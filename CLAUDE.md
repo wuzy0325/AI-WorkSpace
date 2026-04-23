@@ -1,17 +1,152 @@
-# Claude Code Workspace Rules
+# CLAUDE.md
 
-Claude Code must follow the same rules in `AGENTS.md`.
+This file provides guidance to Claude Code when working with code in this workspace.
 
-## Required Behavior
+## Project Context
 
-1. Never change workspace directory structure without explicit user approval.
-2. Use `scripts/new-project.ps1` for new projects.
-3. Run `scripts/validate-structure.ps1` before claiming work is complete.
-4. Keep hardware dependencies out of core domain logic.
-5. Keep desktop app code under `projects/*/apps/desktop-wails` (Vue 3 + Go + Wails).
-6. Reuse shared code instead of duplicating: algorithms in `shared/algorithms`, device protocol code in `shared/device-sdk`, UI/composables in `shared/frontend`.
-7. Keep Wails backend as app-shell/bindings glue; put business rules in `projects/*/services/api-go/internal/core`.
-8. Run impacted tests and report concrete command outputs before marking tasks done.
-9. Follow Chinese execution SOP when needed: `docs/runbooks/ai-agent-execution-standard.zh-CN.md`.
+Industrial DAQ (Data Acquisition) desktop platform — Wails app (Vue 3 + Go) for wind tunnel and lab measurement.
 
-If a requested change conflicts with these rules, stop and ask for confirmation with a concrete structure diff.
+- Multiple hardware devices: DAQ cards, stepping motors, pressure probes, position actuators
+- Calibration workflows with guided procedures
+- Real-time waveform display and high-frequency data acquisition
+- Built for small engineering teams in testing labs
+
+## Architecture
+
+**Go backend + Vue 3 frontend via Wails, with hexagonal architecture per project.**
+
+```
+projects/<project>/
+├── apps/desktop-wails/
+│   ├── frontend/          # Vue 3 UI (display + interaction only)
+│   └── backend/           # Wails bindings/app shell glue (zero business logic)
+├── services/api-go/
+│   ├── cmd/               # Server entry points (wiring only)
+│   └── internal/
+│       ├── core/          # Pure domain logic (zero hardware, zero I/O)
+│       ├── usecase/       # Orchestration (coordinates core + ports)
+│       ├── ports/         # Interface definitions (zero implementations)
+│       └── adapters/      # Concrete implementations
+│           ├── hardware/  # Device drivers (DAQ, motors, probes)
+│           ├── db/        # Database persistence
+│           └── mq/        # Event/message
+├── contracts/             # API contracts (OpenAPI, Proto)
+├── tests/
+│   ├── integration/       # Integration tests
+│   └── hil/               # Hardware-in-loop tests (real devices only)
+└── deploy/                # Environment configs (dev/staging/prod)
+```
+
+Shared cross-project code:
+
+- `shared/algorithms/` — Reusable computation (Go + TS), zero device dependencies
+- `shared/device-sdk/` — Reusable device protocol/transport primitives
+- `shared/frontend/` — Reusable Vue 3 components/composables
+- `shared/contracts/` — Cross-project API contracts
+
+Standalone tools:
+
+- `programs/` — CLI utilities (calibrator, serial monitor, firmware upgrader). Depend on `shared/*` only, never on project `internal/*`.
+
+Hardware lab artifacts:
+
+- `device-lab/` — Raw driver docs, firmware, captures, rig diagrams. Reference material, not source code.
+
+### Key Architectural Decisions
+
+**Hexagonal (ports & adapters):** Business logic in `core` is completely isolated from hardware, databases, and UI. External dependencies are defined as interfaces in `ports`, implemented in `adapters`. This means `core` is testable without any device connected.
+
+**Dependency direction:** `usecase → core + ports`. `core` never imports `ports` or `adapters`. Adapters implement port interfaces. The dependency graph is strictly one-way.
+
+**Wails as thin bridge:** The Wails backend (`apps/desktop-wails/backend/`) only converts parameters and calls usecase methods. No business logic, no if/else branching, no hardware calls. If logic needs to survive a UI framework change, it belongs in `services/api-go/internal/`.
+
+**Frontend owns display only:** Vue 3 components handle UI state, visualization, and user interaction. All business rules (calibration algorithms, measurement processing, device control) live in the Go backend.
+
+### Module Design
+
+See `docs/architecture/module-design.md` for detailed Go package and Vue 3 module structure.
+
+## Hard Constraints
+
+These are zero-tolerance rules. Violating them breaks the architecture:
+
+| Location | Constraint |
+|---|---|
+| `core/` | zero hardware imports, zero file I/O, zero serial/network, zero framework imports |
+| `ports/` | zero implementations, zero structs with methods — interface definitions only |
+| `usecase/` | zero direct hardware calls — go through `ports` interfaces |
+| `adapters/hardware/` | zero business logic — pure protocol translation and I/O |
+| `apps/desktop-wails/backend/` | zero business logic — parameter conversion + usecase calls only |
+| `apps/desktop-wails/frontend/` | zero direct hardware access, zero calibration algorithms |
+| `programs/` | zero project `internal/*` imports — depend on `shared/*` only |
+
+## Decision Tree: Where Does This Code Go?
+
+```
+Is it a business rule (calibration, measurement, acquisition logic)?
+  → YES: core/<domain>/
+
+Does it orchestrate multiple domains or external dependencies?
+  → YES: usecase/
+
+Is it an interface definition for an external dependency?
+  → YES: ports/
+
+Is it a concrete implementation of a port (device driver, DB access)?
+  → YES: adapters/<type>/
+
+Is it UI display or user interaction?
+  → YES: apps/desktop-wails/frontend/src/modules/<domain>/
+
+Is it Wails method binding (Go → JS bridge)?
+  → YES: apps/desktop-wails/backend/bindings/
+
+Can 2+ projects reuse this logic?
+  → YES: shared/ (algorithms, device-sdk, or frontend)
+
+Is it a standalone CLI tool?
+  → YES: programs/<tool-name>/
+
+Is it raw hardware documentation (PDF, datasheet, capture logs)?
+  → YES: device-lab/
+```
+
+## Design Principles
+
+Reference: `docs/runbooks/development-rules.md` (sections 8–12).
+
+1. **Frontend-backend separation** — Frontend displays, backend decides. If swapping Vue for a web UI would still need this logic, put it in the Go backend.
+2. **Program to interfaces** — All external deps via `ports`. Strategy pattern for multi-device. Observer pattern for real-time data. New device = new adapter, zero core changes.
+3. **Readability first** — One function, one job. Business-domain names, no abbreviations. Max 3 nesting levels. Comments explain why, not what.
+4. **Boundary defense** — Validate at edges (user input, device responses). Trust internal callers. Timeout + retry on all hardware I/O. No silent error swallowing.
+5. **Long-term stability** — Explicit resource cleanup (defer, context). Pre-allocate buffers on hot paths. Log state changes at info, communication at debug. Externalize all config.
+
+## Workspace Structure
+
+- Structure is validated by `scripts/validate-structure.ps1`. Run before completing non-trivial work.
+- New projects: `scripts/new-project.ps1 -Name <name>`.
+- Structural changes require: update `workspace.structure.json` + document in `docs/decisions/`.
+- Full rules: `docs/runbooks/workspace-directory-rules.zh-CN.md`.
+
+## Commands
+
+```powershell
+# Structure validation
+powershell -File .\scripts\validate-structure.ps1
+
+# New project scaffold
+powershell -File .\scripts\new-project.ps1 -Name project-gamma
+```
+
+Per-project commands will be added as projects get build tooling.
+
+## Commit Rules
+
+- Atomic commits grouped by logical intent.
+- Conventional format: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
+
+## Language
+
+- Documentation files: bilingual (English + Chinese) as needed.
+- Code comments: English only.
+- AI agent execution standard (Chinese): `docs/runbooks/ai-agent-execution-standard.zh-CN.md`.
