@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wind-DAQ UI Reference</title>
+  <style>
+    :root {
+      --bg-0: #060b16;
+      --bg-1: #0d1628;
+      --bg-2: #14213a;
+      --line: #223252;
+      --text-0: #eaf0ff;
+      --text-1: #a7b4d6;
+      --ok: #3ddc97;
+      --warn: #ffca55;
+      --alarm: #ff6b6b;
+      --cyan: #5fd4ff;
+      --violet: #9a7cff;
+      --green: #48d597;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 10% -20%, #1a2a4d 0%, var(--bg-0) 42%), var(--bg-0);
+      color: var(--text-0);
+      font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+      letter-spacing: 0.01em;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 260px 1fr;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(15, 24, 43, 0.96) 0%, rgba(9, 15, 28, 0.96) 100%);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-1);
+      letter-spacing: 0.02em;
+    }
+
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .nav-item {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text-1);
+      background: rgba(28, 41, 70, 0.24);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .nav-item.active {
+      color: var(--text-0);
+      background: rgba(92, 140, 255, 0.2);
+      border-color: rgba(113, 154, 255, 0.4);
+    }
+
+    .sidebar-meta {
+      margin-top: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(18, 29, 51, 0.8);
+      padding: 12px;
+      font-size: 12px;
+      color: var(--text-1);
+      line-height: 1.55;
+    }
+
+    .main {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+      grid-template-rows: auto auto auto 1fr auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      background: rgba(15, 24, 43, 0.76);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .topbar p {
+      margin: 4px 0 0;
+      color: var(--text-1);
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 12px;
+      color: var(--text-0);
+      background: rgba(30, 45, 75, 0.72);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      border-color: rgba(97, 177, 255, 0.58);
+      background: rgba(76, 155, 255, 0.24);
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: rgba(20, 30, 51, 0.76);
+      font-size: 12px;
+      color: var(--text-1);
+    }
+
+    .chip .v {
+      color: var(--text-0);
+      font-weight: 700;
+      margin-left: 6px;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: linear-gradient(180deg, rgba(22, 33, 58, 0.9), rgba(13, 22, 40, 0.95));
+      padding: 10px 12px;
+    }
+
+    .kpi .label {
+      font-size: 11px;
+      letter-spacing: 0.03em;
+      color: var(--text-1);
+      text-transform: uppercase;
+    }
+
+    .kpi .value {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .kpi .unit {
+      font-size: 12px;
+      color: var(--text-1);
+      margin-left: 5px;
+      font-weight: 600;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(11, 19, 35, 0.84);
+      overflow: hidden;
+      min-height: 130px;
+    }
+
+    .panel-head {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .panel-note {
+      margin: 0;
+      font-size: 11px;
+      color: var(--text-1);
+    }
+
+    .chart-wrap {
+      padding: 10px;
+      height: 320px;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(16, 27, 47, 0.9), rgba(8, 14, 24, 0.95));
+    }
+
+    .channel-wrap {
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(37, 52, 83, 0.75);
+      text-align: left;
+      color: var(--text-1);
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #0e1729;
+      color: #d4deff;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    td.value {
+      color: var(--text-0);
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+    }
+
+    .dot.ok {
+      background: var(--ok);
+    }
+
+    .dot.warn {
+      background: var(--warn);
+    }
+
+    .dot.alarm {
+      background: var(--alarm);
+    }
+
+    .events {
+      max-height: 180px;
+      overflow: auto;
+      margin: 0;
+      padding: 8px 0;
+      list-style: none;
+    }
+
+    .events li {
+      display: grid;
+      grid-template-columns: 86px 70px 1fr;
+      gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(37, 52, 83, 0.6);
+      font-size: 12px;
+      color: var(--text-1);
+    }
+
+    .events .level {
+      font-weight: 700;
+    }
+
+    .events .level.info {
+      color: var(--cyan);
+    }
+
+    .events .level.warn {
+      color: var(--warn);
+    }
+
+    .events .level.alarm {
+      color: var(--alarm);
+    }
+
+    @media (max-width: 1220px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-grid {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">Wind-DAQ<small>Desktop UI Reference (HTML only)</small></div>
+
+      <div class="nav">
+        <div class="nav-item active">Live Acquisition</div>
+        <div class="nav-item">Channel Matrix</div>
+        <div class="nav-item">Trigger and Buffer</div>
+        <div class="nav-item">Calibration</div>
+        <div class="nav-item">Alarm Center</div>
+        <div class="nav-item">Data Replay</div>
+      </div>
+
+      <div class="sidebar-meta">
+        This static mock shows a DAQ layout style:
+        high-density metrics, real-time wave, channel status,
+        and event feed in one screen.
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1>Live Acquisition</h1>
+          <p>Reference interaction style for Wails + Vue3 desktop DAQ software.</p>
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="btn-run">Run</button>
+          <button class="btn" id="btn-stop">Stop</button>
+          <button class="btn" id="btn-zero">Zero</button>
+          <button class="btn" id="btn-cal">Calibrate</button>
+        </div>
+      </header>
+
+      <section class="status-row">
+        <div class="chip">Device<span class="v" id="s-device">Connected</span></div>
+        <div class="chip">Sample Rate<span class="v" id="s-rate">100 Hz</span></div>
+        <div class="chip">Frame Seq<span class="v" id="s-seq">0</span></div>
+        <div class="chip">Dropped<span class="v" id="s-drop">0</span></div>
+        <div class="chip">State<span class="v" id="s-state">Running</span></div>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="kpi">
+          <div class="label">CH-01 Pressure</div>
+          <div class="value" id="kpi-ch1">0.000<span class="unit">bar</span></div>
+        </article>
+        <article class="kpi">
+          <div class="label">CH-08 Pressure</div>
+          <div class="value" id="kpi-ch8">0.000<span class="unit">bar</span></div>
+        </article>
+        <article class="kpi">
+          <div class="label">Atmosphere</div>
+          <div class="value" id="kpi-atm">0.000<span class="unit">bar</span></div>
+        </article>
+        <article class="kpi">
+          <div class="label">Temperature</div>
+          <div class="value" id="kpi-temp">0.0<span class="unit">C</span></div>
+        </article>
+        <article class="kpi">
+          <div class="label">Flow</div>
+          <div class="value" id="kpi-flow">0.0<span class="unit">L/min</span></div>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <article class="panel">
+          <header class="panel-head">
+            <div>
+              <h2 class="panel-title">Realtime Wave (CH-01 vs CH-08)</h2>
+              <p class="panel-note">10 second window, auto-scroll, 100 Hz simulation</p>
+            </div>
+          </header>
+          <div class="chart-wrap">
+            <canvas id="wave"></canvas>
+          </div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <div>
+              <h2 class="panel-title">Channel Matrix</h2>
+              <p class="panel-note">Live values and health flags</p>
+            </div>
+          </header>
+          <div class="channel-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>CH</th>
+                  <th>Status</th>
+                  <th>Value (bar)</th>
+                  <th>Gain</th>
+                </tr>
+              </thead>
+              <tbody id="channel-rows"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <header class="panel-head">
+          <div>
+            <h2 class="panel-title">Event Feed</h2>
+            <p class="panel-note">Operational log + warning/alarm feed</p>
+          </div>
+        </header>
+        <ul class="events" id="events"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const channelCount = 16;
+    const maxPoints = 200;
+    const series = Array.from({ length: channelCount }, () => Array(maxPoints).fill(0));
+    const channelRows = document.getElementById("channel-rows");
+    const events = document.getElementById("events");
+
+    const state = {
+      running: true,
+      seq: 0,
+      dropped: 0,
+      offset: 0,
+      gains: Array.from({ length: channelCount }, (_, i) => 1 + (i % 3) * 0.0015),
+    };
+
+    for (let i = 0; i < channelCount; i += 1) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>CH-" + String(i + 1).padStart(2, "0") +
+        "</td><td><span class=\"dot ok\" id=\"st-" + i + "\"></span></td>" +
+        "<td class=\"value\" id=\"val-" + i + "\">0.000</td>" +
+        "<td id=\"gain-" + i + "\">" + state.gains[i].toFixed(4) + "</td>";
+      channelRows.appendChild(tr);
+    }
+
+    function addEvent(level, source, text) {
+      const li = document.createElement("li");
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      li.innerHTML =
+        "<span>" + hh + ":" + mm + ":" + ss + "</span>" +
+        "<span class=\"level " + level + "\">" + level.toUpperCase() + "</span>" +
+        "<span><strong>" + source + "</strong> - " + text + "</span>";
+      events.prepend(li);
+      while (events.children.length > 16) events.removeChild(events.lastChild);
+    }
+
+    addEvent("info", "SYSTEM", "UI reference initialized");
+
+    const wave = document.getElementById("wave");
+    const ctx = wave.getContext("2d");
+
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = wave.getBoundingClientRect();
+      wave.width = Math.floor(rect.width * dpr);
+      wave.height = Math.floor(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    function pushPoint(arr, value) {
+      arr.push(value);
+      if (arr.length > maxPoints) arr.shift();
+    }
+
+    function signalAt(channelIndex, t) {
+      const base = 0.82 + channelIndex * 0.026 + state.offset;
+      const waveA = Math.sin(t * (0.72 + channelIndex * 0.02) + channelIndex * 0.35) * (0.05 + (channelIndex % 2) * 0.01);
+      const waveB = Math.cos(t * 2.7 + channelIndex * 0.12) * 0.012;
+      const noise = (Math.random() - 0.5) * 0.008;
+      return (base + waveA + waveB + noise) * state.gains[channelIndex];
+    }
+
+    function drawGrid(width, height) {
+      ctx.clearRect(0, 0, width, height);
+      ctx.strokeStyle = "rgba(89, 113, 156, 0.3)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 10; i += 1) {
+        const y = (height / 10) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= 8; i += 1) {
+        const x = (width / 8) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+    }
+
+    function drawSeries(values, width, height, min, max, color) {
+      ctx.beginPath();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      values.forEach((v, i) => {
+        const x = (i / (maxPoints - 1)) * width;
+        const y = height - ((v - min) / (max - min)) * height;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function renderWave() {
+      const width = wave.clientWidth;
+      const height = wave.clientHeight;
+      const min = 0.6;
+      const max = 1.45;
+
+      drawGrid(width, height);
+      drawSeries(series[0], width, height, min, max, "#5fd4ff");
+      drawSeries(series[7], width, height, min, max, "#9a7cff");
+
+      ctx.fillStyle = "rgba(234, 240, 255, 0.8)";
+      ctx.font = "12px Segoe UI";
+      ctx.fillText("CH-01", 12, 18);
+      ctx.fillStyle = "#5fd4ff";
+      ctx.fillRect(62, 9, 14, 6);
+
+      ctx.fillStyle = "rgba(234, 240, 255, 0.8)";
+      ctx.fillText("CH-08", 90, 18);
+      ctx.fillStyle = "#9a7cff";
+      ctx.fillRect(140, 9, 14, 6);
+    }
+
+    function updateUi(t) {
+      const atm = 1.01 + Math.sin(t * 0.12) * 0.012;
+      const temp = 24.8 + Math.sin(t * 0.25) * 1.4 + Math.cos(t * 0.06) * 0.8;
+      const flow = 12.2 + Math.cos(t * 0.45) * 1.3;
+
+      const ch1 = series[0][series[0].length - 1] || 0;
+      const ch8 = series[7][series[7].length - 1] || 0;
+
+      document.getElementById("kpi-ch1").innerHTML = ch1.toFixed(3) + "<span class=\"unit\">bar</span>";
+      document.getElementById("kpi-ch8").innerHTML = ch8.toFixed(3) + "<span class=\"unit\">bar</span>";
+      document.getElementById("kpi-atm").innerHTML = atm.toFixed(3) + "<span class=\"unit\">bar</span>";
+      document.getElementById("kpi-temp").innerHTML = temp.toFixed(1) + "<span class=\"unit\">C</span>";
+      document.getElementById("kpi-flow").innerHTML = flow.toFixed(1) + "<span class=\"unit\">L/min</span>";
+
+      document.getElementById("s-seq").textContent = String(state.seq);
+      document.getElementById("s-drop").textContent = String(state.dropped);
+      document.getElementById("s-state").textContent = state.running ? "Running" : "Stopped";
+    }
+
+    function updateChannels() {
+      for (let i = 0; i < channelCount; i += 1) {
+        const value = series[i][series[i].length - 1] || 0;
+        document.getElementById("val-" + i).textContent = value.toFixed(3);
+        const dot = document.getElementById("st-" + i);
+
+        if (value > 1.32) {
+          dot.className = "dot alarm";
+          if (Math.random() < 0.06) addEvent("alarm", "CH-" + String(i + 1).padStart(2, "0"), "High pressure threshold exceeded");
+        } else if (value > 1.24) {
+          dot.className = "dot warn";
+          if (Math.random() < 0.04) addEvent("warn", "CH-" + String(i + 1).padStart(2, "0"), "Approaching alarm threshold");
+        } else {
+          dot.className = "dot ok";
+        }
+      }
+    }
+
+    function tick() {
+      if (!state.running) return;
+
+      state.seq += 1;
+      if (Math.random() < 0.01) state.dropped += 1;
+
+      const t = performance.now() / 1000;
+      for (let i = 0; i < channelCount; i += 1) {
+        pushPoint(series[i], signalAt(i, t));
+      }
+
+      updateChannels();
+      updateUi(t);
+      renderWave();
+    }
+
+    document.getElementById("btn-run").addEventListener("click", () => {
+      if (!state.running) {
+        state.running = true;
+        addEvent("info", "SYSTEM", "Acquisition resumed");
+      }
+    });
+
+    document.getElementById("btn-stop").addEventListener("click", () => {
+      if (state.running) {
+        state.running = false;
+        addEvent("warn", "SYSTEM", "Acquisition paused by user");
+      }
+    });
+
+    document.getElementById("btn-zero").addEventListener("click", () => {
+      state.offset = -0.02;
+      setTimeout(() => {
+        state.offset = 0;
+      }, 1400);
+      addEvent("info", "CAL", "Zero procedure applied");
+    });
+
+    document.getElementById("btn-cal").addEventListener("click", () => {
+      for (let i = 0; i < channelCount; i += 1) {
+        state.gains[i] = 1 + (Math.random() - 0.5) * 0.004;
+        document.getElementById("gain-" + i).textContent = state.gains[i].toFixed(4);
+      }
+      addEvent("info", "CAL", "Gain coefficients refreshed");
+    });
+
+    setInterval(tick, 100);
+    tick();
+  </script>
+</body>
+</html>
