@@ -1,0 +1,6 @@
+go 1.25.0
+
+use (
+	projects/wind-daq/services/api-go
+	shared/device-sdk/go
+)

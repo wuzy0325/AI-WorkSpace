@@ -22,14 +22,14 @@ Go backend + Vue 3 frontend via Wails, hexagonal architecture per project.
 ### Hard Constraints (zero-tolerance)
 
 | Location | Constraint |
-|---|---|
-| `core/` | zero hardware, zero I/O, zero framework |
-| `ports/` | zero implementations — interfaces only |
-| `usecase/` | zero direct hardware — use ports |
-| `adapters/hardware/` | zero business logic |
-| Wails backend | zero business logic — binding calls only |
-| Wails frontend | zero hardware access, zero algorithms |
-| `programs/` | zero project internal imports |
+|---|---|---|
+| `core/` | zero hardware imports, zero file I/O, zero serial/network, zero framework imports |
+| `ports/` | zero implementations — interface definitions only |
+| `usecase/` | zero direct hardware calls — go through `ports` interfaces |
+| `adapters/hardware/` | zero business logic — pure protocol translation and I/O |
+| `apps/desktop-wails/backend/` | zero business logic — parameter conversion + usecase calls only |
+| `apps/desktop-wails/frontend/` | zero direct hardware access, zero calibration algorithms |
+| `programs/` | zero project `internal/*` imports — depend on `shared/*` only |
 
 ### Commands
 

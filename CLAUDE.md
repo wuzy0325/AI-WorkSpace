@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with code in this workspace.
+This file provides guidance to AI agents (Claude Code, OpenCode, or others) when working with code in this workspace.
 
 ## Project Context
 
@@ -136,6 +136,9 @@ powershell -File .\scripts\validate-structure.ps1
 
 # New project scaffold
 powershell -File .\scripts\new-project.ps1 -Name project-gamma
+
+# Go lint (gofmt + build) across all Go projects
+powershell -File .\scripts\lint-go.ps1
 ```
 
 Per-project commands will be added as projects get build tooling.
@@ -145,8 +148,18 @@ Per-project commands will be added as projects get build tooling.
 - Atomic commits grouped by logical intent.
 - Conventional format: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
 
+## Code Standards
+
+Detailed code structure, naming, comment, and writing conventions for AI-friendly maintainability:
+
+- `docs/runbooks/code-standards.zh-CN.md` — Full specification (Chinese)
+
 ## Language
 
 - Documentation files: bilingual (English + Chinese) as needed.
 - Code comments: English only.
 - AI agent execution standard (Chinese): `docs/runbooks/ai-agent-execution-standard.zh-CN.md`.
+
+## More
+
+- `docs/index.md` — Full documentation index (coding standards, architecture, runbooks, scripts).

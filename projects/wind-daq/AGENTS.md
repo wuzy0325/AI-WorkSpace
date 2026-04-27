@@ -2,8 +2,24 @@
 
 Single source of truth: `../../AGENTS.md`.
 
-## Project Addendum
+## Project Commands
 
-No project-specific overrides currently.
+```powershell
+# Build
+go build -buildvcs=false ./...
+cd services/api-go
 
-Add rules here only when Wind-DAQ needs local deltas.
+# Format & lint
+gofmt -l .          # check formatting
+gofmt -w .          # fix formatting
+go vet ./...        # static analysis
+
+# Run
+go run ./cmd/server/main.go
+```
+
+## Pre-submit Checklist
+
+1. `go build -buildvcs=false ./...` — must pass
+2. `gofmt -l .` — must show no output
+3. Verify docs/STRUCTURE.md matches actual disk layout
