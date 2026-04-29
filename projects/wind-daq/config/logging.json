@@ -1,0 +1,18 @@
+{
+  "level": "info",
+  "format": "text",
+  "console": true,
+  "file": {
+    "enabled": true,
+    "path": "logs/wind-daq.log",
+    "maxSizeMB": 50,
+    "maxBackups": 10,
+    "maxAgeDays": 30,
+    "compress": true
+  },
+  "frontend": {
+    "enabled": true,
+    "bufferSize": 500,
+    "minLevel": "warn"
+  }
+}

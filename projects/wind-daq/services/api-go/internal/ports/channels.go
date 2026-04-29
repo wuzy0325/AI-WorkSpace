@@ -10,4 +10,5 @@ const (
 	ChannelTraversalProgress = "traversal:onProgress"
 	ChannelTraversalComplete = "traversal:onComplete"
 	ChannelTraversalError    = "traversal:onError"
+	ChannelLog               = "log:entry"
 )

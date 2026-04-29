@@ -71,3 +71,8 @@ func (h *Hub) Count() int {
 	defer h.mu.RUnlock()
 	return len(h.clients)
 }
+
+// Send implements logger.LogSink — pushes log entries to frontend via WebSocket.
+func (h *Hub) Send(entry any) {
+	h.Broadcast(ChannelLog, entry)
+}

@@ -12,6 +12,7 @@ const (
 	ChannelTraversalProgress = ports.ChannelTraversalProgress
 	ChannelTraversalComplete = ports.ChannelTraversalComplete
 	ChannelTraversalError    = ports.ChannelTraversalError
+	ChannelLog               = ports.ChannelLog
 )
 
 type Message struct {

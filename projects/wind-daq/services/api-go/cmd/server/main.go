@@ -11,6 +11,7 @@ import (
 	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/adapters/hardware"
+	"wind-daq/services/api-go/internal/adapters/logger"
 	"wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	"wind-daq/services/api-go/internal/adapters/storage"
@@ -60,6 +61,10 @@ func main() {
 	deviceStore := config.NewDeviceStore(configMgr)
 	acqStore := config.NewAcquisitionStore(configMgr)
 	wsHub := ws.NewHub()
+
+	logCfg := logger.LoadConfig(configDir + "/logging.json")
+	logger.Init(logCfg, wsHub)
+
 	reportSvc := report.NewService(dataDir)
 
 	var devFactory ports.DeviceFactory = &deviceFactoryAdapter{}
