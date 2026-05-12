@@ -1,10 +1,10 @@
 # AI Workspace
 
-This workspace hosts multiple product projects that share frontend code, Go backend libraries, and hardware integration utilities.
+This workspace hosts multiple product projects that share frontend code, Rust backend services, and hardware integration utilities.
 
 ## Top-Level Layout
 
-- `projects/`: business projects (Wails desktop app + Vue 3 frontend + Go backend)
+- `projects/`: business projects (Tauri desktop app + Vue 3 frontend + Rust backend)
 - `shared/`: reusable algorithms, device SDK, contracts, and frontend shared modules
 - `programs/`: standalone utilities and small tools
 - `device-lab/`: hardware rigs, captures, firmware, and lab tooling

@@ -1,0 +1,13 @@
+[package]
+name = "wind-daq-api"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "wind-daq-api"
+path = "src/bin/server.rs"
+
+[dependencies]

@@ -5,21 +5,22 @@ Single source of truth: `../../AGENTS.md`.
 ## Project Commands
 
 ```powershell
+# From workspace root
+Set-Location .\projects\wind-daq\services\api-rs
+
 # Build
-go build -buildvcs=false ./...
-cd services/api-go
+cargo check
 
 # Format & lint
-gofmt -l .          # check formatting
-gofmt -w .          # fix formatting
-go vet ./...        # static analysis
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 
 # Run
-go run ./cmd/server/main.go
+cargo run --bin wind-daq-api
 ```
 
 ## Pre-submit Checklist
 
-1. `go build -buildvcs=false ./...` — must pass
-2. `gofmt -l .` — must show no output
+1. `Set-Location .\projects\wind-daq\services\api-rs; cargo check` — must pass
+2. `Set-Location .\projects\wind-daq\services\api-rs; cargo fmt --check` — must pass
 3. Verify docs/STRUCTURE.md matches actual disk layout

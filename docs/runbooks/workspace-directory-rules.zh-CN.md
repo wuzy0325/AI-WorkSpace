@@ -31,49 +31,49 @@
 
 建议每个项目使用一致结构：
 
-### 3.1 `projects/<project>/apps/desktop-wails`
+### 3.1 `projects/<project>/apps/desktop-tauri`
 
-- 用途：Wails 桌面应用壳（Vue 3 前端 + Go 绑定层）。
+- 用途：Tauri 桌面应用壳（Vue 3 前端 + Rust shell/命令桥）。
 - 场景：桌面 UI 开发、窗口能力、前后端桥接。
-- 规则：桌面壳相关代码放这里；核心业务逻辑仍放 `services/api-go/internal/*`。
+- 规则：桌面壳、启动装配和 Tauri 命令桥放这里；核心业务逻辑仍放 `services/api-rs/src/*`。
 
-### 3.2 `projects/<project>/services/api-go/cmd`
+### 3.2 `projects/<project>/services/api-rs/src/bin`
 
-- 用途：Go 服务入口（server/worker 等）。
+- 用途：Rust 服务入口（server/worker 等）。
 - 场景：启动 API 服务、注册路由、组装依赖。
 - 规则：入口层做装配，不写复杂业务逻辑。
 
-### 3.3 `projects/<project>/services/api-go/internal/core`
+### 3.3 `projects/<project>/services/api-rs/src/core`
 
 - 用途：核心领域逻辑（纯业务规则）。
 - 场景：计算、判定、流程编排中的领域规则。
 - 规则：必须硬件无关、框架无关、易测试。
 
-### 3.4 `projects/<project>/services/api-go/internal/usecase`
+### 3.4 `projects/<project>/services/api-rs/src/usecase`
 
 - 用途：应用服务层（协调 core 与外部端口）。
 - 场景：实现业务用例、事务边界、调用顺序。
-- 规则：依赖 `ports` 接口，不直接依赖具体硬件实现。
+- 规则：依赖 `ports` trait，不直接依赖具体硬件实现。
 
-### 3.5 `projects/<project>/services/api-go/internal/ports`
+### 3.5 `projects/<project>/services/api-rs/src/ports`
 
 - 用途：对外依赖抽象接口。
-- 场景：设备接口、仓储接口、消息接口定义。
-- 规则：接口保持稳定、与实现解耦。
+- 场景：设备 trait、仓储 trait、消息 trait 定义。
+- 规则：trait 保持稳定、与实现解耦。
 
-### 3.6 `projects/<project>/services/api-go/internal/adapters/hardware`
+### 3.6 `projects/<project>/services/api-rs/src/adapters/hardware`
 
 - 用途：硬件协议与设备适配实现。
 - 场景：TCP/串口/CAN/Modbus 收发、协议编解码。
 - 规则：硬件依赖只放这里；不要把硬件库带进 `core`。
 
-### 3.7 `projects/<project>/services/api-go/internal/adapters/db`
+### 3.7 `projects/<project>/services/api-rs/src/adapters/db`
 
 - 用途：数据库适配实现。
 - 场景：持久化、查询、事务实现。
 - 规则：实现 `ports`，避免把 SQL 细节扩散到 usecase/core。
 
-### 3.8 `projects/<project>/services/api-go/internal/adapters/mq`
+### 3.8 `projects/<project>/services/api-rs/src/adapters/mq`
 
 - 用途：消息队列适配实现。
 - 场景：事件发布、异步消费。
@@ -101,7 +101,7 @@
 
 ### 4.1 `shared/algorithms`
 
-- 用途：共通算法库（Go/TS）。
+- 用途：共通算法库（Rust/TS）。
 - 场景：滤波、标定、数据处理、计算模型。
 - 规则：算法库应与具体设备驱动解耦。
 
@@ -126,7 +126,7 @@
 ### 4.5 `shared/frontend`
 
 - 用途：前端共享模块（组件、hooks、utils）。
-- 场景：多个 Wails + Vue 3 桌面项目复用 UI 或逻辑。
+- 场景：多个 Tauri + Vue 3 桌面项目复用 UI 或逻辑。
 - 规则：公共模块保持通用，避免携带某项目私有耦合。
 
 ## 5. `programs/` 目录（独立小程序）
@@ -170,7 +170,7 @@
 
 1. 设备原始手册：优先归档到 `device-lab/drivers/...`。
 2. 可直接开发的命令规范：维护在 `shared/device-sdk/docs/commands/...`。
-3. 某项目特殊覆盖：写到 `projects/<project>/services/api-go/internal/adapters/hardware/docs/...`。
+3. 某项目特殊覆盖：写到 `projects/<project>/services/api-rs/src/adapters/hardware/docs/...`。
 
 ## 8. AI Agent 执行约束（防止乱改结构）
 
@@ -194,7 +194,7 @@ powershell -File .\scripts\new-project.ps1 -Name project-gamma
 
 1. 单一事实来源：目录边界以 `AGENTS.md` + 本文档为准，出现冲突时先更新文档再改代码。
 2. 去重优先：同类逻辑在 2 个及以上项目出现时，优先提取到 `shared/*`，禁止长期复制粘贴。
-3. 分层清晰：Wails 桌面壳负责 UI 与绑定，核心业务逻辑必须留在 `services/api-go/internal/core`。
-4. 状态与数据职责分离：前端展示状态在前端层管理，业务规则与设备协议处理在 Go 后端层管理。
+3. 分层清晰：Tauri 桌面壳负责 UI 与命令桥，核心业务逻辑必须留在 `services/api-rs/src/core`。
+4. 状态与数据职责分离：前端展示状态在前端层管理，业务规则与设备协议处理在 Rust 后端层管理。
 5. 测试就近：核心规则测 `core/usecase`，外部依赖测 `adapters`，真机验证只放 `tests/hil`。
 6. 完成前验证：执行结构校验 + 受影响测试，并在结果中附带命令输出信息。

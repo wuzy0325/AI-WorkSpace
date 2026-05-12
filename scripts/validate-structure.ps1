@@ -27,6 +27,15 @@ function Resolve-WorkspacePath {
     return Join-Path $workspaceRoot $normalized
 }
 
+function Get-RelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return $Path.Substring($workspaceRoot.Length + 1)
+}
+
 # ---- 1. Directory & File existence checks ----
 foreach ($requiredDir in $config.requiredDirectories) {
     $path = Resolve-WorkspacePath -RelativePath $requiredDir
@@ -53,94 +62,111 @@ if (-not $config.allowUnknownTopLevelEntries) {
     }
 }
 
-# ---- 2. Go Architecture Import Validation ----
+# ---- 2. Rust Architecture Boundary Validation ----
 
-function Get-GoImports {
-    param([string]$FileContent)
-    $imports = New-Object System.Collections.Generic.List[string]
+function Test-RustFileOutsideComments {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FileContent,
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
+    )
 
-    # Match simple imports like "pkg/path"
-    $pattern = '^\s+"([^"]+)"'
-
-    # Match grouped imports inside ()
-    $inGroup = $false
     foreach ($line in $FileContent -split "`n") {
         $trimmed = $line.Trim()
-        if ($trimmed -match '^import\s*\(') { $inGroup = $true; continue }
-        if ($inGroup -and $trimmed -eq ')') { $inGroup = $false; continue }
+        if ($trimmed.StartsWith("//") -or $trimmed.StartsWith("#![") -or $trimmed.StartsWith("#[")) {
+            continue
+        }
 
-        if ($trimmed -match $pattern) {
-            $imports.Add($matches[1])
+        if ($trimmed -match $Pattern) {
+            return $true
         }
     }
-    return $imports
+    return $false
 }
 
-# 2a. usecase must not import internal/adapters
-$usecaseFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/usecase") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
-foreach ($f in $usecaseFiles) {
-    $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
-    if (-not $content) { continue }
-    $imports = Get-GoImports -FileContent $content
-    foreach ($imp in $imports) {
-        if ($imp -match 'internal/adapters/') {
-            $relPath = $f.FullName.Substring($workspaceRoot.Length + 1)
-            $errors.Add("ARCH: usecase imports adapter: $relPath -> $imp")
-        }
-    }
-}
+$projectDirs = Get-ChildItem -Path (Join-Path $workspaceRoot "projects") -Directory -ErrorAction SilentlyContinue
+foreach ($projectDir in $projectDirs) {
+    $tauriRoot = Join-Path $projectDir.FullName "apps/desktop-tauri/src-tauri"
+    if (Test-Path -Path $tauriRoot -PathType Container) {
+        $tauriFiles = Get-ChildItem -Path $tauriRoot -Filter "*.rs" -Recurse -ErrorAction SilentlyContinue
+        foreach ($f in $tauriFiles) {
+            $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
+            if (-not $content) { continue }
 
-# 2b. core must not import hardware, file I/O, network, or framework packages
-$coreFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/core") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
-$forbiddenCorePatterns = @(
-    'adapters/',
-    'os\.',
-    'net\.',
-    'io/ioutil',
-    'serial',
-    'github.com/',
-    'gopkg\.in/',
-    'google\.golang\.org/'
-)
-foreach ($f in $coreFiles) {
-    $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
-    if (-not $content) { continue }
-    $imports = Get-GoImports -FileContent $content
-    foreach ($imp in $imports) {
-        foreach ($pattern in $forbiddenCorePatterns) {
-            if ($imp -match $pattern) {
-                $relPath = $f.FullName.Substring($workspaceRoot.Length + 1)
-                $errors.Add("ARCH: core imports forbidden package: $relPath -> $imp (matches: $pattern)")
+            if (Test-RustFileOutsideComments -FileContent $content -Pattern '::(core|usecase|ports|adapters)\b') {
+                $relPath = Get-RelativePath -Path $f.FullName
+                $errors.Add("ARCH: Tauri shell imports backend internals: $relPath (use commands/API bridge only)")
             }
         }
     }
-}
 
-# 2c. ports must not contain struct method definitions
-$portsFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/ports") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
-foreach ($f in $portsFiles) {
-    $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
-    if (-not $content) { continue }
-    # Check for func \(receiver\) method patterns
-    if ($content -match 'func\s+\([^)]+\)\s+\w+\(') {
-        $relPath = $f.FullName.Substring($workspaceRoot.Length + 1)
-        $errors.Add("ARCH: ports has struct method: $relPath (ports must only define interfaces)")
+    $apiRoot = Join-Path $projectDir.FullName "services/api-rs"
+    if (-not (Test-Path -Path $apiRoot -PathType Container)) {
+        continue
+    }
+
+    $srcRoot = Join-Path $apiRoot "src"
+
+    $usecaseFiles = Get-ChildItem -Path (Join-Path $srcRoot "usecase") -Filter "*.rs" -Recurse -ErrorAction SilentlyContinue
+    foreach ($f in $usecaseFiles) {
+        $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $content) { continue }
+
+        if (Test-RustFileOutsideComments -FileContent $content -Pattern 'crate::adapters|super::super::adapters') {
+            $relPath = Get-RelativePath -Path $f.FullName
+            $errors.Add("ARCH: Rust usecase depends on adapter: $relPath")
+        }
+    }
+
+    $coreFiles = Get-ChildItem -Path (Join-Path $srcRoot "core") -Filter "*.rs" -Recurse -ErrorAction SilentlyContinue
+    foreach ($f in $coreFiles) {
+        $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $content) { continue }
+
+        $coreForbiddenPatterns = @(
+            'crate::adapters',
+            'crate::ports',
+            '\bstd::fs\b',
+            '\bstd::net\b',
+            '\btokio::net\b',
+            '\bserialport::',
+            '\baxum::',
+            '\bactix_',
+            '\brocket::'
+        )
+
+        foreach ($pattern in $coreForbiddenPatterns) {
+            if (Test-RustFileOutsideComments -FileContent $content -Pattern $pattern) {
+                $relPath = Get-RelativePath -Path $f.FullName
+                $errors.Add("ARCH: Rust core uses forbidden dependency: $relPath (matches: $pattern)")
+            }
+        }
+    }
+
+    $portsFiles = Get-ChildItem -Path (Join-Path $srcRoot "ports") -Filter "*.rs" -Recurse -ErrorAction SilentlyContinue
+    foreach ($f in $portsFiles) {
+        $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $content) { continue }
+        $relPath = Get-RelativePath -Path $f.FullName
+
+        if (Test-RustFileOutsideComments -FileContent $content -Pattern '^\s*(pub\s+)?fn\s+\w+') {
+            $errors.Add("ARCH: Rust ports has function implementation: $relPath (ports must define traits only)")
+        }
     }
 }
 
-# 2d. programs must not import projects/*/internal/*
+# 2b. programs must not import projects/*/services/* private internals
 $programsDirs = Get-ChildItem -Path (Join-Path $workspaceRoot "programs") -Directory -ErrorAction SilentlyContinue
 foreach ($progDir in $programsDirs) {
-    $progFiles = Get-ChildItem -Path $progDir.FullName -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
+    $progFiles = Get-ChildItem -Path $progDir.FullName -Include "*.go","*.rs" -File -Recurse -ErrorAction SilentlyContinue
     foreach ($f in $progFiles) {
         $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
         if (-not $content) { continue }
-        $imports = Get-GoImports -FileContent $content
-        foreach ($imp in $imports) {
-            if ($imp -match 'projects/.*/internal/') {
-                $relPath = $f.FullName.Substring($workspaceRoot.Length + 1)
-                $errors.Add("ARCH: program imports project internal: $relPath -> $imp")
-            }
+
+        if ($content -match 'projects/.*/services/.*/(internal|src/(core|usecase|ports|adapters))') {
+            $relPath = Get-RelativePath -Path $f.FullName
+            $errors.Add("ARCH: program imports project private service code: $relPath")
         }
     }
 }

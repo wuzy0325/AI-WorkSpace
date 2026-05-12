@@ -12,17 +12,17 @@
 1. 开始任务前先读取 `AGENTS.md`。
 2. 未经明确要求，不得新增/删除/重命名/移动顶层目录。
 3. 新建项目必须使用 `scripts/new-project.ps1`。
-4. 核心业务层 `projects/*/services/api-go/internal/core` 禁止直接依赖硬件库。
+4. 核心业务层 `projects/*/services/api-rs/src/core` 禁止直接依赖硬件库、文件 I/O、网络、串口、数据库、Web 框架或 Tauri 类型。
 5. 硬件依赖只允许在 `adapters/hardware` 或 `shared/device-sdk`。
 6. 完成非 trivial 任务前，必须执行 `scripts/validate-structure.ps1`。
 
-## 3. 分层与职责（Wails + Vue3 + Go）
+## 3. 分层与职责（Tauri + Vue 3 + Rust）
 
-- `projects/*/apps/desktop-wails/frontend`：桌面前端（Vue 3），不直接依赖硬件驱动与数据库适配。
-- `projects/*/apps/desktop-wails/backend`：Wails 宿主与绑定层，只做 app shell glue。
-- `projects/*/services/api-go/internal/core`：核心业务规则，纯业务、可单测、硬件无关。
-- `projects/*/services/api-go/internal/usecase` + `ports`：编排流程和依赖抽象。
-- `projects/*/services/api-go/internal/adapters/*`：硬件/数据库/消息等外部依赖实现。
+- `projects/*/apps/desktop-tauri/frontend`：桌面前端（Vue 3），只负责展示和交互，不直接依赖硬件驱动、数据库适配或校准算法。
+- `projects/*/apps/desktop-tauri/src-tauri`：Tauri 桌面壳与薄命令桥，只做窗口生命周期、系统能力和桥接，不写业务逻辑。
+- `projects/*/services/api-rs/src/core`：核心业务规则，纯业务、可单测、硬件无关。
+- `projects/*/services/api-rs/src/usecase` + `ports`：编排流程和依赖抽象，依赖 trait 而非具体实现。
+- `projects/*/services/api-rs/src/adapters/*`：硬件/数据库/消息等外部依赖实现。
 
 ## 4. 复用优先策略
 

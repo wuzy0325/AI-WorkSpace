@@ -30,7 +30,7 @@ src/
   utils/       # 纯工具：加密、格式化、通用计算
   config/      # 配置、环境变量、全局参数
   middleware/  # 中间件、拦截器、鉴权、日志
-  types/       # 类型定义(TS/Go)
+  types/       # 类型定义(TS/Rust)
 ```
 
 #### 模式 B：六边形架构（适用于硬件 / 多领域 / 复杂业务）
@@ -44,45 +44,44 @@ src/
 推荐采用六边形架构（Ports & Adapters）：
 
 ```
-services/<service>/
-├── api/                    # HTTP REST API + 路由（≈ api/）
-├── cmd/                    # 入口层：依赖注入 + 启动
-└── internal/
+services/<service>-rs/
+├── Cargo.toml
+└── src/
+    ├── bin/                # 服务入口：依赖注入 + 启动
     ├── core/               # 纯业务领域模型 + 算法（≈ model/ 加强版）
-    │   └── <domain>/       #   按领域拆分子包：device/motion/calibration/...
-    ├── ports/              # 接口抽象层（标准三层缺失的部分）
-    │   ├── device.go       #   定义 Device 接口
-    │   ├── motion.go       #   定义 MotionController 接口
+    │   └── <domain>/       #   按领域拆分子模块：device/motion/calibration/...
+    ├── ports/              # trait 抽象层（标准三层缺失的部分）
+    │   ├── device.rs       #   定义 Device trait
+    │   ├── motion.rs       #   定义 MotionController trait
     │   └── ...
     ├── usecase/            # 业务编排层（≈ service/ 加强版）
-    │   ├── device_manager.go
-    │   ├── acquisition.go
+    │   ├── device_manager.rs
+    │   ├── acquisition.rs
     │   └── ...
-    ├── adapters/           # 外部适配器（≈ dao/db/ 的泛化）
-    │   ├── hardware/       #   硬件驱动：P1604、T1603、模拟
-    │   ├── config/         #   配置持久化
-    │   ├── ws/             #   WebSocket 实时推送
-    │   ├── scan/           #   设备发现
-    │   ├── storage/        #   文件存储
-    │   ├── report/         #   报告生成
-    │   ├── mq/             #   消息队列（预留）
-    │   └── db/             #   数据库（预留）
-    └── pkg/               # 共享工具（≈ utils/，可选）
+    └── adapters/           # 外部适配器（≈ dao/db/ 的泛化）
+        ├── hardware/       #   硬件驱动：P1604、T1603、模拟
+        ├── config/         #   配置持久化
+        ├── ws/             #   WebSocket 实时推送
+        ├── scan/           #   设备发现
+        ├── storage/        #   文件存储
+        ├── report/         #   报告生成
+        ├── mq/             #   消息队列（预留）
+        └── db/             #   数据库（预留）
 ```
 
 **两种模式对照表：**
 
 | 标准三层（模式 A） | 六边形架构（模式 B） | 说明 |
 |------|------|------|
-| `api/` | `api/` | HTTP 路由/处理器，职责不变 |
+| `api/` | `src/bin` + API adapter | HTTP 路由/处理器保持薄层，职责不变 |
 | — | `ports/` | **新增** — 接口抽象层，标准三层缺失，导致模块耦合 |
 | `service/` | `usecase/` + `core/` | 拆为两层：纯领域逻辑（core）+ 编排（usecase） |
 | `dao/db/` | `adapters/` | 从单一 DB 操作泛化为多种外部适配器 |
 | `model/` | `core/<domain>/` | 从单一 model 拆为按领域组织的子包 |
 | `utils/` | `pkg/` | 纯工具函数，职责不变 |
 | `middleware/` | 在 `api/` 内 | 中间件，通常规模不大，放在 api 层内即可 |
-| `types/` | 分散在 core + ports | Go 类型定义靠近使用方，不单独成包 |
-| — | `cmd/` | **新增** — 显示式入口 + 依赖注入 |
+| `types/` | 分散在 core + ports | Rust 类型定义靠近使用方，不单独成包 |
+| — | `src/bin/` | **新增** — 显式入口 + 依赖注入 |
 
 **何时选 A，何时选 B：**
 
@@ -145,7 +144,7 @@ services/<service>/
 | 场景 | 规范 |
 |------|------|
 | 前端 TS/JS | 小驼峰 `camelCase` |
-| Go/Python | 蛇形 `snake_case` |
+| Rust/Python | 蛇形 `snake_case` |
 | 类/结构体 | 大驼峰 `PascalCase` |
 
 ### 变量用途显性化
@@ -226,11 +225,11 @@ AI 可直接检索批量处理遗留问题。
 
 ### 固定编码风格 & 格式化
 
-开启 ESLint / Prettier / `gofmt` 强制格式化，代码风格统一。
+开启 ESLint / Prettier / `cargo fmt` 强制格式化，代码风格统一。
 
 ### 依赖版本固定
 
-`package.json` / `go.mod` / `requirements` 锁定版本，避免 AI 升级依赖炸库。
+`package.json` / `Cargo.toml` / `Cargo.lock` / `requirements` 锁定版本，避免 AI 升级依赖炸库。
 
 ### 最小权限导出
 

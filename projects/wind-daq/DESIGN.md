@@ -635,7 +635,7 @@ TraversalMain + TraversalSettings
 **数据流（高层）：**
 
 ```
-Go Backend (Wails Bindings / WebSocket)
+Rust Backend (Tauri Commands / REST / WebSocket)
   → Vue Composable / Store
     → Pinia State Update
       → Vue Reactivity → UI 更新
@@ -645,14 +645,14 @@ Go Backend (Wails Bindings / WebSocket)
 
 ## 11. 后端架构
 
-系统使用 **Wails** 框架，Go 后端 + Vue 3 前端：
+系统使用 **Tauri** 桌面壳，Rust 后端 + Vue 3 前端：
 
 | 层 | 技术 | 说明 |
 |---|---|---|
-| 桌面框架 | Wails | Go → JS 绑定，原生窗口 |
-| 前端 | Vue 3 + Vite | 纯 SPA，Wails 嵌入 |
-| 后端 | Go (hexagonal) | 业务逻辑在 core/usecase，硬件在 adapters |
-| 通信 | Wails Bindings | 结构体方法自动暴露为 JS 调用 |
+| 桌面框架 | Tauri 2 | 原生窗口、WebView、系统能力和薄命令桥 |
+| 前端 | Vue 3 + Vite | 纯 SPA，由 Tauri 承载 |
+| 后端 | Rust (hexagonal) | 业务逻辑在 core/usecase，硬件在 adapters |
+| 通信 | Tauri Commands / REST / WebSocket | 按功能选择命令桥、HTTP API 或实时通道 |
 | 实时数据 | WebSocket (可选) | 高频波形数据推送 |
 
 ---
@@ -664,8 +664,8 @@ Go Backend (Wails Bindings / WebSocket)
 | 层级 | 技术 | 版本 |
 |---|---|---|
 | 框架 | Vue 3 | ^3.4 |
-| 桌面 | Wails | ^2.8 |
-| 后端 | Go | ^1.22 |
+| 桌面 | Tauri | ^2.0 |
+| 后端 | Rust | stable |
 | 构建 | Vite | ^5.0 |
 | 状态 | Pinia | ^2.1 |
 | 路由 | Vue Router | ^4.3 |

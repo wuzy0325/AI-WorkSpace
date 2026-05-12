@@ -16,6 +16,6 @@ All frontend UI work **must** follow the design specification in `DESIGN.md` (sa
 - **Components**: Match UiButton/UiPanel/UiMetricCard specs exactly — variant colors, sizes, border-radius, transitions
 - **Channel colors**: 8-color core scheme, 8-color extended. Never invent new channel colors
 - **Error states**: Follow `DESIGN.md` §8 for device status, empty states, feedback levels
-- **Tech stack**: Vue 3 + Vite + Pinia + Vue Router + Tailwind CSS + ECharts. No Electron
+- **Tech stack**: Tauri + Vue 3 + Vite + Pinia + Vue Router + Tailwind CSS + ECharts. No Electron
 
 When generating or modifying any Vue component, CSS, or layout: read `DESIGN.md` first and conform to its tokens and patterns.
