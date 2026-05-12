@@ -26,3 +26,7 @@ npm-cache/
 # Environment
 .env
 .env.local
+
+# Office temp files
+~$*
+*.docx~

@@ -91,7 +91,13 @@
 - 场景：接口联调验证、真机回归。
 - 规则：`hil` 仅放真机相关测试，不与普通集成测试混放。
 
-### 3.11 `projects/<project>/deploy/dev|staging|prod`
+### 3.11 `projects/<project>/config`
+
+- 用途：项目默认配置文件（JSON）。
+- 场景：采集参数、设备档案、日志配置、运动配置、存储配置。
+- 规则：存放项目级别的默认配置，与环境无关。环境特定配置放 `deploy/`。
+
+### 3.12 `projects/<project>/deploy/dev|staging|prod`
 
 - 用途：环境部署配置。
 - 场景：不同环境参数与部署清单。

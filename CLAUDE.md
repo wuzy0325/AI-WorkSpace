@@ -138,11 +138,16 @@ powershell -File .\scripts\validate-structure.ps1
 # New project scaffold
 powershell -File .\scripts\new-project.ps1 -Name project-gamma
 
-# Rust backend check
+# Rust workspace check (requires Rust toolchain)
 cargo check --workspace
 ```
 
 Per-project commands will be added as projects get build tooling.
+
+## Requirements
+
+- **Rust** (stable, via rustup) — `cargo check --workspace` must pass before committing.
+- **Node.js** (LTS) — required for Vue 3 frontend builds in Tauri projects.
 
 ## Commit Rules
 

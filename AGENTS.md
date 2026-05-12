@@ -38,4 +38,16 @@ powershell -File .\scripts\validate-structure.ps1   # Structure check
 powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 ```
 
+### Environment Requirements
+
+- **Rust toolchain** (stable) — required for building any project in this workspace.
+- **Node.js** (LTS) — required for Vue 3 Tauri frontend builds.
+
+### Pre-submit Checklist
+
+Before committing, run:
+
+1. `powershell -File .\scripts\validate-structure.ps1` — must pass
+2. `cargo check --workspace` — must pass (requires Rust toolchain)
+
 See CLAUDE.md for complete rules, decision tree, and design principles.

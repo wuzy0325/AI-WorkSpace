@@ -63,6 +63,7 @@
     "projects/wind-daq/contracts",
     "projects/wind-daq/contracts/openapi",
     "projects/wind-daq/contracts/proto",
+    "projects/wind-daq/config",
     "projects/wind-daq/deploy",
     "projects/wind-daq/deploy/dev",
     "projects/wind-daq/deploy/staging",
