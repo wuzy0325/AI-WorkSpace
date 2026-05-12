@@ -1,0 +1,8 @@
+C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace\target\debug\deps\time_core-dfedd2e17104c1a6.d: C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\lib.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\convert.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\hint.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\util.rs
+
+C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace\target\debug\deps\libtime_core-dfedd2e17104c1a6.rmeta: C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\lib.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\convert.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\hint.rs C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\util.rs
+
+C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\lib.rs:
+C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\convert.rs:
+C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\hint.rs:
+C:\Users\wuzhy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-core-0.1.8\src\util.rs:
