@@ -1,52 +1,48 @@
-# Module Design: Rust Backend + Vue 3 Frontend (Tauri Desktop App)
+# Module Design: Go Backend + Vue 3 Frontend (Wails Desktop App)
 
-## 1. Rust Backend Module Structure
+## 1. Go Backend Module Structure
 
-Organize by architectural responsibility. Each module should stay small and domain-named.
+Organize by responsibility domain. Each module is an independent Go package.
 
 ```
-services/api-rs/src/
-├── bin/
-│   └── server.rs              # Server entry point and dependency wiring only
+internal/
+├── core/                    # Pure domain logic, no external dependencies
+│   ├── acquisition/         # Acquisition domain: sample control, data buffer, trigger rules
+│   ├── calibration/         # Calibration domain: algorithms, coefficient calculation, flow
+│   ├── measurement/         # Measurement domain: unit conversion, correction, verdict
+│   └── project/             # Project management: test config, condition management
 │
-├── core/                      # Pure domain logic, no external dependencies
-│   ├── acquisition/           # Acquisition domain: sample control, buffers, trigger rules
-│   ├── calibration/           # Calibration domain: algorithms, coefficient calculation, flow
-│   ├── measurement/           # Measurement domain: unit conversion, correction, verdict
-│   └── project/               # Project management: test config, condition management
+├── usecase/                 # Orchestration layer, coordinates core + ports
+│   ├── acquire_task.go      # Acquire use case: start/stop acquisition, real-time push
+│   ├── calibrate_task.go    # Calibrate use case: run calibration flow, save results
+│   ├── device_manager.go    # Device use case: connect/disconnect, status query
+│   └── export_task.go       # Export use case: data query, file export
 │
-├── usecase/                   # Orchestration layer, coordinates core + ports
-│   ├── acquire_task.rs        # Acquire use case: start/stop acquisition, real-time push
-│   ├── calibrate_task.rs      # Calibrate use case: run calibration flow, save results
-│   ├── device_manager.rs      # Device use case: connect/disconnect, status query
-│   └── export_task.rs         # Export use case: data query, file export
+├── ports/                   # Interface definitions only
+│   ├── device.go            # Device interface: Read, Write, Connect, Disconnect
+│   ├── data_sink.go         # DataSink interface: store, query
+│   ├── event_bus.go         # EventBus interface: publish/subscribe
+│   └── config_repo.go       # ConfigRepo interface: read/write config
 │
-├── ports/                     # Trait definitions only
-│   ├── device.rs              # Device trait: read, write, connect, disconnect
-│   ├── data_sink.rs           # DataSink trait: store, query
-│   ├── event_bus.rs           # EventBus trait: publish/subscribe
-│   └── config_repo.rs         # ConfigRepo trait: read/write config
-│
-└── adapters/                  # Concrete implementations
-    ├── hardware/              # Device adapters: one module per device
-    │   ├── daq_p1604.rs
-    │   ├── stepping_motor.rs
-    │   └── pressure_probe.rs
-    ├── db/                    # Database adapters
-    ├── mq/                    # Message/event adapters
-    └── config/                # Config file adapters
+└── adapters/                # Concrete implementations
+        ├── hardware/         # Device adapters: one file per device
+        │   ├── daq_p1604.go
+        │   ├── stepping_motor.go
+        │   └── pressure_probe.go
+        ├── db/               # Database adapters
+        ├── mq/               # Message/event adapters
+        └── config/           # Config file adapters
 ```
 
 ### Backend Rules
 
 | Rule | Description |
 |---|---|
-| core splits by business domain | Each domain is independent. `acquisition` must not import `calibration` unless there is an explicit domain-level reason. |
-| usecase splits by user operation | One module per complete operation, such as `run_calibration`. |
-| ports contains traits only | No behavior implementations. Keep external dependency traits stable. |
-| adapters split by technology | `hardware` for device drivers, `db` for persistence, one module per concrete implementation. |
-| cross-domain coordination in usecase | Logic that touches both acquisition and calibration lives in `usecase`, never in `core`. |
-| async at boundaries | Keep async runtime/framework types out of `core`; isolate them in `bin`, `usecase`, or adapters as appropriate. |
+| core splits by business domain | Each domain is independent. `acquisition` must not import `calibration`. |
+| usecase splits by user operation | One file per complete operation (e.g. "run calibration"). |
+| ports contains interfaces only | No implementations, no structs. Interface definitions only. |
+| adapters split by technology | hardware for device drivers, db for persistence, one file per concrete implementation. |
+| cross-domain coordination in usecase | Logic that touches both acquisition and calibration lives in usecase, never in core. |
 
 ## 2. Vue 3 Frontend Module Structure
 
@@ -57,7 +53,7 @@ frontend/src/
 ├── modules/                 # Business modules by feature domain
 │   ├── device/              # Device management: connect, status, config
 │   │   ├── components/      # DevicePanel, DeviceStatus, PortConfig
-│   │   ├── composables/     # useDevice.ts (calls API client)
+│   │   ├── composables/     # useDevice.ts (calls backend device methods)
 │   │   └── types.ts
 │   ├── acquisition/         # Real-time acquisition: waveform, sample params
 │   │   ├── components/      # WaveformChart, SampleConfig, ChannelSelector
@@ -71,13 +67,13 @@ frontend/src/
 │   └── settings/            # System settings: preferences, configuration
 │
 ├── shared/                  # Internal frontend sharing
-│   ├── components/          # Common UI components
-│   ├── composables/         # Common hooks
-│   ├── utils/               # Formatting, conversion, API helpers
+│   ├── components/          # Common UI components (buttons, tables, dialogs)
+│   ├── composables/         # Common hooks (useToast, useLoading)
+│   ├── utils/               # Utility functions (formatting, conversion)
 │   └── styles/              # Global styles, theme variables
 │
-├── layouts/                 # Layout components
-├── api/                     # Rust backend HTTP/WebSocket client
+├── layouts/                 # Layout components (main frame, sidebar)
+├── bridge/                  # Wails binding wrapper (unified backend calls)
 └── App.vue
 ```
 
@@ -85,27 +81,31 @@ frontend/src/
 
 | Rule | Description |
 |---|---|
-| modules split by feature domain | Each module is self-contained: components + composables + types. |
+| modules split by feature domain | Each module is self-contained (components + composables + types). |
 | shared for cross-module reuse | Only promote to shared when 2+ modules use it. |
-| API client wraps backend calls | Never call hardware, filesystem, or calibration algorithms directly from Vue. |
-| composable maps to usecase | One composable should correspond to one Rust backend usecase area. |
-| no direct cross-module imports | Acquisition does not import calibration components. Compose via events or layout layer. |
+| bridge layer wraps backend calls | Never call Wails API directly in composables. Go through bridge. |
+| composable maps to usecase | One composable corresponds to one backend usecase. |
+| no direct cross-module imports | acquisition does not import calibration components. Compose via events or layout layer. |
 
-## 3. Tauri Desktop Shell
+## 3. Wails Binding Layer
 
 ```
-apps/desktop-tauri/
-├── frontend/                # Vue 3 UI
-└── src-tauri/               # Tauri startup, native shell, command bridge
+backend/                     # Wails app shell
+├── app.go                   # App struct, mounts all services
+├── bindings/
+│   ├── device.go            # Device* methods → usecase.DeviceManager
+│   ├── acquisition.go       # Acquisition* methods → usecase.AcquireTask
+│   └── calibration.go       # Calibration* methods → usecase.CalibrateTask
+└── main.go
 ```
 
-### Shell Rules
+### Binding Rules
 
 | Rule | Description |
 |---|---|
-| no business logic | Tauri shell code does not implement calibration, acquisition, device control, or persistence rules. |
-| bridge only | Tauri may start/stop backend services, expose app metadata, or provide desktop-specific capabilities. |
-| Rust owns backend behavior | Device communication, data processing, state machines, and APIs live in `services/api-rs`. |
+| one binding file per domain | Methods map 1:1 to usecase. |
+| binding methods only convert params and call usecase | No if/else, no business logic. |
+| errors converted to frontend-friendly format | Never expose Go internal error details. |
 
 ## 4. Data Flow
 
@@ -116,30 +116,30 @@ User Action
 Vue Component ──calls──▶ composable
                               │
                               ▼
-                         API client
+                         bridge layer
                               │
                               ▼
-                   Rust backend API / WS
+                    Wails Binding (Go)
                               │
                               ▼
-                          usecase
-                         ╱       ╲
-                       core      ports (traits)
-                                   │
-                                   ▼
-                               adapter (concrete impl)
-                                   │
-                                   ▼
-                            Hardware / DB / File
+                         usecase
+                        ╱       ╲
+                      core      ports (interface)
+                                  │
+                                  ▼
+                              adapter (concrete impl)
+                                  │
+                                  ▼
+                           Hardware / DB / File
 ```
 
 ## 5. Adding a New Feature Checklist
 
-1. Define domain logic in `services/api-rs/src/core/<domain>/`.
-2. Define traits in `services/api-rs/src/ports/` if an external dependency is needed.
-3. Implement adapters in `services/api-rs/src/adapters/<type>/`.
-4. Write usecases in `services/api-rs/src/usecase/` orchestrating core + ports.
-5. Expose the usecase through the Rust backend API/WebSocket layer.
-6. Add frontend API wrappers in `frontend/src/api/`.
-7. Add composables in `frontend/src/modules/<domain>/composables/`.
-8. Build UI components in `frontend/src/modules/<domain>/components/`.
+1. Define domain logic in `core/<domain>/`
+2. Define interfaces in `ports/` if external dependency needed
+3. Implement adapter in `adapters/<type>/` for concrete dependency
+4. Write usecase in `usecase/` orchestrating core + ports
+5. Add Wails binding in `backend/bindings/<domain>.go`
+6. Add bridge wrapper in `frontend/src/bridge/`
+7. Add composable in `frontend/src/modules/<domain>/composables/`
+8. Build UI components in `frontend/src/modules/<domain>/components/`

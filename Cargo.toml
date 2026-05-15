@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "projects/wind-daq/apps/desktop-tauri/src-tauri",
-    "projects/wind-daq/services/api-rs",
-]
-resolver = "2"

@@ -10,10 +10,10 @@ This file provides guidance to AI agents (Claude Code, OpenCode, or others) when
 
 ### Architecture
 
-Rust backend + Tauri desktop app with Vue 3 frontend, hexagonal architecture per project.
+Go backend + Vue 3 frontend via Wails, hexagonal architecture per project.
 
-- `projects/<name>/apps/desktop-tauri/` — Tauri desktop app (Vue 3 frontend + Rust shell/commands)
-- `projects/<name>/services/api-rs/src/` — Rust backend (core → usecase → ports → adapters)
+- `projects/<name>/apps/desktop-wails/` — Wails desktop app (Vue 3 + Go bindings)
+- `projects/<name>/services/api-go/internal/` — Go backend (core → usecase → ports → adapters)
 - `shared/` — Cross-project reusable code (algorithms, device-sdk, frontend, contracts)
 - `programs/` — Standalone CLI tools (`shared/*` only, never project `internal/*`)
 - `device-lab/` — Hardware lab artifacts (raw docs, firmware, captures)
@@ -23,13 +23,13 @@ Rust backend + Tauri desktop app with Vue 3 frontend, hexagonal architecture per
 
 | Location | Constraint |
 |---|---|---|
-| `services/api-rs/src/core/` | zero hardware imports, zero file I/O, zero serial/network, zero framework imports |
-| `services/api-rs/src/ports/` | zero implementations — trait definitions only |
-| `services/api-rs/src/usecase/` | zero direct hardware calls — go through `ports` traits |
-| `services/api-rs/src/adapters/hardware/` | zero business logic — pure protocol translation and I/O |
-| `apps/desktop-tauri/src-tauri/` | zero business logic — Tauri startup, native shell, command bridge only |
-| `apps/desktop-tauri/frontend/` | zero direct hardware access, zero calibration algorithms |
-| `programs/` | zero project private service imports — depend on `shared/*` only |
+| `core/` | zero hardware imports, zero file I/O, zero serial/network, zero framework imports |
+| `ports/` | zero implementations — interface definitions only |
+| `usecase/` | zero direct hardware calls — go through `ports` interfaces |
+| `adapters/hardware/` | zero business logic — pure protocol translation and I/O |
+| `apps/desktop-wails/backend/` | zero business logic — parameter conversion + usecase calls only |
+| `apps/desktop-wails/frontend/` | zero direct hardware access, zero calibration algorithms |
+| `programs/` | zero project `internal/*` imports — depend on `shared/*` only |
 
 ### Commands
 

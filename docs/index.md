@@ -25,7 +25,7 @@
 | 文档 | 内容 |
 |------|------|
 | `CLAUDE.md`（工作空间根目录） | 架构总纲、六边形硬约束、决策树、设计原则 |
-| `architecture/module-design.md` | Rust 后端和 Vue 3/Tauri 模块设计细节 |
+| `architecture/module-design.md` | Go 包和 Vue 3 模块设计细节 |
 | `decisions/` | 架构决策记录（ADR） |
 
 **快速定位：**
@@ -59,7 +59,7 @@
 | 脚本 | 用途 | 运行方式 |
 |------|------|---------|
 | `scripts/validate-structure.ps1` | 结构合规检查 | `powershell -File .\scripts\validate-structure.ps1` |
-| `scripts/lint-rust.ps1` | Rust 代码检查（cargo fmt + cargo check） | `powershell -File scripts/lint-rust.ps1` |
+| `scripts/lint-go.ps1` | Go 代码检查（gofmt + build） | `powershell -File scripts/lint-go.ps1` |
 | `scripts/new-project.ps1` | 创建新项目骨架 | `powershell -File scripts/new-project.ps1 -Name foo` |
 
 ---
@@ -69,7 +69,7 @@
 ```
 遇到编译错误？
   → 先看项目 AGENTS.md -> Pre-submit Checklist
-  → 跑 cargo check / cargo fmt
+  → 跑 go build / gofmt
 
 不知道代码放哪个目录？
   → CLAUDE.md -> Decision Tree
@@ -85,5 +85,5 @@
 
 修改硬件驱动？
   → CLAUDE.md -> Hard Constraints（adapters/hardware/ 零业务逻辑）
-  → ports/ trait 定义 -> 项目 docs/STRUCTURE.md
+  → ports/ 接口定义 -> 项目 docs/STRUCTURE.md
 ```
