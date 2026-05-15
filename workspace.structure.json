@@ -46,7 +46,6 @@
     "projects/wind-daq/apps/desktop-tauri/frontend/src",
     "projects/wind-daq/apps/desktop-tauri/src-tauri",
     "projects/wind-daq/apps/desktop-tauri/src-tauri/src",
-    "projects/wind-daq/apps/desktop-tauri/src-tauri/icons",
     "projects/wind-daq/services",
     "projects/wind-daq/services/api-rs",
     "projects/wind-daq/services/api-rs/src",
