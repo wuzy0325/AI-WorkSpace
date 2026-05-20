@@ -82,6 +82,33 @@ func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestDeviceDisconnectAndDeleteProfileHTTPFlow(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	store := &apiProfileStore{}
+	manager, err := usecase.NewDeviceManager(store, apiDeviceFactory{}, hub.OnData)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	router := NewRouter(Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profileBody, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, router, http.MethodPut, "/api/device/profiles", profileBody, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/device/sim-1/connect", nil, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/device/sim-1/disconnect", nil, http.StatusOK)
+	request(t, router, http.MethodGet, "/api/device/sim-1/status", nil, http.StatusNotFound)
+
+	request(t, router, http.MethodPost, "/api/device/sim-1/connect", nil, http.StatusOK)
+	request(t, router, http.MethodDelete, "/api/device/profiles/sim-1", nil, http.StatusOK)
+	if len(store.profiles) != 0 {
+		t.Fatalf("expected profile store to be empty, got %d", len(store.profiles))
+	}
+	request(t, router, http.MethodGet, "/api/device/sim-1/status", nil, http.StatusNotFound)
+}
+
 func request(t *testing.T, handler http.Handler, method string, path string, body []byte, wantStatus int) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader

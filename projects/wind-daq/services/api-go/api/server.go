@@ -35,6 +35,22 @@ func NewRouter(deps Deps) http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
+	mux.HandleFunc("/api/device/profiles/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/device/profiles/")
+		if id == "" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err := deps.DeviceManager.DeleteProfile(id); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	})
 	mux.HandleFunc("/api/device/", func(w http.ResponseWriter, r *http.Request) {
 		handleDeviceByID(w, r, deps)
 	})
@@ -62,6 +78,12 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 	switch {
 	case r.Method == http.MethodPost && action == "connect":
 		if err := deps.DeviceManager.Connect(id); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	case r.Method == http.MethodPost && action == "disconnect":
+		if err := deps.DeviceManager.Disconnect(id); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

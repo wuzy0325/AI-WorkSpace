@@ -89,6 +89,52 @@ func TestDeviceManagerConnectsProfileAndReportsStatus(t *testing.T) {
 	}
 }
 
+func TestDeviceManagerDisconnectsConnectedDevice(t *testing.T) {
+	store := &memoryProfileStore{profiles: []device.Profile{
+		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+	}}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	if err := manager.Connect("sim-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
+	if err := manager.Disconnect("sim-1"); err != nil {
+		t.Fatalf("Disconnect returned error: %v", err)
+	}
+	if _, ok := manager.GetStatus("sim-1"); ok {
+		t.Fatal("expected disconnected device to be removed from active statuses")
+	}
+}
+
+func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
+	store := &memoryProfileStore{profiles: []device.Profile{
+		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+	}}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	if err := manager.Connect("sim-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
+	if err := manager.DeleteProfile("sim-1"); err != nil {
+		t.Fatalf("DeleteProfile returned error: %v", err)
+	}
+	if len(manager.GetProfiles()) != 0 {
+		t.Fatalf("expected no profiles, got %d", len(manager.GetProfiles()))
+	}
+	if len(store.profiles) != 0 {
+		t.Fatalf("expected persisted profile removal, got %d saved profiles", len(store.profiles))
+	}
+	if _, ok := manager.GetStatus("sim-1"); ok {
+		t.Fatal("expected deleted profile to disconnect active device")
+	}
+}
+
 func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
 		device.NewDefaultProfile("sim-1", device.DeviceSimulated),

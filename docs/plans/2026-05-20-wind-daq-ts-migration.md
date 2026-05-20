@@ -64,9 +64,9 @@
 - ✅ 补齐 OpenAPI 到当前已实现 REST 端点。
   目标：`contracts/openapi/openapi.yaml` 不再只是占位，至少准确描述 MVP API。
   验证：人工对照 `api/server.go`，已覆盖当前实现的 profiles、connect、startAcquisition、stopAcquisition、status、latest data 端点及 request/response schema；`powershell -File .\scripts\validate-structure.ps1` passed。
-- ⬜ 增加设备断开/删除 profile API。
+- ✅ 增加设备断开/删除 profile API。
   目标：Dashboard 能完成 connect/start/stop/disconnect 的完整生命周期。
-  验证：HTTP flow test 覆盖 disconnect/delete。
+  验证：新增 `DeviceManager` disconnect/delete tests 和 HTTP flow test；`go test ./internal/usecase -run 'Disconnect|DeleteProfile' -v`、`go test ./api -run DisconnectAndDelete -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。OpenAPI 已同步 `POST /api/device/{deviceId}/disconnect` 和 `DELETE /api/device/profiles/{deviceId}`。
 - ⬜ 实现设备扫描端口和 simulated scanner。
   目标：无硬件情况下也能验证 scan UI，真实硬件 scanner 后续接入同一 port。
   验证：usecase tests 覆盖 empty result、timeout、simulated result。

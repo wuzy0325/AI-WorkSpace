@@ -51,6 +51,31 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	return m.store.SaveProfiles(m.profiles)
 }
 
+func (m *DeviceManager) DeleteProfile(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profiles := m.profiles[:0]
+	found := false
+	for _, profile := range m.profiles {
+		if profile.ID == id {
+			found = true
+			continue
+		}
+		profiles = append(profiles, profile)
+	}
+	if !found {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	if dev, ok := m.devices[id]; ok {
+		_ = dev.StopAcquisition()
+		_ = dev.Disconnect()
+		delete(m.devices, id)
+	}
+	m.profiles = append([]device.Profile(nil), profiles...)
+	return m.store.SaveProfiles(m.profiles)
+}
+
 func (m *DeviceManager) Connect(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -73,6 +98,24 @@ func (m *DeviceManager) Connect(id string) error {
 		return err
 	}
 	m.devices[id] = dev
+	return nil
+}
+
+func (m *DeviceManager) Disconnect(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	dev, ok := m.devices[id]
+	if !ok {
+		return nil
+	}
+	if err := dev.StopAcquisition(); err != nil {
+		return err
+	}
+	if err := dev.Disconnect(); err != nil {
+		return err
+	}
+	delete(m.devices, id)
 	return nil
 }
 

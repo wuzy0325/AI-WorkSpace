@@ -70,6 +70,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/disconnect:
+    post:
+      summary: Disconnect a connected device
+      operationId: disconnectDevice
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device disconnected, or was already disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Device could not be disconnected cleanly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/profiles/{deviceId}:
+    delete:
+      summary: Delete a device profile
+      description: Deletes the saved profile and disconnects any active device instance with the same ID.
+      operationId: deleteDeviceProfile
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Profile deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Profile could not be deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/device/{deviceId}/startAcquisition:
     post:
       summary: Start device acquisition
