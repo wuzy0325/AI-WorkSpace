@@ -55,9 +55,9 @@
 
 ### 后端后续计划
 
-- ⬜ 抽取 backend bootstrap/wiring。
+- ✅ 抽取 backend bootstrap/wiring。
   目标：避免 `cmd/server/main.go` 和未来 Wails/desktop launcher 重复组装依赖。
-  验证：`go test ./... -v`、`go build -buildvcs=false ./...`。
+  验证：新增 `internal/bootstrap.BuildAPIServer`，统一组装 file-backed profile store、default simulated profile、AcquisitionHub、DeviceManager、simulated scanner 和 API router；`cmd/server/main.go` 改为 thin launcher。`go test ./internal/bootstrap -run TestBuildAPIServerInitializesDefaultProfilesAndRouter -v`、`gofmt -l .`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。
 - ✅ 实现 file-backed `ProfileStore`。
   目标：profile 不再只存在内存，支持启动后恢复设备配置。
   验证：`go test ./internal/adapters/config -run FileProfileStore -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。覆盖 save/load、missing file empty list、invalid JSON error；server 默认使用 `config/device-profiles.json`，可用 `WIND_DAQ_PROFILE_PATH` 覆盖。
