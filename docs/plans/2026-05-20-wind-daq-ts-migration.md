@@ -61,9 +61,9 @@
 - ✅ 实现 file-backed `ProfileStore`。
   目标：profile 不再只存在内存，支持启动后恢复设备配置。
   验证：`go test ./internal/adapters/config -run FileProfileStore -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。覆盖 save/load、missing file empty list、invalid JSON error；server 默认使用 `config/device-profiles.json`，可用 `WIND_DAQ_PROFILE_PATH` 覆盖。
-- ⬜ 补齐 OpenAPI 到当前已实现 REST 端点。
+- ✅ 补齐 OpenAPI 到当前已实现 REST 端点。
   目标：`contracts/openapi/openapi.yaml` 不再只是占位，至少准确描述 MVP API。
-  验证：人工检查端点、request、response 和实际 handler 对齐。
+  验证：人工对照 `api/server.go`，已覆盖当前实现的 profiles、connect、startAcquisition、stopAcquisition、status、latest data 端点及 request/response schema；`powershell -File .\scripts\validate-structure.ps1` passed。
 - ⬜ 增加设备断开/删除 profile API。
   目标：Dashboard 能完成 connect/start/stop/disconnect 的完整生命周期。
   验证：HTTP flow test 覆盖 disconnect/delete。
@@ -157,7 +157,7 @@
 - ⬜ 更新 `projects/wind-daq/README.md` 到当前 MVP 运行方式。
 - ⬜ 更新 `projects/wind-daq/docs/STRUCTURE.md` 到实际目录结构。
 - ⬜ 更新 `projects/wind-daq/docs/migration/ts-reference-feature-map.md`，把每个参考功能标成 Done/Partial/Missing/Do not migrate。
-- ⬜ 更新 `projects/wind-daq/contracts/openapi/openapi.yaml`，与当前 REST API 对齐。
+- ✅ 更新 `projects/wind-daq/contracts/openapi/openapi.yaml`，与当前 REST API 对齐。
 - ⬜ 每完成一个后端/前端/桌面任务，同步更新本节勾选状态和验证证据。
 
 ---

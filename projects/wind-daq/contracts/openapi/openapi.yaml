@@ -2,4 +2,305 @@ openapi: "3.0.3"
 info:
   title: Wind-DAQ API
   version: "0.1.0-rebuild"
-paths: {}
+  description: |
+    MVP API for the rebuilt Wind-DAQ backend.
+    This contract intentionally documents only endpoints currently implemented
+    by projects/wind-daq/services/api-go/api/server.go.
+servers:
+  - url: http://localhost:8080
+    description: Local development API server
+paths:
+  /api/device/profiles:
+    get:
+      summary: List configured device profiles
+      operationId: listDeviceProfiles
+      tags:
+        - Device
+      responses:
+        "200":
+          description: Device profiles loaded by the DeviceManager
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceProfile"
+    put:
+      summary: Create or update a device profile
+      operationId: upsertDeviceProfile
+      tags:
+        - Device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceProfile"
+      responses:
+        "200":
+          description: Profile saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid JSON or invalid profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/connect:
+    post:
+      summary: Connect a configured device profile
+      operationId: connectDevice
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Device could not be connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/startAcquisition:
+    post:
+      summary: Start device acquisition
+      operationId: startDeviceAcquisition
+      tags:
+        - Device
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Acquisition started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Acquisition could not be started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/stopAcquisition:
+    post:
+      summary: Stop device acquisition
+      operationId: stopDeviceAcquisition
+      tags:
+        - Device
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Acquisition stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Acquisition could not be stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/status:
+    get:
+      summary: Get connected device status
+      operationId: getDeviceStatus
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceStatus"
+        "404":
+          description: Device is not connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/daq/latest/{deviceId}:
+    get:
+      summary: Get the latest acquisition payload for a device
+      operationId: getLatestDaqPayload
+      tags:
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Latest payload, or an empty payload with only deviceId when no data is available yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataPayload"
+components:
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: sim-1
+  schemas:
+    DeviceType:
+      type: string
+      enum:
+        - SIMULATED
+    ConnectionState:
+      type: string
+      enum:
+        - Disconnected
+        - Connected
+        - Acquiring
+        - Error
+    ChannelConfig:
+      type: object
+      required:
+        - index
+        - name
+        - enabled
+        - unit
+        - precision
+      properties:
+        index:
+          type: integer
+          example: 0
+        name:
+          type: string
+          example: CH1
+        enabled:
+          type: boolean
+          example: true
+        unit:
+          type: string
+          example: V
+        precision:
+          type: integer
+          example: 3
+        rangeMin:
+          type: number
+          format: double
+          example: -10
+        rangeMax:
+          type: number
+          format: double
+          example: 10
+    DeviceProfile:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - samplingRate
+        - channels
+      properties:
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        samplingRate:
+          type: integer
+          minimum: 1
+          example: 20
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelConfig"
+    DeviceStatus:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - connection
+        - acquiring
+      properties:
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        connection:
+          $ref: "#/components/schemas/ConnectionState"
+        acquiring:
+          type: boolean
+          example: true
+        lastError:
+          type: string
+          example: device not connected
+    DataPayload:
+      type: object
+      required:
+        - deviceId
+        - timestamp
+        - channels
+        - channelIndices
+      properties:
+        deviceId:
+          type: string
+          example: sim-1
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1716200000000
+        channels:
+          type: array
+          items:
+            type: number
+            format: double
+          example:
+            - 1.234
+            - 2.345
+        channelIndices:
+          type: array
+          items:
+            type: integer
+          example:
+            - 0
+            - 1
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: not found
