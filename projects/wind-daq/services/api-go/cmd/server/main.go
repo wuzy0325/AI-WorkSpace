@@ -24,9 +24,11 @@ type noopPublisher struct{}
 func (noopPublisher) Publish(string, any) {}
 
 func main() {
-	store := config.NewMemoryProfileStore([]device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
-	})
+	store := config.NewFileProfileStore(profileStorePath())
+	if err := ensureDefaultProfiles(store); err != nil {
+		slog.Error("initialize device profiles", "err", err)
+		os.Exit(1)
+	}
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
 	manager, err := usecase.NewDeviceManager(store, deviceFactory{}, hub.OnData)
 	if err != nil {
@@ -44,4 +46,24 @@ func main() {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+func profileStorePath() string {
+	if path := os.Getenv("WIND_DAQ_PROFILE_PATH"); path != "" {
+		return path
+	}
+	return "config/device-profiles.json"
+}
+
+func ensureDefaultProfiles(store ports.ProfileStore) error {
+	profiles, err := store.LoadProfiles()
+	if err != nil {
+		return err
+	}
+	if len(profiles) > 0 {
+		return nil
+	}
+	return store.SaveProfiles([]device.Profile{
+		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+	})
 }

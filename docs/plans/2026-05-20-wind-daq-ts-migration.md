@@ -10,6 +10,158 @@
 
 ---
 
+## 当前执行进度看板
+
+> 维护规则：每完成一个可验证交付项，在本节把 `⬜` 改为 `✅`，并补充验证命令或产物路径。不要仅凭代码已写完就打勾，必须有构建、测试、结构校验或人工联调证据。
+
+### 已完成基础重建
+
+- ✅ 重建 `projects/wind-daq` 项目骨架。
+  验证：`master` 已合并 `04cc509 merge: wind-daq Go Vue Wails rebuild`。
+- ✅ 建立 Go backend hexagonal skeleton。
+  范围：`core/device`、`ports`、`usecase`、`adapters/hardware`、`adapters/config`、`api`、`cmd/server`。
+- ✅ 实现无硬件 simulated DAQ 设备闭环。
+  范围：profile upsert/list、connect、start acquisition、stop acquisition、status、latest data。
+- ✅ 实现最小 REST API。
+  端点：`PUT /api/device/profiles`、`GET /api/device/profiles`、`POST /api/device/{id}/connect`、`POST /api/device/{id}/startAcquisition`、`POST /api/device/{id}/stopAcquisition`、`GET /api/device/{id}/status`、`GET /api/daq/latest/{id}`。
+- ✅ 新建 Vue 3 + Vite + TypeScript 前端骨架。
+  范围：Dashboard、REST client、connect/start/stop、latest data polling、SCADA dark styling。
+- ✅ 建立 Wails v2 桌面壳。
+  范围：`wails.json`、`main.go`、thin backend `GetVersion()`、embedded frontend assets。
+- ✅ 对齐 Wails CLI 和 Go dependency 到 `v2.12.0`。
+  验证：`wails build` 无版本不匹配警告。
+- ✅ 合并到 `master` 并清理 feature worktree。
+  提交：`dc40366`、`04cc509`、`e4b3d44`、`ffbfc51`。
+- ✅ 修复 workspace structure validation 阻塞。
+  验证：`powershell -File .\scripts\validate-structure.ps1` passed。
+
+### 已完成验证记录
+
+- ✅ Backend tests passed。
+  命令：`go test ./... -v` in `projects/wind-daq/services/api-go`。
+- ✅ Backend build passed。
+  命令：`go build -buildvcs=false ./...` in `projects/wind-daq/services/api-go`。
+- ✅ Frontend typecheck passed。
+  命令：`npm run typecheck` in `projects/wind-daq/apps/desktop-wails/frontend`。
+- ✅ Frontend production build passed。
+  命令：`npm run build` in `projects/wind-daq/apps/desktop-wails/frontend`。
+- ✅ Desktop Go tests passed。
+  命令：`go test ./... -v` in `projects/wind-daq/apps/desktop-wails`。
+- ✅ Desktop Go build passed。
+  命令：`go build -buildvcs=false ./...` in `projects/wind-daq/apps/desktop-wails`。
+- ✅ Wails package build passed。
+  命令：`wails build` in `projects/wind-daq/apps/desktop-wails`。
+  产物：`projects/wind-daq/apps/desktop-wails/build/bin/wind-daq.exe`。
+
+### 后端后续计划
+
+- ⬜ 抽取 backend bootstrap/wiring。
+  目标：避免 `cmd/server/main.go` 和未来 Wails/desktop launcher 重复组装依赖。
+  验证：`go test ./... -v`、`go build -buildvcs=false ./...`。
+- ✅ 实现 file-backed `ProfileStore`。
+  目标：profile 不再只存在内存，支持启动后恢复设备配置。
+  验证：`go test ./internal/adapters/config -run FileProfileStore -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。覆盖 save/load、missing file empty list、invalid JSON error；server 默认使用 `config/device-profiles.json`，可用 `WIND_DAQ_PROFILE_PATH` 覆盖。
+- ⬜ 补齐 OpenAPI 到当前已实现 REST 端点。
+  目标：`contracts/openapi/openapi.yaml` 不再只是占位，至少准确描述 MVP API。
+  验证：人工检查端点、request、response 和实际 handler 对齐。
+- ⬜ 增加设备断开/删除 profile API。
+  目标：Dashboard 能完成 connect/start/stop/disconnect 的完整生命周期。
+  验证：HTTP flow test 覆盖 disconnect/delete。
+- ⬜ 实现设备扫描端口和 simulated scanner。
+  目标：无硬件情况下也能验证 scan UI，真实硬件 scanner 后续接入同一 port。
+  验证：usecase tests 覆盖 empty result、timeout、simulated result。
+- ⬜ 重建真实 DAQ hardware adapter。
+  范围：DAQ-P-1604、DAQ-T-1603，按 Go ports 重新实现，不复制旧 TS service 结构。
+  验证：protocol-level unit tests + simulated/no-hardware tests；真实硬件验证另列 HIL。
+- ⬜ 增加采集历史环形缓存。
+  目标：支持图表、校准、遍历读取 recent samples，而不是只有 latest。
+  验证：AcquisitionHub tests 覆盖容量、覆盖、并发读。
+- ⬜ 增加 WebSocket 或 SSE 实时推送。
+  目标：替换前端 250ms polling，支持 dashboard live stream。
+  验证：API tests 或 integration test 覆盖 subscribe、publish、disconnect。
+- ⬜ 实现 storage recording usecase。
+  目标：采集 payload 可按配置写入文件/数据目录。
+  验证：fake clock/temp dir tests，覆盖 start/stop/write/error。
+- ⬜ 重建 motion core/usecase/ports。
+  范围：connect、status、moveTo、moveBy、jog、home、stop、emergencyStop。
+  验证：fake motion adapter tests 覆盖状态机和 emergency stop。
+- ⬜ 重建 calibration core/usecase。
+  范围：校准流程、暂停/恢复/停止、状态查询、数据采集依赖。
+  验证：fake acquisition/motion/storage ports tests。
+- ⬜ 重建 traversal core/usecase。
+  范围：点位遍历、插值、进度、暂停/恢复/停止、数据落盘入口。
+  验证：状态机 tests + interpolation pure core tests。
+- ⬜ 重建 report generation usecase。
+  目标：基于 storage/calibration/traversal 结果生成报告入口。
+  验证：temp dir tests，覆盖输出文件和错误路径。
+
+### 前端后续计划
+
+- ⬜ 将当前单文件 Dashboard 拆分为 layout、views、api、components。
+  目标：为后续 Motion/Calibration/Traversal 页面扩展做结构准备。
+  验证：`npm run typecheck`、`npm run build`。
+- ⬜ 引入前端路由。
+  页面：Dashboard、Devices、Motion、Calibration、Traversal、Storage/Reports、Settings。
+  验证：build passed，主要导航可人工点击。
+- ⬜ 引入状态管理。
+  目标：保留 UI state、profile selection、latest snapshots；不放硬件算法和校准算法。
+  验证：typecheck + store unit tests（如测试框架加入）。
+- ⬜ 实现 Devices 页面。
+  功能：scan、profile list、create/edit、connect/disconnect、status。
+  验证：against simulated API manual flow。
+- ⬜ 实现 realtime chart。
+  目标：展示采集曲线、通道开关、最新值、stale 状态。
+  验证：simulated acquisition 运行 60s 无 console error。
+- ⬜ 从 polling 切换到 WS/SSE client。
+  目标：封装 reconnect、backoff、parse guard、unsubscribe。
+  验证：断开/重连 manual test。
+- ⬜ 实现 Motion 页面。
+  功能：连接、状态、moveTo/moveBy/jog/home/stop/emergencyStop。
+  验证：fake/simulated motion backend 联调。
+- ⬜ 实现 Calibration 页面。
+  功能：任务创建、启动、暂停、恢复、停止、状态、结果查看。
+  验证：fake backend flow + typecheck/build。
+- ⬜ 实现 Traversal 页面。
+  功能：路径/点位配置、启动、暂停、恢复、停止、进度、结果入口。
+  验证：fake backend flow + typecheck/build。
+- ⬜ 实现 Storage/Reports 页面。
+  功能：存储配置、录制状态、报告生成入口、输出路径提示。
+  验证：manual flow + build。
+- ⬜ 补充空状态、错误状态、加载状态。
+  目标：无硬件、API 未启动、连接失败、采集失败都能给出清晰 UI。
+  验证：manual checklist。
+- ⬜ 增加前端测试基础。
+  目标：至少覆盖 API client 和关键 store；E2E 后续再加。
+  验证：新增 test command passed。
+
+### 桌面与联调后续计划
+
+- ⬜ 明确 Wails 与 Go API 的运行关系。
+  当前状态：Wails 只嵌入前端；Go API 需要单独运行。
+  待决策：Wails 启动内嵌 API、启动 sidecar API，或保持外部 API dev 模式。
+- ⬜ 在 Wails frontend 显示 `GetVersion()`。
+  目标：验证 Wails binding 通道可用，但不把业务逻辑放进 desktop backend。
+  验证：desktop app manual check。
+- ⬜ 增加 desktop dev/build 文档。
+  内容：API server、Vite dev、Wails dev、Wails build、端口和 env var。
+  验证：新同事按 README 可启动 MVP。
+- ⬜ 增加 integrated smoke test checklist。
+  流程：启动 API、启动前端/Wails、创建 simulated profile、connect、start、观察数据、stop。
+  验证：人工执行并在文档记录日期。
+- ⬜ 真实硬件 HIL 验证计划。
+  范围：设备型号、连接方式、测试数据、失败处理、日志采集。
+  验证：单独 HIL runbook。
+
+### 文档维护计划
+
+- ⬜ 更新 `projects/wind-daq/README.md` 到当前 MVP 运行方式。
+- ⬜ 更新 `projects/wind-daq/docs/STRUCTURE.md` 到实际目录结构。
+- ⬜ 更新 `projects/wind-daq/docs/migration/ts-reference-feature-map.md`，把每个参考功能标成 Done/Partial/Missing/Do not migrate。
+- ⬜ 更新 `projects/wind-daq/contracts/openapi/openapi.yaml`，与当前 REST API 对齐。
+- ⬜ 每完成一个后端/前端/桌面任务，同步更新本节勾选状态和验证证据。
+
+---
+
 ## 0. 已确认现状
 
 ### 参考项目来源
