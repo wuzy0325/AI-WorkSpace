@@ -1,8 +1,7 @@
 package hardware
 
 import (
-	"context"
-	"math/rand"
+	"math"
 	"sync"
 	"time"
 
@@ -10,90 +9,126 @@ import (
 )
 
 type SimulatedDevice struct {
-	*BaseDevice
-	mu        sync.Mutex
+	mu        sync.RWMutex
+	profile   device.Profile
+	status    device.Status
+	sink      device.DataSink
+	stop      chan struct{}
 	acquiring bool
-	cancel    context.CancelFunc
 }
 
-func NewSimulatedDevice(config device.DeviceConfig) *SimulatedDevice {
-	return &SimulatedDevice{BaseDevice: NewBaseDevice(config)}
-}
-
-func (s *SimulatedDevice) Connect() error {
-	s.setState(device.StateConnected)
-	return nil
-}
-
-func (s *SimulatedDevice) Disconnect() error {
-	s.mu.Lock()
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
+func NewSimulatedDevice(profile device.Profile) *SimulatedDevice {
+	return &SimulatedDevice{
+		profile: profile,
+		status: device.Status{
+			ID:         profile.ID,
+			Name:       profile.Name,
+			Type:       profile.Type,
+			Connection: device.ConnectionDisconnected,
+		},
 	}
-	s.acquiring = false
-	s.mu.Unlock()
-	s.setState(device.StateDisconnected)
+}
+
+func (d *SimulatedDevice) ID() string { return d.profile.ID }
+
+func (d *SimulatedDevice) Connect() error {
+	d.mu.Lock()
+	d.status.Connection = device.ConnectionConnected
+	d.mu.Unlock()
 	return nil
 }
 
-func (s *SimulatedDevice) StartAcquisition() error {
-	s.mu.Lock()
-	if s.acquiring {
-		s.mu.Unlock()
+func (d *SimulatedDevice) Disconnect() error {
+	_ = d.StopAcquisition()
+	d.mu.Lock()
+	d.status.Connection = device.ConnectionDisconnected
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *SimulatedDevice) StartAcquisition() error {
+	d.mu.Lock()
+	if d.acquiring {
+		d.mu.Unlock()
 		return nil
 	}
-	s.acquiring = true
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	s.mu.Unlock()
-	s.setState(device.StateAcquiring)
-	s.setAcquiring(true)
-	go s.generateData(ctx)
+	d.acquiring = true
+	d.status.Acquiring = true
+	d.status.Connection = device.ConnectionAcquiring
+	d.stop = make(chan struct{})
+	stop := d.stop
+	d.mu.Unlock()
+
+	go d.loop(stop)
 	return nil
 }
 
-func (s *SimulatedDevice) StopAcquisition() error {
-	s.mu.Lock()
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
+func (d *SimulatedDevice) StopAcquisition() error {
+	d.mu.Lock()
+	if d.acquiring && d.stop != nil {
+		close(d.stop)
 	}
-	s.acquiring = false
-	s.mu.Unlock()
-	s.setState(device.StateConnected)
-	s.setAcquiring(false)
+	d.acquiring = false
+	d.stop = nil
+	d.status.Acquiring = false
+	if d.status.Connection == device.ConnectionAcquiring {
+		d.status.Connection = device.ConnectionConnected
+	}
+	d.mu.Unlock()
 	return nil
 }
 
-func (s *SimulatedDevice) generateData(ctx context.Context) {
-	config := s.Config()
-	interval := time.Duration(1000/config.SamplingRate) * time.Millisecond
-	if interval < 10*time.Millisecond {
-		interval = 10 * time.Millisecond
+func (d *SimulatedDevice) SetDataSink(sink device.DataSink) {
+	d.mu.Lock()
+	d.sink = sink
+	d.mu.Unlock()
+}
+
+func (d *SimulatedDevice) Status() device.Status {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.status
+}
+
+func (d *SimulatedDevice) loop(stop <-chan struct{}) {
+	interval := time.Second / time.Duration(d.profile.SamplingRate)
+	if interval <= 0 {
+		interval = 50 * time.Millisecond
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
-	numChannels := 16
-	indices := make([]int, numChannels)
-	for i := range indices {
-		indices[i] = i
-	}
-
+	start := time.Now()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-stop:
 			return
-		case <-ticker.C:
-			channels := make([]float64, numChannels)
-			for i := range channels {
-				channels[i] = rand.Float64()*200 - 100
-			}
-			s.EmitData(device.DataPayload{
-				DeviceID: s.ID(), Timestamp: device.NowMs(),
-				Channels: channels, ChannelIndices: indices,
-			})
+		case now := <-ticker.C:
+			d.emit(now.Sub(start).Seconds())
 		}
 	}
+}
+
+func (d *SimulatedDevice) emit(seconds float64) {
+	d.mu.RLock()
+	sink := d.sink
+	channels := d.profile.Channels
+	d.mu.RUnlock()
+	if sink == nil {
+		return
+	}
+	values := make([]float64, 0, len(channels))
+	indices := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if !channel.Enabled {
+			continue
+		}
+		indices = append(indices, channel.Index)
+		values = append(values, math.Sin(seconds+float64(channel.Index)))
+	}
+	sink(device.DataPayload{
+		DeviceID:       d.profile.ID,
+		Timestamp:      device.NowMs(),
+		Channels:       values,
+		ChannelIndices: indices,
+	})
 }
