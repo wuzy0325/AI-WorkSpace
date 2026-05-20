@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0daq-mvp.exe"
+start "" "%~dp0daq-mvp-win7.exe"
