@@ -35,6 +35,7 @@ func main() {
 		slog.Error("create device manager", "err", err)
 		os.Exit(1)
 	}
+	manager.SetScanner(hardware.NewSimulatedScanner())
 
 	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
 	addr := ":8080"

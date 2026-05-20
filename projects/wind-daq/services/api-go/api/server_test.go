@@ -109,6 +109,35 @@ func TestDeviceDisconnectAndDeleteProfileHTTPFlow(t *testing.T) {
 	request(t, router, http.MethodGet, "/api/device/sim-1/status", nil, http.StatusNotFound)
 }
 
+func TestDeviceScanHTTPFlow(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	manager, err := usecase.NewDeviceManager(&apiProfileStore{}, apiDeviceFactory{}, hub.OnData)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetScanner(apiScanner{results: []device.ScanResult{
+		{ID: "sim-1", Name: "Simulator 1", Type: device.DeviceSimulated, Available: true},
+	}})
+	router := NewRouter(Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	resp := request(t, router, http.MethodGet, "/api/device/scan", nil, http.StatusOK)
+	var results []device.ScanResult
+	if err := json.Unmarshal(resp.Body.Bytes(), &results); err != nil {
+		t.Fatalf("decode scan response: %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "sim-1" {
+		t.Fatalf("unexpected scan results: %+v", results)
+	}
+}
+
+type apiScanner struct {
+	results []device.ScanResult
+}
+
+func (s apiScanner) Scan() ([]device.ScanResult, error) {
+	return append([]device.ScanResult(nil), s.results...), nil
+}
+
 func request(t *testing.T, handler http.Handler, method string, path string, body []byte, wantStatus int) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader

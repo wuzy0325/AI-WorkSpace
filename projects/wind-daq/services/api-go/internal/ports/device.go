@@ -24,3 +24,7 @@ type ProfileStore interface {
 type DeviceFactory interface {
 	Create(profile device.Profile) (Device, error)
 }
+
+type DeviceScanner interface {
+	Scan() ([]device.ScanResult, error)
+}

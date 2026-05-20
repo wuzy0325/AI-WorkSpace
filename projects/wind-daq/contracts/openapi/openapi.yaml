@@ -49,6 +49,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/device/scan:
+    get:
+      summary: Scan for discoverable devices
+      description: Returns discovered devices. MVP wiring always includes a simulated scanner so no-hardware mode remains testable.
+      operationId: scanDevices
+      tags:
+        - Device
+      responses:
+        "200":
+          description: Scan results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceScanResult"
+        "400":
+          description: Scan failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/device/{deviceId}/connect:
     post:
       summary: Connect a configured device profile
@@ -296,6 +318,28 @@ components:
         lastError:
           type: string
           example: device not connected
+    DeviceScanResult:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - available
+      properties:
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        available:
+          type: boolean
+          example: true
+        address:
+          type: string
+          example: simulated://sim-1
     DataPayload:
       type: object
       required:

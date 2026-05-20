@@ -44,6 +44,14 @@ type Status struct {
 	LastError  string     `json:"lastError,omitempty"`
 }
 
+type ScanResult struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      Type   `json:"type"`
+	Available bool   `json:"available"`
+	Address   string `json:"address,omitempty"`
+}
+
 type DataPayload struct {
 	DeviceID       string    `json:"deviceId"`
 	Timestamp      int64     `json:"timestamp"`

@@ -14,6 +14,7 @@ type DeviceManager struct {
 	devices  map[string]ports.Device
 	store    ports.ProfileStore
 	factory  ports.DeviceFactory
+	scanner  ports.DeviceScanner
 	dataSink device.DataSink
 }
 
@@ -29,6 +30,22 @@ func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dat
 		factory:  factory,
 		dataSink: dataSink,
 	}, nil
+}
+
+func (m *DeviceManager) SetScanner(scanner ports.DeviceScanner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scanner = scanner
+}
+
+func (m *DeviceManager) ScanDevices() ([]device.ScanResult, error) {
+	m.mu.RLock()
+	scanner := m.scanner
+	m.mu.RUnlock()
+	if scanner == nil {
+		return []device.ScanResult{}, nil
+	}
+	return scanner.Scan()
 }
 
 func (m *DeviceManager) GetProfiles() []device.Profile {

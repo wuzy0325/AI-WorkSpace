@@ -28,6 +28,14 @@ func (simulatedFactory) Create(profile device.Profile) (ports.Device, error) {
 	return hardware.NewSimulatedDevice(profile), nil
 }
 
+type fakeScanner struct {
+	results []device.ScanResult
+}
+
+func (s fakeScanner) Scan() ([]device.ScanResult, error) {
+	return append([]device.ScanResult(nil), s.results...), nil
+}
+
 func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
 		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
@@ -43,6 +51,27 @@ func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	}
 	if profiles[0].ID != "sim-1" {
 		t.Fatalf("expected profile sim-1, got %q", profiles[0].ID)
+	}
+}
+
+func TestDeviceManagerScansDevices(t *testing.T) {
+	manager, err := NewDeviceManager(&memoryProfileStore{}, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetScanner(fakeScanner{results: []device.ScanResult{
+		{ID: "sim-1", Name: "Simulator 1", Type: device.DeviceSimulated, Available: true},
+	}})
+
+	results, err := manager.ScanDevices()
+	if err != nil {
+		t.Fatalf("ScanDevices returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one scan result, got %d", len(results))
+	}
+	if results[0].ID != "sim-1" || !results[0].Available {
+		t.Fatalf("unexpected scan result: %+v", results[0])
 	}
 }
 

@@ -67,9 +67,9 @@
 - ✅ 增加设备断开/删除 profile API。
   目标：Dashboard 能完成 connect/start/stop/disconnect 的完整生命周期。
   验证：新增 `DeviceManager` disconnect/delete tests 和 HTTP flow test；`go test ./internal/usecase -run 'Disconnect|DeleteProfile' -v`、`go test ./api -run DisconnectAndDelete -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。OpenAPI 已同步 `POST /api/device/{deviceId}/disconnect` 和 `DELETE /api/device/profiles/{deviceId}`。
-- ⬜ 实现设备扫描端口和 simulated scanner。
+- ✅ 实现设备扫描端口和 simulated scanner。
   目标：无硬件情况下也能验证 scan UI，真实硬件 scanner 后续接入同一 port。
-  验证：usecase tests 覆盖 empty result、timeout、simulated result。
+  验证：新增 `ports.DeviceScanner`、`device.ScanResult`、`hardware.NewSimulatedScanner()`、`DeviceManager.ScanDevices()` 和 `GET /api/device/scan`；`go test ./internal/usecase -run TestDeviceManagerScansDevices -v`、`go test ./api -run DeviceScan -v`、`go test ./internal/adapters/hardware -run SimulatedScanner -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。OpenAPI 已同步 `GET /api/device/scan`。
 - ⬜ 重建真实 DAQ hardware adapter。
   范围：DAQ-P-1604、DAQ-T-1603，按 Go ports 重新实现，不复制旧 TS service 结构。
   验证：protocol-level unit tests + simulated/no-hardware tests；真实硬件验证另列 HIL。
