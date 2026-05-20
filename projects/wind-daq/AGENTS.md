@@ -5,21 +5,15 @@ Single source of truth: `../../AGENTS.md`.
 ## Project Commands
 
 ```powershell
-# Build
+# Backend, after go.mod exists
+cd projects\wind-daq\services\api-go
 go build -buildvcs=false ./...
-cd services/api-go
-
-# Format & lint
-gofmt -l .          # check formatting
-gofmt -w .          # fix formatting
-go vet ./...        # static analysis
-
-# Run
-go run ./cmd/server/main.go
+gofmt -l .
+go vet ./...
 ```
 
-## Pre-submit Checklist
+## Project Addendum
 
-1. `go build -buildvcs=false ./...` — must pass
-2. `gofmt -l .` — must show no output
-3. Verify docs/STRUCTURE.md matches actual disk layout
+- Wails backend code in `apps/desktop-wails/backend` must stay thin: parameter conversion and usecase calls only.
+- Vue frontend code in `apps/desktop-wails/frontend` must not access hardware or contain calibration/traversal algorithms.
+- New migrated behavior should be added test-first unless it is documentation-only or generated code.
