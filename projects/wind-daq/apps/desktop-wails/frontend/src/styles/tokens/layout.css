@@ -1,9 +1,9 @@
 :root {
   --layout-header-height: 56px;
-  --layout-rail-width: 56px;
-  --layout-sidebar-width: 220px;
+  --layout-rail-width: 64px;
+  --layout-sidebar-width: 244px;
   --layout-sidebar-width-wide: 260px;
-  --layout-footer-height: 64px;
+  --layout-footer-height: 72px;
   --layout-toolbar-gap: var(--space-3);
   --layout-panel-gap: var(--space-4);
   --layout-panel-padding: var(--space-4);

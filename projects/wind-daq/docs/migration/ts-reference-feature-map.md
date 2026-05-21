@@ -40,8 +40,8 @@
 | B140 driver | Missing | ⬜ adapters/hardware | N/A | No file found — do not migrate (current version scope) |
 | WTNMC4A driver | Missing | ⬜ adapters/hardware | N/A | No file found — do not migrate (current version scope) |
 | HTTP motion API | Done | ✅ api/server.go (9 routes) | N/A | connect/disconnect/home/stop/status/moveTo/moveBy/jog/emergencyStop |
-| Motion page UI | Partial | N/A | ✅ MotionView | Connect/status/jog/MoveTo UI with inline controls |
-| Motion control panel | Frontend-only | N/A | ✅ MotionView (inline) | Jog velocity input + axis buttons + MoveTo integrated |
+| Motion page UI | Partial | N/A | ✅ MotionView | Inline controls for connect/status/jog/MoveTo. Reference MotionControlPanel has per-axis cards with history bars, limit indicators, step controls, setZero. Not yet ported — requires motionStore. |
+| Motion control panel | Frontend-only | N/A | ✅ MotionView (inline) | Reference has MotionControlPanel.vue (756 lines) with axis history bar, per-axis ±step inputs, target position, setZero/stop/limit indicators. Current is simplified inline version. |
 
 ## Calibration
 
@@ -54,7 +54,7 @@
 | Three-hole calibration | Missing | ⬜ | ⬜ | |
 | Total pressure calibration | Missing | ⬜ | ⬜ | |
 | Total temperature calibration | Missing | ⬜ | ⬜ | |
-| Calibration page shell | Partial | N/A | ✅ CalibrationView | 4 probe type cards |
+| Calibration page shell | Partial | N/A | ✅ CalibrationView | 4 probe type cards with backend API flow. Reference has CalibrationWindow with full step-by-step workflows. |
 
 ## Traversal
 
@@ -63,7 +63,7 @@
 | Traversal core types | Done | ✅ core/traversal/types.go | N/A | |
 | Traversal path interpolation | Done | ✅ core/traversal/path.go | N/A | Linear path interpolation |
 | TraversalManager usecase | Done | ✅ usecase/traversal.go | N/A | Start/pause/resume/stop |
-| Traversal page shell | Partial | N/A | ✅ TraversalView | 3 feature cards |
+| Traversal page shell | Partial | N/A | ✅ TraversalView | 3 feature cards with basic backend API integration. Reference has TraversalMain + TraversalSettings with multi-step config (Layout/Hardware/PRB), real-time interpolation, point visualization. |
 | Traversal workflow steps | Missing | ⬜ | ⬜ | HIL/Layout/PRB step components |
 | Traversal visualization | Missing | ⬜ | ⬜ | Heatmap, vector, cross-section |
 
@@ -74,7 +74,17 @@
 | Recording config | Done | ✅ core/storage | N/A | |
 | CSV recording sink | Done | ✅ adapters/storage | N/A | |
 | StorageRecorder usecase | Done | ✅ usecase/storage.go | N/A | |
-| Recording control UI | Frontend-only | N/A | ✅ RecordingControl | Visual button only |
+| Recording control UI | Done | ✅ `/api/storage/status`, `/api/storage/start`, `/api/storage/stop` | ✅ MainBottomBar + StorageView | Bottom bar recording control is wired to Go storage API; StorageView provides detailed output configuration. |
+
+## Log Viewer
+
+| Reference Feature | Status | Go Backend | Vue Frontend | Notes |
+|---|---|---|---|---|
+| Log viewer shell | Done | N/A | ✅ LogViewer | Level filters (All/Debug/Info/Warn/Error), search, pause/resume, clear, copy, auto-scroll, dark/light theme. Ported from reference with local logStore (no backend API dependency). |
+| Log level filtering | Done | N/A | ✅ LogViewer | Toggle between All/Debug/Info/Warn/Error with colored chips |
+| Log search | Done | N/A | ✅ LogViewer | Free-text search across message and source fields |
+| Log pause/resume | Done | N/A | ✅ LogViewer | Buffer entries while paused; flush on resume |
+| Log clear/copy | Done | N/A | ✅ LogViewer | Clear or copy all filtered entries to clipboard |
 
 ## UI Shell & Layout
 

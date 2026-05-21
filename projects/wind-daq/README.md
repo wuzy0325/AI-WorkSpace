@@ -2,7 +2,9 @@
 
 ## Scope
 
-Wind-DAQ is the wind tunnel DAQ desktop application rebuilt from the TS/Electron reference into this workspace's Go + Vue + Wails architecture.
+Wind-DAQ is the wind tunnel DAQ desktop application rebuilt from the Cursor DAQ TS/Electron reference into this workspace's Go + Vue + Wails architecture.
+
+The product goal is UI/workflow parity with Cursor DAQ plus a cleaner implementation architecture. The frontend should look and behave like the reference; backend business logic belongs in Go usecases/core behind typed API boundaries.
 
 This project owns:
 
@@ -88,7 +90,7 @@ wind-daq/
 │       └── adapters/      # Hardware, config, storage implementations
 ├── contracts/             # OpenAPI spec
 └── docs/
-    └── migration/         # Reference feature map
+    └── migration/         # Migration entry, UI parity plan, feature map
 ```
 
 ## Development Rules
@@ -123,4 +125,10 @@ wails build
 
 ## Migration Notes
 
-See `docs/migration/ts-reference-feature-map.md` before implementing migrated functionality.
+Use `docs/migration/README.md` as the single migration documentation entry point.
+
+Before implementing migrated functionality, read:
+
+1. `docs/migration/README.md`
+2. `docs/migration/ui-parity-plan.md`
+3. `docs/migration/ts-reference-feature-map.md`

@@ -13,6 +13,7 @@ const (
 type Config struct {
 	TaskID         string    `json:"taskId"`
 	DeviceID       string    `json:"deviceId"`
+	Type           string    `json:"type"`
 	Channels       []int     `json:"channels"`
 	PressurePoints []float64 `json:"pressurePoints"`
 	AverageSamples int       `json:"averageSamples"`

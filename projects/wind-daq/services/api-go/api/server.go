@@ -194,7 +194,7 @@ func NewRouter(deps Deps) http.Handler {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
 			err := deps.CalibrationManager.Start(calibration.Config{
-				TaskID: body.TaskID, DeviceID: body.DeviceID,
+				TaskID: body.TaskID, DeviceID: body.DeviceID, Type: body.Type,
 				Channels: body.Channels, PressurePoints: body.PressurePoints,
 				AverageSamples: body.AverageSamples,
 			})

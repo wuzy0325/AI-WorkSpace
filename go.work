@@ -1,7 +1,6 @@
 go 1.25.0
 
 use (
-	projects/daq-mvp
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/device-sdk/go

@@ -23,6 +23,18 @@
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 
+.glass-sidebar {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme='light'] .glass-sidebar {
+  background: rgba(248, 250, 252, 0.8);
+  border-right: 1px solid rgba(0, 0, 0, 0.05);
+}
+
 .glass-rail {
   background: rgba(15, 23, 42, 0.5);
   backdrop-filter: blur(10px);
@@ -58,14 +70,6 @@
   animation: status-pulse 2s infinite;
 }
 
-.neon-text {
-  text-shadow: 0 0 12px currentColor;
-}
-
-:root[data-theme='light'] .neon-text {
-  text-shadow: 0 0 8px currentColor;
-}
-
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -73,4 +77,12 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.app-bg-gradient {
+  background: radial-gradient(circle at top left, #1e293b 0%, #0f172a 100%);
+}
+
+:root[data-theme='light'] .app-bg-gradient {
+  background: radial-gradient(circle at top left, #f8fafc 0%, #e2e8f0 100%);
 }

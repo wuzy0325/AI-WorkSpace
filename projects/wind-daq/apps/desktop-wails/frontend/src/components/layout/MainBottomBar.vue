@@ -1,69 +1,56 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { Play, Square, Circle, Timer, Clock } from '@lucide/vue'
+import { Play, Square, Timer, Clock, Circle } from '@lucide/vue'
 
 const props = withDefaults(
   defineProps<{
-    isAcquiring?: boolean
+    isAcquiring: boolean
     isRecording?: boolean
-    totalDevices?: number
+    t?: Record<string, string>
+    totalDevices: number
   }>(),
   {
-    isAcquiring: false,
     isRecording: false,
-    totalDevices: 0,
-  },
+    t: () => ({}),
+  }
 )
 
 const emit = defineEmits<{
   (e: 'start'): void
   (e: 'stop'): void
-  (e: 'toggleRecording'): void
+  (e: 'toggle-recording'): void
 }>()
 
-const currentTime = ref('')
+const currentTime = ref('12:00:00')
 const elapsedTime = ref('00:00:00')
 const startTimestamp = ref<number | null>(null)
 let timeTimer: number | null = null
 let elapsedTimer: number | null = null
 
 function updateTime() {
-  currentTime.value = new Date().toLocaleTimeString('zh-CN', {
+  const now = new Date()
+  currentTime.value = now.toLocaleTimeString('zh-CN', {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
+    second: '2-digit'
   })
 }
 
-function updateElapsed() {
+function updateElapsedTime() {
   if (!startTimestamp.value) {
     elapsedTime.value = '00:00:00'
     return
   }
-  const elapsed = Date.now() - startTimestamp.value
-  const h = Math.floor(elapsed / 3600000)
-  const m = Math.floor((elapsed % 3600000) / 60000)
-  const s = Math.floor((elapsed % 60000) / 1000)
-  elapsedTime.value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  const now = Date.now()
+  const elapsed = now - startTimestamp.value
+  const hours = Math.floor(elapsed / 3600000)
+  const minutes = Math.floor((elapsed % 3600000) / 60000)
+  const seconds = Math.floor((elapsed % 60000) / 1000)
+  elapsedTime.value = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-const running = computed(() => props.isAcquiring)
-
-watch(running, (val, prev) => {
-  if (val && !prev) {
-    startTimestamp.value = Date.now()
-    updateElapsed()
-    elapsedTimer = window.setInterval(updateElapsed, 1000)
-  } else if (!val && prev) {
-    if (elapsedTimer !== null) {
-      clearInterval(elapsedTimer)
-      elapsedTimer = null
-    }
-    startTimestamp.value = null
-    elapsedTime.value = '00:00:00'
-  }
-})
+const isRunning = computed(() => props.isAcquiring)
 
 onMounted(() => {
   updateTime()
@@ -71,67 +58,90 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (timeTimer !== null) { clearInterval(timeTimer); timeTimer = null }
-  if (elapsedTimer !== null) { clearInterval(elapsedTimer); elapsedTimer = null }
+  if (timeTimer !== null) {
+    window.clearInterval(timeTimer)
+    timeTimer = null
+  }
+  if (elapsedTimer !== null) {
+    window.clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
 })
+
+watch(isRunning, (newVal, oldVal) => {
+  if (newVal && !oldVal) {
+    startTimestamp.value = Date.now()
+    updateElapsedTime()
+    elapsedTimer = window.setInterval(updateElapsedTime, 1000)
+  } else if (!newVal && oldVal) {
+    if (elapsedTimer !== null) {
+      window.clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
+    startTimestamp.value = null
+    elapsedTime.value = '00:00:00'
+  }
+}, { immediate: true })
 </script>
 
 <template>
   <footer class="main-bottom-bar">
+    <!-- Left: Control Buttons -->
     <div class="main-bottom-bar__left">
       <div class="main-bottom-bar__controls">
         <button
-          class="main-bottom-bar__btn start"
-          :disabled="isAcquiring"
-          @click="emit('start')"
-          title="Start acquisition"
+          data-test="acquisition-toggle-btn"
+          class="main-bottom-bar__btn"
+          :class="isAcquiring ? 'btn-stop' : 'btn-start'"
+          @click="isAcquiring ? emit('stop') : emit('start')"
+          :title="isAcquiring ? (t.stopAcquisition || '停止采集') : (t.startAcquisition || '开始采集')"
         >
-          <Play class="w-5 h-5 fill-current" />
+          <Play v-if="!isAcquiring" class="w-5 h-5 fill-current" />
+          <Square v-else class="w-4 h-4 fill-current" />
         </button>
         <button
-          class="main-bottom-bar__btn stop"
-          :disabled="!isAcquiring"
-          @click="emit('stop')"
-          title="Stop acquisition"
-        >
-          <Square class="w-4 h-4 fill-current" />
-        </button>
-        <button
-          class="main-bottom-bar__btn record"
+          data-test="recording-toggle-btn"
+          class="main-bottom-bar__btn btn-record"
           :class="{ active: isRecording }"
-          @click="emit('toggleRecording')"
-          title="Toggle recording"
+          @click="emit('toggle-recording')"
+          :title="isRecording ? (t.stopRecording || '停止记录') : (t.startRecording || '开始记录')"
         >
           <Circle class="w-4 h-4 fill-current" />
         </button>
       </div>
 
-      <div class="main-bottom-bar__status">
-        <span class="main-bottom-bar__label">Status</span>
-        <strong :class="isAcquiring ? 'text--acquiring' : 'text--idle'">
-          {{ isAcquiring ? 'Running' : 'Idle' }}
-        </strong>
+      <!-- Status -->
+      <div class="main-bottom-bar__status-item">
+        <span class="main-bottom-bar__status-label">{{ t.acquisitionStatusLabel || '状态' }}</span>
+        <span class="main-bottom-bar__status-value" :class="isAcquiring ? 'text-emerald-500' : 'text-slate-500'">
+          {{ isAcquiring ? (t.acquiring || '运行中') : (t.idle || '已停止') }}
+        </span>
       </div>
 
-      <div class="main-bottom-bar__stat-item">
-        <span class="main-bottom-bar__label">Devices</span>
-        <strong>{{ totalDevices }}</strong>
+      <!-- Device Count -->
+      <div class="main-bottom-bar__status-item">
+        <span class="main-bottom-bar__status-label">{{ t.totalDevices || '设备' }}</span>
+        <span class="main-bottom-bar__status-value">{{ totalDevices }}</span>
       </div>
     </div>
 
-      <div class="main-bottom-bar__right">
-      <div class="main-bottom-bar__stat-item">
-        <span class="main-bottom-bar__label">Elapsed</span>
-        <div class="main-bottom-bar__stat-row">
+    <!-- Right: Time Stats -->
+    <div class="main-bottom-bar__stats">
+      <!-- Elapsed Time -->
+      <div class="main-bottom-bar__stat">
+        <span class="main-bottom-bar__stat-label">{{ t.elapsedTime || '运行时间' }}</span>
+        <div class="main-bottom-bar__stat-value">
           <Timer class="w-4 h-4 text-emerald-500" />
-          <strong class="mono">{{ elapsedTime }}</strong>
+          <span class="mono-font">{{ elapsedTime }}</span>
         </div>
       </div>
-      <div class="main-bottom-bar__stat-item">
-        <span class="main-bottom-bar__label">Clock</span>
-        <div class="main-bottom-bar__stat-row">
+
+      <!-- System Time -->
+      <div class="main-bottom-bar__stat">
+        <span class="main-bottom-bar__stat-label">{{ t.systemTime || '系统时间' }}</span>
+        <div class="main-bottom-bar__stat-value">
           <Clock class="w-4 h-4 text-slate-400" />
-          <strong class="mono text--muted">{{ currentTime }}</strong>
+          <span class="mono-font text-slate-400">{{ currentTime }}</span>
         </div>
       </div>
     </div>
@@ -159,8 +169,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.05);
 }
 
-.main-bottom-bar__left,
-.main-bottom-bar__right {
+.main-bottom-bar__left {
   display: flex;
   align-items: center;
   gap: 1.5rem;
@@ -179,8 +188,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.875rem;
-  font-weight: 900;
   transition: all 0.2s ease;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
@@ -189,37 +196,37 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
 }
 
-.main-bottom-bar__btn.start {
+.btn-start {
   background: #10b981;
   color: white;
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
-.main-bottom-bar__btn.start:hover {
+.btn-start:hover {
   background: #059669;
   box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
 }
 
-.main-bottom-bar__btn.stop {
+.btn-stop {
   background: rgba(244, 63, 94, 0.1);
   color: #f43f5e;
   border: 1px solid rgba(244, 63, 94, 0.2);
 }
 
-.main-bottom-bar__btn.stop:hover {
+.btn-stop:hover {
   background: rgba(244, 63, 94, 0.2);
 }
 
-.main-bottom-bar__btn.record {
+.btn-record {
   background: rgba(148, 163, 184, 0.1);
-  color: var(--text-muted);
+  color: #64748b;
   border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
-.main-bottom-bar__btn.record.active {
+.btn-record.active {
+  background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.1);
   animation: pulse-record 2s infinite;
 }
 
@@ -227,54 +234,67 @@ onBeforeUnmount(() => {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
   }
-
   50% {
     box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
   }
 }
 
-.main-bottom-bar__status,
-.main-bottom-bar__stat-item {
+.main-bottom-bar__status-item {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
 }
 
-.main-bottom-bar__stat-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.main-bottom-bar__label {
+.main-bottom-bar__status-label {
   font-size: 0.625rem;
   font-weight: 700;
-  color: var(--text-muted);
+  color: #64748b;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
-.main-bottom-bar__status strong,
-.main-bottom-bar__stat-item strong {
+.main-bottom-bar__status-value {
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.main-bottom-bar__stats {
+  display: flex;
+  align-items: center;
+  gap: 3rem;
+}
+
+.main-bottom-bar__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.main-bottom-bar__stat-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.main-bottom-bar__stat-value {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 1.25rem;
   font-weight: 800;
-  color: var(--text-primary);
+  color: #e2e8f0;
+  letter-spacing: -0.02em;
 }
 
-.text--acquiring {
-  color: var(--accent-success);
+:root[data-theme='light'] .main-bottom-bar__stat-value {
+  color: #0f172a;
 }
 
-.text--idle {
-  color: var(--text-muted);
-}
-
-.text--muted {
-  color: var(--text-muted);
-}
-
-.mono {
-  font-family: var(--font-family-mono, monospace);
+.mono-font {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
 </style>

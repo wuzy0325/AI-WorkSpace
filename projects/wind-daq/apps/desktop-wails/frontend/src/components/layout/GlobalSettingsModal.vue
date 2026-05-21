@@ -13,64 +13,97 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-overlay" @click.self="emit('update:open', false)">
-      <div class="modal">
-        <div class="modal__head">
-          <h2>设置</h2>
-          <button class="modal__close" @click="emit('update:open', false)">✕</button>
-        </div>
-
-        <div class="modal__tabs">
-          <button
-            v-for="tab in (['appearance', 'language', 'about'] as const)"
-            :key="tab"
-            :class="{ active: activeTab === tab }"
-            @click="activeTab = tab"
+    <Transition
+      enter-active-class="transition ease-out duration-200"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition ease-in duration-150"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-show="open"
+        class="modal-overlay"
+        @click="emit('update:open', false)"
+      >
+        <Transition
+          enter-active-class="transition ease-out duration-300"
+          enter-from-class="opacity-0 scale-95 translate-y-4"
+          enter-to-class="opacity-100 scale-100 translate-y-0"
+          leave-active-class="transition ease-in duration-200"
+          leave-from-class="opacity-100 scale-100 translate-y-0"
+          leave-to-class="opacity-0 scale-95 translate-y-4"
+        >
+          <div
+            v-show="open"
+            class="modal-container"
+            @click.stop
           >
-            {{ tab === 'appearance' ? '外观' : tab === 'language' ? '语言' : '关于' }}
-          </button>
-        </div>
-
-        <div class="modal__body">
-          <div v-if="activeTab === 'appearance'" class="modal__section">
-            <h3>主题</h3>
-            <div class="modal__row">
-              <button
-                class="theme-btn"
-                :class="{ active: themeStore.theme === 'dark' }"
-                @click="themeStore.setTheme('dark')"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                深色
+            <!-- Header -->
+            <header class="modal-header">
+              <h2 class="modal-header__title">{{ i18n.t.settings || '设置' }}</h2>
+              <button class="modal-header__close" @click="emit('update:open', false)">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
               </button>
+            </header>
+
+            <!-- Tabs -->
+            <div class="modal-tabs">
               <button
-                class="theme-btn"
-                :class="{ active: themeStore.theme === 'light' }"
-                @click="themeStore.setTheme('light')"
+                v-for="tab in (['appearance', 'language', 'about'] as const)"
+                :key="tab"
+                :class="{ active: activeTab === tab }"
+                @click="activeTab = tab"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                浅色
+                {{ tab === 'appearance' ? '外观' : tab === 'language' ? '语言' : '关于' }}
               </button>
             </div>
-          </div>
 
-          <div v-else-if="activeTab === 'language'" class="modal__section">
-            <h3>界面语言</h3>
-            <div class="modal__row">
-              <button class="lang-btn" :class="{ active: i18n.locale === 'zh' }" @click="i18n.setLocale('zh')">中文</button>
-              <button class="lang-btn" :class="{ active: i18n.locale === 'en' }" @click="i18n.setLocale('en')">English</button>
+            <!-- Body -->
+            <div class="modal-body">
+              <div v-if="activeTab === 'appearance'" class="modal-section">
+                <h3>{{ i18n.t.theme || '主题' }}</h3>
+                <div class="modal-row">
+                  <button
+                    class="theme-btn"
+                    :class="{ active: themeStore.theme === 'dark' }"
+                    @click="themeStore.setTheme('dark')"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    深色
+                  </button>
+                  <button
+                    class="theme-btn"
+                    :class="{ active: themeStore.theme === 'light' }"
+                    @click="themeStore.setTheme('light')"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                    浅色
+                  </button>
+                </div>
+              </div>
+
+              <div v-else-if="activeTab === 'language'" class="modal-section">
+                <h3>{{ i18n.t.language || '界面语言' }}</h3>
+                <div class="modal-row">
+                  <button class="lang-btn" :class="{ active: i18n.locale === 'zh' }" @click="i18n.setLocale('zh')">中文</button>
+                  <button class="lang-btn" :class="{ active: i18n.locale === 'en' }" @click="i18n.setLocale('en')">English</button>
+                </div>
+              </div>
+
+              <div v-else class="modal-section">
+                <h3>Wind-DAQ</h3>
+                <p>版本 0.1.0</p>
+                <p class="modal-muted">数据采集与运动控制系统</p>
+                <p class="modal-muted">基于 Go + Vue 3 + Wails 重构</p>
+              </div>
             </div>
           </div>
-
-          <div v-else class="modal__section">
-            <h3>Wind-DAQ</h3>
-            <p>版本 0.1.0</p>
-            <p class="modal__muted">数据采集与运动控制系统</p>
-            <p class="modal__muted">基于 Go + Vue 3 + Wails 重构</p>
-          </div>
-        </div>
+        </Transition>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -86,16 +119,17 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
   justify-content: center;
 }
 
-.modal {
+.modal-container {
   width: 420px;
   max-width: 90vw;
   border-radius: 1rem;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
 }
 
-.modal__head {
+.modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -103,12 +137,13 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.modal__head h2 {
+.modal-header__title {
   margin: 0;
   font-size: 1.1rem;
+  font-weight: 700;
 }
 
-.modal__close {
+.modal-header__close {
   width: 32px;
   height: 32px;
   display: grid;
@@ -116,16 +151,22 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
   border-radius: 0.5rem;
   color: var(--text-muted);
   background: rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
 }
 
-.modal__tabs {
+.modal-header__close:hover {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.modal-tabs {
   display: flex;
   gap: 0;
   padding: 0 var(--space-6);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.modal__tabs button {
+.modal-tabs button {
   padding: 0.6rem 1rem;
   font-size: 0.8rem;
   font-weight: 700;
@@ -134,16 +175,16 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
   transition: all 0.2s ease;
 }
 
-.modal__tabs button.active {
+.modal-tabs button.active {
   color: var(--accent-success);
   border-bottom-color: var(--accent-success);
 }
 
-.modal__body {
+.modal-body {
   padding: var(--space-5) var(--space-6);
 }
 
-.modal__section h3 {
+.modal-section h3 {
   margin: 0 0 var(--space-3);
   font-size: 0.8rem;
   font-weight: 700;
@@ -152,17 +193,17 @@ const activeTab = ref<'appearance' | 'language' | 'about'>('appearance')
   text-transform: uppercase;
 }
 
-.modal__section p {
+.modal-section p {
   margin: 0.25rem 0;
   font-size: 0.85rem;
 }
 
-.modal__muted {
+.modal-muted {
   color: var(--text-muted);
   font-size: 0.8rem;
 }
 
-.modal__row {
+.modal-row {
   display: flex;
   gap: 0.75rem;
 }

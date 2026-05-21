@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { storeToRefs } from 'pinia'
 import { useThemeStore } from '@stores/themeStore'
-import MainLayout from '@views/main/MainLayout.vue'
+import MainDashboardView from '@views/main/MainDashboardView.vue'
+import UiToastHost from '@components/feedback/UiToastHost.vue'
+import UiConfirmDialog from '@components/feedback/UiConfirmDialog.vue'
 
 const themeStore = useThemeStore()
-const { theme } = storeToRefs(themeStore)
 </script>
 
 <template>
-  <div class="app-shell" :data-theme="theme">
-    <MainLayout />
+  <div class="app-shell" :data-theme="themeStore.theme">
+    <MainDashboardView />
+    <UiToastHost />
+    <UiConfirmDialog />
   </div>
 </template>
+
+<style>
+body { margin: 0; overflow: hidden; user-select: none; }
+</style>

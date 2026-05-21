@@ -1,24 +1,42 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
-import DeviceDetailPanel from '@components/main/DeviceDetailPanel.vue'
+import { storeToRefs } from 'pinia'
+import { GetVersion } from '../../../wailsjs/go/backend/App'
+import type { AppRailNavItem } from '@components/layout/AppRailNav.vue'
+import AppRailNav from '@components/layout/AppRailNav.vue'
+import DeviceManagementDrawer from '@components/device/DeviceManagementDrawer.vue'
+import GlobalSettingsModal from '@components/layout/GlobalSettingsModal.vue'
+import MainTopBar from '@components/layout/MainTopBar.vue'
+import MainBottomBar from '@components/layout/MainBottomBar.vue'
+import DeviceSidebar from '@components/main/DeviceSidebar.vue'
 import DeviceOverviewPanel from '@components/main/DeviceOverviewPanel.vue'
+import DeviceDetailPanel from '@components/main/DeviceDetailPanel.vue'
+import MainView from '@views/MainView.vue'
+import MotionView from '@views/MotionView.vue'
+import CalibrationView from '@views/CalibrationView.vue'
+import TraversalView from '@views/TraversalView.vue'
+import LogViewer from '@views/LogViewer.vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { deviceApi } from '@api/deviceApi'
+import { deviceApi, storageApi } from '@api/deviceApi'
 import { subscribeDaqStream, type SseSubscription } from '@api/sse-client'
 
-type DashboardMode = 'overview' | 'chart' | 'table' | 'both'
-
-const props = withDefaults(
-  defineProps<{
-    dashboardMode?: DashboardMode
-  }>(),
-  { dashboardMode: 'both' },
-)
+type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 
 const deviceStore = useDeviceStore()
-const feedback = useFeedbackStore()
+const i18n = useI18nStore()
+const feedbackStore = useFeedbackStore()
+const { t, locale } = storeToRefs(i18n)
 
+const activePage = ref<MainShellPage>('dashboard')
+const appVersion = ref('0.1.0')
+const showDeviceDrawer = ref(false)
+const showSettings = ref(false)
+const viewMode = ref<'overview' | 'chart' | 'table' | 'both'>('both')
+const isRecording = ref(false)
+const recordingOutputDir = ref('data/recordings')
+const recordingFilePrefix = ref('run')
 const busy = ref(false)
 const error = ref('')
 let sseSub: SseSubscription | null = null
@@ -27,6 +45,24 @@ const acquiring = computed(() => {
   const id = deviceStore.selectedDeviceId
   return id ? deviceStore.acquiringFor(id) : false
 })
+
+const railItems = computed<AppRailNavItem[]>(() => [
+  { id: 'dashboard', label: t.value.dashboardHome, icon: 'IO', active: activePage.value === 'dashboard' },
+  { id: 'motion', label: t.value.motionControl, icon: 'AX', active: activePage.value === 'motion' },
+  { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration' },
+  { id: 'traversal', label: t.value.traversalTest, icon: 'TR', active: activePage.value === 'traversal' },
+  { id: 'log', label: t.value.logViewer || 'Logs', icon: 'LG', active: activePage.value === 'log' }
+])
+
+function handleRailSelect(id: string): void {
+  if (id === 'dashboard' || id === 'motion' || id === 'calibration' || id === 'traversal' || id === 'log') {
+    activePage.value = id
+  }
+}
+
+function setViewMode(mode: 'overview' | 'chart' | 'table' | 'both'): void {
+  viewMode.value = mode
+}
 
 async function ensureProfile() {
   await deviceStore.refreshProfiles()
@@ -42,13 +78,13 @@ async function run(action: () => Promise<void>) {
     await action()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
-    feedback.pushToast(error.value, 'error')
+    feedbackStore.pushToast(error.value, 'error')
   } finally {
     busy.value = false
   }
 }
 
-async function connectAndStart() {
+async function start(): Promise<void> {
   await run(async () => {
     await ensureProfile()
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
@@ -59,13 +95,45 @@ async function connectAndStart() {
   })
 }
 
-async function stopAcq() {
+async function stop(): Promise<void> {
   await run(async () => {
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
     await deviceApi.stopAcquisition(id)
     await deviceStore.refreshStatusFor(id)
     unsubscribeStream()
   })
+}
+
+async function refreshStorageStatus(): Promise<void> {
+  try {
+    const status = await storageApi.status()
+    isRecording.value = status.recording
+    if (status.outputDir) recordingOutputDir.value = status.outputDir
+  } catch {
+    // Storage status is non-critical for the main shell.
+  }
+}
+
+async function toggleRecording(): Promise<void> {
+  try {
+    if (isRecording.value) {
+      await storageApi.stop()
+      isRecording.value = false
+      feedbackStore.pushToast(t.value.stoppedRecording || '已停止记录', 'success')
+      return
+    }
+
+    await storageApi.start(recordingOutputDir.value, recordingFilePrefix.value)
+    isRecording.value = true
+    feedbackStore.pushToast(t.value.startedRecording || '已开始记录数据', 'success')
+  } catch {
+    feedbackStore.pushToast(
+      isRecording.value
+        ? (t.value.failedToStopRecording || '停止记录失败')
+        : (t.value.failedToStartRecording || '启动记录失败'),
+      'error',
+    )
+  }
 }
 
 function subscribeStream(id: string) {
@@ -86,8 +154,15 @@ function unsubscribeStream() {
   }
 }
 
-onMounted(() => {
-  void run(ensureProfile)
+onMounted(async () => {
+  try {
+    const result = await GetVersion()
+    appVersion.value = result.version
+  } catch {
+    appVersion.value = '0.1.0-dev'
+  }
+  await run(ensureProfile)
+  await refreshStorageStatus()
 })
 
 onBeforeUnmount(() => {
@@ -96,31 +171,133 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="dashboard-stage">
-    <p v-if="error" class="error-text">{{ error }}</p>
+  <MainView class="main-dashboard-view">
+    <template #header>
+      <MainTopBar
+        :locale="locale"
+        :version="appVersion"
+        :is-acquiring="acquiring"
+        :active-page="activePage"
+        :view-mode="viewMode"
+        :t="t"
+        @set-locale="i18n.setLocale"
+        @set-view-mode="setViewMode"
+      />
+    </template>
 
-    <DeviceOverviewPanel v-if="props.dashboardMode === 'overview'" />
-    <DeviceDetailPanel v-else :mode="props.dashboardMode">
-      <template #actions>
-        <button class="primary" :disabled="busy" @click="connectAndStart">
-          {{ acquiring ? '采集中' : '连接 + 开始' }}
+    <template #rail>
+      <AppRailNav :items="railItems" @select="handleRailSelect" @open-settings="showSettings = true" />
+    </template>
+
+    <template v-if="activePage === 'dashboard'" #sidebar>
+      <DeviceSidebar @open-manage="showDeviceDrawer = true" />
+    </template>
+
+    <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
+      <p v-if="error" class="error-text">{{ error }}</p>
+
+      <DeviceOverviewPanel v-if="viewMode === 'overview'" />
+
+      <DeviceDetailPanel
+        v-else-if="deviceStore.selectedProfile"
+        :mode="viewMode === 'both' ? 'both' : viewMode"
+      />
+
+      <section
+        v-else
+        data-test="dashboard-empty-state"
+        class="dashboard-empty-state"
+      >
+        <div
+          data-test="dashboard-empty-icon"
+          class="dashboard-empty-icon"
+        >
+          <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <path d="M9 9h6v6H9z"/>
+            <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/>
+          </svg>
+        </div>
+        <div data-test="dashboard-empty-title" class="dashboard-empty-title">{{ t.emptyDeviceSelectionTitle }}</div>
+        <div class="dashboard-empty-desc">{{ t.selectDevicePrompt }}</div>
+        <button
+          data-test="dashboard-empty-action"
+          class="dashboard-empty-btn"
+          @click="showDeviceDrawer = true"
+        >
+          {{ t.openDeviceManager }}
         </button>
-        <button class="danger" :disabled="busy || !acquiring" @click="stopAcq">
-          停止
-        </button>
-      </template>
-    </DeviceDetailPanel>
-  </div>
+      </section>
+    </div>
+
+    <div v-else class="page-container">
+      <section class="page-content">
+        <MotionView v-if="activePage === 'motion'" />
+        <CalibrationView v-else-if="activePage === 'calibration'" />
+        <TraversalView v-else-if="activePage === 'traversal'" />
+        <LogViewer v-else-if="activePage === 'log'" />
+      </section>
+    </div>
+
+    <template v-if="activePage === 'dashboard'" #statusbar>
+      <MainBottomBar
+        :is-acquiring="acquiring"
+        :is-recording="isRecording"
+        :t="t"
+        :total-devices="deviceStore.profiles?.length ?? 0"
+        @start="start"
+        @stop="stop"
+        @toggle-recording="toggleRecording"
+      />
+    </template>
+
+    <DeviceManagementDrawer v-model:open="showDeviceDrawer" />
+    <GlobalSettingsModal v-model:open="showSettings" @close="showSettings = false" />
+  </MainView>
 </template>
 
 <style scoped>
-.dashboard-stage {
-  display: flex;
-  flex-direction: column;
+.main-dashboard-view {
+  background: radial-gradient(circle at top left, #1e293b 0%, #0f172a 100%);
+}
+
+:root[data-theme='light'] .main-dashboard-view {
+  background: radial-gradient(circle at top left, #f8fafc 0%, #e2e8f0 100%);
+}
+
+.main-dashboard-stage {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4);
+}
+
+:root[data-theme='light'] .main-dashboard-stage {
+  background: transparent;
+}
+
+.page-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-6);
+  background: transparent;
+}
+
+.page-content {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-theme='light'] .page-content {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .error-text {
@@ -129,23 +306,73 @@ onBeforeUnmount(() => {
   font: 700 0.75rem/1.4 var(--font-family-mono, monospace);
 }
 
-.primary,
-.danger {
-  min-height: 34px;
-  padding: 0 0.9rem;
-  border-radius: 0.5rem;
-  color: #f8fbff;
-  font-size: 0.8rem;
+.dashboard-empty-state {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(8px);
+  padding: 1.5rem;
+  text-align: center;
+}
+
+:root[data-theme='light'] .dashboard-empty-state {
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.dashboard-empty-icon {
+  display: flex;
+  height: 4rem;
+  width: 4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(30, 41, 59, 0.6);
+  color: rgba(148, 163, 184, 0.8);
+}
+
+:root[data-theme='light'] .dashboard-empty-icon {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+  color: rgba(100, 116, 139, 0.8);
+}
+
+.dashboard-empty-title {
+  margin-top: 1.5rem;
+  font-size: 1rem;
   font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
 }
 
-.primary {
-  background: var(--accent-success);
+.dashboard-empty-desc {
+  margin-top: 0.5rem;
+  max-width: 36rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
-.danger {
-  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
-  color: var(--accent-danger);
-  border: 1px solid color-mix(in srgb, var(--accent-danger) 25%, transparent);
+.dashboard-empty-btn {
+  margin-top: 1.5rem;
+  padding: 0.5rem 1.5rem;
+  border-radius: 0.5rem;
+  background: #10b981;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.dashboard-empty-btn:hover {
+  background: #059669;
+  transform: translateY(-1px);
 }
 </style>

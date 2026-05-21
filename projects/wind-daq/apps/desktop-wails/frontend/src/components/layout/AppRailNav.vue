@@ -5,19 +5,8 @@ import IconMotion from '@components/icons/IconMotion.vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 import IconTraversal from '@components/icons/IconTraversal.vue'
 import IconLog from '@components/icons/IconLog.vue'
-import IconStorage from '@components/icons/IconStorage.vue'
 
-function iconComponent(type?: string) {
-  if (type === 'IO') return IconDashboard
-  if (type === 'AX') return IconMotion
-  if (type === 'CP') return IconCalibrationFiveHole
-  if (type === 'TR') return IconTraversal
-  if (type === 'LG') return IconLog
-  if (type === 'ST') return IconStorage
-  return IconDashboard
-}
-
-export interface RailItem {
+export interface AppRailNavItem {
   id: string
   label: string
   icon?: string
@@ -27,15 +16,24 @@ export interface RailItem {
 
 withDefaults(
   defineProps<{
-    items?: RailItem[]
+    items?: AppRailNavItem[]
   }>(),
   { items: () => [] },
 )
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
-  (e: 'openSettings'): void
+  (e: 'open-settings'): void
 }>()
+
+function getIconComponent(iconType: string | undefined) {
+  if (iconType === 'IO') return IconDashboard
+  if (iconType === 'AX') return IconMotion
+  if (iconType === 'CP') return IconCalibrationFiveHole
+  if (iconType === 'TR') return IconTraversal
+  if (iconType === 'LG') return IconLog
+  return IconDashboard
+}
 </script>
 
 <template>
@@ -46,24 +44,26 @@ const emit = defineEmits<{
         :key="item.id"
         type="button"
         :aria-label="item.label"
-        :class="[
-          'app-rail-nav__btn',
-          { 'active': item.active, 'disabled': item.disabled },
-        ]"
+        class="app-rail-nav__button"
+        :class="{
+          'app-rail-nav__button--active': item.active,
+          'app-rail-nav__button--disabled': item.disabled
+        }"
         :title="item.label"
         :disabled="item.disabled"
         @click="emit('select', item.id)"
       >
-        <component :is="iconComponent(item.icon)" class="w-5 h-5" />
+        <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
       </button>
     </nav>
 
     <div class="app-rail-nav__footer">
       <button
         type="button"
-        class="app-rail-nav__btn"
-        title="Settings"
-        @click="emit('openSettings')"
+        class="app-rail-nav__button app-rail-nav__button--settings"
+        aria-label="设置"
+        title="设置"
+        @click="emit('open-settings')"
       >
         <Settings class="w-5 h-5" />
       </button>
@@ -98,30 +98,28 @@ const emit = defineEmits<{
   flex: 1;
 }
 
-.app-rail-nav__btn {
+.app-rail-nav__button {
   width: 40px;
   height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
-  background: transparent;
   color: #64748b;
-  font: 900 0.7rem/1 var(--font-family-mono, monospace);
   transition: all 0.2s ease;
 }
 
-.app-rail-nav__btn:hover {
+.app-rail-nav__button:hover {
   color: #10b981;
 }
 
-.app-rail-nav__btn.active {
+.app-rail-nav__button--active {
   background: rgba(16, 185, 129, 0.15);
   color: #10b981;
   border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
-.app-rail-nav__btn.disabled {
+.app-rail-nav__button--disabled {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;

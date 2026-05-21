@@ -66,6 +66,7 @@ const zh = {
   apply: '确定',
   pts: '点',
   bufferWindowLabel: '缓冲区',
+  theme: '主题',
   language: '语言',
   settings: '设置',
 }
@@ -133,6 +134,7 @@ const en: Record<string, string> = {
   apply: 'Apply',
   pts: 'pts',
   bufferWindowLabel: 'Buffer',
+  theme: 'Theme',
   language: 'Language',
   settings: 'Settings',
 }
