@@ -14,6 +14,6 @@ go vet ./...
 
 ## Project Addendum
 
-- Wails backend code in `apps/desktop-wails/backend` must stay thin: parameter conversion and usecase calls only.
+- Wails backend code in `apps/desktop-wails/backend` must stay thin: parameter conversion and usecase calls only. No domain business logic.
 - Vue frontend code in `apps/desktop-wails/frontend` must not access hardware or contain calibration/traversal algorithms.
 - New migrated behavior should be added test-first unless it is documentation-only or generated code.
