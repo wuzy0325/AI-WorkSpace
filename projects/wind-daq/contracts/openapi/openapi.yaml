@@ -200,6 +200,86 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/unit:
+    put:
+      summary: Update the display/engineering unit for all profile channels
+      operationId: setDeviceUnit
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - unit
+              properties:
+                unit:
+                  type: string
+                  example: kPa
+      responses:
+        "200":
+          description: Unit saved to the device profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Unit could not be saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/daqT1603Config:
+    get:
+      summary: Get DAQ-T-1603 hardware configuration
+      operationId: getDaqT1603Config
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Saved or active DAQ-T-1603 hardware configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaqT1603HardwareConfig"
+        "400":
+          description: Configuration could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      summary: Save DAQ-T-1603 hardware configuration
+      operationId: applyDaqT1603Config
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DaqT1603HardwareConfig"
+      responses:
+        "200":
+          description: Configuration saved and applied when supported by the active device adapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Configuration could not be saved or applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/daq/latest/{deviceId}:
     get:
       summary: Get the latest acquisition payload for a device
@@ -215,6 +295,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DataPayload"
+  /api/daq/stream/{deviceId}:
+    get:
+      summary: Stream acquisition payloads for a device with Server-Sent Events
+      operationId: streamDaqPayloads
+      tags:
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: SSE stream. Each event is named `payload` and contains a DataPayload JSON object.
+          content:
+            text/event-stream:
+              schema:
+                type: string
 components:
   parameters:
     DeviceId:
@@ -229,6 +324,7 @@ components:
       type: string
       enum:
         - SIMULATED
+        - DAQ_T_1603
     ConnectionState:
       type: string
       enum:
@@ -293,6 +389,25 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ChannelConfig"
+        daqT1603Config:
+          $ref: "#/components/schemas/DaqT1603HardwareConfig"
+    DaqT1603HardwareConfig:
+      type: object
+      required:
+        - thermocoupleType
+        - coldJunction
+        - filterHz
+      properties:
+        thermocoupleType:
+          type: string
+          example: K
+        coldJunction:
+          type: string
+          example: internal
+        filterHz:
+          type: integer
+          minimum: 1
+          example: 50
     DeviceStatus:
       type: object
       required:

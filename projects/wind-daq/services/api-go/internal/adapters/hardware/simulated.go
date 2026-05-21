@@ -84,6 +84,15 @@ func (d *SimulatedDevice) SetDataSink(sink device.DataSink) {
 	d.mu.Unlock()
 }
 
+func (d *SimulatedDevice) SetUnit(unit string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range d.profile.Channels {
+		d.profile.Channels[i].Unit = unit
+	}
+	return nil
+}
+
 func (d *SimulatedDevice) Status() device.Status {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

@@ -1,0 +1,51 @@
+:root {
+  --font-family-sans: 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', monospace;
+
+  --font-size-micro: 0.625rem;
+  --font-size-2xs: 0.6875rem;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.125rem;
+  --font-size-2xl: 1.25rem;
+  --font-size-3xl: 1.5rem;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-black: 800;
+
+  --line-height-tight: 1.25;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.75;
+
+  --type-title-size: var(--font-size-xl);
+  --type-title-weight: var(--font-weight-bold);
+  --type-section-size: var(--font-size-xs);
+  --type-section-weight: var(--font-weight-semibold);
+  --type-helper-size: var(--font-size-xs);
+  --type-helper-weight: var(--font-weight-medium);
+  --type-mono-size: var(--font-size-sm);
+  --type-mono-weight: var(--font-weight-semibold);
+
+  --type-dashboard-data-xl: var(--font-size-3xl);
+  --type-dashboard-data-lg: var(--font-size-2xl);
+  --type-dashboard-data: var(--font-size-xl);
+  --type-dashboard-data-sm: var(--font-size-lg);
+
+  --type-dashboard-label: var(--font-size-xs);
+  --type-dashboard-caption: var(--font-size-2xs);
+  --type-dashboard-micro: var(--font-size-micro);
+
+  --type-dashboard-title: var(--font-size-2xl);
+  --type-dashboard-section: var(--font-size-xs);
+  --type-dashboard-subsection: var(--font-size-2xs);
+
+  --type-dashboard-weight-data: var(--font-weight-black);
+  --type-dashboard-weight-title: var(--font-weight-bold);
+  --type-dashboard-weight-label: var(--font-weight-semibold);
+  --type-dashboard-weight-body: var(--font-weight-medium);
+}

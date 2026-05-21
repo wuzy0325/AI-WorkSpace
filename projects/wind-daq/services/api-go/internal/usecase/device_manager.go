@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/device"
@@ -93,6 +94,75 @@ func (m *DeviceManager) DeleteProfile(id string) error {
 	return m.store.SaveProfiles(m.profiles)
 }
 
+func (m *DeviceManager) SetUnit(id string, unit string) error {
+	unit = strings.TrimSpace(unit)
+	if unit == "" {
+		return fmt.Errorf("unit is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profileIndex, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	if dev, ok := m.devices[id]; ok {
+		configurable, ok := dev.(ports.UnitConfigurable)
+		if !ok {
+			return fmt.Errorf("device does not support unit configuration: %s", id)
+		}
+		if err := configurable.SetUnit(unit); err != nil {
+			return err
+		}
+	}
+	for i := range m.profiles[profileIndex].Channels {
+		m.profiles[profileIndex].Channels[i].Unit = unit
+	}
+	return m.store.SaveProfiles(m.profiles)
+}
+
+func (m *DeviceManager) GetDaqT1603Config(id string) (device.DaqT1603HardwareConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.DaqT1603Configurable); ok {
+			return configurable.GetDaqT1603Config()
+		}
+	}
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return device.DaqT1603HardwareConfig{}, fmt.Errorf("device profile not found: %s", id)
+	}
+	return profile.DaqT1603Config, nil
+}
+
+func (m *DeviceManager) ApplyDaqT1603Config(id string, config device.DaqT1603HardwareConfig) error {
+	if err := validateDaqT1603Config(config); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profileIndex, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	if dev, ok := m.devices[id]; ok {
+		configurable, ok := dev.(ports.DaqT1603Configurable)
+		if !ok {
+			return fmt.Errorf("device does not support DAQ-T-1603 configuration: %s", id)
+		}
+		if err := configurable.ApplyDaqT1603Config(config); err != nil {
+			return err
+		}
+	}
+	m.profiles[profileIndex].DaqT1603Config = config
+	return m.store.SaveProfiles(m.profiles)
+}
+
 func (m *DeviceManager) Connect(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -173,4 +243,26 @@ func (m *DeviceManager) findProfileLocked(id string) (device.Profile, bool) {
 		}
 	}
 	return device.Profile{}, false
+}
+
+func (m *DeviceManager) findProfileIndexLocked(id string) (int, bool) {
+	for i := range m.profiles {
+		if m.profiles[i].ID == id {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
+	if strings.TrimSpace(config.ThermocoupleType) == "" {
+		return fmt.Errorf("thermocoupleType is required")
+	}
+	if strings.TrimSpace(config.ColdJunction) == "" {
+		return fmt.Errorf("coldJunction is required")
+	}
+	if config.FilterHz <= 0 {
+		return fmt.Errorf("filterHz must be greater than zero")
+	}
+	return nil
 }

@@ -23,6 +23,7 @@ func main() {
 		MinWidth:      1280,
 		MinHeight:     720,
 		OnStartup:     app.Startup,
+		OnShutdown:    app.Shutdown,
 		Bind:          []interface{}{app},
 		AssetServer:   &assetserver.Options{Assets: assets},
 		StartHidden:   false,

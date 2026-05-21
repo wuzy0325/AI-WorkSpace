@@ -1,0 +1,51 @@
+[
+  {
+    "id": "sim-1",
+    "name": "sim-1",
+    "type": "SIMULATED",
+    "samplingRate": 20,
+    "channels": [
+      {
+        "index": 0,
+        "name": "CH1",
+        "enabled": true,
+        "unit": "V",
+        "precision": 3,
+        "rangeMin": -10,
+        "rangeMax": 10
+      },
+      {
+        "index": 1,
+        "name": "CH2",
+        "enabled": true,
+        "unit": "V",
+        "precision": 3,
+        "rangeMin": -10,
+        "rangeMax": 10
+      },
+      {
+        "index": 2,
+        "name": "CH3",
+        "enabled": true,
+        "unit": "V",
+        "precision": 3,
+        "rangeMin": -10,
+        "rangeMax": 10
+      },
+      {
+        "index": 3,
+        "name": "CH4",
+        "enabled": true,
+        "unit": "V",
+        "precision": 3,
+        "rangeMin": -10,
+        "rangeMax": 10
+      }
+    ],
+    "daqT1603Config": {
+      "thermocoupleType": "",
+      "coldJunction": "",
+      "filterHz": 0
+    }
+  }
+]

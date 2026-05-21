@@ -23,3 +23,17 @@ func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
+	profile := NewDefaultProfile("temp-1", DeviceDaqT1603)
+
+	if len(profile.Channels) != 16 {
+		t.Fatalf("expected 16 default channels, got %d", len(profile.Channels))
+	}
+	if profile.Channels[15].Name != "TC16" {
+		t.Fatalf("expected last channel name TC16, got %q", profile.Channels[15].Name)
+	}
+	if profile.DaqT1603Config.ThermocoupleType != "K" {
+		t.Fatalf("expected default thermocouple type K, got %q", profile.DaqT1603Config.ThermocoupleType)
+	}
+}

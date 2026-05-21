@@ -194,12 +194,12 @@ shared/device-sdk/go/              # Cross-project reusable device primitives
 - [ ] 8.3 Run and test: binary starts, serves HTTP, WebSocket connects
 
 ### Phase 9: Cleanup & Verification
-- [ ] 9.1 Delete dead code: `internal/runtime/` (registries, facades — superseded by usecase structure)
-- [ ] 9.2 Delete `pkg/` from source (now in shared/device-sdk/go/)
-- [x] 9.3 Run `go vet ./...` — fixed JSON tag duplicates in core/calibration/types.go
-- [ ] 9.4 Run `scripts/validate-structure.ps1`
-- [ ] 9.5 Update `workspace.structure.json` if new files/dirs added
-- [ ] 9.6 Commit with conventional commit message
+- [x] 9.1 Delete dead code: `internal/runtime/` — confirmed removed
+- [x] 9.2 Delete old `pkg/protocol/`, `pkg/serialport/`, `pkg/ffi/` — confirmed removed (new `pkg/apiserver/` is intentional)
+- [x] 9.3 Run `go vet ./...` — pass
+- [x] 9.4 Run `scripts/validate-structure.ps1` — pass
+- [x] 9.5 Update `workspace.structure.json` — pass
+- [ ] 9.6 Commit with conventional commit message (pending user)
 
 ## 4. Module Names
 

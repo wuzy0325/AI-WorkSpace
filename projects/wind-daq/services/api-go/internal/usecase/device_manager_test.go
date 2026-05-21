@@ -164,6 +164,55 @@ func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
 	}
 }
 
+func TestDeviceManagerSetUnitUpdatesAllChannelsAndPersists(t *testing.T) {
+	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	if err := manager.SetUnit("sim-1", "kPa"); err != nil {
+		t.Fatalf("SetUnit returned error: %v", err)
+	}
+
+	saved := store.profiles[0]
+	for _, channel := range saved.Channels {
+		if channel.Unit != "kPa" {
+			t.Fatalf("expected channel %d unit kPa, got %q", channel.Index, channel.Unit)
+		}
+	}
+}
+
+func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
+	profile := device.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	config := device.DaqT1603HardwareConfig{
+		ThermocoupleType: "K",
+		ColdJunction:     "internal",
+		FilterHz:         50,
+	}
+	if err := manager.ApplyDaqT1603Config("temp-1", config); err != nil {
+		t.Fatalf("ApplyDaqT1603Config returned error: %v", err)
+	}
+
+	got, err := manager.GetDaqT1603Config("temp-1")
+	if err != nil {
+		t.Fatalf("GetDaqT1603Config returned error: %v", err)
+	}
+	if got != config {
+		t.Fatalf("expected config %+v, got %+v", config, got)
+	}
+	if store.profiles[0].DaqT1603Config != config {
+		t.Fatalf("expected persisted config %+v, got %+v", config, store.profiles[0].DaqT1603Config)
+	}
+}
+
 func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
 		device.NewDefaultProfile("sim-1", device.DeviceSimulated),

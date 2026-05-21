@@ -1,11 +1,16 @@
 package device
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Type string
 
 const (
 	DeviceSimulated Type = "SIMULATED"
+	DeviceDAQP1604  Type = "DAQ_P_1604"
+	DeviceDaqT1603  Type = "DAQ_T_1603"
 )
 
 type Connection string
@@ -28,11 +33,19 @@ type ChannelConfig struct {
 }
 
 type Profile struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Type         Type            `json:"type"`
-	SamplingRate int             `json:"samplingRate"`
-	Channels     []ChannelConfig `json:"channels"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Type           Type                   `json:"type"`
+	SamplingRate   int                    `json:"samplingRate"`
+	Channels       []ChannelConfig        `json:"channels"`
+	Address        string                 `json:"address,omitempty"`
+	DaqT1603Config DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
+}
+
+type DaqT1603HardwareConfig struct {
+	ThermocoupleType string `json:"thermocoupleType"`
+	ColdJunction     string `json:"coldJunction"`
+	FilterHz         int    `json:"filterHz"`
 }
 
 type Status struct {
@@ -68,8 +81,16 @@ func NewDefaultProfile(id string, deviceType Type) Profile {
 		Type:         deviceType,
 		SamplingRate: 20,
 	}
-	if deviceType == DeviceSimulated {
+	switch deviceType {
+	case DeviceSimulated:
 		profile.Channels = defaultSimulatedChannels()
+	case DeviceDaqT1603:
+		profile.Channels = defaultDaqT1603Channels()
+		profile.DaqT1603Config = DaqT1603HardwareConfig{
+			ThermocoupleType: "K",
+			ColdJunction:     "internal",
+			FilterHz:         50,
+		}
 	}
 	return profile
 }
@@ -89,6 +110,20 @@ func defaultSimulatedChannels() []ChannelConfig {
 			Precision: 3,
 			RangeMin:  -10,
 			RangeMax:  10,
+		}
+	}
+	return channels
+}
+
+func defaultDaqT1603Channels() []ChannelConfig {
+	channels := make([]ChannelConfig, 16)
+	for i := range channels {
+		channels[i] = ChannelConfig{
+			Index:     i,
+			Name:      fmt.Sprintf("TC%d", i+1),
+			Enabled:   true,
+			Unit:      "degC",
+			Precision: 2,
 		}
 	}
 	return channels

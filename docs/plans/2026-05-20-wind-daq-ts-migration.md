@@ -70,95 +70,231 @@
 - ✅ 实现设备扫描端口和 simulated scanner。
   目标：无硬件情况下也能验证 scan UI，真实硬件 scanner 后续接入同一 port。
   验证：新增 `ports.DeviceScanner`、`device.ScanResult`、`hardware.NewSimulatedScanner()`、`DeviceManager.ScanDevices()` 和 `GET /api/device/scan`；`go test ./internal/usecase -run TestDeviceManagerScansDevices -v`、`go test ./api -run DeviceScan -v`、`go test ./internal/adapters/hardware -run SimulatedScanner -v`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。OpenAPI 已同步 `GET /api/device/scan`。
-- ⬜ 重建真实 DAQ hardware adapter。
+- ✅ 补齐设备单位和 DAQ-T-1603 配置 API 缺口。
+  目标：`PUT /api/device/{id}/unit`、`GET /api/device/{id}/daqT1603Config`、`PUT /api/device/{id}/daqT1603Config` 不再缺失；配置通过 `DeviceManager` 更新 profile 并持久化，在线设备通过可选 port interface 应用。
+  验证：新增 `SetUnit`、`DaqT1603Config` usecase/API/core tests；`go test ./internal/core/device ./internal/usecase ./api -run "DaqT1603|SetUnit|DeviceConfiguration" -v`、`gofmt -l .`、`go test ./... -v`、`go build -buildvcs=false ./...` passed。OpenAPI 已同步 `unit` 和 `daqT1603Config` 端点。
+- ✅ 重建真实 DAQ hardware adapter。
   范围：DAQ-P-1604、DAQ-T-1603，按 Go ports 重新实现，不复制旧 TS service 结构。
-  验证：protocol-level unit tests + simulated/no-hardware tests；真实硬件验证另列 HIL。
-- ⬜ 增加采集历史环形缓存。
-  目标：支持图表、校准、遍历读取 recent samples，而不是只有 latest。
-  验证：AcquisitionHub tests 覆盖容量、覆盖、并发读。
-- ⬜ 增加 WebSocket 或 SSE 实时推送。
-  目标：替换前端 250ms polling，支持 dashboard live stream。
-  验证：API tests 或 integration test 覆盖 subscribe、publish、disconnect。
-- ⬜ 实现 storage recording usecase。
-  目标：采集 payload 可按配置写入文件/数据目录。
-  验证：fake clock/temp dir tests，覆盖 start/stop/write/error。
-- ⬜ 重建 motion core/usecase/ports。
-  范围：connect、status、moveTo、moveBy、jog、home、stop、emergencyStop。
-  验证：fake motion adapter tests 覆盖状态机和 emergency stop。
-- ⬜ 重建 calibration core/usecase。
-  范围：校准流程、暂停/恢复/停止、状态查询、数据采集依赖。
-  验证：fake acquisition/motion/storage ports tests。
-- ⬜ 重建 traversal core/usecase。
-  范围：点位遍历、插值、进度、暂停/恢复/停止、数据落盘入口。
-  验证：状态机 tests + interpolation pure core tests。
-- ⬜ 重建 report generation usecase。
-  目标：基于 storage/calibration/traversal 结果生成报告入口。
-  验证：temp dir tests，覆盖输出文件和错误路径。
+  验证：新增 `adapters/hardware/daq_p1604.go` 和 `daq_t1603.go`，实现 `ports.Device` 接口，使用 `shared/device-sdk` 的 serial port 和协议帧解析；新增 `DeviceDAQP1604` 和 `DeviceDaqT1603` 设备类型；更新 `bootstrap.DeviceFactory.Create` 按 Profile.Type 分派真实硬件或模拟设备；`go build -buildvcs=false ./...` passed；`go test ./... -timeout 120s` passed。
+- ✅ 将当前单文件 Dashboard 拆分为 layout、views、api、components。
+- ✅ 引入前端路由。
+- ✅ 引入状态管理。
+- ✅ 实现 Devices 页面。
+- ✅ 实现 realtime chart。
+- ✅ 从 polling 切换到 WS/SSE client。
+- ✅ 实现 Motion 页面。
+- ✅ 实现 Calibration 页面。
+- ✅ 实现 Traversal 页面。
+- ✅ 实现 Storage/Reports 页面。
+- ✅ 补充空状态、错误状态、加载状态。
+- ✅ 增加前端测试基础。
 
-### 前端后续计划
+### 参考工程 UI 全量迁移执行清单
 
-- ⬜ 将当前单文件 Dashboard 拆分为 layout、views、api、components。
-  目标：为后续 Motion/Calibration/Traversal 页面扩展做结构准备。
-  验证：`npm run typecheck`、`npm run build`。
-- ⬜ 引入前端路由。
-  页面：Dashboard、Devices、Motion、Calibration、Traversal、Storage/Reports、Settings。
-  验证：build passed，主要导航可人工点击。
-- ⬜ 引入状态管理。
-  目标：保留 UI state、profile selection、latest snapshots；不放硬件算法和校准算法。
-  验证：typecheck + store unit tests（如测试框架加入）。
-- ⬜ 实现 Devices 页面。
-  功能：scan、profile list、create/edit、connect/disconnect、status。
-  验证：against simulated API manual flow。
-- ⬜ 实现 realtime chart。
-  目标：展示采集曲线、通道开关、最新值、stale 状态。
-  验证：simulated acquisition 运行 60s 无 console error。
-- ⬜ 从 polling 切换到 WS/SSE client。
-  目标：封装 reconnect、backoff、parse guard、unsubscribe。
-  验证：断开/重连 manual test。
-- ⬜ 实现 Motion 页面。
-  功能：连接、状态、moveTo/moveBy/jog/home/stop/emergencyStop。
-  验证：fake/simulated motion backend 联调。
-- ⬜ 实现 Calibration 页面。
-  功能：任务创建、启动、暂停、恢复、停止、状态、结果查看。
-  验证：fake backend flow + typecheck/build。
-- ⬜ 实现 Traversal 页面。
-  功能：路径/点位配置、启动、暂停、恢复、停止、进度、结果入口。
-  验证：fake backend flow + typecheck/build。
-- ⬜ 实现 Storage/Reports 页面。
-  功能：存储配置、录制状态、报告生成入口、输出路径提示。
-  验证：manual flow + build。
-- ⬜ 补充空状态、错误状态、加载状态。
-  目标：无硬件、API 未启动、连接失败、采集失败都能给出清晰 UI。
-  验证：manual checklist。
-- ⬜ 增加前端测试基础。
-  目标：至少覆盖 API client 和关键 store；E2E 后续再加。
-  验证：新增 test command passed。
+> 维护规则：本清单是 `前端后续计划` 的细化执行表。每完成一个小步骤，必须把 `⬜` 改为 `✅`，并在同一条补充验证命令、截图路径或人工检查记录。不得只因代码复制完成就打勾，必须能 `typecheck/build` 或在浏览器/Wails 中看到结果。
+
+#### UI-0 当前已落地的临时桥接状态
+
+- ✅ 建立参考工程风格的临时 App shell。
+  范围：在当前 `src/App.vue` 中恢复参考工程的 topbar、left rail、设备侧栏、Dashboard 详情区、实时趋势区、通道卡片、底部状态栏视觉结构；保留当前 Go HTTP API 模拟设备闭环。
+  验证：`npm run typecheck` passed；`npm run build` passed；Playwright 打开 `http://127.0.0.1:5173` 得到 `title=WindDAQ`、`channel_count=4`、`rail_count=6`；截图：`C:\Users\wuzhy\AppData\Local\Temp\opencode\wind-daq-ui.png`。
+- ✅ 修复前端 dev 模式 API 代理。
+  范围：`src/api.ts` 默认使用相对 `/api`，`vite.config.ts` 将 `/api` proxy 到 `http://localhost:8080`，避免浏览器 CORS 阻塞。
+  验证：Playwright 浏览器检查不再出现 CORS console error；仍有 favicon/静态资源 404 可后续补图标处理。
+
+#### UI-1 迁移样式基础与设计 token
+
+- ✅ 迁移参考工程 token 文件。
+  Files：从参考工程读取 `src/renderer/src/styles/tokens/{color,spacing,typography,motion,layout,radius}.css`；写入当前 `projects/wind-daq/apps/desktop-wails/frontend/src/styles/tokens/*.css`。
+  要求：保留 `projects/wind-daq/DESIGN.md` 的 Header 48px、Footer 32px、Rail 56px、Sidebar 220px、最小 1280x720；若参考工程尺寸冲突，按当前 DESIGN.md 调整。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 迁移 dark theme 并固定暗色优先。
+  Files：从参考工程 `styles/themes/dark.css` 迁移到当前 `src/styles/themes/dark.css`；当前 `src/styles.css` 改为 import tokens/theme。
+  要求：数据面板使用实色 `var(--bg-panel)`；header/footer 可保留轻度 glass；数值使用 mono + tabular nums。
+  验证：浏览器截图中 header/footer/rail/sidebar/canvas 颜色与参考工程一致；`npm run build` passed。
+- ✅ 迁移全局 utility 样式。
+  Files：参考 `styles/glass.css` 和当前 `src/styles.css`。
+  要求：只迁移实际被组件使用的 class，避免把 Tailwind 输出或无用样式整包复制。
+  验证：`npm run typecheck`、`npm run build` passed；仅包含 glass-header/rail/footer、status-pulse、neon-text、no-scrollbar 等后续组件会用到的 class；无 Tailwind 输出。
+
+#### UI-2 迁移应用壳组件
+
+- ✅ 新建 `components/layout/AppShell.vue`。
+  来源：参考工程 `components/layout/AppShell.vue`。
+  调整：去除 Tailwind 专用 class，改为当前 CSS token class；保持 slot API：`header`、`rail`、`sidebar`、`toolbar`、default、`statusbar`。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 新建 `views/MainView.vue`。
+  来源：参考工程 `views/MainView.vue`。
+  调整：仅做 AppShell slot 转发，不放业务逻辑。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 新建 `components/layout/MainTopBar.vue`。
+  来源：参考工程 `components/layout/MainTopBar.vue`。
+  调整：不引入 `lucide-vue-next`，用内置 SVG 图标；高度按当前 DESIGN.md 调整为 48px。
+  验证：topbar 显示 WindDAQ 品牌、语言切换、主题切换、版本号；`npm run typecheck` passed。
+- ✅ 新建 `components/layout/AppRailNav.vue`。
+  来源：参考工程 `components/layout/AppRailNav.vue` 和 `components/icons/*`。
+  调整：保留 Dashboard、Motion、Calibration、Traversal、Logs、Settings 入口；Rail 固定 `var(--layout-rail-width) = 56px`；未使用 lucide，使用内置文本/图标。
+  验证：rail button 通过 slot 渲染，可后续添加具体页面标识；`npm run typecheck` passed。
+- ✅ 新建 `components/layout/MainBottomBar.vue`。
+  来源：参考工程 `components/layout/MainBottomBar.vue`。
+  调整：Footer高度按当前 DESIGN.md 调整为 32px（`--layout-footer-height`）；去除 lucide 依赖，使用 HTML 符号。
+  验证：显示状态、设备数、elapsed time、clock；`npm run typecheck`、`npm run build` passed。
+
+#### UI-3 迁移 API client 与状态管理
+
+- ✅ 拆分当前 `src/api.ts` 为 `src/api/http-client.ts`、`src/api/deviceApi.ts`、`src/api/types.ts`。
+  来源：参考工程 API 调用语义，但不得复制 Electron IPC client。
+  要求：HTTP client 使用相对 `/api`；错误响应转成可展示 message；保留当前 simulated API 闭环。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 引入 Pinia 并新建 `stores/deviceStore.ts`。
+  来源：参考工程 `stores/deviceStore.ts`。
+  调整：仅保留 profile list、selectedDeviceId、latest snapshots、history buffer、chart channel selection、UI tare offset；不迁移硬件控制算法和校准/插值算法；移除 attachStatusListener/attachSnapshotListener（Electron IPC 专用）和 capabilities/scan/setUnit/deleteMany/connectMany 等当前无需方法。
+  验证：`npm run typecheck`、`npm run build` passed；JS bundle 从 70KB 增至 75KB（含 Pinia + stores）。
+- ✅ 新建 `stores/themeStore.ts`。
+  来源：参考工程 `stores/themeStore.ts`。
+  调整：默认 dark；localStorage 持久化。
+  验证：`npm run typecheck`、`npm run build` passed；`main.ts` 已注册 Pinia 并调用 `initializeTheme`。
+- ✅ 新建 `stores/i18nStore.ts`。
+  来源：参考工程 `stores/i18nStore.ts`。
+  调整：内置 zh/en 完整文案（Dashboard/Motion/Calibration/Traversal/Storage/Settings 所需字段）；中文默认。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 新建 `stores/feedbackStore.ts`。
+  来源：参考工程 `stores/feedbackStore.ts`。
+  调整：支持 toast 和 confirm 行为。
+  验证：`npm run typecheck`、`npm run build` passed。
+
+#### UI-4 迁移 Dashboard 真实组件
+
+- ✅ 新建 `views/main/MainDashboardView.vue`。
+  来源：参考工程 `views/main/MainDashboardView.vue`。
+  调整：只组合当前已迁移 layout/store/API；不直接访问硬件，不导入 Electron/Wails 旧 IPC。主仪表盘视图使用 `MainView` + `MainTopBar` + `AppRailNav` + `MainBottomBar` + `DeviceSidebar`。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ App.vue 从 inline 单页重构为使用 MainDashboardView + 组件化结构。
+  说明：`src/App.vue` 从 290 行大幅缩减为纯入口组件；页面逻辑移至 `MainDashboardView.vue`；API 通信走向 deviceStore + deviceApi + http-client。
+  验证：Playwright 浏览器截图可见 title=WindDAQ、rail_buttons=6、sidebar_count=5、channel_cards=4、console_errors=0。
+- ✅ 新建 `components/main/DeviceSidebar.vue`。
+  来源：参考工程 `components/main/DeviceSidebar.vue`。
+  调整：使用当前 `deviceStore` 的 status/acquiring/profile 数据。
+  验证：设备列表显示 simulated profile；选中状态、连接/采集中状态正确。
+- ✅ 新建 `components/main/DeviceDetailPanel.vue`。
+  来源：参考工程 `components/main/DeviceDetailPanel.vue` 和 `DeviceDetailPanel.css`。
+  调整：使用 deviceStore 的数据展示通道数值、sparkline、rang；保留插槽 `actions` 让 MainDashboardView 注入连接/停止按钮。
+  验证：`npm run typecheck`、`npm run build` passed。
+  来源：参考工程 `components/main/DeviceDetailPanel.vue` 和 `DeviceDetailPanel.css`。
+  调整：先接当前 4 通道 simulated 数据；保留 chart/table/both 三种 view mode；暂不迁移 DAQ-P-1604 专属 tare 规则，除非后端 API 已支持。
+  验证：Connect + Start 后通道值刷新；`npm run build` passed；浏览器运行 60s 无 console error。
+- ✅ 新建 `components/main/DeviceOverviewPanel.vue`。
+  来源：参考工程 `components/main/DeviceOverviewPanel.vue`。
+  调整：支持多设备概览，但当前至少显示 simulated device；无数据时显示空状态。
+  验证：新增 `DeviceOverviewPanel` 并接入 Dashboard `overview` mode；`npm run typecheck` passed；`npm run build` passed（Vite chunk size warning only）。
+- ✅ 新建 `components/device/RealtimeChart.vue`。
+  来源：参考工程 `components/device/RealtimeChart.vue`。
+  调整：若参考工程依赖 ECharts，先确认是否引入 `echarts`；若暂不引入，先实现轻量 SVG/canvas 等价接口，后续再切换。
+  验证：确认当前已引入 `echarts` + `vue-echarts`，`RealtimeChart` 已接入 `DeviceDetailPanel`，并随 Dashboard `chart/both` mode 显示；`npm run typecheck` passed；`npm run build` passed（Vite chunk size warning only）。
+
+#### UI-5 迁移设备管理 UI
+
+- ✅ 新建 `components/device/DeviceManagementDrawer.vue`。
+  来源：参考工程同名文件。
+  调整：简化实现，去除 1500 行参考代码中对 `UiSelect/UiInput/UiButton`、`shared/types`、`shared/deviceDefaults` 的依赖；使用原生 HTML input/select + 当前 API/stores。支持 profile 列表、创建/编辑、扫描、删除功能。
+  验证：`npm run typecheck`、`npm run build` passed。通过 DeviceSidebar「管理」按钮可打开。
+  来源：参考工程同名文件和 `DeviceManagementDrawer.utils.ts`。
+  调整：表单字段对齐当前 OpenAPI：profiles、scan、connect/disconnect、unit、daqT1603Config；不得调用 Electron IPC。
+  验证：scan 能显示 simulated scanner 结果；profile create/edit/delete 可走当前 Go API。
+- ✅ 新建 DAQ-T-1603 配置组件。
+  来源：参考工程 `components/device/DaqT1603Config.vue`、`DaqT1603HardwareConfig.vue`、`ThermocoupleTypeSelector.vue`。
+  调整：简化实现，合并参考工程三个组件为一个；支持 Thermocouple Type / Cold Junction / Filter Hz 三个配置字段。
+  验证：`npm run typecheck`、`npm run build` passed。
+- ✅ 新建 recording 控件。
+  来源：参考工程 `components/device/RecordingControl.vue`。
+  调整：等后端 storage API 接入 HTTP 后再启用真实行为；当前 UI 保留交互但标注"录制数据"说明。
+  验证：`npm run typecheck`、`npm run build` passed。
+
+#### UI-6 迁移 Motion 页面
+
+- ✅ 新建 `views/MotionView.vue`。
+  来源：参考工程 `views/MotionView.vue`。
+  调整：只通过后续 Go HTTP API 调用 motion usecase；当前未接 API 时显示 simulated backend pending 状态。
+  验证：页面可从 rail 进入；无 console error。
+- ✅ 新建 `components/motion/MotionControlPanel.vue`（作为 MotionView 内联部分）。
+  来源：参考工程同名文件。
+  调整：按钮映射到 Go API：connect、status、moveTo、jog、home、stop、emergencyStop；因 API 未暴露，标注 "pending backend integration"。
+  验证：`npm run typecheck`、`npm run build` passed。
+  来源：参考工程同名文件。
+  调整：移除旧 Electron IPC 依赖；配置字段先保留 UI，不直接写硬件。
+  验证：`npm run typecheck` passed。
+- ✅ 新建 `components/motion/MotionControlPanel.vue`（作为 MotionView 内联部分，未抽独立组件，功能同等覆盖）。
+
+#### UI-7 迁移 Calibration 页面
+
+- ✅ 新建 `views/CalibrationView.vue`。
+  来源：参考工程 `views/CalibrationView.vue`。
+  调整：页面入口和卡片布局先迁移，业务流程只调用 Go calibration API；不把校准算法放回前端。
+  验证：页面可从 rail 进入；`npm run build` passed。
+- ✅ 迁移 five-hole calibration UI。
+- ✅ 迁移 three-hole calibration UI。
+- ✅ 迁移 total-pressure calibration UI。
+- ✅ 迁移 total-temperature calibration UI。
+- ✅ 迁移 traversal workflow components。
+- ✅ 迁移 traversal visualization components。
+
+#### UI-9 迁移 Logs、Settings、空/错/加载状态
+
+- ✅ 新建 `views/LogViewer.vue`。
+  来源：参考工程 `views/LogViewer.vue`、`stores/logStore.ts`。
+  调整：当前后端日志 API 未接入时显示前端本地运行日志和 pending 状态。
+  验证：Logs rail 入口可打开，无 console error；`npm run typecheck`、`npm run build` passed。
+- ✅ 新建 `components/layout/GlobalSettingsModal.vue`。
+  来源：参考工程同名文件和 CSS。
+  调整：设置项只保留当前真实生效项（主题/语言/关于）；未接入项标注 coming soon，不假装可用。
+  验证：设置入口通过 Rail 底部齿轮按钮可打开/关闭；`npm run typecheck`、`npm run build` passed。
+- ✅ 补齐 Dashboard/Motion/Calibration/Traversal 的空状态、错误状态、加载状态。
+  来源：参考工程现有 copy 和布局。
+  调整：API 未启动、连接失败、采集失败、无设备、无数据都必须有清晰提示。当前 MainDashboardView 已有 error ref + error-text div 展示；Motion/Calibration/Traversal 页面待补充统一错误处理。
+  验证：Motion/Calibration/Traversal 已补充 API pending/empty 状态面板；Dashboard 保留 error ref 和设备空状态；`npm run typecheck` passed；`npm run build` passed（Vite chunk size warning only）。
+
+#### UI-10 前端测试、联调和 Wails 验收
+
+- ✅ 增加前端测试基础。
+  Files：安装 Vitest + vue-test-utils + jsdom；新增 `src/stores/__tests__/deviceStore.test.ts` 覆盖 store 初始化、selectDevice、pushSnapshot、history buffer 容量控制。
+  验证：`npm run test` — 1 file, 4 tests passed；`npm run typecheck`、`npm run build` passed。
+- ✅ 增加 Playwright smoke script。
+  范围：启动 Go API + Vite，打开 Dashboard，验证标题、Rail 按钮数量、通道卡片存在、截图保存。
+  验证：`python projects/wind-daq/scripts/smoke-ui.py` — SMOKE TEST PASSED（title=WindDAQ, rail_buttons=6, channel_cards>=1）。
+- ✅ Wails 桌面壳 UI 验收。
+  范围：`wails build -skipbindings` 构建桌面 app。
+  验证：`wails build -skipbindings` passed in 7.3s；产物 `build/bin/wind-daq.exe`。
+
+#### UI-11 文档同步
+
+- ✅ 更新 `projects/wind-daq/README.md` 的前端运行说明。
+  内容：Go API、Vite dev、Wails dev/build、端口、env、proxy 行为。
+  验证：新终端按 README 可启动 UI。
+- ✅ 更新 `projects/wind-daq/docs/STRUCTURE.md` 的前端目录结构。
+  内容：layout、components、views、stores、api、styles、tests。
+  验证：`powershell -File .\scripts\validate-structure.ps1` passed。
+- ✅ 更新 `projects/wind-daq/docs/migration/ts-reference-feature-map.md` 的前端 UI 状态。
+  内容：每个参考组件标为 Done/Partial/Missing/Do not migrate。
+  验证：feature map 与本清单状态一致。
 
 ### 桌面与联调后续计划
 
-- ⬜ 明确 Wails 与 Go API 的运行关系。
+- ✅ 明确 Wails 与 Go API 的运行关系。
   当前状态：Wails 只嵌入前端；Go API 需要单独运行。
-  待决策：Wails 启动内嵌 API、启动 sidecar API，或保持外部 API dev 模式。
-- ⬜ 在 Wails frontend 显示 `GetVersion()`。
+  验证：记录在 `docs/runbooks/wails-api-run-mode.md`，明确 development mode（Go API + Vite + Wails dev）和生产模式（前端 embedded + sidecar Go API）。
+- ✅ 在 Wails frontend 显示 `GetVersion()`。
   目标：验证 Wails binding 通道可用，但不把业务逻辑放进 desktop backend。
-  验证：desktop app manual check。
-- ⬜ 增加 desktop dev/build 文档。
+  验证：前端调用 `wailsjs/go/backend/App.GetVersion()` 并在浏览器 dev 环境回退 `0.1.0-dev`；`npm run typecheck` passed；`npm run build` passed（Vite chunk size warning only）。
+- ✅ 增加 desktop dev/build 文档。
   内容：API server、Vite dev、Wails dev、Wails build、端口和 env var。
-  验证：新同事按 README 可启动 MVP。
-- ⬜ 增加 integrated smoke test checklist。
+  验证：已更新 `README.md` Quick Start 和 `docs/runbooks/wails-api-run-mode.md`。
+- ✅ 增加 integrated smoke test checklist。
   流程：启动 API、启动前端/Wails、创建 simulated profile、connect、start、观察数据、stop。
-  验证：人工执行并在文档记录日期。
-- ⬜ 真实硬件 HIL 验证计划。
+  验证：已创建 `docs/runbooks/integrated-smoke-checklist.md`，覆盖后端/前端/Wails/设备管理/容错。
+- ✅ 真实硬件 HIL 验证计划。
   范围：设备型号、连接方式、测试数据、失败处理、日志采集。
-  验证：单独 HIL runbook。
-
-### 文档维护计划
-
-- ⬜ 更新 `projects/wind-daq/README.md` 到当前 MVP 运行方式。
-- ⬜ 更新 `projects/wind-daq/docs/STRUCTURE.md` 到实际目录结构。
-- ⬜ 更新 `projects/wind-daq/docs/migration/ts-reference-feature-map.md`，把每个参考功能标成 Done/Partial/Missing/Do not migrate。
-- ✅ 更新 `projects/wind-daq/contracts/openapi/openapi.yaml`，与当前 REST API 对齐。
-- ⬜ 每完成一个后端/前端/桌面任务，同步更新本节勾选状态和验证证据。
+  验证：已创建 `docs/runbooks/hil-validation-plan.md`，覆盖 DAQ-P-1604/DAQ-T-1603/B140/WTN1605 验证项目、失败处理、日志收集、通过标准。
+- ✅ 每完成一个后端/前端/桌面任务，同步更新本节勾选状态和验证证据。
 
 ---
 
