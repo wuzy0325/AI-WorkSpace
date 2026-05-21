@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"wind-daq/services/api-go/internal/adapters/hardware"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/ports"
 )
@@ -25,8 +24,59 @@ func (s *memoryProfileStore) SaveProfiles(profiles []device.Profile) error {
 type simulatedFactory struct{}
 
 func (simulatedFactory) Create(profile device.Profile) (ports.Device, error) {
-	return hardware.NewSimulatedDevice(profile), nil
+	return &fakeDevice{id: profile.ID}, nil
 }
+
+type fakeDevice struct {
+	id       string
+	conn     device.Connection
+	dataSink device.DataSink
+	emitDone chan struct{}
+}
+
+func (d *fakeDevice) ID() string { return d.id }
+
+func (d *fakeDevice) Status() device.Status {
+	return device.Status{ID: d.id, Connection: d.conn}
+}
+
+func (d *fakeDevice) Connect() error  { d.conn = device.ConnectionConnected; return nil }
+func (d *fakeDevice) Disconnect() error {
+	if d.emitDone != nil {
+		close(d.emitDone)
+		d.emitDone = nil
+	}
+	d.conn = device.ConnectionDisconnected
+	return nil
+}
+func (d *fakeDevice) StartAcquisition() error {
+	d.conn = device.ConnectionAcquiring
+	d.emitDone = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-d.emitDone:
+				return
+			case <-ticker.C:
+				if d.dataSink != nil {
+					d.dataSink(device.DataPayload{DeviceID: d.id, Timestamp: time.Now().UnixMilli(), Channels: []float64{1, 2, 3, 4}, ChannelIndices: []int{0, 1, 2, 3}})
+				}
+			}
+		}
+	}()
+	return nil
+}
+func (d *fakeDevice) StopAcquisition() error {
+	if d.emitDone != nil {
+		close(d.emitDone)
+		d.emitDone = nil
+	}
+	d.conn = device.ConnectionConnected
+	return nil
+}
+func (d *fakeDevice) SetDataSink(sink device.DataSink) { d.dataSink = sink }
 
 type fakeScanner struct {
 	results []device.ScanResult

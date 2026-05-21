@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
-	"os"
 
 	"wind-daq/services/api-go/pkg/apiserver"
 )
@@ -29,7 +27,7 @@ func NewApp() *App {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
-	port := a.findAvailablePort()
+	port := apiserver.FindAvailablePort(apiserver.EnvInt("WIND_DAQ_PORT", 8080))
 	if port == 0 {
 		log.Printf("WARNING: no available port found, API server not started")
 		return
@@ -52,27 +50,4 @@ func (a *App) Shutdown(ctx context.Context) {
 
 func (a *App) GetVersion() VersionInfo {
 	return VersionInfo{Name: "Wind-DAQ", Version: "0.1.0-rebuild", Port: a.port}
-}
-
-func (a *App) findAvailablePort() int {
-	preferred := envInt("WIND_DAQ_PORT", 8080)
-	ports := []int{preferred, 8081, 8082, 9090, 9091}
-	for _, port := range ports {
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		if err == nil {
-			ln.Close()
-			return port
-		}
-	}
-	return 0
-}
-
-func envInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
-			return n
-		}
-	}
-	return fallback
 }

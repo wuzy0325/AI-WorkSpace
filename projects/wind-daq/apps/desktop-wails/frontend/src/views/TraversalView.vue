@@ -29,6 +29,8 @@ const pathConfig = ref({
   mode: 'hil' as TraversalMode,
 })
 
+const generatedPath = ref<{ x: number; y: number; z: number }[]>([])
+
 const running = computed(() => state.value === 'running')
 const paused = computed(() => state.value === 'paused')
 const completed = computed(() => state.value === 'idle' && currentPoint.value > 0 && currentPoint.value >= totalPoints.value)
@@ -44,17 +46,6 @@ const modes = [
   { id: 'layout' as const, label: 'Layout (布局点)' },
   { id: 'prb' as const, label: 'PRB (探针校准)' },
 ]
-
-function buildGridPath(): { x: number; y: number; z: number }[] {
-  const path: { x: number; y: number; z: number }[] = []
-  const cfg = pathConfig.value
-  for (let x = cfg.xStart; x <= cfg.xEnd; x += cfg.xStep) {
-    for (let y = cfg.yStart; y <= cfg.yEnd; y += cfg.yStep) {
-      path.push({ x, y, z: cfg.zStart })
-    }
-  }
-  return path
-}
 
 async function run(action: () => Promise<void>) {
   busy.value = true; error.value = ''
@@ -75,8 +66,13 @@ async function startTraversal() {
   await run(async () => {
     const taskId = `trav-${Date.now()}`
     lastTaskId.value = taskId
-    const path = buildGridPath()
     const channels = pathConfig.value.channels.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+    const path = await traversalApi.generateGrid({
+      xStart: pathConfig.value.xStart, xEnd: pathConfig.value.xEnd, xStep: pathConfig.value.xStep,
+      yStart: pathConfig.value.yStart, yEnd: pathConfig.value.yEnd, yStep: pathConfig.value.yStep,
+      zStart: pathConfig.value.zStart,
+    })
+    generatedPath.value = path
     await traversalApi.start(taskId, pathConfig.value.deviceId, channels, path)
     await refreshStatus()
     totalPoints.value = path.length
@@ -170,12 +166,13 @@ onMounted(refreshStatus)
         </div>
       </div>
       <div class="traversal-config__preview">
-        <h3>路径预览 ({{ buildGridPath().length }} 个点)</h3>
+        <h3>路径预览 ({{ generatedPath.length || 0 }} 个点)</h3>
         <svg :viewBox="`0 0 200 200`" class="traversal-config__svg">
           <line x1="10" y1="190" x2="190" y2="190" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
           <line x1="10" y1="190" x2="10" y2="10" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-          <circle v-for="(pt, i) in buildGridPath().slice(0, 200)" :key="i" :cx="10 + (pt.x / (pathConfig.xEnd || 1)) * 180" :cy="190 - (pt.y / (pathConfig.yEnd || 1)) * 180" r="2" fill="rgba(16,185,129,0.6)" />
+          <circle v-for="(pt, i) in generatedPath.slice(0, 200)" :key="i" :cx="10 + (pt.x / (pathConfig.xEnd || 1)) * 180" :cy="190 - (pt.y / (pathConfig.yEnd || 1)) * 180" r="2" fill="rgba(16,185,129,0.6)" />
         </svg>
+        <p v-if="!generatedPath.length" style="color:var(--text-muted);font-size:0.7rem;">启动遍历后自动生成路径</p>
       </div>
       <button class="btn-primary" :disabled="busy || running" @click="startTraversal">
         启动遍历

@@ -2,6 +2,8 @@ package apiserver
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 
@@ -102,4 +104,26 @@ func ensureDefaultProfiles(store ports.ProfileStore) error {
 	return store.SaveProfiles([]device.Profile{
 		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	})
+}
+
+func FindAvailablePort(preferred int) int {
+	ports := []int{preferred, 8081, 8082, 9090, 9091}
+	for _, port := range ports {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err == nil {
+			ln.Close()
+			return port
+		}
+	}
+	return 0
+}
+
+func EnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+	}
+	return fallback
 }

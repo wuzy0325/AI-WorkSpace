@@ -40,3 +40,19 @@ func distance(a Point, b Point) float64 {
 	dz := b.Z - a.Z
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
+
+func GenerateGridPath(cfg GridConfig) ([]Point, error) {
+	if cfg.XStep <= 0 || cfg.YStep <= 0 {
+		return nil, fmt.Errorf("step must be greater than zero")
+	}
+	if cfg.XStart > cfg.XEnd || cfg.YStart > cfg.YEnd {
+		return nil, fmt.Errorf("start must be less than or equal to end")
+	}
+	var path []Point
+	for x := cfg.XStart; x <= cfg.XEnd; x += cfg.XStep {
+		for y := cfg.YStart; y <= cfg.YEnd; y += cfg.YStep {
+			path = append(path, Point{X: x, Y: y, Z: cfg.ZStart})
+		}
+	}
+	return path, nil
+}

@@ -23,6 +23,16 @@ type Config struct {
 	Path     []Point `json:"path"`
 }
 
+type GridConfig struct {
+	XStart float64 `json:"xStart"`
+	XEnd   float64 `json:"xEnd"`
+	XStep  float64 `json:"xStep"`
+	YStart float64 `json:"yStart"`
+	YEnd   float64 `json:"yEnd"`
+	YStep  float64 `json:"yStep"`
+	ZStart float64 `json:"zStart"`
+}
+
 type PointResult struct {
 	PointIndex int             `json:"pointIndex"`
 	Point      Point           `json:"point"`

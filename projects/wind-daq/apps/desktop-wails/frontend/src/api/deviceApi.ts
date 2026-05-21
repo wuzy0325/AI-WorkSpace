@@ -104,6 +104,10 @@ export interface TraversalPoint {
 }
 
 export const traversalApi = {
+  generateGrid: (cfg: { xStart: number; xEnd: number; xStep: number; yStart: number; yEnd: number; yStep: number; zStart: number }) =>
+    request<TraversalPoint[]>('/api/traversal/generateGrid', {
+      method: 'POST', body: JSON.stringify(cfg),
+    }),
   start: (taskId: string, deviceId: string, channels: number[], path: TraversalPoint[]) =>
     request<{ success: boolean }>('/api/traversal/start', {
       method: 'POST', body: JSON.stringify({ taskId, deviceId, channels, path }),

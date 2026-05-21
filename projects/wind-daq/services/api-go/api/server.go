@@ -235,6 +235,13 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("/api/traversal/", func(w http.ResponseWriter, r *http.Request) {
 		action := strings.TrimPrefix(r.URL.Path, "/api/traversal/")
 		switch action {
+		case "generateGrid":
+			if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
+			var grid traversal.GridConfig
+			if err := json.NewDecoder(r.Body).Decode(&grid); err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
+			path, err := traversal.GenerateGridPath(grid)
+			if err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
+			writeJSON(w, http.StatusOK, path)
 		case "start":
 			if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
 			var body struct {
