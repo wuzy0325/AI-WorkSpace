@@ -102,6 +102,12 @@ Current `wind-daq` behavior:
 
 This architectural change made the UI feel different even when some tokens/components are similar.
 
+## Current Real Status (2026-05-22)
+
+The earlier plan assumed that Phases 1-9 could be executed sequentially. In practice, `ui-parity-audit.md` revealed that most UI components labelled `Done` in the feature map were only structurally present but visually and behaviorally incomplete.
+
+**Before starting any phase**, read `ui-parity-audit.md` to see the current truthful status. Then read the reference file and the target file side by side. Do not rely on the Phase 0-9 labels below as proof of completion.
+
 ## Reference Files To Inspect First
 
 Always inspect these reference files before editing target files:

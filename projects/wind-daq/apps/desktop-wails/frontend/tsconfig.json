@@ -19,8 +19,11 @@
       "@views/*": ["src/views/*"],
       "@stores/*": ["src/stores/*"],
       "@api/*": ["src/api/*"],
-      "@styles/*": ["src/styles/*"]
+      "@styles/*": ["src/styles/*"],
+      "@shared/*": ["src/shared/*"],
+      "@composables/*": ["src/composables/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "wailsjs/**/*.ts", "wailsjs/**/*.d.ts"],
+  "exclude": []
 }

@@ -200,6 +200,18 @@ function activePageLabel(): string {
   margin-top: 0.125rem;
 }
 
+@media (max-width: 1280px) {
+  .main-topbar__subtitle {
+    display: none;
+  }
+}
+
+@media (min-width: 1280px) {
+  .main-topbar__subtitle {
+    display: block;
+  }
+}
+
 .main-topbar__nav {
   display: flex;
   align-items: center;
@@ -272,6 +284,15 @@ function activePageLabel(): string {
   background: currentColor;
 }
 
+.status-pulse {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .main-topbar__icon-btn {
   width: 32px;
   height: 32px;
@@ -330,5 +351,23 @@ function activePageLabel(): string {
   font-weight: 500;
   color: #64748b;
   font-family: ui-monospace, monospace;
+}
+
+@media (max-width: 1536px) {
+  .main-topbar__version {
+    display: none;
+  }
+}
+
+@media (min-width: 1536px) {
+  .main-topbar__version {
+    display: block;
+  }
+}
+
+@media (max-width: 1024px) {
+  .main-topbar__nav {
+    display: none;
+  }
 }
 </style>

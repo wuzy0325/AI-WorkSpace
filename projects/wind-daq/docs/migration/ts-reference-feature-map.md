@@ -40,8 +40,10 @@
 | B140 driver | Missing | ⬜ adapters/hardware | N/A | No file found — do not migrate (current version scope) |
 | WTNMC4A driver | Missing | ⬜ adapters/hardware | N/A | No file found — do not migrate (current version scope) |
 | HTTP motion API | Done | ✅ api/server.go (9 routes) | N/A | connect/disconnect/home/stop/status/moveTo/moveBy/jog/emergencyStop |
-| Motion page UI | Partial | N/A | ✅ MotionView | Inline controls for connect/status/jog/MoveTo. Reference MotionControlPanel has per-axis cards with history bars, limit indicators, step controls, setZero. Not yet ported — requires motionStore. |
-| Motion control panel | Frontend-only | N/A | ✅ MotionView (inline) | Reference has MotionControlPanel.vue (756 lines) with axis history bar, per-axis ±step inputs, target position, setZero/stop/limit indicators. Current is simplified inline version. |
+| motionStore | Done | N/A | ✅ motionStore.ts | Full feature parity with reference: profiles, status, connect/disconnect, moveTo/moveBy/jog/home/stop/emergencyStop/definePosition |
+| Motion page UI | Partial | N/A | ✅ MotionView | Has embedded layout. Missing integration with full MotionControlPanel and config. |
+| Motion control panel | Partial | N/A | ✅ MotionControlPanel.vue | Current is simplified version. Reference has full controller list, per-axis cards with gradient history bars, limit indicators, step controls, setZero/stop buttons, config integration. |
+| Motion controller config | Partial | N/A | ✅ MotionControllerConfig.vue | Current is simplified version. Reference has full axis matrix config, encoder compensation, steps per rev, microsteps, lead/gear ratio, language switcher, larger window size (1100x750). |
 
 ## Calibration
 
@@ -89,15 +91,15 @@
 ## UI Shell & Layout
 
 | Reference Feature | Status | Notes |
-|---|---|---|
-| AppShell | Done | Slot-based layout with header/rail/sidebar/canvas/statusbar |
-| MainTopBar | Done | Brand, mode tabs, theme toggle, locale switch |
-| AppRailNav | Done | 5 pages + settings |
-| MainBottomBar | Done | Start/stop/record buttons, elapsed time, clock |
-| DeviceSidebar | Done | Profile list with status indicators |
-| DeviceDetailPanel | Done | Channel grid with values, sparklines, range info |
-| DeviceManagementDrawer | Done | Profile CRUD + scan |
-| GlobalSettingsModal | Done | Theme/language/about |
+|---|---|---|---|
+| AppShell | Partial | Slot-based layout exists. Check slot shaping and visual parity against reference. |
+| MainTopBar | Partial | Component exists. Brand block, mode segmented buttons, status pill, icons need visual alignment with reference. |
+| AppRailNav | Partial | 5-page order matches reference. Icons/active states/settings entry need visual alignment. |
+| MainBottomBar | Partial | Visual height and control layout may differ from reference. |
+| DeviceSidebar | Partial | Profile list exists, but visual/status alignment with reference needs confirmation. |
+| DeviceDetailPanel | Partial | Channel grid template restored, but chart selector, behavior parity, and complete mode switching need verification. |
+| DeviceManagementDrawer | Partial | CRUD/scan drawer exists. Verify full parity with reference. |
+| GlobalSettingsModal | Partial | Full functional form restored (directory, prefix, auto-start, stop conditions, refresh rate). Directory picker binding and backend stop-condition enforcement are incomplete. |
 
 ## Design System
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
-import { GetVersion } from '../../../wailsjs/go/backend/App'
+import { wailsApi } from '@api/wails-adapter'
 import type { AppRailNavItem } from '@components/layout/AppRailNav.vue'
 import AppRailNav from '@components/layout/AppRailNav.vue'
 import DeviceManagementDrawer from '@components/device/DeviceManagementDrawer.vue'
@@ -156,7 +156,7 @@ function unsubscribeStream() {
 
 onMounted(async () => {
   try {
-    const result = await GetVersion()
+    const result = await wailsApi.app.getVersion()
     appVersion.value = result.version
   } catch {
     appVersion.value = '0.1.0-dev'
@@ -232,10 +232,10 @@ onBeforeUnmount(() => {
 
     <div v-else class="page-container">
       <section class="page-content">
-        <MotionView v-if="activePage === 'motion'" />
-        <CalibrationView v-else-if="activePage === 'calibration'" />
-        <TraversalView v-else-if="activePage === 'traversal'" />
-        <LogViewer v-else-if="activePage === 'log'" />
+        <MotionView v-if="activePage === 'motion'" embedded />
+        <CalibrationView v-else-if="activePage === 'calibration'" embedded />
+        <TraversalView v-else-if="activePage === 'traversal'" embedded />
+        <LogViewer v-else-if="activePage === 'log'" embedded />
       </section>
     </div>
 
@@ -285,7 +285,9 @@ onBeforeUnmount(() => {
 }
 
 .page-content {
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
   border-radius: 1.5rem;

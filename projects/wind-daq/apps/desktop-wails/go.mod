@@ -2,7 +2,12 @@ module wind-daq/apps/desktop-wails
 
 go 1.25.0
 
-require github.com/wailsapp/wails/v2 v2.12.0
+require (
+	github.com/wailsapp/wails/v2 v2.12.0
+	wind-daq/services/api-go v0.0.0
+)
+
+replace wind-daq/services/api-go => ../../services/api-go
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect

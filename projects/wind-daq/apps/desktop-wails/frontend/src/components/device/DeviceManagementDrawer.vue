@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { deviceApi } from '@api/deviceApi'
-import type { DeviceProfile } from '@api/types'
+import type { DeviceProfile, ScanResult } from '@api/types'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -12,13 +12,13 @@ const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
 
 const scanning = ref(false)
-const discovered = ref<Array<{ id: string; name: string; type: string }>>([])
+const discovered = ref<ScanResult[]>([])
 const selectedIds = ref<string[]>([])
 
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
 const draftName = ref('')
-const draftType = ref<'SIMULATED' | 'DAQ_T_1603'>('SIMULATED')
+const draftType = ref<DeviceProfile['type']>('SIMULATED')
 const saving = ref(false)
 
 function openCreate() {
@@ -44,12 +44,12 @@ async function saveDraft() {
       name: draftName.value.trim(),
       type: draftType.value,
       samplingRate: 20,
-      channels: Array.from({ length: draftType.value === 'DAQ_T_1603' ? 16 : 4 }, (_, i) => ({
+      channels: Array.from({ length: draftType.value === 'DAQ-T-1603' ? 16 : 4 }, (_, i) => ({
         index: i,
-        name: draftType.value === 'DAQ_T_1603' ? `TC${i + 1}` : `CH${i + 1}`,
+        name: draftType.value === 'DAQ-T-1603' ? `TC${i + 1}` : `CH${i + 1}`,
         enabled: true,
-        unit: draftType.value === 'DAQ_T_1603' ? 'degC' : 'V',
-        precision: draftType.value === 'DAQ_T_1603' ? 2 : 3,
+        unit: draftType.value === 'DAQ-T-1603' ? 'degC' : 'V',
+        precision: draftType.value === 'DAQ-T-1603' ? 2 : 3,
       })),
     }
     await deviceApi.upsertProfile(profile)
@@ -93,13 +93,16 @@ watch(() => props.open, (v) => {
 async function runScan() {
   scanning.value = true
   try {
-    const results = await deviceApi.getProfiles()
-    discovered.value = results.map((r: any) => ({
-      id: r.id, name: r.name ?? r.id, type: r.type ?? 'SIMULATED',
-    }))
+    const results = await deviceApi.scanDevices()
+    console.log('[DeviceScan] scanDevices returned:', results, 'type:', typeof results, 'isArray:', Array.isArray(results));
+    discovered.value = results
     if (discovered.value.length) feedback.pushToast(`发现 ${discovered.value.length} 个设备`, 'info')
-  } catch {
+    else feedback.pushToast('未发现新设备', 'info')
+  } catch (err) {
     discovered.value = []
+    console.error('[DeviceScan] 扫描失败:', err)
+    console.error('[DeviceScan] 错误类型:', err?.constructor?.name, '错误消息:', err instanceof Error ? err.message : String(err))
+    feedback.pushToast(`扫描失败: ${err instanceof Error ? err.message : String(err)}`, 'error')
   } finally {
     scanning.value = false
   }
@@ -107,6 +110,44 @@ async function runScan() {
 
 function clearDiscovered() {
   discovered.value = []
+}
+
+async function addDiscoveredDevice(d: ScanResult) {
+  const existing = deviceStore.profiles.find((p) => p.id === d.id)
+  if (existing) {
+    feedback.pushToast(`设备 "${d.name}" 已存在于配置中`, 'warning')
+    return
+  }
+  const profileType = mapScanTypeToProfileType(d.type)
+  const profile: DeviceProfile = {
+    id: d.id,
+    name: d.name,
+    type: profileType,
+    samplingRate: 20,
+    channels: Array.from({ length: profileType === 'DAQ-T-1603' ? 16 : 4 }, (_, i) => ({
+      index: i,
+      name: profileType === 'DAQ-T-1603' ? `TC${i + 1}` : `CH${i + 1}`,
+      enabled: true,
+      unit: profileType === 'DAQ-T-1603' ? 'degC' : 'V',
+      precision: profileType === 'DAQ-T-1603' ? 2 : 3,
+    })),
+  }
+  try {
+    await deviceApi.upsertProfile(profile)
+    await deviceStore.refreshProfiles()
+    feedback.pushToast(`设备 "${d.name}" 已添加到配置`, 'success')
+  } catch (e) {
+    feedback.pushToast(String(e), 'error')
+  }
+}
+
+function mapScanTypeToProfileType(scanType: string): DeviceProfile['type'] {
+  switch (scanType) {
+    case 'DAQ-P-1604': return 'DAQ-P-1604'
+    case 'DAQ-T-1603': return 'DAQ-T-1603'
+    case 'DAQ-P-1064Pre': return 'DAQ-P-1064Pre'
+    default: return 'SIMULATED'
+  }
 }
 
 async function connectToggle(p: DeviceProfile) {
@@ -221,11 +262,16 @@ function connectLabel(p: DeviceProfile) {
           </div>
           <div class="drawer-discovered-list">
             <div v-for="d in discovered" :key="d.id" class="discovered-card">
-              <div class="discovered-card-icon">D</div>
+              <div class="discovered-card-icon">{{ d.type === 'DAQ-T-1603' ? 'T' : d.type === 'DAQ-P-1604' ? 'P' : d.type === 'DAQ-P-1064Pre' ? 'S' : 'D' }}</div>
               <div class="discovered-card-info">
                 <div class="discovered-card-name">{{ d.name }}</div>
-                <div class="discovered-card-type">{{ d.type }}</div>
+                <div class="discovered-card-type">
+                  {{ d.type }}
+                  <span v-if="d.address" class="discovered-card-addr"> · {{ d.address }}<template v-if="d.port">:{{ d.port }}</template></span>
+                  <span v-if="d.macAddress" class="discovered-card-addr"> · MAC: {{ d.macAddress }}</span>
+                </div>
               </div>
+              <button class="btn btn-xs btn-green" @click="addDiscoveredDevice(d)">添加</button>
             </div>
           </div>
         </div>
@@ -297,7 +343,9 @@ function connectLabel(p: DeviceProfile) {
               <label class="editor-label">设备类型</label>
               <select v-model="draftType" class="editor-input">
                 <option value="SIMULATED">Simulated</option>
-                <option value="DAQ_T_1603">DAQ-T-1603</option>
+                <option value="DAQ-P-1604">DAQ-P-1604</option>
+                <option value="DAQ-T-1603">DAQ-T-1603</option>
+                <option value="DAQ-P-1064Pre">DAQ-P-1064Pre</option>
               </select>
             </div>
             <p class="editor-note">保存后可在仪表盘中连接设备并开始采集。</p>
@@ -444,6 +492,14 @@ function connectLabel(p: DeviceProfile) {
 
 .discovered-card-type {
   font-size: 0.65rem; font-weight: 600; color: var(--text-muted); margin-top: 0.125rem;
+}
+
+.discovered-card-addr {
+  color: var(--text-muted); opacity: 0.7;
+}
+
+.discovered-card .btn-green {
+  margin-left: auto; flex-shrink: 0;
 }
 
 /* Device List */

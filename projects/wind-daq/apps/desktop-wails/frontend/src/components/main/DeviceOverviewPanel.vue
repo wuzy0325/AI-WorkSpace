@@ -1,226 +1,414 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Activity, RadioTower, Gauge, Waves } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
-import type { DeviceProfile } from '@api/types'
+import { useI18nStore } from '@stores/i18nStore'
+import UiButton from '@components/ui/UiButton.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiSectionHeader from '@components/ui/UiSectionHeader.vue'
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 
-const devices = computed(() => deviceStore.profiles)
-const selectedId = computed(() => deviceStore.selectedDeviceId)
+const DEVICE_COLORS = [
+  { text: 'text-emerald-400', borderLeft: 'border-l-emerald-500' },
+  { text: 'text-sky-400', borderLeft: 'border-l-sky-500' },
+  { text: 'text-violet-400', borderLeft: 'border-l-violet-500' },
+  { text: 'text-amber-400', borderLeft: 'border-l-amber-500' },
+]
 
-function latestValue(profile: DeviceProfile): string {
-  const snapshot = deviceStore.latestFor(profile.id)
-  if (!snapshot?.channels.length) return '--'
-  return deviceStore.formatValue(profile.id, snapshot.channelIndices[0] ?? 0, snapshot.channels[0])
+function getDeviceTheme(index: number) {
+  return DEVICE_COLORS[index % DEVICE_COLORS.length]
 }
 
-function latestUnit(profile: DeviceProfile): string {
-  const channelIndex = deviceStore.latestFor(profile.id)?.channelIndices[0] ?? 0
-  return profile.channels.find((ch) => ch.index === channelIndex)?.unit ?? profile.channels[0]?.unit ?? ''
+interface OverviewChannelItem {
+  key: string
+  channelIndex: number
+  label: string
+  name: string
+  formattedValue: string
+  unit: string
+  tone: 'active' | 'warning'
 }
 
-function historyCount(id: string): number {
-  return deviceStore.historyFor(id).length
+interface OverviewDeviceGroup {
+  id: string
+  name: string
+  type: string
+  status: string
+  statusLabel: string
+  channelCount: number
+  warningCount: number
+  theme: { text: string; borderLeft: string }
+  channels: OverviewChannelItem[]
 }
 
-function selectDevice(id: string) {
-  deviceStore.selectDevice(id)
+function channelDisplayName(deviceId: string, channelIndex: number): string {
+  const profile = deviceStore.profiles?.find((item) => item.id === deviceId)
+  const name = profile?.channels[channelIndex]?.name?.trim()
+  if (!name) return `CH${channelIndex + 1}`
+  return name
 }
+
+function channelTone(deviceId: string, channelIndex: number, rawValue: number): 'active' | 'warning' {
+  const status = deviceStore.statusFor(deviceId)
+  if (status === 'Error' || status === 'Disconnected') return 'warning'
+
+  const value = deviceStore.getDisplayValue(deviceId, channelIndex, rawValue)
+  const range = deviceStore.getChannelRange(deviceId, channelIndex)
+  const span = range.max - range.min
+  const upper = range.max - span * 0.12
+  const lower = range.min + span * 0.12
+  return value >= upper || value <= lower ? 'warning' : 'active'
+}
+
+function deviceStatusTone(profileId: string): 'healthy' | 'warning' {
+  const status = deviceStore.statusFor(profileId)
+  if (status === 'Error' || status === 'Disconnected') return 'warning'
+  return 'healthy'
+}
+
+function deviceStatusLabel(profileId: string): string {
+  if (deviceStore.acquiringFor(profileId)) return i18n.t.acquiring || '采集中'
+  const status = deviceStore.statusFor(profileId)
+  if (status === 'Connected') return i18n.t.connectedState || 'Connected'
+  if (status === 'Connecting') return i18n.t.connectingState || 'Connecting'
+  if (status === 'Error') return i18n.t.warningState || 'Warning'
+  return i18n.t.disconnectedState || 'Disconnected'
+}
+
+const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
+  (deviceStore.profiles ?? []).flatMap((profile, index) => {
+    const latest = deviceStore.latestFor(profile.id)
+    if (!latest?.channels?.length) return []
+
+    const channels = latest.channels.map((rawValue, snapshotIndex) => {
+      const channelIndex = latest.channelIndices[snapshotIndex]
+      return {
+        key: `${profile.id}-${channelIndex}`,
+        channelIndex,
+        label: `CH_${String(channelIndex + 1).padStart(2, '0')}`,
+        name: channelDisplayName(profile.id, channelIndex),
+        formattedValue: deviceStore.formatValue(profile.id, channelIndex, rawValue),
+        unit: profile.channels[channelIndex]?.unit || (i18n.t.unit ?? 'PA'),
+        tone: channelTone(profile.id, channelIndex, rawValue),
+      }
+    })
+
+    return [
+      {
+        id: profile.id,
+        name: profile.name,
+        type: profile.type,
+        status: deviceStore.statusFor(profile.id),
+        statusLabel: deviceStatusLabel(profile.id),
+        channelCount: channels.length,
+        warningCount: channels.filter((ch) => ch.tone === 'warning').length,
+        theme: getDeviceTheme(index),
+        channels,
+      },
+    ]
+  }),
+)
 </script>
 
 <template>
-  <section class="overview-panel">
-    <header class="overview-panel__head">
-      <div>
-        <p class="overview-panel__eyebrow">Fleet Overview</p>
-        <h2>设备总览</h2>
+  <UiPanel class="overview-panel h-full" :padded="false">
+    <template #header>
+      <div class="overview-panel__header-row flex min-w-full items-start justify-between gap-4">
+        <UiSectionHeader :title="i18n.t.allDevicesOverview || '设备总览'" />
+        <div class="flex items-center gap-2">
+          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="() => { (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1064Pre').forEach((p) => deviceStore.tareAllEnabled(p.id)) }">
+            {{ i18n.t.allDevicesTare || '全部归零' }}
+          </UiButton>
+        </div>
       </div>
-      <div class="overview-panel__metrics">
-        <span><RadioTower class="overview-panel__icon" />{{ devices.length }} devices</span>
-        <span><Waves class="overview-panel__icon" />{{ deviceStore.latestSnapshots.length }} live</span>
-      </div>
-    </header>
+    </template>
 
-    <div v-if="devices.length" class="overview-grid">
-      <button
-        v-for="profile in devices"
-        :key="profile.id"
-        type="button"
-        class="overview-card"
-        :class="{ 'overview-card--active': profile.id === selectedId }"
-        @click="selectDevice(profile.id)"
-      >
-        <div class="overview-card__top">
-          <div>
-            <p class="overview-card__type">{{ profile.type }}</p>
-            <h3>{{ profile.name }}</h3>
+    <div class="device-overview">
+      <div class="device-overview__stack">
+        <section
+          v-for="group in overviewGroups"
+          :key="group.id"
+          class="overview-device-group border-l-4"
+          :class="group.theme.borderLeft"
+        >
+          <header class="overview-device-group__header">
+            <div class="min-w-0">
+              <div class="overview-device-group__eyebrow">{{ group.type }}</div>
+              <div class="overview-device-group__title-row">
+                <strong class="overview-device-group__title">{{ group.name }}</strong>
+                <span class="overview-device-group__count">{{ group.channelCount }} CH</span>
+                <span
+                  class="overview-device-group__status"
+                  :class="deviceStatusTone(group.id) === 'warning' ? 'overview-device-group__status--warning' : 'overview-device-group__status--healthy'"
+                >
+                  {{ group.statusLabel }}
+                </span>
+              </div>
+            </div>
+            <div class="overview-device-group__summary">
+              <span class="overview-device-group__summary-label">{{ i18n.t.warningState || 'Warning' }}</span>
+              <span class="overview-device-group__summary-value" :class="group.warningCount > 0 ? 'text-amber-500' : group.theme.text">
+                {{ group.warningCount }}
+              </span>
+            </div>
+          </header>
+
+          <div class="overview-device-group__channels">
+            <div
+              v-for="channel in group.channels"
+              :key="channel.key"
+              class="overview-channel-micro"
+              :class="channel.tone === 'warning' ? 'overview-channel-micro--warning' : ''"
+              :title="`${group.name} - ${channel.name}`"
+            >
+              <div class="overview-channel-micro__main">
+                <span
+                  class="overview-channel-micro__value"
+                  :class="channel.tone === 'warning' ? 'text-amber-500' : group.theme.text"
+                >
+                  {{ channel.formattedValue }}
+                </span>
+                <span class="overview-channel-micro__unit">{{ channel.unit }}</span>
+              </div>
+              <div class="overview-channel-micro__meta">
+                <span class="overview-channel-micro__ch">{{ channel.label }}</span>
+                <span class="overview-channel-micro__dot" :class="channel.tone === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'" />
+              </div>
+            </div>
           </div>
-          <span class="overview-card__status">{{ deviceStore.statusFor(profile.id) }}</span>
-        </div>
+        </section>
+      </div>
 
-        <div class="overview-card__value">
-          <strong>{{ latestValue(profile) }}</strong>
-          <small>{{ latestUnit(profile) }}</small>
-        </div>
-
-        <div class="overview-card__meta">
-          <span><Gauge class="overview-panel__icon" />{{ profile.samplingRate }} Hz</span>
-          <span><Activity class="overview-panel__icon" />{{ historyCount(profile.id) }} samples</span>
-          <span>{{ profile.channels.length }} channels</span>
-        </div>
-      </button>
+      <div v-if="overviewGroups.length === 0" class="overview-empty">
+        <p>{{ i18n.t.noConnectedDevices || '暂无设备数据' }}</p>
+      </div>
     </div>
-
-    <div v-else class="overview-empty">
-      <RadioTower class="overview-empty__icon" />
-      <h3>暂无设备配置</h3>
-      <p>打开设备管理添加或扫描 simulated device 后，总览会显示实时状态。</p>
-    </div>
-  </section>
+  </UiPanel>
 </template>
 
 <style scoped>
-.overview-panel {
-  border-radius: 1rem;
-  background: rgba(15, 23, 42, 0.55);
+.overview-panel__header-row {
+  padding-inline: var(--space-3);
+}
+
+.device-overview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-inline: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+.device-overview__stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.overview-device-group {
+  border-radius: var(--radius-lg, 0.75rem);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(30, 41, 59, 0.3);
+  padding: var(--space-2-5) var(--space-3) var(--space-3);
+}
+
+:root[data-theme='light'] .overview-device-group {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.overview-device-group__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.overview-device-group__eyebrow {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.overview-device-group__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.overview-device-group__title {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+:root[data-theme='light'] .overview-device-group__title {
+  color: #0f172a;
+}
+
+.overview-device-group__count,
+.overview-device-group__status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.1rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.overview-device-group__count {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+}
+
+:root[data-theme='light'] .overview-device-group__count {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.02);
+  color: #64748b;
+}
+
+.overview-device-group__status--healthy {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.overview-device-group__status--warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+
+.overview-device-group__summary {
+  display: grid;
+  justify-items: end;
+  gap: 0.05rem;
+  min-width: 2.5rem;
+}
+
+.overview-device-group__summary-label {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.overview-device-group__summary-value {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.overview-device-group__channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-rows: repeat(2, 1fr);
+  grid-auto-flow: column dense;
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+
+.overview-channel-micro {
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 0.6rem);
+  padding: var(--space-2) var(--space-2-5);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 0;
+  position: relative;
   overflow: hidden;
 }
 
-.overview-panel__head {
-  min-height: 76px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+:root[data-theme='light'] .overview-channel-micro {
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.overview-panel__eyebrow,
-.overview-card__type {
-  margin: 0 0 0.3rem;
-  color: #64748b;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.overview-channel-micro::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #10b981, transparent);
+  opacity: 0.5;
 }
 
-.overview-panel__head h2,
-.overview-card h3 {
-  margin: 0;
+.overview-channel-micro--warning::before {
+  background: linear-gradient(90deg, transparent, #f59e0b, transparent);
 }
 
-.overview-panel__metrics,
-.overview-card__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: #94a3b8;
-  font: 700 0.72rem/1 var(--font-family-mono, monospace);
+.overview-channel-micro--warning {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
 }
 
-.overview-panel__metrics span,
-.overview-card__meta span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.overview-panel__icon {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0.9rem;
-  padding: 1rem;
-}
-
-.overview-card {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  min-height: 190px;
-  padding: 1rem;
-  text-align: left;
-  border-radius: 0.85rem;
-  color: inherit;
-  background: rgba(30, 41, 59, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
-}
-
-.overview-card:hover,
-.overview-card--active {
-  border-color: color-mix(in srgb, var(--accent-success) 55%, transparent);
-  background: rgba(16, 185, 129, 0.08);
-  transform: translateY(-1px);
-}
-
-.overview-card__top {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.overview-card__status {
-  height: fit-content;
-  padding: 0.25rem 0.5rem;
-  border-radius: 999px;
-  color: var(--accent-success);
-  background: rgba(16, 185, 129, 0.1);
-  font: 800 0.62rem/1 var(--font-family-mono, monospace);
-  text-transform: uppercase;
-}
-
-.overview-card__value {
+.overview-channel-micro__main {
   display: flex;
   align-items: baseline;
-  gap: 0.45rem;
+  gap: var(--space-1);
+  line-height: 1;
 }
 
-.overview-card__value strong {
-  color: var(--accent-success);
-  font: 900 2.4rem/1 var(--font-family-mono, monospace);
-  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-success) 45%, transparent);
+.overview-channel-micro__value {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-black);
+  letter-spacing: -0.02em;
 }
 
-.overview-card__value small {
+:root[data-theme='dark'] .overview-channel-micro__value {
+  text-shadow: 0 0 10px currentColor;
+}
+
+.overview-channel-micro__unit {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
   color: #64748b;
-  font-weight: 800;
+  font-style: italic;
+  text-transform: uppercase;
 }
 
-.overview-card__meta {
-  flex-wrap: wrap;
-  margin-top: auto;
+.overview-channel-micro__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+
+.overview-channel-micro__ch {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.04em;
+}
+
+.overview-channel-micro__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .overview-empty {
-  min-height: 320px;
   display: flex;
+  height: 16rem;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 2rem;
-  color: #94a3b8;
-  text-align: center;
-}
-
-.overview-empty h3,
-.overview-empty p {
-  margin: 0;
-}
-
-.overview-empty__icon {
-  width: 2.5rem;
-  height: 2.5rem;
-  color: var(--accent-success);
+  color: var(--text-muted);
 }
 </style>

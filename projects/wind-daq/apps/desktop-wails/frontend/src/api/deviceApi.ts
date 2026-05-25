@@ -1,5 +1,13 @@
 import { request } from '@api/http-client'
-import type { DeviceProfile, DeviceStatus, DataPayload } from '@api/types'
+import type { DeviceProfile, DeviceStatus, DataPayload, ScanResult } from '@api/types'
+import { subscribeDaqStream } from '@api/sse-client'
+import { isWailsAvailable, wailsApi } from '@api/wails-adapter'
+export { motionApi } from './motionApi'
+export { calibrationApi } from './calibrationApi'
+export { traversalApi, storageApi, reportApi } from './otherApis'
+export type { TraversalPoint, MotionAxisStatus, MotionStatus } from './otherApis'
+
+const useWails = isWailsAvailable
 
 export function defaultSimulatedProfile(): DeviceProfile {
   return {
@@ -17,121 +25,145 @@ export function defaultSimulatedProfile(): DeviceProfile {
   }
 }
 
+type SnapshotCallback = (payload: DataPayload) => void
+type StatusCallback = (status: DeviceStatus[]) => void
+
+function wailsOk(res: { Success: boolean; Error?: string }): { success: boolean } {
+  if (!res.Success && res.Error) {
+    throw new Error(res.Error)
+  }
+  return { success: res.Success }
+}
+
 export const deviceApi = {
-  getProfiles: () => request<DeviceProfile[]>('/api/device/profiles'),
-  upsertProfile: (profile: DeviceProfile) =>
-    request<{ success: boolean }>('/api/device/profiles', { method: 'PUT', body: JSON.stringify(profile) }),
-  connect: (id: string) =>
-    request<{ success: boolean }>(`/api/device/${id}/connect`, { method: 'POST' }),
-  disconnect: (id: string) =>
-    request<{ success: boolean }>(`/api/device/${id}/disconnect`, { method: 'POST' }),
-  startAcquisition: (id: string) =>
-    request<{ success: boolean }>(`/api/device/${id}/startAcquisition`, { method: 'POST' }),
-  stopAcquisition: (id: string) =>
-    request<{ success: boolean }>(`/api/device/${id}/stopAcquisition`, { method: 'POST' }),
-  getStatus: (id: string) => request<DeviceStatus>(`/api/device/${id}/status`),
-  getLatest: (id: string) => request<DataPayload>(`/api/daq/latest/${id}`),
-  getProfilesList: () => request<DeviceProfile[]>('/api/device/profiles'),
-}
+  scanDevices: async (): Promise<ScanResult[]> => {
+    if (useWails()) {
+      const results = await wailsApi.device.scanDevices()
+      return (results ?? []) as ScanResult[]
+    }
+    return request<ScanResult[]>('/api/device/scan')
+  },
 
-export interface MotionAxisStatus {
-  name: string
-  position: number
-  homed: boolean
-  moving: boolean
-}
+  getProfiles: async (): Promise<DeviceProfile[]> => {
+    if (useWails()) {
+      return (await wailsApi.device.getProfiles()) as DeviceProfile[]
+    }
+    return request<DeviceProfile[]>('/api/device/profiles')
+  },
 
-export interface MotionStatus {
-  connected: boolean
-  axes: MotionAxisStatus[]
-}
+  upsertProfile: async (profile: DeviceProfile): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.upsertProfile(profile as any))
+    }
+    return request<{ success: boolean }>('/api/device/profiles', { method: 'PUT', body: JSON.stringify(profile) })
+  },
 
-export const motionApi = {
-  connect: () => request<{ success: boolean }>('/api/motion/connect', { method: 'POST' }),
-  disconnect: () => request<{ success: boolean }>('/api/motion/disconnect', { method: 'POST' }),
-  status: () => request<MotionStatus>('/api/motion/status'),
-  moveTo: (axis: string, position: number) =>
-    request<{ success: boolean }>('/api/motion/moveTo', { method: 'POST', body: JSON.stringify({ axis, position }) }),
-  moveBy: (axis: string, delta: number) =>
-    request<{ success: boolean }>('/api/motion/moveBy', { method: 'POST', body: JSON.stringify({ axis, delta }) }),
-  jog: (axis: string, velocity: number) =>
-    request<{ success: boolean }>('/api/motion/jog', { method: 'POST', body: JSON.stringify({ axis, velocity }) }),
-  home: () => request<{ success: boolean }>('/api/motion/home', { method: 'POST' }),
-  stop: () => request<{ success: boolean }>('/api/motion/stop', { method: 'POST' }),
-  emergencyStop: () => request<{ success: boolean }>('/api/motion/emergencyStop', { method: 'POST' }),
-}
+  connect: async (id: string): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.connect(id))
+    }
+    return request<{ success: boolean }>(`/api/device/${id}/connect`, { method: 'POST' })
+  },
 
-export interface CalibrationPointResult {
-  pointIndex: number
-  targetPressure: number
-  timestamp: number
-  values: Record<number, number>
-}
+  disconnect: async (id: string): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.disconnect(id))
+    }
+    return request<{ success: boolean }>(`/api/device/${id}/disconnect`, { method: 'POST' })
+  },
 
-export interface CalibrationStatus {
-  taskId: string
-  state: string
-  currentPoint: number
-  totalPoints: number
-  lastError?: string
-  results?: CalibrationPointResult[]
-}
+  startAcquisition: async (id: string): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.startAcquisition(id))
+    }
+    return request<{ success: boolean }>(`/api/device/${id}/startAcquisition`, { method: 'POST' })
+  },
 
-export interface CalibrationConfig {
-  taskId: string
-  deviceId: string
-  type: string
-  channels: number[]
-  pressurePoints: number[]
-  averageSamples: number
-}
+  stopAcquisition: async (id: string): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.stopAcquisition(id))
+    }
+    return request<{ success: boolean }>(`/api/device/${id}/stopAcquisition`, { method: 'POST' })
+  },
 
-export const calibrationApi = {
-  start: (cfg: CalibrationConfig) =>
-    request<{ success: boolean }>('/api/calibration/start', { method: 'POST', body: JSON.stringify(cfg) }),
-  status: () => request<CalibrationStatus>('/api/calibration/status'),
-  collect: () => request<{ success: boolean }>('/api/calibration/collect', { method: 'POST' }),
-  pause: () => request<{ success: boolean }>('/api/calibration/pause', { method: 'POST' }),
-  resume: () => request<{ success: boolean }>('/api/calibration/resume', { method: 'POST' }),
-  stop: () => request<{ success: boolean }>('/api/calibration/stop', { method: 'POST' }),
-  getResult: (taskId: string) => request<CalibrationStatus>(`/api/calibration/result?taskId=${taskId}`),
-}
+  getStatus: async (id: string): Promise<DeviceStatus> => {
+    if (useWails()) {
+      const result = await wailsApi.device.getStatus(id)
+      if (result === false || result === true) {
+        throw new Error('设备状态不可用')
+      }
+      return result as DeviceStatus
+    }
+    return request<DeviceStatus>(`/api/device/${id}/status`)
+  },
 
-export interface TraversalPoint {
-  x: number
-  y: number
-  z: number
-}
+  getLatest: async (id: string): Promise<DataPayload> => {
+    if (useWails()) {
+      const result = await wailsApi.device.getLatestData(id)
+      if (result === false || result === true) {
+        return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
+      }
+      return result as DataPayload
+    }
+    return request<DataPayload>(`/api/daq/latest/${id}`)
+  },
 
-export const traversalApi = {
-  generateGrid: (cfg: { xStart: number; xEnd: number; xStep: number; yStart: number; yEnd: number; yStep: number; zStart: number }) =>
-    request<TraversalPoint[]>('/api/traversal/generateGrid', {
-      method: 'POST', body: JSON.stringify(cfg),
-    }),
-  start: (taskId: string, deviceId: string, channels: number[], path: TraversalPoint[]) =>
-    request<{ success: boolean }>('/api/traversal/start', {
-      method: 'POST', body: JSON.stringify({ taskId, deviceId, channels, path }),
-    }),
-  status: () => request<{ state: string; currentPoint: number; totalPoints: number }>('/api/traversal/status'),
-  runPoint: () => request<{ success: boolean }>('/api/traversal/runPoint', { method: 'POST' }),
-  pause: () => request<{ success: boolean }>('/api/traversal/pause', { method: 'POST' }),
-  resume: () => request<{ success: boolean }>('/api/traversal/resume', { method: 'POST' }),
-  stop: () => request<{ success: boolean }>('/api/traversal/stop', { method: 'POST' }),
-}
+  getPublishRate: async (): Promise<number> => {
+    if (useWails()) {
+      return await wailsApi.device.getPublishRate()
+    }
+    return request<{ hz: number }>('/api/daq/publishRate').then((result) => result.hz)
+  },
 
-export const storageApi = {
-  status: () => request<{ recording: boolean; outputDir?: string }>('/api/storage/status'),
-  start: (outputDir: string, filePrefix: string) =>
-    request<{ success: boolean }>('/api/storage/start', {
-      method: 'POST', body: JSON.stringify({ outputDir, filePrefix }),
-    }),
-  stop: () => request<{ success: boolean }>('/api/storage/stop', { method: 'POST' }),
-}
+  setPublishRate: async (hz: number): Promise<{ success: boolean }> => {
+    if (useWails()) {
+      return wailsOk(await wailsApi.device.setPublishRate(hz))
+    }
+    return request<{ success: boolean }>('/api/daq/publishRate', { method: 'PUT', body: JSON.stringify({ hz }) })
+  },
 
-export const reportApi = {
-  generate: (outputDir: string, filePrefix: string, deviceId: string) =>
-    request<{ path: string; size: number; records: number }>('/api/report/generate', {
-      method: 'POST', body: JSON.stringify({ outputDir, filePrefix, deviceId }),
-    }),
-  status: () => request<{ generating: boolean }>('/api/report/status'),
+  getProfilesList: async (): Promise<DeviceProfile[]> => {
+    if (useWails()) {
+      return (await wailsApi.device.getProfiles()) as DeviceProfile[]
+    }
+    return request<DeviceProfile[]>('/api/device/profiles')
+  },
+
+  _snapshotListeners: new Set<SnapshotCallback>(),
+  _statusListeners: new Set<StatusCallback>(),
+  _subscriptions: new Map<string, ReturnType<typeof subscribeDaqStream>>(),
+
+  onSnapshot: (cb: SnapshotCallback): (() => void) => {
+    deviceApi._snapshotListeners.add(cb)
+    return () => { deviceApi._snapshotListeners.delete(cb) }
+  },
+
+  onStatusUpdated: (cb: StatusCallback): (() => void) => {
+    deviceApi._statusListeners.add(cb)
+    return () => { deviceApi._statusListeners.delete(cb) }
+  },
+
+  subscribeToDevice: (deviceId: string): void => {
+    if (deviceApi._subscriptions.has(deviceId)) return
+
+    const subscription = subscribeDaqStream(
+      deviceId,
+      (payload) => {
+        deviceApi._snapshotListeners.forEach((cb) => cb(payload))
+      },
+      (error) => {
+        console.log(`SSE for ${deviceId}:`, error)
+      }
+    )
+
+    deviceApi._subscriptions.set(deviceId, subscription)
+  },
+
+  unsubscribeFromDevice: (deviceId: string): void => {
+    const subscription = deviceApi._subscriptions.get(deviceId)
+    if (subscription) {
+      subscription.unsubscribe()
+      deviceApi._subscriptions.delete(deviceId)
+    }
+  },
 }

@@ -5,20 +5,19 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { traversalApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 const i18n = useI18nStore()
 const feedback = useFeedbackStore()
 const deviceStore = useDeviceStore()
 
-type Tab = 'config' | 'execute' | 'visualize'
-type TraversalMode = 'hil' | 'layout' | 'prb'
-
-const activeTab = ref<Tab>('config')
 const busy = ref(false)
 const error = ref('')
 const state = ref('idle')
 const currentPoint = ref(0)
 const totalPoints = ref(0)
-const lastTaskId = ref('')
+const showSettings = ref(false)
+const activeWorkspaceTab = ref<'preview' | 'visualize'>('preview')
 
 const pathConfig = ref({
   xStart: 0, xEnd: 100, xStep: 10,
@@ -26,26 +25,57 @@ const pathConfig = ref({
   zStart: 0, zEnd: 50, zStep: 10,
   deviceId: 'sim-1',
   channels: '0,1,2,3',
-  mode: 'hil' as TraversalMode,
+})
+const generatedPath = ref<{ x: number; y: number; z: number }[]>([])
+
+// 实时监控数据
+const monitorData = ref({
+  alpha: '--',
+  beta: '--',
+  attackAngle: '--',
+  sideslipAngle: '--',
+  mach: '--',
+  velocity: '--',
+  p0: '--',
+  ps: '--',
+  validity: '--',
 })
 
-const generatedPath = ref<{ x: number; y: number; z: number }[]>([])
+// 实时压力数据
+const pressureData = ref({
+  p1: '--',
+  p2: '--',
+  p3: '--',
+  p4: '--',
+  p5: '--',
+  patm: '--',
+  tatm: '--',
+})
 
 const running = computed(() => state.value === 'running')
 const paused = computed(() => state.value === 'paused')
 const completed = computed(() => state.value === 'idle' && currentPoint.value > 0 && currentPoint.value >= totalPoints.value)
+const canStart = computed(() => !running && !paused && generatedPath.value.length > 0)
+const canPause = computed(() => running)
+const canResume = computed(() => paused)
 
-const tabs = [
-  { id: 'config' as const, label: '路径配置' },
-  { id: 'execute' as const, label: '执行控制' },
-  { id: 'visualize' as const, label: '可视化' },
-]
+const statusText = computed(() => {
+  if (running) return 'RUNNING'
+  if (paused) return 'PAUSED'
+  if (completed) return 'DONE'
+  if (error.value) return 'ERROR'
+  return 'IDLE'
+})
 
-const modes = [
-  { id: 'hil' as const, label: 'HIL (水平网格)' },
-  { id: 'layout' as const, label: 'Layout (布局点)' },
-  { id: 'prb' as const, label: 'PRB (探针校准)' },
-]
+const statusDotClass = computed(() => {
+  if (running) return 'bg-emerald-500 shadow-[0_0_6px_#10b981]'
+  if (paused) return 'bg-amber-500 animate-pulse'
+  if (completed) return 'bg-blue-500 shadow-[0_0_6px_#3b82f6]'
+  if (error.value) return 'bg-rose-500 shadow-[0_0_6px_#f43f5e]'
+  return 'bg-slate-400'
+})
+
+const progressSummary = computed(() => `${currentPoint.value} / ${totalPoints.value}`)
 
 async function run(action: () => Promise<void>) {
   busy.value = true; error.value = ''
@@ -56,16 +86,13 @@ async function run(action: () => Promise<void>) {
 async function refreshStatus() {
   try {
     const s = await traversalApi.status()
-    state.value = s.state
-    currentPoint.value = s.currentPoint
-    totalPoints.value = s.totalPoints
+    state.value = s.state; currentPoint.value = s.currentPoint; totalPoints.value = s.totalPoints
   } catch { /* offline */ }
 }
 
-async function startTraversal() {
+async function startTest() {
   await run(async () => {
     const taskId = `trav-${Date.now()}`
-    lastTaskId.value = taskId
     const channels = pathConfig.value.channels.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
     const path = await traversalApi.generateGrid({
       xStart: pathConfig.value.xStart, xEnd: pathConfig.value.xEnd, xStep: pathConfig.value.xStep,
@@ -76,366 +103,371 @@ async function startTraversal() {
     await traversalApi.start(taskId, pathConfig.value.deviceId, channels, path)
     await refreshStatus()
     totalPoints.value = path.length
-    activeTab.value = 'execute'
     feedback.pushToast('遍历任务已启动', 'success')
   })
 }
 
-async function pauseTraversal() { await run(async () => { await traversalApi.pause(); await refreshStatus(); feedback.pushToast('已暂停', 'info') }) }
-async function resumeTraversal() { await run(async () => { await traversalApi.resume(); await refreshStatus(); feedback.pushToast('已恢复', 'success') }) }
-async function stopTraversal() { await run(async () => { await traversalApi.stop(); await refreshStatus(); feedback.pushToast('已停止', 'info') }) }
+async function pauseTest() { await run(async () => { await traversalApi.pause(); await refreshStatus(); feedback.pushToast('已暂停', 'info') }) }
+async function resumeTest() { await run(async () => { await traversalApi.resume(); await refreshStatus(); feedback.pushToast('已恢复', 'success') }) }
+async function stopTest() { await run(async () => { await traversalApi.stop(); await refreshStatus(); feedback.pushToast('已停止', 'info') }) }
 async function runCurrentPoint() {
   await run(async () => {
-    await traversalApi.runPoint()
-    await refreshStatus()
-    if (completed.value) {
-      feedback.pushToast('遍历完成！', 'success')
-    }
+    await traversalApi.runPoint(); await refreshStatus()
+    if (completed.value) feedback.pushToast('遍历完成！', 'success')
   })
 }
+
+function openSettings() { showSettings.value = true }
 
 onMounted(refreshStatus)
 </script>
 
 <template>
-  <div class="traversal-view">
-    <div class="traversal-view__head">
-      <p class="eyebrow">{{ i18n.t.traversalTest }}</p>
-      <h2>{{ i18n.t.traversalTest }}</h2>
-    </div>
-
-    <section class="state-panel" :class="{ complete: completed, error: !!error && !running }">
-      <div class="state-panel__indicator" />
-      <div>
-        <h3>{{ completed ? '遍历完成' : (running ? '遍历进行中' : (paused ? '已暂停' : '遍历测试')) }}</h3>
-        <p v-if="completed">所有 {{ totalPoints }} 个点位已采集完毕</p>
-        <p v-else-if="running">点位: {{ currentPoint + 1 }} / {{ totalPoints }} — 按「采集当前点」记录数据</p>
-        <p v-else-if="paused">点击恢复继续遍历</p>
-        <p v-else>配置遍历路径参数后启动任务</p>
-      </div>
-    </section>
-
-    <p v-if="error" class="error-text">{{ error }}</p>
-
-    <div class="traversal-tabs">
-      <button
-        v-for="t in tabs"
-        :key="t.id"
-        class="traversal-tab"
-        :class="{ active: activeTab === t.id }"
-        @click="activeTab = t.id"
-      >
-        {{ t.label }}
-      </button>
-    </div>
-
-    <div v-if="activeTab === 'config'" class="traversal-config">
-      <div class="traversal-config__mode">
-        <h3>遍历模式</h3>
-        <div class="traversal-config__mode-btns">
-          <button v-for="m in modes" :key="m.id" class="traversal-tab" :class="{ active: pathConfig.mode === m.id }" @click="pathConfig.mode = m.id">{{ m.label }}</button>
-        </div>
-      </div>
-      <div class="traversal-config__misc">
-        <div class="traversal-config__field">
-          <label>设备</label>
-          <select v-model="pathConfig.deviceId">
-            <option v-for="d in deviceStore.profiles" :key="d.id" :value="d.id">{{ d.name }}</option>
-          </select>
-        </div>
-        <div class="traversal-config__field">
-          <label>通道 (逗号分隔)</label>
-          <input v-model="pathConfig.channels" type="text" />
-        </div>
-      </div>
-      <div class="traversal-config__grid">
-        <div v-for="axis in ['x', 'y', 'z']" :key="axis" class="traversal-config__axis">
-          <h3>{{ axis.toUpperCase() }} 轴</h3>
-          <div class="traversal-config__field">
-            <label>起始</label>
-            <input v-model.number="pathConfig[`${axis}Start` as keyof typeof pathConfig]" type="number" />
-          </div>
-          <div class="traversal-config__field">
-            <label>结束</label>
-            <input v-model.number="pathConfig[`${axis}End` as keyof typeof pathConfig]" type="number" />
-          </div>
-          <div class="traversal-config__field">
-            <label>步长</label>
-            <input v-model.number="pathConfig[`${axis}Step` as keyof typeof pathConfig]" type="number" step="1" />
+  <div class="flex h-full flex-col text-[color:var(--text-primary)]">
+    <!-- Top Toolbar -->
+    <div class="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 dark:border-slate-800 dark:bg-slate-900">
+      <div class="flex items-center gap-3">
+        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500 text-white font-bold text-sm">T</div>
+        <div>
+          <h1 class="text-sm font-bold text-slate-900 dark:text-slate-100">遍历测试</h1>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span class="flex h-1.5 w-1.5 rounded-full" :class="statusDotClass"></span>
+            <p class="text-xs text-slate-400">{{ statusText }} · 预设轨迹自动采集</p>
           </div>
         </div>
       </div>
-      <div class="traversal-config__preview">
-        <h3>路径预览 ({{ generatedPath.length || 0 }} 个点)</h3>
-        <svg :viewBox="`0 0 200 200`" class="traversal-config__svg">
-          <line x1="10" y1="190" x2="190" y2="190" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-          <line x1="10" y1="190" x2="10" y2="10" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-          <circle v-for="(pt, i) in generatedPath.slice(0, 200)" :key="i" :cx="10 + (pt.x / (pathConfig.xEnd || 1)) * 180" :cy="190 - (pt.y / (pathConfig.yEnd || 1)) * 180" r="2" fill="rgba(16,185,129,0.6)" />
-        </svg>
-        <p v-if="!generatedPath.length" style="color:var(--text-muted);font-size:0.7rem;">启动遍历后自动生成路径</p>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800/50">
+          <div class="text-xs text-slate-500">进度</div>
+          <div class="font-mono text-sm font-semibold text-blue-500">{{ progressSummary }}</div>
+          <div class="h-4 w-px bg-slate-300 dark:bg-slate-600"></div>
+          <div class="text-xs text-slate-500">SVG 预览</div>
+          <div class="max-w-[80px] truncate font-mono text-xs text-slate-600 dark:text-slate-300">{{ generatedPath.length || 0 }} 点</div>
+        </div>
+
+        <button
+          @click="openSettings"
+          class="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-all hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          配置
+        </button>
+
+        <div class="w-px h-5 bg-slate-200 dark:bg-slate-700"></div>
+
+        <div class="flex items-center gap-2">
+          <button
+            v-if="canStart"
+            class="flex h-9 items-center gap-2 rounded-lg bg-blue-500 px-4 text-xs font-semibold text-white transition-all hover:bg-blue-600 active:scale-95 disabled:opacity-40"
+            :disabled="busy"
+            @click="startTest"
+          >
+            <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            启动
+          </button>
+          <template v-else-if="canPause">
+            <button class="flex h-9 items-center gap-2 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-white transition-all hover:bg-amber-600 active:scale-95" @click="pauseTest" :disabled="busy">
+              <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              暂停
+            </button>
+            <button class="flex h-9 items-center gap-2 rounded-lg bg-rose-500 px-3 text-xs font-semibold text-white transition-all hover:bg-rose-600 active:scale-95" @click="stopTest" :disabled="busy">
+              <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg>
+              停止
+            </button>
+          </template>
+          <template v-else-if="canResume">
+            <button class="flex h-9 items-center gap-2 rounded-lg bg-blue-500 px-3 text-xs font-semibold text-white transition-all hover:bg-blue-600 active:scale-95" @click="resumeTest" :disabled="busy">
+              <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              恢复
+            </button>
+            <button class="flex h-9 items-center gap-2 rounded-lg bg-rose-500 px-3 text-xs font-semibold text-white transition-all hover:bg-rose-600 active:scale-95" @click="stopTest" :disabled="busy">
+              <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg>
+              停止
+            </button>
+          </template>
+        </div>
       </div>
-      <button class="btn-primary" :disabled="busy || running" @click="startTraversal">
-        启动遍历
-      </button>
     </div>
 
-    <div v-else-if="activeTab === 'execute'" class="traversal-execute">
-      <div v-if="!running && !paused && !completed" class="traversal-placeholder">
-        请先在路径配置中设定参数并启动遍历
-      </div>
-      <div v-else-if="completed" class="traversal-placeholder" style="color: var(--accent-success);">
-        ✔ 全部 {{ totalPoints }} 个点位已完成
-      </div>
-      <template v-else>
-        <div class="traversal-progress-bar">
-          <div class="traversal-progress-bar__fill" :style="{ width: `${totalPoints > 0 ? (currentPoint / totalPoints) * 100 : 0}%` }" />
-        </div>
-        <p class="traversal-progress-text">当前点位: {{ currentPoint + 1 }} / {{ totalPoints }}</p>
-        <div class="traversal-controls">
-          <button v-if="running" class="btn-secondary" :disabled="busy" @click="pauseTraversal">暂停</button>
-          <button v-if="paused" class="btn-primary" :disabled="busy" @click="resumeTraversal">恢复</button>
-          <button v-if="running || paused" class="btn-danger" :disabled="busy" @click="stopTraversal">停止</button>
-          <button v-if="running" class="btn-sm" :disabled="busy" @click="runCurrentPoint">采集当前点</button>
-        </div>
-      </template>
-    </div>
+    <!-- Main Workspace -->
+    <div class="flex-1 overflow-hidden p-5">
+      <div class="grid h-full grid-cols-[280px_1fr] gap-4">
+        <!-- Sidebar -->
+        <aside class="flex min-h-0 flex-col gap-3 overflow-hidden">
+          <section class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div class="mb-2">
+              <h2 class="text-sm font-semibold">遍历配置</h2>
+              <p class="text-xs text-slate-400">网格参数与设备</p>
+            </div>
 
-    <div v-else-if="activeTab === 'visualize'" class="traversal-visualize">
-      <div class="traversal-placeholder">
-        <p>可视化区域将在后续集成 ECharts Heatmap/CrossSection/Vector 后展示</p>
+            <div class="mb-2 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800">
+              <div class="text-[10px] text-slate-400 mb-2 font-semibold">网格范围 (mm)</div>
+              <div class="space-y-1.5">
+                <div v-for="axis in ['X', 'Y', 'Z']" :key="axis" class="flex items-center gap-2">
+                  <span class="text-xs font-bold text-slate-500 w-4">{{ axis }}</span>
+                  <input v-model.number="pathConfig[`${axis.toLowerCase()}Start` as keyof typeof pathConfig]" type="number" class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" placeholder="起始" :disabled="running || paused" />
+                  <span class="text-xs text-slate-400">~</span>
+                  <input v-model.number="pathConfig[`${axis.toLowerCase()}End` as keyof typeof pathConfig]" type="number" class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" placeholder="结束" :disabled="running || paused" />
+                  <input v-model.number="pathConfig[`${axis.toLowerCase()}Step` as keyof typeof pathConfig]" type="number" class="w-12 rounded border border-slate-200 bg-white px-1 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" placeholder="步长" :disabled="running || paused" />
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800">
+              <div class="text-[10px] text-slate-400 mb-1.5 font-semibold">设备与通道</div>
+              <div class="space-y-1.5">
+                <select v-model="pathConfig.deviceId" class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" :disabled="running || paused">
+                  <option v-for="d in deviceStore.profiles" :key="d.id" :value="d.id">{{ d.name }}</option>
+                </select>
+                <input v-model="pathConfig.channels" type="text" class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" placeholder="通道: 0,1,2,3" :disabled="running || paused" />
+              </div>
+            </div>
+          </section>
+
+          <!-- 监控面板 -->
+          <section class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div class="mb-2 flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-semibold">监控</h3>
+                <p class="text-xs text-slate-400">实时计算</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="flex h-2 w-2 rounded-full bg-rose-500"></span>
+                <span class="text-[10px] text-slate-500">采集中</span>
+                <span class="flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                <span class="text-[10px] text-slate-500">位移机构</span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <!-- 当前点 -->
+              <div class="rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                <div class="text-[10px] text-slate-400 mb-1">当前点</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-slate-500">α:</span>
+                    <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.alpha }}</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-slate-500">β:</span>
+                    <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.beta }}</span>
+                  </div>
+                </div>
+              </div>
+              <!-- 参数网格 -->
+              <div class="grid grid-cols-2 gap-2">
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">攻角</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.attackAngle }}</span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">侧滑角</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.sideslipAngle }}</span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">马赫数</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.mach }}</span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">速度</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.velocity }}</span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">P0</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.p0 }}</span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                  <span class="text-xs text-slate-500">Ps</span>
+                  <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.ps }}</span>
+                </div>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                <span class="text-xs text-slate-500">有效性</span>
+                <span class="font-mono text-xs font-semibold text-slate-700">{{ monitorData.validity }}</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 实时压力数据面板 -->
+          <section class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div class="mb-2">
+              <h3 class="text-sm font-semibold">实时压力数据</h3>
+              <p class="text-xs text-slate-400">原始通道数据</p>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">P1</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.p1 }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">P2</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.p2 }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">P3</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.p3 }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">P4</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.p4 }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">P5</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.p5 }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">Patm</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.patm }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <span class="text-xs font-medium text-slate-600">Tatm</span>
+                <span class="font-mono text-xs font-semibold text-blue-500">{{ pressureData.tatm }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div class="mb-2">
+              <h3 class="text-sm font-semibold">执行状态</h3>
+              <p class="text-xs text-slate-400">实时点位进度</p>
+            </div>
+            <div class="mb-2 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800">
+              <div class="mb-1 text-[10px] text-slate-400">当前点位</div>
+              <div class="font-mono text-sm font-semibold text-blue-500">{{ running || paused ? `${currentPoint + 1} / ${totalPoints}` : '--' }}</div>
+            </div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                <span class="text-xs text-slate-500">状态</span>
+                <span class="font-mono text-xs font-semibold" :class="running ? 'text-emerald-500' : paused ? 'text-amber-500' : 'text-slate-400'">{{ statusText }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+                <span class="text-xs text-slate-500">采集</span>
+                <button v-if="running" class="text-xs font-semibold text-blue-500 hover:text-blue-700" :disabled="busy" @click="runCurrentPoint">运行</button>
+                <span v-else class="font-mono text-xs text-slate-400">--</span>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div class="min-h-0 flex-1">
+            <section class="h-full flex flex-col rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold">{{ activeWorkspaceTab === 'preview' ? '点位预览' : '可视化' }}</h3>
+                  <p class="text-xs text-slate-400">{{ activeWorkspaceTab === 'preview' ? '路径拓扑图' : '需集成 ECharts 扩展' }}</p>
+                </div>
+                <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
+                  <button
+                    class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                    :class="activeWorkspaceTab === 'preview' ? 'bg-blue-500 text-white' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'"
+                    @click="activeWorkspaceTab = 'preview'"
+                  >点位预览</button>
+                  <button
+                    class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                    :class="activeWorkspaceTab === 'visualize' ? 'bg-blue-500 text-white' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'"
+                    @click="activeWorkspaceTab = 'visualize'"
+                  >可视化</button>
+                </div>
+              </div>
+
+              <div class="flex-1 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800 relative">
+                <template v-if="activeWorkspaceTab === 'preview'">
+                  <div v-if="generatedPath.length > 0" class="h-full flex flex-col p-4">
+                    <!-- 图例 -->
+                    <div class="flex items-center justify-end gap-3 mb-2">
+                      <div class="flex items-center gap-1">
+                        <span class="h-2 w-2 rounded-full bg-blue-500"></span>
+                        <span class="text-[10px] text-slate-500">移动</span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+                        <span class="text-[10px] text-slate-500">稳定</span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                        <span class="text-[10px] text-slate-500">采集</span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <span class="h-2 w-2 rounded-full bg-purple-500"></span>
+                        <span class="text-[10px] text-slate-500">完成</span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <span class="h-2 w-2 rounded-full bg-slate-300"></span>
+                        <span class="text-[10px] text-slate-500">未测</span>
+                      </div>
+                    </div>
+                    <!-- SVG 画布 -->
+                    <div class="flex-1 relative">
+                      <svg :viewBox="`${pathConfig.xStart - 5} ${pathConfig.yStart - 5} ${Math.max(pathConfig.xEnd - pathConfig.xStart + 10, 1)} ${Math.max(pathConfig.yEnd - pathConfig.yStart + 10, 1)}`" class="w-full h-full" preserveAspectRatio="xMidYMid meet">
+                        <!-- 背景网格 -->
+                        <defs>
+                          <pattern :id="'grid-' + pathConfig.xStep" :width="pathConfig.xStep" :height="pathConfig.yStep" patternUnits="userSpaceOnUse">
+                            <path :d="`M ${pathConfig.xStep} 0 L 0 0 0 ${pathConfig.yStep}`" fill="none" stroke="rgba(148,163,184,0.15)" stroke-width="0.5"/>
+                          </pattern>
+                        </defs>
+                        <rect :x="pathConfig.xStart" :y="pathConfig.yStart" :width="pathConfig.xEnd - pathConfig.xStart" :height="pathConfig.yEnd - pathConfig.yStart" :fill="`url(#grid-${pathConfig.xStep})`" />
+
+                        <!-- 主网格线 -->
+                        <line v-for="x in Math.floor((pathConfig.xEnd - pathConfig.xStart) / pathConfig.xStep) + 1" :key="'vx'+x"
+                          :x1="pathConfig.xStart + (x - 1) * pathConfig.xStep" :y1="pathConfig.yStart"
+                          :x2="pathConfig.xStart + (x - 1) * pathConfig.xStep" :y2="pathConfig.yEnd"
+                          stroke="rgba(148,163,184,0.25)" stroke-width="0.5"
+                        />
+                        <line v-for="y in Math.floor((pathConfig.yEnd - pathConfig.yStart) / pathConfig.yStep) + 1" :key="'vy'+y"
+                          :x1="pathConfig.xStart" :y1="pathConfig.yStart + (y - 1) * pathConfig.yStep"
+                          :x2="pathConfig.xEnd" :y2="pathConfig.yStart + (y - 1) * pathConfig.yStep"
+                          stroke="rgba(148,163,184,0.25)" stroke-width="0.5"
+                        />
+
+                        <!-- 中心十字线 -->
+                        <line :x1="(pathConfig.xStart + pathConfig.xEnd) / 2" :y1="pathConfig.yStart" :x2="(pathConfig.xStart + pathConfig.xEnd) / 2" :y2="pathConfig.yEnd" stroke="rgba(59,130,246,0.3)" stroke-width="1" />
+                        <line :x1="pathConfig.xStart" :y1="(pathConfig.yStart + pathConfig.yEnd) / 2" :x2="pathConfig.xEnd" :y2="(pathConfig.yStart + pathConfig.yEnd) / 2" stroke="rgba(59,130,246,0.3)" stroke-width="1" />
+
+                        <!-- 连接路径线 -->
+                        <line v-for="(pt, i) in generatedPath.slice(0, -1)" :key="'l'+i"
+                          :x1="pt.x" :y1="pt.y"
+                          :x2="generatedPath[i+1].x" :y2="generatedPath[i+1].y"
+                          stroke="rgba(148,163,184,0.3)" stroke-width="0.8"
+                        />
+
+                        <!-- 点位圆圈 -->
+                        <circle v-for="(pt, i) in generatedPath" :key="i"
+                          :cx="pt.x" :cy="pt.y" r="1.8"
+                          :fill="i < currentPoint ? '#10b981' : i === currentPoint && running ? '#3b82f6' : 'rgba(148,163,184,0.5)'"
+                          :stroke="i === currentPoint && running ? '#3b82f6' : 'none'"
+                          stroke-width="0.5"
+                        />
+
+                        <!-- 当前点位高亮 -->
+                        <circle v-if="running && currentPoint < generatedPath.length"
+                          :cx="generatedPath[currentPoint]?.x" :cy="generatedPath[currentPoint]?.y" r="4"
+                          fill="none" stroke="#3b82f6" stroke-width="1"
+                          class="animate-pulse"
+                        />
+                      </svg>
+                    </div>
+                    <!-- 坐标轴标签 -->
+                    <div class="flex items-center justify-between mt-1 px-1">
+                      <span class="text-[10px] text-slate-400">X: {{ pathConfig.xStart }} ~ {{ pathConfig.xEnd }}</span>
+                      <span class="text-[10px] text-slate-400">Y: {{ pathConfig.yStart }} ~ {{ pathConfig.yEnd }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="flex h-full w-full flex-col items-center justify-center gap-3 text-center">
+                    <div class="text-4xl opacity-30">📐</div>
+                    <div class="text-xs text-slate-400">未配置路径</div>
+                    <p class="text-[10px] text-slate-400 px-8">在左侧边栏设定网格参数后点击「启动」生成遍历路径</p>
+                  </div>
+                </template>
+                <div v-else class="h-full flex items-center justify-center">
+                  <p class="text-xs text-slate-400">可视化（Heatmap / Vector / CrossSection）需额外 ECharts 组件集成</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.traversal-view {
-  padding: var(--space-4);
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.traversal-view__head {
-  margin-bottom: var(--space-4);
-}
-
-.traversal-view__head h2 {
-  margin: 0;
-  font-size: 1.35rem;
-}
-
-.state-panel.complete {
-  background: rgba(16, 185, 129, 0.08);
-  border-color: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-}
-
-.state-panel {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  padding: var(--space-3);
-  border-radius: 0.5rem;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-  font-size: 0.75rem;
-}
-
-.state-panel__indicator {
-  width: 0.6rem;
-  height: 0.6rem;
-  margin-top: 0.25rem;
-  border-radius: 999px;
-  background: currentColor;
-  box-shadow: 0 0 12px currentColor;
-  flex-shrink: 0;
-}
-
-.state-panel h3, .state-panel p { margin: 0; }
-.state-panel p { margin-top: 0.25rem; color: var(--text-muted); line-height: 1.5; }
-
-.error-text {
-  margin-bottom: var(--space-3);
-  color: var(--accent-danger);
-  font: 700 0.75rem/1.4 var(--font-family-mono, monospace);
-}
-
-.traversal-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: var(--space-4);
-  padding: 0.25rem;
-  border-radius: 0.5rem;
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.traversal-tab {
-  padding: 0.4rem 1rem;
-  border-radius: 0.375rem;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-weight: 700;
-  flex: 1;
-}
-
-.traversal-tab.active {
-  color: #f8fbff;
-  background: rgba(16, 185, 129, 0.16);
-}
-
-.traversal-config__mode,
-.traversal-config__misc {
-  display: flex;
-  gap: var(--space-4);
-  align-items: flex-start;
-  margin-bottom: var(--space-4);
-  padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
-}
-
-.traversal-config__mode h3,
-.traversal-config__misc > .traversal-config__field { margin: 0; }
-
-.traversal-config__mode-btns {
-  display: flex;
-  gap: 0.25rem;
-  margin-top: var(--space-2);
-}
-
-.traversal-config__preview {
-  margin-bottom: var(--space-4);
-  padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
-}
-
-.traversal-config__preview h3 {
-  margin: 0 0 var(--space-2);
-  font-size: 0.85rem;
-  font-weight: 800;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.traversal-config__svg {
-  width: 100%;
-  max-height: 180px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 0.4rem;
-}
-
-.traversal-config__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-
-.traversal-config__axis {
-  padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
-}
-
-.traversal-config__axis h3 {
-  margin: 0 0 var(--space-3);
-  font-size: 0.85rem;
-  font-weight: 800;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.traversal-config__field {
-  margin-bottom: var(--space-3);
-}
-
-.traversal-config__field label {
-  display: block;
-  margin-bottom: 0.25rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--text-muted);
-}
-
-.traversal-config__field input {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border-radius: 0.35rem;
-  border: 1px solid var(--border-default);
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--text-primary);
-  font-size: 0.85rem;
-}
-
-.traversal-execute {
-  padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
-}
-
-.traversal-placeholder {
-  min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.traversal-progress-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.1);
-  overflow: hidden;
-  margin-bottom: var(--space-3);
-}
-
-.traversal-progress-bar__fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent-success);
-  transition: width 0.3s ease;
-}
-
-.traversal-progress-text {
-  margin: 0 0 var(--space-3);
-  font: 700 0.8rem/1 var(--font-family-mono, monospace);
-  color: var(--text-secondary);
-}
-
-.traversal-controls {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.traversal-visualize {
-  padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
-  min-height: 300px;
-}
-
-.btn-primary, .btn-secondary, .btn-danger, .btn-sm {
-  min-height: 32px;
-  padding: 0 0.9rem;
-  border-radius: 0.4rem;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.btn-primary { background: var(--accent-success); color: #f8fbff; }
-.btn-secondary { background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.25); }
-.btn-danger { background: rgba(244, 63, 94, 0.12); color: var(--accent-danger); border: 1px solid rgba(244, 63, 94, 0.25); }
-.btn-sm { min-height: 28px; padding: 0 0.6rem; font-size: 0.7rem; background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); border: 1px solid rgba(255, 255, 255, 0.1); }
-</style>

@@ -11,7 +11,7 @@ export interface ChannelConfig {
 export interface DeviceProfile {
   id: string
   name: string
-  type: 'SIMULATED' | 'DAQ_T_1603'
+  type: 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-T-1603' | 'DAQ-P-1064Pre'
   samplingRate: number
   channels: ChannelConfig[]
 }
@@ -23,6 +23,18 @@ export interface DeviceStatus {
   connection: string
   acquiring: boolean
   lastError?: string
+}
+
+export interface ScanResult {
+  id: string
+  name: string
+  type: string
+  available: boolean
+  address?: string
+  port?: number
+  macAddress?: string
+  serialNumber?: string
+  firmwareVersion?: string
 }
 
 export interface DataPayload {

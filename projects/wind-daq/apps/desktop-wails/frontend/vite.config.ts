@@ -13,11 +13,17 @@ export default defineConfig({
       '@stores': fileURLToPath(new URL('./src/stores', import.meta.url)),
       '@api': fileURLToPath(new URL('./src/api', import.meta.url)),
       '@styles': fileURLToPath(new URL('./src/styles', import.meta.url)),
+      '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@composables': fileURLToPath(new URL('./src/composables', import.meta.url)),
     },
   },
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
+      external: [
+        '../wailsjs/go/backend/App',
+        '../wailsjs/go/models',
+      ],
       output: {
         manualChunks: {
           echarts: ['echarts', 'vue-echarts'],

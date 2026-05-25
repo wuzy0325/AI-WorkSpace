@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'warning'
     size?: 'sm' | 'md' | 'lg'
     disabled?: boolean
   }>(),
@@ -66,5 +66,11 @@ withDefaults(
 .ui-btn--ghost:hover {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.05);
+}
+
+.ui-btn--warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.25);
 }
 </style>
