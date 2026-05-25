@@ -1,5 +1,8 @@
 package motion
 
+// PtrFloat64 returns a pointer to a copy of v.
+func PtrFloat64(v float64) *float64 { return &v }
+
 type AxisName string
 
 type AxisNameSet map[AxisName]bool

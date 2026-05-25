@@ -54,10 +54,13 @@ func (m *MotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error)
 				Port:        9000,
 				AutoConnect: false,
 				Axes: []motion.AxisConfig{
-					{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-					{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-					{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-					{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: ptrFloat64(10)},
+					{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+					{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+					{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+					{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
 				},
 			},
 		}
@@ -308,9 +311,4 @@ func (m *MotionManager) DefinePosition(id string, axis motion.AxisName, position
 		return err
 	}
 	return ctrl.DefinePosition(axis, position)
-}
-
-// ptrFloat64 创建float64指针
-func ptrFloat64(v float64) *float64 {
-	return &v
 }

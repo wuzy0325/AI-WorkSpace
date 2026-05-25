@@ -24,6 +24,11 @@ type prbFileWithInterpolator struct {
 	MachNumber   float64
 }
 
+type PrbFileData struct {
+	FilePath string
+	Lines    []string
+}
+
 // MultiPrbLoadResult 多PRB文件加载结果
 type MultiPrbLoadResult struct {
 	Files       []PrbFileInfo // 已加载文件信息
@@ -38,19 +43,25 @@ func NewMultiPrbInterpolator() *MultiPrbInterpolator {
 	}
 }
 
-// LoadPrbFiles 加载多个PRB文件
+// LoadPrbFiles is kept for source compatibility. File I/O belongs in adapters.
 func (m *MultiPrbInterpolator) LoadPrbFiles(filePaths []string, machNumbers []float64) (*MultiPrbLoadResult, error) {
+	return nil, fmt.Errorf("load PRB files through an adapter and call LoadPrbData")
+}
+
+// LoadPrbData loads multiple PRB datasets from already-read text lines.
+func (m *MultiPrbInterpolator) LoadPrbData(fileData []PrbFileData, machNumbers []float64) (*MultiPrbLoadResult, error) {
 	m.clearState()
 
 	var files []PrbFileInfo
 	var loadedMachNumbers []float64
 	var warnings []string
 
-	for i, filePath := range filePaths {
+	for i, data := range fileData {
+		filePath := data.FilePath
 		fileName := filepath.Base(filePath)
 
 		interpolator := NewPrbInterpolator()
-		if err := interpolator.LoadPrbFile(filePath); err != nil {
+		if err := interpolator.LoadPrbLines(data.Lines, filePath); err != nil {
 			warnings = append(warnings, fmt.Sprintf("加载PRB文件失败: %s - %v", fileName, err))
 			continue
 		}

@@ -1,3 +1,16 @@
+export const CHART_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e']
+
+export function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  const rect = canvas.getBoundingClientRect()
+  canvas.width = rect.width * window.devicePixelRatio
+  canvas.height = rect.height * window.devicePixelRatio
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+  return ctx
+}
+
 export function drawFiveHoleChartScaffold(
   ctx: CanvasRenderingContext2D,
   width: number,

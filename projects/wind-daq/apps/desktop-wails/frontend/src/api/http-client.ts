@@ -14,9 +14,18 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   })
+
+  const text = await response.text().catch(() => '')
+
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
     throw new ApiError(text || `HTTP ${response.status}`, response.status)
   }
-  return response.json() as Promise<T>
+
+  try {
+    return JSON.parse(text) as T
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e)
+    console.error(`[HTTP] JSON 解析失败: ${path}`, detail, '响应内容:', text.slice(0, 500))
+    throw new ApiError(`服务端返回了非 JSON 数据 (${detail}): ${text.slice(0, 200)}`, response.status)
+  }
 }

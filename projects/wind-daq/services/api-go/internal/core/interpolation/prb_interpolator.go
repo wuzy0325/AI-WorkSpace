@@ -1,10 +1,8 @@
 package interpolation
 
 import (
-	"bufio"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 )
 
@@ -128,29 +126,24 @@ func NewPrbInterpolator() *PrbInterpolator {
 	return &PrbInterpolator{}
 }
 
-// LoadPrbFile 加载PRB文件
+// LoadPrbFile is kept for source compatibility. File I/O belongs in adapters.
 func (p *PrbInterpolator) LoadPrbFile(filePath string) error {
+	return fmt.Errorf("load PRB file through an adapter and call LoadPrbLines")
+}
+
+// LoadPrbLines loads PRB calibration data from already-read text lines.
+func (p *PrbInterpolator) LoadPrbLines(lines []string, source string) error {
 	p.clearState()
 
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("打开PRB文件失败: %w", err)
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	nonEmptyLines := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
 		if line != "" {
-			lines = append(lines, line)
+			nonEmptyLines = append(nonEmptyLines, line)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("读取PRB文件失败: %w", err)
-	}
 
-	rows, err := parsePrbFile(lines)
+	rows, err := parsePrbFile(nonEmptyLines)
 	if err != nil {
 		return err
 	}
@@ -160,7 +153,7 @@ func (p *PrbInterpolator) LoadPrbFile(filePath string) error {
 		return err
 	}
 
-	validRange := createValidRange(rows, filePath)
+	validRange := createValidRange(rows, source)
 
 	p.context = &prbInterpolationContext{
 		ValidRange:     validRange,

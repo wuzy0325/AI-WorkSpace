@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/motion"
@@ -20,7 +21,6 @@ type FileMotionProfileStore struct {
 func NewFileMotionProfileStore(filePath string) *FileMotionProfileStore {
 	return &FileMotionProfileStore{
 		filePath: filePath,
-		profiles: make([]motion.MotionControllerProfile, 0),
 	}
 }
 
@@ -29,9 +29,9 @@ func (s *FileMotionProfileStore) LoadProfiles() ([]motion.MotionControllerProfil
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 如果已经加载过，直接返回
+	// If already loaded, return the cached profiles.
 	if s.profiles != nil {
-		return s.profiles, nil
+		return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 	}
 
 	// 读取文件
@@ -40,7 +40,7 @@ func (s *FileMotionProfileStore) LoadProfiles() ([]motion.MotionControllerProfil
 		if os.IsNotExist(err) {
 			// 文件不存在，返回默认配置
 			s.profiles = getDefaultProfiles()
-			return s.profiles, nil
+			return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 		}
 		return nil, err
 	}
@@ -48,14 +48,14 @@ func (s *FileMotionProfileStore) LoadProfiles() ([]motion.MotionControllerProfil
 	// 解析 JSON
 	if len(data) == 0 {
 		s.profiles = getDefaultProfiles()
-		return s.profiles, nil
+		return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 	}
 
 	if err := json.Unmarshal(data, &s.profiles); err != nil {
 		return nil, err
 	}
 
-	return s.profiles, nil
+	return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 }
 
 // SaveProfiles 保存配置
@@ -63,10 +63,10 @@ func (s *FileMotionProfileStore) SaveProfiles(profiles []motion.MotionController
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.profiles = profiles
+	s.profiles = append([]motion.MotionControllerProfile(nil), profiles...)
 
-	// 确保目录存在
-	dir := s.filePath[:len(s.filePath)-len("/motion-profiles.json")]
+	// Ensure directory exists.
+	dir := filepath.Dir(s.filePath)
 	if dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
@@ -94,10 +94,13 @@ func getDefaultProfiles() []motion.MotionControllerProfile {
 			Port:        9000,
 			AutoConnect: false,
 			Axes: []motion.AxisConfig{
-				{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-				{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-				{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: ptrFloat64(10)},
-				{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: ptrFloat64(10)},
+				{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+				{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+				{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+
+				{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
 			},
 		},
 	}
@@ -133,8 +136,3 @@ func (s *MemoryMotionProfileStore) SaveProfiles(profiles []motion.MotionControll
 
 // Ensure FileMotionProfileStore implements ports.MotionProfileStore
 var _ ports.MotionProfileStore = (*FileMotionProfileStore)(nil)
-
-// ptrFloat64 创建 float64 指针
-func ptrFloat64(v float64) *float64 {
-	return &v
-}

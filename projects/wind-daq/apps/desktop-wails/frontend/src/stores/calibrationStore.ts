@@ -145,47 +145,31 @@ export const useCalibrationStore = defineStore('calibration', () => {
   }
 
   async function startCalibration(config: CalibrationConfig) {
-    if (isWailsAvailable()) {
-      // 使用 Wails API
+    let taskId: string
+    const wails = isWailsAvailable()
+    if (wails) {
       const res = await wailsApi.calibration.start(config)
-      if (!res.Success) {
-        throw new Error(res.Error || '启动校准失败')
-      }
-      isRunning.value = true
-      isPaused.value = false
-      completeEvent.value = null
-      dataPoints.value = []
-      status.value = {
-        taskId: config.taskId || `cal-${Date.now()}`,
-        type: config.type,
-        status: 'running',
-        totalPoints: config.points.length,
-        completedPoints: 0,
-        progress: 0,
-        dataPoints: [],
-      }
-      // 开始轮询状态
-      startStatusPolling()
+      if (!res.Success) throw new Error(res.Error || '启动校准失败')
+      taskId = config.taskId || `cal-${Date.now()}`
     } else {
-      // 降级使用 HTTP API
       const res = await calibrationApi.startCalibration(config)
-      if (!res.success) {
-        throw new Error(res.error || '启动校准失败')
-      }
-      isRunning.value = true
-      isPaused.value = false
-      completeEvent.value = null
-      dataPoints.value = []
-      status.value = {
-        taskId: res.taskId || '',
-        type: config.type,
-        status: 'running',
-        totalPoints: config.points.length,
-        completedPoints: 0,
-        progress: 0,
-        dataPoints: [],
-      }
+      if (!res.success) throw new Error(res.error || '启动校准失败')
+      taskId = res.taskId || ''
     }
+    isRunning.value = true
+    isPaused.value = false
+    completeEvent.value = null
+    dataPoints.value = []
+    status.value = {
+      taskId,
+      type: config.type,
+      status: 'running',
+      totalPoints: config.points.length,
+      completedPoints: 0,
+      progress: 0,
+      dataPoints: [],
+    }
+    if (wails) startStatusPolling()
   }
 
   async function pause() {

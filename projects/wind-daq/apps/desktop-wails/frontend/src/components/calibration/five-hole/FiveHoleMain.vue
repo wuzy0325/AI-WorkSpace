@@ -7,7 +7,7 @@ import type { DataPayload } from '@api/types'
 import { isFiveHoleDataPoint } from '@shared/calibrationDataGuards'
 import { getDerivedValuePrecision, getProbeChannelPrecision } from '@shared/calibrationPrecision'
 import { formatFiveHoleActualPosition, generateFiveHoleSnakePoints } from './motionCalibrationUtils'
-import { drawFiveHoleChartScaffold, resolveKAlphaKbetaBounds, drawNoDataHint, drawAxisTicks } from './fiveHoleChartUtils'
+import { drawFiveHoleChartScaffold, resolveKAlphaKbetaBounds, drawNoDataHint, drawAxisTicks, setupCanvas, CHART_COLORS } from './fiveHoleChartUtils'
 import { ArrowLeft, Settings, Play, Pause, StopCircle, RefreshCcw, Activity, Save, FileText, Clock, Navigation2, Maximize2, Minimize2 } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 
@@ -421,16 +421,10 @@ function toCanvasElement(el: Element | ComponentPublicInstance | null): HTMLCanv
 function drawKAlphaKbetaChart() {
   const canvas = kAlphaKbetaCanvas.value
   if (!canvas) return
-  const ctx = canvas.getContext('2d')
+  const ctx = setupCanvas(canvas)
   if (!ctx) return
 
-  // 设置 canvas 实际尺寸
   const rect = canvas.getBoundingClientRect()
-  canvas.width = rect.width * window.devicePixelRatio
-  canvas.height = rect.height * window.devicePixelRatio
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
-
   const width = rect.width
   const height = rect.height
   const padding = 42
@@ -472,8 +466,6 @@ function drawKAlphaKbetaChart() {
     return
   }
 
-  const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e']
-
   const toX = (v: number) => padding + ((v - xMin) / xRange) * plotWidth
   const toY = (v: number) => height - padding - ((v - yMin) / yRange) * plotHeight
 
@@ -504,7 +496,7 @@ function drawKAlphaKbetaChart() {
   // 再绘制 alpha 等值线（主要，彩色粗线）
   const alphaGroups = groupByAlpha(points)
   alphaGroups.forEach((group, index) => {
-    const color = colors[index % colors.length]
+    const color = CHART_COLORS[index % CHART_COLORS.length]
     ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -547,15 +539,10 @@ function drawKAlphaKbetaChart() {
 function drawCptAlphaChart() {
   const canvas = cptAlphaCanvas.value
   if (!canvas) return
-  const ctx = canvas.getContext('2d')
+  const ctx = setupCanvas(canvas)
   if (!ctx) return
 
   const rect = canvas.getBoundingClientRect()
-  canvas.width = rect.width * window.devicePixelRatio
-  canvas.height = rect.height * window.devicePixelRatio
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
-
   const width = rect.width
   const height = rect.height
   const padding = 34
@@ -583,10 +570,8 @@ function drawCptAlphaChart() {
 
   drawAxisTicks(ctx, width, height, padding, xMin, xMax, yMin, yMax)
 
-  const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e']
-
   data.forEach((group, index) => {
-    const color = colors[index % colors.length]
+    const color = CHART_COLORS[index % CHART_COLORS.length]
     ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -613,15 +598,10 @@ function drawCptAlphaChart() {
 function drawCpsAlphaChart() {
   const canvas = cpsAlphaCanvas.value
   if (!canvas) return
-  const ctx = canvas.getContext('2d')
+  const ctx = setupCanvas(canvas)
   if (!ctx) return
 
   const rect = canvas.getBoundingClientRect()
-  canvas.width = rect.width * window.devicePixelRatio
-  canvas.height = rect.height * window.devicePixelRatio
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
-
   const width = rect.width
   const height = rect.height
   const padding = 34
@@ -649,10 +629,8 @@ function drawCpsAlphaChart() {
 
   drawAxisTicks(ctx, width, height, padding, xMin, xMax, yMin, yMax)
 
-  const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e']
-
   data.forEach((group, index) => {
-    const color = colors[index % colors.length]
+    const color = CHART_COLORS[index % CHART_COLORS.length]
     ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -690,12 +668,8 @@ function startChartTimer(): void {
   chartTimer = setInterval(updateCharts, calibrationStore.uiRefreshIntervalMs)
 }
 
-onMounted(async () => {
-  try {
-    await Promise.resolve()
-  } finally {
-    startChartTimer()
-  }
+onMounted(() => {
+  startChartTimer()
 })
 
 watch(

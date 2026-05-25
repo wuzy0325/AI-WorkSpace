@@ -137,18 +137,7 @@ export const wailsApi = {
       return await callBinding('DeviceDeleteProfile', profileId);
     },
     scanDevices: async (): Promise<DeviceScanResult[]> => {
-      const raw = await callBinding('DeviceScanDevices');
-      console.log('[WailsAdapter] DeviceScanDevices raw result:', raw, 'type:', typeof raw);
-      if (typeof raw === 'string') {
-        console.error('[WailsAdapter] DeviceScanDevices returned string instead of array:', raw);
-        try {
-          return JSON.parse(raw) as DeviceScanResult[];
-        } catch (e) {
-          console.error('[WailsAdapter] Failed to parse string result:', e);
-          throw e;
-        }
-      }
-      return raw as DeviceScanResult[];
+      return (await callBinding('DeviceScanDevices')) as DeviceScanResult[];
     },
     connect: async (deviceId: string): Promise<GenericResponse> => {
       return await callBinding('DeviceConnect', deviceId);

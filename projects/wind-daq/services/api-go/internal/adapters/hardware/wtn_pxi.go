@@ -62,14 +62,9 @@ func (d *WTNPXI) Connect() error {
 	if host == "" {
 		host = WTN_PXI_DEFAULT_HOST
 	}
-	port := WTN_PXI_DEFAULT_PORT
-	if port <= 0 {
-		port = WTN_PXI_DEFAULT_PORT
-	}
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), WTN_PXI_TIMEOUT)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, WTN_PXI_DEFAULT_PORT), WTN_PXI_TIMEOUT)
 	if err != nil {
-		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
+		return fmt.Errorf("connect to %s:%d: %w", host, WTN_PXI_DEFAULT_PORT, err)
 	}
 
 	d.conn = conn

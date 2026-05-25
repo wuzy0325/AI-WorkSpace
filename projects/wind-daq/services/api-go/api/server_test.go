@@ -189,6 +189,9 @@ func TestDeviceConfigurationHTTPFlow(t *testing.T) {
 	if got.ThermocoupleType != "K" || got.ColdJunction != "internal" || got.FilterHz != 50 {
 		t.Fatalf("unexpected daqT1603 config: %+v", got)
 	}
+
+	request(t, router, http.MethodGet, "/api/device/temp-1/tare?channelIndex=not-a-number", nil, http.StatusBadRequest)
+	request(t, router, http.MethodPost, "/api/device/temp-1/clearTare?channelIndex=-1", nil, http.StatusBadRequest)
 }
 
 func TestDaqStreamSendsServerSentEvents(t *testing.T) {
@@ -359,6 +362,19 @@ func TestTraversalHTTPFlow(t *testing.T) {
 	})
 
 	request(t, router, http.MethodGet, "/api/traversal/status", nil, http.StatusOK)
+	gridResp := request(t, router, http.MethodPost, "/api/traversal/generateGrid", []byte(`{"xStart":0,"xEnd":10,"xStep":10,"yStart":0,"yEnd":0,"yStep":1,"zStart":5}`), http.StatusOK)
+	var generatedPath []struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+		Z float64 `json:"z"`
+	}
+	if err := json.Unmarshal(gridResp.Body.Bytes(), &generatedPath); err != nil {
+		t.Fatalf("decode generated traversal path: %v", err)
+	}
+	if len(generatedPath) != 2 || generatedPath[0].Z != 5 {
+		t.Fatalf("unexpected generated path: %+v", generatedPath)
+	}
+
 	pathPayload := []byte(`{"taskId":"trav-1","deviceId":"sim-1","channels":[0],"path":[{"x":0,"y":0,"z":0},{"x":50,"y":25,"z":10}]}`)
 	request(t, router, http.MethodPost, "/api/traversal/start", pathPayload, http.StatusOK)
 	resp := request(t, router, http.MethodGet, "/api/traversal/status", nil, http.StatusOK)

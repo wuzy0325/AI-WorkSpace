@@ -30,6 +30,10 @@ func NewTraversalManager(reader ports.LatestDataReader, motion *MotionManager, s
 	}
 }
 
+func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]traversal.Point, error) {
+	return traversal.GenerateGridPath(config)
+}
+
 func (m *TraversalManager) Start(config traversal.Config) error {
 	if config.TaskID == "" {
 		return fmt.Errorf("taskID is required")

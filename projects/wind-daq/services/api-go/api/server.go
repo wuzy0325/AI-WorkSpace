@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"wind-daq/services/api-go/internal/core/calibration"
@@ -399,12 +400,16 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
+			if deps.TraversalManager == nil {
+				writeError(w, http.StatusBadRequest, "traversal manager is required")
+				return
+			}
 			var grid traversal.GridConfig
 			if err := json.NewDecoder(r.Body).Decode(&grid); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			path, err := traversal.GenerateGridPath(grid)
+			path, err := deps.TraversalManager.GenerateGridPath(grid)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -657,9 +662,10 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	case r.Method == http.MethodGet && action == "tare":
-		channelIndex := 0
-		if idxStr := r.URL.Query().Get("channelIndex"); idxStr != "" {
-			fmt.Sscanf(idxStr, "%d", &channelIndex)
+		channelIndex, err := parseChannelIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		offset, err := deps.DeviceManager.GetTare(id, channelIndex)
 		if err != nil {
@@ -668,9 +674,10 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, map[string]float64{"offset": offset})
 	case r.Method == http.MethodPost && action == "clearTare":
-		channelIndex := 0
-		if idxStr := r.URL.Query().Get("channelIndex"); idxStr != "" {
-			fmt.Sscanf(idxStr, "%d", &channelIndex)
+		channelIndex, err := parseChannelIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		if err := deps.DeviceManager.ClearTare(id, channelIndex); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -680,6 +687,18 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func parseChannelIndex(r *http.Request) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("channelIndex"))
+	if raw == "" {
+		return 0, nil
+	}
+	channelIndex, err := strconv.Atoi(raw)
+	if err != nil || channelIndex < 0 {
+		return 0, fmt.Errorf("channelIndex must be a non-negative integer")
+	}
+	return channelIndex, nil
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {

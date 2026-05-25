@@ -1,10 +1,8 @@
 package interpolation
 
 import (
-	"bufio"
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strings"
 )
@@ -122,26 +120,24 @@ func NewFiveHoleNewInterpolator() *FiveHoleNewInterpolator {
 	return &FiveHoleNewInterpolator{}
 }
 
-// LoadPrbFile 加载CSV校准数据文件
+// LoadPrbFile is kept for source compatibility. File I/O belongs in adapters.
 func (f *FiveHoleNewInterpolator) LoadPrbFile(filePath string) error {
+	return fmt.Errorf("load calibration file through an adapter and call LoadPrbLines")
+}
+
+// LoadPrbLines loads CSV calibration data from already-read text lines.
+func (f *FiveHoleNewInterpolator) LoadPrbLines(lines []string) error {
 	f.clearState()
 
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("打开校准数据文件失败: %w", err)
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	nonEmptyLines := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
 		if line != "" {
-			lines = append(lines, line)
+			nonEmptyLines = append(nonEmptyLines, line)
 		}
 	}
 
-	rows, err := f.parseCsvFile(lines)
+	rows, err := f.parseCsvFile(nonEmptyLines)
 	if err != nil {
 		return err
 	}

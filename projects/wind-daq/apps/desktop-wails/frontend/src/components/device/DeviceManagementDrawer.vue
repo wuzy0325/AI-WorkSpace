@@ -94,14 +94,12 @@ async function runScan() {
   scanning.value = true
   try {
     const results = await deviceApi.scanDevices()
-    console.log('[DeviceScan] scanDevices returned:', results, 'type:', typeof results, 'isArray:', Array.isArray(results));
     discovered.value = results
     if (discovered.value.length) feedback.pushToast(`发现 ${discovered.value.length} 个设备`, 'info')
     else feedback.pushToast('未发现新设备', 'info')
   } catch (err) {
     discovered.value = []
     console.error('[DeviceScan] 扫描失败:', err)
-    console.error('[DeviceScan] 错误类型:', err?.constructor?.name, '错误消息:', err instanceof Error ? err.message : String(err))
     feedback.pushToast(`扫描失败: ${err instanceof Error ? err.message : String(err)}`, 'error')
   } finally {
     scanning.value = false

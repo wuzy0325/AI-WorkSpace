@@ -1,36 +1,33 @@
 <script setup lang="ts">
-import { ref, shallowRef, type Component } from 'vue'
+import { ref, computed, shallowRef, defineAsyncComponent, type Component } from 'vue'
 import type { CalibrationType } from '@shared/types/calibration'
 import CalibrationHome from './CalibrationHome.vue'
+
+const settingsComponents: Record<string, Component> = {
+  'five-hole': defineAsyncComponent(() => import('./five-hole/FiveHoleSettings.vue')),
+  'three-hole': defineAsyncComponent(() => import('./three-hole/ThreeHoleSettings.vue')),
+  'total-pressure': defineAsyncComponent(() => import('./total-pressure/TotalPressureSettings.vue')),
+  'total-temperature': defineAsyncComponent(() => import('./total-temperature/TotalTemperatureSettings.vue')),
+}
+
+const mainComponents: Record<string, Component> = {
+  'five-hole': defineAsyncComponent(() => import('./five-hole/FiveHoleMain.vue')),
+  'three-hole': defineAsyncComponent(() => import('./three-hole/ThreeHoleMain.vue')),
+  'total-pressure': defineAsyncComponent(() => import('./total-pressure/TotalPressureMain.vue')),
+  'total-temperature': defineAsyncComponent(() => import('./total-temperature/TotalTemperatureMain.vue')),
+}
 
 const currentView = shallowRef<Component>(CalibrationHome)
 const showSettings = ref(false)
 const activeCalibrationType = ref<CalibrationType | null>(null)
 
+const currentSettings = computed(() =>
+  activeCalibrationType.value ? settingsComponents[activeCalibrationType.value] : null,
+)
+
 function handleSelectCalibration(type: CalibrationType) {
   activeCalibrationType.value = type
-  switch (type) {
-    case 'five-hole':
-      import('./five-hole/FiveHoleMain.vue').then((m) => {
-        currentView.value = m.default as Component
-      })
-      break
-    case 'three-hole':
-      import('./three-hole/ThreeHoleMain.vue').then((m) => {
-        currentView.value = m.default as Component
-      })
-      break
-    case 'total-pressure':
-      import('./total-pressure/TotalPressureMain.vue').then((m) => {
-        currentView.value = m.default as Component
-      })
-      break
-    case 'total-temperature':
-      import('./total-temperature/TotalTemperatureMain.vue').then((m) => {
-        currentView.value = m.default as Component
-      })
-      break
-  }
+  currentView.value = mainComponents[type]
 }
 
 function handleBack() {
@@ -57,64 +54,17 @@ function handleCloseSettings() {
       @open-settings="handleOpenSettings"
     />
 
-    <!-- 设置弹窗 -->
-    <template v-if="showSettings">
-      <Suspense v-if="activeCalibrationType === 'five-hole'">
-        <template #default>
-          <component
-            :is="() => import('./five-hole/FiveHoleSettings.vue')"
-            @close="handleCloseSettings"
-            @saved="handleCloseSettings"
-          />
-        </template>
-        <template #fallback>
-          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full"></div>
-          </div>
-        </template>
-      </Suspense>
-      <Suspense v-else-if="activeCalibrationType === 'three-hole'">
-        <template #default>
-          <component
-            :is="() => import('./three-hole/ThreeHoleSettings.vue')"
-            @close="handleCloseSettings"
-            @saved="handleCloseSettings"
-          />
-        </template>
-        <template #fallback>
-          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full"></div>
-          </div>
-        </template>
-      </Suspense>
-      <Suspense v-else-if="activeCalibrationType === 'total-pressure'">
-        <template #default>
-          <component
-            :is="() => import('./total-pressure/TotalPressureSettings.vue')"
-            @close="handleCloseSettings"
-            @saved="handleCloseSettings"
-          />
-        </template>
-        <template #fallback>
-          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full"></div>
-          </div>
-        </template>
-      </Suspense>
-      <Suspense v-else-if="activeCalibrationType === 'total-temperature'">
-        <template #default>
-          <component
-            :is="() => import('./total-temperature/TotalTemperatureSettings.vue')"
-            @close="handleCloseSettings"
-            @saved="handleCloseSettings"
-          />
-        </template>
-        <template #fallback>
-          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full"></div>
-          </div>
-        </template>
-      </Suspense>
-    </template>
+    <Suspense v-if="showSettings && currentSettings">
+      <component
+        :is="currentSettings"
+        @close="handleCloseSettings"
+        @saved="handleCloseSettings"
+      />
+      <template #fallback>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full"></div>
+        </div>
+      </template>
+    </Suspense>
   </div>
 </template>

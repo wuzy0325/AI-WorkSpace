@@ -13,9 +13,9 @@ import (
 
 // App 是 Wails 应用的主结构体
 type App struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	appContext       *appcontext.AppContext
+	ctx        context.Context
+	cancel     context.CancelFunc
+	appContext *appcontext.AppContext
 }
 
 // VersionInfo 版本信息
@@ -39,7 +39,6 @@ func NewApp() *App {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
-	// 初始化应用上下文
 	var err error
 	a.appContext, err = appcontext.NewAppContext("")
 	if err != nil {
@@ -83,9 +82,19 @@ func (a *App) PickDirectory() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, opts)
 }
 
+// callMgr 通用 manager 方法调用辅助
+func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
+	if a.appContext == nil || mgr == nil {
+		return GenericResponse{Success: false, Error: name + "未初始化"}
+	}
+	if err := fn(); err != nil {
+		return GenericResponse{Success: false, Error: err.Error()}
+	}
+	return GenericResponse{Success: true}
+}
+
 // ==================== 设备管理 API ====================
 
-// DeviceGetProfiles 获取所有设备配置
 func (a *App) DeviceGetProfiles() []types.DeviceProfile {
 	if a.appContext == nil || a.appContext.DeviceManager == nil {
 		return nil
@@ -93,29 +102,18 @@ func (a *App) DeviceGetProfiles() []types.DeviceProfile {
 	return a.appContext.DeviceManager.GetProfiles()
 }
 
-// DeviceUpsertProfile 更新或创建设备配置
 func (a *App) DeviceUpsertProfile(profile types.DeviceProfile) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.UpsertProfile(profile); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.UpsertProfile(profile)
+	})
 }
 
-// DeviceDeleteProfile 删除设备配置
 func (a *App) DeviceDeleteProfile(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.DeleteProfile(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.DeleteProfile(id)
+	})
 }
 
-// DeviceScanDevices 扫描设备
 func (a *App) DeviceScanDevices() ([]types.DeviceScanResult, error) {
 	if a.appContext == nil || a.appContext.DeviceManager == nil {
 		return nil, fmt.Errorf("设备管理器未初始化")
@@ -123,51 +121,30 @@ func (a *App) DeviceScanDevices() ([]types.DeviceScanResult, error) {
 	return a.appContext.DeviceManager.ScanDevices()
 }
 
-// DeviceConnect 连接设备
 func (a *App) DeviceConnect(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.Connect(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.Connect(id)
+	})
 }
 
-// DeviceDisconnect 断开设备
 func (a *App) DeviceDisconnect(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.Disconnect(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.Disconnect(id)
+	})
 }
 
-// DeviceStartAcquisition 开始采集
 func (a *App) DeviceStartAcquisition(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.StartAcquisition(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.StartAcquisition(id)
+	})
 }
 
-// DeviceStopAcquisition 停止采集
 func (a *App) DeviceStopAcquisition(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
-		return GenericResponse{Success: false, Error: "设备管理器未初始化"}
-	}
-	if err := a.appContext.DeviceManager.StopAcquisition(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.DeviceManager, "设备管理器", func() error {
+		return a.appContext.DeviceManager.StopAcquisition(id)
+	})
 }
 
-// DeviceGetStatus 获取设备状态
 func (a *App) DeviceGetStatus(id string) (types.DeviceStatus, bool) {
 	if a.appContext == nil || a.appContext.DeviceManager == nil {
 		return types.DeviceStatus{}, false
@@ -175,7 +152,6 @@ func (a *App) DeviceGetStatus(id string) (types.DeviceStatus, bool) {
 	return a.appContext.DeviceManager.GetStatus(id)
 }
 
-// DeviceGetLatestData 获取设备最新数据
 func (a *App) DeviceGetLatestData(deviceID string) (types.DeviceDataPayload, bool) {
 	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
 		return types.DeviceDataPayload{}, false
@@ -183,18 +159,12 @@ func (a *App) DeviceGetLatestData(deviceID string) (types.DeviceDataPayload, boo
 	return a.appContext.AcquisitionHub.GetLatestData(deviceID)
 }
 
-// DeviceSetPublishRate 设置数据发布速率
 func (a *App) DeviceSetPublishRate(hz float64) GenericResponse {
-	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
-		return GenericResponse{Success: false, Error: "采集中心未初始化"}
-	}
-	if err := a.appContext.AcquisitionHub.SetPublishRate(hz); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.AcquisitionHub, "采集中心", func() error {
+		return a.appContext.AcquisitionHub.SetPublishRate(hz)
+	})
 }
 
-// DeviceGetPublishRate 获取数据发布速率
 func (a *App) DeviceGetPublishRate() float64 {
 	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
 		return 0
@@ -204,38 +174,25 @@ func (a *App) DeviceGetPublishRate() float64 {
 
 // ==================== 运动控制 API ====================
 
-// MotionGetProfiles 获取运动控制器配置
-func (a *App) MotionGetProfiles() []types.MotionControllerProfile {
+func (a *App) MotionGetProfiles() ([]types.MotionControllerProfile, error) {
 	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return nil
+		return nil, fmt.Errorf("运动管理器未初始化")
 	}
-	profiles, _ := a.appContext.MotionManager.LoadProfiles()
-	return profiles
+	return a.appContext.MotionManager.LoadProfiles()
 }
 
-// MotionUpsertProfile 更新或创建运动控制器配置
 func (a *App) MotionUpsertProfile(profile types.MotionControllerProfile) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.UpsertProfile(profile); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.UpsertProfile(profile)
+	})
 }
 
-// MotionDeleteProfile 删除运动控制器配置
 func (a *App) MotionDeleteProfile(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.DeleteProfile(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.DeleteProfile(id)
+	})
 }
 
-// MotionGetStatus 获取所有运动控制器状态
 func (a *App) MotionGetStatus() []types.MotionControllerStatus {
 	if a.appContext == nil || a.appContext.MotionManager == nil {
 		return nil
@@ -243,123 +200,72 @@ func (a *App) MotionGetStatus() []types.MotionControllerStatus {
 	return a.appContext.MotionManager.StatusAll()
 }
 
-// MotionConnect 连接运动控制器
 func (a *App) MotionConnect(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.Connect(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.Connect(id)
+	})
 }
 
-// MotionDisconnect 断开运动控制器
 func (a *App) MotionDisconnect(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.Disconnect(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.Disconnect(id)
+	})
 }
 
-// MotionHome 回原点
 func (a *App) MotionHome(id string, axis string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.Home(id, types.MotionAxisName(axis)); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.Home(id, types.MotionAxisName(axis))
+	})
 }
 
-// MotionStop 停止运动
 func (a *App) MotionStop(id string, axis string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	var axisName types.MotionAxisName
-	if axis != "" {
-		axisName = types.MotionAxisName(axis)
-	}
-	if err := a.appContext.MotionManager.Stop(id, axisName); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		var axisName types.MotionAxisName
+		if axis != "" {
+			axisName = types.MotionAxisName(axis)
+		}
+		return a.appContext.MotionManager.Stop(id, axisName)
+	})
 }
 
-// MotionEmergencyStop 紧急停止
 func (a *App) MotionEmergencyStop(id string) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.EmergencyStop(id); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.EmergencyStop(id)
+	})
 }
 
-// MotionMoveTo 移动到指定位置
 func (a *App) MotionMoveTo(id string, axis string, position float64) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.MoveTo(id, types.MotionAxisName(axis), position); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.MoveTo(id, types.MotionAxisName(axis), position)
+	})
 }
 
-// MotionMoveBy 相对移动
 func (a *App) MotionMoveBy(id string, axis string, delta float64) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.MoveBy(id, types.MotionAxisName(axis), delta); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.MoveBy(id, types.MotionAxisName(axis), delta)
+	})
 }
 
-// MotionJog 点动控制
 func (a *App) MotionJog(id string, axis string, velocity float64) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.Jog(id, types.MotionAxisName(axis), velocity); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.Jog(id, types.MotionAxisName(axis), velocity)
+	})
 }
 
-// MotionDefinePosition 定义当前位置
 func (a *App) MotionDefinePosition(id string, axis string, position float64) GenericResponse {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
-		return GenericResponse{Success: false, Error: "运动管理器未初始化"}
-	}
-	if err := a.appContext.MotionManager.DefinePosition(id, types.MotionAxisName(axis), position); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.DefinePosition(id, types.MotionAxisName(axis), position)
+	})
 }
 
 // ==================== 校准 API ====================
 
-// CalibrationStart 开始校准
 func (a *App) CalibrationStart(config types.CalibrationConfig) GenericResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	if err := a.appContext.CalibrationMgr.Start(config); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.CalibrationMgr, "校准管理器", func() error {
+		return a.appContext.CalibrationMgr.Start(config)
+	})
 }
 
-// CalibrationStatus 获取校准状态
 func (a *App) CalibrationStatus() types.CalibrationStatus {
 	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return types.CalibrationStatus{}
@@ -367,51 +273,30 @@ func (a *App) CalibrationStatus() types.CalibrationStatus {
 	return a.appContext.CalibrationMgr.Status()
 }
 
-// CalibrationCollect 采集当前点
 func (a *App) CalibrationCollect() GenericResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	if err := a.appContext.CalibrationMgr.CollectCurrentPoint(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.CalibrationMgr, "校准管理器", func() error {
+		return a.appContext.CalibrationMgr.CollectCurrentPoint()
+	})
 }
 
-// CalibrationPause 暂停校准
 func (a *App) CalibrationPause() GenericResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	if err := a.appContext.CalibrationMgr.Pause(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.CalibrationMgr, "校准管理器", func() error {
+		return a.appContext.CalibrationMgr.Pause()
+	})
 }
 
-// CalibrationResume 恢复校准
 func (a *App) CalibrationResume() GenericResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	if err := a.appContext.CalibrationMgr.Resume(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.CalibrationMgr, "校准管理器", func() error {
+		return a.appContext.CalibrationMgr.Resume()
+	})
 }
 
-// CalibrationStop 停止校准
 func (a *App) CalibrationStop() GenericResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	if err := a.appContext.CalibrationMgr.Stop(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.CalibrationMgr, "校准管理器", func() error {
+		return a.appContext.CalibrationMgr.Stop()
+	})
 }
 
-// CalibrationGetResult 获取校准结果
 func (a *App) CalibrationGetResult(taskID string) (types.CalibrationStatus, bool) {
 	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return types.CalibrationStatus{}, false
@@ -421,7 +306,6 @@ func (a *App) CalibrationGetResult(taskID string) (types.CalibrationStatus, bool
 
 // ==================== 存储 API ====================
 
-// StorageGetStatus 获取存储记录器状态
 func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 	if a.appContext == nil || a.appContext.StorageRecorder == nil {
 		return wind_usecase.StorageRecordingStatus{}
@@ -429,35 +313,22 @@ func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 	return a.appContext.StorageRecorder.Status()
 }
 
-// StorageStartRecording 开始记录
 func (a *App) StorageStartRecording(outputDir string, filePrefix string) GenericResponse {
-	if a.appContext == nil || a.appContext.StorageRecorder == nil {
-		return GenericResponse{Success: false, Error: "存储记录器未初始化"}
-	}
-	cfg := wind_usecase.StorageRecordingConfig{
-		OutputDir:  outputDir,
-		FilePrefix: filePrefix,
-	}
-	if err := a.appContext.StorageRecorder.Start(cfg); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.StorageRecorder, "存储记录器", func() error {
+		return a.appContext.StorageRecorder.Start(wind_usecase.StorageRecordingConfig{
+			OutputDir: outputDir, FilePrefix: filePrefix,
+		})
+	})
 }
 
-// StorageStopRecording 停止记录
 func (a *App) StorageStopRecording() GenericResponse {
-	if a.appContext == nil || a.appContext.StorageRecorder == nil {
-		return GenericResponse{Success: false, Error: "存储记录器未初始化"}
-	}
-	if err := a.appContext.StorageRecorder.Stop(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
-	}
-	return GenericResponse{Success: true}
+	return a.callMgr(a.appContext.StorageRecorder, "存储记录器", func() error {
+		return a.appContext.StorageRecorder.Stop()
+	})
 }
 
 // ==================== 报告 API ====================
 
-// ReportGetStatus 获取报告管理器状态
 func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
 	if a.appContext == nil || a.appContext.ReportManager == nil {
 		return wind_usecase.ReportStatus{}
