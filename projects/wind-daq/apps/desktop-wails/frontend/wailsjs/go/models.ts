@@ -245,9 +245,15 @@ export namespace device {
 	    id: string;
 	    name: string;
 	    type: string;
+	    transport?: string;
+	    address?: string;
+	    port?: number;
+	    serialPort?: string;
+	    baudRate?: number;
+	    autoConnect?: boolean;
+	    macAddress?: string;
 	    samplingRate: number;
 	    channels: ChannelConfig[];
-	    address?: string;
 	    daqT1603Config?: DaqT1603HardwareConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -259,9 +265,15 @@ export namespace device {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.type = source["type"];
+	        this.transport = source["transport"];
+	        this.address = source["address"];
+	        this.port = source["port"];
+	        this.serialPort = source["serialPort"];
+	        this.baudRate = source["baudRate"];
+	        this.autoConnect = source["autoConnect"];
+	        this.macAddress = source["macAddress"];
 	        this.samplingRate = source["samplingRate"];
 	        this.channels = this.convertValues(source["channels"], ChannelConfig);
-	        this.address = source["address"];
 	        this.daqT1603Config = this.convertValues(source["daqT1603Config"], DaqT1603HardwareConfig);
 	    }
 	

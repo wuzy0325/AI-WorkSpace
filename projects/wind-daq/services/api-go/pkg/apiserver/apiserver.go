@@ -54,11 +54,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if os.Getenv("WIND_DAQ_NETWORK_SCAN") == "true" {
-		manager.SetScanner(scan.NewNetworkScanner())
-	} else {
-		manager.SetScanner(hardware.NewSimulatedScanner())
-	}
+	manager.SetScanner(scan.NewNetworkScanner())
 
 	handler := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

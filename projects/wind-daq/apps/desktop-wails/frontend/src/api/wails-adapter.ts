@@ -1,4 +1,5 @@
 // Wails API 适配器 - 运行时动态加载绑定，避免 Vite 构建时模块解析问题
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
 export interface GenericResponse {
@@ -162,6 +163,18 @@ export const wailsApi = {
     },
     getPublishRate: async (): Promise<number> => {
       return await callBinding('DeviceGetPublishRate');
+    },
+    subscribeStream: async (deviceId: string, subscribe: boolean): Promise<GenericResponse> => {
+      return await callBinding('DeviceSubscribeStream', deviceId, subscribe);
+    },
+    onPayload: (callback: (payload: DeviceDataPayload) => void): (() => void) => {
+      const cleanup = EventsOn('daq:payload', (data: unknown) => {
+        callback(data as DeviceDataPayload);
+      });
+      return () => {
+        cleanup();
+        EventsOff('daq:payload');
+      };
     }
   },
 

@@ -1,3 +1,5 @@
+export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-T-1603' | 'DAQ-P-1064Pre' | 'WTN_PXI' | 'DSA3217'
+
 export interface ChannelConfig {
   index: number
   name: string
@@ -8,12 +10,26 @@ export interface ChannelConfig {
   rangeMax?: number
 }
 
+export interface DaqT1603HardwareConfig {
+  thermocoupleType: string
+  coldJunction: string
+  filterHz: number
+}
+
 export interface DeviceProfile {
   id: string
   name: string
-  type: 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-T-1603' | 'DAQ-P-1064Pre'
+  type: DeviceType
+  transport?: 'tcp' | 'serial'
+  address?: string
+  port?: number
+  serialPort?: string
+  baudRate?: number
+  autoConnect?: boolean
+  macAddress?: string
   samplingRate: number
   channels: ChannelConfig[]
+  daqT1603Config?: DaqT1603HardwareConfig
 }
 
 export interface DeviceStatus {

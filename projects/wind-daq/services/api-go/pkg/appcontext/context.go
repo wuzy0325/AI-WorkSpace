@@ -2,8 +2,13 @@
 package appcontext
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"wind-daq/services/api-go/internal/adapters/calstore"
 	"wind-daq/services/api-go/internal/adapters/config"
@@ -49,8 +54,9 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	deviceProfilePath := filepath.Join(configDir, "device-profiles.json")
 	motionProfilePath := filepath.Join(configDir, "motion-profiles.json")
 
-	// Copy default profiles if they don't exist
-	copyDefaultProfilesIfNeeded(deviceProfilePath, motionProfilePath)
+	if err := copyDefaultProfilesIfNeeded(deviceProfilePath, motionProfilePath); err != nil {
+		return nil, err
+	}
 
 	profileStore := config.NewFileProfileStore(deviceProfilePath)
 	motionProfileStore := config.NewFileMotionProfileStore(motionProfilePath)
@@ -75,11 +81,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	if os.Getenv("WIND_DAQ_NETWORK_SCAN") == "true" {
-		deviceMgr.SetScanner(scan.NewNetworkScanner())
-	} else {
-		deviceMgr.SetScanner(hardware.NewSimulatedScanner())
-	}
+	deviceMgr.SetScanner(scan.NewNetworkScanner())
 
 	return &AppContext{
 		DeviceManager:   deviceMgr,
@@ -116,13 +118,82 @@ func (deviceFactory) Create(profile device.Profile) (ports.Device, error) {
 	}
 }
 
-func copyDefaultProfilesIfNeeded(devicePath, motionPath string) {
-	if _, err := os.Stat(devicePath); os.IsNotExist(err) {
-		defaultContent := `[{"id":"sim-1","name":"仿真设备","type":"SIMULATED"}]`
-		_ = os.WriteFile(devicePath, []byte(defaultContent), 0644)
+func copyDefaultProfilesIfNeeded(devicePath, motionPath string) error {
+	if err := ensureJSONFile(devicePath, defaultDeviceProfiles()); err != nil {
+		return err
 	}
-	if _, err := os.Stat(motionPath); os.IsNotExist(err) {
-		defaultContent := `[{"id":"sim-motion-1","name":"仿真运动控制器"}]`
-		_ = os.WriteFile(motionPath, []byte(defaultContent), 0644)
+	return ensureJSONFile(motionPath, defaultMotionProfiles())
+}
+
+func ensureJSONFile(path string, fallback any) error {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if json.Valid(bytes.TrimSpace(data)) {
+			return nil
+		}
+		backupPath, backupErr := moveInvalidConfigAside(path)
+		if backupErr != nil {
+			return backupErr
+		}
+		if err := writeDefaultJSON(path, fallback); err != nil {
+			return err
+		}
+		log.Printf("replaced invalid config %s; backup saved at %s", path, backupPath)
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	return writeDefaultJSON(path, fallback)
+}
+
+func moveInvalidConfigAside(path string) (string, error) {
+	backupPath := path + ".invalid"
+	if _, err := os.Stat(backupPath); err == nil {
+		backupPath = fmt.Sprintf("%s.invalid.%d", path, time.Now().Unix())
+	}
+	if err := os.Rename(path, backupPath); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
+
+func writeDefaultJSON(path string, value any) error {
+	dir := filepath.Dir(path)
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0644)
+}
+
+func defaultDeviceProfiles() []device.Profile {
+	return []device.Profile{
+		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+	}
+}
+
+func defaultMotionProfiles() []motion.MotionControllerProfile {
+	return []motion.MotionControllerProfile{
+		{
+			ID:          "sim-motion-1",
+			Name:        "Simulated Motion Controller",
+			Type:        motion.ControllerTypeSimulated,
+			Address:     "127.0.0.1",
+			Port:        9000,
+			AutoConnect: false,
+			Axes: []motion.AxisConfig{
+				{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+				{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+				{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+				{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
+			},
+		},
 	}
 }

@@ -124,10 +124,11 @@ func (d *SimulatedDevice) Status() device.Status {
 }
 
 func (d *SimulatedDevice) loop(stop <-chan struct{}) {
-	interval := time.Second / time.Duration(d.profile.SamplingRate)
-	if interval <= 0 {
-		interval = 50 * time.Millisecond
+	rate := d.profile.SamplingRate
+	if rate <= 0 {
+		rate = 20
 	}
+	interval := time.Second / time.Duration(rate)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	start := time.Now()

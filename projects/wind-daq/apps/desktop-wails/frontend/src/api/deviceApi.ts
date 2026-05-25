@@ -14,6 +14,12 @@ export function defaultSimulatedProfile(): DeviceProfile {
     id: 'sim-1',
     name: 'Simulator 1',
     type: 'SIMULATED',
+    transport: 'tcp',
+    address: '127.0.0.1',
+    port: 0,
+    serialPort: '',
+    baudRate: 115200,
+    autoConnect: true,
     samplingRate: 20,
     channels: Array.from({ length: 4 }, (_, index) => ({
       index,
@@ -21,6 +27,8 @@ export function defaultSimulatedProfile(): DeviceProfile {
       enabled: true,
       unit: 'V',
       precision: 3,
+      rangeMin: -10,
+      rangeMax: 10,
     })),
   }
 }
@@ -146,6 +154,22 @@ export const deviceApi = {
   subscribeToDevice: (deviceId: string): void => {
     if (deviceApi._subscriptions.has(deviceId)) return
 
+    if (useWails()) {
+      // Wails 桌面模式：使用 Wails Events 机制替代 HTTP SSE
+      void wailsApi.device.subscribeStream(deviceId, true)
+      const unsubscribe = wailsApi.device.onPayload((payload) => {
+        deviceApi._snapshotListeners.forEach((cb) => cb(payload))
+      })
+      deviceApi._subscriptions.set(deviceId, {
+        unsubscribe: () => {
+          unsubscribe()
+          void wailsApi.device.subscribeStream(deviceId, false)
+        },
+      })
+      return
+    }
+
+    // Web 模式：使用 HTTP SSE
     const subscription = subscribeDaqStream(
       deviceId,
       (payload) => {

@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"net/http"
-	"os"
 
 	"wind-daq/services/api-go/api"
 	calstore "wind-daq/services/api-go/internal/adapters/calstore"
@@ -62,11 +61,7 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	if err != nil {
 		return APIServer{}, err
 	}
-	if os.Getenv("WIND_DAQ_NETWORK_SCAN") == "true" {
-		manager.SetScanner(scan.NewNetworkScanner())
-	} else {
-		manager.SetScanner(hardware.NewSimulatedScanner())
-	}
+	manager.SetScanner(scan.NewNetworkScanner())
 
 	return APIServer{
 		Address: cfg.Address,

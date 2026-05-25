@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { request, ApiError } from '@api/http-client'
 
+function jsonResponse(data: unknown, init: Partial<Response> = {}): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify(data)),
+    ...init,
+  } as Response
+}
+
 describe('http-client', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -9,11 +18,7 @@ describe('http-client', () => {
 
   it('returns JSON on successful response', async () => {
     const mockData = { success: true }
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(mockData),
-      status: 200,
-    } as Response)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(mockData))
 
     const result = await request<{ success: boolean }>('/api/test')
     expect(result.success).toBe(true)
@@ -49,7 +54,7 @@ describe('http-client', () => {
     let capturedHeaders: Record<string, string> = {}
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_, init) => {
       capturedHeaders = (init?.headers as Record<string, string>) ?? {}
-      return { ok: true, json: () => Promise.resolve({}) } as Response
+      return jsonResponse({})
     })
 
     await request<Record<string, never>>('/api/test')
@@ -61,9 +66,7 @@ describe('deviceApi', () => {
   beforeEach(() => { vi.restoreAllMocks(); vi.stubEnv('VITE_API_BASE', 'http://localhost:8080') })
 
   it('constructs correct connect URL', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, json: () => Promise.resolve({ success: true }),
-    } as Response)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ success: true }))
 
     const { deviceApi } = await import('@api/deviceApi')
     await deviceApi.connect('sim-1')
@@ -75,7 +78,7 @@ describe('deviceApi', () => {
 
   it('motionApi returns status', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, json: () => Promise.resolve({ connected: true, axes: [] }),
+      ok: true, text: () => Promise.resolve(JSON.stringify({ connected: true, axes: [] })),
     } as Response)
 
     const { motionApi } = await import('@api/deviceApi')
@@ -86,9 +89,9 @@ describe('deviceApi', () => {
   it('storageApi start/stop/status', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if ((url as string).includes('status')) {
-        return { ok: true, json: () => Promise.resolve({ recording: false }) } as Response
+        return jsonResponse({ recording: false })
       }
-      return { ok: true, json: () => Promise.resolve({ success: true }) } as Response
+      return jsonResponse({ success: true })
     })
 
     const { storageApi } = await import('@api/deviceApi')
@@ -103,9 +106,9 @@ describe('deviceApi', () => {
   it('calibrationApi start/status/pause/resume/stop/collect/result', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if ((url as string).includes('status') || (url as string).includes('result')) {
-        return { ok: true, json: () => Promise.resolve({ state: 'idle', taskId: 'cal-1' }) } as Response
+        return jsonResponse({ state: 'idle', taskId: 'cal-1' })
       }
-      return { ok: true, json: () => Promise.resolve({ success: true }) } as Response
+      return jsonResponse({ success: true })
     })
 
     const { calibrationApi } = await import('@api/deviceApi')
@@ -122,9 +125,9 @@ describe('deviceApi', () => {
   it('traversalApi start/status/runPoint/pause/resume/stop', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if ((url as string).includes('status')) {
-        return { ok: true, json: () => Promise.resolve({ state: 'running', currentPoint: 0, totalPoints: 2 }) } as Response
+        return jsonResponse({ state: 'running', currentPoint: 0, totalPoints: 2 })
       }
-      return { ok: true, json: () => Promise.resolve({ success: true }) } as Response
+      return jsonResponse({ success: true })
     })
 
     const { traversalApi } = await import('@api/deviceApi')

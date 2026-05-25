@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/types"
 	wind_usecase "wind-daq/services/api-go/pkg/usecase"
@@ -16,6 +19,11 @@ type App struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	appContext *appcontext.AppContext
+
+	// 采集数据推送相关
+	streamMu       sync.Mutex
+	streamCancel   context.CancelFunc
+	streamChannels map[string]chan device.DataPayload
 }
 
 // VersionInfo 版本信息
@@ -51,7 +59,131 @@ func (a *App) Startup(ctx context.Context) {
 		return
 	}
 
+	// 启动采集数据推送 goroutine，将 AcquisitionHub 数据通过 Wails Events 推送到前端
+	a.startStreamRelay()
+
 	log.Println("Wind-DAQ 应用已成功初始化")
+}
+
+// startStreamRelay 启动采集数据中继，将 hub 数据通过 Wails EventsEmit 推送到前端
+func (a *App) startStreamRelay() {
+	a.streamMu.Lock()
+	defer a.streamMu.Unlock()
+
+	if a.streamCancel != nil {
+		a.streamCancel()
+	}
+	streamCtx, cancel := context.WithCancel(a.ctx)
+	a.streamCancel = cancel
+	a.streamChannels = make(map[string]chan device.DataPayload)
+
+	go a.streamRelayLoop(streamCtx)
+}
+
+// streamRelayLoop 监听所有已订阅设备的采集数据并推送到前端
+func (a *App) streamRelayLoop(ctx context.Context) {
+	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
+		return
+	}
+	type sub struct {
+		ch          <-chan device.DataPayload
+		unsubscribe func()
+	}
+	var subs sync.Map
+
+	for {
+		select {
+		case <-ctx.Done():
+			// 清理所有订阅
+			subs.Range(func(key, value any) bool {
+				if s, ok := value.(sub); ok {
+					s.unsubscribe()
+				}
+				return true
+			})
+			return
+		default:
+		}
+
+		// 检查当前需要订阅的设备列表
+		a.streamMu.Lock()
+		needed := make(map[string]struct{}, len(a.streamChannels))
+		for id := range a.streamChannels {
+			needed[id] = struct{}{}
+		}
+		a.streamMu.Unlock()
+
+		// 订阅新设备
+		for id := range needed {
+			if _, exists := subs.Load(id); exists {
+				continue
+			}
+			ch, unsub := a.appContext.AcquisitionHub.Subscribe(id, 16)
+			subs.Store(id, sub{ch: ch, unsubscribe: unsub})
+			go func(deviceID string, payloadCh <-chan device.DataPayload) {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case payload, ok := <-payloadCh:
+						if !ok {
+							return
+						}
+						runtime.EventsEmit(a.ctx, "daq:payload", payload)
+					}
+				}
+			}(id, ch)
+		}
+
+		// 取消不再需要的订阅
+		subs.Range(func(key, value any) bool {
+			id := key.(string)
+			if _, ok := needed[id]; !ok {
+				if s, ok := value.(sub); ok {
+					s.unsubscribe()
+				}
+				subs.Delete(key)
+			}
+			return true
+		})
+
+		// 短暂休眠避免忙等
+		select {
+		case <-ctx.Done():
+			return
+		case <-streamCtxSleep(ctx, 500*time.Millisecond):
+		}
+	}
+}
+
+func streamCtxSleep(ctx context.Context, d time.Duration) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(d):
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+// DeviceSubscribeStream 前端调用此方法来订阅/取消订阅某个设备的采集数据流
+func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResponse {
+	a.streamMu.Lock()
+	defer a.streamMu.Unlock()
+
+	if a.streamChannels == nil {
+		a.streamChannels = make(map[string]chan device.DataPayload)
+	}
+
+	if subscribe {
+		a.streamChannels[deviceID] = make(chan device.DataPayload, 16)
+	} else {
+		delete(a.streamChannels, deviceID)
+	}
+
+	return GenericResponse{Success: true}
 }
 
 // Shutdown 应用关闭时调用
