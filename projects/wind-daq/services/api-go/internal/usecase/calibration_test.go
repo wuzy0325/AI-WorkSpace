@@ -3,8 +3,11 @@ package usecase
 import (
 	"testing"
 
+	"wind-daq/services/api-go/internal/adapters/hardware"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/core/motion"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 type fakeLatestDataReader struct {
@@ -177,8 +180,30 @@ func TestCalibrationManagerReturnsErrorWhenDeviceHasNoData(t *testing.T) {
 }
 
 func TestCalibrationManagerPauseResumeAndStop(t *testing.T) {
-	motionController := newFakeMotionController()
-	motionManager := NewMotionManager(motionController)
+	profile := motion.MotionControllerProfile{
+		ID:      "motion-1",
+		Name:    "Test Controller",
+		Type:    motion.ControllerTypeSimulated,
+		Address: "127.0.0.1",
+		Axes: []motion.AxisConfig{
+			{Name: motion.AxisX, Enabled: true},
+		},
+	}
+	profileStore := &fakeProfileStore{profiles: []motion.MotionControllerProfile{profile}}
+	motionManager := NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
+		return hardware.NewSimulatedMotionController(profile)
+	})
+
+	// 先加载配置，这样管理器才知道有哪些控制器
+	if _, err := motionManager.LoadProfiles(); err != nil {
+		t.Fatalf("LoadProfiles returned error: %v", err)
+	}
+
+	// 连接控制器
+	if err := motionManager.Connect("motion-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
 	manager := NewCalibrationManager(newFakeReaderWithPayload(device.DataPayload{
 		DeviceID: "daq-1", Timestamp: 1,
 		Channels: []float64{1}, ChannelIndices: []int{0},
@@ -201,7 +226,7 @@ func TestCalibrationManagerPauseResumeAndStop(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 
-	if err := motionManager.Jog("X", 1); err != nil {
+	if err := motionManager.Jog("motion-1", motion.AxisX, 1); err != nil {
 		t.Fatalf("Jog: %v", err)
 	}
 	if err := manager.Stop(); err != nil {
@@ -210,7 +235,7 @@ func TestCalibrationManagerPauseResumeAndStop(t *testing.T) {
 	if status := manager.Status(); status.State != calibration.StateStopped {
 		t.Fatalf("expected stopped, got %+v", status)
 	}
-	if motionManager.Status().Axes[0].Moving {
+	if status, _ := motionManager.Status("motion-1"); status.Axes[0].Moving {
 		t.Fatal("expected stop to release motion")
 	}
 }

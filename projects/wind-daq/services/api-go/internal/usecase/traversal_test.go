@@ -3,8 +3,11 @@ package usecase
 import (
 	"testing"
 
+	"wind-daq/services/api-go/internal/adapters/hardware"
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 type fakeTraversalResultStore struct {
@@ -34,6 +37,30 @@ func (s *fakeTraversalPointSink) WriteTraversalPoint(point traversal.PointResult
 	return nil
 }
 
+func createTestMotionProfileStore() ports.MotionProfileStore {
+	return &fakeProfileStore{
+		profiles: []motion.MotionControllerProfile{
+			{
+				ID:      "motion-1",
+				Name:    "Test Controller",
+				Type:    motion.ControllerTypeSimulated,
+				Address: "127.0.0.1",
+				Axes: []motion.AxisConfig{
+					{Name: motion.AxisX, Enabled: true},
+					{Name: motion.AxisY, Enabled: true},
+				},
+			},
+		},
+	}
+}
+
+func createTestMotionManager() *MotionManager {
+	factory := func(profile motion.MotionControllerProfile) ports.MotionController {
+		return hardware.NewSimulatedMotionController(profile)
+	}
+	return NewMotionManager(createTestMotionProfileStore(), factory)
+}
+
 func TestTraversalManagerRunsPointAndRecordsData(t *testing.T) {
 	reader := newFakeReaderWithPayload(device.DataPayload{
 		DeviceID:       "daq-1",
@@ -41,7 +68,18 @@ func TestTraversalManagerRunsPointAndRecordsData(t *testing.T) {
 		Channels:       []float64{1.2, 3.4},
 		ChannelIndices: []int{0, 1},
 	})
-	motionManager := NewMotionManager(newFakeMotionController())
+	motionManager := createTestMotionManager()
+
+	// 先加载配置，这样管理器才知道有哪些控制器
+	if _, err := motionManager.LoadProfiles(); err != nil {
+		t.Fatalf("LoadProfiles returned error: %v", err)
+	}
+
+	// 连接控制器
+	if err := motionManager.Connect("motion-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
 	sink := &fakeTraversalPointSink{}
 	manager := NewTraversalManager(reader, motionManager, sink, newFakeTraversalResultStore())
 
@@ -64,8 +102,8 @@ func TestTraversalManagerRunsPointAndRecordsData(t *testing.T) {
 	if status.CurrentPoint != 1 || len(status.Results) != 1 {
 		t.Fatalf("expected one result and next point index, got %+v", status)
 	}
-	if got := motionManager.Status().Axes[0].Position; got != 2.5 {
-		t.Fatalf("expected X axis moved to 2.5, got %.2f", got)
+	if got, _ := motionManager.Status("motion-1"); got.Axes[0].Position != 2.5 {
+		t.Fatalf("expected X axis moved to 2.5, got %.2f", got.Axes[0].Position)
 	}
 	if got := status.Results[0].Values[1]; got != 3.4 {
 		t.Fatalf("expected recorded channel value 3.4, got %.2f", got)
@@ -76,7 +114,18 @@ func TestTraversalManagerRunsPointAndRecordsData(t *testing.T) {
 }
 
 func TestTraversalManagerPauseResumeAndStop(t *testing.T) {
-	motionManager := NewMotionManager(newFakeMotionController())
+	motionManager := createTestMotionManager()
+
+	// 先加载配置，这样管理器才知道有哪些控制器
+	if _, err := motionManager.LoadProfiles(); err != nil {
+		t.Fatalf("LoadProfiles returned error: %v", err)
+	}
+
+	// 连接控制器
+	if err := motionManager.Connect("motion-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
 	manager := NewTraversalManager(newFakeReaderWithPayload(device.DataPayload{DeviceID: "daq-1", Timestamp: 1, Channels: []float64{1}, ChannelIndices: []int{0}}), motionManager, nil, newFakeTraversalResultStore())
 
 	if err := manager.Start(traversal.Config{
@@ -100,7 +149,7 @@ func TestTraversalManagerPauseResumeAndStop(t *testing.T) {
 		t.Fatalf("expected resumed at point 0, got %+v", status)
 	}
 
-	if err := motionManager.Jog("X", 1); err != nil {
+	if err := motionManager.Jog("motion-1", motion.AxisX, 1); err != nil {
 		t.Fatalf("Jog returned error: %v", err)
 	}
 	if err := manager.Stop(); err != nil {
@@ -109,13 +158,13 @@ func TestTraversalManagerPauseResumeAndStop(t *testing.T) {
 	if status := manager.Status(); status.State != traversal.StateStopped {
 		t.Fatalf("expected stopped state, got %+v", status)
 	}
-	if motionManager.Status().Axes[0].Moving {
+	if status, _ := motionManager.Status("motion-1"); status.Axes[0].Moving {
 		t.Fatal("expected stop to stop moving axis")
 	}
 }
 
 func TestTraversalManagerReturnsErrorWhenDeviceHasNoData(t *testing.T) {
-	manager := NewTraversalManager(&fakeLatestDataReader{}, NewMotionManager(newFakeMotionController()), nil, newFakeTraversalResultStore())
+	manager := NewTraversalManager(&fakeLatestDataReader{}, createTestMotionManager(), nil, newFakeTraversalResultStore())
 
 	if err := manager.Start(traversal.Config{
 		TaskID:   "trav-1",

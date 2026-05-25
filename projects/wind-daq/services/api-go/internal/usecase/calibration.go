@@ -177,10 +177,12 @@ func (m *CalibrationManager) Resume() error {
 
 func (m *CalibrationManager) Stop() error {
 	if m.motion != nil {
-		for _, axis := range m.motion.Status().Axes {
-			if axis.Moving {
-				if err := m.motion.Stop(axis.Name); err != nil {
-					return err
+		for _, status := range m.motion.StatusAll() {
+			for _, axis := range status.Axes {
+				if axis.Moving {
+					if err := m.motion.Stop(status.ID, axis.Name); err != nil {
+						return err
+					}
 				}
 			}
 		}

@@ -8,9 +8,12 @@ import (
 type Type string
 
 const (
-	DeviceSimulated Type = "SIMULATED"
-	DeviceDAQP1604  Type = "DAQ_P_1604"
-	DeviceDaqT1603  Type = "DAQ_T_1603"
+	DeviceSimulated   Type = "SIMULATED"
+	DeviceDAQP1604    Type = "DAQ-P-1604"
+	DeviceDaqT1603    Type = "DAQ-T-1603"
+	DeviceDAQP1064Pre Type = "DAQ-P-1064Pre"
+	DeviceWTNPXI      Type = "WTN_PXI"
+	DeviceDSA3217     Type = "DSA3217"
 )
 
 type Connection string
@@ -23,13 +26,14 @@ const (
 )
 
 type ChannelConfig struct {
-	Index     int     `json:"index"`
-	Name      string  `json:"name"`
-	Enabled   bool    `json:"enabled"`
-	Unit      string  `json:"unit"`
-	Precision int     `json:"precision"`
-	RangeMin  float64 `json:"rangeMin,omitempty"`
-	RangeMax  float64 `json:"rangeMax,omitempty"`
+	Index      int     `json:"index"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	Unit       string  `json:"unit"`
+	Precision  int     `json:"precision"`
+	RangeMin   float64 `json:"rangeMin,omitempty"`
+	RangeMax   float64 `json:"rangeMax,omitempty"`
+	TareOffset float64 `json:"tareOffset,omitempty"`
 }
 
 type Profile struct {
@@ -58,11 +62,15 @@ type Status struct {
 }
 
 type ScanResult struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      Type   `json:"type"`
-	Available bool   `json:"available"`
-	Address   string `json:"address,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Type            Type   `json:"type"`
+	Available       bool   `json:"available"`
+	Address         string `json:"address,omitempty"`
+	Port            int    `json:"port,omitempty"`
+	MacAddress      string `json:"macAddress,omitempty"`
+	SerialNumber    string `json:"serialNumber,omitempty"`
+	FirmwareVersion string `json:"firmwareVersion,omitempty"`
 }
 
 type DataPayload struct {

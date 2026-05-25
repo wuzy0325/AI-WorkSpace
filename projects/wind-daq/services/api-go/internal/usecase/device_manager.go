@@ -254,6 +254,50 @@ func (m *DeviceManager) findProfileIndexLocked(id string) (int, bool) {
 	return 0, false
 }
 
+func (m *DeviceManager) SetTare(id string, channelIndex int, offset float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profileIndex, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.TareConfigurable); ok {
+			if err := configurable.SetTare(channelIndex, offset); err != nil {
+				return err
+			}
+		}
+	}
+	if channelIndex >= 0 && channelIndex < len(m.profiles[profileIndex].Channels) {
+		m.profiles[profileIndex].Channels[channelIndex].TareOffset = offset
+	}
+	return m.store.SaveProfiles(m.profiles)
+}
+
+func (m *DeviceManager) GetTare(id string, channelIndex int) (float64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.TareConfigurable); ok {
+			return configurable.GetTare(channelIndex)
+		}
+	}
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return 0, fmt.Errorf("device profile not found: %s", id)
+	}
+	if channelIndex < 0 || channelIndex >= len(profile.Channels) {
+		return 0, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	return profile.Channels[channelIndex].TareOffset, nil
+}
+
+func (m *DeviceManager) ClearTare(id string, channelIndex int) error {
+	return m.SetTare(id, channelIndex, 0)
+}
+
 func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 	if strings.TrimSpace(config.ThermocoupleType) == "" {
 		return fmt.Errorf("thermocoupleType is required")

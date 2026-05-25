@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"wind-daq/services/api-go/internal/core/device"
 	sharedproto "shared/device-sdk/go/protocol"
 	"shared/device-sdk/go/serialport"
+	"wind-daq/services/api-go/internal/core/device"
 )
 
 type DAQP1604 struct {
@@ -136,6 +136,29 @@ func (d *DAQP1604) SetUnit(unit string) error {
 		d.profile.Channels[i].Unit = unit
 	}
 	return nil
+}
+
+func (d *DAQP1604) SetTare(channelIndex int, offset float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	d.profile.Channels[channelIndex].TareOffset = offset
+	return nil
+}
+
+func (d *DAQP1604) GetTare(channelIndex int) (float64, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return 0, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	return d.profile.Channels[channelIndex].TareOffset, nil
+}
+
+func (d *DAQP1604) ClearTare(channelIndex int) error {
+	return d.SetTare(channelIndex, 0)
 }
 
 func (d *DAQP1604) readLoop(stop <-chan struct{}) {

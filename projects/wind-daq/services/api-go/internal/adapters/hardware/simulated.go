@@ -1,6 +1,7 @@
 package hardware
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -91,6 +92,29 @@ func (d *SimulatedDevice) SetUnit(unit string) error {
 		d.profile.Channels[i].Unit = unit
 	}
 	return nil
+}
+
+func (d *SimulatedDevice) SetTare(channelIndex int, offset float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	d.profile.Channels[channelIndex].TareOffset = offset
+	return nil
+}
+
+func (d *SimulatedDevice) GetTare(channelIndex int) (float64, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return 0, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	return d.profile.Channels[channelIndex].TareOffset, nil
+}
+
+func (d *SimulatedDevice) ClearTare(channelIndex int) error {
+	return d.SetTare(channelIndex, 0)
 }
 
 func (d *SimulatedDevice) Status() device.Status {

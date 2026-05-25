@@ -40,7 +40,7 @@ func (d *fakeDevice) Status() device.Status {
 	return device.Status{ID: d.id, Connection: d.conn}
 }
 
-func (d *fakeDevice) Connect() error  { d.conn = device.ConnectionConnected; return nil }
+func (d *fakeDevice) Connect() error { d.conn = device.ConnectionConnected; return nil }
 func (d *fakeDevice) Disconnect() error {
 	if d.emitDone != nil {
 		close(d.emitDone)

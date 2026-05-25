@@ -21,6 +21,12 @@ type DaqT1603Configurable interface {
 	ApplyDaqT1603Config(config device.DaqT1603HardwareConfig) error
 }
 
+type TareConfigurable interface {
+	SetTare(channelIndex int, offset float64) error
+	GetTare(channelIndex int) (float64, error)
+	ClearTare(channelIndex int) error
+}
+
 type Publisher interface {
 	Publish(channel string, data any)
 }

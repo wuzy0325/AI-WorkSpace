@@ -1,29 +1,37 @@
 package scan
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
+	"sync"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
 )
 
 const (
-	defaultDiscoveryPort = 30303
-	defaultTimeout       = 3 * time.Second
-	broadcastAddr        = "255.255.255.255"
+	daqP1604DiscoveryCmd  = "psi9000"
+	daqP1604DiscoveryPort = 7000
+	daqP1604DefaultPort   = 9000
+
+	daqT1603DiscoveryCmd  = "T1603"
+	daqT1603DiscoveryPort = 7000
+	daqT1603DefaultPort   = 9000
+
+	daqP1064PreDiscoveryPort = 1901
+	daqP1064PreDefaultPort   = 23
+
+	defaultScanTimeout = 3 * time.Second
+	limitedBroadcast   = "255.255.255.255"
 )
 
 type NetworkScanner struct {
-	discoveryPort int
-	timeout       time.Duration
+	timeout time.Duration
 }
 
 type NetworkScannerOption func(*NetworkScanner)
-
-func WithDiscoveryPort(port int) NetworkScannerOption {
-	return func(s *NetworkScanner) { s.discoveryPort = port }
-}
 
 func WithTimeout(timeout time.Duration) NetworkScannerOption {
 	return func(s *NetworkScanner) { s.timeout = timeout }
@@ -31,8 +39,7 @@ func WithTimeout(timeout time.Duration) NetworkScannerOption {
 
 func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 	s := &NetworkScanner{
-		discoveryPort: defaultDiscoveryPort,
-		timeout:       defaultTimeout,
+		timeout: defaultScanTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -41,6 +48,74 @@ func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 }
 
 func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
+	targets := getAllBroadcastTargets()
+
+	var mu sync.Mutex
+	var allResults []device.ScanResult
+	var wg sync.WaitGroup
+
+	scanners := []struct {
+		name string
+		fn   func([]string) ([]device.ScanResult, error)
+	}{
+		{"DAQ-P-1604", s.scanDaqP1604},
+		{"DAQ-T-1603", s.scanDaqT1603},
+		{"DAQ-P-1064Pre", s.scanDaqP1064Pre},
+	}
+
+	for _, sc := range scanners {
+		wg.Add(1)
+		go func(name string, fn func([]string) ([]device.ScanResult, error)) {
+			defer wg.Done()
+			results, err := fn(targets)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			allResults = append(allResults, results...)
+			mu.Unlock()
+		}(sc.name, sc.fn)
+	}
+
+	wg.Wait()
+
+	seen := make(map[string]bool)
+	deduped := make([]device.ScanResult, 0, len(allResults))
+	for _, r := range allResults {
+		key := r.ID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, r)
+	}
+
+	if deduped == nil {
+		deduped = []device.ScanResult{}
+	}
+	return deduped, nil
+}
+
+func (s *NetworkScanner) scanDaqP1604(targets []string) ([]device.ScanResult, error) {
+	return s.udpScan(daqP1604DiscoveryCmd, daqP1604DiscoveryPort, targets, parseDaqP1604Response)
+}
+
+func (s *NetworkScanner) scanDaqT1603(targets []string) ([]device.ScanResult, error) {
+	return s.udpScan(daqT1603DiscoveryCmd, daqT1603DiscoveryPort, targets, parseDaqT1603Response)
+}
+
+func (s *NetworkScanner) scanDaqP1064Pre(targets []string) ([]device.ScanResult, error) {
+	cmd := []byte{0xFF, 0x01, 0x01, 0x02}
+	return s.udpScanBytes(cmd, daqP1064PreDiscoveryPort, targets, parseDaqP1064PreResponse)
+}
+
+type responseParser func(data []byte, remoteAddr string) *device.ScanResult
+
+func (s *NetworkScanner) udpScan(cmd string, port int, targets []string, parser responseParser) ([]device.ScanResult, error) {
+	return s.udpScanBytes([]byte(cmd), port, targets, parser)
+}
+
+func (s *NetworkScanner) udpScanBytes(cmd []byte, port int, targets []string, parser responseParser) ([]device.ScanResult, error) {
 	conn, err := net.ListenPacket("udp4", ":0")
 	if err != nil {
 		return nil, fmt.Errorf("udp listen: %w", err)
@@ -51,13 +126,16 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 		return nil, fmt.Errorf("set deadline: %w", err)
 	}
 
-	discoveryMsg := []byte("WIND_DAQ_DISCOVER")
-	addr := &net.UDPAddr{IP: net.ParseIP(broadcastAddr), Port: s.discoveryPort}
-	if _, err := conn.WriteTo(discoveryMsg, addr); err != nil {
-		return nil, fmt.Errorf("broadcast: %w", err)
+	for _, target := range targets {
+		addr := &net.UDPAddr{IP: net.ParseIP(target), Port: port}
+		if addr.IP == nil {
+			continue
+		}
+		conn.WriteTo(cmd, addr)
 	}
 
 	var results []device.ScanResult
+	seen := make(map[string]bool)
 	buf := make([]byte, 1024)
 
 	for {
@@ -66,11 +144,12 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				break
 			}
-			return results, nil
+			break
 		}
 
-		result := s.parseResponse(buf[:n], remote)
-		if result != nil {
+		result := parser(buf[:n], remote.String())
+		if result != nil && !seen[result.ID] {
+			seen[result.ID] = true
 			results = append(results, *result)
 		}
 	}
@@ -81,29 +160,221 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 	return results, nil
 }
 
-func (s *NetworkScanner) parseResponse(data []byte, addr net.Addr) *device.ScanResult {
-	msg := string(data)
+func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
+	msg := strings.TrimSpace(string(data))
+	parts := strings.Split(msg, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
 
-	switch {
-	case msg == "DAQP1604" || len(msg) >= 8 && msg[:8] == "DAQP1604":
-		id := fmt.Sprintf("daq-p1604-%s", addr.String())
-		return &device.ScanResult{
-			ID:        id,
-			Name:      fmt.Sprintf("DAQ-P-1604 (%s)", addr.String()),
-			Type:      device.DeviceDAQP1604,
-			Available: true,
-			Address:   addr.String(),
+	if len(parts) < 8 {
+		if msg == "DAQP1604" || (len(msg) >= 8 && msg[:8] == "DAQP1604") {
+			return &device.ScanResult{
+				ID:        fmt.Sprintf("scan-daq-p-1604-%s", remoteAddr),
+				Name:      "Discovered DAQ-P-1604",
+				Type:      device.DeviceDAQP1604,
+				Available: true,
+				Address:   remoteAddr,
+				Port:      daqP1604DefaultPort,
+			}
 		}
-	case msg == "DAQT1603" || len(msg) >= 8 && msg[:8] == "DAQT1603":
-		id := fmt.Sprintf("daq-t1603-%s", addr.String())
-		return &device.ScanResult{
-			ID:        id,
-			Name:      fmt.Sprintf("DAQ-T-1603 (%s)", addr.String()),
+		return nil
+	}
+
+	address := parts[0]
+	port := daqP1604DefaultPort
+	if p, err := parseInt(parts[7]); err == nil && p > 0 {
+		port = p
+	}
+
+	if address == "" {
+		return nil
+	}
+
+	result := &device.ScanResult{
+		ID:        fmt.Sprintf("scan-daq-p-1604-%s-%d", address, port),
+		Name:      "Discovered DAQ-P-1604",
+		Type:      device.DeviceDAQP1604,
+		Available: true,
+		Address:   address,
+		Port:      port,
+	}
+
+	if len(parts) > 1 && parts[1] != "" {
+		result.MacAddress = parts[1]
+	}
+	if len(parts) > 3 && parts[3] != "" && parts[3] != "0" {
+		result.SerialNumber = parts[3]
+	}
+	if len(parts) > 4 && parts[4] != "" {
+		result.FirmwareVersion = parts[4]
+	}
+
+	return result
+}
+
+func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
+	msg := strings.TrimSpace(string(data))
+
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
+		address := remoteAddr
+		if ip, ok := jsonData["ip"].(string); ok && ip != "" {
+			address = ip
+		}
+		port := daqT1603DefaultPort
+		if p, ok := jsonData["port"].(float64); ok && p > 0 {
+			port = int(p)
+		}
+
+		result := &device.ScanResult{
+			ID:        fmt.Sprintf("scan-daq-t-1603-%s-%d", address, port),
+			Name:      "Discovered DAQ-T-1603",
 			Type:      device.DeviceDaqT1603,
 			Available: true,
-			Address:   addr.String(),
+			Address:   address,
+			Port:      port,
+		}
+
+		if mac, ok := jsonData["mac"].(string); ok {
+			result.MacAddress = mac
+		}
+		if sn, ok := jsonData["serialNumber"].(string); ok {
+			result.SerialNumber = sn
+		}
+		if fv, ok := jsonData["firmwareVersion"].(string); ok {
+			result.FirmwareVersion = fv
+		}
+
+		return result
+	}
+
+	parts := strings.Split(msg, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+
+	if len(parts) >= 8 {
+		address := parts[0]
+		if address == "" {
+			address = remoteAddr
+		}
+		port := daqT1603DefaultPort
+		if p, err := parseInt(parts[7]); err == nil && p > 0 {
+			port = p
+		}
+
+		result := &device.ScanResult{
+			ID:        fmt.Sprintf("scan-daq-t-1603-%s-%d", address, port),
+			Name:      "Discovered DAQ-T-1603",
+			Type:      device.DeviceDaqT1603,
+			Available: true,
+			Address:   address,
+			Port:      port,
+		}
+
+		if len(parts) > 1 && parts[1] != "" {
+			result.MacAddress = parts[1]
+		}
+		if len(parts) > 2 && parts[2] != "" && parts[2] != "0" {
+			result.SerialNumber = parts[2]
+		}
+		if len(parts) > 4 && parts[4] != "" {
+			result.FirmwareVersion = parts[4]
+		}
+
+		return result
+	}
+
+	if msg == "DAQT1603" || (len(msg) >= 8 && msg[:8] == "DAQT1603") {
+		return &device.ScanResult{
+			ID:        fmt.Sprintf("scan-daq-t-1603-%s", remoteAddr),
+			Name:      "Discovered DAQ-T-1603",
+			Type:      device.DeviceDaqT1603,
+			Available: true,
+			Address:   remoteAddr,
+			Port:      daqT1603DefaultPort,
 		}
 	}
 
 	return nil
+}
+
+func parseDaqP1064PreResponse(data []byte, remoteAddr string) *device.ScanResult {
+	if len(data) < 36 {
+		return nil
+	}
+
+	ip := fmt.Sprintf("%d.%d.%d.%d", data[5], data[6], data[7], data[8])
+	mac := fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
+		data[9], data[10], data[11], data[12], data[13], data[14])
+
+	return &device.ScanResult{
+		ID:         fmt.Sprintf("scan-daq-p-1064pre-%s-%d", ip, daqP1064PreDefaultPort),
+		Name:       "Discovered DAQ-P-1064Pre",
+		Type:       device.DeviceDAQP1064Pre,
+		Available:  true,
+		Address:    ip,
+		Port:       daqP1064PreDefaultPort,
+		MacAddress: mac,
+	}
+}
+
+func getAllBroadcastTargets() []string {
+	targets := make(map[string]bool)
+	targets[limitedBroadcast] = true
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return []string{limitedBroadcast}
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() == nil || ipNet.IP.IsLoopback() {
+				continue
+			}
+
+			broadcast := computeBroadcastAddress(ipNet.IP.To4(), ipNet.Mask)
+			if broadcast != "" {
+				targets[broadcast] = true
+			}
+		}
+	}
+
+	result := make([]string, 0, len(targets))
+	for t := range targets {
+		result = append(result, t)
+	}
+	return result
+}
+
+func computeBroadcastAddress(ip net.IP, mask net.IPMask) string {
+	if len(ip) != 4 || len(mask) != 4 {
+		return ""
+	}
+
+	broadcast := make(net.IP, 4)
+	for i := range ip {
+		broadcast[i] = ip[i] | ^mask[i]
+	}
+
+	return broadcast.String()
+}
+
+func parseInt(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }

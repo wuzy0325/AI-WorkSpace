@@ -48,7 +48,10 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
 	recorder := usecase.NewStorageRecorder(storageadapter.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
-	motionMgr := usecase.NewMotionManager(hardware.NewSimulatedMotionController("sim-motion", []motion.AxisName{"X", "Y", "Z"}))
+	profileStore := config.NewMemoryMotionProfileStore()
+	motionMgr := usecase.NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
+		return hardware.NewSimulatedMotionController(profile)
+	})
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore())
 	dataSink := func(payload device.DataPayload) {
@@ -85,8 +88,14 @@ func (deviceFactory) Create(profile device.Profile) (ports.Device, error) {
 	switch profile.Type {
 	case device.DeviceDAQP1604:
 		return hardware.NewDAQP1604(profile), nil
+	case device.DeviceDAQP1064Pre:
+		return hardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:
 		return hardware.NewDAQT1603(profile), nil
+	case device.DeviceWTNPXI:
+		return hardware.NewWTNPXI(profile), nil
+	case device.DeviceDSA3217:
+		return hardware.NewDSA3217(profile), nil
 	default:
 		return hardware.NewSimulatedDevice(profile), nil
 	}

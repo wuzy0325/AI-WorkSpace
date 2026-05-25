@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/adapters/hardware"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
@@ -39,6 +40,31 @@ func (apiDeviceFactory) Create(profile device.Profile) (ports.Device, error) {
 type apiPublisher struct{}
 
 func (apiPublisher) Publish(string, any) {}
+
+func newTestMotionManager(axisNames ...motion.AxisName) *usecase.MotionManager {
+	profileStore := config.NewMemoryMotionProfileStore()
+	axes := make([]motion.AxisConfig, len(axisNames))
+	for i, name := range axisNames {
+		speed := 10.0
+		axes[i] = motion.AxisConfig{Name: name, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: &speed}
+	}
+	profiles := []motion.MotionControllerProfile{
+		{
+			ID:      "test-motion",
+			Name:    "Test Controller",
+			Type:    motion.ControllerTypeSimulated,
+			Address: "127.0.0.1",
+			Port:    9000,
+			Axes:    axes,
+		},
+	}
+	profileStore.SaveProfiles(profiles)
+	mgr := usecase.NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
+		return hardware.NewSimulatedMotionController(profile)
+	})
+	mgr.LoadProfiles()
+	return mgr
+}
 
 func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
@@ -211,42 +237,45 @@ func TestDaqStreamSendsServerSentEvents(t *testing.T) {
 
 func TestMotionHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := usecase.NewMotionManager(hardware.NewSimulatedMotionController("test-motion", []motion.AxisName{"X", "Y", "Z"}))
+	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
 		MotionManager:  motionMgr,
 	})
 
-	request(t, router, http.MethodPost, "/api/motion/connect", nil, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/motion/connect", []byte(`{"id":"test-motion"}`), http.StatusOK)
 	resp := request(t, router, http.MethodGet, "/api/motion/status", nil, http.StatusOK)
-	var status struct {
+	var statuses []struct {
 		Connected bool              `json:"connected"`
 		Axes      []json.RawMessage `json:"axes"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &status); err != nil {
+	if err := json.Unmarshal(resp.Body.Bytes(), &statuses); err != nil {
 		t.Fatalf("decode motion status: %v", err)
 	}
-	if !status.Connected {
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 controller status, got %d", len(statuses))
+	}
+	if !statuses[0].Connected {
 		t.Fatal("expected connected after connect")
 	}
-	if len(status.Axes) != 3 {
-		t.Fatalf("expected 3 axes, got %d", len(status.Axes))
+	if len(statuses[0].Axes) != 3 {
+		t.Fatalf("expected 3 axes, got %d", len(statuses[0].Axes))
 	}
 
-	request(t, router, http.MethodPost, "/api/motion/moveTo", []byte(`{"axis":"X","position":50}`), http.StatusOK)
-	request(t, router, http.MethodPost, "/api/motion/jog", []byte(`{"axis":"Y","velocity":2}`), http.StatusOK)
+	request(t, router, http.MethodPost, "/api/motion/moveTo", []byte(`{"id":"test-motion","axis":"X","position":50}`), http.StatusOK)
+	request(t, router, http.MethodPost, "/api/motion/jog", []byte(`{"id":"test-motion","axis":"Y","velocity":2}`), http.StatusOK)
 	resp2 := request(t, router, http.MethodGet, "/api/motion/status", nil, http.StatusOK)
 	if strings.Contains(resp2.Body.String(), `"moving":true`) {
-		request(t, router, http.MethodPost, "/api/motion/stop", []byte(`{"axis":"Y"}`), http.StatusOK)
+		request(t, router, http.MethodPost, "/api/motion/stop", []byte(`{"id":"test-motion","axis":"Y"}`), http.StatusOK)
 	}
-	request(t, router, http.MethodPost, "/api/motion/emergencyStop", nil, http.StatusOK)
-	request(t, router, http.MethodPost, "/api/motion/disconnect", nil, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/motion/emergencyStop", []byte(`{"id":"test-motion"}`), http.StatusOK)
+	request(t, router, http.MethodPost, "/api/motion/disconnect", []byte(`{"id":"test-motion"}`), http.StatusOK)
 }
 
 func TestMotionHTTPValidation(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := usecase.NewMotionManager(hardware.NewSimulatedMotionController("test-motion", []motion.AxisName{"X"}))
+	motionMgr := newTestMotionManager(motion.AxisX)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
@@ -261,7 +290,7 @@ func TestMotionHTTPValidation(t *testing.T) {
 
 func TestCalibrationHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := usecase.NewMotionManager(hardware.NewSimulatedMotionController("test-motion", []motion.AxisName{"X", "Y", "Z"}))
+	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:      newTestDeviceManager(t, hub),
@@ -309,7 +338,7 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 	router := NewRouter(Deps{
 		DeviceManager:      newTestDeviceManager(t, hub),
 		AcquisitionHub:     hub,
-		MotionManager:      usecase.NewMotionManager(nil),
+		MotionManager:      usecase.NewMotionManager(nil, nil),
 		CalibrationManager: calMgr,
 	})
 
@@ -320,7 +349,7 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 
 func TestTraversalHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := usecase.NewMotionManager(hardware.NewSimulatedMotionController("test-motion", []motion.AxisName{"X", "Y", "Z"}))
+	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),
@@ -358,7 +387,7 @@ func TestTraversalHTTPValidation(t *testing.T) {
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),
 		AcquisitionHub:   hub,
-		MotionManager:    usecase.NewMotionManager(nil),
+		MotionManager:    usecase.NewMotionManager(nil, nil),
 		TraversalManager: travMgr,
 	})
 
@@ -379,6 +408,19 @@ func TestStorageHTTPFlow(t *testing.T) {
 	request(t, router, http.MethodPost, "/api/storage/start", []byte(`{"outputDir":"testdata","filePrefix":"run-1"}`), http.StatusBadRequest)
 	request(t, router, http.MethodPost, "/api/storage/start", []byte(`{}`), http.StatusBadRequest)
 	request(t, router, http.MethodPost, "/api/storage/stop", nil, http.StatusOK)
+}
+
+func TestPublishRateHTTPFlow(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	router := NewRouter(Deps{
+		DeviceManager:   newTestDeviceManager(t, hub),
+		AcquisitionHub:  hub,
+		StorageRecorder: usecase.NewStorageRecorder(nil),
+	})
+
+	request(t, router, http.MethodGet, "/api/daq/publishRate", nil, http.StatusOK)
+	request(t, router, http.MethodPut, "/api/daq/publishRate", []byte(`{"hz":10}`), http.StatusOK)
+	request(t, router, http.MethodPut, "/api/daq/publishRate", []byte(`{"hz":0}`), http.StatusBadRequest)
 }
 
 func TestReportHTTPFlow(t *testing.T) {

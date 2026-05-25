@@ -12,4 +12,11 @@ type MotionController interface {
 	Home(axis motion.AxisName) error
 	Stop(axis motion.AxisName) error
 	EmergencyStop() error
+	DefinePosition(axis motion.AxisName, position float64) error
+}
+
+// MotionProfileStore 运动控制器配置存储接口
+type MotionProfileStore interface {
+	LoadProfiles() ([]motion.MotionControllerProfile, error)
+	SaveProfiles(profiles []motion.MotionControllerProfile) error
 }

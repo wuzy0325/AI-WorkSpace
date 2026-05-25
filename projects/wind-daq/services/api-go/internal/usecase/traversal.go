@@ -88,23 +88,34 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	point := config.Path[pointIndex]
 	m.mu.Unlock()
 
-	for axis, position := range availableAxisTargets(m.motion.Status(), point) {
-		if err := m.motion.MoveTo(axis, position); err != nil {
-			return m.fail("move %s axis: %v", axis, err)
+	controllerStatuses := m.motion.StatusAll()
+	for _, status := range controllerStatuses {
+		if !status.Connected {
+			continue
+		}
+		for axis, position := range availableAxisTargets(status, point) {
+			if err := m.motion.MoveTo(status.ID, axis, position); err != nil {
+				return m.fail("move %s axis: %v", axis, err)
+			}
 		}
 	}
 
 	deadline := time.Now().Add(2500 * time.Millisecond)
-	motionStatus := m.motion.Status()
+	motionStatuses := m.motion.StatusAll()
 	for time.Now().Before(deadline) {
 		allReached := true
-		for _, axis := range motionStatus.Axes {
-			target, hasTarget := availableAxisTargets(motionStatus, point)[axis.Name]
-			if !hasTarget {
-				continue
+		for _, motionStatus := range motionStatuses {
+			for _, axis := range motionStatus.Axes {
+				target, hasTarget := availableAxisTargets(motionStatus, point)[axis.Name]
+				if !hasTarget {
+					continue
+				}
+				if axis.Moving || abs(axis.Position-target) > 0.01 {
+					allReached = false
+					break
+				}
 			}
-			if axis.Moving || abs(axis.Position-target) > 0.01 {
-				allReached = false
+			if !allReached {
 				break
 			}
 		}
@@ -112,7 +123,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
-		motionStatus = m.motion.Status()
+		motionStatuses = m.motion.StatusAll()
 	}
 
 	payload, ok := m.reader.GetLatestData(config.DeviceID)
@@ -175,10 +186,12 @@ func (m *TraversalManager) Resume() error {
 
 func (m *TraversalManager) Stop() error {
 	if m.motion != nil {
-		for _, axis := range m.motion.Status().Axes {
-			if axis.Moving {
-				if err := m.motion.Stop(axis.Name); err != nil {
-					return err
+		for _, status := range m.motion.StatusAll() {
+			for _, axis := range status.Axes {
+				if axis.Moving {
+					if err := m.motion.Stop(status.ID, axis.Name); err != nil {
+						return err
+					}
 				}
 			}
 		}

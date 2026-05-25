@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"wind-daq/services/api-go/internal/core/device"
 	sharedproto "shared/device-sdk/go/protocol"
 	"shared/device-sdk/go/serialport"
+	"wind-daq/services/api-go/internal/core/device"
 )
 
 type DAQT1603 struct {
@@ -130,6 +130,38 @@ func (d *DAQT1603) Status() device.Status {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.status
+}
+
+func (d *DAQT1603) SetUnit(unit string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range d.profile.Channels {
+		d.profile.Channels[i].Unit = unit
+	}
+	return nil
+}
+
+func (d *DAQT1603) SetTare(channelIndex int, offset float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	d.profile.Channels[channelIndex].TareOffset = offset
+	return nil
+}
+
+func (d *DAQT1603) GetTare(channelIndex int) (float64, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return 0, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	return d.profile.Channels[channelIndex].TareOffset, nil
+}
+
+func (d *DAQT1603) ClearTare(channelIndex int) error {
+	return d.SetTare(channelIndex, 0)
 }
 
 func (d *DAQT1603) GetDaqT1603Config() (device.DaqT1603HardwareConfig, error) {
