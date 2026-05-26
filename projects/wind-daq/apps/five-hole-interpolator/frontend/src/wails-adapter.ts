@@ -8,6 +8,7 @@ export type PrbValidRange = backend.PrbValidRange
 export type LoadPrbResult = backend.LoadPrbResult
 export type InterpolationInput = backend.InterpolationInput
 export type InterpolationResult = backend.InterpolationResult
+type ApiResponse<T> = GenericResponse & { data?: T | null }
 
 // ==================== Wails 可用性检测 ====================
 export function isWailsAvailable(): boolean {
@@ -26,6 +27,10 @@ function isGenericResponse(obj: any): obj is GenericResponse {
 // 从 Wails 的联合类型返回值中分离出 GenericResponse 和数据
 // Wails 对多返回值的处理：返回值可能是按顺序的，第一个是 response
 function splitMultiReturn<T>(raw: any): [GenericResponse, T | null] {
+  if (raw && typeof raw === 'object' && 'success' in raw && 'data' in raw) {
+    const resp = raw as ApiResponse<T>
+    return [resp, resp.data ?? null]
+  }
   // 如果返回的是数组（某些 Wails 版本）
   if (Array.isArray(raw)) {
     const resp = raw[0] as GenericResponse
@@ -44,12 +49,40 @@ function splitMultiReturn<T>(raw: any): [GenericResponse, T | null] {
   return [{ success: true } as GenericResponse, raw as T]
 }
 
+function getMachRangeFromFiles(files: PrbFileInfo[]): number[] {
+  const machNumbers = files.map(file => file.machNumber).filter(Number.isFinite)
+  if (machNumbers.length === 0) return []
+  return [Math.min(...machNumbers), Math.max(...machNumbers)]
+}
+
+function createLoadPrbResult(files: PrbFileInfo[], machRange?: number[], warnings?: string[]): LoadPrbResult {
+  return new backend.LoadPrbResult({
+    files,
+    machRange: machRange ?? getMachRangeFromFiles(files),
+    warnings: warnings ?? [],
+  })
+}
+
 // ==================== API 封装 ====================
 export const api = {
   async loadPrbFiles(): Promise<[GenericResponse, LoadPrbResult | null]> {
     try {
       const result = await WailsApp.LoadPrbFiles()
-      return splitMultiReturn<LoadPrbResult>(result)
+      const [resp, data] = splitMultiReturn<LoadPrbResult>(result)
+      if (!resp.success) return [resp, null]
+      if (data && Array.isArray(data.files)) {
+        return [resp, createLoadPrbResult(data.files, data.machRange, data.warnings)]
+      }
+
+      const files = await WailsApp.GetPrbFiles()
+      if (Array.isArray(files) && files.length > 0) {
+        return [resp, createLoadPrbResult(files)]
+      }
+
+      if (resp.success) {
+        return [{ success: false, error: 'PRB 文件加载成功但未返回文件信息' } as GenericResponse, null]
+      }
+      return [resp, null]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, null]
     }
@@ -97,6 +130,15 @@ export const api = {
       return [resp, data ?? []]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, []]
+    }
+  },
+
+  async openHelpDoc(): Promise<GenericResponse> {
+    try {
+      await WailsApp.OpenHelpDoc()
+      return { success: true } as GenericResponse
+    } catch (e) {
+      return { success: false, error: String(e) } as GenericResponse
     }
   },
 }

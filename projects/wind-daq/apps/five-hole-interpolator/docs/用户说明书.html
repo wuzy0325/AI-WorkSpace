@@ -660,6 +660,39 @@
             </h2>
             <p>在数据输入区域，您可以手动输入五孔探针测量的压力值。</p>
 
+            <h3>压力模式切换</h3>
+            <p>在输入区域上方有<strong>"表压/绝压"</strong>切换按钮，请根据您的传感器输出类型选择正确的模式：</p>
+            <table class="params-table">
+                <thead>
+                    <tr>
+                        <th>模式</th>
+                        <th>说明</th>
+                        <th>适用场景</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="param-name">表压</span>（默认）</td>
+                        <td>P1-P5为相对于大气压的压力值</td>
+                        <td>差压传感器、表压传感器输出</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">绝压</span></td>
+                        <td>P1-P5为绝对压力值</td>
+                        <td>绝压传感器输出</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="tip warning">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <p><strong>重要：</strong>请务必根据实际传感器类型选择正确的压力模式。选错模式会导致计算结果严重偏差。绝压模式下，系统会自动将输入的绝对压力减去大气压转换为表压后进行计算。</p>
+            </div>
+
             <h3>输入参数说明</h3>
             <table class="params-table">
                 <thead>
@@ -752,17 +785,17 @@
                 <tbody>
                     <tr>
                         <td>P1, P2, P3, P4, P5</td>
-                        <td>Patm, Tatm</td>
+                        <td>Patm, Tatm, PressureMode</td>
                     </tr>
                 </tbody>
             </table>
 
             <h3>示例CSV内容</h3>
             <div class="code-block">
-                <code>P1</code>,<code>P2</code>,<code>P3</code>,<code>P4</code>,<code>P5</code>,<code>Patm</code>,<code>Tatm</code>
-                <br>101300,101325,101280,101300,101325,101325,20
-                <br>101310,101330,101290,101305,101328,101325,20
-                <br>101295,101320,101275,101298,101322,101325,20
+                <code>P1</code>,<code>P2</code>,<code>P3</code>,<code>P4</code>,<code>P5</code>,<code>Patm</code>,<code>Tatm</code>,<code>PressureMode</code>
+                <br>101300,101325,101280,101300,101325,101325,20,gauge
+                <br>101310,101330,101290,101305,101328,101325,20,gauge
+                <br>202625,202650,202605,202625,202650,101325,20,absolute
             </div>
 
             <h3>操作步骤</h3>

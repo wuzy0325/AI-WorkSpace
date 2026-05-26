@@ -54,13 +54,14 @@ type PrbValidRange struct {
 }
 
 type InterpolationInput struct {
-	P1   float64 `json:"P1"`
-	P2   float64 `json:"P2"`
-	P3   float64 `json:"P3"`
-	P4   float64 `json:"P4"`
-	P5   float64 `json:"P5"`
-	Patm float64 `json:"Patm"`
-	Tatm float64 `json:"Tatm"`
+	P1           float64 `json:"P1"`
+	P2           float64 `json:"P2"`
+	P3           float64 `json:"P3"`
+	P4           float64 `json:"P4"`
+	P5           float64 `json:"P5"`
+	Patm         float64 `json:"Patm"`
+	Tatm         float64 `json:"Tatm"`
+	PressureMode string  `json:"pressureMode"` // 压力模式：gauge(表压) 或 absolute(绝压)
 }
 
 type InterpolationResult struct {
@@ -83,16 +84,46 @@ type GenericResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+type LoadPrbResponse struct {
+	Success bool           `json:"success"`
+	Error   string         `json:"error,omitempty"`
+	Data    *LoadPrbResult `json:"data,omitempty"`
+}
+
 type LoadPrbResult struct {
-	Files      []PrbFileInfo `json:"files"`
-	MachRange  []float64     `json:"machRange"`
-	Warnings   []string      `json:"warnings"`
+	Files     []PrbFileInfo `json:"files"`
+	MachRange []float64     `json:"machRange"`
+	Warnings  []string      `json:"warnings"`
+}
+
+type MachRangeResponse struct {
+	Success bool      `json:"success"`
+	Error   string    `json:"error,omitempty"`
+	Data    []float64 `json:"data,omitempty"`
+}
+
+type CalculateResponse struct {
+	Success bool                 `json:"success"`
+	Error   string               `json:"error,omitempty"`
+	Data    *InterpolationResult `json:"data,omitempty"`
+}
+
+type BatchCalculateResponse struct {
+	Success bool                   `json:"success"`
+	Error   string                 `json:"error,omitempty"`
+	Data    []*InterpolationResult `json:"data,omitempty"`
+}
+
+type ImportCsvDataResponse struct {
+	Success bool                 `json:"success"`
+	Error   string               `json:"error,omitempty"`
+	Data    []InterpolationInput `json:"data,omitempty"`
 }
 
 type App struct {
-	ctx           context.Context
-	multiInterp   *wind_interp.MultiPrbInterpolator
-	prbFiles      []PrbFileInfo
+	ctx         context.Context
+	multiInterp *wind_interp.MultiPrbInterpolator
+	prbFiles    []PrbFileInfo
 }
 
 func NewApp() *App {
@@ -103,26 +134,26 @@ func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-func (a *App) LoadPrbFiles() (GenericResponse, *LoadPrbResult) {
-	filePaths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+func (a *App) LoadPrbFiles() LoadPrbResponse {
+	filePaths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "选择多个 PRB 校准文件",
-		Filters: []runtime.FileFilter{
+		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "PRB Files (*.prb)", Pattern: "*.prb"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
 	if err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}, nil
+		return LoadPrbResponse{Success: false, Error: err.Error()}
 	}
 	if len(filePaths) == 0 {
-		return GenericResponse{Success: false, Error: "已取消选择"}, nil
+		return LoadPrbResponse{Success: false, Error: "已取消选择"}
 	}
 
 	fileData := make([]wind_interp.PrbFileData, 0, len(filePaths))
 	for _, fp := range filePaths {
 		lines, err := wind_interp.ReadPrbLines(fp)
 		if err != nil {
-			return GenericResponse{Success: false, Error: fmt.Sprintf("读取 %s 失败: %s", filepath.Base(fp), err.Error())}, nil
+			return LoadPrbResponse{Success: false, Error: fmt.Sprintf("读取 %s 失败: %s", filepath.Base(fp), err.Error())}
 		}
 		fileData = append(fileData, wind_interp.PrbFileData{FilePath: fp, Lines: lines})
 	}
@@ -130,15 +161,15 @@ func (a *App) LoadPrbFiles() (GenericResponse, *LoadPrbResult) {
 	interpolator := wind_interp.NewMultiPrbInterpolator()
 	result, err := interpolator.LoadPrbData(fileData, nil)
 	if err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}, nil
+		return LoadPrbResponse{Success: false, Error: err.Error()}
 	}
 
 	a.multiInterp = interpolator
 	a.prbFiles = nil
 	for _, f := range result.Files {
 		a.prbFiles = append(a.prbFiles, PrbFileInfo{
-			FilePath: f.FilePath,
-			FileName: f.FileName,
+			FilePath:   f.FilePath,
+			FileName:   f.FileName,
 			MachNumber: 0,
 			ValidRange: PrbValidRange{
 				AlphaMin: f.ValidRange.AlphaMin,
@@ -157,10 +188,13 @@ func (a *App) LoadPrbFiles() (GenericResponse, *LoadPrbResult) {
 	minMa, maxMa := interpolator.GetMachRange()
 	machRange := []float64{minMa, maxMa}
 
-	return GenericResponse{Success: true}, &LoadPrbResult{
-		Files:     a.prbFiles,
-		MachRange: machRange,
-		Warnings:  result.Warnings,
+	return LoadPrbResponse{
+		Success: true,
+		Data: &LoadPrbResult{
+			Files:     a.prbFiles,
+			MachRange: machRange,
+			Warnings:  result.Warnings,
+		},
 	}
 }
 
@@ -172,84 +206,101 @@ func (a *App) GetPrbFiles() []PrbFileInfo {
 	return a.prbFiles
 }
 
-func (a *App) GetMachRange() (GenericResponse, []float64) {
+func (a *App) GetMachRange() MachRangeResponse {
 	if !a.IsPrbLoaded() {
-		return GenericResponse{Success: false, Error: "请先加载PRB文件"}, nil
+		return MachRangeResponse{Success: false, Error: "请先加载PRB文件"}
 	}
 	min, max := a.multiInterp.GetMachRange()
-	return GenericResponse{Success: true}, []float64{min, max}
+	return MachRangeResponse{Success: true, Data: []float64{min, max}}
 }
 
-func (a *App) Calculate(input InterpolationInput) (GenericResponse, *InterpolationResult) {
+func (a *App) Calculate(input InterpolationInput) CalculateResponse {
 	if !a.IsPrbLoaded() {
-		return GenericResponse{Success: false, Error: "请先加载PRB文件"}, nil
+		return CalculateResponse{Success: false, Error: "请先加载PRB文件"}
 	}
 
-	coreInput := wind_interp.InterpolationInput{
-		P1: input.P1, P2: input.P2, P3: input.P3,
-		P4: input.P4, P5: input.P5,
-		PAtm: input.Patm, TAtm: input.Tatm,
-	}
+	coreInput := toCoreInput(input)
 
 	result, err := a.multiInterp.Calculate(coreInput)
 	if err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}, nil
+		return CalculateResponse{Success: false, Error: err.Error()}
 	}
 
-	return GenericResponse{Success: true}, toAppResult(result)
+	return CalculateResponse{Success: true, Data: toAppResult(result)}
 }
 
-func (a *App) BatchCalculate(datas []InterpolationInput) (GenericResponse, []*InterpolationResult) {
+func (a *App) BatchCalculate(datas []InterpolationInput) BatchCalculateResponse {
 	if !a.IsPrbLoaded() {
-		return GenericResponse{Success: false, Error: "请先加载PRB文件"}, nil
+		return BatchCalculateResponse{Success: false, Error: "请先加载PRB文件"}
 	}
 
 	results := make([]*InterpolationResult, 0, len(datas))
 	for i, input := range datas {
-		coreInput := wind_interp.InterpolationInput{
-			P1: input.P1, P2: input.P2, P3: input.P3,
-			P4: input.P4, P5: input.P5,
-			PAtm: input.Patm, TAtm: input.Tatm,
-		}
+		coreInput := toCoreInput(input)
 		result, err := a.multiInterp.Calculate(coreInput)
 		if err != nil {
-			return GenericResponse{Success: false, Error: fmt.Sprintf("第%d行计算失败: %s", i+1, err.Error())}, nil
+			return BatchCalculateResponse{Success: false, Error: fmt.Sprintf("第%d行计算失败: %s", i+1, err.Error())}
 		}
 		results = append(results, toAppResult(result))
 	}
 
-	return GenericResponse{Success: true}, results
+	return BatchCalculateResponse{Success: true, Data: results}
 }
 
-func (a *App) ImportCsvData() (GenericResponse, []InterpolationInput) {
-	filePath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+// toCoreInput 将应用层输入转换为核心算法输入
+// 核心算法内部统一使用表压，绝压输入时自动减去大气压转为表压
+func toCoreInput(input InterpolationInput) wind_interp.InterpolationInput {
+	coreInput := wind_interp.InterpolationInput{
+		P1:   input.P1,
+		P2:   input.P2,
+		P3:   input.P3,
+		P4:   input.P4,
+		P5:   input.P5,
+		PAtm: input.Patm,
+		TAtm: input.Tatm,
+	}
+
+	// 绝压模式：P1-P5为绝对压力，需减去大气压转为表压
+	if input.PressureMode == "absolute" {
+		coreInput.P1 = input.P1 - input.Patm
+		coreInput.P2 = input.P2 - input.Patm
+		coreInput.P3 = input.P3 - input.Patm
+		coreInput.P4 = input.P4 - input.Patm
+		coreInput.P5 = input.P5 - input.Patm
+	}
+
+	return coreInput
+}
+
+func (a *App) ImportCsvData() ImportCsvDataResponse {
+	filePath, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "选择数据 CSV 文件",
-		Filters: []runtime.FileFilter{
+		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "CSV Files (*.csv)", Pattern: "*.csv"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
 	if err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}, nil
+		return ImportCsvDataResponse{Success: false, Error: err.Error()}
 	}
 	if filePath == "" {
-		return GenericResponse{Success: false, Error: "已取消选择"}, nil
+		return ImportCsvDataResponse{Success: false, Error: "已取消选择"}
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return GenericResponse{Success: false, Error: fmt.Sprintf("打开文件失败: %s", err.Error())}, nil
+		return ImportCsvDataResponse{Success: false, Error: fmt.Sprintf("打开文件失败: %s", err.Error())}
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return GenericResponse{Success: false, Error: fmt.Sprintf("读取CSV失败: %s", err.Error())}, nil
+		return ImportCsvDataResponse{Success: false, Error: fmt.Sprintf("读取CSV失败: %s", err.Error())}
 	}
 
 	if len(records) < 2 {
-		return GenericResponse{Success: false, Error: "CSV文件为空或只有表头"}, nil
+		return ImportCsvDataResponse{Success: false, Error: "CSV文件为空或只有表头"}
 	}
 
 	header := records[0]
@@ -261,12 +312,13 @@ func (a *App) ImportCsvData() (GenericResponse, []InterpolationInput) {
 	required := []string{"P1", "P2", "P3", "P4", "P5"}
 	for _, name := range required {
 		if _, ok := colMap[name]; !ok {
-			return GenericResponse{Success: false, Error: fmt.Sprintf("缺少必要列: %s", name)}, nil
+			return ImportCsvDataResponse{Success: false, Error: fmt.Sprintf("缺少必要列: %s", name)}
 		}
 	}
 
 	patmIdx, hasPatm := colMap["Patm"]
 	tatmIdx, hasTatm := colMap["Tatm"]
+	pmIdx, hasPm := colMap["PressureMode"]
 
 	datas := make([]InterpolationInput, 0, len(records)-1)
 	for rowIdx := 1; rowIdx < len(records); rowIdx++ {
@@ -290,10 +342,18 @@ func (a *App) ImportCsvData() (GenericResponse, []InterpolationInput) {
 		if hasTatm {
 			input.Tatm = parse(tatmIdx)
 		}
+		if hasPm {
+			pm := strings.TrimSpace(row[pmIdx])
+			if pm == "absolute" {
+				input.PressureMode = "absolute"
+			} else {
+				input.PressureMode = "gauge"
+			}
+		}
 		datas = append(datas, input)
 	}
 
-	return GenericResponse{Success: true}, datas
+	return ImportCsvDataResponse{Success: true, Data: datas}
 }
 
 func toAppResult(r wind_interp.InterpolationResult) *InterpolationResult {

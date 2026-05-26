@@ -29,3 +29,7 @@ export function IsPrbLoaded() {
 export function LoadPrbFiles() {
   return window['go']['backend']['App']['LoadPrbFiles']();
 }
+
+export function OpenHelpDoc() {
+  return window['go']['backend']['App']['OpenHelpDoc']();
+}
