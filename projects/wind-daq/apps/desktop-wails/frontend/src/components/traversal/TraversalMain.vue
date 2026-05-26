@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ============================================================================
  * 浜斿瓟鎺㈤拡绉讳綅娴嬭瘯涓荤敾闈?(FiveHoleTraversalMain)
  * ============================================================================
@@ -301,9 +301,11 @@ function buildRealtimePressuresFromSnapshots(
   const toValue = (deviceId: string, channelIndex: number): number | undefined => {
     const payload = snapshots.find((entry) => entry.deviceId === deviceId)
     if (!payload) return undefined
-    const index = payload.channelIndices.indexOf(channelIndex)
+    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
+    const channels = Array.isArray(payload.channels) ? payload.channels : []
+    const index = indices.indexOf(channelIndex)
     if (index < 0) return undefined
-    const value = payload.channels[index]
+    const value = channels[index]
     return typeof value === 'number' ? value : undefined
   }
 

@@ -46,6 +46,7 @@ func NewAcquisitionHubWithHistoryCapacity(publisher ports.Publisher, publishHz f
 }
 
 func (h *AcquisitionHub) OnData(payload device.DataPayload) {
+	payload.EnsureNonNilSlices()
 	h.mu.Lock()
 	h.latestByDevice[payload.DeviceID] = payload
 	history := append(h.historyByDevice[payload.DeviceID], payload)

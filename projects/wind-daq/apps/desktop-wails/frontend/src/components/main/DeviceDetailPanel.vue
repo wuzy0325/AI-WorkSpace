@@ -141,8 +141,10 @@ function sparkBars(channelIndex: number): number[] {
   const history = deviceStore.historyFor(deviceStore.selectedDeviceId ?? '')
   const values = history
     .map((entry) => {
-      const pos = entry.channelIndices.indexOf(channelIndex)
-      return pos >= 0 ? entry.channels[pos] : null
+      const indices = Array.isArray(entry.channelIndices) ? entry.channelIndices : []
+      const channels = Array.isArray(entry.channels) ? entry.channels : []
+      const pos = indices.indexOf(channelIndex)
+      return pos >= 0 ? channels[pos] : null
     })
     .filter((v): v is number => v !== null)
     .slice(-12)

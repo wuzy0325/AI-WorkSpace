@@ -178,10 +178,13 @@ async function handlePickDirectory(): Promise<void> {
 }
 
 async function onSave(): Promise<void> {
-  if (!validate()) return
-
   saving.value = true
   try {
+    if (!validate()) {
+      feedback.pushToast(validationError.value || '设置无效，请检查输入', 'warning')
+      return
+    }
+
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings()))
     if (refreshRate.value !== originalRefreshRate.value) {
       await deviceApi.setPublishRate(refreshRate.value)

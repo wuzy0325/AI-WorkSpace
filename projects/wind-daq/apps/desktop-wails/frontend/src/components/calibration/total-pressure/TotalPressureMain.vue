@@ -390,7 +390,7 @@ onUnmounted(() => {
         </div>
 
         <div v-if="activeTab === 'overview'" class="flex-1 overflow-auto p-5">
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
               <div class="mb-4 flex items-center gap-2">
                 <TrendingUp class="h-5 w-5 text-[var(--accent-primary)]" />
@@ -435,12 +435,12 @@ onUnmounted(() => {
               <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">暂无原始数据</div>
             </div>
 
-            <div class="col-span-2 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
+            <div class="md:col-span-2 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
               <div class="mb-4 flex items-center gap-2">
                 <Settings class="h-5 w-5 text-[var(--accent-primary)]" />
                 <h3 class="text-base font-semibold text-[var(--text-primary)]">配置信息</h3>
               </div>
-              <div class="grid grid-cols-4 gap-4 text-sm">
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
                   <div class="text-xs text-[var(--text-muted)]">配置名称</div>
                   <div class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || '未配置' }}</div>
@@ -481,7 +481,7 @@ onUnmounted(() => {
               <h3 class="text-base font-semibold text-[var(--text-primary)]">校准数据记录</h3>
               <span class="ml-auto text-sm text-[var(--text-muted)]">共 {{ calibrationStore.dataPoints.length }} 条记录</span>
             </div>
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto max-h-[calc(100vh-300px)]">
               <table class="w-full text-sm">
                 <thead class="bg-[var(--bg-panel-strong)]">
                   <tr>

@@ -193,7 +193,15 @@ export const wailsApi = {
     },
     onPayload: (callback: (payload: DeviceDataPayload) => void): (() => void) => {
       const cleanup = EventsOn('daq:payload', (data: unknown) => {
-        callback(data as DeviceDataPayload);
+        if (data == null) return
+        const raw = data as Record<string, unknown>
+        const normalized: DeviceDataPayload = {
+          deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : '',
+          timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+          channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
+          channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
+        }
+        callback(normalized)
       });
       return () => {
         cleanup();

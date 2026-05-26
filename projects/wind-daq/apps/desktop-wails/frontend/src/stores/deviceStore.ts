@@ -39,7 +39,10 @@ export const useDeviceStore = defineStore('devices', () => {
 
   async function refreshProfiles() {
     try {
-      profiles.value = await deviceApi.getProfiles()
+      profiles.value = (await deviceApi.getProfiles()).map((profile) => ({
+        ...profile,
+        channels: Array.isArray(profile.channels) ? profile.channels : [],
+      }))
       if (!profiles.value.length) {
         profiles.value = [defaultSimulatedProfile()]
       }
@@ -68,19 +71,26 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   function pushSnapshot(payload: DataPayload) {
-    const idx = latestSnapshots.value.findIndex((s) => s.deviceId === payload.deviceId)
+    if (!payload || !payload.deviceId) return
+    const normalized: DataPayload = {
+      deviceId: payload.deviceId,
+      timestamp: payload.timestamp ?? 0,
+      channels: Array.isArray(payload.channels) ? payload.channels : [],
+      channelIndices: Array.isArray(payload.channelIndices) ? payload.channelIndices : [],
+    }
+    const idx = latestSnapshots.value.findIndex((s) => s.deviceId === normalized.deviceId)
     if (idx >= 0) {
-      latestSnapshots.value[idx] = payload
+      latestSnapshots.value[idx] = normalized
     } else {
-      latestSnapshots.value.push(payload)
+      latestSnapshots.value.push(normalized)
     }
 
-    let buffer = historyBuffers.value.get(payload.deviceId)
+    let buffer = historyBuffers.value.get(normalized.deviceId)
     if (!buffer) {
       buffer = []
-      historyBuffers.value.set(payload.deviceId, buffer)
+      historyBuffers.value.set(normalized.deviceId, buffer)
     }
-    buffer.push(payload)
+    buffer.push(normalized)
     if (buffer.length > MAX_HISTORY_POINTS) buffer.shift()
   }
 
@@ -153,12 +163,15 @@ export const useDeviceStore = defineStore('devices', () => {
     if (!profile) return
     const snapshot = latestSnapshots.value.find((s) => s.deviceId === id)
     if (!snapshot) return
+    const indices = Array.isArray(snapshot.channelIndices) ? snapshot.channelIndices : []
+    const channels = Array.isArray(snapshot.channels) ? snapshot.channels : []
 
-    profile.channels.forEach((channel) => {
+    const profileChannels = Array.isArray(profile.channels) ? profile.channels : []
+    profileChannels.forEach((channel) => {
       if (!channel.enabled) return
-      const pos = snapshot.channelIndices.indexOf(channel.index)
+      const pos = indices.indexOf(channel.index)
       if (pos >= 0) {
-        setTare(id, channel.index, snapshot.channels[pos])
+        setTare(id, channel.index, channels[pos])
       }
     })
   }
@@ -169,7 +182,9 @@ export const useDeviceStore = defineStore('devices', () => {
 
   function getChannelRange(id: string, channelIndex: number): { min: number; max: number } {
     const profile = profiles.value.find((p) => p.id === id)
-    const channel = profile?.channels.find((c) => c.index === channelIndex)
+    const channel = Array.isArray(profile?.channels)
+      ? profile.channels.find((c) => c.index === channelIndex)
+      : undefined
     const min = channel?.rangeMin ?? -10
     const max = channel?.rangeMax ?? 10
     return min === max ? { min: min - 1, max: max + 1 } : { min, max }
@@ -177,7 +192,9 @@ export const useDeviceStore = defineStore('devices', () => {
 
   function getChannelPrecision(id: string, channelIndex: number): number {
     const profile = profiles.value.find((p) => p.id === id)
-    const channel = profile?.channels.find((c) => c.index === channelIndex)
+    const channel = Array.isArray(profile?.channels)
+      ? profile.channels.find((c) => c.index === channelIndex)
+      : undefined
     return channel?.precision ?? 3
   }
 
@@ -200,7 +217,8 @@ export const useDeviceStore = defineStore('devices', () => {
     if (!profile) return
 
     if (enabled) {
-      const enabledIndices = profile.channels.filter((ch) => ch.enabled).map((ch) => ch.index)
+      const channels = Array.isArray(profile.channels) ? profile.channels : []
+      const enabledIndices = channels.filter((ch) => ch.enabled).map((ch) => ch.index)
       chartSelectedIndices.value.set(id, new Set(enabledIndices.slice(0, MAX_CHART_CHANNELS)))
       return
     }
@@ -219,7 +237,8 @@ export const useDeviceStore = defineStore('devices', () => {
     const profile = profiles.value.find((p) => p.id === id)
     if (!profile) return
 
-    const defaults = profile.channels
+    const channels = Array.isArray(profile.channels) ? profile.channels : []
+    const defaults = channels
       .filter((channel) => channel.enabled)
       .slice(0, 4)
       .map((channel) => channel.index)

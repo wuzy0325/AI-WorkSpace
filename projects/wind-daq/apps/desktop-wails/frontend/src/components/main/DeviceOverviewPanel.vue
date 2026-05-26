@@ -44,7 +44,8 @@ interface OverviewDeviceGroup {
 
 function channelDisplayName(deviceId: string, channelIndex: number): string {
   const profile = deviceStore.profiles?.find((item) => item.id === deviceId)
-  const name = profile?.channels[channelIndex]?.name?.trim()
+  const channels = Array.isArray(profile?.channels) ? profile.channels : []
+  const name = channels[channelIndex]?.name?.trim()
   if (!name) return `CH${channelIndex + 1}`
   return name
 }
@@ -79,17 +80,19 @@ function deviceStatusLabel(profileId: string): string {
 const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   (deviceStore.profiles ?? []).flatMap((profile, index) => {
     const latest = deviceStore.latestFor(profile.id)
-    if (!latest?.channels?.length) return []
+    const indices = Array.isArray(latest?.channelIndices) ? latest.channelIndices : []
+    const values = Array.isArray(latest?.channels) ? latest.channels : []
+    if (!values.length) return []
 
-    const channels = latest.channels.map((rawValue, snapshotIndex) => {
-      const channelIndex = latest.channelIndices[snapshotIndex]
+    const channels = values.map((rawValue, snapshotIndex) => {
+      const channelIndex = indices[snapshotIndex]
       return {
         key: `${profile.id}-${channelIndex}`,
         channelIndex,
         label: `CH_${String(channelIndex + 1).padStart(2, '0')}`,
         name: channelDisplayName(profile.id, channelIndex),
         formattedValue: deviceStore.formatValue(profile.id, channelIndex, rawValue),
-        unit: profile.channels[channelIndex]?.unit || (i18n.t.unit ?? 'PA'),
+        unit: (Array.isArray(profile.channels) ? profile.channels[channelIndex]?.unit : undefined) || (i18n.t.unit ?? 'PA'),
         tone: channelTone(profile.id, channelIndex, rawValue),
       }
     })

@@ -30,8 +30,10 @@ const option = computed(() => {
     name: `CH${ch + 1}`,
     type: 'line' as const,
     data: data.map((d) => {
-      const pos = d.channelIndices.indexOf(ch)
-      return pos >= 0 ? d.channels[pos] : null
+      const indices = Array.isArray(d.channelIndices) ? d.channelIndices : []
+      const channels = Array.isArray(d.channels) ? d.channels : []
+      const pos = indices.indexOf(ch)
+      return pos >= 0 ? channels[pos] : null
     }),
     smooth: true,
     symbol: 'none',

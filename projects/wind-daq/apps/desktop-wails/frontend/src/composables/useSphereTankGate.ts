@@ -65,12 +65,14 @@ export function useSphereTankGate(options: UseSphereTankGateOptions) {
       stableTimeSec.value = null
       return
     }
-    const idx = payload.channelIndices.indexOf(gate.stableTimeChannel.channelIndex)
+    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
+    const channels = Array.isArray(payload.channels) ? payload.channels : []
+    const idx = indices.indexOf(gate.stableTimeChannel.channelIndex)
     if (idx < 0) {
       stableTimeSec.value = null
       return
     }
-    const raw = payload.channels[idx]
+    const raw = channels[idx]
     stableTimeSec.value = typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null
   }
 

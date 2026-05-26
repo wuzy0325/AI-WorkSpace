@@ -270,6 +270,8 @@ function getIconComponent(type: CalibrationType) {
   min-height: 0;
   padding: 1.25rem;
   overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
 }
 
 .grid {
@@ -277,7 +279,7 @@ function getIconComponent(type: CalibrationType) {
   grid-template-columns: repeat(2, 1fr);
   gap: 1.25rem;
   width: 100%;
-  height: 100%;
+  align-content: flex-start;
 }
 
 /* 卡片 */
@@ -285,6 +287,7 @@ function getIconComponent(type: CalibrationType) {
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
   cursor: pointer;
   border-radius: 1rem;
   border: 2px solid var(--card-border);
@@ -434,7 +437,6 @@ function getIconComponent(type: CalibrationType) {
   font-size: 0.9375rem;
   line-height: 1.625;
   color: #475569;
-  flex: 1;
   position: relative;
   z-index: 1;
 }

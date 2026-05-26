@@ -141,10 +141,10 @@ function subscribeStream(id: string) {
     void wailsApi.device.subscribeStream(id, true)
     wailsUnsub = wailsApi.device.onPayload((payload) => {
       deviceStore.pushSnapshot({
-        deviceId: payload.deviceId,
-        timestamp: payload.timestamp,
-        channels: payload.channels,
-        channelIndices: payload.channelIndices,
+        deviceId: payload.deviceId ?? '',
+        timestamp: payload.timestamp ?? 0,
+        channels: Array.isArray(payload.channels) ? payload.channels : [],
+        channelIndices: Array.isArray(payload.channelIndices) ? payload.channelIndices : [],
       })
     })
   } else {

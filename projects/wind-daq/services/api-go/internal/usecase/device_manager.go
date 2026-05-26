@@ -24,6 +24,7 @@ func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dat
 	if err != nil {
 		return nil, err
 	}
+	profiles = normalizeProfiles(profiles)
 	return &DeviceManager{
 		profiles: profiles,
 		devices:  make(map[string]ports.Device),
@@ -59,6 +60,7 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	profile = device.NormalizeProfile(profile)
 	for i := range m.profiles {
 		if m.profiles[i].ID == profile.ID {
 			m.profiles[i] = profile
@@ -67,6 +69,14 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	}
 	m.profiles = append(m.profiles, profile)
 	return m.store.SaveProfiles(m.profiles)
+}
+
+func normalizeProfiles(profiles []device.Profile) []device.Profile {
+	normalized := make([]device.Profile, len(profiles))
+	for i := range profiles {
+		normalized[i] = device.NormalizeProfile(profiles[i])
+	}
+	return normalized
 }
 
 func (m *DeviceManager) DeleteProfile(id string) error {

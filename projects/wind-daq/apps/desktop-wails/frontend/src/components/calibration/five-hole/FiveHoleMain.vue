@@ -229,9 +229,11 @@ function buildRealtimePressuresFromSnapshots(
   const toValue = (deviceId: string, channelIndex: number): number | null => {
     const payload = snapshots.find((p) => p.deviceId === deviceId)
     if (!payload) return null
-    const i = payload.channelIndices.indexOf(channelIndex)
+    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
+    const channels = Array.isArray(payload.channels) ? payload.channels : []
+    const i = indices.indexOf(channelIndex)
     if (i === -1) return null
-    const v = payload.channels[i]
+    const v = channels[i]
     return typeof v === 'number' ? v : null
   }
 

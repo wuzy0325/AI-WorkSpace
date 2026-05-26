@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { api, isWailsAvailable, type PrbFileInfo, type LoadPrbResult, type InterpolationInput, type InterpolationResult } from './wails-adapter'
+import { OpenHelpDoc } from '../wailsjs/go/backend/App'
 
 // ==================== 状态管理 ====================
 const loaded = ref(false)
@@ -29,6 +30,18 @@ const hasResults = computed(() => results.value.length > 0 && results.value.some
 function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') {
   statusMsg.value = msg
   statusType.value = type
+}
+
+async function openHelp() {
+  if (!isWailsAvailable()) {
+    setStatus('当前不在 Wails 环境中运行', 'error')
+    return
+  }
+  try {
+    await OpenHelpDoc()
+  } catch (e: any) {
+    setStatus('打开帮助文档失败: ' + (e.message || e), 'error')
+  }
 }
 
 function formatVal(v: number): string {
@@ -201,6 +214,18 @@ function exportResults() {
         </div>
       </div>
       <div class="header-actions">
+        <button
+          class="btn btn-help"
+          @click="openHelp"
+          title="打开用户说明书"
+        >
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          帮助
+        </button>
         <button
           class="btn btn-primary"
           @click="loadPrb"
@@ -752,6 +777,17 @@ body {
 
 .btn-secondary { background: var(--gray-100); color: var(--gray-700); border: 1px solid var(--gray-200); }
 .btn-secondary:hover:not(:disabled) { background: var(--gray-200); border-color: var(--gray-300); }
+
+.btn-help {
+  background: transparent;
+  color: var(--gray-400);
+  border: 1px solid var(--gray-600);
+}
+.btn-help:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border-color: var(--gray-400);
+}
 
 .btn-calculate { padding: 14px 48px; font-size: 16px; border-radius: var(--radius-lg); }
 .btn-loading { position: relative; pointer-events: none; }

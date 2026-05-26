@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
+import { deviceApi } from '@api/deviceApi'
 
 describe('deviceStore', () => {
   beforeEach(() => {
@@ -44,5 +45,24 @@ describe('deviceStore', () => {
       store.pushSnapshot({ ...payload, timestamp: i })
     }
     expect(store.historyFor('sim-1').length).toBeLessThanOrEqual(256)
+  })
+
+  it('normalizes profiles with null channels during refresh', async () => {
+    const store = useDeviceStore()
+    vi.spyOn(deviceApi, 'getProfiles').mockResolvedValueOnce([
+      {
+        id: 'legacy-1',
+        name: 'Legacy Device',
+        type: 'SIMULATED',
+        samplingRate: 20,
+        channels: null,
+      } as never,
+    ])
+
+    await store.refreshProfiles()
+
+    expect(store.profiles).toHaveLength(1)
+    expect(store.profiles[0].channels).toEqual([])
+    expect(() => store.selectDevice('legacy-1')).not.toThrow()
   })
 })

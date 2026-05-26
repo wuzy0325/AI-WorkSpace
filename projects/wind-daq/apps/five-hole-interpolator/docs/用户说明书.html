@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>五孔探针插值计算系统 - 用户使用说明</title>
+    <style>
+        :root {
+            --primary-50: #eef2ff;
+            --primary-100: #e0e7ff;
+            --primary-200: #c7d2fe;
+            --primary-500: #6366f1;
+            --primary-600: #4f46e5;
+            --primary-700: #4338ca;
+            --gray-50: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --gray-700: #334155;
+            --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --success-50: #f0fdf4;
+            --success-100: #dcfce7;
+            --success-500: #22c55e;
+            --warning-50: #fffbeb;
+            --warning-500: #f59e0b;
+            --error-50: #fef2f2;
+            --error-500: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            color: var(--gray-700);
+            background: linear-gradient(135deg, var(--gray-50) 0%, #fff 50%, var(--gray-50) 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        /* 顶部标题 */
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 32px;
+            border-bottom: 2px solid var(--gray-200);
+        }
+
+        .header-icon {
+            width: 72px;
+            height: 72px;
+            background: linear-gradient(135deg, var(--primary-500), var(--primary-700));
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+        }
+
+        .header-icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--gray-900);
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .header .subtitle {
+            font-size: 16px;
+            color: var(--gray-500);
+            font-weight: 500;
+        }
+
+        /* 目录导航 */
+        .toc {
+            background: white;
+            border-radius: 16px;
+            padding: 24px 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--gray-200);
+        }
+
+        .toc h2 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gray-800);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toc h2 svg {
+            width: 20px;
+            height: 20px;
+            color: var(--primary-500);
+        }
+
+        .toc-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 8px;
+        }
+
+        .toc-list a {
+            display: block;
+            padding: 10px 16px;
+            background: var(--gray-50);
+            border-radius: 8px;
+            color: var(--gray-600);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .toc-list a:hover {
+            background: var(--primary-50);
+            color: var(--primary-600);
+            transform: translateX(4px);
+        }
+
+        .toc-list a::before {
+            content: "→ ";
+            color: var(--primary-400);
+        }
+
+        /* 内容章节 */
+        .section {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--gray-200);
+        }
+
+        .section h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--gray-800);
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--primary-100);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section h2 .section-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--primary-50);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .section h2 svg {
+            width: 20px;
+            height: 20px;
+            color: var(--primary-500);
+        }
+
+        .section h3 {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--gray-700);
+            margin: 24px 0 12px;
+        }
+
+        .section p {
+            margin-bottom: 12px;
+            color: var(--gray-600);
+        }
+
+        /* 步骤列表 */
+        .steps {
+            counter-reset: step-counter;
+            list-style: none;
+        }
+
+        .steps li {
+            position: relative;
+            padding: 16px 20px 16px 56px;
+            margin-bottom: 12px;
+            background: var(--gray-50);
+            border-radius: 10px;
+            counter-increment: step-counter;
+        }
+
+        .steps li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .steps li strong {
+            color: var(--gray-800);
+        }
+
+        /* 提示框 */
+        .tip {
+            padding: 16px 20px;
+            border-radius: 10px;
+            margin: 16px 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .tip svg {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .tip.info {
+            background: var(--primary-50);
+            border-left: 4px solid var(--primary-500);
+        }
+
+        .tip.info svg {
+            color: var(--primary-500);
+        }
+
+        .tip.warning {
+            background: var(--warning-50);
+            border-left: 4px solid var(--warning-500);
+        }
+
+        .tip.warning svg {
+            color: var(--warning-500);
+        }
+
+        .tip.success {
+            background: var(--success-50);
+            border-left: 4px solid var(--success-500);
+        }
+
+        .tip.success svg {
+            color: var(--success-500);
+        }
+
+        .tip p {
+            margin: 0;
+            color: var(--gray-700);
+        }
+
+        /* 参数说明表格 */
+        .params-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 14px;
+        }
+
+        .params-table th,
+        .params-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .params-table th {
+            background: var(--gray-50);
+            font-weight: 600;
+            color: var(--gray-700);
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .params-table td {
+            color: var(--gray-600);
+        }
+
+        .params-table tr:hover td {
+            background: var(--gray-50);
+        }
+
+        .param-name {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background: var(--gray-100);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: var(--primary-600);
+            font-weight: 600;
+        }
+
+        /* 结果说明表格 */
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 14px;
+        }
+
+        .results-table th,
+        .results-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .results-table th {
+            background: var(--gray-50);
+            font-weight: 600;
+            color: var(--gray-700);
+            font-size: 13px;
+        }
+
+        .results-table td {
+            color: var(--gray-600);
+        }
+
+        .results-table tr:hover td {
+            background: var(--gray-50);
+        }
+
+        .result-unit {
+            color: var(--gray-400);
+            font-size: 12px;
+            margin-left: 4px;
+        }
+
+        /* CSV格式说明 */
+        .code-block {
+            background: var(--gray-900);
+            color: var(--gray-100);
+            padding: 16px 20px;
+            border-radius: 10px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            margin: 16px 0;
+        }
+
+        .code-block code {
+            color: #a5f3fc;
+        }
+
+        .code-comment {
+            color: var(--gray-500);
+        }
+
+        /* 探针示意图 */
+        .probe-diagram {
+            background: var(--gray-50);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+        }
+
+        .probe-svg {
+            max-width: 300px;
+            width: 100%;
+        }
+
+        /* 常见问题 */
+        .faq-item {
+            margin-bottom: 16px;
+            padding: 16px;
+            background: var(--gray-50);
+            border-radius: 10px;
+        }
+
+        .faq-item h4 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--gray-800);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .faq-item h4 svg {
+            width: 18px;
+            height: 18px;
+            color: var(--primary-500);
+        }
+
+        .faq-item p {
+            font-size: 14px;
+            color: var(--gray-600);
+            margin: 0;
+        }
+
+        /* 页脚 */
+        .footer {
+            text-align: center;
+            padding: 32px;
+            color: var(--gray-400);
+            font-size: 13px;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 24px 16px;
+            }
+
+            .section {
+                padding: 24px 20px;
+            }
+
+            .header h1 {
+                font-size: 26px;
+            }
+
+            .toc-list {
+                grid-template-columns: 1fr;
+            }
+
+            .params-table,
+            .results-table {
+                font-size: 13px;
+            }
+
+            .params-table th,
+            .params-table td,
+            .results-table th,
+            .results-table td {
+                padding: 10px 12px;
+            }
+        }
+
+        /* 打印样式 */
+        @media print {
+            body {
+                background: white;
+            }
+
+            .section {
+                box-shadow: none;
+                border: 1px solid var(--gray-200);
+                page-break-inside: avoid;
+            }
+
+            .toc {
+                page-break-after: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部标题 -->
+        <header class="header">
+            <div class="header-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                </svg>
+            </div>
+            <h1>五孔探针插值计算系统</h1>
+            <p class="subtitle">Five-Hole Probe Interpolation System · 用户使用说明</p>
+        </header>
+
+        <!-- 目录导航 -->
+        <nav class="toc">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6"/>
+                    <line x1="8" y1="12" x2="21" y2="12"/>
+                    <line x1="8" y1="18" x2="21" y2="18"/>
+                    <line x1="3" y1="6" x2="3.01" y2="6"/>
+                    <line x1="3" y1="12" x2="3.01" y2="12"/>
+                    <line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+                目录导航
+            </h2>
+            <div class="toc-list">
+                <a href="#intro">软件简介</a>
+                <a href="#workflow">工作流程</a>
+                <a href="#prb">加载校准文件</a>
+                <a href="#input">数据输入</a>
+                <a href="#csv">CSV导入</a>
+                <a href="#calculate">执行计算</a>
+                <a href="#results">查看结果</a>
+                <a href="#export">导出数据</a>
+                <a href="#params">参数说明</a>
+                <a href="#faq">常见问题</a>
+            </div>
+        </nav>
+
+        <!-- 软件简介 -->
+        <section id="intro" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                </span>
+                软件简介
+            </h2>
+            <p>五孔探针插值计算系统是一款专业的风洞实验数据处理工具，通过加载校准文件（PRB文件），对五孔探针测量的压力数据进行插值计算，获得气流的角度、速度、马赫数等关键参数。</p>
+
+            <h3>主要功能</h3>
+            <ul class="steps">
+                <li><strong>加载PRB校准文件</strong> - 支持同时加载多个不同马赫数下的校准文件</li>
+                <li><strong>压力数据输入</strong> - 支持手动输入或CSV批量导入五孔探针测量的压力值</li>
+                <li><strong>插值计算</strong> - 根据校准数据进行双线性/三线性插值计算</li>
+                <li><strong>结果导出</strong> - 将计算结果导出为CSV格式便于后续分析</li>
+            </ul>
+
+            <div class="probe-diagram">
+                <svg class="probe-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="100" cy="100" r="60" stroke="#6366f1" stroke-width="2" stroke-dasharray="4 4"/>
+                    <circle cx="100" cy="100" r="8" fill="#6366f1"/>
+                    <text x="100" y="105" text-anchor="middle" fill="#4f46e5" font-size="10" font-weight="bold">P2</text>
+
+                    <circle cx="100" cy="45" r="6" fill="#22c55e"/>
+                    <text x="100" y="35" text-anchor="middle" fill="#16a34a" font-size="9">P3</text>
+
+                    <circle cx="100" cy="155" r="6" fill="#22c55e"/>
+                    <text x="100" y="172" text-anchor="middle" fill="#16a34a" font-size="9">P1</text>
+
+                    <circle cx="45" cy="100" r="6" fill="#22c55e"/>
+                    <text x="28" y="103" text-anchor="middle" fill="#16a34a" font-size="9">P4</text>
+
+                    <circle cx="155" cy="100" r="6" fill="#22c55e"/>
+                    <text x="172" y="103" text-anchor="middle" fill="#16a34a" font-size="9">P5</text>
+
+                    <line x1="100" y1="100" x2="60" y2="60" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 2"/>
+                    <text x="55" y="52" fill="#d97706" font-size="8">α</text>
+
+                    <line x1="100" y1="100" x2="140" y2="100" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 2"/>
+                    <text x="145" y="97" fill="#d97706" font-size="8">β</text>
+                </svg>
+            </div>
+            <p style="text-align: center; color: var(--gray-500); font-size: 13px;">五孔探针压力孔位分布示意图</p>
+        </section>
+
+        <!-- 工作流程 -->
+        <section id="workflow" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 3 21 3 21 8"/>
+                        <line x1="4" y1="20" x2="21" y2="3"/>
+                        <polyline points="21 16 21 21 16 21"/>
+                        <line x1="15" y1="15" x2="21" y2="21"/>
+                        <line x1="4" y1="4" x2="9" y2="9"/>
+                    </svg>
+                </span>
+                工作流程
+            </h2>
+            <p>软件的标准操作流程如下：</p>
+
+            <ol class="steps">
+                <li><strong>加载PRB校准文件</strong> - 点击"加载 PRB 文件"按钮，选择探头校准数据文件</li>
+                <li><strong>输入测量数据</strong> - 手动输入或CSV导入五孔探针的原始压力数据</li>
+                <li><strong>执行插值计算</strong> - 点击"执行插值计算"按钮开始计算</li>
+                <li><strong>查看计算结果</strong> - 切换到"计算结果"标签页查看详细的计算参数</li>
+                <li><strong>导出结果数据</strong> - 将结果导出为CSV文件进行保存或进一步分析</li>
+            </ol>
+
+            <div class="tip info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <p><strong>提示：</strong>首次使用时，必须先加载PRB校准文件，否则无法进行插值计算。</p>
+            </div>
+        </section>
+
+        <!-- 加载校准文件 -->
+        <section id="prb" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                </span>
+                加载校准文件（PRB文件）
+            </h2>
+            <p>PRB文件是五孔探针的校准数据文件，包含不同迎角和侧滑角下的压力系数映射表。软件需要加载这些文件才能进行插值计算。</p>
+
+            <h3>操作步骤</h3>
+            <ol class="steps">
+                <li>点击界面右上角的 <strong>"加载 PRB 文件"</strong> 按钮</li>
+                <li>在弹出的文件选择对话框中，<strong>选择您的PRB校准文件</strong>（支持多选）</li>
+                <li>等待文件加载完成，界面会显示已加载的文件信息</li>
+            </ol>
+
+            <div class="tip warning">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <p><strong>注意：</strong>建议加载多个在不同马赫数下测得的校准文件，这样可以获得更广的测量范围。不同Ma的校准文件，系统会自动识别并整合使用。</p>
+            </div>
+
+            <h3>PRB文件格式说明</h3>
+            <p>PRB文件为文本格式，每行包含多个数值，用空格分隔：</p>
+            <div class="code-block">
+                <code>Ma</code> <span class="code-comment"># 马赫数</span>
+                <br><code>α1 β1 P1* P2* P3* P4* P5*</code> <span class="code-comment"># 第一组数据</span>
+                <br><code>α2 β2 P1* P2* P3* P4* P5*</code> <span class="code-comment"># 第二组数据</span>
+                <br><code>...</code>
+            </div>
+        </section>
+
+        <!-- 数据输入 -->
+        <section id="input" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                </span>
+                手动输入数据
+            </h2>
+            <p>在数据输入区域，您可以手动输入五孔探针测量的压力值。</p>
+
+            <h3>输入参数说明</h3>
+            <table class="params-table">
+                <thead>
+                    <tr>
+                        <th>参数</th>
+                        <th>说明</th>
+                        <th>单位</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="param-name">P1</span></td>
+                        <td>下孔压力（垂直方向下方）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">P2</span></td>
+                        <td>中心孔压力（迎风面中心）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">P3</span></td>
+                        <td>上孔压力（垂直方向上方）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">P4</span></td>
+                        <td>左孔压力（侧向左侧）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">P5</span></td>
+                        <td>右孔压力（侧向右侧）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">Patm</span></td>
+                        <td>大气压力（环境压力）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td><span class="param-name">Tatm</span></td>
+                        <td>大气温度（环境温度）</td>
+                        <td>℃</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>操作步骤</h3>
+            <ol class="steps">
+                <li>在对应的输入框中<strong>输入P1至P5的压力值</strong></li>
+                <li>设置<strong>环境大气压（Patm）</strong>和<strong>环境温度（Tatm）</strong></li>
+                <li>点击<strong>"添加"</strong>按钮，将数据添加到列表中</li>
+                <li>重复上述步骤，添加更多测量数据</li>
+            </ol>
+
+            <div class="tip success">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <p><strong>小技巧：</strong>Patm和Tatm的值会被保存作为默认值，方便连续输入多组数据时不必重复输入。</p>
+            </div>
+        </section>
+
+        <!-- CSV导入 -->
+        <section id="csv" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                    </svg>
+                </span>
+                CSV文件导入
+            </h2>
+            <p>当测量数据较多时，建议使用CSV文件批量导入功能。</p>
+
+            <h3>CSV文件格式要求</h3>
+            <p>CSV文件应包含以下列（首行必须为表头）：</p>
+            <table class="params-table">
+                <thead>
+                    <tr>
+                        <th>必需列</th>
+                        <th>可选列</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>P1, P2, P3, P4, P5</td>
+                        <td>Patm, Tatm</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>示例CSV内容</h3>
+            <div class="code-block">
+                <code>P1</code>,<code>P2</code>,<code>P3</code>,<code>P4</code>,<code>P5</code>,<code>Patm</code>,<code>Tatm</code>
+                <br>101300,101325,101280,101300,101325,101325,20
+                <br>101310,101330,101290,101305,101328,101325,20
+                <br>101295,101320,101275,101298,101322,101325,20
+            </div>
+
+            <h3>操作步骤</h3>
+            <ol class="steps">
+                <li>准备好符合格式要求的<strong>CSV数据文件</strong></li>
+                <li>点击<strong>"导入 CSV"</strong> 按钮</li>
+                <li>在文件选择对话框中选择您的CSV文件</li>
+                <li>数据将自动添加到列表中</li>
+            </ol>
+
+            <div class="tip info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <p><strong>说明：</strong>如果CSV中缺少Patm或Tatm列，系统将使用当前界面上设置的默认值。</p>
+            </div>
+        </section>
+
+        <!-- 执行计算 -->
+        <section id="calculate" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                </span>
+                执行插值计算
+            </h2>
+            <p>当数据准备完成后，即可执行插值计算。</p>
+
+            <h3>操作步骤</h3>
+            <ol class="steps">
+                <li>确认数据列表中已有<strong>待计算的数据</strong></li>
+                <li>点击<strong>"执行插值计算"</strong> 按钮</li>
+                <li>等待计算完成（界面会显示计算进度）</li>
+                <li>计算完成后，系统自动切换到<strong>"计算结果"</strong> 标签页</li>
+            </ol>
+
+            <div class="tip warning">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <p><strong>注意：</strong>如果某些测量数据超出校准文件的有效范围，对应的结果将标记为"无效"，并显示具体原因。</p>
+            </div>
+        </section>
+
+        <!-- 查看结果 -->
+        <section id="results" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                </span>
+                查看计算结果
+            </h2>
+            <p>计算完成后，切换到"计算结果"标签页可以查看详细的计算结果。</p>
+
+            <h3>结果参数说明</h3>
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>参数</th>
+                        <th>说明</th>
+                        <th>单位</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>α <span class="result-unit">(alpha)</span></td>
+                        <td>迎角（俯仰角），正值表示抬头</td>
+                        <td>度 (°)</td>
+                    </tr>
+                    <tr>
+                        <td>β <span class="result-unit">(beta)</span></td>
+                        <td>侧滑角，正值表示右偏</td>
+                        <td>度 (°)</td>
+                    </tr>
+                    <tr>
+                        <td>Ma <span class="result-unit">(Mach)</span></td>
+                        <td>马赫数，气流速度与当地音速的比值</td>
+                        <td>无量纲</td>
+                    </tr>
+                    <tr>
+                        <td>TAS <span class="result-unit">(True Airspeed)</span></td>
+                        <td>真空速，实际气流速度</td>
+                        <td>m/s</td>
+                    </tr>
+                    <tr>
+                        <td>CAS <span class="result-unit">(Calibrated Airspeed)</span></td>
+                        <td>校准空速，修正后的指示空速</td>
+                        <td>m/s</td>
+                    </tr>
+                    <tr>
+                        <td>SAT <span class="result-unit">(Static Air Temperature)</span></td>
+                        <td>静温，未修正的静温读数</td>
+                        <td>K</td>
+                    </tr>
+                    <tr>
+                        <td>Qc <span class="result-unit">(dynamicPressure)</span></td>
+                        <td>动压，速度头的压力值</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td>ρ <span class="result-unit">(rho)</span></td>
+                        <td>空气密度</td>
+                        <td>kg/m³</td>
+                    </tr>
+                    <tr>
+                        <td>Pt <span class="result-unit">(Total Pressure)</span></td>
+                        <td>总压（滞止压力）</td>
+                        <td>Pa</td>
+                    </tr>
+                    <tr>
+                        <td>Ps <span class="result-unit">(Static Pressure)</span></td>
+                        <td>静压</td>
+                        <td>Pa</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>结果状态说明</h3>
+            <ul class="steps">
+                <li><strong>有效</strong> - 数据在正常范围内，计算结果可信</li>
+                <li><strong>无效</strong> - 数据超出校准范围，计算结果可能不准确</li>
+            </ul>
+
+            <div class="tip info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <p><strong>统计信息：</strong>结果页面顶部会显示总记录数、有效结果数和无效结果数，方便快速了解数据质量。</p>
+            </div>
+        </section>
+
+        <!-- 导出数据 -->
+        <section id="export" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                </span>
+                导出计算结果
+            </h2>
+            <p>计算完成后，可以将结果导出为CSV文件进行保存或后续分析处理。</p>
+
+            <h3>操作步骤</h3>
+            <ol class="steps">
+                <li>在<strong>"计算结果"</strong> 标签页确认有可导出的数据</li>
+                <li>点击<strong>"导出 CSV"</strong> 按钮</li>
+                <li>系统会弹出保存对话框，选择保存位置</li>
+                <li>文件将以"五孔探针计算结果_日期时间.csv"命名保存</li>
+            </ol>
+
+            <h3>导出文件内容</h3>
+            <p>导出的CSV文件包含以下列：</p>
+            <div class="code-block">
+                序号,α(°),β(°),Ma,TAS(m/s),CAS(m/s),SAT(K),Qc(Pa),ρ(kg/m³),Pt(Pa),Ps(Pa),状态
+            </div>
+
+            <div class="tip success">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <p><strong>建议：</strong>导出的CSV文件可以用Excel或其他数据分析软件打开，方便进行进一步的数据处理和图表绘制。</p>
+            </div>
+        </section>
+
+        <!-- 常见问题 -->
+        <section id="faq" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                </span>
+                常见问题解答
+            </h2>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 为什么计算结果显示"无效"？
+                </h4>
+                <p>A: 这表示输入的测量数据超出了PRB校准文件的有效范围。可能的原因包括：探头偏离预期流向较大、压力值异常、或加载的校准文件Ma范围不包含当前测量条件。建议检查测量数据的合理性，或使用覆盖更广Ma范围的校准文件。</p>
+            </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 需要加载多少个PRB文件？
+                </h4>
+                <p>A: 至少需要加载一个PRB文件。建议加载多个不同Ma条件下的校准文件（如Ma=0.3, 0.5, 0.7等），这样系统可以在这些Ma值之间进行插值，覆盖更大的测量范围。</p>
+            </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: CSV导入时报错"缺少必要列"怎么办？
+                </h4>
+                <p>A: 请检查CSV文件的表头是否正确。必须包含P1、P2、P3、P4、P5五列（大小写敏感）。可选的Patm和Tatm列用于设置环境参数。</p>
+            </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 大气压和环境温度的默认值是什么？
+                </h4>
+                <p>A: 默认大气压为101325 Pa（标准大气压），默认环境温度为20℃。这些值可以根据实际测量环境进行修改，并会自动保存作为后续输入的默认值。</p>
+            </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 如何删除已添加的数据行？
+                </h4>
+                <p>A: 在数据列表中，每行数据右侧有一个删除按钮（垃圾桶图标），点击即可删除该行数据。如需清空所有数据，点击"清空"按钮即可。</p>
+            </div>
+        </section>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <p>五孔探针插值计算系统 v1.0</p>
+            <p style="margin-top: 8px;">技术支持与反馈请联系开发团队</p>
+        </footer>
+    </div>
+</body>
+</html>

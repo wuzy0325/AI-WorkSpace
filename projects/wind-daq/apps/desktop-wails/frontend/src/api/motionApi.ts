@@ -16,10 +16,24 @@ export interface MotionStatus {
 
 const MOTION_STORAGE_KEY = 'wind-daq.motion-profiles';
 
+function normalizeMotionProfile(profile: MotionControllerProfile): MotionControllerProfile {
+  return {
+    ...profile,
+    axes: Array.isArray(profile?.axes) ? profile.axes : [],
+  };
+}
+
+function normalizeMotionProfiles(profiles: unknown): MotionControllerProfile[] {
+  if (!Array.isArray(profiles)) return [];
+  return profiles
+    .filter((profile): profile is MotionControllerProfile => typeof profile === 'object' && profile !== null)
+    .map((profile) => normalizeMotionProfile(profile));
+}
+
 function storedProfiles(): MotionControllerProfile[] {
   try {
     const raw = window.localStorage.getItem(MOTION_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return normalizeMotionProfiles(JSON.parse(raw));
   } catch { /* ignore */ }
   return [{
     id: 'sim-mc-1',
@@ -52,14 +66,15 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
     // 后端返回空或非数组，返回默认状态
     raw = [];
   }
-  return profiles.map((p) => {
+  return normalizeMotionProfiles(profiles).map((p) => {
     const live = raw.find((s) => s.id === p.id);
+    const axes = Array.isArray(p.axes) ? p.axes : [];
     return {
       id: p.id,
       name: p.name,
       type: p.type,
       connected: live?.connected ?? false,
-      axes: p.axes.filter((a) => a.enabled).map((a) => {
+      axes: axes.filter((a) => a.enabled).map((a) => {
         const axisLive = live?.axes?.find((x) => x.name === a.name);
         return {
           name: a.name,
@@ -87,7 +102,8 @@ export const motionApi = {
       } else {
         profiles = await request<MotionControllerProfile[]>('/api/motion/profiles');
       }
-      if (Array.isArray(profiles) && profiles.length > 0) {
+      profiles = normalizeMotionProfiles(profiles);
+      if (profiles.length > 0) {
         // 保存到本地缓存
         saveProfiles(profiles);
         return profiles;

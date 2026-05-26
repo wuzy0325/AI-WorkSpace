@@ -5,13 +5,39 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	wind_interp "wind-daq/services/api-go/pkg/interpolation"
 )
+
+// getHelpDocPath 获取用户说明书文件路径
+func getHelpDocPath() string {
+	// 获取当前可执行文件所在目录
+	ex, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exeDir := filepath.Dir(ex)
+
+	// 尝试多个可能的路径
+	possiblePaths := []string{
+		filepath.Join(exeDir, "docs", "用户说明书.html"),
+		filepath.Join(exeDir, "..", "docs", "用户说明书.html"),
+		filepath.Join(exeDir, "..", "..", "docs", "用户说明书.html"),
+	}
+
+	for _, p := range possiblePaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
 
 type PrbFileInfo struct {
 	FilePath   string        `json:"filePath"`
@@ -279,4 +305,24 @@ func toAppResult(r wind_interp.InterpolationResult) *InterpolationResult {
 		TotalPressure: r.TotalPressure, StaticPressure: r.StaticPressure,
 		IsValid: r.IsValid, Warning: r.Warning,
 	}
+}
+
+// OpenHelpDoc 打开用户说明书HTML文件
+func (a *App) OpenHelpDoc() error {
+	helpPath := getHelpDocPath()
+	if helpPath == "" {
+		return fmt.Errorf("未找到用户说明书文件")
+	}
+
+	// 使用系统默认浏览器打开HTML文件
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", helpPath)
+	case "darwin":
+		cmd = exec.Command("open", helpPath)
+	default: // linux
+		cmd = exec.Command("xdg-open", helpPath)
+	}
+	return cmd.Start()
 }
