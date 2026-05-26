@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>角度计算器 - 整合版</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .upload-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            text-align: center;
+            background-color: #f9f9f9;
+        }
+        .upload-section:hover {
+            border-color: #3498db;
+        }
+        input[type="file"] {
+            display: block;
+            margin: 10px auto;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .chart-container {
+            position: relative;
+            height: 500px;
+            margin: 20px 0;
+        }
+        .error-message {
+            color: red;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .success-message {
+            color: green;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .instructions {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #e8f4f8;
+            border-radius: 4px;
+        }
+        .instructions h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .instructions ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .formula {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .formula-section {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 3px solid #3498db;
+            background-color: #fafafa;
+        }
+        .formula-section.aa1 {
+            border-left-color: #e74c3c;
+        }
+        .formula-section.aa2 {
+            border-left-color: #f39c12;
+        }
+        .formula-section.aa3 {
+            border-left-color: #27ae60;
+        }
+        .file-group {
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .file-group h4 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .result-display {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #e8f5e9;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 16px;
+        }
+        .result-final {
+            background-color: #c8e6c9;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 2px solid #4caf50;
+        }
+        .logic-flow {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #fff3e0;
+            border-radius: 4px;
+            border-left: 4px solid #ff9800;
+        }
+        .logic-flow h3 {
+            margin-top: 0;
+            color: #e65100;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>角度计算器 - 整合版</h1>
+        
+        <div class="instructions">
+            <h3>使用说明：</h3>
+            <ul>
+                <li>上传包含多组α、β、P1-P5数据的CSV文件生成网格图</li>
+                <li>上传单个点的P1-P5数据，系统将自动选择合适的计算方法</li>
+                <li>文件格式应为：α,β,P1,P2,P3,P4,P5（第一行为表头）</li>
+                <li>系统会根据计算结果自动判断使用哪种公式进行最终计算</li>
+            </ul>
+        </div>
+        
+        <div class="logic-flow">
+            <h3>计算逻辑流程：</h3>
+            <p><strong>步骤1：</strong>先用AA1公式计算得到初步角度(α1, β1)</p>
+            <p><strong>步骤2：</strong>根据(α1, β1)的位置判断：</p>
+            <ul>
+                <li>若α1和β1都在±15°之外（四个角区域）→ 直接输出(α1, β1)</li>
+                <li>若α1在±15°内且β1在±20°之外，或β1在±15°内且α1在±20°之外 → 用AA2公式计算并输出(α2, β2)</li>
+                <li>其他情况 → 用AA3公式计算并输出(α3, β3)</li>
+            </ul>
+        </div>
+        
+        <div class="formula">
+            <h3>计算公式：</h3>
+            <div class="formula-section aa1">
+                <h4 style="color: #e74c3c;">AA1公式（用于初步计算和四个角区域）：</h4>
+                <p>Kα = (P4 - P5) / [(P2 + P第一大 + P第二大) / 3 - P平均]</p>
+                <p>Kβ = (P1 - P3) / [(P2 + P第一大 + P第二大) / 3 - P平均]</p>
+                <p>其中：P第一大、P第二大是P1、P3、P4、P5中的最高和第二高压力</p>
+                <p>P平均 = (P1 + P3 + P4 + P5) / 4</p>
+            </div>
+            <div class="formula-section aa2">
+                <h4 style="color: #f39c12;">AA2公式（用于边缘区域）：</h4>
+                <p>Kα = (P4 - P5) / [(P2 + P第一大 + P第二大 + P第三大) / 4 - P平均]</p>
+                <p>Kβ = (P1 - P3) / [(P2 + P第一大 + P第二大 + P第三大) / 4 - P平均]</p>
+                <p>其中：P第一大、P第二大、P第三大是P1、P3、P4、P5中的最高、第二高、第三高压力</p>
+                <p>P平均 = (P1 + P3 + P4 + P5) / 4</p>
+            </div>
+            <div class="formula-section aa3">
+                <h4 style="color: #27ae60;">AA3公式（用于中心区域）：</h4>
+                <p>Kα = (P4 - P5) / (P2 - P平均)</p>
+                <p>Kβ = (P1 - P3) / (P2 - P平均)</p>
+                <p>其中：P平均 = (P1 + P3 + P4 + P5) / 4</p>
+            </div>
+        </div>
+        
+        <div class="upload-section">
+            <div class="file-group">
+                <h4>1. 上传网格数据文件（必选）</h4>
+                <input type="file" id="gridFileInput" accept=".csv">
+                <p>格式：α,β,P1,P2,P3,P4,P5</p>
+            </div>
+            
+            <div class="file-group">
+                <h4>2. 上传单个点数据（必选）</h4>
+                <input type="file" id="pointFileInput" accept=".csv">
+                <p>格式：P1,P2,P3,P4,P5（仅需P1-P5，无需α,β）</p>
+            </div>
+            
+            <button onclick="processFiles()">计算角度</button>
+            <button onclick="clearChart()">清除</button>
+            <div id="errorMessage" class="error-message"></div>
+            <div id="successMessage" class="success-message"></div>
+        </div>
+        
+        <div id="resultDisplay" class="result-display" style="display: none;"></div>
+        
+        <div class="chart-container">
+            <canvas id="gridChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+
+        function processFiles() {
+            const gridFileInput = document.getElementById('gridFileInput');
+            const pointFileInput = document.getElementById('pointFileInput');
+            const errorMessage = document.getElementById('errorMessage');
+            const successMessage = document.getElementById('successMessage');
+            
+            errorMessage.textContent = '';
+            successMessage.textContent = '';
+            
+            if (!gridFileInput.files || gridFileInput.files.length === 0) {
+                errorMessage.textContent = '请选择网格数据文件';
+                return;
+            }
+            
+            if (!pointFileInput.files || pointFileInput.files.length === 0) {
+                errorMessage.textContent = '请选择单个点数据文件';
+                return;
+            }
+            
+            const gridFile = gridFileInput.files[0];
+            if (gridFile.type !== 'text/csv' && !gridFile.name.endsWith('.csv')) {
+                errorMessage.textContent = '请选择CSV格式的网格数据文件';
+                return;
+            }
+            
+            const pointFile = pointFileInput.files[0];
+            if (pointFile.type !== 'text/csv' && !pointFile.name.endsWith('.csv')) {
+                errorMessage.textContent = '请选择CSV格式的单个点数据文件';
+                return;
+            }
+            
+            errorMessage.textContent = '';
+            
+            const gridReader = new FileReader();
+            gridReader.onload = function(e) {
+                try {
+                    const rawData = parseGridCSV(e.target.result);
+                    
+                    const pointReader = new FileReader();
+                    pointReader.onload = function(pe) {
+                        try {
+                            const pointData = parsePointCSV(pe.target.result);
+                            calculateAndDisplay(rawData, pointData);
+                            successMessage.textContent = '角度计算完成！';
+                        } catch (error) {
+                            errorMessage.textContent = '单个点文件解析错误：' + error.message;
+                        }
+                    };
+                    pointReader.onerror = function() {
+                        errorMessage.textContent = '单个点文件读取失败';
+                    };
+                    pointReader.readAsText(pointFile);
+                } catch (error) {
+                    errorMessage.textContent = '网格文件解析错误：' + error.message;
+                }
+            };
+            gridReader.onerror = function() {
+                errorMessage.textContent = '网格文件读取失败';
+            };
+            gridReader.readAsText(gridFile);
+        }
+
+        function parseGridCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length < 2) {
+                throw new Error('文件至少需要包含表头和一行数据');
+            }
+            
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                const values = line.split(',').map(val => parseFloat(val.trim()));
+                if (values.length !== 7) {
+                    throw new Error(`第${i+1}行数据格式错误，需要7个数值：α,β,P1,P2,P3,P4,P5`);
+                }
+                
+                data.push(values);
+            }
+            
+            if (data.length === 0) {
+                throw new Error('文件中没有有效数据');
+            }
+            
+            return data;
+        }
+
+        function parsePointCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length < 2) {
+                throw new Error('文件至少需要包含表头和一行数据');
+            }
+            
+            const values = lines[1].trim().split(',').map(val => parseFloat(val.trim()));
+            if (values.length !== 5) {
+                throw new Error('数据格式错误，需要5个数值：P1,P2,P3,P4,P5');
+            }
+            
+            return values;
+        }
+
+        function calculateKaKbAA1(rawData) {
+            const results = [];
+            for (const row of rawData) {
+                const alpha = row[0];
+                const beta = row[1];
+                const p1 = row[2];
+                const p2 = row[3];
+                const p3 = row[4];
+                const p4 = row[5];
+                const p5 = row[6];
+                
+                const pressures = [p1, p3, p4, p5];
+                const sortedPressures = pressures.slice().sort((a, b) => b - a);
+                const p_first = sortedPressures[0];
+                const p_second = sortedPressures[1];
+                
+                const p_avg = (p1 + p3 + p4 + p5) / 4;
+                const denominator = (p2 + p_first + p_second) / 3 - p_avg;
+                
+                let ka, kb;
+                if (denominator !== 0) {
+                    ka = (p4 - p5) / denominator;
+                    kb = (p1 - p3) / denominator;
+                } else {
+                    ka = 0;
+                    kb = 0;
+                }
+                
+                results.push([alpha, beta, ka, kb]);
+            }
+            return results;
+        }
+
+        function calculateKaKbAA2(rawData) {
+            const results = [];
+            for (const row of rawData) {
+                const alpha = row[0];
+                const beta = row[1];
+                const p1 = row[2];
+                const p2 = row[3];
+                const p3 = row[4];
+                const p4 = row[5];
+                const p5 = row[6];
+                
+                const pressures = [p1, p3, p4, p5];
+                const sortedPressures = pressures.slice().sort((a, b) => b - a);
+                const p_first = sortedPressures[0];
+                const p_second = sortedPressures[1];
+                const p_third = sortedPressures[2];
+                
+                const p_avg = (p1 + p3 + p4 + p5) / 4;
+                const denominator = (p2 + p_first + p_second + p_third) / 4 - p_avg;
+                
+                let ka, kb;
+                if (denominator !== 0) {
+                    ka = (p4 - p5) / denominator;
+                    kb = (p1 - p3) / denominator;
+                } else {
+                    ka = 0;
+                    kb = 0;
+                }
+                
+                results.push([alpha, beta, ka, kb]);
+            }
+            return results;
+        }
+
+        function calculateKaKbAA3(rawData) {
+            const results = [];
+            for (const row of rawData) {
+                const alpha = row[0];
+                const beta = row[1];
+                
+                if (alpha >= -20 && alpha <= 20 && beta >= -20 && beta <= 20) {
+                    const p1 = row[2];
+                    const p2 = row[3];
+                    const p3 = row[4];
+                    const p4 = row[5];
+                    const p5 = row[6];
+                    
+                    const p_avg = (p1 + p3 + p4 + p5) / 4;
+                    const denominator = p2 - p_avg;
+                    
+                    let ka, kb;
+                    if (denominator !== 0) {
+                        ka = (p4 - p5) / denominator;
+                        kb = (p1 - p3) / denominator;
+                    } else {
+                        ka = 0;
+                        kb = 0;
+                    }
+                    
+                    results.push([alpha, beta, ka, kb]);
+                }
+            }
+            return results;
+        }
+
+        function calculateKaKbPointAA1(pointData) {
+            const p1 = pointData[0];
+            const p2 = pointData[1];
+            const p3 = pointData[2];
+            const p4 = pointData[3];
+            const p5 = pointData[4];
+            
+            const pressures = [p1, p3, p4, p5];
+            const sortedPressures = pressures.slice().sort((a, b) => b - a);
+            const p_first = sortedPressures[0];
+            const p_second = sortedPressures[1];
+            
+            const p_avg = (p1 + p3 + p4 + p5) / 4;
+            const denominator = (p2 + p_first + p_second) / 3 - p_avg;
+            
+            let ka, kb;
+            if (denominator !== 0) {
+                ka = (p4 - p5) / denominator;
+                kb = (p1 - p3) / denominator;
+            } else {
+                ka = 0;
+                kb = 0;
+            }
+            
+            return { ka, kb, p1, p2, p3, p4, p5 };
+        }
+
+        function calculateKaKbPointAA2(pointData) {
+            const p1 = pointData[0];
+            const p2 = pointData[1];
+            const p3 = pointData[2];
+            const p4 = pointData[3];
+            const p5 = pointData[4];
+            
+            const pressures = [p1, p3, p4, p5];
+            const sortedPressures = pressures.slice().sort((a, b) => b - a);
+            const p_first = sortedPressures[0];
+            const p_second = sortedPressures[1];
+            const p_third = sortedPressures[2];
+            
+            const p_avg = (p1 + p3 + p4 + p5) / 4;
+            const denominator = (p2 + p_first + p_second + p_third) / 4 - p_avg;
+            
+            let ka, kb;
+            if (denominator !== 0) {
+                ka = (p4 - p5) / denominator;
+                kb = (p1 - p3) / denominator;
+            } else {
+                ka = 0;
+                kb = 0;
+            }
+            
+            return { ka, kb, p1, p2, p3, p4, p5 };
+        }
+
+        function calculateKaKbPointAA3(pointData) {
+            const p1 = pointData[0];
+            const p2 = pointData[1];
+            const p3 = pointData[2];
+            const p4 = pointData[3];
+            const p5 = pointData[4];
+            
+            const p_avg = (p1 + p3 + p4 + p5) / 4;
+            const denominator = p2 - p_avg;
+            
+            let ka, kb;
+            if (denominator !== 0) {
+                ka = (p4 - p5) / denominator;
+                kb = (p1 - p3) / denominator;
+            } else {
+                ka = 0;
+                kb = 0;
+            }
+            
+            return { ka, kb, p1, p2, p3, p4, p5 };
+        }
+
+        function determineRegion(alpha1, beta1) {
+            if ((alpha1 < -15 && beta1 < -15) ||
+                (alpha1 < -15 && beta1 > 15) ||
+                (alpha1 > 15 && beta1 < -15) ||
+                (alpha1 > 15 && beta1 > 15)) {
+                return 'AA1';
+            }
+            
+            if ((alpha1 >= -15 && alpha1 <= 15 && beta1 < -20) ||
+                (alpha1 >= -15 && alpha1 <= 15 && beta1 > 20) ||
+                (beta1 >= -15 && beta1 <= 15 && alpha1 > 20) ||
+                (beta1 >= -15 && beta1 <= 15 && alpha1 < -20)) {
+                return 'AA2';
+            }
+            
+            return 'AA3';
+        }
+
+        function pointInTriangle(px, py, x1, y1, x2, y2, x3, y3, tolerance = 1e-9) {
+            const area = 0.5 * (-y2 * x3 + y1 * (-x2 + x3) + x1 * (y2 - y3) + x2 * y3);
+            const s = 1 / (2 * area) * (y1 * x3 - x1 * y3 + (y3 - y1) * px + (x1 - x3) * py);
+            const t = 1 / (2 * area) * (x1 * y2 - y1 * x2 + (y1 - y2) * px + (x2 - x1) * py);
+            return s >= -tolerance && t >= -tolerance && (s + t) <= 1 + tolerance;
+        }
+
+        function pointInQuad(px, py, corners) {
+            const [c1, c2, c3, c4] = corners;
+            if (pointInTriangle(px, py, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y)) return true;
+            if (pointInTriangle(px, py, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y)) return true;
+            if (pointInTriangle(px, py, c1.x, c1.y, c3.x, c3.y, c4.x, c4.y)) return true;
+            if (pointInTriangle(px, py, c1.x, c1.y, c2.x, c2.y, c4.x, c4.y)) return true;
+            return false;
+        }
+
+        function findGridCell(point, alphaGroups, betaGroups) {
+            if (!point) return null;
+            
+            const px = point.ka;
+            const py = point.kb;
+            
+            const alphas = Object.keys(alphaGroups).map(Number).sort((a, b) => a - b);
+            const betas = Object.keys(betaGroups).map(Number).sort((a, b) => a - b);
+            
+            const findPoint = (alpha, beta) => {
+                const group = alphaGroups[alpha];
+                if (group) {
+                    return group.find(p => p.beta === beta);
+                }
+                return null;
+            };
+            
+            const isPointMatch = (p1, p2, tolerance = 1e-4) => {
+                return Math.abs(p1.x - p2.x) < tolerance && Math.abs(p1.y - p2.y) < tolerance;
+            };
+            
+            for (let i = 0; i < alphas.length - 1; i++) {
+                for (let j = 0; j < betas.length - 1; j++) {
+                    const alphaLow = alphas[i];
+                    const alphaHigh = alphas[i + 1];
+                    const betaLow = betas[j];
+                    const betaHigh = betas[j + 1];
+                    
+                    const corner1 = findPoint(alphaLow, betaLow);
+                    const corner2 = findPoint(alphaLow, betaHigh);
+                    const corner3 = findPoint(alphaHigh, betaLow);
+                    const corner4 = findPoint(alphaHigh, betaHigh);
+                    
+                    if (corner1 && corner2 && corner3 && corner4) {
+                        if (isPointMatch({x: px, y: py}, corner1) || 
+                            isPointMatch({x: px, y: py}, corner2) ||
+                            isPointMatch({x: px, y: py}, corner3) ||
+                            isPointMatch({x: px, y: py}, corner4)) {
+                            return {
+                                alphaLow,
+                                alphaHigh,
+                                betaLow,
+                                betaHigh,
+                                corners: [corner1, corner2, corner3, corner4],
+                                isExtended: false
+                            };
+                        }
+                        
+                        if (pointInQuad(px, py, [corner1, corner2, corner3, corner4])) {
+                            return {
+                                alphaLow,
+                                alphaHigh,
+                                betaLow,
+                                betaHigh,
+                                corners: [corner1, corner2, corner3, corner4],
+                                isExtended: false
+                            };
+                        }
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        function calculateGridSpacing(alphaGroups, betaGroups) {
+            const alphas = Object.keys(alphaGroups).map(Number).sort((a, b) => a - b);
+            const betas = Object.keys(betaGroups).map(Number).sort((a, b) => a - b);
+            
+            let alphaSpacing = 5;
+            let betaSpacing = 5;
+            
+            if (alphas.length >= 2) {
+                const spacings = [];
+                for (let i = 1; i < alphas.length; i++) {
+                    spacings.push(alphas[i] - alphas[i-1]);
+                }
+                alphaSpacing = spacings.reduce((a, b) => a + b, 0) / spacings.length;
+            }
+            
+            if (betas.length >= 2) {
+                const spacings = [];
+                for (let i = 1; i < betas.length; i++) {
+                    spacings.push(betas[i] - betas[i-1]);
+                }
+                betaSpacing = spacings.reduce((a, b) => a + b, 0) / spacings.length;
+            }
+            
+            return { alphaSpacing, betaSpacing };
+        }
+
+        function generateExtendedGridData(alphaGroups, betaGroups, maxAlpha = 70) {
+            const alphas = Object.keys(alphaGroups).map(Number).sort((a, b) => a - b);
+            const betas = Object.keys(betaGroups).map(Number).sort((a, b) => a - b);
+            
+            if (alphas.length < 2 || betas.length < 2) return null;
+            
+            const { alphaSpacing, betaSpacing } = calculateGridSpacing(alphaGroups, betaGroups);
+            
+            const minAlpha = alphas[0];
+            const maxAlphaOrig = alphas[alphas.length - 1];
+            const minBeta = betas[0];
+            const maxBeta = betas[betas.length - 1];
+            
+            const extendedAlphas = [];
+            const extendedBetas = [];
+            
+            for (let a = minAlpha - alphaSpacing; a >= -maxAlpha; a -= alphaSpacing) {
+                extendedAlphas.unshift(a);
+            }
+            for (let a = maxAlphaOrig + alphaSpacing; a <= maxAlpha; a += alphaSpacing) {
+                extendedAlphas.push(a);
+            }
+            
+            for (let b = minBeta - betaSpacing; b >= -maxAlpha; b -= betaSpacing) {
+                extendedBetas.unshift(b);
+            }
+            for (let b = maxBeta + betaSpacing; b <= maxAlpha; b += betaSpacing) {
+                extendedBetas.push(b);
+            }
+            
+            const allAlphas = [...new Set([...extendedAlphas, ...alphas])].sort((a, b) => a - b);
+            const allBetas = [...new Set([...extendedBetas, ...betas])].sort((a, b) => a - b);
+            
+            return {
+                extendedAlphas,
+                extendedBetas,
+                allAlphas,
+                allBetas,
+                alphaSpacing,
+                betaSpacing,
+                originalAlphas: alphas,
+                originalBetas: betas
+            };
+        }
+
+        function extrapolatePoint(alpha, beta, alphaGroups, betaGroups, extendedGrid) {
+            const alphas = extendedGrid.originalAlphas;
+            const betas = extendedGrid.originalBetas;
+            
+            const minAlpha = alphas[0];
+            const maxAlpha = alphas[alphas.length - 1];
+            const minBeta = betas[0];
+            const maxBeta = betas[betas.length - 1];
+            
+            const findPoint = (a, b) => {
+                const group = alphaGroups[a];
+                if (group) {
+                    return group.find(p => p.beta === b);
+                }
+                return null;
+            };
+            
+            const interpolateBeta = (refPoints, targetBeta) => {
+                if (refPoints.length < 2) return null;
+                
+                refPoints.sort((a, b) => a.beta - b.beta);
+                
+                if (targetBeta < refPoints[0].beta) {
+                    const p1 = refPoints[0];
+                    const p2 = refPoints[1];
+                    const t = (targetBeta - p1.beta) / (p2.beta - p1.beta);
+                    return {
+                        x: p1.x + t * (p2.x - p1.x),
+                        y: p1.y + t * (p2.y - p1.y)
+                    };
+                } else if (targetBeta > refPoints[refPoints.length - 1].beta) {
+                    const p1 = refPoints[refPoints.length - 2];
+                    const p2 = refPoints[refPoints.length - 1];
+                    const t = (targetBeta - p1.beta) / (p2.beta - p1.beta);
+                    return {
+                        x: p1.x + t * (p2.x - p1.x),
+                        y: p1.y + t * (p2.y - p1.y)
+                    };
+                } else {
+                    for (let i = 0; i < refPoints.length - 1; i++) {
+                        if (targetBeta >= refPoints[i].beta && targetBeta <= refPoints[i + 1].beta) {
+                            const p1 = refPoints[i];
+                            const p2 = refPoints[i + 1];
+                            const t = (targetBeta - p1.beta) / (p2.beta - p1.beta);
+                            return {
+                                x: p1.x + t * (p2.x - p1.x),
+                                y: p1.y + t * (p2.y - p1.y)
+                            };
+                        }
+                    }
+                }
+                return null;
+            };
+            
+            const getPointsOnAlphaLine = (refAlpha) => {
+                const points = [];
+                if (refAlpha >= minAlpha && refAlpha <= maxAlpha) {
+                    for (let b of betas) {
+                        const p = findPoint(refAlpha, b);
+                        if (p) points.push({alpha: refAlpha, beta: b, x: p.x, y: p.y});
+                    }
+                }
+                return points;
+            };
+            
+            if (alpha >= minAlpha && alpha <= maxAlpha && beta >= minBeta && beta <= maxBeta) {
+                return findPoint(alpha, beta);
+            }
+            
+            if (alpha >= minAlpha && alpha <= maxAlpha) {
+                const refPoints = getPointsOnAlphaLine(alpha);
+                const result = interpolateBeta(refPoints, beta);
+                if (result) {
+                    return { alpha, beta, x: result.x, y: result.y };
+                }
+                return null;
+            }
+            
+            if (alpha < minAlpha) {
+                const refAlpha1 = minAlpha;
+                const refAlpha2 = Math.min(minAlpha + extendedGrid.alphaSpacing, maxAlpha);
+                
+                const points1 = getPointsOnAlphaLine(refAlpha1);
+                const points2 = getPointsOnAlphaLine(refAlpha2);
+                
+                if (points1.length >= 2 && points2.length >= 2) {
+                    const p1 = interpolateBeta(points1, beta);
+                    const p2 = interpolateBeta(points2, beta);
+                    
+                    if (p1 && p2) {
+                        const t = (alpha - refAlpha1) / (refAlpha2 - refAlpha1);
+                        return {
+                            alpha, beta,
+                            x: p1.x + t * (p2.x - p1.x),
+                            y: p1.y + t * (p2.y - p1.y)
+                        };
+                    }
+                }
+            }
+            
+            if (alpha > maxAlpha) {
+                const refAlpha1 = maxAlpha;
+                const refAlpha2 = Math.max(maxAlpha - extendedGrid.alphaSpacing, minAlpha);
+                
+                const points1 = getPointsOnAlphaLine(refAlpha1);
+                const points2 = getPointsOnAlphaLine(refAlpha2);
+                
+                if (points1.length >= 2 && points2.length >= 2) {
+                    const p1 = interpolateBeta(points1, beta);
+                    const p2 = interpolateBeta(points2, beta);
+                    
+                    if (p1 && p2) {
+                        const t = (alpha - refAlpha1) / (refAlpha2 - refAlpha1);
+                        return {
+                            alpha, beta,
+                            x: p1.x + t * (p2.x - p1.x),
+                            y: p1.y + t * (p2.y - p1.y)
+                        };
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        function findExtendedGridCell(point, alphaGroups, betaGroups, extendedGrid) {
+            if (!point || !extendedGrid) return null;
+            
+            const px = point.ka;
+            const py = point.kb;
+            
+            const allAlphas = extendedGrid.allAlphas;
+            const allBetas = extendedGrid.allBetas;
+            const originalAlphas = extendedGrid.originalAlphas;
+            const originalBetas = extendedGrid.originalBetas;
+            
+            const minOriginalAlpha = originalAlphas[0];
+            const maxOriginalAlpha = originalAlphas[originalAlphas.length - 1];
+            const minOriginalBeta = originalBetas[0];
+            const maxOriginalBeta = originalBetas[originalBetas.length - 1];
+            
+            for (let i = 0; i < allAlphas.length - 1; i++) {
+                for (let j = 0; j < allBetas.length - 1; j++) {
+                    const alphaLow = allAlphas[i];
+                    const alphaHigh = allAlphas[i + 1];
+                    const betaLow = allBetas[j];
+                    const betaHigh = allBetas[j + 1];
+                    
+                    const corner1 = extrapolatePoint(alphaLow, betaLow, alphaGroups, betaGroups, extendedGrid);
+                    const corner2 = extrapolatePoint(alphaLow, betaHigh, alphaGroups, betaGroups, extendedGrid);
+                    const corner3 = extrapolatePoint(alphaHigh, betaLow, alphaGroups, betaGroups, extendedGrid);
+                    const corner4 = extrapolatePoint(alphaHigh, betaHigh, alphaGroups, betaGroups, extendedGrid);
+                    
+                    if (corner1 && corner2 && corner3 && corner4) {
+                        if (pointInQuad(px, py, [corner1, corner2, corner3, corner4])) {
+                            const isExtended = (alphaLow < minOriginalAlpha || alphaHigh > maxOriginalAlpha ||
+                                               betaLow < minOriginalBeta || betaHigh > maxOriginalBeta);
+                            return {
+                                alphaLow,
+                                alphaHigh,
+                                betaLow,
+                                betaHigh,
+                                corners: [corner1, corner2, corner3, corner4],
+                                isExtended: isExtended
+                            };
+                        }
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        function generateSubGrid(cell, divisions = 100) {
+            if (!cell || !cell.corners || cell.corners.length !== 4) return null;
+            
+            const [c1, c2, c3, c4] = cell.corners;
+            const subGridLines = [];
+            
+            for (let i = 0; i <= divisions; i++) {
+                const t = i / divisions;
+                const leftX = c1.x + t * (c2.x - c1.x);
+                const leftY = c1.y + t * (c2.y - c1.y);
+                const rightX = c3.x + t * (c4.x - c3.x);
+                const rightY = c3.y + t * (c4.y - c3.y);
+                
+                subGridLines.push({
+                    type: 'horizontal',
+                    data: [{x: leftX, y: leftY}, {x: rightX, y: rightY}]
+                });
+            }
+            
+            for (let i = 0; i <= divisions; i++) {
+                const t = i / divisions;
+                const bottomX = c1.x + t * (c3.x - c1.x);
+                const bottomY = c1.y + t * (c3.y - c1.y);
+                const topX = c2.x + t * (c4.x - c2.x);
+                const topY = c2.y + t * (c4.y - c2.y);
+                
+                subGridLines.push({
+                    type: 'vertical',
+                    data: [{x: bottomX, y: bottomY}, {x: topX, y: topY}]
+                });
+            }
+            
+            return subGridLines;
+        }
+
+        function generateSubGridPoints(cell, divisions = 100) {
+            if (!cell || !cell.corners || cell.corners.length !== 4) return [];
+            
+            const [c1, c2, c3, c4] = cell.corners;
+            const points = [];
+            
+            for (let i = 0; i <= divisions; i++) {
+                for (let j = 0; j <= divisions; j++) {
+                    const t1 = i / divisions;
+                    const t2 = j / divisions;
+                    
+                    const leftX = c1.x + t1 * (c2.x - c1.x);
+                    const leftY = c1.y + t1 * (c2.y - c1.y);
+                    const rightX = c3.x + t1 * (c4.x - c3.x);
+                    const rightY = c3.y + t1 * (c4.y - c3.y);
+                    
+                    const x = leftX + t2 * (rightX - leftX);
+                    const y = leftY + t2 * (rightY - leftY);
+                    
+                    points.push({x, y, gridI: i, gridJ: j});
+                }
+            }
+            
+            return points;
+        }
+
+        function findNearestPoint(inputPoint, gridPoints) {
+            if (!inputPoint || !gridPoints || gridPoints.length === 0) return null;
+            
+            let minDist = Infinity;
+            let nearestPoint = null;
+            
+            const px = inputPoint.ka;
+            const py = inputPoint.kb;
+            
+            for (const point of gridPoints) {
+                const dist = Math.sqrt((point.x - px) ** 2 + (point.y - py) ** 2);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestPoint = point;
+                }
+            }
+            
+            return nearestPoint;
+        }
+
+        function interpolateAlphaBeta(nearestPoint, gridCell, divisions = 100) {
+            if (!nearestPoint || !gridCell) return null;
+            
+            const t1 = nearestPoint.gridI / divisions;
+            const t2 = nearestPoint.gridJ / divisions;
+            
+            const alphaLow = gridCell.alphaLow;
+            const alphaHigh = gridCell.alphaHigh;
+            const betaLow = gridCell.betaLow;
+            const betaHigh = gridCell.betaHigh;
+            
+            const interpolatedAlpha = alphaLow + t2 * (alphaHigh - alphaLow);
+            const interpolatedBeta = betaLow + t1 * (betaHigh - betaLow);
+            
+            return {
+                alpha: interpolatedAlpha,
+                beta: interpolatedBeta,
+                t1: t1,
+                t2: t2
+            };
+        }
+
+        function createCrossMarker(point, size, color) {
+            return [
+                {
+                    data: [{x: point.x - size, y: point.y}, {x: point.x + size, y: point.y}],
+                    borderColor: color,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    type: 'line',
+                    fill: false
+                },
+                {
+                    data: [{x: point.x, y: point.y - size}, {x: point.x, y: point.y + size}],
+                    borderColor: color,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    type: 'line',
+                    fill: false
+                }
+            ];
+        }
+
+        function calculateAndDisplay(rawData, pointData) {
+            const pointAA1 = calculateKaKbPointAA1(pointData);
+            
+            const gridDataAA1 = calculateKaKbAA1(rawData);
+            const gridDataAA2 = calculateKaKbAA2(rawData);
+            const gridDataAA3 = calculateKaKbAA3(rawData);
+            
+            const alphaGroupsAA1 = {};
+            const betaGroupsAA1 = {};
+            gridDataAA1.forEach(item => {
+                const alpha = item[0];
+                const beta = item[1];
+                const ka = item[2];
+                const kb = item[3];
+                if (!alphaGroupsAA1[alpha]) alphaGroupsAA1[alpha] = [];
+                alphaGroupsAA1[alpha].push({x: ka, y: kb, alpha, beta});
+                if (!betaGroupsAA1[beta]) betaGroupsAA1[beta] = [];
+                betaGroupsAA1[beta].push({x: ka, y: kb, alpha, beta});
+            });
+            
+            const extendedGridAA1 = generateExtendedGridData(alphaGroupsAA1, betaGroupsAA1, 70);
+            
+            let gridCellAA1 = findGridCell(pointAA1, alphaGroupsAA1, betaGroupsAA1);
+            let nearestPointAA1 = null;
+            let interpolatedAA1 = null;
+            let isExtendedAA1 = false;
+            
+            if (!gridCellAA1 && extendedGridAA1) {
+                gridCellAA1 = findExtendedGridCell(pointAA1, alphaGroupsAA1, betaGroupsAA1, extendedGridAA1);
+                if (gridCellAA1) isExtendedAA1 = gridCellAA1.isExtended;
+            }
+            
+            if (gridCellAA1) {
+                const subGridPoints = generateSubGridPoints(gridCellAA1, 100);
+                nearestPointAA1 = findNearestPoint(pointAA1, subGridPoints);
+                if (nearestPointAA1) {
+                    interpolatedAA1 = interpolateAlphaBeta(nearestPointAA1, gridCellAA1, 100);
+                }
+            }
+            
+            const alpha1 = interpolatedAA1 ? interpolatedAA1.alpha : 0;
+            const beta1 = interpolatedAA1 ? interpolatedAA1.beta : 0;
+            
+            const region = determineRegion(alpha1, beta1);
+            
+            let finalAlpha, finalBeta, usedFormula;
+            let gridDataFinal, pointFinal;
+            let alphaGroupsFinal, betaGroupsFinal, extendedGridFinal;
+            let isExtendedFinal = false;
+            
+            if (region === 'AA1') {
+                finalAlpha = alpha1;
+                finalBeta = beta1;
+                usedFormula = 'AA1';
+                gridDataFinal = gridDataAA1;
+                pointFinal = pointAA1;
+                alphaGroupsFinal = alphaGroupsAA1;
+                betaGroupsFinal = betaGroupsAA1;
+                extendedGridFinal = extendedGridAA1;
+                isExtendedFinal = isExtendedAA1;
+            } else if (region === 'AA2') {
+                pointFinal = calculateKaKbPointAA2(pointData);
+                gridDataFinal = gridDataAA2;
+                usedFormula = 'AA2';
+                
+                alphaGroupsFinal = {};
+                betaGroupsFinal = {};
+                gridDataAA2.forEach(item => {
+                    const alpha = item[0];
+                    const beta = item[1];
+                    const ka = item[2];
+                    const kb = item[3];
+                    if (!alphaGroupsFinal[alpha]) alphaGroupsFinal[alpha] = [];
+                    alphaGroupsFinal[alpha].push({x: ka, y: kb, alpha, beta});
+                    if (!betaGroupsFinal[beta]) betaGroupsFinal[beta] = [];
+                    betaGroupsFinal[beta].push({x: ka, y: kb, alpha, beta});
+                });
+                
+                extendedGridFinal = generateExtendedGridData(alphaGroupsFinal, betaGroupsFinal, 70);
+                
+                let gridCell = findGridCell(pointFinal, alphaGroupsFinal, betaGroupsFinal);
+                if (!gridCell && extendedGridFinal) {
+                    gridCell = findExtendedGridCell(pointFinal, alphaGroupsFinal, betaGroupsFinal, extendedGridFinal);
+                    if (gridCell) isExtendedFinal = gridCell.isExtended;
+                }
+                
+                if (gridCell) {
+                    const subGridPoints = generateSubGridPoints(gridCell, 100);
+                    const nearestPoint = findNearestPoint(pointFinal, subGridPoints);
+                    if (nearestPoint) {
+                        const interpolated = interpolateAlphaBeta(nearestPoint, gridCell, 100);
+                        finalAlpha = interpolated.alpha;
+                        finalBeta = interpolated.beta;
+                    } else {
+                        finalAlpha = 0;
+                        finalBeta = 0;
+                    }
+                } else {
+                    finalAlpha = 0;
+                    finalBeta = 0;
+                }
+            } else {
+                pointFinal = calculateKaKbPointAA3(pointData);
+                gridDataFinal = gridDataAA3;
+                usedFormula = 'AA3';
+                
+                alphaGroupsFinal = {};
+                betaGroupsFinal = {};
+                gridDataAA3.forEach(item => {
+                    const alpha = item[0];
+                    const beta = item[1];
+                    const ka = item[2];
+                    const kb = item[3];
+                    if (!alphaGroupsFinal[alpha]) alphaGroupsFinal[alpha] = [];
+                    alphaGroupsFinal[alpha].push({x: ka, y: kb, alpha, beta});
+                    if (!betaGroupsFinal[beta]) betaGroupsFinal[beta] = [];
+                    betaGroupsFinal[beta].push({x: ka, y: kb, alpha, beta});
+                });
+                
+                extendedGridFinal = null;
+                
+                const gridCell = findGridCell(pointFinal, alphaGroupsFinal, betaGroupsFinal);
+                if (gridCell) {
+                    const subGridPoints = generateSubGridPoints(gridCell, 100);
+                    const nearestPoint = findNearestPoint(pointFinal, subGridPoints);
+                    if (nearestPoint) {
+                        const interpolated = interpolateAlphaBeta(nearestPoint, gridCell, 100);
+                        finalAlpha = interpolated.alpha;
+                        finalBeta = interpolated.beta;
+                    } else {
+                        finalAlpha = 0;
+                        finalBeta = 0;
+                    }
+                } else {
+                    finalAlpha = 0;
+                    finalBeta = 0;
+                }
+            }
+            
+            renderChart(gridDataFinal, pointFinal, usedFormula, alphaGroupsFinal, betaGroupsFinal, extendedGridFinal);
+            
+            const resultDisplay = document.getElementById('resultDisplay');
+            resultDisplay.style.display = 'block';
+            
+            let regionDesc = '';
+            if (region === 'AA1') {
+                regionDesc = '四个角区域（α1和β1都在±15°之外）';
+            } else if (region === 'AA2') {
+                regionDesc = '边缘区域';
+            } else {
+                regionDesc = '中心区域';
+            }
+            
+            let extendedWarning = '';
+            if (isExtendedFinal) {
+                extendedWarning = '<br><span style="color: red; font-weight: bold;">⚠ 超过校验范围，此数值为估算</span>';
+            }
+            
+            resultDisplay.innerHTML = `
+                <div style="text-align: left; padding: 10px;">
+                    <h3>计算过程：</h3>
+                    <p><strong>步骤1 - AA1公式初步计算：</strong></p>
+                    <p>输入参数：P1=${pointData[0]}, P2=${pointData[1]}, P3=${pointData[2]}, P4=${pointData[3]}, P5=${pointData[4]}</p>
+                    <p>Kα = ${pointAA1.ka.toFixed(6)}, Kβ = ${pointAA1.kb.toFixed(6)}</p>
+                    <p>初步角度：(α1, β1) = (${alpha1.toFixed(4)}°, ${beta1.toFixed(4)}°)</p>
+                    <hr>
+                    <p><strong>步骤2 - 区域判断：</strong></p>
+                    <p>根据(α1=${alpha1.toFixed(4)}°, β1=${beta1.toFixed(4)}°)判断位置：${regionDesc}</p>
+                    <p>选择公式：<strong style="color: ${region === 'AA1' ? '#e74c3c' : region === 'AA2' ? '#f39c12' : '#27ae60'}">${usedFormula}</strong></p>
+                    <hr>
+                    <p><strong>步骤3 - 最终计算：</strong></p>
+                    <p>使用${usedFormula}公式进行网格插值计算</p>
+                    <p>Kα = ${pointFinal.ka.toFixed(6)}, Kβ = ${pointFinal.kb.toFixed(6)}</p>${extendedWarning}
+                </div>
+                <div class="result-final">
+                    <h2 style="margin: 0; color: #2e7d32;">最终结果</h2>
+                    <p style="font-size: 24px; margin: 10px 0;">
+                        <strong>α = ${finalAlpha.toFixed(4)}°</strong> | 
+                        <strong>β = ${finalBeta.toFixed(4)}°</strong>
+                    </p>
+                    <p style="color: #666;">使用公式：${usedFormula}</p>
+                </div>
+            `;
+        }
+
+        function renderChart(data, pointData, usedFormula, alphaGroupsParam, betaGroupsParam, extendedGridParam) {
+            const alphaGroups = alphaGroupsParam || {};
+            const betaGroups = betaGroupsParam || {};
+
+            if (!alphaGroupsParam) {
+                data.forEach(item => {
+                    const alpha = item[0];
+                    const beta = item[1];
+                    const ka = item[2];
+                    const kb = item[3];
+
+                    if (!alphaGroups[alpha]) {
+                        alphaGroups[alpha] = [];
+                    }
+                    alphaGroups[alpha].push({x: ka, y: kb, alpha, beta});
+
+                    if (!betaGroups[beta]) {
+                        betaGroups[beta] = [];
+                    }
+                    betaGroups[beta].push({x: ka, y: kb, alpha, beta});
+                });
+            }
+
+            const datasets = [];
+
+            datasets.push({
+                label: '数据点',
+                data: data.map(item => ({x: item[2], y: item[3]})),
+                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                type: 'scatter'
+            });
+
+            Object.values(alphaGroups).forEach((points) => {
+                points.sort((a, b) => a.beta - b.beta);
+                
+                datasets.push({
+                    label: `α=${points[0].alpha}`,
+                    data: points.map(p => ({x: p.x, y: p.y})),
+                    borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.7)`,
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    type: 'line',
+                    fill: false
+                });
+            });
+
+            Object.values(betaGroups).forEach((points) => {
+                points.sort((a, b) => a.alpha - b.alpha);
+                
+                datasets.push({
+                    label: `β=${points[0].beta}`,
+                    data: points.map(p => ({x: p.x, y: p.y})),
+                    borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.5)`,
+                    borderWidth: 1,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    type: 'line',
+                    fill: false
+                });
+            });
+
+            const extendedGrid = extendedGridParam || generateExtendedGridData(alphaGroups, betaGroups, 70);
+            if (extendedGrid && (usedFormula === 'AA1' || usedFormula === 'AA2')) {
+                Object.keys(alphaGroups).forEach(alpha => {
+                    const alphaNum = Number(alpha);
+                    const linePoints = [];
+                    extendedGrid.allBetas.forEach(beta => {
+                        const p = extrapolatePoint(alphaNum, beta, alphaGroups, betaGroups, extendedGrid);
+                        if (p) linePoints.push({x: p.x, y: p.y});
+                    });
+                    if (linePoints.length >= 2) {
+                        linePoints.sort((a, b) => a.y - b.y);
+                        datasets.push({
+                            label: `延伸α=${alpha}`,
+                            data: linePoints,
+                            borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.7)`,
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            type: 'line',
+                            fill: false
+                        });
+                    }
+                });
+                
+                Object.keys(betaGroups).forEach(beta => {
+                    const betaNum = Number(beta);
+                    const linePoints = [];
+                    extendedGrid.allAlphas.forEach(alpha => {
+                        const p = extrapolatePoint(alpha, betaNum, alphaGroups, betaGroups, extendedGrid);
+                        if (p) linePoints.push({x: p.x, y: p.y});
+                    });
+                    if (linePoints.length >= 2) {
+                        linePoints.sort((a, b) => a.x - b.x);
+                        datasets.push({
+                            label: `延伸β=${beta}`,
+                            data: linePoints,
+                            borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.5)`,
+                            borderWidth: 1,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            type: 'line',
+                            fill: false
+                        });
+                    }
+                });
+                
+                extendedGrid.extendedAlphas.forEach(alpha => {
+                    const linePoints = [];
+                    extendedGrid.allBetas.forEach(beta => {
+                        const p = extrapolatePoint(alpha, beta, alphaGroups, betaGroups, extendedGrid);
+                        if (p) linePoints.push({x: p.x, y: p.y});
+                    });
+                    if (linePoints.length >= 2) {
+                        linePoints.sort((a, b) => a.y - b.y);
+                        datasets.push({
+                            label: `扩展α=${alpha}`,
+                            data: linePoints,
+                            borderColor: 'rgba(150, 150, 150, 0.4)',
+                            borderWidth: 1,
+                            borderDash: [3, 3],
+                            pointRadius: 0,
+                            type: 'line',
+                            fill: false
+                        });
+                    }
+                });
+                
+                extendedGrid.extendedBetas.forEach(beta => {
+                    const linePoints = [];
+                    extendedGrid.allAlphas.forEach(alpha => {
+                        const p = extrapolatePoint(alpha, beta, alphaGroups, betaGroups, extendedGrid);
+                        if (p) linePoints.push({x: p.x, y: p.y});
+                    });
+                    if (linePoints.length >= 2) {
+                        linePoints.sort((a, b) => a.x - b.x);
+                        datasets.push({
+                            label: `扩展β=${beta}`,
+                            data: linePoints,
+                            borderColor: 'rgba(150, 150, 150, 0.4)',
+                            borderWidth: 1,
+                            borderDash: [3, 3],
+                            pointRadius: 0,
+                            type: 'line',
+                            fill: false
+                        });
+                    }
+                });
+            }
+
+            if (pointData) {
+                const crossSize = 1;
+                
+                const inputCross = createCrossMarker({x: pointData.ka, y: pointData.kb}, crossSize, 'rgba(255, 0, 0, 1)');
+                inputCross.forEach(line => {
+                    datasets.push({
+                        label: '输入的点',
+                        ...line
+                    });
+                });
+
+                let gridCell = findGridCell(pointData, alphaGroups, betaGroups);
+                let nearestPoint = null;
+                
+                if (!gridCell && extendedGrid && (usedFormula === 'AA1' || usedFormula === 'AA2')) {
+                    gridCell = findExtendedGridCell(pointData, alphaGroups, betaGroups, extendedGrid);
+                }
+                
+                if (gridCell) {
+                    const subGridLines = generateSubGrid(gridCell, 100);
+                    if (subGridLines) {
+                        subGridLines.forEach(line => {
+                            datasets.push({
+                                label: '小网格',
+                                data: line.data,
+                                borderColor: gridCell.isExtended ? 'rgba(200, 100, 0, 0.6)' : 'rgba(255, 165, 0, 0.6)',
+                                borderWidth: 1,
+                                pointRadius: 0,
+                                type: 'line',
+                                fill: false
+                            });
+                        });
+                        
+                        datasets.push({
+                            label: '网格区域边界',
+                            data: [
+                                gridCell.corners[0],
+                                gridCell.corners[1],
+                                gridCell.corners[3],
+                                gridCell.corners[2],
+                                gridCell.corners[0]
+                            ],
+                            borderColor: gridCell.isExtended ? 'rgba(200, 100, 0, 1)' : 'rgba(255, 140, 0, 1)',
+                            backgroundColor: gridCell.isExtended ? 'rgba(200, 100, 0, 0.1)' : 'rgba(255, 165, 0, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            pointBackgroundColor: gridCell.isExtended ? 'rgba(200, 100, 0, 1)' : 'rgba(255, 140, 0, 1)',
+                            type: 'line',
+                            fill: true
+                        });
+                        
+                        const subGridPoints = generateSubGridPoints(gridCell, 100);
+                        nearestPoint = findNearestPoint(pointData, subGridPoints);
+                        
+                        if (nearestPoint) {
+                            const nearestCross = createCrossMarker(nearestPoint, crossSize, 'rgba(0, 0, 255, 1)');
+                            nearestCross.forEach(line => {
+                                datasets.push({
+                                    label: '最近的点',
+                                    ...line
+                                });
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (chart) {
+                chart.destroy();
+            }
+
+            const config = {
+                data: {
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Kα'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Kβ'
+                            }
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `网格图 (${usedFormula}公式)`
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const point = context.raw;
+                                    return [
+                                        `Kα: ${point.x.toFixed(3)}`,
+                                        `Kβ: ${point.y.toFixed(3)}`
+                                    ];
+                                }
+                            }
+                        },
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            };
+
+            const ctx = document.getElementById('gridChart').getContext('2d');
+            chart = new Chart(ctx, config);
+        }
+
+        function clearChart() {
+            const gridFileInput = document.getElementById('gridFileInput');
+            const pointFileInput = document.getElementById('pointFileInput');
+            const errorMessage = document.getElementById('errorMessage');
+            const successMessage = document.getElementById('successMessage');
+            const resultDisplay = document.getElementById('resultDisplay');
+            
+            gridFileInput.value = '';
+            pointFileInput.value = '';
+            errorMessage.textContent = '';
+            successMessage.textContent = '';
+            resultDisplay.style.display = 'none';
+            
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>七孔探针校准算法详解</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style type="text/tailwindcss">
+        @layer base {
+            body { font-family: 'Noto Sans SC', sans-serif; scroll-behavior: smooth; }
+            .math-block { overflow-x: auto; }
+        }
+        @layer components {
+            .section-card { @apply bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden transition-all duration-300 hover:shadow-xl; }
+            .formula-box { @apply bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 my-4 border-l-4 border-blue-500; }
+            .code-block { @apply bg-slate-900 text-slate-50 rounded-xl p-5 overflow-x-auto text-sm leading-relaxed; }
+            .step-badge { @apply inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold text-sm mr-3 flex-shrink-0; }
+            .highlight-text { @apply bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-medium; }
+            .warn-box { @apply bg-rose-50 rounded-xl p-5 border border-rose-200; }
+            .info-box { @apply bg-blue-50 rounded-xl p-5 border border-blue-200; }
+            .tip-box { @apply bg-amber-50 rounded-xl p-5 border border-amber-200; }
+            .diff-badge { @apply inline-block text-xs font-mono px-2 py-0.5 rounded; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <button id="backToTop" class="fixed bottom-8 right-8 w-12 h-12 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all duration-300 opacity-0 pointer-events-none z-50 flex items-center justify-center" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+    </button>
+
+    <header class="relative bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 text-white overflow-hidden">
+        <div class="absolute inset-0 opacity-10">
+            <svg class="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="white" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(#grid)"/></svg>
+        </div>
+        <div class="relative max-w-6xl mx-auto px-6 py-20">
+            <div class="flex items-center gap-3 mb-6">
+                <span class="px-3 py-1 bg-blue-500/20 border border-blue-400/30 rounded-full text-sm font-medium text-blue-200">WindLabX2</span>
+                <span class="px-3 py-1 bg-emerald-500/20 border border-emerald-400/30 rounded-full text-sm font-medium text-emerald-200">算法文档 v2</span>
+            </div>
+            <h1 class="text-5xl font-bold mb-6 leading-tight">七孔探针校准算法</h1>
+            <p class="text-xl text-blue-100 max-w-3xl leading-relaxed">基于压力测量的流场参数计算系统，通过小角度校准和大角度校准双模式，实现对流场速度、马赫数、俯仰角和偏航角的精确解算。</p>
+            <div class="mt-10 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white/5 backdrop-blur rounded-xl p-4 border border-white/10"><div class="text-2xl font-bold text-blue-300">7</div><div class="text-sm text-blue-200">测压孔</div></div>
+                <div class="bg-white/5 backdrop-blur rounded-xl p-4 border border-white/10"><div class="text-2xl font-bold text-emerald-300">2</div><div class="text-sm text-emerald-200">校准模式</div></div>
+                <div class="bg-white/5 backdrop-blur rounded-xl p-4 border border-white/10"><div class="text-2xl font-bold text-amber-300">5°</div><div class="text-sm text-amber-200">角度步长</div></div>
+                <div class="bg-white/5 backdrop-blur rounded-xl p-4 border border-white/10"><div class="text-2xl font-bold text-rose-300">15</div><div class="text-sm text-rose-200">核心函数</div></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+        <nav class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                目录
+            </h2>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                <a href="#overview" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">1</span><span class="text-slate-700">算法概述</span></a>
+                <a href="#probe-structure" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">2</span><span class="text-slate-700">探针结构</span></a>
+                <a href="#main-flow" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">3</span><span class="text-slate-700">主流程</span></a>
+                <a href="#little-calibration" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">4</span><span class="text-slate-700">小角度校准</span></a>
+                <a href="#big-calibration" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">5</span><span class="text-slate-700">大角度校准</span></a>
+                <a href="#velocity-mach" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">6</span><span class="text-slate-700">速度马赫数</span></a>
+                <a href="#interpolation" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">7</span><span class="text-slate-700">插值算法</span></a>
+                <a href="#polygon" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">8</span><span class="text-slate-700">多边形判定</span></a>
+                <a href="#data-io" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">9</span><span class="text-slate-700">数据IO</span></a>
+                <a href="#func-ref" class="flex items-center gap-2 p-2 rounded-lg hover:bg-blue-50 transition-colors text-sm"><span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">#</span><span class="text-slate-700">函数索引</span></a>
+            </div>
+        </nav>
+
+        <!-- 1. 算法概述 -->
+        <section id="overview" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xl font-bold">1</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">算法概述</h2><p class="text-slate-500">Algorithm Overview</p></div>
+                </div>
+                <p class="text-lg leading-relaxed text-slate-700 mb-6">
+                    七孔探针校准算法是一种用于测量三维流场参数的经典方法。通过测量探针七个孔位的压力值，结合预先建立的校准数据库，可以计算出流场的<span class="highlight-text">总压</span>、<span class="highlight-text">静压</span>、<span class="highlight-text">速度</span>、<span class="highlight-text">马赫数</span>以及<span class="highlight-text">流动角度</span>。
+                </p>
+                <!-- 校准模式对比表 -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm border-collapse">
+                        <thead><tr class="bg-slate-50"><th class="px-4 py-3 text-left font-bold text-slate-700 rounded-tl-lg">对比项</th><th class="px-4 py-3 text-center font-bold text-emerald-700 bg-emerald-50">小角度校准</th><th class="px-4 py-3 text-center font-bold text-rose-700 bg-rose-50 rounded-tr-lg">大角度校准</th></tr></thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">角度范围</td><td class="px-4 py-3 text-center text-emerald-700">|a|, |b| ≤ 30°</td><td class="px-4 py-3 text-center text-rose-700">30° &lt; |a| ≤ 45°</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">校准文件</td><td class="px-4 py-3 text-center text-emerald-700">7.prb（1个文件）</td><td class="px-4 py-3 text-center text-rose-700">1.prb ~ 6.prb（6个文件）</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">ka, kb 计算</td><td class="px-4 py-3 text-center text-emerald-700">P7 + 六孔平均</td><td class="px-4 py-3 text-center text-rose-700">主孔 + 相邻两孔</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">Cpt 方程</td><td class="px-4 py-3 text-center text-emerald-700">(P7 - Pt)/(Pt - Ps)</td><td class="px-4 py-3 text-center text-rose-700">(Pcenter - Pt)/(Pt - Ps)</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">Cps 方程</td><td class="px-4 py-3 text-center text-emerald-700">(Ps - Pavg)/(Pt - Ps)</td><td class="px-4 py-3 text-center text-rose-700">(Ps - (Pleft+Pright)/2)/(Pt - Ps)</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">坐标转换</td><td class="px-4 py-3 text-center text-emerald-700">无需</td><td class="px-4 py-3 text-center text-rose-700">θ,φ → a,b（big_ab_convert）</td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">b 插值符号</td><td class="px-4 py-3 text-center"><span class="diff-badge bg-emerald-100 text-emerald-700">b = b_X1 + d1/(d1+d3)*5</span></td><td class="px-4 py-3 text-center"><span class="diff-badge bg-rose-100 text-rose-700">b = b_X1 - d1/(d1+d3)*5</span></td></tr>
+                            <tr><td class="px-4 py-3 font-medium text-slate-700">方格数量</td><td class="px-4 py-3 text-center text-emerald-700">12×12 = 144</td><td class="px-4 py-3 text-center text-rose-700">12×3 = 36/扇区</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. 探针结构 -->
+        <section id="probe-structure" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-xl font-bold">2</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">探针结构与压力定义</h2><p class="text-slate-500">Probe Structure & Pressure Definition</p></div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div>
+                        <h3 class="font-bold text-slate-800 mb-4">七孔探针布局（正视图）</h3>
+                        <p class="text-slate-600 mb-4 leading-relaxed">七孔探针由中心孔（P7）和周围六个孔（P1-P6）组成，呈正六边形分布。六个外孔按 60° 等间隔排列，P1 位于右下方，顺时针依次编号。</p>
+                        <div class="bg-slate-50 rounded-xl p-5 border border-slate-200 flex justify-center">
+                            <svg viewBox="0 0 300 300" class="w-64 h-64">
+                                <circle cx="150" cy="150" r="120" fill="none" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+                                <line x1="150" y1="150" x2="150" y2="50" stroke="#cbd5e1" stroke-width="1"/><line x1="150" y1="150" x2="237" y2="100" stroke="#cbd5e1" stroke-width="1"/><line x1="150" y1="150" x2="237" y2="200" stroke="#cbd5e1" stroke-width="1"/><line x1="150" y1="150" x2="150" y2="250" stroke="#cbd5e1" stroke-width="1"/><line x1="150" y1="150" x2="63" y2="200" stroke="#cbd5e1" stroke-width="1"/><line x1="150" y1="150" x2="63" y2="100" stroke="#cbd5e1" stroke-width="1"/>
+                                <circle cx="150" cy="50" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="150" y="55" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P3</text>
+                                <circle cx="237" cy="100" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="237" y="105" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P2</text>
+                                <circle cx="237" cy="200" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="237" y="205" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P1</text>
+                                <circle cx="150" cy="250" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="150" y="255" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P6</text>
+                                <circle cx="63" cy="200" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="63" y="205" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P5</text>
+                                <circle cx="63" cy="100" r="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/><text x="63" y="105" text-anchor="middle" fill="#1d4ed8" font-size="14" font-weight="bold">P4</text>
+                                <circle cx="150" cy="150" r="26" fill="#fef3c7" stroke="#f59e0b" stroke-width="2.5"/><text x="150" y="155" text-anchor="middle" fill="#b45309" font-size="14" font-weight="bold">P7</text>
+                                <text x="195" y="68" fill="#94a3b8" font-size="10">0°</text><text x="262" y="155" fill="#94a3b8" font-size="10">60°</text><text x="195" y="248" fill="#94a3b8" font-size="10">120°</text><text x="95" y="248" fill="#94a3b8" font-size="10">180°</text><text x="28" y="155" fill="#94a3b8" font-size="10">240°</text><text x="95" y="68" fill="#94a3b8" font-size="10">300°</text>
+                            </svg>
+                        </div>
+                        <div class="mt-4 bg-slate-50 rounded-lg p-4 border border-slate-200">
+                            <div class="text-sm font-medium text-slate-700 mb-2">扇区角度映射（big_create_line 使用）</div>
+                            <div class="grid grid-cols-3 gap-2 text-xs">
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">1</span> → 330°~30°</div>
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">2</span> → 30°~90°</div>
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">3</span> → 90°~150°</div>
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">4</span> → 150°~210°</div>
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">5</span> → 210°~270°</div>
+                                <div class="bg-white rounded p-2 border border-slate-200 text-center"><span class="font-mono text-blue-600">6</span> → 270°~330°</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-800 mb-4">关键参数定义</h3>
+                        <div class="space-y-3">
+                            <div class="bg-white rounded-lg p-4 border border-slate-200 shadow-sm"><div class="flex items-center justify-between mb-2"><span class="font-medium text-slate-800">总压 Pt</span><span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Total Pressure</span></div><p class="text-sm text-slate-600">流体等熵滞止后的压力，代表流体的总能量</p></div>
+                            <div class="bg-white rounded-lg p-4 border border-slate-200 shadow-sm"><div class="flex items-center justify-between mb-2"><span class="font-medium text-slate-800">静压 Ps</span><span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Static Pressure</span></div><p class="text-sm text-slate-600">流体静止时的压力，与流速无关</p></div>
+                            <div class="bg-white rounded-lg p-4 border border-slate-200 shadow-sm"><div class="flex items-center justify-between mb-2"><span class="font-medium text-slate-800">动压 q</span><span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">Dynamic Pressure</span></div><p class="text-sm text-slate-600">q = Pt - Ps，与流速的平方成正比</p></div>
+                            <div class="bg-white rounded-lg p-4 border border-slate-200 shadow-sm"><div class="flex items-center justify-between mb-2"><span class="font-medium text-slate-800">压力系数</span><span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Coefficients</span></div>
+                                <div class="text-sm text-slate-600 space-y-1">
+                                    <div><span class="font-mono text-blue-600">Cpt</span> = (P<sub>ref</sub> - Pt) / (Pt - Ps)</div>
+                                    <div><span class="font-mono text-emerald-600">Cps</span> = (Ps - P<sub>base</sub>) / (Pt - Ps)</div>
+                                    <div class="text-xs text-slate-500 mt-1">小角度: P<sub>ref</sub>=P7, P<sub>base</sub>=Pavg</div>
+                                    <div class="text-xs text-slate-500">大角度: P<sub>ref</sub>=Pcenter, P<sub>base</sub>=(Pleft+Pright)/2</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. 主流程 -->
+        <section id="main-flow" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold">3</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">主流程：cal_ab</h2><p class="text-slate-500">Main Calibration Flow</p></div>
+                </div>
+                <p class="text-slate-700 mb-6 leading-relaxed"><code class="bg-slate-100 text-slate-800 px-2 py-1 rounded font-mono text-sm">cal_ab</code> 是整个算法的入口函数，采用<strong>逐级降级</strong>策略：先尝试小角度校准 → 失败后尝试大角度第一主孔校准 → 再失败尝试第二主孔校准 → 全部失败则走越界处理。</p>
+
+                <div class="bg-slate-50 rounded-xl p-6 border border-slate-200 mb-6 overflow-x-auto">
+                    <h3 class="font-bold text-slate-800 mb-6 text-center">算法主流程图</h3>
+                    <svg viewBox="0 0 900 680" class="w-full min-w-[700px]" style="max-height:680px">
+                        <defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/></marker></defs>
+                        <rect x="340" y="10" width="220" height="40" rx="20" fill="#3b82f6" opacity="0.9"/><text x="450" y="35" text-anchor="middle" fill="white" font-size="13" font-weight="bold">开始：读取数据</text>
+                        <line x1="450" y1="50" x2="450" y2="75" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <rect x="330" y="75" width="240" height="40" rx="8" fill="white" stroke="#93c5fd" stroke-width="2"/><text x="450" y="100" text-anchor="middle" fill="#1e40af" font-size="12" font-weight="bold">小角度 ka, kb 计算</text>
+                        <line x1="450" y1="115" x2="450" y2="140" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <polygon points="450,140 560,180 450,220 340,180" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/><text x="450" y="177" text-anchor="middle" fill="#92400e" font-size="11" font-weight="bold">点在多边形内？</text><text x="450" y="192" text-anchor="middle" fill="#92400e" font-size="9">point_in_polygon</text>
+                        <!-- 是 - 小角度 -->
+                        <line x1="340" y1="180" x2="170" y2="180" stroke="#10b981" stroke-width="2" marker-end="url(#arrowhead)"/><text x="260" y="172" fill="#10b981" font-size="11" font-weight="bold">是</text>
+                        <rect x="50" y="160" width="120" height="40" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/><text x="110" y="177" text-anchor="middle" fill="#065f46" font-size="10" font-weight="bold">方形插值 a,b</text><text x="110" y="192" text-anchor="middle" fill="#065f46" font-size="8">little_cal_ab</text>
+                        <line x1="110" y1="200" x2="110" y2="220" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <rect x="50" y="220" width="120" height="40" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/><text x="110" y="237" text-anchor="middle" fill="#065f46" font-size="10" font-weight="bold">插值 Cpt, Cps</text><text x="110" y="252" text-anchor="middle" fill="#065f46" font-size="8">little_cal_cptcps</text>
+                        <line x1="110" y1="260" x2="110" y2="280" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <rect x="50" y="280" width="120" height="40" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/><text x="110" y="297" text-anchor="middle" fill="#065f46" font-size="10" font-weight="bold">求解 Pt, Ps</text><text x="110" y="312" text-anchor="middle" fill="#065f46" font-size="8">little_cal_ptps</text>
+                        <line x1="110" y1="320" x2="110" y2="530" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <!-- 否 - 大角度 -->
+                        <line x1="560" y1="180" x2="680" y2="180" stroke="#ef4444" stroke-width="2" marker-end="url(#arrowhead)"/><text x="620" y="172" fill="#ef4444" font-size="11" font-weight="bold">否</text>
+                        <rect x="680" y="160" width="140" height="40" rx="8" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/><text x="750" y="177" text-anchor="middle" fill="#991b1b" font-size="10" font-weight="bold">找最大压力孔</text><text x="750" y="192" text-anchor="middle" fill="#991b1b" font-size="8">big_max_pressure</text>
+                        <line x1="750" y1="200" x2="750" y2="225" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <polygon points="750,225 850,260 750,295 650,260" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/><text x="750" y="257" text-anchor="middle" fill="#92400e" font-size="10" font-weight="bold">第一主孔内？</text><text x="750" y="272" text-anchor="middle" fill="#92400e" font-size="8">big_cal_kakb → point_in_polygon</text>
+                        <line x1="650" y1="260" x2="570" y2="260" stroke="#10b981" stroke-width="2" marker-end="url(#arrowhead)"/><text x="610" y="252" fill="#10b981" font-size="10" font-weight="bold">是</text>
+                        <rect x="430" y="240" width="140" height="40" rx="8" fill="#fef2f2" stroke="#f87171" stroke-width="2"/><text x="500" y="257" text-anchor="middle" fill="#991b1b" font-size="10" font-weight="bold">大角度校准流程</text><text x="500" y="272" text-anchor="middle" fill="#991b1b" font-size="8">cal_ab→cptcps→ptps→convert</text>
+                        <line x1="500" y1="280" x2="500" y2="530" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <line x1="850" y1="260" x2="870" y2="260" stroke="#ef4444" stroke-width="2"/><line x1="870" y1="260" x2="870" y2="330" stroke="#ef4444" stroke-width="2" marker-end="url(#arrowhead)"/><text x="878" y="295" fill="#ef4444" font-size="10" font-weight="bold">否</text>
+                        <polygon points="870,330 850,365 870,400 890,365" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/><text x="870" y="362" text-anchor="middle" fill="#92400e" font-size="10" font-weight="bold">第二主孔内？</text><text x="870" y="377" text-anchor="middle" fill="#92400e" font-size="8">big_cal_kakb → point_in_polygon</text>
+                        <line x1="780" y1="365" x2="700" y2="365" stroke="#10b981" stroke-width="2" marker-end="url(#arrowhead)"/><text x="740" y="357" fill="#10b981" font-size="10" font-weight="bold">是</text>
+                        <rect x="560" y="345" width="140" height="40" rx="8" fill="#fef2f2" stroke="#f87171" stroke-width="2"/><text x="630" y="362" text-anchor="middle" fill="#991b1b" font-size="10" font-weight="bold">大角度校准流程</text><text x="630" y="377" text-anchor="middle" fill="#991b1b" font-size="8">cal_ab→cptcps→ptps→convert</text>
+                        <line x1="630" y1="385" x2="630" y2="530" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <line x1="870" y1="400" x2="870" y2="430" stroke="#ef4444" stroke-width="2" marker-end="url(#arrowhead)"/><text x="878" y="418" fill="#ef4444" font-size="10" font-weight="bold">否</text>
+                        <rect x="780" y="430" width="120" height="40" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/><text x="840" y="447" text-anchor="middle" fill="#991b1b" font-size="10" font-weight="bold">越界处理</text><text x="840" y="462" text-anchor="middle" fill="#991b1b" font-size="8">beyond_border</text>
+                        <line x1="840" y1="470" x2="840" y2="530" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <rect x="300" y="530" width="300" height="45" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/><text x="450" y="550" text-anchor="middle" fill="#065f46" font-size="12" font-weight="bold">计算速度与马赫数</text><text x="450" y="567" text-anchor="middle" fill="#065f46" font-size="9">cal_velocity_mach</text>
+                        <line x1="450" y1="575" x2="450" y2="600" stroke="#64748b" marker-end="url(#arrowhead)"/>
+                        <rect x="340" y="600" width="220" height="40" rx="20" fill="#475569"/><text x="450" y="625" text-anchor="middle" fill="white" font-size="13" font-weight="bold">输出 JSON 结果</text>
+                    </svg>
+                </div>
+
+                <div class="warn-box">
+                    <div class="flex items-start gap-3">
+                        <svg class="w-6 h-6 text-rose-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        <div><div class="font-bold text-rose-800 mb-1">关键决策逻辑</div><p class="text-sm text-rose-700">每一级判定失败后，都会<strong>重新计算 ka, kb</strong>（使用不同的孔组合）并<strong>重新判定多边形</strong>（使用不同的校准文件边界）。这意味着同一组压力数据在不同校准模式下会产生不同的 ka, kb 值。</p></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. 小角度校准 -->
+        <section id="little-calibration" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-xl font-bold">4</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">小角度校准</h2><p class="text-slate-500">Little Calibration (|a|, |b| ≤ 30°)</p></div>
+                </div>
+                <div class="space-y-6">
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">1</span><h3 class="text-lg font-bold text-slate-800">计算 ka, kb 系数 <code class="text-sm font-mono text-blue-600">little_cal_kakb</code></h3></div>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">计算公式</div><div class="math-block">$$ P_{avg} = \frac{P_1 + P_2 + P_3 + P_4 + P_5 + P_6}{6} $$ $$ C_{pa} = \frac{P_4 - P_1}{P_7 - P_{avg}}, \quad C_{pb} = \frac{P_5 - P_2}{P_7 - P_{avg}}, \quad C_{pc} = \frac{P_6 - P_3}{P_7 - P_{avg}} $$ $$ k_a = \frac{C_{pb} + C_{pc}}{\sqrt{3}}, \quad k_b = -\frac{2C_{pa} + C_{pb} - C_{pc}}{3} $$</div></div>
+                        <div class="tip-box mt-4"><div class="text-sm text-amber-800"><span class="font-medium">物理含义：</span>Cpa 反映上下方向（P4-P1）的压力差，Cpb 反映左下-右上方向（P5-P2），Cpc 反映正下-正上方向（P6-P3）。ka 和 kb 是这三个方向分量的合成，构成校准坐标系的两个轴。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">2</span><h3 class="text-lg font-bold text-slate-800">构建边界线 <code class="text-sm font-mono text-blue-600">little_create_line</code></h3></div>
+                        <p class="text-slate-600 mb-4">从校准数据中提取四条边界线上的点，构成 ka-kb 平面上的封闭多边形。</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">四条边界线</div><div class="space-y-1 text-sm text-slate-600"><div><span class="font-mono text-blue-600">line[0]</span>：b = -30°（下边界，13个点）</div><div><span class="font-mono text-blue-600">line[1]</span>：a = 30°（右边界，13个点）</div><div><span class="font-mono text-blue-600">line[2]</span>：b = 30°（上边界，13个点，<span class="text-rose-600">反转</span>）</div><div><span class="font-mono text-blue-600">line[3]</span>：a = -30°（左边界，13个点，<span class="text-rose-600">反转</span>）</div></div></div>
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">判定结果</div><div class="space-y-1 text-sm text-slate-600"><div><span class="text-emerald-600 font-medium">0</span>：点在边界上</div><div><span class="text-emerald-600 font-medium">1</span>：点在内部</div><div><span class="text-rose-600 font-medium">-1</span>：点在外部（需大角度校准）</div></div></div>
+                        </div>
+                        <div class="info-box mt-4"><div class="text-sm text-blue-800"><span class="font-medium">注意：</span>line[2] 和 line[3] 在提取后会执行 <code class="font-mono">.reverse()</code>，确保四条边首尾相连构成逆时针方向的封闭多边形，这是射线法判定的前提条件。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">3</span><h3 class="text-lg font-bold text-slate-800">构建方格网格 <code class="text-sm font-mono text-blue-600">little_create_square</code></h3></div>
+                        <p class="text-slate-600 mb-4">在 a-b 平面上以 5° 为步长构建 12×12 = 144 个方格，每个方格包含四个顶点的坐标和对应的 ka, kb 值。</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">网格参数</div><div class="space-y-1 text-sm text-slate-600"><div>a 范围：-30° ~ 30°，步长 5°，共 12 段</div><div>b 范围：-30° ~ 30°，步长 5°，共 12 段</div><div>方格总数：12 × 12 = 144</div><div>每个方格 4 个顶点：X1, X2, X3, X4</div></div></div>
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">顶点排列</div><div class="text-sm text-slate-600"><div class="inline-grid grid-cols-2 gap-2 mb-2"><div class="bg-blue-100 rounded px-2 py-1 text-center font-mono text-xs">X1(a, b)</div><div class="bg-blue-100 rounded px-2 py-1 text-center font-mono text-xs">X2(a+5, b)</div><div class="bg-blue-100 rounded px-2 py-1 text-center font-mono text-xs">X4(a, b+5)</div><div class="bg-blue-100 rounded px-2 py-1 text-center font-mono text-xs">X3(a+5, b+5)</div></div><div class="text-xs text-slate-500">每个顶点存储 {a, b, ka, kb}</div></div></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">4</span><h3 class="text-lg font-bold text-slate-800">方形插值求 a, b <code class="text-sm font-mono text-blue-600">little_cal_ab</code></h3></div>
+                        <p class="text-slate-600 mb-4">遍历 144 个方格，找到包含目标点 (ka, kb) 的方格，通过距离反比插值计算对应的 a 和 b 角度值。</p>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">距离反比插值</div><div class="math-block">$$ d_i = \frac{|{-k_i} \cdot k_a + k_b - b_i|}{\sqrt{k_i^2 + 1}} \quad (i=1,2,3,4) $$ $$ b = b_{X1} + \frac{d_1}{d_1 + d_3} \times 5 $$ $$ a = a_{X1} + \frac{d_4}{d_2 + d_4} \times 5 $$</div></div>
+                        <div class="warn-box mt-4"><div class="text-sm text-rose-800"><span class="font-medium">⚠ 大小角度差异：</span>小角度中 b 的插值使用 <span class="diff-badge bg-emerald-100 text-emerald-700">+</span> 号，而大角度 <code class="font-mono">big_cal_ab</code> 中使用 <span class="diff-badge bg-rose-100 text-rose-700">-</span> 号：<code class="font-mono text-xs">b = b_X1 - d1/(d1+d3) * 5</code>。这是由于大角度校准中 b 的方向定义不同。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">5</span><h3 class="text-lg font-bold text-slate-800">插值求 Cpt, Cps <code class="text-sm font-mono text-blue-600">little_cptcps_square + little_cal_cptcps</code></h3></div>
+                        <p class="text-slate-600 mb-4">在 a-b 平面上，根据已求得的 a, b 值找到对应的方格，对 Cpt 和 Cps 分别进行双线性插值。</p>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">双线性插值</div><div class="math-block">$$ cp_1 = k_1 \cdot a + b_1 \quad \text{(下边线性插值)} $$ $$ cp_2 = k_3 \cdot a + b_3 \quad \text{(上边线性插值)} $$ $$ cp = (cp_2 - cp_1) \times \frac{b - b_{X1}}{5} + cp_1 \quad \text{(纵向插值)} $$</div></div>
+                        <div class="info-box mt-4"><div class="text-sm text-blue-800"><span class="font-medium">little_cptcps_square 的边界处理：</span>当 a 接近 ±30° 或 b 接近 ±30° 时，方格顶点的取值逻辑会调整：<code class="font-mono text-xs">0 ≤ a &lt; 30</code> 时正常取整，<code class="font-mono text-xs">a ≤ -30</code> 时也正常取整，其他情况使用 <code class="font-mono text-xs">k-1</code> 作为下界。大角度的 <code class="font-mono">big_cptcps_square</code> 还有 <code class="font-mono text-xs">l==71</code> 的特殊处理（b=355°，处理 360°/0° 边界跨越）。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">6</span><h3 class="text-lg font-bold text-slate-800">求解 Pt, Ps <code class="text-sm font-mono text-blue-600">little_cal_ptps</code></h3></div>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">方程组（小角度）</div><div class="math-block">$$ C_{pt} = \frac{P_7 - P_t}{P_t - P_s} $$ $$ C_{ps} = \frac{P_s - P_{avg}}{P_t - P_s} $$</div></div>
+                        <p class="text-slate-600 mt-4">使用 SymPy 符号计算库的 <code class="font-mono text-sm">solve()</code> 函数求解上述二元一次方程组，得到 Pt 和 Ps 的精确解。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. 大角度校准 -->
+        <section id="big-calibration" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white text-xl font-bold">5</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">大角度校准</h2><p class="text-slate-500">Big Calibration (30° &lt; |a| ≤ 45°)</p></div>
+                </div>
+                <div class="space-y-6">
+                    <div class="warn-box"><div class="flex items-start gap-3"><svg class="w-6 h-6 text-rose-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg><div><div class="font-bold text-rose-800 mb-1">触发条件</div><p class="text-sm text-rose-700">当小角度校准的 ka-kb 点落在 [-30°, 30°] 正方形区域外时（point_in_polygon 返回 -1），说明流场角度较大，需要切换到大角度校准模式。</p></div></div></div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">1</span><h3 class="text-lg font-bold text-slate-800">识别最大压力孔 <code class="text-sm font-mono text-blue-600">big_max_pressure</code></h3></div>
+                        <p class="text-slate-600 mb-4">在 P1-P6 中找出压力最大的两个孔，分别作为第一主孔和第二主孔。返回值为孔号（1-6），用于选择对应的校准文件。</p>
+                        <div class="code-block"><pre>def big_max_pressure(hole_dict):
+    pressures = [p1, p2, p3, p4, p5, p6]
+    sorted_values = sorted(pressures)
+    max_values = sorted_values[4:6]  # 取最大的两个
+    max_keys = {
+        'first':  最大值对应的孔号,   # sorted_values[5]
+        'second': 次大值对应的孔号    # sorted_values[4]
+    }
+    return max_keys</pre></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">2</span><h3 class="text-lg font-bold text-slate-800">大角度 ka, kb 计算 <code class="text-sm font-mono text-blue-600">big_cal_kakb</code></h3></div>
+                        <p class="text-slate-600 mb-4">以最大压力孔为中心，结合相邻两孔和中心孔 P7 计算 ka 和 kb。相邻孔按正六边形排列：P1 的左邻为 P6，右邻为 P2。</p>
+                        <div class="formula-box"><div class="math-block">$$ k_a = \frac{P_{center} - P_7}{P_{center} - \frac{P_{left} + P_{right}}{2}} $$ $$ k_b = \frac{P_{left} - P_{right}}{P_{center} - \frac{P_{left} + P_{right}}{2}} $$</div></div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">相邻孔映射</div><div class="text-sm text-slate-600"><div>n=1 → left=P6, right=P2</div><div>n=2 → left=P1, right=P3</div><div>n=3 → left=P2, right=P4</div><div>n=4 → left=P3, right=P5</div><div>n=5 → left=P4, right=P6</div><div>n=6 → left=P5, right=P1</div></div></div>
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">与小角度的区别</div><div class="text-sm text-slate-600"><div>小角度：使用 P7 和六孔平均</div><div>大角度：使用主孔和相邻两孔</div><div>分母：Pcenter-(Pleft+Pright)/2</div><div>分子：Pcenter-P7 / Pleft-Pright</div></div></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">3</span><h3 class="text-lg font-bold text-slate-800">大角度边界线 <code class="text-sm font-mono text-blue-600">big_create_line</code></h3></div>
+                        <p class="text-slate-600 mb-4">根据主孔号 n 确定扇区角度范围，提取四条边界线上的校准数据点。</p>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">扇区角度映射 ab_dict</div><div class="math-block">$$ \text{ab\_dict} = \{'1': (330°, 30°),\ '2': (30°, 90°),\ '3': (90°, 150°),\ '4': (150°, 210°),\ '5': (210°, 270°),\ '6': (270°, 330°)\} $$</div></div>
+                        <div class="bg-slate-50 rounded-lg p-4 border border-slate-200 mt-4"><div class="text-sm font-medium text-slate-700 mb-2">四条边界线</div><div class="space-y-1 text-sm text-slate-600"><div><span class="font-mono text-blue-600">line[0]</span>：b = ab_dict[n][1]（扇区右边界，4个点，a=30°~45°）</div><div><span class="font-mono text-blue-600">line[1]</span>：a = 45°（外弧，13个点，<span class="text-rose-600">反转</span>）</div><div><span class="font-mono text-blue-600">line[2]</span>：b = ab_dict[n][0]（扇区左边界，4个点，<span class="text-rose-600">反转</span>）</div><div><span class="font-mono text-blue-600">line[3]</span>：a = 30°（内弧，13个点）</div></div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">4</span><h3 class="text-lg font-bold text-slate-800">大角度方格 <code class="text-sm font-mono text-blue-600">big_create_square</code></h3></div>
+                        <p class="text-slate-600 mb-4">在每个扇区内构建 12×3 = 36 个方格。a 范围 30°~45°（3段），b 范围为扇区角度范围（12段，每段5°）。</p>
+                        <div class="info-box"><div class="text-sm text-blue-800"><span class="font-medium">360°/0° 边界处理：</span>当扇区跨越 360°/0° 边界时（如扇区1：330°~30°），b 值会从 330° 递增到 360° 后跳回 0° 继续到 30°。代码中 <code class="font-mono">big_cptcps_square</code> 的 <code class="font-mono">l==71</code> 分支专门处理 b=355° 的情况，确保插值时不会跨越 360°/0° 断层。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">5</span><h3 class="text-lg font-bold text-slate-800">大角度坐标转换 <code class="text-sm font-mono text-blue-600">big_ab_convert</code></h3></div>
+                        <p class="text-slate-600 mb-4">大角度校准中，插值得到的 a 和 b 实际上是球坐标的 θ（俯仰角）和 φ（偏航角），需要转换为最终的 a 和 b。</p>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">转换过程</div><div class="math-block">$$ \theta = a_{\text{calibrated}}, \quad \varphi = b_{\text{calibrated}} $$ $$ a = \arctan\left(\tan\theta \cdot \cos\varphi\right) $$ $$ b = \arcsin\left(\sin\theta \cdot \sin\varphi\right) $$</div></div>
+                        <div class="warn-box mt-4"><div class="text-sm text-rose-800"><span class="font-medium">⚠ 转换方向：</span>代码中先将原始 a 保存为 <code class="font-mono">theta</code>，b 保存为 <code class="font-mono">fai</code>，然后用上述公式计算新的 a 和 b。这是从校准坐标 (θ,φ) 到角度坐标 (a,b) 的转换，<strong>不是</strong>反向转换。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">6</span><h3 class="text-lg font-bold text-slate-800">大角度求解 Pt, Ps <code class="text-sm font-mono text-blue-600">big_cal_ptps</code></h3></div>
+                        <div class="formula-box"><div class="text-sm text-slate-500 mb-2">方程组（大角度）</div><div class="math-block">$$ C_{pt} = \frac{P_{center} - P_t}{P_t - P_s} $$ $$ C_{ps} = \frac{P_s - \frac{P_{left} + P_{right}}{2}}{P_t - P_s} $$</div></div>
+                        <div class="warn-box mt-4"><div class="text-sm text-rose-800"><span class="font-medium">⚠ 与小角度的关键差异：</span>大角度方程组中，Cpt 的分子使用 <code class="font-mono">Pcenter</code>（主孔压力）而非 P7；Cps 的分子使用 <code class="font-mono">(Pleft+Pright)/2</code>（相邻两孔平均）而非 Pavg（六孔平均）。这是因为大角度下中心孔 P7 不再面对来流，主孔才是最接近驻点的孔。</div></div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <div class="flex items-center gap-3 mb-4"><span class="step-badge">7</span><h3 class="text-lg font-bold text-slate-800">越界处理 <code class="text-sm font-mono text-blue-600">beyond_border</code></h3></div>
+                        <p class="text-slate-600 mb-4">当 ka-kb 点落在所有校准区域之外时，采用外推策略估算角度值。</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">a 角度</div><div class="text-sm text-slate-600">固定设为 45.0°（校准范围的最大角度）</div></div>
+                            <div class="bg-slate-50 rounded-lg p-4 border border-slate-200"><div class="text-sm font-medium text-slate-700 mb-2">b 角度</div><div class="text-sm text-slate-600"><div>kb 在范围内：线性插值</div><div>kb 超出范围：回退到扇区中心角</div><div>中心角：fai_list = [0, 60, 120, 180, 240, 300]</div></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 6. 速度与马赫数 -->
+        <section id="velocity-mach" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white text-xl font-bold">6</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">速度与马赫数计算</h2><p class="text-slate-500">Velocity & Mach Number</p></div>
+                </div>
+                <div class="formula-box">
+                    <div class="text-sm text-slate-500 mb-2">计算公式</div>
+                    <div class="math-block">
+                        $$ v = \sqrt{\frac{2|P_t - P_s| \cdot R \cdot T}{P_a}} $$
+                        $$ Ma = \sqrt{5\left|\left(\frac{P_t + P_a}{P_s + P_a}\right)^{\frac{2}{7}} - 1\right|} $$
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div class="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                        <div class="text-sm font-medium text-slate-700 mb-2">速度公式参数</div>
+                        <div class="text-sm text-slate-600 space-y-1">
+                            <div><span class="font-mono">R</span> = 287.06 J/(kg·K)（空气气体常数）</div>
+                            <div><span class="font-mono">T</span> = t + 273.15 K（绝对温度）</div>
+                            <div><span class="font-mono">Pa</span> = 大气压</div>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                        <div class="text-sm font-medium text-slate-700 mb-2">马赫数公式参数</div>
+                        <div class="text-sm text-slate-600 space-y-1">
+                            <div><span class="font-mono">γ</span> = 1.4（空气比热比）</div>
+                            <div><span class="font-mono">2/7</span> = (γ-1)/γ = 0.4/1.4</div>
+                            <div>公式基于等熵关系式推导</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="warn-box mt-4"><div class="text-sm text-rose-800"><span class="font-medium">⚠ 潜在问题：</span>代码中 <code class="font-mono">math.fabs()</code> 取绝对值可能导致负压差时产生错误的正速度。在实际应用中，Pt &lt; Ps 的情况可能意味着测量异常，应考虑增加合理性检查而非简单取绝对值。</div></div>
+            </div>
+        </section>
+
+        <!-- 7. 插值算法 -->
+        <section id="interpolation" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xl font-bold">7</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">插值算法详解</h2><p class="text-slate-500">Interpolation Algorithms</p></div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <span class="w-6 h-6 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">A</span>
+                            距离反比插值（ka-kb → a,b）
+                        </h3>
+                        <p class="text-slate-600 text-sm mb-4">用于从校准坐标 (ka, kb) 反查角度坐标 (a, b)。计算目标点到方格四条边的距离，按距离反比分配角度增量。</p>
+                        <div class="formula-box"><div class="math-block">$$ d_i = \frac{|{-k_i} \cdot k_a + k_b - b_i|}{\sqrt{k_i^2 + 1}} $$</div></div>
+                        <div class="text-sm text-slate-600 mt-3">
+                            <div class="mb-1">其中 k_i 和 b_i 是方格第 i 条边的斜率和截距：</div>
+                            <div class="font-mono text-xs bg-slate-50 p-2 rounded">k = (kb_j - kb_{j+1}) / (a_j - a_{j+1})</div>
+                            <div class="font-mono text-xs bg-slate-50 p-2 rounded mt-1">b = kb_j - k * a_j</div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <span class="w-6 h-6 rounded bg-emerald-100 text-emerald-600 flex items-center justify-center text-xs font-bold">B</span>
+                            双线性插值（a-b → Cpt,Cps）
+                        </h3>
+                        <p class="text-slate-600 text-sm mb-4">用于从角度坐标 (a, b) 查找压力系数 (Cpt, Cps)。先在方格上下两边分别线性插值，再纵向插值。</p>
+                        <div class="formula-box"><div class="math-block">$$ f(a, b_{X1}) = k_1 a + b_1 $$ $$ f(a, b_{X4}) = k_3 a + b_3 $$ $$ f(a, b) = f(a, b_{X1}) + \frac{b - b_{X1}}{5}[f(a, b_{X4}) - f(a, b_{X1})] $$</div></div>
+                        <div class="text-sm text-slate-600 mt-3">其中 k_1, b_1 是方格下边的线性系数，k_3, b_3 是上边的线性系数，5° 是 b 方向的步长。</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 8. 多边形判定 -->
+        <section id="polygon" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white text-xl font-bold">8</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">多边形判定算法</h2><p class="text-slate-500">Point-in-Polygon Detection</p></div>
+                </div>
+                <p class="text-slate-700 mb-6 leading-relaxed">使用<strong>射线法（Ray Casting）</strong>判定目标点 (ka, kb) 是否在校准区域的封闭多边形内。</p>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="font-bold text-slate-800 mb-4">算法原理</h3>
+                        <div class="space-y-3 text-sm text-slate-600">
+                            <div class="flex items-start gap-3"><span class="step-badge">1</span><div>从目标点向右发射一条水平射线</div></div>
+                            <div class="flex items-start gap-3"><span class="step-badge">2</span><div>计算射线与多边形各边的交点数</div></div>
+                            <div class="flex items-start gap-3"><span class="step-badge">3</span><div>交点数为奇数 → 点在内部；偶数 → 点在外部</div></div>
+                        </div>
+                        <div class="formula-box mt-4"><div class="text-sm text-slate-500 mb-2">交点判定条件</div><div class="math-block">$$ \text{相交} \iff (y_i > y_0) \neq (y_{i+1} > y_0) \;\wedge\; x_0 < \frac{(y_0 - y_i)(x_{i+1} - x_i)}{y_{i+1} - y_i} + x_i $$</div></div>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-800 mb-4">返回值含义</h3>
+                        <div class="space-y-3">
+                            <div class="bg-emerald-50 rounded-lg p-4 border border-emerald-200"><div class="font-medium text-emerald-800">返回 0：点在边界上</div><div class="text-sm text-emerald-700 mt-1">目标点恰好落在多边形的某条边上，视为有效点</div></div>
+                            <div class="bg-emerald-50 rounded-lg p-4 border border-emerald-200"><div class="font-medium text-emerald-800">返回 1：点在内部</div><div class="text-sm text-emerald-700 mt-1">目标点在多边形内部，可以使用该校准模式</div></div>
+                            <div class="bg-rose-50 rounded-lg p-4 border border-rose-200"><div class="font-medium text-rose-800">返回 -1：点在外部</div><div class="text-sm text-rose-700 mt-1">目标点在多边形外部，需要尝试下一级校准模式</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 9. 数据IO -->
+        <section id="data-io" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-500 to-gray-600 flex items-center justify-center text-white text-xl font-bold">9</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">数据输入输出</h2><p class="text-slate-500">Data I/O</p></div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <h3 class="font-bold text-slate-800 mb-4">输入数据</h3>
+                        <div class="space-y-3 text-sm">
+                            <div class="bg-slate-50 rounded-lg p-3 border border-slate-200"><div class="font-medium text-slate-700">hole_dict_path</div><div class="text-slate-600">JSON 格式的压力数据文件路径，包含 P1-P7 压力值、温度 t、大气压 pa</div></div>
+                            <div class="bg-slate-50 rounded-lg p-3 border border-slate-200"><div class="font-medium text-slate-700">calibration_path</div><div class="text-slate-600">校准数据文件路径（.prb 格式），小角度用 7.prb，大角度用 1-6.prb</div></div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 p-6">
+                        <h3 class="font-bold text-slate-800 mb-4">输出数据</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-blue-500"></span><span class="font-mono">ka, kb</span><span class="text-slate-500">— 校准坐标系值</span></div>
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="font-mono">a, b</span><span class="text-slate-500">— 流动角度（度）</span></div>
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amber-500"></span><span class="font-mono">Cpt, Cps</span><span class="text-slate-500">— 压力系数</span></div>
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-purple-500"></span><span class="font-mono">pt, ps</span><span class="text-slate-500">— 总压、静压</span></div>
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="font-mono">v, ma</span><span class="text-slate-500">— 速度、马赫数</span></div>
+                            <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-slate-500"></span><span class="font-mono">theta, fai</span><span class="text-slate-500">— 大角度下的球坐标（仅大角度）</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 函数索引 -->
+        <section id="func-ref" class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xl font-bold">#</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">函数索引</h2><p class="text-slate-500">Function Reference</p></div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm border-collapse">
+                        <thead><tr class="bg-slate-50"><th class="px-4 py-3 text-left font-bold text-slate-700">函数名</th><th class="px-4 py-3 text-left font-bold text-slate-700">功能</th><th class="px-4 py-3 text-center font-bold text-slate-700">模式</th><th class="px-4 py-3 text-left font-bold text-slate-700">输入</th><th class="px-4 py-3 text-left font-bold text-slate-700">输出</th></tr></thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">cal_ab</td><td class="px-4 py-3">主入口函数</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs">全部</span></td><td class="px-4 py-3 text-xs">hole_dict_path, calibration_path</td><td class="px-4 py-3 text-xs">JSON 结果字典</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_cal_kakb</td><td class="px-4 py-3">小角度 ka, kb 计算</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">hole_dict</td><td class="px-4 py-3 text-xs">{ka, kb}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_create_line</td><td class="px-4 py-3">小角度边界线构建</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">calibration_list</td><td class="px-4 py-3 text-xs">4条边界线</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_create_square</td><td class="px-4 py-3">小角度方格构建</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">calibration_list</td><td class="px-4 py-3 text-xs">144个方格</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_cal_ab</td><td class="px-4 py-3">小角度方形插值求 a, b</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">point_dict, square_list</td><td class="px-4 py-3 text-xs">{a, b}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_cptcps_square</td><td class="px-4 py-3">小角度 Cpt/Cps 方格查找</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">point_dict, calibration_list</td><td class="px-4 py-3 text-xs">方格数据</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_cal_cptcps</td><td class="px-4 py-3">小角度 Cpt/Cps 双线性插值</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">point_dict, square_dict</td><td class="px-4 py-3 text-xs">{Cpt, Cps}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">little_cal_ptps</td><td class="px-4 py-3">小角度求解 Pt, Ps</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-emerald-100 rounded text-xs">小角度</span></td><td class="px-4 py-3 text-xs">point_dict, hole_dict</td><td class="px-4 py-3 text-xs">{pt, ps}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_max_pressure</td><td class="px-4 py-3">找最大压力孔</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">hole_dict</td><td class="px-4 py-3 text-xs">{first, second}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_cal_kakb</td><td class="px-4 py-3">大角度 ka, kb 计算</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">hole_dict, n</td><td class="px-4 py-3 text-xs">{ka, kb}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_create_line</td><td class="px-4 py-3">大角度边界线构建</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">calibration_dict, n</td><td class="px-4 py-3 text-xs">4条边界线</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_create_square</td><td class="px-4 py-3">大角度方格构建</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">calibration_dict, n</td><td class="px-4 py-3 text-xs">36个方格</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_ab_convert</td><td class="px-4 py-3">θ,φ → a,b 坐标转换</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">point_dict</td><td class="px-4 py-3 text-xs">{a, b, theta, fai}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">big_cal_ptps</td><td class="px-4 py-3">大角度求解 Pt, Ps</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">point_dict, hole_dict, n</td><td class="px-4 py-3 text-xs">{pt, ps}</td></tr>
+                            <tr><td class="px-4 py-3 font-mono text-blue-600">beyond_border</td><td class="px-4 py-3">越界外推处理</td><td class="px-4 py-3 text-center"><span class="px-2 py-0.5 bg-rose-100 rounded text-xs">大角度</span></td><td class="px-4 py-3 text-xs">point_dict, line_list, n, cal_dict, hole_dict</td><td class="px-4 py-3 text-xs">估算结果</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- 改进建议 -->
+        <section class="section-card">
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-600 flex items-center justify-center text-white text-xl font-bold">!</div>
+                    <div><h2 class="text-2xl font-bold text-slate-800">源码改进建议</h2><p class="text-slate-500">Code Improvement Suggestions</p></div>
+                </div>
+                <div class="space-y-4">
+                    <div class="bg-rose-50 rounded-xl p-5 border border-rose-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-rose-200 text-rose-800 rounded text-xs font-bold">P0</span><span class="font-bold text-rose-800">异常处理不完整</span></div>
+                        <p class="text-sm text-rose-700">cal_ab 函数在 except 块中仅 print 错误信息，部分分支缺少 return 语句。KeyError 和 ValueError 分支没有返回值，可能导致调用方收到 None 而非预期的 "no-return" 字符串。</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-xl p-5 border border-rose-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-rose-200 text-rose-800 rounded text-xs font-bold">P0</span><span class="font-bold text-rose-800">math.fabs 掩盖异常</span></div>
+                        <p class="text-sm text-rose-700">cal_velocity_mach 中使用 math.fabs() 取绝对值，当 Pt &lt; Ps 时会计算出物理上不合理的正速度。建议增加合理性检查，在压差为负时返回错误或警告。</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-5 border border-amber-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded text-xs font-bold">P1</span><span class="font-bold text-amber-800">SymPy 性能问题</span></div>
+                        <p class="text-sm text-amber-700">little_cal_ptps 和 big_cal_ptps 使用 SymPy 的 solve() 求解线性方程组，但这是简单的二元一次方程组，可以直接用代数方法求解，避免 SymPy 的符号计算开销。</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-5 border border-amber-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded text-xs font-bold">P1</span><span class="font-bold text-amber-800">重复代码</span></div>
+                        <p class="text-sm text-amber-700">小角度和大角度的校准流程高度相似（create_line → create_square → cal_ab → cptcps → cal_ptps），可以抽象为通用模板，减少代码重复。</p>
+                    </div>
+                    <div class="bg-blue-50 rounded-xl p-5 border border-blue-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-blue-200 text-blue-800 rounded text-xs font-bold">P2</span><span class="font-bold text-blue-800">类型安全</span></div>
+                        <p class="text-sm text-blue-700">代码中大量使用 float() 强制转换，缺少类型检查。建议添加输入参数的类型验证和范围检查，避免因无效输入导致运行时错误。</p>
+                    </div>
+                    <div class="bg-blue-50 rounded-xl p-5 border border-blue-200">
+                        <div class="flex items-center gap-2 mb-2"><span class="px-2 py-0.5 bg-blue-200 text-blue-800 rounded text-xs font-bold">P2</span><span class="font-bold text-blue-800">魔法数字</span></div>
+                        <p class="text-sm text-blue-700">代码中存在大量硬编码的数字（如 5、30、45、71 等），建议提取为命名常量，提高可读性和可维护性。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-slate-900 text-slate-400 py-8 mt-12">
+        <div class="max-w-6xl mx-auto px-6 text-center">
+            <p class="text-sm">七孔探针校准算法文档 · WindLabX2 · 基于源码 seven_hole.py 自动生成</p>
+        </div>
+    </footer>
+
+    <script>
+        // 返回顶部按钮
+        const backToTopBtn = document.getElementById('backToTop');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 400) {
+                backToTopBtn.classList.remove('opacity-0', 'pointer-events-none');
+                backToTopBtn.classList.add('opacity-100');
+            } else {
+                backToTopBtn.classList.add('opacity-0', 'pointer-events-none');
+                backToTopBtn.classList.remove('opacity-100');
+            }
+        });
+    </script>
+</body>
+</html>
