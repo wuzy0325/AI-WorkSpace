@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
-import { wailsApi } from '@api/wails-adapter'
+import { wailsApi, isWailsAvailable } from '@api/wails-adapter'
 import type { AppRailNavItem } from '@components/layout/AppRailNav.vue'
 import AppRailNav from '@components/layout/AppRailNav.vue'
 import DeviceManagementDrawer from '@components/device/DeviceManagementDrawer.vue'
@@ -20,7 +20,7 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
-import { subscribeDaqStream, type SseSubscription } from '@api/sse-client'
+import { subscribeDaqStream } from '@api/sse-client'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 
@@ -39,7 +39,9 @@ const recordingOutputDir = ref('data/recordings')
 const recordingFilePrefix = ref('run')
 const busy = ref(false)
 const error = ref('')
-let sseSub: SseSubscription | null = null
+let sseSub: { unsubscribe: () => void } | null = null
+let wailsUnsub: (() => void) | null = null
+let unsubscribeDeviceSnapshots: (() => void) | null = null
 
 const acquiring = computed(() => {
   const id = deviceStore.selectedDeviceId
@@ -88,19 +90,15 @@ async function start(): Promise<void> {
   await run(async () => {
     await ensureProfile()
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
-    await deviceApi.connect(id)
-    await deviceApi.startAcquisition(id)
-    await deviceStore.refreshStatusFor(id)
-    subscribeStream(id)
+    await deviceStore.connect(id)
+    await deviceStore.startAcquisition(id)
   })
 }
 
 async function stop(): Promise<void> {
   await run(async () => {
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
-    await deviceApi.stopAcquisition(id)
-    await deviceStore.refreshStatusFor(id)
-    unsubscribeStream()
+    await deviceStore.stopAcquisition(id)
   })
 }
 
@@ -138,19 +136,41 @@ async function toggleRecording(): Promise<void> {
 
 function subscribeStream(id: string) {
   unsubscribeStream()
-  sseSub = subscribeDaqStream(
-    id,
-    (payload) => { deviceStore.pushSnapshot(payload) },
-    (msg) => {
-      if (msg !== 'connected') error.value = msg
-    },
-  )
+  if (isWailsAvailable()) {
+    // Wails 桌面模式：使用 Wails Events 机制接收采集数据
+    void wailsApi.device.subscribeStream(id, true)
+    wailsUnsub = wailsApi.device.onPayload((payload) => {
+      deviceStore.pushSnapshot({
+        deviceId: payload.deviceId,
+        timestamp: payload.timestamp,
+        channels: payload.channels,
+        channelIndices: payload.channelIndices,
+      })
+    })
+  } else {
+    // Web 模式：使用 HTTP SSE
+    sseSub = subscribeDaqStream(
+      id,
+      (payload) => { deviceStore.pushSnapshot(payload) },
+      (msg) => {
+        if (msg !== 'connected') error.value = msg
+      },
+    )
+  }
 }
 
 function unsubscribeStream() {
   if (sseSub) {
     sseSub.unsubscribe()
     sseSub = null
+  }
+  if (wailsUnsub) {
+    wailsUnsub()
+    wailsUnsub = null
+    const id = deviceStore.selectedDeviceId
+    if (id) {
+      void wailsApi.device.subscribeStream(id, false)
+    }
   }
 }
 
@@ -162,11 +182,14 @@ onMounted(async () => {
     appVersion.value = '0.1.0-dev'
   }
   await run(ensureProfile)
+  unsubscribeDeviceSnapshots = deviceStore.attachStatusListener()
   await refreshStorageStatus()
 })
 
 onBeforeUnmount(() => {
   unsubscribeStream()
+  unsubscribeDeviceSnapshots?.()
+  unsubscribeDeviceSnapshots = null
 })
 </script>
 
@@ -277,10 +300,12 @@ onBeforeUnmount(() => {
 }
 
 .page-container {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: var(--space-6);
+  padding: var(--space-4);
   background: transparent;
 }
 
@@ -288,6 +313,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   flex: 1;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   border-radius: 1.5rem;

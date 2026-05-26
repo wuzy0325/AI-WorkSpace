@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	calibration "wind-daq/services/api-go/internal/core/calibration"
 )
 
 // ==================== 常量定义 ====================
@@ -793,22 +795,41 @@ func calculatePressureDelta(input runtimeInput) (avg, delta float64) {
 	return
 }
 
+// calculateVelocity 计算真空速（使用 AtmosphericDataCalculator 声速马赫数法）
+// 需要绝对总压、绝对静压和总温（开氏温度）
 func calculateVelocity(input runtimeInput, pt, ps float64) float64 {
-	absPs := input.AtmP + ps
+	absPt := pt + input.AtmP
+	absPs := ps + input.AtmP
 	tempK := input.AtmT + 273.15
-	if absPs <= 0 || tempK <= 0 {
+
+	if absPs <= 0 || tempK <= 0 || absPt <= absPs {
 		return 0
 	}
-	return math.Sqrt((2 * math.Abs(pt-ps) * gasConstantAir * tempK) / absPs)
+
+	calc := calibration.NewAtmosphericDataCalculator()
+	ma, err := calc.CalculateMach(absPt, absPs)
+	if err != nil {
+		return 0
+	}
+
+	sat := calc.CalculateSAT(tempK, ma)
+	return calc.CalculateTASByMach(ma, sat)
 }
 
+// calculateMachFromPressures 计算马赫数（使用 AtmosphericDataCalculator）
 func calculateMachFromPressures(input runtimeInput, pt, ps float64) float64 {
 	absPt := pt + input.AtmP
 	absPs := ps + input.AtmP
 	if absPs <= 0 || absPt <= absPs {
 		return 0
 	}
-	return math.Sqrt(5 * math.Abs(math.Pow(absPt/absPs, 0.4/gamma)-1))
+
+	calc := calibration.NewAtmosphericDataCalculator()
+	ma, err := calc.CalculateMach(absPt, absPs)
+	if err != nil {
+		return 0
+	}
+	return ma
 }
 
 func interpolateFactor(value, start, end float64) float64 {
@@ -855,11 +876,24 @@ func collectInputWarnings(input runtimeInput) []string {
 func toInterpolationResult(result interResult, input runtimeInput, validRange PrbValidRange, warnings []string) InterpolationResult {
 	dynamicPressure := result.Pt - result.Ps
 	tempK := input.AtmT + 273.15
+	absPt := input.AtmP + result.Pt
 	absPs := input.AtmP + result.Ps
 
 	var density float64
 	if isFinite(absPs) && absPs > 0 && tempK > 0 {
 		density = absPs / (gasConstantAir * tempK)
+	}
+
+	// 使用 AtmosphericDataCalculator 计算 CAS 和 SAT
+	var cas float64
+	var sat float64
+	calc := calibration.NewAtmosphericDataCalculator()
+	if absPs > 0 && absPt > absPs && tempK > 0 {
+		if ma, err := calc.CalculateMach(absPt, absPs); err == nil {
+			sat = calc.CalculateSAT(tempK, ma)
+			qc := calc.CalculateQc(absPt, absPs)
+			cas = calc.CalculateCAS(qc)
+		}
 	}
 
 	isValid := true
@@ -895,6 +929,8 @@ func toInterpolationResult(result interResult, input runtimeInput, validRange Pr
 		Beta:            result.Beta,
 		MachNumber:      result.Ma,
 		Velocity:        result.V,
+		CAS:             ternary(isFinite(cas), cas, 0),
+		SAT:             ternary(isFinite(sat), sat, 0),
 		DynamicPressure: ternary(isFinite(dynamicPressure), dynamicPressure, 0),
 		Density:         ternary(isFinite(density) && density > 0, density, 0),
 		TotalPressure:   ternary(isFinite(result.Pt), result.Pt, 0),

@@ -58,6 +58,14 @@ type DaqT1603HardwareConfig struct {
 	FilterHz         int    `json:"filterHz"`
 }
 
+// DSA3217ScanConfig DSA3217 扫描配置（从 LIST S 读取）
+type DSA3217ScanConfig struct {
+	Avg    int    `json:"avg"`
+	Period int    `json:"period"`
+	Fps    string `json:"fps"`
+	Unit   string `json:"unit"`
+}
+
 type Status struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`

@@ -40,12 +40,25 @@ npm run dev -- --host 127.0.0.1
 
 Starts on `http://127.0.0.1:5173`. Dev server proxies `/api` to backend.
 
-### Wails desktop
+### Wails desktop (Wind-DAQ 主应用)
 
 ```powershell
 cd projects/wind-daq/apps/desktop-wails
 wails dev
 ```
+
+前端开发服务器: `http://localhost:5173`
+
+### Wails desktop (五孔探针插值计算)
+
+```powershell
+cd projects/wind-daq/apps/five-hole-interpolator
+wails dev
+```
+
+前端开发服务器: `http://localhost:5174`
+
+> **注意**: 两个 Wails 应用使用不同的 Vite 端口（5173 / 5174），可同时 `wails dev` 启动互不干扰。
 
 ### Config
 
@@ -92,6 +105,10 @@ wind-daq/
 └── docs/
     └── migration/         # Migration entry, UI parity plan, feature map
 ```
+
+Additional desktop app:
+
+- `apps/five-hole-interpolator/` is a dedicated Wails desktop tool for five-hole probe PRB interpolation. Keep its Vue UI and Wails bindings in the app directory; keep reusable interpolation rules in `services/api-go/internal/core/interpolation` or a usecase layer when orchestration grows.
 
 ## Development Rules
 

@@ -1,0 +1,67 @@
+﻿import type { InterpolationResult } from '@shared/types/traversal'
+
+export type VisualizationParam =
+  | 'machNumber'
+  | 'velocity'
+  | 'P0'
+  | 'Ps'
+  | 'dynamicPressure'
+  | 'density'
+  | 'alpha'
+  | 'beta'
+
+export interface VisualizationParamConfig {
+  labelKey: 'mach' | 'velocity' | 'totalPressure' | 'staticPressure' | 'dynamicP' | 'density' | 'alpha' | 'beta'
+  fallbackLabel: string
+  title: string
+  unit: string
+}
+
+export const VISUALIZATION_PARAM_CONFIG: Record<VisualizationParam, VisualizationParamConfig> = {
+  machNumber: { labelKey: 'mach', fallbackLabel: 'Mach', title: 'Mach', unit: '' },
+  velocity: { labelKey: 'velocity', fallbackLabel: 'Velocity', title: 'Velocity', unit: 'm/s' },
+  P0: { labelKey: 'totalPressure', fallbackLabel: 'P0', title: 'P0', unit: 'kPa' },
+  Ps: { labelKey: 'staticPressure', fallbackLabel: 'Ps', title: 'Ps', unit: 'kPa' },
+  dynamicPressure: { labelKey: 'dynamicP', fallbackLabel: 'Dynamic Pressure', title: 'Dynamic Pressure', unit: 'kPa' },
+  density: { labelKey: 'density', fallbackLabel: 'Density', title: 'Density', unit: 'kg/m^3' },
+  alpha: { labelKey: 'alpha', fallbackLabel: 'Alpha', title: 'Alpha', unit: 'deg' },
+  beta: { labelKey: 'beta', fallbackLabel: 'Beta', title: 'Beta', unit: 'deg' }
+}
+
+export function getParamValue(result: InterpolationResult, param: VisualizationParam): number | null {
+  switch (param) {
+    case 'machNumber':
+      return result.machNumber
+    case 'velocity':
+      return result.velocity
+    case 'P0':
+      return result.P0 ?? null
+    case 'Ps':
+      return result.Ps ?? null
+    case 'dynamicPressure':
+      return result.dynamicPressure
+    case 'density':
+      return result.density
+    case 'alpha':
+      return result.alpha
+    case 'beta':
+      return result.beta
+  }
+}
+
+export interface HeatmapCell {
+  value: [number, number, number]
+  alpha: number
+  beta: number
+}
+
+export interface ChartTheme {
+  textColor: string
+  axisColor: string
+  gridColor: string
+  panelColor: string
+  tooltipBackground: string
+  tooltipBorder: string
+  heatmapColors: string[]
+}
+

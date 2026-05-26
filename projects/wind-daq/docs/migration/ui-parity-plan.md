@@ -39,7 +39,6 @@ C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace\projects\wind-daq\app
 
 Do not use these as the UI design source:
 
-- `projects/daq-mvp/frontend`
 - `projects/wind-daq/apps/desktop-wails/frontend/dist`
 - Any new generated design ideas
 - Generic dashboard/SCADA UI assumptions

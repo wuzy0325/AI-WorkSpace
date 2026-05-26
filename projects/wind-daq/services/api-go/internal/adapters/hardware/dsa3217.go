@@ -346,3 +346,46 @@ func (d *DSA3217) ReadScanConfig() (avg, period int, unit string, err error) {
 
 	return avg, period, unit, nil
 }
+
+// GetDsa3217ScanConfig 实现 ports.DSA3217Configurable 接口
+func (d *DSA3217) GetDsa3217ScanConfig() (device.DSA3217ScanConfig, error) {
+	avg, period, unit, err := d.ReadScanConfig()
+	if err != nil {
+		return device.DSA3217ScanConfig{}, err
+	}
+	fps := "--"
+	if avg >= 1 && period >= 73 {
+		fps = fmt.Sprintf("%.3f", 1.0/(float64(period)*1e-6*16*float64(avg)))
+	}
+	return device.DSA3217ScanConfig{
+		Avg:    avg,
+		Period: period,
+		Fps:    fps,
+		Unit:   unit,
+	}, nil
+}
+
+// ApplyDsa3217ScanConfig 实现 ports.DSA3217Configurable 接口，写入后回读验证
+func (d *DSA3217) ApplyDsa3217ScanConfig(avg int, period int) (device.DSA3217ScanConfig, error) {
+	if err := d.SetAvg(avg); err != nil {
+		return device.DSA3217ScanConfig{}, err
+	}
+	if err := d.SetPeriod(period); err != nil {
+		return device.DSA3217ScanConfig{}, err
+	}
+	if err := d.SaveConfig(); err != nil {
+		return device.DSA3217ScanConfig{}, err
+	}
+	// 写入后回读确认生效
+	verify, err := d.GetDsa3217ScanConfig()
+	if err != nil {
+		return device.DSA3217ScanConfig{}, err
+	}
+	if avg >= 1 && verify.Avg != avg {
+		slog.Warn("DSA3217 AVG 写入验证不匹配", "device", d.profile.ID, "expected", avg, "actual", verify.Avg)
+	}
+	if period >= 73 && verify.Period != period {
+		slog.Warn("DSA3217 PERIOD 写入验证不匹配", "device", d.profile.ID, "expected", period, "actual", verify.Period)
+	}
+	return verify, nil
+}

@@ -82,14 +82,13 @@ func CalculateFiveHoleCoefficients(data FiveHoleRawData) FiveHoleCoefficients {
 		CPS = (pSide - *data.PStatic) / safeQ
 	}
 
-	// 计算马赫数（需要总压和静压）
+	// 计算马赫数（使用 AtmosphericDataCalculator）
 	var machNumber *float64
 	if data.PTotal != nil && data.PStatic != nil && data.PAtm > 0 {
 		totalPressureAbs := *data.PTotal + data.PAtm
 		staticPressureAbs := *data.PStatic + data.PAtm
-		if staticPressureAbs > 0 && totalPressureAbs > staticPressureAbs {
-			pressureRatio := totalPressureAbs / staticPressureAbs
-			ma := math.Sqrt(5 * (math.Pow(pressureRatio, 2.0/7.0) - 1))
+		calc := NewAtmosphericDataCalculator()
+		if ma, err := calc.CalculateMach(totalPressureAbs, staticPressureAbs); err == nil {
 			machNumber = &ma
 		}
 	}
@@ -308,13 +307,13 @@ func CalculateTotalPressureCoefficients(rawData TotalPressureRawData) TotalPress
 		err = ((pProbeTotal - pTunnelTotal) / pTunnelTotalAbs) * 100
 	}
 
-	// 计算马赫数
+	// 计算马赫数（使用 AtmosphericDataCalculator）
 	var machNumber float64
-	gamma := 1.4 // 空气比热比
-	if pTunnelStaticAbs > 0 {
-		pressureDiff := pTunnelTotalAbs - pTunnelStaticAbs
-		if pressureDiff >= 0 {
-			machNumber = math.Sqrt((2 * pressureDiff) / (gamma * pTunnelStaticAbs))
+	calc := NewAtmosphericDataCalculator()
+	if pTunnelStaticAbs > 0 && pTunnelTotalAbs > pTunnelStaticAbs {
+		ma, err := calc.CalculateMach(pTunnelTotalAbs, pTunnelStaticAbs)
+		if err == nil {
+			machNumber = ma
 		}
 	}
 
@@ -354,21 +353,11 @@ func CalculateTotalPressureAverage(samples []TotalPressureRawData) TotalPressure
 
 // ==================== 总温探针公式 ====================
 
-// CalculateMachNumber 计算马赫数
-//
-// 公式: Ma = sqrt(5 * ((Pt / Ps)^(2/7) - 1))
+// CalculateMachNumber 计算马赫数（委托给 AtmosphericDataCalculator）
+// 公式: Ma = sqrt( (2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1) )
 func CalculateMachNumber(totalPressure, staticPressure float64) (float64, error) {
-	if staticPressure <= 0 {
-		return 0, fmt.Errorf("静压必须大于0")
-	}
-
-	pressureRatio := totalPressure / staticPressure
-	if pressureRatio < 1 {
-		return 0, fmt.Errorf("总压必须大于静压")
-	}
-
-	ma := math.Sqrt(5 * (math.Pow(pressureRatio, 2.0/7.0) - 1))
-	return ma, nil
+	calc := NewAtmosphericDataCalculator()
+	return calc.CalculateMach(totalPressure, staticPressure)
 }
 
 // CalculateRecoveryCoefficient 计算恢复系数

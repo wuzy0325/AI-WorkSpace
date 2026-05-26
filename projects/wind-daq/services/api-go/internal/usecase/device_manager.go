@@ -163,6 +163,42 @@ func (m *DeviceManager) ApplyDaqT1603Config(id string, config device.DaqT1603Har
 	return m.store.SaveProfiles(m.profiles)
 }
 
+// GetDsa3217ScanConfig 获取 DSA3217 设备的扫描配置
+func (m *DeviceManager) GetDsa3217ScanConfig(id string) (device.DSA3217ScanConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.DSA3217Configurable); ok {
+			return configurable.GetDsa3217ScanConfig()
+		}
+	}
+	return device.DSA3217ScanConfig{}, fmt.Errorf("device not connected or does not support DSA3217 configuration: %s", id)
+}
+
+// ApplyDsa3217ScanConfig 写入 DSA3217 扫描配置并回读验证
+func (m *DeviceManager) ApplyDsa3217ScanConfig(id string, avg int, period int) (device.DSA3217ScanConfig, error) {
+	if avg < 1 || avg > 240 {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("AVG must be between 1 and 240")
+	}
+	if period < 73 || period > 65535 {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("PERIOD must be between 73 and 65535")
+	}
+
+	m.mu.RLock()
+	dev, ok := m.devices[id]
+	m.mu.RUnlock()
+
+	if !ok {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("device not connected: %s", id)
+	}
+	configurable, ok := dev.(ports.DSA3217Configurable)
+	if !ok {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("device does not support DSA3217 configuration: %s", id)
+	}
+	return configurable.ApplyDsa3217ScanConfig(avg, period)
+}
+
 func (m *DeviceManager) Connect(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -5,7 +5,9 @@ type InterpolationResult struct {
 	Alpha           float64 `json:"alpha"`             // 攻角 (度)
 	Beta            float64 `json:"beta"`              // 侧滑角 (度)
 	MachNumber      float64 `json:"machNumber"`        // 马赫数
-	Velocity        float64 `json:"velocity"`          // 速度 (m/s)
+	Velocity        float64 `json:"velocity"`          // 真空速 TAS (m/s)
+	CAS             float64 `json:"cas"`               // 校正空速 CAS (m/s)
+	SAT             float64 `json:"sat"`               // 静温 SAT (K)
 	DynamicPressure float64 `json:"dynamicPressure"`   // 动压 (Pa)
 	Density         float64 `json:"density"`           // 密度 (kg/m³)
 	TotalPressure   float64 `json:"P0"`                // 总压 (表压 Pa)

@@ -32,6 +32,41 @@ const deviceUnit = ref('')
 const devicePrecision = ref<number | null>(null)
 const deviceRangeMin = ref<number | null>(null)
 const deviceRangeMax = ref<number | null>(null)
+// DSA3217 扫描配置
+const dsa3217Avg = ref<number>(32)
+const dsa3217Period = ref<number>(500)
+const dsa3217Fps = computed<string>(() => {
+  const avg = dsa3217Avg.value
+  const period = dsa3217Period.value
+  if (avg >= 1 && period >= 73) {
+    return (1 / (period * 1e-6 * 16 * avg)).toFixed(3)
+  }
+  return '--'
+})
+
+// DSA3217 AVG 输入校验：自动修正 NaN/越界值，防止兄弟控件清空
+watch(dsa3217Avg, (val) => {
+  if (typeof val !== 'number' || isNaN(val) || val < 1) {
+    dsa3217Avg.value = 32
+  } else if (val > 240) {
+    dsa3217Avg.value = 240
+  } else if (val !== Math.round(val)) {
+    dsa3217Avg.value = Math.round(val)
+  }
+}, { flush: 'sync' })
+
+// DSA3217 PERIOD 输入校验：自动修正 NaN/越界值，防止兄弟控件清空
+watch(dsa3217Period, (val) => {
+  if (typeof val !== 'number' || isNaN(val) || val < 73) {
+    dsa3217Period.value = 500
+  } else if (val > 65535) {
+    dsa3217Period.value = 65535
+  } else if (val !== Math.round(val)) {
+    dsa3217Period.value = Math.round(val)
+  }
+}, { flush: 'sync' })
+
+const dsa3217Loading = ref(false)
 const enabledOnlyChannels = ref(false)
 const channelKeyword = ref('')
 const enableAtmospheric = ref(false)
@@ -239,6 +274,7 @@ function snapshotDraft(p: DeviceProfile): string {
 
 const isDirty = computed(() => snapshotDraft(draft.value) !== initialDraftSnapshot.value)
 const isReadOnly = computed(() => editorMode.value === 'edit' && deviceStore.acquiringFor(draft.value.id))
+const statusForDraft = computed(() => deviceStore.statusFor(draft.value.id))
 
 interface DraftFieldErrors {
   name?: string
@@ -303,6 +339,11 @@ function openCreate(type: DeviceType = 'SIMULATED') {
   devicePrecision.value = getDevicePrecisionFromChannels(draft.value.channels)
   applyFixedUnitsIfNeeded(draft.value.type, draft.value.channels)
   applyDeviceUnitToChannels(deviceUnit.value)
+  // DSA3217：初始化扫描参数
+  if (draft.value.type === 'DSA3217') {
+    dsa3217Avg.value = 32
+    dsa3217Period.value = 500
+  }
   enabledOnlyChannels.value = false
   channelKeyword.value = ''
   enableAtmospheric.value = draft.value.type === 'DAQ-P-1604' ? false : (draft.value.channels[16]?.enabled !== false)
@@ -313,6 +354,10 @@ function openCreate(type: DeviceType = 'SIMULATED') {
   initialDraftSnapshot.value = snapshotDraft(draft.value)
   saveError.value = null
   editorOpen.value = true
+  // DSA3217 已连接时自动读取扫描配置
+  if (draft.value.type === 'DSA3217' && statusForDraft.value === 'Connected') {
+    void loadDsa3217Config()
+  }
 }
 
 function openEdit(p: DeviceProfile) {
@@ -327,12 +372,19 @@ function openEdit(p: DeviceProfile) {
   devicePrecision.value = getDevicePrecisionFromChannels(draft.value.channels)
   applyFixedUnitsIfNeeded(draft.value.type, draft.value.channels)
   applyDeviceUnitToChannels(deviceUnit.value)
+  // DSA3217：恢复上次保存的 AVG/PERIOD（未连接时初始化为默认）
+  dsa3217Avg.value = 32
+  dsa3217Period.value = 500
   enabledOnlyChannels.value = false
   channelKeyword.value = ''
   enableAtmospheric.value = draft.value.channels[16]?.enabled !== false
   initialDraftSnapshot.value = snapshotDraft(draft.value)
   saveError.value = null
   editorOpen.value = true
+  // DSA3217 已连接时自动读取扫描配置
+  if (draft.value.type === 'DSA3217' && statusForDraft.value === 'Connected') {
+    void loadDsa3217Config()
+  }
 }
 
 async function onTypeChanged(next: DeviceType) {
@@ -411,6 +463,22 @@ async function saveDraft() {
     const normalized: DeviceProfile = { ...draft.value, name: draft.value.name.trim() }
     await deviceApi.upsertProfile(normalized)
     await deviceStore.refreshProfiles()
+    // DSA3217：已连接时自动写入 AVG/PERIOD 并保存到设备
+    if (normalized.type === 'DSA3217' && statusForDraft.value === 'Connected') {
+      try {
+        const verify = await deviceStore.applyDsa3217ScanConfig(normalized.id, {
+          avg: dsa3217Avg.value,
+          period: dsa3217Period.value
+        })
+        // 写入成功后用回读数据更新 UI，确认实际生效值
+        if (verify) {
+          dsa3217Avg.value = verify.avg
+          dsa3217Period.value = verify.period
+        }
+      } catch (e) {
+        console.warn('同步 DSA3217 扫描参数失败:', e)
+      }
+    }
     if (normalized.autoConnect) {
       try { await deviceApi.connect(normalized.id) } catch { /* 连接失败不阻塞保存 */ }
     }
@@ -461,6 +529,31 @@ watch(() => props.open, (v) => {
     clearSelection()
   }
 })
+
+async function loadDsa3217Config(): Promise<void> {
+  dsa3217Loading.value = true
+  try {
+    const config = await deviceStore.getDsa3217ScanConfig(draft.value.id)
+    if (config) {
+      dsa3217Avg.value = config.avg
+      dsa3217Period.value = config.period
+    }
+  } catch (e) {
+    console.warn('读取 DSA3217 配置失败:', e)
+  } finally {
+    dsa3217Loading.value = false
+  }
+}
+
+// DSA3217 连接成功后自动读取扫描参数
+watch(
+  statusForDraft,
+  (status) => {
+    if (status === 'Connected' && draft.value.type === 'DSA3217' && editorOpen.value) {
+      void loadDsa3217Config()
+    }
+  }
+)
 
 async function runScan() {
   scanning.value = true
@@ -841,6 +934,42 @@ function channelLabel(c: ChannelConfig): string {
                       <span class="editor-toggle-thumb" :class="{ on: enableAtmospheric }" />
                     </div>
                     <span class="editor-atmo-label">{{ enableAtmospheric ? '包含大气压与大气温度数据' : '仅采集 16 路压力数据' }}</span>
+                  </div>
+                </div>
+              </section>
+
+              <!-- DSA3217 扫描参数（在已连接设备的基本信息中显示） -->
+              <section v-if="draft.type === 'DSA3217' && statusForDraft === 'Connected'" class="editor-section">
+                <div class="editor-section-head">
+                  <h4 class="editor-section-title">DSA3217 扫描参数</h4>
+                  <p class="editor-section-desc">平均值、周期与数据帧率（保存设备配置时自动写入）</p>
+                </div>
+                <div class="editor-grid">
+                  <div class="editor-field col-4">
+                    <label class="editor-label">AVG（平均值 1~240）</label>
+                    <input
+                      v-model.number="dsa3217Avg"
+                      type="number"
+                      min="1" max="240"
+                      :disabled="isReadOnly"
+                      class="editor-input"
+                    />
+                  </div>
+                  <div class="editor-field col-4">
+                    <label class="editor-label">PERIOD（周期 73~65535 μs）</label>
+                    <input
+                      v-model.number="dsa3217Period"
+                      type="number"
+                      min="73" max="65535"
+                      :disabled="isReadOnly"
+                      class="editor-input"
+                    />
+                  </div>
+                  <div class="editor-field col-4">
+                    <label class="editor-label">FPS（数据帧率 Hz）</label>
+                    <div class="editor-input editor-input-readonly">
+                      {{ dsa3217Fps }}
+                    </div>
                   </div>
                 </div>
               </section>

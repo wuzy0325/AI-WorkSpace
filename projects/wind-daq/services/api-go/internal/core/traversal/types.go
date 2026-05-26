@@ -41,10 +41,12 @@ type PointResult struct {
 }
 
 type Status struct {
-	TaskID       string        `json:"taskId"`
-	State        State         `json:"state"`
-	CurrentPoint int           `json:"currentPoint"`
-	TotalPoints  int           `json:"totalPoints"`
-	Results      []PointResult `json:"results"`
-	LastError    string        `json:"lastError,omitempty"`
+	TaskID                  string        `json:"taskId"`
+	State                   State         `json:"state"`
+	CurrentPoint            int           `json:"currentPoint"`
+	CurrentPointCoordinates *Point        `json:"currentPointCoordinates,omitempty"`
+	TotalPoints             int           `json:"totalPoints"`
+	Results                 []PointResult `json:"results"`
+	LastError               string        `json:"lastError,omitempty"`
+	StartedAt               int64         `json:"startedAt,omitempty"`
 }

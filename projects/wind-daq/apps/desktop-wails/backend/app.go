@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/types"
 	wind_usecase "wind-daq/services/api-go/pkg/usecase"
@@ -19,11 +20,12 @@ type App struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	appContext *appcontext.AppContext
+	apiServer  *http.Server
 
 	// 采集数据推送相关
 	streamMu       sync.Mutex
 	streamCancel   context.CancelFunc
-	streamChannels map[string]chan device.DataPayload
+	streamChannels map[string]chan types.DeviceDataPayload
 }
 
 // VersionInfo 版本信息
@@ -61,8 +63,33 @@ func (a *App) Startup(ctx context.Context) {
 
 	// 启动采集数据推送 goroutine，将 AcquisitionHub 数据通过 Wails Events 推送到前端
 	a.startStreamRelay()
+	a.startLocalAPIServer()
 
 	log.Println("Wind-DAQ 应用已成功初始化")
+}
+
+func (a *App) startLocalAPIServer() {
+	if a.appContext == nil {
+		return
+	}
+	a.apiServer = &http.Server{
+		Addr: "127.0.0.1:8900",
+		Handler: api.NewRouter(api.Deps{
+			DeviceManager:      a.appContext.DeviceManager,
+			AcquisitionHub:     a.appContext.AcquisitionHub,
+			ReportManager:      a.appContext.ReportManager,
+			MotionManager:      a.appContext.MotionManager,
+			CalibrationManager: a.appContext.CalibrationMgr,
+			TraversalManager:   a.appContext.TraversalMgr,
+			StorageRecorder:    a.appContext.StorageRecorder,
+		}),
+	}
+	go func() {
+		log.Println("Wind-DAQ local API listening on http://127.0.0.1:8900")
+		if err := a.apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Wind-DAQ local API failed: %v", err)
+		}
+	}()
 }
 
 // startStreamRelay 启动采集数据中继，将 hub 数据通过 Wails EventsEmit 推送到前端
@@ -75,7 +102,7 @@ func (a *App) startStreamRelay() {
 	}
 	streamCtx, cancel := context.WithCancel(a.ctx)
 	a.streamCancel = cancel
-	a.streamChannels = make(map[string]chan device.DataPayload)
+	a.streamChannels = make(map[string]chan types.DeviceDataPayload)
 
 	go a.streamRelayLoop(streamCtx)
 }
@@ -86,7 +113,7 @@ func (a *App) streamRelayLoop(ctx context.Context) {
 		return
 	}
 	type sub struct {
-		ch          <-chan device.DataPayload
+		ch          <-chan types.DeviceDataPayload
 		unsubscribe func()
 	}
 	var subs sync.Map
@@ -120,7 +147,7 @@ func (a *App) streamRelayLoop(ctx context.Context) {
 			}
 			ch, unsub := a.appContext.AcquisitionHub.Subscribe(id, 16)
 			subs.Store(id, sub{ch: ch, unsubscribe: unsub})
-			go func(deviceID string, payloadCh <-chan device.DataPayload) {
+			go func(deviceID string, payloadCh <-chan types.DeviceDataPayload) {
 				for {
 					select {
 					case <-ctx.Done():
@@ -174,11 +201,11 @@ func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResp
 	defer a.streamMu.Unlock()
 
 	if a.streamChannels == nil {
-		a.streamChannels = make(map[string]chan device.DataPayload)
+		a.streamChannels = make(map[string]chan types.DeviceDataPayload)
 	}
 
 	if subscribe {
-		a.streamChannels[deviceID] = make(chan device.DataPayload, 16)
+		a.streamChannels[deviceID] = make(chan types.DeviceDataPayload, 16)
 	} else {
 		delete(a.streamChannels, deviceID)
 	}
@@ -190,6 +217,11 @@ func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResp
 func (a *App) Shutdown(ctx context.Context) {
 	if a.cancel != nil {
 		a.cancel()
+	}
+	if a.apiServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = a.apiServer.Shutdown(shutdownCtx)
 	}
 	log.Println("Wind-DAQ 应用已关闭")
 }
@@ -212,6 +244,26 @@ func (a *App) PickDirectory() (string, error) {
 		CanCreateDirectories: true,
 	}
 	return runtime.OpenDirectoryDialog(a.ctx, opts)
+}
+
+func (a *App) PickFile(title string, filters []runtime.FileFilter) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("应用上下文未初始化")
+	}
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   title,
+		Filters: filters,
+	})
+}
+
+func (a *App) PickFiles(title string, filters []runtime.FileFilter) ([]string, error) {
+	if a.ctx == nil {
+		return nil, fmt.Errorf("应用上下文未初始化")
+	}
+	return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   title,
+		Filters: filters,
+	})
 }
 
 // callMgr 通用 manager 方法调用辅助

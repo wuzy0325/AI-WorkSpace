@@ -1,23 +1,27 @@
 package usecase
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	coreinterp "wind-daq/services/api-go/internal/core/interpolation"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
 
 type TraversalManager struct {
-	mu     sync.RWMutex
-	reader ports.LatestDataReader
-	motion *MotionManager
-	sink   ports.TraversalPointSink
-	store  ports.TraversalResultStore
-	config traversal.Config
-	status traversal.Status
+	mu           sync.RWMutex
+	reader       ports.LatestDataReader
+	motion       *MotionManager
+	sink         ports.TraversalPointSink
+	store        ports.TraversalResultStore
+	config       traversal.Config
+	status       traversal.Status
+	configRaw    json.RawMessage
+	interpolator coreinterp.Interpolator
 }
 
 func NewTraversalManager(reader ports.LatestDataReader, motion *MotionManager, sink ports.TraversalPointSink, store ports.TraversalResultStore) *TraversalManager {
@@ -32,6 +36,40 @@ func NewTraversalManager(reader ports.LatestDataReader, motion *MotionManager, s
 
 func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]traversal.Point, error) {
 	return traversal.GenerateGridPath(config)
+}
+
+func (m *TraversalManager) SaveConfigRaw(config json.RawMessage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.configRaw = append(json.RawMessage(nil), config...)
+}
+
+func (m *TraversalManager) GetConfigRaw() json.RawMessage {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append(json.RawMessage(nil), m.configRaw...)
+}
+
+func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.interpolator = interpolator
+}
+
+func (m *TraversalManager) CalculateRealtime(input coreinterp.InterpolationInput) (coreinterp.InterpolationResult, error) {
+	m.mu.RLock()
+	interpolator := m.interpolator
+	m.mu.RUnlock()
+	if interpolator == nil || !interpolator.IsLoaded() {
+		return coreinterp.InterpolationResult{}, fmt.Errorf("PRB interpolation data is not loaded")
+	}
+	return interpolator.Calculate(input)
+}
+
+func (m *TraversalManager) HasLoadedInterpolator() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.interpolator != nil && m.interpolator.IsLoaded()
 }
 
 func (m *TraversalManager) Start(config traversal.Config) error {
@@ -55,6 +93,7 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		TaskID:      config.TaskID,
 		State:       traversal.StateRunning,
 		TotalPoints: len(config.Path),
+		StartedAt:   time.Now().UnixMilli(),
 	}
 	return nil
 }
@@ -64,6 +103,10 @@ func (m *TraversalManager) Status() traversal.Status {
 	defer m.mu.RUnlock()
 	status := m.status
 	status.Results = append([]traversal.PointResult(nil), m.status.Results...)
+	if status.CurrentPoint >= 0 && status.CurrentPoint < len(m.config.Path) {
+		point := m.config.Path[status.CurrentPoint]
+		status.CurrentPointCoordinates = &point
+	}
 	return status
 }
 

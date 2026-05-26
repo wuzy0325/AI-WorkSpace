@@ -1,0 +1,28 @@
+// Package types provides public access to core type definitions
+package types
+
+import (
+	"wind-daq/services/api-go/internal/core/calibration"
+)
+
+// Type aliases for calibration types
+type (
+	Type             = calibration.Type
+	Config           = calibration.Config
+	Status           = calibration.Status
+	DataPoint        = calibration.DataPoint
+	RawData          = calibration.RawData
+	Coefficients     = calibration.Coefficients
+	FiveHoleDataPoint = calibration.FiveHoleDataPoint
+	ThreeHoleDataPoint = calibration.ThreeHoleDataPoint
+	TotalPressureDataPoint = calibration.TotalPressureDataPoint
+	TotalTemperatureDataPoint = calibration.TotalTemperatureDataPoint
+)
+
+// Calibration type constants
+const (
+	TypeFiveHole          = calibration.TypeFiveHole
+	TypeThreeHole         = calibration.TypeThreeHole
+	TypeTotalPressure     = calibration.TypeTotalPressure
+	TypeTotalTemperature  = calibration.TypeTotalTemperature
+)

@@ -1,7 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { DeviceProfile, DeviceStatus, DataPayload } from '@api/types'
+import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig } from '@api/types'
 import { deviceApi, defaultSimulatedProfile } from '@api/deviceApi'
+
+const MAX_HISTORY_POINTS = 256
+const MAX_CHART_CHANNELS = 16
 
 export const useDeviceStore = defineStore('devices', () => {
   const profiles = ref<DeviceProfile[]>([])
@@ -11,7 +14,10 @@ export const useDeviceStore = defineStore('devices', () => {
   const tareOffsets = ref<Map<string, Record<number, number>>>(new Map())
   const chartSelectedIndices = ref<Map<string, Set<number>>>(new Map())
   const deviceStatuses = ref<Map<string, DeviceStatus>>(new Map())
-  let _unsubscribeSnapshot: (() => void) | null = null
+
+  let unsubscribeSnapshot: (() => void) | null = null
+  let snapshotAttachCount = 0
+  const subscribedDeviceIds = new Set<string>()
 
   const selectedProfile = computed(() =>
     profiles.value.find((p) => p.id === selectedDeviceId.value),
@@ -19,6 +25,7 @@ export const useDeviceStore = defineStore('devices', () => {
   const selectedSnapshot = computed(() =>
     latestSnapshots.value.find((s) => s.deviceId === selectedDeviceId.value),
   )
+
   const statusFor = (id: string): string => deviceStatuses.value.get(id)?.connection ?? 'Disconnected'
   const acquiringFor = (id: string): boolean => deviceStatuses.value.get(id)?.acquiring ?? false
   const latestFor = (id: string): DataPayload | undefined =>
@@ -27,6 +34,7 @@ export const useDeviceStore = defineStore('devices', () => {
 
   function selectDevice(id: string | null) {
     selectedDeviceId.value = id
+    if (id) initializeDefaultChartSelection(id)
   }
 
   async function refreshProfiles() {
@@ -38,6 +46,12 @@ export const useDeviceStore = defineStore('devices', () => {
     } catch {
       profiles.value = [defaultSimulatedProfile()]
     }
+    syncSnapshotSubscriptions()
+    if (selectedDeviceId.value) initializeDefaultChartSelection(selectedDeviceId.value)
+  }
+
+  async function refreshInstances() {
+    await refreshProfiles()
   }
 
   async function refreshStatusFor(id: string) {
@@ -45,7 +59,7 @@ export const useDeviceStore = defineStore('devices', () => {
       const status = await deviceApi.getStatus(id)
       deviceStatuses.value.set(id, status)
     } catch {
-      // keep stale status
+      // Keep the last known status; transient device status reads should not blank the UI.
     }
   }
 
@@ -60,59 +74,78 @@ export const useDeviceStore = defineStore('devices', () => {
     } else {
       latestSnapshots.value.push(payload)
     }
-    let buf = historyBuffers.value.get(payload.deviceId)
-    if (!buf) {
-      buf = []
-      historyBuffers.value.set(payload.deviceId, buf)
+
+    let buffer = historyBuffers.value.get(payload.deviceId)
+    if (!buffer) {
+      buffer = []
+      historyBuffers.value.set(payload.deviceId, buffer)
     }
-    buf.push(payload)
-    if (buf.length > 256) buf.shift()
+    buffer.push(payload)
+    if (buffer.length > MAX_HISTORY_POINTS) buffer.shift()
+  }
+
+  function syncSnapshotSubscriptions() {
+    if (!unsubscribeSnapshot) return
+
+    const activeIds = new Set(profiles.value.map((p) => p.id))
+    profiles.value.forEach((profile) => {
+      if (subscribedDeviceIds.has(profile.id)) return
+      deviceApi.subscribeToDevice(profile.id)
+      subscribedDeviceIds.add(profile.id)
+    })
+
+    Array.from(subscribedDeviceIds).forEach((id) => {
+      if (activeIds.has(id)) return
+      deviceApi.unsubscribeFromDevice(id)
+      subscribedDeviceIds.delete(id)
+    })
+  }
+
+  function cleanupSnapshotSubscriptions() {
+    subscribedDeviceIds.forEach((id) => {
+      deviceApi.unsubscribeFromDevice(id)
+    })
+    subscribedDeviceIds.clear()
   }
 
   function attachStatusListener(): () => void {
-    if (_unsubscribeSnapshot) {
-      _unsubscribeSnapshot()
-    }
-    
-    // 自动订阅所有设备的快照
-    _unsubscribeSnapshot = deviceApi.onSnapshot((payload) => {
-      pushSnapshot(payload)
-    })
+    snapshotAttachCount += 1
 
-    // 同时自动订阅现有所有设备的数据流
-    profiles.value.forEach((p) => {
-      deviceApi.subscribeToDevice(p.id)
-    })
-
-    return () => {
-      if (_unsubscribeSnapshot) {
-        _unsubscribeSnapshot()
-        _unsubscribeSnapshot = null
-      }
-      // 取消所有设备订阅
-      profiles.value.forEach((p) => {
-        deviceApi.unsubscribeFromDevice(p.id)
+    if (!unsubscribeSnapshot) {
+      unsubscribeSnapshot = deviceApi.onSnapshot((payload) => {
+        pushSnapshot(payload)
       })
     }
+    syncSnapshotSubscriptions()
+
+    return () => {
+      snapshotAttachCount = Math.max(0, snapshotAttachCount - 1)
+      if (snapshotAttachCount === 0 && unsubscribeSnapshot) {
+        unsubscribeSnapshot()
+        unsubscribeSnapshot = null
+        cleanupSnapshotSubscriptions()
+      }
+    }
   }
 
-  const formatValue = (id: string, ch: number, raw: number): string => {
-    const offset = tareOffsets.value.get(id)?.[ch] ?? 0
-    return (raw - offset).toFixed(3)
+  const formatValue = (id: string, channelIndex: number, rawValue: number): string => {
+    const value = getDisplayValue(id, channelIndex, rawValue)
+    if (!Number.isFinite(value)) return ''
+    return value.toFixed(getChannelPrecision(id, channelIndex))
   }
 
-  const getDisplayValue = (id: string, ch: number, raw: number): number => {
-    const offset = tareOffsets.value.get(id)?.[ch] ?? 0
-    return raw - offset
+  const getDisplayValue = (id: string, channelIndex: number, rawValue: number): number => {
+    const offset = tareOffsets.value.get(id)?.[channelIndex] ?? 0
+    return rawValue - offset
   }
 
-  function setTare(id: string, ch: number, val: number) {
+  function setTare(id: string, channelIndex: number, value: number) {
     let deviceTares = tareOffsets.value.get(id)
     if (!deviceTares) {
       deviceTares = {}
       tareOffsets.value.set(id, deviceTares)
     }
-    deviceTares[ch] = val
+    deviceTares[channelIndex] = value
   }
 
   function tareAllEnabled(id: string) {
@@ -120,27 +153,26 @@ export const useDeviceStore = defineStore('devices', () => {
     if (!profile) return
     const snapshot = latestSnapshots.value.find((s) => s.deviceId === id)
     if (!snapshot) return
-    profile.channels.forEach((ch) => {
-      if (ch.enabled) {
-        const pos = snapshot.channelIndices.indexOf(ch.index)
-        if (pos >= 0) {
-          setTare(id, ch.index, snapshot.channels[pos])
-        }
+
+    profile.channels.forEach((channel) => {
+      if (!channel.enabled) return
+      const pos = snapshot.channelIndices.indexOf(channel.index)
+      if (pos >= 0) {
+        setTare(id, channel.index, snapshot.channels[pos])
       }
     })
   }
 
-  function getOffset(id: string, ch: number): number {
-    return tareOffsets.value.get(id)?.[ch] ?? 0
+  function getOffset(id: string, channelIndex: number): number {
+    return tareOffsets.value.get(id)?.[channelIndex] ?? 0
   }
 
   function getChannelRange(id: string, channelIndex: number): { min: number; max: number } {
     const profile = profiles.value.find((p) => p.id === id)
     const channel = profile?.channels.find((c) => c.index === channelIndex)
-    return {
-      min: channel?.rangeMin ?? -10,
-      max: channel?.rangeMax ?? 10,
-    }
+    const min = channel?.rangeMin ?? -10
+    const max = channel?.rangeMax ?? 10
+    return min === max ? { min: min - 1, max: max + 1 } : { min, max }
   }
 
   function getChannelPrecision(id: string, channelIndex: number): number {
@@ -149,52 +181,101 @@ export const useDeviceStore = defineStore('devices', () => {
     return channel?.precision ?? 3
   }
 
-  function toggleChartSelection(id: string, ch: number) {
-    let sel = chartSelectedIndices.value.get(id)
-    if (!sel) {
-      sel = new Set()
-      chartSelectedIndices.value.set(id, sel)
+  function toggleChartSelection(id: string, channelIndex: number) {
+    let selection = chartSelectedIndices.value.get(id)
+    if (!selection) {
+      selection = new Set()
+      chartSelectedIndices.value.set(id, selection)
     }
-    if (sel.has(ch)) sel.delete(ch)
-    else if (sel.size < 16) sel.add(ch)
+
+    if (selection.has(channelIndex)) {
+      selection.delete(channelIndex)
+    } else if (selection.size < MAX_CHART_CHANNELS) {
+      selection.add(channelIndex)
+    }
   }
 
   function setAllChartSelection(id: string, enabled: boolean) {
     const profile = profiles.value.find((p) => p.id === id)
     if (!profile) return
-    let sel = chartSelectedIndices.value.get(id)
-    if (!sel) {
-      sel = new Set()
-      chartSelectedIndices.value.set(id, sel)
+
+    if (enabled) {
+      const enabledIndices = profile.channels.filter((ch) => ch.enabled).map((ch) => ch.index)
+      chartSelectedIndices.value.set(id, new Set(enabledIndices.slice(0, MAX_CHART_CHANNELS)))
+      return
     }
-    profile.channels.forEach((ch) => {
-      if (enabled) {
-        if (sel!.size < 16) sel!.add(ch.index)
-      } else {
-        sel!.delete(ch.index)
-      }
-    })
+
+    chartSelectedIndices.value.set(id, new Set())
   }
 
-  function isChartSelected(id: string, ch: number): boolean {
-    return chartSelectedIndices.value.get(id)?.has(ch) ?? false
+  function isChartSelected(id: string, channelIndex: number): boolean {
+    return chartSelectedIndices.value.get(id)?.has(channelIndex) ?? false
+  }
+
+  function initializeDefaultChartSelection(id: string): void {
+    const current = chartSelectedIndices.value.get(id)
+    if (current && current.size > 0) return
+
+    const profile = profiles.value.find((p) => p.id === id)
+    if (!profile) return
+
+    const defaults = profile.channels
+      .filter((channel) => channel.enabled)
+      .slice(0, 4)
+      .map((channel) => channel.index)
+
+    if (defaults.length > 0) {
+      chartSelectedIndices.value.set(id, new Set(defaults))
+    }
   }
 
   async function connect(id: string) {
     await deviceApi.connect(id)
+    await refreshStatusFor(id)
   }
 
   async function disconnect(id: string) {
     await deviceApi.disconnect(id)
+    deviceApi.unsubscribeFromDevice(id)
+    subscribedDeviceIds.delete(id)
+    await refreshStatusFor(id)
   }
 
   async function startAcquisition(id: string): Promise<boolean> {
-    const ok = await deviceApi.startAcquisition(id)
-    return ok.success
+    const result = await deviceApi.startAcquisition(id)
+    if (result.success) {
+      deviceApi.subscribeToDevice(id)
+      subscribedDeviceIds.add(id)
+      await refreshStatusFor(id)
+    }
+    return result.success
   }
 
   async function stopAcquisition(id: string): Promise<void> {
     await deviceApi.stopAcquisition(id)
+    deviceApi.unsubscribeFromDevice(id)
+    subscribedDeviceIds.delete(id)
+    await refreshStatusFor(id)
+  }
+
+  async function getDsa3217ScanConfig(id: string): Promise<DSA3217ScanConfig | null> {
+    try {
+      const result = await deviceApi.getDsa3217ScanConfig(id)
+      return result?.data ?? null
+    } catch {
+      return null
+    }
+  }
+
+  async function applyDsa3217ScanConfig(
+    id: string,
+    config: { avg: number; period: number },
+  ): Promise<DSA3217ScanConfig | null> {
+    const result = await deviceApi.applyDsa3217ScanConfig(id, config)
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to sync DSA3217 scan config')
+    }
+    return result.data ?? null
   }
 
   return {
@@ -208,6 +289,7 @@ export const useDeviceStore = defineStore('devices', () => {
     acquiringFor,
     selectDevice,
     refreshProfiles,
+    refreshInstances,
     refreshStatusFor,
     updateStatus,
     pushSnapshot,
@@ -224,9 +306,12 @@ export const useDeviceStore = defineStore('devices', () => {
     toggleChartSelection,
     setAllChartSelection,
     isChartSelected,
+    initializeDefaultChartSelection,
     connect,
     disconnect,
     startAcquisition,
     stopAcquisition,
+    getDsa3217ScanConfig,
+    applyDsa3217ScanConfig,
   }
 })

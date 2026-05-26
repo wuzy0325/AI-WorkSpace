@@ -16,6 +16,18 @@ export interface DaqT1603HardwareConfig {
   filterHz: number
 }
 
+/** DSA3217 扫描配置（从 LIST S 读取） */
+export interface DSA3217ScanConfig {
+  /** 平均值 1~240 */
+  avg: number
+  /** 周期 73~65535 μs */
+  period: number
+  /** 数据帧率 Hz（根据 avg/period 自动换算） */
+  fps: string
+  /** 压力单位 */
+  unit: string
+}
+
 export interface DeviceProfile {
   id: string
   name: string

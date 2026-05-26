@@ -1,5 +1,5 @@
 // Wails API 适配器 - 运行时动态加载绑定，避免 Vite 构建时模块解析问题
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
 export interface GenericResponse {
@@ -102,6 +102,30 @@ export interface ReportStatus {
   lastResult?: string;
 }
 
+export interface TraversalPoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface TraversalStatus {
+  state: string;
+  currentPoint: number;
+  totalPoints: number;
+}
+
+// DSA3217 扫描配置响应
+export interface DSA3217ScanConfigWailsResponse {
+  Success: boolean;
+  Data?: {
+    Avg: number;
+    Period: number;
+    Fps: string;
+    Unit: string;
+  };
+  Error?: string;
+}
+
 // 运行时获取 Wails API 绑定
 function getWailsBinding(): any {
   if (typeof window !== 'undefined' && (window as any).go && (window as any).go.backend && (window as any).go.backend.App) {
@@ -173,8 +197,13 @@ export const wailsApi = {
       });
       return () => {
         cleanup();
-        EventsOff('daq:payload');
       };
+    },
+    getDsa3217ScanConfig: async (deviceId: string): Promise<DSA3217ScanConfigWailsResponse> => {
+      return await callBinding('DeviceGetDsa3217ScanConfig', deviceId);
+    },
+    applyDsa3217ScanConfig: async (deviceId: string, avg: number, period: number): Promise<DSA3217ScanConfigWailsResponse> => {
+      return await callBinding('DeviceApplyDsa3217ScanConfig', deviceId, avg, period);
     }
   },
 
@@ -248,8 +277,8 @@ export const wailsApi = {
 
   // 存储管理
   storage: {
-    startRecording: async (deviceId: string, outputDir: string): Promise<GenericResponse> => {
-      return await callBinding('StorageStartRecording', deviceId, outputDir);
+    startRecording: async (outputDir: string, filePrefix: string): Promise<GenericResponse> => {
+      return await callBinding('StorageStartRecording', outputDir, filePrefix);
     },
     stopRecording: async (): Promise<GenericResponse> => {
       return await callBinding('StorageStopRecording');
@@ -273,6 +302,12 @@ export const wailsApi = {
     },
     pickDirectory: async (): Promise<string> => {
       return await callBinding('PickDirectory');
+    },
+    pickFile: async (title: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string> => {
+      return await callBinding('PickFile', title, filters);
+    },
+    pickFiles: async (title: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string[]> => {
+      return await callBinding('PickFiles', title, filters);
     }
   }
 };

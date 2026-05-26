@@ -47,6 +47,7 @@ type (
 	DeviceScanResult       = device.ScanResult
 	DeviceChannelConfig    = device.ChannelConfig
 	DaqT1603HardwareConfig = device.DaqT1603HardwareConfig
+	DSA3217ScanConfig      = device.DSA3217ScanConfig
 )
 
 // Device type constants

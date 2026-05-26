@@ -1,16 +1,17 @@
-import { request } from '@api/http-client'
+import { request } from '@api/http-client';
+import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8900'
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8900';
 
 function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const fullPath = path.startsWith('http') ? path : `${API_BASE}${path}`
-  return request<T>(fullPath, init)
+  const fullPath = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  return request<T>(fullPath, init);
 }
 
 export interface TraversalPoint {
-  x: number
-  y: number
-  z: number
+  x: number;
+  y: number;
+  z: number;
 }
 
 export const traversalApi = {
@@ -29,17 +30,39 @@ export const traversalApi = {
   pause: () => apiRequest<{ success: boolean }>('/api/traversal/pause', { method: 'POST' }),
   resume: () => apiRequest<{ success: boolean }>('/api/traversal/resume', { method: 'POST' }),
   stop: () => apiRequest<{ success: boolean }>('/api/traversal/stop', { method: 'POST' }),
-}
+};
 
 export const storageApi = {
-  status: () => apiRequest<{ recording: boolean; outputDir?: string }>('/api/storage/status'),
-  start: (outputDir: string, filePrefix: string) =>
-    apiRequest<{ success: boolean }>('/api/storage/start', {
+  status: async () => {
+    if (isWailsAvailable()) {
+      return await wailsApi.storage.getStatus();
+    }
+    return apiRequest<{ recording: boolean; outputDir?: string }>('/api/storage/status');
+  },
+  start: async (outputDir: string, filePrefix: string) => {
+    if (isWailsAvailable()) {
+      const result = await wailsApi.storage.startRecording(outputDir, filePrefix);
+      if (!result.Success) {
+        throw new Error(result.Error);
+      }
+      return { success: true };
+    }
+    return apiRequest<{ success: boolean }>('/api/storage/start', {
       method: 'POST',
       body: JSON.stringify({ outputDir, filePrefix }),
-    }),
-  stop: () => apiRequest<{ success: boolean }>('/api/storage/stop', { method: 'POST' }),
-}
+    });
+  },
+  stop: async () => {
+    if (isWailsAvailable()) {
+      const result = await wailsApi.storage.stopRecording();
+      if (!result.Success) {
+        throw new Error(result.Error);
+      }
+      return { success: true };
+    }
+    return apiRequest<{ success: boolean }>('/api/storage/stop', { method: 'POST' });
+  },
+};
 
 export const reportApi = {
   generate: (outputDir: string, filePrefix: string, deviceId: string) =>
@@ -47,17 +70,22 @@ export const reportApi = {
       method: 'POST',
       body: JSON.stringify({ outputDir, filePrefix, deviceId }),
     }),
-  status: () => apiRequest<{ generating: boolean }>('/api/report/status'),
-}
+  status: async () => {
+    if (isWailsAvailable()) {
+      return await wailsApi.report.getStatus();
+    }
+    return apiRequest<{ generating: boolean }>('/api/report/status');
+  },
+};
 
 export interface MotionAxisStatus {
-  name: string
-  position: number
-  homed: boolean
-  moving: boolean
+  name: string;
+  position: number;
+  homed: boolean;
+  moving: boolean;
 }
 
 export interface MotionStatus {
-  connected: boolean
-  axes: MotionAxisStatus[]
+  connected: boolean;
+  axes: MotionAxisStatus[];
 }

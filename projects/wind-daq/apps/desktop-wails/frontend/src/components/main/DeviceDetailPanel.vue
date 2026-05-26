@@ -23,6 +23,18 @@ const showChart = computed(() => props.mode === 'chart' || props.mode === 'both'
 const showTable = computed(() => props.mode === 'table' || props.mode === 'both')
 const isMixedMode = computed(() => props.mode === 'both')
 const isTableMode = computed(() => props.mode === 'table')
+const chartChannelIndices = computed(() => {
+  const id = deviceStore.selectedDeviceId
+  const channels = profile.value?.channels ?? []
+  if (!id) return channels.filter((channel) => channel.enabled).slice(0, 4).map((channel) => channel.index)
+
+  const selected = channels
+    .filter((channel) => channel.enabled && deviceStore.isChartSelected(id, channel.index))
+    .map((channel) => channel.index)
+  return selected.length > 0
+    ? selected
+    : channels.filter((channel) => channel.enabled).slice(0, 4).map((channel) => channel.index)
+})
 
 function channelColor(index: number): string {
   return CHANNEL_COLORS[index % CHANNEL_COLORS.length]
@@ -218,7 +230,7 @@ const isPressureScannerDevice = computed(() => {
         </div>
       </div>
       <div class="detail-panel__chart-body">
-        <RealtimeChart :device-id="deviceStore.selectedDeviceId ?? ''" />
+        <RealtimeChart :device-id="deviceStore.selectedDeviceId ?? ''" :channel-indices="chartChannelIndices" />
       </div>
       </div>
 

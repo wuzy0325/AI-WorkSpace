@@ -4,6 +4,7 @@ import {backend} from '../models';
 import {calibration} from '../models';
 import {device} from '../models';
 import {motion} from '../models';
+import {frontend} from '../models';
 import {report} from '../models';
 import {storage} from '../models';
 
@@ -43,6 +44,8 @@ export function DeviceStartAcquisition(arg1:string):Promise<backend.GenericRespo
 
 export function DeviceStopAcquisition(arg1:string):Promise<backend.GenericResponse>;
 
+export function DeviceSubscribeStream(arg1:string,arg2:boolean):Promise<backend.GenericResponse>;
+
 export function DeviceUpsertProfile(arg1:device.Profile):Promise<backend.GenericResponse>;
 
 export function GetVersion():Promise<backend.VersionInfo>;
@@ -74,6 +77,10 @@ export function MotionStop(arg1:string,arg2:string):Promise<backend.GenericRespo
 export function MotionUpsertProfile(arg1:motion.MotionControllerProfile):Promise<backend.GenericResponse>;
 
 export function PickDirectory():Promise<string>;
+
+export function PickFile(arg1:string,arg2:Array<frontend.FileFilter>):Promise<string>;
+
+export function PickFiles(arg1:string,arg2:Array<frontend.FileFilter>):Promise<Array<string>>;
 
 export function ReportGetStatus():Promise<report.ReportStatus>;
 

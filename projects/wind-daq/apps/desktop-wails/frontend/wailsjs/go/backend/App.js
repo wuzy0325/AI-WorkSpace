@@ -74,6 +74,10 @@ export function DeviceStopAcquisition(arg1) {
   return window['go']['backend']['App']['DeviceStopAcquisition'](arg1);
 }
 
+export function DeviceSubscribeStream(arg1, arg2) {
+  return window['go']['backend']['App']['DeviceSubscribeStream'](arg1, arg2);
+}
+
 export function DeviceUpsertProfile(arg1) {
   return window['go']['backend']['App']['DeviceUpsertProfile'](arg1);
 }
@@ -136,6 +140,14 @@ export function MotionUpsertProfile(arg1) {
 
 export function PickDirectory() {
   return window['go']['backend']['App']['PickDirectory']();
+}
+
+export function PickFile(arg1, arg2) {
+  return window['go']['backend']['App']['PickFile'](arg1, arg2);
+}
+
+export function PickFiles(arg1, arg2) {
+  return window['go']['backend']['App']['PickFiles'](arg1, arg2);
 }
 
 export function ReportGetStatus() {

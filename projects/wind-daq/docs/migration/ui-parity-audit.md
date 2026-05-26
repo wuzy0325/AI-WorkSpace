@@ -21,7 +21,6 @@ C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace\projects\wind-daq\app
 Do not use these as design references:
 
 - `projects/wind-daq/apps/desktop-wails/frontend/dist`
-- `projects/daq-mvp/frontend`
 - generic dashboard or SCADA assumptions
 - newly invented visual designs
 

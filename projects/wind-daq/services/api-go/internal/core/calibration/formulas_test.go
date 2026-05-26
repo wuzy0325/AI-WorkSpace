@@ -307,3 +307,143 @@ func TestCheckTemperatureStability(t *testing.T) {
 		t.Error("单点数据应判定为不稳定")
 	}
 }
+
+// ==================== 大气数据计算器测试 ====================
+
+func TestAtmosphericDataCalculator_Mach(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// 文档验证数据：Pt=95934, Ps=95495.4 → Ma≈0.084
+	ma, err := calc.CalculateMach(95934, 95495.4)
+	if err != nil {
+		t.Fatalf("计算马赫数失败: %v", err)
+	}
+	if ma < 0.07 || ma > 0.10 {
+		t.Errorf("马赫数应在 0.07~0.10 范围内, 实际 %v", ma)
+	}
+
+	// 标准大气条件
+	ma2, err := calc.CalculateMach(106891, 101325)
+	if err != nil {
+		t.Fatalf("计算马赫数失败: %v", err)
+	}
+	if ma2 < 0.15 || ma2 > 0.3 {
+		t.Errorf("马赫数应在 0.15~0.3 范围内, 实际 %v", ma2)
+	}
+}
+
+func TestAtmosphericDataCalculator_Mach_InvalidInput(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	_, err := calc.CalculateMach(101325, 0)
+	if err == nil {
+		t.Error("静压为0时应返回错误")
+	}
+
+	_, err = calc.CalculateMach(50000, 101325)
+	if err == nil {
+		t.Error("总压小于静压时应返回错误")
+	}
+}
+
+func TestAtmosphericDataCalculator_SAT(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// TAT=295.35K, Ma≈0.084, r=1.0 → SAT≈294.94K
+	sat := calc.CalculateSAT(295.35, 0.084)
+	if sat < 294.0 || sat > 296.0 {
+		t.Errorf("静温应在 294~296 K 范围内, 实际 %v", sat)
+	}
+
+	// Ma=0 时 SAT = TAT
+	sat2 := calc.CalculateSAT(300.0, 0.0)
+	if math.Abs(sat2-300.0) > epsilon {
+		t.Errorf("Ma=0时静温应等于总温, 实际 %v", sat2)
+	}
+}
+
+func TestAtmosphericDataCalculator_Qc(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// Qc = Pt - Ps = 95934 - 95495.4 ≈ 438.6
+	qc := calc.CalculateQc(95934, 95495.4)
+	if math.Abs(qc-438.6) > 1.0 {
+		t.Errorf("动压期望约438.6, 实际 %v", qc)
+	}
+}
+
+func TestAtmosphericDataCalculator_CAS(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// 小动压下的CAS计算
+	qc := calc.CalculateQc(95934, 95495.4)
+	cas := calc.CalculateCAS(qc)
+	if cas <= 0 {
+		t.Errorf("校正空速应大于0, 实际 %v", cas)
+	}
+}
+
+func TestAtmosphericDataCalculator_TAS_Method1(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// 文档验证数据
+	Pt := 95934.0
+	Ps := 95495.4
+	TAT := 295.35
+
+	ma, _ := calc.CalculateMach(Pt, Ps)
+	sat := calc.CalculateSAT(TAT, ma)
+	qc := calc.CalculateQc(Pt, Ps)
+	tas := calc.CalculateTASByDensity(Ps, qc, sat)
+
+	// 文档验证值: vt(m/s) ≈ 28.92
+	if tas < 25.0 || tas > 35.0 {
+		t.Errorf("真空速(方法1)应在 25~35 m/s 范围内, 实际 %v", tas)
+	}
+}
+
+func TestAtmosphericDataCalculator_TAS_Method2(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	// 文档验证数据
+	Pt := 95934.0
+	Ps := 95495.4
+	TAT := 295.35
+
+	ma, _ := calc.CalculateMach(Pt, Ps)
+	sat := calc.CalculateSAT(TAT, ma)
+	tas := calc.CalculateTASByMach(ma, sat)
+
+	// 文档验证值: vt(m/s) ≈ 28.92
+	if tas < 25.0 || tas > 35.0 {
+		t.Errorf("真空速(方法2)应在 25~35 m/s 范围内, 实际 %v", tas)
+	}
+}
+
+func TestAtmosphericDataCalculator_CalculateAll(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+
+	result, err := calc.CalculateAll(95934, 95495.4, 295.35)
+	if err != nil {
+		t.Fatalf("完整计算失败: %v", err)
+	}
+
+	if result.MachNumber < 0.07 || result.MachNumber > 0.10 {
+		t.Errorf("马赫数异常: %v", result.MachNumber)
+	}
+	if result.SAT < 294.0 || result.SAT > 296.0 {
+		t.Errorf("静温异常: %v", result.SAT)
+	}
+	if result.Qc < 400 || result.Qc > 500 {
+		t.Errorf("动压异常: %v", result.Qc)
+	}
+	if result.CAS <= 0 {
+		t.Errorf("校正空速应大于0: %v", result.CAS)
+	}
+	if result.TASDensity < 25 || result.TASDensity > 35 {
+		t.Errorf("真空速(方法1)异常: %v", result.TASDensity)
+	}
+	if result.TASMach < 25 || result.TASMach > 35 {
+		t.Errorf("真空速(方法2)异常: %v", result.TASMach)
+	}
+}
