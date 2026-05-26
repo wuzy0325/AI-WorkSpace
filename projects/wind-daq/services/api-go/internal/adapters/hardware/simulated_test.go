@@ -32,8 +32,8 @@ func TestSimulatedDeviceEmitsDataWhenAcquiring(t *testing.T) {
 		if payload.DeviceID != "sim-1" {
 			t.Fatalf("expected device id sim-1, got %q", payload.DeviceID)
 		}
-		if len(payload.Channels) == 0 {
-			t.Fatal("expected at least one channel")
+		if len(payload.Channels) != 18 {
+			t.Fatalf("expected 18 channels, got %d", len(payload.Channels))
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for simulated data")

@@ -1,6 +1,9 @@
 package device
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 	profile := NewDefaultProfile("sim-1", DeviceSimulated)
@@ -11,16 +14,25 @@ func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 	if profile.Type != DeviceSimulated {
 		t.Fatalf("expected simulated type, got %q", profile.Type)
 	}
-	if len(profile.Channels) != 4 {
-		t.Fatalf("expected 4 default channels, got %d", len(profile.Channels))
+	if len(profile.Channels) != 18 {
+		t.Fatalf("expected 18 default channels, got %d", len(profile.Channels))
 	}
-	for _, channel := range profile.Channels {
+	for i, channel := range profile.Channels {
 		if !channel.Enabled {
 			t.Fatalf("expected channel %d to be enabled", channel.Index)
 		}
 		if channel.Unit == "" {
 			t.Fatalf("expected channel %d to have a unit", channel.Index)
 		}
+		if i < 16 && channel.Name != fmt.Sprintf("CH%d", i+1) {
+			t.Fatalf("expected channel %d name CH%d, got %q", i, i+1, channel.Name)
+		}
+	}
+	if profile.Channels[16].Name != "大气压" {
+		t.Fatalf("expected channel 16 name 大气压, got %q", profile.Channels[16].Name)
+	}
+	if profile.Channels[17].Name != "大气温度" {
+		t.Fatalf("expected channel 17 name 大气温度, got %q", profile.Channels[17].Name)
 	}
 }
 
@@ -35,5 +47,23 @@ func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 	}
 	if profile.DaqT1603Config.ThermocoupleType != "K" {
 		t.Fatalf("expected default thermocouple type K, got %q", profile.DaqT1603Config.ThermocoupleType)
+	}
+}
+
+func TestNormalizeProfileRestoresDefaultChannels(t *testing.T) {
+	profile := Profile{
+		ID:           "legacy-sim",
+		Name:         "Legacy Simulator",
+		Type:         DeviceSimulated,
+		SamplingRate: 20,
+	}
+
+	normalized := NormalizeProfile(profile)
+
+	if len(normalized.Channels) != 18 {
+		t.Fatalf("expected 18 default channels, got %d", len(normalized.Channels))
+	}
+	if normalized.Name != "Legacy Simulator" {
+		t.Fatalf("expected name to be preserved, got %q", normalized.Name)
 	}
 }

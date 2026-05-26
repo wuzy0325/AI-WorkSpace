@@ -3,6 +3,7 @@ package hardware
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -142,6 +143,14 @@ func (d *SimulatedDevice) loop(stop <-chan struct{}) {
 	}
 }
 
+func pressureSim(t float64) float64 {
+	return 101.325 + 2*math.Sin(t*0.1) + (rand.Float64()-0.5)*0.2
+}
+
+func tempSim(t float64) float64 {
+	return 22.5 + 0.3*math.Sin(t*0.05) + (rand.Float64()-0.5)*0.1
+}
+
 func (d *SimulatedDevice) emit(seconds float64) {
 	d.mu.RLock()
 	sink := d.sink
@@ -157,7 +166,16 @@ func (d *SimulatedDevice) emit(seconds float64) {
 			continue
 		}
 		indices = append(indices, channel.Index)
-		values = append(values, math.Sin(seconds+float64(channel.Index)))
+		var v float64
+		switch channel.Index {
+		case 16:
+			v = pressureSim(seconds)
+		case 17:
+			v = tempSim(seconds)
+		default:
+			v = (rand.Float64()*2 - 1) * 10
+		}
+		values = append(values, v)
 	}
 	sink(device.DataPayload{
 		DeviceID:       d.profile.ID,

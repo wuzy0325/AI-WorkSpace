@@ -94,6 +94,15 @@ type DataPayload struct {
 	ChannelIndices []int     `json:"channelIndices"`
 }
 
+func (p *DataPayload) EnsureNonNilSlices() {
+	if p.Channels == nil {
+		p.Channels = make([]float64, 0)
+	}
+	if p.ChannelIndices == nil {
+		p.ChannelIndices = make([]int, 0)
+	}
+}
+
 type DataSink func(payload DataPayload)
 
 func NewDefaultProfile(id string, deviceType Type) Profile {
@@ -138,22 +147,53 @@ func NewDefaultProfile(id string, deviceType Type) Profile {
 	return profile
 }
 
+func NormalizeProfile(profile Profile) Profile {
+	if len(profile.Channels) == 0 {
+		defaultProfile := NewDefaultProfile(profile.ID, profile.Type)
+		profile.Channels = defaultProfile.Channels
+		if profile.Transport == "" {
+			profile.Transport = defaultProfile.Transport
+		}
+		if profile.Address == "" {
+			profile.Address = defaultProfile.Address
+		}
+		if profile.Port == 0 {
+			profile.Port = defaultProfile.Port
+		}
+		if profile.BaudRate == 0 {
+			profile.BaudRate = defaultProfile.BaudRate
+		}
+		if profile.SamplingRate == 0 {
+			profile.SamplingRate = defaultProfile.SamplingRate
+		}
+	}
+	return profile
+}
+
 func NowMs() int64 {
 	return time.Now().UnixMilli()
 }
 
 func defaultSimulatedChannels() []ChannelConfig {
-	channels := make([]ChannelConfig, 4)
-	for i := range channels {
+	channels := make([]ChannelConfig, 18)
+	for i := 0; i < 16; i++ {
 		channels[i] = ChannelConfig{
 			Index:     i,
-			Name:      "CH" + string(rune('1'+i)),
+			Name:      fmt.Sprintf("CH%d", i+1),
 			Enabled:   true,
 			Unit:      "V",
 			Precision: 3,
 			RangeMin:  -10,
 			RangeMax:  10,
 		}
+	}
+	channels[16] = ChannelConfig{
+		Index: 16, Name: "大气压", Enabled: true, Unit: "kPa",
+		Precision: 3, RangeMin: 99, RangeMax: 106,
+	}
+	channels[17] = ChannelConfig{
+		Index: 17, Name: "大气温度", Enabled: true, Unit: "degC",
+		Precision: 2, RangeMin: 20, RangeMax: 25,
 	}
 	return channels
 }

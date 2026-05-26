@@ -104,6 +104,53 @@ func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	}
 }
 
+func TestDeviceManagerNormalizesStoredProfilesWithNoChannels(t *testing.T) {
+	store := &memoryProfileStore{profiles: []device.Profile{
+		{
+			ID:           "legacy-sim",
+			Name:         "Legacy Simulator",
+			Type:         device.DeviceSimulated,
+			SamplingRate: 20,
+		},
+	}}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	profiles := manager.GetProfiles()
+	if len(profiles) != 1 {
+		t.Fatalf("expected one profile, got %d", len(profiles))
+	}
+	if len(profiles[0].Channels) != 18 {
+		t.Fatalf("expected normalized channels, got %d", len(profiles[0].Channels))
+	}
+}
+
+func TestDeviceManagerUpsertProfileNormalizesNoChannels(t *testing.T) {
+	store := &memoryProfileStore{}
+	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	if err := manager.UpsertProfile(device.Profile{
+		ID:           "legacy-sim",
+		Name:         "Legacy Simulator",
+		Type:         device.DeviceSimulated,
+		SamplingRate: 20,
+	}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
+	}
+
+	if len(store.profiles) != 1 {
+		t.Fatalf("expected one saved profile, got %d", len(store.profiles))
+	}
+	if len(store.profiles[0].Channels) != 18 {
+		t.Fatalf("expected normalized channels to persist, got %d", len(store.profiles[0].Channels))
+	}
+}
+
 func TestDeviceManagerScansDevices(t *testing.T) {
 	manager, err := NewDeviceManager(&memoryProfileStore{}, simulatedFactory{}, nil)
 	if err != nil {

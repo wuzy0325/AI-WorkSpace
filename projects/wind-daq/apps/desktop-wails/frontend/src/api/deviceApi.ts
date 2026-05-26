@@ -19,15 +19,19 @@ export function defaultSimulatedProfile(): DeviceProfile {
     baudRate: 115200,
     autoConnect: true,
     samplingRate: 20,
-    channels: Array.from({ length: 4 }, (_, index) => ({
-      index,
-      name: `CH${index + 1}`,
-      enabled: true,
-      unit: 'V',
-      precision: 3,
-      rangeMin: -10,
-      rangeMax: 10,
-    })),
+    channels: [
+      ...Array.from({ length: 16 }, (_, index) => ({
+        index,
+        name: `CH${index + 1}`,
+        enabled: true,
+        unit: 'V',
+        precision: 3,
+        rangeMin: -10,
+        rangeMax: 10,
+      })),
+      { index: 16, name: '大气压', enabled: true, unit: 'kPa', precision: 3, rangeMin: 99, rangeMax: 106 },
+      { index: 17, name: '大气温度', enabled: true, unit: 'degC', precision: 2, rangeMin: 20, rangeMax: 25 },
+    ],
   }
 }
 
@@ -35,6 +39,20 @@ type SnapshotCallback = (payload: DataPayload) => void
 type StatusCallback = (status: DeviceStatus[]) => void
 
 type WailsResponse = { Success?: boolean; Error?: string; success?: boolean; error?: string }
+
+function normalizeDeviceProfile(profile: DeviceProfile): DeviceProfile {
+  return {
+    ...profile,
+    channels: Array.isArray(profile?.channels) ? profile.channels : [],
+  }
+}
+
+function normalizeDeviceProfiles(profiles: unknown): DeviceProfile[] {
+  if (!Array.isArray(profiles)) return []
+  return profiles
+    .filter((profile): profile is DeviceProfile => typeof profile === 'object' && profile !== null)
+    .map((profile) => normalizeDeviceProfile(profile))
+}
 
 function wailsOk(res: WailsResponse): { success: boolean } {
   const success = res.Success ?? res.success ?? false
@@ -56,9 +74,9 @@ export const deviceApi = {
 
   getProfiles: async (): Promise<DeviceProfile[]> => {
     if (isWailsAvailable()) {
-      return (await wailsApi.device.getProfiles()) as DeviceProfile[]
+      return normalizeDeviceProfiles(await wailsApi.device.getProfiles())
     }
-    return request<DeviceProfile[]>('/api/device/profiles')
+    return normalizeDeviceProfiles(await request<DeviceProfile[]>('/api/device/profiles'))
   },
 
   upsertProfile: async (profile: DeviceProfile): Promise<{ success: boolean }> => {
@@ -99,7 +117,7 @@ export const deviceApi = {
   getStatus: async (id: string): Promise<DeviceStatus> => {
     if (isWailsAvailable()) {
       const result = await wailsApi.device.getStatus(id)
-      if (result === false || result === true) {
+      if (result == null || result === false || result === true) {
         throw new Error('设备状态不可用')
       }
       return result as DeviceStatus
@@ -110,10 +128,16 @@ export const deviceApi = {
   getLatest: async (id: string): Promise<DataPayload> => {
     if (isWailsAvailable()) {
       const result = await wailsApi.device.getLatestData(id)
-      if (result === false || result === true) {
+      if (result == null || result === false || result === true) {
         return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
       }
-      return result as DataPayload
+      const raw = result as unknown as Record<string, unknown>
+      return {
+        deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : id,
+        timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+        channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
+        channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
+      }
     }
     return request<DataPayload>(`/api/daq/latest/${id}`)
   },
@@ -134,9 +158,9 @@ export const deviceApi = {
 
   getProfilesList: async (): Promise<DeviceProfile[]> => {
     if (isWailsAvailable()) {
-      return (await wailsApi.device.getProfiles()) as DeviceProfile[]
+      return normalizeDeviceProfiles(await wailsApi.device.getProfiles())
     }
-    return request<DeviceProfile[]>('/api/device/profiles')
+    return normalizeDeviceProfiles(await request<DeviceProfile[]>('/api/device/profiles'))
   },
 
   getDsa3217ScanConfig: async (
@@ -194,7 +218,13 @@ export const deviceApi = {
       void wailsApi.device.subscribeStream(deviceId, true)
       if (!deviceApi._wailsPayloadUnsubscribe) {
         deviceApi._wailsPayloadUnsubscribe = wailsApi.device.onPayload((payload) => {
-          deviceApi._snapshotListeners.forEach((cb) => cb(payload))
+          const normalized: DataPayload = {
+            deviceId: payload?.deviceId ?? '',
+            timestamp: payload?.timestamp ?? 0,
+            channels: Array.isArray(payload?.channels) ? payload.channels : [],
+            channelIndices: Array.isArray(payload?.channelIndices) ? payload.channelIndices : [],
+          }
+          deviceApi._snapshotListeners.forEach((cb) => cb(normalized))
         })
       }
       deviceApi._subscriptions.set(deviceId, {
@@ -209,7 +239,13 @@ export const deviceApi = {
     const subscription = subscribeDaqStream(
       deviceId,
       (payload) => {
-        deviceApi._snapshotListeners.forEach((cb) => cb(payload))
+        const normalized: DataPayload = {
+          deviceId: payload?.deviceId ?? '',
+          timestamp: payload?.timestamp ?? 0,
+          channels: Array.isArray(payload?.channels) ? payload.channels : [],
+          channelIndices: Array.isArray(payload?.channelIndices) ? payload.channelIndices : [],
+        }
+        deviceApi._snapshotListeners.forEach((cb) => cb(normalized))
       },
       (error) => {
         console.log(`SSE for ${deviceId}:`, error)
