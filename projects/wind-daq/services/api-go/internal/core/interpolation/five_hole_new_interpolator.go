@@ -1,6 +1,7 @@
 package interpolation
 
 import (
+	"encoding/csv"
 	"fmt"
 	"math"
 	"sort"
@@ -76,8 +77,9 @@ const (
 
 // kaKbResult Kα/Kβ计算结果
 type kaKbResult struct {
-	Ka float64
-	Kb float64
+	Ka    float64
+	Kb    float64
+	Valid bool
 }
 
 // gridInterpolationResult 网格插值结果
@@ -85,6 +87,7 @@ type gridInterpolationResult struct {
 	Alpha      float64
 	Beta       float64
 	IsExtended bool
+	Found      bool
 }
 
 // ==================== FiveHoleNewInterpolator ====================
@@ -190,6 +193,12 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	// 步骤1：用AA1公式计算初步角度
 	aa1Point := f.calculateKaKbAA1(p1, p2, p3, p4, p5)
 	aa1Result := f.interpolateOnGrid(aa1Point, f.aa1Grid, f.aa1BetaGroups, f.aa1ExtGrid, true)
+	if !aa1Result.Found {
+		return InterpolationResult{
+			IsValid: false,
+			Warning: "AA1初始角度插值失败，目标点不在校准网格或扩展网格内",
+		}, nil
+	}
 
 	alpha1 := aa1Result.Alpha
 	beta1 := aa1Result.Beta
@@ -211,6 +220,12 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 		// 边缘区：用AA2公式重新计算
 		aa2Point := f.calculateKaKbAA2(p1, p2, p3, p4, p5)
 		aa2Result := f.interpolateOnGrid(aa2Point, f.aa2Grid, f.aa2BetaGroups, f.aa2ExtGrid, true)
+		if !aa2Result.Found {
+			return InterpolationResult{
+				IsValid: false,
+				Warning: "AA2边缘区插值失败，目标点不在校准网格或扩展网格内",
+			}, nil
+		}
 		finalAlpha = aa2Result.Alpha
 		finalBeta = aa2Result.Beta
 		isExtended = aa2Result.IsExtended
@@ -219,6 +234,12 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 		// 中心区：用AA3公式重新计算
 		aa3Point := f.calculateKaKbAA3(p1, p2, p3, p4, p5)
 		aa3Result := f.interpolateOnGrid(aa3Point, f.aa3Grid, f.aa3BetaGroups, nil, false)
+		if !aa3Result.Found {
+			return InterpolationResult{
+				IsValid: false,
+				Warning: "AA3中心区插值失败，目标点不在校准网格内",
+			}, nil
+		}
 		finalAlpha = aa3Result.Alpha
 		finalBeta = aa3Result.Beta
 		isExtended = aa3Result.IsExtended
@@ -272,33 +293,89 @@ func (f *FiveHoleNewInterpolator) parseCsvFile(lines []string) ([]calibrationRow
 		return nil, fmt.Errorf("CSV文件至少需要包含表头和一行数据")
 	}
 
+	reader := csv.NewReader(strings.NewReader(strings.Join(lines, "\n")))
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("CSV文件解析失败: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, fmt.Errorf("CSV文件至少需要包含表头和一行数据")
+	}
+
 	var rows []calibrationRow
-	for i := 1; i < len(lines); i++ {
-		values := strings.Split(lines[i], ",")
+	seen := make(map[string]bool)
+	for i := 1; i < len(records); i++ {
+		values := records[i]
 		if len(values) != 7 {
-			continue
+			return nil, fmt.Errorf("CSV第%d行必须包含7列: alpha,beta,p1,p2,p3,p4,p5", i+1)
 		}
 
 		parsed := make([]float64, 7)
-		valid := true
 		for j, v := range values {
 			val, err := parseFloat(strings.TrimSpace(v))
 			if err != nil {
-				valid = false
-				break
+				return nil, fmt.Errorf("CSV第%d行第%d列不是有效数字", i+1, j+1)
 			}
 			parsed[j] = val
 		}
-		if !valid {
-			continue
-		}
 
-		rows = append(rows, calibrationRow{
+		row := calibrationRow{
 			Alpha: parsed[0], Beta: parsed[1],
 			P1: parsed[2], P2: parsed[3], P3: parsed[4], P4: parsed[5], P5: parsed[6],
-		})
+		}
+		if !isFinite(row.Alpha) || !isFinite(row.Beta) ||
+			!isFinite(row.P1) || !isFinite(row.P2) || !isFinite(row.P3) ||
+			!isFinite(row.P4) || !isFinite(row.P5) {
+			return nil, fmt.Errorf("CSV第%d行包含非有限数值", i+1)
+		}
+		key := calibrationPointKey(row.Alpha, row.Beta)
+		if seen[key] {
+			return nil, fmt.Errorf("CSV存在重复角度点(%.6g, %.6g)", row.Alpha, row.Beta)
+		}
+		seen[key] = true
+		rows = append(rows, row)
+	}
+	if err := validateCalibrationGrid(rows); err != nil {
+		return nil, err
 	}
 	return rows, nil
+}
+
+func validateCalibrationGrid(rows []calibrationRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	alphaSet := make(map[float64]bool)
+	betaSet := make(map[float64]bool)
+	points := make(map[string]bool)
+	for _, row := range rows {
+		alphaSet[row.Alpha] = true
+		betaSet[row.Beta] = true
+		points[calibrationPointKey(row.Alpha, row.Beta)] = true
+	}
+
+	alphas := sortedKeys(alphaSet)
+	betas := sortedKeys(betaSet)
+	if len(alphas) < 2 || len(betas) < 2 {
+		return fmt.Errorf("CSV校准网格至少需要2个alpha和2个beta角度")
+	}
+
+	for _, alpha := range alphas {
+		for _, beta := range betas {
+			if !points[calibrationPointKey(alpha, beta)] {
+				return fmt.Errorf("CSV校准网格缺少角度点(%.6g, %.6g)", alpha, beta)
+			}
+		}
+	}
+	return nil
+}
+
+func calibrationPointKey(alpha, beta float64) string {
+	return fmt.Sprintf("%.12g,%.12g", alpha, beta)
 }
 
 // buildAllGrids 构建所有公式的网格数据
@@ -333,6 +410,9 @@ func (f *FiveHoleNewInterpolator) buildGrid(formula aaFormula) (map[float64][]gr
 		}
 
 		result := f.calculateKaKb(row.P1, row.P2, row.P3, row.P4, row.P5, formula)
+		if !result.Valid {
+			continue
+		}
 		gp := gridPoint{
 			X: result.Ka, Y: result.Kb,
 			Alpha: row.Alpha, Beta: row.Beta,
@@ -382,13 +462,14 @@ func (f *FiveHoleNewInterpolator) calculateKaKb(p1, p2, p3, p4, p5 float64, form
 		denominator = p2 - pAvg
 	}
 
-	if denominator == 0 {
+	if math.Abs(denominator) < 1e-12 || !isFinite(denominator) {
 		return kaKbResult{}
 	}
 
 	return kaKbResult{
-		Ka: (p4 - p5) / denominator,
-		Kb: (p1 - p3) / denominator,
+		Ka:    (p4 - p5) / denominator,
+		Kb:    (p1 - p3) / denominator,
+		Valid: true,
 	}
 }
 
@@ -421,6 +502,10 @@ func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	extGrid *extendedGrid,
 	useExtended bool,
 ) gridInterpolationResult {
+	if !point.Valid || !isFinite(point.Ka) || !isFinite(point.Kb) {
+		return gridInterpolationResult{}
+	}
+
 	px, py := point.Ka, point.Kb
 
 	// 先在原始网格中查找
@@ -446,13 +531,13 @@ func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	}
 
 	// 双线性插值反算角度
-	t1 := float64(nearest.GridI) / subGridDivisions
-	t2 := float64(nearest.GridJ) / subGridDivisions
+	tAlpha := float64(nearest.GridI) / subGridDivisions
+	tBeta := float64(nearest.GridJ) / subGridDivisions
 
-	alpha := cell.AlphaLow + t2*(cell.AlphaHigh-cell.AlphaLow)
-	beta := cell.BetaLow + t1*(cell.BetaHigh-cell.BetaLow)
+	alpha := cell.AlphaLow + tAlpha*(cell.AlphaHigh-cell.AlphaLow)
+	beta := cell.BetaLow + tBeta*(cell.BetaHigh-cell.BetaLow)
 
-	return gridInterpolationResult{Alpha: alpha, Beta: beta, IsExtended: isExtended}
+	return gridInterpolationResult{Alpha: alpha, Beta: beta, IsExtended: isExtended, Found: true}
 }
 
 // subGridPoint 子网格点
@@ -484,15 +569,15 @@ func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups, beta
 	for i := 0; i < len(alphas)-1; i++ {
 		for j := 0; j < len(betas)-1; j++ {
 			c1 := findPoint(alphas[i], betas[j])
-			c2 := findPoint(alphas[i], betas[j+1])
-			c3 := findPoint(alphas[i+1], betas[j])
+			c2 := findPoint(alphas[i+1], betas[j])
+			c3 := findPoint(alphas[i], betas[j+1])
 			c4 := findPoint(alphas[i+1], betas[j+1])
 
 			if c1 == nil || c2 == nil || c3 == nil || c4 == nil {
 				continue
 			}
 
-			if pointInQuad(px, py, [4]*gridPoint{c1, c2, c3, c4}) {
+			if pointInQuad(px, py, [4]*gridPoint{c1, c2, c4, c3}) {
 				return &gridCell{
 					AlphaLow: alphas[i], AlphaHigh: alphas[i+1],
 					BetaLow: betas[j], BetaHigh: betas[j+1],
@@ -506,9 +591,107 @@ func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups, beta
 
 // findExtendedGridCell 在扩展网格中查找
 func (f *FiveHoleNewInterpolator) findExtendedGridCell(px, py float64, alphaGroups, betaGroups map[float64][]gridPoint, extGrid *extendedGrid) *gridCell {
-	// 简化实现：使用最近邻查找
-	// 完整实现应参考参考项目的 findExtendedGridCell
+	if extGrid == nil || len(extGrid.AllAlphas) < 2 || len(extGrid.AllBetas) < 2 {
+		return nil
+	}
+
+	estimate := func(alpha, beta float64) (*gridPoint, bool) {
+		return estimateGridPoint(alpha, beta, alphaGroups, extGrid)
+	}
+
+	for i := 0; i < len(extGrid.AllAlphas)-1; i++ {
+		for j := 0; j < len(extGrid.AllBetas)-1; j++ {
+			alphaLow, alphaHigh := extGrid.AllAlphas[i], extGrid.AllAlphas[i+1]
+			betaLow, betaHigh := extGrid.AllBetas[j], extGrid.AllBetas[j+1]
+
+			c1, ok1 := estimate(alphaLow, betaLow)
+			c2, ok2 := estimate(alphaHigh, betaLow)
+			c3, ok3 := estimate(alphaLow, betaHigh)
+			c4, ok4 := estimate(alphaHigh, betaHigh)
+			if !ok1 || !ok2 || !ok3 || !ok4 {
+				continue
+			}
+
+			if !pointInQuad(px, py, [4]*gridPoint{c1, c2, c4, c3}) {
+				continue
+			}
+
+			isExtended := alphaLow < extGrid.OriginalAlphas[0] ||
+				alphaHigh > extGrid.OriginalAlphas[len(extGrid.OriginalAlphas)-1] ||
+				betaLow < extGrid.OriginalBetas[0] ||
+				betaHigh > extGrid.OriginalBetas[len(extGrid.OriginalBetas)-1]
+
+			return &gridCell{
+				AlphaLow: alphaLow, AlphaHigh: alphaHigh,
+				BetaLow: betaLow, BetaHigh: betaHigh,
+				Corners:    [4]gridPoint{*c1, *c2, *c3, *c4},
+				IsExtended: isExtended,
+			}
+		}
+	}
 	return nil
+}
+
+func estimateGridPoint(alpha, beta float64, alphaGroups map[float64][]gridPoint, extGrid *extendedGrid) (*gridPoint, bool) {
+	alpha0, alpha1, ok := interpolationBounds(alpha, extGrid.OriginalAlphas)
+	if !ok {
+		return nil, false
+	}
+	beta0, beta1, ok := interpolationBounds(beta, extGrid.OriginalBetas)
+	if !ok {
+		return nil, false
+	}
+
+	p00, ok00 := findGridPoint(alphaGroups, alpha0, beta0)
+	p10, ok10 := findGridPoint(alphaGroups, alpha1, beta0)
+	p01, ok01 := findGridPoint(alphaGroups, alpha0, beta1)
+	p11, ok11 := findGridPoint(alphaGroups, alpha1, beta1)
+	if !ok00 || !ok10 || !ok01 || !ok11 {
+		return nil, false
+	}
+
+	tAlpha := interpolateFactor(alpha, alpha0, alpha1)
+	tBeta := interpolateFactor(beta, beta0, beta1)
+	point := gridPoint{
+		X:     bilinearInterpolate(p00.X, p10.X, p01.X, p11.X, tAlpha, tBeta),
+		Y:     bilinearInterpolate(p00.Y, p10.Y, p01.Y, p11.Y, tAlpha, tBeta),
+		Alpha: alpha,
+		Beta:  beta,
+	}
+	if !isFinite(point.X) || !isFinite(point.Y) {
+		return nil, false
+	}
+	return &point, true
+}
+
+func interpolationBounds(value float64, sortedValues []float64) (float64, float64, bool) {
+	if len(sortedValues) < 2 {
+		return 0, 0, false
+	}
+
+	for i := 0; i < len(sortedValues)-1; i++ {
+		if value >= sortedValues[i] && value <= sortedValues[i+1] {
+			return sortedValues[i], sortedValues[i+1], true
+		}
+	}
+
+	if value < sortedValues[0] {
+		return sortedValues[0], sortedValues[1], true
+	}
+	return sortedValues[len(sortedValues)-2], sortedValues[len(sortedValues)-1], true
+}
+
+func findGridPoint(alphaGroups map[float64][]gridPoint, alpha, beta float64) (gridPoint, bool) {
+	group, ok := alphaGroups[alpha]
+	if !ok {
+		return gridPoint{}, false
+	}
+	for _, point := range group {
+		if point.Beta == beta {
+			return point, true
+		}
+	}
+	return gridPoint{}, false
 }
 
 // findNearestSubGridPoint 子网格细化查找最近点
@@ -518,19 +701,19 @@ func (f *FiveHoleNewInterpolator) findNearestSubGridPoint(px, py float64, cell *
 
 	for i := 0; i <= subGridDivisions; i++ {
 		for j := 0; j <= subGridDivisions; j++ {
-			t1 := float64(i) / subGridDivisions
-			t2 := float64(j) / subGridDivisions
+			tAlpha := float64(i) / subGridDivisions
+			tBeta := float64(j) / subGridDivisions
 
 			// 双线性插值计算子网格点的Kα/Kβ
 			x := bilinearInterpolate(
 				cell.Corners[0].X, cell.Corners[1].X,
 				cell.Corners[2].X, cell.Corners[3].X,
-				t1, t2,
+				tAlpha, tBeta,
 			)
 			y := bilinearInterpolate(
 				cell.Corners[0].Y, cell.Corners[1].Y,
 				cell.Corners[2].Y, cell.Corners[3].Y,
-				t1, t2,
+				tAlpha, tBeta,
 			)
 
 			dist := math.Hypot(px-x, py-y)

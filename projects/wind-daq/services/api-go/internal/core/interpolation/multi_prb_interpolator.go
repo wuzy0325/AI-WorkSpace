@@ -91,6 +91,8 @@ func (m *MultiPrbInterpolator) LoadPrbData(fileData []PrbFileData, machNumbers [
 			LoadedAt:   0, // 可用 time.Now().UnixMilli()
 			ValidRange: interpolator.GetValidRange(),
 		}
+		fileInfo.ValidRange.MachMin = machNumber
+		fileInfo.ValidRange.MachMax = machNumber
 
 		m.prbFiles = append(m.prbFiles, prbFileWithInterpolator{
 			FileInfo:     fileInfo,
@@ -257,6 +259,8 @@ func (m *MultiPrbInterpolator) calculateWithLinear(targetMa float64, input Inter
 		Beta:            lerp(lowerResult.Beta, upperResult.Beta, weight),
 		MachNumber:      lerp(lowerResult.MachNumber, upperResult.MachNumber, weight),
 		Velocity:        lerp(lowerResult.Velocity, upperResult.Velocity, weight),
+		CAS:             lerp(lowerResult.CAS, upperResult.CAS, weight),
+		SAT:             lerp(lowerResult.SAT, upperResult.SAT, weight),
 		DynamicPressure: lerp(lowerResult.DynamicPressure, upperResult.DynamicPressure, weight),
 		Density:         lerp(lowerResult.Density, upperResult.Density, weight),
 		TotalPressure:   lerp(lowerResult.TotalPressure, upperResult.TotalPressure, weight),
@@ -265,6 +269,7 @@ func (m *MultiPrbInterpolator) calculateWithLinear(targetMa float64, input Inter
 		Warning: fmt.Sprintf("Ma=%.3f 在 Ma=%.3f 和 Ma=%.3f 之间线性插值 (权重=%.3f)",
 			targetMa, lowerMa, upperMa, weight),
 	}
+	result.Warning = mergeWarnings(result.Warning, lowerResult.Warning, upperResult.Warning)
 
 	return result, nil
 }
@@ -340,6 +345,22 @@ func containsFloat(slice []float64, val float64) bool {
 		}
 	}
 	return false
+}
+
+func mergeWarnings(warnings ...string) string {
+	seen := make(map[string]bool)
+	var parts []string
+	for _, warning := range warnings {
+		for _, part := range strings.Split(warning, ";") {
+			part = strings.TrimSpace(part)
+			if part == "" || seen[part] {
+				continue
+			}
+			seen[part] = true
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // parseMachFromFileName 从文件名解析马赫数（包级函数，供PrbInterpolator和MultiPrbInterpolator共用）

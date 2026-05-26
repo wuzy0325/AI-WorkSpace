@@ -525,7 +525,7 @@ func NewRouter(deps Deps) http.Handler {
 				"fileName":   filepath.Base(body.FilePath),
 				"loadedAt":   time.Now().UnixMilli(),
 				"validRange": rangeInfo,
-				"pointCount": 0,
+				"pointCount": interpolator.GetPointCount(),
 			})
 		case "importMultiPrb":
 			if r.Method != http.MethodPost {
