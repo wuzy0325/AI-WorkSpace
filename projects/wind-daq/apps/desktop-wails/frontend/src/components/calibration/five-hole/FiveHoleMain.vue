@@ -814,21 +814,6 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 无配置提示 -->
-    <div v-else-if="!hasConfig" class="flex-1 flex items-center justify-center">
-      <div class="text-center max-w-md">
-        <div class="text-6xl mb-4">⚙️</div>
-        <h2 class="mb-2 text-xl font-bold text-[var(--text-primary)]">尚未配置</h2>
-        <p class="mb-6 text-[var(--text-muted)]">请先配置校准参数，包括点位布局、测点通道、运动轴等设置。</p>
-        <button
-            @click="emit('openSettings')"
-            class="rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-6 py-2 text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
-          >
-            前往配置
-          </button>
-      </div>
-    </div>
-
     <!-- 主内容区 -->
     <template v-else>
       <div class="flex-1 overflow-hidden p-4">

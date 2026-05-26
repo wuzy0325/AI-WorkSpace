@@ -92,6 +92,18 @@ async function start(): Promise<void> {
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
     await deviceStore.connect(id)
     await deviceStore.startAcquisition(id)
+    // 采集启动后主动刷新实例状态，采集按钮立即响应
+    await deviceStore.refreshInstances()
+    // 检查 autoStartOnAcquisition 配置，自动开始记录
+    const saved = window.localStorage.getItem('wind-daq.global-settings')
+    if (saved) {
+      try {
+        const settings = JSON.parse(saved)
+        if (settings.autoStartOnAcquisition && !isRecording.value) {
+          await toggleRecording()
+        }
+      } catch { /* 忽略解析错误 */ }
+    }
   })
 }
 
@@ -99,6 +111,8 @@ async function stop(): Promise<void> {
   await run(async () => {
     const id = deviceStore.selectedDeviceId ?? 'sim-1'
     await deviceStore.stopAcquisition(id)
+    // 停止采集后也刷新实例状态，按钮同步更新
+    await deviceStore.refreshInstances()
   })
 }
 

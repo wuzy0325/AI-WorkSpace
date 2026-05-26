@@ -17,6 +17,11 @@ interface LocalStorageSettings {
     maxFileSizeBytes?: number
     maxRecordCount?: number
   }
+  fileRotation: {
+    enabled: boolean
+    maxFileSizeBytes: number
+    maxDurationMs: number
+  }
 }
 
 const STORAGE_KEY = 'wind-daq.global-settings'
@@ -44,6 +49,9 @@ const sizeEnabled = ref(false)
 const sizeMb = ref(100)
 const countEnabled = ref(false)
 const recordCount = ref(1000000)
+const rotationEnabled = ref(false)
+const rotationDurationMinutes = ref(30)
+const rotationSizeMb = ref(100)
 const refreshRate = ref(20)
 const originalRefreshRate = ref(20)
 const validationError = ref('')
@@ -109,6 +117,7 @@ function readLocalSettings(): LocalStorageSettings {
     filePrefix: 'run',
     autoStartOnAcquisition: false,
     stopConditions: {},
+    fileRotation: { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 },
   }
 }
 
@@ -126,6 +135,10 @@ function applySettings(settings: LocalStorageSettings): void {
     : 100
   countEnabled.value = !!settings.stopConditions.maxRecordCount
   recordCount.value = settings.stopConditions.maxRecordCount || 1000000
+  const fr = settings.fileRotation ?? { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 }
+  rotationEnabled.value = fr.enabled
+  rotationDurationMinutes.value = Math.max(1, Math.round(fr.maxDurationMs / 1000 / 60))
+  rotationSizeMb.value = Math.max(1, Math.round(fr.maxFileSizeBytes / (1024 * 1024)))
 }
 
 function currentSettings(): LocalStorageSettings {
@@ -134,11 +147,18 @@ function currentSettings(): LocalStorageSettings {
   if (sizeEnabled.value) stopConditions.maxFileSizeBytes = sizeMb.value * 1048576
   if (countEnabled.value) stopConditions.maxRecordCount = recordCount.value
 
+  const fileRotation = {
+    enabled: rotationEnabled.value,
+    maxFileSizeBytes: rotationSizeMb.value * 1024 * 1024,
+    maxDurationMs: rotationDurationMinutes.value * 60 * 1000,
+  }
+
   return {
     baseDirectory: baseDirectory.value.trim(),
     filePrefix: filePrefix.value.trim(),
     autoStartOnAcquisition: autoStart.value,
     stopConditions,
+    fileRotation,
   }
 }
 
@@ -148,6 +168,8 @@ function validate(): boolean {
   else if (durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440)) validationError.value = '定时停止范围为 1 到 1440 分钟'
   else if (sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000)) validationError.value = '文件大小范围为 1 到 10000 MB'
   else if (countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000)) validationError.value = '记录数范围为 1 到 100000000'
+  else if (rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440)) validationError.value = '滚动时长范围为 1 到 1440 分钟'
+  else if (rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000)) validationError.value = '滚动大小范围为 1 到 10000 MB'
   else if (refreshRate.value < 1 || refreshRate.value > 20) validationError.value = '刷新率范围为 1 到 20 Hz'
   else validationError.value = ''
 
@@ -355,6 +377,48 @@ async function onSave(): Promise<void> {
                         </div>
                       </div>
                       <p class="field-hint">启用后，任一条件满足时录制将自动停止。</p>
+                    </div>
+
+                    <!-- 文件滚动保存 -->
+                    <div class="stop-conditions" style="margin-top: 16px;">
+                      <div class="stop-conditions__header">
+                        <span class="stop-conditions__label">文件滚动保存</span>
+                        <div class="condition-item__toggle" @click.stop>
+                          <UiToggle v-model="rotationEnabled" />
+                        </div>
+                      </div>
+
+                      <div v-if="rotationEnabled" class="stop-conditions__items">
+                        <!-- 滚动时长 -->
+                        <div class="condition-item condition-item--enabled">
+                          <div class="condition-item__header">
+                            <div class="condition-item__label">单文件时长上限</div>
+                            <div class="condition-item__value">{{ rotationDurationMinutes }} 分钟</div>
+                          </div>
+                          <div class="condition-item__content">
+                            <div class="condition-item__input-row">
+                              <input v-model.number="rotationDurationMinutes" class="number-field" type="number" min="1" max="1440" />
+                              <span class="condition-item__unit">分钟</span>
+                            </div>
+                            <p class="field-hint">超过此时长自动创建新文件，不会中断录制。</p>
+                          </div>
+                        </div>
+
+                        <!-- 滚动大小 -->
+                        <div class="condition-item condition-item--enabled">
+                          <div class="condition-item__header">
+                            <div class="condition-item__label">单文件大小上限</div>
+                            <div class="condition-item__value">{{ rotationSizeMb }} MB</div>
+                          </div>
+                          <div class="condition-item__content">
+                            <div class="condition-item__input-row">
+                              <input v-model.number="rotationSizeMb" class="number-field" type="number" min="1" max="10000" />
+                              <span class="condition-item__unit">MB</span>
+                            </div>
+                            <p class="field-hint">超过此大小自动创建新文件，不会中断录制。</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>
