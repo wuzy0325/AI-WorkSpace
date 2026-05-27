@@ -25,7 +25,10 @@ const history = computed(() => deviceStore.historyFor(props.deviceId))
 
 const option = computed(() => {
   const data = history.value.slice(-props.maxPoints)
-  const times = data.map((d) => d.timestamp.toString().slice(-6))
+  const times = data.map((d) => {
+    const date = new Date(d.timestamp)
+    return date.toLocaleTimeString('zh-CN', { hour12: false })
+  })
   const series = props.channelIndices.map((ch, i) => ({
     name: `CH${ch + 1}`,
     type: 'line' as const,
