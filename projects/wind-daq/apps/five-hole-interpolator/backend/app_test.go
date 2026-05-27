@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	wind_interp "wind-daq/services/api-go/pkg/interpolation"
@@ -33,6 +34,11 @@ func TestBatchCalculateReturnsDataPayload(t *testing.T) {
 	}
 	if !response.Data[0].IsValid {
 		t.Fatalf("expected valid interpolation result, got warning %q", response.Data[0].Warning)
+	}
+	if response.Data[0].V <= 0 || response.Data[0].Vz <= 0 ||
+		math.Abs(response.Data[0].Vx) > 1e-12 || math.Abs(response.Data[0].Vy) > 1e-12 {
+		t.Fatalf("expected velocity vector fields in probe axis convention, got V=%v Vx=%v Vy=%v Vz=%v",
+			response.Data[0].V, response.Data[0].Vx, response.Data[0].Vy, response.Data[0].Vz)
 	}
 }
 

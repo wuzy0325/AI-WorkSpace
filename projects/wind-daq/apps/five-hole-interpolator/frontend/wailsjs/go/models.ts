@@ -4,6 +4,10 @@ export namespace backend {
 	    alpha: number;
 	    beta: number;
 	    machNumber: number;
+	    V: number;
+	    Vx: number;
+	    Vy: number;
+	    Vz: number;
 	    velocity: number;
 	    cas: number;
 	    sat: number;
@@ -23,6 +27,10 @@ export namespace backend {
 	        this.alpha = source["alpha"];
 	        this.beta = source["beta"];
 	        this.machNumber = source["machNumber"];
+	        this.V = source["V"];
+	        this.Vx = source["Vx"];
+	        this.Vy = source["Vy"];
+	        this.Vz = source["Vz"];
 	        this.velocity = source["velocity"];
 	        this.cas = source["cas"];
 	        this.sat = source["sat"];

@@ -53,6 +53,10 @@ function formatInt(v: number): string {
   return v.toLocaleString('zh-CN')
 }
 
+function resultVelocity(r: InterpolationResult): number {
+  return r.V ?? r.velocity
+}
+
 // ==================== 数据操作 ====================
 function buildCurrentInput(): InterpolationInput {
   return {
@@ -192,17 +196,16 @@ function exportResults() {
     return
   }
 
-  const headers = ['序号', 'α(°)', 'β(°)', 'Ma', 'TAS(m/s)', 'CAS(m/s)', 'SAT(K)', 'Qc(Pa)', 'ρ(kg/m³)', 'Pt(Pa)', 'Ps(Pa)', '状态']
+  const headers = ['序号', 'α(°)', 'β(°)', 'Ma', 'V(m/s)', 'Vx(m/s)', 'Vy(m/s)', 'Vz(m/s)', 'P0(Pa)', 'Ps(Pa)', '状态']
   const rows = results.value.map((r, idx) => [
     idx + 1,
     r ? formatVal(r.alpha) : '-',
     r ? formatVal(r.beta) : '-',
     r ? formatVal(r.machNumber) : '-',
-    r ? formatVal(r.velocity) : '-',
-    r ? formatVal(r.cas) : '-',
-    r ? formatVal(r.sat) : '-',
-    r ? formatVal(r.dynamicPressure) : '-',
-    r ? formatVal(r.density) : '-',
+    r ? formatVal(resultVelocity(r)) : '-',
+    r ? formatVal(r.Vx) : '-',
+    r ? formatVal(r.Vy) : '-',
+    r ? formatVal(r.Vz) : '-',
     r ? formatVal(r.P0) : '-',
     r ? formatVal(r.Ps) : '-',
     r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
@@ -545,13 +548,12 @@ function exportResults() {
                   <th>α (°)</th>
                   <th>β (°)</th>
                   <th>Ma</th>
-                  <th>TAS (m/s)</th>
-                  <th>CAS (m/s)</th>
-                  <th>SAT (K)</th>
-                  <th>Qc (Pa)</th>
-                  <th>ρ (kg/m³)</th>
-                  <th>Pt (Pa)</th>
-                  <th>Ps (Pa)</th>
+                  <th>V (m/s)</th>
+                  <th>Vx (m/s)</th>
+                  <th>Vy (m/s)</th>
+                  <th>Vz (m/s)</th>
+                  <th>总压 P0 (Pa)</th>
+                  <th>静压 Ps (Pa)</th>
                   <th class="col-status">状态</th>
                 </tr>
               </thead>
@@ -561,11 +563,10 @@ function exportResults() {
                   <td>{{ r ? formatVal(r.alpha) : '-' }}</td>
                   <td>{{ r ? formatVal(r.beta) : '-' }}</td>
                   <td>{{ r ? formatVal(r.machNumber) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.velocity) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.cas) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.sat) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.dynamicPressure) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.density) : '-' }}</td>
+                  <td>{{ r ? formatVal(resultVelocity(r)) : '-' }}</td>
+                  <td>{{ r ? formatVal(r.Vx) : '-' }}</td>
+                  <td>{{ r ? formatVal(r.Vy) : '-' }}</td>
+                  <td>{{ r ? formatVal(r.Vz) : '-' }}</td>
                   <td>{{ r ? formatVal(r.P0) : '-' }}</td>
                   <td>{{ r ? formatVal(r.Ps) : '-' }}</td>
                   <td class="col-status">

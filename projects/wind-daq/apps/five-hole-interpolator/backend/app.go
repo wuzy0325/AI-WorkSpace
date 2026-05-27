@@ -68,6 +68,10 @@ type InterpolationResult struct {
 	Alpha           float64 `json:"alpha"`
 	Beta            float64 `json:"beta"`
 	MachNumber      float64 `json:"machNumber"`
+	V               float64 `json:"V"`
+	Vx              float64 `json:"Vx"`
+	Vy              float64 `json:"Vy"`
+	Vz              float64 `json:"Vz"`
 	Velocity        float64 `json:"velocity"`
 	CAS             float64 `json:"cas"`
 	SAT             float64 `json:"sat"`
@@ -359,8 +363,10 @@ func (a *App) ImportCsvData() ImportCsvDataResponse {
 func toAppResult(r wind_interp.InterpolationResult) *InterpolationResult {
 	return &InterpolationResult{
 		Alpha: r.Alpha, Beta: r.Beta,
-		MachNumber: r.MachNumber, Velocity: r.Velocity,
-		CAS: r.CAS, SAT: r.SAT,
+		MachNumber: r.MachNumber,
+		V:          r.V, Vx: r.Vx, Vy: r.Vy, Vz: r.Vz,
+		Velocity: r.Velocity,
+		CAS:      r.CAS, SAT: r.SAT,
 		DynamicPressure: r.DynamicPressure, Density: r.Density,
 		TotalPressure: r.TotalPressure, StaticPressure: r.StaticPressure,
 		IsValid: r.IsValid, Warning: r.Warning,
