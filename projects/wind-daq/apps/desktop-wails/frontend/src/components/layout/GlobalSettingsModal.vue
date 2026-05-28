@@ -3,28 +3,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useStorageStore, type StorageSettings } from '@stores/storageStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { wailsApi } from '@api/wails-adapter'
 import UiButton from '@components/ui/UiButton.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
-
-interface LocalStorageSettings {
-  baseDirectory: string
-  filePrefix: string
-  autoStartOnAcquisition: boolean
-  stopConditions: {
-    maxDurationMs?: number
-    maxFileSizeBytes?: number
-    maxRecordCount?: number
-  }
-  fileRotation: {
-    enabled: boolean
-    maxFileSizeBytes: number
-    maxDurationMs: number
-  }
-}
-
-const STORAGE_KEY = 'wind-daq.global-settings'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
@@ -34,6 +17,7 @@ const emit = defineEmits<{
 
 const i18n = useI18nStore()
 const feedback = useFeedbackStore()
+const storageStore = useStorageStore()
 const { t } = storeToRefs(i18n)
 const modalRef = ref<HTMLElement | null>(null)
 
@@ -81,14 +65,14 @@ async function loadSettings(): Promise<void> {
   validationError.value = ''
 
   try {
-    const saved = readLocalSettings()
-    applySettings(saved)
+    await storageStore.loadSettings()
+    applySettings(storageStore.settings)
 
     try {
       const status = await storageApi.status()
       if (status.outputDir) baseDirectory.value = status.outputDir
     } catch {
-      // Recording status is optional for opening settings.
+      // 录制状态对打开设置是可选的
     }
 
     try {
@@ -105,44 +89,28 @@ async function loadSettings(): Promise<void> {
   }
 }
 
-function readLocalSettings(): LocalStorageSettings {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as LocalStorageSettings
-  } catch {
-    // Ignore corrupt local settings and fall back to defaults.
-  }
-  return {
-    baseDirectory: 'data/recordings',
-    filePrefix: 'run',
-    autoStartOnAcquisition: false,
-    stopConditions: {},
-    fileRotation: { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 },
-  }
-}
-
-function applySettings(settings: LocalStorageSettings): void {
-  baseDirectory.value = settings.baseDirectory || 'data/recordings'
-  filePrefix.value = settings.filePrefix || 'run'
-  autoStart.value = settings.autoStartOnAcquisition
-  durationEnabled.value = !!settings.stopConditions.maxDurationMs
-  durationMinutes.value = settings.stopConditions.maxDurationMs
-    ? Math.max(1, Math.round(settings.stopConditions.maxDurationMs / 60000))
+function applySettings(s: StorageSettings): void {
+  baseDirectory.value = s.baseDirectory || 'data/recordings'
+  filePrefix.value = s.filePrefix || 'run'
+  autoStart.value = s.autoStartOnAcquisition
+  durationEnabled.value = !!s.stopConditions.maxDurationMs
+  durationMinutes.value = s.stopConditions.maxDurationMs
+    ? Math.max(1, Math.round(s.stopConditions.maxDurationMs / 60000))
     : 10
-  sizeEnabled.value = !!settings.stopConditions.maxFileSizeBytes
-  sizeMb.value = settings.stopConditions.maxFileSizeBytes
-    ? Math.max(1, Math.round(settings.stopConditions.maxFileSizeBytes / 1048576))
+  sizeEnabled.value = !!s.stopConditions.maxFileSizeBytes
+  sizeMb.value = s.stopConditions.maxFileSizeBytes
+    ? Math.max(1, Math.round(s.stopConditions.maxFileSizeBytes / 1048576))
     : 100
-  countEnabled.value = !!settings.stopConditions.maxRecordCount
-  recordCount.value = settings.stopConditions.maxRecordCount || 1000000
-  const fr = settings.fileRotation ?? { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 }
+  countEnabled.value = !!s.stopConditions.maxRecordCount
+  recordCount.value = s.stopConditions.maxRecordCount || 1000000
+  const fr = s.fileRotation ?? { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 }
   rotationEnabled.value = fr.enabled
   rotationDurationMinutes.value = Math.max(1, Math.round(fr.maxDurationMs / 1000 / 60))
   rotationSizeMb.value = Math.max(1, Math.round(fr.maxFileSizeBytes / (1024 * 1024)))
 }
 
-function currentSettings(): LocalStorageSettings {
-  const stopConditions: LocalStorageSettings['stopConditions'] = {}
+function currentSettings(): StorageSettings {
+  const stopConditions: StorageSettings['stopConditions'] = {}
   if (durationEnabled.value) stopConditions.maxDurationMs = durationMinutes.value * 60000
   if (sizeEnabled.value) stopConditions.maxFileSizeBytes = sizeMb.value * 1048576
   if (countEnabled.value) stopConditions.maxRecordCount = recordCount.value
@@ -201,24 +169,26 @@ async function handlePickDirectory(): Promise<void> {
 
 async function onSave(): Promise<void> {
   saving.value = true
+  let saved = false
   try {
     if (!validate()) {
       feedback.pushToast(validationError.value || '设置无效，请检查输入', 'warning')
       return
     }
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings()))
+    await storageStore.saveSettings(currentSettings())
     if (refreshRate.value !== originalRefreshRate.value) {
       await deviceApi.setPublishRate(refreshRate.value)
       originalRefreshRate.value = refreshRate.value
     }
     feedback.pushToast('设置已保存', 'success')
-    onClose()
+    saved = true
   } catch {
     feedback.pushToast('保存失败，请重试', 'error')
   } finally {
     saving.value = false
   }
+  if (saved) onClose()
 }
 </script>
 
@@ -249,6 +219,7 @@ async function onSave(): Promise<void> {
             @click.stop
             @keydown.esc="onClose"
           >
+            <!-- 头部 -->
             <header class="modal-header">
               <div class="modal-header__content">
                 <h2 class="modal-header__title">全局设置</h2>
@@ -261,6 +232,7 @@ async function onSave(): Promise<void> {
               </UiButton>
             </header>
 
+            <!-- 内容区 -->
             <div class="modal-body custom-scrollbar">
               <div v-if="loading" class="loading-state">
                 <div class="loading-state__spinner" />
@@ -280,144 +252,80 @@ async function onSave(): Promise<void> {
               </div>
 
               <div v-else class="settings-form">
+                <!-- 数据保存 -->
                 <section class="form-section">
-                  <div class="section-header">
-                    <div class="section-header__icon">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                    </div>
-                    <div class="section-header__text">
-                      <h3 class="section-header__title">数据保存设置</h3>
-                      <p class="section-header__subtitle">设置默认保存目录、文件前缀和录制策略</p>
+                  <h3 class="section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    数据保存
+                  </h3>
+
+                  <div class="field-row">
+                    <label class="field-label">保存目录</label>
+                    <div class="directory-field">
+                      <input v-model="baseDirectory" class="directory-field__input" placeholder="data/recordings" />
+                      <UiButton variant="secondary" size="sm" @click="handlePickDirectory">选择</UiButton>
                     </div>
                   </div>
 
-                  <div class="section-content">
-                    <div class="field-group">
-                      <label class="field-label">保存目录</label>
-                      <div class="directory-field">
-                        <input v-model="baseDirectory" class="directory-field__input" placeholder="data/recordings" />
-                        <UiButton variant="secondary" size="sm" @click="handlePickDirectory">选择目录</UiButton>
+                  <div class="field-row">
+                    <label class="field-label">文件前缀</label>
+                    <input v-model="filePrefix" class="text-field" placeholder="run" />
+                  </div>
+
+                  <label class="toggle-row">
+                    <UiToggle v-model="autoStart" />
+                    <span>开始采集时自动开始记录</span>
+                  </label>
+                </section>
+
+                <div class="section-divider" />
+
+                <!-- 自动停止条件 -->
+                <section class="form-section">
+                  <h3 class="section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    自动停止条件
+                    <span v-if="enabledConditionsCount > 0" class="section-badge">{{ enabledConditionsCount }} 项</span>
+                  </h3>
+
+                  <div class="conditions-list">
+                    <!-- 定时停止 -->
+                    <div class="condition-row" :class="{ 'condition-row--active': durationEnabled }">
+                      <div class="condition-row__main">
+                        <UiToggle v-model="durationEnabled" />
+                        <span class="condition-row__label">定时停止</span>
                       </div>
-                      <p class="field-hint">点击选择目录按钮或直接输入路径。</p>
+                      <div v-if="durationEnabled" class="condition-row__input">
+                        <input v-model.number="durationMinutes" class="number-field" type="number" min="1" max="1440" />
+                        <span class="unit">分钟</span>
+                      </div>
                     </div>
 
-                    <div class="field-group">
-                      <label class="field-label">文件前缀</label>
-                      <input v-model="filePrefix" class="text-field" placeholder="run" />
+                    <!-- 按文件大小停止 -->
+                    <div class="condition-row" :class="{ 'condition-row--active': sizeEnabled }">
+                      <div class="condition-row__main">
+                        <UiToggle v-model="sizeEnabled" />
+                        <span class="condition-row__label">按文件大小停止</span>
+                      </div>
+                      <div v-if="sizeEnabled" class="condition-row__input">
+                        <input v-model.number="sizeMb" class="number-field" type="number" min="1" max="10000" />
+                        <span class="unit">MB</span>
+                      </div>
                     </div>
 
-                    <label class="toggle-row">
-                      <UiToggle v-model="autoStart" />
-                      <span>开始采集时自动开始记录</span>
-                    </label>
-
-                    <div class="stop-conditions">
-                      <div class="stop-conditions__header">
-                        <span class="stop-conditions__label">自动停止条件</span>
-                        <span v-if="enabledConditionsCount > 0" class="stop-conditions__badge">
-                          {{ enabledConditionsCount }} 项已启用
-                        </span>
+                    <!-- 按记录数停止 -->
+                    <div class="condition-row" :class="{ 'condition-row--active': countEnabled }">
+                      <div class="condition-row__main">
+                        <UiToggle v-model="countEnabled" />
+                        <span class="condition-row__label">按记录数停止</span>
                       </div>
-
-                      <div class="stop-conditions__items">
-                        <div class="condition-item" :class="{ 'condition-item--enabled': durationEnabled }">
-                          <div class="condition-item__header" @click="durationEnabled = !durationEnabled">
-                            <div class="condition-item__toggle" @click.stop><UiToggle v-model="durationEnabled" /></div>
-                            <div class="condition-item__label">定时停止</div>
-                            <div v-if="durationEnabled" class="condition-item__value">{{ durationMinutes }} 分钟</div>
-                            <svg class="condition-item__chevron" :class="{ 'condition-item__chevron--open': durationEnabled }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M6 9l6 6 6-6" />
-                            </svg>
-                          </div>
-                          <div v-if="durationEnabled" class="condition-item__content">
-                            <div class="condition-item__input-row">
-                              <input v-model.number="durationMinutes" class="number-field" type="number" min="1" max="1440" />
-                              <span class="condition-item__unit">分钟</span>
-                            </div>
-                            <p class="field-hint">达到指定时长后自动停止录制。</p>
-                          </div>
-                        </div>
-
-                        <div class="condition-item" :class="{ 'condition-item--enabled': sizeEnabled }">
-                          <div class="condition-item__header" @click="sizeEnabled = !sizeEnabled">
-                            <div class="condition-item__toggle" @click.stop><UiToggle v-model="sizeEnabled" /></div>
-                            <div class="condition-item__label">按文件大小停止</div>
-                            <div v-if="sizeEnabled" class="condition-item__value">{{ sizeMb }} MB</div>
-                            <svg class="condition-item__chevron" :class="{ 'condition-item__chevron--open': sizeEnabled }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M6 9l6 6 6-6" />
-                            </svg>
-                          </div>
-                          <div v-if="sizeEnabled" class="condition-item__content">
-                            <div class="condition-item__input-row">
-                              <input v-model.number="sizeMb" class="number-field" type="number" min="1" max="10000" />
-                              <span class="condition-item__unit">MB</span>
-                            </div>
-                            <p class="field-hint">当前文件达到大小上限后停止录制。</p>
-                          </div>
-                        </div>
-
-                        <div class="condition-item" :class="{ 'condition-item--enabled': countEnabled }">
-                          <div class="condition-item__header" @click="countEnabled = !countEnabled">
-                            <div class="condition-item__toggle" @click.stop><UiToggle v-model="countEnabled" /></div>
-                            <div class="condition-item__label">按记录数停止</div>
-                            <div v-if="countEnabled" class="condition-item__value">{{ formatNumber(recordCount) }} 条</div>
-                            <svg class="condition-item__chevron" :class="{ 'condition-item__chevron--open': countEnabled }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M6 9l6 6 6-6" />
-                            </svg>
-                          </div>
-                          <div v-if="countEnabled" class="condition-item__content">
-                            <div class="condition-item__input-row">
-                              <input v-model.number="recordCount" class="number-field" type="number" min="1" max="100000000" />
-                              <span class="condition-item__unit">条</span>
-                            </div>
-                            <p class="field-hint">达到指定记录数后自动停止录制。</p>
-                          </div>
-                        </div>
-                      </div>
-                      <p class="field-hint">启用后，任一条件满足时录制将自动停止。</p>
-                    </div>
-
-                    <!-- 文件滚动保存 -->
-                    <div class="stop-conditions" style="margin-top: 16px;">
-                      <div class="stop-conditions__header">
-                        <span class="stop-conditions__label">文件滚动保存</span>
-                        <div class="condition-item__toggle" @click.stop>
-                          <UiToggle v-model="rotationEnabled" />
-                        </div>
-                      </div>
-
-                      <div v-if="rotationEnabled" class="stop-conditions__items">
-                        <!-- 滚动时长 -->
-                        <div class="condition-item condition-item--enabled">
-                          <div class="condition-item__header">
-                            <div class="condition-item__label">单文件时长上限</div>
-                            <div class="condition-item__value">{{ rotationDurationMinutes }} 分钟</div>
-                          </div>
-                          <div class="condition-item__content">
-                            <div class="condition-item__input-row">
-                              <input v-model.number="rotationDurationMinutes" class="number-field" type="number" min="1" max="1440" />
-                              <span class="condition-item__unit">分钟</span>
-                            </div>
-                            <p class="field-hint">超过此时长自动创建新文件，不会中断录制。</p>
-                          </div>
-                        </div>
-
-                        <!-- 滚动大小 -->
-                        <div class="condition-item condition-item--enabled">
-                          <div class="condition-item__header">
-                            <div class="condition-item__label">单文件大小上限</div>
-                            <div class="condition-item__value">{{ rotationSizeMb }} MB</div>
-                          </div>
-                          <div class="condition-item__content">
-                            <div class="condition-item__input-row">
-                              <input v-model.number="rotationSizeMb" class="number-field" type="number" min="1" max="10000" />
-                              <span class="condition-item__unit">MB</span>
-                            </div>
-                            <p class="field-hint">超过此大小自动创建新文件，不会中断录制。</p>
-                          </div>
-                        </div>
+                      <div v-if="countEnabled" class="condition-row__input">
+                        <input v-model.number="recordCount" class="number-field" type="number" min="1" max="100000000" />
+                        <span class="unit">条</span>
                       </div>
                     </div>
                   </div>
@@ -425,35 +333,57 @@ async function onSave(): Promise<void> {
 
                 <div class="section-divider" />
 
-                <section class="form-section form-section--compact">
-                  <div class="section-header">
-                    <div class="section-header__icon">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
+                <!-- 文件滚动保存 -->
+                <section class="form-section">
+                  <h3 class="section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    文件滚动保存
+                    <UiToggle v-model="rotationEnabled" />
+                  </h3>
+
+                  <div v-if="rotationEnabled" class="conditions-list">
+                    <div class="condition-row condition-row--active">
+                      <span class="condition-row__label">滚动时长</span>
+                      <div class="condition-row__input">
+                        <input v-model.number="rotationDurationMinutes" class="number-field" type="number" min="1" max="1440" />
+                        <span class="unit">分钟</span>
+                      </div>
                     </div>
-                    <div class="section-header__text">
-                      <h3 class="section-header__title">刷新率设置</h3>
-                      <p class="section-header__subtitle">控制前端实时数据发布频率</p>
+                    <div class="condition-row condition-row--active">
+                      <span class="condition-row__label">滚动大小</span>
+                      <div class="condition-row__input">
+                        <input v-model.number="rotationSizeMb" class="number-field" type="number" min="1" max="10000" />
+                        <span class="unit">MB</span>
+                      </div>
                     </div>
                   </div>
+                </section>
 
-                  <div class="section-content">
-                    <div class="refresh-rate-control">
-                      <div class="refresh-rate-control__slider-wrap">
-                        <input v-model.number="refreshRate" type="range" min="1" max="20" step="1" class="refresh-rate-control__slider" />
-                        <div class="refresh-rate-control__ticks">
-                          <span>1Hz</span>
-                          <span class="refresh-rate-control__tick--recommended">10Hz 推荐</span>
-                          <span>20Hz</span>
-                        </div>
-                      </div>
-                      <div class="refresh-rate-control__value">
-                        <input v-model.number="refreshRate" type="number" min="1" max="20" class="refresh-rate-control__input" />
-                        <span class="refresh-rate-control__unit">Hz</span>
+                <div class="section-divider" />
+
+                <!-- 刷新率 -->
+                <section class="form-section">
+                  <h3 class="section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    刷新率
+                  </h3>
+                  <div class="refresh-rate-row">
+                    <div class="refresh-rate__slider-wrap">
+                      <input v-model.number="refreshRate" type="range" min="1" max="20" step="1" class="refresh-rate__slider" />
+                      <div class="refresh-rate__ticks">
+                        <span>1Hz</span>
+                        <span class="refresh-rate__tick--recommended">10Hz 推荐</span>
+                        <span>20Hz</span>
                       </div>
                     </div>
-                    <p class="field-hint">较高刷新率会增加界面绘制和数据传输压力。</p>
+                    <div class="refresh-rate__value">
+                      <input v-model.number="refreshRate" type="number" min="1" max="20" class="refresh-rate__input" />
+                      <span class="unit">Hz</span>
+                    </div>
                   </div>
                 </section>
 
@@ -461,8 +391,9 @@ async function onSave(): Promise<void> {
               </div>
             </div>
 
+            <!-- 底部 -->
             <footer class="modal-footer">
-              <p class="modal-footer__hint">保存后对当前桌面会话生效。</p>
+              <p class="modal-footer__hint">保存后对当前桌面会话生效</p>
               <div class="modal-footer__actions">
                 <UiButton variant="secondary" size="sm" :disabled="saving" @click="onClose">取消</UiButton>
                 <UiButton variant="primary" size="sm" :disabled="saving || loading" @click="onSave">
@@ -478,6 +409,7 @@ async function onSave(): Promise<void> {
 </template>
 
 <style scoped>
+/* ========== 模态框容器 ========== */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -492,7 +424,7 @@ async function onSave(): Promise<void> {
 
 .modal-container {
   width: 100%;
-  max-width: 40rem;
+  max-width: 28rem;
   max-height: calc(100vh - var(--space-8));
   display: flex;
   flex-direction: column;
@@ -503,38 +435,36 @@ async function onSave(): Promise<void> {
   outline: none;
 }
 
-.modal-header,
-.modal-footer {
+/* ========== 头部 ========== */
+.modal-header {
   display: flex;
   justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-panel-strong);
-}
-
-.modal-header {
   align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-panel-strong);
   border-bottom: 1px solid var(--border-default);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 .modal-header__title {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  line-height: 1.2;
+  line-height: 1.3;
 }
 
 .modal-header__subtitle {
-  margin-top: var(--space-1);
-  font-size: var(--font-size-sm);
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
+/* ========== 内容区 ========== */
 .modal-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-6) var(--space-6);
+  padding: var(--space-3) var(--space-5) var(--space-4);
 }
 
 .loading-state,
@@ -543,15 +473,15 @@ async function onSave(): Promise<void> {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
-  padding: var(--space-16) var(--space-6);
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-4);
   text-align: center;
 }
 
 .loading-state__spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--border-default);
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border-default);
   border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -562,315 +492,272 @@ async function onSave(): Promise<void> {
 }
 
 .error-state__icon {
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   color: var(--accent-danger);
 }
 
+.loading-state__text,
+.error-state__text {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* ========== 表单区域 ========== */
 .settings-form {
   display: flex;
   flex-direction: column;
 }
 
 .form-section {
-  padding: var(--space-5) 0;
+  padding: var(--space-3) 0;
 }
 
-.form-section--compact {
-  padding: var(--space-4) 0;
-}
-
-.section-header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-bottom: var(--space-5);
-}
-
-.section-header__icon {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+.section-title {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
-  color: var(--accent-primary);
-}
-
-.section-header__icon svg {
-  width: 20px;
-  height: 20px;
-}
-
-.section-header__text {
-  flex: 1;
-  min-width: 0;
-  padding-top: var(--space-1);
-}
-
-.section-header__title {
-  font-size: var(--font-size-base);
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
-.section-header__subtitle,
-.field-hint,
-.modal-footer__hint,
-.loading-state__text,
-.error-state__text {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  line-height: 1.4;
+.section-title svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.section-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
 }
 
 .section-divider {
   height: 1px;
   background: var(--border-default);
-  margin: 0 calc(-1 * var(--space-6));
+  margin: 0 calc(-1 * var(--space-5));
 }
 
-.section-content {
+/* ========== 字段行 ========== */
+.field-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  padding-left: calc(36px + var(--space-3));
+  gap: var(--space-1-5);
+  margin-bottom: var(--space-3);
 }
 
-.field-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.field-row:last-child {
+  margin-bottom: 0;
 }
 
 .field-label {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
+.directory-field {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .directory-field__input,
 .text-field,
-.number-field,
-.refresh-rate-control__input {
+.number-field {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--bg-app);
   color: var(--text-secondary);
   outline: none;
+  font-size: var(--font-size-sm);
 }
 
 .directory-field__input,
 .text-field {
-  width: 100%;
-  padding: var(--space-2-5) var(--space-3);
-  font-size: var(--font-size-sm);
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+}
+
+.number-field {
+  width: 5rem;
+  padding: var(--space-1-5) var(--space-2);
+  text-align: right;
 }
 
 .toggle-row {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-}
-
-.stop-conditions__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-3);
-}
-
-.stop-conditions__label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.stop-conditions__badge {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--accent-success);
-  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
-  padding: var(--space-0-5) var(--space-2);
-  border-radius: var(--radius-pill);
-}
-
-.stop-conditions__items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.condition-item {
-  background: var(--bg-app);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  transition: all var(--motion-fast) var(--easing-standard);
-}
-
-.condition-item--enabled {
-  background: color-mix(in srgb, var(--accent-success) 5%, var(--bg-app));
-  border-color: color-mix(in srgb, var(--accent-success) 25%, var(--border-default));
-}
-
-.condition-item__header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
   cursor: pointer;
 }
 
-.condition-item__label {
-  flex: 1;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-secondary);
-}
-
-.condition-item__value {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--accent-success);
-}
-
-.condition-item__chevron {
-  width: 16px;
-  height: 16px;
+.unit {
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
-  transition: transform var(--motion-fast) var(--easing-standard);
+  white-space: nowrap;
 }
 
-.condition-item__chevron--open {
-  transform: rotate(180deg);
-}
-
-.condition-item__content {
-  padding: 0 var(--space-3) var(--space-3) calc(38px + var(--space-3));
-  border-top: 1px solid var(--border-default);
-  background: var(--bg-panel);
-}
-
-.condition-item__input-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-}
-
-.number-field {
-  width: 7rem;
-  padding: var(--space-2) var(--space-3);
-}
-
-.condition-item__unit {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
-.refresh-rate-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-4);
-  background: var(--bg-app);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-}
-
-.refresh-rate-control__slider-wrap {
-  flex: 1;
+/* ========== 条件列表（紧凑行式布局） ========== */
+.conditions-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.refresh-rate-control__slider {
+.condition-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-app);
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.condition-row--active {
+  background: color-mix(in srgb, var(--accent-success) 4%, var(--bg-app));
+  border-color: color-mix(in srgb, var(--accent-success) 20%, var(--border-default));
+}
+
+.condition-row__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.condition-row__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.condition-row__input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-shrink: 0;
+}
+
+/* ========== 刷新率（紧凑行式布局） ========== */
+.refresh-rate-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.refresh-rate__slider-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.refresh-rate__slider {
   width: 100%;
-  height: 6px;
+  height: 4px;
   appearance: none;
   background: var(--border-strong);
   border-radius: var(--radius-pill);
   cursor: pointer;
 }
 
-.refresh-rate-control__slider::-webkit-slider-thumb {
+.refresh-rate__slider::-webkit-slider-thumb {
   appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   background: var(--accent-primary);
-  border: 3px solid var(--bg-panel);
+  border: 2px solid var(--bg-panel);
   border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
-.refresh-rate-control__ticks {
+.refresh-rate__ticks {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
-.refresh-rate-control__tick--recommended {
+.refresh-rate__tick--recommended {
   color: var(--accent-success);
   font-weight: var(--font-weight-medium);
 }
 
-.refresh-rate-control__value {
+.refresh-rate__value {
   display: flex;
   align-items: baseline;
   gap: var(--space-1);
-  min-width: 5rem;
+  min-width: 4rem;
   justify-content: flex-end;
-  padding-left: var(--space-4);
+  padding-left: var(--space-3);
   border-left: 1px solid var(--border-default);
 }
 
-.refresh-rate-control__input {
-  width: 4.5rem;
-  padding: 0 var(--space-2);
-  font-size: 1.5rem;
+.refresh-rate__input {
+  width: 3.5rem;
+  padding: 0 var(--space-1-5);
+  font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
   color: var(--accent-primary);
   text-align: right;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  outline: none;
 }
 
-.refresh-rate-control__unit {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
+/* ========== 验证错误 ========== */
 .validation-error {
-  margin: var(--space-2) 0 0 calc(36px + var(--space-3));
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
   color: var(--accent-danger);
   font-size: var(--font-size-sm);
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 15%, transparent);
 }
 
+/* ========== 底部 ========== */
 .modal-footer {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-panel-strong);
   border-top: 1px solid var(--border-default);
   border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+}
+
+.modal-footer__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 
 .modal-footer__actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
+/* ========== 滚动条 ========== */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {

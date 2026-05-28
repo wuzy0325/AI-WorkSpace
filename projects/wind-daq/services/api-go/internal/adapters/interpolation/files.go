@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	coreinterp "wind-daq/services/api-go/internal/core/interpolation"
+	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 )
 
 func LoadPrbFile(filePath string) (*coreinterp.PrbInterpolator, error) {

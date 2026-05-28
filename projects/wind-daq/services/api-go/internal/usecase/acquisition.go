@@ -3,6 +3,7 @@ package usecase
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/ports"
@@ -22,6 +23,7 @@ type AcquisitionHub struct {
 	historyByDevice map[string][]device.DataPayload
 	historyCapacity int
 	subscribers     map[string]map[chan device.DataPayload]struct{}
+	lastPublishAt   map[string]time.Time
 }
 
 func NewAcquisitionHub(publisher ports.Publisher, publishHz float64) *AcquisitionHub {
@@ -42,24 +44,36 @@ func NewAcquisitionHubWithHistoryCapacity(publisher ports.Publisher, publishHz f
 		historyByDevice: make(map[string][]device.DataPayload),
 		historyCapacity: historyCapacity,
 		subscribers:     make(map[string]map[chan device.DataPayload]struct{}),
+		lastPublishAt:   make(map[string]time.Time),
 	}
 }
 
 func (h *AcquisitionHub) OnData(payload device.DataPayload) {
 	payload.EnsureNonNilSlices()
 	h.mu.Lock()
+
+	// 始终更新最新数据和历史记录
 	h.latestByDevice[payload.DeviceID] = payload
 	history := append(h.historyByDevice[payload.DeviceID], payload)
 	if len(history) > h.historyCapacity {
 		history = append([]device.DataPayload(nil), history[len(history)-h.historyCapacity:]...)
 	}
 	h.historyByDevice[payload.DeviceID] = history
-	for subscriber := range h.subscribers[payload.DeviceID] {
-		select {
-		case subscriber <- payload:
-		default:
+
+	// 按 publishHz 节流推送到订阅者
+	now := time.Now()
+	lastPublish := h.lastPublishAt[payload.DeviceID]
+	interval := time.Duration(float64(time.Second) / h.publishHz)
+	if now.Sub(lastPublish) >= interval {
+		h.lastPublishAt[payload.DeviceID] = now
+		for subscriber := range h.subscribers[payload.DeviceID] {
+			select {
+			case subscriber <- payload:
+			default:
+			}
 		}
 	}
+
 	h.mu.Unlock()
 }
 

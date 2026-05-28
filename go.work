@@ -1,8 +1,9 @@
 go 1.25.0
 
 use (
+	projects/five-hole-interpolator/apps/desktop-wails
 	projects/wind-daq/apps/desktop-wails
-	projects/wind-daq/apps/five-hole-interpolator
 	projects/wind-daq/services/api-go
+	shared/algorithms/go/fivehole
 	shared/device-sdk/go
 )

@@ -55,6 +55,9 @@ func (s *FileMotionProfileStore) LoadProfiles() ([]motion.MotionControllerProfil
 		return nil, err
 	}
 
+	// 规范化配置：为空的 axes 填充默认值
+	s.profiles = normalizeProfiles(s.profiles)
+
 	return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 }
 
@@ -95,15 +98,74 @@ func getDefaultProfiles() []motion.MotionControllerProfile {
 			AutoConnect: false,
 			Axes: []motion.AxisConfig{
 				{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-
 				{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-
 				{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-
 				{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
 			},
 		},
 	}
+}
+
+// getDefaultAxes 获取默认轴配置（4轴：X/Y/Z/U）
+func getDefaultAxes() []motion.AxisConfig {
+	return []motion.AxisConfig{
+		{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10), StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
+		{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10), StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
+		{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10), StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
+		{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10), StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
+	}
+}
+
+// normalizeAxisConfig 补全轴配置中的 nil 指针字段
+func normalizeAxisConfig(axis motion.AxisConfig) motion.AxisConfig {
+	if axis.StepsPerRev == nil {
+		defaultSteps := 1.8
+		axis.StepsPerRev = &defaultSteps
+	}
+	if axis.MicroSteps == nil {
+		defaultMicro := 4
+		axis.MicroSteps = &defaultMicro
+	}
+	if axis.Lead == nil {
+		defaultLead := 4.0
+		axis.Lead = &defaultLead
+	}
+	if axis.GearRatio == nil {
+		defaultGear := 1.0
+		axis.GearRatio = &defaultGear
+	}
+	if axis.MaxSpeed == nil {
+		defaultSpeed := 10.0
+		axis.MaxSpeed = &defaultSpeed
+	}
+	if axis.EncoderScale == nil {
+		defaultScale := 0.005
+		axis.EncoderScale = &defaultScale
+	}
+	if axis.PositionSource == "" {
+		axis.PositionSource = motion.PositionSourceRegister
+	}
+	return axis
+}
+
+// normalizeProfile 规范化配置：如果 axes 为空，填充默认轴配置；否则补全缺失字段
+func normalizeProfile(profile motion.MotionControllerProfile) motion.MotionControllerProfile {
+	if len(profile.Axes) == 0 {
+		profile.Axes = getDefaultAxes()
+	} else {
+		for i := range profile.Axes {
+			profile.Axes[i] = normalizeAxisConfig(profile.Axes[i])
+		}
+	}
+	return profile
+}
+
+// normalizeProfiles 规范化所有配置
+func normalizeProfiles(profiles []motion.MotionControllerProfile) []motion.MotionControllerProfile {
+	for i := range profiles {
+		profiles[i] = normalizeProfile(profiles[i])
+	}
+	return profiles
 }
 
 // MemoryMotionProfileStore 内存运动控制器配置存储（用于测试）
@@ -123,7 +185,7 @@ func NewMemoryMotionProfileStore() *MemoryMotionProfileStore {
 func (s *MemoryMotionProfileStore) LoadProfiles() ([]motion.MotionControllerProfile, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.profiles, nil
+	return append([]motion.MotionControllerProfile(nil), s.profiles...), nil
 }
 
 // SaveProfiles 保存配置

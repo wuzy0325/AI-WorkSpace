@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	coreinterp "wind-daq/services/api-go/internal/core/interpolation"
+	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"

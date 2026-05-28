@@ -49,16 +49,14 @@ wails dev
 
 前端开发服务器: `http://localhost:5173`
 
-### Wails desktop (五孔探针插值计算)
+### Five-Hole Interpolator
 
 ```powershell
-cd projects/wind-daq/apps/five-hole-interpolator
+cd projects/five-hole-interpolator/apps/desktop-wails
 wails dev
 ```
 
-前端开发服务器: `http://localhost:5174`
-
-> **注意**: 两个 Wails 应用使用不同的 Vite 端口（5173 / 5174），可同时 `wails dev` 启动互不干扰。
+The five-hole interpolator is now an independent project. Wind-DAQ and the standalone app both use `shared/algorithms/go/fivehole` for interpolation.
 
 ### Config
 
@@ -106,9 +104,9 @@ wind-daq/
     └── migration/         # Migration entry, UI parity plan, feature map
 ```
 
-Additional desktop app:
+Related desktop app:
 
-- `apps/five-hole-interpolator/` is a dedicated Wails desktop tool for five-hole probe PRB interpolation. Keep its Vue UI and Wails bindings in the app directory; keep reusable interpolation rules in `services/api-go/internal/core/interpolation` or a usecase layer when orchestration grows.
+- `../five-hole-interpolator/apps/desktop-wails/` is the standalone Wails tool for five-hole probe PRB interpolation. Reusable interpolation rules live in `../../shared/algorithms/go/fivehole`.
 
 ## Development Rules
 

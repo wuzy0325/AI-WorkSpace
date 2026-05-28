@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	interpfiles "wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
-	coreinterp "wind-daq/services/api-go/internal/core/interpolation"
 	"wind-daq/services/api-go/internal/core/motion"
 	wind_report "wind-daq/services/api-go/internal/core/report"
 	"wind-daq/services/api-go/internal/core/storage"

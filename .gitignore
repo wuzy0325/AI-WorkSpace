@@ -3,6 +3,9 @@ node_modules/
 
 # Build output
 dist/
+!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/
+projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/*
+!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/.gitkeep
 build/
 target/
 *.exe

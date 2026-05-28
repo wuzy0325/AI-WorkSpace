@@ -22,7 +22,7 @@
 | 运动控制 (Motion) | 60% | P1 |
 | 校准模块 (Calibration) | 40% | P0 |
 | 报告生成 (Report) | 25% | P1 |
-| 插值算法 (Interpolation) | 0% | P0 |
+| 插值算法 (Interpolation) | 100% | Shared |
 | 运行时基础设施 (Runtime) | 15% | P2 |
 
 **整体完成度约 55%。** 核心框架和基础功能已就位，但校准算法、插值计算和 PDF 报告等专业领域功能严重缺失。
@@ -180,7 +180,7 @@
 
 ---
 
-### 2.9 插值算法模块 (Interpolation) — 完成度: 0%
+### 2.9 插值算法模块 (Interpolation) — 完成度: 100%
 
 | 功能 | 参考项目 | Go 实现 | 状态 |
 |------|---------|---------|------|
@@ -267,7 +267,7 @@ Go 后端有 **21 个测试文件**，覆盖情况如下：
 **缺失的测试:**
 - DAQ-P-1604 和 DAQ-T-1603 硬件驱动无测试
 - 校准算法（五孔/三孔/总压/总温）无测试
-- 插值算法无测试
+- 插值算法测试已迁移到 `shared/algorithms/go/fivehole/interpolation`
 - SSE 流式推送集成测试
 - 并发压力测试
 
@@ -294,10 +294,10 @@ Go 后端有 **21 个测试文件**，覆盖情况如下：
 | B0-5 | 三孔校准算法 | `core/calibration/three_hole.go` | 移植 `ThreeHoleCalibration.ts` 的核心算法 | 三孔校准计算结果与参考项目一致 | ⬜ |
 | B0-6 | 总压校准算法 | `core/calibration/total_pressure.go` | 移植 `TotalPressureCalibration.ts` 的核心算法 | 总压校准计算结果与参考项目一致 | ⬜ |
 | B0-7 | 总温校准算法 | `core/calibration/total_temperature.go` | 移植 `TotalTemperatureCalibration.ts` 的核心算法 | 总温校准计算结果与参考项目一致 | ⬜ |
-| B0-8 | 插值器接口 | `ports/interpolation.go` | 定义 Interpolator 接口 | 接口可被不同插值算法实现 | ⬜ |
-| B0-9 | PRB 插值器 | `core/interpolation/prb.go` | 移植 `PrbInterpolator.ts` | 插值结果与参考项目一致 | ⬜ |
-| B0-10 | 多 PRB 插值器 | `core/interpolation/multi_prb.go` | 移植 `MultiPrbInterpolator.ts` | 插值结果与参考项目一致 | ⬜ |
-| B0-11 | 五孔插值器 | `core/interpolation/five_hole.go` | 移植 `FiveHoleNewInterpolator.ts` | 插值结果与参考项目一致 | ⬜ |
+| B0-8 | 插值器接口 | `shared/algorithms/go/fivehole/interpolation/types.go` | 定义 Interpolator 接口 | 接口可被不同插值算法实现 | ✅ |
+| B0-9 | PRB 插值器 | `shared/algorithms/go/fivehole/interpolation/prb_interpolator.go` | 移植 `PrbInterpolator.ts` | 插值结果与参考项目一致 | ✅ |
+| B0-10 | 多 PRB 插值器 | `shared/algorithms/go/fivehole/interpolation/multi_prb_interpolator.go` | 移植 `MultiPrbInterpolator.ts` | 插值结果与参考项目一致 | ✅ |
+| B0-11 | 五孔插值器 | `shared/algorithms/go/fivehole/interpolation/five_hole_new_interpolator.go` | 移植 `FiveHoleNewInterpolator.ts` | 插值结果与参考项目一致 | ✅ |
 
 ### 6.3 P1 — 高优先级（功能完整性）
 
@@ -356,7 +356,7 @@ Go 后端有 **21 个测试文件**，覆盖情况如下：
 | B0-8: 插值器接口 | ⬜ | - | - |
 | B0-9: PRB 插值器 | ⬜ | - | - |
 | B0-10: 多 PRB 插值器 | ⬜ | - | - |
-| B0-11: 五孔插值器 | ⬜ | - | - |
+| B0-11: 五孔插值器 | ✅ | - | 已迁移到 `shared/algorithms/go/fivehole` |
 
 ### P1 进度
 

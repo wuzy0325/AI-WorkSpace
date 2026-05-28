@@ -19,6 +19,7 @@ import LogViewer from '@views/LogViewer.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useStorageStore } from '@stores/storageStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { subscribeDaqStream } from '@api/sse-client'
 
@@ -27,6 +28,7 @@ type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
 const feedbackStore = useFeedbackStore()
+const storageStore = useStorageStore()
 const { t, locale } = storeToRefs(i18n)
 
 const activePage = ref<MainShellPage>('dashboard')
@@ -95,14 +97,11 @@ async function start(): Promise<void> {
     // 采集启动后主动刷新实例状态，采集按钮立即响应
     await deviceStore.refreshInstances()
     // 检查 autoStartOnAcquisition 配置，自动开始记录
-    const saved = window.localStorage.getItem('wind-daq.global-settings')
-    if (saved) {
-      try {
-        const settings = JSON.parse(saved)
-        if (settings.autoStartOnAcquisition && !isRecording.value) {
-          await toggleRecording()
-        }
-      } catch { /* 忽略解析错误 */ }
+    if (storageStore.settings.autoStartOnAcquisition && !isRecording.value) {
+      // 从全局设置同步保存目录和文件前缀，确保使用用户配置的值
+      recordingOutputDir.value = storageStore.settings.baseDirectory || 'data/recordings'
+      recordingFilePrefix.value = storageStore.settings.filePrefix || 'run'
+      await toggleRecording()
     }
   })
 }
@@ -113,6 +112,10 @@ async function stop(): Promise<void> {
     await deviceStore.stopAcquisition(id)
     // 停止采集后也刷新实例状态，按钮同步更新
     await deviceStore.refreshInstances()
+    // 如果记录正在运行，同步停止记录
+    if (isRecording.value) {
+      await toggleRecording()
+    }
   })
 }
 
@@ -121,6 +124,8 @@ async function refreshStorageStatus(): Promise<void> {
     const status = await storageApi.status()
     isRecording.value = status.recording
     if (status.outputDir) recordingOutputDir.value = status.outputDir
+    // 从全局设置同步文件前缀，确保手动录制也使用用户配置的值
+    recordingFilePrefix.value = storageStore.settings.filePrefix || 'run'
   } catch {
     // Storage status is non-critical for the main shell.
   }
@@ -138,11 +143,12 @@ async function toggleRecording(): Promise<void> {
     await storageApi.start(recordingOutputDir.value, recordingFilePrefix.value)
     isRecording.value = true
     feedbackStore.pushToast(t.value.startedRecording || '已开始记录数据', 'success')
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
     feedbackStore.pushToast(
       isRecording.value
-        ? (t.value.failedToStopRecording || '停止记录失败')
-        : (t.value.failedToStartRecording || '启动记录失败'),
+        ? (t.value.failedToStopRecording || '停止记录失败') + ': ' + message
+        : (t.value.failedToStartRecording || '启动记录失败') + ': ' + message,
       'error',
     )
   }
@@ -197,6 +203,7 @@ onMounted(async () => {
   }
   await run(ensureProfile)
   unsubscribeDeviceSnapshots = deviceStore.attachStatusListener()
+  await storageStore.loadSettings()
   await refreshStorageStatus()
 })
 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   CalibrationConfig,
   CalibrationType,
@@ -56,12 +56,54 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const uiRefreshHz = ref(5)
   const uiRefreshIntervalMs = computed(() => 1000 / uiRefreshHz.value)
 
+  // 压力数据节流控制
+  let lastPressureUpdateAt = 0
+  let pendingPressureUpdate: RealtimePressures | null = null
+  let pressureThrottleTimer: ReturnType<typeof setTimeout> | null = null
+
+  function cancelPressureThrottle(): void {
+    if (pressureThrottleTimer !== null) {
+      clearTimeout(pressureThrottleTimer)
+      pressureThrottleTimer = null
+    }
+    pendingPressureUpdate = null
+  }
+
+  function flushPendingPressureIfReady(): void {
+    if (pendingPressureUpdate === null) return
+
+    if (pressureThrottleTimer !== null) {
+      clearTimeout(pressureThrottleTimer)
+      pressureThrottleTimer = null
+    }
+
+    const now = Date.now()
+    const intervalMs = Math.round(uiRefreshIntervalMs.value)
+
+    if (now - lastPressureUpdateAt >= intervalMs) {
+      realtimePressures.value = pendingPressureUpdate
+      pendingPressureUpdate = null
+      lastPressureUpdateAt = now
+    } else {
+      const delay = intervalMs - (now - lastPressureUpdateAt)
+      pressureThrottleTimer = setTimeout(() => {
+        if (pendingPressureUpdate !== null) {
+          realtimePressures.value = pendingPressureUpdate
+          pendingPressureUpdate = null
+        }
+        lastPressureUpdateAt = Date.now()
+        pressureThrottleTimer = null
+      }, delay)
+    }
+  }
+
   function setUiRefreshHz(hz: number) {
     uiRefreshHz.value = Math.max(1, Math.min(60, hz))
   }
 
   function updateRealtimePressures(pressures: RealtimePressures) {
-    realtimePressures.value = pressures
+    pendingPressureUpdate = pressures
+    flushPendingPressureIfReady()
   }
 
   // 开始轮询校准状态
@@ -78,7 +120,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
       } catch (err) {
         console.error('轮询校准状态失败:', err)
       }
-    }, uiRefreshIntervalMs.value)
+    }, Math.round(uiRefreshIntervalMs.value))
   }
 
   // 停止轮询
@@ -143,6 +185,18 @@ export const useCalibrationStore = defineStore('calibration', () => {
       default: return 'idle'
     }
   }
+
+  // 监听刷新频率变化：重新创建压力节流定时器
+  watch(uiRefreshHz, () => {
+    flushPendingPressureIfReady()
+  })
+
+  // 监听刷新频率变化：重新创建状态轮询定时器
+  watch(uiRefreshHz, () => {
+    if (isRunning.value && isWailsAvailable()) {
+      startStatusPolling()
+    }
+  })
 
   async function startCalibration(config: CalibrationConfig) {
     let taskId: string
@@ -227,6 +281,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
   }
 
   function reset() {
+    cancelPressureThrottle()
     stopStatusPolling()
     status.value = null
     isRunning.value = false

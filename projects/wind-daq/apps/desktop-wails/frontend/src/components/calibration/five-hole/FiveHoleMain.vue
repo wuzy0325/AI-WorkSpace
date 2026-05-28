@@ -667,7 +667,7 @@ function updateCharts() {
 let chartTimer: ReturnType<typeof setInterval> | null = null
 function startChartTimer(): void {
   if (chartTimer) clearInterval(chartTimer)
-  chartTimer = setInterval(updateCharts, calibrationStore.uiRefreshIntervalMs)
+  chartTimer = setInterval(updateCharts, Math.round(calibrationStore.uiRefreshIntervalMs))
 }
 
 onMounted(() => {

@@ -71,7 +71,7 @@ watch(
   position: fixed;
   top: 1rem;
   right: 1rem;
-  z-index: 100;
+  z-index: 300;
   display: flex;
   width: 380px;
   max-width: calc(100vw - 2rem);

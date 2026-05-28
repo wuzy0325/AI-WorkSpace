@@ -142,7 +142,7 @@ shared/device-sdk/go/              # Cross-project reusable device primitives
 - [x] 2.2 Move domain types from `internal/motion/types.go` → `core/motion/types.go`
 - [x] 2.3 Move `internal/calibration/types.go` → `core/calibration/types.go`
 - [x] 2.4 Move `internal/calibration/formulas.go` → `core/calibration/formulas.go` (pure math, verify zero imports)
-- [x] 2.5 Move `internal/interpolation/*` → `core/interpolation/*` (pure math, verify zero imports)
+- [x] 2.5 Extract reusable five-hole interpolation algorithms to `shared/algorithms/go/fivehole`
 - [x] 2.6 Extract traversal domain types from `internal/traversal/service.go` → `core/traversal/types.go`
 - [x] 2.7 Verify: `go build ./internal/core/...` passes, zero external imports
 
