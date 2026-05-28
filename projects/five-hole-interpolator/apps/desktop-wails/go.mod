@@ -1,13 +1,13 @@
-module wind-daq/apps/five-hole-interpolator
+module five-hole-interpolator/apps/desktop-wails
 
 go 1.25.0
 
 require (
+	ai-workspace/shared/algorithms/go/fivehole v0.0.0
 	github.com/wailsapp/wails/v2 v2.12.0
-	wind-daq/services/api-go v0.0.0
 )
 
-replace wind-daq/services/api-go => ../../services/api-go
+replace ai-workspace/shared/algorithms/go/fivehole => ../../../../shared/algorithms/go/fivehole
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect

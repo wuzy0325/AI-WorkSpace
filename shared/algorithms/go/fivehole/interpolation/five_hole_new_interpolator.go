@@ -358,8 +358,8 @@ func validateCalibrationGrid(rows []calibrationRow) error {
 		points[calibrationPointKey(row.Alpha, row.Beta)] = true
 	}
 
-	alphas := sortedKeys(alphaSet)
-	betas := sortedKeys(betaSet)
+	alphas := sortedFloat64Keys(alphaSet)
+	betas := sortedFloat64Keys(betaSet)
 	if len(alphas) < 2 || len(betas) < 2 {
 		return fmt.Errorf("CSV校准网格至少需要2个alpha和2个beta角度")
 	}
@@ -387,8 +387,8 @@ func (f *FiveHoleNewInterpolator) buildAllGrids() {
 		betaSet[row.Beta] = true
 	}
 
-	f.sortedAlphas = sortedKeys(alphaSet)
-	f.sortedBetas = sortedKeys(betaSet)
+	f.sortedAlphas = sortedFloat64Keys(alphaSet)
+	f.sortedBetas = sortedFloat64Keys(betaSet)
 
 	f.aa1Grid, f.aa1BetaGroups = f.buildGrid(aaFormula1)
 	f.aa2Grid, f.aa2BetaGroups = f.buildGrid(aaFormula2)
@@ -550,8 +550,8 @@ type subGridPoint struct {
 
 // findGridCell 在原始网格中查找包含目标点的网格单元
 func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups, betaGroups map[float64][]gridPoint) *gridCell {
-	alphas := sortedMapKeys(alphaGroups)
-	betas := sortedMapKeys(betaGroups)
+	alphas := sortedFloat64Keys(alphaGroups)
+	betas := sortedFloat64Keys(betaGroups)
 
 	findPoint := func(alpha, beta float64) *gridPoint {
 		group, ok := alphaGroups[alpha]
@@ -729,8 +729,8 @@ func (f *FiveHoleNewInterpolator) findNearestSubGridPoint(px, py float64, cell *
 // ==================== 扩展网格 ====================
 
 func (f *FiveHoleNewInterpolator) generateExtendedGrid(alphaGroups, betaGroups map[float64][]gridPoint) *extendedGrid {
-	alphas := sortedMapKeys(alphaGroups)
-	betas := sortedMapKeys(betaGroups)
+	alphas := sortedFloat64Keys(alphaGroups)
+	betas := sortedFloat64Keys(betaGroups)
 
 	if len(alphas) < 2 || len(betas) < 2 {
 		return nil
@@ -767,8 +767,8 @@ func (f *FiveHoleNewInterpolator) generateExtendedGrid(alphaGroups, betaGroups m
 	}
 
 	return &extendedGrid{
-		AllAlphas:      sortedBoolKeys(allAlphas),
-		AllBetas:       sortedBoolKeys(allBetas),
+		AllAlphas:      sortedFloat64Keys(allAlphas),
+		AllBetas:       sortedFloat64Keys(allBetas),
 		AlphaSpacing:   alphaSpacing,
 		BetaSpacing:    betaSpacing,
 		OriginalAlphas: alphas,
@@ -796,25 +796,8 @@ func bilinearInterpolate(v00, v01, v10, v11, t1, t2 float64) float64 {
 
 // ==================== 通用工具 ====================
 
-func sortedKeys(m map[float64]bool) []float64 {
-	keys := make([]float64, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Float64s(keys)
-	return keys
-}
-
-func sortedMapKeys(m map[float64][]gridPoint) []float64 {
-	keys := make([]float64, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Float64s(keys)
-	return keys
-}
-
-func sortedBoolKeys(m map[float64]bool) []float64 {
+// sortedFloat64Keys 从 map[float64]V 中提取 key 并排序
+func sortedFloat64Keys[V any](m map[float64]V) []float64 {
 	keys := make([]float64, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

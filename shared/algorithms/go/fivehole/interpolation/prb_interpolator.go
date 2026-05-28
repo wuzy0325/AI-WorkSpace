@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-
-	calibration "wind-daq/services/api-go/internal/core/calibration"
 )
 
 // ==================== 常量定义 ====================
@@ -88,7 +86,7 @@ type region9Cell struct {
 type indexedCalibrationTable struct {
 	Rows                     []probeTableRow
 	GetExactGridPoint        func(alpha, beta float64) *probeTableRow
-	GetExactGridPointOrThrow func(alpha, beta float64) probeTableRow
+	GetExactGridPointOrThrow func(alpha, beta float64) (probeTableRow, error)
 }
 
 // ==================== PrbInterpolator PRB插值器 ====================
@@ -114,6 +112,7 @@ type PrbInterpolator struct {
 type prbInterpolationContext struct {
 	ValidRange     PrbValidRange
 	GetInterResult func(input runtimeInput) interResult
+	AtmCalc        *AtmosphericDataCalculator
 }
 
 // runtimeInput 运行时插值输入
@@ -157,9 +156,11 @@ func (p *PrbInterpolator) LoadPrbLines(lines []string, source string) error {
 
 	validRange := createValidRange(rows, source)
 
+	atmCalc := NewAtmosphericDataCalculator()
 	p.context = &prbInterpolationContext{
 		ValidRange:     validRange,
-		GetInterResult: createInterResultCalculator(indexedTable),
+		GetInterResult: createInterResultCalculator(indexedTable, atmCalc),
+		AtmCalc:        atmCalc,
 	}
 	p.validRange = validRange
 	p.loaded = true
@@ -177,7 +178,13 @@ func (p *PrbInterpolator) GetValidRange() PrbValidRange {
 }
 
 // Calculate 执行插值计算
-func (p *PrbInterpolator) Calculate(input InterpolationInput) (InterpolationResult, error) {
+func (p *PrbInterpolator) Calculate(input InterpolationInput) (result InterpolationResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("插值计算内部panic: %v", r)
+		}
+	}()
+
 	if !p.loaded || p.context == nil {
 		return InterpolationResult{}, fmt.Errorf("PRB文件未加载")
 	}
@@ -185,8 +192,8 @@ func (p *PrbInterpolator) Calculate(input InterpolationInput) (InterpolationResu
 	rtInput := toRuntimeInput(input)
 	warnings := collectInputWarnings(rtInput)
 
-	result := p.context.GetInterResult(rtInput)
-	return toInterpolationResult(result, rtInput, p.context.ValidRange, warnings), nil
+	interResult := p.context.GetInterResult(rtInput)
+	return toInterpolationResult(interResult, rtInput, p.context.ValidRange, warnings, p.context.AtmCalc), nil
 }
 
 func (p *PrbInterpolator) clearState() {
@@ -323,12 +330,12 @@ func validateAndIndexTable(table []probeTableRow) (*indexedCalibrationTable, err
 			}
 			return nil
 		},
-		GetExactGridPointOrThrow: func(alpha, beta float64) probeTableRow {
+		GetExactGridPointOrThrow: func(alpha, beta float64) (probeTableRow, error) {
 			row, ok := byGridPoint[gridPointKey(alpha, beta)]
 			if !ok {
-				panic(fmt.Sprintf("校准表不包含网格点(%.0f,%.0f)", alpha, beta))
+				return probeTableRow{}, fmt.Errorf("校准表不包含网格点(%.0f,%.0f)", alpha, beta)
 			}
-			return row
+			return row, nil
 		},
 	}, nil
 }
@@ -383,7 +390,7 @@ func createValidRange(rows []probeTableRow, filePath string) PrbValidRange {
 
 // ==================== 插值计算核心 ====================
 
-func createInterResultCalculator(table *indexedCalibrationTable) func(input runtimeInput) interResult {
+func createInterResultCalculator(table *indexedCalibrationTable, atmCalc *AtmosphericDataCalculator) func(input runtimeInput) interResult {
 	// 预计算边界点
 	region2Boundary := createBoundaryPoints(table.Rows,
 		func(row probeTableRow) bool { return row.Beta == gridMinAngle && row.Kb < 0 },
@@ -403,10 +410,22 @@ func createInterResultCalculator(table *indexedCalibrationTable) func(input runt
 	)
 
 	// 预计算角点
-	region1Corner := table.GetExactGridPointOrThrow(gridMinAngle, gridMinAngle)
-	region3Corner := table.GetExactGridPointOrThrow(gridMaxAngle, gridMinAngle)
-	region5Corner := table.GetExactGridPointOrThrow(gridMaxAngle, gridMaxAngle)
-	region7Corner := table.GetExactGridPointOrThrow(gridMinAngle, gridMaxAngle)
+	region1Corner, err := table.GetExactGridPointOrThrow(gridMinAngle, gridMinAngle)
+	if err != nil {
+		panic(err)
+	}
+	region3Corner, err := table.GetExactGridPointOrThrow(gridMaxAngle, gridMinAngle)
+	if err != nil {
+		panic(err)
+	}
+	region5Corner, err := table.GetExactGridPointOrThrow(gridMaxAngle, gridMaxAngle)
+	if err != nil {
+		panic(err)
+	}
+	region7Corner, err := table.GetExactGridPointOrThrow(gridMinAngle, gridMaxAngle)
+	if err != nil {
+		panic(err)
+	}
 
 	// 预计算区域9网格单元
 	region9Cells := createRegion9Cells(table.GetExactGridPointOrThrow)
@@ -441,8 +460,8 @@ func createInterResultCalculator(table *indexedCalibrationTable) func(input runt
 		avg := (input.FiveHoleData[0] + input.FiveHoleData[2] + input.FiveHoleData[3] + input.FiveHoleData[4]) * 0.25
 		ps := avg - cps*delta
 
-		v := calculateVelocity(input, pt, ps)
-		ma := calculateMachFromPressures(input, pt, ps)
+		v := calculateVelocity(atmCalc, input, pt, ps)
+		ma := calculateMachFromPressures(atmCalc, input, pt, ps)
 
 		return interResult{
 			Alpha: alpha,
@@ -634,10 +653,22 @@ func interpolateOutputValue(point interpolationPoint, table *indexedCalibrationT
 	alpha1, alpha2 := resolveOutputCellAxis(*point.Alpha)
 	beta1, beta2 := resolveOutputCellAxis(*point.Beta)
 
-	x1 := table.GetExactGridPointOrThrow(alpha1, beta1)
-	x2 := table.GetExactGridPointOrThrow(alpha2, beta1)
-	x3 := table.GetExactGridPointOrThrow(alpha2, beta2)
-	x4 := table.GetExactGridPointOrThrow(alpha1, beta2)
+	x1, err := table.GetExactGridPointOrThrow(alpha1, beta1)
+	if err != nil {
+		return 0
+	}
+	x2, err := table.GetExactGridPointOrThrow(alpha2, beta1)
+	if err != nil {
+		return 0
+	}
+	x3, err := table.GetExactGridPointOrThrow(alpha2, beta2)
+	if err != nil {
+		return 0
+	}
+	x4, err := table.GetExactGridPointOrThrow(alpha1, beta2)
+	if err != nil {
+		return 0
+	}
 
 	lowerEdge := interpolateValue(selector(x1), selector(x2), interpolateFactor(*point.Alpha, x1.Alpha, x2.Alpha))
 	upperEdge := interpolateValue(selector(x4), selector(x3), interpolateFactor(*point.Alpha, x4.Alpha, x3.Alpha))
@@ -661,14 +692,16 @@ func createBoundaryPoints(
 	predicate func(probeTableRow) bool,
 	angleSelector func(probeTableRow) float64,
 ) []boundaryPoint {
-	boundaryByAngle := make(map[float64]boundaryPoint)
+	// 使用整数作为 map key 避免浮点精度问题
+	boundaryByAngle := make(map[int]boundaryPoint)
 
 	for _, row := range table {
 		if !predicate(row) {
 			continue
 		}
 		angle := angleSelector(row)
-		boundaryByAngle[angle] = boundaryPoint{
+		angleKey := int(math.Round(angle * 1000))
+		boundaryByAngle[angleKey] = boundaryPoint{
 			Ka:    row.Ka,
 			Kb:    row.Kb,
 			Alpha: row.Alpha,
@@ -678,23 +711,36 @@ func createBoundaryPoints(
 
 	var boundary []boundaryPoint
 	for a := float64(gridMinAngle); a <= gridMaxAngle; a += gridStep {
-		if bp, ok := boundaryByAngle[a]; ok {
+		angleKey := int(math.Round(a * 1000))
+		if bp, ok := boundaryByAngle[angleKey]; ok {
 			boundary = append(boundary, bp)
 		}
 	}
 	return boundary
 }
 
-func createRegion9Cells(getExact func(float64, float64) probeTableRow) []region9Cell {
+func createRegion9Cells(getExact func(float64, float64) (probeTableRow, error)) []region9Cell {
 	var cells []region9Cell
 	angles := createGridAngles()
 
 	for i := 0; i < len(angles)-1; i++ {
 		for j := 0; j < len(angles)-1; j++ {
-			x1 := getExact(angles[i], angles[j])
-			x2 := getExact(angles[i+1], angles[j])
-			x3 := getExact(angles[i+1], angles[j+1])
-			x4 := getExact(angles[i], angles[j+1])
+			x1, err := getExact(angles[i], angles[j])
+			if err != nil {
+				continue
+			}
+			x2, err := getExact(angles[i+1], angles[j])
+			if err != nil {
+				continue
+			}
+			x3, err := getExact(angles[i+1], angles[j+1])
+			if err != nil {
+				continue
+			}
+			x4, err := getExact(angles[i], angles[j+1])
+			if err != nil {
+				continue
+			}
 
 			cells = append(cells, region9Cell{
 				X1: x1, X2: x2, X3: x3, X4: x4,
@@ -797,7 +843,7 @@ func calculatePressureDelta(input runtimeInput) (avg, delta float64) {
 
 // calculateVelocity 计算真空速（使用 AtmosphericDataCalculator 声速马赫数法）
 // 需要绝对总压、绝对静压和总温（开氏温度）
-func calculateVelocity(input runtimeInput, pt, ps float64) float64 {
+func calculateVelocity(calc *AtmosphericDataCalculator, input runtimeInput, pt, ps float64) float64 {
 	absPt := pt + input.AtmP
 	absPs := ps + input.AtmP
 	tempK := input.AtmT + 273.15
@@ -806,7 +852,6 @@ func calculateVelocity(input runtimeInput, pt, ps float64) float64 {
 		return 0
 	}
 
-	calc := calibration.NewAtmosphericDataCalculator()
 	ma, err := calc.CalculateMach(absPt, absPs)
 	if err != nil {
 		return 0
@@ -817,14 +862,13 @@ func calculateVelocity(input runtimeInput, pt, ps float64) float64 {
 }
 
 // calculateMachFromPressures 计算马赫数（使用 AtmosphericDataCalculator）
-func calculateMachFromPressures(input runtimeInput, pt, ps float64) float64 {
+func calculateMachFromPressures(calc *AtmosphericDataCalculator, input runtimeInput, pt, ps float64) float64 {
 	absPt := pt + input.AtmP
 	absPs := ps + input.AtmP
 	if absPs <= 0 || absPt <= absPs {
 		return 0
 	}
 
-	calc := calibration.NewAtmosphericDataCalculator()
 	ma, err := calc.CalculateMach(absPt, absPs)
 	if err != nil {
 		return 0
@@ -873,26 +917,26 @@ func collectInputWarnings(input runtimeInput) []string {
 	return warnings
 }
 
-func toInterpolationResult(result interResult, input runtimeInput, validRange PrbValidRange, warnings []string) InterpolationResult {
+func toInterpolationResult(result interResult, input runtimeInput, validRange PrbValidRange, warnings []string, atmCalc *AtmosphericDataCalculator) InterpolationResult {
 	dynamicPressure := result.Pt - result.Ps
 	tempK := input.AtmT + 273.15
 	absPt := input.AtmP + result.Pt
 	absPs := input.AtmP + result.Ps
+	vx, vy, vz := calculateVelocityComponents(result.V, result.Alpha, result.Beta)
 
 	var density float64
 	if isFinite(absPs) && absPs > 0 && tempK > 0 {
 		density = absPs / (gasConstantAir * tempK)
 	}
 
-	// 使用 AtmosphericDataCalculator 计算 CAS 和 SAT
+	// 使用复用的 AtmosphericDataCalculator 计算 CAS 和 SAT
 	var cas float64
 	var sat float64
-	calc := calibration.NewAtmosphericDataCalculator()
 	if absPs > 0 && absPt > absPs && tempK > 0 {
-		if ma, err := calc.CalculateMach(absPt, absPs); err == nil {
-			sat = calc.CalculateSAT(tempK, ma)
-			qc := calc.CalculateQc(absPt, absPs)
-			cas = calc.CalculateCAS(qc)
+		if ma, err := atmCalc.CalculateMach(absPt, absPs); err == nil {
+			sat = atmCalc.CalculateSAT(tempK, ma)
+			qc := atmCalc.CalculateQc(absPt, absPs)
+			cas = atmCalc.CalculateCAS(qc)
 		}
 	}
 
@@ -928,6 +972,10 @@ func toInterpolationResult(result interResult, input runtimeInput, validRange Pr
 		Alpha:           result.Alpha,
 		Beta:            result.Beta,
 		MachNumber:      result.Ma,
+		V:               result.V,
+		Vx:              vx,
+		Vy:              vy,
+		Vz:              vz,
 		Velocity:        result.V,
 		CAS:             ternary(isFinite(cas), cas, 0),
 		SAT:             ternary(isFinite(sat), sat, 0),
@@ -938,6 +986,20 @@ func toInterpolationResult(result interResult, input runtimeInput, validRange Pr
 		IsValid:         isValid,
 		Warning:         warningStr,
 	}
+}
+
+func calculateVelocityComponents(v, alphaDeg, betaDeg float64) (vx, vy, vz float64) {
+	if !isFinite(v) || !isFinite(alphaDeg) || !isFinite(betaDeg) {
+		return 0, 0, 0
+	}
+
+	alpha := alphaDeg * math.Pi / 180
+	beta := betaDeg * math.Pi / 180
+
+	vx = v * math.Cos(beta) * math.Sin(alpha)
+	vy = v * math.Sin(beta)
+	vz = v * math.Cos(beta) * math.Cos(alpha)
+	return vx, vy, vz
 }
 
 func appendUnique(warnings []string, msg string) []string {

@@ -177,6 +177,8 @@ export namespace backend {
 	    alphaMax: number;
 	    betaMin: number;
 	    betaMax: number;
+	    machMin: number;
+	    machMax: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PrbValidRange(source);
@@ -188,6 +190,8 @@ export namespace backend {
 	        this.alphaMax = source["alphaMax"];
 	        this.betaMin = source["betaMin"];
 	        this.betaMax = source["betaMax"];
+	        this.machMin = source["machMin"];
+	        this.machMax = source["machMax"];
 	    }
 	}
 	export class PrbFileInfo {

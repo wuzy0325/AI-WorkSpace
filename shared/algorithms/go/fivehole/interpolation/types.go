@@ -5,6 +5,10 @@ type InterpolationResult struct {
 	Alpha           float64 `json:"alpha"`             // 攻角 (度)
 	Beta            float64 `json:"beta"`              // 侧滑角 (度)
 	MachNumber      float64 `json:"machNumber"`        // 马赫数
+	V               float64 `json:"V"`                 // 速度 (m/s)
+	Vx              float64 `json:"Vx"`                // X方向速度分量 (m/s)
+	Vy              float64 `json:"Vy"`                // Y方向速度分量 (m/s)
+	Vz              float64 `json:"Vz"`                // Z方向速度分量 (m/s)
 	Velocity        float64 `json:"velocity"`          // 真空速 TAS (m/s)
 	CAS             float64 `json:"cas"`               // 校正空速 CAS (m/s)
 	SAT             float64 `json:"sat"`               // 静温 SAT (K)

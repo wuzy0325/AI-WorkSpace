@@ -255,9 +255,13 @@ func (m *MultiPrbInterpolator) calculateWithLinear(targetMa float64, input Inter
 	weight := (targetMa - lowerMa) / (upperMa - lowerMa)
 
 	result := InterpolationResult{
-		Alpha:           lerp(lowerResult.Alpha, upperResult.Alpha, weight),
-		Beta:            lerp(lowerResult.Beta, upperResult.Beta, weight),
+		Alpha:           angleLerp(lowerResult.Alpha, upperResult.Alpha, weight),
+		Beta:            angleLerp(lowerResult.Beta, upperResult.Beta, weight),
 		MachNumber:      lerp(lowerResult.MachNumber, upperResult.MachNumber, weight),
+		V:               lerp(lowerResult.V, upperResult.V, weight),
+		Vx:              lerp(lowerResult.Vx, upperResult.Vx, weight),
+		Vy:              lerp(lowerResult.Vy, upperResult.Vy, weight),
+		Vz:              lerp(lowerResult.Vz, upperResult.Vz, weight),
 		Velocity:        lerp(lowerResult.Velocity, upperResult.Velocity, weight),
 		CAS:             lerp(lowerResult.CAS, upperResult.CAS, weight),
 		SAT:             lerp(lowerResult.SAT, upperResult.SAT, weight),
@@ -336,6 +340,27 @@ func (m *MultiPrbInterpolator) findMachInterval(targetMa float64) (lower, upper 
 
 func lerp(a, b, t float64) float64 {
 	return a + (b-a)*t
+}
+
+// angleLerp 角度线性插值，处理符号不一致时的最短路径插值
+// 当两个角度符号不一致时，直接 lerp 可能走长路径（如 -170° 到 170° 应经过 180° 而非 0°）
+func angleLerp(a, b, t float64) float64 {
+	diff := b - a
+	// 取最短角度路径
+	if diff > 180 {
+		diff -= 360
+	} else if diff < -180 {
+		diff += 360
+	}
+	result := a + diff*t
+	// 归一化到 [-180, 180)
+	for result <= -180 {
+		result += 360
+	}
+	for result > 180 {
+		result -= 360
+	}
+	return result
 }
 
 func containsFloat(slice []float64, val float64) bool {

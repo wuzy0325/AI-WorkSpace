@@ -1,53 +1,25 @@
 import * as WailsApp from '../wailsjs/go/backend/App'
 import { backend } from '../wailsjs/go/models'
 
-// ==================== 类型导出 ====================
-export type GenericResponse = backend.GenericResponse
 export type PrbFileInfo = backend.PrbFileInfo
 export type PrbValidRange = backend.PrbValidRange
 export type LoadPrbResult = backend.LoadPrbResult
 export type InterpolationInput = backend.InterpolationInput
 export type InterpolationResult = backend.InterpolationResult
-type ApiResponse<T> = GenericResponse & { data?: T | null }
 
-// ==================== Wails 可用性检测 ====================
+// GenericResponse 不在 Wails 生成的 models.ts 中，手动定义
+export interface GenericResponse {
+  success: boolean
+  error?: string
+}
+
 export function isWailsAvailable(): boolean {
   return typeof window !== 'undefined' && !!(window as any).go?.backend?.App
 }
 
-// ==================== 辅助函数 ====================
-
-// Wails 多返回值处理：Go 返回 (GenericResponse, T) 时，
-// Wails 实际返回两个独立的 Promise 结果，第一个是 GenericResponse，第二个是 T
-// 需要分别判断类型来提取
-function isGenericResponse(obj: any): obj is GenericResponse {
-  return obj && typeof obj === 'object' && 'success' in obj
-}
-
-// 从 Wails 的联合类型返回值中分离出 GenericResponse 和数据
-// Wails 对多返回值的处理：返回值可能是按顺序的，第一个是 response
-function splitMultiReturn<T>(raw: any): [GenericResponse, T | null] {
-  if (raw && typeof raw === 'object' && 'success' in raw && 'data' in raw) {
-    const resp = raw as ApiResponse<T>
-    return [resp, resp.data ?? null]
-  }
-  // 如果返回的是数组（某些 Wails 版本）
-  if (Array.isArray(raw)) {
-    const resp = raw[0] as GenericResponse
-    const data = raw.length > 1 ? (raw[1] as T) : null
-    return [resp, data]
-  }
-  // 如果返回的是单个 GenericResponse（表示失败）
-  if (isGenericResponse(raw) && !raw.success) {
-    return [raw, null]
-  }
-  // 如果返回的是单个对象且包含 success: true，可能是 response 本身
-  if (isGenericResponse(raw) && raw.success) {
-    return [raw, null]
-  }
-  // 其他情况
-  return [{ success: true } as GenericResponse, raw as T]
-}
+// #4/#20 修复：简化 Wails 适配器
+// Wails v2 绑定机制将 Go 方法的单个返回值序列化为 JSON 对象
+// 直接使用 Response 对象的 data 字段即可，无需复杂的 splitMultiReturn 逻辑
 
 function getMachRangeFromFiles(files: PrbFileInfo[]): number[] {
   const machNumbers = files.map(file => file.machNumber).filter(Number.isFinite)
@@ -63,26 +35,28 @@ function createLoadPrbResult(files: PrbFileInfo[], machRange?: number[], warning
   })
 }
 
-// ==================== API 封装 ====================
 export const api = {
   async loadPrbFiles(): Promise<[GenericResponse, LoadPrbResult | null]> {
     try {
       const result = await WailsApp.LoadPrbFiles()
-      const [resp, data] = splitMultiReturn<LoadPrbResult>(result)
-      if (!resp.success) return [resp, null]
-      if (data && Array.isArray(data.files)) {
-        return [resp, createLoadPrbResult(data.files, data.machRange, data.warnings)]
+      // Wails 返回 LoadPrbResponse 对象，直接使用其字段
+      if (!result.success) {
+        return [{ success: false, error: result.error } as GenericResponse, null]
+      }
+      if (result.data && Array.isArray(result.data.files)) {
+        return [
+          { success: true } as GenericResponse,
+          createLoadPrbResult(result.data.files, result.data.machRange, result.data.warnings),
+        ]
       }
 
+      // 回退：从 GetPrbFiles 获取文件信息
       const files = await WailsApp.GetPrbFiles()
       if (Array.isArray(files) && files.length > 0) {
-        return [resp, createLoadPrbResult(files)]
+        return [{ success: true } as GenericResponse, createLoadPrbResult(files)]
       }
 
-      if (resp.success) {
-        return [{ success: false, error: 'PRB 文件加载成功但未返回文件信息' } as GenericResponse, null]
-      }
-      return [resp, null]
+      return [{ success: false, error: 'PRB 文件加载成功但未返回文件信息' } as GenericResponse, null]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, null]
     }
@@ -107,8 +81,10 @@ export const api = {
   async batchCalculate(datas: InterpolationInput[]): Promise<[GenericResponse, InterpolationResult[]]> {
     try {
       const result = await WailsApp.BatchCalculate(datas)
-      const [resp, results] = splitMultiReturn<InterpolationResult[]>(result)
-      return [resp, results ?? []]
+      if (!result.success) {
+        return [{ success: false, error: result.error } as GenericResponse, []]
+      }
+      return [{ success: true } as GenericResponse, result.data ?? []]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, []]
     }
@@ -117,7 +93,10 @@ export const api = {
   async calculate(input: InterpolationInput): Promise<[GenericResponse, InterpolationResult | null]> {
     try {
       const result = await WailsApp.Calculate(input)
-      return splitMultiReturn<InterpolationResult>(result)
+      if (!result.success) {
+        return [{ success: false, error: result.error } as GenericResponse, null]
+      }
+      return [{ success: true } as GenericResponse, result.data ?? null]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, null]
     }
@@ -126,8 +105,10 @@ export const api = {
   async importCsvData(): Promise<[GenericResponse, InterpolationInput[]]> {
     try {
       const result = await WailsApp.ImportCsvData()
-      const [resp, data] = splitMultiReturn<InterpolationInput[]>(result)
-      return [resp, data ?? []]
+      if (!result.success) {
+        return [{ success: false, error: result.error } as GenericResponse, []]
+      }
+      return [{ success: true } as GenericResponse, result.data ?? []]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, []]
     }

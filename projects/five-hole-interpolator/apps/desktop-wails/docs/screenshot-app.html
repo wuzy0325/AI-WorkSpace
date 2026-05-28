@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>五孔探针插值计算 - 截图</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #f1f5f9;
+            padding: 20px;
+        }
+        .mock-window {
+            width: 1200px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+            overflow: hidden;
+            margin: 0 auto;
+        }
+        /* 标题栏 */
+        .app-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-brand { display: flex; align-items: center; gap: 10px; }
+        .logo {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, #6366f1, #4338ca);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            color: white;
+        }
+        .brand-text h1 { font-size: 18px; font-weight: 700; color: white; }
+        .brand-text .subtitle { font-size: 10px; color: #94a3b8; }
+        .header-actions { display: flex; gap: 8px; }
+        .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 14px; border: none; border-radius: 6px;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+        }
+        .btn-help { background: transparent; color: #94a3b8; border: 1px solid #475569; }
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #4338ca);
+            color: white;
+        }
+        /* 信息卡片 */
+        .info-card {
+            background: white;
+            margin: 10px 14px;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        .info-item { display: flex; flex-direction: column; gap: 1px; }
+        .info-label { font-size: 10px; color: #64748b; font-weight: 500; }
+        .info-value { font-size: 12px; font-weight: 600; color: #1e293b; }
+        .info-value.file-name { color: #4f46e5; }
+        .info-divider { width: 1px; height: 24px; background: #e2e8f0; }
+        .prb-tags { display: flex; gap: 4px; }
+        .prb-tag { background: #eef2ff; color: #4338ca; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .info-status {
+            margin-left: auto;
+            display: flex; align-items: center; gap: 6px;
+            padding: 4px 10px;
+            background: #f0fdf4;
+            border-radius: 4px;
+            font-size: 11px; font-weight: 600; color: #16a34a;
+        }
+        .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
+        /* 主内容 */
+        .main-content { padding: 0 14px 14px; }
+        .tabs { display: flex; gap: 3px; background: #e2e8f0; padding: 3px; border-radius: 6px; width: fit-content; margin-bottom: 10px; }
+        .tab-btn {
+            display: flex; align-items: center; gap: 6px;
+            padding: 6px 16px; border: none; background: transparent;
+            color: #64748b; font-size: 13px; font-weight: 600;
+            border-radius: 4px;
+        }
+        .tab-btn.active { background: white; color: #4f46e5; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .badge { padding: 1px 6px; background: #e2e8f0; color: #64748b; border-radius: 10px; font-size: 10px; }
+        .panel { background: white; border-radius: 8px; padding: 14px; border: 1px solid #e2e8f0; }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .section-header h3 { font-size: 14px; font-weight: 700; color: #1e293b; }
+        .section-actions { display: flex; gap: 6px; }
+        .mode-switch { display: flex; background: #e2e8f0; border-radius: 4px; padding: 2px; gap: 2px; }
+        .mode-btn { padding: 4px 12px; border: none; background: transparent; color: #64748b; font-size: 11px; font-weight: 600; border-radius: 3px; }
+        .mode-btn.active { background: white; color: #4f46e5; }
+        .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+        /* 输入行 */
+        .input-row { display: flex; gap: 8px; align-items: flex-end; }
+        .input-group { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+        .input-group.action-group { flex: 0 0 auto; min-width: 80px; }
+        .input-label { display: flex; flex-direction: column; gap: 1px; }
+        .label-text { font-size: 11px; font-weight: 600; color: #334155; }
+        .label-hint { font-size: 9px; color: #64748b; }
+        .input-field {
+            padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+            font-size: 12px; font-weight: 500; color: #1e293b; width: 100%; height: 30px;
+        }
+        .btn-add { width: 100%; height: 30px; justify-content: center; }
+        .calculate-bar { display: flex; justify-content: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+        .btn-calculate { padding: 8px 32px; font-size: 14px; border-radius: 8px; }
+        /* 数据表格 */
+        .data-table-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+        .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .count-badge { padding: 2px 8px; background: #eef2ff; color: #4f46e5; border-radius: 12px; font-size: 11px; font-weight: 700; }
+        .table-container { overflow-x: auto; border-radius: 6px; border: 1px solid #e2e8f0; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th { padding: 6px 8px; text-align: center; font-weight: 700; color: #64748b; font-size: 10px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+        td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #334155; }
+        .col-num { width: 36px; color: #64748b; font-weight: 600; }
+        .col-action { width: 40px; }
+        /* 状态栏 */
+        .status-bar {
+            background: white; padding: 8px 16px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-top: 1px solid #e2e8f0;
+        }
+        .status-content { display: flex; align-items: center; gap: 8px; }
+        .status-indicator { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
+        .status-text { font-size: 11px; font-weight: 600; color: #475569; }
+        .status-meta { font-size: 10px; color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div class="mock-window">
+        <!-- 标题栏 -->
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="logo">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h1>五孔探针插值计算</h1>
+                    <span class="subtitle">Five-Hole Probe Interpolation System</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-help">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    帮助
+                </button>
+                <button class="btn btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    加载 PRB 文件
+                </button>
+            </div>
+        </header>
+
+        <!-- 信息卡片 -->
+        <div class="info-card">
+            <div class="info-item">
+                <span class="info-label">已加载文件</span>
+                <span class="info-value file-name">3 个 PRB 文件</span>
+            </div>
+            <div class="info-divider"></div>
+            <div class="info-item">
+                <span class="info-label">Ma 范围</span>
+                <span class="info-value">0.300 ~ 0.700</span>
+            </div>
+            <div class="info-divider"></div>
+            <div class="prb-tags">
+                <span class="prb-tag">calib_M03.prb <em>Ma=0.300</em></span>
+                <span class="prb-tag">calib_M05.prb <em>Ma=0.500</em></span>
+                <span class="prb-tag">calib_M07.prb <em>Ma=0.700</em></span>
+            </div>
+            <div class="info-status">
+                <span class="status-dot"></span>
+                就绪
+            </div>
+        </div>
+
+        <!-- 主内容 -->
+        <main class="main-content">
+            <div class="tabs">
+                <button class="tab-btn active">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                    数据输入
+                    <span class="badge">3</span>
+                </button>
+                <button class="tab-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                    计算结果
+                    <span class="badge">3/3</span>
+                </button>
+            </div>
+
+            <div class="panel">
+                <div class="section-header">
+                    <h3>压力参数输入</h3>
+                    <div class="section-actions">
+                        <div class="mode-switch">
+                            <button class="mode-btn active">表压</button>
+                            <button class="mode-btn">绝压</button>
+                        </div>
+                        <button class="btn btn-secondary">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            导入 CSV
+                        </button>
+                        <button class="btn btn-secondary">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                            清空
+                        </button>
+                    </div>
+                </div>
+
+                <div class="input-row">
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">P1</span>
+                            <span class="label-hint">下孔(表压)</span>
+                        </div>
+                        <input class="input-field" value="150.5" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">P2</span>
+                            <span class="label-hint">中心(表压)</span>
+                        </div>
+                        <input class="input-field" value="325.8" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">P3</span>
+                            <span class="label-hint">上孔(表压)</span>
+                        </div>
+                        <input class="input-field" value="-45.2" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">P4</span>
+                            <span class="label-hint">左孔(表压)</span>
+                        </div>
+                        <input class="input-field" value="82.3" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">P5</span>
+                            <span class="label-hint">右孔(表压)</span>
+                        </div>
+                        <input class="input-field" value="-12.7" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">Patm</span>
+                            <span class="label-hint">大气压</span>
+                        </div>
+                        <input class="input-field" value="101325" />
+                    </div>
+                    <div class="input-group">
+                        <div class="input-label">
+                            <span class="label-text">Tatm</span>
+                            <span class="label-hint">大气温</span>
+                        </div>
+                        <input class="input-field" value="20" />
+                    </div>
+                    <div class="input-group action-group">
+                        <div class="input-label">
+                            <span class="label-text">操作</span>
+                            <span class="label-hint">添加数据</span>
+                        </div>
+                        <button class="btn btn-primary btn-add">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            添加
+                        </button>
+                    </div>
+                </div>
+
+                <div class="calculate-bar">
+                    <button class="btn btn-primary btn-calculate">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        执行插值计算
+                    </button>
+                </div>
+
+                <div class="data-table-section">
+                    <div class="table-header">
+                        <h3>数据列表</h3>
+                        <span class="count-badge">3 条记录</span>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th class="col-num">#</th>
+                                    <th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>P5</th>
+                                    <th>Patm</th><th>Tatm</th><th class="col-action">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="col-num">1</td>
+                                    <td>150</td><td>326</td><td>-45</td><td>82</td><td>-13</td>
+                                    <td>101,325</td><td>20</td>
+                                    <td class="col-action">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                            <polyline points="3 6 5 6 21 6"/>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td class="col-num">2</td>
+                                    <td>210</td><td>380</td><td>-80</td><td>120</td><td>-30</td>
+                                    <td>101,325</td><td>20</td>
+                                    <td class="col-action">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                            <polyline points="3 6 5 6 21 6"/>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td class="col-num">3</td>
+                                    <td>95</td><td>280</td><td>-20</td><td>50</td><td>5</td>
+                                    <td>101,325</td><td>20</td>
+                                    <td class="col-action">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                            <polyline points="3 6 5 6 21 6"/>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 状态栏 -->
+        <footer class="status-bar">
+            <div class="status-content">
+                <span class="status-indicator"></span>
+                <span class="status-text">计算完成！有效结果: 3/3 条</span>
+            </div>
+            <div class="status-meta">五孔探针插值计算系统 v1.1</div>
+        </footer>
+    </div>
+</body>
+</html>

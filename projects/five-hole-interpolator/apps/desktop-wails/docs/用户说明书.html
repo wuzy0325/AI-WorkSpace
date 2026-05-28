@@ -464,6 +464,158 @@
             }
         }
 
+        /* 截图模拟容器 */
+        .screenshot-container {
+            margin: 24px 0;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+            border: 1px solid var(--gray-200);
+        }
+        .screenshot-caption {
+            text-align: center;
+            color: var(--gray-500);
+            font-size: 13px;
+            margin-top: 12px;
+            font-style: italic;
+        }
+        .ss {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            font-size: 12px;
+            line-height: 1.5;
+            background: #f1f5f9;
+            padding: 10px;
+        }
+        .ss * { box-sizing: border-box; margin: 0; padding: 0; }
+        .ss-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .ss-header-brand { display: flex; align-items: center; gap: 8px; }
+        .ss-logo {
+            width: 30px; height: 30px;
+            background: linear-gradient(135deg, #6366f1, #4338ca);
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 14px;
+        }
+        .ss-header h1 { font-size: 15px; font-weight: 700; color: white; }
+        .ss-header .ss-sub { font-size: 9px; color: #94a3b8; letter-spacing: 0.3px; }
+        .ss-header-actions { display: flex; gap: 6px; }
+        .ss-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 4px 10px; border: none; border-radius: 4px;
+            font-size: 11px; font-weight: 600;
+        }
+        .ss-btn-help { background: transparent; color: #94a3b8; border: 1px solid #475569; }
+        .ss-btn-primary { background: linear-gradient(135deg, #6366f1, #4338ca); color: white; }
+        .ss-info-card {
+            background: white; margin: 8px 10px; padding: 6px 12px;
+            display: flex; align-items: center; gap: 10px;
+            border-radius: 6px; border: 1px solid #e2e8f0;
+        }
+        .ss-info-item { display: flex; flex-direction: column; gap: 0; }
+        .ss-info-label { font-size: 9px; color: #64748b; font-weight: 500; }
+        .ss-info-value { font-size: 11px; font-weight: 600; color: #1e293b; }
+        .ss-info-value.accent { color: #4f46e5; }
+        .ss-divider { width: 1px; height: 20px; background: #e2e8f0; }
+        .ss-prb-tag {
+            background: #eef2ff; color: #4338ca; padding: 1px 6px;
+            border-radius: 3px; font-size: 10px; font-weight: 600;
+        }
+        .ss-prb-tag em { font-style: normal; color: #6366f1; margin-left: 2px; }
+        .ss-status-badge {
+            margin-left: auto;
+            display: flex; align-items: center; gap: 4px;
+            padding: 2px 8px; background: #f0fdf4; border-radius: 3px;
+            font-size: 10px; font-weight: 600; color: #16a34a;
+        }
+        .ss-status-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; }
+        .ss-main { padding: 0 10px 10px; }
+        .ss-tabs {
+            display: flex; gap: 2px; background: #e2e8f0; padding: 2px;
+            border-radius: 4px; width: fit-content; margin-bottom: 8px;
+        }
+        .ss-tab {
+            display: flex; align-items: center; gap: 4px;
+            padding: 4px 12px; border: none; background: transparent;
+            color: #64748b; font-size: 11px; font-weight: 600; border-radius: 3px;
+        }
+        .ss-tab.active { background: white; color: #4f46e5; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+        .ss-badge { padding: 0 5px; background: #e2e8f0; color: #64748b; border-radius: 8px; font-size: 9px; font-weight: 700; }
+        .ss-badge.ok { background: #dcfce7; color: #16a34a; }
+        .ss-panel { background: white; border-radius: 6px; padding: 10px; border: 1px solid #e2e8f0; }
+        .ss-section-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .ss-section-hdr h3 { font-size: 12px; font-weight: 700; color: #1e293b; }
+        .ss-section-actions { display: flex; gap: 4px; align-items: center; }
+        .ss-mode-switch { display: flex; background: #e2e8f0; border-radius: 3px; padding: 1px; gap: 1px; }
+        .ss-mode-btn { padding: 2px 8px; border: none; background: transparent; color: #64748b; font-size: 10px; font-weight: 600; border-radius: 2px; }
+        .ss-mode-btn.active { background: white; color: #4f46e5; }
+        .ss-btn-sm { padding: 3px 8px; border: 1px solid #e2e8f0; background: #f1f5f9; color: #475569; border-radius: 3px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }
+        .ss-input-row { display: flex; gap: 6px; align-items: flex-end; }
+        .ss-input-group { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+        .ss-input-group.action { flex: 0 0 auto; min-width: 60px; }
+        .ss-label { font-size: 10px; font-weight: 600; color: #334155; }
+        .ss-label-hint { font-size: 8px; color: #64748b; }
+        .ss-input {
+            padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 3px;
+            font-size: 11px; font-weight: 500; color: #1e293b; width: 100%; height: 24px;
+            background: white;
+        }
+        .ss-btn-add {
+            width: 100%; height: 24px; border: none; border-radius: 3px;
+            background: linear-gradient(135deg, #6366f1, #4338ca); color: white;
+            font-size: 10px; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 3px;
+        }
+        .ss-calc-bar {
+            display: flex; justify-content: center; margin-top: 8px;
+            padding-top: 8px; border-top: 1px solid #e2e8f0;
+        }
+        .ss-btn-calc {
+            padding: 6px 24px; border: none; border-radius: 6px;
+            background: linear-gradient(135deg, #6366f1, #4338ca); color: white;
+            font-size: 12px; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .ss-table-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; }
+        .ss-table-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .ss-count { padding: 1px 6px; background: #eef2ff; color: #4f46e5; border-radius: 8px; font-size: 10px; font-weight: 700; }
+        .ss-table-wrap { overflow-x: auto; border-radius: 4px; border: 1px solid #e2e8f0; }
+        .ss-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        .ss-table th { padding: 4px 6px; text-align: center; font-weight: 700; color: #64748b; font-size: 9px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+        .ss-table td { padding: 3px 6px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #334155; font-weight: 500; white-space: nowrap; }
+        .ss-table .col-num { color: #64748b; font-weight: 600; }
+        .ss-table .col-del { color: #ef4444; font-size: 10px; }
+        .ss-table .invalid-row { background: #fef2f2; }
+        .ss-status-bar {
+            background: white; padding: 6px 14px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-top: 1px solid #e2e8f0;
+        }
+        .ss-status-content { display: flex; align-items: center; gap: 6px; }
+        .ss-status-ind { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; }
+        .ss-status-txt { font-size: 10px; font-weight: 600; color: #475569; }
+        .ss-status-meta { font-size: 9px; color: #94a3b8; }
+        .ss-result-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .ss-result-stats { display: flex; gap: 6px; }
+        .ss-stat-card {
+            display: flex; flex-direction: column; align-items: center;
+            padding: 6px 12px; background: #f8fafc; border-radius: 4px;
+            border: 1px solid #e2e8f0; min-width: 50px;
+        }
+        .ss-stat-card.ok { background: #f0fdf4; border-color: #dcfce7; }
+        .ss-stat-card.err { background: #fef2f2; border-color: #fee2e2; }
+        .ss-stat-val { font-size: 16px; font-weight: 800; color: #1e293b; line-height: 1; }
+        .ss-stat-card.ok .ss-stat-val { color: #16a34a; }
+        .ss-stat-card.err .ss-stat-val { color: #ef4444; }
+        .ss-stat-lbl { font-size: 8px; color: #64748b; font-weight: 600; margin-top: 1px; }
+        .ss-valid-badge { display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px; border-radius: 10px; font-size: 9px; font-weight: 600; background: #dcfce7; color: #16a34a; }
+        .ss-invalid-badge { display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px; border-radius: 10px; font-size: 9px; font-weight: 600; background: #fee2e2; color: #ef4444; }
+
         /* 打印样式 */
         @media print {
             body {
@@ -522,6 +674,152 @@
                 <a href="#faq">常见问题</a>
             </div>
         </nav>
+
+        <!-- 界面概览 -->
+        <section id="ui-overview" class="section">
+            <h2>
+                <span class="section-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <line x1="3" y1="9" x2="21" y2="9"/>
+                        <line x1="9" y1="21" x2="9" y2="9"/>
+                    </svg>
+                </span>
+                界面概览
+            </h2>
+            <p>软件界面由以下几个主要区域组成：</p>
+            <ul class="steps">
+                <li><strong>顶部标题栏</strong> - 显示软件名称，包含"帮助"和"加载 PRB 文件"按钮</li>
+                <li><strong>文件信息卡片</strong> - 加载PRB文件后显示已加载文件数量、Ma范围及文件名列表</li>
+                <li><strong>标签页切换</strong> - "数据输入"和"计算结果"两个标签页</li>
+                <li><strong>状态栏</strong> - 底部显示当前操作状态和软件版本</li>
+            </ul>
+            <div class="tip info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <p><strong>帮助按钮：</strong>点击界面右上角的"帮助"按钮可随时打开本说明书。</p>
+            </div>
+
+            <!-- 截图：数据输入界面 -->
+            <div class="screenshot-container">
+                <div class="ss">
+                    <div class="ss-header">
+                        <div class="ss-header-brand">
+                            <div class="ss-logo">☀</div>
+                            <div>
+                                <h1>五孔探针插值计算</h1>
+                                <div class="ss-sub">Five-Hole Probe Interpolation System</div>
+                            </div>
+                        </div>
+                        <div class="ss-header-actions">
+                            <span class="ss-btn ss-btn-help">? 帮助</span>
+                            <span class="ss-btn ss-btn-primary">↓ 加载 PRB 文件</span>
+                        </div>
+                    </div>
+                    <div class="ss-info-card">
+                        <div class="ss-info-item">
+                            <span class="ss-info-label">已加载文件</span>
+                            <span class="ss-info-value accent">3 个 PRB 文件</span>
+                        </div>
+                        <div class="ss-divider"></div>
+                        <div class="ss-info-item">
+                            <span class="ss-info-label">Ma 范围</span>
+                            <span class="ss-info-value">0.300 ~ 0.700</span>
+                        </div>
+                        <div class="ss-divider"></div>
+                        <span class="ss-prb-tag">calib_M03.prb <em>Ma=0.300</em></span>
+                        <span class="ss-prb-tag">calib_M05.prb <em>Ma=0.500</em></span>
+                        <span class="ss-prb-tag">calib_M07.prb <em>Ma=0.700</em></span>
+                        <div class="ss-status-badge">
+                            <span class="ss-status-dot"></span> 就绪
+                        </div>
+                    </div>
+                    <div class="ss-main">
+                        <div class="ss-tabs">
+                            <span class="ss-tab active">✏ 数据输入 <span class="ss-badge">3</span></span>
+                            <span class="ss-tab">📊 计算结果 <span class="ss-badge ok">3/3</span></span>
+                        </div>
+                        <div class="ss-panel">
+                            <div class="ss-section-hdr">
+                                <h3>压力参数输入</h3>
+                                <div class="ss-section-actions">
+                                    <div class="ss-mode-switch">
+                                        <span class="ss-mode-btn active">表压</span>
+                                        <span class="ss-mode-btn">绝压</span>
+                                    </div>
+                                    <span class="ss-btn-sm">↑ 导入 CSV</span>
+                                    <span class="ss-btn-sm">🗑 清空</span>
+                                </div>
+                            </div>
+                            <div class="ss-input-row">
+                                <div class="ss-input-group">
+                                    <span class="ss-label">P1</span><span class="ss-label-hint">下孔(表压)</span>
+                                    <input class="ss-input" value="150.5" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">P2</span><span class="ss-label-hint">中心(表压)</span>
+                                    <input class="ss-input" value="325.8" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">P3</span><span class="ss-label-hint">上孔(表压)</span>
+                                    <input class="ss-input" value="-45.2" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">P4</span><span class="ss-label-hint">左孔(表压)</span>
+                                    <input class="ss-input" value="82.3" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">P5</span><span class="ss-label-hint">右孔(表压)</span>
+                                    <input class="ss-input" value="-12.7" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">Patm</span><span class="ss-label-hint">大气压</span>
+                                    <input class="ss-input" value="101325" readonly />
+                                </div>
+                                <div class="ss-input-group">
+                                    <span class="ss-label">Tatm</span><span class="ss-label-hint">大气温</span>
+                                    <input class="ss-input" value="20" readonly />
+                                </div>
+                                <div class="ss-input-group action">
+                                    <span class="ss-label">操作</span><span class="ss-label-hint">添加数据</span>
+                                    <button class="ss-btn-add">+ 添加</button>
+                                </div>
+                            </div>
+                            <div class="ss-calc-bar">
+                                <span class="ss-btn-calc">▶ 执行插值计算</span>
+                            </div>
+                            <div class="ss-table-section">
+                                <div class="ss-table-hdr">
+                                    <h3>数据列表</h3>
+                                    <span class="ss-count">3 条记录</span>
+                                </div>
+                                <div class="ss-table-wrap">
+                                    <table class="ss-table">
+                                        <thead><tr><th class="col-num">#</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>P5</th><th>Patm</th><th>Tatm</th><th>操作</th></tr></thead>
+                                        <tbody>
+                                            <tr><td class="col-num">1</td><td>150</td><td>326</td><td>-45</td><td>82</td><td>-13</td><td>101,325</td><td>20</td><td class="col-del">🗑</td></tr>
+                                            <tr><td class="col-num">2</td><td>210</td><td>380</td><td>-80</td><td>120</td><td>-30</td><td>101,325</td><td>20</td><td class="col-del">🗑</td></tr>
+                                            <tr><td class="col-num">3</td><td>95</td><td>280</td><td>-20</td><td>50</td><td>5</td><td>101,325</td><td>20</td><td class="col-del">🗑</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ss-status-bar">
+                        <div class="ss-status-content">
+                            <span class="ss-status-ind"></span>
+                            <span class="ss-status-txt">计算完成！有效结果: 3/3 条</span>
+                        </div>
+                        <span class="ss-status-meta">五孔探针插值计算系统 v1.1</span>
+                    </div>
+                </div>
+            </div>
+            <p class="screenshot-caption">图1：数据输入界面（已加载PRB文件，数据输入标签页）</p>
+        </section>
 
         <!-- 软件简介 -->
         <section id="intro" class="section">
@@ -593,9 +891,18 @@
                 <li><strong>加载PRB校准文件</strong> - 点击"加载 PRB 文件"按钮，选择探头校准数据文件</li>
                 <li><strong>输入测量数据</strong> - 手动输入或CSV导入五孔探针的原始压力数据</li>
                 <li><strong>执行插值计算</strong> - 点击"执行插值计算"按钮开始计算</li>
-                <li><strong>查看计算结果</strong> - 切换到"计算结果"标签页查看详细的计算参数</li>
+                <li><strong>查看计算结果</strong> - 自动切换到"计算结果"标签页查看详细的计算参数</li>
                 <li><strong>导出结果数据</strong> - 将结果导出为CSV文件进行保存或进一步分析</li>
             </ol>
+
+            <div class="tip info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                <p><strong>快捷计算：</strong>输入压力参数后，无需点击"添加"按钮，直接点击"执行插值计算"即可对当前输入进行计算。如需批量处理多条数据，再使用"添加"按钮将数据加入列表。</p>
+            </div>
 
             <div class="tip info">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -745,9 +1052,18 @@
             <ol class="steps">
                 <li>在对应的输入框中<strong>输入P1至P5的压力值</strong></li>
                 <li>设置<strong>环境大气压（Patm）</strong>和<strong>环境温度（Tatm）</strong></li>
-                <li>点击<strong>"添加"</strong>按钮，将数据添加到列表中</li>
-                <li>重复上述步骤，添加更多测量数据</li>
+                <li>选择正确的<strong>压力模式</strong>（表压/绝压）</li>
+                <li>点击<strong>"添加"</strong>按钮，将数据添加到列表中（可选）</li>
+                <li>点击<strong>"执行插值计算"</strong>按钮开始计算</li>
             </ol>
+
+            <div class="tip success">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <p><strong>快捷计算：</strong>如果只需要计算当前输入的一组数据，无需点击"添加"，直接点击"执行插值计算"即可。系统会自动将当前输入作为计算数据。</p>
+            </div>
 
             <div class="tip success">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -858,6 +1174,86 @@
             </h2>
             <p>计算完成后，切换到"计算结果"标签页可以查看详细的计算结果。</p>
 
+            <!-- 截图：计算结果界面 -->
+            <div class="screenshot-container">
+                <div class="ss">
+                    <div class="ss-header">
+                        <div class="ss-header-brand">
+                            <div class="ss-logo">☀</div>
+                            <div>
+                                <h1>五孔探针插值计算</h1>
+                                <div class="ss-sub">Five-Hole Probe Interpolation System</div>
+                            </div>
+                        </div>
+                        <div class="ss-header-actions">
+                            <span class="ss-btn ss-btn-help">? 帮助</span>
+                            <span class="ss-btn ss-btn-primary">↓ 加载 PRB 文件</span>
+                        </div>
+                    </div>
+                    <div class="ss-info-card">
+                        <div class="ss-info-item">
+                            <span class="ss-info-label">已加载文件</span>
+                            <span class="ss-info-value accent">3 个 PRB 文件</span>
+                        </div>
+                        <div class="ss-divider"></div>
+                        <div class="ss-info-item">
+                            <span class="ss-info-label">Ma 范围</span>
+                            <span class="ss-info-value">0.300 ~ 0.700</span>
+                        </div>
+                        <div class="ss-divider"></div>
+                        <span class="ss-prb-tag">calib_M03.prb <em>Ma=0.300</em></span>
+                        <span class="ss-prb-tag">calib_M05.prb <em>Ma=0.500</em></span>
+                        <span class="ss-prb-tag">calib_M07.prb <em>Ma=0.700</em></span>
+                        <div class="ss-status-badge">
+                            <span class="ss-status-dot"></span> 就绪
+                        </div>
+                    </div>
+                    <div class="ss-main">
+                        <div class="ss-tabs">
+                            <span class="ss-tab">✏ 数据输入 <span class="ss-badge">3</span></span>
+                            <span class="ss-tab active">📊 计算结果 <span class="ss-badge ok">3/3</span></span>
+                        </div>
+                        <div class="ss-panel">
+                            <div class="ss-result-hdr">
+                                <div class="ss-result-stats">
+                                    <div class="ss-stat-card"><span class="ss-stat-val">3</span><span class="ss-stat-lbl">总记录</span></div>
+                                    <div class="ss-stat-card ok"><span class="ss-stat-val">2</span><span class="ss-stat-lbl">有效</span></div>
+                                    <div class="ss-stat-card err"><span class="ss-stat-val">1</span><span class="ss-stat-lbl">无效</span></div>
+                                </div>
+                                <span class="ss-btn-sm">↓ 导出 CSV</span>
+                            </div>
+                            <div class="ss-table-wrap">
+                                <table class="ss-table">
+                                    <thead><tr><th class="col-num">#</th><th>α (°)</th><th>β (°)</th><th>Ma</th><th>V (m/s)</th><th>Vx (m/s)</th><th>Vy (m/s)</th><th>Vz (m/s)</th><th>总压 P0 (Pa)</th><th>静压 Ps (Pa)</th><th>状态</th></tr></thead>
+                                    <tbody>
+                                        <tr>
+                                            <td class="col-num">1</td><td>3.2456</td><td>-1.8723</td><td>0.4512</td><td>152.3456</td><td>148.9234</td><td>8.6234</td><td>-4.7123</td><td>106825.34</td><td>101312.56</td>
+                                            <td><span class="ss-valid-badge">✓ 有效</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="col-num">2</td><td>5.1234</td><td>-3.4521</td><td>0.5234</td><td>176.8912</td><td>172.3456</td><td>15.2341</td><td>-9.5678</td><td>108432.12</td><td>101298.34</td>
+                                            <td><span class="ss-valid-badge">✓ 有效</span></td>
+                                        </tr>
+                                        <tr class="invalid-row">
+                                            <td class="col-num">3</td><td>12.3456</td><td>-8.9123</td><td>0.7891</td><td>265.1234</td><td>256.7891</td><td>33.4567</td><td>-24.1234</td><td>115623.45</td><td>101285.67</td>
+                                            <td><span class="ss-invalid-badge">! 无效</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ss-status-bar">
+                        <div class="ss-status-content">
+                            <span class="ss-status-ind"></span>
+                            <span class="ss-status-txt">计算完成！有效结果: 2/3 条</span>
+                        </div>
+                        <span class="ss-status-meta">五孔探针插值计算系统 v1.1</span>
+                    </div>
+                </div>
+            </div>
+            <p class="screenshot-caption">图2：计算结果界面（含有效和无效结果的示例）</p>
+
             <h3>结果参数说明</h3>
             <table class="results-table">
                 <thead>
@@ -884,32 +1280,27 @@
                         <td>无量纲</td>
                     </tr>
                     <tr>
-                        <td>TAS <span class="result-unit">(True Airspeed)</span></td>
-                        <td>真空速，实际气流速度</td>
+                        <td>V <span class="result-unit">(Velocity)</span></td>
+                        <td>气流速度大小</td>
                         <td>m/s</td>
                     </tr>
                     <tr>
-                        <td>CAS <span class="result-unit">(Calibrated Airspeed)</span></td>
-                        <td>校准空速，修正后的指示空速</td>
+                        <td>Vx <span class="result-unit"></span></td>
+                        <td>速度在X轴方向的分量</td>
                         <td>m/s</td>
                     </tr>
                     <tr>
-                        <td>SAT <span class="result-unit">(Static Air Temperature)</span></td>
-                        <td>静温，未修正的静温读数</td>
-                        <td>K</td>
+                        <td>Vy <span class="result-unit"></span></td>
+                        <td>速度在Y轴方向的分量</td>
+                        <td>m/s</td>
                     </tr>
                     <tr>
-                        <td>Qc <span class="result-unit">(dynamicPressure)</span></td>
-                        <td>动压，速度头的压力值</td>
-                        <td>Pa</td>
+                        <td>Vz <span class="result-unit"></span></td>
+                        <td>速度在Z轴方向的分量</td>
+                        <td>m/s</td>
                     </tr>
                     <tr>
-                        <td>ρ <span class="result-unit">(rho)</span></td>
-                        <td>空气密度</td>
-                        <td>kg/m³</td>
-                    </tr>
-                    <tr>
-                        <td>Pt <span class="result-unit">(Total Pressure)</span></td>
+                        <td>P0 <span class="result-unit">(Total Pressure)</span></td>
                         <td>总压（滞止压力）</td>
                         <td>Pa</td>
                     </tr>
@@ -962,7 +1353,7 @@
             <h3>导出文件内容</h3>
             <p>导出的CSV文件包含以下列：</p>
             <div class="code-block">
-                序号,α(°),β(°),Ma,TAS(m/s),CAS(m/s),SAT(K),Qc(Pa),ρ(kg/m³),Pt(Pa),Ps(Pa),状态
+                序号,α(°),β(°),Ma,V(m/s),Vx(m/s),Vy(m/s),Vz(m/s),P0(Pa),Ps(Pa),状态
             </div>
 
             <div class="tip success">
@@ -1046,11 +1437,35 @@
                 </h4>
                 <p>A: 在数据列表中，每行数据右侧有一个删除按钮（垃圾桶图标），点击即可删除该行数据。如需清空所有数据，点击"清空"按钮即可。</p>
             </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 可以直接计算而不添加到列表吗？
+                </h4>
+                <p>A: 可以。在输入区域填写好压力参数后，直接点击"执行插值计算"按钮即可。系统会自动将当前输入作为计算数据，无需先点击"添加"按钮。这种方式适合单次快速计算。</p>
+            </div>
+
+            <div class="faq-item">
+                <h4>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Q: 计算完成后如何查看结果？
+                </h4>
+                <p>A: 计算完成后，系统会自动切换到"计算结果"标签页。您也可以手动点击顶部的"计算结果"标签页切换查看。结果页面顶部会显示统计信息（总记录数、有效数、无效数），下方表格展示详细的计算结果。</p>
+            </div>
         </section>
 
         <!-- 页脚 -->
         <footer class="footer">
-            <p>五孔探针插值计算系统 v1.0</p>
+            <p>五孔探针插值计算系统 v1.1</p>
             <p style="margin-top: 8px;">技术支持与反馈请联系开发团队</p>
         </footer>
     </div>

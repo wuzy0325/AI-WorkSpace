@@ -99,6 +99,20 @@ func TestMultiPrbLinearKeepsCasSatAndMachRange(t *testing.T) {
 	assertNear(t, "MachMax", validRange.MachMax, 0.4, 1e-12)
 }
 
+func TestCalculateVelocityComponentsUsesProbeAxisConvention(t *testing.T) {
+	v := 100.0
+	alphaDeg := 30.0
+	betaDeg := 20.0
+
+	vx, vy, vz := calculateVelocityComponents(v, alphaDeg, betaDeg)
+
+	alpha := alphaDeg * math.Pi / 180
+	beta := betaDeg * math.Pi / 180
+	assertNear(t, "vx", vx, v*math.Cos(beta)*math.Sin(alpha), 1e-12)
+	assertNear(t, "vy", vy, v*math.Sin(beta), 1e-12)
+	assertNear(t, "vz", vz, v*math.Cos(beta)*math.Cos(alpha), 1e-12)
+}
+
 func syntheticFiveHoleCsv(alphas, betas []float64) []string {
 	lines := []string{"alpha,beta,p1,p2,p3,p4,p5"}
 	for _, alpha := range alphas {

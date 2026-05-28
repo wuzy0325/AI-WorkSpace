@@ -189,6 +189,15 @@ async function calculateAll() {
   }
 }
 
+// #9 修复：CSV 字段转义函数，处理逗号、换行符和双引号
+function escapeCsvField(value: string | number): string {
+  const s = String(value)
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"'
+  }
+  return s
+}
+
 // ==================== 导出结果 ====================
 function exportResults() {
   if (!hasResults.value) {
@@ -209,9 +218,9 @@ function exportResults() {
     r ? formatVal(r.P0) : '-',
     r ? formatVal(r.Ps) : '-',
     r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
-  ])
+  ].map(escapeCsvField))
 
-  const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+  const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map(row => row.join(','))].join('\n')
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
@@ -467,6 +476,7 @@ function exportResults() {
                       <th>P5</th>
                       <th>Patm</th>
                       <th>Tatm</th>
+                      <th>模式</th>
                       <th class="col-action">操作</th>
                     </tr>
                   </thead>
@@ -480,6 +490,7 @@ function exportResults() {
                       <td>{{ formatInt(row.P5) }}</td>
                       <td>{{ formatInt(row.Patm) }}</td>
                       <td>{{ row.Tatm }}</td>
+                      <td class="col-mode">{{ row.pressureMode === 'absolute' ? '绝压' : '表压' }}</td>
                       <td class="col-action">
                         <button class="btn-icon danger" @click="removeRow(idx)" title="删除">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -898,6 +909,7 @@ body {
 .col-num { width: 36px; color: var(--gray-500); font-weight: 600; }
 .col-action { width: 40px; }
 .col-status { width: 60px; }
+.col-mode { color: var(--primary-600); font-weight: 600; font-size: 10px; }
 
 .status-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 20px; font-size: 10px; font-weight: 600; }
 .status-badge.success { background: var(--success-100); color: var(--success-600); }
