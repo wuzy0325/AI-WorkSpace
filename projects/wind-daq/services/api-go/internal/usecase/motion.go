@@ -54,13 +54,13 @@ func (m *MotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error)
 				Port:        9000,
 				AutoConnect: false,
 				Axes: []motion.AxisConfig{
-					{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+					{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
 
-					{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+					{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
 
-					{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
+					{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
 
-					{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
+					{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
 				},
 			},
 		}

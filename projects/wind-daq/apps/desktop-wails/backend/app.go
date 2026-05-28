@@ -26,6 +26,9 @@ type App struct {
 	streamMu       sync.Mutex
 	streamCancel   context.CancelFunc
 	streamChannels map[string]chan types.DeviceDataPayload
+
+	// 运动状态推送相关
+	motionStatusCancel context.CancelFunc
 }
 
 // VersionInfo 版本信息
@@ -63,6 +66,8 @@ func (a *App) Startup(ctx context.Context) {
 
 	// 启动采集数据推送 goroutine，将 AcquisitionHub 数据通过 Wails Events 推送到前端
 	a.startStreamRelay()
+	// 启动运动状态定时推送
+	a.startMotionStatusRelay()
 	a.startLocalAPIServer()
 
 	log.Println("Wind-DAQ 应用已成功初始化")
@@ -193,6 +198,38 @@ func streamCtxSleep(ctx context.Context, d time.Duration) <-chan struct{} {
 		close(ch)
 	}()
 	return ch
+}
+
+// startMotionStatusRelay 启动运动状态定时推送，将控制器状态通过 Wails EventsEmit 推送到前端
+func (a *App) startMotionStatusRelay() {
+	if a.motionStatusCancel != nil {
+		a.motionStatusCancel()
+	}
+	motionCtx, cancel := context.WithCancel(a.ctx)
+	a.motionStatusCancel = cancel
+
+	go a.motionStatusRelayLoop(motionCtx)
+}
+
+// motionStatusRelayLoop 定时轮询运动控制器状态并推送到前端
+func (a *App) motionStatusRelayLoop(ctx context.Context) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if a.appContext == nil || a.appContext.MotionManager == nil {
+				continue
+			}
+			statuses := a.appContext.MotionManager.StatusAll()
+			if len(statuses) > 0 {
+				runtime.EventsEmit(a.ctx, "motion:status", statuses)
+			}
+		}
+	}
 }
 
 // DeviceSubscribeStream 前端调用此方法来订阅/取消订阅某个设备的采集数据流

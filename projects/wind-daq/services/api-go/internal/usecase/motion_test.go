@@ -82,6 +82,15 @@ func (c *fakeMotionController) DefinePosition(axis motion.AxisName, position flo
 	return nil
 }
 
+func (c *fakeMotionController) ResetEmergencyStop() error {
+	c.status.EmergencyStopped = false
+	return nil
+}
+
+func (c *fakeMotionController) GetProfile() motion.MotionControllerProfile {
+	return motion.MotionControllerProfile{ID: c.status.ID}
+}
+
 var _ ports.MotionController = (*fakeMotionController)(nil)
 
 func TestMotionManagerCoordinatesControllerCommands(t *testing.T) {

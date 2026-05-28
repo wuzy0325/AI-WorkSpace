@@ -3,6 +3,9 @@ package motion
 // PtrFloat64 returns a pointer to a copy of v.
 func PtrFloat64(v float64) *float64 { return &v }
 
+// PtrInt returns a pointer to a copy of v.
+func PtrInt(v int) *int { return &v }
+
 type AxisName string
 
 type AxisNameSet map[AxisName]bool
@@ -29,7 +32,7 @@ type AxisConfig struct {
 	Name                AxisName                       `json:"name"`
 	Enabled             bool                           `json:"enabled"`
 	Kind                AxisKind                       `json:"kind"`
-	StepsPerRev         *float64                       `json:"stepsPerRev,omitempty"`
+	StepsPerRev         *float64                       `json:"stepsPerRev,omitempty"` // 步距角(°/step)，默认 1.8
 	MicroSteps          *int                           `json:"microSteps,omitempty"`
 	Lead                *float64                       `json:"lead,omitempty"`
 	GearRatio           *float64                       `json:"gearRatio,omitempty"`
