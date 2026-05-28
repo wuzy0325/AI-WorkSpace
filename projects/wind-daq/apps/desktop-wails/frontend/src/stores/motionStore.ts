@@ -40,47 +40,38 @@ export const useMotionStore = defineStore('motion', () => {
 
   async function connect(id: string): Promise<void> {
     await motionApi.connect(id)
-    await refreshStatus()
   }
 
   async function disconnect(id: string): Promise<void> {
     await motionApi.disconnect(id)
-    await refreshStatus()
   }
 
   async function moveTo(id: string, axis: AxisName, position: number): Promise<void> {
     await motionApi.moveTo(id, axis, position)
-    await refreshStatus()
   }
 
   async function moveBy(id: string, axis: AxisName, delta: number): Promise<void> {
     await motionApi.moveBy(id, axis, delta)
-    await refreshStatus()
   }
 
   async function jog(id: string, axis: AxisName, direction: 'forward' | 'reverse', speed?: number): Promise<void> {
     await motionApi.jog(id, axis, direction, speed)
-    await refreshStatus()
   }
 
   async function home(id: string, axis: AxisName): Promise<void> {
     await motionApi.home(id, axis)
-    await refreshStatus()
   }
 
   async function stop(id: string, axis?: AxisName): Promise<void> {
     await motionApi.stop(id, axis)
-    await refreshStatus()
   }
 
   async function emergencyStop(id: string): Promise<void> {
     await motionApi.emergencyStop(id)
-    await refreshStatus()
   }
 
   async function definePosition(id: string, axis: AxisName, position: number): Promise<void> {
     await motionApi.definePosition(id, axis, position)
-    await refreshStatus()
   }
 
   return {

@@ -255,6 +255,15 @@ export const wailsApi = {
     },
     definePosition: async (controllerId: string, axisName: string, position: number): Promise<GenericResponse> => {
       return await callBinding('MotionDefinePosition', controllerId, axisName, position);
+    },
+
+    onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
+      const cleanup = EventsOn('motion:status', (data: unknown) => {
+        callback(data);
+      });
+      return () => {
+        cleanup();
+      };
     }
   },
 

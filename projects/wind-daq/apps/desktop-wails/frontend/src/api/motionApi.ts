@@ -16,11 +16,21 @@ export interface MotionStatus {
 
 const MOTION_STORAGE_KEY = 'wind-daq.motion-profiles';
 
+const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
+  { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'U', enabled: false, kind: 'ROTARY' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+];
+
 function normalizeMotionProfile(profile: MotionControllerProfile): MotionControllerProfile {
-  return {
-    ...profile,
-    axes: Array.isArray(profile?.axes) ? profile.axes : [],
-  };
+  let axes: import('@shared/types/motion').AxisConfig[];
+  if (Array.isArray(profile?.axes) && profile.axes.length > 0) {
+    axes = profile.axes.map((a) => ({ ...a, enabled: a.enabled ?? true }));
+  } else {
+    axes = DEFAULT_AXES.map((a) => ({ ...a }));
+  }
+  return { ...profile, axes };
 }
 
 function normalizeMotionProfiles(profiles: unknown): MotionControllerProfile[] {
@@ -42,12 +52,7 @@ function storedProfiles(): MotionControllerProfile[] {
     address: '127.0.0.1',
     port: 9000,
     autoConnect: false,
-    axes: [
-      { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
-      { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
-      { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
-      { name: 'U', enabled: false, kind: 'ROTARY' as const, maxSpeed: 10 },
-    ],
+    axes: DEFAULT_AXES.map((a) => ({ ...a })),
   }];
 }
 
@@ -68,13 +73,26 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
   }
   return normalizeMotionProfiles(profiles).map((p) => {
     const live = raw.find((s) => s.id === p.id);
-    const axes = Array.isArray(p.axes) ? p.axes : [];
+    const profileAxes = Array.isArray(p.axes) ? p.axes : [];
+
+    // 优先从 profile 配置中获取启用的轴，如果 profile 中没有配置，则尝试从后端状态中获取
+    // 注意：enabled 为 undefined 时视为 true（兼容旧数据）
+    let enabledAxes = profileAxes.filter((a) => a.enabled !== false);
+    if (enabledAxes.length === 0 && live && Array.isArray(live.axes) && live.axes.length > 0) {
+      // profile 中没有配置轴，但后端状态中有轴数据，使用后端的轴数据
+      enabledAxes = live.axes.map((axis) => ({
+        name: axis.name as import('@shared/types/motion').AxisName,
+        enabled: true,
+        kind: 'LINEAR' as const,
+      }));
+    }
+
     return {
       id: p.id,
       name: p.name,
       type: p.type,
       connected: live?.connected ?? false,
-      axes: axes.filter((a) => a.enabled).map((a) => {
+      axes: enabledAxes.map((a) => {
         const axisLive = live?.axes?.find((x) => x.name === a.name);
         return {
           name: a.name,
@@ -251,6 +269,23 @@ export const motionApi = {
 
   onStatusUpdated: (cb: StatusCallback): (() => void) => {
     motionApi._listeners.add(cb);
+
+    // 在 Wails 环境下，监听后端推送的运动状态事件
+    if (isWailsAvailable()) {
+      const unsubscribe = wailsApi.motion.onStatusEvent((data) => {
+        if (Array.isArray(data)) {
+          motionApi._listeners.forEach((listener) => {
+            try { listener(data as MotionControllerStatus[]); } catch { /* 忽略回调异常 */ }
+          });
+        }
+      });
+      // 返回清理函数，同时移除监听器和 Wails 事件订阅
+      return () => {
+        motionApi._listeners.delete(cb);
+        try { unsubscribe(); } catch { /* 忽略清理异常 */ }
+      };
+    }
+
     return () => { motionApi._listeners.delete(cb); };
   },
 };

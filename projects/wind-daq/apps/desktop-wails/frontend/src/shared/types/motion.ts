@@ -19,6 +19,7 @@ export interface AxisConfig {
   name: AxisName;
   enabled: boolean;
   kind: AxisKind;
+  /** 步距角(°/step)，如 1.8° 对应 200 步/转 */
   stepsPerRev?: number;
   microSteps?: number;
   lead?: number;
