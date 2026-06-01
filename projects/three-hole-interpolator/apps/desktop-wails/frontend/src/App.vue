@@ -18,8 +18,6 @@ const newP3 = ref(0)
 const activeTab = ref<'input' | 'results'>('input')
 const pressureMode = ref<'gauge' | 'absolute'>('gauge')
 
-const validResultsCount = computed(() => results.value.filter(r => r !== null && r.isValid).length)
-const invalidResultsCount = computed(() => results.value.filter(r => r !== null && !r.isValid).length)
 const hasResults = computed(() => results.value.length > 0 && results.value.some(r => r !== null))
 
 function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') {
@@ -120,7 +118,10 @@ async function importCsv() {
     setStatus('请先加载 PRB 文件', 'warning')
     return
   }
-  if (!isWailsAvailable()) return
+  if (!isWailsAvailable()) {
+    setStatus('当前不在 Wails 环境中运行', 'error')
+    return
+  }
   try {
     const [resp, data] = await api.importCsvData()
     if (!resp.success) {
@@ -161,7 +162,7 @@ async function calculateAll() {
     }
     results.value = res
     const valid = res.filter(r => r && r.isValid).length
-    setStatus(`计算完成！有效结果: ${valid}/${res.length} 条`, 'success')
+    setStatus(`计算完成，共 ${res.length} 条`, 'success')
     activeTab.value = 'results'
   } catch (e: any) {
     setStatus('计算失败: ' + (e.message || e), 'error')
@@ -184,15 +185,13 @@ function exportResults() {
     return
   }
 
-  const headers = ['序号', 'α(°)', 'Ma', 'Pt(Pa)', 'Ps(Pa)', '迭代次数', '状态']
+  const headers = ['序号', 'α(°)', 'Ma', 'Pt(Pa)', 'Ps(Pa)']
   const rows = results.value.map((r, idx) => [
     idx + 1,
     r ? formatVal(r.alpha) : '-',
     r ? formatVal(r.machNumber) : '-',
     r ? formatVal(r.P0) : '-',
     r ? formatVal(r.Ps) : '-',
-    r ? formatNum(r.iterationCount) : '-',
-    r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
   const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map(row => row.join(','))].join('\n')
@@ -345,8 +344,6 @@ function exportResults() {
           <div class="result-header">
             <div class="result-stats">
               <div class="stat-card"><span class="stat-value">{{ results.length }}</span><span class="stat-label">总记录</span></div>
-              <div class="stat-card success"><span class="stat-value">{{ validResultsCount }}</span><span class="stat-label">有效</span></div>
-              <div class="stat-card error" v-if="invalidResultsCount > 0"><span class="stat-value">{{ invalidResultsCount }}</span><span class="stat-label">无效</span></div>
             </div>
             <button class="btn btn-secondary" @click="exportResults">导出 CSV</button>
           </div>
@@ -354,22 +351,16 @@ function exportResults() {
             <table class="data-table">
               <thead>
                 <tr>
-                  <th class="col-num">#</th><th>α (°)</th><th>Ma</th><th>Pt (Pa)</th><th>Ps (Pa)</th><th>迭代次数</th><th class="col-status">状态</th>
+                  <th class="col-num">#</th><th>α (°)</th><th>Ma</th><th>Pt (Pa)</th><th>Ps (Pa)</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
+                <tr v-for="(r, idx) in results" :key="idx">
                   <td class="col-num">{{ idx + 1 }}</td>
                   <td>{{ r ? formatVal(r.alpha) : '-' }}</td>
                   <td>{{ r ? formatVal(r.machNumber) : '-' }}</td>
                   <td>{{ r ? formatVal(r.P0) : '-' }}</td>
                   <td>{{ r ? formatVal(r.Ps) : '-' }}</td>
-                  <td>{{ r ? formatNum(r.iterationCount) : '-' }}</td>
-                  <td class="col-status">
-                    <span v-if="r && r.isValid" class="status-badge success">有效</span>
-                    <span v-else-if="r && !r.isValid" class="status-badge error" :title="r.warning">无效</span>
-                    <span v-else class="status-badge">-</span>
-                  </td>
                 </tr>
               </tbody>
             </table>
@@ -527,7 +518,6 @@ body {
 .data-table th.col-mode, .data-table td.col-mode { text-align: center; }
 .data-table td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--gray-100); color: var(--gray-700); }
 .data-table tbody tr:hover { background: var(--gray-50); }
-.data-table tbody tr.invalid { background: var(--error-50); }
 
 .count-badge {
   font-size: 11px; padding: 2px 10px; background: var(--primary-50);
@@ -548,11 +538,6 @@ body {
 .stat-card.success .stat-value { color: var(--success-600); }
 .stat-card.error .stat-value { color: var(--error-500); }
 .stat-label { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
-
-/* ===== Status Badge ===== */
-.status-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--gray-100); color: var(--gray-500); }
-.status-badge.success { background: var(--success-100); color: var(--success-600); }
-.status-badge.error { background: var(--error-100); color: var(--error-600); }
 
 /* ===== Empty State ===== */
 .empty-state { text-align: center; padding: 40px 20px; }

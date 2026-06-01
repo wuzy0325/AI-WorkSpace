@@ -3,7 +3,6 @@ package backend
 import (
 	"bufio"
 	"context"
-	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
@@ -26,14 +25,35 @@ func getHelpDocPath() string {
 		return ""
 	}
 	exeDir := filepath.Dir(ex)
+
+	// 收集所有可能的路径候选
 	possiblePaths := []string{
+		// 同级 docs 目录（打包后的标准结构）
 		filepath.Join(exeDir, "docs", helpDocFileName),
-		filepath.Join(exeDir, "..", "docs", helpDocFileName),
+		// 向上回溯两级（开发模式：backend 目录下运行）
 		filepath.Join(exeDir, "..", "..", "docs", helpDocFileName),
+		// 向上回溯三级（开发模式：frontend 目录下运行）
+		filepath.Join(exeDir, "..", "..", "..", "docs", helpDocFileName),
+		// 向上回溯四级（极端情况）
+		filepath.Join(exeDir, "..", "..", "..", "..", "docs", helpDocFileName),
 	}
+
+	// 在 Windows 开发模式下，wails dev 可能使用临时目录，尝试从工作目录查找
+	if runtime.GOOS == "windows" {
+		if cwd, err := os.Getwd(); err == nil {
+			possiblePaths = append(possiblePaths,
+				filepath.Join(cwd, "docs", helpDocFileName),
+				filepath.Join(cwd, "..", "docs", helpDocFileName),
+				filepath.Join(cwd, "..", "..", "docs", helpDocFileName),
+			)
+		}
+	}
+
 	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			return p
+		// 使用 Clean 规范化路径（解析 .. 等）
+		cleanPath := filepath.Clean(p)
+		if info, err := os.Stat(cleanPath); err == nil && !info.IsDir() {
+			return cleanPath
 		}
 	}
 	return ""
@@ -323,9 +343,9 @@ func toAppResult(r three_interp.InterpolationResult) *InterpolationResult {
 
 func (a *App) ImportCsvData() ImportCsvDataResponse {
 	filePath, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "选择数据 CSV 文件",
+		Title: "选择数据文件",
 		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "CSV Files (*.csv)", Pattern: "*.csv"},
+			{DisplayName: "数据文件 (*.csv, *.txt)", Pattern: "*.csv;*.txt"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
@@ -369,17 +389,45 @@ func readCsvFile(filePath string) ([][]string, error) {
 	}
 	defer file.Close()
 
-	reader := csv.NewReader(file)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("读取CSV失败: %s", err.Error())
+	scanner := bufio.NewScanner(file)
+	var dataLines []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		dataLines = append(dataLines, trimmed)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("读取文件失败: %s", err.Error())
 	}
 
-	if len(records) < 2 {
-		return nil, fmt.Errorf("CSV文件为空或只有表头")
+	if len(dataLines) < 2 {
+		return nil, fmt.Errorf("文件为空或只有表头")
+	}
+
+	delimiter := detectDelimiter(dataLines[0])
+
+	records := make([][]string, 0, len(dataLines))
+	for _, line := range dataLines {
+		fields := strings.Split(line, string(delimiter))
+		for i := range fields {
+			fields[i] = strings.TrimSpace(fields[i])
+		}
+		records = append(records, fields)
 	}
 
 	return records, nil
+}
+
+func detectDelimiter(line string) rune {
+	tabCount := strings.Count(line, "\t")
+	commaCount := strings.Count(line, ",")
+	if tabCount > commaCount {
+		return '\t'
+	}
+	return ','
 }
 
 func parseCsvHeader(header []string) (map[string]int, string) {
