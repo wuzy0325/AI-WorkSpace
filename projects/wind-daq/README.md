@@ -13,6 +13,8 @@ This project owns:
 - Go backend usecases for acquisition, device management, motion, calibration, traversal, storage, and reporting.
 - Project-specific API contracts, configs, deployment notes, and HIL/integration tests.
 
+Reusable motion behavior is shared through `shared/motion-control/go` and low-level motion device code through `shared/device-sdk/go/motion`. Wind-DAQ must not import `projects/motion-controller/*` packages.
+
 ## Quick Start
 
 ### Prerequisites

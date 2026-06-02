@@ -2,11 +2,12 @@
 
 ## Objective
 
-从 wind-daq 项目中提取运动控制器模块，形成一个独立的桌面应用程序。**关键设计原则：设备控制代码共享** — 运动控制器的设备控制层提取到 `shared/device-sdk/go/motion/`，wind-daq 和新的 motion-controller 项目都通过 Go module 引用，确保修复错误时两个项目都能受益。
+从 wind-daq 项目中提取运动控制器模块，形成一个独立的桌面应用程序。**关键设计原则：分层共享** — 运动控制器的底层设备控制层位于 `shared/device-sdk/go/motion/`，可复用的应用级运动控制编排位于 `shared/motion-control/go/`，wind-daq 和 motion-controller 都通过 Go module 引用，确保修复错误时两个项目都能受益。
 
 **共享边界:**
 - **共享（shared/device-sdk/go/motion/）**: 控制器通用类型、接口定义、协议实现、模拟器、可复用硬件 adapter
-- **项目私有**: 连接管理、配置选择、状态推送、应用级流程（usecase 层）
+- **共享（shared/motion-control/go/）**: MotionManager、profile 持久化、HTTP route glue、状态轮询 helper
+- **项目私有**: Wails 生命周期、产品级配置选择、页面布局、项目特定 wiring
 
 **用户场景:**
 - 工程师需要独立调试和测试运动控制器
@@ -16,7 +17,7 @@
 **成功标准:**
 - 可独立运行的 Wails 桌面应用
 - **完整实现** Simulated、B140、WTNMC4A 三种控制器类型
-- 设备控制代码在 `shared/device-sdk/go/motion/` 中，两个项目共享引用
+- 底层设备控制代码在 `shared/device-sdk/go/motion/` 中，应用级 motion 行为在 `shared/motion-control/go/` 中，两个项目共享引用
 - 完整的运动控制 UI（监控、点动、移动、配置）
 - 实时状态推送（100ms 刷新）
 - 可独立保存/加载控制器配置
@@ -26,7 +27,7 @@
 | Component | Technology | Version |
 |-----------|-----------|---------|
 | Desktop Shell | Wails | v2.12.0 |
-| Backend | Go | 1.21+ |
+| Backend | Go | Follow `go.work` / module `go.mod` |
 | Frontend | Vue | 3.5.14 |
 | State Management | Pinia | 3.0.4 |
 | UI Framework | Tailwind CSS | 4.3.0 |
@@ -81,6 +82,16 @@ shared/device-sdk/go/motion/         # 运动控制器设备控制层（共享�
         └── motion_profile_store.go   # 配置存储
 ```
 
+### 共享应用级运动控制代码（关键）
+
+```
+shared/motion-control/go/          # 运动控制应用层共享模块
+├── manager/                       # MotionManager 编排
+├── profile/                       # ProfileStore 与文件持久化
+├── httpapi/                       # /api/motion/* route glue
+└── events/                        # 状态轮询 helper（不直接依赖 Wails）
+```
+
 ### Motion Controller 项目
 
 ```
@@ -123,8 +134,8 @@ projects/motion-controller/
 │       │             │      │       │             │
 │       ▼             │      │       ▼             │
 │  ┌─────────────────────────────────────────┐    │
+│  │   shared/motion-control/go              │    │
 │  │   shared/device-sdk/go/motion           │    │
-│  │  (core, ports, adapters - 完整实现)     │    │
 │  └─────────────────────────────────────────┘    │
 └─────────────────────┘      └─────────────────────┘
 ```
@@ -211,7 +222,7 @@ export const motionApi = {
 - 添加新的控制器类型
 - 修改配置文件格式
 - 添加新的 Wails 绑定方法
-- 修改 shared/device-sdk/go/motion 的公共 API
+- 修改 shared/device-sdk/go/motion 或 shared/motion-control/go 的公共 API
 
 ### Never (绝不做)
 - 提交密钥或敏感信息
@@ -230,7 +241,7 @@ export const motionApi = {
 - [ ] **完整实现** WTNMC4A 控制器
 - [ ] 完整的运动控制操作（MoveTo, MoveBy, Jog, Home, Stop, EStop）
 - [ ] 多轴支持（X, Y, Z, U）
-- [ ] 实时状态监控（位置、速度、限位、归零状态）
+- [ ] 实时状态监控（位置、速度、限位、回零状态）
 - [ ] 控制器配置管理（创建、编辑、删除、保存、加载）
 
 ### UI 完整性
@@ -243,6 +254,7 @@ export const motionApi = {
 
 ### 架构完整性
 - [ ] **设备控制代码共享** — shared/device-sdk/go/motion 被两个项目引用
+- [ ] **应用级 motion 共享** — shared/motion-control/go 被两个项目引用
 - [ ] 六边形架构（usecase → core + ports, adapters → ports, core 零依赖）
 - [ ] Wails 绑定 + HTTP API 双通道
 - [ ] 100ms 状态推送
@@ -250,11 +262,11 @@ export const motionApi = {
 
 ### 可独立运行
 - [ ] 无需 wind-daq 即可编译和运行（通过 shared module 引用）
-- [ ] 独立的 Go module（引用 shared/device-sdk/go/motion）
+- [ ] 独立的 Go module（引用 shared/device-sdk/go/motion 和 shared/motion-control/go）
 - [ ] 独立的 package.json
 
 ### 代码共享验证
-- [ ] 修改 shared/device-sdk/go/motion 后，两个项目都能编译通过
+- [ ] 修改 shared/device-sdk/go/motion 或 shared/motion-control/go 后，两个项目都能编译通过
 - [ ] 两个项目的测试都能通过
 - [ ] 共享代码的修复自动同步到两个项目
 
