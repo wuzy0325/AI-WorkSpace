@@ -7,16 +7,20 @@ import (
 	"net/http"
 	"os"
 
+	"shared.local/device-sdk/go/motion/adapters/hardware"
+	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/motion/ports"
+	motionprofile "shared.local/motion-control/go/profile"
+
 	"wind-daq/services/api-go/api"
 	calstore "wind-daq/services/api-go/internal/adapters/calstore"
 	configadapter "wind-daq/services/api-go/internal/adapters/config"
-	"wind-daq/services/api-go/internal/adapters/hardware"
+	windaqhardware "wind-daq/services/api-go/internal/adapters/hardware"
 	reportadapter "wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/device"
-	"wind-daq/services/api-go/internal/core/motion"
-	"wind-daq/services/api-go/internal/ports"
+	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -38,10 +42,10 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	recorder := usecase.NewStorageRecorder(storageadapter.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 
-	// 创建运动控制器配置存储
-	motionProfileStore := configadapter.NewFileMotionProfileStore("config/motion-profiles.json")
-	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
-		return hardware.NewSimulatedMotionController(profile)
+	motionProfileStore := motionprofile.NewFileMotionProfileStore("config/motion-profiles.json")
+	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+		factory := hardware.NewDefaultMotionControllerFactory()
+		return factory.Create(profile)
 	})
 
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
@@ -64,6 +68,9 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		CalibrationManager: calMgr,
 		TraversalManager:   travMgr,
 		StorageRecorder:    recorder,
+		ConfigManager: usecase.NewConfigManager(
+			configadapter.NewFileAppConfigStore("config/app"),
+		),
 	})
 
 	srv := &http.Server{Addr: addr, Handler: handler}
@@ -80,20 +87,20 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 
 type deviceFactory struct{}
 
-func (deviceFactory) Create(profile device.Profile) (ports.Device, error) {
+func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) {
 	switch profile.Type {
 	case device.DeviceDAQP1604:
-		return hardware.NewDAQP1604(profile), nil
+		return windaqhardware.NewDAQP1604(profile), nil
 	case device.DeviceDAQP1064Pre:
-		return hardware.NewDAQP1064Pre(profile), nil
+		return windaqhardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:
-		return hardware.NewDAQT1603(profile), nil
+		return windaqhardware.NewDAQT1603(profile), nil
 	case device.DeviceWTNPXI:
-		return hardware.NewWTNPXI(profile), nil
+		return windaqhardware.NewWTNPXI(profile), nil
 	case device.DeviceDSA3217:
-		return hardware.NewDSA3217(profile), nil
+		return windaqhardware.NewDSA3217(profile), nil
 	default:
-		return hardware.NewSimulatedDevice(profile), nil
+		return windaqhardware.NewSimulatedDevice(profile), nil
 	}
 }
 
@@ -101,7 +108,7 @@ type noopPublisher struct{}
 
 func (noopPublisher) Publish(string, any) {}
 
-func ensureDefaultProfiles(store ports.ProfileStore) error {
+func ensureDefaultProfiles(store windaqports.ProfileStore) error {
 	profiles, err := store.LoadProfiles()
 	if err != nil {
 		return err
@@ -110,7 +117,7 @@ func ensureDefaultProfiles(store ports.ProfileStore) error {
 		return nil
 	}
 	return store.SaveProfiles([]device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		configadapter.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	})
 }
 

@@ -95,9 +95,13 @@ func (d *DAQP1064Pre) Connect() error {
 	if host == "" {
 		host = DAQ_P_1064PRE_DEFAULT_HOST
 	}
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, DAQ_P_1064PRE_DEFAULT_PORT), DAQ_P_1064PRE_TIMEOUT)
+	port := d.profile.Port
+	if port <= 0 {
+		port = DAQ_P_1064PRE_DEFAULT_PORT
+	}
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_P_1064PRE_TIMEOUT)
 	if err != nil {
-		return fmt.Errorf("connect to %s:%d: %w", host, DAQ_P_1064PRE_DEFAULT_PORT, err)
+		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
 
 	d.conn = conn

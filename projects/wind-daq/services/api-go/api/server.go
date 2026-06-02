@@ -3,19 +3,17 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	motionhttp "shared.local/motion-control/go/httpapi"
 	interpfiles "wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
-	"wind-daq/services/api-go/internal/core/motion"
 	wind_report "wind-daq/services/api-go/internal/core/report"
 	"wind-daq/services/api-go/internal/core/storage"
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -30,6 +28,7 @@ type Deps struct {
 	CalibrationManager *usecase.CalibrationManager
 	TraversalManager   *usecase.TraversalManager
 	StorageRecorder    *usecase.StorageRecorder
+	ConfigManager      *usecase.ConfigManager
 }
 
 type traversalAPIConfig struct {
@@ -37,30 +36,30 @@ type traversalAPIConfig struct {
 	Layout struct {
 		Pattern string `json:"pattern"`
 		Line    *struct {
-			StartX        float64       `json:"startX"`
-			StartY        float64       `json:"startY"`
-			EndX          float64       `json:"endX"`
-			EndY          float64       `json:"endY"`
-			XStepSegments []stepSegment `json:"xStepSegments"`
-			YStepSegments []stepSegment `json:"yStepSegments"`
+			StartX        float64                 `json:"startX"`
+			StartY        float64                 `json:"startY"`
+			EndX          float64                 `json:"endX"`
+			EndY          float64                 `json:"endY"`
+			XStepSegments []traversal.StepSegment `json:"xStepSegments"`
+			YStepSegments []traversal.StepSegment `json:"yStepSegments"`
 		} `json:"line"`
 		Rectangle *struct {
-			XMin          float64       `json:"xMin"`
-			XMax          float64       `json:"xMax"`
-			XStepSegments []stepSegment `json:"xStepSegments"`
-			YMin          float64       `json:"yMin"`
-			YMax          float64       `json:"yMax"`
-			YStepSegments []stepSegment `json:"yStepSegments"`
+			XMin          float64                 `json:"xMin"`
+			XMax          float64                 `json:"xMax"`
+			XStepSegments []traversal.StepSegment `json:"xStepSegments"`
+			YMin          float64                 `json:"yMin"`
+			YMax          float64                 `json:"yMax"`
+			YStepSegments []traversal.StepSegment `json:"yStepSegments"`
 		} `json:"rectangle"`
 		Sector *struct {
-			CenterX             float64       `json:"centerX"`
-			CenterY             float64       `json:"centerY"`
-			RadiusMin           float64       `json:"radiusMin"`
-			RadiusMax           float64       `json:"radiusMax"`
-			RadialStepSegments  []stepSegment `json:"radialStepSegments"`
-			AngleStart          float64       `json:"angleStart"`
-			AngleEnd            float64       `json:"angleEnd"`
-			AngularStepSegments []stepSegment `json:"angularStepSegments"`
+			CenterX             float64                 `json:"centerX"`
+			CenterY             float64                 `json:"centerY"`
+			RadiusMin           float64                 `json:"radiusMin"`
+			RadiusMax           float64                 `json:"radiusMax"`
+			RadialStepSegments  []traversal.StepSegment `json:"radialStepSegments"`
+			AngleStart          float64                 `json:"angleStart"`
+			AngleEnd            float64                 `json:"angleEnd"`
+			AngularStepSegments []traversal.StepSegment `json:"angularStepSegments"`
 		} `json:"sector"`
 		Custom *struct {
 			Points []struct {
@@ -79,12 +78,6 @@ type traversalAPIConfig struct {
 		} `json:"probeChannels"`
 	} `json:"channels"`
 	DwellTimeMs int `json:"dwellTimeMs"`
-}
-
-type stepSegment struct {
-	Start float64 `json:"start"`
-	End   float64 `json:"end"`
-	Step  float64 `json:"step"`
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -224,135 +217,9 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	// ---- Motion API ----
-	mux.HandleFunc("/api/motion/profiles", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			profiles, err := deps.MotionManager.LoadProfiles()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, profiles)
-		case http.MethodPut:
-			var profile motion.MotionControllerProfile
-			if !decodeBody(w, r, &profile) {
-				return
-			}
-			if err := deps.MotionManager.UpsertProfile(profile); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/motion/profiles/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/api/motion/profiles/")
-		if id == "" {
-			writeError(w, http.StatusBadRequest, "profile id is required")
-			return
-		}
-		if r.Method != http.MethodDelete {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if err := deps.MotionManager.DeleteProfile(id); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-	})
-	mux.HandleFunc("/api/motion/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		writeJSON(w, http.StatusOK, deps.MotionManager.StatusAll())
-	})
-
-	handleMotionCmd := func(pattern string, fn func(id string, axis motion.AxisName, body motionBody) error) {
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			var body motionBody
-			if !decodeBody(w, r, &body) {
-				return
-			}
-			if body.ID == "" || body.Axis == "" {
-				writeError(w, http.StatusBadRequest, "id and axis are required")
-				return
-			}
-			if err := fn(body.ID, motion.AxisName(body.Axis), body); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-		})
+	if deps.MotionManager != nil {
+		motionhttp.RegisterMotionRoutes(mux, deps.MotionManager)
 	}
-	handleMotionCmd("/api/motion/home", func(id string, axis motion.AxisName, body motionBody) error {
-		return deps.MotionManager.Home(id, axis)
-	})
-	handleMotionCmd("/api/motion/moveTo", func(id string, axis motion.AxisName, body motionBody) error {
-		return deps.MotionManager.MoveTo(id, axis, body.Position)
-	})
-	handleMotionCmd("/api/motion/moveBy", func(id string, axis motion.AxisName, body motionBody) error {
-		return deps.MotionManager.MoveBy(id, axis, body.Delta)
-	})
-	handleMotionCmd("/api/motion/jog", func(id string, axis motion.AxisName, body motionBody) error {
-		return deps.MotionManager.Jog(id, axis, body.Velocity)
-	})
-	handleMotionCmd("/api/motion/definePosition", func(id string, axis motion.AxisName, body motionBody) error {
-		return deps.MotionManager.DefinePosition(id, axis, body.Position)
-	})
-
-	handleMotionSimple := func(pattern string, fn func(id string) error) {
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			var body struct {
-				ID string `json:"id"`
-			}
-			if !decodeBody(w, r, &body) {
-				return
-			}
-			if body.ID == "" {
-				writeError(w, http.StatusBadRequest, "id is required")
-				return
-			}
-			if err := fn(body.ID); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-		})
-	}
-	handleMotionSimple("/api/motion/connect", deps.MotionManager.Connect)
-	handleMotionSimple("/api/motion/disconnect", deps.MotionManager.Disconnect)
-	handleMotionSimple("/api/motion/emergencyStop", deps.MotionManager.EmergencyStop)
-	mux.HandleFunc("/api/motion/stop", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var body motionBody
-		if !decodeBody(w, r, &body) {
-			return
-		}
-		if body.ID == "" {
-			writeError(w, http.StatusBadRequest, "id is required")
-			return
-		}
-		if err := deps.MotionManager.Stop(body.ID, motion.AxisName(body.Axis)); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-	})
 
 	// ---- Calibration API ----
 	mux.HandleFunc("/api/calibration/", func(w http.ResponseWriter, r *http.Request) {
@@ -642,7 +509,7 @@ func NewRouter(deps Deps) http.Handler {
 			}
 			deps.TraversalManager.SaveConfigRaw(raw)
 			if dwell >= 0 {
-				go runTraversalTask(deps.TraversalManager, dwell)
+				go deps.TraversalManager.RunTraversalLoop(dwell)
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"taskId": config.TaskID})
 		case "status":
@@ -650,7 +517,7 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			writeJSON(w, http.StatusOK, traversalStatusResponse(deps.TraversalManager.Status(), deps.TraversalManager))
+			writeJSON(w, http.StatusOK, deps.TraversalManager.BuildStatusResponse())
 		case "runPoint":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -709,6 +576,41 @@ func NewRouter(deps Deps) http.Handler {
 			writeJSON(w, http.StatusOK, result)
 		default:
 			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	// ---- Config API ----
+	mux.HandleFunc("/api/config/", func(w http.ResponseWriter, r *http.Request) {
+		if deps.ConfigManager == nil {
+			writeError(w, http.StatusServiceUnavailable, "config manager not initialized")
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/api/config/")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "config key is required")
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			data, err := deps.ConfigManager.LoadConfig(key)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": data})
+		case http.MethodPut:
+			var raw json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if err := deps.ConfigManager.SaveConfig(key, raw); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
 
@@ -940,14 +842,6 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {
 	return true
 }
 
-type motionBody struct {
-	ID       string  `json:"id"`
-	Axis     string  `json:"axis"`
-	Position float64 `json:"position"`
-	Delta    float64 `json:"delta"`
-	Velocity float64 `json:"velocity"`
-}
-
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -973,7 +867,63 @@ func traversalConfigFromRequest(raw json.RawMessage) (traversal.Config, time.Dur
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return traversal.Config{}, 0, err
 	}
-	points := traversalPointsFromLayout(cfg)
+	points := traversal.PointsFromLayout(traversal.LayoutConfig{
+		Pattern: cfg.Layout.Pattern,
+		Line: func() *traversal.LineLayout {
+			if cfg.Layout.Line == nil {
+				return nil
+			}
+			return &traversal.LineLayout{
+				StartX:        cfg.Layout.Line.StartX,
+				StartY:        cfg.Layout.Line.StartY,
+				EndX:          cfg.Layout.Line.EndX,
+				EndY:          cfg.Layout.Line.EndY,
+				XStepSegments: cfg.Layout.Line.XStepSegments,
+				YStepSegments: cfg.Layout.Line.YStepSegments,
+			}
+		}(),
+		Rectangle: func() *traversal.RectangleLayout {
+			if cfg.Layout.Rectangle == nil {
+				return nil
+			}
+			return &traversal.RectangleLayout{
+				XMin:          cfg.Layout.Rectangle.XMin,
+				XMax:          cfg.Layout.Rectangle.XMax,
+				XStepSegments: cfg.Layout.Rectangle.XStepSegments,
+				YMin:          cfg.Layout.Rectangle.YMin,
+				YMax:          cfg.Layout.Rectangle.YMax,
+				YStepSegments: cfg.Layout.Rectangle.YStepSegments,
+			}
+		}(),
+		Sector: func() *traversal.SectorLayout {
+			if cfg.Layout.Sector == nil {
+				return nil
+			}
+			return &traversal.SectorLayout{
+				CenterX:             cfg.Layout.Sector.CenterX,
+				CenterY:             cfg.Layout.Sector.CenterY,
+				RadiusMin:           cfg.Layout.Sector.RadiusMin,
+				RadiusMax:           cfg.Layout.Sector.RadiusMax,
+				RadialStepSegments:  cfg.Layout.Sector.RadialStepSegments,
+				AngleStart:          cfg.Layout.Sector.AngleStart,
+				AngleEnd:            cfg.Layout.Sector.AngleEnd,
+				AngularStepSegments: cfg.Layout.Sector.AngularStepSegments,
+			}
+		}(),
+		Custom: func() *traversal.CustomLayout {
+			if cfg.Layout.Custom == nil {
+				return nil
+			}
+			cl := &traversal.CustomLayout{}
+			for _, p := range cfg.Layout.Custom.Points {
+				cl.Points = append(cl.Points, struct {
+					X float64 `json:"x"`
+					Y float64 `json:"y"`
+				}{X: p.X, Y: p.Y})
+			}
+			return cl
+		}(),
+	})
 	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
 	deviceID := ""
 	for _, probe := range cfg.Channels.ProbeChannels {
@@ -999,217 +949,6 @@ func traversalConfigFromRequest(raw json.RawMessage) (traversal.Config, time.Dur
 		dwell = 0
 	}
 	return traversal.Config{TaskID: fmt.Sprintf("trav-%d", time.Now().UnixMilli()), DeviceID: deviceID, Channels: channels, Path: points}, dwell, nil
-}
-
-func traversalPointsFromLayout(cfg traversalAPIConfig) []traversal.Point {
-	switch cfg.Layout.Pattern {
-	case "line":
-		if cfg.Layout.Line == nil {
-			return nil
-		}
-		xs := traversalStepValues(cfg.Layout.Line.StartX, cfg.Layout.Line.EndX, cfg.Layout.Line.XStepSegments)
-		ys := traversalStepValues(cfg.Layout.Line.StartY, cfg.Layout.Line.EndY, cfg.Layout.Line.YStepSegments)
-		if len(ys) == 0 {
-			ys = []float64{cfg.Layout.Line.StartY}
-		}
-		return gridPoints(xs, ys)
-	case "rectangle":
-		if cfg.Layout.Rectangle == nil {
-			return nil
-		}
-		return gridPoints(
-			traversalStepValues(cfg.Layout.Rectangle.XMin, cfg.Layout.Rectangle.XMax, cfg.Layout.Rectangle.XStepSegments),
-			traversalStepValues(cfg.Layout.Rectangle.YMin, cfg.Layout.Rectangle.YMax, cfg.Layout.Rectangle.YStepSegments),
-		)
-	case "sector":
-		if cfg.Layout.Sector == nil {
-			return nil
-		}
-		var points []traversal.Point
-		radii := traversalStepValues(cfg.Layout.Sector.RadiusMin, cfg.Layout.Sector.RadiusMax, cfg.Layout.Sector.RadialStepSegments)
-		angles := traversalStepValues(cfg.Layout.Sector.AngleStart, cfg.Layout.Sector.AngleEnd, cfg.Layout.Sector.AngularStepSegments)
-		for _, radius := range radii {
-			for _, angle := range angles {
-				radian := angle * math.Pi / 180
-				points = append(points, traversal.Point{
-					X: cfg.Layout.Sector.CenterX + radius*math.Cos(radian),
-					Y: cfg.Layout.Sector.CenterY + radius*math.Sin(radian),
-				})
-			}
-		}
-		return points
-	case "custom":
-		if cfg.Layout.Custom == nil {
-			return nil
-		}
-		points := make([]traversal.Point, 0, len(cfg.Layout.Custom.Points))
-		for _, point := range cfg.Layout.Custom.Points {
-			points = append(points, traversal.Point{X: point.X, Y: point.Y})
-		}
-		return points
-	default:
-		return nil
-	}
-}
-
-func traversalStepValues(start, end float64, segments []stepSegment) []float64 {
-	var values []float64
-	for _, segment := range segments {
-		if segment.Step <= 0 {
-			continue
-		}
-		actualStart := math.Max(segment.Start, start)
-		actualEnd := math.Min(segment.End, end)
-		for value := actualStart; value <= actualEnd+1e-9; value += segment.Step {
-			if !containsFloat(values, value) {
-				values = append(values, value)
-			}
-		}
-	}
-	if len(values) == 0 {
-		if start == end {
-			return []float64{start}
-		}
-		return []float64{start, end}
-	}
-	return values
-}
-
-func gridPoints(xs, ys []float64) []traversal.Point {
-	points := make([]traversal.Point, 0, len(xs)*len(ys))
-	for _, x := range xs {
-		for _, y := range ys {
-			points = append(points, traversal.Point{X: x, Y: y})
-		}
-	}
-	return points
-}
-
-func containsFloat(values []float64, needle float64) bool {
-	for _, value := range values {
-		if math.Abs(value-needle) < 1e-9 {
-			return true
-		}
-	}
-	return false
-}
-
-func traversalStatusResponse(status traversal.Status, manager *usecase.TraversalManager) map[string]any {
-	state := string(status.State)
-	if status.State == traversal.StateIdle && status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
-		state = "completed"
-	}
-	progress := 0.0
-	if status.TotalPoints > 0 {
-		progress = float64(status.CurrentPoint) / float64(status.TotalPoints) * 100
-	}
-	var currentPoint map[string]float64
-	if status.CurrentPointCoordinates != nil {
-		point := *status.CurrentPointCoordinates
-		currentPoint = map[string]float64{"alpha": point.X, "beta": point.Y}
-	}
-	dataPoints := traversalDataPoints(status.Results, manager)
-	var latestData any
-	if len(dataPoints) > 0 {
-		latestData = dataPoints[len(dataPoints)-1]
-	}
-	return map[string]any{
-		"taskId":                  status.TaskID,
-		"state":                   string(status.State),
-		"status":                  state,
-		"currentPoint":            status.CurrentPoint,
-		"currentPointCoordinates": currentPoint,
-		"completedPoints":         status.CurrentPoint,
-		"totalPoints":             status.TotalPoints,
-		"progress":                progress,
-		"startTime":               status.StartedAt,
-		"lastError":               status.LastError,
-		"results":                 status.Results,
-		"dataPoints":              dataPoints,
-		"latestData":              latestData,
-	}
-}
-
-func traversalDataPoints(results []traversal.PointResult, manager *usecase.TraversalManager) []map[string]any {
-	dataPoints := make([]map[string]any, 0, len(results))
-	for _, result := range results {
-		rawPressure, input, ok := traversalRawPressure(result.Values)
-		interpolationResult := coreinterp.InterpolationResult{IsValid: false}
-		if ok && manager != nil {
-			calculated, err := manager.CalculateRealtime(input)
-			if err == nil {
-				interpolationResult = calculated
-			} else {
-				interpolationResult.Warning = err.Error()
-			}
-		}
-		dataPoints = append(dataPoints, map[string]any{
-			"pointId":             result.PointIndex + 1,
-			"coordinates":         map[string]float64{"alpha": result.Point.X, "beta": result.Point.Y},
-			"rawPressure":         rawPressure,
-			"interpolationResult": interpolationResult,
-			"sampleCount":         1,
-			"timestamp":           result.Timestamp,
-			"dwellTimeElapsed":    0,
-		})
-	}
-	return dataPoints
-}
-
-func traversalRawPressure(values map[int]float64) (map[string]float64, coreinterp.InterpolationInput, bool) {
-	orderedKeys := make([]int, 0, len(values))
-	for key := range values {
-		orderedKeys = append(orderedKeys, key)
-	}
-	sort.Ints(orderedKeys)
-	raw := make(map[string]float64, 7)
-	labels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
-	for i, label := range labels {
-		if i >= len(orderedKeys) {
-			continue
-		}
-		raw[label] = values[orderedKeys[i]]
-	}
-	input := coreinterp.InterpolationInput{
-		P1:   raw["P1"],
-		P2:   raw["P2"],
-		P3:   raw["P3"],
-		P4:   raw["P4"],
-		P5:   raw["P5"],
-		PAtm: raw["Patm"],
-		TAtm: raw["Tatm"],
-	}
-	_, hasP1 := raw["P1"]
-	_, hasP2 := raw["P2"]
-	_, hasP3 := raw["P3"]
-	_, hasP4 := raw["P4"]
-	_, hasP5 := raw["P5"]
-	_, hasPatm := raw["Patm"]
-	_, hasTatm := raw["Tatm"]
-	return raw, input, hasP1 && hasP2 && hasP3 && hasP4 && hasP5 && hasPatm && hasTatm
-}
-
-func runTraversalTask(manager *usecase.TraversalManager, dwell time.Duration) {
-	if dwell <= 0 {
-		dwell = 100 * time.Millisecond
-	}
-	for {
-		status := manager.Status()
-		switch status.State {
-		case traversal.StateRunning:
-			if status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
-				return
-			}
-			if err := manager.RunCurrentPoint(); err != nil {
-				return
-			}
-			time.Sleep(dwell)
-		case traversal.StatePaused:
-			time.Sleep(200 * time.Millisecond)
-		default:
-			return
-		}
-	}
 }
 
 func prbFileInfo(filePath string, validRange coreinterp.PrbValidRange) map[string]any {

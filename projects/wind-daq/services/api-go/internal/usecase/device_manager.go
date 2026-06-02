@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/device"
+	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/ports"
 )
 
@@ -60,7 +61,7 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	profile = device.NormalizeProfile(profile)
+	profile = windaqconfig.NormalizeProfile(profile)
 	for i := range m.profiles {
 		if m.profiles[i].ID == profile.ID {
 			m.profiles[i] = profile
@@ -74,7 +75,7 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 func normalizeProfiles(profiles []device.Profile) []device.Profile {
 	normalized := make([]device.Profile, len(profiles))
 	for i := range profiles {
-		normalized[i] = device.NormalizeProfile(profiles[i])
+		normalized[i] = windaqconfig.NormalizeProfile(profiles[i])
 	}
 	return normalized
 }

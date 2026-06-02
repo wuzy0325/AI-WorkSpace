@@ -3,12 +3,18 @@ package hardware
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
-	sharedproto "shared/device-sdk/go/protocol"
-	"shared/device-sdk/go/serialport"
+	sharedproto "shared.local/device-sdk/go/protocol"
 	"wind-daq/services/api-go/internal/core/device"
+)
+
+const (
+	DAQ_P_1604_DEFAULT_HOST = "192.168.3.101"
+	DAQ_P_1604_DEFAULT_PORT = 9000
+	DAQ_P_1604_TIMEOUT      = 5 * time.Second
 )
 
 type DAQP1604 struct {
@@ -18,7 +24,9 @@ type DAQP1604 struct {
 	sink        device.DataSink
 	stop        chan struct{}
 	acquiring   bool
-	port        *serialport.Port
+	conn        net.Conn
+	frameReader *sharedproto.FrameReader
+	recvBuffer  []byte
 	readErrors  int
 	frameErrors int
 }
@@ -32,6 +40,7 @@ func NewDAQP1604(profile device.Profile) *DAQP1604 {
 			Type:       profile.Type,
 			Connection: device.ConnectionDisconnected,
 		},
+		recvBuffer: make([]byte, 0, 4096),
 	}
 }
 
@@ -41,23 +50,26 @@ func (d *DAQP1604) Connect() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.port != nil {
+	if d.conn != nil {
 		return nil
 	}
 
-	portName := d.profile.Address
-	if portName == "" {
-		return fmt.Errorf("serial port address is required — set Address in device profile")
+	host := d.profile.Address
+	if host == "" {
+		host = DAQ_P_1604_DEFAULT_HOST
+	}
+	port := d.profile.Port
+	if port <= 0 {
+		port = DAQ_P_1604_DEFAULT_PORT
 	}
 
-	cfg := serialport.DefaultConfig(portName)
-	cfg.ReadTimeout = 3 * time.Second
-	port, err := serialport.Open(cfg)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_P_1604_TIMEOUT)
 	if err != nil {
-		return fmt.Errorf("open serial %s: %w", portName, err)
+		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
 
-	d.port = port
+	d.conn = conn
+	d.frameReader = sharedproto.NewFrameReader(conn)
 	d.status.Connection = device.ConnectionConnected
 	return nil
 }
@@ -68,9 +80,10 @@ func (d *DAQP1604) Disconnect() error {
 
 	_ = d.stopAcquisitionLocked()
 
-	if d.port != nil {
-		_ = d.port.Close()
-		d.port = nil
+	if d.conn != nil {
+		_ = d.conn.Close()
+		d.conn = nil
+		d.frameReader = nil
 	}
 
 	d.status.Connection = device.ConnectionDisconnected
@@ -84,8 +97,16 @@ func (d *DAQP1604) StartAcquisition() error {
 	if d.acquiring {
 		return nil
 	}
-	if d.port == nil {
+	if d.conn == nil {
 		return fmt.Errorf("device not connected")
+	}
+
+	if err := d.initStream(); err != nil {
+		return fmt.Errorf("init stream: %w", err)
+	}
+
+	if err := d.sendCommand("c 01 1"); err != nil {
+		return fmt.Errorf("start stream: %w", err)
 	}
 
 	d.acquiring = true
@@ -105,8 +126,15 @@ func (d *DAQP1604) StopAcquisition() error {
 }
 
 func (d *DAQP1604) stopAcquisitionLocked() error {
-	if d.acquiring && d.stop != nil {
-		close(d.stop)
+	if d.acquiring {
+		if d.conn != nil {
+			if err := d.sendCommand("c 02 1"); err != nil {
+				slog.Warn("DAQ-P-1604 stop stream command failed", "device", d.profile.ID, "error", err)
+			}
+		}
+		if d.stop != nil {
+			close(d.stop)
+		}
 	}
 	d.acquiring = false
 	d.stop = nil
@@ -161,55 +189,95 @@ func (d *DAQP1604) ClearTare(channelIndex int) error {
 	return d.SetTare(channelIndex, 0)
 }
 
-func (d *DAQP1604) readLoop(stop <-chan struct{}) {
-	if err := d.port.SetReadTimeout(10 * time.Millisecond); err != nil {
-		slog.Warn("DAQ-P-1604 set read timeout", "error", err)
+func (d *DAQP1604) initStream() error {
+	if err := d.sendCommand("w1601"); err != nil {
+		return fmt.Errorf("enable length prefix: %w", err)
 	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := d.sendCommand("c 00 1 FFFF 1 100 7 0"); err != nil {
+		return fmt.Errorf("set stream params: %w", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := d.sendCommand("c 05 1 0810"); err != nil {
+		return fmt.Errorf("set stream content: %w", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	return nil
+}
+
+func (d *DAQP1604) sendCommand(cmd string) error {
+	if d.conn == nil {
+		return fmt.Errorf("not connected")
+	}
+	d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1604_TIMEOUT))
+	_, err := d.conn.Write([]byte(cmd + "\r\n"))
+	return err
+}
+
+func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
 			return
 		default:
-			d.readFrame()
+			d.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			payload, err := d.frameReader.ReadFrame()
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				d.mu.Lock()
+				d.readErrors++
+				d.mu.Unlock()
+				slog.Debug("DAQ-P-1604 read error", "device", d.profile.ID, "error", err)
+				return
+			}
+			if len(payload) > 0 {
+				d.processPayload(payload)
+			}
 		}
 	}
 }
 
-func (d *DAQP1604) readFrame() {
+func (d *DAQP1604) processPayload(data []byte) {
 	d.mu.RLock()
-	port := d.port
 	sink := d.sink
 	d.mu.RUnlock()
 
-	if port == nil || sink == nil {
+	if sink == nil {
 		return
 	}
 
-	buf := make([]byte, 1024)
-	n, err := port.Read(buf)
-	if err != nil {
-		d.mu.Lock()
-		d.readErrors++
-		d.mu.Unlock()
-		slog.Debug("DAQ-P-1604 read error", "device", d.profile.ID, "error", err)
-		return
-	}
-	if n < 5 {
-		return
-	}
-
-	var channels []float64
-	if sharedproto.IsASCIIFrame(buf[:n]) {
-		channels = d.parseASCIIFrame(buf[:n])
-	} else {
-		channels, err = sharedproto.ParseStreamFrame(buf[:n])
-		if err != nil {
-			d.mu.Lock()
-			d.frameErrors++
-			d.mu.Unlock()
-			slog.Debug("DAQ-P-1604 frame parse error", "device", d.profile.ID, "n", n, "error", err)
+	if sharedproto.IsASCIIFrame(data) {
+		channels := d.parseASCIIFrame(data)
+		if len(channels) == 0 {
 			return
 		}
+		indices := make([]int, len(channels))
+		values := make([]float64, len(channels))
+		for i := range channels {
+			indices[i] = i
+			values[i] = channels[i]
+		}
+		sink(device.DataPayload{
+			DeviceID:       d.profile.ID,
+			Timestamp:      device.NowMs(),
+			Channels:       values,
+			ChannelIndices: indices,
+		})
+		return
+	}
+
+	channels, err := sharedproto.ParseStreamFrame(data)
+	if err != nil {
+		d.mu.Lock()
+		d.frameErrors++
+		d.mu.Unlock()
+		slog.Debug("DAQ-P-1604 frame parse error", "device", d.profile.ID, "n", len(data), "error", err)
+		return
 	}
 
 	if len(channels) == 0 {

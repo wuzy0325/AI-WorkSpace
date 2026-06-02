@@ -7,9 +7,15 @@ require (
 	wind-daq/services/api-go v0.0.0
 )
 
-replace wind-daq/services/api-go => ../../services/api-go
+replace (
+	ai-workspace/shared/algorithms/go/fivehole => ../../../../shared/algorithms/go/fivehole
+	shared.local/device-sdk/go => ../../../../shared/device-sdk/go
+	shared.local/motion-control/go => ../../../../shared/motion-control/go
+	wind-daq/services/api-go => ../../services/api-go
+)
 
 require (
+	ai-workspace/shared/algorithms/go/fivehole v0.0.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -38,4 +44,5 @@ require (
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
+	shared.local/device-sdk/go v0.0.0 // indirect
 )

@@ -11,7 +11,7 @@ import (
 func TestFileProfileStoreSavesAndLoadsProfiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.json")
 	store := NewFileProfileStore(path)
-	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := NewDefaultProfile("sim-1", device.DeviceSimulated)
 	profile.Name = "Simulator 1"
 
 	if err := store.SaveProfiles([]device.Profile{profile}); err != nil {

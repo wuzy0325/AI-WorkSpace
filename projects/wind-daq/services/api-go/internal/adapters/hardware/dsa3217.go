@@ -61,7 +61,7 @@ func (d *DSA3217) Connect() error {
 	if host == "" {
 		host = DSA3217_DEFAULT_HOST
 	}
-	port := d.profile.DaqT1603Config.FilterHz
+	port := d.profile.Port
 	if port <= 0 {
 		port = DSA3217_DEFAULT_PORT
 	}

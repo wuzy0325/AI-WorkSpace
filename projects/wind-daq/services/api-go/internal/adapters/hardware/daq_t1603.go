@@ -3,12 +3,18 @@ package hardware
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
-	sharedproto "shared/device-sdk/go/protocol"
-	"shared/device-sdk/go/serialport"
+	sharedproto "shared.local/device-sdk/go/protocol"
 	"wind-daq/services/api-go/internal/core/device"
+)
+
+const (
+	DAQ_T_1603_DEFAULT_HOST = "192.168.3.101"
+	DAQ_T_1603_DEFAULT_PORT = 9000
+	DAQ_T_1603_TIMEOUT      = 5 * time.Second
 )
 
 type DAQT1603 struct {
@@ -18,8 +24,9 @@ type DAQT1603 struct {
 	sink        device.DataSink
 	stop        chan struct{}
 	acquiring   bool
-	port        *serialport.Port
-	tcpAddress  string
+	conn        net.Conn
+	frameReader *sharedproto.FrameReader
+	recvBuffer  []byte
 	readErrors  int
 	frameErrors int
 }
@@ -33,7 +40,7 @@ func NewDAQT1603(profile device.Profile) *DAQT1603 {
 			Type:       profile.Type,
 			Connection: device.ConnectionDisconnected,
 		},
-		tcpAddress: profile.Address,
+		recvBuffer: make([]byte, 0, 4096),
 	}
 }
 
@@ -43,24 +50,26 @@ func (d *DAQT1603) Connect() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.port != nil {
+	if d.conn != nil {
 		return nil
 	}
 
-	addr := d.tcpAddress
-	if addr == "" {
-		return fmt.Errorf("serial port address is required — set Address in device profile")
+	host := d.profile.Address
+	if host == "" {
+		host = DAQ_T_1603_DEFAULT_HOST
+	}
+	port := d.profile.Port
+	if port <= 0 {
+		port = DAQ_T_1603_DEFAULT_PORT
 	}
 
-	cfg := serialport.DefaultConfig(addr)
-	cfg.BaudRate = 115200
-	cfg.ReadTimeout = 3 * time.Second
-	port, err := serialport.Open(cfg)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_T_1603_TIMEOUT)
 	if err != nil {
-		return fmt.Errorf("open serial %s: %w", addr, err)
+		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
 
-	d.port = port
+	d.conn = conn
+	d.frameReader = sharedproto.NewFrameReader(conn)
 	d.status.Connection = device.ConnectionConnected
 	return nil
 }
@@ -71,9 +80,10 @@ func (d *DAQT1603) Disconnect() error {
 
 	_ = d.stopAcquisitionLocked()
 
-	if d.port != nil {
-		_ = d.port.Close()
-		d.port = nil
+	if d.conn != nil {
+		_ = d.conn.Close()
+		d.conn = nil
+		d.frameReader = nil
 	}
 
 	d.status.Connection = device.ConnectionDisconnected
@@ -87,7 +97,7 @@ func (d *DAQT1603) StartAcquisition() error {
 	if d.acquiring {
 		return nil
 	}
-	if d.port == nil {
+	if d.conn == nil {
 		return fmt.Errorf("device not connected")
 	}
 
@@ -178,49 +188,45 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg device.DaqT1603HardwareConfig) error 
 }
 
 func (d *DAQT1603) readLoop(stop <-chan struct{}) {
-	const frameInterval = 200 * time.Millisecond
-	ticker := time.NewTicker(frameInterval)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-stop:
 			return
-		case <-ticker.C:
-			d.readFrame()
+		default:
+			d.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			payload, err := d.frameReader.ReadFrame()
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				d.mu.Lock()
+				d.readErrors++
+				d.mu.Unlock()
+				slog.Debug("DAQ-T-1603 read error", "device", d.profile.ID, "error", err)
+				return
+			}
+			if len(payload) > 0 {
+				d.processPayload(payload)
+			}
 		}
 	}
 }
 
-func (d *DAQT1603) readFrame() {
+func (d *DAQT1603) processPayload(data []byte) {
 	d.mu.RLock()
-	port := d.port
 	sink := d.sink
 	d.mu.RUnlock()
 
-	if port == nil || sink == nil {
+	if sink == nil || len(data) < 8 {
 		return
 	}
 
-	buf := make([]byte, sharedproto.SerialFrameSize)
-	n, err := port.Read(buf)
-	if err != nil {
-		d.mu.Lock()
-		d.readErrors++
-		d.mu.Unlock()
-		slog.Debug("DAQ-T-1603 read error", "device", d.profile.ID, "error", err)
-		return
-	}
-	if n < 8 {
-		return
-	}
-
-	temps, err := sharedproto.ParseSerialFrame(buf[:n])
+	temps, err := sharedproto.ParseTCPFrame(data)
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
 		d.mu.Unlock()
-		slog.Debug("DAQ-T-1603 frame parse error", "device", d.profile.ID, "n", n, "error", err)
+		slog.Debug("DAQ-T-1603 frame parse error", "device", d.profile.ID, "n", len(data), "error", err)
 		return
 	}
 

@@ -10,11 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"wind-daq/services/api-go/internal/adapters/config"
-	"wind-daq/services/api-go/internal/adapters/hardware"
+	"shared.local/device-sdk/go/motion/adapters/hardware"
+	"shared.local/device-sdk/go/motion/core"
+	motionports "shared.local/device-sdk/go/motion/ports"
+	motionprofile "shared.local/motion-control/go/profile"
+
+	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/core/device"
-	"wind-daq/services/api-go/internal/core/motion"
-	"wind-daq/services/api-go/internal/ports"
+	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -33,34 +36,64 @@ func (s *apiProfileStore) SaveProfiles(profiles []device.Profile) error {
 
 type apiDeviceFactory struct{}
 
-func (apiDeviceFactory) Create(profile device.Profile) (ports.Device, error) {
-	return hardware.NewSimulatedDevice(profile), nil
+func (apiDeviceFactory) Create(profile device.Profile) (windaqports.Device, error) {
+	// Return a simulated device that implements the Device interface
+	return &simulatedDevice{profile: profile}, nil
 }
+
+type simulatedDevice struct {
+	profile   device.Profile
+	dataSink  device.DataSink
+	connected bool
+	acquiring bool
+}
+
+func (d *simulatedDevice) ID() string        { return d.profile.ID }
+func (d *simulatedDevice) Connect() error    { d.connected = true; return nil }
+func (d *simulatedDevice) Disconnect() error { d.connected = false; d.acquiring = false; return nil }
+func (d *simulatedDevice) StartAcquisition() error {
+	d.acquiring = true
+	if d.dataSink != nil {
+		d.dataSink(device.DataPayload{DeviceID: d.profile.ID, Timestamp: device.NowMs(), Channels: []float64{1}, ChannelIndices: []int{0}})
+	}
+	return nil
+}
+func (d *simulatedDevice) StopAcquisition() error { d.acquiring = false; return nil }
+func (d *simulatedDevice) Status() device.Status {
+	connection := device.ConnectionDisconnected
+	if d.acquiring {
+		connection = device.ConnectionAcquiring
+	} else if d.connected {
+		connection = device.ConnectionConnected
+	}
+	return device.Status{ID: d.profile.ID, Name: d.profile.Name, Type: d.profile.Type, Connection: connection, Acquiring: d.acquiring}
+}
+func (d *simulatedDevice) SetDataSink(sink device.DataSink) { d.dataSink = sink }
 
 type apiPublisher struct{}
 
 func (apiPublisher) Publish(string, any) {}
 
-func newTestMotionManager(axisNames ...motion.AxisName) *usecase.MotionManager {
-	profileStore := config.NewMemoryMotionProfileStore()
-	axes := make([]motion.AxisConfig, len(axisNames))
+func newTestMotionManager(axisNames ...core.AxisName) *usecase.MotionManager {
+	profileStore := motionprofile.NewMemoryMotionProfileStore()
+	axes := make([]core.AxisConfig, len(axisNames))
 	for i, name := range axisNames {
 		speed := 10.0
-		axes[i] = motion.AxisConfig{Name: name, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: &speed}
+		axes[i] = core.AxisConfig{Name: name, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: &speed}
 	}
-	profiles := []motion.MotionControllerProfile{
+	profiles := []core.MotionControllerProfile{
 		{
 			ID:      "test-motion",
 			Name:    "Test Controller",
-			Type:    motion.ControllerTypeSimulated,
+			Type:    core.ControllerTypeSimulated,
 			Address: "127.0.0.1",
 			Port:    9000,
 			Axes:    axes,
 		},
 	}
 	profileStore.SaveProfiles(profiles)
-	mgr := usecase.NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
-		return hardware.NewSimulatedMotionController(profile)
+	mgr := usecase.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (motionports.MotionController, error) {
+		return hardware.NewSimulatedMotionController(profile), nil
 	})
 	mgr.LoadProfiles()
 	return mgr
@@ -74,7 +107,7 @@ func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
 	}
 	router := NewRouter(Deps{DeviceManager: manager, AcquisitionHub: hub})
 
-	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
 	profileBody, err := json.Marshal(profile)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +153,7 @@ func TestDeviceDisconnectAndDeleteProfileHTTPFlow(t *testing.T) {
 	}
 	router := NewRouter(Deps{DeviceManager: manager, AcquisitionHub: hub})
 
-	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
 	profileBody, err := json.Marshal(profile)
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +201,7 @@ func TestDeviceConfigurationHTTPFlow(t *testing.T) {
 	}
 	router := NewRouter(Deps{DeviceManager: manager, AcquisitionHub: hub})
 
-	profile := device.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	profile := windaqconfig.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
 	profileBody, err := json.Marshal(profile)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +273,7 @@ func TestDaqStreamSendsServerSentEvents(t *testing.T) {
 
 func TestMotionHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
+	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
@@ -278,7 +311,7 @@ func TestMotionHTTPFlow(t *testing.T) {
 
 func TestMotionHTTPValidation(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(motion.AxisX)
+	motionMgr := newTestMotionManager(core.AxisX)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
@@ -293,7 +326,7 @@ func TestMotionHTTPValidation(t *testing.T) {
 
 func TestCalibrationHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
+	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:      newTestDeviceManager(t, hub),
@@ -352,7 +385,7 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 
 func TestTraversalHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(motion.AxisX, motion.AxisY, motion.AxisZ)
+	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),

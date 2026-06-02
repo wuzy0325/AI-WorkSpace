@@ -1,17 +1,19 @@
-package device
+package config
 
 import (
 	"fmt"
 	"testing"
+
+	"wind-daq/services/api-go/internal/core/device"
 )
 
 func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
-	profile := NewDefaultProfile("sim-1", DeviceSimulated)
+	profile := NewDefaultProfile("sim-1", device.DeviceSimulated)
 
 	if profile.ID != "sim-1" {
 		t.Fatalf("expected profile id sim-1, got %q", profile.ID)
 	}
-	if profile.Type != DeviceSimulated {
+	if profile.Type != device.DeviceSimulated {
 		t.Fatalf("expected simulated type, got %q", profile.Type)
 	}
 	if len(profile.Channels) != 18 {
@@ -37,7 +39,7 @@ func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 }
 
 func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
-	profile := NewDefaultProfile("temp-1", DeviceDaqT1603)
+	profile := NewDefaultProfile("temp-1", device.DeviceDaqT1603)
 
 	if len(profile.Channels) != 16 {
 		t.Fatalf("expected 16 default channels, got %d", len(profile.Channels))
@@ -51,10 +53,10 @@ func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 }
 
 func TestNormalizeProfileRestoresDefaultChannels(t *testing.T) {
-	profile := Profile{
+	profile := device.Profile{
 		ID:           "legacy-sim",
 		Name:         "Legacy Simulator",
-		Type:         DeviceSimulated,
+		Type:         device.DeviceSimulated,
 		SamplingRate: 20,
 	}
 

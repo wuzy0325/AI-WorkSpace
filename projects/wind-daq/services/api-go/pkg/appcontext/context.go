@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	config "shared/device-sdk/go/motion/adapters/config"
-	hardware "shared/device-sdk/go/motion/adapters/hardware"
-	"shared/device-sdk/go/motion/core"
-	"shared/device-sdk/go/motion/ports"
+	hardware "shared.local/device-sdk/go/motion/adapters/hardware"
+	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/motion/ports"
+	motionprofile "shared.local/motion-control/go/profile"
 
 	"wind-daq/services/api-go/internal/adapters/calstore"
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
@@ -63,7 +63,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	}
 
 	profileStore := windaqconfig.NewFileProfileStore(deviceProfilePath)
-	motionProfileStore := config.NewFileMotionProfileStore(motionProfilePath)
+	motionProfileStore := motionprofile.NewFileMotionProfileStore(motionProfilePath)
 	appConfigStore := windaqconfig.NewFileAppConfigStore(filepath.Join(configDir, "app"))
 	configMgr := usecase.NewConfigManager(appConfigStore)
 

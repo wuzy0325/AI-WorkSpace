@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -87,6 +88,7 @@ func (a *App) startLocalAPIServer() {
 			CalibrationManager: a.appContext.CalibrationMgr,
 			TraversalManager:   a.appContext.TraversalMgr,
 			StorageRecorder:    a.appContext.StorageRecorder,
+			ConfigManager:      a.appContext.ConfigManager,
 		}),
 	}
 	go func() {
@@ -224,7 +226,7 @@ func (a *App) motionStatusRelayLoop(ctx context.Context) {
 			if a.appContext == nil || a.appContext.MotionManager == nil {
 				continue
 			}
-			statuses := a.appContext.MotionManager.StatusAll()
+			statuses := a.appContext.MotionManager.StatusAll(a.ctx)
 			if len(statuses) > 0 {
 				runtime.EventsEmit(a.ctx, "motion:status", statuses)
 			}
@@ -418,24 +420,24 @@ func (a *App) MotionGetStatus() []types.MotionControllerStatus {
 	if a.appContext == nil || a.appContext.MotionManager == nil {
 		return nil
 	}
-	return a.appContext.MotionManager.StatusAll()
+	return a.appContext.MotionManager.StatusAll(a.ctx)
 }
 
 func (a *App) MotionConnect(id string) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.Connect(id)
+		return a.appContext.MotionManager.Connect(a.ctx, id)
 	})
 }
 
 func (a *App) MotionDisconnect(id string) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.Disconnect(id)
+		return a.appContext.MotionManager.Disconnect(a.ctx, id)
 	})
 }
 
 func (a *App) MotionHome(id string, axis string) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.Home(id, types.MotionAxisName(axis))
+		return a.appContext.MotionManager.Home(a.ctx, id, types.MotionAxisName(axis))
 	})
 }
 
@@ -445,37 +447,43 @@ func (a *App) MotionStop(id string, axis string) GenericResponse {
 		if axis != "" {
 			axisName = types.MotionAxisName(axis)
 		}
-		return a.appContext.MotionManager.Stop(id, axisName)
+		return a.appContext.MotionManager.Stop(a.ctx, id, axisName)
 	})
 }
 
 func (a *App) MotionEmergencyStop(id string) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.EmergencyStop(id)
+		return a.appContext.MotionManager.EmergencyStop(a.ctx, id)
 	})
 }
 
 func (a *App) MotionMoveTo(id string, axis string, position float64) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.MoveTo(id, types.MotionAxisName(axis), position)
+		return a.appContext.MotionManager.MoveTo(a.ctx, id, types.MotionAxisName(axis), position)
 	})
 }
 
 func (a *App) MotionMoveBy(id string, axis string, delta float64) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.MoveBy(id, types.MotionAxisName(axis), delta)
+		return a.appContext.MotionManager.MoveBy(a.ctx, id, types.MotionAxisName(axis), delta)
 	})
 }
 
 func (a *App) MotionJog(id string, axis string, velocity float64) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.Jog(id, types.MotionAxisName(axis), velocity)
+		return a.appContext.MotionManager.Jog(a.ctx, id, types.MotionAxisName(axis), velocity)
 	})
 }
 
 func (a *App) MotionDefinePosition(id string, axis string, position float64) GenericResponse {
 	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
-		return a.appContext.MotionManager.DefinePosition(id, types.MotionAxisName(axis), position)
+		return a.appContext.MotionManager.DefinePosition(a.ctx, id, types.MotionAxisName(axis), position)
+	})
+}
+
+func (a *App) MotionResetEmergencyStop(id string) GenericResponse {
+	return a.callMgr(a.appContext.MotionManager, "运动管理器", func() error {
+		return a.appContext.MotionManager.ResetEmergencyStop(a.ctx, id)
 	})
 }
 
@@ -555,4 +563,26 @@ func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
 		return wind_usecase.ReportStatus{}
 	}
 	return a.appContext.ReportManager.Status()
+}
+
+// ==================== 配置 API ====================
+
+func (a *App) ConfigLoad(key string) (map[string]any, error) {
+	if a.appContext == nil || a.appContext.ConfigManager == nil {
+		return nil, fmt.Errorf("配置管理器未初始化")
+	}
+	data, err := a.appContext.ConfigManager.LoadConfig(key)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return map[string]any{"success": true, "data": nil}, nil
+	}
+	return map[string]any{"success": true, "data": json.RawMessage(data)}, nil
+}
+
+func (a *App) ConfigSave(key string, configJSON string) GenericResponse {
+	return a.callMgr(a.appContext.ConfigManager, "配置管理器", func() error {
+		return a.appContext.ConfigManager.SaveConfig(key, json.RawMessage(configJSON))
+	})
 }

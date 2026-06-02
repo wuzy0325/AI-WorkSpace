@@ -1,202 +1,392 @@
 package usecase
 
 import (
+	"context"
+	"sync"
 	"testing"
 
-	"wind-daq/services/api-go/internal/adapters/hardware"
-	"wind-daq/services/api-go/internal/core/motion"
-	"wind-daq/services/api-go/internal/ports"
+	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/motion/ports"
 )
 
-type fakeMotionController struct {
-	status motion.ControllerStatus
+// mockMotionController 模拟运动控制器，用于测试
+type mockMotionController struct {
+	mu         sync.RWMutex
+	profile    core.MotionControllerProfile
+	status     core.ControllerStatus
+	connected  bool
+	estopped   bool
+	lastMoveTo map[core.AxisName]float64
+	lastMoveBy map[core.AxisName]float64
+	lastJog    map[core.AxisName]float64
+	homeCalled map[core.AxisName]bool
+	stopCalled map[core.AxisName]bool
 }
 
-func newFakeMotionController() *fakeMotionController {
-	return &fakeMotionController{status: motion.ControllerStatus{
-		ID:        "motion-1",
-		Connected: false,
-		Axes: []motion.AxisStatus{
-			{Name: motion.AxisX},
-		},
-	}}
-}
-
-func (c *fakeMotionController) LoadProfiles() ([]motion.MotionControllerProfile, error) {
-	return []motion.MotionControllerProfile{}, nil
-}
-
-func (c *fakeMotionController) SaveProfiles(profiles []motion.MotionControllerProfile) error {
-	return nil
-}
-
-func (c *fakeMotionController) Connect() error {
-	c.status.Connected = true
-	return nil
-}
-
-func (c *fakeMotionController) Disconnect() error {
-	c.status.Connected = false
-	return nil
-}
-
-func (c *fakeMotionController) Status() motion.ControllerStatus { return c.status }
-
-func (c *fakeMotionController) MoveTo(axis motion.AxisName, position float64) error {
-	c.status.Axes[0].Position = position
-	return nil
-}
-
-func (c *fakeMotionController) MoveBy(axis motion.AxisName, delta float64) error {
-	c.status.Axes[0].Position += delta
-	return nil
-}
-
-func (c *fakeMotionController) Jog(axis motion.AxisName, velocity float64) error {
-	c.status.Axes[0].Moving = true
-	c.status.Axes[0].Velocity = velocity
-	return nil
-}
-
-func (c *fakeMotionController) Home(axis motion.AxisName) error {
-	c.status.Axes[0].Position = 0
-	c.status.Axes[0].Homed = true
-	return nil
-}
-
-func (c *fakeMotionController) Stop(axis motion.AxisName) error {
-	c.status.Axes[0].Moving = false
-	c.status.Axes[0].Velocity = 0
-	return nil
-}
-
-func (c *fakeMotionController) EmergencyStop() error {
-	c.status.EmergencyStopped = true
-	c.status.Axes[0].Moving = false
-	c.status.Axes[0].Velocity = 0
-	return nil
-}
-
-func (c *fakeMotionController) DefinePosition(axis motion.AxisName, position float64) error {
-	c.status.Axes[0].Position = position
-	return nil
-}
-
-func (c *fakeMotionController) ResetEmergencyStop() error {
-	c.status.EmergencyStopped = false
-	return nil
-}
-
-func (c *fakeMotionController) GetProfile() motion.MotionControllerProfile {
-	return motion.MotionControllerProfile{ID: c.status.ID}
-}
-
-var _ ports.MotionController = (*fakeMotionController)(nil)
-
-func TestMotionManagerCoordinatesControllerCommands(t *testing.T) {
-	profile := motion.MotionControllerProfile{
-		ID:      "motion-1",
-		Name:    "Test Controller",
-		Type:    motion.ControllerTypeSimulated,
-		Address: "127.0.0.1",
-		Axes: []motion.AxisConfig{
-			{Name: motion.AxisX, Enabled: true},
+func newMockMotionController(profile core.MotionControllerProfile) *mockMotionController {
+	return &mockMotionController{
+		profile:    profile,
+		connected:  false,
+		estopped:   false,
+		lastMoveTo: make(map[core.AxisName]float64),
+		lastMoveBy: make(map[core.AxisName]float64),
+		lastJog:    make(map[core.AxisName]float64),
+		homeCalled: make(map[core.AxisName]bool),
+		stopCalled: make(map[core.AxisName]bool),
+		status: core.ControllerStatus{
+			ID:   profile.ID,
+			Name: profile.Name,
+			Type: profile.Type,
+			Axes: []core.AxisStatus{
+				{Name: core.AxisX, Position: 0, Homed: false, Moving: false},
+				{Name: core.AxisY, Position: 0, Homed: false, Moving: false},
+				{Name: core.AxisZ, Position: 0, Homed: false, Moving: false},
+			},
 		},
 	}
-	profileStore := &fakeProfileStore{profiles: []motion.MotionControllerProfile{profile}}
-	manager := NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
-		return hardware.NewSimulatedMotionController(profile)
+}
+
+func (m *mockMotionController) GetProfile() core.MotionControllerProfile { return m.profile }
+func (m *mockMotionController) Connect(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.connected = true
+	m.status.Connected = true
+	return nil
+}
+func (m *mockMotionController) Disconnect(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.connected = false
+	m.status.Connected = false
+	return nil
+}
+func (m *mockMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.status, nil
+}
+func (m *mockMotionController) MoveTo(ctx context.Context, axis core.AxisName, position float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastMoveTo[axis] = position
+	return nil
+}
+func (m *mockMotionController) MoveBy(ctx context.Context, axis core.AxisName, delta float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastMoveBy[axis] = delta
+	return nil
+}
+func (m *mockMotionController) Jog(ctx context.Context, axis core.AxisName, velocity float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastJog[axis] = velocity
+	return nil
+}
+func (m *mockMotionController) Home(ctx context.Context, axis core.AxisName) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.homeCalled[axis] = true
+	return nil
+}
+func (m *mockMotionController) Stop(ctx context.Context, axis core.AxisName) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopCalled[axis] = true
+	return nil
+}
+func (m *mockMotionController) EmergencyStop(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.estopped = true
+	m.status.EmergencyStopped = true
+	return nil
+}
+func (m *mockMotionController) ResetEmergencyStop(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.estopped = false
+	m.status.EmergencyStopped = false
+	return nil
+}
+func (m *mockMotionController) DefinePosition(ctx context.Context, axis core.AxisName, position float64) error {
+	return nil
+}
+
+var _ ports.MotionController = (*mockMotionController)(nil)
+
+func testProfile() core.MotionControllerProfile {
+	return core.MotionControllerProfile{
+		ID:      "test-mc-1",
+		Name:    "Test Controller",
+		Type:    core.ControllerTypeSimulated,
+		Address: "127.0.0.1",
+		Port:    9000,
+		Axes: []core.AxisConfig{
+			{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+			{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+			{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+		},
+	}
+}
+
+func TestMotionManager_Connect(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
 	})
 
-	// 先加载配置，这样管理器才知道有哪些控制器
-	if _, err := manager.LoadProfiles(); err != nil {
-		t.Fatalf("LoadProfiles returned error: %v", err)
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
 	}
 
-	if err := manager.Connect("motion-1"); err != nil {
-		t.Fatalf("Connect returned error: %v", err)
-	}
-	status, _ := manager.Status("motion-1")
-	if !status.Connected {
-		t.Fatal("expected connected controller")
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
 	}
 
-	// 使用 DefinePosition 同步设置位置，避免异步模拟问题
-	if err := manager.DefinePosition("motion-1", motion.AxisX, 10); err != nil {
-		t.Fatalf("DefinePosition returned error: %v", err)
-	}
-	status, _ = manager.Status("motion-1")
-	if got := status.Axes[0].Position; got != 10.0 {
-		t.Fatalf("expected position 10.0, got %.2f", got)
-	}
-
-	// 测试其他命令是否正常执行（不检查最终位置值）
-	if err := manager.Jog("motion-1", motion.AxisX, 1.25); err != nil {
-		t.Fatalf("Jog returned error: %v", err)
-	}
-	status, _ = manager.Status("motion-1")
-	if !status.Axes[0].Moving {
-		t.Fatal("expected jogging axis to be moving")
-	}
-	if err := manager.Stop("motion-1", motion.AxisX); err != nil {
-		t.Fatalf("Stop returned error: %v", err)
-	}
-	status, _ = manager.Status("motion-1")
-	if status.Axes[0].Moving {
-		t.Fatal("expected stopped axis")
-	}
-	if err := manager.Home("motion-1", motion.AxisX); err != nil {
-		t.Fatalf("Home returned error: %v", err)
+	if !ctrl.connected {
+		t.Error("expected controller to be connected")
 	}
 }
 
-func TestMotionManagerEmergencyStop(t *testing.T) {
-	profile := motion.MotionControllerProfile{
-		ID:      "motion-1",
-		Name:    "Test Controller",
-		Type:    motion.ControllerTypeSimulated,
-		Address: "127.0.0.1",
-		Axes: []motion.AxisConfig{
-			{Name: motion.AxisX, Enabled: true},
-		},
-	}
-	profileStore := &fakeProfileStore{profiles: []motion.MotionControllerProfile{profile}}
-	manager := NewMotionManager(profileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
-		return hardware.NewSimulatedMotionController(profile)
+func TestMotionManager_MoveTo(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
 	})
 
-	// 先加载配置，这样管理器才知道有哪些控制器
-	if _, err := manager.LoadProfiles(); err != nil {
-		t.Fatalf("LoadProfiles returned error: %v", err)
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
 	}
 
-	if err := manager.Connect("motion-1"); err != nil {
-		t.Fatalf("Connect returned error: %v", err)
+	if err := mgr.MoveTo(context.Background(), profile.ID, core.AxisX, 100.5); err != nil {
+		t.Fatalf("MoveTo failed: %v", err)
 	}
-	if err := manager.Jog("motion-1", motion.AxisX, 5); err != nil {
-		t.Fatalf("Jog returned error: %v", err)
-	}
-	if err := manager.EmergencyStop("motion-1"); err != nil {
-		t.Fatalf("EmergencyStop returned error: %v", err)
-	}
-	status, _ := manager.Status("motion-1")
-	if !status.EmergencyStopped {
-		t.Fatal("expected emergency stopped status")
-	}
-	if status.Axes[0].Moving || status.Axes[0].Velocity != 0 {
-		t.Fatalf("expected all motion stopped, got %+v", status.Axes[0])
+
+	if ctrl.lastMoveTo[core.AxisX] != 100.5 {
+		t.Errorf("expected MoveTo X=100.5, got %v", ctrl.lastMoveTo[core.AxisX])
 	}
 }
 
-type fakeProfileStore struct {
-	profiles []motion.MotionControllerProfile
+func TestMotionManager_MoveBy(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.MoveBy(context.Background(), profile.ID, core.AxisY, -5.0); err != nil {
+		t.Fatalf("MoveBy failed: %v", err)
+	}
+
+	if ctrl.lastMoveBy[core.AxisY] != -5.0 {
+		t.Errorf("expected MoveBy Y=-5.0, got %v", ctrl.lastMoveBy[core.AxisY])
+	}
 }
 
-func (f *fakeProfileStore) LoadProfiles() ([]motion.MotionControllerProfile, error) {
-	return f.profiles, nil
+func TestMotionManager_Jog(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.Jog(context.Background(), profile.ID, core.AxisZ, 3.0); err != nil {
+		t.Fatalf("Jog failed: %v", err)
+	}
+
+	if ctrl.lastJog[core.AxisZ] != 3.0 {
+		t.Errorf("expected Jog Z=3.0, got %v", ctrl.lastJog[core.AxisZ])
+	}
 }
 
-func (f *fakeProfileStore) SaveProfiles(profiles []motion.MotionControllerProfile) error {
-	f.profiles = profiles
-	return nil
+func TestMotionManager_Home(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.Home(context.Background(), profile.ID, core.AxisX); err != nil {
+		t.Fatalf("Home failed: %v", err)
+	}
+
+	if !ctrl.homeCalled[core.AxisX] {
+		t.Error("expected Home to be called for X axis")
+	}
+}
+
+func TestMotionManager_EmergencyStop(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.EmergencyStop(context.Background(), profile.ID); err != nil {
+		t.Fatalf("EmergencyStop failed: %v", err)
+	}
+
+	if !ctrl.estopped {
+		t.Error("expected controller to be emergency stopped")
+	}
+}
+
+func TestMotionManager_ResetEmergencyStop(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.EmergencyStop(context.Background(), profile.ID); err != nil {
+		t.Fatalf("EmergencyStop failed: %v", err)
+	}
+	if !ctrl.estopped {
+		t.Fatal("expected controller to be emergency stopped after EStop")
+	}
+
+	if err := mgr.ResetEmergencyStop(context.Background(), profile.ID); err != nil {
+		t.Fatalf("ResetEmergencyStop failed: %v", err)
+	}
+
+	if ctrl.estopped {
+		t.Error("expected controller to not be emergency stopped after reset")
+	}
+}
+
+func TestMotionManager_Stop(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.Stop(context.Background(), profile.ID, core.AxisX); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	if !ctrl.stopCalled[core.AxisX] {
+		t.Error("expected Stop to be called for X axis")
+	}
+}
+
+func TestMotionManager_DeleteProfile(t *testing.T) {
+	profile := testProfile()
+	var ctrl *mockMotionController
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		ctrl = newMockMotionController(p)
+		return ctrl, nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	if err := mgr.DeleteProfile(profile.ID); err != nil {
+		t.Fatalf("DeleteProfile failed: %v", err)
+	}
+
+	profiles := mgr.GetProfiles()
+	for _, p := range profiles {
+		if p.ID == profile.ID {
+			t.Error("expected profile to be deleted")
+		}
+	}
+}
+
+func TestMotionManager_StatusAll(t *testing.T) {
+	profile := testProfile()
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		return newMockMotionController(p), nil
+	})
+
+	if err := mgr.UpsertProfile(profile); err != nil {
+		t.Fatalf("UpsertProfile failed: %v", err)
+	}
+	if err := mgr.Connect(context.Background(), profile.ID); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	statuses := mgr.StatusAll(context.Background())
+	found := false
+	for _, s := range statuses {
+		if s.ID == profile.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find status for test profile")
+	}
+}
+
+func TestMotionManager_ConnectNonExistent(t *testing.T) {
+	mgr := NewMotionManager(nil, func(p core.MotionControllerProfile) (ports.MotionController, error) {
+		return newMockMotionController(p), nil
+	})
+
+	err := mgr.Connect(context.Background(), "nonexistent")
+	if err == nil {
+		t.Error("expected error when connecting to non-existent controller")
+	}
 }

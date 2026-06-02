@@ -5,15 +5,16 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
+	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/ports"
 )
 
 func TestSimulatedDeviceImplementsDevicePort(t *testing.T) {
-	var _ ports.Device = NewSimulatedDevice(device.NewDefaultProfile("sim-1", device.DeviceSimulated))
+	var _ ports.Device = NewSimulatedDevice(windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated))
 }
 
 func TestSimulatedDeviceEmitsDataWhenAcquiring(t *testing.T) {
-	dev := NewSimulatedDevice(device.NewDefaultProfile("sim-1", device.DeviceSimulated))
+	dev := NewSimulatedDevice(windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated))
 	payloads := make(chan device.DataPayload, 1)
 	dev.SetDataSink(func(payload device.DataPayload) {
 		payloads <- payload

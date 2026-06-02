@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -177,10 +178,11 @@ func (m *CalibrationManager) Resume() error {
 
 func (m *CalibrationManager) Stop() error {
 	if m.motion != nil {
-		for _, status := range m.motion.StatusAll() {
+		ctx := context.Background()
+		for _, status := range m.motion.StatusAll(ctx) {
 			for _, axis := range status.Axes {
 				if axis.Moving {
-					if err := m.motion.Stop(status.ID, axis.Name); err != nil {
+					if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil {
 						return err
 					}
 				}

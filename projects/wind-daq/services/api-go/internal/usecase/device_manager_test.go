@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
+	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/ports"
 )
 
@@ -88,7 +89,7 @@ func (s fakeScanner) Scan() ([]device.ScanResult, error) {
 
 func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -179,7 +180,7 @@ func TestDeviceManagerUpsertProfilePersistsProfile(t *testing.T) {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
 
-	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
 	profile.Name = "Simulator 1"
 	if err := manager.UpsertProfile(profile); err != nil {
 		t.Fatalf("UpsertProfile returned error: %v", err)
@@ -195,7 +196,7 @@ func TestDeviceManagerUpsertProfilePersistsProfile(t *testing.T) {
 
 func TestDeviceManagerConnectsProfileAndReportsStatus(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -217,7 +218,7 @@ func TestDeviceManagerConnectsProfileAndReportsStatus(t *testing.T) {
 
 func TestDeviceManagerDisconnectsConnectedDevice(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -237,7 +238,7 @@ func TestDeviceManagerDisconnectsConnectedDevice(t *testing.T) {
 
 func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -262,7 +263,7 @@ func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
 }
 
 func TestDeviceManagerSetUnitUpdatesAllChannelsAndPersists(t *testing.T) {
-	profile := device.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
 	store := &memoryProfileStore{profiles: []device.Profile{profile}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -282,7 +283,7 @@ func TestDeviceManagerSetUnitUpdatesAllChannelsAndPersists(t *testing.T) {
 }
 
 func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
-	profile := device.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	profile := windaqconfig.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
 	store := &memoryProfileStore{profiles: []device.Profile{profile}}
 	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
@@ -312,7 +313,7 @@ func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
 
 func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}}
 	hub := NewAcquisitionHub(&capturePublisher{}, 20)
 	manager, err := NewDeviceManager(store, simulatedFactory{}, hub.OnData)

@@ -1,7 +1,6 @@
 package device
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -36,6 +35,9 @@ type ChannelConfig struct {
 	TareOffset float64 `json:"tareOffset,omitempty"`
 }
 
+// Profile 设备配置档案
+// 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
+// core 层只保留类型定义，不包含基础设施知识
 type Profile struct {
 	ID             string                 `json:"id"`
 	Name           string                 `json:"name"`
@@ -105,175 +107,6 @@ func (p *DataPayload) EnsureNonNilSlices() {
 
 type DataSink func(payload DataPayload)
 
-func NewDefaultProfile(id string, deviceType Type) Profile {
-	profile := Profile{
-		ID:           id,
-		Name:         id,
-		Type:         deviceType,
-		Transport:    "tcp",
-		SamplingRate: 20,
-		AutoConnect:  true,
-		BaudRate:     115200,
-	}
-	switch deviceType {
-	case DeviceSimulated:
-		profile.Channels = defaultSimulatedChannels()
-	case DeviceDAQP1604:
-		profile.Address = "192.168.3.101"
-		profile.Port = 9000
-		profile.Channels = defaultDAQP1604Channels()
-	case DeviceDaqT1603:
-		profile.Address = "192.168.3.101"
-		profile.Port = 9000
-		profile.Channels = defaultDaqT1603Channels()
-		profile.DaqT1603Config = DaqT1603HardwareConfig{
-			ThermocoupleType: "K",
-			ColdJunction:     "internal",
-			FilterHz:         50,
-		}
-	case DeviceDAQP1064Pre:
-		profile.Address = "192.168.1.100"
-		profile.Port = 5000
-		profile.Channels = defaultDAQP1064PreChannels()
-	case DeviceWTNPXI:
-		profile.Address = "192.168.3.101"
-		profile.Port = 9000
-		profile.Channels = defaultWTNPXIChannels()
-	case DeviceDSA3217:
-		profile.Address = "192.168.1.254"
-		profile.Port = 5000
-		profile.Channels = defaultDSA3217Channels()
-	}
-	return profile
-}
-
-func NormalizeProfile(profile Profile) Profile {
-	if len(profile.Channels) == 0 {
-		defaultProfile := NewDefaultProfile(profile.ID, profile.Type)
-		profile.Channels = defaultProfile.Channels
-		if profile.Transport == "" {
-			profile.Transport = defaultProfile.Transport
-		}
-		if profile.Address == "" {
-			profile.Address = defaultProfile.Address
-		}
-		if profile.Port == 0 {
-			profile.Port = defaultProfile.Port
-		}
-		if profile.BaudRate == 0 {
-			profile.BaudRate = defaultProfile.BaudRate
-		}
-		if profile.SamplingRate == 0 {
-			profile.SamplingRate = defaultProfile.SamplingRate
-		}
-	}
-	return profile
-}
-
 func NowMs() int64 {
 	return time.Now().UnixMilli()
-}
-
-func defaultSimulatedChannels() []ChannelConfig {
-	channels := make([]ChannelConfig, 18)
-	for i := 0; i < 16; i++ {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      fmt.Sprintf("CH%d", i+1),
-			Enabled:   true,
-			Unit:      "V",
-			Precision: 3,
-			RangeMin:  -10,
-			RangeMax:  10,
-		}
-	}
-	channels[16] = ChannelConfig{
-		Index: 16, Name: "大气压", Enabled: true, Unit: "kPa",
-		Precision: 3, RangeMin: 99, RangeMax: 106,
-	}
-	channels[17] = ChannelConfig{
-		Index: 17, Name: "大气温度", Enabled: true, Unit: "degC",
-		Precision: 2, RangeMin: 20, RangeMax: 25,
-	}
-	return channels
-}
-
-func defaultDaqT1603Channels() []ChannelConfig {
-	channels := make([]ChannelConfig, 16)
-	for i := range channels {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      fmt.Sprintf("TC%d", i+1),
-			Enabled:   true,
-			Unit:      "degC",
-			Precision: 2,
-		}
-	}
-	return channels
-}
-
-func defaultDAQP1604Channels() []ChannelConfig {
-	channels := make([]ChannelConfig, 18)
-	for i := 0; i < 16; i++ {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      fmt.Sprintf("CH%d", i+1),
-			Enabled:   true,
-			Unit:      "Pa",
-			Precision: 2,
-			RangeMin:  -5000,
-			RangeMax:  5000,
-		}
-	}
-	channels[16] = ChannelConfig{Index: 16, Name: "大气压", Enabled: false, Unit: "Pa", Precision: 2}
-	channels[17] = ChannelConfig{Index: 17, Name: "大气温度", Enabled: false, Unit: "degC", Precision: 2}
-	return channels
-}
-
-func defaultDAQP1064PreChannels() []ChannelConfig {
-	channels := make([]ChannelConfig, 16)
-	for i := range channels {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      fmt.Sprintf("CH%d", i+1),
-			Enabled:   true,
-			Unit:      "Pa",
-			Precision: 2,
-			RangeMin:  -5000,
-			RangeMax:  5000,
-		}
-	}
-	return channels
-}
-
-func defaultWTNPXIChannels() []ChannelConfig {
-	names := []string{"球罐压力", "球罐总压", "球罐静压", "球罐温度1", "球罐温度2", "球罐温度3", "球罐温度4", "球罐温度5"}
-	units := []string{"Pa", "Pa", "Pa", "degC", "degC", "degC", "degC", "degC"}
-	channels := make([]ChannelConfig, 8)
-	for i := range channels {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      names[i],
-			Enabled:   true,
-			Unit:      units[i],
-			Precision: 2,
-		}
-	}
-	return channels
-}
-
-func defaultDSA3217Channels() []ChannelConfig {
-	channels := make([]ChannelConfig, 16)
-	for i := range channels {
-		channels[i] = ChannelConfig{
-			Index:     i,
-			Name:      fmt.Sprintf("CH%d", i+1),
-			Enabled:   true,
-			Unit:      "Pa",
-			Precision: 2,
-			RangeMin:  -5000,
-			RangeMax:  5000,
-		}
-	}
-	return channels
 }
