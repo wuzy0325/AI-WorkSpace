@@ -1,0 +1,508 @@
+/* =============================================================
+   DAQ-T1603 设计系统
+   Wind-DAQ 风格：玻璃表面、石板面板、翠绿色强调色
+   ============================================================= */
+
+/* ----------------------------
+   间距规范
+   ---------------------------- */
+:root {
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+}
+
+/* ----------------------------
+   字体规范
+   ---------------------------- */
+:root {
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --font-size-xs: 0.65rem;
+  --font-size-sm: 0.75rem;
+  --font-size-base: 0.875rem;
+  --font-size-md: 0.95rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.65;
+}
+
+/* ----------------------------
+   圆角规范
+   ---------------------------- */
+:root {
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-pill: 9999px;
+}
+
+/* ----------------------------
+   布局尺寸
+   ---------------------------- */
+:root {
+  --layout-header-height: 56px;
+  --layout-bottombar-height: 64px;
+  --layout-sidebar-width: 248px;
+  --layout-content-padding: 1.25rem;
+  --layout-content-gap: 1rem;
+  --layout-panel-radius: 1rem;
+  --layout-panel-padding: 1.25rem;
+}
+
+/* ----------------------------
+   动画时间规范
+   ---------------------------- */
+:root {
+  --motion-instant: 0ms;
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-emphasis: cubic-bezier(0.18, 0.7, 0.2, 1);
+  --easing-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* ----------------------------
+   深色主题（默认）
+   ---------------------------- */
+:root,
+[data-theme='dark'] {
+  /* 背景色 */
+  --bg-app: #020617;
+  --bg-canvas: #0a0f1c;
+  --bg-panel: #0f172a;
+  --bg-panel-strong: #1e293b;
+  --bg-elevated: #1e293b;
+  --bg-input: rgba(0, 0, 0, 0.25);
+  --bg-overlay: rgba(2, 6, 23, 0.72);
+
+  /* 文字色 */
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-inverse: #0f172a;
+
+  /* 边框色 */
+  --border-default: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.18);
+  --divider-color: rgba(255, 255, 255, 0.04);
+
+  /* 强调色 */
+  --accent: #10b981;
+  --accent-hover: #34d399;
+  --accent-active: #059669;
+  --accent-muted: rgba(16, 185, 129, 0.12);
+  --accent-soft: rgba(16, 185, 129, 0.08);
+  --accent-border: rgba(16, 185, 129, 0.3);
+  --accent-glow: rgba(16, 185, 129, 0.35);
+
+  /* 语义色 */
+  --success: #10b981;
+  --success-muted: rgba(16, 185, 129, 0.15);
+  --warning: #f59e0b;
+  --warning-muted: rgba(245, 158, 11, 0.15);
+  --danger: #f43f5e;
+  --danger-hover: #fb7185;
+  --danger-muted: rgba(244, 63, 94, 0.12);
+  --danger-border: rgba(244, 63, 94, 0.3);
+  --info: #3b82f6;
+  --info-muted: rgba(59, 130, 246, 0.15);
+
+  /* 表面色 */
+  --btn-bg: rgba(148, 163, 184, 0.08);
+  --btn-bg-hover: rgba(148, 163, 184, 0.16);
+  --btn-bg-active: rgba(148, 163, 184, 0.24);
+  --card-bg: rgba(30, 41, 59, 0.45);
+  --card-bg-hover: rgba(30, 41, 59, 0.65);
+  --sidebar-bg: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  --topbar-bg: rgba(15, 23, 42, 0.78);
+  --bottombar-bg: rgba(15, 23, 42, 0.78);
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 0 1px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(16, 185, 129, 0.2);
+
+  /* 图表 */
+  --chart-grid: rgba(148, 163, 184, 0.08);
+  --chart-axis: rgba(148, 163, 184, 0.1);
+  --chart-text: #64748b;
+  --chart-tooltip-bg: rgba(15, 23, 42, 0.95);
+  --chart-tooltip-border: rgba(148, 163, 184, 0.18);
+
+  /* 滚动条 */
+  --scrollbar-thumb: rgba(100, 116, 139, 0.3);
+  --scrollbar-thumb-hover: rgba(100, 116, 139, 0.5);
+
+  /* 状态 */
+  --status-idle: #64748b;
+  --status-connecting: #f59e0b;
+  --status-connected: #10b981;
+  --status-acquiring: #10b981;
+  --status-error: #f43f5e;
+}
+
+/* ----------------------------
+   浅色主题
+   ---------------------------- */
+[data-theme='light'] {
+  --bg-app: #f6f8fb;
+  --bg-canvas: #eef2f7;
+  --bg-panel: #ffffff;
+  --bg-panel-strong: #f1f5f9;
+  --bg-elevated: #ffffff;
+  --bg-input: rgba(255, 255, 255, 0.95);
+  --bg-overlay: rgba(15, 23, 42, 0.42);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --text-inverse: #f8fafc;
+
+  --border-default: rgba(15, 23, 42, 0.07);
+  --border-strong: rgba(15, 23, 42, 0.12);
+  --border-hover: rgba(15, 23, 42, 0.2);
+  --divider-color: rgba(15, 23, 42, 0.06);
+
+  --accent: #059669;
+  --accent-hover: #10b981;
+  --accent-active: #047857;
+  --accent-muted: rgba(5, 150, 105, 0.12);
+  --accent-soft: rgba(5, 150, 105, 0.06);
+  --accent-border: rgba(5, 150, 105, 0.28);
+  --accent-glow: rgba(5, 150, 105, 0.3);
+
+  --success: #059669;
+  --success-muted: rgba(5, 150, 105, 0.12);
+  --warning: #d97706;
+  --warning-muted: rgba(217, 119, 6, 0.12);
+  --danger: #e11d48;
+  --danger-hover: #f43f5e;
+  --danger-muted: rgba(225, 29, 72, 0.1);
+  --danger-border: rgba(225, 29, 72, 0.25);
+  --info: #2563eb;
+  --info-muted: rgba(37, 99, 235, 0.12);
+
+  --btn-bg: rgba(15, 23, 42, 0.05);
+  --btn-bg-hover: rgba(15, 23, 42, 0.1);
+  --btn-bg-active: rgba(15, 23, 42, 0.18);
+  --card-bg: rgba(255, 255, 255, 0.78);
+  --card-bg-hover: rgba(255, 255, 255, 0.92);
+  --sidebar-bg: rgba(255, 255, 255, 0.85);
+  --topbar-bg: rgba(255, 255, 255, 0.78);
+  --bottombar-bg: rgba(255, 255, 255, 0.78);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 6px 16px rgba(15, 23, 42, 0.07);
+  --shadow-lg: 0 20px 40px rgba(15, 23, 42, 0.1);
+  --shadow-glow: 0 0 0 1px rgba(5, 150, 105, 0.2), 0 8px 24px rgba(5, 150, 105, 0.18);
+
+  --chart-grid: rgba(15, 23, 42, 0.08);
+  --chart-axis: rgba(15, 23, 42, 0.08);
+  --chart-text: #94a3b8;
+  --chart-tooltip-bg: rgba(255, 255, 255, 0.98);
+  --chart-tooltip-border: rgba(15, 23, 42, 0.1);
+
+  --scrollbar-thumb: rgba(148, 163, 184, 0.4);
+  --scrollbar-thumb-hover: rgba(100, 116, 139, 0.6);
+
+  --status-idle: #94a3b8;
+  --status-connecting: #d97706;
+  --status-connected: #059669;
+  --status-acquiring: #059669;
+  --status-error: #e11d48;
+}
+
+/* =============================================================
+   基础重置
+   ============================================================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-family-base);
+  font-size: 14px;
+  line-height: var(--line-height-normal);
+  color: var(--text-primary);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--motion-slow) var(--easing-standard),
+              color var(--motion-slow) var(--easing-standard);
+}
+
+#app {
+  height: 100%;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, var(--accent-soft) 0%, transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(59, 130, 246, 0.08) 0%, transparent 60%),
+    var(--bg-app);
+}
+
+[data-theme='light'] #app {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(16, 185, 129, 0.08) 0%, transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(59, 130, 246, 0.06) 0%, transparent 60%),
+    var(--bg-app);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+input,
+select,
+button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  border: none;
+  outline: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+input,
+select {
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.75rem;
+  transition: border-color var(--motion-fast) var(--easing-standard),
+              box-shadow var(--motion-fast) var(--easing-standard);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}
+
+/* =============================================================
+   玻璃表面工具类
+   ============================================================= */
+.glass {
+  background: var(--topbar-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+.glass-panel {
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  backdrop-filter: blur(12px) saturate(130%);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  border: 1px solid var(--border-default);
+  border-radius: var(--layout-panel-radius);
+  box-shadow: var(--shadow-md);
+}
+
+.glass-panel-strong {
+  background: color-mix(in srgb, var(--bg-panel-strong) 90%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--layout-panel-radius);
+  box-shadow: var(--shadow-md);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.mono {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* =============================================================
+   动画定义
+   ============================================================= */
+
+/* 状态脉冲 - 用于实时指示器 */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.7); }
+}
+
+/* 呼吸动画 - 用于等待状态 */
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.75); }
+}
+
+/* 录制脉冲 - 用于录制按钮 */
+@keyframes record-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(244, 63, 94, 0);
+  }
+}
+
+/* 空状态脉冲环 */
+@keyframes empty-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.2;
+    transform: scale(1.05);
+  }
+}
+
+/* 空状态呼吸 */
+@keyframes empty-breathe {
+  0% { transform: scale(0.9); opacity: 0.9; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+/* 旋转动画 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 模态框进入动画 */
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 模态框遮罩进入 */
+@keyframes modal-overlay-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 侧边栏项目进入 */
+@keyframes sidebar-item-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 卡片进入动画 */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 数值变化闪烁 */
+@keyframes value-flash {
+  0% { color: var(--accent); }
+  100% { color: inherit; }
+}
+
+/* 工具类 */
+.pulse-dot {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+.breathe-dot {
+  animation: breathe 1.5s ease-in-out infinite;
+}
+
+/* =============================================================
+   减少动画偏好支持
+   ============================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .pulse-dot,
+  .breathe-dot {
+    animation: none;
+  }
+}
+
+/* 仅当用户未偏好减少动画时应用过渡 */
+@media (prefers-reduced-motion: no-preference) {
+  .modal-animate {
+    animation: modal-enter var(--motion-base) var(--easing-emphasis);
+  }
+
+  .modal-overlay-animate {
+    animation: modal-overlay-enter var(--motion-fast) var(--easing-standard);
+  }
+
+  .sidebar-item-animate {
+    animation: sidebar-item-enter var(--motion-base) var(--easing-emphasis);
+    animation-fill-mode: both;
+  }
+
+  .card-animate {
+    animation: card-enter var(--motion-base) var(--easing-emphasis);
+    animation-fill-mode: both;
+  }
+}
