@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	b140DefaultPort    = 5000
+	b140DefaultPort    = 23
 	b140CommandTimeout = 5 * time.Second
 	b140DefaultStepDeg = 1.8
 	b140DefaultScale   = 0.005
@@ -33,6 +33,7 @@ type B140MotionController struct {
 
 // NewB140MotionController creates a B140 motion controller adapter.
 func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionController {
+	profile.Port = b140DefaultPort
 	status := core.ControllerStatus{
 		ID:               profile.ID,
 		Name:             profile.Name,
@@ -66,11 +67,7 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 		return nil
 	}
 
-	port := c.profile.Port
-	if port == 0 {
-		port = b140DefaultPort
-	}
-	address := fmt.Sprintf("%s:%d", c.profile.Address, port)
+	address := fmt.Sprintf("%s:%d", c.profile.Address, c.profile.Port)
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		c.status.LastError = err.Error()
@@ -413,9 +410,6 @@ func (c *B140MotionController) prepareAxisCommandLocked(ctx context.Context, axi
 	axisCfg, ok := c.axisConfigLocked(axis)
 	if !ok {
 		return core.AxisConfig{}, "", fmt.Errorf("unknown motion axis: %s", axis)
-	}
-	if axisCfg.PositionSource == core.PositionSourceEncoder && axisCfg.EncoderCompensation != nil && axisCfg.EncoderCompensation.Enabled {
-		return core.AxisConfig{}, "", fmt.Errorf("B140 encoder compensation is not implemented")
 	}
 	physical, _, err := b140PhysicalAxis(axis)
 	if err != nil {

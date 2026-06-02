@@ -15,14 +15,34 @@ import (
 )
 
 func TestDefaultMotionControllerFactoryCreatesB140(t *testing.T) {
-	profile := testB140Profile("127.0.0.1", 23)
-	ctrl, err := NewDefaultMotionControllerFactory().Create(profile)
+	ctrl, err := NewDefaultMotionControllerFactory().Create(core.MotionControllerProfile{
+		ID:      "b140-1",
+		Name:    "B140",
+		Type:    core.ControllerTypeB140,
+		Address: "127.0.0.1",
+	})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
 	if _, ok := ctrl.(*B140MotionController); !ok {
 		t.Fatalf("Create returned %T, want *B140MotionController", ctrl)
 	}
+}
+
+func newTestB140WithServer(t *testing.T, server *b140FakeServer, extra ...core.AxisConfig) *B140MotionController {
+	profile := core.MotionControllerProfile{
+		ID:      "b140-1",
+		Name:    "B140",
+		Type:    core.ControllerTypeB140,
+		Address: server.host,
+		Axes: []core.AxisConfig{
+			{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), MaxSpeed: core.PtrFloat64(20), PositionSource: core.PositionSourceRegister},
+		},
+	}
+	profile.Axes = append(profile.Axes, extra...)
+	ctrl := NewB140MotionController(profile)
+	ctrl.profile.Port = server.port
+	return ctrl
 }
 
 func TestB140ConnectSendsServoOnAndDirectionConfig(t *testing.T) {
@@ -35,9 +55,7 @@ func TestB140ConnectSendsServoOnAndDirectionConfig(t *testing.T) {
 	})
 	defer server.close()
 
-	profile := testB140Profile(server.host, server.port)
-	profile.Axes = append(profile.Axes, core.AxisConfig{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), Inverted: true, MaxSpeed: core.PtrFloat64(20), PositionSource: core.PositionSourceRegister})
-	ctrl := NewB140MotionController(profile)
+	ctrl := newTestB140WithServer(t, server, core.AxisConfig{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), Inverted: true, MaxSpeed: core.PtrFloat64(20), PositionSource: core.PositionSourceRegister})
 	if err := ctrl.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect returned error: %v", err)
 	}
@@ -58,7 +76,7 @@ func TestB140MoveToSendsGalilCommands(t *testing.T) {
 	})
 	defer server.close()
 
-	ctrl := NewB140MotionController(testB140Profile(server.host, server.port))
+	ctrl := newTestB140WithServer(t, server)
 	if err := ctrl.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect returned error: %v", err)
 	}
@@ -84,7 +102,7 @@ func TestB140StatusParsesPositionAndSwitches(t *testing.T) {
 	})
 	defer server.close()
 
-	ctrl := NewB140MotionController(testB140Profile(server.host, server.port))
+	ctrl := newTestB140WithServer(t, server)
 	if err := ctrl.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect returned error: %v", err)
 	}
@@ -115,19 +133,6 @@ func TestB140StatusParsesPositionAndSwitches(t *testing.T) {
 	want := []string{"SH", "MTA=2", "CEA=0", "TD", "TS", "MG _LFA", "MG _LRA"}
 	if got := server.commands(len(want)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
-	}
-}
-
-func testB140Profile(host string, port int) core.MotionControllerProfile {
-	return core.MotionControllerProfile{
-		ID:      "b140-1",
-		Name:    "B140",
-		Type:    core.ControllerTypeB140,
-		Address: host,
-		Port:    port,
-		Axes: []core.AxisConfig{
-			{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), MaxSpeed: core.PtrFloat64(20), PositionSource: core.PositionSourceRegister},
-		},
 	}
 }
 

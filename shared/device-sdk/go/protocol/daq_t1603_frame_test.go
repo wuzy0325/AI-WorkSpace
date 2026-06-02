@@ -1,9 +1,14 @@
 package protocol
 
 import (
+	"bufio"
 	"encoding/binary"
+	"fmt"
 	"math"
+	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSerialFrame_Valid(t *testing.T) {
@@ -78,7 +83,7 @@ func TestParseSerialFrame_AllChannels(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for i := 0; i < 16; i++ {
-		expected := float64((i + 1) * 10) * 0.1
+		expected := float64((i+1)*10) * 0.1
 		if temps[i] != expected {
 			t.Errorf("ch%d: expected %f, got %f", i, expected, temps[i])
 		}
@@ -157,5 +162,195 @@ func TestParseTCPFrame_FloatValues(t *testing.T) {
 	}
 	if temps[0] != 38.5 {
 		t.Errorf("expected ch0=38.5, got %f", temps[0])
+	}
+}
+
+// --- ASCII frame tests ---
+
+func encodeASCIIFrame(values []float64) []byte {
+	var sb strings.Builder
+	for _, v := range values {
+		sb.WriteString(fmt.Sprintf("%12.6f", v))
+	}
+	return []byte(sb.String())
+}
+
+func TestParseASCIIFrame_Valid(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	data := encodeASCIIFrame(vals)
+
+	temps, err := ParseASCIIFrame(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(temps) != 16 {
+		t.Fatalf("expected 16 temperatures, got %d", len(temps))
+	}
+	for i := 0; i < 16; i++ {
+		expected := float64(i + 1)
+		if temps[i] != expected {
+			t.Errorf("ch%d: expected %f, got %f", i, expected, temps[i])
+		}
+	}
+}
+
+func TestParseASCIIFrame_InvalidSize(t *testing.T) {
+	_, err := ParseASCIIFrame(make([]byte, 191))
+	if err == nil {
+		t.Error("expected error for 191-byte frame")
+	}
+	_, err = ParseASCIIFrame(make([]byte, 193))
+	if err == nil {
+		t.Error("expected error for 193-byte frame")
+	}
+}
+
+func TestParseASCIIFrame_InvalidTokens(t *testing.T) {
+	data := make([]byte, 192)
+	for i := range data {
+		data[i] = ' '
+	}
+	copy(data, "not-a-number")
+	_, err := ParseASCIIFrame(data)
+	if err == nil {
+		t.Error("expected parse error for non-numeric data")
+	}
+}
+
+func TestParseASCIIFrame_ChannelReversal(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(100 + i)
+	}
+	data := encodeASCIIFrame(vals)
+
+	temps, err := ParseASCIIFrame(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if temps[0] != 115.0 {
+		t.Errorf("expected ch0=115, got %f", temps[0])
+	}
+	if temps[15] != 100.0 {
+		t.Errorf("expected ch15=100, got %f", temps[15])
+	}
+}
+
+func TestParseASCIIFrame_ExampleFromSpec(t *testing.T) {
+	vals := make([]float64, 16)
+	vals[7] = 39.952503
+	data := encodeASCIIFrame(vals)
+
+	temps, err := ParseASCIIFrame(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(temps) != 16 {
+		t.Fatalf("expected 16 values, got %d", len(temps))
+	}
+	if temps[8] != 39.952503 {
+		t.Errorf("expected ch8=39.952503 (device ch7 reversed), got %f", temps[8])
+	}
+	if temps[0] != 0 {
+		t.Errorf("expected ch0=0, got %f", temps[0])
+	}
+}
+
+// --- TCP auto-detect tests ---
+
+func TestParseTCPFrame_AutoDetectBinary(t *testing.T) {
+	data := make([]byte, 64)
+	for i := 0; i < 16; i++ {
+		f := float32(15 - i + 1)
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(f))
+	}
+
+	temps, err := ParseTCPFrame(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i := 0; i < 16; i++ {
+		if temps[i] != float64(i+1) {
+			t.Errorf("ch%d: expected %f, got %f", i, float64(i+1), temps[i])
+		}
+	}
+}
+
+func TestParseTCPFrame_AutoDetectASCII(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	data := encodeASCIIFrame(vals)
+
+	temps, err := ParseTCPFrame(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i := 0; i < 16; i++ {
+		if temps[i] != float64(i+1) {
+			t.Errorf("ch%d: expected %f, got %f", i, float64(i+1), temps[i])
+		}
+	}
+}
+
+func TestParseTCPFrame_AutoDetectInvalidSize(t *testing.T) {
+	_, err := ParseTCPFrame(make([]byte, 128))
+	if err == nil {
+		t.Error("expected error for 128-byte frame")
+	}
+}
+
+func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		if cmd, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(cmd) != "@e3" {
+			done <- fmt.Errorf("first command = %q, err = %v", cmd, err)
+			return
+		}
+		if _, err := server.Write([]byte("KKKKKKKKKKKKKKKK\r")); err != nil {
+			done <- err
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+		if _, err := server.Write([]byte("\n")); err != nil {
+			done <- err
+			return
+		}
+		if cmd, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(cmd) != "@fd MCH" {
+			done <- fmt.Errorf("second command = %q, err = %v", cmd, err)
+			return
+		}
+		_, err := server.Write([]byte("FFFF\n"))
+		done <- err
+	}()
+
+	resp, err := SendCommandExact(client, "@e3", 16)
+	if err != nil {
+		t.Fatalf("SendCommandExact returned error: %v", err)
+	}
+	if resp != "KKKKKKKKKKKKKKKK" {
+		t.Fatalf("SendCommandExact response = %q", resp)
+	}
+
+	resp, err = SendCommand(client, "@fd MCH")
+	if err != nil {
+		t.Fatalf("SendCommand returned error: %v", err)
+	}
+	if resp != "FFFF" {
+		t.Fatalf("SendCommand response = %q, want FFFF", resp)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("server error: %v", err)
 	}
 }
