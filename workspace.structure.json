@@ -16,6 +16,7 @@
                                    "docs",
                                    "deploy",
                                    "go.work",
+                                   "go.work.bak",
                                    "go.work.sum",
                                    "pnpm-workspace.yaml",
                                    "programs",
@@ -70,11 +71,13 @@
                                 "shared/algorithms/go",
                                 "shared/algorithms/ts",
                                 "shared/algorithms/docs",
-                                "shared/device-sdk",
-                                "shared/device-sdk/go",
-                                "shared/device-sdk/simulators",
-                                "shared/contracts",
-                                "shared/frontend",
+                                 "shared/device-sdk",
+                                 "shared/device-sdk/go",
+                                 "shared/device-sdk/simulators",
+                                 "shared/motion-control",
+                                 "shared/motion-control/go",
+                                 "shared/contracts",
+                                 "shared/frontend",
                                 "programs",
                                 "programs/calibrator-cli",
                                 "programs/serial-monitor",
@@ -117,9 +120,10 @@
                           "projects/wind-daq/AGENTS.md",
                           "projects/wind-daq/CLAUDE.md",
                           "projects/five-hole-interpolator/README.md",
-                          "projects/five-hole-interpolator/SPEC.md",
-                          "projects/five-hole-interpolator/apps/desktop-wails/go.mod",
-                          "projects/five-hole-interpolator/apps/desktop-wails/wails.json",
-                          "shared/algorithms/go/fivehole/go.mod"
-                      ]
+                           "projects/five-hole-interpolator/SPEC.md",
+                           "projects/five-hole-interpolator/apps/desktop-wails/go.mod",
+                           "projects/five-hole-interpolator/apps/desktop-wails/wails.json",
+                          "shared/algorithms/go/fivehole/go.mod",
+                          "shared/motion-control/go/go.mod"
+                       ]
 }

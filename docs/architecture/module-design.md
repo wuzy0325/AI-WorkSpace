@@ -2,6 +2,8 @@
 
 ## 1. Go Backend Module Structure
 
+The tree below is the preferred split-service layout for larger products such as `wind-daq` and `motion-controller`. Small standalone Wails apps may use the same packages directly under `apps/desktop-wails`; see `project-variants.md`.
+
 Organize by responsibility domain. Each module is an independent Go package.
 
 ```
@@ -46,7 +48,7 @@ internal/
 
 ## 2. Vue 3 Frontend Module Structure
 
-Organize by feature domain. Each module is a self-contained directory.
+Organize by feature domain where the project has enough complexity to justify feature modules. Existing projects may also use `views/`, `components/`, `stores/`, `api/`, and `bridge/` directly when that is the established local convention.
 
 ```
 frontend/src/
@@ -81,11 +83,18 @@ frontend/src/
 
 | Rule | Description |
 |---|---|
-| modules split by feature domain | Each module is self-contained (components + composables + types). |
+| modules split by feature domain | Preferred for larger frontends. Existing direct `views/` / `components/` layouts are acceptable when documented by the project. |
 | shared for cross-module reuse | Only promote to shared when 2+ modules use it. |
 | bridge layer wraps backend calls | Never call Wails API directly in composables. Go through bridge. |
 | composable maps to usecase | One composable corresponds to one backend usecase. |
 | no direct cross-module imports | acquisition does not import calibration components. Compose via events or layout layer. |
+
+Additional accepted directories:
+
+- `frontend/src/api/` — typed HTTP/Wails API facade for projects that support both Wails and browser/dev-server modes.
+- `frontend/src/bridge/` — the only frontend layer allowed to import generated `wailsjs/` bindings when the project uses this stricter pattern.
+- `frontend/src/stores/` — Pinia state that calls `api/` or `bridge/`, not hardware or generated Wails bindings directly.
+- `frontend/src/views/` — page-level composition.
 
 ## 3. Wails Binding Layer
 

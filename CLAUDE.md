@@ -13,7 +13,9 @@ Industrial DAQ (Data Acquisition) desktop platform — Wails app (Vue 3 + Go) fo
 
 ## Architecture
 
-**Go backend + Vue 3 frontend via Wails, with hexagonal architecture per project.**
+**Go backend + Vue 3 frontend via Wails, with hexagonal boundaries per project.**
+
+Most larger projects use a split `services/api-go` backend plus a Wails app shell. Smaller standalone tools may use a single Go module under `apps/desktop-wails` while keeping the same `core -> usecase -> ports -> adapters` boundaries inside that module.
 
 ```
 projects/<project>/
@@ -41,6 +43,7 @@ Shared cross-project code:
 
 - `shared/algorithms/` — Reusable computation (Go + TS), zero device dependencies
 - `shared/device-sdk/` — Reusable device protocol/transport primitives
+- `shared/motion-control/` — Reusable application-level motion orchestration, profile persistence, HTTP routes, and status polling helpers
 - `shared/frontend/` — Reusable Vue 3 components/composables
 - `shared/contracts/` — Cross-project API contracts
 
@@ -65,6 +68,7 @@ Hardware lab artifacts:
 ### Module Design
 
 See `docs/architecture/module-design.md` for detailed Go package and Vue 3 module structure.
+See `docs/architecture/project-variants.md` for approved project layout variants.
 
 ## Hard Constraints
 
@@ -103,7 +107,13 @@ Is it Wails method binding (Go → JS bridge)?
   → YES: apps/desktop-wails/backend/bindings/
 
 Can 2+ projects reuse this logic?
-  → YES: shared/ (algorithms, device-sdk, or frontend)
+  → YES: shared/ (algorithms, device-sdk, motion-control, frontend, or contracts)
+
+Is it reusable motion-control application logic (manager, profile store, HTTP route glue, status poller)?
+  → YES: shared/motion-control/go/
+
+Is it low-level device protocol, hardware adapter, serial transport, or FFI wrapper?
+  → YES: shared/device-sdk/go/
 
 Is it a standalone CLI tool?
   → YES: programs/<tool-name>/
@@ -146,8 +156,9 @@ Per-project commands will be added as projects get build tooling.
 
 ## Requirements
 
-- **Go** (1.21+) — `go build ./...` must pass before committing.
+- **Go** — follow the version declared in `go.work` and each touched `go.mod`; `go build ./...` or `go test ./...` must pass for touched Go modules before committing.
 - **Node.js** (LTS) — required for Vue 3 frontend builds.
+- **Wails CLI v2** — required for desktop app generation/builds.
 
 ## Commit Rules
 
@@ -169,11 +180,12 @@ Detailed code structure, naming, comment, and writing conventions for AI-friendl
 ## More
 
 - `docs/index.md` — Full documentation index (coding standards, architecture, runbooks, scripts).
+- `docs/architecture/project-variants.md` — Approved project structure variants and examples.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (6916 symbols, 16542 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (10674 symbols, 25627 relationships, 296 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -10,11 +10,12 @@ This file provides guidance to AI agents (Claude Code, OpenCode, or others) when
 
 ### Architecture
 
-Go backend + Vue 3 frontend via Wails, hexagonal architecture per project.
+Go backend + Vue 3 frontend via Wails, using hexagonal boundaries. Projects may use either a split service layout or an approved single-module Wails layout.
 
-- `projects/<name>/apps/desktop-wails/` — Wails desktop app (Vue 3 + Go bindings)
-- `projects/<name>/services/api-go/internal/` — Go backend (core → usecase → ports → adapters)
-- `shared/` — Cross-project reusable code (algorithms, device-sdk, frontend, contracts)
+- `projects/<name>/apps/desktop-wails/` — Wails desktop app (Vue 3 + Go host/bindings)
+- `projects/<name>/services/api-go/internal/` — split Go backend for larger projects (core -> usecase -> ports -> adapters)
+- `projects/<name>/apps/desktop-wails/{core,ports,usecase,adapters}` — approved single-module layout for small standalone Wails apps such as `daq-t1603`
+- `shared/` — cross-project reusable code (algorithms, device-sdk, motion-control, frontend, contracts)
 - `programs/` — Standalone CLI tools (`shared/*` only, never project `internal/*`)
 - `device-lab/` — Hardware lab artifacts (raw docs, firmware, captures)
 - `docs/` — Architecture, decisions, runbooks
@@ -41,22 +42,24 @@ powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 
 ### Environment Requirements
 
-- **Rust toolchain** (stable) — required for building any project in this workspace.
-- **Node.js** (LTS) — required for Vue 3 Tauri frontend builds.
+- **Go** (workspace target follows `go.work`) — required for backend and Wails builds.
+- **Node.js** (LTS) — required for Vue 3 frontend builds.
+- **Wails CLI v2** — required for desktop app generation/builds.
 
 ### Pre-submit Checklist
 
-Before committing, run:
+Before committing, run the checks that apply to the touched project:
 
 1. `powershell -File .\scripts\validate-structure.ps1` — must pass
-2. `cargo check --workspace` — must pass (requires Rust toolchain)
+2. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
+3. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
 
 See CLAUDE.md for complete rules, decision tree, and design principles.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (6916 symbols, 16542 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (10674 symbols, 25627 relationships, 296 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
