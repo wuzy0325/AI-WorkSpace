@@ -653,8 +653,7 @@ async function removeProfile(p: DeviceProfile) {
   try {
     await deviceApi.disconnect(p.id).catch(() => {})
     await deviceApi.stopAcquisition(p.id).catch(() => {})
-    const empty: DeviceProfile = { id: p.id, name: '', type: 'SIMULATED', samplingRate: 0, channels: [] }
-    await deviceApi.upsertProfile(empty)
+    await deviceApi.deleteProfile(p.id)
     await deviceStore.refreshProfiles()
     feedback.pushToast('设备配置已删除', 'info')
   } catch (e) { feedback.pushToast(String(e), 'error') }
@@ -683,11 +682,7 @@ async function bulkDelete() {
     try {
       await deviceApi.disconnect(id).catch(() => {})
       await deviceApi.stopAcquisition(id).catch(() => {})
-      const p = deviceStore.profiles.find((x) => x.id === id)
-      if (p) {
-        const empty: DeviceProfile = { id: p.id, name: '', type: 'SIMULATED', samplingRate: 0, channels: [] }
-        await deviceApi.upsertProfile(empty)
-      }
+      await deviceApi.deleteProfile(id)
     } catch { /* 跳过 */ }
   }
   await deviceStore.refreshProfiles()

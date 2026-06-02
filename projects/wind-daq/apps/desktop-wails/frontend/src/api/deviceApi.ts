@@ -86,6 +86,13 @@ export const deviceApi = {
     return request<{ success: boolean }>('/api/device/profiles', { method: 'PUT', body: JSON.stringify(profile) })
   },
 
+  deleteProfile: async (id: string): Promise<{ success: boolean }> => {
+    if (isWailsAvailable()) {
+      return wailsOk(await wailsApi.device.deleteProfile(id))
+    }
+    return request<{ success: boolean }>(`/api/device/profiles/${id}`, { method: 'DELETE' })
+  },
+
   connect: async (id: string): Promise<{ success: boolean }> => {
     if (isWailsAvailable()) {
       return wailsOk(await wailsApi.device.connect(id))

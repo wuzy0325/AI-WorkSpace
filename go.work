@@ -1,9 +1,18 @@
-go 1.25.0
+go 1.26.1
 
 use (
+	./projects/three-hole-interpolator/apps/desktop-win7
+	./projects/three-hole-interpolator/apps/desktop-win7-walk
+	projects/daq-t1603/apps/desktop-wails
 	projects/five-hole-interpolator/apps/desktop-wails
+	projects/motion-controller/apps/desktop-wails
+	projects/motion-controller/services/api-go
+	projects/three-hole-interpolator/apps/desktop-wails
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/algorithms/go/fivehole
 	shared/device-sdk/go
+	shared/motion-control/go
 )
+
+replace ai-workspace/shared/algorithms/go/threehole => ./shared/algorithms/go/threehole

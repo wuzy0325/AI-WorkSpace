@@ -1,3 +1,7 @@
+// ⚠️ 架构边界警告：此文件包含业务规则（精度默认值），按六边形架构应迁移到 Go 后端 core 层。
+// 前端只应从后端 API 获取精度配置，不应硬编码业务默认值。
+// TODO: 将精度默认值迁移到 Go 后端，前端通过 API 获取。
+
 import type { CalibrationConfig } from '@shared/types/calibration'
 
 export const DEFAULT_CALIBRATION_PROBE_PRECISION = 3

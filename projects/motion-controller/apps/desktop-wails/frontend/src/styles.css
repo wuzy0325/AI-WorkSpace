@@ -1,0 +1,125 @@
+@import './styles/tokens/color.css';
+@import './styles/tokens/spacing.css';
+@import './styles/tokens/typography.css';
+@import './styles/tokens/motion.css';
+@import './styles/tokens/layout.css';
+@import './styles/tokens/radius.css';
+@import './styles/themes/dark.css';
+@import './styles/themes/light.css';
+@import './styles/glass.css';
+
+@import 'tailwindcss';
+
+@theme {
+  --font-family-sans: 'Microsoft YaHei UI', sans-serif;
+}
+
+:root {
+  font-family: var(--font-family-sans, 'Microsoft YaHei UI', sans-serif);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: var(--bg-app);
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+}
+
+body {
+  overflow: hidden;
+  user-select: none;
+  background-image:
+    radial-gradient(circle at 1.2px 1.2px, var(--bg-grid-dot) 1.2px, transparent 0);
+  background-position: 0 0, 0 0;
+  background-size: 24px 24px;
+}
+
+#app {
+  width: 100%;
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+*::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.app-canvas {
+  background: var(--bg-canvas);
+}
+
+.ui-panel-surface {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+}
+
+.ui-panel-surface--strong {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+}
+
+.text-mono-data {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-ring {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 3px var(--focus-ring-soft);
+}
+
+.dashboard-ceramic-shell {
+  background-color: var(--bg-canvas);
+  background-image: none;
+}

@@ -179,195 +179,7 @@ export namespace calibration {
 
 }
 
-export namespace device {
-	
-	export class ChannelConfig {
-	    index: number;
-	    name: string;
-	    enabled: boolean;
-	    unit: string;
-	    precision: number;
-	    rangeMin?: number;
-	    rangeMax?: number;
-	    tareOffset?: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new ChannelConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.index = source["index"];
-	        this.name = source["name"];
-	        this.enabled = source["enabled"];
-	        this.unit = source["unit"];
-	        this.precision = source["precision"];
-	        this.rangeMin = source["rangeMin"];
-	        this.rangeMax = source["rangeMax"];
-	        this.tareOffset = source["tareOffset"];
-	    }
-	}
-	export class DaqT1603HardwareConfig {
-	    thermocoupleType: string;
-	    coldJunction: string;
-	    filterHz: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new DaqT1603HardwareConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.thermocoupleType = source["thermocoupleType"];
-	        this.coldJunction = source["coldJunction"];
-	        this.filterHz = source["filterHz"];
-	    }
-	}
-	export class DataPayload {
-	    deviceId: string;
-	    timestamp: number;
-	    channels: number[];
-	    channelIndices: number[];
-	
-	    static createFrom(source: any = {}) {
-	        return new DataPayload(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.deviceId = source["deviceId"];
-	        this.timestamp = source["timestamp"];
-	        this.channels = source["channels"];
-	        this.channelIndices = source["channelIndices"];
-	    }
-	}
-	export class Profile {
-	    id: string;
-	    name: string;
-	    type: string;
-	    transport?: string;
-	    address?: string;
-	    port?: number;
-	    serialPort?: string;
-	    baudRate?: number;
-	    autoConnect?: boolean;
-	    macAddress?: string;
-	    samplingRate: number;
-	    channels: ChannelConfig[];
-	    daqT1603Config?: DaqT1603HardwareConfig;
-	
-	    static createFrom(source: any = {}) {
-	        return new Profile(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.transport = source["transport"];
-	        this.address = source["address"];
-	        this.port = source["port"];
-	        this.serialPort = source["serialPort"];
-	        this.baudRate = source["baudRate"];
-	        this.autoConnect = source["autoConnect"];
-	        this.macAddress = source["macAddress"];
-	        this.samplingRate = source["samplingRate"];
-	        this.channels = this.convertValues(source["channels"], ChannelConfig);
-	        this.daqT1603Config = this.convertValues(source["daqT1603Config"], DaqT1603HardwareConfig);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class ScanResult {
-	    id: string;
-	    name: string;
-	    type: string;
-	    available: boolean;
-	    address?: string;
-	    port?: number;
-	    macAddress?: string;
-	    serialNumber?: string;
-	    firmwareVersion?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ScanResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.available = source["available"];
-	        this.address = source["address"];
-	        this.port = source["port"];
-	        this.macAddress = source["macAddress"];
-	        this.serialNumber = source["serialNumber"];
-	        this.firmwareVersion = source["firmwareVersion"];
-	    }
-	}
-	export class Status {
-	    id: string;
-	    name: string;
-	    type: string;
-	    connection: string;
-	    acquiring: boolean;
-	    lastError?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Status(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.connection = source["connection"];
-	        this.acquiring = source["acquiring"];
-	        this.lastError = source["lastError"];
-	    }
-	}
-
-}
-
-export namespace frontend {
-	
-	export class FileFilter {
-	    DisplayName: string;
-	    Pattern: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new FileFilter(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.DisplayName = source["DisplayName"];
-	        this.Pattern = source["Pattern"];
-	    }
-	}
-
-}
-
-export namespace motion {
+export namespace core {
 	
 	export class AxisEncoderCompensationConfig {
 	    enabled: boolean;
@@ -563,6 +375,194 @@ export namespace motion {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace device {
+	
+	export class ChannelConfig {
+	    index: number;
+	    name: string;
+	    enabled: boolean;
+	    unit: string;
+	    precision: number;
+	    rangeMin?: number;
+	    rangeMax?: number;
+	    tareOffset?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.index = source["index"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
+	        this.unit = source["unit"];
+	        this.precision = source["precision"];
+	        this.rangeMin = source["rangeMin"];
+	        this.rangeMax = source["rangeMax"];
+	        this.tareOffset = source["tareOffset"];
+	    }
+	}
+	export class DaqT1603HardwareConfig {
+	    thermocoupleType: string;
+	    coldJunction: string;
+	    filterHz: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DaqT1603HardwareConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.thermocoupleType = source["thermocoupleType"];
+	        this.coldJunction = source["coldJunction"];
+	        this.filterHz = source["filterHz"];
+	    }
+	}
+	export class DataPayload {
+	    deviceId: string;
+	    timestamp: number;
+	    channels: number[];
+	    channelIndices: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DataPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deviceId = source["deviceId"];
+	        this.timestamp = source["timestamp"];
+	        this.channels = source["channels"];
+	        this.channelIndices = source["channelIndices"];
+	    }
+	}
+	export class Profile {
+	    id: string;
+	    name: string;
+	    type: string;
+	    transport?: string;
+	    address?: string;
+	    port?: number;
+	    serialPort?: string;
+	    baudRate?: number;
+	    autoConnect?: boolean;
+	    macAddress?: string;
+	    samplingRate: number;
+	    channels: ChannelConfig[];
+	    daqT1603Config?: DaqT1603HardwareConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new Profile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.transport = source["transport"];
+	        this.address = source["address"];
+	        this.port = source["port"];
+	        this.serialPort = source["serialPort"];
+	        this.baudRate = source["baudRate"];
+	        this.autoConnect = source["autoConnect"];
+	        this.macAddress = source["macAddress"];
+	        this.samplingRate = source["samplingRate"];
+	        this.channels = this.convertValues(source["channels"], ChannelConfig);
+	        this.daqT1603Config = this.convertValues(source["daqT1603Config"], DaqT1603HardwareConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ScanResult {
+	    id: string;
+	    name: string;
+	    type: string;
+	    available: boolean;
+	    address?: string;
+	    port?: number;
+	    macAddress?: string;
+	    serialNumber?: string;
+	    firmwareVersion?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScanResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.available = source["available"];
+	        this.address = source["address"];
+	        this.port = source["port"];
+	        this.macAddress = source["macAddress"];
+	        this.serialNumber = source["serialNumber"];
+	        this.firmwareVersion = source["firmwareVersion"];
+	    }
+	}
+	export class Status {
+	    id: string;
+	    name: string;
+	    type: string;
+	    connection: string;
+	    acquiring: boolean;
+	    lastError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.connection = source["connection"];
+	        this.acquiring = source["acquiring"];
+	        this.lastError = source["lastError"];
+	    }
+	}
+
+}
+
+export namespace frontend {
+	
+	export class FileFilter {
+	    DisplayName: string;
+	    Pattern: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileFilter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.DisplayName = source["DisplayName"];
+	        this.Pattern = source["Pattern"];
+	    }
 	}
 
 }

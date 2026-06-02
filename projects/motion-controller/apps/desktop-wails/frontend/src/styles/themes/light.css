@@ -1,0 +1,39 @@
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-app: #f8fafc;
+  --bg-canvas: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-panel-strong: #f8fafc;
+
+  --border-default: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #94a3b8;
+
+  --accent-primary: #22c55e;
+  --accent-primary-muted: color-mix(in srgb, #22c55e 12%, transparent);
+  --accent-success: #22c55e;
+  --accent-warning: #ea580c;
+  --accent-danger: #dc2626;
+  --accent-info: #22c55e;
+
+  --focus-ring: color-mix(in srgb, var(--accent-primary) 50%, white 10%);
+  --focus-ring-soft: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  --selection-bg: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  --selection-text: #0f172a;
+  --bg-grid-dot: color-mix(in srgb, #cbd5e1 90%, transparent);
+
+  --shadow-panel: 0 1px 3px color-mix(in srgb, #0f172a 6%, transparent);
+
+  --axis-x: #2563eb;
+  --axis-x-soft: #dbeafe;
+  --axis-y: #7c3aed;
+  --axis-y-soft: #ede9fe;
+  --axis-z: #0891b2;
+  --axis-z-soft: #cffafe;
+  --axis-u: #d97706;
+  --axis-u-soft: #fef3c7;
+}

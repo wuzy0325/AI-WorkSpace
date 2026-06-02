@@ -92,6 +92,7 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
       name: p.name,
       type: p.type,
       connected: live?.connected ?? false,
+      emergencyStopped: live?.emergencyStopped ?? false,
       axes: enabledAxes.map((a) => {
         const axisLive = live?.axes?.find((x) => x.name === a.name);
         return {
@@ -255,6 +256,16 @@ export const motionApi = {
       return result.Success;
     } else {
       await request('/api/motion/definePosition', { method: 'POST', body: JSON.stringify({ id, axis, position }) });
+    }
+    return true;
+  },
+
+  resetEmergencyStop: async (id: string): Promise<boolean> => {
+    if (isWailsAvailable()) {
+      const result = await wailsApi.motion.resetEmergencyStop(id);
+      return result.Success;
+    } else {
+      await request('/api/motion/resetEmergencyStop', { method: 'POST', body: JSON.stringify({ id }) });
     }
     return true;
   },

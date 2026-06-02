@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter'
+import { request } from '@api/http-client'
 
 export interface FileRotationSettings {
   enabled: boolean
@@ -20,7 +21,7 @@ export interface StorageSettings {
   fileRotation: FileRotationSettings
 }
 
-const STORAGE_KEY = 'wind-daq.global-settings'
+const CONFIG_KEY = 'storage-settings'
 
 const DEFAULT_SETTINGS: StorageSettings = {
   baseDirectory: 'data/recordings',
@@ -35,9 +36,16 @@ export const useStorageStore = defineStore('storage', () => {
 
   async function loadSettings(): Promise<void> {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<StorageSettings>
+      let data: any = null
+      if (isWailsAvailable()) {
+        const res = await wailsApi.config.load(CONFIG_KEY)
+        if (res.success) data = res.data
+      } else {
+        const res = await request<{ success: boolean; data?: any }>(`/api/config/${CONFIG_KEY}`)
+        if (res.success && res.data) data = res.data
+      }
+      if (data) {
+        const parsed = data as Partial<StorageSettings>
         settings.value = {
           baseDirectory: parsed.baseDirectory ?? DEFAULT_SETTINGS.baseDirectory,
           filePrefix: parsed.filePrefix ?? DEFAULT_SETTINGS.filePrefix,
@@ -53,7 +61,18 @@ export const useStorageStore = defineStore('storage', () => {
 
   async function saveSettings(next: StorageSettings): Promise<void> {
     settings.value = { ...next }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    try {
+      if (isWailsAvailable()) {
+        await wailsApi.config.save(CONFIG_KEY, next)
+      } else {
+        await request(`/api/config/${CONFIG_KEY}`, {
+          method: 'PUT',
+          body: JSON.stringify(next),
+        })
+      }
+    } catch (err) {
+      console.error('保存存储设置失败:', err)
+    }
   }
 
   async function pickDirectory(): Promise<string> {

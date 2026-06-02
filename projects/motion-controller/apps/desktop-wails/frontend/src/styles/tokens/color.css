@@ -1,0 +1,68 @@
+:root {
+  --accent-primary-core: #2f88ff;
+  --accent-primary-core-strong: #1967d2;
+  --accent-success-core: #2bb673;
+  --accent-warning-core: #f59e0b;
+  --accent-danger-core: #ef5b47;
+  --accent-info-core: #38bdf8;
+
+  --color-brand: var(--accent-primary-core);
+  --color-brand-strong: var(--accent-primary-core-strong);
+  --color-brand-foreground: #f8fbff;
+
+  --state-success: var(--accent-success-core);
+  --state-warning: var(--accent-warning-core);
+  --state-error: var(--accent-danger-core);
+  --state-info: var(--accent-info-core);
+
+  --color-channel-1: #2f88ff;
+  --color-channel-2: #29b6b0;
+  --color-channel-3: #4c7bd9;
+  --color-channel-4: #d8b84c;
+  --color-channel-5: #f59e0b;
+  --color-channel-6: #ef7d32;
+  --color-channel-7: #c96dd8;
+  --color-channel-8: #37c995;
+
+  --text-primary: #e2e8f0;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --text-muted: var(--text-tertiary);
+
+  --surface-0: #0f172a;
+  --surface-1: #111c31;
+  --surface-2: #172338;
+  --surface-3: #1e293b;
+
+  --bg-app: var(--surface-0);
+  --bg-canvas: var(--surface-1);
+  --bg-panel: var(--surface-2);
+  --bg-panel-strong: var(--surface-3);
+
+  --border-default: #334155;
+  --border-strong: #475569;
+
+  --accent-primary: var(--accent-primary-core);
+  --accent-primary-muted: color-mix(in srgb, var(--accent-primary-core) 20%, transparent);
+  --accent-success: var(--accent-success-core);
+  --accent-warning: var(--accent-warning-core);
+  --accent-danger: var(--accent-danger-core);
+  --accent-info: var(--accent-info-core);
+
+  --focus-ring: color-mix(in srgb, var(--accent-primary) 75%, white 10%);
+  --focus-ring-soft: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+  --selection-bg: color-mix(in srgb, var(--accent-primary) 42%, transparent);
+  --selection-text: var(--color-brand-foreground);
+  --bg-grid-dot: color-mix(in srgb, var(--border-default) 28%, transparent);
+
+  --shadow-panel: 0 10px 30px color-mix(in srgb, #020617 28%, transparent);
+
+  --axis-x: #3b82f6;
+  --axis-x-soft: color-mix(in srgb, #3b82f6 20%, transparent);
+  --axis-y: #8b5cf6;
+  --axis-y-soft: color-mix(in srgb, #8b5cf6 20%, transparent);
+  --axis-z: #06b6d4;
+  --axis-z-soft: color-mix(in srgb, #06b6d4 20%, transparent);
+  --axis-u: #f59e0b;
+  --axis-u-soft: color-mix(in srgb, #f59e0b 20%, transparent);
+}

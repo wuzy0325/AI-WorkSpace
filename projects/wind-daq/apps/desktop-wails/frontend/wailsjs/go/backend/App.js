@@ -30,6 +30,14 @@ export function CalibrationStop() {
   return window['go']['backend']['App']['CalibrationStop']();
 }
 
+export function ConfigLoad(arg1) {
+  return window['go']['backend']['App']['ConfigLoad'](arg1);
+}
+
+export function ConfigSave(arg1, arg2) {
+  return window['go']['backend']['App']['ConfigSave'](arg1, arg2);
+}
+
 export function DeviceConnect(arg1) {
   return window['go']['backend']['App']['DeviceConnect'](arg1);
 }
@@ -128,6 +136,10 @@ export function MotionMoveBy(arg1, arg2, arg3) {
 
 export function MotionMoveTo(arg1, arg2, arg3) {
   return window['go']['backend']['App']['MotionMoveTo'](arg1, arg2, arg3);
+}
+
+export function MotionResetEmergencyStop(arg1) {
+  return window['go']['backend']['App']['MotionResetEmergencyStop'](arg1);
 }
 
 export function MotionStop(arg1, arg2) {

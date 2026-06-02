@@ -74,6 +74,10 @@ export const useMotionStore = defineStore('motion', () => {
     await motionApi.definePosition(id, axis, position)
   }
 
+  async function resetEmergencyStop(id: string): Promise<void> {
+    await motionApi.resetEmergencyStop(id)
+  }
+
   return {
     profiles,
     statusList,
@@ -92,5 +96,6 @@ export const useMotionStore = defineStore('motion', () => {
     stop,
     emergencyStop,
     definePosition,
+    resetEmergencyStop,
   }
 })

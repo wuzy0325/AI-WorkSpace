@@ -1,3 +1,7 @@
+// ⚠️ 架构边界警告：此文件包含业务算法（蛇形点位生成），按六边形架构应迁移到 Go 后端 core 层。
+// 前端只应调用后端 API 获取生成的校准点位，不应直接实现业务算法。
+// TODO: 将 generateFiveHoleSnakePoints 迁移到 Go 后端，前端通过 API 调用。
+
 import type { FiveHolePointLayout, CalibrationPoint } from '@shared/types/calibration'
 import type { MotionControllerStatus } from '@shared/types/motion'
 import type { CalibrationConfig } from '@shared/types/calibration'

@@ -126,6 +126,13 @@ export interface DSA3217ScanConfigWailsResponse {
   Error?: string;
 }
 
+// 配置加载结果
+export interface ConfigLoadResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
 // 运行时获取 Wails API 绑定
 function getWailsBinding(): any {
   if (typeof window !== 'undefined' && (window as any).go && (window as any).go.backend && (window as any).go.backend.App) {
@@ -256,6 +263,9 @@ export const wailsApi = {
     definePosition: async (controllerId: string, axisName: string, position: number): Promise<GenericResponse> => {
       return await callBinding('MotionDefinePosition', controllerId, axisName, position);
     },
+    resetEmergencyStop: async (controllerId: string): Promise<GenericResponse> => {
+      return await callBinding('MotionResetEmergencyStop', controllerId);
+    },
 
     onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
       const cleanup = EventsOn('motion:status', (data: unknown) => {
@@ -310,6 +320,25 @@ export const wailsApi = {
     getStatus: async (): Promise<ReportStatus> => {
       return await callBinding('ReportGetStatus');
     }
+  },
+
+  // 配置管理
+  config: {
+    load: async <T = unknown>(key: string): Promise<ConfigLoadResult<T>> => {
+      try {
+        const result = await callBinding<ConfigLoadResult<T>>('ConfigLoad', key);
+        return result;
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
+    },
+    save: async (key: string, config: unknown): Promise<GenericResponse> => {
+      try {
+        return await callBinding<GenericResponse>('ConfigSave', key, JSON.stringify(config));
+      } catch (e) {
+        return { Success: false, Error: String(e) };
+      }
+    },
   },
 
   // 应用通用

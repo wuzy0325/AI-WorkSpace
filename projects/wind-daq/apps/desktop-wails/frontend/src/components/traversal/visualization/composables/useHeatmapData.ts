@@ -1,4 +1,8 @@
-﻿import { computed, type ComputedRef, type Ref, unref } from 'vue'
+// ⚠️ 架构边界注意：此文件包含数据插值/聚合逻辑（热力图数据构建）。
+// 纯展示数据转换可保留在前端，但插值计算应确保在后端完成。
+// 当前实现仅做数据格式转换（后端已计算插值结果），符合前端展示职责。
+
+import { computed, type ComputedRef, type Ref, unref } from 'vue'
 import type { TraversalDataPoint } from '@shared/types/traversal'
 import type { HeatmapCell, VisualizationParam } from '../types'
 import { getParamValue } from '../types'

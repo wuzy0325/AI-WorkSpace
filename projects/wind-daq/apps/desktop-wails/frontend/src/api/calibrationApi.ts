@@ -2,10 +2,8 @@ import type { CalibrationConfig, CalibrationType, SphereTankGateConfig } from '@
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
-const CALIBRATION_STORAGE_KEY = 'wind-daq.calibration-config';
-
-function getStorageKey(type: CalibrationType): string {
-  return `${CALIBRATION_STORAGE_KEY}.${type}`;
+function getConfigKey(type: CalibrationType): string {
+  return `calibration-config.${type}`;
 }
 
 // 兼容旧 API 的类型
@@ -37,11 +35,19 @@ export interface OldCalibrationConfig {
 export const calibrationApi = {
   getConfig: async (type: CalibrationType): Promise<{ success: boolean; data?: CalibrationConfig; error?: string }> => {
     try {
-      const raw = window.localStorage.getItem(getStorageKey(type));
-      if (raw) {
-        return { success: true, data: JSON.parse(raw) };
+      if (isWailsAvailable()) {
+        const res = await wailsApi.config.load(getConfigKey(type));
+        if (res.success && res.data) {
+          return { success: true, data: res.data as CalibrationConfig };
+        }
+        return { success: false, error: 'No saved config' };
+      } else {
+        const res = await request<{ success: boolean; data?: CalibrationConfig }>(`/api/config/${getConfigKey(type)}`);
+        if (res.success && res.data) {
+          return { success: true, data: res.data };
+        }
+        return { success: false, error: 'No saved config' };
       }
-      return { success: false, error: 'No saved config' };
     } catch (e) {
       return { success: false, error: String(e) };
     }
@@ -49,7 +55,14 @@ export const calibrationApi = {
 
   saveConfig: async (type: CalibrationType, config: CalibrationConfig): Promise<{ success: boolean; data?: CalibrationConfig; error?: string }> => {
     try {
-      window.localStorage.setItem(getStorageKey(type), JSON.stringify(config));
+      if (isWailsAvailable()) {
+        await wailsApi.config.save(getConfigKey(type), config);
+      } else {
+        await request(`/api/config/${getConfigKey(type)}`, {
+          method: 'PUT',
+          body: JSON.stringify(config),
+        });
+      }
       return { success: true, data: config };
     } catch (e) {
       return { success: false, error: String(e) };
