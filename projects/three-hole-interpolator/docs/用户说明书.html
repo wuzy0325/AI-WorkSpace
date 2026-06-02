@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>三孔探针插值计算系统 - 用户说明书</title>
+    <style>
+        :root {
+            --primary-50: #eef2ff; --primary-100: #e0e7ff; --primary-200: #c7d2fe;
+            --primary-300: #a5b4fc; --primary-400: #818cf8; --primary-500: #6366f1;
+            --primary-600: #4f46e5; --primary-700: #4338ca; --primary-800: #3730a3;
+            --gray-50: #f8fafc; --gray-100: #f1f5f9; --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1; --gray-400: #94a3b8; --gray-500: #64748b;
+            --gray-600: #475569; --gray-700: #334155; --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --success-50: #f0fdf4; --success-500: #22c55e; --success-600: #16a34a;
+            --error-50: #fef2f2; --error-500: #ef4444; --error-600: #dc2626;
+            --warning-50: #fffbeb; --warning-500: #f59e0b; --warning-600: #d97706;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100); color: var(--gray-800); line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+        /* ===== Header ===== */
+        .doc-header {
+            background: white; border-radius: var(--radius-lg); padding: 32px;
+            text-align: center; box-shadow: var(--shadow-sm); margin-bottom: 24px;
+            border: 1px solid var(--primary-100);
+        }
+        .doc-header h1 { font-size: 28px; font-weight: 700; color: var(--gray-900); margin-bottom: 8px; }
+        .doc-header .subtitle { font-size: 14px; color: var(--gray-500); }
+        .doc-header .version { font-size: 12px; color: var(--gray-400); margin-top: 8px; }
+
+        /* ===== Sections ===== */
+        .section {
+            background: white; border-radius: var(--radius-lg); padding: 28px;
+            margin-bottom: 20px; box-shadow: var(--shadow-sm);
+        }
+        .section h2 {
+            font-size: 20px; font-weight: 600; color: var(--gray-900);
+            margin-bottom: 16px; padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary-100);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .section h2 .icon {
+            width: 32px; height: 32px; background: var(--primary-50);
+            border-radius: var(--radius-sm); display: flex; align-items: center;
+            justify-content: center; color: var(--primary-600); font-size: 16px;
+        }
+        .section h3 {
+            font-size: 16px; font-weight: 600; color: var(--gray-800);
+            margin: 20px 0 10px 0;
+        }
+        .section p { margin-bottom: 12px; color: var(--gray-700); }
+        .section ul, .section ol { margin-left: 20px; margin-bottom: 12px; color: var(--gray-700); }
+        .section li { margin-bottom: 6px; }
+
+        /* ===== Screenshots ===== */
+        .screenshot-container {
+            margin: 20px 0; text-align: center;
+            background: var(--gray-50); border-radius: var(--radius-md);
+            padding: 16px; border: 1px solid var(--gray-200);
+        }
+        .screenshot-container img {
+            max-width: 100%; border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-md); border: 1px solid var(--gray-200);
+        }
+        .screenshot-caption {
+            font-size: 13px; color: var(--gray-500); margin-top: 10px;
+            font-style: italic;
+        }
+
+        /* ===== Info Boxes ===== */
+        .info-box {
+            background: var(--primary-50); border-left: 4px solid var(--primary-500);
+            padding: 14px 18px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            margin: 16px 0;
+        }
+        .info-box.warning {
+            background: var(--warning-50); border-left-color: var(--warning-500);
+        }
+        .info-box.error {
+            background: var(--error-50); border-left-color: var(--error-500);
+        }
+        .info-box.success {
+            background: var(--success-50); border-left-color: var(--success-500);
+        }
+        .info-box-title {
+            font-weight: 600; color: var(--gray-800); margin-bottom: 6px;
+        }
+        .info-box p { margin-bottom: 4px; }
+
+        /* ===== Table ===== */
+        .data-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
+        .data-table th {
+            background: var(--gray-50); padding: 10px 12px; text-align: left;
+            font-weight: 600; color: var(--gray-700); border-bottom: 2px solid var(--gray-200);
+        }
+        .data-table td {
+            padding: 10px 12px; border-bottom: 1px solid var(--gray-100);
+            color: var(--gray-700);
+        }
+        .data-table tbody tr:hover { background: var(--gray-50); }
+
+        /* ===== Steps ===== */
+        .steps { counter-reset: step; }
+        .step {
+            display: flex; gap: 16px; margin-bottom: 20px;
+            padding: 16px; background: var(--gray-50); border-radius: var(--radius-md);
+        }
+        .step-number {
+            width: 32px; height: 32px; background: var(--primary-600);
+            color: white; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; font-weight: 600; font-size: 14px; flex-shrink: 0;
+        }
+        .step-content { flex: 1; }
+        .step-content h4 { font-size: 15px; font-weight: 600; color: var(--gray-800); margin-bottom: 6px; }
+        .step-content p { margin-bottom: 4px; color: var(--gray-600); font-size: 14px; }
+
+        /* ===== Footer ===== */
+        .doc-footer {
+            text-align: center; padding: 24px; color: var(--gray-400);
+            font-size: 13px; margin-top: 20px;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 768px) {
+            .container { padding: 12px; }
+            .doc-header h1 { font-size: 22px; }
+            .section { padding: 20px; }
+            .step { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 文档标题 -->
+        <div class="doc-header">
+            <h1>三孔探针插值计算系统</h1>
+            <p class="subtitle">用户说明书</p>
+            <p class="version">版本: v1.0 | 适用于风洞试验工程师</p>
+        </div>
+
+        <!-- 1. 系统概述 -->
+        <div class="section">
+            <h2><span class="icon">📖</span>1. 系统概述</h2>
+            <p>三孔探针插值计算系统是一款专业的风洞试验数据处理工具，用于根据三孔探针的测量数据计算气流参数，包括：</p>
+            <ul>
+                <li><strong>攻角 (α)</strong>：气流方向与探针轴线的夹角，单位：度 (°)</li>
+                <li><strong>马赫数 (Ma)</strong>：气流速度与声速的比值，无量纲</li>
+                <li><strong>总压 (Pt)</strong>：气流的总压，单位：帕斯卡 (Pa)</li>
+                <li><strong>静压 (Ps)</strong>：气流的静压，单位：帕斯卡 (Pa)</li>
+            </ul>
+            <p>系统采用迭代二维插值算法，基于 PRB 校准文件对三孔探针测量数据进行精确计算，支持单点手动输入和批量 CSV 导入两种数据输入方式。</p>
+
+            <div class="info-box">
+                <div class="info-box-title">适用场景</div>
+                <p>本系统适用于风洞试验中使用三孔探针进行气流参数测量的场景，可处理表压或绝压模式的测量数据。</p>
+            </div>
+        </div>
+
+        <!-- 2. 界面介绍 -->
+        <div class="section">
+            <h2><span class="icon">🖥️</span>2. 界面介绍</h2>
+            <p>系统主界面分为以下几个区域：</p>
+
+            <div class="screenshot-container">
+                <img src="screenshots/01_initial.png" alt="系统初始界面">
+                <p class="screenshot-caption">图 2-1 系统初始界面</p>
+            </div>
+
+            <h3>2.1 顶部标题栏</h3>
+            <ul>
+                <li><strong>系统名称</strong>：左侧显示"三孔探针插值计算"及英文名称</li>
+                <li><strong>帮助按钮</strong>：点击可打开本用户说明书</li>
+                <li><strong>加载 PRB 文件按钮</strong>：用于加载校准文件（必需步骤）</li>
+            </ul>
+
+            <h3>2.2 信息卡片</h3>
+            <p>加载 PRB 文件后，系统会显示信息卡片，包含：</p>
+            <ul>
+                <li>已加载的 PRB 文件数量及文件名</li>
+                <li>各文件对应的马赫数</li>
+                <li>系统状态（就绪/未就绪）</li>
+            </ul>
+
+            <h3>2.3 标签页</h3>
+            <ul>
+                <li><strong>数据输入</strong>：输入探针测量数据和查看数据列表</li>
+                <li><strong>计算结果</strong>：查看插值计算结果（需先完成计算）</li>
+            </ul>
+
+            <h3>2.4 状态栏</h3>
+            <p>底部状态栏显示当前操作状态和系统版本信息。</p>
+        </div>
+
+        <!-- 3. 操作流程 -->
+        <div class="section">
+            <h2><span class="icon">📝</span>3. 操作流程</h2>
+
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h4>加载 PRB 校准文件</h4>
+                        <p>点击顶部"加载 PRB 文件"按钮，在弹出的文件选择对话框中选择一个或多个 .prb 校准文件。</p>
+                        <p>PRB 文件是三孔探针的校准数据文件，包含不同马赫数下的 Kb、Kt、Sb、Alpha 等校准系数。</p>
+
+                        <div class="info-box warning">
+                            <div class="info-box-title">重要提示</div>
+                            <p>必须先加载 PRB 文件才能进行计算。系统需要至少一个 PRB 文件才能正常工作。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h4>选择压力模式</h4>
+                        <p>在"压力参数输入"区域右上角，选择压力输入模式：</p>
+                        <ul>
+                            <li><strong>表压</strong>：输入相对于大气压的压力差值（默认模式）</li>
+                            <li><strong>绝压</strong>：输入绝对压力值，系统会自动减去大气压进行计算</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h4>输入压力参数</h4>
+                        <p>在输入区域填写以下参数：</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>参数</th><th>说明</th><th>默认值</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>P1</td><td>1号孔压力（侧孔）</td><td>0</td></tr>
+                                <tr><td>P2</td><td>中心孔压力</td><td>0</td></tr>
+                                <tr><td>P3</td><td>3号孔压力（侧孔）</td><td>0</td></tr>
+                                <tr><td>Patm</td><td>大气压</td><td>101325 Pa</td></tr>
+                                <tr><td>Tatm</td><td>大气温度</td><td>20 °C</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="screenshot-container">
+                            <img src="screenshots/02_input_filled.png" alt="填写压力参数">
+                            <p class="screenshot-caption">图 3-1 填写压力参数示例</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h4>添加数据到列表（可选）</h4>
+                        <p>点击"添加"按钮将当前输入的数据保存到数据列表中。您可以添加多行数据进行批量计算。</p>
+                        <p>如果不添加到列表，也可以直接点击"执行插值计算"进行单点计算。</p>
+
+                        <div class="screenshot-container">
+                            <img src="screenshots/03_data_list.png" alt="数据列表">
+                            <p class="screenshot-caption">图 3-2 数据列表显示</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <h4>执行插值计算</h4>
+                        <p>点击"执行插值计算"按钮，系统将自动进行迭代插值计算。</p>
+                        <p>计算过程中按钮会显示"计算中..."，请耐心等待。</p>
+
+                        <div class="screenshot-container">
+                            <img src="screenshots/04_calculating.png" alt="计算中">
+                            <p class="screenshot-caption">图 3-3 计算进行中</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">6</div>
+                    <div class="step-content">
+                        <h4>查看计算结果</h4>
+                        <p>计算完成后，系统会自动切换到"计算结果"标签页，显示以下结果：</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>结果项</th><th>说明</th><th>单位</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>α (°)</td><td>攻角</td><td>度</td></tr>
+                                <tr><td>Ma</td><td>马赫数</td><td>无量纲</td></tr>
+                                <tr><td>Pt (Pa)</td><td>总压</td><td>帕斯卡</td></tr>
+                                <tr><td>Ps (Pa)</td><td>静压</td><td>帕斯卡</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="screenshot-container">
+                            <img src="screenshots/05_results.png" alt="计算结果">
+                            <p class="screenshot-caption">图 3-4 计算结果展示</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. CSV 批量导入 -->
+        <div class="section">
+            <h2><span class="icon">📁</span>4. 数据文件批量导入</h2>
+            <p>系统支持通过数据文件批量导入数据进行计算，提高数据处理效率。支持 CSV（逗号分隔）和 TXT（制表符分隔）两种格式。</p>
+
+            <h3>4.1 数据文件格式要求</h3>
+            <p>数据文件必须包含以下列（列名区分大小写）：</p>
+            <table class="data-table">
+                <thead>
+                    <tr><th>列名</th><th>说明</th><th>是否必需</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>P1</td><td>1号孔压力</td><td>是</td></tr>
+                    <tr><td>P2</td><td>中心孔压力</td><td>是</td></tr>
+                    <tr><td>P3</td><td>3号孔压力</td><td>是</td></tr>
+                    <tr><td>Patm</td><td>大气压 (Pa, 绝压)</td><td>是</td></tr>
+                    <tr><td>Tatm</td><td>大气温度 (K)</td><td>是</td></tr>
+                </tbody>
+            </table>
+
+            <h3>4.2 数据文件示例</h3>
+            <div class="info-box">
+                <pre style="background: var(--gray-100); padding: 12px; border-radius: var(--radius-sm); font-size: 13px; overflow-x: auto;">
+P1,P2,P3,Patm,Tatm
+1000,2000,1500,101325,293.15
+1200,2200,1700,101325,293.15
+800,1800,1300,101325,298.15</pre>
+            </div>
+
+            <h3>4.3 导入步骤</h3>
+            <ol>
+                <li>确保已加载 PRB 校准文件</li>
+                <li>点击"导入数据"按钮</li>
+                <li>在文件选择对话框中选择数据文件</li>
+                <li>系统自动解析并导入数据到列表</li>
+                <li>点击"执行插值计算"进行批量计算</li>
+            </ol>
+
+            <div class="info-box success">
+                <div class="info-box-title">提示</div>
+                <p>导入数据文件时，系统会自动跳过格式错误的行，并在状态栏显示导入结果和警告信息。</p>
+                <p>文件支持 Tab 制表符或逗号作为列分隔符，系统会自动检测。以 <code>#</code> 开头的行会被当作注释自动跳过。</p>
+            </div>
+        </div>
+
+        <!-- 5. 结果导出 -->
+        <div class="section">
+            <h2><span class="icon">💾</span>5. 结果导出</h2>
+            <p>计算完成后，您可以将结果导出为 CSV 文件：</p>
+            <ol>
+                <li>切换到"计算结果"标签页</li>
+                <li>点击右上角的"导出 CSV"按钮</li>
+                <li>选择保存位置，系统自动生成带时间戳的文件名</li>
+            </ol>
+
+            <div class="info-box">
+                <div class="info-box-title">导出文件格式</div>
+                <p>导出文件包含以下列：序号、α(°)、Ma、Pt(Pa)、Ps(Pa)</p>
+                <p>文件名格式：<code>三孔探针计算结果_YYYY-MM-DD_HH-MM-SS.csv</code></p>
+            </div>
+        </div>
+
+        <!-- 6. 数据管理 -->
+        <div class="section">
+            <h2><span class="icon">🗑️</span>6. 数据管理</h2>
+
+            <h3>6.1 删除单条数据</h3>
+            <p>在数据列表中，点击每行末尾的"[X]"按钮即可删除该条数据。</p>
+
+            <h3>6.2 清空所有数据</h3>
+            <p>点击"清空"按钮可一次性删除所有输入数据和计算结果。</p>
+
+            <div class="info-box warning">
+                <div class="info-box-title">注意</div>
+                <p>清空操作不可撤销，请确认后再执行。</p>
+            </div>
+        </div>
+
+        <!-- 7. 常见问题 -->
+        <div class="section">
+            <h2><span class="icon">❓</span>7. 常见问题</h2>
+
+            <h3>Q1: 为什么提示"请先加载 PRB 文件"？</h3>
+            <p>PRB 校准文件包含探针的校准系数，是进行插值计算的必要条件。必须先加载至少一个 PRB 文件才能进行计算。</p>
+
+            <h3>Q2: 表压和绝压有什么区别？</h3>
+            <p><strong>表压</strong>是相对于大气压的压力差值（如压力表读数）；<strong>绝压</strong>是相对于真空的压力绝对值。选择错误的模式会导致计算结果偏差。</p>
+
+            <h3>Q3: 计算结果显示"无效"是什么原因？</h3>
+            <p>可能的原因包括：</p>
+            <ul>
+                <li>压力差值接近零，无法计算 Kb 系数</li>
+                <li>马赫数超出校准文件的范围</li>
+                <li>Kb 值超出校准数据范围，使用了外推</li>
+                <li>迭代计算未收敛</li>
+            </ul>
+
+            <h3>Q4: 可以加载多个 PRB 文件吗？</h3>
+            <p>可以。系统支持同时加载多个不同马赫数的 PRB 文件，插值计算时会自动在相邻马赫数之间进行插值。</p>
+
+            <h3>Q5: 数据文件导入失败怎么办？</h3>
+            <p>请检查：</p>
+            <ul>
+                <li>文件编码是否为 UTF-8</li>
+                <li>是否包含必需的 P1、P2、P3、Patm、Tatm 列</li>
+                <li>数值格式是否正确（不要使用逗号作为千位分隔符）</li>
+                <li>文件是否被其他程序占用</li>
+                <li>压力模式由 UI 切换按钮指定，数据文件中无需包含 PressureMode 列</li>
+            </ul>
+        </div>
+
+        <!-- 8. 技术参数 -->
+        <div class="section">
+            <h2><span class="icon">⚙️</span>8. 技术参数</h2>
+            <table class="data-table">
+                <thead>
+                    <tr><th>参数</th><th>说明</th><th>数值</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>最大迭代次数</td><td>插值计算最大迭代次数</td><td>20 次</td></tr>
+                    <tr><td>收敛容差</td><td>马赫数收敛判断标准</td><td>1e-4</td></tr>
+                    <tr><td>压力差容差</td><td>判断压力差是否接近零</td><td>1e-6</td></tr>
+                    <tr><td>比热比</td><td>空气比热比 k</td><td>1.4</td></tr>
+                    <tr><td>支持文件格式</td><td>校准文件格式</td><td>.prb</td></tr>
+                    <tr><td>导入格式</td><td>批量数据导入格式</td><td>.csv, .txt</td></tr>
+                    <tr><td>导出格式</td><td>结果导出格式</td><td>.csv</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 9. 注意事项 -->
+        <div class="section">
+            <h2><span class="icon">⚠️</span>9. 注意事项</h2>
+            <ul>
+                <li>请确保输入的压力数据单位统一（建议使用帕斯卡 Pa）</li>
+                <li>温度输入单位为开尔文 (K)</li>
+                <li>PRB 校准文件必须与探针型号匹配</li>
+                <li>计算结果超出校准范围时，精度可能会降低</li>
+                <li>建议定期保存计算结果，避免数据丢失</li>
+                <li>大气压默认值 101325 Pa 为标准大气压，实际使用时请根据试验环境调整</li>
+            </ul>
+
+            <div class="info-box error">
+                <div class="info-box-title">安全提示</div>
+                <p>本系统仅用于数据处理和分析，不直接控制试验设备。进行风洞试验时，请遵守相关安全操作规程。</p>
+            </div>
+        </div>
+
+        <!-- 10. 联系方式 -->
+        <div class="section">
+            <h2><span class="icon">📞</span>10. 技术支持</h2>
+            <p>如在使用过程中遇到问题，请联系技术支持团队。</p>
+            <p>建议提供以下信息以便快速定位问题：</p>
+            <ul>
+                <li>系统版本号（见底部状态栏）</li>
+                <li>PRB 校准文件信息</li>
+                <li>输入数据示例</li>
+                <li>错误提示信息</li>
+            </ul>
+        </div>
+
+        <!-- 文档页脚 -->
+        <div class="doc-footer">
+            <p>三孔探针插值计算系统 v1.0 | 用户说明书</p>
+            <p>本文档最后更新日期：2026-06-01</p>
+        </div>
+    </div>
+</body>
+</html>

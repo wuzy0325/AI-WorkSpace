@@ -129,6 +129,7 @@ async function importCsv() {
       return
     }
     for (const d of data) {
+      d.pressureMode = pressureMode.value
       inputs.value.push(d)
       results.value.push(null)
     }
@@ -265,7 +266,7 @@ function exportResults() {
                   <button class="mode-btn" :class="{ active: pressureMode === 'gauge' }" @click="pressureMode = 'gauge'">表压</button>
                   <button class="mode-btn" :class="{ active: pressureMode === 'absolute' }" @click="pressureMode = 'absolute'">绝压</button>
                 </div>
-                <button class="btn btn-secondary" @click="importCsv">导入 CSV</button>
+                <button class="btn btn-secondary" @click="importCsv">导入数据</button>
                 <button class="btn btn-secondary" @click="clearAll" :disabled="inputs.length === 0">清空</button>
               </div>
             </div>

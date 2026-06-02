@@ -345,7 +345,7 @@ func (a *App) ImportCsvData() ImportCsvDataResponse {
 	filePath, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "选择数据文件",
 		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "数据文件 (*.csv, *.txt)", Pattern: "*.csv;*.txt"},
+			{DisplayName: "数据文件 (*.csv, *.txt, *.dat)", Pattern: "*.csv;*.txt;*.dat"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
@@ -436,7 +436,7 @@ func parseCsvHeader(header []string) (map[string]int, string) {
 		colMap[strings.TrimSpace(col)] = i
 	}
 
-	requiredCols := []string{"P1", "P2", "P3"}
+	requiredCols := []string{"P1", "P2", "P3", "Patm", "Tatm"}
 	for _, name := range requiredCols {
 		if _, ok := colMap[name]; !ok {
 			return nil, fmt.Sprintf("缺少必要列: %s", name)
@@ -449,16 +449,15 @@ func parseCsvHeader(header []string) (map[string]int, string) {
 func parseCsvRows(rows [][]string, colMap map[string]int) ([]InterpolationInput, []string) {
 	colCount := len(colMap)
 
-	patmIdx, hasPatm := colMap["Patm"]
-	tatmIdx, hasTatm := colMap["Tatm"]
-	pmIdx, hasPm := colMap["PressureMode"]
+	patmIdx := colMap["Patm"]
+	tatmIdx := colMap["Tatm"]
 
 	datas := make([]InterpolationInput, 0, len(rows))
 	var warnings []string
 
 	for rowIdx := 0; rowIdx < len(rows); rowIdx++ {
 		row := rows[rowIdx]
-		csvLine := rowIdx + 2 // CSV行号 = 数据行索引 + 表头行(1) + 1
+		csvLine := rowIdx + 2
 
 		if len(row) < colCount {
 			warnings = append(warnings, fmt.Sprintf("第%d行列数不足，已跳过", csvLine))
@@ -473,7 +472,6 @@ func parseCsvRows(rows [][]string, colMap map[string]int) ([]InterpolationInput,
 			return val, nil
 		}
 
-		// 必须列：解析失败则跳过整行
 		p1, err1 := parseField(colMap["P1"], "P1")
 		p2, err2 := parseField(colMap["P2"], "P2")
 		p3, err3 := parseField(colMap["P3"], "P3")
@@ -487,32 +485,24 @@ func parseCsvRows(rows [][]string, colMap map[string]int) ([]InterpolationInput,
 			continue
 		}
 
-		input := InterpolationInput{P1: p1, P2: p2, P3: p3}
+		patm, errPatm := parseField(patmIdx, "Patm")
+		if errPatm != nil {
+			warnings = append(warnings, errPatm.Error())
+			continue
+		}
 
-		// 可选列：解析失败也跳过整行，避免静默使用零值
-		if hasPatm {
-			val, err := parseField(patmIdx, "Patm")
-			if err != nil {
-				warnings = append(warnings, err.Error())
-				continue
-			}
-			input.Patm = val
+		tatm, errTatm := parseField(tatmIdx, "Tatm")
+		if errTatm != nil {
+			warnings = append(warnings, errTatm.Error())
+			continue
 		}
-		if hasTatm {
-			val, err := parseField(tatmIdx, "Tatm")
-			if err != nil {
-				warnings = append(warnings, err.Error())
-				continue
-			}
-			input.Tatm = val
-		}
-		if hasPm {
-			pm := strings.TrimSpace(row[pmIdx])
-			if pm == "absolute" {
-				input.PressureMode = "absolute"
-			} else {
-				input.PressureMode = "gauge"
-			}
+
+		input := InterpolationInput{
+			P1:   p1,
+			P2:   p2,
+			P3:   p3,
+			Patm: patm,
+			Tatm: tatm,
 		}
 
 		datas = append(datas, input)

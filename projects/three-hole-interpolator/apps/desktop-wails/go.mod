@@ -37,4 +37,3 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 )
 
-replace ai-workspace/shared/algorithms/go/threehole => ../../shared/algorithms/go/threehole
