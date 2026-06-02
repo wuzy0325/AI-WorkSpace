@@ -10,15 +10,19 @@ import (
 	"path/filepath"
 	"time"
 
+	config "shared/device-sdk/go/motion/adapters/config"
+	hardware "shared/device-sdk/go/motion/adapters/hardware"
+	"shared/device-sdk/go/motion/core"
+	"shared/device-sdk/go/motion/ports"
+
 	"wind-daq/services/api-go/internal/adapters/calstore"
-	"wind-daq/services/api-go/internal/adapters/config"
-	"wind-daq/services/api-go/internal/adapters/hardware"
+	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
+	windaqhardware "wind-daq/services/api-go/internal/adapters/hardware"
 	"wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	"wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/device"
-	"wind-daq/services/api-go/internal/core/motion"
-	"wind-daq/services/api-go/internal/ports"
+	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -31,6 +35,7 @@ type AppContext struct {
 	CalibrationMgr  *usecase.CalibrationManager
 	TraversalMgr    *usecase.TraversalManager
 	StorageRecorder *usecase.StorageRecorder
+	ConfigManager   *usecase.ConfigManager
 	configDir       string
 }
 
@@ -46,7 +51,6 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		}
 	}
 
-	// Ensure config directory exists
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, err
 	}
@@ -58,14 +62,22 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		return nil, err
 	}
 
-	profileStore := config.NewFileProfileStore(deviceProfilePath)
+	profileStore := windaqconfig.NewFileProfileStore(deviceProfilePath)
 	motionProfileStore := config.NewFileMotionProfileStore(motionProfilePath)
+	appConfigStore := windaqconfig.NewFileAppConfigStore(filepath.Join(configDir, "app"))
+	configMgr := usecase.NewConfigManager(appConfigStore)
 
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
 	recorder := usecase.NewStorageRecorder(storage.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(report.NewCSVReportWriter())
-	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile motion.MotionControllerProfile) ports.MotionController {
-		return hardware.NewSimulatedMotionController(profile)
+	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+		switch profile.Type {
+		case core.ControllerTypeWTNMC4A:
+			return windaqhardware.NewWTNMC4AMotionController(profile), nil
+		default:
+			factory := hardware.NewDefaultMotionControllerFactory()
+			return factory.Create(profile)
+		}
 	})
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
@@ -91,6 +103,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		CalibrationMgr:  calibrationMgr,
 		TraversalMgr:    traversalMgr,
 		StorageRecorder: recorder,
+		ConfigManager:   configMgr,
 		configDir:       configDir,
 	}, nil
 }
@@ -101,20 +114,20 @@ func (noopPublisher) Publish(string, any) {}
 
 type deviceFactory struct{}
 
-func (deviceFactory) Create(profile device.Profile) (ports.Device, error) {
+func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) {
 	switch profile.Type {
 	case device.DeviceDAQP1604:
-		return hardware.NewDAQP1604(profile), nil
+		return windaqhardware.NewDAQP1604(profile), nil
 	case device.DeviceDAQP1064Pre:
-		return hardware.NewDAQP1064Pre(profile), nil
+		return windaqhardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:
-		return hardware.NewDAQT1603(profile), nil
+		return windaqhardware.NewDAQT1603(profile), nil
 	case device.DeviceWTNPXI:
-		return hardware.NewWTNPXI(profile), nil
+		return windaqhardware.NewWTNPXI(profile), nil
 	case device.DeviceDSA3217:
-		return hardware.NewDSA3217(profile), nil
+		return windaqhardware.NewDSA3217(profile), nil
 	default:
-		return hardware.NewSimulatedDevice(profile), nil
+		return windaqhardware.NewSimulatedDevice(profile), nil
 	}
 }
 
@@ -175,24 +188,24 @@ func writeDefaultJSON(path string, value any) error {
 
 func defaultDeviceProfiles() []device.Profile {
 	return []device.Profile{
-		device.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}
 }
 
-func defaultMotionProfiles() []motion.MotionControllerProfile {
-	return []motion.MotionControllerProfile{
+func defaultMotionProfiles() []core.MotionControllerProfile {
+	return []core.MotionControllerProfile{
 		{
 			ID:          "sim-motion-1",
 			Name:        "Simulated Motion Controller",
-			Type:        motion.ControllerTypeSimulated,
+			Type:        core.ControllerTypeSimulated,
 			Address:     "127.0.0.1",
 			Port:        9000,
 			AutoConnect: false,
-			Axes: []motion.AxisConfig{
-				{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-				{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-				{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, MaxSpeed: motion.PtrFloat64(10)},
-				{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, MaxSpeed: motion.PtrFloat64(10)},
+			Axes: []core.AxisConfig{
+				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisU, Enabled: false, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(10)},
 			},
 		},
 	}

@@ -1,26 +1,27 @@
 package usecase
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
-	"wind-daq/services/api-go/internal/core/motion"
-	"wind-daq/services/api-go/internal/ports"
+	"shared/device-sdk/go/motion/core"
+	"shared/device-sdk/go/motion/ports"
 )
 
-// MotionControllerFactory 创建运动控制器实例的工厂函数
-type MotionControllerFactory func(profile motion.MotionControllerProfile) ports.MotionController
+// MotionControllerFactory factory function for creating motion controller instances
+type MotionControllerFactory func(profile core.MotionControllerProfile) (ports.MotionController, error)
 
-// MotionManager 运动控制器管理器
+// MotionManager motion controller manager
 type MotionManager struct {
 	mu                sync.RWMutex
 	controllers       map[string]ports.MotionController
-	profiles          []motion.MotionControllerProfile
+	profiles          []core.MotionControllerProfile
 	profileStore      ports.MotionProfileStore
 	controllerFactory MotionControllerFactory
 }
 
-// NewMotionManager 创建运动控制器管理器
+// NewMotionManager create motion controller manager
 func NewMotionManager(profileStore ports.MotionProfileStore, factory MotionControllerFactory) *MotionManager {
 	return &MotionManager{
 		controllers:       make(map[string]ports.MotionController),
@@ -29,8 +30,8 @@ func NewMotionManager(profileStore ports.MotionProfileStore, factory MotionContr
 	}
 }
 
-// LoadProfiles 加载控制器配置
-func (m *MotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error) {
+// LoadProfiles load controller profiles
+func (m *MotionManager) LoadProfiles() ([]core.MotionControllerProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -43,24 +44,20 @@ func (m *MotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error)
 		return profiles, nil
 	}
 
-	// 如果没有配置存储，返回默认配置
 	if len(m.profiles) == 0 {
-		m.profiles = []motion.MotionControllerProfile{
+		m.profiles = []core.MotionControllerProfile{
 			{
 				ID:          "sim-mc-1",
-				Name:        "模拟控制器 1",
-				Type:        motion.ControllerTypeSimulated,
+				Name:        "Simulated Controller 1",
+				Type:        core.ControllerTypeSimulated,
 				Address:     "127.0.0.1",
 				Port:        9000,
 				AutoConnect: false,
-				Axes: []motion.AxisConfig{
-					{Name: motion.AxisX, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
-
-					{Name: motion.AxisY, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
-
-					{Name: motion.AxisZ, Enabled: true, Kind: motion.AxisKindLinear, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
-
-					{Name: motion.AxisU, Enabled: false, Kind: motion.AxisKindRotary, StepsPerRev: motion.PtrFloat64(1.8), MicroSteps: motion.PtrInt(4), Lead: motion.PtrFloat64(4), GearRatio: motion.PtrFloat64(1), MaxSpeed: motion.PtrFloat64(10), PositionSource: motion.PositionSourceRegister, EncoderScale: motion.PtrFloat64(0.005)},
+				Axes: []core.AxisConfig{
+					{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), GearRatio: core.PtrFloat64(1), MaxSpeed: core.PtrFloat64(10), PositionSource: core.PositionSourceRegister, EncoderScale: core.PtrFloat64(0.005)},
+					{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), GearRatio: core.PtrFloat64(1), MaxSpeed: core.PtrFloat64(10), PositionSource: core.PositionSourceRegister, EncoderScale: core.PtrFloat64(0.005)},
+					{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), GearRatio: core.PtrFloat64(1), MaxSpeed: core.PtrFloat64(10), PositionSource: core.PositionSourceRegister, EncoderScale: core.PtrFloat64(0.005)},
+					{Name: core.AxisU, Enabled: false, Kind: core.AxisKindRotary, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), GearRatio: core.PtrFloat64(1), MaxSpeed: core.PtrFloat64(10), PositionSource: core.PositionSourceRegister, EncoderScale: core.PtrFloat64(0.005)},
 				},
 			},
 		}
@@ -69,8 +66,8 @@ func (m *MotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error)
 	return m.profiles, nil
 }
 
-// SaveProfiles 保存控制器配置
-func (m *MotionManager) SaveProfiles(profiles []motion.MotionControllerProfile) error {
+// SaveProfiles save controller profiles
+func (m *MotionManager) SaveProfiles(profiles []core.MotionControllerProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -83,19 +80,18 @@ func (m *MotionManager) SaveProfiles(profiles []motion.MotionControllerProfile) 
 	return nil
 }
 
-// GetProfiles 获取所有控制器配置
-func (m *MotionManager) GetProfiles() []motion.MotionControllerProfile {
+// GetProfiles get all controller profiles
+func (m *MotionManager) GetProfiles() []core.MotionControllerProfile {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.profiles
 }
 
-// UpsertProfile 插入或更新控制器配置
-func (m *MotionManager) UpsertProfile(profile motion.MotionControllerProfile) error {
+// UpsertProfile insert or update controller profile
+func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 查找是否已存在
 	found := false
 	for i, p := range m.profiles {
 		if p.ID == profile.ID {
@@ -109,7 +105,6 @@ func (m *MotionManager) UpsertProfile(profile motion.MotionControllerProfile) er
 		m.profiles = append(m.profiles, profile)
 	}
 
-	// 保存到存储
 	if m.profileStore != nil {
 		return m.profileStore.SaveProfiles(m.profiles)
 	}
@@ -117,13 +112,12 @@ func (m *MotionManager) UpsertProfile(profile motion.MotionControllerProfile) er
 	return nil
 }
 
-// DeleteProfile 删除控制器配置
+// DeleteProfile delete controller profile
 func (m *MotionManager) DeleteProfile(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 从列表中删除
-	newProfiles := make([]motion.MotionControllerProfile, 0)
+	newProfiles := make([]core.MotionControllerProfile, 0)
 	for _, p := range m.profiles {
 		if p.ID != id {
 			newProfiles = append(newProfiles, p)
@@ -131,13 +125,11 @@ func (m *MotionManager) DeleteProfile(id string) error {
 	}
 	m.profiles = newProfiles
 
-	// 断开并删除控制器实例
 	if ctrl, ok := m.controllers[id]; ok {
-		ctrl.Disconnect()
+		ctrl.Disconnect(context.Background())
 		delete(m.controllers, id)
 	}
 
-	// 保存到存储
 	if m.profileStore != nil {
 		return m.profileStore.SaveProfiles(m.profiles)
 	}
@@ -145,61 +137,54 @@ func (m *MotionManager) DeleteProfile(id string) error {
 	return nil
 }
 
-// getController 获取或创建控制器实例
+// getController get or create controller instance
 func (m *MotionManager) getController(id string) (ports.MotionController, error) {
-	m.mu.RLock()
-	ctrl, exists := m.controllers[id]
-	profile, profileExists := m.findProfileLocked(id)
-	m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if exists {
+	if ctrl, exists := m.controllers[id]; exists {
 		return ctrl, nil
 	}
 
+	profile, profileExists := m.findProfileLocked(id)
 	if !profileExists {
 		return nil, fmt.Errorf("controller not found: %s", id)
 	}
 
-	// 创建新的控制器实例
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// 再次检查（可能在其他协程中已创建）
-	if ctrl, exists = m.controllers[id]; exists {
-		return ctrl, nil
+	if m.controllerFactory == nil {
+		return nil, fmt.Errorf("no controller factory configured")
 	}
 
-	if m.controllerFactory != nil {
-		ctrl = m.controllerFactory(profile)
-	} else {
-		return nil, fmt.Errorf("no controller factory configured")
+	ctrl, err := m.controllerFactory(profile)
+	if err != nil {
+		return nil, err
 	}
 
 	m.controllers[id] = ctrl
 	return ctrl, nil
 }
 
-// findProfileLocked 查找配置（需要持有锁）
-func (m *MotionManager) findProfileLocked(id string) (motion.MotionControllerProfile, bool) {
+// findProfileLocked find profile (requires lock)
+func (m *MotionManager) findProfileLocked(id string) (core.MotionControllerProfile, bool) {
 	for _, p := range m.profiles {
 		if p.ID == id {
 			return p, true
 		}
 	}
-	return motion.MotionControllerProfile{}, false
+	return core.MotionControllerProfile{}, false
 }
 
-// Connect 连接控制器
-func (m *MotionManager) Connect(id string) error {
+// Connect connect controller
+func (m *MotionManager) Connect(ctx context.Context, id string) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.Connect()
+	return ctrl.Connect(ctx)
 }
 
-// Disconnect 断开控制器
-func (m *MotionManager) Disconnect(id string) error {
+// Disconnect disconnect controller
+func (m *MotionManager) Disconnect(ctx context.Context, id string) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
 	m.mu.RUnlock()
@@ -207,36 +192,44 @@ func (m *MotionManager) Disconnect(id string) error {
 	if !exists {
 		return nil
 	}
-	return ctrl.Disconnect()
+	return ctrl.Disconnect(ctx)
 }
 
-// Status 获取控制器状态
-func (m *MotionManager) Status(id string) (motion.ControllerStatus, error) {
+// Status get controller status
+func (m *MotionManager) Status(ctx context.Context, id string) (core.ControllerStatus, error) {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
 	m.mu.RUnlock()
 
 	if !exists {
-		return motion.ControllerStatus{}, fmt.Errorf("controller not connected: %s", id)
+		return core.ControllerStatus{}, fmt.Errorf("controller not connected: %s", id)
 	}
-	return ctrl.Status(), nil
+	return ctrl.Status(ctx)
 }
 
-// StatusAll 获取所有控制器状态
-func (m *MotionManager) StatusAll() []motion.ControllerStatus {
+// StatusAll get all controller statuses
+// 先提取控制器引用和配置信息后释放锁，再逐个查询，避免 Status（含 FFI/网络 I/O）阻塞写操作
+func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	statuses := make([]motion.ControllerStatus, 0, len(m.controllers))
+	controllers := make(map[string]ports.MotionController, len(m.controllers))
 	for id, ctrl := range m.controllers {
-		status := ctrl.Status()
-		// 补充名称和类型信息
-		for _, p := range m.profiles {
-			if p.ID == id {
-				status.Name = p.Name
-				status.Type = p.Type
-				break
-			}
+		controllers[id] = ctrl
+	}
+	profileMap := make(map[string]core.MotionControllerProfile, len(m.profiles))
+	for _, p := range m.profiles {
+		profileMap[p.ID] = p
+	}
+	m.mu.RUnlock()
+
+	statuses := make([]core.ControllerStatus, 0, len(controllers))
+	for id, ctrl := range controllers {
+		status, err := ctrl.Status(ctx)
+		if err != nil {
+			continue
+		}
+		if p, ok := profileMap[id]; ok {
+			status.Name = p.Name
+			status.Type = p.Type
 		}
 		statuses = append(statuses, status)
 	}
@@ -244,44 +237,44 @@ func (m *MotionManager) StatusAll() []motion.ControllerStatus {
 	return statuses
 }
 
-// MoveTo 移动到绝对位置
-func (m *MotionManager) MoveTo(id string, axis motion.AxisName, position float64) error {
+// MoveTo move to absolute position
+func (m *MotionManager) MoveTo(ctx context.Context, id string, axis core.AxisName, position float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.MoveTo(axis, position)
+	return ctrl.MoveTo(ctx, axis, position)
 }
 
-// MoveBy 相对移动
-func (m *MotionManager) MoveBy(id string, axis motion.AxisName, delta float64) error {
+// MoveBy relative move
+func (m *MotionManager) MoveBy(ctx context.Context, id string, axis core.AxisName, delta float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.MoveBy(axis, delta)
+	return ctrl.MoveBy(ctx, axis, delta)
 }
 
-// Jog 点动运动
-func (m *MotionManager) Jog(id string, axis motion.AxisName, velocity float64) error {
+// Jog jog movement
+func (m *MotionManager) Jog(ctx context.Context, id string, axis core.AxisName, velocity float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.Jog(axis, velocity)
+	return ctrl.Jog(ctx, axis, velocity)
 }
 
-// Home 归原点
-func (m *MotionManager) Home(id string, axis motion.AxisName) error {
+// Home home axis
+func (m *MotionManager) Home(ctx context.Context, id string, axis core.AxisName) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.Home(axis)
+	return ctrl.Home(ctx, axis)
 }
 
-// Stop 停止轴运动
-func (m *MotionManager) Stop(id string, axis motion.AxisName) error {
+// Stop stop axis movement
+func (m *MotionManager) Stop(ctx context.Context, id string, axis core.AxisName) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
 	m.mu.RUnlock()
@@ -289,11 +282,11 @@ func (m *MotionManager) Stop(id string, axis motion.AxisName) error {
 	if !exists {
 		return nil
 	}
-	return ctrl.Stop(axis)
+	return ctrl.Stop(ctx, axis)
 }
 
-// EmergencyStop 紧急停止
-func (m *MotionManager) EmergencyStop(id string) error {
+// EmergencyStop emergency stop
+func (m *MotionManager) EmergencyStop(ctx context.Context, id string) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
 	m.mu.RUnlock()
@@ -301,14 +294,23 @@ func (m *MotionManager) EmergencyStop(id string) error {
 	if !exists {
 		return nil
 	}
-	return ctrl.EmergencyStop()
+	return ctrl.EmergencyStop(ctx)
 }
 
-// DefinePosition 定义当前位置
-func (m *MotionManager) DefinePosition(id string, axis motion.AxisName, position float64) error {
+// DefinePosition define current position
+func (m *MotionManager) DefinePosition(ctx context.Context, id string, axis core.AxisName, position float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
 		return err
 	}
-	return ctrl.DefinePosition(axis, position)
+	return ctrl.DefinePosition(ctx, axis, position)
+}
+
+// ResetEmergencyStop 重置急停状态，恢复控制器正常操作
+func (m *MotionManager) ResetEmergencyStop(ctx context.Context, id string) error {
+	ctrl, err := m.getController(id)
+	if err != nil {
+		return err
+	}
+	return ctrl.ResetEmergencyStop(ctx)
 }
