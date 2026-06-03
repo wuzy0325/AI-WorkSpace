@@ -422,9 +422,7 @@ function statusLabel(): string {
   padding: 0.4rem 0.85rem;
   border-radius: var(--radius-pill);
   font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
   border: 1px solid var(--border-default);
   background: var(--btn-bg);
 }

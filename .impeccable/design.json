@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-03T13:48:00+08:00",
+  "title": "Design System: Wind-DAQ",
+  "extensions": {
+    "colorMeta": {
+      "accent-primary": { "role": "primary", "displayName": "Emerald Signal", "canonical": "#22c55e", "tonalRamp": ["#0a3318", "#0e4420", "#135a2a", "#187435", "#1e9142", "#22c55e", "#3dd06f", "#62da88", "#87e4a3", "#aeeec1", "#d6f7e0"] },
+      "accent-primary-deep": { "role": "primary", "displayName": "Deep Blue Anchor", "canonical": "#1967d2", "tonalRamp": ["#0a1d3d", "#0d2856", "#113672", "#164698", "#1c58c2", "#1967d2", "#3978db", "#5b8ee3", "#7ca4eb", "#9dbaf1", "#bfd0f6"] },
+      "accent-success": { "role": "status", "displayName": "Success Green", "canonical": "#22c55e", "tonalRamp": ["#0a3318", "#0e4420", "#135a2a", "#187435", "#1e9142", "#22c55e", "#3dd06f", "#62da88", "#87e4a3", "#aeeec1", "#d6f7e0"] },
+      "accent-warning": { "role": "status", "displayName": "Warning Amber", "canonical": "#f59e0b", "tonalRamp": ["#3d2600", "#5c3a00", "#7a4e00", "#9a6200", "#ba7800", "#d98e00", "#f59e0b", "#f7b035", "#f9c15f", "#fbd389", "#fde5b4"] },
+      "accent-danger": { "role": "status", "displayName": "Danger Red", "canonical": "#ef5b47", "tonalRamp": ["#3d0e08", "#5a150c", "#781d10", "#942515", "#b22e1a", "#d0371f", "#ef5b47", "#f27767", "#f59588", "#f8b4aa", "#fcd4ce"] },
+      "surface-app": { "role": "neutral", "displayName": "App Base", "canonical": "#0f172a", "tonalRamp": ["#060a12", "#0a0f1c", "#0e1526", "#0f172a", "#131d34", "#182540", "#1e2d4d", "#25365b", "#2d406a", "#364b7b", "#3f568c"] },
+      "surface-panel": { "role": "neutral", "displayName": "Panel Surface", "canonical": "#172338", "tonalRamp": ["#0b121c", "#0f1828", "#131e34", "#172338", "#1c2a42", "#22324d", "#293b59", "#304466", "#384e74", "#405883", "#496392"] }
+    },
+    "shadows": [
+      { "name": "panel-shadow", "value": "0 10px 30px rgba(2, 6, 23, 0.28)", "purpose": "Single ambient shadow for panels, modals, and dropdowns." },
+      { "name": "footer-ambient", "value": "0 -20px 50px rgba(0, 0, 0, 0.1)", "purpose": "Upward ambient shadow on the footer bar." }
+    ],
+    "motion": [
+      { "name": "motion-fast", "value": "120ms", "purpose": "Micro-interactions: toggle, hover color shift." },
+      { "name": "motion-base", "value": "180ms", "purpose": "Default state transition: panel open, dropdown appear." },
+      { "name": "motion-slow", "value": "260ms", "purpose": "Modal enter/exit, sidebar slide." },
+      { "name": "easing-standard", "value": "cubic-bezier(0.2, 0, 0, 1)", "purpose": "Default easing for state transitions. Decelerates to rest." },
+      { "name": "easing-emphasis", "value": "cubic-bezier(0.18, 0.7, 0.2, 1)", "purpose": "Emphasized entrances. Slight overshoot feel without bounce." },
+      { "name": "easing-exit", "value": "cubic-bezier(0.4, 0, 1, 1)", "purpose": "Exit transitions. Accelerates away." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The primary action button. Green with white text — the 'go' button for acquire, confirm, and apply actions.",
+      "html": "<button class=\"ds-btn-primary\">ACQUIRE</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; border-radius: 4px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; min-height: 34px; padding: 0 14px; font-size: 0.8rem; background: #22c55e; color: #f8fbff; } .ds-btn-primary:hover { background: #1ea34e; } .ds-btn-primary:active { background: #198a42; } .ds-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; } .ds-btn-primary:focus-visible { outline: 2px solid rgba(56, 189, 248, 0.72); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default non-primary action. Ghost-like background with subtle border.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; border-radius: 4px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; min-height: 34px; padding: 0 14px; font-size: 0.8rem; background: rgba(255, 255, 255, 0.06); color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.1); } .ds-btn-secondary:hover { background: rgba(255, 255, 255, 0.1); } .ds-btn-secondary:disabled { opacity: 0.55; cursor: not-allowed; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Invisible button for toolbars, rails, and inline actions. Reveals on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Settings</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; border-radius: 4px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; min-height: 34px; padding: 0 14px; font-size: 0.8rem; background: transparent; color: #94a3b8; } .ds-btn-ghost:hover { color: #e2e8f0; background: rgba(255, 255, 255, 0.05); }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Soft-danger treatment for destructive actions. No solid red fill — caution, not alarm.",
+      "html": "<button class=\"ds-btn-danger\">Delete</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; border-radius: 4px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; min-height: 34px; padding: 0 14px; font-size: 0.8rem; background: rgba(244, 63, 94, 0.12); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.25); } .ds-btn-danger:hover { background: rgba(244, 63, 94, 0.2); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Standard text/number input. Darker-than-panel background signals data entry.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"192.168.1.100\" />",
+      "css": ".ds-input { width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #334155; background: rgba(0, 0, 0, 0.2); color: #e2e8f0; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; font-size: 0.85rem; } .ds-input::placeholder { color: #94a3b8; } .ds-input:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18); }"
+    },
+    {
+      "name": "Toggle Switch",
+      "kind": "custom",
+      "refersTo": "toggle",
+      "description": "On/off switch. Green when active, neutral when off. Sliding thumb with shadow.",
+      "html": "<button class=\"ds-toggle ds-toggle--on\"><span class=\"ds-toggle__thumb\"></span></button>",
+      "css": ".ds-toggle { width: 36px; height: 20px; border-radius: 999px; background: rgba(148, 163, 184, 0.25); border: none; cursor: pointer; position: relative; transition: background 0.2s ease; } .ds-toggle--on { background: #22c55e; } .ds-toggle__thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #f8fbff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); transition: transform 0.2s ease; } .ds-toggle--on .ds-toggle__thumb { transform: translateX(16px); }"
+    },
+    {
+      "name": "Status Badge (Connected)",
+      "kind": "custom",
+      "refersTo": "status-badge-connected",
+      "description": "Pill badge with color dot to indicate live device/hardware status. Connected state in emerald.",
+      "html": "<span class=\"ds-status-badge ds-status-badge--connected\"><span class=\"ds-status-badge__dot\"></span><span class=\"ds-status-badge__label\">CONNECTED</span></span>",
+      "css": ".ds-status-badge { display: inline-flex; align-items: center; gap: 0.4rem; padding: 3px 10px; border-radius: 999px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; } .ds-status-badge--connected { background: rgba(16, 185, 129, 0.1); color: #10b981; } .ds-status-badge__dot { width: 7px; height: 7px; border-radius: 50%; } .ds-status-badge--connected .ds-status-badge__dot { background: #10b981; } .ds-status-badge__label { line-height: 1; }"
+    },
+    {
+      "name": "Panel Container",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Standard content container. 12px radius, single ambient shadow, optional header slot.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel__header\">Panel Title</div><div class=\"ds-panel__body\">Content goes here.</div></div>",
+      "css": ".ds-panel { border-radius: 12px; border: 1px solid #334155; background: #172338; box-shadow: 0 10px 30px rgba(2, 6, 23, 0.28); } .ds-panel__header { padding: 16px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-weight: 700; font-size: 0.95rem; color: #e2e8f0; } .ds-panel__body { padding: 16px 20px; color: #cbd5e1; font-size: 0.9375rem; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Precision Instrument Panel",
+    "overview": "A dark, focused environment where data is the protagonist. Every pixel earns its place by serving the engineer's workflow — nothing decorative, nothing distracting. The design system borrows from laboratory instrumentation: sharp contrast, unambiguous state signals, predictable layout. Glass-translucent chrome elements frame the workspace without competing with it; the canvas belongs to the data.\n\nThe system is explicitly not a SaaS dashboard, not a consumer app, not a marketing surface. The accent color is a signal, not a decoration — it marks actionable elements and live state. The monospace data font communicates precision; the sans-serif UI font communicates clarity. Together they form a single, coherent voice: this is a tool for engineers who need to trust what they see.",
+    "keyCharacteristics": [
+      "Deep navy base (#0f172a) anchors all surfaces",
+      "Glass-translucent chrome (rail, header, sidebar, footer) uses backdrop-blur for depth",
+      "Status colors drive the only moments of saturated color",
+      "Monospace data at weight 800 reads like an instrument readout",
+      "Tight 4px radius keeps edges industrial",
+      "Grid-dot background at 24px spacing"
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "The primary accent is used on ≤10% of any given screen. It signals focus and state. When everything is highlighted, nothing is.", "section": "colors" },
+      { "name": "The Status-Is-The-Color Rule", "body": "Saturated color on screen always signals device or system state. Never use accent/success/warning/danger colors for decoration or branding alone.", "section": "colors" },
+      { "name": "The Data-Is-Mono Rule", "body": "Any numeric value displayed in the interface uses the data font (JetBrains Mono). Proportional fonts are for prose, labels, and UI chrome only.", "section": "typography" },
+      { "name": "The Section Label Rule", "body": "Upper section labels are architectural markers (spacing blocks, not announcements). One label per logical section — not above every heading.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Interactive surfaces (buttons, inputs, toggles) are flat at rest. Environmental glass surfaces carry the system's depth. Per-element elevation is prohibited.", "section": "elevation" },
+      { "name": "The Blur-Is-Chrome Rule", "body": "Backdrop-filter blur is reserved for the application chrome (rail, header, sidebar, footer). Content panels and data surfaces are opaque. Blur never touches data.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use status color only when the status is live — idle devices get neutral, not green.",
+      "Do use JetBrains Mono for every numeric readout, channel label, coordinate, and configuration value.",
+      "Do maintain the surface ramp (--surface-0 through --surface-3) as the only source of background hierarchy.",
+      "Do use glass surfaces only on application chrome. Content panels are opaque.",
+      "Do keep the primary accent at ≤10% screen surface.",
+      "Do match input/button/select border-radius at 4px for rhythmic consistency.",
+      "Do prefer the data font at weight 800 for dashboard readouts."
+    ],
+    "donts": [
+      "Don't use border-left or border-right greater than 1px as a colored accent stripe.",
+      "Don't apply background-clip: text with gradient backgrounds. No gradient text anywhere.",
+      "Don't use glassmorphism on content panels, data cards, or any surface that carries information.",
+      "Don't put tiny uppercase tracked eyebrows above every section.",
+      "Don't nest cards inside cards.",
+      "Don't use arbitrary z-index values (999, 9999).",
+      "Don't animate CSS layout properties (width, height, top, left). Transform and opacity only.",
+      "Don't gate content visibility on CSS-triggered reveal animations."
+    ]
+  }
+}

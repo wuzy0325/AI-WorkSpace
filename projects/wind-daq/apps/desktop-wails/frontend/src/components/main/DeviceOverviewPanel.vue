@@ -2,18 +2,20 @@
 import { computed } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useFeedbackStore } from '@stores/feedbackStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiSectionHeader from '@components/ui/UiSectionHeader.vue'
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
+const feedbackStore = useFeedbackStore()
 
 const DEVICE_COLORS = [
-  { text: 'text-emerald-400', borderLeft: 'border-l-emerald-500' },
-  { text: 'text-sky-400', borderLeft: 'border-l-sky-500' },
-  { text: 'text-violet-400', borderLeft: 'border-l-violet-500' },
-  { text: 'text-amber-400', borderLeft: 'border-l-amber-500' },
+  { text: 'text-emerald-400', dot: 'bg-emerald-500' },
+  { text: 'text-sky-400', dot: 'bg-sky-500' },
+  { text: 'text-violet-400', dot: 'bg-violet-500' },
+  { text: 'text-amber-400', dot: 'bg-amber-500' },
 ]
 
 function getDeviceTheme(index: number) {
@@ -38,7 +40,7 @@ interface OverviewDeviceGroup {
   statusLabel: string
   channelCount: number
   warningCount: number
-  theme: { text: string; borderLeft: string }
+  theme: { text: string; dot: string }
   channels: OverviewChannelItem[]
 }
 
@@ -66,6 +68,17 @@ function deviceStatusTone(profileId: string): 'healthy' | 'warning' {
   const status = deviceStore.statusFor(profileId)
   if (status === 'Error' || status === 'Disconnected') return 'warning'
   return 'healthy'
+}
+
+async function onTareAll(): Promise<void> {
+  const profiles = (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1064Pre')
+  if (profiles.length === 0) return
+  const ok = await feedbackStore.confirm(
+    `将对 ${profiles.length} 台设备执行全部通道归零，当前测量数据将作为新的零点基准。`,
+    { title: '全部归零', confirmText: '确认归零', cancelText: '取消' }
+  )
+  if (!ok) return
+  profiles.forEach((p) => deviceStore.tareAllEnabled(p.id))
 }
 
 function deviceStatusLabel(profileId: string): string {
@@ -120,7 +133,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
       <div class="overview-panel__header-row flex min-w-full items-start justify-between gap-4">
         <UiSectionHeader :title="i18n.t.allDevicesOverview || '设备总览'" />
         <div class="flex items-center gap-2">
-          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="() => { (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1064Pre').forEach((p) => deviceStore.tareAllEnabled(p.id)) }">
+          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="onTareAll">
             {{ i18n.t.allDevicesTare || '全部归零' }}
           </UiButton>
         </div>
@@ -132,13 +145,13 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
         <section
           v-for="group in overviewGroups"
           :key="group.id"
-          class="overview-device-group border-l-4"
-          :class="group.theme.borderLeft"
+          class="overview-device-group"
         >
           <header class="overview-device-group__header">
             <div class="min-w-0">
               <div class="overview-device-group__eyebrow">{{ group.type }}</div>
               <div class="overview-device-group__title-row">
+                <span class="overview-device-group__dot" :class="group.theme.dot" />
                 <strong class="overview-device-group__title">{{ group.name }}</strong>
                 <span class="overview-device-group__count">{{ group.channelCount }} CH</span>
                 <span
@@ -210,14 +223,14 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 
 .overview-device-group {
   border-radius: var(--radius-lg, 0.75rem);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(30, 41, 59, 0.3);
+  border: 1px solid var(--border-default, #334155);
+  background: var(--bg-panel, #172338);
   padding: var(--space-2-5) var(--space-3) var(--space-3);
 }
 
 :root[data-theme='light'] .overview-device-group {
-  background: rgba(255, 255, 255, 0.5);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--bg-panel, #ffffff);
+  border: 1px solid var(--border-default, #e2e8f0);
 }
 
 .overview-device-group__header {
@@ -229,19 +242,24 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-device-group__eyebrow {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #64748b;
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
 }
 
 .overview-device-group__title-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   margin-top: var(--space-1);
+}
+
+.overview-device-group__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .overview-device-group__title {
@@ -321,9 +339,9 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-channel-micro {
-  background: rgba(30, 41, 59, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-md, 0.6rem);
+  background: var(--bg-panel-strong, #1e293b);
+  border: 1px solid var(--border-default, #334155);
+  border-radius: var(--radius-md, 0.4rem);
   padding: var(--space-2) var(--space-2-5);
   display: flex;
   flex-direction: column;
@@ -335,23 +353,8 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 :root[data-theme='light'] .overview-channel-micro {
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.overview-channel-micro::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #10b981, transparent);
-  opacity: 0.5;
-}
-
-.overview-channel-micro--warning::before {
-  background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+  background: var(--bg-panel, #ffffff);
+  border: 1px solid var(--border-default, #e2e8f0);
 }
 
 .overview-channel-micro--warning {
@@ -367,14 +370,10 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-channel-micro__value {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-family-mono, monospace);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-black);
   letter-spacing: -0.02em;
-}
-
-:root[data-theme='dark'] .overview-channel-micro__value {
-  text-shadow: 0 0 10px currentColor;
 }
 
 .overview-channel-micro__unit {

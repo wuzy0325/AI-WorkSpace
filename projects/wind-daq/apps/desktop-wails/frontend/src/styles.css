@@ -206,7 +206,7 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 3px var(--focus-ring-soft);
 }
 
-.dashboard-ceramic-shell {
+.dashboard-canvas {
   background-color: var(--bg-canvas);
   background-image: none;
 }

@@ -170,8 +170,6 @@ function themeToggleLabel(): string {
   font-size: 0.5rem;
   font-weight: 600;
   color: var(--text-muted);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   margin-top: 0.25rem;
 }
 
@@ -236,10 +234,8 @@ function themeToggleLabel(): string {
 
 .topbar__stat-label {
   font-size: 0.55rem;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .topbar__stat-value {
@@ -266,9 +262,7 @@ function themeToggleLabel(): string {
   padding: 0.35rem 0.85rem;
   border-radius: var(--radius-pill);
   font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .topbar__status--active {

@@ -247,10 +247,8 @@ watch(isRunning, (newVal, oldVal) => {
 
 .main-bottom-bar__status-label {
   font-size: 0.625rem;
-  font-weight: 700;
-  color: #64748b;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
 }
 
 .main-bottom-bar__status-value {
@@ -273,10 +271,8 @@ watch(isRunning, (newVal, oldVal) => {
 
 .main-bottom-bar__stat-label {
   font-size: 0.625rem;
-  font-weight: 700;
-  color: #64748b;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
 }
 
 .main-bottom-bar__stat-value {

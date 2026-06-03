@@ -34,8 +34,7 @@ function toggleAcquisition() {
     }
   } else {
     for (const p of deviceStore.profiles) {
-      const status = deviceStore.statusFor(p.id)
-      if (status === 'Connected' || status === 'Acquiring') {
+      if (deviceStore.statusFor(p.id) === 'Connected') {
         void deviceStore.startAcquisition(p.id)
       }
     }
@@ -334,8 +333,6 @@ async function confirmAddDevice() {
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-secondary);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .dialog__error {

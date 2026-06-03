@@ -14,6 +14,8 @@ import (
 	"shared.local/device-sdk/go/protocol"
 )
 
+const noDataTimeout = 10 * time.Second
+
 const (
 	DAQ_T_1603_DEFAULT_HOST = "192.168.1.7"
 	DAQ_T_1603_DEFAULT_PORT = 9000
@@ -34,6 +36,7 @@ type DAQT1603 struct {
 	frameReader    *protocol.T1603FrameReader
 	config         core.DaqT1603HardwareConfig
 	onConfigSynced onConfigSyncedFn
+	onReadLoopExit func(error)
 	readErrors     int
 	frameErrors    int
 }
@@ -57,6 +60,14 @@ func (d *DAQT1603) ID() string { return d.profile.ID }
 func (d *DAQT1603) OnConfigSynced(fn onConfigSyncedFn) {
 	d.mu.Lock()
 	d.onConfigSynced = fn
+	d.mu.Unlock()
+}
+
+// OnReadLoopExit registers a callback invoked when the acquisition read loop
+// exits unexpectedly (error or no-data timeout).
+func (d *DAQT1603) OnReadLoopExit(fn func(error)) {
+	d.mu.Lock()
+	d.onReadLoopExit = fn
 	d.mu.Unlock()
 }
 
@@ -137,15 +148,23 @@ func (d *DAQT1603) StartAcquisition() error {
 
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(d.config.BinaryFormat)
+		// Drain "A\n" ACK that some firmware sends after @f0.
+		// Read up to 2 bytes with a short timeout; if they aren't "A\n",
+		// prepend them back to the frame buffer so no data is lost.
+		d.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+		ack := make([]byte, 2)
+		n, _ := d.conn.Read(ack)
+		if n > 0 && !(n == 2 && ack[0] == 'A' && ack[1] == '\n') {
+			d.frameReader.PrependBytes(ack[:n])
+		}
 	}
 
 	d.acquiring = true
 	d.status.Acquiring = true
 	d.status.Connection = core.ConnectionAcquiring
 	d.stop = make(chan struct{})
-	stop := d.stop
 
-	go d.readLoop(stop)
+	go d.readLoop()
 	return nil
 }
 
@@ -251,10 +270,44 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 	return nil
 }
 
-func (d *DAQT1603) readLoop(stop <-chan struct{}) {
+func (d *DAQT1603) readLoop() {
+	lastDataAt := time.Now()
+	var unexpectedErr error // set when exit is due to error/timeout, not normal stop
+
+	defer func() {
+		d.mu.Lock()
+		if d.conn != nil {
+			d.writeMu.Lock()
+			d.conn.Write([]byte("@f1\n"))
+			d.writeMu.Unlock()
+		}
+		d.acquiring = false
+		d.stop = nil
+		d.status.Acquiring = false
+		if d.status.Connection == core.ConnectionAcquiring {
+			d.status.Connection = core.ConnectionConnected
+		}
+		fn := d.onReadLoopExit
+		d.mu.Unlock()
+		// Only notify adapter for unexpected exits (error/timeout).
+		// Normal stop via StopAcquisition already holds adapter lock,
+		// calling back would deadlock.
+		if fn != nil && unexpectedErr != nil {
+			fn(unexpectedErr)
+		}
+	}()
+
 	for {
+		d.mu.RLock()
+		stop := d.stop
+		d.mu.RUnlock()
+		if stop == nil {
+			return
+		}
+
 		select {
 		case <-stop:
+			// Normal stop requested via StopAcquisition.
 			return
 		default:
 			d.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
@@ -264,15 +317,22 @@ func (d *DAQT1603) readLoop(stop <-chan struct{}) {
 					continue
 				}
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					if time.Since(lastDataAt) > noDataTimeout {
+						slog.Warn("DAQ-T-1603 no data timeout", "device", d.profile.ID, "since", time.Since(lastDataAt))
+						unexpectedErr = fmt.Errorf("no data received for %v", noDataTimeout)
+						return
+					}
 					continue
 				}
 				d.mu.Lock()
 				d.readErrors++
 				d.mu.Unlock()
 				slog.Debug("DAQ-T-1603 read error", "device", d.profile.ID, "error", err)
+				unexpectedErr = err
 				return
 			}
 			if len(payload) > 0 {
+				lastDataAt = time.Now()
 				d.processPayload(payload)
 			}
 		}
@@ -318,9 +378,10 @@ func (d *DAQT1603) syncHardwareConfig() {
 	d.mu.RLock()
 	conn := d.conn
 	isConnected := d.status.Connection == core.ConnectionConnected
+	alreadyAcquiring := d.acquiring
 	d.mu.RUnlock()
 
-	if conn == nil || !isConnected {
+	if conn == nil || !isConnected || alreadyAcquiring {
 		return
 	}
 
@@ -332,7 +393,7 @@ func (d *DAQT1603) syncHardwareConfig() {
 	}
 
 	d.mu.Lock()
-	if d.conn == nil || d.status.Connection == core.ConnectionDisconnected {
+	if d.conn == nil || d.status.Connection == core.ConnectionDisconnected || d.acquiring {
 		d.mu.Unlock()
 		return
 	}

@@ -297,9 +297,7 @@ const statusColor = computed(() => {
 
 .card__footer-text {
   font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
   transition: color var(--motion-fast) var(--easing-standard);
 }
 

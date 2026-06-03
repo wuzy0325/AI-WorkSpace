@@ -319,8 +319,6 @@ function selectColor(index: number, color: string) {
   border-radius: var(--radius-sm);
   font-size: 0.6rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .config__close {
