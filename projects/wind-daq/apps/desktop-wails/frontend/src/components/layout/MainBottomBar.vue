@@ -290,7 +290,7 @@ watch(isRunning, (newVal, oldVal) => {
 }
 
 .mono-font {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
 }
 </style>

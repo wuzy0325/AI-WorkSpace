@@ -641,11 +641,9 @@ const connectionButtonLabel = computed(() => {
 }
 
 .detail-panel__chart-label {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: #64748b;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
 }
 
 .detail-panel__chart-value {
