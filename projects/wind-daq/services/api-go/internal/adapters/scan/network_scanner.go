@@ -185,7 +185,7 @@ func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
 	}
 
 	if len(parts) < 8 {
-		if msg == "DAQP1604" {
+		if strings.HasPrefix(msg, "DAQP1604") {
 			remoteHost := remoteHostFromAddr(remoteAddr)
 			return &device.ScanResult{
 				ID:        scanResultID(scanDaqP1604Prefix, remoteHost, daqP1604DefaultPort, ""),
@@ -253,7 +253,7 @@ func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
 		return parseDaqT1603Csv(parts, remoteAddr)
 	}
 
-	if msg == "DAQT1603" {
+	if strings.HasPrefix(msg, "DAQT1603") {
 		remoteHost := remoteHostFromAddr(remoteAddr)
 		return &device.ScanResult{
 			ID:        scanResultID(scanDaqT1603Prefix, remoteHost, daqT1603DefaultPort, ""),
