@@ -9,6 +9,7 @@ export namespace core {
 	    precision: number;
 	    rangeMin?: number;
 	    rangeMax?: number;
+	    thermocoupleType?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ChannelConfig(source);
@@ -24,10 +25,11 @@ export namespace core {
 	        this.precision = source["precision"];
 	        this.rangeMin = source["rangeMin"];
 	        this.rangeMax = source["rangeMax"];
+	        this.thermocoupleType = source["thermocoupleType"];
 	    }
 	}
 	export class T1603Config {
-	    thermocoupleType: string;
+	    thermocoupleTypes: string;
 	    channelMask: string;
 	    samplingRate: number;
 	    averageCount: number;
@@ -40,7 +42,7 @@ export namespace core {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.thermocoupleType = source["thermocoupleType"];
+	        this.thermocoupleTypes = source["thermocoupleTypes"];
 	        this.channelMask = source["channelMask"];
 	        this.samplingRate = source["samplingRate"];
 	        this.averageCount = source["averageCount"];

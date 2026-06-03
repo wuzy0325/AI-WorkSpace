@@ -90,7 +90,7 @@ func TestApplyConfigNotConnected(t *testing.T) {
 	app := newTestApp(t)
 	_ = app.UpsertProfile(core.TemperatureProfile{ID: "dev1"})
 	err := app.ApplyConfig("dev1", core.T1603Config{
-		ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
+		ThermocoupleTypes: "KKKKKKKKKKKKKKKK", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
 	})
 	if err == nil {
 		t.Fatal("expected error applying config to disconnected device")
@@ -103,7 +103,7 @@ func TestApplyConfig(t *testing.T) {
 	_ = app.Connect("dev1")
 
 	err := app.ApplyConfig("dev1", core.T1603Config{
-		ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
+		ThermocoupleTypes: "KKKKKKKKKKKKKKKK", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
 	})
 	if err != nil {
 		t.Fatalf("ApplyConfig: %v", err)

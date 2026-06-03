@@ -38,7 +38,7 @@ func TestSaveAndLoad(t *testing.T) {
 			{Index: 0, Name: "CH1", Enabled: true, Unit: "°C", Color: "#ff0000"},
 		},
 		T1603Cfg: core.T1603Config{
-			ThermocoupleType: "K",
+			ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
 			ChannelMask:      "FFFF",
 			SamplingRate:     10,
 			AverageCount:     4,

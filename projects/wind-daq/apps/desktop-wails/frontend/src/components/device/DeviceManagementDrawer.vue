@@ -214,7 +214,7 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
   switch (type) {
     case 'DAQ-T-1603':
       return Array.from({ length: 16 }, (_, i) => ({
-        index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2,
+        index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2, thermocoupleType: 'K',
       }))
     case 'DAQ-P-1604':
       return [
@@ -269,6 +269,8 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
       : undefined,
   }
 }
+
+const TC_TYPES = ['K', 'J', 'T', 'E', 'N', 'R', 'S', 'B']
 
 function cloneProfile(p: DeviceProfile): DeviceProfile {
   try { return structuredClone(p) } catch { return JSON.parse(JSON.stringify(p)) }
@@ -378,6 +380,13 @@ function openEdit(p: DeviceProfile) {
   devicePrecision.value = getDevicePrecisionFromChannels(draft.value.channels)
   applyFixedUnitsIfNeeded(draft.value.type, draft.value.channels)
   applyDeviceUnitToChannels(deviceUnit.value)
+  // DAQ-T-1603：将存储的 16 字符热电偶类型字符串分发到各通道
+  if (draft.value.type === 'DAQ-T-1603' && draft.value.daqT1603Config) {
+    const stored = draft.value.daqT1603Config.thermocoupleTypes
+    for (let i = 0; i < Math.min(16, draft.value.channels.length); i++) {
+      draft.value.channels[i].thermocoupleType = stored[i] || 'K'
+    }
+  }
   // DSA3217：恢复上次保存的 AVG/PERIOD（未连接时初始化为默认）
   dsa3217Avg.value = 32
   dsa3217Period.value = 500
@@ -465,6 +474,10 @@ async function saveDraft() {
         if (idx === 17) return { ...ch, enabled: enableAtmospheric.value, unit: enableAtmospheric.value ? '℃' : ch.unit }
         return ch
       })
+    }
+    if (draft.value.type === 'DAQ-T-1603' && draft.value.daqT1603Config) {
+      const tcStr = draft.value.channels.slice(0, 16).map((c) => c.thermocoupleType || 'K').join('')
+      draft.value.daqT1603Config.thermocoupleTypes = tcStr
     }
     const normalized: DeviceProfile = { ...draft.value, name: draft.value.name.trim() }
     await deviceApi.upsertProfile(normalized)
@@ -1058,16 +1071,13 @@ function channelLabel(c: ChannelConfig): string {
               <!-- DAQ-T-1603 专用配置 -->
               <div v-if="draft.type === 'DAQ-T-1603'" class="editor-channels-special">
                 <DaqT1603Config
-                  v-model:thermocouple-types="draft.daqT1603Config!.thermocoupleTypes"
                   v-model:channel-mask="draft.daqT1603Config!.channelMask"
                   v-model:sampling-rate="draft.daqT1603Config!.samplingRate"
                   v-model:binary-format="draft.daqT1603Config!.binaryFormat"
-                  v-model:average-count="draft.daqT1603Config!.averageCount"
                   v-model:trigger-mode="draft.daqT1603Config!.triggerMode"
                   v-model:trigger-edge="draft.daqT1603Config!.triggerEdge"
                   v-model:trigger-count="draft.daqT1603Config!.triggerCount"
                   v-model:show-timestamp="draft.daqT1603Config!.showTimestamp"
-                  v-model:show-sequence="draft.daqT1603Config!.showSequence"
                   v-model:open-circuit-check="draft.daqT1603Config!.openCircuitCheck"
                 />
                 <div class="editor-channels-table-wrap">
@@ -1076,6 +1086,7 @@ function channelLabel(c: ChannelConfig): string {
                       <tr>
                         <th class="w-14">#</th>
                         <th>通道名称</th>
+                        <th>热电偶类型</th>
                         <th class="w-20 text-right">单位</th>
                       </tr>
                     </thead>
@@ -1084,6 +1095,11 @@ function channelLabel(c: ChannelConfig): string {
                         <td class="font-mono">{{ channelLabel(c).padStart(2, '0') }}</td>
                         <td>
                           <input v-model="c.name" :disabled="isReadOnly" class="editor-ch-input" />
+                        </td>
+                        <td>
+                          <select v-model="c.thermocoupleType" :disabled="isReadOnly" class="editor-ch-tc">
+                            <option v-for="t in TC_TYPES" :key="t" :value="t">{{ t }}</option>
+                          </select>
                         </td>
                         <td class="text-right text-muted">℃</td>
                       </tr>
@@ -1734,6 +1750,31 @@ function channelLabel(c: ChannelConfig): string {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.editor-ch-tc {
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.editor-ch-tc:hover {
+  background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
+  border-color: var(--border-default);
+}
+.editor-ch-tc:focus {
+  background: var(--bg-panel);
+  border-color: #3b82f6;
+}
+.editor-ch-tc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .editor-ch-precision-input {
   width: 100%;
   padding: 0.375rem 0.5rem;

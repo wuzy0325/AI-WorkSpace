@@ -54,7 +54,7 @@ func TestSimulatedFullFlow(t *testing.T) {
 		t.Fatalf("expected Connected status, got %v", state.Status)
 	}
 
-	cfg := core.T1603Config{ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4}
+	cfg := core.T1603Config{ThermocoupleTypes: "KKKKKKKKKKKKKKKK", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4}
 	if err := duc.ApplyConfig("sim1", cfg); err != nil {
 		t.Fatalf("ApplyConfig: %v", err)
 	}

@@ -123,7 +123,7 @@ function statusLabel(): string {
               <span class="detail__device-meta-item mono">{{ selected.address }}:{{ selected.port }}</span>
               <span class="detail__device-meta-divider"></span>
               <span class="detail__device-meta-item">
-                {{ selected.t1603Config?.thermocoupleType || 'K' }} 型热电偶
+                {{ (selected.t1603Config?.thermocoupleTypes || 'K')[0] }} 型热电偶
               </span>
               <span class="detail__device-meta-divider"></span>
               <span class="detail__device-meta-item mono">{{ selected.samplingRate }} Hz</span>

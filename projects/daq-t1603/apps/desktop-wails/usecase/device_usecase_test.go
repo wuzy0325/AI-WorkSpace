@@ -252,7 +252,7 @@ func TestDeviceUsecase_ApplyConfig(t *testing.T) {
 	_ = uc.Connect("dev1")
 
 	err := uc.ApplyConfig("dev1", core.T1603Config{
-		ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
+		ThermocoupleTypes: "KKKKKKKKKKKKKKKK", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
 	})
 	if err != nil {
 		t.Fatalf("ApplyConfig: %v", err)

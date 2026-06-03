@@ -2,9 +2,9 @@
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import {
-  Settings2, Thermometer, Activity,
+  Settings2, Activity,
   Save, RotateCcw, ChevronDown, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Zap, Hash, Layers, Clock, ListOrdered,
+  SlidersHorizontal, Zap, Hash, Clock,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -15,16 +15,13 @@ const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.d
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
 const samplingRateOptions = [1, 2, 5, 10, 20, 50, 100]
-const averageOptions = [1, 2, 4, 8, 16, 32, 64, 100]
 
-const tcType = ref('K')
 const samplingRate = ref(10)
-const avgCount = ref(4)
 const showTimestamp = ref(false)
-const showSequence = ref(false)
 const channelNames = ref<string[]>(Array(16).fill(''))
 const channelEnabled = ref<boolean[]>(Array(16).fill(true))
 const channelColors = ref<string[]>(Array(16).fill(''))
+const channelTcTypes = ref<string[]>(Array(16).fill('K'))
 
 const COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
@@ -39,14 +36,16 @@ const saveMessage = ref('')
 
 function syncFormFromProfile(profileData: typeof profile.value) {
   if (!profileData) return
-  tcType.value = profileData.t1603Config?.thermocoupleType || 'K'
+  const tcTypes = profileData.t1603Config?.thermocoupleTypes || 'KKKKKKKKKKKKKKKK'
   samplingRate.value = profileData.t1603Config?.samplingRate || 10
-  avgCount.value = profileData.t1603Config?.averageCount || 4
   showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
-  showSequence.value = profileData.t1603Config?.showSequence ?? false
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
+  channelTcTypes.value = Array.from({ length: 16 }, (_, i) => {
+    const ch = profileData.channels[i]
+    return (ch?.thermocoupleType || tcTypes[i] || 'K')
+  })
   hasChanges.value = false
   saveStatus.value = 'idle'
 }
@@ -57,7 +56,7 @@ watch(
   { immediate: true }
 )
 
-watch([tcType, samplingRate, avgCount, showTimestamp, showSequence, channelNames, channelEnabled, channelColors], () => {
+watch([samplingRate, showTimestamp, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
   hasChanges.value = true
   saveStatus.value = 'idle'
 }, { deep: true })
@@ -69,18 +68,18 @@ async function saveConfig() {
   saveStatus.value = 'saving'
   saveMessage.value = ''
   try {
+    const tcTypesStr = channelTcTypes.value.join('')
     await deviceStore.updateT1603Config(props.deviceId, {
-      thermocoupleType: tcType.value,
+      thermocoupleTypes: tcTypesStr,
       samplingRate: samplingRate.value,
-      averageCount: avgCount.value,
       showTimestamp: showTimestamp.value,
-      showSequence: showSequence.value,
     })
     for (let i = 0; i < 16; i++) {
       await deviceStore.updateChannel(props.deviceId, i, {
         name: channelNames.value[i] || undefined,
         enabled: channelEnabled.value[i],
         color: channelColors.value[i] || undefined,
+        thermocoupleType: channelTcTypes.value[i],
       })
     }
     saveStatus.value = 'success'
@@ -137,38 +136,12 @@ function selectColor(index: number, color: string) {
         <div class="config__section-body">
           <div class="config__field">
             <label class="config__label">
-              <Thermometer class="config__label-icon" />
-              <span>热电偶类型</span>
-            </label>
-            <div class="config__select-wrap">
-              <select v-model="tcType" class="config__select">
-                <option v-for="t in thermocoupleOptions" :key="t" :value="t">{{ t }} 型</option>
-              </select>
-              <ChevronDown class="config__select-arrow" />
-            </div>
-          </div>
-
-          <div class="config__field">
-            <label class="config__label">
               <Hash class="config__label-icon" />
               <span>采样频率</span>
             </label>
             <div class="config__select-wrap">
               <select v-model="samplingRate" class="config__select">
                 <option v-for="s in samplingRateOptions" :key="s" :value="s">{{ s }} Hz</option>
-              </select>
-              <ChevronDown class="config__select-arrow" />
-            </div>
-          </div>
-
-          <div class="config__field">
-            <label class="config__label">
-              <Layers class="config__label-icon" />
-              <span>平均次数</span>
-            </label>
-            <div class="config__select-wrap">
-              <select v-model="avgCount" class="config__select">
-                <option v-for="a in averageOptions" :key="a" :value="a">{{ a }}</option>
               </select>
               <ChevronDown class="config__select-arrow" />
             </div>
@@ -188,23 +161,6 @@ function selectColor(index: number, color: string) {
                 <span class="config__toggle-thumb"></span>
               </span>
               <span class="config__toggle-text">{{ showTimestamp ? '显示' : '隐藏' }}</span>
-            </button>
-          </div>
-
-          <div class="config__field">
-            <label class="config__label">
-              <ListOrdered class="config__label-icon" />
-              <span>序号</span>
-            </label>
-            <button
-              class="config__toggle"
-              :class="{ 'config__toggle--on': showSequence }"
-              @click="showSequence = !showSequence"
-            >
-              <span class="config__toggle-track">
-                <span class="config__toggle-thumb"></span>
-              </span>
-              <span class="config__toggle-text">{{ showSequence ? '显示' : '隐藏' }}</span>
             </button>
           </div>
         </div>
@@ -233,6 +189,13 @@ function selectColor(index: number, color: string) {
                   :placeholder="`通道 ${i}`"
                   :disabled="!channelEnabled[i - 1]"
                 />
+                <select
+                  v-model="channelTcTypes[i - 1]"
+                  class="config__channel-tc"
+                  :disabled="!channelEnabled[i - 1]"
+                >
+                  <option v-for="t in thermocoupleOptions" :key="t" :value="t">{{ t }}</option>
+                </select>
               </div>
               <div class="config__channel-actions">
                 <div class="config__channel-colors">
@@ -645,6 +608,34 @@ function selectColor(index: number, color: string) {
   font-weight: 600;
   color: var(--text-primary);
   transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.config__channel-tc {
+  flex-shrink: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  appearance: none;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__channel-tc:hover {
+  border-color: var(--border-hover);
+}
+
+.config__channel-tc:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.config__channel-tc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .config__channel-name:hover {

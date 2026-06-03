@@ -22,12 +22,13 @@ function defaultChannels() {
     precision: 2,
     rangeMin: 0,
     rangeMax: 200,
+    thermocoupleType: 'K',
   }))
 }
 
 function defaultT1603Config(): T1603Config {
   return {
-    thermocoupleType: 'K',
+    thermocoupleTypes: 'KKKKKKKKKKKKKKKK',
     channelMask: 'FFFF',
     samplingRate: 10,
     averageCount: 4,
@@ -38,7 +39,7 @@ function defaultT1603Config(): T1603Config {
 
 function t1603Defaults(cfg: Partial<T1603Config>): T1603Config {
   return {
-    thermocoupleType: cfg.thermocoupleType ?? 'K',
+    thermocoupleTypes: cfg.thermocoupleTypes ?? 'KKKKKKKKKKKKKKKK',
     channelMask: cfg.channelMask ?? 'FFFF',
     samplingRate: cfg.samplingRate ?? 10,
     averageCount: cfg.averageCount ?? 4,
@@ -142,7 +143,7 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function startAcquisition(id: string): Promise<void> {
-    await transitionStatus(id, () => bridge.startAcquisition(id), 'Acquiring', 'Connected')
+    await transitionStatus(id, () => bridge.startAcquisition(id), 'Acquiring', 'Connected', 'Starting')
   }
 
   async function stopAcquisition(id: string): Promise<void> {

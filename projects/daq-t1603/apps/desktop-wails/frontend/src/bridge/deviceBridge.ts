@@ -21,10 +21,11 @@ export interface ChannelConfig {
   precision: number
   rangeMin?: number
   rangeMax?: number
+  thermocoupleType: string
 }
 
 export interface T1603Config {
-  thermocoupleType: string
+  thermocoupleTypes: string
   channelMask: string
   samplingRate: number
   averageCount: number

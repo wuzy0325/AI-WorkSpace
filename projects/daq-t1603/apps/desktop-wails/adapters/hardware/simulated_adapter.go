@@ -149,8 +149,8 @@ func (a *SimulatedAdapter) ApplyConfig(id string, cfg core.T1603Config) error {
 		if cfg.ChannelMask == "" {
 			cfg.ChannelMask = "FFFF"
 		}
-		if cfg.ThermocoupleType == "" {
-			cfg.ThermocoupleType = "K"
+		if cfg.ThermocoupleTypes == "" {
+			cfg.ThermocoupleTypes = "KKKKKKKKKKKKKKKK"
 		}
 		if cfg.AverageCount < 1 {
 			cfg.AverageCount = 1

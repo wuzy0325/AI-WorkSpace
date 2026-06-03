@@ -27,23 +27,24 @@ func (s DeviceStatus) String() string {
 }
 
 type T1603Config struct {
-	ThermocoupleType string `json:"thermocoupleType"` // applied to all 16 channels
-	ChannelMask      string `json:"channelMask"`       // hex 0000-FFFF
-	SamplingRate     int    `json:"samplingRate"`      // Hz
-	AverageCount     int    `json:"averageCount"`      // 1-100
-	ShowTimestamp    bool   `json:"showTimestamp"`
-	ShowSequence     bool   `json:"showSequence"`
+	ThermocoupleTypes string `json:"thermocoupleTypes"` // 16 chars, one per channel
+	ChannelMask       string `json:"channelMask"`        // hex 0000-FFFF
+	SamplingRate      int    `json:"samplingRate"`       // Hz
+	AverageCount      int    `json:"averageCount"`       // 1-100
+	ShowTimestamp     bool   `json:"showTimestamp"`
+	ShowSequence      bool   `json:"showSequence"`
 }
 
 type ChannelConfig struct {
-	Index     int     `json:"index"`
-	Name      string  `json:"name"`
-	Enabled   bool    `json:"enabled"`
-	Unit      string  `json:"unit"`
-	Color     string  `json:"color"`
-	Precision int     `json:"precision"`
-	RangeMin  float64 `json:"rangeMin,omitempty"`
-	RangeMax  float64 `json:"rangeMax,omitempty"`
+	Index            int     `json:"index"`
+	Name             string  `json:"name"`
+	Enabled          bool    `json:"enabled"`
+	Unit             string  `json:"unit"`
+	Color            string  `json:"color"`
+	Precision        int     `json:"precision"`
+	RangeMin         float64 `json:"rangeMin,omitempty"`
+	RangeMax         float64 `json:"rangeMax,omitempty"`
+	ThermocoupleType string  `json:"thermocoupleType,omitempty"`
 }
 
 type TemperatureProfile struct {

@@ -1,60 +1,39 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import UiSelect from '@components/ui/UiSelect.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
 
 const props = withDefaults(
   defineProps<{
-    thermocoupleTypes?: string
     channelMask?: string
     samplingRate?: number
     binaryFormat?: boolean
-    averageCount?: number
     triggerMode?: number
     triggerEdge?: number
     triggerCount?: number
     showTimestamp?: boolean
-    showSequence?: boolean
     openCircuitCheck?: string
   }>(),
   {
-    thermocoupleTypes: 'KKKKKKKKKKKKKKKK',
     channelMask: 'FFFF',
     samplingRate: 10,
     binaryFormat: false,
-    averageCount: 4,
     triggerMode: 0,
     triggerEdge: 0,
     triggerCount: 0,
     showTimestamp: false,
-    showSequence: false,
     openCircuitCheck: '0000',
   },
 )
 
 const emit = defineEmits<{
-  (e: 'update:thermocoupleTypes', v: string): void
   (e: 'update:channelMask', v: string): void
   (e: 'update:samplingRate', v: number): void
   (e: 'update:binaryFormat', v: boolean): void
-  (e: 'update:averageCount', v: number): void
   (e: 'update:triggerMode', v: number): void
   (e: 'update:triggerEdge', v: number): void
   (e: 'update:triggerCount', v: number): void
   (e: 'update:showTimestamp', v: boolean): void
-  (e: 'update:showSequence', v: boolean): void
   (e: 'update:openCircuitCheck', v: string): void
 }>()
-
-const tcTypes = ['K', 'J', 'T', 'E', 'N', 'R', 'S', 'B']
-const tcTypeOptions = computed(() =>
-  tcTypes.map((t) => ({ value: t, label: `Type ${t}` })),
-)
-
-const tcTypeValue = computed({
-  get: () => props.thermocoupleTypes?.[0] || 'K',
-  set: (v: string) => emit('update:thermocoupleTypes', v.repeat(16)),
-})
 
 const samplingRateOptions = [
   { value: '1', label: '1 Hz' },
@@ -98,11 +77,6 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 <template>
   <div class="t1603-config">
     <div class="t1603-config__field">
-      <label class="t1603-config__label">热电偶类型</label>
-      <UiSelect :model-value="tcTypeValue" :options="tcTypeOptions" @update:model-value="tcTypeValue = $event" />
-    </div>
-
-    <div class="t1603-config__field">
       <label class="t1603-config__label">通道掩码</label>
       <input type="text" class="t1603-config__input" :value="channelMask" placeholder="0000-FFFF" maxlength="4" @input="emit('update:channelMask', ($event.target as HTMLInputElement).value)" />
     </div>
@@ -112,12 +86,6 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
       <select class="t1603-config__input" :value="samplingRate" @change="onSamplingRateChange">
         <option v-for="o in samplingRateOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
       </select>
-    </div>
-
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">平均次数</label>
-      <input type="number" class="t1603-config__input" :value="averageCount" min="1" max="100" @input="onNumberEmit((v) => emit('update:averageCount', v), $event)" />
-      <span class="t1603-config__hint">1 ~ 100</span>
     </div>
 
     <div class="t1603-config__field">
@@ -147,11 +115,6 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
     <div class="t1603-config__field">
       <label class="t1603-config__label">显示时间戳</label>
       <UiToggle :model-value="showTimestamp" @update:model-value="emit('update:showTimestamp', $event)" />
-    </div>
-
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">显示序号</label>
-      <UiToggle :model-value="showSequence" @update:model-value="emit('update:showSequence', $event)" />
     </div>
 
     <div class="t1603-config__field">

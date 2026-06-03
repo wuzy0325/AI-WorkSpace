@@ -97,7 +97,7 @@ func TestSimulatedApplyConfig(t *testing.T) {
 	ad := NewSimulatedAdapter()
 	_ = ad.Connect(core.TemperatureProfile{ID: "sim1"})
 
-	cfg := core.T1603Config{ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4}
+	cfg := core.T1603Config{ThermocoupleTypes: "KKKKKKKKKKKKKKKK", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4}
 	if err := ad.ApplyConfig("sim1", cfg); err != nil {
 		t.Fatalf("ApplyConfig: %v", err)
 	}

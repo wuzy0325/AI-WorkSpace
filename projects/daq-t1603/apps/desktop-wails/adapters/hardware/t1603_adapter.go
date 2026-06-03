@@ -2,7 +2,6 @@ package hardware
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	sharedcore "shared.local/device-sdk/go/daq/core"
@@ -34,7 +33,7 @@ func NewT1603Adapter() *T1603Adapter {
 var _ ports.DevicePort = (*T1603Adapter)(nil)
 
 func mapT1603SharedConfig(cfg core.T1603Config) sharedcore.DaqT1603HardwareConfig {
-	tcTypes := strings.Repeat(cfg.ThermocoupleType, 16)
+	tcTypes := cfg.ThermocoupleTypes
 	if len(tcTypes) != 16 {
 		tcTypes = "KKKKKKKKKKKKKKKK"
 	}
@@ -103,8 +102,26 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		profile.T1603Cfg.AverageCount = cfg.AverageCount
 		profile.T1603Cfg.ShowTimestamp = cfg.ShowTimestamp
 		profile.T1603Cfg.ShowSequence = cfg.ShowSequence
-		profile.T1603Cfg.ThermocoupleType = string(cfg.ThermocoupleTypes[0])
+		profile.T1603Cfg.ThermocoupleTypes = cfg.ThermocoupleTypes
 		st.Profile = profile
+		a.mu.Unlock()
+	})
+
+	dev.OnReadLoopExit(func(err error) {
+		a.mu.Lock()
+		delete(a.sinks, profile.ID)
+		if done, ok := a.stopChs[profile.ID]; ok {
+			close(done)
+			delete(a.stopChs, profile.ID)
+		}
+		if ch, ok := a.channels[profile.ID]; ok {
+			close(ch)
+			delete(a.channels, profile.ID)
+		}
+		if st, exists := a.status[profile.ID]; exists {
+			st.Status = core.StatusConnected
+			st.AcquiringAt = 0
+		}
 		a.mu.Unlock()
 	})
 

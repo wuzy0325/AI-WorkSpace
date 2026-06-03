@@ -8,6 +8,7 @@ export interface ChannelConfig {
   precision: number
   rangeMin?: number
   rangeMax?: number
+  thermocoupleType?: string
 }
 
 export interface DaqT1603HardwareConfig {
