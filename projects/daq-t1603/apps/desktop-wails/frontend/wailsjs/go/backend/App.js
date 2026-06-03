@@ -34,6 +34,10 @@ export function PickDirectory() {
   return window['go']['backend']['App']['PickDirectory']();
 }
 
+export function ScanDevices() {
+  return window['go']['backend']['App']['ScanDevices']();
+}
+
 export function StartAcquisition(arg1) {
   return window['go']['backend']['App']['StartAcquisition'](arg1);
 }

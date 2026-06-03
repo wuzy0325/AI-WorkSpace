@@ -8,7 +8,29 @@ import { isFiveHoleDataPoint } from '@shared/calibrationDataGuards'
 import { getDerivedValuePrecision, getProbeChannelPrecision } from '@shared/calibrationPrecision'
 import { formatFiveHoleActualPosition, generateFiveHoleSnakePoints } from './motionCalibrationUtils'
 import { drawFiveHoleChartScaffold, resolveKAlphaKbetaBounds, drawNoDataHint, drawAxisTicks, setupCanvas, CHART_COLORS } from './fiveHoleChartUtils'
-import { ArrowLeft, Settings, Play, Pause, StopCircle, RefreshCcw, Activity, Save, FileText, Clock, Navigation2, Maximize2, Minimize2 } from '@lucide/vue'
+import {
+  ArrowLeft,
+  Settings,
+  Play,
+  Pause,
+  StopCircle,
+  Activity,
+  Save,
+  FileText,
+  Navigation2,
+  Maximize2,
+  Minimize2,
+  CheckCircle2,
+  XCircle,
+  Gauge,
+  Thermometer,
+  Wind,
+  Zap,
+  Timer,
+  Target,
+  LayoutGrid,
+  TrendingUp,
+} from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 
 const emit = defineEmits<{
@@ -43,7 +65,7 @@ const {
 } = useCalibrationWorkflow('five-hole')
 
 defineExpose({
-  reloadSavedConfig: loadSavedConfig
+  reloadSavedConfig: loadSavedConfig,
 })
 
 // 主图表展开状态
@@ -131,17 +153,17 @@ function hasConfiguredProbeChannel(roles: ProbeChannelRole[], namePatterns: RegE
 
 const hasWindTunnelTotalPressureChannel = computed(() => hasConfiguredProbeChannel(
   ['fiveHole.pTotal'],
-  [/总压/, /total pressure/, /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/, /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/]
+  [/总压/, /total pressure/, /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/, /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/],
 ))
 
 const hasWindTunnelStaticPressureChannel = computed(() => hasConfiguredProbeChannel(
   ['fiveHole.pTunnelStatic'],
-  [/静压/, /static pressure/, /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/]
+  [/静压/, /static pressure/, /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/],
 ))
 
 const hasWindTunnelTemperatureChannel = computed(() => hasConfiguredProbeChannel(
   ['fiveHole.tTunnel'],
-  [/风洞.*温/, /tunnel temp/, /tunnel temperature/, /(?:^|[^a-z0-9])ttunnel(?:[^a-z0-9]|$)/]
+  [/风洞.*温/, /tunnel temp/, /tunnel temperature/, /(?:^|[^a-z0-9])ttunnel(?:[^a-z0-9]|$)/],
 ))
 
 const hasRequiredWindTunnelChannels = computed(() => {
@@ -151,11 +173,11 @@ const hasRequiredWindTunnelChannels = computed(() => {
 })
 
 const canStartCalibration = computed(() => {
-  return hasConfig.value &&
-    !isLoading.value &&
-    hasRequiredWindTunnelChannels.value &&
-    isAcquisitionDeviceConnected.value &&
-    isMotionControllerConnected.value
+  return hasConfig.value
+    && !isLoading.value
+    && hasRequiredWindTunnelChannels.value
+    && isAcquisitionDeviceConnected.value
+    && isMotionControllerConnected.value
 })
 
 const startDisabledReason = computed(() => {
@@ -203,7 +225,7 @@ function getFiveHoleProbeValue(index: number): number | undefined {
 function formatFiveHoleRealtimeValue(
   role: ProbeChannelRole,
   value: number | undefined,
-  unit = ''
+  unit = '',
 ): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return '--'
@@ -224,7 +246,7 @@ function formatFiveHoleDerivedValue(key: 'machNumber' | 'velocity', value: numbe
 
 function buildRealtimePressuresFromSnapshots(
   config: CalibrationConfig,
-  snapshots: DataPayload[]
+  snapshots: DataPayload[],
 ): import('@stores/calibrationStore').RealtimePressures | null {
   const toValue = (deviceId: string, channelIndex: number): number | null => {
     const payload = snapshots.find((p) => p.deviceId === deviceId)
@@ -353,45 +375,45 @@ function buildRealtimePressuresFromSnapshots(
 
 function groupByBeta(
   points: CalibrationDataPoint[],
-  coefficient: 'CPT' | 'CPS'
+  coefficient: 'CPT' | 'CPS',
 ) {
   const groups = new Map<number, { alpha: number; value: number }[]>()
-  points.forEach(p => {
+  points.forEach((p) => {
     const beta = p.coordinates['β'] as number
     const alpha = p.coordinates['α'] as number
     const value = coefficient === 'CPT' ? p.coefficients.CPT : p.coefficients.CPS
     if (!groups.has(beta)) groups.set(beta, [])
     groups.get(beta)!.push({ alpha, value })
   })
-  groups.forEach(group => group.sort((a, b) => a.alpha - b.alpha))
+  groups.forEach((group) => group.sort((a, b) => a.alpha - b.alpha))
   return Array.from(groups.entries()).map(([beta, data]) => ({ beta, data }))
 }
 
 function groupByAlpha(
-  points: CalibrationDataPoint[]
+  points: CalibrationDataPoint[],
 ) {
   const groups = new Map<number, { beta: number; Kalpha: number; Kbeta: number; pointId: number }[]>()
-  points.forEach(p => {
+  points.forEach((p) => {
     const alpha = p.coordinates['α'] as number
     const beta = p.coordinates['β'] as number
     if (!groups.has(alpha)) groups.set(alpha, [])
     groups.get(alpha)!.push({ beta, Kalpha: p.coefficients.Kalpha, Kbeta: p.coefficients.Kbeta, pointId: p.pointId })
   })
-  groups.forEach(group => group.sort((a, b) => a.beta - b.beta))
+  groups.forEach((group) => group.sort((a, b) => a.beta - b.beta))
   return Array.from(groups.entries()).map(([alpha, data]) => ({ alpha, data }))
 }
 
 function groupByBetaKb(
-  points: CalibrationDataPoint[]
+  points: CalibrationDataPoint[],
 ) {
   const groups = new Map<number, { alpha: number; Kalpha: number; Kbeta: number }[]>()
-  points.forEach(p => {
+  points.forEach((p) => {
     const beta = p.coordinates['β'] as number
     const alpha = p.coordinates['α'] as number
     if (!groups.has(beta)) groups.set(beta, [])
     groups.get(beta)!.push({ alpha, Kalpha: p.coefficients.Kalpha, Kbeta: p.coefficients.Kbeta })
   })
-  groups.forEach(group => group.sort((a, b) => a.alpha - b.alpha))
+  groups.forEach((group) => group.sort((a, b) => a.alpha - b.alpha))
   return Array.from(groups.entries()).map(([beta, data]) => ({ beta, data }))
 }
 
@@ -435,7 +457,7 @@ function drawKAlphaKbetaChart() {
   const points = calibrationStore.dataPoints.filter(isFiveHoleDataPoint)
   let xMin = -1.0, xMax = 1.0, yMin = -1.0, yMax = 1.0, tickCount = 4
   if (points.length > 0) {
-    const scatterData = points.map(p => ({ x: p.coefficients.Kalpha, y: p.coefficients.Kbeta }))
+    const scatterData = points.map((p) => ({ x: p.coefficients.Kalpha, y: p.coefficients.Kbeta }))
     const bounds = resolveKAlphaKbetaBounds(scatterData)
     xMin = bounds.xMin; xMax = bounds.xMax
     yMin = bounds.yMin; yMax = bounds.yMax
@@ -473,7 +495,7 @@ function drawKAlphaKbetaChart() {
 
   // 先绘制 beta 等值线（次要，灰色细线）
   const betaGroups = groupByBetaKb(points)
-  betaGroups.forEach(group => {
+  betaGroups.forEach((group) => {
     if (group.data.length < 2) return
     ctx.strokeStyle = '#94a3b8'
     ctx.lineWidth = 1
@@ -488,7 +510,7 @@ function drawKAlphaKbetaChart() {
 
     // 小圆点
     ctx.fillStyle = '#94a3b8'
-    group.data.forEach(pt => {
+    group.data.forEach((pt) => {
       ctx.beginPath()
       ctx.arc(toX(pt.Kalpha), toY(pt.Kbeta), 1.8, 0, 2 * Math.PI)
       ctx.fill()
@@ -512,7 +534,7 @@ function drawKAlphaKbetaChart() {
 
     // 数据点
     ctx.fillStyle = color
-    group.data.forEach(pt => {
+    group.data.forEach((pt) => {
       ctx.beginPath()
       ctx.arc(toX(pt.Kalpha), toY(pt.Kbeta), 2.5, 0, 2 * Math.PI)
       ctx.fill()
@@ -522,7 +544,7 @@ function drawKAlphaKbetaChart() {
   // 当前采集点高亮
   const currentPointId = calibrationStore.status?.currentPoint?.id
   if (currentPointId != null) {
-    const cp = points.find(p => p.pointId === currentPointId)
+    const cp = points.find((p) => p.pointId === currentPointId)
     if (cp) {
       const x = toX(cp.coefficients.Kalpha)
       const y = toY(cp.coefficients.Kbeta)
@@ -562,9 +584,9 @@ function drawCptAlphaChart() {
     return
   }
 
-  const allValues = data.flatMap(g => g.data.map(d => d.value))
-  const xMin = Math.min(...data.flatMap(g => g.data.map(d => d.alpha)))
-  const xMax = Math.max(...data.flatMap(g => g.data.map(d => d.alpha)))
+  const allValues = data.flatMap((g) => g.data.map((d) => d.value))
+  const xMin = Math.min(...data.flatMap((g) => g.data.map((d) => d.alpha)))
+  const xMax = Math.max(...data.flatMap((g) => g.data.map((d) => d.alpha)))
   const yMin = Math.min(...allValues)
   const yMax = Math.max(...allValues)
   const xRange = xMax - xMin || 1
@@ -621,9 +643,9 @@ function drawCpsAlphaChart() {
     return
   }
 
-  const allValues = data.flatMap(g => g.data.map(d => d.value))
-  const xMin = Math.min(...data.flatMap(g => g.data.map(d => d.alpha)))
-  const xMax = Math.max(...data.flatMap(g => g.data.map(d => d.alpha)))
+  const allValues = data.flatMap((g) => g.data.map((d) => d.value))
+  const xMin = Math.min(...data.flatMap((g) => g.data.map((d) => d.alpha)))
+  const xMax = Math.max(...data.flatMap((g) => g.data.map((d) => d.alpha)))
   const yMin = Math.min(...allValues)
   const yMax = Math.max(...allValues)
   const xRange = xMax - xMin || 1
@@ -678,7 +700,7 @@ watch(
   () => calibrationStore.uiRefreshIntervalMs,
   () => {
     startChartTimer()
-  }
+  },
 )
 
 watch(isTopChartExpanded, () => {
@@ -695,11 +717,15 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-full flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)]">
     <!-- 顶部工具栏 -->
-    <div data-test="five-hole-top-header" class="flex shrink-0 items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-4 py-3">
+    <div
+      data-test="five-hole-top-header"
+      class="flex shrink-0 items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-5 py-3"
+    >
+      <!-- 左侧：标题与状态 -->
       <div class="flex items-center gap-4">
         <button
-          @click="emit('back')"
           class="rounded-[var(--radius-sm)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]"
+          @click="emit('back')"
         >
           <ArrowLeft class="h-5 w-5" />
         </button>
@@ -708,19 +734,34 @@ onBeforeUnmount(() => {
             <IconCalibrationFiveHole :size="20" />
           </div>
           <div>
-              <h1 class="text-lg font-bold text-[var(--text-primary)]">五孔探针校准</h1>
-            <div class="flex items-center gap-3">
+            <h1 class="text-base font-bold leading-tight text-[var(--text-primary)]">五孔探针移位测试</h1>
+            <div class="mt-1 flex items-center gap-3">
               <div class="flex items-center gap-1.5">
-                <span class="h-2 w-2 rounded-full" :class="statusColor === 'success' ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"></span>
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :class="statusColor === 'success' ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
+                ></span>
                 <p class="text-xs text-[var(--text-muted)]">{{ statusText }}</p>
               </div>
               <div class="h-3 w-px bg-[var(--border-default)]"></div>
-              <div class="flex items-center gap-1.5" :title="isAcquisitionDeviceConnected ? '采集设备已连接' : '采集设备未连接'">
-                <span class="h-2 w-2 rounded-full" :class="isAcquisitionDeviceConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"></span>
+              <div
+                class="flex items-center gap-1.5"
+                :title="isAcquisitionDeviceConnected ? '采集设备已连接' : '采集设备未连接'"
+              >
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :class="isAcquisitionDeviceConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
+                ></span>
                 <span class="text-xs text-[var(--text-muted)]">采集</span>
               </div>
-              <div class="flex items-center gap-1.5" :title="isMotionControllerConnected ? '位移机构已连接' : '位移机构未连接'">
-                <span class="h-2 w-2 rounded-full" :class="isMotionControllerConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"></span>
+              <div
+                class="flex items-center gap-1.5"
+                :title="isMotionControllerConnected ? '位移机构已连接' : '位移机构未连接'"
+              >
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :class="isMotionControllerConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
+                ></span>
                 <span class="text-xs text-[var(--text-muted)]">位移</span>
               </div>
             </div>
@@ -728,54 +769,59 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="flex items-center gap-3">
-        <!-- 频率选择 -->
-        <div class="flex items-center gap-2">
-            <span class="text-xs text-[var(--text-muted)] whitespace-nowrap">刷新</span>
-            <select
-              :value="calibrationStore.uiRefreshHz"
-              @change="calibrationStore.setUiRefreshHz(Number(($event.target as HTMLSelectElement).value))"
-              class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none"
+      <!-- 右侧：控制区 -->
+      <div class="flex items-center gap-2">
+        <!-- 监控参数组 -->
+        <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
+          <Zap class="h-3.5 w-3.5 text-[var(--accent-warning)]" />
+          <span class="text-xs text-[var(--text-muted)]">刷新</span>
+          <select
+            :value="calibrationStore.uiRefreshHz"
+            class="cursor-pointer rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-0.5 text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent-primary)]"
+            @change="calibrationStore.setUiRefreshHz(Number(($event.target as HTMLSelectElement).value))"
           >
             <option v-for="hz in 20" :key="hz" :value="hz">{{ hz }} Hz</option>
           </select>
         </div>
 
         <!-- 球罐判定 -->
-        <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5 text-xs">
-          <label class="flex items-center gap-2 cursor-pointer text-[var(--text-primary)]">
-              <input
-                :checked="sphereTankGate.gateEnabled.value"
-                type="checkbox"
-                class="h-4 w-4 cursor-pointer"
-                @change="saveSphereTankGate(($event.target as HTMLInputElement).checked, sphereTankGate.waitTimeSec.value)"
-              >
-              <span>球罐判定</span>
-            </label>
-            <span class="text-[var(--text-muted)]">稳定</span>
-            <span class="font-mono font-bold text-[var(--accent-primary)]">{{ sphereTankGate.stableTimeSec.value === null ? '--' : `${sphereTankGate.stableTimeSec.value.toFixed(1)}s` }}</span>
-            <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold" :class="sphereTankGate.statusText.value === '稳定' ? 'bg-[var(--accent-success)]/10 text-[var(--accent-success)]' : 'bg-[var(--accent-warning)]/10 text-[var(--accent-warning)]'">{{ sphereTankGate.statusText.value }}</span>
+        <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
+          <label class="flex cursor-pointer items-center gap-2 text-[var(--text-primary)]">
+            <input
+              :checked="sphereTankGate.gateEnabled.value"
+              type="checkbox"
+              class="h-3.5 w-3.5 cursor-pointer accent-[var(--accent-primary)]"
+              @change="saveSphereTankGate(($event.target as HTMLInputElement).checked, sphereTankGate.waitTimeSec.value)"
+            />
+            <span class="text-xs">球罐判定</span>
+          </label>
+          <div class="h-3.5 w-px bg-[var(--border-default)]"></div>
+          <span class="text-xs text-[var(--text-muted)]">稳定</span>
+          <span class="font-mono text-xs font-bold text-[var(--accent-primary)]">{{ sphereTankGate.stableTimeSec.value === null ? '--' : `${sphereTankGate.stableTimeSec.value.toFixed(1)}s` }}</span>
+          <span
+            class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            :class="sphereTankGate.statusText.value === '稳定' ? 'bg-[var(--accent-success)]/10 text-[var(--accent-success)]' : 'bg-[var(--accent-warning)]/10 text-[var(--accent-warning)]'"
+          >{{ sphereTankGate.statusText.value }}</span>
         </div>
 
-        <div class="h-6 w-px bg-[var(--border-default)]"></div>
+        <div class="mx-1 h-6 w-px bg-[var(--border-default)]"></div>
 
-        <!-- 配置按钮 -->
+        <!-- 操作按钮组 -->
         <button
-          @click="emit('openSettings')"
           class="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-canvas)]"
+          @click="emit('openSettings')"
         >
-          <Settings class="h-4 w-4" />
+          <Settings class="h-3.5 w-3.5" />
           配置
         </button>
 
-        <!-- 主控制组 -->
         <template v-if="!calibrationStore.isRunning && !calibrationStore.isPaused">
           <button
-            @click="startCalibration"
             :disabled="!canStartCalibration"
             class="flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-4 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)] disabled:cursor-not-allowed disabled:opacity-50"
+            @click="startCalibration"
           >
-            <Play class="h-4 w-4" />
+            <Play class="h-3.5 w-3.5" />
             开始校准
           </button>
         </template>
@@ -783,23 +829,25 @@ onBeforeUnmount(() => {
         <template v-else>
           <button
             v-if="!calibrationStore.isPaused"
+            class="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent-warning)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-warning)_92%,black_8%)]"
             @click="pauseCalibration"
-            class="rounded-[var(--radius-sm)] bg-[var(--accent-warning)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-warning)_92%,black_8%)]"
           >
+            <Pause class="h-3.5 w-3.5" />
             暂停
           </button>
           <button
             v-else
+            class="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
             @click="resumeCalibration"
-            class="rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
           >
+            <Play class="h-3.5 w-3.5" />
             继续
           </button>
-          <div class="h-6 w-px bg-[color:color-mix(in_srgb,var(--accent-danger)_35%,var(--border-default))]"></div>
           <button
+            class="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent-danger)]/30 bg-[var(--accent-danger)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-danger)_92%,black_8%)]"
             @click="stopCalibration"
-            class="rounded-[var(--radius-sm)] border border-[color:color-mix(in_srgb,var(--accent-danger)_35%,var(--border-default))] bg-[var(--accent-danger)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-danger)_92%,black_8%)]"
           >
+            <StopCircle class="h-3.5 w-3.5" />
             停止
           </button>
         </template>
@@ -807,9 +855,9 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 加载状态 -->
-    <div v-if="isLoading" class="flex-1 flex items-center justify-center">
+    <div v-if="isLoading" class="flex flex-1 items-center justify-center">
       <div class="text-center">
-        <div class="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+        <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--accent-primary)] border-t-transparent"></div>
         <p class="text-[var(--text-muted)]">正在加载...</p>
       </div>
     </div>
@@ -817,30 +865,34 @@ onBeforeUnmount(() => {
     <!-- 主内容区 -->
     <template v-else>
       <div class="flex-1 overflow-hidden p-4">
-        <div class="grid h-full grid-cols-[280px_1fr] gap-4" data-test="five-hole-layout-root">
-          <aside data-test="five-hole-left-sidebar" class="flex min-h-0 flex-col gap-4 overflow-hidden">
+        <div class="grid h-full grid-cols-[300px_1fr] gap-4" data-test="five-hole-layout-root">
+          <aside data-test="five-hole-left-sidebar" class="flex min-h-0 flex-col gap-3 overflow-hidden">
             <!-- 运行摘要卡片 -->
-            <section class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
-              <div class="mb-3 flex items-center justify-between">
-                <span class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行摘要</span>
+            <section class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
+              <div class="mb-2 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <Timer class="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                  <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行摘要</span>
+                </div>
                 <span class="rounded-full bg-[var(--accent-primary)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--accent-primary)]">{{ statusText }}</span>
               </div>
-              <div class="space-y-3">
+              <div class="space-y-2">
                 <div class="grid grid-cols-2 gap-2">
-                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-3 text-center">
-                    <p class="mb-1 text-[10px] uppercase text-[var(--text-muted)]">完成度</p>
-                    <p class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ progressInfo ? `${progressInfo.percent}%` : '0%' }}</p>
+                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5 text-center">
+                    <p class="mb-0.5 text-[10px] uppercase text-[var(--text-muted)]">完成度</p>
+                    <p class="font-mono text-base font-bold text-[var(--accent-primary)]">{{ progressInfo ? `${progressInfo.percent}%` : '0%' }}</p>
                   </div>
-                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-3 text-center">
-                    <p class="mb-1 text-[10px] uppercase text-[var(--text-muted)]">已用时</p>
-                    <p class="font-mono text-lg font-bold text-[var(--text-primary)]">{{ formattedTimeInfo?.elapsed || '00:00' }}</p>
+                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5 text-center">
+                    <p class="mb-0.5 text-[10px] uppercase text-[var(--text-muted)]">已用时</p>
+                    <p class="font-mono text-base font-bold text-[var(--text-primary)]">{{ formattedTimeInfo?.elapsed || '00:00' }}</p>
                   </div>
                 </div>
-                <div class="flex items-center justify-between rounded-[var(--radius-sm)] bg-[var(--bg-panel-strong)] p-2">
+                <div class="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5">
                   <div class="flex flex-col">
                     <span class="text-[10px] text-[var(--text-muted)]">攻角 α</span>
                     <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">{{ calibrationStore.angleInfo?.alpha?.toFixed(2) ?? '0.00' }}°</span>
                   </div>
+                  <div class="h-6 w-px bg-[var(--border-default)]"></div>
                   <div class="flex flex-col text-right">
                     <span class="text-[10px] text-[var(--text-muted)]">侧滑角 β</span>
                     <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">{{ calibrationStore.angleInfo?.beta?.toFixed(2) ?? '0.00' }}°</span>
@@ -850,45 +902,49 @@ onBeforeUnmount(() => {
             </section>
 
             <!-- 压力矩阵 -->
-            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
-              <div class="mb-3 flex items-center gap-2">
-                <Activity class="h-4 w-4 text-[var(--accent-success)]" />
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">五孔压力 (Pa)</h3>
+            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
+              <div class="mb-2 flex items-center gap-2">
+                <Activity class="h-3.5 w-3.5 text-[var(--accent-success)]" />
+                <h3 class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">五孔压力 (Pa)</h3>
               </div>
-              <div class="grid grid-cols-2 gap-2">
-                <div v-for="i in [1,2,3,4] as const" :key="i" class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
-                  <span class="text-[10px] font-medium text-[var(--text-muted)]">P{{i}}</span>
+              <!-- 探针五孔压力 -->
+              <div class="grid grid-cols-2 gap-1.5">
+                <div
+                  v-for="i in [1, 2, 3, 4] as const"
+                  :key="i"
+                  class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2 transition-colors hover:border-[var(--accent-primary)]/30"
+                >
+                  <span class="text-[10px] font-medium text-[var(--text-muted)]">P{{ i }}</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
                     {{ formatFiveHoleRealtimeValue(getFiveHoleProbeRole(i), getFiveHoleProbeValue(i)) }}
                   </span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-2">
+                <div class="col-span-2 flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-2">
                   <div class="flex items-center justify-between">
-                    <span class="text-[10px] font-medium text-[var(--accent-primary)]">P5 (参考)</span>
+                    <span class="text-[10px] font-medium text-[var(--accent-primary)]">P5 (中心参考孔)</span>
                   </div>
-                  <span class="font-mono text-base font-semibold text-[var(--accent-primary)]">
+                  <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.p5', calibrationStore.realtimePressures?.P5) }}
                   </span>
                 </div>
+              </div>
+              <!-- 风洞环境参数 -->
+              <div class="mt-2 grid grid-cols-2 gap-1.5">
                 <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-info)]/25 bg-[var(--accent-info)]/8 p-2">
-                  <div class="flex items-center justify-between">
-                    <span class="text-[10px] font-medium text-[var(--accent-info)]">风洞总压 Pt</span>
-                  </div>
-                  <span class="font-mono text-base font-semibold text-[var(--accent-info)]">
+                  <span class="text-[10px] font-medium text-[var(--accent-info)]">风洞总压 Pt</span>
+                  <span class="font-mono text-sm font-semibold text-[var(--accent-info)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.pTotal', calibrationStore.realtimePressures?.P0) }}
                   </span>
                 </div>
                 <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-warning)]/25 bg-[var(--accent-warning)]/8 p-2">
-                  <div class="flex items-center justify-between">
-                    <span class="text-[10px] font-medium text-[var(--accent-warning)]">风洞静压 Ps</span>
-                  </div>
-                  <span class="font-mono text-base font-semibold text-[var(--accent-warning)]">
+                  <span class="text-[10px] font-medium text-[var(--accent-warning)]">风洞静压 Ps</span>
+                  <span class="font-mono text-sm font-semibold text-[var(--accent-warning)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.pTunnelStatic', calibrationStore.realtimePressures?.Ps) }}
                   </span>
                 </div>
                 <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-success)]/25 bg-[var(--accent-success)]/8 p-2">
-                  <span class="text-[10px] font-medium text-[var(--accent-success)]">风洞温度 Ttunnel</span>
-                  <span class="font-mono text-base font-semibold text-[var(--accent-success)]">
+                  <span class="text-[10px] font-medium text-[var(--accent-success)]">风洞温度 Tt</span>
+                  <span class="font-mono text-sm font-semibold text-[var(--accent-success)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.tTunnel', calibrationStore.realtimePressures?.Ttunnel, '°C') }}
                   </span>
                 </div>
@@ -908,12 +964,12 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 物理计算卡片 -->
-            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
-              <div class="mb-3 flex items-center gap-2">
-                <Navigation2 class="h-4 w-4 text-[var(--accent-info)]" />
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">气动参数</h3>
+            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
+              <div class="mb-2 flex items-center gap-2">
+                <Navigation2 class="h-3.5 w-3.5 text-[var(--accent-info)]" />
+                <h3 class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">气动参数</h3>
               </div>
-              <div class="grid grid-cols-2 gap-2">
+              <div class="grid grid-cols-2 gap-1.5">
                 <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
                   <span class="text-[10px] text-[var(--text-muted)]">马赫数 Ma</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">{{ formatFiveHoleDerivedValue('machNumber', calibrationStore.calculatedPhysics?.machNumber) }}</span>
@@ -928,39 +984,43 @@ onBeforeUnmount(() => {
 
           <main data-test="five-hole-right-workspace" class="flex min-h-0 flex-col gap-4">
             <!-- 主绘图区：K-Alpha/Beta -->
-            <div class="flex-1 min-h-0 rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-[var(--shadow-panel)] overflow-hidden flex flex-col">
-              <div class="flex items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/50 px-4 py-2">
-                <div class="flex items-center gap-2">
-                  <span class="h-3 w-1.5 rounded-sm bg-[var(--accent-primary)]"></span>
+            <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-[var(--shadow-panel)]">
+              <div class="flex items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/60 px-4 py-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="h-3.5 w-1.5 rounded-sm bg-[var(--accent-primary)]"></span>
                   <h4 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">Kα - Kβ 系数特征空间</h4>
                 </div>
                 <button
-                  @click="isTopChartExpanded = !isTopChartExpanded"
                   class="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]"
                   :title="isTopChartExpanded ? '恢复默认视图' : '展开图表'"
+                  @click="isTopChartExpanded = !isTopChartExpanded"
                 >
                   <Maximize2 v-if="!isTopChartExpanded" class="h-4 w-4" />
                   <Minimize2 v-else class="h-4 w-4" />
                 </button>
               </div>
-              <div data-test="k-alpha-chart-canvas-wrap" class="relative flex-1 min-h-0">
+              <div data-test="k-alpha-chart-canvas-wrap" class="relative min-h-0 flex-1">
                 <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
               </div>
             </div>
 
             <!-- 次级曲线区 -->
             <div v-show="!isTopChartExpanded" class="grid min-h-0 flex-[0.85] grid-cols-2 gap-4">
-              <div v-for="chart in [
-                { id: 'cpt', label: 'CPT - α 恢复系数', color: 'bg-[var(--accent-success)]' },
-                { id: 'cps', label: 'CPS - α 静态系数', color: 'bg-[var(--accent-warning)]' }
-              ]" :key="chart.id" class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-[var(--shadow-panel)] overflow-hidden flex flex-col">
-                <div class="border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/50 px-4 py-2">
-                  <h4 class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                    <span class="h-3 w-1.5 rounded-sm" :class="chart.color"></span>
+              <div
+                v-for="chart in [
+                  { id: 'cpt', label: 'CPT - α 恢复系数', color: 'bg-[var(--accent-success)]', icon: TrendingUp },
+                  { id: 'cps', label: 'CPS - α 静态系数', color: 'bg-[var(--accent-warning)]', icon: LayoutGrid },
+                ]"
+                :key="chart.id"
+                class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-[var(--shadow-panel)]"
+              >
+                <div class="border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/60 px-4 py-2.5">
+                  <h4 class="flex items-center gap-2.5 text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    <span class="h-3.5 w-1.5 rounded-sm" :class="chart.color"></span>
                     {{ chart.label }}
                   </h4>
                 </div>
-                <div class="flex-1 min-h-0">
+                <div class="min-h-0 flex-1">
                   <canvas :ref="chart.id === 'cpt' ? setCptAlphaCanvasRef : setCpsAlphaCanvasRef" class="h-full w-full"></canvas>
                 </div>
               </div>
@@ -972,44 +1032,41 @@ onBeforeUnmount(() => {
       <!-- 完成提示 -->
       <div
         v-if="calibrationStore.completeEvent"
-        class="px-4 py-3 border-t border-[var(--border-default)]"
+        class="border-t border-[var(--border-default)] px-4 py-3"
         :class="calibrationStore.completeEvent.success ? 'bg-[var(--accent-success)]/10' : 'bg-[var(--accent-danger)]/10'"
       >
         <div class="flex items-center gap-3">
-          <svg
-            v-if="calibrationStore.completeEvent.success"
-            class="w-5 h-5 text-[var(--accent-success)]"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-          </svg>
-          <svg v-else class="w-5 h-5 text-[var(--accent-danger)]" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 001.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-          </svg>
-          <div>
-            <p class="text-sm font-medium" :class="calibrationStore.completeEvent.success ? 'text-[var(--accent-success)]' : 'text-[var(--accent-danger)]'">
+          <CheckCircle2 v-if="calibrationStore.completeEvent.success" class="h-5 w-5 flex-shrink-0 text-[var(--accent-success)]" />
+          <XCircle v-else class="h-5 w-5 flex-shrink-0 text-[var(--accent-danger)]" />
+          <div class="min-w-0">
+            <p
+              class="text-sm font-medium"
+              :class="calibrationStore.completeEvent.success ? 'text-[var(--accent-success)]' : 'text-[var(--accent-danger)]'"
+            >
               {{ calibrationStore.completeEvent.success ? '校准完成！' : '校准失败' }}
             </p>
-            <p class="text-xs text-[var(--text-secondary)]">
-              {{ calibrationStore.completeEvent.success
-                ? `共采集 ${calibrationStore.completeEvent.totalPoints} 个点，耗时 ${(calibrationStore.completeEvent.duration / 1000).toFixed(1)} 秒`
-                : calibrationStore.completeEvent.error
+            <p class="truncate text-xs text-[var(--text-secondary)]">
+              {{
+                calibrationStore.completeEvent.success
+                  ? `共采集 ${calibrationStore.completeEvent.totalPoints} 个点，耗时 ${(calibrationStore.completeEvent.duration / 1000).toFixed(1)} 秒`
+                  : calibrationStore.completeEvent.error
               }}
             </p>
           </div>
 
-          <div v-if="calibrationStore.completeEvent.success" class="ml-auto flex items-center gap-2">
+          <div v-if="calibrationStore.completeEvent.success" class="ml-auto flex flex-shrink-0 items-center gap-2">
             <button
+              class="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-panel-strong)]"
               @click="saveCsv"
-              class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-panel-strong)]"
             >
+              <Save class="h-3.5 w-3.5" />
               保存CSV
             </button>
             <button
+              class="flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
               @click="exportReport"
-              class="rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
             >
+              <FileText class="h-3.5 w-3.5" />
               导出报告
             </button>
           </div>

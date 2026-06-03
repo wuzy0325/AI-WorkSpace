@@ -28,8 +28,11 @@ export namespace core {
 	}
 	export class T1603Config {
 	    thermocoupleType: string;
-	    coldJunction: string;
-	    filterHz: number;
+	    channelMask: string;
+	    samplingRate: number;
+	    averageCount: number;
+	    showTimestamp: boolean;
+	    showSequence: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new T1603Config(source);
@@ -38,8 +41,11 @@ export namespace core {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.thermocoupleType = source["thermocoupleType"];
-	        this.coldJunction = source["coldJunction"];
-	        this.filterHz = source["filterHz"];
+	        this.channelMask = source["channelMask"];
+	        this.samplingRate = source["samplingRate"];
+	        this.averageCount = source["averageCount"];
+	        this.showTimestamp = source["showTimestamp"];
+	        this.showSequence = source["showSequence"];
 	    }
 	}
 	export class TemperatureProfile {
@@ -50,6 +56,7 @@ export namespace core {
 	    samplingRate: number;
 	    channels: ChannelConfig[];
 	    t1603Config: T1603Config;
+	    createdAt?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new TemperatureProfile(source);
@@ -64,6 +71,7 @@ export namespace core {
 	        this.samplingRate = source["samplingRate"];
 	        this.channels = this.convertValues(source["channels"], ChannelConfig);
 	        this.t1603Config = this.convertValues(source["t1603Config"], T1603Config);
+	        this.createdAt = source["createdAt"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -144,6 +152,30 @@ export namespace core {
 	        this.startTimeMs = source["startTimeMs"];
 	        this.snapshotCount = source["snapshotCount"];
 	        this.status = source["status"];
+	    }
+	}
+	export class ScanResult {
+	    id: string;
+	    name: string;
+	    address: string;
+	    port: number;
+	    macAddress?: string;
+	    serialNumber?: string;
+	    firmwareVersion?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScanResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.address = source["address"];
+	        this.port = source["port"];
+	        this.macAddress = source["macAddress"];
+	        this.serialNumber = source["serialNumber"];
+	        this.firmwareVersion = source["firmwareVersion"];
 	    }
 	}
 	

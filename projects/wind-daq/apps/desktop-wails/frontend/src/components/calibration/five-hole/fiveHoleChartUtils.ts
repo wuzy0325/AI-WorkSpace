@@ -24,12 +24,12 @@ export function drawFiveHoleChartScaffold(
   ctx.save()
 
   if (fillBackground) {
-    ctx.fillStyle = 'rgba(0,0,0,0.02)'
+    ctx.fillStyle = 'rgba(128,128,128,0.03)'
     ctx.fillRect(0, 0, width, height)
   }
 
-  // 坐标轴
-  ctx.strokeStyle = 'rgba(100,116,139,0.3)'
+  // 坐标轴 — 使用主题变量，确保在深浅主题下都有良好对比度
+  ctx.strokeStyle = 'var(--border-default, rgba(100,116,139,0.3))'
   ctx.lineWidth = 1
 
   // X轴
@@ -44,10 +44,11 @@ export function drawFiveHoleChartScaffold(
   ctx.lineTo(padding, height - padding)
   ctx.stroke()
 
-  // 内部网格
+  // 内部网格 — 更细腻的虚线网格，提升可读性
   if (showInteriorGrid) {
-    ctx.strokeStyle = 'rgba(100,116,139,0.08)'
+    ctx.strokeStyle = 'var(--border-default, rgba(100,116,139,0.08))'
     ctx.lineWidth = 0.5
+    ctx.setLineDash([3, 3])
     const gridCount = 4
     for (let i = 1; i < gridCount; i++) {
       const x = padding + ((width - 2 * padding) * i) / gridCount
@@ -62,10 +63,11 @@ export function drawFiveHoleChartScaffold(
       ctx.lineTo(width - padding, y)
       ctx.stroke()
     }
+    ctx.setLineDash([])
   }
 
-  // 轴标签
-  ctx.fillStyle = '#64748b'
+  // 轴标签 — 使用主题变量
+  ctx.fillStyle = 'var(--text-muted, #64748b)'
   ctx.font = '11px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
@@ -122,7 +124,7 @@ export function resolveKAlphaKbetaBounds(
 }
 
 export function drawNoDataHint(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-  ctx.fillStyle = '#64748b'
+  ctx.fillStyle = 'var(--text-muted, #64748b)'
   ctx.font = '13px sans-serif'
   ctx.textAlign = 'center'
   ctx.fillText('等待采集数据（可先点击开始校准）', width / 2, height / 2)
@@ -139,7 +141,7 @@ export function drawAxisTicks(
   yMax: number,
   tickCount = 3
 ): void {
-  ctx.fillStyle = '#64748b'
+  ctx.fillStyle = 'var(--text-muted, #64748b)'
   ctx.font = '10px sans-serif'
   ctx.textBaseline = 'top'
   const xTickY = height - padding + 6

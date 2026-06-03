@@ -11,10 +11,15 @@ import (
 type DeviceUsecase struct {
 	device ports.DevicePort
 	config ports.ConfigPort
+	scanner ports.DeviceScanPort
 }
 
 func NewDeviceUsecase(device ports.DevicePort, config ports.ConfigPort) *DeviceUsecase {
 	return &DeviceUsecase{device: device, config: config}
+}
+
+func (uc *DeviceUsecase) SetScanner(scanner ports.DeviceScanPort) {
+	uc.scanner = scanner
 }
 
 func (uc *DeviceUsecase) GetProfiles() []core.TemperatureProfile {
@@ -70,6 +75,13 @@ func (uc *DeviceUsecase) StopAcquisition(id string) error {
 
 func (uc *DeviceUsecase) GetStatus(id string) (core.DeviceState, bool) {
 	return uc.device.Status(id)
+}
+
+func (uc *DeviceUsecase) ScanDevices() ([]core.ScanResult, error) {
+	if uc.scanner == nil {
+		return []core.ScanResult{}, nil
+	}
+	return uc.scanner.Scan()
 }
 
 func (uc *DeviceUsecase) ApplyConfig(id string, cfg core.T1603Config) error {

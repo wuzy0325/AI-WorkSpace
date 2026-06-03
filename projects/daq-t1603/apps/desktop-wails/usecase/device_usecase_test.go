@@ -160,6 +160,18 @@ func (f *fakeRecordingPort) Status() core.RecordingSession {
 	}
 }
 
+type fakeScanPort struct {
+	results []core.ScanResult
+}
+
+func newFakeScanPort(results []core.ScanResult) *fakeScanPort {
+	return &fakeScanPort{results: results}
+}
+
+func (f *fakeScanPort) Scan() ([]core.ScanResult, error) {
+	return f.results, nil
+}
+
 func TestDeviceUsecase_GetProfiles_Empty(t *testing.T) {
 	dp := newFakeDevicePort()
 	cp := newFakeConfigPort()
@@ -240,10 +252,41 @@ func TestDeviceUsecase_ApplyConfig(t *testing.T) {
 	_ = uc.Connect("dev1")
 
 	err := uc.ApplyConfig("dev1", core.T1603Config{
-		ThermocoupleType: "K", ColdJunction: "internal", FilterHz: 50,
+		ThermocoupleType: "K", ChannelMask: "FFFF", SamplingRate: 10, AverageCount: 4,
 	})
 	if err != nil {
 		t.Fatalf("ApplyConfig: %v", err)
+	}
+}
+
+func TestDeviceUsecase_ScanDevices_NilScanner(t *testing.T) {
+	uc := NewDeviceUsecase(newFakeDevicePort(), newFakeConfigPort())
+	results, err := uc.ScanDevices()
+	if err != nil {
+		t.Fatalf("ScanDevices: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results with nil scanner, got %d", len(results))
+	}
+}
+
+func TestDeviceUsecase_ScanDevices_WithScanner(t *testing.T) {
+	uc := NewDeviceUsecase(newFakeDevicePort(), newFakeConfigPort())
+	expected := []core.ScanResult{
+		{ID: "dev1", Address: "10.0.0.1", Port: 9000},
+		{ID: "dev2", Address: "10.0.0.2", Port: 9000},
+	}
+	uc.SetScanner(newFakeScanPort(expected))
+
+	results, err := uc.ScanDevices()
+	if err != nil {
+		t.Fatalf("ScanDevices: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].ID != "dev1" {
+		t.Fatalf("expected dev1 first, got %s", results[0].ID)
 	}
 }
 

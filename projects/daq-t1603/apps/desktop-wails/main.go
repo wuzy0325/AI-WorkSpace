@@ -33,15 +33,19 @@ func main() {
 	cfgStore := config.NewJSONConfigStore(filepath.Join(configDir, "device-profiles.json"))
 
 	var devAdapter ports.DevicePort
+	var scanner ports.DeviceScanPort
 	if os.Getenv("DAQ_T1603_MODE") == "simulated" {
 		slog.Info("using simulated device adapter")
 		devAdapter = hardware.NewSimulatedAdapter()
+		scanner = hardware.NewSimulatedScanner()
 	} else {
 		devAdapter = hardware.NewT1603Adapter()
+		scanner = hardware.NewT1603Scanner()
 	}
 	recorder := recording.NewCSVRecorder()
 
 	deviceUC := usecase.NewDeviceUsecase(devAdapter, cfgStore)
+	deviceUC.SetScanner(scanner)
 	recordUC := usecase.NewRecordingUsecase(recorder)
 
 	app := backend.NewApp(deviceUC, recordUC)

@@ -161,6 +161,28 @@ const isPressureScannerDevice = computed(() => {
   const type = profile.value?.type
   return type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre'
 })
+
+const statusText = computed(() => {
+  if (currentAcquiring()) {
+    return i18n.t.acquiring || '采集中'
+  }
+  if (currentStatus() === 'Connected') {
+    return i18n.t.deviceRunning || '设备运行正常'
+  }
+  return currentStatus()
+})
+
+const acquisitionButtonLabel = computed(() => {
+  return currentAcquiring()
+    ? (i18n.t.stopAcquisition || '停止采集')
+    : (i18n.t.startAcquisition || '开始采集')
+})
+
+const connectionButtonLabel = computed(() => {
+  return currentAcquiring() || currentStatus() === 'Connected'
+    ? (i18n.t.disconnect || '断开')
+    : (i18n.t.connect || '连接')
+})
 </script>
 
 <template>
@@ -173,7 +195,7 @@ const isPressureScannerDevice = computed(() => {
         <div>
           <h2 class="detail-panel__header-title">{{ profile?.name ?? 'Wind-DAQ' }}</h2>
           <p class="detail-panel__header-desc">
-            {{ currentAcquiring() ? (i18n.t.acquiring || '采集中') : currentStatus() === 'Connected' ? (i18n.t.deviceRunning || '设备运行正常') : currentStatus() }}
+            {{ statusText }}
             · {{ profile?.channels?.length ?? 0 }} {{ i18n.t.channels || '通道' }}
           </p>
         </div>
@@ -193,14 +215,14 @@ const isPressureScannerDevice = computed(() => {
           :class="currentAcquiring() ? 'detail-panel__btn--stop' : 'detail-panel__btn--acq'"
           @click="() => { const id = profile!.id; currentAcquiring() ? deviceStore.stopAcquisition(id) : deviceStore.startAcquisition(id) }"
         >
-          {{ currentAcquiring() ? (i18n.t.stopAcquisition || '停止采集') : (i18n.t.startAcquisition || '开始采集') }}
+          {{ acquisitionButtonLabel }}
         </button>
         <button
           class="detail-panel__btn"
           :class="currentStatus() === 'Connected' || currentAcquiring() ? 'detail-panel__btn--danger' : 'detail-panel__btn--primary'"
           @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
         >
-          {{ currentAcquiring() ? (i18n.t.disconnect || '断开') : currentStatus() === 'Connected' ? (i18n.t.disconnect || '断开') : (i18n.t.connect || '连接') }}
+          {{ connectionButtonLabel }}
         </button>
         <button
           v-if="props.mode !== 'table'"

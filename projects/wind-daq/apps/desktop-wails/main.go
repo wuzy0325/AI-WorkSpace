@@ -18,7 +18,7 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:         "Wind-DAQ",
-		Width:         1440,
+		Width:         1600,
 		Height:        900,
 		MinWidth:      1280,
 		MinHeight:     720,

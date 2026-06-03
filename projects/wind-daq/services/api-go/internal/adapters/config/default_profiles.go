@@ -30,9 +30,11 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		profile.Port = 9000
 		profile.Channels = defaultDaqT1603Channels()
 		profile.DaqT1603Config = device.DaqT1603HardwareConfig{
-			ThermocoupleType: "K",
-			ColdJunction:     "internal",
-			FilterHz:         50,
+			ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
+			ChannelMask:       "FFFF",
+			SamplingRate:      10,
+			BinaryFormat:      false,
+			AverageCount:      1,
 		}
 	case device.DeviceDAQP1064Pre:
 		profile.Address = "192.168.1.100"
@@ -53,8 +55,13 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 // NormalizeProfile 补全配置中的缺失字段（使用硬件默认值填充）
 // 注意：此函数依赖硬件特定默认值，属于 adapter 层职责
 func NormalizeProfile(profile device.Profile) device.Profile {
+	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603
+	var defaultProfile device.Profile
+	if needsDefaultProfile {
+		defaultProfile = NewDefaultProfile(profile.ID, profile.Type)
+	}
+
 	if len(profile.Channels) == 0 {
-		defaultProfile := NewDefaultProfile(profile.ID, profile.Type)
 		profile.Channels = defaultProfile.Channels
 		if profile.Transport == "" {
 			profile.Transport = defaultProfile.Transport
@@ -72,7 +79,26 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 			profile.SamplingRate = defaultProfile.SamplingRate
 		}
 	}
+	if profile.Type == device.DeviceDaqT1603 {
+		profile.DaqT1603Config = normalizeDaqT1603Config(profile.DaqT1603Config, defaultProfile.DaqT1603Config)
+	}
 	return profile
+}
+
+func normalizeDaqT1603Config(config device.DaqT1603HardwareConfig, defaults device.DaqT1603HardwareConfig) device.DaqT1603HardwareConfig {
+	if config.ThermocoupleTypes == "" {
+		config.ThermocoupleTypes = defaults.ThermocoupleTypes
+	}
+	if config.ChannelMask == "" {
+		config.ChannelMask = defaults.ChannelMask
+	}
+	if config.SamplingRate == 0 {
+		config.SamplingRate = defaults.SamplingRate
+	}
+	if config.AverageCount == 0 {
+		config.AverageCount = defaults.AverageCount
+	}
+	return config
 }
 
 func defaultSimulatedChannels() []device.ChannelConfig {

@@ -408,9 +408,17 @@ export namespace device {
 	    }
 	}
 	export class DaqT1603HardwareConfig {
-	    thermocoupleType: string;
-	    coldJunction: string;
-	    filterHz: number;
+	    thermocoupleTypes: string;
+	    channelMask: string;
+	    samplingRate: number;
+	    binaryFormat: boolean;
+	    averageCount: number;
+	    triggerMode: number;
+	    triggerEdge: number;
+	    triggerCount: number;
+	    showTimestamp: boolean;
+	    showSequence: boolean;
+	    openCircuitCheck: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DaqT1603HardwareConfig(source);
@@ -418,9 +426,17 @@ export namespace device {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.thermocoupleType = source["thermocoupleType"];
-	        this.coldJunction = source["coldJunction"];
-	        this.filterHz = source["filterHz"];
+	        this.thermocoupleTypes = source["thermocoupleTypes"];
+	        this.channelMask = source["channelMask"];
+	        this.samplingRate = source["samplingRate"];
+	        this.binaryFormat = source["binaryFormat"];
+	        this.averageCount = source["averageCount"];
+	        this.triggerMode = source["triggerMode"];
+	        this.triggerEdge = source["triggerEdge"];
+	        this.triggerCount = source["triggerCount"];
+	        this.showTimestamp = source["showTimestamp"];
+	        this.showSequence = source["showSequence"];
+	        this.openCircuitCheck = source["openCircuitCheck"];
 	    }
 	}
 	export class DataPayload {

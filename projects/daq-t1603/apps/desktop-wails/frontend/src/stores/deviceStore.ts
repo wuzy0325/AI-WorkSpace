@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
-import type { TemperatureProfile, TemperatureSnapshot, T1603Config, ChannelConfig } from '@bridge/deviceBridge'
+import type { TemperatureProfile, TemperatureSnapshot, T1603Config, ChannelConfig, ScanResult } from '@bridge/deviceBridge'
 
 const MAX_HISTORY = 200
 
@@ -26,14 +26,24 @@ function defaultChannels() {
 }
 
 function defaultT1603Config(): T1603Config {
-  return { thermocoupleType: 'K', coldJunction: 'internal', filterHz: 50 }
+  return {
+    thermocoupleType: 'K',
+    channelMask: 'FFFF',
+    samplingRate: 10,
+    averageCount: 4,
+    showTimestamp: false,
+    showSequence: false,
+  }
 }
 
 function t1603Defaults(cfg: Partial<T1603Config>): T1603Config {
   return {
     thermocoupleType: cfg.thermocoupleType ?? 'K',
-    coldJunction: cfg.coldJunction ?? 'internal',
-    filterHz: cfg.filterHz ?? 50,
+    channelMask: cfg.channelMask ?? 'FFFF',
+    samplingRate: cfg.samplingRate ?? 10,
+    averageCount: cfg.averageCount ?? 4,
+    showTimestamp: cfg.showTimestamp ?? false,
+    showSequence: cfg.showSequence ?? false,
   }
 }
 
@@ -44,6 +54,8 @@ export const useDeviceStore = defineStore('device', () => {
   const historyMap = ref<Record<string, TemperatureSnapshot[]>>({})
   const snapshotMap = ref<Record<string, TemperatureSnapshot>>({})
   const chartSelections = ref<Record<string, Set<number>>>({})
+  const scanResults = ref<ScanResult[]>([])
+  const isScanning = ref(false)
 
   const selectedProfile = computed(() =>
     profiles.value.find((p) => p.id === selectedId.value) ?? null
@@ -103,49 +115,38 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
-  async function connect(id: string): Promise<void> {
+  async function transitionStatus(
+    id: string,
+    action: () => Promise<void>,
+    targetStatus: string,
+    fallbackStatus: string,
+    preStatus?: string,
+  ): Promise<void> {
     const prev = statusMap.value[id]
-    statusMap.value[id] = 'Connecting'
+    if (preStatus) statusMap.value[id] = preStatus
     try {
-      await bridge.connect(id)
-      statusMap.value[id] = 'Connected'
+      await action()
+      statusMap.value[id] = targetStatus
     } catch (err) {
-      statusMap.value[id] = prev ?? 'Disconnected'
+      statusMap.value[id] = prev ?? fallbackStatus
       throw err
     }
+  }
+
+  async function connect(id: string): Promise<void> {
+    await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
   }
 
   async function disconnect(id: string): Promise<void> {
-    const prev = statusMap.value[id]
-    try {
-      await bridge.disconnect(id)
-      statusMap.value[id] = 'Disconnected'
-    } catch (err) {
-      statusMap.value[id] = prev ?? 'Disconnected'
-      throw err
-    }
+    await transitionStatus(id, () => bridge.disconnect(id), 'Disconnected', 'Disconnected')
   }
 
   async function startAcquisition(id: string): Promise<void> {
-    const prev = statusMap.value[id]
-    try {
-      await bridge.startAcquisition(id)
-      statusMap.value[id] = 'Acquiring'
-    } catch (err) {
-      statusMap.value[id] = prev ?? 'Connected'
-      throw err
-    }
+    await transitionStatus(id, () => bridge.startAcquisition(id), 'Acquiring', 'Connected')
   }
 
   async function stopAcquisition(id: string): Promise<void> {
-    const prev = statusMap.value[id]
-    try {
-      await bridge.stopAcquisition(id)
-      statusMap.value[id] = 'Connected'
-    } catch (err) {
-      statusMap.value[id] = prev ?? 'Connected'
-      throw err
-    }
+    await transitionStatus(id, () => bridge.stopAcquisition(id), 'Connected', 'Connected')
   }
 
   async function applyConfig(id: string, cfg: Partial<T1603Config>): Promise<void> {
@@ -170,6 +171,19 @@ export const useDeviceStore = defineStore('device', () => {
     const ch = profile.channels[index]!
     Object.assign(ch, patch)
     await bridge.upsertProfile(profile)
+  }
+
+  function clearScanResults(): void {
+    scanResults.value = []
+  }
+
+  async function scanDevices(): Promise<void> {
+    isScanning.value = true
+    try {
+      scanResults.value = await bridge.scanDevices()
+    } finally {
+      isScanning.value = false
+    }
   }
 
   async function addProfile(name: string, address: string, port: number): Promise<void> {
@@ -198,10 +212,11 @@ export const useDeviceStore = defineStore('device', () => {
 
   return {
     profiles, selectedId, statusMap, historyMap, snapshotMap, chartSelections,
+    scanResults, isScanning,
     selectedProfile, selectedSnapshot,
     selectDevice, statusFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateT1603Config, updateChannel,
-    addProfile, removeProfile,
+    clearScanResults, scanDevices, addProfile, removeProfile,
   }
 })

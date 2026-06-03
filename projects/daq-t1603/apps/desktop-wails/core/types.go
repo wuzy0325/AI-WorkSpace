@@ -27,9 +27,12 @@ func (s DeviceStatus) String() string {
 }
 
 type T1603Config struct {
-	ThermocoupleType string `json:"thermocoupleType"`
-	ColdJunction     string `json:"coldJunction"`
-	FilterHz         int    `json:"filterHz"`
+	ThermocoupleType string `json:"thermocoupleType"` // applied to all 16 channels
+	ChannelMask      string `json:"channelMask"`       // hex 0000-FFFF
+	SamplingRate     int    `json:"samplingRate"`      // Hz
+	AverageCount     int    `json:"averageCount"`      // 1-100
+	ShowTimestamp    bool   `json:"showTimestamp"`
+	ShowSequence     bool   `json:"showSequence"`
 }
 
 type ChannelConfig struct {
@@ -68,6 +71,16 @@ type DeviceState struct {
 	ConnectedAt  int64              `json:"connectedAt"`
 	AcquiringAt  int64              `json:"acquiringAt"`
 	SamplingRate float64            `json:"samplingRate"`
+}
+
+type ScanResult struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Address         string `json:"address"`
+	Port            int    `json:"port"`
+	MacAddress      string `json:"macAddress,omitempty"`
+	SerialNumber    string `json:"serialNumber,omitempty"`
+	FirmwareVersion string `json:"firmwareVersion,omitempty"`
 }
 
 func TimestampMs() int64 {

@@ -18,6 +18,8 @@ export function GetStatus(arg1:string):Promise<core.DeviceState|boolean>;
 
 export function PickDirectory():Promise<string>;
 
+export function ScanDevices():Promise<Array<core.ScanResult>>;
+
 export function StartAcquisition(arg1:string):Promise<void>;
 
 export function StartRecording(arg1:string,arg2:string):Promise<void>;

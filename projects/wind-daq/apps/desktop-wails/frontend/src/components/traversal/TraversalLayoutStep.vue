@@ -59,6 +59,19 @@ const computedSectorRange = computed(() => {
 
 const tRef = computed(() => props.t)
 
+const patternLabel = computed(() => {
+  switch (pattern.value) {
+    case 'line':
+      return tRef.value.patternLine
+    case 'rectangle':
+      return tRef.value.patternRectangle
+    case 'sector':
+      return tRef.value.patternSector
+    default:
+      return tRef.value.patternCustom
+  }
+})
+
 const { errors: rectangleXSegmentErrors, countError: rectangleXSegmentCountError } =
   useTraversalSegmentValidation(computed(() => rectangleConfig.value.xStepSegments), computed(() => rectangleConfig.value.xMin), computed(() => rectangleConfig.value.xMax), tRef)
 const { errors: rectangleYSegmentErrors, countError: rectangleYSegmentCountError } =
@@ -126,7 +139,7 @@ function removeCustomPoint(index: number) { customPoints.value.splice(index, 1) 
         @click="pattern = p"
         class="px-3 py-1.5 text-sm font-medium rounded-[var(--radius-sm)] transition-colors"
         :class="pattern === p ? 'bg-[color:var(--accent-primary)] text-white' : 'bg-[color:var(--bg-panel)] text-[color:var(--text-secondary)] border border-[color:var(--border-default)] hover:bg-[color:var(--bg-panel-strong)]'">
-        {{ p === 'line' ? t.patternLine : p === 'rectangle' ? t.patternRectangle : p === 'sector' ? t.patternSector : t.patternCustom }}
+        {{ patternLabel }}
       </button>
     </section>
 

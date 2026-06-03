@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
-import { filterHzToLabel, filterLabelToHz, FILTER_HZ_OPTIONS } from '@bridge/deviceBridge'
 import {
-  Settings2, Thermometer, Snowflake, Activity, Gauge,
+  Settings2, Thermometer, Activity,
   Save, RotateCcw, ChevronDown, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Zap
+  SlidersHorizontal, Zap, Hash, Layers, Clock, ListOrdered,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -15,11 +14,14 @@ const deviceStore = useDeviceStore()
 const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
-const filterLabels = FILTER_HZ_OPTIONS.map(filterHzToLabel)
+const samplingRateOptions = [1, 2, 5, 10, 20, 50, 100]
+const averageOptions = [1, 2, 4, 8, 16, 32, 64, 100]
 
 const tcType = ref('K')
-const cjcEnabled = ref(true)
-const filterFreq = ref('50Hz')
+const samplingRate = ref(10)
+const avgCount = ref(4)
+const showTimestamp = ref(false)
+const showSequence = ref(false)
 const channelNames = ref<string[]>(Array(16).fill(''))
 const channelEnabled = ref<boolean[]>(Array(16).fill(true))
 const channelColors = ref<string[]>(Array(16).fill(''))
@@ -35,23 +37,27 @@ const hasChanges = ref(false)
 const saveStatus = ref<'idle' | 'saving' | 'success' | 'error'>('idle')
 const saveMessage = ref('')
 
+function syncFormFromProfile(profileData: typeof profile.value) {
+  if (!profileData) return
+  tcType.value = profileData.t1603Config?.thermocoupleType || 'K'
+  samplingRate.value = profileData.t1603Config?.samplingRate || 10
+  avgCount.value = profileData.t1603Config?.averageCount || 4
+  showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
+  showSequence.value = profileData.t1603Config?.showSequence ?? false
+  channelNames.value = profileData.channels.map((c) => c.name || '')
+  channelEnabled.value = profileData.channels.map((c) => c.enabled)
+  channelColors.value = profileData.channels.map((c) => c.color || '')
+  hasChanges.value = false
+  saveStatus.value = 'idle'
+}
+
 watch(
   () => profile.value,
-  (p) => {
-    if (!p) return
-    tcType.value = p.t1603Config?.thermocoupleType || 'K'
-    cjcEnabled.value = p.t1603Config?.coldJunction === 'internal'
-    filterFreq.value = filterHzToLabel(p.t1603Config?.filterHz ?? 50)
-    channelNames.value = p.channels.map((c) => c.name || '')
-    channelEnabled.value = p.channels.map((c) => c.enabled)
-    channelColors.value = p.channels.map((c) => c.color || '')
-    hasChanges.value = false
-    saveStatus.value = 'idle'
-  },
+  syncFormFromProfile,
   { immediate: true }
 )
 
-watch([tcType, cjcEnabled, filterFreq, channelNames, channelEnabled, channelColors], () => {
+watch([tcType, samplingRate, avgCount, showTimestamp, showSequence, channelNames, channelEnabled, channelColors], () => {
   hasChanges.value = true
   saveStatus.value = 'idle'
 }, { deep: true })
@@ -65,8 +71,10 @@ async function saveConfig() {
   try {
     await deviceStore.updateT1603Config(props.deviceId, {
       thermocoupleType: tcType.value,
-      coldJunction: cjcEnabled.value ? 'internal' : 'disabled',
-      filterHz: filterLabelToHz(filterFreq.value),
+      samplingRate: samplingRate.value,
+      averageCount: avgCount.value,
+      showTimestamp: showTimestamp.value,
+      showSequence: showSequence.value,
     })
     for (let i = 0; i < 16; i++) {
       await deviceStore.updateChannel(props.deviceId, i, {
@@ -86,16 +94,7 @@ async function saveConfig() {
 }
 
 function resetConfig() {
-  const p = profile.value
-  if (!p) return
-  tcType.value = p.t1603Config?.thermocoupleType || 'K'
-  cjcEnabled.value = p.t1603Config?.coldJunction === 'internal'
-  filterFreq.value = filterHzToLabel(p.t1603Config?.filterHz ?? 50)
-  channelNames.value = p.channels.map((c) => c.name || '')
-  channelEnabled.value = p.channels.map((c) => c.enabled)
-  channelColors.value = p.channels.map((c) => c.color || '')
-  hasChanges.value = false
-  saveStatus.value = 'idle'
+  syncFormFromProfile(profile.value)
 }
 
 function toggleChannel(index: number) {
@@ -151,32 +150,62 @@ function selectColor(index: number, color: string) {
 
           <div class="config__field">
             <label class="config__label">
-              <Snowflake class="config__label-icon" />
-              <span>冷端补偿</span>
+              <Hash class="config__label-icon" />
+              <span>采样频率</span>
+            </label>
+            <div class="config__select-wrap">
+              <select v-model="samplingRate" class="config__select">
+                <option v-for="s in samplingRateOptions" :key="s" :value="s">{{ s }} Hz</option>
+              </select>
+              <ChevronDown class="config__select-arrow" />
+            </div>
+          </div>
+
+          <div class="config__field">
+            <label class="config__label">
+              <Layers class="config__label-icon" />
+              <span>平均次数</span>
+            </label>
+            <div class="config__select-wrap">
+              <select v-model="avgCount" class="config__select">
+                <option v-for="a in averageOptions" :key="a" :value="a">{{ a }}</option>
+              </select>
+              <ChevronDown class="config__select-arrow" />
+            </div>
+          </div>
+
+          <div class="config__field">
+            <label class="config__label">
+              <Clock class="config__label-icon" />
+              <span>时间戳</span>
             </label>
             <button
               class="config__toggle"
-              :class="{ 'config__toggle--on': cjcEnabled }"
-              @click="cjcEnabled = !cjcEnabled"
+              :class="{ 'config__toggle--on': showTimestamp }"
+              @click="showTimestamp = !showTimestamp"
             >
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ cjcEnabled ? '启用' : '禁用' }}</span>
+              <span class="config__toggle-text">{{ showTimestamp ? '显示' : '隐藏' }}</span>
             </button>
           </div>
 
           <div class="config__field">
             <label class="config__label">
-              <Gauge class="config__label-icon" />
-              <span>滤波频率</span>
+              <ListOrdered class="config__label-icon" />
+              <span>序号</span>
             </label>
-            <div class="config__select-wrap">
-              <select v-model="filterFreq" class="config__select">
-                <option v-for="f in filterLabels" :key="f" :value="f">{{ f }}</option>
-              </select>
-              <ChevronDown class="config__select-arrow" />
-            </div>
+            <button
+              class="config__toggle"
+              :class="{ 'config__toggle--on': showSequence }"
+              @click="showSequence = !showSequence"
+            >
+              <span class="config__toggle-track">
+                <span class="config__toggle-thumb"></span>
+              </span>
+              <span class="config__toggle-text">{{ showSequence ? '显示' : '隐藏' }}</span>
+            </button>
           </div>
         </div>
       </section>

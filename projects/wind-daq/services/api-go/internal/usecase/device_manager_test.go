@@ -291,9 +291,11 @@ func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
 	}
 
 	config := device.DaqT1603HardwareConfig{
-		ThermocoupleType: "K",
-		ColdJunction:     "internal",
-		FilterHz:         50,
+		ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
+		ChannelMask:       "FFFF",
+		SamplingRate:      10,
+		BinaryFormat:      false,
+		AverageCount:      4,
 	}
 	if err := manager.ApplyDaqT1603Config("temp-1", config); err != nil {
 		t.Fatalf("ApplyDaqT1603Config returned error: %v", err)

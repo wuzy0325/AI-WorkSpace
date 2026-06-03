@@ -8,6 +8,7 @@ import {
   StopAcquisition,
   ApplyConfig,
   GetStatus,
+  ScanDevices,
 } from '../../wailsjs/go/backend/App'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -24,8 +25,11 @@ export interface ChannelConfig {
 
 export interface T1603Config {
   thermocoupleType: string
-  coldJunction: string
-  filterHz: number
+  channelMask: string
+  samplingRate: number
+  averageCount: number
+  showTimestamp: boolean
+  showSequence: boolean
 }
 
 export const TC_RANGES: Record<string, { min: number; max: number }> = {
@@ -37,21 +41,6 @@ export const TC_RANGES: Record<string, { min: number; max: number }> = {
   R: { min: -50, max: 1768 },
   S: { min: -50, max: 1768 },
   B: { min: 0, max: 1820 },
-}
-
-export const FILTER_HZ_OPTIONS = [50, 60, 400, 1000] as const
-
-export function filterHzToLabel(hz: number): string {
-  return `${hz}Hz`
-}
-
-export function filterLabelToHz(label: string): number {
-  const num = parseInt(label, 10)
-  return isNaN(num) ? 50 : num
-}
-
-export function coldJunctionToLabel(cj: string): string {
-  return cj === 'internal' ? 'internal' : cj
 }
 
 export interface TemperatureProfile {
@@ -72,6 +61,16 @@ export interface DeviceState {
   connectedAt: number
   acquiringAt: number
   samplingRate: number
+}
+
+export interface ScanResult {
+  id: string
+  name: string
+  address: string
+  port: number
+  macAddress?: string
+  serialNumber?: string
+  firmwareVersion?: string
 }
 
 export interface TemperatureSnapshot {
@@ -115,6 +114,10 @@ export function getStatus(id: string): Promise<DeviceState | boolean> {
 
 export function applyConfig(id: string, cfg: T1603Config): Promise<void> {
   return ApplyConfig(id, cfg as any) as Promise<void>
+}
+
+export function scanDevices(): Promise<ScanResult[]> {
+  return ScanDevices() as any
 }
 
 export function onPayload(handler: (snapshot: TemperatureSnapshot) => void): void {

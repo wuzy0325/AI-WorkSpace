@@ -11,9 +11,17 @@ export interface ChannelConfig {
 }
 
 export interface DaqT1603HardwareConfig {
-  thermocoupleType: string
-  coldJunction: string
-  filterHz: number
+  thermocoupleTypes: string
+  channelMask: string
+  samplingRate: number
+  binaryFormat: boolean
+  averageCount: number
+  triggerMode: number
+  triggerEdge: number
+  triggerCount: number
+  showTimestamp: boolean
+  showSequence: boolean
+  openCircuitCheck: string
 }
 
 /** DSA3217 扫描配置（从 LIST S 读取） */

@@ -73,6 +73,12 @@ const enableAtmospheric = ref(false)
 
 const PRESSURE_UNIT_OPTIONS = ['Pa', 'kPa', 'MPa', 'psi', 'kgf/cm2'] as const
 
+const DISCOVERED_TYPE_ICON: Record<string, string> = {
+  'DAQ-T-1603': 'T',
+  'DAQ-P-1604': 'P',
+  'DAQ-P-1064Pre': 'S',
+}
+
 const WTN_PXI_CHANNEL_NAMES = [
   '球罐压力', '球罐总压', '球罐静压',
   '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4', '球罐温度5',
@@ -259,7 +265,7 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     serialPort: '', baudRate: 115200, samplingRate: 20,
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
-      ? { thermocoupleType: 'K', coldJunction: 'internal', filterHz: 50 }
+      ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
       : undefined,
   }
 }
@@ -408,7 +414,7 @@ async function onTypeChanged(next: DeviceType) {
     enableAtmospheric.value = draft.value.channels[16]?.enabled !== false
   }
   if (next === 'DAQ-T-1603') {
-    draft.value.daqT1603Config = { thermocoupleType: 'K', coldJunction: 'internal', filterHz: 50 }
+    draft.value.daqT1603Config = { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
   } else if (next === 'DAQ-P-1604' || next === 'WTN_PXI') {
@@ -759,7 +765,7 @@ function channelLabel(c: ChannelConfig): string {
           </div>
           <div class="drawer-discovered-list">
             <div v-for="d in discovered" :key="d.id" class="discovered-card">
-              <div class="discovered-card-icon">{{ d.type === 'DAQ-T-1603' ? 'T' : d.type === 'DAQ-P-1604' ? 'P' : d.type === 'DAQ-P-1064Pre' ? 'S' : 'D' }}</div>
+              <div class="discovered-card-icon">{{ DISCOVERED_TYPE_ICON[d.type] ?? 'D' }}</div>
               <div class="discovered-card-info">
                 <div class="discovered-card-name">{{ d.name }}</div>
                 <div class="discovered-card-type">
@@ -851,23 +857,46 @@ function channelLabel(c: ChannelConfig): string {
           <!-- 标签页切换 -->
           <div class="editor-tabs">
             <div class="editor-tabs-inner">
-              <button class="editor-tab" :class="{ active: editorTab === 'basic' }" @click="editorTab = 'basic'">
+              <button
+                class="editor-tab"
+                :class="{ active: editorTab === 'basic' }"
+                @click="editorTab = 'basic'"
+              >
                 基本信息
               </button>
-              <button class="editor-tab" :class="{ active: editorTab === 'channels' }" @click="editorTab = 'channels'">
+              <button
+                class="editor-tab"
+                :class="{ active: editorTab === 'channels' }"
+                @click="editorTab = 'channels'"
+              >
                 通道配置
               </button>
             </div>
           </div>
 
           <div class="editor-body">
-            <div v-if="saveError" class="editor-error-banner">
-              <span>⚠️</span> 保存失败: {{ saveError }}
-            </div>
+            <!-- 保存错误提示横幅 -->
+            <Transition name="banner">
+              <div v-if="saveError" class="editor-error-banner">
+                <svg class="banner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span>保存失败: {{ saveError }}</span>
+              </div>
+            </Transition>
 
-            <div v-if="isReadOnly" class="editor-readonly-banner">
-              <span>🔒</span> 设备正在采集中，无法修改配置
-            </div>
+            <!-- 只读模式提示横幅 -->
+            <Transition name="banner">
+              <div v-if="isReadOnly" class="editor-readonly-banner">
+                <svg class="banner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span>设备正在采集中，无法修改配置</span>
+              </div>
+            </Transition>
 
             <!-- 基本信息 -->
             <div v-if="editorTab === 'basic'" class="editor-sections">
@@ -1029,9 +1058,17 @@ function channelLabel(c: ChannelConfig): string {
               <!-- DAQ-T-1603 专用配置 -->
               <div v-if="draft.type === 'DAQ-T-1603'" class="editor-channels-special">
                 <DaqT1603Config
-                  v-model:thermocouple-type="draft.daqT1603Config!.thermocoupleType"
-                  v-model:cold-junction="draft.daqT1603Config!.coldJunction"
-                  v-model:filter-hz="draft.daqT1603Config!.filterHz"
+                  v-model:thermocouple-types="draft.daqT1603Config!.thermocoupleTypes"
+                  v-model:channel-mask="draft.daqT1603Config!.channelMask"
+                  v-model:sampling-rate="draft.daqT1603Config!.samplingRate"
+                  v-model:binary-format="draft.daqT1603Config!.binaryFormat"
+                  v-model:average-count="draft.daqT1603Config!.averageCount"
+                  v-model:trigger-mode="draft.daqT1603Config!.triggerMode"
+                  v-model:trigger-edge="draft.daqT1603Config!.triggerEdge"
+                  v-model:trigger-count="draft.daqT1603Config!.triggerCount"
+                  v-model:show-timestamp="draft.daqT1603Config!.showTimestamp"
+                  v-model:show-sequence="draft.daqT1603Config!.showSequence"
+                  v-model:open-circuit-check="draft.daqT1603Config!.openCircuitCheck"
                 />
                 <div class="editor-channels-table-wrap">
                   <table class="editor-channels-table">
@@ -1098,18 +1135,37 @@ function channelLabel(c: ChannelConfig): string {
                 <!-- 批量同步 -->
                 <div class="editor-ch-batch">
                   <div class="editor-ch-batch-item">
-                    <div class="editor-label">批量量程 (1~16CH)</div>
+                    <div class="editor-label">批量量程 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-range">
-                      <input v-model.number="deviceRangeMin" type="number" :disabled="isReadOnly" class="editor-ch-batch-input" />
-                      <span>~</span>
-                      <input v-model.number="deviceRangeMax" type="number" :disabled="isReadOnly" class="editor-ch-batch-input" />
+                      <input
+                        v-model.number="deviceRangeMin"
+                        type="number"
+                        :disabled="isReadOnly"
+                        class="editor-ch-batch-input"
+                        placeholder="最小值"
+                      />
+                      <span class="editor-ch-batch-sep">~</span>
+                      <input
+                        v-model.number="deviceRangeMax"
+                        type="number"
+                        :disabled="isReadOnly"
+                        class="editor-ch-batch-input"
+                        placeholder="最大值"
+                      />
                     </div>
                   </div>
                   <div class="editor-ch-batch-divider" />
                   <div class="editor-ch-batch-item">
-                    <div class="editor-label">批量精度 (1~16CH)</div>
+                    <div class="editor-label">批量精度 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-precision">
-                      <input v-model.number="devicePrecision" type="number" min="0" :disabled="isReadOnly" class="editor-ch-batch-input-sm" />
+                      <input
+                        v-model.number="devicePrecision"
+                        type="number"
+                        min="0"
+                        :disabled="isReadOnly"
+                        class="editor-ch-batch-input-sm"
+                        placeholder="0"
+                      />
                       <span class="editor-ch-batch-hint">全局小数位</span>
                     </div>
                   </div>
@@ -1156,17 +1212,46 @@ function channelLabel(c: ChannelConfig): string {
 
           <footer class="editor-footer">
             <div class="editor-footer-left">
-              <div v-if="isReadOnly" class="editor-footer-readonly">🔒 只读模式</div>
-              <div v-else-if="validationErrorCount > 0" class="editor-footer-errors">
-                ● 校验失败: {{ validationErrorCount }} 项错误
+              <!-- 只读模式状态指示 -->
+              <div v-if="isReadOnly" class="editor-footer-readonly">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                只读模式
               </div>
+              <!-- 校验错误状态指示 -->
+              <div v-else-if="validationErrorCount > 0" class="editor-footer-errors">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                校验失败: {{ validationErrorCount }} 项错误
+              </div>
+              <!-- 正常状态指示 -->
               <div v-else class="editor-footer-status" :class="{ dirty: isDirty }">
-                {{ isDirty ? '● 检测到未保存的变更' : '✓ 配置已同步' }}
+                <svg v-if="isDirty" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="6" x2="12" y2="12"/>
+                  <polyline points="12 16 12 16"/>
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                {{ isDirty ? '检测到未保存的变更' : '配置已同步' }}
               </div>
             </div>
             <div class="editor-footer-right">
               <button class="btn btn-second" @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</button>
-              <button v-if="!isReadOnly" class="btn btn-primary" :disabled="saving || validationErrorCount > 0" @click="saveDraft">
+              <button
+                v-if="!isReadOnly"
+                class="btn btn-primary"
+                :disabled="saving || validationErrorCount > 0"
+                :class="{ 'btn-saving': saving }"
+                @click="saveDraft"
+              >
+                <span v-if="saving" class="btn-spinner" />
                 {{ saving ? '保存中...' : '保存' }}
               </button>
             </div>
@@ -1385,19 +1470,38 @@ function channelLabel(c: ChannelConfig): string {
 
 .editor-body { padding: 1.5rem; overflow-y: auto; flex: 1; min-height: 0; }
 
+/* 横幅过渡动画 */
+.banner-enter-active,
+.banner-leave-active {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.banner-enter-from,
+.banner-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+  max-height: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .editor-error-banner {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 1rem; border-radius: 0.75rem;
-  background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.3);
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.875rem 1rem; border-radius: 0.625rem;
+  background: rgba(244,63,94,0.08); border: 1px solid rgba(244,63,94,0.2);
   font-size: 0.75rem; font-weight: 700; color: #f43f5e;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 .editor-readonly-banner {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 1rem; border-radius: 0.75rem;
-  background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.875rem 1rem; border-radius: 0.625rem;
+  background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
   font-size: 0.75rem; font-weight: 700; color: #f59e0b;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+.banner-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
 }
 
 .editor-sections { display: flex; flex-direction: column; gap: 2rem; }
@@ -1490,71 +1594,167 @@ function channelLabel(c: ChannelConfig): string {
 
 .editor-ch-batch {
   display: flex; align-items: flex-end; gap: 1.5rem;
-  padding: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--bg-panel-strong) 30%, transparent);
+  border: 1px solid var(--border-default);
 }
 .editor-ch-batch-item { flex: 1; }
-.editor-ch-batch-divider { width: 1px; height: 40px; background: var(--border-default); opacity: 0.6; }
+.editor-ch-batch-divider { width: 1px; height: 40px; background: var(--border-default); opacity: 0.4; }
 .editor-ch-batch-range { display: flex; align-items: center; gap: 0.5rem; }
+.editor-ch-batch-sep {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 .editor-ch-batch-input {
-  width: 100%; padding: 0.375rem 0.5rem; border-radius: 0.5rem;
+  width: 100%; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
   border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-size: 0.75rem; font-weight: 700; color: var(--text-primary);
+  font-size: 0.8rem; font-weight: 700; color: var(--text-primary);
   text-align: center; outline: none;
+  transition: all 0.2s ease;
 }
-.editor-ch-batch-input:focus { border-color: #3b82f6; }
-.editor-ch-batch-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.editor-ch-batch-input:focus { border-color: #3b82f6; background: var(--bg-panel-strong); }
+.editor-ch-batch-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .editor-ch-batch-input-sm {
-  width: 96px; padding: 0.375rem 0.5rem; border-radius: 0.5rem;
+  width: 96px; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
   border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-size: 0.75rem; font-weight: 700; color: var(--text-primary);
+  font-size: 0.8rem; font-weight: 700; color: var(--text-primary);
   text-align: center; outline: none;
+  transition: all 0.2s ease;
 }
-.editor-ch-batch-input-sm:focus { border-color: #3b82f6; }
+.editor-ch-batch-input-sm:focus { border-color: #3b82f6; background: var(--bg-panel-strong); }
 .editor-ch-batch-precision { display: flex; align-items: center; gap: 0.75rem; }
 .editor-ch-batch-hint { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); }
+.editor-label-sub {
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-left: 0.25rem;
+}
 
 .editor-channels-table-wrap {
-  border-radius: 0.5rem; border: 1px solid var(--border-default);
-  overflow: hidden; background: var(--bg-panel);
+  border-radius: 0.625rem;
+  border: 1px solid var(--border-default);
+  overflow: hidden;
+  background: var(--bg-panel);
 }
-.editor-channels-table { width: 100%; border-collapse: collapse; text-align: left; }
-.editor-channels-table thead tr { background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent); }
+.editor-channels-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: left;
+}
+.editor-channels-table thead tr {
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+}
 .editor-channels-table th {
-  padding: 0.75rem 0.5rem; font-size: 0.625rem; font-weight: 800;
-  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
 }
 .editor-channels-table td {
-  padding: 0.5rem; border-top: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
-  font-size: 0.75rem; color: var(--text-primary);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  transition: background 0.15s ease;
 }
-.editor-channels-table tr:hover td { background: color-mix(in srgb, var(--bg-panel-strong) 30%, transparent); }
-.editor-ch-check { width: 16px; height: 16px; accent-color: #3b82f6; }
+.editor-channels-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.editor-channels-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--bg-panel-strong) 25%, transparent);
+}
+.editor-channels-table tbody tr:hover td:first-child {
+  border-radius: 0;
+}
+.editor-ch-check {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+.editor-ch-check:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 .editor-ch-input {
-  width: 100%; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
-  border: 1px solid transparent; background: transparent;
-  font-size: 0.75rem; font-weight: 700; color: var(--text-primary);
-  outline: none; transition: all 0.2s;
+  width: 100%;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s ease;
 }
-.editor-ch-input:hover { background: var(--bg-panel-strong); }
-.editor-ch-input:focus { background: var(--bg-panel); border-color: #3b82f6; }
-.editor-ch-input:disabled { opacity: 0.6; cursor: not-allowed; }
-.editor-ch-range { display: flex; align-items: center; justify-content: center; gap: 0.25rem; }
+.editor-ch-input:hover {
+  background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
+}
+.editor-ch-input:focus {
+  background: var(--bg-panel);
+  border-color: #3b82f6;
+}
+.editor-ch-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.editor-ch-range {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+}
 .editor-ch-range-input {
-  width: 80px; padding: 0.25rem 0.375rem; border-radius: 0.375rem;
-  border: 1px solid transparent; background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-size: 0.7rem; font-weight: 700; color: var(--text-primary);
-  text-align: right; outline: none;
+  width: 80px;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: right;
+  outline: none;
+  transition: all 0.2s ease;
 }
-.editor-ch-range-input:focus { border-color: #3b82f6; }
-.editor-ch-range-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.editor-ch-range-input:focus {
+  border-color: #3b82f6;
+  background: var(--bg-panel);
+}
+.editor-ch-range-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .editor-ch-precision-input {
-  width: 100%; padding: 0.25rem 0.375rem; border-radius: 0.375rem;
-  border: 1px solid transparent; background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-size: 0.7rem; font-weight: 700; color: var(--text-primary);
-  text-align: right; outline: none;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: right;
+  outline: none;
+  transition: all 0.2s ease;
 }
-.editor-ch-precision-input:focus { border-color: #3b82f6; }
-.editor-ch-precision-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.editor-ch-precision-input:focus {
+  border-color: #3b82f6;
+  background: var(--bg-panel);
+}
+.editor-ch-precision-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .font-mono { font-family: ui-monospace, monospace; }
 .text-center { text-align: center; }
@@ -1568,10 +1768,48 @@ function channelLabel(c: ChannelConfig): string {
   background: var(--bg-panel-strong);
   flex-shrink: 0;
 }
-.editor-footer-left { display: flex; flex-direction: column; }
+.editor-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
 .editor-footer-right { display: flex; gap: 0.75rem; }
-.editor-footer-readonly { font-size: 0.65rem; font-weight: 800; color: #f59e0b; text-transform: uppercase; letter-spacing: 0.05em; }
-.editor-footer-errors { font-size: 0.65rem; font-weight: 800; color: #f43f5e; text-transform: uppercase; letter-spacing: 0.05em; }
-.editor-footer-status { font-size: 0.65rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+.editor-footer-readonly {
+  display: flex; align-items: center; gap: 0.375rem;
+  font-size: 0.65rem; font-weight: 800; color: #f59e0b;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.editor-footer-errors {
+  display: flex; align-items: center; gap: 0.375rem;
+  font-size: 0.65rem; font-weight: 800; color: #f43f5e;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.editor-footer-status {
+  display: flex; align-items: center; gap: 0.375rem;
+  font-size: 0.65rem; font-weight: 800; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  transition: color 0.2s ease;
+}
 .editor-footer-status.dirty { color: #f59e0b; }
+
+/* 保存按钮加载动画 */
+.btn-saving {
+  position: relative;
+  padding-left: 2rem;
+}
+.btn-spinner {
+  position: absolute;
+  left: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: btn-spin 0.8s linear infinite;
+}
+@keyframes btn-spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
 </style>

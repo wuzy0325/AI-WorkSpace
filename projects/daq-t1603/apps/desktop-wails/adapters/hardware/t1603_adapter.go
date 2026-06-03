@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	sharedcore "shared.local/device-sdk/go/daq/core"
@@ -32,6 +33,26 @@ func NewT1603Adapter() *T1603Adapter {
 
 var _ ports.DevicePort = (*T1603Adapter)(nil)
 
+func mapT1603SharedConfig(cfg core.T1603Config) sharedcore.DaqT1603HardwareConfig {
+	tcTypes := strings.Repeat(cfg.ThermocoupleType, 16)
+	if len(tcTypes) != 16 {
+		tcTypes = "KKKKKKKKKKKKKKKK"
+	}
+	mask := cfg.ChannelMask
+	if mask == "" {
+		mask = "FFFF"
+	}
+	return sharedcore.DaqT1603HardwareConfig{
+		ThermocoupleTypes: tcTypes,
+		ChannelMask:       mask,
+		SamplingRate:      cfg.SamplingRate,
+		BinaryFormat:      false,
+		AverageCount:      cfg.AverageCount,
+		ShowTimestamp:     cfg.ShowTimestamp,
+		ShowSequence:      cfg.ShowSequence,
+	}
+}
+
 func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -47,6 +68,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		Address:      profile.Address,
 		Port:         profile.Port,
 		SamplingRate: profile.SamplingRate,
+		DaqT1603Config: mapT1603SharedConfig(profile.T1603Cfg),
 		Channels: func() []sharedcore.ChannelConfig {
 			ch := make([]sharedcore.ChannelConfig, 16)
 			for i := range ch {
@@ -67,6 +89,25 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		}(),
 	}
 	dev := sharedhw.NewDAQT1603(sharedProfile)
+
+	dev.OnConfigSynced(func(cfg sharedcore.DaqT1603HardwareConfig) {
+		a.mu.RLock()
+		st, ok := a.status[profile.ID]
+		a.mu.RUnlock()
+		if !ok {
+			return
+		}
+		a.mu.Lock()
+		profile.T1603Cfg.SamplingRate = cfg.SamplingRate
+		profile.T1603Cfg.ChannelMask = cfg.ChannelMask
+		profile.T1603Cfg.AverageCount = cfg.AverageCount
+		profile.T1603Cfg.ShowTimestamp = cfg.ShowTimestamp
+		profile.T1603Cfg.ShowSequence = cfg.ShowSequence
+		profile.T1603Cfg.ThermocoupleType = string(cfg.ThermocoupleTypes[0])
+		st.Profile = profile
+		a.mu.Unlock()
+	})
+
 	if err := dev.Connect(); err != nil {
 		return fmt.Errorf("connect device %s: %w", profile.ID, err)
 	}
@@ -225,11 +266,7 @@ func (a *T1603Adapter) ApplyConfig(id string, cfg core.T1603Config) error {
 	if st, exists := a.status[id]; exists {
 		st.Profile.T1603Cfg = cfg
 	}
-	return dev.ApplyDaqT1603Config(sharedcore.DaqT1603HardwareConfig{
-		ThermocoupleType: cfg.ThermocoupleType,
-		ColdJunction:     cfg.ColdJunction,
-		FilterHz:         cfg.FilterHz,
-	})
+	return dev.ApplyDaqT1603Config(mapT1603SharedConfig(cfg))
 }
 
 func (a *T1603Adapter) SetDataSink(id string, sink func(core.TemperatureSnapshot)) {

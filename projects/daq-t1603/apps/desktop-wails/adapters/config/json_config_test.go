@@ -39,8 +39,9 @@ func TestSaveAndLoad(t *testing.T) {
 		},
 		T1603Cfg: core.T1603Config{
 			ThermocoupleType: "K",
-			ColdJunction:     "internal",
-			FilterHz:         50,
+			ChannelMask:      "FFFF",
+			SamplingRate:     10,
+			AverageCount:     4,
 		},
 	}
 

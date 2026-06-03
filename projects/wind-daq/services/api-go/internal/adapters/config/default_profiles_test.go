@@ -47,8 +47,8 @@ func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 	if profile.Channels[15].Name != "TC16" {
 		t.Fatalf("expected last channel name TC16, got %q", profile.Channels[15].Name)
 	}
-	if profile.DaqT1603Config.ThermocoupleType != "K" {
-		t.Fatalf("expected default thermocouple type K, got %q", profile.DaqT1603Config.ThermocoupleType)
+	if profile.DaqT1603Config.ThermocoupleTypes != "KKKKKKKKKKKKKKKK" {
+		t.Fatalf("expected default thermocouple types, got %q", profile.DaqT1603Config.ThermocoupleTypes)
 	}
 }
 
@@ -67,5 +67,41 @@ func TestNormalizeProfileRestoresDefaultChannels(t *testing.T) {
 	}
 	if normalized.Name != "Legacy Simulator" {
 		t.Fatalf("expected name to be preserved, got %q", normalized.Name)
+	}
+}
+
+func TestNormalizeProfileBackfillsDaqT1603ConfigWhenChannelsExist(t *testing.T) {
+	profile := NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	profile.DaqT1603Config = device.DaqT1603HardwareConfig{}
+
+	normalized := NormalizeProfile(profile)
+
+	if normalized.DaqT1603Config.ThermocoupleTypes != "KKKKKKKKKKKKKKKK" {
+		t.Fatalf("expected default thermocouple types, got %q", normalized.DaqT1603Config.ThermocoupleTypes)
+	}
+	if normalized.DaqT1603Config.ChannelMask != "FFFF" {
+		t.Fatalf("expected default channel mask, got %q", normalized.DaqT1603Config.ChannelMask)
+	}
+	if normalized.DaqT1603Config.SamplingRate != 10 {
+		t.Fatalf("expected default sampling rate, got %d", normalized.DaqT1603Config.SamplingRate)
+	}
+	if normalized.DaqT1603Config.AverageCount != 1 {
+		t.Fatalf("expected default average count, got %d", normalized.DaqT1603Config.AverageCount)
+	}
+}
+
+func TestNormalizeProfilePreservesDaqT1603ConfigValues(t *testing.T) {
+	profile := NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	profile.DaqT1603Config = device.DaqT1603HardwareConfig{
+		ThermocoupleTypes: "SSSSSSSSSSSSSSSS",
+		ChannelMask:       "00FF",
+		SamplingRate:      20,
+		AverageCount:      4,
+	}
+
+	normalized := NormalizeProfile(profile)
+
+	if normalized.DaqT1603Config != profile.DaqT1603Config {
+		t.Fatalf("expected config to be preserved, got %+v", normalized.DaqT1603Config)
 	}
 }

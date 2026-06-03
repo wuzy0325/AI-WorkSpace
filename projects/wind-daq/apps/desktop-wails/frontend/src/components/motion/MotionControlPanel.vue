@@ -19,8 +19,6 @@ const MAX_HISTORY = 50
 interface AxisLocalState {
   targetPosition: number
   step: number
-  /** 控制面板展开状态: monitor | jog | move */
-  expandedPanel: 'monitor' | 'jog' | 'move' | null
 }
 
 type AxisLocalStateMap = Record<AxisName, AxisLocalState>
@@ -30,18 +28,13 @@ const axisLocalState = reactive<Record<string, AxisLocalStateMap>>({})
 function ensureAxisLocalState(controllerId: string, axisName: AxisName): AxisLocalState {
   if (!axisLocalState[controllerId]) {
     axisLocalState[controllerId] = {
-      X: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      Y: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      Z: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      U: { targetPosition: 0, step: 1, expandedPanel: 'monitor' }
+      X: { targetPosition: 0, step: 1 },
+      Y: { targetPosition: 0, step: 1 },
+      Z: { targetPosition: 0, step: 1 },
+      U: { targetPosition: 0, step: 1 }
     }
   }
   return axisLocalState[controllerId][axisName]
-}
-
-function togglePanel(controllerId: string, axisName: AxisName, panel: 'monitor' | 'jog' | 'move'): void {
-  const state = ensureAxisLocalState(controllerId, axisName)
-  state.expandedPanel = state.expandedPanel === panel ? null : panel
 }
 
 type AxisZeroOffsetMap = Record<AxisName, number>
@@ -65,6 +58,11 @@ function getZeroOffset(controllerId: string, axisName: AxisName): number {
 
 function setZeroOffset(controllerId: string, axisName: AxisName, value: number): void {
   ensureZeroOffsetMap(controllerId)[axisName] = value
+}
+
+function getAbsoluteTargetPosition(controllerId: string, axisName: AxisName): number {
+  if (!controllerId) return 0
+  return getZeroOffset(controllerId, axisName) + ensureAxisLocalState(controllerId, axisName).targetPosition
 }
 
 const currentStatus = computed(() =>
@@ -496,7 +494,7 @@ watch(
             <div
               v-for="axis in axes"
               :key="axis.name"
-              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-4 flex flex-col gap-3 transition-all min-w-[200px]"
+              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-[200px]"
               :class="getAxisThemeClass(axis.name)"
             >
               <div class="flex items-center justify-between">
@@ -518,94 +516,52 @@ watch(
                 </div>
               </div>
 
-              <div class="readout-display relative py-4 px-4 rounded-[var(--radius-md)] bg-[color:var(--bg-canvas)] overflow-hidden group-hover:opacity-90 transition-opacity">
+              <div class="readout-display relative py-3 px-3 rounded-[var(--radius-md)] bg-[color:var(--bg-canvas)] overflow-hidden group-hover:opacity-90 transition-opacity">
                 <div class="flex items-baseline justify-between relative z-10">
-                  <div class="text-3xl font-mono font-bold text-[color:var(--text-primary)] tracking-tight truncate">
+                  <div class="text-2xl font-mono font-bold text-[color:var(--text-primary)] tracking-tight truncate">
                     {{
                       selectedId
                         ? (axis.position - getZeroOffset(selectedId as string, axis.name as AxisName)).toFixed(2)
                         : axis.position.toFixed(2)
                     }}
                   </div>
-                  <div class="text-xs font-bold text-[color:var(--text-muted)] uppercase tracking-wider shrink-0 ml-2">{{ getAxisUnit(axis.name as AxisName) }}</div>
+                  <div class="text-[10px] font-bold text-[color:var(--text-muted)] uppercase tracking-wider shrink-0 ml-2">{{ getAxisUnit(axis.name as AxisName) }}</div>
                 </div>
-                <div class="mt-1 flex items-center gap-1.5">
-                  <span class="text-[10px] text-[color:var(--text-muted)]">当前位置</span>
-                  <span
-                    class="history-hint"
-                    title="底部彩色条带显示最近 50 次位置采样历史，颜色从蓝(早)到绿(晚)渐变"
-                  >
-                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12.01" y2="16"/><path d="M12 12v-4"/></svg>
-                  </span>
+                <div class="mt-0.5 flex items-center gap-1">
+                  <span class="text-[9px] text-[color:var(--text-muted)]">当前位置</span>
                 </div>
-                <div class="absolute bottom-0 left-0 right-0 h-1.5 opacity-60">
+                <div class="absolute bottom-0 left-0 right-0 h-1 opacity-60">
                   <div class="h-full w-full" :style="historyBarStyle(axis.name as AxisName)"></div>
                 </div>
               </div>
 
-              <!-- 操作分层标签页 -->
-              <div class="axis-panel-tabs">
-                <button
-                  class="axis-panel-tab"
-                  :class="{ 'axis-panel-tab--active': ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'monitor' }"
-                  @click="togglePanel(selectedId as string, axis.name as AxisName, 'monitor')"
-                >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <!-- 监视区域 -->
+              <div class="axis-section">
+                <div class="axis-section-title">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
                   监视
-                </button>
-                <button
-                  class="axis-panel-tab"
-                  :class="{ 'axis-panel-tab--active': ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'jog' }"
-                  @click="togglePanel(selectedId as string, axis.name as AxisName, 'jog')"
-                  :disabled="!controllerConnected"
-                >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="m5 15 7 7 7-7"/></svg>
-                  点动
-                </button>
-                <button
-                  class="axis-panel-tab"
-                  :class="{ 'axis-panel-tab--active': ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'move' }"
-                  @click="togglePanel(selectedId as string, axis.name as AxisName, 'move')"
-                  :disabled="!controllerConnected"
-                >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
-                  定位
-                </button>
-              </div>
-
-              <!-- 监视面板 -->
-              <div v-if="ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'monitor'" class="axis-panel-content">
-                <div class="space-y-2">
-                  <div class="flex items-center justify-between text-[10px]">
-                    <span class="font-bold uppercase tracking-wider text-[color:var(--text-muted)]">状态</span>
-                    <span class="font-semibold" :class="axis.moving ? 'text-[color:var(--accent-success)]' : 'text-[color:var(--text-muted)]'">
-                      {{ axis.moving ? '运动中' : '静止' }}
-                    </span>
-                  </div>
-                  <div class="flex items-center justify-between text-[10px]">
-                    <span class="font-bold uppercase tracking-wider text-[color:var(--text-muted)]">归零状态</span>
-                    <span class="font-semibold" :class="axis.homed ? 'text-[color:var(--accent-success)]' : 'text-[color:var(--accent-warning)]'">
-                      {{ axis.homed ? '已归零' : '未归零' }}
-                    </span>
-                  </div>
-                  <div class="flex items-center justify-between px-1 pt-1">
-                    <div class="flex items-center gap-1.5 shrink-0">
-                      <span class="limit-indicator" :class="axis.negLimit ? 'active' : ''"></span>
-                      <span class="text-[9px] font-bold uppercase tracking-tighter text-[color:var(--text-muted)]">{{ i18n.t.negLimit }}</span>
+                </div>
+                <div class="space-y-1">
+                  <!-- 限位指示 -->
+                  <div class="limit-status-row">
+                    <div class="limit-status-item">
+                      <span class="limit-indicator-sm" :class="axis.negLimit ? 'active' : ''"></span>
+                      <span class="limit-status-label">{{ i18n.t.negLimit }}</span>
                     </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
-                      <span class="text-[9px] font-bold uppercase tracking-tighter text-[color:var(--text-muted)]">{{ i18n.t.posLimit }}</span>
-                      <span class="limit-indicator" :class="axis.posLimit ? 'active' : ''"></span>
+                    <div class="limit-status-item">
+                      <span class="limit-status-label">{{ i18n.t.posLimit }}</span>
+                      <span class="limit-indicator-sm" :class="axis.posLimit ? 'active' : ''"></span>
                     </div>
                   </div>
-                  <div class="flex gap-2 pt-2">
+                  <!-- 操作按钮 -->
+                  <div class="flex gap-1.5 pt-1">
                     <button
-                      class="flex-1 min-w-0 h-8 rounded-md border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] text-xs font-bold uppercase tracking-wider text-[color:var(--text-secondary)] transition-all hover:bg-[color:var(--bg-canvas)] active:scale-95 disabled:opacity-40 truncate px-1"
+                      class="btn-zero flex-1 min-w-0 h-7 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 truncate px-1"
                       @click="setZero(axis.name as AxisName)"
                       :disabled="axis.moving || !controllerConnected"
                     >{{ i18n.t.setZero }}</button>
                     <button
-                      class="btn-stop flex-1 min-w-0 h-8 rounded-md text-xs font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 truncate px-1"
+                      class="btn-stop flex-1 min-w-0 h-7 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 truncate px-1"
                       @click="stop(axis.name as AxisName)"
                       :disabled="!axis.moving || !controllerConnected"
                     >{{ i18n.t.stop }}</button>
@@ -613,78 +569,73 @@ watch(
                 </div>
               </div>
 
-              <!-- 点动面板 -->
-              <div v-if="ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'jog'" class="axis-panel-content">
-                <div class="space-y-3">
-                  <div>
-                    <div class="flex items-center justify-between mb-1.5">
-                      <span class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--text-muted)]">{{ i18n.t.jogStep }}</span>
-                      <span class="text-[10px] font-semibold text-[color:var(--text-primary)]">{{ ensureAxisLocalState(selectedId as string, axis.name as AxisName).step }} {{ getAxisUnit(axis.name as AxisName) }}</span>
-                    </div>
-                    <div class="flex gap-2">
-                      <button
-                        class="btn-step"
-                        @click="adjustByStep(axis.name as AxisName, 'reverse')"
-                        :disabled="axis.moving || !controllerConnected"
-                      >−</button>
-                      <input
-                        v-model.number="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
-                        type="number"
-                        class="input-field flex-1 min-w-0 h-10 px-2 text-center text-sm font-semibold"
-                        :disabled="axis.moving || !controllerConnected"
-                      />
-                      <button
-                        class="btn-step"
-                        @click="adjustByStep(axis.name as AxisName, 'forward')"
-                        :disabled="axis.moving || !controllerConnected"
-                      >+</button>
-                    </div>
+              <!-- 点动区域 -->
+              <div class="axis-section">
+                <div class="axis-section-title">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="m5 15 7 7 7-7"/></svg>
+                  点动
+                </div>
+                <div class="jog-control-row">
+                  <button
+                    class="btn-step-sm"
+                    @click="adjustByStep(axis.name as AxisName, 'reverse')"
+                    :disabled="axis.moving || !controllerConnected"
+                  >−</button>
+                  <div class="jog-input-wrap">
+                    <input
+                      v-model.number="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
+                      type="number"
+                      class="input-field jog-input"
+                      :disabled="axis.moving || !controllerConnected"
+                    />
+                    <span class="jog-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                  <p class="text-[9px] text-[color:var(--text-muted)] leading-relaxed">
-                    点击 −/+ 按设定步长移动，或修改步长值后点击。
-                  </p>
+                  <button
+                    class="btn-step-sm"
+                    @click="adjustByStep(axis.name as AxisName, 'forward')"
+                    :disabled="axis.moving || !controllerConnected"
+                  >+</button>
                 </div>
               </div>
 
-              <!-- 定位面板 -->
-              <div v-if="ensureAxisLocalState(selectedId as string, axis.name as AxisName).expandedPanel === 'move'" class="axis-panel-content">
-                <div class="space-y-3">
-                  <div>
-                  <span class="block text-[10px] font-bold uppercase tracking-wider text-[color:var(--text-muted)] mb-1.5">{{ i18n.t.targetPosition }}</span>
-                  <div class="flex gap-2">
+              <!-- 定位区域 -->
+              <div class="axis-section">
+                <div class="axis-section-title">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                  定位
+                </div>
+                <div class="move-control-row">
+                  <div class="move-input-wrap">
                     <input
                       v-model.number="ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition"
                       type="number"
-                      class="input-field flex-1 min-w-0 h-10 px-3 text-sm font-semibold"
-                      :class="getLimitWarningClass(axis.name as AxisName, getZeroOffset(selectedId as string, axis.name as AxisName) + ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition)"
+                      class="input-field move-input"
+                      :class="getLimitWarningClass(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName))"
                       :disabled="axis.moving || !controllerConnected"
                       placeholder="0.00"
                     />
-                    <button
-                      class="btn-move h-10 px-4 shrink-0 rounded-lg text-xs font-bold uppercase tracking-wider active:scale-95 transition-all hover:opacity-90 disabled:opacity-40"
-                      @click="move(axis.name as AxisName)"
-                      :disabled="axis.moving || !controllerConnected"
-                    >{{ i18n.t.move }}</button>
+                    <span class="move-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                  <!-- 限位警告提示 -->
-                  <div
-                    v-if="!validateTargetPosition(axis.name as AxisName, getZeroOffset(selectedId as string, axis.name as AxisName) + ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition).valid"
-                    class="mt-1.5 flex items-center gap-1 text-[10px] text-[color:var(--accent-danger)]"
-                  >
-                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    {{ validateTargetPosition(axis.name as AxisName, getZeroOffset(selectedId as string, axis.name as AxisName) + ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition).warning }}
-                  </div>
-                  <div
-                    v-else-if="validateTargetPosition(axis.name as AxisName, getZeroOffset(selectedId as string, axis.name as AxisName) + ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition).warning"
-                    class="mt-1.5 flex items-center gap-1 text-[10px] text-[color:var(--accent-warning)]"
-                  >
-                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    {{ validateTargetPosition(axis.name as AxisName, getZeroOffset(selectedId as string, axis.name as AxisName) + ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition).warning }}
-                  </div>
+                  <button
+                    class="btn-move h-8 px-3 shrink-0 rounded-md text-[11px] font-bold uppercase tracking-wider active:scale-95 transition-all hover:opacity-90 disabled:opacity-40"
+                    @click="move(axis.name as AxisName)"
+                    :disabled="axis.moving || !controllerConnected"
+                  >{{ i18n.t.move }}</button>
                 </div>
-                <p class="text-[9px] text-[color:var(--text-muted)] leading-relaxed">
-                  输入目标位置（相对归零偏移），点击移动。
-                </p>
+                <!-- 限位警告提示 -->
+                <div
+                  v-if="!validateTargetPosition(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName)).valid"
+                  class="mt-1 flex items-center gap-1 text-[10px] text-[color:var(--accent-danger)]"
+                >
+                  <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  {{ validateTargetPosition(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName)).warning }}
+                </div>
+                <div
+                  v-else-if="validateTargetPosition(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName)).warning"
+                  class="mt-1 flex items-center gap-1 text-[10px] text-[color:var(--accent-warning)]"
+                >
+                  <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  {{ validateTargetPosition(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName)).warning }}
                 </div>
               </div>
             </div>
@@ -726,7 +677,19 @@ watch(
 .axis-card .btn-move {
   background: var(--axis-hue);
   color: white;
-  box-shadow: 0 4px 14px 0 color-mix(in srgb, var(--axis-hue) 30%, transparent);
+  border: 1px solid var(--axis-hue);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--axis-hue) 35%, transparent);
+  transition: background-color var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard), transform var(--motion-fast) var(--easing-standard), opacity var(--motion-fast) var(--easing-standard);
+}
+
+.axis-card .btn-move:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--axis-hue) 45%, transparent);
+}
+
+.axis-card .btn-move:active:not(:disabled) {
+  transform: scale(0.95);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--axis-hue) 25%, transparent);
 }
 
 .btn-step {
@@ -765,10 +728,53 @@ watch(
   cursor: not-allowed;
 }
 
+.btn-step-sm {
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel-strong);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 8%, transparent);
+  transition: background-color var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), color var(--motion-fast) var(--easing-standard), transform var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
+}
+
+.btn-step-sm:hover:not(:disabled) {
+  background: var(--axis-hue, var(--accent-primary));
+  border-color: var(--axis-hue, var(--accent-primary));
+  color: white;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--axis-hue, var(--accent-primary)) 25%, transparent);
+}
+
+.btn-step-sm:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 3px var(--focus-ring-soft);
+}
+
+.btn-step-sm:active:not(:disabled) {
+  transform: scale(0.92);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 8%, transparent);
+}
+
+.btn-step-sm:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* 停止按钮 - 红色主题，始终可见 */
 .btn-stop {
   background: var(--bg-panel-strong);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-strong);
   color: var(--text-secondary);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent);
+  transition: background-color var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), color var(--motion-fast) var(--easing-standard), transform var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
 }
 
 .btn-stop:focus-visible {
@@ -780,11 +786,18 @@ watch(
   background: var(--accent-danger);
   border-color: var(--accent-danger);
   color: white;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-danger) 30%, transparent);
+}
+
+.btn-stop:active:not(:disabled) {
+  transform: scale(0.95);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 8%, transparent);
 }
 
 .btn-stop:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-estop {
@@ -994,63 +1007,207 @@ watch(
   color: var(--accent-success);
 }
 
-/* 轴面板标签页 */
-.axis-panel-tabs {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0.25rem;
+/* 轴功能区域 */
+.axis-section {
+  padding: 0.625rem;
   background: var(--bg-canvas);
   border-radius: var(--radius-md);
-  margin-bottom: 0.75rem;
+  margin-top: 0.375rem;
 }
 
-.axis-panel-tab {
-  flex: 1;
-  display: inline-flex;
+.axis-section-title {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  padding: 0.375rem 0.5rem;
-  border-radius: calc(var(--radius-md) - 2px);
+  gap: 0.375rem;
+  margin-bottom: 0.5rem;
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
+}
+
+.axis-section-title svg {
+  color: var(--axis-hue, var(--accent-primary));
+}
+
+/* 限位状态行 */
+.limit-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.375rem;
+  background: var(--bg-panel);
+  border-radius: calc(var(--radius-md) - 2px);
+}
+
+.limit-status-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.limit-status-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.limit-indicator-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--border-default);
   background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: all var(--motion-fast) var(--easing-standard);
+  transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard), box-shadow var(--motion-base) var(--easing-standard);
 }
 
-.axis-panel-tab:hover:not(:disabled) {
-  color: var(--text-primary);
+.limit-indicator-sm.active {
+  background: var(--accent-danger);
+  box-shadow: 0 0 4px var(--accent-danger);
+  border-color: transparent;
+}
+
+/* 归零按钮 */
+.btn-zero {
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent);
+  transition: background-color var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), color var(--motion-fast) var(--easing-standard), transform var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
+}
+
+.btn-zero:hover:not(:disabled) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+.btn-zero:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 3px var(--focus-ring-soft);
+}
+
+.btn-zero:active:not(:disabled) {
+  transform: scale(0.95);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 8%, transparent);
+}
+
+.btn-zero:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* 点动控制行 */
+.jog-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.jog-input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.jog-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 1.5rem 0 0.5rem;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: 600;
   background: var(--bg-panel);
-}
-
-.axis-panel-tab--active {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   color: var(--text-primary);
-  background: var(--bg-panel);
-  box-shadow: 0 1px 3px color-mix(in srgb, #000 15%, transparent);
 }
 
-.axis-panel-tab:disabled {
-  opacity: 0.4;
+.jog-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-primary-muted);
+}
+
+.jog-input:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-.axis-panel-content {
-  animation: panel-fade-in var(--motion-fast) var(--easing-standard);
+.jog-unit {
+  position: absolute;
+  right: 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
-@keyframes panel-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* 定位控制行 */
+.move-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.move-input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.move-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 1.5rem 0 0.5rem;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: var(--bg-panel);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.move-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-primary-muted);
+}
+
+.move-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.move-input.limit-exceeded {
+  border-color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 8%, var(--bg-panel));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 25%, transparent);
+}
+
+.move-input.limit-near {
+  border-color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 8%, var(--bg-panel));
+}
+
+.move-unit {
+  position: absolute;
+  right: 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  pointer-events: none;
 }
 </style>

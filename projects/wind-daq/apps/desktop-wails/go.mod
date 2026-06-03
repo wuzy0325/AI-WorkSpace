@@ -45,4 +45,5 @@ require (
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	shared.local/device-sdk/go v0.0.0 // indirect
+	shared.local/motion-control/go v0.0.0 // indirect
 )

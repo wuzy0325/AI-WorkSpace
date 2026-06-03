@@ -3,8 +3,12 @@ import { computed } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import {
   Activity, Trash2, Wifi, WifiOff, Loader2,
-  CircleDot, Zap, AlertTriangle, ChevronRight
+  CircleDot, Zap, AlertTriangle, ChevronRight, Search
 } from '@lucide/vue'
+
+const emit = defineEmits<{
+  (e: 'scan'): void
+}>()
 
 const deviceStore = useDeviceStore()
 
@@ -48,7 +52,17 @@ function statusLabel(status: string, acquiring: boolean): string {
   <aside class="sidebar">
     <div class="sidebar__header">
       <h2 class="sidebar__title">设备列表</h2>
-      <span class="sidebar__count">{{ sorted.length }}</span>
+      <div class="sidebar__header-actions">
+        <span class="sidebar__count">{{ sorted.length }}</span>
+        <button
+          class="sidebar__scan-btn"
+          title="扫描设备"
+          :disabled="deviceStore.isScanning"
+          @click="emit('scan')"
+        >
+          <Search class="sidebar__scan-icon" />
+        </button>
+      </div>
     </div>
 
     <div v-if="sorted.length === 0" class="sidebar__empty">
@@ -143,6 +157,42 @@ function statusLabel(status: string, acquiring: boolean): string {
   border-radius: var(--radius-pill);
   min-width: 1.5rem;
   text-align: center;
+}
+
+.sidebar__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sidebar__scan-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.sidebar__scan-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.sidebar__scan-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sidebar__scan-icon {
+  width: 14px;
+  height: 14px;
 }
 
 /* 空状态 */

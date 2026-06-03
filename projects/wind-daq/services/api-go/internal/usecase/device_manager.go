@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -346,14 +347,42 @@ func (m *DeviceManager) ClearTare(id string, channelIndex int) error {
 }
 
 func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
-	if strings.TrimSpace(config.ThermocoupleType) == "" {
-		return fmt.Errorf("thermocoupleType is required")
+	if strings.TrimSpace(config.ThermocoupleTypes) == "" {
+		return fmt.Errorf("thermocoupleTypes is required")
 	}
-	if strings.TrimSpace(config.ColdJunction) == "" {
-		return fmt.Errorf("coldJunction is required")
+	if len(config.ThermocoupleTypes) != 16 {
+		return fmt.Errorf("thermocoupleTypes must be exactly 16 characters (one per channel)")
 	}
-	if config.FilterHz <= 0 {
-		return fmt.Errorf("filterHz must be greater than zero")
+	validTypes := "KJTENRSB"
+	for _, c := range config.ThermocoupleTypes {
+		if !strings.ContainsRune(validTypes, c) {
+			return fmt.Errorf("thermocoupleTypes contains invalid type %q; valid: K,J,T,E,N,R,S,B", c)
+		}
+	}
+	if config.ChannelMask != "" {
+		if _, err := strconv.ParseUint(config.ChannelMask, 16, 16); err != nil {
+			return fmt.Errorf("channelMask must be a hex value in 0000-FFFF range")
+		}
+	}
+	if config.SamplingRate <= 0 {
+		return fmt.Errorf("samplingRate must be greater than zero")
+	}
+	if config.AverageCount < 1 || config.AverageCount > 100 {
+		return fmt.Errorf("averageCount must be between 1 and 100")
+	}
+	if config.TriggerMode != 0 && config.TriggerMode != 2 {
+		return fmt.Errorf("triggerMode must be 0 (software) or 2 (hardware)")
+	}
+	if config.TriggerEdge < 0 || config.TriggerEdge > 2 {
+		return fmt.Errorf("triggerEdge must be 0 (rising), 1 (falling), or 2 (change)")
+	}
+	if config.TriggerCount < 0 {
+		return fmt.Errorf("triggerCount must be non-negative")
+	}
+	if config.OpenCircuitCheck != "" {
+		if _, err := strconv.ParseUint(config.OpenCircuitCheck, 16, 16); err != nil {
+			return fmt.Errorf("openCircuitCheck must be a hex mask in 0000-FFFF range")
+		}
 	}
 	return nil
 }

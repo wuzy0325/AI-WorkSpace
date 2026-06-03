@@ -2,9 +2,89 @@ package scan
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
+
+type mockPacketConn struct {
+	responses    map[string]string
+	readBuf      chan []byte
+	done         chan struct{}
+	readDeadline time.Time
+}
+
+func (m *mockPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	type result struct {
+		n   int
+		addr net.Addr
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		select {
+		case data := <-m.readBuf:
+			n := copy(b, data)
+			resultCh <- result{n: n, addr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 7000}}
+		case <-m.done:
+			resultCh <- result{err: &net.OpError{Op: "read", Net: "udp", Source: nil, Addr: nil, Err: &timeoutError{}}}
+		}
+	}()
+
+	var timeout <-chan time.Time
+	if !m.readDeadline.IsZero() {
+		d := time.Until(m.readDeadline)
+		if d <= 0 {
+			return 0, nil, &net.OpError{Op: "read", Net: "udp", Source: nil, Addr: nil, Err: &timeoutError{}}
+		}
+		timeout = time.After(d)
+	}
+
+	select {
+	case r := <-resultCh:
+		return r.n, r.addr, r.err
+	case <-timeout:
+		return 0, nil, &net.OpError{Op: "read", Net: "udp", Source: nil, Addr: nil, Err: &timeoutError{}}
+	}
+}
+
+func (m *mockPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	cmd := string(b)
+	if resp, ok := m.responses[cmd]; ok {
+		m.readBuf <- []byte(resp)
+	}
+	return len(b), nil
+}
+
+func (m *mockPacketConn) Close() error                       { close(m.done); return nil }
+func (m *mockPacketConn) LocalAddr() net.Addr                { return &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0} }
+func (m *mockPacketConn) SetDeadline(t time.Time) error      { m.readDeadline = t; return nil }
+func (m *mockPacketConn) SetReadDeadline(t time.Time) error  { m.readDeadline = t; return nil }
+func (m *mockPacketConn) SetWriteDeadline(_ time.Time) error { return nil }
+
+type timeoutError struct{}
+
+func (*timeoutError) Error() string   { return "timeout" }
+func (*timeoutError) Timeout() bool   { return true }
+func (*timeoutError) Temporary() bool { return false }
+
+func newMockListenPacket(responses map[string]string) listenPacketFn {
+	return func(network, address string) (net.PacketConn, error) {
+		return &mockPacketConn{
+			responses: responses,
+			readBuf:   make(chan []byte, 10),
+			done:      make(chan struct{}),
+		}, nil
+	}
+}
+
+func csvParts(s string) []string {
+	parts := strings.Split(s, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
 
 func TestNetworkScannerReturnsNoErrorOnTimeout(t *testing.T) {
 	scanner := NewNetworkScanner(WithTimeout(100 * time.Millisecond))
@@ -26,6 +106,9 @@ func TestParseDaqP1604ResponseCSV(t *testing.T) {
 	}
 	if result.Type != "DAQ-P-1604" {
 		t.Fatalf("expected DAQ-P-1604 type, got %s", result.Type)
+	}
+	if result.ID != "scan-daq-p-1604-AA-BB-CC-DD-EE-FF" {
+		t.Fatalf("expected ID scan-daq-p-1604-AA-BB-CC-DD-EE-FF, got %s", result.ID)
 	}
 	if result.Address != "192.168.1.100" {
 		t.Fatalf("expected address 192.168.1.100, got %s", result.Address)
@@ -53,6 +136,15 @@ func TestParseDaqP1604ResponseShort(t *testing.T) {
 	if result.Type != "DAQ-P-1604" {
 		t.Fatalf("expected DAQ-P-1604 type, got %s", result.Type)
 	}
+	if result.Address != "192.168.1.100" {
+		t.Fatalf("expected address 192.168.1.100, got %q", result.Address)
+	}
+	if result.Port != daqP1604DefaultPort {
+		t.Fatalf("expected port %d, got %d", daqP1604DefaultPort, result.Port)
+	}
+	if result.ID != "scan-daq-p-1604-192.168.1.100-9000" {
+		t.Fatalf("expected ID scan-daq-p-1604-192.168.1.100-9000, got %q", result.ID)
+	}
 	if !result.Available {
 		t.Fatal("expected available")
 	}
@@ -67,6 +159,9 @@ func TestParseDaqT1603ResponseCSV(t *testing.T) {
 	}
 	if result.Type != "DAQ-T-1603" {
 		t.Fatalf("expected DAQ-T-1603 type, got %s", result.Type)
+	}
+	if result.ID != "scan-daq-t-1603-AA-BB-CC-DD-EE-11" {
+		t.Fatalf("expected ID scan-daq-t-1603-AA-BB-CC-DD-EE-11, got %s", result.ID)
 	}
 	if result.Address != "192.168.1.101" {
 		t.Fatalf("expected address 192.168.1.101, got %s", result.Address)
@@ -86,6 +181,9 @@ func TestParseDaqT1603ResponseJSON(t *testing.T) {
 	if result.Type != "DAQ-T-1603" {
 		t.Fatalf("expected DAQ-T-1603 type, got %s", result.Type)
 	}
+	if result.ID != "scan-daq-t-1603-CC-DD-EE-FF-00-11" {
+		t.Fatalf("expected ID scan-daq-t-1603-CC-DD-EE-FF-00-11, got %s", result.ID)
+	}
 	if result.Address != "192.168.1.102" {
 		t.Fatalf("expected address 192.168.1.102, got %s", result.Address)
 	}
@@ -102,6 +200,15 @@ func TestParseDaqT1603ResponseShort(t *testing.T) {
 	}
 	if result.Type != "DAQ-T-1603" {
 		t.Fatalf("expected DAQ-T-1603 type, got %s", result.Type)
+	}
+	if result.Address != "192.168.1.103" {
+		t.Fatalf("expected address 192.168.1.103, got %q", result.Address)
+	}
+	if result.Port != daqT1603DefaultPort {
+		t.Fatalf("expected port %d, got %d", daqT1603DefaultPort, result.Port)
+	}
+	if result.ID != "scan-daq-t-1603-192.168.1.103-9000" {
+		t.Fatalf("expected ID scan-daq-t-1603-192.168.1.103-9000, got %q", result.ID)
 	}
 }
 
@@ -183,5 +290,340 @@ func TestGetAllBroadcastTargets(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected limited broadcast address in targets")
+	}
+}
+
+func TestScanResultID(t *testing.T) {
+	tests := []struct {
+		name    string
+		prefix  string
+		addr    string
+		port    int
+		mac     string
+		want    string
+	}{
+		{name: "with MAC", prefix: "scan-daq-p-1604", addr: "10.0.0.1", port: 9000, mac: "AA:BB:CC:DD:EE:FF", want: "scan-daq-p-1604-AA:BB:CC:DD:EE:FF"},
+		{name: "without MAC", prefix: "scan-daq-t-1603", addr: "10.0.0.2", port: 9000, mac: "", want: "scan-daq-t-1603-10.0.0.2-9000"},
+		{name: "empty MAC with different IP same device", prefix: "scan-daq-p-1604", addr: "192.168.1.50", port: 23, mac: "", want: "scan-daq-p-1604-192.168.1.50-23"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scanResultID(tt.prefix, tt.addr, tt.port, tt.mac)
+			if got != tt.want {
+				t.Errorf("scanResultID(%q, %q, %d, %q) = %q, want %q", tt.prefix, tt.addr, tt.port, tt.mac, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScanResultID_MACPriorityOverIP(t *testing.T) {
+	mac := "AA:BB:CC:DD:EE:FF"
+	id1 := scanResultID(scanDaqT1603Prefix, "10.0.0.1", 9000, mac)
+	id2 := scanResultID(scanDaqT1603Prefix, "10.0.0.99", 9000, mac)
+	if id1 != id2 {
+		t.Errorf("same MAC should produce same ID regardless of IP: %q vs %q", id1, id2)
+	}
+}
+
+func TestParseDaqT1603Json_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       map[string]interface{}
+		remoteHost string
+		wantAddr   string
+		wantPort   int
+		wantID     string
+		wantMAC    string
+		wantSN     string
+		wantFV     string
+	}{
+		{
+			name:       "full fields",
+			data:       map[string]interface{}{"ip": "10.0.0.5", "port": float64(9000), "mac": "aa:bb:cc:dd:ee:ff", "serialNumber": "SN001", "firmwareVersion": "v2.0"},
+			remoteHost: "10.0.0.5",
+			wantAddr:   "10.0.0.5",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-aa:bb:cc:dd:ee:ff",
+			wantMAC:    "aa:bb:cc:dd:ee:ff",
+			wantSN:     "SN001",
+			wantFV:     "v2.0",
+		},
+		{
+			name:       "missing ip falls back to remoteHost",
+			data:       map[string]interface{}{"mac": "aa:bb:cc:dd:ee:01"},
+			remoteHost: "10.0.0.99",
+			wantAddr:   "10.0.0.99",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-aa:bb:cc:dd:ee:01",
+			wantMAC:    "aa:bb:cc:dd:ee:01",
+		},
+		{
+			name:       "missing mac falls back to IP-based ID",
+			data:       map[string]interface{}{"ip": "10.0.0.7", "serialNumber": "SN002"},
+			remoteHost: "10.0.0.7",
+			wantAddr:   "10.0.0.7",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-10.0.0.7-9000",
+			wantSN:     "SN002",
+		},
+		{
+			name:       "empty fields are omitted",
+			data:       map[string]interface{}{"ip": "10.0.0.8", "mac": "", "serialNumber": ""},
+			remoteHost: "10.0.0.8",
+			wantAddr:   "10.0.0.8",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-10.0.0.8-9000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseDaqT1603Json(tt.data, tt.remoteHost)
+			if got == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if got.Address != tt.wantAddr {
+				t.Errorf("address = %q, want %q", got.Address, tt.wantAddr)
+			}
+			if got.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", got.Port, tt.wantPort)
+			}
+			if got.ID != tt.wantID {
+				t.Errorf("id = %q, want %q", got.ID, tt.wantID)
+			}
+			if got.MacAddress != tt.wantMAC {
+				t.Errorf("macAddress = %q, want %q", got.MacAddress, tt.wantMAC)
+			}
+			if got.SerialNumber != tt.wantSN {
+				t.Errorf("serialNumber = %q, want %q", got.SerialNumber, tt.wantSN)
+			}
+			if got.FirmwareVersion != tt.wantFV {
+				t.Errorf("firmwareVersion = %q, want %q", got.FirmwareVersion, tt.wantFV)
+			}
+		})
+	}
+}
+
+func TestParseDaqT1603Csv_TableDriven(t *testing.T) {
+	split := func(s string) []string {
+		parts := strings.Split(s, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		return parts
+	}
+
+	tests := []struct {
+		name       string
+		parts      []string
+		remoteHost string
+		wantAddr   string
+		wantPort   int
+		wantID     string
+		wantMAC    string
+		wantSN     string
+	}{
+		{
+			name:       "full CSV",
+			parts:      split("192.168.1.7, aa:bb:cc:dd:ee:ff, SN001, 0, v2.0, 0, 0, 9000"),
+			remoteHost: "192.168.1.7",
+			wantAddr:   "192.168.1.7",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-aa:bb:cc:dd:ee:ff",
+			wantMAC:    "aa:bb:cc:dd:ee:ff",
+			wantSN:     "SN001",
+		},
+		{
+			name:       "empty address falls back to remoteHost",
+			parts:      split(", aa:bb:cc:dd:ee:01, SN002, 0, v1.5, 0, 0, 9000"),
+			remoteHost: "10.0.0.50",
+			wantAddr:   "10.0.0.50",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-aa:bb:cc:dd:ee:01",
+			wantMAC:    "aa:bb:cc:dd:ee:01",
+			wantSN:     "SN002",
+		},
+		{
+			name:       "serial number 0 is omitted",
+			parts:      split("10.0.0.1, mac:01, 0, 0, , 0, 0, 9000"),
+			remoteHost: "10.0.0.1",
+			wantAddr:   "10.0.0.1",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-mac:01",
+			wantMAC:    "mac:01",
+			wantSN:     "",
+		},
+		{
+			name:       "no MAC falls back to IP-based ID",
+			parts:      split("10.0.0.2, , SN003, 0, , 0, 0, 9000"),
+			remoteHost: "10.0.0.2",
+			wantAddr:   "10.0.0.2",
+			wantPort:   9000,
+			wantID:     "scan-daq-t-1603-10.0.0.2-9000",
+			wantMAC:    "",
+			wantSN:     "SN003",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseDaqT1603Csv(tt.parts, tt.remoteHost)
+			if got == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if got.Address != tt.wantAddr {
+				t.Errorf("address = %q, want %q", got.Address, tt.wantAddr)
+			}
+			if got.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", got.Port, tt.wantPort)
+			}
+			if got.ID != tt.wantID {
+				t.Errorf("id = %q, want %q", got.ID, tt.wantID)
+			}
+			if got.MacAddress != tt.wantMAC {
+				t.Errorf("macAddress = %q, want %q", got.MacAddress, tt.wantMAC)
+			}
+			if got.SerialNumber != tt.wantSN {
+				t.Errorf("serialNumber = %q, want %q", got.SerialNumber, tt.wantSN)
+			}
+		})
+	}
+}
+
+func TestParseDaqP1604Csv_TableDriven(t *testing.T) {
+	split := func(s string) []string {
+		parts := strings.Split(s, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		return parts
+	}
+
+	tests := []struct {
+		name     string
+		parts    []string
+		wantAddr string
+		wantPort int
+		wantID   string
+		wantMAC  string
+		wantSN   string
+	}{
+		{
+			name:     "full fields with MAC",
+			parts:    split("192.168.1.100, AA:BB:CC:DD:EE:FF, 0, SN001, v1.0, 1, 1, 9000"),
+			wantAddr: "192.168.1.100",
+			wantPort: 9000,
+			wantID:   "scan-daq-p-1604-AA:BB:CC:DD:EE:FF",
+			wantMAC:  "AA:BB:CC:DD:EE:FF",
+			wantSN:   "SN001",
+		},
+		{
+			name:     "empty MAC falls back to IP-based ID",
+			parts:    split("192.168.1.101, , 0, SN002, v1.0, 1, 1, 9000"),
+			wantAddr: "192.168.1.101",
+			wantPort: 9000,
+			wantID:   "scan-daq-p-1604-192.168.1.101-9000",
+			wantMAC:  "",
+			wantSN:   "SN002",
+		},
+		{
+			name:     "empty address returns nil",
+			parts:    split(", AA:BB:CC:DD:EE:01, 0, SN003, v1.0, 1, 1, 9000"),
+			wantAddr: "",
+			wantPort: 0,
+		},
+		{
+			name:     "serial number 0 is omitted",
+			parts:    split("10.0.0.1, mac:01, 0, 0, , 0, 0, 9000"),
+			wantAddr: "10.0.0.1",
+			wantPort: 9000,
+			wantID:   "scan-daq-p-1604-mac:01",
+			wantMAC:  "mac:01",
+			wantSN:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseDaqP1604Csv(tt.parts)
+			if tt.wantAddr == "" {
+				if got != nil {
+					t.Errorf("expected nil for empty address, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if got.Address != tt.wantAddr {
+				t.Errorf("address = %q, want %q", got.Address, tt.wantAddr)
+			}
+			if got.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", got.Port, tt.wantPort)
+			}
+			if got.ID != tt.wantID {
+				t.Errorf("id = %q, want %q", got.ID, tt.wantID)
+			}
+			if got.MacAddress != tt.wantMAC {
+				t.Errorf("macAddress = %q, want %q", got.MacAddress, tt.wantMAC)
+			}
+			if got.SerialNumber != tt.wantSN {
+				t.Errorf("serialNumber = %q, want %q", got.SerialNumber, tt.wantSN)
+			}
+		})
+	}
+}
+
+func TestParseDaqT1603Response_Garbage(t *testing.T) {
+	got := parseDaqT1603Response([]byte("garbage data"), "10.0.0.1:7000")
+	if got != nil {
+		t.Error("expected nil for unrecognized response")
+	}
+}
+
+func TestNetworkScanner_WithMockListenPacket(t *testing.T) {
+	mockListen := newMockListenPacket(map[string]string{
+		"T1603": `{"ip":"192.168.1.10","port":9000,"mac":"AA:BB:CC:DD:EE:01","serialNumber":"SN-TEST"}`,
+	})
+
+	scanner := &NetworkScanner{
+		timeout:      100 * time.Millisecond,
+		listenPacket: mockListen,
+	}
+
+	results, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.ID == "scan-daq-t-1603-AA:BB:CC:DD:EE:01" {
+			found = true
+			if r.Address != "192.168.1.10" {
+				t.Errorf("expected address 192.168.1.10, got %q", r.Address)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected T1603 device in scan results, got %+v", results)
+	}
+}
+
+func TestNetworkScanner_MockListenPacket_TimeoutReturnsEmpty(t *testing.T) {
+	mockListen := newMockListenPacket(nil)
+
+	scanner := &NetworkScanner{
+		timeout:      50 * time.Millisecond,
+		listenPacket: mockListen,
+	}
+
+	results, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty results on timeout, got %d", len(results))
 	}
 }

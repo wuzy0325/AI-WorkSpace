@@ -36,7 +36,7 @@ const zh: Record<string, string> = {
   jogStep: '点动步长',
   targetPosition: '目标位置',
   move: '移动',
-  setZero: '归零',
+  setZero: '置零',
   stop: '停止',
   negLimit: '负限位',
   posLimit: '正限位',

@@ -25,8 +25,12 @@ func main() {
 
 	err = wails.Run(&options.App{
 		Title:  "Motion Controller",
-		Width:  1280,
-		Height: 800,
+		Width:  1350,
+		Height: 740,
+		MinWidth:  1350,
+		MinHeight: 740,
+		MaxWidth:  1350,
+		MaxHeight: 740,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

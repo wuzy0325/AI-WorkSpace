@@ -143,6 +143,18 @@ func (a *SimulatedAdapter) ApplyConfig(id string, cfg core.T1603Config) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if st, exists := a.status[id]; exists {
+		if cfg.SamplingRate <= 0 {
+			cfg.SamplingRate = 5
+		}
+		if cfg.ChannelMask == "" {
+			cfg.ChannelMask = "FFFF"
+		}
+		if cfg.ThermocoupleType == "" {
+			cfg.ThermocoupleType = "K"
+		}
+		if cfg.AverageCount < 1 {
+			cfg.AverageCount = 1
+		}
 		st.Profile.T1603Cfg = cfg
 		return nil
 	}

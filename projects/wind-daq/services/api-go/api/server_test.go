@@ -213,13 +213,13 @@ func TestDeviceConfigurationHTTPFlow(t *testing.T) {
 		t.Fatalf("expected persisted unit degC, got %q", store.profiles[0].Channels[0].Unit)
 	}
 
-	request(t, router, http.MethodPut, "/api/device/temp-1/daqT1603Config", []byte(`{"thermocoupleType":"K","coldJunction":"internal","filterHz":50}`), http.StatusOK)
+	request(t, router, http.MethodPut, "/api/device/temp-1/daqT1603Config", []byte(`{"thermocoupleTypes":"KKKKKKKKKKKKKKKK","channelMask":"FFFF","samplingRate":10,"averageCount":4}`), http.StatusOK)
 	resp := request(t, router, http.MethodGet, "/api/device/temp-1/daqT1603Config", nil, http.StatusOK)
 	var got device.DaqT1603HardwareConfig
 	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode daqT1603 config response: %v", err)
 	}
-	if got.ThermocoupleType != "K" || got.ColdJunction != "internal" || got.FilterHz != 50 {
+	if got.ThermocoupleTypes != "KKKKKKKKKKKKKKKK" || got.SamplingRate != 10 || got.ChannelMask != "FFFF" {
 		t.Fatalf("unexpected daqT1603 config: %+v", got)
 	}
 

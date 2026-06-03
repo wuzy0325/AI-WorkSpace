@@ -35,6 +35,10 @@ func (a *App) Shutdown(ctx context.Context) {
 	slog.Info("DAQ-T-1603 application shut down")
 }
 
+func (a *App) ScanDevices() ([]core.ScanResult, error) {
+	return a.deviceUC.ScanDevices()
+}
+
 func (a *App) GetProfiles() []core.TemperatureProfile {
 	return a.deviceUC.GetProfiles()
 }

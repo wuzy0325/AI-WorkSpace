@@ -4,12 +4,15 @@ import MainTopBar from './MainTopBar.vue'
 import MainBottomBar from './MainBottomBar.vue'
 import DeviceSidebar from './DeviceSidebar.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
+import ScanResultList from '@components/device/ScanResultList.vue'
+import type { ScanResult } from '@bridge/deviceBridge'
 import { useDeviceStore } from '@stores/deviceStore'
 
 const deviceStore = useDeviceStore()
 
 const showAddDialog = ref(false)
 const showConfig = ref(false)
+const showScanDialog = ref(false)
 
 const newName = ref('')
 const newAddress = ref('192.168.3.101')
@@ -39,12 +42,23 @@ function toggleAcquisition() {
   }
 }
 
-function openAddDevice() {
+function openAddDevice(prefill?: { address: string; port: number }) {
   newName.value = ''
-  newAddress.value = '192.168.3.101'
-  newPort.value = 9000
+  newAddress.value = prefill?.address ?? '192.168.3.101'
+  newPort.value = prefill?.port ?? 9000
   addError.value = null
   showAddDialog.value = true
+}
+
+function openScanDialog() {
+  deviceStore.clearScanResults()
+  showScanDialog.value = true
+  void deviceStore.scanDevices()
+}
+
+function addFromScanResult(result: ScanResult) {
+  showScanDialog.value = false
+  openAddDevice({ address: result.address, port: result.port })
 }
 
 function openConfig() {
@@ -90,7 +104,7 @@ async function confirmAddDevice() {
       @open-config="openConfig"
     />
     <div class="shell__body">
-      <DeviceSidebar />
+      <DeviceSidebar @scan="openScanDialog" />
       <main class="shell__main">
         <slot />
       </main>
@@ -106,6 +120,39 @@ async function confirmAddDevice() {
               :device-id="deviceStore.selectedId!"
               @close="showConfig = false"
             />
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- 扫描设备模态框 -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showScanDialog" class="modal-overlay" @click.self="showScanDialog = false">
+          <div class="modal-panel modal-panel--narrow">
+            <div class="dialog">
+              <div class="dialog__header">
+                <h3 class="dialog__title">扫描设备</h3>
+                <p class="dialog__subtitle">局域网中发现 DAQ-T-1603 设备</p>
+              </div>
+              <div class="dialog__body">
+                <ScanResultList
+                  :results="deviceStore.scanResults"
+                  :scanning="deviceStore.isScanning"
+                  @add="addFromScanResult"
+                />
+              </div>
+              <div class="dialog__actions">
+                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">关闭</button>
+                <button
+                  v-if="!deviceStore.isScanning"
+                  class="dialog__btn dialog__btn--primary"
+                  @click="void deviceStore.scanDevices()"
+                >
+                  重新扫描
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </Transition>

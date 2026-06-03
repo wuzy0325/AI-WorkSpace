@@ -58,9 +58,11 @@ const railItems = computed<AppRailNavItem[]>(() => [
   { id: 'log', label: t.value.logViewer || 'Logs', icon: 'LG', active: activePage.value === 'log' }
 ])
 
+const VALID_MAIN_PAGES = new Set(['dashboard', 'motion', 'calibration', 'traversal', 'log'])
+
 function handleRailSelect(id: string): void {
-  if (id === 'dashboard' || id === 'motion' || id === 'calibration' || id === 'traversal' || id === 'log') {
-    activePage.value = id
+  if (VALID_MAIN_PAGES.has(id)) {
+    activePage.value = id as MainShellPage
   }
 }
 
@@ -274,13 +276,12 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div v-else class="page-container">
-      <section class="page-content">
-        <MotionView v-if="activePage === 'motion'" embedded />
-        <CalibrationView v-else-if="activePage === 'calibration'" embedded />
-        <TraversalView v-else-if="activePage === 'traversal'" embedded />
-        <LogViewer v-else-if="activePage === 'log'" embedded />
-      </section>
+    <!-- 统一全铺布局：所有子页面都直接铺满主内容区，保持与仪表盘一致的视觉体验 -->
+    <div v-else class="page-fullscreen">
+      <MotionView v-if="activePage === 'motion'" embedded />
+      <CalibrationView v-else-if="activePage === 'calibration'" embedded />
+      <TraversalView v-else-if="activePage === 'traversal'" embedded />
+      <LogViewer v-else-if="activePage === 'log'" embedded />
     </div>
 
     <template v-if="activePage === 'dashboard'" #statusbar>
@@ -320,33 +321,13 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-.page-container {
-  display: flex;
-  flex-direction: column;
+/* 统一全铺布局样式：与仪表盘页面保持一致的视觉体验 */
+.page-fullscreen {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
   padding: var(--space-4);
   background: transparent;
-}
-
-.page-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  border-radius: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-}
-
-:root[data-theme='light'] .page-content {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.8);
 }
 
 .error-text {
