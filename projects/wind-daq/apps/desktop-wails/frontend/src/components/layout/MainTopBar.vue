@@ -350,7 +350,7 @@ function activePageLabel(): string {
   font-size: 0.625rem;
   font-weight: 500;
   color: #64748b;
-  font-family: var(--font-family-mono, monospace);
+  font-family: ui-monospace, monospace;
 }
 
 @media (max-width: 1536px) {

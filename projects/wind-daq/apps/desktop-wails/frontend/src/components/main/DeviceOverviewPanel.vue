@@ -315,16 +315,51 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-device-group__summary-label {
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
-  color: var(--text-muted, #64748b);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
 }
 
 .overview-device-group__summary-value {
-  font-family: var(--font-family-mono, monospace);
+  font-family: ui-monospace, monospace;
   font-size: var(--font-size-sm);
   font-weight: 700;
   line-height: 1;
+}
+
+.overview-device-group__channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-rows: repeat(2, 1fr);
+  grid-auto-flow: column dense;
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+
+.overview-channel-micro {
+  background: var(--bg-panel-strong, #1e293b);
+  border: 1px solid var(--border-default, #334155);
+  border-radius: var(--radius-md, 0.4rem);
+  padding: var(--space-2) var(--space-2-5);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+:root[data-theme='light'] .overview-channel-micro {
+  background: var(--bg-panel, #ffffff);
+  border: 1px solid var(--border-default, #e2e8f0);
+}
+
+.overview-channel-micro--warning {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .overview-channel-micro__main {
@@ -341,6 +376,14 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   letter-spacing: -0.02em;
 }
 
+.overview-channel-micro__unit {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  color: #64748b;
+  font-style: italic;
+  text-transform: uppercase;
+}
+
 .overview-channel-micro__meta {
   display: flex;
   align-items: center;
@@ -349,9 +392,10 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-channel-micro__ch {
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
-  color: var(--text-muted, #64748b);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.04em;
 }
 
 .overview-channel-micro__dot {
@@ -359,13 +403,6 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-}
-
-.overview-channel-micro__unit {
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
-  color: var(--text-muted, #64748b);
-  font-style: italic;
 }
 
 .overview-empty {
