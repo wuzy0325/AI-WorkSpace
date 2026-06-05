@@ -3,7 +3,7 @@ import AppShell from '@components/layout/AppShell.vue'
 </script>
 
 <template>
-  <AppShell canvas-class="dashboard-canvas">
+  <AppShell canvas-class="dashboard-ceramic-shell">
     <template v-if="$slots.header" #header>
       <slot name="header" />
     </template>

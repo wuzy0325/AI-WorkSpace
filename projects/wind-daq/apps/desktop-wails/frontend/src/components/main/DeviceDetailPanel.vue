@@ -3,14 +3,17 @@ import { computed, ref } from 'vue'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
-import { useFeedbackStore } from '@stores/feedbackStore'
 import RealtimeChart from '@components/device/RealtimeChart.vue'
 
-const props = defineProps<{ mode: 'chart' | 'table' | 'both' }>()
+const props = withDefaults(
+  defineProps<{
+    mode?: 'chart' | 'table' | 'both'
+  }>(),
+  { mode: 'both' },
+)
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
-const feedbackStore = useFeedbackStore()
 
 const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#f43f5e', '#06b6d4', '#f97316', '#6366f1']
 
@@ -175,29 +178,6 @@ const acquisitionButtonLabel = computed(() => {
     : (i18n.t.startAcquisition || '开始采集')
 })
 
-async function onTareDevice(): Promise<void> {
-  if (!isPressureScannerDevice.value || !profile.value) return
-  const ok = await feedbackStore.confirm(
-    `将对 "${profile.value.name}" 的全部通道执行归零，当前测量值将作为新的零点基准。`,
-    { title: '设备归零', confirmText: '确认归零', cancelText: '取消' }
-  )
-  if (!ok) return
-  deviceStore.tareAllEnabled(profile.value.id)
-}
-
-async function onDisconnect(): Promise<void> {
-  if (!profile.value) return
-  if (currentAcquiring()) {
-    const ok = await feedbackStore.confirm(
-      '当前正在采集数据，断开连接将导致数据丢失。确定要断开吗？',
-      { title: '确认断开', confirmText: '断开连接', cancelText: '取消' }
-    )
-    if (!ok) return
-    deviceStore.stopAcquisition(profile.value.id)
-  }
-  deviceStore.disconnect(profile.value.id)
-}
-
 const connectionButtonLabel = computed(() => {
   return currentAcquiring() || currentStatus() === 'Connected'
     ? (i18n.t.disconnect || '断开')
@@ -225,7 +205,7 @@ const connectionButtonLabel = computed(() => {
           class="detail-panel__btn detail-panel__btn--secondary"
           :class="{ 'opacity-40 cursor-not-allowed': !isPressureScannerDevice }"
           :disabled="!isPressureScannerDevice"
-          @click="onTareDevice"
+          @click="isPressureScannerDevice && profile && deviceStore.tareAllEnabled(profile.id)"
         >
           {{ i18n.t.tare || '归零' }}
         </button>
@@ -240,7 +220,7 @@ const connectionButtonLabel = computed(() => {
         <button
           class="detail-panel__btn"
           :class="currentStatus() === 'Connected' || currentAcquiring() ? 'detail-panel__btn--danger' : 'detail-panel__btn--primary'"
-          @click="currentStatus() === 'Connected' || currentAcquiring() ? onDisconnect() : profile && deviceStore.connect(profile.id)"
+          @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
         >
           {{ connectionButtonLabel }}
         </button>
@@ -304,6 +284,10 @@ const connectionButtonLabel = computed(() => {
               :title="i18n.t.tareOffsetApplied || '已应用归零偏移'"
             />
             <span class="channel-card__tag mono-font">CH_{{ String(snapshot.channelIndices[snapshotIndex] + 1).padStart(2, '0') }}</span>
+          </div>
+          <div class="channel-card__id">
+            <span class="channel-card__dot" :style="{ background: channelColor(snapshot.channelIndices[snapshotIndex]), boxShadow: `0 0 8px ${channelColor(snapshot.channelIndices[snapshotIndex])}` }" />
+            <span class="channel-card__id-text mono-font">CH{{ snapshot.channelIndices[snapshotIndex] + 1 }}</span>
           </div>
           <div class="channel-card__actions">
             <button
@@ -562,8 +546,9 @@ const connectionButtonLabel = computed(() => {
 .detail-panel__chart {
   flex: 1;
   min-height: 280px;
-  background: var(--bg-panel, #172338);
-  border: 1px solid var(--border-default, #334155);
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-xl, 1rem);
   padding: var(--space-4);
   display: flex;
@@ -572,8 +557,8 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .detail-panel__chart {
-  background: var(--bg-panel, #ffffff);
-  border: 1px solid var(--border-default, #e2e8f0);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .detail-panel__chart--compact {
@@ -692,9 +677,10 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card {
-  background: var(--bg-panel-strong, #1e293b);
-  border: 1px solid var(--border-default, #334155);
-  border-radius: 0.5rem;
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1em;
   padding: 0.75em;
   display: flex;
   flex-direction: column;
@@ -709,14 +695,25 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .channel-card {
-  background: var(--bg-panel, #ffffff);
-  border: 1px solid var(--border-default, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.channel-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0.3rem;
+  background: linear-gradient(90deg, transparent, var(--theme-color, #10b981), transparent);
+  opacity: 0.6;
 }
 
 .channel-card:hover {
   transform: translateY(-2px);
-  border-color: var(--theme-color, var(--accent-success, #22c55e));
+  border-color: var(--theme-color, #10b981);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
 }
 
@@ -744,10 +741,28 @@ const connectionButtonLabel = computed(() => {
   min-width: 0;
 }
 
-.channel-card__tag {
-  font-size: 0.65em;
-  font-weight: 600;
-  color: var(--text-secondary, #94a3b8);
+.channel-card__tag,
+.channel-card__id-text {
+  font-size: 0.625em;
+  font-weight: 700;
+  color: var(--text-secondary, #64748b);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.channel-card__id {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375em;
+  flex: 1 1 auto;
+}
+
+.channel-card__dot {
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .channel-card__actions {
@@ -905,7 +920,7 @@ const connectionButtonLabel = computed(() => {
 .chart-selector {
   position: fixed;
   inset: 0;
-  z-index: var(--z-modal-backdrop, 40);
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -918,18 +933,19 @@ const connectionButtonLabel = computed(() => {
   width: 100%;
   max-width: 32rem;
   max-height: 80vh;
-  background: var(--bg-panel, #172338);
-  border: 1px solid var(--border-default, #334155);
-  border-radius: 0.75rem;
-  box-shadow: var(--shadow-panel, 0 12px 32px rgba(2, 6, 23, 0.34));
+  background: rgba(30, 41, 59, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.5rem;
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 :root[data-theme='light'] .chart-selector__panel {
-  background: var(--bg-panel, #ffffff);
-  border: 1px solid var(--border-default, #e2e8f0);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .chart-selector__header {

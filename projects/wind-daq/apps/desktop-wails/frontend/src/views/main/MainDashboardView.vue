@@ -344,8 +344,9 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border-radius: 1rem;
-  border: 1px dashed var(--border-default, #334155);
-  background: var(--bg-panel, #172338);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(8px);
   padding: 1.5rem;
   text-align: center;
 }
@@ -363,7 +364,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   border-radius: 0.75rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: var(--bg-panel-strong, #1e293b);
+  background: rgba(30, 41, 59, 0.6);
   color: rgba(148, 163, 184, 0.8);
 }
 

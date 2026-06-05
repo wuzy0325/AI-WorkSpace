@@ -26,7 +26,7 @@ async function handleDelete(id: string, event: Event): Promise<void> {
 function statusIcon(status: string, acquiring: boolean) {
   if (acquiring) return Zap
   if (status === 'Connected') return Wifi
-  if (status === 'Connecting' || status === 'Starting') return Loader2
+  if (status === 'Connecting') return Loader2
   if (status === 'Error') return AlertTriangle
   return WifiOff
 }
@@ -34,7 +34,7 @@ function statusIcon(status: string, acquiring: boolean) {
 function statusClass(status: string, acquiring: boolean): string {
   if (acquiring) return 'device__status--acquiring'
   if (status === 'Connected') return 'device__status--connected'
-  if (status === 'Connecting' || status === 'Starting') return 'device__status--connecting'
+  if (status === 'Connecting') return 'device__status--connecting'
   if (status === 'Error') return 'device__status--error'
   return 'device__status--disconnected'
 }
@@ -43,7 +43,6 @@ function statusLabel(status: string, acquiring: boolean): string {
   if (acquiring) return '采集中'
   if (status === 'Connected') return '已连接'
   if (status === 'Connecting') return '连接中'
-  if (status === 'Starting') return '启动中'
   if (status === 'Error') return '错误'
   return '未连接'
 }
@@ -346,7 +345,9 @@ function statusLabel(status: string, acquiring: boolean): string {
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm);
   font-size: 0.6rem;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   background: var(--btn-bg);
   border: 1px solid var(--border-default);
 }

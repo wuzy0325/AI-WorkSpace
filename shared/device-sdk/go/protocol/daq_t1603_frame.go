@@ -127,17 +127,6 @@ func (r *T1603FrameReader) SetBinaryMode(binary bool) {
 	r.mu.Unlock()
 }
 
-// PrependBytes pushes bytes back to the front of the internal buffer.
-// Used to return non-ACK bytes that were speculatively read from the connection.
-func (r *T1603FrameReader) PrependBytes(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	r.mu.Lock()
-	r.buffer = append(data, r.buffer...)
-	r.mu.Unlock()
-}
-
 // ReadFrame reads one complete frame from the device.
 // Returns the raw frame bytes on success, or an error (including timeout).
 func (r *T1603FrameReader) ReadFrame() ([]byte, error) {

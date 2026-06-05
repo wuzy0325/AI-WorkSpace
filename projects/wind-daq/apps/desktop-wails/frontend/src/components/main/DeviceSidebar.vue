@@ -129,8 +129,10 @@ function displayStatusLabel(profileId: string): string {
 
 .device-sidebar__title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-secondary, #cbd5e1);
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .device-sidebar__manage-btn {
@@ -179,19 +181,19 @@ function displayStatusLabel(profileId: string): string {
   text-align: left;
   padding: var(--space-3);
   border-radius: 0.75rem;
-  background: var(--bg-panel, #172338);
+  background: rgba(30, 41, 59, 0.4);
   border: 1px solid transparent;
   transition: all 0.2s ease;
   cursor: pointer;
 }
 
 :root[data-theme='light'] .device-sidebar__item {
-  background: var(--bg-panel, #ffffff);
+  background: rgba(255, 255, 255, 0.6);
 }
 
 .device-sidebar__item:hover {
-  background: var(--bg-panel-strong, #1e293b);
-  border-color: var(--border-default, #334155);
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 :root[data-theme='light'] .device-sidebar__item:hover {

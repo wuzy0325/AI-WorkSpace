@@ -162,7 +162,7 @@ function stopSave() {
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   border-top: 1px solid var(--border-default);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 -20px 40px rgba(0, 0, 0, 0.15);
 }
 
 [data-theme='light'] .bottombar {
@@ -258,8 +258,10 @@ function stopSave() {
 
 .bottombar__status-label {
   font-size: 0.55rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .bottombar__status-value {
@@ -320,8 +322,10 @@ function stopSave() {
 
 .bottombar__stat-label {
   font-size: 0.55rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .bottombar__stat-value {
