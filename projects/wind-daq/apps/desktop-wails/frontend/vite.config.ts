@@ -41,7 +41,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 15173,
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',

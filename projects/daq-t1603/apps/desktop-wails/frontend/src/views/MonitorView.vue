@@ -111,8 +111,9 @@ function statusLabel(): string {
 
     <!-- 详情内容 -->
     <template v-else>
-      <!-- 详情面板头部 -->
-      <header class="detail__header glass-panel">
+      <div class="detail__top">
+        <!-- 详情面板头部 -->
+        <header class="detail__header glass-panel">
         <div class="detail__header-left">
           <div class="detail__device-icon">
             <Activity class="detail__device-icon-svg" />
@@ -187,6 +188,7 @@ function statusLabel(): string {
           <RealtimeChart :device-id="selected.id" :max-points="120" />
         </div>
       </section>
+      </div>
 
       <!-- 通道网格 -->
       <section class="detail__channels">
@@ -205,7 +207,18 @@ function statusLabel(): string {
   display: flex;
   flex-direction: column;
   gap: var(--layout-content-gap);
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 上方区域：头部 + 波形图，自适应填充剩余空间 */
+.detail__top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--layout-content-gap);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ----------------------------
@@ -532,7 +545,8 @@ function statusLabel(): string {
 .detail__chart {
   display: flex;
   flex-direction: column;
-  min-height: 280px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .detail__chart-header {
@@ -607,7 +621,7 @@ function statusLabel(): string {
 .detail__chart-body {
   flex: 1;
   padding: 0.5rem 0.85rem 0.85rem;
-  min-height: 220px;
+  min-height: 0;
 }
 
 /* ----------------------------
@@ -617,6 +631,9 @@ function statusLabel(): string {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  flex: 0 0 auto;
+  max-height: 35%;
+  overflow-y: auto;
 }
 
 .detail__channels-header {

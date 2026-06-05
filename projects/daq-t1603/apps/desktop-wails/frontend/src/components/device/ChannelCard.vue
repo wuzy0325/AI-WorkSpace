@@ -62,10 +62,9 @@ const statusColor = computed(() => {
     <!-- 顶部彩色条 -->
     <div class="card__topbar" :style="{ background: color }"></div>
 
-    <!-- 头部：通道标识 + 名称 + 切换按钮 -->
+    <!-- 头部：通道标识 + 切换按钮 -->
     <div class="card__head">
       <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
-      <span class="card__name">{{ name }}</span>
       <button
         class="card__toggle"
         :class="{ 'card__toggle--on': chartSelected }"
@@ -85,20 +84,6 @@ const statusColor = computed(() => {
       >{{ displayValue }}</span>
       <span class="card__unit">{{ unit }}</span>
     </div>
-
-    <!-- 底部状态栏 -->
-    <div class="card__footer">
-      <Activity
-        class="card__footer-icon"
-        :style="{ color: statusColor }"
-      />
-      <span
-        class="card__footer-text"
-        :style="{ color: statusColor }"
-      >
-        {{ statusText }}
-      </span>
-    </div>
   </article>
 </template>
 
@@ -107,11 +92,11 @@ const statusColor = computed(() => {
   position: relative;
   background: var(--card-bg);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  padding: 0.7rem 0.85rem 0.55rem;
+  border-radius: var(--radius-md);
+  padding: 0.45rem 0.6rem 0.4rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.2rem;
   transition: all var(--motion-fast) var(--easing-standard);
   overflow: hidden;
 }
@@ -177,36 +162,26 @@ const statusColor = computed(() => {
 .card__head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.35rem;
   min-width: 0;
 }
 
 .card__tag {
-  font-size: 0.6rem;
+  font-size: 0.55rem;
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.08em;
   background: var(--btn-bg);
-  padding: 0.15rem 0.4rem;
+  padding: 0.1rem 0.3rem;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
-.card__name {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  font-weight: 600;
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
 /* 波形图切换按钮 */
 .card__toggle {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -229,32 +204,32 @@ const statusColor = computed(() => {
   background: var(--ch-color, var(--accent));
   color: #ffffff;
   border-color: var(--ch-color, var(--accent));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--ch-color, var(--accent)) 40%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ch-color, var(--accent)) 40%, transparent);
 }
 
 .card__toggle--on:hover {
   background: var(--ch-color, var(--accent));
   color: #ffffff;
-  box-shadow: 0 0 14px color-mix(in srgb, var(--ch-color, var(--accent)) 60%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ch-color, var(--accent)) 60%, transparent);
 }
 
 .card__toggle-icon {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 /* 数值显示 */
 .card__value-row {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: 0.3rem;
   position: relative;
   z-index: 1;
-  min-height: 2rem;
+  min-height: 1.4rem;
 }
 
 .card__value {
-  font-size: 1.5rem;
+  font-size: 1.15rem;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.02em;
@@ -273,34 +248,10 @@ const statusColor = computed(() => {
 }
 
 .card__unit {
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.04em;
-}
-
-/* 底部状态栏 */
-.card__footer {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding-top: 0.3rem;
-  border-top: 1px solid var(--divider-color);
-  margin-top: auto;
-}
-
-.card__footer-icon {
-  width: 11px;
-  height: 11px;
-  transition: color var(--motion-fast) var(--easing-standard);
-}
-
-.card__footer-text {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  transition: color var(--motion-fast) var(--easing-standard);
 }
 
 /* 减少动画偏好 */

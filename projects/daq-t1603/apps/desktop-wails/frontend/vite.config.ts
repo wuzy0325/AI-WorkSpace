@@ -35,7 +35,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
   },
   server: {
-    port: 5173,
+    port: 15174,
     strictPort: true,
   },
 })

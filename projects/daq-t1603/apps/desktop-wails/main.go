@@ -51,9 +51,11 @@ func main() {
 	app := backend.NewApp(deviceUC, recordUC)
 
 	err := wails.Run(&options.App{
-		Title:  "DAQ-T-1603 温度采集",
-		Width:  1400,
-		Height: 1000,
+		Title:     "DAQ-T-1603 温度采集",
+		Width:     1600,
+		Height:    900,
+		MinWidth:  1280,
+		MinHeight: 720,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

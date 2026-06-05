@@ -36,13 +36,26 @@ const COLORS = [
 <style scoped>
 .grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.65rem;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 0.45rem;
+}
+
+@media (max-width: 1399px) {
+  .grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
 }
 
 @media (max-width: 1199px) {
   .grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .grid {
     grid-template-columns: repeat(3, 1fr);
+    gap: 0.4rem;
   }
 }
 </style>

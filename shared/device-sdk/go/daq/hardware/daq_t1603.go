@@ -21,6 +21,7 @@ const (
 )
 
 type onConfigSyncedFn func(core.DaqT1603HardwareConfig)
+type onReadLoopExitFn func(error)
 
 type DAQT1603 struct {
 	mu             sync.RWMutex
@@ -34,6 +35,7 @@ type DAQT1603 struct {
 	frameReader    *protocol.T1603FrameReader
 	config         core.DaqT1603HardwareConfig
 	onConfigSynced onConfigSyncedFn
+	onReadLoopExit onReadLoopExitFn
 	readErrors     int
 	frameErrors    int
 }
@@ -57,6 +59,13 @@ func (d *DAQT1603) ID() string { return d.profile.ID }
 func (d *DAQT1603) OnConfigSynced(fn onConfigSyncedFn) {
 	d.mu.Lock()
 	d.onConfigSynced = fn
+	d.mu.Unlock()
+}
+
+// OnReadLoopExit registers a callback invoked when the read loop exits on error.
+func (d *DAQT1603) OnReadLoopExit(fn onReadLoopExitFn) {
+	d.mu.Lock()
+	d.onReadLoopExit = fn
 	d.mu.Unlock()
 }
 
@@ -268,8 +277,12 @@ func (d *DAQT1603) readLoop(stop <-chan struct{}) {
 				}
 				d.mu.Lock()
 				d.readErrors++
+				fn := d.onReadLoopExit
 				d.mu.Unlock()
 				slog.Debug("DAQ-T-1603 read error", "device", d.profile.ID, "error", err)
+				if fn != nil {
+					fn(err)
+				}
 				return
 			}
 			if len(payload) > 0 {

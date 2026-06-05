@@ -216,7 +216,7 @@ async function confirmAddDevice() {
   flex: 1;
   min-width: 0;
   padding: var(--layout-content-padding);
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--layout-content-gap);

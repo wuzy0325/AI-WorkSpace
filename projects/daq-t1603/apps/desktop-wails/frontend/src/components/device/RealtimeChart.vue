@@ -188,7 +188,7 @@ const selectedChannelCount = computed(() => {
 .chart {
   width: 100%;
   height: 100%;
-  min-height: 190px;
+  min-height: 0;
   position: relative;
   background-image:
     radial-gradient(circle at 1px 1px, var(--chart-grid) 1px, transparent 0);
