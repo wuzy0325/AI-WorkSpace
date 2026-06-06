@@ -1,3 +1,32 @@
+export namespace backend {
+	
+	export class LogEvent {
+	    level: string;
+	    category: string;
+	    deviceId?: string;
+	    source: string;
+	    message: string;
+	    detail?: string;
+	    timestamp: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.level = source["level"];
+	        this.category = source["category"];
+	        this.deviceId = source["deviceId"];
+	        this.source = source["source"];
+	        this.message = source["message"];
+	        this.detail = source["detail"];
+	        this.timestamp = source["timestamp"];
+	    }
+	}
+
+}
+
 export namespace core {
 	
 	export class ChannelConfig {

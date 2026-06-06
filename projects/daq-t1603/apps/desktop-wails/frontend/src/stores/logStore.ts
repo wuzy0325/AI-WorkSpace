@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { DeviceLogEvent, LogCategory } from '@bridge/deviceBridge'
 
 /** 日志级别 */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -8,8 +9,12 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export interface LogEntry {
   id: number
   level: LogLevel
+  category: LogCategory
+  source: string
+  deviceId?: string
   tag: string
   message: string
+  detail?: string
   timestamp: number
 }
 
@@ -28,20 +33,38 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 export const useLogStore = defineStore('log', () => {
   const entries = ref<LogEntry[]>([])
   const minLevel = ref<LogLevel>('info')
+  const category = ref<LogCategory | 'all'>('all')
 
   /** 根据最低级别过滤后的日志 */
   const filteredEntries = computed(() =>
-    entries.value.filter((e) => LEVEL_WEIGHT[e.level] >= LEVEL_WEIGHT[minLevel.value])
+    entries.value.filter((e) => {
+      if (LEVEL_WEIGHT[e.level] < LEVEL_WEIGHT[minLevel.value]) {
+        return false
+      }
+      if (category.value !== 'all' && e.category !== category.value) {
+        return false
+      }
+      return true
+    })
   )
 
   /** 添加一条日志 */
-  function log(level: LogLevel, tag: string, message: string): void {
+  function log(
+    level: LogLevel,
+    tag: string,
+    message: string,
+    options?: Partial<Omit<LogEntry, 'id' | 'level' | 'tag' | 'message'>>,
+  ): void {
     const entry: LogEntry = {
       id: nextId++,
       level,
+      category: options?.category ?? 'system',
+      source: options?.source ?? tag,
+      deviceId: options?.deviceId,
       tag,
       message,
-      timestamp: Date.now(),
+      detail: options?.detail,
+      timestamp: options?.timestamp ?? Date.now(),
     }
     entries.value.push(entry)
     // 超出上限时裁剪旧日志
@@ -49,13 +72,23 @@ export const useLogStore = defineStore('log', () => {
       entries.value.splice(0, entries.value.length - MAX_LOG_ENTRIES)
     }
     // 同时输出到浏览器控制台，方便开发调试
-    const prefix = `[${tag}]`
+    const prefix = `[${entry.category}] [${tag}]`
     switch (level) {
       case 'debug': console.debug(prefix, message); break
       case 'info':  console.info(prefix, message);  break
       case 'warn':  console.warn(prefix, message);  break
       case 'error': console.error(prefix, message); break
     }
+  }
+
+  function pushEvent(entry: DeviceLogEvent): void {
+    log(entry.level, entry.source, entry.message, {
+      category: entry.category,
+      source: entry.source,
+      deviceId: entry.deviceId,
+      detail: entry.detail,
+      timestamp: entry.timestamp,
+    })
   }
 
   function debug(tag: string, message: string): void { log('debug', tag, message) }
@@ -73,9 +106,13 @@ export const useLogStore = defineStore('log', () => {
     minLevel.value = level
   }
 
+  function setCategory(nextCategory: LogCategory | 'all'): void {
+    category.value = nextCategory
+  }
+
   return {
-    entries, minLevel, filteredEntries,
-    log, debug, info, warn, error,
-    clear, setMinLevel,
+    entries, minLevel, category, filteredEntries,
+    log, pushEvent, debug, info, warn, error,
+    clear, setMinLevel, setCategory,
   }
 })

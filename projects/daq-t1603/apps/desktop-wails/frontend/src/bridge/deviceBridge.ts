@@ -81,6 +81,19 @@ export interface TemperatureSnapshot {
   unit: string
 }
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type LogCategory = 'system' | 'hardware-send' | 'hardware-recv' | 'acquisition'
+
+export interface DeviceLogEvent {
+  level: LogLevel
+  category: LogCategory
+  deviceId?: string
+  source: string
+  message: string
+  detail?: string
+  timestamp: number
+}
+
 export function getProfiles(): Promise<TemperatureProfile[]> {
   return GetProfiles() as any
 }
@@ -127,4 +140,12 @@ export function onPayload(handler: (snapshot: TemperatureSnapshot) => void): voi
 
 export function offPayload(): void {
   EventsOff('daq:payload')
+}
+
+export function onLog(handler: (entry: DeviceLogEvent) => void): void {
+  EventsOn('daq:log', handler)
+}
+
+export function offLog(): void {
+  EventsOff('daq:log')
 }

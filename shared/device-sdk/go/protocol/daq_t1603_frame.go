@@ -35,11 +35,14 @@ func ParseSerialFrame(data []byte) ([]float64, error) {
 // -- DAQ-T-1603 TCP frame parsing --
 
 const TCPFrameSize = 64
+const maxReasonableThermocoupleTemp = 300.0
 
 // ParseTCPFrame parses TCP data frame.
 // Auto-detects format based on size:
-//   64 bytes  -> binary format (16 x float32 LE)
-//   192 bytes -> ASCII text format (16 x 12-char fixed-width fields)
+//
+//	64 bytes  -> binary format (16 x float32 LE)
+//	192 bytes -> ASCII text format (16 x 12-char fixed-width fields)
+//
 // Channel order from device is CH15→CH0, results are reversed to CH0→CH15.
 func ParseTCPFrame(data []byte) ([]float64, error) {
 	switch len(data) {
@@ -63,7 +66,27 @@ func parseBinaryFrame(data []byte) ([]float64, error) {
 		temperatures[i], temperatures[j] = temperatures[j], temperatures[i]
 	}
 
+	if !looksLikeReasonableTemperatureFrame(temperatures) {
+		return nil, fmt.Errorf("binary frame values out of expected range")
+	}
+
 	return temperatures, nil
+}
+
+func looksLikeReasonableTemperatureFrame(temps []float64) bool {
+	if len(temps) == 0 {
+		return false
+	}
+	reasonableCount := 0
+	for _, temp := range temps {
+		if math.IsNaN(temp) || math.IsInf(temp, 0) {
+			continue
+		}
+		if temp >= -100 && temp <= maxReasonableThermocoupleTemp {
+			reasonableCount++
+		}
+	}
+	return reasonableCount >= len(temps)/2
 }
 
 // ParseASCIIFrame parses a 192-byte ASCII text frame.
@@ -177,10 +200,92 @@ func (r *T1603FrameReader) extractFrameLocked(size int) []byte {
 	return frame
 }
 
+// PrependBytes 将数据前置到缓冲区开头，用于将误读的数据回退到缓冲区
+func (r *T1603FrameReader) PrependBytes(data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.buffer = append(data, r.buffer...)
+}
+
+// ConsumeOptionalACK drains a leading ACK if present.
+// Some firmwares emit a single-byte 'A', others emit "A\n".
+// It reads byte-by-byte under a short deadline so split TCP packets do not
+// corrupt frame alignment. Non-ACK bytes are preserved in the frame buffer.
+func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	one := make([]byte, 1)
+	var first byte
+	haveFirst := false
+	if len(r.buffer) > 0 {
+		first = r.buffer[0]
+		r.buffer = r.buffer[1:]
+		haveFirst = true
+	} else {
+		if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return false, err
+		}
+		n, err := r.conn.Read(one)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				_ = r.conn.SetReadDeadline(time.Time{})
+				return false, nil
+			}
+			_ = r.conn.SetReadDeadline(time.Time{})
+			return false, err
+		}
+		if n > 0 {
+			first = one[0]
+			haveFirst = true
+		}
+	}
+
+	if !haveFirst {
+		_ = r.conn.SetReadDeadline(time.Time{})
+		return false, nil
+	}
+
+	if first != 'A' {
+		r.buffer = append([]byte{first}, r.buffer...)
+		_ = r.conn.SetReadDeadline(time.Time{})
+		return false, nil
+	}
+
+	// Support both a single-byte 'A' ACK and the older "A\n" variant.
+	if len(r.buffer) > 0 {
+		if r.buffer[0] == '\n' {
+			r.buffer = r.buffer[1:]
+		}
+	} else {
+		if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err == nil {
+			n, err := r.conn.Read(one)
+			if err == nil && n > 0 {
+				if one[0] != '\n' {
+					r.buffer = append([]byte{one[0]}, r.buffer...)
+				}
+			} else if err != nil {
+				if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+					_ = r.conn.SetReadDeadline(time.Time{})
+					return false, err
+				}
+			}
+		}
+	}
+
+	_ = r.conn.SetReadDeadline(time.Time{})
+	if len(r.buffer) == 0 {
+		r.buffer = make([]byte, 0, 256)
+	}
+	return true, nil
+}
+
 // -- DAQ-T-1603 command/response helpers --
 
 const (
 	cmdTimeout     = 5 * time.Second
+	cmdTailTimeout = 100 * time.Millisecond
+	cmdIdleWindow  = 30 * time.Millisecond
 	readLineBuffer = 1024
 )
 
@@ -212,6 +317,44 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 			return strings.TrimRight(buf.String(), "\r "), nil
 		}
 		buf.WriteByte(one[0])
+		// Some devices return short ASCII payloads without a trailing newline.
+		// After the first byte arrives, switch to a short inter-byte timeout so
+		// responses like "FFFF" return promptly instead of blocking for cmdTimeout.
+		conn.SetReadDeadline(time.Now().Add(cmdTailTimeout))
+	}
+}
+
+// SendCommandIdle sends a text command and finishes the response after a short
+// silent window once at least one byte has arrived. This matches DAQ-T-1603
+// query commands that return short ASCII payloads without a trailing newline.
+func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (string, error) {
+	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
+	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+		return "", fmt.Errorf("send %q: %w", cmd, err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(cmdTimeout))
+	var buf bytes.Buffer
+	one := make([]byte, 1)
+	for {
+		n, err := conn.Read(one)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if buf.Len() > 0 {
+					return strings.TrimRight(buf.String(), "\r\n "), nil
+				}
+				return "", err
+			}
+			return "", fmt.Errorf("read response for %q: %w", cmd, err)
+		}
+		if n == 0 {
+			continue
+		}
+		if one[0] == '\n' {
+			return strings.TrimRight(buf.String(), "\r\n "), nil
+		}
+		buf.WriteByte(one[0])
+		conn.SetReadDeadline(time.Now().Add(idleWindow))
 	}
 }
 

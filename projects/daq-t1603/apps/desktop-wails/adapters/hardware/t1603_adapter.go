@@ -18,6 +18,15 @@ type T1603Adapter struct {
 	sinks    map[string]func(core.TemperatureSnapshot)
 	channels map[string]chan core.TemperatureSnapshot
 	stopChs  map[string]chan struct{}
+	logSink  func(DeviceLogEntry)
+}
+
+type DeviceLogEntry struct {
+	Level    string
+	Category string
+	DeviceID string
+	Message  string
+	Detail   string
 }
 
 func NewT1603Adapter() *T1603Adapter {
@@ -27,6 +36,21 @@ func NewT1603Adapter() *T1603Adapter {
 		sinks:    make(map[string]func(core.TemperatureSnapshot)),
 		channels: make(map[string]chan core.TemperatureSnapshot),
 		stopChs:  make(map[string]chan struct{}),
+	}
+}
+
+func (a *T1603Adapter) SetLogSink(sink func(DeviceLogEntry)) {
+	a.mu.Lock()
+	a.logSink = sink
+	a.mu.Unlock()
+}
+
+func (a *T1603Adapter) emitLog(entry DeviceLogEntry) {
+	a.mu.RLock()
+	sink := a.logSink
+	a.mu.RUnlock()
+	if sink != nil {
+		sink(entry)
 	}
 }
 
@@ -61,12 +85,12 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	}
 
 	sharedProfile := sharedcore.Profile{
-		ID:           profile.ID,
-		Name:         profile.Name,
-		Type:         sharedcore.DeviceDaqT1603,
-		Address:      profile.Address,
-		Port:         profile.Port,
-		SamplingRate: profile.SamplingRate,
+		ID:             profile.ID,
+		Name:           profile.Name,
+		Type:           sharedcore.DeviceDaqT1603,
+		Address:        profile.Address,
+		Port:           profile.Port,
+		SamplingRate:   profile.SamplingRate,
 		DaqT1603Config: mapT1603SharedConfig(profile.T1603Cfg),
 		Channels: func() []sharedcore.ChannelConfig {
 			ch := make([]sharedcore.ChannelConfig, 16)
@@ -88,6 +112,15 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		}(),
 	}
 	dev := sharedhw.NewDAQT1603(sharedProfile)
+	dev.OnLog(func(entry sharedhw.LogEntry) {
+		a.emitLog(DeviceLogEntry{
+			Level:    entry.Level,
+			Category: entry.Category,
+			DeviceID: entry.DeviceID,
+			Message:  entry.Message,
+			Detail:   entry.Detail,
+		})
+	})
 
 	dev.OnConfigSynced(func(cfg sharedcore.DaqT1603HardwareConfig) {
 		a.mu.RLock()

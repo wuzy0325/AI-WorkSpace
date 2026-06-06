@@ -2,6 +2,7 @@
 import { computed, provide, ref } from 'vue'
 import MainTopBar from './MainTopBar.vue'
 import MainBottomBar from './MainBottomBar.vue'
+import LogPanel from './LogPanel.vue'
 import DeviceSidebar from './DeviceSidebar.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
 import ScanResultList from '@components/device/ScanResultList.vue'
@@ -102,6 +103,7 @@ async function confirmAddDevice() {
       version="0.1.0"
       @add-device="openAddDevice"
       @open-config="openConfig"
+      @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
       <DeviceSidebar @scan="openScanDialog" />
@@ -109,7 +111,8 @@ async function confirmAddDevice() {
         <slot />
       </main>
     </div>
-    <MainBottomBar @toggle-acquisition="toggleAcquisition" />
+    <LogPanel />
+    <MainBottomBar />
 
     <!-- 配置模态框 -->
     <Teleport to="body">

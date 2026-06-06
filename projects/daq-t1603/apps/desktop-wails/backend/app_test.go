@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"context"
 	"testing"
 
 	"daq-t1603/adapters/config"
@@ -21,7 +20,6 @@ func newTestApp(t *testing.T) *App {
 	duc.SetScanner(hardware.NewSimulatedScanner())
 	ruc := usecase.NewRecordingUsecase(rec)
 	app := NewApp(duc, ruc)
-	app.ctx = context.Background()
 	return app
 }
 

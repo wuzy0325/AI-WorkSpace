@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, computed } from 'vue'
-import { X, Trash2, ChevronDown, ChevronUp, Filter } from '@lucide/vue'
+import { X, Trash2, ChevronDown, ChevronUp } from '@lucide/vue'
 import { useLogStore } from '@stores/logStore'
 import type { LogLevel } from '@stores/logStore'
+import type { LogCategory } from '@bridge/deviceBridge'
 
 const logStore = useLogStore()
 
@@ -18,11 +19,13 @@ const levelOptions: { value: LogLevel; label: string }[] = [
   { value: 'error', label: 'Error' },
 ]
 
-/** 当前级别标签 */
-const currentLevelLabel = computed(() => {
-  const opt = levelOptions.find((o) => o.value === logStore.minLevel)
-  return opt?.label ?? 'Info'
-})
+const categoryOptions: { value: LogCategory | 'all'; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'system', label: '系统' },
+  { value: 'hardware-send', label: '下发' },
+  { value: 'hardware-recv', label: '返回' },
+  { value: 'acquisition', label: '采集' },
+]
 
 /** 日志条数统计 */
 const errorCount = computed(() => logStore.entries.filter((e) => e.level === 'error').length)
@@ -66,11 +69,12 @@ function clearLogs(): void {
   logStore.clear()
 }
 
-/** 切换日志级别 */
-function cycleLevel(): void {
-  const levels: LogLevel[] = ['debug', 'info', 'warn', 'error']
-  const idx = levels.indexOf(logStore.minLevel)
-  logStore.setMinLevel(levels[(idx + 1) % levels.length])
+function selectLevel(level: LogLevel): void {
+  logStore.setMinLevel(level)
+}
+
+function selectCategory(category: LogCategory | 'all'): void {
+  logStore.setCategory(category)
 }
 </script>
 
@@ -94,10 +98,35 @@ function cycleLevel(): void {
       <div v-if="expanded" class="log-panel__body">
         <!-- 工具栏 -->
         <div class="log-panel__toolbar">
-          <button class="log-panel__tool-btn" title="切换日志级别" @click.stop="cycleLevel">
-            <Filter class="log-panel__tool-icon" />
-            <span>{{ currentLevelLabel }}</span>
-          </button>
+          <div class="log-panel__filters">
+            <div class="log-panel__filter-group">
+              <span class="log-panel__filter-label">级别</span>
+              <button
+                v-for="option in levelOptions"
+                :key="option.value"
+                class="log-panel__chip"
+                :class="{ 'log-panel__chip--active': logStore.minLevel === option.value }"
+                type="button"
+                @click.stop="selectLevel(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+
+            <div class="log-panel__filter-group">
+              <span class="log-panel__filter-label">分类</span>
+              <button
+                v-for="option in categoryOptions"
+                :key="option.value"
+                class="log-panel__chip"
+                :class="{ 'log-panel__chip--active': logStore.category === option.value }"
+                type="button"
+                @click.stop="selectCategory(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
           <button class="log-panel__tool-btn" title="清空日志" @click.stop="clearLogs">
             <Trash2 class="log-panel__tool-icon" />
             <span>清空</span>
@@ -117,8 +146,11 @@ function cycleLevel(): void {
           >
             <span class="log-entry__time mono">{{ formatTime(entry.timestamp) }}</span>
             <span class="log-entry__level">[{{ entry.level.toUpperCase() }}]</span>
+            <span class="log-entry__category">[{{ entry.category }}]</span>
             <span class="log-entry__tag">{{ entry.tag }}</span>
             <span class="log-entry__msg">{{ entry.message }}</span>
+            <span v-if="entry.deviceId" class="log-entry__device mono">{{ entry.deviceId }}</span>
+            <span v-if="entry.detail" class="log-entry__detail mono">{{ entry.detail }}</span>
           </div>
           <div v-if="logStore.filteredEntries.length === 0" class="log-panel__empty">
             暂无日志
@@ -226,11 +258,59 @@ function cycleLevel(): void {
 /* 工具栏 */
 .log-panel__toolbar {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.25rem 0.65rem;
   background: var(--bg-panel-strong);
   border-bottom: 1px solid var(--divider-color);
+}
+
+.log-panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.log-panel__filter-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.log-panel__filter-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.log-panel__chip {
+  padding: 0.18rem 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.log-panel__chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--btn-bg-hover);
+}
+
+.log-panel__chip--active {
+  color: var(--text-on-accent, #fff);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 .log-panel__tool-btn {

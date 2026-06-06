@@ -354,3 +354,81 @@ func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 		t.Fatalf("server error: %v", err)
 	}
 }
+
+func TestConsumeOptionalACK_SingleByteA(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+
+	frame := make([]byte, 64)
+	for i := range frame {
+		frame[i] = byte(i)
+	}
+
+	go func() {
+		_, _ = server.Write(append([]byte{'A'}, frame...))
+	}()
+
+	consumed, err := reader.ConsumeOptionalACK(50 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("ConsumeOptionalACK returned error: %v", err)
+	}
+	if !consumed {
+		t.Fatalf("expected ACK to be consumed")
+	}
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != 64 {
+		t.Fatalf("frame length = %d, want 64", len(raw))
+	}
+	for i := range raw {
+		if raw[i] != frame[i] {
+			t.Fatalf("frame[%d] = %d, want %d", i, raw[i], frame[i])
+		}
+	}
+}
+
+func TestConsumeOptionalACK_AWithNewline(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+
+	frame := make([]byte, 64)
+	for i := range frame {
+		frame[i] = byte(255 - i)
+	}
+
+	go func() {
+		_, _ = server.Write(append([]byte{'A', '\n'}, frame...))
+	}()
+
+	consumed, err := reader.ConsumeOptionalACK(50 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("ConsumeOptionalACK returned error: %v", err)
+	}
+	if !consumed {
+		t.Fatalf("expected ACK to be consumed")
+	}
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != 64 {
+		t.Fatalf("frame length = %d, want 64", len(raw))
+	}
+	for i := range raw {
+		if raw[i] != frame[i] {
+			t.Fatalf("frame[%d] = %d, want %d", i, raw[i], frame[i])
+		}
+	}
+}

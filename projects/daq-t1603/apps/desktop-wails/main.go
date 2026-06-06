@@ -34,12 +34,17 @@ func main() {
 
 	var devAdapter ports.DevicePort
 	var scanner ports.DeviceScanPort
+	var logCapableAdapter interface {
+		SetLogSink(func(hardware.DeviceLogEntry))
+	}
 	if os.Getenv("DAQ_T1603_MODE") == "simulated" {
 		slog.Info("using simulated device adapter")
 		devAdapter = hardware.NewSimulatedAdapter()
 		scanner = hardware.NewSimulatedScanner()
 	} else {
-		devAdapter = hardware.NewT1603Adapter()
+		t1603Adapter := hardware.NewT1603Adapter()
+		devAdapter = t1603Adapter
+		logCapableAdapter = t1603Adapter
 		scanner = hardware.NewT1603Scanner()
 	}
 	recorder := recording.NewCSVRecorder()
@@ -49,6 +54,18 @@ func main() {
 	recordUC := usecase.NewRecordingUsecase(recorder)
 
 	app := backend.NewApp(deviceUC, recordUC)
+	if logCapableAdapter != nil {
+		logCapableAdapter.SetLogSink(func(entry hardware.DeviceLogEntry) {
+			app.EmitLog(backend.LogEvent{
+				Level:    entry.Level,
+				Category: entry.Category,
+				DeviceID: entry.DeviceID,
+				Source:   "hardware",
+				Message:  entry.Message,
+				Detail:   entry.Detail,
+			})
+		})
+	}
 
 	err := wails.Run(&options.App{
 		Title:     "DAQ-T-1603 温度采集",
