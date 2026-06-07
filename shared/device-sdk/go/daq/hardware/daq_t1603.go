@@ -516,6 +516,15 @@ func (d *DAQT1603) readLoop() {
 					}
 					continue
 				}
+				// 连接被主动关闭（Disconnect 调用 conn.Close()），
+				// 检查 stop 通道是否已关闭，如果是则视为正常退出
+				if isClosedConnError(err) {
+					select {
+					case <-stop:
+						return // 正常停止，不设置 unexpectedErr
+					default:
+					}
+				}
 				d.mu.Lock()
 				d.readErrors++
 				d.mu.Unlock()
@@ -788,6 +797,12 @@ func boolFlag(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// isClosedConnError 判断错误是否由连接被主动关闭引起
+func isClosedConnError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "use of closed network connection")
 }
 
 func min(a int, b int) int {

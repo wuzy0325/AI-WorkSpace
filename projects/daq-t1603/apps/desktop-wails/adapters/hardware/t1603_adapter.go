@@ -12,6 +12,23 @@ import (
 	"daq-t1603/ports"
 )
 
+// hzToSpsMs 将频率(Hz)转换为设备 SPS 采集间隔(毫秒)
+// 设备 SPS 参数含义为采集间隔毫秒，实际频率 = 1000/SPS
+func hzToSpsMs(hz int) int {
+	if hz <= 0 {
+		return 10 // 默认 10ms = 100Hz
+	}
+	return 1000 / hz
+}
+
+// spsMsToHz 将设备 SPS 采集间隔(毫秒)转换为频率(Hz)
+func spsMsToHz(ms int) int {
+	if ms <= 0 {
+		return 100 // 默认 100Hz
+	}
+	return 1000 / ms
+}
+
 type T1603Adapter struct {
 	mu       sync.RWMutex
 	drivers  map[string]*sharedhw.DAQT1603
@@ -69,7 +86,7 @@ func mapT1603SharedConfig(cfg core.T1603Config) sharedcore.DaqT1603HardwareConfi
 	return sharedcore.DaqT1603HardwareConfig{
 		ThermocoupleTypes: tcTypes,
 		ChannelMask:       mask,
-		SamplingRate:      cfg.SamplingRate,
+		SamplingRate:      hzToSpsMs(cfg.SamplingRate), // Hz → 采集间隔毫秒
 		BinaryFormat:      false,
 		AverageCount:      cfg.AverageCount,
 		ShowTimestamp:     cfg.ShowTimestamp,
@@ -91,7 +108,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		Type:           sharedcore.DeviceDaqT1603,
 		Address:        profile.Address,
 		Port:           profile.Port,
-		SamplingRate:   profile.SamplingRate,
+		SamplingRate:   hzToSpsMs(profile.SamplingRate), // Hz → 采集间隔毫秒
 		DaqT1603Config: mapT1603SharedConfig(profile.T1603Cfg),
 		Channels: func() []sharedcore.ChannelConfig {
 			ch := make([]sharedcore.ChannelConfig, 16)
@@ -130,7 +147,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			a.mu.Unlock()
 			return
 		}
-		profile.T1603Cfg.SamplingRate = cfg.SamplingRate
+		profile.T1603Cfg.SamplingRate = spsMsToHz(cfg.SamplingRate) // 采集间隔毫秒 → Hz
 		profile.T1603Cfg.ChannelMask = cfg.ChannelMask
 		profile.T1603Cfg.AverageCount = cfg.AverageCount
 		profile.T1603Cfg.ShowTimestamp = cfg.ShowTimestamp
@@ -142,6 +159,13 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 
 	dev.OnReadLoopExit(func(err error) {
 		a.mu.Lock()
+		// 如果设备已经断开连接，说明是主动 Disconnect 导致的连接关闭，
+		// readLoop 收到 "use of closed network connection" 是正常行为，不需要处理
+		st, exists := a.status[profile.ID]
+		if !exists || st.Status == core.StatusDisconnected {
+			a.mu.Unlock()
+			return
+		}
 		delete(a.sinks, profile.ID)
 		if done, ok := a.stopChs[profile.ID]; ok {
 			close(done)
@@ -151,10 +175,8 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			close(ch)
 			delete(a.channels, profile.ID)
 		}
-		if st, exists := a.status[profile.ID]; exists {
-			st.Status = core.StatusConnected
-			st.AcquiringAt = 0
-		}
+		st.Status = core.StatusConnected
+		st.AcquiringAt = 0
 		a.mu.Unlock()
 	})
 

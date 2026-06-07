@@ -376,7 +376,7 @@ export const useDeviceStore = defineStore('device', () => {
       name,
       address,
       port,
-      samplingRate: 5,
+      samplingRate: 10,
       channels: defaultChannels(),
       t1603Config: defaultT1603Config(),
       createdAt: Date.now(),
