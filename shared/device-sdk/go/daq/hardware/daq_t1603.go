@@ -50,6 +50,7 @@ type DAQT1603 struct {
 	readErrors     int
 	frameErrors    int
 	configSyncDone chan struct{} // 配置同步完成后关闭，StartAcquisition 需等待
+	readLoopDone   chan struct{} // readLoop 退出后关闭，确保下次 StartAcquisition 前连接无并发读取
 }
 
 func NewDAQT1603(profile core.Profile) *DAQT1603 {
@@ -143,13 +144,42 @@ func (d *DAQT1603) writeCommandOnly(cmd string) error {
 		return fmt.Errorf("device not connected")
 	}
 	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	// 设置写超时，防止连接异常时无限阻塞
+	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_T_1603_TIMEOUT))
 	_, err := d.conn.Write([]byte(cmd + "\n"))
-	d.writeMu.Unlock()
+	_ = d.conn.SetWriteDeadline(time.Time{}) // 清除 deadline，避免影响后续写入
 	if err != nil {
 		d.emitLog("error", "hardware-send", "Command write failed", err.Error())
 		return err
 	}
 	return nil
+}
+
+// drainConnection 清空 TCP 连接中的残留数据，确保下一次操作从干净状态开始。
+// 在停止采集后调用，清除设备继续发送的残留帧和 ACK 响应。
+func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
+	if conn == nil {
+		return
+	}
+	buf := make([]byte, 4096)
+	totalDrained := 0
+	// 最多读取 20 次，防止设备持续发送数据导致无限循环
+	for i := 0; i < 20; i++ {
+		conn.SetReadDeadline(time.Now().Add(timeout))
+		n, err := conn.Read(buf)
+		if n > 0 {
+			totalDrained += n
+		}
+		if err != nil {
+			break
+		}
+	}
+	conn.SetReadDeadline(time.Time{})
+	if totalDrained > 0 {
+		slog.Debug("DAQ-T-1603 drained residual data", "device", d.profile.ID, "bytes", totalDrained)
+		d.emitLog("debug", "system", "Drained residual data", fmt.Sprintf("%d bytes", totalDrained))
+	}
 }
 
 func (d *DAQT1603) Connect() error {
@@ -227,6 +257,20 @@ func (d *DAQT1603) StartAcquisition() error {
 		return fmt.Errorf("device not connected")
 	}
 
+	// 等待上一次 readLoop 完全退出，确保连接上没有并发读取
+	if d.readLoopDone != nil {
+		done := d.readLoopDone
+		d.mu.Unlock()
+		slog.Info("DAQ-T-1603 waiting for readLoop to exit", "device", d.profile.ID)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			slog.Warn("DAQ-T-1603 timeout waiting for readLoop to exit", "device", d.profile.ID)
+		}
+		d.mu.Lock()
+		d.readLoopDone = nil
+	}
+
 	// 等待配置同步完成，避免与 syncHardwareConfig 的命令/响应冲突
 	if d.configSyncDone != nil {
 		syncDone := d.configSyncDone
@@ -243,13 +287,19 @@ func (d *DAQT1603) StartAcquisition() error {
 		}
 	}
 
+	// 清空 TCP 连接中的残留数据（停止采集后设备可能继续发送的帧和 ACK），
+	// 确保下一次 @f0 命令的响应和数据帧从干净状态开始
+	if d.conn != nil {
+		d.drainConnection(d.conn, 100*time.Millisecond)
+	}
+	// 清空 FrameReader 缓冲区
+	if d.frameReader != nil {
+		d.frameReader.Reset()
+	}
+
 	mask := d.config.ChannelMask
 	if mask == "" {
 		mask = "FFFF"
-	}
-	// 清空 FrameReader 缓冲区，确保从干净状态开始读取数据帧
-	if d.frameReader != nil {
-		d.frameReader.Reset()
 	}
 
 	cmd := fmt.Sprintf("@f0 %s 2", mask)
@@ -262,7 +312,7 @@ func (d *DAQT1603) StartAcquisition() error {
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(d.config.BinaryFormat)
 		// 仅在完整匹配 ACK 时才消费，避免 TCP 分包造成帧边界错位。
-		if _, err := d.frameReader.ConsumeOptionalACK(50 * time.Millisecond); err != nil {
+		if _, err := d.frameReader.ConsumeOptionalACK(200 * time.Millisecond); err != nil {
 			return fmt.Errorf("drain start ACK: %w", err)
 		}
 	}
@@ -271,6 +321,7 @@ func (d *DAQT1603) StartAcquisition() error {
 	d.status.Acquiring = true
 	d.status.Connection = core.ConnectionAcquiring
 	d.stop = make(chan struct{})
+	d.readLoopDone = make(chan struct{})
 
 	go d.readLoop()
 	return nil
@@ -283,6 +334,7 @@ func (d *DAQT1603) StopAcquisition() error {
 }
 
 func (d *DAQT1603) stopAcquisitionLocked() error {
+	wasAcquiring := d.acquiring
 	if d.acquiring && d.stop != nil {
 		close(d.stop)
 	}
@@ -292,14 +344,19 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	if d.status.Connection == core.ConnectionAcquiring {
 		d.status.Connection = core.ConnectionConnected
 	}
-	if d.conn != nil {
-		go func(conn net.Conn) {
+	// 仅在正在采集时发送 @f1，避免 Disconnect 等场景下重复发送
+	if d.conn != nil && wasAcquiring {
+		conn := d.conn
+		go func() {
+			d.writeMu.Lock()
+			defer d.writeMu.Unlock()
 			d.emitLog("debug", "hardware-send", "Send command", "@f1")
 			_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
 			if _, err := conn.Write([]byte("@f1\n")); err != nil {
 				d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
 			}
-		}(d.conn)
+			_ = conn.SetWriteDeadline(time.Time{})
+		}()
 	}
 	// 清空 FrameReader 缓冲区，避免残留数据干扰下一次采集的帧解析
 	if d.frameReader != nil {
@@ -395,26 +452,39 @@ func (d *DAQT1603) readLoop() {
 	conn := d.conn
 
 	defer func() {
-		d.mu.Lock()
-		if conn != nil {
-			conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-			conn.Write([]byte("@f1\n"))
-			conn.SetWriteDeadline(time.Time{})
-		}
-		d.acquiring = false
-		d.stop = nil
-		d.status.Acquiring = false
-		if d.status.Connection == core.ConnectionAcquiring {
-			d.status.Connection = core.ConnectionConnected
-		}
-		fn := d.onReadLoopExit
-		d.mu.Unlock()
-		// Only notify adapter for unexpected exits (error/timeout).
-		// Normal stop via StopAcquisition already holds adapter lock,
-		// calling back would deadlock.
-		if fn != nil && unexpectedErr != nil {
+		// 仅在异常退出时发送 @f1 和更新状态
+		// 正常停止时 stopAcquisitionLocked 已同步发送 @f1 并更新状态
+		if unexpectedErr != nil {
+			d.writeMu.Lock()
+			if conn != nil {
+				_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+				conn.Write([]byte("@f1\n"))
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
+			d.writeMu.Unlock()
+
+			d.mu.Lock()
+			d.acquiring = false
+			d.stop = nil
+			d.status.Acquiring = false
+			if d.status.Connection == core.ConnectionAcquiring {
+				d.status.Connection = core.ConnectionConnected
+			}
+			fn := d.onReadLoopExit
+			d.mu.Unlock()
+
 			d.emitLog("warn", "system", "Read loop exited unexpectedly", unexpectedErr.Error())
-			fn(unexpectedErr)
+			if fn != nil {
+				fn(unexpectedErr)
+			}
+		}
+
+		// 通知 readLoop 已退出，使下一次 StartAcquisition 可以安全地操作连接
+		d.mu.Lock()
+		done := d.readLoopDone
+		d.mu.Unlock()
+		if done != nil {
+			close(done)
 		}
 	}()
 
