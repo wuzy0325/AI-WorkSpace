@@ -66,9 +66,13 @@ function onColorChange(target: HTMLInputElement) {
     }"
     :style="{ '--ch-color': color }"
   >
-    <!-- 头部：通道标识 + 颜色选择按钮 -->
+    <!-- 头部：彩色标识点 + 通道标识 + 颜色选择按钮 -->
     <div class="card__head">
-      <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
+      <div class="card__head-left">
+        <!-- 彩色小圆点：标识通道对应波形颜色，替代粗边框降低视觉噪音 -->
+        <span class="card__dot" :style="{ backgroundColor: color }" />
+        <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
+      </div>
       <div class="card__actions">
         <!-- 颜色选择按钮：使用图标替代彩色圆点，降低视觉噪音 -->
         <button
@@ -102,8 +106,9 @@ function onColorChange(target: HTMLInputElement) {
 <style scoped>
 .card {
   position: relative;
-  background: var(--card-bg);
-  border: 1px solid var(--border-default);
+  /* 使用极浅背景色替代边框来区分卡片，视觉上更干净柔和 */
+  background: var(--card-bg-elevated, var(--card-bg));
+  border: none;
   border-radius: var(--radius-md);
   padding: 0.45rem 0.6rem 0.4rem;
   display: flex;
@@ -114,20 +119,20 @@ function onColorChange(target: HTMLInputElement) {
 }
 
 .card:hover {
+  /* 悬浮时轻微提亮背景并添加柔和阴影，替代边框变化 */
   background: var(--card-bg-hover);
-  border-color: var(--border-hover);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
 
-/* 选中状态：仅使用强调色边框，移除彩色发光阴影 */
+/* 选中状态：使用柔和阴影替代边框，保持无边框设计 */
 .card--active {
-  border-color: var(--ch-color, var(--accent));
-  box-shadow: 0 0 0 1.5px var(--ch-color, var(--accent));
+  background: var(--card-bg-hover);
+  box-shadow: 0 0 0 1.5px rgba(var(--accent-rgb, 16, 185, 129), 0.35), var(--shadow-sm);
 }
 
 .card--active:hover {
-  box-shadow: 0 0 0 1.5px var(--ch-color, var(--accent));
+  box-shadow: 0 0 0 1.5px rgba(var(--accent-rgb, 16, 185, 129), 0.45), var(--shadow-sm);
 }
 
 /* 头部布局 */
@@ -137,6 +142,21 @@ function onColorChange(target: HTMLInputElement) {
   justify-content: space-between;
   gap: 0.35rem;
   min-width: 0;
+}
+
+.card__head-left {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+/* 彩色小圆点：标识通道对应波形颜色 */
+.card__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .card__tag {
@@ -222,8 +242,9 @@ function onColorChange(target: HTMLInputElement) {
   animation: value-flash 0.4s var(--easing-standard);
 }
 
+/* 选中状态数值颜色保持主题强调色，不再随通道颜色变化 */
 .card--active .card__value {
-  color: var(--ch-color, var(--accent));
+  color: var(--accent);
 }
 
 .card__unit {
