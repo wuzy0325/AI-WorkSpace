@@ -110,8 +110,8 @@ async function confirmAddDevice() {
       <main class="shell__main">
         <slot />
       </main>
+      <LogPanel />
     </div>
-    <LogPanel />
     <MainBottomBar />
 
     <!-- 配置模态框 -->
