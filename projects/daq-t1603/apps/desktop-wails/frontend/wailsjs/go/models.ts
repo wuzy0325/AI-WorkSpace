@@ -24,6 +24,20 @@ export namespace backend {
 	        this.timestamp = source["timestamp"];
 	    }
 	}
+	export class LogFileState {
+	    active: boolean;
+	    outputDir?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogFileState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.active = source["active"];
+	        this.outputDir = source["outputDir"];
+	    }
+	}
 
 }
 

@@ -17,12 +17,14 @@ const (
 )
 
 type App struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	deviceUC *usecase.DeviceUsecase
-	recordUC *usecase.RecordingUsecase
-	mu       sync.Mutex
-	relays   map[string]*relayControl
+	ctx         context.Context
+	cancel      context.CancelFunc
+	deviceUC    *usecase.DeviceUsecase
+	recordUC    *usecase.RecordingUsecase
+	logUC       *usecase.LogUsecase
+	logDir      string // 默认日志文件保存目录
+	mu          sync.Mutex
+	relays      map[string]*relayControl
 }
 
 type relayControl struct {
@@ -40,16 +42,34 @@ type LogEvent struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-func NewApp(deviceUC *usecase.DeviceUsecase, recordUC *usecase.RecordingUsecase) *App {
+// LogFileState 日志文件写入状态，用于前端展示
+type LogFileState struct {
+	Active    bool   `json:"active"`
+	OutputDir string `json:"outputDir,omitempty"`
+}
+
+func NewApp(deviceUC *usecase.DeviceUsecase, recordUC *usecase.RecordingUsecase, logUC *usecase.LogUsecase, logDir string) *App {
 	return &App{
 		deviceUC: deviceUC,
 		recordUC: recordUC,
+		logUC:    logUC,
+		logDir:   logDir,
 		relays:   make(map[string]*relayControl),
 	}
 }
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
+
+	// 自动启动日志文件写入
+	if a.logDir != "" {
+		if err := a.logUC.Start(a.logDir, "daq-log"); err != nil {
+			slog.Error("自动启动日志文件写入失败", "error", err)
+		} else {
+			slog.Info("日志文件自动保存已开启", "dir", a.logDir)
+		}
+	}
+
 	slog.Info("DAQ-T-1603 application started")
 	a.EmitLog(LogEvent{
 		Level:    "info",
@@ -61,6 +81,7 @@ func (a *App) Startup(ctx context.Context) {
 
 func (a *App) Shutdown(ctx context.Context) {
 	_ = a.recordUC.Stop()
+	_ = a.logUC.Stop()
 	a.stopAllRelays()
 	if a.cancel != nil {
 		a.cancel()
@@ -81,6 +102,14 @@ func (a *App) EmitLog(entry LogEvent) {
 	if entry.Source == "" {
 		entry.Source = "backend"
 	}
+
+	// 同步写入日志文件（如果已开启）
+	if a.logUC != nil && a.logUC.IsActive() {
+		if err := a.logUC.Write(entry.Timestamp, entry.Level, entry.Category, entry.DeviceID, entry.Source, entry.Message, entry.Detail); err != nil {
+			slog.Error("写入日志文件失败", "error", err)
+		}
+	}
+
 	if a.ctx == nil {
 		return
 	}
@@ -307,6 +336,32 @@ func (a *App) StopRecording() error {
 
 func (a *App) GetRecordingStatus() core.RecordingSession {
 	return a.recordUC.Status()
+}
+
+// StartLogFile 开始将日志写入文件
+func (a *App) StartLogFile(outputDir string, prefix string) error {
+	if err := a.logUC.Start(outputDir, prefix); err != nil {
+		return err
+	}
+	a.EmitLog(LogEvent{Level: "info", Category: "system", Source: "logging", Message: "日志文件保存已开启"})
+	return nil
+}
+
+// StopLogFile 停止日志文件写入
+func (a *App) StopLogFile() error {
+	if err := a.logUC.Stop(); err != nil {
+		return err
+	}
+	a.EmitLog(LogEvent{Level: "info", Category: "system", Source: "logging", Message: "日志文件保存已关闭"})
+	return nil
+}
+
+// GetLogFileState 获取日志文件写入状态
+func (a *App) GetLogFileState() LogFileState {
+	return LogFileState{
+		Active:    a.logUC.IsActive(),
+		OutputDir: a.logUC.GetOutputDir(),
+	}
 }
 
 func (a *App) PickDirectory() (string, error) {

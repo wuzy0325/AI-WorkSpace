@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, computed } from 'vue'
-import { X, Trash2, ChevronLeft, ChevronRight, PanelRightOpen, PanelRightClose } from '@lucide/vue'
+import { ref, nextTick, watch, computed, onUnmounted } from 'vue'
+import { Trash2, PanelRightOpen, PanelRightClose, Copy, Check, FileText, FileX, FolderOpen } from '@lucide/vue'
 import { useLogStore } from '@stores/logStore'
-import type { LogLevel } from '@stores/logStore'
+import type { LogLevel, LogGroup, LogEntry } from '@stores/logStore'
+import { LOG_GROUP_LABELS, CATEGORY_LABELS } from '@stores/logStore'
 import type { LogCategory } from '@bridge/deviceBridge'
 
 const logStore = useLogStore()
@@ -12,6 +13,10 @@ const expanded = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
 
+/** 拷贝成功反馈：记录 id -> 是否显示勾 */
+const copiedId = ref<number | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
 /** 级别过滤选项 */
 const levelOptions: { value: LogLevel; label: string }[] = [
   { value: 'debug', label: 'Debug' },
@@ -20,12 +25,12 @@ const levelOptions: { value: LogLevel; label: string }[] = [
   { value: 'error', label: 'Error' },
 ]
 
-const categoryOptions: { value: LogCategory | 'all'; label: string }[] = [
+/** 分组过滤选项（合并后端细粒度分类为用户友好的分组） */
+const groupOptions: { value: LogGroup | 'all'; label: string }[] = [
   { value: 'all', label: '全部' },
-  { value: 'system', label: '系统' },
-  { value: 'hardware-send', label: '下发' },
-  { value: 'hardware-recv', label: '返回' },
-  { value: 'acquisition', label: '采集' },
+  { value: 'system', label: LOG_GROUP_LABELS.system },
+  { value: 'communication', label: LOG_GROUP_LABELS.communication },
+  { value: 'acquisition', label: LOG_GROUP_LABELS.acquisition },
 ]
 
 /** 日志条数统计 */
@@ -46,6 +51,51 @@ function formatTime(ts: number): string {
     minute: '2-digit',
     second: '2-digit',
   }) + '.' + String(d.getMilliseconds()).padStart(3, '0')
+}
+
+/** 获取分类的中文标签 */
+function categoryLabel(category: LogCategory): string {
+  return CATEGORY_LABELS[category] ?? category
+}
+
+/** 格式化单条日志为纯文本 */
+function formatEntry(entry: LogEntry): string {
+  const parts = [
+    formatTime(entry.timestamp),
+    `[${entry.level.toUpperCase()}]`,
+    `[${categoryLabel(entry.category)}]`,
+  ]
+  if (entry.tag) parts.push(entry.tag)
+  parts.push(entry.message)
+  if (entry.deviceId) parts.push(`device=${entry.deviceId}`)
+  if (entry.detail) parts.push(entry.detail)
+  return parts.join(' ')
+}
+
+/** 拷贝单条日志到剪贴板 */
+async function copyEntry(entry: LogEntry): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(formatEntry(entry))
+    copiedId.value = entry.id
+    if (copiedTimer !== null) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => { copiedId.value = null }, 1500)
+  } catch {
+    // 剪贴板不可用时静默失败
+  }
+}
+
+/** 拷贝全部已过滤日志到剪贴板 */
+async function copyAll(): Promise<void> {
+  if (logStore.filteredEntries.length === 0) return
+  try {
+    const text = logStore.filteredEntries.map(formatEntry).join('\n')
+    await navigator.clipboard.writeText(text)
+    copiedId.value = -1 // 用 -1 表示"全部拷贝"的反馈
+    if (copiedTimer !== null) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => { copiedId.value = null }, 1500)
+  } catch {
+    // 剪贴板不可用时静默失败
+  }
 }
 
 /** 自动滚动到底部 */
@@ -74,9 +124,34 @@ function selectLevel(level: LogLevel): void {
   logStore.setMinLevel(level)
 }
 
-function selectCategory(category: LogCategory | 'all'): void {
-  logStore.setCategory(category)
+function selectGroup(g: LogGroup | 'all'): void {
+  logStore.setGroup(g)
 }
+
+/** 切换日志文件保存 */
+async function toggleFileSaving(): Promise<void> {
+  try {
+    if (logStore.fileSaving) {
+      await logStore.stopFileSaving()
+    } else {
+      const dir = await logStore.pickLogDir()
+      if (dir) {
+        await logStore.startFileSaving(dir)
+      }
+    }
+  } catch {
+    // 操作失败时静默忽略，状态由后端决定
+    await logStore.refreshFileState()
+  }
+}
+
+/** 组件卸载时清理定时器 */
+onUnmounted(() => {
+  if (copiedTimer !== null) {
+    clearTimeout(copiedTimer)
+    copiedTimer = null
+  }
+})
 </script>
 
 <template>
@@ -102,6 +177,24 @@ function selectCategory(category: LogCategory | 'all'): void {
           <span class="log-panel__count">{{ logStore.filteredEntries.length }} 条</span>
         </div>
         <div class="log-panel__header-right">
+          <button
+            class="log-panel__tool-btn"
+            :class="{ 'log-panel__tool-btn--active': logStore.fileSaving }"
+            :title="logStore.fileSaving ? `日志正在保存至: ${logStore.fileOutputDir}\n点击停止` : '保存日志到文件'"
+            @click.stop="toggleFileSaving"
+          >
+            <FileText v-if="logStore.fileSaving" class="log-panel__tool-icon" />
+            <FileX v-else class="log-panel__tool-icon" />
+          </button>
+          <button
+            class="log-panel__tool-btn"
+            :class="{ 'log-panel__tool-btn--success': copiedId === -1 }"
+            title="拷贝全部日志"
+            @click.stop="copyAll"
+          >
+            <Check v-if="copiedId === -1" class="log-panel__tool-icon" />
+            <Copy v-else class="log-panel__tool-icon" />
+          </button>
           <button class="log-panel__tool-btn" title="清空日志" @click.stop="clearLogs">
             <Trash2 class="log-panel__tool-icon" />
           </button>
@@ -131,12 +224,12 @@ function selectCategory(category: LogCategory | 'all'): void {
           <div class="log-panel__filter-group">
             <span class="log-panel__filter-label">分类</span>
             <button
-              v-for="option in categoryOptions"
+              v-for="option in groupOptions"
               :key="option.value"
               class="log-panel__chip"
-              :class="{ 'log-panel__chip--active': logStore.category === option.value }"
+              :class="{ 'log-panel__chip--active': logStore.group === option.value }"
               type="button"
-              @click.stop="selectCategory(option.value)"
+              @click.stop="selectGroup(option.value)"
             >
               {{ option.label }}
             </button>
@@ -154,11 +247,19 @@ function selectCategory(category: LogCategory | 'all'): void {
         >
           <span class="log-entry__time mono">{{ formatTime(entry.timestamp) }}</span>
           <span class="log-entry__level">[{{ entry.level.toUpperCase() }}]</span>
-          <span class="log-entry__category">[{{ entry.category }}]</span>
+          <span class="log-entry__category" :class="`log-entry__category--${entry.group}`">{{ categoryLabel(entry.category) }}</span>
           <span class="log-entry__tag">{{ entry.tag }}</span>
           <span class="log-entry__msg">{{ entry.message }}</span>
-          <span v-if="entry.deviceId" class="log-entry__device mono">{{ entry.deviceId }}</span>
-          <span v-if="entry.detail" class="log-entry__detail mono">{{ entry.detail }}</span>
+          <span v-if="entry.detail" class="log-entry__detail mono" :title="entry.detail">{{ entry.detail }}</span>
+          <button
+            class="log-entry__copy"
+            :class="{ 'log-entry__copy--done': copiedId === entry.id }"
+            title="拷贝此条日志"
+            @click.stop="copyEntry(entry)"
+          >
+            <Check v-if="copiedId === entry.id" class="log-entry__copy-icon" />
+            <Copy v-else class="log-entry__copy-icon" />
+          </button>
         </div>
         <div v-if="logStore.filteredEntries.length === 0" class="log-panel__empty">
           暂无日志
@@ -322,6 +423,19 @@ function selectCategory(category: LogCategory | 'all'): void {
   border-color: var(--border-hover);
 }
 
+.log-panel__tool-btn--success {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.log-panel__tool-btn--active {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
 .log-panel__tool-icon {
   width: 12px;
   height: 12px;
@@ -406,10 +520,53 @@ function selectCategory(category: LogCategory | 'all'): void {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
 }
 
 .log-entry:hover {
   background: var(--btn-bg);
+}
+
+/* 悬停时显示拷贝按钮 */
+.log-entry__copy {
+  display: none;
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.log-entry:hover .log-entry__copy {
+  display: flex;
+}
+
+.log-entry__copy:hover {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.log-entry__copy--done {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.log-entry__copy-icon {
+  width: 10px;
+  height: 10px;
 }
 
 .log-entry__time {
@@ -425,10 +582,32 @@ function selectCategory(category: LogCategory | 'all'): void {
   width: 3.2rem;
 }
 
+/* 分类标签：按分组着色 */
 .log-entry__category {
   flex-shrink: 0;
-  color: var(--text-muted);
   font-size: 0.6rem;
+  font-weight: 600;
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+}
+
+.log-entry__category--system {
+  color: var(--text-muted);
+  background: var(--btn-bg);
+  border-color: var(--border-default);
+}
+
+.log-entry__category--communication {
+  color: var(--accent);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+
+.log-entry__category--acquisition {
+  color: var(--success);
+  background: var(--success-muted);
+  border-color: var(--success-border, var(--success));
 }
 
 .log-entry__tag {
@@ -445,12 +624,7 @@ function selectCategory(category: LogCategory | 'all'): void {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-
-.log-entry__device {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  font-size: 0.6rem;
+  flex: 1;
 }
 
 .log-entry__detail {

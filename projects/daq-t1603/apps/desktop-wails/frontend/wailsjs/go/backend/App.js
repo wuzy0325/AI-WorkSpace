@@ -22,6 +22,10 @@ export function EmitLog(arg1) {
   return window['go']['backend']['App']['EmitLog'](arg1);
 }
 
+export function GetLogFileState() {
+  return window['go']['backend']['App']['GetLogFileState']();
+}
+
 export function GetProfiles() {
   return window['go']['backend']['App']['GetProfiles']();
 }
@@ -46,12 +50,20 @@ export function StartAcquisition(arg1) {
   return window['go']['backend']['App']['StartAcquisition'](arg1);
 }
 
+export function StartLogFile(arg1, arg2) {
+  return window['go']['backend']['App']['StartLogFile'](arg1, arg2);
+}
+
 export function StartRecording(arg1, arg2) {
   return window['go']['backend']['App']['StartRecording'](arg1, arg2);
 }
 
 export function StopAcquisition(arg1) {
   return window['go']['backend']['App']['StopAcquisition'](arg1);
+}
+
+export function StopLogFile() {
+  return window['go']['backend']['App']['StopLogFile']();
 }
 
 export function StopRecording() {

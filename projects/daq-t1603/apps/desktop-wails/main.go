@@ -13,6 +13,7 @@ import (
 
 	"daq-t1603/adapters/config"
 	"daq-t1603/adapters/hardware"
+	"daq-t1603/adapters/logging"
 	"daq-t1603/adapters/recording"
 	"daq-t1603/backend"
 	"daq-t1603/ports"
@@ -32,6 +33,10 @@ func main() {
 	os.MkdirAll(configDir, 0755)
 	cfgStore := config.NewJSONConfigStore(filepath.Join(configDir, "device-profiles.json"))
 
+	// 日志文件保存目录
+	logDir := filepath.Join(configDir, "logs")
+	os.MkdirAll(logDir, 0755)
+
 	var devAdapter ports.DevicePort
 	var scanner ports.DeviceScanPort
 	var logCapableAdapter interface {
@@ -48,11 +53,13 @@ func main() {
 		scanner = hardware.NewT1603Scanner()
 	}
 	recorder := recording.NewCSVRecorder()
+	logWriter := logging.NewLogFileWriter()
 
 	deviceUC := usecase.NewDeviceUsecase(devAdapter, cfgStore, scanner)
 	recordUC := usecase.NewRecordingUsecase(recorder)
+	logUC := usecase.NewLogUsecase(logWriter)
 
-	app := backend.NewApp(deviceUC, recordUC)
+	app := backend.NewApp(deviceUC, recordUC, logUC, logDir)
 	if logCapableAdapter != nil {
 		logCapableAdapter.SetLogSink(func(entry hardware.DeviceLogEntry) {
 			app.EmitLog(backend.LogEvent{

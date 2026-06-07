@@ -17,6 +17,8 @@ const recordingStore = useRecordingStore()
 onMounted(async () => {
   // 从后端加载已保存的设备配置
   await deviceStore.loadProfiles()
+  // 同步日志文件保存状态（后端启动时已自动开启）
+  await logStore.refreshFileState()
   // 自动连接所有开启了自动连接的设备
   try {
     await deviceStore.autoConnectAll()

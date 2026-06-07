@@ -6,6 +6,7 @@ import (
 
 	"daq-t1603/adapters/config"
 	"daq-t1603/adapters/hardware"
+	"daq-t1603/adapters/logging"
 	"daq-t1603/adapters/recording"
 	"daq-t1603/core"
 	"daq-t1603/usecase"
@@ -17,9 +18,11 @@ func newTestApp(t *testing.T) *App {
 	cfg := config.NewJSONConfigStore(dir + "/profiles.json")
 	dev := hardware.NewSimulatedAdapter()
 	rec := recording.NewCSVRecorder()
+	logWriter := logging.NewLogFileWriter()
 	duc := usecase.NewDeviceUsecase(dev, cfg, hardware.NewSimulatedScanner())
 	ruc := usecase.NewRecordingUsecase(rec)
-	app := NewApp(duc, ruc)
+	luc := usecase.NewLogUsecase(logWriter)
+	app := NewApp(duc, ruc, luc, "")
 	return app
 }
 

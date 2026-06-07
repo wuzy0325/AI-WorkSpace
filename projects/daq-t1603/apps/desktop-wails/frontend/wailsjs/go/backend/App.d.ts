@@ -13,6 +13,8 @@ export function Disconnect(arg1:string):Promise<void>;
 
 export function EmitLog(arg1:backend.LogEvent):Promise<void>;
 
+export function GetLogFileState():Promise<backend.LogFileState>;
+
 export function GetProfiles():Promise<Array<core.TemperatureProfile>>;
 
 export function GetRecordingStatus():Promise<core.RecordingSession>;
@@ -25,9 +27,13 @@ export function ScanDevices():Promise<Array<core.ScanResult>>;
 
 export function StartAcquisition(arg1:string):Promise<void>;
 
+export function StartLogFile(arg1:string,arg2:string):Promise<void>;
+
 export function StartRecording(arg1:string,arg2:string):Promise<void>;
 
 export function StopAcquisition(arg1:string):Promise<void>;
+
+export function StopLogFile():Promise<void>;
 
 export function StopRecording():Promise<void>;
 
