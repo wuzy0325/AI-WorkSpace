@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
-import { useDisplayStore } from '@stores/displayStore'
 import CustomSelect from './CustomSelect.vue'
 import type { SelectOption } from './CustomSelect.vue'
 import {
@@ -14,22 +13,18 @@ const props = defineProps<{ deviceId: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const deviceStore = useDeviceStore()
-const displayStore = useDisplayStore()
 const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
 const isAcquiring = computed(() => deviceStore.acquiringFor(props.deviceId))
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
 const samplingRateOptions = [1, 2, 5, 10, 20, 50, 100]
-const refreshRateOptions = [2, 5, 10, 15, 20, 30]
 
 // CustomSelect 需要的选项格式
 const samplingRateSelectOptions: SelectOption[] = samplingRateOptions.map(s => ({ value: s, label: `${s} Hz` }))
-const refreshRateSelectOptions: SelectOption[] = refreshRateOptions.map(s => ({ value: s, label: `${s} Hz` }))
 const thermocoupleSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: `${t} 型` }))
 const channelTcSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: t }))
 
 const samplingRate = ref(10)
-const displayRefreshRate = ref(displayStore.refreshRateHz)
 const showTimestamp = ref(false)
 const autoConnect = ref(false) // 启动时自动连接
 const globalTcType = ref('K') // 全局热电偶类型，用于统一设置所有通道
@@ -53,7 +48,6 @@ function syncFormFromProfile(profileData: typeof profile.value) {
   if (syncing.value) return
   const tcTypes = profileData.t1603Config?.thermocoupleTypes || 'KKKKKKKKKKKKKKKK'
   samplingRate.value = profileData.t1603Config?.samplingRate || 10
-  displayRefreshRate.value = displayStore.refreshRateHz
   showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
   autoConnect.value = profileData.t1603Config?.autoConnect ?? false
   channelNames.value = profileData.channels.map((c) => c.name || '')
@@ -75,7 +69,7 @@ watch(
   { immediate: true }
 )
 
-watch([samplingRate, displayRefreshRate, showTimestamp, autoConnect, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
+watch([samplingRate, showTimestamp, autoConnect, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   hasChanges.value = true
@@ -150,14 +144,8 @@ async function saveConfig() {
       await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
     }
 
-    // ③ 设置UI刷新率（纯前端设置，与硬件无关）
-    displayStore.setRefreshRateHz(displayRefreshRate.value)
-    deviceStore.setDisplayRefreshRateHz(displayRefreshRate.value)
-
     saveStatus.value = 'success'
-    if (!hwChanged) {
-      saveMessage.value = '界面刷新率已更新'
-    } else if (status === 'Acquiring') {
+    if (status === 'Acquiring') {
       saveMessage.value = '配置已保存，硬件参数将在停止采集后生效'
     } else {
       saveMessage.value = '配置已保存并应用到设备'
@@ -274,17 +262,6 @@ function toggleChannel(index: number) {
               :options="thermocoupleSelectOptions"
               :disabled="isAcquiring"
               @update:model-value="onGlobalTcTypeChange($event as string)"
-            />
-          </div>
-
-          <div class="config__field">
-            <label class="config__label">
-              <Zap class="config__label-icon" />
-              <span>界面刷新率</span>
-            </label>
-            <CustomSelect
-              v-model="displayRefreshRate"
-              :options="refreshRateSelectOptions"
             />
           </div>
         </div>

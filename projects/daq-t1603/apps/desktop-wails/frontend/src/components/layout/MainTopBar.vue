@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle } from '@lucide/vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const deviceStore = useDeviceStore()
+const displayStore = useDisplayStore()
 const recordingStore = useRecordingStore()
 const { theme, toggle: toggleTheme } = useTheme()
 
@@ -46,6 +48,63 @@ async function startSave() {
 function stopSave() {
   void recordingStore.stopRecording()
 }
+
+// --- 刷新率下拉菜单 ---
+const refreshRateOptions = [2, 5, 10, 15, 20, 30]
+const showRefreshMenu = ref(false)
+const refreshTriggerRef = ref<HTMLElement | null>(null)
+const refreshDropdownRef = ref<HTMLElement | null>(null)
+const refreshDropdownStyle = ref<Record<string, string>>({})
+
+/** 根据触发器位置计算下拉菜单的 fixed 定位 */
+function updateRefreshDropdownPosition() {
+  if (!showRefreshMenu.value || !refreshTriggerRef.value) {
+    refreshDropdownStyle.value = {}
+    return
+  }
+  const rect = refreshTriggerRef.value.getBoundingClientRect()
+  refreshDropdownStyle.value = {
+    position: 'fixed',
+    right: `${window.innerWidth - rect.right}px`,
+    top: `${rect.bottom + 4}px`,
+    minWidth: `${Math.max(rect.width, 120)}px`,
+    zIndex: '9999',
+  }
+}
+
+function toggleRefreshMenu() {
+  showRefreshMenu.value = !showRefreshMenu.value
+  if (showRefreshMenu.value) {
+    nextTick(updateRefreshDropdownPosition)
+  }
+}
+
+/** 选择刷新率后即时生效 */
+function selectRefreshRate(hz: number) {
+  displayStore.setRefreshRateHz(hz)
+  deviceStore.setDisplayRefreshRateHz(hz)
+  showRefreshMenu.value = false
+}
+
+function onRefreshClickOutside(e: MouseEvent) {
+  if (!showRefreshMenu.value) return
+  const target = e.target as Node
+  if (
+    refreshTriggerRef.value?.contains(target) ||
+    refreshDropdownRef.value?.contains(target)
+  ) {
+    return
+  }
+  showRefreshMenu.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onRefreshClickOutside, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onRefreshClickOutside, true)
+})
 </script>
 
 <template>
@@ -110,6 +169,35 @@ function stopSave() {
         >
           <Settings2 class="topbar__icon" />
         </button>
+
+        <button
+          class="topbar__icon-btn"
+          ref="refreshTriggerRef"
+          title="界面刷新率"
+          @click="toggleRefreshMenu"
+        >
+          <Gauge class="topbar__icon" />
+        </button>
+
+        <Teleport to="body">
+          <div
+            v-if="showRefreshMenu"
+            ref="refreshDropdownRef"
+            class="topbar__refresh-dropdown"
+            :style="refreshDropdownStyle"
+          >
+            <div class="topbar__refresh-header">界面刷新率</div>
+            <div
+              v-for="hz in refreshRateOptions"
+              :key="hz"
+              class="topbar__refresh-option"
+              :class="{ 'topbar__refresh-option--active': displayStore.refreshRateHz === hz }"
+              @click="selectRefreshRate(hz)"
+            >
+              {{ hz }} Hz
+            </div>
+          </div>
+        </Teleport>
 
         <button
           class="topbar__icon-btn"
@@ -339,6 +427,43 @@ function stopSave() {
   color: var(--text-muted);
   font-family: var(--font-family-mono);
   padding-left: 0.25rem;
+}
+
+/* 刷新率下拉菜单 */
+.topbar__refresh-dropdown {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 0.25rem;
+}
+
+.topbar__refresh-header {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.topbar__refresh-option {
+  padding: 0.4rem 0.75rem;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--easing-standard);
+}
+
+.topbar__refresh-option:hover {
+  background: var(--btn-bg-hover);
+}
+
+.topbar__refresh-option--active {
+  color: var(--accent);
+  background: var(--accent-muted);
 }
 
 @media (max-width: 1536px) {

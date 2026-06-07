@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Activity } from '@lucide/vue'
+import { Palette } from '@lucide/vue'
 
 const props = defineProps<{
   index: number
@@ -66,20 +66,17 @@ function onColorChange(target: HTMLInputElement) {
     }"
     :style="{ '--ch-color': color }"
   >
-    <!-- 顶部彩色条 -->
-    <div class="card__topbar" :style="{ background: color }"></div>
-
-    <!-- 头部：通道标识 + 操作按钮 -->
+    <!-- 头部：通道标识 + 颜色选择按钮 -->
     <div class="card__head">
       <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
       <div class="card__actions">
-        <!-- 颜色选择按钮 -->
+        <!-- 颜色选择按钮：使用图标替代彩色圆点，降低视觉噪音 -->
         <button
           class="card__color-btn"
-          :style="{ background: color }"
           title="选择波形颜色"
           @click="openColorPicker"
         >
+          <Palette class="card__color-icon" :style="{ color: color }" />
           <input
             :id="`ch-color-${index}`"
             type="color"
@@ -116,18 +113,6 @@ function onColorChange(target: HTMLInputElement) {
   overflow: hidden;
 }
 
-/* 悬停光效背景 */
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, var(--ch-color, var(--accent)) 0%, transparent 40%);
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--easing-standard);
-  pointer-events: none;
-  border-radius: inherit;
-}
-
 .card:hover {
   background: var(--card-bg-hover);
   border-color: var(--border-hover);
@@ -135,42 +120,14 @@ function onColorChange(target: HTMLInputElement) {
   box-shadow: var(--shadow-sm);
 }
 
-.card:hover::before {
-  opacity: 0.04;
-}
-
-/* 选中状态 */
+/* 选中状态：仅使用强调色边框，移除彩色发光阴影 */
 .card--active {
   border-color: var(--ch-color, var(--accent));
-  box-shadow:
-    0 0 0 1px var(--ch-color, var(--accent)),
-    0 6px 18px color-mix(in srgb, var(--ch-color, var(--accent)) 20%, transparent);
-}
-
-.card--active::before {
-  opacity: 0.06;
+  box-shadow: 0 0 0 1.5px var(--ch-color, var(--accent));
 }
 
 .card--active:hover {
-  box-shadow:
-    0 0 0 1px var(--ch-color, var(--accent)),
-    0 8px 24px color-mix(in srgb, var(--ch-color, var(--accent)) 30%, transparent);
-}
-
-/* 顶部彩色条 */
-.card__topbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--ch-color, var(--accent));
-  opacity: 0.85;
-  transition: height var(--motion-fast) var(--easing-standard);
-}
-
-.card:hover .card__topbar {
-  height: 4px;
+  box-shadow: 0 0 0 1.5px var(--ch-color, var(--accent));
 }
 
 /* 头部布局 */
@@ -201,12 +158,16 @@ function onColorChange(target: HTMLInputElement) {
   flex-shrink: 0;
 }
 
-/* 颜色选择按钮 */
+/* 颜色选择按钮：使用图标样式替代彩色圆点 */
 .card__color-btn {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--border-default);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -215,9 +176,13 @@ function onColorChange(target: HTMLInputElement) {
 }
 
 .card__color-btn:hover {
-  border-color: var(--text-primary);
-  transform: scale(1.15);
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
+  background: var(--btn-bg);
+}
+
+.card__color-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* 隐藏原生颜色输入框 */
