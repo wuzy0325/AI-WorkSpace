@@ -187,6 +187,7 @@ function onUpdateEncComp(index: number, value: any): void {
 
                 <EncoderCompensationEditor
                   :axes="editing.axes"
+                  :controller-type="editing.type"
                   @update-enc-comp="onUpdateEncComp"
                 />
               </main>

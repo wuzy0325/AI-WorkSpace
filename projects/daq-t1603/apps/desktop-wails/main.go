@@ -49,8 +49,7 @@ func main() {
 	}
 	recorder := recording.NewCSVRecorder()
 
-	deviceUC := usecase.NewDeviceUsecase(devAdapter, cfgStore)
-	deviceUC.SetScanner(scanner)
+	deviceUC := usecase.NewDeviceUsecase(devAdapter, cfgStore, scanner)
 	recordUC := usecase.NewRecordingUsecase(recorder)
 
 	app := backend.NewApp(deviceUC, recordUC)

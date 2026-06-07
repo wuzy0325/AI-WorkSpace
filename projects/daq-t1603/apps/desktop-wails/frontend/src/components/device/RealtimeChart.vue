@@ -76,7 +76,6 @@ const option = computed(() => {
   const channels = deviceStore.selectedProfile?.channels ?? []
   const selectedChannels = channels
     .filter((ch) => ch.enabled && deviceStore.isChartSelected(props.deviceId, ch.index))
-    .slice(0, 8)
 
   const c = palette.value
 
@@ -178,7 +177,7 @@ const selectedChannelCount = computed(() => {
         {{ !hasData ? '等待实时数据...' : '未选择通道' }}
       </p>
       <p class="chart__empty-hint">
-        {{ !hasData ? '点击通道卡片右上角的指示器即可添加到波形图' : '请在下方通道卡片中点击眼睛图标添加波形' }}
+        {{ !hasData ? '设备开始采集后将自动显示波形' : '请在上方通道选择中勾选需要显示的通道' }}
       </p>
     </div>
   </div>

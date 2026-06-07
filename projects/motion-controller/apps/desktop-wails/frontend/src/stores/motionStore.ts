@@ -170,6 +170,41 @@ export const useMotionStore = defineStore('motion', () => {
     }
   }
 
+  /**
+   * 自动连接所有配置了 autoConnect 的控制器
+   * 在应用启动时调用，遍历 profiles 中 autoConnect 为 true 且当前未连接的控制器并执行连接
+   */
+  async function autoConnectAll(): Promise<void> {
+    const profilesToConnect = profiles.value.filter((p) => p.autoConnect)
+    if (profilesToConnect.length === 0) return
+
+    const feedback = useFeedbackStore()
+    // 并行连接所有需要自动连接的控制器
+    const results = await Promise.allSettled(
+      profilesToConnect.map(async (p) => {
+        const status = statusList.value.find((s) => s.id === p.id)
+        if (status?.connected) return // 已连接的跳过
+        try {
+          await motionApi.connect(p.id)
+        } catch (e) {
+          throw new Error(`${p.name}: ${e instanceof Error ? e.message : '未知错误'}`)
+        }
+      })
+    )
+
+    // 收集失败结果，限制错误信息长度避免 Toast 过长
+    const failures = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
+    if (failures.length > 0) {
+      const messages = failures.map((f) => f.reason instanceof Error ? f.reason.message : '未知错误')
+      const summary = messages.length > 3
+        ? `${messages.length} 个控制器连接失败`
+        : messages.join('; ')
+      feedback.pushToast(`自动连接失败: ${summary}`, 'error')
+    }
+
+    await refreshStatus()
+  }
+
   function clearError(id: string): void {
     const status = statusList.value.find((s) => s.id === id)
     if (status && status.lastError) {
@@ -196,6 +231,7 @@ export const useMotionStore = defineStore('motion', () => {
     emergencyStop,
     resetEmergencyStop,
     definePosition,
+    autoConnectAll,
     clearError,
   }
 })

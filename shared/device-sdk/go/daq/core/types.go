@@ -65,10 +65,11 @@ type Status struct {
 }
 
 type DataPayload struct {
-	DeviceID       string    `json:"deviceId"`
-	Timestamp      int64     `json:"timestamp"`
-	Channels       []float64 `json:"channels"`
-	ChannelIndices []int     `json:"channelIndices"`
+	DeviceID         string    `json:"deviceId"`
+	Timestamp        int64     `json:"timestamp"`
+	HardwareTimestamp float64   `json:"hardwareTimestamp,omitempty"` // 设备硬件时间戳（秒.纳秒），0 表示无时间戳
+	Channels         []float64 `json:"channels"`
+	ChannelIndices   []int     `json:"channelIndices"`
 }
 
 func (p *DataPayload) EnsureNonNilSlices() {

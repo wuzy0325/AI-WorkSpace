@@ -2,9 +2,9 @@
 
 This file provides guidance to AI agents (Claude Code, OpenCode, or others) when working in this workspace.
 
-> **Single source of truth:** This file is a concise pointer document.
-> All authoritative architecture, coding rules, and conventions
-> live in **CLAUDE.md** at the workspace root. Read that file first.
+> **Context-loading rule:** This file is the startup entrypoint, not the full rulebook.
+> Load it first, then load `CLAUDE.md`, project docs, and runbooks **only when the task needs them**.
+> See `docs/architecture/ai-context-loading.zh-CN.md` for the progressive loading protocol.
 
 ## Quick Reference
 
@@ -56,10 +56,24 @@ Before committing, run the checks that apply to the touched project:
 
 See CLAUDE.md for complete rules, decision tree, and design principles.
 
+### Progressive Loading
+
+Load documents in this order unless the task is trivial:
+
+1. `AGENTS.md` — startup boundaries and navigation only
+2. `CLAUDE.md` — workspace architecture and hard constraints when architecture or implementation is involved
+3. `docs/architecture/workspace-engineering-rules.zh-CN.md` — integrated engineering rules when deciding boundaries, frontend/backend split, UI architecture, or coding approach
+4. Project docs under `projects/<name>/` — only after the task is scoped to that project
+5. Topic docs in `docs/runbooks/` and `docs/architecture/` — only when the task specifically needs them
+
+For task-specific loading paths, use `docs/architecture/ai-task-context-map.zh-CN.md`.
+
+Do not load the entire `docs/` tree by default.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (10674 symbols, 25627 relationships, 296 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (11555 symbols, 27142 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

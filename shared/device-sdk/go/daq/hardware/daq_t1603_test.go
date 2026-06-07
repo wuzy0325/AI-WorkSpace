@@ -6,8 +6,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"shared.local/device-sdk/go/daq/core"
+	"shared.local/device-sdk/go/protocol"
 )
 
 func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
@@ -71,5 +73,80 @@ func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, cfg) {
 		t.Fatalf("config = %#v, want %#v", got, cfg)
+	}
+}
+
+func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	commandsCh := make(chan []string, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		commands := make([]string, 0)
+		for {
+			cmd, err := reader.ReadString('\n')
+			if err != nil {
+				commandsCh <- commands
+				return
+			}
+			commands = append(commands, strings.TrimSpace(cmd))
+			_, _ = server.Write([]byte("A\n"))
+		}
+	}()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
+	device.conn = client
+	device.frameReader = protocol.NewT1603FrameReader(client)
+	device.status.Connection = core.ConnectionConnected
+	device.configSyncDone = make(chan struct{})
+	close(device.configSyncDone)
+	device.config = core.DaqT1603HardwareConfig{
+		ChannelMask:   "FFFF",
+		TriggerMode:   2,
+		TriggerEdge:   1,
+		TriggerCount:  3,
+		BinaryFormat:  true,
+		ShowTimestamp: true,
+		ShowSequence:  true,
+		SamplingRate:  10,
+		AverageCount:  1,
+	}
+
+	if err := device.StartAcquisition(); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+
+	if err := device.StopAcquisition(); err != nil {
+		t.Fatalf("StopAcquisition returned error: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	client.Close()
+
+	commands := <-commandsCh
+	wantPrefix := []string{
+		"@fe BIN 0",
+		"@fe TIME 0",
+		"@fe HEAD 0",
+		"@fe TYPE 0",
+		"@fe TRIG 0",
+		"@fe TNUM 1",
+		"@f0 FFFF 2",
+	}
+	if len(commands) < len(wantPrefix) {
+		t.Fatalf("commands = %#v, want prefix %#v", commands, wantPrefix)
+	}
+	for i, want := range wantPrefix {
+		if commands[i] != want {
+			t.Fatalf("commands[%d] = %q, want %q (all=%#v)", i, commands[i], want, commands)
+		}
+	}
+
+	if device.config.TriggerMode != 0 || device.config.TriggerEdge != 0 || device.config.TriggerCount != 1 {
+		t.Fatalf("trigger config = %#v, want mode=0 edge=0 count=1", device.config)
+	}
+	if device.config.BinaryFormat || device.config.ShowTimestamp || device.config.ShowSequence {
+		t.Fatalf("stream format = %#v, want ASCII + no timestamp + no sequence", device.config)
 	}
 }

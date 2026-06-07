@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import {
-  Activity, Trash2, Wifi, WifiOff, Loader2,
+  Activity, Trash2, Network, Loader2,
   CircleDot, Zap, AlertTriangle, ChevronRight, Search
 } from '@lucide/vue'
 
@@ -11,6 +11,8 @@ const emit = defineEmits<{
 }>()
 
 const deviceStore = useDeviceStore()
+const pendingDeleteId = ref<string | null>(null)
+const pendingDeleteName = ref('')
 
 const sorted = computed(() =>
   [...deviceStore.profiles].sort(
@@ -18,21 +20,36 @@ const sorted = computed(() =>
   )
 )
 
-async function handleDelete(id: string, event: Event): Promise<void> {
+function handleDelete(id: string, name: string, event: Event): void {
   event.stopPropagation()
+  pendingDeleteId.value = id
+  pendingDeleteName.value = name || '未命名设备'
+}
+
+function closeDeleteDialog(): void {
+  pendingDeleteId.value = null
+  pendingDeleteName.value = ''
+}
+
+async function confirmDelete(): Promise<void> {
+  if (!pendingDeleteId.value) return
+  const id = pendingDeleteId.value
+  closeDeleteDialog()
   await deviceStore.removeProfile(id)
 }
 
 function statusIcon(status: string, acquiring: boolean) {
   if (acquiring) return Zap
-  if (status === 'Connected') return Wifi
+  if (status === 'Stopping') return Loader2
+  if (status === 'Connected') return Network
   if (status === 'Connecting') return Loader2
   if (status === 'Error') return AlertTriangle
-  return WifiOff
+  return Network
 }
 
 function statusClass(status: string, acquiring: boolean): string {
   if (acquiring) return 'device__status--acquiring'
+  if (status === 'Stopping') return 'device__status--connecting'
   if (status === 'Connected') return 'device__status--connected'
   if (status === 'Connecting') return 'device__status--connecting'
   if (status === 'Error') return 'device__status--error'
@@ -41,6 +58,7 @@ function statusClass(status: string, acquiring: boolean): string {
 
 function statusLabel(status: string, acquiring: boolean): string {
   if (acquiring) return '采集中'
+  if (status === 'Stopping') return '停止中'
   if (status === 'Connected') return '已连接'
   if (status === 'Connecting') return '连接中'
   if (status === 'Error') return '错误'
@@ -97,14 +115,14 @@ function statusLabel(status: string, acquiring: boolean): string {
               <component
                 :is="statusIcon(deviceStore.statusFor(p.id), deviceStore.acquiringFor(p.id))"
                 class="device__status-icon"
-                :class="{ 'device__status-icon--spin': deviceStore.statusFor(p.id) === 'Connecting' }"
+                :class="{ 'device__status-icon--spin': deviceStore.statusFor(p.id) === 'Connecting' || deviceStore.statusFor(p.id) === 'Stopping' }"
               />
               <span class="device__status-text">{{ statusLabel(deviceStore.statusFor(p.id), deviceStore.acquiringFor(p.id)) }}</span>
             </div>
             <button
               class="device__delete"
               title="删除设备"
-              @click="handleDelete(p.id, $event)"
+              @click="handleDelete(p.id, p.name || '未命名设备', $event)"
             >
               <Trash2 class="device__delete-icon" />
             </button>
@@ -116,6 +134,28 @@ function statusLabel(status: string, acquiring: boolean): string {
         <div v-if="deviceStore.selectedId === p.id" class="sidebar__indicator"></div>
       </li>
     </ul>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="pendingDeleteId" class="modal-overlay" @click.self="closeDeleteDialog">
+          <div class="modal-panel modal-panel--compact">
+            <div class="dialog">
+              <div class="dialog__header">
+                <h3 class="dialog__title">确认删除设备</h3>
+                <p class="dialog__subtitle">删除后将移除该设备配置与当前选择状态。</p>
+              </div>
+              <div class="dialog__body">
+                <p class="dialog__text">确认删除设备 “{{ pendingDeleteName }}” 吗？</p>
+              </div>
+              <div class="dialog__actions">
+                <button class="dialog__btn dialog__btn--secondary" @click="closeDeleteDialog">取消</button>
+                <button class="dialog__btn dialog__btn--danger" @click="confirmDelete">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </aside>
 </template>
 
@@ -130,6 +170,134 @@ function statusLabel(status: string, acquiring: boolean): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.modal-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-panel--compact {
+  max-width: 24rem;
+}
+
+.modal-enter-active {
+  transition: opacity var(--motion-base) var(--easing-standard);
+}
+
+.modal-leave-active {
+  transition: opacity var(--motion-fast) var(--easing-exit);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-panel,
+.modal-leave-active .modal-panel {
+  transition: transform var(--motion-base) var(--easing-emphasis),
+              opacity var(--motion-base) var(--easing-standard);
+}
+
+.modal-enter-from .modal-panel {
+  opacity: 0;
+  transform: scale(0.96) translateY(12px);
+}
+
+.modal-leave-to .modal-panel {
+  opacity: 0;
+  transform: scale(0.98) translateY(4px);
+}
+
+.dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog__header {
+  padding: 1.2rem 1.25rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--divider-color);
+}
+
+.dialog__title {
+  font-size: var(--font-size-md);
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.dialog__subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.dialog__body {
+  padding: 1rem 1.25rem;
+}
+
+.dialog__text {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 0 1.25rem 1.1rem;
+}
+
+.dialog__btn {
+  min-width: 4.8rem;
+  height: 2.15rem;
+  padding: 0 0.9rem;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.dialog__btn--secondary {
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.dialog__btn--secondary:hover {
+  background: var(--btn-bg-hover);
+  color: var(--text-primary);
+}
+
+.dialog__btn--danger {
+  background: var(--danger-muted);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+}
+
+.dialog__btn--danger:hover {
+  background: color-mix(in srgb, var(--danger-muted) 160%, transparent);
 }
 
 .sidebar__header {

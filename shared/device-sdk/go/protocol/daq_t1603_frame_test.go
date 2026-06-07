@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +174,20 @@ func encodeASCIIFrame(values []float64) []byte {
 		sb.WriteString(fmt.Sprintf("%12.6f", v))
 	}
 	return []byte(sb.String())
+}
+
+func encodeASCIIFrameWithPrefix(seq *int, timestamp *float64, values []float64) []byte {
+	parts := make([]string, 0, 18)
+	if seq != nil {
+		parts = append(parts, strconv.Itoa(*seq))
+	}
+	if timestamp != nil {
+		parts = append(parts, fmt.Sprintf("%.6f", *timestamp))
+	}
+	for _, v := range values {
+		parts = append(parts, fmt.Sprintf("%.6f", v))
+	}
+	return []byte(strings.Join(parts, " "))
 }
 
 func TestParseASCIIFrame_Valid(t *testing.T) {
@@ -429,6 +444,109 @@ func TestConsumeOptionalACK_AWithNewline(t *testing.T) {
 	for i := range raw {
 		if raw[i] != frame[i] {
 			t.Fatalf("frame[%d] = %d, want %d", i, raw[i], frame[i])
+		}
+	}
+}
+
+func TestReadFrame_WaitsForPrefixedASCIIFrameTail(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+
+	seq := 123
+	timestamp := 1712345678.123456
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeASCIIFrameWithPrefix(&seq, &timestamp, vals)
+	tokens := strings.Fields(string(frame))
+	if len(tokens) != 18 {
+		t.Fatalf("expected 18 tokens, got %d", len(tokens))
+	}
+	firstChunk := []byte(strings.Join(tokens[:16], " "))
+	secondChunk := []byte(" " + strings.Join(tokens[16:], " "))
+
+	go func() {
+		_, _ = server.Write(firstChunk)
+		time.Sleep(10 * time.Millisecond)
+		_, _ = server.Write(secondChunk)
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if string(raw) != string(frame) {
+		t.Fatalf("ReadFrame returned incomplete frame: got %q want %q", string(raw), string(frame))
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.SequenceNumber != seq {
+		t.Fatalf("sequence = %d, want %d", result.SequenceNumber, seq)
+	}
+	if result.HardwareTimestamp != timestamp {
+		t.Fatalf("timestamp = %f, want %f", result.HardwareTimestamp, timestamp)
+	}
+	if len(result.Temperatures) != 16 {
+		t.Fatalf("expected 16 temperatures, got %d", len(result.Temperatures))
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestReadFrame_FixedWidthASCIIFrameFromChunks(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeASCIIFrame(vals)
+	if len(frame) != 192 {
+		t.Fatalf("expected fixed-width ASCII frame to be 192 bytes, got %d", len(frame))
+	}
+
+	go func() {
+		_, _ = server.Write(frame[:73])
+		time.Sleep(10 * time.Millisecond)
+		_, _ = server.Write(frame[73:149])
+		time.Sleep(10 * time.Millisecond)
+		_, _ = server.Write(frame[149:])
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if string(raw) != string(frame) {
+		t.Fatalf("ReadFrame returned wrong frame: got %q want %q", string(raw), string(frame))
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if len(result.Temperatures) != 16 {
+		t.Fatalf("expected 16 temperatures, got %d", len(result.Temperatures))
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
 		}
 	}
 }

@@ -25,11 +25,19 @@
 | 文档 | 内容 |
 |------|------|
 | `CLAUDE.md`（工作空间根目录） | 架构总纲、六边形硬约束、决策树、设计原则 |
+| `architecture/workspace-engineering-rules.zh-CN.md` | 工作空间工程规则总览：前后端分离、后端规则、UI 设计规则、编码规则、良好架构标准 |
+| `architecture/ai-context-loading.zh-CN.md` | AI 渐进式上下文加载协议：适配 OpenCode / Claude Code 的启动轻量化与按需加载流程 |
+| `architecture/ai-document-responsibility-matrix.zh-CN.md` | AI 文档职责矩阵：定义 AGENTS、CLAUDE、README、专题文档、项目文档各自该承载什么 |
+| `architecture/ai-task-context-map.zh-CN.md` | AI 任务上下文加载速查表：按任务类型列出应加载的文档、源码和验证上下文 |
 | `architecture/module-design.md` | Go 包和 Vue 3 模块设计细节 |
 | `architecture/project-variants.md` | 当前工作空间允许的项目结构变体 |
 | `decisions/` | 架构决策记录（ADR） |
 
 **快速定位：**
+- 想按任务类型判断 AI 该加载什么 → `architecture/ai-task-context-map.zh-CN.md`
+- 想治理 AI 文档分工和避免重复 → `architecture/ai-document-responsibility-matrix.zh-CN.md`
+- 想优化 AI 启动规则加载方式 → `architecture/ai-context-loading.zh-CN.md`
+- 想看一份整合版总规则 → `architecture/workspace-engineering-rules.zh-CN.md`
 - 六边形架构约束 → `CLAUDE.md` Hard Constraints
 - 代码放哪里 → `CLAUDE.md` Decision Tree
 - 项目结构验证 → `scripts/validate-structure.ps1`
@@ -53,8 +61,10 @@
 - `projects/wind-daq/AGENTS.md` — Wind-DAQ 构建命令 + 提交前检查
 - `projects/wind-daq/docs/STRUCTURE.md` — Wind-DAQ 目录结构详解
 - `projects/wind-daq/README.md` — Wind-DAQ 运行、构建、迁移入口
+- `projects/daq-t1603/AGENTS.md` — DAQ-T-1603 项目级 AI 入口与渐进加载导航
 - `projects/daq-t1603/README.md` — DAQ-T-1603 独立桌面应用入口
 - `projects/daq-t1603/CLAUDE.md` — DAQ-T-1603 单 Go module 架构约束
+- `projects/motion-controller/AGENTS.md` — Motion Controller 项目级 AI 入口与渐进加载导航
 - `projects/motion-controller/README.md` — Motion Controller 独立桌面应用入口
 - `projects/motion-controller/SPEC.md` — Motion Controller 产品规范
 - `projects/motion-controller/PLAN.md` — Motion 模块共享计划

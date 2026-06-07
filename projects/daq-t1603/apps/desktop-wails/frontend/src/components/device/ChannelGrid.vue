@@ -25,9 +25,8 @@ const COLORS = [
         :color="ch.color || COLORS[ch.index % COLORS.length]"
         :name="ch.name"
         :precision="ch.precision"
-        :chart-selected="deviceStore.isChartSelected(deviceId, ch.index)"
-        :active="deviceStore.selectedId === deviceId"
-        @toggle-chart="deviceStore.toggleChartSelection(deviceId, ch.index)"
+        :active="deviceStore.isChartSelected(deviceId, ch.index)"
+        @change-color="(color: string) => deviceStore.updateChannel(deviceId, ch.index, { color })"
       />
     </template>
   </div>

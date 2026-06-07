@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot } from '@lucide/vue'
+import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
+import { pickDirectory } from '@bridge/recordingBridge'
 
 defineProps<{
   version: string
@@ -11,23 +13,38 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'add-device'): void
   (e: 'open-config'): void
+  (e: 'toggle-acquisition'): void
 }>()
 
 const deviceStore = useDeviceStore()
+const recordingStore = useRecordingStore()
 const { theme, toggle: toggleTheme } = useTheme()
 
-const totalDevices = computed(() => deviceStore.profiles.length)
-const connectedDevices = computed(
-  () => deviceStore.profiles.filter((p) => deviceStore.statusFor(p.id) === 'Connected' || deviceStore.statusFor(p.id) === 'Acquiring').length
-)
 const acquiringDevices = computed(
   () => deviceStore.profiles.filter((p) => deviceStore.acquiringFor(p.id)).length
 )
 
 const isAcquiring = computed(() => acquiringDevices.value > 0)
+const hasConnectedDevice = computed(
+  () => deviceStore.profiles.some((p) => {
+    const status = deviceStore.statusFor(p.id)
+    return status === 'Connected' || status === 'Acquiring' || status === 'Starting'
+  })
+)
+const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDevice.value)
 
 function themeToggleLabel(): string {
   return theme.value === 'dark' ? '切换为浅色模式' : '切换为深色模式'
+}
+
+async function startSave() {
+  const dir = await pickDirectory()
+  if (!dir) return
+  await recordingStore.startRecording(dir, 'DAQ-T1603')
+}
+
+function stopSave() {
+  void recordingStore.stopRecording()
 }
 </script>
 
@@ -54,22 +71,28 @@ function themeToggleLabel(): string {
       </div>
 
       <div class="topbar__actions">
-        <div class="topbar__stat">
-          <span class="topbar__stat-label">设备</span>
-          <span class="topbar__stat-value mono">{{ totalDevices }}</span>
-        </div>
-        <div class="topbar__divider"></div>
-        <div class="topbar__stat">
-          <span class="topbar__stat-label">在线</span>
-          <span class="topbar__stat-value mono topbar__stat-value--online">{{ connectedDevices }}</span>
-        </div>
+        <div class="topbar__primary-actions">
+          <button
+            class="topbar__action-btn"
+            :class="isAcquiring ? 'topbar__action-btn--stop' : 'topbar__action-btn--start'"
+            :disabled="!canToggleAcquisition"
+            :title="isAcquiring ? '停止采集' : '开始采集'"
+            @click="emit('toggle-acquisition')"
+          >
+            <Play v-if="!isAcquiring" class="topbar__action-icon" />
+            <Square v-else class="topbar__action-icon" />
+            <span>{{ isAcquiring ? '停止采集' : '开始采集' }}</span>
+          </button>
 
-        <div
-          class="topbar__status"
-          :class="isAcquiring ? 'topbar__status--active' : 'topbar__status--idle'"
-        >
-          <span class="topbar__status-dot" :class="{ 'pulse-dot': isAcquiring }"></span>
-          <span class="topbar__status-text">{{ isAcquiring ? '采集中' : '就绪' }}</span>
+          <button
+            class="topbar__action-btn topbar__action-btn--record"
+            :class="{ 'topbar__action-btn--recording': recordingStore.isRecording }"
+            :title="recordingStore.isRecording ? '停止保存' : '开始保存'"
+            @click="recordingStore.isRecording ? stopSave() : startSave()"
+          >
+            <Circle class="topbar__action-icon" />
+            <span>{{ recordingStore.isRecording ? '停止保存' : '开始保存' }}</span>
+          </button>
         </div>
 
         <button
@@ -227,67 +250,63 @@ function themeToggleLabel(): string {
   flex-shrink: 0;
 }
 
-.topbar__stat {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.1;
-}
-
-.topbar__stat-label {
-  font-size: 0.55rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.topbar__stat-value {
-  font-size: var(--font-size-base);
-  font-weight: 800;
-  color: var(--text-primary);
-  margin-top: 0.15rem;
-}
-
-.topbar__stat-value--online {
-  color: var(--accent);
-}
-
-.topbar__divider {
-  width: 1px;
-  height: 24px;
-  background: var(--border-default);
-}
-
-.topbar__status {
+.topbar__primary-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.85rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-size-xs);
+  gap: 0.6rem;
+}
+
+.topbar__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-width: 7rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  transition: all 0.2s ease;
 }
 
-.topbar__status--active {
-  background: var(--success-muted);
-  border: 1px solid var(--accent-border);
-  color: var(--success);
+.topbar__action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
-.topbar__status--idle {
+.topbar__action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.topbar__action-btn--start {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-active) 100%);
+  box-shadow: 0 6px 18px var(--accent-glow);
+}
+
+.topbar__action-btn--stop {
+  color: var(--danger);
+  background: var(--danger-muted);
+  border: 1px solid var(--danger-border);
+}
+
+.topbar__action-btn--record {
+  color: var(--text-secondary);
   background: var(--btn-bg);
   border: 1px solid var(--border-default);
-  color: var(--text-muted);
 }
 
-.topbar__status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
+.topbar__action-btn--recording {
+  color: var(--danger);
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.12);
+}
+
+.topbar__action-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 
 .topbar__icon-btn {
@@ -329,8 +348,60 @@ function themeToggleLabel(): string {
 }
 
 @media (max-width: 1024px) {
+  .topbar__content {
+    gap: 0.75rem;
+    padding: 0 0.9rem;
+  }
+
   .topbar__nav {
     display: none;
+  }
+
+  .topbar__primary-actions {
+    gap: 0.45rem;
+  }
+
+  .topbar__action-btn {
+    min-width: auto;
+    height: 2.15rem;
+    padding: 0 0.7rem;
+    font-size: var(--font-size-xs);
+  }
+
+  .topbar__action-btn span {
+    white-space: nowrap;
+  }
+
+  .topbar__actions {
+    gap: 0.45rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .topbar__content {
+    gap: 0.5rem;
+    padding: 0 0.7rem;
+  }
+
+  .topbar__title {
+    font-size: var(--font-size-base);
+  }
+
+  .topbar__primary-actions {
+    gap: 0.35rem;
+  }
+
+  .topbar__action-btn {
+    padding: 0 0.55rem;
+  }
+
+  .topbar__action-btn span {
+    display: none;
+  }
+
+  .topbar__icon-btn {
+    width: 32px;
+    height: 32px;
   }
 }
 </style>

@@ -3,10 +3,17 @@ package backend
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"time"
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const (
+	uiPayloadRefreshInterval    = 100 * time.Millisecond
+	recordingStatusEmitInterval = time.Second
 )
 
 type App struct {
@@ -14,6 +21,13 @@ type App struct {
 	cancel   context.CancelFunc
 	deviceUC *usecase.DeviceUsecase
 	recordUC *usecase.RecordingUsecase
+	mu       sync.Mutex
+	relays   map[string]*relayControl
+}
+
+type relayControl struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 type LogEvent struct {
@@ -30,6 +44,7 @@ func NewApp(deviceUC *usecase.DeviceUsecase, recordUC *usecase.RecordingUsecase)
 	return &App{
 		deviceUC: deviceUC,
 		recordUC: recordUC,
+		relays:   make(map[string]*relayControl),
 	}
 }
 
@@ -45,6 +60,8 @@ func (a *App) Startup(ctx context.Context) {
 }
 
 func (a *App) Shutdown(ctx context.Context) {
+	_ = a.recordUC.Stop()
+	a.stopAllRelays()
 	if a.cancel != nil {
 		a.cancel()
 	}
@@ -70,6 +87,20 @@ func (a *App) EmitLog(entry LogEvent) {
 	runtime.EventsEmit(a.ctx, "daq:log", entry)
 }
 
+func (a *App) emitPayload(snapshot core.TemperatureSnapshot) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "daq:payload", snapshot)
+}
+
+func (a *App) emitRecordingStatus(session core.RecordingSession) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "daq:recording-status", session)
+}
+
 func (a *App) ScanDevices() ([]core.ScanResult, error) {
 	return a.deviceUC.ScanDevices()
 }
@@ -79,11 +110,23 @@ func (a *App) GetProfiles() []core.TemperatureProfile {
 }
 
 func (a *App) UpsertProfile(profile core.TemperatureProfile) error {
-	return a.deviceUC.UpsertProfile(profile)
+	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: profile.ID, Source: "config", Message: "保存设备配置"})
+	if err := a.deviceUC.UpsertProfile(profile); err != nil {
+		a.EmitLog(LogEvent{Level: "error", Category: "system", DeviceID: profile.ID, Source: "config", Message: "保存设备配置失败", Detail: err.Error()})
+		return err
+	}
+	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: profile.ID, Source: "config", Message: "设备配置已保存"})
+	return nil
 }
 
 func (a *App) DeleteProfile(id string) error {
-	return a.deviceUC.DeleteProfile(id)
+	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: id, Source: "config", Message: "删除设备配置"})
+	if err := a.deviceUC.DeleteProfile(id); err != nil {
+		a.EmitLog(LogEvent{Level: "error", Category: "system", DeviceID: id, Source: "config", Message: "删除设备配置失败", Detail: err.Error()})
+		return err
+	}
+	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: id, Source: "config", Message: "设备配置已删除"})
+	return nil
 }
 
 func (a *App) Connect(id string) error {
@@ -102,6 +145,7 @@ func (a *App) Disconnect(id string) error {
 		a.EmitLog(LogEvent{Level: "error", Category: "system", DeviceID: id, Source: "device", Message: "Disconnect failed", Detail: err.Error()})
 		return err
 	}
+	a.waitRelay(id)
 	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: id, Source: "device", Message: "Device disconnected"})
 	return nil
 }
@@ -113,7 +157,7 @@ func (a *App) StartAcquisition(id string) error {
 		a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: id, Source: "device", Message: "Start acquisition failed", Detail: err.Error()})
 		return err
 	}
-	go a.relayStream(id, ch)
+	a.startRelay(id, ch)
 	a.EmitLog(LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Acquisition started"})
 	return nil
 }
@@ -124,6 +168,7 @@ func (a *App) StopAcquisition(id string) error {
 		a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: id, Source: "device", Message: "Stop acquisition failed", Detail: err.Error()})
 		return err
 	}
+	a.waitRelay(id)
 	a.EmitLog(LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Acquisition stopped"})
 	return nil
 }
@@ -142,22 +187,122 @@ func (a *App) ApplyConfig(id string, cfg core.T1603Config) error {
 	return nil
 }
 
-func (a *App) relayStream(deviceID string, ch <-chan core.TemperatureSnapshot) {
-	for snapshot := range ch {
-		runtime.EventsEmit(a.ctx, "daq:payload", snapshot)
-		if a.recordUC.Status().Status == core.RecordingActive {
-			_ = a.recordUC.Write(snapshot)
-			runtime.EventsEmit(a.ctx, "daq:recording-status", a.recordUC.Status())
+func (a *App) startRelay(deviceID string, ch <-chan core.TemperatureSnapshot) {
+	baseCtx := a.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
+	control := &relayControl{cancel: cancel, done: make(chan struct{})}
+
+	a.mu.Lock()
+	if oldControl, ok := a.relays[deviceID]; ok {
+		oldControl.cancel()
+	}
+	a.relays[deviceID] = control
+	a.mu.Unlock()
+
+	go func() {
+		defer close(control.done)
+		defer a.clearRelay(deviceID, control)
+		a.relayStream(ctx, deviceID, ch)
+	}()
+}
+
+func (a *App) stopRelay(deviceID string) {
+	a.mu.Lock()
+	control := a.relays[deviceID]
+	delete(a.relays, deviceID)
+	a.mu.Unlock()
+	if control != nil {
+		control.cancel()
+	}
+}
+
+func (a *App) waitRelay(deviceID string) {
+	a.mu.Lock()
+	control := a.relays[deviceID]
+	a.mu.Unlock()
+	if control != nil {
+		<-control.done
+	}
+}
+
+func (a *App) stopAllRelays() {
+	a.mu.Lock()
+	relays := a.relays
+	a.relays = make(map[string]*relayControl)
+	a.mu.Unlock()
+	for _, control := range relays {
+		control.cancel()
+	}
+}
+
+func (a *App) clearRelay(deviceID string, control *relayControl) {
+	a.mu.Lock()
+	if a.relays[deviceID] == control {
+		delete(a.relays, deviceID)
+	}
+	a.mu.Unlock()
+}
+
+func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.TemperatureSnapshot) {
+	uiTicker := time.NewTicker(uiPayloadRefreshInterval)
+	statusTicker := time.NewTicker(recordingStatusEmitInterval)
+	defer uiTicker.Stop()
+	defer statusTicker.Stop()
+
+	var latest core.TemperatureSnapshot
+	hasLatest := false
+
+	defer func() {
+		if hasLatest {
+			a.emitPayload(latest)
+		}
+		a.emitRecordingStatus(a.recordUC.Status())
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snapshot, ok := <-ch:
+			if !ok {
+				return
+			}
+			latest = snapshot
+			hasLatest = true
+			if a.recordUC.Status().Status == core.RecordingActive {
+				if err := a.recordUC.Write(snapshot); err != nil {
+					a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: deviceID, Source: "recording", Message: "Record snapshot failed", Detail: err.Error()})
+				}
+			}
+		case <-uiTicker.C:
+			if hasLatest {
+				a.emitPayload(latest)
+			}
+		case <-statusTicker.C:
+			if a.recordUC.Status().Status == core.RecordingActive {
+				a.emitRecordingStatus(a.recordUC.Status())
+			}
 		}
 	}
 }
 
 func (a *App) StartRecording(outputDir string, filePrefix string) error {
-	return a.recordUC.Start(outputDir, filePrefix)
+	if err := a.recordUC.Start(outputDir, filePrefix); err != nil {
+		return err
+	}
+	a.emitRecordingStatus(a.recordUC.Status())
+	return nil
 }
 
 func (a *App) StopRecording() error {
-	return a.recordUC.Stop()
+	if err := a.recordUC.Stop(); err != nil {
+		return err
+	}
+	a.emitRecordingStatus(a.recordUC.Status())
+	return nil
 }
 
 func (a *App) GetRecordingStatus() core.RecordingSession {

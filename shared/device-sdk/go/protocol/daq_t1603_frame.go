@@ -207,6 +207,14 @@ func (r *T1603FrameReader) PrependBytes(data []byte) {
 	r.buffer = append(data, r.buffer...)
 }
 
+// Reset 清空内部缓冲区，用于停止采集后重置读取器状态，
+// 避免残留数据干扰下一次采集的帧解析。
+func (r *T1603FrameReader) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.buffer = make([]byte, 0, 256)
+}
+
 // ConsumeOptionalACK drains a leading ACK if present.
 // Some firmwares emit a single-byte 'A', others emit "A\n".
 // It reads byte-by-byte under a short deadline so split TCP packets do not

@@ -14,12 +14,12 @@ type DeviceUsecase struct {
 	scanner ports.DeviceScanPort
 }
 
-func NewDeviceUsecase(device ports.DevicePort, config ports.ConfigPort) *DeviceUsecase {
-	return &DeviceUsecase{device: device, config: config}
-}
-
-func (uc *DeviceUsecase) SetScanner(scanner ports.DeviceScanPort) {
-	uc.scanner = scanner
+func NewDeviceUsecase(device ports.DevicePort, config ports.ConfigPort, scanner ...ports.DeviceScanPort) *DeviceUsecase {
+	uc := &DeviceUsecase{device: device, config: config}
+	if len(scanner) > 0 {
+		uc.scanner = scanner[0]
+	}
+	return uc
 }
 
 func (uc *DeviceUsecase) GetProfiles() []core.TemperatureProfile {

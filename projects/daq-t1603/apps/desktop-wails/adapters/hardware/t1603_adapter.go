@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	sharedcore "shared.local/device-sdk/go/daq/core"
@@ -123,13 +124,12 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	})
 
 	dev.OnConfigSynced(func(cfg sharedcore.DaqT1603HardwareConfig) {
-		a.mu.RLock()
+		a.mu.Lock()
 		st, ok := a.status[profile.ID]
-		a.mu.RUnlock()
 		if !ok {
+			a.mu.Unlock()
 			return
 		}
-		a.mu.Lock()
 		profile.T1603Cfg.SamplingRate = cfg.SamplingRate
 		profile.T1603Cfg.ChannelMask = cfg.ChannelMask
 		profile.T1603Cfg.AverageCount = cfg.AverageCount
@@ -200,7 +200,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		return nil, fmt.Errorf("device %s already acquiring", id)
 	}
 
-	ch := make(chan core.TemperatureSnapshot, 64)
+	ch := make(chan core.TemperatureSnapshot, 8192)
 	done := make(chan struct{})
 	a.channels[id] = ch
 	a.stopChs[id] = done
@@ -231,10 +231,11 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		a.mu.RUnlock()
 		if sink != nil {
 			sink(core.TemperatureSnapshot{
-				DeviceID:  id,
-				Timestamp: payload.Timestamp,
-				Values:    values,
-				Unit:      unit,
+				DeviceID:          id,
+				Timestamp:         payload.Timestamp,
+				HardwareTimestamp: payload.HardwareTimestamp,
+				Values:            values,
+				Unit:              unit,
 			})
 		}
 	})
@@ -244,10 +245,29 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		delete(a.channels, id)
 		delete(a.stopChs, id)
 		delete(a.sinks, id)
+		if st, exists := a.status[id]; exists {
+			st.Status = core.StatusConnected
+			st.AcquiringAt = 0
+		}
 		a.mu.Unlock()
+
+		if isConnectionFault(err) {
+			_ = a.Disconnect(id)
+		}
 		return nil, fmt.Errorf("start acquisition %s: %w", id, err)
 	}
 	return ch, nil
+}
+
+func isConnectionFault(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "i/o timeout") ||
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "reset by peer") ||
+		strings.Contains(message, "device disconnected")
 }
 
 func (a *T1603Adapter) StopAcquisition(id string) error {
@@ -307,15 +327,17 @@ func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 
 func (a *T1603Adapter) ApplyConfig(id string, cfg core.T1603Config) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	dev, ok := a.drivers[id]
 	if !ok {
+		a.mu.Unlock()
 		return fmt.Errorf("device %s not connected", id)
 	}
 	if st, exists := a.status[id]; exists {
 		st.Profile.T1603Cfg = cfg
 	}
+	a.mu.Unlock()
+
+	// 在锁外调用硬件通信，避免与 OnReadLoopExit/OnConfigSynced 回调死锁
 	return dev.ApplyDaqT1603Config(mapT1603SharedConfig(cfg))
 }
 

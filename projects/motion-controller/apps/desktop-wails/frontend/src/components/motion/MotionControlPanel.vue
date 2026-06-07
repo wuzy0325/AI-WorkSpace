@@ -284,7 +284,9 @@ onMounted(async () => {
   if (motion.profiles.length > 0) {
     selectedId.value = motion.profiles[0].id
   }
+  // 先注册状态监听器，再自动连接，确保自动连接的状态更新被捕获
   unsubscribeStatus = motion.attachStatusListener()
+  await motion.autoConnectAll()
   window.addEventListener('keydown', handleKeydown)
 })
 

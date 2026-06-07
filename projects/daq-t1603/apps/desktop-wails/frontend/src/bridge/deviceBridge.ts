@@ -31,6 +31,7 @@ export interface T1603Config {
   averageCount: number
   showTimestamp: boolean
   showSequence: boolean
+  autoConnect: boolean
 }
 
 export const TC_RANGES: Record<string, { min: number; max: number }> = {
@@ -77,6 +78,7 @@ export interface ScanResult {
 export interface TemperatureSnapshot {
   deviceId: string
   timestamp: number
+  hardwareTimestamp: number
   values: number[]
   unit: string
 }
@@ -94,12 +96,16 @@ export interface DeviceLogEvent {
   timestamp: number
 }
 
+function toPlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 export function getProfiles(): Promise<TemperatureProfile[]> {
   return GetProfiles() as any
 }
 
 export function upsertProfile(profile: TemperatureProfile): Promise<void> {
-  return UpsertProfile(profile as any) as Promise<void>
+  return UpsertProfile(toPlain(profile) as any) as Promise<void>
 }
 
 export function deleteProfile(id: string): Promise<void> {
@@ -127,7 +133,7 @@ export function getStatus(id: string): Promise<DeviceState | boolean> {
 }
 
 export function applyConfig(id: string, cfg: T1603Config): Promise<void> {
-  return ApplyConfig(id, cfg as any) as Promise<void>
+  return ApplyConfig(id, toPlain(cfg) as any) as Promise<void>
 }
 
 export function scanDevices(): Promise<ScanResult[]> {

@@ -1,44 +1,61 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useDisplayStore } from '@stores/displayStore'
+import CustomSelect from './CustomSelect.vue'
+import type { SelectOption } from './CustomSelect.vue'
 import {
   Settings2, Activity,
-  Save, RotateCcw, ChevronDown, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Zap, Hash, Clock,
+  Save, RotateCcw, CheckCircle2, AlertCircle,
+  SlidersHorizontal, Hash, Clock, Wifi, Zap,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const deviceStore = useDeviceStore()
+const displayStore = useDisplayStore()
 const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
+const isAcquiring = computed(() => deviceStore.acquiringFor(props.deviceId))
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
 const samplingRateOptions = [1, 2, 5, 10, 20, 50, 100]
+const refreshRateOptions = [2, 5, 10, 15, 20, 30]
+
+// CustomSelect 需要的选项格式
+const samplingRateSelectOptions: SelectOption[] = samplingRateOptions.map(s => ({ value: s, label: `${s} Hz` }))
+const refreshRateSelectOptions: SelectOption[] = refreshRateOptions.map(s => ({ value: s, label: `${s} Hz` }))
+const thermocoupleSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: `${t} 型` }))
+const channelTcSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: t }))
 
 const samplingRate = ref(10)
+const displayRefreshRate = ref(displayStore.refreshRateHz)
 const showTimestamp = ref(false)
+const autoConnect = ref(false) // 启动时自动连接
+const globalTcType = ref('K') // 全局热电偶类型，用于统一设置所有通道
 const channelNames = ref<string[]>(Array(16).fill(''))
 const channelEnabled = ref<boolean[]>(Array(16).fill(true))
 const channelColors = ref<string[]>(Array(16).fill(''))
 const channelTcTypes = ref<string[]>(Array(16).fill('K'))
 
-const COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
-  '#f43f5e', '#06b6d4', '#f97316', '#6366f1',
-  '#ec4899', '#14b8a6', '#84cc16', '#8b5cf6',
-  '#ef4444', '#0ea5e9', '#eab308', '#64748b',
-]
+// 默认颜色，用于未设置颜色时的回退值
+const DEFAULT_COLOR = '#3b82f6'
 
 const hasChanges = ref(false)
 const saveStatus = ref<'idle' | 'saving' | 'success' | 'error'>('idle')
 const saveMessage = ref('')
+/** 保存同步标志：为 true 时禁止 watcher 更新表单状态，防止覆盖保存结果 */
+const syncing = ref(false)
 
 function syncFormFromProfile(profileData: typeof profile.value) {
   if (!profileData) return
+  // 保存同步中跳过表单同步，避免触发 watcher 覆盖 saveStatus
+  if (syncing.value) return
   const tcTypes = profileData.t1603Config?.thermocoupleTypes || 'KKKKKKKKKKKKKKKK'
   samplingRate.value = profileData.t1603Config?.samplingRate || 10
+  displayRefreshRate.value = displayStore.refreshRateHz
   showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
+  autoConnect.value = profileData.t1603Config?.autoConnect ?? false
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
@@ -46,6 +63,8 @@ function syncFormFromProfile(profileData: typeof profile.value) {
     const ch = profileData.channels[i]
     return (ch?.thermocoupleType || tcTypes[i] || 'K')
   })
+  // 同步全局热电偶类型为第一个通道的类型
+  globalTcType.value = channelTcTypes.value[0] || 'K'
   hasChanges.value = false
   saveStatus.value = 'idle'
 }
@@ -56,52 +75,111 @@ watch(
   { immediate: true }
 )
 
-watch([samplingRate, showTimestamp, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
+watch([samplingRate, displayRefreshRate, showTimestamp, autoConnect, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
+  // 保存同步中跳过，避免覆盖 saveStatus
+  if (syncing.value) return
   hasChanges.value = true
   saveStatus.value = 'idle'
 }, { deep: true })
 
+/** 全局热电偶类型变更：将所有通道的热电偶类型统一设置 */
+function onGlobalTcTypeChange(type: string) {
+  globalTcType.value = type
+  for (let i = 0; i < 16; i++) {
+    channelTcTypes.value[i] = type
+  }
+}
+
+/** 单个通道热电偶类型变更 */
+function onChannelTcTypeChange(index: number, type: string) {
+  channelTcTypes.value[index] = type
+}
+
 const enabledCount = computed(() => channelEnabled.value.filter(Boolean).length)
+
+/** 判断硬件配置是否发生变更（排除纯UI设置如界面刷新率） */
+function hasHardwareConfigChanged(current: typeof profile.value, next: typeof current): boolean {
+  if (!current || !next) return true
+  const cur = current.t1603Config
+  const nxt = next.t1603Config
+  if (cur.thermocoupleTypes !== nxt.thermocoupleTypes) return true
+  if (cur.samplingRate !== nxt.samplingRate) return true
+  if (cur.showTimestamp !== nxt.showTimestamp) return true
+  if (cur.autoConnect !== nxt.autoConnect) return true
+  // 通道配置变更
+  for (let i = 0; i < current.channels.length; i++) {
+    const cc = current.channels[i]
+    const nc = next.channels[i]
+    if (!cc || !nc) return true
+    if (cc.enabled !== nc.enabled || cc.thermocoupleType !== nc.thermocoupleType) return true
+  }
+  return false
+}
 
 async function saveConfig() {
   if (!profile.value) return
   saveStatus.value = 'saving'
   saveMessage.value = ''
+  syncing.value = true
   try {
     const tcTypesStr = channelTcTypes.value.join('')
-    await deviceStore.updateT1603Config(props.deviceId, {
-      thermocoupleTypes: tcTypesStr,
-      samplingRate: samplingRate.value,
-      showTimestamp: showTimestamp.value,
-    })
-    for (let i = 0; i < 16; i++) {
-      await deviceStore.updateChannel(props.deviceId, i, {
-        name: channelNames.value[i] || undefined,
-        enabled: channelEnabled.value[i],
-        color: channelColors.value[i] || undefined,
-        thermocoupleType: channelTcTypes.value[i],
-      })
+    const nextProfile = {
+      ...profile.value,
+      t1603Config: {
+        ...profile.value.t1603Config,
+        thermocoupleTypes: tcTypesStr,
+        samplingRate: samplingRate.value,
+        showTimestamp: showTimestamp.value,
+        autoConnect: autoConnect.value,
+      },
+      channels: profile.value.channels.map((channel, index) => ({
+        ...channel,
+        name: channelNames.value[index] || '',
+        enabled: channelEnabled.value[index],
+        color: channelColors.value[index] || '',
+        thermocoupleType: channelTcTypes.value[index],
+      })),
     }
+    // ① 保存配置到文件
+    await deviceStore.saveProfile(nextProfile)
+
+    // ② 仅在硬件配置变更且设备已连接（非采集状态）时发送硬件命令
+    const status = deviceStore.statusFor(props.deviceId)
+    const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
+    if (hwChanged && status === 'Connected') {
+      await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
+    }
+
+    // ③ 设置UI刷新率（纯前端设置，与硬件无关）
+    displayStore.setRefreshRateHz(displayRefreshRate.value)
+    deviceStore.setDisplayRefreshRateHz(displayRefreshRate.value)
+
     saveStatus.value = 'success'
-    saveMessage.value = '配置已保存'
+    if (!hwChanged) {
+      saveMessage.value = '界面刷新率已更新'
+    } else if (status === 'Acquiring') {
+      saveMessage.value = '配置已保存，硬件参数将在停止采集后生效'
+    } else {
+      saveMessage.value = '配置已保存并应用到设备'
+    }
     hasChanges.value = false
     setTimeout(() => { saveStatus.value = 'idle' }, 2000)
   } catch (err) {
     saveStatus.value = 'error'
     saveMessage.value = err instanceof Error ? err.message : '保存失败'
+  } finally {
+    syncing.value = false
   }
 }
 
 function resetConfig() {
+  if (isAcquiring.value) return
   syncFormFromProfile(profile.value)
 }
 
 function toggleChannel(index: number) {
+  if (isAcquiring.value) return
   channelEnabled.value[index] = !channelEnabled.value[index]
-}
-
-function selectColor(index: number, color: string) {
-  channelColors.value[index] = color
 }
 </script>
 
@@ -119,7 +197,7 @@ function selectColor(index: number, color: string) {
           </p>
         </div>
       </div>
-      <button class="config__close" title="关闭" @click="emit('close')">
+      <button type="button" class="config__close" title="关闭" @click.stop="emit('close')">
         <span class="config__close-line"></span>
         <span class="config__close-line"></span>
       </button>
@@ -139,12 +217,11 @@ function selectColor(index: number, color: string) {
               <Hash class="config__label-icon" />
               <span>采样频率</span>
             </label>
-            <div class="config__select-wrap">
-              <select v-model="samplingRate" class="config__select">
-                <option v-for="s in samplingRateOptions" :key="s" :value="s">{{ s }} Hz</option>
-              </select>
-              <ChevronDown class="config__select-arrow" />
-            </div>
+            <CustomSelect
+              v-model="samplingRate"
+              :options="samplingRateSelectOptions"
+              :disabled="isAcquiring"
+            />
           </div>
 
           <div class="config__field">
@@ -153,8 +230,10 @@ function selectColor(index: number, color: string) {
               <span>时间戳</span>
             </label>
             <button
+              type="button"
               class="config__toggle"
               :class="{ 'config__toggle--on': showTimestamp }"
+              :disabled="isAcquiring"
               @click="showTimestamp = !showTimestamp"
             >
               <span class="config__toggle-track">
@@ -163,7 +242,53 @@ function selectColor(index: number, color: string) {
               <span class="config__toggle-text">{{ showTimestamp ? '显示' : '隐藏' }}</span>
             </button>
           </div>
+
+          <!-- 自动连接开关：启动应用时自动连接此设备 -->
+          <div class="config__field">
+            <label class="config__label">
+              <Wifi class="config__label-icon" />
+              <span>自动连接</span>
+            </label>
+            <button
+              type="button"
+              class="config__toggle"
+              :class="{ 'config__toggle--on': autoConnect }"
+              :disabled="isAcquiring"
+              @click="autoConnect = !autoConnect"
+            >
+              <span class="config__toggle-track">
+                <span class="config__toggle-thumb"></span>
+              </span>
+              <span class="config__toggle-text">{{ autoConnect ? '开启' : '关闭' }}</span>
+            </button>
+          </div>
+
+          <!-- 全局热电偶类型选择：统一设置所有通道的热电偶类型 -->
+          <div class="config__field">
+            <label class="config__label">
+              <Zap class="config__label-icon" />
+              <span>热电偶类型（全部通道）</span>
+            </label>
+            <CustomSelect
+              :model-value="globalTcType"
+              :options="thermocoupleSelectOptions"
+              :disabled="isAcquiring"
+              @update:model-value="onGlobalTcTypeChange($event as string)"
+            />
+          </div>
+
+          <div class="config__field">
+            <label class="config__label">
+              <Zap class="config__label-icon" />
+              <span>界面刷新率</span>
+            </label>
+            <CustomSelect
+              v-model="displayRefreshRate"
+              :options="refreshRateSelectOptions"
+            />
+          </div>
         </div>
+        <p v-if="isAcquiring" class="config__section-hint">采集中不允许变更配置，请先停止采集。</p>
       </section>
 
       <!-- 通道列表 -->
@@ -187,34 +312,29 @@ function selectColor(index: number, color: string) {
                   v-model="channelNames[i - 1]"
                   class="config__channel-name"
                   :placeholder="`通道 ${i}`"
-                  :disabled="!channelEnabled[i - 1]"
+                  :disabled="isAcquiring || !channelEnabled[i - 1]"
                 />
-                <select
-                  v-model="channelTcTypes[i - 1]"
+                <CustomSelect
+                  :model-value="channelTcTypes[i - 1]"
+                  :options="channelTcSelectOptions"
+                  :disabled="isAcquiring || !channelEnabled[i - 1]"
                   class="config__channel-tc"
-                  :disabled="!channelEnabled[i - 1]"
-                >
-                  <option v-for="t in thermocoupleOptions" :key="t" :value="t">{{ t }}</option>
-                </select>
+                  @update:model-value="onChannelTcTypeChange(i - 1, $event as string)"
+                />
               </div>
               <div class="config__channel-actions">
-                <div class="config__channel-colors">
-                  <button
-                    v-for="color in COLORS"
-                    :key="color"
-                    class="config__color-dot"
-                    :class="{ 'config__color-dot--active': channelColors[i - 1] === color }"
-                    :style="{ background: color }"
-                    :disabled="!channelEnabled[i - 1]"
-                    @click="selectColor(i - 1, color)"
-                  />
-                </div>
                 <button
-                  class="config__channel-toggle"
-                  :class="{ 'config__channel-toggle--on': channelEnabled[i - 1] }"
+                  type="button"
+                  class="config__toggle"
+                  :class="{ 'config__toggle--on': channelEnabled[i - 1] }"
+                  :title="channelEnabled[i - 1] ? '禁用通道' : '启用通道'"
+                  :disabled="isAcquiring"
                   @click="toggleChannel(i - 1)"
                 >
-                  <Zap class="config__channel-toggle-icon" />
+                  <span class="config__toggle-track">
+                    <span class="config__toggle-thumb"></span>
+                  </span>
+                  <span class="config__toggle-text">{{ channelEnabled[i - 1] ? '开' : '关' }}</span>
                 </button>
               </div>
             </div>
@@ -232,18 +352,20 @@ function selectColor(index: number, color: string) {
         <span>{{ saveMessage || (saveStatus === 'saving' ? '保存中...' : '') }}</span>
       </div>
       <div v-else class="config__status config__status--idle">
-        <span v-if="hasChanges">有未保存的更改</span>
+        <span v-if="isAcquiring">采集中不允许变更配置</span>
+        <span v-else-if="hasChanges">有未保存的更改</span>
         <span v-else>所有更改已保存</span>
       </div>
       <div class="config__actions">
-        <button class="config__btn config__btn--secondary" @click="resetConfig">
+        <button type="button" class="config__btn config__btn--secondary" :disabled="isAcquiring || saveStatus === 'saving'" @click.stop="resetConfig">
           <RotateCcw class="config__btn-icon" />
           <span>重置</span>
         </button>
         <button
+          type="button"
           class="config__btn config__btn--primary"
           :disabled="saveStatus === 'saving'"
-          @click="saveConfig"
+          @click.stop="saveConfig"
         >
           <Save class="config__btn-icon" />
           <span>保存</span>
@@ -417,6 +539,11 @@ function selectColor(index: number, color: string) {
   gap: 0.65rem;
 }
 
+.config__section-hint {
+  font-size: var(--font-size-xs);
+  color: var(--warning);
+}
+
 /* 表单字段 */
 .config__field {
   display: flex;
@@ -450,48 +577,6 @@ function selectColor(index: number, color: string) {
   opacity: 0.8;
 }
 
-/* 下拉选择 */
-.config__select-wrap {
-  position: relative;
-  min-width: 7rem;
-}
-
-.config__select {
-  width: 100%;
-  padding: 0.45rem 1.75rem 0.45rem 0.75rem;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  cursor: pointer;
-  appearance: none;
-  transition: border-color var(--motion-fast) var(--easing-standard),
-              box-shadow var(--motion-fast) var(--easing-standard);
-}
-
-.config__select:hover {
-  border-color: var(--border-hover);
-}
-
-.config__select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-muted);
-}
-
-.config__select-arrow {
-  position: absolute;
-  right: 0.5rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
 /* 开关 */
 .config__toggle {
   display: flex;
@@ -501,6 +586,11 @@ function selectColor(index: number, color: string) {
   border: none;
   cursor: pointer;
   padding: 0.25rem;
+}
+
+.config__toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .config__toggle-track {
@@ -610,32 +700,23 @@ function selectColor(index: number, color: string) {
   transition: all var(--motion-fast) var(--easing-standard);
 }
 
+/* 通道热电偶选择：覆盖 CustomSelect 默认样式，缩小尺寸 */
 .config__channel-tc {
+  min-width: 3.5rem;
   flex-shrink: 0;
-  padding: 0.2rem 0.4rem;
+}
+
+.config__channel-tc :deep(.cselect__trigger) {
+  padding: 0.2rem 1.4rem 0.2rem 0.4rem;
   font-size: 0.6rem;
   font-weight: 700;
   background: var(--btn-bg);
-  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  cursor: pointer;
-  appearance: none;
-  transition: border-color var(--motion-fast) var(--easing-standard);
 }
 
-.config__channel-tc:hover {
-  border-color: var(--border-hover);
-}
-
-.config__channel-tc:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.config__channel-tc:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.config__channel-tc :deep(.cselect__arrow) {
+  width: 10px;
+  height: 10px;
 }
 
 .config__channel-name:hover {
@@ -665,72 +746,6 @@ function selectColor(index: number, color: string) {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
-}
-
-.config__channel-colors {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.config__color-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: all var(--motion-fast) var(--easing-standard);
-  position: relative;
-}
-
-.config__color-dot:hover {
-  transform: scale(1.2);
-  box-shadow: 0 0 8px currentColor;
-}
-
-.config__color-dot--active {
-  border-color: var(--text-primary);
-  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 3px var(--text-primary);
-}
-
-.config__color-dot:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-.config__channel-toggle {
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--btn-bg);
-  border: 1px solid var(--border-default);
-  color: var(--text-muted);
-  transition: all var(--motion-fast) var(--easing-standard);
-}
-
-.config__channel-toggle:hover {
-  background: var(--btn-bg-hover);
-  color: var(--text-primary);
-}
-
-.config__channel-toggle--on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-}
-
-.config__channel-toggle--on:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-
-.config__channel-toggle-icon {
-  width: 12px;
-  height: 12px;
 }
 
 /* 底部 */
@@ -794,6 +809,11 @@ function selectColor(index: number, color: string) {
   transition: all var(--motion-fast) var(--easing-standard);
 }
 
+.config__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .config__btn--secondary {
   background: var(--btn-bg);
   color: var(--text-secondary);
@@ -832,7 +852,6 @@ function selectColor(index: number, color: string) {
 @media (prefers-reduced-motion: reduce) {
   .config__toggle-track,
   .config__toggle-thumb,
-  .config__color-dot,
   .config__close-line,
   .config__field,
   .config__channel,
@@ -841,7 +860,7 @@ function selectColor(index: number, color: string) {
     transition: none;
   }
 
-  .config__color-dot:hover {
+  .config__channel:hover {
     transform: none;
   }
 

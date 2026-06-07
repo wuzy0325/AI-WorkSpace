@@ -247,6 +247,11 @@ func (d *DAQT1603) StartAcquisition() error {
 	if mask == "" {
 		mask = "FFFF"
 	}
+	// 清空 FrameReader 缓冲区，确保从干净状态开始读取数据帧
+	if d.frameReader != nil {
+		d.frameReader.Reset()
+	}
+
 	cmd := fmt.Sprintf("@f0 %s 2", mask)
 	slog.Info("DAQ-T-1603 sending start acquisition command", "device", d.profile.ID, "cmd", cmd)
 	err := d.writeCommandOnly(cmd)
@@ -295,6 +300,10 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 				d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
 			}
 		}(d.conn)
+	}
+	// 清空 FrameReader 缓冲区，避免残留数据干扰下一次采集的帧解析
+	if d.frameReader != nil {
+		d.frameReader.Reset()
 	}
 	return nil
 }
@@ -381,10 +390,16 @@ func (d *DAQT1603) readLoop() {
 	lastDataAt := time.Now()
 	var unexpectedErr error // set when exit is due to error/timeout, not normal stop
 
+	// 捕获当前连接引用，避免 defer 或循环体中 d.conn 被外部 Connect() 替换，
+	// 导致 @f1 发送到错误的连接或读取错误连接的帧数据
+	conn := d.conn
+
 	defer func() {
 		d.mu.Lock()
-		if d.conn != nil {
-			_ = d.writeCommandOnly("@f1")
+		if conn != nil {
+			conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+			conn.Write([]byte("@f1\n"))
+			conn.SetWriteDeadline(time.Time{})
 		}
 		d.acquiring = false
 		d.stop = nil
@@ -416,7 +431,7 @@ func (d *DAQT1603) readLoop() {
 			// Normal stop requested via StopAcquisition.
 			return
 		default:
-			d.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 			payload, err := d.frameReader.ReadFrame()
 			if err != nil {
 				if errors.Is(err, protocol.ErrIncompleteFrame) {

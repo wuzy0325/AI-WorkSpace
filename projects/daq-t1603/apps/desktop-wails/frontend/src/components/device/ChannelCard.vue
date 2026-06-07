@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Eye, EyeOff, Activity } from '@lucide/vue'
+import { Activity } from '@lucide/vue'
 
 const props = defineProps<{
   index: number
@@ -9,12 +9,11 @@ const props = defineProps<{
   color: string
   name: string
   precision?: number
-  chartSelected: boolean
   active: boolean
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggleChart'): void
+  (e: 'changeColor', color: string): void
 }>()
 
 const displayValue = ref('---')
@@ -39,22 +38,30 @@ watch(() => props.value, (newVal, oldVal) => {
 
 const statusText = computed(() => {
   if (props.active) return '已选择'
-  if (props.chartSelected) return '波形中'
   return '空闲'
 })
 
 const statusColor = computed(() => {
   if (props.active) return 'var(--accent)'
-  if (props.chartSelected) return props.color
   return 'var(--text-muted)'
 });
+
+/** 打开原生调色盘 */
+function openColorPicker() {
+  const input = document.getElementById(`ch-color-${props.index}`) as HTMLInputElement | null
+  input?.click()
+}
+
+/** 调色盘颜色变更回调 */
+function onColorChange(target: HTMLInputElement) {
+  emit('changeColor', target.value)
+}
 </script>
 
 <template>
   <article
     class="card"
     :class="{
-      'card--selected': chartSelected,
       'card--active': active,
     }"
     :style="{ '--ch-color': color }"
@@ -62,18 +69,26 @@ const statusColor = computed(() => {
     <!-- 顶部彩色条 -->
     <div class="card__topbar" :style="{ background: color }"></div>
 
-    <!-- 头部：通道标识 + 切换按钮 -->
+    <!-- 头部：通道标识 + 操作按钮 -->
     <div class="card__head">
       <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
-      <button
-        class="card__toggle"
-        :class="{ 'card__toggle--on': chartSelected }"
-        :title="chartSelected ? '从波形图移除' : '添加到波形图'"
-        @click="emit('toggleChart')"
-      >
-        <Eye v-if="chartSelected" class="card__toggle-icon" />
-        <EyeOff v-else class="card__toggle-icon" />
-      </button>
+      <div class="card__actions">
+        <!-- 颜色选择按钮 -->
+        <button
+          class="card__color-btn"
+          :style="{ background: color }"
+          title="选择波形颜色"
+          @click="openColorPicker"
+        >
+          <input
+            :id="`ch-color-${index}`"
+            type="color"
+            class="card__color-input"
+            :value="color"
+            @input="onColorChange(($event as InputEvent).target as HTMLInputElement)"
+          />
+        </button>
+      </div>
     </div>
 
     <!-- 数值显示区 -->
@@ -125,18 +140,18 @@ const statusColor = computed(() => {
 }
 
 /* 选中状态 */
-.card--selected {
+.card--active {
   border-color: var(--ch-color, var(--accent));
   box-shadow:
     0 0 0 1px var(--ch-color, var(--accent)),
     0 6px 18px color-mix(in srgb, var(--ch-color, var(--accent)) 20%, transparent);
 }
 
-.card--selected::before {
+.card--active::before {
   opacity: 0.06;
 }
 
-.card--selected:hover {
+.card--active:hover {
   box-shadow:
     0 0 0 1px var(--ch-color, var(--accent)),
     0 8px 24px color-mix(in srgb, var(--ch-color, var(--accent)) 30%, transparent);
@@ -178,44 +193,43 @@ const statusColor = computed(() => {
   flex-shrink: 0;
 }
 
-/* 波形图切换按钮 */
-.card__toggle {
-  width: 18px;
-  height: 18px;
+/* 操作按钮组 */
+.card__actions {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+/* 颜色选择按钮 */
+.card__color-btn {
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: var(--btn-bg);
-  color: var(--text-muted);
-  border: 1px solid var(--border-default);
+  border: 2px solid var(--border-default);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
   transition: all var(--motion-fast) var(--easing-standard);
   flex-shrink: 0;
 }
 
-.card__toggle:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-border);
-  transform: scale(1.1);
+.card__color-btn:hover {
+  border-color: var(--text-primary);
+  transform: scale(1.15);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
-.card__toggle--on {
-  background: var(--ch-color, var(--accent));
-  color: #ffffff;
-  border-color: var(--ch-color, var(--accent));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--ch-color, var(--accent)) 40%, transparent);
-}
-
-.card__toggle--on:hover {
-  background: var(--ch-color, var(--accent));
-  color: #ffffff;
-  box-shadow: 0 0 12px color-mix(in srgb, var(--ch-color, var(--accent)) 60%, transparent);
-}
-
-.card__toggle-icon {
-  width: 10px;
-  height: 10px;
+/* 隐藏原生颜色输入框 */
+.card__color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
 }
 
 /* 数值显示 */
@@ -243,7 +257,7 @@ const statusColor = computed(() => {
   animation: value-flash 0.4s var(--easing-standard);
 }
 
-.card--selected .card__value {
+.card--active .card__value {
   color: var(--ch-color, var(--accent));
 }
 

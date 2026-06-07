@@ -11,11 +11,18 @@ import (
 	"daq-t1603/core"
 )
 
+const (
+	csvFlushRows     = 100
+	csvFlushInterval = time.Second
+)
+
 type CSVRecorder struct {
-	mu      sync.RWMutex
-	file    *os.File
-	session core.RecordingSession
-	writer  *csv.Writer
+	mu          sync.RWMutex
+	file        *os.File
+	session     core.RecordingSession
+	writer      *csv.Writer
+	pendingRows int
+	lastFlush   time.Time
 }
 
 func NewCSVRecorder() *CSVRecorder {
@@ -53,8 +60,14 @@ func (r *CSVRecorder) Start(outputDir string, prefix string) error {
 		return fmt.Errorf("write header: %w", err)
 	}
 	r.writer.Flush()
+	if err := r.writer.Error(); err != nil {
+		f.Close()
+		return fmt.Errorf("flush header: %w", err)
+	}
 
 	r.file = f
+	r.pendingRows = 0
+	r.lastFlush = time.Now()
 	r.session = core.RecordingSession{
 		ID:          fmt.Sprintf("rec_%d", time.Now().UnixNano()),
 		OutputDir:   outputDir,
@@ -73,7 +86,16 @@ func (r *CSVRecorder) Write(snapshot core.TemperatureSnapshot) error {
 		return nil
 	}
 
-	t := time.UnixMilli(snapshot.Timestamp)
+	// 优先使用设备硬件时间戳，否则使用电脑本地时间
+	var t time.Time
+	if snapshot.HardwareTimestamp > 0 {
+		sec := int64(snapshot.HardwareTimestamp)
+		nsec := int64((snapshot.HardwareTimestamp - float64(sec)) * 1e9)
+		t = time.Unix(sec, nsec)
+	} else {
+		t = time.UnixMilli(snapshot.Timestamp)
+	}
+
 	record := make([]string, 0, 17)
 	record = append(record, t.Format("2006-01-02 15:04:05.000"))
 	for _, v := range snapshot.Values {
@@ -82,8 +104,26 @@ func (r *CSVRecorder) Write(snapshot core.TemperatureSnapshot) error {
 	if err := r.writer.Write(record); err != nil {
 		return err
 	}
-	r.writer.Flush()
+	r.pendingRows++
+	if r.pendingRows >= csvFlushRows || time.Since(r.lastFlush) >= csvFlushInterval {
+		if err := r.flushLocked(); err != nil {
+			return err
+		}
+	}
 	r.session.SnapshotCount++
+	return nil
+}
+
+func (r *CSVRecorder) flushLocked() error {
+	if r.writer == nil {
+		return nil
+	}
+	r.writer.Flush()
+	if err := r.writer.Error(); err != nil {
+		return err
+	}
+	r.pendingRows = 0
+	r.lastFlush = time.Now()
 	return nil
 }
 
@@ -92,7 +132,9 @@ func (r *CSVRecorder) Stop() error {
 	defer r.mu.Unlock()
 
 	if r.writer != nil {
-		r.writer.Flush()
+		if err := r.flushLocked(); err != nil {
+			return err
+		}
 		r.writer = nil
 	}
 	if r.file != nil {

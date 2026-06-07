@@ -33,6 +33,7 @@ type T1603Config struct {
 	AverageCount      int    `json:"averageCount"`       // 1-100
 	ShowTimestamp     bool   `json:"showTimestamp"`
 	ShowSequence      bool   `json:"showSequence"`
+	AutoConnect      bool   `json:"autoConnect"`        // 启动时自动连接
 }
 
 type ChannelConfig struct {
@@ -59,10 +60,11 @@ type TemperatureProfile struct {
 }
 
 type TemperatureSnapshot struct {
-	DeviceID  string    `json:"deviceId"`
-	Timestamp int64     `json:"timestamp"`
-	Values    []float64 `json:"values"`
-	Unit      string    `json:"unit"`
+	DeviceID          string    `json:"deviceId"`
+	Timestamp         int64     `json:"timestamp"`
+	HardwareTimestamp float64   `json:"hardwareTimestamp,omitempty"` // 设备硬件时间戳（秒.纳秒），0 表示无时间戳
+	Values            []float64 `json:"values"`
+	Unit              string    `json:"unit"`
 }
 
 type DeviceState struct {

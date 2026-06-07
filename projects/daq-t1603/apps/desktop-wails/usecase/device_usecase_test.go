@@ -271,12 +271,11 @@ func TestDeviceUsecase_ScanDevices_NilScanner(t *testing.T) {
 }
 
 func TestDeviceUsecase_ScanDevices_WithScanner(t *testing.T) {
-	uc := NewDeviceUsecase(newFakeDevicePort(), newFakeConfigPort())
 	expected := []core.ScanResult{
 		{ID: "dev1", Address: "10.0.0.1", Port: 9000},
 		{ID: "dev2", Address: "10.0.0.2", Port: 9000},
 	}
-	uc.SetScanner(newFakeScanPort(expected))
+	uc := NewDeviceUsecase(newFakeDevicePort(), newFakeConfigPort(), newFakeScanPort(expected))
 
 	results, err := uc.ScanDevices()
 	if err != nil {

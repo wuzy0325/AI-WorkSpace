@@ -1,16 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { Play, Square, Timer, Clock, Circle, FolderOpen } from '@lucide/vue'
+import { Timer, Clock, FolderOpen } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useRecordingStore } from '@stores/recordingStore'
-import { pickDirectory } from '@bridge/recordingBridge'
 
 const deviceStore = useDeviceStore()
 const recordingStore = useRecordingStore()
-
-const emit = defineEmits<{
-  (e: 'toggle-acquisition'): void
-}>()
 
 const currentTime = ref('00:00:00')
 const elapsedTime = ref('00:00:00')
@@ -44,8 +39,10 @@ function updateElapsedTime() {
 const isAcquiring = computed(() =>
   deviceStore.profiles.some((p) => deviceStore.acquiringFor(p.id))
 )
-const hasAcquisitionCapable = computed(() => deviceStore.profiles.length > 0)
 const totalDevices = computed(() => deviceStore.profiles.length)
+const connectedDevices = computed(
+  () => deviceStore.profiles.filter((p) => deviceStore.statusFor(p.id) === 'Connected' || deviceStore.statusFor(p.id) === 'Acquiring').length
+)
 const recordingCount = computed(() => recordingStore.snapshotCount)
 
 onMounted(() => {
@@ -74,60 +71,39 @@ watch(isAcquiring, (newVal, oldVal) => {
   }
 }, { immediate: true })
 
-async function startSave() {
-  const dir = await pickDirectory()
-  if (!dir) return
-  await recordingStore.startRecording(dir, 'DAQ-T1603')
-}
-
-function stopSave() {
-  void recordingStore.stopRecording()
-}
 </script>
 
 <template>
   <footer class="bottombar">
-    <div class="bottombar__left">
-      <div class="bottombar__controls">
-        <button
-          class="bottombar__btn"
-          :class="isAcquiring ? 'bottombar__btn--stop' : 'bottombar__btn--start'"
-          :disabled="!hasAcquisitionCapable"
-          @click="emit('toggle-acquisition')"
-          :title="isAcquiring ? '停止采集' : '开始采集'"
-        >
-          <Play v-if="!isAcquiring" class="bottombar__btn-icon" />
-          <Square v-else class="bottombar__btn-icon" />
-        </button>
-        <button
-          class="bottombar__btn bottombar__btn--record"
-          :class="{ 'bottombar__btn--recording': recordingStore.isRecording }"
-          :title="recordingStore.isRecording ? '停止记录' : '开始记录'"
-          @click="recordingStore.isRecording ? stopSave() : startSave()"
-        >
-          <Circle class="bottombar__btn-icon" />
-        </button>
+    <div class="bottombar__status">
+      <div class="bottombar__status-item">
+        <span class="bottombar__status-label">采集状态</span>
+        <span class="bottombar__status-value" :class="{ 'bottombar__status-value--active': isAcquiring }">
+          {{ isAcquiring ? '运行中' : '已停止' }}
+        </span>
       </div>
-
-      <div class="bottombar__status">
-        <div class="bottombar__status-item">
-          <span class="bottombar__status-label">采集状态</span>
-          <span class="bottombar__status-value" :class="{ 'bottombar__status-value--active': isAcquiring }">
-            {{ isAcquiring ? '运行中' : '已停止' }}
-          </span>
-        </div>
-        <div class="bottombar__status-item">
-          <span class="bottombar__status-label">设备</span>
-          <span class="bottombar__status-value mono">{{ totalDevices }}</span>
-        </div>
-        <div v-if="recordingStore.isRecording" class="bottombar__status-item">
-          <span class="bottombar__status-label">已记录</span>
-          <span class="bottombar__status-value mono bottombar__status-value--rec">{{ recordingCount }}</span>
-        </div>
-        <div v-if="recordingStore.isRecording" class="bottombar__rec-folder">
-          <FolderOpen class="bottombar__rec-icon" />
-          <span class="bottombar__rec-path">{{ recordingStore.outputDir }}</span>
-        </div>
+      <div class="bottombar__status-item">
+        <span class="bottombar__status-label">记录状态</span>
+        <span class="bottombar__status-value" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">
+          {{ recordingStore.isRecording ? '保存中' : '未保存' }}
+        </span>
+      </div>
+      <div class="bottombar__status-item">
+        <span class="bottombar__status-label">设备</span>
+        <span class="bottombar__status-value mono">{{ totalDevices }}</span>
+      </div>
+      <div class="bottombar__status-item">
+        <span class="bottombar__status-label">在线</span>
+        <span class="bottombar__status-value mono bottombar__status-value--active">{{ connectedDevices }}</span>
+      </div>
+      <div class="bottombar__status-item">
+        <span class="bottombar__status-label">已记录</span>
+        <span class="bottombar__status-value mono" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">{{ recordingCount }}</span>
+      </div>
+      <div v-if="recordingStore.outputDir" class="bottombar__rec-folder">
+        <FolderOpen class="bottombar__rec-icon" />
+        <span class="bottombar__rec-label">保存目录</span>
+        <span class="bottombar__rec-path">{{ recordingStore.outputDir }}</span>
       </div>
     </div>
 
@@ -157,7 +133,8 @@ function stopSave() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 2rem;
+  gap: 1.5rem;
+  padding: 0 1.5rem;
   background: var(--bottombar-bg);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -169,85 +146,13 @@ function stopSave() {
   box-shadow: 0 -20px 40px rgba(15, 23, 42, 0.05);
 }
 
-.bottombar__left {
-  display: flex;
-  align-items: center;
-  gap: 1.75rem;
-  min-width: 0;
-  flex: 1;
-}
-
-.bottombar__controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.bottombar__btn {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-}
-
-.bottombar__btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.bottombar__btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.bottombar__btn--start {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-active) 100%);
-  color: #ffffff;
-  box-shadow: 0 4px 14px var(--accent-glow);
-}
-
-.bottombar__btn--start:hover:not(:disabled) {
-  box-shadow: 0 6px 18px var(--accent-glow);
-}
-
-.bottombar__btn--stop {
-  background: var(--danger-muted);
-  color: var(--danger);
-  border: 1px solid var(--danger-border);
-}
-
-.bottombar__btn--stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger-muted) 160%, transparent);
-}
-
-.bottombar__btn--record {
-  background: var(--btn-bg);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-default);
-}
-
-.bottombar__btn--recording {
-  background: rgba(244, 63, 94, 0.12);
-  color: var(--danger);
-  border-color: rgba(244, 63, 94, 0.35);
-  animation: record-pulse 1.8s ease-in-out infinite;
-}
-
-.bottombar__btn-icon {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-
 .bottombar__status {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1.25rem;
   min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
 }
 
 .bottombar__status-item {
@@ -290,6 +195,12 @@ function stopSave() {
   max-width: 22rem;
 }
 
+.bottombar__rec-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .bottombar__rec-icon {
   width: 12px;
   height: 12px;
@@ -309,7 +220,7 @@ function stopSave() {
 .bottombar__stats {
   display: flex;
   align-items: center;
-  gap: 2.5rem;
+  gap: 1.75rem;
   flex-shrink: 0;
 }
 

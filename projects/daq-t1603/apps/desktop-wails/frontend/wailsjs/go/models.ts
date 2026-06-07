@@ -64,6 +64,7 @@ export namespace core {
 	    averageCount: number;
 	    showTimestamp: boolean;
 	    showSequence: boolean;
+	    autoConnect: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new T1603Config(source);
@@ -77,6 +78,7 @@ export namespace core {
 	        this.averageCount = source["averageCount"];
 	        this.showTimestamp = source["showTimestamp"];
 	        this.showSequence = source["showSequence"];
+	        this.autoConnect = source["autoConnect"];
 	    }
 	}
 	export class TemperatureProfile {

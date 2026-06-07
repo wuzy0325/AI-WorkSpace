@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"testing"
 
 	"daq-t1603/adapters/config"
@@ -16,8 +17,7 @@ func newTestApp(t *testing.T) *App {
 	cfg := config.NewJSONConfigStore(dir + "/profiles.json")
 	dev := hardware.NewSimulatedAdapter()
 	rec := recording.NewCSVRecorder()
-	duc := usecase.NewDeviceUsecase(dev, cfg)
-	duc.SetScanner(hardware.NewSimulatedScanner())
+	duc := usecase.NewDeviceUsecase(dev, cfg, hardware.NewSimulatedScanner())
 	ruc := usecase.NewRecordingUsecase(rec)
 	app := NewApp(duc, ruc)
 	return app
@@ -144,6 +144,44 @@ func TestRecordingLifecycle(t *testing.T) {
 	session = app.GetRecordingStatus()
 	if session.Status != core.RecordingIdle {
 		t.Fatal("expected idle after stop")
+	}
+}
+
+func TestRelayStreamRecordsEverySnapshot(t *testing.T) {
+	app := newTestApp(t)
+	dir := t.TempDir()
+
+	if err := app.StartRecording(dir, "relay"); err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+
+	ch := make(chan core.TemperatureSnapshot)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.relayStream(context.Background(), "dev1", ch)
+	}()
+
+	const samples = 1000
+	for i := 0; i < samples; i++ {
+		values := make([]float64, 16)
+		values[0] = float64(i)
+		ch <- core.TemperatureSnapshot{
+			DeviceID:  "dev1",
+			Timestamp: int64(i + 1),
+			Values:    values,
+			Unit:      "°C",
+		}
+	}
+	close(ch)
+	<-done
+
+	if err := app.StopRecording(); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+	session := app.GetRecordingStatus()
+	if session.SnapshotCount != samples {
+		t.Fatalf("expected %d recorded snapshots, got %d", samples, session.SnapshotCount)
 	}
 }
 

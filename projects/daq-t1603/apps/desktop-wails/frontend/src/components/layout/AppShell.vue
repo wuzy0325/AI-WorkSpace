@@ -26,20 +26,20 @@ const isAcquiring = computed(() =>
 
 const canConfigure = computed(() => !!deviceStore.selectedId)
 
-function toggleAcquisition() {
+async function toggleAcquisition() {
   if (isAcquiring.value) {
-    for (const p of deviceStore.profiles) {
-      if (deviceStore.acquiringFor(p.id)) {
-        void deviceStore.stopAcquisition(p.id)
-      }
-    }
+    const acquiringIds = deviceStore.profiles
+      .filter((p) => deviceStore.acquiringFor(p.id))
+      .map((p) => p.id)
+    await Promise.allSettled(acquiringIds.map((id) => deviceStore.stopAcquisition(id)))
   } else {
-    for (const p of deviceStore.profiles) {
-      const status = deviceStore.statusFor(p.id)
-      if (status === 'Connected' || status === 'Acquiring') {
-        void deviceStore.startAcquisition(p.id)
-      }
-    }
+    const connectedIds = deviceStore.profiles
+      .filter((p) => {
+        const status = deviceStore.statusFor(p.id)
+        return status === 'Connected' || status === 'Acquiring' || status === 'Starting'
+      })
+      .map((p) => p.id)
+    await Promise.allSettled(connectedIds.map((id) => deviceStore.startAcquisition(id)))
   }
 }
 

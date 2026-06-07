@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useTheme } from '@composables/useTheme'
-import { Activity, Wifi, WifiOff, Loader2, Settings2, Eye, EyeOff, LineChart, Layers } from '@lucide/vue'
+import { Activity, Wifi, Network, Loader2, Settings2, Eye, EyeOff, LineChart, Layers } from '@lucide/vue'
 import ChannelGrid from '@components/device/ChannelGrid.vue'
 import RealtimeChart from '@components/device/RealtimeChart.vue'
 
@@ -15,6 +15,7 @@ const selected = computed(() => deviceStore.selectedProfile)
 const status = computed(() => (selected.value ? deviceStore.statusFor(selected.value.id) : ''))
 const isAcquiring = computed(() => (selected.value ? deviceStore.acquiringFor(selected.value.id) : false))
 const sampleCount = computed(() => (selected.value ? deviceStore.historyFor(selected.value.id).length : 0))
+const showChannelSelector = ref(false)
 
 const selectedChannelCount = computed(() => {
   if (!selected.value) return 0
@@ -27,26 +28,42 @@ const enabledCount = computed(() => {
   return selected.value.channels.filter((c) => c.enabled).length
 })
 
-const isChartVisible = computed(() => selectedChannelCount.value > 0)
+const selectableChannels = computed(() => {
+  if (!selected.value) return []
+  return selected.value.channels.filter((c) => c.enabled)
+})
 
-function toggleAllCharts() {
+const isChartVisible = computed(() => selectedChannelCount.value > 0)
+const isAllChannelsSelected = computed(() => enabledCount.value > 0 && selectedChannelCount.value === enabledCount.value)
+
+function openChannelSelection() {
+  showChannelSelector.value = !showChannelSelector.value
+}
+
+function toggleChannel(channelIndex: number) {
   if (!selected.value) return
-  const id = selected.value.id
-  if (isChartVisible.value) {
-    // 隐藏所有
-    for (const ch of selected.value.channels) {
-      if (deviceStore.isChartSelected(id, ch.index)) {
-        deviceStore.toggleChartSelection(id, ch.index)
-      }
+  deviceStore.toggleChartSelection(selected.value.id, channelIndex)
+}
+
+function isChannelSelected(channelIndex: number): boolean {
+  if (!selected.value) return false
+  return deviceStore.isChartSelected(selected.value.id, channelIndex)
+}
+
+function selectAllChannels() {
+  if (!selected.value) return
+  for (const channel of selectableChannels.value) {
+    if (!deviceStore.isChartSelected(selected.value.id, channel.index)) {
+      deviceStore.toggleChartSelection(selected.value.id, channel.index)
     }
-  } else {
-    // 显示前4个有数据的通道
-    let added = 0
-    for (const ch of selected.value.channels) {
-      if (ch.enabled && !deviceStore.isChartSelected(id, ch.index) && added < 4) {
-        deviceStore.toggleChartSelection(id, ch.index)
-        added++
-      }
+  }
+}
+
+function clearAllChannels() {
+  if (!selected.value) return
+  for (const channel of selectableChannels.value) {
+    if (deviceStore.isChartSelected(selected.value.id, channel.index)) {
+      deviceStore.toggleChartSelection(selected.value.id, channel.index)
     }
   }
 }
@@ -62,6 +79,7 @@ async function connectDisconnect() {
 
 function statusBadgeClass(): string {
   if (isAcquiring.value) return 'detail__status-badge--acquiring'
+  if (status.value === 'Stopping') return 'detail__status-badge--connecting'
   if (status.value === 'Connected') return 'detail__status-badge--connected'
   if (status.value === 'Connecting') return 'detail__status-badge--connecting'
   if (status.value === 'Error') return 'detail__status-badge--error'
@@ -70,6 +88,7 @@ function statusBadgeClass(): string {
 
 function statusLabel(): string {
   if (isAcquiring.value) return '采集中'
+  if (status.value === 'Stopping') return '停止中'
   if (status.value === 'Connected') return '已连接'
   if (status.value === 'Connecting') return '连接中'
   if (status.value === 'Error') return '错误'
@@ -144,9 +163,9 @@ function statusLabel(): string {
             :title="status === 'Connected' || status === 'Acquiring' ? '断开连接' : '连接设备'"
             @click="connectDisconnect"
           >
-            <Wifi v-if="status === 'Connected' || status === 'Acquiring'" class="detail__action-icon" />
+            <Network v-if="status === 'Connected' || status === 'Acquiring'" class="detail__action-icon" />
             <Loader2 v-else-if="status === 'Connecting'" class="detail__action-icon detail__action-icon--spin" />
-            <WifiOff v-else class="detail__action-icon" />
+            <Network v-else class="detail__action-icon" />
             <span>{{ status === 'Connected' || status === 'Acquiring' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}</span>
           </button>
           <button
@@ -170,19 +189,63 @@ function statusLabel(): string {
               · {{ selectedChannelCount }} 条曲线
             </span>
             <span v-else-if="sampleCount > 0" class="detail__chart-meta detail__chart-meta--hint">
-              · 点击右侧按钮添加波形
+              · 点击右侧按钮选择通道
             </span>
           </div>
-          <button
-            class="detail__chart-toggle"
-            :class="{ 'detail__chart-toggle--off': !isChartVisible }"
-            :title="isChartVisible ? '隐藏全部波形' : '显示波形'"
-            @click="toggleAllCharts"
-          >
-            <Eye v-if="isChartVisible" class="detail__chart-toggle-icon" />
-            <EyeOff v-else class="detail__chart-toggle-icon" />
-            <span>{{ isChartVisible ? '隐藏波形' : '添加波形' }}</span>
-          </button>
+          <div class="detail__chart-tools">
+            <button
+              class="detail__chart-toggle"
+              :class="{ 'detail__chart-toggle--active': showChannelSelector }"
+              :title="showChannelSelector ? '收起通道选择' : '展开通道选择'"
+              @click="openChannelSelection"
+            >
+              <Layers class="detail__chart-toggle-icon" />
+              <span>通道选择</span>
+            </button>
+
+            <div v-if="showChannelSelector" class="detail__channel-popover">
+              <div class="detail__channel-popover-head">
+                <div>
+                  <span class="detail__channel-popover-title">通道选择</span>
+                  <span class="detail__channel-popover-meta">{{ selectedChannelCount }}/{{ enabledCount }}</span>
+                </div>
+                <div class="detail__channel-popover-actions">
+                  <button
+                    class="detail__channel-batch-btn"
+                    type="button"
+                    :disabled="isAllChannelsSelected"
+                    @click="selectAllChannels"
+                  >
+                    全选
+                  </button>
+                  <button
+                    class="detail__channel-batch-btn"
+                    type="button"
+                    :disabled="selectedChannelCount === 0"
+                    @click="clearAllChannels"
+                  >
+                    全取消
+                  </button>
+                </div>
+              </div>
+              <div class="detail__channel-selector-grid">
+                <label
+                  v-for="channel in selectableChannels"
+                  :key="channel.index"
+                  class="detail__channel-option"
+                  :class="{ 'detail__channel-option--active': isChannelSelected(channel.index) }"
+                >
+                  <input
+                    class="detail__channel-checkbox"
+                    type="checkbox"
+                    :checked="isChannelSelected(channel.index)"
+                    @change="toggleChannel(channel.index)"
+                  />
+                  <span class="detail__channel-option-label">CH{{ channel.index + 1 }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="detail__chart-body">
           <RealtimeChart :device-id="selected.id" :max-points="120" />
@@ -194,7 +257,7 @@ function statusLabel(): string {
       <section class="detail__channels">
         <div class="detail__channels-header">
           <h3 class="detail__channels-title">通道监控</h3>
-          <p class="detail__channels-hint">点击通道卡片上的眼睛图标即可在波形图中加入或移除</p>
+          <p class="detail__channels-hint">通过上方"通道选择"按钮可以控制波形图中显示的通道</p>
         </div>
         <ChannelGrid :device-id="selected.id" />
       </section>
@@ -555,6 +618,7 @@ function statusLabel(): string {
   justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--divider-color);
+  gap: 1rem;
 }
 
 .detail__chart-title {
@@ -602,20 +666,135 @@ function statusLabel(): string {
   color: #ffffff;
 }
 
-.detail__chart-toggle--off {
-  background: var(--btn-bg);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
-}
-
-.detail__chart-toggle--off:hover {
-  background: var(--btn-bg-hover);
-  color: var(--text-primary);
+.detail__chart-toggle--active {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
 
 .detail__chart-toggle-icon {
   width: 12px;
   height: 12px;
+}
+
+.detail__chart-tools {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.detail__channel-popover {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  z-index: 20;
+  width: min(18rem, 78vw);
+  padding: 0.85rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.detail__channel-popover-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.detail__channel-popover-head > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.detail__channel-popover-title {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.detail__channel-popover-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.detail__channel-popover-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.detail__channel-batch-btn {
+  min-width: 3.2rem;
+  height: 1.8rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.detail__channel-batch-btn:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.detail__channel-batch-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.detail__channel-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem 0.6rem;
+}
+
+.detail__channel-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  transition: all var(--motion-fast) var(--easing-standard);
+  cursor: pointer;
+}
+
+.detail__channel-option:hover {
+  background: var(--btn-bg);
+  color: var(--text-primary);
+}
+
+.detail__channel-option--active {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.detail__channel-checkbox {
+  width: 0.9rem;
+  height: 0.9rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.detail__channel-option-label {
+  white-space: nowrap;
 }
 
 .detail__chart-body {
@@ -634,6 +813,7 @@ function statusLabel(): string {
   flex: 0 0 auto;
   max-height: 35%;
   overflow-y: auto;
+  padding: 0 0.25rem 0.25rem;
 }
 
 .detail__channels-header {
@@ -654,6 +834,26 @@ function statusLabel(): string {
 .detail__channels-hint {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
+}
+
+@media (max-width: 1199px) {
+  .detail__channel-selector-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .detail__chart-header {
+    align-items: flex-start;
+  }
+
+  .detail__channel-selector-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .detail__channel-popover {
+    width: min(16rem, calc(100vw - 3rem));
+  }
 }
 
 /* 减少动画偏好 */
