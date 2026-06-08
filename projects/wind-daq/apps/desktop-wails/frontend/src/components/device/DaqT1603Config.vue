@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import UiToggle from '@components/ui/UiToggle.vue'
+import { NInput, NInputNumber, NSelect } from 'naive-ui'
 
 const props = withDefaults(
   defineProps<{
@@ -78,14 +79,12 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
   <div class="t1603-config">
     <div class="t1603-config__field">
       <label class="t1603-config__label">通道掩码</label>
-      <input type="text" class="t1603-config__input" :value="channelMask" placeholder="0000-FFFF" maxlength="4" @input="emit('update:channelMask', ($event.target as HTMLInputElement).value)" />
+      <NInput :value="channelMask" @update:value="emit('update:channelMask', $event)" size="small" placeholder="0000-FFFF" :maxlength="4" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">采样率</label>
-      <select class="t1603-config__input" :value="samplingRate" @change="onSamplingRateChange">
-        <option v-for="o in samplingRateOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-      </select>
+      <NSelect :value="samplingRate" @update:value="emit('update:samplingRate', Number($event))" :options="samplingRateOptions" size="tiny" />
     </div>
 
     <div class="t1603-config__field">
@@ -95,21 +94,17 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发模式</label>
-      <select class="t1603-config__input" :value="triggerMode" @change="onTriggerModeChange">
-        <option v-for="o in triggerModeOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-      </select>
+      <NSelect :value="triggerMode" @update:value="emit('update:triggerMode', Number($event))" :options="triggerModeOptions" size="tiny" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发边沿</label>
-      <select class="t1603-config__input" :value="triggerEdge" @change="onTriggerEdgeChange">
-        <option v-for="o in triggerEdgeOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-      </select>
+      <NSelect :value="triggerEdge" @update:value="emit('update:triggerEdge', Number($event))" :options="triggerEdgeOptions" size="tiny" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发计数</label>
-      <input type="number" class="t1603-config__input" :value="triggerCount" min="0" @input="onNumberEmit((v) => emit('update:triggerCount', v), $event)" />
+      <NInputNumber :value="triggerCount" @update:value="(v) => v !== null && emit('update:triggerCount', v)" size="tiny" style="width:80px" :min="0" />
     </div>
 
     <div class="t1603-config__field">
@@ -119,7 +114,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">开路检测</label>
-      <input type="text" class="t1603-config__input" :value="openCircuitCheck" placeholder="hex mask" maxlength="4" @input="emit('update:openCircuitCheck', ($event.target as HTMLInputElement).value)" />
+      <NInput :value="openCircuitCheck" @update:value="emit('update:openCircuitCheck', $event)" size="small" placeholder="hex mask" :maxlength="4" />
     </div>
   </div>
 </template>

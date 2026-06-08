@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NSlider } from 'naive-ui'
 
 const alpha = ref(25)
 const beta = ref(20)
@@ -121,13 +122,13 @@ const betaArcEnd = computed(() => ({
         <span>alpha: 偏航角（偏航面）</span>
         <span class="font-bold text-[#ffaa00]">{{ alpha }} deg</span>
       </label>
-      <input v-model.number="alpha" type="range" min="-60" max="60" class="mb-4 w-full accent-amber-400" />
+      <NSlider v-model:value="alpha" :min="-60" :max="60" class="mb-4 w-full" />
 
       <label class="mb-2 flex justify-between text-xs text-slate-300">
         <span>beta: 俯仰角（俯仰面）</span>
         <span class="font-bold text-[#ff00aa]">{{ beta }} deg</span>
       </label>
-      <input v-model.number="beta" type="range" min="-60" max="60" class="mb-4 w-full accent-fuchsia-500" />
+      <NSlider v-model:value="beta" :min="-60" :max="60" class="mb-4 w-full" />
 
       <div class="space-y-1 rounded-xl border border-slate-700 bg-slate-900/75 p-3 text-xs leading-5 text-slate-300">
         <div><span class="font-bold text-amber-400">alpha+</span>: flow offset in the yaw plane; alpha- is the opposite direction.</div>

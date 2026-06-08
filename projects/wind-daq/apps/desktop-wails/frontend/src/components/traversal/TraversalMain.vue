@@ -32,6 +32,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UiButton from '@components/ui/UiButton.vue'
+import { NButton } from 'naive-ui'
 import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 import { deviceApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -450,45 +451,57 @@ watch(
         </div>
 
         <!-- 操作按钮组 -->
-        <button
+        <NButton
           @click="openSettings"
-          class="flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 transition-all hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+          quaternary size="tiny"
         >
-          <Settings class="h-3.5 w-3.5" />
+          <template #icon>
+            <Settings class="h-3.5 w-3.5" />
+          </template>
           {{ t.configBtn }}
-        </button>
+        </NButton>
 
         <div class="h-4 w-px bg-slate-200 dark:bg-slate-700"></div>
 
         <div class="flex items-center gap-1.5">
-          <button
+          <NButton
             v-if="!recovering && traversalStore.canStart"
-            class="flex h-8 items-center gap-1.5 rounded-lg bg-blue-500 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-600 active:scale-95 disabled:opacity-40"
+            type="primary" size="tiny"
             :disabled="!hasConfig"
             @click="startTest"
           >
-            <Play class="h-3.5 w-3.5 fill-current" />
+            <template #icon>
+              <Play class="h-3.5 w-3.5 fill-current" />
+            </template>
             {{ t.startRun }}
-          </button>
+          </NButton>
           <template v-else-if="!recovering && traversalStore.canPause">
-            <button class="flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:bg-amber-600 active:scale-95" @click="pauseTest">
-              <Pause class="h-3.5 w-3.5 fill-current" />
+            <NButton type="warning" size="tiny" @click="pauseTest">
+              <template #icon>
+                <Pause class="h-3.5 w-3.5 fill-current" />
+              </template>
               {{ t.travPause }}
-            </button>
-            <button class="flex h-8 items-center gap-1.5 rounded-lg bg-rose-500 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:bg-rose-600 active:scale-95" @click="stopTest">
-              <Square class="h-3.5 w-3.5 fill-current" />
+            </NButton>
+            <NButton type="error" size="tiny" @click="stopTest">
+              <template #icon>
+                <Square class="h-3.5 w-3.5 fill-current" />
+              </template>
               {{ t.travStop }}
-            </button>
+            </NButton>
           </template>
           <template v-else-if="!recovering && traversalStore.canResume">
-            <button class="flex h-8 items-center gap-1.5 rounded-lg bg-blue-500 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-600 active:scale-95" @click="resumeTest">
-              <Play class="h-3.5 w-3.5 fill-current" />
+            <NButton type="primary" size="tiny" @click="resumeTest">
+              <template #icon>
+                <Play class="h-3.5 w-3.5 fill-current" />
+              </template>
               {{ t.travResume }}
-            </button>
-            <button class="flex h-8 items-center gap-1.5 rounded-lg bg-rose-500 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:bg-rose-600 active:scale-95" @click="stopTest">
-              <Square class="h-3.5 w-3.5 fill-current" />
+            </NButton>
+            <NButton type="error" size="tiny" @click="stopTest">
+              <template #icon>
+                <Square class="h-3.5 w-3.5 fill-current" />
+              </template>
               {{ t.travStop }}
-            </button>
+            </NButton>
           </template>
         </div>
       </div>
@@ -642,15 +655,15 @@ watch(
                 </div>
                 <!-- 标签页切换 -->
                 <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800">
-                  <button
+                  <NButton
                     v-for="tab in workspaceTabs"
                     :key="tab.value"
-                    class="rounded-md px-3 py-1.5 text-xs font-medium transition-all"
+                    quaternary size="small"
                     :class="activeWorkspaceTab === tab.value ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'"
                     @click="activeWorkspaceTab = tab.value"
                   >
                     {{ tab.label }}
-                  </button>
+                  </NButton>
                 </div>
               </div>
 
@@ -697,13 +710,15 @@ watch(
                       <div class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ t.noLayoutConfigured }}</div>
                       <div class="mt-1 text-xs text-slate-400">请先配置测试点位布局以开始移位测试</div>
                     </div>
-                    <button
-                      class="flex items-center gap-1.5 rounded-lg bg-blue-500 px-4 py-2 text-xs font-medium text-white shadow-sm transition-all hover:bg-blue-600 active:scale-95"
+                    <NButton
+                      type="primary" size="tiny"
                       @click="openSettings"
                     >
-                      <Settings class="h-3.5 w-3.5" />
+                      <template #icon>
+                        <Settings class="h-3.5 w-3.5" />
+                      </template>
                       {{ t.configureLayout }}
-                    </button>
+                    </NButton>
                   </div>
                 </template>
                 <div v-else-if="activeWorkspaceTab === 'visualization'" class="h-full p-4">
@@ -726,7 +741,7 @@ watch(
           <AlertTriangle class="h-4 w-4" />
           <span>{{ traversalStore.error }}</span>
         </div>
-        <button class="rounded-lg bg-rose-100 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-200" @click="traversalStore.clearError">{{ t.dismiss }}</button>
+        <NButton type="error" size="tiny" @click="traversalStore.clearError">{{ t.dismiss }}</NButton>
       </div>
     </div>
   </div>

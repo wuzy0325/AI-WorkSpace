@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { storageApi, reportApi } from '@api/deviceApi'
+import { NButton, NInput, NSelect } from 'naive-ui'
 
 const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
@@ -78,21 +79,22 @@ onMounted(refreshStatus)
         <h3>录制控制</h3>
         <div class="storage-card__field">
           <label>输出目录</label>
-          <input v-model="recordingOutputDir" type="text" />
+          <NInput v-model:value="recordingOutputDir" size="small" />
         </div>
         <div class="storage-card__field">
           <label>文件前缀</label>
-          <input v-model="recordingFilePrefix" type="text" />
+          <NInput v-model:value="recordingFilePrefix" size="small" />
         </div>
         <div class="storage-card__actions">
-          <button
-            class="btn-primary"
+          <NButton
+            type="primary"
+            size="small"
             :class="{ active: recording }"
             :disabled="busy"
             @click="toggleRecording"
           >
             {{ recording ? '停止录制' : '开始录制' }}
-          </button>
+          </NButton>
           <span v-if="recording" class="recording-indicator">REC</span>
         </div>
         <p class="storage-card__hint">
@@ -104,21 +106,19 @@ onMounted(refreshStatus)
         <h3>报告生成</h3>
         <div class="storage-card__field">
           <label>输出目录</label>
-          <input v-model="reportOutputDir" type="text" />
+          <NInput v-model:value="reportOutputDir" size="small" />
         </div>
         <div class="storage-card__field">
           <label>文件前缀</label>
-          <input v-model="reportFilePrefix" type="text" />
+          <NInput v-model:value="reportFilePrefix" size="small" />
         </div>
         <div class="storage-card__field">
           <label>设备 ID</label>
-          <select v-model="reportDeviceId">
-            <option v-for="p in deviceStore.profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+          <NSelect v-model:value="reportDeviceId" :options="deviceStore.profiles.map(p => ({value: p.id, label: p.name}))" size="tiny" />
         </div>
-        <button class="btn-primary" :disabled="busy || generating" @click="generateReport">
+        <NButton type="primary" size="small" :disabled="busy || generating" @click="generateReport">
           {{ generating ? '生成中...' : '生成报告' }}
-        </button>
+        </NButton>
         <p v-if="lastReportPath" class="storage-card__result">
           上次报告: {{ lastReportPath }}
         </p>

@@ -2,6 +2,7 @@
 import { inject } from 'vue'
 import type { AxisConfig } from '@shared/types/motion'
 import { getAxisThemeClass, getAxisInfoLabel, computePulsesPerUnit } from './motionConfigEditor'
+import { NCheckbox, NInputNumber, NSelect } from 'naive-ui'
 
 const props = defineProps<{
   axis: AxisConfig
@@ -28,7 +29,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
     <div class="axis-card__header">
       <div class="axis-card__badge">{{ axis.name }}</div>
       <label class="axis-card__toggle">
-        <input type="checkbox" :checked="axis.enabled" @change="onAxisUpdate(index, 'enabled', !axis.enabled)" />
+        <NCheckbox :checked="axis.enabled" @update:checked="onAxisUpdate(index, 'enabled', $event)" size="small" />
         <span>{{ axis.enabled ? '启用' : '禁用' }}</span>
       </label>
     </div>
@@ -40,10 +41,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           轴类型
           <span class="field-hint" @mouseenter="tooltip('LINEAR=直线运动(单位mm), ROTARY=旋转运动(单位°)', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <select :value="axis.kind" @change="onAxisUpdate(index, 'kind', ($event.target as HTMLSelectElement).value)" class="axis-card__select" :disabled="!axis.enabled">
-          <option value="LINEAR">直线轴</option>
-          <option value="ROTARY">旋转轴</option>
-        </select>
+        <NSelect :value="axis.kind" @update:value="onAxisUpdate(index, 'kind', $event)" size="tiny" style="width:96px" :disabled="!axis.enabled" :options="[{value:'LINEAR',label:'直线轴'},{value:'ROTARY',label:'旋转轴'}]" />
       </div>
 
       <div class="axis-card__group">
@@ -51,7 +49,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           丝杆导程
           <span class="field-hint" @mouseenter="tooltip('丝杠旋转一周，螺母移动的直线距离(mm)。仅直线轴有效', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input :value="axis.lead" @input="onAxisUpdate(index, 'lead', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input" :disabled="!axis.enabled || axis.kind === 'ROTARY'" min="0.1" step="0.1" />
+        <NInputNumber :value="axis.lead" @update:value="onAxisUpdate(index, 'lead', $event ?? 0)" size="tiny" style="width:80px" :disabled="!axis.enabled || axis.kind === 'ROTARY'" :min="0.1" :step="0.1" />
       </div>
 
       <div class="axis-card__group">
@@ -59,7 +57,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           传动比
           <span class="field-hint" @mouseenter="tooltip('电机转速与负载转速的比值。减速比>1时填写传动比。仅旋转轴有效', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input :value="axis.gearRatio" @input="onAxisUpdate(index, 'gearRatio', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input" :disabled="!axis.enabled || axis.kind === 'LINEAR'" min="0.1" step="0.1" />
+        <NInputNumber :value="axis.gearRatio" @update:value="onAxisUpdate(index, 'gearRatio', $event ?? 0)" size="tiny" style="width:80px" :disabled="!axis.enabled || axis.kind === 'LINEAR'" :min="0.1" :step="0.1" />
       </div>
 
       <div class="axis-card__group-title">电气参数</div>
@@ -68,7 +66,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           步距角 (°/step)
           <span class="field-hint" @mouseenter="tooltip('电机每步转过的角度。常见值: 1.8°, 0.9°, 7.5°', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input :value="axis.stepsPerRev" @input="onAxisUpdate(index, 'stepsPerRev', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input" :disabled="!axis.enabled" step="0.1" min="0.1" />
+        <NInputNumber :value="axis.stepsPerRev" @update:value="onAxisUpdate(index, 'stepsPerRev', $event ?? 0)" size="tiny" style="width:80px" :disabled="!axis.enabled" :step="0.1" :min="0.1" />
       </div>
 
       <div class="axis-card__group">
@@ -76,7 +74,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           细分数
           <span class="field-hint" @mouseenter="tooltip('驱动器的细分数。细分数越高运动越平滑但扭矩越小', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input :value="axis.microSteps" @input="onAxisUpdate(index, 'microSteps', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input" :disabled="!axis.enabled" min="1" step="1" />
+        <NInputNumber :value="axis.microSteps" @update:value="onAxisUpdate(index, 'microSteps', $event ?? 0)" size="tiny" style="width:80px" :disabled="!axis.enabled" :min="1" :step="1" />
       </div>
 
       <div class="axis-card__group-title">运动参数</div>
@@ -85,7 +83,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           最大速度
           <span class="field-hint" @mouseenter="tooltip('轴的最大运动速度，单位取决于轴类型(mm/s 或 °/s)', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input :value="axis.maxSpeed" @input="onAxisUpdate(index, 'maxSpeed', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input" :disabled="!axis.enabled" min="1" />
+        <NInputNumber :value="axis.maxSpeed" @update:value="onAxisUpdate(index, 'maxSpeed', $event ?? 0)" size="tiny" style="width:80px" :disabled="!axis.enabled" :min="1" />
       </div>
 
       <div class="axis-card__group">
@@ -93,10 +91,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           位置源
           <span class="field-hint" @mouseenter="tooltip('register=使用驱动器内部寄存器, encoder=使用外部编码器反馈', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <select :value="axis.positionSource" @change="onAxisUpdate(index, 'positionSource', ($event.target as HTMLSelectElement).value)" class="axis-card__select" :disabled="!axis.enabled">
-          <option value="register">寄存器</option>
-          <option value="encoder">编码器</option>
-        </select>
+        <NSelect :value="axis.positionSource" @update:value="onAxisUpdate(index, 'positionSource', $event)" size="tiny" style="width:96px" :disabled="!axis.enabled" :options="[{value:'register',label:'寄存器'},{value:'encoder',label:'编码器'}]" />
       </div>
 
       <div class="axis-card__group">
@@ -105,7 +100,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
           <span class="field-hint" @mouseenter="tooltip('勾选后轴的运动方向与默认方向相反', $event)" @mouseleave="hideTooltip">?</span>
         </label>
         <label class="mini-toggle">
-          <input type="checkbox" :checked="axis.inverted" @change="onAxisUpdate(index, 'inverted', !axis.inverted)" :disabled="!axis.enabled" />
+          <NCheckbox :checked="axis.inverted" @update:checked="onAxisUpdate(index, 'inverted', $event)" size="small" :disabled="!axis.enabled" />
           <span class="mini-toggle__track">
             <span class="mini-toggle__thumb"></span>
           </span>

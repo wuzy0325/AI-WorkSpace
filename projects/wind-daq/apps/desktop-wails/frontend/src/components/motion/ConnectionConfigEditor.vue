@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject } from 'vue'
+import { NCheckbox, NInput, NInputNumber, NSelect } from 'naive-ui'
 
 const model = defineModel<{
   name: string
@@ -25,32 +26,28 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
           名称
           <span class="field-hint" @mouseenter="tooltip('控制器的显示名称，用于区分多个控制器', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input v-model="model.name" class="config-field__input" placeholder="控制器名称" />
+        <NInput v-model:value="model.name" size="small" placeholder="控制器名称" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           类型
           <span class="field-hint" @mouseenter="tooltip('选择运动控制器的硬件型号', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <select v-model="model.type" class="config-field__select">
-          <option value="SIMULATED-MC">模拟控制器</option>
-          <option value="B140-MC">B140 控制器</option>
-          <option value="WTNMC4A-MC">WTNMC4A 控制器</option>
-        </select>
+        <NSelect v-model:value="model.type" :options="[{value:'SIMULATED-MC',label:'模拟控制器'},{value:'B140-MC',label:'B140 控制器'},{value:'WTNMC4A-MC',label:'WTNMC4A 控制器'}]" size="tiny" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           地址
           <span class="field-hint" @mouseenter="tooltip('控制器的 IP 地址或主机名', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input v-model="model.address" class="config-field__input" placeholder="127.0.0.1" />
+        <NInput v-model:value="model.address" size="small" placeholder="127.0.0.1" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           端口
           <span class="field-hint" @mouseenter="tooltip('控制器的通信端口号', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <input v-model.number="model.port" type="number" class="config-field__input config-field__input--short" min="1" max="65535" />
+        <NInputNumber v-model:value="model.port" size="tiny" style="width:80px" :min="1" :max="65535" />
       </div>
       <div class="config-field config-field--toggle">
         <label class="config-field__label">
@@ -58,7 +55,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
           <span class="field-hint" @mouseenter="tooltip('程序启动时自动连接此控制器', $event)" @mouseleave="hideTooltip">?</span>
         </label>
         <label class="toggle-switch">
-          <input type="checkbox" v-model="model.autoConnect" />
+          <NCheckbox v-model:checked="model.autoConnect" size="small" />
           <span class="toggle-switch__track">
             <span class="toggle-switch__thumb"></span>
           </span>

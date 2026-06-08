@@ -7,6 +7,7 @@ import HeatmapView from './HeatmapView.vue'
 import PressureRadarView from './PressureRadarView.vue'
 import VectorFieldView from './VectorFieldView.vue'
 import { VISUALIZATION_PARAM_CONFIG, type VisualizationParam } from './types'
+import { NButton, NSelect } from 'naive-ui'
 
 type VisualizationTab = 'heatmap' | 'crossSection' | 'vectorField' | 'pressureRadar'
 
@@ -38,25 +39,25 @@ const hasData = computed(() => dataPoints.value.length > 0)
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div class="mb-3 flex flex-wrap items-center gap-2 border-b border-[color:var(--border-default)] pb-3">
-      <button
+      <NButton
         v-for="tab in tabs"
         :key="tab.value"
-        class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
-        :class="activeTab === tab.value ? 'bg-blue-500 text-white' : 'text-[color:var(--text-secondary)] hover:bg-[color:var(--bg-panel-strong)]'"
+        quaternary
+        size="small"
+        :class="activeTab === tab.value ? 'bg-blue-500 text-white' : ''"
         @click="activeTab = tab.value"
       >
         {{ tab.label }}
-      </button>
+      </NButton>
 
-      <select
+      <NSelect
         v-if="activeTab === 'heatmap' || activeTab === 'crossSection'"
-        v-model="selectedParam"
-        class="ml-auto rounded-lg border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-3 py-1.5 text-xs text-[color:var(--text-primary)]"
-      >
-        <option v-for="option in paramOptions" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
+        v-model:value="selectedParam"
+        :options="paramOptions"
+        size="tiny"
+        class="ml-auto"
+        style="min-width:120px"
+      />
     </div>
 
     <div class="min-h-0 flex-1 overflow-hidden">

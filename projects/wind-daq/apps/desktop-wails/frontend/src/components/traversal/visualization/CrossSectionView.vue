@@ -6,6 +6,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { getParamValue, VISUALIZATION_PARAM_CONFIG, type VisualizationParam } from './types'
 import { useECharts } from './composables/useECharts'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
+import { NSelect } from 'naive-ui'
 
 const props = defineProps<{
   dataPoints: TraversalDataPoint[]
@@ -126,16 +127,11 @@ watch([chart, chartData, chartTheme, paramLabel], updateChart, { immediate: true
     <div class="flex flex-wrap items-center gap-3 text-xs text-[color:var(--text-secondary)]">
       <label class="flex items-center gap-2">
         {{ t.sectionType }}
-        <select v-model="sectionType" class="rounded-lg border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-[color:var(--text-primary)]">
-          <option value="beta">{{ t.fixedBeta }}</option>
-          <option value="alpha">{{ t.fixedAlpha }}</option>
-        </select>
+        <NSelect v-model:value="sectionType" :options="[{value:'beta',label:t.fixedBeta},{value:'alpha',label:t.fixedAlpha}]" size="tiny" style="min-width:100px" />
       </label>
       <label class="flex items-center gap-2">
         {{ t.sectionValue }}
-        <select v-model.number="sectionValue" class="rounded-lg border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-[color:var(--text-primary)]">
-          <option v-for="value in sectionOptions" :key="value" :value="value">{{ value.toFixed(2) }}</option>
-        </select>
+        <NSelect v-model:value="sectionValue" :options="sectionOptions.map(v => ({value:v,label:v.toFixed(2)}))" size="tiny" style="min-width:100px" />
       </label>
     </div>
     <div class="relative min-h-0 flex-1">

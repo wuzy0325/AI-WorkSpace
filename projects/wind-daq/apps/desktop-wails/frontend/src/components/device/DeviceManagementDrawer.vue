@@ -872,20 +872,24 @@ function channelLabel(c: ChannelConfig): string {
           <!-- 标签页切换 -->
           <div class="editor-tabs">
             <div class="editor-tabs-inner">
-              <button
+              <NButton
+                quaternary
+                size="small"
                 class="editor-tab"
                 :class="{ active: editorTab === 'basic' }"
                 @click="editorTab = 'basic'"
               >
                 基本信息
-              </button>
-              <button
+              </NButton>
+              <NButton
+                quaternary
+                size="small"
                 class="editor-tab"
                 :class="{ active: editorTab === 'channels' }"
                 @click="editorTab = 'channels'"
               >
                 通道配置
-              </button>
+              </NButton>
             </div>
           </div>
 

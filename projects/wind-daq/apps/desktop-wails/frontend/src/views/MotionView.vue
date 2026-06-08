@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import MotionControlPanel from '@components/motion/MotionControlPanel.vue'
+import { NButton } from 'naive-ui'
 
 withDefaults(
   defineProps<{
@@ -20,13 +21,14 @@ function closeCurrentWindow(): void {
         <h1 class="text-sm font-bold tracking-tight text-[color:var(--text-primary)]">运动控制器</h1>
         <p class="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)]">{{ embedded ? '轴控制与监视' : '独立窗口 · 用于轴控制与监视' }}</p>
       </div>
-      <button
+      <NButton
         v-if="!embedded"
-        class="h-8 px-3 rounded-md text-xs font-semibold transition-all border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)] active:scale-95"
+        quaternary
+        size="small"
         @click="closeCurrentWindow"
       >
         关闭
-      </button>
+      </NButton>
     </header>
     <main class="flex-1 min-h-0 p-4 bg-[color:var(--bg-canvas)]">
       <MotionControlPanel />

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { NButton } from 'naive-ui'
 
 const feedbackStore = useFeedbackStore()
 const timerMap = new Map<number, ReturnType<typeof setTimeout>>()
@@ -56,11 +57,9 @@ watch(
     >
       <div class="toast-content">
         <span class="toast-message">{{ toast.message }}</span>
-        <button class="toast-close" @click="dismiss(toast.id)">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M18 6L6 18M6 6l12 12"/>
-          </svg>
-        </button>
+        <NButton quaternary size="tiny" @click="dismiss(toast.id)">
+          <template #icon>✕</template>
+        </NButton>
       </div>
     </div>
   </div>

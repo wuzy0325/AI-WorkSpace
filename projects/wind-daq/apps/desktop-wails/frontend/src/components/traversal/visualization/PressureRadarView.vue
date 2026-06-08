@@ -5,6 +5,7 @@ import type { TraversalDataPoint } from '@shared/types/traversal'
 import { useI18nStore } from '@stores/i18nStore'
 import { useECharts } from './composables/useECharts'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
+import { NButton } from 'naive-ui'
 
 const props = defineProps<{
   dataPoints: TraversalDataPoint[]
@@ -105,15 +106,16 @@ watch([chart, selectedPoint, radarValues, chartTheme, t], updateChart, { immedia
     <aside class="min-h-0 overflow-hidden rounded-xl border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] p-3">
       <h4 class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">{{ t.measurementPoints }}</h4>
       <div class="flex max-h-full flex-col gap-1 overflow-y-auto pr-1">
-        <button
+        <NButton
           v-for="(point, index) in dataPoints"
           :key="point.pointId"
-          class="rounded-lg px-2 py-1.5 text-left text-xs transition-colors"
-          :class="selectedIndex === index ? 'bg-blue-500/15 text-blue-500' : 'text-[color:var(--text-secondary)] hover:bg-[color:var(--bg-panel-strong)]'"
+          size="tiny"
+          quaternary
+          :class="selectedIndex === index ? 'bg-blue-500/15 text-blue-500' : ''"
           @click="selectedIndex = index"
         >
           #{{ point.pointId }} alpha={{ point.coordinates.alpha.toFixed(1) }} beta={{ point.coordinates.beta.toFixed(1) }}
-        </button>
+        </NButton>
       </div>
     </aside>
   </div>

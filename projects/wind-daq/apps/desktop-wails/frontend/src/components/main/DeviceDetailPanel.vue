@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NButton, NCheckbox } from 'naive-ui'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
@@ -201,37 +202,41 @@ const connectionButtonLabel = computed(() => {
         </div>
       </div>
       <div class="detail-panel__actions">
-        <button
-          class="detail-panel__btn detail-panel__btn--secondary"
+        <NButton
+          secondary
+          size="tiny"
           :class="{ 'opacity-40 cursor-not-allowed': !isPressureScannerDevice }"
           :disabled="!isPressureScannerDevice"
           @click="isPressureScannerDevice && profile && deviceStore.tareAllEnabled(profile.id)"
         >
           {{ i18n.t.tare || '归零' }}
-        </button>
-        <button
+        </NButton>
+        <NButton
           v-if="currentStatus() === 'Connected'"
-          class="detail-panel__btn"
-          :class="currentAcquiring() ? 'detail-panel__btn--stop' : 'detail-panel__btn--acq'"
+          size="tiny"
+          :type="currentAcquiring() ? 'error' : 'primary'"
           @click="() => { const id = profile!.id; currentAcquiring() ? deviceStore.stopAcquisition(id) : deviceStore.startAcquisition(id) }"
         >
           {{ acquisitionButtonLabel }}
-        </button>
-        <button
-          class="detail-panel__btn"
-          :class="currentStatus() === 'Connected' || currentAcquiring() ? 'detail-panel__btn--danger' : 'detail-panel__btn--primary'"
+        </NButton>
+        <NButton
+          size="tiny"
+          :type="currentStatus() === 'Connected' || currentAcquiring() ? 'error' : 'primary'"
           @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
         >
           {{ connectionButtonLabel }}
-        </button>
-        <button
+        </NButton>
+        <NButton
           v-if="props.mode !== 'table'"
-          class="detail-panel__btn detail-panel__btn--icon"
+          quaternary
+          size="small"
           @click="openChartSelector"
           :title="i18n.t.channelSettings || '通道设置'"
         >
-          <Settings2 class="w-4 h-4" />
-        </button>
+          <template #icon>
+            <Settings2 class="w-4 h-4" />
+          </template>
+        </NButton>
       </div>
     </div>
 
@@ -243,10 +248,12 @@ const connectionButtonLabel = computed(() => {
           <span>实时趋势</span>
         </div>
         <div class="detail-panel__chart-controls">
-          <button class="detail-panel__chart-btn" @click="openChartSelector">
-            <Settings2 class="w-3.5 h-3.5" />
+          <NButton secondary size="tiny" @click="openChartSelector">
+            <template #icon>
+              <Settings2 class="w-3.5 h-3.5" />
+            </template>
             <span>通道选择</span>
-          </button>
+          </NButton>
           <div class="detail-panel__chart-info">
             <span class="detail-panel__chart-label">缓冲区</span>
             <span class="detail-panel__chart-value mono-font">100 点</span>
@@ -290,24 +297,30 @@ const connectionButtonLabel = computed(() => {
             <span class="channel-card__id-text mono-font">CH{{ snapshot.channelIndices[snapshotIndex] + 1 }}</span>
           </div>
           <div class="channel-card__actions">
-            <button
-              class="channel-card__action-btn"
+            <NButton
+              quaternary
+              size="tiny"
               :class="{ 'channel-card__action-btn--active': isChartVisible(snapshot.channelIndices[snapshotIndex]) }"
               :title="isChartVisible(snapshot.channelIndices[snapshotIndex]) ? '隐藏波形' : '显示波形'"
               @click.stop="toggleChartVisibility(snapshot.channelIndices[snapshotIndex])"
             >
-              <Eye v-if="isChartVisible(snapshot.channelIndices[snapshotIndex])" class="channel-card__icon" />
-              <EyeOff v-else class="channel-card__icon" />
-            </button>
-            <button
-              class="channel-card__action-btn"
+              <template #icon>
+                <Eye v-if="isChartVisible(snapshot.channelIndices[snapshotIndex])" class="channel-card__icon" />
+                <EyeOff v-else class="channel-card__icon" />
+              </template>
+            </NButton>
+            <NButton
+              quaternary
+              size="tiny"
               :class="{ 'channel-card__action-btn--disabled': shouldDisableTare(snapshot.channelIndices[snapshotIndex]) }"
               :title="shouldDisableTare(snapshot.channelIndices[snapshotIndex]) ? '此通道不支持校零' : '归零'"
               :disabled="shouldDisableTare(snapshot.channelIndices[snapshotIndex])"
               @click.stop="setTare(snapshot.channelIndices[snapshotIndex], rawValue)"
             >
-              <Minus class="channel-card__icon" />
-            </button>
+              <template #icon>
+                <Minus class="channel-card__icon" />
+              </template>
+            </NButton>
           </div>
         </div>
         <div class="channel-card__value-area">
@@ -349,11 +362,13 @@ const connectionButtonLabel = computed(() => {
             <h3 class="chart-selector__title">通道选择</h3>
             <p class="chart-selector__subtitle">{{ profile?.name }}</p>
           </div>
-          <button class="chart-selector__close" @click="closeChartSelector">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
+          <NButton quaternary size="small" @click="closeChartSelector">
+            <template #icon>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </template>
+          </NButton>
         </div>
 
         <div class="chart-selector__grid">
@@ -371,19 +386,18 @@ const connectionButtonLabel = computed(() => {
                 <div class="chart-selector__channel">通道 {{ channel.index + 1 }}</div>
               </div>
             </div>
-            <input
-              type="checkbox"
-              class="chart-selector__checkbox"
+            <NCheckbox
+              size="small"
               :checked="isChartVisible(channel.index)"
-              @change="toggleChartVisibility(channel.index)"
+              @update:checked="toggleChartVisibility(channel.index)"
             />
           </label>
         </div>
 
         <div class="chart-selector__footer">
-          <button class="chart-selector__btn chart-selector__btn--secondary" @click="setAllChartVisibility(true)">全选</button>
-          <button class="chart-selector__btn chart-selector__btn--secondary" @click="setAllChartVisibility(false)">取消全选</button>
-          <button class="chart-selector__btn chart-selector__btn--primary" @click="closeChartSelector">确定</button>
+          <NButton secondary size="tiny" @click="setAllChartVisibility(true)">全选</NButton>
+          <NButton secondary size="tiny" @click="setAllChartVisibility(false)">取消全选</NButton>
+          <NButton type="primary" size="tiny" @click="closeChartSelector">确定</NButton>
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import type { AxisName } from '@shared/types/motion'
 import MotionControllerConfig from './MotionControllerConfig.vue'
+import { NButton, NInputNumber } from 'naive-ui'
 
 const motion = useMotionStore()
 const i18n = useI18nStore()
@@ -317,12 +318,12 @@ watch(
         <div class="text-[11px] font-semibold tracking-wide text-[color:var(--text-secondary)] uppercase">
           {{ i18n.t.motionController }}
         </div>
-        <button
-          class="px-2 py-0.5 text-[10px] rounded-lg transition-colors border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)]"
+        <NButton
+          secondary size="tiny"
           @click="showConfig = true"
         >
           {{ i18n.t.config }}
-        </button>
+        </NButton>
       </div>
 
       <div v-if="motion.profiles.length === 0" class="mt-4 text-[11px] text-[color:var(--text-muted)] space-y-1 leading-relaxed">
@@ -331,10 +332,11 @@ watch(
       </div>
 
       <div v-else class="flex-1 overflow-auto space-y-2 mt-1 custom-scrollbar">
-        <button
+        <NButton
           v-for="p in motion.profiles"
           :key="p.id"
           @click="selectController(p.id)"
+          secondary size="tiny"
           class="motion-list-item w-full text-left"
           :class="{ 'motion-list-item--active': selectedId === p.id }"
         >
@@ -357,7 +359,7 @@ watch(
             <span class="truncate">{{ p.address }}:{{ p.port }}</span>
             <span class="uppercase tracking-widest motion-item-type">{{ p.type }}</span>
           </div>
-        </button>
+        </NButton>
       </div>
     </aside>
 
@@ -399,43 +401,43 @@ watch(
         </div>
 
         <div class="flex items-center gap-2">
-          <button
-            class="h-10 px-4 rounded-lg text-xs font-bold transition-all active:scale-95 text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed bg-[color:var(--accent-success)] shadow-[0_4px_12px_color-mix(in_srgb,var(--accent-success)_30%,transparent)]"
+          <NButton
+            secondary size="tiny"
             @click="handleConnect"
             :disabled="!selectedId || currentStatus?.connected"
           >
             {{ i18n.t.connectBtn }}
-          </button>
-          <button
-            class="h-10 px-4 rounded-lg text-xs font-bold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)]"
+          </NButton>
+          <NButton
+            secondary size="tiny"
             @click="handleDisconnect"
             :disabled="!selectedId || !currentStatus?.connected"
           >
             {{ i18n.t.disconnectBtn }}
-          </button>
+          </NButton>
           <div class="w-px h-6 bg-[color:var(--border-default)] mx-1"></div>
-          <button
-            class="h-10 px-4 rounded-lg text-xs font-bold transition-all active:scale-95 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-white bg-[color:var(--accent-warning)] shadow-[0_4px_12px_color-mix(in_srgb,var(--accent-warning)_30%,transparent)]"
+          <NButton
+            secondary size="tiny"
             @click="stop()"
             :disabled="!selectedId || !currentStatus?.connected"
           >
             {{ i18n.t.stopAll }}
-          </button>
-          <button
-            class="btn-estop h-10 px-6 rounded-lg text-xs font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:animate-none"
+          </NButton>
+          <NButton
+            type="error" size="small"
             @click="emergencyStop"
             :disabled="!selectedId"
             title="紧急停止 (快捷键: Esc)"
           >
-            <span class="btn-estop__icon">
+            <template #icon>
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="15" y1="9" x2="9" y2="15"/>
                 <line x1="9" y1="9" x2="15" y2="15"/>
               </svg>
-            </span>
+            </template>
             {{ i18n.t.eStop }}
-          </button>
+          </NButton>
         </div>
       </header>
 
@@ -452,15 +454,17 @@ watch(
           <p class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--accent-danger)]">{{ i18n.t.controllerAlarm }}</p>
           <p class="text-xs font-semibold text-[color:var(--text-primary)] truncate">{{ currentStatus.lastError }}</p>
         </div>
-        <button
-          class="shrink-0 h-6 w-6 rounded-md flex items-center justify-center text-[color:var(--accent-danger)]/60 hover:text-[color:var(--accent-danger)] hover:bg-[color:var(--accent-danger)]/10 transition-all"
+        <NButton
+          secondary size="tiny"
           @click="clearCurrentError"
         >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
+          <template #icon>
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </template>
+        </NButton>
       </div>
 
       <div v-if="!selectedId" class="flex-1 flex flex-col items-center justify-center text-[color:var(--text-muted)] p-12">
@@ -483,12 +487,12 @@ watch(
             </svg>
             <p class="text-sm font-semibold">{{ i18n.t.noAxesConfigured || '未配置运动轴' }}</p>
             <p class="text-xs mt-1 opacity-60">{{ i18n.t.checkProfileAxes || '请在配置中启用至少一个轴' }}</p>
-            <button
-              class="mt-4 px-4 py-2 rounded-lg text-xs font-bold transition-colors border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)]"
-              @click="showConfig = true"
-            >
-              {{ i18n.t.openConfig || '打开配置' }}
-            </button>
+          <NButton
+            secondary size="tiny"
+            @click="showConfig = true"
+          >
+            {{ i18n.t.openConfig || '打开配置' }}
+          </NButton>
           </div>
           <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
             <div
@@ -555,16 +559,16 @@ watch(
                   </div>
                   <!-- 操作按钮 -->
                   <div class="flex gap-1.5 pt-1">
-                    <button
-                      class="btn-zero flex-1 min-w-0 h-7 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 truncate px-1"
+                    <NButton
+                      secondary size="tiny"
                       @click="setZero(axis.name as AxisName)"
                       :disabled="axis.moving || !controllerConnected"
-                    >{{ i18n.t.setZero }}</button>
-                    <button
-                      class="btn-stop flex-1 min-w-0 h-7 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95 disabled:opacity-40 truncate px-1"
+                    >{{ i18n.t.setZero }}</NButton>
+                    <NButton
+                      type="error" size="tiny"
                       @click="stop(axis.name as AxisName)"
                       :disabled="!axis.moving || !controllerConnected"
-                    >{{ i18n.t.stop }}</button>
+                    >{{ i18n.t.stop }}</NButton>
                   </div>
                 </div>
               </div>
@@ -576,25 +580,25 @@ watch(
                   点动
                 </div>
                 <div class="jog-control-row">
-                  <button
-                    class="btn-step-sm"
-                    @click="adjustByStep(axis.name as AxisName, 'reverse')"
-                    :disabled="axis.moving || !controllerConnected"
-                  >−</button>
+                    <NButton
+                      secondary size="tiny"
+                      @click="adjustByStep(axis.name as AxisName, 'reverse')"
+                      :disabled="axis.moving || !controllerConnected"
+                    >−</NButton>
                   <div class="jog-input-wrap">
-                    <input
-                      v-model.number="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
-                      type="number"
-                      class="input-field jog-input"
+                    <NInputNumber
+                      v-model:value="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
+                      size="tiny"
+                      style="width:80px"
                       :disabled="axis.moving || !controllerConnected"
                     />
                     <span class="jog-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                  <button
-                    class="btn-step-sm"
-                    @click="adjustByStep(axis.name as AxisName, 'forward')"
-                    :disabled="axis.moving || !controllerConnected"
-                  >+</button>
+                    <NButton
+                      secondary size="tiny"
+                      @click="adjustByStep(axis.name as AxisName, 'forward')"
+                      :disabled="axis.moving || !controllerConnected"
+                    >+</NButton>
                 </div>
               </div>
 
@@ -606,21 +610,21 @@ watch(
                 </div>
                 <div class="move-control-row">
                   <div class="move-input-wrap">
-                    <input
-                      v-model.number="ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition"
-                      type="number"
-                      class="input-field move-input"
+                    <NInputNumber
+                      v-model:value="ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition"
+                      size="tiny"
+                      style="width:80px"
                       :class="getLimitWarningClass(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName))"
                       :disabled="axis.moving || !controllerConnected"
                       placeholder="0.00"
                     />
                     <span class="move-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                  <button
-                    class="btn-move h-8 px-3 shrink-0 rounded-md text-[11px] font-bold uppercase tracking-wider active:scale-95 transition-all hover:opacity-90 disabled:opacity-40"
-                    @click="move(axis.name as AxisName)"
-                    :disabled="axis.moving || !controllerConnected"
-                  >{{ i18n.t.move }}</button>
+                    <NButton
+                      type="primary" size="tiny"
+                      @click="move(axis.name as AxisName)"
+                      :disabled="axis.moving || !controllerConnected"
+                    >{{ i18n.t.move }}</NButton>
                 </div>
                 <!-- 限位警告提示 -->
                 <div

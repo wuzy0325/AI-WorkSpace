@@ -2,6 +2,7 @@
 import { inject } from 'vue'
 import type { AxisConfig, AxisEncoderCompensationConfig } from '@shared/types/motion'
 import { getAxisThemeClass, defaultEncComp } from './motionConfigEditor'
+import { NCheckbox, NInputNumber } from 'naive-ui'
 
 const props = defineProps<{
   axes: AxisConfig[]
@@ -33,7 +34,7 @@ function setEncComp(index: number, v: AxisEncoderCompensationConfig): void {
     <div v-for="(axis, index) in axes" :key="'enc-' + axis.name" class="encoder-compensation" :class="[getAxisThemeClass(axis.name)]" style="margin-bottom: 0.5rem;">
       <div class="encoder-compensation__header">
         <label class="encoder-compensation__toggle">
-          <input type="checkbox" :checked="getEncComp(index).enabled" @change="setEncComp(index, { ...getEncComp(index), enabled: !getEncComp(index).enabled })" />
+          <NCheckbox :checked="getEncComp(index).enabled" @update:checked="setEncComp(index, { ...getEncComp(index), enabled: $event })" size="small" />
           <span>{{ axis.name }} 轴编码器补偿</span>
         </label>
       </div>
@@ -44,35 +45,35 @@ function setEncComp(index: number, v: AxisEncoderCompensationConfig): void {
               容差
               <span class="field-hint" @mouseenter="tooltip('补偿停止的允许位置误差', $event)" @mouseleave="hideTooltip">?</span>
             </label>
-            <input :value="getEncComp(index).tolerance" @input="setEncComp(index, { ...getEncComp(index), tolerance: Number(($event.target as HTMLInputElement).value) })" type="number" class="encoder-compensation__input" step="0.001" min="0" />
+            <NInputNumber :value="getEncComp(index).tolerance" @update:value="setEncComp(index, { ...getEncComp(index), tolerance: $event ?? 0 })" size="tiny" style="width:80px" :step="0.001" :min="0" />
           </div>
           <div class="encoder-compensation__field">
             <label>
               最大周期
               <span class="field-hint" @mouseenter="tooltip('补偿尝试的最大循环次数', $event)" @mouseleave="hideTooltip">?</span>
             </label>
-            <input :value="getEncComp(index).maxCycles" @input="setEncComp(index, { ...getEncComp(index), maxCycles: Number(($event.target as HTMLInputElement).value) })" type="number" class="encoder-compensation__input" min="1" />
+            <NInputNumber :value="getEncComp(index).maxCycles" @update:value="setEncComp(index, { ...getEncComp(index), maxCycles: $event ?? 0 })" size="tiny" style="width:80px" :min="1" />
           </div>
           <div class="encoder-compensation__field">
             <label>
               稳定时间 (ms)
               <span class="field-hint" @mouseenter="tooltip('每次补偿移动后的等待稳定时间', $event)" @mouseleave="hideTooltip">?</span>
             </label>
-            <input :value="getEncComp(index).settleMs" @input="setEncComp(index, { ...getEncComp(index), settleMs: Number(($event.target as HTMLInputElement).value) })" type="number" class="encoder-compensation__input" min="10" />
+            <NInputNumber :value="getEncComp(index).settleMs" @update:value="setEncComp(index, { ...getEncComp(index), settleMs: $event ?? 0 })" size="tiny" style="width:80px" :min="10" />
           </div>
           <div class="encoder-compensation__field">
             <label>
               最小步长
               <span class="field-hint" @mouseenter="tooltip('补偿移动的最小步进值', $event)" @mouseleave="hideTooltip">?</span>
             </label>
-            <input :value="getEncComp(index).minStep" @input="setEncComp(index, { ...getEncComp(index), minStep: Number(($event.target as HTMLInputElement).value) })" type="number" class="encoder-compensation__input" step="0.0001" min="0" />
+            <NInputNumber :value="getEncComp(index).minStep" @update:value="setEncComp(index, { ...getEncComp(index), minStep: $event ?? 0 })" size="tiny" style="width:80px" :step="0.0001" :min="0" />
           </div>
           <div class="encoder-compensation__field">
             <label>
               超时时间 (ms)
               <span class="field-hint" @mouseenter="tooltip('补偿过程的最大允许时间', $event)" @mouseleave="hideTooltip">?</span>
             </label>
-            <input :value="getEncComp(index).timeoutMs" @input="setEncComp(index, { ...getEncComp(index), timeoutMs: Number(($event.target as HTMLInputElement).value) })" type="number" class="encoder-compensation__input" min="100" />
+            <NInputNumber :value="getEncComp(index).timeoutMs" @update:value="setEncComp(index, { ...getEncComp(index), timeoutMs: $event ?? 0 })" size="tiny" style="width:80px" :min="100" />
           </div>
         </div>
       </div>

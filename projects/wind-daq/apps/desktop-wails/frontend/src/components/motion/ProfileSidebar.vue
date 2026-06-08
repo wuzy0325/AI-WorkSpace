@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { MotionControllerProfile } from '@shared/types/motion'
+import { NButton } from 'naive-ui'
 
 defineProps<{
   profiles: MotionControllerProfile[]
@@ -17,17 +18,21 @@ const emit = defineEmits<{
   <aside class="config-sidebar">
     <div class="config-sidebar__header">
       <h3 class="config-sidebar__title">控制器配置</h3>
-      <button class="config-sidebar__add-btn" @click="emit('add')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-      </button>
+      <NButton quaternary size="small" class="config-sidebar__add-btn" @click="emit('add')">
+        <template #icon>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </template>
+      </NButton>
     </div>
     <div class="config-sidebar__list">
-      <button
+      <NButton
         v-for="p in profiles"
         :key="p.id"
         @click="emit('select', p.id)"
+        quaternary
+        size="small"
         class="config-sidebar__item"
         :class="{ 'config-sidebar__item--active': activeId === p.id }"
       >
@@ -42,7 +47,7 @@ const emit = defineEmits<{
             <span class="config-sidebar__item-type">{{ p.type }}</span>
           </div>
         </div>
-      </button>
+      </NButton>
       <div v-if="profiles.length === 0" class="config-sidebar__empty">
         <p>暂无控制器配置</p>
       </div>

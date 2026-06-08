@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { NButton } from 'naive-ui'
 
 const feedbackStore = useFeedbackStore()
 </script>
@@ -10,18 +11,20 @@ const feedbackStore = useFeedbackStore()
       <h3 class="confirm-dialog__title">{{ feedbackStore.confirmState.title }}</h3>
       <p class="confirm-dialog__message">{{ feedbackStore.confirmState.message }}</p>
       <div class="confirm-dialog__actions">
-        <button
-          class="confirm-dialog__btn confirm-dialog__btn--cancel"
+        <NButton
+          quaternary
+          size="small"
           @click="feedbackStore.resolveConfirm(false)"
         >
           {{ feedbackStore.confirmState.cancelText }}
-        </button>
-        <button
-          class="confirm-dialog__btn confirm-dialog__btn--confirm"
+        </NButton>
+        <NButton
+          type="error"
+          size="small"
           @click="feedbackStore.resolveConfirm(true)"
         >
           {{ feedbackStore.confirmState.confirmText }}
-        </button>
+        </NButton>
       </div>
     </div>
   </div>
