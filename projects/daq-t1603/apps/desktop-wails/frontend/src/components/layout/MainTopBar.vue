@@ -7,14 +7,16 @@ import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
 
-defineProps<{
-  version: string
-}>()
-
 const emit = defineEmits<{
   (e: 'add-device'): void
   (e: 'open-config'): void
   (e: 'toggle-acquisition'): void
+}>()
+
+const props = defineProps<{
+  version: string
+  /** 操作进行中标志：用于禁用采集按钮防止重复点击 */
+  isToggling?: boolean
 }>()
 
 const deviceStore = useDeviceStore()
@@ -34,6 +36,9 @@ const hasConnectedDevice = computed(
   })
 )
 const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDevice.value)
+
+/** 采集按钮是否应该被禁用（操作进行中或无可操作设备） */
+const isAcquisitionDisabled = computed(() => !canToggleAcquisition.value || props.isToggling)
 
 function themeToggleLabel(): string {
   return theme.value === 'dark' ? '切换为浅色模式' : '切换为深色模式'
@@ -134,8 +139,8 @@ onBeforeUnmount(() => {
           <button
             class="topbar__action-btn"
             :class="isAcquiring ? 'topbar__action-btn--stop' : 'topbar__action-btn--start'"
-            :disabled="!canToggleAcquisition"
-            :title="isAcquiring ? '停止采集' : '开始采集'"
+            :disabled="isAcquisitionDisabled"
+            :title="isAcquisitionDisabled ? (isToggling ? '操作中...' : (isAcquiring ? '停止采集' : '没有可用的设备')) : (isAcquiring ? '停止采集' : '开始采集')"
             @click="emit('toggle-acquisition')"
           >
             <Play v-if="!isAcquiring" class="topbar__action-icon" />

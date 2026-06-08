@@ -20,26 +20,50 @@ const newAddress = ref('192.168.3.101')
 const newPort = ref(9000)
 const addError = ref<string | null>(null)
 
+/** 操作锁：防止快速重复点击导致并发请求 */
+const isToggling = ref(false)
+
 const isAcquiring = computed(() =>
   deviceStore.profiles.some((p) => deviceStore.acquiringFor(p.id))
 )
 
 const canConfigure = computed(() => !!deviceStore.selectedId)
 
+/**
+ * 切换采集状态（带操作锁保护）
+ * 
+ * 优化点：
+ * 1. 使用 isToggling 锁防止并发执行
+ * 2. 在操作期间禁止重复触发
+ */
 async function toggleAcquisition() {
-  if (isAcquiring.value) {
-    const acquiringIds = deviceStore.profiles
-      .filter((p) => deviceStore.acquiringFor(p.id))
-      .map((p) => p.id)
-    await Promise.allSettled(acquiringIds.map((id) => deviceStore.stopAcquisition(id)))
-  } else {
-    const connectedIds = deviceStore.profiles
-      .filter((p) => {
-        const status = deviceStore.statusFor(p.id)
-        return status === 'Connected' || status === 'Acquiring' || status === 'Starting'
-      })
-      .map((p) => p.id)
-    await Promise.allSettled(connectedIds.map((id) => deviceStore.startAcquisition(id)))
+  // 操作锁检查：如果正在进行采集切换操作，忽略后续点击
+  if (isToggling.value) {
+    return
+  }
+
+  isToggling.value = true
+  try {
+    if (isAcquiring.value) {
+      // 停止所有正在采集的设备
+      const acquiringIds = deviceStore.profiles
+        .filter((p) => deviceStore.acquiringFor(p.id))
+        .map((p) => p.id)
+      await Promise.allSettled(acquiringIds.map((id) => deviceStore.stopAcquisition(id)))
+    } else {
+      // 仅对已连接的设备启动采集（排除正在转换状态的设备）
+      const connectedIds = deviceStore.profiles
+        .filter((p) => {
+          const status = deviceStore.statusFor(p.id)
+          // ✅ 修复：只允许 Connected 状态的设备启动采集，排除 Starting/Stopping
+          return status === 'Connected'
+        })
+        .map((p) => p.id)
+      await Promise.allSettled(connectedIds.map((id) => deviceStore.startAcquisition(id)))
+    }
+  } finally {
+    // 无论成功失败，都释放操作锁
+    isToggling.value = false
   }
 }
 
@@ -101,6 +125,7 @@ async function confirmAddDevice() {
   <div class="shell">
     <MainTopBar
       version="0.1.0"
+      :is-toggling="isToggling"
       @add-device="openAddDevice"
       @open-config="openConfig"
       @toggle-acquisition="toggleAcquisition"
