@@ -138,26 +138,21 @@ function displayStatusLabel(profileId: string): string {
   text-transform: uppercase;
 }
 
-.device-sidebar__manage-btn {
+:deep(.device-sidebar__manage-btn) {
   padding: var(--space-1) var(--space-3);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0.5rem;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: all 0.2s ease;
 }
 
-:root[data-theme='light'] .device-sidebar__manage-btn {
+:root[data-theme='light'] :deep(.device-sidebar__manage-btn) {
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
-.device-sidebar__manage-btn:hover {
+:deep(.device-sidebar__manage-btn):hover {
   color: #10b981;
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.3);
@@ -179,41 +174,39 @@ function displayStatusLabel(profileId: string): string {
   color: #64748b;
 }
 
-.device-sidebar__item {
+:deep(.device-sidebar__item) {
   width: 100%;
   text-align: left;
   padding: var(--space-3);
-  border-radius: 0.75rem;
   background: rgba(30, 41, 59, 0.4);
   border: 1px solid transparent;
-  transition: all 0.2s ease;
   cursor: pointer;
 }
 
-:root[data-theme='light'] .device-sidebar__item {
+:root[data-theme='light'] :deep(.device-sidebar__item) {
   background: rgba(255, 255, 255, 0.6);
 }
 
-.device-sidebar__item:hover {
+:deep(.device-sidebar__item):hover {
   background: rgba(30, 41, 59, 0.6);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-:root[data-theme='light'] .device-sidebar__item:hover {
+:root[data-theme='light'] :deep(.device-sidebar__item):hover {
   background: rgba(255, 255, 255, 0.8);
   border-color: rgba(0, 0, 0, 0.05);
 }
 
-.device-sidebar__item--active {
+:deep(.device-sidebar__item--active) {
   background: rgba(16, 185, 129, 0.08) !important;
   border-color: rgba(16, 185, 129, 0.3) !important;
 }
 
-.device-sidebar__item--error {
+:deep(.device-sidebar__item--error) {
   border-color: rgba(244, 63, 94, 0.2);
 }
 
-.device-sidebar__item--error:hover {
+:deep(.device-sidebar__item--error):hover {
   border-color: rgba(244, 63, 94, 0.4);
 }
 

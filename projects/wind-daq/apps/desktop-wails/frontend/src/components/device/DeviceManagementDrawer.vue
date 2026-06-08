@@ -1477,14 +1477,13 @@ function channelLabel(c: ChannelConfig): string {
   display: inline-flex; border-radius: 0.75rem;
   background: var(--bg-app, rgba(0,0,0,0.2)); padding: 0.25rem;
 }
-.editor-tab {
-  padding: 0.5rem 1.5rem; border-radius: 0.5rem;
+:deep(.editor-tab) {
+  padding: 0.5rem 1.5rem;
   font-size: 0.75rem; font-weight: 800;
-  color: var(--text-muted); transition: all 0.2s; cursor: pointer;
-  border: none; background: transparent;
+  cursor: pointer;
 }
-.editor-tab:hover { color: var(--text-primary); }
-.editor-tab.active { background: var(--bg-panel); color: #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+:deep(.editor-tab):hover { color: var(--text-primary); }
+:deep(.editor-tab.active) { background: var(--bg-panel); color: #3b82f6; }
 
 .editor-body { padding: 1.5rem; overflow-y: auto; flex: 1; min-height: 0; }
 

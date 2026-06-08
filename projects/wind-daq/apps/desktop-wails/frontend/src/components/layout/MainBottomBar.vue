@@ -186,49 +186,44 @@ watch(isRunning, (newVal, oldVal) => {
   gap: 0.75rem;
 }
 
-.main-bottom-bar__btn {
+:deep(.main-bottom-bar__btn) {
   width: 44px;
   height: 44px;
-  border-radius: 0.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.main-bottom-bar__btn:hover:not(:disabled) {
+:deep(.main-bottom-bar__btn):hover:not(:disabled) {
   transform: translateY(-2px);
 }
 
-.btn-start {
+:deep(.btn-start) {
   background: #10b981;
   color: white;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
-.btn-start:hover {
+:deep(.btn-start):hover {
   background: #059669;
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
 }
 
-.btn-stop {
+:deep(.btn-stop) {
   background: rgba(244, 63, 94, 0.1);
   color: #f43f5e;
   border: 1px solid rgba(244, 63, 94, 0.2);
 }
 
-.btn-stop:hover {
+:deep(.btn-stop):hover {
   background: rgba(244, 63, 94, 0.2);
 }
 
-.btn-record {
+:deep(.btn-record) {
   background: rgba(148, 163, 184, 0.1);
   color: #64748b;
   border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
-.btn-record.active {
+:deep(.btn-record.active) {
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.3);

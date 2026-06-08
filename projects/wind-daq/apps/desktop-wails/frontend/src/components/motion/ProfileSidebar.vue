@@ -80,20 +80,16 @@ const emit = defineEmits<{
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.config-sidebar__add-btn {
+:deep(.config-sidebar__add-btn) {
   width: 1.75rem;
   height: 1.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0.375rem;
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  transition: all 0.2s ease;
 }
-.config-sidebar__add-btn:hover {
+:deep(.config-sidebar__add-btn):hover {
   background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 .config-sidebar__list {
   flex: 1;
@@ -102,27 +98,24 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
 }
-.config-sidebar__item {
+:deep(.config-sidebar__item) {
   display: block;
   width: 100%;
   padding: 0.75rem 1rem;
   margin-bottom: 0.5rem;
-  border-radius: 0.5rem;
   background: rgba(0, 0, 0, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
-  transition: all 0.2s ease;
   text-align: left;
 }
-.config-sidebar__item:hover {
+:deep(.config-sidebar__item):hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.12);
   transform: translateX(2px);
 }
-.config-sidebar__item--active {
+:deep(.config-sidebar__item--active) {
   background: rgba(16, 185, 129, 0.12) !important;
   border-color: rgba(16, 185, 129, 0.4) !important;
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15), 0 2px 8px rgba(16, 185, 129, 0.1);
 }
 .config-sidebar__item-row {
   display: flex;

@@ -235,23 +235,18 @@ function activePageLabel(): string {
 }
 
 .main-topbar__nav-btn {
-  padding: 0.25rem 1rem;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #94a3b8;
-  border-radius: 0.375rem;
-  transition: all 0.2s ease;
   white-space: nowrap;
 }
 
-.main-topbar__nav-btn:hover {
-  color: #10b981;
+:deep(.main-topbar__nav-btn--active) {
+  background: rgba(16, 185, 129, 0.1) !important;
+  color: #10b981 !important;
 }
 
-.main-topbar__nav-btn--active {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
-  box-shadow: inset 0 -2px 0 #10b981;
+:deep(.main-topbar__nav-btn--active:hover) {
+  color: #10b981 !important;
 }
 
 .main-topbar__actions {
@@ -304,25 +299,6 @@ function activePageLabel(): string {
 .main-topbar__icon-btn {
   width: 32px;
   height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.5rem;
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: all 0.2s ease;
-}
-
-:root[data-theme='light'] .main-topbar__icon-btn {
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.main-topbar__icon-btn:hover {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.2);
 }
 
 .main-topbar__locale {
@@ -348,10 +324,9 @@ function activePageLabel(): string {
   transition: all 0.2s ease;
 }
 
-.main-topbar__locale-btn--active {
-  background: #10b981;
-  color: white;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+:deep(.main-topbar__locale-btn--active) {
+  background: #10b981 !important;
+  color: white !important;
 }
 
 .main-topbar__version {

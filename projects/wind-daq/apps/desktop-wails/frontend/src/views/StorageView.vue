@@ -250,17 +250,5 @@ onMounted(refreshStatus)
   font-size: 0.7rem;
 }
 
-.btn-primary {
-  min-height: 32px;
-  padding: 0 0.9rem;
-  border-radius: 0.4rem;
-  background: var(--accent-success);
-  color: #f8fbff;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
 
-.btn-primary.active {
-  background: var(--accent-danger);
-}
 </style>

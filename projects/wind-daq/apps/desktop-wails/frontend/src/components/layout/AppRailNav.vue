@@ -108,22 +108,14 @@ function getIconComponent(iconType: string | undefined) {
 .app-rail-nav__button {
   width: 40px;
   height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.75rem;
-  color: #64748b;
-  transition: all 0.2s ease;
 }
 
-.app-rail-nav__button:hover {
+:deep(.app-rail-nav__button--active) {
   color: #10b981;
 }
 
-.app-rail-nav__button--active {
-  background: rgba(16, 185, 129, 0.15);
+:deep(.app-rail-nav__button--active:hover) {
   color: #10b981;
-  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .app-rail-nav__button--disabled {
