@@ -841,7 +841,7 @@ func calculatePressureDelta(input runtimeInput) (avg, delta float64) {
 	return
 }
 
-// calculateVelocity 计算真空速（使用 AtmosphericDataCalculator 声速马赫数法）
+// calculateVelocity 计算真空速（使用 AtmosphericDataCalculator 气压静温密度法）
 // 需要绝对总压、绝对静压和总温（开氏温度）
 func calculateVelocity(calc *AtmosphericDataCalculator, input runtimeInput, pt, ps float64) float64 {
 	absPt := pt + input.AtmP
@@ -858,7 +858,8 @@ func calculateVelocity(calc *AtmosphericDataCalculator, input runtimeInput, pt, 
 	}
 
 	sat := calc.CalculateSAT(tempK, ma)
-	return calc.CalculateTASByMach(ma, sat)
+	qc := calc.CalculateQc(absPt, absPs)
+	return calc.CalculateTASByDensity(absPs, qc, sat)
 }
 
 // calculateMachFromPressures 计算马赫数（使用 AtmosphericDataCalculator）

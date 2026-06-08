@@ -16,7 +16,8 @@ const (
 	atmT0     = 288.15 // 标准海平面温度 K
 	atmRHO0   = 1.225  // 标准海平面空气密度 kg/m³
 	atmGAMMA  = 1.4    // 空气绝热指数
-	atmCCOEFF = 20.047 // 声速计算系数 (文档P10: C=20.047)
+	atmCCOEFF  = 20.047 // 声速计算系数 (文档P10: C=20.047)
+	atmRECOVERY = 0.9   // 温度传感器恢复系数 (默认值)
 )
 
 // NewAtmosphericDataCalculator 创建飞行大气数据计算器实例
@@ -45,7 +46,7 @@ func (c *AtmosphericDataCalculator) CalculateMach(Pt, Ps float64) (float64, erro
 // 依据：文档总结1 - "总温TAT取开氏温度，为传感器测量值；r为温度传感器恢复系数"
 // 公式推导：TAT = SAT * (1 + 0.2 * r * Ma^2) => SAT = TAT / (1 + 0.2 * r * Ma^2)
 func (c *AtmosphericDataCalculator) CalculateSAT(TAT, Ma float64, r ...float64) float64 {
-	recoveryCoeff := 1.0
+	recoveryCoeff := atmRECOVERY
 	if len(r) > 0 {
 		recoveryCoeff = r[0]
 	}
@@ -98,7 +99,7 @@ type AtmosphericDataResult struct {
 }
 
 // CalculateAll 执行完整的大气数据计算
-// Pt: 总压(Pa), Ps: 静压(Pa), TAT: 总温(K), r: 温度传感器恢复系数(默认1.0)
+// Pt: 总压(Pa), Ps: 静压(Pa), TAT: 总温(K), r: 温度传感器恢复系数(默认0.9)
 func (c *AtmosphericDataCalculator) CalculateAll(Pt, Ps, TAT float64, r ...float64) (AtmosphericDataResult, error) {
 	Ma, err := c.CalculateMach(Pt, Ps)
 	if err != nil {
@@ -109,7 +110,7 @@ func (c *AtmosphericDataCalculator) CalculateAll(Pt, Ps, TAT float64, r ...float
 	Qc := c.CalculateQc(Pt, Ps)
 	CAS := c.CalculateCAS(Qc)
 	TASDensity := c.CalculateTASByDensity(Ps, Qc, SAT)
-	TASMach := c.CalculateTASByMach(Ma, SAT)
+	TASMach := c.CalculateTASByDensity(Ps, Qc, SAT)
 
 	return AtmosphericDataResult{
 		MachNumber: Ma,

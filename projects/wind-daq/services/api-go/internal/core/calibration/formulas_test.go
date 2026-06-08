@@ -410,9 +410,10 @@ func TestAtmosphericDataCalculator_TAS_Method2(t *testing.T) {
 	Ps := 95495.4
 	TAT := 295.35
 
+	qc := calc.CalculateQc(Pt, Ps)
 	ma, _ := calc.CalculateMach(Pt, Ps)
 	sat := calc.CalculateSAT(TAT, ma)
-	tas := calc.CalculateTASByMach(ma, sat)
+	tas := calc.CalculateTASByDensity(Ps, qc, sat)
 
 	// 文档验证值: vt(m/s) ≈ 28.92
 	if tas < 25.0 || tas > 35.0 {
