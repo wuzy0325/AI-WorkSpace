@@ -83,8 +83,8 @@ const calibrationName = ref('')
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
-const machNumberPrecision = ref(DEFAULT_CALIBRATION_MACH_PRECISION)
-const velocityPrecision = ref(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
+const machNumberPrecision = ref<number>(DEFAULT_CALIBRATION_MACH_PRECISION)
+const velocityPrecision = ref<number>(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
 
 const probeChannels = ref<ProbeChannelConfig[]>([
   { name: 'P1 (Lower)', role: 'fiveHole.p1', channel: { deviceId: '', channelIndex: 0 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },

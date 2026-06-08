@@ -180,22 +180,21 @@ export const useDeviceStore = defineStore('devices', () => {
     return tareOffsets.value.get(id)?.[channelIndex] ?? 0
   }
 
-  function getChannelRange(id: string, channelIndex: number): { min: number; max: number } {
+  function findChannel(id: string, channelIndex: number) {
     const profile = profiles.value.find((p) => p.id === id)
-    const channel = Array.isArray(profile?.channels)
-      ? profile.channels.find((c) => c.index === channelIndex)
-      : undefined
+    if (!Array.isArray(profile?.channels)) return undefined
+    return profile.channels.find((c) => c.index === channelIndex)
+  }
+
+  function getChannelRange(id: string, channelIndex: number): { min: number; max: number } {
+    const channel = findChannel(id, channelIndex)
     const min = channel?.rangeMin ?? -10
     const max = channel?.rangeMax ?? 10
     return min === max ? { min: min - 1, max: max + 1 } : { min, max }
   }
 
   function getChannelPrecision(id: string, channelIndex: number): number {
-    const profile = profiles.value.find((p) => p.id === id)
-    const channel = Array.isArray(profile?.channels)
-      ? profile.channels.find((c) => c.index === channelIndex)
-      : undefined
-    return channel?.precision ?? 3
+    return findChannel(id, channelIndex)?.precision ?? 3
   }
 
   function toggleChartSelection(id: string, channelIndex: number) {

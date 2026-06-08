@@ -186,13 +186,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
     }
   }
 
-  // 监听刷新频率变化：重新创建压力节流定时器
   watch(uiRefreshHz, () => {
     flushPendingPressureIfReady()
-  })
-
-  // 监听刷新频率变化：重新创建状态轮询定时器
-  watch(uiRefreshHz, () => {
     if (isRunning.value && isWailsAvailable()) {
       startStatusPolling()
     }

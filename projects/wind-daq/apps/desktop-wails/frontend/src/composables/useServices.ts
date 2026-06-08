@@ -62,13 +62,28 @@ export function useFeedbackService(): IFeedbackService {
  * @param options.showError 是否在错误时显示 Toast，默认为 true
  * @param options.errorPrefix 错误消息前缀，默认为 '运动控制失败'
  */
+async function safeOp(
+  fn: () => Promise<void>,
+  showError: boolean,
+  errorPrefix: string,
+  feedback: IFeedbackService,
+): Promise<boolean> {
+  try {
+    await fn();
+    return true;
+  } catch (error) {
+    if (showError) {
+      const message = error instanceof Error ? error.message : String(error);
+      feedback.toast.error(`${errorPrefix}: ${message}`);
+    }
+    return false;
+  }
+}
+
 export function useMotionWithFeedback(options: {
   showError?: boolean;
   errorPrefix?: string;
 } = {}): IMotionService & {
-  /**
-   * 安全执行运动操作，自动处理错误
-   */
   safeMoveTo: (id: string, axis: AxisName, position: number) => Promise<boolean>;
   safeHome: (id: string, axis: AxisName) => Promise<boolean>;
   safeConnect: (id: string) => Promise<boolean>;
@@ -76,47 +91,17 @@ export function useMotionWithFeedback(options: {
   const { showError = true, errorPrefix = '运动控制失败' } = options;
   const motion = container.motion;
   const feedback = container.feedback;
-  
+
   return {
     ...motion,
-    
-    safeMoveTo: async (id: string, axis: AxisName, position: number): Promise<boolean> => {
-      try {
-        await motion.adapter.moveTo(id, axis, position);
-        return true;
-      } catch (error) {
-        if (showError) {
-          const message = error instanceof Error ? error.message : String(error);
-          feedback.toast.error(`${errorPrefix}: ${message}`);
-        }
-        return false;
-      }
-    },
-    
-    safeHome: async (id: string, axis: AxisName): Promise<boolean> => {
-      try {
-        await motion.adapter.home(id, axis);
-        return true;
-      } catch (error) {
-        if (showError) {
-          const message = error instanceof Error ? error.message : String(error);
-          feedback.toast.error(`${errorPrefix}: ${message}`);
-        }
-        return false;
-      }
-    },
-    
-    safeConnect: async (id: string): Promise<boolean> => {
-      try {
-        await motion.adapter.connect(id);
-        return true;
-      } catch (error) {
-        if (showError) {
-          const message = error instanceof Error ? error.message : String(error);
-          feedback.toast.error(`${errorPrefix}: ${message}`);
-        }
-        return false;
-      }
-    },
+
+    safeMoveTo: (id, axis, position) =>
+      safeOp(() => motion.adapter.moveTo(id, axis, position), showError, errorPrefix, feedback),
+
+    safeHome: (id, axis) =>
+      safeOp(() => motion.adapter.home(id, axis), showError, errorPrefix, feedback),
+
+    safeConnect: (id) =>
+      safeOp(() => motion.adapter.connect(id), showError, errorPrefix, feedback),
   };
 }

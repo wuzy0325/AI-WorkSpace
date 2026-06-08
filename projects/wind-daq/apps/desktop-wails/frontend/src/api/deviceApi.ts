@@ -54,6 +54,16 @@ function normalizeDeviceProfiles(profiles: unknown): DeviceProfile[] {
     .map((profile) => normalizeDeviceProfile(profile))
 }
 
+function normalizeDataPayload(raw: unknown, deviceIdFallback?: string): DataPayload {
+  const d = raw as Record<string, unknown> | undefined | null
+  return {
+    deviceId: typeof d?.deviceId === 'string' ? d.deviceId : (deviceIdFallback ?? ''),
+    timestamp: typeof d?.timestamp === 'number' ? d.timestamp : 0,
+    channels: Array.isArray(d?.channels) ? d.channels as number[] : [],
+    channelIndices: Array.isArray(d?.channelIndices) ? d.channelIndices as number[] : [],
+  }
+}
+
 function wailsOk(res: WailsResponse): { success: boolean } {
   const success = res.Success ?? res.success ?? false
   const error = res.Error ?? res.error
@@ -138,13 +148,7 @@ export const deviceApi = {
       if (result == null || result === false || result === true) {
         return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
       }
-      const raw = result as unknown as Record<string, unknown>
-      return {
-        deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : id,
-        timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
-        channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
-        channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
-      }
+      return normalizeDataPayload(result, id)
     }
     return request<DataPayload>(`/api/daq/latest/${id}`)
   },
@@ -161,13 +165,6 @@ export const deviceApi = {
       return wailsOk(await wailsApi.device.setPublishRate(hz))
     }
     return request<{ success: boolean }>('/api/daq/publishRate', { method: 'PUT', body: JSON.stringify({ hz }) })
-  },
-
-  getProfilesList: async (): Promise<DeviceProfile[]> => {
-    if (isWailsAvailable()) {
-      return normalizeDeviceProfiles(await wailsApi.device.getProfiles())
-    }
-    return normalizeDeviceProfiles(await request<DeviceProfile[]>('/api/device/profiles'))
   },
 
   getDsa3217ScanConfig: async (
@@ -217,21 +214,18 @@ export const deviceApi = {
     return () => { deviceApi._statusListeners.delete(cb) }
   },
 
+  _notifyListeners: (payload: unknown) => {
+    deviceApi._snapshotListeners.forEach((cb) => cb(normalizeDataPayload(payload)))
+  },
+
   subscribeToDevice: (deviceId: string): void => {
     if (deviceApi._subscriptions.has(deviceId)) return
 
     if (isWailsAvailable()) {
-      // Wails 桌面模式：使用 Wails Events 机制替代 HTTP SSE
       void wailsApi.device.subscribeStream(deviceId, true)
       if (!deviceApi._wailsPayloadUnsubscribe) {
         deviceApi._wailsPayloadUnsubscribe = wailsApi.device.onPayload((payload) => {
-          const normalized: DataPayload = {
-            deviceId: payload?.deviceId ?? '',
-            timestamp: payload?.timestamp ?? 0,
-            channels: Array.isArray(payload?.channels) ? payload.channels : [],
-            channelIndices: Array.isArray(payload?.channelIndices) ? payload.channelIndices : [],
-          }
-          deviceApi._snapshotListeners.forEach((cb) => cb(normalized))
+          deviceApi._notifyListeners(payload)
         })
       }
       deviceApi._subscriptions.set(deviceId, {
@@ -242,21 +236,10 @@ export const deviceApi = {
       return
     }
 
-    // Web 模式：使用 HTTP SSE
     const subscription = subscribeDaqStream(
       deviceId,
-      (payload) => {
-        const normalized: DataPayload = {
-          deviceId: payload?.deviceId ?? '',
-          timestamp: payload?.timestamp ?? 0,
-          channels: Array.isArray(payload?.channels) ? payload.channels : [],
-          channelIndices: Array.isArray(payload?.channelIndices) ? payload.channelIndices : [],
-        }
-        deviceApi._snapshotListeners.forEach((cb) => cb(normalized))
-      },
-      (error) => {
-        console.log(`SSE for ${deviceId}:`, error)
-      }
+      deviceApi._notifyListeners,
+      (error) => console.log(`SSE for ${deviceId}:`, error),
     )
 
     deviceApi._subscriptions.set(deviceId, subscription)
