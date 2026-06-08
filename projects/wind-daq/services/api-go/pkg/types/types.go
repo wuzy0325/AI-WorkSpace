@@ -2,9 +2,9 @@
 package types
 
 import (
-	"shared.local/device-sdk/go/motion/core"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/report"
 	"wind-daq/services/api-go/internal/core/storage"
 )
@@ -62,9 +62,9 @@ const (
 
 // ==================== Motion Types ====================
 type (
-	MotionControllerProfile = core.MotionControllerProfile
-	MotionControllerStatus  = core.ControllerStatus
-	MotionAxisName          = core.AxisName
+	MotionControllerProfile = motion.MotionControllerProfile
+	MotionControllerStatus  = motion.ControllerStatus
+	MotionAxisName          = motion.AxisName
 )
 
 // ==================== Storage Types ====================

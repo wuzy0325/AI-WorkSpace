@@ -13,6 +13,7 @@ import (
 	"shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
 	motionports "shared.local/device-sdk/go/motion/ports"
+	motionmanager "shared.local/motion-control/go/manager"
 	motionprofile "shared.local/motion-control/go/profile"
 
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
@@ -74,7 +75,7 @@ type apiPublisher struct{}
 
 func (apiPublisher) Publish(string, any) {}
 
-func newTestMotionManager(axisNames ...core.AxisName) *usecase.MotionManager {
+func newTestMotionManager(axisNames ...core.AxisName) (windaqports.MotionManager, *motionmanager.MotionManager) {
 	profileStore := motionprofile.NewMemoryMotionProfileStore()
 	axes := make([]core.AxisConfig, len(axisNames))
 	for i, name := range axisNames {
@@ -92,11 +93,11 @@ func newTestMotionManager(axisNames ...core.AxisName) *usecase.MotionManager {
 		},
 	}
 	profileStore.SaveProfiles(profiles)
-	mgr := usecase.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (motionports.MotionController, error) {
+	rawMgr := motionmanager.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (motionports.MotionController, error) {
 		return hardware.NewSimulatedMotionController(profile), nil
 	})
-	mgr.LoadProfiles()
-	return mgr
+	rawMgr.LoadProfiles()
+	return usecase.WrapMotionManager(rawMgr), rawMgr
 }
 
 func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
@@ -273,11 +274,12 @@ func TestDaqStreamSendsServerSentEvents(t *testing.T) {
 
 func TestMotionHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
+	motionMgr, rawMotionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
 		MotionManager:  motionMgr,
+		MotionService:  rawMotionMgr,
 	})
 
 	request(t, router, http.MethodPost, "/api/motion/connect", []byte(`{"id":"test-motion"}`), http.StatusOK)
@@ -311,11 +313,12 @@ func TestMotionHTTPFlow(t *testing.T) {
 
 func TestMotionHTTPValidation(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(core.AxisX)
+	motionMgr, rawMotionMgr := newTestMotionManager(core.AxisX)
 	router := NewRouter(Deps{
 		DeviceManager:  newTestDeviceManager(t, hub),
 		AcquisitionHub: hub,
 		MotionManager:  motionMgr,
+		MotionService:  rawMotionMgr,
 	})
 
 	request(t, router, http.MethodGet, "/api/motion/connect", nil, http.StatusMethodNotAllowed)
@@ -326,12 +329,13 @@ func TestMotionHTTPValidation(t *testing.T) {
 
 func TestCalibrationHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
+	motionMgr, rawMotionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:      newTestDeviceManager(t, hub),
 		AcquisitionHub:     hub,
 		MotionManager:      motionMgr,
+		MotionService:      rawMotionMgr,
 		CalibrationManager: calMgr,
 	})
 
@@ -385,12 +389,13 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 
 func TestTraversalHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	motionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
+	motionMgr, rawMotionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),
 		AcquisitionHub:   hub,
 		MotionManager:    motionMgr,
+		MotionService:    rawMotionMgr,
 		TraversalManager: travMgr,
 	})
 

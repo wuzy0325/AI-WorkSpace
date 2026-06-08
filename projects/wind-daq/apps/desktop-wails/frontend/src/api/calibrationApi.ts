@@ -231,4 +231,33 @@ export const calibrationApi = {
   updateSphereTankGate: async (_gate: SphereTankGateConfig): Promise<{ success: boolean; error?: string }> => {
     return { success: true };
   },
+
+  generateFiveHoleSnakePoints: async (layout: {
+    alphaMin: number; alphaMax: number; alphaStep: number
+    betaMin: number; betaMax: number; betaStep: number
+  }): Promise<Array<{ id: number; coordinates: Record<string, number> }>> => {
+    try {
+      if (isWailsAvailable()) {
+        return [] // Wails 模式下暂不实现
+      }
+      return await request('/api/calibration/fivehole', {
+        method: 'POST',
+        body: JSON.stringify(layout),
+      })
+    } catch {
+      return []
+    }
+  },
+
+  getPrecisionDefaults: async (): Promise<{ probePrecision: number; machPrecision: number; velocityPrecision: number } | null> => {
+    try {
+      if (isWailsAvailable()) {
+        return null; // Wails 模式下暂不实现，使用前端 fallback
+      } else {
+        return await request('/api/calibration/precisionDefaults');
+      }
+    } catch {
+      return null;
+    }
+  },
 };

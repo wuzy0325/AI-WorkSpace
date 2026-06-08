@@ -159,7 +159,7 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
-      points: generatePoints(),
+      points: await generatePoints(),
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
       savePath: '',

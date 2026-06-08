@@ -13,6 +13,7 @@ import (
 	hardware "shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
 	"shared.local/device-sdk/go/motion/ports"
+	motionmanager "shared.local/motion-control/go/manager"
 	motionprofile "shared.local/motion-control/go/profile"
 
 	"wind-daq/services/api-go/internal/adapters/calstore"
@@ -28,15 +29,18 @@ import (
 
 // AppContext holds all core application services
 type AppContext struct {
-	DeviceManager   *usecase.DeviceManager
-	AcquisitionHub  *usecase.AcquisitionHub
-	ReportManager   *usecase.ReportManager
-	MotionManager   *usecase.MotionManager
-	CalibrationMgr  *usecase.CalibrationManager
-	TraversalMgr    *usecase.TraversalManager
-	StorageRecorder *usecase.StorageRecorder
-	ConfigManager   *usecase.ConfigManager
-	configDir       string
+	DeviceManager      *usecase.DeviceManager
+	AcquisitionHub     *usecase.AcquisitionHub
+	ReportManager      *usecase.ReportManager
+	MotionManager      windaqports.MotionManager
+	CalibrationMgr     *usecase.CalibrationManager
+	TraversalMgr       *usecase.TraversalManager
+	StorageRecorder    *usecase.StorageRecorder
+	ConfigManager      *usecase.ConfigManager
+	MotionManagerRaw   *motionmanager.MotionManager
+	DataStreamRelay    *usecase.DataStreamRelay
+	MotionStatusPoller *usecase.MotionStatusPoller
+	configDir          string
 }
 
 // NewAppContext creates and initializes all core services
@@ -70,7 +74,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
 	recorder := usecase.NewStorageRecorder(storage.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(report.NewCSVReportWriter())
-	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+	rawMotionMgr := motionmanager.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
 		switch profile.Type {
 		case core.ControllerTypeWTNMC4A:
 			return windaqhardware.NewWTNMC4AMotionController(profile), nil
@@ -79,6 +83,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 			return factory.Create(profile)
 		}
 	})
+	motionMgr := usecase.WrapMotionManager(rawMotionMgr)
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
 	travStore := calstore.NewTraversalResultStore()
@@ -96,15 +101,18 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	deviceMgr.SetScanner(scan.NewNetworkScanner())
 
 	return &AppContext{
-		DeviceManager:   deviceMgr,
-		AcquisitionHub:  hub,
-		ReportManager:   reportMgr,
-		MotionManager:   motionMgr,
-		CalibrationMgr:  calibrationMgr,
-		TraversalMgr:    traversalMgr,
-		StorageRecorder: recorder,
-		ConfigManager:   configMgr,
-		configDir:       configDir,
+		DeviceManager:      deviceMgr,
+		AcquisitionHub:     hub,
+		ReportManager:      reportMgr,
+		MotionManager:      motionMgr,
+		CalibrationMgr:     calibrationMgr,
+		TraversalMgr:       traversalMgr,
+		StorageRecorder:    recorder,
+		ConfigManager:      configMgr,
+		MotionManagerRaw:   rawMotionMgr,
+		DataStreamRelay:    usecase.NewDataStreamRelay(hub),
+		MotionStatusPoller: usecase.NewMotionStatusPoller(motionMgr),
+		configDir:          configDir,
 	}, nil
 }
 

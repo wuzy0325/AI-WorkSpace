@@ -123,7 +123,7 @@ async function startCalibration() {
     const configToStart: CalibrationConfig = {
       ...currentConfig.value,
       points: currentConfig.value.fiveHoleLayout
-        ? generateFiveHoleSnakePoints(currentConfig.value.fiveHoleLayout)
+        ? await generateFiveHoleSnakePoints(currentConfig.value.fiveHoleLayout)
         : currentConfig.value.points,
     }
     await calibrationStore.startCalibration(configToStart)

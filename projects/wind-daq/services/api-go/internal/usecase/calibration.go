@@ -16,14 +16,14 @@ const defaultSampleInterval = 50 * time.Millisecond
 type CalibrationManager struct {
 	mu     sync.RWMutex
 	reader ports.LatestDataReader
-	motion *MotionManager
+	motion ports.MotionManager
 	sink   ports.CalibrationPointSink
 	store  ports.CalibrationResultStore
 	config calibration.Config
 	status calibration.Status
 }
 
-func NewCalibrationManager(reader ports.LatestDataReader, motion *MotionManager, sink ports.CalibrationPointSink, store ports.CalibrationResultStore) *CalibrationManager {
+func NewCalibrationManager(reader ports.LatestDataReader, motion ports.MotionManager, sink ports.CalibrationPointSink, store ports.CalibrationResultStore) *CalibrationManager {
 	return &CalibrationManager{
 		reader: reader,
 		motion: motion,

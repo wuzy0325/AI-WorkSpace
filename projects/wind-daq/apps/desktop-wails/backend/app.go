@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -15,22 +14,6 @@ import (
 	"wind-daq/services/api-go/pkg/types"
 	wind_usecase "wind-daq/services/api-go/pkg/usecase"
 )
-
-// App 是 Wails 应用的主结构体
-type App struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	appContext *appcontext.AppContext
-	apiServer  *http.Server
-
-	// 采集数据推送相关
-	streamMu       sync.Mutex
-	streamCancel   context.CancelFunc
-	streamChannels map[string]chan types.DeviceDataPayload
-
-	// 运动状态推送相关
-	motionStatusCancel context.CancelFunc
-}
 
 // VersionInfo 版本信息
 type VersionInfo struct {
@@ -42,6 +25,15 @@ type VersionInfo struct {
 type GenericResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+}
+
+// App 是 Wails 应用的主结构体
+type App struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	appContext *appcontext.AppContext
+	apiServer  *http.Server
+	relayStop  func()
 }
 
 // NewApp 创建新的 App 实例
@@ -65,10 +57,8 @@ func (a *App) Startup(ctx context.Context) {
 		return
 	}
 
-	// 启动采集数据推送 goroutine，将 AcquisitionHub 数据通过 Wails Events 推送到前端
-	a.startStreamRelay()
-	// 启动运动状态定时推送
-	a.startMotionStatusRelay()
+	a.startDataRelay()
+	a.startMotionPoller()
 	a.startLocalAPIServer()
 
 	log.Println("Wind-DAQ 应用已成功初始化")
@@ -85,6 +75,7 @@ func (a *App) startLocalAPIServer() {
 			AcquisitionHub:     a.appContext.AcquisitionHub,
 			ReportManager:      a.appContext.ReportManager,
 			MotionManager:      a.appContext.MotionManager,
+			MotionService:      a.appContext.MotionManagerRaw,
 			CalibrationManager: a.appContext.CalibrationMgr,
 			TraversalManager:   a.appContext.TraversalMgr,
 			StorageRecorder:    a.appContext.StorageRecorder,
@@ -99,161 +90,66 @@ func (a *App) startLocalAPIServer() {
 	}()
 }
 
-// startStreamRelay 启动采集数据中继，将 hub 数据通过 Wails EventsEmit 推送到前端
-func (a *App) startStreamRelay() {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-
-	if a.streamCancel != nil {
-		a.streamCancel()
-	}
-	streamCtx, cancel := context.WithCancel(a.ctx)
-	a.streamCancel = cancel
-	a.streamChannels = make(map[string]chan types.DeviceDataPayload)
-
-	go a.streamRelayLoop(streamCtx)
-}
-
-// streamRelayLoop 监听所有已订阅设备的采集数据并推送到前端
-func (a *App) streamRelayLoop(ctx context.Context) {
-	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
+// startDataRelay 启动采集数据中继，将 DataStreamRelay 输出通过 Wails EventsEmit 推送到前端
+func (a *App) startDataRelay() {
+	relay := a.appContext.DataStreamRelay
+	if relay == nil {
 		return
 	}
-	type sub struct {
-		ch          <-chan types.DeviceDataPayload
-		unsubscribe func()
-	}
-	var subs sync.Map
-
-	for {
-		select {
-		case <-ctx.Done():
-			// 清理所有订阅
-			subs.Range(func(key, value any) bool {
-				if s, ok := value.(sub); ok {
-					s.unsubscribe()
-				}
-				return true
-			})
-			return
-		default:
-		}
-
-		// 检查当前需要订阅的设备列表
-		a.streamMu.Lock()
-		needed := make(map[string]struct{}, len(a.streamChannels))
-		for id := range a.streamChannels {
-			needed[id] = struct{}{}
-		}
-		a.streamMu.Unlock()
-
-		// 订阅新设备
-		for id := range needed {
-			if _, exists := subs.Load(id); exists {
-				continue
-			}
-			ch, unsub := a.appContext.AcquisitionHub.Subscribe(id, 16)
-			subs.Store(id, sub{ch: ch, unsubscribe: unsub})
-			go func(deviceID string, payloadCh <-chan types.DeviceDataPayload) {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case payload, ok := <-payloadCh:
-						if !ok {
-							return
-						}
-						runtime.EventsEmit(a.ctx, "daq:payload", payload)
-					}
-				}
-			}(id, ch)
-		}
-
-		// 取消不再需要的订阅
-		subs.Range(func(key, value any) bool {
-			id := key.(string)
-			if _, ok := needed[id]; !ok {
-				if s, ok := value.(sub); ok {
-					s.unsubscribe()
-				}
-				subs.Delete(key)
-			}
-			return true
-		})
-
-		// 短暂休眠避免忙等
-		select {
-		case <-ctx.Done():
-			return
-		case <-streamCtxSleep(ctx, 500*time.Millisecond):
-		}
-	}
-}
-
-func streamCtxSleep(ctx context.Context, d time.Duration) <-chan struct{} {
-	ch := make(chan struct{})
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.relayStop = cancel
 	go func() {
-		select {
-		case <-ctx.Done():
-		case <-time.After(d):
+		for {
+			select {
+			case <-ctx.Done():
+				relay.Stop()
+				return
+			case payload, ok := <-relay.Payloads():
+				if !ok {
+					return
+				}
+				runtime.EventsEmit(a.ctx, "daq:payload", payload)
+			}
 		}
-		close(ch)
 	}()
-	return ch
 }
 
-// startMotionStatusRelay 启动运动状态定时推送，将控制器状态通过 Wails EventsEmit 推送到前端
-func (a *App) startMotionStatusRelay() {
-	if a.motionStatusCancel != nil {
-		a.motionStatusCancel()
+// startMotionPoller 启动运动状态轮询，将 MotionStatusPoller 输出通过 Wails EventsEmit 推送到前端
+func (a *App) startMotionPoller() {
+	poller := a.appContext.MotionStatusPoller
+	if poller == nil {
+		return
 	}
-	motionCtx, cancel := context.WithCancel(a.ctx)
-	a.motionStatusCancel = cancel
-
-	go a.motionStatusRelayLoop(motionCtx)
-}
-
-// motionStatusRelayLoop 定时轮询运动控制器状态并推送到前端
-func (a *App) motionStatusRelayLoop(ctx context.Context) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if a.appContext == nil || a.appContext.MotionManager == nil {
-				continue
-			}
-			statuses := a.appContext.MotionManager.StatusAll(a.ctx)
-			if len(statuses) > 0 {
-				runtime.EventsEmit(a.ctx, "motion:status", statuses)
-			}
+	poller.Start(a.ctx)
+	go func() {
+		for statuses := range poller.Status() {
+			runtime.EventsEmit(a.ctx, "motion:status", statuses)
 		}
-	}
+	}()
 }
 
 // DeviceSubscribeStream 前端调用此方法来订阅/取消订阅某个设备的采集数据流
 func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResponse {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-
-	if a.streamChannels == nil {
-		a.streamChannels = make(map[string]chan types.DeviceDataPayload)
+	relay := a.appContext.DataStreamRelay
+	if relay == nil {
+		return GenericResponse{Success: false, Error: "数据流中继未初始化"}
 	}
-
 	if subscribe {
-		a.streamChannels[deviceID] = make(chan types.DeviceDataPayload, 16)
+		relay.Subscribe(deviceID)
 	} else {
-		delete(a.streamChannels, deviceID)
+		relay.Unsubscribe(deviceID)
 	}
-
 	return GenericResponse{Success: true}
 }
 
 // Shutdown 应用关闭时调用
 func (a *App) Shutdown(ctx context.Context) {
+	if a.relayStop != nil {
+		a.relayStop()
+	}
+	if a.appContext != nil && a.appContext.MotionStatusPoller != nil {
+		a.appContext.MotionStatusPoller.Stop()
+	}
 	if a.cancel != nil {
 		a.cancel()
 	}

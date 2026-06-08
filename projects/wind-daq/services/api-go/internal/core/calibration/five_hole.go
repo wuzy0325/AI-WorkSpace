@@ -2,6 +2,7 @@ package calibration
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -11,6 +12,47 @@ type FiveHoleAlgorithm struct{}
 // NewFiveHoleAlgorithm 创建五孔探针校准算法实例
 func NewFiveHoleAlgorithm() *FiveHoleAlgorithm {
 	return &FiveHoleAlgorithm{}
+}
+
+type FiveHoleSnakePoint struct {
+	ID          int                `json:"id"`
+	Coordinates map[string]float64 `json:"coordinates"`
+}
+
+type FiveHolePointLayout struct {
+	AlphaMin  float64 `json:"alphaMin"`
+	AlphaMax  float64 `json:"alphaMax"`
+	AlphaStep float64 `json:"alphaStep"`
+	BetaMin   float64 `json:"betaMin"`
+	BetaMax   float64 `json:"betaMax"`
+	BetaStep  float64 `json:"betaStep"`
+}
+
+func GenerateFiveHoleSnakePoints(layout FiveHolePointLayout) ([]FiveHoleSnakePoint, error) {
+	if layout.AlphaStep <= 0 || layout.BetaStep <= 0 {
+		return nil, fmt.Errorf("step must be positive")
+	}
+	alphaCount := int(math.Round((layout.AlphaMax-layout.AlphaMin)/layout.AlphaStep)) + 1
+	betaCount := int(math.Round((layout.BetaMax-layout.BetaMin)/layout.BetaStep)) + 1
+	points := make([]FiveHoleSnakePoint, 0, alphaCount*betaCount)
+	id := 1
+	for bi := 0; bi < betaCount; bi++ {
+		beta := math.Round((layout.BetaMin+float64(bi)*layout.BetaStep)*10) / 10
+		reverse := bi%2 == 1
+		for ai := 0; ai < alphaCount; ai++ {
+			alphaIdx := ai
+			if reverse {
+				alphaIdx = alphaCount - 1 - ai
+			}
+			alpha := math.Round((layout.AlphaMin+float64(alphaIdx)*layout.AlphaStep)*10) / 10
+			points = append(points, FiveHoleSnakePoint{
+				ID: id,
+				Coordinates: map[string]float64{"α": alpha, "β": beta},
+			})
+			id++
+		}
+	}
+	return points, nil
 }
 
 func (a *FiveHoleAlgorithm) Type() CalibrationType {

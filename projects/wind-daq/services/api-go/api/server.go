@@ -17,6 +17,7 @@ import (
 	wind_report "wind-daq/services/api-go/internal/core/report"
 	"wind-daq/services/api-go/internal/core/storage"
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -24,61 +25,15 @@ type Deps struct {
 	DeviceManager      *usecase.DeviceManager
 	AcquisitionHub     *usecase.AcquisitionHub
 	ReportManager      *usecase.ReportManager
-	MotionManager      *usecase.MotionManager
+	MotionManager      ports.MotionManager
+	MotionService      motionhttp.MotionService
 	CalibrationManager *usecase.CalibrationManager
 	TraversalManager   *usecase.TraversalManager
 	StorageRecorder    *usecase.StorageRecorder
 	ConfigManager      *usecase.ConfigManager
 }
 
-type traversalAPIConfig struct {
-	Name   string `json:"name"`
-	Layout struct {
-		Pattern string `json:"pattern"`
-		Line    *struct {
-			StartX        float64                 `json:"startX"`
-			StartY        float64                 `json:"startY"`
-			EndX          float64                 `json:"endX"`
-			EndY          float64                 `json:"endY"`
-			XStepSegments []traversal.StepSegment `json:"xStepSegments"`
-			YStepSegments []traversal.StepSegment `json:"yStepSegments"`
-		} `json:"line"`
-		Rectangle *struct {
-			XMin          float64                 `json:"xMin"`
-			XMax          float64                 `json:"xMax"`
-			XStepSegments []traversal.StepSegment `json:"xStepSegments"`
-			YMin          float64                 `json:"yMin"`
-			YMax          float64                 `json:"yMax"`
-			YStepSegments []traversal.StepSegment `json:"yStepSegments"`
-		} `json:"rectangle"`
-		Sector *struct {
-			CenterX             float64                 `json:"centerX"`
-			CenterY             float64                 `json:"centerY"`
-			RadiusMin           float64                 `json:"radiusMin"`
-			RadiusMax           float64                 `json:"radiusMax"`
-			RadialStepSegments  []traversal.StepSegment `json:"radialStepSegments"`
-			AngleStart          float64                 `json:"angleStart"`
-			AngleEnd            float64                 `json:"angleEnd"`
-			AngularStepSegments []traversal.StepSegment `json:"angularStepSegments"`
-		} `json:"sector"`
-		Custom *struct {
-			Points []struct {
-				X float64 `json:"x"`
-				Y float64 `json:"y"`
-			} `json:"points"`
-		} `json:"custom"`
-	} `json:"layout"`
-	Channels struct {
-		ProbeChannels []struct {
-			Channel struct {
-				DeviceID     string `json:"deviceId"`
-				ChannelIndex int    `json:"channelIndex"`
-			} `json:"channel"`
-			Enabled bool `json:"enabled"`
-		} `json:"probeChannels"`
-	} `json:"channels"`
-	DwellTimeMs int `json:"dwellTimeMs"`
-}
+
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -217,8 +172,8 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	// ---- Motion API ----
-	if deps.MotionManager != nil {
-		motionhttp.RegisterMotionRoutes(mux, deps.MotionManager)
+	if deps.MotionService != nil {
+		motionhttp.RegisterMotionRoutes(mux, deps.MotionService)
 	}
 
 	// ---- Calibration API ----
@@ -284,6 +239,18 @@ func NewRouter(deps Deps) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, result)
+		case "precisionDefaults":
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]int{
+				"probePrecision":   3,
+				"machPrecision":    4,
+				"velocityPrecision": 3,
+			})
+		case "fivehole":
+			handleFiveholeSnakePoints(w, r)
 		case "pause":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -455,18 +422,7 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			checks := []map[string]any{
-				{"name": "PRB", "passed": deps.TraversalManager != nil && deps.TraversalManager.HasLoadedInterpolator(), "message": "Load PRB or calibration CSV before running interpolation"},
-				{"name": "Motion", "passed": deps.MotionManager != nil, "message": "Motion manager is available"},
-				{"name": "DAQ", "passed": deps.AcquisitionHub != nil, "message": "DAQ acquisition hub is available"},
-			}
-			allPassed := true
-			for _, check := range checks {
-				if passed, _ := check["passed"].(bool); !passed {
-					allPassed = false
-				}
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"allPassed": allPassed, "checks": checks})
+			writeJSON(w, http.StatusOK, deps.TraversalManager.CheckPreconditions())
 		case "generateGrid":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -497,21 +453,12 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			config, dwell, err := traversalConfigFromRequest(raw)
+			taskID, err := deps.TraversalManager.ParseAndStartTraversal(raw)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			err = deps.TraversalManager.Start(config)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			deps.TraversalManager.SaveConfigRaw(raw)
-			if dwell >= 0 {
-				go deps.TraversalManager.RunTraversalLoop(dwell)
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"taskId": config.TaskID})
+			writeJSON(w, http.StatusOK, map[string]string{"taskId": taskID})
 		case "status":
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -852,103 +799,22 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"success": false, "error": message})
 }
 
-func traversalConfigFromRequest(raw json.RawMessage) (traversal.Config, time.Duration, error) {
-	var legacy struct {
-		TaskID   string            `json:"taskId"`
-		DeviceID string            `json:"deviceId"`
-		Channels []int             `json:"channels"`
-		Path     []traversal.Point `json:"path"`
+func handleFiveholeSnakePoints(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
-	if err := json.Unmarshal(raw, &legacy); err == nil && legacy.TaskID != "" {
-		return traversal.Config{TaskID: legacy.TaskID, DeviceID: legacy.DeviceID, Channels: legacy.Channels, Path: legacy.Path}, -1, nil
+	var body calibration.FiveHolePointLayout
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-
-	var cfg traversalAPIConfig
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return traversal.Config{}, 0, err
+	points, err := calibration.GenerateFiveHoleSnakePoints(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	points := traversal.PointsFromLayout(traversal.LayoutConfig{
-		Pattern: cfg.Layout.Pattern,
-		Line: func() *traversal.LineLayout {
-			if cfg.Layout.Line == nil {
-				return nil
-			}
-			return &traversal.LineLayout{
-				StartX:        cfg.Layout.Line.StartX,
-				StartY:        cfg.Layout.Line.StartY,
-				EndX:          cfg.Layout.Line.EndX,
-				EndY:          cfg.Layout.Line.EndY,
-				XStepSegments: cfg.Layout.Line.XStepSegments,
-				YStepSegments: cfg.Layout.Line.YStepSegments,
-			}
-		}(),
-		Rectangle: func() *traversal.RectangleLayout {
-			if cfg.Layout.Rectangle == nil {
-				return nil
-			}
-			return &traversal.RectangleLayout{
-				XMin:          cfg.Layout.Rectangle.XMin,
-				XMax:          cfg.Layout.Rectangle.XMax,
-				XStepSegments: cfg.Layout.Rectangle.XStepSegments,
-				YMin:          cfg.Layout.Rectangle.YMin,
-				YMax:          cfg.Layout.Rectangle.YMax,
-				YStepSegments: cfg.Layout.Rectangle.YStepSegments,
-			}
-		}(),
-		Sector: func() *traversal.SectorLayout {
-			if cfg.Layout.Sector == nil {
-				return nil
-			}
-			return &traversal.SectorLayout{
-				CenterX:             cfg.Layout.Sector.CenterX,
-				CenterY:             cfg.Layout.Sector.CenterY,
-				RadiusMin:           cfg.Layout.Sector.RadiusMin,
-				RadiusMax:           cfg.Layout.Sector.RadiusMax,
-				RadialStepSegments:  cfg.Layout.Sector.RadialStepSegments,
-				AngleStart:          cfg.Layout.Sector.AngleStart,
-				AngleEnd:            cfg.Layout.Sector.AngleEnd,
-				AngularStepSegments: cfg.Layout.Sector.AngularStepSegments,
-			}
-		}(),
-		Custom: func() *traversal.CustomLayout {
-			if cfg.Layout.Custom == nil {
-				return nil
-			}
-			cl := &traversal.CustomLayout{}
-			for _, p := range cfg.Layout.Custom.Points {
-				cl.Points = append(cl.Points, struct {
-					X float64 `json:"x"`
-					Y float64 `json:"y"`
-				}{X: p.X, Y: p.Y})
-			}
-			return cl
-		}(),
-	})
-	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
-	deviceID := ""
-	for _, probe := range cfg.Channels.ProbeChannels {
-		if !probe.Enabled || probe.Channel.ChannelIndex < 0 {
-			continue
-		}
-		if deviceID == "" {
-			deviceID = probe.Channel.DeviceID
-		}
-		channels = append(channels, probe.Channel.ChannelIndex)
-	}
-	if deviceID == "" {
-		return traversal.Config{}, 0, fmt.Errorf("deviceId is required")
-	}
-	if len(channels) == 0 {
-		return traversal.Config{}, 0, fmt.Errorf("channels are required")
-	}
-	if len(points) == 0 {
-		return traversal.Config{}, 0, fmt.Errorf("path is required")
-	}
-	dwell := time.Duration(cfg.DwellTimeMs) * time.Millisecond
-	if dwell < 0 {
-		dwell = 0
-	}
-	return traversal.Config{TaskID: fmt.Sprintf("trav-%d", time.Now().UnixMilli()), DeviceID: deviceID, Channels: channels, Path: points}, dwell, nil
+	writeJSON(w, http.StatusOK, points)
 }
 
 func prbFileInfo(filePath string, validRange coreinterp.PrbValidRange) map[string]any {
