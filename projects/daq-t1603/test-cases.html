@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DAQ-T-1603 功能测试用例</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-light: #dbeafe;
+            --success: #16a34a;
+            --success-light: #dcfce7;
+            --danger: #dc2626;
+            --danger-light: #fee2e2;
+            --warning: #d97706;
+            --warning-light: #fef3c7;
+            --gray: #6b7280;
+            --gray-light: #f3f4f6;
+            --gray-border: #e5e7eb;
+            --block: #7c3aed;
+            --block-light: #ede9fe;
+            --skip: #9ca3af;
+            --skip-light: #f9fafb;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            line-height: 1.6;
+        }
+
+        /* 顶部工具栏 */
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: white;
+            border-bottom: 2px solid var(--gray-border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        .toolbar h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { background: #15803d; }
+        .btn-outline { background: white; color: var(--gray); border: 1px solid var(--gray-border); }
+        .btn-outline:hover { background: var(--gray-light); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #b91c1c; }
+
+        /* 统计面板 */
+        .stats-bar {
+            background: white;
+            border-bottom: 1px solid var(--gray-border);
+            padding: 12px 24px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .stat-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .stat-count {
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .progress-bar {
+            flex: 1;
+            min-width: 200px;
+            height: 8px;
+            background: var(--gray-light);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+            background: var(--primary);
+        }
+
+        /* 主内容 */
+        .content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px 24px 60px;
+        }
+
+        /* 测试模块 */
+        .test-module {
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 10px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+
+        .module-header {
+            padding: 14px 20px;
+            background: var(--gray-light);
+            border-bottom: 1px solid var(--gray-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .module-header:hover { background: #eef2ff; }
+
+        .module-title {
+            font-size: 15px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .module-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: white;
+        }
+
+        .module-stats {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--gray);
+        }
+
+        .module-stats span { font-weight: 600; }
+
+        .module-body { padding: 0; }
+
+        .module-body.collapsed { display: none; }
+
+        /* 测试用例行 */
+        .test-row {
+            display: grid;
+            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        .test-row:hover { background: #f8fafc; }
+        .test-row:last-child { border-bottom: none; }
+
+        .test-id {
+            color: var(--gray);
+            font-family: "Cascadia Code", "Fira Code", monospace;
+            font-size: 12px;
+        }
+
+        .test-name {
+            font-weight: 500;
+        }
+
+        .test-steps {
+            color: var(--gray);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        /* 结果选择器 */
+        .result-select {
+            padding: 6px 10px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            background: white;
+            width: 100%;
+        }
+
+        .result-select.pass { background: var(--success-light); color: var(--success); border-color: var(--success); }
+        .result-select.fail { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
+        .result-select.block { background: var(--block-light); color: var(--block); border-color: var(--block); }
+        .result-select.skip { background: var(--skip-light); color: var(--skip); border-color: var(--skip); }
+
+        /* 备注输入 */
+        .remark-input {
+            padding: 6px 10px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 12px;
+            width: 100%;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .remark-input:focus { border-color: var(--primary); }
+
+        /* 表头 */
+        .test-header {
+            display: grid;
+            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
+            padding: 8px 20px;
+            background: #f8fafc;
+            border-bottom: 2px solid var(--gray-border);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gray);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* 测试信息区 */
+        .test-info {
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 12px;
+        }
+
+        .info-field label {
+            display: block;
+            font-size: 12px;
+            color: var(--gray);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .info-field input, .info-field select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .info-field input:focus, .info-field select:focus {
+            border-color: var(--primary);
+        }
+
+        /* 导出对话框 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            width: 480px;
+            max-width: 90vw;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+
+        .modal h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .export-option {
+            padding: 12px;
+            border: 2px solid var(--gray-border);
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+        }
+
+        .export-option:hover { border-color: var(--primary); background: var(--primary-light); }
+        .export-option.selected { border-color: var(--primary); background: var(--primary-light); }
+
+        .export-option h3 { font-size: 14px; margin-bottom: 4px; }
+        .export-option p { font-size: 12px; color: var(--gray); }
+
+        /* 打印样式 */
+        @media print {
+            .toolbar, .modal-overlay { display: none !important; }
+            .stats-bar { position: static; }
+            .test-module { break-inside: avoid; }
+            .result-select { -webkit-appearance: none; border: none; padding: 0; font-size: 12px; }
+            .remark-input { border: none; }
+            body { background: white; }
+        }
+
+        /* 响应式 */
+        @media (max-width: 900px) {
+            .test-row, .test-header {
+                grid-template-columns: 50px 1fr 100px 90px;
+            }
+            .test-steps, .remark-input { display: none; }
+            .test-header span:nth-child(3), .test-header span:nth-child(6),
+            .test-row .test-steps, .test-row .remark-cell { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- 顶部工具栏 -->
+<div class="toolbar">
+    <h1>DAQ-T-1603 功能测试用例</h1>
+    <div class="toolbar-actions">
+        <button class="btn btn-outline" onclick="resetAll()">重置全部</button>
+        <button class="btn btn-outline" onclick="toggleAllModules()">展开/折叠</button>
+        <button class="btn btn-primary" onclick="showExportModal()">导出报告</button>
+    </div>
+</div>
+
+<!-- 统计面板 -->
+<div class="stats-bar" id="statsBar">
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--primary)"></div>
+        <span>总计</span>
+        <span class="stat-count" id="statTotal">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--success)"></div>
+        <span>通过</span>
+        <span class="stat-count" id="statPass" style="color:var(--success)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--danger)"></div>
+        <span>失败</span>
+        <span class="stat-count" id="statFail" style="color:var(--danger)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--block)"></div>
+        <span>阻塞</span>
+        <span class="stat-count" id="statBlock" style="color:var(--block)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--skip)"></div>
+        <span>跳过</span>
+        <span class="stat-count" id="statSkip" style="color:var(--skip)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--gray)"></div>
+        <span>未测</span>
+        <span class="stat-count" id="statUntested" style="color:var(--gray)">0</span>
+    </div>
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <span style="font-size:13px;font-weight:600" id="progressText">0%</span>
+</div>
+
+<!-- 主内容 -->
+<div class="content">
+
+    <!-- 测试信息 -->
+    <div class="test-info">
+        <h3 style="font-size:15px;margin-bottom:14px;font-weight:700;">测试信息</h3>
+        <div class="info-grid">
+            <div class="info-field">
+                <label>测试人员</label>
+                <input type="text" id="tester" placeholder="请输入姓名">
+            </div>
+            <div class="info-field">
+                <label>测试日期</label>
+                <input type="date" id="testDate">
+            </div>
+            <div class="info-field">
+                <label>软件版本</label>
+                <input type="text" id="version" placeholder="如 v1.0.0">
+            </div>
+            <div class="info-field">
+                <label>运行模式</label>
+                <select id="runMode">
+                    <option value="">全部</option>
+                    <option value="simulated">Simulated 模拟模式</option>
+                    <option value="real">Real 真实设备模式</option>
+                </select>
+            </div>
+            <div class="info-field">
+                <label>测试环境</label>
+                <select id="testEnv">
+                    <option value="dev">开发环境</option>
+                    <option value="staging">预发布环境</option>
+                    <option value="prod">生产环境</option>
+                </select>
+            </div>
+            <div class="info-field">
+                <label>操作系统</label>
+                <input type="text" id="osInfo" value="Windows 11">
+            </div>
+        </div>
+    </div>
+
+    <!-- 测试模块容器 -->
+    <div id="testModules"></div>
+</div>
+
+<!-- 导出对话框 -->
+<div class="modal-overlay" id="exportModal">
+    <div class="modal">
+        <h2>导出测试报告</h2>
+        <div class="export-option selected" onclick="selectExport(this, 'html')">
+            <h3>HTML 报告</h3>
+            <p>生成独立的 HTML 文件，包含完整测试结果和样式，可直接在浏览器中查看</p>
+        </div>
+        <div class="export-option" onclick="selectExport(this, 'print')">
+            <h3>打印 / PDF</h3>
+            <p>调用浏览器打印功能，可保存为 PDF 文件</p>
+        </div>
+        <div class="export-option" onclick="selectExport(this, 'csv')">
+            <h3>CSV 表格</h3>
+            <p>导出为 CSV 格式，可在 Excel 中打开进行二次分析</p>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideExportModal()">取消</button>
+            <button class="btn btn-primary" onclick="doExport()">导出</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================
+// 测试用例数据定义
+// ============================================================
+const TEST_MODULES = [
+    {
+        id: 'CONN',
+        title: '设备连接管理',
+        icon: '🔌',
+        color: '#2563eb',
+        cases: [
+            { id: 'CONN-001', name: 'Simulated 模拟设备连接', steps: '前置：打开 PowerShell，执行 $env:DAQ_T1603_MODE="simulated"，然后 cd apps/desktop-wails && go run -buildvcs=false .\n1.应用启动后，点击顶栏右侧「+」按钮添加设备\n2.在弹出的对话框中填写设备名称（如"模拟设备"）、IP 地址（如 127.0.0.1）、端口（如 5000）\n3.点击确认，设备出现在左侧「设备列表」侧边栏\n4.点击侧边栏中的设备项选中它\n5.在右侧详情面板头部，点击「连接」按钮\n6.观察设备状态：侧边栏设备项右侧状态标签从「未连接」变为「已连接」（绿色）\n7.详情面板头部的状态徽章显示「已连接」' },
+            { id: 'CONN-002', name: '真实 T1603 设备连接', steps: '前置：确保 T1603 设备已上电且与电脑在同一局域网，不设置 DAQ_T1603_MODE 环境变量，直接 cd apps/desktop-wails && go run -buildvcs=false .\n1.应用启动后，点击顶栏右侧「+」按钮\n2.填写设备名称（如"1号炉"）、设备实际 IP 地址（如 192.168.1.100）、端口（默认 5000）\n3.点击确认，设备出现在左侧侧边栏\n4.选中该设备，点击详情面板头部的「连接」按钮\n5.按钮显示加载动画（旋转图标），状态变为「连接中」\n6.连接成功后，硬件通过 OnConfigSynced 回调将实际配置（采样率、热电偶类型、通道掩码等）同步回来\n7.验证配置面板中显示的采样率、热电偶类型等与硬件实际值一致（非本地默认值）\n8.侧边栏状态标签变为「已连接」（绿色）\n9.若连接失败，状态标签显示「错误」（红色），底部日志面板可见 error 级别日志' },
+            { id: 'CONN-003', name: '断开设备连接', steps: '1.选中已连接的设备（侧边栏状态显示「已连接」或「采集中」）\n2.点击详情面板头部的「断开」按钮（连接后原「连接」按钮变为「断开」）\n3.观察侧边栏状态标签变回「未连接」（灰色）\n4.若设备正在采集，验证采集自动停止，状态直接变为「未连接」\n5.底部状态栏「在线」计数减 1' },
+            { id: 'CONN-004', name: '连接失败错误提示', steps: '1.点击顶栏「+」添加设备，IP 填写不可达地址（如 10.255.255.1），端口填 5000\n2.选中该设备，点击「连接」\n3.等待连接超时，观察状态标签变为「错误」（红色）\n4.查看底部日志面板，验证出现 error 级别日志，分类为 system，消息包含 "Connect failed"\n5.验证应用不崩溃，界面仍可正常操作' },
+            { id: 'CONN-005', name: '重复连接处理', steps: '1.选中已连接的设备（侧边栏显示「已连接」）\n2.再次点击详情面板头部的「断开/连接」按钮（此时应显示为「断开」）\n3.验证按钮行为正确：已连接时只显示「断开」，不会出现重复连接\n4.若通过其他方式触发重复连接（如代码调用），后端返回 "device already connected" 错误' },
+            { id: 'CONN-006', name: '断开后重连', steps: '1.选中已连接设备，点击「断开」，状态变为「未连接」\n2.等待 1 秒后，点击「连接」\n3.验证状态重新变为「已连接」\n4.启动采集，验证数据正常接收\n5.检查配置文件 %APPDATA%\\daq-t1603\\device-profiles.json，确认配置未被修改' },
+            { id: 'CONN-007', name: '异常断开自动检测', steps: '前置：使用真实设备模式连接 T1603\n1.连接设备并确认状态为「已连接」\n2.物理断开设备网线或关闭设备电源\n3.等待数秒，观察侧边栏状态自动变为「未连接」或「已连接」（非采集状态）\n4.查看日志面板，验证出现 hardware-recv 相关的断开日志\n5.重新接通设备后，点击「连接」可重新连接' },
+            { id: 'CONN-008', name: '自动连接功能', steps: '1.选中设备，点击详情面板头部「配置」按钮，打开右侧配置面板\n2.在「硬件参数」区域，找到「自动连接」开关，点击开启\n3.点击底部「保存」按钮，确认保存成功提示\n4.关闭应用（关闭窗口）\n5.重新启动应用\n6.验证设备自动连接，侧边栏状态直接显示「已连接」\n7.检查配置文件 %APPDATA%\\daq-t1603\\device-profiles.json 中该设备的 autoConnect 字段为 true' },
+            { id: 'CONN-009', name: '多设备同时连接', steps: '1.点击顶栏「+」添加设备 A（如 192.168.1.100:5000）\n2.再点击「+」添加设备 B（如 192.168.1.101:5000）\n3.选中设备 A，点击「连接」，验证 A 变为「已连接」\n4.选中设备 B，点击「连接」，验证 B 也变为「已连接」\n5.底部状态栏「在线」显示 2\n6.分别对 A、B 启动采集，验证各自独立采集，数据不混淆' },
+            { id: 'CONN-010', name: '连接超时处理', steps: '1.添加设备，IP 填写局域网中不存在地址（如 192.168.1.254）\n2.点击「连接」，观察按钮显示加载动画\n3.等待连接超时（通常 10-30 秒取决于 TCP 超时）\n4.验证状态回退到「未连接」或「错误」\n5.验证界面不卡死，其他设备仍可操作' },
+        ]
+    },
+    {
+        id: 'ACQ',
+        title: '数据采集操作',
+        icon: '🌡️',
+        color: '#16a34a',
+        cases: [
+            { id: 'ACQ-001', name: '启动数据采集', steps: '1.选中已连接的设备（侧边栏状态「已连接」）\n2.点击顶栏左侧绿色「开始采集」按钮（带播放图标）\n3.观察按钮变为红色「停止采集」（带方块图标）\n4.侧边栏设备状态标签变为「采集中」（绿色脉冲动画）\n5.详情面板头部状态徽章显示「采集中」\n6.底部状态栏「采集状态」变为「运行中」，「运行时间」开始计时\n7.右侧通道网格区域开始显示温度数值' },
+            { id: 'ACQ-002', name: '停止数据采集', steps: '1.在采集状态下，点击顶栏红色「停止采集」按钮\n2.观察按钮变回绿色「开始采集」\n3.侧边栏状态标签变回「已连接」（无脉冲动画）\n4.详情面板状态徽章显示「已连接」\n5.底部状态栏「采集状态」变为「已停止」，运行时间归零\n6.通道网格温度数值停止更新（保持最后值）' },
+            { id: 'ACQ-003', name: '未连接时启动采集', steps: '1.选中未连接的设备（侧边栏状态「未连接」）\n2.观察顶栏「开始采集」按钮为灰色禁用状态\n3.若通过其他方式触发采集，验证后端返回 "device not connected" 错误\n4.验证应用不崩溃' },
+            { id: 'ACQ-004', name: '重复启动采集', steps: '1.在采集状态下（侧边栏显示「采集中」）\n2.顶栏按钮已变为「停止采集」，无法再次点击「开始采集」\n3.若通过代码重复调用 StartAcquisition，后端返回 "device already acquiring" 错误' },
+            { id: 'ACQ-005', name: '16通道温度数据接收', steps: '1.启动采集后，观察右侧「通道监控」区域的 16 个通道卡片\n2.每个卡片显示 CH01~CH16 编号、温度数值、单位（°C）\n3.模拟模式下，温度值在 25±5°C 范围内波动（正弦波叠加）\n4.真实设备模式下，温度值取决于实际热电偶输入\n5.验证所有 16 个通道都有数据更新' },
+            { id: 'ACQ-006', name: '采集数据实时刷新', steps: '1.启动采集后，观察通道卡片数值变化\n2.模拟模式下，数据约每 200ms 更新一次（模拟器 ticker 间隔）\n3.真实设备模式下，数据通过 relay 机制以 100ms 间隔推送到前端\n4.验证 ECharts 实时波形图持续滚动更新' },
+            { id: 'ACQ-007', name: '硬件时间戳正确性', steps: '前置：使用真实设备模式\n1.启动采集，观察日志面板中 acquisition 类别日志\n2.验证 TemperatureSnapshot 数据中 hardwareTimestamp 字段 > 0（单位：秒.纳秒）\n3.若设备未提供硬件时间戳，hardwareTimestamp 为 0，系统回退使用本地时间\n4.录制 CSV 后打开文件，验证时间列格式为 yyyy-MM-dd HH:mm:ss.SSS' },
+            { id: 'ACQ-008', name: '断开连接时自动停止采集', steps: '1.在采集状态下，点击详情面板「断开」按钮\n2.验证采集立即停止，顶栏按钮变回「开始采集」\n3.侧边栏状态变为「未连接」\n4.若录制正在进行，验证录制继续但不再写入新数据' },
+            { id: 'ACQ-009', name: '采集超时处理', steps: '1.连接真实设备后，若设备响应缓慢\n2.点击「开始采集」，前端设置 8 秒超时（ACQUISITION_ACTION_TIMEOUT_MS）\n3.超时后前端抛出 "Start acquisition timed out" 错误\n4.前端自动查询后端 GetStatus 恢复正确状态\n5.验证界面不卡死' },
+            { id: 'ACQ-010', name: '停止采集超时处理', steps: '1.采集过程中，若设备响应缓慢\n2.点击「停止采集」，前端设置 8 秒超时\n3.超时后前端抛出 "Stop acquisition timed out" 错误\n4.前端自动查询 GetStatus 恢复正确状态\n5.验证可重试停止操作' },
+            { id: 'ACQ-011', name: '采集期间连接中断恢复', steps: '前置：使用真实设备\n1.采集过程中，拔掉设备网线\n2.设备 readLoop 退出，触发 OnReadLoopExit 回调\n3.观察侧边栏状态从「采集中」变为「已连接」（非断开，因为 TCP 连接可能未立即检测到）\n4.重新插上网线后，点击「断开」再「连接」可恢复\n5.验证重新启动采集后数据正常' },
+        ]
+    },
+    {
+        id: 'CFG',
+        title: '设备配置管理',
+        icon: '⚙️',
+        color: '#7c3aed',
+        cases: [
+            { id: 'CFG-001', name: '创建新设备配置', steps: '1.点击顶栏右侧「+」按钮（加号图标）\n2.在弹出的添加设备对话框中填写：设备名称（如"1号炉"）、IP 地址（如 192.168.1.100）、端口（如 5000）\n3.点击确认，设备出现在左侧侧边栏列表\n4.验证侧边栏显示设备名称和地址\n5.打开配置文件 %APPDATA%\\daq-t1603\\device-profiles.json，验证新设备配置已写入\n6.默认配置：采样率 10Hz、热电偶类型 KKKKKKKKKKKKKKKK、通道掩码 FFFF、平均次数 4' },
+            { id: 'CFG-002', name: '编辑设备配置', steps: '1.选中设备，点击详情面板头部「配置」按钮（齿轮图标），右侧弹出配置面板\n2.在「硬件参数」区域修改采样频率（如从 10 Hz 改为 20 Hz）\n3.在「通道配置」区域修改 CH01 的名称（如改为"炉口温度"）\n4.点击配置面板底部「保存」按钮\n5.验证底部状态提示「配置已保存并应用到设备」\n6.检查 %APPDATA%\\daq-t1603\\device-profiles.json，确认修改已持久化' },
+            { id: 'CFG-003', name: '删除设备配置', steps: '1.在左侧侧边栏，将鼠标悬停在要删除的设备上\n2.点击设备项右侧出现的垃圾桶图标\n3.弹出确认对话框，显示"确认删除设备 xxx 吗？"\n4.点击「删除」按钮\n5.验证设备从侧边栏列表移除\n6.若设备已连接，验证自动断开连接\n7.检查 %APPDATA%\\daq-t1603\\device-profiles.json，确认该设备配置已移除' },
+            { id: 'CFG-004', name: '热电偶类型配置 - 全局设置', steps: '1.打开配置面板，在「硬件参数」区域找到「热电偶类型（全部通道）」下拉框\n2.点击下拉框，选项包括：K 型、J 型、T 型、E 型、N 型、S 型、R 型、B 型\n3.选择「J 型」，验证所有 16 个通道的热电偶类型统一变为 J\n4.点击「保存」，验证配置已保存\n5.检查配置文件中 thermocoupleTypes 字段变为 "JJJJJJJJJJJJJJJJ"' },
+            { id: 'CFG-005', name: '热电偶类型配置 - 单通道设置', steps: '1.打开配置面板，在「通道配置」区域找到 CH01 行\n2.点击 CH01 右侧的热电偶类型下拉框，选择「T」\n3.验证仅 CH01 变为 T 型，其他通道不变\n4.点击「保存」\n5.检查配置文件中 thermocoupleTypes 字段第 1 个字符变为 T' },
+            { id: 'CFG-006', name: '采样率配置', steps: '1.打开配置面板，在「硬件参数」区域找到「采样频率」下拉框\n2.可选值：1 Hz、2 Hz、5 Hz、10 Hz、20 Hz、50 Hz、100 Hz\n3.选择「50 Hz」，点击「保存」\n4.若设备已连接（非采集状态），验证配置发送到硬件（ApplyConfig，15 秒超时）\n5.硬件应用配置后，通过 OnConfigSynced 回调将实际采样率同步回来，更新到 profile.T1603Cfg.SamplingRate\n6.注意：硬件实际采样率可能与请求值不同（设备 SPS 参数为采集间隔毫秒，整数除法可能导致精度损失，如 1000/50=20ms=50Hz，但 1000/30≈33ms≈30Hz）\n7.验证详情面板头部显示的采样率与硬件回传值一致（spsMsToHz 转换后）\n8.启动采集，观察数据更新频率与配置的采样率匹配' },
+            { id: 'CFG-007', name: '时间戳显示配置', steps: '1.打开配置面板，在「硬件参数」区域找到「时间戳」开关\n2.点击开关，从「隐藏」切换为「显示」\n3.点击「保存」\n4.检查配置文件中 showTimestamp 字段变为 true\n5.此配置影响设备端数据输出格式' },
+            { id: 'CFG-008', name: '自动连接配置', steps: '1.打开配置面板，在「硬件参数」区域找到「自动连接」开关\n2.点击开关，从「关闭」切换为「开启」\n3.点击「保存」\n4.检查配置文件中 autoConnect 字段变为 true\n5.重启应用，验证该设备自动连接' },
+            { id: 'CFG-009', name: '通道名称编辑', steps: '1.打开配置面板，在「通道配置」区域找到 CH01 行\n2.点击名称输入框（默认占位符"通道 1"），输入"炉口温度"\n3.点击「保存」\n4.验证通道卡片显示新名称\n5.检查配置文件中 channels[0].name 变为 "炉口温度"' },
+            { id: 'CFG-010', name: '通道启用/禁用', steps: '1.打开配置面板，在「通道配置」区域找到 CH01 行\n2.点击右侧开关，从「开」切换为「关」\n3.该通道行变为半透明（opacity 0.55），名称输入框禁用\n4.点击「保存」\n5.验证通道监控区域不再显示 CH01\n6.验证实时波形图中 CH01 曲线消失\n7.配置面板顶部显示启用数更新（如 "15/16 启用"）' },
+            { id: 'CFG-011', name: '配置参数校验 - 无效采样率', steps: '1.模拟模式下，若后端收到 samplingRate <= 0\n2.验证系统自动使用默认值 5 Hz（SimulatedAdapter 中逻辑）\n3.真实设备模式下，hzToSpsMs 函数将无效值转为默认 10ms（100Hz）\n4.验证应用不崩溃，采集正常运行' },
+            { id: 'CFG-012', name: '配置参数校验 - 热电偶类型长度异常', steps: '1.若配置文件中 thermocoupleTypes 长度不为 16\n2.验证 T1603Adapter 自动补全为 "KKKKKKKKKKKKKKKK"（mapT1603SharedConfig 中逻辑）\n3.验证采集正常，不会因类型字符串长度错误而崩溃' },
+            { id: 'CFG-013', name: '配置参数校验 - 通道掩码为空', steps: '1.若配置文件中 channelMask 为空字符串\n2.验证系统自动使用默认值 "FFFF"（所有通道启用）\n3.验证采集正常' },
+            { id: 'CFG-014', name: '采集状态下修改配置', steps: '1.启动采集后，点击「配置」按钮打开配置面板\n2.观察配置面板中所有硬件参数控件为禁用状态（灰色不可点击）\n3.底部提示「采集中不允许变更配置，请先停止采集」\n4.「重置」按钮禁用，但「保存」按钮仍可用\n5.通道启用/禁用开关禁用\n6.停止采集后，验证控件恢复可编辑' },
+            { id: 'CFG-015', name: '已连接非采集状态应用配置', steps: '1.设备状态为「已连接」（非采集），打开配置面板\n2.修改采样率为 20 Hz，点击「保存」\n3.验证保存流程：①先保存到配置文件 ②再调用 ApplyConfig 发送到硬件\n4.若硬件应用超时（15 秒），验证前端提示「应用配置超时，设备可能无响应」\n5.验证配置文件已保存成功（即使硬件应用失败）' },
+            { id: 'CFG-016', name: '配置文件损坏恢复', steps: '1.关闭应用\n2.手动编辑 %APPDATA%\\daq-t1603\\device-profiles.json，写入无效 JSON（如截断内容）\n3.重新启动应用\n4.验证应用正常启动，不崩溃\n5.验证设备列表为空（配置加载失败返回空列表）\n6.验证可正常添加新设备并保存' },
+            { id: 'CFG-017', name: '配置文件原子写入', steps: '1.添加设备并保存配置\n2.检查 %APPDATA%\\daq-t1603\\ 目录\n3.验证不存在 .tmp 临时文件（写入完成后已 rename 替换）\n4.验证 device-profiles.json 为合法 JSON 格式\n5.验证 JSON 格式化缩进（json.MarshalIndent）' },
+            { id: 'CFG-018', name: '连接后硬件配置同步（OnConfigSynced）', steps: '前置：使用真实设备模式\n1.添加设备时本地默认采样率为 10 Hz、热电偶类型 KKKKKKKKKKKKKKKK\n2.连接设备后，硬件通过 OnConfigSynced 回调返回实际配置\n3.验证 profile.T1603Cfg.SamplingRate 被更新为硬件回传值（spsMsToHz 转换：采集间隔毫秒 → Hz）\n4.验证 profile.T1603Cfg.ThermocoupleTypes 被更新为硬件回传值\n5.验证 profile.T1603Cfg.ChannelMask 被更新为硬件回传值\n6.验证 profile.T1603Cfg.AverageCount 被更新为硬件回传值\n7.打开配置面板，验证显示的值与硬件实际值一致（非本地默认值）\n8.检查配置文件，验证已持久化硬件回传的配置值' },
+        ]
+    },
+    {
+        id: 'SCAN',
+        title: '设备扫描发现',
+        icon: '📡',
+        color: '#0891b2',
+        cases: [
+            { id: 'SCAN-001', name: '扫描局域网设备', steps: '前置：确保局域网中有 T1603 设备在线，使用真实设备模式启动\n1.在左侧侧边栏头部，点击搜索图标按钮（放大镜）\n2.等待扫描完成（按钮在扫描中为禁用状态）\n3.扫描完成后，若发现设备，弹出扫描结果列表\n4.验证结果包含：设备名称、IP 地址、端口、MAC 地址、序列号、固件版本\n5.模拟模式下，SimulatedScanner 返回预设的模拟设备列表' },
+            { id: 'SCAN-002', name: '扫描结果添加为配置', steps: '1.扫描设备后，在扫描结果列表中选择一个设备\n2.点击添加按钮，设备自动创建为配置（IP 和端口自动填入）\n3.验证设备出现在左侧侧边栏\n4.验证配置文件已更新' },
+            { id: 'SCAN-003', name: '无设备时扫描', steps: '1.在无 T1603 设备的网络环境中点击扫描\n2.验证扫描完成，结果列表为空或显示"未发现设备"\n3.验证界面无异常' },
+            { id: 'SCAN-004', name: '扫描中状态指示', steps: '1.点击侧边栏搜索按钮\n2.验证按钮变为禁用状态（半透明，不可再次点击）\n3.扫描完成后按钮恢复可用\n4.验证扫描过程中界面其他功能正常' },
+        ]
+    },
+    {
+        id: 'REC',
+        title: 'CSV 数据录制',
+        icon: '💾',
+        color: '#d97706',
+        cases: [
+            { id: 'REC-001', name: '启动 CSV 录制', steps: '前置：先启动采集（采集状态为「运行中」）\n1.点击顶栏「开始保存」按钮（圆形图标，在「停止采集」按钮右侧）\n2.弹出系统目录选择对话框，选择保存路径（如 D:\\data）\n3.确认后，按钮变为红色「停止保存」状态\n4.底部状态栏「记录状态」变为「保存中」（红色）\n5.底部状态栏显示保存目录路径\n6.打开选择的目录，验证生成了 CSV 文件，命名格式：DAQ-T1603_yyyyMMdd-HHmmss.csv' },
+            { id: 'REC-002', name: '停止 CSV 录制', steps: '1.在录制状态下，点击顶栏红色「停止保存」按钮\n2.按钮变回「开始保存」\n3.底部状态栏「记录状态」变为「未保存」\n4.打开 CSV 文件，验证数据完整，最后一行数据已写入\n5.验证文件可正常用 Excel 或文本编辑器打开' },
+            { id: 'REC-003', name: 'CSV 文件头格式', steps: '1.启动录制后，用文本编辑器打开生成的 CSV 文件\n2.验证第一行为表头：Timestamp,CH01,CH02,CH03,...,CH16（共 17 列）\n3.验证使用 UTF-8 编码（含 BOM 标记）' },
+            { id: 'REC-004', name: 'CSV 数据行格式', steps: '1.启动采集和录制，等待数秒后停止\n2.用文本编辑器打开 CSV 文件\n3.验证数据行格式：2024-01-15 14:30:25.123,25.345,26.789,...,30.123\n4.时间列格式为 yyyy-MM-dd HH:mm:ss.SSS\n5.温度值保留 3 位小数（fmt.Sprintf("%.3f", v)）\n6.若设备提供硬件时间戳，时间列使用硬件时间；否则使用本地电脑时间' },
+            { id: 'REC-005', name: '录制文件命名规则', steps: '1.点击「开始保存」，选择目录\n2.文件前缀固定为 "DAQ-T1603"（代码中 hardcode）\n3.打开保存目录，验证文件名格式：DAQ-T1603_20240115-143025.csv\n4.时间部分为录制启动时刻，格式 yyyyMMdd-HHmmss' },
+            { id: 'REC-006', name: '录制快照计数', steps: '1.启动采集和录制\n2.观察底部状态栏「已记录」数值持续递增\n3.停止录制后，用文本编辑器打开 CSV 文件\n4.验证数据行数（不含表头）= 底部显示的快照计数\n5.计数由后端 relayStream 中每写入一个 snapshot 递增' },
+            { id: 'REC-007', name: '重复启动录制', steps: '1.在录制中（按钮显示「停止保存」），无法再次点击「开始保存」\n2.若通过代码重复调用 StartRecording，后端返回 "recording already in progress" 错误\n3.验证应用不崩溃' },
+            { id: 'REC-008', name: '未采集时录制', steps: '1.不启动采集，直接点击「开始保存」\n2.选择目录后，录制启动成功（状态变为「保存中」）\n3.但无数据写入 CSV 文件（只有表头行）\n4.启动采集后，验证数据开始写入' },
+            { id: 'REC-009', name: '录制状态实时推送', steps: '1.启动录制后，后端每秒通过 daq:recording-status 事件推送录制状态\n2.前端 recordingStore 监听事件，更新 isRecording、snapshotCount、outputDir\n3.验证底部状态栏每秒更新快照计数\n4.停止录制后，推送最终状态（status=Idle）' },
+            { id: 'REC-010', name: '选择保存目录', steps: '1.点击「开始保存」按钮\n2.验证弹出 Windows 系统目录选择对话框（Wails OpenDirectoryDialog）\n3.对话框标题为"选择保存目录"，支持创建新目录\n4.选择目录后验证路径显示在底部状态栏\n5.取消选择则不启动录制' },
+            { id: 'REC-011', name: 'CSV 自动刷新机制', steps: '1.启动录制，观察 CSV 文件\n2.验证每写入 100 行（csvFlushRows）自动刷新到磁盘\n3.或每秒（csvFlushInterval）自动刷新\n4.停止录制时，验证最终 flush（flushLocked）执行\n5.验证文件不会丢失最后一批数据' },
+            { id: 'REC-012', name: '输出目录自动创建', steps: '1.点击「开始保存」，在目录选择对话框中导航到一个不存在的路径\n2.确认后，验证 os.MkdirAll 自动创建目录\n3.验证 CSV 文件正常写入到该目录' },
+        ]
+    },
+    {
+        id: 'MON',
+        title: '实时监控显示',
+        icon: '📊',
+        color: '#059669',
+        cases: [
+            { id: 'MON-001', name: '通道温度数值显示', steps: '1.启动采集后，观察右侧「通道监控」区域\n2.16 个通道卡片以网格排列，每个卡片显示：通道编号（CH01~CH16）、温度数值、单位\n3.模拟模式下温度约 25±5°C 波动\n4.数值精度默认 2 位小数（可在配置中修改 precision）\n5.数值随采集数据实时更新' },
+            { id: 'MON-002', name: '通道单位显示', steps: '1.打开配置面板，修改某通道的 unit 字段\n2.保存后验证通道卡片显示对应单位\n3.默认单位为 °C\n4.单位也影响 CSV 录制中 TemperatureSnapshot 的 unit 字段' },
+            { id: 'MON-003', name: '通道卡片颜色标识', steps: '1.观察 16 个通道卡片，每个卡片左侧或边框有不同颜色\n2.颜色定义在 deviceStore 的 CHANNEL_COLORS 数组中：#3b82f6, #10b981, #f59e0b, #a855f7 等 16 色\n3.验证卡片颜色与实时波形图中对应通道曲线颜色一致\n4.颜色可在配置中通过 color 字段自定义' },
+            { id: 'MON-004', name: '实时温度曲线图', steps: '1.启动采集后，观察详情面板中部的「实时波形」区域\n2.验证 ECharts 图表实时更新，曲线平滑滚动\n3.默认显示所有已启用通道的曲线\n4.X 轴为时间，Y 轴为温度值\n5.图表最多显示 120 个数据点（RealtimeChart 组件 maxPoints 属性）' },
+            { id: 'MON-005', name: '通道选择切换', steps: '1.在「实时波形」区域右上角，点击「通道选择」按钮（Layers 图标）\n2.弹出通道选择面板，显示 4x4 网格的 CH01~CH16 复选框\n3.点击某个通道取消勾选，验证图表中该通道曲线消失\n4.再次勾选，曲线重新出现\n5.面板顶部显示选中数/启用数（如 "12/16"）\n6.可点击「全选」或「全取消」批量操作' },
+            { id: 'MON-006', name: '历史数据保留', steps: '1.持续采集一段时间（如 5 分钟）\n2.前端 deviceStore 中 historyMap 为每个设备保留最多 200 条历史快照（MAX_HISTORY）\n3.超出后自动丢弃最旧的数据（history.splice(0, length - 200)）\n4.验证图表持续显示最近的数据，不会因数据量增大而卡顿' },
+            { id: 'MON-007', name: '显示刷新率控制', steps: '1.点击顶栏右侧仪表盘图标按钮，弹出「界面刷新率」下拉菜单\n2.可选值：2 Hz、5 Hz、10 Hz、15 Hz、20 Hz、30 Hz\n3.默认为 10 Hz（DISPLAY_REFRESH_RATE_FALLBACK_HZ）\n4.选择 30 Hz，验证界面更新更流畅\n5.选择 2 Hz，验证界面更新变慢但 CPU 占用降低\n6.刷新率影响 pendingSnapshotMap 到 historyMap 的刷新间隔' },
+            { id: 'MON-008', name: '禁用通道不显示', steps: '1.打开配置面板，禁用 CH01（开关切换为「关」）\n2.保存配置\n3.验证通道监控区域不再显示 CH01 卡片\n4.验证实时波形图中 CH01 曲线消失\n5.通道选择面板中 CH01 不出现（仅显示 enabled 通道）' },
+            { id: 'MON-009', name: '设备切换后数据独立', steps: '1.连接多个设备（A 和 B），分别启动采集\n2.在左侧侧边栏点击设备 A，观察通道数据和波形\n3.切换到设备 B，验证显示 B 的数据\n4.切回设备 A，验证 A 的历史数据仍在（historyMap 按设备 ID 独立存储）\n5.验证两个设备的数据不混淆' },
+        ]
+    },
+    {
+        id: 'LOG',
+        title: '日志系统',
+        icon: '📋',
+        color: '#6366f1',
+        cases: [
+            { id: 'LOG-001', name: '日志面板显示', steps: '1.启动应用后，观察底部日志面板（LogPanel 组件）\n2.验证面板可见，显示系统启动日志\n3.首条日志：level=info, category=system, message="DAQ-T-1603 application started"\n4.日志条目包含：级别图标、分类标签、时间戳、消息内容' },
+            { id: 'LOG-002', name: '操作日志记录', steps: '1.选中设备，点击「连接」\n2.验证日志面板出现：level=info, category=system, source=device, message="Connect requested"\n3.连接成功后出现：message="Device connected"\n4.点击「断开」，验证出现 "Disconnect requested" 和 "Device disconnected" 日志\n5.日志通过 Wails EventsEmit("daq:log") 推送到前端' },
+            { id: 'LOG-003', name: '硬件通信日志', steps: '前置：使用真实设备模式\n1.连接设备后，观察日志面板\n2.验证出现 category=hardware-send 和 hardware-recv 的日志\n3.日志包含 deviceId 字段，标识来源设备\n4.日志 source 为 "hardware"（由 T1603Adapter.SetLogSink 转发）' },
+            { id: 'LOG-004', name: '采集日志记录', steps: '1.点击「开始采集」，验证日志：level=info, category=acquisition, message="Start acquisition requested"\n2.采集启动成功后：message="Acquisition started"\n3.点击「停止采集」，验证 "Stop acquisition requested" 和 "Acquisition stopped"\n4.若启动失败，验证 error 级别日志包含失败详情' },
+            { id: 'LOG-005', name: '错误日志记录', steps: '1.触发连接失败（如无效 IP）\n2.验证日志面板出现 level=error 的日志条目\n3.日志包含 detail 字段，显示具体错误信息（如 "connect device xxx: dial tcp timeout"）\n4.错误日志条目以红色高亮显示' },
+            { id: 'LOG-006', name: '日志文件自动保存', steps: '1.启动应用后，检查 %APPDATA%\\daq-t1603\\logs\\ 目录\n2.验证自动创建了日志文件，命名格式：daq-log_yyyyMMdd-HHmmss.log\n3.日志文件在应用启动时自动开启（main.go 中 logDir 设置）\n4.验证日志文件持续写入' },
+            { id: 'LOG-007', name: '日志文件内容格式', steps: '1.打开 %APPDATA%\\daq-t1603\\logs\\ 下的日志文件\n2.验证每行包含：时间戳、级别、分类、设备ID、来源、消息、详情\n3.验证级别包括 debug、info、warn、error\n4.验证分类包括 system、hardware-send、hardware-recv、acquisition' },
+            { id: 'LOG-008', name: '录制写入失败日志', steps: '1.启动采集和录制\n2.若 CSV 写入失败（如磁盘满），验证日志面板出现：level=error, category=acquisition, source=recording, message="Record snapshot failed"\n3.验证 detail 字段包含具体 I/O 错误信息\n4.验证采集不中断，仅录制受影响' },
+        ]
+    },
+    {
+        id: 'UI',
+        title: 'UI 界面功能',
+        icon: '🖥️',
+        color: '#0284c7',
+        cases: [
+            { id: 'UI-001', name: '设备侧边栏显示', steps: '1.启动应用，验证左侧显示「设备列表」侧边栏\n2.头部显示"设备列表"标题和设备数量徽章\n3.右侧有搜索图标按钮（扫描设备）\n4.无设备时显示空状态："暂无设备"，提示"点击顶栏 + 添加 T1603"\n5.有设备时，每项显示：设备图标、名称、地址:端口、状态标签、删除按钮（悬停显示）\n6.选中设备左侧显示蓝色指示条' },
+            { id: 'UI-002', name: '顶部工具栏显示', steps: '1.验证顶栏左侧显示应用品牌：DAQ-T1603 标题和 "Temperature Acquisition" 副标题\n2.中间导航区显示"实时监控"标签\n3.右侧操作区依次为：绿色「开始采集」/红色「停止采集」按钮、「开始保存」/「停止保存」按钮、「+」添加设备按钮、齿轮配置按钮、仪表盘刷新率按钮、日/夜主题切换按钮、版本号\n4.验证按钮图标和文字正确显示' },
+            { id: 'UI-003', name: '底部状态栏显示', steps: '1.验证底部状态栏左侧显示：采集状态（运行中/已停止）、记录状态（保存中/未保存）、设备总数、在线数、已记录快照数、保存目录路径\n2.右侧显示：运行时间（计时器，采集开始后计时）、系统时间（实时时钟）\n3.验证运行时间格式 HH:MM:SS，采集停止后归零' },
+            { id: 'UI-004', name: '通道网格布局', steps: '1.选中设备并启动采集后，验证右侧「通道监控」区域\n2.16 个通道卡片以网格布局排列\n3.每个卡片显示：通道编号（CH01~CH16，等宽字体）、温度数值、单位\n4.卡片左侧有颜色标识条（与波形图曲线颜色对应）\n5.禁用通道不显示卡片' },
+            { id: 'UI-005', name: 'T1603 配置面板', steps: '1.选中设备，点击详情面板头部「配置」按钮\n2.右侧滑出配置面板，头部显示设备名称和地址:端口\n3.「硬件参数」区域包含：采样频率下拉框、时间戳开关、自动连接开关、热电偶类型（全部通道）下拉框\n4.「通道配置」区域包含 16 行通道，每行：编号、名称输入框、热电偶类型下拉框、启用开关\n5.底部显示状态提示和「重置」「保存」按钮\n6.点击右上角 X 按钮关闭面板' },
+            { id: 'UI-006', name: '详情面板空状态', steps: '1.启动应用，不选中任何设备（或删除所有设备）\n2.验证右侧详情面板显示空状态\n3.中央显示脉冲动画图标、标题"选择一个设备开始监控"\n4.提示"从左侧设备列表中选择一台 T1603，或者点击顶栏 + 添加新设备"\n5.底部显示三个功能提示：实时波形、16 通道并行、数据导出' },
+            { id: 'UI-007', name: '设备状态视觉指示', steps: '1.未连接：侧边栏状态标签灰色，详情面板徽章灰色"未连接"\n2.连接中：状态标签黄色，旋转加载图标，徽章黄色"连接中"\n3.已连接：状态标签绿色，徽章绿色"已连接"\n4.采集中：状态标签绿色+脉冲动画，徽章绿色"采集中"（带闪烁圆点）\n5.停止中：状态标签黄色，徽章黄色"停止中"\n6.错误：状态标签红色，徽章红色"错误"' },
+            { id: 'UI-008', name: '窗口缩放适配', steps: '1.拖拽窗口边框缩小到最小尺寸 1280x720\n2.验证所有 UI 元素仍可见，无溢出或遮挡\n3.侧边栏宽度固定，详情面板自适应\n4.通道网格自动换行\n5.顶栏按钮在小窗口下隐藏文字只显示图标（<1024px）\n6.底部状态栏在小窗口下隐藏部分信息（<1024px）' },
+            { id: 'UI-009', name: '深色/浅色主题切换', steps: '1.点击顶栏右侧日/月图标按钮\n2.验证从浅色切换到深色主题（或反向）\n3.验证所有面板、卡片、按钮颜色正确切换\n4.验证图表背景和文字在深色模式下可读\n5.验证侧边栏、顶栏、底部栏背景正确切换\n6.主题偏好持久化到 localStorage' },
+            { id: 'UI-010', name: '自定义下拉选择组件', steps: '1.打开配置面板，点击「采样频率」下拉框\n2.验证弹出选项列表：1 Hz、2 Hz、5 Hz、10 Hz、20 Hz、50 Hz、100 Hz\n3.当前选中项高亮显示\n4.点击选项后下拉框关闭，值更新\n5.点击外部区域关闭下拉框\n6.采集状态下下拉框禁用（灰色不可点击）' },
+        ]
+    },
+    {
+        id: 'STAB',
+        title: '异常场景与边界测试',
+        icon: '🛡️',
+        color: '#dc2626',
+        cases: [
+            { id: 'STB-001', name: '未连接时操作采集按钮', steps: '1.选中未连接的设备\n2.验证顶栏「开始采集」按钮为灰色禁用状态\n3.无法点击，不会触发任何后端调用\n4.验证应用不崩溃' },
+            { id: 'STB-002', name: '快速连续点击采集按钮', steps: '1.连接设备后，快速连续点击「开始采集」按钮\n2.验证 isToggling 标志防止重复点击（按钮短暂禁用）\n3.验证最终只启动一次采集\n4.快速点击「停止采集」，验证只停止一次\n5.应用不崩溃，状态正确' },
+            { id: 'STB-003', name: '通信中断后恢复', steps: '前置：使用真实设备\n1.连接设备并启动采集\n2.拔掉设备网线\n3.观察日志面板出现连接错误日志\n4.状态可能变为「已连接」（TCP 未立即检测到断开）\n5.重新插上网线\n6.点击「断开」再「连接」，验证可恢复\n7.重新启动采集，验证数据正常' },
+            { id: 'STB-004', name: '配置文件不存在时启动', steps: '1.关闭应用\n2.删除 %APPDATA%\\daq-t1603\\device-profiles.json 文件\n3.重新启动应用\n4.验证应用正常启动，侧边栏设备列表为空\n5.验证可正常添加新设备\n6.添加后验证配置文件自动创建' },
+            { id: 'STB-005', name: '采集过程中断开连接', steps: '1.连接设备并启动采集\n2.点击详情面板「断开」按钮\n3.验证采集自动停止（StopAcquisition 在 Disconnect 中自动调用）\n4.侧边栏状态变为「未连接」\n5.顶栏按钮变回「开始采集」\n6.验证应用不崩溃' },
+            { id: 'STB-006', name: '录制过程中磁盘满', steps: '1.启动采集和录制，选择一个磁盘空间极少的目录\n2.当磁盘写满时，CSV 写入失败\n3.验证日志面板出现 error 级别日志："Record snapshot failed" + I/O 错误详情\n4.验证采集不中断，仅录制受影响\n5.验证应用不崩溃' },
+            { id: 'STB-007', name: '多设备同时采集', steps: '1.添加并连接设备 A 和 B\n2.同时启动 A 和 B 的采集\n3.验证两个设备独立采集，各自有独立的 relay goroutine\n4.切换查看 A 和 B 的数据，验证不混淆\n5.停止 A 的采集，验证 B 不受影响\n6.验证通道缓冲区独立（每个设备 8192 容量）' },
+            { id: 'STB-008', name: '应用关闭时资源清理', steps: '1.启动采集和录制\n2.关闭应用窗口\n3.验证 Shutdown 回调执行：recordUC.Stop() 关闭 CSV 文件、logUC.Stop() 关闭日志文件、stopAllRelays() 取消所有 relay goroutine\n4.验证 CSV 文件完整（最终 flush 已执行）\n5.验证无 goroutine 泄漏' },
+            { id: 'STB-009', name: '热电偶类型字符串长度异常', steps: '1.手动编辑 %APPDATA%\\daq-t1603\\device-profiles.json\n2.将 thermocoupleTypes 改为 "KKK"（长度 3）或空字符串\n3.重启应用并连接设备\n4.验证 T1603Adapter 中 mapT1603SharedConfig 自动补全为 "KKKKKKKKKKKKKKKK"\n5.验证采集正常，不崩溃' },
+            { id: 'STB-010', name: '通道掩码为空', steps: '1.手动编辑配置文件，将 channelMask 改为空字符串 ""\n2.重启应用并连接设备\n3.验证 mapT1603SharedConfig 自动使用默认值 "FFFF"\n4.验证所有 16 通道正常启用' },
+            { id: 'STB-011', name: '平均次数为 0 或负数', steps: '1.手动编辑配置文件，将 averageCount 改为 0 或 -1\n2.重启应用，在模拟模式下连接设备\n3.验证 SimulatedAdapter 自动将 averageCount 修正为 1\n4.验证采集正常' },
+            { id: 'STB-012', name: '应用配置时设备断开', steps: '前置：使用真实设备\n1.在 Connected 状态下修改配置并保存\n2.在 ApplyConfig 执行期间（15 秒超时内）拔掉设备网线\n3.验证 ApplyConfig 返回错误\n4.验证 T1603Adapter 中 ApplyConfig 在锁外调用硬件通信，不会与 OnReadLoopExit/OnConfigSynced 回调死锁\n5.验证应用不卡死' },
+            { id: 'STB-013', name: '长时间运行稳定性', steps: '1.启动采集和录制，持续运行 1 小时以上\n2.定期检查：内存占用是否持续增长（泄漏）\n3.检查 CSV 文件大小持续增长但写入正常\n4.检查通道缓冲区是否溢出（容量 8192）\n5.验证 UI 响应正常，无卡顿\n6.验证历史数据自动清理（MAX_HISTORY=200）' },
+        ]
+    }
+];
+
+// ============================================================
+// 全局状态
+// ============================================================
+let exportFormat = 'html';
+let allCollapsed = false;
+
+// ============================================================
+// 初始化
+// ============================================================
+function init() {
+    // 设置今日日期
+    document.getElementById('testDate').value = new Date().toISOString().split('T')[0];
+
+    // 从 localStorage 恢复数据
+    loadState();
+
+    // 渲染测试模块
+    renderModules();
+
+    // 更新统计
+    updateStats();
+}
+
+// ============================================================
+// 渲染测试模块
+// ============================================================
+function renderModules() {
+    const container = document.getElementById('testModules');
+    container.innerHTML = '';
+
+    TEST_MODULES.forEach(mod => {
+        const moduleEl = document.createElement('div');
+        moduleEl.className = 'test-module';
+        moduleEl.dataset.moduleId = mod.id;
+
+        // 模块头部
+        const header = document.createElement('div');
+        header.className = 'module-header';
+        header.onclick = () => toggleModule(mod.id);
+        header.innerHTML = `
+            <div class="module-title">
+                <div class="module-icon" style="background:${mod.color}">${mod.icon}</div>
+                ${mod.title}
+            </div>
+            <div class="module-stats" id="module-stats-${mod.id}">
+                <span style="color:var(--success)">0 通过</span>
+                <span style="color:var(--danger)">0 失败</span>
+                <span style="color:var(--gray)">0 未测</span>
+            </div>
+        `;
+
+        // 模块内容
+        const body = document.createElement('div');
+        body.className = 'module-body';
+        body.id = `module-body-${mod.id}`;
+
+        // 表头
+        const tableHeader = document.createElement('div');
+        tableHeader.className = 'test-header';
+        tableHeader.innerHTML = `
+            <span>编号</span>
+            <span>测试项</span>
+            <span>测试步骤</span>
+            <span>结果</span>
+            <span>备注</span>
+        `;
+        body.appendChild(tableHeader);
+
+        // 测试用例行
+        mod.cases.forEach(tc => {
+            const row = document.createElement('div');
+            row.className = 'test-row';
+
+            const savedResult = getTestResult(tc.id);
+            const savedRemark = getTestRemark(tc.id);
+
+            row.innerHTML = `
+                <div class="test-id">${tc.id}</div>
+                <div class="test-name">${tc.name}</div>
+                <div class="test-steps">${tc.steps.replace(/\n/g, '<br>')}</div>
+                <div>
+                    <select class="result-select ${savedResult}" data-test-id="${tc.id}" onchange="onResultChange(this)">
+                        <option value="" ${!savedResult ? 'selected' : ''}>未测试</option>
+                        <option value="pass" ${savedResult === 'pass' ? 'selected' : ''}>✅ 通过</option>
+                        <option value="fail" ${savedResult === 'fail' ? 'selected' : ''}>❌ 失败</option>
+                        <option value="block" ${savedResult === 'block' ? 'selected' : ''}>🚫 阻塞</option>
+                        <option value="skip" ${savedResult === 'skip' ? 'selected' : ''}>⏭️ 跳过</option>
+                    </select>
+                </div>
+                <div>
+                    <input class="remark-input" data-test-id="${tc.id}" value="${savedRemark}" placeholder="备注..." oninput="onRemarkChange(this)">
+                </div>
+            `;
+            body.appendChild(row);
+        });
+
+        moduleEl.appendChild(header);
+        moduleEl.appendChild(body);
+        container.appendChild(moduleEl);
+    });
+
+    // 更新模块统计
+    TEST_MODULES.forEach(mod => updateModuleStats(mod.id));
+}
+
+// ============================================================
+// 状态管理
+// ============================================================
+function getTestResult(testId) {
+    return localStorage.getItem(`tc_result_${testId}`) || '';
+}
+
+function getTestRemark(testId) {
+    return localStorage.getItem(`tc_remark_${testId}`) || '';
+}
+
+function onResultChange(select) {
+    const testId = select.dataset.testId;
+    const value = select.value;
+
+    // 更新样式
+    select.className = `result-select ${value}`;
+
+    // 保存状态
+    localStorage.setItem(`tc_result_${testId}`, value);
+
+    // 更新统计
+    updateStats();
+
+    // 更新模块统计
+    const mod = TEST_MODULES.find(m => testId.startsWith(m.id));
+    if (mod) updateModuleStats(mod.id);
+}
+
+function onRemarkChange(input) {
+    const testId = input.dataset.testId;
+    localStorage.setItem(`tc_remark_${testId}`, input.value);
+}
+
+function loadState() {
+    // 恢复测试信息
+    const fields = ['tester', 'testDate', 'version', 'runMode', 'testEnv', 'osInfo'];
+    fields.forEach(f => {
+        const saved = localStorage.getItem(`tc_info_${f}`);
+        if (saved) document.getElementById(f).value = saved;
+    });
+}
+
+function saveInfoState() {
+    const fields = ['tester', 'testDate', 'version', 'runMode', 'testEnv', 'osInfo'];
+    fields.forEach(f => {
+        const el = document.getElementById(f);
+        if (el) localStorage.setItem(`tc_info_${f}`, el.value);
+    });
+}
+
+// ============================================================
+// 统计更新
+// ============================================================
+function updateStats() {
+    let total = 0, pass = 0, fail = 0, block = 0, skip = 0, untested = 0;
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            total++;
+            const r = getTestResult(tc.id);
+            if (r === 'pass') pass++;
+            else if (r === 'fail') fail++;
+            else if (r === 'block') block++;
+            else if (r === 'skip') skip++;
+            else untested++;
+        });
+    });
+
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statPass').textContent = pass;
+    document.getElementById('statFail').textContent = fail;
+    document.getElementById('statBlock').textContent = block;
+    document.getElementById('statSkip').textContent = skip;
+    document.getElementById('statUntested').textContent = untested;
+
+    const tested = total - untested;
+    const pct = total > 0 ? Math.round((tested / total) * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent = pct + '%';
+
+    // 进度条颜色
+    const fill = document.getElementById('progressFill');
+    if (fail > 0) fill.style.background = 'var(--danger)';
+    else if (block > 0) fill.style.background = 'var(--warning)';
+    else fill.style.background = 'var(--success)';
+}
+
+function updateModuleStats(moduleId) {
+    const mod = TEST_MODULES.find(m => m.id === moduleId);
+    if (!mod) return;
+
+    let pass = 0, fail = 0, untested = 0;
+    mod.cases.forEach(tc => {
+        const r = getTestResult(tc.id);
+        if (r === 'pass') pass++;
+        else if (r === 'fail') fail++;
+        else untested++;
+    });
+
+    const el = document.getElementById(`module-stats-${moduleId}`);
+    if (el) {
+        el.innerHTML = `
+            <span style="color:var(--success)">${pass} 通过</span>
+            <span style="color:var(--danger)">${fail} 失败</span>
+            <span style="color:var(--gray)">${untested} 未测</span>
+        `;
+    }
+}
+
+// ============================================================
+// 模块折叠
+// ============================================================
+function toggleModule(moduleId) {
+    const body = document.getElementById(`module-body-${moduleId}`);
+    if (body) body.classList.toggle('collapsed');
+}
+
+function toggleAllModules() {
+    allCollapsed = !allCollapsed;
+    TEST_MODULES.forEach(mod => {
+        const body = document.getElementById(`module-body-${mod.id}`);
+        if (body) {
+            if (allCollapsed) body.classList.add('collapsed');
+            else body.classList.remove('collapsed');
+        }
+    });
+}
+
+// ============================================================
+// 重置
+// ============================================================
+function resetAll() {
+    if (!confirm('确定要重置所有测试结果吗？此操作不可撤销。')) return;
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            localStorage.removeItem(`tc_result_${tc.id}`);
+            localStorage.removeItem(`tc_remark_${tc.id}`);
+        });
+    });
+
+    renderModules();
+    updateStats();
+}
+
+// ============================================================
+// 导出功能
+// ============================================================
+function showExportModal() {
+    saveInfoState();
+    document.getElementById('exportModal').classList.add('active');
+}
+
+function hideExportModal() {
+    document.getElementById('exportModal').classList.remove('active');
+}
+
+function selectExport(el, format) {
+    document.querySelectorAll('.export-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+    exportFormat = format;
+}
+
+function doExport() {
+    hideExportModal();
+    saveInfoState();
+
+    switch (exportFormat) {
+        case 'html': exportHTML(); break;
+        case 'print': window.print(); break;
+        case 'csv': exportCSV(); break;
+    }
+}
+
+function exportHTML() {
+    const tester = document.getElementById('tester').value || '未填写';
+    const testDate = document.getElementById('testDate').value || '未填写';
+    const version = document.getElementById('version').value || '未填写';
+    const runMode = document.getElementById('runMode').selectedOptions[0]?.text || '未填写';
+    const env = document.getElementById('testEnv').selectedOptions[0]?.text || '未填写';
+    const os = document.getElementById('osInfo').value || '未填写';
+
+    // 统计数据
+    let total = 0, pass = 0, fail = 0, block = 0, skip = 0, untested = 0;
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            total++;
+            const r = getTestResult(tc.id);
+            if (r === 'pass') pass++;
+            else if (r === 'fail') fail++;
+            else if (r === 'block') block++;
+            else if (r === 'skip') skip++;
+            else untested++;
+        });
+    });
+
+    const pct = total > 0 ? Math.round(((total - untested) / total) * 100) : 0;
+
+    // 构建报告内容
+    let moduleHTML = '';
+    TEST_MODULES.forEach(mod => {
+        let rows = '';
+        mod.cases.forEach(tc => {
+            const r = getTestResult(tc.id);
+            const remark = getTestRemark(tc.id);
+            const resultText = r === 'pass' ? '通过' : r === 'fail' ? '失败' : r === 'block' ? '阻塞' : r === 'skip' ? '跳过' : '未测试';
+            const resultColor = r === 'pass' ? '#16a34a' : r === 'fail' ? '#dc2626' : r === 'block' ? '#7c3aed' : r === 'skip' ? '#9ca3af' : '#6b7280';
+
+            rows += `<tr>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-family:monospace;font-size:12px">${tc.id}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb">${tc.name}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-size:12px;white-space:pre-line">${tc.steps}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;text-align:center;font-weight:700;color:${resultColor}">${resultText}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-size:12px">${remark}</td>
+            </tr>`;
+        });
+
+        moduleHTML += `
+        <div style="margin-bottom:24px">
+            <h3 style="font-size:16px;padding:10px 16px;background:#f3f4f6;border-radius:6px;margin-bottom:0">${mod.icon} ${mod.title}</h3>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="background:#f8fafc">
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:70px">编号</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left">测试项</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:200px">测试步骤</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:center;width:80px">结果</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:160px">备注</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    });
+
+    const reportHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DAQ-T-1603 功能测试报告 - ${testDate}</title>
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1200px; margin: 0 auto; padding: 40px 20px; color: #1e293b; line-height: 1.6; }
+    h1 { color: #2563eb; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
+    .meta-item { padding: 10px 16px; background: #f8fafc; border-radius: 6px; }
+    .meta-item label { font-size: 12px; color: #6b7280; display: block; }
+    .meta-item span { font-weight: 700; font-size: 14px; }
+    .summary { display: flex; gap: 16px; margin: 20px 0; padding: 16px; background: #f0f9ff; border-radius: 8px; }
+    .summary-item { text-align: center; }
+    .summary-item .num { font-size: 28px; font-weight: 800; }
+    .summary-item .lbl { font-size: 12px; color: #6b7280; }
+    @media print { body { padding: 10px; } }
+</style>
+</head>
+<body>
+<h1>DAQ-T-1603 功能测试报告</h1>
+<div class="meta">
+    <div class="meta-item"><label>测试人员</label><span>${tester}</span></div>
+    <div class="meta-item"><label>测试日期</label><span>${testDate}</span></div>
+    <div class="meta-item"><label>软件版本</label><span>${version}</span></div>
+    <div class="meta-item"><label>运行模式</label><span>${runMode}</span></div>
+    <div class="meta-item"><label>测试环境</label><span>${env}</span></div>
+    <div class="meta-item"><label>操作系统</label><span>${os}</span></div>
+</div>
+<div class="summary">
+    <div class="summary-item"><div class="num" style="color:#2563eb">${total}</div><div class="lbl">总计</div></div>
+    <div class="summary-item"><div class="num" style="color:#16a34a">${pass}</div><div class="lbl">通过</div></div>
+    <div class="summary-item"><div class="num" style="color:#dc2626">${fail}</div><div class="lbl">失败</div></div>
+    <div class="summary-item"><div class="num" style="color:#7c3aed">${block}</div><div class="lbl">阻塞</div></div>
+    <div class="summary-item"><div class="num" style="color:#9ca3af">${skip}</div><div class="lbl">跳过</div></div>
+    <div class="summary-item"><div class="num" style="color:#6b7280">${untested}</div><div class="lbl">未测</div></div>
+    <div class="summary-item"><div class="num" style="color:#2563eb">${pct}%</div><div class="lbl">执行率</div></div>
+</div>
+${moduleHTML}
+<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:40px">报告生成时间: ${new Date().toLocaleString('zh-CN')}</p>
+</body>
+</html>`;
+
+    // 下载 HTML 文件
+    const blob = new Blob([reportHTML], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `DAQT1603_测试报告_${testDate}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function exportCSV() {
+    const tester = document.getElementById('tester').value || '';
+    const testDate = document.getElementById('testDate').value || '';
+    const version = document.getElementById('version').value || '';
+
+    // BOM + 表头
+    let csv = '\uFEFF编号,测试模块,测试项,测试步骤,结果,备注\n';
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            const r = getTestResult(tc.id);
+            const remark = getTestRemark(tc.id);
+            const resultText = r === 'pass' ? '通过' : r === 'fail' ? '失败' : r === 'block' ? '阻塞' : r === 'skip' ? '跳过' : '未测试';
+            const steps = tc.steps.replace(/\n/g, '；').replace(/,/g, '，');
+            const name = tc.name.replace(/,/g, '，');
+            const remarkClean = remark.replace(/,/g, '，');
+
+            csv += `${tc.id},${mod.title},${name},"${steps}",${resultText},"${remarkClean}"\n`;
+        });
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `DAQT1603_测试报告_${testDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// 保存测试信息变更
+document.addEventListener('change', (e) => {
+    if (e.target.closest('.test-info')) saveInfoState();
+});
+
+// 启动
+init();
+</script>
+</body>
+</html>
