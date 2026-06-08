@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useLogStore } from '@stores/logStore'
 import { useThemeStore } from '@stores/themeStore'
 import type { LogLevel } from '@api/types'
+import { NButton, NInput } from 'naive-ui'
 
 defineProps<{
   embedded?: boolean
@@ -130,58 +131,69 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="log-header-actions">
-        <button
+        <NButton
+          size="tiny"
           class="log-action-btn"
           :class="{ 'pause-active': logStore.isPaused }"
           @click="logStore.togglePause()"
           :title="logStore.isPaused ? 'Resume' : 'Pause'"
         >
-          <svg v-if="logStore.isPaused" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <template #icon>
+            <svg v-if="logStore.isPaused" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          </template>
           {{ logStore.isPaused ? 'Resume' : 'Pause' }}
-        </button>
-        <button class="log-action-btn" @click="logStore.clear()" title="Clear">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-          </svg>
+        </NButton>
+        <NButton size="tiny" class="log-action-btn" @click="logStore.clear()" title="Clear">
+          <template #icon>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </template>
           Clear
-        </button>
-        <button class="log-action-btn" @click="copyLogs" title="Copy all">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-          </svg>
+        </NButton>
+        <NButton size="tiny" class="log-action-btn" @click="copyLogs" title="Copy all">
+          <template #icon>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </template>
           Copy
-        </button>
+        </NButton>
       </div>
     </div>
 
     <!-- Filters -->
     <div class="log-filters">
       <div class="log-level-filters">
-        <button
+        <NButton
           v-for="lvl in LEVELS"
           :key="lvl.label"
+          size="tiny"
           class="log-level-chip"
           :class="[`chip-${lvl.label.toLowerCase()}`, { active: logStore.filterLevel === lvl.value }]"
           @click="logStore.setFilterLevel(lvl.value)"
         >
           <span class="chip-dot" v-if="lvl.value" :class="levelDotColors[lvl.value]"></span>
           {{ lvl.label }}
-        </button>
+        </NButton>
       </div>
       <div class="log-search">
-        <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input
-          v-model="logStore.filterSearch"
-          type="text"
+        <NInput
+          v-model:value="logStore.filterSearch"
+          size="small"
           class="log-search-input"
           placeholder="Filter logs..."
-        />
+        >
+          <template #prefix>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </template>
+        </NInput>
       </div>
     </div>
 
@@ -408,41 +420,10 @@ onBeforeUnmount(() => {
 .log-search {
   flex: 1;
   min-width: 0;
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.search-icon {
-  position: absolute;
-  left: 0.5rem;
-  color: #475569;
-  pointer-events: none;
-  z-index: 1;
 }
 
 .log-search-input {
   width: 100%;
-  padding: 0.3125rem 0.625rem 0.3125rem 1.5rem;
-  font-size: 0.6875rem;
-  border-radius: 0.375rem;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(0, 0, 0, 0.25);
-  color: #e2e8f0;
-  outline: none;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-sizing: border-box;
-  font-family: inherit;
-}
-
-.log-search-input:focus {
-  border-color: rgba(56, 189, 248, 0.35);
-  background: rgba(0, 0, 0, 0.35);
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.06);
-}
-
-.log-search-input::placeholder {
-  color: #475569;
 }
 
 .log-entries {
@@ -658,26 +639,6 @@ onBeforeUnmount(() => {
   background: rgba(220, 38, 38, 0.08);
   border-color: rgba(220, 38, 38, 0.2);
   color: rgba(220, 38, 38, 0.9);
-}
-
-:root[data-theme='light'] .search-icon {
-  color: #94a3b8;
-}
-
-:root[data-theme='light'] .log-search-input {
-  border-color: rgba(0, 0, 0, 0.08);
-  background: rgba(0, 0, 0, 0.03);
-  color: #1e293b;
-}
-
-:root[data-theme='light'] .log-search-input:focus {
-  border-color: rgba(37, 99, 235, 0.4);
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.06);
-}
-
-:root[data-theme='light'] .log-search-input::placeholder {
-  color: #94a3b8;
 }
 
 :root[data-theme='light'] .log-entries::-webkit-scrollbar-thumb {

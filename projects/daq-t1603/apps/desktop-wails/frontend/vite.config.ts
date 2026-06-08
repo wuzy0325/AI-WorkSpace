@@ -13,6 +13,9 @@ export default defineConfig({
       '@stores': fileURLToPath(new URL('./src/stores', import.meta.url)),
       '@bridge': fileURLToPath(new URL('./src/bridge', import.meta.url)),
       '@composables': fileURLToPath(new URL('./src/composables', import.meta.url)),
+      '@shared-frontend': fileURLToPath(new URL('../../../../../shared/frontend', import.meta.url)),
+      'naive-ui': fileURLToPath(new URL('./node_modules/naive-ui', import.meta.url)),
+      'naive-ui/es': fileURLToPath(new URL('./node_modules/naive-ui/es', import.meta.url)),
     },
   },
   build: {

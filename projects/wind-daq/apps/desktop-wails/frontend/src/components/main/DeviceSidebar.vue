@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CheckCircle2 } from '@lucide/vue'
+import { NButton } from 'naive-ui'
 import { useDeviceStore } from '@stores/deviceStore'
 
 const props = defineProps<{
@@ -50,13 +51,14 @@ function displayStatusLabel(profileId: string): string {
     <!-- Header -->
     <div class="device-sidebar__header">
       <span class="device-sidebar__title">{{ t?.deviceList || '设备列表' }}</span>
-      <button
+      <NButton
+        size="tiny"
         class="device-sidebar__manage-btn"
         @click="emit('open-manage')"
         :title="t?.manage || '管理设备'"
       >
         {{ t?.manage || '管理' }}
-      </button>
+      </NButton>
     </div>
 
     <!-- Device List -->
@@ -66,9 +68,10 @@ function displayStatusLabel(profileId: string): string {
       </div>
 
       <template v-else>
-        <button
+        <NButton
           v-for="p in deviceStore.profiles"
           :key="p.id"
+          text
           data-test="device-sidebar-item"
           class="device-sidebar__item"
           :class="{
@@ -93,7 +96,7 @@ function displayStatusLabel(profileId: string): string {
             <CheckCircle2 v-else-if="deviceStore.statusFor(p.id) === 'Connected'" class="w-3 h-3 mr-1" />
             {{ displayStatusLabel(p.id) }}
           </div>
-        </button>
+        </NButton>
       </template>
     </div>
   </aside>

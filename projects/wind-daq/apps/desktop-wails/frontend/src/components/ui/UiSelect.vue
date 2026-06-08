@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { NSelect } from 'naive-ui'
+
 withDefaults(
   defineProps<{
     modelValue?: string
@@ -12,29 +14,11 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 </script>
 
 <template>
-  <select
-    class="ui-select"
-    :value="modelValue"
-    @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
-  >
-    <option v-if="placeholder" value="" disabled>{{ placeholder }}</option>
-    <option v-for="opt in options" :key="opt.value" :value="opt.value">
-      {{ opt.label }}
-    </option>
-  </select>
+  <NSelect
+    :value="modelValue || null"
+    :options="options"
+    :placeholder="placeholder"
+    size="small"
+    @update:value="emit('update:modelValue', $event ?? '')"
+  />
 </template>
-
-<style scoped>
-.ui-select {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.4rem;
-  border: 1px solid var(--border-default);
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-  appearance: auto;
-}
-</style>

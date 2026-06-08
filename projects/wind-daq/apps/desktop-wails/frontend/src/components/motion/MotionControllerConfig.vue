@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, onMounted, watch, ref, provide } from 'vue';
+import { NButton } from 'naive-ui';
 import { useMotionStore } from '@stores/motionStore';
 import { useI18nStore } from '@stores/i18nStore';
 import { useFeedbackStore } from '@stores/feedbackStore';
 import type { MotionControllerProfile } from '@shared/types/motion';
-
 import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor';
 import ProfileSidebar from './ProfileSidebar.vue';
 import ConnectionConfigEditor from './ConnectionConfigEditor.vue';
@@ -176,14 +176,16 @@ function toggleLocale() {
                 </div>
               </div>
               <div class="config-panel__header-right">
-                <button class="locale-toggle-btn" @click="toggleLocale" title="切换语言 / Switch Language">
+                <NButton size="tiny" class="locale-toggle-btn" @click="toggleLocale" title="切换语言 / Switch Language">
                   {{ i18n.locale === 'zh' ? 'EN' : '中文' }}
-                </button>
-                <button class="config-panel__close" @click="emit('close')">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 6L6 18M6 6l12 12"/>
-                  </svg>
-                </button>
+                </NButton>
+                <NButton quaternary size="small" class="config-panel__close" @click="emit('close')">
+                  <template #icon>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                  </template>
+                </NButton>
               </div>
             </header>
 
@@ -224,12 +226,12 @@ function toggleLocale() {
 
             <footer class="config-panel__footer">
               <div class="config-panel__footer-left">
-                <button v-if="isEdit" class="config-panel__delete-btn" @click="remove(editing.id)">删除</button>
-                <button class="config-panel__new-btn" @click="newProfile">新建</button>
+                <NButton v-if="isEdit" type="error" size="tiny" class="config-panel__delete-btn" @click="remove(editing.id)">删除</NButton>
+                <NButton type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
               </div>
               <div class="config-panel__footer-right">
-                <button class="config-panel__cancel-btn" @click="emit('close')">取消</button>
-                <button class="config-panel__save-btn" @click="save">保存</button>
+                <NButton quaternary size="tiny" class="config-panel__cancel-btn" @click="emit('close')">取消</NButton>
+                <NButton type="primary" size="tiny" class="config-panel__save-btn" @click="save">保存</NButton>
               </div>
             </footer>
           </div>

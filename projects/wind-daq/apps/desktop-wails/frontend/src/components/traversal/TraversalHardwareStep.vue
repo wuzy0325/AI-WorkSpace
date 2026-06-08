@@ -3,6 +3,7 @@ import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/type
 import { isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
+import { NCard, NCheckbox, NSelect, NSpace, NTag, NText } from 'naive-ui'
 
 const probeChannels = defineModel<ProbeChannelConfig[]>('probeChannels', { required: true })
 const motionAxes = defineModel<TraversalMotionAxisConfig[]>('motionAxes', { required: true })
@@ -15,65 +16,46 @@ const props = defineProps<{
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 
-function isRequiredProbeChannel(channel: ProbeChannelConfig): boolean {
-  return isTraversalRequiredProbeChannel(channel.role, channel.name)
-}
+function isRequired(c: ProbeChannelConfig) { return isTraversalRequiredProbeChannel(c.role, c.name) }
+
+const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i}`, value: i }))
+const axisOptions = ['X', 'Y', 'Z', 'U'].map(a => ({ label: `${a} 轴`, value: a }))
+const mappingOptions = [{ label: 'alpha', value: 'alpha' }, { label: 'beta', value: 'beta' }]
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="ui-panel-surface p-4 p-3">
-      <div class="flex items-center gap-2 mb-3 pb-2 border-b border-[color:var(--border-default)]">
-        <div class="w-8 text-xs text-[color:var(--text-muted)]">{{ t.channelEnabled }}</div>
-        <div class="flex-1 text-xs text-[color:var(--text-muted)]">{{ t.channelProbeName }}</div>
-        <div class="w-40 text-xs text-[color:var(--text-muted)]">{{ t.channelDataSource }}</div>
-        <div class="w-20 text-xs text-[color:var(--text-muted)]">{{ t.channelIndexLabel }}</div>
-      </div>
-      <div class="space-y-1">
-        <div v-for="channel in probeChannels" :key="channel.name" data-test="traversal-probe-row" class="flex items-center gap-2 py-1.5 hover:bg-[color:var(--bg-panel-strong)] rounded-[var(--radius-sm)]">
-          <input v-model="channel.enabled" type="checkbox" :disabled="isRequiredProbeChannel(channel)" class="h-4 w-4 rounded border-[color:var(--border-default)] text-[color:var(--accent-primary)] focus:ring-[color:var(--focus-ring-soft)]" />
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span data-test="traversal-probe-label" class="text-sm text-[color:var(--text-primary)] truncate">{{ channel.name }}</span>
-              <span v-if="isRequiredProbeChannel(channel)" class="rounded-full bg-[color:var(--accent-primary)]/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[color:var(--accent-primary)]">Required</span>
-            </div>
-          </div>
-          <select v-model="channel.channel.deviceId" :disabled="!channel.enabled || props.isLoading" class="w-40 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-xs text-[color:var(--text-primary)]">
-            <option value="">{{ t.selectDevice }}</option>
-            <option v-for="device in deviceStore.profiles" :key="device.id" :value="device.id">{{ device.name }}</option>
-          </select>
-          <select v-model="channel.channel.channelIndex" :disabled="!channel.enabled" class="w-20 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-xs text-[color:var(--text-primary)]">
-            <option :value="-1">Unassigned</option>
-            <option v-for="index in 18" :key="index - 1" :value="index - 1">CH{{ index - 1 }}</option>
-          </select>
+  <div class="step-content">
+    <NCard size="small" :bordered="true" class="section-card">
+      <div class="hw-head"><NText depth="3" style="font-size:11px;flex:0 0 32px">{{ t.channelEnabled }}</NText><NText depth="3" style="font-size:11px;flex:1">{{ t.channelProbeName }}</NText><NText depth="3" style="font-size:11px;width:150px">{{ t.channelDataSource }}</NText><NText depth="3" style="font-size:11px;width:80px">{{ t.channelIndexLabel }}</NText></div>
+      <div v-for="ch in probeChannels" :key="ch.name" class="hw-row">
+        <div style="flex:0 0 32px"><NCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" size="small" /></div>
+        <div style="flex:1;min-width:0">
+          <NSpace size="small" align="center">
+            <NText depth="1" style="font-size:12px;truncate">{{ ch.name }}</NText>
+            <NTag v-if="isRequired(ch)" size="tiny" type="primary" :bordered="false">Required</NTag>
+          </NSpace>
         </div>
+        <NSelect v-model:value="ch.channel.deviceId" :options="deviceStore.profiles.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" size="tiny" style="width:150px" :disabled="!ch.enabled || isLoading" clearable />
+        <NSelect v-model:value="ch.channel.channelIndex" :options="channelIndexOptions" placeholder="Unassigned" size="tiny" style="width:80px" :disabled="!ch.enabled" />
       </div>
-    </section>
+    </NCard>
 
-    <section class="ui-panel-surface p-4 p-3">
-      <div class="flex items-center gap-2 mb-3 pb-2 border-b border-[color:var(--border-default)]">
-        <div class="w-12 text-xs text-[color:var(--text-muted)]">{{ t.coordinateAxis }}</div>
-        <div class="flex-1 text-xs text-[color:var(--text-muted)]">{{ t.motionControllerLabel }}</div>
-        <div class="w-20 text-xs text-[color:var(--text-muted)]">{{ t.physicalAxis }}</div>
-        <div class="w-24 text-xs text-[color:var(--text-muted)]">Mapping</div>
+    <NCard size="small" :bordered="true" class="section-card">
+      <div class="hw-head"><NText depth="3" style="font-size:11px;width:50px">{{ t.coordinateAxis }}</NText><NText depth="3" style="font-size:11px;flex:1">{{ t.motionControllerLabel }}</NText><NText depth="3" style="font-size:11px;width:80px">{{ t.physicalAxis }}</NText><NText depth="3" style="font-size:11px;width:90px">Mapping</NText></div>
+      <div v-for="ax in motionAxes" :key="ax.name" class="hw-row">
+        <NText depth="1" style="font-size:12px;font-weight:600;width:50px">{{ ax.name }}</NText>
+        <NSelect v-model:value="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" placeholder="选择控制器" size="tiny" style="flex:1" :disabled="isLoading" clearable />
+        <NSelect v-model:value="ax.axis" :options="axisOptions" size="tiny" style="width:80px" />
+        <NSelect v-model:value="ax.angleMapping!.type" :options="mappingOptions" size="tiny" style="width:90px" />
       </div>
-      <div class="space-y-1">
-        <div v-for="axis in motionAxes" :key="axis.name" class="flex items-center gap-2 py-1.5 hover:bg-[color:var(--bg-panel-strong)] rounded-[var(--radius-sm)]">
-          <span class="w-12 text-sm font-semibold text-[color:var(--text-primary)]">{{ axis.name }}</span>
-          <select v-model="axis.controllerId" :disabled="props.isLoading" class="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-xs text-[color:var(--text-primary)]">
-            <option value="">{{ t.selectController }}</option>
-            <option v-for="controller in motionStore.profiles" :key="controller.id" :value="controller.id">{{ controller.name }}</option>
-          </select>
-          <select v-model="axis.axis" class="w-20 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-xs text-[color:var(--text-primary)]">
-            <option v-for="axisName in ['X', 'Y', 'Z', 'U']" :key="axisName" :value="axisName">{{ axisName }}</option>
-          </select>
-          <select v-model="axis.angleMapping!.type" class="w-24 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-xs text-[color:var(--text-primary)]">
-            <option value="alpha">alpha</option>
-            <option value="beta">beta</option>
-          </select>
-        </div>
-      </div>
-    </section>
+    </NCard>
   </div>
 </template>
 
+<style scoped>
+.step-content { display:flex; flex-direction:column; gap:12px; }
+.section-card { font-size:12px; }
+.hw-head { display:flex; align-items:center; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--border-default); }
+.hw-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
+.hw-row:hover { background:var(--bg-panel-strong); border-radius:4px; }
+</style>

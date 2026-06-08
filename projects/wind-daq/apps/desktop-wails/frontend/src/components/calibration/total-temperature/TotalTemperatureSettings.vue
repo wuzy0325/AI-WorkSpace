@@ -4,43 +4,23 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { calibrationApi } from '@api/calibrationApi'
+import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, ChannelRef } from '@shared/types/calibration'
+import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
+import { NAlert, NButton, NCard, NCheckbox, NInput, NInputNumber, NModal, NSelect, NSpin, NStep, NSteps, NTag, NText } from 'naive-ui'
 import UiButton from '@components/ui/UiButton.vue'
-import type {
-  CalibrationConfig,
-  ProbeChannelConfig,
-  MotionAxisConfig,
-  ChannelRef
-} from '@shared/types/calibration'
-import {
-  applyCalibrationPrecisionDefaults,
-  DEFAULT_CALIBRATION_PROBE_PRECISION
-} from '@shared/calibrationPrecision'
 
-const emit = defineEmits<{
-  close: []
-  saved: [config: CalibrationConfig]
-}>()
-
+const emit = defineEmits<{ close: []; saved: [config: CalibrationConfig] }>()
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
 
 const isLoading = ref(true)
 const isSaving = ref(false)
-
 const currentStep = ref(0)
 const steps = ['基本设置', '硬件配置', '确认保存']
 
-const pointLayout = ref<{ machMin: number; machMax: number; machStep: number }>({
-  machMin: 0.3,
-  machMax: 2.0,
-  machStep: 0.1
-})
-
-const pointCount = computed(() => {
-  return Math.floor((pointLayout.value.machMax - pointLayout.value.machMin) / pointLayout.value.machStep) + 1
-})
-
+const pointLayout = ref({ machMin: 0.3, machMax: 2.0, machStep: 0.1 })
+const pointCount = computed(() => Math.floor((pointLayout.value.machMax - pointLayout.value.machMin) / pointLayout.value.machStep) + 1)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
 const calibrationName = ref(`总温探针校准-${new Date().toLocaleDateString()}`)
@@ -54,66 +34,40 @@ const probeChannels = ref<ProbeChannelConfig[]>([
   { name: '大气温度', role: 'totalTemperature.tAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION }
 ])
 
-const motionAxes = ref<MotionAxisConfig[]>([
-  { name: 'Mach', controllerId: '', axis: 'X' }
-])
-
+const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Mach', controllerId: '', axis: 'X' }])
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
-
-const REQUIRED_CHANNEL_ROLES = [
-  'totalTemperature.tTotal',
-  'totalTemperature.tStatic',
-  'totalTemperature.tAtm'
-] as const
+const REQUIRED_CHANNEL_ROLES = ['totalTemperature.tTotal', 'totalTemperature.tStatic', 'totalTemperature.tAtm'] as const
 
 const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
-    if (calibrationName.value.trim() === '') errors.push('请输入配置名称')
+    if (!calibrationName.value.trim()) errors.push('请输入配置名称')
     if (pointLayout.value.machStep <= 0) errors.push('Mach步长必须大于 0')
     if (pointLayout.value.machMax <= pointLayout.value.machMin) errors.push('Mach最大值必须大于最小值')
     if (dwellTimeMs.value < 100) errors.push('稳定等待时间不能小于 100 ms')
     if (samplesPerPoint.value < 1) errors.push('每点采样次数不能小于 1')
     return errors
   }
-
   if (currentStep.value === 1) {
     const errors: string[] = []
-    const enabledRoles = new Set(probeChannels.value.filter(ch => ch.enabled).map(ch => ch.role))
-    const missingRoles = REQUIRED_CHANNEL_ROLES.filter(role => !enabledRoles.has(role))
-    if (missingRoles.length > 0) errors.push('总温/静温/大气温度必须启用并绑定')
-    const invalidChannel = probeChannels.value.find(ch => ch.enabled && (!ch.channel.deviceId || ch.channel.channelIndex < 0))
-    if (invalidChannel) errors.push(`通道映射未完成：${invalidChannel.name}`)
-    if (motionAxes.value.some(axis => !axis.controllerId)) errors.push('运动轴必须绑定控制器')
-    if (sphereTankGateEnabled.value && !sphereTankStableChannel.value.deviceId) {
-      errors.push('球罐判定启用时必须配置稳定时间设备')
-    }
+    if (probeChannels.value.filter(ch => ch.enabled).some(ch => !ch.channel.deviceId || ch.channel.channelIndex < 0)) errors.push('通道映射未完成')
+    if (motionAxes.value.some(a => !a.controllerId)) errors.push('运动轴必须绑定控制器')
+    if (sphereTankGateEnabled.value && !sphereTankStableChannel.value.deviceId) errors.push('球罐判定需要选择设备')
     return errors
   }
-
   return []
 })
 
-const isStepValid = computed(() => {
-  if (currentStep.value === 2) return true
-  return currentStepErrors.value.length === 0
-})
+const isStepValid = computed(() => currentStep.value === 2 || currentStepErrors.value.length === 0)
 
-function nextStep() {
-  if (currentStep.value < steps.length - 1) currentStep.value++
-}
-
-function prevStep() {
-  if (currentStep.value > 0) currentStep.value--
-}
+function nextStep() { if (currentStep.value < steps.length - 1) currentStep.value++ }
+function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
 function generatePoints() {
   const points = []
-  let id = 0
-  for (let mach = pointLayout.value.machMin; mach <= pointLayout.value.machMax; mach += pointLayout.value.machStep) {
-    points.push({ id: id++, coordinates: { Mach: Math.round(mach * 100) / 100 } })
-  }
+  for (let m = pointLayout.value.machMin; m <= pointLayout.value.machMax; m += pointLayout.value.machStep)
+    points.push({ id: points.length, coordinates: { Mach: Math.round(m * 100) / 100 } })
   return points
 }
 
@@ -121,368 +75,180 @@ async function saveConfig() {
   isSaving.value = true
   try {
     const config: CalibrationConfig = {
-      type: 'total-temperature',
-      name: calibrationName.value,
-      probeChannels: probeChannels.value.filter(ch => ch.enabled),
-      motionAxes: motionAxes.value,
-      points: generatePoints(),
-      dwellTimeMs: dwellTimeMs.value,
-      samplesPerPoint: samplesPerPoint.value,
-      savePath: '',
+      type: 'total-temperature', name: calibrationName.value,
+      probeChannels: probeChannels.value.filter(ch => ch.enabled), motionAxes: motionAxes.value,
+      points: generatePoints(), dwellTimeMs: dwellTimeMs.value, samplesPerPoint: samplesPerPoint.value, savePath: '',
       totalTemperatureConfig: {
         machRange: { min: pointLayout.value.machMin, max: pointLayout.value.machMax, step: pointLayout.value.machStep },
         probeChannels: {
           testProbe: probeChannels.value.find(ch => ch.role === 'totalTemperature.tTotal')?.channel ?? { deviceId: '', channelIndex: 0 },
           standardProbe: probeChannels.value.find(ch => ch.role === 'totalTemperature.tStatic')?.channel ?? { deviceId: '', channelIndex: 0 },
-          totalPressure: { deviceId: '', channelIndex: 0 },
-          staticPressure: { deviceId: '', channelIndex: 0 },
-          atmosphericPressure: { deviceId: '', channelIndex: 0 },
-          atmosphericTemperature: { deviceId: '', channelIndex: 0 }
+          totalPressure: { deviceId: '', channelIndex: 0 }, staticPressure: { deviceId: '', channelIndex: 0 },
+          atmosphericPressure: { deviceId: '', channelIndex: 0 }, atmosphericTemperature: { deviceId: '', channelIndex: 0 }
         },
         targetMachNumbers: generatePoints().map(p => p.coordinates.Mach),
-        stabilityCriteria: { sampleCount: samplesPerPoint.value, maxStdDev: 0.1, sampleInterval: 100 },
-        sampleInterval: 100
+        stabilityCriteria: { sampleCount: samplesPerPoint.value, maxStdDev: 0.1, sampleInterval: 100 }, sampleInterval: 100
       },
-      sphereTankGate: {
-        enabled: sphereTankGateEnabled.value,
-        waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
-        stableTimeChannel: { ...sphereTankStableChannel.value }
-      }
+      sphereTankGate: { enabled: sphereTankGateEnabled.value, waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value), stableTimeChannel: { ...sphereTankStableChannel.value } }
     }
-
-    const normalizedConfig = applyCalibrationPrecisionDefaults(config)
-    const res = await calibrationApi.saveConfig('total-temperature', JSON.parse(JSON.stringify(normalizedConfig)))
-    if (!res.success) {
-      throw new Error(res.error || '保存配置失败')
-    }
-
-    emit('saved', normalizedConfig)
+    const res = await calibrationApi.saveConfig('total-temperature', JSON.parse(JSON.stringify(applyCalibrationPrecisionDefaults(config))))
+    if (!res.success) throw new Error(res.error || '保存失败')
+    emit('saved', applyCalibrationPrecisionDefaults(config))
     emit('close')
   } catch (err) {
-    console.error('Failed to save config:', err)
-    feedbackStore.pushToast('保存配置失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
-  } finally {
-    isSaving.value = false
-  }
+    feedbackStore.pushToast('保存失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+  } finally { isSaving.value = false }
 }
 
 async function loadSavedConfig() {
   try {
     const res = await calibrationApi.getConfig('total-temperature')
     const config = res.success && res.data ? applyCalibrationPrecisionDefaults(res.data) : null
-    if (config) {
-      calibrationName.value = config.name
-      if (config.totalTemperatureConfig?.machRange) {
-        pointLayout.value.machMin = config.totalTemperatureConfig.machRange.min
-        pointLayout.value.machMax = config.totalTemperatureConfig.machRange.max
-        pointLayout.value.machStep = config.totalTemperatureConfig.machRange.step
-      }
-      if (config.probeChannels) {
-        config.probeChannels.forEach(savedCh => {
-          const existingCh = probeChannels.value.find(ch => ch.role ? ch.role === savedCh.role : ch.name === savedCh.name)
-          if (existingCh) {
-            existingCh.channel = { ...savedCh.channel }
-            existingCh.enabled = savedCh.enabled
-            existingCh.role = savedCh.role
-            existingCh.precision = savedCh.precision
-          }
-        })
-      }
-      if (config.motionAxes) {
-        config.motionAxes.forEach((savedAxis, index) => {
-          if (motionAxes.value[index]) motionAxes.value[index] = { ...savedAxis }
-        })
-      }
-      dwellTimeMs.value = config.dwellTimeMs
-      samplesPerPoint.value = config.samplesPerPoint
-      if (config.sphereTankGate) {
-        sphereTankGateEnabled.value = config.sphereTankGate.enabled
-        sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
-        sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
-      }
-    }
-  } catch (err) {
-    console.error('Failed to load saved config:', err)
-  }
+    if (!config) return
+    calibrationName.value = config.name
+    if (config.totalTemperatureConfig?.machRange) pointLayout.value = { ...pointLayout.value, ...config.totalTemperatureConfig.machRange }
+    config.probeChannels?.forEach(sc => { const ec = probeChannels.value.find(c => c.role ? c.role === sc.role : c.name === sc.name); if (ec) { ec.channel = { ...sc.channel }; ec.enabled = sc.enabled; ec.role = sc.role; ec.precision = sc.precision } })
+    config.motionAxes?.forEach((sa, i) => { if (motionAxes.value[i]) motionAxes.value[i] = { ...sa } })
+    dwellTimeMs.value = config.dwellTimeMs; samplesPerPoint.value = config.samplesPerPoint
+    if (config.sphereTankGate) { sphereTankGateEnabled.value = config.sphereTankGate.enabled; sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec; sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel } }
+  } catch { /* ok */ }
 }
 
 onMounted(async () => {
-  try {
-    await Promise.all([
-      deviceStore.refreshProfiles(),
-      motionStore.refreshProfiles(),
-      loadSavedConfig()
-    ])
-  } finally {
-    isLoading.value = false
-  }
+  try { await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()]) }
+  finally { isLoading.value = false }
 })
+
+const axisOptions = [{ label: 'X 轴', value: 'X' }, { label: 'Y 轴', value: 'Y' }, { label: 'Z 轴', value: 'Z' }, { label: 'U 轴', value: 'U' }]
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 backdrop-blur-sm">
-    <div data-test="total-temperature-settings-shell" class="flex max-h-[90vh] w-[92vw] max-w-[980px] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-default)] bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-[0_24px_80px_rgba(15,23,42,0.16)]">
-      <div class="flex items-center justify-between border-b border-[var(--border-default)] px-6 py-4">
-        <div>
-          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">Configuration</p>
-          <h1 class="text-xl font-bold text-[var(--text-primary)]">总温探针校准配置</h1>
-          <p class="text-sm text-[var(--text-secondary)]">配置概览与硬件映射会在保存后自动复用</p>
-        </div>
-        <button @click="emit('close')" class="rounded p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+  <NModal :show="true" preset="card" :style="{ maxWidth: '980px', width: '92vw' }" title="总温探针校准配置" closable @close="emit('close')">
+    <template #header-extra><NText depth="3" style="font-size:11px">配置概览与硬件映射会在保存后自动复用</NText></template>
+
+    <NSteps :current="currentStep" size="small" style="margin-bottom:16px">
+      <NStep v-for="(s, i) in steps" :key="i" :title="s" :disabled="i > currentStep" />
+    </NSteps>
+
+    <NSpin v-if="isLoading" style="display:flex;justify-content:center;padding:40px 0" />
+
+    <template v-else>
+      <NAlert v-if="currentStepErrors.length > 0" type="warning" :bordered="false" style="margin-bottom:12px;font-size:12px">
+        <template #header>请先修正以下问题</template>{{ currentStepErrors[0] }}
+      </NAlert>
+
+      <div v-if="currentStep === 0" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置名称</NText></template>
+          <NInput v-model:value="calibrationName" placeholder="输入配置名称" size="small" />
+        </NCard>
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">点位布局</NText></template>
+          <NText depth="3" style="font-size:11px;display:block;margin-bottom:8px">Mach 数范围</NText>
+          <div class="mach-grid">
+            <div><NText depth="3" style="font-size:11px">最小值</NText><NInputNumber v-model:value="pointLayout.machMin" :step="0.1" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">最大值</NText><NInputNumber v-model:value="pointLayout.machMax" :step="0.1" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">步长</NText><NInputNumber v-model:value="pointLayout.machStep" :min="0.01" :step="0.1" size="small" style="width:100%" /></div>
+          </div>
+          <div class="point-summary">
+            <NText depth="3" style="font-size:12px">总校准点数</NText>
+            <NText depth="1" style="font-size:22px;font-weight:700;color:var(--accent-primary)">{{ pointCount }} 点</NText>
+          </div>
+        </NCard>
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">采集参数</NText></template>
+          <div class="param-grid">
+            <div><NText depth="3" style="font-size:11px">稳定等待时间 (毫秒)</NText><NInputNumber v-model:value="dwellTimeMs" :min="100" :step="100" size="small" style="width:100%" /><NText depth="3" style="font-size:10px;display:block;margin-top:2px">到达点位后等待稳定的时间</NText></div>
+            <div><NText depth="3" style="font-size:11px">每点采样次数</NText><NInputNumber v-model:value="samplesPerPoint" :min="1" :max="1000" size="small" style="width:100%" /><NText depth="3" style="font-size:10px;display:block;margin-top:2px">每个点位采集的样本数量，取平均值</NText></div>
+          </div>
+        </NCard>
       </div>
 
-      <div data-test="total-temperature-settings-stepper" class="border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-6 py-3">
-        <div class="flex items-center justify-center gap-2">
-          <div v-for="(step, idx) in steps" :key="idx" class="flex items-center">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all cursor-pointer"
-              :class="[
-                idx === currentStep ? 'bg-[var(--accent-primary)] text-white' : idx < currentStep ? 'bg-[var(--accent-success)] text-white' : 'bg-[var(--bg-panel)] text-[var(--text-muted)] border border-[var(--border-default)] hover:bg-[var(--bg-panel-strong)]'
-              ]"
-              @click="idx <= currentStep && (currentStep = idx)">
-              {{ idx < currentStep ? '✓' : idx + 1 }}
-            </div>
-            <div v-if="idx < steps.length - 1" class="w-12 h-0.5 mx-1" :class="idx < currentStep ? 'bg-[var(--accent-success)]' : 'bg-[var(--border-default)]'"></div>
+      <div v-if="currentStep === 1" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">测点通道映射</NText></template>
+          <div class="table-wrap">
+            <table class="ntable"><thead><tr><th style="width:48px">启用</th><th>测点名称</th><th>数据源设备</th><th style="width:100px">通道索引</th><th style="width:80px">精度</th></tr></thead>
+              <tbody>
+                <tr v-for="ch in probeChannels" :key="ch.name">
+                  <td style="text-align:center"><NCheckbox v-model:checked="ch.enabled" size="small" /></td>
+                  <td><NText depth="1" style="font-size:12px">{{ ch.name }}</NText></td>
+                  <td><NSelect v-model:value="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" size="tiny" style="min-width:140px" :disabled="!ch.enabled" clearable /></td>
+                  <td><NInputNumber v-model:value="ch.channel.channelIndex" :min="-1" :max="100" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><NInputNumber v-model:value="ch.precision" :min="0" :max="8" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </div>
+        </NCard>
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">运动轴配置</NText></template>
+          <div class="table-wrap">
+            <table class="ntable"><thead><tr><th>坐标轴</th><th>运动控制器</th><th>物理轴</th></tr></thead>
+              <tbody>
+                <tr v-for="ax in motionAxes" :key="ax.name">
+                  <td><NTag size="tiny" type="primary" :bordered="false">{{ ax.name }}</NTag></td>
+                  <td><NSelect v-model:value="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" placeholder="选择控制器" size="tiny" style="min-width:160px" clearable /></td>
+                  <td><NSelect v-model:value="ax.axis" :options="axisOptions" size="tiny" style="width:100px" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </NCard>
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">球罐稳定判定（PXI）</NText></template>
+          <NCheckbox v-model:checked="sphereTankGateEnabled" size="small" style="margin-bottom:8px">启用球罐判定</NCheckbox>
+          <div v-if="sphereTankGateEnabled" class="sphere-grid">
+            <div><NText depth="3" style="font-size:11px">等待时间 (秒)</NText><NInputNumber v-model:value="sphereTankWaitTimeSec" :min="0" :step="0.1" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">PXI 设备</NText><NSelect v-model:value="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" size="small" clearable /></div>
+            <div><NText depth="3" style="font-size:11px">稳定时间通道</NText><NInputNumber v-model:value="sphereTankStableChannel.channelIndex" :min="0" size="small" style="width:100%" /></div>
+            <div style="display:flex;align-items:flex-end"><NText depth="3" style="font-size:11px">采集前需满足：稳定时间 >= 等待时间</NText></div>
+          </div>
+        </NCard>
       </div>
 
-      <div class="flex-1 overflow-auto p-6">
-        <div v-if="isLoading" class="flex items-center justify-center h-full">
-          <div class="text-center">
-            <div class="animate-spin w-8 h-8 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p class="text-[var(--text-muted)]">正在加载...</p>
+      <div v-if="currentStep === 2" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置摘要</NText></template>
+          <div class="summary-grid">
+            <div class="summary-row"><NText depth="3">配置名称</NText><NText depth="1">{{ calibrationName }}</NText></div>
+            <div class="summary-row"><NText depth="3">校准类型</NText><NText depth="1">总温探针</NText></div>
+            <div class="summary-row"><NText depth="3">点位布局</NText><NText depth="1">Mach: {{ pointLayout.machMin }} ~ {{ pointLayout.machMax }}（步长 {{ pointLayout.machStep }}）</NText></div>
+            <div class="summary-row"><NText depth="3">总点数</NText><NText depth="1" style="color:var(--accent-primary);font-weight:700">{{ pointCount }} 点</NText></div>
+            <div class="summary-row"><NText depth="3">启用测点</NText><NText depth="1">{{ probeChannels.filter(ch => ch.enabled).length }} 个</NText></div>
+            <div class="summary-row"><NText depth="3">稳定时间</NText><NText depth="1">{{ dwellTimeMs }} ms</NText></div>
+            <div class="summary-row"><NText depth="3">每点采样</NText><NText depth="1">{{ samplesPerPoint }} 次</NText></div>
           </div>
-        </div>
+        </NCard>
+      </div>
+    </template>
 
-        <div v-else-if="currentStep === 0" class="max-w-3xl mx-auto space-y-6">
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">配置名称</h3>
-            <input v-model="calibrationName" type="text" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" placeholder="输入配置名称" />
-          </div>
-
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">点位布局</h3>
-            <div class="space-y-4">
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-2">Mach数范围</label>
-                <div class="grid grid-cols-3 gap-4">
-                  <div>
-                    <label class="block text-xs text-[var(--text-muted)] mb-1">最小值</label>
-                    <input v-model.number="pointLayout.machMin" type="number" step="0.1" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" />
-                  </div>
-                  <div>
-                    <label class="block text-xs text-[var(--text-muted)] mb-1">最大值</label>
-                    <input v-model.number="pointLayout.machMax" type="number" step="0.1" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" />
-                  </div>
-                  <div>
-                    <label class="block text-xs text-[var(--text-muted)] mb-1">步长</label>
-                    <input v-model.number="pointLayout.machStep" type="number" min="0.01" step="0.1" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="mt-4 bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/30 rounded-[var(--radius-md)] p-4">
-              <div class="flex items-center justify-between">
-                <span class="text-[var(--accent-primary)]">总校准点数</span>
-                <span class="text-2xl font-bold text-[var(--accent-primary)]">{{ pointCount }} 点</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">采集参数</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-2">稳定等待时间 (毫秒)</label>
-                <input v-model.number="dwellTimeMs" type="number" min="100" step="100" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" />
-                <p class="text-xs text-[var(--text-muted)] mt-1">到达点位后等待稳定的时间</p>
-              </div>
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-2">每点采样次数</label>
-                <input v-model.number="samplesPerPoint" type="number" min="1" max="1000" class="w-full px-4 py-2 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none transition-colors" />
-                <p class="text-xs text-[var(--text-muted)] mt-1">每个点位采集的样本数量，取平均值</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-else-if="currentStep === 1" class="max-w-4xl mx-auto space-y-6">
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">测点通道映射</h3>
-            <div class="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--border-default)]">
-              <table class="w-full">
-                <thead class="bg-[var(--bg-panel-strong)]">
-                  <tr>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">启用</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">测点名称</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">数据源设备</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">通道索引</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">精度</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-[var(--border-default)]">
-                  <tr v-for="channel in probeChannels" :key="channel.name" class="hover:bg-[var(--bg-panel-strong)]/50">
-                    <td class="px-4 py-3">
-                      <input v-model="channel.enabled" type="checkbox" class="w-4 h-4 rounded border-[var(--border-default)] bg-[var(--bg-panel-strong)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)] focus:ring-offset-0" />
-                    </td>
-                    <td class="px-4 py-3 text-sm text-[var(--text-secondary)]">{{ channel.name }}</td>
-                    <td class="px-4 py-3">
-                      <select v-model="channel.channel.deviceId" :disabled="!channel.enabled" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50">
-                        <option value="">选择设备</option>
-                        <option v-for="device in deviceList" :key="device.id" :value="device.id">{{ device.name }} ({{ device.type }})</option>
-                      </select>
-                    </td>
-                    <td class="px-4 py-3">
-                      <input v-model.number="channel.channel.channelIndex" type="number" min="-1" max="100" :disabled="!channel.enabled" class="w-20 px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50" />
-                    </td>
-                    <td class="px-4 py-3">
-                      <input v-model.number="channel.precision" type="number" min="0" max="8" :disabled="!channel.enabled" class="w-20 px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50" />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">运动轴配置</h3>
-            <div class="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--border-default)]">
-              <table class="w-full">
-                <thead class="bg-[var(--bg-panel-strong)]">
-                  <tr>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">坐标轴</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">运动控制器</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-[var(--text-secondary)]">物理轴</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-[var(--border-default)]">
-                  <tr v-for="axis in motionAxes" :key="axis.name" class="hover:bg-[var(--bg-panel-strong)]/50">
-                    <td class="px-4 py-3">
-                      <span class="text-lg font-bold text-[var(--accent-primary)]">{{ axis.name }}</span>
-                    </td>
-                    <td class="px-4 py-3">
-                      <select v-model="axis.controllerId" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
-                        <option value="">选择控制器</option>
-                        <option v-for="controller in motionControllerList" :key="controller.id" :value="controller.id">{{ controller.name }} ({{ controller.type }})</option>
-                      </select>
-                    </td>
-                    <td class="px-4 py-3">
-                      <select v-model="axis.axis" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
-                        <option value="X">X轴</option>
-                        <option value="Y">Y轴</option>
-                        <option value="Z">Z轴</option>
-                        <option value="U">U轴</option>
-                      </select>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">球罐稳定判定（PXI）</h3>
-            <div class="grid grid-cols-3 gap-4 items-end">
-              <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-                <input v-model="sphereTankGateEnabled" type="checkbox" class="w-4 h-4 rounded border-[var(--border-default)] bg-[var(--bg-panel-strong)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)] focus:ring-offset-0" />
-                启用球罐判定
-              </label>
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-1">等待时间(秒)</label>
-                <input v-model.number="sphereTankWaitTimeSec" type="number" min="0" step="0.1" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none" />
-              </div>
-              <div class="text-xs text-[var(--text-muted)]">采集前需满足：稳定时间 >= 等待时间</div>
-            </div>
-            <div class="grid grid-cols-2 gap-4 mt-3">
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-1">PXI设备</label>
-                <select v-model="sphereTankStableChannel.deviceId" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
-                  <option value="">选择设备</option>
-                  <option v-for="device in deviceList" :key="device.id" :value="device.id">{{ device.name }} ({{ device.type }})</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-sm text-[var(--text-secondary)] mb-1">稳定时间通道</label>
-                <input v-model.number="sphereTankStableChannel.channelIndex" type="number" min="0" class="w-full px-3 py-1.5 bg-[var(--bg-panel-strong)] border border-[var(--border-default)] rounded-[var(--radius-sm)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-else-if="currentStep === 2" class="max-w-3xl mx-auto space-y-6">
-          <div class="bg-[var(--bg-panel)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-6">
-            <h3 class="text-lg font-semibold mb-4 text-[var(--text-primary)]">配置摘要</h3>
-            <div class="space-y-3 text-sm">
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">配置名称</span>
-                <span class="text-[var(--text-primary)]">{{ calibrationName }}</span>
-              </div>
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">校准类型</span>
-                <span class="text-[var(--text-primary)]">总温探针</span>
-              </div>
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">点位布局</span>
-                <span class="text-[var(--text-primary)]">Mach: {{ pointLayout.machMin }} ~ {{ pointLayout.machMax }} (步长 {{ pointLayout.machStep }})</span>
-              </div>
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">总点数</span>
-                <span class="text-[var(--accent-primary)] font-bold">{{ pointCount }} 点</span>
-              </div>
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">启用测点</span>
-                <span class="text-[var(--text-primary)]">{{ probeChannels.filter(ch => ch.enabled).length }} 个</span>
-              </div>
-              <div class="flex justify-between py-2 border-b border-[var(--border-default)]">
-                <span class="text-[var(--text-secondary)]">稳定时间</span>
-                <span class="text-[var(--text-primary)]">{{ dwellTimeMs }} ms</span>
-              </div>
-              <div class="flex justify-between py-2">
-                <span class="text-[var(--text-secondary)]">每点采样</span>
-                <span class="text-[var(--text-primary)]">{{ samplesPerPoint }} 次</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/30 rounded-[var(--radius-md)] p-4">
-            <div class="flex items-start gap-3">
-              <svg class="w-5 h-5 text-[var(--accent-primary)] mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a 1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              <div class="text-sm">
-                <p class="font-medium text-[var(--accent-primary)]">配置保存说明</p>
-                <p class="mt-1 text-[var(--text-secondary)]">保存后，配置将自动存储。下次进入总温探针校准时，将自动加载此配置。</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="!isLoading && currentStepErrors.length > 0" class="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <div class="font-medium mb-1">请先修正以下问题：</div>
-          <div>{{ currentStepErrors[0] }}</div>
+    <template #footer>
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <div><UiButton v-if="currentStep > 0" variant="secondary" size="sm" @click="prevStep">上一步</UiButton></div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <NText depth="3" style="font-size:11px">步骤 {{ currentStep + 1 }} / {{ steps.length }}</NText>
+          <UiButton v-if="currentStep < steps.length - 1" variant="primary" size="sm" :disabled="!isStepValid" @click="nextStep">下一步</UiButton>
+          <NButton v-else size="small" type="primary" :loading="isSaving" :disabled="!isStepValid" @click="saveConfig">保存配置</NButton>
         </div>
       </div>
-
-      <div class="px-6 py-4 border-t border-[var(--border-default)] flex items-center justify-between">
-        <UiButton v-if="currentStep > 0" variant="secondary" @click="prevStep">上一步</UiButton>
-        <div v-else></div>
-
-        <div class="flex items-center gap-3">
-          <span class="text-sm text-[var(--text-muted)]">步骤 {{ currentStep + 1 }} / {{ steps.length }}</span>
-          <UiButton v-if="currentStep < steps.length - 1" variant="primary" :disabled="!isStepValid" @click="nextStep">下一步</UiButton>
-          <UiButton v-else variant="primary" :disabled="!isStepValid || isSaving" @click="saveConfig">
-            <svg v-if="isSaving" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            {{ isSaving ? '保存中...' : '保存配置' }}
-          </UiButton>
-        </div>
-      </div>
-    </div>
-  </div>
+    </template>
+  </NModal>
 </template>
+
+<style scoped>
+.step-content { display:flex; flex-direction:column; gap:12px; }
+.section-card { font-size:12px; }
+.mach-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+.point-summary { display:flex; align-items:center; gap:8px; padding:10px; border-radius:4px; border:1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent); background:color-mix(in srgb, var(--accent-primary) 5%, transparent); }
+.param-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.table-wrap { overflow-x:auto; }
+.ntable { width:100%; border-collapse:collapse; font-size:12px; }
+.ntable th { text-align:left; padding:8px 10px; font-weight:600; font-size:11px; color:var(--text-muted); background:var(--bg-panel-strong); border-bottom:1px solid var(--border-default); }
+.ntable td { padding:6px 10px; border-bottom:1px solid var(--border-default); }
+.ntable tbody tr:hover { background:color-mix(in srgb, var(--accent-primary) 3%, transparent); }
+.sphere-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.summary-grid { display:flex; flex-direction:column; }
+.summary-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border-default); gap:12px; font-size:12px; }
+.summary-row:last-child { border-bottom:none; }
+</style>

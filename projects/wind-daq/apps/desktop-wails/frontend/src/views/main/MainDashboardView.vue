@@ -22,6 +22,13 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { subscribeDaqStream } from '@api/sse-client'
+import {
+  NAlert,
+  NButton,
+  NResult,
+  NText,
+} from 'naive-ui'
+import { Activity, Wifi, LineChart } from '@lucide/vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 
@@ -240,7 +247,9 @@ onBeforeUnmount(() => {
     </template>
 
     <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
-      <p v-if="error" class="error-text">{{ error }}</p>
+      <NAlert v-if="error" type="error" :bordered="false" closable style="margin-bottom:12px;font-size:12px" @close="error = ''">
+        <template #header><NText depth="1" style="font-weight:600;font-size:12px">{{ error }}</NText></template>
+      </NAlert>
 
       <DeviceOverviewPanel v-if="viewMode === 'overview'" />
 
@@ -249,31 +258,19 @@ onBeforeUnmount(() => {
         :mode="viewMode === 'both' ? 'both' : viewMode"
       />
 
-      <section
+      <NResult
         v-else
-        data-test="dashboard-empty-state"
-        class="dashboard-empty-state"
+        status="info"
+        title="选择一个设备"
+        :description="t.selectDevicePrompt || '请从左侧设备列表中选择一台设备开始监控'"
+        size="small"
       >
-        <div
-          data-test="dashboard-empty-icon"
-          class="dashboard-empty-icon"
-        >
-          <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="4" y="4" width="16" height="16" rx="2"/>
-            <path d="M9 9h6v6H9z"/>
-            <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/>
-          </svg>
-        </div>
-        <div data-test="dashboard-empty-title" class="dashboard-empty-title">{{ t.emptyDeviceSelectionTitle }}</div>
-        <div class="dashboard-empty-desc">{{ t.selectDevicePrompt }}</div>
-        <button
-          data-test="dashboard-empty-action"
-          class="dashboard-empty-btn"
-          @click="showDeviceDrawer = true"
-        >
-          {{ t.openDeviceManager }}
-        </button>
-      </section>
+        <template #footer>
+          <NButton size="small" type="primary" @click="showDeviceDrawer = true">
+            {{ t.openDeviceManager || '打开设备管理器' }}
+          </NButton>
+        </template>
+      </NResult>
     </div>
 
     <!-- 统一全铺布局：所有子页面都直接铺满主内容区，保持与仪表盘一致的视觉体验 -->
@@ -321,88 +318,11 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-/* 统一全铺布局样式：与仪表盘页面保持一致的视觉体验 */
 .page-fullscreen {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4);
   background: transparent;
-}
-
-.error-text {
-  margin-bottom: var(--space-3);
-  color: var(--accent-danger);
-  font: 700 0.75rem/1.4 var(--font-family-mono, monospace);
-}
-
-.dashboard-empty-state {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border-radius: 1rem;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
-  background: rgba(30, 41, 59, 0.4);
-  backdrop-filter: blur(8px);
-  padding: 1.5rem;
-  text-align: center;
-}
-
-:root[data-theme='light'] .dashboard-empty-state {
-  border: 1px dashed rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.6);
-}
-
-.dashboard-empty-icon {
-  display: flex;
-  height: 4rem;
-  width: 4rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(30, 41, 59, 0.6);
-  color: rgba(148, 163, 184, 0.8);
-}
-
-:root[data-theme='light'] .dashboard-empty-icon {
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.8);
-  color: rgba(100, 116, 139, 0.8);
-}
-
-.dashboard-empty-title {
-  margin-top: 1.5rem;
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  color: var(--text-primary);
-}
-
-.dashboard-empty-desc {
-  margin-top: 0.5rem;
-  max-width: 36rem;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-.dashboard-empty-btn {
-  margin-top: 1.5rem;
-  padding: 0.5rem 1.5rem;
-  border-radius: 0.5rem;
-  background: #10b981;
-  color: white;
-  font-size: 0.875rem;
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
-
-.dashboard-empty-btn:hover {
-  background: #059669;
-  transform: translateY(-1px);
 }
 </style>

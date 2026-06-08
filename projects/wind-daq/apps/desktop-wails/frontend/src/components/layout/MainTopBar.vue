@@ -2,6 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { useThemeStore } from '@stores/themeStore'
 import { Sun, Moon, Activity } from '@lucide/vue'
+import { NButton } from 'naive-ui'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 type MainViewMode = 'chart' | 'table' | 'both' | 'overview'
@@ -67,15 +68,16 @@ function activePageLabel(): string {
 
       <!-- Navigation -->
       <nav v-if="activePage === 'dashboard'" class="main-topbar__nav">
-        <button
+        <NButton
           v-for="mode in dashboardModes"
           :key="mode"
+          size="tiny"
           class="main-topbar__nav-btn"
           :class="{ 'main-topbar__nav-btn--active': viewMode === mode }"
           @click="emit('set-view-mode', mode)"
         >
           {{ modeLabel(mode) }}
-        </button>
+        </NButton>
       </nav>
       <div v-else class="main-topbar__nav">
         <div class="main-topbar__nav-btn main-topbar__nav-btn--active">
@@ -96,32 +98,38 @@ function activePageLabel(): string {
         </div>
 
         <!-- Theme Toggle -->
-        <button
+        <NButton
+          quaternary
+          size="small"
           class="main-topbar__icon-btn"
           @click="themeStore.toggleTheme()"
           :aria-label="themeToggleLabel()"
           :title="themeToggleLabel()"
         >
-          <Sun v-if="theme === 'dark'" class="w-4 h-4" />
-          <Moon v-else class="w-4 h-4" />
-        </button>
+          <template #icon>
+            <Sun v-if="theme === 'dark'" class="w-4 h-4" />
+            <Moon v-else class="w-4 h-4" />
+          </template>
+        </NButton>
 
         <!-- Locale Switch -->
         <div class="main-topbar__locale">
-          <button
+          <NButton
+            size="tiny"
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'zh' }"
             @click="emit('set-locale', 'zh')"
           >
             中文
-          </button>
-          <button
+          </NButton>
+          <NButton
+            size="tiny"
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'en' }"
             @click="emit('set-locale', 'en')"
           >
             EN
-          </button>
+          </NButton>
         </div>
 
         <!-- Version -->

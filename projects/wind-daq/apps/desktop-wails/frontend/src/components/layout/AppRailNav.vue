@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Settings } from '@lucide/vue'
+import { NButton } from 'naive-ui'
 import IconDashboard from '@components/icons/IconDashboard.vue'
 import IconMotion from '@components/icons/IconMotion.vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
@@ -39,10 +40,11 @@ function getIconComponent(iconType: string | undefined) {
 <template>
   <aside class="app-rail-nav">
     <nav class="app-rail-nav__menu">
-      <button
+      <NButton
         v-for="item in items"
         :key="item.id"
-        type="button"
+        quaternary
+        size="small"
         :aria-label="item.label"
         class="app-rail-nav__button"
         :class="{
@@ -53,20 +55,25 @@ function getIconComponent(iconType: string | undefined) {
         :disabled="item.disabled"
         @click="emit('select', item.id)"
       >
-        <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
-      </button>
+        <template #icon>
+          <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
+        </template>
+      </NButton>
     </nav>
 
     <div class="app-rail-nav__footer">
-      <button
-        type="button"
+      <NButton
+        quaternary
+        size="small"
         class="app-rail-nav__button app-rail-nav__button--settings"
         aria-label="设置"
         title="设置"
         @click="emit('open-settings')"
       >
-        <Settings class="w-5 h-5" />
-      </button>
+        <template #icon>
+          <Settings class="w-5 h-5" />
+        </template>
+      </NButton>
       <slot />
     </div>
   </aside>

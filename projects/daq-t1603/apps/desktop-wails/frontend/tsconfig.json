@@ -17,7 +17,8 @@
       "@views/*": ["./src/views/*"],
       "@stores/*": ["./src/stores/*"],
       "@bridge/*": ["./src/bridge/*"],
-      "@composables/*": ["./src/composables/*"]
+      "@composables/*": ["./src/composables/*"],
+      "@shared-frontend/*": ["../../../../../shared/frontend/*"]
     },
     "baseUrl": "."
   },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { Play, Square, Timer, Clock, Circle } from '@lucide/vue'
+import { NButton } from 'naive-ui'
 
 const props = withDefaults(
   defineProps<{
@@ -89,25 +90,29 @@ watch(isRunning, (newVal, oldVal) => {
     <!-- Left: Control Buttons -->
     <div class="main-bottom-bar__left">
       <div class="main-bottom-bar__controls">
-        <button
+        <NButton
           data-test="acquisition-toggle-btn"
           class="main-bottom-bar__btn"
           :class="isAcquiring ? 'btn-stop' : 'btn-start'"
           @click="isAcquiring ? emit('stop') : emit('start')"
           :title="isAcquiring ? (t.stopAcquisition || '停止采集') : (t.startAcquisition || '开始采集')"
         >
-          <Play v-if="!isAcquiring" class="w-5 h-5 fill-current" />
-          <Square v-else class="w-4 h-4 fill-current" />
-        </button>
-        <button
+          <template #icon>
+            <Play v-if="!isAcquiring" class="w-5 h-5 fill-current" />
+            <Square v-else class="w-4 h-4 fill-current" />
+          </template>
+        </NButton>
+        <NButton
           data-test="recording-toggle-btn"
           class="main-bottom-bar__btn btn-record"
           :class="{ active: isRecording }"
           @click="emit('toggle-recording')"
           :title="isRecording ? (t.stopRecording || '停止记录') : (t.startRecording || '开始记录')"
         >
-          <Circle class="w-4 h-4 fill-current" />
-        </button>
+          <template #icon>
+            <Circle class="w-4 h-4 fill-current" />
+          </template>
+        </NButton>
       </div>
 
       <!-- Status -->

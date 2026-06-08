@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { NCard } from 'naive-ui'
+
 withDefaults(
   defineProps<{
     padded?: boolean
@@ -8,34 +10,12 @@ withDefaults(
 </script>
 
 <template>
-  <div class="ui-panel" :class="{ 'ui-panel--unpadded': !padded }">
-    <div v-if="$slots.header" class="ui-panel__header">
-      <slot name="header" />
-    </div>
-    <div class="ui-panel__body">
-      <slot />
-    </div>
-  </div>
+  <NCard
+    size="small"
+    :bordered="true"
+    :content-style="padded ? { padding: '1rem 1.25rem' } : { padding: 0 }"
+  >
+    <template v-if="$slots.header" #header><slot name="header" /></template>
+    <slot />
+  </NCard>
 </template>
-
-<style scoped>
-.ui-panel {
-  border-radius: 0.75rem;
-  border: 1px solid var(--border-default);
-  background: var(--bg-panel);
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.28);
-}
-
-.ui-panel__header {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.ui-panel__body {
-  padding: 1rem 1.25rem;
-}
-
-.ui-panel--unpadded .ui-panel__body {
-  padding: 0;
-}
-</style>

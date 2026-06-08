@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
+
 defineProps<{
   isRecording?: boolean
 }>()
@@ -9,7 +11,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <button
+  <NButton
+    size="tiny"
     class="recording-control"
     :class="{ active: isRecording }"
     @click="emit('toggle')"
@@ -22,7 +25,7 @@ const emit = defineEmits<{
     <small class="recording-control__hint">
       {{ isRecording ? '点击停止' : '录制数据' }}
     </small>
-  </button>
+  </NButton>
 </template>
 
 <style scoped>

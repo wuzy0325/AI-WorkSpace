@@ -15,7 +15,10 @@ export default defineConfig({
       '@styles': fileURLToPath(new URL('./src/styles', import.meta.url)),
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
       '@shared/motion': fileURLToPath(new URL('../../../../motion-controller/shared/frontend/motion/src', import.meta.url)),
+      '@shared-frontend': fileURLToPath(new URL('../../../../../shared/frontend', import.meta.url)),
       '@composables': fileURLToPath(new URL('./src/composables', import.meta.url)),
+      'naive-ui': fileURLToPath(new URL('./node_modules/naive-ui', import.meta.url)),
+      'naive-ui/es': fileURLToPath(new URL('./node_modules/naive-ui/es', import.meta.url)),
     },
   },
   build: {

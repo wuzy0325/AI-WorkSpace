@@ -1,8 +1,8 @@
 ﻿<script setup lang="ts">
 import { computed } from 'vue'
 import type { StepSegment, TraversalPattern } from '@shared/types/traversal'
-import UiButton from '@components/ui/UiButton.vue'
 import { useTraversalSegmentValidation, getSegmentError, hasSegmentError } from '@composables/useTraversalValidation'
+import { NButton, NCard, NInput, NInputNumber, NSpace, NText } from 'naive-ui'
 
 const testName = defineModel<string>('testName', { required: true })
 const dwellTimeMs = defineModel<number>('dwellTimeMs', { required: true })
@@ -36,10 +36,8 @@ const computedRectangleRange = computed(() => {
   const xMax = xs.length > 0 ? Math.max(...xs.map(s => s.end)) : 0
   const yMin = ys.length > 0 ? Math.min(...ys.map(s => s.start)) : 0
   const yMax = ys.length > 0 ? Math.max(...ys.map(s => s.end)) : 0
-  rectangleConfig.value.xMin = xMin
-  rectangleConfig.value.xMax = xMax
-  rectangleConfig.value.yMin = yMin
-  rectangleConfig.value.yMax = yMax
+  rectangleConfig.value.xMin = xMin; rectangleConfig.value.xMax = xMax
+  rectangleConfig.value.yMin = yMin; rectangleConfig.value.yMax = yMax
   return { xMin, xMax, yMin, yMax }
 })
 
@@ -50,10 +48,8 @@ const computedSectorRange = computed(() => {
   const radiusMax = rs.length > 0 ? Math.max(...rs.map(s => s.end)) : 0
   const angleStart = as.length > 0 ? Math.min(...as.map(s => s.start)) : 0
   const angleEnd = as.length > 0 ? Math.max(...as.map(s => s.end)) : 0
-  sectorConfig.value.radiusMin = radiusMin
-  sectorConfig.value.radiusMax = radiusMax
-  sectorConfig.value.angleStart = angleStart
-  sectorConfig.value.angleEnd = angleEnd
+  sectorConfig.value.radiusMin = radiusMin; sectorConfig.value.radiusMax = radiusMax
+  sectorConfig.value.angleStart = angleStart; sectorConfig.value.angleEnd = angleEnd
   return { radiusMin, radiusMax, angleStart, angleEnd }
 })
 
@@ -61,238 +57,141 @@ const tRef = computed(() => props.t)
 
 const patternLabel = computed(() => {
   switch (pattern.value) {
-    case 'line':
-      return tRef.value.patternLine
-    case 'rectangle':
-      return tRef.value.patternRectangle
-    case 'sector':
-      return tRef.value.patternSector
-    default:
-      return tRef.value.patternCustom
+    case 'line': return tRef.value.patternLine
+    case 'rectangle': return tRef.value.patternRectangle
+    case 'sector': return tRef.value.patternSector
+    default: return tRef.value.patternCustom
   }
 })
 
-const { errors: rectangleXSegmentErrors, countError: rectangleXSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => rectangleConfig.value.xStepSegments), computed(() => rectangleConfig.value.xMin), computed(() => rectangleConfig.value.xMax), tRef)
-const { errors: rectangleYSegmentErrors, countError: rectangleYSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => rectangleConfig.value.yStepSegments), computed(() => rectangleConfig.value.yMin), computed(() => rectangleConfig.value.yMax), tRef)
-const { errors: sectorRadialSegmentErrors, countError: sectorRadialSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => sectorConfig.value.radialStepSegments), computed(() => sectorConfig.value.radiusMin), computed(() => sectorConfig.value.radiusMax), tRef)
-const { errors: sectorAngularSegmentErrors, countError: sectorAngularSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => sectorConfig.value.angularStepSegments), computed(() => sectorConfig.value.angleStart), computed(() => sectorConfig.value.angleEnd), tRef)
-const { errors: lineXSegmentErrors, countError: lineXSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => lineConfig.value.xStepSegments), computed(() => lineConfig.value.startX), computed(() => lineConfig.value.endX), tRef)
-const { errors: lineYSegmentErrors, countError: lineYSegmentCountError } =
-  useTraversalSegmentValidation(computed(() => lineConfig.value.yStepSegments), computed(() => lineConfig.value.startY), computed(() => lineConfig.value.endY), tRef)
+const { errors: rxSegErrs, countError: rxSegCntErr } = useTraversalSegmentValidation(computed(() => rectangleConfig.value.xStepSegments), computed(() => rectangleConfig.value.xMin), computed(() => rectangleConfig.value.xMax), tRef)
+const { errors: rySegErrs } = useTraversalSegmentValidation(computed(() => rectangleConfig.value.yStepSegments), computed(() => rectangleConfig.value.yMin), computed(() => rectangleConfig.value.yMax), tRef)
+const { errors: srSegErrs } = useTraversalSegmentValidation(computed(() => sectorConfig.value.radialStepSegments), computed(() => sectorConfig.value.radiusMin), computed(() => sectorConfig.value.radiusMax), tRef)
+const { errors: saSegErrs } = useTraversalSegmentValidation(computed(() => sectorConfig.value.angularStepSegments), computed(() => sectorConfig.value.angleStart), computed(() => sectorConfig.value.angleEnd), tRef)
+const { errors: lxSegErrs } = useTraversalSegmentValidation(computed(() => lineConfig.value.xStepSegments), computed(() => lineConfig.value.startX), computed(() => lineConfig.value.endX), tRef)
+const { errors: lySegErrs } = useTraversalSegmentValidation(computed(() => lineConfig.value.yStepSegments), computed(() => lineConfig.value.startY), computed(() => lineConfig.value.endY), tRef)
 
 function addSegment() { lineConfig.value.xStepSegments.push({ start: -30, end: 30, step: 5 }) }
-function removeSegment(index: number) { lineConfig.value.xStepSegments.splice(index, 1) }
-function addRectangleXSegment() {
-  const segs = rectangleConfig.value.xStepSegments
-  if (segs.length === 0) segs.push({ start: 0, end: 10, step: 5 })
-  else { const last = segs[segs.length - 1]; segs.push({ start: last.end, end: last.end + 10, step: 5 }) }
-}
-function removeRectangleXSegment(index: number) { rectangleConfig.value.xStepSegments.splice(index, 1) }
-function addRectangleYSegment() {
-  const segs = rectangleConfig.value.yStepSegments
-  if (segs.length === 0) segs.push({ start: 0, end: 10, step: 5 })
-  else { const last = segs[segs.length - 1]; segs.push({ start: last.end, end: last.end + 10, step: 5 }) }
-}
-function removeRectangleYSegment(index: number) { rectangleConfig.value.yStepSegments.splice(index, 1) }
-function addSectorRadialSegment() {
-  const segs = sectorConfig.value.radialStepSegments
-  if (segs.length === 0) segs.push({ start: 100, end: 200, step: 50 })
-  else { const last = segs[segs.length - 1]; segs.push({ start: last.end, end: last.end + 100, step: 50 }) }
-}
-function removeSectorRadialSegment(index: number) { sectorConfig.value.radialStepSegments.splice(index, 1) }
-function addSectorAngularSegment() {
-  const segs = sectorConfig.value.angularStepSegments
-  if (segs.length === 0) segs.push({ start: 0, end: 10, step: 5 })
-  else { const last = segs[segs.length - 1]; segs.push({ start: last.end, end: last.end + 10, step: 5 }) }
-}
-function removeSectorAngularSegment(index: number) { sectorConfig.value.angularStepSegments.splice(index, 1) }
+function removeSegment(i: number) { lineConfig.value.xStepSegments.splice(i, 1) }
+function addRectangleXSegment() { const s = rectangleConfig.value.xStepSegments; if (s.length === 0) s.push({ start: 0, end: 10, step: 5 }); else { const l = s[s.length - 1]; s.push({ start: l.end, end: l.end + 10, step: 5 }) } }
+function removeRectangleXSegment(i: number) { rectangleConfig.value.xStepSegments.splice(i, 1) }
+function addRectangleYSegment() { const s = rectangleConfig.value.yStepSegments; if (s.length === 0) s.push({ start: 0, end: 10, step: 5 }); else { const l = s[s.length - 1]; s.push({ start: l.end, end: l.end + 10, step: 5 }) } }
+function removeRectangleYSegment(i: number) { rectangleConfig.value.yStepSegments.splice(i, 1) }
+function addSectorRadialSegment() { const s = sectorConfig.value.radialStepSegments; if (s.length === 0) s.push({ start: 100, end: 200, step: 50 }); else { const l = s[s.length - 1]; s.push({ start: l.end, end: l.end + 100, step: 50 }) } }
+function removeSectorRadialSegment(i: number) { sectorConfig.value.radialStepSegments.splice(i, 1) }
+function addSectorAngularSegment() { const s = sectorConfig.value.angularStepSegments; if (s.length === 0) s.push({ start: 0, end: 10, step: 5 }); else { const l = s[s.length - 1]; s.push({ start: l.end, end: l.end + 10, step: 5 }) } }
+function removeSectorAngularSegment(i: number) { sectorConfig.value.angularStepSegments.splice(i, 1) }
 function addCustomPoint() { customPoints.value.push({ x: customPointInput.value.x, y: customPointInput.value.y }); customPointInput.value = { x: 0, y: 0 } }
-function removeCustomPoint(index: number) { customPoints.value.splice(index, 1) }
+function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-3 rounded-[var(--radius-md)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)]">
-      <div class="grid gap-3 grid-cols-3">
-        <div>
-          <label class="block text-[10px] text-[color:var(--text-muted)] mb-1">{{ t.testNameLabel }}</label>
-          <input v-model="testName" type="text" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] px-2 py-1.5 text-sm text-[color:var(--text-primary)]" :placeholder="t.testNameLabel" />
-        </div>
-        <div>
-          <label class="block text-[10px] text-[color:var(--text-muted)] mb-1">{{ t.dwellMsLabel }}</label>
-          <input v-model.number="dwellTimeMs" type="number" min="100" max="60000" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] px-2 py-1.5 text-sm text-[color:var(--text-primary)]" :placeholder="t.dwellMsLabel" />
-        </div>
-        <div>
-          <label class="block text-[10px] text-[color:var(--text-muted)] mb-1">{{ t.samplesLabel }}</label>
-          <input v-model.number="samplesPerPoint" type="number" min="1" max="1000" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] px-2 py-1.5 text-sm text-[color:var(--text-primary)]" :placeholder="t.samplesLabel" />
-        </div>
+  <div class="step-content">
+    <NCard size="small" :bordered="true" class="section-card">
+      <div class="layout-basics">
+        <div><NText depth="3" style="font-size:10px">{{ t.testNameLabel }}</NText><NInput v-model:value="testName" size="small" :placeholder="t.testNameLabel" /></div>
+        <div><NText depth="3" style="font-size:10px">{{ t.dwellMsLabel }}</NText><NInputNumber v-model:value="dwellTimeMs" :min="100" :max="60000" size="small" style="width:100%" /></div>
+        <div><NText depth="3" style="font-size:10px">{{ t.samplesLabel }}</NText><NInputNumber v-model:value="samplesPerPoint" :min="1" :max="1000" size="small" style="width:100%" /></div>
       </div>
-    </section>
+    </NCard>
 
-    <section class="flex gap-1.5">
-      <button v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p"
-        @click="pattern = p"
-        class="px-3 py-1.5 text-sm font-medium rounded-[var(--radius-sm)] transition-colors"
-        :class="pattern === p ? 'bg-[color:var(--accent-primary)] text-white' : 'bg-[color:var(--bg-panel)] text-[color:var(--text-secondary)] border border-[color:var(--border-default)] hover:bg-[color:var(--bg-panel-strong)]'">
-        {{ patternLabel }}
-      </button>
-    </section>
+    <NSpace size="small">
+      <NButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="tiny" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ patternLabel }}</NButton>
+    </NSpace>
 
-    <!-- Line pattern -->
-    <section v-if="pattern === 'line'" class="p-3 rounded-[var(--radius-md)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)]">
-      <div class="grid gap-3 lg:grid-cols-[180px_1fr]">
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase mb-2">{{ t.pointLayout }}</div>
-          <div class="grid grid-cols-2 gap-1.5">
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.startX }}</label><input v-model.number="lineConfig.startX" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.startY }}</label><input v-model.number="lineConfig.startY" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.endX }}</label><input v-model.number="lineConfig.endX" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.endY }}</label><input v-model.number="lineConfig.endY" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
+    <NCard v-if="pattern === 'line'" size="small" :bordered="true" class="section-card">
+      <div class="seg-grid">
+        <div class="seg-side">
+          <NText depth="3" style="font-size:10px;font-weight:500">{{ t.pointLayout }}</NText>
+          <div class="seg-pts">
+            <div><NText depth="3" style="font-size:9px">{{ t.startX }}</NText><NInputNumber v-model:value="lineConfig.startX" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.startY }}</NText><NInputNumber v-model:value="lineConfig.startY" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.endX }}</NText><NInputNumber v-model:value="lineConfig.endX" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.endY }}</NText><NInputNumber v-model:value="lineConfig.endY" size="tiny" style="width:100%" /></div>
           </div>
         </div>
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="flex items-center justify-between mb-1.5">
-            <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase">{{ t.xSegments }}</div>
-            <UiButton size="sm" variant="secondary" @click="addSegment">{{ t.addSegment }}</UiButton>
-          </div>
-          <div class="flex items-center gap-1.5 pb-1 text-[9px] text-[color:var(--text-muted)]">
-            <div class="flex-1">{{ t.start }}</div><div class="flex-1">{{ t.end }}</div><div class="flex-1">{{ t.step }}</div><div class="w-12"></div>
-          </div>
-          <div v-for="(segment, index) in lineConfig.xStepSegments" :key="index" class="mb-1.5">
-            <div class="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-              <input v-model.number="segment.start" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(lineXSegmentErrors, index, 'start') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.end" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(lineXSegmentErrors, index, 'end') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.step" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(lineXSegmentErrors, index, 'step') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <UiButton size="sm" variant="danger" :disabled="lineConfig.xStepSegments.length === 1" @click="removeSegment(index)">{{ t.del }}</UiButton>
-            </div>
-            <div v-if="getSegmentError(lineXSegmentErrors, index, 'start') || getSegmentError(lineXSegmentErrors, index, 'end') || getSegmentError(lineXSegmentErrors, index, 'step')" class="text-[8px] text-red-500 mt-0.5 pl-1">
-              {{ getSegmentError(lineXSegmentErrors, index, 'start') || getSegmentError(lineXSegmentErrors, index, 'end') || getSegmentError(lineXSegmentErrors, index, 'step') }}
-            </div>
+        <div class="seg-list">
+          <div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.xSegments }}</NText><NButton size="tiny" secondary @click="addSegment">{{ t.addSegment }}</NButton></div>
+          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+          <div v-for="(s, i) in lineConfig.xStepSegments" :key="i" class="seg-row">
+            <NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'start') ? 'error' : undefined" />
+            <NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'end') ? 'error' : undefined" />
+            <NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'step') ? 'error' : undefined" />
+            <NButton size="tiny" secondary :disabled="lineConfig.xStepSegments.length === 1" @click="removeSegment(i)">{{ t.del }}</NButton>
           </div>
         </div>
       </div>
-    </section>
+    </NCard>
 
-    <!-- Rectangle pattern -->
-    <section v-else-if="pattern === 'rectangle'" class="p-3 rounded-[var(--radius-md)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)]">
-      <div class="space-y-3">
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase mb-2">{{ t.pointLayout }} ({{ t.xMin }}: {{ computedRectangleRange.xMin }}, {{ t.xMax }}: {{ computedRectangleRange.xMax }}, {{ t.yMin }}: {{ computedRectangleRange.yMin }}, {{ t.yMax }}: {{ computedRectangleRange.yMax }})</div>
+    <NCard v-else-if="pattern === 'rectangle'" size="small" :bordered="true" class="section-card">
+      <NText depth="3" style="font-size:10px;font-weight:500;display:block;margin-bottom:8px">{{ t.pointLayout }} (X: {{ computedRectangleRange.xMin }}..{{ computedRectangleRange.xMax }}, Y: {{ computedRectangleRange.yMin }}..{{ computedRectangleRange.yMax }})</NText>
+      <div class="seg-col-list">
+        <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">X {{ t.xSegments }}</NText><NButton size="tiny" secondary @click="addRectangleXSegment">{{ t.addSegment }}</NButton></div>
+          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+          <div v-for="(s, i) in rectangleConfig.xStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="rectangleConfig.xStepSegments.length === 1" @click="removeRectangleXSegment(i)">{{ t.del }}</NButton></div>
         </div>
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="flex items-center justify-between mb-1.5">
-            <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase">{{ t.xSegments }}</div>
-            <UiButton size="sm" variant="secondary" @click="addRectangleXSegment">{{ t.addSegment }}</UiButton>
-          </div>
-          <div class="flex items-center gap-1.5 pb-1 text-[9px] text-[color:var(--text-muted)]"><div class="flex-1">{{ t.start }}</div><div class="flex-1">{{ t.end }}</div><div class="flex-1">{{ t.step }}</div><div class="w-12"></div></div>
-          <div v-for="(segment, index) in rectangleConfig.xStepSegments" :key="index" class="mb-1.5">
-            <div class="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-              <input v-model.number="segment.start" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleXSegmentErrors, index, 'start') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.end" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleXSegmentErrors, index, 'end') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.step" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleXSegmentErrors, index, 'step') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <UiButton size="sm" variant="danger" :disabled="rectangleConfig.xStepSegments.length === 1" @click="removeRectangleXSegment(index)">{{ t.del }}</UiButton>
-            </div>
-            <div v-if="getSegmentError(rectangleXSegmentErrors, index, 'start') || getSegmentError(rectangleXSegmentErrors, index, 'end') || getSegmentError(rectangleXSegmentErrors, index, 'step')" class="text-[8px] text-red-500 mt-0.5 pl-1">
-              {{ getSegmentError(rectangleXSegmentErrors, index, 'start') || getSegmentError(rectangleXSegmentErrors, index, 'end') || getSegmentError(rectangleXSegmentErrors, index, 'step') }}
-            </div>
-          </div>
-        </div>
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="flex items-center justify-between mb-1.5">
-            <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase">{{ t.ySegments }}</div>
-            <UiButton size="sm" variant="secondary" @click="addRectangleYSegment">{{ t.addSegment }}</UiButton>
-          </div>
-          <div class="flex items-center gap-1.5 pb-1 text-[9px] text-[color:var(--text-muted)]"><div class="flex-1">{{ t.start }}</div><div class="flex-1">{{ t.end }}</div><div class="flex-1">{{ t.step }}</div><div class="w-12"></div></div>
-          <div v-for="(segment, index) in rectangleConfig.yStepSegments" :key="index" class="mb-1.5">
-            <div class="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-              <input v-model.number="segment.start" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleYSegmentErrors, index, 'start') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.end" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleYSegmentErrors, index, 'end') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <input v-model.number="segment.step" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(rectangleYSegmentErrors, index, 'step') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-              <UiButton size="sm" variant="danger" :disabled="rectangleConfig.yStepSegments.length === 1" @click="removeRectangleYSegment(index)">{{ t.del }}</UiButton>
-            </div>
-            <div v-if="getSegmentError(rectangleYSegmentErrors, index, 'start') || getSegmentError(rectangleYSegmentErrors, index, 'end') || getSegmentError(rectangleYSegmentErrors, index, 'step')" class="text-[8px] text-red-500 mt-0.5 pl-1">
-              {{ getSegmentError(rectangleYSegmentErrors, index, 'start') || getSegmentError(rectangleYSegmentErrors, index, 'end') || getSegmentError(rectangleYSegmentErrors, index, 'step') }}
-            </div>
-          </div>
+        <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">Y {{ t.ySegments }}</NText><NButton size="tiny" secondary @click="addRectangleYSegment">{{ t.addSegment }}</NButton></div>
+          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+          <div v-for="(s, i) in rectangleConfig.yStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="rectangleConfig.yStepSegments.length === 1" @click="removeRectangleYSegment(i)">{{ t.del }}</NButton></div>
         </div>
       </div>
-    </section>
+    </NCard>
 
-    <!-- Sector pattern -->
-    <section v-else-if="pattern === 'sector'" class="p-3 rounded-[var(--radius-md)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)]">
-      <div class="grid gap-3 lg:grid-cols-[180px_1fr]">
-        <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-          <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase mb-2">{{ t.pointLayout }}</div>
-          <div class="grid grid-cols-2 gap-1.5">
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.centerX }}</label><input v-model.number="sectorConfig.centerX" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.centerY }}</label><input v-model.number="sectorConfig.centerY" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.radiusMin }}</label><input v-model.number="sectorConfig.radiusMin" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.radiusMax }}</label><input v-model.number="sectorConfig.radiusMax" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.angleStart }}</label><input v-model.number="sectorConfig.angleStart" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-            <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">{{ t.angleEnd }}</label><input v-model.number="sectorConfig.angleEnd" type="number" class="w-full rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
+    <NCard v-else-if="pattern === 'sector'" size="small" :bordered="true" class="section-card">
+      <div class="seg-grid">
+        <div class="seg-side">
+          <NText depth="3" style="font-size:10px;font-weight:500">{{ t.pointLayout }}</NText>
+          <div class="seg-pts">
+            <div><NText depth="3" style="font-size:9px">{{ t.centerX }}</NText><NInputNumber v-model:value="sectorConfig.centerX" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.centerY }}</NText><NInputNumber v-model:value="sectorConfig.centerY" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.radiusMin }}</NText><NInputNumber v-model:value="sectorConfig.radiusMin" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.radiusMax }}</NText><NInputNumber v-model:value="sectorConfig.radiusMax" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.angleStart }}</NText><NInputNumber v-model:value="sectorConfig.angleStart" size="tiny" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:9px">{{ t.angleEnd }}</NText><NInputNumber v-model:value="sectorConfig.angleEnd" size="tiny" style="width:100%" /></div>
           </div>
         </div>
-        <div class="space-y-3">
-          <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-            <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase">{{ t.radiusSegments }}</div>
-              <UiButton size="sm" variant="secondary" @click="addSectorRadialSegment">{{ t.addSegment }}</UiButton>
-            </div>
-            <div class="flex items-center gap-1.5 pb-1 text-[9px] text-[color:var(--text-muted)]"><div class="flex-1">{{ t.start }}</div><div class="flex-1">{{ t.end }}</div><div class="flex-1">{{ t.step }}</div><div class="w-12"></div></div>
-            <div v-for="(segment, index) in sectorConfig.radialStepSegments" :key="index" class="mb-1.5">
-              <div class="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-                <input v-model.number="segment.start" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorRadialSegmentErrors, index, 'start') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <input v-model.number="segment.end" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorRadialSegmentErrors, index, 'end') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <input v-model.number="segment.step" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorRadialSegmentErrors, index, 'step') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <UiButton size="sm" variant="danger" :disabled="sectorConfig.radialStepSegments.length === 1" @click="removeSectorRadialSegment(index)">{{ t.del }}</UiButton>
-              </div>
-              <div v-if="getSegmentError(sectorRadialSegmentErrors, index, 'start') || getSegmentError(sectorRadialSegmentErrors, index, 'end') || getSegmentError(sectorRadialSegmentErrors, index, 'step')" class="text-[8px] text-red-500 mt-0.5 pl-1">
-                {{ getSegmentError(sectorRadialSegmentErrors, index, 'start') || getSegmentError(sectorRadialSegmentErrors, index, 'end') || getSegmentError(sectorRadialSegmentErrors, index, 'step') }}
-              </div>
-            </div>
+        <div class="seg-col-list">
+          <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.radiusSegments }}</NText><NButton size="tiny" secondary @click="addSectorRadialSegment">{{ t.addSegment }}</NButton></div>
+            <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+            <div v-for="(s, i) in sectorConfig.radialStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="sectorConfig.radialStepSegments.length === 1" @click="removeSectorRadialSegment(i)">{{ t.del }}</NButton></div>
           </div>
-          <div class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)]">
-            <div class="flex items-center justify-between mb-1.5">
-              <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase">{{ t.angleSegments }}</div>
-              <UiButton size="sm" variant="secondary" @click="addSectorAngularSegment">{{ t.addSegment }}</UiButton>
-            </div>
-            <div class="flex items-center gap-1.5 pb-1 text-[9px] text-[color:var(--text-muted)]"><div class="flex-1">{{ t.start }}</div><div class="flex-1">{{ t.end }}</div><div class="flex-1">{{ t.step }}</div><div class="w-12"></div></div>
-            <div v-for="(segment, index) in sectorConfig.angularStepSegments" :key="index" class="mb-1.5">
-              <div class="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-                <input v-model.number="segment.start" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorAngularSegmentErrors, index, 'start') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <input v-model.number="segment.end" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorAngularSegmentErrors, index, 'end') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <input v-model.number="segment.step" type="number" class="w-full rounded-[var(--radius-sm)] border px-2 py-1 text-sm text-[color:var(--text-primary)]" :class="hasSegmentError(sectorAngularSegmentErrors, index, 'step') ? 'border-red-500 bg-red-50' : 'border-[color:var(--border-default)] bg-[color:var(--bg-panel)]'" />
-                <UiButton size="sm" variant="danger" :disabled="sectorConfig.angularStepSegments.length === 1" @click="removeSectorAngularSegment(index)">{{ t.del }}</UiButton>
-              </div>
-              <div v-if="getSegmentError(sectorAngularSegmentErrors, index, 'start') || getSegmentError(sectorAngularSegmentErrors, index, 'end') || getSegmentError(sectorAngularSegmentErrors, index, 'step')" class="text-[8px] text-red-500 mt-0.5 pl-1">
-                {{ getSegmentError(sectorAngularSegmentErrors, index, 'start') || getSegmentError(sectorAngularSegmentErrors, index, 'end') || getSegmentError(sectorAngularSegmentErrors, index, 'step') }}
-              </div>
-            </div>
+          <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.angleSegments }}</NText><NButton size="tiny" secondary @click="addSectorAngularSegment">{{ t.addSegment }}</NButton></div>
+            <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+            <div v-for="(s, i) in sectorConfig.angularStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="sectorConfig.angularStepSegments.length === 1" @click="removeSectorAngularSegment(i)">{{ t.del }}</NButton></div>
           </div>
         </div>
       </div>
-    </section>
+    </NCard>
 
-    <!-- Custom pattern -->
-    <section v-else class="p-3 rounded-[var(--radius-md)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel)]">
-      <div class="text-[10px] font-medium text-[color:var(--text-muted)] uppercase mb-2">{{ t.pointLayout }}</div>
-      <div class="flex flex-wrap items-end gap-2">
-        <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">X</label><input v-model.number="customPointInput.x" type="number" class="w-20 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-        <div><label class="block text-[9px] text-[color:var(--text-muted)] mb-0.5">Y</label><input v-model.number="customPointInput.y" type="number" class="w-20 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] px-2 py-1 text-sm text-[color:var(--text-primary)]" /></div>
-        <UiButton size="sm" variant="primary" @click="addCustomPoint">{{ t.addPoint }}</UiButton>
-      </div>
-      <div class="mt-3 space-y-1.5">
-        <div v-for="(point, index) in customPoints" :key="index" class="p-2 rounded-[var(--radius-sm)] border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] flex items-center justify-between">
-          <span class="font-mono text-xs text-[color:var(--text-primary)]">{{ t.point }} {{ index + 1 }}: {{ point.x }}, {{ point.y }}</span>
-          <UiButton size="sm" variant="danger" @click="removeCustomPoint(index)">{{ t.remove }}</UiButton>
+    <NCard v-else size="small" :bordered="true" class="section-card">
+      <NText depth="3" style="font-size:10px;font-weight:500;display:block;margin-bottom:8px">{{ t.pointLayout }}</NText>
+      <NSpace size="small" align="flex-end">
+        <div><NText depth="3" style="font-size:9px">X</NText><NInputNumber v-model:value="customPointInput.x" size="tiny" style="width:80px" /></div>
+        <div><NText depth="3" style="font-size:9px">Y</NText><NInputNumber v-model:value="customPointInput.y" size="tiny" style="width:80px" /></div>
+        <NButton size="tiny" type="primary" @click="addCustomPoint">{{ t.addPoint }}</NButton>
+      </NSpace>
+      <div v-if="customPoints.length > 0" class="pt-list">
+        <div v-for="(pt, i) in customPoints" :key="i" class="pt-row">
+          <NText depth="1" style="font-size:11px">{{ t.point }} {{ i + 1 }}: {{ pt.x }}, {{ pt.y }}</NText>
+          <NButton size="tiny" secondary @click="removeCustomPoint(i)">{{ t.remove }}</NButton>
         </div>
       </div>
-    </section>
+    </NCard>
   </div>
 </template>
 
+<style scoped>
+.step-content { display:flex; flex-direction:column; gap:12px; }
+.section-card { font-size:12px; }
+.layout-basics { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+.seg-grid { display:grid; grid-template-columns:180px 1fr; gap:10px; }
+.seg-side { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.seg-pts { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
+.seg-list { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.seg-col-list { display:flex; flex-direction:column; gap:8px; }
+.seg-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.seg-labels { display:flex; gap:6px; padding:0 2px 4px; }
+.seg-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+.pt-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.pt-row { display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+</style>

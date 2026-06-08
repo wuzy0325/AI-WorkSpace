@@ -6,6 +6,7 @@ import { deviceApi } from '@api/deviceApi'
 import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
+import { NButton, NCheckbox, NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -751,17 +752,17 @@ function channelLabel(c: ChannelConfig): string {
             <h2 class="drawer-title">设备管理</h2>
             <p class="drawer-subtitle">管理设备配置、扫描和连接</p>
           </div>
-          <button class="drawer-close" @click="close">✕</button>
+          <NButton quaternary size="small" @click="close">✕</NButton>
         </header>
 
         <div class="drawer-toolbar">
-          <button class="btn btn-primary" @click="openCreate()">
+          <NButton type="primary" size="small" @click="openCreate()">
             <span class="btn-icon">+</span> 新建设备
-          </button>
-          <button class="btn btn-second" :disabled="scanning" @click="runScan">
+          </NButton>
+          <NButton secondary size="small" :disabled="scanning" @click="runScan">
             <span class="btn-icon" :class="{ spin: scanning }">⟳</span>
             {{ scanning ? '扫描中...' : '扫描' }}
-          </button>
+          </NButton>
           <div class="drawer-total">
             设备: {{ deviceStore.profiles.length }}
           </div>
@@ -771,9 +772,9 @@ function channelLabel(c: ChannelConfig): string {
           <div class="drawer-discovered-head">
             <span class="drawer-discovered-label">发现的设备</span>
             <div class="drawer-discovered-actions">
-              <button class="btn btn-xs btn-primary" @click="addAllDiscoveredDevices">全部添加</button>
+              <NButton type="primary" size="tiny" @click="addAllDiscoveredDevices">全部添加</NButton>
               <span class="discovered-pulse" />
-              <button class="btn btn-xs btn-ghost" @click="clearDiscovered">✕</button>
+              <NButton quaternary size="tiny" @click="clearDiscovered">✕</NButton>
             </div>
           </div>
           <div class="drawer-discovered-list">
@@ -790,9 +791,9 @@ function channelLabel(c: ChannelConfig): string {
                   已匹配: {{ matchedProfileForDiscovered(d)?.name }}
                 </div>
               </div>
-              <button class="btn btn-xs" :class="matchedProfileForDiscovered(d) ? 'btn-second' : 'btn-green'" @click="handleDiscoveredDeviceAction(d)">
+              <NButton size="tiny" @click="handleDiscoveredDeviceAction(d)">
                 {{ discoveryActionLabel(d) }}
-              </button>
+              </NButton>
             </div>
           </div>
         </div>
@@ -808,9 +809,10 @@ function channelLabel(c: ChannelConfig): string {
             <div class="device-card-body">
               <div class="device-card-left">
                 <div class="device-card-row">
-                  <input type="checkbox" class="device-checkbox"
+                  <NCheckbox
                     :checked="isSelected(p.id)"
-                    @change="toggleSelected(p.id)" />
+                    size="small"
+                    @update:checked="toggleSelected(p.id)" />
                   <h3 class="device-card-name">{{ p.name }}</h3>
                   <span class="device-card-type-badge">{{ p.type }}</span>
                 </div>
@@ -822,14 +824,14 @@ function channelLabel(c: ChannelConfig): string {
               </div>
 
               <div class="device-card-right">
-                <button class="btn btn-sm btn-second" @click="openEdit(p)">编辑</button>
-                <button class="btn btn-sm" :class="connectLabel(p) === '断开' ? 'btn-danger' : 'btn-green'" @click="connectToggle(p)">
+                <NButton secondary size="small" @click="openEdit(p)">编辑</NButton>
+                <NButton size="small" @click="connectToggle(p)">
                   {{ connectLabel(p) }}
-                </button>
-                <button v-if="deviceStore.statusFor(p.id) === 'Connected'" class="btn btn-sm" :class="deviceStore.acquiringFor(p.id) ? 'btn-warn' : 'btn-green'" @click="toggleAcquisition(p)">
+                </NButton>
+                <NButton v-if="deviceStore.statusFor(p.id) === 'Connected'" size="small" @click="toggleAcquisition(p)">
                   {{ deviceStore.acquiringFor(p.id) ? '停止' : '采集' }}
-                </button>
-                <button class="btn btn-sm btn-danger ghost" @click="removeProfile(p)">删除</button>
+                </NButton>
+                <NButton type="error" size="small" secondary @click="removeProfile(p)">删除</NButton>
               </div>
             </div>
 
@@ -841,10 +843,10 @@ function channelLabel(c: ChannelConfig): string {
 
         <div v-if="selectedIds.length" class="drawer-bulk">
           <span>已选 <strong>{{ selectedCount }}</strong></span>
-          <button class="btn btn-xs btn-green" :disabled="!selectedCount" @click="bulkConnect">批量连接</button>
-          <button class="btn btn-xs btn-second" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</button>
-          <button class="btn btn-xs btn-danger" :disabled="!selectedCount" @click="bulkDelete">批量删除</button>
-          <button class="btn btn-xs btn-ghost" @click="clearSelection" style="margin-left:auto">清除</button>
+          <NButton type="primary" size="tiny" :disabled="!selectedCount" @click="bulkConnect">批量连接</NButton>
+          <NButton secondary size="tiny" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</NButton>
+          <NButton type="error" size="tiny" :disabled="!selectedCount" @click="bulkDelete">批量删除</NButton>
+          <NButton quaternary size="tiny" @click="clearSelection">清除</NButton>
         </div>
       </div>
 
@@ -864,7 +866,7 @@ function channelLabel(c: ChannelConfig): string {
                 </div>
               </div>
             </div>
-            <button class="drawer-close" @click="tryCloseEditor">✕</button>
+            <NButton quaternary size="small" @click="tryCloseEditor">✕</NButton>
           </header>
 
           <!-- 标签页切换 -->
@@ -921,7 +923,7 @@ function channelLabel(c: ChannelConfig): string {
                 <div class="editor-grid">
                   <div class="editor-field col-6">
                     <label class="editor-label">设备名称 *</label>
-                    <input v-model="draft.name" type="text" class="editor-input" :disabled="isReadOnly" placeholder="输入设备名称" />
+                    <NInput v-model:value="draft.name" size="small" :disabled="isReadOnly" placeholder="输入设备名称" />
                     <div v-if="fieldErrors.name" class="editor-field-error">● {{ fieldErrors.name }}</div>
                   </div>
                   <div class="editor-field col-4">
@@ -935,7 +937,7 @@ function channelLabel(c: ChannelConfig): string {
                   </div>
                   <div v-if="draft.type !== 'DSA3217'" class="editor-field col-2">
                     <label class="editor-label">采样率 (Hz)</label>
-                    <input v-model.number="draft.samplingRate" type="number" class="editor-input" :disabled="isReadOnly" />
+                    <NInputNumber v-model:value="draft.samplingRate" size="small" style="width:100%" :disabled="isReadOnly" />
                     <div v-if="fieldErrors.samplingRate" class="editor-field-error">● {{ fieldErrors.samplingRate }}</div>
                   </div>
                   <div class="editor-field col-12">
@@ -984,22 +986,22 @@ function channelLabel(c: ChannelConfig): string {
                 <div class="editor-grid">
                   <div class="editor-field col-4">
                     <label class="editor-label">AVG（平均值 1~240）</label>
-                    <input
-                      v-model.number="dsa3217Avg"
-                      type="number"
-                      min="1" max="240"
+                    <NInputNumber
+                      v-model:value="dsa3217Avg"
+                      :min="1" :max="240"
                       :disabled="isReadOnly"
-                      class="editor-input"
+                      size="small"
+                      style="width:100%"
                     />
                   </div>
                   <div class="editor-field col-4">
                     <label class="editor-label">PERIOD（周期 73~65535 μs）</label>
-                    <input
-                      v-model.number="dsa3217Period"
-                      type="number"
-                      min="73" max="65535"
+                    <NInputNumber
+                      v-model:value="dsa3217Period"
+                      :min="73" :max="65535"
                       :disabled="isReadOnly"
-                      class="editor-input"
+                      size="small"
+                      style="width:100%"
                     />
                   </div>
                   <div class="editor-field col-4">
@@ -1031,12 +1033,12 @@ function channelLabel(c: ChannelConfig): string {
                   <template v-if="isTcpType(draft.type) && draft.transport === 'tcp'">
                     <div class="editor-field col-5">
                       <label class="editor-label">IP 地址 *</label>
-                      <input v-model="draft.address" class="editor-input" :disabled="isReadOnly" placeholder="192.168.1.100" />
+                      <NInput v-model:value="draft.address" size="small" :disabled="isReadOnly" placeholder="192.168.1.100" />
                       <div v-if="fieldErrors.address" class="editor-field-error">● {{ fieldErrors.address }}</div>
                     </div>
                     <div class="editor-field col-3">
                       <label class="editor-label">端口 *</label>
-                      <input v-model.number="draft.port" type="number" class="editor-input" :disabled="isReadOnly" />
+                      <NInputNumber v-model:value="draft.port" size="small" style="width:100%" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
                     </div>
                   </template>
@@ -1044,22 +1046,21 @@ function channelLabel(c: ChannelConfig): string {
                   <template v-if="isTcpType(draft.type) && draft.transport === 'serial'">
                     <div class="editor-field col-7">
                       <label class="editor-label">串口号 *</label>
-                      <input v-model="draft.serialPort" class="editor-input" :disabled="isReadOnly" placeholder="COM1" />
+                      <NInput v-model:value="draft.serialPort" size="small" :disabled="isReadOnly" placeholder="COM1" />
                       <div v-if="fieldErrors.serialPort" class="editor-field-error">● {{ fieldErrors.serialPort }}</div>
                     </div>
                     <div class="editor-field col-5">
                       <label class="editor-label">波特率 *</label>
-                      <input v-model.number="draft.baudRate" type="number" class="editor-input" :disabled="isReadOnly" />
+                      <NInputNumber v-model:value="draft.baudRate" size="small" style="width:100%" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.baudRate" class="editor-field-error">● {{ fieldErrors.baudRate }}</div>
                     </div>
                   </template>
 
                   <div class="editor-field col-12">
                     <div class="editor-autoconnect-row">
-                      <label class="editor-autoconnect-label">
-                        <input v-model="draft.autoConnect" type="checkbox" :disabled="isReadOnly" class="editor-autoconnect-check" />
+                      <NCheckbox v-model:checked="draft.autoConnect" size="small" :disabled="isReadOnly">
                         保存后自动连接
-                      </label>
+                      </NCheckbox>
                     </div>
                   </div>
                 </div>
@@ -1094,12 +1095,10 @@ function channelLabel(c: ChannelConfig): string {
                       <tr v-for="c in draft.channels" :key="c.index">
                         <td class="font-mono">{{ channelLabel(c).padStart(2, '0') }}</td>
                         <td>
-                          <input v-model="c.name" :disabled="isReadOnly" class="editor-ch-input" />
+                          <NInput v-model:value="c.name" size="small" :disabled="isReadOnly" />
                         </td>
                         <td>
-                          <select v-model="c.thermocoupleType" :disabled="isReadOnly" class="editor-ch-tc">
-                            <option v-for="t in TC_TYPES" :key="t" :value="t">{{ t }}</option>
-                          </select>
+                          <NSelect v-model:value="c.thermocoupleType" :options="[{label:'K',value:'K'},{label:'T',value:'T'},{label:'E',value:'E'},{label:'J',value:'J'},{label:'N',value:'N'},{label:'S',value:'S'},{label:'R',value:'R'},{label:'B',value:'B'}]" size="tiny" style="min-width:80px" :disabled="isReadOnly" />
                         </td>
                         <td class="text-right text-muted">℃</td>
                       </tr>
@@ -1135,16 +1134,15 @@ function channelLabel(c: ChannelConfig): string {
               <div v-else class="editor-channels-full">
                 <div class="editor-channels-toolbar">
                   <div class="editor-channels-toolbar-left">
-                    <button class="btn btn-xs btn-second" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</button>
-                    <button class="btn btn-xs btn-second" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</button>
-                    <button class="btn btn-xs btn-second" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</button>
+                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</NButton>
+                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</NButton>
+                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</NButton>
                   </div>
                   <div class="editor-channels-toolbar-right">
-                    <input v-model="channelKeyword" type="text" class="editor-ch-search" placeholder="过滤通道..." />
-                    <label class="editor-ch-filter-label">
-                      <input v-model="enabledOnlyChannels" type="checkbox" class="editor-ch-filter-check" />
+                    <NInput v-model:value="channelKeyword" size="small" placeholder="过滤通道..." />
+                    <NCheckbox v-model:checked="enabledOnlyChannels" size="small">
                       仅看启用
-                    </label>
+                    </NCheckbox>
                   </div>
                 </div>
 
@@ -1153,19 +1151,19 @@ function channelLabel(c: ChannelConfig): string {
                   <div class="editor-ch-batch-item">
                     <div class="editor-label">批量量程 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-range">
-                      <input
-                        v-model.number="deviceRangeMin"
-                        type="number"
+                      <NInputNumber
+                        v-model:value="deviceRangeMin"
+                        size="small"
+                        style="width:100%"
                         :disabled="isReadOnly"
-                        class="editor-ch-batch-input"
                         placeholder="最小值"
                       />
                       <span class="editor-ch-batch-sep">~</span>
-                      <input
-                        v-model.number="deviceRangeMax"
-                        type="number"
+                      <NInputNumber
+                        v-model:value="deviceRangeMax"
+                        size="small"
+                        style="width:100%"
                         :disabled="isReadOnly"
-                        class="editor-ch-batch-input"
                         placeholder="最大值"
                       />
                     </div>
@@ -1174,12 +1172,12 @@ function channelLabel(c: ChannelConfig): string {
                   <div class="editor-ch-batch-item">
                     <div class="editor-label">批量精度 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-precision">
-                      <input
-                        v-model.number="devicePrecision"
-                        type="number"
-                        min="0"
+                      <NInputNumber
+                        v-model:value="devicePrecision"
+                        size="small"
+                        style="width:100%"
+                        :min="0"
                         :disabled="isReadOnly"
-                        class="editor-ch-batch-input-sm"
                         placeholder="0"
                       />
                       <span class="editor-ch-batch-hint">全局小数位</span>
@@ -1202,21 +1200,21 @@ function channelLabel(c: ChannelConfig): string {
                     <tbody>
                       <tr v-for="row in channelRows" :key="row.channel.index">
                         <td class="text-center">
-                          <input v-model="row.channel.enabled" type="checkbox" :disabled="isReadOnly" class="editor-ch-check" />
+                          <NCheckbox v-model:checked="row.channel.enabled" size="small" :disabled="isReadOnly" />
                         </td>
                         <td class="font-mono">{{ channelLabel(row.channel).padStart(2, '0') }}</td>
                         <td>
-                          <input v-model="row.channel.name" :disabled="isReadOnly" class="editor-ch-input" />
+                          <NInput v-model:value="row.channel.name" size="small" :disabled="isReadOnly" />
                         </td>
                         <td>
                           <div class="editor-ch-range">
-                            <input v-model.number="row.channel.rangeMin" type="number" :disabled="isReadOnly || row.originalIndex >= 16" class="editor-ch-range-input" />
+                            <NInputNumber v-model:value="row.channel.rangeMin" size="small" style="width:100%" :disabled="isReadOnly || row.originalIndex >= 16" />
                             <span>~</span>
-                            <input v-model.number="row.channel.rangeMax" type="number" :disabled="isReadOnly || row.originalIndex >= 16" class="editor-ch-range-input" />
+                            <NInputNumber v-model:value="row.channel.rangeMax" size="small" style="width:100%" :disabled="isReadOnly || row.originalIndex >= 16" />
                           </div>
                         </td>
                         <td>
-                          <input v-model.number="row.channel.precision" type="number" min="0" :disabled="isReadOnly || row.originalIndex >= 16" class="editor-ch-precision-input" />
+                          <NInputNumber v-model:value="row.channel.precision" size="small" style="width:100%" :min="0" :disabled="isReadOnly || row.originalIndex >= 16" />
                         </td>
                       </tr>
                     </tbody>
@@ -1259,17 +1257,17 @@ function channelLabel(c: ChannelConfig): string {
               </div>
             </div>
             <div class="editor-footer-right">
-              <button class="btn btn-second" @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</button>
-              <button
+              <NButton secondary @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</NButton>
+              <NButton
                 v-if="!isReadOnly"
-                class="btn btn-primary"
+                type="primary"
+                size="small"
                 :disabled="saving || validationErrorCount > 0"
-                :class="{ 'btn-saving': saving }"
                 @click="saveDraft"
               >
                 <span v-if="saving" class="btn-spinner" />
                 {{ saving ? '保存中...' : '保存' }}
-              </button>
+              </NButton>
             </div>
           </footer>
         </div>

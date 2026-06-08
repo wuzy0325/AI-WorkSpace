@@ -2,7 +2,25 @@
 import { computed, inject, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useTheme } from '@composables/useTheme'
-import { Activity, Wifi, Network, Loader2, Settings2, Eye, EyeOff, LineChart, Layers } from '@lucide/vue'
+import {
+  NButton,
+  NCard,
+  NCheckbox,
+  NModal,
+  NResult,
+  NSpace,
+  NTag,
+  NText,
+} from 'naive-ui'
+import {
+  Activity,
+  Layers,
+  LineChart,
+  Loader2,
+  Network,
+  Settings2,
+  Wifi,
+} from '@lucide/vue'
 import ChannelGrid from '@components/device/ChannelGrid.vue'
 import RealtimeChart from '@components/device/RealtimeChart.vue'
 
@@ -77,13 +95,11 @@ async function connectDisconnect() {
   }
 }
 
-function statusBadgeClass(): string {
-  if (isAcquiring.value) return 'detail__status-badge--acquiring'
-  if (status.value === 'Stopping') return 'detail__status-badge--connecting'
-  if (status.value === 'Connected') return 'detail__status-badge--connected'
-  if (status.value === 'Connecting') return 'detail__status-badge--connecting'
-  if (status.value === 'Error') return 'detail__status-badge--error'
-  return 'detail__status-badge--disconnected'
+function statusType(): 'success' | 'warning' | 'error' | 'default' {
+  if (isAcquiring.value || status.value === 'Connected') return 'success'
+  if (status.value === 'Connecting' || status.value === 'Stopping') return 'warning'
+  if (status.value === 'Error') return 'error'
+  return 'default'
 }
 
 function statusLabel(): string {
@@ -98,166 +114,138 @@ function statusLabel(): string {
 
 <template>
   <div class="detail">
-    <!-- 空状态 -->
-    <div v-if="!selected" class="detail__empty glass-panel">
+    <div v-if="!selected" class="detail__empty">
       <div class="detail__empty-illu">
         <div class="detail__empty-icon">
           <Activity class="detail__empty-icon-svg" />
         </div>
         <div class="detail__empty-rings">
-          <div class="detail__empty-ring"></div>
-          <div class="detail__empty-ring"></div>
-          <div class="detail__empty-ring"></div>
+          <div class="detail__empty-ring" />
+          <div class="detail__empty-ring" />
+          <div class="detail__empty-ring" />
         </div>
       </div>
-      <h2 class="detail__empty-title">选择一个设备开始监控</h2>
-      <p class="detail__empty-hint">从左侧设备列表中选择一台 T1603，或者点击顶栏 + 添加新设备</p>
+      <NText tag="h2" depth="1" style="font-size:1.25rem;font-weight:800;letter-spacing:-0.02em">选择一个设备开始监控</NText>
+      <NText depth="3" style="font-size:0.95rem;max-width:30rem;text-align:center;line-height:1.6">从左侧设备列表中选择一台 T1603，或者点击顶栏 + 添加新设备</NText>
       <div class="detail__empty-tips">
         <div class="detail__empty-tip">
-          <Wifi class="detail__empty-tip-icon" />
+          <Wifi :size="14" class="detail__empty-tip-icon" />
           <span>实时波形</span>
         </div>
         <div class="detail__empty-tip">
-          <Layers class="detail__empty-tip-icon" />
+          <Layers :size="14" class="detail__empty-tip-icon" />
           <span>16 通道并行</span>
         </div>
         <div class="detail__empty-tip">
-          <LineChart class="detail__empty-tip-icon" />
+          <LineChart :size="14" class="detail__empty-tip-icon" />
           <span>数据导出</span>
         </div>
       </div>
     </div>
 
-    <!-- 详情内容 -->
     <template v-else>
       <div class="detail__top">
-        <!-- 详情面板头部 -->
-        <header class="detail__header glass-panel">
-        <div class="detail__header-left">
-          <div class="detail__device-icon">
-            <Activity class="detail__device-icon-svg" />
-          </div>
-          <div class="detail__device-info">
-            <h2 class="detail__device-name">{{ selected.name || '未命名设备' }}</h2>
-            <div class="detail__device-meta">
-              <span class="detail__device-meta-item mono">{{ selected.address }}:{{ selected.port }}</span>
-              <span class="detail__device-meta-divider"></span>
-              <span class="detail__device-meta-item">
-                {{ (selected.t1603Config?.thermocoupleTypes || 'K')[0] }} 型热电偶
-              </span>
-              <span class="detail__device-meta-divider"></span>
-              <span class="detail__device-meta-item mono">{{ selected.samplingRate }} Hz</span>
+        <NCard size="small" :bordered="false" class="glass-panel" content-style="padding:0">
+          <div class="detail__header">
+            <div class="detail__header-left">
+              <div class="detail__device-icon">
+                <Activity class="detail__device-icon-svg" />
+              </div>
+              <div class="detail__device-info">
+                <NText tag="h2" depth="1" style="font-size:1rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  {{ selected.name || '未命名设备' }}
+                </NText>
+                <NSpace size="small" align="center" style="color:var(--text-muted);font-size:0.7rem;flex-wrap:wrap">
+                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.address }}:{{ selected.port }}</NText>
+                  <span class="detail__meta-dot" />
+                  <NText depth="3" style="font-size:0.7rem">{{ (selected.t1603Config?.thermocoupleTypes || 'K')[0] }} 型热电偶</NText>
+                  <span class="detail__meta-dot" />
+                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.samplingRate }} Hz</NText>
+                </NSpace>
+              </div>
+            </div>
+            <div class="detail__header-right">
+              <NTag :type="statusType()" size="small" :bordered="false" round>
+                <template #avatar>
+                  <span class="status-dot" :class="`status-dot--${statusType()}`" />
+                </template>
+                {{ statusLabel() }}
+              </NTag>
+              <NButton
+                size="small"
+                :type="status === 'Connected' || status === 'Acquiring' ? 'error' : 'primary'"
+                :loading="status === 'Connecting'"
+                @click="connectDisconnect"
+              >
+                <template #icon>
+                  <Loader2 v-if="status === 'Connecting'" :size="14" class="spin" />
+                  <Network v-else :size="14" />
+                </template>
+                {{ status === 'Connected' || status === 'Acquiring' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}
+              </NButton>
+              <NButton size="small" secondary @click="openConfig()">
+                <template #icon><Settings2 :size="14" /></template>配置
+              </NButton>
             </div>
           </div>
-        </div>
-        <div class="detail__header-right">
-          <div class="detail__status-badge" :class="statusBadgeClass()">
-            <span class="detail__status-dot"></span>
-            {{ statusLabel() }}
-          </div>
-          <button
-            class="detail__action"
-            :class="{
-              'detail__action--connected': status === 'Connected' || status === 'Acquiring',
-            }"
-            :title="status === 'Connected' || status === 'Acquiring' ? '断开连接' : '连接设备'"
-            @click="connectDisconnect"
-          >
-            <Network v-if="status === 'Connected' || status === 'Acquiring'" class="detail__action-icon" />
-            <Loader2 v-else-if="status === 'Connecting'" class="detail__action-icon detail__action-icon--spin" />
-            <Network v-else class="detail__action-icon" />
-            <span>{{ status === 'Connected' || status === 'Acquiring' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}</span>
-          </button>
-          <button
-            class="detail__action detail__action--accent"
-            title="设备配置"
-            @click="openConfig()"
-          >
-            <Settings2 class="detail__action-icon" />
-            <span>配置</span>
-          </button>
-        </div>
-      </header>
+        </NCard>
 
-      <!-- 图表面板 -->
-      <section class="detail__chart glass-panel">
-        <div class="detail__chart-header">
-          <div class="detail__chart-title">
-            <LineChart class="detail__chart-title-icon" />
-            <span>实时波形</span>
-            <span v-if="isChartVisible" class="detail__chart-meta">
-              · {{ selectedChannelCount }} 条曲线
-            </span>
-            <span v-else-if="sampleCount > 0" class="detail__chart-meta detail__chart-meta--hint">
-              · 点击右侧按钮选择通道
-            </span>
-          </div>
-          <div class="detail__chart-tools">
-            <button
-              class="detail__chart-toggle"
-              :class="{ 'detail__chart-toggle--active': showChannelSelector }"
-              :title="showChannelSelector ? '收起通道选择' : '展开通道选择'"
-              @click="openChannelSelection"
-            >
-              <Layers class="detail__chart-toggle-icon" />
-              <span>通道选择</span>
-            </button>
-
-            <div v-if="showChannelSelector" class="detail__channel-popover">
-              <div class="detail__channel-popover-head">
-                <div>
-                  <span class="detail__channel-popover-title">通道选择</span>
-                  <span class="detail__channel-popover-meta">{{ selectedChannelCount }}/{{ enabledCount }}</span>
+        <NCard size="small" :bordered="false" class="glass-panel detail__chart" content-style="display:flex;flex-direction:column;flex:1;min-height:0;padding:0">
+          <div class="detail__chart-header">
+            <div class="detail__chart-title">
+              <LineChart :size="15" style="color:var(--accent)" />
+              <NText depth="1" style="font-size:0.9rem;font-weight:700">实时波形</NText>
+              <NText v-if="isChartVisible" depth="3" style="font-size:0.7rem;margin-left:0.25rem">· {{ selectedChannelCount }} 条曲线</NText>
+              <NText v-else-if="sampleCount > 0" depth="3" style="font-size:0.7rem;margin-left:0.25rem;opacity:0.7">· 点击右侧按钮选择通道</NText>
+            </div>
+            <div class="detail__chart-tools">
+              <NButton
+                size="tiny"
+                :type="showChannelSelector ? 'primary' : 'default'"
+                secondary
+                @click="openChannelSelection"
+              >
+                <template #icon><Layers :size="13" /></template>通道选择
+              </NButton>
+              <div v-if="showChannelSelector" class="detail__channel-popover">
+                <div class="detail__channel-popover-head">
+                  <div>
+                    <NText depth="1" style="font-size:0.72rem;font-weight:700">通道选择</NText>
+                    <NText depth="3" style="font-size:0.7rem">{{ selectedChannelCount }}/{{ enabledCount }}</NText>
+                  </div>
+                  <NSpace size="small">
+                    <NButton size="tiny" quaternary :disabled="isAllChannelsSelected" @click="selectAllChannels">全选</NButton>
+                    <NButton size="tiny" quaternary :disabled="selectedChannelCount === 0" @click="clearAllChannels">全取消</NButton>
+                  </NSpace>
                 </div>
-                <div class="detail__channel-popover-actions">
-                  <button
-                    class="detail__channel-batch-btn"
-                    type="button"
-                    :disabled="isAllChannelsSelected"
-                    @click="selectAllChannels"
+                <div class="detail__channel-selector-grid">
+                  <label
+                    v-for="channel in selectableChannels"
+                    :key="channel.index"
+                    class="detail__channel-option"
+                    :class="{ 'detail__channel-option--active': isChannelSelected(channel.index) }"
                   >
-                    全选
-                  </button>
-                  <button
-                    class="detail__channel-batch-btn"
-                    type="button"
-                    :disabled="selectedChannelCount === 0"
-                    @click="clearAllChannels"
-                  >
-                    全取消
-                  </button>
+                    <NCheckbox
+                      :checked="isChannelSelected(channel.index)"
+                      size="small"
+                      @update:checked="toggleChannel(channel.index)"
+                    />
+                    <span class="detail__channel-option-label">CH{{ channel.index + 1 }}</span>
+                  </label>
                 </div>
-              </div>
-              <div class="detail__channel-selector-grid">
-                <label
-                  v-for="channel in selectableChannels"
-                  :key="channel.index"
-                  class="detail__channel-option"
-                  :class="{ 'detail__channel-option--active': isChannelSelected(channel.index) }"
-                >
-                  <input
-                    class="detail__channel-checkbox"
-                    type="checkbox"
-                    :checked="isChannelSelected(channel.index)"
-                    @change="toggleChannel(channel.index)"
-                  />
-                  <span class="detail__channel-option-label">CH{{ channel.index + 1 }}</span>
-                </label>
               </div>
             </div>
           </div>
-        </div>
-        <div class="detail__chart-body">
-          <RealtimeChart :device-id="selected.id" :max-points="120" />
-        </div>
-      </section>
+          <div class="detail__chart-body">
+            <RealtimeChart :device-id="selected.id" :max-points="120" />
+          </div>
+        </NCard>
       </div>
 
-      <!-- 通道网格 -->
       <section class="detail__channels">
         <div class="detail__channels-header">
-          <h3 class="detail__channels-title">通道监控</h3>
-          <p class="detail__channels-hint">通过上方"通道选择"按钮可以控制波形图中显示的通道</p>
+          <NText depth="1" style="font-size:0.95rem;font-weight:800;letter-spacing:-0.01em">通道监控</NText>
+          <NText depth="3" style="font-size:0.7rem">通过上方"通道选择"按钮可以控制波形图中显示的通道</NText>
         </div>
         <ChannelGrid :device-id="selected.id" />
       </section>
@@ -274,7 +262,6 @@ function statusLabel(): string {
   overflow: hidden;
 }
 
-/* 上方区域：头部 + 波形图，自适应填充剩余空间 */
 .detail__top {
   display: flex;
   flex-direction: column;
@@ -284,9 +271,7 @@ function statusLabel(): string {
   overflow: hidden;
 }
 
-/* ----------------------------
-   空状态
-   ---------------------------- */
+/* ---- empty state ---- */
 .detail__empty {
   display: flex;
   flex-direction: column;
@@ -342,36 +327,13 @@ function statusLabel(): string {
   animation: empty-pulse 3s ease-in-out infinite;
 }
 
-.detail__empty-ring:nth-child(1) {
-  width: 88px;
-  height: 88px;
-  animation-delay: 0s;
-}
+.detail__empty-ring:nth-child(1) { width: 88px; height: 88px; animation-delay: 0s; }
+.detail__empty-ring:nth-child(2) { width: 108px; height: 108px; animation-delay: 0.5s; }
+.detail__empty-ring:nth-child(3) { width: 128px; height: 128px; animation-delay: 1s; }
 
-.detail__empty-ring:nth-child(2) {
-  width: 108px;
-  height: 108px;
-  animation-delay: 0.5s;
-}
-
-.detail__empty-ring:nth-child(3) {
-  width: 128px;
-  height: 128px;
-  animation-delay: 1s;
-}
-
-.detail__empty-title {
-  font-size: var(--font-size-xl);
-  font-weight: 800;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-}
-
-.detail__empty-hint {
-  font-size: var(--font-size-base);
-  color: var(--text-muted);
-  max-width: 30rem;
-  line-height: 1.6;
+@keyframes empty-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.15; transform: scale(1.05); }
 }
 
 .detail__empty-tips {
@@ -390,7 +352,7 @@ function statusLabel(): string {
   background: var(--btn-bg);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-sm);
+  font-size: 0.75rem;
   color: var(--text-secondary);
   font-weight: 600;
   transition: all var(--motion-fast) var(--easing-standard);
@@ -402,15 +364,9 @@ function statusLabel(): string {
   transform: translateY(-1px);
 }
 
-.detail__empty-tip-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-}
+.detail__empty-tip-icon { color: var(--accent); }
 
-/* ----------------------------
-   详情头部
-   ---------------------------- */
+/* ---- header ---- */
 .detail__header {
   display: flex;
   align-items: center;
@@ -452,31 +408,7 @@ function statusLabel(): string {
   min-width: 0;
 }
 
-.detail__device-name {
-  font-size: var(--font-size-lg);
-  font-weight: 800;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.detail__device-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.detail__device-meta-item {
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.detail__device-meta-divider {
+.detail__meta-dot {
   width: 3px;
   height: 3px;
   border-radius: 50%;
@@ -487,124 +419,26 @@ function statusLabel(): string {
 .detail__header-right {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
 
-.detail__status-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.85rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  border: 1px solid var(--border-default);
-  background: var(--btn-bg);
-}
-
-.detail__status-dot {
-  width: 8px;
-  height: 8px;
+.status-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
 }
 
-.detail__status-badge--acquiring {
-  background: var(--success-muted);
-  border-color: var(--accent-border);
-  color: var(--accent);
+.status-dot--success { animation: status-pulse 1.5s ease-in-out infinite; }
+.status-dot--warning { animation: status-pulse 0.8s ease-in-out infinite; }
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
-.detail__status-badge--acquiring .detail__status-dot {
-  animation: status-pulse 1.5s ease-in-out infinite;
-}
-
-.detail__status-badge--connected {
-  background: var(--success-muted);
-  border-color: var(--accent-border);
-  color: var(--accent);
-}
-
-.detail__status-badge--connecting {
-  background: var(--warning-muted);
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
-.detail__status-badge--connecting .detail__status-dot {
-  animation: status-pulse 0.8s ease-in-out infinite;
-}
-
-.detail__status-badge--error {
-  background: var(--danger-muted);
-  border-color: var(--danger-border);
-  color: var(--danger);
-}
-
-.detail__status-badge--disconnected {
-  color: var(--text-muted);
-}
-
-.detail__action {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.5rem 0.95rem;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  background: var(--btn-bg);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-default);
-  transition: all var(--motion-fast) var(--easing-standard);
-}
-
-.detail__action:hover {
-  background: var(--btn-bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
-}
-
-.detail__action--connected {
-  color: var(--accent);
-  background: var(--success-muted);
-  border-color: var(--accent-border);
-}
-
-.detail__action--connected:hover {
-  color: var(--danger);
-  background: var(--danger-muted);
-  border-color: var(--danger-border);
-}
-
-.detail__action--accent {
-  background: var(--accent-muted);
-  color: var(--accent);
-  border-color: var(--accent-border);
-}
-
-.detail__action--accent:hover {
-  background: var(--accent);
-  color: #ffffff;
-  border-color: var(--accent);
-  box-shadow: 0 4px 14px var(--accent-glow);
-}
-
-.detail__action-icon {
-  width: 14px;
-  height: 14px;
-}
-
-.detail__action-icon--spin {
-  animation: spin 1s linear infinite;
-}
-
-/* ----------------------------
-   图表面板
-   ---------------------------- */
+/* ---- chart panel ---- */
 .detail__chart {
   display: flex;
   flex-direction: column;
@@ -616,7 +450,7 @@ function statusLabel(): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   border-bottom: 1px solid var(--divider-color);
   gap: 1rem;
 }
@@ -624,57 +458,7 @@ function statusLabel(): string {
 .detail__chart-title {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: var(--font-size-base);
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.detail__chart-title-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
-}
-
-.detail__chart-meta {
-  color: var(--text-muted);
-  font-weight: 500;
-  font-size: var(--font-size-xs);
-  margin-left: 0.25rem;
-}
-
-.detail__chart-meta--hint {
-  opacity: 0.7;
-}
-
-.detail__chart-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  background: var(--accent-muted);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
-  transition: all var(--motion-fast) var(--easing-standard);
-}
-
-.detail__chart-toggle:hover {
-  background: var(--accent);
-  color: #ffffff;
-}
-
-.detail__chart-toggle--active {
-  background: var(--accent);
-  color: #ffffff;
-  box-shadow: 0 4px 14px var(--accent-glow);
-}
-
-.detail__chart-toggle-icon {
-  width: 12px;
-  height: 12px;
+  gap: 0.45rem;
 }
 
 .detail__chart-tools {
@@ -684,6 +468,13 @@ function statusLabel(): string {
   flex-shrink: 0;
 }
 
+.detail__chart-body {
+  flex: 1;
+  padding: 0.5rem 0.85rem 0.85rem;
+  min-height: 0;
+}
+
+/* ---- channel popover ---- */
 .detail__channel-popover {
   position: absolute;
   top: calc(100% + 0.55rem);
@@ -713,47 +504,6 @@ function statusLabel(): string {
   gap: 0.2rem;
 }
 
-.detail__channel-popover-title {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.detail__channel-popover-meta {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-.detail__channel-popover-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.detail__channel-batch-btn {
-  min-width: 3.2rem;
-  height: 1.8rem;
-  padding: 0 0.55rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-  background: var(--btn-bg);
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  transition: all var(--motion-fast) var(--easing-standard);
-}
-
-.detail__channel-batch-btn:hover:not(:disabled) {
-  border-color: var(--accent-border);
-  color: var(--accent);
-  background: var(--accent-muted);
-}
-
-.detail__channel-batch-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .detail__channel-selector-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -768,44 +518,31 @@ function statusLabel(): string {
   padding: 0.35rem 0.45rem;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  transition: all var(--motion-fast) var(--easing-standard);
   cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
 }
 
 .detail__channel-option:hover {
   background: var(--btn-bg);
-  color: var(--text-primary);
 }
 
 .detail__channel-option--active {
   background: var(--accent-muted);
-  color: var(--accent);
   border-color: var(--accent-border);
 }
 
-.detail__channel-checkbox {
-  width: 0.9rem;
-  height: 0.9rem;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
 .detail__channel-option-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
-.detail__chart-body {
-  flex: 1;
-  padding: 0.5rem 0.85rem 0.85rem;
-  min-height: 0;
+.detail__channel-option--active .detail__channel-option-label {
+  color: var(--accent);
 }
 
-/* ----------------------------
-   通道区域
-   ---------------------------- */
+/* ---- channel section ---- */
 .detail__channels {
   display: flex;
   flex-direction: column;
@@ -824,56 +561,23 @@ function statusLabel(): string {
   padding: 0 0.25rem;
 }
 
-.detail__channels-title {
-  font-size: var(--font-size-md);
-  font-weight: 800;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
+/* ---- animations ---- */
+.spin {
+  animation: spin 1s linear infinite;
 }
 
-.detail__channels-hint {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-@media (max-width: 1199px) {
-  .detail__channel-selector-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 767px) {
-  .detail__chart-header {
-    align-items: flex-start;
-  }
-
-  .detail__channel-selector-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .detail__channel-popover {
-    width: min(16rem, calc(100vw - 3rem));
-  }
+  .detail__channel-selector-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-/* 减少动画偏好 */
 @media (prefers-reduced-motion: reduce) {
-  .detail__empty-ring {
-    animation: none;
-    opacity: 0.3;
-  }
-
-  .detail__status-badge--acquiring .detail__status-dot,
-  .detail__status-badge--connecting .detail__status-dot {
-    animation: none;
-  }
-
-  .detail__action-icon--spin {
-    animation: none;
-  }
-
-  .detail__empty-tip:hover {
-    transform: none;
-  }
+  .detail__empty-ring { animation: none; opacity: 0.3; }
+  .status-dot--success, .status-dot--warning { animation: none; }
+  .spin { animation: none; }
+  .detail__empty-tip:hover { transform: none; }
 }
 </style>

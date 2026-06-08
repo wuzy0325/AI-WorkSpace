@@ -32,6 +32,7 @@ import {
   TrendingUp,
 } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
+import { NButton, NCheckbox, NSelect } from 'naive-ui'
 
 const emit = defineEmits<{
   openSettings: []
@@ -723,12 +724,9 @@ onBeforeUnmount(() => {
     >
       <!-- 左侧：标题与状态 -->
       <div class="flex items-center gap-4">
-        <button
-          class="rounded-[var(--radius-sm)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]"
-          @click="emit('back')"
-        >
-          <ArrowLeft class="h-5 w-5" />
-        </button>
+        <NButton quaternary size="small" @click="emit('back')">
+          <template #icon><ArrowLeft :size="18" /></template>
+        </NButton>
         <div class="flex items-center gap-3">
           <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
             <IconCalibrationFiveHole :size="20" />
@@ -775,25 +773,25 @@ onBeforeUnmount(() => {
         <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
           <Zap class="h-3.5 w-3.5 text-[var(--accent-warning)]" />
           <span class="text-xs text-[var(--text-muted)]">刷新</span>
-          <select
+          <NSelect
             :value="calibrationStore.uiRefreshHz"
-            class="cursor-pointer rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-0.5 text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent-primary)]"
-            @change="calibrationStore.setUiRefreshHz(Number(($event.target as HTMLSelectElement).value))"
-          >
-            <option v-for="hz in 20" :key="hz" :value="hz">{{ hz }} Hz</option>
-          </select>
+            :options="Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} Hz`, value: i + 1 }))"
+            size="tiny"
+            style="width:80px"
+            @update:value="calibrationStore.setUiRefreshHz"
+          />
         </div>
 
         <!-- 球罐判定 -->
         <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
           <label class="flex cursor-pointer items-center gap-2 text-[var(--text-primary)]">
-            <input
-              :checked="sphereTankGate.gateEnabled.value"
-              type="checkbox"
-              class="h-3.5 w-3.5 cursor-pointer accent-[var(--accent-primary)]"
-              @change="saveSphereTankGate(($event.target as HTMLInputElement).checked, sphereTankGate.waitTimeSec.value)"
-            />
-            <span class="text-xs">球罐判定</span>
+          <NCheckbox
+            :checked="sphereTankGate.gateEnabled.value"
+            size="small"
+            @update:checked="saveSphereTankGate($event, sphereTankGate.waitTimeSec.value)"
+          >
+            <template #default><span class="text-xs">球罐判定</span></template>
+          </NCheckbox>
           </label>
           <div class="h-3.5 w-px bg-[var(--border-default)]"></div>
           <span class="text-xs text-[var(--text-muted)]">稳定</span>
@@ -807,49 +805,26 @@ onBeforeUnmount(() => {
         <div class="mx-1 h-6 w-px bg-[var(--border-default)]"></div>
 
         <!-- 操作按钮组 -->
-        <button
-          class="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-canvas)]"
-          @click="emit('openSettings')"
-        >
-          <Settings class="h-3.5 w-3.5" />
-          配置
-        </button>
+        <NButton size="tiny" quaternary @click="emit('openSettings')">
+          <template #icon><Settings :size="14" /></template>配置
+        </NButton>
 
         <template v-if="!calibrationStore.isRunning && !calibrationStore.isPaused">
-          <button
-            :disabled="!canStartCalibration"
-            class="flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-4 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)] disabled:cursor-not-allowed disabled:opacity-50"
-            @click="startCalibration"
-          >
-            <Play class="h-3.5 w-3.5" />
-            开始校准
-          </button>
+          <NButton size="tiny" type="primary" :disabled="!canStartCalibration" @click="startCalibration">
+            <template #icon><Play :size="14" /></template>开始校准
+          </NButton>
         </template>
 
         <template v-else>
-          <button
-            v-if="!calibrationStore.isPaused"
-            class="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent-warning)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-warning)_92%,black_8%)]"
-            @click="pauseCalibration"
-          >
-            <Pause class="h-3.5 w-3.5" />
-            暂停
-          </button>
-          <button
-            v-else
-            class="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
-            @click="resumeCalibration"
-          >
-            <Play class="h-3.5 w-3.5" />
-            继续
-          </button>
-          <button
-            class="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent-danger)]/30 bg-[var(--accent-danger)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-danger)_92%,black_8%)]"
-            @click="stopCalibration"
-          >
-            <StopCircle class="h-3.5 w-3.5" />
-            停止
-          </button>
+          <NButton v-if="!calibrationStore.isPaused" size="tiny" type="warning" @click="pauseCalibration">
+            <template #icon><Pause :size="14" /></template>暂停
+          </NButton>
+          <NButton v-else size="tiny" type="primary" @click="resumeCalibration">
+            <template #icon><Play :size="14" /></template>继续
+          </NButton>
+          <NButton size="tiny" type="error" @click="stopCalibration">
+            <template #icon><StopCircle :size="14" /></template>停止
+          </NButton>
         </template>
       </div>
     </div>
@@ -990,14 +965,9 @@ onBeforeUnmount(() => {
                   <span class="h-3.5 w-1.5 rounded-sm bg-[var(--accent-primary)]"></span>
                   <h4 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">Kα - Kβ 系数特征空间</h4>
                 </div>
-                <button
-                  class="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]"
-                  :title="isTopChartExpanded ? '恢复默认视图' : '展开图表'"
-                  @click="isTopChartExpanded = !isTopChartExpanded"
-                >
-                  <Maximize2 v-if="!isTopChartExpanded" class="h-4 w-4" />
-                  <Minimize2 v-else class="h-4 w-4" />
-                </button>
+                <NButton quaternary size="tiny" :title="isTopChartExpanded ? '恢复默认视图' : '展开图表'" @click="isTopChartExpanded = !isTopChartExpanded">
+                  <template #icon><Maximize2 v-if="!isTopChartExpanded" :size="14" /><Minimize2 v-else :size="14" /></template>
+                </NButton>
               </div>
               <div data-test="k-alpha-chart-canvas-wrap" class="relative min-h-0 flex-1">
                 <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
@@ -1055,20 +1025,12 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="calibrationStore.completeEvent.success" class="ml-auto flex flex-shrink-0 items-center gap-2">
-            <button
-              class="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-panel-strong)]"
-              @click="saveCsv"
-            >
-              <Save class="h-3.5 w-3.5" />
-              保存CSV
-            </button>
-            <button
-              class="flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent-primary)_92%,black_8%)]"
-              @click="exportReport"
-            >
-              <FileText class="h-3.5 w-3.5" />
-              导出报告
-            </button>
+            <NButton size="tiny" secondary @click="saveCsv">
+              <template #icon><Save :size="14" /></template>保存CSV
+            </NButton>
+            <NButton size="tiny" type="primary" @click="exportReport">
+              <template #icon><FileText :size="14" /></template>导出报告
+            </NButton>
           </div>
         </div>
       </div>

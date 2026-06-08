@@ -9,7 +9,6 @@ import type {
   CalibrationConfig,
   ProbeChannelConfig,
   MotionAxisConfig,
-  FiveHolePointLayout,
   ChannelRef,
 } from '@shared/types/calibration'
 import {
@@ -19,22 +18,30 @@ import {
   DEFAULT_CALIBRATION_VELOCITY_PRECISION,
 } from '@shared/calibrationPrecision'
 import { generateFiveHoleSnakePoints } from './motionCalibrationUtils'
-import UiButton from '@components/ui/UiButton.vue'
 import {
-  X,
-  ChevronRight,
+  NAlert,
+  NButton,
+  NCard,
+  NCheckbox,
+  NInput,
+  NInputNumber,
+  NModal,
+  NSelect,
+  NSpin,
+  NStep,
+  NSteps,
+  NTag,
+  NText,
+} from 'naive-ui'
+import {
   ChevronLeft,
-  Save,
+  ChevronRight,
   LayoutGrid,
-  Settings2,
-  CheckCircle2,
-  AlertTriangle,
-  Activity,
-  Gauge,
-  Thermometer,
   Move3D,
+  Save,
   ShieldCheck,
 } from '@lucide/vue'
+import UiButton from '@components/ui/UiButton.vue'
 
 const emit = defineEmits<{
   close: []
@@ -50,12 +57,12 @@ const isLoading = ref(true)
 const isSaving = ref(false)
 const currentStep = ref(0)
 const steps = computed(() => [
-  { label: t.stepBasic || '基本设置', icon: LayoutGrid },
-  { label: t.stepHardware || '硬件配置', icon: Settings2 },
-  { label: t.stepConfirm || '确认保存', icon: CheckCircle2 },
+  { label: t.stepBasic || '基本设置' },
+  { label: t.stepHardware || '硬件配置' },
+  { label: t.stepConfirm || '确认保存' },
 ])
 
-const pointLayout = ref<FiveHolePointLayout>({
+const pointLayout = ref({
   alphaMin: -30,
   alphaMax: 30,
   alphaStep: 5,
@@ -138,17 +145,11 @@ const isStepValid = computed(() => {
   return currentStepErrors.value.length === 0
 })
 
-function nextStep() {
-  if (currentStep.value < steps.value.length - 1) currentStep.value++
-}
+function nextStep() { if (currentStep.value < steps.value.length - 1) currentStep.value++ }
 
-function prevStep() {
-  if (currentStep.value > 0) currentStep.value--
-}
+function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
-function generatePoints() {
-  return generateFiveHoleSnakePoints(pointLayout.value)
-}
+function generatePoints() { return generateFiveHoleSnakePoints(pointLayout.value) }
 
 async function saveConfig() {
   isSaving.value = true
@@ -163,10 +164,7 @@ async function saveConfig() {
       samplesPerPoint: samplesPerPoint.value,
       savePath: '',
       fiveHoleLayout: pointLayout.value,
-      derivedValuePrecision: {
-        machNumber: machNumberPrecision.value,
-        velocity: velocityPrecision.value,
-      },
+      derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
       sphereTankGate: {
         enabled: sphereTankGateEnabled.value,
         waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
@@ -179,526 +177,327 @@ async function saveConfig() {
     emit('saved', normalizedConfig)
     emit('close')
   } catch (err) {
-    console.error('Failed to save config:', err)
     feedbackStore.pushToast('保存失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
-  } finally {
-    isSaving.value = false
-  }
+  } finally { isSaving.value = false }
 }
 
 async function loadSavedConfig() {
   try {
     const res = await calibrationApi.getConfig('five-hole')
     const config = res.success && res.data ? applyCalibrationPrecisionDefaults(res.data) : null
-    if (config) {
-      calibrationName.value = config.name
-      if (config.fiveHoleLayout) pointLayout.value = { ...config.fiveHoleLayout }
-      if (config.probeChannels) {
-        config.probeChannels.forEach((savedCh) => {
-          const existingCh = probeChannels.value.find((ch) => (ch.role ? ch.role === savedCh.role : ch.name === savedCh.name))
-          if (existingCh) {
-            existingCh.channel = { ...savedCh.channel }
-            existingCh.enabled = savedCh.enabled
-            existingCh.role = savedCh.role ?? existingCh.role
-            existingCh.precision = savedCh.precision
-          }
-        })
-      }
-      if (config.motionAxes) {
-        config.motionAxes.forEach((savedAxis, index) => {
-          if (motionAxes.value[index]) motionAxes.value[index] = { ...savedAxis }
-        })
-      }
-      dwellTimeMs.value = config.dwellTimeMs
-      samplesPerPoint.value = config.samplesPerPoint
-      machNumberPrecision.value = config.derivedValuePrecision?.machNumber ?? DEFAULT_CALIBRATION_MACH_PRECISION
-      velocityPrecision.value = config.derivedValuePrecision?.velocity ?? DEFAULT_CALIBRATION_VELOCITY_PRECISION
-      if (config.sphereTankGate) {
-        sphereTankGateEnabled.value = config.sphereTankGate.enabled
-        sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
-        sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
-      }
+    if (!config) return
+    calibrationName.value = config.name
+    if (config.fiveHoleLayout) pointLayout.value = { ...config.fiveHoleLayout }
+    if (config.probeChannels) {
+      config.probeChannels.forEach((savedCh) => {
+        const existingCh = probeChannels.value.find((ch) => ch.role ? ch.role === savedCh.role : ch.name === savedCh.name)
+        if (!existingCh) return
+        existingCh.channel = { ...savedCh.channel }
+        existingCh.enabled = savedCh.enabled
+        existingCh.role = savedCh.role ?? existingCh.role
+        existingCh.precision = savedCh.precision
+      })
     }
-  } catch (err) {
-    console.error('Failed to load saved config:', err)
-  }
+    if (config.motionAxes) {
+      config.motionAxes.forEach((savedAxis, index) => {
+        if (motionAxes.value[index]) motionAxes.value[index] = { ...savedAxis }
+      })
+    }
+    dwellTimeMs.value = config.dwellTimeMs
+    samplesPerPoint.value = config.samplesPerPoint
+    machNumberPrecision.value = config.derivedValuePrecision?.machNumber ?? DEFAULT_CALIBRATION_MACH_PRECISION
+    velocityPrecision.value = config.derivedValuePrecision?.velocity ?? DEFAULT_CALIBRATION_VELOCITY_PRECISION
+    if (config.sphereTankGate) {
+      sphereTankGateEnabled.value = config.sphereTankGate.enabled
+      sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
+      sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
+    }
+  } catch { /* ignore */ }
 }
 
 onMounted(async () => {
   try {
     await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()])
     if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toLocaleDateString()}`
-  } finally {
-    isLoading.value = false
-  }
+  } finally { isLoading.value = false }
 })
+
+const axisOptions = [
+  { label: 'X 轴', value: 'X' },
+  { label: 'Y 轴', value: 'Y' },
+  { label: 'Z 轴', value: 'Z' },
+  { label: 'U 轴', value: 'U' },
+]
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.35)] backdrop-blur-[3px]">
-    <div
-      data-test="five-hole-settings-shell"
-      class="flex max-h-[92vh] w-[92vw] max-w-[1020px] flex-col rounded-[var(--radius-lg)] border border-[var(--border-default)] bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-[0_32px_80px_rgba(15,23,42,0.18)]"
-    >
-      <!-- 头部 -->
-      <div class="flex items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/40 px-6 py-4">
-        <div class="flex items-center gap-3">
-          <div class="flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
-            <Gauge class="h-5 w-5" />
+  <NModal :show="true" preset="card" :style="{ maxWidth: '1020px', width: '92vw' }" title="五孔探针校准配置" closable @close="emit('close')">
+    <template #header-extra>
+      <NText depth="3" style="font-size:11px">配置点位布局、通道映射和运动轴参数</NText>
+    </template>
+
+    <NSteps :current="currentStep" size="small" style="margin-bottom:16px">
+      <NStep v-for="(step, idx) in steps" :key="idx" :title="step.label" :disabled="idx > currentStep" />
+    </NSteps>
+
+    <NSpin v-if="isLoading" style="display:flex;justify-content:center;padding:40px 0" />
+
+    <template v-else>
+      <NAlert v-if="currentStepErrors.length > 0" type="warning" :bordered="false" style="margin-bottom:12px;font-size:12px">
+        <template #header>请修正以下错误</template>
+        {{ currentStepErrors[0] }}
+      </NAlert>
+
+      <div v-if="currentStep === 0" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置名称</NText></template>
+          <NInput v-model:value="calibrationName" placeholder="输入配置名称" size="small" />
+        </NCard>
+
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">点位布局</NText></template>
+          <div class="angle-section">
+            <div class="angle-group">
+              <div class="angle-label"><Move3D :size="14" /><NText depth="1" style="font-size:12px">攻角 α 范围</NText></div>
+              <div class="angle-grid">
+                <div><NText depth="3" style="font-size:11px">最小值 (°)</NText><NInputNumber v-model:value="pointLayout.alphaMin" size="tiny" style="width:100%" /></div>
+                <div><NText depth="3" style="font-size:11px">最大值 (°)</NText><NInputNumber v-model:value="pointLayout.alphaMax" size="tiny" style="width:100%" /></div>
+                <div><NText depth="3" style="font-size:11px">步长 (°)</NText><NInputNumber v-model:value="pointLayout.alphaStep" size="tiny" style="width:100%" :min="1" /></div>
+              </div>
+            </div>
+            <div class="angle-group">
+              <div class="angle-label"><Move3D :size="14" /><NText depth="1" style="font-size:12px">侧滑角 β 范围</NText></div>
+              <div class="angle-grid">
+                <div><NText depth="3" style="font-size:11px">最小值 (°)</NText><NInputNumber v-model:value="pointLayout.betaMin" size="tiny" style="width:100%" /></div>
+                <div><NText depth="3" style="font-size:11px">最大值 (°)</NText><NInputNumber v-model:value="pointLayout.betaMax" size="tiny" style="width:100%" /></div>
+                <div><NText depth="3" style="font-size:11px">步长 (°)</NText><NInputNumber v-model:value="pointLayout.betaStep" size="tiny" style="width:100%" :min="1" /></div>
+              </div>
+            </div>
           </div>
-          <div>
-            <h1 class="text-lg font-bold text-[var(--text-primary)]">五孔探针校准配置</h1>
-            <p class="text-xs text-[var(--text-muted)]">配置点位布局、通道映射和运动轴参数</p>
+          <div class="point-summary">
+            <LayoutGrid :size="16" />
+            <NText depth="3" style="font-size:12px">总点数</NText>
+            <NText depth="1" style="font-size:22px;font-weight:700;color:var(--accent-primary)">{{ pointCount }}</NText>
+            <NText depth="3" style="font-size:12px">点</NText>
           </div>
-        </div>
-        <button
-          class="rounded-[var(--radius-sm)] p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-panel-strong)] hover:text-[var(--text-primary)]"
-          @click="emit('close')"
-        >
-          <X class="h-5 w-5" />
-        </button>
+        </NCard>
+
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">采集参数</NText></template>
+          <div class="param-grid">
+            <div><NText depth="3" style="font-size:11px">驻留时间 (ms)</NText><NInputNumber v-model:value="dwellTimeMs" :min="100" :step="100" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">每点采样数</NText><NInputNumber v-model:value="samplesPerPoint" :min="1" :max="1000" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">马赫数精度</NText><NInputNumber v-model:value="machNumberPrecision" :min="0" :max="8" size="small" style="width:100%" /></div>
+            <div><NText depth="3" style="font-size:11px">流速精度 (m/s)</NText><NInputNumber v-model:value="velocityPrecision" :min="0" :max="8" size="small" style="width:100%" /></div>
+          </div>
+        </NCard>
       </div>
 
-      <!-- 步骤指示器 -->
-      <div data-test="five-hole-settings-steps" class="border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/30 px-6 py-3.5">
-        <div class="flex items-center justify-center gap-3">
-          <div v-for="(step, idx) in steps" :key="idx" class="flex items-center">
-            <button
-              class="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-1.5 text-sm font-medium transition-all"
-              :class="[
-                idx === currentStep
-                  ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/30'
-                  : idx < currentStep
-                    ? 'text-[var(--accent-success)] hover:bg-[var(--accent-success)]/8'
-                    : 'text-[var(--text-muted)] hover:bg-[var(--bg-panel-strong)]',
-              ]"
-              :disabled="idx > currentStep"
-              @click="idx <= currentStep && (currentStep = idx)"
-            >
-              <component :is="step.icon" class="h-4 w-4" />
-              <span>{{ step.label }}</span>
-              <CheckCircle2 v-if="idx < currentStep" class="h-3.5 w-3.5" />
-            </button>
-            <ChevronRight v-if="idx < steps.length - 1" class="mx-1 h-4 w-4 text-[var(--border-default)]" />
+      <div v-if="currentStep === 1" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">探针通道映射</NText></template>
+          <div class="table-wrap">
+            <table class="ntable">
+              <thead><tr>
+                <th style="width:48px">启用</th><th>名称</th><th>数据源</th><th style="width:100px">通道</th><th style="width:80px">精度</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="ch in probeChannels" :key="ch.name">
+                  <td style="text-align:center"><NCheckbox v-model:checked="ch.enabled" size="small" /></td>
+                  <td><NText depth="1" style="font-size:12px">{{ ch.name }}</NText></td>
+                  <td>
+                    <NSelect
+                      v-model:value="ch.channel.deviceId"
+                      :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
+                      placeholder="选择设备"
+                      size="tiny"
+                      :disabled="!ch.enabled"
+                      style="min-width:140px"
+                      clearable
+                    />
+                  </td>
+                  <td><NInputNumber v-model:value="ch.channel.channelIndex" :min="-1" :max="100" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><NInputNumber v-model:value="ch.precision" :min="0" :max="8" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </div>
+        </NCard>
+
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">运动轴配置</NText></template>
+          <div class="table-wrap">
+            <table class="ntable">
+              <thead><tr><th>坐标轴</th><th>运动控制器</th><th>物理轴</th></tr></thead>
+              <tbody>
+                <tr v-for="axis in motionAxes" :key="axis.name">
+                  <td><NTag size="tiny" type="primary" :bordered="false">{{ axis.name }}</NTag></td>
+                  <td>
+                    <NSelect
+                      v-model:value="axis.controllerId"
+                      :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))"
+                      placeholder="选择控制器"
+                      size="tiny"
+                      style="min-width:160px"
+                      clearable
+                    />
+                  </td>
+                  <td><NSelect v-model:value="axis.axis" :options="axisOptions" size="tiny" style="width:100px" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </NCard>
+
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">球罐判定门控</NText></template>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <NCheckbox v-model:checked="sphereTankGateEnabled" size="small">启用球罐判定</NCheckbox>
+            <div v-if="sphereTankGateEnabled" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div><NText depth="3" style="font-size:11px">等待时间 (秒)</NText><NInputNumber v-model:value="sphereTankWaitTimeSec" :min="0" :step="0.1" size="small" style="width:100%" /></div>
+              <div><NText depth="3" style="font-size:11px">稳定通道设备</NText><NSelect v-model:value="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" size="small" clearable /></div>
+              <div><NText depth="3" style="font-size:11px">稳定通道索引</NText><NInputNumber v-model:value="sphereTankStableChannel.channelIndex" :min="0" size="small" style="width:100%" /></div>
+              <div style="display:flex;align-items:flex-end"><NText depth="3" style="font-size:11px">球罐稳定后才开始采集</NText></div>
+            </div>
+          </div>
+        </NCard>
       </div>
 
-      <!-- 内容区域 -->
-      <div class="flex-1 overflow-auto p-6">
-        <div v-if="isLoading" class="flex h-full items-center justify-center">
-          <div class="text-center">
-            <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--accent-primary)] border-t-transparent"></div>
-            <p class="text-[var(--text-muted)]">加载中...</p>
+      <div v-if="currentStep === 2" class="step-content">
+        <NCard size="small" :bordered="true" class="section-card">
+          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置摘要</NText></template>
+          <div class="summary-grid">
+            <div class="summary-row"><NText depth="3" style="font-size:12px">配置名称</NText><NText depth="1">{{ calibrationName }}</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">校准类型</NText><NText depth="1">五孔探针</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">点位布局</NText><NText depth="1">α: {{ pointLayout.alphaMin }}° ~ {{ pointLayout.alphaMax }}° (步长 {{ pointLayout.alphaStep }}°) / β: {{ pointLayout.betaMin }}° ~ {{ pointLayout.betaMax }}° (步长 {{ pointLayout.betaStep }}°)</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">总点数</NText><NText depth="1" style="color:var(--accent-primary);font-weight:700">{{ pointCount }} 点</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">启用探针</NText><NText depth="1">{{ probeChannels.filter(ch => ch.enabled).length }} 个</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">驻留时间</NText><NText depth="1">{{ dwellTimeMs }} ms</NText></div>
+            <div class="summary-row"><NText depth="3" style="font-size:12px">每点采样数</NText><NText depth="1">{{ samplesPerPoint }}</NText></div>
           </div>
-        </div>
-
-        <div
-          v-if="!isLoading && currentStepErrors.length > 0"
-          class="mb-5 flex items-start gap-2.5 rounded-[var(--radius-md)] border border-[var(--accent-warning)]/25 bg-[var(--accent-warning)]/8 px-4 py-3"
-        >
-          <AlertTriangle class="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--accent-warning)]" />
-          <div>
-            <div class="text-sm font-medium text-[var(--accent-warning)]">请修正以下错误</div>
-            <div class="mt-0.5 text-sm text-[var(--text-secondary)]">{{ currentStepErrors[0] }}</div>
-          </div>
-        </div>
-
-        <!-- 步骤 0: 基本设置 -->
-        <div v-if="!isLoading && currentStep === 0" class="mx-auto max-w-3xl space-y-5">
-          <!-- 配置名称 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-3 flex items-center gap-2">
-              <div class="h-5 w-1 rounded-full bg-[var(--accent-primary)]"></div>
-              <h3 class="text-sm font-semibold">配置名称</h3>
-            </div>
-            <input
-              v-model="calibrationName"
-              type="text"
-              class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3.5 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-              placeholder="输入配置名称"
-            />
-          </div>
-
-          <!-- 点位布局 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <div class="h-5 w-1 rounded-full bg-[var(--accent-info)]"></div>
-              <h3 class="text-sm font-semibold">点位布局</h3>
-            </div>
-            <div class="space-y-4">
-              <!-- 攻角 α -->
-              <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)]/60 bg-[var(--bg-panel-strong)]/40 p-4">
-                <div class="mb-3 flex items-center gap-2">
-                  <Move3D class="h-4 w-4 text-[var(--accent-info)]" />
-                  <span class="text-sm font-medium text-[var(--text-primary)]">攻角 α 范围</span>
-                </div>
-                <div class="grid grid-cols-3 gap-3">
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">最小值 (°)</label>
-                    <input
-                      v-model.number="pointLayout.alphaMin"
-                      type="number"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">最大值 (°)</label>
-                    <input
-                      v-model.number="pointLayout.alphaMax"
-                      type="number"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">步长 (°)</label>
-                    <input
-                      v-model.number="pointLayout.alphaStep"
-                      type="number"
-                      min="1"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                </div>
-              </div>
-              <!-- 侧滑角 β -->
-              <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)]/60 bg-[var(--bg-panel-strong)]/40 p-4">
-                <div class="mb-3 flex items-center gap-2">
-                  <Move3D class="h-4 w-4 text-[var(--accent-warning)]" />
-                  <span class="text-sm font-medium text-[var(--text-primary)]">侧滑角 β 范围</span>
-                </div>
-                <div class="grid grid-cols-3 gap-3">
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">最小值 (°)</label>
-                    <input
-                      v-model.number="pointLayout.betaMin"
-                      type="number"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">最大值 (°)</label>
-                    <input
-                      v-model.number="pointLayout.betaMax"
-                      type="number"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1.5 block text-xs text-[var(--text-muted)]">步长 (°)</label>
-                    <input
-                      v-model.number="pointLayout.betaStep"
-                      type="number"
-                      min="1"
-                      step="1"
-                      class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <!-- 总点数 -->
-            <div class="mt-4 rounded-[var(--radius-md)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-4">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <LayoutGrid class="h-4 w-4 text-[var(--accent-primary)]" />
-                  <span class="text-sm text-[var(--text-muted)]">总点数</span>
-                </div>
-                <div class="flex items-baseline gap-1.5">
-                  <span class="text-2xl font-bold text-[var(--accent-primary)]">{{ pointCount }}</span>
-                  <span class="text-sm font-medium text-[var(--text-muted)]">点</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 采集参数 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <div class="h-5 w-1 rounded-full bg-[var(--accent-success)]"></div>
-              <h3 class="text-sm font-semibold">采集参数</h3>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="mb-1.5 block text-xs text-[var(--text-muted)]">驻留时间 (ms)</label>
-                <input
-                  v-model.number="dwellTimeMs"
-                  type="number"
-                  min="100"
-                  step="100"
-                  class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                />
-              </div>
-              <div>
-                <label class="mb-1.5 block text-xs text-[var(--text-muted)]">每点采样数</label>
-                <input
-                  v-model.number="samplesPerPoint"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                />
-              </div>
-              <div>
-                <label class="mb-1.5 block text-xs text-[var(--text-muted)]">马赫数精度</label>
-                <input
-                  v-model.number="machNumberPrecision"
-                  type="number"
-                  min="0"
-                  max="8"
-                  class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                />
-              </div>
-              <div>
-                <label class="mb-1.5 block text-xs text-[var(--text-muted)]">流速精度 (m/s)</label>
-                <input
-                  v-model.number="velocityPrecision"
-                  type="number"
-                  min="0"
-                  max="8"
-                  class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 步骤 1: 硬件配置 -->
-        <div v-if="!isLoading && currentStep === 1" class="mx-auto max-w-4xl space-y-5">
-          <!-- 探针通道映射 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <Activity class="h-4 w-4 text-[var(--accent-primary)]" />
-              <h3 class="text-sm font-semibold">探针通道映射</h3>
-            </div>
-            <div class="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--border-default)]">
-              <table class="w-full text-sm">
-                <thead class="bg-[var(--bg-panel-strong)]">
-                  <tr>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">启用</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">名称</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">数据源</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">通道</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">精度</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-[var(--border-default)]">
-                  <tr
-                    v-for="channel in probeChannels"
-                    :key="channel.name"
-                    class="transition-colors hover:bg-[var(--bg-panel-strong)]/60"
-                  >
-                    <td class="px-3 py-2.5">
-                      <input
-                        v-model="channel.enabled"
-                        type="checkbox"
-                        class="h-4 w-4 cursor-pointer rounded border-[var(--border-default)] bg-[var(--bg-panel)] text-[var(--accent-primary)] accent-[var(--accent-primary)]"
-                      />
-                    </td>
-                    <td class="px-3 py-2.5 text-[var(--text-primary)]">{{ channel.name }}</td>
-                    <td class="px-3 py-2.5">
-                      <select
-                        v-model="channel.channel.deviceId"
-                        :disabled="!channel.enabled"
-                        class="w-full min-w-[140px] rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50"
-                      >
-                        <option value="">选择设备</option>
-                        <option v-for="device in deviceList" :key="device.id" :value="device.id">{{ device.name }} ({{ device.type }})</option>
-                      </select>
-                    </td>
-                    <td class="px-3 py-2.5">
-                      <input
-                        v-model.number="channel.channel.channelIndex"
-                        type="number"
-                        min="-1"
-                        max="100"
-                        :disabled="!channel.enabled"
-                        class="w-20 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50"
-                      />
-                    </td>
-                    <td class="px-3 py-2.5">
-                      <input
-                        v-model.number="channel.precision"
-                        type="number"
-                        min="0"
-                        max="8"
-                        :disabled="!channel.enabled"
-                        class="w-20 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none disabled:opacity-50"
-                      />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- 运动轴配置 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <Move3D class="h-4 w-4 text-[var(--accent-info)]" />
-              <h3 class="text-sm font-semibold">运动轴配置</h3>
-            </div>
-            <div class="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--border-default)]">
-              <table class="w-full text-sm">
-                <thead class="bg-[var(--bg-panel-strong)]">
-                  <tr>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">坐标轴</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">运动控制器</th>
-                    <th class="px-3 py-2.5 text-left text-xs font-medium text-[var(--text-muted)]">物理轴</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-[var(--border-default)]">
-                  <tr v-for="axis in motionAxes" :key="axis.name" class="transition-colors hover:bg-[var(--bg-panel-strong)]/60">
-                    <td class="px-3 py-2.5">
-                      <span class="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)]/8 px-2.5 py-1 text-sm font-bold text-[var(--accent-primary)]">{{ axis.name }}</span>
-                    </td>
-                    <td class="px-3 py-2.5">
-                      <select
-                        v-model="axis.controllerId"
-                        class="w-full min-w-[160px] rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none"
-                      >
-                        <option value="">选择控制器</option>
-                        <option v-for="controller in motionControllerList" :key="controller.id" :value="controller.id">{{ controller.name }} ({{ controller.type }})</option>
-                      </select>
-                    </td>
-                    <td class="px-3 py-2.5">
-                      <select
-                        v-model="axis.axis"
-                        class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none"
-                      >
-                        <option value="X">X 轴</option>
-                        <option value="Y">Y 轴</option>
-                        <option value="Z">Z 轴</option>
-                        <option value="U">U 轴</option>
-                      </select>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- 球罐判定门控 -->
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <ShieldCheck class="h-4 w-4 text-[var(--accent-warning)]" />
-              <h3 class="text-sm font-semibold">球罐判定门控</h3>
-            </div>
-            <div class="space-y-3">
-              <div class="flex flex-wrap items-end gap-4">
-                <label class="flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)]/40 px-3 py-2 text-sm text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-panel-strong)]">
-                  <input v-model="sphereTankGateEnabled" type="checkbox" class="h-4 w-4 cursor-pointer rounded border-[var(--border-default)] bg-[var(--bg-panel)] text-[var(--accent-primary)] accent-[var(--accent-primary)]" />
-                  启用球罐判定
-                </label>
-                <div class="min-w-[140px]">
-                  <label class="mb-1.5 block text-xs text-[var(--text-muted)]">等待时间 (秒)</label>
-                  <input
-                    v-model.number="sphereTankWaitTimeSec"
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                  />
-                </div>
-                <span class="pb-2 text-xs text-[var(--text-muted)]">球罐稳定后才开始采集</span>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="mb-1.5 block text-xs text-[var(--text-muted)]">稳定通道设备</label>
-                  <select
-                    v-model="sphereTankStableChannel.deviceId"
-                    class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none"
-                  >
-                    <option value="">选择设备</option>
-                    <option v-for="device in deviceList" :key="device.id" :value="device.id">{{ device.name }}</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-xs text-[var(--text-muted)]">稳定通道索引</label>
-                  <input
-                    v-model.number="sphereTankStableChannel.channelIndex"
-                    type="number"
-                    min="0"
-                    class="w-full rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/15"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 步骤 2: 确认保存 -->
-        <div v-if="!isLoading && currentStep === 2" class="mx-auto max-w-3xl space-y-5">
-          <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <div class="mb-4 flex items-center gap-2">
-              <CheckCircle2 class="h-4 w-4 text-[var(--accent-success)]" />
-              <h3 class="text-sm font-semibold">配置摘要</h3>
-            </div>
-            <div class="space-y-0 text-sm">
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">配置名称</span>
-                <span class="font-medium text-[var(--text-primary)]">{{ calibrationName }}</span>
-              </div>
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">校准类型</span>
-                <span class="text-[var(--text-primary)]">五孔探针</span>
-              </div>
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">点位布局</span>
-                <span class="text-right text-[var(--text-primary)]">
-                  α: {{ pointLayout.alphaMin }}° ~ {{ pointLayout.alphaMax }}° (步长 {{ pointLayout.alphaStep }}°)<br />
-                  β: {{ pointLayout.betaMin }}° ~ {{ pointLayout.betaMax }}° (步长 {{ pointLayout.betaStep }}°)
-                </span>
-              </div>
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">总点数</span>
-                <span class="font-bold text-[var(--accent-primary)]">{{ pointCount }} 点</span>
-              </div>
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">启用探针</span>
-                <span class="text-[var(--text-primary)]">{{ probeChannels.filter((ch) => ch.enabled).length }} 个</span>
-              </div>
-              <div class="flex justify-between border-b border-[var(--border-default)] py-2.5">
-                <span class="text-[var(--text-muted)]">驻留时间</span>
-                <span class="text-[var(--text-primary)]">{{ dwellTimeMs }} ms</span>
-              </div>
-              <div class="flex justify-between py-2.5">
-                <span class="text-[var(--text-muted)]">每点采样数</span>
-                <span class="text-[var(--text-primary)]">{{ samplesPerPoint }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        </NCard>
       </div>
+    </template>
 
-      <!-- 底部按钮 -->
-      <div class="flex items-center justify-between border-t border-[var(--border-default)] bg-[var(--bg-panel-strong)]/40 px-6 py-4">
-        <UiButton v-if="currentStep > 0" variant="secondary" @click="prevStep">
-          <ChevronLeft class="mr-1 h-4 w-4" />
-          上一步
-        </UiButton>
-        <div v-else></div>
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-[var(--text-muted)]">步骤 {{ currentStep + 1 }} / {{ steps.length }}</span>
-          <UiButton v-if="currentStep < steps.length - 1" variant="primary" :disabled="!isStepValid" @click="nextStep">
-            下一步
-            <ChevronRight class="ml-1 h-4 w-4" />
-          </UiButton>
-          <UiButton v-else variant="primary" :disabled="!isStepValid || isSaving" @click="saveConfig">
-            <Save v-if="!isSaving" class="mr-1 h-4 w-4" />
-            <svg v-else class="mr-1 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            {{ isSaving ? '保存中...' : '保存配置' }}
+    <template #footer>
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <div>
+          <UiButton v-if="currentStep > 0" variant="secondary" size="sm" @click="prevStep">
+            <ChevronLeft :size="14" style="margin-right:4px" />上一步
           </UiButton>
         </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <NText depth="3" style="font-size:11px">步骤 {{ currentStep + 1 }} / {{ steps.length }}</NText>
+          <UiButton v-if="currentStep < steps.length - 1" variant="primary" size="sm" :disabled="!isStepValid" @click="nextStep">
+            下一步<ChevronRight :size="14" style="margin-left:4px" />
+          </UiButton>
+          <NButton v-else size="small" type="primary" :loading="isSaving" :disabled="!isStepValid" @click="saveConfig">
+            <template #icon><Save :size="14" /></template>保存配置
+          </NButton>
+        </div>
       </div>
-    </div>
-  </div>
+    </template>
+  </NModal>
 </template>
+
+<style scoped>
+.step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-card {
+  font-size: 12px;
+}
+
+.angle-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.angle-group {
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel-strong);
+}
+
+.angle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.angle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.point-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
+}
+
+.param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.ntable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ntable th {
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-panel-strong);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ntable td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ntable tbody tr:hover {
+  background: color-mix(in srgb, var(--accent-primary) 3%, transparent);
+}
+
+.summary-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-default);
+  gap: 12px;
+}
+
+.summary-row:last-child {
+  border-bottom: none;
+}
+</style>

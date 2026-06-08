@@ -1,16 +1,17 @@
-import { createApp } from 'vue'
+import { createApp, type Component } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import { useThemeStore } from './stores/themeStore'
 import { container } from './core/container'
 import './styles.css'
 
-const app = createApp(App)
-const pinia = createPinia()
-app.use(pinia)
+async function resolveRootComponent(): Promise<Component> {
+  if (import.meta.env.VITE_UI_SPIKE === '1') {
+    return (await import('./spikes/UiLibrarySpikeView.vue')).default
+  }
 
-// 初始化主题
-useThemeStore().initializeTheme()
+  return App
+}
 
 // 初始化依赖注入容器
 function initializeServices(): void {
@@ -26,6 +27,19 @@ function initializeServices(): void {
   }
 }
 
-initializeServices()
+async function bootstrap(): Promise<void> {
+  const app = createApp(await resolveRootComponent())
+  const pinia = createPinia()
+  app.use(pinia)
 
-app.mount('#app')
+  // 初始化主题
+  useThemeStore().initializeTheme()
+
+  if (import.meta.env.VITE_UI_SPIKE !== '1') {
+    initializeServices()
+  }
+
+  app.mount('#app')
+}
+
+void bootstrap()
