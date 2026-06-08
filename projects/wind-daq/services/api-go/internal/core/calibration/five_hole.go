@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// FiveHoleAlgorithm 五孔探针校准算法
 type FiveHoleAlgorithm struct{}
 
-// NewFiveHoleAlgorithm 创建五孔探针校准算法实例
 func NewFiveHoleAlgorithm() *FiveHoleAlgorithm {
 	return &FiveHoleAlgorithm{}
 }

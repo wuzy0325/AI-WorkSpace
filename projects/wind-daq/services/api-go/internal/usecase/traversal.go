@@ -163,31 +163,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 	}
 
-	deadline := time.Now().Add(2500 * time.Millisecond)
-	motionStatuses := m.motion.StatusAll(ctx)
-	for time.Now().Before(deadline) {
-		allReached := true
-		for _, motionStatus := range motionStatuses {
-			for _, axis := range motionStatus.Axes {
-				target, hasTarget := availableAxisTargets(motionStatus, point)[axis.Name]
-				if !hasTarget {
-					continue
-				}
-				if axis.Moving || abs(axis.Position-target) > 0.01 {
-					allReached = false
-					break
-				}
-			}
-			if !allReached {
-				break
-			}
-		}
-		if allReached {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-		motionStatuses = m.motion.StatusAll(ctx)
-	}
+	m.waitForMotionComplete(ctx, point)
 
 	payload, ok := m.reader.GetLatestData(config.DeviceID)
 	if !ok {
@@ -225,6 +201,32 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point) {
+	deadline := time.Now().Add(2500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		allReached := true
+		for _, status := range m.motion.StatusAll(ctx) {
+			for _, axis := range status.Axes {
+				target, hasTarget := availableAxisTargets(status, point)[axis.Name]
+				if !hasTarget {
+					continue
+				}
+				if axis.Moving || abs(axis.Position-target) > 0.01 {
+					allReached = false
+					break
+				}
+			}
+			if !allReached {
+				break
+			}
+		}
+		if allReached {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (m *TraversalManager) Pause() error {
@@ -479,7 +481,6 @@ func availableAxisTargets(status motion.ControllerStatus, point traversal.Point)
 	return targets
 }
 
-// RunTraversalLoop 执行遍历任务循环
 func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 	if dwell <= 0 {
 		dwell = 100 * time.Millisecond
@@ -503,7 +504,6 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 	}
 }
 
-// BuildStatusResponse 构建遍历状态响应
 func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	status := m.Status()
 	state := string(status.State)

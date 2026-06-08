@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// TotalPressureAlgorithm 总压探针校准算法
 type TotalPressureAlgorithm struct{}
 
-// NewTotalPressureAlgorithm 创建总压探针校准算法实例
 func NewTotalPressureAlgorithm() *TotalPressureAlgorithm {
 	return &TotalPressureAlgorithm{}
 }

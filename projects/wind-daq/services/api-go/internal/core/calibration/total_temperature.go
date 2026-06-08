@@ -5,11 +5,9 @@ import (
 	"time"
 )
 
-// TotalTemperatureAlgorithm 总温探针校准算法
 // 采用手动控制模式：用户手动调整风洞工况，系统实时监控马赫数和温度稳定性
 type TotalTemperatureAlgorithm struct{}
 
-// NewTotalTemperatureAlgorithm 创建总温探针校准算法实例
 func NewTotalTemperatureAlgorithm() *TotalTemperatureAlgorithm {
 	return &TotalTemperatureAlgorithm{}
 }

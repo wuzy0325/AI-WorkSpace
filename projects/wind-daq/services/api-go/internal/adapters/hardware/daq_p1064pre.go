@@ -421,6 +421,3 @@ func writeFloat32LE(data []byte, v float32) {
 	binary.LittleEndian.PutUint32(data, math.Float32bits(v))
 }
 
-func ptrFloat32(v float32) *float32 {
-	return &v
-}

@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// ThreeHoleAlgorithm 三孔探针校准算法
 type ThreeHoleAlgorithm struct{}
 
-// NewThreeHoleAlgorithm 创建三孔探针校准算法实例
 func NewThreeHoleAlgorithm() *ThreeHoleAlgorithm {
 	return &ThreeHoleAlgorithm{}
 }
