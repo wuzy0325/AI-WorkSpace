@@ -119,6 +119,79 @@ func ParseASCIIFrame(data []byte) ([]float64, error) {
 	return temps, nil
 }
 
+// T1603ParsedFrame is the result of ParseTCPFrameEx with optional
+// metadata prefix (sequence number and hardware timestamp).
+type T1603ParsedFrame struct {
+	HardwareTimestamp float64
+	SequenceNumber    int
+	Temperatures      []float64
+}
+
+// ParseTCPFrameEx parses a TCP frame with optional metadata prefix.
+// The device can prefix data with sequence number (@fe HEAD 1) and
+// hardware timestamp (@fe TIME 1). The space-separated format is:
+//
+//	[seq] [timestamp] t1 t2 ... t16
+//
+// Fixed-width 192-byte and 64-byte binary frames are also supported.
+func ParseTCPFrameEx(data []byte) (*T1603ParsedFrame, error) {
+	switch len(data) {
+	case TCPFrameSize:
+		temps, err := parseBinaryFrame(data)
+		if err != nil {
+			return nil, err
+		}
+		return &T1603ParsedFrame{Temperatures: temps}, nil
+	case 192:
+		temps, err := ParseASCIIFrame(data)
+		if err != nil {
+			return nil, err
+		}
+		return &T1603ParsedFrame{Temperatures: temps}, nil
+	default:
+		return parseSpaceSeparatedFrame(data)
+	}
+}
+
+func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
+	s := strings.TrimSpace(string(data))
+	parts := strings.Fields(s)
+	if len(parts) < 16 {
+		return nil, fmt.Errorf("expected >= 16 values, got %d", len(parts))
+	}
+
+	result := &T1603ParsedFrame{}
+	offset := 0
+
+	if len(parts) > 16 {
+		seq, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("parse sequence number %q: %w", parts[0], err)
+		}
+		result.SequenceNumber = seq
+		result.HardwareTimestamp, err = strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse timestamp %q: %w", parts[1], err)
+		}
+		offset = 2
+	}
+
+	temps := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		val, err := strconv.ParseFloat(parts[offset+i], 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse value %d (%q): %w", i, parts[offset+i], err)
+		}
+		temps[i] = val
+	}
+
+	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
+		temps[i], temps[j] = temps[j], temps[i]
+	}
+	result.Temperatures = temps
+	return result, nil
+}
+
 // -- DAQ-T-1603 TCP frame reader --
 
 // ErrIncompleteFrame is returned when ReadFrame has buffered data but

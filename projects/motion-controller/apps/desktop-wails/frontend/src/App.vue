@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import MotionView from './views/MotionView.vue'
 import ToastOverlay from './components/ToastOverlay.vue'
+import UiConfirmDialog from './components/ui/UiConfirmDialog.vue'
 </script>
 
 <template>
   <div class="app">
     <MotionView />
     <ToastOverlay />
+    <UiConfirmDialog />
   </div>
 </template>
 

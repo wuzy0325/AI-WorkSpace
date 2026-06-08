@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Controller 功能测试用例</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-light: #dbeafe;
+            --success: #16a34a;
+            --success-light: #dcfce7;
+            --danger: #dc2626;
+            --danger-light: #fee2e2;
+            --warning: #d97706;
+            --warning-light: #fef3c7;
+            --gray: #6b7280;
+            --gray-light: #f3f4f6;
+            --gray-border: #e5e7eb;
+            --block: #7c3aed;
+            --block-light: #ede9fe;
+            --skip: #9ca3af;
+            --skip-light: #f9fafb;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            line-height: 1.6;
+        }
+
+        /* 顶部工具栏 */
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: white;
+            border-bottom: 2px solid var(--gray-border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        .toolbar h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { background: #15803d; }
+        .btn-outline { background: white; color: var(--gray); border: 1px solid var(--gray-border); }
+        .btn-outline:hover { background: var(--gray-light); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #b91c1c; }
+
+        /* 统计面板 */
+        .stats-bar {
+            background: white;
+            border-bottom: 1px solid var(--gray-border);
+            padding: 12px 24px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .stat-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .stat-count {
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .progress-bar {
+            flex: 1;
+            min-width: 200px;
+            height: 8px;
+            background: var(--gray-light);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+            background: var(--primary);
+        }
+
+        /* 主内容 */
+        .content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px 24px 60px;
+        }
+
+        /* 测试模块 */
+        .test-module {
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 10px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+
+        .module-header {
+            padding: 14px 20px;
+            background: var(--gray-light);
+            border-bottom: 1px solid var(--gray-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .module-header:hover { background: #eef2ff; }
+
+        .module-title {
+            font-size: 15px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .module-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: white;
+        }
+
+        .module-stats {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--gray);
+        }
+
+        .module-stats span { font-weight: 600; }
+
+        .module-body { padding: 0; }
+
+        .module-body.collapsed { display: none; }
+
+        /* 测试用例行 */
+        .test-row {
+            display: grid;
+            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        .test-row:hover { background: #f8fafc; }
+        .test-row:last-child { border-bottom: none; }
+
+        .test-id {
+            color: var(--gray);
+            font-family: "Cascadia Code", "Fira Code", monospace;
+            font-size: 12px;
+        }
+
+        .test-name {
+            font-weight: 500;
+        }
+
+        .test-steps {
+            color: var(--gray);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        /* 结果选择器 */
+        .result-select {
+            padding: 6px 10px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            background: white;
+            width: 100%;
+        }
+
+        .result-select.pass { background: var(--success-light); color: var(--success); border-color: var(--success); }
+        .result-select.fail { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
+        .result-select.block { background: var(--block-light); color: var(--block); border-color: var(--block); }
+        .result-select.skip { background: var(--skip-light); color: var(--skip); border-color: var(--skip); }
+
+        /* 备注输入 */
+        .remark-input {
+            padding: 6px 10px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 12px;
+            width: 100%;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .remark-input:focus { border-color: var(--primary); }
+
+        /* 表头 */
+        .test-header {
+            display: grid;
+            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
+            padding: 8px 20px;
+            background: #f8fafc;
+            border-bottom: 2px solid var(--gray-border);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gray);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* 测试信息区 */
+        .test-info {
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 12px;
+        }
+
+        .info-field label {
+            display: block;
+            font-size: 12px;
+            color: var(--gray);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .info-field input, .info-field select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .info-field input:focus, .info-field select:focus {
+            border-color: var(--primary);
+        }
+
+        /* 导出对话框 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            width: 480px;
+            max-width: 90vw;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+
+        .modal h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .export-option {
+            padding: 12px;
+            border: 2px solid var(--gray-border);
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+        }
+
+        .export-option:hover { border-color: var(--primary); background: var(--primary-light); }
+        .export-option.selected { border-color: var(--primary); background: var(--primary-light); }
+
+        .export-option h3 { font-size: 14px; margin-bottom: 4px; }
+        .export-option p { font-size: 12px; color: var(--gray); }
+
+        /* 打印样式 */
+        @media print {
+            .toolbar, .modal-overlay { display: none !important; }
+            .stats-bar { position: static; }
+            .test-module { break-inside: avoid; }
+            .result-select { -webkit-appearance: none; border: none; padding: 0; font-size: 12px; }
+            .remark-input { border: none; }
+            body { background: white; }
+        }
+
+        /* 响应式 */
+        @media (max-width: 900px) {
+            .test-row, .test-header {
+                grid-template-columns: 50px 1fr 100px 90px;
+            }
+            .test-steps, .remark-input { display: none; }
+            .test-header span:nth-child(3), .test-header span:nth-child(6),
+            .test-row .test-steps, .test-row .remark-cell { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- 顶部工具栏 -->
+<div class="toolbar">
+    <h1>Motion Controller 功能测试用例</h1>
+    <div class="toolbar-actions">
+        <button class="btn btn-outline" onclick="resetAll()">重置全部</button>
+        <button class="btn btn-outline" onclick="toggleAllModules()">展开/折叠</button>
+        <button class="btn btn-primary" onclick="showExportModal()">导出报告</button>
+    </div>
+</div>
+
+<!-- 统计面板 -->
+<div class="stats-bar" id="statsBar">
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--primary)"></div>
+        <span>总计</span>
+        <span class="stat-count" id="statTotal">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--success)"></div>
+        <span>通过</span>
+        <span class="stat-count" id="statPass" style="color:var(--success)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--danger)"></div>
+        <span>失败</span>
+        <span class="stat-count" id="statFail" style="color:var(--danger)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--block)"></div>
+        <span>阻塞</span>
+        <span class="stat-count" id="statBlock" style="color:var(--block)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--skip)"></div>
+        <span>跳过</span>
+        <span class="stat-count" id="statSkip" style="color:var(--skip)">0</span>
+    </div>
+    <div class="stat-item">
+        <div class="stat-dot" style="background:var(--gray)"></div>
+        <span>未测</span>
+        <span class="stat-count" id="statUntested" style="color:var(--gray)">0</span>
+    </div>
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <span style="font-size:13px;font-weight:600" id="progressText">0%</span>
+</div>
+
+<!-- 主内容 -->
+<div class="content">
+
+    <!-- 测试信息 -->
+    <div class="test-info">
+        <h3 style="font-size:15px;margin-bottom:14px;font-weight:700;">测试信息</h3>
+        <div class="info-grid">
+            <div class="info-field">
+                <label>测试人员</label>
+                <input type="text" id="tester" placeholder="请输入姓名">
+            </div>
+            <div class="info-field">
+                <label>测试日期</label>
+                <input type="date" id="testDate">
+            </div>
+            <div class="info-field">
+                <label>软件版本</label>
+                <input type="text" id="version" placeholder="如 v1.0.0">
+            </div>
+            <div class="info-field">
+                <label>控制器类型</label>
+                <select id="controllerType">
+                    <option value="">全部</option>
+                    <option value="Simulated">Simulated</option>
+                    <option value="B140">B140</option>
+                    <option value="WTNMC4A">WTNMC4A</option>
+                </select>
+            </div>
+            <div class="info-field">
+                <label>测试环境</label>
+                <select id="testEnv">
+                    <option value="dev">开发环境</option>
+                    <option value="staging">预发布环境</option>
+                    <option value="prod">生产环境</option>
+                </select>
+            </div>
+            <div class="info-field">
+                <label>操作系统</label>
+                <input type="text" id="osInfo" value="Windows 11">
+            </div>
+        </div>
+    </div>
+
+    <!-- 测试模块容器 -->
+    <div id="testModules"></div>
+</div>
+
+<!-- 导出对话框 -->
+<div class="modal-overlay" id="exportModal">
+    <div class="modal">
+        <h2>导出测试报告</h2>
+        <div class="export-option selected" onclick="selectExport(this, 'html')">
+            <h3>HTML 报告</h3>
+            <p>生成独立的 HTML 文件，包含完整测试结果和样式，可直接在浏览器中查看</p>
+        </div>
+        <div class="export-option" onclick="selectExport(this, 'print')">
+            <h3>打印 / PDF</h3>
+            <p>调用浏览器打印功能，可保存为 PDF 文件</p>
+        </div>
+        <div class="export-option" onclick="selectExport(this, 'csv')">
+            <h3>CSV 表格</h3>
+            <p>导出为 CSV 格式，可在 Excel 中打开进行二次分析</p>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideExportModal()">取消</button>
+            <button class="btn btn-primary" onclick="doExport()">导出</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================
+// 测试用例数据定义
+// ============================================================
+const TEST_MODULES = [
+    {
+        id: 'CONN',
+        title: '设备连接管理',
+        icon: '🔌',
+        color: '#2563eb',
+        cases: [
+            { id: 'CONN-001', name: 'Simulated 控制器连接', steps: '1.选择 Simulated 类型\n2.点击连接\n3.验证连接状态变为已连接' },
+            { id: 'CONN-002', name: 'B140 控制器连接', steps: '1.选择 B140 类型\n2.配置串口参数\n3.点击连接\n4.验证连接成功' },
+            { id: 'CONN-003', name: 'WTNMC4A 控制器连接', steps: '1.选择 WTNMC4A 类型\n2.配置通信参数\n3.点击连接\n4.验证连接成功' },
+            { id: 'CONN-004', name: '断开控制器连接', steps: '1.在已连接状态下点击断开\n2.验证状态变为已断开' },
+            { id: 'CONN-005', name: '连接失败错误提示', steps: '1.配置无效连接参数\n2.点击连接\n3.验证显示错误提示信息' },
+            { id: 'CONN-006', name: '重复连接处理', steps: '1.在已连接状态下再次点击连接\n2.验证系统正确处理（提示或忽略）' },
+            { id: 'CONN-007', name: '断开后重连', steps: '1.连接控制器\n2.断开连接\n3.再次连接\n4.验证重连成功且状态正常' },
+            { id: 'CONN-008', name: '异常断开自动检测', steps: '1.连接控制器\n2.模拟通信中断\n3.验证系统检测到断开并提示' },
+        ]
+    },
+    {
+        id: 'MOTION',
+        title: '运动控制操作',
+        icon: '🎯',
+        color: '#16a34a',
+        cases: [
+            { id: 'MOT-001', name: 'MoveTo 绝对定位 - X轴', steps: '1.选择 X 轴\n2.输入目标位置\n3.点击 MoveTo\n4.验证轴运动到目标位置' },
+            { id: 'MOT-002', name: 'MoveTo 绝对定位 - Y轴', steps: '1.选择 Y 轴\n2.输入目标位置\n3.点击 MoveTo\n4.验证轴运动到目标位置' },
+            { id: 'MOT-003', name: 'MoveTo 绝对定位 - Z轴', steps: '1.选择 Z 轴\n2.输入目标位置\n3.点击 MoveTo\n4.验证轴运动到目标位置' },
+            { id: 'MOT-004', name: 'MoveTo 绝对定位 - U轴', steps: '1.选择 U 轴\n2.输入目标位置\n3.点击 MoveTo\n4.验证轴运动到目标位置' },
+            { id: 'MOT-005', name: 'MoveBy 相对移动', steps: '1.选择任意轴\n2.输入相对距离\n3.点击 MoveBy\n4.验证轴移动了指定距离' },
+            { id: 'MOT-006', name: 'Jog 正向点动', steps: '1.选择轴\n2.按住 Jog+ 按钮\n3.验证轴持续正向运动\n4.松开后轴停止' },
+            { id: 'MOT-007', name: 'Jog 反向点动', steps: '1.选择轴\n2.按住 Jog- 按钮\n3.验证轴持续反向运动\n4.松开后轴停止' },
+            { id: 'MOT-008', name: 'Home 回零操作', steps: '1.选择轴\n2.点击 Home\n3.验证轴执行回零\n4.验证回零完成后位置归零' },
+            { id: 'MOT-009', name: 'Stop 停止运动', steps: '1.执行运动操作\n2.运动过程中点击 Stop\n3.验证轴减速停止' },
+            { id: 'MOT-010', name: 'EStop 急停操作', steps: '1.执行运动操作\n2.点击 EStop\n3.验证轴立即停止' },
+            { id: 'MOT-011', name: 'Esc 键急停快捷键', steps: '1.执行运动操作\n2.按下 Esc 键\n3.验证触发急停' },
+            { id: 'MOT-012', name: '运动中切换轴', steps: '1.在 X 轴运动中\n2.切换到 Y 轴\n3.验证 X 轴状态仍可监控' },
+            { id: 'MOT-013', name: '多轴同时运动', steps: '1.同时对 X、Y 轴发送运动指令\n2.验证两轴同时运动\n3.验证各轴独立停止' },
+            { id: 'MOT-014', name: '超限位运动拦截', steps: '1.设置目标位置超出限位\n2.点击运动\n3.验证系统拦截并提示' },
+        ]
+    },
+    {
+        id: 'STATUS',
+        title: '实时状态监控',
+        icon: '📊',
+        color: '#d97706',
+        cases: [
+            { id: 'STA-001', name: '位置实时更新', steps: '1.执行运动操作\n2.观察位置显示\n3.验证位置值实时变化（100ms刷新）' },
+            { id: 'STA-002', name: '速度实时更新', steps: '1.执行运动操作\n2.观察速度显示\n3.验证速度值实时变化' },
+            { id: 'STA-003', name: '限位状态显示', steps: '1.触发正/负限位\n2.验证限位状态正确显示' },
+            { id: 'STA-004', name: '回零状态显示', steps: '1.执行回零操作\n2.验证回零状态正确切换（未回零→回零中→已回零）' },
+            { id: 'STA-005', name: '连接状态显示', steps: '1.连接/断开控制器\n2.验证连接状态图标和文字正确' },
+            { id: 'STA-006', name: '运动状态显示', steps: '1.执行运动操作\n2.验证运动状态正确显示（空闲/运动中/减速中）' },
+            { id: 'STA-007', name: '100ms 状态刷新验证', steps: '1.连接控制器\n2.使用计时器验证状态更新间隔≤100ms' },
+            { id: 'STA-008', name: '位置历史梯度条', steps: '1.执行多次运动\n2.验证位置历史梯度条正确显示运动轨迹' },
+        ]
+    },
+    {
+        id: 'CONFIG',
+        title: '控制器配置管理',
+        icon: '⚙️',
+        color: '#7c3aed',
+        cases: [
+            { id: 'CFG-001', name: '创建新控制器配置', steps: '1.点击新建配置\n2.填写配置名称和参数\n3.保存\n4.验证配置已创建' },
+            { id: 'CFG-002', name: '编辑控制器配置', steps: '1.选择已有配置\n2.修改参数\n3.保存\n4.验证修改已生效' },
+            { id: 'CFG-003', name: '删除控制器配置', steps: '1.选择已有配置\n2.点击删除\n3.确认删除\n4.验证配置已移除' },
+            { id: 'CFG-004', name: '保存配置到文件', steps: '1.修改配置\n2.点击保存\n3.验证配置文件已更新' },
+            { id: 'CFG-005', name: '从文件加载配置', steps: '1.点击加载配置\n2.选择配置文件\n3.验证配置正确加载' },
+            { id: 'CFG-006', name: '轴参数配置 - 速度', steps: '1.选择轴\n2.修改最大速度参数\n3.保存\n4.验证运动时速度限制生效' },
+            { id: 'CFG-007', name: '轴参数配置 - 加速度', steps: '1.选择轴\n2.修改加速度参数\n3.保存\n4.验证运动时加速度限制生效' },
+            { id: 'CFG-008', name: '轴参数配置 - 软限位', steps: '1.设置正/负软限位\n2.执行超限运动\n3.验证软限位生效' },
+            { id: 'CFG-009', name: '编码器补偿配置', steps: '1.打开编码器补偿编辑器\n2.设置补偿参数\n3.保存\n4.验证补偿参数生效' },
+            { id: 'CFG-010', name: '连接参数配置', steps: '1.打开连接配置编辑器\n2.修改串口/通信参数\n3.保存\n4.验证新参数生效' },
+            { id: 'CFG-011', name: '配置参数校验', steps: '1.输入无效参数（如负速度）\n2.保存\n3.验证系统提示参数错误' },
+        ]
+    },
+    {
+        id: 'UI',
+        title: 'UI 界面功能',
+        icon: '🖥️',
+        color: '#0891b2',
+        cases: [
+            { id: 'UI-001', name: '控制器状态面板显示', steps: '1.启动应用\n2.验证状态面板正确显示控制器信息' },
+            { id: 'UI-002', name: '轴控制卡片 - 监控模式', steps: '1.选择轴\n2.验证监控模式显示位置、速度、状态' },
+            { id: 'UI-003', name: '轴控制卡片 - 点动模式', steps: '1.切换到点动模式\n2.验证 Jog+ 和 Jog- 按钮可用' },
+            { id: 'UI-004', name: '轴控制卡片 - 移动模式', steps: '1.切换到移动模式\n2.验证 MoveTo 和 MoveBy 输入框和按钮可用' },
+            { id: 'UI-005', name: '控制器配置对话框', steps: '1.打开配置对话框\n2.验证所有配置项正确显示\n3.验证可编辑和保存' },
+            { id: 'UI-006', name: '连接管理界面', steps: '1.打开连接管理\n2.验证可选择控制器类型\n3.验证连接/断开操作可用' },
+            { id: 'UI-007', name: '多轴切换', steps: '1.在 X/Y/Z/U 轴之间切换\n2.验证各轴数据独立正确显示' },
+            { id: 'UI-008', name: '窗口缩放适配', steps: '1.调整窗口大小\n2.验证 UI 元素正确适配\n3.验证无内容溢出或遮挡' },
+            { id: 'UI-009', name: '错误提示信息展示', steps: '1.触发错误场景（如连接失败、参数无效等）\n2.验证错误信息清晰可读\n3.验证错误提示可关闭' },
+        ]
+    },
+    {
+        id: 'STAB',
+        title: '异常场景与边界测试',
+        icon: '🛡️',
+        color: '#dc2626',
+        cases: [
+            { id: 'STB-001', name: '未连接时操作运动按钮', steps: '1.不连接控制器\n2.点击 MoveTo/Jog/Home 等按钮\n3.验证系统给出提示，不崩溃' },
+            { id: 'STB-002', name: '快速连续点击运动按钮', steps: '1.连接控制器\n2.快速连续点击运动按钮\n3.验证系统不崩溃，操作被正确处理' },
+            { id: 'STB-003', name: '通信中断后恢复', steps: '1.连接真实控制器\n2.断开通信线缆\n3.观察界面提示\n4.重新连接线缆\n5.验证可恢复正常操作' },
+            { id: 'STB-004', name: '输入非法运动参数', steps: '1.在位置输入框输入非数字字符\n2.输入超出范围的值\n3.验证系统给出明确提示' },
+            { id: 'STB-005', name: '运动中突然断开连接', steps: '1.连接控制器\n2.执行运动操作\n3.运动中断开连接\n4.验证界面状态正确，不崩溃' },
+            { id: 'STB-006', name: '配置文件不存在时启动', steps: '1.删除或移走配置文件\n2.启动应用\n3.验证应用正常启动，使用默认配置' },
+            { id: 'STB-007', name: '同时操作多个轴', steps: '1.同时对 X、Y 轴发送运动指令\n2.验证两轴均能正常响应\n3.验证可独立停止各轴' },
+            { id: 'STB-008', name: '急停后恢复操作', steps: '1.执行运动\n2.触发急停\n3.等待轴完全停止\n4.再次发送运动指令\n5.验证可正常运动' },
+        ]
+    }
+];
+
+// ============================================================
+// 全局状态
+// ============================================================
+let exportFormat = 'html';
+let allCollapsed = false;
+
+// ============================================================
+// 初始化
+// ============================================================
+function init() {
+    // 设置今日日期
+    document.getElementById('testDate').value = new Date().toISOString().split('T')[0];
+
+    // 从 localStorage 恢复数据
+    loadState();
+
+    // 渲染测试模块
+    renderModules();
+
+    // 更新统计
+    updateStats();
+}
+
+// ============================================================
+// 渲染测试模块
+// ============================================================
+function renderModules() {
+    const container = document.getElementById('testModules');
+    container.innerHTML = '';
+
+    TEST_MODULES.forEach(mod => {
+        const moduleEl = document.createElement('div');
+        moduleEl.className = 'test-module';
+        moduleEl.dataset.moduleId = mod.id;
+
+        // 模块头部
+        const header = document.createElement('div');
+        header.className = 'module-header';
+        header.onclick = () => toggleModule(mod.id);
+        header.innerHTML = `
+            <div class="module-title">
+                <div class="module-icon" style="background:${mod.color}">${mod.icon}</div>
+                ${mod.title}
+            </div>
+            <div class="module-stats" id="module-stats-${mod.id}">
+                <span style="color:var(--success)">0 通过</span>
+                <span style="color:var(--danger)">0 失败</span>
+                <span style="color:var(--gray)">0 未测</span>
+            </div>
+        `;
+
+        // 模块内容
+        const body = document.createElement('div');
+        body.className = 'module-body';
+        body.id = `module-body-${mod.id}`;
+
+        // 表头
+        const tableHeader = document.createElement('div');
+        tableHeader.className = 'test-header';
+        tableHeader.innerHTML = `
+            <span>编号</span>
+            <span>测试项</span>
+            <span>测试步骤</span>
+            <span>结果</span>
+            <span>备注</span>
+        `;
+        body.appendChild(tableHeader);
+
+        // 测试用例行
+        mod.cases.forEach(tc => {
+            const row = document.createElement('div');
+            row.className = 'test-row';
+
+            const savedResult = getTestResult(tc.id);
+            const savedRemark = getTestRemark(tc.id);
+
+            row.innerHTML = `
+                <div class="test-id">${tc.id}</div>
+                <div class="test-name">${tc.name}</div>
+                <div class="test-steps">${tc.steps.replace(/\n/g, '<br>')}</div>
+                <div>
+                    <select class="result-select ${savedResult}" data-test-id="${tc.id}" onchange="onResultChange(this)">
+                        <option value="" ${!savedResult ? 'selected' : ''}>未测试</option>
+                        <option value="pass" ${savedResult === 'pass' ? 'selected' : ''}>✅ 通过</option>
+                        <option value="fail" ${savedResult === 'fail' ? 'selected' : ''}>❌ 失败</option>
+                        <option value="block" ${savedResult === 'block' ? 'selected' : ''}>🚫 阻塞</option>
+                        <option value="skip" ${savedResult === 'skip' ? 'selected' : ''}>⏭️ 跳过</option>
+                    </select>
+                </div>
+                <div>
+                    <input class="remark-input" data-test-id="${tc.id}" value="${savedRemark}" placeholder="备注..." oninput="onRemarkChange(this)">
+                </div>
+            `;
+            body.appendChild(row);
+        });
+
+        moduleEl.appendChild(header);
+        moduleEl.appendChild(body);
+        container.appendChild(moduleEl);
+    });
+
+    // 更新模块统计
+    TEST_MODULES.forEach(mod => updateModuleStats(mod.id));
+}
+
+// ============================================================
+// 状态管理
+// ============================================================
+function getTestResult(testId) {
+    return localStorage.getItem(`tc_result_${testId}`) || '';
+}
+
+function getTestRemark(testId) {
+    return localStorage.getItem(`tc_remark_${testId}`) || '';
+}
+
+function onResultChange(select) {
+    const testId = select.dataset.testId;
+    const value = select.value;
+
+    // 更新样式
+    select.className = `result-select ${value}`;
+
+    // 保存状态
+    localStorage.setItem(`tc_result_${testId}`, value);
+
+    // 更新统计
+    updateStats();
+
+    // 更新模块统计
+    const moduleId = testId.split('-')[0];
+    // 查找对应的模块ID
+    const mod = TEST_MODULES.find(m => testId.startsWith(m.id));
+    if (mod) updateModuleStats(mod.id);
+}
+
+function onRemarkChange(input) {
+    const testId = input.dataset.testId;
+    localStorage.setItem(`tc_remark_${testId}`, input.value);
+}
+
+function loadState() {
+    // 恢复测试信息
+    const fields = ['tester', 'testDate', 'version', 'controllerType', 'testEnv', 'osInfo'];
+    fields.forEach(f => {
+        const saved = localStorage.getItem(`tc_info_${f}`);
+        if (saved) document.getElementById(f).value = saved;
+    });
+}
+
+function saveInfoState() {
+    const fields = ['tester', 'testDate', 'version', 'controllerType', 'testEnv', 'osInfo'];
+    fields.forEach(f => {
+        const el = document.getElementById(f);
+        if (el) localStorage.setItem(`tc_info_${f}`, el.value);
+    });
+}
+
+// ============================================================
+// 统计更新
+// ============================================================
+function updateStats() {
+    let total = 0, pass = 0, fail = 0, block = 0, skip = 0, untested = 0;
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            total++;
+            const r = getTestResult(tc.id);
+            if (r === 'pass') pass++;
+            else if (r === 'fail') fail++;
+            else if (r === 'block') block++;
+            else if (r === 'skip') skip++;
+            else untested++;
+        });
+    });
+
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statPass').textContent = pass;
+    document.getElementById('statFail').textContent = fail;
+    document.getElementById('statBlock').textContent = block;
+    document.getElementById('statSkip').textContent = skip;
+    document.getElementById('statUntested').textContent = untested;
+
+    const tested = total - untested;
+    const pct = total > 0 ? Math.round((tested / total) * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent = pct + '%';
+
+    // 进度条颜色
+    const fill = document.getElementById('progressFill');
+    if (fail > 0) fill.style.background = 'var(--danger)';
+    else if (block > 0) fill.style.background = 'var(--warning)';
+    else fill.style.background = 'var(--success)';
+}
+
+function updateModuleStats(moduleId) {
+    const mod = TEST_MODULES.find(m => m.id === moduleId);
+    if (!mod) return;
+
+    let pass = 0, fail = 0, untested = 0;
+    mod.cases.forEach(tc => {
+        const r = getTestResult(tc.id);
+        if (r === 'pass') pass++;
+        else if (r === 'fail') fail++;
+        else untested++;
+    });
+
+    const el = document.getElementById(`module-stats-${moduleId}`);
+    if (el) {
+        el.innerHTML = `
+            <span style="color:var(--success)">${pass} 通过</span>
+            <span style="color:var(--danger)">${fail} 失败</span>
+            <span style="color:var(--gray)">${untested} 未测</span>
+        `;
+    }
+}
+
+// ============================================================
+// 模块折叠
+// ============================================================
+function toggleModule(moduleId) {
+    const body = document.getElementById(`module-body-${moduleId}`);
+    if (body) body.classList.toggle('collapsed');
+}
+
+function toggleAllModules() {
+    allCollapsed = !allCollapsed;
+    TEST_MODULES.forEach(mod => {
+        const body = document.getElementById(`module-body-${mod.id}`);
+        if (body) {
+            if (allCollapsed) body.classList.add('collapsed');
+            else body.classList.remove('collapsed');
+        }
+    });
+}
+
+// ============================================================
+// 重置
+// ============================================================
+function resetAll() {
+    if (!confirm('确定要重置所有测试结果吗？此操作不可撤销。')) return;
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            localStorage.removeItem(`tc_result_${tc.id}`);
+            localStorage.removeItem(`tc_remark_${tc.id}`);
+        });
+    });
+
+    renderModules();
+    updateStats();
+}
+
+// ============================================================
+// 导出功能
+// ============================================================
+function showExportModal() {
+    saveInfoState();
+    document.getElementById('exportModal').classList.add('active');
+}
+
+function hideExportModal() {
+    document.getElementById('exportModal').classList.remove('active');
+}
+
+function selectExport(el, format) {
+    document.querySelectorAll('.export-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+    exportFormat = format;
+}
+
+function doExport() {
+    hideExportModal();
+    saveInfoState();
+
+    switch (exportFormat) {
+        case 'html': exportHTML(); break;
+        case 'print': window.print(); break;
+        case 'csv': exportCSV(); break;
+    }
+}
+
+function exportHTML() {
+    const tester = document.getElementById('tester').value || '未填写';
+    const testDate = document.getElementById('testDate').value || '未填写';
+    const version = document.getElementById('version').value || '未填写';
+    const ctrlType = document.getElementById('controllerType').value || '全部';
+    const env = document.getElementById('testEnv').selectedOptions[0]?.text || '未填写';
+    const os = document.getElementById('osInfo').value || '未填写';
+
+    // 统计数据
+    let total = 0, pass = 0, fail = 0, block = 0, skip = 0, untested = 0;
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            total++;
+            const r = getTestResult(tc.id);
+            if (r === 'pass') pass++;
+            else if (r === 'fail') fail++;
+            else if (r === 'block') block++;
+            else if (r === 'skip') skip++;
+            else untested++;
+        });
+    });
+
+    const pct = total > 0 ? Math.round(((total - untested) / total) * 100) : 0;
+
+    // 构建报告内容
+    let moduleHTML = '';
+    TEST_MODULES.forEach(mod => {
+        let rows = '';
+        mod.cases.forEach(tc => {
+            const r = getTestResult(tc.id);
+            const remark = getTestRemark(tc.id);
+            const resultText = r === 'pass' ? '通过' : r === 'fail' ? '失败' : r === 'block' ? '阻塞' : r === 'skip' ? '跳过' : '未测试';
+            const resultColor = r === 'pass' ? '#16a34a' : r === 'fail' ? '#dc2626' : r === 'block' ? '#7c3aed' : r === 'skip' ? '#9ca3af' : '#6b7280';
+
+            rows += `<tr>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-family:monospace;font-size:12px">${tc.id}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb">${tc.name}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-size:12px;white-space:pre-line">${tc.steps}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;text-align:center;font-weight:700;color:${resultColor}">${resultText}</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-size:12px">${remark}</td>
+            </tr>`;
+        });
+
+        moduleHTML += `
+        <div style="margin-bottom:24px">
+            <h3 style="font-size:16px;padding:10px 16px;background:#f3f4f6;border-radius:6px;margin-bottom:0">${mod.icon} ${mod.title}</h3>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="background:#f8fafc">
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:70px">编号</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left">测试项</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:200px">测试步骤</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:center;width:80px">结果</th>
+                        <th style="padding:8px 12px;border:1px solid #e5e7eb;text-align:left;width:160px">备注</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    });
+
+    const reportHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Motion Controller 功能测试报告 - ${testDate}</title>
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1200px; margin: 0 auto; padding: 40px 20px; color: #1e293b; line-height: 1.6; }
+    h1 { color: #2563eb; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
+    .meta-item { padding: 10px 16px; background: #f8fafc; border-radius: 6px; }
+    .meta-item label { font-size: 12px; color: #6b7280; display: block; }
+    .meta-item span { font-weight: 700; font-size: 14px; }
+    .summary { display: flex; gap: 16px; margin: 20px 0; padding: 16px; background: #f0f9ff; border-radius: 8px; }
+    .summary-item { text-align: center; }
+    .summary-item .num { font-size: 28px; font-weight: 800; }
+    .summary-item .lbl { font-size: 12px; color: #6b7280; }
+    @media print { body { padding: 10px; } }
+</style>
+</head>
+<body>
+<h1>Motion Controller 功能测试报告</h1>
+<div class="meta">
+    <div class="meta-item"><label>测试人员</label><span>${tester}</span></div>
+    <div class="meta-item"><label>测试日期</label><span>${testDate}</span></div>
+    <div class="meta-item"><label>软件版本</label><span>${version}</span></div>
+    <div class="meta-item"><label>控制器类型</label><span>${ctrlType}</span></div>
+    <div class="meta-item"><label>测试环境</label><span>${env}</span></div>
+    <div class="meta-item"><label>操作系统</label><span>${os}</span></div>
+</div>
+<div class="summary">
+    <div class="summary-item"><div class="num" style="color:#2563eb">${total}</div><div class="lbl">总计</div></div>
+    <div class="summary-item"><div class="num" style="color:#16a34a">${pass}</div><div class="lbl">通过</div></div>
+    <div class="summary-item"><div class="num" style="color:#dc2626">${fail}</div><div class="lbl">失败</div></div>
+    <div class="summary-item"><div class="num" style="color:#7c3aed">${block}</div><div class="lbl">阻塞</div></div>
+    <div class="summary-item"><div class="num" style="color:#9ca3af">${skip}</div><div class="lbl">跳过</div></div>
+    <div class="summary-item"><div class="num" style="color:#6b7280">${untested}</div><div class="lbl">未测</div></div>
+    <div class="summary-item"><div class="num" style="color:#2563eb">${pct}%</div><div class="lbl">执行率</div></div>
+</div>
+${moduleHTML}
+<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:40px">报告生成时间: ${new Date().toLocaleString('zh-CN')}</p>
+</body>
+</html>`;
+
+    // 下载 HTML 文件
+    const blob = new Blob([reportHTML], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `MotionController_测试报告_${testDate}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function exportCSV() {
+    const tester = document.getElementById('tester').value || '';
+    const testDate = document.getElementById('testDate').value || '';
+    const version = document.getElementById('version').value || '';
+
+    // BOM + 表头
+    let csv = '\uFEFF编号,测试模块,测试项,测试步骤,结果,备注\n';
+
+    TEST_MODULES.forEach(mod => {
+        mod.cases.forEach(tc => {
+            const r = getTestResult(tc.id);
+            const remark = getTestRemark(tc.id);
+            const resultText = r === 'pass' ? '通过' : r === 'fail' ? '失败' : r === 'block' ? '阻塞' : r === 'skip' ? '跳过' : '未测试';
+            const steps = tc.steps.replace(/\n/g, '；').replace(/,/g, '，');
+            const name = tc.name.replace(/,/g, '，');
+            const remarkClean = remark.replace(/,/g, '，');
+
+            csv += `${tc.id},${mod.title},${name},"${steps}",${resultText},"${remarkClean}"\n`;
+        });
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `MotionController_测试报告_${testDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// 保存测试信息变更
+document.addEventListener('change', (e) => {
+    if (e.target.closest('.test-info')) saveInfoState();
+});
+
+// 启动
+init();
+</script>
+</body>
+</html>

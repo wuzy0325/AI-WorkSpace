@@ -28,7 +28,7 @@ func (f *DefaultMotionControllerFactory) Create(profile core.MotionControllerPro
 	case core.ControllerTypeB140:
 		return NewB140MotionController(profile), nil
 	case core.ControllerTypeWTNMC4A:
-		return nil, fmt.Errorf("WTNMC4A controller not implemented yet")
+		return NewWTNMC4AMotionController(profile), nil
 	default:
 		return nil, fmt.Errorf("unknown controller type: %s", profile.Type)
 	}

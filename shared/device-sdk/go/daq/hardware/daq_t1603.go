@@ -164,7 +164,6 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
-	// 最多读取 20 次，防止设备持续发送数据导致无限循环
 	for i := 0; i < 20; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(buf)
@@ -287,9 +286,16 @@ func (d *DAQT1603) StartAcquisition() error {
 		}
 	}
 
-	// 清空 TCP 连接中的残留数据（停止采集后设备可能继续发送的帧和 ACK），
-	// 确保下一次 @f0 命令的响应和数据帧从干净状态开始
+	// 确保 @f1 已发送并生效：同步发送 @f1 停止命令，
+	// 防止异步 @f1 还未执行导致设备仍在输出数据
 	if d.conn != nil {
+		d.writeMu.Lock()
+		_ = d.conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		d.conn.Write([]byte("@f1\n"))
+		_ = d.conn.SetWriteDeadline(time.Time{})
+		d.writeMu.Unlock()
+		// 短暂等待设备停止输出
+		time.Sleep(50 * time.Millisecond)
 		d.drainConnection(d.conn, 100*time.Millisecond)
 	}
 	// 清空 FrameReader 缓冲区
@@ -344,7 +350,7 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	if d.status.Connection == core.ConnectionAcquiring {
 		d.status.Connection = core.ConnectionConnected
 	}
-	// 仅在正在采集时发送 @f1，避免 Disconnect 等场景下重复发送
+	// 异步发送 @f1 停止命令，保持 StopAcquisition 响应速度
 	if d.conn != nil && wasAcquiring {
 		conn := d.conn
 		go func() {

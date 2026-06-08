@@ -27,7 +27,7 @@ func main() {
 	addr := fmt.Sprintf("%s:%d", deviceHost, devicePort)
 	fmt.Printf("=== DAQ-T-1603 频率测试工具 ===\n")
 	fmt.Printf("目标设备: %s\n", addr)
-	fmt.Printf("SPS 含义: 采集间隔(毫秒), 实际频率 = 1000/SPS\n\n", addr)
+	fmt.Printf("SPS 含义: 采集间隔(毫秒), 实际频率 = 1000/SPS\n\n")
 
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {

@@ -32,6 +32,10 @@ npm-cache/
 .env
 .env.local
 
+# Tools skills repo (nested git and cache)
+tools/wuzy-skills/.git/
+tools/wuzy-skills/npm-cache/
+
 # Office temp files
 ~$*
 *.docx~

@@ -20,6 +20,7 @@ export const useFeedbackStore = defineStore('feedback', () => {
     title: '确认操作',
     confirmText: '确认',
     cancelText: '取消',
+    variant: 'danger' as 'danger' | 'primary',
   })
 
   let confirmResolver: ((value: boolean) => void) | null = null
@@ -42,7 +43,7 @@ export const useFeedbackStore = defineStore('feedback', () => {
 
   function confirm(
     message: string,
-    options?: Partial<Pick<typeof confirmState, 'title' | 'confirmText' | 'cancelText'>>,
+    options?: Partial<Pick<typeof confirmState, 'title' | 'confirmText' | 'cancelText' | 'variant'>>,
   ): Promise<boolean> {
     if (confirmResolver) {
       confirmResolver(false)
@@ -50,10 +51,12 @@ export const useFeedbackStore = defineStore('feedback', () => {
     }
     confirmState.open = true
     confirmState.message = message
+    confirmState.variant = 'danger'
     if (options) {
       if (options.title) confirmState.title = options.title
       if (options.confirmText) confirmState.confirmText = options.confirmText
       if (options.cancelText) confirmState.cancelText = options.cancelText
+      if (options.variant) confirmState.variant = options.variant
     }
     return new Promise<boolean>((resolve) => {
       confirmResolver = resolve

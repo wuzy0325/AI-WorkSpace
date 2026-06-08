@@ -36,8 +36,10 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	motionProfilePath := filepath.Join(configDir, "motion-profiles.json")
 	motionProfileStore := motionprofile.NewFileMotionProfileStore(motionProfilePath)
 
+	// [FIX] 工厂在闭包外创建一次，避免每次调用都重新实例化
+	factory := hardware.NewDefaultMotionControllerFactory()
 	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
-		factory := hardware.NewDefaultMotionControllerFactory()
+		// 所有控制器类型（包括 WTNMC4A）统一使用共享工厂
 		return factory.Create(profile)
 	})
 

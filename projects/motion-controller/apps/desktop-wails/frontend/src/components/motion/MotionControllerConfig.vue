@@ -1,59 +1,141 @@
 <script setup lang="ts">
-import { computed, reactive, onMounted, watch, ref, provide } from 'vue';
-import { useMotionStore } from '@stores/motionStore';
-import { useFeedbackStore } from '@stores/feedbackStore';
-import type { MotionControllerProfile } from '@shared/types/motion';
+import { computed, reactive, onMounted, watch, ref, provide } from 'vue'
+import { useMotionStore } from '@stores/motionStore'
+import { useFeedbackStore } from '@stores/feedbackStore'
+import type { MotionControllerProfile, AxisConfig, AxisEncoderCompensationConfig } from '@shared/types/motion'
 
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor';
-import ProfileSidebar from './ProfileSidebar.vue';
-import ConnectionConfigEditor from './ConnectionConfigEditor.vue';
-import AxisConfigCard from './AxisConfigCard.vue';
-import EncoderCompensationEditor from './EncoderCompensationEditor.vue';
+import UiButton from '@components/ui/UiButton.vue'
+import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
+import UiInput from '@components/ui/UiInput.vue'
 
-const props = defineProps<{ open: boolean; currentId?: string | null }>();
+import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor'
+import ProfileSidebar from './ProfileSidebar.vue'
+import AxisConfigCard from './AxisConfigCard.vue'
+import EncoderCompensationEditor from './EncoderCompensationEditor.vue'
+
+const props = defineProps<{ open: boolean; currentId?: string | null }>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'saved', id: string): void
-}>();
+}>()
 
-const motion = useMotionStore();
-const feedback = useFeedbackStore();
+const motion = useMotionStore()
+const feedback = useFeedbackStore()
 
-const activeTooltip = ref<{ text: string; x: number; y: number } | null>(null);
+/* -- Tooltip system -- */
+const activeTooltip = ref<{ text: string; x: number; y: number } | null>(null)
 
 function showTooltip(text: string, event: MouseEvent): void {
-  activeTooltip.value = { text, x: event.clientX, y: event.clientY - 32 };
+  activeTooltip.value = { text, x: event.clientX, y: event.clientY - 32 }
 }
 function hideTooltip(): void {
-  activeTooltip.value = null;
+  activeTooltip.value = null
 }
-provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip);
-provide<() => void>('hideTooltip', hideTooltip);
+provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip)
+provide<() => void>('hideTooltip', hideTooltip)
 
+/* -- Form state -- */
 const editing = reactive<MotionControllerProfile>({
   id: '', name: '', type: 'SIMULATED-MC', address: '127.0.0.1', port: 5176, autoConnect: false,
   axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name)),
-});
+})
 
-const isEdit = computed(() => !!editing.id);
+const isEdit = computed(() => !!editing.id)
 
-function newProfile(): void {
-  editing.id = '';
-  editing.name = '新控制器';
-  editing.type = 'SIMULATED-MC';
-  editing.address = '127.0.0.1';
-  editing.port = 5176;
-  editing.autoConnect = false;
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name));
+/* -- Creating-new indicator -- */
+const isCreatingNew = ref(false)
+
+/* -- Saving state -- */
+const saving = ref(false)
+
+/* -- Controller type options -- */
+const controllerTypeOptions = computed<UiSelectOption[]>(() => [
+  { value: 'SIMULATED-MC', label: '模拟控制器' },
+  { value: 'B140-MC', label: 'B140 控制器' },
+  { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
+])
+
+/* -- Form validation -- */
+type FieldErrors = {
+  name?: string
+  address?: string
+  port?: string
 }
 
+const fieldErrors = computed<FieldErrors>(() => {
+  const errors: FieldErrors = {}
+  // name is required
+  if (!editing.name.trim()) {
+    errors.name = '控制器名称不能为空'
+  }
+  // name must be unique
+  const duplicate = motion.profiles.find(p => p.name.trim() === editing.name.trim() && p.id !== editing.id)
+  if (duplicate) {
+    errors.name = '已存在同名控制器'
+  }
+  // address is required
+  if (!editing.address.trim()) {
+    errors.address = 'IP 地址不能为空'
+  }
+  // port range check
+  if (!Number.isFinite(editing.port) || editing.port < 1 || editing.port > 65535) {
+    errors.port = '端口范围 1-65535'
+  }
+  return errors
+})
+
+const validationErrorCount = computed(() => Object.values(fieldErrors.value).filter(Boolean).length)
+
+/* -- Dirty detection -- */
+const initialDraftSnapshot = ref('')
+
+/** Serialize current form state as a snapshot string. */
+function snapshotDraft(): string {
+  return JSON.stringify({
+    name: editing.name,
+    type: editing.type,
+    address: editing.address,
+    port: editing.port,
+    autoConnect: editing.autoConnect,
+    axes: editing.axes,
+  })
+}
+
+/** Whether the form differs from the initial snapshot. */
+const isDirty = ref(false)
+
+/** Mark the form as dirty. */
+function markDirty(): void {
+  isDirty.value = true
+}
+
+/** Capture current form state as the initial snapshot and reset dirty flag. */
+function captureSnapshot(): void {
+  initialDraftSnapshot.value = snapshotDraft()
+  isDirty.value = false
+}
+
+/* -- New profile -- */
+function newProfile(): void {
+  editing.id = ''
+  editing.name = '新控制器'
+  editing.type = 'SIMULATED-MC'
+  editing.address = '127.0.0.1'
+  editing.port = 5176
+  editing.autoConnect = false
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name))
+  isCreatingNew.value = true
+  captureSnapshot()
+}
+
+/* -- Edit profile -- */
 function editProfile(src: MotionControllerProfile): void {
-  editing.id = src.id;
-  editing.name = src.name;
-  editing.type = src.type;
-  editing.address = src.address;
-  editing.port = src.port;
-  editing.autoConnect = src.autoConnect;
+  editing.id = src.id
+  editing.name = src.name
+  editing.type = src.type
+  editing.address = src.address
+  editing.port = src.port
+  editing.autoConnect = src.autoConnect
   editing.axes = src.axes.map((a) => ({
     ...a,
     enabled: a.enabled ?? true,
@@ -64,62 +146,132 @@ function editProfile(src: MotionControllerProfile): void {
     positionSource: a.positionSource ?? 'register',
     encoderScale: a.encoderScale ?? 0.005,
     encoderCompensation: a.encoderCompensation ?? defaultEncComp(),
-  }));
+  }))
+  isCreatingNew.value = false
+  captureSnapshot()
 }
 
+/* -- Save profile -- */
 async function save(): Promise<void> {
-  const profile: MotionControllerProfile = {
-    id: editing.id || (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-    name: editing.name.trim() || '新控制器',
-    type: editing.type,
-    address: editing.address.trim() || '127.0.0.1',
-    port: Number.isFinite(editing.port) ? editing.port : 5176,
-    autoConnect: editing.autoConnect,
-    axes: editing.axes.map((a) => ({
-      name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
-      maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
-      stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
-      lead: a.lead, gearRatio: a.gearRatio,
-      inverted: a.inverted, encoderInverted: a.encoderInverted,
-      positionSource: a.positionSource, encoderScale: a.encoderScale,
-      encoderCompensation: a.encoderCompensation,
-    })),
-  };
-  await motion.upsertProfile(profile);
-  feedback.pushToast('控制器配置已保存', 'success');
-  emit('saved', profile.id);
-  emit('close');
+  // prevent save if validation fails
+  if (validationErrorCount.value > 0) return
+  saving.value = true
+  try {
+    const profile: MotionControllerProfile = {
+      id: editing.id || (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+      name: editing.name.trim() || '新控制器',
+      type: editing.type,
+      address: editing.address.trim() || '127.0.0.1',
+      port: Number.isFinite(editing.port) ? editing.port : 5176,
+      autoConnect: editing.autoConnect,
+      axes: editing.axes.map((a) => ({
+        name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
+        maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
+        stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
+        lead: a.lead, gearRatio: a.gearRatio,
+        inverted: a.inverted, encoderInverted: a.encoderInverted,
+        positionSource: a.positionSource, encoderScale: a.encoderScale,
+        encoderCompensation: a.encoderCompensation,
+      })),
+    }
+    await motion.upsertProfile(profile)
+    isCreatingNew.value = false
+    captureSnapshot()
+    feedback.pushToast('控制器配置已保存', 'success')
+    emit('saved', profile.id)
+    emit('close')
+  } finally {
+    saving.value = false
+  }
 }
 
+/* -- Delete profile -- */
 async function remove(id: string): Promise<void> {
-  if (!window.confirm('确定要删除此控制器配置吗？此操作不可撤销。')) return
+  const profile = motion.profiles.find(p => p.id === id)
+  const name = profile?.name ?? ''
+  const ok = await feedback.confirm(`确定要删除控制器「${name}」吗？此操作不可撤销。`, {
+    title: '删除确认',
+    confirmText: '删除',
+    cancelText: '取消',
+  })
+  if (!ok) return
   await motion.deleteProfile(id)
   feedback.pushToast('控制器已删除', 'info')
   emit('close')
 }
 
-function ensureEditingOnOpen(): void {
-  if (!props.open) return;
-  if (props.currentId) {
-    const target = motion.profiles.find((p) => p.id === props.currentId);
-    if (target) { editProfile(target); return; }
+/* -- Close confirm (dirty check) -- */
+async function tryClose(): Promise<void> {
+  if (isDirty.value) {
+    const ok = await feedback.confirm('当前有未保存的更改，确定要关闭吗？', {
+      title: '关闭确认',
+      confirmText: '关闭',
+      cancelText: '取消',
+      variant: 'primary',
+    })
+    if (!ok) return
   }
-  newProfile();
+  emit('close')
+}
+
+/* -- Sidebar: switch profile (dirty check) -- */
+async function onProfileSelect(id: string): Promise<void> {
+  if (isDirty.value) {
+    const ok = await feedback.confirm('当前有未保存的更改，切换配置将丢失更改。确定要切换吗？', {
+      title: '切换确认',
+      confirmText: '切换',
+      cancelText: '取消',
+      variant: 'primary',
+    })
+    if (!ok) return
+  }
+  const p = motion.profiles.find(x => x.id === id)
+  if (p) editProfile(p)
+}
+
+/* -- Sidebar: new profile (dirty check) -- */
+async function onProfileAdd(): Promise<void> {
+  if (isDirty.value) {
+    const ok = await feedback.confirm('当前有未保存的更改，新建配置将丢失更改。确定要新建吗？', {
+      title: '新建确认',
+      confirmText: '新建',
+      cancelText: '取消',
+      variant: 'primary',
+    })
+    if (!ok) return
+  }
+  newProfile()
+}
+
+/* -- Initialization -- */
+function ensureEditingOnOpen(): void {
+  if (!props.open) return
+  if (props.currentId) {
+    const target = motion.profiles.find((p) => p.id === props.currentId)
+    if (target) { editProfile(target); return }
+  }
+  newProfile()
 }
 
 onMounted(async () => {
-  await motion.refreshProfiles();
-  ensureEditingOnOpen();
-});
+  await motion.refreshProfiles()
+  ensureEditingOnOpen()
+})
 
-watch(() => props.open, (v) => { if (v) ensureEditingOnOpen(); });
+watch(() => props.open, (v) => { if (v) ensureEditingOnOpen() })
 
-function onAxisUpdate(index: number, axis: any): void {
-  editing.axes[index] = axis;
+// [FIX] deep-watch editing changes to mark dirty state (replaces computed + JSON.stringify overhead)
+watch(editing, () => { if (initialDraftSnapshot.value) markDirty() }, { deep: true })
+
+/* -- Axis update callbacks -- */
+function onAxisUpdate(index: number, axis: AxisConfig): void {
+  editing.axes[index] = axis
+  markDirty()
 }
 
-function onUpdateEncComp(index: number, value: any): void {
-  editing.axes[index].encoderCompensation = value;
+function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): void {
+  editing.axes[index].encoderCompensation = value
+  markDirty()
 }
 </script>
 
@@ -133,7 +285,7 @@ function onUpdateEncComp(index: number, value: any): void {
       leave-from-class="opacity-100"
       leave-to-class="opacity-0"
     >
-      <div v-show="open" class="config-overlay" @click="emit('close')">
+      <div v-show="open" class="config-overlay" @click="tryClose">
         <Transition
           enter-active-class="transition ease-out duration-300"
           enter-from-class="opacity-0 scale-95 translate-y-4"
@@ -143,13 +295,24 @@ function onUpdateEncComp(index: number, value: any): void {
           leave-to-class="opacity-0 scale-95 translate-y-4"
         >
           <div v-show="open" class="config-panel" @click.stop>
+            <!-- -- Header -- -->
             <header class="config-panel__header">
               <div class="config-panel__header-left">
-                <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
+                <div class="config-panel__title-row">
+                  <svg class="config-panel__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><circle cx="6" cy="6" r="1" /><circle cx="6" cy="18" r="1" />
+                  </svg>
+                  <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
+                  <!-- New-mode pulse indicator -->
+                  <span v-if="isCreatingNew" class="creation-badge">
+                    <span class="creation-badge__dot"></span>
+                    新建中
+                  </span>
+                </div>
                 <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
               </div>
               <div class="config-panel__header-right">
-                <button class="config-panel__close" @click="emit('close')">
+                <button class="config-panel__close" @click="tryClose">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M18 6L6 18M6 6l12 12"/>
                   </svg>
@@ -157,17 +320,89 @@ function onUpdateEncComp(index: number, value: any): void {
               </div>
             </header>
 
+            <!-- -- Body -- -->
             <div class="config-panel__body">
-              <ProfileSidebar
-                :profiles="motion.profiles"
-                :active-id="editing.id"
-                @select="(id: string) => { const p = motion.profiles.find(x => x.id === id); if (p) editProfile(p); }"
-                @add="newProfile"
-              />
+              <!-- Sidebar -->
+              <div class="sidebar-area">
+                <ProfileSidebar
+                  :profiles="motion.profiles"
+                  :active-id="editing.id"
+                  @select="onProfileSelect"
+                  @add="onProfileAdd"
+                />
+                <!-- Sidebar bottom creation indicator -->
+                <div v-if="isCreatingNew" class="creation-indicator">
+                  <span class="creation-indicator__dot"></span>
+                  <span class="creation-indicator__text">新建中</span>
+                </div>
+              </div>
 
+              <!-- Config content area -->
               <main class="config-content">
-                <ConnectionConfigEditor v-model="editing" />
+                <!-- Validation error banner -->
+                <div v-if="validationErrorCount > 0" class="validation-banner">
+                  <svg class="validation-banner__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  <span>{{ validationErrorCount }} 项验证错误需要修正</span>
+                </div>
 
+                <!-- Basic info section -->
+                <div class="config-section">
+                  <h3 class="config-section__title">
+                    <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    基本信息
+                  </h3>
+                  <div class="form-grid">
+                    <!-- Name -->
+                    <UiInput
+                      v-model="editing.name"
+                      label="名称"
+                      placeholder="控制器名称"
+                      :error="fieldErrors.name"
+                    />
+                    <!-- Type -->
+                    <div class="ui-field">
+                      <label class="ui-field__label">类型</label>
+                      <UiSelect
+                        v-model="editing.type"
+                        :options="controllerTypeOptions"
+                        compact
+                      />
+                    </div>
+                    <!-- Address -->
+                    <UiInput
+                      v-model="editing.address"
+                      label="地址"
+                      placeholder="127.0.0.1"
+                      :error="fieldErrors.address"
+                    />
+                    <!-- Port -->
+                    <UiInput
+                      v-model="editing.port"
+                      type="number"
+                      label="端口"
+                      :min="1"
+                      :max="65535"
+                      :step="1"
+                      :error="fieldErrors.port"
+                    />
+                    <!-- Auto-connect toggle -->
+                    <div class="config-field config-field--toggle">
+                      <label class="config-field__label">自动连接</label>
+                      <label class="toggle-switch">
+                        <input type="checkbox" v-model="editing.autoConnect" />
+                        <span class="toggle-switch__track">
+                          <span class="toggle-switch__thumb"></span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Axis config section -->
                 <div class="config-section">
                   <h3 class="config-section__title">
                     <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
@@ -185,6 +420,7 @@ function onUpdateEncComp(index: number, value: any): void {
                   </div>
                 </div>
 
+                <!-- Encoder compensation -->
                 <EncoderCompensationEditor
                   :axes="editing.axes"
                   :controller-type="editing.type"
@@ -193,14 +429,31 @@ function onUpdateEncComp(index: number, value: any): void {
               </main>
             </div>
 
+            <!-- -- Footer actions -- -->
             <footer class="config-panel__footer">
               <div class="config-panel__footer-left">
-                <button v-if="isEdit" class="config-panel__delete-btn" @click="remove(editing.id)">删除</button>
-                <button class="config-panel__new-btn" @click="newProfile">新建</button>
+                <UiButton v-if="isEdit" variant="danger" size="sm" @click="remove(editing.id)">
+                  删除
+                </UiButton>
+                <!-- Dirty state indicator -->
+                <span v-if="isDirty" class="dirty-indicator">
+                  <span class="dirty-indicator__dot"></span>
+                  未保存
+                </span>
               </div>
               <div class="config-panel__footer-right">
-                <button class="config-panel__cancel-btn" @click="emit('close')">取消</button>
-                <button class="config-panel__save-btn" @click="save">保存</button>
+                <UiButton variant="secondary" size="sm" @click="tryClose">
+                  取消
+                </UiButton>
+                <UiButton
+                  variant="primary"
+                  size="sm"
+                  :loading="saving"
+                  :disabled="validationErrorCount > 0"
+                  @click="save"
+                >
+                  保存
+                </UiButton>
               </div>
             </footer>
           </div>
@@ -209,6 +462,7 @@ function onUpdateEncComp(index: number, value: any): void {
     </Transition>
   </Teleport>
 
+  <!-- Tooltip overlay -->
   <Teleport to="body">
     <Transition
       enter-active-class="transition ease-out duration-150"
@@ -230,6 +484,7 @@ function onUpdateEncComp(index: number, value: any): void {
 </template>
 
 <style scoped>
+/* -- Overlay -- */
 .config-overlay {
   position: fixed;
   inset: 0;
@@ -241,6 +496,8 @@ function onUpdateEncComp(index: number, value: any): void {
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
 }
+
+/* -- Panel container -- */
 .config-panel {
   width: 100%;
   max-width: 960px;
@@ -254,6 +511,7 @@ function onUpdateEncComp(index: number, value: any): void {
   outline: none;
 }
 
+/* -- Header -- */
 .config-panel__header {
   display: flex;
   align-items: center;
@@ -261,7 +519,6 @@ function onUpdateEncComp(index: number, value: any): void {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border-default);
 }
-
 .config-panel__header-left {
   display: flex;
   flex-direction: column;
@@ -271,15 +528,26 @@ function onUpdateEncComp(index: number, value: any): void {
   display: flex;
   align-items: center;
 }
+.config-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.config-panel__title-icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--accent-success);
+  flex-shrink: 0;
+}
 .config-panel__title {
   font-size: 1rem;
   font-weight: 700;
   color: var(--text-primary);
 }
-
 .config-panel__subtitle {
   font-size: 0.7rem;
   color: var(--text-muted);
+  padding-left: 1.5rem;
 }
 .config-panel__close {
   width: 1.75rem;
@@ -296,16 +564,99 @@ function onUpdateEncComp(index: number, value: any): void {
   color: var(--accent-success);
   background: color-mix(in srgb, var(--accent-success) 15%, transparent);
 }
+
+/* -- Creation badge -- */
+.creation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 25%, transparent);
+}
+.creation-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-success);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* -- Body -- */
 .config-panel__body {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
+
+/* -- Sidebar area -- */
+.sidebar-area {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+/* -- Sidebar bottom creation indicator -- */
+.creation-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border-right: 1px solid var(--border-default);
+  border-top: 1px dashed color-mix(in srgb, var(--accent-success) 30%, var(--border-default));
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 5%, transparent);
+}
+.creation-indicator__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-success);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+.creation-indicator__text {
+  letter-spacing: 0.03em;
+}
+
+/* -- Config content area -- */
 .config-content {
   flex: 1;
   overflow-y: auto;
   padding: 0.75rem;
 }
+
+/* -- Validation banner -- */
+.validation-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
+}
+.validation-banner__icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+/* -- Config section -- */
 .config-section {
   margin-bottom: 1rem;
 }
@@ -326,11 +677,69 @@ function onUpdateEncComp(index: number, value: any): void {
   letter-spacing: normal;
   margin-left: 0.5rem;
 }
+
+/* -- Form grid -- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 0.625rem;
+}
+
+/* -- Auto-connect switch -- */
+.config-field--toggle {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0;
+}
+.config-field__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.toggle-switch input {
+  display: none;
+}
+.toggle-switch__track {
+  width: 2.25rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  background: var(--border-strong);
+  position: relative;
+  transition: background 0.2s ease;
+}
+.toggle-switch input:checked + .toggle-switch__track {
+  background: var(--accent-success);
+}
+.toggle-switch__thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: calc(1.125rem - 4px);
+  height: calc(1.125rem - 4px);
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s ease;
+}
+.toggle-switch input:checked + .toggle-switch__track .toggle-switch__thumb {
+  transform: translateX(1.125rem);
+}
+
+/* -- Axis matrix -- */
 .axis-matrix {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.625rem;
 }
+
+/* -- Footer actions -- */
 .config-panel__footer {
   display: flex;
   align-items: center;
@@ -338,62 +747,31 @@ function onUpdateEncComp(index: number, value: any): void {
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--border-default);
 }
-
 .config-panel__footer-left,
 .config-panel__footer-right {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-.config-panel__delete-btn,
-.config-panel__new-btn {
-  padding: 0.375rem 0.875rem;
-  border-radius: 0.375rem;
-  font-size: 0.75rem;
+
+/* -- Dirty state indicator -- */
+.dirty-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
   font-weight: 600;
-  transition: all 0.2s ease;
+  color: color-mix(in srgb, var(--accent-danger) 80%, var(--text-muted));
 }
-.config-panel__delete-btn {
-  color: var(--accent-danger);
-  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
+.dirty-indicator__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-danger);
+  animation: pulse-dot 2s ease-in-out infinite;
 }
-.config-panel__delete-btn:hover {
-  background: color-mix(in srgb, var(--accent-danger) 20%, transparent);
-}
-.config-panel__new-btn {
-  color: var(--accent-success);
-  background: color-mix(in srgb, var(--accent-success) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-success) 20%, transparent);
-}
-.config-panel__new-btn:hover {
-  background: color-mix(in srgb, var(--accent-success) 20%, transparent);
-}
-.config-panel__cancel-btn,
-.config-panel__save-btn {
-  padding: 0.375rem 1rem;
-  border-radius: 0.375rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
-.config-panel__cancel-btn {
-  color: var(--text-muted);
-  background: var(--bg-panel-strong);
-  border: 1px solid var(--border-default);
-}
-.config-panel__cancel-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-canvas);
-}
-.config-panel__save-btn {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent-success), color-mix(in srgb, var(--accent-success) 80%, black));
-  border: none;
-}
-.config-panel__save-btn:hover {
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent-success) 30%, transparent);
-}
+
+/* -- Tooltip overlay -- */
 .field-tooltip {
   position: fixed;
   z-index: 9999;
@@ -408,5 +786,4 @@ function onUpdateEncComp(index: number, value: any): void {
   white-space: nowrap;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
-
 </style>
