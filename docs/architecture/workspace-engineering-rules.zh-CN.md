@@ -2,6 +2,7 @@
 
 > 本文档是工作空间级的统一工程规则入口，整合前后端分离、后端分层、前端 UI 设计、编码规范与良好架构原则。
 > 详细规则仍以根目录 `CLAUDE.md`、`docs/runbooks/code-standards.zh-CN.md`、`docs/runbooks/development-rules.md` 与项目级文档为准；本文用于统一理解、快速决策与落地执行。
+> AI 执行前端任务时，还必须遵守 `docs/runbooks/frontend-ai-rules.zh-CN.md`。
 
 ## 1. 这份文档解决什么问题
 
@@ -10,6 +11,7 @@
 - 根目录 `CLAUDE.md`：架构总纲、六边形硬约束、代码放置决策树
 - `docs/runbooks/development-rules.md`：开发规则、依赖边界、验证要求
 - `docs/runbooks/code-standards.zh-CN.md`：编码、命名、注释、抽象规范
+- `docs/runbooks/frontend-ai-rules.zh-CN.md`：AI 可执行前端规则、控件使用、状态完整性、样式 token 与验证要求
 - `docs/architecture/*`：工作空间结构、模块设计、项目变体
 - `projects/*/DESIGN.md`、`projects/*/README.md`、`projects/*/AGENTS.md`：项目级补充规则
 
@@ -198,6 +200,8 @@ Wails 是界面壳，不是业务层。
 
 ## 5. 前端与 UI 架构规则
 
+AI 执行前端任务时，本节只作为总览；具体强制规则以 `docs/runbooks/frontend-ai-rules.zh-CN.md` 为准。
+
 前端的目标不是“页面能跑起来”，而是：
 
 - 结构清楚
@@ -206,20 +210,22 @@ Wails 是界面壳，不是业务层。
 - 容易复用
 - 不把业务逻辑错误地下沉到 UI
 
-### 5.1 前端分层建议
+### 5.1 前端目录结构
 
-推荐按以下逻辑分层：
+目录结构标准见 `docs/runbooks/frontend-directory-rules.zh-CN.md`。简而言之：
 
-- `app/`：应用启动、provider、layout、路由、全局 host
-- `design/`：tokens、theme、motion、z-index、视觉基础设施
-- `shared/ui/`：基础 UI 组件
-- `shared/patterns/`：稳定复用的界面模式
-- `features/`：业务功能模块
-- `pages/`：页面级组装
+- `pages/` 或 `views/` — 页面路由组件
+- `components/ui/` — 基础 UI 控件
+- `components/layout/` — 布局组件
+- `components/<domain>/` — 业务领域组件
+- `stores/` — Pinia 状态
+- `api/` — API 调用封装
+- `styles/tokens/` — 设计 token
+- `styles/themes/` — 主题
 
 ### 5.2 UI 基础组件规则
 
-基础 UI 组件应放在 `shared/ui/`，例如：
+基础 UI 组件应放在 `components/ui/`，例如：
 
 - `UiButton`
 - `UiInput`
@@ -238,7 +244,7 @@ Wails 是界面壳，不是业务层。
 
 ### 5.3 Pattern 组件规则
 
-Pattern 组件位于 `shared/patterns/`，解决重复出现的界面模式，例如：
+Pattern 组件位于 `components/<domain>/` 或 `composables/`，解决重复出现的界面模式，例如：
 
 - `FormField`
 - `SettingsSection`
@@ -250,7 +256,7 @@ Pattern 组件位于 `shared/patterns/`，解决重复出现的界面模式，�
 
 ### 5.4 Feature 组件规则
 
-业务组件必须放在 `features/*`，例如：
+业务组件必须放在 `components/<domain>/`，例如：
 
 - `DeviceManagementDrawer`
 - `GlobalSettingsModal`
@@ -264,7 +270,7 @@ Pattern 组件位于 `shared/patterns/`，解决重复出现的界面模式，�
 - 使用领域类型
 - 处理业务流程
 
-但不能反向污染 `shared/ui/`。
+但不能反向污染 `components/ui/`。
 
 ### 5.5 前端状态管理规则
 
@@ -417,6 +423,7 @@ Pattern 组件位于 `shared/patterns/`，解决重复出现的界面模式，�
 - `CLAUDE.md`：架构总纲与硬约束
 - `docs/runbooks/development-rules.md`：开发与验证规则
 - `docs/runbooks/code-standards.zh-CN.md`：详细编码规范
+- `docs/runbooks/frontend-ai-rules.zh-CN.md`：AI 前端开发强制规则
 - `docs/architecture/module-design.md`：模块设计细节
 - `docs/architecture/project-variants.md`：项目结构变体
 - `projects/*/DESIGN.md`：项目级 UI 设计补充

@@ -27,6 +27,20 @@ Current parity token targets:
 - Numeric values use mono font and tabular numbers.
 - Keep animation restrained and functional.
 
+## UI System Rules
+
+- Naive UI is the low-level widget toolkit.
+- `apps/desktop-wails/frontend/src/components/ui/` is the Wind-DAQ project primitive layer.
+- Feature code should prefer existing `Ui*` primitives before direct Naive UI usage.
+- `apps/desktop-wails/frontend/src/styles/tokens/` is the visual token source of truth.
+- New UI work must follow `../../docs/runbooks/frontend-ai-rules.zh-CN.md` from the workspace root.
+
+Local execution docs:
+
+- `apps/desktop-wails/frontend/src/components/ui/README.md` — component usage rules.
+- `apps/desktop-wails/frontend/src/styles/tokens/README.md` — token usage rules.
+- `docs/ui-design-audit.md` — current UI debt and migration order.
+
 ## Migration Source
 
 Use the reference frontend under:

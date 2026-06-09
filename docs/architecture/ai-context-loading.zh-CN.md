@@ -76,6 +76,8 @@
 推荐映射：
 
 - 编码规范：`docs/runbooks/code-standards.zh-CN.md`
+- 前端开发规则：`docs/runbooks/frontend-ai-rules.zh-CN.md`
+- 前端目录结构：`docs/runbooks/frontend-directory-rules.zh-CN.md`
 - 开发/验证规则：`docs/runbooks/development-rules.md`
 - 工作空间目录规则：`docs/runbooks/workspace-directory-rules.zh-CN.md`
 - 模块设计：`docs/architecture/module-design.md`
@@ -178,9 +180,11 @@ AI 进入工作空间后，默认只需要完成这些动作：
 
 1. `AGENTS.md`
 2. `CLAUDE.md`
-3. `docs/architecture/workspace-engineering-rules.zh-CN.md`
-4. 项目级 `DESIGN.md`
-5. 当前前端源码文件与相似组件
+3. `docs/runbooks/frontend-ai-rules.zh-CN.md`
+4. `docs/runbooks/frontend-directory-rules.zh-CN.md`
+5. `docs/architecture/workspace-engineering-rules.zh-CN.md`
+6. 项目级 `DESIGN.md`
+7. 当前前端源码文件与相似组件
 
 必要时追加：
 
@@ -205,6 +209,31 @@ AI 进入工作空间后，默认只需要完成这些动作：
 2. `docs/index.md`
 3. `docs/architecture/workspace-engineering-rules.zh-CN.md`
 4. 被修改的目标文档
+
+### 5.6 前端目录 / 文件结构变更任务
+
+典型请求：
+
+- 新增页面目录
+- 新建前端组件目录
+- 重构前端文件组织
+- 创建新前端项目
+
+加载顺序：
+
+1. `AGENTS.md`
+2. `CLAUDE.md`
+3. `docs/runbooks/frontend-directory-rules.zh-CN.md`
+4. `docs/runbooks/frontend-ai-rules.zh-CN.md`
+5. `docs/architecture/workspace-engineering-rules.zh-CN.md`
+6. 项目级 `DESIGN.md`（涉及 UI 时）
+
+必须确认：
+
+- 目录位置符合 frontend-directory-rules
+- 不破坏已有加载约定（api/ 与 bridge/ 二选一、pages/ 与 views/ 二选一）
+- 新增文件放在正确分层（ui / layout / domain）
+- 修改后运行 `validate-frontend-structure.ps1`
 
 ## 6. 给 OpenCode 和 Claude Code 的结构建议
 

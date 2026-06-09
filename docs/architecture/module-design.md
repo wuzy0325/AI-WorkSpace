@@ -48,53 +48,46 @@ internal/
 
 ## 2. Vue 3 Frontend Module Structure
 
-Organize by feature domain where the project has enough complexity to justify feature modules. Existing projects may also use `views/`, `components/`, `stores/`, `api/`, and `bridge/` directly when that is the established local convention.
+Standard directory layout is defined in `docs/runbooks/frontend-directory-rules.zh-CN.md`. All existing projects already follow the de facto `views/` + `components/<domain>/` + `components/ui/` pattern.
 
 ```
 frontend/src/
-├── modules/                 # Business modules by feature domain
-│   ├── device/              # Device management: connect, status, config
-│   │   ├── components/      # DevicePanel, DeviceStatus, PortConfig
-│   │   ├── composables/     # useDevice.ts (calls backend device methods)
-│   │   └── types.ts
-│   ├── acquisition/         # Real-time acquisition: waveform, sample params
-│   │   ├── components/      # WaveformChart, SampleConfig, ChannelSelector
-│   │   ├── composables/     # useAcquisition.ts
-│   │   └── types.ts
-│   ├── calibration/         # Calibration: wizard, results display
-│   │   ├── components/      # CalibWizard, CalibResult, CoeffTable
-│   │   ├── composables/     # useCalibration.ts
-│   │   └── types.ts
-│   ├── history/             # Historical data: query, replay, export
-│   └── settings/            # System settings: preferences, configuration
-│
-├── shared/                  # Internal frontend sharing
-│   ├── components/          # Common UI components (buttons, tables, dialogs)
-│   ├── composables/         # Common hooks (useToast, useLoading)
-│   ├── utils/               # Utility functions (formatting, conversion)
-│   └── styles/              # Global styles, theme variables
-│
-├── layouts/                 # Layout components (main frame, sidebar)
-├── bridge/                  # Wails binding wrapper (unified backend calls)
-└── App.vue
+├── main.ts                 # Entry point
+├── App.vue                 # Root component
+├── pages/                  # Route-level page components (or views/)
+├── components/
+│   ├── ui/                 # Base UI primitives (UiButton, UiInput, UiPanel…)
+│   ├── layout/             # Layout components (AppShell, MainTopBar…)
+│   └── <domain>/           # Business domain components (device, calibration…)
+│       ├── components/     # Domain-specific sub-components (optional)
+│       ├── composables/    # Domain-specific composables (optional)
+│       └── types.ts        # Domain-specific types (optional)
+├── stores/                 # Pinia state
+├── api/                    # HTTP/Wails API facade (or bridge/)
+├── styles/
+│   ├── tokens/             # Design tokens (color, spacing, typography…)
+│   └── themes/             # Theme overrides (dark.css, light.css)
+├── router/                 # Route config
+├── composables/            # Cross-domain reusable composables
+├── types/                  # Global TypeScript types
+├── shared/                 # Cross-domain shared utilities and types
+├── bridge/                 # Wails binding wrapper (alternative to api/)
+├── core/                   # Framework-agnostic container
+└── spikes/                 # Prototyping code (dev only)
 ```
 
 ### Frontend Rules
 
 | Rule | Description |
 |---|---|
-| modules split by feature domain | Preferred for larger frontends. Existing direct `views/` / `components/` layouts are acceptable when documented by the project. |
-| shared for cross-module reuse | Only promote to shared when 2+ modules use it. |
-| bridge layer wraps backend calls | Never call Wails API directly in composables. Go through bridge. |
+| pages/ or views/ for route components | Page level only, no business logic. |
+| components/ui/ for Ui* primitives | Business-agnostic, no store imports, no domain words. |
+| components/<domain>/ for feature code | One directory per business domain. |
+| stores/ for Pinia | Calls api/ or bridge/, not hardware or wailsjs/ directly. |
+| api/ or bridge/ as single API facade | One per project, not both. |
 | composable maps to usecase | One composable corresponds to one backend usecase. |
-| no direct cross-module imports | acquisition does not import calibration components. Compose via events or layout layer. |
-
-Additional accepted directories:
-
-- `frontend/src/api/` — typed HTTP/Wails API facade for projects that support both Wails and browser/dev-server modes.
-- `frontend/src/bridge/` — the only frontend layer allowed to import generated `wailsjs/` bindings when the project uses this stricter pattern.
-- `frontend/src/stores/` — Pinia state that calls `api/` or `bridge/`, not hardware or generated Wails bindings directly.
-- `frontend/src/views/` — page-level composition.
+| no cross-domain imports | device does not import calibration components. Compose via pages/ or events. |
+| styles/tokens/ is visual source of truth | Components use tokens, not raw visual values. |
 
 ## 3. Wails Binding Layer
 

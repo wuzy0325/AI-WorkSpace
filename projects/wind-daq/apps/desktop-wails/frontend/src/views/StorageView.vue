@@ -3,7 +3,11 @@ import { ref, onMounted } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { storageApi, reportApi } from '@api/deviceApi'
-import { NButton, NInput, NSelect } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
+import UiFormField from '@components/ui/UiFormField.vue'
+import UiErrorState from '@components/ui/UiErrorState.vue'
 
 const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
@@ -72,29 +76,36 @@ onMounted(refreshStatus)
       </div>
     </section>
 
-    <p v-if="error" class="error-text">{{ error }}</p>
+    <UiErrorState
+      v-if="error"
+      title="操作失败"
+      :message="error"
+    >
+      <template #action>
+        <UiButton variant="secondary" size="sm" @click="error = ''">
+          关闭
+        </UiButton>
+      </template>
+    </UiErrorState>
 
     <div class="storage-grid">
       <section class="storage-card">
         <h3>录制控制</h3>
-        <div class="storage-card__field">
-          <label>输出目录</label>
-          <NInput v-model:value="recordingOutputDir" size="small" />
-        </div>
-        <div class="storage-card__field">
-          <label>文件前缀</label>
-          <NInput v-model:value="recordingFilePrefix" size="small" />
-        </div>
+        <UiFormField label="输出目录">
+          <UiInput v-model="recordingOutputDir" placeholder="data/recordings" />
+        </UiFormField>
+        <UiFormField label="文件前缀">
+          <UiInput v-model="recordingFilePrefix" placeholder="run" />
+        </UiFormField>
         <div class="storage-card__actions">
-          <NButton
-            type="primary"
-            size="small"
-            :class="{ active: recording }"
+          <UiButton
+            :variant="recording ? 'danger' : 'primary'"
+            size="sm"
             :disabled="busy"
             @click="toggleRecording"
           >
             {{ recording ? '停止录制' : '开始录制' }}
-          </NButton>
+          </UiButton>
           <span v-if="recording" class="recording-indicator">REC</span>
         </div>
         <p class="storage-card__hint">
@@ -104,21 +115,18 @@ onMounted(refreshStatus)
 
       <section class="storage-card">
         <h3>报告生成</h3>
-        <div class="storage-card__field">
-          <label>输出目录</label>
-          <NInput v-model:value="reportOutputDir" size="small" />
-        </div>
-        <div class="storage-card__field">
-          <label>文件前缀</label>
-          <NInput v-model:value="reportFilePrefix" size="small" />
-        </div>
-        <div class="storage-card__field">
-          <label>设备 ID</label>
-          <NSelect v-model:value="reportDeviceId" :options="deviceStore.profiles.map(p => ({value: p.id, label: p.name}))" size="tiny" />
-        </div>
-        <NButton type="primary" size="small" :disabled="busy || generating" @click="generateReport">
+        <UiFormField label="输出目录">
+          <UiInput v-model="reportOutputDir" placeholder="data/reports" />
+        </UiFormField>
+        <UiFormField label="文件前缀">
+          <UiInput v-model="reportFilePrefix" placeholder="report" />
+        </UiFormField>
+        <UiFormField label="设备 ID">
+          <UiSelect v-model="reportDeviceId" :options="deviceStore.profiles.map(p => ({value: p.id, label: p.name}))" />
+        </UiFormField>
+        <UiButton variant="primary" size="sm" :disabled="busy || generating" @click="generateReport">
           {{ generating ? '生成中...' : '生成报告' }}
-        </NButton>
+        </UiButton>
         <p v-if="lastReportPath" class="storage-card__result">
           上次报告: {{ lastReportPath }}
         </p>
@@ -140,13 +148,7 @@ onMounted(refreshStatus)
 
 .storage-view__head h2 {
   margin: 0;
-  font-size: 1.35rem;
-}
-
-.error-text {
-  margin-bottom: var(--space-3);
-  color: var(--accent-danger);
-  font: 700 0.75rem/1.4 var(--font-family-mono, monospace);
+  font-size: var(--font-size-2xl);
 }
 
 .state-panel {
@@ -155,25 +157,25 @@ onMounted(refreshStatus)
   gap: var(--space-3);
   margin-bottom: var(--space-4);
   padding: var(--space-3);
-  border-radius: 0.5rem;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-  font-size: 0.75rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--state-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--state-warning) 15%, transparent);
+  color: var(--state-warning);
+  font-size: var(--font-size-xs);
 }
 
 .state-panel__indicator {
   width: 0.6rem;
   height: 0.6rem;
   margin-top: 0.25rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: currentColor;
   box-shadow: 0 0 12px currentColor;
   flex-shrink: 0;
 }
 
 .state-panel h3, .state-panel p { margin: 0; }
-.state-panel p { margin-top: 0.25rem; color: var(--text-muted); line-height: 1.5; }
+.state-panel p { margin-top: var(--space-1); color: var(--text-muted); line-height: var(--line-height-base); }
 
 .storage-grid {
   display: grid;
@@ -183,41 +185,18 @@ onMounted(refreshStatus)
 
 .storage-card {
   padding: var(--space-4);
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(30, 41, 59, 0.4);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
 }
 
 .storage-card h3 {
   margin: 0 0 var(--space-3);
-  font-size: 0.85rem;
-  font-weight: 800;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-black);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-}
-
-.storage-card__field {
-  margin-bottom: var(--space-3);
-}
-
-.storage-card__field label {
-  display: block;
-  margin-bottom: 0.25rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--text-muted);
-}
-
-.storage-card__field input,
-.storage-card__field select {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border-radius: 0.35rem;
-  border: 1px solid var(--border-default);
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--text-primary);
-  font-size: 0.85rem;
 }
 
 .storage-card__actions {
@@ -231,14 +210,14 @@ onMounted(refreshStatus)
   align-items: center;
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(239, 68, 68, 0.12);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
   color: var(--accent-danger);
-  font: 800 0.65rem/1 var(--font-family-mono, monospace);
-  animation: pulse 1.5s ease-in-out infinite;
+  font: var(--font-weight-black) var(--font-size-micro)/1 var(--font-family-mono);
+  animation: ui-rec-pulse var(--motion-slow) var(--easing-standard) infinite;
 }
 
-@keyframes pulse {
+@keyframes ui-rec-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
@@ -247,8 +226,6 @@ onMounted(refreshStatus)
 .storage-card__result {
   margin: var(--space-3) 0 0;
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--font-size-2xs);
 }
-
-
 </style>

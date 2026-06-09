@@ -162,16 +162,18 @@
 
 1. `AGENTS.md`
 2. 项目级 `AGENTS.md`
-3. `docs/architecture/workspace-engineering-rules.zh-CN.md`
-4. 项目级 `DESIGN.md`（若存在）
-5. 当前组件文件
-6. 相似组件文件
-7. `docs/runbooks/code-standards.zh-CN.md`（需要编码细则时）
+3. `docs/runbooks/frontend-ai-rules.zh-CN.md`
+4. `docs/runbooks/frontend-directory-rules.zh-CN.md`
+5. `docs/architecture/workspace-engineering-rules.zh-CN.md`
+6. 项目级 `DESIGN.md`（若存在）
+7. 当前组件文件
+8. 相似组件文件
+9. `docs/runbooks/code-standards.zh-CN.md`（需要编码细则时）
 
 必须确认：
 
 - 前端不承载校准算法或硬件访问
-- 基础组件、pattern、feature 分层正确
+- 组件放在正确目录（ui / layout / domain）
 - token 和样式规则不被随意绕过
 
 ### 3.7 修改前端状态 / store / API 调用
@@ -187,11 +189,13 @@
 
 1. `AGENTS.md`
 2. 项目级 `AGENTS.md`
-3. 项目级 `README.md` / `CLAUDE.md`
-4. 相关 store 文件
-5. 相关 api / bridge 文件
-6. 后端 contract 或 usecase 文件
-7. 相关测试
+3. `docs/runbooks/frontend-ai-rules.zh-CN.md`
+4. `docs/runbooks/frontend-directory-rules.zh-CN.md`（新增文件时）
+5. 项目级 `README.md` / `CLAUDE.md`
+6. 相关 store 文件
+7. 相关 api / bridge 文件
+8. 后端 contract 或 usecase 文件
+9. 相关测试
 
 必须确认：
 
@@ -242,14 +246,16 @@
 3. `docs/architecture/workspace-engineering-rules.zh-CN.md`
 4. `docs/architecture/project-variants.md`
 5. `docs/runbooks/development-rules.md`
-6. 涉及项目的 `AGENTS.md` / `README.md`
-7. 相关源码和测试
+6. `docs/runbooks/frontend-directory-rules.zh-CN.md`（移动前端目录时）
+7. 涉及项目的 `AGENTS.md` / `README.md`
+8. 相关源码和测试
 
 必须确认：
 
 - 不能让项目互相导入 `internal/*`
 - 2 个以上项目复用的逻辑优先考虑 `shared/*`
 - 结构变化需考虑 `workspace.structure.json` 和 ADR
+- 前端目录变更后跑 `validate-frontend-structure.ps1`
 
 若使用 GitNexus：
 

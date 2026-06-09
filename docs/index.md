@@ -10,6 +10,8 @@
 |------|---------|------|
 | `runbooks/code-standards.zh-CN.md` | 开发者 / AI | 架构选型、目录结构、命名、注释、写法、复用规范 |
 | `runbooks/ai-agent-execution-standard.zh-CN.md` | AI | AI 执行工作流标准 |
+| `runbooks/frontend-ai-rules.zh-CN.md` | AI / 前端开发者 | Vue/Wails 前端职责边界、控件、UI 状态、样式 token 与验证规则 |
+| `runbooks/frontend-directory-rules.zh-CN.md` | AI / 前端开发者 | Vue 前端目录结构标准与文件放置规则 |
 | `runbooks/development-rules.md` | 开发者 / AI | 开发规则（设计原则补充） |
 
 **快速定位：**
@@ -38,6 +40,8 @@
 - 想治理 AI 文档分工和避免重复 → `architecture/ai-document-responsibility-matrix.zh-CN.md`
 - 想优化 AI 启动规则加载方式 → `architecture/ai-context-loading.zh-CN.md`
 - 想看一份整合版总规则 → `architecture/workspace-engineering-rules.zh-CN.md`
+- 前端 UI / 控件 / 样式 / store / API client 修改 → `runbooks/frontend-ai-rules.zh-CN.md`
+- 前端目录结构 / 文件放置 → `runbooks/frontend-directory-rules.zh-CN.md`
 - 六边形架构约束 → `CLAUDE.md` Hard Constraints
 - 代码放哪里 → `CLAUDE.md` Decision Tree
 - 项目结构验证 → `scripts/validate-structure.ps1`
@@ -80,7 +84,8 @@
 
 | 脚本 | 用途 | 运行方式 |
 |------|------|---------|
-| `scripts/validate-structure.ps1` | 结构合规检查 | `powershell -File .\scripts\validate-structure.ps1` |
+| `scripts/validate-structure.ps1` | 后端/整体结构合规检查 | `powershell -File .\scripts\validate-structure.ps1` |
+| `scripts/validate-frontend-structure.ps1` | 前端目录结构合规检查 | `powershell -File scripts/validate-frontend-structure.ps1 -ProjectDir <path>` |
 | `scripts/lint-go.ps1` | Go 代码检查（gofmt + build） | `powershell -File scripts/lint-go.ps1` |
 | `scripts/new-project.ps1` | 创建新项目骨架 | `powershell -File scripts/new-project.ps1 -Name foo` |
 

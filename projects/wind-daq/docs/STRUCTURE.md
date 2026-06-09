@@ -4,17 +4,30 @@
 
 ### Frontend (`apps/desktop-wails/frontend/src/`)
 
+Directory structure follows `docs/runbooks/frontend-directory-rules.zh-CN.md`.
+
 | Path | Description |
 |---|---|
-| `api/` | HTTP client (`http-client.ts`), typed API modules (`deviceApi.ts`, `calibrationApi.ts`, `types.ts`) |
-| `components/device/` | DeviceManagementDrawer, DaqT1603Config, RecordingControl |
-| `components/calibration/` | Calibration UI (five-hole, three-hole, total-pressure, total-temperature) |
-| `components/traversal/` | Traversal UI with visualization composables |
-| `components/layout/` | AppShell, MainView, MainTopBar, AppRailNav, MainBottomBar, GlobalSettingsModal |
-| `components/main/` | DeviceSidebar, DeviceDetailPanel |
-| `stores/` | Pinia stores: deviceStore, themeStore, i18nStore, feedbackStore, calibrationStore, motionStore, traversalStore, storageStore |
-| `shared/` | Shared types and UI-only helpers (⚠️ business algorithms marked for migration) |
-| `composables/` | Vue composables for workflow orchestration and validation |
+| `pages/` or `views/` | 页面级路由组件 |
+| `components/ui/` | 基础 UI 控件（UiButton, UiInput, UiSelect, UiPanel…） |
+| `components/layout/` | 布局组件（AppShell, MainTopBar, AppRailNav, MainBottomBar） |
+| `components/feedback/` | 反馈组件（UiToastHost, UiConfirmDialog） |
+| `components/main/` | 主面板组件（DeviceSidebar, DeviceDetailPanel） |
+| `components/device/` | 设备管理组件（DeviceManagementDrawer, DaqT1603Config, RecordingControl） |
+| `components/calibration/` | 校准 UI（五孔/三孔/总压/总温） |
+| `components/traversal/` | 遍历 UI 与可视化 |
+| `components/motion/` | 运动控制配置面板 |
+| `components/icons/` | 图标组件 |
+| `stores/` | Pinia stores |
+| `api/` | HTTP/Wails API facade |
+| `styles/tokens/` | 设计 token（color, spacing, typography, radius, motion, layout） |
+| `styles/themes/` | 主题覆盖（dark.css, light.css） |
+| `router/` | 路由配置 |
+| `composables/` | 跨组件可复用 composable |
+| `shared/` | 共享类型与 UI-only helper |
+| `types/` | 全局类型声明 |
+| `core/` | 框架无关容器与常量 |
+| `spikes/` | 实验性代码（仅开发态） |
 
 > **架构约束**: 前端只负责展示、交互和临时 UI 状态。所有业务规则、配置持久化、设备控制、
 > 插值/校准/运动控制逻辑必须在 Go 后端或 shared 模块中。配置持久化通过后端

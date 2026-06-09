@@ -135,6 +135,7 @@ Reference: `docs/runbooks/development-rules.md` (sections 8–12).
 ## Workspace Structure
 
 - Structure is validated by `scripts/validate-structure.ps1`. Run before completing non-trivial work.
+- Frontend directory structure is validated by `scripts/validate-frontend-structure.ps1`.
 - New projects: `scripts/new-project.ps1 -Name <name>`.
 - Structural changes require: update `workspace.structure.json` + document in `docs/decisions/`.
 - Full rules: `docs/runbooks/workspace-directory-rules.zh-CN.md`.
@@ -170,12 +171,16 @@ Per-project commands will be added as projects get build tooling.
 Detailed code structure, naming, comment, and writing conventions for AI-friendly maintainability:
 
 - `docs/runbooks/code-standards.zh-CN.md` — Full specification (Chinese)
+- `docs/runbooks/frontend-ai-rules.zh-CN.md` — AI-executable frontend rules for Vue/Wails UI work
+- `docs/runbooks/frontend-directory-rules.zh-CN.md` — Frontend directory structure standard
 
 ## Language
 
 - Documentation files: bilingual (English + Chinese) as needed.
 - Code comments: English only.
 - AI agent execution standard (Chinese): `docs/runbooks/ai-agent-execution-standard.zh-CN.md`.
+- AI frontend execution rules (Chinese): `docs/runbooks/frontend-ai-rules.zh-CN.md`.
+- Frontend directory structure (Chinese): `docs/runbooks/frontend-directory-rules.zh-CN.md`.
 
 ## More
 

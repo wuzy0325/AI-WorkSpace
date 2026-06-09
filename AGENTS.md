@@ -51,10 +51,15 @@ powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 Before committing, run the checks that apply to the touched project:
 
 1. `powershell -File .\scripts\validate-structure.ps1` — must pass
-2. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
-3. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
+2. `powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "apps/desktop-wails/frontend/src"` — when modifying frontend files or directories
+3. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
+4. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
 
 See CLAUDE.md for complete rules, decision tree, and design principles.
+
+### Packaging / Release Rule
+
+Before creating any deliverable package, installer, release build, or user-facing `wails build` output, agents must follow `docs/runbooks/release-versioning.zh-CN.md`: update the target project version, changelog, per-version release note, run applicable verification, and report the final artifact path.
 
 ### Progressive Loading
 
@@ -65,6 +70,11 @@ Load documents in this order unless the task is trivial:
 3. `docs/architecture/workspace-engineering-rules.zh-CN.md` — integrated engineering rules when deciding boundaries, frontend/backend split, UI architecture, or coding approach
 4. Project docs under `projects/<name>/` — only after the task is scoped to that project
 5. Topic docs in `docs/runbooks/` and `docs/architecture/` — only when the task specifically needs them
+
+For frontend UI, layout, component, style, store, API-client, or Wails frontend tasks, load `docs/runbooks/frontend-ai-rules.zh-CN.md` before editing.
+For frontend directory structure decisions, load `docs/runbooks/frontend-directory-rules.zh-CN.md` before creating new files.
+
+For packaging, release, installer, or deliverable build tasks, load `docs/runbooks/release-versioning.zh-CN.md` before building.
 
 For task-specific loading paths, use `docs/architecture/ai-task-context-map.zh-CN.md`.
 

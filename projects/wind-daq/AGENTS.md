@@ -76,7 +76,10 @@ Use these docs by task type:
 - development/verification rules: `../../docs/runbooks/development-rules.md`
 - project overview and commands: `README.md`
 - project-specific architecture addendum: `CLAUDE.md`
+- frontend UI / component / style / store / API-client rules: `../../docs/runbooks/frontend-ai-rules.zh-CN.md`
+- frontend directory structure: `../../docs/runbooks/frontend-directory-rules.zh-CN.md`
 - frontend UI / parity / layout: `DESIGN.md`
+- frontend UI consistency migration: `docs/ui-design-audit.md`
 - migration implementation: `docs/migration/README.md`, `docs/migration/ui-parity-plan.md`, `docs/migration/ts-reference-feature-map.md`
 
 ## Wind-DAQ-Specific Boundaries
