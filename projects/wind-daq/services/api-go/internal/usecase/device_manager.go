@@ -11,14 +11,21 @@ import (
 	"wind-daq/services/api-go/internal/ports"
 )
 
+type scanPending struct {
+	results []device.ScanResult
+	err     error
+	done    chan struct{}
+}
+
 type DeviceManager struct {
-	mu       sync.RWMutex
-	profiles []device.Profile
-	devices  map[string]ports.Device
-	store    ports.ProfileStore
-	factory  ports.DeviceFactory
-	scanner  ports.DeviceScanner
-	dataSink device.DataSink
+	mu           sync.RWMutex
+	profiles     []device.Profile
+	devices      map[string]ports.Device
+	store        ports.ProfileStore
+	factory      ports.DeviceFactory
+	scanner      ports.DeviceScanner
+	dataSink     device.DataSink
+	scanInFlight *scanPending
 }
 
 func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink) (*DeviceManager, error) {
@@ -43,13 +50,31 @@ func (m *DeviceManager) SetScanner(scanner ports.DeviceScanner) {
 }
 
 func (m *DeviceManager) ScanDevices() ([]device.ScanResult, error) {
-	m.mu.RLock()
+	m.mu.Lock()
 	scanner := m.scanner
-	m.mu.RUnlock()
 	if scanner == nil {
+		m.mu.Unlock()
 		return []device.ScanResult{}, nil
 	}
-	return scanner.Scan()
+	if m.scanInFlight != nil {
+		pending := m.scanInFlight
+		m.mu.Unlock()
+		<-pending.done
+		return pending.results, pending.err
+	}
+	pending := &scanPending{done: make(chan struct{})}
+	m.scanInFlight = pending
+	m.mu.Unlock()
+
+	pending.results, pending.err = scanner.Scan()
+	close(pending.done)
+
+	m.mu.Lock()
+	if m.scanInFlight == pending {
+		m.scanInFlight = nil
+	}
+	m.mu.Unlock()
+	return pending.results, pending.err
 }
 
 func (m *DeviceManager) GetProfiles() []device.Profile {

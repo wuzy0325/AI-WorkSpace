@@ -95,6 +95,12 @@ type ScanResult struct {
 	MacAddress      string `json:"macAddress,omitempty"`
 	SerialNumber    string `json:"serialNumber,omitempty"`
 	FirmwareVersion string `json:"firmwareVersion,omitempty"`
+	Model           string `json:"model,omitempty"`
+	SubnetMask      string `json:"subnetMask,omitempty"`
+	Gateway         string `json:"gateway,omitempty"`
+	IpMode          string `json:"ipMode,omitempty"`
+	TcpConnected    bool   `json:"tcpConnected,omitempty"`
+	IpAssigned      bool   `json:"ipAssigned,omitempty"`
 }
 
 type DataPayload struct {

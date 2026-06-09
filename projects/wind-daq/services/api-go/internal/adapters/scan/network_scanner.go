@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -31,6 +32,8 @@ const (
 	scanDaqT1603Prefix    = "scan-daq-t-1603"
 	scanDaqP1064PrePrefix = "scan-daq-p-1064pre"
 )
+
+var commonDiscoveryOctets = []int{7, 9, 101, 102, 104, 200, 202, 254}
 
 func scanResultID(prefix, address string, port int, mac string) string {
 	if mac != "" {
@@ -74,7 +77,7 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 		return nil, fmt.Errorf("set deadline: %w", err)
 	}
 
-	targets := getAllBroadcastTargets()
+	targets := getAllDiscoveryTargets()
 	p1064preCmd := []byte{0xFF, 0x01, 0x01, 0x02}
 
 	for _, target := range targets {
@@ -129,12 +132,30 @@ func deviceDispatcher(data []byte, remoteAddr string) *device.ScanResult {
 		}
 	}
 
+	return parseDaqP1604Response(data, remoteAddr)
+}
+
+func isASCIIPrintable(data []byte) bool {
+	n := len(data)
+	if n > 5 {
+		n = 5
+	}
+	for _, b := range data[:n] {
+		if b < 0x20 || b > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
+	msg := strings.TrimSpace(string(data))
 	parts := strings.Split(msg, ",")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 
-	if len(parts) >= 8 {
+	if len(parts) >= 6 {
 		if result := parseDaqP1604Csv(parts); result != nil {
 			return result
 		}
@@ -167,63 +188,24 @@ func deviceDispatcher(data []byte, remoteAddr string) *device.ScanResult {
 	return nil
 }
 
-func isASCIIPrintable(data []byte) bool {
-	n := len(data)
-	if n > 5 {
-		n = 5
-	}
-	for _, b := range data[:n] {
-		if b < 0x20 || b > 0x7E {
-			return false
-		}
-	}
-	return true
-}
-
-func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
-	msg := strings.TrimSpace(string(data))
-	parts := strings.Split(msg, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-
-	if len(parts) < 8 {
-		if strings.HasPrefix(msg, "DAQP1604") {
-			remoteHost := remoteHostFromAddr(remoteAddr)
-			return &device.ScanResult{
-				ID:        scanResultID(scanDaqP1604Prefix, remoteHost, daqP1604DefaultPort, ""),
-				Name:      "Discovered DAQ-P-1604",
-				Type:      device.DeviceDAQP1604,
-				Available: true,
-				Address:   remoteHost,
-				Port:      daqP1604DefaultPort,
-			}
-		}
+func parseDaqP1604Csv(parts []string) *device.ScanResult {
+	if len(parts) < 6 {
 		return nil
 	}
-
-	return parseDaqP1604Csv(parts)
-}
-
-func parseDaqP1604Csv(parts []string) *device.ScanResult {
-	if len(parts) > 2 && parts[2] != "0" {
+	if parts[2] != "0" {
 		return nil
 	}
 
 	address := parts[0]
-	port := daqP1604DefaultPort
-	if p, err := parseInt(parts[7]); err == nil && p > 0 {
-		port = p
-	}
-
 	if address == "" {
 		return nil
 	}
-
-	mac := ""
-	if len(parts) > 1 && parts[1] != "" {
-		mac = parts[1]
+	port := daqP1604DefaultPort
+	if p, err := parseInt(safeGet(parts, 7)); err == nil && p > 0 {
+		port = p
 	}
+
+	mac := safeGet(parts, 1)
 	result := &device.ScanResult{
 		ID:         scanResultID(scanDaqP1604Prefix, address, port, mac),
 		Name:       "Discovered DAQ-P-1604",
@@ -233,12 +215,11 @@ func parseDaqP1604Csv(parts []string) *device.ScanResult {
 		Port:       port,
 		MacAddress: mac,
 	}
-	if len(parts) > 3 && parts[3] != "" && parts[3] != "0" {
-		result.SerialNumber = parts[3]
-	}
-	if len(parts) > 4 && parts[4] != "" {
-		result.FirmwareVersion = parts[4]
-	}
+
+	result.SerialNumber = omitZero(safeGet(parts, 3))
+	result.FirmwareVersion = safeGet(parts, 4)
+	result.SubnetMask = safeGet(parts, 8)
+	result.Gateway = safeGet(parts, 9)
 
 	return result
 }
@@ -251,28 +232,7 @@ func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
 		return parseDaqT1603Json(jsonData, remoteAddr)
 	}
 
-	parts := strings.Split(msg, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-
-	if len(parts) >= 8 {
-		return parseDaqT1603Csv(parts, remoteAddr)
-	}
-
-	if strings.HasPrefix(msg, "DAQT1603") {
-		remoteHost := remoteHostFromAddr(remoteAddr)
-		return &device.ScanResult{
-			ID:        scanResultID(scanDaqT1603Prefix, remoteHost, daqT1603DefaultPort, ""),
-			Name:      "Discovered DAQ-T-1603",
-			Type:      device.DeviceDaqT1603,
-			Available: true,
-			Address:   remoteHost,
-			Port:      daqT1603DefaultPort,
-		}
-	}
-
-	return nil
+	return parseDaqP1604Response(data, remoteAddr)
 }
 
 func remoteHostFromAddr(remoteAddr string) string {
@@ -304,17 +264,29 @@ func parseDaqT1603Json(jsonData map[string]interface{}, remoteHost string) *devi
 		MacAddress: mac,
 	}
 
-	if sn, ok := jsonData["serialNumber"].(string); ok {
-		result.SerialNumber = sn
+	result.SerialNumber = getJSONString(jsonData, "serialNumber")
+	result.FirmwareVersion = getJSONString(jsonData, "firmwareVersion")
+	result.Model = getJSONString(jsonData, "model")
+	result.SubnetMask = getJSONString(jsonData, "subnetMask")
+	result.Gateway = getJSONString(jsonData, "gateway")
+	if mode, ok := jsonData["ipMode"].(string); ok {
+		result.IpMode = mode
 	}
-	if fv, ok := jsonData["firmwareVersion"].(string); ok {
-		result.FirmwareVersion = fv
+	if tc, ok := jsonData["tcpConnected"].(bool); ok {
+		result.TcpConnected = tc
+	}
+	if ia, ok := jsonData["ipAssigned"].(bool); ok {
+		result.IpAssigned = ia
 	}
 
 	return result
 }
 
 func parseDaqT1603Csv(parts []string, remoteHost string) *device.ScanResult {
+	if len(parts) < 8 {
+		return nil
+	}
+
 	address := parts[0]
 	if address == "" {
 		address = remoteHost
@@ -338,12 +310,16 @@ func parseDaqT1603Csv(parts []string, remoteHost string) *device.ScanResult {
 		MacAddress: mac,
 	}
 
-	if len(parts) > 2 && parts[2] != "" && parts[2] != "0" {
-		result.SerialNumber = parts[2]
+	result.SerialNumber = omitZero(safeGet(parts, 2))
+	result.Model = safeGet(parts, 3)
+	result.FirmwareVersion = safeGet(parts, 4)
+	if tc := safeGet(parts, 5); tc == "1" {
+		result.TcpConnected = true
 	}
-	if len(parts) > 4 && parts[4] != "" {
-		result.FirmwareVersion = parts[4]
+	if ia := safeGet(parts, 6); ia == "1" {
+		result.IpAssigned = true
 	}
+	result.SubnetMask = safeGet(parts, 8)
 
 	return result
 }
@@ -368,6 +344,44 @@ func parseDaqP1064PreResponse(data []byte, remoteAddr string) *device.ScanResult
 	}
 }
 
+func getAllDiscoveryTargets() []string {
+	targets := getAllBroadcastTargets()
+
+	unicastIPs := make(map[string]bool)
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return targets
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() == nil || ipNet.IP.IsLoopback() {
+				continue
+			}
+			base := ipNet.IP.To4()
+			for _, o := range commonDiscoveryOctets {
+				candidate := net.IPv4(base[0], base[1], base[2], byte(o)).String()
+				if !unicastIPs[candidate] {
+					unicastIPs[candidate] = true
+				}
+			}
+		}
+	}
+
+	for ip := range unicastIPs {
+		targets = append(targets, ip)
+	}
+	return targets
+}
+
 func getAllBroadcastTargets() []string {
 	targets := make(map[string]bool)
 	targets[limitedBroadcast] = true
@@ -381,18 +395,15 @@ func getAllBroadcastTargets() []string {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
-
 		for _, addr := range addrs {
 			ipNet, ok := addr.(*net.IPNet)
 			if !ok || ipNet.IP.To4() == nil || ipNet.IP.IsLoopback() {
 				continue
 			}
-
 			broadcast := computeBroadcastAddress(ipNet.IP.To4(), ipNet.Mask)
 			if broadcast != "" {
 				targets[broadcast] = true
@@ -411,12 +422,10 @@ func computeBroadcastAddress(ip net.IP, mask net.IPMask) string {
 	if len(ip) != 4 || len(mask) != 4 {
 		return ""
 	}
-
 	broadcast := make(net.IP, 4)
 	for i := range ip {
 		broadcast[i] = ip[i] | ^mask[i]
 	}
-
 	return broadcast.String()
 }
 
@@ -425,4 +434,29 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+func safeGet(parts []string, index int) string {
+	if index < len(parts) {
+		return strings.TrimSpace(parts[index])
+	}
+	return ""
+}
+
+func omitZero(s string) string {
+	if s == "" || s == "0" {
+		return ""
+	}
+	return s
+}
+
+func getJSONString(data map[string]interface{}, key string) string {
+	if v, ok := data[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func init() {
+	log.SetFlags(log.Ltime | log.Lshortfile)
 }

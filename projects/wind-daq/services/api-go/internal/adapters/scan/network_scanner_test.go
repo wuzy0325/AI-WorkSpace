@@ -51,7 +51,10 @@ func (m *mockPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
 func (m *mockPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 	cmd := string(b)
 	if resp, ok := m.responses[cmd]; ok {
-		m.readBuf <- []byte(resp)
+		select {
+		case m.readBuf <- []byte(resp):
+		default:
+		}
 	}
 	return len(b), nil
 }
@@ -572,6 +575,129 @@ func TestParseDaqP1604Csv_TableDriven(t *testing.T) {
 				t.Errorf("serialNumber = %q, want %q", got.SerialNumber, tt.wantSN)
 			}
 		})
+	}
+}
+
+func TestParseDaqT1603Json_ExtraFields(t *testing.T) {
+	data := map[string]interface{}{
+		"ip":              "10.0.0.9",
+		"port":            float64(9000),
+		"mac":             "aa:bb:cc:dd:ee:ff",
+		"serialNumber":    "SN009",
+		"firmwareVersion": "v3.1",
+		"model":           "T1603-Pro",
+		"subnetMask":      "255.255.255.0",
+		"gateway":         "10.0.0.1",
+		"ipMode":          "dhcp",
+		"tcpConnected":    true,
+		"ipAssigned":      true,
+	}
+	result := parseDaqT1603Json(data, "10.0.0.9")
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Model != "T1603-Pro" {
+		t.Errorf("model = %q, want %q", result.Model, "T1603-Pro")
+	}
+	if result.SubnetMask != "255.255.255.0" {
+		t.Errorf("subnetMask = %q, want %q", result.SubnetMask, "255.255.255.0")
+	}
+	if result.Gateway != "10.0.0.1" {
+		t.Errorf("gateway = %q, want %q", result.Gateway, "10.0.0.1")
+	}
+	if result.IpMode != "dhcp" {
+		t.Errorf("ipMode = %q, want %q", result.IpMode, "dhcp")
+	}
+	if !result.TcpConnected {
+		t.Error("expected TcpConnected = true")
+	}
+	if !result.IpAssigned {
+		t.Error("expected IpAssigned = true")
+	}
+}
+
+func TestParseDaqT1603Csv_ExtraFields(t *testing.T) {
+	parts := strings.Split("10.0.0.10, aa:bb:cc:dd:ee:10, SN010, ModelX, v3.0, 1, 1, 9000, 255.255.0.0", ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	result := parseDaqT1603Csv(parts, "10.0.0.10")
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Model != "ModelX" {
+		t.Errorf("model = %q, want %q", result.Model, "ModelX")
+	}
+	if !result.TcpConnected {
+		t.Error("expected TcpConnected = true")
+	}
+	if !result.IpAssigned {
+		t.Error("expected IpAssigned = true")
+	}
+	if result.SubnetMask != "255.255.0.0" {
+		t.Errorf("subnetMask = %q, want %q", result.SubnetMask, "255.255.0.0")
+	}
+}
+
+func TestParseDaqP1604Csv_ExtraFields(t *testing.T) {
+	parts := strings.Split("10.0.0.20, aa:bb:cc:dd:ee:20, 0, SN020, v2.0, 1, 1, 9000, 255.255.255.0, 10.0.0.1", ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	result := parseDaqP1604Csv(parts)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.SerialNumber != "SN020" {
+		t.Errorf("serialNumber = %q, want %q", result.SerialNumber, "SN020")
+	}
+	if result.SubnetMask != "255.255.255.0" {
+		t.Errorf("subnetMask = %q, want %q", result.SubnetMask, "255.255.255.0")
+	}
+	if result.Gateway != "10.0.0.1" {
+		t.Errorf("gateway = %q, want %q", result.Gateway, "10.0.0.1")
+	}
+}
+
+func TestGetAllDiscoveryTargets_IncludesUnicast(t *testing.T) {
+	targets := getAllDiscoveryTargets()
+	if len(targets) == 0 {
+		t.Fatal("expected at least one discovery target")
+	}
+	foundLimited := false
+	for _, tgt := range targets {
+		if tgt == limitedBroadcast {
+			foundLimited = true
+			break
+		}
+	}
+	if !foundLimited {
+		t.Error("expected limited broadcast in discovery targets")
+	}
+}
+
+func TestSafeGet(t *testing.T) {
+	parts := []string{"a", "b", "c"}
+	if got := safeGet(parts, 0); got != "a" {
+		t.Errorf("safeGet(0) = %q, want %q", got, "a")
+	}
+	if got := safeGet(parts, 2); got != "c" {
+		t.Errorf("safeGet(2) = %q, want %q", got, "c")
+	}
+	if got := safeGet(parts, 5); got != "" {
+		t.Errorf("safeGet(5) = %q, want empty", got)
+	}
+}
+
+func TestOmitZero(t *testing.T) {
+	if got := omitZero(""); got != "" {
+		t.Errorf("omitZero('') = %q, want empty", got)
+	}
+	if got := omitZero("0"); got != "" {
+		t.Errorf("omitZero('0') = %q, want empty", got)
+	}
+	if got := omitZero("SN001"); got != "SN001" {
+		t.Errorf("omitZero('SN001') = %q, want 'SN001'", got)
 	}
 }
 

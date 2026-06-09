@@ -72,6 +72,12 @@ export interface ScanResult {
   macAddress?: string
   serialNumber?: string
   firmwareVersion?: string
+  model?: string
+  subnetMask?: string
+  gateway?: string
+  ipMode?: string
+  tcpConnected?: boolean
+  ipAssigned?: boolean
 }
 
 export interface DataPayload {

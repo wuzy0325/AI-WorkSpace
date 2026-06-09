@@ -787,6 +787,16 @@ function channelLabel(c: ChannelConfig): string {
                   <span v-if="d.address" class="discovered-card-addr"> · {{ d.address }}<template v-if="d.port">:{{ d.port }}</template></span>
                   <span v-if="d.macAddress" class="discovered-card-addr"> · MAC: {{ d.macAddress }}</span>
                 </div>
+                <div class="discovered-card-meta">
+                  <span v-if="d.serialNumber" class="discovered-meta-badge">SN: {{ d.serialNumber }}</span>
+                  <span v-if="d.firmwareVersion" class="discovered-meta-badge">FW: {{ d.firmwareVersion }}</span>
+                  <span v-if="d.model" class="discovered-meta-badge">{{ d.model }}</span>
+                  <span v-if="d.subnetMask" class="discovered-meta-badge">{{ d.subnetMask }}</span>
+                  <span v-if="d.gateway" class="discovered-meta-badge">GW: {{ d.gateway }}</span>
+                  <span v-if="d.ipMode" class="discovered-meta-badge">{{ d.ipMode }}</span>
+                  <span v-if="d.tcpConnected" class="discovered-meta-badge">TCP:ON</span>
+                  <span v-if="d.ipAssigned" class="discovered-meta-badge">IP:OK</span>
+                </div>
                 <div v-if="matchedProfileForDiscovered(d)" class="discovered-matched">
                   已匹配: {{ matchedProfileForDiscovered(d)?.name }}
                 </div>
@@ -1377,6 +1387,14 @@ function channelLabel(c: ChannelConfig): string {
 .discovered-card-name { font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
 .discovered-card-type { font-size: 0.65rem; font-weight: 600; color: var(--text-muted); margin-top: 0.125rem; }
 .discovered-card-addr { color: var(--text-muted); opacity: 0.7; }
+.discovered-card-meta { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+.discovered-meta-badge {
+  display: inline-flex; align-items: center;
+  padding: 0.0625rem 0.375rem; border-radius: 4px;
+  font-size: 0.55rem; font-weight: 600;
+  background: var(--bg-secondary); color: var(--text-tertiary);
+  border: 1px solid var(--border-default);
+}
 .discovered-matched {
   margin-top: 0.25rem; display: inline-flex; align-items: center;
   padding: 0.125rem 0.5rem; border-radius: 999px;
