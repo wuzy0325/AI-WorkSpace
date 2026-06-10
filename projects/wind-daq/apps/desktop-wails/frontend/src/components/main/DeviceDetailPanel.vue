@@ -167,10 +167,17 @@ const statusText = computed(() => {
   if (currentAcquiring()) {
     return i18n.t.acquiring || '采集中'
   }
-  if (currentStatus() === 'Connected') {
+  const status = currentStatus()
+  if (status === 'Connected') {
     return i18n.t.deviceRunning || '设备运行正常'
   }
-  return currentStatus()
+  if (status === 'Connecting') {
+    return i18n.t.connectingState || '连接中'
+  }
+  if (status === 'Error') {
+    return i18n.t.warningState || '警告'
+  }
+  return i18n.t.disconnectedState || '已断开'
 })
 
 const acquisitionButtonLabel = computed(() => {
@@ -204,7 +211,7 @@ const connectionButtonLabel = computed(() => {
       <div class="detail-panel__actions">
         <NButton
           secondary
-          size="tiny"
+          size="small"
           :class="{ 'opacity-40 cursor-not-allowed': !isPressureScannerDevice }"
           :disabled="!isPressureScannerDevice"
           @click="isPressureScannerDevice && profile && deviceStore.tareAllEnabled(profile.id)"
@@ -213,14 +220,14 @@ const connectionButtonLabel = computed(() => {
         </NButton>
         <NButton
           v-if="currentStatus() === 'Connected'"
-          size="tiny"
+          size="small"
           :type="currentAcquiring() ? 'error' : 'primary'"
           @click="() => { const id = profile!.id; currentAcquiring() ? deviceStore.stopAcquisition(id) : deviceStore.startAcquisition(id) }"
         >
           {{ acquisitionButtonLabel }}
         </NButton>
         <NButton
-          size="tiny"
+          size="small"
           :type="currentStatus() === 'Connected' || currentAcquiring() ? 'error' : 'primary'"
           @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
         >
@@ -248,9 +255,9 @@ const connectionButtonLabel = computed(() => {
           <span>实时趋势</span>
         </div>
         <div class="detail-panel__chart-controls">
-          <NButton secondary size="tiny" @click="openChartSelector">
+          <NButton secondary size="small" @click="openChartSelector">
             <template #icon>
-              <Settings2 class="w-3.5 h-3.5" />
+              <Settings2 class="w-4 h-4" />
             </template>
             <span>通道选择</span>
           </NButton>
@@ -299,7 +306,7 @@ const connectionButtonLabel = computed(() => {
           <div class="channel-card__actions">
             <NButton
               quaternary
-              size="tiny"
+              size="small"
               :class="{ 'channel-card__action-btn--active': isChartVisible(snapshot.channelIndices[snapshotIndex]) }"
               :title="isChartVisible(snapshot.channelIndices[snapshotIndex]) ? '隐藏波形' : '显示波形'"
               @click.stop="toggleChartVisibility(snapshot.channelIndices[snapshotIndex])"
@@ -311,7 +318,7 @@ const connectionButtonLabel = computed(() => {
             </NButton>
             <NButton
               quaternary
-              size="tiny"
+              size="small"
               :class="{ 'channel-card__action-btn--disabled': shouldDisableTare(snapshot.channelIndices[snapshotIndex]) }"
               :title="shouldDisableTare(snapshot.channelIndices[snapshotIndex]) ? '此通道不支持校零' : '归零'"
               :disabled="shouldDisableTare(snapshot.channelIndices[snapshotIndex])"
@@ -395,9 +402,9 @@ const connectionButtonLabel = computed(() => {
         </div>
 
         <div class="chart-selector__footer">
-          <NButton secondary size="tiny" @click="setAllChartVisibility(true)">全选</NButton>
-          <NButton secondary size="tiny" @click="setAllChartVisibility(false)">取消全选</NButton>
-          <NButton type="primary" size="tiny" @click="closeChartSelector">确定</NButton>
+          <NButton secondary size="small" @click="setAllChartVisibility(true)">全选</NButton>
+          <NButton secondary size="small" @click="setAllChartVisibility(false)">取消全选</NButton>
+          <NButton type="primary" size="small" @click="closeChartSelector">确定</NButton>
         </div>
       </div>
     </div>
@@ -460,8 +467,6 @@ const connectionButtonLabel = computed(() => {
   align-items: center;
   gap: var(--space-2);
 }
-
-
 
 .detail-panel__content {
   flex: 1;
