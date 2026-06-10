@@ -13,7 +13,7 @@ withDefaults(
   <NCard
     size="small"
     :bordered="true"
-    :content-style="padded ? { padding: '1rem 1.25rem' } : { padding: 0 }"
+    :content-style="padded ? { padding: 'var(--space-4) var(--space-5)' } : { padding: 0 }"
   >
     <template v-if="$slots.header" #header><slot name="header" /></template>
     <slot />

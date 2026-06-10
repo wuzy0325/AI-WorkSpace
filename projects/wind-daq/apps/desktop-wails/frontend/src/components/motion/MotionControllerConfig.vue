@@ -5,11 +5,10 @@ import { useMotionStore } from '@stores/motionStore';
 import { useI18nStore } from '@stores/i18nStore';
 import { useFeedbackStore } from '@stores/feedbackStore';
 import type { MotionControllerProfile } from '@shared/types/motion';
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor';
+import { DEFAULT_AXIS_NAMES, createDefaultAxis } from './motionConfigEditor';
 import ProfileSidebar from './ProfileSidebar.vue';
 import ConnectionConfigEditor from './ConnectionConfigEditor.vue';
-import AxisConfigCard from './AxisConfigCard.vue';
-import EncoderCompensationEditor from './EncoderCompensationEditor.vue';
+import AxisConfigCard from './AxisConfigCard.vue';
 
 const props = defineProps<{ open: boolean; currentId?: string | null }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -73,13 +72,6 @@ function editProfile(src: MotionControllerProfile): void {
   editing.axes = src.axes.map((a) => ({
     ...a,
     enabled: a.enabled ?? true,
-    stepsPerRev: a.stepsPerRev ?? 1.8,
-    microSteps: a.microSteps ?? 4,
-    lead: a.lead ?? 4,
-    gearRatio: a.gearRatio ?? 1,
-    positionSource: a.positionSource ?? 'register',
-    encoderScale: a.encoderScale ?? 0.005,
-    encoderCompensation: a.encoderCompensation ?? defaultEncComp(),
   }));
 }
 
@@ -94,11 +86,6 @@ async function save(): Promise<void> {
     axes: editing.axes.map((a) => ({
       name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
       maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
-      stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
-      lead: a.lead, gearRatio: a.gearRatio,
-      inverted: a.inverted, encoderInverted: a.encoderInverted,
-      positionSource: a.positionSource, encoderScale: a.encoderScale,
-      encoderCompensation: a.encoderCompensation,
     })),
   };
   await motion.upsertProfile(profile);
@@ -133,8 +120,7 @@ function onAxisUpdate(index: number, axis: any): void {
 }
 
 function onUpdateEncComp(index: number, value: any): void {
-  editing.axes[index].encoderCompensation = value;
-}
+  }
 
 function toggleLocale() {
   i18n.setLocale(i18n.locale === 'zh' ? 'en' : 'zh');
@@ -215,12 +201,7 @@ function toggleLocale() {
                       @update="onAxisUpdate"
                     />
                   </div>
-                </div>
-
-                <EncoderCompensationEditor
-                  :axes="editing.axes"
-                  @update-enc-comp="onUpdateEncComp"
-                />
+                </div>
               </main>
             </div>
 

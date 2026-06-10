@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { Play, Square, Timer, Clock, Circle } from '@lucide/vue'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -90,7 +90,7 @@ watch(isRunning, (newVal, oldVal) => {
     <!-- Left: Control Buttons -->
     <div class="main-bottom-bar__left">
       <div class="main-bottom-bar__controls">
-        <NButton
+        <UiButton
           data-test="acquisition-toggle-btn"
           class="main-bottom-bar__btn"
           :class="isAcquiring ? 'btn-stop' : 'btn-start'"
@@ -101,8 +101,8 @@ watch(isRunning, (newVal, oldVal) => {
             <Play v-if="!isAcquiring" class="w-5 h-5 fill-current" />
             <Square v-else class="w-4 h-4 fill-current" />
           </template>
-        </NButton>
-        <NButton
+        </UiButton>
+        <UiButton
           data-test="recording-toggle-btn"
           class="main-bottom-bar__btn btn-record"
           :class="{ active: isRecording }"
@@ -112,7 +112,7 @@ watch(isRunning, (newVal, oldVal) => {
           <template #icon>
             <Circle class="w-4 h-4 fill-current" />
           </template>
-        </NButton>
+        </UiButton>
       </div>
 
       <!-- Status -->
@@ -199,12 +199,13 @@ watch(isRunning, (newVal, oldVal) => {
 }
 
 :deep(.btn-start) {
-  background: #10b981;
+  background: var(--accent-primary);
   color: white;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 :deep(.btn-start):hover {
-  background: #059669;
+  background: var(--accent-primary-core-strong);
 }
 
 :deep(.btn-stop) {
@@ -285,12 +286,12 @@ watch(isRunning, (newVal, oldVal) => {
   gap: 0.5rem;
   font-size: 1.25rem;
   font-weight: 800;
-  color: #e2e8f0;
+  color: var(--text-primary);
   letter-spacing: -0.02em;
 }
 
 :root[data-theme='light'] .main-bottom-bar__stat-value {
-  color: #0f172a;
+  color: var(--text-primary);
 }
 
 .mono-font {

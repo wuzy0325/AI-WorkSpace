@@ -54,6 +54,7 @@ Before committing, run the checks that apply to the touched project:
 2. `powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/<name>/apps/desktop-wails/frontend/src"` — when modifying frontend files or directories
 3. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
 4. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
+5. `powershell -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"` — when modifying wind-daq frontend files (prevents direct naive-ui imports in feature code)
 
 See CLAUDE.md for complete rules, decision tree, and design principles.
 

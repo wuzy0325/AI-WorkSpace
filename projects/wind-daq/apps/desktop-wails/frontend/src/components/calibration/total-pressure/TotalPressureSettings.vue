@@ -6,8 +6,18 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { calibrationApi } from '@api/calibrationApi'
 import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, TotalPressurePointLayout, ChannelRef } from '@shared/types/calibration'
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
-import { NAlert, NButton, NCard, NCheckbox, NInput, NInputNumber, NModal, NSelect, NSpin, NStep, NSteps, NTag, NText } from 'naive-ui'
 import UiButton from '@components/ui/UiButton.vue'
+import UiAlert from '@components/ui/UiAlert.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiDialog from '@components/ui/UiDialog.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
+import UiSpin from '@components/ui/UiSpin.vue'
+import UiStep from '@components/ui/UiStep.vue'
+import UiSteps from '@components/ui/UiSteps.vue'
+import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 
 const emit = defineEmits<{ close: []; saved: [config: CalibrationConfig] }>()
 const deviceStore = useDeviceStore()
@@ -101,85 +111,103 @@ onMounted(async () => { try { await Promise.all([deviceStore.refreshProfiles(), 
 </script>
 
 <template>
-  <NModal :show="true" preset="card" :style="{ maxWidth: '980px', width: '92vw' }" title="总压探针校准配置" closable @close="emit('close')">
-    <NSteps :current="currentStep" size="small" style="margin-bottom:16px"><NStep v-for="(s, i) in steps" :key="i" :title="s" :disabled="i > currentStep" /></NSteps>
+  <UiDialog :show="true" title="总压探针校准配置" closable width="980px" @update:show="emit('close')">
+    <UiSteps :current="currentStep" class="steps-mb"><UiStep v-for="(s, i) in steps" :key="i" :title="s" /></UiSteps>
 
-    <NSpin v-if="isLoading" style="display:flex;justify-content:center;padding:40px 0" />
+    <UiSpin v-if="isLoading" :show="true" class="spinner" />
     <template v-else>
-      <NAlert v-if="currentStepErrors.length > 0" type="warning" :bordered="false" style="margin-bottom:12px;font-size:12px"><template #header>请先修正以下问题</template>{{ currentStepErrors[0] }}</NAlert>
+      <UiAlert v-if="currentStepErrors.length > 0" type="warning" title="请先修正以下问题" class="alert-error">{{ currentStepErrors[0] }}</UiAlert>
 
       <div v-if="currentStep === 0" class="step-content">
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置名称</NText></template>
-          <NInput v-model:value="calibrationName" placeholder="输入配置名称" size="small" />
-        </NCard>
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">点位布局</NText></template>
-          <NText depth="3" style="font-size:11px;display:block;margin-bottom:8px">攻角 α 范围</NText>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">配置名称</span></template>
+          <UiInput v-model="calibrationName" placeholder="输入配置名称" />
+        </UiPanel>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">点位布局</span></template>
+          <span class="section-desc">攻角 α 范围</span>
           <div class="mach-grid">
-            <div><NText depth="3" style="font-size:11px">最小值 (°)</NText><NInputNumber v-model:value="pointLayout.alphaMin" size="small" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:11px">最大值 (°)</NText><NInputNumber v-model:value="pointLayout.alphaMax" size="small" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:11px">步长 (°)</NText><NInputNumber v-model:value="pointLayout.alphaStep" :min="1" size="small" style="width:100%" /></div>
+            <div><span class="field-label">最小值 (°)</span><UiInputNumber v-model="pointLayout.alphaMin" style="width:100%" /></div>
+            <div><span class="field-label">最大值 (°)</span><UiInputNumber v-model="pointLayout.alphaMax" style="width:100%" /></div>
+            <div><span class="field-label">步长 (°)</span><UiInputNumber v-model="pointLayout.alphaStep" :min="1" style="width:100%" /></div>
           </div>
-          <div class="point-summary"><NText depth="3" style="font-size:12px">总校准点数</NText><NText depth="1" style="font-size:22px;font-weight:700;color:var(--accent-primary)">{{ pointCount }} 点</NText></div>
-        </NCard>
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">采集参数</NText></template>
+          <div class="point-summary"><span class="field-label" style="font-size:var(--text-sm)">总校准点数</span><span class="point-count">{{ pointCount }} 点</span></div>
+        </UiPanel>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">采集参数</span></template>
           <div class="param-grid">
-            <div><NText depth="3" style="font-size:11px">稳定等待时间 (毫秒)</NText><NInputNumber v-model:value="dwellTimeMs" :min="100" :step="100" size="small" style="width:100%" /><NText depth="3" style="font-size:10px;display:block;margin-top:2px">到达点位后等待稳定的时间</NText></div>
-            <div><NText depth="3" style="font-size:11px">每点采样次数</NText><NInputNumber v-model:value="samplesPerPoint" :min="1" :max="1000" size="small" style="width:100%" /><NText depth="3" style="font-size:10px;display:block;margin-top:2px">每个点位采集的样本数量，取平均值</NText></div>
+            <div><span class="field-label">稳定等待时间 (毫秒)</span><UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" style="width:100%" /><span class="hint-text">到达点位后等待稳定的时间</span></div>
+            <div><span class="field-label">每点采样次数</span><UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" style="width:100%" /><span class="hint-text">每个点位采集的样本数量，取平均值</span></div>
           </div>
-        </NCard>
+        </UiPanel>
       </div>
 
       <div v-if="currentStep === 1" class="step-content">
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">测点通道映射</NText></template>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">测点通道映射</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th style="width:48px">启用</th><th>测点名称</th><th>数据源设备</th><th style="width:100px">通道索引</th><th style="width:80px">精度</th></tr></thead>
-            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td style="text-align:center"><NCheckbox v-model:checked="ch.enabled" size="small" /></td><td><NText depth="1" style="font-size:12px">{{ ch.name }}</NText></td><td><NSelect v-model:value="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" size="tiny" style="min-width:140px" :disabled="!ch.enabled" clearable /></td><td><NInputNumber v-model:value="ch.channel.channelIndex" :min="-1" :max="100" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td><td><NInputNumber v-model:value="ch.precision" :min="0" :max="8" size="tiny" style="width:100%" :disabled="!ch.enabled" /></td></tr></tbody></table></div>
-        </NCard>
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">运动轴配置</NText></template>
+            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td><td><span class="cell-name">{{ ch.name }}</span></td><td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" /></td><td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td><td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td></tr></tbody></table></div>
+        </UiPanel>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">运动轴配置</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th>坐标轴</th><th>运动控制器</th><th>物理轴</th></tr></thead>
-            <tbody><tr v-for="ax in motionAxes" :key="ax.name"><td><NTag size="tiny" type="primary" :bordered="false">{{ ax.name }}</NTag></td><td><NSelect v-model:value="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" placeholder="选择控制器" size="tiny" style="min-width:160px" clearable /></td><td><NSelect v-model:value="ax.axis" :options="[{label:'X 轴',value:'X'},{label:'Y 轴',value:'Y'},{label:'Z 轴',value:'Z'},{label:'U 轴',value:'U'}]" size="tiny" style="width:100px" /></td></tr></tbody></table></div>
-        </NCard>
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">球罐稳定判定</NText></template>
-          <NCheckbox v-model:checked="sphereTankGateEnabled" size="small" style="margin-bottom:8px">启用球罐判定</NCheckbox>
+            <tbody><tr v-for="ax in motionAxes" :key="ax.name"><td><UiStatusBadge status="connected">{{ ax.name }}</UiStatusBadge></td><td><UiSelect v-model="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" placeholder="选择控制器" style="min-width:160px" /></td><td><UiSelect v-model="ax.axis" :options="[{label:'X 轴',value:'X'},{label:'Y 轴',value:'Y'},{label:'Z 轴',value:'Z'},{label:'U 轴',value:'U'}]" style="width:100px" /></td></tr></tbody></table></div>
+        </UiPanel>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">球罐稳定判定</span></template>
+          <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">启用球罐判定</UiCheckbox>
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
-            <div><NText depth="3" style="font-size:11px">等待时间 (秒)</NText><NInputNumber v-model:value="sphereTankWaitTimeSec" :min="0" :step="0.1" size="small" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:11px">PXI 设备</NText><NSelect v-model:value="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" size="small" clearable /></div>
-            <div><NText depth="3" style="font-size:11px">稳定时间通道</NText><NInputNumber v-model:value="sphereTankStableChannel.channelIndex" :min="0" size="small" style="width:100%" /></div>
+            <div><span class="field-label">等待时间 (秒)</span><UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" /></div>
+            <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" /></div>
+            <div><span class="field-label">稳定时间通道</span><UiInputNumber v-model="sphereTankStableChannel.channelIndex" :min="0" style="width:100%" /></div>
           </div>
-        </NCard>
+        </UiPanel>
       </div>
 
       <div v-if="currentStep === 2" class="step-content">
-        <NCard size="small" :bordered="true" class="section-card">
-          <template #header><NText depth="1" style="font-size:12px;font-weight:600">配置摘要</NText></template>
-          <div class="summary-grid"><div class="summary-row"><NText depth="3">配置名称</NText><NText depth="1">{{ calibrationName }}</NText></div><div class="summary-row"><NText depth="3">校准类型</NText><NText depth="1">总压探针</NText></div><div class="summary-row"><NText depth="3">点位布局</NText><NText depth="1">α: {{ pointLayout.alphaMin }}° ~ {{ pointLayout.alphaMax }}°（步长 {{ pointLayout.alphaStep }}°）</NText></div><div class="summary-row"><NText depth="3">总点数</NText><NText depth="1" style="color:var(--accent-primary);font-weight:700">{{ pointCount }} 点</NText></div><div class="summary-row"><NText depth="3">启用测点</NText><NText depth="1">{{ probeChannels.filter(ch => ch.enabled).length }} 个</NText></div><div class="summary-row"><NText depth="3">稳定时间</NText><NText depth="1">{{ dwellTimeMs }} ms</NText></div><div class="summary-row"><NText depth="3">每点采样</NText><NText depth="1">{{ samplesPerPoint }} 次</NText></div></div>
-        </NCard>
+        <UiPanel class="section-card">
+          <template #header><span class="section-header">配置摘要</span></template>
+          <div class="summary-grid"><div class="summary-row"><span class="summary-label">配置名称</span><span class="summary-value">{{ calibrationName }}</span></div><div class="summary-row"><span class="summary-label">校准类型</span><span class="summary-value">总压探针</span></div><div class="summary-row"><span class="summary-label">点位布局</span><span class="summary-value">α: {{ pointLayout.alphaMin }}° ~ {{ pointLayout.alphaMax }}°（步长 {{ pointLayout.alphaStep }}°）</span></div><div class="summary-row"><span class="summary-label">总点数</span><span class="accent-bold">{{ pointCount }} 点</span></div><div class="summary-row"><span class="summary-label">启用测点</span><span class="summary-value">{{ probeChannels.filter(ch => ch.enabled).length }} 个</span></div><div class="summary-row"><span class="summary-label">稳定时间</span><span class="summary-value">{{ dwellTimeMs }} ms</span></div><div class="summary-row"><span class="summary-label">每点采样</span><span class="summary-value">{{ samplesPerPoint }} 次</span></div></div>
+        </UiPanel>
       </div>
     </template>
 
     <template #footer>
-      <div style="display:flex;align-items:center;justify-content:space-between;width:100%"><div><UiButton v-if="currentStep > 0" variant="secondary" size="sm" @click="prevStep">上一步</UiButton></div><div style="display:flex;align-items:center;gap:12px"><NText depth="3" style="font-size:11px">步骤 {{ currentStep + 1 }} / {{ steps.length }}</NText><UiButton v-if="currentStep < steps.length - 1" variant="primary" size="sm" :disabled="!isStepValid" @click="nextStep">下一步</UiButton><NButton v-else size="small" type="primary" :loading="isSaving" :disabled="!isStepValid" @click="saveConfig">保存配置</NButton></div></div>
+      <div class="footer-bar"><div><UiButton v-if="currentStep > 0" variant="secondary" size="sm" @click="prevStep">上一步</UiButton></div><div class="footer-actions"><span class="step-indicator">步骤 {{ currentStep + 1 }} / {{ steps.length }}</span><UiButton v-if="currentStep < steps.length - 1" variant="primary" size="sm" :disabled="!isStepValid" @click="nextStep">下一步</UiButton><UiButton v-else size="sm" variant="primary" :loading="isSaving" :disabled="!isStepValid" @click="saveConfig">保存配置</UiButton></div></div>
     </template>
-  </NModal>
+  </UiDialog>
 </template>
 
 <style scoped>
-.step-content { display:flex; flex-direction:column; gap:12px; }
-.section-card { font-size:12px; }
-.mach-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
-.point-summary { display:flex; align-items:center; gap:8px; padding:10px; border-radius:4px; border:1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent); background:color-mix(in srgb, var(--accent-primary) 5%, transparent); }
+.step-content { display:flex; flex-direction:column; gap:var(--space-3); }
+.section-card { font-size:var(--text-sm); }
+.mach-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-2); margin-bottom:var(--space-3); }
+.point-summary { display:flex; align-items:center; gap:var(--space-2); padding:10px; border-radius:var(--radius-md); border:1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent); background:color-mix(in srgb, var(--accent-primary) 5%, transparent); }
 .param-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .table-wrap { overflow-x:auto; }
-.ntable { width:100%; border-collapse:collapse; font-size:12px; }
-.ntable th { text-align:left; padding:8px 10px; font-weight:600; font-size:11px; color:var(--text-muted); background:var(--bg-panel-strong); border-bottom:1px solid var(--border-default); }
+.ntable { width:100%; border-collapse:collapse; font-size:var(--text-sm); }
+.ntable th { text-align:left; padding:var(--space-2) 10px; font-weight:600; font-size:var(--text-xs); color:var(--text-muted); background:var(--bg-panel-strong); border-bottom:1px solid var(--border-default); }
 .ntable td { padding:6px 10px; border-bottom:1px solid var(--border-default); }
 .sphere-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .summary-grid { display:flex; flex-direction:column; }
-.summary-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border-default); gap:12px; font-size:12px; }
+.summary-row { display:flex; justify-content:space-between; align-items:center; padding:var(--space-2) 0; border-bottom:1px solid var(--border-default); gap:var(--space-3); font-size:var(--text-sm); }
 .summary-row:last-child { border-bottom:none; }
+
+.section-header { font-size:var(--text-sm); font-weight:600; color:var(--text-primary); }
+.section-desc { font-size:var(--text-xs); display:block; margin-bottom:var(--space-2); color:var(--text-muted); }
+.field-label { font-size:var(--text-xs); color:var(--text-muted); }
+.hint-text { font-size:10px; display:block; margin-top:2px; color:var(--text-muted); }
+.summary-label { color:var(--text-muted); }
+.summary-value { color:var(--text-primary); }
+.point-count { font-size:22px; font-weight:700; color:var(--accent-primary); }
+.accent-bold { color:var(--accent-primary); font-weight:700; }
+.checkbox-mb { margin-bottom:var(--space-2); }
+.cell-center { text-align:center; }
+.cell-name { font-size:var(--text-sm); color:var(--text-primary); }
+.steps-mb { margin-bottom:var(--space-4); }
+.spinner { display:flex; justify-content:center; padding:var(--space-10) 0; }
+.alert-error { margin-bottom:var(--space-3); font-size:var(--text-sm); }
+.footer-bar { display:flex; align-items:center; justify-content:space-between; width:100%; }
+.footer-actions { display:flex; align-items:center; gap:var(--space-3); }
+.step-indicator { font-size:var(--text-xs); color:var(--text-muted); }
 </style>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import UiToggle from '@components/ui/UiToggle.vue'
-import { NInput, NInputNumber, NSelect } from 'naive-ui'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -79,12 +81,12 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
   <div class="t1603-config">
     <div class="t1603-config__field">
       <label class="t1603-config__label">通道掩码</label>
-      <NInput :value="channelMask" @update:value="emit('update:channelMask', $event)" size="small" placeholder="0000-FFFF" :maxlength="4" />
+      <UiInput :model-value="channelMask" @update:model-value="emit('update:channelMask', $event as string)" placeholder="0000-FFFF" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">采样率</label>
-      <NSelect :value="samplingRate" @update:value="emit('update:samplingRate', Number($event))" :options="samplingRateOptions" size="tiny" />
+      <UiSelect :model-value="String(samplingRate)" @update:model-value="emit('update:samplingRate', Number($event))" :options="samplingRateOptions" />
     </div>
 
     <div class="t1603-config__field">
@@ -94,17 +96,17 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发模式</label>
-      <NSelect :value="triggerMode" @update:value="emit('update:triggerMode', Number($event))" :options="triggerModeOptions" size="tiny" />
+      <UiSelect :model-value="String(triggerMode)" @update:model-value="emit('update:triggerMode', Number($event))" :options="triggerModeOptions" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发边沿</label>
-      <NSelect :value="triggerEdge" @update:value="emit('update:triggerEdge', Number($event))" :options="triggerEdgeOptions" size="tiny" />
+      <UiSelect :model-value="String(triggerEdge)" @update:model-value="emit('update:triggerEdge', Number($event))" :options="triggerEdgeOptions" />
     </div>
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">触发计数</label>
-      <NInputNumber :value="triggerCount" @update:value="(v) => v !== null && emit('update:triggerCount', v)" size="tiny" style="width:80px" :min="0" />
+      <UiInputNumber :model-value="triggerCount" @update:model-value="(v) => v !== null && emit('update:triggerCount', v)" class="t1603-config__input--trigger-count" :min="0" />
     </div>
 
     <div class="t1603-config__field">
@@ -114,7 +116,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">开路检测</label>
-      <NInput :value="openCircuitCheck" @update:value="emit('update:openCircuitCheck', $event)" size="small" placeholder="hex mask" :maxlength="4" />
+      <UiInput :model-value="openCircuitCheck" @update:model-value="emit('update:openCircuitCheck', $event as string)" placeholder="hex mask" />
     </div>
   </div>
 </template>
@@ -160,12 +162,16 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 }
 
 .t1603-config__input:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-accent);
   background: var(--bg-panel-strong);
 }
 
 :root[data-theme='light'] .t1603-config__input {
   background: rgba(255, 255, 255, 0.8);
+}
+
+.t1603-config__input--trigger-count {
+  width: 80px;
 }
 
 .t1603-config__hint {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Settings } from '@lucide/vue'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 import IconDashboard from '@components/icons/IconDashboard.vue'
 import IconMotion from '@components/icons/IconMotion.vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
@@ -40,11 +40,11 @@ function getIconComponent(iconType: string | undefined) {
 <template>
   <aside class="app-rail-nav">
     <nav class="app-rail-nav__menu">
-      <NButton
+      <UiButton
         v-for="item in items"
         :key="item.id"
         quaternary
-        size="small"
+        size="sm"
         :aria-label="item.label"
         class="app-rail-nav__button"
         :class="{
@@ -58,13 +58,13 @@ function getIconComponent(iconType: string | undefined) {
         <template #icon>
           <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
         </template>
-      </NButton>
+      </UiButton>
     </nav>
 
     <div class="app-rail-nav__footer">
-      <NButton
+      <UiButton
         quaternary
-        size="small"
+        size="sm"
         class="app-rail-nav__button app-rail-nav__button--settings"
         aria-label="设置"
         title="设置"
@@ -73,7 +73,7 @@ function getIconComponent(iconType: string | undefined) {
         <template #icon>
           <Settings class="w-5 h-5" />
         </template>
-      </NButton>
+      </UiButton>
       <slot />
     </div>
   </aside>
@@ -111,11 +111,11 @@ function getIconComponent(iconType: string | undefined) {
 }
 
 :deep(.app-rail-nav__button--active) {
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 :deep(.app-rail-nav__button--active:hover) {
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 .app-rail-nav__button--disabled {

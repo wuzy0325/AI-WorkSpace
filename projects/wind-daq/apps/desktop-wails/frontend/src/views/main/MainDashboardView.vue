@@ -22,12 +22,10 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { subscribeDaqStream } from '@api/sse-client'
-import {
-  NAlert,
-  NButton,
-  NResult,
-  NText,
-} from 'naive-ui'
+import UiAlert from '@components/ui/UiAlert.vue'
+import UiEmptyState from '@components/ui/UiEmptyState.vue'
+import UiLoadingState from '@components/ui/UiLoadingState.vue'
+import UiButton from '@components/ui/UiButton.vue'
 import { Activity, Wifi, LineChart } from '@lucide/vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
@@ -48,6 +46,7 @@ const recordingOutputDir = ref('data/recordings')
 const recordingFilePrefix = ref('run')
 const busy = ref(false)
 const error = ref('')
+const initialLoading = ref(true)
 let sseSub: { unsubscribe: () => void } | null = null
 let wailsUnsub: (() => void) | null = null
 let unsubscribeDeviceSnapshots: (() => void) | null = null
@@ -214,6 +213,7 @@ onMounted(async () => {
   unsubscribeDeviceSnapshots = deviceStore.attachStatusListener()
   await storageStore.loadSettings()
   await refreshStorageStatus()
+  initialLoading.value = false
 })
 
 onBeforeUnmount(() => {
@@ -247,30 +247,32 @@ onBeforeUnmount(() => {
     </template>
 
     <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
-      <NAlert v-if="error" type="error" :bordered="false" closable style="margin-bottom:12px;font-size:12px" @close="error = ''">
-        <template #header><NText depth="1" style="font-weight:600;font-size:12px">{{ error }}</NText></template>
-      </NAlert>
+      <UiLoadingState v-if="initialLoading" :loading="true" text="正在加载设备..." />
 
-      <DeviceOverviewPanel v-if="viewMode === 'overview'" />
+      <template v-else>
+        <UiAlert v-if="error" type="error" :closable="true" class="mb-3" @close="error = ''">
+          {{ error }}
+        </UiAlert>
 
-      <DeviceDetailPanel
-        v-else-if="deviceStore.selectedProfile"
-        :mode="viewMode === 'both' ? 'both' : viewMode"
+        <DeviceOverviewPanel v-if="viewMode === 'overview'" />
+
+        <DeviceDetailPanel
+          v-else-if="deviceStore.selectedProfile"
+          :mode="viewMode === 'both' ? 'both' : viewMode"
       />
 
-      <NResult
+      <UiEmptyState
         v-else
-        status="info"
         title="选择一个设备"
         :description="t.selectDevicePrompt || '请从左侧设备列表中选择一台设备开始监控'"
-        size="small"
       >
-        <template #footer>
-          <NButton size="small" type="primary" @click="showDeviceDrawer = true">
+        <template #action>
+          <UiButton size="sm" variant="primary" @click="showDeviceDrawer = true">
             {{ t.openDeviceManager || '打开设备管理器' }}
-          </NButton>
+          </UiButton>
         </template>
-      </NResult>
+      </UiEmptyState>
+      </template>
     </div>
 
     <!-- 统一全铺布局：所有子页面都直接铺满主内容区，保持与仪表盘一致的视觉体验 -->
@@ -300,11 +302,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .main-dashboard-view {
-  background: radial-gradient(circle at top left, #1e293b 0%, #0f172a 100%);
+  background: radial-gradient(circle at top left, var(--color-bg-panel) 0%, var(--color-bg-canvas) 100%);
 }
 
 :root[data-theme='light'] .main-dashboard-view {
-  background: radial-gradient(circle at top left, #f8fafc 0%, #e2e8f0 100%);
+  background: radial-gradient(circle at top left, var(--color-bg-canvas) 0%, var(--color-bg-surface) 100%);
 }
 
 .main-dashboard-stage {

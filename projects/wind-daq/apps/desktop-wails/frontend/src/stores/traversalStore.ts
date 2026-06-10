@@ -63,10 +63,6 @@ export const useTraversalStore = defineStore('traversal', () => {
   let recoveryRequestId = 0
   let startupBlockedTaskId: string | null = null
   let startupPendingTaskId: string | null = null
-  let realtimeInterpolationTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingRealtimeInterpolationInput: TraversalInterpolationInput | null = null
-  let pendingRealtimeInterpolationConfig: TraversalTestConfig | null = null
-  let lastRealtimeInterpolationAt = 0
   let realtimeInterpolationRequestId = 0
 
   function isTerminalStatus(value: TraversalTestStatus['status'] | undefined): value is TraversalTerminalStatus {
@@ -100,29 +96,11 @@ export const useTraversalStore = defineStore('traversal', () => {
     recoveryRequestId += 1
   }
 
-  function clearRealtimeInterpolationTimer(): void {
-    if (realtimeInterpolationTimer) {
-      clearTimeout(realtimeInterpolationTimer)
-      realtimeInterpolationTimer = null
-    }
-  }
-
-  async function runRealtimeInterpolation(): Promise<void> {
-    clearRealtimeInterpolationTimer()
-
-    const input = pendingRealtimeInterpolationInput
-    const configOverride = pendingRealtimeInterpolationConfig
-    pendingRealtimeInterpolationInput = null
-    pendingRealtimeInterpolationConfig = null
-
-    if (!input) {
-      realtimeInterpolationRequestId += 1
-      realtimeResult.value = null
-      return
-    }
-
+  async function requestRealtimeResult(
+    input: TraversalInterpolationInput,
+    configOverride?: TraversalTestConfig
+  ): Promise<void> {
     const requestId = ++realtimeInterpolationRequestId
-    lastRealtimeInterpolationAt = Date.now()
 
     const res = await traversalApi.calculateRealtime(
       input,
@@ -133,44 +111,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     }
 
     realtimeResult.value = res.success ? (res.data ?? null) : null
-  }
-
-  function syncRealtimeInterpolation(
-    input: TraversalInterpolationInput | null,
-    configOverride: TraversalTestConfig | null = null
-  ): void {
-    const effectiveConfig = configOverride ?? config.value
-    const hasInterpolationDataset = Boolean(
-      effectiveConfig?.prbFile ||
-      (effectiveConfig?.useMultiPrb && effectiveConfig.multiPrb?.files.length)
-    )
-
-    if (!input || !hasInterpolationDataset) {
-      pendingRealtimeInterpolationInput = null
-      pendingRealtimeInterpolationConfig = null
-      clearRealtimeInterpolationTimer()
-      realtimeInterpolationRequestId += 1
-      realtimeResult.value = null
-      return
-    }
-
-    pendingRealtimeInterpolationInput = input
-    pendingRealtimeInterpolationConfig = effectiveConfig
-
-    const now = Date.now()
-    const elapsed = now - lastRealtimeInterpolationAt
-    const delay = Math.max(0, uiRefreshIntervalMs.value - elapsed)
-
-    if (delay === 0) {
-      void runRealtimeInterpolation()
-      return
-    }
-
-    if (!realtimeInterpolationTimer) {
-      realtimeInterpolationTimer = setTimeout(() => {
-        void runRealtimeInterpolation()
-      }, delay)
-    }
   }
 
   function shouldIgnoreTaskEvent(taskId: string): boolean {
@@ -587,10 +527,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     cancelRecovery()
     statusRecoveryFailed.value = false
     clearStartupWindow()
-    clearRealtimeInterpolationTimer()
-    pendingRealtimeInterpolationInput = null
-    pendingRealtimeInterpolationConfig = null
-    lastRealtimeInterpolationAt = 0
     realtimeInterpolationRequestId += 1
     status.value = null
     dataPoints.value = []
@@ -638,7 +574,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     clearError,
     reset,
     setUiRefreshHz,
-    syncRealtimeInterpolation
+    requestRealtimeResult
   }
 })
 

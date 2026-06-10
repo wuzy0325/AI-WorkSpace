@@ -84,7 +84,7 @@ function detailChannelTone(channelIndex: number, rawValue: number): 'active' | '
   const status = currentStatus()
   if (status === 'Error' || status === 'Disconnected') return 'warning'
 
-  const value = deviceStore.getDisplayValue(id, channelIndex, rawValue)
+  const value = deviceStore.applyDisplayTare(id, channelIndex, rawValue)
   const range = channelRange(channelIndex)
   const span = range.max - range.min
   const upperThreshold = range.max - span * 0.12
@@ -441,12 +441,12 @@ const connectionButtonLabel = computed(() => {
   margin: 0;
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-black);
-  color: #e2e8f0;
+  color: var(--text-primary);
   letter-spacing: -0.02em;
 }
 
 :root[data-theme='light'] .detail-panel__header-title {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .detail-panel__header-desc {
@@ -509,11 +509,11 @@ const connectionButtonLabel = computed(() => {
   gap: var(--space-2);
   font-size: var(--font-size-sm);
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .detail-panel__chart-title {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .detail-panel__chart-controls {
@@ -542,7 +542,7 @@ const connectionButtonLabel = computed(() => {
 .detail-panel__chart-value {
   font-size: var(--font-size-xs);
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--text-tertiary);
 }
 
 .detail-panel__chart-body {
@@ -613,18 +613,18 @@ const connectionButtonLabel = computed(() => {
   left: 0;
   width: 100%;
   height: 0.3rem;
-  background: linear-gradient(90deg, transparent, var(--theme-color, #10b981), transparent);
+  background: linear-gradient(90deg, transparent, var(--theme-color, var(--accent-primary)), transparent);
   opacity: 0.6;
 }
 
 .channel-card:hover {
   transform: translateY(-2px);
-  border-color: var(--theme-color, #10b981);
+  border-color: var(--theme-color, var(--accent-primary));
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
 }
 
 .channel-card--selected {
-  box-shadow: 0 0 0 1px var(--theme-color, #10b981), 0 10px 25px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 0 1px var(--theme-color, var(--accent-primary)), 0 10px 25px rgba(0, 0, 0, 0.1);
 }
 
 .channel-card--warning {
@@ -695,12 +695,12 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card__action-btn:hover {
-  color: var(--theme-color, #10b981);
+  color: var(--theme-color, var(--accent-primary));
   background: rgba(16, 185, 129, 0.15);
 }
 
 .channel-card__action-btn--active {
-  color: var(--theme-color, #10b981);
+  color: var(--theme-color, var(--accent-primary));
   background: var(--theme-color-soft, rgba(16, 185, 129, 0.15));
 }
 
@@ -720,8 +720,8 @@ const connectionButtonLabel = computed(() => {
   width: 0.6em;
   height: 0.6em;
   border-radius: 50%;
-  background: #f59e0b;
-  box-shadow: 0 0 4px #f59e0b;
+  background: var(--accent-warning);
+  box-shadow: 0 0 4px var(--accent-warning);
   flex-shrink: 0;
 }
 
@@ -750,11 +750,11 @@ const connectionButtonLabel = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-primary, #334155);
+  color: var(--text-primary, var(--border-default));
 }
 
 .channel-card__value.text-amber-500 {
-  color: #f59e0b;
+  color: var(--accent-warning);
 }
 
 .channel-card__unit {
@@ -853,11 +853,11 @@ const connectionButtonLabel = computed(() => {
 .chart-selector__title {
   font-size: var(--font-size-xl);
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .chart-selector__title {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .chart-selector__subtitle {
@@ -917,11 +917,11 @@ const connectionButtonLabel = computed(() => {
 .chart-selector__name {
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .chart-selector__name {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .chart-selector__channel {

@@ -8,8 +8,9 @@ const props = withDefaults(
     options?: Array<{ value: string; label: string }>
     placeholder?: string
     size?: 'sm' | 'md' | 'lg'
+    disabled?: boolean
   }>(),
-  { modelValue: '', options: () => [], placeholder: '', size: 'sm' },
+  { modelValue: '', options: () => [], placeholder: '', size: 'sm', disabled: false },
 )
 
 const naiveSize = computed(() => {
@@ -27,6 +28,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
     :options="options"
     :placeholder="placeholder"
     :size="naiveSize"
+    :disabled="disabled"
     @update:value="emit('update:modelValue', $event ?? '')"
   />
 </template>

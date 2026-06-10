@@ -36,6 +36,9 @@ const naiveSize = computed(() => {
     :size="naiveSize"
     :disabled="disabled"
   >
+    <template v-if="$slots.icon" #icon>
+      <slot name="icon" />
+    </template>
     <slot />
   </NButton>
 </template>

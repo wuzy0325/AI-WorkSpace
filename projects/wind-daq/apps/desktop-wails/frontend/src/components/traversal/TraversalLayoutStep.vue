@@ -2,7 +2,10 @@
 import { computed } from 'vue'
 import type { StepSegment, TraversalPattern } from '@shared/types/traversal'
 import { useTraversalSegmentValidation, getSegmentError, hasSegmentError } from '@composables/useTraversalValidation'
-import { NButton, NCard, NInput, NInputNumber, NSpace, NText } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
 
 const testName = defineModel<string>('testName', { required: true })
 const dwellTimeMs = defineModel<number>('dwellTimeMs', { required: true })
@@ -87,96 +90,96 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 
 <template>
   <div class="step-content">
-    <NCard size="small" :bordered="true" class="section-card">
+    <UiPanel class="section-card">
       <div class="layout-basics">
-        <div><NText depth="3" style="font-size:10px">{{ t.testNameLabel }}</NText><NInput v-model:value="testName" size="small" :placeholder="t.testNameLabel" /></div>
-        <div><NText depth="3" style="font-size:10px">{{ t.dwellMsLabel }}</NText><NInputNumber v-model:value="dwellTimeMs" :min="100" :max="60000" size="small" style="width:100%" /></div>
-        <div><NText depth="3" style="font-size:10px">{{ t.samplesLabel }}</NText><NInputNumber v-model:value="samplesPerPoint" :min="1" :max="1000" size="small" style="width:100%" /></div>
+        <div><span class="label-helper">{{ t.testNameLabel }}</span><UiInput v-model="testName" :placeholder="t.testNameLabel" /></div>
+        <div><span class="label-helper">{{ t.dwellMsLabel }}</span><UiInputNumber v-model="dwellTimeMs" :min="100" :max="60000" class="w-full" /></div>
+        <div><span class="label-helper">{{ t.samplesLabel }}</span><UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" class="w-full" /></div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NSpace size="small">
-      <NButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="tiny" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ patternLabel }}</NButton>
-    </NSpace>
+    <div class="flex gap-2">
+      <UiButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="sm" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ patternLabel }}</UiButton>
+    </div>
 
-    <NCard v-if="pattern === 'line'" size="small" :bordered="true" class="section-card">
+    <UiPanel v-if="pattern === 'line'" class="section-card">
       <div class="seg-grid">
         <div class="seg-side">
-          <NText depth="3" style="font-size:10px;font-weight:500">{{ t.pointLayout }}</NText>
+          <span class="section-title">{{ t.pointLayout }}</span>
           <div class="seg-pts">
-            <div><NText depth="3" style="font-size:9px">{{ t.startX }}</NText><NInputNumber v-model:value="lineConfig.startX" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.startY }}</NText><NInputNumber v-model:value="lineConfig.startY" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.endX }}</NText><NInputNumber v-model:value="lineConfig.endX" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.endY }}</NText><NInputNumber v-model:value="lineConfig.endY" size="tiny" style="width:100%" /></div>
+            <div><span class="label-tiny">{{ t.startX }}</span><UiInputNumber v-model="lineConfig.startX" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.startY }}</span><UiInputNumber v-model="lineConfig.startY" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.endX }}</span><UiInputNumber v-model="lineConfig.endX" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.endY }}</span><UiInputNumber v-model="lineConfig.endY" class="w-full" /></div>
           </div>
         </div>
         <div class="seg-list">
-          <div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.xSegments }}</NText><NButton size="tiny" secondary @click="addSegment">{{ t.addSegment }}</NButton></div>
-          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
+          <div class="seg-header"><span class="seg-header-label">{{ t.xSegments }}</span><UiButton size="sm" secondary @click="addSegment">{{ t.addSegment }}</UiButton></div>
+          <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
           <div v-for="(s, i) in lineConfig.xStepSegments" :key="i" class="seg-row">
-            <NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'start') ? 'error' : undefined" />
-            <NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'end') ? 'error' : undefined" />
-            <NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(lxSegErrs, i, 'step') ? 'error' : undefined" />
-            <NButton size="tiny" secondary :disabled="lineConfig.xStepSegments.length === 1" @click="removeSegment(i)">{{ t.del }}</NButton>
+            <UiInputNumber v-model="s.start" class="flex-1" />
+            <UiInputNumber v-model="s.end" class="flex-1" />
+            <UiInputNumber v-model="s.step" class="flex-1" />
+            <UiButton size="sm" secondary :disabled="lineConfig.xStepSegments.length === 1" @click="removeSegment(i)">{{ t.del }}</UiButton>
           </div>
         </div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard v-else-if="pattern === 'rectangle'" size="small" :bordered="true" class="section-card">
-      <NText depth="3" style="font-size:10px;font-weight:500;display:block;margin-bottom:8px">{{ t.pointLayout }} (X: {{ computedRectangleRange.xMin }}..{{ computedRectangleRange.xMax }}, Y: {{ computedRectangleRange.yMin }}..{{ computedRectangleRange.yMax }})</NText>
+    <UiPanel v-else-if="pattern === 'rectangle'" class="section-card">
+      <span class="section-title-block">{{ t.pointLayout }} (X: {{ computedRectangleRange.xMin }}..{{ computedRectangleRange.xMax }}, Y: {{ computedRectangleRange.yMin }}..{{ computedRectangleRange.yMax }})</span>
       <div class="seg-col-list">
-        <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">X {{ t.xSegments }}</NText><NButton size="tiny" secondary @click="addRectangleXSegment">{{ t.addSegment }}</NButton></div>
-          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
-          <div v-for="(s, i) in rectangleConfig.xStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(rxSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="rectangleConfig.xStepSegments.length === 1" @click="removeRectangleXSegment(i)">{{ t.del }}</NButton></div>
+        <div class="seg-list"><div class="seg-header"><span class="seg-header-label">X {{ t.xSegments }}</span><UiButton size="sm" secondary @click="addRectangleXSegment">{{ t.addSegment }}</UiButton></div>
+          <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
+          <div v-for="(s, i) in rectangleConfig.xStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="rectangleConfig.xStepSegments.length === 1" @click="removeRectangleXSegment(i)">{{ t.del }}</UiButton></div>
         </div>
-        <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">Y {{ t.ySegments }}</NText><NButton size="tiny" secondary @click="addRectangleYSegment">{{ t.addSegment }}</NButton></div>
-          <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
-          <div v-for="(s, i) in rectangleConfig.yStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(rySegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="rectangleConfig.yStepSegments.length === 1" @click="removeRectangleYSegment(i)">{{ t.del }}</NButton></div>
+        <div class="seg-list"><div class="seg-header"><span class="seg-header-label">Y {{ t.ySegments }}</span><UiButton size="sm" secondary @click="addRectangleYSegment">{{ t.addSegment }}</UiButton></div>
+          <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
+          <div v-for="(s, i) in rectangleConfig.yStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="rectangleConfig.yStepSegments.length === 1" @click="removeRectangleYSegment(i)">{{ t.del }}</UiButton></div>
         </div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard v-else-if="pattern === 'sector'" size="small" :bordered="true" class="section-card">
+    <UiPanel v-else-if="pattern === 'sector'" class="section-card">
       <div class="seg-grid">
         <div class="seg-side">
-          <NText depth="3" style="font-size:10px;font-weight:500">{{ t.pointLayout }}</NText>
+          <span class="section-title">{{ t.pointLayout }}</span>
           <div class="seg-pts">
-            <div><NText depth="3" style="font-size:9px">{{ t.centerX }}</NText><NInputNumber v-model:value="sectorConfig.centerX" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.centerY }}</NText><NInputNumber v-model:value="sectorConfig.centerY" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.radiusMin }}</NText><NInputNumber v-model:value="sectorConfig.radiusMin" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.radiusMax }}</NText><NInputNumber v-model:value="sectorConfig.radiusMax" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.angleStart }}</NText><NInputNumber v-model:value="sectorConfig.angleStart" size="tiny" style="width:100%" /></div>
-            <div><NText depth="3" style="font-size:9px">{{ t.angleEnd }}</NText><NInputNumber v-model:value="sectorConfig.angleEnd" size="tiny" style="width:100%" /></div>
+            <div><span class="label-tiny">{{ t.centerX }}</span><UiInputNumber v-model="sectorConfig.centerX" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.centerY }}</span><UiInputNumber v-model="sectorConfig.centerY" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.radiusMin }}</span><UiInputNumber v-model="sectorConfig.radiusMin" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.radiusMax }}</span><UiInputNumber v-model="sectorConfig.radiusMax" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.angleStart }}</span><UiInputNumber v-model="sectorConfig.angleStart" class="w-full" /></div>
+            <div><span class="label-tiny">{{ t.angleEnd }}</span><UiInputNumber v-model="sectorConfig.angleEnd" class="w-full" /></div>
           </div>
         </div>
         <div class="seg-col-list">
-          <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.radiusSegments }}</NText><NButton size="tiny" secondary @click="addSectorRadialSegment">{{ t.addSegment }}</NButton></div>
-            <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
-            <div v-for="(s, i) in sectorConfig.radialStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(srSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="sectorConfig.radialStepSegments.length === 1" @click="removeSectorRadialSegment(i)">{{ t.del }}</NButton></div>
+          <div class="seg-list"><div class="seg-header"><span class="seg-header-label">{{ t.radiusSegments }}</span><UiButton size="sm" secondary @click="addSectorRadialSegment">{{ t.addSegment }}</UiButton></div>
+            <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
+            <div v-for="(s, i) in sectorConfig.radialStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="sectorConfig.radialStepSegments.length === 1" @click="removeSectorRadialSegment(i)">{{ t.del }}</UiButton></div>
           </div>
-          <div class="seg-list"><div class="seg-header"><NText depth="3" style="font-size:10px;text-transform:uppercase">{{ t.angleSegments }}</NText><NButton size="tiny" secondary @click="addSectorAngularSegment">{{ t.addSegment }}</NButton></div>
-            <div class="seg-labels"><NText depth="3" style="font-size:9px;flex:1">{{ t.start }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.end }}</NText><NText depth="3" style="font-size:9px;flex:1">{{ t.step }}</NText><div style="width:40px"></div></div>
-            <div v-for="(s, i) in sectorConfig.angularStepSegments" :key="i" class="seg-row"><NInputNumber v-model:value="s.start" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'start') ? 'error' : undefined" /><NInputNumber v-model:value="s.end" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'end') ? 'error' : undefined" /><NInputNumber v-model:value="s.step" size="tiny" style="flex:1" :status="hasSegmentError(saSegErrs, i, 'step') ? 'error' : undefined" /><NButton size="tiny" secondary :disabled="sectorConfig.angularStepSegments.length === 1" @click="removeSectorAngularSegment(i)">{{ t.del }}</NButton></div>
+          <div class="seg-list"><div class="seg-header"><span class="seg-header-label">{{ t.angleSegments }}</span><UiButton size="sm" secondary @click="addSectorAngularSegment">{{ t.addSegment }}</UiButton></div>
+            <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
+            <div v-for="(s, i) in sectorConfig.angularStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="sectorConfig.angularStepSegments.length === 1" @click="removeSectorAngularSegment(i)">{{ t.del }}</UiButton></div>
           </div>
         </div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard v-else size="small" :bordered="true" class="section-card">
-      <NText depth="3" style="font-size:10px;font-weight:500;display:block;margin-bottom:8px">{{ t.pointLayout }}</NText>
+    <UiPanel v-else class="section-card">
+      <span class="section-title-block">{{ t.pointLayout }}</span>
       <NSpace size="small" align="flex-end">
-        <div><NText depth="3" style="font-size:9px">X</NText><NInputNumber v-model:value="customPointInput.x" size="tiny" style="width:80px" /></div>
-        <div><NText depth="3" style="font-size:9px">Y</NText><NInputNumber v-model:value="customPointInput.y" size="tiny" style="width:80px" /></div>
-        <NButton size="tiny" type="primary" @click="addCustomPoint">{{ t.addPoint }}</NButton>
+        <div><span class="label-tiny">X</span><UiInputNumber v-model="customPointInput.x" class="w-80px" /></div>
+        <div><span class="label-tiny">Y</span><UiInputNumber v-model="customPointInput.y" class="w-80px" /></div>
+        <UiButton size="sm" variant="primary" @click="addCustomPoint">{{ t.addPoint }}</UiButton>
       </NSpace>
       <div v-if="customPoints.length > 0" class="pt-list">
         <div v-for="(pt, i) in customPoints" :key="i" class="pt-row">
-          <NText depth="1" style="font-size:11px">{{ t.point }} {{ i + 1 }}: {{ pt.x }}, {{ pt.y }}</NText>
-          <NButton size="tiny" secondary @click="removeCustomPoint(i)">{{ t.remove }}</NButton>
+          <span class="point-label">{{ t.point }} {{ i + 1 }}: {{ pt.x }}, {{ pt.y }}</span>
+          <UiButton size="sm" secondary @click="removeCustomPoint(i)">{{ t.remove }}</UiButton>
         </div>
       </div>
-    </NCard>
+    </UiPanel>
   </div>
 </template>
 
@@ -194,4 +197,15 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 .seg-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
 .pt-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
 .pt-row { display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.label-helper { font-size: 10px; color: var(--text-muted) }
+.label-tiny { font-size: 9px; color: var(--text-muted) }
+.section-title { font-size: 10px; font-weight: 500; color: var(--text-muted) }
+.seg-header-label { font-size: 10px; text-transform: uppercase; color: var(--text-muted) }
+.col-label { font-size: 9px; flex: 1; color: var(--text-muted) }
+.flex-1 { flex: 1 }
+.w-full { width: 100% }
+.w-40px { width: 40px }
+.w-80px { width: 80px }
+.section-title-block { font-size: 10px; font-weight: 500; display: block; margin-bottom: 8px; color: var(--text-muted) }
+.point-label { font-size: var(--text-xs); color: var(--text-primary) }
 </style>

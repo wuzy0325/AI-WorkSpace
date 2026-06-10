@@ -19,5 +19,9 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string | number): void }>
     :placeholder="placeholder"
     size="small"
     @update:value="emit('update:modelValue', $event)"
-  />
+  >
+    <template v-if="$slots.prefix" #prefix>
+      <slot name="prefix" />
+    </template>
+  </NInput>
 </template>

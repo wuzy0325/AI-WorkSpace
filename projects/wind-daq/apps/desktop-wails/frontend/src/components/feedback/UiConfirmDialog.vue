@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 const feedbackStore = useFeedbackStore()
 </script>
@@ -11,20 +11,20 @@ const feedbackStore = useFeedbackStore()
       <h3 class="confirm-dialog__title">{{ feedbackStore.confirmState.title }}</h3>
       <p class="confirm-dialog__message">{{ feedbackStore.confirmState.message }}</p>
       <div class="confirm-dialog__actions">
-        <NButton
+        <UiButton
           quaternary
-          size="small"
+          size="md"
           @click="feedbackStore.resolveConfirm(false)"
         >
           {{ feedbackStore.confirmState.cancelText }}
-        </NButton>
-        <NButton
-          type="error"
-          size="small"
+        </UiButton>
+        <UiButton
+          variant="danger"
+          size="md"
           @click="feedbackStore.resolveConfirm(true)"
         >
           {{ feedbackStore.confirmState.confirmText }}
-        </NButton>
+        </UiButton>
       </div>
     </div>
   </div>

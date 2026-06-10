@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, computed, reactive, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, computed, reactive, ref, watch, defineAsyncComponent } from 'vue'
 import { useMotionStore } from '@stores/motionStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import type { AxisName } from '@shared/types/motion'
-import MotionControllerConfig from './MotionControllerConfig.vue'
-import { NButton, NInputNumber } from 'naive-ui'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiButton from '@components/ui/UiButton.vue'
+
+const MotionControllerConfig = defineAsyncComponent(() => import('./MotionControllerConfig.vue'))
 
 const motion = useMotionStore()
 const i18n = useI18nStore()
@@ -318,12 +320,12 @@ watch(
         <div class="text-[11px] font-semibold tracking-wide text-[color:var(--text-secondary)] uppercase">
           {{ i18n.t.motionController }}
         </div>
-        <NButton
-          secondary size="tiny"
+        <UiButton
+          secondary size="sm"
           @click="showConfig = true"
         >
           {{ i18n.t.config }}
-        </NButton>
+        </UiButton>
       </div>
 
       <div v-if="motion.profiles.length === 0" class="mt-4 text-[11px] text-[color:var(--text-muted)] space-y-1 leading-relaxed">
@@ -332,11 +334,11 @@ watch(
       </div>
 
       <div v-else class="flex-1 overflow-auto space-y-2 mt-1 custom-scrollbar">
-        <NButton
+        <UiButton
           v-for="p in motion.profiles"
           :key="p.id"
           @click="selectController(p.id)"
-          secondary size="tiny"
+          secondary size="sm"
           class="motion-list-item w-full text-left"
           :class="{ 'motion-list-item--active': selectedId === p.id }"
         >
@@ -359,7 +361,7 @@ watch(
             <span class="truncate">{{ p.address }}:{{ p.port }}</span>
             <span class="uppercase tracking-widest motion-item-type">{{ p.type }}</span>
           </div>
-        </NButton>
+        </UiButton>
       </div>
     </aside>
 
@@ -401,30 +403,30 @@ watch(
         </div>
 
         <div class="flex items-center gap-2">
-          <NButton
-            secondary size="tiny"
+          <UiButton
+            secondary size="sm"
             @click="handleConnect"
             :disabled="!selectedId || currentStatus?.connected"
           >
             {{ i18n.t.connectBtn }}
-          </NButton>
-          <NButton
-            secondary size="tiny"
+          </UiButton>
+          <UiButton
+            secondary size="sm"
             @click="handleDisconnect"
             :disabled="!selectedId || !currentStatus?.connected"
           >
             {{ i18n.t.disconnectBtn }}
-          </NButton>
+          </UiButton>
           <div class="w-px h-6 bg-[color:var(--border-default)] mx-1"></div>
-          <NButton
-            secondary size="tiny"
+          <UiButton
+            secondary size="sm"
             @click="stop()"
             :disabled="!selectedId || !currentStatus?.connected"
           >
             {{ i18n.t.stopAll }}
-          </NButton>
-          <NButton
-            type="error" size="small"
+          </UiButton>
+          <UiButton
+            variant="danger" size="md"
             @click="emergencyStop"
             :disabled="!selectedId"
             title="紧急停止 (快捷键: Esc)"
@@ -437,7 +439,7 @@ watch(
               </svg>
             </template>
             {{ i18n.t.eStop }}
-          </NButton>
+          </UiButton>
         </div>
       </header>
 
@@ -454,8 +456,8 @@ watch(
           <p class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--accent-danger)]">{{ i18n.t.controllerAlarm }}</p>
           <p class="text-xs font-semibold text-[color:var(--text-primary)] truncate">{{ currentStatus.lastError }}</p>
         </div>
-        <NButton
-          secondary size="tiny"
+        <UiButton
+          secondary size="sm"
           @click="clearCurrentError"
         >
           <template #icon>
@@ -464,7 +466,7 @@ watch(
               <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </template>
-        </NButton>
+        </UiButton>
       </div>
 
       <div v-if="!selectedId" class="flex-1 flex flex-col items-center justify-center text-[color:var(--text-muted)] p-12">
@@ -487,12 +489,12 @@ watch(
             </svg>
             <p class="text-sm font-semibold">{{ i18n.t.noAxesConfigured || '未配置运动轴' }}</p>
             <p class="text-xs mt-1 opacity-60">{{ i18n.t.checkProfileAxes || '请在配置中启用至少一个轴' }}</p>
-          <NButton
-            secondary size="tiny"
+          <UiButton
+            secondary size="sm"
             @click="showConfig = true"
           >
             {{ i18n.t.openConfig || '打开配置' }}
-          </NButton>
+          </UiButton>
           </div>
           <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
             <div
@@ -559,16 +561,16 @@ watch(
                   </div>
                   <!-- 操作按钮 -->
                   <div class="flex gap-1.5 pt-1">
-                    <NButton
-                      secondary size="tiny"
+                    <UiButton
+                      secondary size="sm"
                       @click="setZero(axis.name as AxisName)"
                       :disabled="axis.moving || !controllerConnected"
-                    >{{ i18n.t.setZero }}</NButton>
-                    <NButton
-                      type="error" size="tiny"
+                    >{{ i18n.t.setZero }}</UiButton>
+                    <UiButton
+                      variant="danger" size="sm"
                       @click="stop(axis.name as AxisName)"
                       :disabled="!axis.moving || !controllerConnected"
-                    >{{ i18n.t.stop }}</NButton>
+                    >{{ i18n.t.stop }}</UiButton>
                   </div>
                 </div>
               </div>
@@ -580,25 +582,24 @@ watch(
                   点动
                 </div>
                 <div class="jog-control-row">
-                    <NButton
-                      secondary size="tiny"
+                    <UiButton
+                      secondary size="sm"
                       @click="adjustByStep(axis.name as AxisName, 'reverse')"
                       :disabled="axis.moving || !controllerConnected"
-                    >−</NButton>
+                    >−</UiButton>
                   <div class="jog-input-wrap">
-                    <NInputNumber
-                      v-model:value="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
-                      size="tiny"
-                      style="width:80px"
+                    <UiInputNumber
+                      v-model="ensureAxisLocalState(selectedId as string, axis.name as AxisName).step"
+                      class="input-width-80"
                       :disabled="axis.moving || !controllerConnected"
                     />
                     <span class="jog-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                    <NButton
-                      secondary size="tiny"
+                    <UiButton
+                      secondary size="sm"
                       @click="adjustByStep(axis.name as AxisName, 'forward')"
                       :disabled="axis.moving || !controllerConnected"
-                    >+</NButton>
+                    >+</UiButton>
                 </div>
               </div>
 
@@ -610,21 +611,20 @@ watch(
                 </div>
                 <div class="move-control-row">
                   <div class="move-input-wrap">
-                    <NInputNumber
-                      v-model:value="ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition"
-                      size="tiny"
-                      style="width:80px"
+                    <UiInputNumber
+                      v-model="ensureAxisLocalState(selectedId as string, axis.name as AxisName).targetPosition"
+                      class="input-width-80"
                       :class="getLimitWarningClass(axis.name as AxisName, getAbsoluteTargetPosition(selectedId as string, axis.name as AxisName))"
                       :disabled="axis.moving || !controllerConnected"
                       placeholder="0.00"
                     />
                     <span class="move-unit">{{ getAxisUnit(axis.name as AxisName) }}</span>
                   </div>
-                    <NButton
-                      type="primary" size="tiny"
+                    <UiButton
+                      variant="primary" size="sm"
                       @click="move(axis.name as AxisName)"
                       :disabled="axis.moving || !controllerConnected"
-                    >{{ i18n.t.move }}</NButton>
+                    >{{ i18n.t.move }}</UiButton>
                 </div>
                 <!-- 限位警告提示 -->
                 <div
@@ -679,8 +679,8 @@ watch(
 
 
 .limit-indicator {
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   border: 1px solid var(--border-default);
   transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard), box-shadow var(--motion-base) var(--easing-standard);
@@ -729,7 +729,7 @@ watch(
 }
 
 .motion-list-item {
-  padding: 0.75rem;
+  padding: var(--space-3);
   border-radius: var(--radius-md);
   background: var(--bg-panel-strong);
   border: 1px solid transparent;
@@ -737,7 +737,7 @@ watch(
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-1);
 }
 
 .motion-list-item:hover {
@@ -775,8 +775,8 @@ watch(
 }
 
 .motion-status-dot {
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--text-muted);
@@ -817,8 +817,8 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  margin-bottom: 0.5rem;
-  font-size: 0.6875rem;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -888,7 +888,7 @@ watch(
 
 .jog-unit {
   position: absolute;
-  right: 0.5rem;
+  right: var(--space-2);
   font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -913,11 +913,15 @@ watch(
 
 .move-unit {
   position: absolute;
-  right: 0.5rem;
+  right: var(--space-2);
   font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--text-muted);
   pointer-events: none;
+}
+
+.input-width-80 {
+  width: 80px;
 }
 </style>

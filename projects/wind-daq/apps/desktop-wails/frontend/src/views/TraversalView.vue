@@ -2,6 +2,9 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import TraversalMain from '@components/traversal/TraversalMain.vue'
 import TraversalSettings from '@components/traversal/TraversalSettings.vue'
+import UiLoadingState from '@components/ui/UiLoadingState.vue'
+import UiErrorState from '@components/ui/UiErrorState.vue'
+import UiButton from '@components/ui/UiButton.vue'
 import { useTraversalStore } from '@stores/traversalStore'
 
 withDefaults(
@@ -17,13 +20,19 @@ const emit = defineEmits<{ (event: 'back'): void }>()
 
 const traversalStore = useTraversalStore()
 const isRecovering = ref(true)
+const recoveryError = ref('')
 const showTraversalSettings = ref(false)
 let isRecoveryActive = true
 
 onMounted(async () => {
-  await traversalStore.recoverRendererState()
-  if (isRecoveryActive) {
-    isRecovering.value = false
+  try {
+    await traversalStore.recoverRendererState()
+  } catch (err) {
+    recoveryError.value = err instanceof Error ? err.message : '恢复状态失败'
+  } finally {
+    if (isRecoveryActive) {
+      isRecovering.value = false
+    }
   }
 })
 
@@ -37,21 +46,36 @@ function backFromTraversal(): void {
   emit('back')
 }
 
+async function retryRecovery(): Promise<void> {
+  recoveryError.value = ''
+  isRecovering.value = true
+  try {
+    await traversalStore.recoverRendererState()
+  } catch (err) {
+    recoveryError.value = err instanceof Error ? err.message : '重试恢复失败'
+  } finally {
+    isRecovering.value = false
+  }
+}
+
 async function onConfigSaved(): Promise<void> {
   showTraversalSettings.value = false
-  // 閲嶆柊鍔犺浇閰嶇疆浠ョ‘淇濅富鐣岄潰鏄剧ず鏈€鏂伴厤缃?
   await traversalStore.loadConfig()
 }
 </script>
 
 <template>
-  <div data-test="traversal-shell" class="bg-[color:var(--bg-canvas)] text-[color:var(--text-primary)] font-sans flex flex-col overflow-hidden" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
-    <TraversalMain :recovering="isRecovering" @open-settings="showTraversalSettings = true" @back="backFromTraversal" />
-    <TraversalSettings
-      v-if="showTraversalSettings"
-      @close="showTraversalSettings = false"
-      @saved="onConfigSaved"
-    />
+  <div data-test="traversal-shell" class="flex h-full min-h-0 flex-col overflow-hidden font-sans" style="background:var(--color-bg-canvas);color:var(--color-text-primary)">
+    <UiLoadingState v-if="isRecovering" loading text="正在恢复移位测试状态..." />
+    <UiErrorState v-else-if="recoveryError" title="恢复失败" :message="recoveryError">
+      <template #action>
+        <UiButton variant="secondary" size="sm" @click="retryRecovery">重试</UiButton>
+      </template>
+    </UiErrorState>
+    <template v-else>
+      <TraversalMain :recovering="false" @open-settings="showTraversalSettings = true" @back="backFromTraversal" />
+      <TraversalSettings v-if="showTraversalSettings" @close="showTraversalSettings = false" @saved="onConfigSaved" />
+    </template>
   </div>
 </template>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MotionControllerProfile } from '@shared/types/motion'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 defineProps<{
   profiles: MotionControllerProfile[]
@@ -17,22 +17,22 @@ const emit = defineEmits<{
 <template>
   <aside class="config-sidebar">
     <div class="config-sidebar__header">
-      <h3 class="config-sidebar__title">控制器配置</h3>
-      <NButton quaternary size="small" class="config-sidebar__add-btn" @click="emit('add')">
+      <h3 class="config-sidebar__title">控制器配</h3>
+      <UiButton quaternary size="sm" class="config-sidebar__add-btn" @click="emit('add')">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>
           </svg>
         </template>
-      </NButton>
+      </UiButton>
     </div>
     <div class="config-sidebar__list">
-      <NButton
+      <UiButton
         v-for="p in profiles"
         :key="p.id"
         @click="emit('select', p.id)"
         quaternary
-        size="small"
+        size="sm"
         class="config-sidebar__item"
         :class="{ 'config-sidebar__item--active': activeId === p.id }"
       >
@@ -47,9 +47,9 @@ const emit = defineEmits<{
             <span class="config-sidebar__item-type">{{ p.type }}</span>
           </div>
         </div>
-      </NButton>
+      </UiButton>
       <div v-if="profiles.length === 0" class="config-sidebar__empty">
-        <p>暂无控制器配置</p>
+        <p>暂无控制器配</p>
       </div>
     </div>
   </aside>
@@ -76,7 +76,7 @@ const emit = defineEmits<{
 .config-sidebar__title {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--text-tertiary);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -131,17 +131,17 @@ const emit = defineEmits<{
   height: 2rem;
   border-radius: 0.375rem;
   background: rgba(255, 255, 255, 0.08);
-  color: #94a3b8;
+  color: var(--text-tertiary);
   flex-shrink: 0;
   transition: all 0.2s ease;
 }
 .config-sidebar__item:hover .config-sidebar__item-icon {
   background: rgba(255, 255, 255, 0.12);
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 .config-sidebar__item--active .config-sidebar__item-icon {
   background: rgba(16, 185, 129, 0.2) !important;
-  color: #10b981 !important;
+  color: var(--accent-primary) !important;
 }
 .config-sidebar__item-content {
   display: flex;
@@ -151,11 +151,11 @@ const emit = defineEmits<{
 .config-sidebar__item-name {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
   line-height: 1.4;
 }
 :root[data-theme='light'] .config-sidebar__item-name {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 .config-sidebar__item-type {
   font-size: 0.7rem;

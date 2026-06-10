@@ -32,7 +32,9 @@ import {
   TrendingUp,
 } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
-import { NButton, NCheckbox, NSelect } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
 
 const emit = defineEmits<{
   openSettings: []
@@ -325,44 +327,42 @@ function buildRealtimePressuresFromSnapshots(
     if (!ch.enabled) continue
     const rawValue = toValue(ch.channel.deviceId, ch.channel.channelIndex)
     if (rawValue === null) continue
-    const value = deviceStore.getDisplayValue(ch.channel.deviceId, ch.channel.channelIndex, rawValue)
-
     if (ch.role) {
-      assignByRole(ch.role as ProbeChannelRole, value)
+      assignByRole(ch.role as ProbeChannelRole, rawValue)
       continue
     }
 
     const name = ch.name.trim()
     const normalizedName = name.toLowerCase()
     if (/(?:^|[^a-z0-9])p1(?:[^a-z0-9]|$)/.test(normalizedName) || /孔\s*1/.test(name) || name.includes('孔1压力')) {
-      result.P1 = value
+      result.P1 = rawValue
       matchedChannelCount += 1
     } else if (/(?:^|[^a-z0-9])p2(?:[^a-z0-9]|$)/.test(normalizedName) || /孔\s*2/.test(name) || name.includes('孔2压力')) {
-      result.P2 = value
+      result.P2 = rawValue
       matchedChannelCount += 1
     } else if (/(?:^|[^a-z0-9])p3(?:[^a-z0-9]|$)/.test(normalizedName) || /孔\s*3/.test(name) || name.includes('孔3压力')) {
-      result.P3 = value
+      result.P3 = rawValue
       matchedChannelCount += 1
     } else if (/(?:^|[^a-z0-9])p4(?:[^a-z0-9]|$)/.test(normalizedName) || /孔\s*4/.test(name) || name.includes('孔4压力')) {
-      result.P4 = value
+      result.P4 = rawValue
       matchedChannelCount += 1
     } else if (/(?:^|[^a-z0-9])p5(?:[^a-z0-9]|$)/.test(normalizedName) || /孔\s*5/.test(name) || name.includes('孔5压力')) {
-      result.P5 = value
+      result.P5 = rawValue
       matchedChannelCount += 1
     } else if (/大气.*压/.test(name) || normalizedName.includes('atmospheric pressure') || /(?:^|[^a-z0-9])patm(?:[^a-z0-9]|$)/.test(normalizedName) || normalizedName.includes('p∞')) {
-      result.Patm = value
+      result.Patm = rawValue
       matchedChannelCount += 1
     } else if (/大气.*温/.test(name) || normalizedName.includes('atmospheric temp') || normalizedName.includes('atmospheric temperature') || /(?:^|[^a-z0-9])tatm(?:[^a-z0-9]|$)/.test(normalizedName) || normalizedName.includes('t∞')) {
-      result.Tatm = value
+      result.Tatm = rawValue
       matchedChannelCount += 1
     } else if (/总压/.test(name) || normalizedName.includes('total pressure') || /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/.test(normalizedName) || /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/.test(normalizedName)) {
-      result.P0 = value
+      result.P0 = rawValue
       matchedChannelCount += 1
     } else if (/静压/.test(name) || normalizedName.includes('static pressure') || /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/.test(normalizedName)) {
-      result.Ps = value
+      result.Ps = rawValue
       matchedChannelCount += 1
     } else if (/风洞.*温/.test(name) || normalizedName.includes('tunnel temp') || normalizedName.includes('tunnel temperature') || /(?:^|[^a-z0-9])ttunnel(?:[^a-z0-9]|$)/.test(normalizedName)) {
-      result.Ttunnel = value
+      result.Ttunnel = rawValue
       matchedChannelCount += 1
     }
   }
@@ -724,9 +724,9 @@ onBeforeUnmount(() => {
     >
       <!-- 左侧：标题与状态 -->
       <div class="flex items-center gap-4">
-        <NButton quaternary size="small" @click="emit('back')">
-          <template #icon><ArrowLeft :size="18" /></template>
-        </NButton>
+        <UiButton quaternary size="sm" @click="emit('back')">
+          <ArrowLeft :size="18" />
+        </UiButton>
         <div class="flex items-center gap-3">
           <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
             <IconCalibrationFiveHole :size="20" />
@@ -773,25 +773,23 @@ onBeforeUnmount(() => {
         <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
           <Zap class="h-3.5 w-3.5 text-[var(--accent-warning)]" />
           <span class="text-xs text-[var(--text-muted)]">刷新</span>
-          <NSelect
-            :value="calibrationStore.uiRefreshHz"
-            :options="Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} Hz`, value: i + 1 }))"
-            size="tiny"
+          <UiSelect
+            :model-value="String(calibrationStore.uiRefreshHz)"
+            :options="Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} Hz`, value: String(i + 1) }))"
             style="width:80px"
-            @update:value="calibrationStore.setUiRefreshHz"
+            @update:model-value="calibrationStore.setUiRefreshHz(Number($event))"
           />
         </div>
 
         <!-- 球罐判定 -->
         <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
           <label class="flex cursor-pointer items-center gap-2 text-[var(--text-primary)]">
-          <NCheckbox
+          <UiCheckbox
             :checked="sphereTankGate.gateEnabled.value"
-            size="small"
             @update:checked="saveSphereTankGate($event, sphereTankGate.waitTimeSec.value)"
           >
-            <template #default><span class="text-xs">球罐判定</span></template>
-          </NCheckbox>
+            <span class="text-xs">球罐判定</span>
+          </UiCheckbox>
           </label>
           <div class="h-3.5 w-px bg-[var(--border-default)]"></div>
           <span class="text-xs text-[var(--text-muted)]">稳定</span>
@@ -805,26 +803,26 @@ onBeforeUnmount(() => {
         <div class="mx-1 h-6 w-px bg-[var(--border-default)]"></div>
 
         <!-- 操作按钮组 -->
-        <NButton size="tiny" quaternary @click="emit('openSettings')">
-          <template #icon><Settings :size="14" /></template>配置
-        </NButton>
+        <UiButton size="sm" quaternary @click="emit('openSettings')">
+          <Settings :size="14" />配置
+        </UiButton>
 
         <template v-if="!calibrationStore.isRunning && !calibrationStore.isPaused">
-          <NButton size="tiny" type="primary" :disabled="!canStartCalibration" @click="startCalibration">
-            <template #icon><Play :size="14" /></template>开始校准
-          </NButton>
+          <UiButton size="sm" variant="primary" :disabled="!canStartCalibration" @click="startCalibration">
+            <Play :size="14" />开始校准
+          </UiButton>
         </template>
 
         <template v-else>
-          <NButton v-if="!calibrationStore.isPaused" size="tiny" type="warning" @click="pauseCalibration">
-            <template #icon><Pause :size="14" /></template>暂停
-          </NButton>
-          <NButton v-else size="tiny" type="primary" @click="resumeCalibration">
-            <template #icon><Play :size="14" /></template>继续
-          </NButton>
-          <NButton size="tiny" type="error" @click="stopCalibration">
-            <template #icon><StopCircle :size="14" /></template>停止
-          </NButton>
+          <UiButton v-if="!calibrationStore.isPaused" size="sm" variant="warning" @click="pauseCalibration">
+            <Pause :size="14" />暂停
+          </UiButton>
+          <UiButton v-else size="sm" variant="primary" @click="resumeCalibration">
+            <Play :size="14" />继续
+          </UiButton>
+          <UiButton size="sm" variant="danger" @click="stopCalibration">
+            <StopCircle :size="14" />停止
+          </UiButton>
         </template>
       </div>
     </div>
@@ -965,9 +963,9 @@ onBeforeUnmount(() => {
                   <span class="h-3.5 w-1.5 rounded-sm bg-[var(--accent-primary)]"></span>
                   <h4 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">Kα - Kβ 系数特征空间</h4>
                 </div>
-                <NButton quaternary size="tiny" :title="isTopChartExpanded ? '恢复默认视图' : '展开图表'" @click="isTopChartExpanded = !isTopChartExpanded">
-                  <template #icon><Maximize2 v-if="!isTopChartExpanded" :size="14" /><Minimize2 v-else :size="14" /></template>
-                </NButton>
+                <UiButton quaternary size="sm" :title="isTopChartExpanded ? '恢复默认视图' : '展开图表'" @click="isTopChartExpanded = !isTopChartExpanded">
+                  <Maximize2 v-if="!isTopChartExpanded" :size="14" /><Minimize2 v-else :size="14" />
+                </UiButton>
               </div>
               <div data-test="k-alpha-chart-canvas-wrap" class="relative min-h-0 flex-1">
                 <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
@@ -1025,12 +1023,12 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="calibrationStore.completeEvent.success" class="ml-auto flex flex-shrink-0 items-center gap-2">
-            <NButton size="tiny" secondary @click="saveCsv">
-              <template #icon><Save :size="14" /></template>保存CSV
-            </NButton>
-            <NButton size="tiny" type="primary" @click="exportReport">
-              <template #icon><FileText :size="14" /></template>导出报告
-            </NButton>
+            <UiButton size="sm" secondary @click="saveCsv">
+              <Save :size="14" />保存CSV
+            </UiButton>
+            <UiButton size="sm" variant="primary" @click="exportReport">
+              <FileText :size="14" />导出报告
+            </UiButton>
           </div>
         </div>
       </div>

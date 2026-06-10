@@ -2,36 +2,16 @@ export type AxisName = 'X' | 'Y' | 'Z' | 'U';
 
 export type AxisKind = 'LINEAR' | 'ROTARY';
 
-export type PositionSource = 'register' | 'encoder';
-
 export type MotionControllerType = 'SIMULATED-MC' | 'B140-MC' | 'WTNMC4A-MC';
-
-export interface AxisEncoderCompensationConfig {
-  enabled?: boolean;
-  tolerance?: number;
-  maxCycles?: number;
-  settleMs?: number;
-  minStep?: number;
-  timeoutMs?: number;
-}
 
 export interface AxisConfig {
   name: AxisName;
   enabled: boolean;
   kind: AxisKind;
-  /** 步距角(°/step)，如 1.8° 对应 200 步/转 */
-  stepsPerRev?: number;
-  microSteps?: number;
-  lead?: number;
-  gearRatio?: number;
   maxSpeed?: number;
   minLimit?: number;
   maxLimit?: number;
   inverted?: boolean;
-  encoderInverted?: boolean;
-  positionSource?: PositionSource;
-  encoderScale?: number;
-  encoderCompensation?: AxisEncoderCompensationConfig;
 }
 
 export interface MotionControllerProfile {

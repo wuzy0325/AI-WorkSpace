@@ -8,11 +8,9 @@
 @import './styles/themes/light.css';
 @import './styles/glass.css';
 
-@import 'tailwindcss';
-
-@theme {
-  --font-family-sans: 'Microsoft YaHei UI', sans-serif;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* 显式声明常用的布局类，确保它们被包含在构建产物中 */
 .flex { display: flex; }
@@ -166,12 +164,12 @@ button:disabled {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-border-default);
   border-radius: var(--radius-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--color-text-muted);
 }
 
 .app-shell {

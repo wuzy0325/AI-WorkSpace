@@ -10,8 +10,6 @@
 export type {
   AxisName,
   AxisKind,
-  PositionSource,
-  AxisEncoderCompensationConfig,
   AxisConfig,
   MotionControllerType,
   MotionControllerProfile,

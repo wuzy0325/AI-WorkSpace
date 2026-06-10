@@ -6,7 +6,10 @@ import { deviceApi } from '@api/deviceApi'
 import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
-import { NButton, NCheckbox, NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiButton from '@components/ui/UiButton.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -752,17 +755,17 @@ function channelLabel(c: ChannelConfig): string {
             <h2 class="drawer-title">设备管理</h2>
             <p class="drawer-subtitle">管理设备配置、扫描和连接</p>
           </div>
-          <NButton quaternary size="small" @click="close">✕</NButton>
+          <UiButton quaternary size="md" @click="close">✕</UiButton>
         </header>
 
         <div class="drawer-toolbar">
-          <NButton type="primary" size="small" @click="openCreate()">
+          <UiButton variant="primary" size="md" @click="openCreate()">
             <span class="btn-icon">+</span> 新建设备
-          </NButton>
-          <NButton secondary size="small" :disabled="scanning" @click="runScan">
+          </UiButton>
+          <UiButton secondary size="md" :disabled="scanning" @click="runScan">
             <span class="btn-icon" :class="{ spin: scanning }">⟳</span>
             {{ scanning ? '扫描中...' : '扫描' }}
-          </NButton>
+          </UiButton>
           <div class="drawer-total">
             设备: {{ deviceStore.profiles.length }}
           </div>
@@ -772,9 +775,9 @@ function channelLabel(c: ChannelConfig): string {
           <div class="drawer-discovered-head">
             <span class="drawer-discovered-label">发现的设备</span>
             <div class="drawer-discovered-actions">
-              <NButton type="primary" size="tiny" @click="addAllDiscoveredDevices">全部添加</NButton>
+              <UiButton variant="primary" size="sm" @click="addAllDiscoveredDevices">全部添加</UiButton>
               <span class="discovered-pulse" />
-              <NButton quaternary size="tiny" @click="clearDiscovered">✕</NButton>
+              <UiButton quaternary size="sm" @click="clearDiscovered">✕</UiButton>
             </div>
           </div>
           <div class="drawer-discovered-list">
@@ -801,9 +804,9 @@ function channelLabel(c: ChannelConfig): string {
                   已匹配: {{ matchedProfileForDiscovered(d)?.name }}
                 </div>
               </div>
-              <NButton size="tiny" @click="handleDiscoveredDeviceAction(d)">
+              <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
                 {{ discoveryActionLabel(d) }}
-              </NButton>
+              </UiButton>
             </div>
           </div>
         </div>
@@ -819,9 +822,8 @@ function channelLabel(c: ChannelConfig): string {
             <div class="device-card-body">
               <div class="device-card-left">
                 <div class="device-card-row">
-                  <NCheckbox
+                  <UiCheckbox
                     :checked="isSelected(p.id)"
-                    size="small"
                     @update:checked="toggleSelected(p.id)" />
                   <h3 class="device-card-name">{{ p.name }}</h3>
                   <span class="device-card-type-badge">{{ p.type }}</span>
@@ -834,14 +836,14 @@ function channelLabel(c: ChannelConfig): string {
               </div>
 
               <div class="device-card-right">
-                <NButton secondary size="small" @click="openEdit(p)">编辑</NButton>
-                <NButton size="small" @click="connectToggle(p)">
+                <UiButton secondary size="md" @click="openEdit(p)">编辑</UiButton>
+                <UiButton size="md" @click="connectToggle(p)">
                   {{ connectLabel(p) }}
-                </NButton>
-                <NButton v-if="deviceStore.statusFor(p.id) === 'Connected'" size="small" @click="toggleAcquisition(p)">
+                </UiButton>
+                <UiButton v-if="deviceStore.statusFor(p.id) === 'Connected'" size="md" @click="toggleAcquisition(p)">
                   {{ deviceStore.acquiringFor(p.id) ? '停止' : '采集' }}
-                </NButton>
-                <NButton type="error" size="small" secondary @click="removeProfile(p)">删除</NButton>
+                </UiButton>
+                <UiButton variant="danger" size="md" secondary @click="removeProfile(p)">删除</UiButton>
               </div>
             </div>
 
@@ -853,10 +855,10 @@ function channelLabel(c: ChannelConfig): string {
 
         <div v-if="selectedIds.length" class="drawer-bulk">
           <span>已选 <strong>{{ selectedCount }}</strong></span>
-          <NButton type="primary" size="tiny" :disabled="!selectedCount" @click="bulkConnect">批量连接</NButton>
-          <NButton secondary size="tiny" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</NButton>
-          <NButton type="error" size="tiny" :disabled="!selectedCount" @click="bulkDelete">批量删除</NButton>
-          <NButton quaternary size="tiny" @click="clearSelection">清除</NButton>
+          <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">批量连接</UiButton>
+          <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</UiButton>
+          <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">批量删除</UiButton>
+          <UiButton quaternary size="sm" @click="clearSelection">清除</UiButton>
         </div>
       </div>
 
@@ -876,30 +878,30 @@ function channelLabel(c: ChannelConfig): string {
                 </div>
               </div>
             </div>
-            <NButton quaternary size="small" @click="tryCloseEditor">✕</NButton>
+            <UiButton quaternary size="md" @click="tryCloseEditor">✕</UiButton>
           </header>
 
           <!-- 标签页切换 -->
           <div class="editor-tabs">
             <div class="editor-tabs-inner">
-              <NButton
+              <UiButton
                 quaternary
-                size="small"
+                size="md"
                 class="editor-tab"
                 :class="{ active: editorTab === 'basic' }"
                 @click="editorTab = 'basic'"
               >
                 基本信息
-              </NButton>
-              <NButton
+              </UiButton>
+              <UiButton
                 quaternary
-                size="small"
+                size="md"
                 class="editor-tab"
                 :class="{ active: editorTab === 'channels' }"
                 @click="editorTab = 'channels'"
               >
                 通道配置
-              </NButton>
+              </UiButton>
             </div>
           </div>
 
@@ -937,7 +939,7 @@ function channelLabel(c: ChannelConfig): string {
                 <div class="editor-grid">
                   <div class="editor-field col-6">
                     <label class="editor-label">设备名称 *</label>
-                    <NInput v-model:value="draft.name" size="small" :disabled="isReadOnly" placeholder="输入设备名称" />
+                    <UiInput v-model="draft.name" :disabled="isReadOnly" placeholder="输入设备名称" />
                     <div v-if="fieldErrors.name" class="editor-field-error">● {{ fieldErrors.name }}</div>
                   </div>
                   <div class="editor-field col-4">
@@ -951,7 +953,7 @@ function channelLabel(c: ChannelConfig): string {
                   </div>
                   <div v-if="draft.type !== 'DSA3217'" class="editor-field col-2">
                     <label class="editor-label">采样率 (Hz)</label>
-                    <NInputNumber v-model:value="draft.samplingRate" size="small" style="width:100%" :disabled="isReadOnly" />
+                    <UiInputNumber v-model="draft.samplingRate" class="w-full" :disabled="isReadOnly" />
                     <div v-if="fieldErrors.samplingRate" class="editor-field-error">● {{ fieldErrors.samplingRate }}</div>
                   </div>
                   <div class="editor-field col-12">
@@ -1000,22 +1002,20 @@ function channelLabel(c: ChannelConfig): string {
                 <div class="editor-grid">
                   <div class="editor-field col-4">
                     <label class="editor-label">AVG（平均值 1~240）</label>
-                    <NInputNumber
-                      v-model:value="dsa3217Avg"
+                    <UiInputNumber
+                      v-model="dsa3217Avg"
                       :min="1" :max="240"
                       :disabled="isReadOnly"
-                      size="small"
-                      style="width:100%"
+                      class="w-full"
                     />
                   </div>
                   <div class="editor-field col-4">
                     <label class="editor-label">PERIOD（周期 73~65535 μs）</label>
-                    <NInputNumber
-                      v-model:value="dsa3217Period"
+                    <UiInputNumber
+                      v-model="dsa3217Period"
                       :min="73" :max="65535"
                       :disabled="isReadOnly"
-                      size="small"
-                      style="width:100%"
+                      class="w-full"
                     />
                   </div>
                   <div class="editor-field col-4">
@@ -1047,12 +1047,12 @@ function channelLabel(c: ChannelConfig): string {
                   <template v-if="isTcpType(draft.type) && draft.transport === 'tcp'">
                     <div class="editor-field col-5">
                       <label class="editor-label">IP 地址 *</label>
-                      <NInput v-model:value="draft.address" size="small" :disabled="isReadOnly" placeholder="192.168.1.100" />
+                      <UiInput v-model="draft.address" :disabled="isReadOnly" placeholder="192.168.1.100" />
                       <div v-if="fieldErrors.address" class="editor-field-error">● {{ fieldErrors.address }}</div>
                     </div>
                     <div class="editor-field col-3">
                       <label class="editor-label">端口 *</label>
-                      <NInputNumber v-model:value="draft.port" size="small" style="width:100%" :disabled="isReadOnly" />
+                      <UiInputNumber v-model="draft.port" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
                     </div>
                   </template>
@@ -1060,21 +1060,21 @@ function channelLabel(c: ChannelConfig): string {
                   <template v-if="isTcpType(draft.type) && draft.transport === 'serial'">
                     <div class="editor-field col-7">
                       <label class="editor-label">串口号 *</label>
-                      <NInput v-model:value="draft.serialPort" size="small" :disabled="isReadOnly" placeholder="COM1" />
+                      <UiInput v-model="draft.serialPort" :disabled="isReadOnly" placeholder="COM1" />
                       <div v-if="fieldErrors.serialPort" class="editor-field-error">● {{ fieldErrors.serialPort }}</div>
                     </div>
                     <div class="editor-field col-5">
                       <label class="editor-label">波特率 *</label>
-                      <NInputNumber v-model:value="draft.baudRate" size="small" style="width:100%" :disabled="isReadOnly" />
+                      <UiInputNumber v-model="draft.baudRate" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.baudRate" class="editor-field-error">● {{ fieldErrors.baudRate }}</div>
                     </div>
                   </template>
 
                   <div class="editor-field col-12">
                     <div class="editor-autoconnect-row">
-                      <NCheckbox v-model:checked="draft.autoConnect" size="small" :disabled="isReadOnly">
+                      <UiCheckbox v-model:checked="draft.autoConnect" :disabled="isReadOnly">
                         保存后自动连接
-                      </NCheckbox>
+                      </UiCheckbox>
                     </div>
                   </div>
                 </div>
@@ -1109,10 +1109,10 @@ function channelLabel(c: ChannelConfig): string {
                       <tr v-for="c in draft.channels" :key="c.index">
                         <td class="font-mono">{{ channelLabel(c).padStart(2, '0') }}</td>
                         <td>
-                          <NInput v-model:value="c.name" size="small" :disabled="isReadOnly" />
+                          <UiInput v-model="c.name" :disabled="isReadOnly" />
                         </td>
                         <td>
-                          <NSelect v-model:value="c.thermocoupleType" :options="[{label:'K',value:'K'},{label:'T',value:'T'},{label:'E',value:'E'},{label:'J',value:'J'},{label:'N',value:'N'},{label:'S',value:'S'},{label:'R',value:'R'},{label:'B',value:'B'}]" size="tiny" style="min-width:80px" :disabled="isReadOnly" />
+                          <UiSelect v-model="c.thermocoupleType" :options="[{label:'K',value:'K'},{label:'T',value:'T'},{label:'E',value:'E'},{label:'J',value:'J'},{label:'N',value:'N'},{label:'S',value:'S'},{label:'R',value:'R'},{label:'B',value:'B'}]" class="editor-ch-select-min-width" :disabled="isReadOnly" />
                         </td>
                         <td class="text-right text-muted">℃</td>
                       </tr>
@@ -1148,15 +1148,15 @@ function channelLabel(c: ChannelConfig): string {
               <div v-else class="editor-channels-full">
                 <div class="editor-channels-toolbar">
                   <div class="editor-channels-toolbar-left">
-                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</NButton>
-                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</NButton>
-                    <NButton secondary size="tiny" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</NButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
                   </div>
                   <div class="editor-channels-toolbar-right">
-                    <NInput v-model:value="channelKeyword" size="small" placeholder="过滤通道..." />
-                    <NCheckbox v-model:checked="enabledOnlyChannels" size="small">
+                    <UiInput v-model="channelKeyword" placeholder="过滤通道..." />
+                    <UiCheckbox v-model:checked="enabledOnlyChannels">
                       仅看启用
-                    </NCheckbox>
+                    </UiCheckbox>
                   </div>
                 </div>
 
@@ -1165,18 +1165,16 @@ function channelLabel(c: ChannelConfig): string {
                   <div class="editor-ch-batch-item">
                     <div class="editor-label">批量量程 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-range">
-                      <NInputNumber
-                        v-model:value="deviceRangeMin"
-                        size="small"
-                        style="width:100%"
+                      <UiInputNumber
+                        v-model="deviceRangeMin"
+                        class="w-full"
                         :disabled="isReadOnly"
                         placeholder="最小值"
                       />
                       <span class="editor-ch-batch-sep">~</span>
-                      <NInputNumber
-                        v-model:value="deviceRangeMax"
-                        size="small"
-                        style="width:100%"
+                      <UiInputNumber
+                        v-model="deviceRangeMax"
+                        class="w-full"
                         :disabled="isReadOnly"
                         placeholder="最大值"
                       />
@@ -1186,10 +1184,9 @@ function channelLabel(c: ChannelConfig): string {
                   <div class="editor-ch-batch-item">
                     <div class="editor-label">批量精度 <span class="editor-label-sub">1~16CH</span></div>
                     <div class="editor-ch-batch-precision">
-                      <NInputNumber
-                        v-model:value="devicePrecision"
-                        size="small"
-                        style="width:100%"
+                      <UiInputNumber
+                        v-model="devicePrecision"
+                        class="w-full"
                         :min="0"
                         :disabled="isReadOnly"
                         placeholder="0"
@@ -1214,21 +1211,21 @@ function channelLabel(c: ChannelConfig): string {
                     <tbody>
                       <tr v-for="row in channelRows" :key="row.channel.index">
                         <td class="text-center">
-                          <NCheckbox v-model:checked="row.channel.enabled" size="small" :disabled="isReadOnly" />
+                          <UiCheckbox v-model:checked="row.channel.enabled" :disabled="isReadOnly" />
                         </td>
                         <td class="font-mono">{{ channelLabel(row.channel).padStart(2, '0') }}</td>
                         <td>
-                          <NInput v-model:value="row.channel.name" size="small" :disabled="isReadOnly" />
+                          <UiInput v-model="row.channel.name" :disabled="isReadOnly" />
                         </td>
                         <td>
                           <div class="editor-ch-range">
-                            <NInputNumber v-model:value="row.channel.rangeMin" size="small" style="width:100%" :disabled="isReadOnly || row.originalIndex >= 16" />
+                            <UiInputNumber v-model="row.channel.rangeMin" class="w-full" :disabled="isReadOnly || row.originalIndex >= 16" />
                             <span>~</span>
-                            <NInputNumber v-model:value="row.channel.rangeMax" size="small" style="width:100%" :disabled="isReadOnly || row.originalIndex >= 16" />
+                            <UiInputNumber v-model="row.channel.rangeMax" class="w-full" :disabled="isReadOnly || row.originalIndex >= 16" />
                           </div>
                         </td>
                         <td>
-                          <NInputNumber v-model:value="row.channel.precision" size="small" style="width:100%" :min="0" :disabled="isReadOnly || row.originalIndex >= 16" />
+                          <UiInputNumber v-model="row.channel.precision" class="w-full" :min="0" :disabled="isReadOnly || row.originalIndex >= 16" />
                         </td>
                       </tr>
                     </tbody>
@@ -1271,17 +1268,17 @@ function channelLabel(c: ChannelConfig): string {
               </div>
             </div>
             <div class="editor-footer-right">
-              <NButton secondary @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</NButton>
-              <NButton
+              <UiButton secondary @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</UiButton>
+              <UiButton
                 v-if="!isReadOnly"
-                type="primary"
-                size="small"
+                variant="primary"
+                size="md"
                 :disabled="saving || validationErrorCount > 0"
                 @click="saveDraft"
               >
                 <span v-if="saving" class="btn-spinner" />
                 {{ saving ? '保存中...' : '保存' }}
-              </NButton>
+              </UiButton>
             </div>
           </footer>
         </div>
@@ -1318,7 +1315,7 @@ function channelLabel(c: ChannelConfig): string {
 .drawer-subtitle { margin: 0.25rem 0 0; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
 
 .drawer-close {
-  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  width: var(--space-8); height: var(--space-8); display: flex; align-items: center; justify-content: center;
   border-radius: 0.5rem; color: var(--text-muted);
   background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.875rem; transition: all 0.2s;
@@ -1347,15 +1344,15 @@ function channelLabel(c: ChannelConfig): string {
   transition: all 0.2s; cursor: pointer; border: 1px solid transparent;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: #10b981; color: white; box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
-.btn-primary:hover { background: #059669; }
-.btn-second { background: rgba(59,130,246,0.1); color: #3b82f6; border-color: rgba(59,130,246,0.2); }
-.btn-second:hover { background: rgba(59,130,246,0.2); color: #2563eb; border-color: rgba(59,130,246,0.4); }
-.btn-green { background: #10b981; color: white; }
-.btn-green:hover { background: #059669; }
-.btn-danger { background: rgba(244,63,94,0.1); color: #f43f5e; border-color: rgba(244,63,94,0.2); }
+.btn-primary { background: var(--color-success); color: white; box-shadow: 0 var(--space-1) var(--space-3) rgba(16,185,129,0.3); }
+.btn-primary:hover { background: var(--color-success); }
+.btn-second { background: rgba(59,130,246,0.1); color: var(--color-accent); border-color: rgba(59,130,246,0.2); }
+.btn-second:hover { background: rgba(59,130,246,0.2); color: var(--color-accent); border-color: rgba(59,130,246,0.4); }
+.btn-green { background: var(--color-success); color: white; }
+.btn-green:hover { background: var(--color-success); }
+.btn-danger { background: rgba(244,63,94,0.1); color: var(--color-danger); border-color: rgba(244,63,94,0.2); }
 .btn-danger:hover { background: rgba(244,63,94,0.2); }
-.btn-warn { background: rgba(245,158,11,0.1); color: #f59e0b; border-color: rgba(245,158,11,0.2); }
+.btn-warn { background: rgba(245,158,11,0.1); color: var(--color-warning); border-color: rgba(245,158,11,0.2); }
 .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.7rem; white-space: nowrap; }
 .btn-xs { padding: 0.25rem 0.5rem; font-size: 0.625rem; }
 .btn-icon { font-size: 1rem; line-height: 1; }
@@ -1372,7 +1369,7 @@ function channelLabel(c: ChannelConfig): string {
 .drawer-discovered-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
 .drawer-discovered-label { font-size: 0.625rem; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-muted); }
 .drawer-discovered-actions { display: flex; align-items: center; gap: 0.5rem; }
-.discovered-pulse { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; animation: pulse 1.5s infinite; }
+.discovered-pulse { width: var(--space-1); height: var(--space-1); border-radius: 50%; background: var(--color-accent); animation: pulse 1.5s infinite; }
 .drawer-discovered-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 30vh; overflow-y: auto; }
 .discovered-card {
   display: flex; align-items: center; gap: 0.75rem;
@@ -1380,8 +1377,8 @@ function channelLabel(c: ChannelConfig): string {
   background: var(--bg-panel); border: 1px solid var(--border-default);
 }
 .discovered-card-icon {
-  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; background: rgba(59,130,246,0.1); color: #3b82f6;
+  width: var(--space-8); height: var(--space-8); display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: rgba(59,130,246,0.1); color: var(--color-accent);
   font-size: 0.75rem; font-weight: 800; flex-shrink: 0;
 }
 .discovered-card-name { font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
@@ -1399,7 +1396,7 @@ function channelLabel(c: ChannelConfig): string {
   margin-top: 0.25rem; display: inline-flex; align-items: center;
   padding: 0.125rem 0.5rem; border-radius: 999px;
   background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3);
-  font-size: 0.6rem; font-weight: 700; color: #10b981;
+  font-size: 0.6rem; font-weight: 700; color: var(--color-success);
 }
 .discovered-card .btn-green, .discovered-card .btn-second { margin-left: auto; flex-shrink: 0; }
 
@@ -1412,14 +1409,14 @@ function channelLabel(c: ChannelConfig): string {
   background: var(--bg-panel); transition: all 0.2s;
 }
 .device-card:hover { border-color: var(--accent-success); }
-.device-card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #64748b; transition: all 0.3s; }
-.device-card-stripe.status-online { background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.5); }
-.device-card-stripe.status-acq { background: #10b981; box-shadow: 0 0 12px rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
-.device-card-stripe.status-connecting { background: #f59e0b; animation: pulse 0.8s infinite; }
+.device-card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: var(--space-1); background: var(--color-text-muted); transition: all 0.3s; }
+.device-card-stripe.status-online { background: var(--color-success); box-shadow: 0 0 var(--space-2) rgba(16,185,129,0.5); }
+.device-card-stripe.status-acq { background: var(--color-success); box-shadow: 0 0 var(--space-3) rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
+.device-card-stripe.status-connecting { background: var(--color-warning); animation: pulse 0.8s infinite; }
 .device-card-body { padding: 1rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .device-card-left { min-width: 0; flex: 1; }
 .device-card-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.device-checkbox { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; accent-color: #3b82f6; }
+.device-checkbox { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-sm); flex-shrink: 0; accent-color: var(--color-accent); }
 .device-card-name { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .device-card-type-badge {
   flex-shrink: 0; padding: 0.125rem 0.5rem; border-radius: 0.25rem;
@@ -1430,12 +1427,12 @@ function channelLabel(c: ChannelConfig): string {
 .device-card-meta span { display: inline-flex; align-items: center; gap: 0.25rem; }
 .device-card-right { display: flex; flex-direction: column; gap: 0.375rem; flex-shrink: 0; }
 .device-card-error {
-  margin: 0 1rem 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.375rem;
+  margin: 0 1rem 0.75rem; padding: 0.5rem 0.75rem; border-radius: var(--radius-lg);
   background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.2);
-  font-size: 0.65rem; font-weight: 600; color: #f43f5e;
+  font-size: 0.65rem; font-weight: 600; color: var(--color-danger);
 }
 .device-card-right .btn.ghost { background: transparent; color: var(--text-muted); border: 1px dashed var(--border-default); }
-.device-card-right .btn.ghost:hover { color: #f43f5e; border-color: #f43f5e; }
+.device-card-right .btn.ghost:hover { color: var(--color-danger); border-color: var(--color-danger); }
 
 .drawer-bulk {
   flex-shrink: 0; display: flex; align-items: center; gap: 0.75rem;
@@ -1458,7 +1455,7 @@ function channelLabel(c: ChannelConfig): string {
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   border-radius: 1rem;
-  box-shadow: 0 32px 64px -12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 var(--space-8) 64px -12px rgba(0, 0, 0, 0.5);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
@@ -1472,18 +1469,18 @@ function channelLabel(c: ChannelConfig): string {
 }
 .editor-header-left { display: flex; align-items: center; gap: 0.75rem; }
 .editor-header-icon {
-  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
-  border-radius: 0.75rem; background: rgba(59,130,246,0.1); color: #3b82f6;
+  width: var(--space-10); height: var(--space-10); display: flex; align-items: center; justify-content: center;
+  border-radius: 0.75rem; background: rgba(59,130,246,0.1); color: var(--color-accent);
   font-size: 1.25rem; font-weight: 800;
 }
 .editor-title { margin: 0; font-size: 1rem; font-weight: 800; color: var(--text-primary); }
 .editor-status-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
 .editor-status-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted);
+  width: var(--space-1); height: var(--space-1); border-radius: 50%; background: var(--text-muted);
 }
-.editor-status-dot.status-online { background: #10b981; box-shadow: 0 0 4px rgba(16,185,129,0.5); }
-.editor-status-dot.status-acq { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
-.editor-status-dot.status-connecting { background: #f59e0b; animation: pulse 0.8s infinite; }
+.editor-status-dot.status-online { background: var(--color-success); box-shadow: 0 0 var(--space-1) rgba(16,185,129,0.5); }
+.editor-status-dot.status-acq { background: var(--color-success); box-shadow: 0 0 var(--space-1) rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
+.editor-status-dot.status-connecting { background: var(--color-warning); animation: pulse 0.8s infinite; }
 .editor-status-text { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
 
 .editor-tabs {
@@ -1501,7 +1498,7 @@ function channelLabel(c: ChannelConfig): string {
   cursor: pointer;
 }
 :deep(.editor-tab):hover { color: var(--text-primary); }
-:deep(.editor-tab.active) { background: var(--bg-panel); color: #3b82f6; }
+:deep(.editor-tab.active) { background: var(--bg-panel); color: var(--color-accent); }
 
 .editor-body { padding: 1.5rem; overflow-y: auto; flex: 1; min-height: 0; }
 
@@ -1524,14 +1521,14 @@ function channelLabel(c: ChannelConfig): string {
   display: flex; align-items: center; gap: 0.625rem;
   padding: 0.875rem 1rem; border-radius: 0.625rem;
   background: rgba(244,63,94,0.08); border: 1px solid rgba(244,63,94,0.2);
-  font-size: 0.75rem; font-weight: 700; color: #f43f5e;
+  font-size: 0.75rem; font-weight: 700; color: var(--color-danger);
   margin-bottom: 1.25rem;
 }
 .editor-readonly-banner {
   display: flex; align-items: center; gap: 0.625rem;
   padding: 0.875rem 1rem; border-radius: 0.625rem;
   background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
-  font-size: 0.75rem; font-weight: 700; color: #f59e0b;
+  font-size: 0.75rem; font-weight: 700; color: var(--color-warning);
   margin-bottom: 1.25rem;
 }
 .banner-icon {
@@ -1563,14 +1560,14 @@ function channelLabel(c: ChannelConfig): string {
   font: inherit; font-size: 0.85rem; font-weight: 700;
   outline: none; transition: all 0.2s;
 }
-.editor-input:focus { border-color: #3b82f6; background: var(--bg-panel-strong); }
+.editor-input:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
 .editor-input:disabled { opacity: 0.6; cursor: not-allowed; }
 .editor-input-readonly {
   display: flex; align-items: center;
-  height: 40px; font-weight: 700; color: var(--text-muted);
+  height: var(--space-10); font-weight: 700; color: var(--text-muted);
 }
 :root[data-theme='light'] .editor-input { background: rgba(255, 255, 255, 0.8); }
-.editor-field-error { margin-top: 0.375rem; font-size: 0.65rem; font-weight: 700; color: #f43f5e; }
+.editor-field-error { margin-top: 0.375rem; font-size: 0.65rem; font-weight: 700; color: var(--color-danger); }
 
 .editor-unit-row { display: flex; align-items: center; gap: 0.75rem; }
 .editor-unit-select { flex: 1; }
@@ -1583,16 +1580,16 @@ function channelLabel(c: ChannelConfig): string {
 }
 .editor-atmo-toggle { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; }
 .editor-toggle-track {
-  width: 44px; height: 24px; border-radius: 999px;
+  width: 44px; height: var(--space-6); border-radius: 999px;
   background: var(--border-default); position: relative; transition: all 0.2s;
 }
-.editor-toggle-track.on { background: #3b82f6; }
+.editor-toggle-track.on { background: var(--color-accent); }
 .editor-toggle-thumb {
   position: absolute; top: 2px; left: 3px;
-  width: 20px; height: 20px; border-radius: 50%;
+  width: var(--space-5); height: var(--space-5); border-radius: 50%;
   background: white; transition: all 0.2s;
 }
-.editor-toggle-thumb.on { transform: translateX(20px); }
+.editor-toggle-thumb.on { transform: translateX(var(--space-5)); }
 .editor-atmo-label { font-size: 0.75rem; font-weight: 700; color: var(--text-primary); }
 
 .editor-autoconnect-row {
@@ -1602,9 +1599,9 @@ function channelLabel(c: ChannelConfig): string {
 }
 .editor-autoconnect-label {
   display: flex; align-items: center; gap: 0.5rem;
-  font-size: 0.75rem; font-weight: 800; color: #3b82f6; cursor: pointer;
+  font-size: 0.75rem; font-weight: 800; color: var(--color-accent); cursor: pointer;
 }
-.editor-autoconnect-check { width: 16px; height: 16px; accent-color: #3b82f6; }
+.editor-autoconnect-check { width: var(--space-4); height: var(--space-4); accent-color: var(--color-accent); }
 
 /* Channels */
 .editor-channels-special { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -1620,12 +1617,12 @@ function channelLabel(c: ChannelConfig): string {
   font-size: 0.7rem; font-weight: 700; color: var(--text-primary);
   outline: none; width: 160px;
 }
-.editor-ch-search:focus { border-color: #3b82f6; }
+.editor-ch-search:focus { border-color: var(--color-accent); }
 .editor-ch-filter-label {
   display: flex; align-items: center; gap: 0.375rem;
   font-size: 0.7rem; font-weight: 800; color: var(--text-muted); cursor: pointer;
 }
-.editor-ch-filter-check { width: 14px; height: 14px; accent-color: #3b82f6; }
+.editor-ch-filter-check { width: var(--space-3); height: var(--space-3); accent-color: var(--color-accent); }
 
 .editor-ch-batch {
   display: flex; align-items: flex-end; gap: 1.5rem;
@@ -1635,7 +1632,7 @@ function channelLabel(c: ChannelConfig): string {
   border: 1px solid var(--border-default);
 }
 .editor-ch-batch-item { flex: 1; }
-.editor-ch-batch-divider { width: 1px; height: 40px; background: var(--border-default); opacity: 0.4; }
+.editor-ch-batch-divider { width: 1px; height: var(--space-10); background: var(--border-default); opacity: 0.4; }
 .editor-ch-batch-range { display: flex; align-items: center; gap: 0.5rem; }
 .editor-ch-batch-sep {
   font-size: 0.75rem;
@@ -1650,7 +1647,7 @@ function channelLabel(c: ChannelConfig): string {
   text-align: center; outline: none;
   transition: all 0.2s ease;
 }
-.editor-ch-batch-input:focus { border-color: #3b82f6; background: var(--bg-panel-strong); }
+.editor-ch-batch-input:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
 .editor-ch-batch-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .editor-ch-batch-input-sm {
   width: 96px; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
@@ -1659,7 +1656,7 @@ function channelLabel(c: ChannelConfig): string {
   text-align: center; outline: none;
   transition: all 0.2s ease;
 }
-.editor-ch-batch-input-sm:focus { border-color: #3b82f6; background: var(--bg-panel-strong); }
+.editor-ch-batch-input-sm:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
 .editor-ch-batch-precision { display: flex; align-items: center; gap: 0.75rem; }
 .editor-ch-batch-hint { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); }
 .editor-label-sub {
@@ -1710,9 +1707,9 @@ function channelLabel(c: ChannelConfig): string {
   border-radius: 0;
 }
 .editor-ch-check {
-  width: 16px;
-  height: 16px;
-  accent-color: #3b82f6;
+  width: var(--space-4);
+  height: var(--space-4);
+  accent-color: var(--color-accent);
   cursor: pointer;
 }
 .editor-ch-check:disabled {
@@ -1736,7 +1733,7 @@ function channelLabel(c: ChannelConfig): string {
 }
 .editor-ch-input:focus {
   background: var(--bg-panel);
-  border-color: #3b82f6;
+  border-color: var(--color-accent);
 }
 .editor-ch-input:disabled {
   opacity: 0.5;
@@ -1762,7 +1759,7 @@ function channelLabel(c: ChannelConfig): string {
   transition: all 0.2s ease;
 }
 .editor-ch-range-input:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-accent);
   background: var(--bg-panel);
 }
 .editor-ch-range-input:disabled {
@@ -1787,7 +1784,7 @@ function channelLabel(c: ChannelConfig): string {
 }
 .editor-ch-tc:focus {
   background: var(--bg-panel);
-  border-color: #3b82f6;
+  border-color: var(--color-accent);
 }
 .editor-ch-tc:disabled {
   opacity: 0.5;
@@ -1808,7 +1805,7 @@ function channelLabel(c: ChannelConfig): string {
   transition: all 0.2s ease;
 }
 .editor-ch-precision-input:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-accent);
   background: var(--bg-panel);
 }
 .editor-ch-precision-input:disabled {
@@ -1836,12 +1833,12 @@ function channelLabel(c: ChannelConfig): string {
 .editor-footer-right { display: flex; gap: 0.75rem; }
 .editor-footer-readonly {
   display: flex; align-items: center; gap: 0.375rem;
-  font-size: 0.65rem; font-weight: 800; color: #f59e0b;
+  font-size: 0.65rem; font-weight: 800; color: var(--color-warning);
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 .editor-footer-errors {
   display: flex; align-items: center; gap: 0.375rem;
-  font-size: 0.65rem; font-weight: 800; color: #f43f5e;
+  font-size: 0.65rem; font-weight: 800; color: var(--color-danger);
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 .editor-footer-status {
@@ -1850,7 +1847,7 @@ function channelLabel(c: ChannelConfig): string {
   text-transform: uppercase; letter-spacing: 0.1em;
   transition: color 0.2s ease;
 }
-.editor-footer-status.dirty { color: #f59e0b; }
+.editor-footer-status.dirty { color: var(--color-warning); }
 
 /* 保存按钮加载动画 */
 .btn-saving {
@@ -1862,13 +1859,15 @@ function channelLabel(c: ChannelConfig): string {
   left: 0.625rem;
   top: 50%;
   transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
+  width: var(--space-3);
+  height: var(--space-3);
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: white;
   border-radius: 50%;
   animation: btn-spin 0.8s linear infinite;
 }
+.w-full { width: 100%; }
+.editor-ch-select-min-width { min-width: 80px; }
 @keyframes btn-spin {
   to { transform: translateY(-50%) rotate(360deg); }
 }

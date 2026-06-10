@@ -6,21 +6,17 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore, type StorageSettings } from '@stores/storageStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { wailsApi } from '@api/wails-adapter'
-import {
-  NAlert,
-  NButton,
-  NCard,
-  NInput,
-  NInputNumber,
-  NModal,
-  NResult,
-  NSlider,
-  NSpace,
-  NSpin,
-  NSwitch,
-  NTag,
-  NText,
-} from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiSpin from '@components/ui/UiSpin.vue'
+import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
+import UiAlert from '@components/ui/UiAlert.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiSlider from '@components/ui/UiSlider.vue'
+import UiToggle from '@components/ui/UiToggle.vue'
+import UiErrorState from '@components/ui/UiErrorState.vue'
+import UiDialog from '@components/ui/UiDialog.vue'
 import {
   CheckCircle,
   Clock,
@@ -190,7 +186,7 @@ async function onSave(): Promise<void> {
 </script>
 
 <template>
-  <NModal
+  <UiDialog
     v-model:show="isVisible"
     preset="card"
     :style="{ maxWidth: '32rem' }"
@@ -202,55 +198,55 @@ async function onSave(): Promise<void> {
     <template #header>
       <div class="modal-head">
         <div>
-          <NText tag="div" depth="1" style="font-size:15px;font-weight:600">全局设置</NText>
-          <NText depth="3" style="font-size:11px;margin-top:2px">数据保存、自动停止条件和实时刷新频率</NText>
+          <div style="font-size:15px;font-weight:600">全局设置</div>
+          <span style="font-size:11px;margin-top:2px;color:var(--text-tertiary)">数据保存、自动停止条件和实时刷新频率</span>
         </div>
-        <NButton quaternary circle size="small" @click="onClose"><template #icon><X :size="14" /></template></NButton>
+        <UiButton quaternary circle size="md" @click="onClose"><template #icon><X :size="14" /></template></UiButton>
       </div>
     </template>
 
-    <NSpin v-if="loading" size="small" style="display:flex;justify-content:center;padding:40px 0" />
-    <NResult v-else-if="loadError" status="error" title="设置加载失败" description="请检查后端连接" size="small">
-      <template #footer><NButton size="small" @click="loadSettings">重试</NButton></template>
-    </NResult>
+    <UiSpin v-if="loading" style="display:flex;justify-content:center;padding:40px 0" />
+    <UiErrorState v-else-if="loadError" title="设置加载失败" message="请检查后端连接">
+      <template #action><UiButton size="md" @click="loadSettings">重试</UiButton></template>
+    </UiErrorState>
 
     <div v-else class="settings-body">
-      <NCard size="small" :bordered="true" :segmented="false" class="form-card">
+      <UiPanel :segmented="false" class="form-card">
         <template #header>
           <div class="card-head">
             <FileText :size="15" />
-            <NText depth="1" style="font-size:12px;font-weight:600">数据保存</NText>
+            <span style="font-size:12px;font-weight:600">数据保存</span>
           </div>
         </template>
-        <NSpace vertical size="small">
+        <div class="flex flex-col gap-2">
           <div class="field-row">
-            <NText depth="3" style="font-size:11px">保存目录</NText>
-            <NSpace>
-              <NInput v-model:value="baseDirectory" placeholder="data/recordings" size="small" style="flex:1;min-width:220px" />
-              <NButton size="small" @click="handlePickDirectory">
+            <span style="font-size:11px;color:var(--text-tertiary)">保存目录</span>
+            <div class="flex gap-2">
+              <UiInput v-model="baseDirectory" placeholder="data/recordings" style="flex:1;min-width:220px" />
+              <UiButton size="md" @click="handlePickDirectory">
                 <template #icon><Folder :size="14" /></template>选择
-              </NButton>
-            </NSpace>
+              </UiButton>
+            </div>
           </div>
           <div class="field-row">
-            <NText depth="3" style="font-size:11px">文件前缀</NText>
-            <NInput v-model:value="filePrefix" placeholder="run" size="small" />
+            <span style="font-size:11px;color:var(--text-tertiary)">文件前缀</span>
+            <UiInput v-model="filePrefix" placeholder="run"  />
           </div>
           <div class="auto-start-row">
-            <NSwitch v-model:value="autoStart" size="small" />
-            <NText depth="2" style="font-size:12px">开始采集时自动开始记录</NText>
+            <UiToggle v-model="autoStart" />
+            <span style="font-size:12px;color:var(--text-secondary)">开始采集时自动开始记录</span>
           </div>
-        </NSpace>
-      </NCard>
+        </div>
+      </UiPanel>
 
-      <NCard size="small" :bordered="true" class="form-card">
+      <UiPanel class="form-card">
         <template #header>
           <div class="card-head">
             <Clock :size="15" />
-            <NText depth="1" style="font-size:12px;font-weight:600">自动停止条件</NText>
-            <NTag v-if="enabledConditionsCount > 0" size="tiny" type="success" round style="margin-left:auto">
+            <span style="font-size:12px;font-weight:600">自动停止条件</span>
+            <UiStatusBadge v-if="enabledConditionsCount > 0" status="connected" style="margin-left:auto">
               {{ enabledConditionsCount }} 项
-            </NTag>
+            </UiStatusBadge>
           </div>
         </template>
         <div class="conditions-list">
@@ -262,11 +258,11 @@ async function onSave(): Promise<void> {
             <div class="condition-row__main">
               <CheckCircle v-if="durationEnabled" :size="14" class="icon-check" />
               <div v-else class="icon-circle" />
-              <NText :depth="durationEnabled ? 1 : 3" style="font-size:12px">定时停止</NText>
+              <span :style="{ color: durationEnabled ? 'var(--text-primary)' : 'var(--text-tertiary)', fontSize: '12px' }">定时停止</span>
             </div>
             <div v-if="durationEnabled" class="condition-row__input" @click.stop>
-              <NInputNumber v-model:value="durationMinutes" :min="1" :max="1440" size="tiny" style="width:80px" />
-              <NText depth="3" style="font-size:11px">分钟</NText>
+              <UiInputNumber v-model="durationMinutes" :min="1" :max="1440" style="width:80px" />
+              <span style="font-size:11px;color:var(--text-tertiary)">分钟</span>
             </div>
           </div>
           <div
@@ -277,11 +273,11 @@ async function onSave(): Promise<void> {
             <div class="condition-row__main">
               <CheckCircle v-if="sizeEnabled" :size="14" class="icon-check" />
               <div v-else class="icon-circle" />
-              <NText :depth="sizeEnabled ? 1 : 3" style="font-size:12px">按文件大小停止</NText>
+              <span :style="{ color: sizeEnabled ? 'var(--text-primary)' : 'var(--text-tertiary)', fontSize: '12px' }">按文件大小停止</span>
             </div>
             <div v-if="sizeEnabled" class="condition-row__input" @click.stop>
-              <NInputNumber v-model:value="sizeMb" :min="1" :max="10000" size="tiny" style="width:80px" />
-              <NText depth="3" style="font-size:11px">MB</NText>
+              <UiInputNumber v-model="sizeMb" :min="1" :max="10000" style="width:80px" />
+              <span style="font-size:11px;color:var(--text-tertiary)">MB</span>
             </div>
           </div>
           <div
@@ -292,85 +288,85 @@ async function onSave(): Promise<void> {
             <div class="condition-row__main">
               <CheckCircle v-if="countEnabled" :size="14" class="icon-check" />
               <div v-else class="icon-circle" />
-              <NText :depth="countEnabled ? 1 : 3" style="font-size:12px">按记录数停止</NText>
+              <span :style="{ color: countEnabled ? 'var(--text-primary)' : 'var(--text-tertiary)', fontSize: '12px' }">按记录数停止</span>
             </div>
             <div v-if="countEnabled" class="condition-row__input" @click.stop>
-              <NInputNumber v-model:value="recordCount" :min="1" :max="100000000" size="tiny" style="width:96px" />
-              <NText depth="3" style="font-size:11px">条</NText>
+              <UiInputNumber v-model="recordCount" :min="1" :max="100000000" style="width:96px" />
+              <span style="font-size:11px;color:var(--text-tertiary)">条</span>
             </div>
           </div>
         </div>
-      </NCard>
+      </UiPanel>
 
-      <NCard size="small" :bordered="true" class="form-card">
+      <UiPanel class="form-card">
         <template #header>
           <div class="card-head">
             <HardDrive :size="15" />
-            <NText depth="1" style="font-size:12px;font-weight:600">文件滚动保存</NText>
-            <NSwitch v-model:value="rotationEnabled" size="small" style="margin-left:auto" />
+            <span style="font-size:12px;font-weight:600">文件滚动保存</span>
+            <UiToggle v-model="rotationEnabled" style="margin-left:auto" />
           </div>
         </template>
         <div v-if="rotationEnabled" class="conditions-list">
           <div class="condition-row condition-row--on">
-            <NText depth="2" style="font-size:12px">滚动时长</NText>
+            <span style="font-size:12px;color:var(--text-secondary)">滚动时长</span>
             <div class="condition-row__input">
-              <NInputNumber v-model:value="rotationDurationMinutes" :min="1" :max="1440" size="tiny" style="width:80px" />
-              <NText depth="3" style="font-size:11px">分钟</NText>
+              <UiInputNumber v-model="rotationDurationMinutes" :min="1" :max="1440" style="width:80px" />
+              <span style="font-size:11px;color:var(--text-tertiary)">分钟</span>
             </div>
           </div>
           <div class="condition-row condition-row--on">
-            <NText depth="2" style="font-size:12px">滚动大小</NText>
+            <span style="font-size:12px;color:var(--text-secondary)">滚动大小</span>
             <div class="condition-row__input">
-              <NInputNumber v-model:value="rotationSizeMb" :min="1" :max="10000" size="tiny" style="width:80px" />
-              <NText depth="3" style="font-size:11px">MB</NText>
+              <UiInputNumber v-model="rotationSizeMb" :min="1" :max="10000" style="width:80px" />
+              <span style="font-size:11px;color:var(--text-tertiary)">MB</span>
             </div>
           </div>
         </div>
         <div v-else class="empty-hint">
-          <NText depth="3" style="font-size:11px">启用后可在采集时长或大小达到阈值时自动滚动到新文件</NText>
+          <span style="font-size:11px;color:var(--text-tertiary)">启用后可在采集时长或大小达到阈值时自动滚动到新文件</span>
         </div>
-      </NCard>
+      </UiPanel>
 
-      <NCard size="small" :bordered="true" class="form-card">
+      <UiPanel class="form-card">
         <template #header>
           <div class="card-head">
             <RefreshCw :size="15" />
-            <NText depth="1" style="font-size:12px;font-weight:600">刷新率</NText>
+            <span style="font-size:12px;font-weight:600">刷新率</span>
           </div>
         </template>
         <div class="refresh-row">
           <div class="refresh-slider">
-            <NSlider v-model:value="refreshRate" :min="1" :max="20" :step="1" />
+            <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" />
             <div class="refresh-labels">
-              <NText depth="3" style="font-size:10px">1 Hz</NText>
-              <NText :depth="refreshRate >= 5 && refreshRate <= 15 ? 1 : 3" style="font-size:10px;font-weight:500">推荐 5–15 Hz</NText>
-              <NText depth="3" style="font-size:10px">20 Hz</NText>
+              <span style="font-size:10px;color:var(--text-tertiary)">1 Hz</span>
+              <span :style="{ color: refreshRate >= 5 && refreshRate <= 15 ? 'var(--text-primary)' : 'var(--text-tertiary)', fontSize: '10px', fontWeight: '500' }">推荐 5–15 Hz</span>
+              <span style="font-size:10px;color:var(--text-tertiary)">20 Hz</span>
             </div>
           </div>
           <div class="refresh-value">
-            <NInputNumber v-model:value="refreshRate" :min="1" :max="20" size="small" style="width:72px" />
-            <NText depth="3" style="font-size:11px">Hz</NText>
+            <UiInputNumber v-model="refreshRate" :min="1" :max="20" size="small" style="width:72px" />
+            <span style="font-size:11px;color:var(--text-tertiary)">Hz</span>
           </div>
         </div>
-      </NCard>
+      </UiPanel>
 
-      <NAlert v-if="validationError" type="warning" :bordered="false" closable @close="validationError = ''">
+      <UiAlert v-if="validationError" type="warning" closable @close="validationError = ''">
         {{ validationError }}
-      </NAlert>
+      </UiAlert>
     </div>
 
     <template #footer>
       <div class="modal-foot">
-        <NText depth="3" style="font-size:11px">保存后对当前桌面会话生效</NText>
-        <NSpace size="small">
-          <NButton size="small" :disabled="saving" @click="onClose">取消</NButton>
-          <NButton size="small" type="primary" :loading="saving" :disabled="loading" @click="onSave">
+        <span style="font-size:11px;color:var(--text-tertiary)">保存后对当前桌面会话生效</span>
+        <div class="flex gap-2">
+          <UiButton size="md" :disabled="saving" @click="onClose">取消</UiButton>
+          <UiButton size="md" variant="primary" :loading="saving" :disabled="loading" @click="onSave">
             <template #icon><Save :size="14" /></template>保存设置
-          </NButton>
-        </NSpace>
+          </UiButton>
+        </div>
       </div>
     </template>
-  </NModal>
+  </UiDialog>
 </template>
 
 <style scoped>

@@ -9,14 +9,11 @@ import type {
   PrbFileInfo,
   InterpolationAlgorithm
 } from '@shared/types/traversal'
-import {
-  NButton,
-  NCard,
-  NInputNumber,
-  NSelect,
-  NTag,
-  NText,
-} from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
+import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 
 const prbMode = defineModel<'single' | 'multi'>('prbMode', { required: true })
 const interpolationAlgorithm = defineModel<InterpolationAlgorithm>('interpolationAlgorithm', { required: true })
@@ -151,91 +148,106 @@ async function importCalibrationCsvFile(): Promise<void> {
 
 <template>
   <div class="step-content">
-    <NCard size="small" :bordered="true" class="section-card">
+    <UiPanel class="section-card">
       <div class="mode-row">
-        <div><NText depth="3" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.14em">{{ t.prbMode }}</NText><NText depth="2" style="font-size:11px;margin-top:2px;display:block">{{ t.prbModeHint }}</NText></div>
-        <NSpace size="small">
-          <NButton size="tiny" :type="prbMode === 'single' ? 'primary' : 'default'" secondary @click="setPrbMode('single')">{{ t.singlePrbMode }}</NButton>
-          <NButton size="tiny" :type="prbMode === 'multi' ? 'primary' : 'default'" secondary @click="setPrbMode('multi')">{{ t.multiPrbMode }}</NButton>
-        </NSpace>
+        <div><span class="label-section">{{ t.prbMode }}</span><span class="hint-text">{{ t.prbModeHint }}</span></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <UiButton size="sm" :type="prbMode === 'single' ? 'primary' : 'default'" secondary @click="setPrbMode('single')">{{ t.singlePrbMode }}</UiButton>
+          <UiButton size="sm" :type="prbMode === 'multi' ? 'primary' : 'default'" secondary @click="setPrbMode('multi')">{{ t.multiPrbMode }}</UiButton>
+        </div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard size="small" :bordered="true" class="section-card">
+    <UiPanel class="section-card">
       <div class="mode-row">
-        <div><NText depth="3" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.14em">{{ t.interpolationAlgorithm || 'Interpolation Algorithm' }}</NText><NText depth="2" style="font-size:11px;margin-top:2px;display:block">{{ t.interpolationAlgorithmHint || 'Select interpolation algorithm' }}</NText></div>
-        <NSpace size="small">
-          <NButton size="tiny" :type="interpolationAlgorithm === 'old' ? 'primary' : 'default'" secondary @click="interpolationAlgorithm = 'old'">{{ t.algorithmOld || 'Old' }}</NButton>
-          <NButton size="tiny" :type="interpolationAlgorithm === 'new' ? 'primary' : 'default'" secondary @click="interpolationAlgorithm = 'new'">{{ t.algorithmNew || 'New' }}</NButton>
-        </NSpace>
+        <div><span class="label-section">{{ t.interpolationAlgorithm || 'Interpolation Algorithm' }}</span><span class="hint-text">{{ t.interpolationAlgorithmHint || 'Select interpolation algorithm' }}</span></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <UiButton size="sm" :type="interpolationAlgorithm === 'old' ? 'primary' : 'default'" secondary @click="interpolationAlgorithm = 'old'">{{ t.algorithmOld || 'Old' }}</UiButton>
+          <UiButton size="sm" :type="interpolationAlgorithm === 'new' ? 'primary' : 'default'" secondary @click="interpolationAlgorithm = 'new'">{{ t.algorithmNew || 'New' }}</UiButton>
+        </div>
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard v-if="interpolationAlgorithm === 'new'" size="small" :bordered="true" class="section-card">
+    <UiPanel v-if="interpolationAlgorithm === 'new'" class="section-card">
       <div class="import-head">
-        <div><NText depth="1" style="font-size:12px;font-weight:600">{{ t.csvImport || 'Import CSV Calibration Data' }}</NText><NText depth="2" style="font-size:11px;margin-top:1px;display:block">{{ t.csvImportHint || 'Import calibration data in CSV format' }}</NText></div>
-        <NButton size="tiny" type="primary" :loading="isImportingCsv" @click="importCalibrationCsvFile">{{ isImportingCsv ? (t.importing || 'Importing...') : (t.importCsv || 'Import CSV') }}</NButton>
+        <div><span class="section-title">{{ t.csvImport || 'Import CSV Calibration Data' }}</span><span class="section-hint">{{ t.csvImportHint || 'Import calibration data in CSV format' }}</span></div>
+        <UiButton size="sm" variant="primary" :loading="isImportingCsv" @click="importCalibrationCsvFile">{{ isImportingCsv ? (t.importing || 'Importing...') : (t.importCsv || 'Import CSV') }}</UiButton>
       </div>
       <template v-if="calibrationCsvFile">
-        <div class="file-row"><div class="file-info"><NText depth="1" style="font-size:12px;font-weight:600;truncate">{{ calibrationCsvFile.fileName }}</NText><NText depth="3" style="font-size:11px;truncate">{{ calibrationCsvFile.filePath }}</NText></div><NButton size="tiny" secondary @click="calibrationCsvFile = null">{{ t.remove }}</NButton></div>
+        <div class="file-row"><div class="file-info"><span class="file-name">{{ calibrationCsvFile.fileName }}</span><span class="file-path">{{ calibrationCsvFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="calibrationCsvFile = null">{{ t.remove }}</UiButton></div>
         <div class="range-grid">
-          <div class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">Alpha</NText><NText depth="1" style="font-size:12px">{{ calibrationCsvFile.validRange.alphaMin }}..{{ calibrationCsvFile.validRange.alphaMax }} deg</NText></div>
-          <div class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">Beta</NText><NText depth="1" style="font-size:12px">{{ calibrationCsvFile.validRange.betaMin }}..{{ calibrationCsvFile.validRange.betaMax }} deg</NText></div>
-          <div class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">{{ t.pointCount || 'Points' }}</NText><NText depth="1" style="font-size:12px">{{ calibrationCsvFile.pointCount }}</NText></div>
+          <div class="range-stat"><span class="range-label">Alpha</span><span class="range-value">{{ calibrationCsvFile.validRange.alphaMin }}..{{ calibrationCsvFile.validRange.alphaMax }} deg</span></div>
+          <div class="range-stat"><span class="range-label">Beta</span><span class="range-value">{{ calibrationCsvFile.validRange.betaMin }}..{{ calibrationCsvFile.validRange.betaMax }} deg</span></div>
+          <div class="range-stat"><span class="range-label">{{ t.pointCount || 'Points' }}</span><span class="range-value">{{ calibrationCsvFile.pointCount }}</span></div>
         </div>
       </template>
-      <div v-else class="empty-state"><NText depth="3" style="font-size:12px">{{ t.noCsvImported || 'No CSV calibration data imported' }}</NText></div>
-    </NCard>
+      <div v-else class="empty-state"><span class="empty-text">{{ t.noCsvImported || 'No CSV calibration data imported' }}</span></div>
+    </UiPanel>
 
-    <NCard v-if="interpolationAlgorithm === 'old'" size="small" :bordered="true" class="section-card">
+    <UiPanel v-if="interpolationAlgorithm === 'old'" class="section-card">
       <div class="import-head">
-        <div><NText depth="1" style="font-size:12px;font-weight:600">{{ prbMode === 'multi' ? t.multiPrbImport : t.prbImport }}</NText><NText depth="2" style="font-size:11px;margin-top:1px;display:block">{{ prbMode === 'multi' ? t.multiPrbImportHint : t.prbImportHint }}</NText></div>
-        <NButton size="tiny" type="primary" :loading="isImportingPrb" @click="importPrbFile">{{ isImportingPrb ? t.importing : (prbMode === 'multi' ? t.importPrbs : t.importPrb) }}</NButton>
+        <div><span class="section-title">{{ prbMode === 'multi' ? t.multiPrbImport : t.prbImport }}</span><span class="section-hint">{{ prbMode === 'multi' ? t.multiPrbImportHint : t.prbImportHint }}</span></div>
+        <UiButton size="sm" variant="primary" :loading="isImportingPrb" @click="importPrbFile">{{ isImportingPrb ? t.importing : (prbMode === 'multi' ? t.importPrbs : t.importPrb) }}</UiButton>
       </div>
 
       <template v-if="prbMode === 'single'">
         <template v-if="prbFile">
-          <div class="file-row"><div class="file-info"><NText depth="1" style="font-size:12px;font-weight:600;truncate">{{ prbFile.fileName }}</NText><NText depth="3" style="font-size:11px;truncate">{{ prbFile.filePath }}</NText></div><NButton size="tiny" secondary @click="prbFile = null">{{ t.remove }}</NButton></div>
-          <div class="range-grid"><div v-for="r in prbValidRangeRows" :key="r.label" class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">{{ r.label }}</NText><NText depth="1" style="font-size:12px">{{ r.value }}</NText></div></div>
+          <div class="file-row"><div class="file-info"><span class="file-name">{{ prbFile.fileName }}</span><span class="file-path">{{ prbFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="prbFile = null">{{ t.remove }}</UiButton></div>
+          <div class="range-grid"><div v-for="r in prbValidRangeRows" :key="r.label" class="range-stat"><span class="range-label">{{ r.label }}</span><span class="range-value">{{ r.value }}</span></div></div>
         </template>
-        <div v-else class="empty-state"><NText depth="3" style="font-size:12px">{{ t.noPrbImported }}</NText></div>
+        <div v-else class="empty-state"><span class="empty-text">{{ t.noPrbImported }}</span></div>
       </template>
 
       <template v-else>
         <div class="multi-mode-summary">
-          <div class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">{{ t.interpolationMode }}</NText><NSelect v-model:value="multiPrbInterpolationMode" :options="interpolationModeOptions" size="tiny" style="width:100%;margin-top:4px" /></div>
-          <div class="range-stat"><NText depth="3" style="font-size:10px;font-weight:600;text-transform:uppercase">{{ t.multiPrbFilesLabel }}</NText><NText depth="1" style="font-size:16px;font-weight:700;margin-top:4px;display:block">{{ multiPrbFiles.length }}</NText></div>
+          <div class="range-stat"><span class="range-label">{{ t.interpolationMode }}</span><UiSelect v-model="multiPrbInterpolationMode" :options="interpolationModeOptions" class="field-full" /></div>
+          <div class="range-stat"><span class="range-label">{{ t.multiPrbFilesLabel }}</span><span class="file-count-num">{{ multiPrbFiles.length }}</span></div>
         </div>
 
         <template v-if="multiPrbFiles.length > 0">
           <div v-for="(file, i) in multiPrbFiles" :key="file.filePath" class="multi-file">
-            <div class="file-row"><div class="file-info"><NText depth="1" style="font-size:12px;font-weight:600;truncate">{{ file.fileName }}</NText><NText depth="3" style="font-size:11px;truncate">{{ file.filePath }}</NText></div><NButton size="tiny" secondary @click="removeMultiPrbFile(i)">{{ t.remove }}</NButton></div>
+            <div class="file-row"><div class="file-info"><span class="file-name">{{ file.fileName }}</span><span class="file-path">{{ file.filePath }}</span></div>        <UiButton size="sm" secondary @click="removeMultiPrbFile(i)">{{ t.remove }}</UiButton></div>
             <div class="multi-mach-grid">
-              <div><NText depth="3" style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.14em">{{ t.fileMachNumber }}</NText><NInputNumber v-model:value="multiPrbMachNumbers[i]" :step="0.01" size="tiny" style="width:100%;margin-top:4px" /></div>
-              <div class="range-stat"><NText depth="3" style="font-size:9px;font-weight:600;text-transform:uppercase">Alpha</NText><NText depth="1" style="font-size:11px">{{ file.validRange.alphaMin }}..{{ file.validRange.alphaMax }} deg</NText></div>
-              <div class="range-stat"><NText depth="3" style="font-size:9px;font-weight:600;text-transform:uppercase">Beta</NText><NText depth="1" style="font-size:11px">{{ file.validRange.betaMin }}..{{ file.validRange.betaMax }} deg</NText></div>
-              <div class="range-stat"><NText depth="3" style="font-size:9px;font-weight:600;text-transform:uppercase">Mach</NText><NText depth="1" style="font-size:11px">{{ file.validRange.machMin }}..{{ file.validRange.machMax }}</NText></div>
+              <div><span class="compact-label">{{ t.fileMachNumber }}</span><UiInputNumber v-model="multiPrbMachNumbers[i]" :step="0.01" class="field-full" /></div>
+              <div class="range-stat"><span class="compact-label-plain">Alpha</span><span class="compact-value">{{ file.validRange.alphaMin }}..{{ file.validRange.alphaMax }} deg</span></div>
+              <div class="range-stat"><span class="compact-label-plain">Beta</span><span class="compact-value">{{ file.validRange.betaMin }}..{{ file.validRange.betaMax }} deg</span></div>
+              <div class="range-stat"><span class="compact-label-plain">Mach</span><span class="compact-value">{{ file.validRange.machMin }}..{{ file.validRange.machMax }}</span></div>
             </div>
           </div>
-          <div style="display:flex;justify-content:flex-end"><NButton size="tiny" secondary @click="clearMultiPrbFiles">{{ t.clearAll }}</NButton></div>
+          <div class="action-bar">          <UiButton size="sm" secondary @click="clearMultiPrbFiles">{{ t.clearAll }}</UiButton></div>
         </template>
-        <div v-else class="empty-state"><NText depth="3" style="font-size:12px">{{ t.noMultiPrbImported }}</NText></div>
+        <div v-else class="empty-state"><span class="empty-text">{{ t.noMultiPrbImported }}</span></div>
       </template>
-    </NCard>
+    </UiPanel>
   </div>
 </template>
 
 <style scoped>
-.step-content { display:flex; flex-direction:column; gap:12px; }
-.section-card { font-size:12px; }
-.mode-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.import-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
-.file-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-radius:4px; background:var(--bg-panel-strong); margin-bottom:8px; }
-.file-info { min-width:0; flex:1; }
-.range-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-.range-stat { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
-.empty-state { display:flex; align-items:center; justify-content:center; height:100px; border-radius:4px; border:1px dashed var(--border-default); background:var(--bg-panel-strong); }
-.multi-mode-summary { display:grid; grid-template-columns:1fr 120px; gap:8px; margin-bottom:8px; }
-.multi-file { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); margin-bottom:8px; }
-.multi-mach-grid { display:grid; grid-template-columns:120px repeat(3,1fr); gap:8px; margin-top:6px; }
+.step-content { display:flex; flex-direction:column; gap:var(--space-3) }
+.section-card { font-size:var(--text-sm) }
+.mode-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3) }
+.import-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-3); margin-bottom:var(--space-3) }
+.file-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); padding:var(--space-2); border-radius:var(--radius-md); background:var(--bg-panel-strong); margin-bottom:var(--space-2) }
+.file-info { min-width:0; flex:1 }
+.range-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-2) }
+.range-stat { padding:var(--space-2); border-radius:var(--radius-md); border:1px solid var(--border-default); background:var(--bg-panel-strong) }
+.empty-state { display:flex; align-items:center; justify-content:center; height:100px; border-radius:var(--radius-md); border:1px dashed var(--border-default); background:var(--bg-panel-strong) }
+.multi-mode-summary { display:grid; grid-template-columns:1fr 120px; gap:var(--space-2); margin-bottom:var(--space-2) }
+.multi-file { padding:var(--space-2); border-radius:var(--radius-md); border:1px solid var(--border-default); background:var(--bg-panel-strong); margin-bottom:var(--space-2) }
+.multi-mach-grid { display:grid; grid-template-columns:120px repeat(3,1fr); gap:var(--space-2); margin-top:6px }
+.label-section { font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-tertiary) }
+.hint-text { font-size:var(--text-xs);margin-top:2px;display:block;color:var(--text-secondary) }
+.section-title { font-size:var(--text-sm);font-weight:600 }
+.section-hint { font-size:var(--text-xs);margin-top:var(--space-1);display:block;color:var(--text-secondary) }
+.file-name { font-size:var(--text-sm);font-weight:600 }
+.file-path { font-size:var(--text-xs);color:var(--text-tertiary) }
+.range-label { font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-tertiary) }
+.range-value { font-size:var(--text-sm) }
+.empty-text { font-size:var(--text-sm);color:var(--text-tertiary) }
+.compact-label { font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-tertiary) }
+.compact-label-plain { font-size:9px;font-weight:600;text-transform:uppercase;color:var(--text-tertiary) }
+.compact-value { font-size:var(--text-xs) }
+.action-bar { display:flex;justify-content:flex-end }
+.field-full { width:100%;margin-top:var(--space-1) }
+.file-count-num { font-size:var(--text-base);font-weight:700;margin-top:var(--space-1);display:block }
 </style>

@@ -7,7 +7,8 @@ import HeatmapView from './HeatmapView.vue'
 import PressureRadarView from './PressureRadarView.vue'
 import VectorFieldView from './VectorFieldView.vue'
 import { VISUALIZATION_PARAM_CONFIG, type VisualizationParam } from './types'
-import { NButton, NSelect } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
 
 type VisualizationTab = 'heatmap' | 'crossSection' | 'vectorField' | 'pressureRadar'
 
@@ -39,22 +40,21 @@ const hasData = computed(() => dataPoints.value.length > 0)
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div class="mb-3 flex flex-wrap items-center gap-2 border-b border-[color:var(--border-default)] pb-3">
-      <NButton
+      <UiButton
         v-for="tab in tabs"
         :key="tab.value"
         quaternary
-        size="small"
+        size="sm"
         :class="activeTab === tab.value ? 'bg-blue-500 text-white' : ''"
         @click="activeTab = tab.value"
       >
         {{ tab.label }}
-      </NButton>
+      </UiButton>
 
-      <NSelect
+      <UiSelect
         v-if="activeTab === 'heatmap' || activeTab === 'crossSection'"
-        v-model:value="selectedParam"
+        v-model="selectedParam"
         :options="paramOptions"
-        size="tiny"
         class="ml-auto"
         style="min-width:120px"
       />

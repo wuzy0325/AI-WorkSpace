@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 defineProps<{
   isRecording?: boolean
@@ -11,8 +11,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <NButton
-    size="tiny"
+  <UiButton
+    size="sm"
     class="recording-control"
     :class="{ active: isRecording }"
     @click="emit('toggle')"
@@ -25,7 +25,7 @@ const emit = defineEmits<{
     <small class="recording-control__hint">
       {{ isRecording ? '点击停止' : '录制数据' }}
     </small>
-  </NButton>
+  </UiButton>
 </template>
 
 <style scoped>
@@ -50,8 +50,8 @@ const emit = defineEmits<{
 }
 
 .recording-control__dot {
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   background: currentColor;
 }
@@ -62,7 +62,7 @@ const emit = defineEmits<{
 
 @keyframes pulse-rec {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  50% { box-shadow: 0 0 0 var(--space-2) rgba(239, 68, 68, 0); }
 }
 
 .recording-control__hint {

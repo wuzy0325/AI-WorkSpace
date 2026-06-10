@@ -6,7 +6,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { getParamValue, VISUALIZATION_PARAM_CONFIG, type VisualizationParam } from './types'
 import { useECharts } from './composables/useECharts'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
-import { NSelect } from 'naive-ui'
+import UiSelect from '@components/ui/UiSelect.vue'
 
 const props = defineProps<{
   dataPoints: TraversalDataPoint[]
@@ -127,11 +127,11 @@ watch([chart, chartData, chartTheme, paramLabel], updateChart, { immediate: true
     <div class="flex flex-wrap items-center gap-3 text-xs text-[color:var(--text-secondary)]">
       <label class="flex items-center gap-2">
         {{ t.sectionType }}
-        <NSelect v-model:value="sectionType" :options="[{value:'beta',label:t.fixedBeta},{value:'alpha',label:t.fixedAlpha}]" size="tiny" style="min-width:100px" />
+        <UiSelect v-model="sectionType" :options="[{value:'beta',label:t.fixedBeta},{value:'alpha',label:t.fixedAlpha}]" style="min-width:100px" />
       </label>
       <label class="flex items-center gap-2">
         {{ t.sectionValue }}
-        <NSelect v-model:value="sectionValue" :options="sectionOptions.map(v => ({value:v,label:v.toFixed(2)}))" size="tiny" style="min-width:100px" />
+        <UiSelect :model-value="sectionValue != null ? String(sectionValue) : ''" @update:model-value="sectionValue = $event ? Number($event) : null" :options="sectionOptions.map(v => ({value:String(v),label:v.toFixed(2)}))" style="min-width:100px" />
       </label>
     </div>
     <div class="relative min-h-0 flex-1">

@@ -32,7 +32,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UiButton from '@components/ui/UiButton.vue'
-import { NButton } from 'naive-ui'
 import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 import { deviceApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -118,6 +117,10 @@ onBeforeUnmount(() => {
   if (unsubscribeMotionStatus) {
     unsubscribeMotionStatus()
     unsubscribeMotionStatus = null
+  }
+  if (realtimeThrottleTimer) {
+    clearTimeout(realtimeThrottleTimer)
+    realtimeThrottleTimer = null
   }
   traversalStore.reset()
 })
@@ -372,10 +375,35 @@ function toRealtimeInterpolationInput(pressures: LivePressureMap | null): Traver
 
 const liveInterpolationInput = computed(() => toRealtimeInterpolationInput(livePressures.value))
 
+let realtimeThrottleTimer: ReturnType<typeof setTimeout> | null = null
+let pendingRealtimeInput: TraversalInterpolationInput | null = null
+let pendingRealtimeConfig: TraversalTestConfig | undefined
 watch(
   [liveInterpolationInput, () => currentConfig.value?.prbFile?.filePath ?? null],
-  ([input, _prbPath]) => {
-    traversalStore.syncRealtimeInterpolation(input, currentConfig.value)
+  ([input]) => {
+    const hasDataset = Boolean(
+      currentConfig.value?.prbFile ||
+      (currentConfig.value?.useMultiPrb && currentConfig.value?.multiPrb?.files.length)
+    )
+    if (!input || !hasDataset) {
+      pendingRealtimeInput = null
+      pendingRealtimeConfig = undefined
+      traversalStore.realtimeResult = null
+      return
+    }
+    pendingRealtimeInput = input
+    pendingRealtimeConfig = currentConfig.value ?? undefined
+    if (realtimeThrottleTimer) return
+    realtimeThrottleTimer = setTimeout(() => {
+      realtimeThrottleTimer = null
+      const nextInput = pendingRealtimeInput
+      const nextConfig = pendingRealtimeConfig
+      pendingRealtimeInput = null
+      pendingRealtimeConfig = undefined
+      if (nextInput) {
+        traversalStore.requestRealtimeResult(nextInput, nextConfig)
+      }
+    }, traversalStore.uiRefreshIntervalMs)
   }
 )
 
@@ -451,22 +479,22 @@ watch(
         </div>
 
         <!-- 操作按钮组 -->
-        <NButton
+        <UiButton
           @click="openSettings"
-          quaternary size="tiny"
+          quaternary size="sm"
         >
           <template #icon>
             <Settings class="h-3.5 w-3.5" />
           </template>
           {{ t.configBtn }}
-        </NButton>
+        </UiButton>
 
         <div class="h-4 w-px bg-slate-200 dark:bg-slate-700"></div>
 
         <div class="flex items-center gap-1.5">
-          <NButton
+          <UiButton
             v-if="!recovering && traversalStore.canStart"
-            type="primary" size="tiny"
+            variant="primary" size="sm"
             :disabled="!hasConfig"
             @click="startTest"
           >
@@ -474,34 +502,34 @@ watch(
               <Play class="h-3.5 w-3.5 fill-current" />
             </template>
             {{ t.startRun }}
-          </NButton>
+          </UiButton>
           <template v-else-if="!recovering && traversalStore.canPause">
-            <NButton type="warning" size="tiny" @click="pauseTest">
+            <UiButton variant="warning" size="sm" @click="pauseTest">
               <template #icon>
                 <Pause class="h-3.5 w-3.5 fill-current" />
               </template>
               {{ t.travPause }}
-            </NButton>
-            <NButton type="error" size="tiny" @click="stopTest">
+            </UiButton>
+            <UiButton variant="danger" size="sm" @click="stopTest">
               <template #icon>
                 <Square class="h-3.5 w-3.5 fill-current" />
               </template>
               {{ t.travStop }}
-            </NButton>
+            </UiButton>
           </template>
           <template v-else-if="!recovering && traversalStore.canResume">
-            <NButton type="primary" size="tiny" @click="resumeTest">
+            <UiButton variant="primary" size="sm" @click="resumeTest">
               <template #icon>
                 <Play class="h-3.5 w-3.5 fill-current" />
               </template>
               {{ t.travResume }}
-            </NButton>
-            <NButton type="error" size="tiny" @click="stopTest">
+            </UiButton>
+            <UiButton variant="danger" size="sm" @click="stopTest">
               <template #icon>
                 <Square class="h-3.5 w-3.5 fill-current" />
               </template>
               {{ t.travStop }}
-            </NButton>
+            </UiButton>
           </template>
         </div>
       </div>
@@ -655,15 +683,15 @@ watch(
                 </div>
                 <!-- 标签页切换 -->
                 <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800">
-                  <NButton
+                  <UiButton
                     v-for="tab in workspaceTabs"
                     :key="tab.value"
-                    quaternary size="small"
+                    quaternary size="sm"
                     :class="activeWorkspaceTab === tab.value ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'"
                     @click="activeWorkspaceTab = tab.value"
                   >
                     {{ tab.label }}
-                  </NButton>
+                  </UiButton>
                 </div>
               </div>
 
@@ -710,15 +738,15 @@ watch(
                       <div class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ t.noLayoutConfigured }}</div>
                       <div class="mt-1 text-xs text-slate-400">请先配置测试点位布局以开始移位测试</div>
                     </div>
-                    <NButton
-                      type="primary" size="tiny"
+                    <UiButton
+                      variant="primary" size="sm"
                       @click="openSettings"
                     >
                       <template #icon>
                         <Settings class="h-3.5 w-3.5" />
                       </template>
                       {{ t.configureLayout }}
-                    </NButton>
+                    </UiButton>
                   </div>
                 </template>
                 <div v-else-if="activeWorkspaceTab === 'visualization'" class="h-full p-4">
@@ -741,7 +769,7 @@ watch(
           <AlertTriangle class="h-4 w-4" />
           <span>{{ traversalStore.error }}</span>
         </div>
-        <NButton type="error" size="tiny" @click="traversalStore.clearError">{{ t.dismiss }}</NButton>
+        <UiButton variant="danger" size="sm" @click="traversalStore.clearError">{{ t.dismiss }}</UiButton>
       </div>
     </div>
   </div>

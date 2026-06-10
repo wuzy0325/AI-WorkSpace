@@ -2,7 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { useThemeStore } from '@stores/themeStore'
 import { Sun, Moon, Activity } from '@lucide/vue'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 type MainViewMode = 'chart' | 'table' | 'both' | 'overview'
@@ -68,16 +68,16 @@ function activePageLabel(): string {
 
       <!-- Navigation -->
       <nav v-if="activePage === 'dashboard'" class="main-topbar__nav">
-        <NButton
+        <UiButton
           v-for="mode in dashboardModes"
           :key="mode"
-          size="tiny"
+          size="sm"
           class="main-topbar__nav-btn"
           :class="{ 'main-topbar__nav-btn--active': viewMode === mode }"
           @click="emit('set-view-mode', mode)"
         >
           {{ modeLabel(mode) }}
-        </NButton>
+        </UiButton>
       </nav>
       <div v-else class="main-topbar__nav">
         <div class="main-topbar__nav-btn main-topbar__nav-btn--active">
@@ -98,9 +98,9 @@ function activePageLabel(): string {
         </div>
 
         <!-- Theme Toggle -->
-        <NButton
+        <UiButton
           quaternary
-          size="small"
+          size="md"
           class="main-topbar__icon-btn"
           @click="themeStore.toggleTheme()"
           :aria-label="themeToggleLabel()"
@@ -110,26 +110,26 @@ function activePageLabel(): string {
             <Sun v-if="theme === 'dark'" class="w-4 h-4" />
             <Moon v-else class="w-4 h-4" />
           </template>
-        </NButton>
+        </UiButton>
 
         <!-- Locale Switch -->
         <div class="main-topbar__locale">
-          <NButton
-            size="tiny"
+          <UiButton
+            size="sm"
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'zh' }"
             @click="emit('set-locale', 'zh')"
           >
             中文
-          </NButton>
-          <NButton
-            size="tiny"
+          </UiButton>
+          <UiButton
+            size="sm"
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'en' }"
             @click="emit('set-locale', 'en')"
           >
             EN
-          </NButton>
+          </UiButton>
         </div>
 
         <!-- Version -->
@@ -175,28 +175,28 @@ function activePageLabel(): string {
 .main-topbar__logo {
   width: 32px;
   height: 32px;
-  background: #10b981;
+  background: var(--accent-primary);
   border-radius: 0.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 .main-topbar__title {
   font-size: 1.125rem;
   font-weight: 800;
   letter-spacing: -0.025em;
-  color: #e2e8f0;
+  color: var(--text-primary);
   line-height: 1;
 }
 
 :root[data-theme='light'] .main-topbar__title {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .main-topbar__title-accent {
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 .main-topbar__subtitle {
@@ -241,12 +241,12 @@ function activePageLabel(): string {
 }
 
 :deep(.main-topbar__nav-btn--active) {
-  background: rgba(16, 185, 129, 0.1) !important;
-  color: #10b981 !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
+  color: var(--accent-primary) !important;
 }
 
 :deep(.main-topbar__nav-btn--active:hover) {
-  color: #10b981 !important;
+  color: var(--accent-primary) !important;
 }
 
 .main-topbar__actions {
@@ -269,9 +269,9 @@ function activePageLabel(): string {
 }
 
 .main-topbar__status--active {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  color: #10b981;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  color: var(--accent-primary);
 }
 
 .main-topbar__status--idle {

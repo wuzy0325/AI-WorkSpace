@@ -42,33 +42,13 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     await sphereTankGate.saveGate(enabled, waitTimeSec)
   }
 
-  function hasConfiguredProbeChannel(roles: ProbeChannelRole[], namePatterns: RegExp[]): boolean {
+  function hasConfiguredProbeChannel(roles: ProbeChannelRole[]): boolean {
     if (!currentConfig.value || !currentConfig.value.probeChannels) return false
     return currentConfig.value.probeChannels.some((channel) => {
       if (!channel.enabled || !channel.channel.deviceId || channel.channel.channelIndex < 0) return false
-      if (channel.role && roles.includes(channel.role)) return true
-      const normalizedName = channel.name.trim().toLowerCase()
-      return namePatterns.some((pattern) => pattern.test(normalizedName))
+      return channel.role ? roles.includes(channel.role) : false
     })
   }
-
-  const hasWindTunnelTotalPressureChannel = computed(() => 
-    hasConfiguredProbeChannel(['fiveHole.pTotal'], [/总压/, /total pressure/, /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/, /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/])
-  )
-
-  const hasWindTunnelStaticPressureChannel = computed(() => 
-    hasConfiguredProbeChannel(['fiveHole.pTunnelStatic'], [/静压/, /static pressure/, /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/])
-  )
-
-  const hasWindTunnelTemperatureChannel = computed(() => 
-    hasConfiguredProbeChannel(['fiveHole.tTunnel'], [/风洞.*温/, /tunnel temp/, /tunnel temperature/, /(?:^|[^a-z0-9])ttunnel(?:[^a-z0-9]|$)/])
-  )
-
-  const hasRequiredWindTunnelChannels = computed(() => {
-    return calibrationType === 'five-hole' 
-      ? hasWindTunnelTotalPressureChannel.value && hasWindTunnelStaticPressureChannel.value && hasWindTunnelTemperatureChannel.value 
-      : true
-  })
 
   async function startCalibration(configOverrides?: Partial<CalibrationConfig>) {
     if (!canStartCalibration.value || !currentConfig.value) {
@@ -226,7 +206,6 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
 
   const canStartCalibration = computed(() => {
     return hasConfig.value && 
-           hasRequiredWindTunnelChannels.value && 
            isAcquisitionDeviceConnected.value && 
            isMotionControllerConnected.value
   })
@@ -234,7 +213,6 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   const startDisabledReason = computed(() => {
     if (isLoading.value) return '正在加载配置，请稍候'
     if (!hasConfig.value) return '请先配置校准参数'
-    if (!hasRequiredWindTunnelChannels.value) return '请配置风洞总压、风洞静压、风洞温度通道'
     if (!isAcquisitionDeviceConnected.value) return '采集设备未连接'
     if (!isMotionControllerConnected.value) return '运动控制器未连接'
     return ''

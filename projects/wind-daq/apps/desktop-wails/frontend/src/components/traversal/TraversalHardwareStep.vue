@@ -3,7 +3,10 @@ import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/type
 import { isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
-import { NCard, NCheckbox, NSelect, NSpace, NTag, NText } from 'naive-ui'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
+import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 
 const probeChannels = defineModel<ProbeChannelConfig[]>('probeChannels', { required: true })
 const motionAxes = defineModel<TraversalMotionAxisConfig[]>('motionAxes', { required: true })
@@ -25,37 +28,51 @@ const mappingOptions = [{ label: 'alpha', value: 'alpha' }, { label: 'beta', val
 
 <template>
   <div class="step-content">
-    <NCard size="small" :bordered="true" class="section-card">
-      <div class="hw-head"><NText depth="3" style="font-size:11px;flex:0 0 32px">{{ t.channelEnabled }}</NText><NText depth="3" style="font-size:11px;flex:1">{{ t.channelProbeName }}</NText><NText depth="3" style="font-size:11px;width:150px">{{ t.channelDataSource }}</NText><NText depth="3" style="font-size:11px;width:80px">{{ t.channelIndexLabel }}</NText></div>
+    <UiPanel class="section-card">
+      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span></div>
       <div v-for="ch in probeChannels" :key="ch.name" class="hw-row">
-        <div style="flex:0 0 32px"><NCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" size="small" /></div>
-        <div style="flex:1;min-width:0">
-          <NSpace size="small" align="center">
-            <NText depth="1" style="font-size:12px;truncate">{{ ch.name }}</NText>
-            <NTag v-if="isRequired(ch)" size="tiny" type="primary" :bordered="false">Required</NTag>
-          </NSpace>
+        <div class="row-check"><UiCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" /></div>
+        <div class="row-content">
+          <div class="flex items-center gap-2">
+            <span class="chan-name">{{ ch.name }}</span>
+            <UiStatusBadge v-if="isRequired(ch)" status="connected">Required</UiStatusBadge>
+          </div>
         </div>
-        <NSelect v-model:value="ch.channel.deviceId" :options="deviceStore.profiles.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" size="tiny" style="width:150px" :disabled="!ch.enabled || isLoading" clearable />
-        <NSelect v-model:value="ch.channel.channelIndex" :options="channelIndexOptions" placeholder="Unassigned" size="tiny" style="width:80px" :disabled="!ch.enabled" />
+        <UiSelect v-model="ch.channel.deviceId" :options="deviceStore.profiles.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" class="sel-w150" :disabled="!ch.enabled || isLoading" />
+        <UiSelect :model-value="ch.channel.channelIndex != null ? String(ch.channel.channelIndex) : ''" @update:model-value="ch.channel.channelIndex = Number($event)" :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))" placeholder="Unassigned" class="sel-w80" :disabled="!ch.enabled" />
       </div>
-    </NCard>
+    </UiPanel>
 
-    <NCard size="small" :bordered="true" class="section-card">
-      <div class="hw-head"><NText depth="3" style="font-size:11px;width:50px">{{ t.coordinateAxis }}</NText><NText depth="3" style="font-size:11px;flex:1">{{ t.motionControllerLabel }}</NText><NText depth="3" style="font-size:11px;width:80px">{{ t.physicalAxis }}</NText><NText depth="3" style="font-size:11px;width:90px">Mapping</NText></div>
+    <UiPanel class="section-card">
+      <div class="hw-head"><span class="hdr-w50">{{ t.coordinateAxis }}</span><span class="hdr-name">{{ t.motionControllerLabel }}</span><span class="hdr-w80">{{ t.physicalAxis }}</span><span class="hdr-w90">Mapping</span></div>
       <div v-for="ax in motionAxes" :key="ax.name" class="hw-row">
-        <NText depth="1" style="font-size:12px;font-weight:600;width:50px">{{ ax.name }}</NText>
-        <NSelect v-model:value="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" placeholder="选择控制器" size="tiny" style="flex:1" :disabled="isLoading" clearable />
-        <NSelect v-model:value="ax.axis" :options="axisOptions" size="tiny" style="width:80px" />
-        <NSelect v-model:value="ax.angleMapping!.type" :options="mappingOptions" size="tiny" style="width:90px" />
+        <span class="axis-name">{{ ax.name }}</span>
+        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" placeholder="选择控制器" class="sel-flex" :disabled="isLoading" />
+        <UiSelect v-model="ax.axis" :options="axisOptions" class="sel-w80" />
+        <UiSelect v-model="ax.angleMapping!.type" :options="mappingOptions" class="sel-w90" />
       </div>
-    </NCard>
+    </UiPanel>
   </div>
 </template>
 
 <style scoped>
-.step-content { display:flex; flex-direction:column; gap:12px; }
-.section-card { font-size:12px; }
-.hw-head { display:flex; align-items:center; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--border-default); }
-.hw-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
-.hw-row:hover { background:var(--bg-panel-strong); border-radius:4px; }
+.step-content { display:flex; flex-direction:column; gap:var(--space-3) }
+.section-card { font-size:var(--text-sm) }
+.hw-head { display:flex; align-items:center; gap:var(--space-2); padding-bottom:var(--space-2); border-bottom:1px solid var(--border-default) }
+.hw-row { display:flex; align-items:center; gap:var(--space-2); padding:6px 0 }
+.hw-row:hover { background:var(--bg-panel-strong); border-radius:var(--radius-md) }
+.hdr-enabled { font-size:var(--text-xs);flex:0 0 32px;color:var(--color-text-muted) }
+.hdr-name { font-size:var(--text-xs);flex:1;color:var(--color-text-muted) }
+.hdr-device { font-size:var(--text-xs);width:150px;color:var(--color-text-muted) }
+.hdr-w80 { font-size:var(--text-xs);width:80px;color:var(--color-text-muted) }
+.hdr-w50 { font-size:var(--text-xs);width:50px;color:var(--color-text-muted) }
+.hdr-w90 { font-size:var(--text-xs);width:90px;color:var(--color-text-muted) }
+.row-check { flex:0 0 32px }
+.row-content { flex:1;min-width:0 }
+.chan-name { font-size:var(--text-sm);color:var(--color-text-primary) }
+.axis-name { font-size:var(--text-sm);font-weight:600;width:50px;color:var(--color-text-primary) }
+.sel-w150 { width:150px }
+.sel-w80 { width:80px }
+.sel-w90 { width:90px }
+.sel-flex { flex:1 }
 </style>

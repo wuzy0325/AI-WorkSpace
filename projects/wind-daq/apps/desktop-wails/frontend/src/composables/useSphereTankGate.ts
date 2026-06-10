@@ -93,11 +93,6 @@ export function useSphereTankGate(options: UseSphereTankGateOptions) {
         throw new Error(saveRes.error || '保存球罐判定配置失败')
       }
 
-      const runtimeRes = await calibrationApi.updateSphereTankGate(gate)
-      if (!runtimeRes.success) {
-        throw new Error(runtimeRes.error || '更新运行中球罐判定配置失败')
-      }
-
       gateEnabled.value = gate.enabled
       waitTimeSec.value = gate.waitTimeSec
     } catch (error) {

@@ -13,7 +13,7 @@ import {
   Play, Pause, Square, Settings, ArrowLeft, Save, FileText, RotateCcw,
   ChevronDown, ChevronUp, Activity, Gauge, Wind, Timer, Target, TrendingUp
 } from '@lucide/vue'
-import { NButton } from 'naive-ui'
+
 
 const emit = defineEmits<{
   back: []
@@ -367,27 +367,21 @@ onUnmounted(() => {
       <div class="flex flex-1 flex-col min-w-0">
         <!-- 标签页导航：增强选中态样式 -->
         <div class="flex border-b border-[var(--border-default)] bg-[var(--bg-panel)]">
-          <NButton quaternary size="small" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'overview' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'overview'">
-            <template #icon>
-              <Activity class="h-4 w-4" />
-            </template>
+          <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'overview' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'overview'">
+            <Activity class="h-4 w-4" />
             概览
             <span v-if="activeTab === 'overview'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
-          </NButton>
-          <NButton quaternary size="small" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'chart' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'chart'">
-            <template #icon>
-              <TrendingUp class="h-4 w-4" />
-            </template>
+          </UiButton>
+          <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'chart' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'chart'">
+            <TrendingUp class="h-4 w-4" />
             图表
             <span v-if="activeTab === 'chart'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
-          </NButton>
-          <NButton quaternary size="small" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'data' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'data'">
-            <template #icon>
-              <FileText class="h-4 w-4" />
-            </template>
+          </UiButton>
+          <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'data' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'data'">
+            <FileText class="h-4 w-4" />
             数据
             <span v-if="activeTab === 'data'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
-          </NButton>
+          </UiButton>
         </div>
 
         <div v-if="activeTab === 'overview'" class="flex-1 overflow-auto p-5">

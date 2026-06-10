@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CheckCircle2 } from '@lucide/vue'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 
 const props = defineProps<{
@@ -51,14 +51,14 @@ function displayStatusLabel(profileId: string): string {
     <!-- Header -->
     <div class="device-sidebar__header">
       <span class="device-sidebar__title">{{ t?.deviceList || '设备列表' }}</span>
-      <NButton
-        size="tiny"
+      <UiButton
+        size="sm"
         class="device-sidebar__manage-btn"
         @click="emit('open-manage')"
         :title="t?.manage || '管理设备'"
       >
         {{ t?.manage || '管理' }}
-      </NButton>
+      </UiButton>
     </div>
 
     <!-- Device List -->
@@ -68,7 +68,7 @@ function displayStatusLabel(profileId: string): string {
       </div>
 
       <template v-else>
-        <NButton
+        <UiButton
           v-for="p in deviceStore.profiles"
           :key="p.id"
           text
@@ -96,7 +96,7 @@ function displayStatusLabel(profileId: string): string {
             <CheckCircle2 v-else-if="deviceStore.statusFor(p.id) === 'Connected'" class="w-3 h-3 mr-1" />
             {{ displayStatusLabel(p.id) }}
           </div>
-        </NButton>
+        </UiButton>
       </template>
     </div>
   </aside>
@@ -153,9 +153,9 @@ function displayStatusLabel(profileId: string): string {
 }
 
 :deep(.device-sidebar__manage-btn):hover {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 .device-sidebar__list {
@@ -198,8 +198,8 @@ function displayStatusLabel(profileId: string): string {
 }
 
 :deep(.device-sidebar__item--active) {
-  background: rgba(16, 185, 129, 0.08) !important;
-  border-color: rgba(16, 185, 129, 0.3) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
 }
 
 :deep(.device-sidebar__item--error) {
@@ -220,14 +220,14 @@ function displayStatusLabel(profileId: string): string {
 .device-sidebar__item-name {
   font-size: var(--font-size-base);
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 :root[data-theme='light'] .device-sidebar__item-name {
-  color: #0f172a;
+  color: var(--text-primary);
 }
 
 .device-sidebar__status-dot {
@@ -238,19 +238,19 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__status--acquiring {
-  background: #10b981;
-  box-shadow: 0 0 12px #10b981;
+  background: var(--accent-primary);
+  box-shadow: 0 0 12px var(--accent-primary);
   animation: breathe 1.5s ease-in-out infinite;
 }
 
 .device-sidebar__status--connected {
-  background: #10b981;
-  box-shadow: 0 0 8px #10b981;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-primary);
 }
 
 .device-sidebar__status--connecting {
-  background: #f59e0b;
-  box-shadow: 0 0 8px #f59e0b;
+  background: var(--accent-warning-core);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
   animation: breathe 0.8s ease-in-out infinite;
 }
 
@@ -269,17 +269,17 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item-status.device-status--acquiring {
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 .device-status--acquiring-icon {
   display: inline-block;
-  background: #10b981;
+  background: var(--accent-primary);
   animation: breathe 1.5s ease-in-out infinite;
 }
 
 .device-sidebar__item-status.device-status--connected {
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 .device-sidebar__item-status.device-status--error {
@@ -289,7 +289,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item-status.device-status--connecting {
-  color: #f59e0b;
+  color: var(--accent-warning-core);
 }
 
 .device-sidebar__item-status.device-status--disconnected {

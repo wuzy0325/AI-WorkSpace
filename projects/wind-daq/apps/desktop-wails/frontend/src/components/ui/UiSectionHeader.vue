@@ -9,11 +9,28 @@ defineProps<{
 
 <template>
   <div>
-    <NText v-if="subtitle" depth="3" style="display:block;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.25rem">
+    <NText v-if="subtitle" depth="3" class="subtitle">
       {{ subtitle }}
     </NText>
-    <NText depth="1" tag="h3" style="margin:0;font-size:0.95rem;font-weight:800;letter-spacing:-0.02em">
+    <NText depth="1" tag="h3" class="title">
       {{ title }}
     </NText>
   </div>
 </template>
+
+<style scoped>
+.subtitle {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.25rem;
+}
+.title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+</style>

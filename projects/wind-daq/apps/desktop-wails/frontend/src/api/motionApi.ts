@@ -17,10 +17,10 @@ export interface MotionStatus {
 const MOTION_STORAGE_KEY = 'wind-daq.motion-profiles';
 
 const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
-  { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'U', enabled: false, kind: 'ROTARY' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
+  { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
+  { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
+  { name: 'U', enabled: false, kind: 'ROTARY' as const, maxSpeed: 10 },
 ];
 
 function normalizeMotionProfile(profile: MotionControllerProfile): MotionControllerProfile {

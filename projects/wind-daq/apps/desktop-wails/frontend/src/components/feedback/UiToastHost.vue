@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { NButton } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
 
 const feedbackStore = useFeedbackStore()
 const timerMap = new Map<number, ReturnType<typeof setTimeout>>()
@@ -57,9 +57,9 @@ watch(
     >
       <div class="toast-content">
         <span class="toast-message">{{ toast.message }}</span>
-        <NButton quaternary size="tiny" @click="dismiss(toast.id)">
+        <UiButton quaternary size="sm" @click="dismiss(toast.id)">
           <template #icon>✕</template>
-        </NButton>
+        </UiButton>
       </div>
     </div>
   </div>

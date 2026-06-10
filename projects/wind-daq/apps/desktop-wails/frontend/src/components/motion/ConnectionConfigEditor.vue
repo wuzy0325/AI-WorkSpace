@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { inject } from 'vue'
-import { NCheckbox, NInput, NInputNumber, NSelect } from 'naive-ui'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
 
 const model = defineModel<{
   name: string
@@ -26,28 +29,28 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
           名称
           <span class="field-hint" @mouseenter="tooltip('控制器的显示名称，用于区分多个控制器', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <NInput v-model:value="model.name" size="small" placeholder="控制器名称" />
+        <UiInput v-model="model.name" placeholder="控制器名称" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           类型
           <span class="field-hint" @mouseenter="tooltip('选择运动控制器的硬件型号', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <NSelect v-model:value="model.type" :options="[{value:'SIMULATED-MC',label:'模拟控制器'},{value:'B140-MC',label:'B140 控制器'},{value:'WTNMC4A-MC',label:'WTNMC4A 控制器'}]" size="tiny" />
+        <UiSelect v-model="model.type" :options="[{value:'SIMULATED-MC',label:'模拟控制器'},{value:'B140-MC',label:'B140 控制器'},{value:'WTNMC4A-MC',label:'WTNMC4A 控制器'}]" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           地址
           <span class="field-hint" @mouseenter="tooltip('控制器的 IP 地址或主机名', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <NInput v-model:value="model.address" size="small" placeholder="127.0.0.1" />
+        <UiInput v-model="model.address" placeholder="127.0.0.1" />
       </div>
       <div class="config-field">
         <label class="config-field__label">
           端口
           <span class="field-hint" @mouseenter="tooltip('控制器的通信端口号', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <NInputNumber v-model:value="model.port" size="tiny" style="width:80px" :min="1" :max="65535" />
+        <UiInputNumber v-model="model.port" class="input-width-80" :min="1" :max="65535" />
       </div>
       <div class="config-field config-field--toggle">
         <label class="config-field__label">
@@ -55,7 +58,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
           <span class="field-hint" @mouseenter="tooltip('程序启动时自动连接此控制器', $event)" @mouseleave="hideTooltip">?</span>
         </label>
         <label class="toggle-switch">
-          <NCheckbox v-model:checked="model.autoConnect" size="small" />
+          <UiCheckbox v-model:checked="model.autoConnect" />
           <span class="toggle-switch__track">
             <span class="toggle-switch__thumb"></span>
           </span>
@@ -72,7 +75,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 .config-section__title {
   font-size: 0.8rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   margin-bottom: 0.875rem;
@@ -80,7 +83,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 .config-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 .config-field {
   display: flex;
@@ -93,17 +96,17 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
   justify-content: space-between;
 }
 .config-field__label {
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: 600;
-  color: #64748b;
+  color: var(--color-text-muted);
 }
 .config-field__input {
   height: 2.25rem;
-  padding: 0 0.75rem;
-  border-radius: 0.375rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.15);
-  color: #e2e8f0;
+  color: var(--color-text-primary);
   font-size: 0.85rem;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -111,10 +114,10 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 :root[data-theme='light'] .config-field__input {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: #0f172a;
+  color: var(--color-text-primary);
 }
 .config-field__input:focus {
-  border-color: #10b981;
+  border-color: var(--color-success);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
 }
 .config-field__input--short {
@@ -122,11 +125,11 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 }
 .config-field__select {
   height: 2.25rem;
-  padding: 0 0.75rem;
-  border-radius: 0.375rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.15);
-  color: #e2e8f0;
+  color: var(--color-text-primary);
   font-size: 0.85rem;
   outline: none;
   cursor: pointer;
@@ -135,10 +138,10 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 :root[data-theme='light'] .config-field__select {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: #0f172a;
+  color: var(--color-text-primary);
 }
 .config-field__select:focus {
-  border-color: #10b981;
+  border-color: var(--color-success);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
 }
 .toggle-switch {
@@ -151,14 +154,14 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 }
 .toggle-switch__track {
   width: 2.5rem;
-  height: 1.25rem;
+  height: var(--space-5);
   border-radius: 9999px;
   background: rgba(0, 0, 0, 0.3);
   position: relative;
   transition: background 0.2s ease;
 }
 .toggle-switch input:checked + .toggle-switch__track {
-  background: #10b981;
+  background: var(--color-success);
 }
 .toggle-switch__thumb {
   position: absolute;
@@ -172,5 +175,9 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 }
 .toggle-switch input:checked + .toggle-switch__track .toggle-switch__thumb {
   transform: translateX(1.25rem);
+}
+
+.input-width-80 {
+  width: 80px;
 }
 </style>

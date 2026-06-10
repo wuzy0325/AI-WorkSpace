@@ -54,7 +54,7 @@ function channelTone(deviceId: string, channelIndex: number, rawValue: number): 
   const status = deviceStore.statusFor(deviceId)
   if (status === 'Error' || status === 'Disconnected') return 'warning'
 
-  const value = deviceStore.getDisplayValue(deviceId, channelIndex, rawValue)
+  const value = deviceStore.applyDisplayTare(deviceId, channelIndex, rawValue)
   const range = deviceStore.getChannelRange(deviceId, channelIndex)
   const span = range.max - range.min
   const upper = range.max - span * 0.12
@@ -247,11 +247,11 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 .overview-device-group__title {
   font-size: var(--font-size-sm);
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .overview-device-group__title {
-  color: #0f172a;
+  color: var(--bg-app);
 }
 
 .overview-device-group__count,
@@ -270,7 +270,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 .overview-device-group__count {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
-  color: #94a3b8;
+  color: var(--text-tertiary);
 }
 
 :root[data-theme='light'] .overview-device-group__count {
@@ -281,12 +281,12 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 
 .overview-device-group__status--healthy {
   background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
+  color: var(--accent-primary);
 }
 
 .overview-device-group__status--warning {
   background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
+  color: var(--accent-warning);
 }
 
 .overview-device-group__summary {
@@ -346,12 +346,12 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   left: 0;
   width: 100%;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #10b981, transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
   opacity: 0.5;
 }
 
 .overview-channel-micro--warning::before {
-  background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-warning), transparent);
 }
 
 .overview-channel-micro--warning {

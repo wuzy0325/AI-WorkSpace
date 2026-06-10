@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NSlider } from 'naive-ui'
+import UiSlider from '@components/ui/UiSlider.vue'
 
 const alpha = ref(25)
 const beta = ref(20)
@@ -17,8 +17,8 @@ const betaArcEnd = computed(() => ({
 </script>
 
 <template>
-  <section class="relative flex h-full min-h-[560px] overflow-hidden rounded-xl border border-slate-200 bg-[#020617] dark:border-slate-700">
-    <div class="absolute inset-0 bg-[radial-gradient(circle_at_45%_38%,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_70%_70%,rgba(217,70,239,0.15),transparent_30%)]"></div>
+  <section class="probe-card relative flex h-full min-h-[560px] overflow-hidden rounded-xl">
+    <div class="probe-glow absolute inset-0"></div>
 
     <svg viewBox="0 0 920 560" role="img" aria-label="五孔探针角度示意" class="relative z-10 h-full min-h-[560px] w-full">
       <defs>
@@ -122,20 +122,38 @@ const betaArcEnd = computed(() => ({
         <span>alpha: 偏航角（偏航面）</span>
         <span class="font-bold text-[#ffaa00]">{{ alpha }} deg</span>
       </label>
-      <NSlider v-model:value="alpha" :min="-60" :max="60" class="mb-4 w-full" />
+      <UiSlider v-model="alpha" :min="-60" :max="60" class="mb-4 w-full" />
 
       <label class="mb-2 flex justify-between text-xs text-slate-300">
         <span>beta: 俯仰角（俯仰面）</span>
         <span class="font-bold text-[#ff00aa]">{{ beta }} deg</span>
       </label>
-      <NSlider v-model:value="beta" :min="-60" :max="60" class="mb-4 w-full" />
+      <UiSlider v-model="beta" :min="-60" :max="60" class="mb-4 w-full" />
 
-      <div class="space-y-1 rounded-xl border border-slate-700 bg-slate-900/75 p-3 text-xs leading-5 text-slate-300">
-        <div><span class="font-bold text-amber-400">alpha+</span>: flow offset in the yaw plane; alpha- is the opposite direction.</div>
-        <div><span class="font-bold text-fuchsia-400">beta+</span>: flow offset in the pitch plane; beta- is the opposite direction.</div>
+      <div class="info-box space-y-1 rounded-xl p-3 text-xs leading-5">
+        <div><span class="font-bold text-[var(--color-warning)]">alpha+</span>: flow offset in the yaw plane; alpha- is the opposite direction.</div>
+        <div><span class="font-bold text-[var(--color-info)]">beta+</span>: flow offset in the pitch plane; beta- is the opposite direction.</div>
         <div>The dashed line indicates incoming flow direction. Probe axis and -Z orientation are labeled in the diagram.</div>
       </div>
     </aside>
   </section>
 </template>
+
+<style scoped>
+.probe-card {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-canvas);
+  min-height: 560px;
+}
+.probe-glow {
+  background:
+    radial-gradient(circle at 45% 38%, color-mix(in srgb, var(--color-accent) 28%, transparent) 0%, transparent 34%),
+    radial-gradient(circle at 70% 70%, color-mix(in srgb, var(--color-info) 15%, transparent) 0%, transparent 30%);
+}
+.info-box {
+  border: 1px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-panel) 75%, transparent);
+  color: var(--color-text-secondary);
+}
+</style>
 

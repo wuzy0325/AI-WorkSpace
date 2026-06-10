@@ -139,12 +139,12 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   const formatValue = (id: string, channelIndex: number, rawValue: number): string => {
-    const value = getDisplayValue(id, channelIndex, rawValue)
+    const value = applyDisplayTare(id, channelIndex, rawValue)
     if (!Number.isFinite(value)) return ''
     return value.toFixed(getChannelPrecision(id, channelIndex))
   }
 
-  const getDisplayValue = (id: string, channelIndex: number, rawValue: number): number => {
+  const applyDisplayTare = (id: string, channelIndex: number, rawValue: number): number => {
     const offset = tareOffsets.value.get(id)?.[channelIndex] ?? 0
     return rawValue - offset
   }
@@ -315,7 +315,7 @@ export const useDeviceStore = defineStore('devices', () => {
     latestFor,
     historyFor,
     formatValue,
-    getDisplayValue,
+    applyDisplayTare,
     setTare,
     tareAllEnabled,
     getOffset,

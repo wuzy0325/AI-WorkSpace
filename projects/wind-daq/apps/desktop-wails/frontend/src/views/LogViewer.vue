@@ -4,7 +4,8 @@ import { storeToRefs } from 'pinia'
 import { useLogStore } from '@stores/logStore'
 import { useThemeStore } from '@stores/themeStore'
 import type { LogLevel } from '@api/types'
-import { NButton, NInput } from 'naive-ui'
+import UiButton from '@components/ui/UiButton.vue'
+import UiInput from '@components/ui/UiInput.vue'
 
 defineProps<{
   embedded?: boolean
@@ -131,8 +132,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="log-header-actions">
-        <NButton
-          size="tiny"
+        <UiButton
+          size="sm"
           class="log-action-btn"
           :class="{ 'pause-active': logStore.isPaused }"
           @click="logStore.togglePause()"
@@ -143,8 +144,8 @@ onBeforeUnmount(() => {
             <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           </template>
           {{ logStore.isPaused ? 'Resume' : 'Pause' }}
-        </NButton>
-        <NButton size="tiny" class="log-action-btn" @click="logStore.clear()" title="Clear">
+        </UiButton>
+        <UiButton size="sm" class="log-action-btn" @click="logStore.clear()" title="Clear">
           <template #icon>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"/>
@@ -152,8 +153,8 @@ onBeforeUnmount(() => {
             </svg>
           </template>
           Clear
-        </NButton>
-        <NButton size="tiny" class="log-action-btn" @click="copyLogs" title="Copy all">
+        </UiButton>
+        <UiButton size="sm" class="log-action-btn" @click="copyLogs" title="Copy all">
           <template #icon>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -161,29 +162,28 @@ onBeforeUnmount(() => {
             </svg>
           </template>
           Copy
-        </NButton>
+        </UiButton>
       </div>
     </div>
 
     <!-- Filters -->
     <div class="log-filters">
       <div class="log-level-filters">
-        <NButton
+        <UiButton
           v-for="lvl in LEVELS"
           :key="lvl.label"
-          size="tiny"
+          size="sm"
           class="log-level-chip"
           :class="[`chip-${lvl.label.toLowerCase()}`, { active: logStore.filterLevel === lvl.value }]"
           @click="logStore.setFilterLevel(lvl.value)"
         >
           <span class="chip-dot" v-if="lvl.value" :class="levelDotColors[lvl.value]"></span>
           {{ lvl.label }}
-        </NButton>
+        </UiButton>
       </div>
       <div class="log-search">
-        <NInput
-          v-model:value="logStore.filterSearch"
-          size="small"
+        <UiInput
+          v-model="logStore.filterSearch"
           class="log-search-input"
           placeholder="Filter logs..."
         >
@@ -193,7 +193,7 @@ onBeforeUnmount(() => {
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
           </template>
-        </NInput>
+        </UiInput>
       </div>
     </div>
 
@@ -229,7 +229,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.7) 0%, rgba(10, 15, 30, 0.9) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-bg-app) 70%, transparent) 0%, rgba(10, 15, 30, 0.9) 100%);
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 0.75rem;
   overflow: hidden;
@@ -243,7 +243,7 @@ onBeforeUnmount(() => {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.15), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 15%, transparent), transparent);
   pointer-events: none;
 }
 
@@ -255,9 +255,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.625rem 1rem;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(15, 23, 42, 0.6);
+  background: color-mix(in srgb, var(--color-bg-app) 60%, transparent);
   backdrop-filter: blur(8px);
   flex-shrink: 0;
 }
@@ -265,7 +265,7 @@ onBeforeUnmount(() => {
 .log-header-left {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: var(--space-2);
 }
 
 .log-header-icon {
@@ -275,49 +275,49 @@ onBeforeUnmount(() => {
   width: 1.625rem;
   height: 1.625rem;
   border-radius: 0.375rem;
-  background: rgba(56, 189, 248, 0.08);
-  color: rgba(56, 189, 248, 0.7);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 70%, transparent);
 }
 
 .log-header-text {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .log-title {
-  font-size: 0.8125rem;
+  font-size: var(--text-base);
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--color-text-primary);
   letter-spacing: 0.02em;
 }
 
 .log-count {
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   font-weight: 500;
-  color: #64748b;
+  color: var(--color-text-muted);
   background: rgba(255, 255, 255, 0.04);
   padding: 0.0625rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-md);
   font-variant-numeric: tabular-nums;
 }
 
 .log-header-actions {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-1);
 }
 
 .log-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.5625rem;
-  font-size: 0.6875rem;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
   font-weight: 500;
   border-radius: 0.375rem;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.02);
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
@@ -327,43 +327,43 @@ onBeforeUnmount(() => {
 .log-action-btn:hover {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
+  color: var(--color-text-primary);
 }
 
 .log-action-btn.pause-active {
-  background: rgba(251, 191, 36, 0.1);
-  border-color: rgba(251, 191, 36, 0.25);
-  color: #fbbf24;
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 25%, transparent);
+  color: var(--color-warning);
 }
 
 .log-filters {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(15, 23, 42, 0.35);
+  background: color-mix(in srgb, var(--color-bg-app) 35%, transparent);
   flex-shrink: 0;
 }
 
 .log-level-filters {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
 .log-level-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.1875rem 0.5rem;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   font-size: 0.625rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   border-radius: 0.375rem;
   border: 1px solid transparent;
   background: transparent;
-  color: #64748b;
+  color: var(--color-text-muted);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-transform: uppercase;
@@ -377,44 +377,44 @@ onBeforeUnmount(() => {
 }
 
 .log-level-chip:hover {
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   background: rgba(255, 255, 255, 0.04);
 }
 
 .log-level-chip.active {
-  color: #e2e8f0;
+  color: var(--color-text-primary);
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.06);
 }
 
 .chip-all.active {
-  background: rgba(56, 189, 248, 0.08);
-  border-color: rgba(56, 189, 248, 0.2);
-  color: rgba(56, 189, 248, 0.9);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 90%, transparent);
 }
 
 .chip-debug.active {
-  background: rgba(100, 116, 139, 0.12);
-  border-color: rgba(100, 116, 139, 0.2);
-  color: #94a3b8;
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
+  color: var(--color-text-secondary);
 }
 
 .chip-info.active {
-  background: rgba(6, 182, 212, 0.08);
-  border-color: rgba(6, 182, 212, 0.2);
-  color: rgba(34, 211, 238, 0.9);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 90%, transparent);
 }
 
 .chip-warn.active {
-  background: rgba(251, 191, 36, 0.08);
-  border-color: rgba(251, 191, 36, 0.2);
-  color: rgba(251, 191, 36, 0.9);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: color-mix(in srgb, var(--color-warning) 90%, transparent);
 }
 
 .chip-error.active {
-  background: rgba(244, 63, 94, 0.08);
-  border-color: rgba(244, 63, 94, 0.2);
-  color: rgba(251, 113, 133, 0.9);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
+  color: color-mix(in srgb, var(--color-danger) 90%, transparent);
 }
 
 .log-search {
@@ -429,14 +429,14 @@ onBeforeUnmount(() => {
 .log-entries {
   flex: 1;
   overflow-y: auto;
-  padding: 0.25rem 0;
+  padding: var(--space-1) 0;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   font-size: 0.7rem;
   line-height: 1.6;
 }
 
 .log-entries::-webkit-scrollbar {
-  width: 4px;
+  width: var(--space-1);
 }
 
 .log-entries::-webkit-scrollbar-track {
@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
 
 .log-entries::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .log-entries::-webkit-scrollbar-thumb:hover {
@@ -455,8 +455,8 @@ onBeforeUnmount(() => {
 .log-entry {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.1875rem 1rem;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
   transition: background 0.15s ease;
   position: relative;
 }
@@ -466,22 +466,22 @@ onBeforeUnmount(() => {
 }
 
 .log-level-error {
-  background: rgba(244, 63, 94, 0.03);
-  border-left: 2px solid rgba(244, 63, 94, 0.3);
-  padding-left: calc(1rem - 2px);
+  background: color-mix(in srgb, var(--color-danger) 3%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  padding-left: calc(var(--space-4) - 2px);
 }
 
 .log-level-error:hover {
-  background: rgba(244, 63, 94, 0.06);
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
 }
 
 .log-level-warn {
   border-left: 2px solid transparent;
-  padding-left: calc(1rem - 2px);
+  padding-left: calc(var(--space-4) - 2px);
 }
 
 .log-time {
-  color: #475569;
+  color: var(--color-text-muted);
   flex-shrink: 0;
   font-size: 0.625rem;
   min-width: 5.75rem;
@@ -495,13 +495,13 @@ onBeforeUnmount(() => {
   font-weight: 700;
   letter-spacing: 0.05em;
   padding: 0.0625rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-md);
   min-width: 2.75rem;
   text-align: center;
 }
 
 .log-source {
-  color: #64748b;
+  color: var(--color-text-muted);
   flex-shrink: 0;
   min-width: 5rem;
   max-width: 7rem;
@@ -520,9 +520,9 @@ onBeforeUnmount(() => {
 
 .log-details {
   display: block;
-  color: #475569;
+  color: var(--color-text-muted);
   font-size: 0.625rem;
-  padding-left: 0.75rem;
+  padding-left: var(--space-3);
   margin-top: 0.125rem;
   white-space: pre-wrap;
   opacity: 0.7;
@@ -533,10 +533,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
   height: 10rem;
-  color: #475569;
-  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 
 .empty-icon {
@@ -546,7 +546,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 :root[data-theme='light'] .log-viewer {
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.95) 0%, rgba(241, 245, 249, 0.98) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-bg-app) 95%, transparent) 0%, rgba(241, 245, 249, 0.98) 100%);
   border-color: rgba(0, 0, 0, 0.06);
 }
 
@@ -565,48 +565,48 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .log-title {
-  color: #1e293b;
+  color: var(--color-text-primary);
 }
 
 :root[data-theme='light'] .log-count {
-  color: #94a3b8;
+  color: var(--color-text-muted);
   background: rgba(0, 0, 0, 0.04);
 }
 
 :root[data-theme='light'] .log-action-btn {
   border-color: rgba(0, 0, 0, 0.08);
   background: rgba(0, 0, 0, 0.02);
-  color: #64748b;
+  color: var(--color-text-secondary);
 }
 
 :root[data-theme='light'] .log-action-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.12);
-  color: #334155;
+  color: var(--color-text-primary);
 }
 
 :root[data-theme='light'] .log-action-btn.pause-active {
   background: rgba(217, 119, 6, 0.08);
   border-color: rgba(217, 119, 6, 0.2);
-  color: #b45309;
+  color: var(--color-warning);
 }
 
 :root[data-theme='light'] .log-filters {
   border-bottom-color: rgba(0, 0, 0, 0.05);
-  background: rgba(248, 250, 252, 0.5);
+  background: color-mix(in srgb, var(--color-bg-app) 50%, transparent);
 }
 
 :root[data-theme='light'] .log-level-chip {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 :root[data-theme='light'] .log-level-chip:hover {
-  color: #64748b;
+  color: var(--color-text-secondary);
   background: rgba(0, 0, 0, 0.03);
 }
 
 :root[data-theme='light'] .log-level-chip.active {
-  color: #334155;
+  color: var(--color-text-primary);
   border-color: rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.05);
 }
@@ -618,27 +618,27 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .chip-debug.active {
-  background: rgba(100, 116, 139, 0.1);
-  border-color: rgba(100, 116, 139, 0.2);
-  color: #475569;
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
+  color: var(--color-text-muted);
 }
 
 :root[data-theme='light'] .chip-info.active {
-  background: rgba(8, 145, 178, 0.08);
-  border-color: rgba(8, 145, 178, 0.2);
-  color: rgba(8, 145, 178, 0.9);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 90%, transparent);
 }
 
 :root[data-theme='light'] .chip-warn.active {
-  background: rgba(217, 119, 6, 0.08);
-  border-color: rgba(217, 119, 6, 0.2);
-  color: rgba(217, 119, 6, 0.9);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: color-mix(in srgb, var(--color-warning) 90%, transparent);
 }
 
 :root[data-theme='light'] .chip-error.active {
-  background: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.2);
-  color: rgba(220, 38, 38, 0.9);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
+  color: color-mix(in srgb, var(--color-danger) 90%, transparent);
 }
 
 :root[data-theme='light'] .log-entries::-webkit-scrollbar-thumb {
@@ -663,18 +663,18 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .log-time {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 :root[data-theme='light'] .log-source {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 :root[data-theme='light'] .log-details {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 :root[data-theme='light'] .log-empty {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 </style>
