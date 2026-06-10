@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Sun, Moon } from '@lucide/vue'
 import MotionControlPanel from '@components/motion/MotionControlPanel.vue'
 import { useI18nStore } from '@stores/i18nStore'
 import { useThemeStore } from '@stores/themeStore'
@@ -20,7 +21,7 @@ function toggleLanguage(): void {
 
 <template>
   <div data-test="motion-shell" class="bg-[color:var(--bg-canvas)] text-[color:var(--text-primary)] font-sans flex flex-col overflow-hidden" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
-    <header class="glass-header flex items-center justify-between px-5 py-3 shrink-0">
+    <header class="glass-header flex items-center justify-between shrink-0 motion-view-header">
       <div>
         <h1 class="text-sm font-bold tracking-tight text-[color:var(--text-primary)]">运动控制器</h1>
         <p class="text-[10px] font-semibold tracking-wider text-[color:var(--text-muted)]">{{ embedded ? '轴控制与监控' : '独立窗口 · 轴控制与监控' }}</p>
@@ -31,8 +32,8 @@ function toggleLanguage(): void {
           :title="theme.mode === 'dark' ? i18n.t.switchToLightTheme : i18n.t.switchToDarkTheme"
           @click="theme.toggleTheme"
         >
-          <span v-if="theme.mode === 'dark'">☀</span>
-          <span v-else>☾</span>
+          <Sun v-if="theme.mode === 'dark'" class="w-4 h-4" />
+          <Moon v-else class="w-4 h-4" />
         </button>
         <button
           class="h-8 px-3 rounded-md text-xs font-semibold transition-all border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)] active:scale-95"
@@ -43,8 +44,17 @@ function toggleLanguage(): void {
         </button>
       </div>
     </header>
-    <main class="flex-1 min-h-0 p-4 bg-[color:var(--bg-canvas)]">
+    <main class="flex-1 min-h-0 bg-[color:var(--bg-canvas)] motion-view-content">
       <MotionControlPanel />
     </main>
   </div>
 </template>
+
+<style scoped>
+.motion-view-header {
+  padding: var(--space-3) var(--space-5);
+}
+.motion-view-content {
+  padding: var(--layout-content-padding);
+}
+</style>

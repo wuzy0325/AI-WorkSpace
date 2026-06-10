@@ -13,12 +13,12 @@
   --text-secondary: #334155;
   --text-muted: #94a3b8;
 
-  --accent-primary: #22c55e;
-  --accent-primary-muted: color-mix(in srgb, #22c55e 12%, transparent);
-  --accent-success: #22c55e;
+  --accent-primary: #2563eb;
+  --accent-primary-muted: color-mix(in srgb, #2563eb 12%, transparent);
+  --accent-success: #16a34a;
   --accent-warning: #ea580c;
   --accent-danger: #dc2626;
-  --accent-info: #22c55e;
+  --accent-info: #0ea5e9;
 
   --focus-ring: color-mix(in srgb, var(--accent-primary) 50%, white 10%);
   --focus-ring-soft: color-mix(in srgb, var(--accent-primary) 10%, transparent);

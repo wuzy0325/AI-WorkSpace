@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject } from 'vue'
+import UiToggle from '@components/ui/UiToggle.vue'
 
 const model = defineModel<{
   name: string
@@ -57,12 +58,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
           自动连接
           <span class="field-hint" @mouseenter="tooltip('程序启动时自动连接此控制器', $event)" @mouseleave="hideTooltip">?</span>
         </label>
-        <label class="toggle-switch">
-          <input type="checkbox" v-model="model.autoConnect" />
-          <span class="toggle-switch__track">
-            <span class="toggle-switch__thumb"></span>
-          </span>
-        </label>
+        <UiToggle v-model="model.autoConnect" />
       </div>
     </div>
   </div>
@@ -133,36 +129,5 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
   border-color: var(--accent-success);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-success) 20%, transparent);
 }
-.toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-.toggle-switch input {
-  display: none;
-}
-.toggle-switch__track {
-  width: 2.25rem;
-  height: 1.125rem;
-  border-radius: 9999px;
-  background: var(--border-strong);
-  position: relative;
-  transition: background 0.2s ease;
-}
-.toggle-switch input:checked + .toggle-switch__track {
-  background: var(--accent-success);
-}
-.toggle-switch__thumb {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(1.125rem - 4px);
-  height: calc(1.125rem - 4px);
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s ease;
-}
-.toggle-switch input:checked + .toggle-switch__track .toggle-switch__thumb {
-  transform: translateX(1.125rem);
-}
+
 </style>

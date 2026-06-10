@@ -7,6 +7,7 @@ import type { MotionControllerProfile, AxisConfig, AxisEncoderCompensationConfig
 import UiButton from '@components/ui/UiButton.vue'
 import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
 import UiInput from '@components/ui/UiInput.vue'
+import UiToggle from '@components/ui/UiToggle.vue'
 
 import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor'
 import ProfileSidebar from './ProfileSidebar.vue'
@@ -117,6 +118,7 @@ function captureSnapshot(): void {
 
 /* -- New profile -- */
 function newProfile(): void {
+  skipDirtyWatch = true
   editing.id = ''
   editing.name = '新控制器'
   editing.type = 'SIMULATED-MC'
@@ -126,10 +128,13 @@ function newProfile(): void {
   editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name))
   isCreatingNew.value = true
   captureSnapshot()
+  // 下一 tick 恢复监听，确保 captureSnapshot 已完成
+  queueMicrotask(() => { skipDirtyWatch = false })
 }
 
 /* -- Edit profile -- */
 function editProfile(src: MotionControllerProfile): void {
+  skipDirtyWatch = true
   editing.id = src.id
   editing.name = src.name
   editing.type = src.type
@@ -149,6 +154,8 @@ function editProfile(src: MotionControllerProfile): void {
   }))
   isCreatingNew.value = false
   captureSnapshot()
+  // 下一 tick 恢复监听，确保 captureSnapshot 已完成
+  queueMicrotask(() => { skipDirtyWatch = false })
 }
 
 /* -- Save profile -- */
@@ -203,10 +210,10 @@ async function remove(id: string): Promise<void> {
 /* -- Close confirm (dirty check) -- */
 async function tryClose(): Promise<void> {
   if (isDirty.value) {
-    const ok = await feedback.confirm('当前有未保存的更改，确定要关闭吗？', {
+    const ok = await feedback.confirm('当前有未保存的更改，确定要放弃更改并关闭吗？', {
       title: '关闭确认',
-      confirmText: '关闭',
-      cancelText: '取消',
+      confirmText: '放弃并关闭',
+      cancelText: '继续编辑',
       variant: 'primary',
     })
     if (!ok) return
@@ -219,8 +226,8 @@ async function onProfileSelect(id: string): Promise<void> {
   if (isDirty.value) {
     const ok = await feedback.confirm('当前有未保存的更改，切换配置将丢失更改。确定要切换吗？', {
       title: '切换确认',
-      confirmText: '切换',
-      cancelText: '取消',
+      confirmText: '放弃并切换',
+      cancelText: '继续编辑',
       variant: 'primary',
     })
     if (!ok) return
@@ -234,8 +241,8 @@ async function onProfileAdd(): Promise<void> {
   if (isDirty.value) {
     const ok = await feedback.confirm('当前有未保存的更改，新建配置将丢失更改。确定要新建吗？', {
       title: '新建确认',
-      confirmText: '新建',
-      cancelText: '取消',
+      confirmText: '放弃并新建',
+      cancelText: '继续编辑',
       variant: 'primary',
     })
     if (!ok) return
@@ -260,8 +267,14 @@ onMounted(async () => {
 
 watch(() => props.open, (v) => { if (v) ensureEditingOnOpen() })
 
-// [FIX] deep-watch editing changes to mark dirty state (replaces computed + JSON.stringify overhead)
-watch(editing, () => { if (initialDraftSnapshot.value) markDirty() }, { deep: true })
+// 深度监听 editing 变化，标记脏状态
+// 使用 skipDirtyWatch 标志避免在 editProfile/newProfile 赋值期间误触发
+let skipDirtyWatch = false
+
+watch(editing, () => {
+  if (skipDirtyWatch) return
+  if (initialDraftSnapshot.value) markDirty()
+}, { deep: true })
 
 /* -- Axis update callbacks -- */
 function onAxisUpdate(index: number, axis: AxisConfig): void {
@@ -392,12 +405,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                     <!-- Auto-connect toggle -->
                     <div class="config-field config-field--toggle">
                       <label class="config-field__label">自动连接</label>
-                      <label class="toggle-switch">
-                        <input type="checkbox" v-model="editing.autoConnect" />
-                        <span class="toggle-switch__track">
-                          <span class="toggle-switch__thumb"></span>
-                        </span>
-                      </label>
+                      <UiToggle v-model="editing.autoConnect" />
                     </div>
                   </div>
                 </div>
@@ -504,7 +512,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   max-height: 640px;
   display: flex;
   flex-direction: column;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
   border: 1px solid var(--border-default);
   box-shadow: 0 24px 64px -20px rgba(0, 0, 0, 0.5);
@@ -699,38 +707,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   font-weight: 600;
   color: var(--text-muted);
 }
-.toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-.toggle-switch input {
-  display: none;
-}
-.toggle-switch__track {
-  width: 2.25rem;
-  height: 1.125rem;
-  border-radius: 9999px;
-  background: var(--border-strong);
-  position: relative;
-  transition: background 0.2s ease;
-}
-.toggle-switch input:checked + .toggle-switch__track {
-  background: var(--accent-success);
-}
-.toggle-switch__thumb {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(1.125rem - 4px);
-  height: calc(1.125rem - 4px);
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s ease;
-}
-.toggle-switch input:checked + .toggle-switch__track .toggle-switch__thumb {
-  transform: translateX(1.125rem);
-}
+
 
 /* -- Axis matrix -- */
 .axis-matrix {

@@ -2,6 +2,7 @@
 import { inject } from 'vue'
 import type { AxisConfig } from '@shared/types/motion'
 import { getAxisThemeClass, getAxisInfoLabel, computePulsesPerUnit } from './motionConfigEditor'
+import UiToggle from '@components/ui/UiToggle.vue'
 
 const props = defineProps<{
   axis: AxisConfig
@@ -65,12 +66,12 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
             方向反转
             <span class="field-hint" @mouseenter="tooltip('勾选后轴的运动方向与默认方向相反', $event)" @mouseleave="hideTooltip">?</span>
           </label>
-          <label class="mini-toggle">
-            <input type="checkbox" :checked="axis.inverted" @change="onAxisUpdate(index, 'inverted', !axis.inverted)" />
-            <span class="mini-toggle__track">
-              <span class="mini-toggle__thumb"></span>
-            </span>
-          </label>
+          <UiToggle
+            size="sm"
+            :model-value="axis.inverted"
+            style="--toggle-color: var(--axis-hue)"
+            @update:model-value="onAxisUpdate(index, 'inverted', $event)"
+          />
         </div>
       </div>
 
@@ -235,38 +236,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.mini-toggle {
-  display: inline-flex;
-  cursor: pointer;
-}
-.mini-toggle input {
-  display: none;
-}
-.mini-toggle__track {
-  width: 1.625rem;
-  height: 0.875rem;
-  border-radius: 9999px;
-  background: var(--border-strong);
-  position: relative;
-  transition: background 0.2s ease;
-  flex-shrink: 0;
-}
-.mini-toggle input:checked + .mini-toggle__track {
-  background: var(--axis-hue);
-}
-.mini-toggle__thumb {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(0.875rem - 4px);
-  height: calc(0.875rem - 4px);
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s ease;
-}
-.mini-toggle input:checked + .mini-toggle__track .mini-toggle__thumb {
-  transform: translateX(0.75rem);
-}
+
 .axis-card__info {
   display: flex;
   align-items: center;

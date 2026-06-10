@@ -309,7 +309,7 @@ watch(
 
 <template>
   <div class="flex h-full gap-3 motion-control-panel">
-    <aside data-test="motion-panel-surface" class="w-56 shrink-0 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] p-3 flex flex-col shadow-[var(--shadow-panel)]">
+    <aside data-test="motion-panel-surface" class="motion-sidebar shrink-0 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] flex flex-col shadow-[var(--shadow-panel)]">
       <div class="flex items-center justify-between mb-2">
         <div class="text-[11px] font-semibold tracking-wide text-[color:var(--text-secondary)]">
           {{ i18n.t.motionController }}
@@ -363,7 +363,7 @@ watch(
     </aside>
 
     <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
-      <header class="flex items-center justify-between gap-3 border-b border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-4 py-3 flex-wrap">
+      <header class="flex items-center justify-between gap-3 border-b border-[color:var(--border-default)] bg-[color:var(--bg-panel)] flex-wrap motion-panel-header">
         <div class="flex items-center gap-3 min-w-0">
           <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[color:var(--accent-primary)]/20 to-[color:var(--accent-primary)]/5 border border-[color:var(--accent-primary)]/20">
             <svg class="w-5 h-5 text-[color:var(--accent-primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -493,7 +493,7 @@ watch(
         <p class="text-xs font-bold tracking-[0.2em]">{{ i18n.t.selectControllerHint }}</p>
       </div>
       <div v-else class="flex flex-col flex-1 min-h-0">
-        <div class="flex-1 min-h-0 overflow-auto p-6 custom-scrollbar">
+        <div class="flex-1 min-h-0 overflow-auto custom-scrollbar motion-scroll-content">
           <div v-if="axes.length === 0" class="flex flex-col items-center justify-center h-full text-[color:var(--text-muted)]">
             <svg class="w-16 h-16 mb-4 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2v4"/>
@@ -514,11 +514,11 @@ watch(
               {{ i18n.t.openConfig || '打开配置' }}
             </button>
           </div>
-          <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 motion-axis-grid">
             <div
               v-for="axis in axes"
               :key="axis.name"
-              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-[200px]"
+              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col gap-2 transition-all min-w-[200px]"
               :class="getAxisThemeClass(axis.name)"
             >
               <!-- 头部：轴标识 + 状态 -->
@@ -689,7 +689,25 @@ watch(
 .axis-card.axis-u-theme { --axis-hue: var(--axis-u); --axis-hue-soft: var(--axis-u-soft); }
 
 .axis-card {
+  padding: var(--space-3);
   transition: all var(--motion-base) var(--easing-standard);
+}
+
+.motion-sidebar {
+  width: var(--layout-sidebar-width);
+  padding: var(--space-3);
+}
+
+.motion-scroll-content {
+  padding: var(--space-6);
+}
+
+.motion-panel-header {
+  padding: var(--space-4) var(--space-3);
+}
+
+.motion-axis-grid {
+  gap: var(--space-5);
 }
 
 .axis-card:hover {
@@ -857,13 +875,15 @@ watch(
   cursor: not-allowed;
 }
 
-.input-field.limit-exceeded {
+.input-field.limit-exceeded,
+.move-input.limit-exceeded {
   border-color: var(--accent-danger);
   background: color-mix(in srgb, var(--accent-danger) 8%, var(--bg-canvas));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 25%, transparent);
 }
 
-.input-field.limit-near {
+.input-field.limit-near,
+.move-input.limit-near {
   border-color: var(--accent-warning);
   background: color-mix(in srgb, var(--accent-warning) 8%, var(--bg-canvas));
 }
@@ -1058,10 +1078,14 @@ watch(
 
 /* 轴功能区域 */
 .axis-section {
-  padding: 0.625rem;
-  background: var(--bg-canvas);
-  border-radius: var(--radius-md);
+  padding: 0.5rem 0 0;
   margin-top: 0.25rem;
+}
+
+.axis-section + .axis-section {
+  border-top: 1px solid var(--border-default);
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
 }
 
 .axis-section-title {
@@ -1237,17 +1261,6 @@ watch(
 .move-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.move-input.limit-exceeded {
-  border-color: var(--accent-danger);
-  background: color-mix(in srgb, var(--accent-danger) 8%, var(--bg-panel));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 25%, transparent);
-}
-
-.move-input.limit-near {
-  border-color: var(--accent-warning);
-  background: color-mix(in srgb, var(--accent-warning) 8%, var(--bg-panel));
 }
 
 .move-unit {

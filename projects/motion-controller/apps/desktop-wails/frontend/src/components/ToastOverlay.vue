@@ -1,13 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { Info, CheckCircle, AlertTriangle, XCircle } from '@lucide/vue'
 import { useFeedbackStore, type ToastLevel } from '@stores/feedbackStore'
 
 const feedback = useFeedbackStore()
 
-const levelIcon: Record<ToastLevel, string> = {
-  info: 'ℹ',
-  success: '✓',
-  warning: '⚠',
-  error: '✕',
+const levelIcon: Record<ToastLevel, object> = {
+  info: Info,
+  success: CheckCircle,
+  warning: AlertTriangle,
+  error: XCircle,
 }
 
 const levelClass: Record<ToastLevel, string> = {
@@ -40,7 +42,7 @@ function dismiss(id: number): void {
           :class="levelClass[toast.level]"
           @click="dismiss(toast.id)"
         >
-          <span class="toast-icon">{{ levelIcon[toast.level] }}</span>
+          <component :is="levelIcon[toast.level]" class="toast-icon w-3.5 h-3.5" />
           <span class="toast-message">{{ toast.message }}</span>
           <button class="toast-close" @click.stop="dismiss(toast.id)">✕</button>
         </div>
@@ -109,13 +111,6 @@ function dismiss(id: number): void {
 
 .toast-icon {
   flex-shrink: 0;
-  width: 1.25rem;
-  height: 1.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 700;
 }
 
 .toast--info .toast-icon { color: var(--accent-info, #38bdf8); }

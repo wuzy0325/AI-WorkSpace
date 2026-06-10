@@ -1,7 +1,17 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { traversalApi } from '@api/traversalApi'
+
 import { useUiRefreshThrottle } from '@composables/useUiRefreshThrottle'
+
+function formatApiError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+    return '网络连接失败，请检查后端服务是否已启动'
+  }
+  return msg
+}
+
 import type {
   TraversalTestConfig,
   TraversalTestStatus,
@@ -165,18 +175,6 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   function hasEventSubscriptions(): boolean {
     return unsubscribeProgress !== null && unsubscribeComplete !== null && unsubscribeError !== null
-  }
-
-  function toErrorMessage(reason: unknown, fallback: string): string {
-    if (reason instanceof Error && reason.message) {
-      return reason.message
-    }
-
-    if (typeof reason === 'string' && reason) {
-      return reason
-    }
-
-    return fallback
   }
 
   function syncRecoveredStatus(nextStatus: TraversalTestStatus | null): void {
@@ -348,7 +346,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     error.value = null
     statusRecoveryFailed.value = false
 
-    const [configResult, statusResult] = await Promise.allSettled([
+    const [configResult, statusResult] = await Promise.all([
       traversalApi.getConfig(),
       traversalApi.getStatus()
     ])
@@ -359,31 +357,20 @@ export const useTraversalStore = defineStore('traversal', () => {
 
     const recoveryErrors: string[] = []
 
-    if (configResult.status === 'fulfilled') {
-      if (configResult.value.success) {
-        config.value = configResult.value.data ?? null
-      } else {
-        config.value = null
-        recoveryErrors.push(configResult.value.error || '加载移位测试配置失败')
-      }
+    if (configResult.success) {
+      config.value = configResult.data ?? null
     } else {
       config.value = null
-      recoveryErrors.push(toErrorMessage(configResult.reason, '加载移位测试配置失败'))
+      recoveryErrors.push(configResult.error || '加载移位测试配置失败')
     }
 
-    if (statusResult.status === 'fulfilled') {
-      if (statusResult.value.success) {
-        statusRecoveryFailed.value = false
-        syncRecoveredStatus(statusResult.value.data ?? null)
-      } else {
-        statusRecoveryFailed.value = true
-        syncRecoveredStatus(null)
-        recoveryErrors.push(statusResult.value.error || 'Failed to get traversal status')
-      }
+    if (statusResult.success) {
+      statusRecoveryFailed.value = false
+      syncRecoveredStatus(statusResult.data ?? null)
     } else {
       statusRecoveryFailed.value = true
       syncRecoveredStatus(null)
-      recoveryErrors.push(toErrorMessage(statusResult.reason, 'Failed to get traversal status'))
+      recoveryErrors.push(statusResult.error || 'Failed to get traversal status')
     }
 
     if (recoveryErrors.length > 0) {

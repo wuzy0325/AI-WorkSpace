@@ -2,6 +2,7 @@
 import { inject, reactive, watch, computed } from 'vue'
 import type { AxisConfig, AxisEncoderCompensationConfig, MotionControllerType } from '@shared/types/motion'
 import { getAxisThemeClass, defaultEncComp } from './motionConfigEditor'
+import UiToggle from '@components/ui/UiToggle.vue'
 
 const props = defineProps<{
   axes: AxisConfig[]
@@ -120,16 +121,12 @@ watch(() => props.axes, clearRawValues, { deep: true })
           <span class="enc-axis-badge">{{ axis.name }}</span>
         </div>
         <div class="enc-col-toggle">
-          <label class="mini-toggle">
-            <input
-              type="checkbox"
-              :checked="getEncComp(axis.name).enabled"
-              @change="setEncComp(axis.name, { ...getEncComp(axis.name), enabled: !getEncComp(axis.name).enabled })"
-            />
-            <span class="mini-toggle__track">
-              <span class="mini-toggle__thumb"></span>
-            </span>
-          </label>
+          <UiToggle
+            size="sm"
+            :model-value="getEncComp(axis.name).enabled"
+            style="--toggle-color: var(--axis-hue, var(--accent-success))"
+            @update:model-value="setEncComp(axis.name, { ...getEncComp(axis.name), enabled: $event })"
+          />
         </div>
         <div class="enc-col-field">
           <input
@@ -298,37 +295,5 @@ watch(() => props.axes, clearRawValues, { deep: true })
 .axis-z-theme { --axis-hue: var(--axis-z); }
 .axis-u-theme { --axis-hue: var(--axis-u); }
 
-/* 迷你开关 */
-.mini-toggle {
-  display: inline-flex;
-  cursor: pointer;
-}
-.mini-toggle input {
-  display: none;
-}
-.mini-toggle__track {
-  width: 1.625rem;
-  height: 0.875rem;
-  border-radius: 9999px;
-  background: var(--border-strong);
-  position: relative;
-  transition: background 0.2s ease;
-  flex-shrink: 0;
-}
-.mini-toggle input:checked + .mini-toggle__track {
-  background: var(--axis-hue, var(--accent-success));
-}
-.mini-toggle__thumb {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(0.875rem - 4px);
-  height: calc(0.875rem - 4px);
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s ease;
-}
-.mini-toggle input:checked + .mini-toggle__track .mini-toggle__thumb {
-  transform: translateX(0.75rem);
-}
+
 </style>

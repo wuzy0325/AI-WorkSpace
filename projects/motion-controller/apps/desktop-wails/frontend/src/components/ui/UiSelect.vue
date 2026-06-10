@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   outline: none;
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(var(--blur-dropdown));
 }
 
 .ui-select__option {
