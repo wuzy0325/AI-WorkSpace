@@ -51,7 +51,7 @@ powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 Before committing, run the checks that apply to the touched project:
 
 1. `powershell -File .\scripts\validate-structure.ps1` — must pass
-2. `powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "apps/desktop-wails/frontend/src"` — when modifying frontend files or directories
+2. `powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/<name>/apps/desktop-wails/frontend/src"` — when modifying frontend files or directories
 3. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
 4. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
 

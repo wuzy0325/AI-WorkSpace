@@ -16,6 +16,7 @@ frontend/src/
 │
 ├── components/
 │   ├── ui/                     # 基础 UI 控件（Ui*）
+│   ├── patterns/               # 复用界面模式（FormField、SettingsSection、ConfirmActionDialog…）
 │   ├── layout/                 # 布局组件（shell、topbar、sidebar、footer）
 │   ├── feedback/               # 反馈类组件（toast、confirm、notification）
 │   ├── icons/                  # 图标组件
@@ -50,6 +51,13 @@ frontend/src/
 基础 UI 控件，命名必须为 `Ui*` 前缀。不依赖业务 store、不出现业务领域词。
 
 包含：`UiButton`、`UiInput`、`UiSelect`、`UiPanel`、`UiToggle`、`UiStatusBadge`、`UiFormField`、`UiDialog`、`UiToolbar`、`UiEmptyState`、`UiLoadingState`、`UiErrorState`。
+
+### `components/patterns/`
+复用界面模式组合，解决跨领域重复出现的界面片段。组合多个 `Ui*` 组件但不绑定具体业务领域。
+
+不依赖业务 store、不出现设备/采集/校准等业务领域词。
+
+包含：`FormField`、`SettingsSection`、`ConfirmActionDialog`、`EmptyState`、`LoadingState`。
 
 ### `components/layout/`
 应用框架组件，只负责布局结构。
@@ -95,6 +103,7 @@ CSS 自定义属性定义。每个 token 文件对应一个维度。
 | 代码类型 | 必须放在 |
 |---|---|
 | 基础 UI 控件（UiButton、UiInput…） | `components/ui/` |
+| 复用界面模式（FormField、SettingsSection…） | `components/patterns/` |
 | 布局结构组件 | `components/layout/` |
 | 业务领域组件 | `components/<domain>/` |
 | 页面组装 | `pages/` 或 `views/` |
@@ -111,6 +120,7 @@ CSS 自定义属性定义。每个 token 文件对应一个维度。
 
 - 通用 UI 组件放在业务领域目录下
 - 业务组件放在 `components/ui/` 下
+- 业务组件放在 `components/patterns/` 下
 - `pages/` 和 `views/` 并存
 - `api/` 和 `bridge/` 并存
 - `main.ts` 中出现业务逻辑

@@ -93,6 +93,43 @@ if ($hasTokens) {
   }
 }
 
+# Heuristic: Ui* components in components/ui/ should not import business stores
+$uiDir = "$src/components/ui"
+if (Test-Path $uiDir) {
+  $uiStoreImport = @(Select-String -Path "$uiDir/*.vue" -Pattern "from ['`"]\.\./\.\./stores/" -ErrorAction SilentlyContinue)
+  if ($uiStoreImport) {
+    $warnings += "Ui* component(s) in components/ui/ import from stores/ (violates no-business-store dependency rule):"
+    foreach ($m in $uiStoreImport) {
+      $rel = $m.Path.Substring($src.Length + 1)
+      $warnings += "  - $rel"
+    }
+  }
+  $businessKeywords = @("device", "calibration", "traversal", "acquisition", "设备", "采集", "校准", "遍历")
+  foreach ($kw in $businessKeywords) {
+    $matches = @(Select-String -Path "$uiDir/*.vue" -Pattern "\b$kw\b" -ErrorAction SilentlyContinue)
+    if ($matches) {
+      $warnings += "'components/ui/' files contain business keyword '$kw' (violates no-business-term rule):"
+      foreach ($m in $matches) {
+        $rel = $m.Path.Substring($src.Length + 1)
+        $warnings += "  - $rel"
+      }
+    }
+  }
+}
+
+# Heuristic: stores should not directly import Wails runtime
+$storesDir = "$src/stores"
+if (Test-Path $storesDir) {
+  $wailsImport = @(Select-String -Path "$storesDir/*.ts" -Pattern "wailsjs/runtime|@wailsapp/runtime" -ErrorAction SilentlyContinue)
+  if ($wailsImport) {
+    $issues += "stores/ must not directly import Wails runtime (use api/bridge instead):"
+    foreach ($m in $wailsImport) {
+      $rel = $m.Path.Substring($src.Length + 1)
+      $issues += "  - $rel"
+    }
+  }
+}
+
 # Report
 Write-Host "`n=== Frontend Structure Validation ===" -ForegroundColor Cyan
 Write-Host "Target: $src`n"
