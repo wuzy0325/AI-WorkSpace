@@ -72,7 +72,7 @@ func (f *fakeDevicePort) Status(id string) (core.DeviceState, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if p, ok := f.conns[id]; ok {
-		return core.DeviceState{Profile: p, Status: core.StatusConnected}, true
+		return core.DeviceState{Profile: p, Status: core.StatusConnected, StatusText: core.StatusConnected.String()}, true
 	}
 	return core.DeviceState{}, false
 }

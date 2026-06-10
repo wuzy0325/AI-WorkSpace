@@ -70,6 +70,7 @@ type TemperatureSnapshot struct {
 type DeviceState struct {
 	Profile      TemperatureProfile `json:"profile"`
 	Status       DeviceStatus       `json:"status"`
+	StatusText   string             `json:"statusText"`
 	Error        string             `json:"error"`
 	ConnectedAt  int64              `json:"connectedAt"`
 	AcquiringAt  int64              `json:"acquiringAt"`
@@ -84,6 +85,11 @@ type ScanResult struct {
 	MacAddress      string `json:"macAddress,omitempty"`
 	SerialNumber    string `json:"serialNumber,omitempty"`
 	FirmwareVersion string `json:"firmwareVersion,omitempty"`
+}
+
+func (s *DeviceState) SetStatus(status DeviceStatus) {
+	s.Status = status
+	s.StatusText = status.String()
 }
 
 func TimestampMs() int64 {

@@ -40,6 +40,7 @@ func (a *SimulatedAdapter) Connect(profile core.TemperatureProfile) error {
 	a.status[profile.ID] = &core.DeviceState{
 		Profile:     profile,
 		Status:      core.StatusConnected,
+		StatusText:  core.StatusConnected.String(),
 		ConnectedAt: core.TimestampMs(),
 	}
 	return nil
@@ -51,7 +52,7 @@ func (a *SimulatedAdapter) Disconnect(id string) error {
 
 	a.stopAcquisitionLocked(id)
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusDisconnected
+		st.SetStatus(core.StatusDisconnected)
 	}
 	return nil
 }
@@ -73,7 +74,7 @@ func (a *SimulatedAdapter) StartAcquisition(id string) (<-chan core.TemperatureS
 	a.stopChs[id] = done
 
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusAcquiring
+		st.SetStatus(core.StatusAcquiring)
 		st.AcquiringAt = core.TimestampMs()
 	}
 
@@ -118,7 +119,7 @@ func (a *SimulatedAdapter) stopAcquisitionLocked(id string) {
 		delete(a.channels, id)
 	}
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusConnected
+		st.SetStatus(core.StatusConnected)
 	}
 }
 
@@ -136,6 +137,7 @@ func (a *SimulatedAdapter) Status(id string) (core.DeviceState, bool) {
 	if !ok {
 		return core.DeviceState{}, false
 	}
+	st.StatusText = st.Status.String()
 	return *st, true
 }
 

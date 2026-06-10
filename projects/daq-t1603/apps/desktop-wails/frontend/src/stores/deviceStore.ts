@@ -256,14 +256,9 @@ export const useDeviceStore = defineStore('device', () => {
         'Starting',
       )
     } catch (err) {
-      const status = await bridge.getStatus(id).catch(() => false)
-      if (status && typeof status === 'object' && 'status' in status) {
-        const numericStatus = Number(status.status)
-        statusMap.value[id] = numericStatus === 1
-          ? 'Connected'
-          : numericStatus === 2
-            ? 'Acquiring'
-            : 'Disconnected'
+      const state = await bridge.getStatus(id).catch(() => false)
+      if (state && typeof state === 'object' && 'statusText' in state) {
+        statusMap.value[id] = (state as any).statusText
       }
       throw err
     }
@@ -279,14 +274,9 @@ export const useDeviceStore = defineStore('device', () => {
         'Stopping',
       )
     } catch (err) {
-      const status = await bridge.getStatus(id).catch(() => false)
-      if (status && typeof status === 'object' && 'status' in status) {
-        const numericStatus = Number(status.status)
-        statusMap.value[id] = numericStatus === 1
-          ? 'Connected'
-          : numericStatus === 2
-            ? 'Acquiring'
-            : 'Disconnected'
+      const state = await bridge.getStatus(id).catch(() => false)
+      if (state && typeof state === 'object' && 'statusText' in state) {
+        statusMap.value[id] = (state as any).statusText
       }
       throw err
     }
@@ -298,30 +288,6 @@ export const useDeviceStore = defineStore('device', () => {
       APPLY_CONFIG_TIMEOUT_MS,
       '应用配置超时，设备可能无响应',
     )
-  }
-
-  async function updateT1603Config(id: string, cfg: Partial<T1603Config>): Promise<void> {
-    const profile = profiles.value.find((p) => p.id === id)
-    if (!profile) return
-    const merged = { ...defaultT1603Config(), ...profile.t1603Config, ...cfg }
-    // 先更新本地状态，再持久化到后端
-    profile.t1603Config = merged
-    try {
-      await bridge.upsertProfile(profile)
-    } catch {
-      // 持久化失败时重新加载配置，恢复本地状态一致性
-      await loadProfiles()
-      throw new Error('保存配置失败')
-    }
-    // 仅在已连接且非采集状态时应用硬件配置，采集时硬件会拒绝
-    const status = statusMap.value[id]
-    if (status === 'Connected') {
-      await withTimeout(
-        bridge.applyConfig(id, merged),
-        APPLY_CONFIG_TIMEOUT_MS,
-        '应用配置超时，设备可能无响应',
-      )
-    }
   }
 
   async function updateChannel(id: string, index: number, patch: Partial<ChannelConfig>): Promise<void> {
@@ -407,7 +373,7 @@ export const useDeviceStore = defineStore('device', () => {
     selectedProfile, selectedSnapshot,
     selectDevice, statusFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
-    startAcquisition, stopAcquisition, applyConfig, updateT1603Config, updateChannel, saveProfile,
+    startAcquisition, stopAcquisition, applyConfig, updateChannel, saveProfile,
     clearScanResults, scanDevices, addProfile, removeProfile,
     setDisplayRefreshRateHz, stopDisplayFlush,
   }

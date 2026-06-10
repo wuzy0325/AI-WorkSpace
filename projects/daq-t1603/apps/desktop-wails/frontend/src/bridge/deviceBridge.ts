@@ -34,17 +34,6 @@ export interface T1603Config {
   autoConnect: boolean
 }
 
-export const TC_RANGES: Record<string, { min: number; max: number }> = {
-  K: { min: -200, max: 1372 },
-  J: { min: -210, max: 1200 },
-  T: { min: -270, max: 400 },
-  E: { min: -270, max: 1000 },
-  N: { min: -270, max: 1300 },
-  R: { min: -50, max: 1768 },
-  S: { min: -50, max: 1768 },
-  B: { min: 0, max: 1820 },
-}
-
 export interface TemperatureProfile {
   id: string
   name: string
@@ -59,6 +48,7 @@ export interface TemperatureProfile {
 export interface DeviceState {
   profile: TemperatureProfile
   status: number
+  statusText: string
   error: string
   connectedAt: number
   acquiringAt: number

@@ -85,5 +85,9 @@ func (uc *DeviceUsecase) ScanDevices() ([]core.ScanResult, error) {
 }
 
 func (uc *DeviceUsecase) ApplyConfig(id string, cfg core.T1603Config) error {
+	state, ok := uc.device.Status(id)
+	if ok && state.Status == core.StatusAcquiring {
+		return fmt.Errorf("cannot apply config while acquiring")
+	}
 	return uc.device.ApplyConfig(id, cfg)
 }

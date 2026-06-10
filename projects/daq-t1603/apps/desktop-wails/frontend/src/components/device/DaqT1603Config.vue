@@ -134,22 +134,21 @@ async function saveConfig() {
         thermocoupleType: channelTcTypes.value[index],
       })),
     }
-    // ① 保存配置到文件
     await deviceStore.saveProfile(nextProfile)
 
-    // ② 仅在硬件配置变更且设备已连接（非采集状态）时发送硬件命令
-    const status = deviceStore.statusFor(props.deviceId)
     const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
-    if (hwChanged && status === 'Connected') {
-      await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
+    if (hwChanged) {
+      try {
+        await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
+        saveMessage.value = '配置已保存并应用到设备'
+      } catch (hwErr) {
+        saveMessage.value = hwErr instanceof Error ? hwErr.message : '硬件配置应用失败'
+      }
+    } else {
+      saveMessage.value = '配置已保存'
     }
 
     saveStatus.value = 'success'
-    if (status === 'Acquiring') {
-      saveMessage.value = '配置已保存，硬件参数将在停止采集后生效'
-    } else {
-      saveMessage.value = '配置已保存并应用到设备'
-    }
     hasChanges.value = false
     setTimeout(() => { saveStatus.value = 'idle' }, 2000)
   } catch (err) {

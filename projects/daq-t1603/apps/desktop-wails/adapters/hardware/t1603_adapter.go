@@ -175,7 +175,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			close(ch)
 			delete(a.channels, profile.ID)
 		}
-		st.Status = core.StatusConnected
+		st.SetStatus(core.StatusConnected)
 		st.AcquiringAt = 0
 		a.mu.Unlock()
 	})
@@ -188,6 +188,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	a.status[profile.ID] = &core.DeviceState{
 		Profile:     profile,
 		Status:      core.StatusConnected,
+		StatusText:  core.StatusConnected.String(),
 		ConnectedAt: core.TimestampMs(),
 	}
 	return nil
@@ -205,7 +206,7 @@ func (a *T1603Adapter) Disconnect(id string) error {
 	delete(a.drivers, id)
 	delete(a.sinks, id)
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusDisconnected
+		st.SetStatus(core.StatusDisconnected)
 	}
 	return dev.Disconnect()
 }
@@ -236,7 +237,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 	a.sinks[id] = directSink
 
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusAcquiring
+		st.SetStatus(core.StatusAcquiring)
 		st.AcquiringAt = core.TimestampMs()
 	}
 	a.mu.Unlock()
@@ -268,7 +269,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		delete(a.stopChs, id)
 		delete(a.sinks, id)
 		if st, exists := a.status[id]; exists {
-			st.Status = core.StatusConnected
+			st.SetStatus(core.StatusConnected)
 			st.AcquiringAt = 0
 		}
 		a.mu.Unlock()
@@ -320,7 +321,7 @@ func (a *T1603Adapter) stopAcquisitionLocked(id string) error {
 	}
 
 	if st, exists := a.status[id]; exists {
-		st.Status = core.StatusConnected
+		st.SetStatus(core.StatusConnected)
 	}
 	return nil
 }
@@ -337,12 +338,14 @@ func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 	if hasDev {
 		ds := dev.Status()
 		if ds.Connection == sharedcore.ConnectionDisconnected {
-			st.Status = core.StatusDisconnected
+			st.SetStatus(core.StatusDisconnected)
 		} else if ds.Acquiring {
-			st.Status = core.StatusAcquiring
+			st.SetStatus(core.StatusAcquiring)
 		} else {
-			st.Status = core.StatusConnected
+			st.SetStatus(core.StatusConnected)
 		}
+	} else {
+		st.StatusText = st.Status.String()
 	}
 	return *st, true
 }
