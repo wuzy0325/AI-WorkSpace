@@ -1557,7 +1557,7 @@ function channelLabel(c: ChannelConfig): string {
   width: 100%; padding: 0.625rem 0.75rem;
   border-radius: 0.5rem; border: 1px solid var(--border-default);
   background: rgba(0, 0, 0, 0.2); color: var(--text-primary);
-  font: inherit; font-size: 0.85rem; font-weight: 700;
+  font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: 700;
   outline: none; transition: all 0.2s;
 }
 .editor-input:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
@@ -1566,7 +1566,8 @@ function channelLabel(c: ChannelConfig): string {
   display: flex; align-items: center;
   height: var(--space-10); font-weight: 700; color: var(--text-muted);
 }
-:root[data-theme='light'] .editor-input { background: rgba(255, 255, 255, 0.8); }
+:root[data-theme='light'] .editor-input { background: rgba(255, 255, 255, 0.9); border-color: var(--border-strong); color: #0f172a; }
+:root[data-theme='light'] .editor-input:focus { background: #ffffff; border-color: var(--accent-primary); }
 .editor-field-error { margin-top: 0.375rem; font-size: 0.65rem; font-weight: 700; color: var(--color-danger); }
 
 .editor-unit-row { display: flex; align-items: center; gap: 0.75rem; }
@@ -1643,7 +1644,8 @@ function channelLabel(c: ChannelConfig): string {
 .editor-ch-batch-input {
   width: 100%; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
   border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-size: 0.8rem; font-weight: 700; color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm); font-weight: 700; color: var(--text-primary);
   text-align: center; outline: none;
   transition: all 0.2s ease;
 }
@@ -1652,11 +1654,14 @@ function channelLabel(c: ChannelConfig): string {
 .editor-ch-batch-input-sm {
   width: 96px; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
   border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-size: 0.8rem; font-weight: 700; color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm); font-weight: 700; color: var(--text-primary);
   text-align: center; outline: none;
   transition: all 0.2s ease;
 }
 .editor-ch-batch-input-sm:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
+:root[data-theme='light'] .editor-ch-batch-input { color: #0f172a; }
+:root[data-theme='light'] .editor-ch-batch-input-sm { color: #0f172a; }
 .editor-ch-batch-precision { display: flex; align-items: center; gap: 0.75rem; }
 .editor-ch-batch-hint { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); }
 .editor-label-sub {
@@ -1722,7 +1727,8 @@ function channelLabel(c: ChannelConfig): string {
   border-radius: 0.375rem;
   border: 1px solid transparent;
   background: transparent;
-  font-size: 0.8rem;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
   outline: none;
@@ -1739,6 +1745,8 @@ function channelLabel(c: ChannelConfig): string {
   opacity: 0.5;
   cursor: not-allowed;
 }
+:root[data-theme='light'] .editor-ch-input { color: #0f172a; }
+:root[data-theme='light'] .editor-ch-input:focus { background: #ffffff; }
 .editor-ch-range {
   display: flex;
   align-items: center;
@@ -1751,7 +1759,8 @@ function channelLabel(c: ChannelConfig): string {
   border-radius: 0.375rem;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-size: 0.75rem;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
   text-align: right;
@@ -1766,6 +1775,8 @@ function channelLabel(c: ChannelConfig): string {
   opacity: 0.5;
   cursor: not-allowed;
 }
+:root[data-theme='light'] .editor-ch-range-input { color: #0f172a; }
+:root[data-theme='light'] .editor-ch-range-input:focus { background: #ffffff; }
 .editor-ch-tc {
   padding: 0.375rem 0.5rem;
   border-radius: 0.375rem;
@@ -1797,7 +1808,8 @@ function channelLabel(c: ChannelConfig): string {
   border-radius: 0.375rem;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-size: 0.75rem;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
   text-align: right;
@@ -1812,6 +1824,8 @@ function channelLabel(c: ChannelConfig): string {
   opacity: 0.5;
   cursor: not-allowed;
 }
+:root[data-theme='light'] .editor-ch-precision-input { color: #0f172a; }
+:root[data-theme='light'] .editor-ch-precision-input:focus { background: #ffffff; }
 
 .font-mono { font-family: ui-monospace, monospace; }
 .text-center { text-align: center; }
