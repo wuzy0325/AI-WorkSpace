@@ -240,18 +240,23 @@ function activePageLabel(): string {
   border-radius: 0.5rem;
   border: none;
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: #94a3b8;
   cursor: pointer;
   transition: all 0.2s ease;
   letter-spacing: 0.02em;
 }
 
+:root[data-theme='light'] .main-topbar__nav-btn {
+  color: #475569;
+}
+
 .main-topbar__nav-btn:hover {
-  color: var(--text-primary);
+  color: #e2e8f0;
   background: rgba(255, 255, 255, 0.05);
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn:hover {
+  color: #1e293b;
   background: rgba(0, 0, 0, 0.04);
 }
 
@@ -264,7 +269,7 @@ function activePageLabel(): string {
 
 :root[data-theme='light'] .main-topbar__nav-btn--active {
   background: rgba(255, 255, 255, 0.9) !important;
-  color: var(--bg-app) !important;
+  color: #0f172a !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -347,7 +352,7 @@ function activePageLabel(): string {
   padding: 0.375rem 0.75rem;
   font-size: 0.6875rem;
   font-weight: 500;
-  color: var(--text-secondary, #94a3b8);
+  color: #94a3b8;
   border-radius: 0.5rem;
   transition: all 0.2s ease;
   border: none;
@@ -356,12 +361,17 @@ function activePageLabel(): string {
   letter-spacing: 0.02em;
 }
 
+:root[data-theme='light'] .main-topbar__locale-btn {
+  color: #475569;
+}
+
 .main-topbar__locale-btn:hover {
-  color: var(--text-primary);
+  color: #e2e8f0;
   background: rgba(255, 255, 255, 0.05);
 }
 
 :root[data-theme='light'] .main-topbar__locale-btn:hover {
+  color: #1e293b;
   background: rgba(0, 0, 0, 0.04);
 }
 
@@ -374,7 +384,7 @@ function activePageLabel(): string {
 
 :root[data-theme='light'] .main-topbar__locale-btn--active {
   background: rgba(255, 255, 255, 0.9) !important;
-  color: var(--bg-app) !important;
+  color: #0f172a !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
