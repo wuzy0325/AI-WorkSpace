@@ -51,14 +51,13 @@ function displayStatusLabel(profileId: string): string {
     <!-- Header -->
     <div class="device-sidebar__header">
       <span class="device-sidebar__title">{{ t?.deviceList || '设备列表' }}</span>
-      <UiButton
-        size="sm"
+      <button
         class="device-sidebar__manage-btn"
         @click="emit('open-manage')"
         :title="t?.manage || '管理设备'"
       >
         {{ t?.manage || '管理' }}
-      </UiButton>
+      </button>
     </div>
 
     <!-- Device List -->
@@ -68,10 +67,10 @@ function displayStatusLabel(profileId: string): string {
       </div>
 
       <template v-else>
-        <UiButton
+        <button
           v-for="p in deviceStore.profiles"
           :key="p.id"
-          text
+          type="button"
           data-test="device-sidebar-item"
           class="device-sidebar__item"
           :class="{
@@ -92,11 +91,11 @@ function displayStatusLabel(profileId: string): string {
             class="device-sidebar__item-status"
             :class="statusTextClass(p.id)"
           >
-            <span v-if="deviceStore.acquiringFor(p.id)" class="w-3 h-3 mr-1 rounded-[2px] device-status--acquiring-icon"></span>
-            <CheckCircle2 v-else-if="deviceStore.statusFor(p.id) === 'Connected'" class="w-3 h-3 mr-1" />
+            <span v-if="deviceStore.acquiringFor(p.id)" class="device-status--acquiring-icon"></span>
+            <CheckCircle2 v-else-if="deviceStore.statusFor(p.id) === 'Connected'" class="device-sidebar__status-icon" />
             {{ displayStatusLabel(p.id) }}
           </div>
-        </UiButton>
+        </button>
       </template>
     </div>
   </aside>
@@ -133,26 +132,37 @@ function displayStatusLabel(profileId: string): string {
 .device-sidebar__title {
   font-size: var(--font-size-sm);
   font-weight: 700;
-  color: #64748b;
+  color: var(--text-secondary, #94a3b8);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-:deep(.device-sidebar__manage-btn) {
+:root[data-theme='light'] .device-sidebar__title {
+  color: var(--text-secondary, #475569);
+}
+
+.device-sidebar__manage-btn {
   padding: var(--space-1) var(--space-3);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-xs);
   font-weight: 600;
+  color: var(--text-secondary, #94a3b8);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-:root[data-theme='light'] :deep(.device-sidebar__manage-btn) {
+:root[data-theme='light'] .device-sidebar__manage-btn {
+  color: var(--text-secondary, #475569);
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
-:deep(.device-sidebar__manage-btn):hover {
+.device-sidebar__manage-btn:hover {
   color: var(--accent-primary);
   background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
@@ -174,39 +184,47 @@ function displayStatusLabel(profileId: string): string {
   color: #64748b;
 }
 
-:deep(.device-sidebar__item) {
+.device-sidebar__item {
   width: 100%;
   text-align: left;
   padding: var(--space-3);
   background: rgba(30, 41, 59, 0.4);
   border: 1px solid transparent;
+  border-radius: var(--radius-lg);
   cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: stretch;
+  justify-content: flex-start;
+  height: auto;
 }
 
-:root[data-theme='light'] :deep(.device-sidebar__item) {
+:root[data-theme='light'] .device-sidebar__item {
   background: rgba(255, 255, 255, 0.6);
 }
 
-:deep(.device-sidebar__item):hover {
+.device-sidebar__item:hover {
   background: rgba(30, 41, 59, 0.6);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-:root[data-theme='light'] :deep(.device-sidebar__item):hover {
+:root[data-theme='light'] .device-sidebar__item:hover {
   background: rgba(255, 255, 255, 0.8);
   border-color: rgba(0, 0, 0, 0.05);
 }
 
-:deep(.device-sidebar__item--active) {
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
+.device-sidebar__item--active {
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
-:deep(.device-sidebar__item--error) {
+.device-sidebar__item--error {
   border-color: rgba(244, 63, 94, 0.2);
 }
 
-:deep(.device-sidebar__item--error):hover {
+.device-sidebar__item--error:hover {
   border-color: rgba(244, 63, 94, 0.4);
 }
 
@@ -214,7 +232,8 @@ function displayStatusLabel(profileId: string): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-1);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .device-sidebar__item-name {
@@ -224,6 +243,8 @@ function displayStatusLabel(profileId: string): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 
 :root[data-theme='light'] .device-sidebar__item-name {
@@ -274,6 +295,9 @@ function displayStatusLabel(profileId: string): string {
 
 .device-status--acquiring-icon {
   display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
   background: var(--accent-primary);
   animation: breathe 1.5s ease-in-out infinite;
 }
@@ -296,11 +320,20 @@ function displayStatusLabel(profileId: string): string {
   color: #64748b;
 }
 
+
+
 .device-sidebar__item-status {
   display: flex;
   align-items: center;
+  gap: var(--space-1);
   font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.device-sidebar__status-icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex-shrink: 0;
 }
 </style>

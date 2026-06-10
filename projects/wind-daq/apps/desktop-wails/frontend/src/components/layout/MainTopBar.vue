@@ -2,7 +2,6 @@
 import { storeToRefs } from 'pinia'
 import { useThemeStore } from '@stores/themeStore'
 import { Sun, Moon, Activity } from '@lucide/vue'
-import UiButton from '@components/ui/UiButton.vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 type MainViewMode = 'chart' | 'table' | 'both' | 'overview'
@@ -68,16 +67,15 @@ function activePageLabel(): string {
 
       <!-- Navigation -->
       <nav v-if="activePage === 'dashboard'" class="main-topbar__nav">
-        <UiButton
+        <button
           v-for="mode in dashboardModes"
           :key="mode"
-          size="sm"
           class="main-topbar__nav-btn"
           :class="{ 'main-topbar__nav-btn--active': viewMode === mode }"
           @click="emit('set-view-mode', mode)"
         >
           {{ modeLabel(mode) }}
-        </UiButton>
+        </button>
       </nav>
       <div v-else class="main-topbar__nav">
         <div class="main-topbar__nav-btn main-topbar__nav-btn--active">
@@ -114,22 +112,20 @@ function activePageLabel(): string {
 
         <!-- Locale Switch -->
         <div class="main-topbar__locale">
-          <UiButton
-            size="sm"
+          <button
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'zh' }"
             @click="emit('set-locale', 'zh')"
           >
             中文
-          </UiButton>
-          <UiButton
-            size="sm"
+          </button>
+          <button
             class="main-topbar__locale-btn"
             :class="{ 'main-topbar__locale-btn--active': locale === 'en' }"
             @click="emit('set-locale', 'en')"
           >
             EN
-          </UiButton>
+          </button>
         </div>
 
         <!-- Version -->
@@ -223,30 +219,61 @@ function activePageLabel(): string {
 .main-topbar__nav {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.125rem;
   padding: 0.25rem;
   background: rgba(0, 0, 0, 0.2);
-  border-radius: 0.5rem;
+  border-radius: 0.625rem;
   flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 :root[data-theme='light'] .main-topbar__nav {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .main-topbar__nav-btn {
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.02em;
 }
 
-:deep(.main-topbar__nav-btn--active) {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
-  color: var(--accent-primary) !important;
+.main-topbar__nav-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
 }
 
-:deep(.main-topbar__nav-btn--active:hover) {
-  color: var(--accent-primary) !important;
+:root[data-theme='light'] .main-topbar__nav-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.main-topbar__nav-btn--active {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-primary) !important;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme='light'] .main-topbar__nav-btn--active {
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--bg-app) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.main-topbar__nav-btn--active:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+:root[data-theme='light'] .main-topbar__nav-btn--active:hover {
+  background: rgba(255, 255, 255, 1) !important;
 }
 
 .main-topbar__actions {
@@ -304,29 +331,59 @@ function activePageLabel(): string {
 .main-topbar__locale {
   display: flex;
   align-items: center;
-  padding: 0.125rem;
+  padding: 0.25rem;
   background: rgba(0, 0, 0, 0.2);
-  border-radius: 0.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.625rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 0.125rem;
 }
 
 :root[data-theme='light'] .main-topbar__locale {
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .main-topbar__locale-btn {
-  padding: 0.25rem 0.625rem;
-  font-size: 0.625rem;
-  font-weight: 700;
-  color: #64748b;
-  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-secondary, #94a3b8);
+  border-radius: 0.5rem;
   transition: all 0.2s ease;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  letter-spacing: 0.02em;
 }
 
-:deep(.main-topbar__locale-btn--active) {
-  background: #10b981 !important;
-  color: white !important;
+.main-topbar__locale-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme='light'] .main-topbar__locale-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.main-topbar__locale-btn--active {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-primary) !important;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme='light'] .main-topbar__locale-btn--active {
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--bg-app) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.main-topbar__locale-btn--active:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+:root[data-theme='light'] .main-topbar__locale-btn--active:hover {
+  background: rgba(255, 255, 255, 1) !important;
 }
 
 .main-topbar__version {
