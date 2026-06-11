@@ -7,6 +7,8 @@
 @import './styles/themes/dark.css';
 @import './styles/themes/light.css';
 @import './styles/glass.css';
+@import './styles/utilities/scrollbar.css';
+@import './styles/utilities/config-form.css';
 
 @import 'tailwindcss';
 

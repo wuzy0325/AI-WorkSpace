@@ -20,15 +20,16 @@ function toggleLanguage(): void {
 </script>
 
 <template>
-  <div data-test="motion-shell" class="bg-[color:var(--bg-canvas)] text-[color:var(--text-primary)] font-sans flex flex-col overflow-hidden" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
-    <header class="glass-header flex items-center justify-between shrink-0 motion-view-header">
-      <div>
-        <h1 class="text-sm font-bold tracking-tight text-[color:var(--text-primary)]">运动控制器</h1>
-        <p class="text-[10px] font-semibold tracking-wider text-[color:var(--text-muted)]">{{ embedded ? '轴控制与监控' : '独立窗口 · 轴控制与监控' }}</p>
+  <div data-test="motion-shell" class="motion-view" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
+    <!-- 顶部标题栏 -->
+    <header class="motion-view-header">
+      <div class="motion-view-header-left">
+        <h1 class="motion-view-title">运动控制器</h1>
+        <p class="motion-view-subtitle">{{ embedded ? '轴控制与监控' : '独立窗口 · 轴控制与监控' }}</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="motion-view-header-actions">
         <button
-          class="h-8 w-8 rounded-md text-sm transition-all border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)] active:scale-95 flex items-center justify-center"
+          class="header-action-btn"
           :title="theme.mode === 'dark' ? i18n.t.switchToLightTheme : i18n.t.switchToDarkTheme"
           @click="theme.toggleTheme"
         >
@@ -36,7 +37,7 @@ function toggleLanguage(): void {
           <Moon v-else class="w-4 h-4" />
         </button>
         <button
-          class="h-8 px-3 rounded-md text-xs font-semibold transition-all border border-[color:var(--border-default)] text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] hover:bg-[color:var(--bg-panel-strong)] active:scale-95"
+          class="header-action-btn header-action-btn--text"
           :title="i18n.locale === 'zh' ? i18n.t.switchToEnglish : i18n.t.switchToChinese"
           @click="toggleLanguage"
         >
@@ -44,17 +45,107 @@ function toggleLanguage(): void {
         </button>
       </div>
     </header>
-    <main class="flex-1 min-h-0 bg-[color:var(--bg-canvas)] motion-view-content">
+
+    <!-- 主内容区 -->
+    <main class="motion-view-main">
       <MotionControlPanel />
     </main>
   </div>
 </template>
 
 <style scoped>
-.motion-view-header {
-  padding: var(--space-3) var(--space-5);
+/* ============================================================
+   主视图容器
+   ============================================================ */
+.motion-view {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-family-sans, 'Microsoft YaHei UI', sans-serif);
 }
-.motion-view-content {
-  padding: var(--layout-content-padding);
+
+/* ============================================================
+   顶部标题栏
+   ============================================================ */
+.motion-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.motion-view-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.motion-view-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.motion-view-subtitle {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.motion-view-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 头部操作按钮 */
+.header-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  min-width: 2rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border-default);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.header-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+}
+
+.header-action-btn:active {
+  transform: scale(0.95);
+}
+
+.header-action-btn--text {
+  padding: 0 var(--space-3);
+}
+
+/* ============================================================
+   主内容区
+   ============================================================ */
+.motion-view-main {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-canvas);
 }
 </style>

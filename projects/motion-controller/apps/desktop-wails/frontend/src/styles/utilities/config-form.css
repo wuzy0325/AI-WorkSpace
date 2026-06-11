@@ -1,0 +1,53 @@
+/* ============================================================
+   配置表单共享样式
+   用于 AxisConfigCard、EncoderCompensationEditor、ConnectionConfigEditor
+   等配置面板中的输入框和选择框
+   ============================================================ */
+
+/* 配置输入框/选择框基础样式 */
+.config-input,
+.config-select {
+  width: 100%;
+  height: 1.75rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--easing-standard),
+              box-shadow var(--motion-fast) var(--easing-standard);
+  box-sizing: border-box;
+}
+
+.config-select {
+  cursor: pointer;
+}
+
+.config-input:focus,
+.config-select:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-primary-muted);
+}
+
+.config-input:disabled,
+.config-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 配置字段标签 */
+.config-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 配置字段容器 */
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

@@ -345,7 +345,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
           leave-to-class="opacity-0 scale-95 translate-y-4"
         >
           <div v-show="open" class="config-panel" @click.stop>
-            <!-- -- Header -- -->
+            <!-- 面板头部 -->
             <header class="config-panel__header">
               <div class="config-panel__header-left">
                 <div class="config-panel__title-row">
@@ -353,7 +353,6 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                     <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><circle cx="6" cy="6" r="1" /><circle cx="6" cy="18" r="1" />
                   </svg>
                   <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
-                  <!-- New-mode pulse indicator -->
                   <span v-if="isCreatingNew" class="creation-badge">
                     <span class="creation-badge__dot"></span>
                     新建中
@@ -361,18 +360,16 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                 </div>
                 <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
               </div>
-              <div class="config-panel__header-right">
-                <button class="config-panel__close" @click="tryClose">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 6L6 18M6 6l12 12"/>
-                  </svg>
-                </button>
-              </div>
+              <button class="config-panel__close" @click="tryClose">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
             </header>
 
-            <!-- -- Body -- -->
+            <!-- 面板主体 -->
             <div class="config-panel__body">
-              <!-- Sidebar -->
+              <!-- 侧边栏 -->
               <div class="sidebar-area">
                 <ProfileSidebar
                   :profiles="motion.profiles"
@@ -380,16 +377,15 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                   @select="onProfileSelect"
                   @add="onProfileAdd"
                 />
-                <!-- Sidebar bottom creation indicator -->
                 <div v-if="isCreatingNew" class="creation-indicator">
                   <span class="creation-indicator__dot"></span>
                   <span class="creation-indicator__text">新建中</span>
                 </div>
               </div>
 
-              <!-- Config content area -->
-              <main class="config-content">
-                <!-- Validation error banner -->
+              <!-- 配置内容区 -->
+              <main class="config-content custom-scrollbar">
+                <!-- 验证错误横幅 -->
                 <div v-if="validationErrorCount > 0" class="validation-banner">
                   <svg class="validation-banner__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -397,63 +393,36 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                   <span>{{ validationErrorCount }} 项验证错误需要修正</span>
                 </div>
 
-                <!-- Basic info section -->
-                <div class="config-section">
-                  <h3 class="config-section__title">
-                    <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                    </svg>
-                    基本信息
-                  </h3>
+                <!-- 基本信息区域 -->
+                <section class="config-section">
+                  <h3 class="config-section__title">基本信息</h3>
                   <div class="form-grid">
-                    <!-- Name -->
-                    <UiInput
-                      v-model="editing.name"
-                      label="名称"
-                      placeholder="控制器名称"
-                      :error="fieldErrors.name"
-                    />
-                    <!-- Type -->
-                    <div class="ui-field">
-                      <label class="ui-field__label">类型</label>
-                      <UiSelect
-                        v-model="editing.type"
-                        :options="controllerTypeOptions"
-                        compact
-                      />
+                    <div class="form-field">
+                      <label class="form-field__label">名称</label>
+                      <UiInput v-model="editing.name" placeholder="控制器名称" :error="fieldErrors.name" compact />
                     </div>
-                    <!-- Address -->
-                    <UiInput
-                      v-model="editing.address"
-                      label="地址"
-                      placeholder="127.0.0.1"
-                      :error="fieldErrors.address"
-                    />
-                    <!-- Port -->
-                    <UiInput
-                      v-model="editing.port"
-                      type="number"
-                      label="端口"
-                      :min="1"
-                      :max="65535"
-                      :step="1"
-                      :error="fieldErrors.port"
-                    />
-                    <!-- Auto-connect toggle -->
-                    <div class="config-field config-field--toggle">
-                      <label class="config-field__label">自动连接</label>
+                    <div class="form-field">
+                      <label class="form-field__label">类型</label>
+                      <UiSelect v-model="editing.type" :options="controllerTypeOptions" compact />
+                    </div>
+                    <div class="form-field">
+                      <label class="form-field__label">地址</label>
+                      <UiInput v-model="editing.address" placeholder="127.0.0.1" :error="fieldErrors.address" compact />
+                    </div>
+                    <div class="form-field">
+                      <label class="form-field__label">端口</label>
+                      <UiInput v-model="editing.port" type="number" :min="1" :max="65535" :step="1" :error="fieldErrors.port" compact />
+                    </div>
+                    <div class="form-field form-field--toggle">
+                      <label class="form-field__label">自动连接</label>
                       <UiToggle v-model="editing.autoConnect" />
                     </div>
                   </div>
-                </div>
+                </section>
 
-                <!-- Axis config section -->
-                <div class="config-section">
-                  <h3 class="config-section__title">
-                    <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
-                    轴配置
-                    <span class="section-subtitle">配置每个轴的机械和电气参数</span>
-                  </h3>
+                <!-- 轴配置区域 -->
+                <section class="config-section">
+                  <h3 class="config-section__title">轴配置</h3>
                   <div class="axis-matrix">
                     <AxisConfigCard
                       v-for="(axis, index) in editing.axes"
@@ -463,24 +432,25 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                       @update="onAxisUpdate"
                     />
                   </div>
-                </div>
+                </section>
 
-                <!-- Encoder compensation -->
-                <EncoderCompensationEditor
-                  :axes="editing.axes"
-                  :controller-type="editing.type"
-                  @update-enc-comp="onUpdateEncComp"
-                />
+                <!-- 编码器补偿区域 -->
+                <section class="config-section config-section--last">
+                  <EncoderCompensationEditor
+                    :axes="editing.axes"
+                    :controller-type="editing.type"
+                    @update-enc-comp="onUpdateEncComp"
+                  />
+                </section>
               </main>
             </div>
 
-            <!-- -- Footer actions -- -->
+            <!-- 底部操作栏 -->
             <footer class="config-panel__footer">
               <div class="config-panel__footer-left">
                 <UiButton v-if="isEdit" variant="danger" size="sm" @click="remove(editing.id)">
                   删除
                 </UiButton>
-                <!-- Dirty state indicator -->
                 <span v-if="isDirty" class="dirty-indicator">
                   <span class="dirty-indicator__dot"></span>
                   未保存
@@ -529,7 +499,9 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
 </template>
 
 <style scoped>
-/* -- Overlay -- */
+/* ============================================================
+   遮罩层
+   ============================================================ */
 .config-overlay {
   position: fixed;
   inset: 0;
@@ -537,93 +509,109 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-4);
+  padding: var(--space-5);
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
 }
 
-/* -- Panel container -- */
+/* ============================================================
+   配置面板容器
+   ============================================================ */
 .config-panel {
   width: 100%;
-  max-width: 960px;
-  max-height: 640px;
+  max-width: 900px;
+  max-height: 600px;
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
-  box-shadow: 0 24px 64px -20px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-panel);
   outline: none;
+  overflow: hidden;
 }
 
-/* -- Header -- */
+/* ============================================================
+   面板头部
+   ============================================================ */
 .config-panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  flex-shrink: 0;
 }
+
 .config-panel__header-left {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: var(--space-0-5);
 }
-.config-panel__header-right {
-  display: flex;
-  align-items: center;
-}
+
 .config-panel__title-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
+
 .config-panel__title-icon {
   width: 1rem;
   height: 1rem;
   color: var(--accent-success);
   flex-shrink: 0;
 }
+
 .config-panel__title {
-  font-size: 1rem;
+  font-size: 0.875rem;
   font-weight: 700;
   color: var(--text-primary);
 }
+
 .config-panel__subtitle {
-  font-size: 0.7rem;
+  font-size: 0.6875rem;
   color: var(--text-muted);
   padding-left: 1.5rem;
 }
+
 .config-panel__close {
   width: 1.75rem;
   height: 1.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-md);
   color: var(--text-muted);
   background: var(--bg-panel-strong);
-  transition: all 0.2s ease;
-}
-.config-panel__close:hover {
-  color: var(--accent-success);
-  background: color-mix(in srgb, var(--accent-success) 15%, transparent);
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
 }
 
-/* -- Creation badge -- */
+.config-panel__close:hover {
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-danger) 30%, transparent);
+}
+
+/* ============================================================
+   新建状态徽章
+   ============================================================ */
 .creation-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.125rem 0.5rem;
-  border-radius: 9999px;
-  font-size: 0.6rem;
+  gap: var(--space-1);
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: 0.625rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent-success);
   background: color-mix(in srgb, var(--accent-success) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-success) 25%, transparent);
 }
+
 .creation-badge__dot {
   width: 6px;
   height: 6px;
@@ -631,38 +619,47 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   background: var(--accent-success);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
 }
 
-/* -- Body -- */
+/* ============================================================
+   面板主体
+   ============================================================ */
 .config-panel__body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
-/* -- Sidebar area -- */
+/* ============================================================
+   侧边栏区域
+   ============================================================ */
 .sidebar-area {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  width: 12rem;
+  border-right: 1px solid var(--border-default);
+  background: var(--bg-panel-strong);
 }
 
-/* -- Sidebar bottom creation indicator -- */
+/* 侧边栏底部新建指示器 */
 .creation-indicator {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 0.75rem;
-  border-right: 1px solid var(--border-default);
+  gap: var(--space-1-5);
+  padding: var(--space-2) var(--space-3);
   border-top: 1px dashed color-mix(in srgb, var(--accent-success) 30%, var(--border-default));
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--accent-success);
   background: color-mix(in srgb, var(--accent-success) 5%, transparent);
 }
+
 .creation-indicator__dot {
   width: 6px;
   height: 6px;
@@ -670,134 +667,187 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   background: var(--accent-success);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
 .creation-indicator__text {
   letter-spacing: 0.03em;
 }
 
-/* -- Config content area -- */
+/* ============================================================
+   配置内容区
+   ============================================================ */
 .config-content {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 
-/* -- Validation banner -- */
+/* ============================================================
+   验证错误横幅
+   ============================================================ */
 .validation-banner {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 0.75rem;
-  border-radius: 0.375rem;
-  font-size: 0.7rem;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--accent-danger);
   background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
+
 .validation-banner__icon {
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
 }
 
-/* -- Config section -- */
+/* ============================================================
+   配置区域
+   ============================================================ */
 .config-section {
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
+
+.config-section--last {
+  margin-bottom: 0;
+}
+
 .config-section__title {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-bottom: 0.625rem;
+  margin: 0;
 }
+
 .section-subtitle {
   display: inline;
-  font-size: 0.6rem;
+  font-size: 0.625rem;
   font-weight: 400;
   color: var(--text-muted);
   text-transform: none;
   letter-spacing: normal;
-  margin-left: 0.5rem;
+  margin-left: var(--space-2);
 }
 
-/* -- Form grid -- */
+/* ============================================================
+   表单网格
+   ============================================================ */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.5rem 0.625rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3) var(--space-4);
 }
 
-/* -- Auto-connect switch -- */
-.config-field--toggle {
-  grid-column: span 2;
+@media (min-width: 768px) {
+  .form-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+.form-field {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.form-field__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.form-field--toggle {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 0.375rem 0;
-}
-.config-field__label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted);
+  gap: var(--space-2);
 }
 
+.form-field--toggle .form-field__label {
+  margin: 0;
+}
 
-/* -- Axis matrix -- */
+/* ============================================================
+   轴配置矩阵
+   ============================================================ */
 .axis-matrix {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.625rem;
+  grid-template-columns: repeat(1, 1fr);
+  gap: var(--space-3);
 }
 
-/* -- Footer actions -- */
+@media (min-width: 640px) {
+  .axis-matrix {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================================
+   底部操作栏
+   ============================================================ */
 .config-panel__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  gap: var(--space-3);
 }
+
 .config-panel__footer-left,
 .config-panel__footer-right {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
-/* -- Dirty state indicator -- */
+/* ============================================================
+   未保存状态指示器
+   ============================================================ */
 .dirty-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  font-size: 0.65rem;
+  gap: var(--space-1-5);
+  font-size: 0.75rem;
   font-weight: 600;
-  color: color-mix(in srgb, var(--accent-danger) 80%, var(--text-muted));
+  color: var(--accent-danger);
 }
+
 .dirty-indicator__dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent-danger);
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* -- Tooltip overlay -- */
+/* ============================================================
+   Tooltip 覆盖层
+   ============================================================ */
 .field-tooltip {
   position: fixed;
   z-index: 9999;
-  padding: 0.375rem 0.625rem;
-  border-radius: 0.25rem;
-  font-size: 0.65rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-app) 95%, transparent);
+  background: var(--bg-app);
   border: 1px solid var(--border-default);
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-panel);
 }
 </style>

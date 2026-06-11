@@ -1,299 +1,384 @@
 <script setup lang="ts">
-import { inject, reactive, watch, computed } from 'vue'
-import type { AxisConfig, AxisEncoderCompensationConfig, MotionControllerType } from '@shared/types/motion'
-import { getAxisThemeClass, defaultEncComp } from './motionConfigEditor'
-import UiToggle from '@components/ui/UiToggle.vue'
+import { reactive, watch, computed } from 'vue'
+import type { AxisConfig, AxisEncoderCompensationConfig } from '@shared/types/motion'
+import { defaultEncComp } from './motionConfigEditor'
+
+interface AxisCompState {
+  enabled: boolean
+  preset: string
+  customParams: AxisEncoderCompensationConfig
+}
 
 const props = defineProps<{
   axes: AxisConfig[]
-  controllerType: MotionControllerType
+  controllerType: string
 }>()
 
 const emit = defineEmits<{
-  updateEncComp: [index: number, value: AxisEncoderCompensationConfig]
+  'update-enc-comp': [index: number, value: AxisEncoderCompensationConfig]
 }>()
 
-const tooltip = inject<(text: string, event: MouseEvent) => void>('showTooltip', () => {})
-const hideTooltip = inject<() => void>('hideTooltip', () => {})
+// 使用 reactive Record 替代 ref(Map)，确保属性赋值触发 Vue 响应式更新
+const axisConfigs: Record<string, AxisCompState> = reactive({})
 
-// 是否为 B140 控制器（只有 B140 才支持编码器补偿）
-const isB140 = computed(() => props.controllerType === 'B140-MC')
+// 初始化轴配置
+watch(() => props.axes, (axes) => {
+  for (const axis of axes) {
+    if (!axisConfigs[axis.name]) {
+      const defaultConfig = axis.encoderCompensation || defaultEncComp()
+      axisConfigs[axis.name] = {
+        enabled: defaultConfig.enabled ?? false,
+        preset: 'default',
+        customParams: { ...defaultConfig }
+      }
+    }
+  }
+}, { immediate: true })
 
-// 筛选出使用编码器的轴（只有编码器轴才支持补偿）
-const encoderAxes = computed(() =>
-  props.axes.filter((axis) => axis.positionSource === 'encoder')
-)
+const presetOptions = [
+  { label: '默认', value: 'default' },
+  { label: '高精度', value: 'high_precision' },
+  { label: '高速', value: 'high_speed' },
+  { label: '自定义', value: 'custom' }
+]
 
-const rawValues = reactive<Record<string, string>>({})
-
-// 根据轴名查找在 props.axes 中的索引
-function findAxisIndex(axisName: string): number {
-  return props.axes.findIndex((a) => a.name === axisName)
+// 预设配置
+const COMPENSATION_PRESETS: Record<string, AxisEncoderCompensationConfig> = {
+  default: { enabled: true, tolerance: 0.01, maxCycles: 10, settleMs: 100, minStep: 0.001, timeoutMs: 5000 },
+  high_precision: { enabled: true, tolerance: 0.001, maxCycles: 20, settleMs: 200, minStep: 0.0001, timeoutMs: 10000 },
+  high_speed: { enabled: true, tolerance: 0.05, maxCycles: 5, settleMs: 50, minStep: 0.01, timeoutMs: 3000 },
 }
 
-function getEncComp(axisName: string): AxisEncoderCompensationConfig {
-  const axis = props.axes.find((a) => a.name === axisName)
-  return axis?.encoderCompensation ?? defaultEncComp()
+const DEFAULT_STATE: AxisCompState = {
+  enabled: false,
+  preset: 'default',
+  customParams: { enabled: false, tolerance: 0.01, maxCycles: 10, settleMs: 100, minStep: 0.001, timeoutMs: 5000 }
 }
 
-function setEncComp(axisName: string, v: AxisEncoderCompensationConfig): void {
-  const index = findAxisIndex(axisName)
-  if (index >= 0) emit('updateEncComp', index, v)
+function getAxisConfig(axisName: string): AxisCompState {
+  return axisConfigs[axisName] || DEFAULT_STATE
 }
 
-function getRawValue(axisName: string, field: keyof AxisEncoderCompensationConfig): string {
-  const key = `${axisName}-${field}`
-  return rawValues[key] ?? String(getEncComp(axisName)[field] ?? '')
+function getAxisIndex(axisName: string): number {
+  return props.axes.findIndex(a => a.name === axisName)
 }
 
-function setRawValue(axisName: string, field: keyof AxisEncoderCompensationConfig, raw: string): void {
-  const key = `${axisName}-${field}`
-  rawValues[key] = raw
-  const num = raw === '' ? undefined : Number(raw)
-  if (num !== undefined && !isNaN(num)) {
-    setEncComp(axisName, { ...getEncComp(axisName), [field]: num })
+function onToggle(axisName: string, enabled: boolean) {
+  const config = getAxisConfig(axisName)
+  // 直接赋值触发 reactive 响应式更新
+  axisConfigs[axisName] = { ...config, enabled }
+
+  const preset = config.preset === 'custom'
+    ? config.customParams
+    : COMPENSATION_PRESETS[config.preset] || COMPENSATION_PRESETS.default
+
+  emit('update-enc-comp', getAxisIndex(axisName), { ...preset, enabled })
+}
+
+function onPresetChange(axisName: string, presetKey: string) {
+  const config = getAxisConfig(axisName)
+  axisConfigs[axisName] = { ...config, preset: presetKey }
+
+  if (config.enabled) {
+    const preset = presetKey === 'custom'
+      ? config.customParams
+      : COMPENSATION_PRESETS[presetKey] || COMPENSATION_PRESETS.default
+    emit('update-enc-comp', getAxisIndex(axisName), { ...preset, enabled: true })
   }
 }
 
-function clearRawValues(): void {
-  for (const k in rawValues) delete rawValues[k]
+function onCustomParamChange(axisName: string, key: keyof AxisEncoderCompensationConfig, value: number | boolean) {
+  const config = getAxisConfig(axisName)
+  const newCustomParams = { ...config.customParams, [key]: value }
+  axisConfigs[axisName] = {
+    ...config,
+    preset: 'custom',
+    customParams: newCustomParams
+  }
+
+  if (config.enabled) {
+    emit('update-enc-comp', getAxisIndex(axisName), { ...newCustomParams, enabled: true })
+  }
 }
 
-watch(() => props.axes, clearRawValues, { deep: true })
+const enabledAxes = computed(() => {
+  return props.axes.filter(axis => axisConfigs[axis.name]?.enabled)
+})
 </script>
 
 <template>
-  <div class="config-section">
-    <h3 class="config-section__title">
-      <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
-      编码器补偿
-      <span class="section-subtitle">补偿机械间隙和反向间隙</span>
-    </h3>
-
-    <!-- 非 B140 控制器：显示不支持提示 -->
-    <div v-if="!isB140" class="enc-unavailable-hint">
-      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12.01" y2="16"/><path d="M12 12v-4"/></svg>
-      <span>编码器补偿仅支持 B140 控制器</span>
+  <div class="enc-comp-editor">
+    <div class="enc-comp-editor__header">
+      <h4 class="enc-comp-editor__title">编码器补偿</h4>
+      <span class="enc-comp-editor__subtitle">为各轴配置编码器补偿参数</span>
     </div>
 
-    <!-- B140 控制器但无编码器轴：显示配置提示 -->
-    <div v-else-if="encoderAxes.length === 0" class="enc-unavailable-hint">
-      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12.01" y2="16"/><path d="M12 12v-4"/></svg>
-      <span>请将轴的位置源设置为「编码器」后启用补偿功能</span>
-    </div>
-
-    <!-- B140 + 编码器轴：显示补偿配置 -->
-    <template v-else>
-      <!-- 表头 -->
-      <div class="enc-table-header">
-        <div class="enc-col-axis">轴</div>
-        <div class="enc-col-toggle">启用</div>
-        <div class="enc-col-field">
-          容差
-          <span class="field-hint" @mouseenter="tooltip('编码器位置与指令位置的允许误差范围（单位与轴单位一致）。当位置误差超过此值时触发补偿动作', $event)" @mouseleave="hideTooltip">?</span>
-        </div>
-        <div class="enc-col-field">
-          最大周期
-          <span class="field-hint" @mouseenter="tooltip('补偿执行的最大周期数。超过此周期仍未达到目标位置则终止补偿，防止无限循环', $event)" @mouseleave="hideTooltip">?</span>
-        </div>
-        <div class="enc-col-field">
-          稳定时间(ms)
-          <span class="field-hint" @mouseenter="tooltip('补偿到位后的稳定等待时间（毫秒）。等待位置稳定后再进行下一步操作', $event)" @mouseleave="hideTooltip">?</span>
-        </div>
-        <div class="enc-col-field">
-          最小步长
-          <span class="field-hint" @mouseenter="tooltip('每次补偿的最小移动步长。防止因微小误差导致的频繁微调', $event)" @mouseleave="hideTooltip">?</span>
-        </div>
-        <div class="enc-col-field">
-          超时(ms)
-          <span class="field-hint" @mouseenter="tooltip('单次补偿操作的最长等待时间（毫秒）。超时后强制终止本次补偿', $event)" @mouseleave="hideTooltip">?</span>
-        </div>
-      </div>
-
-      <!-- 数据行：仅显示编码器轴 -->
+    <div class="enc-comp-editor__axes">
       <div
-        v-for="axis in encoderAxes"
-        :key="'enc-' + axis.name"
-        class="enc-table-row"
-        :class="[getAxisThemeClass(axis.name)]"
+        v-for="axis in axes"
+        :key="axis.name"
+        class="enc-comp-axis"
       >
-        <div class="enc-col-axis">
-          <span class="enc-axis-badge">{{ axis.name }}</span>
+        <div class="enc-comp-axis__header">
+          <div class="enc-comp-axis__badge">{{ axis.name }}</div>
+          <label class="enc-comp-axis__toggle">
+            <span class="enc-comp-axis__toggle-label">启用补偿</span>
+            <input
+              type="checkbox"
+              :checked="getAxisConfig(axis.name).enabled"
+              @change="onToggle(axis.name, ($event.target as HTMLInputElement).checked)"
+              class="enc-comp-axis__toggle-input"
+            />
+          </label>
         </div>
-        <div class="enc-col-toggle">
-          <UiToggle
-            size="sm"
-            :model-value="getEncComp(axis.name).enabled"
-            style="--toggle-color: var(--axis-hue, var(--accent-success))"
-            @update:model-value="setEncComp(axis.name, { ...getEncComp(axis.name), enabled: $event })"
-          />
-        </div>
-        <div class="enc-col-field">
-          <input
-            :value="getRawValue(axis.name, 'tolerance')"
-            @input="setRawValue(axis.name, 'tolerance', ($event.target as HTMLInputElement).value)"
-            type="text"
-            inputmode="decimal"
-            class="enc-input"
-            :disabled="!getEncComp(axis.name).enabled"
-          />
-        </div>
-        <div class="enc-col-field">
-          <input
-            :value="getEncComp(axis.name).maxCycles"
-            @input="setEncComp(axis.name, { ...getEncComp(axis.name), maxCycles: Number(($event.target as HTMLInputElement).value) })"
-            type="number"
-            class="enc-input"
-            min="1"
-            :disabled="!getEncComp(axis.name).enabled"
-          />
-        </div>
-        <div class="enc-col-field">
-          <input
-            :value="getEncComp(axis.name).settleMs"
-            @input="setEncComp(axis.name, { ...getEncComp(axis.name), settleMs: Number(($event.target as HTMLInputElement).value) })"
-            type="number"
-            class="enc-input"
-            min="10"
-            :disabled="!getEncComp(axis.name).enabled"
-          />
-        </div>
-        <div class="enc-col-field">
-          <input
-            :value="getRawValue(axis.name, 'minStep')"
-            @input="setRawValue(axis.name, 'minStep', ($event.target as HTMLInputElement).value)"
-            type="text"
-            inputmode="decimal"
-            class="enc-input"
-            :disabled="!getEncComp(axis.name).enabled"
-          />
-        </div>
-        <div class="enc-col-field">
-          <input
-            :value="getEncComp(axis.name).timeoutMs"
-            @input="setEncComp(axis.name, { ...getEncComp(axis.name), timeoutMs: Number(($event.target as HTMLInputElement).value) })"
-            type="number"
-            class="enc-input"
-            min="100"
-            :disabled="!getEncComp(axis.name).enabled"
-          />
+
+        <div v-if="getAxisConfig(axis.name).enabled" class="enc-comp-axis__body">
+          <div class="enc-comp-axis__field">
+            <label class="enc-comp-axis__field-label">预设方案</label>
+            <select
+              :value="getAxisConfig(axis.name).preset"
+              @change="onPresetChange(axis.name, ($event.target as HTMLSelectElement).value)"
+              class="enc-comp-axis__select config-select"
+            >
+              <option v-for="opt in presetOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- 自定义参数 -->
+          <div v-if="getAxisConfig(axis.name).preset === 'custom'" class="enc-comp-axis__custom">
+            <div class="enc-comp-axis__custom-row">
+              <label class="enc-comp-axis__field">
+                <span class="enc-comp-axis__field-label">容差</span>
+                <input
+                  type="number"
+                  :value="getAxisConfig(axis.name).customParams.tolerance"
+                  @input="onCustomParamChange(axis.name, 'tolerance', Number(($event.target as HTMLInputElement).value))"
+                  step="0.001"
+                  min="0"
+                  class="enc-comp-axis__input config-input"
+                />
+              </label>
+              <label class="enc-comp-axis__field">
+                <span class="enc-comp-axis__field-label">最大循环</span>
+                <input
+                  type="number"
+                  :value="getAxisConfig(axis.name).customParams.maxCycles"
+                  @input="onCustomParamChange(axis.name, 'maxCycles', Number(($event.target as HTMLInputElement).value))"
+                  step="1"
+                  min="1"
+                  class="enc-comp-axis__input config-input"
+                />
+              </label>
+            </div>
+            <div class="enc-comp-axis__custom-row">
+              <label class="enc-comp-axis__field">
+                <span class="enc-comp-axis__field-label">稳定时间(ms)</span>
+                <input
+                  type="number"
+                  :value="getAxisConfig(axis.name).customParams.settleMs"
+                  @input="onCustomParamChange(axis.name, 'settleMs', Number(($event.target as HTMLInputElement).value))"
+                  step="10"
+                  min="0"
+                  class="enc-comp-axis__input config-input"
+                />
+              </label>
+              <label class="enc-comp-axis__field">
+                <span class="enc-comp-axis__field-label">最小步长</span>
+                <input
+                  type="number"
+                  :value="getAxisConfig(axis.name).customParams.minStep"
+                  @input="onCustomParamChange(axis.name, 'minStep', Number(($event.target as HTMLInputElement).value))"
+                  step="0.0001"
+                  min="0"
+                  class="enc-comp-axis__input config-input"
+                />
+              </label>
+            </div>
+            <div class="enc-comp-axis__custom-row">
+              <label class="enc-comp-axis__field">
+                <span class="enc-comp-axis__field-label">超时(ms)</span>
+                <input
+                  type="number"
+                  :value="getAxisConfig(axis.name).customParams.timeoutMs"
+                  @input="onCustomParamChange(axis.name, 'timeoutMs', Number(($event.target as HTMLInputElement).value))"
+                  step="100"
+                  min="100"
+                  class="enc-comp-axis__input config-input"
+                />
+              </label>
+            </div>
+          </div>
         </div>
       </div>
-    </template>
+    </div>
+
+    <div v-if="enabledAxes.length === 0" class="enc-comp-editor__empty">
+      <p>未启用任何轴的编码器补偿</p>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.config-section {
-  margin-bottom: 1rem;
+/* ============================================================
+   编码器补偿编辑器
+   ============================================================ */
+.enc-comp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
-.config-section__title {
-  font-size: 0.75rem;
+
+/* ============================================================
+   编辑器头部
+   ============================================================ */
+.enc-comp-editor__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.enc-comp-editor__title {
+  font-size: 0.6875rem;
   font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-bottom: 0.625rem;
-}
-.section-subtitle {
-  display: inline;
-  font-size: 0.6rem;
-  font-weight: 400;
-  color: var(--text-muted);
-  text-transform: none;
-  letter-spacing: normal;
-  margin-left: 0.5rem;
+  margin: 0;
 }
 
-/* 不可用提示 */
-.enc-unavailable-hint {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.375rem;
-  background: var(--bg-panel-strong);
-  border: 1px solid var(--border-default);
-  font-size: 0.7rem;
+.enc-comp-editor__subtitle {
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 
-/* 表格布局 */
-.enc-table-header,
-.enc-table-row {
+/* ============================================================
+   轴补偿列表
+   ============================================================ */
+.enc-comp-editor__axes {
   display: grid;
-  grid-template-columns: 2rem 2.5rem repeat(5, 1fr);
-  gap: 0.375rem;
-  align-items: center;
+  grid-template-columns: repeat(1, 1fr);
+  gap: var(--space-3);
 }
-.enc-table-header {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.6rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-default);
-  margin-bottom: 0.25rem;
+
+@media (min-width: 640px) {
+  .enc-comp-editor__axes {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
-.enc-table-row {
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.25rem;
-  background: var(--bg-panel-strong);
+
+/* ============================================================
+   单轴补偿卡片
+   ============================================================ */
+.enc-comp-axis {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border-default);
-  margin-bottom: 0.25rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
 }
-.enc-col-axis {
+
+.enc-comp-axis__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.enc-comp-axis__badge {
+  width: 1.5rem;
+  height: 1.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.enc-axis-badge {
-  width: 1.375rem;
-  height: 1.375rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.25rem;
-  background: var(--axis-hue, var(--text-muted));
+  border-radius: var(--radius-sm);
+  background: var(--axis-hue, var(--accent-primary));
   color: white;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 800;
+  flex-shrink: 0;
 }
-.enc-col-toggle {
+
+.enc-comp-axis__toggle {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: var(--space-2);
+  cursor: pointer;
 }
-.enc-col-field {
+
+.enc-comp-axis__toggle-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.enc-comp-axis__toggle-input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+/* ============================================================
+   轴补偿主体
+   ============================================================ */
+.enc-comp-axis__body {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--space-2);
 }
-.enc-input {
-  width: 100%;
-  height: 1.625rem;
-  padding: 0 0.375rem;
-  border-radius: 0.25rem;
-  border: 1px solid var(--border-default);
-  background: var(--bg-canvas);
-  color: var(--text-primary);
-  font-size: 0.7rem;
-  text-align: right;
-  outline: none;
-  transition: border-color 0.2s ease;
-  box-sizing: border-box;
+
+.enc-comp-axis__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
-.enc-input:focus {
+
+.enc-comp-axis__field-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* 输入框/选择框 — 基础样式继承全局 .config-input / .config-select */
+.enc-comp-axis__select,
+.enc-comp-axis__input {
+  /* 仅补充组件特有样式 */
+}
+
+.enc-comp-axis__select:focus,
+.enc-comp-axis__input:focus {
   border-color: var(--accent-primary);
-}
-.enc-input:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  box-shadow: 0 0 0 2px var(--accent-primary-muted);
 }
 
-/* 轴主题色 */
-.axis-x-theme { --axis-hue: var(--axis-x); }
-.axis-y-theme { --axis-hue: var(--axis-y); }
-.axis-z-theme { --axis-hue: var(--axis-z); }
-.axis-u-theme { --axis-hue: var(--axis-u); }
+/* ============================================================
+   自定义参数行
+   ============================================================ */
+.enc-comp-axis__custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 
+.enc-comp-axis__custom-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2) var(--space-3);
+}
 
+/* ============================================================
+   空状态
+   ============================================================ */
+.enc-comp-editor__empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  background: var(--bg-panel-strong);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+}
 </style>
