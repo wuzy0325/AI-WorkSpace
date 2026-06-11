@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -36,6 +37,12 @@ func (a *App) Shutdown(ctx context.Context) {
 }
 
 func (a *App) emitStatusLoop(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			println("状态轮询异常恢复:", fmt.Sprint(r))
+		}
+	}()
+
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {

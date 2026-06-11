@@ -88,6 +88,14 @@ function onPresetChange(axisName: string, presetKey: string) {
 }
 
 function onCustomParamChange(axisName: string, key: keyof AxisEncoderCompensationConfig, value: number | boolean) {
+  if (typeof value === 'number' && !Number.isFinite(value)) return
+  if (typeof value === 'number') {
+    if (key === 'tolerance' && value <= 0) return
+    if (key === 'minStep' && value <= 0) return
+    if (key === 'maxCycles' && (!Number.isInteger(value) || value < 1)) return
+    if (key === 'settleMs' && value < 0) return
+    if (key === 'timeoutMs' && value < 100) return
+  }
   const config = getAxisConfig(axisName)
   const newCustomParams = { ...config.customParams, [key]: value }
   axisConfigs[axisName] = {

@@ -29,7 +29,13 @@ const emit = defineEmits<{
 
 function onInput(e: Event): void {
   const target = e.target as HTMLInputElement
-  emit('update:modelValue', props.type === 'number' ? Number(target.value) : target.value)
+  if (props.type === 'number') {
+    const n = Number(target.value)
+    if (!Number.isFinite(n)) return
+    emit('update:modelValue', n)
+  } else {
+    emit('update:modelValue', target.value)
+  }
 }
 
 function onBlur(): void {

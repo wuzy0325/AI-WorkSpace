@@ -16,7 +16,20 @@ const emit = defineEmits<{
 const tooltip = inject<(text: string, event: MouseEvent) => void>('showTooltip', () => {})
 const hideTooltip = inject<() => void>('hideTooltip', () => {})
 
+const POSITIVE_NUMBER_KEYS = new Set(['lead', 'gearRatio', 'stepsPerRev', 'maxSpeed'])
+const POSITIVE_INTEGER_KEYS = new Set(['microSteps'])
+
+function sanitizeNumericValue(key: string, raw: unknown): unknown {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined
+  if (POSITIVE_NUMBER_KEYS.has(key) && raw <= 0) return undefined
+  if (POSITIVE_INTEGER_KEYS.has(key) && (!Number.isInteger(raw) || raw <= 0)) return undefined
+  return raw
+}
+
 function onAxisUpdate(index: number, key: string, value: unknown) {
+  if (typeof value === 'number') {
+    value = sanitizeNumericValue(key, value)
+  }
   emit('update', index, { ...props.axis, [key]: value })
 }
 </script>

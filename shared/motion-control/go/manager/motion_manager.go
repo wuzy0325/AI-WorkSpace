@@ -10,10 +10,8 @@ import (
 	"shared.local/device-sdk/go/motion/ports"
 )
 
-// MotionControllerFactory creates motion controller instances from profiles.
 type MotionControllerFactory func(profile core.MotionControllerProfile) (ports.MotionController, error)
 
-// MotionManager coordinates controller profiles and command dispatch.
 type MotionManager struct {
 	mu                sync.RWMutex
 	controllers       map[string]ports.MotionController
@@ -22,7 +20,6 @@ type MotionManager struct {
 	controllerFactory MotionControllerFactory
 }
 
-// NewMotionManager creates a motion controller manager.
 func NewMotionManager(profileStore ports.MotionProfileStore, factory MotionControllerFactory) *MotionManager {
 	return &MotionManager{
 		controllers:       make(map[string]ports.MotionController),
@@ -31,7 +28,6 @@ func NewMotionManager(profileStore ports.MotionProfileStore, factory MotionContr
 	}
 }
 
-// LoadProfiles loads controller profiles from the configured store.
 func (m *MotionManager) LoadProfiles() ([]core.MotionControllerProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -52,7 +48,6 @@ func (m *MotionManager) LoadProfiles() ([]core.MotionControllerProfile, error) {
 	return m.profiles, nil
 }
 
-// SaveProfiles replaces and persists all controller profiles.
 func (m *MotionManager) SaveProfiles(profiles []core.MotionControllerProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,21 +59,17 @@ func (m *MotionManager) SaveProfiles(profiles []core.MotionControllerProfile) er
 	return nil
 }
 
-// GetProfiles returns all known controller profiles.
 func (m *MotionManager) GetProfiles() []core.MotionControllerProfile {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]core.MotionControllerProfile(nil), m.profiles...)
 }
 
-// UpsertProfile inserts or updates a controller profile.
-// - Connection-critical fields (Type/Address/Port) changed → disconnects old controller.
-// - Only axis fields changed and controller is connected → applies config without disconnect.
-// - New profile or no controller connected → just persists.
 func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var toDisconnect ports.MotionController
+	var toApplyConfig ports.MotionController
 
+	m.mu.Lock()
 	found := false
 	for i, existing := range m.profiles {
 		if existing.ID == profile.ID {
@@ -89,12 +80,12 @@ func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) erro
 
 			if connectionChanged {
 				if ctrl, ok := m.controllers[profile.ID]; ok {
-					_ = ctrl.Disconnect(context.Background())
+					toDisconnect = ctrl
 					delete(m.controllers, profile.ID)
 				}
 			} else if axesChanged {
 				if ctrl, ok := m.controllers[profile.ID]; ok {
-					_ = ctrl.ApplyConfig(context.Background(), profile)
+					toApplyConfig = ctrl
 				}
 			}
 
@@ -109,16 +100,29 @@ func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) erro
 	}
 
 	if m.profileStore != nil {
-		return m.profileStore.SaveProfiles(m.profiles)
+		err := m.profileStore.SaveProfiles(m.profiles)
+		m.mu.Unlock()
+		if toDisconnect != nil {
+			_ = toDisconnect.Disconnect(context.Background())
+		}
+		if toApplyConfig != nil {
+			_ = toApplyConfig.ApplyConfig(context.Background(), profile)
+		}
+		return err
+	}
+	m.mu.Unlock()
+
+	if toDisconnect != nil {
+		_ = toDisconnect.Disconnect(context.Background())
+	}
+	if toApplyConfig != nil {
+		_ = toApplyConfig.ApplyConfig(context.Background(), profile)
 	}
 	return nil
 }
 
-// DeleteProfile deletes a controller profile and disconnects its controller.
 func (m *MotionManager) DeleteProfile(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	newProfiles := make([]core.MotionControllerProfile, 0, len(m.profiles))
 	for _, profile := range m.profiles {
 		if profile.ID != id {
@@ -127,13 +131,23 @@ func (m *MotionManager) DeleteProfile(id string) error {
 	}
 	m.profiles = newProfiles
 
+	var toDisconnect ports.MotionController
 	if ctrl, ok := m.controllers[id]; ok {
-		_ = ctrl.Disconnect(context.Background())
+		toDisconnect = ctrl
 		delete(m.controllers, id)
 	}
 
 	if m.profileStore != nil {
-		return m.profileStore.SaveProfiles(m.profiles)
+		err := m.profileStore.SaveProfiles(m.profiles)
+		m.mu.Unlock()
+		if toDisconnect != nil {
+			_ = toDisconnect.Disconnect(context.Background())
+		}
+		return err
+	}
+	m.mu.Unlock()
+	if toDisconnect != nil {
+		_ = toDisconnect.Disconnect(context.Background())
 	}
 	return nil
 }
@@ -178,7 +192,6 @@ func (m *MotionManager) findProfileLocked(id string) (core.MotionControllerProfi
 	return core.MotionControllerProfile{}, false
 }
 
-// Connect connects a controller.
 func (m *MotionManager) Connect(ctx context.Context, id string) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
@@ -187,19 +200,17 @@ func (m *MotionManager) Connect(ctx context.Context, id string) error {
 	return ctrl.Connect(ctx)
 }
 
-// Disconnect disconnects a controller.
 func (m *MotionManager) Disconnect(ctx context.Context, id string) error {
-	m.mu.RLock()
-	ctrl, exists := m.controllers[id]
-	m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if !exists {
-		return nil
+	if ctrl, exists := m.controllers[id]; exists {
+		_ = ctrl.Disconnect(ctx)
+		delete(m.controllers, id)
 	}
-	return ctrl.Disconnect(ctx)
+	return nil
 }
 
-// Status returns a connected controller status.
 func (m *MotionManager) Status(ctx context.Context, id string) (core.ControllerStatus, error) {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
@@ -211,7 +222,6 @@ func (m *MotionManager) Status(ctx context.Context, id string) (core.ControllerS
 	return ctrl.Status(ctx)
 }
 
-// StatusAll returns all connected controller statuses.
 func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	m.mu.RLock()
 	controllers := make(map[string]ports.MotionController, len(m.controllers))
@@ -239,7 +249,6 @@ func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	return statuses
 }
 
-// MoveTo moves an axis to an absolute position.
 func (m *MotionManager) MoveTo(ctx context.Context, id string, axis core.AxisName, position float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
@@ -248,7 +257,6 @@ func (m *MotionManager) MoveTo(ctx context.Context, id string, axis core.AxisNam
 	return ctrl.MoveTo(ctx, axis, position)
 }
 
-// MoveBy moves an axis by a relative delta.
 func (m *MotionManager) MoveBy(ctx context.Context, id string, axis core.AxisName, delta float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
@@ -257,7 +265,6 @@ func (m *MotionManager) MoveBy(ctx context.Context, id string, axis core.AxisNam
 	return ctrl.MoveBy(ctx, axis, delta)
 }
 
-// Jog starts jogging an axis.
 func (m *MotionManager) Jog(ctx context.Context, id string, axis core.AxisName, velocity float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
@@ -266,7 +273,6 @@ func (m *MotionManager) Jog(ctx context.Context, id string, axis core.AxisName, 
 	return ctrl.Jog(ctx, axis, velocity)
 }
 
-// Home homes an axis.
 func (m *MotionManager) Home(ctx context.Context, id string, axis core.AxisName) error {
 	ctrl, err := m.getController(id)
 	if err != nil {
@@ -275,7 +281,6 @@ func (m *MotionManager) Home(ctx context.Context, id string, axis core.AxisName)
 	return ctrl.Home(ctx, axis)
 }
 
-// Stop stops an axis. Empty axis stops all moving axes individually.
 func (m *MotionManager) Stop(ctx context.Context, id string, axis core.AxisName) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
@@ -287,7 +292,6 @@ func (m *MotionManager) Stop(ctx context.Context, id string, axis core.AxisName)
 	return ctrl.Stop(ctx, axis)
 }
 
-// EmergencyStop issues controller emergency stop.
 func (m *MotionManager) EmergencyStop(ctx context.Context, id string) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
@@ -299,7 +303,6 @@ func (m *MotionManager) EmergencyStop(ctx context.Context, id string) error {
 	return ctrl.EmergencyStop(ctx)
 }
 
-// ResetEmergencyStop resets emergency stop state for a connected controller.
 func (m *MotionManager) ResetEmergencyStop(ctx context.Context, id string) error {
 	m.mu.RLock()
 	ctrl, exists := m.controllers[id]
@@ -311,7 +314,6 @@ func (m *MotionManager) ResetEmergencyStop(ctx context.Context, id string) error
 	return ctrl.ResetEmergencyStop(ctx)
 }
 
-// DefinePosition defines the current axis position.
 func (m *MotionManager) DefinePosition(ctx context.Context, id string, axis core.AxisName, position float64) error {
 	ctrl, err := m.getController(id)
 	if err != nil {

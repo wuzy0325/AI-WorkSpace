@@ -206,6 +206,10 @@ async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): P
   const state = ensureAxisLocalState(selectedId.value, axis)
   const axisStatus = currentStatus.value.axes.find((a) => a.name === axis)
   if (!axisStatus) return
+  if (!Number.isFinite(state.step) || state.step <= 0) {
+    feedback.pushToast('步长必须为正数', 'error')
+    return
+  }
   const delta = direction === 'forward' ? state.step : -state.step
   if (currentProfile.value?.type === 'B140-MC') {
     await motion.moveBy(selectedId.value, axis, delta)

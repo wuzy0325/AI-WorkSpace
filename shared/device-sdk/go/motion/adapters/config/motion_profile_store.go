@@ -107,27 +107,27 @@ func getDefaultAxes() []core.AxisConfig {
 }
 
 func normalizeAxisConfig(axis core.AxisConfig) core.AxisConfig {
-	if axis.StepsPerRev == nil {
+	if axis.StepsPerRev == nil || *axis.StepsPerRev <= 0 {
 		defaultSteps := 1.8
 		axis.StepsPerRev = &defaultSteps
 	}
-	if axis.MicroSteps == nil {
+	if axis.MicroSteps == nil || *axis.MicroSteps < 1 {
 		defaultMicro := 4
 		axis.MicroSteps = &defaultMicro
 	}
-	if axis.Lead == nil {
+	if axis.Lead == nil || *axis.Lead <= 0 {
 		defaultLead := 4.0
 		axis.Lead = &defaultLead
 	}
-	if axis.GearRatio == nil {
+	if axis.GearRatio == nil || *axis.GearRatio <= 0 {
 		defaultGear := 1.0
 		axis.GearRatio = &defaultGear
 	}
-	if axis.MaxSpeed == nil {
+	if axis.MaxSpeed == nil || *axis.MaxSpeed <= 0 {
 		defaultSpeed := 10.0
 		axis.MaxSpeed = &defaultSpeed
 	}
-	if axis.EncoderScale == nil {
+	if axis.EncoderScale == nil || *axis.EncoderScale <= 0 {
 		defaultScale := 0.005
 		axis.EncoderScale = &defaultScale
 	}

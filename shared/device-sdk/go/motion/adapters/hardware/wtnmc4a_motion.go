@@ -319,149 +319,92 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 	return c.copyStatusLocked(), nil
 }
 
-// MoveTo does absolute positioning to the given position (engineering units).
+// MoveTo does absolute positioning via SetP + StartLVDV (avoids crashing InitLVDV).
 func (c *WTNMC4AMotionController) MoveTo(ctx context.Context, axis core.AxisName, position float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
-	}
-
+	if err := c.checkReadyLocked(); err != nil { return err }
 	axisCfg, ok := c.axisConfigLocked(axis)
-	if !ok {
-		return fmt.Errorf("未知运动轴: %s", axis)
-	}
+	if !ok { return fmt.Errorf("未知运动轴: %s", axis) }
 	an := wtnmc4aAxisNum(axis)
 
-	// read current position (pulses)
-	lpRet, _, _ := c.procs.readLP.Call(c.handle, uintptr(an))
-	currentPulse := int64(lpRet)
-
-	// calculate target position (pulses)
 	targetPulse := wtnmc4aEngineeringToPulse(axisCfg, position)
-	deltaPulse := targetPulse - currentPulse
-	if deltaPulse == 0 {
-		return nil
-	}
+	lpRet, _, _ := c.procs.readLP.Call(c.handle, uintptr(an))
+	if targetPulse == int64(lpRet) { return nil }
 
-	// initialize and start fixed-length drive
-	if err := c.initAndStartDriveLocked(axisCfg, an, deltaPulse, dv); err != nil {
-		c.status.LastError = err.Error()
-		return err
+	ret, _, _ := c.procs.setP.Call(c.handle, uintptr(an), uintptr(targetPulse))
+	if ret == 0 {
+		c.status.LastError = fmt.Sprintf("设置轴 %s 目标位置失败", axis)
+		return fmt.Errorf("WTNMC4A 设置轴 %s 目标位置失败", axis)
 	}
-
+	ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	if ret == 0 {
+		c.status.LastError = fmt.Sprintf("启动轴 %s 运动失败", axis)
+		return fmt.Errorf("WTNMC4A 启动轴 %s 运动失败", axis)
+	}
 	c.status.LastError = ""
 	return nil
 }
 
-// MoveBy does relative movement by the given delta (engineering units).
+// MoveBy does relative movement via SetP + StartLVDV.
 func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName, delta float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
-	}
-
+	if err := c.checkReadyLocked(); err != nil { return err }
 	axisCfg, ok := c.axisConfigLocked(axis)
-	if !ok {
-		return fmt.Errorf("未知运动轴: %s", axis)
-	}
+	if !ok { return fmt.Errorf("未知运动轴: %s", axis) }
 	an := wtnmc4aAxisNum(axis)
 
-	// read current position
 	lpRet, _, _ := c.procs.readLP.Call(c.handle, uintptr(an))
-	currentPulse := int64(lpRet)
-	currentPos := wtnmc4aPulseToEngineering(axisCfg, float64(currentPulse))
-
-	// calculate target position
+	currentPos := wtnmc4aPulseToEngineering(axisCfg, float64(lpRet))
 	targetPulse := wtnmc4aEngineeringToPulse(axisCfg, currentPos+delta)
-	deltaPulse := targetPulse - currentPulse
-	if deltaPulse == 0 {
-		return nil
-	}
+	if targetPulse == int64(lpRet) { return nil }
 
-	if err := c.initAndStartDriveLocked(axisCfg, an, deltaPulse, dv); err != nil {
-		c.status.LastError = err.Error()
-		return err
+	ret, _, _ := c.procs.setP.Call(c.handle, uintptr(an), uintptr(targetPulse))
+	if ret == 0 {
+		c.status.LastError = fmt.Sprintf("设置轴 %s 目标位置失败", axis)
+		return fmt.Errorf("WTNMC4A 设置轴 %s 目标位置失败", axis)
 	}
-
+	ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	if ret == 0 {
+		c.status.LastError = fmt.Sprintf("启动轴 %s 运动失败", axis)
+		return fmt.Errorf("WTNMC4A 启动轴 %s 运动失败", axis)
+	}
 	c.status.LastError = ""
 	return nil
 }
 
-// Jog performs continuous motion (jog).
-// velocity > 0 for positive direction, velocity < 0 for negative direction.
+// Jog performs continuous motion via SetV + StartLVDV (avoids crashing InitLVDV).
 func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, velocity float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
-	}
-
+	if err := c.checkReadyLocked(); err != nil { return err }
 	axisCfg, ok := c.axisConfigLocked(axis)
-	if !ok {
-		return fmt.Errorf("未知运动轴: %s", axis)
-	}
+	if !ok { return fmt.Errorf("未知运动轴: %s", axis) }
 	an := wtnmc4aAxisNum(axis)
 
 	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, 100)
 	jogSpeed := math.Abs(velocity)
-	if jogSpeed > maxSpeed {
-		jogSpeed = maxSpeed
-	}
-	if jogSpeed == 0 {
-		jogSpeed = maxSpeed
-	}
-
+	if jogSpeed > maxSpeed { jogSpeed = maxSpeed }
+	if jogSpeed == 0 { jogSpeed = maxSpeed }
 	ppu := core.PulsesPerUnit(axisCfg)
-	driveSpeedPulse := int64(math.Round(jogSpeed * math.Abs(ppu)))
-	driveSpeedPulse = core.ClampInt64(driveSpeedPulse, speedMin, speedMax)
+	pulseSpeed := int64(math.Round(jogSpeed * math.Abs(ppu)))
+	pulseSpeed = core.ClampInt64(pulseSpeed, speedMin, speedMax)
+	if velocity < 0 { pulseSpeed = -pulseSpeed }
 
-	dataList := paraDataList{
-		Multiple:     1,
-		StartSpeed:   defaultStartSpeed,
-		DriveSpeed:   driveSpeedPulse,
-		Acceleration: defaultAcceleration,
-		Deceleration: defaultAcceleration,
-		AccIncRate:   defaultAccIncRate,
-		DecIncRate:   defaultAccIncRate,
-	}
-
-	// direction determined by velocity sign
-	direction := int64(pDirection)
-	if velocity < 0 {
-		direction = mDirection
-	}
-
-	lcData := paraLCData{
-		AxisNum:     int64(an),
-		LVDV:        lv, // continuous drive
-		DecMode:     autoDec,
-		PulseMode:   cpDir,
-		PLSLogLever: direction,
-		DIRLogLever: 0,
-		LineCurve:   line,
-		Direction:   direction,
-		NPulseNum:   0, // continuous drive: pulse count is 0
-	}
-
-	ret, _, _ := c.procs.initLVDV.Call(
-		c.handle,
-		uintptr(unsafe.Pointer(&dataList)),
-		uintptr(unsafe.Pointer(&lcData)),
-	)
+	ret, _, _ := c.procs.setV.Call(c.handle, uintptr(an), uintptr(pulseSpeed))
 	if ret == 0 {
-		return fmt.Errorf("WTNMC4A 初始化轴 %s 点动失败", axis)
+		c.status.LastError = fmt.Sprintf("设置轴 %s 点动速度失败", axis)
+		return fmt.Errorf("WTNMC4A 设置轴 %s 点动速度失败", axis)
 	}
-
 	ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
 	if ret == 0 {
+		c.status.LastError = fmt.Sprintf("启动轴 %s 点动失败", axis)
 		return fmt.Errorf("WTNMC4A 启动轴 %s 点动失败", axis)
 	}
-
 	c.status.LastError = ""
 	return nil
 }
@@ -471,9 +414,9 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
-	}
+	if err := c.checkReadyLocked(); err != nil { return err }
+
+	if _, ok := c.axisConfigLocked(axis); !ok { return fmt.Errorf("未知运动轴: %s", axis) }
 
 	an := wtnmc4aAxisNum(axis)
 	ret, _, _ := c.procs.startHome.Call(c.handle, uintptr(an))
@@ -594,6 +537,13 @@ func (c *WTNMC4AMotionController) checkConnectedLocked() error {
 	if c.handle == 0 || !c.status.Connected {
 		return fmt.Errorf("控制器未连接")
 	}
+	return nil
+}
+
+// checkReadyLocked checks connection AND emergency stop state.
+func (c *WTNMC4AMotionController) checkReadyLocked() error {
+	if err := c.checkConnectedLocked(); err != nil { return err }
+	if c.status.EmergencyStopped { return fmt.Errorf("控制器处于急停状态，请先复位急停") }
 	return nil
 }
 

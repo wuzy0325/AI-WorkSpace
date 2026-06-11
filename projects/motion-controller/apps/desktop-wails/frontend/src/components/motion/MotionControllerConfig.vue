@@ -70,20 +70,28 @@ type FieldErrors = {
   port?: string
 }
 
+const IPV4_REGEX = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/
+const MAX_NAME_LENGTH = 64
+
 const fieldErrors = computed<FieldErrors>(() => {
   const errors: FieldErrors = {}
   // name is required
   if (!editing.name.trim()) {
     errors.name = '控制器名称不能为空'
+  } else if (editing.name.trim().length > MAX_NAME_LENGTH) {
+    errors.name = `名称不能超过${MAX_NAME_LENGTH}个字符`
   }
   // name must be unique
   const duplicate = motion.profiles.find(p => p.name.trim() === editing.name.trim() && p.id !== editing.id)
   if (duplicate) {
     errors.name = '已存在同名控制器'
   }
-  // address is required
-  if (!editing.address.trim()) {
+  // address validation
+  const trimmedAddr = editing.address.trim()
+  if (!trimmedAddr) {
     errors.address = 'IP 地址不能为空'
+  } else if (!IPV4_REGEX.test(trimmedAddr) && !/^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(trimmedAddr)) {
+    errors.address = '请输入有效的 IP 地址或主机名'
   }
   // port range check
   if (!Number.isFinite(editing.port) || editing.port < 1 || editing.port > MAX_PORT) {
