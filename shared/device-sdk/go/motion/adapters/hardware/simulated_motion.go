@@ -62,6 +62,14 @@ func NewSimulatedMotionController(profile core.MotionControllerProfile) *Simulat
 	}
 }
 
+// ApplyConfig 应用新的控制器配置（模拟控制器无需硬件操作，仅更新 profile）
+func (c *SimulatedMotionController) ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = profile
+	return nil
+}
+
 // GetProfile 获取控制器配置
 func (c *SimulatedMotionController) GetProfile() core.MotionControllerProfile {
 	c.mu.RLock()

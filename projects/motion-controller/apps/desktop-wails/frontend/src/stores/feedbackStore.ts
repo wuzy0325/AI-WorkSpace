@@ -49,8 +49,12 @@ export const useFeedbackStore = defineStore('feedback', () => {
       confirmResolver(false)
       confirmResolver = null
     }
+    // 重置所有字段为默认值，避免上一次调用的文案残留
     confirmState.open = true
     confirmState.message = message
+    confirmState.title = '确认操作'
+    confirmState.confirmText = '确认'
+    confirmState.cancelText = '取消'
     confirmState.variant = 'danger'
     if (options) {
       if (options.title) confirmState.title = options.title

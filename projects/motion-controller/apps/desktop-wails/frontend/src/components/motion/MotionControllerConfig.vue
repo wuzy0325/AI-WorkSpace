@@ -35,9 +35,16 @@ function hideTooltip(): void {
 provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip)
 provide<() => void>('hideTooltip', hideTooltip)
 
+/* -- 控制器默认值常量 -- */
+const DEFAULT_NAME = '新控制器'
+const DEFAULT_TYPE = 'SIMULATED-MC'
+const DEFAULT_ADDRESS = '127.0.0.1'
+const DEFAULT_PORT = 5176
+const MAX_PORT = 65535
+
 /* -- Form state -- */
 const editing = reactive<MotionControllerProfile>({
-  id: '', name: '', type: 'SIMULATED-MC', address: '127.0.0.1', port: 5176, autoConnect: false,
+  id: '', name: '', type: DEFAULT_TYPE, address: DEFAULT_ADDRESS, port: DEFAULT_PORT, autoConnect: false,
   axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name)),
 })
 
@@ -51,7 +58,7 @@ const saving = ref(false)
 
 /* -- Controller type options -- */
 const controllerTypeOptions = computed<UiSelectOption[]>(() => [
-  { value: 'SIMULATED-MC', label: '模拟控制器' },
+  { value: DEFAULT_TYPE, label: '模拟控制器' },
   { value: 'B140-MC', label: 'B140 控制器' },
   { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
 ])
@@ -79,8 +86,8 @@ const fieldErrors = computed<FieldErrors>(() => {
     errors.address = 'IP 地址不能为空'
   }
   // port range check
-  if (!Number.isFinite(editing.port) || editing.port < 1 || editing.port > 65535) {
-    errors.port = '端口范围 1-65535'
+  if (!Number.isFinite(editing.port) || editing.port < 1 || editing.port > MAX_PORT) {
+    errors.port = `端口范围 1-${MAX_PORT}`
   }
   return errors
 })
@@ -120,15 +127,15 @@ function captureSnapshot(): void {
 function newProfile(): void {
   skipDirtyWatch = true
   editing.id = ''
-  editing.name = '新控制器'
-  editing.type = 'SIMULATED-MC'
-  editing.address = '127.0.0.1'
-  editing.port = 5176
+  editing.name = DEFAULT_NAME
+  editing.type = DEFAULT_TYPE
+  editing.address = DEFAULT_ADDRESS
+  editing.port = DEFAULT_PORT
   editing.autoConnect = false
   editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name))
   isCreatingNew.value = true
   captureSnapshot()
-  // 下一 tick 恢复监听，确保 captureSnapshot 已完成
+  // 下一微任务恢复监听，确保 captureSnapshot 已完成
   queueMicrotask(() => { skipDirtyWatch = false })
 }
 
@@ -154,22 +161,24 @@ function editProfile(src: MotionControllerProfile): void {
   }))
   isCreatingNew.value = false
   captureSnapshot()
-  // 下一 tick 恢复监听，确保 captureSnapshot 已完成
+  // 下一微任务恢复监听，确保 captureSnapshot 已完成
   queueMicrotask(() => { skipDirtyWatch = false })
 }
 
 /* -- Save profile -- */
 async function save(): Promise<void> {
-  // prevent save if validation fails
+  // 验证失败时阻止保存
   if (validationErrorCount.value > 0) return
   saving.value = true
+  // 保存期间跳过脏状态监听，避免异步等待期间 watch 干扰
+  skipDirtyWatch = true
   try {
     const profile: MotionControllerProfile = {
       id: editing.id || (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-      name: editing.name.trim() || '新控制器',
+      name: editing.name.trim() || DEFAULT_NAME,
       type: editing.type,
-      address: editing.address.trim() || '127.0.0.1',
-      port: Number.isFinite(editing.port) ? editing.port : 5176,
+      address: editing.address.trim() || DEFAULT_ADDRESS,
+      port: Number.isFinite(editing.port) ? editing.port : DEFAULT_PORT,
       autoConnect: editing.autoConnect,
       axes: editing.axes.map((a) => ({
         name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
@@ -189,6 +198,8 @@ async function save(): Promise<void> {
     emit('close')
   } finally {
     saving.value = false
+    // 下一微任务恢复监听，确保 captureSnapshot 已完成
+    queueMicrotask(() => { skipDirtyWatch = false })
   }
 }
 
@@ -202,52 +213,76 @@ async function remove(id: string): Promise<void> {
     cancelText: '取消',
   })
   if (!ok) return
-  await motion.deleteProfile(id)
-  feedback.pushToast('控制器已删除', 'info')
-  emit('close')
+  try {
+    await motion.deleteProfile(id)
+    feedback.pushToast('控制器已删除', 'info')
+    emit('close')
+  } catch (e) {
+    feedback.pushToast(`删除失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
+  }
+}
+
+/* -- Re-entry guard for async confirm dialogs -- */
+const confirming = ref(false)
+
+/** 包装带确认对话框的异步操作，防止快速重复点击导致 confirm 竞态 */
+async function withConfirmGuard(fn: () => Promise<void>): Promise<void> {
+  if (confirming.value) return
+  confirming.value = true
+  try {
+    await fn()
+  } finally {
+    confirming.value = false
+  }
 }
 
 /* -- Close confirm (dirty check) -- */
 async function tryClose(): Promise<void> {
-  if (isDirty.value) {
-    const ok = await feedback.confirm('当前有未保存的更改，确定要放弃更改并关闭吗？', {
-      title: '关闭确认',
-      confirmText: '放弃并关闭',
-      cancelText: '继续编辑',
-      variant: 'primary',
-    })
-    if (!ok) return
-  }
-  emit('close')
+  await withConfirmGuard(async () => {
+    if (isDirty.value) {
+      const ok = await feedback.confirm('当前有未保存的更改，确定要放弃更改并关闭吗？', {
+        title: '关闭确认',
+        confirmText: '放弃并关闭',
+        cancelText: '继续编辑',
+        variant: 'primary',
+      })
+      if (!ok) return
+    }
+    emit('close')
+  })
 }
 
 /* -- Sidebar: switch profile (dirty check) -- */
 async function onProfileSelect(id: string): Promise<void> {
-  if (isDirty.value) {
-    const ok = await feedback.confirm('当前有未保存的更改，切换配置将丢失更改。确定要切换吗？', {
-      title: '切换确认',
-      confirmText: '放弃并切换',
-      cancelText: '继续编辑',
-      variant: 'primary',
-    })
-    if (!ok) return
-  }
-  const p = motion.profiles.find(x => x.id === id)
-  if (p) editProfile(p)
+  await withConfirmGuard(async () => {
+    if (isDirty.value) {
+      const ok = await feedback.confirm('当前有未保存的更改，切换配置将丢失更改。确定要切换吗？', {
+        title: '切换确认',
+        confirmText: '放弃并切换',
+        cancelText: '继续编辑',
+        variant: 'primary',
+      })
+      if (!ok) return
+    }
+    const p = motion.profiles.find(x => x.id === id)
+    if (p) editProfile(p)
+  })
 }
 
 /* -- Sidebar: new profile (dirty check) -- */
 async function onProfileAdd(): Promise<void> {
-  if (isDirty.value) {
-    const ok = await feedback.confirm('当前有未保存的更改，新建配置将丢失更改。确定要新建吗？', {
-      title: '新建确认',
-      confirmText: '放弃并新建',
-      cancelText: '继续编辑',
-      variant: 'primary',
-    })
-    if (!ok) return
-  }
-  newProfile()
+  await withConfirmGuard(async () => {
+    if (isDirty.value) {
+      const ok = await feedback.confirm('当前有未保存的更改，新建配置将丢失更改。确定要新建吗？', {
+        title: '新建确认',
+        confirmText: '放弃并新建',
+        cancelText: '继续编辑',
+        variant: 'primary',
+      })
+      if (!ok) return
+    }
+    newProfile()
+  })
 }
 
 /* -- Initialization -- */
@@ -268,7 +303,9 @@ onMounted(async () => {
 watch(() => props.open, (v) => { if (v) ensureEditingOnOpen() })
 
 // 深度监听 editing 变化，标记脏状态
-// 使用 skipDirtyWatch 标志避免在 editProfile/newProfile 赋值期间误触发
+// 使用 skipDirtyWatch 标志避免在 editProfile/newProfile/save 赋值期间误触发
+// 注意：skipDirtyWatch 是模块级变量，若同一页面渲染多个本组件实例会共享状态
+// 当前场景下组件仅单实例使用，若需多实例请改为 ref
 let skipDirtyWatch = false
 
 watch(editing, () => {

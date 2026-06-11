@@ -88,6 +88,14 @@ func NewWTNMC4AMotionController(profile core.MotionControllerProfile) *WTNMC4AMo
 	}
 }
 
+// ApplyConfig 应用新的控制器配置（wind-daq 适配器无运行时配置下发，仅更新 profile）
+func (c *WTNMC4AMotionController) ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = profile
+	return nil
+}
+
 // GetProfile 获取控制器配置
 func (c *WTNMC4AMotionController) GetProfile() core.MotionControllerProfile {
 	c.mu.RLock()

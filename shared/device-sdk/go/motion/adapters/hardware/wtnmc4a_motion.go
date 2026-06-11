@@ -155,6 +155,18 @@ func NewWTNMC4AMotionController(profile core.MotionControllerProfile) *WTNMC4AMo
 	}
 }
 
+// ApplyConfig applies a new controller profile without disconnecting.
+// Updates the profile and re-applies axis speed parameters to the hardware.
+func (c *WTNMC4AMotionController) ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = profile
+	if c.status.Connected && c.handle != 0 {
+		c.applyAxisSpeedsLocked()
+	}
+	return nil
+}
+
 // GetProfile returns the controller profile.
 func (c *WTNMC4AMotionController) GetProfile() core.MotionControllerProfile {
 	c.mu.Lock()
@@ -292,7 +304,7 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		moving := rr1.ASND || rr1.CNST || rr1.DSND
 
 		// check if near home position
-		homed := wtnmc4aIsHomed(position, axisCfg)
+		homed := core.IsHomed(position, axisCfg)
 
 		axisStatus.Position = position
 		axisStatus.Moving = moving
@@ -395,7 +407,7 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 	}
 	an := wtnmc4aAxisNum(axis)
 
-	maxSpeed := wtnmc4aValueOrFloat(axisCfg.MaxSpeed, 100)
+	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, 100)
 	jogSpeed := math.Abs(velocity)
 	if jogSpeed > maxSpeed {
 		jogSpeed = maxSpeed
@@ -404,9 +416,9 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 		jogSpeed = maxSpeed
 	}
 
-	pulsesPerUnit := wtnmc4aPulsesPerUnit(axisCfg)
-	driveSpeedPulse := int64(math.Round(jogSpeed * math.Abs(pulsesPerUnit)))
-	driveSpeedPulse = wtnmc4aClampInt64(driveSpeedPulse, speedMin, speedMax)
+	ppu := core.PulsesPerUnit(axisCfg)
+	driveSpeedPulse := int64(math.Round(jogSpeed * math.Abs(ppu)))
+	driveSpeedPulse = core.ClampInt64(driveSpeedPulse, speedMin, speedMax)
 
 	dataList := paraDataList{
 		Multiple:     1,
@@ -565,7 +577,7 @@ func (c *WTNMC4AMotionController) DefinePosition(ctx context.Context, axis core.
 	}
 
 	// set encoder counter
-	encoderCount := wtnmc4aEngineeringToEncoderCount(axisCfg, position)
+	encoderCount := core.EngineeringToEncoderCount(axisCfg, position)
 	ret, _, _ = c.procs.setEP.Call(c.handle, uintptr(an), uintptr(unsafe.Pointer(&encoderCount)))
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 设置轴 %s 实位失败", axis)
@@ -610,9 +622,9 @@ func (c *WTNMC4AMotionController) applyAxisSpeedsLocked() {
 		}
 		an := wtnmc4aAxisNum(axisCfg.Name)
 		if axisCfg.MaxSpeed != nil && *axisCfg.MaxSpeed > 0 {
-			ppu := wtnmc4aPulsesPerUnit(axisCfg)
+			ppu := core.PulsesPerUnit(axisCfg)
 			pulseSpeed := int64(math.Round(*axisCfg.MaxSpeed * math.Abs(ppu)))
-			pulseSpeed = wtnmc4aClampInt64(pulseSpeed, speedMin, speedMax)
+			pulseSpeed = core.ClampInt64(pulseSpeed, speedMin, speedMax)
 			c.procs.setV.Call(c.handle, uintptr(an), uintptr(pulseSpeed))
 		}
 	}
@@ -636,10 +648,10 @@ func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
 
 // initAndStartDriveLocked initializes and starts the drive (must hold lock).
 func (c *WTNMC4AMotionController) initAndStartDriveLocked(axisCfg core.AxisConfig, an int, deltaPulse int64, driveMode int64) error {
-	maxSpeed := wtnmc4aValueOrFloat(axisCfg.MaxSpeed, 100)
-	ppu := wtnmc4aPulsesPerUnit(axisCfg)
+	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, 100)
+	ppu := core.PulsesPerUnit(axisCfg)
 	driveSpeedPulse := int64(math.Round(maxSpeed * math.Abs(ppu)))
-	driveSpeedPulse = wtnmc4aClampInt64(driveSpeedPulse, speedMin, speedMax)
+	driveSpeedPulse = core.ClampInt64(driveSpeedPulse, speedMin, speedMax)
 
 	dataList := paraDataList{
 		Multiple:     1,
@@ -703,35 +715,10 @@ func wtnmc4aAxisNum(axis core.AxisName) int {
 	}
 }
 
-// wtnmc4aPulsesPerUnit calculates pulses per engineering unit.
-func wtnmc4aPulsesPerUnit(axisCfg core.AxisConfig) float64 {
-	stepAngleDeg := wtnmc4aValueOrFloat(axisCfg.StepsPerRev, 1.8)
-	if stepAngleDeg == 0 {
-		stepAngleDeg = 1.8
-	}
-	microSteps := wtnmc4aValueOrInt(axisCfg.MicroSteps, 1)
-	stepsPerRev := 360 / stepAngleDeg
-
-	if axisCfg.Kind == core.AxisKindRotary {
-		gearRatio := wtnmc4aValueOrFloat(axisCfg.GearRatio, 1)
-		if gearRatio == 0 {
-			gearRatio = 1
-		}
-		return (stepsPerRev * float64(microSteps) * gearRatio) / 360
-	}
-
-	lead := wtnmc4aValueOrFloat(axisCfg.Lead, 1)
-	if lead == 0 {
-		lead = 1
-	}
-	return (stepsPerRev * float64(microSteps)) / lead
-}
-
 // wtnmc4aEngineeringToPulse converts engineering units to pulses.
+// Inverted handling is applied here (B140 handles inversion via MT/CE commands).
 func wtnmc4aEngineeringToPulse(axisCfg core.AxisConfig, value float64) int64 {
-	ppu := wtnmc4aPulsesPerUnit(axisCfg)
-	raw := value * ppu
-	pulse := int64(math.Round(raw))
+	pulse := core.EngineeringToPulse(axisCfg, value)
 	if axisCfg.Inverted {
 		pulse = -pulse
 	}
@@ -740,65 +727,11 @@ func wtnmc4aEngineeringToPulse(axisCfg core.AxisConfig, value float64) int64 {
 
 // wtnmc4aPulseToEngineering converts pulses to engineering units.
 func wtnmc4aPulseToEngineering(axisCfg core.AxisConfig, pulse float64) float64 {
-	ppu := wtnmc4aPulsesPerUnit(axisCfg)
-	if ppu == 0 {
-		return 0
-	}
 	signedPulse := pulse
 	if axisCfg.Inverted {
 		signedPulse = -signedPulse
 	}
-	return signedPulse / ppu
-}
-
-// wtnmc4aEngineeringToEncoderCount converts engineering units to encoder count.
-func wtnmc4aEngineeringToEncoderCount(axisCfg core.AxisConfig, value float64) int64 {
-	scale := wtnmc4aValueOrFloat(axisCfg.EncoderScale, 0.005)
-	if scale == 0 {
-		return 0
-	}
-	return int64(math.Round(value / scale))
-}
-
-// wtnmc4aIsHomed checks if the axis is near the home position.
-func wtnmc4aIsHomed(position float64, axisCfg core.AxisConfig) bool {
-	if math.Abs(position) >= 0.001 {
-		return false
-	}
-	if axisCfg.MinLimit != nil && position < *axisCfg.MinLimit {
-		return false
-	}
-	if axisCfg.MaxLimit != nil && position > *axisCfg.MaxLimit {
-		return false
-	}
-	return true
-}
-
-// wtnmc4aClampInt64 clamps an int64 value within the given range.
-func wtnmc4aClampInt64(value, min, max int64) int64 {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
-}
-
-// wtnmc4aValueOrFloat returns the pointer value or a fallback default.
-func wtnmc4aValueOrFloat(value *float64, fallback float64) float64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-// wtnmc4aValueOrInt returns the pointer value or a fallback default.
-func wtnmc4aValueOrInt(value *int, fallback int) int {
-	if value == nil {
-		return fallback
-	}
-	return *value
+	return core.PulseToEngineering(axisCfg, signedPulse)
 }
 
 // wtnmc4aFindDLL finds the WTNMC4A DLL path.

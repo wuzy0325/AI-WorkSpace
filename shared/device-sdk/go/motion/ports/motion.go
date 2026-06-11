@@ -20,6 +20,7 @@ type MotionController interface {
 	ResetEmergencyStop(ctx context.Context) error
 	DefinePosition(ctx context.Context, axis core.AxisName, position float64) error
 	GetProfile() core.MotionControllerProfile
+	ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error
 }
 
 // MotionProfileStore motion controller profile store interface

@@ -72,6 +72,9 @@ func (m *MotionManager) GetProfiles() []core.MotionControllerProfile {
 }
 
 // UpsertProfile inserts or updates a controller profile.
+// - Connection-critical fields (Type/Address/Port) changed → disconnects old controller.
+// - Only axis fields changed and controller is connected → applies config without disconnect.
+// - New profile or no controller connected → just persists.
 func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,12 +82,22 @@ func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) erro
 	found := false
 	for i, existing := range m.profiles {
 		if existing.ID == profile.ID {
-			if motionControllerConfigChanged(existing, profile) {
+			connectionChanged := existing.Type != profile.Type ||
+				existing.Address != profile.Address ||
+				existing.Port != profile.Port
+			axesChanged := !reflect.DeepEqual(existing.Axes, profile.Axes)
+
+			if connectionChanged {
 				if ctrl, ok := m.controllers[profile.ID]; ok {
 					_ = ctrl.Disconnect(context.Background())
 					delete(m.controllers, profile.ID)
 				}
+			} else if axesChanged {
+				if ctrl, ok := m.controllers[profile.ID]; ok {
+					_ = ctrl.ApplyConfig(context.Background(), profile)
+				}
 			}
+
 			m.profiles[i] = profile
 			found = true
 			break
@@ -99,13 +112,6 @@ func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) erro
 		return m.profileStore.SaveProfiles(m.profiles)
 	}
 	return nil
-}
-
-func motionControllerConfigChanged(oldProfile, newProfile core.MotionControllerProfile) bool {
-	return oldProfile.Type != newProfile.Type ||
-		oldProfile.Address != newProfile.Address ||
-		oldProfile.Port != newProfile.Port ||
-		!reflect.DeepEqual(oldProfile.Axes, newProfile.Axes)
 }
 
 // DeleteProfile deletes a controller profile and disconnects its controller.

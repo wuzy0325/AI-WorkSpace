@@ -31,7 +31,7 @@ export const useMotionStore = defineStore('motion', () => {
       const result = await api.getStatusAll();
       statusList.value = Array.isArray(result) ? result : [];
     } catch {
-      // 状态刷新失败静默处理
+      // 状态刷为非关键操作，失败时不干扰用户操作
     }
   }
 
@@ -168,9 +168,9 @@ export const useMotionStore = defineStore('motion', () => {
   }
 
   function clearError(id: string): void {
-    const status = statusList.value.find((s: MotionControllerStatus) => s.id === id);
-    if (status && status.lastError) {
-      status.lastError = '';
+    const idx = statusList.value.findIndex((s: MotionControllerStatus) => s.id === id);
+    if (idx !== -1 && statusList.value[idx].lastError) {
+      statusList.value[idx].lastError = '';
     }
   }
 

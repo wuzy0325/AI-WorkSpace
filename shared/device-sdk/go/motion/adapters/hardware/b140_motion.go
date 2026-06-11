@@ -17,8 +17,6 @@ import (
 const (
 	b140DefaultPort    = 23
 	b140CommandTimeout = 5 * time.Second
-	b140DefaultStepDeg = 1.8
-	b140DefaultScale   = 0.005
 )
 
 // B140MotionController implements Galil DMC-B140-M TCP ASCII motion control.
@@ -49,6 +47,17 @@ func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionCo
 	}
 
 	return &B140MotionController{profile: profile, status: status}
+}
+
+// ApplyConfig applies a new controller profile without disconnecting.
+// Updates the cached profile and invalidates the direction signature so
+// ensureDirectionConfiguredLocked re-applies inversion settings on the next command.
+func (c *B140MotionController) ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = profile
+	c.directionSignature = ""
+	return nil
 }
 
 // GetProfile returns the controller profile.
@@ -111,6 +120,9 @@ func (c *B140MotionController) Disconnect(ctx context.Context) error {
 	c.reader = nil
 	c.directionSignature = ""
 	c.status.Connected = false
+	if err != nil {
+		c.status.LastError = err.Error()
+	}
 	for i := range c.status.Axes {
 		c.status.Axes[i].Moving = false
 		c.status.Axes[i].Velocity = 0
@@ -167,13 +179,13 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		}
 
 		registerPulse := numberAt(registerPositions, axisIndex)
-		position := pulseToEngineering(axisCfg, registerPulse)
+		position := core.PulseToEngineering(axisCfg, registerPulse)
 		if axisCfg.PositionSource == core.PositionSourceEncoder {
 			payload, err := c.sendCommandLocked(ctx, "TP"+physical)
 			if err == nil {
 				encoderCount, parseErr := strconv.ParseFloat(strings.TrimSpace(payload), 64)
 				if parseErr == nil {
-					position = encoderCountToEngineering(axisCfg, encoderCount)
+					position = core.EncoderCountToEngineering(axisCfg, encoderCount)
 				}
 			}
 		}
@@ -191,7 +203,7 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 
 		axisStatus.Position = position
 		axisStatus.Moving = int(numberAt(statusBytes, axisIndex))&0x80 != 0
-		axisStatus.Homed = b140IsHomed(position, axisCfg)
+		axisStatus.Homed = core.IsHomed(position, axisCfg)
 		axisStatus.PosLimit = parseB140Limit(forwardPayload)
 		axisStatus.NegLimit = parseB140Limit(reversePayload)
 		axisStatus.Compensating = false
@@ -211,7 +223,7 @@ func (c *B140MotionController) MoveTo(ctx context.Context, axis core.AxisName, p
 	if err != nil {
 		return err
 	}
-	pulse := engineeringToPulse(axisCfg, position)
+	pulse := core.EngineeringToPulse(axisCfg, position)
 	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PA%s=%d", physical, pulse)); err != nil {
 		c.status.LastError = err.Error()
 		return err
@@ -233,7 +245,7 @@ func (c *B140MotionController) MoveBy(ctx context.Context, axis core.AxisName, d
 	if err != nil {
 		return err
 	}
-	deltaPulse := engineeringToPulse(axisCfg, delta)
+	deltaPulse := core.EngineeringToPulse(axisCfg, delta)
 	if deltaPulse == 0 {
 		return nil
 	}
@@ -258,7 +270,7 @@ func (c *B140MotionController) Jog(ctx context.Context, axis core.AxisName, velo
 	if err != nil {
 		return err
 	}
-	maxSpeed := valueOrFloat(axisCfg.MaxSpeed, 10)
+	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, 10)
 	jogSpeed := math.Abs(velocity)
 	if jogSpeed > maxSpeed {
 		jogSpeed = maxSpeed
@@ -266,12 +278,12 @@ func (c *B140MotionController) Jog(ctx context.Context, axis core.AxisName, velo
 	if jogSpeed == 0 {
 		jogSpeed = maxSpeed
 	}
-	pulseSpeed := engineeringToPulse(axisCfg, jogSpeed)
+	pulseSpeed := core.EngineeringToPulse(axisCfg, jogSpeed)
 	step := 1.0
 	if velocity < 0 {
 		step = -1
 	}
-	stepPulse := engineeringToPulse(axisCfg, step)
+	stepPulse := core.EngineeringToPulse(axisCfg, step)
 
 	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed)); err != nil {
 		c.status.LastError = err.Error()
@@ -385,8 +397,8 @@ func (c *B140MotionController) DefinePosition(ctx context.Context, axis core.Axi
 	if err != nil {
 		return err
 	}
-	pulse := engineeringToPulse(axisCfg, position)
-	encoderCount := engineeringToEncoderCount(axisCfg, position)
+	pulse := core.EngineeringToPulse(axisCfg, position)
+	encoderCount := core.EngineeringToEncoderCount(axisCfg, position)
 	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("DP%s=%d", physical, pulse)); err != nil {
 		c.status.LastError = err.Error()
 		return err
@@ -563,74 +575,4 @@ func parseB140Limit(payload string) bool {
 	return value < 1
 }
 
-func engineeringToPulse(axisCfg core.AxisConfig, value float64) int64 {
-	return int64(math.Round(value * pulsesPerUnit(axisCfg)))
-}
 
-func pulseToEngineering(axisCfg core.AxisConfig, pulse float64) float64 {
-	pulses := pulsesPerUnit(axisCfg)
-	if pulses == 0 {
-		return 0
-	}
-	return pulse / pulses
-}
-
-func engineeringToEncoderCount(axisCfg core.AxisConfig, value float64) int64 {
-	scale := valueOrFloat(axisCfg.EncoderScale, b140DefaultScale)
-	if scale == 0 {
-		return 0
-	}
-	return int64(math.Round(value / scale))
-}
-
-func encoderCountToEngineering(axisCfg core.AxisConfig, count float64) float64 {
-	return count * valueOrFloat(axisCfg.EncoderScale, b140DefaultScale)
-}
-
-func pulsesPerUnit(axisCfg core.AxisConfig) float64 {
-	stepAngleDeg := valueOrFloat(axisCfg.StepsPerRev, b140DefaultStepDeg)
-	if stepAngleDeg == 0 {
-		stepAngleDeg = b140DefaultStepDeg
-	}
-	microSteps := valueOrInt(axisCfg.MicroSteps, 1)
-	stepsPerRev := 360 / stepAngleDeg
-	if axisCfg.Kind == core.AxisKindRotary {
-		gearRatio := valueOrFloat(axisCfg.GearRatio, 1)
-		if gearRatio == 0 {
-			gearRatio = 1
-		}
-		return (stepsPerRev * float64(microSteps) * gearRatio) / 360
-	}
-	lead := valueOrFloat(axisCfg.Lead, 1)
-	if lead == 0 {
-		lead = 1
-	}
-	return (stepsPerRev * float64(microSteps)) / lead
-}
-
-func valueOrFloat(value *float64, fallback float64) float64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func valueOrInt(value *int, fallback int) int {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func b140IsHomed(position float64, axisCfg core.AxisConfig) bool {
-	if math.Abs(position) >= 0.001 {
-		return false
-	}
-	if axisCfg.MinLimit != nil && position < *axisCfg.MinLimit {
-		return false
-	}
-	if axisCfg.MaxLimit != nil && position > *axisCfg.MaxLimit {
-		return false
-	}
-	return true
-}
