@@ -115,7 +115,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   gap: 0.375rem;
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .axis-card__body {
@@ -128,9 +128,9 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   margin-bottom: var(--space-2);
 }
 .axis-card__group-title {
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   letter-spacing: 0.03em;
   text-transform: uppercase;
   margin-bottom: var(--space-2);
@@ -139,9 +139,9 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 .axis-card__label {
-  font-size: 0.675rem;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 .axis-card__input {
   width: 6rem;
@@ -150,8 +150,8 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.2);
-  color: var(--color-text-primary);
-  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
   text-align: right;
   outline: none;
   transition: border-color 0.2s ease;
@@ -159,7 +159,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
 :root[data-theme='light'] .axis-card__input {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 .axis-card__input:focus {
   border-color: var(--axis-hue);
@@ -175,8 +175,8 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.2);
-  color: var(--color-text-primary);
-  font-size: 0.7rem;
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
   outline: none;
   cursor: pointer;
   transition: border-color 0.2s ease;
@@ -184,7 +184,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
 :root[data-theme='light'] .axis-card__select {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 .axis-card__select:focus {
   border-color: var(--axis-hue);
@@ -235,11 +235,11 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .axis-card__info-label {
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 .axis-card__info-value {
-  font-size: var(--text-sm);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   font-family: monospace;
   color: var(--axis-hue);

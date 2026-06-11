@@ -286,17 +286,17 @@ function toggleLocale() {
   gap: 1rem;
 }
 .config-panel__title {
-  font-size: 1.1rem;
+  font-size: var(--font-size-xl);
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 :root[data-theme='light'] .config-panel__title {
-  color: #0f172a;
+  color: var(--text-primary);
 }
 .config-panel__subtitle {
   margin-top: 0.25rem;
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 .config-panel__close {
   width: 2rem;
@@ -305,12 +305,12 @@ function toggleLocale() {
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
-  color: #64748b;
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.2);
   transition: all 0.2s ease;
 }
 .config-panel__close:hover {
-  color: #10b981;
+  color: var(--accent-primary);
   background: rgba(16, 185, 129, 0.15);
 }
 .locale-toggle-btn {
@@ -318,15 +318,15 @@ function toggleLocale() {
   border-radius: 0.375rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.15);
-  color: #94a3b8;
-  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   transition: all 0.2s ease;
 }
 .locale-toggle-btn:hover {
-  color: #fff;
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.1);
 }
 .config-panel__body {
@@ -343,18 +343,18 @@ function toggleLocale() {
   margin-bottom: 1.5rem;
 }
 .config-section__title {
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--text-muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   margin-bottom: 0.875rem;
 }
 .section-subtitle {
   display: inline;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-weight: 400;
-  color: #64748b;
+  color: var(--text-muted);
   text-transform: none;
   letter-spacing: normal;
   margin-left: 0.5rem;
@@ -384,12 +384,12 @@ function toggleLocale() {
 .config-panel__new-btn {
   padding: 0.5rem 1rem;
   border-radius: 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   transition: all 0.2s ease;
 }
 .config-panel__delete-btn {
-  color: #ef4444;
+  color: var(--accent-danger);
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.2);
 }
@@ -397,7 +397,7 @@ function toggleLocale() {
   background: rgba(239, 68, 68, 0.2);
 }
 .config-panel__new-btn {
-  color: #10b981;
+  color: var(--accent-primary);
   background: rgba(16, 185, 129, 0.1);
   border: 1px solid rgba(16, 185, 129, 0.2);
 }
@@ -408,22 +408,22 @@ function toggleLocale() {
 .config-panel__save-btn {
   padding: 0.5rem 1.25rem;
   border-radius: 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   transition: all 0.2s ease;
 }
 .config-panel__cancel-btn {
-  color: #94a3b8;
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.15);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 .config-panel__cancel-btn:hover {
-  color: #e2e8f0;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.25);
 }
 .config-panel__save-btn {
-  color: #fff;
-  background: linear-gradient(135deg, #10b981, #059669);
+  color: var(--color-brand-foreground);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-primary-core-strong));
   border: none;
 }
 .config-panel__save-btn:hover {
@@ -434,18 +434,18 @@ function toggleLocale() {
   z-index: 9999;
   padding: 0.5rem 0.75rem;
   border-radius: 0.375rem;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   font-weight: 500;
-  color: #f1f5f9;
-  background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-panel);
 }
 :root[data-theme='light'] .field-tooltip {
-  color: #0f172a;
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
 }
 </style>

@@ -24,6 +24,14 @@ function ok<T>(data?: T): { success: boolean; data?: T; error?: string } {
   return data === undefined ? { success: true } : { success: true, data }
 }
 
+function formatApiError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+    return '网络连接失败，请检查后端服务是否已启动'
+  }
+  return msg
+}
+
 async function invoke<T>(path: string, body?: unknown): Promise<{ success: boolean; data?: T; error?: string }> {
   try {
     const data = await apiRequest<T>(path, body === undefined
@@ -31,7 +39,7 @@ async function invoke<T>(path: string, body?: unknown): Promise<{ success: boole
       : { method: 'POST', body: JSON.stringify(body) })
     return ok(data)
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) }
+    return { success: false, error: formatApiError(err) }
   }
 }
 

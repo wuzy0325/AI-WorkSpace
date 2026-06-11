@@ -334,11 +334,11 @@ watch(
       </div>
 
       <div v-else class="flex-1 overflow-auto space-y-2 mt-1 custom-scrollbar">
-        <UiButton
+        <button
           v-for="p in motion.profiles"
           :key="p.id"
+          type="button"
           @click="selectController(p.id)"
-          secondary size="sm"
           class="motion-list-item w-full text-left"
           :class="{ 'motion-list-item--active': selectedId === p.id }"
         >
@@ -361,7 +361,7 @@ watch(
             <span class="truncate">{{ p.address }}:{{ p.port }}</span>
             <span class="uppercase tracking-widest motion-item-type">{{ p.type }}</span>
           </div>
-        </UiButton>
+        </button>
       </div>
     </aside>
 
@@ -738,6 +738,9 @@ watch(
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  align-items: stretch;
+  justify-content: flex-start;
+  height: auto;
 }
 
 .motion-list-item:hover {
@@ -746,8 +749,8 @@ watch(
 }
 
 .motion-list-item--active {
-  background: color-mix(in srgb, var(--accent-success) 8%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent-success) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--accent-success) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent-success) 30%, transparent);
 }
 
 .motion-list-item:focus-visible {
@@ -756,7 +759,7 @@ watch(
 }
 
 .motion-item-name {
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;
@@ -765,12 +768,13 @@ watch(
 }
 
 .motion-item-meta {
-  font-size: 0.625rem;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
+  gap: var(--space-2);
 }
 
 .motion-item-type {
-  font-size: 0.5625rem;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
@@ -794,7 +798,7 @@ watch(
 .motion-status-text {
   display: flex;
   align-items: center;
-  font-size: 0.5625rem;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -845,8 +849,8 @@ watch(
   gap: 0.375rem;
 }
 
-.limit-status-label {
-  font-size: 0.625rem;
+ .limit-status-label {
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -889,7 +893,7 @@ watch(
 .jog-unit {
   position: absolute;
   right: var(--space-2);
-  font-size: 0.625rem;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -914,7 +918,7 @@ watch(
 .move-unit {
   position: absolute;
   right: var(--space-2);
-  font-size: 0.625rem;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   color: var(--text-muted);

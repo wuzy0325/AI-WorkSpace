@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref } from 'vue'
 import UiSlider from '@components/ui/UiSlider.vue'
 
@@ -141,8 +141,8 @@ const betaArcEnd = computed(() => ({
 
 <style scoped>
 .probe-card {
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-canvas);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
   min-height: 560px;
 }
 .probe-glow {
@@ -151,9 +151,9 @@ const betaArcEnd = computed(() => ({
     radial-gradient(circle at 70% 70%, color-mix(in srgb, var(--color-info) 15%, transparent) 0%, transparent 30%);
 }
 .info-box {
-  border: 1px solid var(--color-border-default);
-  background: color-mix(in srgb, var(--color-bg-panel) 75%, transparent);
-  color: var(--color-text-secondary);
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-panel) 75%, transparent);
+  color: var(--text-secondary);
 }
 </style>
 

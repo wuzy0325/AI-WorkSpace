@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import TraversalMain from '@components/traversal/TraversalMain.vue'
 import TraversalSettings from '@components/traversal/TraversalSettings.vue'
@@ -65,7 +65,7 @@ async function onConfigSaved(): Promise<void> {
 </script>
 
 <template>
-  <div data-test="traversal-shell" class="flex h-full min-h-0 flex-col overflow-hidden font-sans" style="background:var(--color-bg-canvas);color:var(--color-text-primary)">
+  <div data-test="traversal-shell" class="flex h-full min-h-0 flex-col overflow-hidden font-sans" style="background:var(--bg-canvas);color:var(--text-primary)">
     <UiLoadingState v-if="isRecovering" loading text="正在恢复移位测试状态..." />
     <UiErrorState v-else-if="recoveryError" title="恢复失败" :message="recoveryError">
       <template #action>

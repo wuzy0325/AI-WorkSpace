@@ -61,6 +61,24 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
       labelFontSizeLeftSmall: '12px',
       labelTextColor: isDark ? '#cbd5e1' : '#334155',
     },
+    // 浅色主题下 Input/Select 文字颜色强制使用深色，确保对比度
+    Input: {
+      textColor: isDark ? '#e2e8f0' : '#0f172a',
+      placeholderColor: isDark ? '#64748b' : '#94a3b8',
+      border: isDark ? '1px solid #334155' : '1px solid #e2e8f0',
+      borderHover: isDark ? '1px solid #38bdf8' : '1px solid #22c55e',
+      borderFocus: isDark ? '1px solid #38bdf8' : '1px solid #22c55e',
+      color: isDark ? 'rgba(255, 255, 255, 0.03)' : '#ffffff',
+      colorFocus: isDark ? 'rgba(255, 255, 255, 0.05)' : '#ffffff',
+    },
+    Select: {
+      textColor: isDark ? '#e2e8f0' : '#0f172a',
+      placeholderColor: isDark ? '#64748b' : '#94a3b8',
+      border: isDark ? '1px solid #334155' : '1px solid #e2e8f0',
+      borderHover: isDark ? '1px solid #38bdf8' : '1px solid #22c55e',
+      borderFocus: isDark ? '1px solid #38bdf8' : '1px solid #22c55e',
+      color: isDark ? 'rgba(255, 255, 255, 0.03)' : '#ffffff',
+    },
   }
 })
 </script>

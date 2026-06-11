@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/types/traversal'
 import { isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -61,16 +61,16 @@ const mappingOptions = [{ label: 'alpha', value: 'alpha' }, { label: 'beta', val
 .hw-head { display:flex; align-items:center; gap:var(--space-2); padding-bottom:var(--space-2); border-bottom:1px solid var(--border-default) }
 .hw-row { display:flex; align-items:center; gap:var(--space-2); padding:6px 0 }
 .hw-row:hover { background:var(--bg-panel-strong); border-radius:var(--radius-md) }
-.hdr-enabled { font-size:var(--text-xs);flex:0 0 32px;color:var(--color-text-muted) }
-.hdr-name { font-size:var(--text-xs);flex:1;color:var(--color-text-muted) }
-.hdr-device { font-size:var(--text-xs);width:150px;color:var(--color-text-muted) }
-.hdr-w80 { font-size:var(--text-xs);width:80px;color:var(--color-text-muted) }
-.hdr-w50 { font-size:var(--text-xs);width:50px;color:var(--color-text-muted) }
-.hdr-w90 { font-size:var(--text-xs);width:90px;color:var(--color-text-muted) }
+.hdr-enabled { font-size:var(--text-xs);flex:0 0 32px;color:var(--text-muted) }
+.hdr-name { font-size:var(--text-xs);flex:1;color:var(--text-muted) }
+.hdr-device { font-size:var(--text-xs);width:150px;color:var(--text-muted) }
+.hdr-w80 { font-size:var(--text-xs);width:80px;color:var(--text-muted) }
+.hdr-w50 { font-size:var(--text-xs);width:50px;color:var(--text-muted) }
+.hdr-w90 { font-size:var(--text-xs);width:90px;color:var(--text-muted) }
 .row-check { flex:0 0 32px }
 .row-content { flex:1;min-width:0 }
-.chan-name { font-size:var(--text-sm);color:var(--color-text-primary) }
-.axis-name { font-size:var(--text-sm);font-weight:600;width:50px;color:var(--color-text-primary) }
+.chan-name { font-size:var(--text-sm);color:var(--text-primary) }
+.axis-name { font-size:var(--text-sm);font-weight:600;width:50px;color:var(--text-primary) }
 .sel-w150 { width:150px }
 .sel-w80 { width:80px }
 .sel-w90 { width:90px }

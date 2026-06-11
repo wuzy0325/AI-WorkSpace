@@ -106,6 +106,6 @@ watch(history, () => { loading.value = false }, { deep: true })
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
 }
 </style>

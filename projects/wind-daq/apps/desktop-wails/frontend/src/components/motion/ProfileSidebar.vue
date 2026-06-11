@@ -17,7 +17,7 @@ const emit = defineEmits<{
 <template>
   <aside class="config-sidebar">
     <div class="config-sidebar__header">
-      <h3 class="config-sidebar__title">控制器配</h3>
+      <h3 class="config-sidebar__title">控制器配置</h3>
       <UiButton quaternary size="sm" class="config-sidebar__add-btn" @click="emit('add')">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -49,7 +49,7 @@ const emit = defineEmits<{
         </div>
       </UiButton>
       <div v-if="profiles.length === 0" class="config-sidebar__empty">
-        <p>暂无控制器配</p>
+        <p>暂无控制器配置</p>
       </div>
     </div>
   </aside>
@@ -74,7 +74,7 @@ const emit = defineEmits<{
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 .config-sidebar__title {
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-tertiary);
   letter-spacing: 0.05em;
@@ -149,17 +149,17 @@ const emit = defineEmits<{
   min-width: 0;
 }
 .config-sidebar__item-name {
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.4;
 }
 :root[data-theme='light'] .config-sidebar__item-name {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 .config-sidebar__item-type {
-  font-size: 0.7rem;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   margin-top: 0.25rem;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -167,7 +167,7 @@ const emit = defineEmits<{
 .config-sidebar__empty {
   padding: 2rem 1rem;
   text-align: center;
-  color: #64748b;
-  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 </style>

@@ -140,7 +140,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
 .t1603-config__label {
   display: block;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-weight: 800;
   color: var(--text-muted);
   letter-spacing: 0.08em;
@@ -155,7 +155,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
   background: rgba(0, 0, 0, 0.2);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   font-weight: 700;
   outline: none;
   transition: all 0.2s ease;
@@ -175,7 +175,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 }
 
 .t1603-config__hint {
-  font-size: 0.6rem;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   color: var(--text-muted);
   margin-top: 0.125rem;

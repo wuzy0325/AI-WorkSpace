@@ -75,7 +75,7 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 .config-section__title {
   font-size: 0.8rem;
   font-weight: 700;
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   margin-bottom: 0.875rem;
@@ -96,9 +96,9 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
   justify-content: space-between;
 }
 .config-field__label {
-  font-size: var(--text-sm);
+  font-size: var(--font-size-sm);
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 .config-field__input {
   height: 2.25rem;
@@ -106,18 +106,18 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
   border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.15);
-  color: var(--color-text-primary);
-  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 :root[data-theme='light'] .config-field__input {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 .config-field__input:focus {
-  border-color: var(--color-success);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
 }
 .config-field__input--short {
@@ -129,8 +129,8 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
   border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.15);
-  color: var(--color-text-primary);
-  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
   outline: none;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -138,10 +138,10 @@ const hideTooltip = inject<() => void>('hideTooltip', () => {})
 :root[data-theme='light'] .config-field__select {
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 .config-field__select:focus {
-  border-color: var(--color-success);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
 }
 .toggle-switch {

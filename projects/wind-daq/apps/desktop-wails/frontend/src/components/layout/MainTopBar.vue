@@ -196,9 +196,9 @@ function activePageLabel(): string {
 }
 
 .main-topbar__subtitle {
-  font-size: 0.5rem;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
-  color: #64748b;
+  color: var(--text-muted);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-top: 0.125rem;
@@ -233,30 +233,30 @@ function activePageLabel(): string {
 }
 
 .main-topbar__nav-btn {
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   white-space: nowrap;
   padding: 0.375rem 0.875rem;
   border-radius: 0.5rem;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s ease;
   letter-spacing: 0.02em;
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn {
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .main-topbar__nav-btn:hover {
-  color: #e2e8f0;
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.05);
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn:hover {
-  color: #1e293b;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.04);
 }
 
@@ -269,7 +269,7 @@ function activePageLabel(): string {
 
 :root[data-theme='light'] .main-topbar__nav-btn--active {
   background: rgba(255, 255, 255, 0.9) !important;
-  color: #0f172a !important;
+  color: var(--text-primary) !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -309,7 +309,7 @@ function activePageLabel(): string {
 .main-topbar__status--idle {
   background: rgba(148, 163, 184, 0.1);
   border: 1px solid rgba(148, 163, 184, 0.2);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .main-topbar__status-dot {
@@ -350,9 +350,9 @@ function activePageLabel(): string {
 
 .main-topbar__locale-btn {
   padding: 0.375rem 0.75rem;
-  font-size: 0.6875rem;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--text-muted);
   border-radius: 0.5rem;
   transition: all 0.2s ease;
   border: none;
@@ -362,16 +362,16 @@ function activePageLabel(): string {
 }
 
 :root[data-theme='light'] .main-topbar__locale-btn {
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .main-topbar__locale-btn:hover {
-  color: #e2e8f0;
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.05);
 }
 
 :root[data-theme='light'] .main-topbar__locale-btn:hover {
-  color: #1e293b;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.04);
 }
 
@@ -384,7 +384,7 @@ function activePageLabel(): string {
 
 :root[data-theme='light'] .main-topbar__locale-btn--active {
   background: rgba(255, 255, 255, 0.9) !important;
-  color: #0f172a !important;
+  color: var(--text-primary) !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -397,9 +397,9 @@ function activePageLabel(): string {
 }
 
 .main-topbar__version {
-  font-size: 0.625rem;
+  font-size: var(--font-size-micro);
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   font-family: ui-monospace, monospace;
 }
 

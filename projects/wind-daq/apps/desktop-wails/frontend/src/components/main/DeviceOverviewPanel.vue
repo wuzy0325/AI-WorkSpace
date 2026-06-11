@@ -233,7 +233,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .overview-device-group__title-row {
@@ -269,14 +269,14 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 
 .overview-device-group__count {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-canvas);
   color: var(--text-tertiary);
 }
 
 :root[data-theme='light'] .overview-device-group__count {
   border: 1px solid rgba(0, 0, 0, 0.06);
   background: rgba(0, 0, 0, 0.02);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .overview-device-group__status--healthy {
@@ -301,7 +301,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .overview-device-group__summary-value {
@@ -380,7 +380,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 .overview-channel-micro__unit {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: #64748b;
+  color: var(--text-muted);
   font-style: italic;
   text-transform: uppercase;
 }
@@ -395,7 +395,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 .overview-channel-micro__ch {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: #64748b;
+  color: var(--text-muted);
   letter-spacing: 0.04em;
 }
 

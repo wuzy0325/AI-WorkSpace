@@ -27,11 +27,40 @@ Use `Ui*` components when the interaction matches an existing primitive:
 - Use `UiPanel` before direct `NCard` for product panels.
 - Use `UiStatusBadge` before direct `NTag` for connected, acquiring, warning, error, and idle status.
 
+### UiButton 使用边界
+
+`UiButton` 适用于以下场景：
+- 工具栏操作按钮（连接、断开、开始、停止等）
+- 表单提交按钮
+- 弹窗确认/取消按钮
+- 简单的图标按钮
+
+`UiButton` **不适用于**以下场景（应使用原生 `<button>` 或专门的列表项组件）：
+- 侧边栏设备列表项（需要复杂的内部 flex 布局，如名称+状态+地址的多行结构）
+- 控制器列表项（需要状态圆点、名称、连接地址的多列布局）
+- 任何需要 `NButton` 内部 `.n-button__content` 作为 flex 容器且需要自定义布局的列表项
+
+原因：`UiButton` 包装了 `NButton`，其内部 `.n-button__content` 使用 `display: inline-flex`，会压缩和干扰复杂的内部布局。强行使用会导致文本截断、布局错乱，需要使用大量 `:deep()` 覆盖，反而增加维护成本。
+
+### 列表项组件规范
+
+对于侧边栏列表、卡片列表等场景，优先使用以下方式：
+1. 原生 `<div>` 或 `<button>` 元素 + 自定义样式
+2. 如果该列表项模式在多个领域复用，创建专门的 `UiListItem` 或 `UiSidebarItem` 组件
+3. 列表项组件可以放在 `components/ui/`（如果通用）或 `components/patterns/`（如果带特定布局模式）
+
+列表项组件应支持：
+- 激活状态样式
+- 悬停状态样式
+- 错误状态样式
+- 内部自由布局（不受 `NButton` 限制）
+
 Direct Naive UI usage is allowed when:
 
 - No `Ui*` wrapper exists yet.
 - The component is complex enough that wrapping it first would add churn, such as `NDataTable`, `NModal`, `NSteps`, `NInputNumber`, `NCheckbox`, or chart-adjacent controls.
 - The file is a spike or migration-only experiment.
+- **需要 `NButton` 的 `type` 属性（如 `type="primary"`、`type="error"`）且 `UiButton` 的 `variant` 无法满足时**。
 
 When direct Naive UI usage repeats across two or more feature areas, add or extend a `Ui*` primitive before continuing broad usage.
 
@@ -64,17 +93,32 @@ Avoid in primitive components:
 
 Existing inline styles in this directory are migration debt. New changes should move repeated values into scoped classes or token-backed CSS.
 
-## Missing Primitives
+## Primitive Inventory
 
-Add these next before large UI cleanup work:
+All planned primitives are now implemented:
 
-- `UiFormField` for compact label, unit, hint, and field error layout.
-- `UiDialog` for standard modal shell behavior.
-- `UiEmptyState` for empty data panels.
-- `UiLoadingState` for loading panels.
-- `UiErrorState` for recoverable UI errors.
-- `UiToolbar` for dense action rows.
-- `UiDataTableShell` for table container, toolbar, empty, and loading states.
+| Component | Status | Purpose |
+|---|---|---|
+| `UiButton` | ✅ | Standard action button |
+| `UiInput` | ✅ | Text input |
+| `UiSelect` | ✅ | Single select |
+| `UiToggle` | ✅ | Boolean toggle |
+| `UiCheckbox` | ✅ | Checkbox |
+| `UiInputNumber` | ✅ | Numeric input |
+| `UiPanel` | ✅ | Panel/card container |
+| `UiSectionHeader` | ✅ | Section title |
+| `UiStatusBadge` | ✅ | Status indicator |
+| `UiFormField` | ✅ | Form field layout |
+| `UiDialog` | ✅ | Modal dialog |
+| `UiEmptyState` | ✅ | Empty data panels |
+| `UiLoadingState` | ✅ | Loading spinner |
+| `UiErrorState` | ✅ | Recoverable errors |
+| `UiToolbar` | ✅ | Dense action rows |
+| `UiDataTableShell` | ✅ | Table container with states |
+| `UiAlert` | ✅ | Alert banners |
+| `UiSteps` / `UiStep` | ✅ | Step indicators |
+| `UiSpin` | ✅ | Spinner overlay |
+| `UiListItem` | 📝 | Sidebar/card list item with free internal layout |
 
 ## Review Checklist
 

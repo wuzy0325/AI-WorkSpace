@@ -288,14 +288,14 @@ onBeforeUnmount(() => {
 .log-title {
   font-size: var(--text-base);
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--text-primary);
   letter-spacing: 0.02em;
 }
 
 .log-count {
   font-size: var(--text-xs);
   font-weight: 500;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   background: rgba(255, 255, 255, 0.04);
   padding: 0.0625rem 0.375rem;
   border-radius: var(--radius-md);
@@ -317,7 +317,7 @@ onBeforeUnmount(() => {
   border-radius: 0.375rem;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.02);
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
 .log-action-btn:hover {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.1);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 
 .log-action-btn.pause-active {
@@ -363,7 +363,7 @@ onBeforeUnmount(() => {
   border-radius: 0.375rem;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-transform: uppercase;
@@ -377,12 +377,12 @@ onBeforeUnmount(() => {
 }
 
 .log-level-chip:hover {
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.04);
 }
 
 .log-level-chip.active {
-  color: var(--color-text-primary);
+  color: var(--text-primary);
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.06);
 }
@@ -394,9 +394,9 @@ onBeforeUnmount(() => {
 }
 
 .chip-debug.active {
-  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
-  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-secondary);
 }
 
 .chip-info.active {
@@ -481,7 +481,7 @@ onBeforeUnmount(() => {
 }
 
 .log-time {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   flex-shrink: 0;
   font-size: 0.625rem;
   min-width: 5.75rem;
@@ -501,7 +501,7 @@ onBeforeUnmount(() => {
 }
 
 .log-source {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   flex-shrink: 0;
   min-width: 5rem;
   max-width: 7rem;
@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
 
 .log-details {
   display: block;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   font-size: 0.625rem;
   padding-left: var(--space-3);
   margin-top: 0.125rem;
@@ -535,7 +535,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--space-3);
   height: 10rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   font-size: var(--text-sm);
 }
 
@@ -565,24 +565,24 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .log-title {
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .log-count {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.04);
 }
 
 :root[data-theme='light'] .log-action-btn {
   border-color: rgba(0, 0, 0, 0.08);
   background: rgba(0, 0, 0, 0.02);
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
 }
 
 :root[data-theme='light'] .log-action-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.12);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 
 :root[data-theme='light'] .log-action-btn.pause-active {
@@ -597,16 +597,16 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .log-level-chip {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 :root[data-theme='light'] .log-level-chip:hover {
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   background: rgba(0, 0, 0, 0.03);
 }
 
 :root[data-theme='light'] .log-level-chip.active {
-  color: var(--color-text-primary);
+  color: var(--text-primary);
   border-color: rgba(0, 0, 0, 0.1);
   background: rgba(0, 0, 0, 0.05);
 }
@@ -618,9 +618,9 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .chip-debug.active {
-  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
-  border-color: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
-  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-muted);
 }
 
 :root[data-theme='light'] .chip-info.active {
@@ -663,18 +663,18 @@ onBeforeUnmount(() => {
 }
 
 :root[data-theme='light'] .log-time {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 :root[data-theme='light'] .log-source {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 :root[data-theme='light'] .log-details {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 :root[data-theme='light'] .log-empty {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 </style>

@@ -243,7 +243,7 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-if="activePage === 'dashboard'" #sidebar>
-      <DeviceSidebar @open-manage="showDeviceDrawer = true" />
+      <DeviceSidebar :t="i18n.t" @open-manage="showDeviceDrawer = true" />
     </template>
 
     <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
@@ -302,11 +302,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .main-dashboard-view {
-  background: radial-gradient(circle at top left, var(--color-bg-panel) 0%, var(--color-bg-canvas) 100%);
+  background: radial-gradient(circle at top left, var(--bg-panel) 0%, var(--bg-canvas) 100%);
 }
 
 :root[data-theme='light'] .main-dashboard-view {
-  background: radial-gradient(circle at top left, var(--color-bg-canvas) 0%, var(--color-bg-surface) 100%);
+  background: radial-gradient(circle at top left, var(--bg-canvas) 0%, var(--bg-surface) 100%);
 }
 
 .main-dashboard-stage {

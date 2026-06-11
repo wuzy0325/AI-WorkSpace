@@ -3,7 +3,7 @@
 import {backend} from '../models';
 import {calibration} from '../models';
 import {device} from '../models';
-import {core} from '../models';
+import {motion} from '../models';
 import {frontend} from '../models';
 import {report} from '../models';
 import {storage} from '../models';
@@ -64,9 +64,9 @@ export function MotionDisconnect(arg1:string):Promise<backend.GenericResponse>;
 
 export function MotionEmergencyStop(arg1:string):Promise<backend.GenericResponse>;
 
-export function MotionGetProfiles():Promise<Array<core.MotionControllerProfile>>;
+export function MotionGetProfiles():Promise<Array<motion.MotionControllerProfile>>;
 
-export function MotionGetStatus():Promise<Array<core.ControllerStatus>>;
+export function MotionGetStatus():Promise<Array<motion.ControllerStatus>>;
 
 export function MotionHome(arg1:string,arg2:string):Promise<backend.GenericResponse>;
 
@@ -80,7 +80,7 @@ export function MotionResetEmergencyStop(arg1:string):Promise<backend.GenericRes
 
 export function MotionStop(arg1:string,arg2:string):Promise<backend.GenericResponse>;
 
-export function MotionUpsertProfile(arg1:core.MotionControllerProfile):Promise<backend.GenericResponse>;
+export function MotionUpsertProfile(arg1:motion.MotionControllerProfile):Promise<backend.GenericResponse>;
 
 export function PickDirectory():Promise<string>;
 

@@ -132,13 +132,13 @@ function displayStatusLabel(profileId: string): string {
 .device-sidebar__title {
   font-size: var(--font-size-sm);
   font-weight: 700;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 :root[data-theme='light'] .device-sidebar__title {
-  color: var(--text-secondary, #475569);
+  color: var(--text-secondary);
 }
 
 .device-sidebar__manage-btn {
@@ -148,7 +148,7 @@ function displayStatusLabel(profileId: string): string {
   justify-content: center;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-md);
@@ -157,7 +157,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 :root[data-theme='light'] .device-sidebar__manage-btn {
-  color: var(--text-secondary, #475569);
+  color: var(--text-secondary);
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
@@ -181,7 +181,7 @@ function displayStatusLabel(profileId: string): string {
   padding: var(--space-8) var(--space-4);
   text-align: center;
   font-size: var(--font-size-xs);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .device-sidebar__item {
@@ -281,7 +281,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__status--disconnected {
-  background: #64748b;
+  background: var(--text-muted);
 }
 
 @keyframes breathe {
@@ -295,8 +295,8 @@ function displayStatusLabel(profileId: string): string {
 
 .device-status--acquiring-icon {
   display: inline-block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: var(--font-size-xs);
+  height: var(--font-size-xs);
   border-radius: 2px;
   background: var(--accent-primary);
   animation: breathe 1.5s ease-in-out infinite;
@@ -317,7 +317,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item-status.device-status--disconnected {
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 

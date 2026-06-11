@@ -38,7 +38,7 @@ const emit = defineEmits<{
   background: rgba(148, 163, 184, 0.1);
   color: var(--text-muted);
   border: 1px solid rgba(148, 163, 184, 0.2);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 800;
   transition: all 0.2s ease;
 }

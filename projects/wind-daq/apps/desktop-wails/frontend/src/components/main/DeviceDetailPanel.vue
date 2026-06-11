@@ -459,7 +459,7 @@ const connectionButtonLabel = computed(() => {
 .detail-panel__header-desc {
   margin: 0.125rem 0 0;
   font-size: var(--font-size-xs);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .detail-panel__actions {
@@ -539,7 +539,7 @@ const connectionButtonLabel = computed(() => {
 .detail-panel__chart-label {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: #64748b;
+  color: var(--text-muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -654,9 +654,9 @@ const connectionButtonLabel = computed(() => {
 
 .channel-card__tag,
 .channel-card__id-text {
-  font-size: 0.625em;
+  font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   letter-spacing: 0.1em;
   white-space: nowrap;
 }
@@ -690,7 +690,7 @@ const connectionButtonLabel = computed(() => {
   align-items: center;
   justify-content: center;
   border-radius: 0.25em;
-  color: #64748b;
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.2);
   transition: all 0.2s ease;
 }
@@ -763,9 +763,9 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card__unit {
-  font-size: 0.625em;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-black);
-  color: var(--text-secondary, #64748b);
+  color: var(--text-muted);
   font-style: italic;
   letter-spacing: 0.02em;
 }
@@ -797,9 +797,9 @@ const connectionButtonLabel = computed(() => {
 .channel-card__range {
   display: flex;
   justify-content: space-between;
-  font-size: 0.625em;
+  font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin-top: 0.25em;
 }
 
@@ -809,7 +809,7 @@ const connectionButtonLabel = computed(() => {
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-sm);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .chart-selector {
@@ -868,7 +868,7 @@ const connectionButtonLabel = computed(() => {
 .chart-selector__subtitle {
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: #64748b;
+  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
@@ -931,7 +931,7 @@ const connectionButtonLabel = computed(() => {
 
 .chart-selector__channel {
   font-size: var(--font-size-xs);
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .chart-selector__footer {

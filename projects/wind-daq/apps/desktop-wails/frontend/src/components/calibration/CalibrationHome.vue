@@ -250,16 +250,16 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .header-title {
-  font-size: 1.125rem;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   letter-spacing: -0.025em;
-  color: #0f172a;
+  color: var(--text-primary);
   margin: 0;
 }
 
 .header-subtitle {
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   margin: 0;
   font-weight: 500;
 }
@@ -383,9 +383,9 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .card-name {
-  font-size: 1.25rem;
+  font-size: var(--font-size-xl);
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text-primary);
   margin: 0;
   transition: color 0.3s ease;
 }
@@ -395,7 +395,7 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .card-subtitle {
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   margin: 0.25rem 0 0;
   color: var(--card-text-light);
@@ -434,9 +434,9 @@ function getIconComponent(type: CalibrationType) {
 
 .card-description {
   margin-bottom: 1.25rem;
-  font-size: 0.9375rem;
+  font-size: var(--font-size-base);
   line-height: 1.625;
-  color: #475569;
+  color: var(--text-secondary);
   position: relative;
   z-index: 1;
 }
@@ -473,7 +473,7 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .feature-text {
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--card-text);
 }
@@ -527,8 +527,8 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .footer-text {
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   margin: 0;
 }
 
@@ -553,7 +553,7 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .footer-hint {
-  color: #94a3b8;
+  color: var(--text-tertiary);
 }
 
 /* 暗色模式 */
@@ -585,7 +585,7 @@ function getIconComponent(type: CalibrationType) {
   }
 
   .card-description {
-    color: #94a3b8;
+    color: var(--text-muted);
   }
 
   .feature-tag {
