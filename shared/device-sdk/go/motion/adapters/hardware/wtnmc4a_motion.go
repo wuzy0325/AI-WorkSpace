@@ -518,41 +518,44 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 }
 
 func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) error {
-	// 高优先级：使用 RLock 而非 Lock，不与 Status 轮询争抢写锁
+	// 最优先级：只在 RLock 下读取 handle（纳秒级），释放锁后再调用 DLL。
+	// 这样 Stop 永远不会阻塞在 MoveBy/MoveTo 等写锁操作上。
+	var handle uintptr
 	c.mu.RLock()
-	handle := c.handle
+	handle = c.handle
 	connected := c.status.Connected
+	c.mu.RUnlock()
+
 	if handle == 0 || !connected {
-		c.mu.RUnlock()
 		return fmt.Errorf("控制器未连接")
 	}
+
 	if axis == "" {
 		for _, an := range []int{0, 1, 2, 3} {
 			c.procs.decStop.Call(handle, uintptr(an))
 		}
-		c.mu.RUnlock()
 		return nil
 	}
 	an := wtnmc4aAxisNum(axis)
 	c.procs.decStop.Call(handle, uintptr(an))
-	c.mu.RUnlock()
 	return nil
 }
 
 func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
-	// 高优先级：使用 RLock 而非 Lock，不与 Status 轮询争抢写锁
+	// 最优先级：只在 RLock 下读取 handle（纳秒级），释放锁后再调用 DLL
+	var handle uintptr
 	c.mu.RLock()
-	handle := c.handle
+	handle = c.handle
 	connected := c.status.Connected
+	c.mu.RUnlock()
+
 	if handle == 0 || !connected {
-		c.mu.RUnlock()
 		return fmt.Errorf("控制器未连接")
 	}
+
 	for _, an := range []int{0, 1, 2, 3} {
 		c.procs.instStop.Call(handle, uintptr(an))
 	}
-	c.mu.RUnlock()
-	// 更新状态需要写锁
 	c.mu.Lock()
 	c.status.EmergencyStopped = true
 	c.status.LastError = ""
