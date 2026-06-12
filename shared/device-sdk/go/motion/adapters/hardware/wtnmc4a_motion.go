@@ -106,7 +106,7 @@ type axisSpeedParams struct {
 }
 
 type WTNMC4AMotionController struct {
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	profile     core.MotionControllerProfile
 	status      core.ControllerStatus
 	handle      uintptr
@@ -250,8 +250,8 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 }
 
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	if err := c.checkConnectedLocked(); err != nil {
 		return c.copyStatusLocked(), err
@@ -518,45 +518,45 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 }
 
 func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
+	// 高优先级：使用 RLock 而非 Lock，不与 Status 轮询争抢写锁
+	c.mu.RLock()
+	handle := c.handle
+	connected := c.status.Connected
+	if handle == 0 || !connected {
+		c.mu.RUnlock()
+		return fmt.Errorf("控制器未连接")
 	}
-
 	if axis == "" {
 		for _, an := range []int{0, 1, 2, 3} {
-			c.procs.decStop.Call(c.handle, uintptr(an))
+			c.procs.decStop.Call(handle, uintptr(an))
 		}
-		c.status.LastError = ""
+		c.mu.RUnlock()
 		return nil
 	}
-	if _, ok := c.axisConfigLocked(axis); !ok {
-		return fmt.Errorf("未知运动轴: %s", axis)
-	}
-
 	an := wtnmc4aAxisNum(axis)
-	ret, _, _ := c.procs.decStop.Call(c.handle, uintptr(an))
-	if ret == 0 {
-		return fmt.Errorf("WTNMC4A 停止轴 %s 失败", axis)
-	}
-	c.status.LastError = ""
+	c.procs.decStop.Call(handle, uintptr(an))
+	c.mu.RUnlock()
 	return nil
 }
 
 func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
+	// 高优先级：使用 RLock 而非 Lock，不与 Status 轮询争抢写锁
+	c.mu.RLock()
+	handle := c.handle
+	connected := c.status.Connected
+	if handle == 0 || !connected {
+		c.mu.RUnlock()
+		return fmt.Errorf("控制器未连接")
 	}
 	for _, an := range []int{0, 1, 2, 3} {
-		c.procs.instStop.Call(c.handle, uintptr(an))
+		c.procs.instStop.Call(handle, uintptr(an))
 	}
+	c.mu.RUnlock()
+	// 更新状态需要写锁
+	c.mu.Lock()
 	c.status.EmergencyStopped = true
 	c.status.LastError = ""
+	c.mu.Unlock()
 	return nil
 }
 
