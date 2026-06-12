@@ -161,17 +161,13 @@ watch(isRunning, (newVal, oldVal) => {
   align-items: center;
   justify-content: space-between;
   padding: 0 2rem;
-  background: rgba(30, 41, 59, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.1);
+  background: var(--bg-panel-strong);
+  border-top: 1px solid var(--border-default);
 }
 
 :root[data-theme='light'] .main-bottom-bar {
-  background: rgba(255, 255, 255, 0.75);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.05);
+  background: var(--bg-panel-strong);
+  border-top: 1px solid var(--border-default);
 }
 
 .main-bottom-bar__left {

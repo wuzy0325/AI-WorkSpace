@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { Settings } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import IconDashboard from '@components/icons/IconDashboard.vue'
@@ -27,6 +28,8 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
+const isExpanded = ref(false)
+
 function getIconComponent(iconType: string | undefined) {
   if (iconType === 'IO') return IconDashboard
   if (iconType === 'AX') return IconMotion
@@ -38,7 +41,12 @@ function getIconComponent(iconType: string | undefined) {
 </script>
 
 <template>
-  <aside class="app-rail-nav">
+  <aside
+    class="app-rail-nav"
+    :class="{ 'app-rail-nav--expanded': isExpanded }"
+    @mouseenter="isExpanded = true"
+    @mouseleave="isExpanded = false"
+  >
     <nav class="app-rail-nav__menu">
       <UiButton
         v-for="item in items"
@@ -58,6 +66,7 @@ function getIconComponent(iconType: string | undefined) {
         <template #icon>
           <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
         </template>
+        <span v-if="isExpanded" class="app-rail-nav__label">{{ item.label }}</span>
       </UiButton>
     </nav>
 
@@ -73,6 +82,7 @@ function getIconComponent(iconType: string | undefined) {
         <template #icon>
           <Settings class="w-5 h-5" />
         </template>
+        <span v-if="isExpanded" class="app-rail-nav__label">设置</span>
       </UiButton>
       <slot />
     </div>
@@ -86,31 +96,53 @@ function getIconComponent(iconType: string | undefined) {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-default);
+  transition: width 0.2s ease;
+  overflow: hidden;
 }
 
-:root[data-theme='light'] .app-rail-nav {
-  border-right: 1px solid rgba(0, 0, 0, 0.05);
+.app-rail-nav--expanded {
+  width: 160px;
 }
 
 .app-rail-nav__menu {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 1.5rem 0;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1.5rem 0.75rem;
   flex: 1;
 }
 
 .app-rail-nav__button {
-  width: 40px;
+  width: 100%;
   height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  padding: 0 0.5rem;
+}
+
+.app-rail-nav__label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.app-rail-nav--expanded .app-rail-nav__label {
+  opacity: 1;
 }
 
 :deep(.app-rail-nav__button--active) {
+  color: var(--accent-primary);
+}
+
+:deep(.app-rail-nav__button--active) .app-rail-nav__label {
   color: var(--accent-primary);
 }
 
@@ -127,9 +159,9 @@ function getIconComponent(iconType: string | undefined) {
 .app-rail-nav__footer {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem 0;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1rem 0.75rem;
   margin-top: auto;
 }
 </style>

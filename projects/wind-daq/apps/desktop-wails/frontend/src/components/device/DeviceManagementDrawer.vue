@@ -10,6 +10,7 @@ import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiButton from '@components/ui/UiButton.vue'
+import { Plug, Zap, LayoutGrid } from '@lucide/vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -19,6 +20,7 @@ const feedback = useFeedbackStore()
 
 const scanning = ref(false)
 const discovered = ref<ScanResult[]>([])
+const showDiscovered = ref(true)
 const selectedIds = ref<string[]>([])
 
 type EditorMode = 'create' | 'edit'
@@ -771,44 +773,44 @@ function channelLabel(c: ChannelConfig): string {
           </div>
         </div>
 
+        <!-- 发现的设备区域：可折叠，减少认知负荷 -->
         <div v-if="discovered.length" class="drawer-discovered">
-          <div class="drawer-discovered-head">
-            <span class="drawer-discovered-label">发现的设备</span>
+          <div class="drawer-discovered-head" @click="showDiscovered = !showDiscovered" style="cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span class="drawer-discovered-label">发现的设备</span>
+              <span class="discovered-count">{{ discovered.length }}</span>
+            </div>
             <div class="drawer-discovered-actions">
-              <UiButton variant="primary" size="sm" @click="addAllDiscoveredDevices">全部添加</UiButton>
-              <span class="discovered-pulse" />
-              <UiButton quaternary size="sm" @click="clearDiscovered">✕</UiButton>
+              <UiButton variant="primary" size="sm" @click.stop="addAllDiscoveredDevices">全部添加</UiButton>
+              <UiButton quaternary size="sm" @click.stop="clearDiscovered">✕</UiButton>
+              <span class="discovered-toggle" :class="{ 'discovered-toggle--open': showDiscovered }">▼</span>
             </div>
           </div>
-          <div class="drawer-discovered-list">
-            <div v-for="d in discovered" :key="d.id" class="discovered-card">
-              <div class="discovered-card-icon">{{ DISCOVERED_TYPE_ICON[d.type] ?? 'D' }}</div>
-              <div class="discovered-card-info">
-                <div class="discovered-card-name">{{ d.name }}</div>
-                <div class="discovered-card-type">
-                  {{ d.type }}
-                  <span v-if="d.address" class="discovered-card-addr"> · {{ d.address }}<template v-if="d.port">:{{ d.port }}</template></span>
-                  <span v-if="d.macAddress" class="discovered-card-addr"> · MAC: {{ d.macAddress }}</span>
+          <Transition name="discovered-expand">
+            <div v-show="showDiscovered" class="drawer-discovered-list">
+              <div v-for="d in discovered" :key="d.id" class="discovered-card">
+                <div class="discovered-card-icon">{{ DISCOVERED_TYPE_ICON[d.type] ?? 'D' }}</div>
+                <div class="discovered-card-info">
+                  <div class="discovered-card-name">{{ d.name }}</div>
+                  <div class="discovered-card-type">
+                    {{ d.type }}
+                    <span v-if="d.address" class="discovered-card-addr"> · {{ d.address }}<template v-if="d.port">:{{ d.port }}</template></span>
+                  </div>
+                  <!-- 精简元数据：仅显示关键信息，hover 时显示完整信息 -->
+                  <div class="discovered-card-meta">
+                    <span v-if="d.model" class="discovered-meta-badge">{{ d.model }}</span>
+                    <span v-if="d.firmwareVersion" class="discovered-meta-badge">FW: {{ d.firmwareVersion }}</span>
+                  </div>
+                  <div v-if="matchedProfileForDiscovered(d)" class="discovered-matched">
+                    已匹配: {{ matchedProfileForDiscovered(d)?.name }}
+                  </div>
                 </div>
-                <div class="discovered-card-meta">
-                  <span v-if="d.serialNumber" class="discovered-meta-badge">SN: {{ d.serialNumber }}</span>
-                  <span v-if="d.firmwareVersion" class="discovered-meta-badge">FW: {{ d.firmwareVersion }}</span>
-                  <span v-if="d.model" class="discovered-meta-badge">{{ d.model }}</span>
-                  <span v-if="d.subnetMask" class="discovered-meta-badge">{{ d.subnetMask }}</span>
-                  <span v-if="d.gateway" class="discovered-meta-badge">GW: {{ d.gateway }}</span>
-                  <span v-if="d.ipMode" class="discovered-meta-badge">{{ d.ipMode }}</span>
-                  <span v-if="d.tcpConnected" class="discovered-meta-badge">TCP:ON</span>
-                  <span v-if="d.ipAssigned" class="discovered-meta-badge">IP:OK</span>
-                </div>
-                <div v-if="matchedProfileForDiscovered(d)" class="discovered-matched">
-                  已匹配: {{ matchedProfileForDiscovered(d)?.name }}
-                </div>
+                <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
+                  {{ discoveryActionLabel(d) }}
+                </UiButton>
               </div>
-              <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
-                {{ discoveryActionLabel(d) }}
-              </UiButton>
             </div>
-          </div>
+          </Transition>
         </div>
 
         <main class="drawer-list">
@@ -829,9 +831,9 @@ function channelLabel(c: ChannelConfig): string {
                   <span class="device-card-type-badge">{{ p.type }}</span>
                 </div>
                 <div class="device-card-meta">
-                  <span>🔌 {{ p.transport === 'serial' ? (p.serialPort || 'COM?') : `${p.address || '-'}:${p.port || '-'}` }}</span>
-                  <span>⚡ {{ p.samplingRate ?? 20 }}Hz</span>
-                  <span>📂 {{ p.channels?.length ?? 0 }} 通道</span>
+                  <span><Plug class="meta-icon" /> {{ p.transport === 'serial' ? (p.serialPort || 'COM?') : `${p.address || '-'}:${p.port || '-'}` }}</span>
+                  <span><Zap class="meta-icon" /> {{ p.samplingRate ?? 20 }}Hz</span>
+                  <span><LayoutGrid class="meta-icon" /> {{ p.channels?.length ?? 0 }} 通道</span>
                 </div>
               </div>
 
@@ -848,7 +850,8 @@ function channelLabel(c: ChannelConfig): string {
             </div>
 
             <div v-if="deviceStore.statusFor(p.id) === 'Error'" class="device-card-error">
-              ⚠ 设备通信错误
+              <svg class="error-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              设备通信错误
             </div>
           </div>
         </main>
@@ -1366,10 +1369,16 @@ function channelLabel(c: ChannelConfig): string {
   background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
   flex-shrink: 0;
 }
-.drawer-discovered-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+.drawer-discovered-head { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0; transition: opacity 0.2s; }
+.drawer-discovered-head:hover { opacity: 0.8; }
 .drawer-discovered-label { font-size: var(--font-size-micro); font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-muted); }
 .drawer-discovered-actions { display: flex; align-items: center; gap: 0.5rem; }
-.discovered-pulse { width: var(--space-1); height: var(--space-1); border-radius: 50%; background: var(--color-accent); animation: pulse 1.5s infinite; }
+.discovered-count { padding: 0.125rem 0.5rem; border-radius: 999px; background: color-mix(in srgb, var(--accent-primary) 15%, transparent); color: var(--accent-primary); font-size: var(--font-size-micro); font-weight: 800; }
+.discovered-toggle { font-size: var(--font-size-xs); color: var(--text-muted); transition: transform 0.2s; display: inline-block; }
+.discovered-toggle--open { transform: rotate(180deg); }
+.discovered-expand-enter-active, .discovered-expand-leave-active { transition: all 0.25s ease; }
+.discovered-expand-enter-from, .discovered-expand-leave-to { opacity: 0; max-height: 0; overflow: hidden; }
+.discovered-expand-enter-to, .discovered-expand-leave-from { opacity: 1; max-height: 500px; }
 .drawer-discovered-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 30vh; overflow-y: auto; }
 .discovered-card {
   display: flex; align-items: center; gap: 0.75rem;
@@ -1425,6 +1434,9 @@ function channelLabel(c: ChannelConfig): string {
 }
 .device-card-meta { display: flex; flex-wrap: wrap; gap: 1rem; font-size: var(--font-size-2xs); font-weight: 600; color: var(--text-muted); }
 .device-card-meta span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.device-card-meta .meta-icon { width: 12px; height: 12px; opacity: 0.7; }
+.device-card-error { display: flex; align-items: center; gap: 0.375rem; }
+.device-card-error .error-icon { flex-shrink: 0; }
 .device-card-right { display: flex; flex-direction: column; gap: 0.375rem; flex-shrink: 0; }
 .device-card-error {
   margin: 0 1rem 0.75rem; padding: 0.5rem 0.75rem; border-radius: var(--radius-lg);

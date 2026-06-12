@@ -139,17 +139,15 @@ function activePageLabel(): string {
 .main-topbar {
   height: 56px;
   flex-shrink: 0;
-  background: rgba(30, 41, 59, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-panel-strong);
+  border-bottom: 1px solid var(--border-default);
   position: relative;
   z-index: 50;
 }
 
 :root[data-theme='light'] .main-topbar {
-  background: rgba(255, 255, 255, 0.75);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: var(--bg-panel-strong);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .main-topbar__content {
