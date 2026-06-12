@@ -154,7 +154,8 @@ func TestParseDaqP1604ResponseShort(t *testing.T) {
 }
 
 func TestParseDaqT1603ResponseCSV(t *testing.T) {
-	csv := "192.168.1.101, AA-BB-CC-DD-EE-11, SN002, ModelT, v2.0, 1, 1, 9000"
+	// 使用实际 T1603 设备的响应格式：parts[3] 为 "T1603"
+	csv := "192.168.1.101, AA-BB-CC-DD-EE-11, 0, T1603, v2.0, 1, 1, 9000"
 	result := parseDaqT1603Response([]byte(csv), "192.168.1.101:7000")
 
 	if result == nil {

@@ -23,7 +23,7 @@ const (
 	daqP1064PreDiscoveryPort = 1901
 	daqP1064PreDefaultPort   = 23
 
-	defaultScanTimeout = 3 * time.Second
+	defaultScanTimeout = 2 * time.Second
 	limitedBroadcast   = "255.255.255.255"
 )
 
@@ -67,36 +67,73 @@ func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 }
 
 func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
+	log.Printf("[scan] 开始设备扫描, timeout=%v", s.timeout)
+
+	type scanTask struct {
+		cmd    string
+		port   int
+		parser func([]byte, string) *device.ScanResult
+	}
+
+	// 顺序执行每种设备类型的扫描，避免 Windows 上并发 UDP socket 的冲突
+	tasks := []scanTask{
+		{cmd: daqT1603DiscoveryCmd, port: daqT1603DiscoveryPort, parser: deviceDispatcher},
+		{cmd: daqP1604DiscoveryCmd, port: daqP1604DiscoveryPort, parser: deviceDispatcher},
+		{cmd: "\xFF\x01\x01\x02", port: daqP1064PreDiscoveryPort, parser: parseDaqP1064PreResponse},
+	}
+
+	seen := make(map[string]bool)
+	var results []device.ScanResult
+
+	for _, task := range tasks {
+		devices := s.scanWithSocket(task.cmd, task.port, task.parser)
+		for _, d := range devices {
+			if !seen[d.ID] {
+				seen[d.ID] = true
+				results = append(results, d)
+			}
+		}
+	}
+
+	if results == nil {
+		results = []device.ScanResult{}
+	}
+	log.Printf("[scan] 扫描完成, 共发现 %d 个设备", len(results))
+	return results, nil
+}
+
+// scanWithSocket 为单个设备类型创建独立的 UDP socket，发送发现命令并收集响应
+func (s *NetworkScanner) scanWithSocket(
+	cmd string,
+	port int,
+	parser func([]byte, string) *device.ScanResult,
+) []device.ScanResult {
 	conn, err := s.listenPacket("udp4", ":0")
 	if err != nil {
-		return nil, fmt.Errorf("udp listen: %w", err)
+		log.Printf("[scan] 创建 socket 失败 cmd=%q: %v", cmd, err)
+		return nil
 	}
 	defer conn.Close()
 
-	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
-		return nil, fmt.Errorf("set deadline: %w", err)
-	}
-
 	targets := getAllDiscoveryTargets()
-	p1064preCmd := []byte{0xFF, 0x01, 0x01, 0x02}
-
 	for _, target := range targets {
 		addr := net.ParseIP(target)
 		if addr == nil {
 			continue
 		}
-		dest7000 := &net.UDPAddr{IP: addr, Port: daqP1604DiscoveryPort}
-		conn.WriteTo([]byte(daqP1604DiscoveryCmd), dest7000)
-		conn.WriteTo([]byte(daqT1603DiscoveryCmd), dest7000)
-
-		dest1901 := &net.UDPAddr{IP: addr, Port: daqP1064PreDiscoveryPort}
-		conn.WriteTo(p1064preCmd, dest1901)
+		dest := &net.UDPAddr{IP: addr, Port: port}
+		if _, err := conn.WriteTo([]byte(cmd), dest); err != nil {
+			log.Printf("[scan] 发送命令 %q 到 %s:%d 失败: %v", cmd, target, port, err)
+		}
 	}
 
-	var results []device.ScanResult
-	seen := make(map[string]bool)
-	buf := make([]byte, 1024)
+	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
+		return nil
+	}
 
+	seen := make(map[string]bool)
+	var devices []device.ScanResult
+	buf := make([]byte, 1024)
 	for {
 		n, remote, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -105,34 +142,54 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 			}
 			break
 		}
-		result := deviceDispatcher(buf[:n], remote.String())
-		if result != nil && !seen[result.ID] {
-			seen[result.ID] = true
-			results = append(results, *result)
+		raw := string(buf[:n])
+		log.Printf("[scan] socket %q 收到响应 from=%s len=%d data=%q", cmd, remote.String(), n, raw)
+		result := parser(buf[:n], remote.String())
+		if result != nil {
+			log.Printf("[scan] socket %q 解析成功 id=%s type=%s", cmd, result.ID, result.Type)
+			if !seen[result.ID] {
+				seen[result.ID] = true
+				devices = append(devices, *result)
+			}
+		} else {
+			log.Printf("[scan] socket %q 解析失败", cmd)
 		}
 	}
-
-	if results == nil {
-		results = []device.ScanResult{}
-	}
-	return results, nil
+	return devices
 }
 
+// deviceDispatcher 根据响应内容分发到对应的设备解析函数。
+// remoteAddr 格式为 "host:port"，入口处统一提取纯 IP 供下游使用。
 func deviceDispatcher(data []byte, remoteAddr string) *device.ScanResult {
+	remoteHost := remoteHostFromAddr(remoteAddr)
 	msg := strings.TrimSpace(string(data))
 
+	// JSON 响应：根据 model/type 字段区分设备类型，默认按 T1603 处理
 	var jsonData map[string]interface{}
 	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
-		return parseDaqT1603Json(jsonData, remoteAddr)
+		return dispatchJsonResponse(jsonData, remoteHost)
 	}
 
+	// 二进制响应：P1064Pre
 	if len(data) >= 36 && !isASCIIPrintable(data) {
 		if result := parseDaqP1064PreResponse(data, remoteAddr); result != nil {
 			return result
 		}
 	}
 
+	// CSV / 短文本响应
 	return parseDaqP1604Response(data, remoteAddr)
+}
+
+// dispatchJsonResponse 根据 JSON 中的 model 字段分发到对应的解析函数
+func dispatchJsonResponse(jsonData map[string]interface{}, remoteHost string) *device.ScanResult {
+	model := getJSONString(jsonData, "model")
+	// 如果 model 包含 P1604 标识，按 P1604 处理
+	if strings.Contains(strings.ToUpper(model), "P1604") {
+		return parseDaqP1604Json(jsonData, remoteHost)
+	}
+	// 默认按 T1603 处理（保持向后兼容）
+	return parseDaqT1603Json(jsonData, remoteHost)
 }
 
 func isASCIIPrintable(data []byte) bool {
@@ -149,21 +206,28 @@ func isASCIIPrintable(data []byte) bool {
 }
 
 func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
+	remoteHost := remoteHostFromAddr(remoteAddr)
 	msg := strings.TrimSpace(string(data))
 	parts := strings.Split(msg, ",")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 
+	// CSV 响应：根据 model 字段（parts[3]）区分设备类型
+	// P1604 响应格式：IP,MAC,0,序列号,firmware,...（parts[3] 为序列号，不含 T1603）
+	// T1603 响应格式：IP,MAC,0,T1603,firmware,...（parts[3] 为 model "T1603"）
+	// 注意：两者 parts[2] 都可能是 "0"，不能用 parts[2] 区分
 	if len(parts) >= 6 {
-		if result := parseDaqP1604Csv(parts); result != nil {
-			return result
+		model := strings.ToUpper(safeGet(parts, 3))
+		if strings.Contains(model, "T1603") {
+			// model 包含 T1603，按 T1603 解析
+			return parseDaqT1603Csv(parts, remoteHost)
 		}
-		return parseDaqT1603Csv(parts, remoteAddr)
+		// model 不含 T1603，按 P1604 解析（P1604 的 parts[3] 是序列号）
+		return parseDaqP1604Csv(parts)
 	}
 
 	if strings.HasPrefix(msg, "DAQP1604") {
-		remoteHost := remoteHostFromAddr(remoteAddr)
 		return &device.ScanResult{
 			ID:        scanResultID(scanDaqP1604Prefix, remoteHost, daqP1604DefaultPort, ""),
 			Name:      "Discovered DAQ-P-1604",
@@ -174,7 +238,6 @@ func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
 		}
 	}
 	if strings.HasPrefix(msg, "DAQT1603") {
-		remoteHost := remoteHostFromAddr(remoteAddr)
 		return &device.ScanResult{
 			ID:        scanResultID(scanDaqT1603Prefix, remoteHost, daqT1603DefaultPort, ""),
 			Name:      "Discovered DAQ-T-1603",
@@ -190,9 +253,6 @@ func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
 
 func parseDaqP1604Csv(parts []string) *device.ScanResult {
 	if len(parts) < 6 {
-		return nil
-	}
-	if parts[2] != "0" {
 		return nil
 	}
 
@@ -224,12 +284,43 @@ func parseDaqP1604Csv(parts []string) *device.ScanResult {
 	return result
 }
 
+// parseDaqP1604Json 解析 P1604 设备的 JSON 格式响应
+func parseDaqP1604Json(jsonData map[string]interface{}, remoteHost string) *device.ScanResult {
+	address := remoteHost
+	if ip, ok := jsonData["ip"].(string); ok && ip != "" {
+		address = ip
+	}
+	port := daqP1604DefaultPort
+	if p, ok := jsonData["port"].(float64); ok && p > 0 {
+		port = int(p)
+	}
+
+	mac, _ := jsonData["mac"].(string)
+	result := &device.ScanResult{
+		ID:         scanResultID(scanDaqP1604Prefix, address, port, mac),
+		Name:       "Discovered DAQ-P-1604",
+		Type:       device.DeviceDAQP1604,
+		Available:  true,
+		Address:    address,
+		Port:       port,
+		MacAddress: mac,
+	}
+
+	result.SerialNumber = getJSONString(jsonData, "serialNumber")
+	result.FirmwareVersion = getJSONString(jsonData, "firmwareVersion")
+	result.SubnetMask = getJSONString(jsonData, "subnetMask")
+	result.Gateway = getJSONString(jsonData, "gateway")
+
+	return result
+}
+
 func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
+	remoteHost := remoteHostFromAddr(remoteAddr)
 	msg := strings.TrimSpace(string(data))
 
 	var jsonData map[string]interface{}
 	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
-		return parseDaqT1603Json(jsonData, remoteAddr)
+		return parseDaqT1603Json(jsonData, remoteHost)
 	}
 
 	return parseDaqP1604Response(data, remoteAddr)
