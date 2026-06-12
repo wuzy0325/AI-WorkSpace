@@ -55,11 +55,8 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	recorder := usecase.NewStorageRecorder(storageadapter.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 	profileStore := motionprofile.NewMemoryMotionProfileStore()
+	factory := hardware.NewDefaultMotionControllerFactory()
 	motionMgr := usecase.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
-		if profile.Type == core.ControllerTypeWTNMC4A {
-			return windaqhardware.NewWTNMC4AMotionController(profile), nil
-		}
-		factory := hardware.NewDefaultMotionControllerFactory()
 		return factory.Create(profile)
 	})
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())

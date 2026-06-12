@@ -75,13 +75,8 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	recorder := usecase.NewStorageRecorder(storage.NewCSVRecordingSink())
 	reportMgr := usecase.NewReportManager(report.NewCSVReportWriter())
 	rawMotionMgr := motionmanager.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
-		switch profile.Type {
-		case core.ControllerTypeWTNMC4A:
-			return windaqhardware.NewWTNMC4AMotionController(profile), nil
-		default:
-			factory := hardware.NewDefaultMotionControllerFactory()
-			return factory.Create(profile)
-		}
+		factory := hardware.NewDefaultMotionControllerFactory()
+		return factory.Create(profile)
 	})
 	motionMgr := usecase.WrapMotionManager(rawMotionMgr)
 	calStore := calstore.NewMemoryResultStore()

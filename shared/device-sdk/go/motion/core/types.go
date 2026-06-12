@@ -26,6 +26,8 @@ type AxisConfig struct {
 	Name                AxisName                       `json:"name"`
 	Enabled             bool                           `json:"enabled"`
 	Kind                AxisKind                       `json:"kind"`
+	// StepsPerRev step angle in degrees (e.g. 1.8 for a 200-step/rev motor). Despite the name,
+	// this field stores degrees-per-step, NOT steps-per-revolution.
 	StepsPerRev         *float64                       `json:"stepsPerRev,omitempty"`
 	MicroSteps          *int                           `json:"microSteps,omitempty"`
 	Lead                *float64                       `json:"lead,omitempty"`

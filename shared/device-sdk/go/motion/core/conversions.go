@@ -21,6 +21,8 @@ func ClampInt64(value, min, max int64) int64 {
 	return value
 }
 
+// PulsesPerUnit returns pulses per engineering unit (mm for LINEAR, ° for ROTARY).
+// stepsPerRev is the step angle in degrees (e.g. 1.8°); 360/stepAngleDeg = steps per full revolution.
 func PulsesPerUnit(axisCfg AxisConfig) float64 {
 	stepAngleDeg := ValueOrFloat(axisCfg.StepsPerRev, DefaultStepDeg)
 	if stepAngleDeg == 0 {
@@ -80,8 +82,13 @@ func ValueOrInt(value *int, fallback int) int {
 	return *value
 }
 
+// homedThreshold tolerance for "at home" position (engineering units).
+// 0.01 mm for linear axes, 0.01° for rotary axes. Mechanical homing
+// typically settles within this range.
+const homedThreshold = 0.01
+
 func IsHomed(position float64, axisCfg AxisConfig) bool {
-	if math.Abs(position) >= 0.001 {
+	if math.Abs(position) >= homedThreshold {
 		return false
 	}
 	if axisCfg.MinLimit != nil && position < *axisCfg.MinLimit {

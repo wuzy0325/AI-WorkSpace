@@ -224,9 +224,11 @@ func (m *MotionManager) Status(ctx context.Context, id string) (core.ControllerS
 
 func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	m.mu.RLock()
-	controllers := make(map[string]ports.MotionController, len(m.controllers))
+	controllers := make([]ports.MotionController, 0, len(m.controllers))
+	controllerIDs := make([]string, 0, len(m.controllers))
 	for id, ctrl := range m.controllers {
-		controllers[id] = ctrl
+		controllerIDs = append(controllerIDs, id)
+		controllers = append(controllers, ctrl)
 	}
 	profiles := make(map[string]core.MotionControllerProfile, len(m.profiles))
 	for _, profile := range m.profiles {
@@ -234,17 +236,34 @@ func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	}
 	m.mu.RUnlock()
 
+	if len(controllers) == 0 {
+		return nil
+	}
+
+	type statusResult struct {
+		id     string
+		status core.ControllerStatus
+		err    error
+	}
+	ch := make(chan statusResult, len(controllers))
+	for i, ctrl := range controllers {
+		go func(id string, c ports.MotionController) {
+			s, err := c.Status(ctx)
+			ch <- statusResult{id: id, status: s, err: err}
+		}(controllerIDs[i], ctrl)
+	}
+
 	statuses := make([]core.ControllerStatus, 0, len(controllers))
-	for id, ctrl := range controllers {
-		status, err := ctrl.Status(ctx)
-		if err != nil {
+	for range controllers {
+		r := <-ch
+		if r.err != nil {
 			continue
 		}
-		if profile, ok := profiles[id]; ok {
-			status.Name = profile.Name
-			status.Type = profile.Type
+		if profile, ok := profiles[r.id]; ok {
+			r.status.Name = profile.Name
+			r.status.Type = profile.Type
 		}
-		statuses = append(statuses, status)
+		statuses = append(statuses, r.status)
 	}
 	return statuses
 }
@@ -309,7 +328,7 @@ func (m *MotionManager) ResetEmergencyStop(ctx context.Context, id string) error
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil
+		return fmt.Errorf("controller not connected: %s", id)
 	}
 	return ctrl.ResetEmergencyStop(ctx)
 }

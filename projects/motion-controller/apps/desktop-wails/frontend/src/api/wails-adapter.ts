@@ -1,5 +1,6 @@
 // Wails API 适配器 - 运行时动态加载绑定，避免 Vite 构建时模块解析问题
 import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { MOTION_HTTP_BASE } from './motionApi'
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
 export interface GenericResponse {
@@ -145,7 +146,14 @@ async function callBinding<T>(methodName: string, ...args: any[]): Promise<T> {
   if (!binding || !binding[methodName]) {
     throw new Error(`Wails binding '${methodName}' not available`);
   }
-  return await binding[methodName](...args);
+  try {
+    // Wails v2 绑定函数期望参数直接传递（运行时会自动序列化）
+    const result = await binding[methodName](...args);
+    return result;
+  } catch (e) {
+    console.error(`[wails-adapter] callBinding('${methodName}') failed`, args, e);
+    throw e;
+  }
 }
 
 // Wails API 适配器
@@ -216,9 +224,16 @@ export const wailsApi = {
   },
 
   // 运动控制（Wails 绑定返回 Promise<void>，error 时 reject）
+  // 注意：MotionGetProfiles 和 MotionGetStatus 返回 JSON 字符串（绕开 Wails reflect bug），
+  // 需要在前端手动 JSON.parse
   motion: {
     getProfiles: async (): Promise<MotionProfile[]> => {
-      return await callBinding('MotionGetProfiles');
+      const raw = await callBinding<string>('MotionGetProfiles');
+      try {
+        return JSON.parse(raw) as MotionProfile[];
+      } catch {
+        return [];
+      }
     },
     upsertProfile: async (profile: MotionProfile): Promise<void> => {
       await callBinding('MotionUpsertProfile', profile);
@@ -233,7 +248,12 @@ export const wailsApi = {
       await callBinding('MotionDisconnect', controllerId);
     },
     getStatus: async (): Promise<MotionStatus[]> => {
-      return await callBinding('MotionGetStatus');
+      const raw = await callBinding<string>('MotionGetStatus');
+      try {
+        return JSON.parse(raw) as MotionStatus[];
+      } catch {
+        return [];
+      }
     },
     home: async (controllerId: string, axisName: string): Promise<void> => {
       await callBinding('MotionHome', controllerId, axisName);
@@ -261,11 +281,37 @@ export const wailsApi = {
     },
 
     onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
-      const cleanup = EventsOn('motion:status', (data: unknown) => {
-        callback(data);
-      });
+      // 绕开 Wails v2.12.0 reflect 序列化 bug，通过 HTTP API 轮询状态
+      let active = true;
+      let pollCount = 0;
+      let errorCount = 0;
+      const poll = async () => {
+        if (!active) return;
+        try {
+          const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/status`);
+          if (resp.ok) {
+            const statuses = await resp.json();
+            pollCount++;
+            if (pollCount <= 5 || pollCount % 50 === 0) {
+              console.log('[wails-adapter] onStatusEvent poll success', { pollCount, statusCount: Array.isArray(statuses) ? statuses.length : 'not-array' })
+            }
+            if (active) callback(statuses);
+          }
+        } catch (e) {
+          errorCount++;
+          if (errorCount <= 10 || errorCount % 20 === 0) {
+            console.error('[wails-adapter] onStatusEvent poll error', { pollCount, errorCount, error: e })
+          }
+        }
+        if (active) {
+          setTimeout(poll, 200);
+        }
+      };
+      console.log('[wails-adapter] onStatusEvent HTTP polling started')
+      poll();
       return () => {
-        cleanup();
+        console.log('[wails-adapter] onStatusEvent HTTP polling stopped', { pollCount, errorCount })
+        active = false;
       };
     }
   },

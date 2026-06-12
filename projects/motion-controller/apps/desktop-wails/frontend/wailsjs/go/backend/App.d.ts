@@ -12,9 +12,9 @@ export function MotionDisconnect(arg1:string):Promise<void>;
 
 export function MotionEmergencyStop(arg1:string):Promise<void>;
 
-export function MotionGetProfiles():Promise<Array<core.MotionControllerProfile>>;
+export function MotionGetProfiles():Promise<string>;
 
-export function MotionGetStatus():Promise<Array<core.ControllerStatus>>;
+export function MotionGetStatus():Promise<string>;
 
 export function MotionHome(arg1:string,arg2:string):Promise<void>;
 

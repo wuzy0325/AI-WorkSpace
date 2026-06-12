@@ -18,22 +18,6 @@ export function createDefaultAxis(name: AxisName): AxisConfig {
   }
 }
 
-function axisToSave(a: AxisConfig) {
-  return {
-    name: a.name, enabled: a.enabled, kind: a.kind,
-    maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
-    stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
-    lead: a.lead, gearRatio: a.gearRatio,
-    inverted: a.inverted, encoderInverted: a.encoderInverted,
-    positionSource: a.positionSource, encoderScale: a.encoderScale,
-    encoderCompensation: a.encoderCompensation,
-  }
-}
-
-export function axisToSaveSafe(a: AxisConfig) {
-  return axisToSave(a)
-}
-
 export function getAxisThemeClass(axisName: AxisName): string {
   const themeMap: Record<AxisName, string> = {
     X: 'axis-x-theme', Y: 'axis-y-theme', Z: 'axis-z-theme', U: 'axis-u-theme',

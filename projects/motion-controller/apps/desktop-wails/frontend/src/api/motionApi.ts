@@ -16,6 +16,10 @@ export interface MotionStatus {
 
 const MOTION_STORAGE_KEY = 'motion-controller.profiles';
 
+// HTTP API 基础 URL（Wails 运行时后端启动的 HTTP 状态服务）
+// 绕开 Wails v2.12.0 reflect 序列化 bug
+export const MOTION_HTTP_BASE = 'http://localhost:16888';
+
 const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
   { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
   { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
@@ -63,13 +67,13 @@ function saveProfiles(profiles: MotionControllerProfile[]): void {
 async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): Promise<MotionControllerStatus[]> {
   let raw: MotionControllerStatus[] = [];
   try {
-    if (isWailsAvailable()) {
-      raw = await wailsApi.motion.getStatus() as unknown as MotionControllerStatus[];
-    } else {
-      raw = await request<MotionControllerStatus[]>('/api/motion/status');
+    // 通过 HTTP API 获取状态（绕开 Wails v2.12.0 reflect 序列化 bug）
+    const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/status`);
+    if (resp.ok) {
+      raw = await resp.json() as MotionControllerStatus[];
     }
   } catch {
-    // 后端不可用时使用空状态，仍基于 profile 生成轴列表
+    // HTTP 不可用时使用空状态
   }
   if (!Array.isArray(raw) || raw.length === 0) {
     raw = [];
@@ -115,20 +119,18 @@ const statusListeners = new Set<StatusCallback>();
 
 export const motionApi = {
   getProfiles: async (): Promise<MotionControllerProfile[]> => {
+    // 通过 HTTP API 获取配置（绕开 Wails reflect bug）
     try {
-      let profiles: MotionControllerProfile[];
-      if (isWailsAvailable()) {
-        profiles = await wailsApi.motion.getProfiles() as unknown as MotionControllerProfile[];
-      } else {
-        profiles = await request<MotionControllerProfile[]>('/api/motion/profiles');
-      }
-      profiles = normalizeMotionProfiles(profiles);
-      if (profiles.length > 0) {
-        saveProfiles(profiles);
-        return profiles;
+      const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/profiles`);
+      if (resp.ok) {
+        const profiles = normalizeMotionProfiles(await resp.json());
+        if (profiles.length > 0) {
+          saveProfiles(profiles);
+          return profiles;
+        }
       }
     } catch {
-      // 后端失败，使用本地缓存
+      // HTTP 不可用，使用本地缓存
     }
     return storedProfiles();
   },
@@ -139,14 +141,10 @@ export const motionApi = {
   },
 
   upsertProfile: async (profile: MotionControllerProfile): Promise<void> => {
-    try {
-      if (isWailsAvailable()) {
-        await wailsApi.motion.upsertProfile(profile);
-      } else {
-        await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-      }
-    } catch {
-      // 后端失败，仅更新本地
+    if (isWailsAvailable()) {
+      await wailsApi.motion.upsertProfile(profile);
+    } else {
+      await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
     }
     const profiles = storedProfiles();
     const idx = profiles.findIndex((p) => p.id === profile.id);
@@ -156,14 +154,10 @@ export const motionApi = {
   },
 
   deleteProfile: async (id: string): Promise<void> => {
-    try {
-      if (isWailsAvailable()) {
-        await wailsApi.motion.deleteProfile(id);
-      } else {
-        await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-      }
-    } catch {
-      // 后端失败，仅更新本地
+    if (isWailsAvailable()) {
+      await wailsApi.motion.deleteProfile(id);
+    } else {
+      await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
     }
     const profiles = storedProfiles().filter((p) => p.id !== id);
     saveProfiles(profiles);
@@ -196,6 +190,7 @@ export const motionApi = {
   },
 
   moveBy: async (id: string, axis: AxisName, delta: number): Promise<boolean> => {
+    console.log('[motionApi] moveBy', { id, axis, delta, wails: isWailsAvailable() })
     if (isWailsAvailable()) {
       await wailsApi.motion.moveBy(id, axis, delta);
       return true;

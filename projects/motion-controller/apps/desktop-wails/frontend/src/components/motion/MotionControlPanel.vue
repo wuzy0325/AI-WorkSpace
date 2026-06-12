@@ -152,6 +152,7 @@ async function handleDisconnect(): Promise<void> {
 }
 
 async function move(axis: AxisName): Promise<void> {
+  console.log('[move] called', { axis, selectedId: selectedId.value, connected: controllerConnected.value })
   if (!selectedId.value || !controllerConnected.value) return
   const state = ensureAxisLocalState(selectedId.value, axis)
   const offset = getZeroOffset(selectedId.value, axis)
@@ -171,7 +172,9 @@ async function move(axis: AxisName): Promise<void> {
     feedback.pushToast(validation.warning, 'warning')
   }
 
+  console.log('[move] calling moveTo', { id: selectedId.value, axis, absoluteTarget })
   await motion.moveTo(selectedId.value, axis, absoluteTarget)
+  console.log('[move] moveTo done')
 }
 
 async function jogAxis(axis: AxisName, direction: 'forward' | 'reverse'): Promise<void> {
@@ -202,20 +205,18 @@ function clearCurrentError(): void {
 }
 
 async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): Promise<void> {
+  console.log('[adjustByStep] called', { axis, direction, selectedId: selectedId.value, connected: controllerConnected.value, hasStatus: !!currentStatus.value })
   if (!selectedId.value || !controllerConnected.value || !currentStatus.value) return
+  if (!currentStatus.value.axes.some((a) => a.name === axis)) return
   const state = ensureAxisLocalState(selectedId.value, axis)
-  const axisStatus = currentStatus.value.axes.find((a) => a.name === axis)
-  if (!axisStatus) return
   if (!Number.isFinite(state.step) || state.step <= 0) {
     feedback.pushToast('步长必须为正数', 'error')
     return
   }
   const delta = direction === 'forward' ? state.step : -state.step
-  if (currentProfile.value?.type === 'B140-MC') {
-    await motion.moveBy(selectedId.value, axis, delta)
-    return
-  }
-  await motion.moveTo(selectedId.value, axis, axisStatus.position + delta)
+  console.log('[adjustByStep] calling moveBy', { id: selectedId.value, axis, delta })
+  await motion.moveBy(selectedId.value, axis, delta)
+  console.log('[adjustByStep] moveBy done')
 }
 
 async function setZero(axis: AxisName): Promise<void> {
@@ -612,7 +613,7 @@ watch(
                     <button
                       class="btn-stop"
                       @click="stop(axis.name as AxisName)"
-                      :disabled="!axis.moving || !controllerConnected"
+                      :disabled="!controllerConnected"
                     >{{ i18n.t.stop }}</button>
                   </div>
                 </div>

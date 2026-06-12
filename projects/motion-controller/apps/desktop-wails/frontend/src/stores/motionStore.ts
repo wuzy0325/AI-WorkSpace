@@ -94,7 +94,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.moveTo(id, axis, position)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`移动失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -103,9 +102,11 @@ export const useMotionStore = defineStore('motion', () => {
   async function moveBy(id: string, axis: AxisName, delta: number): Promise<void> {
     const feedback = useFeedbackStore()
     try {
+      console.log('[motionStore] moveBy', { id, axis, delta })
       await motionApi.moveBy(id, axis, delta)
-      await refreshStatus()
+      console.log('[motionStore] moveBy done')
     } catch (e) {
+      console.error('[motionStore] moveBy error', e)
       feedback.pushToast(`移动失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
   }
@@ -114,7 +115,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.jog(id, axis, direction, speed)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`点动失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -124,7 +124,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.home(id, axis)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`回零失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -134,7 +133,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.stop(id, axis)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`停止失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -144,7 +142,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.emergencyStop(id)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`急停失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -154,7 +151,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.resetEmergencyStop(id)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`解除急停失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
@@ -164,7 +160,6 @@ export const useMotionStore = defineStore('motion', () => {
     const feedback = useFeedbackStore()
     try {
       await motionApi.definePosition(id, axis, position)
-      await refreshStatus()
     } catch (e) {
       feedback.pushToast(`定义位置失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }

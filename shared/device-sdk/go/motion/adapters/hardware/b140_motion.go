@@ -32,7 +32,9 @@ type B140MotionController struct {
 
 // NewB140MotionController creates a B140 motion controller adapter.
 func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionController {
-	profile.Port = b140DefaultPort
+	if profile.Port == 0 {
+		profile.Port = b140DefaultPort
+	}
 	status := core.ControllerStatus{
 		ID:               profile.ID,
 		Name:             profile.Name,
@@ -77,6 +79,7 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	}
 	address := fmt.Sprintf("%s:%d", c.profile.Address, c.profile.Port)
 	c.mu.Unlock()
+
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		c.mu.Lock()
@@ -97,32 +100,65 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	c.connMu.Unlock()
 	c.directionSignature = ""
 
+	dirCmds := c.buildDirectionCommandsLocked()
+	c.mu.Unlock()
+
 	if _, err := c.sendCommandLocked(ctx, "SH"); err != nil {
-		c.mu.Unlock()
-		c.connMu.Lock()
-		_ = conn.Close()
-		c.conn = nil
-		c.reader = nil
-		c.connMu.Unlock()
-		c.status.LastError = err.Error()
-		return err
+		return c.connectCleanup(conn, err)
 	}
-	if err := c.ensureDirectionConfiguredLocked(ctx); err != nil {
-		c.mu.Unlock()
-		c.connMu.Lock()
-		_ = conn.Close()
-		c.conn = nil
-		c.reader = nil
-		c.connMu.Unlock()
-		c.status.LastError = err.Error()
-		return err
+	for _, cmd := range dirCmds {
+		if _, err := c.sendCommandLocked(ctx, cmd); err != nil {
+			return c.connectCleanup(conn, err)
+		}
 	}
 
+	c.mu.Lock()
 	c.status.Connected = true
 	c.status.EmergencyStopped = false
 	c.status.LastError = ""
 	c.mu.Unlock()
 	return nil
+}
+
+func (c *B140MotionController) buildDirectionCommandsLocked() []string {
+	sig := c.directionConfigSignatureLocked()
+	if c.directionSignature == sig {
+		return nil
+	}
+	c.directionSignature = sig
+	var cmds []string
+	for _, ac := range c.profile.Axes {
+		if !ac.Enabled {
+			continue
+		}
+		physical, _, err := b140PhysicalAxis(ac.Name)
+		if err != nil {
+			continue
+		}
+		mt := 2
+		ce := 0
+		if ac.Inverted {
+			mt = -2
+			ce = 2
+		}
+		cmds = append(cmds,
+			fmt.Sprintf("MT%s=%d", physical, mt),
+			fmt.Sprintf("CE%s=%d", physical, ce),
+		)
+	}
+	return cmds
+}
+
+func (c *B140MotionController) connectCleanup(conn net.Conn, err error) error {
+	c.connMu.Lock()
+	_ = conn.Close()
+	c.conn = nil
+	c.reader = nil
+	c.connMu.Unlock()
+	c.mu.Lock()
+	c.status.LastError = err.Error()
+	c.mu.Unlock()
+	return err
 }
 
 // Disconnect closes TCP connection and clears cached hardware state.
@@ -211,15 +247,11 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 	c.mu.Unlock()
 
 	type axisResult struct {
-		position      float64
-		velocity      float64
-		moving        bool
-		homed         bool
-		posLimit      bool
-		negLimit      bool
-		compensating  bool
-		compError     string
-		positionError float64
+		position float64
+		moving   bool
+		homed    bool
+		posLimit bool
+		negLimit bool
 	}
 	results := make(map[core.AxisName]axisResult)
 
@@ -259,14 +291,11 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		moving := int(numberAt(statusBytes, axisIndex))&0x80 != 0
 
 		results[axisSnapshot.Name] = axisResult{
-			position:      position,
-			moving:        moving,
-			homed:         core.IsHomed(position, axisCfg),
-			posLimit:      parseB140Limit(forwardPayload),
-			negLimit:      parseB140Limit(reversePayload),
-			compensating:  false,
-			compError:     "",
-			positionError: 0,
+			position: position,
+			moving:   moving,
+			homed:    core.IsHomed(position, axisCfg),
+			posLimit: parseB140Limit(forwardPayload),
+			negLimit: parseB140Limit(reversePayload),
 		}
 	}
 
@@ -275,14 +304,10 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 	for i := range c.status.Axes {
 		if r, ok := results[c.status.Axes[i].Name]; ok {
 			c.status.Axes[i].Position = r.position
-			c.status.Axes[i].Velocity = r.velocity
 			c.status.Axes[i].Moving = r.moving
 			c.status.Axes[i].Homed = r.homed
 			c.status.Axes[i].PosLimit = r.posLimit
 			c.status.Axes[i].NegLimit = r.negLimit
-			c.status.Axes[i].Compensating = r.compensating
-			c.status.Axes[i].CompensationError = r.compError
-			c.status.Axes[i].PositionError = r.positionError
 		}
 	}
 	c.status.LastError = ""
