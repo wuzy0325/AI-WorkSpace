@@ -204,28 +204,37 @@ func (m *TraversalManager) RunCurrentPoint() error {
 }
 
 func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 	deadline := time.Now().Add(2500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		allReached := true
-		for _, status := range m.motion.StatusAll(ctx) {
-			for _, axis := range status.Axes {
-				target, hasTarget := availableAxisTargets(status, point)[axis.Name]
-				if !hasTarget {
-					continue
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return
+			}
+			allReached := true
+			for _, status := range m.motion.StatusAll(ctx) {
+				for _, axis := range status.Axes {
+					target, hasTarget := availableAxisTargets(status, point)[axis.Name]
+					if !hasTarget {
+						continue
+					}
+					if axis.Moving || abs(axis.Position-target) > 0.01 {
+						allReached = false
+						break
+					}
 				}
-				if axis.Moving || abs(axis.Position-target) > 0.01 {
-					allReached = false
+				if !allReached {
 					break
 				}
 			}
-			if !allReached {
-				break
+			if allReached {
+				return
 			}
 		}
-		if allReached {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
 }
 

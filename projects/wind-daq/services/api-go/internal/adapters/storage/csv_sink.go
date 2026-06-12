@@ -13,12 +13,14 @@ import (
 )
 
 type CSVRecordingSink struct {
-	mu   sync.Mutex
-	file *os.File
+	mu          sync.Mutex
+	file        *os.File
+	writeCount  int
+	syncEvery   int // 每写入多少条记录执行一次 Sync
 }
 
 func NewCSVRecordingSink() *CSVRecordingSink {
-	return &CSVRecordingSink{}
+	return &CSVRecordingSink{syncEvery: 100}
 }
 
 func (s *CSVRecordingSink) Start(config corestorage.RecordingConfig) error {
@@ -66,6 +68,14 @@ func (s *CSVRecordingSink) Write(payload device.DataPayload) error {
 		}
 		if _, err := fmt.Fprintf(s.file, "%d,%s,%d,%f\n", payload.Timestamp, payload.DeviceID, channelIndex, value); err != nil {
 			return err
+		}
+		s.writeCount++
+		// 定期执行文件同步，防止系统崩溃时数据丢失
+		if s.writeCount >= s.syncEvery {
+			s.writeCount = 0
+			if err := s.file.Sync(); err != nil {
+				return fmt.Errorf("failed to sync csv file: %w", err)
+			}
 		}
 	}
 	return nil

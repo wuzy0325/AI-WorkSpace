@@ -210,14 +210,14 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 
 .overview-device-group {
   border-radius: var(--radius-lg, 0.75rem);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(30, 41, 59, 0.3);
+  border: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
   padding: var(--space-2-5) var(--space-3) var(--space-3);
 }
 
 :root[data-theme='light'] .overview-device-group {
-  background: rgba(255, 255, 255, 0.5);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 30%, transparent);
 }
 
 .overview-device-group__header {
@@ -268,24 +268,24 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-device-group__count {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
   background: var(--bg-canvas);
   color: var(--text-tertiary);
 }
 
 :root[data-theme='light'] .overview-device-group__count {
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 20%, transparent);
   color: var(--text-muted);
 }
 
 .overview-device-group__status--healthy {
-  background: rgba(16, 185, 129, 0.1);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   color: var(--accent-primary);
 }
 
 .overview-device-group__status--warning {
-  background: rgba(245, 158, 11, 0.12);
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
   color: var(--accent-warning);
 }
 
@@ -321,8 +321,8 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-channel-micro {
-  background: rgba(30, 41, 59, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
   border-radius: var(--radius-md, 0.6rem);
   padding: var(--space-2) var(--space-2-5);
   display: flex;
@@ -335,8 +335,8 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 :root[data-theme='light'] .overview-channel-micro {
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
 }
 
 .overview-channel-micro::before {
@@ -355,8 +355,8 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 .overview-channel-micro--warning {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: rgba(245, 158, 11, 0.08);
+  border-color: color-mix(in srgb, var(--accent-warning) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 8%, transparent);
 }
 
 .overview-channel-micro__main {

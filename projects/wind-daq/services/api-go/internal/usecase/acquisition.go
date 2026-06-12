@@ -64,17 +64,27 @@ func (h *AcquisitionHub) OnData(payload device.DataPayload) {
 	now := time.Now()
 	lastPublish := h.lastPublishAt[payload.DeviceID]
 	interval := time.Duration(float64(time.Second) / h.publishHz)
-	if now.Sub(lastPublish) >= interval {
+	shouldPublish := now.Sub(lastPublish) >= interval
+	var subscribers []chan device.DataPayload
+	if shouldPublish {
 		h.lastPublishAt[payload.DeviceID] = now
-		for subscriber := range h.subscribers[payload.DeviceID] {
-			select {
-			case subscriber <- payload:
-			default:
-			}
+		// 复制订阅者列表，避免在锁内发送导致阻塞
+		for ch := range h.subscribers[payload.DeviceID] {
+			subscribers = append(subscribers, ch)
 		}
 	}
 
 	h.mu.Unlock()
+
+	// 在锁外发送数据，避免阻塞其他设备的数据处理
+	if shouldPublish {
+		for _, ch := range subscribers {
+			select {
+			case ch <- payload:
+			default:
+			}
+		}
+	}
 }
 
 func (h *AcquisitionHub) GetLatestData(deviceID string) (device.DataPayload, bool) {

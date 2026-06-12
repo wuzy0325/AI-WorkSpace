@@ -54,7 +54,8 @@ const rotationDurationMinutes = ref(30)
 const rotationSizeMb = ref(100)
 const refreshRate = ref(20)
 const originalRefreshRate = ref(20)
-const validationError = ref('')
+const validationErrors = ref<Record<string, string>>({})
+const validationError = computed(() => Object.values(validationErrors.value).find(Boolean) || '')
 
 const isVisible = computed({
   get: () => props.open,
@@ -70,7 +71,7 @@ watch(() => props.open, (open) => { if (open) void loadSettings() })
 async function loadSettings(): Promise<void> {
   loading.value = true
   loadError.value = false
-  validationError.value = ''
+  validationErrors.value = {}
   try {
     await storageStore.loadSettings()
     applySettings(storageStore.settings)
@@ -127,23 +128,23 @@ function currentSettings(): StorageSettings {
 }
 
 function validate(): boolean {
-  const v = validationError
-  if (!baseDirectory.value.trim()) v.value = '保存目录不能为空'
-  else if (!filePrefix.value.trim()) v.value = '文件前缀不能为空'
-  else if (durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440))
-    v.value = '定时停止范围为 1 到 1440 分钟'
-  else if (sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000))
-    v.value = '文件大小范围为 1 到 10000 MB'
-  else if (countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000))
-    v.value = '记录数范围为 1 到 100000000'
-  else if (rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440))
-    v.value = '滚动时长范围为 1 到 1440 分钟'
-  else if (rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000))
-    v.value = '滚动大小范围为 1 到 10000 MB'
-  else if (refreshRate.value < 1 || refreshRate.value > 20)
-    v.value = '刷新率范围为 1 到 20 Hz'
-  else v.value = ''
-  return !v.value
+  const errs: Record<string, string> = {}
+  if (!baseDirectory.value.trim()) errs.baseDirectory = '保存目录不能为空'
+  if (!filePrefix.value.trim()) errs.filePrefix = '文件前缀不能为空'
+  if (durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440))
+    errs.durationMinutes = '定时停止范围为 1 到 1440 分钟'
+  if (sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000))
+    errs.sizeMb = '文件大小范围为 1 到 10000 MB'
+  if (countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000))
+    errs.recordCount = '记录数范围为 1 到 100000000'
+  if (rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440))
+    errs.rotationDurationMinutes = '滚动时长范围为 1 到 1440 分钟'
+  if (rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000))
+    errs.rotationSizeMb = '滚动大小范围为 1 到 10000 MB'
+  if (refreshRate.value < 1 || refreshRate.value > 20)
+    errs.refreshRate = '刷新率范围为 1 到 20 Hz'
+  validationErrors.value = errs
+  return Object.keys(errs).length === 0
 }
 
 function onClose(): void {

@@ -10,6 +10,11 @@ function resolveInitialTheme(): ThemeMode {
   } catch {
     // localStorage not available
   }
+  // 检测系统主题偏好
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches
+    if (prefersLight) return 'light'
+  }
   return 'dark'
 }
 

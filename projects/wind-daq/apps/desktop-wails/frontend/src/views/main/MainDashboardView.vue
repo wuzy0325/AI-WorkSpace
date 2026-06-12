@@ -162,7 +162,12 @@ async function toggleRecording(): Promise<void> {
   }
 }
 
+let isSubscribing = false
+
 function subscribeStream(id: string) {
+  // 防止重复订阅的竞态条件
+  if (isSubscribing) return
+  isSubscribing = true
   unsubscribeStream()
   if (isWailsAvailable()) {
     // Wails 桌面模式：使用 Wails Events 机制接收采集数据
@@ -185,6 +190,7 @@ function subscribeStream(id: string) {
       },
     )
   }
+  isSubscribing = false
 }
 
 function unsubscribeStream() {
@@ -193,8 +199,10 @@ function unsubscribeStream() {
     sseSub = null
   }
   if (wailsUnsub) {
-    wailsUnsub()
+    const unsub = wailsUnsub
     wailsUnsub = null
+    unsub()
+    // 使用当前选中的设备ID取消订阅，避免依赖可能已变化的变量
     const id = deviceStore.selectedDeviceId
     if (id) {
       void wailsApi.device.subscribeStream(id, false)
@@ -214,13 +222,33 @@ onMounted(async () => {
   await storageStore.loadSettings()
   await refreshStorageStatus()
   initialLoading.value = false
+  // 注册键盘快捷键
+  window.addEventListener('keydown', handleKeydown)
 })
 
 onBeforeUnmount(() => {
   unsubscribeStream()
   unsubscribeDeviceSnapshots?.()
   unsubscribeDeviceSnapshots = null
+  window.removeEventListener('keydown', handleKeydown)
 })
+
+// 键盘快捷键处理：空格键开始/停止采集
+function handleKeydown(e: KeyboardEvent) {
+  // 忽略输入框内的按键
+  const target = e.target as HTMLElement
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+    return
+  }
+  if (e.code === 'Space') {
+    e.preventDefault()
+    if (acquiring.value) {
+      void stop()
+    } else {
+      void start()
+    }
+  }
+}
 </script>
 
 <template>

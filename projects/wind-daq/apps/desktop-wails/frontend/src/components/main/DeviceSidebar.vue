@@ -109,12 +109,12 @@ function displayStatusLabel(profileId: string): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
 }
 
 :root[data-theme='light'] .device-sidebar {
-  border-right: 1px solid rgba(0, 0, 0, 0.05);
+  border-right: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
 .device-sidebar__header {
@@ -122,11 +122,11 @@ function displayStatusLabel(profileId: string): string {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-4);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
 :root[data-theme='light'] .device-sidebar__header {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
 .device-sidebar__title {
@@ -149,8 +149,8 @@ function displayStatusLabel(profileId: string): string {
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -158,8 +158,8 @@ function displayStatusLabel(profileId: string): string {
 
 :root[data-theme='light'] .device-sidebar__manage-btn {
   color: var(--text-secondary);
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .device-sidebar__manage-btn:hover {
@@ -188,7 +188,7 @@ function displayStatusLabel(profileId: string): string {
   width: 100%;
   text-align: left;
   padding: var(--space-3);
-  background: rgba(30, 41, 59, 0.4);
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
   cursor: pointer;
@@ -201,18 +201,24 @@ function displayStatusLabel(profileId: string): string {
   height: auto;
 }
 
+/* 无障碍焦点样式：确保键盘导航时可见 */
+.device-sidebar__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring), 0 0 0 4px var(--focus-ring-soft);
+}
+
 :root[data-theme='light'] .device-sidebar__item {
-  background: rgba(255, 255, 255, 0.6);
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
 }
 
 .device-sidebar__item:hover {
-  background: rgba(30, 41, 59, 0.6);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 80%, transparent);
 }
 
 :root[data-theme='light'] .device-sidebar__item:hover {
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(0, 0, 0, 0.05);
+  background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .device-sidebar__item--active {
@@ -221,11 +227,11 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item--error {
-  border-color: rgba(244, 63, 94, 0.2);
+  border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
 
 .device-sidebar__item--error:hover {
-  border-color: rgba(244, 63, 94, 0.4);
+  border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
 }
 
 .device-sidebar__item-header {
@@ -270,14 +276,14 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__status--connecting {
-  background: var(--accent-warning-core);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+  background: var(--accent-warning);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-warning) 50%, transparent);
   animation: breathe 0.8s ease-in-out infinite;
 }
 
 .device-sidebar__status--error {
-  background: #f43f5e;
-  box-shadow: 0 0 8px #f43f5e;
+  background: var(--accent-danger);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-danger) 60%, transparent);
 }
 
 .device-sidebar__status--disconnected {
@@ -307,7 +313,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item-status.device-status--error {
-  color: #f43f5e;
+  color: var(--accent-danger);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
