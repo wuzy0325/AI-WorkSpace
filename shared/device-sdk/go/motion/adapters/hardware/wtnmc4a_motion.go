@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -20,12 +21,12 @@ const (
 	speedMin    = 1
 	speedMax    = 8000
 
-	defaultSendTO      = 200
-	defaultRecvTO      = 200
-	defaultStartSpeed  = 500
+	defaultSendTO       = 200
+	defaultRecvTO       = 200
+	defaultStartSpeed   = 500
 	defaultAcceleration = 500
-	defaultAccIncRate  = 1000
-	defaultDecIncRate  = 1000
+	defaultAccIncRate   = 1000
+	defaultDecIncRate   = 1000
 
 	lvdvPulse = 0
 	lvdvCont  = 1
@@ -113,6 +114,12 @@ type WTNMC4AMotionController struct {
 	dll         *syscall.DLL
 	procs       dllProcs
 	speedParams map[int]*axisSpeedParams
+
+	// atomic 副本：Stop/EmergencyStop 通过 atomic 读取，完全避免锁竞争。
+	// 背景：Status 持 RLock 期间，MoveBy 等待 Lock 时，Go RWMutex 会阻塞所有新 RLock，
+	// 导致 Stop 也被阻塞。用 atomic 彻底消除这个问题。
+	atomicHandle    atomic.Uintptr
+	atomicConnected atomic.Bool
 }
 
 func (c *WTNMC4AMotionController) GetProfile() core.MotionControllerProfile {
@@ -217,6 +224,10 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	}
 	c.handle = ret
 
+	// 同步 atomic 副本，供 Stop/EmergencyStop 无锁读取
+	c.atomicHandle.Store(ret)
+	c.atomicConnected.Store(true)
+
 	c.speedParams = make(map[int]*axisSpeedParams)
 	c.cacheAxisSpeedsLocked()
 
@@ -239,6 +250,10 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 		c.dll = nil
 	}
 
+	// 清除 atomic 副本
+	c.atomicHandle.Store(0)
+	c.atomicConnected.Store(false)
+
 	c.status.Connected = false
 	c.status.EmergencyStopped = false
 	for i := range c.status.Axes {
@@ -249,41 +264,82 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 	return nil
 }
 
+// Status 返回控制器和所有轴的状态。
+// 优化：在 RLock 内仅收集查询信息，释放锁后再调用 DLL（耗时操作），
+// 最后用写锁更新状态。避免长时间持锁阻塞 Stop/EmergencyStop。
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	if err := c.checkConnectedLocked(); err != nil {
-		return c.copyStatusLocked(), err
+		status := c.copyStatusLocked()
+		c.mu.RUnlock()
+		return status, err
 	}
 
+	// 在锁内收集需要查询的轴信息（轻量操作）
+	handle := c.handle
+	type axisQuery struct {
+		axisNum int
+		axisIdx int
+		axisCfg core.AxisConfig
+	}
+	queries := make([]axisQuery, 0, len(c.status.Axes))
 	for i := range c.status.Axes {
-		axisStatus := &c.status.Axes[i]
-		axisCfg, ok := c.axisConfigLocked(axisStatus.Name)
+		axisCfg, ok := c.axisConfigLocked(c.status.Axes[i].Name)
 		if !ok {
 			continue
 		}
-		axisNum := wtnmc4aAxisNum(axisStatus.Name)
+		queries = append(queries, axisQuery{
+			axisNum: wtnmc4aAxisNum(c.status.Axes[i].Name),
+			axisIdx: i,
+			axisCfg: axisCfg,
+		})
+	}
+	c.mu.RUnlock()
 
-		lpRet, _, _ := c.procs.readLP.Call(c.handle, uintptr(axisNum))
+	// 在锁外调用 DLL（耗时操作），避免长时间持锁阻塞 Stop
+	type axisResult struct {
+		axisIdx  int
+		position float64
+		moving   bool
+		homed    bool
+		posLimit bool
+		negLimit bool
+	}
+	results := make([]axisResult, 0, len(queries))
+	for _, q := range queries {
+		lpRet, _, _ := c.procs.readLP.Call(handle, uintptr(q.axisNum))
 		logicalPos := int64(int32(lpRet))
-		position := wtnmc4aPulseToEngineering(axisCfg, float64(logicalPos))
-
-		rr1 := c.getRR1StatusLocked(axisNum)
+		position := wtnmc4aPulseToEngineering(q.axisCfg, float64(logicalPos))
+		rr1 := c.getRR1Status(handle, q.axisNum)
 		moving := rr1.ASND || rr1.CNST || rr1.DSND
-		homed := core.IsHomed(position, axisCfg)
+		homed := core.IsHomed(position, q.axisCfg)
+		results = append(results, axisResult{
+			axisIdx:  q.axisIdx,
+			position: position,
+			moving:   moving,
+			homed:    homed,
+			posLimit: rr1.LMTP,
+			negLimit: rr1.LMTM,
+		})
+	}
 
-		axisStatus.Position = position
-		axisStatus.Moving = moving
-		axisStatus.Homed = homed
-		axisStatus.PosLimit = rr1.LMTP
-		axisStatus.NegLimit = rr1.LMTM
+	// 写锁更新状态（极短时间）
+	c.mu.Lock()
+	for _, r := range results {
+		axisStatus := &c.status.Axes[r.axisIdx]
+		axisStatus.Position = r.position
+		axisStatus.Moving = r.moving
+		axisStatus.Homed = r.homed
+		axisStatus.PosLimit = r.posLimit
+		axisStatus.NegLimit = r.negLimit
 		axisStatus.Compensating = false
 		axisStatus.CompensationError = ""
 		axisStatus.PositionError = 0
 	}
 	c.status.LastError = ""
-	return c.copyStatusLocked(), nil
+	statusCopy := c.copyStatusLocked()
+	c.mu.Unlock()
+	return statusCopy, nil
 }
 
 // InitLVDV + StartLVDV 启动轴的运动（参照标准SDK示例用法）。
@@ -418,7 +474,7 @@ func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName
 	return nil
 }
 
-// Jog 连续运动：参照标准SDK用法，使用 SetV + StartLVDV（连续模式 LVDV=1）
+// Jog 连续运动：参照标准SDK用法，使用 InitLVDV（连续模式 LVDV=1）+ StartLVDV
 func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, velocity float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -517,39 +573,34 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 	return nil
 }
 
+// Stop 停止指定轴或全部轴的运动。
+// 使用 instStop（立即停止）替代 decStop（减速停止），确保停止响应最快。
+// 通过 atomic 读取 handle 和连接状态，完全避免锁竞争：
+//   Status 持 RLock 期间，MoveBy 等待 Lock 时 Go RWMutex 会阻塞所有新 RLock，
+//   atomic 读彻底消除了 Stop 被阻塞的可能。
 func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) error {
-	// 最优先级：只在 RLock 下读取 handle（纳秒级），释放锁后再调用 DLL。
-	// 这样 Stop 永远不会阻塞在 MoveBy/MoveTo 等写锁操作上。
-	var handle uintptr
-	c.mu.RLock()
-	handle = c.handle
-	connected := c.status.Connected
-	c.mu.RUnlock()
-
-	if handle == 0 || !connected {
+	handle := c.atomicHandle.Load()
+	if handle == 0 || !c.atomicConnected.Load() {
 		return fmt.Errorf("控制器未连接")
 	}
 
+	// instStop = 立即停止，不经过减速阶段，响应最快
 	if axis == "" {
 		for _, an := range []int{0, 1, 2, 3} {
-			c.procs.decStop.Call(handle, uintptr(an))
+			c.procs.instStop.Call(handle, uintptr(an))
 		}
 		return nil
 	}
 	an := wtnmc4aAxisNum(axis)
-	c.procs.decStop.Call(handle, uintptr(an))
+	c.procs.instStop.Call(handle, uintptr(an))
 	return nil
 }
 
+// EmergencyStop 紧急停止所有轴。
+// 通过 atomic 读取 handle，完全避免锁竞争，确保急停命令不受 Status/MoveBy 阻塞。
 func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
-	// 最优先级：只在 RLock 下读取 handle（纳秒级），释放锁后再调用 DLL
-	var handle uintptr
-	c.mu.RLock()
-	handle = c.handle
-	connected := c.status.Connected
-	c.mu.RUnlock()
-
-	if handle == 0 || !connected {
+	handle := c.atomicHandle.Load()
+	if handle == 0 || !c.atomicConnected.Load() {
 		return fmt.Errorf("控制器未连接")
 	}
 
@@ -673,9 +724,10 @@ func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() {
 	}
 }
 
-func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
+// getRR1Status 查询指定轴的状态寄存器（接受 handle 参数，不依赖锁）。
+func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) rr1Status {
 	var buf [4]byte
-	c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
+	c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
 	status := uint16(buf[0]) | uint16(buf[1])<<8
 	return rr1Status{
 		CMPP: (status&(1<<0)) != 0, CMPM: (status&(1<<1)) != 0,
@@ -686,6 +738,12 @@ func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
 		LMTM: (status&(1<<10)) != 0, ALARM: (status&(1<<11)) != 0,
 		EMG: (status&(1<<12)) != 0,
 	}
+}
+
+// getRR1StatusLocked 保留原有方法名（内部调用 handle 版本），
+// 确保其他可能在锁内调用的代码兼容。
+func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
+	return c.getRR1Status(c.handle, axisNum)
 }
 
 func wtnmc4aAxisNum(axis core.AxisName) int {
