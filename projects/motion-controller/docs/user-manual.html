@@ -5,1055 +5,1159 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>运动控制器 - 用户说明书</title>
   <style>
+    /* ============================================================
+       全局样式与CSS变量
+       ============================================================ */
     :root {
-      --bg-app: #0f172a;
-      --bg-canvas: #1e293b;
-      --bg-panel: #334155;
-      --bg-panel-strong: #475569;
-      --text-primary: #f1f5f9;
-      --text-secondary: #cbd5e1;
-      --text-muted: #94a3b8;
-      --accent-primary: #3b82f6;
-      --accent-success: #22c55e;
-      --accent-warning: #f59e0b;
-      --accent-danger: #ef4444;
-      --border-default: #475569;
-      --border-strong: #64748b;
-      --radius-md: 0.5rem;
-      --radius-lg: 0.75rem;
+      --bg-page: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-sidebar: #0f172a;
+      --bg-sidebar-hover: #1e293b;
+      --text-primary: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
+      --text-on-dark: #e2e8f0;
+      --accent-primary: #2563eb;
+      --accent-success: #16a34a;
+      --accent-warning: #ea580c;
+      --accent-danger: #dc2626;
+      --border-default: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --font-sans: 'Microsoft YaHei UI', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+      --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
     }
 
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 80px;
     }
 
     body {
-      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
-      background: var(--bg-app);
+      font-family: var(--font-sans);
+      background: var(--bg-page);
       color: var(--text-primary);
       line-height: 1.7;
+      font-size: 15px;
+    }
+
+    /* ============================================================
+       布局容器
+       ============================================================ */
+    .page-wrapper {
+      display: flex;
       min-height: 100vh;
     }
 
-    /* 侧边导航 */
+    /* ============================================================
+       侧边导航栏
+       ============================================================ */
     .sidebar {
+      width: 260px;
+      background: var(--bg-sidebar);
+      color: var(--text-on-dark);
       position: fixed;
       left: 0;
       top: 0;
-      width: 260px;
-      height: 100vh;
-      background: var(--bg-canvas);
-      border-right: 1px solid var(--border-default);
+      bottom: 0;
       overflow-y: auto;
       z-index: 100;
-      padding: 1.5rem 0;
+      padding: 28px 0;
+      transition: transform 0.3s ease;
     }
 
-    .sidebar-logo {
-      padding: 0 1.5rem 1.5rem;
-      border-bottom: 1px solid var(--border-default);
-      margin-bottom: 1rem;
+    .sidebar-brand {
+      padding: 0 24px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      margin-bottom: 16px;
     }
 
-    .sidebar-logo h1 {
-      font-size: 1.1rem;
+    .sidebar-brand h1 {
+      font-size: 18px;
       font-weight: 700;
-      color: var(--text-primary);
+      letter-spacing: -0.01em;
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 10px;
     }
 
-    .sidebar-logo p {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 0.25rem;
-    }
-
-    .nav-section {
-      padding: 0.5rem 1rem;
-    }
-
-    .nav-title {
-      font-size: 0.65rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      padding: 0.5rem 0.75rem;
-    }
-
-    .nav-list {
-      list-style: none;
-    }
-
-    .nav-list li a {
-      display: block;
-      padding: 0.5rem 0.75rem;
-      color: var(--text-secondary);
-      text-decoration: none;
-      font-size: 0.85rem;
+    .sidebar-brand .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent-primary), #60a5fa);
       border-radius: var(--radius-md);
-      transition: all 0.2s ease;
-      margin-bottom: 0.125rem;
-    }
-
-    .nav-list li a:hover {
-      background: var(--bg-panel);
-      color: var(--text-primary);
-    }
-
-    .nav-list li a.active {
-      background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
-      color: var(--accent-primary);
-      font-weight: 600;
-    }
-
-    /* 主内容区 */
-    .main-content {
-      margin-left: 260px;
-      padding: 2rem 3rem;
-      max-width: 900px;
-    }
-
-    .section {
-      margin-bottom: 3rem;
-      scroll-margin-top: 2rem;
-    }
-
-    .section-header {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      margin-bottom: 1.5rem;
-      padding-bottom: 0.75rem;
-      border-bottom: 2px solid var(--border-default);
-    }
-
-    .section-number {
-      width: 2rem;
-      height: 2rem;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--accent-primary);
-      color: white;
-      font-weight: 800;
-      font-size: 0.9rem;
-      border-radius: var(--radius-md);
-      flex-shrink: 0;
+      font-size: 16px;
     }
 
-    .section h2 {
-      font-size: 1.5rem;
+    .sidebar-brand .brand-subtitle {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 4px;
+      margin-left: 42px;
+    }
+
+    .sidebar-nav {
+      list-style: none;
+      padding: 0 12px;
+    }
+
+    .sidebar-nav li {
+      margin-bottom: 2px;
+    }
+
+    .sidebar-nav a {
+      display: block;
+      padding: 10px 16px;
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sidebar-nav a:hover {
+      background: var(--bg-sidebar-hover);
+      color: #e2e8f0;
+    }
+
+    .sidebar-nav a.active {
+      background: rgba(37, 99, 235, 0.15);
+      color: #60a5fa;
+    }
+
+    .sidebar-nav .nav-section {
+      padding: 16px 16px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+    }
+
+    /* ============================================================
+       主内容区
+       ============================================================ */
+    .main-content {
+      flex: 1;
+      margin-left: 260px;
+      max-width: 900px;
+      padding: 48px 40px;
+    }
+
+    /* ============================================================
+       内容区块
+       ============================================================ */
+    .section {
+      margin-bottom: 56px;
+    }
+
+    .section-title {
+      font-size: 28px;
       font-weight: 700;
       color: var(--text-primary);
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--border-default);
+    }
+
+    .section-subtitle {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 28px;
     }
 
     .section h3 {
-      font-size: 1.15rem;
+      font-size: 20px;
       font-weight: 600;
-      color: var(--text-secondary);
-      margin: 1.5rem 0 0.75rem;
+      color: var(--text-primary);
+      margin: 32px 0 16px;
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 10px;
     }
 
-    .section h3::before {
-      content: "";
-      width: 4px;
-      height: 1.2rem;
+    .section h3 .section-num {
+      width: 28px;
+      height: 28px;
       background: var(--accent-primary);
-      border-radius: 2px;
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .section h4 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin: 24px 0 12px;
     }
 
     .section p {
+      margin-bottom: 14px;
       color: var(--text-secondary);
-      margin-bottom: 1rem;
-      font-size: 0.95rem;
     }
 
-    /* 截图占位框 */
-    .screenshot-box {
-      background: var(--bg-canvas);
-      border: 2px dashed var(--border-default);
+    /* ============================================================
+       截图卡片
+       ============================================================ */
+    .screenshot-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-default);
       border-radius: var(--radius-lg);
-      padding: 2rem;
-      text-align: center;
-      margin: 1.5rem 0;
-      position: relative;
       overflow: hidden;
+      box-shadow: var(--shadow-md);
+      margin: 24px 0;
     }
 
-    .screenshot-box::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
-      background: linear-gradient(90deg, var(--accent-primary), var(--accent-success));
+    .screenshot-card img {
+      width: 100%;
+      display: block;
+      border-bottom: 1px solid var(--border-default);
     }
 
-    .screenshot-placeholder {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1rem;
+    .screenshot-caption {
+      padding: 16px 20px;
+      font-size: 13px;
       color: var(--text-muted);
+      background: #fafafa;
     }
 
-    .screenshot-placeholder svg {
-      width: 64px;
-      height: 64px;
-      opacity: 0.5;
+    .screenshot-caption strong {
+      color: var(--text-primary);
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
     }
 
-    .screenshot-placeholder p {
-      font-size: 0.85rem;
+    /* ============================================================
+       标注框
+       ============================================================ */
+    .annotation-wrap {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+    }
+
+    .annotation-wrap img {
+      width: 100%;
+      display: block;
+    }
+
+    .hotspot {
+      position: absolute;
+      border: 2px dashed var(--accent-primary);
+      border-radius: var(--radius-sm);
+      background: rgba(37, 99, 235, 0.08);
+      pointer-events: none;
+    }
+
+    .hotspot-label {
+      position: absolute;
+      background: var(--accent-primary);
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      white-space: nowrap;
+      transform: translateY(-100%);
+      margin-top: -4px;
+    }
+
+    /* ============================================================
+       信息卡片
+       ============================================================ */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .info-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .info-card .info-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    .info-card.info-primary .info-icon { background: rgba(37,99,235,0.1); }
+    .info-card.info-success .info-icon { background: rgba(22,163,74,0.1); }
+    .info-card.info-warning .info-icon { background: rgba(234,88,12,0.1); }
+    .info-card.info-danger .info-icon { background: rgba(220,38,38,0.1); }
+
+    .info-card h5 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .info-card p {
+      font-size: 13px;
+      color: var(--text-muted);
       margin: 0;
     }
 
-    .screenshot-label {
-      position: absolute;
-      top: 0.75rem;
-      right: 0.75rem;
-      background: var(--accent-primary);
-      color: white;
-      font-size: 0.7rem;
-      font-weight: 700;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-    }
-
-    /* 步骤说明 */
-    .step-list {
+    /* ============================================================
+       步骤列表
+       ============================================================ */
+    .steps {
       list-style: none;
       counter-reset: step;
-      margin: 1rem 0;
+      margin: 20px 0;
     }
 
-    .step-list li {
+    .steps li {
       position: relative;
-      padding-left: 2.5rem;
-      margin-bottom: 1rem;
-      color: var(--text-secondary);
+      padding-left: 44px;
+      margin-bottom: 20px;
+      min-height: 32px;
     }
 
-    .step-list li::before {
+    .steps li::before {
       counter-increment: step;
       content: counter(step);
       position: absolute;
       left: 0;
       top: 0;
-      width: 1.75rem;
-      height: 1.75rem;
+      width: 28px;
+      height: 28px;
+      background: var(--accent-primary);
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--bg-panel);
-      border: 1px solid var(--border-default);
-      color: var(--accent-primary);
-      font-weight: 700;
-      font-size: 0.8rem;
-      border-radius: 50%;
     }
 
-    /* 提示框 */
-    .tip-box {
-      background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-canvas));
-      border: 1px solid color-mix(in srgb, var(--accent-primary) 25%, var(--border-default));
-      border-radius: var(--radius-md);
-      padding: 1rem 1.25rem;
-      margin: 1rem 0;
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
+    .steps li strong {
+      color: var(--text-primary);
+      display: block;
+      margin-bottom: 4px;
     }
 
-    .tip-box svg {
-      width: 20px;
-      height: 20px;
-      color: var(--accent-primary);
-      flex-shrink: 0;
-      margin-top: 0.125rem;
-    }
-
-    .tip-box p {
+    .steps li p {
       margin: 0;
-      font-size: 0.9rem;
+      font-size: 14px;
     }
 
-    .warning-box {
-      background: color-mix(in srgb, var(--accent-warning) 8%, var(--bg-canvas));
-      border: 1px solid color-mix(in srgb, var(--accent-warning) 25%, var(--border-default));
-      border-radius: var(--radius-md);
-      padding: 1rem 1.25rem;
-      margin: 1rem 0;
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-    }
-
-    .warning-box svg {
-      width: 20px;
-      height: 20px;
-      color: var(--accent-warning);
-      flex-shrink: 0;
-      margin-top: 0.125rem;
-    }
-
-    .warning-box p {
-      margin: 0;
-      font-size: 0.9rem;
-    }
-
-    .danger-box {
-      background: color-mix(in srgb, var(--accent-danger) 8%, var(--bg-canvas));
-      border: 1px solid color-mix(in srgb, var(--accent-danger) 25%, var(--border-default));
-      border-radius: var(--radius-md);
-      padding: 1rem 1.25rem;
-      margin: 1rem 0;
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-    }
-
-    .danger-box svg {
-      width: 20px;
-      height: 20px;
-      color: var(--accent-danger);
-      flex-shrink: 0;
-      margin-top: 0.125rem;
-    }
-
-    .danger-box p {
-      margin: 0;
-      font-size: 0.9rem;
-    }
-
-    /* 表格样式 */
+    /* ============================================================
+       表格
+       ============================================================ */
     .data-table {
       width: 100%;
       border-collapse: collapse;
-      margin: 1rem 0;
-      font-size: 0.9rem;
+      margin: 20px 0;
+      font-size: 14px;
+      background: var(--bg-card);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
     }
 
     .data-table th,
     .data-table td {
-      padding: 0.75rem 1rem;
+      padding: 12px 16px;
       text-align: left;
       border-bottom: 1px solid var(--border-default);
     }
 
     .data-table th {
-      background: var(--bg-canvas);
+      background: #f1f5f9;
       font-weight: 600;
+      font-size: 13px;
       color: var(--text-secondary);
-      font-size: 0.8rem;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
     }
 
-    .data-table td {
-      color: var(--text-secondary);
+    .data-table tr:last-child td {
+      border-bottom: none;
     }
 
     .data-table tr:hover td {
-      background: color-mix(in srgb, var(--bg-panel) 50%, transparent);
+      background: #f8fafc;
     }
 
-    /* 功能标签 */
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      margin-right: 0.5rem;
+    /* ============================================================
+       提示框
+       ============================================================ */
+    .tip-box {
+      padding: 16px 20px;
+      border-radius: var(--radius-md);
+      margin: 20px 0;
+      font-size: 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
     }
 
-    .tag-success {
-      background: color-mix(in srgb, var(--accent-success) 15%, transparent);
-      color: var(--accent-success);
+    .tip-box.tip-info {
+      background: rgba(37,99,235,0.06);
+      border: 1px solid rgba(37,99,235,0.15);
+      color: #1e40af;
     }
 
-    .tag-warning {
-      background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
-      color: var(--accent-warning);
+    .tip-box.tip-warning {
+      background: rgba(234,88,12,0.06);
+      border: 1px solid rgba(234,88,12,0.15);
+      color: #9a3412;
     }
 
-    .tag-danger {
-      background: color-mix(in srgb, var(--accent-danger) 15%, transparent);
-      color: var(--accent-danger);
+    .tip-box.tip-danger {
+      background: rgba(220,38,38,0.06);
+      border: 1px solid rgba(220,38,38,0.15);
+      color: #991b1b;
     }
 
-    /* 快捷键 */
+    .tip-box .tip-icon {
+      font-size: 20px;
+      flex-shrink: 0;
+      margin-top: -2px;
+    }
+
+    /* ============================================================
+       快捷键标签
+       ============================================================ */
     kbd {
       display: inline-block;
-      padding: 0.2rem 0.5rem;
-      background: var(--bg-panel);
-      border: 1px solid var(--border-default);
-      border-radius: 0.25rem;
-      font-family: monospace;
-      font-size: 0.85rem;
-      color: var(--text-primary);
-      box-shadow: 0 2px 0 var(--border-default);
+      padding: 2px 8px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: #f1f5f9;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 1px 0 var(--border-strong);
+      color: var(--text-secondary);
+      vertical-align: middle;
     }
 
-    /* 页脚 */
-    .footer {
-      margin-top: 4rem;
-      padding-top: 2rem;
+    /* ============================================================
+       页脚
+       ============================================================ */
+    .page-footer {
+      margin-top: 60px;
+      padding-top: 24px;
       border-top: 1px solid var(--border-default);
       text-align: center;
+      font-size: 13px;
       color: var(--text-muted);
-      font-size: 0.8rem;
     }
 
-    /* 返回顶部 */
-    .back-to-top {
+    /* ============================================================
+       移动端适配
+       ============================================================ */
+    .menu-toggle {
+      display: none;
       position: fixed;
-      bottom: 2rem;
-      right: 2rem;
-      width: 2.5rem;
-      height: 2.5rem;
-      background: var(--bg-panel);
-      border: 1px solid var(--border-default);
-      border-radius: 50%;
-      display: flex;
+      top: 16px;
+      left: 16px;
+      z-index: 200;
+      width: 40px;
+      height: 40px;
+      background: var(--bg-sidebar);
+      color: white;
+      border: none;
+      border-radius: var(--radius-md);
+      font-size: 20px;
+      cursor: pointer;
       align-items: center;
       justify-content: center;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all 0.2s ease;
-      z-index: 50;
     }
 
-    .back-to-top:hover {
-      background: var(--accent-primary);
-      color: white;
-      border-color: var(--accent-primary);
-    }
-
-    /* 响应式 */
-    @media (max-width: 768px) {
+    @media (max-width: 900px) {
+      .menu-toggle { display: flex; }
       .sidebar {
-        width: 100%;
-        height: auto;
-        position: relative;
-        border-right: none;
-        border-bottom: 1px solid var(--border-default);
+        transform: translateX(-100%);
+        box-shadow: 4px 0 20px rgba(0,0,0,0.2);
       }
+      .sidebar.open { transform: translateX(0); }
       .main-content {
         margin-left: 0;
-        padding: 1.5rem;
+        padding: 72px 20px 40px;
+        max-width: 100%;
       }
     }
   </style>
 </head>
 <body>
-  <!-- 侧边导航 -->
-  <nav class="sidebar">
-    <div class="sidebar-logo">
-      <h1>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>
-        </svg>
-        运动控制器
-      </h1>
-      <p>用户说明书 v1.0</p>
-    </div>
+  <button class="menu-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">☰</button>
 
-    <div class="nav-section">
-      <div class="nav-title">目录</div>
-      <ul class="nav-list">
-        <li><a href="#overview" class="active">1. 软件概述</a></li>
-        <li><a href="#interface">2. 主界面介绍</a></li>
-        <li><a href="#config">3. 控制器配置</a></li>
-        <li><a href="#connect">4. 连接与断开</a></li>
-        <li><a href="#axis-control">5. 轴控制操作</a></li>
-        <li><a href="#monitor">6. 状态监视</a></li>
-        <li><a href="#emergency">7. 急停与安全</a></li>
-        <li><a href="#theme-lang">8. 主题与语言</a></li>
-        <li><a href="#shortcut">9. 快捷键</a></li>
-        <li><a href="#troubleshoot">10. 故障排除</a></li>
+  <div class="page-wrapper">
+    <!-- 侧边导航 -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1><span class="brand-icon">⚙</span> 运动控制器</h1>
+        <div class="brand-subtitle">用户说明书 v1.0</div>
+      </div>
+      <ul class="sidebar-nav">
+        <li class="nav-section">概览</li>
+        <li><a href="#overview" class="active">产品简介</a></li>
+        <li><a href="#features">功能特性</a></li>
+        <li><a href="#interface">界面概览</a></li>
+
+        <li class="nav-section">快速入门</li>
+        <li><a href="#quickstart">首次使用</a></li>
+        <li><a href="#connect">连接控制器</a></li>
+        <li><a href="#control">轴运动控制</a></li>
+
+        <li class="nav-section">配置指南</li>
+        <li><a href="#config-basic">基本信息配置</a></li>
+        <li><a href="#config-axis">轴参数配置</a></li>
+        <li><a href="#config-encoder">编码器补偿</a></li>
+
+        <li class="nav-section">操作参考</li>
+        <li><a href="#operations">常用操作</a></li>
+        <li><a href="#safety">安全与急停</a></li>
+        <li><a href="#shortcuts">快捷键</a></li>
+
+        <li class="nav-section">附录</li>
+        <li><a href="#themes">主题切换</a></li>
+        <li><a href="#troubleshooting">故障排查</a></li>
       </ul>
-    </div>
-  </nav>
+    </aside>
 
-  <!-- 主内容 -->
-  <main class="main-content">
-    <!-- 第1章：软件概述 -->
-    <section class="section" id="overview">
-      <div class="section-header">
-        <div class="section-number">1</div>
-        <h2>软件概述</h2>
-      </div>
-      <p>运动控制器是一款独立的桌面应用程序，用于配置、测试和操作运动控制器设备。本软件支持多种控制器型号，提供直观的轴控制界面，帮助您轻松完成运动控制任务。</p>
+    <!-- 主内容 -->
+    <main class="main-content">
+      <!-- 产品简介 -->
+      <section class="section" id="overview">
+        <h2 class="section-title">产品简介</h2>
+        <p class="section-subtitle">运动控制器是一款用于配置、测试和操作运动控制设备的桌面应用程序。</p>
 
-      <h3>主要功能</h3>
-      <ul class="step-list">
-        <li>支持多种运动控制器型号（模拟控制器、B140、WTNMC4A）</li>
-        <li>多轴实时控制（X、Y、Z、U 轴）</li>
-        <li>轴参数配置与编码器补偿</li>
-        <li>实时位置监视与限位状态显示</li>
-        <li>点动（Jog）与定位（Move）两种运动模式</li>
-        <li>紧急停止与安全保护机制</li>
-        <li>深色/浅色主题切换</li>
-        <li>中英文语言切换</li>
-      </ul>
+        <p>运动控制器（Motion Controller）是一款独立的 Wails 桌面应用，专为运动控制设备的配置、监控与操作而设计。它支持多控制器管理、多轴实时运动控制、编码器补偿配置等功能，适用于工业自动化、精密测量、实验设备控制等场景。</p>
 
-      <h3>系统要求</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>项目</th><th>要求</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>操作系统</td><td>Windows 10/11</td></tr>
-          <tr><td>内存</td><td>4GB 及以上</td></tr>
-          <tr><td>网络</td><td>与控制器的网络连接（IP 可达）</td></tr>
-          <tr><td>分辨率</td><td>1280×720 及以上</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- 第2章：主界面介绍 -->
-    <section class="section" id="interface">
-      <div class="section-header">
-        <div class="section-number">2</div>
-        <h2>主界面介绍</h2>
-      </div>
-      <p>启动软件后，您将看到主界面。界面分为三个主要区域：顶部标题栏、左侧控制器列表、右侧轴控制面板。</p>
-
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入软件主界面全屏截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应包含标题栏、左侧控制器列表和右侧轴控制面板</p>
+        <div class="info-grid">
+          <div class="info-card info-primary">
+            <div class="info-icon">🖥</div>
+            <h5>独立桌面应用</h5>
+            <p>基于 Wails 框架构建的跨平台桌面应用，提供原生级性能与体验。</p>
+          </div>
+          <div class="info-card info-success">
+            <div class="info-icon">🔗</div>
+            <h5>多控制器支持</h5>
+            <p>同时管理多个运动控制器，支持模拟控制器、B140、WTNMC4A 等型号。</p>
+          </div>
+          <div class="info-card info-warning">
+            <div class="info-icon">⚡</div>
+            <h5>实时运动控制</h5>
+            <p>支持点动、定位、归零、急停等多种运动控制模式，响应迅速。</p>
+          </div>
+          <div class="info-card info-danger">
+            <div class="info-icon">🛡</div>
+            <h5>安全保护机制</h5>
+            <p>内置限位检测、急停保护、软限位预警等多重安全机制。</p>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>界面区域说明</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>区域</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>标题栏</td><td>显示软件名称、主题切换按钮、语言切换按钮</td></tr>
-          <tr><td>控制器列表</td><td>显示已配置的控制器，可查看连接状态并切换当前控制器</td></tr>
-          <tr><td>轴控制面板</td><td>显示当前控制器的所有轴，包含位置读数、限位状态、操作按钮</td></tr>
-        </tbody>
-      </table>
+      <!-- 功能特性 -->
+      <section class="section" id="features">
+        <h2 class="section-title">功能特性</h2>
+        <p class="section-subtitle">运动控制器提供的核心功能一览。</p>
 
-      <div class="tip-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>首次使用软件时，如果左侧控制器列表为空，请点击「配置」按钮添加控制器。</p>
-      </div>
-    </section>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>功能模块</th>
+              <th>功能说明</th>
+              <th>适用场景</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>控制器管理</strong></td>
+              <td>添加、编辑、删除控制器配置，支持自动连接</td>
+              <td>多设备环境</td>
+            </tr>
+            <tr>
+              <td><strong>轴监控</strong></td>
+              <td>实时显示各轴位置、状态、限位信息</td>
+              <td>运行监控</td>
+            </tr>
+            <tr>
+              <td><strong>点动控制</strong></td>
+              <td>按设定步长正向/反向微调轴位置</td>
+              <td>精密对位</td>
+            </tr>
+            <tr>
+              <td><strong>定位控制</strong></td>
+              <td>移动轴到指定的绝对目标位置</td>
+              <td>自动定位</td>
+            </tr>
+            <tr>
+              <td><strong>归零操作</strong></td>
+              <td>将当前位置设为零点，便于相对定位</td>
+              <td>坐标系建立</td>
+            </tr>
+            <tr>
+              <td><strong>急停保护</strong></td>
+              <td>一键紧急停止所有轴运动，支持解除</td>
+              <td>安全保护</td>
+            </tr>
+            <tr>
+              <td><strong>编码器补偿</strong></td>
+              <td>配置编码器补偿参数，提高定位精度</td>
+              <td>高精度应用</td>
+            </tr>
+            <tr>
+              <td><strong>主题切换</strong></td>
+              <td>支持深色/浅色主题，适应不同环境</td>
+              <td>视觉偏好</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-    <!-- 第3章：控制器配置 -->
-    <section class="section" id="config">
-      <div class="section-header">
-        <div class="section-number">3</div>
-        <h2>控制器配置</h2>
-      </div>
-      <p>在使用软件控制运动设备之前，您需要先配置控制器参数。点击左侧控制器列表上方的「配置」按钮，打开配置面板。</p>
+      <!-- 界面概览 -->
+      <section class="section" id="interface">
+        <h2 class="section-title">界面概览</h2>
+        <p class="section-subtitle">了解运动控制器的主界面布局与各个区域的功能。</p>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入控制器配置面板截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应包含配置面板整体，包括左侧配置列表和右侧表单</p>
+        <h3><span class="section-num">1</span>主界面布局</h3>
+        <p>运动控制器主界面采用三栏式布局：顶部标题栏、左侧控制器列表、右侧主操作区。整体界面简洁直观，信息层级清晰。</p>
+
+        <div class="screenshot-card">
+          <img src="screenshots/01-main-view.png" alt="主界面截图">
+          <div class="screenshot-caption">
+            <strong>图 1：主界面（浅色主题）</strong>
+            显示控制器列表、轴状态监控、运动控制面板。当前未连接控制器，操作按钮处于禁用状态。
+          </div>
         </div>
-      </div>
 
-      <h3>添加新控制器</h3>
-      <ol class="step-list">
-        <li>点击左侧控制器列表上方的「配置」按钮，打开配置面板。</li>
-        <li>在配置面板左下角点击「新建」按钮，或点击左侧列表上方的「+」图标。</li>
-        <li>在「通信设置」区域填写控制器信息：
-n          <ul style="margin-top:0.5rem;margin-left:1rem;list-style:disc;color:var(--text-muted)">
-            <li>名称：控制器的显示名称</li>
-            <li>类型：选择控制器型号（模拟控制器 / B140 / WTNMC4A）</li>
-            <li>地址：控制器的 IP 地址或主机名</li>
-            <li>端口：控制器的通信端口号</li>
-            <li>自动连接：勾选后软件启动时自动连接此控制器</li>
-          </ul>
-        </li>
-        <li>在「轴配置」区域配置每个轴的机械和电气参数。</li>
-        <li>点击「保存」按钮完成配置。</li>
-      </ol>
+        <h4>界面区域说明</h4>
+        <table class="data-table">
+          <thead>
+            <tr><th>区域</th><th>位置</th><th>功能说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>标题栏</strong></td><td>顶部</td><td>显示应用名称、主题切换按钮、语言切换按钮</td></tr>
+            <tr><td><strong>控制器列表</strong></td><td>左侧边栏</td><td>列出所有已配置的控制器，显示连接状态</td></tr>
+            <tr><td><strong>主操作区</strong></td><td>右侧</td><td>显示选中控制器的轴状态与运动控制面板</td></tr>
+            <tr><td><strong>状态栏</strong></td><td>面板头部</td><td>显示控制器名称、类型、连接状态与网络地址</td></tr>
+            <tr><td><strong>操作按钮组</strong></td><td>面板头部右侧</td><td>连接、断开、全部停止、急停等操作按钮</td></tr>
+            <tr><td><strong>轴卡片网格</strong></td><td>主内容区</td><td>每个轴独立显示位置读数与操作控件</td></tr>
+          </tbody>
+        </table>
 
-      <h3>通信设置说明</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>字段</th><th>说明</th><th>示例</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>名称</td><td>控制器的显示名称，用于区分多个控制器</td><td>主控制器</td></tr>
-          <tr><td>类型</td><td>选择运动控制器的硬件型号</td><td>B140-MC</td></tr>
-          <tr><td>地址</td><td>控制器的 IP 地址或主机名</td><td>192.168.1.100</td></tr>
-          <tr><td>端口</td><td>控制器的通信端口号</td><td>5176</td></tr>
-          <tr><td>自动连接</td><td>程序启动时自动连接此控制器</td><td>勾选/不勾选</td></tr>
-        </tbody>
-      </table>
+        <h3><span class="section-num">2</span>深色主题</h3>
+        <p>点击标题栏右上角的月亮/太阳图标，可在深色与浅色主题之间切换。深色主题适合低光环境使用，减轻眼部疲劳。</p>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入通信设置区域截图】</p>
+        <div class="screenshot-card">
+          <img src="screenshots/04-light-theme.png" alt="深色主题截图">
+          <div class="screenshot-caption">
+            <strong>图 2：主界面（深色主题）</strong>
+            深色主题下界面元素对比度适中，适合夜间或暗光环境操作。
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>轴配置说明</h3>
-      <p>每个控制器最多支持 4 个轴（X、Y、Z、U）。在轴配置区域，您可以为每个轴设置以下参数：</p>
+      <!-- 快速入门 -->
+      <section class="section" id="quickstart">
+        <h2 class="section-title">快速入门</h2>
+        <p class="section-subtitle">从安装到首次运行，快速上手运动控制器。</p>
 
-      <table class="data-table">
-        <thead>
-          <tr><th>参数类别</th><th>参数名</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td rowspan="4">机械参数</td><td>轴类型</td><td>直线轴（单位 mm）或旋转轴（单位 °）</td></tr>
-          <tr><td>丝杆导程</td><td>丝杠旋转一周，螺母移动的直线距离（mm），仅直线轴有效</td></tr>
-          <tr><td>传动比</td><td>电机转速与负载转速的比值，仅旋转轴有效</td></tr>
-          <tr><td>方向反转</td><td>勾选后轴的运动方向与默认方向相反</td></tr>
-          <tr><td rowspan="2">电气参数</td><td>步距角</td><td>电机每步转过的角度，常见值：1.8°、0.9°、7.5°</td></tr>
-          <tr><td>细分数</td><td>驱动器的细分数，越高运动越平滑但扭矩越小</td></tr>
-          <tr><td rowspan="2">运动参数</td><td>最大速度</td><td>轴的最大运动速度（mm/s 或 °/s）</td></tr>
-          <tr><td>位置源</td><td>寄存器（内部）或编码器（外部反馈）</td></tr>
-        </tbody>
-      </table>
+        <h3><span class="section-num">1</span>首次使用步骤</h3>
+        <ol class="steps">
+          <li>
+            <strong>启动应用</strong>
+            <p>运行运动控制器桌面程序，应用启动后会自动加载已保存的控制器配置。</p>
+          </li>
+          <li>
+            <strong>检查控制器列表</strong>
+            <p>在左侧边栏查看已配置的控制器。首次使用时会自带一个模拟控制器（Simulated Controller）。</p>
+          </li>
+          <li>
+            <strong>连接控制器</strong>
+            <p>选中目标控制器，点击面板头部的「连接」按钮建立通信连接。</p>
+          </li>
+          <li>
+            <strong>进行运动控制</strong>
+            <p>连接成功后，各轴的操作按钮将变为可用状态，即可进行点动、定位等操作。</p>
+          </li>
+        </ol>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入轴配置卡片截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应包含 X/Y/Z/U 轴的配置卡片</p>
+        <div class="tip-box tip-info">
+          <span class="tip-icon">💡</span>
+          <div>
+            <strong>提示</strong><br>
+            如果左侧控制器列表为空，点击「配置」按钮添加新的控制器配置。模拟控制器无需硬件即可测试软件功能。
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>编码器补偿（仅 B140 控制器）</h3>
-      <p>当使用 B140 控制器且轴的位置源设置为「编码器」时，可以配置编码器补偿功能，用于补偿机械间隙和反向间隙。</p>
+      <!-- 连接控制器 -->
+      <section class="section" id="connect">
+        <h2 class="section-title">连接控制器</h2>
+        <p class="section-subtitle">建立与运动控制器的通信连接，开始实时监控与操作。</p>
 
-      <table class="data-table">
-        <thead>
-          <tr><th>参数</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>容差</td><td>编码器位置与指令位置的允许误差范围</td></tr>
-          <tr><td>最大周期</td><td>补偿执行的最大周期数，防止无限循环</td></tr>
-          <tr><td>稳定时间</td><td>补偿到位后的稳定等待时间（毫秒）</td></tr>
-          <tr><td>最小步长</td><td>每次补偿的最小移动步长</td></tr>
-          <tr><td>超时</td><td>单次补偿操作的最长等待时间（毫秒）</td></tr>
-        </tbody>
-      </table>
+        <h3><span class="section-num">1</span>连接步骤</h3>
+        <ol class="steps">
+          <li>
+            <strong>选择控制器</strong>
+            <p>在左侧边栏点击要连接的控制器名称，使其高亮显示为选中状态。</p>
+          </li>
+          <li>
+            <strong>点击连接</strong>
+            <p>点击面板头部右侧的绿色「连接」按钮，等待连接建立。</p>
+          </li>
+          <li>
+            <strong>确认连接状态</strong>
+            <p>连接成功后，状态指示点变为绿色，左侧列表中该控制器的状态也显示为「已连接」。</p>
+          </li>
+        </ol>
 
-      <div class="warning-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <p>编码器补偿功能仅支持 B140 控制器。如果您使用的是其他型号控制器，此区域将显示「编码器补偿仅支持 B140 控制器」的提示。</p>
-      </div>
-    </section>
-
-    <!-- 第4章：连接与断开 -->
-    <section class="section" id="connect">
-      <div class="section-header">
-        <div class="section-number">4</div>
-        <h2>连接与断开</h2>
-      </div>
-
-      <h3>连接控制器</h3>
-      <ol class="step-list">
-        <li>在左侧控制器列表中，点击选择要连接的控制器。</li>
-        <li>点击右侧标题区域的「连接」按钮（绿色按钮）。</li>
-        <li>等待连接成功，状态指示灯变为绿色，显示「系统在线」。</li>
-      </ol>
-
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入连接状态截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应显示已连接状态，绿色指示灯和「系统在线」文字</p>
+        <div class="screenshot-card">
+          <img src="screenshots/03-connected-view.png" alt="已连接状态截图">
+          <div class="screenshot-caption">
+            <strong>图 3：已连接状态</strong>
+            控制器连接成功后，各轴的操作按钮变为可用状态，可以执行运动控制操作。
+          </div>
         </div>
-      </div>
 
-      <h3>断开控制器</h3>
-      <ol class="step-list">
-        <li>确认当前已连接的控制器。</li>
-        <li>点击「断开」按钮（灰色边框按钮）。</li>
-        <li>状态指示灯变为灰色，显示「系统离线」。</li>
-      </ol>
+        <h3><span class="section-num">2</span>断开连接</h3>
+        <p>点击「断开」按钮可主动断开与控制器的通信。断开前请确保各轴已停止运动，避免异常中断。</p>
 
-      <div class="tip-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>如果配置了「自动连接」，软件启动时会自动尝试连接该控制器，无需手动操作。</p>
-      </div>
-    </section>
+        <h3><span class="section-num">3</span>自动连接</h3>
+        <p>在控制器配置中开启「自动连接」选项后，应用启动时会自动尝试连接该控制器，无需手动操作。</p>
+      </section>
 
-    <!-- 第5章：轴控制操作 -->
-    <section class="section" id="axis-control">
-      <div class="section-header">
-        <div class="section-number">5</div>
-        <h2>轴控制操作</h2>
-      </div>
-      <p>连接成功后，您可以在轴控制面板中对各个轴进行操作。每个轴卡片包含四个功能区域：位置读数、监视、点动、定位。</p>
+      <!-- 轴运动控制 -->
+      <section class="section" id="control">
+        <h2 class="section-title">轴运动控制</h2>
+        <p class="section-subtitle">掌握各轴的监视、点动、定位等核心操作方法。</p>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入单个轴卡片截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应清晰显示轴卡片的四个区域：位置读数、监视、点动、定位</p>
+        <h3><span class="section-num">1</span>轴卡片结构</h3>
+        <p>每个运动轴以独立卡片形式展示，包含以下功能区域：</p>
+
+        <table class="data-table">
+          <thead>
+            <tr><th>区域</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>轴标识</strong></td><td>显示轴名称（X/Y/Z/U）与轴类型（直线轴/旋转轴）</td></tr>
+            <tr><td><strong>位置读数</strong></td><td>大号数字显示当前位置，单位 mm 或 °，底部彩色条带显示位置历史</td></tr>
+            <tr><td><strong>监视区</strong></td><td>显示负限位、正限位状态，提供「置零」和「停止」按钮</td></tr>
+            <tr><td><strong>点动区</strong></td><td>设置步长，点击左右箭头按步长正向/反向移动</td></tr>
+            <tr><td><strong>定位区</strong></td><td>输入目标位置，点击「移动」按钮执行绝对定位</td></tr>
+          </tbody>
+        </table>
+
+        <h3><span class="section-num">2</span>点动操作</h3>
+        <p>点动模式用于精密微调轴位置，适合对位、校准等场景。</p>
+        <ol class="steps">
+          <li>
+            <strong>设置步长</strong>
+            <p>在点动区的输入框中输入期望的步长值（单位：mm 或 °）。</p>
+          </li>
+          <li>
+            <strong>执行点动</strong>
+            <p>点击左箭头按钮向负方向移动一个步长，点击右箭头向正方向移动一个步长。</p>
+          </li>
+          <li>
+            <strong>观察位置变化</strong>
+            <p>位置读数会实时更新，底部彩色历史条带记录最近 50 次位置采样。</p>
+          </li>
+        </ol>
+
+        <h3><span class="section-num">3</span>定位操作</h3>
+        <p>定位模式将轴移动到指定的绝对目标位置。</p>
+        <ol class="steps">
+          <li>
+            <strong>输入目标位置</strong>
+            <p>在定位区的输入框中输入目标位置值。系统会自动校验是否超出软限位。</p>
+          </li>
+          <li>
+            <strong>检查限位警告</strong>
+            <p>如果目标位置接近或超出限位，输入框会以黄色/红色高亮提示。</p>
+          </li>
+          <li>
+            <strong>执行移动</strong>
+            <p>点击「移动」按钮，轴将自动运行到目标位置。</p>
+          </li>
+        </ol>
+
+        <div class="tip-box tip-warning">
+          <span class="tip-icon">⚠</span>
+          <div>
+            <strong>限位警告说明</strong><br>
+            黄色边框表示目标位置接近限位（距离限位 10% 范围内），红色边框表示已超出限位，此时无法执行移动操作。
+          </div>
         </div>
-      </div>
 
-      <h3>位置读数</h3>
-      <p>轴卡片顶部显示当前轴的实时位置。位置值以大字显示，单位为毫米（mm）或度（°），取决于轴类型。</p>
-      <ul class="step-list">
-        <li>位置数值实时更新，反映轴的当前位置。</li>
-        <li>底部的彩色条带显示最近 50 次位置采样历史，帮助观察运动趋势。</li>
-        <li>状态指示灯显示轴是否正在运动：绿色闪烁表示运动中，灰色表示静止。</li>
-      </ul>
+        <h3><span class="section-num">4</span>置零操作</h3>
+        <p>点击「置零」按钮可将当前轴的物理位置设为零点坐标。置零后，所有相对定位操作将以该零点为基准计算。</p>
 
-      <h3>监视区域</h3>
-      <p>监视区域显示轴的限位状态和常用操作按钮。</p>
-      <table class="data-table">
-        <thead>
-          <tr><th>元素</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>负限位指示灯</td><td>红色亮起表示触发负方向限位开关</td></tr>
-          <tr><td>正限位指示灯</td><td>红色亮起表示触发正方向限位开关</td></tr>
-          <tr><td>归零按钮</td><td>将当前位置设为零点（相对坐标系原点）</td></tr>
-          <tr><td>停止按钮</td><td>立即停止该轴的运动</td></tr>
-        </tbody>
-      </table>
+        <h3><span class="section-num">5</span>停止操作</h3>
+        <p>点击单轴的「停止」按钮可立即停止该轴的运动。点击面板头部的「全部停止」按钮可同时停止所有轴。</p>
+      </section>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入监视区域截图】</p>
+      <!-- 配置指南 -->
+      <section class="section" id="config-basic">
+        <h2 class="section-title">基本信息配置</h2>
+        <p class="section-subtitle">配置控制器的通信参数与基本属性。</p>
+
+        <h3><span class="section-num">1</span>打开配置面板</h3>
+        <p>点击左侧边栏顶部的「配置」按钮，或点击面板头部的配置图标，即可打开控制器配置面板。</p>
+
+        <div class="screenshot-card">
+          <img src="screenshots/02-config-view.png" alt="配置面板截图">
+          <div class="screenshot-caption">
+            <strong>图 4：配置面板（浅色主题）</strong>
+            配置面板分为左侧控制器列表与右侧配置内容区，支持新建、编辑、删除控制器配置。
+          </div>
         </div>
-      </div>
 
-      <h3>点动操作（Jog）</h3>
-      <p>点动模式用于微调轴的位置。您可以设置步长，然后通过前进/后退按钮进行精确移动。</p>
-      <ol class="step-list">
-        <li>在步长输入框中输入每次点动的距离（单位与轴类型一致）。</li>
-        <li>点击「←」按钮向负方向移动一个步长。</li>
-        <li>点击「→」按钮向正方向移动一个步长。</li>
-      </ol>
+        <h3><span class="section-num">2</span>基本信息字段</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>字段</th><th>说明</th><th>示例值</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>名称</strong></td><td>控制器的显示名称，用于区分多个控制器</td><td>Simulated Controller 1</td></tr>
+            <tr><td><strong>类型</strong></td><td>控制器的硬件型号</td><td>模拟控制器 / B140 / WTNMC4A</td></tr>
+            <tr><td><strong>地址</strong></td><td>控制器的 IP 地址或主机名</td><td>127.0.0.1</td></tr>
+            <tr><td><strong>端口</strong></td><td>控制器的通信端口号</td><td>5176</td></tr>
+            <tr><td><strong>自动连接</strong></td><td>程序启动时是否自动连接此控制器</td><td>开启 / 关闭</td></tr>
+          </tbody>
+        </table>
 
-      <div class="tip-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>点动操作在轴运动过程中会被禁用，等待当前运动完成后才能进行下一次点动。</p>
-      </div>
+        <h3><span class="section-num">3</span>新建控制器</h3>
+        <ol class="steps">
+          <li><strong>点击添加</strong><p>在配置面板左侧点击「+」按钮或「新建」选项。</p></li>
+          <li><strong>填写信息</strong><p>输入控制器名称、选择类型、填写地址和端口。</p></li>
+          <li><strong>保存配置</strong><p>点击右下角「保存」按钮，新控制器将出现在列表中。</p></li>
+        </ol>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入点动区域截图】</p>
+        <h3><span class="section-num">4</span>删除控制器</h3>
+        <p>在编辑现有控制器时，点击左下角红色的「删除」按钮，确认后即可删除该控制器配置。此操作不可撤销。</p>
+
+        <div class="tip-box tip-info">
+          <span class="tip-icon">💡</span>
+          <div>
+            <strong>未保存提示</strong><br>
+            当配置有未保存的更改时，底部会显示红色「未保存」提示。关闭面板或切换控制器前会弹出确认对话框，防止误操作丢失更改。
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>定位操作（Move）</h3>
-      <p>定位模式用于将轴移动到指定的目标位置。</p>
-      <ol class="step-list">
-        <li>在目标位置输入框中输入要移动到的位置（相对于零点的坐标）。</li>
-        <li>系统会自动检查目标位置是否在限位范围内。</li>
-        <li>如果目标位置超出限位，输入框会显示红色警告。</li>
-        <li>点击「移动」按钮，轴将运动到目标位置。</li>
-      </ol>
+      <!-- 轴参数配置 -->
+      <section class="section" id="config-axis">
+        <h2 class="section-title">轴参数配置</h2>
+        <p class="section-subtitle">为每个运动轴配置机械参数与运动限制。</p>
 
-      <div class="warning-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <p>当目标位置接近限位（距离限位 10% 范围内）时，系统会显示黄色警告「接近限位，请谨慎操作」。请确认安全后再执行移动。</p>
-      </div>
-
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入定位区域截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应显示目标位置输入框和移动按钮</p>
+        <div class="screenshot-card">
+          <img src="screenshots/05-config-light-theme.png" alt="轴配置截图">
+          <div class="screenshot-caption">
+            <strong>图 5：配置面板（深色主题）</strong>
+            深色主题下的配置面板，轴配置卡片以不同颜色区分各轴。
+          </div>
         </div>
-      </div>
-    </section>
 
-    <!-- 第6章：状态监视 -->
-    <section class="section" id="monitor">
-      <div class="section-header">
-        <div class="section-number">6</div>
-        <h2>状态监视</h2>
-      </div>
+        <h3><span class="section-num">1</span>轴配置参数说明</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>参数</th><th>说明</th><th>适用轴类型</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>类型</strong></td><td>直线轴（LINEAR）或旋转轴（ROTARY）</td><td>全部</td></tr>
+            <tr><td><strong>导程</strong></td><td>丝杆每转一圈的直线位移（mm）</td><td>直线轴</td></tr>
+            <tr><td><strong>传动比</strong></td><td>电机转速与轴转速的比值</td><td>旋转轴</td></tr>
+            <tr><td><strong>反转</strong></td><td>是否反转运动方向</td><td>全部</td></tr>
+            <tr><td><strong>步距角</strong></td><td>电机每步的角度（°）</td><td>全部</td></tr>
+            <tr><td><strong>细分</strong></td><td>驱动器的细分数</td><td>全部</td></tr>
+            <tr><td><strong>最大速度</strong></td><td>轴的最大运动速度</td><td>全部</td></tr>
+            <tr><td><strong>位置源</strong></td><td>位置反馈来源：寄存器或编码器（编码器仅 B140 支持）</td><td>全部（编码器仅 B140）</td></tr>
+          </tbody>
+        </table>
 
-      <h3>控制器状态</h3>
-      <p>在右侧标题区域，您可以查看当前控制器的连接状态：</p>
-      <ul class="step-list">
-        <li><span class="tag tag-success">在线</span> 绿色指示灯表示控制器已连接，通信正常。</li>
-        <li><span class="tag tag-warning">离线</span> 灰色指示灯表示控制器未连接。</li>
-        <li>显示控制器名称、型号和 IP 地址。</li>
-      </ul>
+        <h3><span class="section-num">2</span>脉冲当量计算</h3>
+        <p>配置面板底部会自动显示「步/mm」或「步/°」的计算结果，该值由步距角、细分数、导程/传动比等参数自动计算得出，用于校验配置合理性。</p>
 
-      <h3>报警信息</h3>
-      <p>当控制器发生错误时，界面顶部会显示红色报警条，包含错误信息。点击右侧的「×」按钮可以清除报警显示。</p>
-
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入报警信息截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应显示红色报警条和错误信息</p>
+        <div class="tip-box tip-warning">
+          <span class="tip-icon">⚠</span>
+          <div>
+            <strong>配置注意事项</strong><br>
+            修改轴配置后需点击「保存」按钮生效。错误的机械参数会导致位置计算偏差，请在配置前确认设备的实际机械参数。
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>限位状态</h3>
-      <p>每个轴卡片的监视区域显示限位开关状态：</p>
-      <table class="data-table">
-        <thead>
-          <tr><th>状态</th><th>说明</th><th>操作</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>指示灯灰色</td><td>限位开关未触发</td><td>正常操作</td></tr>
-          <tr><td>指示灯红色</td><td>限位开关已触发</td><td>停止运动，反向离开限位</td></tr>
-        </tbody>
-      </table>
-    </section>
+      <!-- 编码器补偿 -->
+      <section class="section" id="config-encoder">
+        <h2 class="section-title">编码器补偿</h2>
+        <p class="section-subtitle">配置编码器补偿参数，提升定位精度。</p>
 
-    <!-- 第7章：急停与安全 -->
-    <section class="section" id="emergency">
-      <div class="section-header">
-        <div class="section-number">7</div>
-        <h2>急停与安全</h2>
-      </div>
+        <h3><span class="section-num">1</span>编码器补偿功能</h3>
+        <p>编码器补偿用于修正编码器反馈与目标位置之间的系统性误差。当位置源选择「编码器」时，可启用补偿功能。</p>
 
-      <h3>紧急停止</h3>
-      <p>紧急停止（E-Stop）用于在紧急情况下立即停止所有轴的运动。</p>
-
-      <div class="danger-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-        <p><strong>紧急停止会立即停止所有运动！</strong> 请在真正紧急的情况下使用，如发生碰撞、人员安全受到威胁等。</p>
-      </div>
-
-      <h3>触发急停的方式</h3>
-      <ol class="step-list">
-        <li>点击界面右上角的红色「急停」按钮。</li>
-        <li>按下键盘上的 <kbd>ESC</kbd> 键。</li>
-      </ol>
-
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入急停按钮截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应突出显示红色的急停按钮</p>
+        <div class="tip-box tip-warning">
+          <span class="tip-icon">⚠</span>
+          <div>
+            <strong>设备类型限制</strong><br>
+            编码器位置源与编码器补偿功能仅适用于 <strong>B140 控制器</strong>。模拟控制器（SIMULATED-MC）和 WTNMC4A 控制器不支持编码器方式，轴配置中的「位置源」选项仅可选择「寄存器」。
+          </div>
         </div>
-      </div>
 
-      <h3>解除急停</h3>
-      <p>触发急停后，界面会显示黄色警告条，提示「急停已激活」。此时所有操作按钮将被禁用。</p>
-      <ol class="step-list">
-        <li>确认现场安全，排除故障原因。</li>
-        <li>点击黄色警告条中的「解除急停」按钮。</li>
-        <li>急停解除后，可以恢复正常操作。</li>
-      </ol>
+        <h3><span class="section-num">2</span>补偿参数说明</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>参数</th><th>说明</th><th>默认值</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>启用补偿</strong></td><td>是否对该轴启用编码器补偿</td><td>关闭</td></tr>
+            <tr><td><strong>预设方案</strong></td><td>选择默认/高精度/高速/自定义方案</td><td>默认</td></tr>
+            <tr><td><strong>容差</strong></td><td>补偿停止的误差阈值</td><td>0.01</td></tr>
+            <tr><td><strong>最大循环</strong></td><td>补偿算法的最大迭代次数</td><td>10</td></tr>
+            <tr><td><strong>稳定时间</strong></td><td>每次补偿步进后的等待稳定时间（ms）</td><td>100</td></tr>
+            <tr><td><strong>最小步长</strong></td><td>补偿调整的最小步进量</td><td>0.001</td></tr>
+            <tr><td><strong>超时</strong></td><td>补偿过程的最大允许时间（ms）</td><td>5000</td></tr>
+          </tbody>
+        </table>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入急停激活状态截图】</p>
-          <p style="font-size:0.75rem;opacity:0.6">截图应显示黄色急停警告条和「解除急停」按钮</p>
+        <h3><span class="section-num">3</span>预设方案选择</h3>
+        <ul class="steps">
+          <li><strong>默认</strong><p>平衡精度与速度，适用于一般应用场景。</p></li>
+          <li><strong>高精度</strong><p>更小的容差和步长，更多的迭代次数，适用于精密定位。</p></li>
+          <li><strong>高速</strong><p>较大的容差和步长，较少的迭代次数，适用于对速度要求高的场景。</p></li>
+          <li><strong>自定义</strong><p>手动调整所有参数，满足特殊应用需求。</p></li>
+        </ul>
+      </section>
+
+      <!-- 常用操作 -->
+      <section class="section" id="operations">
+        <h2 class="section-title">常用操作</h2>
+        <p class="section-subtitle">日常使用中常见的操作场景与步骤。</p>
+
+        <h3><span class="section-num">1</span>切换控制器</h3>
+        <p>在左侧边栏直接点击要操作的控制器名称即可切换。切换前请确保当前控制器的运动已停止。</p>
+
+        <h3><span class="section-num">2</span>查看轴状态</h3>
+        <p>每个轴卡片顶部显示运动状态：绿色闪烁点表示「运动中」，灰色点表示「空闲」。位置读数实时刷新，精度为 0.01 mm/°。</p>
+
+        <h3><span class="section-num">3</span>限位状态监控</h3>
+        <p>监视区显示负限位和正限位的状态。当轴触发限位开关时，对应的指示灯变为红色。触发限位后，该方向的移动将被禁止。</p>
+
+        <h3><span class="section-num">4</span>语言切换</h3>
+        <p>点击标题栏右上角的「中文/EN」按钮，可在中文与英文界面之间切换。切换后所有界面文本将实时更新。</p>
+      </section>
+
+      <!-- 安全与急停 -->
+      <section class="section" id="safety">
+        <h2 class="section-title">安全与急停</h2>
+        <p class="section-subtitle">了解安全保护机制与急停操作方法。</p>
+
+        <h3><span class="section-num">1</span>急停按钮</h3>
+        <p>面板头部右侧的红色「急停」按钮用于紧急情况下立即停止所有轴的运动。急停按钮带有脉冲动画效果，醒目易识别。</p>
+
+        <div class="tip-box tip-danger">
+          <span class="tip-icon">🚨</span>
+          <div>
+            <strong>急停操作</strong><br>
+            点击急停按钮后，所有轴将立即停止。急停状态下无法执行任何运动操作，必须先解除急停才能恢复。
+          </div>
         </div>
-      </div>
 
-      <h3>停止所有轴</h3>
-      <p>如果需要停止所有轴的运动（非紧急情况），可以点击「停止全部」按钮（黄色按钮）。此操作会平滑停止所有轴，不会触发急停状态。</p>
-    </section>
+        <h3><span class="section-num">2</span>解除急停</h3>
+        <p>急停激活后，界面会显示黄色警告横幅，提示「急停已激活」。点击横幅上的「解除急停」按钮，或再次点击急停按钮，即可解除急停状态。</p>
 
-    <!-- 第8章：主题与语言 -->
-    <section class="section" id="theme-lang">
-      <div class="section-header">
-        <div class="section-number">8</div>
-        <h2>主题与语言</h2>
-      </div>
+        <h3><span class="section-num">3</span>键盘快捷键</h3>
+        <p>按下键盘上的 <kbd>Esc</kbd> 键可快速触发急停，无需鼠标操作。这在紧急情况下可以更快响应。</p>
 
-      <h3>切换主题</h3>
-      <p>软件支持深色和浅色两种主题。点击标题栏的「☀/☾」图标可以切换主题。</p>
-      <ul class="step-list">
-        <li>☀ 图标：切换到浅色主题</li>
-        <li>☾ 图标：切换到深色主题</li>
-      </ul>
+        <h3><span class="section-num">4</span>软限位保护</h3>
+        <p>系统会在目标位置超出配置的软限位时自动阻止移动，并在输入框显示红色警告。接近限位时（距离限位 10% 范围内）会显示黄色警告。</p>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入主题切换按钮截图】</p>
+        <h3><span class="section-num">5</span>错误处理</h3>
+        <p>当控制器发生报警时，界面顶部会显示红色错误横幅，包含错误信息。点击右侧的关闭按钮可清除错误提示。请根据错误信息排查问题后重新操作。</p>
+      </section>
+
+      <!-- 快捷键 -->
+      <section class="section" id="shortcuts">
+        <h2 class="section-title">快捷键</h2>
+        <p class="section-subtitle">键盘快捷键列表，提高操作效率。</p>
+
+        <table class="data-table">
+          <thead>
+            <tr><th>快捷键</th><th>功能</th><th>使用场景</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><kbd>Esc</kbd></td><td>紧急停止</td><td>紧急情况下快速停止所有轴</td></tr>
+          </tbody>
+        </table>
+
+        <div class="tip-box tip-info">
+          <span class="tip-icon">💡</span>
+          <div>
+            <strong>提示</strong><br>
+            急停快捷键在任何界面状态下均有效，无需聚焦特定区域。建议操作人员在设备运行时将手放在 Esc 键附近，以备紧急情况。
+          </div>
         </div>
-      </div>
+      </section>
 
-      <h3>切换语言</h3>
-      <p>软件支持中文和英文两种语言。点击标题栏的「中文/EN」按钮可以切换语言。</p>
+      <!-- 主题切换 -->
+      <section class="section" id="themes">
+        <h2 class="section-title">主题切换</h2>
+        <p class="section-subtitle">自定义界面外观，适应不同使用环境。</p>
 
-      <div class="screenshot-box">
-        <span class="screenshot-label">截图占位</span>
-        <div class="screenshot-placeholder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <p>【请在此处插入语言切换按钮截图】</p>
+        <h3><span class="section-num">1</span>切换方法</h3>
+        <p>点击标题栏右上角的月亮/太阳图标即可在深色与浅色主题之间切换。主题设置会自动保存，下次启动时恢复。</p>
+
+        <h3><span class="section-num">2</span>主题特点</h3>
+        <div class="info-grid">
+          <div class="info-card info-primary">
+            <div class="info-icon">🌙</div>
+            <h5>深色主题</h5>
+            <p>低亮度背景，高对比度文字，适合夜间或暗光环境，减轻眼部疲劳。</p>
+          </div>
+          <div class="info-card info-success">
+            <div class="info-icon">☀</div>
+            <h5>浅色主题</h5>
+            <p>明亮清爽的背景，适合白天或光线充足的环境，界面元素清晰易辨。</p>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- 第9章：快捷键 -->
-    <section class="section" id="shortcut">
-      <div class="section-header">
-        <div class="section-number">9</div>
-        <h2>快捷键</h2>
-      </div>
-      <p>软件提供以下快捷键，帮助您快速操作：</p>
+      <!-- 故障排查 -->
+      <section class="section" id="troubleshooting">
+        <h2 class="section-title">故障排查</h2>
+        <p class="section-subtitle">常见问题与解决方法。</p>
 
-      <table class="data-table">
-        <thead>
-          <tr><th>快捷键</th><th>功能</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><kbd>ESC</kbd></td><td>紧急停止</td><td>立即停止所有轴运动，触发急停状态</td></tr>
-        </tbody>
-      </table>
+        <h3><span class="section-num">1</span>连接问题</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>现象</th><th>可能原因</th><th>解决方法</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>连接失败</td>
+              <td>IP 地址或端口错误</td>
+              <td>检查控制器配置中的地址和端口是否正确</td>
+            </tr>
+            <tr>
+              <td>连接失败</td>
+              <td>控制器未通电或网络不通</td>
+              <td>检查控制器电源和网络连接状态</td>
+            </tr>
+            <tr>
+              <td>连接后断开</td>
+              <td>网络不稳定</td>
+              <td>检查网线或 WiFi 信号，尽量使用有线连接</td>
+            </tr>
+          </tbody>
+        </table>
 
-      <div class="tip-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>急停按钮上显示了 <kbd>ESC</kbd> 快捷键提示，方便您记忆。</p>
-      </div>
-    </section>
+        <h3><span class="section-num">2</span>运动问题</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>现象</th><th>可能原因</th><th>解决方法</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>轴不运动</td>
+              <td>未连接控制器</td>
+              <td>先点击「连接」按钮建立连接</td>
+            </tr>
+            <tr>
+              <td>轴不运动</td>
+              <td>急停已激活</td>
+              <td>解除急停状态后再操作</td>
+            </tr>
+            <tr>
+              <td>轴不运动</td>
+              <td>触发限位</td>
+              <td>检查限位状态，手动脱离限位开关</td>
+            </tr>
+            <tr>
+              <td>位置不更新</td>
+              <td>位置源配置错误</td>
+              <td>检查轴配置中的位置源设置</td>
+            </tr>
+          </tbody>
+        </table>
 
-    <!-- 第10章：故障排除 -->
-    <section class="section" id="troubleshoot">
-      <div class="section-header">
-        <div class="section-number">10</div>
-        <h2>故障排除</h2>
-      </div>
+        <h3><span class="section-num">3</span>配置问题</h3>
+        <table class="data-table">
+          <thead>
+            <tr><th>现象</th><th>可能原因</th><th>解决方法</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>保存失败</td>
+              <td>名称重复</td>
+              <td>更换控制器名称，确保唯一</td>
+            </tr>
+            <tr>
+              <td>保存失败</td>
+              <td>端口超出范围</td>
+              <td>端口号必须在 1-65535 之间</td>
+            </tr>
+            <tr>
+              <td>脉冲当量异常</td>
+              <td>机械参数配置错误</td>
+              <td>核对导程、步距角、细分数等参数</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-      <h3>无法连接控制器</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>可能原因</th><th>解决方法</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>IP 地址或端口错误</td><td>检查配置中的地址和端口是否正确</td></tr>
-          <tr><td>网络不通</td><td>使用 ping 命令测试网络连通性</td></tr>
-          <tr><td>控制器未启动</td><td>确认控制器设备已上电并正常运行</td></tr>
-          <tr><td>防火墙阻止</td><td>检查防火墙设置，放行对应端口</td></tr>
-        </tbody>
-      </table>
-
-      <h3>轴无法运动</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>可能原因</th><th>解决方法</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>控制器未连接</td><td>先点击「连接」按钮建立连接</td></tr>
-          <tr><td>急停已激活</td><td>点击「解除急停」按钮</td></tr>
-          <tr><td>触发限位</td><td>反向点动离开限位开关</td></tr>
-          <tr><td>目标位置超限</td><td>修改目标位置到限位范围内</td></tr>
-        </tbody>
-      </table>
-
-      <h3>位置显示异常</h3>
-      <table class="data-table">
-        <thead>
-          <tr><th>可能原因</th><th>解决方法</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>零点未设置</td><td>点击「归零」按钮设置当前位置为零点</td></tr>
-          <tr><td>编码器方向反了</td><td>在配置中勾选「方向反转」</td></tr>
-          <tr><td>丝杆导程错误</td><td>检查并修正轴配置中的丝杆导程参数</td></tr>
-        </tbody>
-      </table>
-
-      <div class="tip-box">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>如果问题仍然无法解决，请记录错误信息并联系技术支持人员。</p>
-      </div>
-    </section>
-
-    <!-- 页脚 -->
-    <footer class="footer">
-      <p>运动控制器用户说明书 · 版本 1.0</p>
-      <p style="margin-top:0.5rem">如有疑问，请联系技术支持</p>
-    </footer>
-  </main>
-
-  <!-- 返回顶部 -->
-  <div class="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="m18 15-6-6-6 6"/>
-    </svg>
+      <!-- 页脚 -->
+      <footer class="page-footer">
+        <p>运动控制器用户说明书 v1.0 | 如有疑问请联系技术支持</p>
+      </footer>
+    </main>
   </div>
 
   <script>
-    // 导航高亮
-    const sections = document.querySelectorAll('.section');
-    const navLinks = document.querySelectorAll('.nav-list a');
+    // 侧边栏导航高亮
+    const sections = document.querySelectorAll('.section[id]');
+    const navLinks = document.querySelectorAll('.sidebar-nav a');
 
-    window.addEventListener('scroll', () => {
+    function onScroll() {
       let current = '';
       sections.forEach(section => {
-        const sectionTop = section.offsetTop;
-        if (scrollY >= sectionTop - 100) {
-          current = section.getAttribute('id');
-        }
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= 100) current = section.id;
       });
-
       navLinks.forEach(link => {
-        link.classList.remove('active');
-        if (link.getAttribute('href') === '#' + current) {
-          link.classList.add('active');
-        }
+        link.classList.toggle('active', link.getAttribute('href') === '#' + current);
       });
-    });
+    }
+
+    window.addEventListener('scroll', onScroll);
+    onScroll();
   </script>
 </body>
 </html>

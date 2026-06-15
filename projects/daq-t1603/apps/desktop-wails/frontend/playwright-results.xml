@@ -1,0 +1,46 @@
+<testsuites id="" name="" tests="19" failures="0" skipped="0" errors="0" time="17.632068">
+<testsuite name="features\acquisition.spec.ts" timestamp="2026-06-12T04:12:10.579Z" hostname="chromium" tests="5" failures="0" skipped="0" time="38.154" errors="0">
+<testcase name="Acquisition › should start acquisition and update status" classname="features\acquisition.spec.ts" time="7.738">
+</testcase>
+<testcase name="Acquisition › should show channel card values when data arrives" classname="features\acquisition.spec.ts" time="7.482">
+</testcase>
+<testcase name="Acquisition › should stop acquisition" classname="features\acquisition.spec.ts" time="7.771">
+</testcase>
+<testcase name="Acquisition › should show acquisition status in bottom bar" classname="features\acquisition.spec.ts" time="7.479">
+</testcase>
+<testcase name="Acquisition › should handle connect error gracefully" classname="features\acquisition.spec.ts" time="7.684">
+</testcase>
+</testsuite>
+<testsuite name="features\device-management.spec.ts" timestamp="2026-06-12T04:12:10.579Z" hostname="chromium" tests="7" failures="0" skipped="0" time="42.378" errors="0">
+<testcase name="Device Management › should show empty state when no device selected" classname="features\device-management.spec.ts" time="6.201">
+</testcase>
+<testcase name="Device Management › should add a device via dialog" classname="features\device-management.spec.ts" time="7.18">
+</testcase>
+<testcase name="Device Management › should select a device and show details" classname="features\device-management.spec.ts" time="5.695">
+</testcase>
+<testcase name="Device Management › should delete a device" classname="features\device-management.spec.ts" time="6.623">
+</testcase>
+<testcase name="Device Management › should show multiple devices in sidebar" classname="features\device-management.spec.ts" time="5.514">
+</testcase>
+<testcase name="Device Management › should connect to a device" classname="features\device-management.spec.ts" time="7.863">
+</testcase>
+<testcase name="Device Management › should disconnect a device" classname="features\device-management.spec.ts" time="3.302">
+</testcase>
+</testsuite>
+<testsuite name="features\ui-interaction.spec.ts" timestamp="2026-06-12T04:12:10.579Z" hostname="chromium" tests="7" failures="0" skipped="0" time="15.662" errors="0">
+<testcase name="UI Interaction › should toggle theme between dark and light" classname="features\ui-interaction.spec.ts" time="2.958">
+</testcase>
+<testcase name="UI Interaction › should show channel cards when device is selected" classname="features\ui-interaction.spec.ts" time="2.074">
+</testcase>
+<testcase name="UI Interaction › should toggle channel selection for chart" classname="features\ui-interaction.spec.ts" time="2.354">
+</testcase>
+<testcase name="UI Interaction › should show device count in bottom bar" classname="features\ui-interaction.spec.ts" time="1.916">
+</testcase>
+<testcase name="UI Interaction › should scan for devices" classname="features\ui-interaction.spec.ts" time="2.229">
+</testcase>
+<testcase name="UI Interaction › should show config dialog when clicking config button" classname="features\ui-interaction.spec.ts" time="2.265">
+</testcase>
+<testcase name="UI Interaction › should display version number" classname="features\ui-interaction.spec.ts" time="1.866">
+</testcase>
+</testsuite>
+</testsuites>

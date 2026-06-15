@@ -127,9 +127,45 @@
 
         /* 主内容 */
         .content {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 20px 24px 60px;
+        }
+
+        /* 测试信息区 */
+        .test-info {
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 12px;
+        }
+
+        .info-field label {
+            display: block;
+            font-size: 12px;
+            color: var(--gray);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .info-field input, .info-field select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-border);
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .info-field input:focus, .info-field select:focus {
+            border-color: var(--primary);
         }
 
         /* 测试模块 */
@@ -186,46 +222,55 @@
 
         .module-body.collapsed { display: none; }
 
-        /* 测试用例行 */
-        .test-row {
-            display: grid;
-            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
-            align-items: center;
-            padding: 10px 20px;
+        /* 测试用例行 - 卡片式布局 */
+        .test-card {
+            padding: 16px 20px;
             border-bottom: 1px solid #f1f5f9;
-            font-size: 13px;
             transition: background 0.15s;
         }
 
-        .test-row:hover { background: #f8fafc; }
-        .test-row:last-child { border-bottom: none; }
+        .test-card:hover { background: #f8fafc; }
+        .test-card:last-child { border-bottom: none; }
+
+        .test-card-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
 
         .test-id {
             color: var(--gray);
             font-family: "Cascadia Code", "Fira Code", monospace;
             font-size: 12px;
+            font-weight: 600;
+            min-width: 60px;
+            padding-top: 2px;
         }
 
         .test-name {
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 14px;
+            flex: 1;
+            padding-top: 2px;
         }
 
-        .test-steps {
-            color: var(--gray);
-            font-size: 12px;
-            line-height: 1.5;
+        .test-actions {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
         }
 
         /* 结果选择器 */
         .result-select {
-            padding: 6px 10px;
+            padding: 6px 12px;
             border: 1px solid var(--gray-border);
             border-radius: 6px;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
             background: white;
-            width: 100%;
+            min-width: 100px;
         }
 
         .result-select.pass { background: var(--success-light); color: var(--success); border-color: var(--success); }
@@ -238,19 +283,71 @@
             padding: 6px 10px;
             border: 1px solid var(--gray-border);
             border-radius: 6px;
-            font-size: 12px;
-            width: 100%;
+            font-size: 13px;
+            width: 180px;
             outline: none;
             transition: border-color 0.2s;
         }
 
         .remark-input:focus { border-color: var(--primary); }
 
+        /* 测试步骤区域 */
+        .test-steps-area {
+            margin-left: 72px;
+            background: #f8fafc;
+            border: 1px solid var(--gray-border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+            line-height: 1.8;
+            color: #374151;
+        }
+
+        .test-steps-area .step-line {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            padding: 2px 0;
+        }
+
+        .test-steps-area .step-num {
+            min-width: 22px;
+            text-align: right;
+            color: var(--primary);
+            font-weight: 700;
+            font-size: 12px;
+            font-family: "Cascadia Code", "Fira Code", monospace;
+            flex-shrink: 0;
+            padding-top: 1px;
+        }
+
+        .test-steps-area .step-num.pre {
+            color: var(--warning);
+        }
+
+        .test-steps-area .step-text {
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .test-steps-area .step-text code {
+            background: #e5e7eb;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: "Cascadia Code", "Fira Code", monospace;
+            font-size: 12px;
+            color: #1f2937;
+        }
+
+        .test-steps-area .step-text strong {
+            color: #111827;
+        }
+
         /* 表头 */
         .test-header {
-            display: grid;
-            grid-template-columns: 60px 1fr 160px 120px 100px 200px;
-            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            padding: 10px 20px;
             background: #f8fafc;
             border-bottom: 2px solid var(--gray-border);
             font-size: 12px;
@@ -260,41 +357,10 @@
             letter-spacing: 0.5px;
         }
 
-        /* 测试信息区 */
-        .test-info {
-            background: white;
-            border: 1px solid var(--gray-border);
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-            gap: 12px;
-        }
-
-        .info-field label {
-            display: block;
-            font-size: 12px;
-            color: var(--gray);
-            margin-bottom: 4px;
-            font-weight: 600;
-        }
-
-        .info-field input, .info-field select {
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid var(--gray-border);
-            border-radius: 6px;
-            font-size: 13px;
-            outline: none;
-        }
-
-        .info-field input:focus, .info-field select:focus {
-            border-color: var(--primary);
-        }
+        .test-header .h-id { min-width: 60px; }
+        .test-header .h-name { flex: 1; }
+        .test-header .h-result { min-width: 100px; margin-left: 12px; }
+        .test-header .h-remark { min-width: 180px; margin-left: 8px; }
 
         /* 导出对话框 */
         .modal-overlay {
@@ -353,16 +419,15 @@
             .result-select { -webkit-appearance: none; border: none; padding: 0; font-size: 12px; }
             .remark-input { border: none; }
             body { background: white; }
+            .test-steps-area { background: white; border: 1px solid #ddd; }
         }
 
         /* 响应式 */
         @media (max-width: 900px) {
-            .test-row, .test-header {
-                grid-template-columns: 50px 1fr 100px 90px;
-            }
-            .test-steps, .remark-input { display: none; }
-            .test-header span:nth-child(3), .test-header span:nth-child(6),
-            .test-row .test-steps, .test-row .remark-cell { display: none; }
+            .test-card-header { flex-wrap: wrap; }
+            .test-actions { width: 100%; justify-content: flex-end; margin-top: 8px; }
+            .test-steps-area { margin-left: 0; }
+            .remark-input { width: 120px; }
         }
     </style>
 </head>
@@ -439,7 +504,6 @@
                 <label>运行模式</label>
                 <select id="runMode">
                     <option value="">全部</option>
-                    <option value="simulated">Simulated 模拟模式</option>
                     <option value="real">Real 真实设备模式</option>
                 </select>
             </div>
@@ -496,15 +560,14 @@ const TEST_MODULES = [
         icon: '🔌',
         color: '#2563eb',
         cases: [
-            { id: 'CONN-001', name: 'Simulated 模拟设备连接', steps: '前置：打开 PowerShell，执行 $env:DAQ_T1603_MODE="simulated"，然后 cd apps/desktop-wails && go run -buildvcs=false .\n1.应用启动后，点击顶栏右侧「+」按钮添加设备\n2.在弹出的对话框中填写设备名称（如"模拟设备"）、IP 地址（如 127.0.0.1）、端口（如 5000）\n3.点击确认，设备出现在左侧「设备列表」侧边栏\n4.点击侧边栏中的设备项选中它\n5.在右侧详情面板头部，点击「连接」按钮\n6.观察设备状态：侧边栏设备项右侧状态标签从「未连接」变为「已连接」（绿色）\n7.详情面板头部的状态徽章显示「已连接」' },
-            { id: 'CONN-002', name: '真实 T1603 设备连接', steps: '前置：确保 T1603 设备已上电且与电脑在同一局域网，不设置 DAQ_T1603_MODE 环境变量，直接 cd apps/desktop-wails && go run -buildvcs=false .\n1.应用启动后，点击顶栏右侧「+」按钮\n2.填写设备名称（如"1号炉"）、设备实际 IP 地址（如 192.168.1.100）、端口（默认 5000）\n3.点击确认，设备出现在左侧侧边栏\n4.选中该设备，点击详情面板头部的「连接」按钮\n5.按钮显示加载动画（旋转图标），状态变为「连接中」\n6.连接成功后，硬件通过 OnConfigSynced 回调将实际配置（采样率、热电偶类型、通道掩码等）同步回来\n7.验证配置面板中显示的采样率、热电偶类型等与硬件实际值一致（非本地默认值）\n8.侧边栏状态标签变为「已连接」（绿色）\n9.若连接失败，状态标签显示「错误」（红色），底部日志面板可见 error 级别日志' },
+            { id: 'CONN-001', name: 'T1603 设备连接', steps: '前置：确保 T1603 设备已上电且与电脑在同一局域网\n1.应用启动后，点击顶栏右侧「+」按钮\n2.填写设备名称（如"1号炉"）、设备实际 IP 地址（如 192.168.1.100）、端口（默认 9000）\n3.点击确认，设备出现在左侧侧边栏\n4.选中该设备，点击详情面板头部的「连接」按钮\n5.按钮显示加载动画（旋转图标），状态变为「连接中」\n6.连接成功后，硬件通过 OnConfigSynced 回调将实际配置（采样率、热电偶类型、通道掩码等）同步回来\n7.验证配置面板中显示的采样率、热电偶类型等与硬件实际值一致（非本地默认值）\n8.侧边栏状态标签变为「已连接」（绿色）\n9.若连接失败，状态标签显示「错误」（红色），底部日志面板可见 error 级别日志' },
             { id: 'CONN-003', name: '断开设备连接', steps: '1.选中已连接的设备（侧边栏状态显示「已连接」或「采集中」）\n2.点击详情面板头部的「断开」按钮（连接后原「连接」按钮变为「断开」）\n3.观察侧边栏状态标签变回「未连接」（灰色）\n4.若设备正在采集，验证采集自动停止，状态直接变为「未连接」\n5.底部状态栏「在线」计数减 1' },
-            { id: 'CONN-004', name: '连接失败错误提示', steps: '1.点击顶栏「+」添加设备，IP 填写不可达地址（如 10.255.255.1），端口填 5000\n2.选中该设备，点击「连接」\n3.等待连接超时，观察状态标签变为「错误」（红色）\n4.查看底部日志面板，验证出现 error 级别日志，分类为 system，消息包含 "Connect failed"\n5.验证应用不崩溃，界面仍可正常操作' },
+            { id: 'CONN-004', name: '连接失败错误提示', steps: '1.点击顶栏「+」添加设备，IP 填写不可达地址（如 10.255.255.1），端口填 9000\n2.选中该设备，点击「连接」\n3.等待连接超时，观察状态标签变为「错误」（红色）\n4.查看底部日志面板，验证出现 error 级别日志，分类为 system，消息包含 "Connect failed"\n5.验证应用不崩溃，界面仍可正常操作' },
             { id: 'CONN-005', name: '重复连接处理', steps: '1.选中已连接的设备（侧边栏显示「已连接」）\n2.再次点击详情面板头部的「断开/连接」按钮（此时应显示为「断开」）\n3.验证按钮行为正确：已连接时只显示「断开」，不会出现重复连接\n4.若通过其他方式触发重复连接（如代码调用），后端返回 "device already connected" 错误' },
             { id: 'CONN-006', name: '断开后重连', steps: '1.选中已连接设备，点击「断开」，状态变为「未连接」\n2.等待 1 秒后，点击「连接」\n3.验证状态重新变为「已连接」\n4.启动采集，验证数据正常接收\n5.检查配置文件 %APPDATA%\\daq-t1603\\device-profiles.json，确认配置未被修改' },
             { id: 'CONN-007', name: '异常断开自动检测', steps: '前置：使用真实设备模式连接 T1603\n1.连接设备并确认状态为「已连接」\n2.物理断开设备网线或关闭设备电源\n3.等待数秒，观察侧边栏状态自动变为「未连接」或「已连接」（非采集状态）\n4.查看日志面板，验证出现 hardware-recv 相关的断开日志\n5.重新接通设备后，点击「连接」可重新连接' },
             { id: 'CONN-008', name: '自动连接功能', steps: '1.选中设备，点击详情面板头部「配置」按钮，打开右侧配置面板\n2.在「硬件参数」区域，找到「自动连接」开关，点击开启\n3.点击底部「保存」按钮，确认保存成功提示\n4.关闭应用（关闭窗口）\n5.重新启动应用\n6.验证设备自动连接，侧边栏状态直接显示「已连接」\n7.检查配置文件 %APPDATA%\\daq-t1603\\device-profiles.json 中该设备的 autoConnect 字段为 true' },
-            { id: 'CONN-009', name: '多设备同时连接', steps: '1.点击顶栏「+」添加设备 A（如 192.168.1.100:5000）\n2.再点击「+」添加设备 B（如 192.168.1.101:5000）\n3.选中设备 A，点击「连接」，验证 A 变为「已连接」\n4.选中设备 B，点击「连接」，验证 B 也变为「已连接」\n5.底部状态栏「在线」显示 2\n6.分别对 A、B 启动采集，验证各自独立采集，数据不混淆' },
+            { id: 'CONN-009', name: '多设备同时连接', steps: '1.点击顶栏「+」添加设备 A（如 192.168.1.100:9000）\n2.再点击「+」添加设备 B（如 192.168.1.101:9000）\n3.选中设备 A，点击「连接」，验证 A 变为「已连接」\n4.选中设备 B，点击「连接」，验证 B 也变为「已连接」\n5.底部状态栏「在线」显示 2\n6.分别对 A、B 启动采集，验证各自独立采集，数据不混淆' },
             { id: 'CONN-010', name: '连接超时处理', steps: '1.添加设备，IP 填写局域网中不存在地址（如 192.168.1.254）\n2.点击「连接」，观察按钮显示加载动画\n3.等待连接超时（通常 10-30 秒取决于 TCP 超时）\n4.验证状态回退到「未连接」或「错误」\n5.验证界面不卡死，其他设备仍可操作' },
         ]
     },
@@ -533,7 +596,7 @@ const TEST_MODULES = [
         icon: '⚙️',
         color: '#7c3aed',
         cases: [
-            { id: 'CFG-001', name: '创建新设备配置', steps: '1.点击顶栏右侧「+」按钮（加号图标）\n2.在弹出的添加设备对话框中填写：设备名称（如"1号炉"）、IP 地址（如 192.168.1.100）、端口（如 5000）\n3.点击确认，设备出现在左侧侧边栏列表\n4.验证侧边栏显示设备名称和地址\n5.打开配置文件 %APPDATA%\\daq-t1603\\device-profiles.json，验证新设备配置已写入\n6.默认配置：采样率 10Hz、热电偶类型 KKKKKKKKKKKKKKKK、通道掩码 FFFF、平均次数 4' },
+            { id: 'CFG-001', name: '创建新设备配置', steps: '1.点击顶栏右侧「+」按钮（加号图标）\n2.在弹出的添加设备对话框中填写：设备名称（如"1号炉"）、IP 地址（如 192.168.1.100）、端口（默认 9000）\n3.点击确认，设备出现在左侧侧边栏列表\n4.验证侧边栏显示设备名称和地址\n5.打开配置文件 %APPDATA%\\daq-t1603\\device-profiles.json，验证新设备配置已写入\n6.默认配置：采样率 10Hz、热电偶类型 KKKKKKKKKKKKKKKK、通道掩码 FFFF、平均次数 4' },
             { id: 'CFG-002', name: '编辑设备配置', steps: '1.选中设备，点击详情面板头部「配置」按钮（齿轮图标），右侧弹出配置面板\n2.在「硬件参数」区域修改采样频率（如从 10 Hz 改为 20 Hz）\n3.在「通道配置」区域修改 CH01 的名称（如改为"炉口温度"）\n4.点击配置面板底部「保存」按钮\n5.验证底部状态提示「配置已保存并应用到设备」\n6.检查 %APPDATA%\\daq-t1603\\device-profiles.json，确认修改已持久化' },
             { id: 'CFG-003', name: '删除设备配置', steps: '1.在左侧侧边栏，将鼠标悬停在要删除的设备上\n2.点击设备项右侧出现的垃圾桶图标\n3.弹出确认对话框，显示"确认删除设备 xxx 吗？"\n4.点击「删除」按钮\n5.验证设备从侧边栏列表移除\n6.若设备已连接，验证自动断开连接\n7.检查 %APPDATA%\\daq-t1603\\device-profiles.json，确认该设备配置已移除' },
             { id: 'CFG-004', name: '热电偶类型配置 - 全局设置', steps: '1.打开配置面板，在「硬件参数」区域找到「热电偶类型（全部通道）」下拉框\n2.点击下拉框，选项包括：K 型、J 型、T 型、E 型、N 型、S 型、R 型、B 型\n3.选择「J 型」，验证所有 16 个通道的热电偶类型统一变为 J\n4.点击「保存」，验证配置已保存\n5.检查配置文件中 thermocoupleTypes 字段变为 "JJJJJJJJJJJJJJJJ"' },
@@ -543,7 +606,7 @@ const TEST_MODULES = [
             { id: 'CFG-008', name: '自动连接配置', steps: '1.打开配置面板，在「硬件参数」区域找到「自动连接」开关\n2.点击开关，从「关闭」切换为「开启」\n3.点击「保存」\n4.检查配置文件中 autoConnect 字段变为 true\n5.重启应用，验证该设备自动连接' },
             { id: 'CFG-009', name: '通道名称编辑', steps: '1.打开配置面板，在「通道配置」区域找到 CH01 行\n2.点击名称输入框（默认占位符"通道 1"），输入"炉口温度"\n3.点击「保存」\n4.验证通道卡片显示新名称\n5.检查配置文件中 channels[0].name 变为 "炉口温度"' },
             { id: 'CFG-010', name: '通道启用/禁用', steps: '1.打开配置面板，在「通道配置」区域找到 CH01 行\n2.点击右侧开关，从「开」切换为「关」\n3.该通道行变为半透明（opacity 0.55），名称输入框禁用\n4.点击「保存」\n5.验证通道监控区域不再显示 CH01\n6.验证实时波形图中 CH01 曲线消失\n7.配置面板顶部显示启用数更新（如 "15/16 启用"）' },
-            { id: 'CFG-011', name: '配置参数校验 - 无效采样率', steps: '1.模拟模式下，若后端收到 samplingRate <= 0\n2.验证系统自动使用默认值 5 Hz（SimulatedAdapter 中逻辑）\n3.真实设备模式下，hzToSpsMs 函数将无效值转为默认 10ms（100Hz）\n4.验证应用不崩溃，采集正常运行' },
+            { id: 'CFG-011', name: '配置参数校验 - 无效采样率', steps: '1.若后端收到 samplingRate <= 0\n2.验证 hzToSpsMs 函数将无效值转为默认 10ms（100Hz）\n3.验证应用不崩溃，采集正常运行' },
             { id: 'CFG-012', name: '配置参数校验 - 热电偶类型长度异常', steps: '1.若配置文件中 thermocoupleTypes 长度不为 16\n2.验证 T1603Adapter 自动补全为 "KKKKKKKKKKKKKKKK"（mapT1603SharedConfig 中逻辑）\n3.验证采集正常，不会因类型字符串长度错误而崩溃' },
             { id: 'CFG-013', name: '配置参数校验 - 通道掩码为空', steps: '1.若配置文件中 channelMask 为空字符串\n2.验证系统自动使用默认值 "FFFF"（所有通道启用）\n3.验证采集正常' },
             { id: 'CFG-014', name: '采集状态下修改配置', steps: '1.启动采集后，点击「配置」按钮打开配置面板\n2.观察配置面板中所有硬件参数控件为禁用状态（灰色不可点击）\n3.底部提示「采集中不允许变更配置，请先停止采集」\n4.「重置」按钮禁用，但「保存」按钮仍可用\n5.通道启用/禁用开关禁用\n6.停止采集后，验证控件恢复可编辑' },
@@ -559,7 +622,7 @@ const TEST_MODULES = [
         icon: '📡',
         color: '#0891b2',
         cases: [
-            { id: 'SCAN-001', name: '扫描局域网设备', steps: '前置：确保局域网中有 T1603 设备在线，使用真实设备模式启动\n1.在左侧侧边栏头部，点击搜索图标按钮（放大镜）\n2.等待扫描完成（按钮在扫描中为禁用状态）\n3.扫描完成后，若发现设备，弹出扫描结果列表\n4.验证结果包含：设备名称、IP 地址、端口、MAC 地址、序列号、固件版本\n5.模拟模式下，SimulatedScanner 返回预设的模拟设备列表' },
+            { id: 'SCAN-001', name: '扫描局域网设备', steps: '前置：确保局域网中有 T1603 设备在线\n1.在左侧侧边栏头部，点击搜索图标按钮（放大镜）\n2.等待扫描完成（按钮在扫描中为禁用状态）\n3.扫描完成后，若发现设备，弹出扫描结果列表\n4.验证结果包含：设备名称、IP 地址、端口、MAC 地址、序列号、固件版本' },
             { id: 'SCAN-002', name: '扫描结果添加为配置', steps: '1.扫描设备后，在扫描结果列表中选择一个设备\n2.点击添加按钮，设备自动创建为配置（IP 和端口自动填入）\n3.验证设备出现在左侧侧边栏\n4.验证配置文件已更新' },
             { id: 'SCAN-003', name: '无设备时扫描', steps: '1.在无 T1603 设备的网络环境中点击扫描\n2.验证扫描完成，结果列表为空或显示"未发现设备"\n3.验证界面无异常' },
             { id: 'SCAN-004', name: '扫描中状态指示', steps: '1.点击侧边栏搜索按钮\n2.验证按钮变为禁用状态（半透明，不可再次点击）\n3.扫描完成后按钮恢复可用\n4.验证扫描过程中界面其他功能正常' },
@@ -625,7 +688,7 @@ const TEST_MODULES = [
         color: '#0284c7',
         cases: [
             { id: 'UI-001', name: '设备侧边栏显示', steps: '1.启动应用，验证左侧显示「设备列表」侧边栏\n2.头部显示"设备列表"标题和设备数量徽章\n3.右侧有搜索图标按钮（扫描设备）\n4.无设备时显示空状态："暂无设备"，提示"点击顶栏 + 添加 T1603"\n5.有设备时，每项显示：设备图标、名称、地址:端口、状态标签、删除按钮（悬停显示）\n6.选中设备左侧显示蓝色指示条' },
-            { id: 'UI-002', name: '顶部工具栏显示', steps: '1.验证顶栏左侧显示应用品牌：DAQ-T1603 标题和 "Temperature Acquisition" 副标题\n2.中间导航区显示"实时监控"标签\n3.右侧操作区依次为：绿色「开始采集」/红色「停止采集」按钮、「开始保存」/「停止保存」按钮、「+」添加设备按钮、齿轮配置按钮、仪表盘刷新率按钮、日/夜主题切换按钮、版本号\n4.验证按钮图标和文字正确显示' },
+            { id: 'UI-002', name: '顶部工具栏显示', steps: '1.验证顶栏左侧显示应用品牌：DAQ-T-1603 标题和 "Temperature Acquisition" 副标题\n2.中间导航区显示"实时监控"标签\n3.右侧操作区依次为：绿色「开始采集」/红色「停止采集」按钮、「开始保存」/「停止保存」按钮、「+」添加设备按钮、齿轮配置按钮、仪表盘刷新率按钮、日/夜主题切换按钮、版本号\n4.验证按钮图标和文字正确显示' },
             { id: 'UI-003', name: '底部状态栏显示', steps: '1.验证底部状态栏左侧显示：采集状态（运行中/已停止）、记录状态（保存中/未保存）、设备总数、在线数、已记录快照数、保存目录路径\n2.右侧显示：运行时间（计时器，采集开始后计时）、系统时间（实时时钟）\n3.验证运行时间格式 HH:MM:SS，采集停止后归零' },
             { id: 'UI-004', name: '通道网格布局', steps: '1.选中设备并启动采集后，验证右侧「通道监控」区域\n2.16 个通道卡片以网格布局排列\n3.每个卡片显示：通道编号（CH01~CH16，等宽字体）、温度数值、单位\n4.卡片左侧有颜色标识条（与波形图曲线颜色对应）\n5.禁用通道不显示卡片' },
             { id: 'UI-005', name: 'T1603 配置面板', steps: '1.选中设备，点击详情面板头部「配置」按钮\n2.右侧滑出配置面板，头部显示设备名称和地址:端口\n3.「硬件参数」区域包含：采样频率下拉框、时间戳开关、自动连接开关、热电偶类型（全部通道）下拉框\n4.「通道配置」区域包含 16 行通道，每行：编号、名称输入框、热电偶类型下拉框、启用开关\n5.底部显示状态提示和「重置」「保存」按钮\n6.点击右上角 X 按钮关闭面板' },
@@ -652,7 +715,7 @@ const TEST_MODULES = [
             { id: 'STB-008', name: '应用关闭时资源清理', steps: '1.启动采集和录制\n2.关闭应用窗口\n3.验证 Shutdown 回调执行：recordUC.Stop() 关闭 CSV 文件、logUC.Stop() 关闭日志文件、stopAllRelays() 取消所有 relay goroutine\n4.验证 CSV 文件完整（最终 flush 已执行）\n5.验证无 goroutine 泄漏' },
             { id: 'STB-009', name: '热电偶类型字符串长度异常', steps: '1.手动编辑 %APPDATA%\\daq-t1603\\device-profiles.json\n2.将 thermocoupleTypes 改为 "KKK"（长度 3）或空字符串\n3.重启应用并连接设备\n4.验证 T1603Adapter 中 mapT1603SharedConfig 自动补全为 "KKKKKKKKKKKKKKKK"\n5.验证采集正常，不崩溃' },
             { id: 'STB-010', name: '通道掩码为空', steps: '1.手动编辑配置文件，将 channelMask 改为空字符串 ""\n2.重启应用并连接设备\n3.验证 mapT1603SharedConfig 自动使用默认值 "FFFF"\n4.验证所有 16 通道正常启用' },
-            { id: 'STB-011', name: '平均次数为 0 或负数', steps: '1.手动编辑配置文件，将 averageCount 改为 0 或 -1\n2.重启应用，在模拟模式下连接设备\n3.验证 SimulatedAdapter 自动将 averageCount 修正为 1\n4.验证采集正常' },
+            { id: 'STB-011', name: '平均次数为 0 或负数', steps: '1.手动编辑配置文件，将 averageCount 改为 0 或 -1\n2.重启应用并连接设备\n3.验证 T1603Adapter 自动将 averageCount 修正为 1\n4.验证采集正常' },
             { id: 'STB-012', name: '应用配置时设备断开', steps: '前置：使用真实设备\n1.在 Connected 状态下修改配置并保存\n2.在 ApplyConfig 执行期间（15 秒超时内）拔掉设备网线\n3.验证 ApplyConfig 返回错误\n4.验证 T1603Adapter 中 ApplyConfig 在锁外调用硬件通信，不会与 OnReadLoopExit/OnConfigSynced 回调死锁\n5.验证应用不卡死' },
             { id: 'STB-013', name: '长时间运行稳定性', steps: '1.启动采集和录制，持续运行 1 小时以上\n2.定期检查：内存占用是否持续增长（泄漏）\n3.检查 CSV 文件大小持续增长但写入正常\n4.检查通道缓冲区是否溢出（容量 8192）\n5.验证 UI 响应正常，无卡顿\n6.验证历史数据自动清理（MAX_HISTORY=200）' },
         ]
@@ -719,40 +782,44 @@ function renderModules() {
         const tableHeader = document.createElement('div');
         tableHeader.className = 'test-header';
         tableHeader.innerHTML = `
-            <span>编号</span>
-            <span>测试项</span>
-            <span>测试步骤</span>
-            <span>结果</span>
-            <span>备注</span>
+            <span class="h-id">编号</span>
+            <span class="h-name">测试项</span>
+            <span class="h-result">结果</span>
+            <span class="h-remark">备注</span>
         `;
         body.appendChild(tableHeader);
 
-        // 测试用例行
+        // 测试用例卡片
         mod.cases.forEach(tc => {
-            const row = document.createElement('div');
-            row.className = 'test-row';
-
             const savedResult = getTestResult(tc.id);
             const savedRemark = getTestRemark(tc.id);
 
-            row.innerHTML = `
-                <div class="test-id">${tc.id}</div>
-                <div class="test-name">${tc.name}</div>
-                <div class="test-steps">${tc.steps.replace(/\n/g, '<br>')}</div>
-                <div>
-                    <select class="result-select ${savedResult}" data-test-id="${tc.id}" onchange="onResultChange(this)">
-                        <option value="" ${!savedResult ? 'selected' : ''}>未测试</option>
-                        <option value="pass" ${savedResult === 'pass' ? 'selected' : ''}>✅ 通过</option>
-                        <option value="fail" ${savedResult === 'fail' ? 'selected' : ''}>❌ 失败</option>
-                        <option value="block" ${savedResult === 'block' ? 'selected' : ''}>🚫 阻塞</option>
-                        <option value="skip" ${savedResult === 'skip' ? 'selected' : ''}>⏭️ 跳过</option>
-                    </select>
+            const card = document.createElement('div');
+            card.className = 'test-card';
+
+            // 解析步骤为带行号的HTML
+            const stepsHtml = parseSteps(tc.steps);
+
+            card.innerHTML = `
+                <div class="test-card-header">
+                    <div class="test-id">${tc.id}</div>
+                    <div class="test-name">${tc.name}</div>
+                    <div class="test-actions">
+                        <select class="result-select ${savedResult}" data-test-id="${tc.id}" onchange="onResultChange(this)">
+                            <option value="" ${!savedResult ? 'selected' : ''}>未测试</option>
+                            <option value="pass" ${savedResult === 'pass' ? 'selected' : ''}>✅ 通过</option>
+                            <option value="fail" ${savedResult === 'fail' ? 'selected' : ''}>❌ 失败</option>
+                            <option value="block" ${savedResult === 'block' ? 'selected' : ''}>🚫 阻塞</option>
+                            <option value="skip" ${savedResult === 'skip' ? 'selected' : ''}>⏭️ 跳过</option>
+                        </select>
+                        <input class="remark-input" data-test-id="${tc.id}" value="${savedRemark}" placeholder="备注..." oninput="onRemarkChange(this)">
+                    </div>
                 </div>
-                <div>
-                    <input class="remark-input" data-test-id="${tc.id}" value="${savedRemark}" placeholder="备注..." oninput="onRemarkChange(this)">
+                <div class="test-steps-area">
+                    ${stepsHtml}
                 </div>
             `;
-            body.appendChild(row);
+            body.appendChild(card);
         });
 
         moduleEl.appendChild(header);
@@ -762,6 +829,49 @@ function renderModules() {
 
     // 更新模块统计
     TEST_MODULES.forEach(mod => updateModuleStats(mod.id));
+}
+
+// ============================================================
+// 解析步骤文本为带行号的HTML
+// ============================================================
+function parseSteps(stepsText) {
+    const lines = stepsText.split('\n');
+    let html = '';
+    let stepNum = 1;
+
+    lines.forEach(line => {
+        if (!line.trim()) return;
+
+        const trimmed = line.trim();
+        let numClass = '';
+        let numText = '';
+        let textContent = trimmed;
+
+        if (trimmed.startsWith('前置：')) {
+            numClass = 'pre';
+            numText = '前置';
+            textContent = trimmed.substring(3);
+        } else {
+            // 移除行首的数字标记（如 "1."、"2."）
+            const match = trimmed.match(/^(\d+)\.\s*/);
+            if (match) {
+                stepNum = parseInt(match[1]);
+                textContent = trimmed.substring(match[0].length);
+            }
+            numClass = '';
+            numText = String(stepNum).padStart(2, '0');
+            stepNum++;
+        }
+
+        // 高亮代码片段（反引号包裹的内容）
+        textContent = textContent.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // 高亮引号内容
+        textContent = textContent.replace(/"([^"]+)"/g, '<strong>"$1"</strong>');
+
+        html += `<div class="step-line"><span class="step-num ${numClass}">${numText}</span><span class="step-text">${textContent}</span></div>`;
+    });
+
+    return html;
 }
 
 // ============================================================

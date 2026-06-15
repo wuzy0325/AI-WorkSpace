@@ -1,0 +1,99 @@
+<html>
+<body>
+<pre>
+<h1>Build Log</h1>
+<h3>
+--------------------Configuration: Sys - Win32 Release--------------------
+</h3>
+<h3>Command Lines</h3>
+Creating command line "rc.exe /l 0x804 /fo"Release/Sys.res" /d "NDEBUG" /d "_AFXDLL" "E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\Sys.rc"" 
+Creating temporary file "C:\Users\ADMINI~1\AppData\Local\Temp\RSPEE8F.tmp" with contents
+[
+/nologo /MD /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_AFXDLL" /D "_MBCS" /FR"Release/" /Fp"Release/Sys.pch" /Yu"stdafx.h" /Fo"Release/" /Fd"Release/" /FD /c 
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\ADDoc.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\ADFrm.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\ADView.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\AutoHomeSearchDlg.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\ComSetPage.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\FilterSetDlg.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\InterruptSetDlg.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\MainFrm.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageDIO.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageHardLimit.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageInterApp.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageInterpolation.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageLine.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageSoftLimit.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageSynchron.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\PageSynchronSet.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\SynchronPageSheet.cpp"
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\Sys.cpp"
+]
+Creating command line "cl.exe @C:\Users\ADMINI~1\AppData\Local\Temp\RSPEE8F.tmp" 
+Creating temporary file "C:\Users\ADMINI~1\AppData\Local\Temp\RSPEE90.tmp" with contents
+[
+/nologo /MD /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_AFXDLL" /D "_MBCS" /FR"Release/" /Fp"Release/Sys.pch" /Yc"stdafx.h" /Fo"Release/" /Fd"Release/" /FD /c 
+"E:\InstallShield\InstallShield11.5\USB\USB1020\Data\Samples\Samples\VC\Advanced\StdAfx.cpp"
+]
+Creating command line "cl.exe @C:\Users\ADMINI~1\AppData\Local\Temp\RSPEE90.tmp" 
+Creating temporary file "C:\Users\ADMINI~1\AppData\Local\Temp\RSPEEA0.tmp" with contents
+[
+/nologo /subsystem:windows /incremental:no /pdb:"Sys.pdb" /machine:I386 /out:"Sys.exe" 
+.\Release\ADDoc.obj
+.\Release\ADFrm.obj
+.\Release\ADView.obj
+.\Release\AutoHomeSearchDlg.obj
+.\Release\ComSetPage.obj
+.\Release\FilterSetDlg.obj
+.\Release\InterruptSetDlg.obj
+.\Release\MainFrm.obj
+.\Release\PageDIO.obj
+.\Release\PageHardLimit.obj
+.\Release\PageInterApp.obj
+.\Release\PageInterpolation.obj
+.\Release\PageLine.obj
+.\Release\PageSoftLimit.obj
+.\Release\PageSynchron.obj
+.\Release\PageSynchronSet.obj
+.\Release\StdAfx.obj
+.\Release\SynchronPageSheet.obj
+.\Release\Sys.obj
+.\Release\Sys.res
+]
+Creating command line "link.exe @C:\Users\ADMINI~1\AppData\Local\Temp\RSPEEA0.tmp"
+<h3>Output Window</h3>
+Compiling resources...
+Compiling...
+StdAfx.cpp
+======== Welcome to use our art company product!
+======== Automatically linking with USB1020.dll...
+======== Successfully linked with USB1020.dll
+Compiling...
+ADDoc.cpp
+ADFrm.cpp
+ADView.cpp
+AutoHomeSearchDlg.cpp
+ComSetPage.cpp
+FilterSetDlg.cpp
+InterruptSetDlg.cpp
+MainFrm.cpp
+PageDIO.cpp
+PageHardLimit.cpp
+PageInterApp.cpp
+PageInterpolation.cpp
+PageLine.cpp
+PageSoftLimit.cpp
+PageSynchron.cpp
+PageSynchronSet.cpp
+SynchronPageSheet.cpp
+Sys.cpp
+Generating Code...
+Linking...
+
+
+
+<h3>Results</h3>
+Sys.exe - 0 error(s), 0 warning(s)
+</pre>
+</body>
+</html>

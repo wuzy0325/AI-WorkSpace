@@ -142,6 +142,7 @@ export namespace core {
 	export class DeviceState {
 	    profile: TemperatureProfile;
 	    status: number;
+	    statusText: string;
 	    error: string;
 	    connectedAt: number;
 	    acquiringAt: number;
@@ -155,6 +156,7 @@ export namespace core {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profile = this.convertValues(source["profile"], TemperatureProfile);
 	        this.status = source["status"];
+	        this.statusText = source["statusText"];
 	        this.error = source["error"];
 	        this.connectedAt = source["connectedAt"];
 	        this.acquiringAt = source["acquiringAt"];
