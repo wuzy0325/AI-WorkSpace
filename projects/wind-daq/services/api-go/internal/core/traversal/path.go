@@ -3,8 +3,10 @@ package traversal
 import (
 	"fmt"
 	"math"
+	"sort"
 )
 
+// InterpolateLinearPath 沿折线插值生成路径点
 func InterpolateLinearPath(points []Point, step float64) ([]Point, error) {
 	if step <= 0 {
 		return nil, fmt.Errorf("step must be greater than zero")
@@ -17,11 +19,11 @@ func InterpolateLinearPath(points []Point, step float64) ([]Point, error) {
 	for i := 0; i < len(points)-1; i++ {
 		from := points[i]
 		to := points[i+1]
-		distance := distance(from, to)
-		if distance == 0 {
+		d := distance(from, to)
+		if d == 0 {
 			continue
 		}
-		segments := int(math.Ceil(distance / step))
+		segments := int(math.Ceil(d / step))
 		for segment := 1; segment <= segments; segment++ {
 			ratio := float64(segment) / float64(segments)
 			path = append(path, Point{
@@ -41,6 +43,7 @@ func distance(a Point, b Point) float64 {
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
+// GenerateGridPath 生成网格路径（旧接口兼容）
 func GenerateGridPath(cfg GridConfig) ([]Point, error) {
 	if cfg.XStep <= 0 || cfg.YStep <= 0 {
 		return nil, fmt.Errorf("step must be greater than zero")
@@ -103,6 +106,65 @@ func GridPointsFromAxes(xs, ys []float64) []Point {
 	return points
 }
 
+// GridPointsFromAxesSnake 从 X/Y 轴值生成蛇形网格点
+// 蛇形遍历：偶数行（从0开始）正常顺序，奇数行反转Y轴顺序，减少回程时间
+func GridPointsFromAxesSnake(xs, ys []float64) []Point {
+	points := make([]Point, 0, len(xs)*len(ys))
+	for i, x := range xs {
+		if i%2 == 1 {
+			// 奇数行反转Y轴顺序
+			for j := len(ys) - 1; j >= 0; j-- {
+				points = append(points, Point{X: x, Y: ys[j]})
+			}
+		} else {
+			for _, y := range ys {
+				points = append(points, Point{X: x, Y: y})
+			}
+		}
+	}
+	return points
+}
+
+// SectorPointsFromRadiiAngles 从半径和角度生成扇形点
+func SectorPointsFromRadiiAngles(centerX, centerY float64, radii, angles []float64) []Point {
+	var points []Point
+	for _, radius := range radii {
+		for _, angle := range angles {
+			radian := angle * math.Pi / 180
+			points = append(points, Point{
+				X: centerX + radius*math.Cos(radian),
+				Y: centerY + radius*math.Sin(radian),
+			})
+		}
+	}
+	return points
+}
+
+// SectorPointsFromRadiiAnglesSnake 从半径和角度生成蛇形扇形点
+func SectorPointsFromRadiiAnglesSnake(centerX, centerY float64, radii, angles []float64) []Point {
+	var points []Point
+	for i, radius := range radii {
+		if i%2 == 1 {
+			for j := len(angles) - 1; j >= 0; j-- {
+				radian := angles[j] * math.Pi / 180
+				points = append(points, Point{
+					X: centerX + radius*math.Cos(radian),
+					Y: centerY + radius*math.Sin(radian),
+				})
+			}
+		} else {
+			for _, angle := range angles {
+				radian := angle * math.Pi / 180
+				points = append(points, Point{
+					X: centerX + radius*math.Cos(radian),
+					Y: centerY + radius*math.Sin(radian),
+				})
+			}
+		}
+	}
+	return points
+}
+
 // ContainsFloat 检查浮点数切片是否包含指定值（容差 1e-9）
 func ContainsFloat(values []float64, needle float64) bool {
 	for _, value := range values {
@@ -115,11 +177,12 @@ func ContainsFloat(values []float64, needle float64) bool {
 
 // LayoutConfig 遍历布局配置
 type LayoutConfig struct {
-	Pattern   string          `json:"pattern"`
-	Line      *LineLayout     `json:"line,omitempty"`
-	Rectangle *RectangleLayout `json:"rectangle,omitempty"`
-	Sector    *SectorLayout   `json:"sector,omitempty"`
-	Custom    *CustomLayout   `json:"custom,omitempty"`
+	Pattern    string          `json:"pattern"`
+	SnakeOrder bool            `json:"snakeOrder,omitempty"`
+	Line       *LineLayout     `json:"line,omitempty"`
+	Rectangle  *RectangleLayout `json:"rectangle,omitempty"`
+	Sector     *SectorLayout   `json:"sector,omitempty"`
+	Custom     *CustomLayout   `json:"custom,omitempty"`
 }
 
 // LineLayout 线型布局
@@ -174,32 +237,30 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		if len(ys) == 0 {
 			ys = []float64{cfg.Line.StartY}
 		}
+		if cfg.SnakeOrder {
+			return GridPointsFromAxesSnake(xs, ys)
+		}
 		return GridPointsFromAxes(xs, ys)
 	case "rectangle":
 		if cfg.Rectangle == nil {
 			return nil
 		}
-		return GridPointsFromAxes(
-			StepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments),
-			StepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments),
-		)
+		xs := StepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments)
+		ys := StepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments)
+		if cfg.SnakeOrder {
+			return GridPointsFromAxesSnake(xs, ys)
+		}
+		return GridPointsFromAxes(xs, ys)
 	case "sector":
 		if cfg.Sector == nil {
 			return nil
 		}
-		var points []Point
 		radii := StepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
 		angles := StepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
-		for _, radius := range radii {
-			for _, angle := range angles {
-				radian := angle * math.Pi / 180
-				points = append(points, Point{
-					X: cfg.Sector.CenterX + radius*math.Cos(radian),
-					Y: cfg.Sector.CenterY + radius*math.Sin(radian),
-				})
-			}
+		if cfg.SnakeOrder {
+			return SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
 		}
-		return points
+		return SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
 	case "custom":
 		if cfg.Custom == nil {
 			return nil
@@ -212,4 +273,42 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 	default:
 		return nil
 	}
+}
+
+// ValidatePressures 验证压力数据是否在有效范围内
+// 通道映射约定：按通道索引排序后依次对应 P1,P2,P3,P4,P5,Patm,Tatm
+func ValidatePressures(values map[int]float64, config *DataValidationConfig) (bool, []string) {
+	if config == nil || !config.Enabled {
+		return true, nil
+	}
+
+	var warnings []string
+	// 通道索引到标签的映射：排序后的通道依次对应
+	labels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
+	orderedKeys := sortedKeys(values)
+
+	for i, label := range labels {
+		if i >= len(orderedKeys) {
+			break
+		}
+		value := values[orderedKeys[i]]
+		if r, ok := config.PressureRange[label]; ok {
+			if value < r.Min || value > r.Max {
+				warnings = append(warnings, fmt.Sprintf("%s 超出范围: %.2f (%.2f-%.2f)", label, value, r.Min, r.Max))
+			}
+		}
+	}
+
+	valid := len(warnings) == 0 || config.OnInvalid == "continue"
+	return valid, warnings
+}
+
+// sortedKeys 返回排序后的 map 键
+func sortedKeys(m map[int]float64) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }

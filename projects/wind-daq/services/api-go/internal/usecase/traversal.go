@@ -9,9 +9,19 @@ import (
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
+)
+
+// 运动完成等待超时和轮询间隔
+const (
+	motionCompleteTimeoutMs = 120000
+	motionCompletePollMs    = 100
+	acquisitionBatchTimeoutMs = 2000
+	acquisitionBatchPollMs    = 10
+	checkpointInterval       = 10 // 每完成10个点保存一次断点
 )
 
 type TraversalManager struct {
@@ -24,6 +34,20 @@ type TraversalManager struct {
 	status       traversal.Status
 	configRaw    json.RawMessage
 	interpolator coreinterp.Interpolator
+
+	// 断点恢复
+	lastCheckpointPath string
+
+	// 暂停/停止控制
+	isStopped          bool
+	isPaused           bool
+	motionPauseCancelled bool
+
+	// 数据验证配置
+	validation *traversal.DataValidationConfig
+
+	// 稳定等待配置
+	stabilization *traversal.StabilizationConfig
 }
 
 func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAccess, sink ports.TraversalPointSink, store ports.TraversalResultStore) *TraversalManager {
@@ -56,6 +80,20 @@ func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.interpolator = interpolator
+}
+
+// SetValidation 设置数据验证配置
+func (m *TraversalManager) SetValidation(config *traversal.DataValidationConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validation = config
+}
+
+// SetStabilization 设置稳定等待配置
+func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stabilization = config
 }
 
 func (m *TraversalManager) CheckPreconditions() map[string]any {
@@ -104,6 +142,9 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.config = config
+	m.isStopped = false
+	m.isPaused = false
+	m.motionPauseCancelled = false
 	m.status = traversal.Status{
 		TaskID:      config.TaskID,
 		State:       traversal.StateRunning,
@@ -125,19 +166,22 @@ func (m *TraversalManager) Status() traversal.Status {
 	return status
 }
 
+// RunCurrentPoint 执行当前测试点的完整流程（移动→稳定→采集→保存）
 func (m *TraversalManager) RunCurrentPoint() error {
 	m.mu.Lock()
 	if m.status.State != traversal.StateRunning {
+		errMsg := "traversal is not running"
+		m.setErrorLocked(errMsg, traversal.ErrUnknown)
 		m.mu.Unlock()
-		return fmt.Errorf("traversal is not running")
+		return fmt.Errorf(errMsg)
 	}
 	if m.reader == nil {
-		m.setErrorLocked("latest data reader is required")
+		m.setErrorLocked("latest data reader is required", traversal.ErrAcquisitionFailed)
 		m.mu.Unlock()
 		return fmt.Errorf("latest data reader is required")
 	}
 	if m.motion == nil {
-		m.setErrorLocked("motion manager is required")
+		m.setErrorLocked("motion manager is required", traversal.ErrMotionFailed)
 		m.mu.Unlock()
 		return fmt.Errorf("motion manager is required")
 	}
@@ -150,6 +194,10 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	point := config.Path[pointIndex]
 	m.mu.Unlock()
 
+	taskID := config.TaskID
+
+	// 阶段1：移动中
+	m.updatePhase(taskID, traversal.StateMoving, traversal.PhaseMoving, pointIndex, len(config.Path))
 	ctx := context.Background()
 	controllerStatuses := m.motion.StatusAll(ctx)
 	for _, status := range controllerStatuses {
@@ -158,38 +206,99 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 		for axis, position := range availableAxisTargets(status, point) {
 			if err := m.motion.MoveTo(ctx, status.ID, axis, position); err != nil {
-				return m.fail("move %s axis: %v", axis, err)
+				return m.failWithCode("move %s axis: %v", traversal.ErrMotionFailed, axis, err)
 			}
 		}
 	}
 
-	m.waitForMotionComplete(ctx, point)
+	motionComplete := m.waitForMotionComplete(ctx, point, taskID)
+	if !motionComplete {
+		m.stopMotionAxes()
+		if m.motionPauseCancelled {
+			m.motionPauseCancelled = false
+			return nil // 暂停导致的中断，不算错误
+		}
+		return m.failWithCode("motion did not complete for point %d", traversal.ErrMotionFailed, pointIndex+1)
+	}
 
-	payload, ok := m.reader.GetLatestData(config.DeviceID)
-	if !ok {
-		return m.fail("no data available for device %s", config.DeviceID)
+	// 阶段2：等待稳定
+	m.updatePhase(taskID, traversal.StateStabilizing, traversal.PhaseStabilizing, pointIndex, len(config.Path))
+	m.waitForStabilization(taskID)
+
+	// 阶段3：采集中
+	m.updatePhase(taskID, traversal.StateAcquiring, traversal.PhaseAcquiring, pointIndex, len(config.Path))
+	samplesPerPoint := config.SamplesPerPoint
+	if samplesPerPoint <= 0 {
+		samplesPerPoint = 1
 	}
+
+	var resultValues map[int]float64
+	var ok bool
+	if samplesPerPoint == 1 {
+		// 单次采样（兼容旧逻辑）
+		var payload device.DataPayload
+		payload, ok = m.reader.GetLatestData(config.DeviceID)
+		if !ok {
+			return m.failWithCode("no data available for device %s", traversal.ErrAcquisitionFailed, config.DeviceID)
+		}
+		resultValues = valuesForChannels(payload, config.Channels)
+	} else {
+		// 多次采样取平均
+		averaged, err := m.collectAveragedSamples(config.DeviceID, config.Channels, samplesPerPoint)
+		if err != nil {
+			return m.failWithCode("averaged sampling failed: %v", traversal.ErrAcquisitionFailed, err)
+		}
+		resultValues = averaged
+	}
+
+	if len(resultValues) != len(config.Channels) {
+		return m.failWithCode("latest data does not contain all requested channels", traversal.ErrAcquisitionFailed)
+	}
+
+	// 数据验证
+	m.mu.RLock()
+	validation := m.validation
+	m.mu.RUnlock()
+	if validation != nil && validation.Enabled {
+		valid, warnings := traversal.ValidatePressures(resultValues, validation)
+		m.mu.Lock()
+		m.status.ValidationWarnings = warnings
+		m.mu.Unlock()
+		if !valid && validation.OnInvalid == "skip" {
+			// 跳过此点，继续下一个
+			m.mu.Lock()
+			m.status.CurrentPoint++
+			m.mu.Unlock()
+			return nil
+		}
+	}
+
+	// 阶段4：保存中
+	m.updatePhase(taskID, traversal.StateSaving, traversal.PhaseSaving, pointIndex, len(config.Path))
+
+	dwellTime := config.DwellTimeMs
 	result := traversal.PointResult{
-		PointIndex: pointIndex,
-		Point:      point,
-		Timestamp:  payload.Timestamp,
-		Values:     valuesForChannels(payload, config.Channels),
-	}
-	if len(result.Values) != len(config.Channels) {
-		return m.fail("latest data does not contain all requested channels")
+		PointIndex:      pointIndex,
+		Point:           point,
+		Timestamp:       time.Now().UnixMilli(),
+		Values:          resultValues,
+		SampleCount:     samplesPerPoint,
+		DwellTimeElapsed: dwellTime,
 	}
 	if m.sink != nil {
 		if err := m.sink.WriteTraversalPoint(result); err != nil {
-			return m.fail("write traversal point: %v", err)
+			return m.failWithCode("write traversal point: %v", traversal.ErrSaveFailed, err)
 		}
 	}
 
 	m.mu.Lock()
 	m.status.Results = append(m.status.Results, result)
 	m.status.CurrentPoint++
+	m.status.ValidationWarnings = nil
 	allDone := m.status.CurrentPoint >= len(m.config.Path)
 	if allDone {
-		m.status.State = traversal.StateIdle
+		m.status.State = traversal.StateCompleted
+		m.status.CurrentPointPhase = ""
 		if m.store != nil {
 			status := m.status
 			status.Results = append([]traversal.PointResult(nil), m.status.Results...)
@@ -203,17 +312,172 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	return nil
 }
 
-func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point) {
-	ticker := time.NewTicker(50 * time.Millisecond)
+// updatePhase 更新当前阶段状态
+func (m *TraversalManager) updatePhase(taskID string, state traversal.State, phase traversal.PointPhase, pointIndex, totalPoints int) {
+	m.mu.Lock()
+	if m.status.TaskID == taskID {
+		m.status.State = state
+		m.status.CurrentPointPhase = phase
+	}
+	m.mu.Unlock()
+}
+
+// waitForStabilization 等待数据稳定
+func (m *TraversalManager) waitForStabilization(taskID string) {
+	m.mu.RLock()
+	stab := m.stabilization
+	dwellMs := m.config.DwellTimeMs
+	deviceID := m.config.DeviceID
+	channels := m.config.Channels
+	m.mu.RUnlock()
+
+	if stab == nil || stab.Mode == "fixed" {
+		// 固定等待模式
+		waitMs := dwellMs
+		if stab != nil && stab.FixedTimeMs > 0 {
+			waitMs = stab.FixedTimeMs
+		}
+		if waitMs <= 0 {
+			waitMs = 1000
+		}
+		m.sleepWithTaskCheck(taskID, time.Duration(waitMs)*time.Millisecond)
+		return
+	}
+
+	// 自适应稳定模式
+	if stab.Adaptive == nil {
+		m.sleepWithTaskCheck(taskID, time.Duration(dwellMs)*time.Millisecond)
+		return
+	}
+
+	adaptive := stab.Adaptive
+	minWait := time.Duration(adaptive.MinWaitMs) * time.Millisecond
+	maxWait := time.Duration(adaptive.MaxWaitMs) * time.Millisecond
+	checkInterval := time.Duration(adaptive.CheckIntervalMs) * time.Millisecond
+	threshold := adaptive.StabilityThreshold
+
+	// 至少等待最小时间
+	m.sleepWithTaskCheck(taskID, minWait)
+
+	// 读取初始参考值
+	prevValues := m.readCurrentValues(deviceID, channels)
+	start := time.Now()
+	stableCount := 0
+
+	for time.Since(start) < maxWait && stableCount < adaptive.ConsecutiveChecks {
+		if m.isTaskCancelled(taskID) {
+			return
+		}
+		m.sleepWithTaskCheck(taskID, checkInterval)
+
+		// 读取当前值并判断稳定性
+		curValues := m.readCurrentValues(deviceID, channels)
+		if m.isStable(prevValues, curValues, threshold) {
+			stableCount++
+		} else {
+			stableCount = 0 // 不稳定则重置计数
+		}
+		prevValues = curValues
+	}
+}
+
+// readCurrentValues 读取当前设备数据值
+func (m *TraversalManager) readCurrentValues(deviceID string, channels []int) map[int]float64 {
+	if m.reader == nil {
+		return nil
+	}
+	payload, ok := m.reader.GetLatestData(deviceID)
+	if !ok {
+		return nil
+	}
+	return valuesForChannels(payload, channels)
+}
+
+// isStable 判断两组数据是否在稳定性阈值内
+func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64) bool {
+	if prev == nil || cur == nil {
+		return false
+	}
+	for k, prevVal := range prev {
+		curVal, ok := cur[k]
+		if !ok {
+			return false
+		}
+		if prevVal == 0 {
+			if abs(curVal) > threshold {
+				return false
+			}
+			continue
+		}
+		// 计算百分比变化
+		change := abs((curVal - prevVal) / prevVal) * 100
+		if change > threshold {
+			return false
+		}
+	}
+	return true
+}
+
+// collectAveragedSamples 多次采样取平均（带总体超时保护）
+func (m *TraversalManager) collectAveragedSamples(deviceID string, channels []int, samplesPerPoint int) (map[int]float64, error) {
+	totals := make(map[int]float64)
+	validSamples := 0
+	deadline := time.Now().Add(time.Duration(acquisitionBatchTimeoutMs) * time.Millisecond)
+
+	for i := 0; i < samplesPerPoint; i++ {
+		if time.Now().After(deadline) {
+			break // 超时保护：不再继续采样
+		}
+		payload, ok := m.reader.GetLatestData(deviceID)
+		if !ok {
+			continue
+		}
+		values := valuesForChannels(payload, channels)
+		if len(values) == len(channels) {
+			for k, v := range values {
+				totals[k] += v
+			}
+			validSamples++
+		}
+		time.Sleep(time.Duration(acquisitionBatchPollMs) * time.Millisecond)
+	}
+
+	if validSamples == 0 {
+		return nil, fmt.Errorf("no valid samples collected within timeout")
+	}
+
+	averaged := make(map[int]float64, len(totals))
+	for k, total := range totals {
+		averaged[k] = total / float64(validSamples)
+	}
+	return averaged, nil
+}
+
+// waitForMotionComplete 等待运动完成（带超时和取消检查）
+func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string) bool {
+	ticker := time.NewTicker(motionCompletePollMs)
 	defer ticker.Stop()
-	deadline := time.Now().Add(2500 * time.Millisecond)
+	deadline := time.Now().Add(motionCompleteTimeoutMs)
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-ticker.C:
+			// 检查是否暂停或停止（在锁内读取 isPaused 避免竞态）
+			m.mu.RLock()
+			isPaused := m.isPaused
+			stopped := m.isStopped || isPaused
+			m.mu.RUnlock()
+			if stopped {
+				if isPaused {
+					m.motionPauseCancelled = true
+				}
+				return false
+			}
+
 			if time.Now().After(deadline) {
-				return
+				return false
 			}
 			allReached := true
 			for _, status := range m.motion.StatusAll(ctx) {
@@ -232,7 +496,7 @@ func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point trav
 				}
 			}
 			if allReached {
-				return
+				return true
 			}
 		}
 	}
@@ -241,9 +505,10 @@ func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point trav
 func (m *TraversalManager) Pause() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status.State != traversal.StateRunning {
+	if m.status.State != traversal.StateRunning && !isSubState(m.status.State) {
 		return fmt.Errorf("traversal is not running")
 	}
+	m.isPaused = true
 	m.status.State = traversal.StatePaused
 	return nil
 }
@@ -254,25 +519,24 @@ func (m *TraversalManager) Resume() error {
 	if m.status.State != traversal.StatePaused {
 		return fmt.Errorf("traversal is not paused")
 	}
+	m.isPaused = false
+	m.motionPauseCancelled = false
 	m.status.State = traversal.StateRunning
 	return nil
 }
 
 func (m *TraversalManager) Stop() error {
-	if m.motion != nil {
-		ctx := context.Background()
-		for _, status := range m.motion.StatusAll(ctx) {
-			for _, axis := range status.Axes {
-				if axis.Moving {
-					if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
+	// 先设置停止标志，让运行中的循环能尽快感知
 	m.mu.Lock()
+	m.isStopped = true
+	m.isPaused = false
 	m.status.State = traversal.StateStopped
+	m.mu.Unlock()
+
+	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
+	stopErr := m.stopMotionAxes()
+
+	m.mu.Lock()
 	if m.store != nil {
 		status := m.status
 		status.Results = append([]traversal.PointResult(nil), m.status.Results...)
@@ -282,7 +546,27 @@ func (m *TraversalManager) Stop() error {
 		}
 	}
 	m.mu.Unlock()
-	return nil
+
+	return stopErr
+}
+
+// stopMotionAxes 停止所有运动轴，返回第一个遇到的错误
+func (m *TraversalManager) stopMotionAxes() error {
+	if m.motion == nil {
+		return nil
+	}
+	var firstErr error
+	ctx := context.Background()
+	for _, status := range m.motion.StatusAll(ctx) {
+		for _, axis := range status.Axes {
+			if axis.Moving {
+				if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	}
+	return firstErr
 }
 
 func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
@@ -292,11 +576,18 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	return m.store.Get(taskID)
 }
 
+// isSubState 判断是否为运行中的子状态
+func isSubState(s traversal.State) bool {
+	return s == traversal.StateMoving || s == traversal.StateStabilizing ||
+		s == traversal.StateAcquiring || s == traversal.StateSaving || s == traversal.StatePreparing
+}
+
 type traversalAPIConfig struct {
 	Name   string `json:"name"`
 	Layout struct {
-		Pattern string `json:"pattern"`
-		Line    *struct {
+		Pattern    string                       `json:"pattern"`
+		SnakeOrder bool                         `json:"snakeOrder"`
+		Line       *struct {
 			StartX        float64                 `json:"startX"`
 			StartY        float64                 `json:"startY"`
 			EndX          float64                 `json:"endX"`
@@ -338,7 +629,8 @@ type traversalAPIConfig struct {
 			Enabled bool `json:"enabled"`
 		} `json:"probeChannels"`
 	} `json:"channels"`
-	DwellTimeMs int `json:"dwellTimeMs"`
+	DwellTimeMs    int `json:"dwellTimeMs"`
+	SamplesPerPoint int `json:"samplesPerPoint"`
 }
 
 func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, error) {
@@ -366,7 +658,8 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	}
 
 	points := traversal.PointsFromLayout(traversal.LayoutConfig{
-		Pattern: cfg.Layout.Pattern,
+		Pattern:    cfg.Layout.Pattern,
+		SnakeOrder: cfg.Layout.SnakeOrder,
 		Line: func() *traversal.LineLayout {
 			if cfg.Layout.Line == nil {
 				return nil
@@ -441,9 +734,17 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	if dwell < 0 {
 		dwell = 0
 	}
+	samplesPerPoint := cfg.SamplesPerPoint
+	if samplesPerPoint <= 0 {
+		samplesPerPoint = 1
+	}
 	config := traversal.Config{
-		TaskID: fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
-		DeviceID: deviceID, Channels: channels, Path: points,
+		TaskID:         fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
+		DeviceID:       deviceID,
+		Channels:       channels,
+		Path:           points,
+		DwellTimeMs:    cfg.DwellTimeMs,
+		SamplesPerPoint: samplesPerPoint,
 	}
 	if err := m.Start(config); err != nil {
 		return "", err
@@ -458,14 +759,42 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 func (m *TraversalManager) fail(format string, args ...any) error {
 	message := fmt.Sprintf(format, args...)
 	m.mu.Lock()
-	m.setErrorLocked(message)
+	m.setErrorLocked(message, traversal.ErrUnknown)
 	m.mu.Unlock()
 	return fmt.Errorf("%s", message)
 }
 
-func (m *TraversalManager) setErrorLocked(message string) {
+// failWithCode 带错误码的失败
+func (m *TraversalManager) failWithCode(format string, code traversal.ErrorCode, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	m.mu.Lock()
+	m.setErrorLocked(message, code)
+	m.mu.Unlock()
+	return fmt.Errorf("%s", message)
+}
+
+func (m *TraversalManager) setErrorLocked(message string, code traversal.ErrorCode) {
 	m.status.State = traversal.StateError
 	m.status.LastError = message
+	m.status.LastErrorCode = code
+}
+
+// isTaskCancelled 检查任务是否已取消
+func (m *TraversalManager) isTaskCancelled(taskID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.status.TaskID != taskID || m.isStopped
+}
+
+// sleepWithTaskCheck 带任务取消检查的睡眠
+func (m *TraversalManager) sleepWithTaskCheck(taskID string, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if m.isTaskCancelled(taskID) {
+			return
+		}
+		time.Sleep(time.Duration(motionCompletePollMs) * time.Millisecond)
+	}
 }
 
 func abs(f float64) float64 {
@@ -496,8 +825,8 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 	}
 	for {
 		status := m.Status()
-		switch status.State {
-		case traversal.StateRunning:
+		switch {
+		case status.State == traversal.StateRunning || isSubState(status.State):
 			if status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
 				return
 			}
@@ -505,7 +834,7 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 				return
 			}
 			time.Sleep(dwell)
-		case traversal.StatePaused:
+		case status.State == traversal.StatePaused:
 			time.Sleep(200 * time.Millisecond)
 		default:
 			return
@@ -518,6 +847,11 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	state := string(status.State)
 	if status.State == traversal.StateIdle && status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
 		state = "completed"
+	}
+	// 兼容：子状态也映射为 running
+	displayState := state
+	if isSubState(status.State) {
+		displayState = "running"
 	}
 	progress := 0.0
 	if status.TotalPoints > 0 {
@@ -536,17 +870,20 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	return map[string]any{
 		"taskId":                  status.TaskID,
 		"state":                   string(status.State),
-		"status":                  state,
+		"status":                  displayState,
 		"currentPoint":            status.CurrentPoint,
 		"currentPointCoordinates": currentPoint,
+		"currentPointPhase":       string(status.CurrentPointPhase),
 		"completedPoints":         status.CurrentPoint,
 		"totalPoints":             status.TotalPoints,
 		"progress":                progress,
 		"startTime":               status.StartedAt,
 		"lastError":               status.LastError,
+		"lastErrorCode":           string(status.LastErrorCode),
 		"results":                 status.Results,
 		"dataPoints":              dataPoints,
 		"latestData":              latestData,
+		"validationWarnings":      status.ValidationWarnings,
 	}
 }
 
@@ -569,9 +906,9 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 			"coordinates":         map[string]float64{"alpha": result.Point.X, "beta": result.Point.Y},
 			"rawPressure":         rawPressure,
 			"interpolationResult": interpolationResult,
-			"sampleCount":         1,
+			"sampleCount":         result.SampleCount,
 			"timestamp":           result.Timestamp,
-			"dwellTimeElapsed":    0,
+			"dwellTimeElapsed":    result.DwellTimeElapsed,
 		})
 	}
 	return dataPoints

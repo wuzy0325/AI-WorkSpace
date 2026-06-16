@@ -1,14 +1,14 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getTraversalLayoutPoints } from '@shared/types/traversal'
-import type { TraversalLayout, TraversalPoint } from '@shared/types/traversal'
+import type { TraversalLayout, TraversalPoint, TraversalPointPhase } from '@shared/types/traversal'
 import { useThemeStore } from '@stores/themeStore'
 
 const props = defineProps<{
   layout?: TraversalLayout
   currentPoint?: { alpha: number; beta: number }
   completedPoints?: number
-  currentPointPhase?: 'moving' | 'stabilizing' | 'acquiring'
+  currentPointPhase?: TraversalPointPhase
 }>()
 
 const themeStore = useThemeStore()

@@ -7,6 +7,7 @@ import type {
   PreconditionCheckResult,
   TraversalCompleteEvent,
   TraversalErrorEvent,
+  TraversalErrorCode,
   TraversalInterpolationInput,
   TraversalProgressEvent,
   TraversalTestConfig,
@@ -61,6 +62,15 @@ function createPollingSubscription<T>(
   return () => window.clearInterval(timer)
 }
 
+/** 后端返回的原始状态响应类型（包含后端额外字段） */
+type TraversalStatusRawResponse = Omit<TraversalTestStatus, 'state' | 'lastErrorCode' | 'validationWarnings'> & {
+  currentPointCoordinates?: { alpha: number; beta: number }
+  currentPoint?: number | { alpha: number; beta: number }
+  state?: string
+  lastErrorCode?: TraversalErrorCode
+  validationWarnings?: string[]
+}
+
 export const traversalApi = {
   getConfig: async (): Promise<{ success: boolean; data?: TraversalTestConfig | null; error?: string }> =>
     invoke<TraversalTestConfig | null>('/api/traversal/config'),
@@ -100,13 +110,22 @@ export const traversalApi = {
   stop: async (): Promise<{ success: boolean; error?: string }> => invoke('/api/traversal/stop'),
 
   getStatus: async (): Promise<{ success: boolean; data?: TraversalTestStatus | null; error?: string }> => {
-    const res = await invoke<(TraversalTestStatus & { currentPointCoordinates?: { alpha: number; beta: number }; currentPoint?: number | { alpha: number; beta: number } }) | null>('/api/traversal/status')
+    const res = await invoke<TraversalStatusRawResponse | null>('/api/traversal/status')
     if (!res.success || !res.data) return res as { success: boolean; data?: TraversalTestStatus | null; error?: string }
     const raw = res.data
     const point = typeof raw.currentPoint === 'number'
       ? raw.currentPointCoordinates
       : raw.currentPoint
-    return { success: true, data: { ...raw, currentPoint: point } as TraversalTestStatus }
+    return {
+      success: true,
+      data: {
+        ...raw,
+        currentPoint: point,
+        state: raw.state ?? raw.status,
+        lastErrorCode: raw.lastErrorCode,
+        validationWarnings: raw.validationWarnings,
+      } as TraversalTestStatus
+    }
   },
 
   onProgress: (callback: (event: TraversalProgressEvent) => void): (() => void) =>
@@ -139,6 +158,12 @@ export const traversalApi = {
   onError: (callback: (event: TraversalErrorEvent) => void): (() => void) =>
     createPollingSubscription((status) => {
       if (status.status !== 'error' || !status.lastError) return null
-      return { taskId: status.taskId, error: status.lastError, code: 'UNKNOWN' as const, recoverable: false }
+      const rawStatus = status as TraversalStatusRawResponse
+      return {
+        taskId: status.taskId,
+        error: status.lastError,
+        code: rawStatus.lastErrorCode ?? 'UNKNOWN',
+        recoverable: false
+      }
     }, callback),
 }

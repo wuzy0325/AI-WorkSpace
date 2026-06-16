@@ -27,7 +27,10 @@ import type {
   TraversalInterpolationInput,
   TraversalRawPressure,
   CalibrationCsvFileInfo,
-  InterpolationAlgorithm
+  InterpolationAlgorithm,
+  TraversalErrorCode,
+  DataValidationConfig,
+  StabilizationConfig
 } from '@shared/types/traversal'
 
 export type RealtimePressures = TraversalRawPressure
@@ -255,6 +258,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     const previousStatus = status.value
     status.value = {
       taskId: previousStatus?.taskId ?? event.taskId,
+      state: previousStatus?.state ?? 'running',
       status: previousStatus?.status === 'paused' ? 'paused' : 'running',
       totalPoints: event.totalPoints,
       completedPoints: event.completedPoints,
@@ -263,7 +267,9 @@ export const useTraversalStore = defineStore('traversal', () => {
       progress: event.totalPoints > 0 ? (event.completedPoints / event.totalPoints) * 100 : 0,
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
-      lastError: previousStatus?.lastError
+      lastError: previousStatus?.lastError,
+      lastErrorCode: previousStatus?.lastErrorCode,
+      validationWarnings: previousStatus?.validationWarnings
     }
 
     if (!previousStatus) {
@@ -285,6 +291,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     const previousStatus = status.value
     status.value = {
       taskId: previousStatus?.taskId ?? event.taskId,
+      state: 'error',
       status: 'error',
       totalPoints: previousStatus?.totalPoints ?? 0,
       completedPoints: previousStatus?.completedPoints ?? 0,
@@ -292,7 +299,8 @@ export const useTraversalStore = defineStore('traversal', () => {
       progress: previousStatus?.progress ?? 0,
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
-      lastError: event.error
+      lastError: event.error,
+      lastErrorCode: event.code as TraversalErrorCode
     }
 
     if (!previousStatus) {
@@ -312,6 +320,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     completeEvent.value = event
     status.value = {
       taskId: previousStatus?.taskId ?? event.taskId,
+      state: completionStatus,
       status: completionStatus,
       totalPoints: event.totalPoints,
       completedPoints: completionStatus === 'completed' ? event.totalPoints : (previousStatus?.completedPoints ?? 0),
@@ -320,7 +329,8 @@ export const useTraversalStore = defineStore('traversal', () => {
       progress: completionStatus === 'completed' ? 100 : (previousStatus?.progress ?? 0),
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
-      lastError: completionStatus === 'completed' ? undefined : (event.error ?? previousStatus?.lastError)
+      lastError: completionStatus === 'completed' ? undefined : (event.error ?? previousStatus?.lastError),
+      lastErrorCode: completionStatus === 'completed' ? undefined : previousStatus?.lastErrorCode
     }
 
     if (!previousStatus) {

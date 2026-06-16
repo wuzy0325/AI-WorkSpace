@@ -67,9 +67,10 @@ export function isTraversalConfigurableProbeChannel(role?: ProbeChannelRole, nam
   })
 }
 
-/** 布点配置 */
+/** 布局配置 */
 export interface TraversalLayout {
   pattern: TraversalPattern
+  snakeOrder?: boolean // 蛇形遍历：偶数行正常，奇数行反转，减少回程时间
   
   line?: {
     startX: number
@@ -134,17 +135,70 @@ export function getTraversalStepValues(start: number, end: number, segments: Ste
   return values.sort((a, b) => a - b)
 }
 
+/** 网格布点（支持蛇形遍历） */
+function gridPointsFromAxes(
+  xs: number[],
+  ys: number[],
+  snakeOrder = false
+): TraversalPoint[] {
+  const points: TraversalPoint[] = []
+  for (let i = 0; i < xs.length; i++) {
+    if (snakeOrder && i % 2 === 1) {
+      // 奇数行反转Y轴顺序
+      for (let j = ys.length - 1; j >= 0; j--) {
+        points.push({ x: xs[i], y: ys[j] })
+      }
+    } else {
+      for (const y of ys) {
+        points.push({ x: xs[i], y })
+      }
+    }
+  }
+  return points
+}
+
+/** 扇形布点（支持蛇形遍历） */
+function sectorPointsFromRadiiAngles(
+  centerX: number,
+  centerY: number,
+  radii: number[],
+  angles: number[],
+  snakeOrder = false
+): TraversalPoint[] {
+  const points: TraversalPoint[] = []
+  for (let i = 0; i < radii.length; i++) {
+    if (snakeOrder && i % 2 === 1) {
+      for (let j = angles.length - 1; j >= 0; j--) {
+        const radian = (angles[j] * Math.PI) / 180
+        points.push({
+          x: centerX + radii[i] * Math.cos(radian),
+          y: centerY + radii[i] * Math.sin(radian)
+        })
+      }
+    } else {
+      for (const angle of angles) {
+        const radian = (angle * Math.PI) / 180
+        points.push({
+          x: centerX + radii[i] * Math.cos(radian),
+          y: centerY + radii[i] * Math.sin(radian)
+        })
+      }
+    }
+  }
+  return points
+}
+
 export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoint[] {
   if (!layout) {
     return []
   }
 
-  const points: TraversalPoint[] = []
+  const snake = layout.snakeOrder ?? false
 
   switch (layout.pattern) {
     case 'line': {
       if (!layout.line) {
-        break
+        return []
       }
 
       const { startX, startY, endX, endY, xStepSegments, yStepSegments } = layout.line
@@ -152,45 +206,31 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       const ySteps = getTraversalStepValues(startY, endY, yStepSegments)
 
       if (xSteps.length === 0 && ySteps.length === 0) {
-        points.push({ x: startX, y: startY })
-      } else if (ySteps.length === 0) {
-        for (const x of xSteps) {
-          points.push({ x, y: startY })
-        }
-      } else if (xSteps.length === 0) {
-        for (const y of ySteps) {
-          points.push({ x: startX, y })
-        }
-      } else {
-        for (const x of xSteps) {
-          for (const y of ySteps) {
-            points.push({ x, y })
-          }
-        }
+        return [{ x: startX, y: startY }]
       }
-      break
+      if (ySteps.length === 0) {
+        return xSteps.map((x) => ({ x, y: startY }))
+      }
+      if (xSteps.length === 0) {
+        return ySteps.map((y) => ({ x: startX, y }))
+      }
+      return gridPointsFromAxes(xSteps, ySteps, snake)
     }
 
     case 'rectangle': {
       if (!layout.rectangle) {
-        break
+        return []
       }
 
       const { xMin, xMax, xStepSegments, yMin, yMax, yStepSegments } = layout.rectangle
       const xSteps = getTraversalStepValues(xMin, xMax, xStepSegments)
       const ySteps = getTraversalStepValues(yMin, yMax, yStepSegments)
-
-      for (const x of xSteps) {
-        for (const y of ySteps) {
-          points.push({ x, y })
-        }
-      }
-      break
+      return gridPointsFromAxes(xSteps, ySteps, snake)
     }
 
     case 'sector': {
       if (!layout.sector) {
-        break
+        return []
       }
 
       const {
@@ -205,28 +245,15 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       } = layout.sector
       const radii = getTraversalStepValues(radiusMin, radiusMax, radialStepSegments)
       const angles = getTraversalStepValues(angleStart, angleEnd, angularStepSegments)
-
-      for (const radius of radii) {
-        for (const angle of angles) {
-          const radian = (angle * Math.PI) / 180
-          points.push({
-            x: centerX + radius * Math.cos(radian),
-            y: centerY + radius * Math.sin(radian)
-          })
-        }
-      }
-      break
+      return sectorPointsFromRadiiAngles(centerX, centerY, radii, angles, snake)
     }
 
     case 'custom': {
-      if (layout.custom?.points) {
-        points.push(...layout.custom.points)
-      }
-      break
+      return layout.custom?.points ? [...layout.custom.points] : []
     }
   }
 
-  return points
+  return []
 }
 
 export function getTraversalLayoutPointCount(layout?: TraversalLayout): number {
@@ -364,10 +391,11 @@ export type TraversalTerminalStatus = 'completed' | 'error' | 'stopped'
 export type TraversalTestStatusType = 'idle' | 'running' | 'paused' | TraversalTerminalStatus
 
 /** 当前点的处理阶段 */
-export type TraversalPointPhase = 'moving' | 'stabilizing' | 'acquiring'
+export type TraversalPointPhase = 'moving' | 'stabilizing' | 'acquiring' | 'saving'
 
 export interface TraversalTestStatus {
   taskId: string
+  state: string // 后端原始状态（idle/preparing/moving/stabilizing/acquiring/saving/running/paused/stopped/error/completed）
   status: TraversalTestStatusType
   totalPoints: number
   completedPoints: number
@@ -379,6 +407,8 @@ export interface TraversalTestStatus {
   startTime?: number
   estimatedRemaining?: number
   lastError?: string
+  lastErrorCode?: TraversalErrorCode
+  validationWarnings?: string[]
 }
 
 export interface TraversalModuleResult {
@@ -439,4 +469,39 @@ export interface TraversalErrorEvent {
   error: string
   code: TraversalErrorCode
   recoverable: boolean
+}
+
+/** 数据验证配置 */
+export interface DataValidationConfig {
+  enabled: boolean
+  pressureRange?: Record<string, { min: number; max: number }>
+  spikeDetection?: {
+    enabled: boolean
+    threshold: number // 百分比阈值
+  }
+  onInvalid: 'skip' | 'retry' | 'continue'
+  retryCount?: number
+}
+
+/** 稳定等待配置 */
+export interface StabilizationConfig {
+  mode: 'fixed' | 'adaptive'
+  fixedTimeMs?: number
+  adaptive?: {
+    maxWaitMs: number
+    minWaitMs: number
+    stabilityThreshold: number // 百分比变化阈值
+    checkIntervalMs: number
+    consecutiveChecks: number // 连续稳定检查次数
+  }
+}
+
+/** 断点恢复信息 */
+export interface TraversalCheckpoint {
+  taskId: string
+  completedPoints: number
+  totalPoints: number
+  lastPoint?: TraversalPoint
+  savePath: string
+  createdAt: number
 }
