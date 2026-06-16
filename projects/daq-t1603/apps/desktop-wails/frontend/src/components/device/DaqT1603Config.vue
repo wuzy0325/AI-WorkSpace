@@ -17,10 +17,6 @@ const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.d
 const isAcquiring = computed(() => deviceStore.acquiringFor(props.deviceId))
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
-const samplingRateOptions = [1, 2, 5, 10, 20, 50, 100]
-
-// CustomSelect 需要的选项格式
-const samplingRateSelectOptions: SelectOption[] = samplingRateOptions.map(s => ({ value: s, label: `${s} Hz` }))
 const thermocoupleSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: `${t} 型` }))
 const channelTcSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: t }))
 
@@ -168,6 +164,14 @@ function toggleChannel(index: number) {
   if (isAcquiring.value) return
   channelEnabled.value[index] = !channelEnabled.value[index]
 }
+
+function onRateInput(e: Event) {
+  const target = e.target as HTMLInputElement
+  let v = parseInt(target.value, 10)
+  if (isNaN(v)) v = 1
+  v = Math.max(1, Math.min(1000, v))
+  samplingRate.value = v
+}
 </script>
 
 <template>
@@ -204,10 +208,14 @@ function toggleChannel(index: number) {
               <Hash class="config__label-icon" />
               <span>采样频率</span>
             </label>
-            <CustomSelect
-              v-model="samplingRate"
-              :options="samplingRateSelectOptions"
+            <input
+              v-model.number="samplingRate"
+              type="number"
+              class="config__rate-input"
+              :min="1"
+              :max="1000"
               :disabled="isAcquiring"
+              @input="onRateInput"
             />
           </div>
 
@@ -535,6 +543,30 @@ function toggleChannel(index: number) {
 
 .config__field:hover {
   border-color: var(--border-hover);
+}
+
+.config__rate-input {
+  width: 6rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__rate-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.config__rate-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .config__label {

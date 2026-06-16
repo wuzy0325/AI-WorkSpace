@@ -317,6 +317,7 @@ func (d *DAQT1603) StartAcquisition() error {
 
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(d.config.BinaryFormat)
+		d.frameReader.SetMetadataMode(d.config.ShowTimestamp || d.config.ShowSequence)
 		// 仅在完整匹配 ACK 时才消费，避免 TCP 分包造成帧边界错位。
 		if _, err := d.frameReader.ConsumeOptionalACK(200 * time.Millisecond); err != nil {
 			return fmt.Errorf("drain start ACK: %w", err)
@@ -444,6 +445,7 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 	d.profile.DaqT1603Config = cfg
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(cfg.BinaryFormat)
+		d.frameReader.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
 	}
 	d.mu.Unlock()
 	return nil
@@ -556,7 +558,7 @@ func (d *DAQT1603) processPayload(data []byte) {
 		return
 	}
 
-	temps, err := protocol.ParseTCPFrame(data)
+	result, err := protocol.ParseTCPFrameEx(data)
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
@@ -566,16 +568,17 @@ func (d *DAQT1603) processPayload(data []byte) {
 		return
 	}
 
-	indices := make([]int, len(temps))
-	for i := range temps {
+	indices := make([]int, len(result.Temperatures))
+	for i := range result.Temperatures {
 		indices[i] = i
 	}
 
 	sink(core.DataPayload{
-		DeviceID:       d.profile.ID,
-		Timestamp:      core.NowMs(),
-		Channels:       temps,
-		ChannelIndices: indices,
+		DeviceID:          d.profile.ID,
+		Timestamp:         core.NowMs(),
+		HardwareTimestamp: result.HardwareTimestamp,
+		Channels:          result.Temperatures,
+		ChannelIndices:    indices,
 	})
 }
 
@@ -627,6 +630,7 @@ func (d *DAQT1603) syncHardwareConfig() {
 	d.profile.DaqT1603Config = *cfg
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(cfg.BinaryFormat)
+		d.frameReader.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
 	}
 	fn := d.onConfigSynced
 	d.mu.Unlock()

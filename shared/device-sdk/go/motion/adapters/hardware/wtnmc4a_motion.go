@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -777,8 +779,23 @@ func wtnmc4aPulseToEngineering(axisCfg core.AxisConfig, pulse float64) float64 {
 	return core.PulseToEngineering(axisCfg, signedPulse)
 }
 
+// wtnmc4aFindDLL 查找 WTNMC4A_64.dll 的路径。
+// 优先从可执行文件所在目录查找，确保安装包部署后能正确定位 DLL。
 func wtnmc4aFindDLL() string {
-	return "WTNMC4A_64.dll"
+	dllName := "WTNMC4A_64.dll"
+	// 获取可执行文件所在目录
+	exePath, err := os.Executable()
+	if err != nil {
+		slog.Warn("获取可执行文件路径失败，使用默认DLL名", "error", err)
+		return dllName
+	}
+	dllPath := filepath.Join(filepath.Dir(exePath), dllName)
+	if _, err := os.Stat(dllPath); err == nil {
+		return dllPath
+	}
+	// 回退到系统搜索路径（PATH、exe同目录等）
+	slog.Debug("exe目录下未找到DLL，回退到系统搜索路径", "dll", dllName, "checked", dllPath)
+	return dllName
 }
 
 var _ ports.MotionController = (*WTNMC4AMotionController)(nil)

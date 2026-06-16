@@ -38,16 +38,6 @@ const emit = defineEmits<{
   (e: 'update:openCircuitCheck', v: string): void
 }>()
 
-const samplingRateOptions = [
-  { value: '1', label: '1 Hz' },
-  { value: '2', label: '2 Hz' },
-  { value: '5', label: '5 Hz' },
-  { value: '10', label: '10 Hz' },
-  { value: '20', label: '20 Hz' },
-  { value: '50', label: '50 Hz' },
-  { value: '100', label: '100 Hz' },
-]
-
 const triggerModeOptions = [
   { value: '0', label: '软件触发' },
   { value: '2', label: '硬件触发' },
@@ -58,10 +48,6 @@ const triggerEdgeOptions = [
   { value: '1', label: '下降沿' },
   { value: '2', label: '跳变' },
 ]
-
-function onSamplingRateChange(e: Event): void {
-  emit('update:samplingRate', Number((e.target as HTMLSelectElement).value))
-}
 
 function onTriggerModeChange(e: Event): void {
   emit('update:triggerMode', Number((e.target as HTMLSelectElement).value))
@@ -86,7 +72,7 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
     <div class="t1603-config__field">
       <label class="t1603-config__label">采样率</label>
-      <UiSelect :model-value="String(samplingRate)" @update:model-value="emit('update:samplingRate', Number($event))" :options="samplingRateOptions" />
+      <UiInputNumber :model-value="samplingRate" @update:model-value="(v) => v !== null && emit('update:samplingRate', Math.max(1, Math.min(1000, v)))" :min="1" :max="1000" />
     </div>
 
     <div class="t1603-config__field">

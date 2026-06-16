@@ -164,16 +164,27 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 	offset := 0
 
 	if len(parts) > 16 {
+		// Try to detect HEAD (integer seq) vs TIME (float timestamp) vs both
 		seq, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return nil, fmt.Errorf("parse sequence number %q: %w", parts[0], err)
+		if err == nil {
+			result.SequenceNumber = seq
+			offset = 1
+			if len(parts) > 17 {
+				ts, err := strconv.ParseFloat(parts[1], 64)
+				if err == nil {
+					result.HardwareTimestamp = ts
+					offset = 2
+				}
+			}
+		} else {
+			// Not an integer → timestamp from TIME mode only
+			ts, err := strconv.ParseFloat(parts[0], 64)
+			if err != nil {
+				return nil, fmt.Errorf("parse metadata token %q: %w", parts[0], err)
+			}
+			result.HardwareTimestamp = ts
+			offset = 1
 		}
-		result.SequenceNumber = seq
-		result.HardwareTimestamp, err = strconv.ParseFloat(parts[1], 64)
-		if err != nil {
-			return nil, fmt.Errorf("parse timestamp %q: %w", parts[1], err)
-		}
-		offset = 2
 	}
 
 	temps := make([]float64, 16)
@@ -198,14 +209,16 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 // not yet received a full frame. The caller should retry.
 var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 
-// T1603FrameReader reads fixed-size frames from a DAQ-T-1603 device over TCP.
-// The device sends either 192-byte ASCII frames or 64-byte binary frames,
-// without any length-prefix framing.
+// T1603FrameReader reads fixed-size or variable-length frames from a DAQ-T-1603
+// device over TCP. When metadata mode is active (TIME or HEAD enabled),
+// frames are newline-terminated and variable-length.
+// Without metadata, frames are fixed-size (192-byte ASCII or 64-byte binary).
 type T1603FrameReader struct {
-	conn       net.Conn
-	mu         sync.Mutex
-	buffer     []byte
-	binaryMode bool
+	conn          net.Conn
+	mu            sync.Mutex
+	buffer        []byte
+	binaryMode    bool
+	metadataMode  bool
 }
 
 // NewT1603FrameReader creates a frame reader for DAQ-T-1603 TCP data.
@@ -223,10 +236,28 @@ func (r *T1603FrameReader) SetBinaryMode(binary bool) {
 	r.mu.Unlock()
 }
 
+// SetMetadataMode enables variable-length newline-terminated frame mode.
+// Set true when @fe TIME or @fe HEAD is enabled on the device.
+func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
+	r.mu.Lock()
+	r.metadataMode = metadata
+	r.mu.Unlock()
+}
+
 // ReadFrame reads one complete frame from the device.
-// Returns the raw frame bytes on success, or an error (including timeout).
+// In metadata mode, reads until newline. In fixed mode, reads fixed-size chunks.
 func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
-	// Phase 1: check if we already have a full frame (fast path, under lock)
+	r.mu.Lock()
+	mm := r.metadataMode
+	r.mu.Unlock()
+
+	if mm {
+		return r.readFrameVariable()
+	}
+	return r.readFrameFixed()
+}
+
+func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	r.mu.Lock()
 	frameSize := r.frameSizeLocked()
 	if len(r.buffer) >= frameSize {
@@ -236,24 +267,100 @@ func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 	}
 	r.mu.Unlock()
 
-	// Phase 2: read from connection (blocks, no lock held)
 	tmp := make([]byte, frameSize)
 	n, err := r.conn.Read(tmp)
 	if err != nil {
 		return nil, err
 	}
 
-	// Phase 3: append to buffer and check for complete frame (under lock)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.buffer = append(r.buffer, tmp[:n]...)
-
 	if len(r.buffer) >= frameSize {
 		return r.extractFrameLocked(frameSize), nil
 	}
-
 	return nil, ErrIncompleteFrame
+}
+
+// findFieldEnd scans buf for N space-separated fields and returns the
+// byte index right after the Nth field. Returns -1 if fewer than N fields exist.
+func findFieldEnd(buf []byte, n int) int {
+	count := 0
+	inField := false
+	for i, b := range buf {
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			if inField {
+				count++
+				if count == n {
+					return i
+				}
+			}
+			inField = false
+		} else {
+			if !inField {
+				inField = true
+			}
+		}
+	}
+	if inField {
+		count++
+		if count == n {
+			return len(buf)
+		}
+	}
+	return -1
+}
+
+// tryExtractFrame attempts to extract a complete metadata frame from the buffer.
+// Returns the frame and the end position, or -1 if no complete frame is available.
+// Tries 18 tokens first (HEAD+TIME), then 17 (HEAD-only or TIME-only).
+func tryExtractFrame(buf []byte) ([]byte, int) {
+	// Always try to parse to validate — this ensures we have a complete frame
+	// even if the token count varies (17 for one metadata, 18 for both).
+	for _, need := range []int{18, 17} {
+		if end := findFieldEnd(buf, need); end >= 0 {
+			if _, err := ParseTCPFrameEx(buf[:end]); err == nil {
+				frame := make([]byte, end)
+				copy(frame, buf[:end])
+				return frame, end
+			}
+		}
+	}
+	return nil, -1
+}
+
+func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
+	r.mu.Lock()
+	if frame, end := tryExtractFrame(r.buffer); end >= 0 {
+		r.buffer = r.buffer[end:]
+		if len(r.buffer) == 0 {
+			r.buffer = make([]byte, 0, 256)
+		}
+		r.mu.Unlock()
+		return frame, nil
+	}
+	r.mu.Unlock()
+
+	tmp := make([]byte, 256)
+	for {
+		n, err := r.conn.Read(tmp)
+		if err != nil {
+			return nil, err
+		}
+
+		r.mu.Lock()
+		r.buffer = append(r.buffer, tmp[:n]...)
+		if frame, end := tryExtractFrame(r.buffer); end >= 0 {
+			r.buffer = r.buffer[end:]
+			if len(r.buffer) == 0 {
+				r.buffer = make([]byte, 0, 256)
+			}
+			r.mu.Unlock()
+			return frame, nil
+		}
+		r.mu.Unlock()
+	}
 }
 
 func (r *T1603FrameReader) frameSizeLocked() int {

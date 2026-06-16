@@ -1,6 +1,6 @@
 ---
 name: daq-t1603
-description: DAQ-T-1603 热电偶采集设备驱动开发指南。涵盖 ASCII 文本协议（@e3/@f0/@f1/@f3/@fd/@fe 命令体系）、TCP 采集数据帧解析（64 字节二进制 float32 LE 与 192 字节 ASCII）、串口协议（46 字节二进制帧）、配置同步和生命周期管理。Use when writing or modifying DAQ-T-1603 driver code, debugging thermocouple data streams, adding DAQ-T-1603 features, or when user mentions DAQ-T-1603, T1603, 热电偶, thermocouple, temp model firmware, binaryFormat, BIN=1, or 16通道温度采集.
+description: DAQ-T-1603 热电偶采集设备驱动开发指南。涵盖 ASCII 文本协议（@e3/@f0/@f1/@f3/@fd/@fe 命令体系）、TCP/串口数据帧解析、配置同步和生命周期管理。Use when writing or modifying DAQ-T-1603 driver code, debugging thermocouple data streams, adding DAQ-T-1603 features, or when user mentions DAQ-T-1603, T1603, 热电偶, thermocouple, temp model firmware, binaryFormat, BIN=1, or 16通道温度采集.
 ---
 
 # DAQ-T-1603 热电偶采集设备驱动开发
@@ -102,13 +102,17 @@ func isValidFrame(values: float64[16]) -> bool:
 
 当 `@fd BIN` 返回 `0`，或设备为 temp 型号固件时使用。
 
+| 帧模式 | 帧大小 | 终止符 | 触发条件 |
+|--------|--------|--------|----------|
+| 定长 ASCII | **192 字节**（固定） | 无 | ShowSequence=0 且 ShowTimestamp=0 |
+| 变长 ASCII | **不定长**（约 210~230 字节） | 无 | ShowSequence=1 **或** ShowTimestamp=1 |
+
+**定长模式（192 字节）：**
 | 属性 | 值 |
 |------|------|
-| 帧大小 | **192 字节**（固定，无换行终止符） |
 | 字段宽度 | 每通道 12 字符，空格左对齐填充 |
 | 分隔符 | 空格 |
 | 通道顺序 | **CH15 → CH0**，解析后需 `.reverse()` |
-| 触发条件 | ShowSequence=0 且 ShowTimestamp=0 |
 
 **示例帧（CH15=39.95℃，其余为 0）：**
 ```
@@ -116,24 +120,58 @@ func isValidFrame(values: float64[16]) -> bool:
    0.000000    0.000000    0.000000   39.952503
 ```
 
-**解析伪代码：**
-```pseudocode
-func parseASCIIFrame(raw: byte[192]) -> float64[16]:
-    text = string(raw)                     // ASCII 解码
-    tokens = trim(text).split(/\s+/)       // 按空白分 token
-    assert tokens.length >= 16             // 含扩展时可能 > 16
-    values = tokens[0..15].map(parseFloat) // 取前 16 个
-    return reverse(values)                 // CH15→CH0 → CH0→CH15
+**变长模式（ShowSequence=1 或 ShowTimestamp=1）：**
+| 属性 | 值 |
+|------|------|
+| 帧格式 | 空格分隔的连续流，**无换行** |
+| 读取方式 | 字段计数法，FrameReader 启用 `metadataMode=true` |
+| 字段数 | 17（仅 TIME 或仅 HEAD）或 18（两者都开） |
+| 通道顺序 | **CH15 → CH0**，解析后需 `.reverse()` |
+
+**变长帧在线形态：**
+```
+A0 1781600803.751855    0.000000    ...    25.500000 1 1781600803.762758    ...
+↑ACK               16×12字符定宽值=192B       ↑下一帧序列号
+seq=0 ts=1781600803.75                         seq=1 ts=1781600803.76
 ```
 
-**含时间戳/序号的扩展帧：**
-```pseudocode
-// 当 ShowSequence=1 或 ShowTimestamp=1 时
-if tokenCount > 16:
-    seq = parseInt(tokens[0])              // 帧序号
-    hwTimestamp = parseFloat(tokens[1])    // 硬件时间戳（秒.纳秒）
-    values = tokens[2..].map(parseFloat)   // 从第 3 个开始是温度值
+**变长帧完整示例（HEAD=1 + TIME=1，18 个 token）：**
 ```
+0 1781600803.751855    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000   39.952503    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000    0.000000
+│ │                  └──────────────────────── 16 个温度值（CH15→CH0）─────────────────────────────────────────────────────────────────────────────────────┘
+│ └─ 时间戳（Unix 秒，浮点）
+└─ 帧序号（整数）
+```
+解析结果：`seq=0, ts=1781600803.751855, values[15]=39.952503, 其余=0.0`（reverse 后 `values[7]=39.952503`）。
+
+**解析伪代码——自动检测 TIME/HEAD 组合：**
+```pseudocode
+func parseMetadataFrame(raw: byte[]) -> (seq?: int, ts?: float64, values: float64[16]):
+    tokens = trim(string(raw)).split(/\s+/)
+
+    // 检测第一个 token 是帧序号(整数)还是时间戳(浮点)
+    if parseableAsInt(tokens[0]):
+        seq = int(tokens[0])
+        offset = 1
+        if tokens.length > 17:
+            ts = float(tokens[1])  // 第二个 token 是时间戳
+            offset = 2
+    else:
+        ts = float(tokens[0])      // 仅 TIME=1，无序列号
+        offset = 1
+
+    values = tokens[offset..offset+15].map(parseFloat)
+    return (seq, ts, reverse(values))
+```
+
+**字段数速查：**
+
+| TIME | HEAD | Token 数 | token[0] | token[1] |
+|------|------|----------|----------|----------|
+| 0 | 0 | 16（定长192B） | 无 | 无 |
+| 0 | 1 | 17 | seq（整数） | — |
+| 1 | 0 | 17 | ts（浮点） | 无 |
+| 1 | 1 | 18 | seq（整数） | ts（浮点） |
 
 ### 2.3 串口帧（46 字节）
 
@@ -151,9 +189,14 @@ if tokenCount > 16:
 
 **温度解析：** 从偏移 8 开始，每通道 2 字节 **int16 大端序**，值 × 0.1 = ℃。
 
+**校验和：** 偏移 44 的 1 字节为前 44 字节（偏移 0~43）的算术和取低 8 位，即 `checksum = sum(raw[0..43]) & 0xFF`。
+
 ```pseudocode
 func parseSerialFrame(raw: byte[46]) -> float64[16]:
     assert raw.length == 46
+    // 校验和验证
+    expectedChecksum = sum(raw[0..43]) & 0xFF
+    assert raw[44] == expectedChecksum, "串口帧校验和不匹配"
     for i = 0; i < 16; i++:
         offset = 8 + i * 2
         values[i] = float64(readInt16BE(raw, offset)) * 0.1
@@ -173,41 +216,76 @@ func parseSerialFrame(raw: byte[46]) -> float64[16]:
 
 ```pseudocode
 class FrameReader:
-    buffer: byte[]       // 内部累积缓冲区
-    frameSize: int       // 64（BIN=1）或 192（BIN=0）
+    buffer: byte[]           // 内部累积缓冲区
+    frameSize: int           // 64（BIN=1）或 192（BIN=0）
+    metadataMode: bool       // true=变长字段计数法, false=定长读取
 
     func setBinaryMode(isBinary: bool):
         this.frameSize = isBinary ? 64 : 192
 
-    func feed(data: byte[]):       // 喂入 TCP 原始数据
-        buffer.append(data)
+    func setMetadataMode(enabled: bool):
+        // 当 TIME=1 或 HEAD=1 时启用变长模式
+        this.metadataMode = enabled
 
-    func hasCompleteFrame() -> bool:
-        return buffer.length >= frameSize
+    func readFrame() -> byte[]:
+        if metadataMode:
+            return this.readFrameVariable()
+        else:
+            return this.readFrameFixed()
 
-    func readFrame() -> byte[]:    // 取出一个完整帧
-        frame = buffer[0..frameSize]
-        buffer = buffer[frameSize..]
-        return frame
+    // —— 定长模式（BIN=0 标准 ASCII 或 BIN=1 二进制）——
+    func readFrameFixed() -> byte[]:
+        // 检查 buffer 是否有完整帧
+        if buffer.length >= frameSize:
+            return buffer.extract(frameSize)
 
-    // 消费 @f0 的可选 ACK 前导（BIN=1 模式下部分固件无 ACK）
+        // 从连接读取并累积
+        tmp = conn.read(frameSize)
+        buffer.append(tmp)
+        if buffer.length >= frameSize:
+            return buffer.extract(frameSize)
+        return null  // 仍需等待更多数据
+
+    // —— 变长模式（TIME=1 或 HEAD=1，空格分隔连续流）——
+    func readFrameVariable() -> byte[]:
+        // 尝试用 18 或 17 个字段提取一帧，并用解析器验证
+        for need in [18, 17]:
+            end = findFieldEnd(buffer, need)
+            if end >= 0 and parseMetadataFrame(buffer[0..end]) succeeds:
+                frame = buffer[0..end]
+                buffer = buffer[end..]
+                return frame
+
+        // buffer 中字段不足，从连接读取更多数据
+        tmp = conn.read(256)
+        buffer.append(tmp)
+        // 再次尝试提取...
+        return retry
+
+    // 辅助：扫描 buffer 前 N 个空白分隔字段的结束位置
+    func findFieldEnd(buf: byte[], n: int) -> int:
+        count = 0
+        inField = false
+        for i, b in buf:
+            if b 是空白字符:
+                if inField:
+                    count++
+                    if count == n: return i
+                inField = false
+            else:
+                inField = true
+        if inField:
+            count++
+            if count == n: return buf.length
+        return -1
+
+    // 消费 @f0 的可选 ACK 前导
     func consumeOptionalACK(timeoutMs: int):
-        firstByte = conn.read(timeout=timeoutMs)
-        if firstByte == 'A'(0x41):
-            secondByte = conn.read(timeout=10ms)
-            if secondByte == '\n'(0x0A):
-                return            // 消费 "A\n"
-            elif secondByte != null:
-                buffer.prepend(secondByte)
-            // 消费单字节 "A"
-        elif firstByte != null:
-            buffer.prepend(firstByte)  // 非 ACK 字节，塞回
+        ...（同前）
 
     func reset():
         buffer.clear()
-
-    func prependBytes(data: byte[]):  // 错误恢复
-        buffer = data + buffer
+        // ★ metadataMode 不清零，保留当前模式配置
 ```
 
 ---
@@ -239,6 +317,8 @@ class FrameReader:
 | ACK（带换行） | `A\n` | `41 0A` |
 | ACK（单字节） | `A` | `41` |
 | 错误 | `E` | `45` |
+
+**错误响应 `E` 的触发条件：** 命令格式错误、参数越界、不支持的操作（如向 temp 型号发送不支持的命令）。驱动收到 `E` 后应终止当前操作并上报错误，不应重试同一命令。
 
 ### 3.2 数据帧十六进制展开
 
@@ -317,7 +397,7 @@ func connect():
 
 ### 4.2 配置同步（syncHardwareConfig）
 
-连接后 300ms 自动执行，逐条查询设备当前配置。**查询完后，强制设 BIN=1**。
+连接后 300ms 自动执行，逐条查询设备当前配置。**读取后不做修改**，保持设备已有参数不变。
 
 ```pseudocode
 func syncHardwareConfig():
@@ -333,29 +413,29 @@ func syncHardwareConfig():
     config.triggerEdge       = parseInt(sendCommandExact("@fd TRIG", 1))
     config.triggerCount      = parseInt(sendCommandIdle("@fd TNUM"))
 
-    // —— 强制启用二进制模式 ——
-    // BIN=1：更小的帧（64 字节 vs 192 字节），直接内存读取，无字符串开销
-    sendCommand("@fe BIN 1")
-    config.binaryFormat = true
+    // —— 根据读回配置设置帧读取器模式 ——
+    frameReader.setBinaryMode(config.binaryFormat)
+    // ★ 关键：TIME=1 或 HEAD=1 时启用 metadataMode
+    frameReader.setMetadataMode(config.showTimestamp || config.showSequence)
 
-    frameReader.setBinaryMode(true)  // 帧读取器设为 64 字节模式
     onConfigSynced(config)           // 通知外部配置已就绪
 ```
 
-> **BIN=1 固件兼容说明**：`@fe BIN 1` 后，若后续 `@fd BIN` 返回 `0`，说明该固件不支持二进制模式（如 temp 型号），此时回退为 ASCII 帧读取。
+> **BIN=1 固件兼容说明**：某些固件（如 temp 型号）不支持二进制模式，`@fd BIN` 始终返回 `0`，自动回退为 ASCII 帧读取。向 temp 型号发送 `@fe BIN 1` 时，设备返回 `A`（ACK）但实际不生效，`@fd BIN` 仍返回 `0`。驱动应通过配置同步检测此情况，将 `binaryFormat` 强制设为 `false`。
 
-### 4.3 归一化（applyNormalizedConfig）
+### 4.3 启动前准备（StartAcquisition preamble）
 
-采集启动前的准备工作，保证帧结构稳定可预测。
+采集启动前清理残留数据并配置帧读取器。**此步骤是 `startAcquisition` 的内部子流程**，在 `@f0` 发送之前执行，不应独立调用。
 
 ```pseudocode
-func applyNormalizedConfig():
+func startAcquisitionPreamble():
     writeCommandOnly("@f1")                     // 停止任何残留采集流
-    sendCommand("@fe BIN 1")                   // ★ 强制二进制模式
-    sendCommand("@fe TIME 0")                   // 不显示时间戳
-    sendCommand("@fe HEAD 0")                   // 不显示序号
-    sendCommand("@fe TYPE 0")                   // 软件触发
-    // 保留：thermocoupleTypes、SPS、AVG、TRIG、TNUM
+    drainConnection(conn, waitTime=100ms)       // 排空 TCP 缓冲区
+    frameReader.reset()                         // 清空内部 buffer
+    // ★ 根据当前配置设置帧读取器模式
+    frameReader.setBinaryMode(currentConfig.binaryFormat)
+    frameReader.setMetadataMode(currentConfig.showTimestamp || currentConfig.showSequence)
+    // ★ 注意：不自动发 @fe TIME/HEAD，保持用户配置不变
 ```
 
 ### 4.4 StartAcquisition
@@ -368,11 +448,8 @@ func startAcquisition():
     // 配置归一化
     applyNormalizedConfig()
 
-    // 清空 TCP 缓冲区残留数据（停止后约残留 3000+ 字节）
-    drainConnection(conn, waitTime=100ms)
-
-    // 重置帧读取器（64 字节模式）
-    frameReader.reset()
+    // ★ 启动前准备（停止残留采集 + 排空缓冲区 + 重置帧读取器）
+    startAcquisitionPreamble()
 
     // 发送开始采集
     writeCommandOnly("@f0 FFFF 2")
@@ -404,9 +481,14 @@ func readLoop():
 
         while frameReader.hasCompleteFrame():
             frame = frameReader.readFrame()
-            // 按当前 frameSize 分流解析
-            values = parseBinaryFrame(frame)   // BIN=1 默认走此路
-            // 反转通道顺序
+            // ★ 按当前配置分流解析
+            if currentConfig.binaryFormat:
+                values = parseBinaryFrame(frame)
+            else if currentConfig.showTimestamp || currentConfig.showSequence:
+                (_, _, values) = parseMetadataFrame(frame)
+            else:
+                values = parseASCIIFrame(frame)
+            // 反转通道顺序（串口帧除外，但 TCP 模式下始终需要）
             values = reverse(values)
             // 合法性校验
             if not isValidFrame(values):
@@ -491,6 +573,8 @@ func sendCommandIdle(cmd: string) -> string:
 | `@fd TNUM` | 触发次数 | 可变 | SendCommandIdle |
 | `@fd CHECK` | 开路检测 | 4 字符 | SendCommandExact(4) |
 
+**`@fd CHECK` 响应格式：** 4 位十六进制掩码，每 bit 对应一个通道（bit0=CH0，bit15=CH15），`1` 表示该通道开路。例如 `0003` 表示 CH0 和 CH1 开路，`FFFF` 表示全部通道开路。
+
 ### 5.3 配置设置（@fe）
 
 所有 `@fe` 响应为 `A\n`（ACK）。
@@ -498,6 +582,7 @@ func sendCommandIdle(cmd: string) -> string:
 | 命令 | 参数 | 说明 |
 |------|------|------|
 | `@fe BIN <0\|1>` | `0`=ASCII, `1`=二进制 | **驱动默认强制 `1`** |
+| `@fe MCH <mask>` | 4 位十六进制掩码 | 如 `FFFF`=全通道, `0001`=仅 CH0 |
 | `@fe SPS <n>` | 采样间隔（毫秒） | n = 正整数 |
 | `@fe TIME <0\|1>` | 时间戳显示 | 0=不显示, 1=显示 |
 | `@fe HEAD <0\|1>` | 序号显示 | 0=不显示, 1=显示 |
@@ -532,8 +617,8 @@ func sendCommandIdle(cmd: string) -> string:
 | `@f1` | 停止采集 | writeCommandOnly |
 
 参数说明：
-- `<mask>`：16 位十六进制通道掩码，如 `FFFF`（全通道）、`0001`（仅 CH0）
-- `2`：固定值，触发方式参数
+- `<mask>`：16 位十六进制通道掩码，bit0=CH0，bit15=CH15。如 `FFFF`（全通道）、`0001`（仅 CH0）、`0003`（CH0+CH1）
+- `2`：触发方式参数，对应 `@fd TYPE` 的值（`0`=软件触发, `2`=硬件触发）。驱动默认使用 `2`（硬件触发）以获得连续采集
 
 ---
 
@@ -559,12 +644,28 @@ struct DaqT1603HardwareConfig:
 ### 6.2 Hz ↔ SPS 转换
 
 ```pseudocode
-// 项目层常用 Hz，设备层用 SPS（毫秒）
+// 应用层常用 Hz，设备层用 SPS（毫秒）
 func hzToSpsMs(hz: int) -> int:  return 1000 / hz
 func spsMsToHz(spsMs: int) -> int:  return 1000 / spsMs
 // 10 Hz → SPS=100（即 100ms/帧）
 // SPS=10 → 100 Hz（即 10ms/帧）
 ```
+
+**精度限制（整数除法）：** `1000 / hz` 为整数除法，高频段分辨率低：
+
+| 请求 Hz | 实际 SPS(ms) | 实际 Hz | 偏差 |
+|---------|-------------|---------|------|
+| 1 | 1000 | 1.0 | 0% |
+| 10 | 100 | 10.0 | 0% |
+| 100 | 10 | 100.0 | 0% |
+| 200 | 5 | 200.0 | 0% |
+| 333 | 3 | 333.3 | 0.1% |
+| 500 | 2 | 500.0 | 0% |
+| 501~1000 | **1** | **1000.0** | **≤50%** |
+
+**上限（>500 Hz 均映射到 SPS=1 即 1000 Hz），且设备硬件实际最大约 800 Hz。**
+
+应用层输入范围为 **1~1000 Hz**，驱动负责 `hzToSpsMs` 转换。低于 500 Hz 时精度可接受，高于 500 Hz 数据仅供参考。
 
 ### 6.3 配置下发（ApplyConfig）
 
@@ -584,6 +685,7 @@ func applyConfig(config: DaqT1603HardwareConfig):
 
     localConfig = config
     frameReader.setBinaryMode(config.binaryFormat)
+    frameReader.setMetadataMode(config.showTimestamp || config.showSequence)
 ```
 
 ### 6.4 默认配置
@@ -604,6 +706,8 @@ func applyConfig(config: DaqT1603HardwareConfig):
 ---
 
 ## 7. 发现协议（UDP 广播）
+
+设备发现通过 UDP 广播实现：向端口 **7000** 发送字符串 **`"T1603"`**，设备在同一端口回复设备信息。
 
 ```pseudocode
 func scanDevices(timeoutMs: int = 3000) -> DiscoveredDevice[]:
@@ -686,7 +790,26 @@ func isClosedConnError(err: Error) -> bool:
 | ACK 消费 | 200ms | 等待 @f0 前导 |
 | 缓冲区排空 | 100ms | drainConnection |
 
-### 8.3 采集启停风险点
+### 8.3 断线重连策略
+
+驱动**不自动重连**。readLoop 检测到连接故障后退出，上层通过 `onReadLoopExit` 回调获知断线事件，由用户决定是否重连。重连流程：
+
+```pseudocode
+// 上层处理断线
+onReadLoopExit():
+    acquiring = false
+    connected = false
+    notifyConnectionLost(deviceId, lastError)
+
+// 用户主动重连
+await driver.disconnect()       // 清理旧连接状态
+await driver.connect()          // 重新建立 TCP + 配置同步
+await driver.startAcquisition() // 恢复采集
+```
+
+> **注意**：断线后必须先 `disconnect()` 清理旧状态，再 `connect()` 建立新连接，不可直接 `connect()` 覆盖。
+
+### 8.4 采集启停风险点
 
 **残留数据污染：** `@f1` 停止后 TCP 缓冲区约残留 3000+ 字节，不清空直接 `@f0` 导致帧错位。
 
@@ -717,13 +840,13 @@ close(stopSignal)
 wait(readLoopDone)
 ```
 
-### 8.4 绝对禁止的操作
+### 8.5 绝对禁止的操作
 
 | 禁止 | 后果 |
 |------|------|
 | StopAcquisition 后 Disconnect + 重连 | defer 在新连接上发 @f1，设备混乱 |
 | defer 中无条件发 @f1 | 正常停止时已发，重复发送导致异常 |
-| readLoop 中用 `d.conn` 而非捕获 `conn` | Connect 替换 d.conn 后操作错误连接 |
+| readLoop 中用全局连接引用而非捕获的局部变量 | Connect 替换连接后操作错误连接 |
 | 跳过 drainConnection | 残留数据导致帧错位 |
 | 采集期间发送查询命令 | 数据流与响应混杂 |
 | 未消费前导 ACK（BIN=0 时） | 192 字节帧错位 1 字节 |
@@ -762,74 +885,27 @@ func generateSimulatedData(ch: int, elapsedMs: int) -> float64:
 
 ---
 
-## 10. 数据流架构
-
-### 后端 → 前端事件传递
-
-```pseudocode
-// Go 后端
-TCP 数据帧
-  → parseBinaryFrame() / parseASCIIFrame()
-    → DataPayload
-      → dataSink callback
-        → TemperatureSnapshot channel
-          → relayStream (100ms 节流)
-            → EventsEmit("daq:payload", snapshot)
-
-// TypeScript 前端
-EventsOn("daq:payload", (snapshot) => {
-    store.pendingSnapshots[deviceId] = snapshot
-})
-// 定时刷新（默认 10Hz）
-setInterval(() => flushPendingSnapshots(), 1000 / refreshRateHz)
-```
-
-**前端超时配置：**
-
-| 操作 | 超时 |
-|------|------|
-| 采集操作 | 8s |
-| 配置下发 | 15s |
-
----
-
-## 11. 配置持久化
-
-```pseudocode
-// 文件
-configPath = %APPDATA%/daq-t1603/device-profiles.json
-logDir     = %APPDATA%/daq-t1603/logs/
-
-// 持久化的配置结构
-struct PersistedData:
-    profiles: TemperatureProfile[]
-    autoConnectProfileId: string | null
-
-// 前端持久化（localStorage）
-{
-    refreshRateHz: number     // 默认 10
-    chartYRange: [number, number]
-    selectedChannels: Set<int>
-    theme: "light" | "dark"
-}
-```
-
----
-
-## 12. 注意事项速查
+## 10. 注意事项速查
 
 | # | 注意点 |
 |---|--------|
 | 1 | **BIN 推荐值：1**。驱动连接后强制 `@fe BIN 1`，以 64 字节 float32 LE 接收，效率最高 |
 | 2 | 二进制帧前**可能无 ACK**。部分固件不发 `A`/`A\n`，consumeOptionalACK 超时 200ms 后正常读取即可 |
 | 3 | 设备发送 CH15→CH0，解析后必须 `.reverse()` |
-| 4 | ASCII 帧 192 字节**无换行终止**，按长度截取 |
+| 4 | ASCII 定长帧 192 字节**无换行终止**，按长度截取；变长帧（TIME=1 或 HEAD=1）同样无换行，按字段计数截取 |
 | 5 | `@f0`/`@f1` 走 writeCommandOnly，不进入 pending 队列 |
 | 6 | 采集期间**禁止**查询命令，需先停止 |
 | 7 | 启动采集前必须 drainConnection + reset FrameReader |
 | 8 | 停止→启动是高危操作，必须等 readLoopDone |
-| 9 | readLoop 内捕获连接引用，不用 `d.conn` |
-| 10 | SPS 单位是**毫秒**，项目层可能用 Hz：`Hz = 1000 / SPS` |
+| 9 | readLoop 内捕获连接引用，不直接使用全局连接变量 |
+| 10 | SPS 单位是**毫秒**，应用层可能用 Hz：`Hz = 1000 / SPS` |
 | 11 | temp 型号固件不支持 BIN=1，`@fd BIN` 始终返回 `0`，需回退 ASCII 解析 |
 | 12 | 串口模式下不支持 `@e3`/`@fd`/`@fe`，配置需在 TCP 下完成 |
 | 13 | 模拟模式：`DAQ_T1603_MODE=simulated` |
+| 14 | **TIME=1 或 HEAD=1 时帧格式从 192 字节定长变为空格分隔不定长连续流（无换行）**，FrameReader 必须启用 `metadataMode=true` |
+| 15 | 变长帧的读取方式为**字段计数法**：累积 buffer → 尝试提取 18/17 字段 → 解析校验 → 成功则提取，失败则继续读 |
+| 16 | 变长帧中检测 HEAD vs TIME 的逻辑：首 token 可解析为整数则视为 seq（HEAD），否则视为 ts（TIME） |
+| 17 | 配置下发（ApplyConfig）后必须同步调用 `frameReader.setMetadataMode(config.showTimestamp || config.showSequence)` |
+| 18 | 解析帧时应提取 `HardwareTimestamp`（变长帧中的 Unix 秒浮点值），传递给上层用于数据记录 |
+| 19 | `HardwareTimestamp` 为 Unix 秒（float64，微秒精度），无时间戳时为 0，此时应使用本机接收时间 |
+| 20 | 应用层采样率输入范围为 **1~1000 Hz**，驱动通过 `hzToSpsMs` 转换为设备 SPS 参数 |

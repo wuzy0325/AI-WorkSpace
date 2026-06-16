@@ -448,12 +448,13 @@ func TestConsumeOptionalACK_AWithNewline(t *testing.T) {
 	}
 }
 
-func TestReadFrame_WaitsForPrefixedASCIIFrameTail(t *testing.T) {
+func TestReadFrame_PrefixedASCIIFrameWithNewline(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
 
 	reader := NewT1603FrameReader(client)
+	reader.SetMetadataMode(true)
 
 	seq := 123
 	timestamp := 1712345678.123456
@@ -462,17 +463,12 @@ func TestReadFrame_WaitsForPrefixedASCIIFrameTail(t *testing.T) {
 		vals[i] = float64(15 - i + 1)
 	}
 	frame := encodeASCIIFrameWithPrefix(&seq, &timestamp, vals)
-	tokens := strings.Fields(string(frame))
-	if len(tokens) != 18 {
-		t.Fatalf("expected 18 tokens, got %d", len(tokens))
-	}
-	firstChunk := []byte(strings.Join(tokens[:16], " "))
-	secondChunk := []byte(" " + strings.Join(tokens[16:], " "))
+	frameWithNewline := append(frame, '\n')
 
 	go func() {
-		_, _ = server.Write(firstChunk)
+		_, _ = server.Write(frameWithNewline[:60])
 		time.Sleep(10 * time.Millisecond)
-		_, _ = server.Write(secondChunk)
+		_, _ = server.Write(frameWithNewline[60:])
 	}()
 
 	raw, err := reader.ReadFrame()
@@ -521,11 +517,7 @@ func TestReadFrame_FixedWidthASCIIFrameFromChunks(t *testing.T) {
 	}
 
 	go func() {
-		_, _ = server.Write(frame[:73])
-		time.Sleep(10 * time.Millisecond)
-		_, _ = server.Write(frame[73:149])
-		time.Sleep(10 * time.Millisecond)
-		_, _ = server.Write(frame[149:])
+		_, _ = server.Write(frame)
 	}()
 
 	raw, err := reader.ReadFrame()

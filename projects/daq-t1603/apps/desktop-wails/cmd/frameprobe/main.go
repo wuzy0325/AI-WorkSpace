@@ -18,9 +18,10 @@ func main() {
 	defer conn.Close()
 	fmt.Println("已连接设备 192.168.1.10:9000")
 
-	// 开启时间戳
-	fmt.Println("\n=== 开启时间戳 ===")
+	// 开启时间戳和序列号
+	fmt.Println("\n=== 开启时间戳 + 序列号 ===")
 	sendCmd(conn, "@fe TIME 1")
+	sendCmd(conn, "@fe HEAD 1")
 	time.Sleep(100 * time.Millisecond)
 
 	// 开始采集
@@ -28,8 +29,9 @@ func main() {
 	sendCmd(conn, "@f0 FFFF 2")
 	time.Sleep(500 * time.Millisecond)
 
-	// 用 FrameReader 读取帧
+	// 用 FrameReader 读取帧（开启时间戳模式）
 	reader := protocol.NewT1603FrameReader(conn)
+	reader.SetMetadataMode(true)
 	reader.ConsumeOptionalACK(500 * time.Millisecond)
 
 	fmt.Println("\n=== 解析帧 ===")
@@ -43,7 +45,6 @@ func main() {
 
 		result, err := protocol.ParseTCPFrameEx(frame)
 		if err != nil {
-			// 打印更多原始数据帮助调试
 			raw := string(frame)
 			if len(raw) > 120 {
 				raw = raw[:120] + "..."
@@ -52,8 +53,14 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("帧%d: 时间戳=%.6f 序列号=%d 温度=[%.2f, %.2f, ..., %.2f] (共%d通道)\n",
-			i+1, result.HardwareTimestamp, result.SequenceNumber,
+		hwTime := ""
+		if result.HardwareTimestamp > 0 {
+			sec := int64(result.HardwareTimestamp)
+			nsec := int64((result.HardwareTimestamp - float64(sec)) * 1e9)
+			hwTime = time.Unix(sec, nsec).Format("15:04:05.000")
+		}
+		fmt.Printf("帧%d: 时间戳=%s 序列号=%d 温度=[%.2f, %.2f, ..., %.2f] (共%d通道)\n",
+			i+1, hwTime, result.SequenceNumber,
 			result.Temperatures[0], result.Temperatures[1],
 			result.Temperatures[15], len(result.Temperatures))
 	}
@@ -64,6 +71,7 @@ func main() {
 
 	// 恢复
 	sendCmd(conn, "@fe TIME 0")
+	sendCmd(conn, "@fe HEAD 0")
 	fmt.Println("\n完成")
 }
 
