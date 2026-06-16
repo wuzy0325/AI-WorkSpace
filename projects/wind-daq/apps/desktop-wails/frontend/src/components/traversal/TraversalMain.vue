@@ -212,7 +212,15 @@ const currentPointSummary = computed(() => ({
   beta: traversalStore.status?.currentPoint?.beta?.toFixed(2) || '--'
 }))
 
-const prbLabel = computed(() => traversalStore.config?.prbFile?.fileName || 'No PRB')
+// 新算法使用 calibrationCsvFile，旧算法和多PRB使用 prbFile/multiPrb
+const prbLabel = computed(() => {
+  const cfg = traversalStore.config
+  if (!cfg) return 'No PRB'
+  if (cfg.interpolationAlgorithm === 'new') {
+    return cfg.calibrationCsvFile?.fileName || 'No PRB'
+  }
+  return cfg.prbFile?.fileName || (cfg.useMultiPrb && cfg.multiPrb?.files.length ? `${cfg.multiPrb.files.length} PRBs` : 'No PRB')
+})
 
 const hasRealtimeResult = computed(() => traversalStore.realtimeResult !== null)
 
@@ -379,11 +387,15 @@ let realtimeThrottleTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRealtimeInput: TraversalInterpolationInput | null = null
 let pendingRealtimeConfig: TraversalTestConfig | undefined
 watch(
-  [liveInterpolationInput, () => currentConfig.value?.prbFile?.filePath ?? null],
+  [liveInterpolationInput, () => currentConfig.value?.interpolationAlgorithm === 'new'
+    ? currentConfig.value?.calibrationCsvFile?.filePath ?? null
+    : currentConfig.value?.prbFile?.filePath ?? null],
   ([input]) => {
+    // 根据算法类型互斥判断：新算法使用 calibrationCsvFile，旧算法使用 prbFile 或 multiPrb
     const hasDataset = Boolean(
-      currentConfig.value?.prbFile ||
-      (currentConfig.value?.useMultiPrb && currentConfig.value?.multiPrb?.files.length)
+      currentConfig.value?.interpolationAlgorithm === 'new'
+        ? currentConfig.value?.calibrationCsvFile
+        : currentConfig.value?.prbFile || (currentConfig.value?.useMultiPrb && currentConfig.value?.multiPrb?.files.length)
     )
     if (!input || !hasDataset) {
       pendingRealtimeInput = null
