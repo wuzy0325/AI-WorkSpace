@@ -24,17 +24,23 @@ const (
 
 // Config 校准任务通用配置
 type Config struct {
-	TaskID          string         `json:"taskId"`
-	DeviceID        string         `json:"deviceId"`
-	Type            string         `json:"type"`
-	Channels        []int          `json:"channels"`
-	PressurePoints  []float64      `json:"pressurePoints"`
-	AverageSamples  int            `json:"averageSamples"`
-	ProbeChannels   []ProbeChannel `json:"probeChannels,omitempty"`
-	Points          []CalPoint     `json:"points,omitempty"`
-	SamplesPerPoint int            `json:"samplesPerPoint,omitempty"`
-	DwellTimeMs     int            `json:"dwellTimeMs,omitempty"`
-	StopOnError     bool           `json:"stopOnError,omitempty"`
+	TaskID                 string                     `json:"taskId"`
+	DeviceID               string                     `json:"deviceId"`
+	Type                   string                     `json:"type"`
+	Channels               []int                      `json:"channels"`
+	PressurePoints         []float64                  `json:"pressurePoints"`
+	AverageSamples         int                        `json:"averageSamples"`
+	ProbeChannels          []ProbeChannel             `json:"probeChannels,omitempty"`
+	Points                 []CalPoint                 `json:"points,omitempty"`
+	SamplesPerPoint        int                        `json:"samplesPerPoint,omitempty"`
+	DwellTimeMs            int                        `json:"dwellTimeMs,omitempty"`
+	StopOnError            bool                       `json:"stopOnError,omitempty"`
+	Name                   string                     `json:"name"`                             // 校准任务名称
+	SavePath               string                     `json:"savePath,omitempty"`               // 数据保存路径
+	MotionAxes             []MotionAxisConfig         `json:"motionAxes,omitempty"`             // 运动轴配置
+	SphereTankGate         *SphereTankGateConfig      `json:"sphereTankGate,omitempty"`         // 球罐闸门配置
+	AcquisitionSampling    *AcquisitionSamplingConfig `json:"acquisitionSampling,omitempty"`    // 采集采样配置
+	TotalTemperatureConfig *TotalTemperatureConfig    `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
 }
 
 // ProbeChannel 探针通道配置，将逻辑角色映射到物理通道
@@ -62,12 +68,16 @@ type PointResult struct {
 
 // Status 校准任务状态
 type Status struct {
-	TaskID       string        `json:"taskId"`
-	State        State         `json:"state"`
-	CurrentPoint int           `json:"currentPoint"`
-	TotalPoints  int           `json:"totalPoints"`
-	Results      []PointResult `json:"results"`
-	LastError    string        `json:"lastError,omitempty"`
+	TaskID          string      `json:"taskId"`
+	State           State       `json:"state"`
+	CurrentPoint    int         `json:"currentPoint"`
+	TotalPoints     int         `json:"totalPoints"`
+	LastError       string      `json:"lastError,omitempty"`
+	Type            string      `json:"type"`
+	CompletedPoints int         `json:"completedPoints"`
+	Progress        float64     `json:"progress"` // 百分比 0-100
+	StartTime       int64       `json:"startTime,omitempty"`
+	DataPoints      []DataPoint `json:"dataPoints,omitempty"`
 }
 
 // ==================== 五孔探针类型 ====================
@@ -218,4 +228,91 @@ type TotalTemperatureDataPoint struct {
 	AtmosphericTemperature float64 `json:"atmosphericTemperature"`
 	StdDev                 float64 `json:"stdDev"`
 	Timestamp              int64   `json:"timestamp"`
+}
+
+// ==================== 运动轴配置 ====================
+
+// MotionAxisConfig 校准运动轴配置，将逻辑轴名映射到物理运动控制器
+type MotionAxisConfig struct {
+	ControllerID string `json:"controllerId"` // 运动控制器ID
+	Axis         string `json:"axis"`         // 轴名称（如 "x", "y", "z"）
+	Name         string `json:"name"`         // 逻辑轴名（如 "α", "β", "θ"）
+}
+
+// ==================== 球罐闸门配置 ====================
+
+// SphereTankGateConfig 球罐闸门判定配置
+type SphereTankGateConfig struct {
+	Enabled           bool       `json:"enabled"`           // 是否启用球罐判定
+	WaitTimeSec       float64    `json:"waitTimeSec"`       // 等待稳定时间（秒）
+	StableTimeChannel ChannelRef `json:"stableTimeChannel"` // 稳定时间通道引用
+}
+
+// ==================== 采集采样配置 ====================
+
+// AcquisitionSamplingConfig 采集采样参数配置
+type AcquisitionSamplingConfig struct {
+	BatchTimeoutMs      int `json:"batchTimeoutMs,omitempty"`      // 批量读取超时（毫秒）
+	BatchPollIntervalMs int `json:"batchPollIntervalMs,omitempty"` // 批量读取轮询间隔（毫秒）
+	BatchMaxAgeMs       int `json:"batchMaxAgeMs,omitempty"`       // 数据最大年龄（毫秒）
+}
+
+// ==================== 校准事件类型 ====================
+
+// ProgressEvent 校准进度事件
+type ProgressEvent struct {
+	TaskID          string    `json:"taskId"`
+	WindowTag       string    `json:"windowTag"`
+	CurrentPoint    CalPoint  `json:"currentPoint"`
+	CompletedPoints int       `json:"completedPoints"`
+	TotalPoints     int       `json:"totalPoints"`
+	LatestData      DataPoint `json:"latestData,omitempty"`
+	Timestamp       int64     `json:"timestamp"`
+}
+
+// CompleteEvent 校准完成事件
+type CompleteEvent struct {
+	TaskID        string `json:"taskId"`
+	WindowTag     string `json:"windowTag"`
+	Success       bool   `json:"success"`
+	Error         string `json:"error,omitempty"`
+	Duration      int64  `json:"duration"` // 毫秒
+	TotalPoints   int    `json:"totalPoints"`
+	SuccessPoints int    `json:"successPoints"`
+	FilePath      string `json:"filePath,omitempty"`
+}
+
+// RealtimeEvent 校准实时数据事件
+type RealtimeEvent struct {
+	TaskID               string                `json:"taskId"`
+	WindowTag            string                `json:"windowTag"`
+	Type                 CalibrationType       `json:"type"`
+	Timestamp            int64                 `json:"timestamp"`
+	FiveHoleRaw          *FiveHoleRawData      `json:"fiveHoleRaw,omitempty"`
+	FiveHoleCoefficients *FiveHoleCoefficients `json:"fiveHoleCoefficients,omitempty"`
+	Point                *CalPoint             `json:"point,omitempty"`
+}
+
+// EventPublisher 校准事件发布接口
+type EventPublisher interface {
+	OnProgress(event ProgressEvent)
+	OnComplete(event CompleteEvent)
+	OnRealtime(event RealtimeEvent)
+}
+
+// ==================== 校准导出载荷 ====================
+
+// ExportPayload 校准导出数据
+type ExportPayload struct {
+	Type       CalibrationType `json:"type"`
+	Config     Config          `json:"config"`
+	DataPoints []DataPoint     `json:"dataPoints"`
+}
+
+// ModuleResult 校准模块结果
+type ModuleResult struct {
+	TaskID     string          `json:"taskId"`
+	Type       CalibrationType `json:"type"`
+	Config     Config          `json:"config"`
+	DataPoints []DataPoint     `json:"dataPoints"`
 }

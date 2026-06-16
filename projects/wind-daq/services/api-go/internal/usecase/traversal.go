@@ -17,11 +17,11 @@ import (
 
 // 运动完成等待超时和轮询间隔
 const (
-	motionCompleteTimeoutMs = 120000
-	motionCompletePollMs    = 100
+	motionCompleteTimeoutMs   = 120000
+	motionCompletePollMs      = 100
 	acquisitionBatchTimeoutMs = 2000
 	acquisitionBatchPollMs    = 10
-	checkpointInterval       = 10 // 每完成10个点保存一次断点
+	checkpointInterval        = 10 // 每完成10个点保存一次断点
 )
 
 type TraversalManager struct {
@@ -39,8 +39,8 @@ type TraversalManager struct {
 	lastCheckpointPath string
 
 	// 暂停/停止控制
-	isStopped          bool
-	isPaused           bool
+	isStopped            bool
+	isPaused             bool
 	motionPauseCancelled bool
 
 	// 数据验证配置
@@ -278,11 +278,11 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	dwellTime := config.DwellTimeMs
 	result := traversal.PointResult{
-		PointIndex:      pointIndex,
-		Point:           point,
-		Timestamp:       time.Now().UnixMilli(),
-		Values:          resultValues,
-		SampleCount:     samplesPerPoint,
+		PointIndex:       pointIndex,
+		Point:            point,
+		Timestamp:        time.Now().UnixMilli(),
+		Values:           resultValues,
+		SampleCount:      samplesPerPoint,
 		DwellTimeElapsed: dwellTime,
 	}
 	if m.sink != nil {
@@ -410,7 +410,7 @@ func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64
 			continue
 		}
 		// 计算百分比变化
-		change := abs((curVal - prevVal) / prevVal) * 100
+		change := abs((curVal-prevVal)/prevVal) * 100
 		if change > threshold {
 			return false
 		}
@@ -585,8 +585,8 @@ func isSubState(s traversal.State) bool {
 type traversalAPIConfig struct {
 	Name   string `json:"name"`
 	Layout struct {
-		Pattern    string                       `json:"pattern"`
-		SnakeOrder bool                         `json:"snakeOrder"`
+		Pattern    string `json:"pattern"`
+		SnakeOrder bool   `json:"snakeOrder"`
 		Line       *struct {
 			StartX        float64                 `json:"startX"`
 			StartY        float64                 `json:"startY"`
@@ -629,7 +629,7 @@ type traversalAPIConfig struct {
 			Enabled bool `json:"enabled"`
 		} `json:"probeChannels"`
 	} `json:"channels"`
-	DwellTimeMs    int `json:"dwellTimeMs"`
+	DwellTimeMs     int `json:"dwellTimeMs"`
 	SamplesPerPoint int `json:"samplesPerPoint"`
 }
 
@@ -739,11 +739,11 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		samplesPerPoint = 1
 	}
 	config := traversal.Config{
-		TaskID:         fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
-		DeviceID:       deviceID,
-		Channels:       channels,
-		Path:           points,
-		DwellTimeMs:    cfg.DwellTimeMs,
+		TaskID:          fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
+		DeviceID:        deviceID,
+		Channels:        channels,
+		Path:            points,
+		DwellTimeMs:     cfg.DwellTimeMs,
 		SamplesPerPoint: samplesPerPoint,
 	}
 	if err := m.Start(config); err != nil {
@@ -802,6 +802,27 @@ func abs(f float64) float64 {
 		return -f
 	}
 	return f
+}
+
+// valuesForChannels 从数据载荷中提取指定通道索引的值
+func valuesForChannels(payload device.DataPayload, channels []int) map[int]float64 {
+	valuesByIndex := make(map[int]float64, len(payload.Channels))
+	for i, value := range payload.Channels {
+		chIdx := i
+		if i < len(payload.ChannelIndices) {
+			chIdx = payload.ChannelIndices[i]
+		}
+		valuesByIndex[chIdx] = value
+	}
+
+	values := make(map[int]float64, len(channels))
+	for _, channel := range channels {
+		value, ok := valuesByIndex[channel]
+		if ok {
+			values[channel] = value
+		}
+	}
+	return values
 }
 
 func availableAxisTargets(status motion.ControllerStatus, point traversal.Point) map[motion.AxisName]float64 {

@@ -1,38 +1,32 @@
 <script setup lang="ts">
-import { storeToRefs } from 'pinia'
-import { useThemeStore } from '@stores/themeStore'
-import { Sun, Moon, Activity } from '@lucide/vue'
+import { Play, Square, Circle, Activity } from '@lucide/vue'
+import UiButton from '@components/ui/UiButton.vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
 type MainViewMode = 'chart' | 'table' | 'both' | 'overview'
 
 const props = withDefaults(
   defineProps<{
-    locale: 'zh' | 'en'
     version: string
     isAcquiring: boolean
+    isRecording?: boolean
     activePage: MainShellPage
     viewMode: MainViewMode
     t: Record<string, string>
   }>(),
-  {}
+  {
+    isRecording: false,
+  }
 )
 
 const emit = defineEmits<{
-  (e: 'set-locale', locale: 'zh' | 'en'): void
   (e: 'set-view-mode', mode: MainViewMode): void
+  (e: 'start'): void
+  (e: 'stop'): void
+  (e: 'toggle-recording'): void
 }>()
 
-const themeStore = useThemeStore()
-const { theme } = storeToRefs(themeStore)
-
 const dashboardModes: MainViewMode[] = ['chart', 'table', 'both', 'overview']
-
-function themeToggleLabel(): string {
-  return theme.value === 'dark'
-    ? (props.t.toggleToLightTheme || '切换为浅色模式')
-    : (props.t.toggleToDarkTheme || '切换为深色模式')
-}
 
 function modeLabel(mode: MainViewMode): string {
   if (mode === 'chart') return props.t.chartMode || '图表'
@@ -83,50 +77,36 @@ function activePageLabel(): string {
         </div>
       </div>
 
-      <!-- Right Section -->
+      <!-- Right Section: 核心操作按钮 -->
       <div data-test="topbar-utility-group" class="main-topbar__actions">
-        <!-- Status Pill -->
-        <div
-          data-test="system-status-pill"
-          class="main-topbar__status"
-          :class="isAcquiring ? 'main-topbar__status--active' : 'main-topbar__status--idle'"
-        >
-          <span class="main-topbar__status-dot" :class="{ 'status-pulse': isAcquiring }"></span>
-          <span data-test="system-status-label" class="main-topbar__status-text">{{ isAcquiring ? (t.acquiring || '采集开启') : (t.idle || '就绪') }}</span>
-        </div>
-
-        <!-- Theme Toggle -->
+        <!-- 开始/停止采集按钮 -->
         <UiButton
-          quaternary
-          size="md"
-          class="main-topbar__icon-btn"
-          @click="themeStore.toggleTheme()"
-          :aria-label="themeToggleLabel()"
-          :title="themeToggleLabel()"
+          data-test="acquisition-toggle-btn"
+          class="main-topbar__btn"
+          :class="isAcquiring ? 'btn-stop' : 'btn-start'"
+          @click="isAcquiring ? emit('stop') : emit('start')"
+          :title="isAcquiring ? (t.stopAcquisition || '停止采集') : (t.startAcquisition || '开始采集')"
         >
           <template #icon>
-            <Sun v-if="theme === 'dark'" class="w-4 h-4" />
-            <Moon v-else class="w-4 h-4" />
+            <Play v-if="!isAcquiring" class="w-4 h-4 fill-current" />
+            <Square v-else class="w-4 h-4 fill-current" />
           </template>
+          {{ isAcquiring ? (t.stopAcquisition || '停止采集') : (t.startAcquisition || '开始采集') }}
         </UiButton>
 
-        <!-- Locale Switch -->
-        <div class="main-topbar__locale">
-          <button
-            class="main-topbar__locale-btn"
-            :class="{ 'main-topbar__locale-btn--active': locale === 'zh' }"
-            @click="emit('set-locale', 'zh')"
-          >
-            中文
-          </button>
-          <button
-            class="main-topbar__locale-btn"
-            :class="{ 'main-topbar__locale-btn--active': locale === 'en' }"
-            @click="emit('set-locale', 'en')"
-          >
-            EN
-          </button>
-        </div>
+        <!-- 开始/停止记录按钮 -->
+        <UiButton
+          data-test="recording-toggle-btn"
+          class="main-topbar__btn main-topbar__btn--with-text btn-record"
+          :class="{ active: isRecording }"
+          @click="emit('toggle-recording')"
+          :title="isRecording ? (t.stopRecording || '停止记录') : (t.startRecording || '开始记录')"
+        >
+          <template #icon>
+            <Circle class="w-4 h-4 fill-current" />
+          </template>
+          {{ isRecording ? (t.stopRecording || '停止记录') : (t.startRecording || '开始记录') }}
+        </UiButton>
 
         <!-- Version -->
         <span data-test="topbar-version-text" class="main-topbar__version">v{{ version }}</span>
@@ -186,7 +166,7 @@ function activePageLabel(): string {
 }
 
 :root[data-theme='light'] .main-topbar__title {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .main-topbar__title-accent {
@@ -202,32 +182,32 @@ function activePageLabel(): string {
   margin-top: 0.125rem;
 }
 
+/* 副标题在小屏幕上自然隐藏，不使用生硬断点 */
+.main-topbar__subtitle {
+  display: block;
+}
+
 @media (max-width: 1280px) {
   .main-topbar__subtitle {
     display: none;
   }
 }
 
-@media (min-width: 1280px) {
-  .main-topbar__subtitle {
-    display: block;
-  }
-}
-
+/* 视图模式导航：使用更紧凑的 pill 设计 */
 .main-topbar__nav {
   display: flex;
   align-items: center;
   gap: 0.125rem;
   padding: 0.25rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--bg-canvas) 80%, transparent);
   border-radius: 0.625rem;
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-default);
 }
 
 :root[data-theme='light'] .main-topbar__nav {
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: color-mix(in srgb, var(--bg-canvas) 80%, transparent);
+  border: 1px solid var(--border-default);
 }
 
 .main-topbar__nav-btn {
@@ -245,38 +225,38 @@ function activePageLabel(): string {
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn {
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .main-topbar__nav-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn:hover {
   color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 .main-topbar__nav-btn--active {
-  background: rgba(255, 255, 255, 0.1) !important;
+  background: var(--bg-panel-strong) !important;
   color: var(--text-primary) !important;
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn--active {
-  background: rgba(255, 255, 255, 0.9) !important;
+  background: var(--bg-panel-strong) !important;
   color: var(--text-primary) !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .main-topbar__nav-btn--active:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: var(--bg-panel-strong) !important;
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn--active:hover {
-  background: rgba(255, 255, 255, 1) !important;
+  background: var(--bg-panel-strong) !important;
 }
 
 .main-topbar__actions {
@@ -286,112 +266,63 @@ function activePageLabel(): string {
   flex-shrink: 0;
 }
 
-.main-topbar__status {
+/* 顶部栏操作按钮样式 */
+:deep(.main-topbar__btn) {
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.625rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.main-topbar__status--active {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
-  color: var(--accent-primary);
-}
-
-.main-topbar__status--idle {
-  background: rgba(148, 163, 184, 0.1);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  color: var(--text-muted);
-}
-
-.main-topbar__status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.status-pulse {
-  animation: status-pulse 2s ease-in-out infinite;
-}
-
-@keyframes status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.main-topbar__icon-btn {
-  width: 32px;
-  height: 32px;
-}
-
-.main-topbar__locale {
-  display: flex;
-  align-items: center;
-  padding: 0.25rem;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 0.625rem;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  gap: 0.125rem;
-}
-
-:root[data-theme='light'] .main-topbar__locale {
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.main-topbar__locale-btn {
-  padding: 0.375rem 0.75rem;
-  font-size: var(--font-size-2xs);
-  font-weight: 500;
-  color: var(--text-muted);
-  border-radius: 0.5rem;
-  transition: all 0.2s ease;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  letter-spacing: 0.02em;
-}
-
-:root[data-theme='light'] .main-topbar__locale-btn {
-  color: var(--text-secondary);
-}
-
-.main-topbar__locale-btn:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
-}
-
-:root[data-theme='light'] .main-topbar__locale-btn:hover {
-  color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.main-topbar__locale-btn--active {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: var(--text-primary) !important;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
-:root[data-theme='light'] .main-topbar__locale-btn--active {
-  background: rgba(255, 255, 255, 0.9) !important;
-  color: var(--text-primary) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+:deep(.main-topbar__btn):hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
-.main-topbar__locale-btn--active:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+:deep(.btn-start) {
+  background: var(--accent-primary);
+  color: white;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
-:root[data-theme='light'] .main-topbar__locale-btn--active:hover {
-  background: rgba(255, 255, 255, 1) !important;
+:deep(.btn-start):hover {
+  background: var(--accent-primary-core-strong);
+}
+
+:deep(.btn-stop) {
+  background: rgba(244, 63, 94, 0.1);
+  color: var(--accent-danger);
+  border: 1px solid rgba(244, 63, 94, 0.2);
+}
+
+:deep(.btn-stop):hover {
+  background: rgba(244, 63, 94, 0.2);
+}
+
+:deep(.btn-record) {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+:deep(.btn-record.active) {
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+  color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 30%, transparent);
+  /* 使用更 subtle 的呼吸动画，降低视觉干扰 */
+  animation: pulse-record 3s ease-in-out infinite;
+}
+
+@keyframes pulse-record {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-danger) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-danger) 0%, transparent);
+  }
 }
 
 .main-topbar__version {
@@ -399,20 +330,12 @@ function activePageLabel(): string {
   font-weight: 500;
   color: var(--text-muted);
   font-family: ui-monospace, monospace;
+  display: block;
+  opacity: 0.6;
+  margin-left: 0.5rem;
 }
 
-@media (max-width: 1536px) {
-  .main-topbar__version {
-    display: none;
-  }
-}
-
-@media (min-width: 1536px) {
-  .main-topbar__version {
-    display: block;
-  }
-}
-
+/* 在较小屏幕上隐藏视图模式切换，用户仍可通过其他方式切换 */
 @media (max-width: 1024px) {
   .main-topbar__nav {
     display: none;

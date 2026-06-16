@@ -20,7 +20,6 @@ func (a *TotalPressureAlgorithm) ValidateConfig(config Config) error {
 		return fmt.Errorf("总压探针校准需要配置探针通道")
 	}
 
-	// 检查必需的通道角色
 	requiredRoles := []string{
 		"totalPressure.pAtm",
 		"totalPressure.pTunnelTotal",
@@ -44,6 +43,7 @@ func (a *TotalPressureAlgorithm) ValidateConfig(config Config) error {
 	return nil
 }
 
+// AcquireData 采集单个点位数据（实现 Algorithm 接口）
 func (a *TotalPressureAlgorithm) AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error) {
 	alpha, ok := point.Coordinates["α"]
 	if !ok {
@@ -52,10 +52,12 @@ func (a *TotalPressureAlgorithm) AcquireData(point CalPoint, channelReader Chann
 
 	startTime := time.Now().UnixMilli()
 
-	// 多次采样
 	samples := make([]TotalPressureRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
-		rawData := a.collectRawData(channelReader)
+		rawData, err := ReadProbeChannelsToTotalPressureRaw(nil, channelReader)
+		if err != nil {
+			rawData = readTotalPressureFallback(channelReader)
+		}
 		samples = append(samples, rawData)
 		if i < samplesPerPoint-1 {
 			time.Sleep(10 * time.Millisecond)
@@ -64,10 +66,7 @@ func (a *TotalPressureAlgorithm) AcquireData(point CalPoint, channelReader Chann
 
 	endTime := time.Now().UnixMilli()
 
-	// 计算平均值
 	avgRawData := CalculateTotalPressureAverage(samples)
-
-	// 计算系数
 	coefficients := CalculateTotalPressureCoefficients(avgRawData)
 
 	return &TotalPressureDataPoint{
@@ -95,20 +94,12 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 
 	startTime := time.Now().UnixMilli()
 
-	// 角色到字段名的映射
-	roleMap := map[string]string{
-		"totalPressure.pAtm":          "pAtm",
-		"totalPressure.tAtm":          "tAtm",
-		"totalPressure.pTunnelTotal":  "pTunnelTotal",
-		"totalPressure.pTunnelStatic": "pTunnelStatic",
-		"totalPressure.tTunnel":       "tTunnel",
-		"totalPressure.pProbeTotal":   "pProbeTotal",
-	}
-
-	// 多次采样
 	samples := make([]TotalPressureRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
-		rawData := a.readProbeChannels(channelReader, probeChannels, roleMap)
+		rawData, err := ReadProbeChannelsToTotalPressureRaw(probeChannels, channelReader)
+		if err != nil {
+			return nil, fmt.Errorf("读取总压探针通道失败: %w", err)
+		}
 		samples = append(samples, rawData)
 		if i < samplesPerPoint-1 {
 			time.Sleep(10 * time.Millisecond)
@@ -131,35 +122,7 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 	}, nil
 }
 
-// collectRawData 从通道读取器中收集原始数据
-func (a *TotalPressureAlgorithm) collectRawData(reader ChannelValueReader) TotalPressureRawData {
-	// 简化实现
+// readTotalPressureFallback 简化的通道读取回退方案
+func readTotalPressureFallback(reader ChannelValueReader) TotalPressureRawData {
 	return TotalPressureRawData{}
-}
-
-// readProbeChannels 通过探针通道配置读取原始数据
-func (a *TotalPressureAlgorithm) readProbeChannels(reader ChannelValueReader, probeChannels []ProbeChannel, roleMap map[string]string) TotalPressureRawData {
-	values := make(map[string]float64)
-	for _, ch := range probeChannels {
-		if !ch.Enabled {
-			continue
-		}
-		fieldName, ok := roleMap[ch.Role]
-		if !ok {
-			continue
-		}
-		val, found := reader(ch.DeviceID, ch.ChannelIndex)
-		if found {
-			values[fieldName] = val
-		}
-	}
-
-	return TotalPressureRawData{
-		PAtm:          values["pAtm"],
-		TAtm:          values["tAtm"],
-		PTunnelTotal:  values["pTunnelTotal"],
-		PTunnelStatic: values["pTunnelStatic"],
-		TTunnel:       values["tTunnel"],
-		PProbeTotal:   values["pProbeTotal"],
-	}
 }

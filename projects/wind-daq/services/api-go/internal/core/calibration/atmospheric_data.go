@@ -11,13 +11,13 @@ type AtmosphericDataCalculator struct{}
 
 // 大气数据计算常数
 const (
-	atmR      = 287.05 // 气体常数 J/(kg·K)
-	atmP0     = 101325 // 标准海平面气压 Pa
-	atmT0     = 288.15 // 标准海平面温度 K
-	atmRHO0   = 1.225  // 标准海平面空气密度 kg/m³
-	atmGAMMA  = 1.4    // 空气绝热指数
-	atmCCOEFF  = 20.047 // 声速计算系数 (文档P10: C=20.047)
-	atmRECOVERY = 0.9   // 温度传感器恢复系数 (默认值)
+	atmR        = 287.05 // 气体常数 J/(kg·K)
+	atmP0       = 101325 // 标准海平面气压 Pa
+	atmT0       = 288.15 // 标准海平面温度 K
+	atmRHO0     = 1.225  // 标准海平面空气密度 kg/m³
+	atmGAMMA    = 1.4    // 空气绝热指数
+	atmCCOEFF   = 20.047 // 声速计算系数 (文档P10: C=20.047)
+	atmRECOVERY = 0.9    // 温度传感器恢复系数 (默认值)
 )
 
 // NewAtmosphericDataCalculator 创建飞行大气数据计算器实例
@@ -110,7 +110,7 @@ func (c *AtmosphericDataCalculator) CalculateAll(Pt, Ps, TAT float64, r ...float
 	Qc := c.CalculateQc(Pt, Ps)
 	CAS := c.CalculateCAS(Qc)
 	TASDensity := c.CalculateTASByDensity(Ps, Qc, SAT)
-	TASMach := c.CalculateTASByDensity(Ps, Qc, SAT)
+	TASMach := c.CalculateTASByMach(Ma, SAT)
 
 	return AtmosphericDataResult{
 		MachNumber: Ma,

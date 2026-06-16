@@ -28,7 +28,12 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
+/* 导航栏展开状态：使用点击切换代替 hover，避免误触和布局跳动 */
 const isExpanded = ref(false)
+
+function toggleExpand(): void {
+  isExpanded.value = !isExpanded.value
+}
 
 function getIconComponent(iconType: string | undefined) {
   if (iconType === 'IO') return IconDashboard
@@ -44,8 +49,6 @@ function getIconComponent(iconType: string | undefined) {
   <aside
     class="app-rail-nav"
     :class="{ 'app-rail-nav--expanded': isExpanded }"
-    @mouseenter="isExpanded = true"
-    @mouseleave="isExpanded = false"
   >
     <nav class="app-rail-nav__menu">
       <UiButton
@@ -71,6 +74,21 @@ function getIconComponent(iconType: string | undefined) {
     </nav>
 
     <div class="app-rail-nav__footer">
+      <!-- 展开/收起切换按钮 -->
+      <UiButton
+        quaternary
+        size="sm"
+        class="app-rail-nav__button app-rail-nav__button--toggle"
+        :aria-label="isExpanded ? '收起导航' : '展开导航'"
+        :title="isExpanded ? '收起导航' : '展开导航'"
+        @click="toggleExpand"
+      >
+        <template #icon>
+          <svg v-if="isExpanded" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>
+          <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
+        </template>
+        <span v-if="isExpanded" class="app-rail-nav__label">收起</span>
+      </UiButton>
       <UiButton
         quaternary
         size="sm"
@@ -154,6 +172,15 @@ function getIconComponent(iconType: string | undefined) {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* 展开/收起按钮使用更明显的视觉区分 */
+.app-rail-nav__button--toggle {
+  color: var(--text-muted);
+}
+
+.app-rail-nav__button--toggle:hover {
+  color: var(--text-primary);
 }
 
 .app-rail-nav__footer {

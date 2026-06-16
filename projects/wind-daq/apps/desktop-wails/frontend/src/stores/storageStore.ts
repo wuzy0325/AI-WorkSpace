@@ -23,7 +23,7 @@ export interface StorageSettings {
 
 const CONFIG_KEY = 'storage-settings'
 
-const DEFAULT_SETTINGS: StorageSettings = {
+export const DEFAULT_SETTINGS: StorageSettings = {
   baseDirectory: 'data/recordings',
   filePrefix: 'run',
   autoStartOnAcquisition: false,
@@ -72,6 +72,7 @@ export const useStorageStore = defineStore('storage', () => {
       }
     } catch (err) {
       console.error('保存存储设置失败:', err)
+      throw err
     }
   }
 

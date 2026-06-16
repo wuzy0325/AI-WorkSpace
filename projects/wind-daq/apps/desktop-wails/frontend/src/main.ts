@@ -1,6 +1,7 @@
 import { createApp, type Component } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
+import router from './router'
 import { useThemeStore } from './stores/themeStore'
 import { container } from './core/container'
 import './styles.css'
@@ -31,6 +32,7 @@ async function bootstrap(): Promise<void> {
   const app = createApp(await resolveRootComponent())
   const pinia = createPinia()
   app.use(pinia)
+  app.use(router)
 
   // 初始化主题
   useThemeStore().initializeTheme()

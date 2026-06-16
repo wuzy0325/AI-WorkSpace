@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// TotalTemperatureAlgorithm 总温探针校准算法
 // 采用手动控制模式：用户手动调整风洞工况，系统实时监控马赫数和温度稳定性
 type TotalTemperatureAlgorithm struct{}
 
@@ -47,9 +48,10 @@ func (a *TotalTemperatureAlgorithm) ValidateConfig(config Config) error {
 	return nil
 }
 
+// AcquireData 采集单个点位数据（实现 Algorithm 接口）
+// 总温校准使用手动控制模式，不支持自动循环采集
 func (a *TotalTemperatureAlgorithm) AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error) {
-	// 总温校准使用 AcquireDataWithChannels 更合适
-	return nil, fmt.Errorf("总温校准请使用 AcquireDataWithChannels 方法")
+	return nil, fmt.Errorf("总温校准使用手动控制模式，请使用 AcquireDataWithChannels 方法")
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据
@@ -141,6 +143,17 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 	}, nil
 }
 
+// ReacquirePoint 重新采集指定工况点
+func (a *TotalTemperatureAlgorithm) ReacquirePoint(
+	point CalPoint,
+	channelReader ChannelValueReader,
+	probeChannels []ProbeChannel,
+	samplesPerPoint int,
+	sampleInterval time.Duration,
+) (*TotalTemperatureDataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, probeChannels, samplesPerPoint, sampleInterval)
+}
+
 // CheckStability 检测温度稳定性
 func (a *TotalTemperatureAlgorithm) CheckStability(
 	channelReader ChannelValueReader,
@@ -178,6 +191,36 @@ func (a *TotalTemperatureAlgorithm) ReadMachNumber(
 	}
 
 	return CalculateMachNumber(*totalPressure, *staticPressure)
+}
+
+// GetState 获取总温校准专用状态
+func (a *TotalTemperatureAlgorithm) GetState(
+	channelReader ChannelValueReader,
+	channels map[string]ChannelRef,
+	targetMachNumber float64,
+	machTolerance float64,
+) (*TotalTemperatureState, error) {
+	currentMa, err := a.ReadMachNumber(channelReader, channels)
+	if err != nil {
+		return nil, err
+	}
+
+	isNearTarget := false
+	if machTolerance > 0 {
+		diff := currentMa - targetMachNumber
+		if diff < 0 {
+			diff = -diff
+		}
+		isNearTarget = diff <= machTolerance
+	}
+
+	return &TotalTemperatureState{
+		Status:            "monitoring",
+		CurrentMachNumber: currentMa,
+		TargetMachNumber:  targetMachNumber,
+		IsNearTarget:      isNearTarget,
+		StartTime:         time.Now().UnixMilli(),
+	}, nil
 }
 
 // getChannelData 从通道读取器中获取指定角色的数据

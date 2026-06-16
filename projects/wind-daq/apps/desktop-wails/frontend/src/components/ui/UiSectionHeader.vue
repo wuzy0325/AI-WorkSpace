@@ -21,7 +21,7 @@ defineProps<{
 <style scoped>
 .subtitle {
   display: block;
-  font-size: var(--text-xs);
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -29,7 +29,7 @@ defineProps<{
 }
 .title {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: var(--font-size-base);
   font-weight: 800;
   letter-spacing: -0.02em;
 }

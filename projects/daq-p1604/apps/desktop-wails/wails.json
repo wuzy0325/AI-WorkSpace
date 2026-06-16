@@ -1,0 +1,14 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "daq-p1604",
+  "outputfilename": "DAQ-P-1604",
+  "frontend:dir": "frontend",
+  "frontend:install": "npm install --no-audit --no-fund",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "http://localhost:15175",
+  "author": {
+    "name": "DAQ-P-1604 Team",
+    "email": ""
+  }
+}

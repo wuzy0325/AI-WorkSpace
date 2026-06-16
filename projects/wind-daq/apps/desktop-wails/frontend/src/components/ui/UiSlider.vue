@@ -7,6 +7,7 @@ withDefaults(
     min?: number
     max?: number
     step?: number
+    ariaLabel?: string
   }>(),
   { modelValue: 0, min: 0, max: 100, step: 1 },
 )
@@ -20,6 +21,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: number): void }>()
     :min="min"
     :max="max"
     :step="step"
+    :aria-label="ariaLabel"
     @update:value="emit('update:modelValue', $event)"
   />
 </template>

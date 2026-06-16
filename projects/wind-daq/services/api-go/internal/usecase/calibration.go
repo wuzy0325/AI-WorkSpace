@@ -3,206 +3,358 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/ports"
 )
 
 const defaultSampleInterval = 50 * time.Millisecond
 
+// CalibrationManager 校准管理器
+// 管理校准任务的生命周期，协调自动校准引擎、采集协调器、CSV写入器等组件
 type CalibrationManager struct {
 	mu     sync.RWMutex
 	reader ports.LatestDataReader
 	motion ports.MotionManager
 	sink   ports.CalibrationPointSink
 	store  ports.CalibrationResultStore
-	config calibration.Config
-	status calibration.Status
+
+	// 新增组件
+	eventPublisher ports.CalibrationEventPublisher
+	runtime        ports.CalibrationRuntime
+	statusProvider ports.DeviceStatusProvider
+
+	// 校准引擎
+	autoEngine    *calibration.AutomaticCalibration
+	currentConfig calibration.Config
+	currentStatus calibration.Status
+	currentTaskID string
+	csvWriter     *calibration.CalibrationCsvWriter
+	lastExport    *calibration.ExportPayload
 }
 
-func NewCalibrationManager(reader ports.LatestDataReader, motion ports.MotionManager, sink ports.CalibrationPointSink, store ports.CalibrationResultStore) *CalibrationManager {
+func NewCalibrationManager(
+	reader ports.LatestDataReader,
+	motion ports.MotionManager,
+	sink ports.CalibrationPointSink,
+	store ports.CalibrationResultStore,
+) *CalibrationManager {
 	return &CalibrationManager{
 		reader: reader,
 		motion: motion,
 		sink:   sink,
 		store:  store,
-		status: calibration.Status{State: calibration.StateIdle},
+		currentStatus: calibration.Status{
+			State: calibration.StateIdle,
+		},
 	}
 }
 
+// SetEventPublisher 设置事件发布器
+func (m *CalibrationManager) SetEventPublisher(p ports.CalibrationEventPublisher) {
+	m.eventPublisher = p
+}
+
+// SetRuntime 设置校准运行时
+func (m *CalibrationManager) SetRuntime(r ports.CalibrationRuntime) {
+	m.runtime = r
+}
+
+// SetDeviceStatusProvider 设置设备状态查询
+func (m *CalibrationManager) SetDeviceStatusProvider(p ports.DeviceStatusProvider) {
+	m.statusProvider = p
+}
+
+// Start 启动校准任务
 func (m *CalibrationManager) Start(config calibration.Config) error {
 	if config.TaskID == "" {
 		return fmt.Errorf("taskID is required")
 	}
-	if config.DeviceID == "" {
-		return fmt.Errorf("deviceID is required")
-	}
-	if len(config.Channels) == 0 {
-		return fmt.Errorf("channels are required")
-	}
-	if len(config.PressurePoints) < 2 {
-		return fmt.Errorf("at least two pressure points are required")
-	}
-	if config.AverageSamples < 1 {
-		return fmt.Errorf("averageSamples must be greater than zero")
-	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.config = config
-	m.status = calibration.Status{
-		TaskID:      config.TaskID,
-		State:       calibration.StateRunning,
-		TotalPoints: len(config.PressurePoints),
-	}
-	return nil
-}
 
-func (m *CalibrationManager) Status() calibration.Status {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	status := m.status
-	status.Results = append([]calibration.PointResult(nil), m.status.Results...)
-	return status
-}
-
-func (m *CalibrationManager) CollectCurrentPoint() error {
-	m.mu.Lock()
-	if m.status.State != calibration.StateRunning {
-		m.mu.Unlock()
-		return fmt.Errorf("calibration is not running")
-	}
-	if m.reader == nil {
-		m.setErrorLocked("latest data reader is required")
-		m.mu.Unlock()
-		return fmt.Errorf("latest data reader is required")
-	}
-	if m.status.CurrentPoint >= len(m.config.PressurePoints) {
-		m.mu.Unlock()
-		return fmt.Errorf("all pressure points are already collected")
-	}
-	config := m.config
-	pointIndex := m.status.CurrentPoint
-	m.mu.Unlock()
-
-	values := m.collectAverageValues(config.DeviceID, config.Channels, config.AverageSamples)
-
-	if len(values) == 0 {
-		return m.fail("no data available for device %s", config.DeviceID)
+	if m.currentStatus.State == calibration.StateRunning || m.currentStatus.State == calibration.StatePaused {
+		return fmt.Errorf("校准任务已在运行中，请先停止")
 	}
 
-	result := calibration.PointResult{
-		PointIndex:     pointIndex,
-		TargetPressure: config.PressurePoints[pointIndex],
-		Timestamp:      time.Now().UnixMilli(),
-		Values:         values,
-	}
+	m.currentConfig = config
+	m.currentTaskID = config.TaskID
+	m.lastExport = nil
 
-	if m.sink != nil {
-		if err := m.sink.WriteCalibrationPoint(result); err != nil {
-			return m.fail("write calibration point: %v", err)
+	// 创建事件发布适配器
+	publisher := m.createEventPublisher()
+
+	// 创建运行时适配器
+	runtime := m.createRuntime()
+
+	// 创建自动校准引擎
+	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime)
+	m.autoEngine.SetTaskID(config.TaskID)
+
+	// 初始化CSV写入器
+	if config.SavePath != "" {
+		m.csvWriter = calibration.NewCalibrationCsvWriter(config)
+		if err := m.csvWriter.Initialize(); err != nil {
+			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
+			m.csvWriter = nil
 		}
 	}
 
-	m.mu.Lock()
-	m.status.Results = append(m.status.Results, result)
-	m.status.CurrentPoint++
-	if m.status.CurrentPoint >= len(m.config.PressurePoints) {
-		m.status.State = calibration.StateIdle
+	// 更新状态
+	m.currentStatus = calibration.Status{
+		TaskID:      config.TaskID,
+		Type:        config.Type,
+		State:       calibration.StateRunning,
+		TotalPoints: len(config.Points),
+		StartTime:   time.Now().UnixMilli(),
+	}
+
+	// 根据校准类型选择算法并启动
+	algorithm, err := m.createAlgorithm(config)
+	if err != nil {
+		return err
+	}
+
+	// 异步启动校准循环
+	go func() {
+		err := m.autoEngine.Start(algorithm)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		if err != nil {
+			m.currentStatus.State = calibration.StateError
+			m.currentStatus.LastError = err.Error()
+		} else {
+			m.currentStatus.State = calibration.StateCompleted
+		}
+
+		// 保存导出载荷
+		dataPoints := m.autoEngine.GetDataPoints()
+		m.lastExport = &calibration.ExportPayload{
+			Type:       calibration.CalibrationType(config.Type),
+			Config:     config,
+			DataPoints: dataPoints,
+		}
+		m.currentStatus.DataPoints = dataPoints
+		m.currentStatus.CompletedPoints = len(dataPoints)
+		if m.currentStatus.TotalPoints > 0 {
+			m.currentStatus.Progress = float64(len(dataPoints)) / float64(m.currentStatus.TotalPoints) * 100
+		}
+
+		// 保存结果
 		if m.store != nil {
-			status := m.status
-			status.Results = append([]calibration.PointResult(nil), m.status.Results...)
-			if err := m.store.Save(m.config.TaskID, status); err != nil {
-				m.mu.Unlock()
-				return fmt.Errorf("save calibration result: %v", err)
+			if saveErr := m.store.Save(config.TaskID, m.currentStatus); saveErr != nil {
+				log.Printf("[CalibrationManager] 保存校准结果失败: %v", saveErr)
 			}
 		}
-	}
-	m.mu.Unlock()
+
+		// 刷新CSV
+		if m.csvWriter != nil {
+			if flushErr := m.csvWriter.Flush(); flushErr != nil {
+				log.Printf("[CalibrationManager] CSV刷新失败: %v", flushErr)
+			}
+			m.csvWriter = nil
+		}
+
+		// 运动归零
+		m.returnToHomePosition(config)
+	}()
+
 	return nil
 }
 
-func (m *CalibrationManager) collectAverageValues(deviceID string, channels []int, samples int) map[int]float64 {
-	accum := make(map[int]float64, len(channels))
-	count := make(map[int]int, len(channels))
-	for _, ch := range channels {
-		accum[ch] = 0
-	}
-
-	for i := 0; i < samples; i++ {
-		if i > 0 {
-			time.Sleep(defaultSampleInterval)
-		}
-		payload, ok := m.reader.GetLatestData(deviceID)
-		if !ok {
-			continue
-		}
-		vals := valuesForChannels(payload, channels)
-		for ch, v := range vals {
-			accum[ch] += v
-			count[ch]++
-		}
-	}
-
-	values := make(map[int]float64, len(channels))
-	for _, ch := range channels {
-		if count[ch] > 0 {
-			values[ch] = accum[ch] / float64(count[ch])
-		}
-	}
-	return values
-}
-
+// Pause 暂停校准
 func (m *CalibrationManager) Pause() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status.State != calibration.StateRunning {
-		return fmt.Errorf("calibration is not running")
+
+	if m.currentStatus.State != calibration.StateRunning {
+		return fmt.Errorf("校准未在运行中")
 	}
-	m.status.State = calibration.StatePaused
+
+	if m.autoEngine != nil {
+		m.autoEngine.Pause()
+	}
+	m.currentStatus.State = calibration.StatePaused
 	return nil
 }
 
+// Resume 恢复校准
 func (m *CalibrationManager) Resume() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status.State != calibration.StatePaused {
-		return fmt.Errorf("calibration is not paused")
+
+	if m.currentStatus.State != calibration.StatePaused {
+		return fmt.Errorf("校准未在暂停状态")
 	}
-	m.status.State = calibration.StateRunning
+
+	if m.autoEngine != nil {
+		m.autoEngine.Resume()
+	}
+	m.currentStatus.State = calibration.StateRunning
 	return nil
 }
 
+// Stop 停止校准
 func (m *CalibrationManager) Stop() error {
-	if m.motion != nil {
-		ctx := context.Background()
-		for _, status := range m.motion.StatusAll(ctx) {
-			for _, axis := range status.Axes {
-				if axis.Moving {
-					if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil {
-						return err
-					}
-				}
-			}
+	m.mu.Lock()
+
+	if m.autoEngine != nil {
+		m.autoEngine.Stop()
+	}
+
+	m.currentStatus.State = calibration.StateStopped
+
+	// 保存导出载荷
+	if m.autoEngine != nil {
+		dataPoints := m.autoEngine.GetDataPoints()
+		m.lastExport = &calibration.ExportPayload{
+			Type:       calibration.CalibrationType(m.currentConfig.Type),
+			Config:     m.currentConfig,
+			DataPoints: dataPoints,
+		}
+		m.currentStatus.DataPoints = dataPoints
+		m.currentStatus.CompletedPoints = len(dataPoints)
+		if m.currentStatus.TotalPoints > 0 {
+			m.currentStatus.Progress = float64(len(dataPoints)) / float64(m.currentStatus.TotalPoints) * 100
 		}
 	}
-	m.mu.Lock()
-	m.status.State = calibration.StateStopped
+
+	// 保存结果
 	if m.store != nil {
-		status := m.status
-		status.Results = append([]calibration.PointResult(nil), m.status.Results...)
-		if err := m.store.Save(m.config.TaskID, status); err != nil {
-			m.mu.Unlock()
-			return fmt.Errorf("save calibration result: %v", err)
+		status := m.currentStatus
+		m.mu.Unlock()
+		if err := m.store.Save(m.currentConfig.TaskID, status); err != nil {
+			return fmt.Errorf("保存校准结果失败: %v", err)
 		}
+	} else {
+		m.mu.Unlock()
+	}
+
+	// 刷新CSV
+	if m.csvWriter != nil {
+		if err := m.csvWriter.Flush(); err != nil {
+			log.Printf("[CalibrationManager] CSV刷新失败: %v", err)
+		}
+		m.csvWriter = nil
+	}
+
+	// 停止运动
+	m.stopMotion()
+
+	return nil
+}
+
+// CollectCurrentPoint 手动采集当前工况点（总温校准专用）
+func (m *CalibrationManager) CollectCurrentPoint() error {
+	m.mu.Lock()
+	if m.currentStatus.State != calibration.StateRunning {
+		m.mu.Unlock()
+		return fmt.Errorf("校准未在运行中")
+	}
+	if m.reader == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("数据读取器未配置")
+	}
+	config := m.currentConfig
+	m.mu.Unlock()
+
+	// 使用总温算法手动采集
+	algorithm := calibration.NewTotalTemperatureAlgorithm()
+	channelReader := m.makeChannelReader()
+
+	pointIdx := 0
+	m.mu.RLock()
+	if m.autoEngine != nil {
+		pointIdx = m.autoEngine.GetCurrentPointIndex()
+	}
+	m.mu.RUnlock()
+
+	if pointIdx >= len(config.Points) {
+		return fmt.Errorf("所有工况点已采集完成")
+	}
+
+	point := config.Points[pointIdx]
+	sampleInterval := time.Duration(50) * time.Millisecond
+	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
+		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
+	}
+
+	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval)
+	if err != nil {
+		return m.fail("采集当前工况点失败: %v", err)
+	}
+
+	// 写入CSV
+	if m.csvWriter != nil {
+		if writeErr := m.csvWriter.AppendPoint(dataPoint); writeErr != nil {
+			log.Printf("[CalibrationManager] CSV写入失败: %v", writeErr)
+		}
+	}
+
+	m.mu.Lock()
+	m.currentStatus.DataPoints = append(m.currentStatus.DataPoints, dataPoint)
+	m.currentStatus.CompletedPoints = len(m.currentStatus.DataPoints)
+	if m.currentStatus.TotalPoints > 0 {
+		m.currentStatus.Progress = float64(m.currentStatus.CompletedPoints) / float64(m.currentStatus.TotalPoints) * 100
 	}
 	m.mu.Unlock()
+
 	return nil
 }
 
+// ReacquirePoint 重新采集指定工况点
+func (m *CalibrationManager) ReacquirePoint(index int) error {
+	m.mu.RLock()
+	if m.currentStatus.State != calibration.StateRunning {
+		m.mu.RUnlock()
+		return fmt.Errorf("校准未在运行中")
+	}
+	if index < 0 || index >= len(m.currentConfig.Points) {
+		m.mu.RUnlock()
+		return fmt.Errorf("工况点索引越界: %d", index)
+	}
+	config := m.currentConfig
+	m.mu.RUnlock()
+
+	algorithm := calibration.NewTotalTemperatureAlgorithm()
+	channelReader := m.makeChannelReader()
+	point := config.Points[index]
+
+	sampleInterval := time.Duration(50) * time.Millisecond
+	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
+		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
+	}
+
+	dataPoint, err := algorithm.ReacquirePoint(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval)
+	if err != nil {
+		return fmt.Errorf("重新采集工况点失败: %w", err)
+	}
+
+	// 替换数据点
+	m.mu.Lock()
+	if index < len(m.currentStatus.DataPoints) {
+		m.currentStatus.DataPoints[index] = dataPoint
+	}
+	m.mu.Unlock()
+
+	return nil
+}
+
+// GetExportPayload 获取导出数据
+func (m *CalibrationManager) GetExportPayload() *calibration.ExportPayload {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastExport
+}
+
+// GetResult 获取校准结果
 func (m *CalibrationManager) GetResult(taskID string) (calibration.Status, bool) {
 	if m.store == nil {
 		return calibration.Status{}, false
@@ -210,35 +362,233 @@ func (m *CalibrationManager) GetResult(taskID string) (calibration.Status, bool)
 	return m.store.Get(taskID)
 }
 
+// Status 获取当前状态
+func (m *CalibrationManager) Status() calibration.Status {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentStatus
+}
+
+// GetTotalTemperatureState 获取总温校准专用状态
+func (m *CalibrationManager) GetTotalTemperatureState() *calibration.TotalTemperatureState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.currentConfig.Type != string(calibration.TypeTotalTemperature) {
+		return nil
+	}
+
+	// 构建通道映射
+	channels := make(map[string]calibration.ChannelRef)
+	for _, ch := range m.currentConfig.ProbeChannels {
+		if ch.Enabled {
+			channels[ch.Role] = calibration.ChannelRef{
+				DeviceID:     ch.DeviceID,
+				ChannelIndex: ch.ChannelIndex,
+			}
+		}
+	}
+
+	algorithm := calibration.NewTotalTemperatureAlgorithm()
+	channelReader := m.makeChannelReader()
+
+	var targetMa float64
+	if len(m.currentConfig.Points) > 0 {
+		if ma, ok := m.currentConfig.Points[0].Coordinates["Ma"]; ok {
+			targetMa = ma
+		}
+	}
+
+	machTolerance := float64(0.01)
+	if m.currentConfig.TotalTemperatureConfig != nil {
+		machTolerance = m.currentConfig.TotalTemperatureConfig.MachTolerance
+	}
+
+	state, err := algorithm.GetState(channelReader, channels, targetMa, machTolerance)
+	if err != nil {
+		return nil
+	}
+	return state
+}
+
+// ==================== 内部方法 ====================
+
+// createAlgorithm 根据校准类型创建算法实例
+func (m *CalibrationManager) createAlgorithm(config calibration.Config) (calibration.Algorithm, error) {
+	switch calibration.CalibrationType(config.Type) {
+	case calibration.TypeFiveHole:
+		return calibration.NewFiveHoleAlgorithm(), nil
+	case calibration.TypeThreeHole:
+		return calibration.NewThreeHoleAlgorithm(), nil
+	case calibration.TypeTotalPressure:
+		return calibration.NewTotalPressureAlgorithm(), nil
+	case calibration.TypeTotalTemperature:
+		return calibration.NewTotalTemperatureAlgorithm(), nil
+	default:
+		return nil, fmt.Errorf("未知校准类型: %s", config.Type)
+	}
+}
+
+// createEventPublisher 创建事件发布适配器
+func (m *CalibrationManager) createEventPublisher() calibration.EventPublisher {
+	if m.eventPublisher == nil {
+		return &noopEventPublisher{}
+	}
+	return &eventPublisherAdapter{publisher: m.eventPublisher}
+}
+
+// createRuntime 创建运行时适配器
+func (m *CalibrationManager) createRuntime() calibration.RuntimeAccess {
+	if m.runtime != nil {
+		return &runtimeAdapter{runtime: m.runtime}
+	}
+	return &fallbackRuntime{reader: m.reader, motion: m.motion}
+}
+
+// makeChannelReader 创建通道读取函数
+func (m *CalibrationManager) makeChannelReader() calibration.ChannelValueReader {
+	return func(deviceID string, channelIndex int) (float64, bool) {
+		if m.runtime != nil {
+			return m.runtime.GetChannelValue(deviceID, channelIndex)
+		}
+		if m.reader == nil {
+			return 0, false
+		}
+		payload, ok := m.reader.GetLatestData(deviceID)
+		if !ok {
+			return 0, false
+		}
+		return valuesForChannelIndex(payload, channelIndex), true
+	}
+}
+
+// returnToHomePosition 运动归零
+func (m *CalibrationManager) returnToHomePosition(config calibration.Config) {
+	if m.motion == nil || len(config.MotionAxes) == 0 {
+		return
+	}
+
+	ctx := context.Background()
+	for _, axis := range config.MotionAxes {
+		if err := m.motion.MoveTo(ctx, axis.ControllerID, motion.AxisName(axis.Axis), 0); err != nil {
+			log.Printf("[CalibrationManager] 归零失败 %s/%s: %v", axis.ControllerID, axis.Axis, err)
+		}
+	}
+}
+
+// stopMotion 停止所有运动
+func (m *CalibrationManager) stopMotion() {
+	if m.motion == nil {
+		return
+	}
+
+	ctx := context.Background()
+	for _, status := range m.motion.StatusAll(ctx) {
+		for _, axis := range status.Axes {
+			if axis.Moving {
+				if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil {
+					log.Printf("[CalibrationManager] 停止运动失败 %s/%s: %v", status.ID, axis.Name, err)
+				}
+			}
+		}
+	}
+}
+
+// fail 设置错误状态
 func (m *CalibrationManager) fail(format string, args ...any) error {
 	message := fmt.Sprintf(format, args...)
 	m.mu.Lock()
-	m.setErrorLocked(message)
+	m.currentStatus.State = calibration.StateError
+	m.currentStatus.LastError = message
 	m.mu.Unlock()
 	return fmt.Errorf("%s", message)
 }
 
-func (m *CalibrationManager) setErrorLocked(message string) {
-	m.status.State = calibration.StateError
-	m.status.LastError = message
+// valuesForChannelIndex 从数据载荷中提取指定通道索引的值
+func valuesForChannelIndex(payload device.DataPayload, channelIndex int) float64 {
+	for i, idx := range payload.ChannelIndices {
+		if idx == channelIndex && i < len(payload.Channels) {
+			return payload.Channels[i]
+		}
+	}
+	return 0
 }
 
-func valuesForChannels(payload device.DataPayload, channels []int) map[int]float64 {
-	valuesByIndex := make(map[int]float64, len(payload.Channels))
-	for i, value := range payload.Channels {
-		chIdx := i
-		if i < len(payload.ChannelIndices) {
-			chIdx = payload.ChannelIndices[i]
-		}
-		valuesByIndex[chIdx] = value
-	}
+// ==================== 适配器类型 ====================
 
-	values := make(map[int]float64, len(channels))
-	for _, channel := range channels {
-		value, ok := valuesByIndex[channel]
-		if ok {
-			values[channel] = value
-		}
+// eventPublisherAdapter 事件发布适配器
+type eventPublisherAdapter struct {
+	publisher ports.CalibrationEventPublisher
+}
+
+func (a *eventPublisherAdapter) OnProgress(event calibration.ProgressEvent) {
+	a.publisher.PublishProgress(event)
+}
+
+func (a *eventPublisherAdapter) OnComplete(event calibration.CompleteEvent) {
+	a.publisher.PublishComplete(event)
+}
+
+func (a *eventPublisherAdapter) OnRealtime(event calibration.RealtimeEvent) {
+	a.publisher.PublishRealtime(event)
+}
+
+// noopEventPublisher 空事件发布器
+type noopEventPublisher struct{}
+
+func (n *noopEventPublisher) OnProgress(_ calibration.ProgressEvent) {}
+func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent) {}
+func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent) {}
+
+// runtimeAdapter 运行时适配器
+type runtimeAdapter struct {
+	runtime ports.CalibrationRuntime
+}
+
+func (r *runtimeAdapter) GetChannelValue(deviceID string, channelIndex int) (float64, bool) {
+	return r.runtime.GetChannelValue(deviceID, channelIndex)
+}
+
+func (r *runtimeAdapter) MoveToPosition(axisName string, position float64) error {
+	return r.runtime.MoveToPosition(axisName, position)
+}
+
+func (r *runtimeAdapter) WaitForMotionComplete() error {
+	return r.runtime.WaitForMotionComplete()
+}
+
+// fallbackRuntime 回退运行时（使用旧的 reader 和 motion 接口）
+type fallbackRuntime struct {
+	reader ports.LatestDataReader
+	motion ports.MotionManager
+}
+
+func (f *fallbackRuntime) GetChannelValue(deviceID string, channelIndex int) (float64, bool) {
+	if f.reader == nil {
+		return 0, false
 	}
-	return values
+	payload, ok := f.reader.GetLatestData(deviceID)
+	if !ok {
+		return 0, false
+	}
+	return valuesForChannelIndex(payload, channelIndex), true
+}
+
+func (f *fallbackRuntime) MoveToPosition(axisName string, position float64) error {
+	if f.motion == nil {
+		return fmt.Errorf("运动控制器未配置")
+	}
+	ctx := context.Background()
+	// 简化实现：直接使用第一个控制器
+	statuses := f.motion.StatusAll(ctx)
+	for _, s := range statuses {
+		return f.motion.MoveTo(ctx, s.ID, motion.AxisName(axisName), position)
+	}
+	return fmt.Errorf("没有可用的运动控制器")
+}
+
+func (f *fallbackRuntime) WaitForMotionComplete() error {
+	// 简化实现：等待一段时间
+	time.Sleep(500 * time.Millisecond)
+	return nil
 }

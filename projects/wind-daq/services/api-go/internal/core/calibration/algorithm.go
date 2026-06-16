@@ -60,3 +60,11 @@ func (d *TotalTemperatureDataPoint) GetPointID() int { return d.ID }
 func (d *TotalTemperatureDataPoint) GetCoordinates() map[string]float64 {
 	return map[string]float64{"Ma": d.TargetMachNumber}
 }
+
+// ==================== 通用点位结果适配 ====================
+
+// 确保 PointResult 实现 DataPoint 接口
+var _ DataPoint = (*PointResult)(nil)
+
+func (r *PointResult) GetPointID() int                    { return r.PointIndex }
+func (r *PointResult) GetCoordinates() map[string]float64 { return nil }

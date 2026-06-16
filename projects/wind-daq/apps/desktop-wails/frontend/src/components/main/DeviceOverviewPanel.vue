@@ -251,7 +251,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 }
 
 :root[data-theme='light'] .overview-device-group__title {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .overview-device-group__count,
@@ -311,13 +311,11 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   line-height: 1;
 }
 
+/* 通道卡片布局：优先横向填充，保持阅读顺序 */
 .overview-device-group__channels {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  grid-template-rows: repeat(2, 1fr);
-  grid-auto-flow: column dense;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: var(--space-2);
-  overflow-x: auto;
 }
 
 .overview-channel-micro {
@@ -339,19 +337,16 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   border: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
 }
 
-.overview-channel-micro::before {
+/* 仅在警告状态的卡片上显示顶部指示线，正常状态保持简洁 */
+.overview-channel-micro--warning::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.5;
-}
-
-.overview-channel-micro--warning::before {
   background: linear-gradient(90deg, transparent, var(--accent-warning), transparent);
+  opacity: 0.6;
 }
 
 .overview-channel-micro--warning {
@@ -373,9 +368,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   letter-spacing: -0.02em;
 }
 
-:root[data-theme='dark'] .overview-channel-micro__value {
-  text-shadow: 0 0 10px currentColor;
-}
+/* 移除发光文字效果，保持清晰可读 */
 
 .overview-channel-micro__unit {
   font-size: var(--font-size-micro);

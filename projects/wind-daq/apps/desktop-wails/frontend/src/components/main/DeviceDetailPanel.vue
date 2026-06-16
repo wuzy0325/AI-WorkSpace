@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NCheckbox } from 'naive-ui'
+import { NCheckbox } from 'naive-ui'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
+import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import RealtimeChart from '@components/device/RealtimeChart.vue'
@@ -209,41 +210,40 @@ const connectionButtonLabel = computed(() => {
         </div>
       </div>
       <div class="detail-panel__actions">
-        <NButton
-          secondary
-          size="small"
-          :class="{ 'opacity-40 cursor-not-allowed': !isPressureScannerDevice }"
+        <UiButton
+          variant="secondary"
+          size="sm"
           :disabled="!isPressureScannerDevice"
           @click="isPressureScannerDevice && profile && deviceStore.tareAllEnabled(profile.id)"
         >
           {{ i18n.t.tare || '归零' }}
-        </NButton>
-        <NButton
+        </UiButton>
+        <UiButton
           v-if="currentStatus() === 'Connected'"
-          size="small"
-          :type="currentAcquiring() ? 'error' : 'primary'"
+          :variant="currentAcquiring() ? 'danger' : 'primary'"
+          size="sm"
           @click="() => { const id = profile!.id; currentAcquiring() ? deviceStore.stopAcquisition(id) : deviceStore.startAcquisition(id) }"
         >
           {{ acquisitionButtonLabel }}
-        </NButton>
-        <NButton
-          size="small"
-          :type="currentStatus() === 'Connected' || currentAcquiring() ? 'error' : 'primary'"
+        </UiButton>
+        <UiButton
+          :variant="currentStatus() === 'Connected' || currentAcquiring() ? 'danger' : 'primary'"
+          size="sm"
           @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
         >
           {{ connectionButtonLabel }}
-        </NButton>
-        <NButton
+        </UiButton>
+        <UiButton
           v-if="props.mode !== 'table'"
-          quaternary
-          size="small"
+          variant="ghost"
+          size="sm"
           @click="openChartSelector"
-          :title="i18n.t.channelSettings || '通道设置'"
+          :aria-label="i18n.t.channelSettings || '通道设置'"
         >
           <template #icon>
             <Settings2 class="w-4 h-4" />
           </template>
-        </NButton>
+        </UiButton>
       </div>
     </div>
 
@@ -255,12 +255,12 @@ const connectionButtonLabel = computed(() => {
           <span>实时趋势</span>
         </div>
         <div class="detail-panel__chart-controls">
-          <NButton secondary size="small" @click="openChartSelector">
+          <UiButton variant="secondary" size="sm" @click="openChartSelector">
             <template #icon>
               <Settings2 class="w-4 h-4" />
             </template>
-            <span>通道选择</span>
-          </NButton>
+            通道选择
+          </UiButton>
           <div class="detail-panel__chart-info">
             <span class="detail-panel__chart-label">缓冲区</span>
             <span class="detail-panel__chart-value mono-font">100 点</span>
@@ -300,34 +300,34 @@ const connectionButtonLabel = computed(() => {
             <span class="channel-card__tag mono-font">CH_{{ String(snapshot.channelIndices[snapshotIndex] + 1).padStart(2, '0') }}</span>
           </div>
           <div class="channel-card__id">
-            <span class="channel-card__dot" :style="{ background: channelColor(snapshot.channelIndices[snapshotIndex]), boxShadow: `0 0 8px ${channelColor(snapshot.channelIndices[snapshotIndex])}` }" />
+            <span class="channel-card__dot" :style="{ background: channelColor(snapshot.channelIndices[snapshotIndex]) }" />
             <span class="channel-card__id-text mono-font">CH{{ snapshot.channelIndices[snapshotIndex] + 1 }}</span>
           </div>
           <div class="channel-card__actions">
-            <NButton
-              quaternary
-              size="small"
+            <UiButton
+              variant="ghost"
+              size="sm"
               :class="{ 'channel-card__action-btn--active': isChartVisible(snapshot.channelIndices[snapshotIndex]) }"
-              :title="isChartVisible(snapshot.channelIndices[snapshotIndex]) ? '隐藏波形' : '显示波形'"
+              :aria-label="isChartVisible(snapshot.channelIndices[snapshotIndex]) ? '隐藏波形' : '显示波形'"
               @click.stop="toggleChartVisibility(snapshot.channelIndices[snapshotIndex])"
             >
               <template #icon>
                 <Eye v-if="isChartVisible(snapshot.channelIndices[snapshotIndex])" class="channel-card__icon" />
                 <EyeOff v-else class="channel-card__icon" />
               </template>
-            </NButton>
-            <NButton
-              quaternary
-              size="small"
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="sm"
               :class="{ 'channel-card__action-btn--disabled': shouldDisableTare(snapshot.channelIndices[snapshotIndex]) }"
-              :title="shouldDisableTare(snapshot.channelIndices[snapshotIndex]) ? '此通道不支持校零' : '归零'"
+              :aria-label="shouldDisableTare(snapshot.channelIndices[snapshotIndex]) ? '此通道不支持校零' : '归零'"
               :disabled="shouldDisableTare(snapshot.channelIndices[snapshotIndex])"
               @click.stop="setTare(snapshot.channelIndices[snapshotIndex], rawValue)"
             >
               <template #icon>
                 <Minus class="channel-card__icon" />
               </template>
-            </NButton>
+            </UiButton>
           </div>
         </div>
         <div class="channel-card__value-area">
@@ -369,13 +369,13 @@ const connectionButtonLabel = computed(() => {
             <h3 class="chart-selector__title">通道选择</h3>
             <p class="chart-selector__subtitle">{{ profile?.name }}</p>
           </div>
-          <NButton quaternary size="small" @click="closeChartSelector">
+          <UiButton variant="ghost" size="sm" @click="closeChartSelector" aria-label="关闭">
             <template #icon>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6L6 18M6 6l12 12"/>
               </svg>
             </template>
-          </NButton>
+          </UiButton>
         </div>
 
         <div class="chart-selector__grid">
@@ -402,9 +402,9 @@ const connectionButtonLabel = computed(() => {
         </div>
 
         <div class="chart-selector__footer">
-          <NButton secondary size="small" @click="setAllChartVisibility(true)">全选</NButton>
-          <NButton secondary size="small" @click="setAllChartVisibility(false)">取消全选</NButton>
-          <NButton type="primary" size="small" @click="closeChartSelector">确定</NButton>
+          <UiButton variant="secondary" size="sm" @click="setAllChartVisibility(true)">全选</UiButton>
+          <UiButton variant="secondary" size="sm" @click="setAllChartVisibility(false)">取消全选</UiButton>
+          <UiButton variant="primary" size="sm" @click="closeChartSelector">确定</UiButton>
         </div>
       </div>
     </div>
@@ -453,7 +453,7 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .detail-panel__header-title {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .detail-panel__header-desc {
@@ -518,7 +518,7 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .detail-panel__chart-title {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .detail-panel__chart-controls {
@@ -611,15 +611,16 @@ const connectionButtonLabel = computed(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.channel-card::before {
+/* 仅在警告状态的通道卡片上显示顶部指示线，保持正常卡片简洁 */
+.channel-card--warning::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 0.3rem;
-  background: linear-gradient(90deg, transparent, var(--theme-color, var(--accent-primary)), transparent);
-  opacity: 0.6;
+  background: linear-gradient(90deg, transparent, var(--accent-warning), transparent);
+  opacity: 0.7;
 }
 
 .channel-card:hover {
@@ -670,8 +671,8 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card__dot {
-  width: 0.6em;
-  height: 0.6em;
+  width: 0.5em;
+  height: 0.5em;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -722,11 +723,10 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card__tare-badge {
-  width: 0.6em;
-  height: 0.6em;
+  width: 0.5em;
+  height: 0.5em;
   border-radius: 50%;
   background: var(--accent-warning);
-  box-shadow: 0 0 4px var(--accent-warning);
   flex-shrink: 0;
 }
 
@@ -791,7 +791,8 @@ const connectionButtonLabel = computed(() => {
 }
 
 .channel-card__spark--active {
-  box-shadow: 0 0 6px currentColor;
+  /* 使用纯色高亮代替发光效果 */
+  opacity: 1;
 }
 
 .channel-card__range {
@@ -862,7 +863,7 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .chart-selector__title {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .chart-selector__subtitle {
@@ -926,7 +927,7 @@ const connectionButtonLabel = computed(() => {
 }
 
 :root[data-theme='light'] .chart-selector__name {
-  color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .chart-selector__channel {

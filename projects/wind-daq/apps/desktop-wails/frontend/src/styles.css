@@ -208,3 +208,15 @@ button:disabled {
   background-color: var(--bg-canvas);
   background-image: none;
 }
+
+/* 减少动画支持：尊重用户的无障碍偏好设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

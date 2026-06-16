@@ -20,7 +20,6 @@ func (a *ThreeHoleAlgorithm) ValidateConfig(config Config) error {
 		return fmt.Errorf("三孔探针校准需要配置探针通道")
 	}
 
-	// 检查必需的通道角色
 	requiredRoles := []string{"threeHole.p1", "threeHole.p2", "threeHole.p3", "threeHole.pAtm"}
 	roleSet := make(map[string]bool)
 	for _, ch := range config.ProbeChannels {
@@ -39,22 +38,16 @@ func (a *ThreeHoleAlgorithm) ValidateConfig(config Config) error {
 	return nil
 }
 
+// AcquireData 采集单个点位数据（实现 Algorithm 接口）
 func (a *ThreeHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error) {
 	startTime := time.Now().UnixMilli()
 
-	// 角色到字段名的映射
-	roleMap := map[string]string{
-		"threeHole.p1":     "p1",
-		"threeHole.p2":     "p2",
-		"threeHole.p3":     "p3",
-		"threeHole.pAtm":   "pAtm",
-		"threeHole.pTotal": "pTotal",
-	}
-
-	// 多次采样
 	samples := make([]ThreeHoleRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
-		rawData := a.readRawData(channelReader, roleMap)
+		rawData, err := ReadProbeChannelsToThreeHoleRaw(nil, channelReader)
+		if err != nil {
+			rawData = readThreeHoleFallback(channelReader)
+		}
 		samples = append(samples, rawData)
 		if i < samplesPerPoint-1 {
 			time.Sleep(10 * time.Millisecond)
@@ -63,13 +56,9 @@ func (a *ThreeHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelVa
 
 	endTime := time.Now().UnixMilli()
 
-	// 计算平均值
 	avgData := CalculateThreeHoleAverage(samples)
-
-	// 计算系数
 	coefficients := CalculateThreeHoleCoefficients(avgData)
 
-	// 计算标准差
 	p1Values := make([]float64, len(samples))
 	for i, s := range samples {
 		p1Values[i] = s.P1
@@ -97,18 +86,12 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 ) (*ThreeHoleDataPoint, error) {
 	startTime := time.Now().UnixMilli()
 
-	roleMap := map[string]string{
-		"threeHole.p1":     "p1",
-		"threeHole.p2":     "p2",
-		"threeHole.p3":     "p3",
-		"threeHole.pAtm":   "pAtm",
-		"threeHole.pTotal": "pTotal",
-	}
-
-	// 多次采样
 	samples := make([]ThreeHoleRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
-		rawData := a.readProbeChannels(channelReader, probeChannels, roleMap)
+		rawData, err := ReadProbeChannelsToThreeHoleRaw(probeChannels, channelReader)
+		if err != nil {
+			return nil, fmt.Errorf("读取三孔探针通道失败: %w", err)
+		}
 		samples = append(samples, rawData)
 		if i < samplesPerPoint-1 {
 			time.Sleep(10 * time.Millisecond)
@@ -138,37 +121,7 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 	}, nil
 }
 
-// readRawData 从通道读取器中读取三孔探针原始数据
-func (a *ThreeHoleAlgorithm) readRawData(reader ChannelValueReader, roleMap map[string]string) ThreeHoleRawData {
-	// 简化实现
+// readThreeHoleFallback 简化的通道读取回退方案
+func readThreeHoleFallback(reader ChannelValueReader) ThreeHoleRawData {
 	return ThreeHoleRawData{}
-}
-
-// readProbeChannels 通过探针通道配置读取原始数据
-func (a *ThreeHoleAlgorithm) readProbeChannels(reader ChannelValueReader, probeChannels []ProbeChannel, roleMap map[string]string) ThreeHoleRawData {
-	values := make(map[string]float64)
-	for _, ch := range probeChannels {
-		if !ch.Enabled {
-			continue
-		}
-		fieldName, ok := roleMap[ch.Role]
-		if !ok {
-			continue
-		}
-		val, found := reader(ch.DeviceID, ch.ChannelIndex)
-		if found {
-			values[fieldName] = val
-		}
-	}
-
-	result := ThreeHoleRawData{
-		P1:   values["p1"],
-		P2:   values["p2"],
-		P3:   values["p3"],
-		PAtm: values["pAtm"],
-	}
-	if v, ok := values["pTotal"]; ok {
-		result.PTotal = &v
-	}
-	return result
 }

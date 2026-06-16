@@ -33,6 +33,22 @@ export namespace backend {
 
 export namespace calibration {
 	
+	export class AcquisitionSamplingConfig {
+	    batchTimeoutMs?: number;
+	    batchPollIntervalMs?: number;
+	    batchMaxAgeMs?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AcquisitionSamplingConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.batchTimeoutMs = source["batchTimeoutMs"];
+	        this.batchPollIntervalMs = source["batchPollIntervalMs"];
+	        this.batchMaxAgeMs = source["batchMaxAgeMs"];
+	    }
+	}
 	export class CalPoint {
 	    id: number;
 	    coordinates: Record<string, number>;
@@ -45,6 +61,128 @@ export namespace calibration {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.coordinates = source["coordinates"];
+	    }
+	}
+	export class ChannelRef {
+	    deviceId: string;
+	    channelIndex: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deviceId = source["deviceId"];
+	        this.channelIndex = source["channelIndex"];
+	    }
+	}
+	export class TemperatureStabilityConfig {
+	    sampleCount: number;
+	    sampleInterval: number;
+	    maxStdDev: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TemperatureStabilityConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sampleCount = source["sampleCount"];
+	        this.sampleInterval = source["sampleInterval"];
+	        this.maxStdDev = source["maxStdDev"];
+	    }
+	}
+	export class TotalTemperatureConfig {
+	    probeChannels: Record<string, ChannelRef>;
+	    targetMachNumbers: number[];
+	    machTolerance: number;
+	    stabilityCriteria: TemperatureStabilityConfig;
+	    samplesPerPoint: number;
+	    sampleInterval: number;
+	    enableFitting: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TotalTemperatureConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.probeChannels = this.convertValues(source["probeChannels"], ChannelRef, true);
+	        this.targetMachNumbers = source["targetMachNumbers"];
+	        this.machTolerance = source["machTolerance"];
+	        this.stabilityCriteria = this.convertValues(source["stabilityCriteria"], TemperatureStabilityConfig);
+	        this.samplesPerPoint = source["samplesPerPoint"];
+	        this.sampleInterval = source["sampleInterval"];
+	        this.enableFitting = source["enableFitting"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SphereTankGateConfig {
+	    enabled: boolean;
+	    waitTimeSec: number;
+	    stableTimeChannel: ChannelRef;
+	
+	    static createFrom(source: any = {}) {
+	        return new SphereTankGateConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.waitTimeSec = source["waitTimeSec"];
+	        this.stableTimeChannel = this.convertValues(source["stableTimeChannel"], ChannelRef);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MotionAxisConfig {
+	    controllerId: string;
+	    axis: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MotionAxisConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.controllerId = source["controllerId"];
+	        this.axis = source["axis"];
+	        this.name = source["name"];
 	    }
 	}
 	export class ProbeChannel {
@@ -79,6 +217,12 @@ export namespace calibration {
 	    samplesPerPoint?: number;
 	    dwellTimeMs?: number;
 	    stopOnError?: boolean;
+	    name: string;
+	    savePath?: string;
+	    motionAxes?: MotionAxisConfig[];
+	    sphereTankGate?: SphereTankGateConfig;
+	    acquisitionSampling?: AcquisitionSamplingConfig;
+	    totalTemperatureConfig?: TotalTemperatureConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -97,6 +241,12 @@ export namespace calibration {
 	        this.samplesPerPoint = source["samplesPerPoint"];
 	        this.dwellTimeMs = source["dwellTimeMs"];
 	        this.stopOnError = source["stopOnError"];
+	        this.name = source["name"];
+	        this.savePath = source["savePath"];
+	        this.motionAxes = this.convertValues(source["motionAxes"], MotionAxisConfig);
+	        this.sphereTankGate = this.convertValues(source["sphereTankGate"], SphereTankGateConfig);
+	        this.acquisitionSampling = this.convertValues(source["acquisitionSampling"], AcquisitionSamplingConfig);
+	        this.totalTemperatureConfig = this.convertValues(source["totalTemperatureConfig"], TotalTemperatureConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -117,32 +267,20 @@ export namespace calibration {
 		    return a;
 		}
 	}
-	export class PointResult {
-	    pointIndex: number;
-	    targetPressure: number;
-	    timestamp: number;
-	    values: Record<number, number>;
 	
-	    static createFrom(source: any = {}) {
-	        return new PointResult(source);
-	    }
 	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.pointIndex = source["pointIndex"];
-	        this.targetPressure = source["targetPressure"];
-	        this.timestamp = source["timestamp"];
-	        this.values = source["values"];
-	    }
-	}
 	
 	export class Status {
 	    taskId: string;
 	    state: string;
 	    currentPoint: number;
 	    totalPoints: number;
-	    results: PointResult[];
 	    lastError?: string;
+	    type: string;
+	    completedPoints: number;
+	    progress: number;
+	    startTime?: number;
+	    dataPoints?: any[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
@@ -154,28 +292,15 @@ export namespace calibration {
 	        this.state = source["state"];
 	        this.currentPoint = source["currentPoint"];
 	        this.totalPoints = source["totalPoints"];
-	        this.results = this.convertValues(source["results"], PointResult);
 	        this.lastError = source["lastError"];
+	        this.type = source["type"];
+	        this.completedPoints = source["completedPoints"];
+	        this.progress = source["progress"];
+	        this.startTime = source["startTime"];
+	        this.dataPoints = source["dataPoints"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
+	
 
 }
 

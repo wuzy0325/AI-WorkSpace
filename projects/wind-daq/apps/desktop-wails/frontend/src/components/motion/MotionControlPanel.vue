@@ -363,6 +363,31 @@ watch(
           </div>
         </button>
       </div>
+
+      <!-- 连接/断开按钮：始终可见，未选择时 disabled -->
+      <div class="mt-3 pt-3 border-t border-[color:var(--border-default)]">
+        <div v-if="!selectedId" class="text-[10px] text-[color:var(--text-muted)] text-center py-1">
+          请先选择控制器
+        </div>
+        <div v-else class="flex gap-2">
+          <UiButton
+            secondary size="sm"
+            class="flex-1"
+            @click="handleConnect"
+            :disabled="currentStatus?.connected"
+          >
+            {{ i18n.t.connectBtn }}
+          </UiButton>
+          <UiButton
+            secondary size="sm"
+            class="flex-1"
+            @click="handleDisconnect"
+            :disabled="!currentStatus?.connected"
+          >
+            {{ i18n.t.disconnectBtn }}
+          </UiButton>
+        </div>
+      </div>
     </aside>
 
     <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
@@ -402,22 +427,8 @@ watch(
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
-          <UiButton
-            secondary size="sm"
-            @click="handleConnect"
-            :disabled="!selectedId || currentStatus?.connected"
-          >
-            {{ i18n.t.connectBtn }}
-          </UiButton>
-          <UiButton
-            secondary size="sm"
-            @click="handleDisconnect"
-            :disabled="!selectedId || !currentStatus?.connected"
-          >
-            {{ i18n.t.disconnectBtn }}
-          </UiButton>
-          <div class="w-px h-6 bg-[color:var(--border-default)] mx-1"></div>
+        <!-- 右侧操作区：停止全部 + 紧急停止 -->
+        <div class="flex items-center gap-3">
           <UiButton
             secondary size="sm"
             @click="stop()"
@@ -425,14 +436,16 @@ watch(
           >
             {{ i18n.t.stopAll }}
           </UiButton>
+          <!-- 紧急停止按钮：更大、更醒目、固定在右上角 -->
           <UiButton
-            variant="danger" size="md"
+            variant="danger" size="lg"
+            class="estop-btn"
             @click="emergencyStop"
             :disabled="!selectedId"
             title="紧急停止 (快捷键: Esc)"
           >
             <template #icon>
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="15" y1="9" x2="9" y2="15"/>
                 <line x1="9" y1="9" x2="15" y2="15"/>
@@ -927,5 +940,22 @@ watch(
 
 .input-width-80 {
   width: 80px;
+}
+
+/* 紧急停止按钮：醒目样式 */
+.estop-btn {
+  min-width: 120px;
+  font-weight: 800 !important;
+  letter-spacing: 0.05em;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-danger) 40%, transparent),
+              0 2px 8px color-mix(in srgb, var(--accent-danger) 25%, transparent);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.estop-btn:not(:disabled):hover {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 60%, transparent),
+              0 4px 16px color-mix(in srgb, var(--accent-danger) 35%, transparent);
+}
+.estop-btn:not(:disabled):active {
+  transform: scale(0.97);
 }
 </style>

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useThemeStore } from '@stores/themeStore'
-import MainDashboardView from '@views/main/MainDashboardView.vue'
 import UiToastHost from '@components/feedback/UiToastHost.vue'
 import UiConfirmDialog from '@components/feedback/UiConfirmDialog.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
@@ -86,7 +85,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 <template>
   <div class="app-shell" :data-theme="themeStore.theme">
     <NaiveThemeProvider :theme="themeStore.theme" :theme-overrides="themeOverrides">
-      <MainDashboardView />
+      <router-view />
       <UiToastHost />
       <UiConfirmDialog />
     </NaiveThemeProvider>

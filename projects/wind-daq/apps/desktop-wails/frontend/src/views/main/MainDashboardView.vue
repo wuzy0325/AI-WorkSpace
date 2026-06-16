@@ -255,14 +255,16 @@ function handleKeydown(e: KeyboardEvent) {
   <MainView class="main-dashboard-view">
     <template #header>
       <MainTopBar
-        :locale="locale"
         :version="appVersion"
         :is-acquiring="acquiring"
+        :is-recording="isRecording"
         :active-page="activePage"
         :view-mode="viewMode"
         :t="t"
-        @set-locale="i18n.setLocale"
         @set-view-mode="setViewMode"
+        @start="start"
+        @stop="stop"
+        @toggle-recording="toggleRecording"
       />
     </template>
 
@@ -314,12 +316,8 @@ function handleKeydown(e: KeyboardEvent) {
     <template v-if="activePage === 'dashboard'" #statusbar>
       <MainBottomBar
         :is-acquiring="acquiring"
-        :is-recording="isRecording"
         :t="t"
         :total-devices="deviceStore.profiles?.length ?? 0"
-        @start="start"
-        @stop="stop"
-        @toggle-recording="toggleRecording"
       />
     </template>
 
@@ -330,11 +328,11 @@ function handleKeydown(e: KeyboardEvent) {
 
 <style scoped>
 .main-dashboard-view {
-  background: radial-gradient(circle at top left, var(--bg-panel) 0%, var(--bg-canvas) 100%);
+  background: var(--bg-canvas);
 }
 
 :root[data-theme='light'] .main-dashboard-view {
-  background: radial-gradient(circle at top left, var(--bg-canvas) 0%, var(--bg-surface) 100%);
+  background: var(--bg-canvas);
 }
 
 .main-dashboard-stage {

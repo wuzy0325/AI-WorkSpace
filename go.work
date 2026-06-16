@@ -3,6 +3,7 @@ go 1.26.1
 use (
 	./projects/three-hole-interpolator/apps/desktop-win7
 	./projects/three-hole-interpolator/apps/desktop-win7-walk
+	projects/daq-p1604/apps/desktop-wails
 	projects/daq-t1603/apps/desktop-wails
 	projects/five-hole-interpolator/apps/desktop-wails
 	projects/motion-controller/apps/desktop-wails

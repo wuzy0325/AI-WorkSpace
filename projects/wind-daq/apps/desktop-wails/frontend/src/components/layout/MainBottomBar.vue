@@ -1,25 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { Play, Square, Timer, Clock, Circle } from '@lucide/vue'
-import UiButton from '@components/ui/UiButton.vue'
+import { Timer, Clock } from '@lucide/vue'
 
 const props = withDefaults(
   defineProps<{
     isAcquiring: boolean
-    isRecording?: boolean
     t?: Record<string, string>
     totalDevices: number
   }>(),
   {
-    isRecording: false,
     t: () => ({}),
   }
 )
 
 const emit = defineEmits<{
-  (e: 'start'): void
-  (e: 'stop'): void
-  (e: 'toggle-recording'): void
 }>()
 
 const currentTime = ref('12:00:00')
@@ -87,39 +81,17 @@ watch(isRunning, (newVal, oldVal) => {
 
 <template>
   <footer class="main-bottom-bar">
-    <!-- Left: Control Buttons -->
+    <!-- Left: Status Info -->
     <div class="main-bottom-bar__left">
-      <div class="main-bottom-bar__controls">
-        <UiButton
-          data-test="acquisition-toggle-btn"
-          class="main-bottom-bar__btn"
-          :class="isAcquiring ? 'btn-stop' : 'btn-start'"
-          @click="isAcquiring ? emit('stop') : emit('start')"
-          :title="isAcquiring ? (t.stopAcquisition || '停止采集') : (t.startAcquisition || '开始采集')"
-        >
-          <template #icon>
-            <Play v-if="!isAcquiring" class="w-5 h-5 fill-current" />
-            <Square v-else class="w-4 h-4 fill-current" />
-          </template>
-        </UiButton>
-        <UiButton
-          data-test="recording-toggle-btn"
-          class="main-bottom-bar__btn btn-record"
-          :class="{ active: isRecording }"
-          @click="emit('toggle-recording')"
-          :title="isRecording ? (t.stopRecording || '停止记录') : (t.startRecording || '开始记录')"
-        >
-          <template #icon>
-            <Circle class="w-4 h-4 fill-current" />
-          </template>
-        </UiButton>
-      </div>
-
-      <!-- Status -->
-      <div class="main-bottom-bar__status-item">
-        <span class="main-bottom-bar__status-label">{{ t.acquisitionStatusLabel || '状态' }}</span>
-        <span class="main-bottom-bar__status-value" :class="isAcquiring ? 'text-emerald-500' : 'text-slate-500'">
-          {{ isAcquiring ? (t.acquiring || '运行中') : (t.idle || '已停止') }}
+      <!-- Status Pill (从顶部栏移入) -->
+      <div
+        data-test="system-status-pill"
+        class="main-bottom-bar__status-pill"
+        :class="isAcquiring ? 'main-bottom-bar__status-pill--active' : 'main-bottom-bar__status-pill--idle'"
+      >
+        <span class="main-bottom-bar__status-dot" :class="{ 'status-pulse': isAcquiring }"></span>
+        <span data-test="system-status-label" class="main-bottom-bar__status-text">
+          {{ isAcquiring ? (t.acquiring || '采集开启') : (t.idle || '就绪') }}
         </span>
       </div>
 
@@ -176,64 +148,45 @@ watch(isRunning, (newVal, oldVal) => {
   gap: 1.5rem;
 }
 
-.main-bottom-bar__controls {
+/* 状态 Pill 样式（从顶部栏移入） */
+.main-bottom-bar__status-pill {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
-:deep(.main-bottom-bar__btn) {
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.main-bottom-bar__status-pill--active {
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  color: var(--accent-primary);
 }
 
-:deep(.main-bottom-bar__btn):hover:not(:disabled) {
-  transform: translateY(-2px);
-}
-
-:deep(.btn-start) {
-  background: var(--accent-primary);
-  color: white;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
-}
-
-:deep(.btn-start):hover {
-  background: var(--accent-primary-core-strong);
-}
-
-:deep(.btn-stop) {
-  background: rgba(244, 63, 94, 0.1);
-  color: #f43f5e;
-  border: 1px solid rgba(244, 63, 94, 0.2);
-}
-
-:deep(.btn-stop):hover {
-  background: rgba(244, 63, 94, 0.2);
-}
-
-:deep(.btn-record) {
+.main-bottom-bar__status-pill--idle {
   background: rgba(148, 163, 184, 0.1);
-  color: var(--text-muted);
   border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--text-muted);
 }
 
-:deep(.btn-record.active) {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.3);
-  animation: pulse-record 2s infinite;
+.main-bottom-bar__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
-@keyframes pulse-record {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
-  }
+.status-pulse {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .main-bottom-bar__status-item {

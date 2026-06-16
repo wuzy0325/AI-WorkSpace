@@ -13,9 +13,9 @@ func TestMemoryResultStoreSaveAndGetCalibration(t *testing.T) {
 	status := calibration.Status{
 		TaskID: "cal-1", State: calibration.StateIdle,
 		CurrentPoint: 3, TotalPoints: 3,
-		Results: []calibration.PointResult{
-			{PointIndex: 0, TargetPressure: 0, Values: map[int]float64{0: 10.5}},
-			{PointIndex: 1, TargetPressure: 50, Values: map[int]float64{0: 11.2}},
+		DataPoints: []calibration.DataPoint{
+			&calibration.PointResult{PointIndex: 0, TargetPressure: 0, Values: map[int]float64{0: 10.5}},
+			&calibration.PointResult{PointIndex: 1, TargetPressure: 50, Values: map[int]float64{0: 11.2}},
 		},
 	}
 
@@ -30,8 +30,8 @@ func TestMemoryResultStoreSaveAndGetCalibration(t *testing.T) {
 	if got.State != calibration.StateIdle {
 		t.Fatalf("expected idle, got %s", got.State)
 	}
-	if len(got.Results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(got.Results))
+	if len(got.DataPoints) != 2 {
+		t.Fatalf("expected 2 dataPoints, got %d", len(got.DataPoints))
 	}
 }
 
