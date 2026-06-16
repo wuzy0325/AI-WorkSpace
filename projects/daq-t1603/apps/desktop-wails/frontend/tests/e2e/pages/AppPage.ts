@@ -1,4 +1,4 @@
-import { Page, Locator } from '@playwright/test'
+import { Page, Locator, expect } from '@playwright/test'
 
 export class AppPage {
   readonly page: Page
@@ -20,6 +20,14 @@ export class AppPage {
     await this.page.goto('/')
     await this.page.waitForLoadState('networkidle')
   }
+
+  /** 选中设备并连接，断言状态从"未连接"变为"已连接" */
+  async connectDevice(deviceName: string) {
+    await this.sidebar.selectDevice(deviceName)
+    await expect(this.monitorView.statusTag).toContainText('未连接')
+    await this.monitorView.clickConnect()
+    await expect(this.monitorView.statusTag).toContainText('已连接')
+  }
 }
 
 export class TopBarSection {
@@ -36,14 +44,14 @@ export class TopBarSection {
 
   constructor(page: Page) {
     this.page = page
-    this.brandTitle = page.locator('.topbar__title')
-    this.acquisitionButton = page.locator('.topbar__action-btn--start, .topbar__action-btn--stop')
-    this.recordButton = page.locator('.topbar__action-btn--record')
-    this.addDeviceButton = page.locator('button[title="添加设备"]')
-    this.configButton = page.locator('button[title="打开配置"]')
-    this.themeToggleButton = page.locator('.topbar__icon-btn').last()
+    this.brandTitle = page.getByTestId('topbar-title')
+    this.acquisitionButton = page.getByTestId('btn-acquisition')
+    this.recordButton = page.getByTestId('btn-record')
+    this.addDeviceButton = page.getByTestId('btn-add-device')
+    this.configButton = page.getByTestId('btn-config')
+    this.themeToggleButton = page.getByTestId('btn-theme-toggle')
     this.refreshRateButton = page.locator('button[title="界面刷新率"]')
-    this.versionLabel = page.locator('.topbar__version')
+    this.versionLabel = page.getByTestId('topbar-version')
   }
 
   async clickAcquisitionToggle() {
@@ -83,12 +91,12 @@ export class SidebarSection {
 
   constructor(page: Page) {
     this.page = page
-    this.title = page.locator('.sidebar__title')
-    this.deviceCount = page.locator('.sidebar__count')
-    this.scanButton = page.locator('.sidebar__scan-btn')
-    this.emptyState = page.locator('.sidebar__empty')
-    this.deviceList = page.locator('.sidebar__list')
-    this.deviceItems = page.locator('.sidebar__item')
+    this.title = page.getByTestId('sidebar-title')
+    this.deviceCount = page.getByTestId('sidebar-count')
+    this.scanButton = page.getByTestId('btn-scan')
+    this.emptyState = page.getByTestId('sidebar-empty')
+    this.deviceList = page.getByTestId('sidebar-list')
+    this.deviceItems = page.getByTestId('sidebar-item')
   }
 
   getDeviceItem(deviceName: string): Locator {
@@ -124,16 +132,16 @@ export class MonitorViewSection {
 
   constructor(page: Page) {
     this.page = page
-    this.emptyState = page.locator('.detail__empty')
-    this.deviceName = page.locator('.detail__device-info h2')
-    this.statusTag = page.locator('.detail__header-right .n-tag')
-    this.connectButton = page.locator('.detail__header-right .n-button').first()
-    this.configButton = page.locator('.detail__header-right .n-button').last()
-    this.chartPanel = page.locator('.detail__chart')
-    this.channelSelectButton = page.locator('.detail__chart-tools .n-button')
+    this.emptyState = page.getByTestId('detail-empty')
+    this.deviceName = page.getByTestId('detail-device-info').locator('h2')
+    this.statusTag = page.getByTestId('detail-header-right').locator('.n-tag')
+    this.connectButton = page.getByTestId('detail-header-right').locator('.n-button').first()
+    this.configButton = page.getByTestId('detail-header-right').locator('.n-button').last()
+    this.chartPanel = page.getByTestId('detail-chart')
+    this.channelSelectButton = page.getByTestId('detail-chart').locator('.detail__chart-tools .n-button')
     this.channelGrid = page.locator('.grid')
     this.channelCards = page.locator('.card')
-    this.deviceAddressLabel = page.locator('.detail__device-info .n-space .n-text').first()
+    this.deviceAddressLabel = page.getByTestId('detail-device-info').locator('.n-text').first()
   }
 
   async isShowingEmptyState(): Promise<boolean> {
@@ -174,11 +182,11 @@ export class BottomBarSection {
 
   constructor(page: Page) {
     this.page = page
-    this.acquisitionStatus = page.locator('.bottombar__status-item').nth(0).locator('.bottombar__status-value')
-    this.recordStatus = page.locator('.bottombar__status-item').nth(1).locator('.bottombar__status-value')
-    this.deviceCount = page.locator('.bottombar__status-item').nth(2).locator('.bottombar__status-value')
-    this.onlineCount = page.locator('.bottombar__status-item').nth(3).locator('.bottombar__status-value')
-    this.recordedCount = page.locator('.bottombar__status-item').nth(4).locator('.bottombar__status-value')
+    this.acquisitionStatus = page.getByTestId('status-acquisition').locator('.bottombar__status-value')
+    this.recordStatus = page.getByTestId('status-recording').locator('.bottombar__status-value')
+    this.deviceCount = page.getByTestId('status-devices').locator('.bottombar__status-value')
+    this.onlineCount = page.getByTestId('status-online').locator('.bottombar__status-value')
+    this.recordedCount = page.getByTestId('status-recorded').locator('.bottombar__status-value')
   }
 
   async getAcquisitionStatus(): Promise<string> {

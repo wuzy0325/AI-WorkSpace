@@ -3,13 +3,6 @@ import { AppPage, AddDeviceDialog } from '../pages/AppPage'
 import { setupMockBridge, defaultMockState } from '../mock-bridge'
 import { SINGLE_DEVICE, createMultiProfiles } from '../fixtures/deviceFixtures'
 
-async function connectDevice(app: AppPage, deviceName: string) {
-  await app.sidebar.selectDevice(deviceName)
-  await expect(app.monitorView.statusTag).toContainText('未连接')
-  await app.monitorView.clickConnect()
-  await expect(app.monitorView.statusTag).toContainText('已连接')
-}
-
 test.describe('Device Management', () => {
   test('should show empty state when no device selected', async ({ page }) => {
     await setupMockBridge(page, defaultMockState())
@@ -97,7 +90,7 @@ test.describe('Device Management', () => {
     const app = new AppPage(page)
     await app.goto()
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
   })
 
   test('should disconnect a device', async ({ page }) => {
@@ -108,7 +101,7 @@ test.describe('Device Management', () => {
     const app = new AppPage(page)
     await app.goto()
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
 
     await app.monitorView.clickConnect()
     await expect(app.monitorView.statusTag).toContainText('未连接')

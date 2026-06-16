@@ -114,7 +114,7 @@ function statusLabel(): string {
 
 <template>
   <div class="detail">
-    <div v-if="!selected" class="detail__empty">
+    <div v-if="!selected" class="detail__empty" data-testid="detail-empty">
       <div class="detail__empty-illu">
         <div class="detail__empty-icon">
           <Activity class="detail__empty-icon-svg" />
@@ -190,7 +190,7 @@ function statusLabel(): string {
           </div>
         </NCard>
 
-        <NCard size="small" :bordered="false" class="glass-panel detail__chart" content-style="display:flex;flex-direction:column;flex:1;min-height:0;padding:0">
+        <NCard size="small" :bordered="false" class="glass-panel detail__chart" data-testid="detail-chart" content-style="display:flex;flex-direction:column;flex:1;min-height:0;padding:0">
           <div class="detail__chart-header">
             <div class="detail__chart-title">
               <LineChart :size="15" style="color:var(--accent)" />

@@ -1,3 +1,11 @@
+import type { core } from '../../wailsjs/go/models'
+
+// 复用 Wails 生成的类型，避免重复定义导致与后端模型不同步
+export type MockT1603Config = core.T1603Config
+export type MockChannelConfig = core.ChannelConfig
+export type MockDeviceProfile = core.TemperatureProfile
+export type MockScanResult = core.ScanResult
+
 export const CHANNEL_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
   '#f43f5e', '#06b6d4', '#f97316', '#6366f1',
@@ -5,51 +13,11 @@ export const CHANNEL_COLORS = [
   '#eab308', '#22c55e', '#ef4444', '#8b5cf6',
 ]
 
-export interface MockT1603Config {
-  thermocoupleTypes: string
-  channelMask: string
-  samplingRate: number
-  averageCount: number
-  showTimestamp: boolean
-  showSequence: boolean
-  autoConnect: boolean
-}
-
-export interface MockChannelConfig {
-  index: number
-  name: string
-  enabled: boolean
-  unit: string
-  color: string
-  precision: number
-  rangeMin?: number
-  rangeMax?: number
-  thermocoupleType: string
-}
-
-export interface MockDeviceProfile {
-  id: string
-  name: string
-  address: string
-  port: number
-  samplingRate: number
-  channels: MockChannelConfig[]
-  t1603Config: MockT1603Config
-  createdAt?: number
-}
-
-export interface MockScanResult {
-  id: string
-  name: string
-  address: string
-  port: number
-  macAddress?: string
-  serialNumber?: string
-  firmwareVersion?: string
-}
+/** Mock 通道数 */
+const CHANNEL_COUNT = 16
 
 export function defaultChannels(): MockChannelConfig[] {
-  return Array.from({ length: 16 }, (_, i) => ({
+  return Array.from({ length: CHANNEL_COUNT }, (_, i) => ({
     index: i,
     name: `通道 ${i + 1}`,
     enabled: true,

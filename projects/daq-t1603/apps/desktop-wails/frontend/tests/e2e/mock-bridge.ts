@@ -1,6 +1,11 @@
 import type { Page } from '@playwright/test'
 import type { MockDeviceProfile, MockScanResult } from './fixtures/deviceFixtures'
 
+/** Mock 采集间隔（毫秒） */
+const MOCK_ACQUISITION_INTERVAL_MS = 200
+/** Mock 通道数 */
+const CHANNEL_COUNT = 16
+
 export interface MockState {
   profiles: MockDeviceProfile[]
   statusMap: Record<string, string>
@@ -14,16 +19,18 @@ export interface MockState {
   startAcquisitionError: string | null
 }
 
-const DEFAULT_PROFILES: MockDeviceProfile[] = []
-const DEFAULT_SCAN_RESULTS: MockScanResult[] = [
-  { id: 't1603_scan_1', name: 'T1603-1', address: '192.168.1.10', port: 9000, macAddress: 'AA:BB:CC:DD:EE:01' },
-]
+/** 默认扫描结果工厂函数，每次返回新实例避免共享引用 */
+function createDefaultScanResults(): MockScanResult[] {
+  return [
+    { id: 't1603_scan_1', name: 'T1603-1', address: '192.168.1.10', port: 9000, macAddress: 'AA:BB:CC:DD:EE:01' },
+  ]
+}
 
 export function defaultMockState(): MockState {
   return {
-    profiles: DEFAULT_PROFILES,
+    profiles: [],
     statusMap: {},
-    scanResults: DEFAULT_SCAN_RESULTS,
+    scanResults: createDefaultScanResults(),
     recording: { active: false, snapshotCount: 0, outputDir: null },
     logFile: { active: false, outputDir: null },
     eventHandlers: {},
@@ -37,8 +44,10 @@ export function mockBridgeScript(mockState: MockState): string {
     (() => {
       const state = ${JSON.stringify(mockState)};
       const handlers = {};
-      let snapshotInterval = null;
-      let snapshotCounter = 0;
+      // 按设备 ID 管理各自的采集定时器，避免多设备时互相覆盖
+      const snapshotIntervals = {};
+      const snapshotCounters = {};
+      const CHANNEL_COUNT = ${CHANNEL_COUNT};
 
       window.go = {
         backend: {
@@ -70,10 +79,8 @@ export function mockBridgeScript(mockState: MockState): string {
             Disconnect: (id) => {
               state.statusMap[id] = 'Disconnected';
               fireEvent('daq:device-status', { deviceId: id, status: 'Disconnected' });
-              if (snapshotInterval) {
-                clearInterval(snapshotInterval);
-                snapshotInterval = null;
-              }
+              // 清除该设备的采集定时器
+              clearDeviceInterval(id);
               return Promise.resolve();
             },
             StartAcquisition: (id) => {
@@ -82,11 +89,13 @@ export function mockBridgeScript(mockState: MockState): string {
                 state.startAcquisitionError = null;
                 return Promise.reject(new Error(err));
               }
+              // 若该设备已有定时器则先清除
+              clearDeviceInterval(id);
               state.statusMap[id] = 'Acquiring';
               fireEvent('daq:device-status', { deviceId: id, status: 'Acquiring' });
-              snapshotCounter = 0;
-              snapshotInterval = setInterval(() => {
-                const values = Array.from({ length: 16 }, () => +(20 + Math.random() * 10).toFixed(2));
+              snapshotCounters[id] = 0;
+              snapshotIntervals[id] = setInterval(() => {
+                const values = Array.from({ length: CHANNEL_COUNT }, () => +(20 + Math.random() * 10).toFixed(2));
                 const snap = {
                   deviceId: id,
                   timestamp: Date.now(),
@@ -95,17 +104,14 @@ export function mockBridgeScript(mockState: MockState): string {
                   unit: '°C',
                 };
                 fireEvent('daq:payload', snap);
-                snapshotCounter++;
-              }, 200);
+                snapshotCounters[id]++;
+              }, ${MOCK_ACQUISITION_INTERVAL_MS});
               return Promise.resolve();
             },
             StopAcquisition: (id) => {
               state.statusMap[id] = 'Connected';
               fireEvent('daq:device-status', { deviceId: id, status: 'Connected' });
-              if (snapshotInterval) {
-                clearInterval(snapshotInterval);
-                snapshotInterval = null;
-              }
+              clearDeviceInterval(id);
               return Promise.resolve();
             },
             ApplyConfig: (id, cfg) => {
@@ -117,7 +123,17 @@ export function mockBridgeScript(mockState: MockState): string {
             },
             GetStatus: (id) => {
               const profile = state.profiles.find(p => p.id === id);
-              if (!profile) return Promise.resolve(false);
+              if (!profile) {
+                return Promise.resolve({
+                  profile: null,
+                  status: 0,
+                  statusText: 'NotFound',
+                  error: 'device not found',
+                  connectedAt: 0,
+                  acquiringAt: 0,
+                  samplingRate: 0,
+                });
+              }
               return Promise.resolve({
                 profile,
                 status: state.statusMap[id] === 'Acquiring' ? 3 : state.statusMap[id] === 'Connected' ? 2 : 1,
@@ -155,15 +171,38 @@ export function mockBridgeScript(mockState: MockState): string {
         },
       };
 
-      function registerHandler(eventName, callback) {
+      // 清除指定设备的采集定时器
+      function clearDeviceInterval(deviceId) {
+        if (snapshotIntervals[deviceId]) {
+          clearInterval(snapshotIntervals[deviceId]);
+          delete snapshotIntervals[deviceId];
+        }
+        delete snapshotCounters[deviceId];
+      }
+
+      function registerHandler(eventName, callback, maxCallbacks) {
         if (!handlers[eventName]) handlers[eventName] = [];
-        handlers[eventName].push(callback);
+        // 支持 maxCallbacks：回调触发指定次数后自动移除
+        if (maxCallbacks && maxCallbacks > 0) {
+          let callCount = 0;
+          const wrappedCallback = (...args) => {
+            callCount++;
+            callback(...args);
+            if (callCount >= maxCallbacks) {
+              const idx = handlers[eventName].indexOf(wrappedCallback);
+              if (idx >= 0) handlers[eventName].splice(idx, 1);
+            }
+          };
+          handlers[eventName].push(wrappedCallback);
+        } else {
+          handlers[eventName].push(callback);
+        }
       }
 
       window.runtime = {
-        EventsOn: registerHandler,
+        EventsOn: (eventName, callback) => registerHandler(eventName, callback),
         EventsOnMultiple: (eventName, callback, maxCallbacks) => {
-          registerHandler(eventName, callback);
+          registerHandler(eventName, callback, maxCallbacks);
         },
         EventsOff: (eventName) => {
           delete handlers[eventName];
@@ -196,7 +235,7 @@ export function mockBridgeScript(mockState: MockState): string {
       window.__mockFireEvent = fireEvent;
 
       window.__mockPushSnapshot = function(deviceId) {
-        var values = Array.from({ length: 16 }, function() { return +(20 + Math.random() * 10).toFixed(2); });
+        var values = Array.from({ length: CHANNEL_COUNT }, function() { return +(20 + Math.random() * 10).toFixed(2); });
         fireEvent('daq:payload', {
           deviceId: deviceId,
           timestamp: Date.now(),

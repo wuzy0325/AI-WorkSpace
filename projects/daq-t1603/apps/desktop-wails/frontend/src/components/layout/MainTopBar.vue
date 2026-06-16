@@ -120,7 +120,7 @@ onBeforeUnmount(() => {
           <Activity class="topbar__logo-icon" />
         </div>
         <div class="topbar__title-wrap">
-          <h1 class="topbar__title">
+          <h1 class="topbar__title" data-testid="topbar-title">
             DAQ-T<span class="topbar__title-accent">1603</span>
           </h1>
           <p class="topbar__subtitle">Temperature Acquisition</p>
@@ -170,6 +170,7 @@ onBeforeUnmount(() => {
         <button
           class="topbar__icon-btn"
           :title="'打开配置'"
+          data-testid="btn-config"
           @click="emit('open-config')"
         >
           <Settings2 class="topbar__icon" />
@@ -209,12 +210,13 @@ onBeforeUnmount(() => {
           @click="toggleTheme"
           :aria-label="themeToggleLabel()"
           :title="themeToggleLabel()"
+          data-testid="btn-theme-toggle"
         >
           <Sun v-if="theme === 'dark'" class="topbar__icon" />
           <Moon v-else class="topbar__icon" />
         </button>
 
-        <span class="topbar__version">v{{ version }}</span>
+        <span class="topbar__version" data-testid="topbar-version">v{{ version }}</span>
       </div>
     </div>
   </header>

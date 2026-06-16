@@ -76,27 +76,27 @@ watch(isAcquiring, (newVal, oldVal) => {
 <template>
   <footer class="bottombar">
     <div class="bottombar__status">
-      <div class="bottombar__status-item">
+      <div class="bottombar__status-item" data-testid="status-acquisition">
         <span class="bottombar__status-label">采集状态</span>
         <span class="bottombar__status-value" :class="{ 'bottombar__status-value--active': isAcquiring }">
           {{ isAcquiring ? '运行中' : '已停止' }}
         </span>
       </div>
-      <div class="bottombar__status-item">
+      <div class="bottombar__status-item" data-testid="status-recording">
         <span class="bottombar__status-label">记录状态</span>
         <span class="bottombar__status-value" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">
           {{ recordingStore.isRecording ? '保存中' : '未保存' }}
         </span>
       </div>
-      <div class="bottombar__status-item">
+      <div class="bottombar__status-item" data-testid="status-devices">
         <span class="bottombar__status-label">设备</span>
         <span class="bottombar__status-value mono">{{ totalDevices }}</span>
       </div>
-      <div class="bottombar__status-item">
+      <div class="bottombar__status-item" data-testid="status-online">
         <span class="bottombar__status-label">在线</span>
         <span class="bottombar__status-value mono bottombar__status-value--active">{{ connectedDevices }}</span>
       </div>
-      <div class="bottombar__status-item">
+      <div class="bottombar__status-item" data-testid="status-recorded">
         <span class="bottombar__status-label">已记录</span>
         <span class="bottombar__status-value mono" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">{{ recordingCount }}</span>
       </div>

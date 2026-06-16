@@ -3,13 +3,6 @@ import { AppPage } from '../pages/AppPage'
 import { setupMockBridge, defaultMockState, triggerPayload } from '../mock-bridge'
 import { SINGLE_DEVICE } from '../fixtures/deviceFixtures'
 
-async function connectDevice(app: AppPage, deviceName: string) {
-  await app.sidebar.selectDevice(deviceName)
-  await expect(app.monitorView.statusTag).toContainText('未连接')
-  await app.monitorView.clickConnect()
-  await expect(app.monitorView.statusTag).toContainText('已连接')
-}
-
 test.describe('Acquisition', () => {
   test('should start acquisition and update status', async ({ page }) => {
     const state = defaultMockState()
@@ -19,7 +12,7 @@ test.describe('Acquisition', () => {
     const app = new AppPage(page)
     await app.goto()
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
 
     await app.topBar.clickAcquisitionToggle()
     await expect(app.monitorView.statusTag).toContainText('采集中')
@@ -33,7 +26,7 @@ test.describe('Acquisition', () => {
     const app = new AppPage(page)
     await app.goto()
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
 
     const cardCount = await app.monitorView.channelCards.count()
     expect(cardCount).toBeGreaterThan(0)
@@ -60,7 +53,7 @@ test.describe('Acquisition', () => {
     const app = new AppPage(page)
     await app.goto()
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
     await app.topBar.clickAcquisitionToggle()
     await expect(app.monitorView.statusTag).toContainText('采集中')
 
@@ -78,7 +71,7 @@ test.describe('Acquisition', () => {
 
     expect(await app.bottomBar.getAcquisitionStatus()).toBe('已停止')
 
-    await connectDevice(app, '测试设备')
+    await app.connectDevice('测试设备')
     await app.topBar.clickAcquisitionToggle()
 
     await expect(async () => {

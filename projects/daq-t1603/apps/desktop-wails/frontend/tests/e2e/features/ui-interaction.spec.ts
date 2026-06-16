@@ -52,7 +52,7 @@ test.describe('UI Interaction', () => {
 
     await app.monitorView.toggleChannelSelector()
 
-    const popover = page.locator('.detail__channel-popover')
+    const popover = page.getByTestId('channel-popover')
     await expect(popover).toBeVisible()
 
     await expect(popover.locator('.n-checkbox').first()).toBeVisible()

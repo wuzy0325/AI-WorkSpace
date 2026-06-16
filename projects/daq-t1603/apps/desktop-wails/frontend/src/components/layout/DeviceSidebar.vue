@@ -71,7 +71,7 @@ function statusLabel(status: string, acquiring: boolean): string {
     <div class="sidebar__header">
       <h2 class="sidebar__title">设备列表</h2>
       <div class="sidebar__header-actions">
-        <span class="sidebar__count">{{ sorted.length }}</span>
+        <span class="sidebar__count" data-testid="sidebar-count">{{ sorted.length }}</span>
         <button
           class="sidebar__scan-btn"
           title="扫描设备"
@@ -91,11 +91,12 @@ function statusLabel(status: string, acquiring: boolean): string {
       <p class="sidebar__empty-hint">点击顶栏 + 添加 T1603</p>
     </div>
 
-    <ul v-else class="sidebar__list">
+    <ul v-else class="sidebar__list" data-testid="sidebar-list">
       <li
         v-for="(p, idx) in sorted"
         :key="p.id"
         class="sidebar__item"
+        data-testid="sidebar-item"
         :class="{
           'sidebar__item--selected': deviceStore.selectedId === p.id,
         }"
