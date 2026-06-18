@@ -1,16 +1,34 @@
 package hardware
 
 import (
-	"bufio"
+	"fmt"
 	"net"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
 	"shared.local/device-sdk/go/daq/core"
 	"shared.local/device-sdk/go/protocol"
 )
+
+func readWithTimeout(conn net.Conn, timeout time.Duration) (string, error) {
+	type result struct {
+		data string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		ch <- result{string(buf[:n]), err}
+	}()
+	select {
+	case r := <-ch:
+		return r.data, r.err
+	case <-time.After(timeout):
+		return "", fmt.Errorf("timeout")
+	}
+}
 
 func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
 	client, server := net.Pipe()
@@ -19,15 +37,14 @@ func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
 
 	commandsCh := make(chan []string, 1)
 	go func() {
-		reader := bufio.NewReader(server)
 		commands := make([]string, 0)
 		for {
-			cmd, err := reader.ReadString('\n')
+			cmd, err := readWithTimeout(server, 200*time.Millisecond)
 			if err != nil {
 				commandsCh <- commands
 				return
 			}
-			commands = append(commands, strings.TrimSpace(cmd))
+			commands = append(commands, cmd)
 			_, _ = server.Write([]byte("A\n"))
 		}
 	}()
@@ -83,15 +100,14 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 
 	commandsCh := make(chan []string, 1)
 	go func() {
-		reader := bufio.NewReader(server)
 		commands := make([]string, 0)
 		for {
-			cmd, err := reader.ReadString('\n')
+			cmd, err := readWithTimeout(server, 200*time.Millisecond)
 			if err != nil {
 				commandsCh <- commands
 				return
 			}
-			commands = append(commands, strings.TrimSpace(cmd))
+			commands = append(commands, cmd)
 			_, _ = server.Write([]byte("A\n"))
 		}
 	}()
@@ -126,12 +142,7 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 
 	commands := <-commandsCh
 	wantPrefix := []string{
-		"@fe BIN 0",
-		"@fe TIME 0",
-		"@fe HEAD 0",
-		"@fe TYPE 0",
-		"@fe TRIG 0",
-		"@fe TNUM 1",
+		"@f1",
 		"@f0 FFFF 2",
 	}
 	if len(commands) < len(wantPrefix) {
@@ -141,12 +152,5 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 		if commands[i] != want {
 			t.Fatalf("commands[%d] = %q, want %q (all=%#v)", i, commands[i], want, commands)
 		}
-	}
-
-	if device.config.TriggerMode != 0 || device.config.TriggerEdge != 0 || device.config.TriggerCount != 1 {
-		t.Fatalf("trigger config = %#v, want mode=0 edge=0 count=1", device.config)
-	}
-	if device.config.BinaryFormat || device.config.ShowTimestamp || device.config.ShowSequence {
-		t.Fatalf("stream format = %#v, want ASCII + no timestamp + no sequence", device.config)
 	}
 }

@@ -164,7 +164,6 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 	offset := 0
 
 	if len(parts) > 16 {
-		// Try to detect HEAD (integer seq) vs TIME (float timestamp) vs both
 		seq, err := strconv.Atoi(parts[0])
 		if err == nil {
 			result.SequenceNumber = seq
@@ -177,7 +176,6 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 				}
 			}
 		} else {
-			// Not an integer → timestamp from TIME mode only
 			ts, err := strconv.ParseFloat(parts[0], 64)
 			if err != nil {
 				return nil, fmt.Errorf("parse metadata token %q: %w", parts[0], err)
@@ -316,8 +314,6 @@ func findFieldEnd(buf []byte, n int) int {
 // Returns the frame and the end position, or -1 if no complete frame is available.
 // Tries 18 tokens first (HEAD+TIME), then 17 (HEAD-only or TIME-only).
 func tryExtractFrame(buf []byte) ([]byte, int) {
-	// Always try to parse to validate — this ensures we have a complete frame
-	// even if the token count varies (17 for one metadata, 18 for both).
 	for _, need := range []int{18, 17} {
 		if end := findFieldEnd(buf, need); end >= 0 {
 			if _, err := ParseTCPFrameEx(buf[:end]); err == nil {
@@ -395,6 +391,20 @@ func (r *T1603FrameReader) Reset() {
 	r.buffer = make([]byte, 0, 256)
 }
 
+// Resync 丢弃缓冲区中 1 字节数据，用于帧解析失败后的重同步。
+// 当 processPayload 解析帧失败时，调用此方法跳过 1 字节，
+// 避免残留数据导致后续帧持续错位。
+func (r *T1603FrameReader) Resync() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.buffer) > 0 {
+		r.buffer = r.buffer[1:]
+		if len(r.buffer) == 0 {
+			r.buffer = make([]byte, 0, 256)
+		}
+	}
+}
+
 // ConsumeOptionalACK drains a leading ACK if present.
 // Some firmwares emit a single-byte 'A', others emit "A\n".
 // It reads byte-by-byte under a short deadline so split TCP packets do not
@@ -440,7 +450,6 @@ func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, erro
 		return false, nil
 	}
 
-	// Support both a single-byte 'A' ACK and the older "A\n" variant.
 	if len(r.buffer) > 0 {
 		if r.buffer[0] == '\n' {
 			r.buffer = r.buffer[1:]
@@ -480,7 +489,7 @@ const (
 // SendCommand sends a text command and reads a newline-terminated response.
 func SendCommand(conn net.Conn, cmd string) (string, error) {
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
-	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+	if _, err := conn.Write([]byte(cmd)); err != nil {
 		return "", fmt.Errorf("send %q: %w", cmd, err)
 	}
 
@@ -505,9 +514,6 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 			return strings.TrimRight(buf.String(), "\r "), nil
 		}
 		buf.WriteByte(one[0])
-		// Some devices return short ASCII payloads without a trailing newline.
-		// After the first byte arrives, switch to a short inter-byte timeout so
-		// responses like "FFFF" return promptly instead of blocking for cmdTimeout.
 		conn.SetReadDeadline(time.Now().Add(cmdTailTimeout))
 	}
 }
@@ -517,7 +523,7 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 // query commands that return short ASCII payloads without a trailing newline.
 func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (string, error) {
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
-	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+	if _, err := conn.Write([]byte(cmd)); err != nil {
 		return "", fmt.Errorf("send %q: %w", cmd, err)
 	}
 
@@ -550,7 +556,7 @@ func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (strin
 // After reading n bytes, drains any trailing \r\n to avoid corrupting the next command.
 func SendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
-	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+	if _, err := conn.Write([]byte(cmd)); err != nil {
 		return "", fmt.Errorf("send %q: %w", cmd, err)
 	}
 
@@ -560,7 +566,6 @@ func SendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
 		return "", fmt.Errorf("read exact %d for %q: %w", n, cmd, err)
 	}
 
-	// Drain trailing line endings byte-by-byte; TCP may split "\r\n".
 	conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	one := make([]byte, 1)
 	for i := 0; i < 2; i++ {

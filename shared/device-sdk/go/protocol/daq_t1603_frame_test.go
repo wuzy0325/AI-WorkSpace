@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -321,6 +320,25 @@ func TestParseTCPFrame_AutoDetectInvalidSize(t *testing.T) {
 	}
 }
 
+func readWithTimeout(conn net.Conn, timeout time.Duration) (string, error) {
+	type result struct {
+		data string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		ch <- result{string(buf[:n]), err}
+	}()
+	select {
+	case r := <-ch:
+		return r.data, r.err
+	case <-time.After(timeout):
+		return "", fmt.Errorf("timeout")
+	}
+}
+
 func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -328,8 +346,7 @@ func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		reader := bufio.NewReader(server)
-		if cmd, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(cmd) != "@e3" {
+		if cmd, err := readWithTimeout(server, 50*time.Millisecond); err != nil || cmd != "@e3" {
 			done <- fmt.Errorf("first command = %q, err = %v", cmd, err)
 			return
 		}
@@ -342,7 +359,7 @@ func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 			done <- err
 			return
 		}
-		if cmd, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(cmd) != "@fd MCH" {
+		if cmd, err := readWithTimeout(server, 50*time.Millisecond); err != nil || cmd != "@fd MCH" {
 			done <- fmt.Errorf("second command = %q, err = %v", cmd, err)
 			return
 		}

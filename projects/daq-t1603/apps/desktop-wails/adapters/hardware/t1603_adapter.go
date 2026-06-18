@@ -87,7 +87,7 @@ func mapT1603SharedConfig(cfg core.T1603Config) sharedcore.DaqT1603HardwareConfi
 		ThermocoupleTypes: tcTypes,
 		ChannelMask:       mask,
 		SamplingRate:      hzToSpsMs(cfg.SamplingRate), // Hz → 采集间隔毫秒
-		BinaryFormat:      false,
+		BinaryFormat:      true,
 		AverageCount:      cfg.AverageCount,
 		ShowTimestamp:     cfg.ShowTimestamp,
 		ShowSequence:      cfg.ShowSequence,

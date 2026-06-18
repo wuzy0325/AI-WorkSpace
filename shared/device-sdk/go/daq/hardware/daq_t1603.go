@@ -35,7 +35,7 @@ type LogEntry struct {
 type DAQT1603 struct {
 	mu             sync.RWMutex
 	logMu          sync.RWMutex
-	writeMu        sync.Mutex // serializes connection writes (config sync vs @f0/@f1)
+	writeMu        sync.Mutex
 	profile        core.Profile
 	status         core.Status
 	sink           core.DataSink
@@ -49,8 +49,8 @@ type DAQT1603 struct {
 	onLog          func(LogEntry)
 	readErrors     int
 	frameErrors    int
-	configSyncDone chan struct{} // 配置同步完成后关闭，StartAcquisition 需等待
-	readLoopDone   chan struct{} // readLoop 退出后关闭，确保下次 StartAcquisition 前连接无并发读取
+	configSyncDone chan struct{}
+	readLoopDone   chan struct{}
 }
 
 func NewDAQT1603(profile core.Profile) *DAQT1603 {
@@ -68,15 +68,12 @@ func NewDAQT1603(profile core.Profile) *DAQT1603 {
 
 func (d *DAQT1603) ID() string { return d.profile.ID }
 
-// OnConfigSynced registers a callback invoked after hardware config is synced.
 func (d *DAQT1603) OnConfigSynced(fn onConfigSyncedFn) {
 	d.mu.Lock()
 	d.onConfigSynced = fn
 	d.mu.Unlock()
 }
 
-// OnReadLoopExit registers a callback invoked when the acquisition read loop
-// exits unexpectedly (error or no-data timeout).
 func (d *DAQT1603) OnReadLoopExit(fn func(error)) {
 	d.mu.Lock()
 	d.onReadLoopExit = fn
@@ -145,10 +142,9 @@ func (d *DAQT1603) writeCommandOnly(cmd string) error {
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
-	// 设置写超时，防止连接异常时无限阻塞
 	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_T_1603_TIMEOUT))
-	_, err := d.conn.Write([]byte(cmd + "\n"))
-	_ = d.conn.SetWriteDeadline(time.Time{}) // 清除 deadline，避免影响后续写入
+	_, err := d.conn.Write([]byte(cmd))
+	_ = d.conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		d.emitLog("error", "hardware-send", "Command write failed", err.Error())
 		return err
@@ -156,8 +152,6 @@ func (d *DAQT1603) writeCommandOnly(cmd string) error {
 	return nil
 }
 
-// drainConnection 清空 TCP 连接中的残留数据，确保下一次操作从干净状态开始。
-// 在停止采集后调用，清除设备继续发送的残留帧和 ACK 响应。
 func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	if conn == nil {
 		return
@@ -211,7 +205,7 @@ func (d *DAQT1603) Connect() error {
 	d.conn = conn
 	d.frameReader = protocol.NewT1603FrameReader(conn)
 	d.status.Connection = core.ConnectionConnected
-	d.configSyncDone = make(chan struct{}) // 初始化配置同步完成信号
+	d.configSyncDone = make(chan struct{})
 
 	go d.syncHardwareConfig()
 
@@ -224,11 +218,9 @@ func (d *DAQT1603) Disconnect() error {
 
 	_ = d.stopAcquisitionLocked()
 
-	// 关闭配置同步通道，防止 StartAcquisition 永远阻塞
 	if d.configSyncDone != nil {
 		select {
 		case <-d.configSyncDone:
-			// 已关闭
 		default:
 			close(d.configSyncDone)
 		}
@@ -256,7 +248,6 @@ func (d *DAQT1603) StartAcquisition() error {
 		return fmt.Errorf("device not connected")
 	}
 
-	// 等待上一次 readLoop 完全退出，确保连接上没有并发读取
 	if d.readLoopDone != nil {
 		done := d.readLoopDone
 		d.mu.Unlock()
@@ -270,12 +261,11 @@ func (d *DAQT1603) StartAcquisition() error {
 		d.readLoopDone = nil
 	}
 
-	// 等待配置同步完成，避免与 syncHardwareConfig 的命令/响应冲突
 	if d.configSyncDone != nil {
 		syncDone := d.configSyncDone
 		d.mu.Unlock()
 		slog.Info("DAQ-T-1603 waiting for config sync before acquisition", "device", d.profile.ID)
-		<-syncDone // 阻塞直到配置同步完成
+		<-syncDone
 		d.mu.Lock()
 		slog.Info("DAQ-T-1603 config sync done, proceeding with acquisition", "device", d.profile.ID)
 		if d.acquiring {
@@ -286,19 +276,15 @@ func (d *DAQT1603) StartAcquisition() error {
 		}
 	}
 
-	// 确保 @f1 已发送并生效：同步发送 @f1 停止命令，
-	// 防止异步 @f1 还未执行导致设备仍在输出数据
 	if d.conn != nil {
 		d.writeMu.Lock()
 		_ = d.conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-		d.conn.Write([]byte("@f1\n"))
+		d.conn.Write([]byte("@f1"))
 		_ = d.conn.SetWriteDeadline(time.Time{})
 		d.writeMu.Unlock()
-		// 短暂等待设备停止输出
 		time.Sleep(50 * time.Millisecond)
 		d.drainConnection(d.conn, 100*time.Millisecond)
 	}
-	// 清空 FrameReader 缓冲区
 	if d.frameReader != nil {
 		d.frameReader.Reset()
 	}
@@ -316,9 +302,6 @@ func (d *DAQT1603) StartAcquisition() error {
 	}
 
 	if d.frameReader != nil {
-		d.frameReader.SetBinaryMode(d.config.BinaryFormat)
-		d.frameReader.SetMetadataMode(d.config.ShowTimestamp || d.config.ShowSequence)
-		// 仅在完整匹配 ACK 时才消费，避免 TCP 分包造成帧边界错位。
 		if _, err := d.frameReader.ConsumeOptionalACK(200 * time.Millisecond); err != nil {
 			return fmt.Errorf("drain start ACK: %w", err)
 		}
@@ -351,7 +334,6 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	if d.status.Connection == core.ConnectionAcquiring {
 		d.status.Connection = core.ConnectionConnected
 	}
-	// 异步发送 @f1 停止命令，保持 StopAcquisition 响应速度
 	if d.conn != nil && wasAcquiring {
 		conn := d.conn
 		go func() {
@@ -359,13 +341,12 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 			defer d.writeMu.Unlock()
 			d.emitLog("debug", "hardware-send", "Send command", "@f1")
 			_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-			if _, err := conn.Write([]byte("@f1\n")); err != nil {
+			if _, err := conn.Write([]byte("@f1")); err != nil {
 				d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
 			}
 			_ = conn.SetWriteDeadline(time.Time{})
 		}()
 	}
-	// 清空 FrameReader 缓冲区，避免残留数据干扰下一次采集的帧解析
 	if d.frameReader != nil {
 		d.frameReader.Reset()
 	}
@@ -453,20 +434,16 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 
 func (d *DAQT1603) readLoop() {
 	lastDataAt := time.Now()
-	var unexpectedErr error // set when exit is due to error/timeout, not normal stop
+	var unexpectedErr error
 
-	// 捕获当前连接引用，避免 defer 或循环体中 d.conn 被外部 Connect() 替换，
-	// 导致 @f1 发送到错误的连接或读取错误连接的帧数据
 	conn := d.conn
 
 	defer func() {
-		// 仅在异常退出时发送 @f1 和更新状态
-		// 正常停止时 stopAcquisitionLocked 已同步发送 @f1 并更新状态
 		if unexpectedErr != nil {
 			d.writeMu.Lock()
 			if conn != nil {
 				_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-				conn.Write([]byte("@f1\n"))
+				conn.Write([]byte("@f1"))
 				_ = conn.SetWriteDeadline(time.Time{})
 			}
 			d.writeMu.Unlock()
@@ -487,7 +464,6 @@ func (d *DAQT1603) readLoop() {
 			}
 		}
 
-		// 通知 readLoop 已退出，使下一次 StartAcquisition 可以安全地操作连接
 		d.mu.Lock()
 		done := d.readLoopDone
 		d.mu.Unlock()
@@ -506,7 +482,6 @@ func (d *DAQT1603) readLoop() {
 
 		select {
 		case <-stop:
-			// Normal stop requested via StopAcquisition.
 			return
 		default:
 			conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
@@ -524,12 +499,10 @@ func (d *DAQT1603) readLoop() {
 					}
 					continue
 				}
-				// 连接被主动关闭（Disconnect 调用 conn.Close()），
-				// 检查 stop 通道是否已关闭，如果是则视为正常退出
 				if isClosedConnError(err) {
 					select {
 					case <-stop:
-						return // 正常停止，不设置 unexpectedErr
+						return
 					default:
 					}
 				}
@@ -582,8 +555,6 @@ func (d *DAQT1603) processPayload(data []byte) {
 	})
 }
 
-// -- hardware config sync --
-
 func (d *DAQT1603) syncHardwareConfig() {
 	time.Sleep(300 * time.Millisecond)
 	startedAt := time.Now()
@@ -595,12 +566,10 @@ func (d *DAQT1603) syncHardwareConfig() {
 	syncDone := d.configSyncDone
 	d.mu.RUnlock()
 
-	// 确保最终关闭 configSyncDone 通道，避免 StartAcquisition 永远阻塞
 	defer func() {
 		if syncDone != nil {
 			select {
 			case <-syncDone:
-				// 已关闭
 			default:
 				close(syncDone)
 			}
@@ -615,6 +584,14 @@ func (d *DAQT1603) syncHardwareConfig() {
 
 	d.writeMu.Lock()
 	cfg := d.readAllConfig(conn)
+	if cfg != nil {
+		d.sendCommand(conn, "@fe BIN 1")
+		d.sendCommand(conn, "@fe TIME 0")
+		d.sendCommand(conn, "@fe HEAD 0")
+		cfg.BinaryFormat = true
+		cfg.ShowTimestamp = false
+		cfg.ShowSequence = false
+	}
 	d.writeMu.Unlock()
 	if cfg == nil {
 		d.emitLog("warn", "system", "Config sync aborted", "nil config returned")
@@ -651,7 +628,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		TriggerMode:  0,
 	}
 
-	// @e3: 16 thermocouple type chars
 	startedAt := time.Now()
 	if resp, err := d.sendCommandExact(conn, "@e3", 16); err == nil && len(resp) == 16 {
 		d.logConfigQuery("@e3", startedAt, resp, nil)
@@ -661,7 +637,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		cfg.ThermocoupleTypes = "KKKKKKKKKKKKKKKK"
 	}
 
-	// @fd MCH: channel mask (hex)
 	startedAt = time.Now()
 	if resp, err := d.sendCommandIdle(conn, "@fd MCH"); err == nil {
 		d.logConfigQuery("@fd MCH", startedAt, resp, nil)
@@ -672,7 +647,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd MCH", startedAt, "", err)
 	}
 
-	// @fd SPS: sampling rate
 	startedAt = time.Now()
 	if resp, err := d.sendCommandIdle(conn, "@fd SPS"); err == nil {
 		d.logConfigQuery("@fd SPS", startedAt, resp, nil)
@@ -683,7 +657,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd SPS", startedAt, "", err)
 	}
 
-	// @fd BIN: binary format flag
 	startedAt = time.Now()
 	if resp, err := d.sendCommandExact(conn, "@fd BIN", 1); err == nil {
 		d.logConfigQuery("@fd BIN", startedAt, resp, nil)
@@ -692,7 +665,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd BIN", startedAt, "", err)
 	}
 
-	// @fd TIME: timestamp flag
 	startedAt = time.Now()
 	if resp, err := d.sendCommandExact(conn, "@fd TIME", 1); err == nil {
 		d.logConfigQuery("@fd TIME", startedAt, resp, nil)
@@ -701,7 +673,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd TIME", startedAt, "", err)
 	}
 
-	// @fd HEAD: sequence flag
 	startedAt = time.Now()
 	if resp, err := d.sendCommandExact(conn, "@fd HEAD", 1); err == nil {
 		d.logConfigQuery("@fd HEAD", startedAt, resp, nil)
@@ -710,7 +681,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd HEAD", startedAt, "", err)
 	}
 
-	// @fd AVG: average count
 	startedAt = time.Now()
 	if resp, err := d.sendCommandIdle(conn, "@fd AVG"); err == nil {
 		d.logConfigQuery("@fd AVG", startedAt, resp, nil)
@@ -721,7 +691,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd AVG", startedAt, "", err)
 	}
 
-	// @fd TYPE: trigger mode
 	startedAt = time.Now()
 	if resp, err := d.sendCommandExact(conn, "@fd TYPE", 1); err == nil {
 		d.logConfigQuery("@fd TYPE", startedAt, resp, nil)
@@ -732,7 +701,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd TYPE", startedAt, "", err)
 	}
 
-	// @fd TRIG: trigger edge
 	startedAt = time.Now()
 	if resp, err := d.sendCommandExact(conn, "@fd TRIG", 1); err == nil {
 		d.logConfigQuery("@fd TRIG", startedAt, resp, nil)
@@ -743,7 +711,6 @@ func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
 		d.logConfigQuery("@fd TRIG", startedAt, "", err)
 	}
 
-	// @fd TNUM: trigger count
 	startedAt = time.Now()
 	if resp, err := d.sendCommandIdle(conn, "@fd TNUM"); err == nil {
 		d.logConfigQuery("@fd TNUM", startedAt, resp, nil)
@@ -809,7 +776,6 @@ func boolFlag(v bool) int {
 	return 0
 }
 
-// isClosedConnError 判断错误是否由连接被主动关闭引起
 func isClosedConnError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "use of closed network connection")
