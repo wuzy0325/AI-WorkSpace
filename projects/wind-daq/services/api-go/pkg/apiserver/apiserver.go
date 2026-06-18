@@ -19,9 +19,11 @@ import (
 	reportadapter "wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
+	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/wiring"
 )
 
 type Server struct {
@@ -43,18 +45,20 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 
 	motionProfileStore := motionprofile.NewFileMotionProfileStore("config/motion-profiles.json")
-	motionMgr := usecase.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+	motionMgr := wiring.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
 		factory := hardware.NewDefaultMotionControllerFactory()
 		return factory.Create(profile)
 	})
 
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
-	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore())
+	calMgr.SetCsvWriter(storageadapter.NewCalibrationCsvWriter(calibration.Config{}))
+	appConfigStore := configadapter.NewFileAppConfigStore("config/app")
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
 	dataSink := func(payload device.DataPayload) {
 		hub.OnData(payload)
 		_ = recorder.HandlePayload(payload)
 	}
-	manager, err := usecase.NewDeviceManager(store, deviceFactory{}, dataSink)
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, configadapter.NewProfileNormalizer())
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +73,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		TraversalManager:   travMgr,
 		StorageRecorder:    recorder,
 		ConfigManager: usecase.NewConfigManager(
-			configadapter.NewFileAppConfigStore("config/app"),
+			appConfigStore,
 		),
 	})
 

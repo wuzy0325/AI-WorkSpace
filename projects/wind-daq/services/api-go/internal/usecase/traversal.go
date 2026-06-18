@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -25,15 +26,17 @@ const (
 )
 
 type TraversalManager struct {
-	mu           sync.RWMutex
-	reader       ports.LatestDataReader
-	motion       ports.MotionAccess
-	sink         ports.TraversalPointSink
-	store        ports.TraversalResultStore
-	config       traversal.Config
-	status       traversal.Status
-	configRaw    json.RawMessage
-	interpolator coreinterp.Interpolator
+	mu              sync.RWMutex
+	reader          ports.LatestDataReader
+	motion          ports.MotionAccess
+	sink            ports.TraversalPointSink
+	store           ports.TraversalResultStore
+	checkpointStore ports.CheckpointStore
+	configStore     ports.AppConfigStore // 遍历配置持久化存储
+	config          traversal.Config
+	status          traversal.Status
+	configRaw       json.RawMessage
+	interpolator    coreinterp.Interpolator
 
 	// 断点恢复
 	lastCheckpointPath string
@@ -50,14 +53,38 @@ type TraversalManager struct {
 	stabilization *traversal.StabilizationConfig
 }
 
-func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAccess, sink ports.TraversalPointSink, store ports.TraversalResultStore) *TraversalManager {
-	return &TraversalManager{
-		reader: reader,
-		motion: motion,
-		sink:   sink,
-		store:  store,
-		status: traversal.Status{State: traversal.StateIdle},
+// 遍历配置持久化存储的 key
+const traversalConfigKey = "traversal"
+
+func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAccess, sink ports.TraversalPointSink, store ports.TraversalResultStore, checkpointStore ports.CheckpointStore, configStore ...ports.AppConfigStore) *TraversalManager {
+	mgr := &TraversalManager{
+		reader:          reader,
+		motion:          motion,
+		sink:            sink,
+		store:           store,
+		checkpointStore: checkpointStore,
+		status:          traversal.Status{State: traversal.StateIdle},
 	}
+	// 可选：注入持久化存储，启动时自动加载已保存的配置
+	if len(configStore) > 0 && configStore[0] != nil {
+		mgr.configStore = configStore[0]
+		mgr.loadPersistedConfig()
+	}
+	return mgr
+}
+
+// loadPersistedConfig 启动时从磁盘加载已保存的遍历配置
+func (m *TraversalManager) loadPersistedConfig() {
+	if m.configStore == nil {
+		return
+	}
+	data, err := m.configStore.LoadConfig(traversalConfigKey)
+	if err != nil || data == nil {
+		return
+	}
+	m.mu.Lock()
+	m.configRaw = json.RawMessage(data)
+	m.mu.Unlock()
 }
 
 func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]traversal.Point, error) {
@@ -66,8 +93,12 @@ func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]trav
 
 func (m *TraversalManager) SaveConfigRaw(config json.RawMessage) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.configRaw = append(json.RawMessage(nil), config...)
+	m.mu.Unlock()
+	// 持久化到磁盘，确保重启后配置不丢失
+	if m.configStore != nil {
+		_ = m.configStore.SaveConfig(traversalConfigKey, []byte(config))
+	}
 }
 
 func (m *TraversalManager) GetConfigRaw() json.RawMessage {
@@ -141,6 +172,9 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.status.State == traversal.StateRunning || m.status.State == traversal.StatePaused {
+		return fmt.Errorf("a traversal is already %s", m.status.State)
+	}
 	m.config = config
 	m.isStopped = false
 	m.isPaused = false
@@ -173,7 +207,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		errMsg := "traversal is not running"
 		m.setErrorLocked(errMsg, traversal.ErrUnknown)
 		m.mu.Unlock()
-		return fmt.Errorf(errMsg)
+		return errors.New(errMsg)
 	}
 	if m.reader == nil {
 		m.setErrorLocked("latest data reader is required", traversal.ErrAcquisitionFailed)
@@ -296,6 +330,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	m.status.CurrentPoint++
 	m.status.ValidationWarnings = nil
 	allDone := m.status.CurrentPoint >= len(m.config.Path)
+	completedCount := m.status.CurrentPoint
 	if allDone {
 		m.status.State = traversal.StateCompleted
 		m.status.CurrentPointPhase = ""
@@ -308,7 +343,22 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			}
 		}
 	}
+	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
+	checkpointPath := m.config.SavePath
+	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
 	m.mu.Unlock()
+
+	// 与 Cursor DAQ 一致：每完成 10 个点或最后一个点时保存断点
+	if checkpointPath != "" && len(checkpointPoints) > 0 {
+		if (pointIndex+1)%checkpointInterval == 0 || allDone {
+			m.saveCheckpoint(checkpointPoints, completedCount, checkpointPath)
+		}
+	}
+
+	// 测试成功完成后清理断点文件
+	if allDone {
+		m.ClearCheckpoint()
+	}
 	return nil
 }
 
@@ -569,11 +619,188 @@ func (m *TraversalManager) stopMotionAxes() error {
 	return firstErr
 }
 
+// GetResult 获取测试结果
 func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	if m.store == nil {
 		return traversal.Status{}, false
 	}
 	return m.store.Get(taskID)
+}
+
+// LoadCheckpoint 从最近一次保存的断点文件加载恢复信息
+// 与 Cursor DAQ 行为一致：若 lastCheckpointPath 为空或文件不存在，返回 nil 且无错误
+func (m *TraversalManager) LoadCheckpoint() (*traversal.Checkpoint, error) {
+	m.mu.RLock()
+	path := m.lastCheckpointPath
+	store := m.checkpointStore
+	m.mu.RUnlock()
+
+	if path == "" {
+		return nil, nil
+	}
+	if store == nil {
+		return nil, nil
+	}
+	exists, err := store.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat checkpoint: %w", err)
+	}
+	if !exists {
+		// 文件已被外部清理，重置路径
+		m.mu.Lock()
+		m.lastCheckpointPath = ""
+		m.mu.Unlock()
+		return nil, nil
+	}
+
+	data, err := store.Read(path)
+	if err != nil {
+		return nil, fmt.Errorf("read checkpoint: %w", err)
+	}
+	var cp traversal.Checkpoint
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return nil, fmt.Errorf("parse checkpoint: %w", err)
+	}
+	return &cp, nil
+}
+
+// saveCheckpoint 保存断点到 ${savePath}.checkpoint.json，使用原子写入
+// 与 Cursor DAQ 的 atomicWriteJson 行为一致：先写临时文件再 rename，避免半写入状态
+func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCount int, savePath string) {
+	m.mu.RLock()
+	config := m.config
+	taskID := m.status.TaskID
+	configRaw := m.configRaw
+	m.mu.RUnlock()
+
+	if taskID == "" || savePath == "" {
+		return
+	}
+
+	// 优先使用启动时保存的原始配置 JSON，便于前端完整恢复
+	configPayload := configRaw
+	if len(configPayload) == 0 {
+		if raw, err := json.Marshal(config); err == nil {
+			configPayload = raw
+		}
+	}
+
+	var lastPoint *traversal.Point
+	if completedCount > 0 && completedCount <= len(points) {
+		lp := points[completedCount-1]
+		lastPoint = &lp
+	}
+
+	checkpoint := traversal.Checkpoint{
+		TaskID:          taskID,
+		Config:          []byte(configPayload),
+		CompletedPoints: completedCount,
+		TotalPoints:     len(points),
+		LastPoint:       lastPoint,
+		SavePath:        savePath,
+		CreatedAt:       time.Now().UnixMilli(),
+	}
+
+	data, err := json.MarshalIndent(checkpoint, "", "  ")
+	if err != nil {
+		return
+	}
+
+	checkpointPath := savePath + ".checkpoint.json"
+	if m.checkpointStore == nil {
+		return
+	}
+	if err := m.checkpointStore.Write(checkpointPath, data); err != nil {
+		return
+	}
+
+	m.mu.Lock()
+	m.lastCheckpointPath = checkpointPath
+	m.mu.Unlock()
+}
+
+// ClearCheckpoint 删除断点文件并清空 lastCheckpointPath
+// 测试成功完成后调用，避免残留断点文件
+func (m *TraversalManager) ClearCheckpoint() {
+	m.mu.Lock()
+	path := m.lastCheckpointPath
+	store := m.checkpointStore
+	m.lastCheckpointPath = ""
+	m.mu.Unlock()
+
+	if path == "" || store == nil {
+		return
+	}
+	if exists, err := store.Stat(path); err == nil && exists {
+		_ = store.Remove(path)
+	}
+}
+
+// ResumeFromCheckpoint 从断点恢复测试
+// 与 Cursor DAQ 的 resumeFromCheckpoint 行为一致：
+//  1. 复用原 taskId
+//  2. 从 checkpoint.Config 恢复完整配置
+//  3. 从 checkpoint.CompletedPoints 开始循环
+func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string, error) {
+	if cp.TaskID == "" {
+		return "", fmt.Errorf("checkpoint taskId is required")
+	}
+	if cp.CompletedPoints < 0 || cp.CompletedPoints > cp.TotalPoints {
+		return "", fmt.Errorf("checkpoint completedPoints out of range")
+	}
+
+	m.mu.RLock()
+	currentState := m.status.State
+	m.mu.RUnlock()
+	if currentState == traversal.StateRunning || currentState == traversal.StatePaused {
+		return "", fmt.Errorf("a traversal is already %s", currentState)
+	}
+
+	// 从断点的 Config 字段恢复完整配置
+	var config traversal.Config
+	if len(cp.Config) > 0 {
+		if err := json.Unmarshal(cp.Config, &config); err != nil {
+			return "", fmt.Errorf("parse checkpoint config: %w", err)
+		}
+	} else {
+		return "", fmt.Errorf("checkpoint config is empty")
+	}
+	if len(config.Path) == 0 {
+		return "", fmt.Errorf("checkpoint config path is empty")
+	}
+	if cp.CompletedPoints >= len(config.Path) {
+		return "", fmt.Errorf("checkpoint already completed")
+	}
+
+	m.mu.Lock()
+	m.config = config
+	m.configRaw = append(json.RawMessage(nil), cp.Config...)
+	m.isStopped = false
+	m.isPaused = false
+	m.motionPauseCancelled = false
+	m.status = traversal.Status{
+		TaskID:       cp.TaskID,
+		State:        traversal.StateRunning,
+		TotalPoints:  len(config.Path),
+		CurrentPoint: cp.CompletedPoints, // 从已完成点数开始
+		StartedAt:    cp.CreatedAt,
+	}
+	// 恢复已完成的点结果（从 store 中读取，若存在）
+	if m.store != nil {
+		if prev, ok := m.store.Get(cp.TaskID); ok && len(prev.Results) > 0 {
+			m.status.Results = append([]traversal.PointResult(nil), prev.Results...)
+		}
+	}
+	m.mu.Unlock()
+
+	// 启动后台循环
+	dwell := time.Duration(config.DwellTimeMs) * time.Millisecond
+	if dwell <= 0 {
+		dwell = 100 * time.Millisecond
+	}
+	go m.RunTraversalLoop(dwell)
+
+	return cp.TaskID, nil
 }
 
 // isSubState 判断是否为运行中的子状态
@@ -629,8 +856,10 @@ type traversalAPIConfig struct {
 			Enabled bool `json:"enabled"`
 		} `json:"probeChannels"`
 	} `json:"channels"`
-	DwellTimeMs     int `json:"dwellTimeMs"`
-	SamplesPerPoint int `json:"samplesPerPoint"`
+	DwellTimeMs     int    `json:"dwellTimeMs"`
+	SamplesPerPoint int    `json:"samplesPerPoint"`
+	SavePath        string `json:"savePath"`
+	SaveFileName    string `json:"saveFileName"`
 }
 
 func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, error) {
@@ -745,6 +974,8 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		Path:            points,
 		DwellTimeMs:     cfg.DwellTimeMs,
 		SamplesPerPoint: samplesPerPoint,
+		SavePath:        cfg.SavePath,
+		SaveFileName:    cfg.SaveFileName,
 	}
 	if err := m.Start(config); err != nil {
 		return "", err
