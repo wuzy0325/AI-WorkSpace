@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -23,7 +23,9 @@ import type {
   TraversalPattern,
   TraversalTestConfig,
   CalibrationCsvFileInfo,
-  InterpolationAlgorithm
+  InterpolationAlgorithm,
+  StabilizationConfig,
+  DataValidationConfig
 } from '@shared/types/traversal'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
@@ -63,6 +65,9 @@ const isSaving = ref(false)
 const currentStep = ref(0)
 const steps = computed(() => [t.value.stepLayout, t.value.stepHardware, t.value.stepPrb, t.value.stepReview])
 
+// 记录用户已访问过的步骤索引，用于支持步骤导航点击跳转
+const visitedSteps = ref<Set<number>>(new Set([0]))
+
 const testName = ref(`Traversal-${new Date().toLocaleDateString()}`)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
@@ -76,6 +81,54 @@ const multiPrbMachNumbers = ref<number[]>([])
 const multiPrbInterpolationMode = ref<MultiPrbInterpolationMode>('linear')
 const savePath = ref('')
 const saveFileName = ref(buildDefaultSaveFileName(testName.value))
+
+// 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间
+const snakeOrder = ref(false)
+
+// 稳定化配置：fixed 模式使用固定等待时间，adaptive 模式持续监测压力变化
+const stabilizationMode = ref<'fixed' | 'adaptive'>('fixed')
+const stabilizationConfig = ref<StabilizationConfig>({
+  mode: 'fixed',
+  fixedTimeMs: 2000
+})
+
+// 数据验证配置：可选，用于校验压力范围和异常尖峰
+const validationEnabled = ref(false)
+const validationConfig = ref<DataValidationConfig>({
+  enabled: false,
+  pressureRange: {},
+  onInvalid: 'continue'
+})
+
+// 稳定化模式切换时，重建 stabilizationConfig 以保留/初始化子配置
+watch(stabilizationMode, (mode) => {
+  stabilizationConfig.value = {
+    mode,
+    fixedTimeMs: stabilizationConfig.value.fixedTimeMs ?? 2000,
+    adaptive: mode === 'adaptive'
+      ? (stabilizationConfig.value.adaptive ?? {
+          maxWaitMs: 10000,
+          minWaitMs: 2000,
+          stabilityThreshold: 1,
+          checkIntervalMs: 200,
+          consecutiveChecks: 3
+        })
+      : undefined
+  }
+})
+
+// 保持 dwellTimeMs（布局步骤中的输入）与 stabilizationConfig.fixedTimeMs（review 步骤中的输入）同步
+// 二者代表同一物理量（固定模式下的等待时间），需双向同步以避免保存时数据不一致
+watch(dwellTimeMs, (v) => {
+  if (stabilizationConfig.value.mode === 'fixed' && stabilizationConfig.value.fixedTimeMs !== v) {
+    stabilizationConfig.value = { ...stabilizationConfig.value, fixedTimeMs: v }
+  }
+})
+watch(() => stabilizationConfig.value.fixedTimeMs, (v) => {
+  if (stabilizationConfig.value.mode === 'fixed' && v !== undefined && v !== dwellTimeMs.value) {
+    dwellTimeMs.value = v
+  }
+})
 
 const lineConfig = ref({
   startX: -30, startY: 0, endX: 30, endY: 0,
@@ -110,11 +163,12 @@ const saveOptions = ref<TraversalTestConfig['saveOptions']>({
 })
 
 const currentLayout = computed<TraversalLayout>(() => {
+  // 蛇形扫描顺序透传到 layout，供后端按行交替反向遍历
   switch (pattern.value) {
-    case 'line': return { pattern: 'line', line: lineConfig.value }
-    case 'rectangle': return { pattern: 'rectangle', rectangle: rectangleConfig.value }
-    case 'sector': return { pattern: 'sector', sector: sectorConfig.value }
-    case 'custom': return { pattern: 'custom', custom: { points: customPoints.value } }
+    case 'line': return { pattern: 'line', snakeOrder: snakeOrder.value, line: lineConfig.value }
+    case 'rectangle': return { pattern: 'rectangle', snakeOrder: snakeOrder.value, rectangle: rectangleConfig.value }
+    case 'sector': return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: sectorConfig.value }
+    case 'custom': return { pattern: 'custom', snakeOrder: snakeOrder.value, custom: { points: customPoints.value } }
   }
 })
 
@@ -154,11 +208,30 @@ function normalizeProbeChannel(c: ProbeChannelConfig) { return { ...c, channel: 
 function clonePrbFileInfo(f: PrbFileInfo) { return { ...f, validRange: { ...f.validRange } } }
 function normalizeMultiPrbMachNumbers(files: PrbFileInfo[], nums: number[] = []) { return files.map((f, i) => { const v = nums[i] ?? f.machNumber ?? f.validRange.machMin; return Number.isFinite(v) ? v : 0 }) }
 function isConfigurableProbeChannel(c: ProbeChannelConfig) { return isTraversalConfigurableProbeChannel(c.role, c.name) }
-function nextStep() { if (currentStep.value < steps.value.length - 1 && isStepValid.value) currentStep.value++ }
-function prevStep() { if (currentStep.value > 0) currentStep.value-- }
+function nextStep() {
+  if (currentStep.value < steps.value.length - 1 && isStepValid.value) {
+    currentStep.value++
+    visitedSteps.value.add(currentStep.value)
+  }
+}
+function prevStep() {
+  if (currentStep.value > 0) {
+    currentStep.value--
+    visitedSteps.value.add(currentStep.value)
+  }
+}
+
+// 点击步骤导航跳转：仅允许跳转到已访问过的步骤
+function goToStep(stepIndex: number) {
+  if (visitedSteps.value.has(stepIndex)) {
+    currentStep.value = stepIndex
+  }
+}
 
 function applySavedLayout(layout: TraversalLayout) {
   pattern.value = layout.pattern
+  // 恢复蛇形扫描顺序，缺省为 false
+  snakeOrder.value = layout.snakeOrder ?? false
   if (layout.line) lineConfig.value = { ...layout.line, xStepSegments: layout.line.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.line.yStepSegments.map(s => ({ ...s })) }
   if (layout.rectangle) rectangleConfig.value = { ...layout.rectangle, xStepSegments: layout.rectangle.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.rectangle.yStepSegments.map(s => ({ ...s })) }
   if (layout.sector) sectorConfig.value = { ...layout.sector, radialStepSegments: layout.sector.radialStepSegments.map(s => ({ ...s })), angularStepSegments: layout.sector.angularStepSegments.map(s => ({ ...s })) }
@@ -198,6 +271,32 @@ function applySavedConfig(config: TraversalTestConfig) {
   }
   interpolationAlgorithm.value = c.interpolationAlgorithm ?? 'old'
   calibrationCsvFile.value = c.calibrationCsvFile ? { ...c.calibrationCsvFile } : null
+
+  // 恢复数据验证配置：未保存时使用默认禁用状态
+  if (c.validation) {
+    validationEnabled.value = c.validation.enabled
+    validationConfig.value = {
+      enabled: c.validation.enabled,
+      pressureRange: c.validation.pressureRange ? { ...c.validation.pressureRange } : {},
+      onInvalid: c.validation.onInvalid ?? 'continue'
+    }
+  } else {
+    validationEnabled.value = false
+    validationConfig.value = { enabled: false, pressureRange: {}, onInvalid: 'continue' }
+  }
+
+  // 恢复稳定化配置：未保存时使用默认 fixed 模式
+  if (c.stabilization) {
+    stabilizationMode.value = c.stabilization.mode
+    stabilizationConfig.value = {
+      mode: c.stabilization.mode,
+      fixedTimeMs: c.stabilization.fixedTimeMs ?? 2000,
+      adaptive: c.stabilization.adaptive ? { ...c.stabilization.adaptive } : undefined
+    }
+  } else {
+    stabilizationMode.value = 'fixed'
+    stabilizationConfig.value = { mode: 'fixed', fixedTimeMs: 2000 }
+  }
 }
 
 async function loadSavedConfig() {
@@ -210,7 +309,7 @@ async function pickSavePath() {
     const p = await storageStore.pickDirectory()
     if (p) savePath.value = p
   } catch (e) {
-    feedbackStore.pushToast('Failed to choose directory: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    feedbackStore.pushToast(t.value.failedChooseDirectory + '：' + (e instanceof Error ? e.message : String(e)), 'error')
   }
 }
 
@@ -224,6 +323,7 @@ async function saveConfig() {
     const normName = normalizeSaveFileName(saveFileName.value)
     saveFileName.value = normName
     const useMulti = prbMode.value === 'multi' && multiPrbFiles.value.length > 0
+    // dwellTimeMs 与 stabilizationConfig.fixedTimeMs 保持同步：固定模式下二者一致
     const raw = {
       name: testName.value, layout: currentLayout.value,
       channels: { probeChannels: probeChannels.value.filter(c => c.enabled && isConfigurableProbeChannel(c)), motionAxes: motionAxes.value },
@@ -231,8 +331,13 @@ async function saveConfig() {
       multiPrb: useMulti ? { files: multiPrbFiles.value.map(f => clonePrbFileInfo(f)), machNumbers: multiPrbMachNumbers.value.map(n => Number(n)), interpolationMode: multiPrbInterpolationMode.value } : undefined,
       useMultiPrb: useMulti, interpolationAlgorithm: interpolationAlgorithm.value,
       calibrationCsvFile: interpolationAlgorithm.value === 'new' ? calibrationCsvFile.value : null,
-      dwellTimeMs: dwellTimeMs.value, samplesPerPoint: samplesPerPoint.value,
-      savePath: savePath.value.trim(), saveFileName: normName, saveOptions: saveOptions.value
+      dwellTimeMs: stabilizationConfig.value.fixedTimeMs ?? dwellTimeMs.value,
+      samplesPerPoint: samplesPerPoint.value,
+      savePath: savePath.value.trim(), saveFileName: normName, saveOptions: saveOptions.value,
+      // 仅在启用时保存验证配置，与 Cursor DAQ 行为一致
+      validation: validationEnabled.value ? validationConfig.value : undefined,
+      // 稳定化配置始终保存，后端依据 mode 决定使用固定时间或自适应逻辑
+      stabilization: stabilizationConfig.value
     }
     const config: TraversalTestConfig = JSON.parse(JSON.stringify(raw))
     const ok = await traversalStore.saveConfig(config)
@@ -253,7 +358,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <UiDialog :show="true" width="960px" closable @close="emit('close')">
+  <!-- 遍历测试配置对话框：限制最大高度，使用 flex 布局确保内容不溢出 -->
+  <UiDialog :show="true" width="min(92vw, 960px)" closable @close="emit('close')">
     <template #header>
       <div>
           <span class="setup-overline">{{ t.traversalSetup }}</span>
@@ -262,7 +368,14 @@ onMounted(async () => {
     </template>
 
     <UiSteps :current="currentStep" class="steps-nav">
-      <UiStep v-for="(step, idx) in steps" :key="idx" :title="step" :disabled="idx > currentStep" />
+      <UiStep
+        v-for="(step, idx) in steps"
+        :key="idx"
+        :title="step"
+        :status="idx < currentStep ? 'finish' : idx === currentStep ? 'process' : 'wait'"
+        :disabled="!visitedSteps.has(idx)"
+        @click="goToStep(idx)"
+      />
     </UiSteps>
 
     <div class="traversal-body">
@@ -278,6 +391,7 @@ onMounted(async () => {
           v-model:sector-config="sectorConfig"
           v-model:custom-points="customPoints"
           v-model:custom-point-input="customPointInput"
+          v-model:snake-order="snakeOrder"
           :estimated-point-count="estimatedPointCount"
           :t="(t as unknown as Record<string, string>)"
         />
@@ -285,6 +399,10 @@ onMounted(async () => {
           v-else-if="currentStep === 1"
           v-model:probe-channels="probeChannels"
           v-model:motion-axes="motionAxes"
+          v-model:validation-enabled="validationEnabled"
+          v-model:validation-config="validationConfig"
+          v-model:stabilization-mode="stabilizationMode"
+          v-model:stabilization-config="stabilizationConfig"
           :t="(t as unknown as Record<string, string>)"
           :is-loading="isLoading"
         />
@@ -300,27 +418,40 @@ onMounted(async () => {
           :t="(t as unknown as Record<string, string>)"
         />
         <div v-else class="step-content">
+          <!-- 配置摘要：只读展示，不含配置决策 -->
           <UiPanel class="section-card">
-            <template #header><span class="summary-section-title">配置摘要</span></template>
+            <template #header><span class="summary-section-title">{{ t.summaryTitle }}</span></template>
             <div class="summary-grid">
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.name }}</span><span>{{ testName }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.pattern }}</span><span>{{ pattern }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.estimatedPoints }}</span><span class="summary-accent">{{ estimatedPointCount }}</span></div>
-              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ (t as Record<string, string>).interpolationAlgorithm || 'Algorithm' }}</span><span>{{ interpolationAlgorithm === 'new' ? ((t as Record<string, string>).algorithmNew || 'New') : ((t as Record<string, string>).algorithmOld || 'Old') }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.interpolationAlgorithm }}</span><span>{{ interpolationAlgorithm === 'new' ? t.algorithmNew : t.algorithmOld }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.prb }}</span><span class="text-ellipsis">{{ interpolationAlgorithm === 'new' ? (calibrationCsvFile ? calibrationCsvFile.fileName : t.none) : (prbFile ? prbFile.fileName : t.none) }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travSnakeOrder }}</span><span>{{ snakeOrder ? t.enabled : t.disabled }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travStableMode }}</span><span>{{ stabilizationMode === 'fixed' ? t.travFixedTime : t.travAdaptive }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travEnableValidation }}</span><span>{{ validationEnabled ? t.enabled : t.disabled }}</span></div>
             </div>
           </UiPanel>
 
           <UiPanel class="section-card">
             <div class="save-row">
-              <UiInput v-model="savePath" placeholder="Output directory" size="small" class="flex-input" />
-              <UiInput v-model="saveFileName" placeholder="CSV file name" size="small" class="flex-input" />
-              <UiButton size="sm" @click="pickSavePath">Browse</UiButton>
+              <UiInput v-model="savePath" :placeholder="t.outputDirectory" size="small" class="flex-input" />
+              <UiInput v-model="saveFileName" :placeholder="t.outputFileName" size="small" class="flex-input" />
+              <UiButton size="sm" @click="pickSavePath">{{ t.browse }}</UiButton>
             </div>
-            <span class="save-hint">Choose a real output directory for traversal CSV exports.</span>
+            <span class="save-hint">{{ t.outputDirectoryHint }}</span>
           </UiPanel>
 
           <UiPanel class="section-card">
+            <template #header>
+              <div class="save-options-header">
+                <span class="summary-section-title">{{ t.saveOptionsTitle }}</span>
+                <div class="save-options-actions">
+                  <UiButton size="sm" quaternary @click="saveOptions = { savePointId: true, saveTimestamp: true, saveRawPressure: true, saveCalculatedResult: true }">{{ t.selectAll }}</UiButton>
+                  <UiButton size="sm" quaternary @click="saveOptions = { savePointId: false, saveTimestamp: false, saveRawPressure: false, saveCalculatedResult: false }">{{ t.deselectAll }}</UiButton>
+                </div>
+              </div>
+            </template>
             <div class="save-options">
               <label class="option-label"><UiCheckbox v-model:checked="saveOptions.savePointId" size="small" />{{ t.savePointId }}</label>
               <label class="option-label"><UiCheckbox v-model:checked="saveOptions.saveTimestamp" size="small" />{{ t.saveTimestamp }}</label>
@@ -333,9 +464,18 @@ onMounted(async () => {
 
       <aside class="traversal-sidebar">
         <div class="sidebar-stats">
-          <div class="sidebar-stat"><span class="stat-label">{{ t.points }}</span><span class="stat-number">{{ estimatedPointCount }}</span></div>
-          <div class="sidebar-stat"><span class="stat-label">{{ t.dwell }}</span><span class="stat-value">{{ dwellTimeMs }} <span class="stat-label">ms</span></span></div>
-          <div class="sidebar-stat"><span class="stat-label">{{ t.samples }}</span><span class="stat-value">{{ samplesPerPoint }}</span></div>
+          <div class="sidebar-stat sidebar-stat--highlight">
+            <span class="stat-label">{{ t.points }}</span>
+            <span class="stat-number">{{ estimatedPointCount }}</span>
+          </div>
+          <div class="sidebar-stat">
+            <span class="stat-label">{{ t.dwell }}</span>
+            <span class="stat-value">{{ dwellTimeMs }}<span class="stat-unit">ms</span></span>
+          </div>
+          <div class="sidebar-stat">
+            <span class="stat-label">{{ t.samples }}</span>
+            <span class="stat-value">{{ samplesPerPoint }}</span>
+          </div>
         </div>
         <div class="sidebar-preview">
           <PointsPreview :layout="currentLayout" />
@@ -359,24 +499,29 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* 遍历测试配置画面主体布局：左右分栏，限制最大高度防止被拉长 */
 .traversal-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 0;
   min-height: 0;
-  flex: 1
+  max-height: 65vh;
+  flex: 1;
+  overflow: hidden
 }
 
 .traversal-main {
   min-height: 0;
+  max-height: 65vh;
   overflow-y: auto;
-  padding-right: var(--space-4)
+  padding-right: var(--space-3);
+  scrollbar-width: thin
 }
 
 .step-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3)
+  gap: var(--space-2)
 }
 
 .section-card {
@@ -392,7 +537,7 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 7px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border-default);
   gap: var(--space-3);
   font-size: var(--text-sm)
@@ -417,7 +562,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px var(--space-2);
+  padding: 4px var(--space-2);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--text-primary);
@@ -429,13 +574,17 @@ onMounted(async () => {
   background: var(--bg-panel-strong)
 }
 
+/* 右侧边栏：固定宽度，限制高度，内部可滚动 */
 .traversal-sidebar {
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
-  padding-left: var(--space-4);
+  padding-left: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3)
+  gap: var(--space-2);
+  max-height: 65vh;
+  overflow-y: auto;
+  scrollbar-width: thin
 }
 
 .sidebar-stats {
@@ -445,16 +594,31 @@ onMounted(async () => {
 }
 
 .sidebar-stat {
-  padding: 10px;
+  padding: 10px 6px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
-  text-align: center
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px
 }
 
+.sidebar-stat--highlight {
+  border-color: var(--color-primary, #3b82f6);
+  background: linear-gradient(180deg, var(--bg-panel) 0%, rgba(59,130,246,0.06) 100%)
+}
+
+.sidebar-stat--highlight .stat-number {
+  color: var(--color-primary, #3b82f6)
+}
+
+/* 点阵预览区域：使用自适应高度替代固定最小高度，防止撑大对话框 */
 .sidebar-preview {
-  flex: 1;
-  min-height: 280px;
+  flex: 1 1 auto;
+  min-height: 160px;
+  max-height: 360px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
@@ -476,14 +640,70 @@ onMounted(async () => {
 
 .setup-overline { font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.2em;color:var(--text-tertiary) }
 .setup-title { font-size:18px;font-weight:600;margin-top:2px;display:block }
-.steps-nav { margin-bottom:var(--space-4) }
+/* 步骤导航栏：减小下方间距，与内容区域更紧凑 */
+.steps-nav { margin-bottom:var(--space-2) }
 .summary-section-title { font-size:var(--text-sm);font-weight:600 }
 .summary-accent { color:var(--color-accent);font-weight:700 }
 .text-ellipsis { max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 .flex-input { flex:1 }
 .save-hint { font-size:var(--text-xs);display:block;margin-top:6px;color:var(--text-tertiary) }
 .stat-label { font-size:var(--text-xs);color:var(--text-tertiary) }
-.stat-number { font-size:20px;font-weight:700;color:var(--color-accent) }
-.stat-value { font-size:13px;font-weight:600 }
+.stat-number { font-size:18px;font-weight:700;color:var(--color-accent) }
+.stat-value { font-size:12px;font-weight:600 }
 .stat-unit { font-size:var(--text-xs) }
+
+.save-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%
+}
+
+.save-options-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1)
+}
+
+/* 子配置区块：数据验证策略、稳定化模式等嵌套配置 */
+.sub-config-block {
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px
+}
+
+.sub-config-label {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary)
+}
+
+.sub-config-hint {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.5
+}
+
+/* 单选按钮组：稳定化模式、错误处理策略 */
+.radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: 4px
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer
+}
+
+.radio-label input[type="radio"] {
+  margin: 0
+}
 </style>

@@ -5,6 +5,7 @@ import type {
   MultiPrbInterpolationMode,
   PrbFileInfo,
   PreconditionCheckResult,
+  TraversalCheckpoint,
   TraversalCompleteEvent,
   TraversalErrorEvent,
   TraversalErrorCode,
@@ -44,22 +45,68 @@ async function invoke<T>(path: string, body?: unknown): Promise<{ success: boole
   }
 }
 
+/**
+ * 共享状态轮询调度器：所有 onProgress/onComplete/onError 订阅复用同一个
+ * 500ms 定时器，避免每个订阅者各自 setInterval 导致的"3 倍 GET 风暴"。
+ *
+ * 设计要点：
+ * - 单例 timer 仅在有订阅者时启动，最后一个订阅者注销时停止；
+ * - 每次轮询只发起一次 getStatus，分发给所有事件构造器；
+ * - 通过 lastKey 去重，避免重复回调相同事件。
+ */
+const POLL_INTERVAL_MS = 500
+
+interface SubscriptionEntry<T> {
+  buildEvent: (status: TraversalTestStatus) => T | null
+  callback: (event: T) => void
+  lastKey: string
+}
+
+let pollingTimer: number | null = null
+const subscribers: Set<SubscriptionEntry<unknown>> = new Set()
+
+async function pollOnce(): Promise<void> {
+  if (subscribers.size === 0) return
+  const res = await traversalApi.getStatus()
+  if (!res.success || !res.data) return
+  const status = res.data
+  for (const entry of subscribers) {
+    const event = entry.buildEvent(status)
+    if (!event) continue
+    const key = JSON.stringify(event)
+    if (key === entry.lastKey) continue
+    entry.lastKey = key
+    try {
+      entry.callback(event)
+    } catch (err) {
+      console.error('[traversalApi] subscriber callback failed:', err)
+    }
+  }
+}
+
+function ensurePollingStarted(): void {
+  if (pollingTimer !== null) return
+  pollingTimer = window.setInterval(() => { void pollOnce() }, POLL_INTERVAL_MS)
+}
+
+function ensurePollingStopped(): void {
+  if (subscribers.size === 0 && pollingTimer !== null) {
+    window.clearInterval(pollingTimer)
+    pollingTimer = null
+  }
+}
+
 function createPollingSubscription<T>(
   buildEvent: (status: TraversalTestStatus) => T | null,
   callback: (event: T) => void,
 ): () => void {
-  let lastKey = ''
-  const timer = window.setInterval(async () => {
-    const res = await traversalApi.getStatus()
-    if (!res.success || !res.data) return
-    const event = buildEvent(res.data)
-    if (!event) return
-    const key = JSON.stringify(event)
-    if (key === lastKey) return
-    lastKey = key
-    callback(event)
-  }, 500)
-  return () => window.clearInterval(timer)
+  const entry: SubscriptionEntry<T> = { buildEvent, callback, lastKey: '' }
+  subscribers.add(entry as SubscriptionEntry<unknown>)
+  ensurePollingStarted()
+  return () => {
+    subscribers.delete(entry as SubscriptionEntry<unknown>)
+    ensurePollingStopped()
+  }
 }
 
 /** 后端返回的原始状态响应类型（包含后端额外字段） */
@@ -108,6 +155,18 @@ export const traversalApi = {
   resume: async (): Promise<{ success: boolean; error?: string }> => invoke('/api/traversal/resume'),
 
   stop: async (): Promise<{ success: boolean; error?: string }> => invoke('/api/traversal/stop'),
+
+  /** 加载断点恢复信息（应用启动或进入遍历页面时调用，判断是否需要展示"恢复"横幅） */
+  loadCheckpoint: async (): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
+    invoke<TraversalCheckpoint | null>('/api/traversal/loadCheckpoint'),
+
+  /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
+  resumeFromCheckpoint: async (checkpoint: TraversalCheckpoint): Promise<{ success: boolean; data?: { taskId: string }; error?: string }> =>
+    invoke<{ taskId: string }>('/api/traversal/resumeFromCheckpoint', checkpoint),
+
+  /** 清除断点文件（用户主动放弃恢复时调用） */
+  clearCheckpoint: async (): Promise<{ success: boolean; error?: string }> =>
+    invoke('/api/traversal/clearCheckpoint'),
 
   getStatus: async (): Promise<{ success: boolean; data?: TraversalTestStatus | null; error?: string }> => {
     const res = await invoke<TraversalStatusRawResponse | null>('/api/traversal/status')

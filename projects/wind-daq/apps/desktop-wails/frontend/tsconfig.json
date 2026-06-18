@@ -22,7 +22,8 @@
       "@styles/*": ["src/styles/*"],
       "@shared/*": ["src/shared/*"],
       "@shared-frontend/*": ["../../../../../shared/frontend/*"],
-      "@composables/*": ["src/composables/*"]
+      "@composables/*": ["src/composables/*"],
+      "@utils/*": ["src/utils/*"]
     }
   },
   "include": [

@@ -5,8 +5,8 @@ import { useDisplayStore } from '@stores/displayStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { onPayload, offPayload, onLog, offLog } from '@bridge/deviceBridge'
-import type { PressureSnapshot, DeviceLogEvent } from '@bridge/deviceBridge'
+import { onPayload, offPayload, onLog, offLog, onDeviceState, offDeviceState } from '@bridge/deviceBridge'
+import type { PressureSnapshot, DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
 import MonitorView from '@views/MonitorView.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
@@ -88,6 +88,10 @@ onMounted(async () => {
   onLog((entry: DeviceLogEvent) => {
     logStore.pushEvent(entry)
   })
+  // 监听设备状态变更（连接断开等事件）
+  onDeviceState((id: string, state: DeviceState) => {
+    deviceStore.updateStatusFromBackend(id, state)
+  })
   recordingStore.startListening()
 })
 
@@ -95,6 +99,7 @@ onUnmounted(() => {
   deviceStore.stopDisplayFlush()
   offPayload()
   offLog()
+  offDeviceState()
   recordingStore.stopListening()
 })
 </script>

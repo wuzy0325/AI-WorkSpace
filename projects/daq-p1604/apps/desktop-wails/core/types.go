@@ -29,9 +29,10 @@ func (s DeviceStatus) String() string {
 
 // P1604Config DAQ-P-1604 设备硬件配置
 type P1604Config struct {
-	SamplingRate int    `json:"samplingRate"` // 采样周期（毫秒），最小 10ms
+	SamplingRate int    `json:"samplingRate"` // 采样周期（毫秒），最小 10ms，由采样频率换算得出
 	Unit         string `json:"unit"`         // 压力单位：psi, Pa, kPa, MPa, kgf/cm²
 	AutoConnect  bool   `json:"autoConnect"`  // 启动时自动连接
+	Precision    int    `json:"precision"`    // 全局默认显示精度（小数位数 0-6），单通道精度未设置时回退到此值
 }
 
 // ChannelConfig 通道配置

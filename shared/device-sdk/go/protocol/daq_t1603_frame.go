@@ -86,7 +86,7 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 			reasonableCount++
 		}
 	}
-	return reasonableCount >= len(temps)/2
+	return reasonableCount >= len(temps)*3/4
 }
 
 // ParseASCIIFrame parses a 192-byte ASCII text frame.

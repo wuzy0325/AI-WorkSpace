@@ -9,6 +9,8 @@ const props = defineProps<{
   currentPoint?: { alpha: number; beta: number }
   completedPoints?: number
   currentPointPhase?: TraversalPointPhase
+  /** 父组件传入的可见性：当前 Tab 非 preview 时应暂停动画以节省资源 */
+  visible?: boolean
 }>()
 
 const themeStore = useThemeStore()
@@ -87,23 +89,23 @@ function transformY(y: number, transform: ViewTransform): number {
   return transform.offsetY + transform.plotHeight - ((y - minY) / (maxY - minY || 1)) * transform.plotHeight
 }
 
-// 涓婚棰滆壊閰嶇疆
+// 主题颜色配置
 const themeColors = computed(() => {
   const isDark = themeStore.theme === 'dark'
   return {
-    // 鑳屾櫙鑹?
+    // 背景色
     background: isDark ? '#0f172a' : '#f8fafc',
-    // 缃戞牸绾?
+    // 网格线
     grid: isDark ? '#334155' : '#e2e8f0',
-    // 鍧愭爣杞?
+    // 坐标轴
     axis: isDark ? '#475569' : '#94a3b8',
-    // 鏅€氱偣
+    // 普通点
     point: isDark ? '#3b82f6' : '#2563eb',
-    // 褰撳墠鐐?
+    // 当前点
     currentPoint: '#ef4444',
-    // 褰撳墠鐐规弿杈?
+    // 当前点描边
     currentPointStroke: isDark ? '#fca5a5' : '#fecaca',
-    // 鏂囧瓧
+    // 文字
     text: isDark ? '#94a3b8' : '#64748b'
   }
 })
@@ -118,7 +120,7 @@ function draw() {
   const rect = containerRef.value?.getBoundingClientRect()
   if (!rect || rect.width === 0 || rect.height === 0) return
 
-  // 閬垮厤鏃犻檺灏忓昂瀵哥粯鍒?
+  // 避免无限小尺寸绘制
   if (rect.width < 10 || rect.height < 10) return
 
   const dpr = window.devicePixelRatio || 1
@@ -134,11 +136,11 @@ function draw() {
 
   const colors = themeColors.value
 
-  // 鑳屾櫙
+  // 背景
   ctx.fillStyle = colors.background
   ctx.fillRect(0, 0, width, height)
 
-  // 缃戞牸绾?
+  // 网格线
   ctx.strokeStyle = colors.grid
   ctx.lineWidth = 1
 
@@ -160,7 +162,7 @@ function draw() {
   }
   ctx.stroke()
 
-  // 鍧愭爣杞?
+  // 坐标轴
   ctx.strokeStyle = colors.axis
   ctx.lineWidth = 1.5
   ctx.beginPath()
@@ -172,7 +174,7 @@ function draw() {
   ctx.lineTo(viewTransform.offsetX + viewTransform.plotWidth, centerY)
   ctx.stroke()
 
-  // 鐐逛綅
+  // 点位
   const totalPoints = points.value.length
   const completedCount = props.completedPoints ?? 0
 
@@ -188,7 +190,7 @@ function draw() {
     const isCompleted = i < completedCount
     const isPending = i >= completedCount && !isCurrentPoint
 
-    // 濡傛灉娴嬭瘯宸插畬鎴愶紝褰撳墠鐐逛篃搴旇鏄剧ず涓哄凡瀹屾垚鐘舵€?
+    // 如果测试已完成，当前点也应该显示为已完成状态
     const shouldShowAsCurrent = isCurrentPoint && !isCompleted && props.currentPointPhase
 
     ctx.beginPath()
@@ -196,29 +198,29 @@ function draw() {
     ctx.arc(screenX, screenY, radius, 0, Math.PI * 2)
 
     if (shouldShowAsCurrent) {
-      // 褰撳墠姝ｅ湪澶勭悊鐨勭偣锛屾牴鎹樁娈垫樉绀轰笉鍚岄鑹?
+      // 当前正在处理的点，根据阶段显示不同颜色
       let color: string
       let glowColor: string
 
       if (props.currentPointPhase === 'moving') {
-        // 绉诲姩涓細钃濊壊
+        // 移动中：蓝色
         color = '#3b82f6'
         glowColor = '#3b82f6'
       } else if (props.currentPointPhase === 'stabilizing') {
-        // 绛夊緟绋冲畾锛氶粍鑹?
+        // 等待稳定：黄色
         color = '#fbbf24'
         glowColor = '#fbbf24'
       } else if (props.currentPointPhase === 'acquiring') {
-        // 閲囬泦涓細缁胯壊
+        // 采集中：绿色
         color = '#10b981'
         glowColor = '#10b981'
       } else {
-        // 榛樿锛氭鑹?
+        // 默认：橙色
         color = '#f97316'
         glowColor = '#f97316'
       }
 
-      // 搴旂敤闂儊鏁堟灉
+      // 应用闪烁效果
       const blinkOpacity = blinkState.value.opacity
       const blinkRadius = blinkState.value.radiusOffset
 
@@ -226,14 +228,14 @@ function draw() {
       ctx.globalAlpha = blinkOpacity
       ctx.fill()
 
-      // 鍙戝厜鏁堟灉闅忛棯鐑佸彉鍖?
+      // 发光效果随闪烁变化
       ctx.shadowColor = glowColor
       ctx.shadowBlur = 8 + blinkRadius * 2
       ctx.fill()
       ctx.shadowBlur = 0
       ctx.globalAlpha = 1
 
-      // 缁樺埗闂儊鐨勫鍦?
+      // 绘制闪烁的外圈
       ctx.strokeStyle = glowColor
       ctx.lineWidth = 2
       ctx.globalAlpha = blinkOpacity * 0.6
@@ -242,7 +244,7 @@ function draw() {
       ctx.stroke()
       ctx.globalAlpha = 1
 
-      // 缁樺埗绗簩涓鍦堬紙鏇存贰锛?
+      // 绘制第二个外圈（更淡）
       ctx.strokeStyle = glowColor
       ctx.lineWidth = 1
       ctx.globalAlpha = blinkOpacity * 0.3
@@ -251,29 +253,24 @@ function draw() {
       ctx.stroke()
       ctx.globalAlpha = 1
     } else if (isCompleted) {
-      // 宸插畬鎴愮殑鐐癸細鏍规嵁杩涘害浠庣传鑹叉笎鍙樺埌绮夎壊
-      const progress = totalPoints > 1 ? i / (totalPoints - 1) : 0
-      // 浠庣传鑹?#a855f7 娓愬彉鍒扮矇鑹?#ec4899
-      const r = Math.round(168 + (236 - 168) * progress)
-      const g = Math.round(85 + (72 - 85) * progress)
-      const b = Math.round(247 + (153 - 247) * progress)
-      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+      // 已完成的点：统一使用稳定的蓝灰色，避免渐变色误导数据趋势
+      ctx.fillStyle = colors.point
       ctx.fill()
     } else {
-      // 鏈畬鎴愮殑鐐癸細鍗婇€忔槑鐏拌壊
+      // 未完成的点：半透明灰色
       ctx.fillStyle = 'rgba(148, 163, 184, 0.3)'
       ctx.fill()
     }
   }
 
-  // 鏂囧瓧
+  // 文字
   ctx.fillStyle = colors.text
   ctx.font = '10px sans-serif'
   ctx.fillText(`X: ${bounds.value.minX.toFixed(0)} ~ ${bounds.value.maxX.toFixed(0)}`, 5, height - 5)
   ctx.fillText(`Y: ${bounds.value.minY.toFixed(0)} ~ ${bounds.value.maxY.toFixed(0)}`, width - 100, height - 5)
 }
 
-// 闂儊鍔ㄧ敾鐘舵€?
+// 闪烁动画状态
 const blinkState = ref({
   opacity: 1,
   glowing: false,
@@ -283,7 +280,7 @@ const blinkState = ref({
 
 let blinkAnimationId: number | null = null
 let lastBlinkTime = 0
-const BLINK_DURATION = 600 // 闂儊鍛ㄦ湡锛堟绉掞級
+const BLINK_DURATION = 600 // 闪烁周期（毫秒）
 
 function startBlinkAnimation(): void {
   if (blinkAnimationId !== null) return
@@ -292,19 +289,19 @@ function startBlinkAnimation(): void {
     if (!lastBlinkTime) lastBlinkTime = timestamp
     const elapsed = timestamp - lastBlinkTime
 
-    // 璁＄畻闂儊杩涘害锛?-1锛?
+    // 计算闪烁进度：0-1
     const progress = (elapsed % BLINK_DURATION) / BLINK_DURATION
 
-    // 浣跨敤姝ｅ鸡娉㈠垱寤哄钩婊戠殑闂儊鏁堟灉
+    // 使用正弦波创建平滑的闪烁效果
     const sineValue = Math.sin(progress * Math.PI * 2)
 
-    // 閫忔槑搴﹀湪 0.4-1.0 涔嬮棿鍙樺寲
+    // 透明度在 0.4-1.0 之间变化
     blinkState.value.opacity = 0.4 + (sineValue + 1) * 0.3
 
-    // 鍗婂緞鍋忕Щ鍦?0-3 涔嬮棿鍙樺寲
+    // 半径偏移在 0-3 之间变化
     blinkState.value.radiusOffset = (sineValue + 1) * 1.5
 
-    // 鍙戝厜寮哄害鍙樺寲
+    // 发光强度变化
     blinkState.value.glowing = sineValue > 0
 
     draw()
@@ -326,9 +323,9 @@ function stopBlinkAnimation(): void {
   }
 }
 
-// 鐩戝惉鏄惁闇€瑕侀棯鐑侊紙鏈夊綋鍓嶇偣涓旀鍦ㄨ繍琛岋級
-watch(() => props.currentPoint && props.currentPointPhase, (hasCurrentPoint) => {
-  if (hasCurrentPoint) {
+// 监听是否需要闪烁：需要同时满足可见、有当前点且正在运行
+watch(() => props.visible !== false && !!props.currentPoint && !!props.currentPointPhase, (shouldBlink) => {
+  if (shouldBlink) {
     startBlinkAnimation()
   } else {
     stopBlinkAnimation()
@@ -342,7 +339,7 @@ watch([() => props.layout, () => props.currentPoint, () => props.completedPoints
 let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
-  // 浣跨敤 ResizeObserver 鐩戝惉瀹瑰櫒灏哄鍙樺寲
+  // 使用 ResizeObserver 监听容器尺寸变化
   if (containerRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
       nextTick(draw)
@@ -351,12 +348,12 @@ onMounted(() => {
   }
   window.addEventListener('resize', draw)
 
-  // 寤惰繜鎵ц缁樺埗锛岀‘淇濆鍣ㄥ凡姝ｇ‘娓叉煋
+  // 延迟执行绘制，确保容器已正确渲染
   setTimeout(() => {
     nextTick(draw)
   }, 100)
 
-  // 鍚姩闂儊鍔ㄧ敾锛堝鏋滄湁褰撳墠鐐癸級
+  // 启动闪烁动画（如果有当前点）
   if (props.currentPoint && props.currentPointPhase) {
     startBlinkAnimation()
   }

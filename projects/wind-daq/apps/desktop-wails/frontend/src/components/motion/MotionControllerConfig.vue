@@ -1,81 +1,139 @@
 <script setup lang="ts">
-import { computed, reactive, onMounted, watch, ref, provide } from 'vue';
+import { computed, reactive, onMounted, watch, ref } from 'vue';
 import { NButton } from 'naive-ui';
 import { useMotionStore } from '@stores/motionStore';
-import { useI18nStore } from '@stores/i18nStore';
 import { useFeedbackStore } from '@stores/feedbackStore';
-import type { MotionControllerProfile } from '@shared/types/motion';
-import { DEFAULT_AXIS_NAMES, createDefaultAxis } from './motionConfigEditor';
+import type { MotionControllerProfile, AxisConfig, AxisName, PositionSource } from '@shared/types/motion';
+import {
+  DEFAULT_AXIS_NAMES,
+  DEFAULT_STEPS_PER_REV,
+  DEFAULT_MICRO_STEPS,
+  DEFAULT_LEAD,
+  DEFAULT_GEAR_RATIO,
+  DEFAULT_MAX_SPEED,
+  DEFAULT_ENCODER_SCALE,
+  DEFAULT_ENCODER_COMPENSATION_TOLERANCE,
+  DEFAULT_ENCODER_COMPENSATION_MAX_CYCLES,
+  DEFAULT_ENCODER_COMPENSATION_SETTLE_MS,
+  DEFAULT_ENCODER_COMPENSATION_MIN_STEP,
+  DEFAULT_ENCODER_COMPENSATION_TIMEOUT_MS,
+  createDefaultAxis,
+  createDefaultEncoderCompensation,
+  normalizeAxisForEditing,
+  normalizePositive,
+} from './motionConfigEditor';
 import ProfileSidebar from './ProfileSidebar.vue';
-import ConnectionConfigEditor from './ConnectionConfigEditor.vue';
-import AxisConfigCard from './AxisConfigCard.vue';
+import AxisConfigCard from './AxisConfigCard.vue';
 
 const props = defineProps<{ open: boolean; currentId?: string | null }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const motion = useMotionStore();
-const i18n = useI18nStore();
 const feedback = useFeedbackStore();
 
-const activeTooltip = ref<{ text: string; x: number; y: number } | null>(null);
-
-function showTooltip(text: string, event: MouseEvent): void {
-  activeTooltip.value = { text, x: event.clientX, y: event.clientY - 32 };
-}
-function hideTooltip(): void {
-  activeTooltip.value = null;
-}
-provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip);
-provide<() => void>('hideTooltip', hideTooltip);
+/** 补偿超时验证的缓冲时间(ms)，用于计算最小超时 = maxCycles × settleMs + 缓冲 */
+const COMPENSATION_TIMEOUT_BUFFER_MS = 500;
 
 const editing = reactive<MotionControllerProfile>({
-  id: '', name: '', type: 'SIMULATED-MC', address: '127.0.0.1', port: 9000, autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name) as any),
+  id: '',
+  name: '',
+  type: 'SIMULATED-MC',
+  address: '127.0.0.1',
+  port: 9000,
+  autoConnect: false,
+  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name))),
 });
 
 const isEdit = computed(() => !!editing.id);
-
-const connectionConfig = computed({
-  get: () => ({
-    name: editing.name,
-    type: editing.type,
-    address: editing.address,
-    port: editing.port,
-    autoConnect: editing.autoConnect,
-  }),
-  set: (val) => {
-    editing.name = val.name;
-    editing.type = val.type;
-    editing.address = val.address;
-    editing.port = val.port;
-    editing.autoConnect = val.autoConnect;
-  },
-});
+const validationErrors = ref<string[]>([]);
+const isCreatingNew = ref(false);
 
 function newProfile(): void {
+  isCreatingNew.value = true;
+  validationErrors.value = [];
   editing.id = '';
-  editing.name = '新控制器';
+  editing.name = '模拟控制器';
   editing.type = 'SIMULATED-MC';
   editing.address = '127.0.0.1';
   editing.port = 9000;
   editing.autoConnect = false;
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name) as any);
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name)));
 }
 
 function editProfile(src: MotionControllerProfile): void {
+  isCreatingNew.value = false;
+  validationErrors.value = [];
   editing.id = src.id;
   editing.name = src.name;
   editing.type = src.type;
   editing.address = src.address;
   editing.port = src.port;
   editing.autoConnect = src.autoConnect;
-  editing.axes = src.axes.map((a) => ({
-    ...a,
-    enabled: a.enabled ?? true,
-  }));
+  editing.axes = src.axes.map((a) => normalizeAxisForEditing(a));
+}
+
+function validateEncoderCompensation(): string[] {
+  const errors: string[] = [];
+
+  for (const axis of editing.axes) {
+    if (!axis.enabled || axis.positionSource !== 'encoder') continue;
+
+    const comp = axis.encoderCompensation;
+    if (!comp?.enabled) continue;
+
+    const tolerance = comp.tolerance ?? DEFAULT_ENCODER_COMPENSATION_TOLERANCE;
+    const minStep = comp.minStep ?? DEFAULT_ENCODER_COMPENSATION_MIN_STEP;
+    const maxCycles = comp.maxCycles ?? DEFAULT_ENCODER_COMPENSATION_MAX_CYCLES;
+    const settleMs = comp.settleMs ?? DEFAULT_ENCODER_COMPENSATION_SETTLE_MS;
+    const timeoutMs = comp.timeoutMs ?? DEFAULT_ENCODER_COMPENSATION_TIMEOUT_MS;
+
+    // 关键约束：最小步长必须小于容差
+    if (minStep >= tolerance) {
+      errors.push(
+        `轴 ${axis.name}：最小白 (${minStep}) 必须小于容差 (${tolerance})`
+      );
+    }
+
+    // 建议：最小步长应小于电机一个微步的位移
+    const stepsPerRev = axis.stepsPerRev ?? DEFAULT_STEPS_PER_REV;
+    const microSteps = axis.microSteps ?? DEFAULT_MICRO_STEPS;
+    const stepsPerMicrostep = (360 / stepsPerRev) * microSteps;
+
+    let microstepSize: number;
+    if (axis.kind === 'ROTARY') {
+      const gearRatio = axis.gearRatio ?? DEFAULT_GEAR_RATIO;
+      microstepSize = 360 / (stepsPerMicrostep * gearRatio);
+    } else {
+      const lead = axis.lead ?? DEFAULT_LEAD;
+      microstepSize = lead / stepsPerMicrostep;
+    }
+
+    if (minStep > microstepSize) {
+      errors.push(
+        `轴 ${axis.name}：最小白 (${minStep}) 大于单个微步位移 (${microstepSize.toFixed(4)})，建议调小`
+      );
+    }
+
+    // 超时时间应足够完成所有补偿循环
+    const minTimeout = maxCycles * settleMs + COMPENSATION_TIMEOUT_BUFFER_MS;
+    if (timeoutMs < minTimeout) {
+      errors.push(
+        `轴 ${axis.name}：超时时间 (${timeoutMs}ms) 应不小于 ${minTimeout}ms`
+      );
+    }
+  }
+
+  return errors;
 }
 
 async function save(): Promise<void> {
+  const errors = validateEncoderCompensation();
+  if (errors.length > 0) {
+    validationErrors.value = errors;
+    return;
+  }
+  validationErrors.value = [];
+
   const profile: MotionControllerProfile = {
     id: editing.id || (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
     name: editing.name.trim() || '新控制器',
@@ -84,10 +142,31 @@ async function save(): Promise<void> {
     port: Number.isFinite(editing.port) ? editing.port : 9000,
     autoConnect: editing.autoConnect,
     axes: editing.axes.map((a) => ({
-      name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
-      maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
+      name: a.name,
+      enabled: a.enabled,
+      kind: a.kind ?? (a.name === 'U' ? 'ROTARY' : 'LINEAR'),
+      maxSpeed: normalizePositive(a.maxSpeed, DEFAULT_MAX_SPEED),
+      minLimit: a.minLimit,
+      maxLimit: a.maxLimit,
+      inverted: a.inverted ?? false,
+      encoderInverted: a.encoderInverted ?? a.inverted ?? false,
+      stepsPerRev: normalizePositive(a.stepsPerRev, DEFAULT_STEPS_PER_REV),
+      microSteps: normalizePositive(a.microSteps, DEFAULT_MICRO_STEPS),
+      lead: normalizePositive(a.lead, DEFAULT_LEAD),
+      gearRatio: normalizePositive(a.gearRatio, DEFAULT_GEAR_RATIO),
+      positionSource: (a.positionSource ?? 'register') as PositionSource,
+      encoderScale: normalizePositive(a.encoderScale, DEFAULT_ENCODER_SCALE),
+      encoderCompensation: {
+        enabled: a.encoderCompensation?.enabled ?? false,
+        tolerance: normalizePositive(a.encoderCompensation?.tolerance, DEFAULT_ENCODER_COMPENSATION_TOLERANCE),
+        maxCycles: normalizePositive(a.encoderCompensation?.maxCycles, DEFAULT_ENCODER_COMPENSATION_MAX_CYCLES),
+        settleMs: normalizePositive(a.encoderCompensation?.settleMs, DEFAULT_ENCODER_COMPENSATION_SETTLE_MS),
+        minStep: normalizePositive(a.encoderCompensation?.minStep, DEFAULT_ENCODER_COMPENSATION_MIN_STEP),
+        timeoutMs: normalizePositive(a.encoderCompensation?.timeoutMs, DEFAULT_ENCODER_COMPENSATION_TIMEOUT_MS),
+      },
     })),
   };
+
   await motion.upsertProfile(profile);
   feedback.pushToast('控制器配置已保存', 'success');
   emit('close');
@@ -103,7 +182,14 @@ function ensureEditingOnOpen(): void {
   if (!props.open) return;
   if (props.currentId) {
     const target = motion.profiles.find((p) => p.id === props.currentId);
-    if (target) { editProfile(target); return; }
+    if (target) {
+      editProfile(target);
+      return;
+    }
+  }
+  if (!editing.id && motion.profiles.length > 0) {
+    editProfile(motion.profiles[0]);
+    return;
   }
   newProfile();
 }
@@ -113,18 +199,23 @@ onMounted(async () => {
   ensureEditingOnOpen();
 });
 
-watch(() => props.open, (v) => { if (v) ensureEditingOnOpen(); });
+watch(() => props.open, (v) => {
+  if (v) ensureEditingOnOpen();
+  else isCreatingNew.value = false;
+});
 
-function onAxisUpdate(index: number, axis: any): void {
-  editing.axes[index] = axis;
+function onAxisUpdate(index: number, axis: AxisConfig): void {
+  // 必须使用 splice 触发 Vue 响应式更新，直接按索引赋值不会被追踪
+  editing.axes.splice(index, 1, axis);
 }
 
-function onUpdateEncComp(index: number, value: any): void {
-  }
+const axisIndices = computed(() => editing.axes.map((_, i) => i));
 
-function toggleLocale() {
-  i18n.setLocale(i18n.locale === 'zh' ? 'en' : 'zh');
-}
+const controllerTypeOptions = [
+  { value: 'SIMULATED-MC', label: '模拟控制器' },
+  { value: 'B140-MC', label: 'B140 控制器' },
+  { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
+];
 </script>
 
 <template>
@@ -147,34 +238,30 @@ function toggleLocale() {
           leave-to-class="opacity-0 scale-95 translate-y-4"
         >
           <div v-show="open" class="config-panel" @click.stop>
+            <!-- Header -->
             <header class="config-panel__header">
-              <div class="config-panel__header-left">
-                <div class="flex items-center gap-3">
-                  <div class="h-10 w-10 flex items-center justify-center rounded-lg bg-gradient-to-br from-[color:var(--accent-primary)]/20 to-[color:var(--accent-primary)]/5 border border-[color:var(--accent-primary)]/20">
-                    <svg class="w-5 h-5 text-[color:var(--accent-primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                    </svg>
-                  </div>
-                  <div>
-                    <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
-                    <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
-                  </div>
+              <div class="flex items-center gap-3">
+                <div class="config-panel__icon">
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
+                  <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
                 </div>
               </div>
-              <div class="config-panel__header-right">
-                <NButton size="tiny" class="locale-toggle-btn" @click="toggleLocale" title="切换语言 / Switch Language">
-                  {{ i18n.locale === 'zh' ? 'EN' : '中文' }}
-                </NButton>
-                <NButton quaternary size="small" class="config-panel__close" @click="emit('close')">
-                  <template #icon>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M18 6L6 18M6 6l12 12"/>
-                    </svg>
-                  </template>
-                </NButton>
-              </div>
+              <NButton quaternary size="small" class="config-panel__close" @click="emit('close')">
+                <template #icon>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </template>
+              </NButton>
             </header>
 
+            <!-- Main Content -->
             <div class="config-panel__body">
               <ProfileSidebar
                 :profiles="motion.profiles"
@@ -184,9 +271,45 @@ function toggleLocale() {
               />
 
               <main class="config-content">
-                <ConnectionConfigEditor v-model="connectionConfig" />
+                <!-- Basic Info -->
+                <section class="config-section config-section--boxed">
+                  <h3 class="config-section__title">
+                    <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    通信设置
+                  </h3>
+                  <div class="basic-info-grid">
+                    <div class="basic-info-field">
+                      <label class="basic-info-field__label">名称</label>
+                      <input v-model="editing.name" type="text" placeholder="控制器名称" class="input-compact" />
+                    </div>
+                    <div class="basic-info-field">
+                      <label class="basic-info-field__label">类型</label>
+                      <select v-model="editing.type" class="input-compact input-compact--select">
+                        <option v-for="opt in controllerTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                      </select>
+                    </div>
+                    <div class="basic-info-field basic-info-field--wide">
+                      <label class="basic-info-field__label">地址</label>
+                      <div class="flex gap-2">
+                        <input v-model="editing.address" type="text" placeholder="127.0.0.1" class="input-compact flex-1" />
+                        <input v-model.number="editing.port" type="number" placeholder="9000" min="1" max="65535" class="input-compact w-20 text-center" />
+                      </div>
+                    </div>
+                    <div class="basic-info-field">
+                      <label class="basic-info-field__label">自动连接</label>
+                      <label class="auto-connect-toggle">
+                        <input v-model="editing.autoConnect" type="checkbox" />
+                        <span class="auto-connect-toggle__track">
+                          <span class="auto-connect-toggle__thumb"></span>
+                        </span>
+                        <span class="auto-connect-toggle__label">{{ editing.autoConnect ? '启用' : '禁用' }}</span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
 
-                <div class="config-section">
+                <!-- Axis Matrix -->
+                <div class="config-section flex-1 flex flex-col min-h-0">
                   <h3 class="config-section__title">
                     <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
                     轴配置
@@ -194,48 +317,45 @@ function toggleLocale() {
                   </h3>
                   <div class="axis-matrix">
                     <AxisConfigCard
-                      v-for="(axis, index) in editing.axes"
-                      :key="axis.name"
-                      :axis="axis"
-                      :index="index"
+                      v-for="idx in axisIndices"
+                      :key="editing.axes[idx].name"
+                      :axis="editing.axes[idx]"
+                      :index="idx"
+                      :controller-type="editing.type"
                       @update="onAxisUpdate"
                     />
                   </div>
-                </div>
+                </div>
               </main>
             </div>
 
+            <!-- Footer -->
             <footer class="config-panel__footer">
               <div class="config-panel__footer-left">
-                <NButton v-if="isEdit" type="error" size="tiny" class="config-panel__delete-btn" @click="remove(editing.id)">删除</NButton>
-                <NButton type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
+                <span class="config-status" :class="isEdit ? 'config-status--edit' : 'config-status--new'">
+                  {{ isEdit ? '编辑现有配置' : '新建配置' }}
+                </span>
               </div>
               <div class="config-panel__footer-right">
+                <NButton v-if="isEdit" type="error" size="tiny" class="config-panel__delete-btn" @click="remove(editing.id)">删除</NButton>
+                <NButton type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
                 <NButton quaternary size="tiny" class="config-panel__cancel-btn" @click="emit('close')">取消</NButton>
                 <NButton type="primary" size="tiny" class="config-panel__save-btn" @click="save">保存</NButton>
               </div>
             </footer>
+
+            <!-- 验证错误提示 -->
+            <div v-if="validationErrors.length > 0" class="validation-errors">
+              <div class="validation-errors__title">参数验证失败</div>
+              <ul class="validation-errors__list">
+                <li v-for="(err, idx) in validationErrors" :key="idx" class="validation-errors__item">
+                  <span class="validation-errors__dot">•</span>
+                  <span>{{ err }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </Transition>
-      </div>
-    </Transition>
-  </Teleport>
-
-  <Teleport to="body">
-    <Transition
-      enter-active-class="transition ease-out duration-150"
-      enter-from-class="opacity-0 scale-95"
-      enter-to-class="opacity-100 scale-100"
-      leave-active-class="transition ease-in duration-100"
-      leave-from-class="opacity-100 scale-100"
-      leave-to-class="opacity-0 scale-95"
-    >
-      <div
-        v-if="activeTooltip"
-        class="field-tooltip"
-        :style="{ left: activeTooltip.x + 'px', top: activeTooltip.y + 'px' }"
-      >
-        {{ activeTooltip.text }}
       </div>
     </Transition>
   </Teleport>
@@ -256,14 +376,15 @@ function toggleLocale() {
 .config-panel {
   width: 100%;
   max-width: 1100px;
-  max-height: 750px;
+  max-height: 800px;
+  height: 90vh;
   display: flex;
   flex-direction: column;
   border-radius: 1rem;
-  background: rgba(30, 41, 59, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
   box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.5);
-  outline: none;
+  overflow: hidden;
 }
 :root[data-theme='light'] .config-panel {
   background: rgba(255, 255, 255, 0.98);
@@ -274,23 +395,22 @@ function toggleLocale() {
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-panel-strong);
 }
-:root[data-theme='light'] .config-panel__header {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-}
-.config-panel__header-left,
-.config-panel__header-right {
+.config-panel__icon {
+  width: 2.5rem;
+  height: 2.5rem;
   display: flex;
   align-items: center;
-  gap: 1rem;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--accent-info) 10%, transparent);
+  color: var(--accent-info);
 }
 .config-panel__title {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   font-weight: 700;
-  color: var(--text-primary);
-}
-:root[data-theme='light'] .config-panel__title {
   color: var(--text-primary);
 }
 .config-panel__subtitle {
@@ -310,25 +430,10 @@ function toggleLocale() {
   transition: all 0.2s ease;
 }
 .config-panel__close:hover {
-  color: var(--accent-primary);
-  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-danger);
+  background: rgba(239, 68, 68, 0.15);
 }
-.locale-toggle-btn {
-  padding: 0.375rem 0.75rem;
-  border-radius: 0.375rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.15);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  transition: all 0.2s ease;
-}
-.locale-toggle-btn:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.1);
-}
+
 .config-panel__body {
   flex: 1;
   display: flex;
@@ -338,17 +443,37 @@ function toggleLocale() {
   flex: 1;
   overflow-y: auto;
   padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
+.config-content::-webkit-scrollbar {
+  width: 4px;
+}
+.config-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.config-content::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 2px;
+}
+
 .config-section {
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
+}
+.config-section--boxed {
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
 }
 .config-section__title {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  margin-bottom: 0.875rem;
+  margin-bottom: 0.75rem;
 }
 .section-subtitle {
   display: inline;
@@ -359,20 +484,99 @@ function toggleLocale() {
   letter-spacing: normal;
   margin-left: 0.5rem;
 }
+
+.basic-info-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 0.75rem;
+}
+.basic-info-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.basic-info-field:nth-child(1) { grid-column: span 3; }
+.basic-info-field:nth-child(2) { grid-column: span 3; }
+.basic-info-field--wide { grid-column: span 4; }
+.basic-info-field:nth-child(4) { grid-column: span 2; }
+.basic-info-field__label {
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.input-compact {
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.input-compact:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--focus-ring-soft);
+}
+.input-compact--select {
+  cursor: pointer;
+}
+
+.auto-connect-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.auto-connect-toggle input {
+  display: none;
+}
+.auto-connect-toggle__track {
+  width: 2rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.3);
+  position: relative;
+  transition: background 0.2s ease;
+}
+.auto-connect-toggle input:checked + .auto-connect-toggle__track {
+  background: var(--accent-primary);
+}
+.auto-connect-toggle__thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: calc(1.125rem - 4px);
+  height: calc(1.125rem - 4px);
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s ease;
+}
+.auto-connect-toggle input:checked + .auto-connect-toggle__track .auto-connect-toggle__thumb {
+  transform: translateX(0.875rem);
+}
+.auto-connect-toggle__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
 .axis-matrix {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.875rem;
+  flex: 1;
+  min-height: 0;
 }
+
 .config-panel__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-:root[data-theme='light'] .config-panel__footer {
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 0.875rem 1.25rem;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-panel-strong);
 }
 .config-panel__footer-left,
 .config-panel__footer-right {
@@ -380,8 +584,20 @@ function toggleLocale() {
   align-items: center;
   gap: 0.75rem;
 }
+.config-status {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+.config-status--edit {
+  color: var(--accent-primary);
+}
+.config-status--new {
+  color: var(--text-muted);
+}
 .config-panel__delete-btn,
-.config-panel__new-btn {
+.config-panel__new-btn,
+.config-panel__cancel-btn,
+.config-panel__save-btn {
   padding: 0.5rem 1rem;
   border-radius: 0.5rem;
   font-size: var(--font-size-sm);
@@ -404,14 +620,6 @@ function toggleLocale() {
 .config-panel__new-btn:hover {
   background: rgba(16, 185, 129, 0.2);
 }
-.config-panel__cancel-btn,
-.config-panel__save-btn {
-  padding: 0.5rem 1.25rem;
-  border-radius: 0.5rem;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
 .config-panel__cancel-btn {
   color: var(--text-muted);
   background: rgba(0, 0, 0, 0.15);
@@ -429,23 +637,34 @@ function toggleLocale() {
 .config-panel__save-btn:hover {
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
 }
-.field-tooltip {
-  position: fixed;
-  z-index: 9999;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.375rem;
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--text-primary);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-default);
-  pointer-events: none;
-  white-space: nowrap;
-  box-shadow: var(--shadow-panel);
+
+.validation-errors {
+  padding: 0.75rem 1.25rem;
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
-:root[data-theme='light'] .field-tooltip {
-  color: var(--text-primary);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-default);
+.validation-errors__title {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--accent-danger);
+  margin-bottom: 0.25rem;
+}
+.validation-errors__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.validation-errors__item {
+  font-size: var(--font-size-2xs);
+  color: var(--accent-danger);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.validation-errors__dot {
+  flex-shrink: 0;
 }
 </style>

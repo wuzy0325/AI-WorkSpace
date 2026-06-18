@@ -5,10 +5,13 @@ import (
 	"sync"
 	"testing"
 
+	motionmanager "shared.local/motion-control/go/manager"
 	sharedcore "shared.local/device-sdk/go/motion/core"
 	sharedports "shared.local/device-sdk/go/motion/ports"
 
 	"wind-daq/services/api-go/internal/core/motion"
+	"wind-daq/services/api-go/internal/ports"
+	"wind-daq/services/api-go/pkg/wiring"
 )
 
 type mockMotionController struct {
@@ -115,6 +118,14 @@ func (m *mockMotionController) DefinePosition(ctx context.Context, axis sharedco
 	return nil
 }
 
+// ApplyConfig 应用控制器配置：mock 实现更新内部 profile，便于测试配置热更新场景
+func (m *mockMotionController) ApplyConfig(ctx context.Context, profile sharedcore.MotionControllerProfile) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.profile = profile
+	return nil
+}
+
 var _ sharedports.MotionController = (*mockMotionController)(nil)
 
 func testProfile() motion.MotionControllerProfile {
@@ -134,10 +145,16 @@ func testProfile() motion.MotionControllerProfile {
 
 func f64ptr(v float64) *float64 { return &v }
 
+// newTestMotionManager 构造一个包装了 shared MotionManager 的 ports.MotionManager，
+// 经 pkg/wiring 装配以匹配生产装配根，避免测试直接依赖 adapters。
+func newTestMotionManager(factory func(sharedcore.MotionControllerProfile) (sharedports.MotionController, error)) ports.MotionManager {
+	return wiring.WrapMotionManager(motionmanager.NewMotionManager(nil, factory))
+}
+
 func TestMotionManager_Connect(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -158,7 +175,7 @@ func TestMotionManager_Connect(t *testing.T) {
 func TestMotionManager_MoveTo(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -182,7 +199,7 @@ func TestMotionManager_MoveTo(t *testing.T) {
 func TestMotionManager_MoveBy(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -206,7 +223,7 @@ func TestMotionManager_MoveBy(t *testing.T) {
 func TestMotionManager_Jog(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -230,7 +247,7 @@ func TestMotionManager_Jog(t *testing.T) {
 func TestMotionManager_Home(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -254,7 +271,7 @@ func TestMotionManager_Home(t *testing.T) {
 func TestMotionManager_EmergencyStop(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -278,7 +295,7 @@ func TestMotionManager_EmergencyStop(t *testing.T) {
 func TestMotionManager_ResetEmergencyStop(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -309,7 +326,7 @@ func TestMotionManager_ResetEmergencyStop(t *testing.T) {
 func TestMotionManager_Stop(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -333,7 +350,7 @@ func TestMotionManager_Stop(t *testing.T) {
 func TestMotionManager_DeleteProfile(t *testing.T) {
 	profile := testProfile()
 	var ctrl *mockMotionController
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		ctrl = newMockMotionController(p)
 		return ctrl, nil
 	})
@@ -359,7 +376,7 @@ func TestMotionManager_DeleteProfile(t *testing.T) {
 
 func TestMotionManager_StatusAll(t *testing.T) {
 	profile := testProfile()
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		return newMockMotionController(p), nil
 	})
 
@@ -384,7 +401,7 @@ func TestMotionManager_StatusAll(t *testing.T) {
 }
 
 func TestMotionManager_ConnectNonExistent(t *testing.T) {
-	mgr := NewMotionManager(nil, func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
+	mgr := newTestMotionManager(func(p sharedcore.MotionControllerProfile) (sharedports.MotionController, error) {
 		return newMockMotionController(p), nil
 	})
 

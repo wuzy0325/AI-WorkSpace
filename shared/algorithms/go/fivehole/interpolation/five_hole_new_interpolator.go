@@ -112,10 +112,29 @@ type FiveHoleNewInterpolator struct {
 	aa1BetaGroups map[float64][]gridPoint
 	aa2BetaGroups map[float64][]gridPoint
 	aa3BetaGroups map[float64][]gridPoint
-	aa1ExtGrid    *extendedGrid
-	aa2ExtGrid    *extendedGrid
-	sortedAlphas  []float64
-	sortedBetas   []float64
+	aa1ExtGrid *extendedGrid
+	aa2ExtGrid *extendedGrid
+
+	aa1SortedAlphas []float64
+	aa1SortedBetas  []float64
+	aa2SortedAlphas []float64
+	aa2SortedBetas  []float64
+	aa3SortedAlphas []float64
+	aa3SortedBetas  []float64
+
+	aa1ExtCells []gridCell
+	aa2ExtCells []gridCell
+
+	// Opt: 预计算每条 alpha 带的 Ka 范围, 避免每次 Calculate 重算
+	aa1KaMin []float64
+	aa1KaMax []float64
+	aa2KaMin []float64
+	aa2KaMax []float64
+	aa3KaMin []float64
+	aa3KaMax []float64
+
+	sortedAlphas []float64
+	sortedBetas  []float64
 }
 
 // NewFiveHoleNewInterpolator 创建五孔探针新插值器
@@ -192,7 +211,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 
 	// 步骤1：用AA1公式计算初步角度
 	aa1Point := f.calculateKaKbAA1(p1, p2, p3, p4, p5)
-	aa1Result := f.interpolateOnGrid(aa1Point, f.aa1Grid, f.aa1BetaGroups, f.aa1ExtGrid, true)
+	aa1Result := f.interpolateOnGrid(aa1Point, f.aa1Grid, f.aa1SortedAlphas, f.aa1SortedBetas, f.aa1ExtGrid, f.aa1ExtCells, true)
 	if !aa1Result.Found {
 		return InterpolationResult{
 			IsValid: false,
@@ -219,7 +238,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	case regionEdge:
 		// 边缘区：用AA2公式重新计算
 		aa2Point := f.calculateKaKbAA2(p1, p2, p3, p4, p5)
-		aa2Result := f.interpolateOnGrid(aa2Point, f.aa2Grid, f.aa2BetaGroups, f.aa2ExtGrid, true)
+		aa2Result := f.interpolateOnGrid(aa2Point, f.aa2Grid, f.aa2SortedAlphas, f.aa2SortedBetas, f.aa2ExtGrid, f.aa2ExtCells, true)
 		if !aa2Result.Found {
 			return InterpolationResult{
 				IsValid: false,
@@ -233,7 +252,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	case regionCenter:
 		// 中心区：用AA3公式重新计算
 		aa3Point := f.calculateKaKbAA3(p1, p2, p3, p4, p5)
-		aa3Result := f.interpolateOnGrid(aa3Point, f.aa3Grid, f.aa3BetaGroups, nil, false)
+		aa3Result := f.interpolateOnGrid(aa3Point, f.aa3Grid, f.aa3SortedAlphas, f.aa3SortedBetas, nil, nil, false)
 		if !aa3Result.Found {
 			return InterpolationResult{
 				IsValid: false,
@@ -283,6 +302,20 @@ func (f *FiveHoleNewInterpolator) clearState() {
 	f.aa3BetaGroups = nil
 	f.aa1ExtGrid = nil
 	f.aa2ExtGrid = nil
+	f.aa1SortedAlphas = nil
+	f.aa1SortedBetas = nil
+	f.aa2SortedAlphas = nil
+	f.aa2SortedBetas = nil
+	f.aa3SortedAlphas = nil
+	f.aa3SortedBetas = nil
+	f.aa1ExtCells = nil
+	f.aa2ExtCells = nil
+	f.aa1KaMin = nil
+	f.aa1KaMax = nil
+	f.aa2KaMin = nil
+	f.aa2KaMax = nil
+	f.aa3KaMin = nil
+	f.aa3KaMax = nil
 	f.sortedAlphas = nil
 	f.sortedBetas = nil
 }
@@ -390,16 +423,21 @@ func (f *FiveHoleNewInterpolator) buildAllGrids() {
 	f.sortedAlphas = sortedFloat64Keys(alphaSet)
 	f.sortedBetas = sortedFloat64Keys(betaSet)
 
-	f.aa1Grid, f.aa1BetaGroups = f.buildGrid(aaFormula1)
-	f.aa2Grid, f.aa2BetaGroups = f.buildGrid(aaFormula2)
-	f.aa3Grid, f.aa3BetaGroups = f.buildGrid(aaFormula3)
+	f.aa1Grid, _, f.aa1SortedAlphas, f.aa1SortedBetas = f.buildGrid(aaFormula1)
+	f.aa2Grid, _, f.aa2SortedAlphas, f.aa2SortedBetas = f.buildGrid(aaFormula2)
+	f.aa3Grid, _, f.aa3SortedAlphas, f.aa3SortedBetas = f.buildGrid(aaFormula3)
 
-	f.aa1ExtGrid = f.generateExtendedGrid(f.aa1Grid, f.aa1BetaGroups)
-	f.aa2ExtGrid = f.generateExtendedGrid(f.aa2Grid, f.aa2BetaGroups)
+	// Opt: 预计算每条 alpha 带的 Ka 范围, 避免每次 Calculate 重算
+	f.aa1KaMin, f.aa1KaMax = f.computeKaRange(f.aa1Grid, f.aa1SortedAlphas)
+	f.aa2KaMin, f.aa2KaMax = f.computeKaRange(f.aa2Grid, f.aa2SortedAlphas)
+	f.aa3KaMin, f.aa3KaMax = f.computeKaRange(f.aa3Grid, f.aa3SortedAlphas)
+
+	f.aa1ExtGrid, f.aa1ExtCells = f.generateExtendedGrid(f.aa1Grid, f.aa1SortedAlphas, f.aa1SortedBetas)
+	f.aa2ExtGrid, f.aa2ExtCells = f.generateExtendedGrid(f.aa2Grid, f.aa2SortedAlphas, f.aa2SortedBetas)
 }
 
 // buildGrid 构建指定公式的网格
-func (f *FiveHoleNewInterpolator) buildGrid(formula aaFormula) (map[float64][]gridPoint, map[float64][]gridPoint) {
+func (f *FiveHoleNewInterpolator) buildGrid(formula aaFormula) (map[float64][]gridPoint, map[float64][]gridPoint, []float64, []float64) {
 	alphaGroups := make(map[float64][]gridPoint)
 	betaGroups := make(map[float64][]gridPoint)
 
@@ -422,7 +460,57 @@ func (f *FiveHoleNewInterpolator) buildGrid(formula aaFormula) (map[float64][]gr
 		betaGroups[row.Beta] = append(betaGroups[row.Beta], gp)
 	}
 
-	return alphaGroups, betaGroups
+	sortedAlphas := sortedFloat64Keys(alphaGroups)
+	sortedBetas := sortedFloat64Keys(betaGroups)
+	return alphaGroups, betaGroups, sortedAlphas, sortedBetas
+}
+
+// computeKaRange 预计算每条 alpha 带的 [Kamin, Kamax]，缓存到 struct 字段，
+// 避免在 findGridCell 中每次 Calculate 都重新扫描 alphaGroups。
+func (f *FiveHoleNewInterpolator) computeKaRange(alphaGroups map[float64][]gridPoint, sortedAlphas []float64) ([]float64, []float64) {
+	if len(sortedAlphas) == 0 {
+		return nil, nil
+	}
+	mn := make([]float64, len(sortedAlphas))
+	mx := make([]float64, len(sortedAlphas))
+	for i, a := range sortedAlphas {
+		group := alphaGroups[a]
+		if len(group) == 0 {
+			mn[i], mx[i] = 0, 0
+			continue
+		}
+		lo, hi := group[0].X, group[0].X
+		for _, gp := range group[1:] {
+			if gp.X < lo {
+				lo = gp.X
+			}
+			if gp.X > hi {
+				hi = gp.X
+			}
+		}
+		mn[i] = lo
+		mx[i] = hi
+	}
+	return mn, mx
+}
+
+// getKaRange 根据传入的 alphaGroups 反查对应公式的 KaMin/KaMax 缓存。
+// 通过指针地址判断是哪一套数据 (aa1/aa2/aa3)。
+func (f *FiveHoleNewInterpolator) getKaRange(alphaGroups map[float64][]gridPoint) ([]float64, []float64) {
+	switch {
+	case isSameMap(alphaGroups, f.aa1Grid):
+		return f.aa1KaMin, f.aa1KaMax
+	case isSameMap(alphaGroups, f.aa2Grid):
+		return f.aa2KaMin, f.aa2KaMax
+	case isSameMap(alphaGroups, f.aa3Grid):
+		return f.aa3KaMin, f.aa3KaMax
+	}
+	return nil, nil
+}
+
+// isSameMap 判断两个 map 是否指向同一底层数据（用于 getKaRange 路由）。
+func isSameMap(a, b map[float64][]gridPoint) bool {
+	return fmt.Sprintf("%p", a) == fmt.Sprintf("%p", b)
 }
 
 // ==================== AA公式计算 ====================
@@ -441,23 +529,35 @@ func (f *FiveHoleNewInterpolator) calculateKaKbAA3(p1, p2, p3, p4, p5 float64) k
 
 // calculateKaKb 通用Kα/Kβ计算
 func (f *FiveHoleNewInterpolator) calculateKaKb(p1, p2, p3, p4, p5 float64, formula aaFormula) kaKbResult {
-	pressures := []float64{p1, p3, p4, p5}
-	sorted := make([]float64, len(pressures))
-	copy(sorted, pressures)
-	sort.Float64s(sorted)
-	// 降序排列
-	for i, j := 0, len(sorted)-1; i < j; i, j = i+1, j-1 {
-		sorted[i], sorted[j] = sorted[j], sorted[i]
+	// Opt: 4 个浮点数手写降序排序，避免 slice 堆分配 + sort.Float64s 接口开销
+	a, b, c, d := p1, p3, p4, p5
+	if a < b {
+		a, b = b, a
 	}
+	if c < d {
+		c, d = d, c
+	}
+	if a < c {
+		a, c = c, a
+	}
+	if b < d {
+		b, d = d, b
+	}
+	if b < c {
+		b, c = c, b
+	}
+	// 此时 a >= b >= c >= d，即降序
+	sorted0, sorted1, sorted2 := a, b, c
+	_ = d
 
 	pAvg := (p1 + p3 + p4 + p5) / 4
 
 	var denominator float64
 	switch formula {
 	case aaFormula1:
-		denominator = (p2+sorted[0]+sorted[1])/3 - pAvg
+		denominator = (p2+sorted0+sorted1)/3 - pAvg
 	case aaFormula2:
-		denominator = (p2+sorted[0]+sorted[1]+sorted[2])/4 - pAvg
+		denominator = (p2+sorted0+sorted1+sorted2)/4 - pAvg
 	case aaFormula3:
 		denominator = p2 - pAvg
 	}
@@ -498,8 +598,10 @@ func (f *FiveHoleNewInterpolator) determineRegion(alpha1, beta1 float64) region 
 func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	point kaKbResult,
 	alphaGroups map[float64][]gridPoint,
-	betaGroups map[float64][]gridPoint,
+	sortedAlphas []float64,
+	sortedBetas []float64,
 	extGrid *extendedGrid,
+	extCells []gridCell,
 	useExtended bool,
 ) gridInterpolationResult {
 	if !point.Valid || !isFinite(point.Ka) || !isFinite(point.Kb) {
@@ -509,12 +611,12 @@ func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	px, py := point.Ka, point.Kb
 
 	// 先在原始网格中查找
-	cell := f.findGridCell(px, py, alphaGroups, betaGroups)
+	cell := f.findGridCell(px, py, alphaGroups, sortedAlphas, sortedBetas)
 	isExtended := false
 
 	// 如果在原始网格中找不到，尝试扩展网格
-	if cell == nil && useExtended && extGrid != nil {
-		cell = f.findExtendedGridCell(px, py, alphaGroups, betaGroups, extGrid)
+	if cell == nil && useExtended && extGrid != nil && len(extCells) > 0 {
+		cell = f.findCellInList(px, py, extCells)
 		if cell != nil {
 			isExtended = cell.IsExtended
 		}
@@ -524,15 +626,16 @@ func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 		return gridInterpolationResult{}
 	}
 
-	// 子网格细化 + 最近点搜索
-	nearest := f.findNearestSubGridPoint(px, py, cell)
-	if nearest == nil {
-		return gridInterpolationResult{IsExtended: isExtended}
+	// Opt1: 双线性反演解析求解 O(1), 失败回退到子网格暴力扫描
+	tAlpha, tBeta, ok := f.solveBilinearInverse(px, py, cell.Corners)
+	if !ok {
+		nearest := f.findNearestSubGridPoint(px, py, cell)
+		if nearest == nil {
+			return gridInterpolationResult{IsExtended: isExtended}
+		}
+		tAlpha = float64(nearest.GridI) / subGridDivisions
+		tBeta = float64(nearest.GridJ) / subGridDivisions
 	}
-
-	// 双线性插值反算角度
-	tAlpha := float64(nearest.GridI) / subGridDivisions
-	tBeta := float64(nearest.GridJ) / subGridDivisions
 
 	alpha := cell.AlphaLow + tAlpha*(cell.AlphaHigh-cell.AlphaLow)
 	beta := cell.BetaLow + tBeta*(cell.BetaHigh-cell.BetaLow)
@@ -549,9 +652,15 @@ type subGridPoint struct {
 }
 
 // findGridCell 在原始网格中查找包含目标点的网格单元
-func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups, betaGroups map[float64][]gridPoint) *gridCell {
-	alphas := sortedFloat64Keys(alphaGroups)
-	betas := sortedFloat64Keys(betaGroups)
+//
+// 优化策略：预计算每个 alpha 带的 Ka 范围 (minKa, maxKa)，
+// 定位 px 可能落入的 alpha 带，再在邻域内遍历 beta 交叉单元。
+// 平均 O(log N + K*M) 替代原 O(N*M)。
+func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups map[float64][]gridPoint, sortedAlphas, sortedBetas []float64) *gridCell {
+	na, nb := len(sortedAlphas), len(sortedBetas)
+	if na < 2 || nb < 2 {
+		return nil
+	}
 
 	findPoint := func(alpha, beta float64) *gridPoint {
 		group, ok := alphaGroups[alpha]
@@ -566,67 +675,69 @@ func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups, beta
 		return nil
 	}
 
-	for i := 0; i < len(alphas)-1; i++ {
-		for j := 0; j < len(betas)-1; j++ {
-			c1 := findPoint(alphas[i], betas[j])
-			c2 := findPoint(alphas[i+1], betas[j])
-			c3 := findPoint(alphas[i], betas[j+1])
-			c4 := findPoint(alphas[i+1], betas[j+1])
+	// Ka 范围来自 struct 预计算缓存（buildAllGrids 阶段一次性构建）
+	alphaKamin, alphaKamax := f.getKaRange(alphaGroups)
+	if alphaKamin == nil || len(alphaKamin) != na {
+		// 兜底：缓存缺失时即时计算（不应发生）
+		alphaKamin, alphaKamax = f.computeKaRange(alphaGroups, sortedAlphas)
+	}
 
-			if c1 == nil || c2 == nil || c3 == nil || c4 == nil {
-				continue
-			}
-
-			if pointInQuad(px, py, [4]*gridPoint{c1, c2, c4, c3}) {
-				return &gridCell{
-					AlphaLow: alphas[i], AlphaHigh: alphas[i+1],
-					BetaLow: betas[j], BetaHigh: betas[j+1],
-					Corners: [4]gridPoint{*c1, *c2, *c3, *c4},
+	const neighbor = 2
+	startI, endI := -1, -1
+	for i := 0; i < na; i++ {
+		if px >= alphaKamin[i]-1e-9 && px <= alphaKamax[i]+1e-9 {
+			if startI < 0 { startI = i }
+			endI = i
+		}
+	}
+	if startI < 0 {
+		for i := 0; i < na-1; i++ {
+			for j := 0; j < nb-1; j++ {
+				if cell := f.tryCell(px, py, sortedAlphas, sortedBetas, i, j, findPoint); cell != nil {
+					return cell
 				}
+			}
+		}
+		return nil
+	}
+	if startI >= neighbor { startI -= neighbor } else { startI = 0 }
+	endI += neighbor
+	if endI >= na-1 { endI = na - 2 }
+
+	for i := startI; i <= endI; i++ {
+		for j := 0; j < nb-1; j++ {
+			if cell := f.tryCell(px, py, sortedAlphas, sortedBetas, i, j, findPoint); cell != nil {
+				return cell
 			}
 		}
 	}
 	return nil
 }
 
-// findExtendedGridCell 在扩展网格中查找
-func (f *FiveHoleNewInterpolator) findExtendedGridCell(px, py float64, alphaGroups, betaGroups map[float64][]gridPoint, extGrid *extendedGrid) *gridCell {
-	if extGrid == nil || len(extGrid.AllAlphas) < 2 || len(extGrid.AllBetas) < 2 {
+func (f *FiveHoleNewInterpolator) tryCell(px, py float64, alphas, betas []float64, i, j int, findPoint func(float64, float64) *gridPoint) *gridCell {
+	c1 := findPoint(alphas[i], betas[j])
+	c2 := findPoint(alphas[i+1], betas[j])
+	c3 := findPoint(alphas[i], betas[j+1])
+	c4 := findPoint(alphas[i+1], betas[j+1])
+	if c1 == nil || c2 == nil || c3 == nil || c4 == nil {
 		return nil
 	}
-
-	estimate := func(alpha, beta float64) (*gridPoint, bool) {
-		return estimateGridPoint(alpha, beta, alphaGroups, extGrid)
+	if pointInQuad(px, py, [4]*gridPoint{c1, c2, c4, c3}) {
+		return &gridCell{
+			AlphaLow: alphas[i], AlphaHigh: alphas[i+1],
+			BetaLow: betas[j], BetaHigh: betas[j+1],
+			Corners: [4]gridPoint{*c1, *c2, *c3, *c4},
+		}
 	}
+	return nil
+}
 
-	for i := 0; i < len(extGrid.AllAlphas)-1; i++ {
-		for j := 0; j < len(extGrid.AllBetas)-1; j++ {
-			alphaLow, alphaHigh := extGrid.AllAlphas[i], extGrid.AllAlphas[i+1]
-			betaLow, betaHigh := extGrid.AllBetas[j], extGrid.AllBetas[j+1]
-
-			c1, ok1 := estimate(alphaLow, betaLow)
-			c2, ok2 := estimate(alphaHigh, betaLow)
-			c3, ok3 := estimate(alphaLow, betaHigh)
-			c4, ok4 := estimate(alphaHigh, betaHigh)
-			if !ok1 || !ok2 || !ok3 || !ok4 {
-				continue
-			}
-
-			if !pointInQuad(px, py, [4]*gridPoint{c1, c2, c4, c3}) {
-				continue
-			}
-
-			isExtended := alphaLow < extGrid.OriginalAlphas[0] ||
-				alphaHigh > extGrid.OriginalAlphas[len(extGrid.OriginalAlphas)-1] ||
-				betaLow < extGrid.OriginalBetas[0] ||
-				betaHigh > extGrid.OriginalBetas[len(extGrid.OriginalBetas)-1]
-
-			return &gridCell{
-				AlphaLow: alphaLow, AlphaHigh: alphaHigh,
-				BetaLow: betaLow, BetaHigh: betaHigh,
-				Corners:    [4]gridPoint{*c1, *c2, *c3, *c4},
-				IsExtended: isExtended,
-			}
+// findCellInList 在预计算的 cell 列表中查找（Opt4：加载阶段预建四角）
+func (f *FiveHoleNewInterpolator) findCellInList(px, py float64, cells []gridCell) *gridCell {
+	for i := range cells {
+		c := &cells[i]
+		if pointInQuad(px, py, [4]*gridPoint{&c.Corners[0], &c.Corners[1], &c.Corners[3], &c.Corners[2]}) {
+			return c
 		}
 	}
 	return nil
@@ -665,20 +776,28 @@ func estimateGridPoint(alpha, beta float64, alphaGroups map[float64][]gridPoint,
 }
 
 func interpolationBounds(value float64, sortedValues []float64) (float64, float64, bool) {
-	if len(sortedValues) < 2 {
+	n := len(sortedValues)
+	if n < 2 {
 		return 0, 0, false
 	}
 
-	for i := 0; i < len(sortedValues)-1; i++ {
-		if value >= sortedValues[i] && value <= sortedValues[i+1] {
-			return sortedValues[i], sortedValues[i+1], true
-		}
-	}
-
-	if value < sortedValues[0] {
+	// Opt: 二分搜索代替线性扫描，平均 O(log n)
+	if value <= sortedValues[0] {
 		return sortedValues[0], sortedValues[1], true
 	}
-	return sortedValues[len(sortedValues)-2], sortedValues[len(sortedValues)-1], true
+	if value >= sortedValues[n-1] {
+		return sortedValues[n-2], sortedValues[n-1], true
+	}
+	lo, hi := 0, n-1
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if sortedValues[mid] <= value {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return sortedValues[lo], sortedValues[hi], true
 }
 
 func findGridPoint(alphaGroups map[float64][]gridPoint, alpha, beta float64) (gridPoint, bool) {
@@ -728,12 +847,13 @@ func (f *FiveHoleNewInterpolator) findNearestSubGridPoint(px, py float64, cell *
 
 // ==================== 扩展网格 ====================
 
-func (f *FiveHoleNewInterpolator) generateExtendedGrid(alphaGroups, betaGroups map[float64][]gridPoint) *extendedGrid {
-	alphas := sortedFloat64Keys(alphaGroups)
-	betas := sortedFloat64Keys(betaGroups)
+func (f *FiveHoleNewInterpolator) generateExtendedGrid(alphaGroups map[float64][]gridPoint, sortedAlphas, sortedBetas []float64) (*extendedGrid, []gridCell) {
+	// Opt: 直接复用 buildGrid 已经排序好的 alpha/beta，避免重复排序
+	alphas := sortedAlphas
+	betas := sortedBetas
 
 	if len(alphas) < 2 || len(betas) < 2 {
-		return nil
+		return nil, nil
 	}
 
 	alphaSpacing := averageSpacing(alphas)
@@ -766,16 +886,65 @@ func (f *FiveHoleNewInterpolator) generateExtendedGrid(alphaGroups, betaGroups m
 		allBetas[b] = true
 	}
 
-	return &extendedGrid{
-		AllAlphas:      sortedFloat64Keys(allAlphas),
-		AllBetas:       sortedFloat64Keys(allBetas),
+	allAlphasSorted := sortedFloat64Keys(allAlphas)
+	allBetasSorted := sortedFloat64Keys(allBetas)
+
+	extGrid := &extendedGrid{
+		AllAlphas:      allAlphasSorted,
+		AllBetas:       allBetasSorted,
 		AlphaSpacing:   alphaSpacing,
 		BetaSpacing:    betaSpacing,
 		OriginalAlphas: alphas,
 		OriginalBetas:  betas,
 	}
+
+	cells := preBuildExtendedCells(allAlphasSorted, allBetasSorted, alphaGroups, extGrid)
+
+	return extGrid, cells
 }
 
+// preBuildExtendedCells 预计算扩展网格中所有 cell 的四角点
+//
+// 将原本在每次 Calculate 中重复执行的 estimateGridPoint 合并到加载阶段一次性完成。
+// 返回值可被多次只读遍历（findCellInList）。
+func preBuildExtendedCells(allAlphas, allBetas []float64, alphaGroups map[float64][]gridPoint, extGrid *extendedGrid) []gridCell {
+	if len(allAlphas) < 2 || len(allBetas) < 2 {
+		return nil
+	}
+
+	estimate := func(alpha, beta float64) (*gridPoint, bool) {
+		return estimateGridPoint(alpha, beta, alphaGroups, extGrid)
+	}
+
+	cells := make([]gridCell, 0, (len(allAlphas)-1)*(len(allBetas)-1))
+	for i := 0; i < len(allAlphas)-1; i++ {
+		for j := 0; j < len(allBetas)-1; j++ {
+			alphaLow, alphaHigh := allAlphas[i], allAlphas[i+1]
+			betaLow, betaHigh := allBetas[j], allBetas[j+1]
+
+			c1, ok1 := estimate(alphaLow, betaLow)
+			c2, ok2 := estimate(alphaHigh, betaLow)
+			c3, ok3 := estimate(alphaLow, betaHigh)
+			c4, ok4 := estimate(alphaHigh, betaHigh)
+			if !ok1 || !ok2 || !ok3 || !ok4 {
+				continue
+			}
+
+			isExtended := alphaLow < extGrid.OriginalAlphas[0] ||
+				alphaHigh > extGrid.OriginalAlphas[len(extGrid.OriginalAlphas)-1] ||
+				betaLow < extGrid.OriginalBetas[0] ||
+				betaHigh > extGrid.OriginalBetas[len(extGrid.OriginalBetas)-1]
+
+			cells = append(cells, gridCell{
+				AlphaLow: alphaLow, AlphaHigh: alphaHigh,
+				BetaLow: betaLow, BetaHigh: betaHigh,
+				Corners:    [4]gridPoint{*c1, *c2, *c3, *c4},
+				IsExtended: isExtended,
+			})
+		}
+	}
+	return cells
+}
 // ==================== 几何工具 ====================
 
 func pointInQuad(px, py float64, corners [4]*gridPoint) bool {
@@ -815,4 +984,80 @@ func averageSpacing(values []float64) float64 {
 		total += values[i] - values[i-1]
 	}
 	return total / float64(len(values)-1)
+}
+
+
+// solveBilinearInverse 求解双线性映射的反函数
+//
+// 双线性映射 (t1,t2) → (X,Y)：
+//   X = c1.X*(1-t1)*(1-t2) + c2.X*t1*(1-t2) + c3.X*(1-t1)*t2 + c4.X*t1*t2
+//   Y = c1.Y*(1-t1)*(1-t2) + c2.Y*t1*(1-t2) + c3.Y*(1-t1)*t2 + c4.Y*t1*t2
+//
+// 消去 t1 得到关于 t2 的二次方程 A·t2² + B·t2 + C = 0。
+// 解方程后选重投影误差最小的根，退化时返回 false 让上层回退到子网格暴力扫描。
+//
+// 参考：Heckbert 1989, "Fundamentals of Texture Mapping and Image Warping".
+func (f *FiveHoleNewInterpolator) solveBilinearInverse(px, py float64, corners [4]gridPoint) (float64, float64, bool) {
+	const cornerEps = 1e-4
+	if math.Abs(corners[0].X-px) < cornerEps && math.Abs(corners[0].Y-py) < cornerEps { return 0, 0, true }
+	if math.Abs(corners[1].X-px) < cornerEps && math.Abs(corners[1].Y-py) < cornerEps { return 1, 0, true }
+	if math.Abs(corners[2].X-px) < cornerEps && math.Abs(corners[2].Y-py) < cornerEps { return 0, 1, true }
+	if math.Abs(corners[3].X-px) < cornerEps && math.Abs(corners[3].Y-py) < cornerEps { return 1, 1, true }
+
+	x1, y1 := corners[0].X, corners[0].Y
+	x2, y2 := corners[1].X, corners[1].Y
+	x3, y3 := corners[2].X, corners[2].Y
+	x4, y4 := corners[3].X, corners[3].Y
+
+	a1 := x2 - x1; b1 := x3 - x1; c1c := x1 - x2 - x3 + x4
+	a2 := y2 - y1; b2 := y3 - y1; c2c := y1 - y2 - y3 + y4
+
+	dx := px - x1; dy := py - y1
+
+	A := b1*c2c - b2*c1c
+	B := dx*c2c - dy*c1c + a1*b2 - a2*b1
+	C := dx*a2 - dy*a1
+
+	const quadEps = 1e-12
+	var t2Candidates []float64
+	if math.Abs(A) < quadEps {
+		if math.Abs(B) < quadEps { return 0, 0, false }
+		t2Candidates = []float64{-C / B}
+	} else {
+		disc := B*B - 4*A*C
+		if disc < 0 {
+			if disc > -quadEps { disc = 0 } else { return 0, 0, false }
+		}
+		sq := math.Sqrt(disc)
+		t2Candidates = []float64{(-B + sq) / (2 * A), (-B - sq) / (2 * A)}
+	}
+
+	const inRangeEps = 1e-6
+	bestT1, bestT2 := 0.0, 0.0
+	bestErr := math.MaxFloat64
+	found := false
+	for _, t2 := range t2Candidates {
+		if !isFinite(t2) || t2 < -inRangeEps || t2 > 1+inRangeEps { continue }
+		denom := a1 + c1c*t2
+		var t1 float64
+		if math.Abs(denom) > quadEps {
+			t1 = (dx - b1*t2) / denom
+		} else {
+			denom2 := a2 + c2c*t2
+			if math.Abs(denom2) < quadEps { continue }
+			t1 = (dy - b2*t2) / denom2
+		}
+		if !isFinite(t1) || t1 < -inRangeEps || t1 > 1+inRangeEps { continue }
+		t1c := math.Max(0, math.Min(1, t1))
+		t2c := math.Max(0, math.Min(1, t2))
+		gx := bilinearInterpolate(x1, x2, x3, x4, t1c, t2c)
+		gy := bilinearInterpolate(y1, y2, y3, y4, t1c, t2c)
+		errSq := (gx-px)*(gx-px) + (gy-py)*(gy-py)
+		if errSq < bestErr {
+			bestErr = errSq
+			bestT1, bestT2 = t1c, t2c
+			found = true
+		}
+	}
+	return bestT1, bestT2, found
 }

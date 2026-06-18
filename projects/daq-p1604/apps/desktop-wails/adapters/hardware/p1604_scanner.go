@@ -62,7 +62,7 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 	buf := make([]byte, 1024)
 
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, remote, err := conn.ReadFrom(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				break
@@ -70,7 +70,7 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 			break
 		}
 
-		result := parseP1604Response(buf[:n])
+		result := parseP1604Response(buf[:n], remote.String())
 		if result == nil {
 			continue
 		}
@@ -91,7 +91,8 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 
 // parseP1604Response 解析 P1604 设备发现响应
 // 响应 CSV 格式：<IP>,<MAC>,,<序列号>,<固件版本>,,<端口>,<子网掩码>,<网关>
-func parseP1604Response(data []byte) *core.ScanResult {
+// remoteAddr 作为 IP 为空时的备选
+func parseP1604Response(data []byte, remoteAddr string) *core.ScanResult {
 	msg := strings.TrimSpace(string(data))
 	parts := strings.Split(msg, ",")
 	if len(parts) < 9 {
@@ -99,6 +100,13 @@ func parseP1604Response(data []byte) *core.ScanResult {
 	}
 
 	ip := strings.TrimSpace(parts[0])
+	if ip == "" {
+		// 响应中 IP 为空时，使用远程地址作为备选
+		host, _, _ := net.SplitHostPort(remoteAddr)
+		if host != "" {
+			ip = host
+		}
+	}
 	port := p1604DefaultPort
 	if p, err := strconv.Atoi(strings.TrimSpace(parts[7])); err == nil && p > 0 {
 		port = p

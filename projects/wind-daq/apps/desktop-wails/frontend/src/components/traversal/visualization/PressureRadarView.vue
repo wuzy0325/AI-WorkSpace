@@ -1,9 +1,10 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type { TraversalDataPoint } from '@shared/types/traversal'
 import { useI18nStore } from '@stores/i18nStore'
 import { useECharts } from './composables/useECharts'
+import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
 import UiButton from '@components/ui/UiButton.vue'
 
@@ -16,6 +17,7 @@ const t = computed(() => i18n.t)
 const chartRef = ref<HTMLElement | null>(null)
 const { chart } = useECharts(chartRef)
 const { chartTheme } = useTraversalChartTheme()
+const { exportScreenshot } = useScreenshotExport(chart)
 const selectedIndex = ref(0)
 
 const hasData = computed(() => props.dataPoints.length > 0)
@@ -101,6 +103,15 @@ watch([chart, selectedPoint, radarValues, chartTheme, t], updateChart, { immedia
         {{ t.noVisualizationData }}
       </div>
       <div ref="chartRef" class="h-full w-full"></div>
+      <!-- 截图导出按钮：鼠标悬停时显示 -->
+      <button
+        v-if="hasData"
+        class="pressure-radar-export-btn"
+        :title="t.exportPng || 'Export PNG'"
+        @click="exportScreenshot(`pressure-radar-${selectedIndex + 1}`)"
+      >
+        {{ t.exportPng || 'Export PNG' }}
+      </button>
     </div>
 
     <aside class="min-h-0 overflow-hidden rounded-xl border border-[color:var(--border-default)] bg-[color:var(--bg-panel)] p-3">
@@ -120,4 +131,34 @@ watch([chart, selectedPoint, radarValues, chartTheme, t], updateChart, { immedia
     </aside>
   </div>
 </template>
+
+<style scoped>
+.pressure-radar-export-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 200ms ease, background 120ms ease;
+}
+
+.pressure-radar-export-btn:hover {
+  background: var(--bg-panel-strong);
+}
+
+.pressure-radar-export-btn:focus-visible {
+  opacity: 1;
+}
+
+.relative:hover .pressure-radar-export-btn {
+  opacity: 1;
+}
+</style>
 

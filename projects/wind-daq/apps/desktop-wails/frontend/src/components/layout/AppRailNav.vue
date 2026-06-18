@@ -14,17 +14,22 @@ export interface AppRailNavItem {
   icon?: string
   active?: boolean
   disabled?: boolean
+  // external 标记：该项不切换页面，而是触发外部动作（如弹出独立窗口）
+  external?: boolean
 }
 
 withDefaults(
   defineProps<{
     items?: AppRailNavItem[]
+    // footerItems 渲染在底部区（设置按钮上方），用于独立窗口等特殊入口
+    footerItems?: AppRailNavItem[]
   }>(),
-  { items: () => [] },
+  { items: () => [], footerItems: () => [] },
 )
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
+  (e: 'open-external', id: string): void
   (e: 'open-settings'): void
 }>()
 
@@ -43,6 +48,16 @@ function getIconComponent(iconType: string | undefined) {
   if (iconType === 'LG') return IconLog
   return IconDashboard
 }
+
+// 点击导航项：external 项触发 open-external 事件，普通项触发 select 事件
+function handleClick(item: AppRailNavItem): void {
+  if (item.disabled) return
+  if (item.external) {
+    emit('open-external', item.id)
+  } else {
+    emit('select', item.id)
+  }
+}
 </script>
 
 <template>
@@ -60,20 +75,50 @@ function getIconComponent(iconType: string | undefined) {
         class="app-rail-nav__button"
         :class="{
           'app-rail-nav__button--active': item.active,
-          'app-rail-nav__button--disabled': item.disabled
+          'app-rail-nav__button--disabled': item.disabled,
+          'app-rail-nav__button--external': item.external
         }"
         :title="item.label"
         :disabled="item.disabled"
-        @click="emit('select', item.id)"
+        @click="handleClick(item)"
       >
         <template #icon>
           <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
         </template>
         <span v-if="isExpanded" class="app-rail-nav__label">{{ item.label }}</span>
+        <!-- external 项显示弹出小图标，提示会打开独立窗口 -->
+        <svg v-if="item.external && isExpanded" class="w-3 h-3 ml-auto opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
       </UiButton>
     </nav>
 
     <div class="app-rail-nav__footer">
+      <!-- 底部 external 项（如运动控制器独立窗口入口） -->
+      <UiButton
+        v-for="item in footerItems"
+        :key="item.id"
+        quaternary
+        size="sm"
+        :aria-label="item.label"
+        class="app-rail-nav__button app-rail-nav__button--external"
+        :title="item.label"
+        :disabled="item.disabled"
+        @click="handleClick(item)"
+      >
+        <template #icon>
+          <component :is="getIconComponent(item.icon)" class="w-5 h-5" />
+        </template>
+        <span v-if="isExpanded" class="app-rail-nav__label">{{ item.label }}</span>
+        <!-- external 项显示弹出小图标，提示会打开独立窗口 -->
+        <svg v-if="isExpanded" class="w-3 h-3 ml-auto opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </UiButton>
       <!-- 展开/收起切换按钮 -->
       <UiButton
         quaternary

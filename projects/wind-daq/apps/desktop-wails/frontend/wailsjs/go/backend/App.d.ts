@@ -52,6 +52,8 @@ export function DeviceSubscribeStream(arg1:string,arg2:boolean):Promise<backend.
 
 export function DeviceUpsertProfile(arg1:device.Profile):Promise<backend.GenericResponse>;
 
+export function GetStartupMode():Promise<string>;
+
 export function GetVersion():Promise<backend.VersionInfo>;
 
 export function MotionConnect(arg1:string):Promise<backend.GenericResponse>;
@@ -81,6 +83,8 @@ export function MotionResetEmergencyStop(arg1:string):Promise<backend.GenericRes
 export function MotionStop(arg1:string,arg2:string):Promise<backend.GenericResponse>;
 
 export function MotionUpsertProfile(arg1:motion.MotionControllerProfile):Promise<backend.GenericResponse>;
+
+export function OpenMotionWindow():Promise<backend.GenericResponse>;
 
 export function PickDirectory():Promise<string>;
 

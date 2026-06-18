@@ -137,6 +137,14 @@ func (a *App) emitRecordingStatus(session core.RecordingSession) {
 	runtime.EventsEmit(a.ctx, "daq:recording-status", session)
 }
 
+// EmitDeviceState 发送设备状态变更事件到前端
+func (a *App) EmitDeviceState(id string, state core.DeviceState) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "daq:device-state", id, state)
+}
+
 // ScanDevices 扫描设备
 func (a *App) ScanDevices() ([]core.ScanResult, error) {
 	return a.deviceUC.ScanDevices()
@@ -338,7 +346,12 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.P
 
 // StartRecording 开始录制
 func (a *App) StartRecording(outputDir string, filePrefix string) error {
-	if err := a.recordUC.Start(outputDir, filePrefix); err != nil {
+	// 取第一个设备的通道配置作为录制精度参考（CSV 为单设备 18 通道格式）
+	var channels []core.ChannelConfig
+	if profiles := a.deviceUC.GetProfiles(); len(profiles) > 0 {
+		channels = profiles[0].Channels
+	}
+	if err := a.recordUC.Start(outputDir, filePrefix, channels); err != nil {
 		return err
 	}
 	a.emitRecordingStatus(a.recordUC.Status())

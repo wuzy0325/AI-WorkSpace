@@ -35,6 +35,7 @@ function defaultP1604Config(): P1604Config {
     samplingRate: 100,
     unit: 'psi',
     autoConnect: false,
+    precision: 3,
   }
 }
 
@@ -43,6 +44,7 @@ function p1604Defaults(cfg: Partial<P1604Config>): P1604Config {
     samplingRate: cfg.samplingRate ?? 100,
     unit: cfg.unit ?? 'psi',
     autoConnect: cfg.autoConnect ?? false,
+    precision: cfg.precision ?? 3,
   }
 }
 
@@ -50,6 +52,7 @@ export const useDeviceStore = defineStore('device', () => {
   const profiles = ref<PressureProfile[]>([])
   const selectedId = ref<string | null>(null)
   const statusMap = ref<Record<string, string>>({})
+  const errorMap = ref<Record<string, string>>({})
   const historyMap = ref<Record<string, PressureSnapshot[]>>({})
   const snapshotMap = ref<Record<string, PressureSnapshot>>({})
   const pendingSnapshotMap = ref<Record<string, PressureSnapshot>>({})
@@ -84,6 +87,10 @@ export const useDeviceStore = defineStore('device', () => {
 
   function statusFor(id: string): string {
     return statusMap.value[id] ?? 'Disconnected'
+  }
+
+  function errorFor(id: string): string {
+    return errorMap.value[id] ?? ''
   }
 
   function acquiringFor(id: string): boolean {
@@ -225,8 +232,15 @@ export const useDeviceStore = defineStore('device', () => {
     try {
       await action()
       statusMap.value[id] = targetStatus
+      // 操作成功时清除错误信息
+      if (targetStatus !== 'Error') {
+        delete errorMap.value[id]
+      }
     } catch (err) {
       statusMap.value[id] = prev ?? fallbackStatus
+      // 操作失败时记录错误信息
+      const reason = err instanceof Error ? err.message : String(err)
+      errorMap.value[id] = reason
       throw err
     }
   }
@@ -298,6 +312,22 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
+  /** 批量设置某设备所有通道的精度（全局精度应用） */
+  async function applyGlobalPrecision(id: string, precision: number): Promise<void> {
+    const profile = profiles.value.find((p) => p.id === id)
+    if (!profile) return
+    const p = Math.max(0, Math.min(6, Math.floor(precision)))
+    for (const ch of profile.channels) {
+      ch.precision = p
+    }
+    try {
+      await bridge.upsertProfile(profile)
+    } catch {
+      await loadProfiles()
+      throw new Error('保存配置失败')
+    }
+  }
+
   async function saveProfile(profile: PressureProfile): Promise<void> {
     // 先更新本地状态，再持久化到后端（利用 await 的微任务边界让 Vue 处理 watcher）
     const index = profiles.value.findIndex((p) => p.id === profile.id)
@@ -360,14 +390,28 @@ export const useDeviceStore = defineStore('device', () => {
     syncSelectedDevice()
   }
 
+  /** 从后端状态变更事件更新前端状态（连接断开等） */
+  function updateStatusFromBackend(id: string, state: { statusText: string; error?: string }): void {
+    if (statusMap.value[id] !== state.statusText) {
+      statusMap.value[id] = state.statusText
+    }
+    // 同步后端推送的错误信息（如连接断开原因）
+    if (state.error) {
+      errorMap.value[id] = state.error
+    } else if (state.statusText !== 'Error') {
+      // 非 Error 状态时清除错误
+      delete errorMap.value[id]
+    }
+  }
+
   return {
-    profiles, selectedId, statusMap, historyMap, snapshotMap, chartSelections,
+    profiles, selectedId, statusMap, errorMap, historyMap, snapshotMap, chartSelections,
     scanResults, isScanning,
     selectedProfile, selectedSnapshot,
-    selectDevice, statusFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
+    selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
-    startAcquisition, stopAcquisition, applyConfig, updateChannel, saveProfile,
-    clearScanResults, scanDevices, addProfile, removeProfile,
+    startAcquisition, stopAcquisition, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
+    clearScanResults, scanDevices, addProfile, removeProfile, updateStatusFromBackend,
     setDisplayRefreshRateHz, stopDisplayFlush,
   }
 })

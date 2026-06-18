@@ -17,6 +17,7 @@ type SimulatedAdapter struct {
 	sinks    map[string]func(core.PressureSnapshot)
 	channels map[string]chan core.PressureSnapshot
 	stopChs  map[string]chan struct{}
+	logSink  func(DeviceLogEntry)
 }
 
 // NewSimulatedAdapter 创建模拟设备适配器
@@ -168,4 +169,11 @@ func (a *SimulatedAdapter) SetDataSink(id string, sink func(core.PressureSnapsho
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.sinks[id] = sink
+}
+
+// SetLogSink 设置日志回调（模拟模式下也支持日志）
+func (a *SimulatedAdapter) SetLogSink(sink func(DeviceLogEntry)) {
+	a.mu.Lock()
+	a.logSink = sink
+	a.mu.Unlock()
 }

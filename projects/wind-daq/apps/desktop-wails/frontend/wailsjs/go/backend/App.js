@@ -90,6 +90,10 @@ export function DeviceUpsertProfile(arg1) {
   return window['go']['backend']['App']['DeviceUpsertProfile'](arg1);
 }
 
+export function GetStartupMode() {
+  return window['go']['backend']['App']['GetStartupMode']();
+}
+
 export function GetVersion() {
   return window['go']['backend']['App']['GetVersion']();
 }
@@ -148,6 +152,10 @@ export function MotionStop(arg1, arg2) {
 
 export function MotionUpsertProfile(arg1) {
   return window['go']['backend']['App']['MotionUpsertProfile'](arg1);
+}
+
+export function OpenMotionWindow() {
+  return window['go']['backend']['App']['OpenMotionWindow']();
 }
 
 export function PickDirectory() {

@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/device"
-	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/ports"
 )
 
@@ -24,22 +23,30 @@ type DeviceManager struct {
 	store        ports.ProfileStore
 	factory      ports.DeviceFactory
 	scanner      ports.DeviceScanner
+	normalizer   ports.ProfileNormalizer
 	dataSink     device.DataSink
 	scanInFlight *scanPending
 }
 
 func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink) (*DeviceManager, error) {
+	return NewDeviceManagerWithNormalizer(store, factory, dataSink, nil)
+}
+
+// NewDeviceManagerWithNormalizer 创建 DeviceManager 并注入配置规范化器。
+// normalizer 可为 nil（跳过规范化）；由装配根注入 adapters/config 实现。
+func NewDeviceManagerWithNormalizer(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink, normalizer ports.ProfileNormalizer) (*DeviceManager, error) {
 	profiles, err := store.LoadProfiles()
 	if err != nil {
 		return nil, err
 	}
-	profiles = normalizeProfiles(profiles)
+	profiles = normalizeProfiles(profiles, normalizer)
 	return &DeviceManager{
-		profiles: profiles,
-		devices:  make(map[string]ports.Device),
-		store:    store,
-		factory:  factory,
-		dataSink: dataSink,
+		profiles:   profiles,
+		devices:    make(map[string]ports.Device),
+		store:      store,
+		factory:    factory,
+		normalizer: normalizer,
+		dataSink:   dataSink,
 	}, nil
 }
 
@@ -87,7 +94,9 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	profile = windaqconfig.NormalizeProfile(profile)
+	if m.normalizer != nil {
+		profile = m.normalizer.Normalize(profile)
+	}
 	for i := range m.profiles {
 		if m.profiles[i].ID == profile.ID {
 			m.profiles[i] = profile
@@ -98,10 +107,13 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	return m.store.SaveProfiles(m.profiles)
 }
 
-func normalizeProfiles(profiles []device.Profile) []device.Profile {
+func normalizeProfiles(profiles []device.Profile, normalizer ports.ProfileNormalizer) []device.Profile {
+	if normalizer == nil {
+		return profiles
+	}
 	normalized := make([]device.Profile, len(profiles))
 	for i := range profiles {
-		normalized[i] = windaqconfig.NormalizeProfile(profiles[i])
+		normalized[i] = normalizer.Normalize(profiles[i])
 	}
 	return normalized
 }

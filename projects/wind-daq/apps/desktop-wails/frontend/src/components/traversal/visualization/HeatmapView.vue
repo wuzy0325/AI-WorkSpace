@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch, type ComputedRef } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type { TraversalDataPoint } from '@shared/types/traversal'
@@ -6,6 +6,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { VISUALIZATION_PARAM_CONFIG, type HeatmapCell, type VisualizationParam } from './types'
 import { useECharts } from './composables/useECharts'
 import { useHeatmapData } from './composables/useHeatmapData'
+import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
 
 const props = defineProps<{
@@ -18,6 +19,7 @@ const t = computed(() => i18n.t)
 const chartRef = ref<HTMLElement | null>(null)
 const { chart } = useECharts(chartRef)
 const { chartTheme } = useTraversalChartTheme()
+const { exportScreenshot } = useScreenshotExport(chart)
 
 const dataPointsRef = computed(() => props.dataPoints)
 const paramRef = computed(() => props.param)
@@ -108,6 +110,45 @@ watch([chart, heatmapData, alphaValues, betaValues, valueRange, chartTheme, para
       {{ t.noVisualizationData }}
     </div>
     <div ref="chartRef" class="h-full w-full"></div>
+    <!-- 截图导出按钮：鼠标悬停时显示，避免遮挡图表内容 -->
+    <button
+      v-if="hasData"
+      class="heatmap-export-btn"
+      :title="t.exportPng || 'Export PNG'"
+      @click="exportScreenshot(`heatmap-${paramLabel.replace(/\s+/g, '-')}`)"
+    >
+      {{ t.exportPng || 'Export PNG' }}
+    </button>
   </div>
 </template>
+
+<style scoped>
+.heatmap-export-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 200ms ease, background 120ms ease;
+}
+
+.heatmap-export-btn:hover {
+  background: var(--bg-panel-strong);
+}
+
+.heatmap-export-btn:focus-visible {
+  opacity: 1;
+}
+
+.relative:hover .heatmap-export-btn {
+  opacity: 1;
+}
+</style>
 

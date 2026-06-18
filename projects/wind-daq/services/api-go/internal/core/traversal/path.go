@@ -177,12 +177,12 @@ func ContainsFloat(values []float64, needle float64) bool {
 
 // LayoutConfig 遍历布局配置
 type LayoutConfig struct {
-	Pattern    string          `json:"pattern"`
-	SnakeOrder bool            `json:"snakeOrder,omitempty"`
-	Line       *LineLayout     `json:"line,omitempty"`
+	Pattern    string           `json:"pattern"`
+	SnakeOrder bool             `json:"snakeOrder,omitempty"`
+	Line       *LineLayout      `json:"line,omitempty"`
 	Rectangle  *RectangleLayout `json:"rectangle,omitempty"`
-	Sector     *SectorLayout   `json:"sector,omitempty"`
-	Custom     *CustomLayout   `json:"custom,omitempty"`
+	Sector     *SectorLayout    `json:"sector,omitempty"`
+	Custom     *CustomLayout    `json:"custom,omitempty"`
 }
 
 // LineLayout 线型布局
@@ -276,25 +276,43 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 }
 
 // ValidatePressures 验证压力数据是否在有效范围内
-// 通道映射约定：按通道索引排序后依次对应 P1,P2,P3,P4,P5,Patm,Tatm
-func ValidatePressures(values map[int]float64, config *DataValidationConfig) (bool, []string) {
+// 通道映射策略：
+//  1. 若 labels 非空，则按 channelIndex→label 显式映射，避免依赖通道索引顺序；
+//  2. 否则回退为"通道索引升序对应 P1..P5,Patm,Tatm"（旧行为，向后兼容）。
+func ValidatePressures(values map[int]float64, config *DataValidationConfig, labels map[int]string) (bool, []string) {
 	if config == nil || !config.Enabled {
 		return true, nil
 	}
 
 	var warnings []string
-	// 通道索引到标签的映射：排序后的通道依次对应
-	labels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
-	orderedKeys := sortedKeys(values)
 
-	for i, label := range labels {
-		if i >= len(orderedKeys) {
-			break
+	if len(labels) > 0 {
+		// 显式映射模式
+		for chIdx, value := range values {
+			label, ok := labels[chIdx]
+			if !ok {
+				continue
+			}
+			if r, ok := config.PressureRange[label]; ok {
+				if value < r.Min || value > r.Max {
+					warnings = append(warnings, fmt.Sprintf("%s 超出范围: %.2f (%.2f-%.2f)", label, value, r.Min, r.Max))
+				}
+			}
 		}
-		value := values[orderedKeys[i]]
-		if r, ok := config.PressureRange[label]; ok {
-			if value < r.Min || value > r.Max {
-				warnings = append(warnings, fmt.Sprintf("%s 超出范围: %.2f (%.2f-%.2f)", label, value, r.Min, r.Max))
+	} else {
+		// 兼容旧行为：通道索引升序映射
+		legacyLabels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
+		orderedKeys := sortedKeys(values)
+
+		for i, label := range legacyLabels {
+			if i >= len(orderedKeys) {
+				break
+			}
+			value := values[orderedKeys[i]]
+			if r, ok := config.PressureRange[label]; ok {
+				if value < r.Min || value > r.Max {
+					warnings = append(warnings, fmt.Sprintf("%s 超出范围: %.2f (%.2f-%.2f)", label, value, r.Min, r.Max))
+				}
 			}
 		}
 	}

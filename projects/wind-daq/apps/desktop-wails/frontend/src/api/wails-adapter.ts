@@ -2,8 +2,15 @@
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
+// 注意：Wails 实际通过 JSON tag 序列化为小写 success/error，
+// 但历史代码中存在大量 `result.Success` / `res.Error` 的大写读法（来自此文件之前的错误手写类型）。
+// 为了同时兼容新旧调用点，这里同时声明大小写两套字段，并由 callBindingGeneric() 在运行时镜像填充。
 export interface GenericResponse {
+  success: boolean;
+  error?: string;
+  /** @deprecated Wails 实际返回小写 success；保留 Success 仅用于兼容旧调用点 */
   Success: boolean;
+  /** @deprecated Wails 实际返回小写 error；保留 Error 仅用于兼容旧调用点 */
   Error?: string;
 }
 
@@ -155,6 +162,28 @@ async function callBinding<T>(methodName: string, ...args: any[]): Promise<T> {
   return await binding[methodName](...args);
 }
 
+/**
+ * 归一化 Wails GenericResponse 的大小写差异。
+ *
+ * Wails 自动生成的 TypeScript model 字段是小写 success/error（来自 Go 的 json:"success" tag），
+ * 但项目内不少调用点写成了 `res.Success`/`res.Error`（大写）。如果不归一化，这些旧调用点
+ * 永远拿到 undefined，例如打开运动控制器独立窗口时，后端 success=true 但前端
+ * `!res.Success` 永远为真，导致"启动独立窗口失败"误报。
+ *
+ * 这里统一在 callBindingGeneric 出口把两套字段同时填充，保持向后兼容。
+ */
+function normalizeGenericResponse(raw: unknown): GenericResponse {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const success = (obj.success ?? obj.Success ?? false) as boolean;
+  const error = (obj.error ?? obj.Error) as string | undefined;
+  return { success, error, Success: success, Error: error };
+}
+
+async function callBindingGeneric(methodName: string, ...args: any[]): Promise<GenericResponse> {
+  const raw = await callBinding<unknown>(methodName, ...args);
+  return normalizeGenericResponse(raw);
+}
+
 // Wails API 适配器
 export const wailsApi = {
   // 设备管理
@@ -163,40 +192,40 @@ export const wailsApi = {
       return await callBinding('DeviceGetProfiles');
     },
     upsertProfile: async (profile: DeviceProfile): Promise<GenericResponse> => {
-      return await callBinding('DeviceUpsertProfile', profile);
+      return await callBindingGeneric('DeviceUpsertProfile', profile);
     },
     deleteProfile: async (profileId: string): Promise<GenericResponse> => {
-      return await callBinding('DeviceDeleteProfile', profileId);
+      return await callBindingGeneric('DeviceDeleteProfile', profileId);
     },
     scanDevices: async (): Promise<DeviceScanResult[]> => {
       return (await callBinding('DeviceScanDevices')) as DeviceScanResult[];
     },
     connect: async (deviceId: string): Promise<GenericResponse> => {
-      return await callBinding('DeviceConnect', deviceId);
+      return await callBindingGeneric('DeviceConnect', deviceId);
     },
     disconnect: async (deviceId: string): Promise<GenericResponse> => {
-      return await callBinding('DeviceDisconnect', deviceId);
+      return await callBindingGeneric('DeviceDisconnect', deviceId);
     },
     getStatus: async (deviceId: string): Promise<DeviceStatus | boolean> => {
       return await callBinding('DeviceGetStatus', deviceId);
     },
     startAcquisition: async (deviceId: string): Promise<GenericResponse> => {
-      return await callBinding('DeviceStartAcquisition', deviceId);
+      return await callBindingGeneric('DeviceStartAcquisition', deviceId);
     },
     stopAcquisition: async (deviceId: string): Promise<GenericResponse> => {
-      return await callBinding('DeviceStopAcquisition', deviceId);
+      return await callBindingGeneric('DeviceStopAcquisition', deviceId);
     },
     getLatestData: async (deviceId: string): Promise<DeviceDataPayload | boolean> => {
       return await callBinding('DeviceGetLatestData', deviceId);
     },
     setPublishRate: async (rate: number): Promise<GenericResponse> => {
-      return await callBinding('DeviceSetPublishRate', rate);
+      return await callBindingGeneric('DeviceSetPublishRate', rate);
     },
     getPublishRate: async (): Promise<number> => {
       return await callBinding('DeviceGetPublishRate');
     },
     subscribeStream: async (deviceId: string, subscribe: boolean): Promise<GenericResponse> => {
-      return await callBinding('DeviceSubscribeStream', deviceId, subscribe);
+      return await callBindingGeneric('DeviceSubscribeStream', deviceId, subscribe);
     },
     onPayload: (callback: (payload: DeviceDataPayload) => void): (() => void) => {
       const cleanup = EventsOn('daq:payload', (data: unknown) => {
@@ -228,43 +257,43 @@ export const wailsApi = {
       return await callBinding('MotionGetProfiles');
     },
     upsertProfile: async (profile: MotionProfile): Promise<GenericResponse> => {
-      return await callBinding('MotionUpsertProfile', profile);
+      return await callBindingGeneric('MotionUpsertProfile', profile);
     },
     deleteProfile: async (profileId: string): Promise<GenericResponse> => {
-      return await callBinding('MotionDeleteProfile', profileId);
+      return await callBindingGeneric('MotionDeleteProfile', profileId);
     },
     connect: async (controllerId: string): Promise<GenericResponse> => {
-      return await callBinding('MotionConnect', controllerId);
+      return await callBindingGeneric('MotionConnect', controllerId);
     },
     disconnect: async (controllerId: string): Promise<GenericResponse> => {
-      return await callBinding('MotionDisconnect', controllerId);
+      return await callBindingGeneric('MotionDisconnect', controllerId);
     },
     getStatus: async (): Promise<MotionStatus[]> => {
       return await callBinding('MotionGetStatus');
     },
     home: async (controllerId: string, axisName: string): Promise<GenericResponse> => {
-      return await callBinding('MotionHome', controllerId, axisName);
+      return await callBindingGeneric('MotionHome', controllerId, axisName);
     },
     moveTo: async (controllerId: string, axisName: string, position: number): Promise<GenericResponse> => {
-      return await callBinding('MotionMoveTo', controllerId, axisName, position);
+      return await callBindingGeneric('MotionMoveTo', controllerId, axisName, position);
     },
     moveBy: async (controllerId: string, axisName: string, distance: number): Promise<GenericResponse> => {
-      return await callBinding('MotionMoveBy', controllerId, axisName, distance);
+      return await callBindingGeneric('MotionMoveBy', controllerId, axisName, distance);
     },
     jog: async (controllerId: string, axisName: string, velocity: number): Promise<GenericResponse> => {
-      return await callBinding('MotionJog', controllerId, axisName, velocity);
+      return await callBindingGeneric('MotionJog', controllerId, axisName, velocity);
     },
     stop: async (controllerId: string, axisName: string): Promise<GenericResponse> => {
-      return await callBinding('MotionStop', controllerId, axisName);
+      return await callBindingGeneric('MotionStop', controllerId, axisName);
     },
     emergencyStop: async (controllerId: string): Promise<GenericResponse> => {
-      return await callBinding('MotionEmergencyStop', controllerId);
+      return await callBindingGeneric('MotionEmergencyStop', controllerId);
     },
     definePosition: async (controllerId: string, axisName: string, position: number): Promise<GenericResponse> => {
-      return await callBinding('MotionDefinePosition', controllerId, axisName, position);
+      return await callBindingGeneric('MotionDefinePosition', controllerId, axisName, position);
     },
     resetEmergencyStop: async (controllerId: string): Promise<GenericResponse> => {
-      return await callBinding('MotionResetEmergencyStop', controllerId);
+      return await callBindingGeneric('MotionResetEmergencyStop', controllerId);
     },
 
     onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
@@ -280,19 +309,19 @@ export const wailsApi = {
   // 校准管理
   calibration: {
     start: async (config: CalibrationConfig): Promise<GenericResponse> => {
-      return await callBinding('CalibrationStart', config);
+      return await callBindingGeneric('CalibrationStart', config);
     },
     stop: async (): Promise<GenericResponse> => {
-      return await callBinding('CalibrationStop');
+      return await callBindingGeneric('CalibrationStop');
     },
     pause: async (): Promise<GenericResponse> => {
-      return await callBinding('CalibrationPause');
+      return await callBindingGeneric('CalibrationPause');
     },
     resume: async (): Promise<GenericResponse> => {
-      return await callBinding('CalibrationResume');
+      return await callBindingGeneric('CalibrationResume');
     },
     collect: async (): Promise<GenericResponse> => {
-      return await callBinding('CalibrationCollect');
+      return await callBindingGeneric('CalibrationCollect');
     },
     status: async (): Promise<CalibrationStatus> => {
       return await callBinding('CalibrationStatus');
@@ -305,10 +334,10 @@ export const wailsApi = {
   // 存储管理
   storage: {
     startRecording: async (outputDir: string, filePrefix: string): Promise<GenericResponse> => {
-      return await callBinding('StorageStartRecording', outputDir, filePrefix);
+      return await callBindingGeneric('StorageStartRecording', outputDir, filePrefix);
     },
     stopRecording: async (): Promise<GenericResponse> => {
-      return await callBinding('StorageStopRecording');
+      return await callBindingGeneric('StorageStopRecording');
     },
     getStatus: async (): Promise<StorageRecordingStatus> => {
       return await callBinding('StorageGetStatus');
@@ -334,9 +363,9 @@ export const wailsApi = {
     },
     save: async (key: string, config: unknown): Promise<GenericResponse> => {
       try {
-        return await callBinding<GenericResponse>('ConfigSave', key, JSON.stringify(config));
+        return await callBindingGeneric('ConfigSave', key, JSON.stringify(config));
       } catch (e) {
-        return { Success: false, Error: String(e) };
+        return normalizeGenericResponse({ success: false, error: String(e) });
       }
     },
   },
@@ -354,6 +383,14 @@ export const wailsApi = {
     },
     pickFiles: async (title: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string[]> => {
       return await callBinding('PickFiles', title, filters);
+    },
+    // 获取启动模式："normal" 或 "motion"
+    getStartupMode: async (): Promise<string> => {
+      return await callBinding('GetStartupMode');
+    },
+    // 启动运动控制器独立窗口（独立进程）
+    openMotionWindow: async (): Promise<GenericResponse> => {
+      return await callBindingGeneric('OpenMotionWindow');
     }
   }
 };

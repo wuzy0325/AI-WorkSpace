@@ -123,6 +123,13 @@ const option = computed(() => {
         type: 'line',
         lineStyle: { color: c.text, opacity: 0.4, type: 'dashed' as const },
       },
+      // 按通道精度格式化 tooltip 数值（dataIndex 对应 series 顺序）
+      valueFormatter: (value: unknown, dataIndex: number) => {
+        if (value === null || value === undefined || typeof value !== 'number') return '-'
+        const ch = selectedChannels[dataIndex]
+        const p = ch ? (ch.precision ?? 3) : 3
+        return value.toFixed(p)
+      },
     },
     legend: {
       data: selectedChannels.map((ch) => ch.name || `CH${ch.index + 1}`),

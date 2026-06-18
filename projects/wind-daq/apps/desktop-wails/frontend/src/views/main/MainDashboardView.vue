@@ -12,7 +12,6 @@ import DeviceSidebar from '@components/main/DeviceSidebar.vue'
 import DeviceOverviewPanel from '@components/main/DeviceOverviewPanel.vue'
 import DeviceDetailPanel from '@components/main/DeviceDetailPanel.vue'
 import MainView from '@views/MainView.vue'
-import MotionView from '@views/MotionView.vue'
 import CalibrationView from '@views/CalibrationView.vue'
 import TraversalView from '@views/TraversalView.vue'
 import LogViewer from '@views/LogViewer.vue'
@@ -28,7 +27,7 @@ import UiLoadingState from '@components/ui/UiLoadingState.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { Activity, Wifi, LineChart } from '@lucide/vue'
 
-type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
+type MainShellPage = 'dashboard' | 'calibration' | 'traversal' | 'log'
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
@@ -58,17 +57,45 @@ const acquiring = computed(() => {
 
 const railItems = computed<AppRailNavItem[]>(() => [
   { id: 'dashboard', label: t.value.dashboardHome, icon: 'IO', active: activePage.value === 'dashboard' },
-  { id: 'motion', label: t.value.motionControl, icon: 'AX', active: activePage.value === 'motion' },
   { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration' },
   { id: 'traversal', label: t.value.traversalTest, icon: 'TR', active: activePage.value === 'traversal' },
   { id: 'log', label: t.value.logViewer || 'Logs', icon: 'LG', active: activePage.value === 'log' }
 ])
 
-const VALID_MAIN_PAGES = new Set(['dashboard', 'motion', 'calibration', 'traversal', 'log'])
+// 底部 external 项：运动控制器作为独立窗口入口，放在侧边栏最底部
+const railFooterItems = computed<AppRailNavItem[]>(() => [
+  { id: 'motion', label: t.value.motionControl, icon: 'AX', external: true }
+])
+
+const VALID_MAIN_PAGES = new Set(['dashboard', 'calibration', 'traversal', 'log'])
 
 function handleRailSelect(id: string): void {
   if (VALID_MAIN_PAGES.has(id)) {
     activePage.value = id as MainShellPage
+  }
+}
+
+// 独立窗口启动中状态，避免重复点击
+const motionLaunching = ref(false)
+
+// 处理 external 导航项：启动运动控制器独立窗口
+async function handleOpenExternal(id: string): Promise<void> {
+  if (id !== 'motion') return
+  if (!isWailsAvailable()) {
+    feedbackStore.pushToast('当前环境不支持独立窗口', 'error')
+    return
+  }
+  if (motionLaunching.value) return
+  motionLaunching.value = true
+  try {
+    const res = await wailsApi.app.openMotionWindow()
+    if (!res.Success) {
+      feedbackStore.pushToast('启动独立窗口失败: ' + (res.Error || '未知错误'), 'error')
+    }
+  } catch (e) {
+    feedbackStore.pushToast('启动独立窗口异常: ' + String(e), 'error')
+  } finally {
+    setTimeout(() => { motionLaunching.value = false }, 1000)
   }
 }
 
@@ -269,7 +296,13 @@ function handleKeydown(e: KeyboardEvent) {
     </template>
 
     <template #rail>
-      <AppRailNav :items="railItems" @select="handleRailSelect" @open-settings="showSettings = true" />
+      <AppRailNav
+        :items="railItems"
+        :footer-items="railFooterItems"
+        @select="handleRailSelect"
+        @open-external="handleOpenExternal"
+        @open-settings="showSettings = true"
+      />
     </template>
 
     <template v-if="activePage === 'dashboard'" #sidebar>
@@ -307,8 +340,7 @@ function handleKeydown(e: KeyboardEvent) {
 
     <!-- 统一全铺布局：所有子页面都直接铺满主内容区，保持与仪表盘一致的视觉体验 -->
     <div v-else class="page-fullscreen">
-      <MotionView v-if="activePage === 'motion'" embedded />
-      <CalibrationView v-else-if="activePage === 'calibration'" embedded />
+      <CalibrationView v-if="activePage === 'calibration'" embedded />
       <TraversalView v-else-if="activePage === 'traversal'" embedded />
       <LogViewer v-else-if="activePage === 'log'" embedded />
     </div>

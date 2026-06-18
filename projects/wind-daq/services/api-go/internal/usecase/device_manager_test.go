@@ -5,9 +5,44 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
-	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/ports"
 )
+
+// testNormalizer 测试用 ProfileNormalizer，补全缺失通道为 18 通道默认布局。
+// 不依赖 adapters/config，避免 usecase test 反向依赖 adapter。
+type testNormalizer struct{}
+
+func (testNormalizer) Normalize(profile device.Profile) device.Profile {
+	if len(profile.Channels) > 0 {
+		return profile
+	}
+	// 与 adapters/config.defaultSimulatedChannels 一致的简化版（18 通道）
+	channels := make([]device.ChannelConfig, 18)
+	for i := 0; i < 16; i++ {
+		channels[i] = device.ChannelConfig{Index: i, Name: "CH" + string(rune('1'+i)), Enabled: true, Unit: "V"}
+	}
+	channels[16] = device.ChannelConfig{Index: 16, Name: "大气压", Enabled: true, Unit: "kPa"}
+	channels[17] = device.ChannelConfig{Index: 17, Name: "大气温度", Enabled: true, Unit: "degC"}
+	profile.Channels = channels
+	return profile
+}
+
+// newTestProfile 构造测试用设备配置（不依赖 adapters/config）
+func newTestProfile(id string, deviceType device.Type) device.Profile {
+	return device.Profile{
+		ID:           id,
+		Name:         id,
+		Type:         deviceType,
+		Transport:    "tcp",
+		SamplingRate: 20,
+		AutoConnect:  true,
+	}
+}
+
+// newTestDeviceManager 构造带 normalizer 的 DeviceManager（测试辅助）
+func newTestDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink) (*DeviceManager, error) {
+	return NewDeviceManagerWithNormalizer(store, factory, dataSink, testNormalizer{})
+}
 
 type memoryProfileStore struct {
 	profiles []device.Profile
@@ -89,9 +124,9 @@ func (s fakeScanner) Scan() ([]device.ScanResult, error) {
 
 func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		newTestProfile("sim-1", device.DeviceSimulated),
 	}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -114,7 +149,7 @@ func TestDeviceManagerNormalizesStoredProfilesWithNoChannels(t *testing.T) {
 			SamplingRate: 20,
 		},
 	}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -130,7 +165,7 @@ func TestDeviceManagerNormalizesStoredProfilesWithNoChannels(t *testing.T) {
 
 func TestDeviceManagerUpsertProfileNormalizesNoChannels(t *testing.T) {
 	store := &memoryProfileStore{}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -153,7 +188,7 @@ func TestDeviceManagerUpsertProfileNormalizesNoChannels(t *testing.T) {
 }
 
 func TestDeviceManagerScansDevices(t *testing.T) {
-	manager, err := NewDeviceManager(&memoryProfileStore{}, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(&memoryProfileStore{}, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -175,12 +210,12 @@ func TestDeviceManagerScansDevices(t *testing.T) {
 
 func TestDeviceManagerUpsertProfilePersistsProfile(t *testing.T) {
 	store := &memoryProfileStore{}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
 
-	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := newTestProfile("sim-1", device.DeviceSimulated)
 	profile.Name = "Simulator 1"
 	if err := manager.UpsertProfile(profile); err != nil {
 		t.Fatalf("UpsertProfile returned error: %v", err)
@@ -196,9 +231,9 @@ func TestDeviceManagerUpsertProfilePersistsProfile(t *testing.T) {
 
 func TestDeviceManagerConnectsProfileAndReportsStatus(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		newTestProfile("sim-1", device.DeviceSimulated),
 	}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -218,9 +253,9 @@ func TestDeviceManagerConnectsProfileAndReportsStatus(t *testing.T) {
 
 func TestDeviceManagerDisconnectsConnectedDevice(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		newTestProfile("sim-1", device.DeviceSimulated),
 	}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -238,9 +273,9 @@ func TestDeviceManagerDisconnectsConnectedDevice(t *testing.T) {
 
 func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		newTestProfile("sim-1", device.DeviceSimulated),
 	}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -263,9 +298,9 @@ func TestDeviceManagerDeleteProfileDisconnectsAndPersistsRemoval(t *testing.T) {
 }
 
 func TestDeviceManagerSetUnitUpdatesAllChannelsAndPersists(t *testing.T) {
-	profile := windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated)
+	profile := newTestProfile("sim-1", device.DeviceSimulated)
 	store := &memoryProfileStore{profiles: []device.Profile{profile}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -283,9 +318,9 @@ func TestDeviceManagerSetUnitUpdatesAllChannelsAndPersists(t *testing.T) {
 }
 
 func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
-	profile := windaqconfig.NewDefaultProfile("temp-1", device.DeviceDaqT1603)
+	profile := newTestProfile("temp-1", device.DeviceDaqT1603)
 	store := &memoryProfileStore{profiles: []device.Profile{profile}}
-	manager, err := NewDeviceManager(store, simulatedFactory{}, nil)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}
@@ -315,10 +350,10 @@ func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
 
 func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
-		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
+		newTestProfile("sim-1", device.DeviceSimulated),
 	}}
 	hub := NewAcquisitionHub(&capturePublisher{}, 20)
-	manager, err := NewDeviceManager(store, simulatedFactory{}, hub.OnData)
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, hub.OnData)
 	if err != nil {
 		t.Fatalf("NewDeviceManager returned error: %v", err)
 	}

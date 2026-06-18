@@ -19,6 +19,7 @@ import (
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/wiring"
 )
 
 const (
@@ -56,16 +57,18 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 	profileStore := motionprofile.NewMemoryMotionProfileStore()
 	factory := hardware.NewDefaultMotionControllerFactory()
-	motionMgr := usecase.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+	motionMgr := wiring.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
 		return factory.Create(profile)
 	})
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
-	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore())
+	// 注入遍历 CSV 写入 sink，承担测试结果落盘
+	travSink := storageadapter.NewTraversalCsvWriter()
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
 	dataSink := func(payload device.DataPayload) {
 		hub.OnData(payload)
 		_ = recorder.HandlePayload(payload)
 	}
-	manager, err := usecase.NewDeviceManager(store, deviceFactory{}, dataSink)
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return APIServer{}, err
 	}

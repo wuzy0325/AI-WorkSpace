@@ -16,6 +16,13 @@ const (
 	AxisKindRotary AxisKind = "ROTARY"
 )
 
+type PositionSource string
+
+const (
+	PositionSourceRegister PositionSource = "register"
+	PositionSourceEncoder  PositionSource = "encoder"
+)
+
 type ControllerType string
 
 const (
@@ -24,14 +31,33 @@ const (
 	ControllerTypeWTNMC4A   ControllerType = "WTNMC4A-MC"
 )
 
+// AxisEncoderCompensationConfig 编码器补偿参数。
+type AxisEncoderCompensationConfig struct {
+	Enabled   bool    `json:"enabled"`
+	Tolerance float64 `json:"tolerance"`
+	MaxCycles float64 `json:"maxCycles"`
+	SettleMs  float64 `json:"settleMs"`
+	MinStep   float64 `json:"minStep"`
+	TimeoutMs float64 `json:"timeoutMs"`
+}
+
+// AxisConfig 单轴配置，包含机械、电气及运动限制参数。
 type AxisConfig struct {
-	Name      AxisName  `json:"name"`
-	Enabled   bool      `json:"enabled"`
-	Kind      AxisKind  `json:"kind"`
-	MaxSpeed  *float64  `json:"maxSpeed,omitempty"`
-	MinLimit  *float64  `json:"minLimit,omitempty"`
-	MaxLimit  *float64  `json:"maxLimit,omitempty"`
-	Inverted  bool      `json:"inverted"`
+	Name                AxisName                       `json:"name"`
+	Enabled             bool                           `json:"enabled"`
+	Kind                AxisKind                       `json:"kind"`
+	MaxSpeed            *float64                       `json:"maxSpeed,omitempty"`
+	MinLimit            *float64                       `json:"minLimit,omitempty"`
+	MaxLimit            *float64                       `json:"maxLimit,omitempty"`
+	Inverted            bool                           `json:"inverted"`
+	EncoderInverted     bool                           `json:"encoderInverted"`
+	StepsPerRev         *float64                       `json:"stepsPerRev,omitempty"`
+	MicroSteps          *float64                       `json:"microSteps,omitempty"`
+	Lead                *float64                       `json:"lead,omitempty"`
+	GearRatio           *float64                       `json:"gearRatio,omitempty"`
+	PositionSource      PositionSource                 `json:"positionSource"`
+	EncoderScale        *float64                       `json:"encoderScale,omitempty"`
+	EncoderCompensation *AxisEncoderCompensationConfig `json:"encoderCompensation,omitempty"`
 }
 
 type MotionControllerProfile struct {

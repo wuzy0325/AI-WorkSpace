@@ -11,6 +11,8 @@ export function DeleteProfile(arg1:string):Promise<void>;
 
 export function Disconnect(arg1:string):Promise<void>;
 
+export function EmitDeviceState(arg1:string,arg2:core.DeviceState):Promise<void>;
+
 export function EmitLog(arg1:backend.LogEvent):Promise<void>;
 
 export function GetLogFileState():Promise<backend.LogFileState>;

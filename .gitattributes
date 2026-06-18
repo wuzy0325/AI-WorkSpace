@@ -1,0 +1,36 @@
+# 默认：让 git 自动判断文本与二进制
+* text=auto
+
+# 源代码：仓库内统一存为 LF，避免 Windows 检出时反复抖动
+*.go        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.vue       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+*.html      text eol=lf
+*.toml      text eol=lf
+
+# Windows 专用脚本保留 CRLF
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# 二进制
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.zip       binary
+*.7z        binary

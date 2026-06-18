@@ -363,31 +363,6 @@ watch(
           </div>
         </button>
       </div>
-
-      <!-- 连接/断开按钮：始终可见，未选择时 disabled -->
-      <div class="mt-3 pt-3 border-t border-[color:var(--border-default)]">
-        <div v-if="!selectedId" class="text-[10px] text-[color:var(--text-muted)] text-center py-1">
-          请先选择控制器
-        </div>
-        <div v-else class="flex gap-2">
-          <UiButton
-            secondary size="sm"
-            class="flex-1"
-            @click="handleConnect"
-            :disabled="currentStatus?.connected"
-          >
-            {{ i18n.t.connectBtn }}
-          </UiButton>
-          <UiButton
-            secondary size="sm"
-            class="flex-1"
-            @click="handleDisconnect"
-            :disabled="!currentStatus?.connected"
-          >
-            {{ i18n.t.disconnectBtn }}
-          </UiButton>
-        </div>
-      </div>
     </aside>
 
     <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
@@ -427,8 +402,29 @@ watch(
           </div>
         </div>
 
-        <!-- 右侧操作区：停止全部 + 紧急停止 -->
-        <div class="flex items-center gap-3">
+        <!-- 右侧操作区：按逻辑分组 -->
+        <div class="flex items-center gap-2">
+          <!-- 连接/断开按钮组：未选择控制器时 disabled -->
+          <div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[color:var(--bg-panel-strong)] border border-[color:var(--border-default)]">
+            <UiButton
+              secondary size="sm"
+              @click="handleConnect"
+              :disabled="!selectedId || currentStatus?.connected"
+              :title="!selectedId ? '请先选择控制器' : i18n.t.connectBtn"
+            >
+              {{ i18n.t.connectBtn }}
+            </UiButton>
+            <UiButton
+              secondary size="sm"
+              @click="handleDisconnect"
+              :disabled="!selectedId || !currentStatus?.connected"
+              :title="!selectedId ? '请先选择控制器' : i18n.t.disconnectBtn"
+            >
+              {{ i18n.t.disconnectBtn }}
+            </UiButton>
+          </div>
+
+          <!-- 停止全部按钮 -->
           <UiButton
             secondary size="sm"
             @click="stop()"
@@ -436,7 +432,9 @@ watch(
           >
             {{ i18n.t.stopAll }}
           </UiButton>
-          <!-- 紧急停止按钮：更大、更醒目、固定在右上角 -->
+
+          <!-- 紧急停止按钮：更大、更醒目，用分隔线与常规操作区分 -->
+          <div class="w-px h-8 bg-[color:var(--border-default)] mx-1"></div>
           <UiButton
             variant="danger" size="lg"
             class="estop-btn"
@@ -509,11 +507,11 @@ watch(
             {{ i18n.t.openConfig || '打开配置' }}
           </UiButton>
           </div>
-          <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div
               v-for="axis in axes"
               :key="axis.name"
-              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-[200px]"
+              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-0"
               :class="getAxisThemeClass(axis.name)"
             >
               <div class="flex items-center justify-between">

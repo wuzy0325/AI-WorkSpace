@@ -1,10 +1,11 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type { TraversalDataPoint } from '@shared/types/traversal'
 import { useI18nStore } from '@stores/i18nStore'
 import { getParamValue, VISUALIZATION_PARAM_CONFIG, type VisualizationParam } from './types'
 import { useECharts } from './composables/useECharts'
+import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
 import UiSelect from '@components/ui/UiSelect.vue'
 
@@ -18,6 +19,7 @@ const t = computed(() => i18n.t)
 const chartRef = ref<HTMLElement | null>(null)
 const { chart } = useECharts(chartRef)
 const { chartTheme } = useTraversalChartTheme()
+const { exportScreenshot } = useScreenshotExport(chart)
 
 const sectionType = ref<'beta' | 'alpha'>('beta')
 const sectionValue = ref<number | null>(null)
@@ -139,7 +141,46 @@ watch([chart, chartData, chartTheme, paramLabel], updateChart, { immediate: true
         {{ t.noVisualizationData }}
       </div>
       <div ref="chartRef" class="h-full w-full"></div>
+      <!-- 截图导出按钮：鼠标悬停时显示 -->
+      <button
+        v-if="hasData"
+        class="cross-section-export-btn"
+        :title="t.exportPng || 'Export PNG'"
+        @click="exportScreenshot(`cross-section-${paramLabel.replace(/\s+/g, '-')}`)"
+      >
+        {{ t.exportPng || 'Export PNG' }}
+      </button>
     </div>
   </div>
 </template>
+
+<style scoped>
+.cross-section-export-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 200ms ease, background 120ms ease;
+}
+
+.cross-section-export-btn:hover {
+  background: var(--bg-panel-strong);
+}
+
+.cross-section-export-btn:focus-visible {
+  opacity: 1;
+}
+
+.relative:hover .cross-section-export-btn {
+  opacity: 1;
+}
+</style>
 

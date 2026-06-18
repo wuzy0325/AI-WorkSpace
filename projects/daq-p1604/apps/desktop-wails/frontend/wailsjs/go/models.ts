@@ -73,6 +73,7 @@ export namespace core {
 	    samplingRate: number;
 	    unit: string;
 	    autoConnect: boolean;
+	    precision: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new P1604Config(source);
@@ -83,6 +84,7 @@ export namespace core {
 	        this.samplingRate = source["samplingRate"];
 	        this.unit = source["unit"];
 	        this.autoConnect = source["autoConnect"];
+	        this.precision = source["precision"];
 	    }
 	}
 	export class PressureProfile {

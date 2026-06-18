@@ -92,13 +92,21 @@ func toProjectProfile(p sharedcore.MotionControllerProfile) motion.MotionControl
 	axes := make([]motion.AxisConfig, len(p.Axes))
 	for i, a := range p.Axes {
 		axes[i] = motion.AxisConfig{
-			Name:     motion.AxisName(a.Name),
-			Enabled:  a.Enabled,
-			Kind:     motion.AxisKind(a.Kind),
-			MaxSpeed: a.MaxSpeed,
-			MinLimit: a.MinLimit,
-			MaxLimit: a.MaxLimit,
-			Inverted: a.Inverted,
+			Name:                motion.AxisName(a.Name),
+			Enabled:             a.Enabled,
+			Kind:                motion.AxisKind(a.Kind),
+			MaxSpeed:            a.MaxSpeed,
+			MinLimit:            a.MinLimit,
+			MaxLimit:            a.MaxLimit,
+			Inverted:            a.Inverted,
+			EncoderInverted:     a.EncoderInverted,
+			StepsPerRev:         a.StepsPerRev,
+			MicroSteps:          intPtrToFloat64Ptr(a.MicroSteps),
+			Lead:                a.Lead,
+			GearRatio:           a.GearRatio,
+			PositionSource:      motion.PositionSource(a.PositionSource),
+			EncoderScale:        a.EncoderScale,
+			EncoderCompensation: toProjectEncoderCompensation(a.EncoderCompensation),
 		}
 	}
 	return motion.MotionControllerProfile{
@@ -127,13 +135,21 @@ func toSharedProfile(p motion.MotionControllerProfile) sharedcore.MotionControll
 	axes := make([]sharedcore.AxisConfig, len(p.Axes))
 	for i, a := range p.Axes {
 		axes[i] = sharedcore.AxisConfig{
-			Name:     sharedcore.AxisName(a.Name),
-			Enabled:  a.Enabled,
-			Kind:     sharedcore.AxisKind(a.Kind),
-			MaxSpeed: a.MaxSpeed,
-			MinLimit: a.MinLimit,
-			MaxLimit: a.MaxLimit,
-			Inverted: a.Inverted,
+			Name:                sharedcore.AxisName(a.Name),
+			Enabled:             a.Enabled,
+			Kind:                sharedcore.AxisKind(a.Kind),
+			MaxSpeed:            a.MaxSpeed,
+			MinLimit:            a.MinLimit,
+			MaxLimit:            a.MaxLimit,
+			Inverted:            a.Inverted,
+			EncoderInverted:     a.EncoderInverted,
+			StepsPerRev:         a.StepsPerRev,
+			MicroSteps:          float64PtrToIntPtr(a.MicroSteps),
+			Lead:                a.Lead,
+			GearRatio:           a.GearRatio,
+			PositionSource:      sharedcore.PositionSource(a.PositionSource),
+			EncoderScale:        a.EncoderScale,
+			EncoderCompensation: toSharedEncoderCompensation(a.EncoderCompensation),
 		}
 	}
 	return sharedcore.MotionControllerProfile{
@@ -195,4 +211,48 @@ func toProjectStatuses(statuses []sharedcore.ControllerStatus) []motion.Controll
 		out[i] = toProjectStatus(s)
 	}
 	return out
+}
+
+func intPtrToFloat64Ptr(v *int) *float64 {
+	if v == nil {
+		return nil
+	}
+	f := float64(*v)
+	return &f
+}
+
+func float64PtrToIntPtr(v *float64) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v)
+	return &n
+}
+
+func toProjectEncoderCompensation(c *sharedcore.AxisEncoderCompensationConfig) *motion.AxisEncoderCompensationConfig {
+	if c == nil {
+		return nil
+	}
+	return &motion.AxisEncoderCompensationConfig{
+		Enabled:   c.Enabled,
+		Tolerance: c.Tolerance,
+		MaxCycles: float64(c.MaxCycles),
+		SettleMs:  float64(c.SettleMs),
+		MinStep:   c.MinStep,
+		TimeoutMs: float64(c.TimeoutMs),
+	}
+}
+
+func toSharedEncoderCompensation(c *motion.AxisEncoderCompensationConfig) *sharedcore.AxisEncoderCompensationConfig {
+	if c == nil {
+		return nil
+	}
+	return &sharedcore.AxisEncoderCompensationConfig{
+		Enabled:   c.Enabled,
+		Tolerance: c.Tolerance,
+		MaxCycles: int(c.MaxCycles),
+		SettleMs:  int(c.SettleMs),
+		MinStep:   c.MinStep,
+		TimeoutMs: int(c.TimeoutMs),
+	}
 }

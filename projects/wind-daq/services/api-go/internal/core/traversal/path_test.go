@@ -160,7 +160,7 @@ func TestPointsFromLayoutUnknown(t *testing.T) {
 }
 
 func TestValidatePressuresDisabled(t *testing.T) {
-	valid, warnings := ValidatePressures(map[int]float64{0: 100}, &DataValidationConfig{Enabled: false})
+	valid, warnings := ValidatePressures(map[int]float64{0: 100}, &DataValidationConfig{Enabled: false}, nil)
 	if !valid {
 		t.Fatal("expected valid when validation is disabled")
 	}
@@ -175,7 +175,7 @@ func TestValidatePressuresInRange(t *testing.T) {
 		PressureRange: map[string]*PressureRange{
 			"P1": {Min: 0, Max: 100},
 		},
-	})
+	}, nil)
 	if !valid {
 		t.Fatal("expected valid for in-range value")
 	}
@@ -191,7 +191,7 @@ func TestValidatePressuresOutOfRange(t *testing.T) {
 			"P1": {Min: 0, Max: 100},
 		},
 		OnInvalid: "continue",
-	})
+	}, nil)
 	if !valid {
 		t.Fatal("expected valid for continue mode even with out-of-range")
 	}
@@ -207,9 +207,26 @@ func TestValidatePressuresSkipMode(t *testing.T) {
 			"P1": {Min: 0, Max: 100},
 		},
 		OnInvalid: "skip",
-	})
+	}, nil)
 	if valid {
 		t.Fatal("expected invalid for skip mode with out-of-range")
+	}
+}
+
+func TestValidatePressuresWithLabels(t *testing.T) {
+	// 显式映射模式：通道 17 是 P1，应触发 out-of-range
+	valid, warnings := ValidatePressures(map[int]float64{17: 200, 0: 50}, &DataValidationConfig{
+		Enabled: true,
+		PressureRange: map[string]*PressureRange{
+			"P1": {Min: 0, Max: 100},
+		},
+		OnInvalid: "continue",
+	}, map[int]string{17: "P1", 0: "P2"})
+	if !valid {
+		t.Fatal("expected valid in continue mode")
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning for P1 out-of-range, got %d", len(warnings))
 	}
 }
 

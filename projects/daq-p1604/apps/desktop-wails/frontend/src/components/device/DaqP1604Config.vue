@@ -6,7 +6,7 @@ import type { SelectOption } from './CustomSelect.vue'
 import {
   Settings2, Activity,
   Save, RotateCcw, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Hash, Clock, Wifi, Gauge,
+  SlidersHorizontal, Hash, Clock, Wifi, Gauge, Crosshair,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -25,13 +25,22 @@ const pressureUnitOptions: SelectOption[] = [
   { value: 'kgf/cm²', label: 'kgf/cm²' },
 ]
 
-// 采样周期（毫秒），范围 10-60000
-const samplingRate = ref(100)
+// 精度选项（0-6 位小数）
+const precisionOptions: SelectOption[] = Array.from({ length: 7 }, (_, i) => ({
+  value: String(i),
+  label: `${i} 位小数`,
+}))
+
+// 采样频率（Hz），UI 层展示频率，保存时换算为周期毫秒
+// 频率范围：1000/60000 ≈ 0.017 Hz 到 1000/10 = 100 Hz
+const samplingFreq = ref(10)
 const autoConnect = ref(false) // 启动时自动连接
 const pressureUnit = ref('psi') // 全局压力单位
+const globalPrecision = ref(3) // 全局默认精度（小数位数）
 const channelNames = ref<string[]>(Array(18).fill(''))
 const channelEnabled = ref<boolean[]>(Array(18).fill(true))
 const channelColors = ref<string[]>(Array(18).fill(''))
+const channelPrecisions = ref<number[]>(Array(18).fill(3)) // 每通道独立精度
 
 // 默认颜色，用于未设置颜色时的回退值
 const DEFAULT_COLOR = '#3b82f6'
@@ -54,16 +63,32 @@ function getDefaultChannelName(index: number): string {
   return `通道 ${index + 1}`
 }
 
+/** 采样周期（毫秒）转频率（Hz），保留 2 位小数 */
+function periodMsToHz(ms: number): number {
+  if (!ms || ms < 10) return 100
+  const hz = 1000 / ms
+  return Math.round(hz * 100) / 100
+}
+
+/** 频率（Hz）转采样周期（毫秒），限制 10-60000 */
+function hzToPeriodMs(hz: number): number {
+  if (!hz || hz <= 0) return 100
+  const ms = Math.round(1000 / hz)
+  return Math.max(10, Math.min(60000, ms))
+}
+
 function syncFormFromProfile(profileData: typeof profile.value) {
   if (!profileData) return
   // 保存同步中跳过表单同步，避免触发 watcher 覆盖 saveStatus
   if (syncing.value) return
-  samplingRate.value = profileData.p1604Config?.samplingRate || 100
+  samplingFreq.value = periodMsToHz(profileData.p1604Config?.samplingRate || 100)
   autoConnect.value = profileData.p1604Config?.autoConnect ?? false
   pressureUnit.value = profileData.p1604Config?.unit || 'psi'
+  globalPrecision.value = profileData.p1604Config?.precision ?? 3
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
+  channelPrecisions.value = profileData.channels.map((c) => c.precision ?? globalPrecision.value)
   hasChanges.value = false
   saveStatus.value = 'idle'
 }
@@ -74,7 +99,7 @@ watch(
   { immediate: true }
 )
 
-watch([samplingRate, autoConnect, pressureUnit, channelNames, channelEnabled, channelColors], () => {
+watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   hasChanges.value = true
@@ -91,12 +116,14 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
   if (cur.samplingRate !== nxt.samplingRate) return true
   if (cur.autoConnect !== nxt.autoConnect) return true
   if (cur.unit !== nxt.unit) return true
+  if (cur.precision !== nxt.precision) return true
   // 通道配置变更
   for (let i = 0; i < current.channels.length; i++) {
     const cc = current.channels[i]
     const nc = next.channels[i]
     if (!cc || !nc) return true
     if (cc.enabled !== nc.enabled) return true
+    if (cc.precision !== nc.precision) return true
   }
   return false
 }
@@ -111,15 +138,17 @@ async function saveConfig() {
       ...profile.value,
       p1604Config: {
         ...profile.value.p1604Config,
-        samplingRate: samplingRate.value,
+        samplingRate: hzToPeriodMs(samplingFreq.value),
         autoConnect: autoConnect.value,
         unit: pressureUnit.value,
+        precision: globalPrecision.value,
       },
       channels: profile.value.channels.map((channel, index) => ({
         ...channel,
         name: channelNames.value[index] || '',
         enabled: channelEnabled.value[index],
         color: channelColors.value[index] || '',
+        precision: channelPrecisions.value[index] ?? globalPrecision.value,
       })),
     }
     await deviceStore.saveProfile(nextProfile)
@@ -157,12 +186,25 @@ function toggleChannel(index: number) {
   channelEnabled.value[index] = !channelEnabled.value[index]
 }
 
-function onPeriodInput(e: Event) {
+/** 全局精度变更时同步应用到所有通道（UI 层面，保存时持久化） */
+function applyGlobalPrecisionToAll() {
+  for (let i = 0; i < 18; i++) {
+    channelPrecisions.value[i] = globalPrecision.value
+  }
+}
+
+/** 采样频率输入处理，限制 0.02-100 Hz */
+function onFreqInput(e: Event) {
   const target = e.target as HTMLInputElement
-  let v = parseInt(target.value, 10)
+  let v = parseFloat(target.value)
   if (isNaN(v)) v = 10
-  v = Math.max(10, Math.min(60000, v))
-  samplingRate.value = v
+  v = Math.max(0.02, Math.min(100, v))
+  samplingFreq.value = v
+}
+
+/** 单通道精度变更 */
+function onChannelPrecisionChange(index: number, value: string) {
+  channelPrecisions.value[index] = parseInt(value, 10) || 0
 }
 </script>
 
@@ -195,23 +237,24 @@ function onPeriodInput(e: Event) {
           <h4 class="config__section-title">硬件参数</h4>
         </div>
         <div class="config__section-body">
-          <!-- 采样周期（毫秒） -->
+          <!-- 采样频率（Hz） -->
           <div class="config__field">
             <label class="config__label">
               <Clock class="config__label-icon" />
-              <span>采样周期</span>
+              <span>采样频率</span>
             </label>
             <div class="config__rate-wrapper">
               <input
-                v-model.number="samplingRate"
+                v-model.number="samplingFreq"
                 type="number"
+                step="0.1"
                 class="config__rate-input"
-                :min="10"
-                :max="60000"
+                :min="0.02"
+                :max="100"
                 :disabled="isAcquiring"
-                @input="onPeriodInput"
+                @input="onFreqInput"
               />
-              <span class="config__rate-unit">ms</span>
+              <span class="config__rate-unit">Hz</span>
             </div>
           </div>
 
@@ -227,6 +270,31 @@ function onPeriodInput(e: Event) {
               :disabled="isAcquiring"
               @update:model-value="pressureUnit = $event as string"
             />
+          </div>
+
+          <!-- 全局精度设置：应用到所有通道的默认显示精度 -->
+          <div class="config__field">
+            <label class="config__label">
+              <Crosshair class="config__label-icon" />
+              <span>全局精度（全部通道）</span>
+            </label>
+            <div class="config__precision-wrapper">
+              <CustomSelect
+                :model-value="String(globalPrecision)"
+                :options="precisionOptions"
+                :disabled="isAcquiring"
+                @update:model-value="globalPrecision = parseInt($event as string, 10); applyGlobalPrecisionToAll()"
+              />
+              <button
+                type="button"
+                class="config__precision-apply"
+                :disabled="isAcquiring"
+                title="将全局精度应用到所有通道"
+                @click="applyGlobalPrecisionToAll"
+              >
+                应用到全部
+              </button>
+            </div>
           </div>
 
           <!-- 自动连接开关：启动应用时自动连接此设备 -->
@@ -283,6 +351,18 @@ function onPeriodInput(e: Event) {
                 />
               </div>
               <div class="config__channel-actions">
+                <!-- 单通道精度选择：覆盖全局精度 -->
+                <div class="config__channel-precision">
+                  <span class="config__channel-precision-label">精度</span>
+                  <select
+                    class="config__channel-precision-select"
+                    :value="channelPrecisions[i - 1]"
+                    :disabled="isAcquiring || !channelEnabled[i - 1]"
+                    @change="onChannelPrecisionChange(i - 1, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="n in 7" :key="n - 1" :value="n - 1">{{ n - 1 }}</option>
+                  </select>
+                </div>
                 <button
                   type="button"
                   class="config__toggle"
@@ -742,6 +822,73 @@ function onPeriodInput(e: Event) {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
+}
+
+/* 全局精度包装器 */
+.config__precision-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config__precision-apply {
+  padding: 0.3rem 0.6rem;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  transition: all var(--motion-fast) var(--easing-standard);
+  white-space: nowrap;
+}
+
+.config__precision-apply:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.config__precision-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 单通道精度选择 */
+.config__channel-precision {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.config__channel-precision-label {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.config__channel-precision-select {
+  width: 2.6rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__channel-precision-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.config__channel-precision-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 底部 */

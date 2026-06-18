@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type {
@@ -11,6 +11,7 @@ import type { CustomSeriesOption } from 'echarts'
 import type { TraversalDataPoint } from '@shared/types/traversal'
 import { useI18nStore } from '@stores/i18nStore'
 import { useECharts } from './composables/useECharts'
+import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
 
 const props = defineProps<{
@@ -22,6 +23,7 @@ const t = computed(() => i18n.t)
 const chartRef = ref<HTMLElement | null>(null)
 const { chart } = useECharts(chartRef)
 const { chartTheme } = useTraversalChartTheme()
+const { exportScreenshot } = useScreenshotExport(chart)
 
 interface VectorPoint {
   value: [number, number, number]
@@ -182,6 +184,45 @@ watch([chart, vectorData, chartTheme, t], updateChart, { immediate: true })
       {{ t.noVisualizationData }}
     </div>
     <div ref="chartRef" class="h-full w-full"></div>
+    <!-- 截图导出按钮：鼠标悬停时显示 -->
+    <button
+      v-if="hasData"
+      class="vector-field-export-btn"
+      :title="t.exportPng || 'Export PNG'"
+      @click="exportScreenshot('vector-field')"
+    >
+      {{ t.exportPng || 'Export PNG' }}
+    </button>
   </div>
 </template>
+
+<style scoped>
+.vector-field-export-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 200ms ease, background 120ms ease;
+}
+
+.vector-field-export-btn:hover {
+  background: var(--bg-panel-strong);
+}
+
+.vector-field-export-btn:focus-visible {
+  opacity: 1;
+}
+
+.relative:hover .vector-field-export-btn {
+  opacity: 1;
+}
+</style>
 

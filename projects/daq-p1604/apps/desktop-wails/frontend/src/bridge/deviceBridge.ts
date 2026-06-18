@@ -14,9 +14,10 @@ import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 // P1604 设备配置
 export interface P1604Config {
-  samplingRate: number   // 采样周期（毫秒）
+  samplingRate: number   // 采样周期（毫秒），由采样频率换算得出
   unit: string           // 压力单位
   autoConnect: boolean   // 启动时自动连接
+  precision: number      // 全局默认显示精度（小数位数 0-6），单通道精度未设置时回退到此值
 }
 
 // 通道配置
@@ -145,4 +146,12 @@ export function onLog(handler: (entry: DeviceLogEvent) => void): void {
 
 export function offLog(): void {
   EventsOff('daq:log')
+}
+
+export function onDeviceState(handler: (id: string, state: DeviceState) => void): void {
+  EventsOn('daq:device-state', handler)
+}
+
+export function offDeviceState(): void {
+  EventsOff('daq:device-state')
 }

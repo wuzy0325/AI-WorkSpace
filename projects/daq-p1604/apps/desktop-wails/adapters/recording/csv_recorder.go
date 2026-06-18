@@ -14,6 +14,14 @@ import (
 const (
 	csvFlushRows     = 100
 	csvFlushInterval = time.Second
+	// numChannels 与 P1604 硬件通道数保持一致（16 路压力 + 大气压 + 大气温）
+	numChannels = 18
+	// numPressureChannels 仅压力通道数，用于 CSV 表头中 CH01..CH16
+	numPressureChannels = 16
+	// defaultPrecision CSV 输出默认小数位数
+	defaultPrecision = 4
+	// maxPrecision 用户允许配置的最大小数位数
+	maxPrecision = 6
 )
 
 // CSVRecorder CSV 文件录制器
@@ -24,6 +32,7 @@ type CSVRecorder struct {
 	writer      *csv.Writer
 	pendingRows int
 	lastFlush   time.Time
+	precisions  []int // 每个通道的保存精度（小数位数），按通道索引取值
 }
 
 // NewCSVRecorder 创建 CSV 录制器
@@ -31,8 +40,8 @@ func NewCSVRecorder() *CSVRecorder {
 	return &CSVRecorder{}
 }
 
-// Start 开始录制
-func (r *CSVRecorder) Start(outputDir string, prefix string) error {
+// Start 开始录制，channels 用于确定每个通道的保存精度
+func (r *CSVRecorder) Start(outputDir string, prefix string, channels []core.ChannelConfig) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -54,9 +63,9 @@ func (r *CSVRecorder) Start(outputDir string, prefix string) error {
 	r.writer = csv.NewWriter(f)
 
 	// 18 通道 CSV 表头
-	header := make([]string, 0, 19)
+	header := make([]string, 0, numChannels+1)
 	header = append(header, "Timestamp")
-	for i := 0; i < 16; i++ {
+	for i := 0; i < numPressureChannels; i++ {
 		header = append(header, fmt.Sprintf("CH%02d", i+1))
 	}
 	header = append(header, "CH17_AtmPressure")
@@ -69,6 +78,19 @@ func (r *CSVRecorder) Start(outputDir string, prefix string) error {
 	if err := r.writer.Error(); err != nil {
 		f.Close()
 		return fmt.Errorf("flush header: %w", err)
+	}
+
+	// 提取每通道精度，未配置时默认 4 位小数
+	r.precisions = make([]int, numChannels)
+	for i := 0; i < numChannels; i++ {
+		p := defaultPrecision
+		if i < len(channels) {
+			cp := channels[i].Precision
+			if cp >= 0 && cp <= maxPrecision {
+				p = cp
+			}
+		}
+		r.precisions[i] = p
 	}
 
 	r.file = f
@@ -102,10 +124,14 @@ func (r *CSVRecorder) Write(snapshot core.PressureSnapshot) error {
 		t = time.UnixMilli(snapshot.Timestamp)
 	}
 
-	record := make([]string, 0, 19)
+	record := make([]string, 0, numChannels+1)
 	record = append(record, t.Format("2006-01-02 15:04:05.000"))
-	for _, v := range snapshot.Values {
-		record = append(record, fmt.Sprintf("%.4f", v))
+	for i, v := range snapshot.Values {
+		p := defaultPrecision
+		if i < len(r.precisions) {
+			p = r.precisions[i]
+		}
+		record = append(record, fmt.Sprintf("%.*f", p, v))
 	}
 	if err := r.writer.Write(record); err != nil {
 		return err

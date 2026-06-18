@@ -34,7 +34,7 @@ type CalibrationManager struct {
 	currentConfig calibration.Config
 	currentStatus calibration.Status
 	currentTaskID string
-	csvWriter     *calibration.CalibrationCsvWriter
+	csvWriter     ports.CalibrationCsvWriter
 	lastExport    *calibration.ExportPayload
 }
 
@@ -70,6 +70,13 @@ func (m *CalibrationManager) SetDeviceStatusProvider(p ports.DeviceStatusProvide
 	m.statusProvider = p
 }
 
+// SetCsvWriter 设置校准 CSV 写入器
+// CSV 写入器是字节 I/O 组件，由装配根（pkg/appcontext）注入，
+// 避免 usecase 直接依赖 adapters/storage。
+func (m *CalibrationManager) SetCsvWriter(w ports.CalibrationCsvWriter) {
+	m.csvWriter = w
+}
+
 // Start 启动校准任务
 func (m *CalibrationManager) Start(config calibration.Config) error {
 	if config.TaskID == "" {
@@ -81,6 +88,19 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 
 	if m.currentStatus.State == calibration.StateRunning || m.currentStatus.State == calibration.StatePaused {
 		return fmt.Errorf("校准任务已在运行中，请先停止")
+	}
+
+	// 兼容旧接口：当调用方仅提供 PressurePoints 而未提供 Points 时，
+	// 将每个压力点转换为一个 CalPoint，Coordinates 使用 "pressure" 键。
+	// 这样 TotalPoints 与前端期望一致，且 AutomaticCalibration 循环能正常遍历。
+	if len(config.Points) == 0 && len(config.PressurePoints) > 0 {
+		config.Points = make([]calibration.CalPoint, 0, len(config.PressurePoints))
+		for i, p := range config.PressurePoints {
+			config.Points = append(config.Points, calibration.CalPoint{
+				ID:          i + 1,
+				Coordinates: map[string]float64{"pressure": p},
+			})
+		}
 	}
 
 	m.currentConfig = config
@@ -97,10 +117,9 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime)
 	m.autoEngine.SetTaskID(config.TaskID)
 
-	// 初始化CSV写入器
-	if config.SavePath != "" {
-		m.csvWriter = calibration.NewCalibrationCsvWriter(config)
-		if err := m.csvWriter.Initialize(); err != nil {
+	// 初始化CSV写入器（writer 由装配根注入，此处仅调用 Initialize）
+	if config.SavePath != "" && m.csvWriter != nil {
+		if err := m.csvWriter.Initialize(config); err != nil {
 			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
 			m.csvWriter = nil
 		}

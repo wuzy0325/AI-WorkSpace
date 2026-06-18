@@ -15,6 +15,7 @@ import (
 )
 
 const noDataTimeout = 10 * time.Second
+const maxConsecutiveFrameErrors = 5
 
 const (
 	DAQ_T_1603_DEFAULT_HOST = "192.168.1.7"
@@ -48,8 +49,9 @@ type DAQT1603 struct {
 	onReadLoopExit func(error)
 	onLog          func(LogEntry)
 	readErrors     int
-	frameErrors    int
-	configSyncDone chan struct{}
+	frameErrors            int
+	consecutiveFrameErrors int
+	configSyncDone         chan struct{}
 	readLoopDone   chan struct{}
 }
 
@@ -158,13 +160,23 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
-	for i := 0; i < 20; i++ {
+	hasDrained := false
+	const maxIters = 200 // safety cap: ~20s at 100ms timeout
+
+	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(buf)
 		if n > 0 {
 			totalDrained += n
+			hasDrained = true
 		}
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if hasDrained {
+					break
+				}
+				continue
+			}
 			break
 		}
 	}
@@ -302,7 +314,7 @@ func (d *DAQT1603) StartAcquisition() error {
 	}
 
 	if d.frameReader != nil {
-		if _, err := d.frameReader.ConsumeOptionalACK(200 * time.Millisecond); err != nil {
+		if _, err := d.frameReader.ConsumeOptionalACK(1 * time.Second); err != nil {
 			return fmt.Errorf("drain start ACK: %w", err)
 		}
 	}
@@ -535,11 +547,28 @@ func (d *DAQT1603) processPayload(data []byte) {
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
+		d.consecutiveFrameErrors++
+		consecutive := d.consecutiveFrameErrors
 		d.mu.Unlock()
+
 		slog.Debug("DAQ-T-1603 frame parse error", "device", d.profile.ID, "n", len(data), "error", err)
 		d.emitLog("warn", "acquisition", "Frame parse error", fmt.Sprintf("%s raw=% X", err.Error(), data[:min(len(data), 16)]))
+
+		if consecutive >= maxConsecutiveFrameErrors && d.frameReader != nil {
+			slog.Warn("DAQ-T-1603 auto-resync triggered", "device", d.profile.ID, "consecutiveErrors", consecutive)
+			d.emitLog("warn", "acquisition", "Auto-resync triggered",
+				fmt.Sprintf("consecutive=%d, skipping 1 byte to re-align", consecutive))
+			d.frameReader.Resync()
+			d.mu.Lock()
+			d.consecutiveFrameErrors = 0
+			d.mu.Unlock()
+		}
 		return
 	}
+
+	d.mu.Lock()
+	d.consecutiveFrameErrors = 0
+	d.mu.Unlock()
 
 	indices := make([]int, len(result.Temperatures))
 	for i := range result.Temperatures {

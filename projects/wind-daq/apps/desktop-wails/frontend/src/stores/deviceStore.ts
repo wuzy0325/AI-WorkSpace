@@ -55,6 +55,15 @@ export const useDeviceStore = defineStore('devices', () => {
 
   async function refreshInstances() {
     await refreshProfiles()
+    // 刷新所有设备的连接和采集状态，确保指示灯能正确显示
+    await refreshAllStatuses()
+  }
+
+  /** 批量刷新所有已知设备的连接和采集状态 */
+  async function refreshAllStatuses() {
+    const ids = profiles.value.map((p) => p.id)
+    if (ids.length === 0) return
+    await Promise.allSettled(ids.map((id) => refreshStatusFor(id)))
   }
 
   async function refreshStatusFor(id: string) {
@@ -78,6 +87,19 @@ export const useDeviceStore = defineStore('devices', () => {
       channels: Array.isArray(payload.channels) ? payload.channels : [],
       channelIndices: Array.isArray(payload.channelIndices) ? payload.channelIndices : [],
     }
+
+    // 收到快照说明设备已连接且正在采集，同步更新设备状态
+    const existingStatus = deviceStatuses.value.get(normalized.deviceId)
+    if (!existingStatus || existingStatus.connection !== 'Connected' || !existingStatus.acquiring) {
+      deviceStatuses.value.set(normalized.deviceId, {
+        id: normalized.deviceId,
+        name: existingStatus?.name ?? normalized.deviceId,
+        type: existingStatus?.type ?? 'Unknown',
+        connection: 'Connected',
+        acquiring: true
+      })
+    }
+
     const idx = latestSnapshots.value.findIndex((s) => s.deviceId === normalized.deviceId)
     if (idx >= 0) {
       latestSnapshots.value[idx] = normalized
@@ -308,6 +330,7 @@ export const useDeviceStore = defineStore('devices', () => {
     selectDevice,
     refreshProfiles,
     refreshInstances,
+    refreshAllStatuses,
     refreshStatusFor,
     updateStatus,
     pushSnapshot,

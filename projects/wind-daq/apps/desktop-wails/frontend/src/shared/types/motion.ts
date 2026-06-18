@@ -2,8 +2,30 @@ export type AxisName = 'X' | 'Y' | 'Z' | 'U';
 
 export type AxisKind = 'LINEAR' | 'ROTARY';
 
+export type PositionSource = 'register' | 'encoder';
+
 export type MotionControllerType = 'SIMULATED-MC' | 'B140-MC' | 'WTNMC4A-MC';
 
+/**
+ * 编码器补偿参数
+ *
+ * 当位置来源选择编码器时启用，用于消除编码器反馈与指令位置之间的静态偏差。
+ */
+export interface AxisEncoderCompensationConfig {
+  enabled: boolean;
+  tolerance: number;
+  maxCycles: number;
+  settleMs: number;
+  minStep: number;
+  timeoutMs: number;
+}
+
+/**
+ * 单轴配置
+ *
+ * 包含机械、电气及运动限制参数。stepsPerRev / microSteps / lead / gearRatio
+ * 用于把电机步数换算为工程单位（mm 或 °）。
+ */
 export interface AxisConfig {
   name: AxisName;
   enabled: boolean;
@@ -12,6 +34,14 @@ export interface AxisConfig {
   minLimit?: number;
   maxLimit?: number;
   inverted?: boolean;
+  encoderInverted?: boolean;
+  stepsPerRev?: number;
+  microSteps?: number;
+  lead?: number;
+  gearRatio?: number;
+  positionSource?: PositionSource;
+  encoderScale?: number;
+  encoderCompensation?: AxisEncoderCompensationConfig;
 }
 
 export interface MotionControllerProfile {

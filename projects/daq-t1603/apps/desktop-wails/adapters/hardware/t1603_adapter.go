@@ -280,6 +280,37 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		}
 		return nil, fmt.Errorf("start acquisition %s: %w", id, err)
 	}
+
+	// 校验采集启动后状态，防止与 StopAcquisition 的竞态
+	// 如果 stopChs[id] 已被清除，说明在 dev.StartAcquisition() 期间 StopAcquisition 被调用，
+	// 此时需要停止驱动层采集并清理状态
+	a.mu.Lock()
+	_, channelExists := a.channels[id]
+	stopCh, stopChExists := a.stopChs[id]
+	a.mu.Unlock()
+
+	if !channelExists || !stopChExists {
+		_ = dev.StopAcquisition()
+		return nil, fmt.Errorf("start acquisition %s: stopped concurrently", id)
+	}
+
+	// 检查 done 通道是否已关闭（StopAcquisition 在锁外关闭了 done）
+	select {
+	case <-stopCh:
+		_ = dev.StopAcquisition()
+		a.mu.Lock()
+		delete(a.channels, id)
+		delete(a.stopChs, id)
+		delete(a.sinks, id)
+		if st, exists := a.status[id]; exists {
+			st.SetStatus(core.StatusConnected)
+			st.AcquiringAt = 0
+		}
+		a.mu.Unlock()
+		return nil, fmt.Errorf("start acquisition %s: stopped concurrently", id)
+	default:
+	}
+
 	return ch, nil
 }
 

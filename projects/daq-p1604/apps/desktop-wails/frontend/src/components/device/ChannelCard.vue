@@ -66,12 +66,14 @@ function onColorChange(target: HTMLInputElement) {
     }"
     :style="{ '--ch-color': color }"
   >
-    <!-- 头部：彩色标识点 + 通道标识 + 颜色选择按钮 -->
+    <!-- 头部：彩色标识点 + 通道标识 + 通道名 + 颜色选择按钮 -->
     <div class="card__head">
       <div class="card__head-left">
         <!-- 彩色小圆点：标识通道对应波形颜色，替代粗边框降低视觉噪音 -->
         <span class="card__dot" :style="{ backgroundColor: color }" />
         <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
+        <!-- 通道名：用户自定义名称，未设置时隐藏 -->
+        <span v-if="name" class="card__name" :title="name">{{ name }}</span>
       </div>
       <div class="card__actions">
         <!-- 颜色选择按钮：使用图标替代彩色圆点，降低视觉噪音 -->
@@ -168,6 +170,18 @@ function onColorChange(target: HTMLInputElement) {
   padding: 0.1rem 0.3rem;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
+}
+
+/* 通道名：用户自定义名称 */
+.card__name {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 5rem;
 }
 
 /* 操作按钮组 */

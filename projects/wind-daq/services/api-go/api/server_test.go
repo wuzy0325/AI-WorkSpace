@@ -20,6 +20,7 @@ import (
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/wiring"
 )
 
 type apiProfileStore struct {
@@ -97,7 +98,7 @@ func newTestMotionManager(axisNames ...core.AxisName) (windaqports.MotionManager
 		return hardware.NewSimulatedMotionController(profile), nil
 	})
 	rawMgr.LoadProfiles()
-	return usecase.WrapMotionManager(rawMgr), rawMgr
+	return wiring.WrapMotionManager(rawMgr), rawMgr
 }
 
 func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
@@ -378,7 +379,7 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 	router := NewRouter(Deps{
 		DeviceManager:      newTestDeviceManager(t, hub),
 		AcquisitionHub:     hub,
-		MotionManager:      usecase.NewMotionManager(nil, nil),
+		MotionManager:      wiring.NewMotionManager(nil, nil),
 		CalibrationManager: calMgr,
 	})
 
@@ -390,7 +391,7 @@ func TestCalibrationHTTPValidation(t *testing.T) {
 func TestTraversalHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
 	motionMgr, rawMotionMgr := newTestMotionManager(core.AxisX, core.AxisY, core.AxisZ)
-	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, nil)
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),
 		AcquisitionHub:   hub,
@@ -437,11 +438,11 @@ func TestTraversalHTTPFlow(t *testing.T) {
 
 func TestTraversalHTTPValidation(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
-	travMgr := usecase.NewTraversalManager(hub, nil, nil, nil)
+	travMgr := usecase.NewTraversalManager(hub, nil, nil, nil, nil)
 	router := NewRouter(Deps{
 		DeviceManager:    newTestDeviceManager(t, hub),
 		AcquisitionHub:   hub,
-		MotionManager:    usecase.NewMotionManager(nil, nil),
+		MotionManager:    wiring.NewMotionManager(nil, nil),
 		TraversalManager: travMgr,
 	})
 

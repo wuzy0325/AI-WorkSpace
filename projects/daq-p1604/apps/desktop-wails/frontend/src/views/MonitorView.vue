@@ -31,6 +31,7 @@ const openConfig = inject<() => void>('shell:openConfig', () => {})
 
 const selected = computed(() => deviceStore.selectedProfile)
 const status = computed(() => (selected.value ? deviceStore.statusFor(selected.value.id) : ''))
+const errorMessage = computed(() => (selected.value ? deviceStore.errorFor(selected.value.id) : ''))
 const isAcquiring = computed(() => (selected.value ? deviceStore.acquiringFor(selected.value.id) : false))
 const sampleCount = computed(() => (selected.value ? deviceStore.historyFor(selected.value.id).length : 0))
 const showChannelSelector = ref(false)
@@ -187,6 +188,9 @@ function statusLabel(): string {
                 <template #icon><Settings2 :size="14" /></template>配置
               </NButton>
             </div>
+          </div>
+          <div v-if="errorMessage" class="detail__error-bar">
+            <NText depth="3" style="font-size:0.72rem;color:var(--error-color)">{{ errorMessage }}</NText>
           </div>
         </NCard>
 
@@ -375,6 +379,13 @@ function statusLabel(): string {
   gap: 1.25rem;
 }
 
+.detail__error-bar {
+  padding: 0.5rem 1.25rem 0.75rem;
+  border-top: 1px solid var(--divider-color);
+  word-break: break-all;
+  line-height: 1.5;
+}
+
 .detail__header-left {
   display: flex;
   align-items: center;
@@ -480,7 +491,7 @@ function statusLabel(): string {
   top: calc(100% + 0.55rem);
   right: 0;
   z-index: 20;
-  width: min(18rem, 78vw);
+  width: min(26rem, 90vw);
   padding: 0.85rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--accent-border);
@@ -513,13 +524,15 @@ function statusLabel(): string {
 .detail__channel-option {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.35rem;
   min-height: 2rem;
   padding: 0.35rem 0.45rem;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   cursor: pointer;
   transition: all var(--motion-fast) var(--easing-standard);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .detail__channel-option:hover {

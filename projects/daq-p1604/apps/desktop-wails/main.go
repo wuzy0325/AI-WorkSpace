@@ -16,6 +16,7 @@ import (
 	"daq-p1604/adapters/logging"
 	"daq-p1604/adapters/recording"
 	"daq-p1604/backend"
+	"daq-p1604/core"
 	"daq-p1604/ports"
 	"daq-p1604/usecase"
 )
@@ -42,14 +43,20 @@ func main() {
 	var logCapableAdapter interface {
 		SetLogSink(func(hardware.DeviceLogEntry))
 	}
+	var stateCapableAdapter interface {
+		SetStateSink(func(id string, state core.DeviceState))
+	}
 	if os.Getenv("DAQ_P1604_MODE") == "simulated" {
 		slog.Info("using simulated device adapter")
-		devAdapter = hardware.NewSimulatedAdapter()
+		simAdapter := hardware.NewSimulatedAdapter()
+		devAdapter = simAdapter
+		logCapableAdapter = simAdapter
 		scanner = hardware.NewSimulatedScanner()
 	} else {
 		p1604Adapter := hardware.NewP1604Adapter()
 		devAdapter = p1604Adapter
 		logCapableAdapter = p1604Adapter
+		stateCapableAdapter = p1604Adapter
 		scanner = hardware.NewP1604Scanner()
 	}
 	recorder := recording.NewCSVRecorder()
@@ -70,6 +77,12 @@ func main() {
 				Message:  entry.Message,
 				Detail:   entry.Detail,
 			})
+		})
+	}
+	// 设置状态变更回调，连接断开等事件通知前端
+	if stateCapableAdapter != nil {
+		stateCapableAdapter.SetStateSink(func(id string, state core.DeviceState) {
+			app.EmitDeviceState(id, state)
 		})
 	}
 

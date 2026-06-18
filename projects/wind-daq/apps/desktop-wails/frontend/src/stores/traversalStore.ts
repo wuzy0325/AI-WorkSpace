@@ -28,6 +28,7 @@ import type {
   TraversalRawPressure,
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
+  TraversalCheckpoint,
   TraversalErrorCode,
   DataValidationConfig,
   StabilizationConfig
@@ -37,6 +38,8 @@ export type RealtimePressures = TraversalRawPressure
 
 export const useTraversalStore = defineStore('traversal', () => {
   const statusRecoveryFailed = ref(false)
+  // 启动防重入标志：避免用户连续点击"开始"导致并发启动
+  const isStarting = ref(false)
   const status = ref<TraversalTestStatus | null>(null)
   const statusType = computed(() => {
     if (statusRecoveryFailed.value && !status.value) {
@@ -48,10 +51,12 @@ export const useTraversalStore = defineStore('traversal', () => {
   const isRunning = computed(() => status.value?.status === 'running')
   const isPaused = computed(() => status.value?.status === 'paused')
   const isTerminal = computed(() => isTerminalStatus(status.value?.status))
-  const canStart = computed(() => statusType.value !== 'unknown' && (statusType.value === 'idle' || isTerminal.value))
-  const canPause = computed(() => statusType.value === 'running')
+  // canStart 需要考虑 isStarting，避免启动过程中重复触发
+  const canStart = computed(() => !isStarting.value && statusType.value !== 'unknown' && (statusType.value === 'idle' || isTerminal.value))
+  // canPause/canStop 使用 isActiveStatus，覆盖 moving/stabilizing/acquiring/saving 子状态
+  const canPause = computed(() => isActiveStatus(status.value?.status))
   const canResume = computed(() => statusType.value === 'paused')
-  const canStop = computed(() => statusType.value === 'running' || statusType.value === 'paused')
+  const canStop = computed(() => isActiveStatus(status.value?.status) || statusType.value === 'paused')
   const progress = computed(() => status.value?.progress ?? 0)
   const dataPoints = ref<TraversalDataPoint[]>([])
 
@@ -63,8 +68,14 @@ export const useTraversalStore = defineStore('traversal', () => {
   const completeEvent = ref<TraversalCompleteEvent | null>(null)
 
   const error = ref<string | null>(null)
+  // 模拟模式标志：纯前端模拟时为 true，不调用后端硬件接口
+  const isSimulation = ref(false)
 
   const { uiRefreshHz, uiRefreshIntervalMs, setUiRefreshHz } = useUiRefreshThrottle('traversal.uiRefreshHz')
+
+  // 断点恢复信息（应用启动时加载，用于判断是否展示"恢复"横幅）
+  const checkpoint = ref<TraversalCheckpoint | null>(null)
+  const hasCheckpoint = computed(() => checkpoint.value !== null)
 
   function toSerializableConfig(cfg: TraversalTestConfig): TraversalTestConfig {
     return JSON.parse(JSON.stringify(cfg)) as TraversalTestConfig
@@ -76,10 +87,21 @@ export const useTraversalStore = defineStore('traversal', () => {
   let recoveryRequestId = 0
   let startupBlockedTaskId: string | null = null
   let startupPendingTaskId: string | null = null
+  // 实时插值节流相关状态（与 Cursor DAQ 一致：基于定时器的节流，避免高频刷新压垮 UI）
+  let realtimeInterpolationTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingRealtimeInterpolationInput: TraversalInterpolationInput | null = null
+  let pendingRealtimeInterpolationConfig: TraversalTestConfig | null = null
+  let lastRealtimeInterpolationAt = 0
   let realtimeInterpolationRequestId = 0
 
   function isTerminalStatus(value: TraversalTestStatus['status'] | undefined): value is TraversalTerminalStatus {
     return value === 'completed' || value === 'error' || value === 'stopped'
+  }
+
+  // 判断是否为活跃状态（含 running 及其子状态 moving/stabilizing/acquiring/saving）
+  // 后端状态机会返回子状态字符串，故参数类型放宽为 string
+  function isActiveStatus(value: string | undefined): boolean {
+    return value === 'running' || value === 'moving' || value === 'stabilizing' || value === 'acquiring' || value === 'saving'
   }
 
   function beginStartupWindow(previousTaskId: string | null): void {
@@ -109,11 +131,30 @@ export const useTraversalStore = defineStore('traversal', () => {
     recoveryRequestId += 1
   }
 
-  async function requestRealtimeResult(
-    input: TraversalInterpolationInput,
-    configOverride?: TraversalTestConfig
-  ): Promise<void> {
+  function clearRealtimeInterpolationTimer(): void {
+    if (realtimeInterpolationTimer) {
+      clearTimeout(realtimeInterpolationTimer)
+      realtimeInterpolationTimer = null
+    }
+  }
+
+  // 实际执行实时插值计算（清空 pending 并发起请求）
+  async function runRealtimeInterpolation(): Promise<void> {
+    clearRealtimeInterpolationTimer()
+
+    const input = pendingRealtimeInterpolationInput
+    const configOverride = pendingRealtimeInterpolationConfig
+    pendingRealtimeInterpolationInput = null
+    pendingRealtimeInterpolationConfig = null
+
+    if (!input) {
+      realtimeInterpolationRequestId += 1
+      realtimeResult.value = null
+      return
+    }
+
     const requestId = ++realtimeInterpolationRequestId
+    lastRealtimeInterpolationAt = Date.now()
 
     const res = await traversalApi.calculateRealtime(
       input,
@@ -124,6 +165,58 @@ export const useTraversalStore = defineStore('traversal', () => {
     }
 
     realtimeResult.value = res.success ? (res.data ?? null) : null
+  }
+
+  /**
+   * 同步实时插值输入（节流入口）
+   * 与 Cursor DAQ 一致：基于 uiRefreshIntervalMs 节流，避免高频输入压垮后端
+   * 若距离上次计算未达到节流间隔，则暂存输入并设置定时器；否则立即计算
+   */
+  function syncRealtimeInterpolation(
+    input: TraversalInterpolationInput | null,
+    configOverride: TraversalTestConfig | null = null
+  ): void {
+    const effectiveConfig = configOverride ?? config.value
+    const hasInterpolationDataset = Boolean(
+      (effectiveConfig?.useMultiPrb && effectiveConfig.multiPrb?.files.length) ||
+      (effectiveConfig?.interpolationAlgorithm === 'new' && effectiveConfig.calibrationCsvFile) ||
+      effectiveConfig?.prbFile
+    )
+
+    if (!input || !hasInterpolationDataset) {
+      pendingRealtimeInterpolationInput = null
+      pendingRealtimeInterpolationConfig = null
+      clearRealtimeInterpolationTimer()
+      realtimeInterpolationRequestId += 1
+      realtimeResult.value = null
+      return
+    }
+
+    pendingRealtimeInterpolationInput = input
+    pendingRealtimeInterpolationConfig = effectiveConfig
+
+    const now = Date.now()
+    const elapsed = now - lastRealtimeInterpolationAt
+    const delay = Math.max(0, uiRefreshIntervalMs.value - elapsed)
+
+    if (delay === 0) {
+      void runRealtimeInterpolation()
+      return
+    }
+
+    if (!realtimeInterpolationTimer) {
+      realtimeInterpolationTimer = setTimeout(() => {
+        void runRealtimeInterpolation()
+      }, delay)
+    }
+  }
+
+  // 兼容旧接口：直接请求实时插值（内部走节流）
+  async function requestRealtimeResult(
+    input: TraversalInterpolationInput,
+    configOverride?: TraversalTestConfig
+  ): Promise<void> {
+    syncRealtimeInterpolation(input, configOverride ?? null)
   }
 
   function shouldIgnoreTaskEvent(taskId: string): boolean {
@@ -180,12 +273,41 @@ export const useTraversalStore = defineStore('traversal', () => {
     return unsubscribeProgress !== null && unsubscribeComplete !== null && unsubscribeError !== null
   }
 
+  // 将异常原因转换为可读错误消息
+  function toErrorMessage(reason: unknown, fallback: string): string {
+    if (reason instanceof Error && reason.message) {
+      return reason.message
+    }
+
+    if (typeof reason === 'string' && reason) {
+      return reason
+    }
+
+    return fallback
+  }
+
+  /**
+   * 同步恢复的状态
+   * 与 Cursor DAQ 一致：若新状态是活跃状态且 taskId 与前序一致，则保留前序的
+   * currentPoint/currentPointPhase/validationWarnings，避免轮询间隙的状态闪烁
+   */
   function syncRecoveredStatus(nextStatus: TraversalTestStatus | null): void {
     if (nextStatus) {
       clearStartupWindow()
     }
 
+    const previousStatus = status.value
     status.value = nextStatus
+      && previousStatus?.taskId === nextStatus.taskId
+      && isActiveStatus(nextStatus.status)
+      ? {
+          ...nextStatus,
+          currentPoint: nextStatus.currentPoint ?? previousStatus.currentPoint,
+          currentPointPhase: nextStatus.currentPointPhase ?? previousStatus.currentPointPhase,
+          validationWarnings: nextStatus.validationWarnings ?? previousStatus.validationWarnings
+        }
+      : nextStatus
+
     if (nextStatus?.dataPoints) {
       dataPoints.value = nextStatus.dataPoints
       const latest = nextStatus.dataPoints[nextStatus.dataPoints.length - 1]
@@ -295,7 +417,9 @@ export const useTraversalStore = defineStore('traversal', () => {
       status: 'error',
       totalPoints: previousStatus?.totalPoints ?? 0,
       completedPoints: previousStatus?.completedPoints ?? 0,
-      currentPoint: previousStatus?.currentPoint,
+      // 出错后清除当前点，避免残留的 currentPoint 导致颜色显示异常
+      currentPoint: undefined,
+      currentPointPhase: undefined,
       progress: previousStatus?.progress ?? 0,
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
@@ -324,7 +448,8 @@ export const useTraversalStore = defineStore('traversal', () => {
       status: completionStatus,
       totalPoints: event.totalPoints,
       completedPoints: completionStatus === 'completed' ? event.totalPoints : (previousStatus?.completedPoints ?? 0),
-      currentPoint: previousStatus?.currentPoint,
+      // 测试结束后清除当前点，避免残留的 currentPoint 导致颜色显示异常
+      currentPoint: undefined,
       currentPointPhase: undefined,
       progress: completionStatus === 'completed' ? 100 : (previousStatus?.progress ?? 0),
       startTime: previousStatus?.startTime,
@@ -351,12 +476,16 @@ export const useTraversalStore = defineStore('traversal', () => {
     }
   }
 
+  /**
+   * 恢复渲染进程状态
+   * 与 Cursor DAQ 一致：使用 Promise.allSettled 容错，单个请求失败不影响另一个
+   */
   async function recoverRendererState(): Promise<void> {
     const requestId = beginRecoveryRequest()
     error.value = null
     statusRecoveryFailed.value = false
 
-    const [configResult, statusResult] = await Promise.all([
+    const [configResult, statusResult] = await Promise.allSettled([
       traversalApi.getConfig(),
       traversalApi.getStatus()
     ])
@@ -367,24 +496,35 @@ export const useTraversalStore = defineStore('traversal', () => {
 
     const recoveryErrors: string[] = []
 
-    if (configResult.success) {
-      config.value = configResult.data ?? null
+    if (configResult.status === 'fulfilled') {
+      if (configResult.value.success) {
+        config.value = configResult.value.data ?? null
+      } else {
+        config.value = null
+        recoveryErrors.push(configResult.value.error || '加载移位测试配置失败')
+      }
     } else {
       config.value = null
-      recoveryErrors.push(configResult.error || '加载移位测试配置失败')
+      recoveryErrors.push(toErrorMessage(configResult.reason, '加载移位测试配置失败'))
     }
 
-    if (statusResult.success) {
-      statusRecoveryFailed.value = false
-      syncRecoveredStatus(statusResult.data ?? null)
+    if (statusResult.status === 'fulfilled') {
+      if (statusResult.value.success) {
+        statusRecoveryFailed.value = false
+        syncRecoveredStatus(statusResult.value.data ?? null)
+      } else {
+        statusRecoveryFailed.value = true
+        syncRecoveredStatus(null)
+        recoveryErrors.push(statusResult.value.error || '获取移位测试状态失败')
+      }
     } else {
       statusRecoveryFailed.value = true
       syncRecoveredStatus(null)
-      recoveryErrors.push(statusResult.error || 'Failed to get traversal status')
+      recoveryErrors.push(toErrorMessage(statusResult.reason, '获取移位测试状态失败'))
     }
 
     if (recoveryErrors.length > 0) {
-      error.value = recoveryErrors.join('; ')
+      error.value = recoveryErrors.join('；')
     }
   }
 
@@ -456,7 +596,16 @@ export const useTraversalStore = defineStore('traversal', () => {
     return res.success ? (res.data ?? { allPassed: false, checks: [] }) : { allPassed: false, checks: [] }
   }
 
+  /**
+   * 启动测试
+   * 与 Cursor DAQ 一致：使用 isStarting 防重入，避免用户连续点击导致并发启动
+   */
   async function startTest(cfg: TraversalTestConfig): Promise<string> {
+    if (isStarting.value) {
+      throw new Error('测试正在启动')
+    }
+
+    isStarting.value = true
     try {
       beginStartupWindow(status.value?.taskId ?? completeEvent.value?.taskId ?? null)
       error.value = null
@@ -487,6 +636,8 @@ export const useTraversalStore = defineStore('traversal', () => {
       teardownEventSubscriptions()
       error.value = err instanceof Error ? err.message : String(err)
       throw err
+    } finally {
+      isStarting.value = false
     }
   }
 
@@ -499,6 +650,11 @@ export const useTraversalStore = defineStore('traversal', () => {
   async function resume(): Promise<void> {
     const res = await traversalApi.resume()
     if (!res.success) throw new Error(res.error || '继续失败')
+    // 乐观更新：立即将状态切换为 running，避免轮询间隙的 UI 闪烁
+    if (status.value && status.value.status === 'paused') {
+      status.value = { ...status.value, status: 'running' }
+    }
+    // 与 pause() 保持一致：刷新后端状态，确保乐观更新与实际状态同步
     await refreshStatus()
   }
 
@@ -516,6 +672,60 @@ export const useTraversalStore = defineStore('traversal', () => {
     }
   }
 
+  /** 加载断点恢复信息（应用启动或进入遍历页面时调用） */
+  async function loadCheckpoint(): Promise<TraversalCheckpoint | null> {
+    const res = await traversalApi.loadCheckpoint()
+    if (res.success) {
+      checkpoint.value = res.data ?? null
+      return checkpoint.value
+    }
+    checkpoint.value = null
+    return null
+  }
+
+  /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
+  async function resumeFromCheckpoint(cp: TraversalCheckpoint): Promise<string> {
+    if (isStarting.value) {
+      throw new Error('测试正在启动')
+    }
+
+    isStarting.value = true
+    try {
+      error.value = null
+      statusRecoveryFailed.value = false
+      status.value = null
+      dataPoints.value = []
+      completeEvent.value = null
+      realtimePressures.value = null
+      realtimeResult.value = null
+
+      setupEventSubscriptions()
+
+      const res = await traversalApi.resumeFromCheckpoint(cp)
+      if (!res.success || !res.data?.taskId) {
+        teardownEventSubscriptions()
+        throw new Error(res.error || '从断点恢复测试失败')
+      }
+
+      // 恢复后清空 checkpoint 缓存（后端会在测试完成时自动清理断点文件）
+      checkpoint.value = null
+      await refreshStatus()
+      return res.data.taskId
+    } catch (err) {
+      teardownEventSubscriptions()
+      error.value = err instanceof Error ? err.message : String(err)
+      throw err
+    } finally {
+      isStarting.value = false
+    }
+  }
+
+  /** 清除断点文件（用户主动放弃恢复时调用） */
+  async function clearCheckpoint(): Promise<void> {
+    await traversalApi.clearCheckpoint()
+    checkpoint.value = null
+  }
+
   function clearError(): void {
     error.value = null
   }
@@ -523,7 +733,13 @@ export const useTraversalStore = defineStore('traversal', () => {
   function reset(): void {
     cancelRecovery()
     statusRecoveryFailed.value = false
+    isStarting.value = false
+    isSimulation.value = false
     clearStartupWindow()
+    clearRealtimeInterpolationTimer()
+    pendingRealtimeInterpolationInput = null
+    pendingRealtimeInterpolationConfig = null
+    lastRealtimeInterpolationAt = 0
     realtimeInterpolationRequestId += 1
     status.value = null
     dataPoints.value = []
@@ -531,12 +747,14 @@ export const useTraversalStore = defineStore('traversal', () => {
     error.value = null
     realtimePressures.value = null
     realtimeResult.value = null
+    checkpoint.value = null
 
     teardownEventSubscriptions()
   }
 
   return {
     status,
+    isStarting,
     statusType,
     isRunning,
     isPaused,
@@ -552,6 +770,9 @@ export const useTraversalStore = defineStore('traversal', () => {
     config,
     completeEvent,
     error,
+    isSimulation,
+    checkpoint,
+    hasCheckpoint,
     uiRefreshHz,
     uiRefreshIntervalMs,
     loadConfig,
@@ -568,10 +789,15 @@ export const useTraversalStore = defineStore('traversal', () => {
     resume,
     stop,
     refreshStatus,
+    loadCheckpoint,
+    resumeFromCheckpoint,
+    clearCheckpoint,
     clearError,
     reset,
     setUiRefreshHz,
+    syncRealtimeInterpolation,
     requestRealtimeResult
   }
 })
 
+export { formatApiError }

@@ -372,6 +372,10 @@ export interface TraversalTestConfig {
   savePath: string
   saveFileName: string
   saveOptions: TraversalSaveOptions
+  /** 数据验证配置（可选，与 Cursor DAQ 行为一致） */
+  validation?: DataValidationConfig
+  /** 稳定等待配置（可选，与 Cursor DAQ 行为一致） */
+  stabilization?: StabilizationConfig
 }
 
 /** 测试数据点 */
@@ -499,6 +503,8 @@ export interface StabilizationConfig {
 /** 断点恢复信息 */
 export interface TraversalCheckpoint {
   taskId: string
+  /** 完整测试配置（用于恢复时重建测试上下文，与 Cursor DAQ 行为一致） */
+  config?: TraversalTestConfig
   completedPoints: number
   totalPoints: number
   lastPoint?: TraversalPoint

@@ -110,7 +110,8 @@ func (c *AtmosphericDataCalculator) CalculateAll(Pt, Ps, TAT float64, r ...float
 	Qc := c.CalculateQc(Pt, Ps)
 	CAS := c.CalculateCAS(Qc)
 	TASDensity := c.CalculateTASByDensity(Ps, Qc, SAT)
-	TASMach := c.CalculateTASByDensity(Ps, Qc, SAT)
+	// 真空速-声速马赫数法：v = Ma * 声速；之前复制粘贴误写为 ByDensity 已修正
+	TASMach := c.CalculateTASByMach(Ma, SAT)
 
 	return AtmosphericDataResult{
 		MachNumber: Ma,

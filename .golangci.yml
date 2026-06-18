@@ -1,0 +1,138 @@
+# golangci-lint 配置 — AI-Workspace 工作空间
+# 强制六边形架构导入方向：core -> usecase -> ports <- adapters
+#
+# 安装：go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# 运行：golangci-lint run -c .golangci.yml ./...
+#
+# 规则与 CLAUDE.md "Hard Constraints" + "Constraint Clarifications" 一一对应。
+# 跨项目的 adapters/usecase 依赖检查由 scripts/validate-import-direction.ps1 补充
+# （depguard 难以用通配符匹配各项目不同的模块路径前缀）。
+
+run:
+  timeout: 5m
+  tests: true
+  # 允许 go.work 多模块：golangci-lint 会在每个模块内分别运行
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - depguard
+    - gocritic
+    - revive
+
+linters-settings:
+  # depguard v2 语法：按文件 glob 分组，每组列出禁止导入的包
+  depguard:
+    rules:
+      # 规则 1：core/ 禁止字节 I/O、框架、硬件驱动
+      # 允许：格式描述结构体（CsvSchema 等），仅禁止实际 I/O 包
+      core-no-io:
+        files:
+          - "**/core/**/*.go"
+        deny:
+          - pkg: "os"
+            desc: "core/ 禁止文件 I/O；格式描述放 core，字节落盘放 adapters"
+          - pkg: "io"
+            desc: "core/ 禁止 I/O 操作"
+          - pkg: "io/fs"
+            desc: "core/ 禁止文件系统操作"
+          - pkg: "net"
+            desc: "core/ 禁止网络 I/O"
+          - pkg: "net/http"
+            desc: "core/ 禁止 HTTP"
+          - pkg: "encoding/csv"
+            desc: "core/ 禁止 CSV 字节写入；定义 CsvSchema 结构即可"
+          - pkg: "encoding/json"
+            desc: "core/ 禁止 JSON 序列化 I/O；仅定义结构体"
+          - pkg: "encoding/xml"
+            desc: "core/ 禁止 XML 序列化 I/O；仅定义结构体"
+          - pkg: "github.com/wailsapp/wails/v2"
+            desc: "core/ 禁止导入 UI 框架"
+          - pkg: "github.com/tarm/serial"
+            desc: "core/ 禁止导入硬件驱动"
+          - pkg: "github.com/jacobsa/go-serial/serial"
+            desc: "core/ 禁止导入硬件驱动"
+
+      # 规则 2：ports/ 仅接口定义，零实现
+      ports-no-impl:
+        files:
+          - "**/ports/**/*.go"
+        deny:
+          - pkg: "os"
+            desc: "ports/ 仅定义接口，禁止 I/O"
+          - pkg: "io"
+            desc: "ports/ 仅定义接口，禁止 I/O"
+          - pkg: "net"
+            desc: "ports/ 仅定义接口，禁止网络"
+          - pkg: "github.com/tarm/serial"
+            desc: "ports/ 仅定义接口，禁止硬件驱动导入"
+          - pkg: "github.com/wailsapp/wails/v2"
+            desc: "ports/ 禁止导入 UI 框架"
+
+      # 规则 3：usecase/ 禁止直接硬件调用、文件 I/O、UI 框架
+      # 注意：usecase 导入 adapters 由 validate-import-direction.ps1 检查
+      # （depguard 无法跨模块通配各项目 adapters 路径）
+      usecase-no-hardware:
+        files:
+          - "**/usecase/**/*.go"
+        deny:
+          - pkg: "github.com/tarm/serial"
+            desc: "usecase/ 必须通过 ports 访问硬件，禁止直接串口"
+          - pkg: "github.com/jacobsa/go-serial/serial"
+            desc: "usecase/ 必须通过 ports 访问硬件"
+          - pkg: "github.com/wailsapp/wails/v2"
+            desc: "usecase/ 禁止导入 UI 框架"
+          - pkg: "os"
+            desc: "usecase/ 禁止文件 I/O；通过 ports.CheckpointStore 等接口"
+          - pkg: "io"
+            desc: "usecase/ 禁止 I/O；通过 ports 接口"
+
+      # 规则 4：shared/algorithms/ 设备无关
+      shared-algorithms-pure:
+        files:
+          - "**/shared/algorithms/**/*.go"
+        deny:
+          - pkg: "github.com/tarm/serial"
+            desc: "algorithms 必须设备无关"
+          - pkg: "github.com/jacobsa/go-serial/serial"
+            desc: "algorithms 必须设备无关"
+          - pkg: "os"
+            desc: "algorithms 禁止 I/O"
+          - pkg: "net"
+            desc: "algorithms 禁止网络"
+
+      # 规则 5：programs/ 仅依赖 shared/*
+      programs-no-internal:
+        files:
+          - "**/programs/**/*.go"
+        deny:
+          - pkg: "github.com/tarm/serial"
+            desc: "programs/ 应使用 shared/device-sdk，不直接操作串口"
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - hugeParam   # 工业数据结构常较大，按值传递可读性优先
+
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        disabled: true  # 工业项目导出符号较多，注释要求由 code-standards 文档约束
+
+issues:
+  # 不限制问题数量，全部输出
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+  fix: false

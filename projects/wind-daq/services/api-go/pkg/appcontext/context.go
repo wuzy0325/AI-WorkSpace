@@ -22,9 +22,11 @@ import (
 	"wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	"wind-daq/services/api-go/internal/adapters/storage"
+	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/wiring"
 )
 
 // AppContext holds all core application services
@@ -78,18 +80,19 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		factory := hardware.NewDefaultMotionControllerFactory()
 		return factory.Create(profile)
 	})
-	motionMgr := usecase.WrapMotionManager(rawMotionMgr)
+	motionMgr := wiring.WrapMotionManager(rawMotionMgr)
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
+	calibrationMgr.SetCsvWriter(storage.NewCalibrationCsvWriter(calibration.Config{}))
 	travStore := calstore.NewTraversalResultStore()
-	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore)
+	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore, storage.NewFileCheckpointStore(), appConfigStore)
 
 	dataSink := func(payload device.DataPayload) {
 		hub.OnData(payload)
 		_ = recorder.HandlePayload(payload)
 	}
 
-	deviceMgr, err := usecase.NewDeviceManager(profileStore, deviceFactory{}, dataSink)
+	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return nil, err
 	}

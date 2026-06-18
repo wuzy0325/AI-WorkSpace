@@ -49,3 +49,11 @@ type DeviceFactory interface {
 type DeviceScanner interface {
 	Scan() ([]device.ScanResult, error)
 }
+
+// ProfileNormalizer 设备配置规范化端口
+// 补全配置中缺失的字段（通道、地址、端口等硬件默认值）。
+// 实现见 adapters/config.NormalizeProfile（依赖硬件特定默认值，属 adapter 职责）。
+// usecase 通过此端口调用，避免直接依赖 adapters/config。
+type ProfileNormalizer interface {
+	Normalize(profile device.Profile) device.Profile
+}

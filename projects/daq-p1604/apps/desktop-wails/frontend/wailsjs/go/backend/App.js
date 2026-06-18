@@ -18,6 +18,10 @@ export function Disconnect(arg1) {
   return window['go']['backend']['App']['Disconnect'](arg1);
 }
 
+export function EmitDeviceState(arg1, arg2) {
+  return window['go']['backend']['App']['EmitDeviceState'](arg1, arg2);
+}
+
 export function EmitLog(arg1) {
   return window['go']['backend']['App']['EmitLog'](arg1);
 }

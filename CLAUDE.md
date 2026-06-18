@@ -85,6 +85,32 @@ These are zero-tolerance rules. Violating them breaks the architecture:
 | `apps/desktop-wails/frontend/` | zero direct hardware access, zero calibration algorithms |
 | `programs/` | zero project `internal/*` imports — depend on `shared/*` only |
 
+### Constraint Clarifications
+
+The zero-tolerance table above is the baseline. The clarifications below define the only sanctioned exceptions and the composition boundary. They exist because the bare table was too absolute and pushed domain knowledge into the wrong layer.
+
+**1. `core/` — format descriptions are allowed, byte I/O is not.**
+`core/` MAY define data structures that describe persistence formats (e.g. `CsvSchema`, `CalibrationRecord`, column order, units, precision, file naming conventions). What `core/` MUST NOT do is perform byte-level I/O: no `os.OpenFile`, no `csv.NewWriter`, no `json.Marshal` writing to a writer, no `net.Dial`. Rule of thumb: if the code answers "what columns and units?" it belongs in `core/`; if it answers "how do bytes reach disk?" it belongs in `adapters/`.
+
+**2. Composition root is the only place adapters meet usecase.**
+`pkg/appcontext/`, `pkg/wiring/`, `pkg/apiserver/`, `internal/bootstrap/`, `cmd/`, or `apps/desktop-wails/backend/app.go` are the SOLE locations allowed to import `ports`, `adapters`, and `usecase` simultaneously. `usecase/` MUST NOT import any `adapters/*` package — not even to construct a default implementation inside a `New*` factory. Factory functions that wire adapters into usecase belong in `pkg/wiring/` (shared assembly helpers) or the composition root. If a usecase needs a default, the composition root injects it; the usecase only consumes the `ports` interface.
+
+**3. `shared/` dependency direction is one-way and layered.**
+- `shared/` MUST NOT import any `projects/*/internal/*` — shared code is downstream of nothing.
+- `shared/algorithms/` MUST NOT import `shared/device-sdk/` — algorithms are device-agnostic.
+- `shared/device-sdk/` MAY import `shared/algorithms/` but never project internals.
+- `shared/motion-control/` MAY import `shared/algorithms/` and `shared/device-sdk/`.
+- `shared/frontend/` MUST NOT import any project `frontend/src/` — it is consumed by them, not the reverse.
+
+**4. `frontend/` — demo and test code are exempt, production code is not.**
+The "zero calibration algorithms" rule applies to `frontend/src/features/`, `frontend/src/shared/`, `frontend/src/modules/`, `frontend/src/stores/`, and `frontend/src/views/`. Demo, mock, and test utilities under `frontend/src/__tests__/`, `frontend/src/mocks/`, or files matching `frontend/src/utils/simulate*` MAY contain algorithm copies for offline demonstration, provided:
+- The file header contains `// DEMO ONLY — not for production use`.
+- No production feature file imports it (enforced by `scripts/validate-frontend-structure.ps1`).
+
+### Automated Enforcement
+
+Structural rules are validated by scripts; import-direction rules are validated by `golangci-lint` + `depguard` and by `scripts/validate-import-direction.ps1` (which works without `golangci-lint` installed). See Commands below.
+
 ## Decision Tree: Where Does This Code Go?
 
 ```
@@ -146,11 +172,18 @@ Reference: `docs/runbooks/development-rules.md` (sections 8–12).
 # Structure validation
 powershell -File .\scripts\validate-structure.ps1
 
+# Import-direction validation (hexagonal boundaries) — no golangci-lint required
+powershell -File .\scripts\validate-import-direction.ps1
+
 # New project scaffold
 powershell -File .\scripts\new-project.ps1 -Name project-gamma
 
 # Go lint (gofmt + build) across all Go projects
 powershell -File .\scripts\lint-go.ps1
+
+# golangci-lint with depguard (enforces core/ports/usecase import rules)
+# Install once: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+golangci-lint run -c .golangci.yml ./...
 ```
 
 Per-project commands will be added as projects get build tooling.

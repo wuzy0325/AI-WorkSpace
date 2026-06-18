@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -13,6 +16,14 @@ import (
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/types"
 	wind_usecase "wind-daq/services/api-go/pkg/usecase"
+)
+
+// 启动模式常量
+const (
+	// ModeNormal 主窗口模式，加载完整仪表盘及所有后台服务
+	ModeNormal = "normal"
+	// ModeMotion 运动控制器独立窗口模式，仅启动运动相关服务
+	ModeMotion = "motion"
 )
 
 // VersionInfo 版本信息
@@ -34,11 +45,30 @@ type App struct {
 	appContext *appcontext.AppContext
 	apiServer  *http.Server
 	relayStop  func()
+	// mode 启动模式：normal 或 motion，决定 Startup 时加载哪些后台服务
+	mode string
+	// motionWindowMu 保护 motionWindowCmd，避免重复启动独立窗口进程
+	motionWindowMu sync.Mutex
+	// motionWindowCmd 已启动的运动控制器独立窗口进程句柄（可能已 Release）
+	motionWindowCmd *exec.Cmd
+	// parentPID 仅 ModeMotion 子进程使用：父进程消失时本进程自杀，避免成为孤儿
+	parentPID int
 }
 
 // NewApp 创建新的 App 实例
-func NewApp() *App {
-	return &App{}
+// mode 为启动模式："normal"（主窗口）或 "motion"（运动控制器独立窗口）
+func NewApp(mode string) *App {
+	if mode != ModeMotion {
+		mode = ModeNormal
+	}
+	return &App{mode: mode}
+}
+
+// SetParentPID 仅 ModeMotion 子进程使用：在 Wails Run 之前把父进程 PID 注入。
+// Startup 时启动 watchdog 协程，发现父进程不存在则触发自杀，
+// 解决任务管理器强杀父进程导致子进程成为孤儿的问题。
+func (a *App) SetParentPID(pid int) {
+	a.parentPID = pid
 }
 
 // Startup 应用启动时调用
@@ -57,6 +87,19 @@ func (a *App) Startup(ctx context.Context) {
 		return
 	}
 
+	// 运动控制器独立窗口进程：仅启动运动状态轮询，避免与主窗口进程冲突
+	// （API 服务器端口、数据中继、硬件采集由主窗口进程负责）
+	if a.mode == ModeMotion {
+		a.startMotionPoller()
+		// 启动父进程看护：父进程消失时本进程自杀，避免任务管理器强杀父进程后留下孤儿。
+		if a.parentPID > 0 {
+			a.startParentWatchdog()
+		}
+		log.Println("Wind-DAQ 运动控制器独立窗口已初始化（仅运动服务）")
+		return
+	}
+
+	// 主窗口进程：启动全部后台服务
 	a.startDataRelay()
 	a.startMotionPoller()
 	a.startLocalAPIServer()
@@ -144,6 +187,10 @@ func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResp
 
 // Shutdown 应用关闭时调用
 func (a *App) Shutdown(ctx context.Context) {
+	// 先关闭子窗口进程：保证父进程退出时不会留下孤儿运动控制器窗口。
+	// 顺序放在最前是因为子进程仍可能向父进程的日志/HTTP 写数据，先停子再停父更稳。
+	a.terminateMotionWindow()
+
 	if a.relayStop != nil {
 		a.relayStop()
 	}
@@ -161,12 +208,104 @@ func (a *App) Shutdown(ctx context.Context) {
 	log.Println("Wind-DAQ 应用已关闭")
 }
 
+// terminateMotionWindow 关闭运动控制器独立窗口子进程（如已启动）。
+// 子进程是 Wails GUI 进程，Windows 下没有可用的 SIGTERM 软关停信号，
+// 因此直接 Kill；子进程内部的 wails Shutdown 会被中断，但运动控制器
+// 没有需要持久化的中途状态，可以接受。
+//
+// 调用方：仅父进程的 Shutdown。子进程自身退出时，由 OpenMotionWindow
+// 内部的 Wait goroutine 清理 motionWindowCmd 引用，无需在此处理。
+func (a *App) terminateMotionWindow() {
+	a.motionWindowMu.Lock()
+	cmd := a.motionWindowCmd
+	a.motionWindowMu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	// 已退出则跳过
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		return
+	}
+
+	pid := cmd.Process.Pid
+	if err := cmd.Process.Kill(); err != nil {
+		// 子进程可能在我们读句柄到 Kill 之间自然退出，此时 Kill 会报错；非致命。
+		log.Printf("kill motion window (pid=%d) failed: %v", pid, err)
+		return
+	}
+	log.Printf("已关闭运动控制器独立窗口子进程 (pid=%d)", pid)
+}
+
 // GetVersion 获取版本信息
 func (a *App) GetVersion() VersionInfo {
 	return VersionInfo{
 		Name:    "Wind-DAQ",
 		Version: "1.0.0",
 	}
+}
+
+// GetStartupMode 获取当前应用启动模式
+// 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）
+func (a *App) GetStartupMode() string {
+	return a.mode
+}
+
+// OpenMotionWindow 启动运动控制器独立窗口（独立进程）
+// 通过重新启动当前可执行文件并传入 --motion-only 参数实现真正的独立窗口
+// 使用互斥锁防止重复启动
+func (a *App) OpenMotionWindow() GenericResponse {
+	a.motionWindowMu.Lock()
+	defer a.motionWindowMu.Unlock()
+
+	// 检查已有进程是否仍在运行（非阻塞探测）
+	if a.motionWindowCmd != nil && a.motionWindowCmd.Process != nil {
+		// 若进程已退出则清理句柄，否则提示用户窗口已打开
+		if a.motionWindowCmd.ProcessState != nil && a.motionWindowCmd.ProcessState.Exited() {
+			a.motionWindowCmd = nil
+		} else {
+			return GenericResponse{
+				Success: false,
+				Error:   "运动控制器独立窗口已打开，请勿重复启动",
+			}
+		}
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("获取可执行文件路径失败: %v", err)
+		return GenericResponse{Success: false, Error: fmt.Sprintf("获取可执行文件路径失败: %v", err)}
+	}
+
+	// 启动独立进程，传入 --motion-only 参数；同时把父进程 PID 传过去，
+	// 子进程的 watchdog 在父进程消失时触发自杀，避免任务管理器强杀父进程留下孤儿。
+	cmd := exec.Command(exePath, "--motion-only", fmt.Sprintf("--parent-pid=%d", os.Getpid()))
+	// 独立进程继承标准输出和错误，便于调试
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	// 不等待子进程，解耦父子进程生命周期
+	cmd.Stdin = nil
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("启动运动控制器独立窗口失败: %v", err)
+		return GenericResponse{Success: false, Error: fmt.Sprintf("启动独立窗口失败: %v", err)}
+	}
+
+	log.Printf("运动控制器独立窗口已启动，PID: %d", cmd.Process.Pid)
+	a.motionWindowCmd = cmd
+
+	// 后台监控子进程退出，退出后清理句柄以允许再次启动
+	go func(c *exec.Cmd) {
+		_ = c.Wait()
+		a.motionWindowMu.Lock()
+		if a.motionWindowCmd == c {
+			a.motionWindowCmd = nil
+		}
+		a.motionWindowMu.Unlock()
+		log.Println("运动控制器独立窗口进程已退出")
+	}(cmd)
+
+	return GenericResponse{Success: true}
 }
 
 // PickDirectory 选择目录对话框

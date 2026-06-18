@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
 import type { StepSegment, TraversalPattern } from '@shared/types/traversal'
 import { useTraversalSegmentValidation, getSegmentError, hasSegmentError } from '@composables/useTraversalValidation'
@@ -6,6 +6,7 @@ import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
 
 const testName = defineModel<string>('testName', { required: true })
 const dwellTimeMs = defineModel<number>('dwellTimeMs', { required: true })
@@ -26,6 +27,7 @@ const sectorConfig = defineModel<{
 }>('sectorConfig', { required: true })
 const customPoints = defineModel<Array<{ x: number; y: number }>>('customPoints', { required: true })
 const customPointInput = defineModel<{ x: number; y: number }>('customPointInput', { required: true })
+const snakeOrder = defineModel<boolean>('snakeOrder', { required: true })
 
 const props = defineProps<{
   estimatedPointCount: number
@@ -58,14 +60,15 @@ const computedSectorRange = computed(() => {
 
 const tRef = computed(() => props.t)
 
-const patternLabel = computed(() => {
-  switch (pattern.value) {
+// 根据模式类型获取对应的显示标签
+const getPatternLabel = (p: TraversalPattern): string => {
+  switch (p) {
     case 'line': return tRef.value.patternLine
     case 'rectangle': return tRef.value.patternRectangle
     case 'sector': return tRef.value.patternSector
     default: return tRef.value.patternCustom
   }
-})
+}
 
 const { errors: rxSegErrs, countError: rxSegCntErr } = useTraversalSegmentValidation(computed(() => rectangleConfig.value.xStepSegments), computed(() => rectangleConfig.value.xMin), computed(() => rectangleConfig.value.xMax), tRef)
 const { errors: rySegErrs } = useTraversalSegmentValidation(computed(() => rectangleConfig.value.yStepSegments), computed(() => rectangleConfig.value.yMin), computed(() => rectangleConfig.value.yMax), tRef)
@@ -99,8 +102,16 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
     </UiPanel>
 
     <div class="flex gap-2">
-      <UiButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="sm" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ patternLabel }}</UiButton>
+      <UiButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="sm" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ getPatternLabel(p) }}</UiButton>
     </div>
+
+    <!-- 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间 -->
+    <UiPanel class="section-card">
+      <label class="option-label">
+        <UiCheckbox :checked="snakeOrder" size="small" @update:checked="snakeOrder = $event" />
+        <span>{{ t.travSnakeOrder || 'Snake scan order' }}</span>
+      </label>
+    </UiPanel>
 
     <UiPanel v-if="pattern === 'line'" class="section-card">
       <div class="seg-grid">
@@ -184,19 +195,19 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 </template>
 
 <style scoped>
-.step-content { display:flex; flex-direction:column; gap:12px; }
+.step-content { display:flex; flex-direction:column; gap:8px; }
 .section-card { font-size:12px; }
 .layout-basics { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
-.seg-grid { display:grid; grid-template-columns:180px 1fr; gap:10px; }
-.seg-side { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
-.seg-pts { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
-.seg-list { padding:8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
-.seg-col-list { display:flex; flex-direction:column; gap:8px; }
-.seg-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.seg-grid { display:grid; grid-template-columns:180px 1fr; gap:8px; }
+.seg-side { padding:6px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.seg-pts { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:4px; }
+.seg-list { padding:6px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.seg-col-list { display:flex; flex-direction:column; gap:6px; }
+.seg-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
 .seg-labels { display:flex; gap:6px; padding:0 2px 4px; }
-.seg-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
-.pt-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-.pt-row { display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
+.seg-row { display:flex; gap:6px; align-items:center; margin-bottom:4px; }
+.pt-list { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+.pt-row { display:flex; align-items:center; justify-content:space-between; padding:4px 6px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
 .label-helper { font-size: 10px; color: var(--text-muted) }
 .label-tiny { font-size: 9px; color: var(--text-muted) }
 .section-title { font-size: 10px; font-weight: 500; color: var(--text-muted) }
@@ -206,6 +217,7 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 .w-full { width: 100% }
 .w-40px { width: 40px }
 .w-80px { width: 80px }
-.section-title-block { font-size: 10px; font-weight: 500; display: block; margin-bottom: 8px; color: var(--text-muted) }
+.section-title-block { font-size: 10px; font-weight: 500; display: block; margin-bottom: 6px; color: var(--text-muted) }
 .point-label { font-size: var(--text-xs); color: var(--text-primary) }
+.option-label { display:flex; align-items:center; gap:6px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer }
 </style>

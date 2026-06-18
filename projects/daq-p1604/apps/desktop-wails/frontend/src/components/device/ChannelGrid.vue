@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import ChannelCard from './ChannelCard.vue'
 
 defineProps<{ deviceId: string }>()
 
 const deviceStore = useDeviceStore()
+
+// 全局精度：作为单通道精度未设置时的回退值
+const globalPrecision = computed(() => deviceStore.selectedProfile?.p1604Config?.precision ?? 3)
 
 // 18 通道颜色方案
 const COLORS = [
@@ -26,7 +30,7 @@ const COLORS = [
         :unit="ch.unit"
         :color="ch.color || COLORS[ch.index % COLORS.length]"
         :name="ch.name"
-        :precision="ch.precision"
+        :precision="ch.precision ?? globalPrecision"
         :active="deviceStore.isChartSelected(deviceId, ch.index)"
         @change-color="(color: string) => deviceStore.updateChannel(deviceId, ch.index, { color })"
       />

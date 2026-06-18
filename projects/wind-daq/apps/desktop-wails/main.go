@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"flag"
 
 	"wind-daq/apps/desktop-wails/backend"
 
@@ -14,14 +15,38 @@ import (
 var assets embed.FS
 
 func main() {
-	app := backend.NewApp()
+	// 解析命令行参数：
+	//   --motion-only 启动运动控制器独立窗口
+	//   --parent-pid  仅子进程使用，传入父进程 PID，父进程消失时子进程自杀
+	motionOnly := flag.Bool("motion-only", false, "以运动控制器独立窗口模式启动")
+	parentPID := flag.Int("parent-pid", 0, "父进程 PID（仅 motion-only 模式下使用，父进程退出时子进程一并退出）")
+	flag.Parse()
+
+	// 根据启动模式确定模式字符串与窗口参数
+	mode := backend.ModeNormal
+	title := "Wind-DAQ"
+	width, height := 1600, 900
+	minWidth, minHeight := 1280, 720
+
+	if *motionOnly {
+		mode = backend.ModeMotion
+		title = "运动控制器 - Wind-DAQ"
+		// 加宽到 1440 以确保 4 个轴卡片能在单行舒适显示
+		width, height = 1440, 860
+		minWidth, minHeight = 1200, 720
+	}
+
+	app := backend.NewApp(mode)
+	if *motionOnly && *parentPID > 0 {
+		app.SetParentPID(*parentPID)
+	}
 
 	err := wails.Run(&options.App{
-		Title:         "Wind-DAQ",
-		Width:         1600,
-		Height:        900,
-		MinWidth:      1280,
-		MinHeight:     720,
+		Title:         title,
+		Width:         width,
+		Height:        height,
+		MinWidth:      minWidth,
+		MinHeight:     minHeight,
 		OnStartup:     app.Startup,
 		OnShutdown:    app.Shutdown,
 		Bind:          []interface{}{app},

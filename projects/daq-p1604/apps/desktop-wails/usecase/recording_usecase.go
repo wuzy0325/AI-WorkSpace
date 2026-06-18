@@ -16,8 +16,8 @@ func NewRecordingUsecase(recorder ports.RecordingPort) *RecordingUsecase {
 }
 
 // Start 开始录制
-func (uc *RecordingUsecase) Start(outputDir string, prefix string) error {
-	return uc.recorder.Start(outputDir, prefix)
+func (uc *RecordingUsecase) Start(outputDir string, prefix string, channels []core.ChannelConfig) error {
+	return uc.recorder.Start(outputDir, prefix, channels)
 }
 
 // Write 写入数据快照

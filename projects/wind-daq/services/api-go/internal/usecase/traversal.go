@@ -12,17 +12,25 @@ import (
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
+	"wind-daq/services/api-go/internal/core/realtime"
+	"wind-daq/services/api-go/internal/core/resourcelock"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
 
+// traversalLockResource 工作流级互斥锁的资源名，与 Cursor DAQ 保持一致
+const traversalLockResource = "workflow:traversal"
+
 // 运动完成等待超时和轮询间隔
+// 使用 time.Duration 类型以避免 time.NewTicker / time.Now().Add 误把裸数当 ns 使用
 const (
-	motionCompleteTimeoutMs   = 120000
-	motionCompletePollMs      = 100
-	acquisitionBatchTimeoutMs = 2000
-	acquisitionBatchPollMs    = 10
-	checkpointInterval        = 10 // 每完成10个点保存一次断点
+	motionCompleteTimeout   = 120 * time.Second      // 单点运动到位最大等待
+	motionCompletePoll      = 100 * time.Millisecond // 运动到位轮询间隔
+	acquisitionBatchTimeout = 2 * time.Second        // 多次采样总体超时
+	acquisitionBatchPoll    = 10 * time.Millisecond  // 采样间隔
+	cancelCheckPoll         = 100 * time.Millisecond // 任务取消检查间隔
+	pausedLoopIdle          = 200 * time.Millisecond // 暂停态主循环空转间隔
+	checkpointInterval      = 10                     // 每完成10个点保存一次断点
 )
 
 type TraversalManager struct {
@@ -37,6 +45,9 @@ type TraversalManager struct {
 	status          traversal.Status
 	configRaw       json.RawMessage
 	interpolator    coreinterp.Interpolator
+
+	// 实时插值缓存（量化键 + LRU + 容差匹配，对应 Cursor DAQ InterpolationCache）
+	interpCache *realtime.InterpolationCache
 
 	// 断点恢复
 	lastCheckpointPath string
@@ -64,6 +75,8 @@ func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAcces
 		store:           store,
 		checkpointStore: checkpointStore,
 		status:          traversal.Status{State: traversal.StateIdle},
+		// 默认缓存：256 条，容差 1 Pa（与 Cursor DAQ 默认一致）
+		interpCache: realtime.NewInterpolationCache(256, 1.0),
 	}
 	// 可选：注入持久化存储，启动时自动加载已保存的配置
 	if len(configStore) > 0 && configStore[0] != nil {
@@ -74,6 +87,8 @@ func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAcces
 }
 
 // loadPersistedConfig 启动时从磁盘加载已保存的遍历配置
+// 同时尝试根据上一次的 SavePath 推断 checkpoint 路径并回填 lastCheckpointPath，
+// 修复"应用重启后 LoadCheckpoint 永远返回 nil"的问题。
 func (m *TraversalManager) loadPersistedConfig() {
 	if m.configStore == nil {
 		return
@@ -84,6 +99,25 @@ func (m *TraversalManager) loadPersistedConfig() {
 	}
 	m.mu.Lock()
 	m.configRaw = json.RawMessage(data)
+	m.mu.Unlock()
+
+	// 尝试从已保存的配置中提取 savePath，并探测断点文件是否存在
+	var probe struct {
+		SavePath string `json:"savePath"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil || probe.SavePath == "" {
+		return
+	}
+	if m.checkpointStore == nil {
+		return
+	}
+	candidate := probe.SavePath + ".checkpoint.json"
+	exists, err := m.checkpointStore.Stat(candidate)
+	if err != nil || !exists {
+		return
+	}
+	m.mu.Lock()
+	m.lastCheckpointPath = candidate
 	m.mu.Unlock()
 }
 
@@ -107,10 +141,14 @@ func (m *TraversalManager) GetConfigRaw() json.RawMessage {
 	return append(json.RawMessage(nil), m.configRaw...)
 }
 
+// SetInterpolator 注入插值器；切换插值器时清空缓存（避免旧结果污染新算法）
 func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.interpolator = interpolator
+	if m.interpCache != nil {
+		m.interpCache.Clear()
+	}
+	m.mu.Unlock()
 }
 
 // SetValidation 设置数据验证配置
@@ -140,14 +178,39 @@ func (m *TraversalManager) CheckPreconditions() map[string]any {
 	return map[string]any{"allPassed": allPassed, "checks": checks}
 }
 
+// CalculateRealtime 实时插值：先按 Config.InterpolationMode 切换 MultiPRB 模式，
+// 再走"缓存 → 计算 → 写回"路径，对应 Cursor DAQ OptimizedRealtimeInterpolator。
 func (m *TraversalManager) CalculateRealtime(input coreinterp.InterpolationInput) (coreinterp.InterpolationResult, error) {
 	m.mu.RLock()
 	interpolator := m.interpolator
+	cache := m.interpCache
+	mode := m.config.InterpolationMode
 	m.mu.RUnlock()
 	if interpolator == nil || !interpolator.IsLoaded() {
 		return coreinterp.InterpolationResult{}, fmt.Errorf("PRB interpolation data is not loaded")
 	}
-	return interpolator.Calculate(input)
+
+	// 仅 MultiPrbInterpolator 暴露 SetInterpolationMode；通过类型断言切换
+	if mode != "" {
+		if multi, ok := interpolator.(interface {
+			SetInterpolationMode(coreinterp.MultiPrbInterpolationMode)
+		}); ok {
+			multi.SetInterpolationMode(coreinterp.MultiPrbInterpolationMode(mode))
+		}
+	}
+
+	// 缓存命中直接返回
+	if cache != nil {
+		if cached, hit := cache.Find(input); hit {
+			return cached, nil
+		}
+	}
+	// 未命中：计算并写回
+	res, err := interpolator.Calculate(input)
+	if err == nil && res.IsValid && cache != nil {
+		cache.Store(input, res)
+	}
+	return res, err
 }
 
 func (m *TraversalManager) HasLoadedInterpolator() bool {
@@ -171,9 +234,15 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.status.State == traversal.StateRunning || m.status.State == traversal.StatePaused {
+		m.mu.Unlock()
 		return fmt.Errorf("a traversal is already %s", m.status.State)
+	}
+	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）
+	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
+	if err := resourcelock.Default().Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("acquire traversal lock: %w", err)
 	}
 	m.config = config
 	m.isStopped = false
@@ -184,6 +253,22 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		State:       traversal.StateRunning,
 		TotalPoints: len(config.Path),
 		StartedAt:   time.Now().UnixMilli(),
+	}
+	sink := m.sink
+	m.mu.Unlock()
+
+	// 在锁外调用 sink.Initialize，避免阻塞其他状态读取
+	if sink != nil {
+		if err := sink.InitializeTraversal(config); err != nil {
+			// 初始化失败：回滚状态并释放锁，避免半启动
+			m.mu.Lock()
+			m.status.State = traversal.StateError
+			m.status.LastError = fmt.Sprintf("sink init failed: %v", err)
+			m.status.LastErrorCode = traversal.ErrSaveFailed
+			m.mu.Unlock()
+			_ = resourcelock.Default().Release(traversalLockResource, config.TaskID)
+			return err
+		}
 	}
 	return nil
 }
@@ -203,7 +288,9 @@ func (m *TraversalManager) Status() traversal.Status {
 // RunCurrentPoint 执行当前测试点的完整流程（移动→稳定→采集→保存）
 func (m *TraversalManager) RunCurrentPoint() error {
 	m.mu.Lock()
-	if m.status.State != traversal.StateRunning {
+	// 允许 running 及其子状态（moving/stabilizing/acquiring/saving）进入；
+	// 防止 Resume 与 loop 之间的瞬时竞态把已恢复的子状态误判为"未运行"
+	if m.status.State != traversal.StateRunning && !isSubState(m.status.State) {
 		errMsg := "traversal is not running"
 		m.setErrorLocked(errMsg, traversal.ErrUnknown)
 		m.mu.Unlock()
@@ -259,58 +346,111 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	m.updatePhase(taskID, traversal.StateStabilizing, traversal.PhaseStabilizing, pointIndex, len(config.Path))
 	m.waitForStabilization(taskID)
 
-	// 阶段3：采集中
+	// 阶段3：采集中（含数据验证 + 可选重试）
 	m.updatePhase(taskID, traversal.StateAcquiring, traversal.PhaseAcquiring, pointIndex, len(config.Path))
 	samplesPerPoint := config.SamplesPerPoint
 	if samplesPerPoint <= 0 {
 		samplesPerPoint = 1
 	}
 
-	var resultValues map[int]float64
-	var ok bool
-	if samplesPerPoint == 1 {
-		// 单次采样（兼容旧逻辑）
-		var payload device.DataPayload
-		payload, ok = m.reader.GetLatestData(config.DeviceID)
-		if !ok {
-			return m.failWithCode("no data available for device %s", traversal.ErrAcquisitionFailed, config.DeviceID)
-		}
-		resultValues = valuesForChannels(payload, config.Channels)
-	} else {
-		// 多次采样取平均
-		averaged, err := m.collectAveragedSamples(config.DeviceID, config.Channels, samplesPerPoint)
-		if err != nil {
-			return m.failWithCode("averaged sampling failed: %v", traversal.ErrAcquisitionFailed, err)
-		}
-		resultValues = averaged
-	}
-
-	if len(resultValues) != len(config.Channels) {
-		return m.failWithCode("latest data does not contain all requested channels", traversal.ErrAcquisitionFailed)
-	}
-
-	// 数据验证
 	m.mu.RLock()
 	validation := m.validation
-	m.mu.RUnlock()
-	if validation != nil && validation.Enabled {
-		valid, warnings := traversal.ValidatePressures(resultValues, validation)
-		m.mu.Lock()
-		m.status.ValidationWarnings = warnings
-		m.mu.Unlock()
-		if !valid && validation.OnInvalid == "skip" {
-			// 跳过此点，继续下一个
-			m.mu.Lock()
-			m.status.CurrentPoint++
-			m.mu.Unlock()
-			return nil
+	var channelLabels map[int]string
+	if config.ChannelLabels != nil {
+		channelLabels = make(map[int]string, len(config.ChannelLabels))
+		for k, v := range config.ChannelLabels {
+			channelLabels[k] = v
 		}
+	}
+	m.mu.RUnlock()
+
+	// 计算重试次数：仅在 onInvalid == "retry" 且 retryCount > 0 时启用
+	maxAttempts := 1
+	if validation != nil && validation.Enabled && validation.OnInvalid == "retry" && validation.RetryCount > 0 {
+		maxAttempts = validation.RetryCount + 1
+	}
+
+	var resultValues map[int]float64
+	var lastWarnings []string
+	skipPoint := false
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// 单次或多次采样
+		if samplesPerPoint == 1 {
+			payload, ok := m.reader.GetLatestData(config.DeviceID)
+			if !ok {
+				return m.failWithCode("no data available for device %s", traversal.ErrAcquisitionFailed, config.DeviceID)
+			}
+			resultValues = valuesForChannels(payload, config.Channels)
+		} else {
+			averaged, err := m.collectAveragedSamples(taskID, config.DeviceID, config.Channels, samplesPerPoint)
+			if err != nil {
+				return m.failWithCode("averaged sampling failed: %v", traversal.ErrAcquisitionFailed, err)
+			}
+			resultValues = averaged
+		}
+
+		if len(resultValues) != len(config.Channels) {
+			return m.failWithCode("latest data does not contain all requested channels", traversal.ErrAcquisitionFailed)
+		}
+
+		// 无验证或验证通过即接受本次采集
+		if validation == nil || !validation.Enabled {
+			break
+		}
+		valid, warnings := traversal.ValidatePressures(resultValues, validation, channelLabels)
+		lastWarnings = warnings
+		if valid {
+			break
+		}
+
+		// 验证失败，根据 onInvalid 决策
+		switch validation.OnInvalid {
+		case "skip":
+			skipPoint = true
+		case "retry":
+			// 仍在重试上限内则继续；最后一次仍失败则视为接受（避免静默丢点）
+			if attempt < maxAttempts-1 {
+				continue
+			}
+		case "continue":
+			// 继续接受当前结果
+		}
+		break
+	}
+
+	// 把最近一次校验告警记入 status，供前端展示
+	m.mu.Lock()
+	m.status.ValidationWarnings = lastWarnings
+	m.mu.Unlock()
+
+	if skipPoint {
+		// 跳过此点，但 currentPoint 仍需推进
+		m.mu.Lock()
+		m.status.CurrentPoint++
+		m.mu.Unlock()
+		return nil
 	}
 
 	// 阶段4：保存中
 	m.updatePhase(taskID, traversal.StateSaving, traversal.PhaseSaving, pointIndex, len(config.Path))
 
 	dwellTime := config.DwellTimeMs
+	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存
+	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels)
+	var calculated *traversal.CalculatedResult
+	if hasAll {
+		interpRes, interpErr := m.CalculateRealtime(input)
+		if interpErr == nil && interpRes.IsValid {
+			calculated = &traversal.CalculatedResult{
+				Valid: true,
+				Alpha: interpRes.Alpha,
+				Beta:  interpRes.Beta,
+				Pt:    interpRes.TotalPressure,
+				Ps:    interpRes.StaticPressure,
+				Mach:  interpRes.MachNumber,
+			}
+		}
+	}
 	result := traversal.PointResult{
 		PointIndex:       pointIndex,
 		Point:            point,
@@ -318,6 +458,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		Values:           resultValues,
 		SampleCount:      samplesPerPoint,
 		DwellTimeElapsed: dwellTime,
+		Calculated:       calculated,
 	}
 	if m.sink != nil {
 		if err := m.sink.WriteTraversalPoint(result); err != nil {
@@ -468,13 +609,17 @@ func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64
 	return true
 }
 
-// collectAveragedSamples 多次采样取平均（带总体超时保护）
-func (m *TraversalManager) collectAveragedSamples(deviceID string, channels []int, samplesPerPoint int) (map[int]float64, error) {
+// collectAveragedSamples 多次采样取平均（带总体超时保护、暂停/停止响应）
+func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, channels []int, samplesPerPoint int) (map[int]float64, error) {
 	totals := make(map[int]float64)
 	validSamples := 0
-	deadline := time.Now().Add(time.Duration(acquisitionBatchTimeoutMs) * time.Millisecond)
+	deadline := time.Now().Add(acquisitionBatchTimeout)
 
 	for i := 0; i < samplesPerPoint; i++ {
+		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
+		if m.isTaskCancelled(taskID) {
+			return nil, fmt.Errorf("acquisition cancelled")
+		}
 		if time.Now().After(deadline) {
 			break // 超时保护：不再继续采样
 		}
@@ -489,7 +634,7 @@ func (m *TraversalManager) collectAveragedSamples(deviceID string, channels []in
 			}
 			validSamples++
 		}
-		time.Sleep(time.Duration(acquisitionBatchPollMs) * time.Millisecond)
+		time.Sleep(acquisitionBatchPoll)
 	}
 
 	if validSamples == 0 {
@@ -505,9 +650,9 @@ func (m *TraversalManager) collectAveragedSamples(deviceID string, channels []in
 
 // waitForMotionComplete 等待运动完成（带超时和取消检查）
 func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string) bool {
-	ticker := time.NewTicker(motionCompletePollMs)
+	ticker := time.NewTicker(motionCompletePoll)
 	defer ticker.Stop()
-	deadline := time.Now().Add(motionCompleteTimeoutMs)
+	deadline := time.Now().Add(motionCompleteTimeout)
 
 	for {
 		select {
@@ -581,6 +726,7 @@ func (m *TraversalManager) Stop() error {
 	m.isStopped = true
 	m.isPaused = false
 	m.status.State = traversal.StateStopped
+	sink := m.sink
 	m.mu.Unlock()
 
 	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
@@ -596,6 +742,18 @@ func (m *TraversalManager) Stop() error {
 		}
 	}
 	m.mu.Unlock()
+
+	// 在锁外关闭 sink，确保 CSV 缓冲被刷盘
+	if sink != nil {
+		if err := sink.FinalizeTraversal(); err != nil && stopErr == nil {
+			stopErr = err
+		}
+	}
+
+	// 释放工作流级互斥锁；幂等
+	if taskID := m.config.TaskID; taskID != "" {
+		_ = resourcelock.Default().Release(traversalLockResource, taskID)
+	}
 
 	return stopErr
 }
@@ -629,180 +787,6 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 
 // LoadCheckpoint 从最近一次保存的断点文件加载恢复信息
 // 与 Cursor DAQ 行为一致：若 lastCheckpointPath 为空或文件不存在，返回 nil 且无错误
-func (m *TraversalManager) LoadCheckpoint() (*traversal.Checkpoint, error) {
-	m.mu.RLock()
-	path := m.lastCheckpointPath
-	store := m.checkpointStore
-	m.mu.RUnlock()
-
-	if path == "" {
-		return nil, nil
-	}
-	if store == nil {
-		return nil, nil
-	}
-	exists, err := store.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat checkpoint: %w", err)
-	}
-	if !exists {
-		// 文件已被外部清理，重置路径
-		m.mu.Lock()
-		m.lastCheckpointPath = ""
-		m.mu.Unlock()
-		return nil, nil
-	}
-
-	data, err := store.Read(path)
-	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
-	}
-	var cp traversal.Checkpoint
-	if err := json.Unmarshal(data, &cp); err != nil {
-		return nil, fmt.Errorf("parse checkpoint: %w", err)
-	}
-	return &cp, nil
-}
-
-// saveCheckpoint 保存断点到 ${savePath}.checkpoint.json，使用原子写入
-// 与 Cursor DAQ 的 atomicWriteJson 行为一致：先写临时文件再 rename，避免半写入状态
-func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCount int, savePath string) {
-	m.mu.RLock()
-	config := m.config
-	taskID := m.status.TaskID
-	configRaw := m.configRaw
-	m.mu.RUnlock()
-
-	if taskID == "" || savePath == "" {
-		return
-	}
-
-	// 优先使用启动时保存的原始配置 JSON，便于前端完整恢复
-	configPayload := configRaw
-	if len(configPayload) == 0 {
-		if raw, err := json.Marshal(config); err == nil {
-			configPayload = raw
-		}
-	}
-
-	var lastPoint *traversal.Point
-	if completedCount > 0 && completedCount <= len(points) {
-		lp := points[completedCount-1]
-		lastPoint = &lp
-	}
-
-	checkpoint := traversal.Checkpoint{
-		TaskID:          taskID,
-		Config:          []byte(configPayload),
-		CompletedPoints: completedCount,
-		TotalPoints:     len(points),
-		LastPoint:       lastPoint,
-		SavePath:        savePath,
-		CreatedAt:       time.Now().UnixMilli(),
-	}
-
-	data, err := json.MarshalIndent(checkpoint, "", "  ")
-	if err != nil {
-		return
-	}
-
-	checkpointPath := savePath + ".checkpoint.json"
-	if m.checkpointStore == nil {
-		return
-	}
-	if err := m.checkpointStore.Write(checkpointPath, data); err != nil {
-		return
-	}
-
-	m.mu.Lock()
-	m.lastCheckpointPath = checkpointPath
-	m.mu.Unlock()
-}
-
-// ClearCheckpoint 删除断点文件并清空 lastCheckpointPath
-// 测试成功完成后调用，避免残留断点文件
-func (m *TraversalManager) ClearCheckpoint() {
-	m.mu.Lock()
-	path := m.lastCheckpointPath
-	store := m.checkpointStore
-	m.lastCheckpointPath = ""
-	m.mu.Unlock()
-
-	if path == "" || store == nil {
-		return
-	}
-	if exists, err := store.Stat(path); err == nil && exists {
-		_ = store.Remove(path)
-	}
-}
-
-// ResumeFromCheckpoint 从断点恢复测试
-// 与 Cursor DAQ 的 resumeFromCheckpoint 行为一致：
-//  1. 复用原 taskId
-//  2. 从 checkpoint.Config 恢复完整配置
-//  3. 从 checkpoint.CompletedPoints 开始循环
-func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string, error) {
-	if cp.TaskID == "" {
-		return "", fmt.Errorf("checkpoint taskId is required")
-	}
-	if cp.CompletedPoints < 0 || cp.CompletedPoints > cp.TotalPoints {
-		return "", fmt.Errorf("checkpoint completedPoints out of range")
-	}
-
-	m.mu.RLock()
-	currentState := m.status.State
-	m.mu.RUnlock()
-	if currentState == traversal.StateRunning || currentState == traversal.StatePaused {
-		return "", fmt.Errorf("a traversal is already %s", currentState)
-	}
-
-	// 从断点的 Config 字段恢复完整配置
-	var config traversal.Config
-	if len(cp.Config) > 0 {
-		if err := json.Unmarshal(cp.Config, &config); err != nil {
-			return "", fmt.Errorf("parse checkpoint config: %w", err)
-		}
-	} else {
-		return "", fmt.Errorf("checkpoint config is empty")
-	}
-	if len(config.Path) == 0 {
-		return "", fmt.Errorf("checkpoint config path is empty")
-	}
-	if cp.CompletedPoints >= len(config.Path) {
-		return "", fmt.Errorf("checkpoint already completed")
-	}
-
-	m.mu.Lock()
-	m.config = config
-	m.configRaw = append(json.RawMessage(nil), cp.Config...)
-	m.isStopped = false
-	m.isPaused = false
-	m.motionPauseCancelled = false
-	m.status = traversal.Status{
-		TaskID:       cp.TaskID,
-		State:        traversal.StateRunning,
-		TotalPoints:  len(config.Path),
-		CurrentPoint: cp.CompletedPoints, // 从已完成点数开始
-		StartedAt:    cp.CreatedAt,
-	}
-	// 恢复已完成的点结果（从 store 中读取，若存在）
-	if m.store != nil {
-		if prev, ok := m.store.Get(cp.TaskID); ok && len(prev.Results) > 0 {
-			m.status.Results = append([]traversal.PointResult(nil), prev.Results...)
-		}
-	}
-	m.mu.Unlock()
-
-	// 启动后台循环
-	dwell := time.Duration(config.DwellTimeMs) * time.Millisecond
-	if dwell <= 0 {
-		dwell = 100 * time.Millisecond
-	}
-	go m.RunTraversalLoop(dwell)
-
-	return cp.TaskID, nil
-}
-
 // isSubState 判断是否为运行中的子状态
 func isSubState(s traversal.State) bool {
 	return s == traversal.StateMoving || s == traversal.StateStabilizing ||
@@ -849,6 +833,8 @@ type traversalAPIConfig struct {
 	} `json:"layout"`
 	Channels struct {
 		ProbeChannels []struct {
+			Name    string `json:"name"`
+			Role    string `json:"role"`
 			Channel struct {
 				DeviceID     string `json:"deviceId"`
 				ChannelIndex int    `json:"channelIndex"`
@@ -856,10 +842,37 @@ type traversalAPIConfig struct {
 			Enabled bool `json:"enabled"`
 		} `json:"probeChannels"`
 	} `json:"channels"`
-	DwellTimeMs     int    `json:"dwellTimeMs"`
-	SamplesPerPoint int    `json:"samplesPerPoint"`
-	SavePath        string `json:"savePath"`
-	SaveFileName    string `json:"saveFileName"`
+	DwellTimeMs       int                             `json:"dwellTimeMs"`
+	SamplesPerPoint   int                             `json:"samplesPerPoint"`
+	SavePath          string                          `json:"savePath"`
+	SaveFileName      string                          `json:"saveFileName"`
+	SaveOptions       *traversal.SaveOptions          `json:"saveOptions,omitempty"`
+	Validation        *traversal.DataValidationConfig `json:"validation,omitempty"`
+	Stabilization     *traversal.StabilizationConfig  `json:"stabilization,omitempty"`
+	InterpolationMode string                          `json:"interpolationMode,omitempty"`
+}
+
+// roleToLabel 将前端 ProbeChannelConfig.role 转为压力标签
+// 例如 "fiveHole.p1" → "P1"，"fiveHole.pAtm" → "Patm"
+func roleToLabel(role, name string) string {
+	switch role {
+	case "fiveHole.p1":
+		return "P1"
+	case "fiveHole.p2":
+		return "P2"
+	case "fiveHole.p3":
+		return "P3"
+	case "fiveHole.p4":
+		return "P4"
+	case "fiveHole.p5":
+		return "P5"
+	case "fiveHole.pAtm":
+		return "Patm"
+	case "fiveHole.tAtm":
+		return "Tatm"
+	}
+	// 回退使用 name 字段作为标签
+	return name
 }
 
 func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, error) {
@@ -939,6 +952,7 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	})
 
 	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
+	channelLabels := make(map[int]string)
 	deviceID := ""
 	for _, probe := range cfg.Channels.ProbeChannels {
 		if !probe.Enabled || probe.Channel.ChannelIndex < 0 {
@@ -948,6 +962,10 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 			deviceID = probe.Channel.DeviceID
 		}
 		channels = append(channels, probe.Channel.ChannelIndex)
+		// 通过 role/name 显式建立 channelIndex→label 映射，避免依赖通道索引顺序
+		if label := roleToLabel(probe.Role, probe.Name); label != "" {
+			channelLabels[probe.Channel.ChannelIndex] = label
+		}
 	}
 	if deviceID == "" {
 		return "", fmt.Errorf("deviceId is required")
@@ -968,15 +986,22 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		samplesPerPoint = 1
 	}
 	config := traversal.Config{
-		TaskID:          fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
-		DeviceID:        deviceID,
-		Channels:        channels,
-		Path:            points,
-		DwellTimeMs:     cfg.DwellTimeMs,
-		SamplesPerPoint: samplesPerPoint,
-		SavePath:        cfg.SavePath,
-		SaveFileName:    cfg.SaveFileName,
+		TaskID:            fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
+		DeviceID:          deviceID,
+		Channels:          channels,
+		Path:              points,
+		DwellTimeMs:       cfg.DwellTimeMs,
+		SamplesPerPoint:   samplesPerPoint,
+		SavePath:          cfg.SavePath,
+		SaveFileName:      cfg.SaveFileName,
+		SaveOptions:       cfg.SaveOptions,
+		ChannelLabels:     channelLabels,
+		InterpolationMode: cfg.InterpolationMode,
 	}
+	// 注入数据验证与稳定等待配置（前端可选传入）
+	m.SetValidation(cfg.Validation)
+	m.SetStabilization(cfg.Stabilization)
+
 	if err := m.Start(config); err != nil {
 		return "", err
 	}
@@ -987,94 +1012,12 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	return config.TaskID, nil
 }
 
-func (m *TraversalManager) fail(format string, args ...any) error {
-	message := fmt.Sprintf(format, args...)
-	m.mu.Lock()
-	m.setErrorLocked(message, traversal.ErrUnknown)
-	m.mu.Unlock()
-	return fmt.Errorf("%s", message)
-}
-
-// failWithCode 带错误码的失败
-func (m *TraversalManager) failWithCode(format string, code traversal.ErrorCode, args ...any) error {
-	message := fmt.Sprintf(format, args...)
-	m.mu.Lock()
-	m.setErrorLocked(message, code)
-	m.mu.Unlock()
-	return fmt.Errorf("%s", message)
-}
-
-func (m *TraversalManager) setErrorLocked(message string, code traversal.ErrorCode) {
-	m.status.State = traversal.StateError
-	m.status.LastError = message
-	m.status.LastErrorCode = code
-}
-
-// isTaskCancelled 检查任务是否已取消
-func (m *TraversalManager) isTaskCancelled(taskID string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.status.TaskID != taskID || m.isStopped
-}
-
-// sleepWithTaskCheck 带任务取消检查的睡眠
-func (m *TraversalManager) sleepWithTaskCheck(taskID string, d time.Duration) {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if m.isTaskCancelled(taskID) {
-			return
-		}
-		time.Sleep(time.Duration(motionCompletePollMs) * time.Millisecond)
-	}
-}
-
-func abs(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
-}
-
-// valuesForChannels 从数据载荷中提取指定通道索引的值
-func valuesForChannels(payload device.DataPayload, channels []int) map[int]float64 {
-	valuesByIndex := make(map[int]float64, len(payload.Channels))
-	for i, value := range payload.Channels {
-		chIdx := i
-		if i < len(payload.ChannelIndices) {
-			chIdx = payload.ChannelIndices[i]
-		}
-		valuesByIndex[chIdx] = value
-	}
-
-	values := make(map[int]float64, len(channels))
-	for _, channel := range channels {
-		value, ok := valuesByIndex[channel]
-		if ok {
-			values[channel] = value
-		}
-	}
-	return values
-}
-
-func availableAxisTargets(status motion.ControllerStatus, point traversal.Point) map[motion.AxisName]float64 {
-	targets := make(map[motion.AxisName]float64, len(status.Axes))
-	for _, axis := range status.Axes {
-		switch axis.Name {
-		case motion.AxisX:
-			targets[axis.Name] = point.X
-		case motion.AxisY:
-			targets[axis.Name] = point.Y
-		case motion.AxisZ:
-			targets[axis.Name] = point.Z
-		}
-	}
-	return targets
-}
-
+// 任何退出路径都会调用 sink.FinalizeTraversal 关闭文件，保证落盘
 func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 	if dwell <= 0 {
 		dwell = 100 * time.Millisecond
 	}
+	defer m.finalizeSink() // 所有退出路径统一关闭 sink
 	for {
 		status := m.Status()
 		switch {
@@ -1087,10 +1030,27 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 			}
 			time.Sleep(dwell)
 		case status.State == traversal.StatePaused:
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(pausedLoopIdle)
 		default:
 			return
 		}
+	}
+}
+
+// finalizeSink 关闭 sink 并释放工作流级互斥锁
+// 注意：Stop() 路径会主动 Finalize，此处再次 Finalize 是幂等操作
+func (m *TraversalManager) finalizeSink() {
+	m.mu.Lock()
+	sink := m.sink
+	taskID := m.config.TaskID
+	m.mu.Unlock()
+	if sink != nil {
+		// FinalizeTraversal 自身需保证幂等（多次调用安全）
+		_ = sink.FinalizeTraversal()
+	}
+	// 释放工作流级互斥锁；幂等
+	if taskID != "" {
+		_ = resourcelock.Default().Release(traversalLockResource, taskID)
 	}
 }
 
@@ -1142,8 +1102,12 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 // BuildDataPoints 从遍历结果构建数据点
 func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []map[string]any {
 	dataPoints := make([]map[string]any, 0, len(results))
+	// 优先使用 Config.ChannelLabels 进行 channelIndex→label 映射
+	m.mu.RLock()
+	channelLabels := m.config.ChannelLabels
+	m.mu.RUnlock()
 	for _, result := range results {
-		rawPressure, input, ok := BuildRawPressure(result.Values)
+		rawPressure, input, ok := BuildRawPressure(result.Values, channelLabels)
 		interpolationResult := coreinterp.InterpolationResult{IsValid: false}
 		if ok {
 			calculated, err := m.CalculateRealtime(input)
@@ -1167,19 +1131,29 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 }
 
 // BuildRawPressure 从通道值构建原始压力数据和插值输入
-func BuildRawPressure(values map[int]float64) (map[string]float64, coreinterp.InterpolationInput, bool) {
-	orderedKeys := make([]int, 0, len(values))
-	for key := range values {
-		orderedKeys = append(orderedKeys, key)
-	}
-	sort.Ints(orderedKeys)
+// 通道映射策略：若 labels 提供则按显式映射；否则按通道索引升序回退到旧行为
+func BuildRawPressure(values map[int]float64, labels map[int]string) (map[string]float64, coreinterp.InterpolationInput, bool) {
 	raw := make(map[string]float64, 7)
-	labels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
-	for i, label := range labels {
-		if i >= len(orderedKeys) {
-			continue
+	if len(labels) > 0 {
+		for chIdx, value := range values {
+			if label, ok := labels[chIdx]; ok && label != "" {
+				raw[label] = value
+			}
 		}
-		raw[label] = values[orderedKeys[i]]
+	} else {
+		// 兼容旧行为：通道索引升序对应 P1..Tatm
+		orderedKeys := make([]int, 0, len(values))
+		for key := range values {
+			orderedKeys = append(orderedKeys, key)
+		}
+		sort.Ints(orderedKeys)
+		legacyLabels := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
+		for i, label := range legacyLabels {
+			if i >= len(orderedKeys) {
+				continue
+			}
+			raw[label] = values[orderedKeys[i]]
+		}
 	}
 	input := coreinterp.InterpolationInput{
 		P1:   raw["P1"],

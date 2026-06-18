@@ -9,8 +9,10 @@ withDefaults(
     step?: number
     disabled?: boolean
     placeholder?: string
+    /** 是否显示右侧加减按钮，默认隐藏以保持界面简洁 */
+    showButton?: boolean
   }>(),
-  { modelValue: null, disabled: false, placeholder: '' },
+  { modelValue: null, disabled: false, placeholder: '', showButton: false },
 )
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: number | null): void }>()
@@ -24,6 +26,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: number | null): void }>()
     :step="step"
     :disabled="disabled"
     :placeholder="placeholder"
+    :show-button="showButton"
     size="small"
     @update:value="emit('update:modelValue', $event)"
   />
