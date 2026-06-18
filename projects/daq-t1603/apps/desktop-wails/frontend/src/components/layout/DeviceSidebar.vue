@@ -49,7 +49,7 @@ function statusIcon(status: string, acquiring: boolean) {
 
 function statusClass(status: string, acquiring: boolean): string {
   if (acquiring) return 'device__status--acquiring'
-  if (status === 'Stopping') return 'device__status--connecting'
+  if (status === 'Starting' || status === 'Stopping') return 'device__status--connecting'
   if (status === 'Connected') return 'device__status--connected'
   if (status === 'Connecting') return 'device__status--connecting'
   if (status === 'Error') return 'device__status--error'
@@ -58,6 +58,7 @@ function statusClass(status: string, acquiring: boolean): string {
 
 function statusLabel(status: string, acquiring: boolean): string {
   if (acquiring) return '采集中'
+  if (status === 'Starting') return '启动中'
   if (status === 'Stopping') return '停止中'
   if (status === 'Connected') return '已连接'
   if (status === 'Connecting') return '连接中'
@@ -116,7 +117,7 @@ function statusLabel(status: string, acquiring: boolean): string {
               <component
                 :is="statusIcon(deviceStore.statusFor(p.id), deviceStore.acquiringFor(p.id))"
                 class="device__status-icon"
-                :class="{ 'device__status-icon--spin': deviceStore.statusFor(p.id) === 'Connecting' || deviceStore.statusFor(p.id) === 'Stopping' }"
+                :class="{ 'device__status-icon--spin': deviceStore.statusFor(p.id) === 'Connecting' || deviceStore.statusFor(p.id) === 'Starting' || deviceStore.statusFor(p.id) === 'Stopping' }"
               />
               <span class="device__status-text">{{ statusLabel(deviceStore.statusFor(p.id), deviceStore.acquiringFor(p.id)) }}</span>
             </div>

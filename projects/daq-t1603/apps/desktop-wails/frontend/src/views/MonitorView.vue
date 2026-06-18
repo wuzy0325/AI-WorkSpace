@@ -88,6 +88,7 @@ function clearAllChannels() {
 
 async function connectDisconnect() {
   if (!selected.value) return
+  if (status.value === 'Starting' || status.value === 'Stopping') return
   if (status.value === 'Connected' || status.value === 'Acquiring') {
     await deviceStore.disconnect(selected.value.id)
   } else if (status.value === 'Disconnected' || status.value === 'Error') {
@@ -97,13 +98,14 @@ async function connectDisconnect() {
 
 function statusType(): 'success' | 'warning' | 'error' | 'default' {
   if (isAcquiring.value || status.value === 'Connected') return 'success'
-  if (status.value === 'Connecting' || status.value === 'Stopping') return 'warning'
+  if (status.value === 'Connecting' || status.value === 'Starting' || status.value === 'Stopping') return 'warning'
   if (status.value === 'Error') return 'error'
   return 'default'
 }
 
 function statusLabel(): string {
   if (isAcquiring.value) return '采集中'
+  if (status.value === 'Starting') return '启动中'
   if (status.value === 'Stopping') return '停止中'
   if (status.value === 'Connected') return '已连接'
   if (status.value === 'Connecting') return '连接中'
@@ -160,7 +162,7 @@ function statusLabel(): string {
                   <span class="detail__meta-dot" />
                   <NText depth="3" style="font-size:0.7rem">{{ (selected.t1603Config?.thermocoupleTypes || 'K')[0] }} 型热电偶</NText>
                   <span class="detail__meta-dot" />
-                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.samplingRate }} Hz</NText>
+                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.t1603Config?.samplingRate ?? selected.samplingRate }} Hz</NText>
                 </NSpace>
               </div>
             </div>
@@ -173,15 +175,15 @@ function statusLabel(): string {
               </NTag>
               <NButton
                 size="small"
-                :type="status === 'Connected' || status === 'Acquiring' ? 'error' : 'primary'"
-                :loading="status === 'Connecting'"
+                :type="status === 'Connected' || status === 'Acquiring' || status === 'Starting' || status === 'Stopping' ? 'error' : 'primary'"
+                :loading="status === 'Connecting' || status === 'Starting' || status === 'Stopping'"
                 @click="connectDisconnect"
               >
                 <template #icon>
-                  <Loader2 v-if="status === 'Connecting'" :size="14" class="spin" />
+                  <Loader2 v-if="status === 'Connecting' || status === 'Starting' || status === 'Stopping'" :size="14" class="spin" />
                   <Network v-else :size="14" />
                 </template>
-                {{ status === 'Connected' || status === 'Acquiring' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}
+                {{ status === 'Connected' || status === 'Acquiring' || status === 'Starting' || status === 'Stopping' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}
               </NButton>
               <NButton size="small" secondary @click="openConfig()">
                 <template #icon><Settings2 :size="14" /></template>配置

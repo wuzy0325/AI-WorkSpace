@@ -108,7 +108,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		Type:           sharedcore.DeviceDaqT1603,
 		Address:        profile.Address,
 		Port:           profile.Port,
-		SamplingRate:   hzToSpsMs(profile.SamplingRate), // Hz → 采集间隔毫秒
+		SamplingRate:   hzToSpsMs(profile.T1603Cfg.SamplingRate), // Hz → 采集间隔毫秒
 		DaqT1603Config: mapT1603SharedConfig(profile.T1603Cfg),
 		Channels: func() []sharedcore.ChannelConfig {
 			ch := make([]sharedcore.ChannelConfig, 16)
@@ -148,6 +148,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			return
 		}
 		profile.T1603Cfg.SamplingRate = spsMsToHz(cfg.SamplingRate) // 采集间隔毫秒 → Hz
+		profile.SamplingRate = profile.T1603Cfg.SamplingRate
 		profile.T1603Cfg.ChannelMask = cfg.ChannelMask
 		profile.T1603Cfg.AverageCount = cfg.AverageCount
 		profile.T1603Cfg.ShowTimestamp = cfg.ShowTimestamp
@@ -341,7 +342,7 @@ func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 			st.SetStatus(core.StatusDisconnected)
 		} else if ds.Acquiring {
 			st.SetStatus(core.StatusAcquiring)
-		} else {
+		} else if st.Status != core.StatusAcquiring {
 			st.SetStatus(core.StatusConnected)
 		}
 	} else {
