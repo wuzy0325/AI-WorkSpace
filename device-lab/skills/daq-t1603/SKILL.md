@@ -333,23 +333,23 @@ class FrameReader:
 
 ### 3.1 命令在线字节
 
-所有 ASCII 命令以 `\n`（`0x0A`）结尾，发送到 TCP 线路上如下：
+**命令以裸 ASCII 字符串发送，不追加任何换行或终止符。** 驱动直接 `conn.Write([]byte(cmd))`，cmd 即命令本身。换行只出现在**设备响应**中（响应以 `\n` 或 `\r\n` 结尾，由 `SendCommand`/`SendCommandIdle` 的 read-until-`\n` 逻辑消费）。
 
 | 命令 | ASCII | 十六进制 |
 |------|-------|---------|
-| `@e3` | `@e3\n` | `40 65 33 0A` |
-| `@f0 FFFF 2` | `@f0 FFFF 2\n` | `40 66 30 20 46 46 46 46 20 32 0A` |
-| `@f1` | `@f1\n` | `40 66 31 0A` |
-| `@f3 0KKKKKKKKKKKKKKKK0` | `@f3 0KKKKKKKKKKKKKKKK0\n` | `40 66 33 20 30 4B×16 30 0A`（21 字节） |
-| `@fd BIN` | `@fd BIN\n` | `40 66 64 20 42 49 4E 0A` |
-| `@fd MCH` | `@fd MCH\n` | `40 66 64 20 4D 43 48 0A` |
-| `@fd SPS` | `@fd SPS\n` | `40 66 64 20 53 50 53 0A` |
-| `@fe BIN 1` | `@fe BIN 1\n` | `40 66 65 20 42 49 4E 20 31 0A` |
-| `@fe BIN 0` | `@fe BIN 0\n` | `40 66 65 20 42 49 4E 20 30 0A` |
-| `@fe SPS 100` | `@fe SPS 100\n` | `40 66 65 20 53 50 53 20 31 30 30 0A` |
-| `@fe TIME 0` | `@fe TIME 0\n` | `40 66 65 20 54 49 4D 45 20 30 0A` |
+| `@e3` | `@e3` | `40 65 33` |
+| `@f0 FFFF 2` | `@f0 FFFF 2` | `40 66 30 20 46 46 46 46 20 32` |
+| `@f1` | `@f1` | `40 66 31` |
+| `@f3 0KKKKKKKKKKKKKKKK0` | `@f3 0KKKKKKKKKKKKKKKK0` | `40 66 33 20 30 4B×16 30`（20 字节） |
+| `@fd BIN` | `@fd BIN` | `40 66 64 20 42 49 4E` |
+| `@fd MCH` | `@fd MCH` | `40 66 64 20 4D 43 48` |
+| `@fd SPS` | `@fd SPS` | `40 66 64 20 53 50 53` |
+| `@fe BIN 1` | `@fe BIN 1` | `40 66 65 20 42 49 4E 20 31` |
+| `@fe BIN 0` | `@fe BIN 0` | `40 66 65 20 42 49 4E 20 30` |
+| `@fe SPS 100` | `@fe SPS 100` | `40 66 65 20 53 50 53 20 31 30 30` |
+| `@fe TIME 0` | `@fe TIME 0` | `40 66 65 20 54 49 4D 45 20 30` |
 
-常见设备响应：
+常见设备响应（**响应**带换行，命令不带）：
 
 | 响应 | ASCII | 十六进制 |
 |------|-------|---------|
@@ -358,6 +358,8 @@ class FrameReader:
 | 错误 | `E` | `45` |
 
 **错误响应 `E` 的触发条件：** 命令格式错误、参数越界、不支持的操作（如向 temp 型号发送不支持的命令）。驱动收到 `E` 后应终止当前操作并上报错误，不应重试同一命令。
+
+> **响应读取策略差异**：`SendCommand` / `SendCommandIdle` 读到 `\n` 即结束（响应带换行）；`SendCommandExact(n)` 用 `io.ReadFull` 精确读 n 字节，再消费尾部 `\r\n`（固定长度响应如 `@fd BIN` 的单字符 `0`/`1`）。
 
 ### 3.2 数据帧十六进制展开
 
@@ -624,25 +626,29 @@ func disconnect():
 
 ```pseudocode
 // writeCommandOnly —— 只写不读，用于 @f0/@f1
+// ★ 命令裸发，不追加 \n（设备协议不要求换行结尾）
 func writeCommandOnly(cmd: string):
-    conn.write(cmd + "\n", timeout=5s)
+    conn.write(cmd, timeout=5s)
     // 无响应等待
 
 // SendCommand —— 读至换行，用于 @fe 等带 ACK 的命令
+// ★ 命令裸发；响应以 \n 结尾，读到 \n 即止
 func sendCommand(cmd: string) -> string:
-    conn.write(cmd + "\n")
+    conn.write(cmd)
     return conn.readUntil('\n', timeout=5s).trimEnd('\r\n')
 
 // SendCommandExact —— 精确读 N 字节，用于固定长度响应
+// ★ 命令裸发；用 io.ReadFull 精确读 n 字节，再消费尾部 \r\n
 func sendCommandExact(cmd: string, expectBytes: int) -> string:
-    conn.write(cmd + "\n")
+    conn.write(cmd)
     resp = conn.readExact(expectBytes, timeout=5s)
     conn.readAvailable()  // 消费尾部 \r\n
     return resp
 
 // SendCommandIdle —— 读至 30ms 静默，用于可变长度响应
+// ★ 命令裸发；响应无固定长度，靠静默窗口判定结束
 func sendCommandIdle(cmd: string) -> string:
-    conn.write(cmd + "\n")
+    conn.write(cmd)
     return conn.readUntilIdle(idleTime=30ms, timeout=5s)
 ```
 
