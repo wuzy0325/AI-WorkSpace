@@ -20,6 +20,11 @@ import (
 // 任务管理器强杀后最多 1 秒内本进程退出。
 const parentWatchdogInterval = 1 * time.Second
 
+// parentWatchdogGrace 检测到父进程消失后给优雅关停留出的时间窗。
+// 期间会调用 cancel() 让 ctx 派生的子协程退出、appContext 落盘任何挂起的
+// 配置写。500ms 在感知（用户等待时长）和数据完整性之间折中。
+const parentWatchdogGrace = 500 * time.Millisecond
+
 // startParentWatchdog 启动父进程看护协程。
 // 仅 ModeMotion 子进程在 Startup 时调用，且要求 a.parentPID > 0。
 func (a *App) startParentWatchdog() {
@@ -37,8 +42,14 @@ func (a *App) startParentWatchdog() {
 			case <-ticker.C:
 				if !processIsAlive(pid) {
 					log.Printf("父进程 (pid=%d) 已退出，运动控制器独立窗口随之关闭", pid)
-					// 直接 os.Exit，绕过 Wails Shutdown：父进程已不存在，
-					// 任何持久化或事件回调也没有接收方，快速退出最干净。
+					// 优雅关停：先 cancel app ctx 让派生协程退出（MotionStatusPoller 等），
+					// 给可能正在执行的 fsync / 配置原子写一个 500ms 完成窗口，再 os.Exit。
+					// 不调用 a.Shutdown：Wails Shutdown 假定 runtime 还在，但此处直接 os.Exit
+					// 是为了避免 Wails GUI 主线程在已无父进程上下文下继续操作。
+					if a.cancel != nil {
+						a.cancel()
+					}
+					time.Sleep(parentWatchdogGrace)
 					os.Exit(0)
 				}
 			}

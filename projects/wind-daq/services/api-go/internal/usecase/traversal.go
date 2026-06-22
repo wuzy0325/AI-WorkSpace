@@ -281,21 +281,31 @@ func (m *TraversalManager) Stop() error {
 	m.isPaused = false
 	m.status.State = traversal.StateStopped
 	sink := m.sink
+	// 在持锁时快照 TaskID，避免 Resume/Start 并发改写 m.config 导致的数据竞争
+	taskID := m.config.TaskID
 	m.mu.Unlock()
 
 	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
 	stopErr := m.stopMotionAxes()
 
+	// 先在锁内收集 Save 所需快照，再到锁外执行可能耗时的 store.Save
 	m.mu.Lock()
-	if m.store != nil {
-		status := m.status
-		status.Results = append([]traversal.PointResult(nil), m.status.Results...)
-		if err := m.store.Save(m.config.TaskID, status); err != nil {
-			m.mu.Unlock()
+	var savePending bool
+	var saveStatus traversal.Status
+	var saveTaskID string
+	if m.store != nil && taskID != "" {
+		savePending = true
+		saveTaskID = taskID
+		saveStatus = m.status
+		saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
+	}
+	m.mu.Unlock()
+
+	if savePending {
+		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
 			return fmt.Errorf("save traversal result: %v", err)
 		}
 	}
-	m.mu.Unlock()
 
 	// 在锁外关闭 sink，确保 CSV 缓冲被刷盘
 	if sink != nil {
@@ -305,7 +315,7 @@ func (m *TraversalManager) Stop() error {
 	}
 
 	// 释放工作流级互斥锁；幂等
-	if taskID := m.config.TaskID; taskID != "" {
+	if taskID != "" {
 		_ = resourcelock.Default().Release(traversalLockResource, taskID)
 	}
 

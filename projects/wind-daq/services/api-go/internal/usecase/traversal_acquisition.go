@@ -63,8 +63,15 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	motionComplete := m.waitForMotionComplete(ctx, point, taskID)
 	if !motionComplete {
 		m.stopMotionAxes()
-		if m.motionPauseCancelled {
+		// 在锁内读取并清零 motionPauseCancelled，避免与 waitForMotionComplete /
+		// ResumeFromCheckpoint 的写并发产生数据竞争。
+		m.mu.Lock()
+		paused := m.motionPauseCancelled
+		if paused {
 			m.motionPauseCancelled = false
+		}
+		m.mu.Unlock()
+		if paused {
 			return nil // 暂停导致的中断，不算错误
 		}
 		return m.failWithCode("motion did not complete for point %d", traversal.ErrMotionFailed, pointIndex+1)
@@ -203,22 +210,31 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	m.status.ValidationWarnings = nil
 	allDone := m.status.CurrentPoint >= len(m.config.Path)
 	completedCount := m.status.CurrentPoint
+	// 收集 store.Save 所需快照；store.Save 必须在锁外执行，
+	// 避免磁盘 I/O 卡住整个 m.mu，导致 Status()/前端轮询全部阻塞。
+	var pendingSave bool
+	var saveTaskID string
+	var saveStatus traversal.Status
 	if allDone {
 		m.status.State = traversal.StateCompleted
 		m.status.CurrentPointPhase = ""
 		if m.store != nil {
-			status := m.status
-			status.Results = append([]traversal.PointResult(nil), m.status.Results...)
-			if err := m.store.Save(m.config.TaskID, status); err != nil {
-				m.mu.Unlock()
-				return fmt.Errorf("save traversal result: %v", err)
-			}
+			pendingSave = true
+			saveTaskID = m.config.TaskID
+			saveStatus = m.status
+			saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
 		}
 	}
 	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
 	checkpointPath := m.config.SavePath
 	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
 	m.mu.Unlock()
+
+	if pendingSave {
+		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
+			return fmt.Errorf("save traversal result: %v", err)
+		}
+	}
 
 	// 与 Cursor DAQ 一致：每完成 10 个点或最后一个点时保存断点
 	if checkpointPath != "" && len(checkpointPoints) > 0 {
@@ -390,15 +406,16 @@ func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point trav
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
-			// 检查是否暂停或停止（在锁内读取 isPaused 避免竞态）
-			m.mu.RLock()
+			// 检查是否暂停或停止；若已暂停顺手在同一把写锁内置位 motionPauseCancelled，
+			// 让 RunCurrentPoint 在锁内读到的状态保持一致，避免与 Resume 的清零并发竞态。
+			m.mu.Lock()
 			isPaused := m.isPaused
 			stopped := m.isStopped || isPaused
-			m.mu.RUnlock()
+			if stopped && isPaused {
+				m.motionPauseCancelled = true
+			}
+			m.mu.Unlock()
 			if stopped {
-				if isPaused {
-					m.motionPauseCancelled = true
-				}
 				return false
 			}
 

@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"errors"
 	"syscall"
 )
 
@@ -22,7 +23,9 @@ func processIsAlive(pid int) bool {
 	if err != nil {
 		// 常见是 ERROR_INVALID_PARAMETER（PID 无效）或 ERROR_ACCESS_DENIED
 		// 后者出现在跨权限/Session 时；本场景父子同源进程，遇到 access denied 视为存活更保守。
-		if err == syscall.ERROR_ACCESS_DENIED {
+		// 必须用 errors.Is，runtime 在不同版本可能把 Errno 包成 *os.SyscallError 或 *os.PathError；
+		// 直接 == 比较会漏掉 wrapped error。
+		if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
 			return true
 		}
 		return false

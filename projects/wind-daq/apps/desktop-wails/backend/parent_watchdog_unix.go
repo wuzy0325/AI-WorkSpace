@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -21,6 +22,10 @@ func processIsAlive(pid int) bool {
 	if err == nil {
 		return true
 	}
-	// EPERM 表示进程存在但本进程无权访问，仍视为存活
-	return err != syscall.ESRCH
+	// 用 errors.Is 而非 == 比较；某些 libc/runtime 会包成 *os.SyscallError。
+	// 只有真正 ESRCH 才视为进程消失，其它（EPERM 等）保守视为存活。
+	if errors.Is(err, syscall.ESRCH) {
+		return false
+	}
+	return true
 }

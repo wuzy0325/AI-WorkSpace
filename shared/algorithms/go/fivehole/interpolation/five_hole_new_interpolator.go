@@ -211,7 +211,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 
 	// 步骤1：用AA1公式计算初步角度
 	aa1Point := f.calculateKaKbAA1(p1, p2, p3, p4, p5)
-	aa1Result := f.interpolateOnGrid(aa1Point, f.aa1Grid, f.aa1SortedAlphas, f.aa1SortedBetas, f.aa1ExtGrid, f.aa1ExtCells, true)
+	aa1Result := f.interpolateOnGrid(aa1Point, aaFormula1, f.aa1Grid, f.aa1SortedAlphas, f.aa1SortedBetas, f.aa1ExtGrid, f.aa1ExtCells, true)
 	if !aa1Result.Found {
 		return InterpolationResult{
 			IsValid: false,
@@ -238,7 +238,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	case regionEdge:
 		// 边缘区：用AA2公式重新计算
 		aa2Point := f.calculateKaKbAA2(p1, p2, p3, p4, p5)
-		aa2Result := f.interpolateOnGrid(aa2Point, f.aa2Grid, f.aa2SortedAlphas, f.aa2SortedBetas, f.aa2ExtGrid, f.aa2ExtCells, true)
+		aa2Result := f.interpolateOnGrid(aa2Point, aaFormula2, f.aa2Grid, f.aa2SortedAlphas, f.aa2SortedBetas, f.aa2ExtGrid, f.aa2ExtCells, true)
 		if !aa2Result.Found {
 			return InterpolationResult{
 				IsValid: false,
@@ -252,7 +252,7 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	case regionCenter:
 		// 中心区：用AA3公式重新计算
 		aa3Point := f.calculateKaKbAA3(p1, p2, p3, p4, p5)
-		aa3Result := f.interpolateOnGrid(aa3Point, f.aa3Grid, f.aa3SortedAlphas, f.aa3SortedBetas, nil, nil, false)
+		aa3Result := f.interpolateOnGrid(aa3Point, aaFormula3, f.aa3Grid, f.aa3SortedAlphas, f.aa3SortedBetas, nil, nil, false)
 		if !aa3Result.Found {
 			return InterpolationResult{
 				IsValid: false,
@@ -494,23 +494,19 @@ func (f *FiveHoleNewInterpolator) computeKaRange(alphaGroups map[float64][]gridP
 	return mn, mx
 }
 
-// getKaRange 根据传入的 alphaGroups 反查对应公式的 KaMin/KaMax 缓存。
-// 通过指针地址判断是哪一套数据 (aa1/aa2/aa3)。
-func (f *FiveHoleNewInterpolator) getKaRange(alphaGroups map[float64][]gridPoint) ([]float64, []float64) {
-	switch {
-	case isSameMap(alphaGroups, f.aa1Grid):
+// getKaRange 按公式枚举返回预计算的 KaMin/KaMax 缓存。
+// 用 aaFormula 枚举替代旧版的指针地址比较（fmt.Sprintf("%p", m)），
+// 既无字符串分配开销，也避免任何形式的 map 引用重定向导致优化默默失效。
+func (f *FiveHoleNewInterpolator) getKaRange(formula aaFormula) ([]float64, []float64) {
+	switch formula {
+	case aaFormula1:
 		return f.aa1KaMin, f.aa1KaMax
-	case isSameMap(alphaGroups, f.aa2Grid):
+	case aaFormula2:
 		return f.aa2KaMin, f.aa2KaMax
-	case isSameMap(alphaGroups, f.aa3Grid):
+	case aaFormula3:
 		return f.aa3KaMin, f.aa3KaMax
 	}
 	return nil, nil
-}
-
-// isSameMap 判断两个 map 是否指向同一底层数据（用于 getKaRange 路由）。
-func isSameMap(a, b map[float64][]gridPoint) bool {
-	return fmt.Sprintf("%p", a) == fmt.Sprintf("%p", b)
 }
 
 // ==================== AA公式计算 ====================
@@ -597,6 +593,7 @@ func (f *FiveHoleNewInterpolator) determineRegion(alpha1, beta1 float64) region 
 
 func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	point kaKbResult,
+	formula aaFormula,
 	alphaGroups map[float64][]gridPoint,
 	sortedAlphas []float64,
 	sortedBetas []float64,
@@ -611,7 +608,7 @@ func (f *FiveHoleNewInterpolator) interpolateOnGrid(
 	px, py := point.Ka, point.Kb
 
 	// 先在原始网格中查找
-	cell := f.findGridCell(px, py, alphaGroups, sortedAlphas, sortedBetas)
+	cell := f.findGridCell(px, py, formula, alphaGroups, sortedAlphas, sortedBetas)
 	isExtended := false
 
 	// 如果在原始网格中找不到，尝试扩展网格
@@ -656,7 +653,7 @@ type subGridPoint struct {
 // 优化策略：预计算每个 alpha 带的 Ka 范围 (minKa, maxKa)，
 // 定位 px 可能落入的 alpha 带，再在邻域内遍历 beta 交叉单元。
 // 平均 O(log N + K*M) 替代原 O(N*M)。
-func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups map[float64][]gridPoint, sortedAlphas, sortedBetas []float64) *gridCell {
+func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, formula aaFormula, alphaGroups map[float64][]gridPoint, sortedAlphas, sortedBetas []float64) *gridCell {
 	na, nb := len(sortedAlphas), len(sortedBetas)
 	if na < 2 || nb < 2 {
 		return nil
@@ -676,7 +673,7 @@ func (f *FiveHoleNewInterpolator) findGridCell(px, py float64, alphaGroups map[f
 	}
 
 	// Ka 范围来自 struct 预计算缓存（buildAllGrids 阶段一次性构建）
-	alphaKamin, alphaKamax := f.getKaRange(alphaGroups)
+	alphaKamin, alphaKamax := f.getKaRange(formula)
 	if alphaKamin == nil || len(alphaKamin) != na {
 		// 兜底：缓存缺失时即时计算（不应发生）
 		alphaKamin, alphaKamax = f.computeKaRange(alphaGroups, sortedAlphas)

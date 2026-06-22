@@ -168,8 +168,12 @@ func (c *InterpolationCache) evictLRULocked() {
 //   - 距上次 Flush 已达 minInterval → 立即 Flush
 //   - 否则 skipped++；当 skipped >= maxSkipped 时强制 Flush
 //   - 否则在剩余时间后触发一次延迟 Flush
+//
+// 顺序保证：handler 始终按 Push 的实际时间顺序串行执行。
+// 通过 sync.Mutex（flushMu）串行化 handler 调用，避免并发 goroutine 引发的乱序。
 type Throttler[T any] struct {
 	mu           sync.Mutex
+	flushMu      sync.Mutex // 串行化 handler 调用，保证执行顺序
 	minInterval  time.Duration
 	maxSkipped   int
 	handler      func(T, int)
@@ -178,6 +182,9 @@ type Throttler[T any] struct {
 	hasPending   bool
 	skippedCount int
 	pendingTimer *time.Timer
+	// timerGen 单调递增的定时器版本号，AfterFunc 回调启动时记录自己对应的版本，
+	// 唤醒后若发现版本已被新 Push 覆盖，则视为陈旧回调直接退出，避免重复 flush。
+	timerGen uint64
 }
 
 // NewThrottler 创建节流器
@@ -206,27 +213,46 @@ func (t *Throttler[T]) Push(value T) {
 	t.hasPending = true
 	elapsed := time.Since(t.lastFlush)
 	if elapsed >= t.minInterval {
-		t.flushLocked()
+		value, skipped, ok := t.prepareFlushLocked()
 		t.mu.Unlock()
+		if ok {
+			t.dispatch(value, skipped)
+		}
 		return
 	}
 	t.skippedCount++
 	if t.skippedCount >= t.maxSkipped {
-		t.flushLocked()
+		value, skipped, ok := t.prepareFlushLocked()
 		t.mu.Unlock()
+		if ok {
+			t.dispatch(value, skipped)
+		}
 		return
 	}
 	// 安排延迟刷新（替换旧 timer，避免重复触发）
 	if t.pendingTimer != nil {
 		t.pendingTimer.Stop()
 	}
+	// 自增版本号，让任何已经 fired 但还没拿到锁的旧回调成为陈旧回调
+	t.timerGen++
+	gen := t.timerGen
 	delay := t.minInterval - elapsed
 	t.pendingTimer = time.AfterFunc(delay, func() {
 		t.mu.Lock()
-		if t.hasPending {
-			t.flushLocked()
+		// 版本号被 Push 覆盖（即更新的 Push 已抢先 flush）→ 陈旧回调，丢弃
+		if gen != t.timerGen {
+			t.mu.Unlock()
+			return
 		}
+		if !t.hasPending {
+			t.mu.Unlock()
+			return
+		}
+		value, skipped, ok := t.prepareFlushLocked()
 		t.mu.Unlock()
+		if ok {
+			t.dispatch(value, skipped)
+		}
 	})
 	t.mu.Unlock()
 }
@@ -234,27 +260,47 @@ func (t *Throttler[T]) Push(value T) {
 // Flush 强制立即分发当前 pending（如果有）
 func (t *Throttler[T]) Flush() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.hasPending {
-		t.flushLocked()
+	if !t.hasPending {
+		t.mu.Unlock()
+		return
+	}
+	value, skipped, ok := t.prepareFlushLocked()
+	t.mu.Unlock()
+	if ok {
+		t.dispatch(value, skipped)
 	}
 }
 
-// flushLocked 必须在持锁下调用
-func (t *Throttler[T]) flushLocked() {
+// prepareFlushLocked 必须在持锁下调用；提取当前 pending 值并复位计数器，
+// 返回 (value, skipped, ok)。调用方应在锁外执行 dispatch(value, skipped)。
+func (t *Throttler[T]) prepareFlushLocked() (T, int, bool) {
+	if !t.hasPending {
+		var zero T
+		return zero, 0, false
+	}
 	skipped := t.skippedCount
 	value := t.pendingValue
 	t.skippedCount = 0
 	t.hasPending = false
 	t.lastFlush = time.Now()
+	// 任何取出 pending 的路径都顺手让陈旧回调失效
+	t.timerGen++
 	if t.pendingTimer != nil {
 		t.pendingTimer.Stop()
 		t.pendingTimer = nil
 	}
-	if t.handler != nil {
-		// 在锁外回调，避免 handler 重新 Push 时死锁
-		go t.handler(value, skipped)
+	return value, skipped, true
+}
+
+// dispatch 在 flushMu 保护下同步调用 handler，保证 Push 顺序与执行顺序一致。
+// handler 内若再次 Push 是安全的（mu 已释放）。
+func (t *Throttler[T]) dispatch(value T, skipped int) {
+	if t.handler == nil {
+		return
 	}
+	t.flushMu.Lock()
+	defer t.flushMu.Unlock()
+	t.handler(value, skipped)
 }
 
 // ---------- helpers ----------
