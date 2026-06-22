@@ -1,3 +1,17 @@
+// Package usecase 实现风洞 DAQ 的核心业务用例。
+//
+// 本文件 traversal.go 是 TraversalManager（遍历测试编排器）的主入口：
+//   - 状态机：Idle / Running / Paused / Stopped / Error，外加 moving / stabilizing /
+//     acquiring / saving 等运行中子状态
+//   - 生命周期：Start → RunTraversalLoop（每点调用 RunCurrentPoint）→ Stop / finalizeSink
+//   - 资源协调：通过 resourcelock.Default() 与 calibration 等其他工作流互斥
+//
+// 拆分到同包其他文件：
+//   - traversal_acquisition.go：单点采集主流程（移动→稳定→采样→保存）
+//   - traversal_checkpoint.go：断点保存/恢复
+//   - traversal_config.go：API 入口与配置持久化
+//   - traversal_helpers.go：内部工具函数（错误流式构造、任务取消轮询等）
+//   - traversal_view.go：状态/历史结果到 API 响应的映射
 package usecase
 
 import (

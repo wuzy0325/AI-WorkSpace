@@ -119,10 +119,10 @@ func ValidatePressures(p map[string]float64, custom *traversal.DataValidationCon
 			}
 		}
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return fmt.Errorf("%s 非有限数: %v", label, v)
+			return fmt.Errorf("%s is not finite: %v", label, v)
 		}
 		if v < r.Min || v > r.Max {
-			return fmt.Errorf("%s 超出范围 [%.2f, %.2f]: %.2f", label, r.Min, r.Max, v)
+			return fmt.Errorf("%s out of range [%.2f, %.2f]: %.2f", label, r.Min, r.Max, v)
 		}
 		return nil
 	}

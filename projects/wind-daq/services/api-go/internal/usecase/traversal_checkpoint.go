@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"wind-daq/services/api-go/internal/core/resourcelock"
 	"wind-daq/services/api-go/internal/core/traversal"
 )
 
@@ -116,6 +117,8 @@ func (m *TraversalManager) ClearCheckpoint() {
 		return
 	}
 	if exists, err := store.Stat(path); err == nil && exists {
+		// best-effort cleanup, non-critical：删除失败仅意味着断点文件残留，
+		// 不会影响新任务（启动时按 taskId 重置 lastCheckpointPath）。
 		_ = store.Remove(path)
 	}
 }
@@ -154,6 +157,10 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	}
 	if cp.CompletedPoints >= len(config.Path) {
 		return "", fmt.Errorf("checkpoint already completed")
+	}
+
+	if err := resourcelock.Default().Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
+		return "", fmt.Errorf("acquire traversal lock: %w", err)
 	}
 
 	m.mu.Lock()

@@ -102,7 +102,10 @@ function storedProfiles(): MotionControllerProfile[] {
   try {
     const raw = window.localStorage.getItem(MOTION_STORAGE_KEY);
     if (raw) return normalizeMotionProfiles(JSON.parse(raw));
-  } catch { /* ignore */ }
+  } catch (err) {
+    // localStorage 读取或 JSON 解析失败：使用默认模拟控制器，但记录日志便于排查
+    console.warn('[motionApi] failed to load stored profiles:', err);
+  }
   return [{
     id: 'sim-mc-1',
     name: '模拟控制器 1',
@@ -191,8 +194,8 @@ export const motionApi = {
         saveProfiles(profiles);
         return profiles;
       }
-    } catch {
-      // 后端失败，使用本地缓存
+    } catch (err) {
+      console.warn('[motionApi] getProfiles backend unreachable, falling back to local cache:', err);
     }
     return storedProfiles();
   },
@@ -213,8 +216,8 @@ export const motionApi = {
       } else {
         await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
       }
-    } catch {
-      // 后端失败，仅更新本地
+    } catch (err) {
+      console.warn('[motionApi] upsertProfile backend failed, updating local cache only:', err);
     }
     const profiles = storedProfiles();
     const idx = profiles.findIndex((p) => p.id === profile.id);
@@ -233,8 +236,8 @@ export const motionApi = {
       } else {
         await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
       }
-    } catch {
-      // 后端失败，仅更新本地
+    } catch (err) {
+      console.warn('[motionApi] deleteProfile backend failed, updating local cache only:', err);
     }
     const profiles = storedProfiles().filter((p) => p.id !== id);
     saveProfiles(profiles);
@@ -403,9 +406,17 @@ export const motionApi = {
           try {
             const list = await motionApi.getStatusAll();
             motionApi._listeners.forEach((listener) => {
-              try { listener(list); } catch { /* 忽略回调异常 */ }
+              try {
+                listener(list);
+              } catch (err) {
+                // 监听器回调异常不应中断轮询；记录以便排查上游 store 缺陷
+                console.error('[motionApi] status listener threw:', err);
+              }
             });
-          } catch { /* 主进程不可达时忽略，下个 tick 重试 */ }
+          } catch (err) {
+            // 主进程不可达：下个 tick 重试。debug 级别避免刷屏
+            console.debug('[motionApi] standalone tick failed (will retry):', err);
+          }
         };
         // 与主进程 MotionStatusPoller 节奏保持接近：250ms 兼顾实时性与 HTTP 开销
         slot._standaloneTimer = setInterval(() => { void tick(); }, 250);
@@ -431,14 +442,23 @@ export const motionApi = {
       const unsubscribe = wailsApi.motion.onStatusEvent((data) => {
         if (Array.isArray(data)) {
           motionApi._listeners.forEach((listener) => {
-            try { listener(data as MotionControllerStatus[]); } catch { /* 忽略回调异常 */ }
+            try {
+              listener(data as MotionControllerStatus[]);
+            } catch (err) {
+              // 监听器回调异常不应中断 Wails 事件订阅
+              console.error('[motionApi] status listener threw (Wails):', err);
+            }
           });
         }
       });
       // 返回清理函数，同时移除监听器和 Wails 事件订阅
       return () => {
         motionApi._listeners.delete(cb);
-        try { unsubscribe(); } catch { /* 忽略清理异常 */ }
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.warn('[motionApi] unsubscribe failed:', err);
+        }
       };
     }
 

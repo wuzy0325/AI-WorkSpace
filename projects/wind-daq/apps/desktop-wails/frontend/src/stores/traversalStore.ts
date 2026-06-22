@@ -29,9 +29,7 @@ import type {
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
   TraversalCheckpoint,
-  TraversalErrorCode,
-  DataValidationConfig,
-  StabilizationConfig
+  TraversalErrorCode
 } from '@shared/types/traversal'
 
 export type RealtimePressures = TraversalRawPressure

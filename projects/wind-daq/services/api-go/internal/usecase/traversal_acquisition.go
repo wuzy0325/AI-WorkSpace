@@ -14,6 +14,11 @@ import (
 	"wind-daq/services/api-go/internal/core/traversal"
 )
 
+// stabilityNearZeroEpsilon 稳定性判断中"近零值"的判定阈值
+// 当 |prevVal| 小于该值时，切换为绝对差阈值比较，避免极小分母放大波动。
+// 取值理由：传感器分辨率典型量级（< 1e-3 物理单位）远大于该值，不会误判正常读数。
+const stabilityNearZeroEpsilon = 1e-9
+
 func (m *TraversalManager) RunCurrentPoint() error {
 	m.mu.Lock()
 	// 允许 running 及其子状态（moving/stabilizing/acquiring/saving）进入；
@@ -332,6 +337,10 @@ func (m *TraversalManager) readCurrentValues(deviceID string, channels []int) ma
 }
 
 // isStable 判断两组数据是否在稳定性阈值内
+//
+// 近零值处理：当 |prevVal| 小于 stabilityNearZeroEpsilon 时，
+// 百分比变化在数值上虽然可计算，但语义无意义（极小分母会把任何微小波动放大）；
+// 改用绝对阈值比较（|curVal-prevVal| ≤ threshold）。
 func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64) bool {
 	if prev == nil || cur == nil {
 		return false
@@ -341,8 +350,9 @@ func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64
 		if !ok {
 			return false
 		}
-		if prevVal == 0 {
-			if math.Abs(curVal) > threshold {
+		// 近零值（含精确为 0）：使用绝对差阈值，避免分母被放大
+		if math.Abs(prevVal) < stabilityNearZeroEpsilon {
+			if math.Abs(curVal-prevVal) > threshold {
 				return false
 			}
 			continue

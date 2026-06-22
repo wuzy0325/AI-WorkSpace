@@ -21,8 +21,7 @@ import {
 import type {
   TraversalTestConfig,
   TraversalTestStatus,
-  TraversalPointPhase,
-  TraversalCompleteEvent
+  TraversalPointPhase
 } from '@shared/types/traversal'
 
 /** 各阶段模拟延迟（毫秒） */
@@ -139,7 +138,7 @@ export function useTraversalSimulation() {
 
   /** 可被 AbortSignal 取消的延迟函数 */
   function delay(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       if (signal?.aborted) {
         resolve()
         return
