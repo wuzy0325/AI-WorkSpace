@@ -227,14 +227,6 @@ func TestT1603Adapter_DisconnectStopsAcquisition(t *testing.T)
 - **期望**: 采集自动停止, 无 goroutine 泄漏
 - **优先级**: P1
 
-#### TC-ADP-06: SimulatedAdapter 模拟数据生成
-```go
-func TestSimulatedAdapter_GeneratesData(t *testing.T)
-```
-- **操作**: `Connect` → `StartAcquisition` → 读取 channel
-- **期望**: snapshot.Values 包含合理的模拟温度值（如 20-30°C 范围）
-- **优先级**: P2 ✅ 已实现
-
 #### TC-ADP-07: JSONConfigStore 保存/加载
 ```go
 func TestJSONConfigStore_SaveLoad(t *testing.T)
@@ -325,7 +317,7 @@ func TestApplyConfig(t *testing.T)
 ```go
 func TestScanDevices(t *testing.T)
 ```
-- **期望**: 返回至少 2 个模拟设备
+- **期望**: 返回扫描到的设备列表
 - **优先级**: P2 ✅ 已实现
 
 #### TC-APP-09: 录制生命周期
@@ -396,53 +388,6 @@ func TestSyncDeviceStatus(t *testing.T)
 ```
 - **操作**: `SyncDeviceStatus("dev1")`
 - **期望**: 收到 `daq:device-status` 事件
-- **优先级**: P2
-
----
-
-### 2.5 集成测试 (`tests/integration/`)
-
-#### TC-INT-01: 完整模拟流程
-```go
-func TestSimulatedFullFlow(t *testing.T)
-```
-- **流程**: UpsertProfile → Connect → ApplyConfig → StartAcquisition → 录制 3 条 → StopRecording → StopAcquisition → Disconnect → DeleteProfile
-- **验证点**:
-  - 每个步骤状态正确
-  - 录制 CSV 文件生成且非空
-  - 最终设备列表为空
-- **优先级**: P1 ✅ 已实现
-
-#### TC-INT-02: 多设备同时采集
-```go
-func TestMultiDeviceAcquisition(t *testing.T)
-```
-- **流程**: 添加 3 个设备 → 全部连接 → 全部启动采集 → 验证各设备数据独立 → 全部停止
-- **验证点**:
-  - 各设备 snapshot 互不干扰
-  - 状态独立管理
-- **优先级**: P1
-
-#### TC-INT-03: 采集过程中设备断开
-```go
-func TestAcquisition_DeviceDisconnect(t *testing.T)
-```
-- **流程**: Connect → StartAcquisition → 读取数据 → Disconnect
-- **验证点**:
-  - 断开前能正常收到数据
-  - 断开后 relay goroutine 退出, 无泄漏
-  - 前端收到状态变化事件
-- **优先级**: P1
-
-#### TC-INT-04: 采集过程中网络异常
-```go
-func TestAcquisition_NetworkError(t *testing.T)
-```
-- **流程**: Connect → StartAcquisition → 模拟网络断开 → 验证恢复
-- **验证点**:
-  - 错误被正确处理
-  - 状态变为 Error
-  - 可重新连接
 - **优先级**: P2
 
 ---

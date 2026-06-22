@@ -20,15 +20,7 @@ See `CLAUDE.md` for the project-specific constraints.
 
 ## Modes
 
-Real hardware mode is the default. Configure a DAQ-T-1603 profile in the app with the device IP and port.
-
-Simulated mode:
-
-```powershell
-cd projects/daq-t1603/apps/desktop-wails
-$env:DAQ_T1603_MODE = "simulated"
-go run -buildvcs=false .
-```
+Real hardware mode only. Configure a DAQ-T-1603 profile in the app with the device IP and port.
 
 ## Commands
 

@@ -1,4 +1,4 @@
-﻿# Project Architecture (DAQ-T-1603)
+# Project Architecture (DAQ-T-1603)
 
 This project is a standalone Wails desktop app. Unlike other projects in this workspace, it uses a **single Go module** at `apps/desktop-wails` without a separate `services/api-go` module.
 
@@ -10,7 +10,7 @@ apps/desktop-wails/      # Go module "daq-t1603"
 ├── ports/               # Interface definitions only
 ├── usecase/             # Orchestration (depends on core + ports only)
 ├── adapters/
-│   ├── hardware/        # T1603 device adapter + simulated adapter
+│   ├── hardware/        # T1603 device adapter
 │   ├── config/          # JSON profile persistence
 │   └── recording/       # CSV data recording
 ├── backend/             # Thin Wails binding layer (parameter conversion only)
@@ -60,14 +60,8 @@ cd ../../..
 
 ## Usage
 
-### Real hardware (default)
+### Real hardware
 Connect a DAQ-T-1603 device on the network, add a profile with its IP:port in the app.
-
-### Simulated mode (no hardware needed)
-```powershell
-$env:DAQ_T1603_MODE = "simulated"
-go run -buildvcs=false .
-```
 
 ### Wails desktop app build
 ```powershell

@@ -22,7 +22,7 @@ DAQ-T-1603 is a standalone Wails desktop application for:
 - device profile management
 - DAQ-T-1603 acquisition and monitoring
 - CSV recording
-- simulated and real-hardware operation
+- real-hardware operation
 
 This project intentionally uses a single Go module under `apps/desktop-wails`, but it must still preserve the workspace hexagonal boundaries inside that module.
 
