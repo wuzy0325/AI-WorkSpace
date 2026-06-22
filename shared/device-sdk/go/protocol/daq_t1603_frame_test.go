@@ -517,6 +517,198 @@ func TestReadFrame_PrefixedASCIIFrameWithNewline(t *testing.T) {
 	}
 }
 
+// --- 72-byte binary timestamp frame tests ---
+
+func encodeBinaryFrameWithTimestamp(sec uint32, nsec uint32, values []float64) []byte {
+	frame := make([]byte, 72)
+	binary.LittleEndian.PutUint32(frame[0:4], sec)
+	binary.LittleEndian.PutUint32(frame[4:8], nsec)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(frame[8+i*4:], math.Float32bits(float32(v)))
+	}
+	return frame
+}
+
+func TestParseTCPFrameEx_72ByteBinaryTimestamp(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+
+	frame := encodeBinaryFrameWithTimestamp(1781803881, 179316583, vals)
+	if len(frame) != 72 {
+		t.Fatalf("frame length = %d, want 72", len(frame))
+	}
+
+	result, err := ParseTCPFrameEx(frame)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+
+	expectedTS := 1781803881.179316583
+	if result.HardwareTimestamp != expectedTS {
+		t.Errorf("timestamp = %f, want %f", result.HardwareTimestamp, expectedTS)
+	}
+	if len(result.Temperatures) != 16 {
+		t.Fatalf("expected 16 temperatures, got %d", len(result.Temperatures))
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestParseTCPFrameEx_72ByteInvalidSize(t *testing.T) {
+	_, err := ParseTCPFrameEx(make([]byte, 71))
+	if err == nil {
+		t.Error("expected error for 71-byte frame")
+	}
+	_, err = ParseTCPFrameEx(make([]byte, 73))
+	if err == nil {
+		t.Error("expected error for 73-byte frame")
+	}
+}
+
+func TestReadFrame_BinaryTimestampMode(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.SetMetadataMode(true)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithTimestamp(1781803881, 179316583, vals)
+
+	go func() {
+		_, _ = server.Write(frame)
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != 72 {
+		t.Fatalf("frame length = %d, want 72", len(raw))
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+
+	expectedTS := 1781803881.179316583
+	if result.HardwareTimestamp != expectedTS {
+		t.Errorf("timestamp = %f, want %f", result.HardwareTimestamp, expectedTS)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestReadFrame_BinaryTimestampModeFromChunks(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.SetMetadataMode(true)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithTimestamp(1781803881, 179316583, vals)
+
+	go func() {
+		_, _ = server.Write(frame[:40])
+		time.Sleep(10 * time.Millisecond)
+		_, _ = server.Write(frame[40:])
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != 72 {
+		t.Fatalf("frame length = %d, want 72", len(raw))
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.HardwareTimestamp != 1781803881.179316583 {
+		t.Errorf("timestamp = %f, want 1781803881.179316583", result.HardwareTimestamp)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestReadFrame_BinaryTimestampModeAfterACK(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.SetMetadataMode(true)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithTimestamp(1781803881, 179316583, vals)
+
+	go func() {
+		_, _ = server.Write(append([]byte{'A'}, frame...))
+	}()
+
+	consumed, err := reader.ConsumeOptionalACK(50 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("ConsumeOptionalACK returned error: %v", err)
+	}
+	if !consumed {
+		t.Fatalf("expected ACK to be consumed")
+	}
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != 72 {
+		t.Fatalf("frame length = %d, want 72", len(raw))
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.HardwareTimestamp != 1781803881.179316583 {
+		t.Errorf("timestamp = %f, want 1781803881.179316583", result.HardwareTimestamp)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
 func TestReadFrame_FixedWidthASCIIFrameFromChunks(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

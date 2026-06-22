@@ -35,6 +35,7 @@ func ParseSerialFrame(data []byte) ([]float64, error) {
 // -- DAQ-T-1603 TCP frame parsing --
 
 const TCPFrameSize = 64
+const TCPFrameSizeWithTimestamp = 72 // 8 bytes timestamp header + 64 bytes float32 data
 const maxReasonableThermocoupleTemp = 300.0
 
 // ParseTCPFrame parses TCP data frame.
@@ -86,7 +87,9 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 			reasonableCount++
 		}
 	}
-	return reasonableCount >= len(temps)*3/4
+	// 半数通道在合理温度区间即视为有效帧；
+	// 16 路设备常有 5~7 路未接热电偶（读数饱和/NaN），不能因此判定整帧错位。
+	return reasonableCount >= len(temps)/2
 }
 
 // ParseASCIIFrame parses a 192-byte ASCII text frame.
@@ -127,13 +130,42 @@ type T1603ParsedFrame struct {
 	Temperatures      []float64
 }
 
+// parseBinaryFrameWithTimestamp parses a 72-byte binary frame with timestamp header.
+// Format: [uint32 seconds LE][uint32 nanoseconds LE][16 × float32 LE]
+// Channel order from device is CH15→CH0, results are reversed to CH0→CH15.
+func parseBinaryFrameWithTimestamp(data []byte) (*T1603ParsedFrame, error) {
+	if len(data) != TCPFrameSizeWithTimestamp {
+		return nil, fmt.Errorf("invalid frame size: %d, expected %d", len(data), TCPFrameSizeWithTimestamp)
+	}
+
+	sec := binary.LittleEndian.Uint32(data[0:4])
+	ns := binary.LittleEndian.Uint32(data[4:8])
+	ts := float64(sec) + float64(ns)/1e9
+
+	temps := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		bits := binary.LittleEndian.Uint32(data[8+i*4:])
+		temps[i] = float64(math.Float32frombits(bits))
+	}
+
+	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
+		temps[i], temps[j] = temps[j], temps[i]
+	}
+
+	return &T1603ParsedFrame{
+		HardwareTimestamp: ts,
+		Temperatures:      temps,
+	}, nil
+}
+
 // ParseTCPFrameEx parses a TCP frame with optional metadata prefix.
 // The device can prefix data with sequence number (@fe HEAD 1) and
 // hardware timestamp (@fe TIME 1). The space-separated format is:
 //
 //	[seq] [timestamp] t1 t2 ... t16
 //
-// Fixed-width 192-byte and 64-byte binary frames are also supported.
+// Fixed-width 192-byte ASCII, 64-byte binary, and 72-byte binary-with-timestamp
+// frames are also supported.
 func ParseTCPFrameEx(data []byte) (*T1603ParsedFrame, error) {
 	switch len(data) {
 	case TCPFrameSize:
@@ -142,6 +174,8 @@ func ParseTCPFrameEx(data []byte) (*T1603ParsedFrame, error) {
 			return nil, err
 		}
 		return &T1603ParsedFrame{Temperatures: temps}, nil
+	case TCPFrameSizeWithTimestamp:
+		return parseBinaryFrameWithTimestamp(data)
 	case 192:
 		temps, err := ParseASCIIFrame(data)
 		if err != nil {
@@ -207,10 +241,12 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 // not yet received a full frame. The caller should retry.
 var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 
-// T1603FrameReader reads fixed-size or variable-length frames from a DAQ-T-1603
-// device over TCP. When metadata mode is active (TIME or HEAD enabled),
-// frames are newline-terminated and variable-length.
-// Without metadata, frames are fixed-size (192-byte ASCII or 64-byte binary).
+// T1603FrameReader reads frames from a DAQ-T-1603 device over TCP.
+// Mode combinations:
+//   - BIN=0, metadata=false → 192-byte fixed ASCII
+//   - BIN=1, metadata=false → 64-byte fixed binary
+//   - BIN=0, metadata=true  → newline-terminated variable ASCII (TIME/HEAD)
+//   - BIN=1, metadata=true  → 72-byte fixed binary with timestamp header
 type T1603FrameReader struct {
 	conn          net.Conn
 	mu            sync.Mutex
@@ -234,7 +270,10 @@ func (r *T1603FrameReader) SetBinaryMode(binary bool) {
 	r.mu.Unlock()
 }
 
-// SetMetadataMode enables variable-length newline-terminated frame mode.
+// SetMetadataMode enables metadata prefix mode.
+// When true and binaryMode is false, reads newline-terminated variable-length
+// ASCII frames. When true and binaryMode is true, reads 72-byte fixed frames
+// with 8-byte hardware timestamp header.
 // Set true when @fe TIME or @fe HEAD is enabled on the device.
 func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
 	r.mu.Lock()
@@ -243,13 +282,22 @@ func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
 }
 
 // ReadFrame reads one complete frame from the device.
-// In metadata mode, reads until newline. In fixed mode, reads fixed-size chunks.
+// Routing:
+//   - metadataMode + binaryMode     → 72-byte fixed binary with timestamp
+//   - metadataMode + !binaryMode    → variable-length newline-terminated text
+//   - !metadataMode + binaryMode    → 64-byte fixed binary
+//   - !metadataMode + !binaryMode   → 192-byte fixed ASCII
 func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 	r.mu.Lock()
 	mm := r.metadataMode
+	bm := r.binaryMode
 	r.mu.Unlock()
 
-	if mm {
+	// BIN=1, TIME/HEAD=1: 72-byte fixed binary with timestamp header
+	// BIN=0, TIME/HEAD=1: variable-length newline-terminated ASCII
+	// BIN=1, TIME/HEAD=0: 64-byte fixed binary
+	// BIN=0, TIME/HEAD=0: 192-byte fixed ASCII
+	if mm && !bm {
 		return r.readFrameVariable()
 	}
 	return r.readFrameFixed()
@@ -266,19 +314,27 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	r.mu.Unlock()
 
 	tmp := make([]byte, frameSize)
-	n, err := r.conn.Read(tmp)
-	if err != nil {
-		return nil, err
-	}
+	for {
+		n, err := r.conn.Read(tmp)
+		if err != nil {
+			return nil, err
+		}
+		// 防御 (0, nil)：net.Conn 在边缘情况下（清除 deadline 期间、零字节
+		// TCP 段）可能返回 0 字节且无 error。作为瞬态处理，continue 而非
+		// 返回错误，避免单次零字节读取终止整个采集循环。
+		if n == 0 {
+			continue
+		}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.buffer = append(r.buffer, tmp[:n]...)
-	if len(r.buffer) >= frameSize {
-		return r.extractFrameLocked(frameSize), nil
+		r.mu.Lock()
+		r.buffer = append(r.buffer, tmp[:n]...)
+		if len(r.buffer) >= frameSize {
+			frame := r.extractFrameLocked(frameSize)
+			r.mu.Unlock()
+			return frame, nil
+		}
+		r.mu.Unlock()
 	}
-	return nil, ErrIncompleteFrame
 }
 
 // findFieldEnd scans buf for N space-separated fields and returns the
@@ -344,6 +400,10 @@ func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if n == 0 {
+			// 零字节 TCP 段是瞬态，continue 避免终止采集循环
+			continue
+		}
 
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
@@ -361,7 +421,10 @@ func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
 
 func (r *T1603FrameReader) frameSizeLocked() int {
 	if r.binaryMode {
-		return 64
+		if r.metadataMode {
+			return TCPFrameSizeWithTimestamp // 72 bytes: 8 header + 64 float32
+		}
+		return TCPFrameSize // 64 bytes
 	}
 	return 192
 }
@@ -391,13 +454,17 @@ func (r *T1603FrameReader) Reset() {
 	r.buffer = make([]byte, 0, 256)
 }
 
-// Resync 丢弃缓冲区中 1 字节数据，用于帧解析失败后的重同步。
-// 当 processPayload 解析帧失败时，调用此方法跳过 1 字节，
-// 避免残留数据导致后续帧持续错位。
+// Resync 丢弃缓冲区中 1 字节数据用于重同步。
+// 仅在缓冲区有数据时生效；缓冲区为空则不做任何 I/O，
+// 等待下一次 ReadFrame 读到新数据后再由调用方决定是否再次 Resync。
+// 这样保证 Resync 不会持锁阻塞在 conn.Read 上，避免与
+// SetBinaryMode/SetMetadataMode/Reset 等持锁操作互相阻塞。
 func (r *T1603FrameReader) Resync() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if len(r.buffer) > 0 {
+		// 缓冲区有数据，丢弃其中首字节
 		r.buffer = r.buffer[1:]
 		if len(r.buffer) == 0 {
 			r.buffer = make([]byte, 0, 256)

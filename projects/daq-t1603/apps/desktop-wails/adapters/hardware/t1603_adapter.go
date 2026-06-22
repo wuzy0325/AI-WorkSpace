@@ -369,11 +369,14 @@ func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 	dev, hasDev := a.drivers[id]
 	if hasDev {
 		ds := dev.Status()
+		// 信任驱动层状态：硬件层是 acquiring/connection 的唯一真相源。
+		// 此前用 'st.Status != StatusAcquiring' 守卫想抑制闪烁，但会使
+		// StopAcquisition 后 Status() 永远卡在 Acquiring，反映不到 Connected。
 		if ds.Connection == sharedcore.ConnectionDisconnected {
 			st.SetStatus(core.StatusDisconnected)
 		} else if ds.Acquiring {
 			st.SetStatus(core.StatusAcquiring)
-		} else if st.Status != core.StatusAcquiring {
+		} else {
 			st.SetStatus(core.StatusConnected)
 		}
 	} else {

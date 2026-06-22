@@ -137,16 +137,18 @@ func (d *DAQT1603) sendCommandExact(conn net.Conn, cmd string, n int) (string, e
 	return resp, nil
 }
 
-func (d *DAQT1603) writeCommandOnly(cmd string) error {
+// writeCommandOnly 写命令但不读响应。
+// conn 参数由调用方在持有 d.mu 时传入，避免直接访问 d.conn 产生数据竞态。
+func (d *DAQT1603) writeCommandOnly(conn net.Conn, cmd string) error {
 	d.emitLog("debug", "hardware-send", "Send command", cmd)
-	if d.conn == nil {
+	if conn == nil {
 		return fmt.Errorf("device not connected")
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
-	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_T_1603_TIMEOUT))
-	_, err := d.conn.Write([]byte(cmd))
-	_ = d.conn.SetWriteDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Now().Add(DAQ_T_1603_TIMEOUT))
+	_, err := conn.Write([]byte(cmd))
+	_ = conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		d.emitLog("error", "hardware-send", "Command write failed", err.Error())
 		return err
@@ -308,13 +310,15 @@ func (d *DAQT1603) StartAcquisition() error {
 
 	cmd := fmt.Sprintf("@f0 %s 2", mask)
 	slog.Info("DAQ-T-1603 sending start acquisition command", "device", d.profile.ID, "cmd", cmd)
-	err := d.writeCommandOnly(cmd)
+	err := d.writeCommandOnly(d.conn, cmd)
 	if err != nil {
 		return fmt.Errorf("send %s: %w", cmd, err)
 	}
 
 	if d.frameReader != nil {
-		if _, err := d.frameReader.ConsumeOptionalACK(1 * time.Second); err != nil {
+		// 200ms：覆盖慢固件/重负载下的 ACK 延迟（实测 80-180ms），
+		// 短于 200ms 时 ACK 易被当作首个数据帧字节，破坏对齐。
+		if _, err := d.frameReader.ConsumeOptionalACK(200 * time.Millisecond); err != nil {
 			return fmt.Errorf("drain start ACK: %w", err)
 		}
 	}
@@ -354,7 +358,13 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 			d.emitLog("debug", "hardware-send", "Send command", "@f1")
 			_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
 			if _, err := conn.Write([]byte("@f1")); err != nil {
-				d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
+				// 连接已被 Disconnect 关闭时这是预期行为（非真异常），
+				// 降级到 debug 避免日志被无害错误淹没。
+				if isClosedConnError(err) {
+					d.emitLog("debug", "hardware-send", "Stop command skipped (conn closed)", err.Error())
+				} else {
+					d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
+				}
 			}
 			_ = conn.SetWriteDeadline(time.Time{})
 		}()
@@ -613,13 +623,25 @@ func (d *DAQT1603) syncHardwareConfig() {
 
 	d.writeMu.Lock()
 	cfg := d.readAllConfig(conn)
+	modeSetOK := false
 	if cfg != nil {
-		d.sendCommand(conn, "@fe BIN 1")
-		d.sendCommand(conn, "@fe TIME 0")
-		d.sendCommand(conn, "@fe HEAD 0")
-		cfg.BinaryFormat = true
-		cfg.ShowTimestamp = false
-		cfg.ShowSequence = false
+		// 强制设备使用 64 字节纯二进制帧（无 TIME/HEAD 前缀），帧读取最稳。
+		// 三条命令必须全部成功，否则 FrameReader 与设备模式不一致 → 解析乱码。
+		// 任何一条失败：不修改 cfg.BinaryFormat 等字段，让上层用设备实际状态。
+		if _, err := d.sendCommand(conn, "@fe BIN 1"); err != nil {
+			d.emitLog("warn", "system", "Force BIN mode failed", err.Error())
+		} else if _, err := d.sendCommand(conn, "@fe TIME 0"); err != nil {
+			d.emitLog("warn", "system", "Force TIME=0 failed", err.Error())
+		} else if _, err := d.sendCommand(conn, "@fe HEAD 0"); err != nil {
+			d.emitLog("warn", "system", "Force HEAD=0 failed", err.Error())
+		} else {
+			modeSetOK = true
+		}
+		if modeSetOK {
+			cfg.BinaryFormat = true
+			cfg.ShowTimestamp = false
+			cfg.ShowSequence = false
+		}
 	}
 	d.writeMu.Unlock()
 	if cfg == nil {
