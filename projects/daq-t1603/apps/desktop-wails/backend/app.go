@@ -284,6 +284,10 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.T
 	var latest core.TemperatureSnapshot
 	hasLatest := false
 
+	// 录制状态判断通过 RecordingUsecase.IsActive()（atomic.Bool），无锁、O(1)，
+	// 每条 snapshot 直接查询，既避免锁竞争又不丢数据。
+	// （此前缓存策略每秒只刷新一次，会丢失录制开启后 1s 内的全部样本。）
+
 	defer func() {
 		if hasLatest {
 			a.emitPayload(latest)
@@ -301,7 +305,7 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.T
 			}
 			latest = snapshot
 			hasLatest = true
-			if a.recordUC.Status().Status == core.RecordingActive {
+			if a.recordUC.IsActive() {
 				if err := a.recordUC.Write(snapshot); err != nil {
 					a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: deviceID, Source: "recording", Message: "Record snapshot failed", Detail: err.Error()})
 				}
@@ -311,7 +315,7 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.T
 				a.emitPayload(latest)
 			}
 		case <-statusTicker.C:
-			if a.recordUC.Status().Status == core.RecordingActive {
+			if a.recordUC.IsActive() {
 				a.emitRecordingStatus(a.recordUC.Status())
 			}
 		}

@@ -151,6 +151,12 @@ func (f *fakeRecordingPort) Stop() error {
 	return nil
 }
 
+func (f *fakeRecordingPort) IsActive() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.status == core.RecordingActive
+}
+
 func (f *fakeRecordingPort) Status() core.RecordingSession {
 	f.mu.Lock()
 	defer f.mu.Unlock()

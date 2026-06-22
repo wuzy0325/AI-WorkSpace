@@ -204,20 +204,46 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 }
 
 func (a *T1603Adapter) Disconnect(id string) error {
+	// 在锁内只做状态翻转和驱动取出；硬件 I/O（StopAcquisition / Disconnect）
+	// 一律放到锁外，避免与 OnReadLoopExit/OnConfigSynced 回调相互死锁。
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_ = a.stopAcquisitionLocked(id)
 	dev, ok := a.drivers[id]
 	if !ok {
+		a.mu.Unlock()
 		return nil
 	}
-	delete(a.drivers, id)
+	// 标记停止意图并清理共享 channel/sink，让后续回调走静默退出分支。
+	if done, exists := a.stopChs[id]; exists {
+		close(done)
+		delete(a.stopChs, id)
+	}
 	delete(a.sinks, id)
+	delete(a.drivers, id)
 	if st, exists := a.status[id]; exists {
 		st.SetStatus(core.StatusDisconnected)
 	}
-	return dev.Disconnect()
+	// channels[id] 由 dev.StopAcquisition() 在锁外完成后再关闭，避免与生产者并发。
+	chToClose, hasCh := a.channels[id]
+	if hasCh {
+		delete(a.channels, id)
+	}
+	a.mu.Unlock()
+
+	// 锁外：先停止采集，再关闭驱动；任一步骤失败都不影响其余清理。
+	var stopErr error
+	if dev != nil {
+		stopErr = dev.StopAcquisition()
+	}
+	if hasCh {
+		close(chToClose)
+	}
+	if dev == nil {
+		return nil
+	}
+	if err := dev.Disconnect(); err != nil {
+		return err
+	}
+	return stopErr
 }
 
 func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnapshot, error) {
@@ -232,7 +258,9 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		return nil, fmt.Errorf("device %s already acquiring", id)
 	}
 
-	ch := make(chan core.TemperatureSnapshot, 8192)
+	// channel 缓冲区大小：65536 帧，在 1000Hz 下提供约 65 秒缓冲，
+	// 多设备场景下确保 CSV flush 阻塞时不会立即反压到硬件 readLoop
+	ch := make(chan core.TemperatureSnapshot, 65536)
 	done := make(chan struct{})
 	a.channels[id] = ch
 	a.stopChs[id] = done
@@ -334,11 +362,37 @@ func isConnectionFault(err error) bool {
 }
 
 func (a *T1603Adapter) StopAcquisition(id string) error {
+	// 锁内只标记停止 + 提取驱动句柄；dev.StopAcquisition 必须在锁外调用，
+	// 否则会与 OnReadLoopExit/OnConfigSynced 回调互锁。
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.stopAcquisitionLocked(id)
+	dev, ok := a.drivers[id]
+	if !ok {
+		a.mu.Unlock()
+		return nil
+	}
+	if done, exists := a.stopChs[id]; exists {
+		close(done)
+		delete(a.stopChs, id)
+	}
+	delete(a.sinks, id)
+	chToClose, hasCh := a.channels[id]
+	if hasCh {
+		delete(a.channels, id)
+	}
+	if st, exists := a.status[id]; exists {
+		st.SetStatus(core.StatusConnected)
+	}
+	a.mu.Unlock()
+
+	stopErr := dev.StopAcquisition()
+	if hasCh {
+		close(chToClose)
+	}
+	return stopErr
 }
 
+// stopAcquisitionLocked 保留供内部需要在已持锁路径下使用；调用方需自行确保
+// dev.StopAcquisition 不会回调 a.mu，否则务必改用 StopAcquisition。
 func (a *T1603Adapter) stopAcquisitionLocked(id string) error {
 	dev, ok := a.drivers[id]
 	if !ok {
