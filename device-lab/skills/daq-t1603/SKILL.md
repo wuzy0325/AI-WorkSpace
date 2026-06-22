@@ -47,11 +47,15 @@ await driver.disconnect()
 
 ### 1.2 数据格式速查
 
-| 格式 | BIN | 帧大小 | 编码 | 解析方式 | 推荐 |
-|------|-----|--------|------|---------|------|
-| 二进制 | `1` | **64 字节** | float32 LE | `readFloatLE` × 16 + `.reverse()` | **★ 推荐** |
-| ASCII | `0` | **192 字节** | 12 字符/字段定宽 | `trim().split(/\s+/).map(Number).reverse()` | 调试用 |
-| 串口 | — | 46 字节 | int16 BE × 0.1℃/LSB | `readInt16BE` × 16 | 串口专用 |
+| 格式 | BIN | TIME/HEAD | 帧大小 | 编码 | 解析方式 | 推荐 |
+|------|-----|-----------|--------|------|---------|------|
+| 二进制 | `1` | 0 | **64 字节** | float32 LE | `readFloatLE` × 16 + `.reverse()` | **★ 推荐** |
+| 二进制带时间戳 | `1` | 1 | **72 字节** | `[uint32 sec LE][uint32 ns LE]` + 16×float32 LE | 读 8B 时间戳 + 16×`readFloatLE` + `.reverse()` | 需硬件时间戳时 |
+| ASCII | `0` | 0 | **192 字节** | 12 字符/字段定宽 | `trim().split(/\s+/).map(Number).reverse()` | 调试用 |
+| ASCII 变长 | `0` | 1 | **不定长** | 空格分隔连续流 | 字段计数法（17 或 18 token） | 需元数据时 |
+| 串口 | — | — | 46 字节 | int16 BE × 0.1℃/LSB | `readInt16BE` × 16 | 串口专用 |
+
+> **帧路由由两个开关决定**：`binaryMode`（BIN）与 `metadataMode`（TIME 或 HEAD）。四个组合对应四种 TCP 帧格式，详见 §2.4。
 
 ### 1.3 状态机
 
@@ -60,8 +64,10 @@ Disconnected ──connect()──→ Connected ──startAcquisition()──�
      ↑                            ↑                                 │
      │                            │                                 │
      └──disconnect()──────────────┴──stopAcquisition()──────────────┘
-                                       │
-                                       └──→ Error（异常断连）
+     │                                                              │
+     │            disconnect() 内部会先 stopAcquisition()            │
+     │                                                              │
+     └────────────────── readLoop 异常退出（连接故障/无数据超时）────────┘
 ```
 
 ---
@@ -89,6 +95,31 @@ func parseBinaryFrame(raw: byte[64]) -> float64[16]:
     // ★ 设备发送 CH15→CH0，反转成 CH0→CH15
     return reverse(values)
 ```
+
+### 2.1.1 二进制带时间戳帧（BIN=1 + TIME=1 或 HEAD=1，72 字节）
+
+当 `binaryMode=true` 且 `metadataMode=true` 时，设备在 16 个 float32 之前附加 8 字节时间戳头。
+
+| 属性 | 值 |
+|------|------|
+| 帧大小 | **72 字节**（8B 头 + 64B 数据，固定，无分隔符） |
+| 头部 | `[uint32 秒 LE][uint32 纳秒 LE]` |
+| 数据区 | 16 × float32 LE |
+| 通道顺序 | **CH15 → CH0**，解析后需 `.reverse()` |
+| 硬件时间戳 | `float64(sec) + float64(ns) / 1e9`（秒，纳秒精度） |
+
+**解析伪代码：**
+```pseudocode
+func parseBinaryFrameWithTimestamp(raw: byte[72]) -> (ts: float64, values: float64[16]):
+    sec  = uint32LE(raw[0:4])
+    ns   = uint32LE(raw[4:8])
+    ts   = float64(sec) + float64(ns) / 1e9
+    for i = 0; i < 16; i++:
+        values[i] = float64( readFloat32LE(raw, 8 + i * 4) )
+    return (ts, reverse(values))
+```
+
+> **注意**：HEAD=1（仅序号）而 BIN=1 时，设备实际并不发独立序号字段——二进制模式下序号被并入时间戳头，按 72 字节定长读取即可。若需要序列号字段，应在 ASCII 变长模式下使用 HEAD=1。
 
 **合法性校验：**
 ```pseudocode
@@ -217,24 +248,32 @@ func parseSerialFrame(raw: byte[46]) -> float64[16]:
 ```pseudocode
 class FrameReader:
     buffer: byte[]           // 内部累积缓冲区
-    frameSize: int           // 64（BIN=1）或 192（BIN=0）
-    metadataMode: bool       // true=变长字段计数法, false=定长读取
+    binaryMode: bool         // BIN 标志
+    metadataMode: bool       // TIME 或 HEAD 标志
 
     func setBinaryMode(isBinary: bool):
-        this.frameSize = isBinary ? 64 : 192
+        this.binaryMode = isBinary
 
     func setMetadataMode(enabled: bool):
-        // 当 TIME=1 或 HEAD=1 时启用变长模式
+        // 当 TIME=1 或 HEAD=1 时启用元数据模式
         this.metadataMode = enabled
 
+    func frameSize() -> int:
+        // ★ 四种组合对应四种帧大小
+        if binaryMode and metadataMode:  return 72   // 二进制 + 时间戳头
+        if binaryMode:                   return 64   // 纯二进制
+        // ASCII + metadataMode 走变长分支，不返回定长
+        return 192                                  // 纯 ASCII 定长
+
     func readFrame() -> byte[]:
-        if metadataMode:
+        // ★ 路由：仅 ASCII + metadataMode 走变长，其余三种走定长
+        if metadataMode and not binaryMode:
             return this.readFrameVariable()
         else:
-            return this.readFrameFixed()
+            return this.readFrameFixed(frameSize())
 
-    // —— 定长模式（BIN=0 标准 ASCII 或 BIN=1 二进制）——
-    func readFrameFixed() -> byte[]:
+    // —— 定长模式（64 / 72 / 192 字节）——
+    func readFrameFixed(frameSize: int) -> byte[]:
         // 检查 buffer 是否有完整帧
         if buffer.length >= frameSize:
             return buffer.extract(frameSize)
@@ -397,11 +436,13 @@ func connect():
 
 ### 4.2 配置同步（syncHardwareConfig）
 
-连接后 300ms 自动执行，逐条查询设备当前配置。**读取后不做修改**，保持设备已有参数不变。
+连接后 300ms 自动执行，先逐条查询设备当前配置，**再强制归一化为最稳的二进制模式**（BIN=1 / TIME=0 / HEAD=0）。归一化三命令必须全部成功，否则保留设备实际状态不动。
 
 ```pseudocode
 func syncHardwareConfig():
-    // —— 查询设备当前参数 ——
+    sleep(300ms)   // 连接建立后等设备就绪
+
+    // —— 1. 查询设备当前参数 ——
     config.thermocoupleTypes = sendCommandExact("@e3", 16)
     config.channelMask       = sendCommandIdle("@fd MCH")
     config.samplingRate      = parseInt(sendCommandIdle("@fd SPS"))
@@ -412,16 +453,33 @@ func syncHardwareConfig():
     config.triggerMode       = parseInt(sendCommandExact("@fd TYPE", 1))
     config.triggerEdge       = parseInt(sendCommandExact("@fd TRIG", 1))
     config.triggerCount      = parseInt(sendCommandIdle("@fd TNUM"))
+    // 注意：不查询 @fd CHECK，openCircuitCheck 字段保持空，需按需单独调用
 
-    // —— 根据读回配置设置帧读取器模式 ——
+    // —— 2. 强制归一化为 64 字节纯二进制帧 ——
+    // 三条命令必须全部成功，否则 FrameReader 与设备模式不一致 → 解析乱码
+    modeSetOK = false
+    if sendCommand("@fe BIN 1")  succeeds and
+       sendCommand("@fe TIME 0") succeeds and
+       sendCommand("@fe HEAD 0") succeeds:
+        modeSetOK = true
+
+    // —— 3. 仅在三命令全成功时覆盖本地配置 ——
+    if modeSetOK:
+        config.binaryFormat  = true
+        config.showTimestamp = false
+        config.showSequence  = false
+    // 任一失败：保留第 1 步读回的实际值，由上层决定如何处理
+
+    // —— 4. 根据最终配置设置帧读取器模式 ——
     frameReader.setBinaryMode(config.binaryFormat)
-    // ★ 关键：TIME=1 或 HEAD=1 时启用 metadataMode
     frameReader.setMetadataMode(config.showTimestamp || config.showSequence)
 
     onConfigSynced(config)           // 通知外部配置已就绪
 ```
 
-> **BIN=1 固件兼容说明**：某些固件（如 temp 型号）不支持二进制模式，`@fd BIN` 始终返回 `0`，自动回退为 ASCII 帧读取。向 temp 型号发送 `@fe BIN 1` 时，设备返回 `A`（ACK）但实际不生效，`@fd BIN` 仍返回 `0`。驱动应通过配置同步检测此情况，将 `binaryFormat` 强制设为 `false`。
+> **temp 型号固件说明（重要）**：temp 型号固件不支持二进制模式。向其发送 `@fe BIN 1` 时设备**仍回 `A`（ACK）但实际不生效**，`@fd BIN` 仍返回 `0`。当前同步流程**不重新查询 `@fd BIN` 验证生效**，因此 `modeSetOK=true` 会错误地把 `binaryFormat` 置为 `true`，导致 FrameReader 按 64 字节二进制解析设备实际发送的 ASCII 帧 → 帧错位。
+>
+> **已知限制**：驱动未实现 temp 型号自动检测与 ASCII 回退。使用 temp 型号时，必须由上层在 `ApplyConfig` 中显式设 `binaryFormat=false`，并避免依赖 sync 的强制归一化结果。
 
 ### 4.3 启动前准备（StartAcquisition preamble）
 
@@ -430,6 +488,7 @@ func syncHardwareConfig():
 ```pseudocode
 func startAcquisitionPreamble():
     writeCommandOnly("@f1")                     // 停止任何残留采集流
+    sleep(50ms)                                 // 等设备处理停止命令
     drainConnection(conn, waitTime=100ms)       // 排空 TCP 缓冲区
     frameReader.reset()                         // 清空内部 buffer
     // ★ 根据当前配置设置帧读取器模式
@@ -456,7 +515,10 @@ func startAcquisition():
 
     // 消费可选的 ACK 前导
     // BIN=1 时部分固件发 'A' / 'A\n'，部分不发，超时 200ms 即过
-    consumeOptionalACK(timeout=200ms)
+    // ★ ConsumeOptionalACK 返回 error 时直接终止 StartAcquisition（非 ACK 字节
+    //   被回填到 buffer，不视为错误；仅 I/O 错误才返回 error）
+    if consumeOptionalACK(timeout=200ms) returns error:
+        return error
 
     // 启动读取循环
     startAsync(readLoop)
@@ -468,13 +530,25 @@ func startAcquisition():
 ```pseudocode
 func readLoop():
     capturedConn = currentConn   // ★ 入口捕获连接引用，防并发替换
+    lastDataAt = now()
+    consecutiveFrameErrors = 0
+    unexpectedErr = null
 
-    while acquiring:
+    // —— defer：仅在异常退出时发 @f1，正常停止不发 ——
+    defer:
+        if unexpectedErr != null:
+            capturedConn.write("@f1")     // 异常退出才确保停止
+            acquiring = false
+            onReadLoopExit(unexpectedErr)
+        signal(readLoopDone)              // 通知外部 readLoop 已退出
+
+    while stop not signaled:
         rawBytes = capturedConn.read(timeout=200ms)
 
         if rawBytes == null:     // 超时
-            if noDataTimeout > 10s:
-                break
+            if now() - lastDataAt > 10s:   // 无数据超时
+                unexpectedErr = "no data timeout"
+                return
             continue
 
         frameReader.feed(rawBytes)
@@ -482,7 +556,9 @@ func readLoop():
         while frameReader.hasCompleteFrame():
             frame = frameReader.readFrame()
             // ★ 按当前配置分流解析
-            if currentConfig.binaryFormat:
+            if currentConfig.binaryFormat and (currentConfig.showTimestamp or currentConfig.showSequence):
+                (hwTs, values) = parseBinaryFrameWithTimestamp(frame)
+            else if currentConfig.binaryFormat:
                 values = parseBinaryFrame(frame)
             else if currentConfig.showTimestamp || currentConfig.showSequence:
                 (_, _, values) = parseMetadataFrame(frame)
@@ -492,26 +568,40 @@ func readLoop():
             values = reverse(values)
             // 合法性校验
             if not isValidFrame(values):
+                consecutiveFrameErrors++
+                // ★ 连续 5 次失败 → 自动重同步
+                if consecutiveFrameErrors >= 5:
+                    frameReader.resync()    // 丢弃缓冲区首字节重新对齐
+                    consecutiveFrameErrors = 0
                 continue
+            consecutiveFrameErrors = 0
+            lastDataAt = now()
             // 发出数据
-            onData({ deviceId, timestamp, values, unit: "°C" })
+            onData({ deviceId, timestamp, hardwareTimestamp: hwTs, values, unit: "°C" })
 
-    // —— defer 异常退出清理 ——
-    capturedConn.write("@f1")      // 确保停止
-    acquiring = false
-    onReadLoopExit()
-    signal(readLoopDone)           // 通知外部 readLoop 已退出
+    // 正常停止：defer 中 unexpectedErr==null，不发 @f1
 ```
+
+> **Resync 设计要点**：`resync()` 仅丢弃内部 buffer 首字节，**不持锁阻塞在 conn.Read 上**，避免与 `setBinaryMode` / `setMetadataMode` / `reset` 等持锁操作互相阻塞。buffer 为空时不做任何 I/O，等下次读到新数据再由调用方决定是否再次 resync。
 
 ### 4.6 StopAcquisition
 
 ```pseudocode
 func stopAcquisition():
-    signal(stop)                   // 通知 readLoop 正常退出
-    wait(readLoopDone)             // 等待 readLoop 完全结束
-    writeCommandOnly("@f1")        // 发送停止命令
+    if acquiring:
+        close(stopSignal)          // 通知 readLoop 正常退出
+    acquiring = false
+    // ★ 异步发送 @f1（goroutine），不阻塞调用方
+    //   连接已被 Disconnect 关闭时写失败属预期，降级为 debug 日志
+    if wasAcquiring:
+        go func():
+            writeLock.lock()
+            capturedConn.write("@f1", timeout=500ms)
+            writeLock.unlock()
     frameReader.reset()            // 清空缓冲区
 ```
+
+> **注意**：StopAcquisition **不等待 readLoop 退出**。等待 readLoop 退出的逻辑在 **StartAcquisition** 入口：若上一次的 `readLoopDone` 仍在，先等其结束（最多 3s 超时），再启动新循环。这避免「停止→立即启动」时旧 readLoop 与新 readLoop 并发读同一连接。
 
 ### 4.7 Disconnect
 
@@ -575,6 +665,8 @@ func sendCommandIdle(cmd: string) -> string:
 
 **`@fd CHECK` 响应格式：** 4 位十六进制掩码，每 bit 对应一个通道（bit0=CH0，bit15=CH15），`1` 表示该通道开路。例如 `0003` 表示 CH0 和 CH1 开路，`FFFF` 表示全部通道开路。
 
+> **注意**：`@fd CHECK` **不在配置同步流程中查询**，`openCircuitCheck` 字段同步后保持空。需要开路检测时由上层单独调用 `@fd CHECK`。
+
 ### 5.3 配置设置（@fe）
 
 所有 `@fe` 响应为 `A\n`（ACK）。
@@ -629,16 +721,16 @@ func sendCommandIdle(cmd: string) -> string:
 ```pseudocode
 struct DaqT1603HardwareConfig:
     thermocoupleTypes: string[16]   // 如 "KKKKKKKKKKKKKKKK"
-    channelMask:       string       // 十六进制 "0000"~"FFFF"
-    samplingRate:      int          // SPS 值（毫秒），非 Hz
+    channelMask:       string       // 十六进制 "0000"~"FFFF"（仅作 @f0 启动参数，不下发 @fe MCH）
+    samplingRate:      int          // ★ 字段名虽叫 SamplingRate，但存的是 SPS 原值（毫秒），非 Hz
     binaryFormat:      bool         // ★ 驱动默认 true（BIN=1）
-    averageCount:      int          // 1~100
+    averageCount:      int          // 1~100，同步回退默认 1，profile 默认 4
     triggerMode:       int          // 0=软件, 2=硬件
     triggerEdge:       int          // 0=上升, 1=下降, 2=变化
     triggerCount:      int          // 触发次数
     showTimestamp:     bool         // 时间戳标志
     showSequence:      bool         // 序号标志
-    openCircuitCheck:  string       // 开路检测掩码
+    openCircuitCheck:  string       // 开路检测掩码（同步不查询，保持空）
 ```
 
 ### 6.2 Hz ↔ SPS 转换
@@ -673,15 +765,23 @@ func spsMsToHz(spsMs: int) -> int:  return 1000 / spsMs
 func applyConfig(config: DaqT1603HardwareConfig):
     assert status == Connected   // 采集中不允许下发
 
-    sendCommand("@f3 0" + config.thermocoupleTypes + "0")
+    // ★ 热电偶类型走 @f3（若提供，必须 16 字符）
+    if config.thermocoupleTypes != "":
+        assert len(config.thermocoupleTypes) == 16
+        sendCommand("@f3 0" + config.thermocoupleTypes + "0")
+
+    // ★ 注意：不下发 @fe MCH —— 通道掩码通过 @f0 启动参数控制
     sendCommand("@fe BIN " + (config.binaryFormat ? "1" : "0"))
     sendCommand("@fe TIME " + (config.showTimestamp ? "1" : "0"))
     sendCommand("@fe HEAD " + (config.showSequence ? "1" : "0"))
-    sendCommand("@fe SPS " + config.samplingRate)
-    sendCommand("@fe AVG " + config.averageCount)
+    if config.samplingRate > 0:
+        sendCommand("@fe SPS " + config.samplingRate)
+    if config.averageCount > 0:
+        sendCommand("@fe AVG " + config.averageCount)
     sendCommand("@fe TYPE " + config.triggerMode)
     sendCommand("@fe TRIG " + config.triggerEdge)
-    sendCommand("@fe TNUM " + config.triggerCount)
+    if config.triggerCount > 0:
+        sendCommand("@fe TNUM " + config.triggerCount)
 
     localConfig = config
     frameReader.setBinaryMode(config.binaryFormat)
@@ -711,15 +811,18 @@ func applyConfig(config: DaqT1603HardwareConfig):
 
 ```pseudocode
 func scanDevices(timeoutMs: int = 3000) -> DiscoveredDevice[]:
-    socket = new UdpSocket(bindPort=7000)
+    // ★ bind 临时端口 :0，向各广播地址的 7000 端口发送 "T1603"
+    socket = new UdpSocket(bindPort=0)
+    socket.setDeadline(timeoutMs)
     for addr in ["255.255.255.255"] + getSubnetBroadcastAddrs():
         socket.sendTo(addr, 7000, "T1603")
 
     results = [], seen = Set()
-    while elapsed < timeoutMs:
-        response = socket.receiveFrom(timeout=剩余时间)
-        if response == null: break
-        device = parseDiscoveryResponse(response.data)
+    while true:
+        (data, remote) = socket.receiveFrom(timeout=剩余时间)
+        if (data, remote) == timeout: break
+        // 用 UDP 包来源 IP 作为设备地址回退
+        device = parseDiscoveryResponse(data, remoteHost=remote.ip)
         if device and device.id not in seen:
             seen.add(device.id)
             results.append(device)
@@ -753,9 +856,13 @@ func parseDiscoveryResponse(raw: string) -> DiscoveredDevice | null:
                 port: parseInt(parts[7].trim()) ?? 9000
             }
 
-    // 格式 3: 短响应
-    if raw.contains("DAQT1603") or raw.contains("T1603"):
-        return { model: "T1603" }  // 需从 UDP 包来源 IP 补充地址
+    // 格式 3: 短响应（以 "DAQT1603" 开头）
+    if raw == "DAQT1603" or raw.startsWith("DAQT1603"):
+        return {
+            id: "scan-daq-t-1603-" + remoteHost,
+            address: remoteHost, port: 9000,
+            model: "T1603"
+        }
 
     return null
 ```
@@ -788,7 +895,11 @@ func isClosedConnError(err: Error) -> bool:
 | readLoop 读超时 | 200ms | 每次 socket 读取 |
 | 无数据超时 | 10s | 超过即退出 readLoop |
 | ACK 消费 | 200ms | 等待 @f0 前导 |
-| 缓冲区排空 | 100ms | drainConnection |
+| 缓冲区排空 | 100ms/次 | drainConnection，最多 200 次迭代（~20s 安全上限） |
+| StartAcquisition 等旧 readLoop 退出 | 3s | 超时则告警并继续 |
+| @f1 停止命令写入 | 500ms | StopAcquisition 异步发送 |
+| 配置同步起始延迟 | 300ms | connect 后等设备就绪 |
+| 启动前 @f1 后等待 | 50ms | 让设备处理停止命令 |
 
 ### 8.3 断线重连策略
 
@@ -830,82 +941,54 @@ writeLock.unlock()
 **readLoop 退出安全：**
 ```pseudocode
 defer:
-    capturedConn.write("@f1")    // 用捕获的连接
-    acquiring = false
-    onReadLoopExit()
+    // ★ 仅异常退出（unexpectedErr != nil）才发 @f1，正常停止不发
+    if unexpectedErr != null:
+        capturedConn.write("@f1")    // 用捕获的连接
+        acquiring = false
+        onReadLoopExit(unexpectedErr)
     close(readLoopDone)
 
-// 正常停止
-close(stopSignal)
-wait(readLoopDone)
+// 正常停止：close(stopSignal)，readLoop 检测到后 return，defer 不发 @f1
+// 等待 readLoop 退出：在 StartAcquisition 入口 wait(readLoopDone)，最多 3s 超时
 ```
 
 ### 8.5 绝对禁止的操作
 
 | 禁止 | 后果 |
 |------|------|
-| StopAcquisition 后 Disconnect + 重连 | defer 在新连接上发 @f1，设备混乱 |
-| defer 中无条件发 @f1 | 正常停止时已发，重复发送导致异常 |
+| defer 中无条件发 @f1 | 正常停止时 StopAcquisition 已异步发过，重复发送导致异常 |
 | readLoop 中用全局连接引用而非捕获的局部变量 | Connect 替换连接后操作错误连接 |
 | 跳过 drainConnection | 残留数据导致帧错位 |
 | 采集期间发送查询命令 | 数据流与响应混杂 |
-| 未消费前导 ACK（BIN=0 时） | 192 字节帧错位 1 字节 |
+| 未消费前导 ACK | 首字节错位，整帧解析失败 |
 
 ---
 
-## 9. 模拟模式
-
-### 环境变量激活
-
-```
-# Windows
-set DAQ_T1603_MODE=simulated
-
-# Linux/Mac
-DAQ_T1603_MODE=simulated
-```
-
-### 模拟行为
-
-```pseudocode
-// 设备发现：固定返回 2 个设备
-func scanDevices():
-    return [
-        { ip: "192.168.1.7", port: 9000, serialNumber: "SIM-001" },
-        { ip: "192.168.1.8", port: 9000, serialNumber: "SIM-002" }
-    ]
-
-// 温度数据：周期性正弦波
-func generateSimulatedData(ch: int, elapsedMs: int) -> float64:
-    base = 25.0 + ch * 0.5
-    wave1 = 5.0 * sin(elapsedMs/1000 + ch * 0.3)
-    wave2 = 0.5 * sin(elapsedMs/1000 * 3 + ch * 0.7)
-    return base + wave1 + wave2
-```
-
----
-
-## 10. 注意事项速查
+## 9. 注意事项速查
 
 | # | 注意点 |
 |---|--------|
-| 1 | **BIN 推荐值：1**。驱动连接后强制 `@fe BIN 1`，以 64 字节 float32 LE 接收，效率最高 |
-| 2 | 二进制帧前**可能无 ACK**。部分固件不发 `A`/`A\n`，consumeOptionalACK 超时 200ms 后正常读取即可 |
+| 1 | **BIN 推荐值：1**。配置同步后强制 `@fe BIN 1` / `@fe TIME 0` / `@fe HEAD 0`，以 64 字节 float32 LE 接收，效率最高 |
+| 2 | 二进制帧前**可能无 ACK**。部分固件不发 `A`/`A\n`，consumeOptionalACK 超时 200ms 后正常读取即可；返回 I/O error 时中断启动 |
 | 3 | 设备发送 CH15→CH0，解析后必须 `.reverse()` |
-| 4 | ASCII 定长帧 192 字节**无换行终止**，按长度截取；变长帧（TIME=1 或 HEAD=1）同样无换行，按字段计数截取 |
+| 4 | ASCII 定长帧 192 字节**无换行终止**，按长度截取；ASCII 变长帧（BIN=0 + TIME/HEAD=1）同样无换行，按字段计数截取 |
 | 5 | `@f0`/`@f1` 走 writeCommandOnly，不进入 pending 队列 |
 | 6 | 采集期间**禁止**查询命令，需先停止 |
-| 7 | 启动采集前必须 drainConnection + reset FrameReader |
-| 8 | 停止→启动是高危操作，必须等 readLoopDone |
+| 7 | 启动采集前必须 drainConnection + reset FrameReader（含 50ms 等待） |
+| 8 | 停止→启动是高危操作：StopAcquisition 异步发 `@f1` 不等待；StartAcquisition 入口等待上一次 readLoopDone（最多 3s） |
 | 9 | readLoop 内捕获连接引用，不直接使用全局连接变量 |
-| 10 | SPS 单位是**毫秒**，应用层可能用 Hz：`Hz = 1000 / SPS` |
-| 11 | temp 型号固件不支持 BIN=1，`@fd BIN` 始终返回 `0`，需回退 ASCII 解析 |
+| 10 | SPS 单位是**毫秒**，应用层可能用 Hz：`Hz = 1000 / SPS`；配置字段 `samplingRate` 存的是 SPS 原值（ms），非 Hz |
+| 11 | **temp 型号固件不支持 BIN=1**，`@fd BIN` 始终返回 `0`，但发 `@fe BIN 1` 仍回 ACK。驱动**未实现自动回退**，需上层显式设 `binaryFormat=false` |
 | 12 | 串口模式下不支持 `@e3`/`@fd`/`@fe`，配置需在 TCP 下完成 |
-| 13 | 模拟模式：`DAQ_T1603_MODE=simulated` |
-| 14 | **TIME=1 或 HEAD=1 时帧格式从 192 字节定长变为空格分隔不定长连续流（无换行）**，FrameReader 必须启用 `metadataMode=true` |
-| 15 | 变长帧的读取方式为**字段计数法**：累积 buffer → 尝试提取 18/17 字段 → 解析校验 → 成功则提取，失败则继续读 |
-| 16 | 变长帧中检测 HEAD vs TIME 的逻辑：首 token 可解析为整数则视为 seq（HEAD），否则视为 ts（TIME） |
-| 17 | 配置下发（ApplyConfig）后必须同步调用 `frameReader.setMetadataMode(config.showTimestamp || config.showSequence)` |
-| 18 | 解析帧时应提取 `HardwareTimestamp`（变长帧中的 Unix 秒浮点值），传递给上层用于数据记录 |
-| 19 | `HardwareTimestamp` 为 Unix 秒（float64，微秒精度），无时间戳时为 0，此时应使用本机接收时间 |
-| 20 | 应用层采样率输入范围为 **1~1000 Hz**，驱动通过 `hzToSpsMs` 转换为设备 SPS 参数 |
+| 13 | **四种 TCP 帧格式由 (binaryMode, metadataMode) 两开关决定**：64B / 72B / 192B / 变长 ASCII |
+| 14 | BIN=1 + TIME/HEAD=1 → **72 字节定长二进制带时间戳帧**（8B 头 + 64B 数据），走定长读取，不是变长 |
+| 15 | BIN=0 + TIME/HEAD=1 → 空格分隔不定长 ASCII 流（无换行），FrameReader 走 `readFrameVariable` 字段计数法 |
+| 16 | 变长帧读取：累积 buffer → 尝试提取 18/17 字段 → 解析校验 → 成功则提取，失败则继续读 |
+| 17 | 变长帧中检测 HEAD vs TIME：首 token 可解析为整数则视为 seq（HEAD），否则视为 ts（TIME） |
+| 18 | 配置下发（ApplyConfig）后必须同步调用 `frameReader.setMetadataMode(config.showTimestamp \|\| config.showSequence)` |
+| 19 | ApplyConfig **不下发 `@fe MCH`**，通道掩码通过 `@f0 <mask>` 启动参数控制 |
+| 20 | `@fd CHECK` **不在配置同步中查询**，`openCircuitCheck` 同步后为空，需按需单独调用 |
+| 21 | 连续 5 次帧解析失败 → 自动 `resync()`（丢缓冲区首字节重新对齐），计数清零；resync 不持锁阻塞 I/O |
+| 22 | `HardwareTimestamp`：72B 二进制帧为 `sec+ns`（纳秒精度）；ASCII 变长帧为 Unix 秒浮点（微秒精度）；无时间戳时为 0，应用本机接收时间 |
+| 23 | readLoop defer **仅异常退出**发 `@f1`，正常停止不发（StopAcquisition 已异步发过） |
+| 24 | 应用层采样率输入范围为 **1~1000 Hz**，驱动通过 `hzToSpsMs` 转换为设备 SPS 参数 |
