@@ -167,6 +167,10 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			a.mu.Unlock()
 			return
 		}
+		// readLoop 异常退出意味着连接已损坏（断线/超时/对端关闭等），
+		// 必须断开驱动并清理 drivers 表，否则下次 StartAcquisition 会在坏连接上重试
+		driver := a.drivers[profile.ID]
+		delete(a.drivers, profile.ID)
 		delete(a.sinks, profile.ID)
 		if done, ok := a.stopChs[profile.ID]; ok {
 			close(done)
@@ -176,9 +180,13 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			close(ch)
 			delete(a.channels, profile.ID)
 		}
-		st.SetStatus(core.StatusConnected)
+		st.SetStatus(core.StatusDisconnected)
 		st.AcquiringAt = 0
 		a.mu.Unlock()
+
+		if driver != nil {
+			driver.Disconnect()
+		}
 	})
 
 	if err := dev.Connect(); err != nil {

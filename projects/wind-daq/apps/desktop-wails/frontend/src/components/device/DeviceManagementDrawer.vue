@@ -505,7 +505,8 @@ async function saveDraft() {
       }
     }
     if (normalized.autoConnect) {
-      try { await deviceApi.connect(normalized.id) } catch { /* 连接失败不阻塞保存 */ }
+      // 走 store.connect 以触发乐观更新，UI 可立即显示"连接中"
+      try { await deviceStore.connect(normalized.id) } catch { /* 连接失败不阻塞保存 */ }
     }
     feedback.pushToast(`设备 "${normalized.name}" 已保存`, 'success')
     initialDraftSnapshot.value = snapshotDraft(normalized)
@@ -657,9 +658,10 @@ async function connectToggle(p: DeviceProfile) {
   const st = deviceStore.statusFor(p.id)
   if (st === 'Connecting') return
   if (deviceStore.acquiringFor(p.id) || st === 'Connected') {
-    try { await deviceApi.disconnect(p.id); await deviceStore.refreshStatusFor(p.id) } catch (e) { feedback.pushToast(String(e), 'error') }
+    try { await deviceStore.disconnect(p.id) } catch (e) { feedback.pushToast(String(e), 'error') }
   } else {
-    try { await deviceApi.connect(p.id); await deviceStore.refreshStatusFor(p.id) } catch (e) { feedback.pushToast(String(e), 'error') }
+    // 走 store.connect 以触发乐观更新，按钮可立刻显示"连接中..."
+    try { await deviceStore.connect(p.id) } catch (e) { feedback.pushToast(String(e), 'error') }
   }
 }
 
@@ -686,7 +688,8 @@ async function removeProfile(p: DeviceProfile) {
 
 async function bulkConnect() {
   for (const id of selectedIds.value) {
-    try { await deviceApi.connect(id) } catch { /* 跳过 */ }
+    // 走 store.connect 以触发乐观更新，让卡片立刻显示"连接中"
+    try { await deviceStore.connect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
   feedback.pushToast('批量连接完成', 'info')
@@ -739,6 +742,8 @@ function statusLabel(p: DeviceProfile) {
 function connectLabel(p: DeviceProfile) {
   const acquiring = deviceStore.acquiringFor(p.id)
   const st = deviceStore.statusFor(p.id)
+  // 连接中：明确显示"连接中..."并配合按钮 disabled 防止重复点击
+  if (st === 'Connecting') return '连接中...'
   if (acquiring || st === 'Connected') return '断开'
   return '连接'
 }
@@ -839,7 +844,7 @@ function channelLabel(c: ChannelConfig): string {
 
               <div class="device-card-right">
                 <UiButton secondary size="md" @click="openEdit(p)">编辑</UiButton>
-                <UiButton size="md" @click="connectToggle(p)">
+                <UiButton size="md" :disabled="deviceStore.statusFor(p.id) === 'Connecting'" @click="connectToggle(p)">
                   {{ connectLabel(p) }}
                 </UiButton>
                 <UiButton v-if="deviceStore.statusFor(p.id) === 'Connected'" size="md" @click="toggleAcquisition(p)">

@@ -13,11 +13,7 @@ import (
 )
 
 func (m *TraversalManager) fail(format string, args ...any) error {
-	message := fmt.Sprintf(format, args...)
-	m.mu.Lock()
-	m.setErrorLocked(message, traversal.ErrUnknown)
-	m.mu.Unlock()
-	return fmt.Errorf("%s", message)
+	return m.failWithCode(format, traversal.ErrUnknown, args...)
 }
 
 // failWithCode 带错误码的失败
@@ -51,13 +47,6 @@ func (m *TraversalManager) sleepWithTaskCheck(taskID string, d time.Duration) {
 		}
 		time.Sleep(cancelCheckPoll)
 	}
-}
-
-func abs(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
 }
 
 // valuesForChannels 从数据载荷中提取指定通道索引的值

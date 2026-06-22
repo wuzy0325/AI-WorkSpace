@@ -3,7 +3,6 @@ package main
 import (
 	"embed"
 	"log"
-	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -16,7 +15,6 @@ import (
 	"daq-t1603/adapters/logging"
 	"daq-t1603/adapters/recording"
 	"daq-t1603/backend"
-	"daq-t1603/ports"
 	"daq-t1603/usecase"
 )
 
@@ -37,21 +35,10 @@ func main() {
 	logDir := filepath.Join(configDir, "logs")
 	os.MkdirAll(logDir, 0755)
 
-	var devAdapter ports.DevicePort
-	var scanner ports.DeviceScanPort
-	var logCapableAdapter interface {
-		SetLogSink(func(hardware.DeviceLogEntry))
-	}
-	if os.Getenv("DAQ_T1603_MODE") == "simulated" {
-		slog.Info("using simulated device adapter")
-		devAdapter = hardware.NewSimulatedAdapter()
-		scanner = hardware.NewSimulatedScanner()
-	} else {
-		t1603Adapter := hardware.NewT1603Adapter()
-		devAdapter = t1603Adapter
-		logCapableAdapter = t1603Adapter
-		scanner = hardware.NewT1603Scanner()
-	}
+	t1603Adapter := hardware.NewT1603Adapter()
+	devAdapter := t1603Adapter
+	scanner := hardware.NewT1603Scanner()
+	logCapableAdapter := t1603Adapter
 	recorder := recording.NewCSVRecorder()
 	logWriter := logging.NewLogFileWriter()
 

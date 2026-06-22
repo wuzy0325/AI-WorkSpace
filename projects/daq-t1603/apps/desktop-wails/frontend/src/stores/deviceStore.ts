@@ -335,7 +335,34 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
+  /**
+   * 判断扫描结果对应的设备是否已被添加为 profile。
+   *
+   * 匹配优先级：
+   * 1. IP 地址 + 端口（去除空白后小写比较）——同一 IP:Port 视为同一物理访问点
+   *
+   * 注：当前 TemperatureProfile 不持久化 MAC / 序列号，因此仅用网络端点匹配。
+   * 若后续 profile 增加 macAddress / serialNumber 字段，可在此扩展匹配规则。
+   */
+  function isScanResultAdded(result: ScanResult): boolean {
+    const targetAddress = (result.address ?? '').trim().toLowerCase()
+    const targetPort = result.port
+    if (!targetAddress) return false
+    return profiles.value.some(
+      (p) => p.address.trim().toLowerCase() === targetAddress && p.port === targetPort,
+    )
+  }
+
   async function addProfile(name: string, address: string, port: number): Promise<void> {
+    // 重复添加防御：若同一 IP:Port 已存在，则拒绝添加
+    const normalizedAddress = address.trim().toLowerCase()
+    const duplicated = profiles.value.some(
+      (p) => p.address.trim().toLowerCase() === normalizedAddress && p.port === port,
+    )
+    if (duplicated) {
+      throw new Error('该设备已添加，请勿重复添加')
+    }
+
     const id = `t1603_${Date.now()}`
     const profile: TemperatureProfile = {
       id,
@@ -374,7 +401,7 @@ export const useDeviceStore = defineStore('device', () => {
     selectDevice, statusFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateChannel, saveProfile,
-    clearScanResults, scanDevices, addProfile, removeProfile,
+    clearScanResults, scanDevices, addProfile, removeProfile, isScanResultAdded,
     setDisplayRefreshRateHz, stopDisplayFlush,
   }
 })

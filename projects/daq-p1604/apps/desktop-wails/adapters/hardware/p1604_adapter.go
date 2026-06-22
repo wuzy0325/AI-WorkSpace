@@ -237,7 +237,7 @@ func (a *P1604Adapter) Disconnect(id string) error {
 	// 等待 readLoop 退出后再操作连接，避免 ReadFrame 与 Close 竞争。
 	// join 超时仅是兜底，正常情况下 readLoop 在 200ms 读超时内就会观察到 stop。
 	if driver != nil && wasAcquiring {
-		joinReadLoop(id, driver, p1604ReadLoopJoinTimeout)
+		driver.joinReadLoop(id, p1604ReadLoopJoinTimeout)
 	}
 
 	// 在锁外执行 I/O：发送停止命令和关闭连接
@@ -406,7 +406,7 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 
 	// 等待 readLoop 退出，避免它和后续命令并发使用同一 conn
 	if driver != nil && wasAcquiring {
-		joinReadLoop(id, driver, p1604ReadLoopJoinTimeout)
+		driver.joinReadLoop(id, p1604ReadLoopJoinTimeout)
 	}
 
 	// 仅在确实在采集且连接有效时，才在锁外发送停止命令
@@ -423,12 +423,14 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 }
 
 // joinReadLoop 等待 readLoop 关闭其 done channel；超时仅日志，不阻塞调用方。
-func joinReadLoop(id string, driver *p1604Driver, timeout time.Duration) {
-	if driver == nil || driver.readLoopDone == nil {
+// 调用方通常先 close(stop) + 标记 stopReason，然后调用本方法等待 readLoop 退出，
+// 再安全 conn.Close。driver 为 nil 或 readLoop 未启动时直接返回。
+func (d *p1604Driver) joinReadLoop(id string, timeout time.Duration) {
+	if d == nil || d.readLoopDone == nil {
 		return
 	}
 	select {
-	case <-driver.readLoopDone:
+	case <-d.readLoopDone:
 	case <-time.After(timeout):
 		slog.Warn("DAQ-P-1604 readLoop join timeout", "device", id, "timeout", timeout)
 	}

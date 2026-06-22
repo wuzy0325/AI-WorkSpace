@@ -50,6 +50,9 @@ import { AlertTriangle, Activity, ClipboardList, Pause, Play, Settings, Square, 
 import IconTraversal from '@components/icons/IconTraversal.vue'
 import { useTraversalSimulation } from '@composables/useTraversalSimulation'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
+import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
+import { useFocusTrap } from '@composables/useFocusTrap'
+import { useTraversalStatusDisplay } from '@composables/useTraversalStatusDisplay'
 
 const props = withDefaults(
   defineProps<{
@@ -123,32 +126,8 @@ const workspaceTabs = computed<Array<{ value: WorkspaceTab; label: string }>>(()
   { value: 'reference', label: t.value.probeReference }
 ])
 
-/** 焦点陷阱：将 Tab 键限制在对话框内循环 */
-function trapFocus(event: KeyboardEvent): void {
-  const container = confirmDialogRef.value
-  if (!container) return
-
-  const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-  const focusableElements = Array.from(container.querySelectorAll<HTMLElement>(focusableSelectors))
-  if (focusableElements.length === 0) return
-
-  const firstFocusable = focusableElements[0]
-  const lastFocusable = focusableElements[focusableElements.length - 1]
-
-  if (event.shiftKey) {
-    // Shift+Tab：如果当前在第一个元素，跳到最后一个
-    if (document.activeElement === firstFocusable) {
-      event.preventDefault()
-      lastFocusable.focus()
-    }
-  } else {
-    // Tab：如果当前在最后一个元素，跳到第一个
-    if (document.activeElement === lastFocusable) {
-      event.preventDefault()
-      firstFocusable.focus()
-    }
-  }
-}
+// 启动确认对话框的 Tab 焦点陷阱
+const { trapFocus } = useFocusTrap(confirmDialogRef)
 
 onMounted(async () => {
   void deviceStore.refreshInstances()
@@ -350,62 +329,8 @@ async function stopTest(): Promise<void> {
   }
 }
 
-const STATUS_CONFIG: Record<string, { dotClass: string }> = {
-  running:     { dotClass: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' },
-  moving:      { dotClass: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' },
-  stabilizing: { dotClass: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' },
-  acquiring:   { dotClass: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' },
-  saving:      { dotClass: 'bg-emerald-500 shadow-[0_0_6px_#10b981]' },
-  paused:      { dotClass: 'bg-amber-500 animate-pulse' },
-  completed:   { dotClass: 'bg-blue-500 shadow-[0_0_6px_#3b82f6]' },
-  error:       { dotClass: 'bg-rose-500 shadow-[0_0_6px_#f43f5e]' },
-  stopped:     { dotClass: 'bg-amber-500' },
-  unknown:     { dotClass: 'bg-rose-500 shadow-[0_0_6px_#f43f5e]' },
-  idle:        { dotClass: 'bg-slate-400' },
-}
-
-// 状态文本：优先显示子状态（moving/stabilizing/acquiring/saving），其次显示主状态
-const statusText = computed(() => {
-  const phase = traversalStore.status?.currentPointPhase
-  // 启动中或运行中：根据子阶段细化文案
-  if (isStartRequestPending.value || traversalStore.isStarting) {
-    return t.value.statusStarting
-  }
-  if (traversalStore.canPause) {
-    switch (phase) {
-      case 'moving':
-        return t.value.statusMoving
-      case 'stabilizing':
-        return t.value.statusStabilizing
-      case 'acquiring':
-        return t.value.statusAcquiring
-      case 'saving':
-        return t.value.statusSaving
-      default:
-        return t.value.statusRunning
-    }
-  }
-  switch (traversalStore.statusType) {
-    case 'paused':
-      return t.value.statusPaused
-    case 'completed':
-      return t.value.statusDone
-    case 'error':
-      return t.value.statusError
-    case 'stopped':
-      return t.value.statusStopped
-    case 'unknown':
-      return t.value.statusUnknown
-    default:
-      return t.value.statusIdle
-  }
-})
-
-// 状态点样式：根据当前状态类型选择颜色
-const statusDotClass = computed(() => {
-  const cfg = STATUS_CONFIG[traversalStore.statusType] ?? STATUS_CONFIG.idle
-  return cfg.dotClass
-})
+// 状态文本与点样式：抽到 useTraversalStatusDisplay
+const { statusText, statusDotClass } = useTraversalStatusDisplay(isStartRequestPending)
 
 const workspaceTabMeta = computed(() => {
   const tval = t.value
@@ -458,133 +383,13 @@ const prbLabel = computed(() => {
   return cfg.prbFile?.fileName || t.value.noPrbSelected
 })
 
-// 轴位置数据：监听 motionStore 状态变化，更新轴位置显示
-interface AxisPositionDatum { label: string; position: number | undefined; moving: boolean }
-const axisPositions = ref<AxisPositionDatum[]>([])
-watch(
-  () => {
-    const axes = currentConfig.value?.channels.motionAxes ?? []
-    return axes.map((cfg) => {
-      const status = motionStore.statusById(cfg.controllerId)
-      const axisStatus = status?.axes.find((a) => a.name === cfg.axis)
-      return `${cfg.axis}:${axisStatus?.position?.toFixed(3) ?? ''}:${axisStatus?.moving ?? false}`
-    }).join('|')
-  },
-  () => {
-    const axes = currentConfig.value?.channels.motionAxes ?? []
-    axisPositions.value = axes.map((cfg) => {
-      const status = motionStore.statusById(cfg.controllerId)
-      const axisStatus = status?.axes.find((a) => a.name === cfg.axis)
-      return { label: cfg.axis, position: axisStatus?.position, moving: axisStatus?.moving ?? false }
-    })
-  },
-  { immediate: true }
-)
-
-type PositionerConnectionState = 'connected' | 'disconnected' | 'unconfigured'
-type AcquisitionState = 'acquiring' | 'connected' | 'disconnected' | 'unconfigured'
-
-function buildConnectionDisplay(state: PositionerConnectionState, unconfiguredLabel: string) {
-  const dotClassMap: Record<PositionerConnectionState, string> = {
-    connected: 'bg-emerald-500 shadow-[0_0_8px_#10b981]',
-    disconnected: 'bg-rose-500 shadow-[0_0_8px_#f43f5e]',
-    unconfigured: 'bg-slate-400'
-  }
-
-  const textClassMap: Record<PositionerConnectionState, string> = {
-    connected: 'text-emerald-600 dark:text-emerald-400',
-    disconnected: 'text-rose-600 dark:text-rose-400',
-    unconfigured: 'text-slate-500 dark:text-slate-400'
-  }
-
-  const labelMap: Record<PositionerConnectionState, string> = {
-    connected: t.value.connected,
-    disconnected: t.value.disconnected,
-    unconfigured: unconfiguredLabel
-  }
-
-  return {
-    state,
-    label: labelMap[state],
-    dotClass: dotClassMap[state],
-    textClass: textClassMap[state]
-  }
-}
-
-// 采集设备状态显示：区分 acquiring / connected / disconnected / unconfigured
-function buildAcquisitionDisplay(state: AcquisitionState, unconfiguredLabel: string) {
-  const dotClassMap: Record<AcquisitionState, string> = {
-    acquiring: 'bg-emerald-500 shadow-[0_0_8px_#10b981]',
-    connected: 'bg-amber-400',
-    disconnected: 'bg-rose-500 shadow-[0_0_8px_#f43f5e]',
-    unconfigured: 'bg-slate-400'
-  }
-
-  const textClassMap: Record<AcquisitionState, string> = {
-    acquiring: 'text-emerald-600 dark:text-emerald-400',
-    connected: 'text-amber-600 dark:text-amber-400',
-    disconnected: 'text-rose-600 dark:text-rose-400',
-    unconfigured: 'text-slate-500 dark:text-slate-400'
-  }
-
-  const labelMap: Record<AcquisitionState, string> = {
-    acquiring: t.value.acquiring,
-    connected: t.value.connected,
-    disconnected: t.value.disconnected,
-    unconfigured: unconfiguredLabel
-  }
-
-  return {
-    state,
-    label: labelMap[state],
-    dotClass: dotClassMap[state],
-    textClass: textClassMap[state]
-  }
-}
-
-const positionerConnection = computed(() => {
-  const controllerIds = Array.from(
-    new Set(
-      (currentConfig.value?.channels.motionAxes ?? [])
-        .map((axis) => axis.controllerId?.trim())
-        .filter((controllerId): controllerId is string => Boolean(controllerId))
-    )
-  )
-
-  let state: PositionerConnectionState = 'unconfigured'
-  if (controllerIds.length > 0) {
-    state = controllerIds.every((controllerId) => motionStore.statusById(controllerId)?.connected)
-      ? 'connected'
-      : 'disconnected'
-  }
-
-  return buildConnectionDisplay(state, t.value.unconfigured)
-})
-
-const acquisitionConnection = computed(() => {
-  const deviceIds = Array.from(
-    new Set(
-      (currentConfig.value?.channels.probeChannels ?? [])
-        .filter((channel) => channel.enabled)
-        .map((channel) => channel.channel.deviceId?.trim())
-        .filter((deviceId): deviceId is string => Boolean(deviceId))
-    )
-  )
-
-  let state: AcquisitionState = 'unconfigured'
-  if (deviceIds.length > 0) {
-    const allConnected = deviceIds.every((deviceId) => deviceStore.statusFor(deviceId) === 'Connected')
-    if (!allConnected) {
-      state = 'disconnected'
-    } else {
-      // 全部连接且全部采集中 → acquiring；仅连接 → connected
-      const allAcquiring = deviceIds.every((deviceId) => deviceStore.acquiringFor(deviceId))
-      state = allAcquiring ? 'acquiring' : 'connected'
-    }
-  }
-
-  return buildAcquisitionDisplay(state, t.value.unconfigured)
-})
+// 轴位置 / 运动器连接 / 采集设备连接：抽到 useHardwareConnectionStatus，
+// 模板需要的 dotClass / textClass / label 等显示态由 composable 统一计算。
+const {
+  axisPositions,
+  positionerConnection,
+  acquisitionConnection
+} = useHardwareConnectionStatus(currentConfig)
 
 
 

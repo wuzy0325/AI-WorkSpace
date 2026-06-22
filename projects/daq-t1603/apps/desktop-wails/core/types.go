@@ -31,7 +31,7 @@ type T1603Config struct {
 	ChannelMask       string `json:"channelMask"`        // hex 0000-FFFF
 	SamplingRate      int    `json:"samplingRate"`       // Hz
 	AverageCount      int    `json:"averageCount"`       // 1-100
-	ShowTimestamp     bool   `json:"showTimestamp"`
+	ShowTimestamp     bool   `json:"showTimestamp"`      // 启用设备硬件时间戳（@fe TIME）
 	ShowSequence      bool   `json:"showSequence"`
 	AutoConnect      bool   `json:"autoConnect"`        // 启动时自动连接
 }

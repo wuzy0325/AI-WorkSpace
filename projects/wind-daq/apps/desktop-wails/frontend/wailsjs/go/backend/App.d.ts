@@ -94,6 +94,8 @@ export function PickFiles(arg1:string,arg2:Array<frontend.FileFilter>):Promise<A
 
 export function ReportGetStatus():Promise<report.ReportStatus>;
 
+export function SetParentPID(arg1:number):Promise<void>;
+
 export function StorageGetStatus():Promise<storage.RecordingStatus>;
 
 export function StorageStartRecording(arg1:string,arg2:string):Promise<backend.GenericResponse>;

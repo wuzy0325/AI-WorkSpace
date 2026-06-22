@@ -36,7 +36,7 @@ export function defaultT1603Config(): MockT1603Config {
     channelMask: 'FFFF',
     samplingRate: 10,
     averageCount: 4,
-    showTimestamp: false,
+    showTimestamp: true,
     showSequence: false,
     autoConnect: false,
   }

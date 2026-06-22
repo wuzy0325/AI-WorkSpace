@@ -222,7 +222,7 @@ function onRateInput(e: Event) {
           <div class="config__field">
             <label class="config__label">
               <Clock class="config__label-icon" />
-              <span>时间戳</span>
+              <span>硬件时间戳</span>
             </label>
             <button
               type="button"
@@ -234,7 +234,7 @@ function onRateInput(e: Event) {
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ showTimestamp ? '显示' : '隐藏' }}</span>
+              <span class="config__toggle-text">{{ showTimestamp ? '启用' : '禁用' }}</span>
             </button>
           </div>
 

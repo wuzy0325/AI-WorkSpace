@@ -36,7 +36,10 @@ projects/<project>/
 - `VERSION` 是项目当前可交付版本的单一文本记录，只包含版本号。
 - `CHANGELOG.md` 是项目累计变更历史。
 - `releases/<version>.md` 是单次打包交付说明。
+- `wails.json` 的 `version` 必须与项目版本同步。
 - `frontend/package.json` 的 `version` 必须与项目版本同步。
+- `build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION` 必须与项目版本同步。
+  （此 define 控制 NSIS 安装包文件名中嵌入的版本号。）
 - 如果存在 `package-lock.json`，其根包版本也必须同步。
 
 如果目标项目尚未建立上述文件，首次按本文规则打包时应补齐 `VERSION`、`CHANGELOG.md` 和 `releases/`。
@@ -76,18 +79,19 @@ projects/<project>/
 AI agent 在打包前必须执行以下流程：
 
 1. 确认目标项目和打包类型。
-2. 读取目标项目当前 `VERSION`、`CHANGELOG.md`、`frontend/package.json`。
+2. 读取目标项目当前 `VERSION`、`CHANGELOG.md`、`apps/desktop-wails/wails.json`、`frontend/package.json`。
 3. 检查自上一版本以来的相关变更。
 4. 判断版本号应做 PATCH、MINOR、MAJOR 或预发布递增。
 5. 如果版本等级存在歧义，先向用户确认，不得擅自选择较大的版本跳跃。
 6. 更新项目 `VERSION`。
-7. 更新 `apps/desktop-wails/frontend/package.json` 的 `version`。
-8. 如果存在 `package-lock.json`，同步其中根包版本。
-9. 更新 `CHANGELOG.md`，添加新的带日期版本段落。
-10. 创建或更新 `releases/<version>.md` 单次打包说明。
-11. 运行目标项目适用的验证命令。
-12. 验证通过后再执行打包命令。
-13. 最终回复必须包含版本号、主要变更、验证结果、产物路径。
+7. 更新 `apps/desktop-wails/wails.json` 的 `version`。
+8. 更新 `apps/desktop-wails/frontend/package.json` 的 `version`。
+9. 如果存在 `package-lock.json`，同步其中根包版本。
+10. 更新 `apps/desktop-wails/build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION`。
+11. 创建或更新 `releases/<version>.md` 单次打包说明。
+12. 运行目标项目适用的验证命令。
+13. 验证通过后再执行打包命令。
+14. 最终回复必须包含版本号、主要变更、验证结果、产物路径。
 
 AI agent 不得在版本号不变且无明确说明的情况下生成新的可交付包。
 
@@ -196,15 +200,21 @@ Package: <artifact-name>
 
 建议使用以下命名规则：
 
+可执行文件：
 ```text
-<product>-v<version>-<platform>-<arch>-<date>
+<ProductName>.exe
+```
+
+NSIS 安装包（由 `project.nsi` 控制）：
+```text
+<project>-<version>-<arch>-installer.exe
 ```
 
 示例：
 
 ```text
-DAQ-T-1603-v0.2.0-windows-amd64-20260608.exe
-wind-daq-v0.4.1-windows-amd64-20260608.exe
+DAQ-T-1603.exe
+daq-t1603-0.1.2-amd64-installer.exe
 ```
 
 如果 Wails 默认产物名无法直接控制，最终回复和发布说明中必须记录实际产物路径。

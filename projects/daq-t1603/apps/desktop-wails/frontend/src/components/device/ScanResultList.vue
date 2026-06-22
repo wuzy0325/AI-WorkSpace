@@ -1,15 +1,22 @@
 <script setup lang="ts">
 import type { ScanResult } from '@bridge/deviceBridge'
-import { Wifi, Monitor, Loader2, Plus } from '@lucide/vue'
+import { Wifi, Monitor, Loader2, Plus, Check } from '@lucide/vue'
 
-defineProps<{
+const props = defineProps<{
   results: ScanResult[]
   scanning: boolean
+  /** 判断扫描结果对应设备是否已被添加；未传则视为全部未添加 */
+  isAdded?: (result: ScanResult) => boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'add', result: ScanResult): void
 }>()
+
+/** 安全包装：调用方未传 isAdded 时默认返回 false */
+function added(result: ScanResult): boolean {
+  return props.isAdded ? props.isAdded(result) : false
+}
 </script>
 
 <template>
@@ -30,6 +37,7 @@ const emit = defineEmits<{
         v-for="r in results"
         :key="r.id"
         class="scan__item"
+        :class="{ 'scan__item--added': added(r) }"
       >
         <div class="scan__item-icon">
           <Wifi class="scan__item-icon-svg" />
@@ -43,7 +51,13 @@ const emit = defineEmits<{
           <span v-if="r.macAddress" class="scan__item-mac mono">{{ r.macAddress }}</span>
           <span v-if="r.firmwareVersion" class="scan__item-fw mono">FW {{ r.firmwareVersion }}</span>
         </div>
+        <!-- 已添加：显示徽章；未添加：显示 + 按钮 -->
+        <span v-if="added(r)" class="scan__item-badge" title="该设备已添加">
+          <Check class="scan__item-badge-icon" />
+          已添加
+        </span>
         <button
+          v-else
           class="scan__item-add"
           title="添加此设备"
           @click="emit('add', r)"
@@ -132,6 +146,37 @@ const emit = defineEmits<{
 .scan__item:hover {
   border-color: var(--accent-border);
   background: var(--accent-soft);
+}
+
+/* 已添加状态：视觉降权，并屏蔽 hover 高亮，避免误导用户可点击 */
+.scan__item--added {
+  opacity: 0.7;
+}
+
+.scan__item--added:hover {
+  border-color: var(--border-default);
+  background: var(--btn-bg);
+}
+
+/* "已添加"徽章：使用强调色弱化背景，明确告知设备已存在 */
+.scan__item-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.scan__item-badge-icon {
+  width: 12px;
+  height: 12px;
 }
 
 .scan__item-icon {

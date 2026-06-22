@@ -188,6 +188,10 @@ const acquisitionButtonLabel = computed(() => {
 })
 
 const connectionButtonLabel = computed(() => {
+  // 连接中：明确显示"连接中..."并由按钮 disabled 防止用户重复点击
+  if (currentStatus() === 'Connecting') {
+    return (i18n.t.connectingState || '连接中') + '...'
+  }
   return currentAcquiring() || currentStatus() === 'Connected'
     ? (i18n.t.disconnect || '断开')
     : (i18n.t.connect || '连接')
@@ -229,7 +233,15 @@ const connectionButtonLabel = computed(() => {
         <UiButton
           :variant="currentStatus() === 'Connected' || currentAcquiring() ? 'danger' : 'primary'"
           size="sm"
-          @click="() => { const id = profile!.id; currentStatus() === 'Connected' || currentAcquiring() ? deviceStore.disconnect(id) : deviceStore.connect(id) }"
+          :disabled="currentStatus() === 'Connecting'"
+          @click="() => {
+            if (!profile) return
+            const id = profile.id
+            if (currentStatus() === 'Connecting') return
+            currentStatus() === 'Connected' || currentAcquiring()
+              ? deviceStore.disconnect(id)
+              : deviceStore.connect(id)
+          }"
         >
           {{ connectionButtonLabel }}
         </UiButton>

@@ -82,6 +82,10 @@ function openScanDialog() {
 }
 
 function addFromScanResult(result: ScanResult) {
+  // 二次校验：避免极端竞态（如扫描列表渲染期间，profiles 变化未及时反映到禁用状态）
+  if (deviceStore.isScanResultAdded(result)) {
+    return
+  }
   showScanDialog.value = false
   openAddDevice({ address: result.address, port: result.port })
 }
@@ -167,6 +171,7 @@ async function confirmAddDevice() {
                 <ScanResultList
                   :results="deviceStore.scanResults"
                   :scanning="deviceStore.isScanning"
+                  :is-added="deviceStore.isScanResultAdded"
                   @add="addFromScanResult"
                 />
               </div>

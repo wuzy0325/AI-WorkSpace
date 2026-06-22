@@ -174,6 +174,10 @@ export function ReportGetStatus() {
   return window['go']['backend']['App']['ReportGetStatus']();
 }
 
+export function SetParentPID(arg1) {
+  return window['go']['backend']['App']['SetParentPID'](arg1);
+}
+
 export function StorageGetStatus() {
   return window['go']['backend']['App']['StorageGetStatus']();
 }

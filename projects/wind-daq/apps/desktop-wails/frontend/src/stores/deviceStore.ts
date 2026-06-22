@@ -270,8 +270,41 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   async function connect(id: string) {
-    await deviceApi.connect(id)
-    await refreshStatusFor(id)
+    // 乐观更新：在调用后端连接 API 之前，先将状态切换为 Connecting，
+    // 这样 UI 可以立即显示"连接中"提示，避免按下按钮后无任何反馈。
+    const prev = deviceStatuses.value.get(id)
+    const profile = profiles.value.find((p) => p.id === id)
+    deviceStatuses.value.set(id, {
+      id,
+      name: prev?.name ?? profile?.name ?? id,
+      type: prev?.type ?? profile?.type ?? 'Unknown',
+      connection: 'Connecting',
+      acquiring: prev?.acquiring ?? false,
+      lastError: undefined,
+    })
+    try {
+      await deviceApi.connect(id)
+      // 连接调用返回后，再以后端真实状态为准
+      try {
+        await refreshStatusFor(id)
+      } catch (refreshErr) {
+        // refreshStatusFor 失败不意味着连接失败——设备已连接成功，
+        // 仅状态刷新暂时不可用，下一次 StatusPoll 轮询会自行修复。
+        console.warn(`[deviceStore] connect succeeded but refreshStatusFor failed for ${id}:`, refreshErr)
+      }
+    } catch (err) {
+      // 连接失败：回滚到 Error 状态，便于上层 UI 复位按钮并提示
+      const current = deviceStatuses.value.get(id)
+      deviceStatuses.value.set(id, {
+        id,
+        name: current?.name ?? profile?.name ?? id,
+        type: current?.type ?? profile?.type ?? 'Unknown',
+        connection: 'Error',
+        acquiring: current?.acquiring ?? false,
+        lastError: err instanceof Error ? err.message : String(err),
+      })
+      throw err
+    }
   }
 
   async function disconnect(id: string) {
