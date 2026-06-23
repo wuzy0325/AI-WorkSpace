@@ -74,7 +74,7 @@ async function onConfigSaved(): Promise<void> {
     </UiErrorState>
     <template v-else>
       <TraversalMain :recovering="false" @open-settings="showTraversalSettings = true" @back="backFromTraversal" />
-      <TraversalSettings v-if="showTraversalSettings" @close="showTraversalSettings = false" @saved="onConfigSaved" />
+      <TraversalSettings :show="showTraversalSettings" @close="showTraversalSettings = false" @saved="onConfigSaved" />
     </template>
   </div>
 </template>

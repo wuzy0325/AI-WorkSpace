@@ -27,32 +27,40 @@
  * @module FiveHoleTraversalMain
  * @see TraversalSettings.vue - 测试配置
  * @see FiveHoleMain.vue - 探针标定系统
+ *
+ * 【组件结构 Phase A 重构（2026-06）】
+ * 本文件仅负责状态/监听/事件编排。UI 切到子组件：
+ * - shell/TraversalTopBar.vue        — 顶栏（标题+状态+进度+操作按钮）
+ * - shell/TraversalCheckpointBanner.vue — 断点恢复横幅
+ * - shell/TraversalErrorBanner.vue   — 错误横幅
+ * - panels/TraversalLiveMonitor.vue  — 左侧实时数据面板
+ * - panels/TraversalWorkspaceArea.vue — 右侧 Tab 工作区
+ * - dialogs/TraversalStartConfirm.vue — 启动确认对话框
+ *
+ * Phase B（token 化配色）和 Phase C（布局对齐）将在子组件内单独推进。
  * ============================================================================
  */
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useTraversalStore } from '@stores/traversalStore'
 import { useI18nStore } from '@stores/i18nStore'
 import type {
-  TraversalTestConfig,
   TraversalCheckpoint,
   PreconditionCheckResult
 } from '@shared/types/traversal'
-import { getTraversalLayoutPointCount } from '@shared/types/traversal'
-import PointsPreview from './PointsPreview.vue'
-import ProbeReferenceCard from './ProbeReferenceCard.vue'
-import TraversalVisualization from './visualization/TraversalVisualization.vue'
-import { AlertTriangle, Activity, ClipboardList, Pause, Play, Settings, Square, FlaskConical, CheckCircle, XCircle, Clock } from '@lucide/vue'
-import IconTraversal from '@components/icons/IconTraversal.vue'
 import { useTraversalSimulation } from '@composables/useTraversalSimulation'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
-import { useFocusTrap } from '@composables/useFocusTrap'
 import { useTraversalStatusDisplay } from '@composables/useTraversalStatusDisplay'
+import TraversalTopBar from './shell/TraversalTopBar.vue'
+import TraversalCheckpointBanner from './shell/TraversalCheckpointBanner.vue'
+import TraversalErrorBanner from './shell/TraversalErrorBanner.vue'
+import TraversalLiveMonitor from './panels/TraversalLiveMonitor.vue'
+import TraversalWorkspaceArea, { type WorkspaceTab } from './panels/TraversalWorkspaceArea.vue'
+import TraversalStartConfirm from './dialogs/TraversalStartConfirm.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -84,7 +92,6 @@ const {
 
 // 实时数据 composable：统一订阅 DAQ 快照并计算压力/插值输入/展示项
 const {
-  livePressures,
   liveInterpolationInput,
   pressureItems,
   subscribeSnapshot,
@@ -94,8 +101,6 @@ const {
 const i18n = useI18nStore()
 const t = computed(() => i18n.t)
 
-type WorkspaceTab = 'preview' | 'visualization' | 'reference'
-
 const activeWorkspaceTab = ref<WorkspaceTab>('preview')
 // 启动请求防重入标志（与 store.isStarting 配合，避免重复触发）
 const isStartRequestPending = ref(false)
@@ -104,9 +109,8 @@ const isStartRequestPending = ref(false)
 const showStartConfirm = ref(false)
 const isCheckingPreconditions = ref(false)
 const preconditionResult = ref<PreconditionCheckResult | null>(null)
-const confirmDialogRef = ref<HTMLElement | null>(null)
 /** 触发确认对话框的按钮引用，用于关闭后恢复焦点 */
-const startButtonRef = ref<HTMLButtonElement | null>(null)
+const topBarRef = ref<InstanceType<typeof TraversalTopBar> | null>(null)
 
 // 本地维护的断点信息（用于 UI 横幅显示，与 store.checkpoint 同步）
 const checkpoint = ref<TraversalCheckpoint | null>(null)
@@ -120,14 +124,13 @@ const isSimulationMode = computed(() => traversalStore.isSimulation && isSimulat
 // 是否显示真实控制按钮（模拟中和恢复中均不显示）
 const showRealControls = computed(() => !isSimulationMode.value && !isSimulating.value && !props.recovering)
 
-const workspaceTabs = computed<Array<{ value: WorkspaceTab; label: string }>>(() => [
-  { value: 'preview', label: t.value.pointsPreview },
-  { value: 'visualization', label: t.value.flowVisualization },
-  { value: 'reference', label: t.value.probeReference }
+const workspaceTabs = computed(() => [
+  { value: 'preview' as WorkspaceTab, label: t.value.pointsPreview },
+  { value: 'visualization' as WorkspaceTab, label: t.value.flowVisualization },
+  { value: 'reference' as WorkspaceTab, label: t.value.probeReference }
 ])
 
-// 启动确认对话框的 Tab 焦点陷阱
-const { trapFocus } = useFocusTrap(confirmDialogRef)
+// 焦点陷阱由 UiDialog (NModal) 内置处理，不再需要手动 useFocusTrap
 
 onMounted(async () => {
   void deviceStore.refreshInstances()
@@ -273,28 +276,19 @@ async function confirmStartTest(): Promise<void> {
 }
 
 /** 取消启动确认对话框 */
+/** 取消启动确认对话框 */
 function cancelStartConfirm(): void {
   showStartConfirm.value = false
   preconditionResult.value = null
-  // 关闭后将焦点返回触发按钮；若按钮不在DOM中（运行态），退回到对话框本身所在的聚焦目标
+  // 关闭后将焦点返回触发按钮；若按钮不在 DOM 中（运行态），退回工具栏根元素
   nextTick(() => {
-    const target = startButtonRef.value ?? document.querySelector('[data-test="traversal-top-toolbar"]') as HTMLElement | null
-    target?.focus()
+    if (topBarRef.value?.focusStart()) return
+    const fallback = document.querySelector('[data-test="traversal-top-toolbar"]') as HTMLElement | null
+    fallback?.focus()
   })
 }
 
-// 对话框打开时自动聚焦第一个按钮
-watch(showStartConfirm, (isOpen) => {
-  if (isOpen) {
-    nextTick(() => {
-      const container = confirmDialogRef.value
-      if (container) {
-        const firstButton = container.querySelector<HTMLElement>('button')
-        firstButton?.focus()
-      }
-    })
-  }
-})
+// 对话框打开时的初始焦点由 NModal 内部处理，无需手动 watch
 
 async function pauseTest(): Promise<void> {
   try {
@@ -370,37 +364,29 @@ const currentPointSummary = computed(() => ({
   beta: traversalStore.status?.currentPoint?.beta?.toFixed(2) || '--'
 }))
 
-// PRB 标签：多 PRB 优先显示数量，新算法显示 CSV 文件名，旧算法显示 PRB 文件名
-const prbLabel = computed(() => {
-  const cfg = traversalStore.config
-  if (!cfg) return t.value.noPrbSelected
-  if (cfg.useMultiPrb && cfg.multiPrb?.files.length) {
-    return `${cfg.multiPrb.files.length} PRBs`
-  }
-  if (cfg.interpolationAlgorithm === 'new') {
-    return cfg.calibrationCsvFile?.fileName || t.value.noPrbSelected
-  }
-  return cfg.prbFile?.fileName || t.value.noPrbSelected
-})
+// 顶栏进度摘要可见性（运行/暂停/已完成时显示）
+const showProgress = computed(() =>
+  traversalStore.isRunning ||
+  traversalStore.isPaused ||
+  traversalStore.status?.status === 'completed'
+)
 
+// PRB 标签：保留计算逻辑（顶栏未消费但下游可能复用）。
+// TODO Phase B/C：核实是否仍需要，未消费则删除。
 // 轴位置 / 运动器连接 / 采集设备连接：抽到 useHardwareConnectionStatus，
-// 模板需要的 dotClass / textClass / label 等显示态由 composable 统一计算。
+// 模板需要的颜色 / label 等显示态由 composable 统一计算。
 const {
   axisPositions,
   positionerConnection,
   acquisitionConnection
 } = useHardwareConnectionStatus(currentConfig)
 
-
-
 // 实时插值节流：交由 store 统一管理定时器，避免组件内重复实现
-// 监听插值输入与数据集路径变化，触发 store 的节流插值
+// 监听插值输入与插值器加载状态变化，触发 store 的节流插值
 watch(
   [
     liveInterpolationInput,
-    () => currentConfig.value?.prbFile?.filePath ?? null,
-    () => currentConfig.value?.calibrationCsvFile?.filePath ?? null,
-    () => currentConfig.value?.useMultiPrb ? currentConfig.value?.multiPrb?.files.map(f => f.filePath).join(',') : ''
+    () => traversalStore.hasLoadedInterpolator,
   ],
   ([input]) => {
     traversalStore.syncRealtimeInterpolation(input, currentConfig.value)
@@ -453,487 +439,146 @@ watch(
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-slate-50/50 dark:bg-transparent text-[color:var(--text-primary)]">
-    <!-- Top Toolbar -->
-    <div data-test="traversal-top-toolbar" class="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2.5 dark:border-slate-700 dark:bg-slate-900">
-      <!-- 左侧：标题区 -->
-      <div class="flex items-center gap-3">
-        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500 text-white shadow-sm">
-          <IconTraversal :size="16" />
-        </div>
-        <div>
-          <h1 class="text-sm font-bold text-slate-900 dark:text-slate-100">{{ t.fiveHoleTraversalTest }}</h1>
-          <div class="flex items-center gap-2 mt-0.5">
-            <span class="flex h-1.5 w-1.5 rounded-full" :class="statusDotClass"></span>
-            <p class="text-[11px] text-slate-400">{{ statusText }} / {{ t.automatedRun }}</p>
-          </div>
-        </div>
-      </div>
+  <div
+    class="flex h-full flex-col"
+    :style="{ background: 'var(--bg-canvas)', color: 'var(--text-primary)' }"
+  >
+    <!-- 顶栏 -->
+    <TraversalTopBar
+      ref="topBarRef"
+      :title="t.fiveHoleTraversalTest"
+      :status-text="statusText"
+      :status-dot-class="statusDotClass"
+      :automated-run-label="t.automatedRun"
+      :show-progress="showProgress"
+      :progress-summary="progressSummary"
+      :progress-percent="progressPercent"
+      :estimated-remaining-text="estimatedRemainingText"
+      :validation-warnings="traversalStore.status?.validationWarnings"
+      :has-config="hasConfig"
+      :is-start-request-pending="isStartRequestPending"
+      :is-starting="traversalStore.isStarting"
+      :is-simulation-mode="isSimulationMode"
+      :show-real-controls="showRealControls"
+      :can-start="traversalStore.canStart"
+      :can-pause="traversalStore.canPause"
+      :can-resume="traversalStore.canResume"
+      :simulation-progress="progressSummary"
+      :labels="{
+        configBtn: t.configBtn,
+        startRun: t.startRun,
+        travPause: t.travPause,
+        travStop: t.travStop,
+        travResume: t.travResume,
+        travSimRun: t.travSimRun,
+        travSimProgressTemplate: t.travSimProgress,
+      }"
+      @open-settings="openSettings"
+      @start="startTest"
+      @pause="pauseTest"
+      @resume="resumeTest"
+      @stop="stopTest"
+      @run-simulation="runSimulation()"
+      @cancel-simulation="cancelSimulation"
+    />
 
-      <!-- 右侧：控制区 -->
-      <div class="flex items-center gap-2">
-        <!-- 进度摘要：合并进度数字+百分比+预估时间为一行 -->
-        <div v-if="traversalStore.isRunning || traversalStore.isPaused || traversalStore.status?.status === 'completed'" class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800/50">
-          <span class="font-mono text-xs font-semibold text-blue-500">{{ progressSummary }}</span>
-          <span class="text-[11px] text-slate-400">({{ progressPercent }}%)</span>
-          <div class="h-1.5 w-12 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-            <div class="h-full rounded-full bg-blue-500 transition-all duration-300" :style="{ width: `${progressPercent}%` }"></div>
-          </div>
-          <template v-if="estimatedRemainingText !== '--'">
-            <div class="h-3 w-px bg-slate-200 dark:bg-slate-600"></div>
-            <Clock class="h-3 w-3 text-slate-400" />
-            <span class="font-mono text-[11px] text-slate-500 dark:text-slate-400">{{ estimatedRemainingText }}</span>
-          </template>
-        </div>
+    <!-- 断点恢复横幅 -->
+    <TraversalCheckpointBanner
+      v-if="hasCheckpoint && !traversalStore.isRunning && checkpoint"
+      :checkpoint="checkpoint"
+      :labels="{
+        detected: t.travCheckDetected,
+        completed: t.travCheckCompleted,
+        config: t.travCheckConfig,
+        continueTest: t.travContinueTest,
+        abandon: t.travAbandon,
+      }"
+      @resume="resumeFromCheckpoint"
+      @discard="discardCheckpoint"
+    />
 
-        <!-- 验证警告：仅显示图标+数量，点击展开 -->
-        <div v-if="traversalStore.status?.validationWarnings?.length" class="flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 dark:border-amber-800/50 dark:bg-amber-900/20" :title="traversalStore.status.validationWarnings.join('\n')">
-          <AlertTriangle class="h-3 w-3 text-amber-500" />
-          <span class="text-[11px] text-amber-700 dark:text-amber-400">{{ traversalStore.status.validationWarnings.length }}</span>
-        </div>
-
-        <!-- 操作按钮组 -->
-        <UiButton
-          @click="openSettings"
-          variant="secondary" size="sm"
-        >
-          <template #icon>
-            <Settings class="h-3.5 w-3.5" />
-          </template>
-          {{ t.configBtn }}
-        </UiButton>
-
-        <div class="h-4 w-px bg-slate-200 dark:bg-slate-700"></div>
-
-        <div class="flex items-center gap-1.5">
-          <!-- 模拟模式控制 -->
-          <template v-if="isSimulationMode">
-            <div class="flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 dark:border-blue-800/50 dark:bg-blue-900/20">
-              <FlaskConical class="h-3.5 w-3.5 text-blue-500" />
-              <span class="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{{ t.travSimProgress.replace('{progress}', progressSummary) }}</span>
-            </div>
-            <UiButton variant="danger" size="md" @click="cancelSimulation">
-              <template #icon>
-                <Square class="h-4 w-4 fill-current" />
-              </template>
-              {{ t.travStop }}
-            </UiButton>
-          </template>
-
-          <!-- 实际控制 -->
-          <template v-else-if="showRealControls">
-            <UiButton
-              v-if="traversalStore.canStart && !isStartRequestPending"
-              ref="startButtonRef"
-              variant="primary" size="md"
-              :disabled="!hasConfig"
-              @click="startTest"
-            >
-              <template #icon>
-                <Play class="h-4 w-4 fill-current" />
-              </template>
-              {{ t.startRun }}
-            </UiButton>
-            <UiButton
-              v-else-if="isStartRequestPending || traversalStore.isStarting"
-              variant="primary" size="md"
-              disabled
-            >
-              <template #icon>
-                <Play class="h-4 w-4 fill-current" />
-              </template>
-              {{ t.startRun }}
-            </UiButton>
-            <template v-else-if="traversalStore.canPause">
-              <UiButton variant="warning" size="md" @click="pauseTest">
-                <template #icon>
-                  <Pause class="h-4 w-4 fill-current" />
-                </template>
-                {{ t.travPause }}
-              </UiButton>
-              <UiButton variant="danger" size="md" @click="stopTest">
-                <template #icon>
-                  <Square class="h-4 w-4 fill-current" />
-                </template>
-                {{ t.travStop }}
-              </UiButton>
-            </template>
-            <template v-else-if="traversalStore.canResume">
-              <UiButton variant="primary" size="md" @click="resumeTest">
-                <template #icon>
-                  <Play class="h-4 w-4 fill-current" />
-                </template>
-                {{ t.travResume }}
-              </UiButton>
-              <UiButton variant="danger" size="md" @click="stopTest">
-                <template #icon>
-                  <Square class="h-4 w-4 fill-current" />
-                </template>
-                {{ t.travStop }}
-              </UiButton>
-            </template>
-
-            <!-- 模拟运行按钮 -->
-            <template v-if="traversalStore.canStart && !isStartRequestPending">
-              <div class="h-4 w-px bg-slate-200 dark:bg-slate-700"></div>
-              <UiButton
-                quaternary size="md"
-                @click="runSimulation()"
-              >
-                <template #icon>
-                  <FlaskConical class="h-4 w-4" />
-                </template>
-                {{ t.travSimRun }}
-              </UiButton>
-            </template>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- Checkpoint Recovery Banner：检测到未完成的测试时显示 -->
-    <div v-if="hasCheckpoint && !traversalStore.isRunning" class="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 dark:border-amber-800/50 dark:bg-amber-900/20">
-      <div class="flex items-center gap-2.5">
-        <div class="flex h-7 w-7 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400">
-          <Activity class="h-3.5 w-3.5" />
-        </div>
-        <div>
-          <div class="text-xs font-medium text-slate-800 dark:text-slate-100">{{ t.travCheckDetected }}</div>
-          <div class="text-[10px] text-slate-500 dark:text-slate-400">
-            {{ t.travCheckCompleted }} {{ checkpoint?.completedPoints }} / {{ checkpoint?.totalPoints }} ·
-            {{ t.travCheckConfig }} {{ checkpoint?.config?.name || 'Unknown' }}
-          </div>
-        </div>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <UiButton variant="warning" size="sm" @click="resumeFromCheckpoint">
-          <template #icon>
-            <Play class="h-3 w-3 fill-current" />
-          </template>
-          {{ t.travContinueTest }}
-        </UiButton>
-        <UiButton quaternary size="sm" @click="discardCheckpoint">
-          {{ t.travAbandon }}
-        </UiButton>
-      </div>
-    </div>
-
-    <!-- Loading State -->
+    <!-- 恢复加载状态 -->
     <div v-if="recovering" class="flex flex-1 items-center justify-center p-6">
       <div class="flex flex-col items-center justify-center gap-4 text-center">
-        <div class="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
-        <div class="text-sm font-black uppercase tracking-widest text-slate-500">{{ t.loadingWorkspace }}</div>
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          :style="{ borderColor: 'var(--accent-info)', borderTopColor: 'transparent' }"
+        ></div>
+        <div class="text-sm font-black uppercase tracking-widest text-[var(--text-muted)]">{{ t.loadingWorkspace }}</div>
       </div>
     </div>
 
     <!-- Main Workspace -->
-    <div class="flex-1 overflow-hidden p-4">
+    <div v-else class="flex-1 overflow-hidden p-4">
       <div class="grid h-full gap-4 lg:grid-cols-[280px_1fr] grid-cols-1 auto-rows-auto lg:auto-rows-fr">
-        <!-- Sidebar：合并为单一实时数据面板 -->
-        <aside class="flex min-h-0 flex-col overflow-y-auto pr-1">
-          <section data-test="traversal-sidebar-monitor" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900 flex-shrink-0">
-            <!-- 面板头部 -->
-            <div class="mb-2 flex items-center justify-between">
-              <div class="flex items-center gap-1.5">
-                <Activity class="h-4 w-4 text-blue-500" />
-                <div>
-                  <h2 class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ t.travMonitor }}</h2>
-                </div>
-              </div>
-              <div class="flex shrink-0 items-center gap-1.5">
-                <div data-test="traversal-acquisition-indicator" class="flex items-center gap-1">
-                  <span class="h-2 w-2 rounded-full" :class="acquisitionConnection.dotClass"></span>
-                  <span class="text-xs" :class="acquisitionConnection.textClass">
-                    {{ acquisitionConnection.label }}
-                  </span>
-                </div>
-                <div class="h-3 w-px bg-slate-200 dark:bg-slate-700"></div>
-                <div data-test="traversal-positioner-indicator" class="flex items-center gap-1">
-                  <span class="h-2 w-2 rounded-full" :class="positionerConnection.dotClass"></span>
-                  <span class="text-xs" :class="positionerConnection.textClass">
-                    {{ positionerConnection.label }}
-                  </span>
-                </div>
-              </div>
-            </div>
+        <TraversalLiveMonitor
+          :has-config="hasConfig"
+          :current-point-summary="currentPointSummary"
+          :axis-positions="axisPositions"
+          :acquisition-connection="acquisitionConnection"
+          :positioner-connection="positionerConnection"
+          :pressure-items="pressureItems"
+          :realtime-result="traversalStore.realtimeResult"
+          :labels="{
+            monitor: t.travMonitor,
+            currentPoint: t.currentPoint,
+            positioner: t.positioner,
+            realtimeCalculation: t.realtimeCalculation,
+            realtimePressureData: t.realtimePressureData,
+            alpha: t.alpha,
+            beta: t.beta,
+            mach: t.mach,
+            velocity: t.velocity,
+          }"
+        />
 
-            <!-- 当前点位：关键数值使用更大字号 -->
-            <div class="mb-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2 dark:border-slate-700/50 dark:bg-slate-800/50">
-              <div class="mb-1 flex items-center gap-1.5">
-                <div class="h-1.5 w-1.5 rounded-full bg-blue-400"></div>
-                <span class="text-xs font-medium uppercase tracking-wider text-slate-400">{{ t.currentPoint }}</span>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div class="flex flex-col">
-                  <span class="text-xs text-slate-400">{{ t.alpha }}</span>
-                  <span class="font-mono text-base font-bold text-slate-800 dark:text-slate-100">{{ currentPointSummary.alpha }}°</span>
-                </div>
-                <div class="flex flex-col">
-                  <span class="text-xs text-slate-400">{{ t.beta }}</span>
-                  <span class="font-mono text-base font-bold text-slate-800 dark:text-slate-100">{{ currentPointSummary.beta }}°</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 轴位置：提升字号 -->
-            <div v-if="axisPositions.length && hasConfig" class="mb-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2 dark:border-slate-700/50 dark:bg-slate-800/50">
-              <div class="mb-1 flex items-center gap-1.5">
-                <div class="h-1.5 w-1.5 rounded-full bg-blue-400"></div>
-                <span class="text-xs font-medium uppercase tracking-wider text-slate-400">{{ t.positioner }}</span>
-              </div>
-              <div class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-sm">
-                <div v-for="axis in axisPositions" :key="axis.label" class="flex items-center gap-1">
-                  <span class="text-xs text-slate-400">{{ axis.label }}:</span>
-                  <span class="text-sm" :class="axis.moving ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-700 dark:text-slate-200'">
-                    {{ axis.position !== undefined ? axis.position.toFixed(2) : '--' }}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 气动参数网格：提升标签和数值字号 -->
-            <div class="mb-2 space-y-1.5">
-              <div class="flex items-center gap-1.5">
-                <div class="h-1.5 w-1.5 rounded-full bg-blue-400"></div>
-                <span class="text-xs font-medium uppercase tracking-wider text-slate-400">{{ t.realtimeCalculation }}</span>
-              </div>
-              <div class="grid grid-cols-2 gap-1.5">
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">{{ t.alpha }}</span>
-                  <span class="font-mono text-sm font-bold text-blue-600">{{ traversalStore.realtimeResult?.alpha?.toFixed(2) ?? '--' }}°</span>
-                </div>
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">{{ t.beta }}</span>
-                  <span class="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{{ traversalStore.realtimeResult?.beta?.toFixed(2) ?? '--' }}°</span>
-                </div>
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">{{ t.mach }}</span>
-                  <span class="font-mono text-sm font-bold text-blue-600">{{ traversalStore.realtimeResult?.machNumber?.toFixed(3) ?? '--' }}</span>
-                </div>
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">{{ t.velocity }}</span>
-                  <span class="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{{ traversalStore.realtimeResult?.velocity?.toFixed(1) ?? '--' }}</span>
-                </div>
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">P0</span>
-                  <span class="font-mono text-sm font-bold text-blue-600">{{ traversalStore.realtimeResult?.P0?.toFixed(2) ?? '--' }}</span>
-                </div>
-                <div class="flex flex-col rounded-md border border-slate-100 bg-slate-50/60 p-1.5 dark:border-slate-700/50 dark:bg-slate-800/60">
-                  <span class="text-xs text-slate-400">Ps</span>
-                  <span class="font-mono text-sm font-bold text-blue-600">{{ traversalStore.realtimeResult?.Ps?.toFixed(2) ?? '--' }}</span>
-                </div>
-              </div>
-              <!-- 有效性状态 -->
-              <div class="flex items-center justify-between rounded-md border px-2 py-1.5" :class="hasRealtimeResult && traversalStore.realtimeResult?.isValid ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-900/15' : 'border-slate-100 bg-slate-50/60 dark:border-slate-700/50 dark:bg-slate-800/60'">
-                <div class="flex items-center gap-1.5">
-                  <span class="h-2 w-2 rounded-full" :class="hasRealtimeResult && traversalStore.realtimeResult?.isValid ? 'bg-emerald-500' : hasRealtimeResult ? 'bg-rose-500' : 'bg-slate-300'"></span>
-                  <span class="text-xs text-slate-500">{{ t.validity }}</span>
-                </div>
-                <span class="font-mono text-xs font-semibold" :class="hasRealtimeResult && traversalStore.realtimeResult?.isValid ? 'text-emerald-600 dark:text-emerald-400' : hasRealtimeResult ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'">
-                  {{ hasRealtimeResult ? (traversalStore.realtimeResult?.isValid ? t.valid : t.limit) : '--' }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 原始压力数据：合并到同一面板，用分隔线区分 -->
-            <div>
-              <div class="flex items-center gap-1.5 mb-1.5">
-                <ClipboardList class="h-3.5 w-3.5 text-slate-400" />
-                <span class="text-xs font-medium uppercase tracking-wider text-slate-400">{{ t.realtimePressureData }}</span>
-              </div>
-
-              <div class="grid grid-cols-2 gap-1">
-                <div
-                  v-for="item in pressureItems"
-                  :key="item.key"
-                  class="flex flex-col rounded-md border px-1.5 py-1 transition-colors"
-                  :class="item.disabled
-                    ? 'border-slate-100 bg-slate-50/40 dark:border-slate-700/50 dark:bg-slate-800/40'
-                    : 'border-blue-100 bg-blue-50/20 dark:border-blue-800/30 dark:bg-blue-900/10'"
-                >
-                  <div class="flex items-center justify-between">
-                    <span class="text-xs font-medium" :class="item.disabled ? 'text-slate-400' : 'text-slate-500 dark:text-slate-400'">{{ item.label }}</span>
-                    <span v-if="!item.disabled" class="text-xs text-slate-300 dark:text-slate-600">{{ item.unit }}</span>
-                  </div>
-                  <div class="font-mono text-sm font-semibold" :class="item.disabled ? 'text-slate-300 dark:text-slate-600' : 'text-slate-700 dark:text-slate-200'">{{ item.value }}</div>
-                </div>
-              </div>
-            </div>
-          </section>
-        </aside>
-
-        <!-- Main Content Area -->
-        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div data-test="traversal-workspace-primary" class="min-h-0 flex-1">
-            <section class="h-full flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <!-- 工作区头部 -->
-              <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                <div class="flex items-center gap-2">
-                  <div class="h-6 w-1 rounded-full bg-blue-500"></div>
-                  <div>
-                  <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      {{ workspaceTabMeta.title }}
-                    </h3>
-                    <p class="text-[10px] text-slate-400">
-                      {{ workspaceTabMeta.subtitle }}
-                    </p>
-                  </div>
-                </div>
-                <!-- 标签页切换 -->
-                <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800">
-                  <UiButton
-                    v-for="tab in workspaceTabs"
-                    :key="tab.value"
-                    quaternary
-                    :class="[
-                      activeWorkspaceTab === tab.value ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200',
-                      'h-9 px-3 text-sm'
-                    ]"
-                    @click="activeWorkspaceTab = tab.value"
-                  >
-                    {{ tab.label }}
-                  </UiButton>
-                </div>
-              </div>
-
-              <!-- 内容区 -->
-              <div class="flex-1 overflow-hidden relative">
-                <!-- 点位预览图例 -->
-                <div v-if="activeWorkspaceTab === 'preview'" class="absolute right-4 top-3 z-10 flex items-center gap-3 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[10px] shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/90">
-                  <div class="flex items-center gap-1">
-                    <span class="h-2 w-2 rounded-full bg-blue-500"></span>
-                    <span class="text-slate-500">{{ t.moving }}</span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class="h-2 w-2 rounded-full bg-amber-400"></span>
-                    <span class="text-slate-500">{{ t.stabilizing }}</span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                    <span class="text-slate-500">{{ t.acquiring }}</span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class="h-2 w-2 rounded-full bg-gradient-to-r from-purple-500 to-pink-500"></span>
-                    <span class="text-slate-500">{{ t.completed }}</span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class="h-2 w-2 rounded-full bg-slate-300"></span>
-                    <span class="text-slate-500">{{ t.untested }}</span>
-                  </div>
-                </div>
-
-                <template v-if="activeWorkspaceTab === 'preview'">
-                  <PointsPreview
-                    v-if="currentConfig?.layout"
-                    :layout="currentConfig.layout"
-                    :current-point="traversalStore.status?.currentPoint"
-                    :completed-points="traversalStore.status?.completedPoints"
-                    :current-point-phase="traversalStore.status?.currentPointPhase"
-                    :visible="activeWorkspaceTab === 'preview'"
-                  />
-                  <!-- 空状态 -->
-                  <div v-else class="flex h-full w-full flex-col items-center justify-center gap-4 text-center">
-                    <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800">
-                      <ClipboardList class="h-8 w-8 text-slate-300 dark:text-slate-600" />
-                    </div>
-                    <div>
-                      <div class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ t.noLayoutConfigured }}</div>
-                      <div class="mt-1 text-xs text-slate-400">{{ t.pleaseConfigureLayout }}</div>
-                    </div>
-                    <UiButton
-                      variant="primary" size="sm"
-                      @click="openSettings"
-                    >
-                      <template #icon>
-                        <Settings class="h-3.5 w-3.5" />
-                      </template>
-                      {{ t.configureLayout }}
-                    </UiButton>
-                  </div>
-                </template>
-                <div v-else-if="activeWorkspaceTab === 'visualization'" class="h-full p-4">
-                  <TraversalVisualization />
-                </div>
-                <div v-else class="h-full overflow-auto p-4">
-                  <ProbeReferenceCard />
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
+        <TraversalWorkspaceArea
+          v-model:active-tab="activeWorkspaceTab"
+          :tabs="workspaceTabs"
+          :tab-meta="workspaceTabMeta"
+          :current-config="currentConfig"
+          :current-point="traversalStore.status?.currentPoint"
+          :completed-points="traversalStore.status?.completedPoints"
+          :current-point-phase="traversalStore.status?.currentPointPhase"
+          :labels="{
+            moving: t.moving,
+            stabilizing: t.stabilizing,
+            acquiring: t.acquiring,
+            completed: t.completed,
+            untested: t.untested,
+            noLayoutConfigured: t.noLayoutConfigured,
+            pleaseConfigureLayout: t.pleaseConfigureLayout,
+            configureLayout: t.configureLayout,
+          }"
+          @open-settings="openSettings"
+        />
       </div>
     </div>
 
-    <!-- 启动确认对话框：前置条件检查 + 测试摘要 + 确认/取消 -->
-    <div v-if="showStartConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60" role="dialog" aria-modal="true" :aria-label="t.confirmStartTitle" aria-describedby="confirm-start-desc" @keydown.escape="cancelStartConfirm" @click.self="cancelStartConfirm">
-      <div ref="confirmDialogRef" class="w-[calc(100%-2rem)] max-w-[440px] rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-700 dark:bg-slate-900" @keydown.tab="trapFocus">
-        <h3 id="confirm-start-title" class="mb-1 text-base font-bold text-slate-900 dark:text-slate-100">{{ t.confirmStartTitle }}</h3>
-        <p id="confirm-start-desc" class="mb-4 text-xs text-slate-500 dark:text-slate-400">{{ t.confirmStartMessage }}</p>
+    <!-- 启动确认对话框 (UiDialog primitive handles focus trap) -->
+    <TraversalStartConfirm
+      :show="showStartConfirm"
+      :current-config="currentConfig"
+      :is-checking-preconditions="isCheckingPreconditions"
+      :precondition-result="preconditionResult"
+      :labels="{
+        title: t.confirmStartTitle,
+        message: t.confirmStartMessage,
+        checking: t.checkingPreconditions,
+        points: t.confirmStartPoints,
+        output: t.confirmStartOutput,
+        dismiss: t.dismiss,
+        start: t.confirmStartStart,
+      }"
+      @confirm="confirmStartTest"
+      @cancel="cancelStartConfirm"
+    />
 
-        <!-- 前置条件检查结果 -->
-        <div v-if="isCheckingPreconditions" class="mb-4 flex items-center gap-2 text-xs text-slate-400">
-          <div class="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
-          {{ t.checkingPreconditions }}
-        </div>
-        <div v-else-if="preconditionResult" class="mb-4 space-y-1.5">
-          <div
-            v-for="check in preconditionResult.checks"
-            :key="check.name"
-            class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs"
-            :class="check.passed ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-rose-50 dark:bg-rose-900/20'"
-          >
-            <CheckCircle v-if="check.passed" class="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-            <XCircle v-else class="h-3.5 w-3.5 shrink-0 text-rose-500" />
-            <span :class="check.passed ? 'text-slate-600 dark:text-slate-300' : 'text-rose-600 dark:text-rose-400 font-medium'">
-              {{ check.message || check.name }}
-            </span>
-          </div>
-        </div>
-
-        <!-- 测试摘要 -->
-        <div v-if="currentConfig" class="mb-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
-          <div class="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span class="text-slate-400">{{ t.confirmStartPoints }}</span>
-              <span class="ml-1.5 font-mono font-semibold text-blue-500">{{ currentConfig.layout ? getTraversalLayoutPointCount(currentConfig.layout) : '--' }}</span>
-            </div>
-            <div>
-              <span class="text-slate-400">{{ t.confirmStartOutput }}</span>
-              <span class="ml-1.5 truncate text-slate-600 dark:text-slate-300">{{ currentConfig.savePath || '--' }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 操作按钮 -->
-        <div class="flex items-center justify-end gap-2">
-          <UiButton quaternary size="sm" @click="cancelStartConfirm">
-            {{ t.dismiss }}
-          </UiButton>
-          <UiButton
-            :variant="preconditionResult?.allPassed ? 'primary' : 'danger'"
-            size="sm"
-            :disabled="!preconditionResult || isCheckingPreconditions || !preconditionResult.allPassed"
-            @click="confirmStartTest"
-          >
-            <template #icon>
-              <Play class="h-3.5 w-3.5 fill-current" />
-            </template>
-            {{ t.confirmStartStart }}
-          </UiButton>
-        </div>
-      </div>
-    </div>
-
-    <!-- Error Banner -->
-    <div v-if="traversalStore.error" class="shrink-0 border-t border-rose-200 bg-rose-50 px-6 py-3 dark:border-rose-900/30 dark:bg-rose-900/10">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3 text-sm font-medium text-rose-600 dark:text-rose-400">
-          <AlertTriangle class="h-4 w-4" />
-          <span>{{ traversalStore.error }}</span>
-        </div>
-        <UiButton variant="danger" size="sm" @click="traversalStore.clearError">{{ t.dismiss }}</UiButton>
-      </div>
-    </div>
+    <!-- 错误横幅 -->
+    <TraversalErrorBanner
+      :error="traversalStore.error"
+      :dismiss-label="t.dismiss"
+      @dismiss="traversalStore.clearError"
+    />
   </div>
 </template>
-

@@ -123,7 +123,7 @@ function autoFillChannelIndices(): void {
 
     <!-- 探头通道配置 -->
     <UiPanel class="section-card">
-      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span></div>
+      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span><span class="hdr-w80">{{ t.channelPrecision || '精度' }}</span></div>
       <div v-for="ch in probeChannels" :key="ch.name" class="hw-row">
         <div class="row-check"><UiCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" /></div>
         <div class="row-content">
@@ -142,6 +142,7 @@ function autoFillChannelIndices(): void {
           />
         </div>
         <UiSelect :model-value="ch.channel.channelIndex != null ? String(ch.channel.channelIndex) : ''" @update:model-value="ch.channel.channelIndex = Number($event)" :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))" placeholder="Unassigned" class="sel-w80" :disabled="!ch.enabled" />
+        <UiInputNumber v-model="ch.precision" :min="0" :max="8" class="sel-w80" :disabled="!ch.enabled" />
       </div>
     </UiPanel>
 

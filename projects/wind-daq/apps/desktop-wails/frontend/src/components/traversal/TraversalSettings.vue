@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
@@ -39,9 +39,17 @@ import TraversalLayoutStep from './TraversalLayoutStep.vue'
 import TraversalHardwareStep from './TraversalHardwareStep.vue'
 import TraversalPrbStep from './TraversalPrbStep.vue'
 
+const props = withDefaults(
+  defineProps<{
+    show?: boolean
+  }>(),
+  { show: false }
+)
+
 const emit = defineEmits<{
   close: []
   saved: [config: TraversalTestConfig]
+  'update:show': [value: boolean]
 }>()
 
 const deviceStore = useDeviceStore()
@@ -348,18 +356,24 @@ async function saveConfig() {
   } finally { isSaving.value = false }
 }
 
-onMounted(async () => {
+// 对话框打开时重新加载已保存的配置，确保 UI 与后端状态同步
+watch(() => props.show, async (isVisible) => {
+  if (!isVisible) return
+  isLoading.value = true
   try {
     await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), storageStore.loadSettings(), loadSavedConfig()])
     if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
     if (!saveFileName.value.trim()) saveFileName.value = buildDefaultSaveFileName(testName.value)
+    // 重置步骤导航到第一步
+    currentStep.value = 0
+    visitedSteps.value = new Set([0])
   } finally { isLoading.value = false }
-})
+}, { immediate: true })
 </script>
 
 <template>
   <!-- 遍历测试配置对话框：限制最大高度，使用 flex 布局确保内容不溢出 -->
-  <UiDialog :show="true" width="min(92vw, 960px)" closable @close="emit('close')">
+  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @close="emit('close')">
     <template #header>
       <div>
           <span class="setup-overline">{{ t.traversalSetup }}</span>

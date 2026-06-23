@@ -90,6 +90,8 @@ function clearAlgorithmConfig(algorithm: InterpolationAlgorithm): void {
   } else {
     calibrationCsvFile.value = null
   }
+  // 清除后端插值器状态标记
+  traversalStore.clearInterpolator()
 }
 
 /**
@@ -113,9 +115,17 @@ async function switchAlgorithm(target: InterpolationAlgorithm): Promise<void> {
 function removeMultiPrbFile(index: number): void {
   multiPrbFiles.value.splice(index, 1)
   multiPrbMachNumbers.value.splice(index, 1)
+  // 多PRB全部移除后清除插值器状态
+  if (multiPrbFiles.value.length === 0) traversalStore.clearInterpolator()
 }
 
-function clearMultiPrbFiles(): void { multiPrbFiles.value = []; multiPrbMachNumbers.value = [] }
+function clearMultiPrbFiles(): void { multiPrbFiles.value = []; multiPrbMachNumbers.value = []; traversalStore.clearInterpolator() }
+
+/** 移除单个 PRB 文件 */
+function removePrbFile(): void { prbFile.value = null; traversalStore.clearInterpolator() }
+
+/** 移除标定 CSV 文件 */
+function removeCalibrationCsvFile(): void { calibrationCsvFile.value = null; traversalStore.clearInterpolator() }
 
 /** 导入 PRB 文件：单文件或多文件 */
 async function importPrbFile(): Promise<void> {
@@ -150,7 +160,7 @@ async function importPrbFile(): Promise<void> {
 async function importCalibrationCsvFile(): Promise<void> {
   const filePath = await csvImport.importSingleFile({
     title: props.t.importCsv,
-    filters: [{ displayName: 'Calibration CSV', pattern: '*.csv;*.txt' }],
+    filters: [{ displayName: 'Calibration files', pattern: '*.csv;*.txt' }],
   })
   if (!filePath) return
 
@@ -192,7 +202,7 @@ async function importCalibrationCsvFile(): Promise<void> {
         <UiButton size="sm" variant="primary" :loading="isImportingCsv" @click="importCalibrationCsvFile">{{ isImportingCsv ? t.importing : t.importCsv }}</UiButton>
       </div>
       <template v-if="calibrationCsvFile">
-        <div class="file-row"><div class="file-info"><span class="file-name">{{ calibrationCsvFile.fileName }}</span><span class="file-path">{{ calibrationCsvFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="calibrationCsvFile = null">{{ t.remove }}</UiButton></div>
+        <div class="file-row"><div class="file-info"><span class="file-name">{{ calibrationCsvFile.fileName }}</span><span class="file-path">{{ calibrationCsvFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="removeCalibrationCsvFile">{{ t.remove }}</UiButton></div>
         <div class="range-grid">
           <div class="range-stat"><span class="range-label">Alpha</span><span class="range-value">{{ calibrationCsvFile.validRange.alphaMin }}..{{ calibrationCsvFile.validRange.alphaMax }} deg</span></div>
           <div class="range-stat"><span class="range-label">Beta</span><span class="range-value">{{ calibrationCsvFile.validRange.betaMin }}..{{ calibrationCsvFile.validRange.betaMax }} deg</span></div>
@@ -210,7 +220,7 @@ async function importCalibrationCsvFile(): Promise<void> {
 
       <template v-if="prbMode === 'single'">
         <template v-if="prbFile">
-          <div class="file-row"><div class="file-info"><span class="file-name">{{ prbFile.fileName }}</span><span class="file-path">{{ prbFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="prbFile = null">{{ t.remove }}</UiButton></div>
+          <div class="file-row"><div class="file-info"><span class="file-name">{{ prbFile.fileName }}</span><span class="file-path">{{ prbFile.filePath }}</span></div>        <UiButton size="sm" secondary @click="removePrbFile">{{ t.remove }}</UiButton></div>
           <div class="range-grid"><div v-for="r in prbValidRangeRows" :key="r.label" class="range-stat"><span class="range-label">{{ r.label }}</span><span class="range-value">{{ r.value }}</span></div></div>
         </template>
         <div v-else class="empty-state"><span class="empty-text">{{ t.noPrbImported }}</span></div>

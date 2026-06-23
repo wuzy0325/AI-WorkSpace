@@ -1,4 +1,4 @@
-﻿import type { InterpolationResult } from '@shared/types/traversal'
+import type { InterpolationResult } from '@shared/types/traversal'
 
 export type VisualizationParam =
   | 'machNumber'
@@ -20,9 +20,9 @@ export interface VisualizationParamConfig {
 export const VISUALIZATION_PARAM_CONFIG: Record<VisualizationParam, VisualizationParamConfig> = {
   machNumber: { labelKey: 'mach', fallbackLabel: 'Mach', title: 'Mach', unit: '' },
   velocity: { labelKey: 'velocity', fallbackLabel: 'Velocity', title: 'Velocity', unit: 'm/s' },
-  P0: { labelKey: 'totalPressure', fallbackLabel: 'P0', title: 'P0', unit: 'kPa' },
-  Ps: { labelKey: 'staticPressure', fallbackLabel: 'Ps', title: 'Ps', unit: 'kPa' },
-  dynamicPressure: { labelKey: 'dynamicP', fallbackLabel: 'Dynamic Pressure', title: 'Dynamic Pressure', unit: 'kPa' },
+  P0: { labelKey: 'totalPressure', fallbackLabel: 'P0', title: 'P0', unit: 'Pa' },
+  Ps: { labelKey: 'staticPressure', fallbackLabel: 'Ps', title: 'Ps', unit: 'Pa' },
+  dynamicPressure: { labelKey: 'dynamicP', fallbackLabel: 'Dynamic Pressure', title: 'Dynamic Pressure', unit: 'Pa' },
   density: { labelKey: 'density', fallbackLabel: 'Density', title: 'Density', unit: 'kg/m^3' },
   alpha: { labelKey: 'alpha', fallbackLabel: 'Alpha', title: 'Alpha', unit: 'deg' },
   beta: { labelKey: 'beta', fallbackLabel: 'Beta', title: 'Beta', unit: 'deg' }
