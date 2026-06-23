@@ -23,7 +23,7 @@ const (
 	daqP1064PreDiscoveryPort = 1901
 	daqP1064PreDefaultPort   = 23
 
-	defaultScanTimeout = 2 * time.Second
+	defaultScanTimeout = 3 * time.Second
 	limitedBroadcast   = "255.255.255.255"
 )
 
@@ -102,7 +102,8 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 	return results, nil
 }
 
-// scanWithSocket 为单个设备类型创建独立的 UDP socket，发送发现命令并收集响应
+// scanWithSocket 为单个设备类型创建独立的 UDP socket，发送发现命令并收集响应。
+// 只发送广播地址，避免向同一设备重复发送单播命令导致设备不响应。
 func (s *NetworkScanner) scanWithSocket(
 	cmd string,
 	port int,
@@ -115,7 +116,8 @@ func (s *NetworkScanner) scanWithSocket(
 	}
 	defer conn.Close()
 
-	targets := getAllDiscoveryTargets()
+	// 只使用广播地址，避免单播重复命令导致设备不响应
+	targets := getAllBroadcastTargets()
 	for _, target := range targets {
 		addr := net.ParseIP(target)
 		if addr == nil {
