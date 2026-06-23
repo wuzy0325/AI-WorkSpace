@@ -27,6 +27,10 @@ type calibrationRow struct {
 	P3    float64
 	P4    float64
 	P5    float64
+	// 总压系数（可选，原始多列格式CSV有此列，简化格式无此列）
+	Cpt float64
+	// 静压系数（可选，原始多列格式CSV有此列，简化格式无此列）
+	Cps float64
 }
 
 // gridPoint 网格点（在Kα-Kβ空间中）
@@ -99,11 +103,17 @@ type gridInterpolationResult struct {
 // 2. 根据(α1, β1)判断区域（角区/边缘区/中心区）
 // 3. 根据区域选择最终公式（AA1/AA2/AA3）
 // 4. 用选定公式重新计算并插值得到最终(α, β)
+// 5. 利用Cpt/Cps系数计算物理参数（P0, Ps, Mach, 速度等）
 type FiveHoleNewInterpolator struct {
 	loaded          bool
 	validRange      PrbValidRange
 	calibrationData []calibrationRow
 	pointCount      int
+
+	// 校准数据索引：按 (alpha, beta) 快速查找 Cpt/Cps
+	calibrationIndex map[string]*calibrationRow
+	// 是否包含 Cpt/Cps 数据（原始多列格式有，简化格式无）
+	hasCptCps bool
 
 	// 预计算网格数据
 	aa1Grid       map[float64][]gridPoint
@@ -148,6 +158,9 @@ func (f *FiveHoleNewInterpolator) LoadPrbFile(filePath string) error {
 }
 
 // LoadPrbLines loads CSV calibration data from already-read text lines.
+// 支持两种格式：
+//   - 7列简化格式：alpha,beta,p1,p2,p3,p4,p5
+//   - 原始多列格式：包含 Hole1~Hole5, Alpha, Beta, Cpt, Cps 等列
 func (f *FiveHoleNewInterpolator) LoadPrbLines(lines []string) error {
 	f.clearState()
 
@@ -159,7 +172,27 @@ func (f *FiveHoleNewInterpolator) LoadPrbLines(lines []string) error {
 		}
 	}
 
-	rows, err := f.parseCsvFile(nonEmptyLines)
+	if len(nonEmptyLines) < 2 {
+		return fmt.Errorf("CSV文件至少需要包含表头和一行数据")
+	}
+
+	// 根据表头自动检测格式
+	headerColumns := strings.Split(nonEmptyLines[0], ",")
+	for i := range headerColumns {
+		headerColumns[i] = strings.TrimSpace(headerColumns[i])
+	}
+
+	var rows []calibrationRow
+	var err error
+
+	if len(headerColumns) == 7 && headerColumns[0] == "alpha" {
+		// 7列简化格式
+		rows, err = f.parseSimpleCsv(nonEmptyLines)
+	} else {
+		// 原始多列格式：自动识别 Hole1~Hole5 和 Alpha/Beta/Cpt/Cps 列
+		rows, err = f.parseOriginalCsv(nonEmptyLines, headerColumns)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -170,6 +203,10 @@ func (f *FiveHoleNewInterpolator) LoadPrbLines(lines []string) error {
 
 	f.calibrationData = rows
 	f.pointCount = len(rows)
+
+	// 构建校准数据索引（用于 Cpt/Cps 插值）
+	f.buildCalibrationIndex(rows)
+
 	f.buildAllGrids()
 
 	// 计算有效范围
@@ -268,19 +305,27 @@ func (f *FiveHoleNewInterpolator) Calculate(input InterpolationInput) (Interpola
 	if isExtended {
 		warnings = append(warnings, "结果基于扩展网格外推，精度可能下降")
 	}
-	warnings = append(warnings, "新算法仅计算角度，压力/马赫数等参数未计算")
 
-	isValid := isFinite(finalAlpha) && isFinite(finalBeta)
+	// 步骤4：利用 Cpt/Cps 计算物理参数
+	physics := f.calculatePhysics(input, finalAlpha, finalBeta)
+
+	isValid := isFinite(finalAlpha) && isFinite(finalBeta) && physics.isValid
 	var warningStr string
 	if len(warnings) > 0 {
 		warningStr = strings.Join(warnings, "; ")
 	}
 
 	return InterpolationResult{
-		Alpha:   finalAlpha,
-		Beta:    finalBeta,
-		IsValid: isValid,
-		Warning: warningStr,
+		Alpha:           finalAlpha,
+		Beta:            finalBeta,
+		MachNumber:      physics.machNumber,
+		Velocity:        physics.velocity,
+		DynamicPressure: physics.dynamicPressure,
+		Density:         physics.density,
+		TotalPressure:   physics.P0,
+		StaticPressure:  physics.Ps,
+		IsValid:         isValid,
+		Warning:         warningStr,
 	}, nil
 }
 
@@ -294,6 +339,8 @@ func (f *FiveHoleNewInterpolator) GetPointCount() int {
 func (f *FiveHoleNewInterpolator) clearState() {
 	f.loaded = false
 	f.calibrationData = nil
+	f.calibrationIndex = nil
+	f.hasCptCps = false
 	f.aa1Grid = nil
 	f.aa2Grid = nil
 	f.aa3Grid = nil
@@ -320,12 +367,8 @@ func (f *FiveHoleNewInterpolator) clearState() {
 	f.sortedBetas = nil
 }
 
-// parseCsvFile 解析CSV校准数据文件
-func (f *FiveHoleNewInterpolator) parseCsvFile(lines []string) ([]calibrationRow, error) {
-	if len(lines) < 2 {
-		return nil, fmt.Errorf("CSV文件至少需要包含表头和一行数据")
-	}
-
+// parseSimpleCsv 解析7列简化格式CSV (alpha,beta,p1,p2,p3,p4,p5)
+func (f *FiveHoleNewInterpolator) parseSimpleCsv(lines []string) ([]calibrationRow, error) {
 	reader := csv.NewReader(strings.NewReader(strings.Join(lines, "\n")))
 	reader.TrimLeadingSpace = true
 	reader.FieldsPerRecord = -1
@@ -358,6 +401,7 @@ func (f *FiveHoleNewInterpolator) parseCsvFile(lines []string) ([]calibrationRow
 		row := calibrationRow{
 			Alpha: parsed[0], Beta: parsed[1],
 			P1: parsed[2], P2: parsed[3], P3: parsed[4], P4: parsed[5], P5: parsed[6],
+			// 简化格式无 Cpt/Cps
 		}
 		if !isFinite(row.Alpha) || !isFinite(row.Beta) ||
 			!isFinite(row.P1) || !isFinite(row.P2) || !isFinite(row.P3) ||
@@ -375,6 +419,362 @@ func (f *FiveHoleNewInterpolator) parseCsvFile(lines []string) ([]calibrationRow
 		return nil, err
 	}
 	return rows, nil
+}
+
+// parseOriginalCsv 解析原始多列格式CSV，自动识别 Hole1~Hole5、Alpha/Beta、Cpt/Cps 列
+func (f *FiveHoleNewInterpolator) parseOriginalCsv(lines []string, headerColumns []string) ([]calibrationRow, error) {
+	// 查找关键列索引
+	holeIndices := make([]int, 5)
+	for n := 1; n <= 5; n++ {
+		idx := -1
+		for i, h := range headerColumns {
+			if h == fmt.Sprintf("Hole%d", n) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return nil, fmt.Errorf("CSV文件缺少Hole%d列，无法用于新算法插值", n)
+		}
+		holeIndices[n-1] = idx
+	}
+
+	alphaIdx := -1
+	betaIdx := -1
+	for i, h := range headerColumns {
+		if h == "Alpha" {
+			alphaIdx = i
+		}
+		if h == "Beta" {
+			betaIdx = i
+		}
+	}
+	if alphaIdx < 0 || betaIdx < 0 {
+		return nil, fmt.Errorf("CSV文件缺少Alpha或Beta列，无法用于新算法插值")
+	}
+
+	cptIdx := -1
+	cpsIdx := -1
+	for i, h := range headerColumns {
+		if h == "Cpt" {
+			cptIdx = i
+		}
+		if h == "Cps" {
+			cpsIdx = i
+		}
+	}
+	hasCptCps := cptIdx >= 0 && cpsIdx >= 0
+
+	reader := csv.NewReader(strings.NewReader(strings.Join(lines, "\n")))
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("CSV文件解析失败: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, fmt.Errorf("CSV文件至少需要包含表头和一行数据")
+	}
+
+	maxRequiredIdx := alphaIdx
+	for _, idx := range holeIndices {
+		if idx > maxRequiredIdx {
+			maxRequiredIdx = idx
+		}
+	}
+	if betaIdx > maxRequiredIdx {
+		maxRequiredIdx = betaIdx
+	}
+
+	var rows []calibrationRow
+	seen := make(map[string]bool)
+	for i := 1; i < len(records); i++ {
+		values := records[i]
+		if len(values) < maxRequiredIdx+1 {
+			continue
+		}
+
+		alpha, errA := parseFloat(strings.TrimSpace(values[alphaIdx]))
+		beta, errB := parseFloat(strings.TrimSpace(values[betaIdx]))
+		if errA != nil || errB != nil {
+			continue
+		}
+
+		parsed := make([]float64, 5)
+		valid := true
+		for n, idx := range holeIndices {
+			v, err := parseFloat(strings.TrimSpace(values[idx]))
+			if err != nil {
+				valid = false
+				break
+			}
+			parsed[n] = v
+		}
+		if !valid || !isFinite(alpha) || !isFinite(beta) {
+			continue
+		}
+		for _, v := range parsed {
+			if !isFinite(v) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			continue
+		}
+
+		row := calibrationRow{
+			Alpha: alpha,
+			Beta:  beta,
+			P1:    parsed[0],
+			P2:    parsed[1],
+			P3:    parsed[2],
+			P4:    parsed[3],
+			P5:    parsed[4],
+		}
+
+		// 提取 Cpt/Cps（若列存在且有效）
+		if hasCptCps && len(values) > max(cptIdx, cpsIdx) {
+			cptVal, errCpt := parseFloat(strings.TrimSpace(values[cptIdx]))
+			cpsVal, errCps := parseFloat(strings.TrimSpace(values[cpsIdx]))
+			if errCpt == nil && errCps == nil && isFinite(cptVal) && isFinite(cpsVal) {
+				row.Cpt = cptVal
+				row.Cps = cpsVal
+			}
+		}
+
+		key := calibrationPointKey(row.Alpha, row.Beta)
+		if seen[key] {
+			return nil, fmt.Errorf("CSV存在重复角度点(%.6g, %.6g)", row.Alpha, row.Beta)
+		}
+		seen[key] = true
+		rows = append(rows, row)
+	}
+
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("CSV文件未包含有效数据行")
+	}
+
+	// 检查 Cpt/Cps 数据是否全部有效：若列存在但部分行缺失，标记为不可用
+	if hasCptCps {
+		validCptCps := true
+		for _, row := range rows {
+			if row.Cpt == 0 && row.Cps == 0 {
+				// 零值可能表示解析失败或数据缺失
+				// 注意：合法的 Cpt/Cps 可以是零（零偏角时），但全部为零说明数据有问题
+				validCptCps = false
+				break
+			}
+		}
+		f.hasCptCps = validCptCps
+	} else {
+		f.hasCptCps = false
+	}
+
+	if err := validateCalibrationGrid(rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// buildCalibrationIndex 构建校准数据索引，用于 Cpt/Cps 双线性插值
+func (f *FiveHoleNewInterpolator) buildCalibrationIndex(rows []calibrationRow) {
+	f.calibrationIndex = make(map[string]*calibrationRow, len(rows))
+	for i := range rows {
+		key := calibrationPointKey(rows[i].Alpha, rows[i].Beta)
+		f.calibrationIndex[key] = &rows[i]
+	}
+}
+
+// physicsResult 物理参数计算结果
+type physicsResult struct {
+	P0              float64 // 总压 Pa
+	Ps              float64 // 静压 Pa
+	machNumber      float64 // 马赫数
+	velocity        float64 // 速度 m/s
+	dynamicPressure float64 // 动压 Pa
+	density         float64 // 密度 kg/m³
+	isValid         bool
+}
+
+// calculatePhysics 利用 Cpt/Cps 系数计算物理参数
+// 当校准数据包含 Cpt/Cps 时，通过双线性插值获取对应角度的系数，
+// 然后结合实测压力计算总压、静压、马赫数、速度等
+func (f *FiveHoleNewInterpolator) calculatePhysics(input InterpolationInput, alpha, beta float64) physicsResult {
+	result := physicsResult{}
+
+	// 无 Cpt/Cps 数据时无法计算物理参数
+	if !f.hasCptCps || len(f.calibrationIndex) == 0 {
+		// 回退：使用实测孔压估算
+		return f.estimatePhysicsFromPressures(input)
+	}
+
+	// 双线性插值获取 Cpt 和 Cps
+	cpt, errCpt := f.bilinearInterpolateCoefficient(alpha, beta, func(r *calibrationRow) float64 { return r.Cpt })
+	cps, errCps := f.bilinearInterpolateCoefficient(alpha, beta, func(r *calibrationRow) float64 { return r.Cps })
+
+	if errCpt != nil || errCps != nil {
+		return f.estimatePhysicsFromPressures(input)
+	}
+
+	// 计算总压和静压
+	// P0 = P_center + Cpt * (P_center - P_avg)  （总压系数公式）
+	// Ps = P_center + Cps * (P_center - P_avg)  （静压系数公式）
+	// 注意：P2 是中心孔，P1/P3/P4/P5 是四周孔
+	pCenter := input.P2 // 中心孔压力
+	pAvg := (input.P1 + input.P3 + input.P4 + input.P5) / 4.0
+	dp := pCenter - pAvg
+
+	P0 := pCenter + cpt*dp
+	Ps := pCenter + cps*dp
+
+	// 利用大气数据计算马赫数和速度
+	if input.PAtm > 0 && input.TAtm > 0 {
+		calc := NewAtmosphericDataCalculator()
+		atmResult, err := calc.CalculateAll(P0+input.PAtm, Ps+input.PAtm, input.TAtm)
+		if err == nil {
+			result.machNumber = atmResult.MachNumber
+			result.velocity = atmResult.TASMach
+			result.dynamicPressure = atmResult.Qc
+			result.density = input.PAtm / (atmR * atmResult.SAT)
+		}
+	}
+
+	result.P0 = P0
+	result.Ps = Ps
+	result.isValid = isFinite(P0) && isFinite(Ps)
+
+	return result
+}
+
+// estimatePhysicsFromPressures 无 Cpt/Cps 时从实测压力估算物理参数
+func (f *FiveHoleNewInterpolator) estimatePhysicsFromPressures(input InterpolationInput) physicsResult {
+	result := physicsResult{}
+
+	// 使用中心孔压力作为总压近似，四周孔平均作为静压近似
+	// P2 是中心孔，P1/P3/P4/P5 是四周孔
+	P0 := input.P2
+	Ps := (input.P1 + input.P3 + input.P4 + input.P5) / 4.0
+
+	if input.PAtm > 0 && input.TAtm > 0 {
+		calc := NewAtmosphericDataCalculator()
+		atmResult, err := calc.CalculateAll(P0+input.PAtm, Ps+input.PAtm, input.TAtm)
+		if err == nil {
+			result.machNumber = atmResult.MachNumber
+			result.velocity = atmResult.TASMach
+			result.dynamicPressure = atmResult.Qc
+			result.density = input.PAtm / (atmR * atmResult.SAT)
+		}
+	}
+
+	result.P0 = P0
+	result.Ps = Ps
+	result.isValid = isFinite(P0) && isFinite(Ps)
+
+	return result
+}
+
+// bilinearInterpolateCoefficient 对校准系数（Cpt/Cps）进行双线性插值
+func (f *FiveHoleNewInterpolator) bilinearInterpolateCoefficient(
+	alpha, beta float64,
+	coefficientFunc func(*calibrationRow) float64,
+) (float64, error) {
+	// 复用已缓存的排序数组，避免每次调用重建
+	alphas := f.sortedAlphas
+	betas := f.sortedBetas
+
+	// 查找 alpha 区间
+	aLow, aHigh := -1, -1
+	for i := 0; i < len(alphas)-1; i++ {
+		if alphas[i] <= alpha && alpha <= alphas[i+1] {
+			aLow, aHigh = i, i+1
+			break
+		}
+	}
+	if aLow < 0 {
+		// 超出范围，使用最近的边界
+		if alpha <= alphas[0] {
+			aLow, aHigh = 0, 0
+		} else {
+			aLow, aHigh = len(alphas)-1, len(alphas)-1
+		}
+	}
+
+	// 查找 beta 区间
+	bLow, bHigh := -1, -1
+	for j := 0; j < len(betas)-1; j++ {
+		if betas[j] <= beta && beta <= betas[j+1] {
+			bLow, bHigh = j, j+1
+			break
+		}
+	}
+	if bLow < 0 {
+		if beta <= betas[0] {
+			bLow, bHigh = 0, 0
+		} else {
+			bLow, bHigh = len(betas)-1, len(betas)-1
+		}
+	}
+
+	// 获取四角校准点的系数值
+	getCoeff := func(a, b float64) (float64, error) {
+		key := calibrationPointKey(a, b)
+		row, ok := f.calibrationIndex[key]
+		if !ok {
+			return 0, fmt.Errorf("校准点(%.6g, %.6g)不存在", a, b)
+		}
+		return coefficientFunc(row), nil
+	}
+
+	c00, err := getCoeff(alphas[aLow], betas[bLow])
+	if err != nil {
+		return 0, err
+	}
+
+	// 退化情况：目标点恰好在边界上
+	if aLow == aHigh || bLow == bHigh {
+		if aLow == aHigh && bLow == bHigh {
+			return c00, nil
+		}
+		if aLow == aHigh {
+			c01, err := getCoeff(alphas[aLow], betas[bHigh])
+			if err != nil {
+				return 0, err
+			}
+			t := (beta - betas[bLow]) / (betas[bHigh] - betas[bLow])
+			return c00 + t*(c01-c00), nil
+		}
+		// bLow == bHigh
+		c10, err := getCoeff(alphas[aHigh], betas[bLow])
+		if err != nil {
+			return 0, err
+		}
+		t := (alpha - alphas[aLow]) / (alphas[aHigh] - alphas[aLow])
+		return c00 + t*(c10-c00), nil
+	}
+
+	c10, err := getCoeff(alphas[aHigh], betas[bLow])
+	if err != nil {
+		return 0, err
+	}
+	c01, err := getCoeff(alphas[aLow], betas[bHigh])
+	if err != nil {
+		return 0, err
+	}
+	c11, err := getCoeff(alphas[aHigh], betas[bHigh])
+	if err != nil {
+		return 0, err
+	}
+
+	// 双线性插值
+	ta := (alpha - alphas[aLow]) / (alphas[aHigh] - alphas[aLow])
+	tb := (beta - betas[bLow]) / (betas[bHigh] - betas[bLow])
+
+	c0 := c00 + ta*(c10-c00)
+	c1 := c01 + ta*(c11-c01)
+
+	return c0 + tb*(c1-c0), nil
 }
 
 func validateCalibrationGrid(rows []calibrationRow) error {
