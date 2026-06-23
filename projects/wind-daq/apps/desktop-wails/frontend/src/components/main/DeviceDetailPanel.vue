@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import { NCheckbox } from 'naive-ui'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
-import RealtimeChart from '@components/device/RealtimeChart.vue'
+// RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
+// 避免拖慢首屏 LCP。参见 docs/runbooks/perf-frontend-bundle-baseline.md。
+const RealtimeChart = defineAsyncComponent(() => import('@components/device/RealtimeChart.vue'))
 
 const props = withDefaults(
   defineProps<{

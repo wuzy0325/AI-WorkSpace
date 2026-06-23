@@ -29,11 +29,12 @@ export default defineConfig({
         '../wailsjs/go/backend/App',
         '../wailsjs/go/models',
       ],
-      output: {
-        manualChunks: {
-          echarts: ['echarts', 'vue-echarts'],
-        },
-      },
+      // 注意：曾经在这里通过 manualChunks 把 echarts 单独拆出来，
+      // 但被 Vite 视为关键依赖会自动加 <link rel="modulepreload">，
+      // 导致首屏即使不需要图表也下载 echarts（拖慢 LCP）。
+      // 移除手动分块后，echarts 会跟随其异步消费者（DeviceDetailPanel 的 RealtimeChart，
+      // traversal 可视化视图）自然分到 lazy chunk，仅在进入相关视图时下载。
+      // 详见 docs/runbooks/perf-frontend-bundle-baseline.md。
     },
   },
   test: {

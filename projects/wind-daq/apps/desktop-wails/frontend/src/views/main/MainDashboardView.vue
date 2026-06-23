@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, defineAsyncComponent, ref, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { wailsApi, isWailsAvailable } from '@api/wails-adapter'
 import type { AppRailNavItem } from '@components/layout/AppRailNav.vue'
@@ -12,9 +12,12 @@ import DeviceSidebar from '@components/main/DeviceSidebar.vue'
 import DeviceOverviewPanel from '@components/main/DeviceOverviewPanel.vue'
 import DeviceDetailPanel from '@components/main/DeviceDetailPanel.vue'
 import MainView from '@views/MainView.vue'
-import CalibrationView from '@views/CalibrationView.vue'
-import TraversalView from '@views/TraversalView.vue'
-import LogViewer from '@views/LogViewer.vue'
+// 按需异步加载子页面：这些视图通过 v-if 在 activePage 变化时挂载，
+// 默认进入 dashboard 不会触发，把它们的代码体积从首屏 chunk 移除。
+// TraversalView 体积最大（含 echarts + 4 个可视化视图），尤其需要 lazy。
+const CalibrationView = defineAsyncComponent(() => import('@views/CalibrationView.vue'))
+const TraversalView = defineAsyncComponent(() => import('@views/TraversalView.vue'))
+const LogViewer = defineAsyncComponent(() => import('@views/LogViewer.vue'))
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
