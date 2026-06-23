@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -64,7 +65,9 @@ func (simulatedFactory) Create(profile device.Profile) (ports.Device, error) {
 }
 
 type fakeDevice struct {
-	id       string
+	id string
+	mu sync.Mutex // protects conn / dataSink / emitDone — accessed from both
+	// the test goroutine and the emit goroutine spawned in StartAcquisition.
 	conn     device.Connection
 	dataSink device.DataSink
 	emitDone chan struct{}
@@ -73,46 +76,72 @@ type fakeDevice struct {
 func (d *fakeDevice) ID() string { return d.id }
 
 func (d *fakeDevice) Status() device.Status {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return device.Status{ID: d.id, Connection: d.conn}
 }
 
-func (d *fakeDevice) Connect() error { d.conn = device.ConnectionConnected; return nil }
-func (d *fakeDevice) Disconnect() error {
-	if d.emitDone != nil {
-		close(d.emitDone)
-		d.emitDone = nil
-	}
-	d.conn = device.ConnectionDisconnected
+func (d *fakeDevice) Connect() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.conn = device.ConnectionConnected
 	return nil
 }
+
+func (d *fakeDevice) Disconnect() error {
+	d.mu.Lock()
+	done := d.emitDone
+	d.emitDone = nil
+	d.conn = device.ConnectionDisconnected
+	d.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return nil
+}
+
 func (d *fakeDevice) StartAcquisition() error {
+	d.mu.Lock()
 	d.conn = device.ConnectionAcquiring
-	d.emitDone = make(chan struct{})
+	done := make(chan struct{})
+	d.emitDone = done
+	sink := d.dataSink
+	d.mu.Unlock()
+
 	go func() {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-d.emitDone:
+			case <-done:
 				return
 			case <-ticker.C:
-				if d.dataSink != nil {
-					d.dataSink(device.DataPayload{DeviceID: d.id, Timestamp: time.Now().UnixMilli(), Channels: []float64{1, 2, 3, 4}, ChannelIndices: []int{0, 1, 2, 3}})
+				if sink != nil {
+					sink(device.DataPayload{DeviceID: d.id, Timestamp: time.Now().UnixMilli(), Channels: []float64{1, 2, 3, 4}, ChannelIndices: []int{0, 1, 2, 3}})
 				}
 			}
 		}
 	}()
 	return nil
 }
+
 func (d *fakeDevice) StopAcquisition() error {
-	if d.emitDone != nil {
-		close(d.emitDone)
-		d.emitDone = nil
-	}
+	d.mu.Lock()
+	done := d.emitDone
+	d.emitDone = nil
 	d.conn = device.ConnectionConnected
+	d.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
 	return nil
 }
-func (d *fakeDevice) SetDataSink(sink device.DataSink) { d.dataSink = sink }
+
+func (d *fakeDevice) SetDataSink(sink device.DataSink) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dataSink = sink
+}
 
 type fakeScanner struct {
 	results []device.ScanResult

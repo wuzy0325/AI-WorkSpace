@@ -1,7 +1,9 @@
 package usecase
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +28,12 @@ type DeviceManager struct {
 	normalizer   ports.ProfileNormalizer
 	dataSink     device.DataSink
 	scanInFlight *scanPending
+
+	// connMu 序列化同一 device id 上的 Connect/Disconnect/DeleteProfile，
+	// 防止重连场景下两个 goroutine 同时操作同一物理设备（TCP/串口设备
+	// 只允许一个会话）。与 m.mu 配合使用：m.mu 保护内存结构，connMu
+	// 保护硬件 I/O。
+	connMuRegistry sync.Map // map[string]*sync.Mutex
 }
 
 func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink) (*DeviceManager, error) {
@@ -48,6 +56,17 @@ func NewDeviceManagerWithNormalizer(store ports.ProfileStore, factory ports.Devi
 		normalizer: normalizer,
 		dataSink:   dataSink,
 	}, nil
+}
+
+// connMu 返回某 device id 的连接互斥锁，首次访问时惰性创建。
+// 用于 Connect/Disconnect/DeleteProfile 之间的串行化，避免对同一物理设备
+// 并发执行硬件 I/O。
+func (m *DeviceManager) connMu(id string) *sync.Mutex {
+	if mu, ok := m.connMuRegistry.Load(id); ok {
+		return mu.(*sync.Mutex)
+	}
+	actual, _ := m.connMuRegistry.LoadOrStore(id, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
 
 func (m *DeviceManager) SetScanner(scanner ports.DeviceScanner) {
@@ -118,29 +137,57 @@ func normalizeProfiles(profiles []device.Profile, normalizer ports.ProfileNormal
 	return normalized
 }
 
+// DeleteProfile 删除设备配置（并发安全）。
+// 顺序：先持久化（可失败可重试），后修改运行时状态，最后断开硬件。
+// 失败回滚保证：SaveProfiles 失败时 m.profiles / m.devices 不变；
+// 即使中途崩溃，磁盘与运行时也不会出现不一致。
 func (m *DeviceManager) DeleteProfile(id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	connMu := m.connMu(id)
+	connMu.Lock()
+	defer connMu.Unlock()
 
-	profiles := m.profiles[:0]
+	// Phase 1: 在锁内构造去除目标 ID 后的新切片（不修改 m.profiles）。
+	m.mu.Lock()
 	found := false
+	nextProfiles := make([]device.Profile, 0, len(m.profiles))
 	for _, profile := range m.profiles {
 		if profile.ID == id {
 			found = true
 			continue
 		}
-		profiles = append(profiles, profile)
+		nextProfiles = append(nextProfiles, profile)
 	}
 	if !found {
+		m.mu.Unlock()
 		return fmt.Errorf("device profile not found: %s", id)
 	}
-	if dev, ok := m.devices[id]; ok {
-		_ = dev.StopAcquisition()
-		_ = dev.Disconnect()
-		delete(m.devices, id)
+	m.mu.Unlock()
+
+	// Phase 2: 锁外持久化（耗时 I/O，不阻塞其他设备的读操作）。
+	// 失败时不修改任何运行时状态，调用方可重试。
+	if err := m.store.SaveProfiles(nextProfiles); err != nil {
+		return err
 	}
-	m.profiles = append([]device.Profile(nil), profiles...)
-	return m.store.SaveProfiles(m.profiles)
+
+	// Phase 3: 持久化成功，提交运行时状态变更。
+	m.mu.Lock()
+	m.profiles = nextProfiles
+	devToDisconnect := m.devices[id]
+	delete(m.devices, id)
+	m.mu.Unlock()
+
+	// Phase 4: 断开硬件（在 connMu 保护下，与同 id 的 Connect/Disconnect 互斥）。
+	if devToDisconnect != nil {
+		if err := devToDisconnect.StopAcquisition(); err != nil {
+			slog.Warn("DeviceManager.DeleteProfile: StopAcquisition failed",
+				"id", id, "error", err)
+		}
+		if err := devToDisconnect.Disconnect(); err != nil {
+			slog.Warn("DeviceManager.DeleteProfile: Disconnect failed",
+				"id", id, "error", err)
+		}
+	}
+	return nil
 }
 
 func (m *DeviceManager) SetUnit(id string, unit string) error {
@@ -248,17 +295,34 @@ func (m *DeviceManager) ApplyDsa3217ScanConfig(id string, avg int, period int) (
 	return configurable.ApplyDsa3217ScanConfig(avg, period)
 }
 
+// Connect 连接设备（并发安全）。
+// 通过 per-id 互斥锁串行化同一设备的 Connect/Disconnect/DeleteProfile，
+// 避免对同一物理设备并发执行硬件 I/O（TCP/串口设备只允许一个会话）。
+// 不同设备 id 之间仍然并行。
+//
+// 内部仍采用三阶段：
+//   Phase 1: 检查是否已连接、查找 profile（m.mu RLock）。
+//   Phase 2: 创建适配器 + 硬件连接（耗时操作，在 connMu 保护下进行）。
+//   Phase 3: 原子写入 devices map（m.mu Lock）。
 func (m *DeviceManager) Connect(id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	connMu := m.connMu(id)
+	connMu.Lock()
+	defer connMu.Unlock()
 
+	// Phase 1: 锁内快速检查
+	m.mu.RLock()
 	if _, ok := m.devices[id]; ok {
-		return nil
+		m.mu.RUnlock()
+		return nil // 已连接，幂等返回
 	}
 	profile, ok := m.findProfileLocked(id)
+	m.mu.RUnlock()
+
 	if !ok {
 		return fmt.Errorf("device profile not found: %s", id)
 	}
+
+	// Phase 2: connMu 保护下执行耗时操作（创建适配器 + TCP 连接等 I/O）
 	dev, err := m.factory.Create(profile)
 	if err != nil {
 		return err
@@ -269,29 +333,86 @@ func (m *DeviceManager) Connect(id string) error {
 	if err := dev.Connect(); err != nil {
 		return err
 	}
-	m.devices[id] = dev
-	return nil
-}
 
-func (m *DeviceManager) Disconnect(id string) error {
+	// Phase 3: 锁内原子写入 devices map
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	dev, ok := m.devices[id]
-	if !ok {
+	// connMu 已保证同 id 不会并发 Connect，但保留 existing 检查作为防御性兜底；
+	// 若意外发生（如未来代码路径绕过 connMu），丢弃新连接并显式记日志。
+	// 注意：onError 回调必须在 dev 真正写入 map 之后才注册，否则
+	// 丢弃 dev 时触发的 readLoop 退出会执行回调，把 existing 设备从 map 中误删。
+	if existing, ok := m.devices[id]; ok && existing != nil {
+		m.mu.Unlock()
+		if disconnectErr := dev.Disconnect(); disconnectErr != nil {
+			slog.Warn("DeviceManager.Connect: discarding new connection failed to disconnect cleanly, resource may leak",
+				"id", id, "error", disconnectErr)
+		}
 		return nil
 	}
-	if err := dev.StopAcquisition(); err != nil {
-		return err
+	m.devices[id] = dev
+	m.mu.Unlock()
+
+	// Phase 4: dev 已被 manager 接管，此时再注册异常退出回调。
+	// 回调内通过 identity 比较（m.devices[id] == dev）确保只在 dev 仍是当前注册项时才删除，
+	// 避免后续 Connect 替换 map 项后被旧实例的回调误删。
+	if notifiable, ok := dev.(ports.ErrorNotifiable); ok {
+		deviceID := profile.ID
+		notifiable.SetOnError(func(err error) {
+			slog.Warn("DeviceManager: 设备异常退出", "device", deviceID, "error", err)
+			m.mu.Lock()
+			if current, ok := m.devices[deviceID]; ok && current == dev {
+				delete(m.devices, deviceID)
+			}
+			m.mu.Unlock()
+		})
 	}
-	if err := dev.Disconnect(); err != nil {
-		return err
-	}
-	delete(m.devices, id)
+
 	return nil
 }
 
+// Disconnect 断开设备连接（并发安全）。
+// 通过 per-id 互斥锁串行化同一设备的 Connect/Disconnect/DeleteProfile。
+//
+// 内部两阶段：
+//   Phase 1 (锁内): 从 devices map 中原子删除。
+//   Phase 2 (connMu 下): 停止采集 + 断开硬件。与同 id 的 Connect 互斥。
+//
+// 返回 StopAcquisition 和 Disconnect 的合并错误。
+func (m *DeviceManager) Disconnect(id string) error {
+	connMu := m.connMu(id)
+	connMu.Lock()
+	defer connMu.Unlock()
+
+	// Phase 1: 锁内原子删除
+	m.mu.Lock()
+	dev, ok := m.devices[id]
+	if !ok {
+		m.mu.Unlock()
+		return nil
+	}
+	delete(m.devices, id)
+	m.mu.Unlock()
+
+	// Phase 2: connMu 保护下执行耗时操作（停止采集 + 断开硬件连接）
+	var errs []error
+	if err := dev.StopAcquisition(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := dev.Disconnect(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// StartAcquisition 启动设备采集（并发安全）。
+// 通过 per-id connMu 与 Connect/Disconnect/DeleteProfile 互斥，
+// 避免 Disconnect 已从 devices map 中移除设备、即将销毁底层连接的窗口期，
+// 在同一对象上启动一次 manager 已不再追踪的采集。
 func (m *DeviceManager) StartAcquisition(id string) error {
+	connMu := m.connMu(id)
+	connMu.Lock()
+	defer connMu.Unlock()
+
 	m.mu.RLock()
 	dev, ok := m.devices[id]
 	m.mu.RUnlock()
@@ -301,7 +422,13 @@ func (m *DeviceManager) StartAcquisition(id string) error {
 	return dev.StartAcquisition()
 }
 
+// StopAcquisition 停止设备采集（并发安全）。
+// 同 StartAcquisition：通过 connMu 与连接生命周期操作互斥。
 func (m *DeviceManager) StopAcquisition(id string) error {
+	connMu := m.connMu(id)
+	connMu.Lock()
+	defer connMu.Unlock()
+
 	m.mu.RLock()
 	dev, ok := m.devices[id]
 	m.mu.RUnlock()

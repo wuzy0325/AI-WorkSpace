@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -13,6 +14,9 @@ const (
 	minPublishHz           = 1.0
 	maxPublishHz           = 100.0
 	defaultHistoryCapacity = 256
+	// 订阅者缓冲区满导致丢包时，至多每 dropLogInterval 输出一条聚合日志，
+	// 避免高采样率（如 1 kHz）设备遇到慢订阅者时按设备速率刷屏。
+	dropLogInterval = 5 * time.Second
 )
 
 type AcquisitionHub struct {
@@ -24,6 +28,10 @@ type AcquisitionHub struct {
 	historyCapacity int
 	subscribers     map[string]map[chan device.DataPayload]struct{}
 	lastPublishAt   map[string]time.Time
+	// dropCount 累计每个 device 自上次告警以来被丢弃的样本数；
+	// dropLastLogAt 记录上次告警时间。两者均在 h.mu 保护下访问。
+	dropCount     map[string]int
+	dropLastLogAt map[string]time.Time
 }
 
 func NewAcquisitionHub(publisher ports.Publisher, publishHz float64) *AcquisitionHub {
@@ -45,6 +53,8 @@ func NewAcquisitionHubWithHistoryCapacity(publisher ports.Publisher, publishHz f
 		historyCapacity: historyCapacity,
 		subscribers:     make(map[string]map[chan device.DataPayload]struct{}),
 		lastPublishAt:   make(map[string]time.Time),
+		dropCount:       make(map[string]int),
+		dropLastLogAt:   make(map[string]time.Time),
 	}
 }
 
@@ -76,14 +86,41 @@ func (h *AcquisitionHub) OnData(payload device.DataPayload) {
 
 	h.mu.Unlock()
 
-	// 在锁外发送数据，避免阻塞其他设备的数据处理
+	// 在锁外发送数据，避免阻塞其他设备的数据处理；
+	// 缓冲区满时仅累计丢弃计数，按 dropLogInterval 节流输出聚合告警。
 	if shouldPublish {
+		var dropped int
 		for _, ch := range subscribers {
 			select {
 			case ch <- payload:
 			default:
+				dropped++
 			}
 		}
+		if dropped > 0 {
+			h.recordDrops(payload.DeviceID, dropped)
+		}
+	}
+}
+
+// recordDrops 累计丢弃计数；距离上次告警超过 dropLogInterval 时输出一条聚合日志。
+func (h *AcquisitionHub) recordDrops(deviceID string, dropped int) {
+	now := time.Now()
+
+	h.mu.Lock()
+	h.dropCount[deviceID] += dropped
+	total := h.dropCount[deviceID]
+	last := h.dropLastLogAt[deviceID]
+	shouldLog := last.IsZero() || now.Sub(last) >= dropLogInterval
+	if shouldLog {
+		h.dropLastLogAt[deviceID] = now
+		h.dropCount[deviceID] = 0
+	}
+	h.mu.Unlock()
+
+	if shouldLog {
+		slog.Warn("AcquisitionHub: 订阅者缓冲区已满，数据被丢弃",
+			"device", deviceID, "dropped", total, "interval", dropLogInterval)
 	}
 }
 

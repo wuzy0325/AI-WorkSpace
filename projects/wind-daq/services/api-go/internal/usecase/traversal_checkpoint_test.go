@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"wind-daq/services/api-go/internal/core/device"
@@ -59,24 +60,40 @@ func (m *mockMotionAccess) Stop(ctx context.Context, id string, axis motion.Axis
 
 // mockTraversalPointSink 模拟数据点写入器，记录所有写入的点
 type mockTraversalPointSink struct {
+	mu        sync.Mutex // protects all fields — TraversalManager calls Finalize / Write
+	// from its worker goroutine while tests inspect from the test goroutine.
 	points    []traversal.PointResult
 	initCount int
 	finalized bool
 }
 
 func (s *mockTraversalPointSink) InitializeTraversal(_ traversal.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.initCount++
 	return nil
 }
 
 func (s *mockTraversalPointSink) WriteTraversalPoint(point traversal.PointResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.points = append(s.points, point)
 	return nil
 }
 
 func (s *mockTraversalPointSink) FinalizeTraversal() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.finalized = true
 	return nil
+}
+
+// snapshot copies the recorded state under the lock for test assertions.
+func (s *mockTraversalPointSink) snapshot() (points []traversal.PointResult, initCount int, finalized bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	points = append([]traversal.PointResult(nil), s.points...)
+	return points, s.initCount, s.finalized
 }
 
 // mockTraversalResultStore 模拟结果存储，支持 Save/Get
