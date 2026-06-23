@@ -219,6 +219,8 @@ function getIconComponent(type: CalibrationType) {
 .calibration-home {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   height: 100%;
   background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 }
@@ -269,17 +271,17 @@ function getIconComponent(type: CalibrationType) {
   flex: 1;
   min-height: 0;
   padding: 1.25rem;
-  overflow-y: auto;
+  overflow: auto;
   display: flex;
-  align-items: flex-start;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
   gap: 1.25rem;
   width: 100%;
-  align-content: flex-start;
+  min-height: 100%;
 }
 
 /* 卡片 */
@@ -287,20 +289,20 @@ function getIconComponent(type: CalibrationType) {
   position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
   cursor: pointer;
   border-radius: 1rem;
   border: 2px solid var(--card-border);
   background: linear-gradient(145deg, #ffffff 0%, var(--card-bg) 100%);
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem 1.5rem;
   overflow: hidden;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 200ms ease, box-shadow 240ms ease, transform 240ms ease, background 240ms ease;
+  min-height: 0;
 }
 
 .card:hover {
   border-color: var(--card-border-hover);
   box-shadow: 0 20px 40px -12px var(--card-shadow), 0 8px 16px -8px rgba(0, 0, 0, 0.08);
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   background: linear-gradient(145deg, #ffffff 0%, var(--card-bg-hover) 100%);
 }
 
@@ -337,9 +339,10 @@ function getIconComponent(type: CalibrationType) {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
   position: relative;
   z-index: 1;
+  flex-shrink: 0;
 }
 
 .card-title-row {
@@ -433,12 +436,14 @@ function getIconComponent(type: CalibrationType) {
 }
 
 .card-description {
-  margin-bottom: 1.25rem;
-  font-size: var(--font-size-base);
-  line-height: 1.625;
+  margin: 0 0 1rem 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
   color: var(--text-secondary);
   position: relative;
   z-index: 1;
+  flex: 1;
+  min-height: 0;
 }
 
 .card-features {
@@ -447,17 +452,18 @@ function getIconComponent(type: CalibrationType) {
   gap: 0.5rem;
   position: relative;
   z-index: 1;
+  flex-shrink: 0;
 }
 
 .feature-tag {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 0.625rem;
-  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.625rem;
   background: var(--card-bg);
   border: 1.5px solid var(--card-border);
-  transition: all 0.3s ease;
+  transition: background 200ms ease, border-color 200ms ease;
 }
 
 .card:hover .feature-tag {

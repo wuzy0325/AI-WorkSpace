@@ -377,13 +377,13 @@ const connectionButtonLabel = computed(() => {
     <div v-if="chartSelectorOpen" class="chart-selector" @click.self="closeChartSelector">
       <div class="chart-selector__panel" @click.stop>
         <div class="chart-selector__header">
-          <div>
-            <h3 class="chart-selector__title">通道选择</h3>
+          <div class="chart-selector__title-row">
+            <h3 class="chart-selector__title">{{ i18n.t.channelSelection || '通道选择' }}</h3>
             <p class="chart-selector__subtitle">{{ profile?.name }}</p>
           </div>
           <UiButton variant="ghost" size="sm" @click="closeChartSelector" aria-label="关闭">
             <template #icon>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6L6 18M6 6l12 12"/>
               </svg>
             </template>
@@ -398,13 +398,11 @@ const connectionButtonLabel = computed(() => {
             :class="{ 'chart-selector__item--active': isChartVisible(channel.index) }"
             :style="channelStyle(channel.index)"
           >
-            <div class="chart-selector__item-info">
+            <span class="chart-selector__item-info">
               <span class="chart-selector__dot" :style="{ background: channelColor(channel.index) }" />
-              <div>
-                <div class="chart-selector__name">{{ channel.name }}</div>
-                <div class="chart-selector__channel">通道 {{ channel.index + 1 }}</div>
-              </div>
-            </div>
+              <span class="chart-selector__name" :title="channel.name">{{ channel.name }}</span>
+            </span>
+            <span class="chart-selector__channel">CH{{ String(channel.index + 1).padStart(2, '0') }}</span>
             <NCheckbox
               size="small"
               :checked="isChartVisible(channel.index)"
@@ -414,9 +412,16 @@ const connectionButtonLabel = computed(() => {
         </div>
 
         <div class="chart-selector__footer">
-          <UiButton variant="secondary" size="sm" @click="setAllChartVisibility(true)">全选</UiButton>
-          <UiButton variant="secondary" size="sm" @click="setAllChartVisibility(false)">取消全选</UiButton>
-          <UiButton variant="primary" size="sm" @click="closeChartSelector">确定</UiButton>
+          <div class="chart-selector__footer-left">
+            <span class="chart-selector__count">
+              {{ i18n.t.selectedCount || '已选' }} {{ chartChannelIndices.length }} / {{ profile?.channels?.length ?? 0 }}
+            </span>
+            <UiButton variant="ghost" size="sm" @click="setAllChartVisibility(true)">{{ i18n.t.selectAll || '全选' }}</UiButton>
+            <UiButton variant="ghost" size="sm" @click="setAllChartVisibility(false)">{{ i18n.t.clearAll || '清空' }}</UiButton>
+          </div>
+          <div class="chart-selector__footer-right">
+            <UiButton variant="primary" size="sm" @click="closeChartSelector">{{ i18n.t.done || '完成' }}</UiButton>
+          </div>
         </div>
       </div>
     </div>
@@ -839,39 +844,48 @@ const connectionButtonLabel = computed(() => {
 
 .chart-selector__panel {
   width: 100%;
-  max-width: 32rem;
-  max-height: 80vh;
-  background: rgba(30, 41, 59, 0.95);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 1.5rem;
-  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.5);
+  max-width: 48rem;
+  max-height: 78vh;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 0.75rem;
+  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 :root[data-theme='light'] .chart-selector__panel {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--bg-panel);
+  border-color: var(--border-strong);
 }
 
 .chart-selector__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.625rem 0.875rem 0.625rem 1rem;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
 }
 
 :root[data-theme='light'] .chart-selector__header {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.chart-selector__title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .chart-selector__title {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
+  line-height: 1.2;
+  margin: 0;
 }
 
 :root[data-theme='light'] .chart-selector__title {
@@ -880,62 +894,84 @@ const connectionButtonLabel = computed(() => {
 
 .chart-selector__subtitle {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
-  margin-top: 0.25rem;
+  line-height: 1.2;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-selector__subtitle::before {
+  content: '·';
+  margin-right: 0.375rem;
+  color: var(--border-strong);
 }
 
 .chart-selector__grid {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem 1.5rem;
+  padding: 0.5rem 0.75rem;
   display: grid;
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.25rem;
+  align-content: start;
 }
 
 .chart-selector__item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(0, 0, 0, 0.15);
+  padding: 0.25rem 0.5rem 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 120ms ease, border-color 120ms ease;
+  min-width: 0;
+  gap: 0.5rem;
+  min-height: 28px;
 }
 
 :root[data-theme='light'] .chart-selector__item {
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: transparent;
+  border: 1px solid transparent;
 }
 
 .chart-selector__item:hover {
-  border-color: var(--theme-color, rgba(16, 185, 129, 0.3));
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-color: var(--border-default);
 }
 
 .chart-selector__item--active {
-  border-color: var(--theme-color-border, rgba(16, 185, 129, 0.3));
+  border-color: var(--theme-color-border, rgba(16, 185, 129, 0.35));
   background: var(--theme-color-soft, rgba(16, 185, 129, 0.08));
 }
 
 .chart-selector__item-info {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .chart-selector__dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .chart-selector__name {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 :root[data-theme='light'] .chart-selector__name {
@@ -943,21 +979,45 @@ const connectionButtonLabel = computed(() => {
 }
 
 .chart-selector__channel {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
   color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
 
 .chart-selector__footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.chart-selector__footer-left {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.chart-selector__footer-right {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.chart-selector__count {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
 }
 
 :root[data-theme='light'] .chart-selector__footer {
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--border-default);
 }
 
 

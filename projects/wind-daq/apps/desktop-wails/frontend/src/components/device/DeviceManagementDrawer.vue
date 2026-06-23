@@ -73,8 +73,6 @@ watch(dsa3217Period, (val) => {
 }, { flush: 'sync' })
 
 const dsa3217Loading = ref(false)
-const enabledOnlyChannels = ref(false)
-const channelKeyword = ref('')
 const enableAtmospheric = ref(false)
 
 const PRESSURE_UNIT_OPTIONS = ['Pa', 'kPa', 'MPa', 'psi', 'kgf/cm2'] as const
@@ -179,8 +177,15 @@ function applyFixedUnitsIfNeeded(type: DeviceType, channels: ChannelConfig[]): v
     }
     return
   }
-  const has18 = (type === 'SIMULATED' || type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre') && channels.length >= 18
-  if (!has18) return
+  const has18 = (type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre') && channels.length >= 18
+  if (!has18) {
+    // SIMULATED 设备大气通道使用 kPa / degC，与后端默认值一致
+    if (type === 'SIMULATED' && channels.length >= 18) {
+      if (channels[16]) channels[16].unit = 'kPa'
+      if (channels[17]) channels[17].unit = 'degC'
+    }
+    return
+  }
   if (channels[16]) channels[16].unit = 'Pa'
   if (channels[17]) channels[17].unit = '℃'
 }
@@ -222,6 +227,14 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       return Array.from({ length: 16 }, (_, i) => ({
         index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2, thermocoupleType: 'K',
       }))
+    case 'SIMULATED':
+      return [
+        ...Array.from({ length: 16 }, (_, i) => ({
+          index: i, name: `CH${i + 1}`, enabled: true, unit: 'V', precision: 3, rangeMin: -10, rangeMax: 10,
+        })),
+        { index: 16, name: '大气压', enabled: true, unit: 'kPa', precision: 3, rangeMin: 99, rangeMax: 106 },
+        { index: 17, name: '大气温度', enabled: true, unit: 'degC', precision: 2, rangeMin: 20, rangeMax: 25 },
+      ]
     case 'DAQ-P-1604':
       return [
         ...Array.from({ length: 16 }, (_, i) => ({
@@ -332,14 +345,8 @@ function getFirstDraftError(errors: DraftFieldErrors): string | null {
 }
 
 const channelRows = computed(() => {
-  const kw = channelKeyword.value.trim().toLowerCase()
   return draft.value.channels
     .map((channel, originalIndex) => ({ channel, originalIndex }))
-    .filter(({ channel }) => !enabledOnlyChannels.value || channel.enabled)
-    .filter(({ channel }) => {
-      if (!kw) return true
-      return channel.name.toLowerCase().includes(kw) || `${channel.index + 1}`.includes(kw)
-    })
 })
 
 function openCreate(type: DeviceType = 'SIMULATED') {
@@ -358,8 +365,6 @@ function openCreate(type: DeviceType = 'SIMULATED') {
     dsa3217Avg.value = 32
     dsa3217Period.value = 500
   }
-  enabledOnlyChannels.value = false
-  channelKeyword.value = ''
   enableAtmospheric.value = draft.value.type === 'DAQ-P-1604' ? false : (draft.value.channels[16]?.enabled !== false)
   if (draft.value.type === 'DAQ-P-1604' && draft.value.channels.length > 16) {
     draft.value.channels[16] = { ...draft.value.channels[16], enabled: false }
@@ -396,8 +401,6 @@ function openEdit(p: DeviceProfile) {
   // DSA3217：恢复上次保存的 AVG/PERIOD（未连接时初始化为默认）
   dsa3217Avg.value = 32
   dsa3217Period.value = 500
-  enabledOnlyChannels.value = false
-  channelKeyword.value = ''
   enableAtmospheric.value = draft.value.channels[16]?.enabled !== false
   initialDraftSnapshot.value = snapshotDraft(draft.value)
   saveError.value = null
@@ -447,8 +450,11 @@ async function onTypeChanged(next: DeviceType) {
 function toggleAtmosphericData(on: boolean) {
   enableAtmospheric.value = on
   const count = draft.value.channels.length
-  if (count > 16) draft.value.channels[16] = { ...draft.value.channels[16], enabled: on, unit: on ? 'Pa' : '' }
-  if (count > 17) draft.value.channels[17] = { ...draft.value.channels[17], enabled: on, unit: on ? '℃' : '' }
+  // SIMULATED 设备大气通道使用 kPa / degC，DAQ-P-1604 使用 Pa / ℃
+  const pressureUnit = draft.value.type === 'SIMULATED' ? 'kPa' : 'Pa'
+  const tempUnit = draft.value.type === 'SIMULATED' ? 'degC' : '℃'
+  if (count > 16) draft.value.channels[16] = { ...draft.value.channels[16], enabled: on, unit: on ? pressureUnit : '' }
+  if (count > 17) draft.value.channels[17] = { ...draft.value.channels[17], enabled: on, unit: on ? tempUnit : '' }
 }
 
 function resetChannelsToDefault() {
@@ -985,8 +991,8 @@ function channelLabel(c: ChannelConfig): string {
                 </div>
               </section>
 
-              <!-- DAQ-P-1604 大气数据开关 -->
-              <section v-if="draft.type === 'DAQ-P-1604'" class="editor-section">
+              <!-- 大气数据开关（SIMULATED / DAQ-P-1604） -->
+              <section v-if="draft.type === 'DAQ-P-1604' || draft.type === 'SIMULATED'" class="editor-section">
                 <div class="editor-section-head">
                   <h4 class="editor-section-title">大气数据</h4>
                   <p class="editor-section-desc">控制是否采集大气压 (CH17) 与大气温度 (CH18)</p>
@@ -1081,7 +1087,7 @@ function channelLabel(c: ChannelConfig): string {
                   <div class="editor-field col-12">
                     <div class="editor-autoconnect-row">
                       <UiCheckbox v-model:checked="draft.autoConnect" :disabled="isReadOnly">
-                        保存后自动连接
+                        自动连接（应用启动时及保存后自动连接）
                       </UiCheckbox>
                     </div>
                   </div>
@@ -1160,47 +1166,37 @@ function channelLabel(c: ChannelConfig): string {
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
                   </div>
-                  <div class="editor-channels-toolbar-right">
-                    <UiInput v-model="channelKeyword" placeholder="过滤通道..." />
-                    <UiCheckbox v-model:checked="enabledOnlyChannels">
-                      仅看启用
-                    </UiCheckbox>
-                  </div>
                 </div>
 
-                <!-- 批量同步 -->
+                <!-- 批量同步：紧凑单行 -->
                 <div class="editor-ch-batch">
-                  <div class="editor-ch-batch-item">
-                    <div class="editor-label">批量量程 <span class="editor-label-sub">1~16CH</span></div>
-                    <div class="editor-ch-batch-range">
-                      <UiInputNumber
-                        v-model="deviceRangeMin"
-                        class="w-full"
-                        :disabled="isReadOnly"
-                        placeholder="最小值"
-                      />
-                      <span class="editor-ch-batch-sep">~</span>
-                      <UiInputNumber
-                        v-model="deviceRangeMax"
-                        class="w-full"
-                        :disabled="isReadOnly"
-                        placeholder="最大值"
-                      />
-                    </div>
+                  <span class="editor-ch-batch-label">批量应用到 1~16CH:</span>
+                  <div class="editor-ch-batch-field">
+                    <span class="editor-ch-batch-field-label">量程</span>
+                    <UiInputNumber
+                      v-model="deviceRangeMin"
+                      class="editor-ch-batch-num"
+                      :disabled="isReadOnly"
+                      placeholder="最小"
+                    />
+                    <span class="editor-ch-batch-sep">~</span>
+                    <UiInputNumber
+                      v-model="deviceRangeMax"
+                      class="editor-ch-batch-num"
+                      :disabled="isReadOnly"
+                      placeholder="最大"
+                    />
                   </div>
-                  <div class="editor-ch-batch-divider" />
-                  <div class="editor-ch-batch-item">
-                    <div class="editor-label">批量精度 <span class="editor-label-sub">1~16CH</span></div>
-                    <div class="editor-ch-batch-precision">
-                      <UiInputNumber
-                        v-model="devicePrecision"
-                        class="w-full"
-                        :min="0"
-                        :disabled="isReadOnly"
-                        placeholder="0"
-                      />
-                      <span class="editor-ch-batch-hint">全局小数位</span>
-                    </div>
+                  <div class="editor-ch-batch-field">
+                    <span class="editor-ch-batch-field-label">精度</span>
+                    <UiInputNumber
+                      v-model="devicePrecision"
+                      class="editor-ch-batch-num editor-ch-batch-num--narrow"
+                      :min="0"
+                      :disabled="isReadOnly"
+                      placeholder="0"
+                    />
+                    <span class="editor-ch-batch-field-suffix">位小数</span>
                   </div>
                 </div>
 
@@ -1304,7 +1300,7 @@ function channelLabel(c: ChannelConfig): string {
 }
 
 .drawer-shell {
-  width: 560px; max-width: 95vw; height: 100vh;
+  width: 760px; max-width: 95vw; height: 100vh;
   display: flex; flex-direction: column;
   background: var(--bg-panel);
   border-left: 1px solid var(--border-default);
@@ -1622,74 +1618,54 @@ function channelLabel(c: ChannelConfig): string {
 .editor-autoconnect-check { width: var(--space-4); height: var(--space-4); accent-color: var(--color-accent); }
 
 /* Channels */
-.editor-channels-special { display: flex; flex-direction: column; gap: 1.5rem; }
+.editor-channels-special { display: flex; flex-direction: column; gap: 1rem; }
 .editor-channels-hint { font-size: var(--font-size-xs); color: var(--text-muted); margin: 0; }
-.editor-channels-full { display: flex; flex-direction: column; gap: 1rem; }
+.editor-channels-full { display: flex; flex-direction: column; gap: 0.625rem; }
 
-.editor-channels-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.editor-channels-toolbar-left { display: flex; gap: 0.5rem; }
-.editor-channels-toolbar-right { display: flex; align-items: center; gap: 0.75rem; }
-.editor-ch-search {
-  padding: 0.375rem 0.75rem; border-radius: 999px;
-  border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-size: var(--font-size-xs); font-weight: 700; color: var(--text-primary);
-  outline: none; width: 160px;
-}
-.editor-ch-search:focus { border-color: var(--color-accent); }
-.editor-ch-filter-label {
-  display: flex; align-items: center; gap: 0.375rem;
-  font-size: var(--font-size-xs); font-weight: 800; color: var(--text-muted); cursor: pointer;
-}
-.editor-ch-filter-check { width: var(--space-3); height: var(--space-3); accent-color: var(--color-accent); }
+.editor-channels-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.editor-channels-toolbar-left { display: flex; gap: 0.375rem; }
 
+/* 批量同步 - 紧凑单行 */
 .editor-ch-batch {
-  display: flex; align-items: flex-end; gap: 1.5rem;
-  padding: 0.75rem 1rem;
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.375rem 0.75rem;
   border-radius: 0.5rem;
   background: color-mix(in srgb, var(--bg-panel-strong) 30%, transparent);
   border: 1px solid var(--border-default);
+  flex-wrap: wrap;
 }
-.editor-ch-batch-item { flex: 1; }
-.editor-ch-batch-divider { width: 1px; height: var(--space-10); background: var(--border-default); opacity: 0.4; }
-.editor-ch-batch-range { display: flex; align-items: center; gap: 0.5rem; }
+.editor-ch-batch-label {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.editor-ch-batch-field {
+  display: flex; align-items: center; gap: 0.375rem;
+}
+.editor-ch-batch-field-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.editor-ch-batch-field-suffix {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.editor-ch-batch-num { width: 88px; }
+.editor-ch-batch-num--narrow { width: 56px; }
 .editor-ch-batch-sep {
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-muted);
   flex-shrink: 0;
 }
-.editor-ch-batch-input {
-  width: 100%; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
-  border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm); font-weight: 700; color: var(--text-primary);
-  text-align: center; outline: none;
-  transition: all 0.2s ease;
-}
-.editor-ch-batch-input:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
-.editor-ch-batch-input:disabled { opacity: 0.5; cursor: not-allowed; }
-.editor-ch-batch-input-sm {
-  width: 96px; padding: 0.5rem 0.625rem; border-radius: 0.5rem;
-  border: 1px solid var(--border-default); background: var(--bg-panel);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm); font-weight: 700; color: var(--text-primary);
-  text-align: center; outline: none;
-  transition: all 0.2s ease;
-}
-.editor-ch-batch-input-sm:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
-:root[data-theme='light'] .editor-ch-batch-input { color: var(--text-primary); }
-:root[data-theme='light'] .editor-ch-batch-input-sm { color: var(--text-primary); }
-.editor-ch-batch-precision { display: flex; align-items: center; gap: 0.75rem; }
-.editor-ch-batch-hint { font-size: var(--font-size-2xs); font-weight: 700; color: var(--text-muted); }
-.editor-label-sub {
-  font-weight: 600;
-  color: var(--text-muted);
-  opacity: 0.7;
-  margin-left: 0.25rem;
-}
 
+/* Channel table */
 .editor-channels-table-wrap {
-  border-radius: 0.625rem;
+  border-radius: 0.5rem;
   border: 1px solid var(--border-default);
   overflow: hidden;
   background: var(--bg-panel);
@@ -1701,32 +1677,49 @@ function channelLabel(c: ChannelConfig): string {
   text-align: left;
 }
 .editor-channels-table thead tr {
-  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+  background: var(--bg-panel-strong);
 }
 .editor-channels-table th {
-  padding: 0.625rem 0.75rem;
-  font-size: var(--font-size-micro);
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  padding: 0.375rem 0.625rem;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
   border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
 }
 .editor-channels-table td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.25rem 0.5rem;
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   color: var(--text-primary);
-  transition: background 0.15s ease;
+  transition: background 120ms ease;
+  vertical-align: middle;
 }
 .editor-channels-table tbody tr:last-child td {
   border-bottom: none;
 }
 .editor-channels-table tbody tr:hover td {
-  background: color-mix(in srgb, var(--bg-panel-strong) 25%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-strong) 35%, transparent);
 }
-.editor-channels-table tbody tr:hover td:first-child {
-  border-radius: 0;
+
+/* 紧凑 input：作用于表格内 UiInput/UiInputNumber 的内部元素 */
+.editor-channels-table :deep(.n-input),
+.editor-channels-table :deep(.n-input-number),
+.editor-channels-table :deep(.n-base-selection) {
+  --n-height: 28px;
+  min-height: 28px;
+}
+.editor-channels-table :deep(.n-input__input-el),
+.editor-channels-table :deep(.n-input-number .n-input__input-el) {
+  height: 28px;
+  line-height: 28px;
+  font-size: var(--font-size-xs);
+}
+.editor-channels-table :deep(.n-input .n-input-wrapper) {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
 }
 .editor-ch-check {
   width: var(--space-4);

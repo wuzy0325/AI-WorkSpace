@@ -50,10 +50,8 @@ let sseSub: { unsubscribe: () => void } | null = null
 let wailsUnsub: (() => void) | null = null
 let unsubscribeDeviceSnapshots: (() => void) | null = null
 
-const acquiring = computed(() => {
-  const id = deviceStore.selectedDeviceId
-  return id ? deviceStore.acquiringFor(id) : false
-})
+// 采集状态：委托 store 层判断（任一设备正在采集即为 true）
+const acquiring = computed(() => deviceStore.isAnyAcquiring)
 
 const railItems = computed<AppRailNavItem[]>(() => [
   { id: 'dashboard', label: t.value.dashboardHome, icon: 'IO', active: activePage.value === 'dashboard' },
@@ -110,6 +108,27 @@ async function ensureProfile() {
   }
 }
 
+// 启动时自动连接：遍历所有设备配置，对 autoConnect=true 的设备并行发起连接。
+// 单个设备连接失败不阻塞其他设备，错误记录到控制台供排查。
+// 注意：此处通过 deviceStore.connect 走完整的 store → api → wails binding → usecase → adapter 链路，
+// 不直接访问硬件，符合分层约束。
+async function autoConnectProfiles() {
+  const targets = deviceStore.profiles.filter((p) => p.autoConnect)
+  if (targets.length === 0) return
+  const results = await Promise.allSettled(
+    targets.map((p) => deviceStore.connect(p.id)),
+  )
+  results.forEach((result, idx) => {
+    if (result.status === 'rejected') {
+      const profile = targets[idx]
+      console.warn(
+        `[autoConnect] 设备 "${profile.name}"(${profile.id}) 启动自动连接失败:`,
+        result.reason instanceof Error ? result.reason.message : String(result.reason),
+      )
+    }
+  })
+}
+
 async function run(action: () => Promise<void>) {
   busy.value = true
   error.value = ''
@@ -126,14 +145,10 @@ async function run(action: () => Promise<void>) {
 async function start(): Promise<void> {
   await run(async () => {
     await ensureProfile()
-    const id = deviceStore.selectedDeviceId ?? 'sim-1'
-    await deviceStore.connect(id)
-    await deviceStore.startAcquisition(id)
-    // 采集启动后主动刷新实例状态，采集按钮立即响应
-    await deviceStore.refreshInstances()
-    // 检查 autoStartOnAcquisition 配置，自动开始记录
+    // 采集编排逻辑委托给 store 层
+    await deviceStore.startAllAcquisitions()
+    // 采集启动后检查 autoStartOnAcquisition 配置，自动开始记录
     if (storageStore.settings.autoStartOnAcquisition && !isRecording.value) {
-      // 从全局设置同步保存目录和文件前缀，确保使用用户配置的值
       recordingOutputDir.value = storageStore.settings.baseDirectory || 'data/recordings'
       recordingFilePrefix.value = storageStore.settings.filePrefix || 'run'
       await toggleRecording()
@@ -143,10 +158,8 @@ async function start(): Promise<void> {
 
 async function stop(): Promise<void> {
   await run(async () => {
-    const id = deviceStore.selectedDeviceId ?? 'sim-1'
-    await deviceStore.stopAcquisition(id)
-    // 停止采集后也刷新实例状态，按钮同步更新
-    await deviceStore.refreshInstances()
+    // 停止采集编排逻辑委托给 store 层
+    await deviceStore.stopAllAcquisitions()
     // 如果记录正在运行，同步停止记录
     if (isRecording.value) {
       await toggleRecording()
@@ -251,6 +264,8 @@ onMounted(async () => {
   initialLoading.value = false
   // 注册键盘快捷键
   window.addEventListener('keydown', handleKeydown)
+  // 启动时对所有 autoConnect=true 的设备并行发起连接，失败不阻塞主流程
+  void autoConnectProfiles()
 })
 
 onBeforeUnmount(() => {
@@ -384,5 +399,7 @@ function handleKeydown(e: KeyboardEvent) {
   overflow-y: auto;
   padding: var(--space-4);
   background: transparent;
+  display: flex;
+  flex-direction: column;
 }
 </style>

@@ -11,7 +11,7 @@ const CalibrationWindow = defineAsyncComponent({
 </script>
 
 <template>
-  <div class="flex-1 min-h-0 w-full">
+  <div class="flex-1 min-h-0 w-full flex flex-col">
     <UiErrorState v-if="loadError" title="加载失败" :message="loadError">
       <template #action>
         <UiButton variant="secondary" size="sm" @click="loadError = ''">重试</UiButton>

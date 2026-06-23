@@ -5,10 +5,12 @@
 //
 // 暴露：
 //   - axisPositions：每个配置的运动轴当前位置/是否运动中
-//   - positionerConnection：连接显示模型（state/label/dotClass/textClass）
+//   - positionerConnection：连接显示模型（state/label/dotColor/textColor/dotGlow）
 //   - acquisitionConnection：采集设备连接显示模型，比 positioner 多一个 acquiring 状态
 //
 // 入参 currentConfig 必须是响应式 ref，本 composable 内部 watch 它。
+//
+// Phase B (2026-06): 颜色值改为 CSS 变量字符串（token），消费方用 :style 绑定。
 import { computed, type ComputedRef } from 'vue'
 import type { TraversalTestConfig } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -28,57 +30,75 @@ type PositionerConnectionState = 'connected' | 'disconnected' | 'unconfigured'
 // 采集设备连接状态：相对运动器多一个 acquiring（连上且采集中）
 type AcquisitionState = 'acquiring' | 'connected' | 'disconnected' | 'unconfigured'
 
-// 连接状态显示模型，模板直接绑定
-interface ConnectionDisplay<S extends string> {
+// 连接状态显示模型，模板直接绑定 :style
+export interface ConnectionDisplay<S extends string> {
   state: S
   label: string
-  dotClass: string
-  textClass: string
+  /** Dot background color (CSS value). */
+  dotColor: string
+  /** Optional glow shadow when the state is "live" (connected/acquiring). */
+  dotGlow: string
+  /** Text color (CSS value). */
+  textColor: string
 }
 
-// ── 状态 → class 配色映射（模块作用域常量，避免每次 computed 重新构造）─────────────
+// ── 状态 → token 配色映射（模块作用域常量）─────────────
 
-const POSITIONER_DOT_CLASS: Record<PositionerConnectionState, string> = {
-  connected: 'bg-emerald-500 shadow-[0_0_8px_#10b981]',
-  disconnected: 'bg-rose-500 shadow-[0_0_8px_#f43f5e]',
-  unconfigured: 'bg-slate-400'
+const POSITIONER_DOT_COLOR: Record<PositionerConnectionState, string> = {
+  connected: 'var(--state-success)',
+  disconnected: 'var(--state-error)',
+  unconfigured: 'var(--text-muted)',
 }
 
-const POSITIONER_TEXT_CLASS: Record<PositionerConnectionState, string> = {
-  connected: 'text-emerald-600 dark:text-emerald-400',
-  disconnected: 'text-rose-600 dark:text-rose-400',
-  unconfigured: 'text-slate-500 dark:text-slate-400'
+const POSITIONER_DOT_GLOW: Record<PositionerConnectionState, string> = {
+  connected: '0 0 8px color-mix(in srgb, var(--state-success) 60%, transparent)',
+  disconnected: '0 0 8px color-mix(in srgb, var(--state-error) 60%, transparent)',
+  unconfigured: 'none',
 }
 
-const ACQUISITION_DOT_CLASS: Record<AcquisitionState, string> = {
-  acquiring: 'bg-emerald-500 shadow-[0_0_8px_#10b981]',
-  connected: 'bg-amber-400',
-  disconnected: 'bg-rose-500 shadow-[0_0_8px_#f43f5e]',
-  unconfigured: 'bg-slate-400'
+const POSITIONER_TEXT_COLOR: Record<PositionerConnectionState, string> = {
+  connected: 'var(--state-success)',
+  disconnected: 'var(--state-error)',
+  unconfigured: 'var(--text-muted)',
 }
 
-const ACQUISITION_TEXT_CLASS: Record<AcquisitionState, string> = {
-  acquiring: 'text-emerald-600 dark:text-emerald-400',
-  connected: 'text-amber-600 dark:text-amber-400',
-  disconnected: 'text-rose-600 dark:text-rose-400',
-  unconfigured: 'text-slate-500 dark:text-slate-400'
+const ACQUISITION_DOT_COLOR: Record<AcquisitionState, string> = {
+  acquiring: 'var(--state-success)',
+  connected: 'var(--state-warning)',
+  disconnected: 'var(--state-error)',
+  unconfigured: 'var(--text-muted)',
+}
+
+const ACQUISITION_DOT_GLOW: Record<AcquisitionState, string> = {
+  acquiring: '0 0 8px color-mix(in srgb, var(--state-success) 60%, transparent)',
+  connected: 'none',
+  disconnected: '0 0 8px color-mix(in srgb, var(--state-error) 60%, transparent)',
+  unconfigured: 'none',
+}
+
+const ACQUISITION_TEXT_COLOR: Record<AcquisitionState, string> = {
+  acquiring: 'var(--state-success)',
+  connected: 'var(--state-warning)',
+  disconnected: 'var(--state-error)',
+  unconfigured: 'var(--text-muted)',
 }
 
 /**
- * 构造连接状态显示模型。dotClasses/textClasses 携带每个 state 对应的 Tailwind class，
- * label 由调用方提供（已本地化）。
+ * 构造连接状态显示模型。颜色映射通过参数注入，label 由调用方本地化。
  */
 function buildDisplay<S extends string>(
   state: S,
-  dotClasses: Record<S, string>,
-  textClasses: Record<S, string>,
+  dotColors: Record<S, string>,
+  dotGlows: Record<S, string>,
+  textColors: Record<S, string>,
   label: string
 ): ConnectionDisplay<S> {
   return {
     state,
     label,
-    dotClass: dotClasses[state],
-    textClass: textClasses[state]
+    dotColor: dotColors[state],
+    dotGlow: dotGlows[state],
+    textColor: textColors[state],
   }
 }
 
@@ -134,7 +154,13 @@ export function useHardwareConnectionStatus(
         : 'disconnected'
     }
 
-    return buildDisplay(state, POSITIONER_DOT_CLASS, POSITIONER_TEXT_CLASS, positionerLabel(state))
+    return buildDisplay(
+      state,
+      POSITIONER_DOT_COLOR,
+      POSITIONER_DOT_GLOW,
+      POSITIONER_TEXT_COLOR,
+      positionerLabel(state)
+    )
   })
 
   const acquisitionConnection = computed(() => {
@@ -159,7 +185,13 @@ export function useHardwareConnectionStatus(
       }
     }
 
-    return buildDisplay(state, ACQUISITION_DOT_CLASS, ACQUISITION_TEXT_CLASS, acquisitionLabel(state))
+    return buildDisplay(
+      state,
+      ACQUISITION_DOT_COLOR,
+      ACQUISITION_DOT_GLOW,
+      ACQUISITION_TEXT_COLOR,
+      acquisitionLabel(state)
+    )
   })
 
   return {

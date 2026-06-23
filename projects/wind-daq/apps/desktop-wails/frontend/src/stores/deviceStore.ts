@@ -351,6 +351,66 @@ export const useDeviceStore = defineStore('devices', () => {
     return result.data ?? null
   }
 
+  // ==================== 全局采集编排 ====================
+
+  const isAnyAcquiring = computed(() =>
+    profiles.value.some((p) => acquiringFor(p.id)),
+  )
+
+  async function startAllAcquisitions(): Promise<void> {
+    const connectedIds = profiles.value
+      .filter((p) => statusFor(p.id) === 'Connected')
+      .map((p) => p.id)
+    const targetIds = connectedIds.length > 0
+      ? connectedIds
+      : [selectedDeviceId.value ?? 'sim-1']
+
+    // 先把未连接的设备并行连一遍；只对最终处于 Connected 的设备启动采集，
+    // 避免对连接失败的设备发出注定失败的 startAcquisition、并误导调用方
+    // (例如 MainDashboardView 误判已开始采集而进入录制流程)。
+    const needConnect = targetIds.filter((id) => statusFor(id) !== 'Connected')
+    if (needConnect.length > 0) {
+      const connectResults = await Promise.allSettled(needConnect.map((id) => connect(id)))
+      connectResults.forEach((result, idx) => {
+        if (result.status === 'rejected') {
+          const id = needConnect[idx]
+          const profile = profiles.value.find((p) => p.id === id)
+          console.warn(`[startAll] 设备 "${profile?.name ?? id}" 连接失败:`, result.reason)
+        }
+      })
+    }
+
+    const startIds = targetIds.filter((id) => statusFor(id) === 'Connected')
+    if (startIds.length === 0) {
+      console.warn('[startAll] 没有可启动采集的已连接设备，跳过 startAcquisition')
+      await refreshInstances()
+      return
+    }
+    const results = await Promise.allSettled(startIds.map((id) => startAcquisition(id)))
+    results.forEach((result, idx) => {
+      if (result.status === 'rejected') {
+        const profile = profiles.value.find((p) => p.id === startIds[idx])
+        console.warn(`[startAll] 设备 "${profile?.name ?? startIds[idx]}" 启动采集失败:`, result.reason)
+      }
+    })
+    await refreshInstances()
+  }
+
+  async function stopAllAcquisitions(): Promise<void> {
+    const acquiringIds = profiles.value
+      .filter((p) => acquiringFor(p.id))
+      .map((p) => p.id)
+    if (acquiringIds.length === 0) return
+    const results = await Promise.allSettled(acquiringIds.map((id) => stopAcquisition(id)))
+    results.forEach((result, idx) => {
+      if (result.status === 'rejected') {
+        const profile = profiles.value.find((p) => p.id === acquiringIds[idx])
+        console.warn(`[stopAll] 设备 "${profile?.name ?? acquiringIds[idx]}" 停止采集失败:`, result.reason)
+      }
+    })
+    await refreshInstances()
+  }
+
   return {
     profiles,
     latestSnapshots,
@@ -360,6 +420,9 @@ export const useDeviceStore = defineStore('devices', () => {
     deviceStatuses,
     statusFor,
     acquiringFor,
+    isAnyAcquiring,
+    startAllAcquisitions,
+    stopAllAcquisitions,
     selectDevice,
     refreshProfiles,
     refreshInstances,

@@ -61,6 +61,9 @@ export const useTraversalStore = defineStore('traversal', () => {
   const realtimePressures = ref<RealtimePressures | null>(null)
   const realtimeResult = ref<InterpolationResult | null>(null)
 
+  // 后端插值器是否已加载（PRB/CSV 导入成功后置 true，无需等待配置保存）
+  const hasLoadedInterpolator = ref(false)
+
   const config = ref<TraversalTestConfig | null>(null)
 
   const completeEvent = ref<TraversalCompleteEvent | null>(null)
@@ -174,12 +177,10 @@ export const useTraversalStore = defineStore('traversal', () => {
     input: TraversalInterpolationInput | null,
     configOverride: TraversalTestConfig | null = null
   ): void {
+    // 后端插值器已加载即可进行实时插值，无需等待配置保存
+    // （importPrb/importCalibrationCsv/importMultiPrb 成功后后端已 SetInterpolator）
+    const hasInterpolationDataset = hasLoadedInterpolator.value
     const effectiveConfig = configOverride ?? config.value
-    const hasInterpolationDataset = Boolean(
-      (effectiveConfig?.useMultiPrb && effectiveConfig.multiPrb?.files.length) ||
-      (effectiveConfig?.interpolationAlgorithm === 'new' && effectiveConfig.calibrationCsvFile) ||
-      effectiveConfig?.prbFile
-    )
 
     if (!input || !hasInterpolationDataset) {
       pendingRealtimeInterpolationInput = null
@@ -471,6 +472,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     const res = await traversalApi.getConfig()
     if (res.success) {
       config.value = res.data ?? null
+      inferInterpolatorState()
     }
   }
 
@@ -497,6 +499,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     if (configResult.status === 'fulfilled') {
       if (configResult.value.success) {
         config.value = configResult.value.data ?? null
+        inferInterpolatorState()
       } else {
         config.value = null
         recoveryErrors.push(configResult.value.error || '加载移位测试配置失败')
@@ -539,6 +542,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   async function importPrbFile(filePath: string): Promise<PrbFileInfo | null> {
     const res = await traversalApi.importPrb(filePath)
     if (res.success && res.data) {
+      hasLoadedInterpolator.value = true
       if (config.value) {
         config.value.prbFile = res.data
       }
@@ -551,6 +555,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   async function importCalibrationCsvFile(filePath: string): Promise<CalibrationCsvFileInfo | null> {
     const res = await traversalApi.importCalibrationCsv(filePath)
     if (res.success && res.data) {
+      hasLoadedInterpolator.value = true
       if (config.value) {
         config.value.calibrationCsvFile = res.data
       }
@@ -573,6 +578,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   ): Promise<{ files: PrbFileInfo[]; machNumbers: number[]; warnings: string[] } | null> {
     const res = await traversalApi.importMultiPrb(filePaths, machNumbers, interpolationMode)
     if (res.success && res.data) {
+      hasLoadedInterpolator.value = true
       if (config.value) {
         config.value.prbFile = null
         config.value.useMultiPrb = true
@@ -728,6 +734,26 @@ export const useTraversalStore = defineStore('traversal', () => {
     error.value = null
   }
 
+  // 清除插值器状态（移除文件/切换算法时调用）
+  function clearInterpolator(): void {
+    hasLoadedInterpolator.value = false
+    realtimeResult.value = null
+  }
+
+  // 根据已加载的配置推断后端插值器是否已就绪
+  function inferInterpolatorState(): void {
+    const cfg = config.value
+    if (!cfg) {
+      hasLoadedInterpolator.value = false
+      return
+    }
+    hasLoadedInterpolator.value = !!(
+      cfg.prbFile?.filePath ||
+      cfg.calibrationCsvFile?.filePath ||
+      (cfg.useMultiPrb && cfg.multiPrb?.files?.length)
+    )
+  }
+
   function reset(): void {
     cancelRecovery()
     statusRecoveryFailed.value = false
@@ -745,6 +771,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     error.value = null
     realtimePressures.value = null
     realtimeResult.value = null
+    hasLoadedInterpolator.value = false
     checkpoint.value = null
 
     teardownEventSubscriptions()
@@ -765,6 +792,8 @@ export const useTraversalStore = defineStore('traversal', () => {
     dataPoints,
     realtimePressures,
     realtimeResult,
+    hasLoadedInterpolator,
+    clearInterpolator,
     config,
     completeEvent,
     error,

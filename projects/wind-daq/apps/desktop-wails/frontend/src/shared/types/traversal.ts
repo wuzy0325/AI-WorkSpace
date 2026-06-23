@@ -38,12 +38,21 @@ export const TRAVERSAL_PROBE_CHANNEL_PRESETS: readonly TraversalProbeChannelPres
   { name: 'Tatm', role: 'fiveHole.tAtm', defaultChannelIndex: 17, required: true, enabledByDefault: true }
 ] as const
 
+/**
+ * 遍历测试测点压力值的默认小数位数。
+ * 与校准模块 (calibrationPrecision.ts) 的 DEFAULT_CALIBRATION_PROBE_PRECISION 保持一致，
+ * 此处独立定义以避免 types 文件依赖 API 层。
+ */
+export const TRAVERSAL_DEFAULT_PROBE_PRECISION = 3 as const
+
 export function createDefaultTraversalProbeChannels(): ProbeChannelConfig[] {
   return TRAVERSAL_PROBE_CHANNEL_PRESETS.map((preset) => ({
     name: preset.name,
     role: preset.role,
     channel: { deviceId: '', channelIndex: preset.defaultChannelIndex },
-    enabled: preset.enabledByDefault
+    enabled: preset.enabledByDefault,
+    // 为每个测点设置默认精度，用户可在硬件配置步骤中逐通道调整
+    precision: TRAVERSAL_DEFAULT_PROBE_PRECISION
   }))
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Play, Square, Circle, Activity } from '@lucide/vue'
+import { Play, Square, Circle, Activity, LineChart, Table2, Columns2, LayoutGrid } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
@@ -35,6 +35,13 @@ function modeLabel(mode: MainViewMode): string {
   return props.t.overviewMode || '总览'
 }
 
+const modeIcon = {
+  chart: LineChart,
+  table: Table2,
+  both: Columns2,
+  overview: LayoutGrid,
+} as const
+
 function activePageLabel(): string {
   if (props.activePage === 'motion') return props.t.motionControl || '运动控制'
   if (props.activePage === 'calibration') return props.t.probeCalibration || '探针校准'
@@ -66,9 +73,11 @@ function activePageLabel(): string {
           :key="mode"
           class="main-topbar__nav-btn"
           :class="{ 'main-topbar__nav-btn--active': viewMode === mode }"
+          :title="modeLabel(mode)"
           @click="emit('set-view-mode', mode)"
         >
-          {{ modeLabel(mode) }}
+          <component :is="modeIcon[mode]" class="main-topbar__nav-icon" />
+          <span class="main-topbar__nav-label">{{ modeLabel(mode) }}</span>
         </button>
       </nav>
       <div v-else class="main-topbar__nav">
@@ -193,70 +202,90 @@ function activePageLabel(): string {
   }
 }
 
-/* 视图模式导航：使用更紧凑的 pill 设计 */
+/* 视图模式导航：分段控件（segmented control）样式 */
 .main-topbar__nav {
   display: flex;
   align-items: center;
-  gap: 0.125rem;
-  padding: 0.25rem;
-  background: color-mix(in srgb, var(--bg-canvas) 80%, transparent);
-  border-radius: 0.625rem;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-canvas);
+  border-radius: 10px;
   flex-shrink: 0;
   border: 1px solid var(--border-default);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 :root[data-theme='light'] .main-topbar__nav {
-  background: color-mix(in srgb, var(--bg-canvas) 80%, transparent);
-  border: 1px solid var(--border-default);
+  /* 浅色主题下的分段控件容器：使用 canvas + 默认描边 + 文本色派生阴影 token */
+  background: var(--bg-canvas);
+  border-color: var(--border-default);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 .main-topbar__nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   font-size: var(--font-size-xs);
   font-weight: 500;
   white-space: nowrap;
-  padding: 0.375rem 0.875rem;
-  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 7px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
-  letter-spacing: 0.02em;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.main-topbar__nav-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke-width: 2;
+}
+
+.main-topbar__nav-label {
+  line-height: 1;
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .main-topbar__nav-btn:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 :root[data-theme='light'] .main-topbar__nav-btn:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
-.main-topbar__nav-btn--active {
-  background: var(--bg-panel-strong) !important;
-  color: var(--text-primary) !important;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-:root[data-theme='light'] .main-topbar__nav-btn--active {
-  background: var(--bg-panel-strong) !important;
-  color: var(--text-primary) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
+.main-topbar__nav-btn--active,
 .main-topbar__nav-btn--active:hover {
-  background: var(--bg-panel-strong) !important;
+  background: var(--bg-panel) !important;
+  color: var(--accent-primary) !important;
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 
+:root[data-theme='light'] .main-topbar__nav-btn--active,
 :root[data-theme='light'] .main-topbar__nav-btn--active:hover {
-  background: var(--bg-panel-strong) !important;
+  background: var(--bg-panel) !important;
+  color: var(--accent-primary-core-strong) !important;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+}
+
+.main-topbar__nav-btn--active .main-topbar__nav-icon {
+  stroke-width: 2.25;
 }
 
 .main-topbar__actions {

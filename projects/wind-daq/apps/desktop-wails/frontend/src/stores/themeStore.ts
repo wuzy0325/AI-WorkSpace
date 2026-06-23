@@ -10,12 +10,12 @@ function resolveInitialTheme(): ThemeMode {
   } catch {
     // localStorage not available
   }
-  // 检测系统主题偏好
+  // 系统偏好深色时跟随深色，否则使用浅色（默认主题，见 DESIGN.md "Theme"）
   if (typeof window !== 'undefined' && window.matchMedia) {
-    const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches
-    if (prefersLight) return 'light'
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    if (prefersDark) return 'dark'
   }
-  return 'dark'
+  return 'light'
 }
 
 function applyTheme(theme: ThemeMode) {

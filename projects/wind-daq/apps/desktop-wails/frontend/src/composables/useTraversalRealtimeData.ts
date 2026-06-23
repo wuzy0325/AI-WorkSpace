@@ -15,7 +15,9 @@ import type {
   TraversalInterpolationInput
 } from '@shared/types/traversal'
 import type { DataPayload } from '@api/types'
+import type { ProbeChannelRole } from '@shared/types/calibration'
 import { deviceApi } from '@api/deviceApi'
+import { useDeviceStore } from '@stores/deviceStore'
 import { useTraversalStore } from '@stores/traversalStore'
 
 /** 实时压力通道键名 */
@@ -143,6 +145,20 @@ function toRealtimeInterpolationInput(pressures: LivePressureMap | null): Traver
  */
 export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>) {
   const traversalStore = useTraversalStore()
+  const deviceStore = useDeviceStore()
+
+  /**
+   * 根据探针通道角色从设备配置中获取通道单位
+   * 查找逻辑：probeChannels 中匹配 role → 设备配置 channels 中对应索引的 unit
+   */
+  function getChannelUnit(role: ProbeChannelRole, fallback: string): string {
+    if (!config.value) return fallback
+    const ch = config.value.channels.probeChannels.find((c) => c.role === role)
+    if (!ch?.channel.deviceId) return fallback
+    const device = deviceStore.profiles?.find((d) => d.id === ch.channel.deviceId)
+    const channelConfig = device?.channels[ch.channel.channelIndex]
+    return channelConfig?.unit ?? fallback
+  }
 
   // 最新 DAQ 快照（按 deviceId 去重，保留每个设备的最新数据）
   const latestSnapshots = ref<DataPayload[]>([])
@@ -171,13 +187,13 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     const formatValue = (value?: number): string => (typeof value === 'number' ? value.toFixed(3) : '--')
     const hasConfig = config.value !== null
     return [
-      { key: 'P1', label: 'P1', unit: 'kPa', value: formatValue(data?.P1), disabled: !hasConfig },
-      { key: 'P2', label: 'P2', unit: 'kPa', value: formatValue(data?.P2), disabled: !hasConfig },
-      { key: 'P3', label: 'P3', unit: 'kPa', value: formatValue(data?.P3), disabled: !hasConfig },
-      { key: 'P4', label: 'P4', unit: 'kPa', value: formatValue(data?.P4), disabled: !hasConfig },
-      { key: 'P5', label: 'P5', unit: 'kPa', value: formatValue(data?.P5), disabled: !hasConfig },
-      { key: 'Patm', label: 'Patm', unit: 'kPa', value: formatValue(data?.Patm), disabled: !hasConfig },
-      { key: 'Tatm', label: 'Tatm', unit: 'C', value: formatValue(data?.Tatm), disabled: !hasConfig }
+      { key: 'P1', label: 'P1', unit: getChannelUnit('fiveHole.p1', 'Pa'), value: formatValue(data?.P1), disabled: !hasConfig },
+      { key: 'P2', label: 'P2', unit: getChannelUnit('fiveHole.p2', 'Pa'), value: formatValue(data?.P2), disabled: !hasConfig },
+      { key: 'P3', label: 'P3', unit: getChannelUnit('fiveHole.p3', 'Pa'), value: formatValue(data?.P3), disabled: !hasConfig },
+      { key: 'P4', label: 'P4', unit: getChannelUnit('fiveHole.p4', 'Pa'), value: formatValue(data?.P4), disabled: !hasConfig },
+      { key: 'P5', label: 'P5', unit: getChannelUnit('fiveHole.p5', 'Pa'), value: formatValue(data?.P5), disabled: !hasConfig },
+      { key: 'Patm', label: 'Patm', unit: getChannelUnit('fiveHole.pAtm', 'Pa'), value: formatValue(data?.Patm), disabled: !hasConfig },
+      { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('fiveHole.tAtm', '°C'), value: formatValue(data?.Tatm), disabled: !hasConfig }
     ]
   })
 

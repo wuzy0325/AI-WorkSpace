@@ -46,7 +46,7 @@ function handleCloseSettings() {
 </script>
 
 <template>
-  <div class="flex-1 min-h-0 w-full">
+  <div class="flex-1 min-h-0 w-full flex flex-col">
     <component
       :is="currentView"
       @select-calibration="handleSelectCalibration"
