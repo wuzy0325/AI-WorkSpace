@@ -23,6 +23,7 @@ import (
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/debugserver"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -85,6 +86,13 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	go func() {
 		srv.ListenAndServe()
 	}()
+
+	// 按需启动 pprof debug server（受 WINDDAQ_PPROF_ADDR 环境变量控制）。
+	// 共享主 ctx，主服务关闭时 pprof 端点同步关闭。
+	if _, err := debugserver.Start(ctx); err != nil {
+		// 仅警告，不阻塞主服务启动
+		fmt.Fprintf(os.Stderr, "debug server start failed: %v\n", err)
+	}
 
 	return &Server{srv}, nil
 }

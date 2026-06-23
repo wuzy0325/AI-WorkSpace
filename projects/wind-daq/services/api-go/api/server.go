@@ -633,7 +633,10 @@ func NewRouter(deps Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	})
 
-	return corsMiddleware(mux)
+	// 中间件链：metrics（最外层，记录所有请求耗时）→ recover（拦截 panic）→ cors → mux
+	// 顺序原因：metrics 需要能看到 recover 后的最终状态码；
+	// cors 需要在 OPTIONS 短路前生效，所以放在 mux 之前最贴近。
+	return metricsMiddleware(recoverMiddleware(corsMiddleware(mux)))
 }
 
 func handleDaqStream(w http.ResponseWriter, r *http.Request, hub *usecase.AcquisitionHub, deviceID string) {

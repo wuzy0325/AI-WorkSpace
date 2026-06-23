@@ -6,6 +6,7 @@ import { useThemeStore } from './stores/themeStore'
 import { container } from './core/container'
 import { wailsApi, isWailsAvailable } from './api/wails-adapter'
 import { setMotionStandaloneMode } from './api/motionApi'
+import { initWebVitals } from './utils/webVitals'
 import './styles.css'
 
 async function resolveRootComponent(): Promise<Component> {
@@ -60,6 +61,9 @@ async function bootstrap(): Promise<void> {
   }
 
   app.mount('#app')
+
+  // 启动 Web Vitals 上报（在 mount 后，确保 first paint 已发生）
+  initWebVitals()
 }
 
 void bootstrap()
