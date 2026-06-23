@@ -115,8 +115,8 @@ func defaultSimulatedChannels() []device.ChannelConfig {
 		}
 	}
 	channels[16] = device.ChannelConfig{
-		Index: 16, Name: "大气压", Enabled: true, Unit: "kPa",
-		Precision: 3, RangeMin: 99, RangeMax: 106,
+		Index: 16, Name: "大气压", Enabled: true, Unit: "Pa",
+		Precision: 1, RangeMin: 99000, RangeMax: 106000,
 	}
 	channels[17] = device.ChannelConfig{
 		Index: 17, Name: "大气温度", Enabled: true, Unit: "degC",

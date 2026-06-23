@@ -9,6 +9,7 @@ import (
 
 	sharedproto "shared.local/device-sdk/go/protocol"
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 const (
@@ -29,6 +30,7 @@ type DAQP1604 struct {
 	recvBuffer  []byte
 	readErrors  int
 	frameErrors int
+	onError     func(err error) // 设备异常退出通知回调
 }
 
 func NewDAQP1604(profile device.Profile) *DAQP1604 {
@@ -42,6 +44,18 @@ func NewDAQP1604(profile device.Profile) *DAQP1604 {
 		},
 		recvBuffer: make([]byte, 0, 4096),
 	}
+}
+
+// 编译时接口检查
+var _ ports.Device = (*DAQP1604)(nil)
+var _ ports.TareConfigurable = (*DAQP1604)(nil)
+var _ ports.ErrorNotifiable = (*DAQP1604)(nil)
+
+// SetOnError 设置设备异常退出回调，实现 ports.ErrorNotifiable 接口
+func (d *DAQP1604) SetOnError(fn func(err error)) {
+	d.mu.Lock()
+	d.onError = fn
+	d.mu.Unlock()
 }
 
 func (d *DAQP1604) ID() string { return d.profile.ID }
@@ -214,10 +228,34 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	}
 	d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1604_TIMEOUT))
 	_, err := d.conn.Write([]byte(cmd + "\r\n"))
+	d.conn.SetWriteDeadline(time.Time{}) // 清除写截止时间，避免影响后续操作
 	return err
 }
 
 func (d *DAQP1604) readLoop(stop <-chan struct{}) {
+	var unexpectedErr error
+
+	defer func() {
+		// 异常退出时更新状态并通知上层
+		if unexpectedErr != nil {
+			d.mu.Lock()
+			d.acquiring = false
+			d.stop = nil
+			d.status.Acquiring = false
+			d.status.LastError = unexpectedErr.Error()
+			if d.status.Connection == device.ConnectionAcquiring {
+				d.status.Connection = device.ConnectionConnected
+			}
+			fn := d.onError
+			d.mu.Unlock()
+
+			slog.Warn("DAQ-P-1604 read loop exited unexpectedly", "device", d.profile.ID, "error", unexpectedErr)
+			if fn != nil {
+				fn(unexpectedErr)
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-stop:
@@ -233,6 +271,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 				d.readErrors++
 				d.mu.Unlock()
 				slog.Debug("DAQ-P-1604 read error", "device", d.profile.ID, "error", err)
+				unexpectedErr = err
 				return
 			}
 			if len(payload) > 0 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 const (
@@ -32,6 +33,7 @@ type DSA3217 struct {
 	lineBuffer      string
 	dataHandler     chan string
 	responseHandler chan string
+	onError         func(err error) // 设备异常退出通知回调
 }
 
 func NewDSA3217(profile device.Profile) *DSA3217 {
@@ -45,6 +47,19 @@ func NewDSA3217(profile device.Profile) *DSA3217 {
 		},
 		lineBuffer: "",
 	}
+}
+
+// 编译时接口检查
+var _ ports.Device = (*DSA3217)(nil)
+var _ ports.TareConfigurable = (*DSA3217)(nil)
+var _ ports.DSA3217Configurable = (*DSA3217)(nil)
+var _ ports.ErrorNotifiable = (*DSA3217)(nil)
+
+// SetOnError 设置设备异常退出回调，实现 ports.ErrorNotifiable 接口
+func (d *DSA3217) SetOnError(fn func(err error)) {
+	d.mu.Lock()
+	d.onError = fn
+	d.mu.Unlock()
 }
 
 func (d *DSA3217) ID() string { return d.profile.ID }
@@ -196,6 +211,30 @@ func (d *DSA3217) readLoop(stop <-chan struct{}) {
 		return
 	}
 
+	var unexpectedErr error
+
+	defer func() {
+		// 异常退出时更新状态并通知上层
+		if unexpectedErr != nil {
+			d.mu.Lock()
+			d.acquiring = false
+			d.scanning = false
+			d.stop = nil
+			d.status.Acquiring = false
+			d.status.LastError = unexpectedErr.Error()
+			if d.status.Connection == device.ConnectionAcquiring {
+				d.status.Connection = device.ConnectionConnected
+			}
+			fn := d.onError
+			d.mu.Unlock()
+
+			slog.Warn("DSA3217 read loop exited unexpectedly", "device", d.profile.ID, "error", unexpectedErr)
+			if fn != nil {
+				fn(unexpectedErr)
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-stop:
@@ -203,7 +242,12 @@ func (d *DSA3217) readLoop(stop <-chan struct{}) {
 		default:
 			line, err := d.reader.ReadString('\n')
 			if err != nil {
+				// 读取超时不视为异常，继续等待
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
 				slog.Debug("DSA3217 read error", "device", d.profile.ID, "error", err)
+				unexpectedErr = err
 				return
 			}
 
@@ -274,6 +318,13 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 		return "", fmt.Errorf("not connected")
 	}
 
+	// 命令路径退出时清除读/写 deadline，避免过期的绝对时间
+	// 被 readLoop 继承导致 ReadString 永远立即返回 timeout、CPU 死循环。
+	defer func() {
+		conn.SetWriteDeadline(time.Time{})
+		conn.SetReadDeadline(time.Time{})
+	}()
+
 	conn.SetWriteDeadline(time.Now().Add(DSA3217_TIMEOUT))
 	if _, err := conn.Write([]byte(cmd + "\r\n")); err != nil {
 		return "", err
@@ -283,7 +334,7 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 	reader := d.reader
 	d.mu.RUnlock()
 
-	if reader == nil || conn == nil {
+	if reader == nil {
 		return "", fmt.Errorf("not connected")
 	}
 

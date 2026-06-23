@@ -144,7 +144,8 @@ func (d *SimulatedDevice) loop(stop <-chan struct{}) {
 }
 
 func pressureSim(t float64) float64 {
-	return 101.325 + 2*math.Sin(t*0.1) + (rand.Float64()-0.5)*0.2
+	// 返回大气压力值，单位 Pa（约 101325 Pa 标准大气压）
+	return 101325 + 200*math.Sin(t*0.1) + (rand.Float64()-0.5)*20
 }
 
 func tempSim(t float64) float64 {

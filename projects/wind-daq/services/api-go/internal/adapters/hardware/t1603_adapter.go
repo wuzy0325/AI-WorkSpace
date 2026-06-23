@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	sharedcore "shared.local/device-sdk/go/daq/core"
@@ -19,6 +20,7 @@ type T1603Adapter struct {
 	profile device.Profile
 	config  device.DaqT1603HardwareConfig
 	sink    device.DataSink
+	onError func(err error) // 设备异常退出通知回调
 }
 
 // compile-time interface checks
@@ -26,12 +28,20 @@ var _ ports.Device = (*T1603Adapter)(nil)
 var _ ports.UnitConfigurable = (*T1603Adapter)(nil)
 var _ ports.TareConfigurable = (*T1603Adapter)(nil)
 var _ ports.DaqT1603Configurable = (*T1603Adapter)(nil)
+var _ ports.ErrorNotifiable = (*T1603Adapter)(nil)
 
 func NewT1603Adapter(profile device.Profile) *T1603Adapter {
 	return &T1603Adapter{
 		profile: profile,
 		config:  profile.DaqT1603Config,
 	}
+}
+
+// SetOnError 设置设备异常退出回调，实现 ports.ErrorNotifiable 接口
+func (a *T1603Adapter) SetOnError(fn func(err error)) {
+	a.mu.Lock()
+	a.onError = fn
+	a.mu.Unlock()
 }
 
 func (a *T1603Adapter) ID() string {
@@ -61,7 +71,13 @@ func (a *T1603Adapter) Connect() error {
 	dev.OnReadLoopExit(func(err error) {
 		a.mu.Lock()
 		a.sink = nil
+		fn := a.onError
 		a.mu.Unlock()
+
+		slog.Warn("T1603Adapter read loop exited unexpectedly", "device", a.profile.ID, "error", err)
+		if fn != nil {
+			fn(err)
+		}
 	})
 
 	if err := dev.Connect(); err != nil {
