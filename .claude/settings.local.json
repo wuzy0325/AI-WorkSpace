@@ -77,7 +77,18 @@
       "Bash(powershell.exe -ExecutionPolicy Bypass -File ./scripts/validate-import-direction.ps1)",
       "Bash(awk '/^\\(func|type|const|var\\) / {print NR\": \"$0}' projects/wind-daq/services/api-go/internal/usecase/traversal.go)",
       "Bash(grep -v \"^//\")",
-      "Bash(awk '/^\\(func|type|const|var\\) / {print NR\": \"$0}' traversal.go)"
+      "Bash(awk '/^\\(func|type|const|var\\) / {print NR\": \"$0}' traversal.go)",
+      "Bash(grep -nE \"\\\\\\\\bsort\\\\\\\\.|\\\\\\\\berrors\\\\\\\\.|\\\\\\\\btime\\\\\\\\.\" traversal_config.go)",
+      "Bash(grep -nE \"coreinterp\\\\\\\\.\" traversal_config.go)",
+      "Bash(grep -nE \"context\\\\\\\\.|fmt\\\\\\\\.|sort\\\\\\\\.|time\\\\\\\\.|coreinterp\\\\\\\\.|motion\\\\\\\\.|traversal\\\\\\\\.\" traversal_acquisition.go)",
+      "Bash(grep -nE \"\\\\\\\\bsort\\\\\\\\.|\\\\\\\\bcoreinterp\\\\\\\\.\" traversal_acquisition.go)",
+      "Bash(grep -nE \"\\\\\\\\bmotion\\\\\\\\.[A-Z]\" traversal_acquisition.go)",
+      "Bash(grep -nE \"\\\\\\\\bcoreinterp\\\\\\\\.|\\\\\\\\btraversal\\\\\\\\.\" traversal_view.go)",
+      "Bash(grep -nE \"fmt\\\\\\\\.|sort\\\\\\\\.|time\\\\\\\\.|json\\\\\\\\.\" traversal_view.go)",
+      "Bash(grep -n \"sort\\\\\\\\.\\\\|fmt\\\\\\\\.\\\\|context\\\\\\\\.\" traversal.go)",
+      "Bash(grep -n \"context\\\\\\\\.\" traversal.go)",
+      "Bash(npx vue-tsc *)",
+      "Bash(grep -n \"math\\\\\\\\.Abs\\\\|\\\\babs\\(\" traversal_acquisition.go)"
     ]
   }
 }

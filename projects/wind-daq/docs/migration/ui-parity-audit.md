@@ -1,5 +1,7 @@
 # Wind-DAQ UI Parity Audit
 
+> **DEPRECATED (2026-06):** UI parity with Cursor DAQ is no longer the design target. See `../../DESIGN.md` and `./README.md`. Use this document only as a historical task list; the new visual target is "industrial instrumentation with a modern feel" defined in `DESIGN.md`, not the original Cursor DAQ.
+
 > This document is the truthful task list for completing `wind-daq` UI parity with the original `Cursor DAQ` project.
 >
 > Do not use `ts-reference-feature-map.md` alone as proof of UI completion. That file tracks broad feature migration and previously marked several visible UI areas as `Done` when they were only partially present.

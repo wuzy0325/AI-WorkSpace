@@ -1,5 +1,10 @@
 # Wind-DAQ UI Design Audit
 
+> **Status (2026-06):** UI parity with Cursor DAQ is no longer the design target — see `../DESIGN.md`. The minimum window is 1440×900, light theme is the default, and the visual character is "industrial instrumentation with a modern feel". The migration order below remains valid; only the visual reference point changed.
+> An additional pre-Phase-5 task is now active: **light-theme audit** — channel colors (`--color-channel-1..8`), chart grid/crosshair colors, and header/footer glass effects were originally tuned only for dark and need light-theme equivalents before light becomes the daily-use default. Concrete plan lives in `design/light-theme-palette.md`.
+>
+> **Companion specs (2026-06):** `design/chart-spec.md`, `design/light-theme-palette.md`, `design/iconography.md`. These define detailed rules for charts, palette compliance, and icons respectively. Each lists open decisions that need a designer/PM sign-off — they are not blocking AI execution but are blocking commit of the "fill the gaps" patches.
+
 > This audit tracks the path from the current mixed UI implementation to a consistent Wind-DAQ design system. It is intentionally incremental: do not rewrite the whole UI at once.
 
 ## Current State

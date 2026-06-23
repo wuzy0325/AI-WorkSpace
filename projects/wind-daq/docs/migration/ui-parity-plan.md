@@ -1,5 +1,7 @@
 # Cursor DAQ UI Parity AI Implementation Plan
 
+> **DEPRECATED (2026-06):** UI parity with Cursor DAQ is no longer the design target. See `../../DESIGN.md` and `./README.md`. This document is retained for historical reference only; do not treat its visual or layout instructions as current.
+
 ## Purpose
 
 This document is the implementation guide for AI agents rebuilding `Cursor DAQ` as `wind-daq`.

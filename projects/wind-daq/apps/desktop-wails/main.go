@@ -26,12 +26,13 @@ func main() {
 	mode := backend.ModeNormal
 	title := "Wind-DAQ"
 	width, height := 1600, 900
-	minWidth, minHeight := 1280, 720
+	minWidth, minHeight := 1440, 900
 
 	if *motionOnly {
 		mode = backend.ModeMotion
 		title = "运动控制器 - Wind-DAQ"
 		// 加宽到 1440 以确保 4 个轴卡片能在单行舒适显示
+		// 独立窗口为单功能窄窗，最小尺寸豁免主窗口的 1440x900 下限
 		width, height = 1440, 860
 		minWidth, minHeight = 1200, 720
 	}

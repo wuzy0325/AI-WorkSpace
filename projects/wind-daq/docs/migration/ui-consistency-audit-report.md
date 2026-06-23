@@ -1,5 +1,7 @@
 # Wind-DAQ UI 一致性审查报告与整改计划
 
+> **已废止（2026-06）：** 以 Cursor DAQ 为视觉对等目标的策略已废止，详见 `../../DESIGN.md` 与 `./README.md`。本文档保留作为历史审查记录；当前视觉目标改为 DESIGN.md 中定义的"工业仪表 + 现代感"，不再以 Cursor DAQ 为参考标准。
+
 > 审查日期：2026-05-22
 > 审查范围：`projects/wind-daq/apps/desktop-wails/frontend` 全部 UI 组件与页面
 > 参考标准：`C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\Ai Agent\Cursor DAQ\src\renderer\src`

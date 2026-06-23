@@ -1,5 +1,7 @@
 # TS Reference → Wind-DAQ Feature Map
 
+> **Status (2026-06):** This document remains active as a **feature inventory** — tracking which features from the TS/Electron reference have been migrated. It is **no longer a UI parity target**; visual layout and component composition are governed by `../../DESIGN.md`. Use this file only to confirm feature coverage, not to constrain UI design.
+
 > **Purpose:** Track which features from the TS/Electron reference (`C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\Ai Agent\Cursor DAQ`) have been migrated to the Go + Vue + Wails rebuild.
 
 **Status key:** Done / Partial / Missing / Frontend-only / Do not migrate

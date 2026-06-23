@@ -2,6 +2,8 @@
 
 This is the single entry point for the `wind-daq` refactor/migration work.
 
+> **Status (2026-06): UI parity with Cursor DAQ is no longer the design target.** See `../../DESIGN.md`. The documents in this folder are retained as a **feature inventory and workflow reference** — what features must exist, what operator workflows must be preserved — not as a visual or layout target. Sections below that describe UI parity goals should be read as historical context.
+
 ## Product Positioning
 
 `wind-daq` is the refactored successor of the pre-refactor `Cursor DAQ` project:

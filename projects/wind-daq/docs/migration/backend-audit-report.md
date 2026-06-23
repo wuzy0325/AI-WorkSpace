@@ -1,5 +1,7 @@
 # Wind-DAQ Go 后端功能审查报告与实施计划
 
+> **状态（2026-06）：** 本文档作为**后端功能清单**仍然有效——记录哪些后端能力已从 Cursor DAQ 迁移到 wind-daq。UI / 视觉对等已不再是设计目标（见 `../../DESIGN.md`），但后端业务逻辑覆盖与本文档结论无关，可继续作为功能差异追踪表使用。
+
 > 审查日期：2026-05-22
 > 审查范围：`projects/wind-daq/services/api-go` 全部后端模块
 > 参考标准：`C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\Ai Agent\Cursor DAQ\src\main`
