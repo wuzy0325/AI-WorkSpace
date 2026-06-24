@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getTraversalLayoutPoints } from '@shared/types/traversal'
 import type { TraversalLayout, TraversalPoint, TraversalPointPhase } from '@shared/types/traversal'
@@ -183,9 +183,9 @@ function draw() {
     const screenX = transformX(point.x, viewTransform)
     const screenY = transformY(point.y, viewTransform)
 
-    const isCurrentPoint = props.currentPoint &&
-      Math.abs(props.currentPoint.alpha - point.x) < 0.01 &&
-      Math.abs(props.currentPoint.beta - point.y) < 0.01
+    // 使用索引匹配当前点，避免坐标容差匹配导致的错位问题
+    // 后端 CurrentPoint 既是已完成点数，也是当前正在处理的点的索引
+    const isCurrentPoint = i === completedCount && props.currentPointPhase !== undefined
 
     const isCompleted = i < completedCount
     const isPending = i >= completedCount && !isCurrentPoint
@@ -323,8 +323,8 @@ function stopBlinkAnimation(): void {
   }
 }
 
-// 监听是否需要闪烁：需要同时满足可见、有当前点且正在运行
-watch(() => props.visible !== false && !!props.currentPoint && !!props.currentPointPhase, (shouldBlink) => {
+// 监听是否需要闪烁：可见且当前点正在处理（有阶段状态）
+watch(() => props.visible !== false && props.currentPointPhase !== undefined, (shouldBlink) => {
   if (shouldBlink) {
     startBlinkAnimation()
   } else {
