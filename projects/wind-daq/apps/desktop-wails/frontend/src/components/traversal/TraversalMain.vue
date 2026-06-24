@@ -482,6 +482,23 @@ watch(
       @cancel-simulation="cancelSimulation"
     />
 
+    <!-- 插值器恢复状态横幅：当后端启动恢复失败或运行期校验失败时展示，
+         消息由 traversalStore.interpolatorRestoreMessage 提供（含后端 prbCheck.message）。
+         交互：点击右侧"知道了"按钮可临时清除提示；下次刷新或重新校验会再次写入。 -->
+    <div
+      v-if="traversalStore.interpolatorRestoreMessage"
+      role="alert"
+      class="trav-interp-banner"
+    >
+      <span class="trav-interp-banner__icon" aria-hidden="true">⚠</span>
+      <span class="trav-interp-banner__text">{{ traversalStore.interpolatorRestoreMessage }}</span>
+      <button
+        type="button"
+        class="trav-interp-banner__close"
+        @click="traversalStore.interpolatorRestoreMessage = null"
+      >知道了</button>
+    </div>
+
     <!-- 断点恢复横幅 -->
     <TraversalCheckpointBanner
       v-if="hasCheckpoint && !traversalStore.isRunning && checkpoint"
@@ -582,3 +599,48 @@ watch(
     />
   </div>
 </template>
+
+<style scoped>
+/* 插值器恢复横幅：放在 TopBar 下方，使用工作区设计 token 保证主题一致 */
+.trav-interp-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  background: color-mix(in srgb, var(--accent-warning, #d97706) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-warning, #d97706) 35%, transparent);
+  color: var(--accent-warning, #d97706);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.trav-interp-banner__icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.trav-interp-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.trav-interp-banner__close {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.trav-interp-banner__close:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+</style>

@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.1.3] - 2026-06-23
+
+### Fixed
+- 修复适配器死锁：`StopAcquisition`/`Disconnect` 将硬件 I/O 移到锁外执行，避免与 `OnReadLoopExit`/`OnConfigSynced` 回调相互死锁。
+- 修复 readLoop 异常退出后驱动未断开的问题：异常退出时清理 drivers 表并调用 `driver.Disconnect()`，防止下次 StartAcquisition 在坏连接上重试。
+- 修复 Status() 状态卡在 Acquiring 的问题：移除有缺陷的 `st.Status != StatusAcquiring` 守卫，改为信任驱动层状态（true source of truth）。
+- 修复 CSV 录制数据丢失：relayStream 改为每条 snapshot 即时写入（此前每秒只写一次最新值），并结合 `IsActive()` 无锁热路径避免锁竞争。
+- 修复前端扫描列表重复添加问题：ScanResultList 显示"已添加"状态标记，store 层增加重复添加防御。
+- 修复设置命令后概率采集数据解析乱码。
+
+### Changed
+- CSV flush 行阈值从 100 → 2000，让 1s 时间间隔主导 flush 频率，减少多设备高频场景下的磁盘同步次数。
+- CSV `FormatFloat` 替代 `fmt.Sprintf`，消除每秒 16000 次格式串解析开销。
+- CSV `sync.Mutex` 替代 `sync.RWMutex`（Status 调用频率低，读写锁额外开销不值得）。
+- 采集 channel 缓冲区从 8192 → 65536，在 1000Hz 下提供约 65 秒缓冲，防止 CSV flush 阻塞反压到硬件 readLoop。
+- 前端硬件时间戳文案："显示/隐藏" → "启用/禁用"。
+- E2E 测试 fixture 默认启用 `showTimestamp: true`。
+- 文档文件 `MANUAL_TEST.md`、`TEST_PLAN.md`、`test-cases.html` 移至 `docs/` 目录。
+
+### Removed
+- 移除模拟模式：删除 `SimulatedAdapter`、`SimulatedScanner` 及其测试（`simulated_adapter_test.go`、`app_test.go`、`simulated_flow_test.go`）。
+- 移除 `DAQ_T1603_MODE` 环境变量分支（main.go 硬编码使用 T1603Adapter）。
+- 清理临时文件、测试产物和废弃的 threehole 代码。
+
+### Internal
+- `RecordingPort` 接口新增 `IsActive() bool`，`CSVRecorder` 和 `RecordingUsecase` 分别实现无锁热路径。
+- `frameprobe` 调试工具重写：支持二进制帧解析和归一化配置查询。
+- `deviceStore` 新增 `isScanResultAdded` 方法，基于 IP:Port 去重。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `go build -buildvcs=false ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `wails build`: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.1.2] - 2026-06-18
 
 ### Fixed

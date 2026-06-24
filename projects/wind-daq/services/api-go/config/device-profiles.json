@@ -21,7 +21,7 @@
       { "index": 13, "name": "CH14", "enabled": true, "unit": "V", "precision": 3, "rangeMin": -10, "rangeMax": 10 },
       { "index": 14, "name": "CH15", "enabled": true, "unit": "V", "precision": 3, "rangeMin": -10, "rangeMax": 10 },
       { "index": 15, "name": "CH16", "enabled": true, "unit": "V", "precision": 3, "rangeMin": -10, "rangeMax": 10 },
-      { "index": 16, "name": "大气压", "enabled": true, "unit": "kPa", "precision": 3, "rangeMin": 99, "rangeMax": 106 },
+      { "index": 16, "name": "大气压", "enabled": true, "unit": "Pa", "precision": 2, "rangeMin": 99000, "rangeMax": 106000 },
       { "index": 17, "name": "大气温度", "enabled": true, "unit": "degC", "precision": 2, "rangeMin": 20, "rangeMax": 25 }
     ]
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, type Component } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
@@ -73,11 +73,51 @@ const pointLayout = ref({
   betaStep: 5,
 })
 
-const pointCount = computed(() => {
-  const alphaPoints = Math.floor((pointLayout.value.alphaMax - pointLayout.value.alphaMin) / pointLayout.value.alphaStep) + 1
-  const betaPoints = Math.floor((pointLayout.value.betaMax - pointLayout.value.betaMin) / pointLayout.value.betaStep) + 1
-  return alphaPoints * betaPoints
-})
+// 浮点容差：alphaMax-alphaMin 与整数倍 alphaStep 比较时容忍 1e-9 的累加误差
+const FLOAT_EPSILON = 1e-9
+function isRangeDivisible(range: number, step: number): boolean {
+  return Math.abs(range / step - Math.round(range / step)) < FLOAT_EPSILON
+}
+
+/**
+ * 点位布局校验单一真源
+ *
+ * 统一负责两件事：
+ *   1) 给 pointCount / previewDots / currentStepErrors 提供一致的"有效性 + 点数"判定，
+ *      避免出现"UI 显示 0 个点但又没有任何错误"这种反直觉状态。
+ *   2) 把所有校验消息集中在一处，便于本地化与维护。
+ *
+ * 返回值：
+ *   - valid 仅在所有规则通过时为 true；
+ *   - count 始终给出"按当前参数渲染时应得的点数"，无效时为 0；
+ *   - errors 收集本次校验失败的提示，按显示顺序排列。
+ */
+function validatePointLayout(): { valid: boolean; count: number; errors: string[] } {
+  const { alphaMin, alphaMax, alphaStep, betaMin, betaMax, betaStep } = pointLayout.value
+  const errors: string[] = []
+
+  if (alphaStep <= 0 || betaStep <= 0) errors.push(t.stepMustPositive || '步长必须为正数')
+  if (alphaMax <= alphaMin || betaMax <= betaMin) errors.push(t.maxGreaterThanMin || '最大值必须大于最小值')
+
+  const alphaRange = alphaMax - alphaMin
+  const betaRange = betaMax - betaMin
+  const divisible = isRangeDivisible(alphaRange, alphaStep) && isRangeDivisible(betaRange, betaStep)
+  if (!divisible) errors.push(t.rangeDivisible || '范围必须能被步长整除')
+
+  let count = 0
+  if (errors.length === 0) {
+    // 整数迭代：保持 pointCount 与 previewDots 完全一致，避免浮点累加误差
+    const alphaPoints = Math.round(alphaRange / alphaStep) + 1
+    const betaPoints = Math.round(betaRange / betaStep) + 1
+    count = alphaPoints * betaPoints
+  }
+
+  return { valid: errors.length === 0, count, errors }
+}
+
+const pointLayoutValidation = computed(() => validatePointLayout())
+
+const pointCount = computed(() => pointLayoutValidation.value.count)
 
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
@@ -114,26 +154,20 @@ const REQUIRED_CHANNEL_ROLES = [
   'fiveHole.pAtm', 'fiveHole.tAtm', 'fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel',
 ] as const
 
-// 通道分组：探针五孔（P1-P5）
-const probeGroupChannels = computed(() =>
-  probeChannels.value.filter((ch) =>
-    ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'].includes(ch.role || ''),
-  ),
-)
+// 通道分组定义（三个分组共用同一套表格模板）
+interface ChannelGroup {
+  key: string
+  label: string
+  icon: Component
+  roles: string[]
+  channels: ProbeChannelConfig[]
+}
 
-// 通道分组：大气环境
-const atmosphereGroupChannels = computed(() =>
-  probeChannels.value.filter((ch) =>
-    ['fiveHole.pAtm', 'fiveHole.tAtm'].includes(ch.role || ''),
-  ),
-)
-
-// 通道分组：风洞参数
-const windTunnelGroupChannels = computed(() =>
-  probeChannels.value.filter((ch) =>
-    ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'].includes(ch.role || ''),
-  ),
-)
+const channelGroups = computed<ChannelGroup[]>(() => [
+  { key: 'probe', label: '探针五孔', icon: Activity, roles: ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'], channels: probeChannels.value.filter((ch) => ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'].includes(ch.role || '')) },
+  { key: 'atmosphere', label: '大气环境', icon: Wind, roles: ['fiveHole.pAtm', 'fiveHole.tAtm'], channels: probeChannels.value.filter((ch) => ['fiveHole.pAtm', 'fiveHole.tAtm'].includes(ch.role || "")) },
+  { key: 'windTunnel', label: '风洞参数', icon: Gauge, roles: ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'], channels: probeChannels.value.filter((ch) => ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'].includes(ch.role || "")) },
+])
 
 // 通道映射进度：已正确映射的通道数 / 必需通道总数
 const mappedChannelCount = computed(
@@ -144,18 +178,19 @@ const mappedChannelCount = computed(
 )
 const totalRequiredChannelCount = REQUIRED_CHANNEL_ROLES.length
 
-// 点阵预览：将 α-β 网格归一化到 SVG 坐标（viewBox 200×200，绘图区 20~180）
+// 整数迭代生成预览点，避免浮点累加误差；与 pointLayoutValidation.count 共享同一真源
 const previewDots = computed<{ cx: number; cy: number }[]>(() => {
+  if (!pointLayoutValidation.value.valid) return []
   const { alphaMin, alphaMax, alphaStep, betaMin, betaMax, betaStep } = pointLayout.value
-  if (alphaStep <= 0 || betaStep <= 0 || alphaMax <= alphaMin || betaMax <= betaMin) {
-    return []
-  }
   const xRange = alphaMax - alphaMin
   const yRange = betaMax - betaMin
+  const alphaCount = Math.round(xRange / alphaStep)
+  const betaCount = Math.round(yRange / betaStep)
   const dots: { cx: number; cy: number }[] = []
-  // 浮点累加避免步长精度问题
-  for (let a = alphaMin; a <= alphaMax + 1e-6; a += alphaStep) {
-    for (let b = betaMin; b <= betaMax + 1e-6; b += betaStep) {
+  for (let i = 0; i <= alphaCount; i++) {
+    for (let j = 0; j <= betaCount; j++) {
+      const a = alphaMin + i * alphaStep
+      const b = betaMin + j * betaStep
       const cx = 20 + ((a - alphaMin) / xRange) * 160
       const cy = 180 - ((b - betaMin) / yRange) * 160
       dots.push({ cx: Math.round(cx * 10) / 10, cy: Math.round(cy * 10) / 10 })
@@ -168,11 +203,8 @@ const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
     if (calibrationName.value.trim() === '') errors.push(t.enterConfigName || '请输入配置名称')
-    if (pointLayout.value.alphaStep <= 0 || pointLayout.value.betaStep <= 0) errors.push(t.stepMustPositive || '步长必须为正数')
-    if (pointLayout.value.alphaMax <= pointLayout.value.alphaMin || pointLayout.value.betaMax <= pointLayout.value.betaMin) errors.push(t.maxGreaterThanMin || '最大值必须大于最小值')
-    const alphaRange = pointLayout.value.alphaMax - pointLayout.value.alphaMin
-    const betaRange = pointLayout.value.betaMax - pointLayout.value.betaMin
-    if (alphaRange % pointLayout.value.alphaStep !== 0 || betaRange % pointLayout.value.betaStep !== 0) errors.push(t.rangeDivisible || '范围必须能被步长整除')
+    // 点位布局相关错误统一由 validatePointLayout 提供
+    errors.push(...pointLayoutValidation.value.errors)
     if (dwellTimeMs.value < 100) errors.push(t.dwellTimeMin || '驻留时间至少100ms')
     if (samplesPerPoint.value < 1) errors.push(t.samplesMin || '采样次数至少为1')
     return errors
@@ -201,6 +233,7 @@ function nextStep() { if (currentStep.value < steps.value.length - 1) currentSte
 
 function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
+// generatePoints 是同步函数（蛇形顺序点位生成），调用处无需 await
 function generatePoints() { return generateFiveHoleSnakePoints(pointLayout.value) }
 
 async function saveConfig() {
@@ -233,6 +266,7 @@ async function saveConfig() {
   } finally { isSaving.value = false }
 }
 
+// 加载已保存配置：非 404 错误时给用户 toast 提示，避免静默失败
 async function loadSavedConfig() {
   try {
     const res = await calibrationApi.getConfig('five-hole')
@@ -264,7 +298,13 @@ async function loadSavedConfig() {
       sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
       sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
     }
-  } catch { /* ignore */ }
+  } catch (err) {
+    // 首次打开无配置（404）属正常，其他异常需提示
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('404') && !msg.includes('not found')) {
+      feedbackStore.pushToast('加载配置失败: ' + msg, 'warning')
+    }
+  }
 }
 
 onMounted(async () => {
@@ -281,7 +321,7 @@ const axisOptions = [
   { label: 'U 轴', value: 'U' },
 ]
 
-// 通道表格列模板（三个分组共用）
+// 通道表格列定义（三个分组共用）
 const channelColumns = [
   { key: 'enabled', label: '启用', width: '48px' },
   { key: 'name', label: '名称', width: '' },
@@ -461,13 +501,13 @@ const channelColumns = [
           <span class="mapping-progress-text">{{ mappedChannelCount }} / {{ totalRequiredChannelCount }}</span>
         </div>
 
-        <!-- 探针五孔 -->
-        <UiPanel class="section-card">
+        <!-- 通道分组（v-for 循环，消除重复代码） -->
+        <UiPanel v-for="group in channelGroups" :key="group.key" class="section-card">
           <template #header>
             <div class="section-header">
-              <Activity :size="14" />
-              <span>探针五孔</span>
-              <span class="section-count">{{ probeGroupChannels.length }} 通道</span>
+              <component :is="group.icon" :size="14" />
+              <span>{{ group.label }}</span>
+              <span class="section-count">{{ group.channels.length }} 通道</span>
             </div>
           </template>
           <div class="table-wrap">
@@ -478,79 +518,7 @@ const channelColumns = [
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="ch in probeGroupChannels" :key="ch.name">
-                  <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
-                  <td><span class="cell-name">{{ ch.name }}</span></td>
-                  <td>
-                    <UiSelect
-                      v-model="ch.channel.deviceId"
-                      :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
-                      placeholder="选择设备"
-                      :disabled="!ch.enabled"
-                    />
-                  </td>
-                  <td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td>
-                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </UiPanel>
-
-        <!-- 大气环境 -->
-        <UiPanel class="section-card">
-          <template #header>
-            <div class="section-header">
-              <Wind :size="14" />
-              <span>大气环境</span>
-              <span class="section-count">{{ atmosphereGroupChannels.length }} 通道</span>
-            </div>
-          </template>
-          <div class="table-wrap">
-            <table class="ntable">
-              <thead>
-                <tr>
-                  <th v-for="col in channelColumns" :key="col.key" :style="col.width ? { width: col.width } : {}">{{ col.label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="ch in atmosphereGroupChannels" :key="ch.name">
-                  <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
-                  <td><span class="cell-name">{{ ch.name }}</span></td>
-                  <td>
-                    <UiSelect
-                      v-model="ch.channel.deviceId"
-                      :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
-                      placeholder="选择设备"
-                      :disabled="!ch.enabled"
-                    />
-                  </td>
-                  <td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td>
-                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </UiPanel>
-
-        <!-- 风洞参数 -->
-        <UiPanel class="section-card">
-          <template #header>
-            <div class="section-header">
-              <Gauge :size="14" />
-              <span>风洞参数</span>
-              <span class="section-count">{{ windTunnelGroupChannels.length }} 通道</span>
-            </div>
-          </template>
-          <div class="table-wrap">
-            <table class="ntable">
-              <thead>
-                <tr>
-                  <th v-for="col in channelColumns" :key="col.key" :style="col.width ? { width: col.width } : {}">{{ col.label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="ch in windTunnelGroupChannels" :key="ch.name">
+                <tr v-for="ch in group.channels" :key="ch.name">
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
                   <td><span class="cell-name">{{ ch.name }}</span></td>
                   <td>
@@ -704,11 +672,14 @@ const channelColumns = [
 </template>
 
 <style scoped>
-/* 步骤内容容器：整体降一档间距 */
+/* 步骤内容容器：整体降一档间距，内容溢出时独立滚动 */
 .step-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  max-height: calc(90vh - 140px);
+  overflow-y: auto;
+  padding-right: var(--space-1);
 }
 
 .section-card {
@@ -736,7 +707,7 @@ const channelColumns = [
 .field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .field-label {

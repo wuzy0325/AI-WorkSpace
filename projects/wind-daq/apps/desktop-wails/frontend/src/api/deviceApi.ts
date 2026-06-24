@@ -7,6 +7,14 @@ export { calibrationApi } from './calibrationApi'
 export { traversalApi, storageApi, reportApi } from './otherApis'
 export type { TraversalPoint, MotionAxisStatus, MotionStatus } from './otherApis'
 
+// 同步备忘：默认设备配置目前共有 4 处副本，修改单位 / 默认范围 / 精度时必须保持一致：
+//   1) projects/wind-daq/apps/desktop-wails/config/device-profiles.json
+//   2) projects/wind-daq/services/api-go/config/device-profiles.json
+//   3) projects/wind-daq/services/api-go/pkg/apiserver/config/device-profiles.json
+//   4) defaultSimulatedProfile()（本文件）
+// 持久化数据中如出现旧 kPa 单位，由 deviceStore.migrateAtmPressureUnit 在加载阶段做兼容升级。
+// TODO(架构): 后续应集中到 shared/device-presets/ 由后端 API 暴露，避免漂移。
+
 export function defaultSimulatedProfile(): DeviceProfile {
   return {
     id: 'sim-1',
@@ -29,7 +37,7 @@ export function defaultSimulatedProfile(): DeviceProfile {
         rangeMin: -10,
         rangeMax: 10,
       })),
-      { index: 16, name: '大气压', enabled: true, unit: 'kPa', precision: 3, rangeMin: 99, rangeMax: 106 },
+      { index: 16, name: '大气压', enabled: true, unit: 'Pa', precision: 2, rangeMin: 99000, rangeMax: 106000 },
       { index: 17, name: '大气温度', enabled: true, unit: 'degC', precision: 2, rangeMin: 20, rangeMax: 25 },
     ],
   }

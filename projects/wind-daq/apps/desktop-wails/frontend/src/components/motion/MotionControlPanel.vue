@@ -247,13 +247,15 @@ function historyBarStyle(axisName: AxisName): Record<string, string> {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
     return {}
   }
+  // Single-axis-color sparkline: opacity encodes recency/position ratio.
+  // No hue rotation — DESIGN.md "calm, no decorative motion".
   const segments: string[] = []
   const n = data.length
   for (let i = 0; i < n; i += 1) {
     const t = n === 1 ? 0 : (i / (n - 1)) * 100
     const ratio = (data[i] - min) / (max - min)
-    const hue = 210 - ratio * 90
-    segments.push(`hsl(${hue} 80% 60%) ${t.toFixed(1)}%`)
+    const alpha = (0.25 + ratio * 0.6).toFixed(2)
+    segments.push(`color-mix(in srgb, var(--axis-hue, var(--accent-primary)) ${Math.round(Number(alpha) * 100)}%, transparent) ${t.toFixed(1)}%`)
   }
   return {
     backgroundImage: `linear-gradient(to right, ${segments.join(', ')})`
@@ -315,7 +317,7 @@ watch(
 
 <template>
   <div class="flex h-full gap-4 motion-control-panel">
-    <aside data-test="motion-panel-surface" class="w-64 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] p-3 flex flex-col shadow-[var(--shadow-panel)]">
+    <aside data-test="motion-panel-surface" class="motion-sidebar bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] p-3 flex flex-col shadow-[var(--shadow-panel)]">
       <div class="flex items-center justify-between mb-2">
         <div class="text-[11px] font-semibold tracking-wide text-[color:var(--text-secondary)] uppercase">
           {{ i18n.t.motionController }}
@@ -333,7 +335,7 @@ watch(
         <p>{{ i18n.t.clickConfigToAdd }}</p>
       </div>
 
-      <div v-else class="flex-1 overflow-auto space-y-2 mt-1 custom-scrollbar">
+      <div v-else class="flex-1 overflow-auto space-y-1.5 mt-1 custom-scrollbar">
         <button
           v-for="p in motion.profiles"
           :key="p.id"
@@ -365,11 +367,11 @@ watch(
       </div>
     </aside>
 
-    <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
-      <header class="flex items-center justify-between gap-4 border-b border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-6 py-4">
-        <div class="flex items-center gap-4 min-w-0">
-          <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-[color:var(--accent-primary)]/20 to-[color:var(--accent-primary)]/5 border border-[color:var(--accent-primary)]/20">
-            <svg class="w-6 h-6 text-[color:var(--accent-primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <section data-test="motion-panel-surface" class="bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
+      <header class="flex items-center justify-between gap-4 border-b border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-5 py-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="motion-header-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2v4"/>
               <path d="m16.2 7.8 2.9-2.9"/>
               <path d="M18 12h4"/>
@@ -382,21 +384,21 @@ watch(
           </div>
           <div class="min-w-0">
             <div class="flex items-center gap-2">
-              <h2 class="text-base font-bold tracking-tight text-[color:var(--text-primary)] truncate">
+              <h2 class="text-[15px] font-semibold tracking-tight text-[color:var(--text-primary)] truncate">
                 {{ selectedId ? motion.profiles.find(p => p.id === selectedId)?.name || i18n.t.selectController : i18n.t.selectController }}
               </h2>
               <span
                 v-if="selectedId"
-                class="px-2 py-0.5 text-[9px] font-bold rounded-full border border-[color:var(--border-default)] bg-[color:var(--bg-panel-strong)] text-[color:var(--text-secondary)] uppercase tracking-wider"
+                class="motion-header-type-tag"
               >
                 {{ motion.profiles.find(p => p.id === selectedId)?.type }}
               </span>
             </div>
-            <div class="flex items-center gap-2 mt-1">
-              <span class="flex h-2 w-2 rounded-full" :class="currentStatus?.connected ? 'bg-[color:var(--accent-success)] shadow-[0_0_8px_var(--accent-success)]' : 'bg-[color:var(--text-muted)]'"></span>
-              <p class="text-[10px] font-bold text-[color:var(--text-muted)] uppercase tracking-tight">
+            <div class="flex items-center gap-1.5 mt-1">
+              <span class="motion-status-dot" :class="currentStatus?.connected ? 'motion-status-dot--connected' : 'motion-status-dot--disconnected'"></span>
+              <p class="text-[11px] font-semibold text-[color:var(--text-muted)]">
                 {{ currentStatus?.connected ? i18n.t.systemOnline : i18n.t.systemOffline }}
-                <span v-if="selectedId" class="ml-2 opacity-60">· {{ motion.profiles.find(p => p.id === selectedId)?.address }}</span>
+                <span v-if="selectedId" class="ml-2 opacity-70">· {{ motion.profiles.find(p => p.id === selectedId)?.address }}</span>
               </p>
             </div>
           </div>
@@ -405,24 +407,22 @@ watch(
         <!-- 右侧操作区：按逻辑分组 -->
         <div class="flex items-center gap-2">
           <!-- 连接/断开按钮组：未选择控制器时 disabled -->
-          <div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[color:var(--bg-panel-strong)] border border-[color:var(--border-default)]">
-            <UiButton
-              secondary size="sm"
-              @click="handleConnect"
-              :disabled="!selectedId || currentStatus?.connected"
-              :title="!selectedId ? '请先选择控制器' : i18n.t.connectBtn"
-            >
-              {{ i18n.t.connectBtn }}
-            </UiButton>
-            <UiButton
-              secondary size="sm"
-              @click="handleDisconnect"
-              :disabled="!selectedId || !currentStatus?.connected"
-              :title="!selectedId ? '请先选择控制器' : i18n.t.disconnectBtn"
-            >
-              {{ i18n.t.disconnectBtn }}
-            </UiButton>
-          </div>
+          <UiButton
+            secondary size="sm"
+            @click="handleConnect"
+            :disabled="!selectedId || currentStatus?.connected"
+            :title="!selectedId ? '请先选择控制器' : i18n.t.connectBtn"
+          >
+            {{ i18n.t.connectBtn }}
+          </UiButton>
+          <UiButton
+            secondary size="sm"
+            @click="handleDisconnect"
+            :disabled="!selectedId || !currentStatus?.connected"
+            :title="!selectedId ? '请先选择控制器' : i18n.t.disconnectBtn"
+          >
+            {{ i18n.t.disconnectBtn }}
+          </UiButton>
 
           <!-- 停止全部按钮 -->
           <UiButton
@@ -433,8 +433,8 @@ watch(
             {{ i18n.t.stopAll }}
           </UiButton>
 
-          <!-- 紧急停止按钮：更大、更醒目，用分隔线与常规操作区分 -->
-          <div class="w-px h-8 bg-[color:var(--border-default)] mx-1"></div>
+          <!-- 紧急停止按钮：用分隔线与常规操作区分 -->
+          <div class="w-px h-7 bg-[color:var(--border-default)] mx-1"></div>
           <UiButton
             variant="danger" size="lg"
             class="estop-btn"
@@ -456,16 +456,16 @@ watch(
 
       <div
         v-if="currentStatus?.lastError"
-        class="mx-6 mt-4 p-3 rounded-lg border border-[color:var(--accent-danger)]/30 bg-[color:var(--accent-danger)]/10 flex items-center gap-3"
+        class="mx-5 mt-3 p-3 rounded-[var(--radius-md)] border border-[color:var(--accent-danger)]/40 bg-[color:var(--accent-danger)]/10 flex items-center gap-3"
       >
-        <svg class="w-5 h-5 shrink-0 text-[color:var(--accent-danger)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="w-4 h-4 shrink-0 text-[color:var(--accent-danger)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <line x1="12" y1="8" x2="12" y2="12"/>
           <line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
         <div class="flex-1 min-w-0">
           <p class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--accent-danger)]">{{ i18n.t.controllerAlarm }}</p>
-          <p class="text-xs font-semibold text-[color:var(--text-primary)] truncate">{{ currentStatus.lastError }}</p>
+          <p class="text-xs font-medium text-[color:var(--text-primary)] truncate">{{ currentStatus.lastError }}</p>
         </div>
         <UiButton
           secondary size="sm"
@@ -480,14 +480,24 @@ watch(
         </UiButton>
       </div>
 
-      <div v-if="!selectedId" class="flex-1 flex flex-col items-center justify-center text-[color:var(--text-muted)] p-12">
-        <div class="text-6xl mb-4 opacity-20 italic">{{ i18n.t.selectController }}</div>
-        <p class="text-xs font-bold tracking-[0.2em] uppercase">{{ i18n.t.selectControllerHint }}</p>
+      <div v-if="!selectedId" class="flex-1 flex flex-col items-center justify-center text-[color:var(--text-muted)] p-12 gap-3">
+        <svg class="w-12 h-12 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v4"/>
+          <path d="m16.2 7.8 2.9-2.9"/>
+          <path d="M18 12h4"/>
+          <path d="m16.2 16.2 2.9 2.9"/>
+          <path d="M12 18v4"/>
+          <path d="m4.9 19.1 2.9-2.9"/>
+          <path d="M2 12h4"/>
+          <path d="m4.9 4.9 2.9 2.9"/>
+        </svg>
+        <p class="text-sm font-semibold text-[color:var(--text-secondary)]">{{ i18n.t.selectController }}</p>
+        <p class="text-xs">{{ i18n.t.selectControllerHint }}</p>
       </div>
-      <div v-else class="flex flex-col flex-1 min-h-0">
-        <div class="flex-1 min-h-0 overflow-auto p-6 custom-scrollbar">
+      <div v-else class="flex flex-col flex-1 min-h-0 overflow-auto custom-scrollbar">
+        <div class="p-5">
           <!-- 已连接但没有配置轴时显示提示 -->
-          <div v-if="axes.length === 0" class="flex flex-col items-center justify-center h-full text-[color:var(--text-muted)]">
+          <div v-if="axes.length === 0" class="flex flex-col items-center justify-center text-[color:var(--text-muted)] py-12">
             <svg class="w-16 h-16 mb-4 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2v4"/>
               <path d="m16.2 7.8 2.9-2.9"/>
@@ -500,14 +510,15 @@ watch(
             </svg>
             <p class="text-sm font-semibold">{{ i18n.t.noAxesConfigured || '未配置运动轴' }}</p>
             <p class="text-xs mt-1 opacity-60">{{ i18n.t.checkProfileAxes || '请在配置中启用至少一个轴' }}</p>
-          <UiButton
-            secondary size="sm"
-            @click="showConfig = true"
-          >
-            {{ i18n.t.openConfig || '打开配置' }}
-          </UiButton>
+            <UiButton
+              class="mt-3"
+              secondary size="sm"
+              @click="showConfig = true"
+            >
+              {{ i18n.t.openConfig || '打开配置' }}
+            </UiButton>
           </div>
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 content-start">
             <div
               v-for="axis in axes"
               :key="axis.name"
@@ -516,40 +527,35 @@ watch(
             >
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3 min-w-0">
-                  <div class="axis-badge h-10 w-10 shrink-0 rounded-lg flex items-center justify-center font-black text-xl">
+                  <div class="axis-badge h-9 w-9 shrink-0 rounded-md flex items-center justify-center font-bold text-lg">
                     {{ axis.name }}
                   </div>
                   <div class="min-w-0">
-                    <span class="block text-[10px] font-bold uppercase tracking-wider text-[color:var(--text-muted)]">{{ i18n.t.axisNode }}</span>
+                    <span class="block text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)]">{{ i18n.t.axisNode }}</span>
                     <span class="block text-xs font-semibold text-[color:var(--text-primary)] truncate">{{ i18n.t.axisMotionControl }}</span>
                   </div>
                 </div>
-                <div class="flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 bg-[color:var(--bg-canvas)]">
-                  <span
-                    class="w-2 h-2 rounded-full"
-                    :class="axis.moving ? 'bg-[color:var(--accent-success)] shadow-[0_0_8px_var(--accent-success)] animate-pulse' : 'bg-[color:var(--text-muted)]'"
-                  />
-                  <span class="text-[10px] font-bold uppercase text-[color:var(--text-muted)]">{{ axis.moving ? i18n.t.moving : i18n.t.idle }}</span>
+                <div class="axis-moving-pill" :class="{ 'axis-moving-pill--active': axis.moving }">
+                  <span class="motion-status-dot" :class="axis.moving ? 'motion-status-dot--moving' : 'motion-status-dot--disconnected'" />
+                  <span>{{ axis.moving ? i18n.t.moving : i18n.t.idle }}</span>
                 </div>
               </div>
 
-              <div class="readout-display relative py-3 px-3 rounded-[var(--radius-md)] bg-[color:var(--bg-canvas)] overflow-hidden group-hover:opacity-90 transition-opacity">
+              <div class="readout-display relative py-3 px-3 rounded-[var(--radius-md)] bg-[color:var(--bg-canvas)] overflow-hidden">
                 <div class="flex items-baseline justify-between relative z-10">
-                  <div class="text-2xl font-mono font-bold text-[color:var(--text-primary)] tracking-tight truncate">
+                  <div class="text-2xl font-mono font-bold text-[color:var(--text-primary)] tracking-tight truncate readout-value">
                     {{
                       selectedId
                         ? (axis.position - getZeroOffset(selectedId as string, axis.name as AxisName)).toFixed(2)
                         : axis.position.toFixed(2)
                     }}
                   </div>
-                  <div class="text-[10px] font-bold text-[color:var(--text-muted)] uppercase tracking-wider shrink-0 ml-2">{{ getAxisUnit(axis.name as AxisName) }}</div>
+                  <div class="text-[11px] font-semibold text-[color:var(--text-muted)] uppercase tracking-wider shrink-0 ml-2">{{ getAxisUnit(axis.name as AxisName) }}</div>
                 </div>
-                <div class="mt-0.5 flex items-center gap-1">
-                  <span class="text-[9px] text-[color:var(--text-muted)]">当前位置</span>
+                <div class="mt-0.5">
+                  <span class="text-[10px] text-[color:var(--text-muted)]">当前位置</span>
                 </div>
-                <div class="absolute bottom-0 left-0 right-0 h-1 opacity-60">
-                  <div class="h-full w-full" :style="historyBarStyle(axis.name as AxisName)"></div>
-                </div>
+                <div class="readout-sparkline" :style="historyBarStyle(axis.name as AxisName)"></div>
               </div>
 
               <!-- 监视区域 -->
@@ -558,7 +564,7 @@ watch(
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
                   监视
                 </div>
-                <div class="space-y-1">
+                <div class="space-y-1.5">
                   <!-- 限位指示 -->
                   <div class="limit-status-row">
                     <div class="limit-status-item">
@@ -571,7 +577,7 @@ watch(
                     </div>
                   </div>
                   <!-- 操作按钮 -->
-                  <div class="flex gap-1.5 pt-1">
+                  <div class="flex gap-1.5">
                     <UiButton
                       secondary size="sm"
                       @click="setZero(axis.name as AxisName)"
@@ -664,48 +670,107 @@ watch(
 </template>
 
 <style scoped>
+.motion-sidebar {
+  width: 244px;
+  flex-shrink: 0;
+}
+
+.motion-header-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.motion-header-badge svg {
+  width: 16px;
+  height: 16px;
+}
+
+.motion-header-type-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
 .axis-card.axis-x-theme { --axis-hue: var(--axis-x); --axis-hue-soft: var(--axis-x-soft); }
 .axis-card.axis-y-theme { --axis-hue: var(--axis-y); --axis-hue-soft: var(--axis-y-soft); }
 .axis-card.axis-z-theme { --axis-hue: var(--axis-z); --axis-hue-soft: var(--axis-z-soft); }
 .axis-card.axis-u-theme { --axis-hue: var(--axis-u); --axis-hue-soft: var(--axis-u-soft); }
 
 .axis-card {
-  transition: all var(--motion-base) var(--easing-standard);
+  transition: border-color var(--motion-base) var(--easing-standard);
 }
 
 .axis-card:hover {
-  border-color: var(--axis-hue);
-  box-shadow: 0 10px 15px -3px color-mix(in srgb, var(--axis-hue) 15%, transparent), 0 4px 6px -4px color-mix(in srgb, var(--axis-hue) 10%, transparent);
+  border-color: color-mix(in srgb, var(--axis-hue) 60%, var(--border-default));
 }
 
 .axis-card .axis-badge {
   background: var(--axis-hue-soft);
   color: var(--axis-hue);
+  font-variant-numeric: tabular-nums;
 }
 
-
-
-
-
-
+.axis-moving-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: color var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard);
+}
+.axis-moving-pill--active {
+  color: var(--accent-success);
+  border-color: color-mix(in srgb, var(--accent-success) 40%, var(--border-default));
+}
 
 .limit-indicator {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: 50%;
   border: 1px solid var(--border-default);
-  transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard), box-shadow var(--motion-base) var(--easing-standard);
+  transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard);
 }
 
 .limit-indicator.active {
   background: var(--accent-danger);
-  box-shadow: 0 0 6px var(--accent-danger);
-  border-color: transparent;
+  border-color: var(--accent-danger);
 }
 
+/* Data readout: solid surface, no hover fade (operators read these numbers). */
 .readout-display {
   position: relative;
-  transition: opacity var(--motion-fast) var(--easing-standard);
+  border: 1px solid color-mix(in srgb, var(--axis-hue, var(--border-default)) 14%, var(--border-default));
+}
+.readout-value {
+  font-variant-numeric: tabular-nums;
+}
+.readout-sparkline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
 }
 
 .history-hint {
@@ -759,9 +824,11 @@ watch(
   border-color: var(--border-default);
 }
 
+/* Selected state is a neutral selection cue — distinct from the connected/online color. */
 .motion-list-item--active {
-  background: color-mix(in srgb, var(--accent-success) 8%, transparent);
-  border-color: color-mix(in srgb, var(--accent-success) 30%, transparent);
+  background: var(--bg-canvas);
+  border-color: var(--accent-primary);
+  box-shadow: inset 2px 0 0 0 var(--accent-primary);
 }
 
 .motion-list-item:focus-visible {
@@ -771,7 +838,7 @@ watch(
 
 .motion-item-name {
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -782,6 +849,7 @@ watch(
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .motion-item-type {
@@ -790,16 +858,26 @@ watch(
 }
 
 .motion-status-dot {
-  width: var(--space-2);
-  height: var(--space-2);
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--text-muted);
 }
 
+/* No neon glow — DESIGN.md: instrument-grade, calm. */
 .motion-status-dot--connected {
   background: var(--accent-success);
-  box-shadow: 0 0 8px var(--accent-success);
+}
+
+.motion-status-dot--moving {
+  background: var(--accent-success);
+  animation: motion-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes motion-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 .motion-status-dot--disconnected {
@@ -809,10 +887,9 @@ watch(
 .motion-status-text {
   display: flex;
   align-items: center;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
 }
 
@@ -820,21 +897,21 @@ watch(
   color: var(--accent-success);
 }
 
-/* 轴功能区域 */
+/* Axis functional sections — tighter nesting, no double background. */
 .axis-section {
-  padding: 0.625rem;
+  padding: 0.5rem 0.625rem;
   background: var(--bg-canvas);
   border-radius: var(--radius-md);
-  margin-top: 0.375rem;
+  margin-top: 0.25rem;
 }
 
 .axis-section-title {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  margin-bottom: var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: 700;
+  margin-bottom: 0.375rem;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -844,14 +921,12 @@ watch(
   color: var(--axis-hue, var(--accent-primary));
 }
 
-/* 限位状态行 */
+/* Limit status row sits on the canvas background; no inner panel surface. */
 .limit-status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.25rem 0.375rem;
-  background: var(--bg-panel);
-  border-radius: calc(var(--radius-md) - 2px);
+  padding: 0;
 }
 
 .limit-status-item {
@@ -860,11 +935,10 @@ watch(
   gap: 0.375rem;
 }
 
- .limit-status-label {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+.limit-status-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
 }
 
@@ -874,19 +948,15 @@ watch(
   border-radius: 50%;
   border: 1px solid var(--border-default);
   background: transparent;
-  transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard), box-shadow var(--motion-base) var(--easing-standard);
+  transition: background-color var(--motion-base) var(--easing-standard), border-color var(--motion-base) var(--easing-standard);
 }
 
 .limit-indicator-sm.active {
   background: var(--accent-danger);
-  box-shadow: 0 0 4px var(--accent-danger);
-  border-color: transparent;
+  border-color: var(--accent-danger);
 }
 
-/* 归零按钮 */
-
-
-/* 点动控制行 */
+/* Jog control row */
 .jog-control-row {
   display: flex;
   align-items: center;
@@ -904,14 +974,13 @@ watch(
 .jog-unit {
   position: absolute;
   right: var(--space-2);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
   pointer-events: none;
 }
 
-/* 定位控制行 */
+/* Move control row */
 .move-control-row {
   display: flex;
   align-items: center;
@@ -929,9 +998,8 @@ watch(
 .move-unit {
   position: absolute;
   right: var(--space-2);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
   pointer-events: none;
 }
@@ -940,20 +1008,20 @@ watch(
   width: 80px;
 }
 
-/* 紧急停止按钮：醒目样式 */
+/* Emergency stop: visually weighted via the danger variant itself.
+   A single subtle ring marks it as the high-consequence control without
+   adding the neon halo DESIGN.md forbids. */
 .estop-btn {
-  min-width: 120px;
-  font-weight: 800 !important;
-  letter-spacing: 0.05em;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-danger) 40%, transparent),
-              0 2px 8px color-mix(in srgb, var(--accent-danger) 25%, transparent);
+  min-width: 112px;
+  font-weight: 700 !important;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-danger) 35%, transparent);
   transition: box-shadow 0.15s ease, transform 0.1s ease;
 }
 .estop-btn:not(:disabled):hover {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 60%, transparent),
-              0 4px 16px color-mix(in srgb, var(--accent-danger) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-danger) 50%, transparent);
 }
 .estop-btn:not(:disabled):active {
-  transform: scale(0.97);
+  transform: scale(0.98);
 }
 </style>

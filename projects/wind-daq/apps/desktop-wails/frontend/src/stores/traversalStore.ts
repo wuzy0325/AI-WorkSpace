@@ -64,6 +64,14 @@ export const useTraversalStore = defineStore('traversal', () => {
   // 后端插值器是否已加载（PRB/CSV 导入成功后置 true，无需等待配置保存）
   const hasLoadedInterpolator = ref(false)
 
+  // 插值器后端状态消息：
+  //   - 正常加载时为 null
+  //   - 启动校验发现后端未加载（如 PRB 文件被删除/移动）时填入后端 message
+  //   - 网络抖动等导致校验失败时填入提示文本，但不强制清空 hasLoadedInterpolator
+  // 该消息由 UI 层订阅展示（例如 TraversalPrbStep 顶部 Banner），
+  // 避免静默失败导致用户在"已加载"假象下点击开始遍历后才报错。
+  const interpolatorRestoreMessage = ref<string | null>(null)
+
   const config = ref<TraversalTestConfig | null>(null)
 
   const completeEvent = ref<TraversalCompleteEvent | null>(null)
@@ -473,6 +481,9 @@ export const useTraversalStore = defineStore('traversal', () => {
     if (res.success) {
       config.value = res.data ?? null
       inferInterpolatorState()
+      // 启动恢复时通过后端 API 校验插值器实际加载状态，
+      // 避免 PRB 文件被删除/移动后前端误判为已加载（导致实时插值静默失败）
+      await verifyInterpolatorWithBackend()
     }
   }
 
@@ -500,6 +511,8 @@ export const useTraversalStore = defineStore('traversal', () => {
       if (configResult.value.success) {
         config.value = configResult.value.data ?? null
         inferInterpolatorState()
+        // 启动恢复时通过后端 API 校验插值器实际加载状态
+        await verifyInterpolatorWithBackend()
       } else {
         config.value = null
         recoveryErrors.push(configResult.value.error || '加载移位测试配置失败')
@@ -754,6 +767,47 @@ export const useTraversalStore = defineStore('traversal', () => {
     )
   }
 
+  /**
+   * 通过后端 checkPreconditions API 校验插值器是否真正加载
+   * 仅在推断为已加载时调用，防止 PRB 文件被删除/移动后前端误判
+   *
+   * 实现要点：
+   * - 显式区分 API 成功/失败：API 调用失败（success=false）或抛错时保留推断状态，
+   *   避免网络抖动导致误判；同时把"无法校验"提示写入 interpolatorRestoreMessage 让 UI 可见。
+   * - 复用 PreconditionCheckResult 类型推断，不写匿名内联类型，
+   *   后端字段变更时可在编译期感知。
+   * - 后端 message 字段（CheckPreconditions 在 PRB 失败时已经把根因写入）会被回填到
+   *   interpolatorRestoreMessage，由 UI 层展示给用户。
+   */
+  async function verifyInterpolatorWithBackend(): Promise<void> {
+    if (!hasLoadedInterpolator.value) {
+      interpolatorRestoreMessage.value = null
+      return
+    }
+    try {
+      const res = await traversalApi.checkPreconditions()
+      // API 调用未成功（如网络异常）：保留推断状态，但提示用户校验未完成
+      if (!res.success || !res.data) {
+        interpolatorRestoreMessage.value =
+          '无法校验后端插值器状态（' + (res.error || '响应为空') + '）。如导入后未真实加载，请重新导入 PRB / CSV 文件。'
+        return
+      }
+      const result: PreconditionCheckResult = res.data
+      const prbCheck = result.checks.find((c) => c.name === 'PRB')
+      if (prbCheck && !prbCheck.passed) {
+        hasLoadedInterpolator.value = false
+        // 把后端 message 透传给 UI，便于用户看到根本原因（如"PRB 文件不存在"）
+        interpolatorRestoreMessage.value = prbCheck.message || '后端未加载插值器，请重新导入 PRB / CSV 文件'
+      } else {
+        interpolatorRestoreMessage.value = null
+      }
+    } catch (err) {
+      // 抛错时不改变推断状态（避免网络抖动误判），但通过 message 通知 UI
+      interpolatorRestoreMessage.value =
+        '校验后端插值器状态时出错：' + (err instanceof Error ? err.message : String(err))
+    }
+  }
+
   function reset(): void {
     cancelRecovery()
     statusRecoveryFailed.value = false
@@ -793,6 +847,7 @@ export const useTraversalStore = defineStore('traversal', () => {
     realtimePressures,
     realtimeResult,
     hasLoadedInterpolator,
+    interpolatorRestoreMessage,
     clearInterpolator,
     config,
     completeEvent,

@@ -19,6 +19,7 @@ import (
 	"wind-daq/services/api-go/internal/adapters/calstore"
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	windaqhardware "wind-daq/services/api-go/internal/adapters/hardware"
+	interpadapter "wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	"wind-daq/services/api-go/internal/adapters/storage"
@@ -86,6 +87,9 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	calibrationMgr.SetCsvWriter(storage.NewCalibrationCsvWriter(calibration.Config{}))
 	travStore := calstore.NewTraversalResultStore()
 	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore, storage.NewFileCheckpointStore(), appConfigStore)
+	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
+	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
+	traversalMgr.RestoreInterpolatorFromPersistedConfig()
 
 	dataSink := func(payload device.DataPayload) {
 		hub.OnData(payload)

@@ -10,7 +10,8 @@ import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiButton from '@components/ui/UiButton.vue'
-import { Plug, Zap, LayoutGrid } from '@lucide/vue'
+import { AlertCircle } from '@lucide/vue'
+import DeviceCard from '@components/device/DeviceCard.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -179,9 +180,9 @@ function applyFixedUnitsIfNeeded(type: DeviceType, channels: ChannelConfig[]): v
   }
   const has18 = (type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre') && channels.length >= 18
   if (!has18) {
-    // SIMULATED 设备大气通道使用 kPa / degC，与后端默认值一致
+    // SIMULATED 设备大气通道使用 Pa / degC，与后端默认值一致
     if (type === 'SIMULATED' && channels.length >= 18) {
-      if (channels[16]) channels[16].unit = 'kPa'
+      if (channels[16]) channels[16].unit = 'Pa'
       if (channels[17]) channels[17].unit = 'degC'
     }
     return
@@ -232,7 +233,7 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
         ...Array.from({ length: 16 }, (_, i) => ({
           index: i, name: `CH${i + 1}`, enabled: true, unit: 'V', precision: 3, rangeMin: -10, rangeMax: 10,
         })),
-        { index: 16, name: '大气压', enabled: true, unit: 'kPa', precision: 3, rangeMin: 99, rangeMax: 106 },
+        { index: 16, name: '大气压', enabled: true, unit: 'Pa', precision: 2, rangeMin: 99000, rangeMax: 106000 },
         { index: 17, name: '大气温度', enabled: true, unit: 'degC', precision: 2, rangeMin: 20, rangeMax: 25 },
       ]
     case 'DAQ-P-1604':
@@ -345,8 +346,20 @@ function getFirstDraftError(errors: DraftFieldErrors): string | null {
 }
 
 const channelRows = computed(() => {
+  const kw = channelKeyword.value.trim().toLowerCase()
   return draft.value.channels
     .map((channel, originalIndex) => ({ channel, originalIndex }))
+    .filter(({ channel }) => {
+      // 仅启用过滤
+      if (enabledOnlyChannels.value && !channel.enabled) return false
+      // 关键词过滤：匹配通道名称或索引
+      if (kw) {
+        const nameMatch = (channel.name ?? '').toLowerCase().includes(kw)
+        const idxMatch = String(channel.index + 1).includes(kw)
+        if (!nameMatch && !idxMatch) return false
+      }
+      return true
+    })
 })
 
 function openCreate(type: DeviceType = 'SIMULATED') {
@@ -450,8 +463,7 @@ async function onTypeChanged(next: DeviceType) {
 function toggleAtmosphericData(on: boolean) {
   enableAtmospheric.value = on
   const count = draft.value.channels.length
-  // SIMULATED 设备大气通道使用 kPa / degC，DAQ-P-1604 使用 Pa / ℃
-  const pressureUnit = draft.value.type === 'SIMULATED' ? 'kPa' : 'Pa'
+  const pressureUnit = 'Pa'
   const tempUnit = draft.value.type === 'SIMULATED' ? 'degC' : '℃'
   if (count > 16) draft.value.channels[16] = { ...draft.value.channels[16], enabled: on, unit: on ? pressureUnit : '' }
   if (count > 17) draft.value.channels[17] = { ...draft.value.channels[17], enabled: on, unit: on ? tempUnit : '' }
@@ -589,6 +601,7 @@ watch(
 
 async function runScan() {
   scanning.value = true
+  scanError.value = null
   try {
     const results = await deviceApi.scanDevices()
     discovered.value = results
@@ -596,7 +609,8 @@ async function runScan() {
     else feedback.pushToast('未发现新设备', 'info')
   } catch (err) {
     discovered.value = []
-    feedback.pushToast(`扫描失败: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    scanError.value = err instanceof Error ? err.message : String(err)
+    feedback.pushToast(`扫描失败: ${scanError.value}`, 'error')
   } finally {
     scanning.value = false
   }
@@ -635,29 +649,44 @@ function handleDiscoveredDeviceAction(d: ScanResult) {
 }
 
 async function addAllDiscoveredDevices() {
+  if (addingAllDiscovered.value) return
+  bulkError.value = null
   const addable = discovered.value.filter((d) => !matchedProfileForDiscovered(d))
   if (!addable.length) { feedback.pushToast('没有可添加的设备', 'info'); return }
   const existingNames = new Set(deviceStore.profiles.map((p) => p.name.trim()).filter((n) => n))
-  let added = 0
-  for (const d of addable) {
-    const profile = createBlankProfile((d.type as DeviceType) || 'SIMULATED')
-    let baseName = d.name.trim() || `${d.type.replace('DAQ-', '')}-${d.address}`
-    let candidate = baseName
-    let suffix = 2
-    while (existingNames.has(candidate)) { candidate = `${baseName}-${suffix}`; suffix++ }
-    existingNames.add(candidate)
-    profile.name = candidate
-    profile.address = d.address ?? profile.address
-    profile.port = d.port ?? profile.port
-    if (d.macAddress) profile.macAddress = d.macAddress
-    try {
-      await deviceApi.upsertProfile(profile)
-      added++
-    } catch { /* 跳过失败的 */ }
+  addingAllDiscovered.value = true
+  try {
+    const addedProfiles: DeviceProfile[] = []
+    for (const d of addable) {
+      const profile = createBlankProfile((d.type as DeviceType) || 'SIMULATED')
+      let baseName = d.name.trim() || `${d.type.replace('DAQ-', '')}-${d.address}`
+      let candidate = baseName
+      let suffix = 2
+      while (existingNames.has(candidate)) { candidate = `${baseName}-${suffix}`; suffix++ }
+      existingNames.add(candidate)
+      profile.name = candidate
+      profile.address = d.address ?? profile.address
+      profile.port = d.port ?? profile.port
+      if (d.macAddress) profile.macAddress = d.macAddress
+      try {
+        await deviceApi.upsertProfile(profile)
+        addedProfiles.push(profile)
+      } catch { /* 跳过失败的 */ }
+    }
+    // 批量添加后自动连接
+    if (autoConnectAfterBulkAdd.value) {
+      for (const profile of addedProfiles) {
+        try { await deviceStore.connect(profile.id) } catch { /* 跳过连接失败的 */ }
+      }
+    }
+    await deviceStore.refreshProfiles()
+    feedback.pushToast(`已添加 ${addedProfiles.length} 个设备${autoConnectAfterBulkAdd.value ? '并连接' : ''}`, 'success')
+    clearDiscovered()
+  } catch (e) {
+    bulkError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    addingAllDiscovered.value = false
   }
-  await deviceStore.refreshProfiles()
-  feedback.pushToast(`已添加 ${added} 个设备`, 'success')
-  clearDiscovered()
 }
 
 async function connectToggle(p: DeviceProfile) {
@@ -757,6 +786,55 @@ function connectLabel(p: DeviceProfile) {
 function channelLabel(c: ChannelConfig): string {
   return `${c.index + 1}`
 }
+
+// ---- 设备按连接状态分组 ----
+// 单一真源：把每个 profile 映射到唯一的连接分组键（已连接 / 连接中 / 等待连接）
+// connecting 与 error 都不属于"已连接"，但 connecting 是过渡态、error 是终态错误。
+// 模板渲染各分组时统一使用同一份 deviceCardClass 等工具函数。
+type ConnectionGroup = 'connected' | 'connecting' | 'pending'
+
+function connectionGroupOf(profile: DeviceProfile): ConnectionGroup {
+  if (deviceStore.acquiringFor(profile.id) || deviceStore.statusFor(profile.id) === 'Connected') {
+    return 'connected'
+  }
+  if (deviceStore.statusFor(profile.id) === 'Connecting') {
+    return 'connecting'
+  }
+  // Idle / Disconnected / Error 等均归入 "等待连接" 组
+  return 'pending'
+}
+
+const connectedProfiles = computed(() =>
+  deviceStore.profiles.filter((p) => connectionGroupOf(p) === 'connected')
+)
+
+const connectingProfiles = computed(() =>
+  deviceStore.profiles.filter((p) => connectionGroupOf(p) === 'connecting')
+)
+
+const pendingProfiles = computed(() =>
+  deviceStore.profiles.filter((p) => connectionGroupOf(p) === 'pending')
+)
+
+// ---- 扫描结果元数据 ----
+function discoveryMetadataEntries(d: ScanResult): Array<{ label: string; value: string }> {
+  return [
+    { label: 'MAC', value: d.macAddress ?? '' },
+    { label: 'SN', value: d.serialNumber ?? '' },
+    { label: 'FW', value: d.firmwareVersion ?? '' },
+    { label: 'Model', value: d.model ?? '' },
+  ].filter((entry) => entry.value)
+}
+
+// ---- 批量添加自动连接 ----
+const addingAllDiscovered = ref(false)
+const autoConnectAfterBulkAdd = ref(false)
+const bulkError = ref<string | null>(null)
+const scanError = ref<string | null>(null)
+
+// ---- 通道搜索/过滤 ----
+const channelKeyword = ref('')
+const enabledOnlyChannels = ref(false)
 </script>
 
 <template>
@@ -784,18 +862,37 @@ function channelLabel(c: ChannelConfig): string {
           </div>
         </div>
 
+        <!-- 扫描错误提示 -->
+        <div v-if="scanError" class="drawer-banner drawer-banner--error">
+          <AlertCircle :size="14" />
+          扫描失败: {{ scanError }}
+        </div>
+
         <!-- 发现的设备区域：可折叠，减少认知负荷 -->
         <div v-if="discovered.length" class="drawer-discovered">
           <div class="drawer-discovered-head" @click="showDiscovered = !showDiscovered" style="cursor: pointer;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span class="drawer-discovered-dot" aria-hidden="true"></span>
               <span class="drawer-discovered-label">发现的设备</span>
               <span class="discovered-count">{{ discovered.length }}</span>
             </div>
             <div class="drawer-discovered-actions">
-              <UiButton variant="primary" size="sm" @click.stop="addAllDiscoveredDevices">全部添加</UiButton>
+              <UiButton variant="primary" size="sm" :disabled="addingAllDiscovered" @click.stop="addAllDiscoveredDevices">
+                <span v-if="addingAllDiscovered" class="inline-spinner" aria-hidden="true"></span>
+                {{ addingAllDiscovered ? '添加中...' : '全部添加' }}
+              </UiButton>
               <UiButton quaternary size="sm" @click.stop="clearDiscovered">✕</UiButton>
               <span class="discovered-toggle" :class="{ 'discovered-toggle--open': showDiscovered }">▼</span>
             </div>
+          </div>
+          <!-- 批量添加自动连接复选框 -->
+          <div class="drawer-discovered-extra">
+            <UiCheckbox v-model:checked="autoConnectAfterBulkAdd">添加后自动连接</UiCheckbox>
+          </div>
+          <!-- 批量添加错误提示 -->
+          <div v-if="bulkError" class="drawer-discovered-error">
+            <AlertCircle :size="12" />
+            {{ bulkError }}
           </div>
           <Transition name="discovered-expand">
             <div v-show="showDiscovered" class="drawer-discovered-list">
@@ -807,10 +904,9 @@ function channelLabel(c: ChannelConfig): string {
                     {{ d.type }}
                     <span v-if="d.address" class="discovered-card-addr"> · {{ d.address }}<template v-if="d.port">:{{ d.port }}</template></span>
                   </div>
-                  <!-- 精简元数据：仅显示关键信息，hover 时显示完整信息 -->
-                  <div class="discovered-card-meta">
-                    <span v-if="d.model" class="discovered-meta-badge">{{ d.model }}</span>
-                    <span v-if="d.firmwareVersion" class="discovered-meta-badge">FW: {{ d.firmwareVersion }}</span>
+                  <!-- 元数据标签：使用 discoveryMetadataEntries 函数 -->
+                  <div v-if="discoveryMetadataEntries(d).length" class="discovered-card-meta">
+                    <span v-for="entry in discoveryMetadataEntries(d)" :key="entry.label" class="discovered-meta-badge">{{ entry.label }}: {{ entry.value }}</span>
                   </div>
                   <div v-if="matchedProfileForDiscovered(d)" class="discovered-matched">
                     已匹配: {{ matchedProfileForDiscovered(d)?.name }}
@@ -824,55 +920,90 @@ function channelLabel(c: ChannelConfig): string {
           </Transition>
         </div>
 
+        <!-- 设备列表：按连接状态分组（已连接 / 连接中 / 等待连接 + 错误） -->
         <main class="drawer-list">
           <div v-if="!deviceStore.profiles.length" class="drawer-empty">
             暂无设备配置。点击"新建设备"创建。
           </div>
 
-          <div v-for="p in deviceStore.profiles" :key="p.id" class="device-card" :class="[statusClass(p)]">
-            <div class="device-card-stripe" :class="[statusClass(p)]" />
+          <!-- 已连接组 -->
+          <template v-if="connectedProfiles.length">
+            <div class="device-group-label">已连接 · {{ connectedProfiles.length }}</div>
+            <DeviceCard
+              v-for="p in connectedProfiles"
+              :key="p.id"
+              :profile="p"
+              group="connected"
+              :status="deviceStore.statusFor(p.id)"
+              :acquiring="deviceStore.acquiringFor(p.id)"
+              :selected="isSelected(p.id)"
+              :status-class="statusClass(p)"
+              :connect-label="connectLabel(p)"
+              @toggle-selected="toggleSelected(p.id)"
+              @edit="openEdit(p)"
+              @connect-toggle="connectToggle(p)"
+              @toggle-acquisition="toggleAcquisition(p)"
+              @remove="removeProfile(p)"
+            />
+          </template>
 
-            <div class="device-card-body">
-              <div class="device-card-left">
-                <div class="device-card-row">
-                  <UiCheckbox
-                    :checked="isSelected(p.id)"
-                    @update:checked="toggleSelected(p.id)" />
-                  <h3 class="device-card-name">{{ p.name }}</h3>
-                  <span class="device-card-type-badge">{{ p.type }}</span>
-                </div>
-                <div class="device-card-meta">
-                  <span><Plug class="meta-icon" /> {{ p.transport === 'serial' ? (p.serialPort || 'COM?') : `${p.address || '-'}:${p.port || '-'}` }}</span>
-                  <span><Zap class="meta-icon" /> {{ p.samplingRate ?? 20 }}Hz</span>
-                  <span><LayoutGrid class="meta-icon" /> {{ p.channels?.length ?? 0 }} 通道</span>
-                </div>
-              </div>
-
-              <div class="device-card-right">
-                <UiButton secondary size="md" @click="openEdit(p)">编辑</UiButton>
-                <UiButton size="md" :disabled="deviceStore.statusFor(p.id) === 'Connecting'" @click="connectToggle(p)">
-                  {{ connectLabel(p) }}
-                </UiButton>
-                <UiButton v-if="deviceStore.statusFor(p.id) === 'Connected'" size="md" @click="toggleAcquisition(p)">
-                  {{ deviceStore.acquiringFor(p.id) ? '停止' : '采集' }}
-                </UiButton>
-                <UiButton variant="danger" size="md" secondary @click="removeProfile(p)">删除</UiButton>
-              </div>
+          <!-- 连接中组 -->
+          <template v-if="connectingProfiles.length">
+            <div class="device-group-label" :class="connectedProfiles.length ? 'device-group-label--spaced' : ''">
+              连接中 · {{ connectingProfiles.length }}
             </div>
+            <DeviceCard
+              v-for="p in connectingProfiles"
+              :key="p.id"
+              :profile="p"
+              group="connecting"
+              :status="deviceStore.statusFor(p.id)"
+              :acquiring="deviceStore.acquiringFor(p.id)"
+              :selected="isSelected(p.id)"
+              :status-class="statusClass(p)"
+              :connect-label="connectLabel(p)"
+              @toggle-selected="toggleSelected(p.id)"
+              @edit="openEdit(p)"
+              @connect-toggle="connectToggle(p)"
+              @toggle-acquisition="toggleAcquisition(p)"
+              @remove="removeProfile(p)"
+            />
+          </template>
 
-            <div v-if="deviceStore.statusFor(p.id) === 'Error'" class="device-card-error">
-              <svg class="error-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              设备通信错误
+          <!-- 等待连接组（含 Error 状态） -->
+          <template v-if="pendingProfiles.length">
+            <div class="device-group-label"
+              :class="(connectedProfiles.length || connectingProfiles.length) ? 'device-group-label--spaced' : ''">
+              等待连接 · {{ pendingProfiles.length }}
             </div>
-          </div>
+            <DeviceCard
+              v-for="p in pendingProfiles"
+              :key="p.id"
+              :profile="p"
+              group="pending"
+              :status="deviceStore.statusFor(p.id)"
+              :acquiring="deviceStore.acquiringFor(p.id)"
+              :selected="isSelected(p.id)"
+              :status-class="statusClass(p)"
+              :connect-label="connectLabel(p)"
+              @toggle-selected="toggleSelected(p.id)"
+              @edit="openEdit(p)"
+              @connect-toggle="connectToggle(p)"
+              @toggle-acquisition="toggleAcquisition(p)"
+              @remove="removeProfile(p)"
+            />
+          </template>
         </main>
 
+        <!-- 批量操作栏 -->
         <div v-if="selectedIds.length" class="drawer-bulk">
           <span>已选 <strong>{{ selectedCount }}</strong></span>
-          <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">批量连接</UiButton>
-          <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</UiButton>
-          <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">批量删除</UiButton>
-          <UiButton quaternary size="sm" @click="clearSelection">清除</UiButton>
+          <div class="drawer-bulk-actions">
+            <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">批量连接</UiButton>
+            <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</UiButton>
+            <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">批量删除</UiButton>
+            <UiButton quaternary size="sm" @click="clearSelection">清除</UiButton>
+          </div>
         </div>
       </div>
 
@@ -1166,6 +1297,11 @@ function channelLabel(c: ChannelConfig): string {
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
                   </div>
+                  <!-- 通道搜索/过滤 -->
+                  <div class="flex items-center gap-3">
+                    <UiInput v-model="channelKeyword" placeholder="搜索通道..." class="w-40" />
+                    <UiCheckbox v-model:checked="enabledOnlyChannels">仅启用</UiCheckbox>
+                  </div>
                 </div>
 
                 <!-- 批量同步：紧凑单行 -->
@@ -1451,6 +1587,72 @@ function channelLabel(c: ChannelConfig): string {
   flex-shrink: 0; display: flex; align-items: center; gap: 0.75rem;
   padding: 0.75rem 1.5rem; border-top: 1px solid var(--border-default);
   background: var(--bg-panel-strong); font-size: var(--font-size-xs); color: var(--text-secondary);
+}
+.drawer-bulk-actions {
+  display: flex; align-items: center; gap: var(--space-2); margin-left: auto;
+}
+
+/* 通用横幅：作为扫描错误、加载错误等顶部提示条 */
+.drawer-banner {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) 1.5rem;
+  border-bottom: 1px solid var(--border-default);
+  font-size: var(--font-size-xs); font-weight: 700;
+}
+.drawer-banner--error {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+}
+
+/* 设备分组标签：UPPERCASE 小字号、字母间距加大，与已连接/连接中/等待连接 group 标题统一 */
+.device-group-label {
+  font-size: var(--font-size-micro);
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+  margin-bottom: var(--space-2);
+}
+.device-group-label--spaced { margin-top: var(--space-4); }
+
+/* 发现的设备：蓝色心跳点，告知用户当前有未处理扫描结果 */
+.drawer-discovered-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: drawer-discovered-ping 1.6s ease-in-out infinite;
+}
+@keyframes drawer-discovered-ping {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
+.drawer-discovered-extra {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-1-5) var(--space-1);
+}
+.drawer-discovered-error {
+  display: flex; align-items: center; gap: var(--space-1-5);
+  padding: var(--space-1-5) var(--space-1);
+  font-size: var(--font-size-xs); font-weight: 700;
+  color: var(--color-danger);
+}
+
+/* 通用 inline spinner：用 currentColor 描边，自动跟随按钮文字色 */
+.inline-spinner {
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-right: var(--space-1);
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: inline-spinner-spin 0.8s linear infinite;
+  vertical-align: -2px;
+  flex-shrink: 0;
+}
+@keyframes inline-spinner-spin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

@@ -18,14 +18,12 @@ function closeWindow(): void {
 
 <template>
   <div data-test="motion-shell" class="flex h-full min-h-0 flex-col overflow-hidden font-sans" style="background:var(--bg-canvas);color:var(--text-primary)">
-    <header class="glass-header flex shrink-0 items-center justify-between px-5 py-3">
-      <div class="flex items-center gap-2">
-        <div>
-          <h1 class="text-sm font-bold tracking-tight" style="color:var(--text-primary)">运动控制器</h1>
-          <p class="text-[10px] font-semibold uppercase tracking-wider" style="color:var(--text-muted)">独立窗口 · 轴控制与监视</p>
-        </div>
+    <header class="motion-shell-header flex shrink-0 items-center justify-between px-5 py-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <h1 class="motion-shell-title">运动控制器</h1>
+        <span class="motion-shell-subtitle">轴控制与监视</span>
         <UiTooltip content="控制风洞测试中的运动轴（如迎角、侧滑角等）的位置和速度" position="right">
-          <span class="help-icon">?</span>
+          <span class="help-icon" aria-label="帮助">?</span>
         </UiTooltip>
       </div>
       <div class="flex items-center gap-2">
@@ -48,6 +46,25 @@ function closeWindow(): void {
 </template>
 
 <style scoped>
+.motion-shell-header {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-default);
+}
+.motion-shell-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.motion-shell-subtitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-left: 1px solid var(--border-default);
+  padding-left: 12px;
+  line-height: 1.2;
+}
 .help-icon {
   display: inline-flex;
   align-items: center;
@@ -55,14 +72,16 @@ function closeWindow(): void {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
-  color: var(--accent-primary);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+  color: var(--text-muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: help;
-  transition: background 0.2s;
+  transition: color 0.15s, border-color 0.15s;
 }
 .help-icon:hover {
-  background: color-mix(in srgb, var(--accent-primary) 25%, transparent);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 </style>

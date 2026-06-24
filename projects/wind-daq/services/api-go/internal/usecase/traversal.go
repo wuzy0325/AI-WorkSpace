@@ -73,6 +73,15 @@ type TraversalManager struct {
 
 	// 稳定等待配置
 	stabilization *traversal.StabilizationConfig
+
+	// 启动时根据持久化配置恢复插值器的最后一次错误（若有），
+	// 用于在 CheckPreconditions 中向前端暴露真实失败原因，
+	// 避免前端基于配置 JSON 错误推断为"已加载"。
+	lastInterpolatorRestoreErr string
+
+	// 插值器加载端口（用于启动恢复时按路径加载 PRB / CSV / 多 PRB），
+	// nil 表示未注入加载器，启动恢复将被跳过并写入相应错误消息。
+	interpLoader ports.InterpolatorLoader
 }
 
 // 遍历配置持久化存储的 key
@@ -127,7 +136,35 @@ func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator)
 	if m.interpCache != nil {
 		m.interpCache.Clear()
 	}
+	// 一旦插值器被显式重置（包括用户主动重新加载 PRB），
+	// 启动恢复的陈旧错误就不再适用，需要一并清除。
+	m.lastInterpolatorRestoreErr = ""
 	m.mu.Unlock()
+}
+
+// SetInterpolatorLoader 注入插值器加载端口。
+// 该方法在装配阶段（apiserver / bootstrap / appcontext）调用一次；
+// 不需要在运行期切换，因此不清理任何状态。
+func (m *TraversalManager) SetInterpolatorLoader(loader ports.InterpolatorLoader) {
+	m.mu.Lock()
+	m.interpLoader = loader
+	m.mu.Unlock()
+}
+
+// InterpolatorRestoreErr 返回最近一次启动恢复 / 显式 RestoreInterpolatorFromPersistedConfig
+// 调用所遗留的错误消息，主要供测试与 CheckPreconditions 读取。空字符串表示无错误。
+func (m *TraversalManager) InterpolatorRestoreErr() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastInterpolatorRestoreErr
+}
+
+// Interpolator 返回当前注入的插值器（可能为 nil）；测试代码通过该方法断言
+// SetInterpolator 是否被调用，避免直接访问私有字段。
+func (m *TraversalManager) Interpolator() coreinterp.Interpolator {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.interpolator
 }
 
 // SetValidation 设置数据验证配置
@@ -148,8 +185,18 @@ func (m *TraversalManager) CheckPreconditions() map[string]any {
 	hasInterpolator := m.HasLoadedInterpolator()
 	hasMotion := m.motion != nil
 	hasReader := m.reader != nil
+
+	// PRB 项默认消息；若启动恢复时记录了失败原因，则使用真实原因，
+	// 便于前端在 PRB 文件被删除/移动等情况下直接展示根因。
+	prbMessage := "Load PRB or calibration CSV before running interpolation"
+	m.mu.RLock()
+	if !hasInterpolator && m.lastInterpolatorRestoreErr != "" {
+		prbMessage = m.lastInterpolatorRestoreErr
+	}
+	m.mu.RUnlock()
+
 	checks := []map[string]any{
-		{"name": "PRB", "passed": hasInterpolator, "message": "Load PRB or calibration CSV before running interpolation"},
+		{"name": "PRB", "passed": hasInterpolator, "message": prbMessage},
 		{"name": "Motion", "passed": hasMotion, "message": "Motion manager is available"},
 		{"name": "DAQ", "passed": hasReader, "message": "DAQ acquisition hub is available"},
 	}

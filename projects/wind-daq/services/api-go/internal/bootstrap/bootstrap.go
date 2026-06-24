@@ -13,6 +13,7 @@ import (
 	calstore "wind-daq/services/api-go/internal/adapters/calstore"
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
 	windaqhardware "wind-daq/services/api-go/internal/adapters/hardware"
+	interpadapter "wind-daq/services/api-go/internal/adapters/interpolation"
 	reportadapter "wind-daq/services/api-go/internal/adapters/report"
 	"wind-daq/services/api-go/internal/adapters/scan"
 	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
@@ -64,6 +65,9 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	// 注入遍历 CSV 写入 sink，承担测试结果落盘
 	travSink := storageadapter.NewTraversalCsvWriter()
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
+	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
+	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
+	travMgr.RestoreInterpolatorFromPersistedConfig()
 	dataSink := func(payload device.DataPayload) {
 		hub.OnData(payload)
 		_ = recorder.HandlePayload(payload)

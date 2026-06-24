@@ -182,18 +182,40 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
   )
 
   // 压力通道 UI 展示项：优先使用实时数据，回退到 store 中的历史压力
+  // 精度取自配置中各通道的 precision 字段，用户可在硬件配置步骤中调整
+  //
+  // 性能：roleToPrecision 在 config 变化时一次性构建 Map<role, precision>，
+  // pressureItems 在每帧（20Hz）渲染时只做 7 次 O(1) Map 查询，避免原本的 7×N 数组遍历。
+  const roleToPrecision: ComputedRef<Map<string, number>> = computed(() => {
+    const map = new Map<string, number>()
+    const channels = config.value?.channels.probeChannels
+    if (Array.isArray(channels)) {
+      for (const ch of channels) {
+        // role 在类型上可能为 string | undefined，仅在两者均有效时入表
+        if (typeof ch?.precision === 'number' && typeof ch?.role === 'string') {
+          map.set(ch.role, ch.precision)
+        }
+      }
+    }
+    return map
+  })
+
   const pressureItems: ComputedRef<PressureItem[]> = computed(() => {
     const data = livePressures.value ?? traversalStore.realtimePressures
-    const formatValue = (value?: number): string => (typeof value === 'number' ? value.toFixed(3) : '--')
     const hasConfig = config.value !== null
+    const precisionMap = roleToPrecision.value
+    // O(1) 查询：未配置时回退到默认精度 3
+    const getChannelPrecision = (role: string): number => precisionMap.get(role) ?? 3
+    const formatValue = (value?: number, precision?: number): string =>
+      (typeof value === 'number' ? value.toFixed(precision ?? 3) : '--')
     return [
-      { key: 'P1', label: 'P1', unit: getChannelUnit('fiveHole.p1', 'Pa'), value: formatValue(data?.P1), disabled: !hasConfig },
-      { key: 'P2', label: 'P2', unit: getChannelUnit('fiveHole.p2', 'Pa'), value: formatValue(data?.P2), disabled: !hasConfig },
-      { key: 'P3', label: 'P3', unit: getChannelUnit('fiveHole.p3', 'Pa'), value: formatValue(data?.P3), disabled: !hasConfig },
-      { key: 'P4', label: 'P4', unit: getChannelUnit('fiveHole.p4', 'Pa'), value: formatValue(data?.P4), disabled: !hasConfig },
-      { key: 'P5', label: 'P5', unit: getChannelUnit('fiveHole.p5', 'Pa'), value: formatValue(data?.P5), disabled: !hasConfig },
-      { key: 'Patm', label: 'Patm', unit: getChannelUnit('fiveHole.pAtm', 'Pa'), value: formatValue(data?.Patm), disabled: !hasConfig },
-      { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('fiveHole.tAtm', '°C'), value: formatValue(data?.Tatm), disabled: !hasConfig }
+      { key: 'P1', label: 'P1', unit: getChannelUnit('fiveHole.p1', 'Pa'), value: formatValue(data?.P1, getChannelPrecision('fiveHole.p1')), disabled: !hasConfig },
+      { key: 'P2', label: 'P2', unit: getChannelUnit('fiveHole.p2', 'Pa'), value: formatValue(data?.P2, getChannelPrecision('fiveHole.p2')), disabled: !hasConfig },
+      { key: 'P3', label: 'P3', unit: getChannelUnit('fiveHole.p3', 'Pa'), value: formatValue(data?.P3, getChannelPrecision('fiveHole.p3')), disabled: !hasConfig },
+      { key: 'P4', label: 'P4', unit: getChannelUnit('fiveHole.p4', 'Pa'), value: formatValue(data?.P4, getChannelPrecision('fiveHole.p4')), disabled: !hasConfig },
+      { key: 'P5', label: 'P5', unit: getChannelUnit('fiveHole.p5', 'Pa'), value: formatValue(data?.P5, getChannelPrecision('fiveHole.p5')), disabled: !hasConfig },
+      { key: 'Patm', label: 'Patm', unit: getChannelUnit('fiveHole.pAtm', 'Pa'), value: formatValue(data?.Patm, getChannelPrecision('fiveHole.pAtm')), disabled: !hasConfig },
+      { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('fiveHole.tAtm', '°C'), value: formatValue(data?.Tatm, getChannelPrecision('fiveHole.tAtm')), disabled: !hasConfig }
     ]
   })
 

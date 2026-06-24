@@ -37,12 +37,64 @@ export const useDeviceStore = defineStore('devices', () => {
     if (id) initializeDefaultChartSelection(id)
   }
 
+  /**
+   * 兼容迁移：旧版本（device-profiles 单位为 kPa, range 99–106）的持久化配置
+   * 在加载时升级为 Pa, range 99000–106000；同时统一 precision 为 2。
+   *
+   * 设计要点：
+   *   - 仅在通道索引 16（CH17 = 大气压）上生效，避免误改其他自定义通道。
+   *   - 三重守卫，避免误升级用户主动选择的 kPa 量程或非大气压通道：
+   *     1. unit 必须等于 'kPa'（不区分大小写）
+   *     2. 通道名称必须暗示这是"大气压"（包含 "Patm" / "大气压" / "atm" 等关键字），
+   *        防止用户把 CH17 重新映射为其他 kPa 量程的传感器时被误改。
+   *     3. 数值必须落在大气压典型范围 [90, 120] kPa 内，超出范围说明不是大气压量程，
+   *        保留原值不动。
+   *   - 三个守卫之中任何一个不满足，函数都直接返回；幂等性来自首条守卫（升级后 unit=Pa）。
+   *   - 该函数为纯函数（直接修改入参 channel）以便单测覆盖。
+   */
+  function migrateAtmPressureUnit(profile: DeviceProfile): void {
+    if (!Array.isArray(profile.channels) || profile.channels.length < 17) return
+    const atm = profile.channels[16]
+    if (!atm) return
+
+    // 守卫 1：仅升级单位仍是 kPa 的通道
+    const unitNorm = (atm.unit ?? '').toLowerCase()
+    if (unitNorm !== 'kpa') return
+
+    // 守卫 2：通道名称必须暗示是大气压通道，避免用户把 CH17 重映射成其他 kPa 量程后被误改
+    const name = (atm.name ?? '').toLowerCase()
+    const looksLikeAtmospheric =
+      name.includes('patm') ||
+      name.includes('atm') ||
+      name.includes('大气压') ||
+      name.includes('atmosphe')
+    if (!looksLikeAtmospheric) return
+
+    // 守卫 3：range 落在大气压典型区间 [90, 120] kPa 内，否则保留用户配置
+    const min = typeof atm.rangeMin === 'number' ? atm.rangeMin : NaN
+    const max = typeof atm.rangeMax === 'number' ? atm.rangeMax : NaN
+    const rangeLooksAtmospheric = Number.isFinite(min) && Number.isFinite(max) && min >= 90 && max <= 120
+    if (!rangeLooksAtmospheric && Number.isFinite(min) && Number.isFinite(max)) {
+      // 用户明确配置了一个非大气压量程，不做迁移
+      return
+    }
+
+    atm.unit = 'Pa'
+    if (Number.isFinite(min)) atm.rangeMin = min * 1000
+    if (Number.isFinite(max)) atm.rangeMax = max * 1000
+    if (!Number.isFinite(atm.rangeMin)) atm.rangeMin = 99000
+    if (!Number.isFinite(atm.rangeMax)) atm.rangeMax = 106000
+    atm.precision = 2
+  }
+
   async function refreshProfiles() {
     try {
       profiles.value = (await deviceApi.getProfiles()).map((profile) => ({
         ...profile,
         channels: Array.isArray(profile.channels) ? profile.channels : [],
       }))
+      // 加载完成后做一次单位兼容迁移，保证旧 kPa 配置自动升级为 Pa
+      profiles.value.forEach(migrateAtmPressureUnit)
       if (!profiles.value.length) {
         profiles.value = [defaultSimulatedProfile()]
       }
