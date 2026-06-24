@@ -256,12 +256,14 @@ func (m *MotionManager) StatusAll(ctx context.Context) []core.ControllerStatus {
 	statuses := make([]core.ControllerStatus, 0, len(controllers))
 	for range controllers {
 		r := <-ch
-		if r.err != nil {
-			continue
-		}
 		if profile, ok := profiles[r.id]; ok {
 			r.status.Name = profile.Name
 			r.status.Type = profile.Type
+		}
+		if r.err != nil {
+			r.status.ID = r.id
+			r.status.Connected = false
+			r.status.LastError = r.err.Error()
 		}
 		statuses = append(statuses, r.status)
 	}
@@ -306,7 +308,7 @@ func (m *MotionManager) Stop(ctx context.Context, id string, axis core.AxisName)
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil
+		return fmt.Errorf("controller not connected: %s", id)
 	}
 	return ctrl.Stop(ctx, axis)
 }
@@ -317,7 +319,7 @@ func (m *MotionManager) EmergencyStop(ctx context.Context, id string) error {
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil
+		return fmt.Errorf("controller not connected: %s", id)
 	}
 	return ctrl.EmergencyStop(ctx)
 }

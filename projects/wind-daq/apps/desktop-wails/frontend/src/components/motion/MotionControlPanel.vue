@@ -181,7 +181,7 @@ async function stop(axis?: AxisName): Promise<void> {
 }
 
 async function emergencyStop(): Promise<void> {
-  if (!selectedId.value || !controllerConnected.value) return
+  if (!selectedId.value) return
   await motion.emergencyStop(selectedId.value)
 }
 
@@ -198,7 +198,20 @@ async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): P
   const state = ensureAxisLocalState(selectedId.value, axis)
   const axisStatus = currentStatus.value.axes.find((a) => a.name === axis)
   if (!axisStatus) return
+  if (!Number.isFinite(state.step) || state.step <= 0) {
+    feedback.pushToast('步长必须为正数', 'error')
+    return
+  }
   const delta = direction === 'forward' ? state.step : -state.step
+  if ((delta > 0 && axisStatus.posLimit) || (delta < 0 && axisStatus.negLimit)) {
+    feedback.pushToast('当前方向限位已触发，禁止继续点动', 'error')
+    return
+  }
+  const validation = validateTargetPosition(axis, axisStatus.position + delta)
+  if (!validation.valid) {
+    feedback.pushToast(validation.warning || '目标位置超出限位', 'error')
+    return
+  }
   if (currentProfile.value?.type === 'B140-MC') {
     await motion.moveBy(selectedId.value, axis, delta)
     return
@@ -295,6 +308,7 @@ onMounted(async () => {
     selectedId.value = motion.profiles[0].id
   }
   unsubscribeStatus = motion.attachStatusListener()
+  await motion.autoConnectAll()
   window.addEventListener('keydown', handleKeydown)
 })
 
@@ -313,10 +327,18 @@ watch(
   },
   { deep: true }
 )
+
+watch(
+  () => motion.profiles.map((p) => p.id),
+  (ids) => {
+    if (!selectedId.value || ids.includes(selectedId.value)) return
+    selectedId.value = ids[0] ?? null
+  }
+)
 </script>
 
 <template>
-  <div class="flex h-full gap-4 motion-control-panel">
+  <div class="flex gap-4 motion-control-panel">
     <aside data-test="motion-panel-surface" class="motion-sidebar bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] p-3 flex flex-col shadow-[var(--shadow-panel)]">
       <div class="flex items-center justify-between mb-2">
         <div class="text-[11px] font-semibold tracking-wide text-[color:var(--text-secondary)] uppercase">
@@ -367,7 +389,7 @@ watch(
       </div>
     </aside>
 
-    <section data-test="motion-panel-surface" class="bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
+    <section data-test="motion-panel-surface" class="bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden h-fit">
       <header class="flex items-center justify-between gap-4 border-b border-[color:var(--border-default)] bg-[color:var(--bg-panel)] px-5 py-3">
         <div class="flex items-center gap-3 min-w-0">
           <div class="motion-header-badge">
@@ -494,7 +516,7 @@ watch(
         <p class="text-sm font-semibold text-[color:var(--text-secondary)]">{{ i18n.t.selectController }}</p>
         <p class="text-xs">{{ i18n.t.selectControllerHint }}</p>
       </div>
-      <div v-else class="flex flex-col flex-1 min-h-0 overflow-auto custom-scrollbar">
+      <div v-else class="flex flex-col min-h-0 overflow-auto custom-scrollbar">
         <div class="p-5">
           <!-- 已连接但没有配置轴时显示提示 -->
           <div v-if="axes.length === 0" class="flex flex-col items-center justify-center text-[color:var(--text-muted)] py-12">
@@ -518,11 +540,11 @@ watch(
               {{ i18n.t.openConfig || '打开配置' }}
             </UiButton>
           </div>
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 content-start">
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div
               v-for="axis in axes"
               :key="axis.name"
-              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-0"
+              class="axis-card group relative bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] p-3 flex flex-col gap-2 transition-all min-w-0 h-fit"
               :class="getAxisThemeClass(axis.name)"
             >
               <div class="flex items-center justify-between">
@@ -966,18 +988,18 @@ watch(
 .jog-input-wrap {
   flex: 1;
   min-width: 0;
-  position: relative;
   display: flex;
   align-items: center;
+  gap: 0.375rem;
 }
 
 .jog-unit {
-  position: absolute;
-  right: var(--space-2);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   pointer-events: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Move control row */
@@ -990,22 +1012,23 @@ watch(
 .move-input-wrap {
   flex: 1;
   min-width: 0;
-  position: relative;
   display: flex;
   align-items: center;
+  gap: 0.375rem;
 }
 
 .move-unit {
-  position: absolute;
-  right: var(--space-2);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   pointer-events: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .input-width-80 {
   width: 80px;
+  flex-shrink: 0;
 }
 
 /* Emergency stop: visually weighted via the danger variant itself.

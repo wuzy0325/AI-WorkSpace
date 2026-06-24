@@ -145,7 +145,6 @@ function toggleLanguage(): void {
 .motion-view-main {
   flex: 1;
   min-height: 0;
-  padding: var(--space-4) var(--space-5);
   background: var(--bg-canvas);
 }
 </style>

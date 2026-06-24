@@ -28,6 +28,7 @@ type B140MotionController struct {
 	conn               net.Conn
 	reader             *bufio.Reader
 	directionSignature string
+	connecting         bool
 }
 
 // NewB140MotionController creates a B140 motion controller adapter.
@@ -59,6 +60,7 @@ func (c *B140MotionController) ApplyConfig(ctx context.Context, profile core.Mot
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.profile = profile
+	c.rebuildStatusAxesLocked()
 	c.directionSignature = ""
 	return nil
 }
@@ -77,12 +79,18 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
+	if c.connecting {
+		c.mu.Unlock()
+		return fmt.Errorf("controller connection already in progress")
+	}
 	address := fmt.Sprintf("%s:%d", c.profile.Address, c.profile.Port)
+	c.connecting = true
 	c.mu.Unlock()
 
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		c.mu.Lock()
+		c.connecting = false
 		c.status.LastError = err.Error()
 		c.mu.Unlock()
 		return err
@@ -90,6 +98,7 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 
 	c.mu.Lock()
 	if c.status.Connected {
+		c.connecting = false
 		c.mu.Unlock()
 		_ = conn.Close()
 		return nil
@@ -101,6 +110,7 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	c.directionSignature = ""
 
 	dirCmds := c.buildDirectionCommandsLocked()
+	dirSignature := c.directionConfigSignatureLocked()
 	c.mu.Unlock()
 
 	if _, err := c.sendCommandLocked(ctx, "SH"); err != nil {
@@ -113,7 +123,9 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
+	c.directionSignature = dirSignature
 	c.status.Connected = true
+	c.connecting = false
 	c.status.EmergencyStopped = false
 	c.status.LastError = ""
 	c.mu.Unlock()
@@ -125,7 +137,6 @@ func (c *B140MotionController) buildDirectionCommandsLocked() []string {
 	if c.directionSignature == sig {
 		return nil
 	}
-	c.directionSignature = sig
 	var cmds []string
 	for _, ac := range c.profile.Axes {
 		if !ac.Enabled {
@@ -156,6 +167,8 @@ func (c *B140MotionController) connectCleanup(conn net.Conn, err error) error {
 	c.reader = nil
 	c.connMu.Unlock()
 	c.mu.Lock()
+	c.connecting = false
+	c.directionSignature = ""
 	c.status.LastError = err.Error()
 	c.mu.Unlock()
 	return err
@@ -164,6 +177,9 @@ func (c *B140MotionController) connectCleanup(conn net.Conn, err error) error {
 // Disconnect closes TCP connection and clears cached hardware state.
 func (c *B140MotionController) Disconnect(ctx context.Context) error {
 	c.mu.Lock()
+	if c.status.Connected && c.conn != nil {
+		_, _ = c.sendCommandLocked(ctx, "ST")
+	}
 	c.status.Connected = false
 	c.mu.Unlock()
 
@@ -190,6 +206,31 @@ func (c *B140MotionController) Disconnect(ctx context.Context) error {
 	return err
 }
 
+func (c *B140MotionController) rebuildStatusAxesLocked() {
+	existing := make(map[core.AxisName]core.AxisStatus, len(c.status.Axes))
+	for _, axisStatus := range c.status.Axes {
+		existing[axisStatus.Name] = axisStatus
+	}
+	axes := make([]core.AxisStatus, 0, len(c.profile.Axes))
+	for _, axisCfg := range c.profile.Axes {
+		if !axisCfg.Enabled {
+			continue
+		}
+		axisStatus := existing[axisCfg.Name]
+		axisStatus.Name = axisCfg.Name
+		axes = append(axes, axisStatus)
+	}
+	c.status.Axes = axes
+}
+
+func (c *B140MotionController) statusError(err error) (core.ControllerStatus, error) {
+	c.mu.Lock()
+	c.status.LastError = err.Error()
+	status := c.copyStatusLocked()
+	c.mu.Unlock()
+	return status, err
+}
+
 // Status reads register position, motion state, and limit switches.
 func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
 	c.mu.Lock()
@@ -204,47 +245,33 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		c.mu.Unlock()
 		return status, err
 	}
-
-	tdPayload, err := c.sendCommandLocked(ctx, "TD")
-	if err != nil {
-		c.status.LastError = err.Error()
-		status := c.copyStatusLocked()
-		c.mu.Unlock()
-		return status, err
-	}
-	registerPositions, parseErr := parseB140Numbers(tdPayload)
-	if parseErr != nil {
-		c.status.LastError = parseErr.Error()
-		status := c.copyStatusLocked()
-		c.mu.Unlock()
-		return status, parseErr
-	}
-
-	tsPayload, err := c.sendCommandLocked(ctx, "TS")
-	if err != nil {
-		c.status.LastError = err.Error()
-		status := c.copyStatusLocked()
-		c.mu.Unlock()
-		return status, err
-	}
-	statusBytes, parseErr := parseB140Numbers(tsPayload)
-	if parseErr != nil {
-		c.status.LastError = parseErr.Error()
-		status := c.copyStatusLocked()
-		c.mu.Unlock()
-		return status, parseErr
-	}
-
 	axisConfigs := make(map[core.AxisName]core.AxisConfig, len(c.status.Axes))
 	for _, a := range c.status.Axes {
 		if cfg, ok := c.axisConfigLocked(a.Name); ok {
 			axisConfigs[a.Name] = cfg
 		}
 	}
-
 	axesSnapshot := make([]core.AxisStatus, len(c.status.Axes))
 	copy(axesSnapshot, c.status.Axes)
 	c.mu.Unlock()
+
+	tdPayload, err := c.sendCommandLocked(ctx, "TD")
+	if err != nil {
+		return c.statusError(err)
+	}
+	registerPositions, parseErr := parseB140Numbers(tdPayload)
+	if parseErr != nil {
+		return c.statusError(parseErr)
+	}
+
+	tsPayload, err := c.sendCommandLocked(ctx, "TS")
+	if err != nil {
+		return c.statusError(err)
+	}
+	statusBytes, parseErr := parseB140Numbers(tsPayload)
+	if parseErr != nil {
+		return c.statusError(parseErr)
+	}
 
 	type axisResult struct {
 		position float64
@@ -323,7 +350,15 @@ func (c *B140MotionController) MoveTo(ctx context.Context, axis core.AxisName, p
 	if err != nil {
 		return err
 	}
+	if err := validateB140Target(axisCfg, position); err != nil {
+		c.status.LastError = err.Error()
+		return err
+	}
 	pulse := core.EngineeringToPulse(axisCfg, position)
+	if err := c.applyAxisSpeedLocked(ctx, axisCfg, physical); err != nil {
+		c.status.LastError = err.Error()
+		return err
+	}
 	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PA%s=%d", physical, pulse)); err != nil {
 		c.status.LastError = err.Error()
 		return err
@@ -345,9 +380,22 @@ func (c *B140MotionController) MoveBy(ctx context.Context, axis core.AxisName, d
 	if err != nil {
 		return err
 	}
+	current, err := c.readAxisPositionLocked(ctx, axisCfg, physical)
+	if err != nil {
+		c.status.LastError = err.Error()
+		return err
+	}
+	if err := c.validateB140RelativeMoveLocked(axis, delta, current+delta); err != nil {
+		c.status.LastError = err.Error()
+		return err
+	}
 	deltaPulse := core.EngineeringToPulse(axisCfg, delta)
 	if deltaPulse == 0 {
 		return nil
+	}
+	if err := c.applyAxisSpeedLocked(ctx, axisCfg, physical); err != nil {
+		c.status.LastError = err.Error()
+		return err
 	}
 	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PR%s=%d", physical, deltaPulse)); err != nil {
 		c.status.LastError = err.Error()
@@ -382,6 +430,15 @@ func (c *B140MotionController) Jog(ctx context.Context, axis core.AxisName, velo
 	step := 1.0
 	if velocity < 0 {
 		step = -1
+	}
+	current, err := c.readAxisPositionLocked(ctx, axisCfg, physical)
+	if err != nil {
+		c.status.LastError = err.Error()
+		return err
+	}
+	if err := c.validateB140RelativeMoveLocked(axis, step, current+step); err != nil {
+		c.status.LastError = err.Error()
+		return err
 	}
 	stepPulse := core.EngineeringToPulse(axisCfg, step)
 
@@ -658,6 +715,93 @@ func (c *B140MotionController) axisConfigLocked(axis core.AxisName) (core.AxisCo
 	return core.AxisConfig{}, false
 }
 
+func (c *B140MotionController) applyAxisSpeedLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) error {
+	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, core.DefaultMaxSpeed)
+	if maxSpeed <= 0 || math.IsNaN(maxSpeed) || math.IsInf(maxSpeed, 0) {
+		maxSpeed = core.DefaultMaxSpeed
+	}
+	pulseSpeed := core.EngineeringToPulse(axisCfg, maxSpeed)
+	if pulseSpeed <= 0 {
+		pulseSpeed = 1
+	}
+	_, err := c.sendCommandLocked(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed))
+	return err
+}
+
+func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) (float64, error) {
+	_, axisIndex, err := b140PhysicalAxis(axisCfg.Name)
+	if err != nil {
+		return 0, err
+	}
+
+	var position float64
+	if axisCfg.PositionSource == core.PositionSourceEncoder {
+		payload, err := c.sendCommandLocked(ctx, "TP"+physical)
+		if err != nil {
+			return 0, err
+		}
+		encoderCount, err := strconv.ParseFloat(strings.TrimSpace(payload), 64)
+		if err != nil {
+			return 0, err
+		}
+		position = core.EncoderCountToEngineering(axisCfg, encoderCount)
+	} else {
+		payload, err := c.sendCommandLocked(ctx, "TD")
+		if err != nil {
+			return 0, err
+		}
+		registerPositions, err := parseB140Numbers(payload)
+		if err != nil {
+			return 0, err
+		}
+		position = core.PulseToEngineering(axisCfg, numberAt(registerPositions, axisIndex))
+	}
+
+	for i := range c.status.Axes {
+		if c.status.Axes[i].Name == axisCfg.Name {
+			c.status.Axes[i].Position = position
+			return position, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown motion axis: %s", axisCfg.Name)
+}
+
+func validateB140Target(axisCfg core.AxisConfig, target float64) error {
+	if math.IsNaN(target) || math.IsInf(target, 0) {
+		return fmt.Errorf("invalid target position for axis %s", axisCfg.Name)
+	}
+	if axisCfg.MinLimit != nil && target < *axisCfg.MinLimit {
+		return fmt.Errorf("target %.4f is below min limit %.4f for axis %s", target, *axisCfg.MinLimit, axisCfg.Name)
+	}
+	if axisCfg.MaxLimit != nil && target > *axisCfg.MaxLimit {
+		return fmt.Errorf("target %.4f is above max limit %.4f for axis %s", target, *axisCfg.MaxLimit, axisCfg.Name)
+	}
+	return nil
+}
+
+func (c *B140MotionController) validateB140RelativeMoveLocked(axis core.AxisName, delta float64, target float64) error {
+	axisCfg, ok := c.axisConfigLocked(axis)
+	if !ok {
+		return fmt.Errorf("unknown motion axis: %s", axis)
+	}
+	if err := validateB140Target(axisCfg, target); err != nil {
+		return err
+	}
+	for _, axisStatus := range c.status.Axes {
+		if axisStatus.Name != axis {
+			continue
+		}
+		if delta > 0 && axisStatus.PosLimit {
+			return fmt.Errorf("positive limit is active for axis %s", axis)
+		}
+		if delta < 0 && axisStatus.NegLimit {
+			return fmt.Errorf("negative limit is active for axis %s", axis)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown motion axis: %s", axis)
+}
+
 func (c *B140MotionController) copyStatusLocked() core.ControllerStatus {
 	status := c.status
 	status.Axes = append([]core.AxisStatus(nil), c.status.Axes...)
@@ -709,5 +853,3 @@ func parseB140Limit(payload string) bool {
 	}
 	return value < 1
 }
-
-

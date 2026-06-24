@@ -297,11 +297,64 @@ export const wailsApi = {
     },
 
     onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
-      const cleanup = EventsOn('motion:status', (data: unknown) => {
-        callback(data);
-      });
+      // 改为 HTTP 轮询主进程本地 API（127.0.0.1:8900/api/motion/status）。
+      //
+      // 背景：Wails v2.12.0 通过 EventsEmit 推送 MotionControllerStatus[] 时，
+      // 内部对 interface{} 切片做反射序列化，遇到具名 string 类型（ControllerType /
+      // AxisName）的切片会错误调用 reflect.Value.IsNil()，触发 panic：
+      //   "reflect: call of reflect.Value.IsNil on string Value"
+      // B140 点动场景下 100% 复现。
+      //
+      // 与 motion-controller 项目保持一致的修复策略：后端不再 EventsEmit，
+      // 前端通过 HTTP 主动拉取，由 Go 标准库 encoding/json 直接编码到 ResponseWriter，
+      // 完全绕开 Wails 的反射桥。
+      //
+      // 轮询节奏：运动中 250ms 高频，空闲 2000ms 慢速心跳，避免空载时的 CPU 浪费。
+      const STATUS_API = 'http://127.0.0.1:8900/api/motion/status';
+      const FAST_INTERVAL_MS = 250;
+      const SLOW_INTERVAL_MS = 2000;
+      let active = true;
+      let currentInterval = FAST_INTERVAL_MS;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const scheduleNext = (delay: number): void => {
+        if (!active) return;
+        timer = setTimeout(() => { void poll(); }, delay);
+      };
+
+      const poll = async (): Promise<void> => {
+        if (!active) return;
+        try {
+          const resp = await fetch(STATUS_API);
+          if (resp.ok) {
+            const statuses = await resp.json();
+            if (active && Array.isArray(statuses)) {
+              try {
+                callback(statuses);
+              } catch (err) {
+                console.error('[wails-adapter] motion status callback threw:', err);
+              }
+              // 动态调速：任一轴在运动则保持高频，否则降为慢速心跳
+              const hasMoving = (statuses as Array<{ axes?: Array<{ moving?: boolean }> }>)
+                .some((s) => Array.isArray(s.axes) && s.axes.some((a) => a.moving === true));
+              currentInterval = hasMoving ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS;
+            }
+          }
+        } catch {
+          // 网络错误（如主进程尚未启动 HTTP server）静默重试，避免日志噪音
+        }
+        scheduleNext(currentInterval);
+      };
+
+      // 立即触发首次拉取，无需等待轮询周期
+      void poll();
+
       return () => {
-        cleanup();
+        active = false;
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
       };
     }
   },
@@ -377,6 +430,9 @@ export const wailsApi = {
     },
     pickDirectory: async (): Promise<string> => {
       return await callBinding('PickDirectory');
+    },
+    resolvePath: async (p: string): Promise<string> => {
+      return await callBinding('ResolvePath', p);
     },
     pickFile: async (title: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string> => {
       return await callBinding('PickFile', title, filters);

@@ -121,29 +121,44 @@ function saveProfiles(profiles: MotionControllerProfile[]): void {
   window.localStorage.setItem(MOTION_STORAGE_KEY, JSON.stringify(profiles));
 }
 
-async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): Promise<MotionControllerStatus[]> {
-  let raw: MotionControllerStatus[];
+// 内存缓存的 profiles，轮询 tick 不再重复请求后端
+let _cachedProfiles: MotionControllerProfile[] | null = null;
+
+// 轮询速率控制：运动中 250ms 高频刷新，全部空闲时 3000ms 慢速心跳
+const FAST_POLL_MS = 250;
+const SLOW_POLL_MS = 3000;
+let _currentPollIntervalMs = FAST_POLL_MS;
+
+/**
+ * 仅拉取原始状态数据，不依赖 profiles。
+ * 与 goStatusToControllerStatus 的"拉取+合并"二合一逻辑解耦，供 tick 复用。
+ */
+async function fetchRawStatus(): Promise<MotionControllerStatus[]> {
   if (isMotionStandaloneMode()) {
-    // 独立窗口：通过主进程 HTTP 拉真实连接状态，避免子进程的 MotionManager 永远为空
-    raw = await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status');
-  } else if (isWailsAvailable()) {
-    raw = await wailsApi.motion.getStatus() as unknown as MotionControllerStatus[];
-  } else {
-    raw = await request<MotionControllerStatus[]>('/api/motion/status');
+    return await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status');
   }
-  if (!Array.isArray(raw) || raw.length === 0) {
-    // 后端返回空或非数组，返回默认状态
-    raw = [];
+  if (isWailsAvailable()) {
+    return await wailsApi.motion.getStatus() as unknown as MotionControllerStatus[];
   }
+  return await request<MotionControllerStatus[]>('/api/motion/status');
+}
+
+/**
+ * 从原始 status 数据和 profiles 合成归一化的 MotionControllerStatus 列表。
+ * 纯函数，不发起任何网络请求。
+ */
+function mergeStatusWithProfiles(
+  raw: MotionControllerStatus[],
+  profiles: MotionControllerProfile[],
+  statusError = ''
+): MotionControllerStatus[] {
+  if (!Array.isArray(raw)) raw = [];
   return normalizeMotionProfiles(profiles).map((p) => {
     const live = raw.find((s) => s.id === p.id);
     const profileAxes = Array.isArray(p.axes) ? p.axes : [];
 
-    // 优先从 profile 配置中获取启用的轴，如果 profile 中没有配置，则尝试从后端状态中获取
-    // 注意：enabled 为 undefined 时视为 true（兼容旧数据）
     let enabledAxes = profileAxes.filter((a) => a.enabled !== false);
     if (enabledAxes.length === 0 && live && Array.isArray(live.axes) && live.axes.length > 0) {
-      // profile 中没有配置轴，但后端状态中有轴数据，使用后端的轴数据
       enabledAxes = live.axes.map((axis) => ({
         name: axis.name as import('@shared/types/motion').AxisName,
         enabled: true,
@@ -168,9 +183,83 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
           negLimit: axisLive?.negLimit ?? false,
         };
       }),
-      lastError: live?.lastError,
+      lastError: live?.lastError ?? statusError,
     };
   });
+}
+
+async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): Promise<MotionControllerStatus[]> {
+  let raw: MotionControllerStatus[] = [];
+  let statusError = '';
+  try {
+    raw = await fetchRawStatus();
+  } catch (e) {
+    statusError = e instanceof Error ? e.message : '状态服务不可用';
+  }
+  return mergeStatusWithProfiles(raw, profiles, statusError);
+}
+
+/**
+ * 根据是否有轴正在运动，调整轮询间隔。
+ * - 运动中 → 250ms 高频，实时跟踪位置变化
+ * - 全部空闲 → 3000ms 慢速心跳，仅保持连接状态刷新
+ */
+function adjustPollingRate(hasMoving: boolean): void {
+  const target = hasMoving ? FAST_POLL_MS : SLOW_POLL_MS;
+  if (target === _currentPollIntervalMs) return;
+  _currentPollIntervalMs = target;
+
+  const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
+  if (slot._standaloneTimer) {
+    clearInterval(slot._standaloneTimer);
+  }
+  slot._standaloneTimer = setInterval(() => { void tickStandalone(); }, target);
+}
+
+/**
+ * 运动指令发出后调用：立即切换到高频轮询并触发一次 tick，
+ * 确保 UI 快速响应电机位置变化。
+ */
+function requestFastPolling(): void {
+  if (!isMotionStandaloneMode()) return;
+  adjustPollingRate(true);
+  void tickStandalone();
+}
+
+/**
+ * 独立窗口（motion 子进程）的轮询 tick。
+ * 只拉取 /api/motion/status，用缓存的 profiles 做归一化，
+ * 并根据运动状态自动调速。
+ */
+async function tickStandalone(): Promise<void> {
+  let raw: MotionControllerStatus[] = [];
+  let statusError = '';
+  try {
+    raw = await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status');
+    if (!Array.isArray(raw)) raw = [];
+  } catch (err) {
+    statusError = err instanceof Error ? err.message : '主进程状态服务不可用';
+  }
+
+  try {
+    if (!_cachedProfiles) {
+      _cachedProfiles = await motionApi.getProfiles();
+    }
+    const list = mergeStatusWithProfiles(raw, _cachedProfiles, statusError);
+
+    const hasMoving = list.some((s) => s.axes?.some((a) => a.moving));
+    adjustPollingRate(hasMoving);
+
+    motionApi._listeners.forEach((listener) => {
+      try {
+        listener(list);
+      } catch (err) {
+        console.error('[motionApi] status listener threw:', err);
+      }
+    });
+  } catch (err) {
+    console.debug('[motionApi] standalone tick failed (will retry):', err);
+  }
 }
 
 type StatusCallback = (status: MotionControllerStatus[]) => void;
@@ -189,35 +278,33 @@ export const motionApi = {
         profiles = await request<MotionControllerProfile[]>('/api/motion/profiles');
       }
       profiles = normalizeMotionProfiles(profiles);
-      if (profiles.length > 0) {
-        // 保存到本地缓存
-        saveProfiles(profiles);
-        return profiles;
-      }
+      _cachedProfiles = profiles;
+      saveProfiles(profiles);
+      return profiles;
     } catch (err) {
       console.warn('[motionApi] getProfiles backend unreachable, falling back to local cache:', err);
     }
-    return storedProfiles();
+    const fallback = storedProfiles();
+    _cachedProfiles = fallback;
+    return fallback;
   },
 
   getStatusAll: async (): Promise<MotionControllerStatus[]> => {
-    const profiles = await motionApi.getProfiles();
-    return goStatusToControllerStatus(profiles);
+    const [raw, profiles] = await Promise.all([
+      fetchRawStatus(),
+      motionApi.getProfiles(),
+    ]);
+    return mergeStatusWithProfiles(raw, profiles);
   },
 
   upsertProfile: async (profile: MotionControllerProfile): Promise<void> => {
-    // 同时更新后端和本地
-    try {
-      if (isMotionStandaloneMode()) {
-        // 独立窗口：profile 写到主进程，避免子进程持久化文件后被关闭丢失或与主进程冲突
-        await mainProcessRequest('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-      } else if (isWailsAvailable()) {
-        await wailsApi.motion.upsertProfile(profile);
-      } else {
-        await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-      }
-    } catch (err) {
-      console.warn('[motionApi] upsertProfile backend failed, updating local cache only:', err);
+    // 后端保存失败时抛出，避免本地缓存与后端不一致让用户误以为保存成功
+    if (isMotionStandaloneMode()) {
+      await mainProcessRequest('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
+    } else if (isWailsAvailable()) {
+      await wailsApi.motion.upsertProfile(profile);
+    } else {
+      await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
     }
     const profiles = storedProfiles();
     const idx = profiles.findIndex((p) => p.id === profile.id);
@@ -227,17 +314,12 @@ export const motionApi = {
   },
 
   deleteProfile: async (id: string): Promise<void> => {
-    // 同时更新后端和本地
-    try {
-      if (isMotionStandaloneMode()) {
-        await mainProcessRequest(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-      } else if (isWailsAvailable()) {
-        await wailsApi.motion.deleteProfile(id);
-      } else {
-        await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-      }
-    } catch (err) {
-      console.warn('[motionApi] deleteProfile backend failed, updating local cache only:', err);
+    if (isMotionStandaloneMode()) {
+      await mainProcessRequest(`/api/motion/profiles/${id}`, { method: 'DELETE' });
+    } else if (isWailsAvailable()) {
+      await wailsApi.motion.deleteProfile(id);
+    } else {
+      await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
     }
     const profiles = storedProfiles().filter((p) => p.id !== id);
     saveProfiles(profiles);
@@ -274,6 +356,7 @@ export const motionApi = {
   moveTo: async (id: string, axis: AxisName, position: number): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/moveTo', { method: 'POST', body: JSON.stringify({ id, axis, position }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -288,6 +371,7 @@ export const motionApi = {
   moveBy: async (id: string, axis: AxisName, delta: number): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/moveBy', { method: 'POST', body: JSON.stringify({ id, axis, delta }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -303,6 +387,7 @@ export const motionApi = {
     const velocity = (direction === 'forward' ? 1 : -1) * (speed ?? 1);
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/jog', { method: 'POST', body: JSON.stringify({ id, axis, velocity }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -317,6 +402,7 @@ export const motionApi = {
   home: async (id: string, axis: AxisName): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/home', { method: 'POST', body: JSON.stringify({ id, axis }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -331,6 +417,7 @@ export const motionApi = {
   stop: async (id: string, axis?: AxisName): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/stop', { method: 'POST', body: JSON.stringify({ id, axis: axis ?? '' }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -345,6 +432,7 @@ export const motionApi = {
   emergencyStop: async (id: string): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/emergencyStop', { method: 'POST', body: JSON.stringify({ id }) });
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {
@@ -395,40 +483,18 @@ export const motionApi = {
   onStatusUpdated: (cb: StatusCallback): (() => void) => {
     motionApi._listeners.add(cb);
 
-    // 独立窗口（motion 子进程）：自己进程的 motion:status 事件源拿不到主进程数据，
-    // 改为定时拉取主进程 HTTP /api/motion/status，并把结果分发给所有本地监听器。
+    // 独立窗口（motion 子进程）：通过 HTTP 轮询主进程获取状态，启动时慢速心跳，
+    // 电机运动时自动切换到 250ms 高频轮询，全部停止后降回慢速。
     if (isMotionStandaloneMode()) {
-      // 仅由首个监听器启动定时器，避免多个 store 实例触发多组定时器
-      const ensureTimer = (): void => {
-        const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
-        if (slot._standaloneTimer) return;
-        const tick = async (): Promise<void> => {
-          try {
-            const list = await motionApi.getStatusAll();
-            motionApi._listeners.forEach((listener) => {
-              try {
-                listener(list);
-              } catch (err) {
-                // 监听器回调异常不应中断轮询；记录以便排查上游 store 缺陷
-                console.error('[motionApi] status listener threw:', err);
-              }
-            });
-          } catch (err) {
-            // 主进程不可达：下个 tick 重试。debug 级别避免刷屏
-            console.debug('[motionApi] standalone tick failed (will retry):', err);
-          }
-        };
-        // 与主进程 MotionStatusPoller 节奏保持接近：250ms 兼顾实时性与 HTTP 开销
-        slot._standaloneTimer = setInterval(() => { void tick(); }, 250);
-        // 立即触发一次，避免首次渲染等待 250ms
-        void tick();
-      };
-      ensureTimer();
+      const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
+      if (!slot._standaloneTimer) {
+        _currentPollIntervalMs = SLOW_POLL_MS;
+        slot._standaloneTimer = setInterval(() => { void tickStandalone(); }, SLOW_POLL_MS);
+        void tickStandalone();
+      }
       return () => {
         motionApi._listeners.delete(cb);
-        // 最后一个监听器移除时停止定时器，防止内存泄漏
         if (motionApi._listeners.size === 0) {
-          const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
           if (slot._standaloneTimer) {
             clearInterval(slot._standaloneTimer);
             slot._standaloneTimer = undefined;

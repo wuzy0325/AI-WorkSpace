@@ -18,7 +18,7 @@ const MOTION_STORAGE_KEY = 'motion-controller.profiles';
 
 // HTTP API 基础 URL（Wails 运行时后端启动的 HTTP 状态服务）
 // 绕开 Wails v2.12.0 reflect 序列化 bug
-export const MOTION_HTTP_BASE = 'http://localhost:16888';
+export const MOTION_HTTP_BASE = 'http://127.0.0.1:16888';
 
 const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
   { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
@@ -64,16 +64,32 @@ function saveProfiles(profiles: MotionControllerProfile[]): void {
   window.localStorage.setItem(MOTION_STORAGE_KEY, JSON.stringify(profiles));
 }
 
+async function fetchMotionProfile(path: string, init: RequestInit): Promise<void> {
+  if (!isWailsAvailable()) {
+    await request(path, init);
+    return;
+  }
+
+  const resp = await fetch(`${MOTION_HTTP_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    ...init,
+  });
+  if (!resp.ok) {
+    throw new Error(await resp.text().catch(() => `HTTP ${resp.status}`));
+  }
+}
+
 async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): Promise<MotionControllerStatus[]> {
   let raw: MotionControllerStatus[] = [];
+  let statusError = '';
   try {
     // 通过 HTTP API 获取状态（绕开 Wails v2.12.0 reflect 序列化 bug）
     const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/status`);
     if (resp.ok) {
       raw = await resp.json() as MotionControllerStatus[];
     }
-  } catch {
-    // HTTP 不可用时使用空状态
+  } catch (e) {
+    statusError = e instanceof Error ? e.message : '状态服务不可用';
   }
   if (!Array.isArray(raw) || raw.length === 0) {
     raw = [];
@@ -108,7 +124,7 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
           negLimit: axisLive?.negLimit ?? false,
         };
       }),
-      lastError: live?.lastError,
+      lastError: live?.lastError ?? statusError,
     };
   });
 }
@@ -124,10 +140,8 @@ export const motionApi = {
       const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/profiles`);
       if (resp.ok) {
         const profiles = normalizeMotionProfiles(await resp.json());
-        if (profiles.length > 0) {
-          saveProfiles(profiles);
-          return profiles;
-        }
+        saveProfiles(profiles);
+        return profiles;
       }
     } catch {
       // HTTP 不可用，使用本地缓存
@@ -141,11 +155,7 @@ export const motionApi = {
   },
 
   upsertProfile: async (profile: MotionControllerProfile): Promise<void> => {
-    if (isWailsAvailable()) {
-      await wailsApi.motion.upsertProfile(profile);
-    } else {
-      await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-    }
+    await fetchMotionProfile('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
     const profiles = storedProfiles();
     const idx = profiles.findIndex((p) => p.id === profile.id);
     if (idx >= 0) profiles[idx] = profile;
@@ -154,11 +164,7 @@ export const motionApi = {
   },
 
   deleteProfile: async (id: string): Promise<void> => {
-    if (isWailsAvailable()) {
-      await wailsApi.motion.deleteProfile(id);
-    } else {
-      await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-    }
+    await fetchMotionProfile(`/api/motion/profiles/${id}`, { method: 'DELETE' });
     const profiles = storedProfiles().filter((p) => p.id !== id);
     saveProfiles(profiles);
   },
@@ -190,7 +196,6 @@ export const motionApi = {
   },
 
   moveBy: async (id: string, axis: AxisName, delta: number): Promise<boolean> => {
-    console.log('[motionApi] moveBy', { id, axis, delta, wails: isWailsAvailable() })
     if (isWailsAvailable()) {
       await wailsApi.motion.moveBy(id, axis, delta);
       return true;
@@ -256,21 +261,29 @@ export const motionApi = {
 
   onStatusUpdated: (cb: StatusCallback): (() => void) => {
     statusListeners.add(cb);
-
-    if (isWailsAvailable()) {
-      const unsubscribe = wailsApi.motion.onStatusEvent((data) => {
-        if (Array.isArray(data)) {
-          statusListeners.forEach((listener) => {
-            try { listener(data as MotionControllerStatus[]); } catch { /* 忽略回调异常 */ }
-          });
-        }
-      });
-      return () => {
-        statusListeners.delete(cb);
-        try { unsubscribe(); } catch { /* 忽略清理异常 */ }
-      };
-    }
-
+    ensureStatusPolling();
     return () => { statusListeners.delete(cb); };
   },
 };
+
+let statusPollingStarted = false;
+
+function ensureStatusPolling(): void {
+  if (statusPollingStarted) return;
+  statusPollingStarted = true;
+  const poll = async () => {
+    if (statusListeners.size === 0) {
+      statusPollingStarted = false;
+      return;
+    }
+    try {
+      const all = await motionApi.getStatusAll();
+      statusListeners.forEach((listener) => {
+        try { listener(all); } catch { /* 忽略回调异常 */ }
+      });
+    } finally {
+      setTimeout(poll, 200);
+    }
+  };
+  poll();
+}

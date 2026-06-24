@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
-	"shared.local/device-sdk/go/motion/core"
 	"motion-controller/services/api-go/pkg/appcontext"
+	"shared.local/device-sdk/go/motion/core"
+	motionhttp "shared.local/motion-control/go/httpapi"
 )
 
 // motionHTTPPort 是运动状态 HTTP API 的监听端口。
 // 前端通过此端口轮询获取状态数据，绕开 Wails v2.12.0 的 reflect 序列化 bug。
-const motionHTTPPort = ":16888"
+const motionHTTPPort = "127.0.0.1:16888"
 
 type App struct {
 	ctx        context.Context
@@ -32,43 +35,54 @@ func (a *App) Startup(ctx context.Context) {
 
 func (a *App) startStatusHTTPServer() {
 	mux := http.NewServeMux()
+	motionhttp.RegisterMotionRoutes(mux, a.appCtx.MotionManager)
 
 	// CORS 中间件：允许 WebView2 跨域请求
-	cors := func(h http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+	cors := func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin == "" || isAllowedMotionOrigin(origin) {
+				if origin == "" {
+					w.Header().Set("Access-Control-Allow-Origin", "null")
+				} else {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+				}
+				w.Header().Set("Vary", "Origin")
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			h(w, r)
-		}
+			h.ServeHTTP(w, r)
+		})
 	}
 
-	mux.HandleFunc("/api/motion/status", cors(func(w http.ResponseWriter, r *http.Request) {
-		statuses := a.appCtx.MotionManager.StatusAll(a.ctx)
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(statuses); err != nil {
-			slog.Error("[App] status HTTP encode error", "err", err)
-		}
-	}))
-
-	mux.HandleFunc("/api/motion/profiles", cors(func(w http.ResponseWriter, r *http.Request) {
-		profiles := a.appCtx.MotionManager.GetProfiles()
-		w.Header().Set("Content-Type", "application/json")
-		slog.Info("[App] HTTP /profiles", "count", len(profiles))
-		if err := json.NewEncoder(w).Encode(profiles); err != nil {
-			slog.Error("[App] profiles HTTP encode error", "err", err)
-		}
-	}))
-
 	go func() {
-		a.httpServer = &http.Server{Addr: motionHTTPPort, Handler: mux}
+		a.httpServer = &http.Server{
+			Addr:              motionHTTPPort,
+			Handler:           cors(mux),
+			ReadHeaderTimeout: 2 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+		}
 		slog.Info("[App] starting status HTTP server", "addr", motionHTTPPort)
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("[App] status HTTP server failed", "err", err)
 		}
 	}()
+}
+
+func isAllowedMotionOrigin(origin string) bool {
+	return origin == "wails://wails.localhost" ||
+		origin == "http://wails.localhost" ||
+		strings.HasPrefix(origin, "http://wails.localhost:") ||
+		strings.HasPrefix(origin, "http://localhost:") ||
+		strings.HasPrefix(origin, "http://127.0.0.1:")
 }
 
 func (a *App) Shutdown(ctx context.Context) {

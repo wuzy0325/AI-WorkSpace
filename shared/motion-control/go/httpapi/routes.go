@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
 	"shared.local/device-sdk/go/motion/core"
 )
+
+const maxMotionRequestBodyBytes = 1 << 20
 
 // MotionService is the application-level motion API used by HTTP routes.
 type MotionService interface {
@@ -38,7 +42,9 @@ func RegisterMotionRoutes(mux *http.ServeMux, motion MotionService) {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, profiles)
+			// 转 DTO（原生类型）后编码，避免 encoding/json 反射处理具名 string 类型时
+			// 与 float64 字段交错产生的 reflect 编码器缓存错乱
+			writeJSON(w, http.StatusOK, toProfileDTOs(profiles))
 		case http.MethodPut:
 			var profile core.MotionControllerProfile
 			if !decodeBody(w, r, &profile) {
@@ -76,7 +82,14 @@ func RegisterMotionRoutes(mux *http.ServeMux, motion MotionService) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, http.StatusOK, motion.StatusAll(r.Context()))
+		// 转 DTO（原生类型）后编码：
+		//   ControllerStatus 中 Type 为 ControllerType（具名 string），AxisStatus 中 Name 为 AxisName（具名 string），
+		//   与多个 float64 字段（Position/Velocity/PositionError）交错出现。
+		//   Go encoding/json 在高并发场景下，反射构建 structEncoder 的 fields 表与
+		//   实际 reflect.Value 字段类型可能错位（例如 floatEncoder 收到 String kind），
+		//   触发 panic: "reflect: call of reflect.Value.Float on string Value"。
+		//   通过转成只含原生类型的 DTO，规避该 reflect 编码路径上的所有歧义。
+		writeJSON(w, http.StatusOK, toStatusDTOs(motion.StatusAll(r.Context())))
 	})
 
 	handleCommand := func(pattern string, fn func(context.Context, string, core.AxisName, motionBody) error) {
@@ -174,7 +187,14 @@ type motionBody struct {
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxMotionRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	body = bytes.ReplaceAll(body, []byte{0}, nil)
+	if err := json.Unmarshal(body, v); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return false
 	}

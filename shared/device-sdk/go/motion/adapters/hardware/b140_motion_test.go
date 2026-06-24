@@ -71,6 +71,7 @@ func TestB140MoveToSendsGalilCommands(t *testing.T) {
 		"SH":       "",
 		"MTA=2":    "",
 		"CEA=0":    "",
+		"SPA=4000": "",
 		"PAA=2000": "",
 		"BGA":      "",
 	})
@@ -84,7 +85,97 @@ func TestB140MoveToSendsGalilCommands(t *testing.T) {
 		t.Fatalf("MoveTo returned error: %v", err)
 	}
 
-	want := []string{"SH", "MTA=2", "CEA=0", "PAA=2000", "BGA"}
+	want := []string{"SH", "MTA=2", "CEA=0", "SPA=4000", "PAA=2000", "BGA"}
+	if got := server.commands(len(want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestB140MoveByAppliesConfiguredSpeed(t *testing.T) {
+	server := newB140FakeServer(t, map[string]string{
+		"SH":       "",
+		"MTA=2":    "",
+		"CEA=0":    "",
+		"TD":       "0,0,0,0",
+		"SPA=4000": "",
+		"PRA=200":  "",
+		"BGA":      "",
+	})
+	defer server.close()
+
+	ctrl := newTestB140WithServer(t, server)
+	if err := ctrl.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := ctrl.MoveBy(context.Background(), core.AxisX, 1); err != nil {
+		t.Fatalf("MoveBy returned error: %v", err)
+	}
+
+	want := []string{"SH", "MTA=2", "CEA=0", "TD", "SPA=4000", "PRA=200", "BGA"}
+	if got := server.commands(len(want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestB140MoveByValidatesAgainstFreshHardwarePosition(t *testing.T) {
+	server := newB140FakeServer(t, map[string]string{
+		"SH":       "",
+		"MTA=2":    "",
+		"CEA=0":    "",
+		"TD":       "1800,0,0,0",
+		"SPA=4000": "",
+		"PRA=200":  "",
+		"BGA":      "",
+	})
+	defer server.close()
+
+	minLimit := 0.0
+	maxLimit := 10.0
+	ctrl := newTestB140WithServer(t, server)
+	ctrl.profile.Axes[0].MinLimit = &minLimit
+	ctrl.profile.Axes[0].MaxLimit = &maxLimit
+	ctrl.status.Axes[0].Position = 10
+
+	if err := ctrl.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := ctrl.MoveBy(context.Background(), core.AxisX, 1); err != nil {
+		t.Fatalf("MoveBy returned error: %v", err)
+	}
+
+	want := []string{"SH", "MTA=2", "CEA=0", "TD", "SPA=4000", "PRA=200", "BGA"}
+	if got := server.commands(len(want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestB140JogValidatesAgainstFreshHardwarePosition(t *testing.T) {
+	server := newB140FakeServer(t, map[string]string{
+		"SH":       "",
+		"MTA=2":    "",
+		"CEA=0":    "",
+		"TD":       "1800,0,0,0",
+		"SPA=1000": "",
+		"PRA=200":  "",
+		"BGA":      "",
+	})
+	defer server.close()
+
+	minLimit := 0.0
+	maxLimit := 10.0
+	ctrl := newTestB140WithServer(t, server)
+	ctrl.profile.Axes[0].MinLimit = &minLimit
+	ctrl.profile.Axes[0].MaxLimit = &maxLimit
+	ctrl.status.Axes[0].Position = 10
+
+	if err := ctrl.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := ctrl.Jog(context.Background(), core.AxisX, 5); err != nil {
+		t.Fatalf("Jog returned error: %v", err)
+	}
+
+	want := []string{"SH", "MTA=2", "CEA=0", "TD", "SPA=1000", "PRA=200", "BGA"}
 	if got := server.commands(len(want)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
 	}

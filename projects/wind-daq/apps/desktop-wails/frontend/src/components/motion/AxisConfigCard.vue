@@ -154,7 +154,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         </div>
       </div>
 
-      <!-- 底部选项：方向反转 + 位置来源（仅 B140-MC 显示位置来源） -->
+      <!-- 底部选项：方向反转 + 位置来源（所有控制器都显示，仅 B140-MC 可选编码器） -->
       <div class="axis-card__footer">
         <label class="axis-card__footer-item cursor-pointer">
           <UiCheckbox
@@ -164,12 +164,12 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           />
           <span class="axis-card__footer-label">方向反转</span>
         </label>
-        <div v-if="supportsEncoder" class="axis-card__footer-item">
+        <div class="axis-card__footer-item">
           <span class="axis-card__footer-label">位置来源</span>
           <UiSelect
             v-model="positionSourceModel"
             class="w-20"
-            :disabled="!axis.enabled"
+            :disabled="!axis.enabled || !supportsEncoder"
             :options="[
               { value: 'register', label: '寄存器' },
               { value: 'encoder', label: '编码器' },
@@ -293,7 +293,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1-5) var(--space-3);
   background: var(--axis-hue-soft);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -320,12 +320,12 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
 }
 
 .axis-card__body {
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
 }
 .axis-card__grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-2) var(--space-3);
+  gap: var(--space-1-5) var(--space-3);
 }
 .axis-card__grid--disabled {
   opacity: 0.55;
@@ -361,8 +361,8 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
+  margin-top: var(--space-1-5);
+  padding-top: var(--space-1-5);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   gap: var(--space-2);
 }

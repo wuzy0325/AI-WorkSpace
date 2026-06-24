@@ -8,7 +8,7 @@ export function defaultEncComp(): AxisEncoderCompensationConfig {
 
 export function createDefaultAxis(name: AxisName): AxisConfig {
   return {
-    name, enabled: true, kind: name === 'U' ? 'ROTARY' as const : 'LINEAR' as const,
+    name, enabled: name !== 'U', kind: name === 'U' ? 'ROTARY' as const : 'LINEAR' as const,
     maxSpeed: 10, stepsPerRev: 1.8,
     microSteps: 4, lead: 4, gearRatio: 1,
     positionSource: 'register' as const, encoderScale: 0.005,

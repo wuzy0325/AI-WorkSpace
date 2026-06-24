@@ -39,7 +39,7 @@ function closeWindow(): void {
         </UiButton>
       </div>
     </header>
-    <main class="flex-1 min-h-0 p-4" style="background:var(--bg-canvas)">
+    <main class="flex-1 min-h-0 p-4 overflow-auto" style="background:var(--bg-canvas)">
       <MotionControlPanel />
     </main>
   </div>

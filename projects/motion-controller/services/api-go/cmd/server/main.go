@@ -30,12 +30,18 @@ func main() {
 		MotionManager: appCtx.MotionManager,
 	})
 
-	addr := ":8900"
+	addr := "127.0.0.1:8900"
 	if envAddr := os.Getenv("MOTION_SERVER_ADDR"); envAddr != "" {
 		addr = envAddr
 	}
 
-	srv := &http.Server{Addr: addr, Handler: handler}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
 	go func() {
 		log.Printf("Motion Controller server starting on %s", addr)
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {

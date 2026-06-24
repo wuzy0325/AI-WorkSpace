@@ -14,7 +14,7 @@ const feedbackStore = useFeedbackStore()
       leave-from-class="opacity-100"
       leave-to-class="opacity-0"
     >
-      <div v-if="feedbackStore.confirmState.open" class="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div v-if="feedbackStore.confirmState.open" class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
         <Transition
           enter-active-class="transition ease-out duration-300"
           enter-from-class="opacity-0 scale-95"

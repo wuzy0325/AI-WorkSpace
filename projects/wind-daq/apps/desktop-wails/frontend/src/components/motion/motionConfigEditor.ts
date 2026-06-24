@@ -39,7 +39,7 @@ export function createDefaultEncoderCompensation() {
 export function createDefaultAxis(name: AxisName): AxisConfig {
   return {
     name,
-    enabled: true,
+    enabled: name !== 'U',
     kind: name === 'U' ? 'ROTARY' : 'LINEAR',
     maxSpeed: DEFAULT_MAX_SPEED,
     minLimit: undefined,

@@ -283,7 +283,6 @@ export const wailsApi = {
     onStatusEvent: (callback: (data: unknown) => void): (() => void) => {
       // 绕开 Wails v2.12.0 reflect 序列化 bug，通过 HTTP API 轮询状态
       let active = true;
-      let pollCount = 0;
       let errorCount = 0;
       const poll = async () => {
         if (!active) return;
@@ -291,26 +290,20 @@ export const wailsApi = {
           const resp = await fetch(`${MOTION_HTTP_BASE}/api/motion/status`);
           if (resp.ok) {
             const statuses = await resp.json();
-            pollCount++;
-            if (pollCount <= 5 || pollCount % 50 === 0) {
-              console.log('[wails-adapter] onStatusEvent poll success', { pollCount, statusCount: Array.isArray(statuses) ? statuses.length : 'not-array' })
-            }
             if (active) callback(statuses);
           }
         } catch (e) {
           errorCount++;
           if (errorCount <= 10 || errorCount % 20 === 0) {
-            console.error('[wails-adapter] onStatusEvent poll error', { pollCount, errorCount, error: e })
+            console.error('[wails-adapter] onStatusEvent poll error', { errorCount, error: e })
           }
         }
         if (active) {
           setTimeout(poll, 200);
         }
       };
-      console.log('[wails-adapter] onStatusEvent HTTP polling started')
       poll();
       return () => {
-        console.log('[wails-adapter] onStatusEvent HTTP polling stopped', { pollCount, errorCount })
         active = false;
       };
     }

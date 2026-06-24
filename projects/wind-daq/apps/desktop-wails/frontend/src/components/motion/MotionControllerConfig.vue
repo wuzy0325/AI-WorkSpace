@@ -48,6 +48,12 @@ const isEdit = computed(() => !!editing.id);
 const validationErrors = ref<string[]>([]);
 const isCreatingNew = ref(false);
 
+function defaultPortForType(type: string): number {
+  if (type === 'B140-MC') return 23;
+  if (type === 'WTNMC4A-MC') return 5000;
+  return 9000;
+}
+
 function newProfile(): void {
   isCreatingNew.value = true;
   validationErrors.value = [];
@@ -167,15 +173,24 @@ async function save(): Promise<void> {
     })),
   };
 
-  await motion.upsertProfile(profile);
+  try {
+    await motion.upsertProfile(profile);
+  } catch (e) {
+    feedback.pushToast(`保存配置失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+    return;
+  }
   feedback.pushToast('控制器配置已保存', 'success');
   emit('close');
 }
 
 async function remove(id: string): Promise<void> {
-  await motion.deleteProfile(id);
-  feedback.pushToast('控制器已删除', 'info');
-  emit('close');
+  try {
+    await motion.deleteProfile(id);
+    feedback.pushToast('控制器已删除', 'info');
+    emit('close');
+  } catch (e) {
+    feedback.pushToast(`删除失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+  }
 }
 
 function ensureEditingOnOpen(): void {
@@ -202,6 +217,13 @@ onMounted(async () => {
 watch(() => props.open, (v) => {
   if (v) ensureEditingOnOpen();
   else isCreatingNew.value = false;
+});
+
+watch(() => editing.type, (type, oldType) => {
+  if (!oldType || type === oldType) return;
+  if (editing.port === defaultPortForType(oldType)) {
+    editing.port = defaultPortForType(type);
+  }
 });
 
 function onAxisUpdate(index: number, axis: AxisConfig): void {
@@ -237,19 +259,34 @@ const controllerTypeOptions = [
           leave-from-class="opacity-100 scale-100 translate-y-0"
           leave-to-class="opacity-0 scale-95 translate-y-4"
         >
-          <div v-show="open" class="config-panel" @click.stop>
+          <div v-show="open" class="config-panel" :class="{ 'config-panel--creating': isCreatingNew }" @click.stop>
             <!-- Header -->
-            <header class="config-panel__header">
+            <header class="config-panel__header" :class="{ 'config-panel__header--creating': isCreatingNew }">
               <div class="flex items-center gap-3">
-                <div class="config-panel__icon">
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <div class="config-panel__icon" :class="{ 'config-panel__icon--creating': isCreatingNew }">
+                  <!-- 新建态：加号图标；编辑态：齿轮图标 -->
+                  <svg v-if="isCreatingNew" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="16"/>
+                    <line x1="8" y1="12" x2="16" y2="12"/>
+                  </svg>
+                  <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"/>
                     <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
                   </svg>
                 </div>
-                <div>
-                  <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
-                  <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
+                <div class="config-panel__title-block">
+                  <div class="config-panel__title-row">
+                    <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建运动控制器' }}</h2>
+                    <span v-if="isCreatingNew" class="creation-badge">
+                      <span class="creation-badge__dot"></span>
+                      新建中 · 尚未保存
+                    </span>
+                  </div>
+                  <p class="config-panel__subtitle">
+                    <template v-if="isCreatingNew">填写下方表单并点击「创建控制器」以新增一条配置</template>
+                    <template v-else>编辑现有控制器配置</template>
+                  </p>
                 </div>
               </div>
               <NButton quaternary size="small" class="config-panel__close" @click="emit('close')">
@@ -266,6 +303,11 @@ const controllerTypeOptions = [
               <ProfileSidebar
                 :profiles="motion.profiles"
                 :active-id="editing.id"
+                :creating="isCreatingNew"
+                :draft-name="editing.name"
+                :draft-type="editing.type"
+                :draft-address="editing.address"
+                :draft-port="editing.port"
                 @select="(id: string) => { const p = motion.profiles.find(x => x.id === id); if (p) editProfile(p); }"
                 @add="newProfile"
               />
@@ -309,7 +351,7 @@ const controllerTypeOptions = [
                 </section>
 
                 <!-- Axis Matrix -->
-                <div class="config-section flex-1 flex flex-col min-h-0">
+                <div class="config-section flex flex-col">
                   <h3 class="config-section__title">
                     <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
                     轴配置
@@ -330,17 +372,20 @@ const controllerTypeOptions = [
             </div>
 
             <!-- Footer -->
-            <footer class="config-panel__footer">
+            <footer class="config-panel__footer" :class="{ 'config-panel__footer--creating': isCreatingNew }">
               <div class="config-panel__footer-left">
-                <span class="config-status" :class="isEdit ? 'config-status--edit' : 'config-status--new'">
-                  {{ isEdit ? '编辑现有配置' : '新建配置' }}
+                <span class="config-status" :class="isCreatingNew ? 'config-status--new' : 'config-status--edit'">
+                  <span v-if="isCreatingNew" class="config-status__dot"></span>
+                  {{ isCreatingNew ? '新建配置 · 保存后生效' : '编辑现有配置' }}
                 </span>
               </div>
               <div class="config-panel__footer-right">
                 <NButton v-if="isEdit" type="error" size="tiny" class="config-panel__delete-btn" @click="remove(editing.id)">删除</NButton>
-                <NButton type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
+                <NButton v-if="isEdit" type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
                 <NButton quaternary size="tiny" class="config-panel__cancel-btn" @click="emit('close')">取消</NButton>
-                <NButton type="primary" size="tiny" class="config-panel__save-btn" @click="save">保存</NButton>
+                <NButton type="primary" size="tiny" class="config-panel__save-btn" @click="save">
+                  {{ isCreatingNew ? '创建控制器' : '保存' }}
+                </NButton>
               </div>
             </footer>
 
@@ -376,8 +421,8 @@ const controllerTypeOptions = [
 .config-panel {
   width: 100%;
   max-width: 1100px;
-  max-height: 800px;
-  height: 90vh;
+  max-height: calc(100vh - var(--space-8));
+  height: calc(100vh - var(--space-8));
   display: flex;
   flex-direction: column;
   border-radius: 1rem;
@@ -385,6 +430,16 @@ const controllerTypeOptions = [
   border: 1px solid var(--border-default);
   box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* 新建态：弹窗整体加 success 主题色描边和外发光 */
+.config-panel--creating {
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-default));
+  box-shadow:
+    0 32px 80px -24px rgba(0, 0, 0, 0.5),
+    0 0 0 1px color-mix(in srgb, var(--accent-primary) 35%, transparent),
+    0 12px 40px -8px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 :root[data-theme='light'] .config-panel {
   background: rgba(255, 255, 255, 0.98);
@@ -397,6 +452,73 @@ const controllerTypeOptions = [
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
+  position: relative;
+  transition: background 0.25s ease;
+}
+
+/* 新建态：头部主题色渐变背景 + 顶部高亮条 */
+.config-panel__header--creating {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-primary) 18%, var(--bg-panel-strong)) 0%,
+    var(--bg-panel-strong) 100%
+  );
+}
+
+.config-panel__header--creating::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-primary) 20%,
+    var(--accent-primary) 80%,
+    transparent 100%
+  );
+}
+
+.config-panel__title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.config-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+/* 新建状态徽章 */
+.creation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+
+.creation-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: motion-cfg-pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes motion-cfg-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
 }
 .config-panel__icon {
   width: 2.5rem;
@@ -407,6 +529,15 @@ const controllerTypeOptions = [
   border-radius: 0.5rem;
   background: color-mix(in srgb, var(--accent-info) 10%, transparent);
   color: var(--accent-info);
+  transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* 新建态：图标改为主题色高亮 */
+.config-panel__icon--creating {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color: var(--accent-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent),
+              0 0 16px -4px color-mix(in srgb, var(--accent-primary) 60%, transparent);
 }
 .config-panel__title {
   font-size: var(--font-size-lg);
@@ -417,6 +548,12 @@ const controllerTypeOptions = [
   margin-top: 0.25rem;
   font-size: var(--font-size-xs);
   color: var(--text-muted);
+}
+
+/* 新建态：副标题加重颜色作为操作提示 */
+.config-panel__header--creating .config-panel__subtitle {
+  color: var(--accent-primary);
+  font-weight: 600;
 }
 .config-panel__close {
   width: 2rem;
@@ -442,10 +579,10 @@ const controllerTypeOptions = [
 .config-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 0.625rem 0.875rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.625rem;
 }
 .config-content::-webkit-scrollbar {
   width: 4px;
@@ -462,7 +599,7 @@ const controllerTypeOptions = [
   margin-bottom: 0;
 }
 .config-section--boxed {
-  padding: 0.875rem 1rem;
+  padding: 0.625rem 0.875rem;
   border-radius: var(--radius-md);
   background: var(--bg-panel-strong);
   border: 1px solid var(--border-default);
@@ -473,7 +610,7 @@ const controllerTypeOptions = [
   color: var(--text-muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 .section-subtitle {
   display: inline;
@@ -493,7 +630,7 @@ const controllerTypeOptions = [
 .basic-info-field {
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 0.25rem;
 }
 .basic-info-field:nth-child(1) { grid-column: span 3; }
 .basic-info-field:nth-child(2) { grid-column: span 3; }
@@ -565,9 +702,7 @@ const controllerTypeOptions = [
 .axis-matrix {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.875rem;
-  flex: 1;
-  min-height: 0;
+  gap: 0.5rem;
 }
 
 .config-panel__footer {
@@ -577,6 +712,17 @@ const controllerTypeOptions = [
   padding: 0.875rem 1.25rem;
   border-top: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
+  transition: background 0.25s ease, border-top-color 0.25s ease;
+}
+
+/* 新建态：底部轻染色，与头部呼应 */
+.config-panel__footer--creating {
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--accent-primary) 10%, var(--bg-panel-strong)) 0%,
+    var(--bg-panel-strong) 100%
+  );
+  border-top-color: color-mix(in srgb, var(--accent-primary) 25%, var(--border-default));
 }
 .config-panel__footer-left,
 .config-panel__footer-right {
@@ -585,6 +731,9 @@ const controllerTypeOptions = [
   gap: 0.75rem;
 }
 .config-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
@@ -592,7 +741,14 @@ const controllerTypeOptions = [
   color: var(--accent-primary);
 }
 .config-status--new {
-  color: var(--text-muted);
+  color: var(--accent-primary);
+}
+.config-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: motion-cfg-pulse-dot 1.5s ease-in-out infinite;
 }
 .config-panel__delete-btn,
 .config-panel__new-btn,

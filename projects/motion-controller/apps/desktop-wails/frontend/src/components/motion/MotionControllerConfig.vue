@@ -42,6 +42,12 @@ const DEFAULT_ADDRESS = '127.0.0.1'
 const DEFAULT_PORT = 5176
 const MAX_PORT = 65535
 
+function defaultPortForType(type: string): number {
+  if (type === 'B140-MC') return 23
+  if (type === 'WTNMC4A-MC') return 5000
+  return DEFAULT_PORT
+}
+
 /* -- Form state -- */
 const editing = reactive<MotionControllerProfile>({
   id: '', name: '', type: DEFAULT_TYPE, address: DEFAULT_ADDRESS, port: DEFAULT_PORT, autoConnect: false,
@@ -260,6 +266,10 @@ async function tryClose(): Promise<void> {
   })
 }
 
+function cancelAndClose(): void {
+  emit('close')
+}
+
 /* -- Sidebar: switch profile (dirty check) -- */
 async function onProfileSelect(id: string): Promise<void> {
   await withConfirmGuard(async () => {
@@ -310,6 +320,13 @@ onMounted(async () => {
 
 watch(() => props.open, (v) => { if (v) ensureEditingOnOpen() })
 
+watch(() => editing.type, (type, oldType) => {
+  if (!oldType || type === oldType) return
+  if (editing.port === defaultPortForType(oldType)) {
+    editing.port = defaultPortForType(type)
+  }
+})
+
 // 深度监听 editing 变化，标记脏状态
 // 使用 skipDirtyWatch 标志避免在 editProfile/newProfile/save 赋值期间误触发
 // 注意：skipDirtyWatch 是模块级变量，若同一页面渲染多个本组件实例会共享状态
@@ -352,21 +369,30 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
           leave-from-class="opacity-100 scale-100 translate-y-0"
           leave-to-class="opacity-0 scale-95 translate-y-4"
         >
-          <div v-show="open" class="config-panel" @click.stop>
+          <div v-show="open" class="config-panel" :class="{ 'config-panel--creating': isCreatingNew }" @click.stop>
             <!-- 面板头部 -->
-            <header class="config-panel__header">
+            <header class="config-panel__header" :class="{ 'config-panel__header--creating': isCreatingNew }">
               <div class="config-panel__header-left">
                 <div class="config-panel__title-row">
-                  <svg class="config-panel__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <!-- 新建态：加号图标；编辑态：控制器图标 -->
+                  <svg v-if="isCreatingNew" class="config-panel__title-icon config-panel__title-icon--creating" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="16" />
+                    <line x1="8" y1="12" x2="16" y2="12" />
+                  </svg>
+                  <svg v-else class="config-panel__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><circle cx="6" cy="6" r="1" /><circle cx="6" cy="18" r="1" />
                   </svg>
-                  <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建控制器' }}</h2>
+                  <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建运动控制器' }}</h2>
                   <span v-if="isCreatingNew" class="creation-badge">
                     <span class="creation-badge__dot"></span>
-                    新建中
+                    新建中 · 尚未保存
                   </span>
                 </div>
-                <p class="config-panel__subtitle">{{ isEdit ? '编辑现有控制器配置' : '创建新的运动控制器配置' }}</p>
+                <p class="config-panel__subtitle">
+                  <template v-if="isCreatingNew">填写下方表单并点击「创建控制器」以新增一条配置</template>
+                  <template v-else>编辑现有控制器配置 · ID {{ editing.id.slice(0, 8) }}</template>
+                </p>
               </div>
               <button class="config-panel__close" @click="tryClose">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -382,6 +408,9 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                 <ProfileSidebar
                   :profiles="motion.profiles"
                   :active-id="editing.id"
+                  :creating="isCreatingNew"
+                  :draft-name="editing.name"
+                  :draft-type="editing.type"
                   @select="onProfileSelect"
                   @add="onProfileAdd"
                 />
@@ -454,7 +483,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
             </div>
 
             <!-- 底部操作栏 -->
-            <footer class="config-panel__footer">
+            <footer class="config-panel__footer" :class="{ 'config-panel__footer--creating': isCreatingNew }">
               <div class="config-panel__footer-left">
                 <UiButton v-if="isEdit" variant="danger" size="sm" @click="remove(editing.id)">
                   删除
@@ -465,7 +494,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                 </span>
               </div>
               <div class="config-panel__footer-right">
-                <UiButton variant="secondary" size="sm" @click="tryClose">
+                <UiButton variant="secondary" size="sm" @click="cancelAndClose">
                   取消
                 </UiButton>
                 <UiButton
@@ -475,7 +504,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                   :disabled="validationErrorCount > 0"
                   @click="save"
                 >
-                  保存
+                  {{ isCreatingNew ? '创建控制器' : '保存' }}
                 </UiButton>
               </div>
             </footer>
@@ -537,6 +566,16 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   box-shadow: var(--shadow-panel);
   outline: none;
   overflow: hidden;
+  transition: border-color var(--motion-medium) var(--easing-standard),
+              box-shadow var(--motion-medium) var(--easing-standard);
+}
+
+/* 新建态：弹窗整体加 success 主题色描边和外发光，强化"正在创建"的感知 */
+.config-panel--creating {
+  border-color: color-mix(in srgb, var(--accent-success) 55%, var(--border-default));
+  box-shadow: var(--shadow-panel),
+              0 0 0 1px color-mix(in srgb, var(--accent-success) 35%, transparent),
+              0 12px 40px -8px color-mix(in srgb, var(--accent-success) 35%, transparent);
 }
 
 /* ============================================================
@@ -550,6 +589,40 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-panel);
   flex-shrink: 0;
+  position: relative;
+  transition: background var(--motion-medium) var(--easing-standard);
+}
+
+/* 新建态：头部渐变背景 + 顶部主题色高亮条，营造"全新画布"的氛围 */
+.config-panel__header--creating {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-success) 14%, var(--bg-panel)) 0%,
+    var(--bg-panel) 100%
+  );
+}
+
+.config-panel__header--creating::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-success) 20%,
+    var(--accent-success) 80%,
+    transparent 100%
+  );
+}
+
+.config-panel__title-icon--creating {
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--accent-success);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent-success) 60%, transparent));
 }
 
 .config-panel__header-left {
@@ -581,6 +654,12 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   font-size: 0.6875rem;
   color: var(--text-muted);
   padding-left: 1.5rem;
+}
+
+/* 新建态：副标题加重颜色，作为操作提示 */
+.config-panel__header--creating .config-panel__subtitle {
+  color: var(--accent-success);
+  font-weight: 600;
 }
 
 .config-panel__close {
@@ -812,6 +891,17 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   background: var(--bg-panel);
   flex-shrink: 0;
   gap: var(--space-3);
+  transition: background var(--motion-medium) var(--easing-standard);
+}
+
+/* 新建态：底部轻染色，与头部呼应 */
+.config-panel__footer--creating {
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--accent-success) 8%, var(--bg-panel)) 0%,
+    var(--bg-panel) 100%
+  );
+  border-top-color: color-mix(in srgb, var(--accent-success) 25%, var(--border-default));
 }
 
 .config-panel__footer-left,

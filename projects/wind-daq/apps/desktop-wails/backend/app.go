@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -124,6 +125,9 @@ func (a *App) startLocalAPIServer() {
 			StorageRecorder:    a.appContext.StorageRecorder,
 			ConfigManager:      a.appContext.ConfigManager,
 		}),
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
 	}
 	go func() {
 		log.Println("Wind-DAQ local API listening on http://127.0.0.1:8900")
@@ -157,7 +161,20 @@ func (a *App) startDataRelay() {
 	}()
 }
 
-// startMotionPoller 启动运动状态轮询，将 MotionStatusPoller 输出通过 Wails EventsEmit 推送到前端
+// startMotionPoller 启动运动状态轮询。
+//
+// 设计说明：
+//   - 历史实现通过 runtime.EventsEmit("motion:status", statuses) 推送到前端，
+//     但 Wails v2.12.0 存在已知的 reflect 序列化 bug：在序列化嵌套切片中含有
+//     具名 string 类型（如 ControllerType / AxisName）时，会错误地调用
+//     reflect.Value.IsNil()，导致 "reflect: call of reflect.Value.IsNil on string Value" panic。
+//     B140 点动后状态字段更复杂，必现该问题。
+//   - 解决方案与 motion-controller 项目保持一致：彻底放弃 EventsEmit 推送，
+//     前端改为通过 HTTP GET /api/motion/status 主动轮询，后端用标准库 json 编码，
+//     完全绕开 Wails 的 reflect 桥。
+//   - 仍然启动 poller 并消费其输出 channel：一是维持周期性 StatusAll 调用，
+//     让 MotionManager 内部缓存保持新鲜（traversal 等用例依赖此行为）；
+//     二是消费 channel 防止其 buffer 写满后阻塞 poller 协程。
 func (a *App) startMotionPoller() {
 	poller := a.appContext.MotionStatusPoller
 	if poller == nil {
@@ -165,8 +182,8 @@ func (a *App) startMotionPoller() {
 	}
 	poller.Start(a.ctx)
 	go func() {
-		for statuses := range poller.Status() {
-			runtime.EventsEmit(a.ctx, "motion:status", statuses)
+		// 仅消费 channel，不再向前端发射事件，避免触发 Wails v2.12.0 reflect bug
+		for range poller.Status() {
 		}
 	}()
 }
@@ -306,6 +323,18 @@ func (a *App) OpenMotionWindow() GenericResponse {
 	}(cmd)
 
 	return GenericResponse{Success: true}
+}
+
+// ResolvePath 将相对路径解析为绝对路径
+func (a *App) ResolvePath(p string) (string, error) {
+	if p == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p, nil
+	}
+	return abs, nil
 }
 
 // PickDirectory 选择目录对话框

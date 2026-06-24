@@ -1,10 +1,23 @@
 <script setup lang="ts">
 import type { MotionControllerProfile } from '@shared/types/motion'
 
-defineProps<{
-  profiles: MotionControllerProfile[]
-  activeId: string
-}>()
+withDefaults(
+  defineProps<{
+    profiles: MotionControllerProfile[]
+    activeId: string
+    /** 是否正处于新建态（草稿尚未保存） */
+    creating?: boolean
+    /** 新建草稿当前的控制器名称，用于侧边栏占位项的实时显示 */
+    draftName?: string
+    /** 新建草稿当前的控制器类型，用于占位项副标题显示 */
+    draftType?: string
+  }>(),
+  {
+    creating: false,
+    draftName: '',
+    draftType: '',
+  },
+)
 
 const emit = defineEmits<{
   select: [id: string]
@@ -24,12 +37,39 @@ const emit = defineEmits<{
       </button>
     </div>
     <div class="config-sidebar__list">
+      <!-- 新建草稿占位项：仅在新建态显示，作为列表中唯一的高亮活动项 -->
+      <div
+        v-if="creating"
+        class="config-sidebar__item config-sidebar__item--draft config-sidebar__item--active"
+        role="status"
+        aria-label="正在新建控制器"
+      >
+        <div class="config-sidebar__item-row">
+          <div class="config-sidebar__item-icon config-sidebar__item-icon--draft">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="16" />
+              <line x1="8" y1="12" x2="16" y2="12" />
+            </svg>
+          </div>
+          <div class="config-sidebar__item-content">
+            <span class="config-sidebar__item-name config-sidebar__item-name--draft">
+              {{ draftName?.trim() || '未命名控制器' }}
+            </span>
+            <span class="config-sidebar__item-type config-sidebar__item-type--draft">
+              <span class="config-sidebar__draft-dot"></span>
+              新建中 · {{ draftType || '待选类型' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
       <button
         v-for="p in profiles"
         :key="p.id"
         @click="emit('select', p.id)"
         class="config-sidebar__item"
-        :class="{ 'config-sidebar__item--active': activeId === p.id }"
+        :class="{ 'config-sidebar__item--active': !creating && activeId === p.id, 'config-sidebar__item--dimmed': creating }"
       >
         <div class="config-sidebar__item-row">
           <div class="config-sidebar__item-icon">
@@ -43,7 +83,7 @@ const emit = defineEmits<{
           </div>
         </div>
       </button>
-      <div v-if="profiles.length === 0" class="config-sidebar__empty">
+      <div v-if="profiles.length === 0 && !creating" class="config-sidebar__empty">
         <p>暂无控制器配置</p>
       </div>
     </div>
@@ -189,5 +229,87 @@ const emit = defineEmits<{
   text-align: center;
   color: var(--text-muted);
   font-size: 0.75rem;
+}
+
+/* ============================================================
+   新建草稿占位项 —— 让用户在侧边栏直接"看见"正在新建的设备
+   ============================================================ */
+.config-sidebar__item--draft {
+  position: relative;
+  cursor: default;
+  border-style: dashed !important;
+  border-color: color-mix(in srgb, var(--accent-success) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--accent-success) 10%, transparent) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-success) 18%, transparent),
+              0 2px 12px -2px color-mix(in srgb, var(--accent-success) 25%, transparent) !important;
+  animation: draft-item-in 0.25s var(--easing-standard, ease-out);
+}
+
+/* 草稿项左侧竖向高亮条 */
+.config-sidebar__item--draft::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-success);
+}
+
+.config-sidebar__item--draft:hover {
+  transform: none;
+}
+
+.config-sidebar__item-icon--draft {
+  background: color-mix(in srgb, var(--accent-success) 25%, transparent) !important;
+  color: var(--accent-success) !important;
+  box-shadow: 0 0 8px -2px color-mix(in srgb, var(--accent-success) 70%, transparent);
+}
+
+.config-sidebar__item-name--draft {
+  color: var(--accent-success) !important;
+  font-style: italic;
+}
+
+.config-sidebar__item-type--draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--accent-success) !important;
+  font-weight: 600;
+}
+
+.config-sidebar__draft-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-success);
+  animation: draft-pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* 新建态下其余已存在控制器淡化，凸显草稿项 */
+.config-sidebar__item--dimmed {
+  opacity: 0.55;
+}
+.config-sidebar__item--dimmed:hover {
+  opacity: 1;
+}
+
+@keyframes draft-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes draft-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
 }
 </style>

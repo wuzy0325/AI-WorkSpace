@@ -152,7 +152,6 @@ async function handleDisconnect(): Promise<void> {
 }
 
 async function move(axis: AxisName): Promise<void> {
-  console.log('[move] called', { axis, selectedId: selectedId.value, connected: controllerConnected.value })
   if (!selectedId.value || !controllerConnected.value) return
   const state = ensureAxisLocalState(selectedId.value, axis)
   const offset = getZeroOffset(selectedId.value, axis)
@@ -172,9 +171,7 @@ async function move(axis: AxisName): Promise<void> {
     feedback.pushToast(validation.warning, 'warning')
   }
 
-  console.log('[move] calling moveTo', { id: selectedId.value, axis, absoluteTarget })
   await motion.moveTo(selectedId.value, axis, absoluteTarget)
-  console.log('[move] moveTo done')
 }
 
 async function jogAxis(axis: AxisName, direction: 'forward' | 'reverse'): Promise<void> {
@@ -190,7 +187,7 @@ async function stop(axis?: AxisName): Promise<void> {
 }
 
 async function emergencyStop(): Promise<void> {
-  if (!selectedId.value || !controllerConnected.value) return
+  if (!selectedId.value) return
   await motion.emergencyStop(selectedId.value)
 }
 
@@ -205,18 +202,25 @@ function clearCurrentError(): void {
 }
 
 async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): Promise<void> {
-  console.log('[adjustByStep] called', { axis, direction, selectedId: selectedId.value, connected: controllerConnected.value, hasStatus: !!currentStatus.value })
   if (!selectedId.value || !controllerConnected.value || !currentStatus.value) return
-  if (!currentStatus.value.axes.some((a) => a.name === axis)) return
+  const axisStatus = currentStatus.value.axes.find((a) => a.name === axis)
+  if (!axisStatus) return
   const state = ensureAxisLocalState(selectedId.value, axis)
   if (!Number.isFinite(state.step) || state.step <= 0) {
     feedback.pushToast('步长必须为正数', 'error')
     return
   }
   const delta = direction === 'forward' ? state.step : -state.step
-  console.log('[adjustByStep] calling moveBy', { id: selectedId.value, axis, delta })
+  const validation = validateTargetPosition(axis, axisStatus.position + delta)
+  if (!validation.valid) {
+    feedback.pushToast(validation.warning || '目标位置超出限位', 'error')
+    return
+  }
+  if ((delta > 0 && axisStatus.posLimit) || (delta < 0 && axisStatus.negLimit)) {
+    feedback.pushToast('当前方向限位已触发，禁止继续点动', 'error')
+    return
+  }
   await motion.moveBy(selectedId.value, axis, delta)
-  console.log('[adjustByStep] moveBy done')
 }
 
 async function setZero(axis: AxisName): Promise<void> {
@@ -310,10 +314,18 @@ watch(
   },
   { deep: true }
 )
+
+watch(
+  () => motion.profiles.map((p) => p.id),
+  (ids) => {
+    if (!selectedId.value || ids.includes(selectedId.value)) return
+    selectedId.value = ids[0] ?? null
+  }
+)
 </script>
 
 <template>
-  <div class="flex h-full gap-4 motion-control-panel">
+  <div class="flex gap-4 motion-control-panel">
     <!-- 左侧边栏：控制器列表 -->
     <aside data-test="motion-panel-surface" class="motion-sidebar shrink-0 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)]">
       <!-- 边栏头部 -->
@@ -372,7 +384,7 @@ watch(
     </aside>
 
     <!-- 主内容区 -->
-    <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden">
+    <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden h-fit">
       <!-- 面板头部 -->
       <header class="panel-header">
         <div class="panel-header-info">
@@ -509,7 +521,7 @@ watch(
       </div>
 
       <!-- 轴内容区 -->
-      <div v-else class="flex flex-col flex-1 min-h-0">
+      <div v-else class="flex flex-col min-h-0">
         <div class="axis-content custom-scrollbar">
           <!-- 无轴配置状态 -->
           <div v-if="axes.length === 0" class="empty-state">
@@ -1102,7 +1114,7 @@ watch(
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: var(--space-5);
+  padding: var(--space-3) var(--space-5);
 }
 
 /* ============================================================
@@ -1111,7 +1123,7 @@ watch(
 .axis-grid {
   display: grid;
   grid-template-columns: repeat(1, 1fr);
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 @media (min-width: 768px) {
@@ -1138,6 +1150,7 @@ watch(
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   min-width: 200px;
+  height: fit-content;
   transition: border-color var(--motion-base) var(--easing-standard),
               box-shadow var(--motion-base) var(--easing-standard);
 }
@@ -1579,56 +1592,56 @@ watch(
 .jog-input-wrap {
   flex: 1;
   min-width: 0;
-  position: relative;
   display: flex;
   align-items: center;
+  gap: var(--space-1-5);
 }
 
 .jog-input {
   width: 100%;
   height: 2rem;
-  padding: 0 1.5rem 0 var(--space-2);
+  padding: 0 var(--space-2);
   text-align: left;
   font-size: 0.875rem;
   font-weight: 600;
 }
 
 .jog-unit {
-  position: absolute;
-  right: var(--space-2);
   font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--text-muted);
   pointer-events: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* 定位输入 */
 .move-input-wrap {
   flex: 1;
   min-width: 0;
-  position: relative;
   display: flex;
   align-items: center;
+  gap: var(--space-1-5);
 }
 
 .move-input {
   width: 100%;
   height: 2rem;
-  padding: 0 1.5rem 0 var(--space-2);
+  padding: 0 var(--space-2);
   text-align: left;
   font-size: 0.875rem;
   font-weight: 600;
 }
 
 .move-unit {
-  position: absolute;
-  right: var(--space-2);
   font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--text-muted);
   pointer-events: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* ============================================================

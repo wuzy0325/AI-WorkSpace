@@ -174,6 +174,10 @@ export function ReportGetStatus() {
   return window['go']['backend']['App']['ReportGetStatus']();
 }
 
+export function ResolvePath(arg1) {
+  return window['go']['backend']['App']['ResolvePath'](arg1);
+}
+
 export function SetParentPID(arg1) {
   return window['go']['backend']['App']['SetParentPID'](arg1);
 }

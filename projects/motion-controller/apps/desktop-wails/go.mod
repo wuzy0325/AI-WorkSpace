@@ -6,6 +6,7 @@ require (
 	github.com/wailsapp/wails/v2 v2.12.0
 	motion-controller/services/api-go v0.0.0
 	shared.local/device-sdk/go v0.0.0
+	shared.local/motion-control/go v0.0.0
 )
 
 require (
@@ -37,7 +38,6 @@ require (
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
-	shared.local/motion-control/go v0.0.0 // indirect
 )
 
 replace (
