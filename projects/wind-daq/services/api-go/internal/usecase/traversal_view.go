@@ -6,6 +6,7 @@
 package usecase
 
 import (
+	"fmt"
 	"sort"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -20,7 +21,13 @@ func (m *TraversalManager) finalizeSink() {
 	m.mu.Unlock()
 	if sink != nil {
 		// FinalizeTraversal 自身需保证幂等（多次调用安全）
-		_ = sink.FinalizeTraversal()
+		if err := sink.FinalizeTraversal(); err != nil {
+			m.mu.Lock()
+			if m.status.TaskID == taskID {
+				m.setErrorLocked(fmt.Sprintf("finalize traversal sink: %v", err), traversal.ErrSaveFailed)
+			}
+			m.mu.Unlock()
+		}
 	}
 	// 释放工作流级互斥锁；幂等
 	if taskID != "" {

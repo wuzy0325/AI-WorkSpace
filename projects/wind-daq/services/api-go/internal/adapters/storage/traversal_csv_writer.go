@@ -60,7 +60,10 @@ func resolveOutputPath(cfg traversal.Config) string {
 	}
 	if savePath == "" {
 		// 空路径回退到当前工作目录
-		return saveName + ".csv"
+		if filepath.Ext(saveName) != ".csv" {
+			saveName += ".csv"
+		}
+		return saveName
 	}
 	if filepath.Ext(savePath) == ".csv" {
 		return savePath
@@ -126,8 +129,7 @@ func (w *TraversalCsvWriter) InitializeTraversal(cfg traversal.Config) error {
 	if err := w.writer.Write(header); err != nil {
 		return fmt.Errorf("写入遍历 CSV 表头失败: %w", err)
 	}
-	w.writer.Flush()
-	return nil
+	return w.flushLocked("刷新遍历 CSV 表头失败")
 }
 
 // createUniqueFile 在 basePath 已存在时，在文件名 stem 后追加 -2/-3/... 自增直到找到空位
@@ -179,22 +181,43 @@ func (w *TraversalCsvWriter) WriteTraversalPoint(p traversal.PointResult) error 
 	if err := w.writer.Write(row); err != nil {
 		return fmt.Errorf("写入遍历 CSV 行失败: %w", err)
 	}
-	w.writer.Flush()
-	return nil
+	return w.flushLocked("刷新遍历 CSV 行失败")
 }
 
 // FinalizeTraversal 关闭文件
 func (w *TraversalCsvWriter) FinalizeTraversal() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	var flushErr error
 	if w.writer != nil {
-		w.writer.Flush()
+		flushErr = w.flushLocked("刷新遍历 CSV 文件失败")
 		w.writer = nil
 	}
 	if w.file != nil {
 		err := w.file.Close()
 		w.file = nil
+		if flushErr != nil {
+			if err != nil {
+				return fmt.Errorf("%v; 关闭遍历 CSV 文件失败: %w", flushErr, err)
+			}
+			return flushErr
+		}
 		return err
+	}
+	return flushErr
+}
+
+// OutputPath 返回 InitializeTraversal 实际创建的 CSV 文件路径。
+func (w *TraversalCsvWriter) OutputPath() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.path
+}
+
+func (w *TraversalCsvWriter) flushLocked(message string) error {
+	w.writer.Flush()
+	if err := w.writer.Error(); err != nil {
+		return fmt.Errorf("%s: %w", message, err)
 	}
 	return nil
 }

@@ -208,6 +208,12 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			return m.failWithCode("write traversal point: %v", traversal.ErrSaveFailed, err)
 		}
 	}
+	checkpointSavePath := config.SavePath
+	if pathSink, ok := m.sink.(interface{ OutputPath() string }); ok {
+		if outputPath := pathSink.OutputPath(); outputPath != "" {
+			checkpointSavePath = outputPath
+		}
+	}
 
 	m.mu.Lock()
 	m.status.Results = append(m.status.Results, result)
@@ -231,7 +237,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 	}
 	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
-	checkpointPath := m.config.SavePath
+	checkpointPath := checkpointSavePath
 	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
 	m.mu.Unlock()
 
@@ -454,4 +460,3 @@ func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point trav
 		}
 	}
 }
-
