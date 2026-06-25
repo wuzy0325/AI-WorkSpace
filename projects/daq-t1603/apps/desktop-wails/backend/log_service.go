@@ -150,21 +150,10 @@ func (s *LogService) GetLogFileState() LogFileState {
 	}
 }
 
-// PickDirectory 让用户在系统对话框中选择目录，返回选定的绝对路径。
-//
-// 在 Wails v3 中，目录选择通过 app.Dialog.OpenFile().CanChooseDirectories(true) 完成；
-// 该方法被 LogService 和 RecordingService 共用（前端 bridge 各自调用同名 PickDirectory）。
+// PickDirectory 打开系统目录选择对话框。
 func (s *LogService) PickDirectory() (string, error) {
 	s.mu.Lock()
 	app := s.app
 	s.mu.Unlock()
-	if app == nil {
-		app = application.Get()
-	}
-	return app.Dialog.OpenFile().
-		CanChooseDirectories(true).
-		CanChooseFiles(false).
-		CanCreateDirectories(true).
-		SetTitle("选择保存目录").
-		PromptForSingleSelection()
+	return pickDirectory(app)
 }

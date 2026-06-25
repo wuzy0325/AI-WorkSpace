@@ -36,7 +36,12 @@ func ParseSerialFrame(data []byte) ([]float64, error) {
 
 const TCPFrameSize = 64
 const TCPFrameSizeWithTimestamp = 72 // 8 bytes timestamp header + 64 bytes float32 data
-const maxReasonableThermocoupleTemp = 2000.0
+
+// maxReasonableThermocoupleTemp 是温度校验的上限参考值。
+// 基于 K 型热电偶物理量程（-200°C ~ 1350°C），
+// 可覆盖 K/S/R/B 等常见热电偶类型，同时排除明显异常的未初始化内存值。
+const maxReasonableThermocoupleTemp = 1350.0
+const minReasonableThermocoupleTemp = -200.0
 
 // ParseTCPFrame parses TCP data frame.
 // Auto-detects format based on size:
@@ -83,7 +88,7 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 		if math.IsNaN(temp) || math.IsInf(temp, 0) {
 			continue
 		}
-		if temp >= -273.15 && temp <= maxReasonableThermocoupleTemp {
+		if temp >= minReasonableThermocoupleTemp && temp <= maxReasonableThermocoupleTemp {
 			reasonableCount++
 		}
 	}

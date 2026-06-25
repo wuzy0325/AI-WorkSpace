@@ -94,20 +94,10 @@ func (s *RecordingService) GetRecordingStatus() core.RecordingSession {
 	return s.recordUC.Status()
 }
 
-// PickDirectory 选择目录对话框，逻辑与 LogService.PickDirectory 等价。
-// 之所以在两个 Service 都暴露同名方法，是为了保持前端 bridge 的接口形态稳定，
-// 实现层都直接调用 Wails v3 Dialog API。
+// PickDirectory 打开系统目录选择对话框。
 func (s *RecordingService) PickDirectory() (string, error) {
 	s.mu.Lock()
 	app := s.app
 	s.mu.Unlock()
-	if app == nil {
-		app = application.Get()
-	}
-	return app.Dialog.OpenFile().
-		CanChooseDirectories(true).
-		CanChooseFiles(false).
-		CanCreateDirectories(true).
-		SetTitle("选择保存目录").
-		PromptForSingleSelection()
+	return pickDirectory(app)
 }

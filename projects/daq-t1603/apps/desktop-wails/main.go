@@ -45,11 +45,15 @@ func main() {
 	} else {
 		configDir = "config"
 	}
-	_ = os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		slog.Warn("创建配置目录失败", "dir", configDir, "error", err)
+	}
 	cfgStore := config.NewJSONConfigStore(filepath.Join(configDir, "device-profiles.json"))
 
 	logDir := filepath.Join(configDir, "logs")
-	_ = os.MkdirAll(logDir, 0755)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		slog.Warn("创建日志目录失败", "dir", logDir, "error", err)
+	}
 
 	// ---- 2. 实例化 adapters / usecases ----
 	t1603Adapter := hardware.NewT1603Adapter()
