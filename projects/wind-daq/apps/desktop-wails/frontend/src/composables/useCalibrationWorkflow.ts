@@ -88,12 +88,25 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   }
 
   async function saveCsv() {
-    const res = await calibrationStore.saveData()
-    if (!res.success) {
-      feedbackStore.pushToast('保存失败: ' + (res.error || '未知错误'), 'error')
-      return
+    // 校准过程已实时写入 config.savePath；此按钮作为"导出到指定位置"入口，
+    // 弹出文件选择器让用户选目标路径，由后端 SaveCsv 全量覆盖写入。
+    try {
+      const { useStorageStore } = await import('@stores/storageStore')
+      const storageStore = useStorageStore()
+      const defaultName = `${currentConfig.value?.name || 'calibration'}-${new Date().toISOString().slice(0, 10)}.csv`
+      const target = await storageStore.pickSaveFile('选择校准 CSV 导出位置', defaultName, [
+        { displayName: 'CSV 文件 (*.csv)', pattern: '*.csv' },
+      ])
+      if (!target) return
+      const res = await calibrationStore.saveData(target)
+      if (!res.success) {
+        feedbackStore.pushToast('导出失败: ' + (res.error || '未知错误'), 'error')
+        return
+      }
+      feedbackStore.pushToast('已导出: ' + (res.filepath || target), 'success')
+    } catch (e) {
+      feedbackStore.pushToast('导出失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
     }
-    feedbackStore.pushToast('已保存: ' + (res.filepath || ''), 'success')
   }
 
   async function exportReport() {
@@ -135,6 +148,7 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       const device = deviceStore.profiles?.find((d) => d.id === deviceId)
       if (!device) return false
       if (deviceStore.statusFor(deviceId) !== 'Connected') return false
+      if (!deviceStore.acquiringFor(deviceId)) return false
     }
     return true
   })

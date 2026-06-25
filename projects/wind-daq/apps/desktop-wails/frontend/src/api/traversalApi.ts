@@ -34,11 +34,13 @@ function formatApiError(err: unknown): string {
   return msg
 }
 
-async function invoke<T>(path: string, body?: unknown): Promise<{ success: boolean; data?: T; error?: string }> {
+async function invoke<T>(path: string, body?: unknown, method?: string): Promise<{ success: boolean; data?: T; error?: string }> {
   try {
-    const data = await apiRequest<T>(path, body === undefined
-      ? undefined
-      : { method: 'POST', body: JSON.stringify(body) })
+    const init: RequestInit = { method: method ?? 'POST' }
+    if (body !== undefined) {
+      init.body = JSON.stringify(body)
+    }
+    const data = await apiRequest<T>(path, init)
     return ok(data)
   } catch (err) {
     return { success: false, error: formatApiError(err) }
@@ -120,7 +122,7 @@ type TraversalStatusRawResponse = Omit<TraversalTestStatus, 'state' | 'lastError
 
 export const traversalApi = {
   getConfig: async (): Promise<{ success: boolean; data?: TraversalTestConfig | null; error?: string }> =>
-    invoke<TraversalTestConfig | null>('/api/traversal/config'),
+    invoke<TraversalTestConfig | null>('/api/traversal/config', undefined, 'GET'),
 
   saveConfig: async (config: TraversalTestConfig): Promise<{ success: boolean; error?: string }> =>
     invoke('/api/traversal/config', config),
@@ -158,7 +160,7 @@ export const traversalApi = {
 
   /** 加载断点恢复信息（应用启动或进入遍历页面时调用，判断是否需要展示"恢复"横幅） */
   loadCheckpoint: async (): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
-    invoke<TraversalCheckpoint | null>('/api/traversal/loadCheckpoint'),
+    invoke<TraversalCheckpoint | null>('/api/traversal/loadCheckpoint', undefined, 'GET'),
 
   /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
   resumeFromCheckpoint: async (checkpoint: TraversalCheckpoint): Promise<{ success: boolean; data?: { taskId: string }; error?: string }> =>
@@ -169,7 +171,7 @@ export const traversalApi = {
     invoke('/api/traversal/clearCheckpoint'),
 
   getStatus: async (): Promise<{ success: boolean; data?: TraversalTestStatus | null; error?: string }> => {
-    const res = await invoke<TraversalStatusRawResponse | null>('/api/traversal/status')
+    const res = await invoke<TraversalStatusRawResponse | null>('/api/traversal/status', undefined, 'GET')
     if (!res.success || !res.data) return res as { success: boolean; data?: TraversalTestStatus | null; error?: string }
     const raw = res.data
     const point = typeof raw.currentPoint === 'number'

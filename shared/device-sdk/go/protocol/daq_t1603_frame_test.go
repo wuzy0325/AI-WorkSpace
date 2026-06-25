@@ -234,6 +234,18 @@ func TestParseASCIIFrame_InvalidTokens(t *testing.T) {
 	}
 }
 
+func TestParseASCIIFrame_RejectsOutOfRangeValues(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := range vals {
+		vals[i] = 99999
+	}
+
+	_, err := ParseASCIIFrame(encodeASCIIFrame(vals))
+	if err == nil {
+		t.Fatal("expected error for out-of-range ASCII temperatures")
+	}
+}
+
 func TestParseASCIIFrame_ChannelReversal(t *testing.T) {
 	vals := make([]float64, 16)
 	for i := 0; i < 16; i++ {
@@ -517,6 +529,20 @@ func TestReadFrame_PrefixedASCIIFrameWithNewline(t *testing.T) {
 	}
 }
 
+func TestParseTCPFrameEx_RejectsOutOfRangeSpaceSeparatedValues(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := range vals {
+		vals[i] = 99999
+	}
+	seq := 123
+	timestamp := 1712345678.123456
+
+	_, err := ParseTCPFrameEx(encodeASCIIFrameWithPrefix(&seq, &timestamp, vals))
+	if err == nil {
+		t.Fatal("expected error for out-of-range prefixed ASCII temperatures")
+	}
+}
+
 // --- 72-byte binary timestamp frame tests ---
 
 func encodeBinaryFrameWithTimestamp(sec uint32, nsec uint32, values []float64) []byte {
@@ -568,6 +594,18 @@ func TestParseTCPFrameEx_72ByteInvalidSize(t *testing.T) {
 	_, err = ParseTCPFrameEx(make([]byte, 73))
 	if err == nil {
 		t.Error("expected error for 73-byte frame")
+	}
+}
+
+func TestParseTCPFrameEx_72ByteRejectsOutOfRangeValues(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := range vals {
+		vals[i] = 99999
+	}
+
+	_, err := ParseTCPFrameEx(encodeBinaryFrameWithTimestamp(1781803881, 179316583, vals))
+	if err == nil {
+		t.Fatal("expected error for out-of-range binary timestamp temperatures")
 	}
 }
 

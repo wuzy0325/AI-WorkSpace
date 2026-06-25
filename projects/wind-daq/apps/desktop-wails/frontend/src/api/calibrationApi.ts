@@ -137,12 +137,25 @@ export const calibrationApi = {
     }
   },
 
-  saveData: async (_taskId: string): Promise<{ success: boolean; filepath?: string; error?: string }> => {
-    return { success: true, filepath: '' };
+  saveData: async (taskId: string, savePath: string): Promise<{ success: boolean; filepath?: string; error?: string }> => {
+    if (!savePath) return { success: false, error: '请先在校准配置中设置保存路径' };
+    try {
+      if (isWailsAvailable()) {
+        const result = await wailsApi.calibration.saveCsv(taskId, savePath);
+        if (!result.Success) return { success: false, error: result.Error };
+        return { success: true, filepath: result.filepath || result.Filepath };
+      }
+      return await request('/api/calibration/saveCsv', {
+        method: 'POST',
+        body: JSON.stringify({ taskId, savePath }),
+      });
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
   },
 
   exportReport: async (_taskId: string): Promise<{ success: boolean; filepath?: string; error?: string }> => {
-    return { success: true, filepath: '' };
+    return { success: false, error: '校准报告导出接口尚未接入' };
   },
 
   // 旧 API 兼容性，用于测试

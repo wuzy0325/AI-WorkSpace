@@ -1,10 +1,16 @@
-import type { core } from '../../wailsjs/go/models'
+// 由于 Wails v3 取消了 wailsjs/go/models.ts，
+// 这里直接从 deviceBridge.ts 引入业务类型；它们与后端 core.* 字段一一对应。
+import type {
+  ChannelConfig,
+  T1603Config,
+  TemperatureProfile,
+  ScanResult,
+} from '../../../src/bridge/deviceBridge'
 
-// 复用 Wails 生成的类型，避免重复定义导致与后端模型不同步
-export type MockT1603Config = core.T1603Config
-export type MockChannelConfig = core.ChannelConfig
-export type MockDeviceProfile = core.TemperatureProfile
-export type MockScanResult = core.ScanResult
+export type MockT1603Config = T1603Config
+export type MockChannelConfig = ChannelConfig
+export type MockDeviceProfile = TemperatureProfile
+export type MockScanResult = ScanResult
 
 export const CHANNEL_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#a855f7',

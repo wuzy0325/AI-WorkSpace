@@ -46,7 +46,12 @@ func (r *DataStreamRelay) Subscribe(deviceID string) {
 					unsub()
 					return
 				}
-				r.payloads <- payload
+				select {
+				case <-ctx.Done():
+					unsub()
+					return
+				case r.payloads <- payload:
+				}
 			}
 		}
 	}()

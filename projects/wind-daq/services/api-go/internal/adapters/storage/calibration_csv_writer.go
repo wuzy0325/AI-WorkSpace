@@ -20,19 +20,30 @@ import (
 // CalibrationCsvWriter 校准专用 CSV 写入器（字节 I/O 层）
 // 每采集一个点就追加写入 CSV，校准结束或异常时 flush
 type CalibrationCsvWriter struct {
-	mu     sync.Mutex
-	file   *os.File
-	writer *csv.Writer
-	path   string
-	schema calibration.CsvSchema
-	header []string
+	mu       sync.Mutex
+	file     *os.File
+	writer   *csv.Writer
+	path     string
+	schema   calibration.CsvSchema
+	header   []string
+	truncate bool // true 时以覆盖模式打开（用于按需全量导出）
 }
 
-// NewCalibrationCsvWriter 创建校准 CSV 写入器
+// NewCalibrationCsvWriter 创建校准 CSV 写入器（追加模式，用于逐点采集）
 // config 用于构建 CsvSchema（列布局由校准类型决定）
 func NewCalibrationCsvWriter(config calibration.Config) *CalibrationCsvWriter {
 	return &CalibrationCsvWriter{
 		schema: calibration.NewCsvSchema(config),
+	}
+}
+
+// NewCalibrationCsvWriterOverwrite 创建按需全量导出用的 CSV 写入器（覆盖模式）
+// 每次 Initialize 都会截断已存在的文件，适合 SaveCsv 这类"一次性导出全部结果"场景，
+// 避免多次保存到同一路径时 append 模式产生重复数据。
+func NewCalibrationCsvWriterOverwrite(config calibration.Config) *CalibrationCsvWriter {
+	return &CalibrationCsvWriter{
+		schema:   calibration.NewCsvSchema(config),
+		truncate: true,
 	}
 }
 
@@ -57,8 +68,14 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 		w.path = filepath.Join(w.path, fmt.Sprintf("calibration_%s.csv", config.TaskID))
 	}
 
-	// 打开文件（追加模式）
-	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// 打开文件：覆盖模式用于按需全量导出，追加模式用于逐点采集
+	flags := os.O_CREATE | os.O_WRONLY
+	if w.truncate {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_APPEND
+	}
+	file, err := os.OpenFile(w.path, flags, 0644)
 	if err != nil {
 		return fmt.Errorf("打开CSV文件失败: %w", err)
 	}

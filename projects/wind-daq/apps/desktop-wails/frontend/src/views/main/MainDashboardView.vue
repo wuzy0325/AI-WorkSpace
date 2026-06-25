@@ -4,7 +4,6 @@ import { storeToRefs } from 'pinia'
 import { wailsApi, isWailsAvailable } from '@api/wails-adapter'
 import type { AppRailNavItem } from '@components/layout/AppRailNav.vue'
 import AppRailNav from '@components/layout/AppRailNav.vue'
-import DeviceManagementDrawer from '@components/device/DeviceManagementDrawer.vue'
 import GlobalSettingsModal from '@components/layout/GlobalSettingsModal.vue'
 import MainTopBar from '@components/layout/MainTopBar.vue'
 import MainBottomBar from '@components/layout/MainBottomBar.vue'
@@ -18,6 +17,14 @@ import MainView from '@views/MainView.vue'
 const CalibrationView = defineAsyncComponent(() => import('@views/CalibrationView.vue'))
 const TraversalView = defineAsyncComponent(() => import('@views/TraversalView.vue'))
 const LogViewer = defineAsyncComponent(() => import('@views/LogViewer.vue'))
+// DeviceManagementDrawer 体积较大（1430+ 行、含设备配置表单、通道编辑器、扫描结果列表），
+// 仅在用户点击"打开设备管理"时才需要，默认 v-model:open=false 不渲染内部内容。
+// 把它转为异步加载有两个好处：
+//   1) 主仪表盘首屏 chunk 减小约 85KB（SFC 源码体积）；
+//   2) dev 模式下 Wails AssetServer 代理超大 SFC 时可能触发 Resp.AppendHeader 错误，
+//      该错误若发生在首屏同步 import 链上会阻断主画面渲染（白屏）。
+//      改为异步后，加载失败只影响 drawer 本身，主画面照常可用。
+const DeviceManagementDrawer = defineAsyncComponent(() => import('@components/device/DeviceManagementDrawer.vue'))
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'

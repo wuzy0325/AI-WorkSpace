@@ -95,33 +95,30 @@ const tabIcon = {
 
         <!-- 内容区 -->
         <div class="flex-1 overflow-hidden relative">
-          <!-- 点位预览图例 -->
+          <!-- 点位预览图例：颜色须与 PointsPreview.vue Canvas 绘制保持同步 -->
           <div
             v-if="activeTab === 'preview'"
             class="absolute right-4 top-3 z-10 flex items-center gap-3 rounded-full border px-3 py-1.5 text-[10px] shadow-sm backdrop-blur"
             :style="{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-panel) 90%, transparent)' }"
           >
             <div class="flex items-center gap-1">
-              <span class="h-2 w-2 rounded-full" style="background: var(--accent-info)"></span>
+              <span class="h-2 w-2 rounded-full" style="background: #3b82f6"></span>
               <span class="text-[var(--text-muted)]">{{ labels.moving }}</span>
             </div>
             <div class="flex items-center gap-1">
-              <span class="h-2 w-2 rounded-full" style="background: var(--state-warning)"></span>
+              <span class="h-2 w-2 rounded-full" style="background: #fbbf24"></span>
               <span class="text-[var(--text-muted)]">{{ labels.stabilizing }}</span>
             </div>
             <div class="flex items-center gap-1">
-              <span class="h-2 w-2 rounded-full" style="background: var(--state-success)"></span>
+              <span class="h-2 w-2 rounded-full" style="background: #10b981"></span>
               <span class="text-[var(--text-muted)]">{{ labels.acquiring }}</span>
             </div>
             <div class="flex items-center gap-1">
-              <span
-                class="h-2 w-2 rounded-full"
-                style="background: linear-gradient(90deg, var(--accent-primary), var(--state-error))"
-              ></span>
+              <span class="h-2 w-2 rounded-full" style="background: #8b5cf6"></span>
               <span class="text-[var(--text-muted)]">{{ labels.completed }}</span>
             </div>
             <div class="flex items-center gap-1">
-              <span class="h-2 w-2 rounded-full" :style="{ background: 'var(--text-muted)' }"></span>
+              <span class="h-2 w-2 rounded-full" style="background: rgba(148, 163, 184, 0.3)"></span>
               <span class="text-[var(--text-muted)]">{{ labels.untested }}</span>
             </div>
           </div>

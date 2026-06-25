@@ -60,6 +60,13 @@ async function mainProcessRequest<T>(path: string, init?: RequestInit): Promise<
   }
 }
 
+async function motionHttpRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  if (isWailsAvailable()) {
+    return await mainProcessRequest<T>(path, init);
+  }
+  return await request<T>(path, init);
+}
+
 export interface MotionAxisStatus {
   name: string;
   position: number;
@@ -266,17 +273,9 @@ type StatusCallback = (status: MotionControllerStatus[]) => void;
 
 export const motionApi = {
   getProfiles: async (): Promise<MotionControllerProfile[]> => {
-    // 优先从后端获取
+    // profile 结构体包含嵌套数组和具名 string 类型，统一走 HTTP 避开 Wails 反射桥。
     try {
-      let profiles: MotionControllerProfile[];
-      if (isMotionStandaloneMode()) {
-        // 独立窗口：profile 也从主进程读，确保与主窗口一致
-        profiles = await mainProcessRequest<MotionControllerProfile[]>('/api/motion/profiles');
-      } else if (isWailsAvailable()) {
-        profiles = await wailsApi.motion.getProfiles() as unknown as MotionControllerProfile[];
-      } else {
-        profiles = await request<MotionControllerProfile[]>('/api/motion/profiles');
-      }
+      let profiles = await motionHttpRequest<MotionControllerProfile[]>('/api/motion/profiles');
       profiles = normalizeMotionProfiles(profiles);
       _cachedProfiles = profiles;
       saveProfiles(profiles);
@@ -299,13 +298,7 @@ export const motionApi = {
 
   upsertProfile: async (profile: MotionControllerProfile): Promise<void> => {
     // 后端保存失败时抛出，避免本地缓存与后端不一致让用户误以为保存成功
-    if (isMotionStandaloneMode()) {
-      await mainProcessRequest('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-    } else if (isWailsAvailable()) {
-      await wailsApi.motion.upsertProfile(profile);
-    } else {
-      await request('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
-    }
+    await motionHttpRequest('/api/motion/profiles', { method: 'PUT', body: JSON.stringify(profile) });
     const profiles = storedProfiles();
     const idx = profiles.findIndex((p) => p.id === profile.id);
     if (idx >= 0) profiles[idx] = profile;
@@ -314,13 +307,7 @@ export const motionApi = {
   },
 
   deleteProfile: async (id: string): Promise<void> => {
-    if (isMotionStandaloneMode()) {
-      await mainProcessRequest(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-    } else if (isWailsAvailable()) {
-      await wailsApi.motion.deleteProfile(id);
-    } else {
-      await request(`/api/motion/profiles/${id}`, { method: 'DELETE' });
-    }
+    await motionHttpRequest(`/api/motion/profiles/${id}`, { method: 'DELETE' });
     const profiles = storedProfiles().filter((p) => p.id !== id);
     saveProfiles(profiles);
   },

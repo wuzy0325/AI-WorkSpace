@@ -80,6 +80,10 @@ func (a *TotalPressureAlgorithm) AcquireData(point CalPoint, channelReader Chann
 	}, nil
 }
 
+func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint)
+}
+
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
 func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 	point CalPoint,

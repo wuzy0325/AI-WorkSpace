@@ -449,7 +449,7 @@ watch(() => props.show, async (isVisible) => {
 
           <UiPanel class="section-card">
             <div class="save-row">
-              <UiInput v-model="savePath" :placeholder="t.outputDirectory" size="small" class="flex-input" />
+              <UiInput v-model="savePath" :placeholder="t.outputDirectory" size="small" class="flex-input" :title="savePath" />
               <UiInput v-model="saveFileName" :placeholder="t.outputFileName" size="small" class="flex-input" />
               <UiButton size="sm" @click="pickSavePath">{{ t.browse }}</UiButton>
             </div>

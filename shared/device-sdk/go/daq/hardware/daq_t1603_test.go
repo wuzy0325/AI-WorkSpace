@@ -154,3 +154,95 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 		}
 	}
 }
+
+func TestDAQT1603StopCommandCompletesBeforeReturn(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	commandsCh := make(chan string, 4)
+	go func() {
+		for {
+			cmd, err := readWithTimeout(server, 200*time.Millisecond)
+			if err != nil {
+				return
+			}
+			commandsCh <- cmd
+			_, _ = server.Write([]byte("A\n"))
+		}
+	}()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
+	device.conn = client
+	device.frameReader = protocol.NewT1603FrameReader(client)
+	device.status.Connection = core.ConnectionConnected
+	device.configSyncDone = make(chan struct{})
+	close(device.configSyncDone)
+	device.config = core.DaqT1603HardwareConfig{
+		ChannelMask:  "FFFF",
+		BinaryFormat: true,
+	}
+
+	if err := device.StartAcquisition(); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	for _, want := range []string{"@f1", "@f0 FFFF 2"} {
+		if got := <-commandsCh; got != want {
+			t.Fatalf("command = %q, want %q", got, want)
+		}
+	}
+
+	if err := device.StopAcquisition(); err != nil {
+		t.Fatalf("StopAcquisition returned error: %v", err)
+	}
+	select {
+	case got := <-commandsCh:
+		if got != "@f1" {
+			t.Fatalf("command = %q, want %q", got, "@f1")
+		}
+	default:
+		t.Fatal("StopAcquisition returned before the stop command reached the connection")
+	}
+}
+
+func TestDAQT1603StopAcquisitionWaitsForReadLoopExit(t *testing.T) {
+	device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
+	device.acquiring = true
+	device.stop = make(chan struct{})
+	device.readLoopDone = make(chan struct{})
+	done := device.readLoopDone
+	device.status.Connection = core.ConnectionAcquiring
+	device.status.Acquiring = true
+
+	returned := make(chan error, 1)
+	go func() {
+		returned <- device.StopAcquisition()
+	}()
+
+	select {
+	case err := <-returned:
+		t.Fatalf("StopAcquisition returned before readLoop exited: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(done)
+
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("StopAcquisition returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("StopAcquisition did not return after readLoop exited")
+	}
+
+	if device.status.Acquiring {
+		t.Fatal("device still marked acquiring after stop")
+	}
+	if device.status.Connection != core.ConnectionConnected {
+		t.Fatalf("connection status = %v, want %v", device.status.Connection, core.ConnectionConnected)
+	}
+	if device.readLoopDone != nil {
+		t.Fatal("readLoopDone was not cleared after stop")
+	}
+}

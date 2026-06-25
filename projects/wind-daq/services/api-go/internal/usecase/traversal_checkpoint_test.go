@@ -60,7 +60,7 @@ func (m *mockMotionAccess) Stop(ctx context.Context, id string, axis motion.Axis
 
 // mockTraversalPointSink 模拟数据点写入器，记录所有写入的点
 type mockTraversalPointSink struct {
-	mu        sync.Mutex // protects all fields — TraversalManager calls Finalize / Write
+	mu sync.Mutex // protects all fields — TraversalManager calls Finalize / Write
 	// from its worker goroutine while tests inspect from the test goroutine.
 	points    []traversal.PointResult
 	initCount int

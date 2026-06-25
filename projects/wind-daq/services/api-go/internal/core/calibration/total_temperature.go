@@ -54,6 +54,14 @@ func (a *TotalTemperatureAlgorithm) AcquireData(point CalPoint, channelReader Ch
 	return nil, fmt.Errorf("总温校准使用手动控制模式，请使用 AcquireDataWithChannels 方法")
 }
 
+func (a *TotalTemperatureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
+	sampleInterval := time.Duration(50) * time.Millisecond
+	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
+		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
+	}
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval)
+}
+
 // AcquireDataWithChannels 使用探针通道配置采集数据
 // 总温校准不使用运动控制，而是用户手动调整工况后触发采集
 func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(

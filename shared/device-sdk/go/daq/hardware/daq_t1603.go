@@ -34,25 +34,25 @@ type LogEntry struct {
 }
 
 type DAQT1603 struct {
-	mu             sync.RWMutex
-	logMu          sync.RWMutex
-	writeMu        sync.Mutex
-	profile        core.Profile
-	status         core.Status
-	sink           core.DataSink
-	stop           chan struct{}
-	acquiring      bool
-	conn           net.Conn
-	frameReader    *protocol.T1603FrameReader
-	config         core.DaqT1603HardwareConfig
-	onConfigSynced onConfigSyncedFn
-	onReadLoopExit func(error)
-	onLog          func(LogEntry)
-	readErrors     int
+	mu                     sync.RWMutex
+	logMu                  sync.RWMutex
+	writeMu                sync.Mutex
+	profile                core.Profile
+	status                 core.Status
+	sink                   core.DataSink
+	stop                   chan struct{}
+	acquiring              bool
+	conn                   net.Conn
+	frameReader            *protocol.T1603FrameReader
+	config                 core.DaqT1603HardwareConfig
+	onConfigSynced         onConfigSyncedFn
+	onReadLoopExit         func(error)
+	onLog                  func(LogEntry)
+	readErrors             int
 	frameErrors            int
 	consecutiveFrameErrors int
 	configSyncDone         chan struct{}
-	readLoopDone   chan struct{}
+	readLoopDone           chan struct{}
 }
 
 func NewDAQT1603(profile core.Profile) *DAQT1603 {
@@ -341,6 +341,7 @@ func (d *DAQT1603) StopAcquisition() error {
 
 func (d *DAQT1603) stopAcquisitionLocked() error {
 	wasAcquiring := d.acquiring
+	done := d.readLoopDone
 	if d.acquiring && d.stop != nil {
 		close(d.stop)
 	}
@@ -352,22 +353,32 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	}
 	if d.conn != nil && wasAcquiring {
 		conn := d.conn
-		go func() {
-			d.writeMu.Lock()
-			defer d.writeMu.Unlock()
-			d.emitLog("debug", "hardware-send", "Send command", "@f1")
-			_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-			if _, err := conn.Write([]byte("@f1")); err != nil {
-				// 连接已被 Disconnect 关闭时这是预期行为（非真异常），
-				// 降级到 debug 避免日志被无害错误淹没。
-				if isClosedConnError(err) {
-					d.emitLog("debug", "hardware-send", "Stop command skipped (conn closed)", err.Error())
-				} else {
-					d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
-				}
+		d.writeMu.Lock()
+		d.emitLog("debug", "hardware-send", "Send command", "@f1")
+		_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		if _, err := conn.Write([]byte("@f1")); err != nil {
+			// 连接已被 Disconnect 关闭时这是预期行为（非真异常），
+			// 降级到 debug 避免日志被无害错误淹没。
+			if isClosedConnError(err) {
+				d.emitLog("debug", "hardware-send", "Stop command skipped (conn closed)", err.Error())
+			} else {
+				d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
 			}
-			_ = conn.SetWriteDeadline(time.Time{})
-		}()
+		}
+		_ = conn.SetWriteDeadline(time.Time{})
+		d.writeMu.Unlock()
+	}
+	if wasAcquiring && done != nil {
+		d.mu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			slog.Warn("DAQ-T-1603 timeout waiting for readLoop to exit after stop", "device", d.profile.ID)
+		}
+		d.mu.Lock()
+		if d.readLoopDone == done {
+			d.readLoopDone = nil
+		}
 	}
 	if d.frameReader != nil {
 		d.frameReader.Reset()

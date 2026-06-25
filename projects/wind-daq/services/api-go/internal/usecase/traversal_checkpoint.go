@@ -193,4 +193,3 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 
 	return cp.TaskID, nil
 }
-

@@ -7,6 +7,8 @@ export { calibrationApi } from './calibrationApi'
 export { traversalApi, storageApi, reportApi } from './otherApis'
 export type { TraversalPoint, MotionAxisStatus, MotionStatus } from './otherApis'
 
+const MAIN_PROCESS_API_BASE = 'http://127.0.0.1:8900'
+
 // 同步备忘：默认设备配置目前共有 4 处副本，修改单位 / 默认范围 / 精度时必须保持一致：
 //   1) projects/wind-daq/apps/desktop-wails/config/device-profiles.json
 //   2) projects/wind-daq/services/api-go/config/device-profiles.json
@@ -152,7 +154,7 @@ export const deviceApi = {
 
   getLatest: async (id: string): Promise<DataPayload> => {
     if (isWailsAvailable()) {
-      const result = await wailsApi.device.getLatestData(id)
+      const result = await fetch(`${MAIN_PROCESS_API_BASE}/api/daq/latest/${id}`).then((resp) => resp.ok ? resp.json() : null)
       if (result == null || result === false || result === true) {
         return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
       }
@@ -231,13 +233,24 @@ export const deviceApi = {
 
     if (isWailsAvailable()) {
       void wailsApi.device.subscribeStream(deviceId, true)
-      if (!deviceApi._wailsPayloadUnsubscribe) {
-        deviceApi._wailsPayloadUnsubscribe = wailsApi.device.onPayload((payload) => {
-          deviceApi._notifyListeners(payload)
-        })
+      let active = true
+      const pollLatest = async () => {
+        if (!active) return
+        try {
+          const payload = await deviceApi.getLatest(deviceId)
+          if (active && payload.timestamp > 0) {
+            deviceApi._notifyListeners(payload)
+          }
+        } catch (error) {
+          console.log(`Wails polling for ${deviceId}:`, error)
+        }
       }
+      void pollLatest()
+      const timer = window.setInterval(() => { void pollLatest() }, 500)
       deviceApi._subscriptions.set(deviceId, {
         unsubscribe: () => {
+          active = false
+          window.clearInterval(timer)
           void wailsApi.device.subscribeStream(deviceId, false)
         },
       })
@@ -258,10 +271,6 @@ export const deviceApi = {
     if (subscription) {
       subscription.unsubscribe()
       deviceApi._subscriptions.delete(deviceId)
-      if (isWailsAvailable() && deviceApi._subscriptions.size === 0 && deviceApi._wailsPayloadUnsubscribe) {
-        deviceApi._wailsPayloadUnsubscribe()
-        deviceApi._wailsPayloadUnsubscribe = null
-      }
     }
   },
 }

@@ -3,8 +3,54 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+const wailsUnsafeHeaders = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'etag',
+  'last-modified',
+])
+
+function stripWailsUnsafeDevHeaders() {
+  return {
+    name: 'strip-wails-unsafe-dev-headers',
+    apply: 'serve' as const,
+    configureServer(server: import('vite').ViteDevServer) {
+      server.middlewares.use((_req, res, next) => {
+        const stripHeaders = () => {
+          for (const header of wailsUnsafeHeaders) {
+            res.removeHeader(header)
+          }
+          res.setHeader('Cache-Control', 'no-store')
+        }
+
+        const setHeader = res.setHeader.bind(res)
+        res.setHeader = (name, value) => {
+          if (wailsUnsafeHeaders.has(String(name).toLowerCase())) {
+            return res
+          }
+          return setHeader(name, value)
+        }
+
+        const writeHead = res.writeHead.bind(res)
+        res.writeHead = ((...args: Parameters<typeof res.writeHead>) => {
+          stripHeaders()
+          return writeHead(...args)
+        }) as typeof res.writeHead
+
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [stripWailsUnsafeDevHeaders(), vue()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -51,5 +97,11 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
     },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+  },
+  css: {
+    devSourcemap: false,
   },
 })

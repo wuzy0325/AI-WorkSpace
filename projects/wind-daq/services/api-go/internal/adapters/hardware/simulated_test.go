@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"wind-daq/services/api-go/internal/core/device"
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
+	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/ports"
 )
 

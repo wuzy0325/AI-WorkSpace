@@ -85,6 +85,9 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
 	calibrationMgr.SetCsvWriter(storage.NewCalibrationCsvWriter(calibration.Config{}))
+	calibrationMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
+		return storage.NewCalibrationCsvWriterOverwrite(config)
+	})
 	travStore := calstore.NewTraversalResultStore()
 	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore, storage.NewFileCheckpointStore(), appConfigStore)
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）

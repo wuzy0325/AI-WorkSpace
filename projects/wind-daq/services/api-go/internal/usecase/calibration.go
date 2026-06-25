@@ -30,12 +30,13 @@ type CalibrationManager struct {
 	statusProvider ports.DeviceStatusProvider
 
 	// 校准引擎
-	autoEngine    *calibration.AutomaticCalibration
-	currentConfig calibration.Config
-	currentStatus calibration.Status
-	currentTaskID string
-	csvWriter     ports.CalibrationCsvWriter
-	lastExport    *calibration.ExportPayload
+	autoEngine       *calibration.AutomaticCalibration
+	currentConfig    calibration.Config
+	currentStatus    calibration.Status
+	currentTaskID    string
+	csvWriter        ports.CalibrationCsvWriter
+	csvWriterFactory func(calibration.Config) ports.CalibrationCsvWriter
+	lastExport       *calibration.ExportPayload
 }
 
 func NewCalibrationManager(
@@ -77,6 +78,10 @@ func (m *CalibrationManager) SetCsvWriter(w ports.CalibrationCsvWriter) {
 	m.csvWriter = w
 }
 
+func (m *CalibrationManager) SetCsvWriterFactory(factory func(calibration.Config) ports.CalibrationCsvWriter) {
+	m.csvWriterFactory = factory
+}
+
 // Start 启动校准任务
 func (m *CalibrationManager) Start(config calibration.Config) error {
 	if config.TaskID == "" {
@@ -102,6 +107,12 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 			})
 		}
 	}
+	if config.SamplesPerPoint <= 0 && config.AverageSamples > 0 {
+		config.SamplesPerPoint = config.AverageSamples
+	}
+	if config.SamplesPerPoint <= 0 {
+		config.SamplesPerPoint = 1
+	}
 
 	m.currentConfig = config
 	m.currentTaskID = config.TaskID
@@ -113,17 +124,31 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	// 创建运行时适配器
 	runtime := m.createRuntime()
 
-	// 创建自动校准引擎
-	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime)
-	m.autoEngine.SetTaskID(config.TaskID)
-
-	// 初始化CSV写入器（writer 由装配根注入，此处仅调用 Initialize）
-	if config.SavePath != "" && m.csvWriter != nil {
+	// CSV 实时写入：自动校准类型在 Start 时以覆盖模式初始化 csvWriter，
+	// 每个点采集完成后通过 onDataPoint 回调逐点写入，崩溃/断电不丢已采集点。
+	// 总温校准使用手动逐点采集，由 CollectCurrentPoint 直接调用 csvWriter。
+	autoTypes := map[string]bool{
+		string(calibration.TypeFiveHole):      true,
+		string(calibration.TypeThreeHole):     true,
+		string(calibration.TypeTotalPressure): true,
+	}
+	var onDataPoint calibration.DataPointSink
+	if autoTypes[config.Type] && config.SavePath != "" && m.csvWriter != nil {
 		if err := m.csvWriter.Initialize(config); err != nil {
 			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
-			m.csvWriter = nil
+		} else {
+			writer := m.csvWriter
+			onDataPoint = func(dp calibration.DataPoint) {
+				if err := writer.AppendPoint(dp); err != nil {
+					log.Printf("[CalibrationManager] 实时CSV写入失败: %v", err)
+				}
+			}
 		}
 	}
+
+	// 创建自动校准引擎
+	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime, onDataPoint)
+	m.autoEngine.SetTaskID(config.TaskID)
 
 	// 更新状态
 	m.currentStatus = calibration.Status{
@@ -139,6 +164,11 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	if err != nil {
 		return err
 	}
+	if len(config.ProbeChannels) > 0 {
+		if err := algorithm.ValidateConfig(config); err != nil {
+			return err
+		}
+	}
 
 	// 异步启动校准循环
 	go func() {
@@ -153,7 +183,7 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 			m.currentStatus.State = calibration.StateCompleted
 		}
 
-		// 保存导出载荷
+		// 保存导出载荷，供 SaveCsv 按需写入
 		dataPoints := m.autoEngine.GetDataPoints()
 		m.lastExport = &calibration.ExportPayload{
 			Type:       calibration.CalibrationType(config.Type),
@@ -173,12 +203,12 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 			}
 		}
 
-		// 刷新CSV
+		// 实时 CSV 写入完成：flush 并关闭文件句柄，下次 Start 可重新 Initialize。
+		// 不置 nil：writer 由装配根注入一次，Flush 后 file 已关闭，可复用。
 		if m.csvWriter != nil {
 			if flushErr := m.csvWriter.Flush(); flushErr != nil {
 				log.Printf("[CalibrationManager] CSV刷新失败: %v", flushErr)
 			}
-			m.csvWriter = nil
 		}
 
 		// 运动归零
@@ -256,12 +286,12 @@ func (m *CalibrationManager) Stop() error {
 		m.mu.Unlock()
 	}
 
-	// 刷新CSV
+	// 刷新CSV（总温手动采集模式）。不置 nil：writer 由装配根注入一次，
+	// Flush 已关闭内部文件句柄，下次 Start 可再次 Initialize 打开新文件。
 	if m.csvWriter != nil {
 		if err := m.csvWriter.Flush(); err != nil {
 			log.Printf("[CalibrationManager] CSV刷新失败: %v", err)
 		}
-		m.csvWriter = nil
 	}
 
 	// 停止运动
@@ -371,6 +401,57 @@ func (m *CalibrationManager) GetExportPayload() *calibration.ExportPayload {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastExport
+}
+
+func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, error) {
+	if taskID == "" {
+		return "", fmt.Errorf("taskID is required")
+	}
+	if savePath == "" {
+		return "", fmt.Errorf("保存路径为空")
+	}
+	if m.csvWriterFactory == nil {
+		return "", fmt.Errorf("CSV写入器未配置")
+	}
+
+	m.mu.RLock()
+	var payload calibration.ExportPayload
+	if m.lastExport != nil && m.lastExport.Config.TaskID == taskID {
+		payload = *m.lastExport
+	} else if m.currentConfig.TaskID == taskID {
+		payload = calibration.ExportPayload{
+			Type:       calibration.CalibrationType(m.currentConfig.Type),
+			Config:     m.currentConfig,
+			DataPoints: append([]calibration.DataPoint(nil), m.currentStatus.DataPoints...),
+		}
+	} else {
+		m.mu.RUnlock()
+		return "", fmt.Errorf("校准结果不存在: %s", taskID)
+	}
+	m.mu.RUnlock()
+
+	if len(payload.DataPoints) == 0 {
+		return "", fmt.Errorf("校准结果为空，无法保存CSV")
+	}
+
+	payload.Config.SavePath = savePath
+	writer := m.csvWriterFactory(payload.Config)
+	if writer == nil {
+		return "", fmt.Errorf("CSV写入器未配置")
+	}
+	if err := writer.Initialize(payload.Config); err != nil {
+		return "", err
+	}
+	for _, point := range payload.DataPoints {
+		if err := writer.AppendPoint(point); err != nil {
+			_ = writer.Flush()
+			return "", err
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		return "", err
+	}
+	return writer.Path(), nil
 }
 
 // GetResult 获取校准结果
@@ -568,8 +649,8 @@ func (r *runtimeAdapter) GetChannelValue(deviceID string, channelIndex int) (flo
 	return r.runtime.GetChannelValue(deviceID, channelIndex)
 }
 
-func (r *runtimeAdapter) MoveToPosition(axisName string, position float64) error {
-	return r.runtime.MoveToPosition(axisName, position)
+func (r *runtimeAdapter) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {
+	return r.runtime.MoveToPosition(axis, position)
 }
 
 func (r *runtimeAdapter) WaitForMotionComplete() error {
@@ -593,17 +674,23 @@ func (f *fallbackRuntime) GetChannelValue(deviceID string, channelIndex int) (fl
 	return valuesForChannelIndex(payload, channelIndex), true
 }
 
-func (f *fallbackRuntime) MoveToPosition(axisName string, position float64) error {
+func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {
 	if f.motion == nil {
 		return fmt.Errorf("运动控制器未配置")
 	}
-	ctx := context.Background()
-	// 简化实现：直接使用第一个控制器
-	statuses := f.motion.StatusAll(ctx)
-	for _, s := range statuses {
-		return f.motion.MoveTo(ctx, s.ID, motion.AxisName(axisName), position)
+	if axis.ControllerID == "" {
+		return fmt.Errorf("运动控制器ID未配置")
 	}
-	return fmt.Errorf("没有可用的运动控制器")
+	if axis.Axis == "" {
+		return fmt.Errorf("运动轴未配置")
+	}
+	ctx := context.Background()
+	for _, s := range f.motion.StatusAll(ctx) {
+		if s.ID == axis.ControllerID && !s.Connected {
+			return fmt.Errorf("运动控制器未连接: %s", axis.ControllerID)
+		}
+	}
+	return f.motion.MoveTo(ctx, axis.ControllerID, motion.AxisName(axis.Axis), position)
 }
 
 func (f *fallbackRuntime) WaitForMotionComplete() error {

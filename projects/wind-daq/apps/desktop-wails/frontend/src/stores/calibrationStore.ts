@@ -133,40 +133,53 @@ export const useCalibrationStore = defineStore('calibration', () => {
 
   // 从后端状态更新本地状态
   function updateStatusFromBackend(calStatus: any) {
+    const state = calStatus.state ?? calStatus.State
+    const taskId = calStatus.taskId ?? calStatus.TaskID ?? calStatus.TaskId ?? ''
+    const type = calStatus.type ?? calStatus.Type ?? 'five-hole'
+    const totalPoints = calStatus.totalPoints ?? calStatus.TotalPoints ?? 0
+    const completedPoints = calStatus.completedPoints ?? calStatus.CompletedPoints ?? calStatus.currentPoint ?? calStatus.CurrentPoint ?? 0
+    const backendDataPoints = calStatus.dataPoints ?? calStatus.DataPoints
+    const progress = calStatus.progress ?? calStatus.Progress ?? (totalPoints > 0 ? (completedPoints / totalPoints) * 100 : 0)
+    const mappedState = mapCalibrationState(state)
+
     if (!status.value) {
       // 初始化状态
       status.value = {
-        taskId: calStatus.TaskId || '',
-        type: 'five-hole',
-        status: mapCalibrationState(calStatus.State),
-        totalPoints: calStatus.TotalPoints || 0,
-        completedPoints: calStatus.CurrentPoint || 0,
-        progress: calStatus.TotalPoints > 0 
-          ? (calStatus.CurrentPoint / calStatus.TotalPoints) * 100 
-          : 0,
-        dataPoints: [],
+        taskId,
+        type,
+        status: mappedState,
+        totalPoints,
+        completedPoints,
+        progress,
+        dataPoints: Array.isArray(backendDataPoints) ? backendDataPoints : [],
       }
     } else {
-      status.value.status = mapCalibrationState(calStatus.State)
-      status.value.completedPoints = calStatus.CurrentPoint || 0
-      status.value.totalPoints = calStatus.TotalPoints || 0
-      status.value.progress = calStatus.TotalPoints > 0 
-        ? (calStatus.CurrentPoint / calStatus.TotalPoints) * 100 
-        : 0
+      status.value.status = mappedState
+      status.value.completedPoints = completedPoints
+      status.value.totalPoints = totalPoints
+      status.value.progress = progress
+      if (Array.isArray(backendDataPoints)) {
+        status.value.dataPoints = backendDataPoints
+      }
+    }
+
+    if (Array.isArray(backendDataPoints)) {
+      dataPoints.value = backendDataPoints
     }
 
     // 更新运行状态
-    isRunning.value = calStatus.State === 'running'
-    isPaused.value = calStatus.State === 'paused'
+    isRunning.value = state === 'running'
+    isPaused.value = state === 'paused'
 
     // 检查是否完成
-    if (calStatus.State === 'completed' || calStatus.State === 'idle') {
-      if (isRunning.value) {
+    if (state === 'completed' || state === 'error' || state === 'stopped') {
+      if (status.value) {
         completeEvent.value = {
-          taskId: status.value?.taskId || `cal-${Date.now()}`,
-          success: calStatus.State === 'completed',
+          taskId: status.value.taskId || `cal-${Date.now()}`,
+          success: state === 'completed',
           totalPoints: status.value.totalPoints,
           duration: 0,
+          error: calStatus.lastError ?? calStatus.LastError,
         }
         isRunning.value = false
         isPaused.value = false
@@ -194,16 +207,15 @@ export const useCalibrationStore = defineStore('calibration', () => {
   })
 
   async function startCalibration(config: CalibrationConfig) {
-    let taskId: string
+    const taskId = config.taskId || `cal-${Date.now()}`
+    const configToStart: CalibrationConfig = { ...config, taskId }
     const wails = isWailsAvailable()
     if (wails) {
-      const res = await wailsApi.calibration.start(config)
+      const res = await wailsApi.calibration.start(configToStart)
       if (!res.Success) throw new Error(res.Error || '启动校准失败')
-      taskId = config.taskId || `cal-${Date.now()}`
     } else {
-      const res = await calibrationApi.startCalibration(config)
+      const res = await calibrationApi.startCalibration(configToStart)
       if (!res.success) throw new Error(res.error || '启动校准失败')
-      taskId = res.taskId || ''
     }
     isRunning.value = true
     isPaused.value = false
@@ -211,9 +223,9 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints.value = []
     status.value = {
       taskId,
-      type: config.type,
+      type: configToStart.type,
       status: 'running',
-      totalPoints: config.points.length,
+      totalPoints: configToStart.points.length,
       completedPoints: 0,
       progress: 0,
       dataPoints: [],
@@ -265,9 +277,9 @@ export const useCalibrationStore = defineStore('calibration', () => {
     if (status.value) status.value.status = 'idle'
   }
 
-  async function saveData(): Promise<{ success: boolean; filepath?: string; error?: string }> {
+  async function saveData(savePath: string): Promise<{ success: boolean; filepath?: string; error?: string }> {
     if (!status.value) return { success: false, error: '无活跃任务' }
-    return calibrationApi.saveData(status.value.taskId)
+    return calibrationApi.saveData(status.value.taskId, savePath)
   }
 
   async function exportReport(): Promise<{ success: boolean; filepath?: string; error?: string }> {

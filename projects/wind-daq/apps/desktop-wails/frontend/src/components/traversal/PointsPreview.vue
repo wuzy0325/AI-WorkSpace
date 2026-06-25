@@ -99,8 +99,8 @@ const themeColors = computed(() => {
     grid: isDark ? '#334155' : '#e2e8f0',
     // 坐标轴
     axis: isDark ? '#475569' : '#94a3b8',
-    // 普通点
-    point: isDark ? '#3b82f6' : '#2563eb',
+    // 已完成的点
+    point: '#8b5cf6',
     // 当前点
     currentPoint: '#ef4444',
     // 当前点描边
@@ -253,7 +253,7 @@ function draw() {
       ctx.stroke()
       ctx.globalAlpha = 1
     } else if (isCompleted) {
-      // 已完成的点：统一使用稳定的蓝灰色，避免渐变色误导数据趋势
+      // 已完成的点：统一使用稳定的紫色，避免渐变色误导数据趋势
       ctx.fillStyle = colors.point
       ctx.fill()
     } else {

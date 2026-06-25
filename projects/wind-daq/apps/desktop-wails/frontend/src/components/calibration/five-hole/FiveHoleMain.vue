@@ -35,6 +35,7 @@ import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.v
 import UiButton from '@components/ui/UiButton.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import UiTooltip from '@components/ui/UiTooltip.vue'
 
 const emit = defineEmits<{
   openSettings: []
@@ -55,7 +56,6 @@ const {
   resumeCalibration,
   stopCalibration,
   saveCsv,
-  exportReport,
   saveSphereTankGate,
   progressInfo,
   formattedTimeInfo,
@@ -187,7 +187,7 @@ const startDisabledReason = computed(() => {
   if (isLoading.value) return '正在加载配置，请稍候'
   if (!hasConfig.value) return '请先完成校准配置'
   if (!hasRequiredWindTunnelChannels.value) return '请配置风洞总压、风洞静压、风洞温度通道'
-  if (!isAcquisitionDeviceConnected.value) return '采集设备未连接'
+  if (!isAcquisitionDeviceConnected.value) return '采集设备未连接或未开始采集'
   if (!isMotionControllerConnected.value) return '运动控制器未连接'
   return ''
 })
@@ -808,9 +808,11 @@ onBeforeUnmount(() => {
         </UiButton>
 
         <template v-if="!calibrationStore.isRunning && !calibrationStore.isPaused">
-          <UiButton size="sm" variant="primary" :disabled="!canStartCalibration" @click="startCalibration">
-            <Play :size="14" />开始校准
-          </UiButton>
+          <UiTooltip :content="canStartCalibration ? '' : startDisabledReason" position="bottom">
+            <UiButton size="sm" variant="primary" :disabled="!canStartCalibration" @click="startCalibration">
+              <Play :size="14" />开始校准
+            </UiButton>
+          </UiTooltip>
         </template>
 
         <template v-else>
@@ -837,30 +839,30 @@ onBeforeUnmount(() => {
 
     <!-- 主内容区 -->
     <template v-else>
-      <div class="flex-1 overflow-hidden p-4">
-        <div class="grid h-full grid-cols-[300px_1fr] gap-4" data-test="five-hole-layout-root">
-          <aside data-test="five-hole-left-sidebar" class="flex min-h-0 flex-col gap-3 overflow-hidden">
+      <div class="flex-1 overflow-hidden p-3">
+        <div class="grid h-full grid-cols-[300px_1fr] gap-3" data-test="five-hole-layout-root">
+          <aside data-test="five-hole-left-sidebar" class="flex min-h-0 flex-col gap-2 overflow-y-auto pr-1">
             <!-- 运行摘要卡片 -->
-            <section class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <div class="mb-2 flex items-center justify-between">
+            <section class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-2.5 shadow-[var(--shadow-panel)]">
+              <div class="mb-1.5 flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <Timer class="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                   <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行摘要</span>
                 </div>
                 <span class="rounded-full bg-[var(--accent-primary)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--accent-primary)]">{{ statusText }}</span>
               </div>
-              <div class="space-y-2">
-                <div class="grid grid-cols-2 gap-2">
-                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5 text-center">
+              <div class="space-y-1.5">
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2 text-center">
                     <p class="mb-0.5 text-[10px] uppercase text-[var(--text-muted)]">完成度</p>
                     <p class="font-mono text-base font-bold text-[var(--accent-primary)]">{{ progressInfo ? `${progressInfo.percent}%` : '0%' }}</p>
                   </div>
-                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5 text-center">
+                  <div class="rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2 text-center">
                     <p class="mb-0.5 text-[10px] uppercase text-[var(--text-muted)]">已用时</p>
                     <p class="font-mono text-base font-bold text-[var(--text-primary)]">{{ formattedTimeInfo?.elapsed || '00:00' }}</p>
                   </div>
                 </div>
-                <div class="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2.5">
+                <div class="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
                   <div class="flex flex-col">
                     <span class="text-[10px] text-[var(--text-muted)]">攻角 α</span>
                     <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">{{ calibrationStore.angleInfo?.alpha?.toFixed(2) ?? '0.00' }}°</span>
@@ -875,24 +877,24 @@ onBeforeUnmount(() => {
             </section>
 
             <!-- 压力矩阵 -->
-            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <div class="mb-2 flex items-center gap-2">
+            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-2.5 shadow-[var(--shadow-panel)]">
+              <div class="mb-1.5 flex items-center gap-2">
                 <Activity class="h-3.5 w-3.5 text-[var(--accent-success)]" />
                 <h3 class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">五孔压力 (Pa)</h3>
               </div>
               <!-- 探针五孔压力 -->
-              <div class="grid grid-cols-2 gap-1.5">
+              <div class="grid grid-cols-2 gap-1">
                 <div
                   v-for="i in [1, 2, 3, 4] as const"
                   :key="i"
-                  class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2 transition-colors hover:border-[var(--accent-primary)]/30"
+                  class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5 transition-colors hover:border-[var(--accent-primary)]/30"
                 >
                   <span class="text-[10px] font-medium text-[var(--text-muted)]">P{{ i }}</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
                     {{ formatFiveHoleRealtimeValue(getFiveHoleProbeRole(i), getFiveHoleProbeValue(i)) }}
                   </span>
                 </div>
-                <div class="col-span-2 flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-2">
+                <div class="col-span-2 flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-1.5">
                   <div class="flex items-center justify-between">
                     <span class="text-[10px] font-medium text-[var(--accent-primary)]">P5 (中心参考孔)</span>
                   </div>
@@ -902,32 +904,32 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <!-- 风洞环境参数 -->
-              <div class="mt-2 grid grid-cols-2 gap-1.5">
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-info)]/25 bg-[var(--accent-info)]/8 p-2">
+              <div class="mt-1.5 grid grid-cols-2 gap-1">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-info)]/25 bg-[var(--accent-info)]/8 p-1.5">
                   <span class="text-[10px] font-medium text-[var(--accent-info)]">风洞总压 Pt</span>
                   <span class="font-mono text-sm font-semibold text-[var(--accent-info)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.pTotal', calibrationStore.realtimePressures?.P0) }}
                   </span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-warning)]/25 bg-[var(--accent-warning)]/8 p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-warning)]/25 bg-[var(--accent-warning)]/8 p-1.5">
                   <span class="text-[10px] font-medium text-[var(--accent-warning)]">风洞静压 Ps</span>
                   <span class="font-mono text-sm font-semibold text-[var(--accent-warning)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.pTunnelStatic', calibrationStore.realtimePressures?.Ps) }}
                   </span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-success)]/25 bg-[var(--accent-success)]/8 p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-success)]/25 bg-[var(--accent-success)]/8 p-1.5">
                   <span class="text-[10px] font-medium text-[var(--accent-success)]">风洞温度 Tt</span>
                   <span class="font-mono text-sm font-semibold text-[var(--accent-success)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.tTunnel', calibrationStore.realtimePressures?.Ttunnel, '°C') }}
                   </span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5">
                   <span class="text-[10px] font-medium text-[var(--text-muted)]">大气压 Patm</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.pAtm', calibrationStore.realtimePressures?.Patm) }}
                   </span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5">
                   <span class="text-[10px] font-medium text-[var(--text-muted)]">大气温 Tatm</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.tAtm', calibrationStore.realtimePressures?.Tatm, '°C') }}
@@ -937,17 +939,17 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 物理计算卡片 -->
-            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <div class="mb-2 flex items-center gap-2">
+            <div class="rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] p-2.5 shadow-[var(--shadow-panel)]">
+              <div class="mb-1.5 flex items-center gap-2">
                 <Navigation2 class="h-3.5 w-3.5 text-[var(--accent-info)]" />
                 <h3 class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">气动参数</h3>
               </div>
               <div class="grid grid-cols-2 gap-1.5">
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5">
                   <span class="text-[10px] text-[var(--text-muted)]">马赫数 Ma</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">{{ formatFiveHoleDerivedValue('machNumber', calibrationStore.calculatedPhysics?.machNumber) }}</span>
                 </div>
-                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
+                <div class="flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5">
                   <span class="text-[10px] text-[var(--text-muted)]">流速 V (m/s)</span>
                   <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">{{ formatFiveHoleDerivedValue('velocity', calibrationStore.calculatedPhysics?.velocity) }}</span>
                 </div>
@@ -955,7 +957,7 @@ onBeforeUnmount(() => {
             </div>
           </aside>
 
-          <main data-test="five-hole-right-workspace" class="flex min-h-0 flex-col gap-4">
+          <main data-test="five-hole-right-workspace" class="flex min-h-0 flex-col gap-3">
             <!-- 主绘图区：K-Alpha/Beta -->
             <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-[var(--shadow-panel)]">
               <div class="flex items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)]/60 px-4 py-2.5">
@@ -973,7 +975,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 次级曲线区 -->
-            <div v-show="!isTopChartExpanded" class="grid min-h-0 flex-[0.85] grid-cols-2 gap-4">
+            <div v-show="!isTopChartExpanded" class="grid min-h-0 flex-[0.85] grid-cols-2 gap-3">
               <div
                 v-for="chart in [
                   { id: 'cpt', label: 'CPT - α 恢复系数', color: 'bg-[var(--accent-success)]', icon: TrendingUp },
@@ -1024,9 +1026,9 @@ onBeforeUnmount(() => {
 
           <div v-if="calibrationStore.completeEvent.success" class="ml-auto flex flex-shrink-0 items-center gap-2">
             <UiButton size="sm" secondary @click="saveCsv">
-              <Save :size="14" />保存CSV
+              <Save :size="14" />导出CSV
             </UiButton>
-            <UiButton size="sm" variant="primary" @click="exportReport">
+            <UiButton size="sm" variant="primary" disabled title="报告模板尚未接入，当前请使用CSV结果文件">
               <FileText :size="14" />导出报告
             </UiButton>
           </div>

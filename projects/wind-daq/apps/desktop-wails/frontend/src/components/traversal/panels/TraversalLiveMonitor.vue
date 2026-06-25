@@ -35,6 +35,8 @@ defineProps<{
   labels: {
     monitor: string
     currentPoint: string
+    currentPointX: string
+    currentPointY: string
     positioner: string
     realtimeCalculation: string
     realtimePressureData: string
@@ -94,11 +96,11 @@ defineProps<{
         <div class="monitor-section__title">{{ labels.currentPoint }}</div>
         <div class="grid grid-cols-2" :style="{ gap: 'var(--space-3)' }">
           <div>
-            <div class="text-xs text-[var(--text-muted)]">{{ labels.alpha }}</div>
+            <div class="text-xs text-[var(--text-muted)]">{{ labels.currentPointX }}</div>
             <div class="font-mono text-base font-bold tabular-nums text-[var(--text-primary)]">{{ currentPointSummary.alpha }}°</div>
           </div>
           <div>
-            <div class="text-xs text-[var(--text-muted)]">{{ labels.beta }}</div>
+            <div class="text-xs text-[var(--text-muted)]">{{ labels.currentPointY }}</div>
             <div class="font-mono text-base font-bold tabular-nums text-[var(--text-primary)]">{{ currentPointSummary.beta }}°</div>
           </div>
         </div>

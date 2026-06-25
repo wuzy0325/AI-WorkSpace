@@ -420,4 +420,3 @@ func (d *DAQP1064Pre) buildFrame(cmd byte, data []byte) []byte {
 func writeFloat32LE(data []byte, v float32) {
 	binary.LittleEndian.PutUint32(data, math.Float32bits(v))
 }
-

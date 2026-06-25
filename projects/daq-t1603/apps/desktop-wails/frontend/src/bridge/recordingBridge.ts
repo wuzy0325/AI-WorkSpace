@@ -1,10 +1,13 @@
+// Recording Bridge —— Wails v3 版
+//
+// 通过生成的 RecordingService 绑定调用 Go 侧方法；事件改用 @wailsio/runtime。
+import { Events } from '@wailsio/runtime'
 import {
   StartRecording,
   StopRecording,
   GetRecordingStatus,
   PickDirectory,
-} from '../../wailsjs/go/backend/App'
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+} from '../../bindings/daq-t1603/backend/recordingservice'
 
 export interface RecordingSession {
   id: string
@@ -31,10 +34,18 @@ export function pickDirectory(): Promise<string> {
   return PickDirectory() as Promise<string>
 }
 
+let recordingStatusUnsubscribe: (() => void) | null = null
+
 export function onRecordingStatus(handler: (session: RecordingSession) => void): void {
-  EventsOn('daq:recording-status', handler)
+  offRecordingStatus()
+  recordingStatusUnsubscribe = Events.On('daq:recording-status', (event: { data: RecordingSession }) => {
+    handler(event.data)
+  })
 }
 
 export function offRecordingStatus(): void {
-  EventsOff('daq:recording-status')
+  if (recordingStatusUnsubscribe) {
+    recordingStatusUnsubscribe()
+    recordingStatusUnsubscribe = null
+  }
 }

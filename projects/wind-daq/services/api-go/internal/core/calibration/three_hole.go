@@ -77,6 +77,10 @@ func (a *ThreeHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelVa
 	}, nil
 }
 
+func (a *ThreeHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint)
+}
+
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
 func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 	point CalPoint,

@@ -12,6 +12,10 @@ type Algorithm interface {
 	// samplesPerPoint: 每个点位的采样次数
 	AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error)
 
+	// AcquireDataWithConfig 使用完整校准配置采集单个点位数据。
+	// 自动校准流程使用该方法，确保通道映射、采样策略等配置参与采集。
+	AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error)
+
 	// ValidateConfig 验证校准配置是否有效
 	ValidateConfig(config Config) error
 }
@@ -19,6 +23,9 @@ type Algorithm interface {
 // ChannelValueReader 通道数据读取函数类型
 // 输入设备ID和通道索引，返回当前通道值
 type ChannelValueReader func(deviceID string, channelIndex int) (float64, bool)
+
+// DataPointSink 单个数据点采集完成后的回调类型，用于实时持久化（如逐点写 CSV）。
+type DataPointSink func(DataPoint)
 
 // DataPoint 通用校准数据点接口
 type DataPoint interface {

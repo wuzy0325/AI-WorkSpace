@@ -1,5 +1,7 @@
 package calibration
 
+import "encoding/json"
+
 // State 表示校准任务的状态
 type State string
 
@@ -50,6 +52,25 @@ type ProbeChannel struct {
 	DeviceID     string `json:"deviceId"`
 	ChannelIndex int    `json:"channelIndex"`
 	Enabled      bool   `json:"enabled"`
+}
+
+// UnmarshalJSON accepts both the backend flat shape and the frontend nested
+// shape: { channel: { deviceId, channelIndex } }.
+func (p *ProbeChannel) UnmarshalJSON(data []byte) error {
+	type probeChannelAlias ProbeChannel
+	var raw struct {
+		probeChannelAlias
+		Channel *ChannelRef `json:"channel"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*p = ProbeChannel(raw.probeChannelAlias)
+	if raw.Channel != nil {
+		p.DeviceID = raw.Channel.DeviceID
+		p.ChannelIndex = raw.Channel.ChannelIndex
+	}
+	return nil
 }
 
 // CalPoint 校准测点定义

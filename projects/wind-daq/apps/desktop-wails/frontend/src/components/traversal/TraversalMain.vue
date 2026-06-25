@@ -539,6 +539,8 @@ watch(
           :labels="{
             monitor: t.travMonitor,
             currentPoint: t.currentPoint,
+            currentPointX: t.currentPointX,
+            currentPointY: t.currentPointY,
             positioner: t.positioner,
             realtimeCalculation: t.realtimeCalculation,
             realtimePressureData: t.realtimePressureData,

@@ -40,6 +40,9 @@ export const useStorageStore = defineStore('storage', () => {
       if (isWailsAvailable()) {
         const res = await wailsApi.config.load(CONFIG_KEY)
         if (res.success) data = res.data
+        if (data?.baseDirectory) {
+          data.baseDirectory = await wailsApi.app.resolvePath(data.baseDirectory)
+        }
       } else {
         const res = await request<{ success: boolean; data?: any }>(`/api/config/${CONFIG_KEY}`)
         if (res.success && res.data) data = res.data
@@ -53,6 +56,9 @@ export const useStorageStore = defineStore('storage', () => {
           stopConditions: parsed.stopConditions ?? DEFAULT_SETTINGS.stopConditions,
           fileRotation: parsed.fileRotation ?? DEFAULT_SETTINGS.fileRotation,
         }
+      }
+      if (isWailsAvailable() && settings.value.baseDirectory) {
+        settings.value.baseDirectory = await wailsApi.app.resolvePath(settings.value.baseDirectory)
       }
     } catch {
       settings.value = { ...DEFAULT_SETTINGS }
@@ -83,5 +89,12 @@ export const useStorageStore = defineStore('storage', () => {
     return settings.value?.baseDirectory ?? ''
   }
 
-  return { settings, loadSettings, saveSettings, pickDirectory }
+  async function pickSaveFile(title: string, defaultFilename: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string> {
+    if (isWailsAvailable()) {
+      return await wailsApi.app.pickSaveFile(title, defaultFilename, filters)
+    }
+    return ''
+  }
+
+  return { settings, loadSettings, saveSettings, pickDirectory, pickSaveFile }
 })

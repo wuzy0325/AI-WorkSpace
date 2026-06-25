@@ -183,23 +183,12 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			var body struct {
-				TaskID         string    `json:"taskId"`
-				DeviceID       string    `json:"deviceId"`
-				Type           string    `json:"type"`
-				Channels       []int     `json:"channels"`
-				PressurePoints []float64 `json:"pressurePoints"`
-				AverageSamples int       `json:"averageSamples"`
-			}
+			var body calibration.Config
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			err := deps.CalibrationManager.Start(calibration.Config{
-				TaskID: body.TaskID, DeviceID: body.DeviceID, Type: body.Type,
-				Channels: body.Channels, PressurePoints: body.PressurePoints,
-				AverageSamples: body.AverageSamples,
-			})
+			err := deps.CalibrationManager.Start(body)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -237,6 +226,25 @@ func NewRouter(deps Deps) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, result)
+		case "saveCsv":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			var body struct {
+				TaskID   string `json:"taskId"`
+				SavePath string `json:"savePath"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			path, err := deps.CalibrationManager.SaveCsv(body.TaskID, body.SavePath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "filepath": path})
 		case "precisionDefaults":
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)

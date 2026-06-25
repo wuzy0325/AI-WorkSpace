@@ -3,6 +3,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+// Wails v3 frontend Vite 配置
+//   - 端口由 wails3 dev 通过 WAILS_VITE_PORT 注入；
+//   - 不再需要 rollupOptions.external 排除 ../wailsjs/*，
+//     绑定改为 wails3 generate bindings 产物（默认 frontend/bindings/）。
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -21,10 +25,6 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
-      external: [
-        '../wailsjs/go/backend/App',
-        '../wailsjs/go/models',
-      ],
       output: {
         manualChunks: {
           echarts: ['echarts', 'vue-echarts'],
@@ -38,7 +38,8 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
   },
   server: {
-    port: 15174,
+    host: '127.0.0.1',
+    port: Number(process.env.WAILS_VITE_PORT) || 9245,
     strictPort: true,
   },
 })

@@ -3,13 +3,13 @@ import MotionControlPanel from '@components/motion/MotionControlPanel.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiTooltip from '@components/ui/UiTooltip.vue'
 import { isWailsAvailable } from '@api/wails-adapter'
-import { Quit } from '../../wailsjs/runtime/runtime'
 
 // 关闭当前独立窗口（退出独立进程）
-function closeWindow(): void {
+async function closeWindow(): Promise<void> {
   if (isWailsAvailable()) {
     // 独立进程调用 Quit 会退出该进程，等效于关闭窗口
-    Quit()
+    const { Application } = await import('@wailsio/runtime')
+    await Application.Quit()
   } else {
     window.close()
   }

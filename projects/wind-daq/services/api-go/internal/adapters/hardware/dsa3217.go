@@ -22,6 +22,7 @@ const (
 
 type DSA3217 struct {
 	mu              sync.RWMutex
+	ioMu            sync.Mutex
 	profile         device.Profile
 	status          device.Status
 	sink            device.DataSink
@@ -94,9 +95,15 @@ func (d *DSA3217) Connect() error {
 
 func (d *DSA3217) Disconnect() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	shouldStop, _ := d.stopAcquisitionLocked()
+	d.mu.Unlock()
 
-	_ = d.stopAcquisitionLocked()
+	if shouldStop {
+		d.sendStopCommandIfConnected()
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	if d.conn != nil {
 		_ = d.conn.Close()
@@ -110,27 +117,30 @@ func (d *DSA3217) Disconnect() error {
 
 func (d *DSA3217) StartAcquisition() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if d.acquiring {
+		d.mu.Unlock()
 		return nil
 	}
 	if d.conn == nil {
+		d.mu.Unlock()
 		return fmt.Errorf("device not connected")
 	}
+	d.mu.Unlock()
 
+	if _, err := d.sendCommand("SCAN"); err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.acquiring {
+		return nil
+	}
 	d.acquiring = true
 	d.status.Acquiring = true
 	d.status.Connection = device.ConnectionAcquiring
 	d.stop = make(chan struct{})
 	stop := d.stop
-
-	if _, err := d.sendCommand("SCAN"); err != nil {
-		d.acquiring = false
-		d.status.Acquiring = false
-		d.status.Connection = device.ConnectionConnected
-		return err
-	}
 	d.scanning = true
 
 	go d.readLoop(stop)
@@ -139,11 +149,16 @@ func (d *DSA3217) StartAcquisition() error {
 
 func (d *DSA3217) StopAcquisition() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.stopAcquisitionLocked()
+	shouldStop, err := d.stopAcquisitionLocked()
+	d.mu.Unlock()
+	if shouldStop {
+		d.sendStopCommandIfConnected()
+	}
+	return err
 }
 
-func (d *DSA3217) stopAcquisitionLocked() error {
+func (d *DSA3217) stopAcquisitionLocked() (bool, error) {
+	shouldStop := d.acquiring
 	if d.acquiring && d.stop != nil {
 		close(d.stop)
 	}
@@ -155,11 +170,16 @@ func (d *DSA3217) stopAcquisitionLocked() error {
 		d.status.Connection = device.ConnectionConnected
 	}
 
-	if d.conn != nil {
+	return shouldStop, nil
+}
+
+func (d *DSA3217) sendStopCommandIfConnected() {
+	d.mu.RLock()
+	connected := d.conn != nil
+	d.mu.RUnlock()
+	if connected {
 		_, _ = d.sendCommand("STOP")
 	}
-
-	return nil
 }
 
 func (d *DSA3217) SetDataSink(sink device.DataSink) {
@@ -240,7 +260,20 @@ func (d *DSA3217) readLoop(stop <-chan struct{}) {
 		case <-stop:
 			return
 		default:
-			line, err := d.reader.ReadString('\n')
+			d.ioMu.Lock()
+			d.mu.RLock()
+			conn := d.conn
+			reader := d.reader
+			d.mu.RUnlock()
+			if reader == nil {
+				d.ioMu.Unlock()
+				return
+			}
+			if conn != nil {
+				_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			}
+			line, err := reader.ReadString('\n')
+			d.ioMu.Unlock()
 			if err != nil {
 				// 读取超时不视为异常，继续等待
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -310,6 +343,9 @@ func (d *DSA3217) parseDataLine(line string) {
 }
 
 func (d *DSA3217) sendCommand(cmd string) (string, error) {
+	d.ioMu.Lock()
+	defer d.ioMu.Unlock()
+
 	d.mu.RLock()
 	conn := d.conn
 	d.mu.RUnlock()

@@ -1,5 +1,4 @@
-// Wails API 适配器 - 运行时动态加载绑定，避免 Vite 构建时模块解析问题
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+// Wails API 适配器 - 统一封装 Wails v3 生成绑定，避免业务层感知绑定路径变化
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
 // 注意：Wails 实际通过 JSON tag 序列化为小写 success/error，
@@ -12,6 +11,11 @@ export interface GenericResponse {
   Success: boolean;
   /** @deprecated Wails 实际返回小写 error；保留 Error 仅用于兼容旧调用点 */
   Error?: string;
+}
+
+export interface FileResponse extends GenericResponse {
+  filepath?: string;
+  Filepath?: string;
 }
 
 export interface VersionInfo {
@@ -141,21 +145,27 @@ export interface ConfigLoadResult<T = unknown> {
 }
 
 // 运行时获取 Wails API 绑定
-function getWailsBinding(): any {
-  if (typeof window !== 'undefined' && (window as any).go && (window as any).go.backend && (window as any).go.backend.App) {
-    return (window as any).go.backend.App;
-  }
-  return null;
+async function getWailsBinding(): Promise<any> {
+  // 仅在真实 Wails 环境下加载 v3 runtime/bindings，避免浏览器预览和单测被 runtime fetch 副作用污染。
+  if (!isWailsAvailable()) return null;
+  // @ts-expect-error Wails v3 alpha generates JS bindings without TypeScript declarations.
+  return await import('../../bindings/wind-daq/apps/desktop-wails/backend/app.js');
 }
 
 // 检查 Wails 环境是否可用
 export const isWailsAvailable = (): boolean => {
-  return getWailsBinding() !== null;
+  if (typeof window === 'undefined') return false;
+  const w = window as any;
+  return Boolean(
+    w.chrome?.webview?.postMessage ||
+    w.webkit?.messageHandlers?.external?.postMessage ||
+    w.wails?.invoke,
+  );
 };
 
 // 通用调用包装器
 async function callBinding<T>(methodName: string, ...args: any[]): Promise<T> {
-  const binding = getWailsBinding();
+  const binding = await getWailsBinding();
   if (!binding || !binding[methodName]) {
     throw new Error(`Wails binding '${methodName}' not available`);
   }
@@ -228,19 +238,29 @@ export const wailsApi = {
       return await callBindingGeneric('DeviceSubscribeStream', deviceId, subscribe);
     },
     onPayload: (callback: (payload: DeviceDataPayload) => void): (() => void) => {
-      const cleanup = EventsOn('daq:payload', (data: unknown) => {
-        if (data == null) return
-        const raw = data as Record<string, unknown>
-        const normalized: DeviceDataPayload = {
-          deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : '',
-          timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
-          channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
-          channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
-        }
-        callback(normalized)
+      if (!isWailsAvailable()) return () => {};
+
+      let cleanup: (() => void) | null = null;
+      let active = true;
+
+      void import('@wailsio/runtime').then(({ Events }) => {
+        if (!active) return;
+        cleanup = Events.On('daq:payload', (event: { data: unknown }) => {
+          const data = event.data
+          if (data == null) return
+          const raw = data as Record<string, unknown>
+          const normalized: DeviceDataPayload = {
+            deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : '',
+            timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+            channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
+            channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
+          }
+          callback(normalized)
+        });
       });
       return () => {
-        cleanup();
+        active = false;
+        cleanup?.();
       };
     },
     getDsa3217ScanConfig: async (deviceId: string): Promise<DSA3217ScanConfigWailsResponse> => {
@@ -254,7 +274,12 @@ export const wailsApi = {
   // 运动控制
   motion: {
     getProfiles: async (): Promise<MotionProfile[]> => {
-      return await callBinding('MotionGetProfiles');
+      const raw = await callBinding<string>('MotionGetProfiles');
+      try {
+        return JSON.parse(raw) as MotionProfile[];
+      } catch {
+        return [];
+      }
     },
     upsertProfile: async (profile: MotionProfile): Promise<GenericResponse> => {
       return await callBindingGeneric('MotionUpsertProfile', profile);
@@ -269,7 +294,12 @@ export const wailsApi = {
       return await callBindingGeneric('MotionDisconnect', controllerId);
     },
     getStatus: async (): Promise<MotionStatus[]> => {
-      return await callBinding('MotionGetStatus');
+      const raw = await callBinding<string>('MotionGetStatus');
+      try {
+        return JSON.parse(raw) as MotionStatus[];
+      } catch {
+        return [];
+      }
     },
     home: async (controllerId: string, axisName: string): Promise<GenericResponse> => {
       return await callBindingGeneric('MotionHome', controllerId, axisName);
@@ -381,6 +411,13 @@ export const wailsApi = {
     },
     getResult: async (taskId: string): Promise<CalibrationStatus | boolean> => {
       return await callBinding('CalibrationGetResult', taskId);
+    },
+    saveCsv: async (taskId: string, savePath: string): Promise<FileResponse> => {
+      const raw = await callBinding<unknown>('CalibrationSaveCsv', taskId, savePath);
+      const normalized = normalizeGenericResponse(raw);
+      const obj = (raw ?? {}) as Record<string, unknown>;
+      const filepath = (obj.filepath ?? obj.Filepath) as string | undefined;
+      return { ...normalized, filepath, Filepath: filepath };
     }
   },
 
@@ -439,6 +476,13 @@ export const wailsApi = {
     },
     pickFiles: async (title: string, filters: Array<{ displayName: string; pattern: string }>): Promise<string[]> => {
       return await callBinding('PickFiles', title, filters);
+    },
+    pickSaveFile: async (
+      title: string,
+      defaultFilename: string,
+      filters: Array<{ displayName: string; pattern: string }>,
+    ): Promise<string> => {
+      return await callBinding('PickSaveFile', title, defaultFilename, filters);
     },
     // 获取启动模式："normal" 或 "motion"
     getStartupMode: async (): Promise<string> => {

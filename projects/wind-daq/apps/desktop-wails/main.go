@@ -3,12 +3,14 @@ package main
 import (
 	"embed"
 	"flag"
+	"log"
+	"log/slog"
+	"os"
+	"strconv"
 
 	"wind-daq/apps/desktop-wails/backend"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
@@ -21,6 +23,13 @@ func main() {
 	motionOnly := flag.Bool("motion-only", false, "以运动控制器独立窗口模式启动")
 	parentPID := flag.Int("parent-pid", 0, "父进程 PID（仅 motion-only 模式下使用，父进程退出时子进程一并退出）")
 	flag.Parse()
+	motionOnlyFromEnv := os.Getenv("WIND_DAQ_MOTION_ONLY") == "1"
+	parentPIDValue := *parentPID
+	if envParentPID := os.Getenv("WIND_DAQ_PARENT_PID"); envParentPID != "" {
+		if pid, err := strconv.Atoi(envParentPID); err == nil {
+			parentPIDValue = pid
+		}
+	}
 
 	// 根据启动模式确定模式字符串与窗口参数
 	mode := backend.ModeNormal
@@ -28,7 +37,7 @@ func main() {
 	width, height := 1600, 900
 	minWidth, minHeight := 1440, 900
 
-	if *motionOnly {
+	if *motionOnly || motionOnlyFromEnv {
 		mode = backend.ModeMotion
 		title = "运动控制器 - Wind-DAQ"
 		// 窗口尺寸根据实际内容调整：4 列轴卡片 + 侧边栏 + 头部约 620px 高
@@ -38,30 +47,43 @@ func main() {
 	}
 
 	app := backend.NewApp(mode)
-	if *motionOnly && *parentPID > 0 {
-		app.SetParentPID(*parentPID)
+	if mode == backend.ModeMotion && parentPIDValue > 0 {
+		app.SetParentPID(parentPIDValue)
 	}
 
-	err := wails.Run(&options.App{
+	wailsApp := application.New(application.Options{
+		Name:        "Wind-DAQ",
+		Description: "Wind-DAQ wind tunnel data acquisition desktop app",
+		LogLevel:    slog.LevelInfo,
+		Services: []application.Service{
+			application.NewService(app),
+		},
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+	})
+
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         title,
 		Width:         width,
 		Height:        height,
 		MinWidth:      minWidth,
 		MinHeight:     minHeight,
-		OnStartup:     app.Startup,
-		OnShutdown:    app.Shutdown,
-		Bind:          []interface{}{app},
-		AssetServer:   &assetserver.Options{Assets: assets},
-		StartHidden:   false,
+		URL:           "/",
+		Hidden:        false,
 		DisableResize: false,
-		BackgroundColour: &options.RGBA{
-			R: 7,
-			G: 17,
-			B: 31,
-			A: 1,
+		BackgroundColour: application.RGBA{
+			Red:   7,
+			Green: 17,
+			Blue:  31,
+			Alpha: 1,
 		},
 	})
-	if err != nil {
-		println("wails run error:", err.Error())
+
+	if err := wailsApp.Run(); err != nil {
+		log.Fatal(err)
 	}
 }

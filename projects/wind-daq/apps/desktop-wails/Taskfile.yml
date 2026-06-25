@@ -1,0 +1,14 @@
+version: '3'
+
+tasks:
+  build:
+    summary: Builds the Wind-DAQ desktop app for Wails3 dev mode
+    cmds:
+      - npm --prefix frontend install --no-audit --no-fund
+      - npm --prefix frontend run build
+      - go build -o build/bin/wind-daq.exe .
+
+  run:
+    summary: Runs the Wind-DAQ desktop app built by the build task
+    cmds:
+      - build/bin/wind-daq.exe

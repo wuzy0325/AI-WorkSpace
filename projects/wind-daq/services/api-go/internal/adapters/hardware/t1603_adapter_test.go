@@ -159,7 +159,7 @@ func TestT1603Adapter_StatusMapping(t *testing.T) {
 
 	st := device.Status{
 		ID: shared.ID, Name: shared.Name,
-		Type: device.Type(shared.Type),
+		Type:       device.Type(shared.Type),
 		Connection: device.Connection(shared.Conn),
 		Acquiring:  shared.Acq,
 	}

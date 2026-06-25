@@ -1,9 +1,12 @@
+// Log Bridge —— Wails v3 版
+//
+// 通过生成的 LogService 绑定调用 Go 侧方法。
 import {
   StartLogFile,
   StopLogFile,
   GetLogFileState,
   PickDirectory,
-} from '../../wailsjs/go/backend/App'
+} from '../../bindings/daq-t1603/backend/logservice'
 
 /** 日志文件写入状态 */
 export interface LogFileState {

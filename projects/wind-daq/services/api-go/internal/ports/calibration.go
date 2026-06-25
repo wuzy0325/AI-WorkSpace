@@ -28,7 +28,7 @@ type CalibrationEventPublisher interface {
 // CalibrationRuntime 校准运行时端口，提供通道读取和运动控制能力
 type CalibrationRuntime interface {
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
-	MoveToPosition(axisName string, position float64) error
+	MoveToPosition(axis calibration.MotionAxisConfig, position float64) error
 	WaitForMotionComplete() error
 }
 

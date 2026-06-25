@@ -44,7 +44,8 @@ npm run test
 ```powershell
 # Wails shell
 cd projects\wind-daq\apps\desktop-wails
-wails build
+go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```
 
 ## Project Scope

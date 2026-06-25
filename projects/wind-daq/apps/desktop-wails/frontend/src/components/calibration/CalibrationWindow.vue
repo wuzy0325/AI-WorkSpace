@@ -20,6 +20,7 @@ const mainComponents: Record<string, Component> = {
 const currentView = shallowRef<Component>(CalibrationHome)
 const showSettings = ref(false)
 const activeCalibrationType = ref<CalibrationType | null>(null)
+const currentMainRef = ref<{ reloadSavedConfig?: () => Promise<void> | void } | null>(null)
 
 const currentSettings = computed(() =>
   activeCalibrationType.value ? settingsComponents[activeCalibrationType.value] : null,
@@ -43,11 +44,17 @@ function handleOpenSettings() {
 function handleCloseSettings() {
   showSettings.value = false
 }
+
+async function handleSettingsSaved() {
+  showSettings.value = false
+  await currentMainRef.value?.reloadSavedConfig?.()
+}
 </script>
 
 <template>
   <div class="flex-1 min-h-0 w-full flex flex-col">
     <component
+      ref="currentMainRef"
       :is="currentView"
       @select-calibration="handleSelectCalibration"
       @back="handleBack"
@@ -58,7 +65,7 @@ function handleCloseSettings() {
       <component
         :is="currentSettings"
         @close="handleCloseSettings"
-        @saved="handleCloseSettings"
+        @saved="handleSettingsSaved"
       />
       <template #fallback>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">

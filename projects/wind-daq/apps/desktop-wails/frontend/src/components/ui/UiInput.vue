@@ -27,7 +27,7 @@ const inputAttrs = computed(() => {
   if (props.ariaDescribedby) result['aria-describedby'] = props.ariaDescribedby
   // 透传其他 aria 属性
   for (const key of Object.keys(attrs)) {
-    if (key.startsWith('aria-') || key === 'role' || key === 'autocomplete') {
+    if (key.startsWith('aria-') || key === 'role' || key === 'autocomplete' || key === 'title') {
       result[key] = attrs[key] as string
     }
   }

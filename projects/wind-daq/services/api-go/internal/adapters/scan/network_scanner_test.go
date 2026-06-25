@@ -16,9 +16,9 @@ type mockPacketConn struct {
 
 func (m *mockPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	type result struct {
-		n   int
+		n    int
 		addr net.Addr
-		err error
+		err  error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
@@ -59,8 +59,10 @@ func (m *mockPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 	return len(b), nil
 }
 
-func (m *mockPacketConn) Close() error                       { close(m.done); return nil }
-func (m *mockPacketConn) LocalAddr() net.Addr                { return &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0} }
+func (m *mockPacketConn) Close() error { close(m.done); return nil }
+func (m *mockPacketConn) LocalAddr() net.Addr {
+	return &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0}
+}
 func (m *mockPacketConn) SetDeadline(t time.Time) error      { m.readDeadline = t; return nil }
 func (m *mockPacketConn) SetReadDeadline(t time.Time) error  { m.readDeadline = t; return nil }
 func (m *mockPacketConn) SetWriteDeadline(_ time.Time) error { return nil }
@@ -299,12 +301,12 @@ func TestGetAllBroadcastTargets(t *testing.T) {
 
 func TestScanResultID(t *testing.T) {
 	tests := []struct {
-		name    string
-		prefix  string
-		addr    string
-		port    int
-		mac     string
-		want    string
+		name   string
+		prefix string
+		addr   string
+		port   int
+		mac    string
+		want   string
 	}{
 		{name: "with MAC", prefix: "scan-daq-p-1604", addr: "10.0.0.1", port: 9000, mac: "AA:BB:CC:DD:EE:FF", want: "scan-daq-p-1604-AA:BB:CC:DD:EE:FF"},
 		{name: "without MAC", prefix: "scan-daq-t-1603", addr: "10.0.0.2", port: 9000, mac: "", want: "scan-daq-t-1603-10.0.0.2-9000"},

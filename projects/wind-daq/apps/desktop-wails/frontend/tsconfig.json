@@ -28,9 +28,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.vue",
-    "wailsjs/**/*.ts",
-    "wailsjs/**/*.d.ts"
+    "src/**/*.vue"
   ],
   "exclude": []
 }

@@ -301,9 +301,10 @@ func (m *DeviceManager) ApplyDsa3217ScanConfig(id string, avg int, period int) (
 // 不同设备 id 之间仍然并行。
 //
 // 内部仍采用三阶段：
-//   Phase 1: 检查是否已连接、查找 profile（m.mu RLock）。
-//   Phase 2: 创建适配器 + 硬件连接（耗时操作，在 connMu 保护下进行）。
-//   Phase 3: 原子写入 devices map（m.mu Lock）。
+//
+//	Phase 1: 检查是否已连接、查找 profile（m.mu RLock）。
+//	Phase 2: 创建适配器 + 硬件连接（耗时操作，在 connMu 保护下进行）。
+//	Phase 3: 原子写入 devices map（m.mu Lock）。
 func (m *DeviceManager) Connect(id string) error {
 	connMu := m.connMu(id)
 	connMu.Lock()
@@ -374,8 +375,9 @@ func (m *DeviceManager) Connect(id string) error {
 // 通过 per-id 互斥锁串行化同一设备的 Connect/Disconnect/DeleteProfile。
 //
 // 内部两阶段：
-//   Phase 1 (锁内): 从 devices map 中原子删除。
-//   Phase 2 (connMu 下): 停止采集 + 断开硬件。与同 id 的 Connect 互斥。
+//
+//	Phase 1 (锁内): 从 devices map 中原子删除。
+//	Phase 2 (connMu 下): 停止采集 + 断开硬件。与同 id 的 Connect 互斥。
 //
 // 返回 StopAcquisition 和 Disconnect 的合并错误。
 func (m *DeviceManager) Disconnect(id string) error {

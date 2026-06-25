@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref } from 'vue'
-import { NCheckbox } from 'naive-ui'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -405,8 +405,7 @@ const connectionButtonLabel = computed(() => {
               <span class="chart-selector__name" :title="channel.name">{{ channel.name }}</span>
             </span>
             <span class="chart-selector__channel">CH{{ String(channel.index + 1).padStart(2, '0') }}</span>
-            <NCheckbox
-              size="small"
+            <UiCheckbox
               :checked="isChartVisible(channel.index)"
               @update:checked="toggleChartVisibility(channel.index)"
             />

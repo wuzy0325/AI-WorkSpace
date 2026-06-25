@@ -12,7 +12,7 @@ type RuntimeAccess interface {
 	// GetChannelValue 获取指定设备通道的当前值
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
 	// MoveToPosition 移动指定轴到目标位置
-	MoveToPosition(axisName string, position float64) error
+	MoveToPosition(axis MotionAxisConfig, position float64) error
 	// WaitForMotionComplete 等待所有轴运动完成
 	WaitForMotionComplete() error
 }
@@ -24,6 +24,7 @@ type AutomaticCalibration struct {
 	config          Config
 	eventPublisher  EventPublisher
 	runtime         RuntimeAccess
+	onDataPoint     func(DataPoint) // 每个点采集完成后的回调（用于实时 CSV 写入等）
 	taskID          string
 	isRunning       bool
 	isPaused        bool
@@ -33,11 +34,13 @@ type AutomaticCalibration struct {
 }
 
 // NewAutomaticCalibration 创建自动校准引擎
-func NewAutomaticCalibration(config Config, publisher EventPublisher, runtime RuntimeAccess) *AutomaticCalibration {
+// onDataPoint 可为 nil；非 nil 时每个点采集完成后同步调用，调用方负责持久化等 I/O。
+func NewAutomaticCalibration(config Config, publisher EventPublisher, runtime RuntimeAccess, onDataPoint func(DataPoint)) *AutomaticCalibration {
 	return &AutomaticCalibration{
 		config:         config,
 		eventPublisher: publisher,
 		runtime:        runtime,
+		onDataPoint:    onDataPoint,
 		dataPoints:     make([]DataPoint, 0),
 	}
 }
@@ -133,7 +136,7 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 
 	// 4. 采集数据
 	channelReader := a.makeChannelReader()
-	dataPoint, err := algorithm.AcquireData(point, channelReader, a.config.SamplesPerPoint)
+	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config)
 	if err != nil {
 		return fmt.Errorf("数据采集失败: %w", err)
 	}
@@ -141,7 +144,12 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	// 5. 保存数据点
 	a.dataPoints = append(a.dataPoints, dataPoint)
 
-	// 6. 发送进度更新
+	// 6. 实时持久化回调（逐点写 CSV 等），失败仅记录不中断校准
+	if a.onDataPoint != nil {
+		a.onDataPoint(dataPoint)
+	}
+
+	// 7. 发送进度更新
 	a.sendProgressUpdate(point, dataPoint)
 
 	return nil
@@ -166,7 +174,7 @@ func (a *AutomaticCalibration) moveToPoint(point CalPoint) error {
 		}
 
 		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, position)
-		if err := a.runtime.MoveToPosition(axisName, position); err != nil {
+		if err := a.runtime.MoveToPosition(*axisConfig, position); err != nil {
 			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, position, err)
 		}
 	}
@@ -197,7 +205,7 @@ func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []
 		}
 
 		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, position)
-		if err := a.runtime.MoveToPosition(axisName, position); err != nil {
+		if err := a.runtime.MoveToPosition(*axisConfig, position); err != nil {
 			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, position, err)
 		}
 	}

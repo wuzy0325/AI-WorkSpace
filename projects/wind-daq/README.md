@@ -21,7 +21,7 @@ Reusable motion behavior is shared through `shared/motion-control/go` and low-le
 
 - Go 1.21+
 - Node.js LTS
-- Wails CLI v2.12.0+ (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)
+- Wails v3 alpha.95 CLI (`go run github.com/wailsapp/wails/v3/cmd/wails3 ...` or an installed `wails3` wrapper)
 
 ### Backend
 
@@ -46,7 +46,7 @@ Starts on `http://127.0.0.1:5173`. Dev server proxies `/api` to backend.
 
 ```powershell
 cd projects/wind-daq/apps/desktop-wails
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 前端开发服务器: `http://localhost:5173`
@@ -137,7 +137,8 @@ npm run test        # Vitest unit tests
 
 ```powershell
 cd apps/desktop-wails
-wails build
+go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```
 
 ## Migration Notes

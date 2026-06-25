@@ -5,9 +5,9 @@ import (
 	"sync"
 	"testing"
 
-	motionmanager "shared.local/motion-control/go/manager"
 	sharedcore "shared.local/device-sdk/go/motion/core"
 	sharedports "shared.local/device-sdk/go/motion/ports"
+	motionmanager "shared.local/motion-control/go/manager"
 
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/ports"

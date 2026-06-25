@@ -201,7 +201,7 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 			return
 		}
 		mode := coreinterp.MultiPrbInterpolationMode(rawCfg.MultiPrb.InterpolationMode)
-		machNumbers := rawCfg.MultiPrb.MachNumbers
+		machNumbers := append([]float64(nil), rawCfg.MultiPrb.MachNumbers...)
 		interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (coreinterp.Interpolator, error) {
 			return loader.LoadMultiPRB(filePaths, machNumbers, mode)
 		})
@@ -383,6 +383,7 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 			return &traversal.RectangleLayout{
 				XMin: cfg.Layout.Rectangle.XMin, XMax: cfg.Layout.Rectangle.XMax,
 				XStepSegments: cfg.Layout.Rectangle.XStepSegments,
+				YMin:          cfg.Layout.Rectangle.YMin, YMax: cfg.Layout.Rectangle.YMax,
 				YStepSegments: cfg.Layout.Rectangle.YStepSegments,
 			}
 		}(),

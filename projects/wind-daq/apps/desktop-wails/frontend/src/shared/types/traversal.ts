@@ -128,7 +128,9 @@ export function getTraversalStepValues(start: number, end: number, segments: Ste
     const actualStart = Math.max(segmentStart, start)
     const actualEnd = Math.min(segmentEnd, end)
 
-    for (let value = actualStart; value <= actualEnd; value += step) {
+    // 使用 1e-9 容差避免浮点数精度问题导致末端点被遗漏
+    // 必须与后端 path.go 的 StepValues 函数保持一致
+    for (let value = actualStart; value <= actualEnd + 1e-9; value += step) {
       if (!values.includes(value)) {
         values.push(value)
       }

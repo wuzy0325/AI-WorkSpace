@@ -36,7 +36,7 @@ func ParseSerialFrame(data []byte) ([]float64, error) {
 
 const TCPFrameSize = 64
 const TCPFrameSizeWithTimestamp = 72 // 8 bytes timestamp header + 64 bytes float32 data
-const maxReasonableThermocoupleTemp = 300.0
+const maxReasonableThermocoupleTemp = 2000.0
 
 // ParseTCPFrame parses TCP data frame.
 // Auto-detects format based on size:
@@ -83,7 +83,7 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 		if math.IsNaN(temp) || math.IsInf(temp, 0) {
 			continue
 		}
-		if temp >= -100 && temp <= maxReasonableThermocoupleTemp {
+		if temp >= -273.15 && temp <= maxReasonableThermocoupleTemp {
 			reasonableCount++
 		}
 	}
@@ -118,6 +118,9 @@ func ParseASCIIFrame(data []byte) ([]float64, error) {
 	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
 		temps[i], temps[j] = temps[j], temps[i]
 	}
+	if !looksLikeReasonableTemperatureFrame(temps) {
+		return nil, fmt.Errorf("ASCII frame values out of expected range")
+	}
 
 	return temps, nil
 }
@@ -150,6 +153,9 @@ func parseBinaryFrameWithTimestamp(data []byte) (*T1603ParsedFrame, error) {
 
 	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
 		temps[i], temps[j] = temps[j], temps[i]
+	}
+	if !looksLikeReasonableTemperatureFrame(temps) {
+		return nil, fmt.Errorf("binary frame values out of expected range")
 	}
 
 	return &T1603ParsedFrame{
@@ -231,6 +237,9 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
 		temps[i], temps[j] = temps[j], temps[i]
 	}
+	if !looksLikeReasonableTemperatureFrame(temps) {
+		return nil, fmt.Errorf("space-separated frame values out of expected range")
+	}
 	result.Temperatures = temps
 	return result, nil
 }
@@ -248,11 +257,11 @@ var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 //   - BIN=0, metadata=true  → newline-terminated variable ASCII (TIME/HEAD)
 //   - BIN=1, metadata=true  → 72-byte fixed binary with timestamp header
 type T1603FrameReader struct {
-	conn          net.Conn
-	mu            sync.Mutex
-	buffer        []byte
-	binaryMode    bool
-	metadataMode  bool
+	conn         net.Conn
+	mu           sync.Mutex
+	buffer       []byte
+	binaryMode   bool
+	metadataMode bool
 }
 
 // NewT1603FrameReader creates a frame reader for DAQ-T-1603 TCP data.

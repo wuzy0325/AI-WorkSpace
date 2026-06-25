@@ -7,10 +7,10 @@
 package wiring
 
 import (
-	motionadapter "wind-daq/services/api-go/internal/adapters/motion"
-	motionmanager "shared.local/motion-control/go/manager"
 	sharedcore "shared.local/device-sdk/go/motion/core"
 	sharedports "shared.local/device-sdk/go/motion/ports"
+	motionmanager "shared.local/motion-control/go/manager"
+	motionadapter "wind-daq/services/api-go/internal/adapters/motion"
 
 	"wind-daq/services/api-go/internal/ports"
 )

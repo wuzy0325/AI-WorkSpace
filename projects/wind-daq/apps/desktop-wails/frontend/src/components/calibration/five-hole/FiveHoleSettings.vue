@@ -4,6 +4,7 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useStorageStore } from '@stores/storageStore'
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
@@ -53,6 +54,7 @@ const emit = defineEmits<{
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
+const storageStore = useStorageStore()
 const { t } = useI18nStore()
 
 const isLoading = ref(true)
@@ -122,6 +124,7 @@ const pointCount = computed(() => pointLayoutValidation.value.count)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
 const calibrationName = ref('')
+const savePath = ref('')
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
@@ -203,6 +206,7 @@ const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
     if (calibrationName.value.trim() === '') errors.push(t.enterConfigName || '请输入配置名称')
+    if (savePath.value.trim() === '') errors.push('请输入 CSV 保存路径')
     // 点位布局相关错误统一由 validatePointLayout 提供
     errors.push(...pointLayoutValidation.value.errors)
     if (dwellTimeMs.value < 100) errors.push(t.dwellTimeMin || '驻留时间至少100ms')
@@ -236,6 +240,18 @@ function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 // generatePoints 是同步函数（蛇形顺序点位生成），调用处无需 await
 function generatePoints() { return generateFiveHoleSnakePoints(pointLayout.value) }
 
+async function pickSavePath() {
+  try {
+    const defaultName = `${calibrationName.value.trim() || 'five-hole'}-${new Date().toISOString().slice(0, 10)}.csv`
+    const picked = await storageStore.pickSaveFile('选择校准 CSV 保存位置', defaultName, [
+      { displayName: 'CSV 文件 (*.csv)', pattern: '*.csv' },
+    ])
+    if (picked) savePath.value = picked
+  } catch (e) {
+    feedbackStore.pushToast('选择保存路径失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
+  }
+}
+
 async function saveConfig() {
   isSaving.value = true
   try {
@@ -247,7 +263,7 @@ async function saveConfig() {
       points: await generatePoints(),
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
-      savePath: '',
+      savePath: savePath.value.trim(),
       fiveHoleLayout: pointLayout.value,
       derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
       sphereTankGate: {
@@ -291,6 +307,7 @@ async function loadSavedConfig() {
     }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
+    savePath.value = config.savePath || ''
     machNumberPrecision.value = config.derivedValuePrecision?.machNumber ?? DEFAULT_CALIBRATION_MACH_PRECISION
     velocityPrecision.value = config.derivedValuePrecision?.velocity ?? DEFAULT_CALIBRATION_VELOCITY_PRECISION
     if (config.sphereTankGate) {
@@ -485,10 +502,26 @@ const channelColumns = [
             </div>
           </UiPanel>
         </div>
+
+        <UiPanel class="section-card">
+          <template #header>
+            <div class="section-header">
+              <Save :size="14" />
+              <span>CSV 保存</span>
+            </div>
+          </template>
+          <div class="field">
+            <span class="field-label">保存路径</span>
+            <div class="flex items-center gap-2">
+              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存位置" class="flex-1" />
+              <UiButton size="sm" variant="secondary" @click="pickSavePath">选择文件…</UiButton>
+            </div>
+          </div>
+        </UiPanel>
       </div>
 
       <!-- 步骤 2：硬件配置 -->
-      <div v-if="currentStep === 1" class="step-content">
+      <div v-if="currentStep === 1" class="step-content hardware-step">
         <!-- 通道映射进度条：直观展示配置完成度 -->
         <div class="mapping-progress">
           <span class="mapping-progress-label">通道映射</span>
@@ -645,6 +678,10 @@ const channelColumns = [
                 {{ sphereTankGateEnabled ? `启用（等待 ${sphereTankWaitTimeSec}s）` : '未启用' }}
               </span>
             </div>
+            <div class="summary-row">
+              <span class="summary-label">CSV 保存</span>
+              <span class="summary-value">{{ savePath }}</span>
+            </div>
           </div>
         </UiPanel>
       </div>
@@ -672,14 +709,36 @@ const channelColumns = [
 </template>
 
 <style scoped>
-/* 步骤内容容器：整体降一档间距，内容溢出时独立滚动 */
+/* 步骤内容容器：滚动由 UiDialog 内容区统一承载，避免底部按钮被挤出视口 */
 .step-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: calc(90vh - 140px);
-  overflow-y: auto;
   padding-right: var(--space-1);
+}
+
+.hardware-step {
+  gap: var(--space-1-5);
+}
+
+.hardware-step :deep(.n-card-header) {
+  padding: var(--space-2) var(--space-3) var(--space-1-5);
+}
+
+.hardware-step :deep(.n-card__content) {
+  padding: var(--space-1-5) var(--space-3) var(--space-2) !important;
+}
+
+.hardware-step .mapping-progress {
+  padding: var(--space-1) var(--space-2);
+}
+
+.hardware-step .ntable th {
+  padding: var(--space-1) var(--space-2);
+}
+
+.hardware-step .ntable td {
+  padding: var(--space-0-5) var(--space-2);
 }
 
 .section-card {

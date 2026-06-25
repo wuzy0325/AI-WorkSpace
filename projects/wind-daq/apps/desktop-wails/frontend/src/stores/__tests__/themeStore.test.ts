@@ -22,17 +22,17 @@ describe('themeStore', () => {
     mockLocalStorage()
   })
 
-  it('defaults to dark theme', () => {
+  it('defaults to light theme', () => {
     const store = useThemeStore()
-    expect(store.theme).toBe('dark')
+    expect(store.theme).toBe('light')
   })
 
   it('toggles theme', () => {
     const store = useThemeStore()
     store.toggleTheme()
-    expect(store.theme).toBe('light')
-    store.toggleTheme()
     expect(store.theme).toBe('dark')
+    store.toggleTheme()
+    expect(store.theme).toBe('light')
   })
 
   it('sets theme explicitly', () => {

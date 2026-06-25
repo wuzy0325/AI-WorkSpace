@@ -13,10 +13,10 @@ import (
 )
 
 type CSVRecordingSink struct {
-	mu          sync.Mutex
-	file        *os.File
-	writeCount  int
-	syncEvery   int // 每写入多少条记录执行一次 Sync
+	mu         sync.Mutex
+	file       *os.File
+	writeCount int
+	syncEvery  int // 每写入多少条记录执行一次 Sync
 }
 
 func NewCSVRecordingSink() *CSVRecordingSink {

@@ -135,6 +135,10 @@ func (a *FiveHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelVal
 	}, nil
 }
 
+func (a *FiveHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil)
+}
+
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
 // 支持实时数据推送，供前端实时监控使用
 func (a *FiveHoleAlgorithm) AcquireDataWithChannels(

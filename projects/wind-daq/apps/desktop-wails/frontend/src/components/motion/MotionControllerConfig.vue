@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, onMounted, watch, ref } from 'vue';
-import { NButton } from 'naive-ui';
 import { useMotionStore } from '@stores/motionStore';
 import { useFeedbackStore } from '@stores/feedbackStore';
+import UiButton from '@components/ui/UiButton.vue';
 import type { MotionControllerProfile, AxisConfig, AxisName, PositionSource } from '@shared/types/motion';
 import {
   DEFAULT_AXIS_NAMES,
@@ -289,13 +289,13 @@ const controllerTypeOptions = [
                   </p>
                 </div>
               </div>
-              <NButton quaternary size="small" class="config-panel__close" @click="emit('close')">
+              <UiButton variant="ghost" size="sm" class="config-panel__close" @click="emit('close')">
                 <template #icon>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M18 6L6 18M6 6l12 12"/>
                   </svg>
                 </template>
-              </NButton>
+              </UiButton>
             </header>
 
             <!-- Main Content -->
@@ -380,12 +380,12 @@ const controllerTypeOptions = [
                 </span>
               </div>
               <div class="config-panel__footer-right">
-                <NButton v-if="isEdit" type="error" size="tiny" class="config-panel__delete-btn" @click="remove(editing.id)">删除</NButton>
-                <NButton v-if="isEdit" type="primary" size="tiny" class="config-panel__new-btn" @click="newProfile">新建</NButton>
-                <NButton quaternary size="tiny" class="config-panel__cancel-btn" @click="emit('close')">取消</NButton>
-                <NButton type="primary" size="tiny" class="config-panel__save-btn" @click="save">
+                <UiButton v-if="isEdit" variant="danger" size="sm" class="config-panel__delete-btn" @click="remove(editing.id)">删除</UiButton>
+                <UiButton v-if="isEdit" variant="primary" size="sm" class="config-panel__new-btn" @click="newProfile">新建</UiButton>
+                <UiButton variant="ghost" size="sm" class="config-panel__cancel-btn" @click="emit('close')">取消</UiButton>
+                <UiButton variant="primary" size="sm" class="config-panel__save-btn" @click="save">
                   {{ isCreatingNew ? '创建控制器' : '保存' }}
-                </NButton>
+                </UiButton>
               </div>
             </footer>
 
