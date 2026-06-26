@@ -12,7 +12,7 @@ switch ($Mode) {
         npm run build | Out-Null
         Pop-Location
         Push-Location "$root/apps/desktop-wails"
-        go build -o build/bin/wind-daq.exe .
+        go build -ldflags="-H windowsgui" -o build/bin/wind-daq.exe .
         Pop-Location
         Write-Host "启动桌面应用..." -ForegroundColor Green
         Push-Location "$root/apps/desktop-wails"

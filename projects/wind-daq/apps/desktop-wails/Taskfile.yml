@@ -35,7 +35,7 @@ tasks:
   build-go:
     summary: 仅构建 Go 二进制
     cmds:
-      - go build -o build/bin/wind-daq.exe .
+      - go build -ldflags="-H windowsgui" -o build/bin/wind-daq.exe .
 
   run:
     summary: 运行已构建的桌面应用

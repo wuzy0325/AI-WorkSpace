@@ -32,10 +32,18 @@ tasks:
       - npm --prefix frontend install --no-audit --no-fund
       - npm --prefix frontend run build
 
+  generate-syso:
+    summary: 生成 Windows .syso 资源文件（嵌入图标）
+    cmds:
+      - rsrc -ico build/windows/icon.ico -o rsrc.syso
+
   build-go:
     summary: 仅构建 Go 二进制
+    deps:
+      - generate-syso
     cmds:
-      - go build -o build/bin/motion-controller.exe .
+      - go build -ldflags="-H windowsgui" -o build/bin/motion-controller.exe .
+      - cmd: powershell Remove-Item -LiteralPath rsrc.syso -ErrorAction SilentlyContinue
 
   run:
     summary: 运行已构建的桌面应用
@@ -51,5 +59,7 @@ tasks:
     summary: 开发模式（构建前端后运行内嵌资源）
     cmds:
       - task: build-frontend
+      - task: generate-syso
       - go build -o build/bin/motion-controller.exe .
+      - cmd: powershell Remove-Item -LiteralPath rsrc.syso -ErrorAction SilentlyContinue
       - task: run-dev
