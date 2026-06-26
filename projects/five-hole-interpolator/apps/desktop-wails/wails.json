@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "five-hole-interpolator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "outputfilename": "five-hole-interpolator",
   "frontend": {
     "dir": "frontend",

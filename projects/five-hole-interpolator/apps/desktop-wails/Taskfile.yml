@@ -1,0 +1,48 @@
+version: '3'
+
+tasks:
+  default:
+    summary: 一键构建并启动（生产模式，使用内嵌前端资源）
+    cmds:
+      - task: build-frontend
+      - task: build-go
+      - task: run
+
+  build:
+    summary: 构建前端 + Go 二进制
+    cmds:
+      - task: build-frontend
+      - task: build-go
+
+  windows:build:
+    summary: Wails v3 Windows 构建入口
+    cmds:
+      - task: build
+
+  build-frontend:
+    summary: 仅构建前端
+    cmds:
+      - npm --prefix frontend install --no-audit --no-fund
+      - npm --prefix frontend run build
+
+  build-go:
+    summary: 仅构建 Go 二进制
+    cmds:
+      - go build -o build/bin/five-hole-interpolator.exe .
+
+  run:
+    summary: 运行已构建的桌面应用
+    cmds:
+      - build/bin/five-hole-interpolator.exe
+
+  run-dev:
+    summary: 使用已构建的内嵌前端运行桌面应用
+    cmds:
+      - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\five-hole-interpolator.exe"
+
+  dev:
+    summary: 开发模式（构建前端后运行内嵌资源）
+    cmds:
+      - task: build-frontend
+      - go build -o build/bin/five-hole-interpolator.exe .
+      - task: run-dev
