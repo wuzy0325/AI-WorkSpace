@@ -9,8 +9,10 @@ const props = withDefaults(
     placeholder?: string
     size?: 'sm' | 'md' | 'lg'
     disabled?: boolean
+    ariaLabel?: string
+    dataTest?: string
   }>(),
-  { modelValue: '', options: () => [], placeholder: '', size: 'sm', disabled: false },
+  { modelValue: '', options: () => [], placeholder: '', size: 'sm', disabled: false, ariaLabel: '', dataTest: '' },
 )
 
 const naiveSize = computed(() => {
@@ -29,6 +31,8 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
     :placeholder="placeholder"
     :size="naiveSize"
     :disabled="disabled"
+    :aria-label="ariaLabel || undefined"
+    :data-test="dataTest || undefined"
     @update:value="emit('update:modelValue', $event ?? '')"
   />
 </template>

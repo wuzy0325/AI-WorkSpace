@@ -11,10 +11,12 @@ import (
 	"motion-controller/services/api-go/pkg/appcontext"
 	"shared.local/device-sdk/go/motion/core"
 	motionhttp "shared.local/motion-control/go/httpapi"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // motionHTTPPort 是运动状态 HTTP API 的监听端口。
-// 前端通过此端口轮询获取状态数据，绕开 Wails v2.12.0 的 reflect 序列化 bug。
+// 前端通过此端口轮询获取状态数据，避免大结构体状态快照走 Wails 绑定热路径。
 const motionHTTPPort = "127.0.0.1:16888"
 
 type App struct {
@@ -27,10 +29,11 @@ func NewApp(appCtx *appcontext.AppContext) *App {
 	return &App{appCtx: appCtx}
 }
 
-func (a *App) Startup(ctx context.Context) {
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
 	a.appCtx.MotionManager.LoadProfiles()
 	a.startStatusHTTPServer()
+	return nil
 }
 
 func (a *App) startStatusHTTPServer() {
@@ -85,11 +88,14 @@ func isAllowedMotionOrigin(origin string) bool {
 		strings.HasPrefix(origin, "http://127.0.0.1:")
 }
 
-func (a *App) Shutdown(ctx context.Context) {
+func (a *App) ServiceShutdown() error {
 	if a.httpServer != nil {
 		slog.Info("[App] shutting down HTTP server")
-		a.httpServer.Shutdown(ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = a.httpServer.Shutdown(ctx)
 	}
+	return nil
 }
 
 func (a *App) MotionUpsertProfile(profile core.MotionControllerProfile) error {
@@ -153,18 +159,16 @@ func (a *App) MotionDefinePosition(id string, axis string, position float64) err
 	return a.appCtx.MotionManager.DefinePosition(a.ctx, id, core.AxisName(axis), position)
 }
 
-// MotionGetProfiles 保留为 Wails 绑定兼容（返回空数组）。
-// 实际数据通过 HTTP API (http://localhost:16888/api/motion/profiles) 获取，
-// 以绕开 Wails v2.12.0 的 reflect 序列化 bug。
+// MotionGetProfiles 保留为 Wails 绑定兼容。
+// 实际数据也可通过 HTTP API (http://localhost:16888/api/motion/profiles) 获取。
 func (a *App) MotionGetProfiles() string {
 	profiles := a.appCtx.MotionManager.GetProfiles()
 	data, _ := json.Marshal(profiles)
 	return string(data)
 }
 
-// MotionGetStatus 保留为 Wails 绑定兼容（返回空数组）。
-// 实际数据通过 HTTP API (http://localhost:16888/api/motion/status) 获取，
-// 以绕开 Wails v2.12.0 的 reflect 序列化 bug。
+// MotionGetStatus 保留为 Wails 绑定兼容。
+// 实际数据也可通过 HTTP API (http://localhost:16888/api/motion/status) 获取。
 func (a *App) MotionGetStatus() string {
 	statuses := a.appCtx.MotionManager.StatusAll(a.ctx)
 	data, _ := json.Marshal(statuses)

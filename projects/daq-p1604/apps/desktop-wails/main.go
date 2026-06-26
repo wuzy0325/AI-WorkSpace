@@ -7,9 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"daq-p1604/adapters/config"
 	"daq-p1604/adapters/hardware"
@@ -23,6 +21,9 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed appicon.png
+var appIcon []byte
 
 func main() {
 	configDir, _ := os.UserConfigDir()
@@ -86,22 +87,33 @@ func main() {
 		})
 	}
 
-	err := wails.Run(&options.App{
+	wailsApp := application.New(application.Options{
+		Name:        "DAQ-P-1604",
+		Description: "DAQ-P-1604 pressure acquisition desktop app",
+		LogLevel:    slog.LevelInfo,
+		Services: []application.Service{
+			application.NewService(app),
+		},
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+		Icon: appIcon,
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+	})
+
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "DAQ-P-1604 压力采集",
 		Width:     1600,
 		Height:    900,
 		MinWidth:  1280,
 		MinHeight: 720,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		OnStartup:  app.Startup,
-		OnShutdown: app.Shutdown,
-		Bind: []interface{}{
-			app,
-		},
+		URL:       "/",
+		Hidden:    false,
 	})
-	if err != nil {
+
+	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
 }

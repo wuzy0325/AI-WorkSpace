@@ -3,8 +3,8 @@ import {
   StopRecording,
   GetRecordingStatus,
   PickDirectory,
-} from '../../wailsjs/go/backend/App'
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+} from '../../bindings/daq-p1604/backend/app'
+import { Events } from '@wailsio/runtime'
 
 export interface RecordingSession {
   id: string
@@ -32,9 +32,17 @@ export function pickDirectory(): Promise<string> {
 }
 
 export function onRecordingStatus(handler: (session: RecordingSession) => void): void {
-  EventsOn('daq:recording-status', handler)
+  offRecordingStatus()
+  recordingStatusUnsubscribe = Events.On('daq:recording-status', (event: { data: RecordingSession }) => {
+    handler(event.data)
+  })
 }
 
 export function offRecordingStatus(): void {
-  EventsOff('daq:recording-status')
+  if (recordingStatusUnsubscribe) {
+    recordingStatusUnsubscribe()
+    recordingStatusUnsubscribe = null
+  }
 }
+
+let recordingStatusUnsubscribe: (() => void) | null = null

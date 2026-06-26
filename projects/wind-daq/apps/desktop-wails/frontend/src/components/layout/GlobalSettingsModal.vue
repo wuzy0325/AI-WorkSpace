@@ -332,6 +332,8 @@ async function onSave(): Promise<void> {
                   <UiButton
                     size="md"
                     :variant="theme === 'light' ? 'primary' : 'ghost'"
+                    aria-label="切换为浅色主题"
+                    data-test="settings-theme-light"
                     @click="themeStore.setTheme('light')"
                   >
                     <template #icon><Sun :size="14" /></template>浅色
@@ -339,6 +341,8 @@ async function onSave(): Promise<void> {
                   <UiButton
                     size="md"
                     :variant="theme === 'dark' ? 'primary' : 'ghost'"
+                    aria-label="切换为深色主题"
+                    data-test="settings-theme-dark"
                     @click="themeStore.setTheme('dark')"
                   >
                     <template #icon><Moon :size="14" /></template>深色
@@ -351,6 +355,8 @@ async function onSave(): Promise<void> {
                   <button
                     class="locale-btn"
                     :class="{ 'locale-btn--active': locale === 'zh' }"
+                    aria-label="切换为中文界面"
+                    data-test="settings-locale-zh"
                     @click="i18nStore.setLocale('zh')"
                   >
                     <Globe :size="12" />中文
@@ -358,6 +364,8 @@ async function onSave(): Promise<void> {
                   <button
                     class="locale-btn"
                     :class="{ 'locale-btn--active': locale === 'en' }"
+                    aria-label="Switch interface language to English"
+                    data-test="settings-locale-en"
                     @click="i18nStore.setLocale('en')"
                   >
                     <Globe :size="12" />English
@@ -396,7 +404,7 @@ async function onSave(): Promise<void> {
                     placeholder="data/recordings"
                     @blur="updateFieldError('baseDirectory')"
                   />
-                  <UiButton size="md" @click="handlePickDirectory">
+                  <UiButton size="md" aria-label="选择保存目录" data-test="settings-pick-directory" @click="handlePickDirectory">
                     <template #icon><Folder :size="14" /></template>选择
                   </UiButton>
                 </div>

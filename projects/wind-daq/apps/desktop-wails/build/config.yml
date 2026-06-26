@@ -1,0 +1,33 @@
+version: '3'
+
+info:
+  companyName: "Wind-DAQ Team"
+  productName: "Wind-DAQ"
+  productIdentifier: "com.wind-daq.app"
+  description: "Wind-DAQ wind tunnel data acquisition desktop app"
+  copyright: "(c) 2025, Wind-DAQ Team"
+  version: "0.1.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: wails3 task build-frontend
+      type: blocking
+    - cmd: wails3 task build-go
+      type: blocking
+    - cmd: wails3 task run-dev
+      type: primary

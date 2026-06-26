@@ -1549,40 +1549,6 @@ const enabledOnlyChannels = ref(false)
 .drawer-list { flex: 1; overflow-y: auto; padding: 1rem 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .drawer-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
-.device-card {
-  position: relative; overflow: hidden;
-  border-radius: 0.75rem; border: 1px solid var(--border-default);
-  background: var(--bg-panel); transition: all 0.2s;
-}
-.device-card:hover { border-color: var(--accent-success); }
-.device-card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: var(--space-1); background: var(--text-muted); transition: all 0.3s; }
-.device-card-stripe.status-online { background: var(--color-success); box-shadow: 0 0 var(--space-2) rgba(16,185,129,0.5); }
-.device-card-stripe.status-acq { background: var(--color-success); box-shadow: 0 0 var(--space-3) rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
-.device-card-stripe.status-connecting { background: var(--color-warning); animation: pulse 0.8s infinite; }
-.device-card-body { padding: 1rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.device-card-left { min-width: 0; flex: 1; }
-.device-card-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.device-checkbox { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-sm); flex-shrink: 0; accent-color: var(--color-accent); }
-.device-card-name { margin: 0; font-size: var(--font-size-base); font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.device-card-type-badge {
-  flex-shrink: 0; padding: 0.125rem 0.5rem; border-radius: 0.25rem;
-  background: var(--bg-panel-strong); font-size: var(--font-size-micro); font-weight: 800;
-  letter-spacing: 0.05em; color: var(--text-muted); text-transform: uppercase;
-}
-.device-card-meta { display: flex; flex-wrap: wrap; gap: 1rem; font-size: var(--font-size-2xs); font-weight: 600; color: var(--text-muted); }
-.device-card-meta span { display: inline-flex; align-items: center; gap: 0.25rem; }
-.device-card-meta .meta-icon { width: 12px; height: 12px; opacity: 0.7; }
-.device-card-error { display: flex; align-items: center; gap: 0.375rem; }
-.device-card-error .error-icon { flex-shrink: 0; }
-.device-card-right { display: flex; flex-direction: column; gap: 0.375rem; flex-shrink: 0; }
-.device-card-error {
-  margin: 0 1rem 0.75rem; padding: 0.5rem 0.75rem; border-radius: var(--radius-lg);
-  background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.2);
-  font-size: var(--font-size-2xs); font-weight: 600; color: var(--color-danger);
-}
-.device-card-right .btn.ghost { background: transparent; color: var(--text-muted); border: 1px dashed var(--border-default); }
-.device-card-right .btn.ghost:hover { color: var(--color-danger); border-color: var(--color-danger); }
-
 .drawer-bulk {
   flex-shrink: 0; display: flex; align-items: center; gap: 0.75rem;
   padding: 0.75rem 1.5rem; border-top: 1px solid var(--border-default);
@@ -1651,12 +1617,6 @@ const enabledOnlyChannels = ref(false)
   vertical-align: -2px;
   flex-shrink: 0;
 }
-@keyframes inline-spinner-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
 /* Editor Modal */
 .editor-mask {
   position: fixed; inset: 0; z-index: 110;

@@ -7,6 +7,9 @@ dist/
 projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/*
 !projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/.gitkeep
 build/
+!projects/wind-daq/apps/desktop-wails/build/
+projects/wind-daq/apps/desktop-wails/build/*
+!projects/wind-daq/apps/desktop-wails/build/config.yml
 target/
 *.exe
 *.dll
@@ -39,3 +42,6 @@ tools/wuzy-skills/npm-cache/
 # Office temp files
 ~$*
 *.docx~
+
+# E2E audit artifacts
+wind-daq-*.json

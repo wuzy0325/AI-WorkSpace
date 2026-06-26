@@ -36,10 +36,10 @@ apps/desktop-wails/
 ```powershell
 # 模拟模式
 $env:DAQ_P1604_MODE="simulated"
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 
 # 真实设备模式
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 ## 硬件约束

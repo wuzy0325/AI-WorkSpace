@@ -3,6 +3,8 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+const workspaceRoot = fileURLToPath(new URL('../../../../..', import.meta.url))
+
 const wailsUnsafeHeaders = new Set([
   'connection',
   'keep-alive',
@@ -14,6 +16,10 @@ const wailsUnsafeHeaders = new Set([
   'upgrade',
   'etag',
   'last-modified',
+  'content-length',
+  'date',
+  'vary',
+  'cache-control',
 ])
 
 function stripWailsUnsafeDevHeaders() {
@@ -26,7 +32,6 @@ function stripWailsUnsafeDevHeaders() {
           for (const header of wailsUnsafeHeaders) {
             res.removeHeader(header)
           }
-          res.setHeader('Cache-Control', 'no-store')
         }
 
         const setHeader = res.setHeader.bind(res)
@@ -71,10 +76,6 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
-      external: [
-        '../wailsjs/go/backend/App',
-        '../wailsjs/go/models',
-      ],
       // 注意：曾经在这里通过 manualChunks 把 echarts 单独拆出来，
       // 但被 Vite 视为关键依赖会自动加 <link rel="modulepreload">，
       // 导致首屏即使不需要图表也下载 echarts（拖慢 LCP）。
@@ -92,13 +93,14 @@ export default defineConfig({
     },
   },
   server: {
-    port: 15173,
+    host: '127.0.0.1',
+    port: 9245,
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',
     },
-    headers: {
-      'Cache-Control': 'no-store',
+    fs: {
+      allow: [workspaceRoot],
     },
   },
   css: {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { api, isWailsAvailable, type PrbFileInfo, type LoadPrbResult, type InterpolationInput, type InterpolationResult } from './wails-adapter'
+import { api, isWailsAvailable, type PrbFileInfo, type InterpolationInput, type InterpolationResult } from './wails-adapter'
 
 const loaded = ref(false)
 const prbFiles = ref<PrbFileInfo[]>([])
@@ -163,7 +163,7 @@ async function calculateAll() {
     }
     results.value = res
     const valid = res.filter(r => r && r.isValid).length
-    setStatus(`计算完成，共 ${res.length} 条`, 'success')
+    setStatus(`计算完成，共 ${res.length} 条，有效 ${valid} 条`, 'success')
     activeTab.value = 'results'
   } catch (e: any) {
     setStatus('计算失败: ' + (e.message || e), 'error')

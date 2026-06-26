@@ -14,7 +14,7 @@ import (
 	"sync"
 
 	three_interp "ai-workspace/shared/algorithms/go/threehole/interpolation"
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const helpDocFileName = "用户说明书.html"
@@ -136,6 +136,7 @@ type ImportCsvDataResponse struct {
 type App struct {
 	mu          sync.RWMutex
 	ctx         context.Context
+	app         *application.App
 	multiInterp *three_interp.ThreeHoleInterpolator
 	prbFiles    []PrbFileInfo
 }
@@ -144,18 +145,14 @@ func NewApp() *App {
 	return &App{}
 }
 
-func (a *App) Startup(ctx context.Context) {
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
+	a.app = application.Get()
+	return nil
 }
 
 func (a *App) LoadPrbFiles() LoadPrbResponse {
-	filePaths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "选择多个 PRB 校准文件",
-		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "PRB Files (*.prb)", Pattern: "*.prb"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
-	})
+	filePaths, err := a.openFileDialog("选择多个 PRB 校准文件").PromptForMultipleSelection()
 	if err != nil {
 		return LoadPrbResponse{Success: false, Error: err.Error()}
 	}
@@ -342,13 +339,7 @@ func toAppResult(r three_interp.InterpolationResult) *InterpolationResult {
 // ==================== CSV 导入相关方法 ====================
 
 func (a *App) ImportCsvData() ImportCsvDataResponse {
-	filePath, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "选择数据文件",
-		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "数据文件 (*.csv, *.txt, *.dat)", Pattern: "*.csv;*.txt;*.dat"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
-	})
+	filePath, err := a.openFileDialog("选择数据文件").PromptForSingleSelection()
 	if err != nil {
 		return ImportCsvDataResponse{Success: false, Error: err.Error()}
 	}
@@ -533,4 +524,16 @@ func (a *App) OpenHelpDoc() error {
 		return fmt.Errorf("打开帮助文档失败: %w", err)
 	}
 	return nil
+}
+
+func (a *App) openFileDialog(title string) *application.OpenFileDialogStruct {
+	app := a.app
+	if app == nil {
+		app = application.Get()
+	}
+	return app.Dialog.OpenFile().
+		SetTitle(title).
+		AddFilter("PRB Files (*.prb)", "*.prb").
+		AddFilter("数据文件 (*.csv, *.txt, *.dat)", "*.csv;*.txt;*.dat").
+		AddFilter("All Files (*.*)", "*.*")
 }

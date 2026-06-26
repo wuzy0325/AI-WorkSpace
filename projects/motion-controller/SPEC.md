@@ -41,10 +41,10 @@
 ```powershell
 # Development
 cd projects/motion-controller/apps/desktop-wails
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 
 # Build
-wails build
+go run github.com/wailsapp/wails/v3/cmd/wails3 build
 
 # Run Backend Only (for API testing)
 cd projects/motion-controller/services/api-go

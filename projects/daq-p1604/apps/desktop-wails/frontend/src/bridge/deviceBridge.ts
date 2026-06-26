@@ -9,8 +9,8 @@ import {
   ApplyConfig,
   GetStatus,
   ScanDevices,
-} from '../../wailsjs/go/backend/App'
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+} from '../../bindings/daq-p1604/backend/app'
+import { Events } from '@wailsio/runtime'
 
 // P1604 设备配置
 export interface P1604Config {
@@ -133,25 +133,48 @@ export function scanDevices(): Promise<ScanResult[]> {
 }
 
 export function onPayload(handler: (snapshot: PressureSnapshot) => void): void {
-  EventsOn('daq:payload', handler)
+  offPayload()
+  payloadUnsubscribe = Events.On('daq:payload', (event: { data: PressureSnapshot }) => {
+    handler(event.data)
+  })
 }
 
 export function offPayload(): void {
-  EventsOff('daq:payload')
+  if (payloadUnsubscribe) {
+    payloadUnsubscribe()
+    payloadUnsubscribe = null
+  }
 }
 
 export function onLog(handler: (entry: DeviceLogEvent) => void): void {
-  EventsOn('daq:log', handler)
+  offLog()
+  logUnsubscribe = Events.On('daq:log', (event: { data: DeviceLogEvent }) => {
+    handler(event.data)
+  })
 }
 
 export function offLog(): void {
-  EventsOff('daq:log')
+  if (logUnsubscribe) {
+    logUnsubscribe()
+    logUnsubscribe = null
+  }
 }
 
 export function onDeviceState(handler: (id: string, state: DeviceState) => void): void {
-  EventsOn('daq:device-state', handler)
+  offDeviceState()
+  deviceStateUnsubscribe = Events.On('daq:device-state', (event: { data: [string, DeviceState] }) => {
+    const [id, state] = event.data
+    handler(id, state)
+  })
 }
 
 export function offDeviceState(): void {
-  EventsOff('daq:device-state')
+  if (deviceStateUnsubscribe) {
+    deviceStateUnsubscribe()
+    deviceStateUnsubscribe = null
+  }
 }
+
+let payloadUnsubscribe: (() => void) | null = null
+let logUnsubscribe: (() => void) | null = null
+let deviceStateUnsubscribe: (() => void) | null = null

@@ -75,6 +75,8 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           :model-value="axis.kind"
           @update:model-value="updateField('kind', $event as AxisKind)"
           width-class="w-20"
+          :aria-label="`${axis.name} 轴类型`"
+          :data-test="`motion-axis-${axis.name}-kind`"
           :disabled="!axis.enabled"
           :options="[
             { value: 'LINEAR', label: '直线轴' },
@@ -169,6 +171,8 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           <UiSelect
             v-model="positionSourceModel"
             class="w-20"
+            :aria-label="`${axis.name} 位置来源`"
+            :data-test="`motion-axis-${axis.name}-position-source`"
             :disabled="!axis.enabled || !supportsEncoder"
             :options="[
               { value: 'register', label: '寄存器' },

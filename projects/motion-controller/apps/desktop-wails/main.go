@@ -2,10 +2,10 @@ package main
 
 import (
 	"embed"
+	"log"
+	"log/slog"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"motion-controller/apps/desktop-wails/backend"
 	"motion-controller/services/api-go/pkg/appcontext"
@@ -23,24 +23,35 @@ func main() {
 
 	app := backend.NewApp(appCtx)
 
-	err = wails.Run(&options.App{
-		Title:  "Motion Controller",
-		Width:  1350,
-		Height: 740,
-		MinWidth:  1350,
-		MinHeight: 740,
-		MaxWidth:  1350,
-		MaxHeight: 740,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	wailsApp := application.New(application.Options{
+		Name:        "Motion Controller",
+		Description: "Standalone motion controller desktop app",
+		LogLevel:    slog.LevelInfo,
+		Services: []application.Service{
+			application.NewService(app),
 		},
-		OnStartup:  app.Startup,
-		OnShutdown: app.Shutdown,
-		Bind: []interface{}{
-			app,
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
-	if err != nil {
-		println("Error:", err.Error())
+
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:         "Motion Controller",
+		Width:         1350,
+		Height:        740,
+		MinWidth:      1350,
+		MinHeight:     740,
+		MaxWidth:      1350,
+		MaxHeight:     740,
+		URL:           "/",
+		Hidden:        false,
+		DisableResize: true,
+	})
+
+	if err := wailsApp.Run(); err != nil {
+		log.Fatal(err)
 	}
 }

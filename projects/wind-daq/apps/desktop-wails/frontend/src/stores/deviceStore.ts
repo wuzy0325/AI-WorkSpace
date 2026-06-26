@@ -140,15 +140,16 @@ export const useDeviceStore = defineStore('devices', () => {
       channelIndices: Array.isArray(payload.channelIndices) ? payload.channelIndices : [],
     }
 
-    // 收到快照说明设备已连接且正在采集，同步更新设备状态
+    // 快照只能证明设备有可展示数据；采集状态必须以后端 status 为准。
+    // 停止采集后可能仍收到最后一帧缓存，不能用旧快照把 UI 重新标成采集中。
     const existingStatus = deviceStatuses.value.get(normalized.deviceId)
-    if (!existingStatus || existingStatus.connection !== 'Connected' || !existingStatus.acquiring) {
+    if (!existingStatus || existingStatus.connection !== 'Connected') {
       deviceStatuses.value.set(normalized.deviceId, {
         id: normalized.deviceId,
         name: existingStatus?.name ?? normalized.deviceId,
         type: existingStatus?.type ?? 'Unknown',
         connection: 'Connected',
-        acquiring: true
+        acquiring: existingStatus?.acquiring ?? false,
       })
     }
 
@@ -174,6 +175,7 @@ export const useDeviceStore = defineStore('devices', () => {
     const activeIds = new Set(profiles.value.map((p) => p.id))
     profiles.value.forEach((profile) => {
       if (subscribedDeviceIds.has(profile.id)) return
+      if (!acquiringFor(profile.id)) return
       deviceApi.subscribeToDevice(profile.id)
       subscribedDeviceIds.add(profile.id)
     })

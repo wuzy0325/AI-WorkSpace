@@ -65,7 +65,7 @@ Connect a DAQ-T-1603 device on the network, add a profile with its IP:port in th
 
 ### Wails desktop app build
 ```powershell
-# Requires CGO and Wails CLI
-wails generate module   # Regenerate frontend/go bindings
-wails build             # Build distributable desktop app
+# Requires CGO and Wails CLI v3
+go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```

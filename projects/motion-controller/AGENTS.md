@@ -34,7 +34,7 @@ It owns:
 cd projects\motion-controller\apps\desktop-wails
 go test ./...
 go build -buildvcs=false ./...
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 ```powershell

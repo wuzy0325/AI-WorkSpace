@@ -40,10 +40,12 @@ export const useMotionStore = defineStore('motion', () => {
 
   async function connect(id: string): Promise<void> {
     await motionApi.connect(id)
+    await refreshStatus()
   }
 
   async function disconnect(id: string): Promise<void> {
     await motionApi.disconnect(id)
+    await refreshStatus()
   }
 
   async function moveTo(id: string, axis: AxisName, position: number): Promise<void> {

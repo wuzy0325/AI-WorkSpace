@@ -89,7 +89,7 @@ function updateMenuPosition(): void {
     top: `${rect.bottom + 4}px`,
     left: `${rect.left}px`,
     width: `${rect.width}px`,
-    'z-index': '50'
+    'z-index': '250'
   }
 }
 

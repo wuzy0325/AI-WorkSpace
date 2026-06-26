@@ -14,7 +14,7 @@ algorithm lives in `shared/algorithms/go/threehole`.
 
 ```powershell
 cd projects/three-hole-interpolator/apps/desktop-wails
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 ```powershell

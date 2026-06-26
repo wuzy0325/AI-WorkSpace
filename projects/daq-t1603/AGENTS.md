@@ -48,8 +48,8 @@ npm run test
 ```powershell
 # Wails build
 cd projects\daq-t1603\apps\desktop-wails
-wails generate module
-wails build
+go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```
 
 ## Task Routing

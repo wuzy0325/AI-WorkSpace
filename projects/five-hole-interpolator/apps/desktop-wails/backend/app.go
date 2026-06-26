@@ -15,7 +15,7 @@ import (
 	"sync"
 
 	wind_interp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // helpDocFileName 用户说明书文件名常量
@@ -135,6 +135,7 @@ type ImportCsvDataResponse struct {
 type App struct {
 	mu          sync.RWMutex
 	ctx         context.Context
+	app         *application.App
 	multiInterp *wind_interp.MultiPrbInterpolator
 	prbFiles    []PrbFileInfo
 }
@@ -143,18 +144,14 @@ func NewApp() *App {
 	return &App{}
 }
 
-func (a *App) Startup(ctx context.Context) {
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
+	a.app = application.Get()
+	return nil
 }
 
 func (a *App) LoadPrbFiles() LoadPrbResponse {
-	filePaths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "选择多个 PRB 校准文件",
-		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "PRB Files (*.prb)", Pattern: "*.prb"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
-	})
+	filePaths, err := a.openFileDialog("选择多个 PRB 校准文件").PromptForMultipleSelection()
 	if err != nil {
 		return LoadPrbResponse{Success: false, Error: err.Error()}
 	}
@@ -346,13 +343,9 @@ func toCoreInput(input InterpolationInput) wind_interp.InterpolationInput {
 
 // #1 修复：CSV 解析不再静默吞掉错误，收集解析失败信息
 func (a *App) ImportCsvData() ImportCsvDataResponse {
-	filePath, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "选择数据 CSV 文件",
-		Filters: []wailsRuntime.FileFilter{
-			{DisplayName: "CSV Files (*.csv)", Pattern: "*.csv"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
-	})
+	filePath, err := a.openFileDialog("选择数据 CSV 文件").
+		AddFilter("CSV Files (*.csv)", "*.csv").
+		PromptForSingleSelection()
 	if err != nil {
 		return ImportCsvDataResponse{Success: false, Error: err.Error()}
 	}
@@ -469,6 +462,17 @@ func (a *App) ImportCsvData() ImportCsvDataResponse {
 	}
 
 	return ImportCsvDataResponse{Success: true, Data: datas}
+}
+
+func (a *App) openFileDialog(title string) *application.OpenFileDialogStruct {
+	app := a.app
+	if app == nil {
+		app = application.Get()
+	}
+	return app.Dialog.OpenFile().
+		SetTitle(title).
+		AddFilter("PRB Files (*.prb)", "*.prb").
+		AddFilter("All Files (*.*)", "*.*")
 }
 
 func toAppResult(r wind_interp.InterpolationResult) *InterpolationResult {

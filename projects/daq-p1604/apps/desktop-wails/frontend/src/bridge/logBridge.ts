@@ -1,4 +1,4 @@
-import { StartLogFile, StopLogFile, GetLogFileState, PickDirectory } from '../../wailsjs/go/backend/App'
+import { StartLogFile, StopLogFile, GetLogFileState, PickDirectory } from '../../bindings/daq-p1604/backend/app'
 
 export interface LogFileState {
   active: boolean

@@ -31,7 +31,8 @@
                                     ".gitnexus",
                                     ".agents",
                                     "npm-cache",
-                                    "PRODUCT.md"
+                                    "PRODUCT.md",
+                                    "config"
                                ],
     "requiredDirectories":  [
                                 "docs",

@@ -3,36 +3,55 @@ package main
 import (
 	"embed"
 	"log"
+	"log/slog"
 
 	"three-hole-interpolator/apps/desktop-wails/backend"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed appicon.png
+var appIcon []byte
+
 func main() {
 	app := backend.NewApp()
 
-	err := wails.Run(&options.App{
+	wailsApp := application.New(application.Options{
+		Name:        "Three Hole Interpolator",
+		Description: "Three-hole probe interpolation desktop app",
+		LogLevel:    slog.LevelInfo,
+		Services: []application.Service{
+			application.NewService(app),
+		},
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+		Icon: appIcon,
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+	})
+
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "三孔探针插值计算",
 		Width:     1400,
 		Height:    900,
 		MinWidth:  1100,
 		MinHeight: 700,
-		OnStartup: app.Startup,
-		Bind:      []interface{}{app},
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{
-			R: 245, G: 247, B: 250, A: 1,
+		URL:       "/",
+		Hidden:    false,
+		BackgroundColour: application.RGBA{
+			Red:   245,
+			Green: 247,
+			Blue:  250,
+			Alpha: 1,
 		},
 	})
-	if err != nil {
+
+	if err := wailsApp.Run(); err != nil {
 		log.Fatalf("启动应用失败: %v", err)
 	}
 }

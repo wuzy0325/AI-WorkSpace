@@ -192,7 +192,7 @@ Per-project commands will be added as projects get build tooling.
 
 - **Go** — follow the version declared in `go.work` and each touched `go.mod`; `go build ./...` or `go test ./...` must pass for touched Go modules before committing.
 - **Node.js** (LTS) — required for Vue 3 frontend builds.
-- **Wails CLI v2** — required for desktop app generation/builds.
+- **Wails CLI v3** — required for desktop app generation/builds.
 
 ## Commit Rules
 

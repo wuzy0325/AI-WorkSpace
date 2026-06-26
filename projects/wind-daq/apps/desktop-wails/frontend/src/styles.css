@@ -4,6 +4,7 @@
 @import './styles/tokens/motion.css';
 @import './styles/tokens/layout.css';
 @import './styles/tokens/radius.css';
+@import './styles/tokens/animations.css';
 @import './styles/themes/dark.css';
 @import './styles/themes/light.css';
 @import './styles/glass.css';

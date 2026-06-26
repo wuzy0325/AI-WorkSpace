@@ -30,11 +30,11 @@ const (
 	defaultAccIncRate   = 1000
 	defaultDecIncRate   = 1000
 
-	lvdvPulse = 0
-	lvdvCont  = 1
-	autoDec   = 0
-	cpDir     = 0
-	line      = 0
+	lvdvPulse        = 0
+	lvdvCont         = 1
+	autoDec          = 0
+	cpDir            = 0
+	line             = 0
 	pDirection int32 = 1
 	mDirection int32 = 0
 )
@@ -158,8 +158,11 @@ func (c *WTNMC4AMotionController) ApplyConfig(ctx context.Context, profile core.
 	c.mu.Unlock()
 	if needReconfig {
 		c.mu.Lock()
-		c.cacheAxisSpeedsLocked()
+		err := c.cacheAxisSpeedsLocked()
 		c.mu.Unlock()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -171,6 +174,9 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	if c.status.Connected && c.handle != 0 {
 		return nil
 	}
+
+	// 确保重连时不会残留上一轮的DLL句柄或设备句柄
+	c.cleanupConnectionLocked()
 
 	dllPath := wtnmc4aFindDLL()
 	dll, err := syscall.LoadDLL(dllPath)
@@ -218,20 +224,30 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 		uintptr(defaultSendTO),
 		uintptr(defaultRecvTO),
 	)
-	if ret == 0 {
-		c.dll.Release()
-		c.dll = nil
+	if ret == 0 || ret == ^uintptr(0) {
+		c.cleanupConnectionLocked()
 		c.status.LastError = fmt.Sprintf("创建设备句柄失败: %s:%d", c.profile.Address, c.profile.Port)
-		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回空句柄", c.profile.Address, c.profile.Port)
+		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回失败句柄 0x%x", c.profile.Address, c.profile.Port, ret)
 	}
 	c.handle = ret
+	slog.Info("WTNMC4A DEV_CreateA returned handle", "address", c.profile.Address, "handle", fmt.Sprintf("0x%x", ret))
+
+	if err := c.verifyConnectionLocked(); err != nil {
+		c.cleanupConnectionLocked()
+		c.status.LastError = err.Error()
+		return err
+	}
+
+	c.speedParams = make(map[int]*axisSpeedParams)
+	if err := c.cacheAxisSpeedsLocked(); err != nil {
+		c.cleanupConnectionLocked()
+		c.status.LastError = err.Error()
+		return err
+	}
 
 	// 同步 atomic 副本，供 Stop/EmergencyStop 无锁读取
 	c.atomicHandle.Store(ret)
 	c.atomicConnected.Store(true)
-
-	c.speedParams = make(map[int]*axisSpeedParams)
-	c.cacheAxisSpeedsLocked()
 
 	c.status.Connected = true
 	c.status.EmergencyStopped = false
@@ -578,8 +594,9 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 // Stop 停止指定轴或全部轴的运动。
 // 使用 instStop（立即停止）替代 decStop（减速停止），确保停止响应最快。
 // 通过 atomic 读取 handle 和连接状态，完全避免锁竞争：
-//   Status 持 RLock 期间，MoveBy 等待 Lock 时 Go RWMutex 会阻塞所有新 RLock，
-//   atomic 读彻底消除了 Stop 被阻塞的可能。
+//
+//	Status 持 RLock 期间，MoveBy 等待 Lock 时 Go RWMutex 会阻塞所有新 RLock，
+//	atomic 读彻底消除了 Stop 被阻塞的可能。
 func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) error {
 	handle := c.atomicHandle.Load()
 	if handle == 0 || !c.atomicConnected.Load() {
@@ -677,6 +694,33 @@ func (c *WTNMC4AMotionController) checkReadyLocked() error {
 	return nil
 }
 
+func (c *WTNMC4AMotionController) verifyConnectionLocked() error {
+	axisNum := 0
+	if len(c.profile.Axes) > 0 {
+		axisNum = wtnmc4aAxisNum(c.profile.Axes[0].Name)
+	}
+	var buf [4]byte
+	ret, _, _ := c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
+	if ret == 0 {
+		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: GetRR1Status 无响应", c.profile.Address)
+	}
+	return nil
+}
+
+func (c *WTNMC4AMotionController) cleanupConnectionLocked() {
+	if c.handle != 0 && c.procs.devRelease != nil {
+		c.procs.devRelease.Call(c.handle)
+		c.handle = 0
+	}
+	if c.dll != nil {
+		c.dll.Release()
+		c.dll = nil
+	}
+	c.atomicHandle.Store(0)
+	c.atomicConnected.Store(false)
+	c.status.Connected = false
+}
+
 func (c *WTNMC4AMotionController) axisConfigLocked(axis core.AxisName) (core.AxisConfig, bool) {
 	for _, axisCfg := range c.profile.Axes {
 		if axisCfg.Enabled && axisCfg.Name == axis {
@@ -694,7 +738,7 @@ func (c *WTNMC4AMotionController) copyStatusLocked() core.ControllerStatus {
 
 // cacheAxisSpeedsLocked 计算并缓存各轴的速度参数，同时写入硬件寄存器。
 // 使用 int32 以匹配 C LONG（4字节）的内存布局。
-func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() {
+func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() error {
 	if c.speedParams == nil {
 		c.speedParams = make(map[int]*axisSpeedParams)
 	}
@@ -719,11 +763,20 @@ func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() {
 			DecIncRate:   int32(defaultDecIncRate),
 		}
 
-		c.procs.setSV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].StartSpeed)))
-		c.procs.setV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].DriveSpeed)))
-		c.procs.setA.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Acceleration)))
-		c.procs.setDec.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Deceleration)))
+		if ret, _, _ := c.procs.setSV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].StartSpeed))); ret == 0 {
+			return fmt.Errorf("WTNMC4A 设置轴 %s 起始速度失败", axisCfg.Name)
+		}
+		if ret, _, _ := c.procs.setV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].DriveSpeed))); ret == 0 {
+			return fmt.Errorf("WTNMC4A 设置轴 %s 驱动速度失败", axisCfg.Name)
+		}
+		if ret, _, _ := c.procs.setA.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Acceleration))); ret == 0 {
+			return fmt.Errorf("WTNMC4A 设置轴 %s 加速度失败", axisCfg.Name)
+		}
+		if ret, _, _ := c.procs.setDec.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Deceleration))); ret == 0 {
+			return fmt.Errorf("WTNMC4A 设置轴 %s 减速度失败", axisCfg.Name)
+		}
 	}
+	return nil
 }
 
 // getRR1Status 查询指定轴的状态寄存器（接受 handle 参数，不依赖锁）。
@@ -732,13 +785,13 @@ func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) rr1S
 	c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
 	status := uint16(buf[0]) | uint16(buf[1])<<8
 	return rr1Status{
-		CMPP: (status&(1<<0)) != 0, CMPM: (status&(1<<1)) != 0,
-		ASND: (status&(1<<2)) != 0, CNST: (status&(1<<3)) != 0,
-		DSND: (status&(1<<4)) != 0, IN0: (status&(1<<5)) != 0,
-		IN1: (status&(1<<6)) != 0, IN2: (status&(1<<7)) != 0,
-		IN3: (status&(1<<8)) != 0, LMTP: (status&(1<<9)) != 0,
-		LMTM: (status&(1<<10)) != 0, ALARM: (status&(1<<11)) != 0,
-		EMG: (status&(1<<12)) != 0,
+		CMPP: (status & (1 << 0)) != 0, CMPM: (status & (1 << 1)) != 0,
+		ASND: (status & (1 << 2)) != 0, CNST: (status & (1 << 3)) != 0,
+		DSND: (status & (1 << 4)) != 0, IN0: (status & (1 << 5)) != 0,
+		IN1: (status & (1 << 6)) != 0, IN2: (status & (1 << 7)) != 0,
+		IN3: (status & (1 << 8)) != 0, LMTP: (status & (1 << 9)) != 0,
+		LMTM: (status & (1 << 10)) != 0, ALARM: (status & (1 << 11)) != 0,
+		EMG: (status & (1 << 12)) != 0,
 	}
 }
 

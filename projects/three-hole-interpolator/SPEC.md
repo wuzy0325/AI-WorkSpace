@@ -21,7 +21,7 @@ Build a standalone Wails desktop application that reads three-hole probe measure
 |-----------|-----------|---------|
 | Backend | Go | 1.25 |
 | Frontend | Vue 3 + TypeScript + Vite | ^3.5.14 / ^5.4.20 |
-| Desktop Shell | Wails v2 | latest |
+| Desktop Shell | Wails v3 | latest |
 | Algorithm | Pure Go (shared package) | — |
 | Test Framework | Go testing + testify | — |
 
@@ -30,7 +30,7 @@ Build a standalone Wails desktop application that reads three-hole probe measure
 ```powershell
 # Dev mode
 cd projects\three-hole-interpolator\apps\desktop-wails
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 
 # Backend tests
 cd projects\three-hole-interpolator\apps\desktop-wails

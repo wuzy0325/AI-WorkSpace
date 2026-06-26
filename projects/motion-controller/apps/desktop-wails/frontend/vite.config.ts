@@ -20,10 +20,6 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
-      external: [
-        '../wailsjs/go/backend/App',
-        '../wailsjs/go/models',
-      ],
       output: {
         manualChunks: {
           echarts: ['echarts', 'vue-echarts'],
@@ -40,7 +36,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 15177,
+    host: '127.0.0.1',
+    port: 9245,
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',

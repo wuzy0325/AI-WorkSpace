@@ -2,10 +2,14 @@ import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 import type { GenericResponse } from '@api/wails-adapter';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8900';
+function apiBase(): string {
+  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+  if (import.meta.env.DEV) return '';
+  return isWailsAvailable() ? 'http://127.0.0.1:8900' : '';
+}
 
 function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const fullPath = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  const fullPath = path.startsWith('http') ? path : `${apiBase()}${path}`;
   return request<T>(fullPath, init);
 }
 

@@ -41,6 +41,16 @@ export interface DeviceStatus {
   lastError?: string;
 }
 
+type BoolResult<T> = T | [T, boolean] | boolean;
+
+function unwrapBoolResult<T>(result: BoolResult<T>): T | boolean {
+  if (Array.isArray(result)) {
+    const [value, ok] = result;
+    return ok ? value : false;
+  }
+  return result;
+}
+
 export interface DeviceScanResult {
   id: string;
   name: string;
@@ -217,7 +227,7 @@ export const wailsApi = {
       return await callBindingGeneric('DeviceDisconnect', deviceId);
     },
     getStatus: async (deviceId: string): Promise<DeviceStatus | boolean> => {
-      return await callBinding('DeviceGetStatus', deviceId);
+      return unwrapBoolResult(await callBinding<BoolResult<DeviceStatus>>('DeviceGetStatus', deviceId));
     },
     startAcquisition: async (deviceId: string): Promise<GenericResponse> => {
       return await callBindingGeneric('DeviceStartAcquisition', deviceId);
@@ -226,7 +236,7 @@ export const wailsApi = {
       return await callBindingGeneric('DeviceStopAcquisition', deviceId);
     },
     getLatestData: async (deviceId: string): Promise<DeviceDataPayload | boolean> => {
-      return await callBinding('DeviceGetLatestData', deviceId);
+      return unwrapBoolResult(await callBinding<BoolResult<DeviceDataPayload>>('DeviceGetLatestData', deviceId));
     },
     setPublishRate: async (rate: number): Promise<GenericResponse> => {
       return await callBindingGeneric('DeviceSetPublishRate', rate);
@@ -410,7 +420,7 @@ export const wailsApi = {
       return await callBinding('CalibrationStatus');
     },
     getResult: async (taskId: string): Promise<CalibrationStatus | boolean> => {
-      return await callBinding('CalibrationGetResult', taskId);
+      return unwrapBoolResult(await callBinding<BoolResult<CalibrationStatus>>('CalibrationGetResult', taskId));
     },
     saveCsv: async (taskId: string, savePath: string): Promise<FileResponse> => {
       const raw = await callBinding<unknown>('CalibrationSaveCsv', taskId, savePath);

@@ -33,6 +33,26 @@ describe('deviceStore', () => {
     expect(store.latestFor('sim-1')?.channels[0]).toBe(1.5)
   })
 
+  it('does not restart acquisition state from a stale snapshot', () => {
+    const store = useDeviceStore()
+    store.updateStatus('sim-1', {
+      id: 'sim-1',
+      name: 'Simulated',
+      type: 'SIMULATED',
+      connection: 'Connected',
+      acquiring: false,
+    })
+
+    store.pushSnapshot({
+      deviceId: 'sim-1',
+      timestamp: 123,
+      channels: [1.5],
+      channelIndices: [0],
+    })
+
+    expect(store.acquiringFor('sim-1')).toBe(false)
+  })
+
   it('keeps history buffer within capacity', () => {
     const store = useDeviceStore()
     const payload = {

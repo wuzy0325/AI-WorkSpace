@@ -1,5 +1,5 @@
-import * as WailsApp from '../wailsjs/go/backend/App'
-import { backend } from '../wailsjs/go/models'
+import * as WailsApp from '../bindings/three-hole-interpolator/apps/desktop-wails/backend/app'
+import * as backend from '../bindings/three-hole-interpolator/apps/desktop-wails/backend/models'
 
 export type PrbFileInfo = backend.PrbFileInfo
 export type PrbValidRange = backend.PrbValidRange
@@ -13,7 +13,7 @@ export interface GenericResponse {
 }
 
 export function isWailsAvailable(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).go?.backend?.App
+  return typeof window !== 'undefined' && !!(window as any).chrome?.webview
 }
 
 function okResponse(): GenericResponse {
@@ -72,7 +72,7 @@ export const api = {
       if (!result.success) {
         return [errResponse(result.error ?? '未知错误'), []]
       }
-      return [okResponse(), result.data ?? []]
+      return [okResponse(), (result.data ?? []).filter((item): item is InterpolationResult => item !== null)]
     } catch (e) {
       return [errResponse(String(e)), []]
     }

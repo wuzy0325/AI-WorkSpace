@@ -1,14 +1,55 @@
 version: '3'
 
 tasks:
+  default:
+    summary: 一键构建并启动（生产模式，使用内嵌前端资源）
+    cmds:
+      - task: build-frontend
+      - task: build-go
+      - task: run
+
+  dev-frontend:
+    summary: 启动前端开发服务器（热更新）
+    cmds:
+      - npm --prefix frontend run dev -- --host 127.0.0.1
+    env:
+      BROWSER: none
+
   build:
-    summary: Builds the Wind-DAQ desktop app for Wails3 dev mode
+    summary: 构建前端 + Go 二进制
+    cmds:
+      - task: build-frontend
+      - task: build-go
+
+  windows:build:
+    summary: Wails v3 Windows 构建入口
+    cmds:
+      - task: build
+
+  build-frontend:
+    summary: 仅构建前端
     cmds:
       - npm --prefix frontend install --no-audit --no-fund
       - npm --prefix frontend run build
+
+  build-go:
+    summary: 仅构建 Go 二进制
+    cmds:
       - go build -o build/bin/wind-daq.exe .
 
   run:
-    summary: Runs the Wind-DAQ desktop app built by the build task
+    summary: 运行已构建的桌面应用
     cmds:
       - build/bin/wind-daq.exe
+
+  run-dev:
+    summary: 使用已构建的内嵌前端运行桌面应用
+    cmds:
+      - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\wind-daq.exe"
+
+  dev:
+    summary: 开发模式（构建前端后运行内嵌资源，避免 Wails dev proxy 不稳定）
+    cmds:
+      - task: build-frontend
+      - go build -o build/bin/wind-daq.exe .
+      - task: run-dev

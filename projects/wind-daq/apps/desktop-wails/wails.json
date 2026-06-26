@@ -9,7 +9,7 @@
     "build": "npm run build",
     "dev": {
       "watcher": "npm run dev",
-      "serverUrl": "http://localhost:15173"
+      "serverUrl": "http://127.0.0.1:9245"
     }
   },
   "author": {

@@ -21,10 +21,6 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
-      external: [
-        '../wailsjs/go/backend/App',
-        '../wailsjs/go/models',
-      ],
       output: {
         manualChunks: {
           echarts: ['echarts', 'vue-echarts'],

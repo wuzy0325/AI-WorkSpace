@@ -1,12 +1,19 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
+  "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "motion-controller",
+  "version": "0.1.0",
   "outputfilename": "motion-controller",
-  "frontend:install": "npm install",
-  "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
-  "frontend:dev:serverUrl": "http://localhost:15177",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://127.0.0.1:9245"
+    }
+  },
   "author": {
-    "name": "AI-Workspace"
+    "name": "Motion Controller Team",
+    "email": ""
   }
 }

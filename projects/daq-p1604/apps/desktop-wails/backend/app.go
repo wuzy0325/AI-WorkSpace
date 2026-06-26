@@ -8,7 +8,7 @@ import (
 
 	"daq-p1604/core"
 	"daq-p1604/usecase"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const (
@@ -24,6 +24,7 @@ type App struct {
 	recordUC *usecase.RecordingUsecase
 	logUC    *usecase.LogUsecase
 	logDir   string
+	app      *application.App
 	mu       sync.Mutex
 	relays   map[string]*relayControl
 }
@@ -62,9 +63,10 @@ func NewApp(deviceUC *usecase.DeviceUsecase, recordUC *usecase.RecordingUsecase,
 	}
 }
 
-// Startup 应用启动回调
-func (a *App) Startup(ctx context.Context) {
+// ServiceStartup 应用启动回调
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.app = application.Get()
 
 	// 自动启动日志文件写入
 	if a.logDir != "" {
@@ -82,10 +84,11 @@ func (a *App) Startup(ctx context.Context) {
 		Source:   "app",
 		Message:  "DAQ-P-1604 application started",
 	})
+	return nil
 }
 
-// Shutdown 应用关闭回调
-func (a *App) Shutdown(ctx context.Context) {
+// ServiceShutdown 应用关闭回调
+func (a *App) ServiceShutdown() error {
 	_ = a.recordUC.Stop()
 	_ = a.logUC.Stop()
 	a.stopAllRelays()
@@ -99,6 +102,7 @@ func (a *App) Shutdown(ctx context.Context) {
 		Message:  "DAQ-P-1604 application shut down",
 	})
 	slog.Info("DAQ-P-1604 application shut down")
+	return nil
 }
 
 // EmitLog 发送日志事件
@@ -117,32 +121,32 @@ func (a *App) EmitLog(entry LogEvent) {
 		}
 	}
 
-	if a.ctx == nil {
+	if a.app == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:log", entry)
+	a.app.Event.Emit("daq:log", entry)
 }
 
 func (a *App) emitPayload(snapshot core.PressureSnapshot) {
-	if a.ctx == nil {
+	if a.app == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:payload", snapshot)
+	a.app.Event.Emit("daq:payload", snapshot)
 }
 
 func (a *App) emitRecordingStatus(session core.RecordingSession) {
-	if a.ctx == nil {
+	if a.app == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:recording-status", session)
+	a.app.Event.Emit("daq:recording-status", session)
 }
 
 // EmitDeviceState 发送设备状态变更事件到前端
 func (a *App) EmitDeviceState(id string, state core.DeviceState) {
-	if a.ctx == nil {
+	if a.app == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:device-state", id, state)
+	a.app.Event.Emit("daq:device-state", id, state)
 }
 
 // ScanDevices 扫描设备
@@ -400,8 +404,14 @@ func (a *App) GetLogFileState() LogFileState {
 
 // PickDirectory 选择目录对话框
 func (a *App) PickDirectory() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:                "选择保存目录",
-		CanCreateDirectories: true,
-	})
+	app := a.app
+	if app == nil {
+		app = application.Get()
+	}
+	return app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(true).
+		SetTitle("选择保存目录").
+		PromptForSingleSelection()
 }

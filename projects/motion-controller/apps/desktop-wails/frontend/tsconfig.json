@@ -24,6 +24,6 @@
       "@composables/*": ["src/composables/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "wailsjs/**/*.ts", "wailsjs/**/*.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.vue", "bindings/**/*.ts", "bindings/**/*.d.ts"],
   "exclude": []
 }

@@ -134,6 +134,7 @@ let _cachedProfiles: MotionControllerProfile[] | null = null;
 // 轮询速率控制：运动中 250ms 高频刷新，全部空闲时 3000ms 慢速心跳
 const FAST_POLL_MS = 250;
 const SLOW_POLL_MS = 3000;
+const BROWSER_POLL_MS = 3000;
 let _currentPollIntervalMs = FAST_POLL_MS;
 
 /**
@@ -515,6 +516,32 @@ export const motionApi = {
       };
     }
 
-    return () => { motionApi._listeners.delete(cb); };
+    const slot = motionApi as unknown as { _browserTimer?: ReturnType<typeof setInterval> };
+    if (!slot._browserTimer) {
+      const tickBrowser = async () => {
+        try {
+          const list = await motionApi.getStatusAll();
+          motionApi._listeners.forEach((listener) => {
+            try {
+              listener(list);
+            } catch (err) {
+              console.error('[motionApi] status listener threw (browser):', err);
+            }
+          });
+        } catch (err) {
+          console.debug('[motionApi] browser status polling failed (will retry):', err);
+        }
+      };
+      slot._browserTimer = setInterval(() => { void tickBrowser(); }, BROWSER_POLL_MS);
+      void tickBrowser();
+    }
+
+    return () => {
+      motionApi._listeners.delete(cb);
+      if (motionApi._listeners.size === 0 && slot._browserTimer) {
+        clearInterval(slot._browserTimer);
+        slot._browserTimer = undefined;
+      }
+    };
   },
 };

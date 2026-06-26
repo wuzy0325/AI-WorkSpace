@@ -1,12 +1,17 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
+  "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "three-hole-interpolator",
+  "version": "0.1.0",
   "outputfilename": "three-hole-interpolator",
-  "frontend:dir": "frontend",
-  "frontend:install": "npm install --no-audit --no-fund",
-  "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
-  "frontend:dev:serverUrl": "http://localhost:15176",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://localhost:15176"
+    }
+  },
   "author": {
     "name": "Wind-DAQ Team",
     "email": ""

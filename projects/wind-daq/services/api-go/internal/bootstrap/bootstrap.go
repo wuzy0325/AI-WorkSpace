@@ -7,6 +7,7 @@ import (
 	"shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
 	"shared.local/device-sdk/go/motion/ports"
+	motionmanager "shared.local/motion-control/go/manager"
 	motionprofile "shared.local/motion-control/go/profile"
 
 	"wind-daq/services/api-go/api"
@@ -58,9 +59,10 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 	profileStore := motionprofile.NewMemoryMotionProfileStore()
 	factory := hardware.NewDefaultMotionControllerFactory()
-	motionMgr := wiring.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+	rawMotionMgr := motionmanager.NewMotionManager(profileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
 		return factory.Create(profile)
 	})
+	motionMgr := wiring.WrapMotionManager(rawMotionMgr)
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
 	// 注入遍历 CSV 写入 sink，承担测试结果落盘
 	travSink := storageadapter.NewTraversalCsvWriter()
@@ -83,6 +85,7 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 		AcquisitionHub:     hub,
 		ReportManager:      reportMgr,
 		MotionManager:      motionMgr,
+		MotionService:      rawMotionMgr,
 		CalibrationManager: calMgr,
 		TraversalManager:   travMgr,
 		StorageRecorder:    recorder,

@@ -68,7 +68,7 @@ watch(
 <style scoped>
 .toast-host {
   position: fixed;
-  top: 1rem;
+  bottom: 1rem;
   right: 1rem;
   z-index: 300;
   display: flex;
@@ -76,6 +76,7 @@ watch(
   max-width: calc(100vw - 2rem);
   flex-direction: column;
   gap: 0.75rem;
+  pointer-events: none;
 }
 
 .toast-item {
@@ -87,6 +88,7 @@ watch(
   box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(12px);
   animation: toast-slide-in 0.3s ease;
+  pointer-events: auto;
 }
 
 @keyframes toast-slide-in {

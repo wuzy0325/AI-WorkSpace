@@ -55,6 +55,8 @@ linters-settings:
             desc: "core/ 禁止 XML 序列化 I/O；仅定义结构体"
           - pkg: "github.com/wailsapp/wails/v2"
             desc: "core/ 禁止导入 UI 框架"
+          - pkg: "github.com/wailsapp/wails/v3"
+            desc: "core/ 禁止导入 UI 框架"
           - pkg: "github.com/tarm/serial"
             desc: "core/ 禁止导入硬件驱动"
           - pkg: "github.com/jacobsa/go-serial/serial"
@@ -75,6 +77,8 @@ linters-settings:
             desc: "ports/ 仅定义接口，禁止硬件驱动导入"
           - pkg: "github.com/wailsapp/wails/v2"
             desc: "ports/ 禁止导入 UI 框架"
+          - pkg: "github.com/wailsapp/wails/v3"
+            desc: "ports/ 禁止导入 UI 框架"
 
       # 规则 3：usecase/ 禁止直接硬件调用、文件 I/O、UI 框架
       # 注意：usecase 导入 adapters 由 validate-import-direction.ps1 检查
@@ -88,6 +92,8 @@ linters-settings:
           - pkg: "github.com/jacobsa/go-serial/serial"
             desc: "usecase/ 必须通过 ports 访问硬件"
           - pkg: "github.com/wailsapp/wails/v2"
+            desc: "usecase/ 禁止导入 UI 框架"
+          - pkg: "github.com/wailsapp/wails/v3"
             desc: "usecase/ 禁止导入 UI 框架"
           - pkg: "os"
             desc: "usecase/ 禁止文件 I/O；通过 ports.CheckpointStore 等接口"

@@ -57,6 +57,11 @@
 
   --shadow-panel: 0 10px 30px color-mix(in srgb, #020617 28%, transparent);
 
+  --color-success: var(--accent-success);
+  --color-danger: var(--accent-danger);
+  --color-accent: var(--accent-primary);
+  --color-warning: var(--accent-warning);
+
   --axis-x: #3b82f6;
   --axis-x-soft: color-mix(in srgb, #3b82f6 20%, transparent);
   --axis-y: #8b5cf6;

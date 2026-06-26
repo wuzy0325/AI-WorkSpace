@@ -1,5 +1,5 @@
-import * as WailsApp from '../wailsjs/go/backend/App'
-import { backend } from '../wailsjs/go/models'
+import * as WailsApp from '../bindings/five-hole-interpolator/apps/desktop-wails/backend/app'
+import * as backend from '../bindings/five-hole-interpolator/apps/desktop-wails/backend/models'
 
 export type PrbFileInfo = backend.PrbFileInfo
 export type PrbValidRange = backend.PrbValidRange
@@ -14,7 +14,7 @@ export interface GenericResponse {
 }
 
 export function isWailsAvailable(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).go?.backend?.App
+  return typeof window !== 'undefined' && !!(window as any).chrome?.webview
 }
 
 // #4/#20 修复：简化 Wails 适配器
@@ -84,7 +84,7 @@ export const api = {
       if (!result.success) {
         return [{ success: false, error: result.error } as GenericResponse, []]
       }
-      return [{ success: true } as GenericResponse, result.data ?? []]
+      return [{ success: true } as GenericResponse, (result.data ?? []).filter((item): item is InterpolationResult => item !== null)]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, []]
     }

@@ -1,5 +1,4 @@
-// Wails API 适配器 - 运行时动态加载绑定，避免 Vite 构建时模块解析问题
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+// Wails API 适配器 - 运行时动态加载绑定，避免浏览器预览和单测加载 Wails runtime
 import { MOTION_HTTP_BASE } from './motionApi'
 
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
@@ -128,26 +127,30 @@ export interface DSA3217ScanConfigWailsResponse {
 }
 
 // 运行时获取 Wails API 绑定
-function getWailsBinding(): any {
-  if (typeof window !== 'undefined' && (window as any).go && (window as any).go.backend && (window as any).go.backend.App) {
-    return (window as any).go.backend.App;
-  }
-  return null;
+async function getWailsBinding(): Promise<any> {
+  if (!isWailsAvailable()) return null;
+  // @ts-expect-error Wails v3 alpha generates JS bindings without TypeScript declarations.
+  return await import('../../bindings/motion-controller/apps/desktop-wails/backend/app.js');
 }
 
 // 检查 Wails 环境是否可用
 export const isWailsAvailable = (): boolean => {
-  return getWailsBinding() !== null;
+  if (typeof window === 'undefined') return false;
+  const w = window as any;
+  return Boolean(
+    w.chrome?.webview?.postMessage ||
+    w.webkit?.messageHandlers?.external?.postMessage ||
+    w.wails?.invoke,
+  );
 };
 
 // 通用调用包装器
 async function callBinding<T>(methodName: string, ...args: any[]): Promise<T> {
-  const binding = getWailsBinding();
+  const binding = await getWailsBinding();
   if (!binding || !binding[methodName]) {
     throw new Error(`Wails binding '${methodName}' not available`);
   }
   try {
-    // Wails v2 绑定函数期望参数直接传递（运行时会自动序列化）
     const result = await binding[methodName](...args);
     return result;
   } catch (e) {
@@ -200,19 +203,29 @@ export const wailsApi = {
       return await callBinding('DeviceSubscribeStream', deviceId, subscribe);
     },
     onPayload: (callback: (payload: DeviceDataPayload) => void): (() => void) => {
-      const cleanup = EventsOn('daq:payload', (data: unknown) => {
-        if (data == null) return
-        const raw = data as Record<string, unknown>
-        const normalized: DeviceDataPayload = {
-          deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : '',
-          timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
-          channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
-          channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
-        }
-        callback(normalized)
+      if (!isWailsAvailable()) return () => {};
+
+      let cleanup: (() => void) | null = null;
+      let active = true;
+
+      void import('@wailsio/runtime').then(({ Events }) => {
+        if (!active) return;
+        cleanup = Events.On('daq:payload', (event: { data: unknown }) => {
+          const data = event.data
+          if (data == null) return
+          const raw = data as Record<string, unknown>
+          const normalized: DeviceDataPayload = {
+            deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : '',
+            timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+            channels: Array.isArray(raw.channels) ? raw.channels as number[] : [],
+            channelIndices: Array.isArray(raw.channelIndices) ? raw.channelIndices as number[] : [],
+          }
+          callback(normalized)
+        });
       });
       return () => {
-        cleanup();
+        active = false;
+        cleanup?.();
       };
     },
     getDsa3217ScanConfig: async (deviceId: string): Promise<DSA3217ScanConfigWailsResponse> => {

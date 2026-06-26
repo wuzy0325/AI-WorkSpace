@@ -69,7 +69,7 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
         </div>
       </div>
       <div class="device-card-right">
-        <UiButton secondary size="md" @click="emit('edit')">编辑</UiButton>
+        <UiButton variant="secondary" size="md" @click="emit('edit')">编辑</UiButton>
         <!-- 连接按钮：connecting 分组禁用并显示 spinner -->
         <UiButton
           size="md"
@@ -82,7 +82,7 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
         <UiButton v-if="showAcquireBtn()" size="md" @click="emit('toggle-acquisition')">
           {{ acquiring ? '停止' : '采集' }}
         </UiButton>
-        <UiButton variant="danger" size="md" secondary @click="emit('remove')">删除</UiButton>
+        <UiButton variant="danger" size="md" @click="emit('remove')">删除</UiButton>
       </div>
     </div>
     <div v-if="showErrorBadge()" class="device-card-error">
@@ -91,3 +91,144 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
     </div>
   </div>
 </template>
+
+<style scoped>
+.device-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+  transition: border-color 0.2s ease;
+}
+
+.device-card:hover {
+  border-color: var(--accent-success);
+}
+
+.device-card-stripe {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--space-1);
+  background: var(--text-muted);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.device-card-stripe.status-online {
+  background: var(--color-success);
+  box-shadow: 0 0 var(--space-2) color-mix(in srgb, var(--color-success) 50%, transparent);
+}
+
+.device-card-stripe.status-acq {
+  background: var(--color-success);
+  box-shadow: 0 0 var(--space-3) color-mix(in srgb, var(--color-success) 60%, transparent);
+  animation: device-card-pulse 1.5s infinite;
+}
+
+.device-card-stripe.status-connecting {
+  background: var(--color-warning);
+  animation: device-card-pulse 0.8s infinite;
+}
+
+.device-card-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.device-card-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-2);
+}
+
+.device-card-name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-card-type-badge {
+  flex-shrink: 0;
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-strong);
+  color: var(--text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.device-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+}
+
+.device-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.device-card-meta span:first-child {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.meta-icon {
+  width: var(--space-3);
+  height: var(--space-3);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.device-card-right {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.device-card-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+}
+
+.error-icon {
+  flex-shrink: 0;
+}
+
+@keyframes device-card-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+</style>

@@ -326,7 +326,12 @@ const controllerTypeOptions = [
                     </div>
                     <div class="basic-info-field">
                       <label class="basic-info-field__label">类型</label>
-                      <select v-model="editing.type" class="input-compact input-compact--select">
+                      <select
+                        v-model="editing.type"
+                        class="input-compact input-compact--select"
+                        aria-label="控制器类型"
+                        data-test="motion-controller-type"
+                      >
                         <option v-for="opt in controllerTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                       </select>
                     </div>

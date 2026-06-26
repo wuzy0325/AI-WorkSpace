@@ -1,0 +1,42 @@
+:root {
+  --pulse-duration-fast: 0.8s;
+  --pulse-duration-normal: 1.5s;
+  --spinner-size-sm: 0.75rem;
+  --spinner-size-md: 1rem;
+  --spinner-size-lg: 1.25rem;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes spinner-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-record {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.15); }
+}
+
+.inline-spinner {
+  display: inline-block;
+  width: var(--spinner-size-sm);
+  height: var(--spinner-size-sm);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spinner-spin 0.8s linear infinite;
+  vertical-align: -2px;
+}
+
+.inline-spinner--md {
+  width: var(--spinner-size-md);
+  height: var(--spinner-size-md);
+}
+
+.inline-spinner--lg {
+  width: var(--spinner-size-lg);
+  height: var(--spinner-size-lg);
+}

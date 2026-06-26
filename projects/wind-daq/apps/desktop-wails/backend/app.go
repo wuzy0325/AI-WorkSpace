@@ -102,10 +102,8 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// 运动控制器独立窗口进程：仅启动运动状态轮询，避免与主窗口进程冲突
 	// （API 服务器端口、数据中继、硬件采集由主窗口进程负责）
 	if a.mode == ModeMotion {
-		a.startMotionPoller()
-		// 子进程也需要在后台自动连接配置了 AutoConnect 的控制器，
-		// 这样独立窗口拉起后无需用户手动点击即可看到已连接状态。
-		a.startMotionAutoConnect()
+		// Motion-only 窗口只是主进程 MotionManager 的操作面板；
+		// 所有运动请求经本地 HTTP 转发到主进程，避免子进程重复连接真实控制器。
 		// 启动父进程看护：父进程消失时本进程自杀，避免任务管理器强杀父进程后留下孤儿。
 		if a.parentPID > 0 {
 			a.startParentWatchdog()
@@ -121,6 +119,9 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// 主进程启动后，后台异步连接所有标记为 AutoConnect 的位移机构，
 	// 避免用户必须先打开运动控制面板才能触发连接。
 	a.startMotionAutoConnect()
+	// 后台异步连接所有标记为 AutoConnect 的 DAQ 设备（含模拟设备）。
+	// 采集必须由用户显式点击“开始采集”触发。
+	a.startDeviceAutoConnect()
 
 	log.Println("Wind-DAQ 应用已成功初始化")
 	return nil
@@ -264,6 +265,63 @@ func (a *App) startMotionAutoConnect() {
 			}(p.ID, p.Name)
 		}
 		wg.Wait()
+	}()
+}
+
+// startDeviceAutoConnect 启动后自动连接所有标记为 AutoConnect 的 DAQ 设备。
+// 该流程只负责连接设备，不自动开始采集。
+func (a *App) startDeviceAutoConnect() {
+	if a.appContext == nil || a.appContext.DeviceManager == nil {
+		return
+	}
+	mgr := a.appContext.DeviceManager
+	hub := a.appContext.AcquisitionHub
+
+	go func() {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		profiles := mgr.GetProfiles()
+		var wg sync.WaitGroup
+		for _, p := range profiles {
+			if !p.AutoConnect {
+				continue
+			}
+			wg.Add(1)
+			go func(id, name string) {
+				defer wg.Done()
+				if a.ctx.Err() != nil {
+					return
+				}
+				log.Printf("[deviceAutoConnect] 正在连接采集设备 %s (id=%s)", name, id)
+				if err := mgr.Connect(id); err != nil {
+					log.Printf("[deviceAutoConnect] %s 自动连接失败: %v", name, err)
+					return
+				}
+				log.Printf("[deviceAutoConnect] %s 已成功连接", name)
+			}(p.ID, p.Name)
+		}
+		wg.Wait()
+
+		// 连接成功后稍等数据流入 AcquisitionHub，再尝试恢复之前已订阅的数据流
+		if a.ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+		if hub != nil {
+			for _, p := range profiles {
+				if p.AutoConnect && p.Type == types.DeviceTypeSimulated {
+					log.Printf("[deviceAutoConnect] 设备 %s 已连接，等待用户开始采集", p.Name)
+				}
+			}
+		}
 	}()
 }
 
@@ -812,6 +870,9 @@ func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
 // ==================== 配置 API ====================
 
 func (a *App) ConfigLoad(key string) (map[string]any, error) {
+	if a == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	if a.appContext == nil || a.appContext.ConfigManager == nil {
 		return nil, fmt.Errorf("配置管理器未初始化")
 	}
@@ -822,10 +883,17 @@ func (a *App) ConfigLoad(key string) (map[string]any, error) {
 	if data == nil {
 		return map[string]any{"success": true, "data": nil}, nil
 	}
-	return map[string]any{"success": true, "data": json.RawMessage(data)}, nil
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	return map[string]any{"success": true, "data": decoded}, nil
 }
 
 func (a *App) ConfigSave(key string, configJSON string) GenericResponse {
+	if a == nil {
+		return GenericResponse{Success: false, Error: "应用服务未初始化"}
+	}
 	return a.callMgr(a.configManager(), "配置管理器", func() error {
 		return a.appContext.ConfigManager.SaveConfig(key, json.RawMessage(configJSON))
 	})

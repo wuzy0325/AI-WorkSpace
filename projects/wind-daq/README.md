@@ -55,7 +55,7 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 
 ```powershell
 cd projects/five-hole-interpolator/apps/desktop-wails
-wails dev
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 The five-hole interpolator is now an independent project. Wind-DAQ and the standalone app both use `shared/algorithms/go/fivehole` for interpolation.
