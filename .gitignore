@@ -16,6 +16,9 @@ target/
 *.dll
 *.so
 
+# Wails 生成的前端运行时绑定（由 `wails generate bindings` 自动产出，不入库）
+**/apps/desktop-wails/frontend/wailsjs/
+
 # IDE
 .idea/
 .vscode/
