@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.2] - 2026-06-26
+
+### Fixed
+- 修复 0.2.1 安装后 Windows 报“应用程序的并行配置不正确”导致无法启动的问题。
+
+### Internal
+- Windows 资源生成改为仅嵌入应用图标，避免将未渲染的 Wails manifest 模板嵌入 `.exe`。
+
+### Verification
+- `rsrc -ico + go build`: passed
+- `go test ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `wails3 build`: passed
+- `makensis /DARG_WAILS_AMD64_BINARY=..\\..\\bin\\motion-controller.exe project.nsi`: passed
+- 本地启动 `build/bin/motion-controller.exe` 后进程保持运行，SideBySide 日志无新增 manifest 错误
+- `npm run test`: not applicable，当前无 `src/**/*.test.ts` 测试文件，Vitest 返回 code 1
+
+### Known Issues
+- 暂无。
+
+## [0.2.1] - 2026-06-26
+
+### Fixed
+- 修复安装包无应用图标的问题：icon.ico 文件损坏导致 .exe 未嵌入图标资源，桌面快捷方式显示空白图标
+- 构建流程补充 .syso 资源文件生成步骤，确保图标正确嵌入可执行文件
+
+### Internal
+- icon.ico 由 wails3 generate icons 从 512×512 appicon.png 重新生成（6 种分辨率）
+- Taskfile.yml 新增 generate-syso 任务，在 build-go 前自动生成并清理 .syso
+
+### Verification
+- `go test ./...`
+- `npm run typecheck`
+- `npm run build`
+- `rsrc -ico + go build + NSIS` 构建安装包
+
+### Known Issues
+- 暂无。
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

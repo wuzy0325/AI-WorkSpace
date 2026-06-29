@@ -12,6 +12,7 @@ projects/wind-daq/apps/desktop-wails/build/*
 !projects/wind-daq/apps/desktop-wails/build/config.yml
 target/
 *.exe
+*.syso
 *.dll
 *.so
 
