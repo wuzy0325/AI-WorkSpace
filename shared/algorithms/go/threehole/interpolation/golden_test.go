@@ -86,7 +86,7 @@ var realCalibPressures = []calibPressureRow{
 }
 
 // calibAtmPressure 校准数据对应的大气压(Pa)
-// 与 three_hole_customer_test.go 中 getCalibData() 的 pa 字段一致
+// 与 three_hole_customer_test.go 中 getCustomerData() 的 pa 字段一致
 const calibAtmPressure = 101425.0
 
 // calibInputForAlpha 构造能反算出指定角度的真实校准压力输入
@@ -461,9 +461,7 @@ func TestThreeHole_Boundary_InfInput(t *testing.T) {
 
 // TestThreeHole_Boundary_OutOfRange 超出校准范围
 // 构造 Kb > 2.633085(校准上界) 的输入, 触发外推 Warning
-// 设 P2=50000, P1=0, P3=100000 → deltaP=0, 不行
-// 设 P2=50000, P1=10000, P3=90000 → deltaP=2*50000-10000-90000=0, 不行
-// 设 P2=60000, P1=10000, P3=90000 → deltaP=2*60000-10000-90000=20000, Kb=(90000-10000)/20000=4.0 > 2.633085 ✓
+// P2=60000, P1=10000, P3=90000 → deltaP=20000, Kb=(90000-10000)/20000=4.0 > 2.633085
 func TestThreeHole_Boundary_OutOfRange(t *testing.T) {
 	interp := loadRealPrbFile(t)
 	input := InterpolationInput{P1: 10000, P2: 60000, P3: 90000, PAtm: calibAtmPressure, TAtm: 20}
@@ -607,7 +605,7 @@ func TestThreeHole_Stability_Perturbation(t *testing.T) {
 	interp := loadRealPrbFile(t)
 	base := calibInputForAlpha(5) // 中心区基准工况
 
-	m, validity := runThreeHoleStabilityProbe(t, interp, base, 100)
+	m, _ := runThreeHoleStabilityProbe(t, interp, base, 100)
 
 	// 1. 无 NaN/Inf
 	if m.HasNaNOrInf {
@@ -627,7 +625,6 @@ func TestThreeHole_Stability_Perturbation(t *testing.T) {
 	}
 	t.Logf("三孔扰动统计: Alpha[%.4f, %.4f] maxJump=%.6f°, flips=%d",
 		m.AlphaMin, m.AlphaMax, m.AlphaMaxJump, m.IsValidFlips)
-	_ = validity // 保留切片用于后续分析
 }
 
 // TestThreeHole_Stability_DeterministicSeed 验证扰动测试可复现
