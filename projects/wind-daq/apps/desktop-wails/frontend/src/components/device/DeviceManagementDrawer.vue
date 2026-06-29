@@ -731,8 +731,12 @@ async function bulkConnect() {
 }
 
 async function bulkDisconnect() {
+  // 批量断开必须经过 store.disconnect 才能：
+  //   1) 退订该设备的数据流订阅；
+  //   2) 显式把本地连接状态置为 Disconnected，让卡片立刻刷新。
+  // 直接调用 deviceApi.disconnect 会绕过这两步，导致 UI 看似"点了没反应"。
   for (const id of selectedIds.value) {
-    try { await deviceApi.disconnect(id) } catch { /* 跳过 */ }
+    try { await deviceStore.disconnect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
   feedback.pushToast('批量断开完成', 'info')

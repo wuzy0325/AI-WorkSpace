@@ -362,10 +362,40 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   async function disconnect(id: string) {
-    await deviceApi.disconnect(id)
-    deviceApi.unsubscribeFromDevice(id)
-    subscribedDeviceIds.delete(id)
-    await refreshStatusFor(id)
+    // 调用后端断开。即使后端返回成功，DeviceManager 也会从 devices map 中删除该设备，
+    // 之后 GetStatus(id) 会返回 (Status{}, false)，触发 deviceApi.getStatus 抛
+    // "设备状态不可用"，使 refreshStatusFor 静默保留旧状态——按钮文字停在"断开"，
+    // 用户看起来就是"点击断开没反应"。
+    // 修复策略：先调后端，再退订数据流，并显式把本地状态置为 Disconnected，
+    // 最后才尝试 refreshStatusFor。即便刷新失败，UI 也能立即反映断开结果。
+    try {
+      await deviceApi.disconnect(id)
+    } finally {
+      // 无论后端是否报错，都先停止订阅，避免遗留 SSE/事件回调把状态又拉回 Connected
+      deviceApi.unsubscribeFromDevice(id)
+      subscribedDeviceIds.delete(id)
+    }
+
+    // 乐观写入：将本地状态置为 Disconnected，确保按钮文字与状态条立刻刷新
+    const prev = deviceStatuses.value.get(id)
+    const profile = profiles.value.find((p) => p.id === id)
+    deviceStatuses.value.set(id, {
+      id,
+      name: prev?.name ?? profile?.name ?? id,
+      type: prev?.type ?? profile?.type ?? 'Unknown',
+      connection: 'Disconnected',
+      acquiring: false,
+      lastError: undefined,
+    })
+
+    // 仍尝试拉一次后端状态做最终对齐：若后端返回有效状态会覆盖上面的乐观值；
+    // 若返回 "设备状态不可用"（断开后的预期分支），refreshStatusFor 的 catch
+    // 会保留我们刚写入的 Disconnected，符合预期。
+    try {
+      await refreshStatusFor(id)
+    } catch (refreshErr) {
+      console.warn(`[deviceStore] disconnect succeeded but refreshStatusFor failed for ${id}:`, refreshErr)
+    }
   }
 
   async function startAcquisition(id: string): Promise<boolean> {
