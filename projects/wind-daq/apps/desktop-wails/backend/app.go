@@ -807,7 +807,17 @@ func (a *App) MotionResetEmergencyStop(id string) GenericResponse {
 
 // ==================== 校准 API ====================
 
-func (a *App) CalibrationStart(config types.CalibrationConfig) GenericResponse {
+// CalibrationStart 启动校准任务。
+//
+// 参数使用 pkg/types 暴露的 CalibrationConfigDTO（adapters/config 层 DTO 的公共别名），
+// 而非直接用 core 的 calibration.Config。原因：Wails v3 运行时用 encoding/json 把前端
+// JS 对象反序列化进方法参数，而前端发送的探针通道是嵌套 channel 格式，core 层禁止自带
+// UnmarshalJSON（零容忍约束）。DTO 用普通 struct tag 同时接收扁平与嵌套两种 shape，
+// ToCore 再转换为 core 层的 calibration.Config。
+// backend 是独立 Go module，不能直接 import internal/adapters/config（Go internal 规则），
+// 故通过 pkg/types 的类型别名 facade 访问 DTO。
+func (a *App) CalibrationStart(dto types.CalibrationConfigDTO) GenericResponse {
+	config := dto.ToCore()
 	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
 		return a.appContext.CalibrationMgr.Start(config)
 	})

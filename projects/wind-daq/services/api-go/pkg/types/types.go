@@ -2,6 +2,7 @@
 package types
 
 import (
+	configadapter "wind-daq/services/api-go/internal/adapters/config"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
@@ -27,6 +28,12 @@ type (
 	TotalPressureCoefficients = calibration.TotalPressureCoefficients
 	TotalPressureDataPoint    = calibration.TotalPressureDataPoint
 	TotalTemperatureDataPoint = calibration.TotalTemperatureDataPoint
+
+	// 以下 DTO 别名把 adapters/config 层的传输对象对外暴露，供 desktop-wails backend
+	// 等独立模块通过公共包访问。backend 是独立 Go module，无法直接 import
+	// internal/adapters/config（Go internal 规则），因此沿用 pkg/types 的 facade 模式。
+	CalibrationConfigDTO = configadapter.CalibrationConfigDTO
+	ProbeChannelDTO      = configadapter.ProbeChannelDTO
 )
 
 // Calibration type constants

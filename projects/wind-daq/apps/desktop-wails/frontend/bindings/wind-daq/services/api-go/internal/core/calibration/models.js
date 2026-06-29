@@ -135,187 +135,6 @@ export class ChannelRef {
 }
 
 /**
- * Config 校准任务通用配置
- */
-export class Config {
-    /**
-     * Creates a new Config instance.
-     * @param {Partial<Config>} [$$source = {}] - The source object to create the Config.
-     */
-    constructor($$source = {}) {
-        if (!("taskId" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["taskId"] = "";
-        }
-        if (!("deviceId" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["deviceId"] = "";
-        }
-        if (!("type" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["type"] = "";
-        }
-        if (!("channels" in $$source)) {
-            /**
-             * @member
-             * @type {number[]}
-             */
-            this["channels"] = [];
-        }
-        if (!("pressurePoints" in $$source)) {
-            /**
-             * @member
-             * @type {number[]}
-             */
-            this["pressurePoints"] = [];
-        }
-        if (!("averageSamples" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["averageSamples"] = 0;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {ProbeChannel[] | undefined}
-             */
-            this["probeChannels"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {CalPoint[] | undefined}
-             */
-            this["points"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {number | undefined}
-             */
-            this["samplesPerPoint"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {number | undefined}
-             */
-            this["dwellTimeMs"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {boolean | undefined}
-             */
-            this["stopOnError"] = undefined;
-        }
-        if (!("name" in $$source)) {
-            /**
-             * 校准任务名称
-             * @member
-             * @type {string}
-             */
-            this["name"] = "";
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * 数据保存路径
-             * @member
-             * @type {string | undefined}
-             */
-            this["savePath"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * 运动轴配置
-             * @member
-             * @type {MotionAxisConfig[] | undefined}
-             */
-            this["motionAxes"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * 球罐闸门配置
-             * @member
-             * @type {SphereTankGateConfig | null | undefined}
-             */
-            this["sphereTankGate"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * 采集采样配置
-             * @member
-             * @type {AcquisitionSamplingConfig | null | undefined}
-             */
-            this["acquisitionSampling"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * 总温校准专用配置
-             * @member
-             * @type {TotalTemperatureConfig | null | undefined}
-             */
-            this["totalTemperatureConfig"] = undefined;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new Config instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {Config}
-     */
-    static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType1;
-        const $$createField4_0 = $$createType2;
-        const $$createField6_0 = $$createType4;
-        const $$createField7_0 = $$createType6;
-        const $$createField13_0 = $$createType8;
-        const $$createField14_0 = $$createType10;
-        const $$createField15_0 = $$createType12;
-        const $$createField16_0 = $$createType14;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField3_0($$parsedSource["channels"]);
-        }
-        if ("pressurePoints" in $$parsedSource) {
-            $$parsedSource["pressurePoints"] = $$createField4_0($$parsedSource["pressurePoints"]);
-        }
-        if ("probeChannels" in $$parsedSource) {
-            $$parsedSource["probeChannels"] = $$createField6_0($$parsedSource["probeChannels"]);
-        }
-        if ("points" in $$parsedSource) {
-            $$parsedSource["points"] = $$createField7_0($$parsedSource["points"]);
-        }
-        if ("motionAxes" in $$parsedSource) {
-            $$parsedSource["motionAxes"] = $$createField13_0($$parsedSource["motionAxes"]);
-        }
-        if ("sphereTankGate" in $$parsedSource) {
-            $$parsedSource["sphereTankGate"] = $$createField14_0($$parsedSource["sphereTankGate"]);
-        }
-        if ("acquisitionSampling" in $$parsedSource) {
-            $$parsedSource["acquisitionSampling"] = $$createField15_0($$parsedSource["acquisitionSampling"]);
-        }
-        if ("totalTemperatureConfig" in $$parsedSource) {
-            $$parsedSource["totalTemperatureConfig"] = $$createField16_0($$parsedSource["totalTemperatureConfig"]);
-        }
-        return new Config(/** @type {Partial<Config>} */($$parsedSource));
-    }
-}
-
-/**
  * DataPoint 通用校准数据点接口
  * @typedef {any} DataPoint
  */
@@ -369,65 +188,6 @@ export class MotionAxisConfig {
 }
 
 /**
- * ProbeChannel 探针通道配置，将逻辑角色映射到物理通道
- */
-export class ProbeChannel {
-    /**
-     * Creates a new ProbeChannel instance.
-     * @param {Partial<ProbeChannel>} [$$source = {}] - The source object to create the ProbeChannel.
-     */
-    constructor($$source = {}) {
-        if (!("role" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["role"] = "";
-        }
-        if (!("name" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["name"] = "";
-        }
-        if (!("deviceId" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["deviceId"] = "";
-        }
-        if (!("channelIndex" in $$source)) {
-            /**
-             * @member
-             * @type {number}
-             */
-            this["channelIndex"] = 0;
-        }
-        if (!("enabled" in $$source)) {
-            /**
-             * @member
-             * @type {boolean}
-             */
-            this["enabled"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ProbeChannel instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {ProbeChannel}
-     */
-    static createFrom($$source = {}) {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ProbeChannel(/** @type {Partial<ProbeChannel>} */($$parsedSource));
-    }
-}
-
-/**
  * SphereTankGateConfig 球罐闸门判定配置
  */
 export class SphereTankGateConfig {
@@ -470,7 +230,7 @@ export class SphereTankGateConfig {
      * @returns {SphereTankGateConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType15;
+        const $$createField2_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stableTimeChannel" in $$parsedSource) {
             $$parsedSource["stableTimeChannel"] = $$createField2_0($$parsedSource["stableTimeChannel"]);
@@ -588,7 +348,7 @@ export class Status {
      * @returns {Status}
      */
     static createFrom($$source = {}) {
-        const $$createField9_0 = $$createType16;
+        const $$createField9_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataPoints" in $$parsedSource) {
             $$parsedSource["dataPoints"] = $$createField9_0($$parsedSource["dataPoints"]);
@@ -712,9 +472,9 @@ export class TotalTemperatureConfig {
      * @returns {TotalTemperatureConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType17;
-        const $$createField1_0 = $$createType2;
-        const $$createField3_0 = $$createType18;
+        const $$createField0_0 = $$createType3;
+        const $$createField1_0 = $$createType4;
+        const $$createField3_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("probeChannels" in $$parsedSource) {
             $$parsedSource["probeChannels"] = $$createField0_0($$parsedSource["probeChannels"]);
@@ -731,21 +491,8 @@ export class TotalTemperatureConfig {
 
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
-const $$createType1 = $Create.Array($Create.Any);
+const $$createType1 = ChannelRef.createFrom;
 const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = ProbeChannel.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = CalPoint.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = MotionAxisConfig.createFrom;
-const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = SphereTankGateConfig.createFrom;
-const $$createType10 = $Create.Nullable($$createType9);
-const $$createType11 = AcquisitionSamplingConfig.createFrom;
-const $$createType12 = $Create.Nullable($$createType11);
-const $$createType13 = TotalTemperatureConfig.createFrom;
-const $$createType14 = $Create.Nullable($$createType13);
-const $$createType15 = ChannelRef.createFrom;
-const $$createType16 = $Create.Array($Create.Any);
-const $$createType17 = $Create.Map($Create.Any, $$createType15);
-const $$createType18 = TemperatureStabilityConfig.createFrom;
+const $$createType3 = $Create.Map($Create.Any, $$createType1);
+const $$createType4 = $Create.Array($Create.Any);
+const $$createType5 = TemperatureStabilityConfig.createFrom;

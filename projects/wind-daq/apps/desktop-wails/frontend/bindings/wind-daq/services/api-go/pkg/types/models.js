@@ -8,6 +8,9 @@ import { Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as config$0 from "../../internal/adapters/config/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as calibration$0 from "../../internal/core/calibration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -18,12 +21,20 @@ import * as motion$0 from "../../internal/core/motion/models.js";
 
 /**
  * ==================== Calibration Types ====================
+ *
+ * 以下 DTO 别名把 adapters/config 层的传输对象对外暴露，供 desktop-wails backend
+ * 等独立模块通过公共包访问。backend 是独立 Go module，无法直接 import
+ * internal/adapters/config（Go internal 规则），因此沿用 pkg/types 的 facade 模式。
  */
-export const CalibrationConfig = calibration$0.Config;
+export const CalibrationConfigDTO = config$0.CalibrationConfigDTO;
 
 /**
  * ==================== Calibration Types ====================
- * @typedef {calibration$0.Config} CalibrationConfig
+ *
+ * 以下 DTO 别名把 adapters/config 层的传输对象对外暴露，供 desktop-wails backend
+ * 等独立模块通过公共包访问。backend 是独立 Go module，无法直接 import
+ * internal/adapters/config（Go internal 规则），因此沿用 pkg/types 的 facade 模式。
+ * @typedef {config$0.CalibrationConfigDTO} CalibrationConfigDTO
  */
 
 /**

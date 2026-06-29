@@ -4,10 +4,5 @@
 
 export {
     CalibrationConfigDTO,
-    CalibrationStatus,
-    DeviceDataPayload,
-    DeviceProfile,
-    DeviceScanResult,
-    DeviceStatus,
-    MotionControllerProfile
+    ProbeChannelDTO
 } from "./models.js";

@@ -16,6 +16,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as application$0 from "../../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as config$0 from "../../../services/api-go/internal/adapters/config/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as calibration$0 from "../../../services/api-go/internal/core/calibration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -90,11 +93,20 @@ export function CalibrationSaveCsv(taskID, savePath) {
 }
 
 /**
- * @param {types$0.CalibrationConfig} config
+ * CalibrationStart 启动校准任务。
+ * 
+ * 参数使用 pkg/types 暴露的 CalibrationConfigDTO（adapters/config 层 DTO 的公共别名），
+ * 而非直接用 core 的 calibration.Config。原因：Wails v3 运行时用 encoding/json 把前端
+ * JS 对象反序列化进方法参数，而前端发送的探针通道是嵌套 channel 格式，core 层禁止自带
+ * UnmarshalJSON（零容忍约束）。DTO 用普通 struct tag 同时接收扁平与嵌套两种 shape，
+ * ToCore 再转换为 core 层的 calibration.Config。
+ * backend 是独立 Go module，不能直接 import internal/adapters/config（Go internal 规则），
+ * 故通过 pkg/types 的类型别名 facade 访问 DTO。
+ * @param {types$0.CalibrationConfigDTO} dto
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
-export function CalibrationStart(config) {
-    return $Call.ByID(1191713363, config).then(/** @type {($result: any) => any} */(($result) => {
+export function CalibrationStart(dto) {
+    return $Call.ByID(1191713363, dto).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
