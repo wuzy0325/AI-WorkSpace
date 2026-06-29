@@ -41,6 +41,8 @@ tasks:
     summary: 仅构建 Go 二进制（生产模式，含 -tags production 与 -trimpath/-w/-s）
     deps:
       - generate-syso
+    env:
+      GOWORK: off
     cmds:
       - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/motion-controller.exe .
       - cmd: powershell Remove-Item -LiteralPath rsrc.syso -ErrorAction SilentlyContinue

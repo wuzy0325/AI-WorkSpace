@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.4] - 2026-06-29
+
+### Internal
+- 规范化生产构建标签：Taskfile.yml `build-go` 增加 `-tags production -trimpath` 与 `-w -s`。
+
+### Verification
+- `go test ./...`: passed（无测试文件）
+- `npm run typecheck`: passed
+- `npm run build`: passed - vite build
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.2.3] - 2026-06-29
 
 ### Changed

@@ -8,7 +8,7 @@ import (
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const (
@@ -113,21 +113,21 @@ func (a *App) EmitLog(entry LogEvent) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:log", entry)
+	application.Get().Event.Emit("daq:log", entry)
 }
 
 func (a *App) emitPayload(snapshot core.TemperatureSnapshot) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:payload", snapshot)
+	application.Get().Event.Emit("daq:payload", snapshot)
 }
 
 func (a *App) emitRecordingStatus(session core.RecordingSession) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "daq:recording-status", session)
+	application.Get().Event.Emit("daq:recording-status", session)
 }
 
 func (a *App) ScanDevices() ([]core.ScanResult, error) {
@@ -369,8 +369,5 @@ func (a *App) GetLogFileState() LogFileState {
 }
 
 func (a *App) PickDirectory() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:                "选择保存目录",
-		CanCreateDirectories: true,
-	})
+	return pickDirectory(nil)
 }

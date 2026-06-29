@@ -75,7 +75,23 @@ release:
 - 是否需要清理用户数据/注册表残留。
 - 推荐的安装步骤摘要。
 
-### 5. 打包前清理
+### 5. Go Workspace 隔离
+
+工作空间根目录 `go.work` 包含所有项目的 Go 模块。当其中存在混合 v2/v3 Wails 模块的残留时
+（即使当前 go.mod 均已升级到 v3），`go build` 在工作空间模式下可能通过模块图解析将
+wails/v2 的包间接引入最终二进制，导致 `app_default_windows.go` 中的
+"Wails applications will not build" MessageBox stub 被编译进去。
+
+已发生的真实故障（2026-06-29）：motion-controller v0.2.4 安装后启动仍弹此错误。
+验证确认根因为 `go.work` 模式导致二进制包含 `github.com/wailsapp/wails/v2` 符号。
+`$env:GOWORK="off"; go build ...` 构建后的二进制完全干净。
+
+**强制要求：所有 Taskfile.yml 的 `build-go` 任务必须设置 `env: GOWORK: off`。**
+
+三项目（three-hole-interpolator / daq-t1603 / daq-p1604）虽不使用自定义 Taskfile，
+但其 `dev_build.cmd` 或等价脚本也必须设置 `set GOWORK=off`。
+
+### 6. 打包前清理
 
 打包流程必须执行 `task clean` 或等价的清理步骤，移除
 `apps/desktop-wails/build/bin/` 旧产物，避免新旧二进制混淆。

@@ -1,12 +1,17 @@
 # Changelog
 
-## 0.1.0
+## [0.1.1] - 2026-06-29
 
-- 初始版本：DAQ-P-1604 压力采集桌面应用
-- 18 通道数据采集（16 压力 + 大气压力 + 大气温度）
-- TCP 二进制协议通信
-- UDP 设备发现（psi9000）
-- CSV 数据录制
-- 实时波形显示
-- 设备配置管理
-- 压力单位系统（psi/Pa/kPa/MPa/kgf/cm²）
+### Internal
+- AGENTS.md 新增「对外交付打包」节，使用 wails3 build（内部自动启用 -tags production）。
+- 创建 CHANGELOG.md 和发布基础设施。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go run github.com/wailsapp/wails/v3/cmd/wails3 build`: passed
+
+### Known Issues
+- 暂无。

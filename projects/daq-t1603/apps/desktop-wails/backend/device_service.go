@@ -11,11 +11,6 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-const (
-	uiPayloadRefreshInterval    = 100 * time.Millisecond
-	recordingStatusEmitInterval = time.Second
-)
-
 // DeviceService 暴露设备相关能力给前端：
 //   - 扫描 / 配置 CRUD
 //   - 连接 / 断开 / 应用配置

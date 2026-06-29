@@ -11,12 +11,6 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// LogFileState 日志文件写入状态，用于前端展示
-type LogFileState struct {
-	Active    bool   `json:"active"`
-	OutputDir string `json:"outputDir,omitempty"`
-}
-
 // LogService 暴露日志相关能力给前端，同时实现 core.LogEmitter 接口，
 // 由 Hub 统一调度日志事件分发。
 //

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.4] - 2026-06-29
+
+### Added
+- 新增 Wails 桌面 App backend 实现：设备管理、日志、录制服务整合到统一桌面应用。
+
+### Internal
+- AGENTS.md 和 README.md 区分开发与交付命令，新增 Release Commands 段。
+- AGENTS.md 增加 ADR-004 索引。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `go build -buildvcs=false ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go run github.com/wailsapp/wails/v3/cmd/wails3 build`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.1.3] - 2026-06-23
 
 ### Fixed
