@@ -10,6 +10,7 @@
                                    ".golangci.yml",
                                    ".idea",
                                    ".opencode",
+                                   ".uploads",
                                    ".vscode",
                                     "AGENTS.md",
                                     "CLAUDE.md",
