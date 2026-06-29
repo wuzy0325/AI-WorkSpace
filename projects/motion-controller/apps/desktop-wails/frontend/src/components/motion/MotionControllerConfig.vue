@@ -164,7 +164,7 @@ function editProfile(src: MotionControllerProfile): void {
   editing.autoConnect = src.autoConnect
   editing.axes = src.axes.map((a) => ({
     ...a,
-    enabled: a.enabled ?? true,
+    enabled: true,
     stepsPerRev: a.stepsPerRev ?? 1.8,
     microSteps: a.microSteps ?? 4,
     lead: a.lead ?? 4,
@@ -195,7 +195,7 @@ async function save(): Promise<void> {
       port: Number.isFinite(editing.port) ? editing.port : DEFAULT_PORT,
       autoConnect: editing.autoConnect,
       axes: editing.axes.map((a) => ({
-        name: a.name, enabled: a.enabled, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
+        name: a.name, enabled: true, kind: a.kind ?? (a.name === 'U' ? 'ROTARY' as const : 'LINEAR' as const),
         maxSpeed: a.maxSpeed, minLimit: a.minLimit, maxLimit: a.maxLimit,
         stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
         lead: a.lead, gearRatio: a.gearRatio,

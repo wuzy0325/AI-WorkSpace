@@ -82,7 +82,7 @@ function validateEncoderCompensation(): string[] {
   const errors: string[] = [];
 
   for (const axis of editing.axes) {
-    if (!axis.enabled || axis.positionSource !== 'encoder') continue;
+    if (axis.positionSource !== 'encoder') continue;
 
     const comp = axis.encoderCompensation;
     if (!comp?.enabled) continue;
@@ -149,7 +149,7 @@ async function save(): Promise<void> {
     autoConnect: editing.autoConnect,
     axes: editing.axes.map((a) => ({
       name: a.name,
-      enabled: a.enabled,
+      enabled: true,
       kind: a.kind ?? (a.name === 'U' ? 'ROTARY' : 'LINEAR'),
       maxSpeed: normalizePositive(a.maxSpeed, DEFAULT_MAX_SPEED),
       minLimit: a.minLimit,

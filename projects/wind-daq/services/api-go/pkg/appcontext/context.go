@@ -218,7 +218,7 @@ func defaultMotionProfiles() []core.MotionControllerProfile {
 				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
 				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
 				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisU, Enabled: false, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(10)},
 			},
 		},
 	}

@@ -45,15 +45,6 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
         <div class="axis-card__badge">{{ axis.name }}</div>
         <span class="axis-card__kind-label">{{ axis.kind === 'ROTARY' ? '旋转轴' : '直线轴' }}</span>
       </div>
-      <label class="axis-card__enabled-toggle">
-        <span>启用</span>
-        <UiToggle
-          size="sm"
-          :model-value="axis.enabled"
-          style="--toggle-color: var(--axis-hue)"
-          @update:model-value="onAxisUpdate(index, 'enabled', $event)"
-        />
-      </label>
     </div>
 
     <!-- 卡片主体 -->
@@ -160,16 +151,6 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.axis-card__enabled-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.6875rem;
-  font-weight: 600;
 }
 
 .axis-card__badge {

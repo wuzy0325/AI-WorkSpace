@@ -85,13 +85,13 @@ const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
   { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
   { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
   { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10 },
-  { name: 'U', enabled: false, kind: 'ROTARY' as const, maxSpeed: 10 },
+  { name: 'U', enabled: true, kind: 'ROTARY' as const, maxSpeed: 10 },
 ];
 
 function normalizeMotionProfile(profile: MotionControllerProfile): MotionControllerProfile {
   let axes: import('@shared/types/motion').AxisConfig[];
   if (Array.isArray(profile?.axes) && profile.axes.length > 0) {
-    axes = profile.axes.map((a) => ({ ...a, enabled: a.enabled ?? true }));
+    axes = profile.axes.map((a) => ({ ...a, enabled: true }));
   } else {
     axes = DEFAULT_AXES.map((a) => ({ ...a }));
   }

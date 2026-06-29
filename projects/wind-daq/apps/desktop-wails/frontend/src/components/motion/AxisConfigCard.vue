@@ -65,9 +65,9 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
 <template>
   <div
     class="axis-card"
-    :class="[getAxisThemeClass(axis.name), { 'axis-card--disabled': !axis.enabled }]"
+    :class="getAxisThemeClass(axis.name)"
   >
-    <!-- 轴头部：名称 + 类型选择 + 启用开关 -->
+    <!-- 轴头部：名称 + 类型选择 -->
     <div class="axis-card__header">
       <div class="flex items-center gap-2">
         <div class="axis-card__badge">{{ axis.name }}</div>
@@ -77,32 +77,23 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           width-class="w-20"
           :aria-label="`${axis.name} 轴类型`"
           :data-test="`motion-axis-${axis.name}-kind`"
-          :disabled="!axis.enabled"
           :options="[
             { value: 'LINEAR', label: '直线轴' },
             { value: 'ROTARY', label: '旋转轴' },
           ]"
         />
       </div>
-      <label class="axis-card__toggle">
-        <UiCheckbox
-          :checked="axis.enabled"
-          @update:checked="updateField('enabled', $event)"
-        />
-        <span>{{ axis.enabled ? '启用' : '禁用' }}</span>
-      </label>
     </div>
 
     <!-- 参数网格 -->
     <div class="axis-card__body">
-      <div class="axis-card__grid" :class="{ 'axis-card__grid--disabled': !axis.enabled }">
+      <div class="axis-card__grid">
         <div class="axis-card__field">
           <span class="axis-card__field-label">步距角 °</span>
           <UiInputNumber
             :model-value="axis.stepsPerRev ?? 1.8"
             @update:model-value="updateField('stepsPerRev', $event ?? 1.8)"
             class="axis-card__field-input w-16"
-            :disabled="!axis.enabled"
             :min="0.1"
             :step="0.1"
           />
@@ -113,7 +104,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             :model-value="axis.microSteps ?? 4"
             @update:model-value="updateField('microSteps', $event ?? 4)"
             class="axis-card__field-input w-16"
-            :disabled="!axis.enabled"
             :min="1"
             :step="1"
           />
@@ -127,7 +117,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             :model-value="axis.gearRatio ?? 1"
             @update:model-value="updateField('gearRatio', $event ?? 1)"
             class="axis-card__field-input w-16"
-            :disabled="!axis.enabled"
             :min="0.001"
             :step="0.001"
           />
@@ -136,7 +125,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             :model-value="axis.lead ?? 4"
             @update:model-value="updateField('lead', $event ?? 4)"
             class="axis-card__field-input w-16"
-            :disabled="!axis.enabled"
             :min="0.001"
             :step="0.001"
           />
@@ -149,7 +137,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             :model-value="axis.maxSpeed ?? 100"
             @update:model-value="updateField('maxSpeed', $event ?? 100)"
             class="axis-card__field-input w-16 axis-card__field-input--highlight"
-            :disabled="!axis.enabled"
             :min="1"
             :step="1"
           />
@@ -162,7 +149,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           <UiCheckbox
             :checked="axis.inverted"
             @update:checked="updateField('inverted', $event)"
-            :disabled="!axis.enabled"
           />
           <span class="axis-card__footer-label">方向反转</span>
         </label>
@@ -173,7 +159,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             class="w-20"
             :aria-label="`${axis.name} 位置来源`"
             :data-test="`motion-axis-${axis.name}-position-source`"
-            :disabled="!axis.enabled || !supportsEncoder"
+            :disabled="!supportsEncoder"
             :options="[
               { value: 'register', label: '寄存器' },
               { value: 'encoder', label: '编码器' },
@@ -190,7 +176,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             <UiCheckbox
               :checked="encoderComp.enabled"
               @update:checked="updateCompensationField('enabled', $event)"
-              :disabled="!axis.enabled"
             />
             <span class="encoder-section__label">启用</span>
           </label>
@@ -202,7 +187,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="axis.encoderScale ?? 1"
               @update:model-value="updateField('encoderScale', $event ?? 1)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="0.0001"
               :step="0.0001"
             />
@@ -215,7 +199,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="encoderComp.tolerance"
               @update:model-value="updateCompensationField('tolerance', $event ?? 0.01)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="0.0001"
               :step="0.001"
             />
@@ -226,7 +209,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="encoderComp.maxCycles"
               @update:model-value="updateCompensationField('maxCycles', $event ?? 10)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="1"
               :step="1"
             />
@@ -237,7 +219,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="encoderComp.settleMs"
               @update:model-value="updateCompensationField('settleMs', $event ?? 200)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="10"
               :step="10"
             />
@@ -248,7 +229,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="encoderComp.minStep"
               @update:model-value="updateCompensationField('minStep', $event ?? 0.001)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="0.0001"
               :step="0.0001"
             />
@@ -259,7 +239,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :model-value="encoderComp.timeoutMs"
               @update:model-value="updateCompensationField('timeoutMs', $event ?? 5000)"
               class="encoder-section__input"
-              :disabled="!axis.enabled"
               :min="100"
               :step="100"
             />
@@ -281,12 +260,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
 .axis-card:hover {
   border-color: var(--axis-hue);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--axis-hue) 8%, transparent);
-}
-.axis-card--disabled {
-  opacity: 0.55;
-}
-.axis-card--disabled .axis-card__body {
-  pointer-events: none;
 }
 .axis-x-theme { --axis-hue: var(--axis-x); --axis-hue-soft: var(--axis-x-soft); }
 .axis-y-theme { --axis-hue: var(--axis-y); --axis-hue-soft: var(--axis-y-soft); }
@@ -313,16 +286,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
   font-size: 0.875rem;
   font-weight: 800;
 }
-.axis-card__toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
 .axis-card__body {
   padding: var(--space-2) var(--space-3);
 }
@@ -330,9 +293,6 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: var(--space-1-5) var(--space-3);
-}
-.axis-card__grid--disabled {
-  opacity: 0.55;
 }
 .axis-card__field {
   display: flex;
