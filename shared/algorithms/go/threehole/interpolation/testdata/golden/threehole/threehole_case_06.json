@@ -1,0 +1,21 @@
+{
+  "name": "edge_alphaneg25",
+  "region": "edge",
+  "desc": "边缘区: α=-25, Kb=-2.644388, 接近角区边界",
+  "input": {
+    "P1": 49883,
+    "P2": 37295.7,
+    "P3": 9399,
+    "Patm": 101425,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": -25,
+    "machNumber": 0.8021895256832762,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "machNumber": 0.05
+  }
+}

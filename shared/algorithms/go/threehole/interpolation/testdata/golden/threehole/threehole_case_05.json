@@ -1,0 +1,21 @@
+{
+  "name": "edge_alphaneg15",
+  "region": "edge",
+  "desc": "边缘区: α=-15, Kb=-1.174992, 中等角度反向偏角",
+  "input": {
+    "P1": 47193,
+    "P2": 45376.7,
+    "P3": 22801.7,
+    "Patm": 101425,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": -15,
+    "machNumber": 0.8008838684711784,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "machNumber": 0.05
+  }
+}

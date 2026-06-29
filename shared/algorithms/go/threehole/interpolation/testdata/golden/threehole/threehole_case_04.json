@@ -1,0 +1,21 @@
+{
+  "name": "edge_alpha15",
+  "region": "edge",
+  "desc": "边缘区: α=15, Kb=0.948513, 中等角度正向偏角",
+  "input": {
+    "P1": 23187,
+    "P2": 47048.2,
+    "P3": 46417.7,
+    "Patm": 101425,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 15,
+    "machNumber": 0.8008147978813964,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "machNumber": 0.05
+  }
+}

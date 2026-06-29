@@ -1,0 +1,21 @@
+{
+  "name": "center_alpha5",
+  "region": "center",
+  "desc": "中心区: α=5, Kb=0.293167, 小角度正向偏角",
+  "input": {
+    "P1": 32789,
+    "P2": 49680.6,
+    "P3": 40447.8,
+    "Patm": 101425,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 5,
+    "machNumber": 0.8001974967464933,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "machNumber": 0.05
+  }
+}

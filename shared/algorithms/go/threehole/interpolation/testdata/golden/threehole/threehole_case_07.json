@@ -1,0 +1,21 @@
+{
+  "name": "corner_alpha30",
+  "region": "corner",
+  "desc": "角区边界: α=30, Kb=2.633085, 校准数据上边界点",
+  "input": {
+    "P1": 3900.7,
+    "P2": 35640.6,
+    "P3": 49907.8,
+    "Patm": 101425,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 30,
+    "machNumber": 0.8020317412625695,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "machNumber": 0.05
+  }
+}
