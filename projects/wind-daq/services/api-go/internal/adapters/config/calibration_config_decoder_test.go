@@ -144,7 +144,21 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 	if cfg.Points[0].Coordinates["x"] != 1.5 {
 		t.Fatalf("unexpected point coordinates: %v", cfg.Points[0].Coordinates)
 	}
-	if len(cfg.MotionAxes) != 1 || cfg.MotionAxes[0].ControllerID != "mc-1" {
+	// I-1: 补 ProbeChannels 全字段断言——JSON 输入用了嵌套 channel shape，
+	// 必须确认 Role/Name/DeviceID/ChannelIndex/Enabled 都正确解码，防止 DTO 嵌套映射回归。
+	if len(cfg.ProbeChannels) != 1 {
+		t.Fatalf("expected 1 probe channel, got %d", len(cfg.ProbeChannels))
+	}
+	pc := cfg.ProbeChannels[0]
+	if pc.Role != "fiveHole.p1" || pc.Name != "P1" || pc.DeviceID != "dev-1" || pc.ChannelIndex != 1 || !pc.Enabled {
+		t.Fatalf("unexpected probeChannel fields: %+v", pc)
+	}
+	// I-2: MotionAxes 不仅断言 ControllerID，还要覆盖 Axis/Name，避免后续给 MotionAxisConfig
+	// 加字段时 DTO 同步遗漏。
+	if len(cfg.MotionAxes) != 1 ||
+		cfg.MotionAxes[0].ControllerID != "mc-1" ||
+		cfg.MotionAxes[0].Axis != "x" ||
+		cfg.MotionAxes[0].Name != "X" {
 		t.Fatalf("unexpected motionAxes: %+v", cfg.MotionAxes)
 	}
 	if cfg.SphereTankGate == nil || !cfg.SphereTankGate.Enabled || cfg.SphereTankGate.WaitTimeSec != 2.5 {
@@ -153,7 +167,12 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 	if cfg.SphereTankGate.StableTimeChannel.DeviceID != "dev-1" || cfg.SphereTankGate.StableTimeChannel.ChannelIndex != 2 {
 		t.Fatalf("unexpected stableTimeChannel: %+v", cfg.SphereTankGate.StableTimeChannel)
 	}
-	if cfg.AcquisitionSampling == nil || cfg.AcquisitionSampling.BatchTimeoutMs != 100 {
+	// I-2: AcquisitionSampling 必须覆盖全部三个字段（BatchTimeoutMs/BatchPollIntervalMs/BatchMaxAgeMs），
+	// 防止后续给 AcquisitionSamplingConfig 加字段时 DTO 同步遗漏。
+	if cfg.AcquisitionSampling == nil ||
+		cfg.AcquisitionSampling.BatchTimeoutMs != 100 ||
+		cfg.AcquisitionSampling.BatchPollIntervalMs != 10 ||
+		cfg.AcquisitionSampling.BatchMaxAgeMs != 1000 {
 		t.Fatalf("unexpected acquisitionSampling: %+v", cfg.AcquisitionSampling)
 	}
 	if cfg.TotalTemperatureConfig == nil {
@@ -196,5 +215,28 @@ func TestCalibrationConfigDTO_ToCore_EmptyProbeChannels(t *testing.T) {
 	}
 	if cfg.ProbeChannels != nil {
 		t.Fatalf("expected nil ProbeChannels for empty input, got %v", cfg.ProbeChannels)
+	}
+}
+
+// TestDecodeCalibrationConfig_EmptyProbeChannelsArray 验证 probeChannels 为空数组 [] 时，
+// DecodeCalibrationConfig 返回的 cfg.ProbeChannels 为 nil。
+//
+// 这与 ToCore() 中 len(d.ProbeChannels) > 0 的判断语义一致：
+// json.Unmarshal 把 "probeChannels": [] 解码为非 nil 的空切片（len==0），
+// 但 ToCore 用 len > 0 判断，空切片不会进入赋值分支，cfg.ProbeChannels 保持 nil。
+// 此测试防止后续重构（例如改用 != nil 判断或直接赋值）打破 nil 归一化语义。
+func TestDecodeCalibrationConfig_EmptyProbeChannelsArray(t *testing.T) {
+	jsonData := []byte(`{
+		"taskId": "cal-empty-array",
+		"type": "five-hole",
+		"probeChannels": []
+	}`)
+
+	cfg, err := DecodeCalibrationConfig(jsonData)
+	if err != nil {
+		t.Fatalf("decode calibration config: %v", err)
+	}
+	if cfg.ProbeChannels != nil {
+		t.Fatalf("expected nil ProbeChannels for empty array, got %v", cfg.ProbeChannels)
 	}
 }
