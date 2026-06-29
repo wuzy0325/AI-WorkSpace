@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	motionhttp "shared.local/motion-control/go/httpapi"
+	configadapter "wind-daq/services/api-go/internal/adapters/config"
 	interpfiles "wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
@@ -185,12 +187,21 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			var body calibration.Config
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			// 读取整个请求体后用 adapters/config 的解码器转换为 core 层的 calibration.Config。
+			// 这里不直接 json.Decode 进 calibration.Config，因为前端发送的探针通道是嵌套
+			// channel 格式，而 core 层禁止自带 UnmarshalJSON（零容忍约束），解码逻辑必须
+			// 在 adapters/config 层完成。
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			err := deps.CalibrationManager.Start(body)
+			body, err := configadapter.DecodeCalibrationConfig(data)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			err = deps.CalibrationManager.Start(body)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
