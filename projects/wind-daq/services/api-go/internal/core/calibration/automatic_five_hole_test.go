@@ -1,7 +1,6 @@
 package calibration
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -19,16 +18,9 @@ func (f fakeCalibrationRuntime) MoveToPosition(_ MotionAxisConfig, _ float64) er
 
 func (f fakeCalibrationRuntime) WaitForMotionComplete() error { return nil }
 
-func TestProbeChannelUnmarshalNestedFrontendShape(t *testing.T) {
-	var ch ProbeChannel
-	err := json.Unmarshal([]byte(`{"role":"fiveHole.p1","name":"P1","enabled":true,"channel":{"deviceId":"dev-1","channelIndex":7}}`), &ch)
-	if err != nil {
-		t.Fatalf("unmarshal probe channel: %v", err)
-	}
-	if ch.DeviceID != "dev-1" || ch.ChannelIndex != 7 {
-		t.Fatalf("expected nested channel mapping, got device=%q channel=%d", ch.DeviceID, ch.ChannelIndex)
-	}
-}
+// 注意：原 TestProbeChannelUnmarshalNestedFrontendShape 已迁移到
+// adapters/config/calibration_config_decoder_test.go（TestDecodeCalibrationConfig_NestedFrontendShape），
+// 因为 core 层不再做字节级 I/O，解码逻辑由 adapters/config 层的 DecodeCalibrationConfig 负责。
 
 func TestAutomaticFiveHoleCalibrationUsesConfiguredProbeChannels(t *testing.T) {
 	config := Config{
