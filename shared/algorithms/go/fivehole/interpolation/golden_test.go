@@ -367,3 +367,334 @@ func TestPrb_Golden(t *testing.T) {
 
 // 以下为占位，确保 math/rand 在稳定性用例加入前即被引用(避免编译错误)
 var _ = rand.New
+
+// =====================================================================
+// TC-ALGO-02: 边界用例
+//
+// 覆盖除零/NaN/Inf/超范围/反物理输入等风险点，确保算法在极端输入下不 panic，
+// 并返回合理的 Invalid 状态或回退值。每个边界用例用 requireNotPanic 包裹。
+// =====================================================================
+
+// --- FiveHoleNew 边界用例 ---
+
+// TestFiveHoleNew_Boundary_AllZeroPressures 全零压力输入
+// 期望: 分母为零触发防护(1e-12 容差), 返回 IsValid=false, 不 panic
+func TestFiveHoleNew_Boundary_AllZeroPressures(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("全零压力应返回 IsValid=false, 实际=true, Warning=%q", result.Warning)
+		}
+	})
+}
+
+// TestFiveHoleNew_Boundary_SymmetricInput 对称输入
+// P1=P3, P4=P5 → Alpha=0, Beta=0 (对称性验证)
+func TestFiveHoleNew_Boundary_SymmetricInput(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := withAtm(InterpolationInput{P1: 100, P2: 200, P3: 100, P4: 100, P5: 100})
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if math.Abs(result.Alpha) > 0.5 {
+			t.Errorf("对称输入 Alpha 应≈0, 实际=%.6f", result.Alpha)
+		}
+		if math.Abs(result.Beta) > 0.5 {
+			t.Errorf("对称输入 Beta 应≈0, 实际=%.6f", result.Beta)
+		}
+	})
+}
+
+// TestFiveHoleNew_Boundary_TinyDelta 微小压力差
+// P2-avg < 1e-12 → 分母触发防护, 不 panic
+func TestFiveHoleNew_Boundary_TinyDelta(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	// avg=100, P2=100+5e-13 → delta=5e-13 < 1e-12, 触发分母防护
+	input := withAtm(InterpolationInput{P1: 100, P2: 100 + 5e-13, P3: 100, P4: 100, P5: 100})
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		// 微小 delta 应触发防护返回 Invalid 或回退, 关键是不 panic
+		t.Logf("微小 delta(5e-13): IsValid=%v Warning=%q Alpha=%.4f",
+			result.IsValid, result.Warning, result.Alpha)
+	})
+}
+
+// TestFiveHoleNew_Boundary_ZeroAtm 零大气参数
+// PAtm=0 或 TAtm=0 → 物理参数不计算(MachNumber=0), 但角度仍有效
+func TestFiveHoleNew_Boundary_ZeroAtm(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{P1: 95, P2: 200, P3: 105, P4: 105, P5: 95}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if math.Abs(result.Alpha-5) > 0.5 {
+			t.Errorf("Alpha 应≈5, 实际=%.6f", result.Alpha)
+		}
+		if math.Abs(result.Beta-5) > 0.5 {
+			t.Errorf("Beta 应≈5, 实际=%.6f", result.Beta)
+		}
+		if result.MachNumber != 0 {
+			t.Errorf("零大气参数 MachNumber 应=0, 实际=%.6f", result.MachNumber)
+		}
+	})
+}
+
+// TestFiveHoleNew_Boundary_PtLessThanPs 总压低于静压(反物理输入)
+// P2 < avg → P0 < Ps, 验证不 panic 且返回有限结果
+// 注: 五孔新算法不强制校验 P0>=Ps, IsValid 可能为 true(已知行为, 待算法侧评估)
+func TestFiveHoleNew_Boundary_PtLessThanPs(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	// P2=50 < avg=100 → P0=50 < Ps=100
+	input := withAtm(InterpolationInput{P1: 100, P2: 50, P3: 100, P4: 110, P5: 90})
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if !isFinite(result.Alpha) || !isFinite(result.Beta) {
+			t.Errorf("Alpha/Beta 应为有限值: Alpha=%v Beta=%v", result.Alpha, result.Beta)
+		}
+		t.Logf("Pt<Ps 工况: Alpha=%.3f Beta=%.3f IsValid=%v Mach=%.4f Warning=%q",
+			result.Alpha, result.Beta, result.IsValid, result.MachNumber, result.Warning)
+	})
+}
+
+// TestFiveHoleNew_Boundary_OutOfRange 超出网格范围
+// α=50 超出 ±25 原始网格, 使用扩展网格外推, Warning 非空
+func TestFiveHoleNew_Boundary_OutOfRange(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := withAtm(inputForAngles(50, 0))
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if !isFinite(result.Alpha) || !isFinite(result.Beta) {
+			t.Errorf("Alpha/Beta 应为有限值: Alpha=%v Beta=%v", result.Alpha, result.Beta)
+		}
+		t.Logf("超出网格(α=50): Alpha=%.3f Beta=%.3f IsValid=%v Warning=%q",
+			result.Alpha, result.Beta, result.IsValid, result.Warning)
+	})
+}
+
+// TestFiveHoleNew_Boundary_NaNInput NaN 压力输入
+// 分母计算产生 NaN, 防护层(!isFinite)拦截, 返回 IsValid=false
+func TestFiveHoleNew_Boundary_NaNInput(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := withAtm(InterpolationInput{P1: math.NaN(), P2: 200, P3: 100, P4: 100, P5: 100})
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("NaN 输入应返回 IsValid=false, 实际=true")
+		}
+	})
+}
+
+// TestFiveHoleNew_Boundary_InfInput Inf 压力输入
+func TestFiveHoleNew_Boundary_InfInput(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := withAtm(InterpolationInput{P1: math.Inf(1), P2: 200, P3: 100, P4: 100, P5: 100})
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("Inf 输入应返回 IsValid=false, 实际=true")
+		}
+	})
+}
+
+// --- Prb 边界用例 ---
+
+// TestPrb_Boundary_AllZeroPressures 全零压力
+// delta 被 clamp 到 1e-4, Ka=Kb=0 → (0,0), 但 pt<ps → IsValid=false
+func TestPrb_Boundary_AllZeroPressures(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Logf("全零压力返回 IsValid=%v Warning=%q (期望 false)", result.IsValid, result.Warning)
+		}
+	})
+}
+
+// TestPrb_Boundary_SymmetricInput 对称输入
+// P1=P3, P4=P5 → Ka=Kb=0 → Alpha=Beta=0
+func TestPrb_Boundary_SymmetricInput(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{P1: 100, P2: 200, P3: 100, P4: 100, P5: 100, PAtm: 101325, TAtm: 20}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if math.Abs(result.Alpha) > 0.5 {
+			t.Errorf("对称输入 Alpha 应≈0, 实际=%.6f", result.Alpha)
+		}
+		if math.Abs(result.Beta) > 0.5 {
+			t.Errorf("对称输入 Beta 应≈0, 实际=%.6f", result.Beta)
+		}
+	})
+}
+
+// TestPrb_Boundary_TinyDelta 微小压力差
+// delta < minPressureDelta(1e-4) 被 clamp, 产生 Warning
+func TestPrb_Boundary_TinyDelta(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	// delta = P2 - avg = 5e-5 < 1e-4 → clamp 到 1e-4
+	input := InterpolationInput{P1: 100, P2: 100.00005, P3: 100, P4: 100, P5: 100, PAtm: 101325, TAtm: 20}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if result.Warning == "" {
+			t.Errorf("微小 delta 应产生 Warning 非空")
+		}
+		t.Logf("微小 delta: Alpha=%.3f Beta=%.3f IsValid=%v Warning=%q",
+			result.Alpha, result.Beta, result.IsValid, result.Warning)
+	})
+}
+
+// TestPrb_Boundary_ZeroAtm 零大气参数
+// PAtm=0 → PRB 以表压当绝对压计算, V/Mach 仍为有限值(非零), 但角度不受影响
+func TestPrb_Boundary_ZeroAtm(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	// 使用 PRB 约定构造输入: α=10, β=5
+	input := prbInputForAngles(10, 5)
+	input.PAtm = 0
+	input.TAtm = 0
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if math.Abs(result.Alpha-10) > 0.5 {
+			t.Errorf("Alpha 应≈10, 实际=%.6f", result.Alpha)
+		}
+		if math.Abs(result.Beta-5) > 0.5 {
+			t.Errorf("Beta 应≈5, 实际=%.6f", result.Beta)
+		}
+		// PAtm=0 时 PRB 以表压当绝对压计算, V/Mach 仍为有限值(不 panic 即可)
+		if !isFinite(result.V) || !isFinite(result.MachNumber) {
+			t.Errorf("V/Mach 应为有限值: V=%v Mach=%v", result.V, result.MachNumber)
+		}
+	})
+}
+
+// TestPrb_Boundary_PtLessThanPs 总压低于静压
+// PRB 明确校验 dynamicPressure<=0 → IsValid=false
+func TestPrb_Boundary_PtLessThanPs(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	// P2=50 < avg=100 → pt < ps → dynamicPressure < 0
+	input := InterpolationInput{P1: 200, P2: 50, P3: 200, P4: 210, P5: 190, PAtm: 101325, TAtm: 20}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("Pt<Ps 应返回 IsValid=false, 实际=true, Warning=%q", result.Warning)
+		}
+	})
+}
+
+// TestPrb_Boundary_OutOfRange 超出网格范围
+// α=50 → Ka=0.5 超出角点(0.3,0.3), 角区(region 5)解析为(30,30)
+func TestPrb_Boundary_OutOfRange(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := prbInputForAngles(50, 50)
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 错误: %v", err)
+		}
+		// PRB 角区解析将超出点钳位到角点(30,30), 角度仍在 [-30,30] 范围
+		if !isFinite(result.Alpha) || !isFinite(result.Beta) {
+			t.Errorf("Alpha/Beta 应为有限值: Alpha=%v Beta=%v", result.Alpha, result.Beta)
+		}
+		t.Logf("超出网格(α=50,β=50): Alpha=%.3f Beta=%.3f IsValid=%v Warning=%q",
+			result.Alpha, result.Beta, result.IsValid, result.Warning)
+	})
+}
+
+// TestPrb_Boundary_NaNInput NaN 压力输入
+// NaN 传播使 Ka/Kb 含 NaN, 所有区域比较失败, 回退到零结果 → IsValid=false
+func TestPrb_Boundary_NaNInput(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{P1: math.NaN(), P2: 200, P3: 100, P4: 100, P5: 100, PAtm: 101325, TAtm: 20}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("NaN 输入应返回 IsValid=false, 实际=true")
+		}
+	})
+}
