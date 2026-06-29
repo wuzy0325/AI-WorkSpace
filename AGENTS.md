@@ -60,7 +60,7 @@ See CLAUDE.md for complete rules, decision tree, and design principles.
 
 ### Packaging / Release Rule
 
-Before creating any deliverable package, installer, release build, or user-facing `wails build` output, agents must follow `docs/runbooks/release-versioning.zh-CN.md`: update the target project version, changelog, per-version release note, run applicable verification, ensure production build tags (`-tags production`), use `task release` when applicable, and report the final artifact path.
+Before creating any deliverable package, installer, release build, or user-facing `wails build` output, agents must follow `docs/runbooks/release-versioning.zh-CN.md`: update the target project version, changelog, per-version release note, run applicable verification, ensure production build tags (`-tags production`) and `env: GOWORK: off`, use `task release` when applicable, and report the final artifact path.
 
 See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag constraints and the Install / Upgrade release-note requirement.
 

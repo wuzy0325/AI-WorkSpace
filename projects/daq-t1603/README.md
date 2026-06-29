@@ -52,9 +52,12 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 
 ```powershell
 cd projects/daq-t1603/apps/desktop-wails
+$env:GOWORK="off"
 go run github.com/wailsapp/wails/v3/cmd/wails3 build   # wails3 build 内部自动使用 -tags production
 ```
 
+**必须设置 `GOWORK=off`** 以隔离工作空间中其他模块的 wails/v2 间接引用，
+否则构建的 exe 可能运行时报"correct build tags"错误。
 详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Shared Code

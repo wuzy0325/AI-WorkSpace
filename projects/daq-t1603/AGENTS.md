@@ -55,10 +55,11 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```powershell
 # Release build (production mode, wails3 build uses -tags production internally)
 cd projects\daq-t1603\apps\desktop-wails
+$env:GOWORK="off"
 go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```
 
-See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
+See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules and `GOWORK=off` requirement.
 
 ## Task Routing
 

@@ -110,17 +110,27 @@ Wails 桌面项目对外交付时，必须以「生产模式」构建二进制�
 对 v3 项目推荐的生产构建命令（Windows / amd64）：
 
 ```powershell
-go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
+$env:GOWORK="off"; go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
 ```
 
 对应 Taskfile：`build-go` 任务必须固化上述 `-tags production` 参数，不得让构建者
-凭记忆补传标签。
+凭记忆补传标签。并且 `build-go` 任务必须设置 `env: GOWORK: off` 以隔离工作空间
+中其他模块的 wails/v2 污染：
+
+```yaml
+build-go:
+  env:
+    GOWORK: off
+  cmds:
+    - go build -tags production ...
+```
 
 任何项目交付 Wails 桌面安装包前，AI agent 必须检查：
 
 1. 项目 `apps/desktop-wails/Taskfile.yml` 中 `build-go`（或等价任务）已经包含 `-tags production`。
-2. `wails.json` 中 Wails 版本与 `go.mod` 中实际依赖一致（如 v3 alpha.95 对应 `wails/v3 v3.0.0-alpha.95`）。
-3. 没有 v2 时代遗留的安装产物被混入本次发布。
+2. `build-go` 任务已经设置 `env: GOWORK: off`（或命令行构建时设置了 `GOWORK=off`）。
+3. `wails.json` 中 Wails 版本与 `go.mod` 中实际依赖一致（如 v3 alpha.95 对应 `wails/v3 v3.0.0-alpha.95`）。
+4. 没有 v2 时代遗留的安装产物被混入本次发布。
 
 不满足上述任意一项时，AI agent 必须先修复脚本或文档，再继续打包。
 

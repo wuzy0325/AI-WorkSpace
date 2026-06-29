@@ -40,10 +40,13 @@ npm run build
 
 ```powershell
 cd projects/three-hole-interpolator/apps/desktop-wails
+$env:GOWORK="off"
 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/three-hole-interpolator.exe .
 ```
 
-生产构建使用 `-tags production`，详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
+生产构建使用 `-tags production`，且必须设置 `GOWORK=off` 以隔离工作空间中
+wails/v2 的间接引用导致运行时报"correct build tags"错误。
+详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Boundaries
 
