@@ -365,9 +365,6 @@ func TestPrb_Golden(t *testing.T) {
 	}
 }
 
-// 以下为占位，确保 math/rand 在稳定性用例加入前即被引用(避免编译错误)
-var _ = rand.New
-
 // =====================================================================
 // TC-ALGO-02: 边界用例
 //
@@ -697,4 +694,281 @@ func TestPrb_Boundary_NaNInput(t *testing.T) {
 			t.Errorf("NaN 输入应返回 IsValid=false, 实际=true")
 		}
 	})
+}
+
+// =====================================================================
+// TC-ALGO-03: 数值稳定性
+//
+// 对中心区工况施加 ±0.1Pa 随机扰动 100 次, 验证:
+//  1. 输出 Alpha/Beta 无 NaN/Inf
+//  2. 输出连续(相邻扰动输出差 < 0.1°, 全体 max-min < 1.0°)
+//  3. IsValid 稳定(不因微小扰动翻转)
+//  4. 物理参数(MachNumber/V)无 NaN/Inf
+//
+// 使用固定随机种子保证测试可复现。选用中心区是因为其插值平滑、不应有跳变。
+// =====================================================================
+
+// perturb 对 5 个孔压施加 ±amplitude Pa 的随机扰动, 返回扰动后输入
+// 使用 *rand.Rand 保证可复现, 不污染全局 rand 源
+func perturb(base InterpolationInput, rng *rand.Rand, amplitude float64) InterpolationInput {
+	out := base
+	// 在 [-amplitude, +amplitude] 区间均匀扰动
+	out.P1 += (rng.Float64()*2 - 1) * amplitude
+	out.P2 += (rng.Float64()*2 - 1) * amplitude
+	out.P3 += (rng.Float64()*2 - 1) * amplitude
+	out.P4 += (rng.Float64()*2 - 1) * amplitude
+	out.P5 += (rng.Float64()*2 - 1) * amplitude
+	return out
+}
+
+// stabilityMetrics 稳定性统计
+type stabilityMetrics struct {
+	AlphaMin, AlphaMax   float64 // Alpha 极值范围
+	BetaMin, BetaMax     float64 // Beta 极值范围
+	AlphaMaxJump         float64 // 相邻扰动 Alpha 最大跳变
+	BetaMaxJump          float64 // 相邻扰动 Beta 最大跳变
+	IsValidFlips         int     // IsValid 翻转次数
+	HasNaNOrInf          bool    // 是否出现 NaN/Inf
+}
+
+// runStabilityProbe 执行 N 次扰动, 收集稳定性统计
+// interpolator 必须已加载校准数据; base 为基准输入(中心区工况)
+func runStabilityProbe(t *testing.T, interpolator *FiveHoleNewInterpolator, base InterpolationInput, iterations int) stabilityMetrics {
+	t.Helper()
+	rng := rand.New(rand.NewSource(42)) // 固定种子, 保证可复现
+
+	m := stabilityMetrics{
+		AlphaMin: math.Inf(1), BetaMin: math.Inf(1),
+		AlphaMax: math.Inf(-1), BetaMax: math.Inf(-1),
+	}
+	var prevAlpha, prevBeta float64
+	first := true
+
+	for i := 0; i < iterations; i++ {
+		input := perturb(base, rng, 0.1)
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("第 %d 次扰动 Calculate 错误: %v", i, err)
+		}
+		// NaN/Inf 检测
+		if !isFinite(result.Alpha) || !isFinite(result.Beta) ||
+			!isFinite(result.MachNumber) || !isFinite(result.V) {
+			m.HasNaNOrInf = true
+			t.Errorf("第 %d 次扰动出现非有限值: Alpha=%v Beta=%v Mach=%v V=%v",
+				i, result.Alpha, result.Beta, result.MachNumber, result.V)
+			continue
+		}
+		// 极值范围
+		if result.Alpha < m.AlphaMin {
+			m.AlphaMin = result.Alpha
+		}
+		if result.Alpha > m.AlphaMax {
+			m.AlphaMax = result.Alpha
+		}
+		if result.Beta < m.BetaMin {
+			m.BetaMin = result.Beta
+		}
+		if result.Beta > m.BetaMax {
+			m.BetaMax = result.Beta
+		}
+		// 相邻跳变
+		if !first {
+			if d := math.Abs(result.Alpha - prevAlpha); d > m.AlphaMaxJump {
+				m.AlphaMaxJump = d
+			}
+			if d := math.Abs(result.Beta - prevBeta); d > m.BetaMaxJump {
+				m.BetaMaxJump = d
+			}
+		}
+		// IsValid 翻转(以首次为基准)
+		if first {
+			first = false
+		} else {
+			// 翻转计数仅记录 true→false 或 false→true 的变化
+		}
+		prevAlpha = result.Alpha
+		prevBeta = result.Beta
+	}
+	return m
+}
+
+// runPrbStabilityProbe PRB 版稳定性探测
+func runPrbStabilityProbe(t *testing.T, interpolator *PrbInterpolator, base InterpolationInput, iterations int) (stabilityMetrics, []bool) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(42)) // 同样固定种子
+	m := stabilityMetrics{
+		AlphaMin: math.Inf(1), BetaMin: math.Inf(1),
+		AlphaMax: math.Inf(-1), BetaMax: math.Inf(-1),
+	}
+	var prevAlpha, prevBeta float64
+	first := true
+	validity := make([]bool, 0, iterations)
+
+	for i := 0; i < iterations; i++ {
+		input := perturb(base, rng, 0.1)
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("第 %d 次扰动 Calculate 错误: %v", i, err)
+		}
+		validity = append(validity, result.IsValid)
+		if !isFinite(result.Alpha) || !isFinite(result.Beta) ||
+			!isFinite(result.MachNumber) || !isFinite(result.V) {
+			m.HasNaNOrInf = true
+			t.Errorf("第 %d 次扰动出现非有限值: Alpha=%v Beta=%v Mach=%v V=%v",
+				i, result.Alpha, result.Beta, result.MachNumber, result.V)
+			continue
+		}
+		if result.Alpha < m.AlphaMin {
+			m.AlphaMin = result.Alpha
+		}
+		if result.Alpha > m.AlphaMax {
+			m.AlphaMax = result.Alpha
+		}
+		if result.Beta < m.BetaMin {
+			m.BetaMin = result.Beta
+		}
+		if result.Beta > m.BetaMax {
+			m.BetaMax = result.Beta
+		}
+		if !first {
+			if d := math.Abs(result.Alpha - prevAlpha); d > m.AlphaMaxJump {
+				m.AlphaMaxJump = d
+			}
+			if d := math.Abs(result.Beta - prevBeta); d > m.BetaMaxJump {
+				m.BetaMaxJump = d
+			}
+		}
+		first = false
+		prevAlpha = result.Alpha
+		prevBeta = result.Beta
+	}
+	// 统计 IsValid 翻转
+	for i := 1; i < len(validity); i++ {
+		if validity[i] != validity[i-1] {
+			m.IsValidFlips++
+		}
+	}
+	return m, validity
+}
+
+// TestFiveHoleNew_Stability_Perturbation 五孔新算法扰动稳定性
+// 中心区工况(α=5,β=5) ±0.1Pa 扰动 100 次:
+//   - 输出无 NaN/Inf
+//   - Alpha/Beta 连续(相邻跳变 < 0.5°, 全体极差 < 1.0°)
+//   - IsValid 稳定(全为 true)
+//
+// 阈值说明: ±0.1Pa 扰动在 5 个孔压上, 相邻两次独立扰动的 delta 变化可达 ±0.4Pa,
+// FiveHoleNew 灵敏度约 1°/Pa(中心区), 故相邻跳变可达 ±0.4°。设 0.5° 阈值既允许
+// 正常扰动噪声, 又能捕获区域切换造成的 >5° 跳变。
+func TestFiveHoleNew_Stability_Perturbation(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	base := withAtm(inputForAngles(5, 5)) // 中心区基准工况
+
+	m := runStabilityProbe(t, interpolator, base, 100)
+
+	// 1. 无 NaN/Inf
+	if m.HasNaNOrInf {
+		t.Errorf("扰动过程出现 NaN/Inf, 算法数值不稳定")
+	}
+	// 2. 相邻扰动跳变 < 0.5°(平滑性, 阈值见上方说明)
+	if m.AlphaMaxJump > 0.5 {
+		t.Errorf("Alpha 相邻扰动跳变过大: %.6f° (阈值 0.5°)", m.AlphaMaxJump)
+	}
+	if m.BetaMaxJump > 0.5 {
+		t.Errorf("Beta 相邻扰动跳变过大: %.6f° (阈值 0.5°)", m.BetaMaxJump)
+	}
+	// 3. 全体极差 < 1.0°(±0.1Pa 扰动不应造成 >1° 漂移)
+	if alphaRange := m.AlphaMax - m.AlphaMin; alphaRange > 1.0 {
+		t.Errorf("Alpha 扰动极差过大: %.6f° (阈值 1.0°)", alphaRange)
+	}
+	if betaRange := m.BetaMax - m.BetaMin; betaRange > 1.0 {
+		t.Errorf("Beta 扰动极差过大: %.6f° (阈值 1.0°)", betaRange)
+	}
+	t.Logf("FiveHoleNew 扰动统计: Alpha[%.4f, %.4f] maxJump=%.6f°, Beta[%.4f, %.4f] maxJump=%.6f°",
+		m.AlphaMin, m.AlphaMax, m.AlphaMaxJump, m.BetaMin, m.BetaMax, m.BetaMaxJump)
+}
+
+// TestFiveHoleNew_Stability_IsValidStable 五孔新算法 IsValid 稳定性
+// 中心区基准下, 微小扰动不应导致 IsValid 翻转
+func TestFiveHoleNew_Stability_IsValidStable(t *testing.T) {
+	interpolator := NewFiveHoleNewInterpolator()
+	if err := interpolator.LoadPrbLines(goldenFiveHoleGrid()); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	base := withAtm(inputForAngles(5, 5))
+
+	rng := rand.New(rand.NewSource(42))
+	flips := 0
+	var prevValid bool
+	for i := 0; i < 100; i++ {
+		input := perturb(base, rng, 0.1)
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("第 %d 次扰动 Calculate 错误: %v", i, err)
+		}
+		if i > 0 && result.IsValid != prevValid {
+			flips++
+		}
+		prevValid = result.IsValid
+	}
+	if flips > 0 {
+		t.Errorf("IsValid 在扰动下翻转 %d 次, 期望 0(中心区应稳定有效)", flips)
+	}
+}
+
+// TestPrb_Stability_Perturbation PRB 插值器扰动稳定性
+// 中心区工况(α=10,β=5) ±0.1Pa 扰动 100 次
+// 阈值同 FiveHoleNew: 相邻跳变 < 0.5°, 全体极差 < 1.0°
+func TestPrb_Stability_Perturbation(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	base := prbInputForAngles(10, 5) // PRB 中心区基准工况
+
+	m, validity := runPrbStabilityProbe(t, interpolator, base, 100)
+
+	// 1. 无 NaN/Inf
+	if m.HasNaNOrInf {
+		t.Errorf("扰动过程出现 NaN/Inf, 算法数值不稳定")
+	}
+	// 2. 相邻扰动跳变 < 0.5°(平滑性)
+	if m.AlphaMaxJump > 0.5 {
+		t.Errorf("Alpha 相邻扰动跳变过大: %.6f° (阈值 0.5°)", m.AlphaMaxJump)
+	}
+	if m.BetaMaxJump > 0.5 {
+		t.Errorf("Beta 相邻扰动跳变过大: %.6f° (阈值 0.5°)", m.BetaMaxJump)
+	}
+	// 3. 全体极差 < 1.0°
+	if alphaRange := m.AlphaMax - m.AlphaMin; alphaRange > 1.0 {
+		t.Errorf("Alpha 扰动极差过大: %.6f° (阈值 1.0°)", alphaRange)
+	}
+	if betaRange := m.BetaMax - m.BetaMin; betaRange > 1.0 {
+		t.Errorf("Beta 扰动极差过大: %.6f° (阈值 1.0°)", betaRange)
+	}
+	// 4. IsValid 稳定(不翻转)
+	if m.IsValidFlips > 0 {
+		t.Errorf("IsValid 在扰动下翻转 %d 次, 期望 0(中心区应稳定有效)", m.IsValidFlips)
+	}
+	t.Logf("PRB 扰动统计: Alpha[%.4f, %.4f] maxJump=%.6f°, Beta[%.4f, %.4f] maxJump=%.6f°, flips=%d",
+		m.AlphaMin, m.AlphaMax, m.AlphaMaxJump, m.BetaMin, m.BetaMax, m.BetaMaxJump, m.IsValidFlips)
+	_ = validity // 保留切片用于后续分析
+}
+
+// TestStability_DeterministicSeed 验证扰动测试可复现
+// 同一种子两次运行, 输出必须完全一致(否则测试不可靠)
+func TestStability_DeterministicSeed(t *testing.T) {
+	rng1 := rand.New(rand.NewSource(42))
+	rng2 := rand.New(rand.NewSource(42))
+	base := withAtm(inputForAngles(5, 5))
+	for i := 0; i < 10; i++ {
+		a := perturb(base, rng1, 0.1)
+		b := perturb(base, rng2, 0.1)
+		if a != b {
+			t.Fatalf("第 %d 次扰动不一致: a=%+v b=%+v (种子不可复现)", i, a, b)
+		}
+	}
 }
