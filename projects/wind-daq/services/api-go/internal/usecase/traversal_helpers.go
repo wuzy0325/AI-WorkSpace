@@ -5,6 +5,7 @@ package usecase
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
@@ -21,7 +22,15 @@ func (m *TraversalManager) failWithCode(format string, code traversal.ErrorCode,
 	message := fmt.Sprintf(format, args...)
 	m.mu.Lock()
 	m.setErrorLocked(message, code)
+	taskID := m.status.TaskID
 	m.mu.Unlock()
+
+	slog.Error("traversal failed",
+		"component", "traversal",
+		"task_id", taskID,
+		"error_code", string(code),
+		"error", message,
+	)
 	return fmt.Errorf("%s", message)
 }
 

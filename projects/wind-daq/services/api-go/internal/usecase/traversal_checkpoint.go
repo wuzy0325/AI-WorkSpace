@@ -8,6 +8,7 @@ package usecase
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -96,12 +97,27 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 		return
 	}
 	if err := m.checkpointStore.Write(checkpointPath, data); err != nil {
+		slog.Warn("traversal checkpoint save failed",
+			"component", "traversal",
+			"task_id", taskID,
+			"path", checkpointPath,
+			"completed_points", completedCount,
+			"error", err,
+		)
 		return
 	}
 
 	m.mu.Lock()
 	m.lastCheckpointPath = checkpointPath
 	m.mu.Unlock()
+
+	slog.Info("traversal checkpoint saved",
+		"component", "traversal",
+		"task_id", taskID,
+		"path", checkpointPath,
+		"completed_points", completedCount,
+		"total_points", len(points),
+	)
 }
 
 // ClearCheckpoint 删除断点文件并清空 lastCheckpointPath
@@ -120,6 +136,10 @@ func (m *TraversalManager) ClearCheckpoint() {
 		// best-effort cleanup, non-critical：删除失败仅意味着断点文件残留，
 		// 不会影响新任务（启动时按 taskId 重置 lastCheckpointPath）。
 		_ = store.Remove(path)
+		slog.Info("traversal checkpoint cleared",
+			"component", "traversal",
+			"path", path,
+		)
 	}
 }
 
@@ -129,37 +149,58 @@ func (m *TraversalManager) ClearCheckpoint() {
 //  2. 从 checkpoint.Config 恢复完整配置
 //  3. 从 checkpoint.CompletedPoints 开始循环
 func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string, error) {
+	slog.Info("traversal resuming from checkpoint",
+		"component", "traversal",
+		"task_id", cp.TaskID,
+		"completed_points", cp.CompletedPoints,
+		"total_points", cp.TotalPoints,
+	)
+
 	if cp.TaskID == "" {
-		return "", fmt.Errorf("checkpoint taskId is required")
+		err := fmt.Errorf("checkpoint taskId is required")
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "error", err)
+		return "", err
 	}
 	if cp.CompletedPoints < 0 || cp.CompletedPoints > cp.TotalPoints {
-		return "", fmt.Errorf("checkpoint completedPoints out of range")
+		err := fmt.Errorf("checkpoint completedPoints out of range")
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+		return "", err
 	}
 
 	m.mu.RLock()
 	currentState := m.status.State
 	m.mu.RUnlock()
 	if currentState == traversal.StateRunning || currentState == traversal.StatePaused {
-		return "", fmt.Errorf("a traversal is already %s", currentState)
+		err := fmt.Errorf("a traversal is already %s", currentState)
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+		return "", err
 	}
 
 	// 从断点的 Config 字段恢复完整配置
 	var config traversal.Config
 	if len(cp.Config) > 0 {
 		if err := json.Unmarshal(cp.Config, &config); err != nil {
+			slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
 			return "", fmt.Errorf("parse checkpoint config: %w", err)
 		}
 	} else {
-		return "", fmt.Errorf("checkpoint config is empty")
+		err := fmt.Errorf("checkpoint config is empty")
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+		return "", err
 	}
 	if len(config.Path) == 0 {
-		return "", fmt.Errorf("checkpoint config path is empty")
+		err := fmt.Errorf("checkpoint config path is empty")
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+		return "", err
 	}
 	if cp.CompletedPoints >= len(config.Path) {
-		return "", fmt.Errorf("checkpoint already completed")
+		err := fmt.Errorf("checkpoint already completed")
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+		return "", err
 	}
 
 	if err := resourcelock.Default().Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
+		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
 		return "", fmt.Errorf("acquire traversal lock: %w", err)
 	}
 
@@ -191,5 +232,11 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	}
 	go m.RunTraversalLoop(dwell)
 
+	slog.Info("traversal checkpoint resume success",
+		"component", "traversal",
+		"task_id", cp.TaskID,
+		"resume_from", cp.CompletedPoints,
+		"total_points", cp.TotalPoints,
+	)
 	return cp.TaskID, nil
 }

@@ -7,6 +7,7 @@ package usecase
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -19,6 +20,12 @@ func (m *TraversalManager) finalizeSink() {
 	sink := m.sink
 	taskID := m.config.TaskID
 	m.mu.Unlock()
+
+	slog.Info("traversal finalizing sink",
+		"component", "traversal",
+		"task_id", taskID,
+	)
+
 	if sink != nil {
 		// FinalizeTraversal 自身需保证幂等（多次调用安全）
 		if err := sink.FinalizeTraversal(); err != nil {
@@ -27,17 +34,39 @@ func (m *TraversalManager) finalizeSink() {
 				m.setErrorLocked(fmt.Sprintf("finalize traversal sink: %v", err), traversal.ErrSaveFailed)
 			}
 			m.mu.Unlock()
+			slog.Error("traversal finalize sink failed",
+				"component", "traversal",
+				"task_id", taskID,
+				"error", err,
+			)
+		} else {
+			slog.Info("traversal sink finalized",
+				"component", "traversal",
+				"task_id", taskID,
+			)
 		}
 	}
 	// 释放工作流级互斥锁；幂等
 	if taskID != "" {
 		_ = resourcelock.Default().Release(traversalLockResource, taskID)
+		slog.Info("traversal lock released",
+			"component", "traversal",
+			"task_id", taskID,
+		)
 	}
 }
 
 func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	status := m.Status()
 	state := string(status.State)
+
+	slog.Info("building status response",
+		"component", "traversal",
+		"task_id", status.TaskID,
+		"state", state,
+		"current_point", status.CurrentPoint,
+		"total_points", status.TotalPoints,
+	)
 	if status.State == traversal.StateIdle && status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
 		state = "completed"
 	}

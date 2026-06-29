@@ -90,6 +90,7 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 		TraversalManager:   travMgr,
 		StorageRecorder:    recorder,
 		ConfigManager:      configMgr,
+		LogRing:            nil,
 	})
 	return APIServer{Address: cfg.Address, Handler: router}, nil
 }

@@ -6,6 +6,7 @@ import { useThemeStore } from '@stores/themeStore'
 import type { LogLevel } from '@api/types'
 import UiButton from '@components/ui/UiButton.vue'
 import UiInput from '@components/ui/UiInput.vue'
+import { fetchRecentLogs } from '@api/logSseClient'
 
 defineProps<{
   embedded?: boolean
@@ -105,6 +106,7 @@ async function copyLogs(): Promise<void> {
 
 onMounted(() => {
   logStore.init()
+  void fetchRecentLogs(500)
 })
 
 onBeforeUnmount(() => {

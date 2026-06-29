@@ -7,6 +7,7 @@ import { container } from './core/container'
 import { wailsApi, isWailsAvailable } from './api/wails-adapter'
 import { setMotionStandaloneMode } from './api/motionApi'
 import { initWebVitals } from './utils/webVitals'
+import { startLogSubscription } from './api/logSseClient'
 import './styles.css'
 
 async function resolveRootComponent(): Promise<Component> {
@@ -61,6 +62,9 @@ async function bootstrap(): Promise<void> {
   }
 
   app.mount('#app')
+
+  // 启动后端日志 SSE 订阅，实时推送日志到 LogViewer
+  startLogSubscription()
 
   // 启动 Web Vitals 上报（在 mount 后，确保 first paint 已发生）
   initWebVitals()

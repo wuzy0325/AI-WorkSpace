@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -103,6 +104,14 @@ func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAcces
 		mgr.configStore = configStore[0]
 		mgr.loadPersistedConfig()
 	}
+	slog.Info("traversal manager initialized",
+		"component", "traversal",
+		"has_reader", reader != nil,
+		"has_motion", motion != nil,
+		"has_sink", sink != nil,
+		"has_store", store != nil,
+		"has_checkpoint_store", checkpointStore != nil,
+	)
 	return mgr
 }
 
@@ -246,28 +255,46 @@ func (m *TraversalManager) HasLoadedInterpolator() bool {
 }
 
 func (m *TraversalManager) Start(config traversal.Config) error {
+	slog.Info("traversal starting",
+		"component", "traversal",
+		"task_id", config.TaskID,
+		"device_id", config.DeviceID,
+		"total_points", len(config.Path),
+		"channels", config.Channels,
+	)
 	if config.TaskID == "" {
-		return fmt.Errorf("taskID is required")
+		err := fmt.Errorf("taskID is required")
+		slog.Error("traversal start failed", "component", "traversal", "error", err)
+		return err
 	}
 	if config.DeviceID == "" {
-		return fmt.Errorf("deviceID is required")
+		err := fmt.Errorf("deviceID is required")
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+		return err
 	}
 	if len(config.Channels) == 0 {
-		return fmt.Errorf("channels are required")
+		err := fmt.Errorf("channels are required")
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+		return err
 	}
 	if len(config.Path) == 0 {
-		return fmt.Errorf("path is required")
+		err := fmt.Errorf("path is required")
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+		return err
 	}
 
 	m.mu.Lock()
 	if m.status.State == traversal.StateRunning || m.status.State == traversal.StatePaused {
 		m.mu.Unlock()
-		return fmt.Errorf("a traversal is already %s", m.status.State)
+		err := fmt.Errorf("a traversal is already %s", m.status.State)
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+		return err
 	}
 	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）
 	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
 	if err := resourcelock.Default().Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
 		m.mu.Unlock()
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return fmt.Errorf("acquire traversal lock: %w", err)
 	}
 	m.config = config
@@ -293,9 +320,19 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 			m.status.LastErrorCode = traversal.ErrSaveFailed
 			m.mu.Unlock()
 			_ = resourcelock.Default().Release(traversalLockResource, config.TaskID)
+			slog.Error("traversal start failed",
+				"component", "traversal", "task_id", config.TaskID,
+				"error", fmt.Sprintf("sink init failed: %v", err),
+			)
 			return err
 		}
 	}
+	slog.Info("traversal started successfully",
+		"component", "traversal",
+		"task_id", config.TaskID,
+		"device_id", config.DeviceID,
+		"total_points", len(config.Path),
+	)
 	return nil
 }
 
@@ -316,10 +353,22 @@ func (m *TraversalManager) Pause() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status.State != traversal.StateRunning && !isSubState(m.status.State) {
-		return fmt.Errorf("traversal is not running")
+		err := fmt.Errorf("traversal is not running")
+		slog.Warn("traversal pause rejected",
+			"component", "traversal",
+			"task_id", m.config.TaskID,
+			"state", m.status.State,
+			"error", err,
+		)
+		return err
 	}
 	m.isPaused = true
 	m.status.State = traversal.StatePaused
+	slog.Info("traversal paused",
+		"component", "traversal",
+		"task_id", m.config.TaskID,
+		"completed_points", m.status.CurrentPoint,
+	)
 	return nil
 }
 
@@ -327,11 +376,23 @@ func (m *TraversalManager) Resume() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status.State != traversal.StatePaused {
-		return fmt.Errorf("traversal is not paused")
+		err := fmt.Errorf("traversal is not paused")
+		slog.Warn("traversal resume rejected",
+			"component", "traversal",
+			"task_id", m.config.TaskID,
+			"state", m.status.State,
+			"error", err,
+		)
+		return err
 	}
 	m.isPaused = false
 	m.motionPauseCancelled = false
 	m.status.State = traversal.StateRunning
+	slog.Info("traversal resumed",
+		"component", "traversal",
+		"task_id", m.config.TaskID,
+		"completed_points", m.status.CurrentPoint,
+	)
 	return nil
 }
 
@@ -344,7 +405,14 @@ func (m *TraversalManager) Stop() error {
 	sink := m.sink
 	// 在持锁时快照 TaskID，避免 Resume/Start 并发改写 m.config 导致的数据竞争
 	taskID := m.config.TaskID
+	completedPoints := m.status.CurrentPoint
 	m.mu.Unlock()
+
+	slog.Info("traversal stopping",
+		"component", "traversal",
+		"task_id", taskID,
+		"completed_points", completedPoints,
+	)
 
 	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
 	stopErr := m.stopMotionAxes()
@@ -364,8 +432,17 @@ func (m *TraversalManager) Stop() error {
 
 	if savePending {
 		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
+			slog.Error("traversal stop save failed",
+				"component", "traversal",
+				"task_id", taskID,
+				"error", err,
+			)
 			return fmt.Errorf("save traversal result: %v", err)
 		}
+		slog.Info("traversal result saved on stop",
+			"component", "traversal",
+			"task_id", taskID,
+		)
 	}
 
 	// 在锁外关闭 sink，确保 CSV 缓冲被刷盘
@@ -380,6 +457,18 @@ func (m *TraversalManager) Stop() error {
 		_ = resourcelock.Default().Release(traversalLockResource, taskID)
 	}
 
+	if stopErr != nil {
+		slog.Error("traversal stop with error",
+			"component", "traversal",
+			"task_id", taskID,
+			"error", stopErr,
+		)
+	} else {
+		slog.Info("traversal stopped successfully",
+			"component", "traversal",
+			"task_id", taskID,
+		)
+	}
 	return stopErr
 }
 
@@ -410,28 +499,64 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	return m.store.Get(taskID)
 }
 
-// LoadCheckpoint 从最近一次保存的断点文件加载恢复信息
-// 与 Cursor DAQ 行为一致：若 lastCheckpointPath 为空或文件不存在，返回 nil 且无错误
 // isSubState 判断是否为运行中的子状态
 func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 	if dwell <= 0 {
 		dwell = 100 * time.Millisecond
 	}
 	defer m.finalizeSink() // 所有退出路径统一关闭 sink
+
+	initStatus := m.Status()
+	slog.Info("traversal loop started",
+		"component", "traversal",
+		"task_id", initStatus.TaskID,
+		"total_points", initStatus.TotalPoints,
+		"start_point", initStatus.CurrentPoint,
+	)
+
 	for {
 		status := m.Status()
 		switch {
 		case status.State == traversal.StateRunning || isSubState(status.State):
 			if status.TotalPoints > 0 && status.CurrentPoint >= status.TotalPoints {
+				slog.Info("traversal loop completed",
+					"component", "traversal",
+					"task_id", status.TaskID,
+					"total_points", status.TotalPoints,
+				)
 				return
 			}
 			if err := m.RunCurrentPoint(); err != nil {
+				slog.Error("traversal loop aborted",
+					"component", "traversal",
+					"task_id", status.TaskID,
+					"point", status.CurrentPoint+1,
+					"error", err,
+				)
 				return
+			}
+			// 获取最新状态以记录进度
+			curStatus := m.Status()
+			completed := curStatus.CurrentPoint
+			total := curStatus.TotalPoints
+			if completed > 0 && (completed%checkpointInterval == 0 || completed >= total) {
+				slog.Info("traversal progress",
+					"component", "traversal",
+					"task_id", curStatus.TaskID,
+					"completed_points", completed,
+					"total_points", total,
+					"progress_pct", fmt.Sprintf("%.1f", float64(completed)/float64(total)*100),
+				)
 			}
 			time.Sleep(dwell)
 		case status.State == traversal.StatePaused:
 			time.Sleep(pausedLoopIdle)
 		default:
+			slog.Warn("traversal loop exiting on state",
+				"component", "traversal",
+				"task_id", status.TaskID,
+				"state", status.State,
+			)
 			return
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -50,6 +51,14 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	taskID := config.TaskID
 
+	slog.Info("traversal running point",
+		"component", "traversal",
+		"task_id", taskID,
+		"point_index", pointIndex+1,
+		"total_points", len(config.Path),
+		"coordinates", fmt.Sprintf("(%.2f, %.2f)", point.X, point.Y),
+	)
+
 	// 阶段1：移动中
 	m.updatePhase(taskID, traversal.StateMoving, traversal.PhaseMoving, pointIndex, len(config.Path))
 	ctx := context.Background()
@@ -60,6 +69,13 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 		for axis, position := range availableAxisTargets(status, point) {
 			if err := m.motion.MoveTo(ctx, status.ID, axis, position); err != nil {
+				slog.Error("traversal move failed",
+					"component", "traversal",
+					"task_id", taskID,
+					"controller", status.ID,
+					"axis", axis,
+					"error", err,
+				)
 				return m.failWithCode("move %s axis: %v", traversal.ErrMotionFailed, axis, err)
 			}
 		}
@@ -77,8 +93,18 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 		m.mu.Unlock()
 		if paused {
+			slog.Info("traversal motion interrupted by pause",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+			)
 			return nil // 暂停导致的中断，不算错误
 		}
+		slog.Error("traversal motion timeout",
+			"component", "traversal",
+			"task_id", taskID,
+			"point_index", pointIndex+1,
+		)
 		return m.failWithCode("motion did not complete for point %d", traversal.ErrMotionFailed, pointIndex+1)
 	}
 
@@ -118,18 +144,38 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		if samplesPerPoint == 1 {
 			payload, ok := m.reader.GetLatestData(config.DeviceID)
 			if !ok {
+				slog.Error("traversal acquisition failed",
+					"component", "traversal",
+					"task_id", taskID,
+					"point_index", pointIndex+1,
+					"device_id", config.DeviceID,
+					"error", "no data available",
+				)
 				return m.failWithCode("no data available for device %s", traversal.ErrAcquisitionFailed, config.DeviceID)
 			}
 			resultValues = valuesForChannels(payload, config.Channels)
 		} else {
 			averaged, err := m.collectAveragedSamples(taskID, config.DeviceID, config.Channels, samplesPerPoint)
 			if err != nil {
+				slog.Error("traversal averaged sampling failed",
+					"component", "traversal",
+					"task_id", taskID,
+					"point_index", pointIndex+1,
+					"error", err,
+				)
 				return m.failWithCode("averaged sampling failed: %v", traversal.ErrAcquisitionFailed, err)
 			}
 			resultValues = averaged
 		}
 
 		if len(resultValues) != len(config.Channels) {
+			slog.Error("traversal channel mismatch",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+				"expected", len(config.Channels),
+				"got", len(resultValues),
+			)
 			return m.failWithCode("latest data does not contain all requested channels", traversal.ErrAcquisitionFailed)
 		}
 
@@ -205,6 +251,12 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	}
 	if m.sink != nil {
 		if err := m.sink.WriteTraversalPoint(result); err != nil {
+			slog.Error("traversal save failed",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+				"error", err,
+			)
 			return m.failWithCode("write traversal point: %v", traversal.ErrSaveFailed, err)
 		}
 	}
@@ -243,8 +295,18 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	if pendingSave {
 		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
+			slog.Error("traversal final save failed",
+				"component", "traversal",
+				"task_id", saveTaskID,
+				"error", err,
+			)
 			return fmt.Errorf("save traversal result: %v", err)
 		}
+		slog.Info("traversal result saved on completion",
+			"component", "traversal",
+			"task_id", saveTaskID,
+			"completed_points", completedCount,
+		)
 	}
 
 	// 与 Cursor DAQ 一致：每完成 10 个点或最后一个点时保存断点
@@ -381,9 +443,21 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	for i := 0; i < samplesPerPoint; i++ {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
 		if m.isTaskCancelled(taskID) {
+			slog.Warn("traversal averaged sampling cancelled",
+				"component", "traversal",
+				"task_id", taskID,
+				"valid_samples", validSamples,
+				"target_samples", samplesPerPoint,
+			)
 			return nil, fmt.Errorf("acquisition cancelled")
 		}
 		if time.Now().After(deadline) {
+			slog.Warn("traversal averaged sampling timeout",
+				"component", "traversal",
+				"task_id", taskID,
+				"valid_samples", validSamples,
+				"target_samples", samplesPerPoint,
+			)
 			break // 超时保护：不再继续采样
 		}
 		payload, ok := m.reader.GetLatestData(deviceID)
@@ -401,6 +475,10 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	}
 
 	if validSamples == 0 {
+		slog.Error("traversal no valid samples",
+			"component", "traversal",
+			"task_id", taskID,
+		)
 		return nil, fmt.Errorf("no valid samples collected within timeout")
 	}
 

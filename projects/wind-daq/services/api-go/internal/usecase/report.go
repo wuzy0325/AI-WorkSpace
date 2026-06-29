@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -20,20 +21,30 @@ func NewReportManager(gen ports.ReportGenerator) *ReportManager {
 }
 
 func (m *ReportManager) Generate(cfg report.ReportConfig) (report.ReportResult, error) {
+	slog.Info("ReportManager Generate 开始", "component", "ReportManager", "deviceID", cfg.DeviceID, "outputDir", cfg.OutputDir, "filePrefix", cfg.FilePrefix)
+
 	if strings.TrimSpace(cfg.OutputDir) == "" {
-		return report.ReportResult{}, fmt.Errorf("outputDir is required")
+		err := fmt.Errorf("outputDir is required")
+		slog.Error("ReportManager Generate 失败", "component", "ReportManager", "error", err)
+		return report.ReportResult{}, err
 	}
 	if strings.TrimSpace(cfg.FilePrefix) == "" {
-		return report.ReportResult{}, fmt.Errorf("filePrefix is required")
+		err := fmt.Errorf("filePrefix is required")
+		slog.Error("ReportManager Generate 失败", "component", "ReportManager", "error", err)
+		return report.ReportResult{}, err
 	}
 	if m.gen == nil {
-		return report.ReportResult{}, fmt.Errorf("report generator is required")
+		err := fmt.Errorf("report generator is required")
+		slog.Error("ReportManager Generate 失败", "component", "ReportManager", "error", err)
+		return report.ReportResult{}, err
 	}
 
 	m.mu.Lock()
 	if m.busy {
 		m.mu.Unlock()
-		return report.ReportResult{}, fmt.Errorf("report generation already in progress")
+		err := fmt.Errorf("report generation already in progress")
+		slog.Warn("ReportManager Generate 冲突：正在生成中", "component", "ReportManager", "deviceID", cfg.DeviceID)
+		return report.ReportResult{}, err
 	}
 	m.busy = true
 	m.mu.Unlock()
@@ -48,11 +59,19 @@ func (m *ReportManager) Generate(cfg report.ReportConfig) (report.ReportResult, 
 	data := [][]string{
 		{cfg.DeviceID, "sample", "0", "0.0"},
 	}
-	return m.gen.Generate(cfg, data, strings.Split(headers, ","))
+	result, err := m.gen.Generate(cfg, data, strings.Split(headers, ","))
+	if err != nil {
+		slog.Error("ReportManager Generate 失败", "component", "ReportManager", "deviceID", cfg.DeviceID, "error", err)
+		return report.ReportResult{}, err
+	}
+	slog.Info("ReportManager Generate 成功", "component", "ReportManager", "deviceID", cfg.DeviceID, "outputDir", cfg.OutputDir)
+	return result, nil
 }
 
 func (m *ReportManager) Status() report.ReportStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return report.ReportStatus{Generating: m.busy}
+	status := report.ReportStatus{Generating: m.busy}
+	slog.Info("ReportManager Status 查询", "component", "ReportManager", "generating", status.Generating)
+	return status
 }

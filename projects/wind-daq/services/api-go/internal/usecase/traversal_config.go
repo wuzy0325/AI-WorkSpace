@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -150,7 +150,10 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 	}
 	if err := json.Unmarshal(data, &rawCfg); err != nil {
 		msg := fmt.Sprintf("启动恢复失败：解析配置 JSON 出错: %v", err)
-		log.Printf("[traversal] %s", msg)
+		slog.Error("interpolator restore failed",
+			"component", "traversal",
+			"error", msg,
+		)
 		m.setInterpolatorRestoreErr(msg)
 		return
 	}
@@ -175,18 +178,31 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 		})
 		if timedOut {
 			msg := fmt.Sprintf("启动恢复超时：加载 CSV 文件 %s 超过 %s", csvPath, restoreInterpolatorTimeout)
-			log.Printf("[traversal] %s", msg)
+			slog.Warn("interpolator restore timed out",
+				"component", "traversal",
+				"type", "csv",
+				"path", csvPath,
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		if err != nil {
 			msg := fmt.Sprintf("启动恢复失败：加载 CSV 文件 %s 出错: %v", csvPath, err)
-			log.Printf("[traversal] %s", msg)
+			slog.Error("interpolator restore failed",
+				"component", "traversal",
+				"type", "csv",
+				"path", csvPath,
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		m.SetInterpolator(interpolator)
-		log.Printf("[traversal] 已从 CSV 文件恢复插值器: %s", csvPath)
+		slog.Info("interpolator restored from CSV",
+			"component", "traversal",
+			"path", csvPath,
+		)
 
 	case rawCfg.UseMultiPrb && rawCfg.MultiPrb != nil && len(rawCfg.MultiPrb.Files) > 0:
 		// 多 PRB 模式
@@ -207,18 +223,31 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 		})
 		if timedOut {
 			msg := fmt.Sprintf("启动恢复超时：加载 %d 个多 PRB 文件超过 %s", len(filePaths), restoreInterpolatorTimeout)
-			log.Printf("[traversal] %s", msg)
+			slog.Warn("interpolator restore timed out",
+				"component", "traversal",
+				"type", "multi_prb",
+				"file_count", len(filePaths),
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		if err != nil {
 			msg := fmt.Sprintf("启动恢复失败：加载多 PRB 文件出错: %v", err)
-			log.Printf("[traversal] %s", msg)
+			slog.Error("interpolator restore failed",
+				"component", "traversal",
+				"type", "multi_prb",
+				"file_count", len(filePaths),
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		m.SetInterpolator(interpolator)
-		log.Printf("[traversal] 已从 %d 个 PRB 文件恢复插值器", len(filePaths))
+		slog.Info("interpolator restored from multi PRB",
+			"component", "traversal",
+			"file_count", len(filePaths),
+		)
 
 	case rawCfg.PrbFile.FilePath != "":
 		// 单 PRB 模式
@@ -228,18 +257,31 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 		})
 		if timedOut {
 			msg := fmt.Sprintf("启动恢复超时：加载 PRB 文件 %s 超过 %s", prbPath, restoreInterpolatorTimeout)
-			log.Printf("[traversal] %s", msg)
+			slog.Warn("interpolator restore timed out",
+				"component", "traversal",
+				"type", "prb",
+				"path", prbPath,
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		if err != nil {
 			msg := fmt.Sprintf("启动恢复失败：加载 PRB 文件 %s 出错: %v", prbPath, err)
-			log.Printf("[traversal] %s", msg)
+			slog.Error("interpolator restore failed",
+				"component", "traversal",
+				"type", "prb",
+				"path", prbPath,
+				"error", msg,
+			)
 			m.setInterpolatorRestoreErr(msg)
 			return
 		}
 		m.SetInterpolator(interpolator)
-		log.Printf("[traversal] 已从 PRB 文件恢复插值器: %s", prbPath)
+		slog.Info("interpolator restored from PRB",
+			"component", "traversal",
+			"path", prbPath,
+		)
 	}
 }
 
@@ -350,6 +392,12 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 			TaskID: legacy.TaskID, DeviceID: legacy.DeviceID,
 			Channels: legacy.Channels, Path: legacy.Path,
 		}
+		slog.Info("parsing legacy traversal config",
+			"component", "traversal",
+			"task_id", config.TaskID,
+			"device_id", config.DeviceID,
+			"total_points", len(config.Path),
+		)
 		if err := m.Start(config); err != nil {
 			return "", err
 		}
@@ -359,6 +407,10 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 
 	var cfg traversalAPIConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
+		slog.Error("parse traversal config failed",
+			"component", "traversal",
+			"error", err,
+		)
 		return "", fmt.Errorf("invalid request: %w", err)
 	}
 
@@ -432,13 +484,19 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		}
 	}
 	if deviceID == "" {
-		return "", fmt.Errorf("deviceId is required")
+		err := fmt.Errorf("deviceId is required")
+		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
+		return "", err
 	}
 	if len(channels) == 0 {
-		return "", fmt.Errorf("channels are required")
+		err := fmt.Errorf("channels are required")
+		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
+		return "", err
 	}
 	if len(points) == 0 {
-		return "", fmt.Errorf("path is required")
+		err := fmt.Errorf("path is required")
+		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
+		return "", err
 	}
 
 	dwell := time.Duration(cfg.DwellTimeMs) * time.Millisecond
@@ -466,12 +524,27 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	m.SetValidation(cfg.Validation)
 	m.SetStabilization(cfg.Stabilization)
 
+	slog.Info("parsing traversal config",
+		"component", "traversal",
+		"task_id", config.TaskID,
+		"device_id", config.DeviceID,
+		"total_points", len(points),
+		"layout_pattern", cfg.Layout.Pattern,
+		"samples_per_point", samplesPerPoint,
+		"dwell_ms", cfg.DwellTimeMs,
+	)
+
 	if err := m.Start(config); err != nil {
 		return "", err
 	}
 	m.SaveConfigRaw(raw)
 	if dwell > 0 {
 		go m.RunTraversalLoop(dwell)
+		slog.Info("traversal loop launched from ParseAndStartTraversal",
+			"component", "traversal",
+			"task_id", config.TaskID,
+			"dwell_ms", cfg.DwellTimeMs,
+		)
 	}
 	return config.TaskID, nil
 }

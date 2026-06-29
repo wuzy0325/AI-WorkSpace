@@ -19,6 +19,7 @@ import (
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/logging"
 )
 
 type Deps struct {
@@ -31,6 +32,7 @@ type Deps struct {
 	TraversalManager   *usecase.TraversalManager
 	StorageRecorder    *usecase.StorageRecorder
 	ConfigManager      *usecase.ConfigManager
+	LogRing            *logging.RingBuffer
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -641,6 +643,16 @@ func NewRouter(deps Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	})
 
+	// ---- Log API ----
+	if deps.LogRing != nil {
+		mux.HandleFunc("/api/log/stream", func(w http.ResponseWriter, r *http.Request) {
+			handleLogStream(w, r, deps.LogRing)
+		})
+		mux.HandleFunc("/api/log/recent", func(w http.ResponseWriter, r *http.Request) {
+			handleLogRecent(w, r, deps.LogRing)
+		})
+	}
+
 	// 中间件链：metrics（最外层，记录所有请求耗时）→ recover（拦截 panic）→ cors → mux
 	// 顺序原因：metrics 需要能看到 recover 后的最终状态码；
 	// cors 需要在 OPTIONS 短路前生效，所以放在 mux 之前最贴近。
@@ -868,4 +880,86 @@ func prbFileInfo(filePath string, validRange coreinterp.PrbValidRange) map[strin
 		"loadedAt":   time.Now().UnixMilli(),
 		"validRange": validRange,
 	}
+}
+
+// handleLogStream 通过 SSE 实时推送后端日志到前端。
+// 前端无需重连逻辑，连接断开后重新打开页面即可。
+//
+// 注意：必须先 Subscribe 再 Recent，否则两步之间产生的日志会丢失（先取快照
+// 再订阅期间到达的事件无人接）。Recent 与 Subscribe 都按 entry.ID 单调，
+// 这里用 lastID 去重，保证发到前端的条目不重复。
+func handleLogStream(w http.ResponseWriter, r *http.Request, ring *logging.RingBuffer) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ctx := r.Context()
+
+	// 先订阅，避免 Recent 与 Subscribe 之间的事件丢失。
+	ch := ring.Subscribe(ctx)
+
+	// 再发送已有历史（最近 200 条），按 ID 去重。
+	var lastID uint64
+	recent := ring.Recent(200)
+	for _, entry := range recent {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "event: log\ndata: %s\n\n", data); err != nil {
+			return
+		}
+		if entry.ID > lastID {
+			lastID = entry.ID
+		}
+	}
+	flusher.Flush()
+
+	// 订阅后续实时日志，写循环显式监听 ctx，避免慢客户端阻塞。
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case entry, ok := <-ch:
+			if !ok {
+				return
+			}
+			// 跳过已通过 Recent 发出的历史条目
+			if entry.ID <= lastID {
+				continue
+			}
+			data, err := json.Marshal(entry)
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "event: log\ndata: %s\n\n", data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// handleLogRecent 返回最近的 N 条日志，供前端页面加载时回灌历史。
+// limit 参数控制返回条数，默认 500，最大 2000。
+func handleLogRecent(w http.ResponseWriter, r *http.Request, ring *logging.RingBuffer) {
+	limit := 500
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 2000 {
+			limit = parsed
+		}
+	}
+	entries := ring.Recent(limit)
+	if entries == nil {
+		entries = []logging.RingEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }

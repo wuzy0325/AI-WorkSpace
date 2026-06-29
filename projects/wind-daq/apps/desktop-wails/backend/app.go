@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +16,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/pkg/appcontext"
+	"wind-daq/services/api-go/pkg/logging"
 	"wind-daq/services/api-go/pkg/types"
 	wind_usecase "wind-daq/services/api-go/pkg/usecase"
 )
@@ -53,6 +54,7 @@ type App struct {
 	appContext *appcontext.AppContext
 	apiServer  *http.Server
 	relayStop  func()
+	logMgr     *logging.Manager
 	// mode 启动模式：normal 或 motion，决定 Startup 时加载哪些后台服务
 	mode string
 	// motionWindowMu 保护 motionWindowCmd，避免重复启动独立窗口进程
@@ -86,14 +88,28 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.shuttingDown.Store(false)
 
-	var err error
-	a.appContext, err = appcontext.NewAppContext("")
-	if err != nil {
-		log.Printf("服务初始化错误: %v", err)
+	// 初始化统一日志系统：stderr + 文件 data/logs/wind-daq-YYYYMMDD.log + 内存 ring buffer
+	// 必须在所有其他后台服务启动之前调用，确保其后的 slog.Info/Warn/Error 全部被捕获。
+	logDir := filepath.Join("data", "logs")
+	opts := logging.Default(logDir)
+	opts.AddSource = false
+	mgr, err := logging.Init(opts)
+	if err == nil {
+		a.logMgr = mgr
+		slog.Info("[app] 日志系统已初始化", "component", "app", "logDir", logDir, "level", opts.Level.String())
+	} else {
+		// 此时 slog 尚未挂上文件/ring sink，但 stderr 兜底仍能看到错误
+		slog.Error("[app] 日志系统初始化失败", "component", "app", "error", err)
+	}
+
+	var initErr error
+	a.appContext, initErr = appcontext.NewAppContext("")
+	if initErr != nil {
+		slog.Error("[app] 服务初始化错误", "component", "app", "error", initErr)
 		if app := application.Get(); app != nil {
 			app.Dialog.Error().
 				SetTitle("初始化错误").
-				SetMessage(fmt.Sprintf("服务初始化失败: %v", err)).
+				SetMessage(fmt.Sprintf("服务初始化失败: %v", initErr)).
 				Show()
 		}
 		return nil
@@ -108,7 +124,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		if a.parentPID > 0 {
 			a.startParentWatchdog()
 		}
-		log.Println("Wind-DAQ 运动控制器独立窗口已初始化（仅运动服务）")
+		slog.Info("[app] 运动控制器独立窗口已初始化（仅运动服务）", "component", "app")
 		return nil
 	}
 
@@ -120,10 +136,10 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// 避免用户必须先打开运动控制面板才能触发连接。
 	a.startMotionAutoConnect()
 	// 后台异步连接所有标记为 AutoConnect 的 DAQ 设备（含模拟设备）。
-	// 采集必须由用户显式点击“开始采集”触发。
+	// 采集必须由用户显式点击"开始采集"触发。
 	a.startDeviceAutoConnect()
 
-	log.Println("Wind-DAQ 应用已成功初始化")
+	slog.Info("[app] Wind-DAQ 应用已成功初始化", "component", "app")
 	return nil
 }
 
@@ -131,6 +147,12 @@ func (a *App) startLocalAPIServer() {
 	if a.appContext == nil {
 		return
 	}
+	ring := func() *logging.RingBuffer {
+		if a.logMgr != nil {
+			return a.logMgr.Ring()
+		}
+		return nil
+	}()
 	a.apiServer = &http.Server{
 		Addr: "127.0.0.1:8900",
 		Handler: api.NewRouter(api.Deps{
@@ -143,15 +165,16 @@ func (a *App) startLocalAPIServer() {
 			TraversalManager:   a.appContext.TraversalMgr,
 			StorageRecorder:    a.appContext.StorageRecorder,
 			ConfigManager:      a.appContext.ConfigManager,
+			LogRing:            ring,
 		}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 	}
 	go func() {
-		log.Println("Wind-DAQ local API listening on http://127.0.0.1:8900")
+		slog.Info("[app] local API 服务器启动", "component", "app", "addr", "http://127.0.0.1:8900")
 		if err := a.apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Wind-DAQ local API failed: %v", err)
+			slog.Error("[app] local API 服务器异常退出", "component", "app", "error", err)
 		}
 	}()
 }
@@ -239,7 +262,7 @@ func (a *App) startMotionAutoConnect() {
 
 		profiles, err := mgr.LoadProfiles()
 		if err != nil {
-			log.Printf("[motionAutoConnect] 加载控制器配置失败: %v", err)
+			slog.Warn("[app] 加载运动控制器配置失败", "component", "app", "error", err)
 			return
 		}
 
@@ -255,13 +278,13 @@ func (a *App) startMotionAutoConnect() {
 				if a.ctx.Err() != nil {
 					return
 				}
-				log.Printf("[motionAutoConnect] 正在连接位移机构 %s (id=%s)", name, id)
+				slog.Info("正在连接位移机构", "component", "motion-auto", "id", id, "name", name)
 				if err := mgr.Connect(a.ctx, id); err != nil {
 					// 连接失败不影响其它控制器；前端通过 StatusAll 的 LastError 字段感知
-					log.Printf("[motionAutoConnect] %s 自动连接失败: %v", name, err)
+					slog.Warn("位移机构自动连接失败", "component", "motion-auto", "id", id, "name", name, "error", err)
 					return
 				}
-				log.Printf("[motionAutoConnect] %s 已成功连接", name)
+				slog.Info("位移机构已成功连接", "component", "motion-auto", "id", id, "name", name)
 			}(p.ID, p.Name)
 		}
 		wg.Wait()
@@ -296,12 +319,12 @@ func (a *App) startDeviceAutoConnect() {
 				if a.ctx.Err() != nil {
 					return
 				}
-				log.Printf("[deviceAutoConnect] 正在连接采集设备 %s (id=%s)", name, id)
+				slog.Info("正在连接采集设备", "component", "device-auto", "id", id, "name", name)
 				if err := mgr.Connect(id); err != nil {
-					log.Printf("[deviceAutoConnect] %s 自动连接失败: %v", name, err)
+					slog.Warn("采集设备自动连接失败", "component", "device-auto", "id", id, "name", name, "error", err)
 					return
 				}
-				log.Printf("[deviceAutoConnect] %s 已成功连接", name)
+				slog.Info("采集设备已成功连接", "component", "device-auto", "id", id, "name", name)
 			}(p.ID, p.Name)
 		}
 		wg.Wait()
@@ -318,7 +341,7 @@ func (a *App) startDeviceAutoConnect() {
 		if hub != nil {
 			for _, p := range profiles {
 				if p.AutoConnect && p.Type == types.DeviceTypeSimulated {
-					log.Printf("[deviceAutoConnect] 设备 %s 已连接，等待用户开始采集", p.Name)
+					slog.Info("设备已连接，等待用户开始采集", "component", "device-auto", "name", p.Name)
 				}
 			}
 		}
@@ -365,7 +388,11 @@ func (a *App) ServiceShutdown() error {
 		defer cancel()
 		_ = a.apiServer.Shutdown(shutdownCtx)
 	}
-	log.Println("Wind-DAQ 应用已关闭")
+	// 在 logMgr.Close 之前打这条收尾日志，确保它能写入文件/ring sink。
+	slog.Info("Wind-DAQ 应用已关闭", "component", "app")
+	if a.logMgr != nil {
+		_ = a.logMgr.Close()
+	}
 	return nil
 }
 
@@ -392,10 +419,10 @@ func (a *App) terminateMotionWindow() {
 	pid := cmd.Process.Pid
 	if err := cmd.Process.Kill(); err != nil {
 		// 子进程可能在我们读句柄到 Kill 之间自然退出，此时 Kill 会报错；非致命。
-		log.Printf("kill motion window (pid=%d) failed: %v", pid, err)
+		slog.Warn("kill motion window failed", "component", "motion-window", "pid", pid, "error", err)
 		return
 	}
-	log.Printf("已关闭运动控制器独立窗口子进程 (pid=%d)", pid)
+	slog.Info("已关闭运动控制器独立窗口子进程", "component", "motion-window", "pid", pid)
 }
 
 // GetVersion 获取版本信息
@@ -434,7 +461,7 @@ func (a *App) OpenMotionWindow() GenericResponse {
 
 	exePath, err := os.Executable()
 	if err != nil {
-		log.Printf("获取可执行文件路径失败: %v", err)
+		slog.Error("获取可执行文件路径失败", "component", "motion-window", "error", err)
 		return GenericResponse{Success: false, Error: fmt.Sprintf("获取可执行文件路径失败: %v", err)}
 	}
 
@@ -456,11 +483,11 @@ func (a *App) OpenMotionWindow() GenericResponse {
 	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("启动运动控制器独立窗口失败: %v", err)
+		slog.Error("启动运动控制器独立窗口失败", "component", "motion-window", "error", err)
 		return GenericResponse{Success: false, Error: fmt.Sprintf("启动独立窗口失败: %v", err)}
 	}
 
-	log.Printf("运动控制器独立窗口已启动，PID: %d", cmd.Process.Pid)
+	slog.Info("运动控制器独立窗口已启动", "component", "motion-window", "pid", cmd.Process.Pid)
 	a.motionWindowCmd = cmd
 
 	// 后台监控子进程退出，退出后清理句柄以允许再次启动
@@ -471,7 +498,7 @@ func (a *App) OpenMotionWindow() GenericResponse {
 			a.motionWindowCmd = nil
 		}
 		a.motionWindowMu.Unlock()
-		log.Println("运动控制器独立窗口进程已退出")
+		slog.Info("运动控制器独立窗口进程已退出", "component", "motion-window")
 	}(cmd)
 
 	return GenericResponse{Success: true}
