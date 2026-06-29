@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -228,13 +229,27 @@ func SplitAddr(addr string) (string, int) {
 // === 内部实现 ===
 
 // acceptLoop 接受客户端连接，为每个连接创建 client 并启动 read/write goroutine。
+//
+// 错误处理策略（避免临时错误导致模拟器永久不可用，便于多设备并发测试时诊断）：
+//   - net.ErrClosed：listener 被 Close 触发，属正常退出（Close 主动关闭），静默 return。
+//   - 其他错误（如 EMFILE/too many open files 等临时资源耗尽）：用 slog 记录警告后
+//     短暂退避（50ms）并继续重试 Accept，避免 acceptLoop 直接退出导致后续连接永久
+//     无法接受。退避防 busy loop，不退出保证 listener 开放期间能恢复接受新连接。
 func (s *Simulator) acceptLoop() {
 	defer s.wg.Done()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			// 监听被 Close（正常退出）或发生错误：统一退出
-			return
+			if errors.Is(err, net.ErrClosed) {
+				// listener 被 Close 触发：正常退出，静默返回
+				return
+			}
+			// 临时错误（如 EMFILE）：记录警告后短暂退避重试，避免永久不可用。
+			// 不退出 acceptLoop，保证 listener 仍开放期间能恢复接受新连接。
+			slog.Warn("sim acceptLoop: Accept 失败，将退避重试",
+				"addr", s.actual, "err", err)
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		c := &client{
 			conn:    conn,
