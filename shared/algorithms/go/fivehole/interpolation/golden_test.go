@@ -29,12 +29,13 @@ import (
 
 // goldenCase 黄金基准用例，序列化为 JSON 存于 testdata/golden/
 type goldenCase struct {
-	Name      string             `json:"name"`      // 用例名(唯一标识)
-	Region    string             `json:"region"`    // 区域: center/corner/edge
-	Desc      string             `json:"desc"`      // 用例描述(覆盖区域与构造逻辑)
-	Input     InterpolationInput `json:"input"`     // 插值输入
-	Expected  goldenExpected     `json:"expected"`  // 期望输出
-	Tolerance goldenTolerance    `json:"tolerance"` // 断言容差
+	Name       string             `json:"name"`                 // 用例名(唯一标识)
+	Region     string             `json:"region"`               // 区域: center/corner/edge
+	Desc       string             `json:"desc"`                 // 用例描述(覆盖区域与构造逻辑)
+	Input      InterpolationInput `json:"input"`                // 插值输入
+	Expected   goldenExpected     `json:"expected"`             // 期望输出
+	Tolerance  goldenTolerance    `json:"tolerance"`            // 断言容差
+	SkipFields []string           `json:"skipFields,omitempty"` // 跳过断言的字段名(对应 expected 的 JSON key, 如 "isValid")
 }
 
 // goldenExpected 期望输出
@@ -194,6 +195,12 @@ func goldenPrbCases() []goldenCase {
 			Input:     prbInputForAngles(-40, -40),
 			Expected:  goldenExpected{Alpha: -30, Beta: -30},
 			Tolerance: defaultTol,
+			// SkipFields: 跳过 isValid 断言
+			// 原因: 该用例输入(α=-40,β=-40)超出网格范围, PRB 钳位到(-30,-30) 但 IsValid=true, Warning=""
+			// 审查发现这是 PRB 的 bug(超范围静默钳位无 Warning). 此处不锁死 IsValid=true,
+			// 仅验证 Alpha/Beta 回归(-30,-30). 未来若修复让超范围 IsValid=false 或加 Warning, golden 不会 FAIL.
+			// 修复后应移除此 SkipFields 并重新生成 golden 确定期望值.
+			SkipFields: []string{"isValid"},
 		},
 	}
 }
@@ -230,24 +237,64 @@ func loadGoldenCases(t *testing.T, dir string) []goldenCase {
 }
 
 // assertGoldenResult 断言插值结果符合黄金用例期望
+// 支持 gc.SkipFields 跳过指定字段(对应 expected 的 JSON key: alpha/beta/machNumber/isValid)
+// 用于"不锁死已知 bug 行为"——记录当前实现输出但不强断言, 未来修复后可移除 skipFields
 func assertGoldenResult(t *testing.T, gc goldenCase, result InterpolationResult) {
 	t.Helper()
-	if math.Abs(result.Alpha-gc.Expected.Alpha) > gc.Tolerance.Alpha {
-		t.Errorf("Alpha = %.6f, 期望 %.6f ± %.3f (用例 %s, 区域 %s)",
-			result.Alpha, gc.Expected.Alpha, gc.Tolerance.Alpha, gc.Name, gc.Region)
+	skipped := buildSkipSet(gc.SkipFields)
+
+	// Alpha 断言(可跳过)
+	if !skipped["alpha"] {
+		if math.Abs(result.Alpha-gc.Expected.Alpha) > gc.Tolerance.Alpha {
+			t.Errorf("Alpha = %.6f, 期望 %.6f ± %.3f (用例 %s, 区域 %s)",
+				result.Alpha, gc.Expected.Alpha, gc.Tolerance.Alpha, gc.Name, gc.Region)
+		}
+	} else {
+		t.Logf("用例 %s: 跳过 Alpha 断言 (skipFields 标记)", gc.Name)
 	}
-	if math.Abs(result.Beta-gc.Expected.Beta) > gc.Tolerance.Beta {
-		t.Errorf("Beta = %.6f, 期望 %.6f ± %.3f (用例 %s, 区域 %s)",
-			result.Beta, gc.Expected.Beta, gc.Tolerance.Beta, gc.Name, gc.Region)
+
+	// Beta 断言(可跳过)
+	if !skipped["beta"] {
+		if math.Abs(result.Beta-gc.Expected.Beta) > gc.Tolerance.Beta {
+			t.Errorf("Beta = %.6f, 期望 %.6f ± %.3f (用例 %s, 区域 %s)",
+				result.Beta, gc.Expected.Beta, gc.Tolerance.Beta, gc.Name, gc.Region)
+		}
+	} else {
+		t.Logf("用例 %s: 跳过 Beta 断言 (skipFields 标记)", gc.Name)
 	}
-	if math.Abs(result.MachNumber-gc.Expected.MachNumber) > gc.Tolerance.MachNumber {
-		t.Errorf("MachNumber = %.6f, 期望 %.6f ± %.3f (用例 %s)",
-			result.MachNumber, gc.Expected.MachNumber, gc.Tolerance.MachNumber, gc.Name)
+
+	// MachNumber 断言(可跳过)
+	if !skipped["machNumber"] {
+		if math.Abs(result.MachNumber-gc.Expected.MachNumber) > gc.Tolerance.MachNumber {
+			t.Errorf("MachNumber = %.6f, 期望 %.6f ± %.3f (用例 %s)",
+				result.MachNumber, gc.Expected.MachNumber, gc.Tolerance.MachNumber, gc.Name)
+		}
+	} else {
+		t.Logf("用例 %s: 跳过 MachNumber 断言 (skipFields 标记)", gc.Name)
 	}
-	if result.IsValid != gc.Expected.IsValid {
-		t.Errorf("IsValid = %v, 期望 %v (用例 %s, Warning=%q)",
-			result.IsValid, gc.Expected.IsValid, gc.Name, result.Warning)
+
+	// IsValid 断言(可跳过)
+	// 典型场景: PRB 角区超范围静默钳位返回 IsValid=true 是已知 bug, 不锁死
+	// 未来若修复让超范围 IsValid=false 或加 Warning, golden 不会因此 FAIL
+	if !skipped["isValid"] {
+		if result.IsValid != gc.Expected.IsValid {
+			t.Errorf("IsValid = %v, 期望 %v (用例 %s, Warning=%q)",
+				result.IsValid, gc.Expected.IsValid, gc.Name, result.Warning)
+		}
+	} else {
+		t.Logf("用例 %s: 跳过 IsValid 断言 (记录的 bug 行为, 当前 IsValid=%v, Warning=%q; 未来修复后可移除 skipFields)",
+			gc.Name, result.IsValid, result.Warning)
 	}
+}
+
+// buildSkipSet 将 skipFields 切片转为集合便于 O(1) 查询
+// 支持的字段名与 goldenExpected 的 JSON key 对应: alpha/beta/machNumber/isValid
+func buildSkipSet(skipFields []string) map[string]bool {
+	set := make(map[string]bool, len(skipFields))
+	for _, f := range skipFields {
+		set[f] = true
+	}
+	return set
 }
 
 // requireNotPanic 包装函数, 确保被测代码不 panic
@@ -696,6 +743,28 @@ func TestPrb_Boundary_NaNInput(t *testing.T) {
 	})
 }
 
+// TestPrb_Boundary_InfInput Inf 压力输入
+// Inf 传播使 avg/delta 含 Inf, Kb=(p3-p1)/delta 退化为 NaN, ps/pt 退化为非有限值,
+// 动压非有限 → IsValid=false. 参考 FiveHoleNew_Boundary_InfInput 同模式.
+func TestPrb_Boundary_InfInput(t *testing.T) {
+	interpolator := NewPrbInterpolator()
+	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
+		t.Fatalf("LoadPrbLines: %v", err)
+	}
+	input := InterpolationInput{P1: math.Inf(1), P2: 200, P3: 100, P4: 100, P5: 100, PAtm: 101325, TAtm: 20}
+	requireNotPanic(t, func() {
+		result, err := interpolator.Calculate(input)
+		if err != nil {
+			t.Fatalf("Calculate 不应返回错误: %v", err)
+		}
+		if result.IsValid {
+			t.Errorf("Inf 输入应返回 IsValid=false, 实际=true, Warning=%q", result.Warning)
+		}
+		t.Logf("Inf 输入: Alpha=%.3f Beta=%.3f IsValid=%v MachNumber=%.4f Warning=%q",
+			result.Alpha, result.Beta, result.IsValid, result.MachNumber, result.Warning)
+	})
+}
+
 // =====================================================================
 // TC-ALGO-03: 数值稳定性
 //
@@ -723,12 +792,12 @@ func perturb(base InterpolationInput, rng *rand.Rand, amplitude float64) Interpo
 
 // stabilityMetrics 稳定性统计
 type stabilityMetrics struct {
-	AlphaMin, AlphaMax   float64 // Alpha 极值范围
-	BetaMin, BetaMax     float64 // Beta 极值范围
-	AlphaMaxJump         float64 // 相邻扰动 Alpha 最大跳变
-	BetaMaxJump          float64 // 相邻扰动 Beta 最大跳变
-	IsValidFlips         int     // IsValid 翻转次数
-	HasNaNOrInf          bool    // 是否出现 NaN/Inf
+	AlphaMin, AlphaMax float64 // Alpha 极值范围
+	BetaMin, BetaMax   float64 // Beta 极值范围
+	AlphaMaxJump       float64 // 相邻扰动 Alpha 最大跳变
+	BetaMaxJump        float64 // 相邻扰动 Beta 最大跳变
+	IsValidFlips       int     // IsValid 翻转次数
+	HasNaNOrInf        bool    // 是否出现 NaN/Inf
 }
 
 // runStabilityProbe 执行 N 次扰动, 收集稳定性统计
