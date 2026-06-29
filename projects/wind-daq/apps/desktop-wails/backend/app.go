@@ -576,7 +576,7 @@ func (a *App) PickFiles(title string, filters []application.FileFilter) ([]strin
 
 // callMgr 通用 manager 方法调用辅助
 func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
-	if a.appContext == nil || mgr == nil {
+	if a == nil || a.appContext == nil || mgr == nil {
 		return GenericResponse{Success: false, Error: name + "未初始化"}
 	}
 	if err := fn(); err != nil {
@@ -586,42 +586,42 @@ func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 }
 
 func (a *App) deviceManager() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.DeviceManager
 }
 
 func (a *App) acquisitionHub() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.AcquisitionHub
 }
 
 func (a *App) motionManager() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.MotionManager
 }
 
 func (a *App) calibrationManager() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.CalibrationMgr
 }
 
 func (a *App) storageRecorder() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.StorageRecorder
 }
 
 func (a *App) configManager() any {
-	if a.appContext == nil {
+	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.ConfigManager
@@ -630,7 +630,7 @@ func (a *App) configManager() any {
 // ==================== 设备管理 API ====================
 
 func (a *App) DeviceGetProfiles() []types.DeviceProfile {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
 		return nil
 	}
 	return a.appContext.DeviceManager.GetProfiles()
@@ -649,7 +649,7 @@ func (a *App) DeviceDeleteProfile(id string) GenericResponse {
 }
 
 func (a *App) DeviceScanDevices() ([]types.DeviceScanResult, error) {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
 		return nil, fmt.Errorf("设备管理器未初始化")
 	}
 	return a.appContext.DeviceManager.ScanDevices()
@@ -680,14 +680,14 @@ func (a *App) DeviceStopAcquisition(id string) GenericResponse {
 }
 
 func (a *App) DeviceGetStatus(id string) (types.DeviceStatus, bool) {
-	if a.appContext == nil || a.appContext.DeviceManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
 		return types.DeviceStatus{}, false
 	}
 	return a.appContext.DeviceManager.GetStatus(id)
 }
 
 func (a *App) DeviceGetLatestData(deviceID string) (types.DeviceDataPayload, bool) {
-	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
+	if a == nil || a.appContext == nil || a.appContext.AcquisitionHub == nil {
 		return types.DeviceDataPayload{}, false
 	}
 	return a.appContext.AcquisitionHub.GetLatestData(deviceID)
@@ -700,7 +700,7 @@ func (a *App) DeviceSetPublishRate(hz float64) GenericResponse {
 }
 
 func (a *App) DeviceGetPublishRate() float64 {
-	if a.appContext == nil || a.appContext.AcquisitionHub == nil {
+	if a == nil || a.appContext == nil || a.appContext.AcquisitionHub == nil {
 		return 0
 	}
 	return a.appContext.AcquisitionHub.PublishRate()
@@ -709,7 +709,7 @@ func (a *App) DeviceGetPublishRate() float64 {
 // ==================== 运动控制 API ====================
 
 func (a *App) MotionGetProfiles() string {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.MotionManager == nil {
 		return "[]"
 	}
 	profiles, err := a.appContext.MotionManager.LoadProfiles()
@@ -733,7 +733,7 @@ func (a *App) MotionDeleteProfile(id string) GenericResponse {
 }
 
 func (a *App) MotionGetStatus() string {
-	if a.appContext == nil || a.appContext.MotionManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.MotionManager == nil {
 		return "[]"
 	}
 	statuses := a.appContext.MotionManager.StatusAll(a.ctx)
@@ -824,7 +824,7 @@ func (a *App) CalibrationStart(dto types.CalibrationConfigDTO) GenericResponse {
 }
 
 func (a *App) CalibrationStatus() types.CalibrationStatus {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return types.CalibrationStatus{}
 	}
 	return a.appContext.CalibrationMgr.Status()
@@ -855,14 +855,14 @@ func (a *App) CalibrationStop() GenericResponse {
 }
 
 func (a *App) CalibrationGetResult(taskID string) (types.CalibrationStatus, bool) {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return types.CalibrationStatus{}, false
 	}
 	return a.appContext.CalibrationMgr.GetResult(taskID)
 }
 
 func (a *App) CalibrationSaveCsv(taskID string, savePath string) FileResponse {
-	if a.appContext == nil || a.appContext.CalibrationMgr == nil {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return FileResponse{Success: false, Error: "校准管理器未初始化"}
 	}
 	path, err := a.appContext.CalibrationMgr.SaveCsv(taskID, savePath)
@@ -875,7 +875,7 @@ func (a *App) CalibrationSaveCsv(taskID string, savePath string) FileResponse {
 // ==================== 存储 API ====================
 
 func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
-	if a.appContext == nil || a.appContext.StorageRecorder == nil {
+	if a == nil || a.appContext == nil || a.appContext.StorageRecorder == nil {
 		return wind_usecase.StorageRecordingStatus{}
 	}
 	return a.appContext.StorageRecorder.Status()
@@ -898,7 +898,7 @@ func (a *App) StorageStopRecording() GenericResponse {
 // ==================== 报告 API ====================
 
 func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
-	if a.appContext == nil || a.appContext.ReportManager == nil {
+	if a == nil || a.appContext == nil || a.appContext.ReportManager == nil {
 		return wind_usecase.ReportStatus{}
 	}
 	return a.appContext.ReportManager.Status()
