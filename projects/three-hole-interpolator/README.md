@@ -10,27 +10,40 @@ This project owns the user-facing desktop tool: file selection, CSV import,
 batch calculation, help documents, and packaging. The reusable interpolation
 algorithm lives in `shared/algorithms/go/threehole`.
 
-## Commands
+## Development Commands
 
 ```powershell
+# 桌面应用开发（热更新）
 cd projects/three-hole-interpolator/apps/desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 ```powershell
+# Go 测试（桌面应用）
 cd projects/three-hole-interpolator/apps/desktop-wails
 go test ./...
 ```
 
 ```powershell
+# Go 测试（共享算法）
 cd shared/algorithms/go/threehole
 go test ./...
 ```
 
 ```powershell
+# 前端构建
 cd projects/three-hole-interpolator/apps/desktop-wails/frontend
 npm run build
 ```
+
+## Release Commands（对外交付打包）
+
+```powershell
+cd projects/three-hole-interpolator/apps/desktop-wails
+go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/three-hole-interpolator.exe .
+```
+
+生产构建使用 `-tags production`，详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Boundaries
 

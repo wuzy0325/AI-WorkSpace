@@ -54,6 +54,15 @@ npm run build
 npm run test
 ```
 
+```powershell
+# Release build (production mode, -tags production)
+cd projects\motion-controller\apps\desktop-wails
+task release
+# then: makensis build\windows\installer\project.nsi
+```
+
+See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
+
 ## Task Routing
 
 Use these docs by task type:
@@ -64,6 +73,7 @@ Use these docs by task type:
 - project overview and commands: `README.md`
 - product scope and shared boundaries: `SPEC.md`
 - sharing / extraction / migration planning: `PLAN.md`, `TASKS.md`, `../../docs/decisions/ADR-003-shared-motion-control-module.md`
+- release / production build: `../../docs/decisions/ADR-004-wails-v3-production-build.md`
 
 ## Motion-Controller-Specific Boundaries
 

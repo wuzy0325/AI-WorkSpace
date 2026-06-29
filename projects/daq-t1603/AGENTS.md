@@ -29,7 +29,7 @@ This project intentionally uses a single Go module under `apps/desktop-wails`, b
 ## Project Commands
 
 ```powershell
-# Go module root
+# Go module root (development)
 cd projects\daq-t1603\apps\desktop-wails
 go test ./...
 go vet ./...
@@ -46,11 +46,19 @@ npm run test
 ```
 
 ```powershell
-# Wails build
+# Wails development (hot-reload / bindings)
 cd projects\daq-t1603\apps\desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
+```
+
+```powershell
+# Release build (production mode, wails3 build uses -tags production internally)
+cd projects\daq-t1603\apps\desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 build
 ```
+
+See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
 
 ## Task Routing
 
@@ -61,6 +69,7 @@ Use these docs by task type:
 - development/verification rules: `../../docs/runbooks/development-rules.md`
 - project overview and commands: `README.md`
 - project-specific architecture and boundaries: `CLAUDE.md`
+- release / production build: `../../docs/decisions/ADR-004-wails-v3-production-build.md`
 
 ## DAQ-T-1603-Specific Boundaries
 

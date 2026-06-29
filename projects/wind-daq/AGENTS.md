@@ -42,11 +42,19 @@ npm run test
 ```
 
 ```powershell
-# Wails shell
+# Wails shell (development / bindings)
 cd projects\wind-daq\apps\desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
-go run github.com/wailsapp/wails/v3/cmd/wails3 build
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
+
+```powershell
+# Release build (production mode, -tags production)
+cd projects\wind-daq\apps\desktop-wails
+task release
+```
+
+See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
 
 ## Project Scope
 
@@ -82,6 +90,7 @@ Use these docs by task type:
 - frontend UI / parity / layout: `DESIGN.md`
 - frontend UI consistency migration: `docs/ui-design-audit.md`
 - migration implementation: `docs/migration/README.md`, `docs/migration/ui-parity-plan.md`, `docs/migration/ts-reference-feature-map.md`
+- release / production build: `../../docs/decisions/ADR-004-wails-v3-production-build.md`
 
 ## Wind-DAQ-Specific Boundaries
 

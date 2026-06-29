@@ -88,12 +88,41 @@ AI agent 在打包前必须执行以下流程：
 8. 更新 `apps/desktop-wails/frontend/package.json` 的 `version`。
 9. 如果存在 `package-lock.json`，同步其中根包版本。
 10. 更新 `apps/desktop-wails/build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION`。
-11. 创建或更新 `releases/<version>.md` 单次打包说明。
-12. 运行目标项目适用的验证命令。
-13. 验证通过后再执行打包命令。
-14. 最终回复必须包含版本号、主要变更、验证结果、产物路径。
+11. 创建或更新 `releases/<version>.md` 单次打包说明，必须包含 `Install / Upgrade` 段。
+12. 清理本地遗留的 `apps/desktop-wails/build/bin/` 和上次打包遗留的 `.syso`、`installer/*.exe` 等中间产物。
+13. 运行目标项目适用的验证命令。
+14. 用「生产构建」方式构建可执行文件（见下文「生产构建必备构建标签」）。
+15. 通过本机或现场冒烟测试启动一次新构建产物，确认 GUI 正常启动、没有"Wails applications will not build without the correct build tags"等明显错误。
+16. 验证通过后再执行 NSIS 等安装包封装命令。
+17. 最终回复必须包含版本号、主要变更、验证结果、产物路径，以及是否要求用户卸载旧版本。
 
 AI agent 不得在版本号不变且无明确说明的情况下生成新的可交付包。
+
+## 生产构建必备构建标签
+
+Wails 桌面项目对外交付时，必须以「生产模式」构建二进制：
+
+- Wails v2 项目：`go build` **必须**传 `-tags production`，否则会落到默认 stub，运行时弹出
+  「Wails applications will not build without the correct build tags. Please use "wails build" or press "OK" to open the documentation on how to use "go build"」并立即退出。
+- Wails v3 项目：`go build` **应**传 `-tags production`，否则会进入 dev 分支，包含开发期检测和
+  开发期 webview 行为，不应作为正式交付。
+
+对 v3 项目推荐的生产构建命令（Windows / amd64）：
+
+```powershell
+go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
+```
+
+对应 Taskfile：`build-go` 任务必须固化上述 `-tags production` 参数，不得让构建者
+凭记忆补传标签。
+
+任何项目交付 Wails 桌面安装包前，AI agent 必须检查：
+
+1. 项目 `apps/desktop-wails/Taskfile.yml` 中 `build-go`（或等价任务）已经包含 `-tags production`。
+2. `wails.json` 中 Wails 版本与 `go.mod` 中实际依赖一致（如 v3 alpha.95 对应 `wails/v3 v3.0.0-alpha.95`）。
+3. 没有 v2 时代遗留的安装产物被混入本次发布。
+
+不满足上述任意一项时，AI agent 必须先修复脚本或文档，再继续打包。
 
 ## CHANGELOG 格式
 
@@ -183,6 +212,17 @@ Package: <artifact-name>
 - 数据文件格式：兼容 / 不兼容，说明迁移方式。
 - 设备协议行为：无变化 / 有变化，说明影响。
 
+## Install / Upgrade
+
+- 是否需要先卸载旧版本（例如跨大版本框架迁移、安装路径或注册表项变化时必须卸载）。
+- 是否兼容覆盖安装。
+- 是否需要清理用户数据目录、WebView2 缓存目录或注册表残留。
+- 推荐的安装步骤摘要：
+  1. 关闭正在运行的旧版本。
+  2. 如需，先通过"控制面板 → 卸载"或 `Uninstall.exe` 卸载旧版本。
+  3. 运行 `<project>-<version>-<arch>-installer.exe`。
+  4. 启动新版本并确认 GUI 正常出现。
+
 ## Verification
 
 - `<command>`: passed / failed，必要时补充原因。
@@ -226,7 +266,7 @@ daq-t1603-0.1.2-amd64-installer.exe
 Wails 项目的常见最低验证：
 
 ```powershell
-# Go module root
+# Go module root（开发期验证，可不带 production 标签）
 go test ./...
 go build -buildvcs=false ./...
 
@@ -235,8 +275,10 @@ npm run typecheck
 npm run build
 npm run test
 
-# Wails app root
-wails build
+# Wails app root：交付构建必须带 -tags production
+go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
+# 或通过 Taskfile：
+task build
 ```
 
 如果某条命令因环境缺失、硬件依赖或已知项目限制无法运行，AI 必须在发布说明和最终回复中记录：

@@ -44,7 +44,7 @@ powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 
 - **Go** (workspace target follows `go.work`) — required for backend and Wails builds.
 - **Node.js** (LTS) — required for Vue 3 frontend builds.
-- **Wails CLI** (v2 for `daq-p1604`, `motion-controller` 等; v3 for `wind-daq`, `daq-t1603`) — required for desktop app generation/builds.
+- **Wails CLI** (v3 for all projects: `wind-daq`, `daq-t1603`, `daq-p1604`, `motion-controller`, `five-hole-interpolator`, `three-hole-interpolator`) — required for desktop app generation/builds. See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
 
 ### Pre-submit Checklist
 
@@ -60,7 +60,9 @@ See CLAUDE.md for complete rules, decision tree, and design principles.
 
 ### Packaging / Release Rule
 
-Before creating any deliverable package, installer, release build, or user-facing `wails build` output, agents must follow `docs/runbooks/release-versioning.zh-CN.md`: update the target project version, changelog, per-version release note, run applicable verification, and report the final artifact path.
+Before creating any deliverable package, installer, release build, or user-facing `wails build` output, agents must follow `docs/runbooks/release-versioning.zh-CN.md`: update the target project version, changelog, per-version release note, run applicable verification, ensure production build tags (`-tags production`), use `task release` when applicable, and report the final artifact path.
+
+See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag constraints and the Install / Upgrade release-note requirement.
 
 ### Progressive Loading
 

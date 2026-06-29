@@ -120,6 +120,8 @@ Related desktop app:
 
 ## Commands
 
+### 后端开发
+
 ```powershell
 cd services/api-go
 go build -buildvcs=false ./...
@@ -128,6 +130,8 @@ go vet ./...
 go test ./internal/... ./api/...
 ```
 
+### 前端开发
+
 ```powershell
 cd apps/desktop-wails/frontend
 npm run typecheck
@@ -135,11 +139,24 @@ npm run build
 npm run test        # Vitest unit tests
 ```
 
+### 桌面应用开发（wails3 dev 热更新）
+
 ```powershell
 cd apps/desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
-go run github.com/wailsapp/wails/v3/cmd/wails3 build
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
+
+### 对外交付打包
+
+```powershell
+cd apps/desktop-wails
+task release        # 清理旧产物 → 构建前端 → 生产模式 Go 二进制
+# 然后使用 NSIS 打包安装包
+```
+
+生产构建使用 `-tags production -trimpath -ldflags="-w -s -H windowsgui"`，
+详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Migration Notes
 

@@ -32,9 +32,10 @@ projects/motion-controller/
   shared/frontend/    # temporary project-local frontend sharing area
 ```
 
-## Commands
+## Development Commands
 
 ```powershell
+# 桌面应用开发（热更新）
 cd projects/motion-controller/apps/desktop-wails
 go test ./...
 go build -buildvcs=false ./...
@@ -42,6 +43,7 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
 ```powershell
+# 后端服务开发
 cd projects/motion-controller/services/api-go
 go test ./...
 go build -buildvcs=false ./...
@@ -49,12 +51,24 @@ go run ./cmd/server
 ```
 
 ```powershell
+# 前端开发
 cd projects/motion-controller/apps/desktop-wails/frontend
 npm install --no-audit --no-fund
 npm run typecheck
 npm run build
 npm run test
 ```
+
+## Release Commands（对外交付打包）
+
+```powershell
+cd projects/motion-controller/apps/desktop-wails
+task release               # 清理旧产物 → 构建前端 → 生产模式 Go 二进制
+makensis build\windows\installer\project.nsi   # NSIS 安装包
+```
+
+生产构建使用 `-tags production -trimpath -ldflags="-w -s -H windowsgui"`，
+详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Development Rules
 
@@ -70,3 +84,4 @@ npm run test
 - `PLAN.md` — motion sharing plan.
 - `TASKS.md` — current sharing task status.
 - `../../docs/decisions/ADR-003-shared-motion-control-module.md` — shared motion-control module decision.
+- `../../docs/decisions/ADR-004-wails-v3-production-build.md` — Wails 生产构建标签规则与发布约束。

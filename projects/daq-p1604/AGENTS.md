@@ -42,6 +42,15 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
 
+## 对外交付打包
+
+```powershell
+cd projects/daq-p1604/apps/desktop-wails
+go run github.com/wailsapp/wails/v3/cmd/wails3 build   # wails3 build 内部自动使用 -tags production
+```
+
+生产构建规则详见 `../../docs/decisions/ADR-004-wails-v3-production-build.md`。
+
 ## 硬件约束
 
 | 位置 | 约束 |

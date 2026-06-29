@@ -22,9 +22,10 @@ See `CLAUDE.md` for the project-specific constraints.
 
 Real hardware mode only. Configure a DAQ-T-1603 profile in the app with the device IP and port.
 
-## Commands
+## Development Commands
 
 ```powershell
+# Go 开发
 cd projects/daq-t1603/apps/desktop-wails
 go test ./...
 go vet ./...
@@ -32,6 +33,7 @@ go build -buildvcs=false ./...
 ```
 
 ```powershell
+# 前端开发
 cd projects/daq-t1603/apps/desktop-wails/frontend
 npm install --no-audit --no-fund
 npm run typecheck
@@ -40,10 +42,20 @@ npm run test
 ```
 
 ```powershell
+# 桌面应用开发（热更新 / bindings 生成）
 cd projects/daq-t1603/apps/desktop-wails
 go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
-go run github.com/wailsapp/wails/v3/cmd/wails3 build
+go run github.com/wailsapp/wails/v3/cmd/wails3 dev
 ```
+
+## Release Commands（对外交付打包）
+
+```powershell
+cd projects/daq-t1603/apps/desktop-wails
+go run github.com/wailsapp/wails/v3/cmd/wails3 build   # wails3 build 内部自动使用 -tags production
+```
+
+详见 `docs/decisions/ADR-004-wails-v3-production-build.md`。
 
 ## Shared Code
 

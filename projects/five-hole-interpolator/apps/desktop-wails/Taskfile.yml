@@ -26,9 +26,9 @@ tasks:
       - npm --prefix frontend run build
 
   build-go:
-    summary: 仅构建 Go 二进制
+    summary: 仅构建 Go 二进制（生产模式，含 -tags production 与 -trimpath/-w/-s）
     cmds:
-      - go build -ldflags="-H windowsgui" -o build/bin/five-hole-interpolator.exe .
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/five-hole-interpolator.exe .
 
   run:
     summary: 运行已构建的桌面应用
@@ -41,8 +41,20 @@ tasks:
       - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\five-hole-interpolator.exe"
 
   dev:
-    summary: 开发模式（构建前端后运行内嵌资源）
+    summary: 开发模式（构建前端后运行内嵌资源，未启用 production 标签以保留 devtools）
     cmds:
       - task: build-frontend
-      - go build -o build/bin/five-hole-interpolator.exe .
+      - go build -buildvcs=false -o build/bin/five-hole-interpolator.exe .
       - task: run-dev
+
+  clean:
+    summary: 清理上次打包遗留的二进制，避免与新构建混淆
+    cmds:
+      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+
+  release:
+    summary: 生产交付构建（清理 + 前端 + Go 生产二进制），用于 NSIS 打包前的前置步骤
+    cmds:
+      - task: clean
+      - task: build-frontend
+      - task: build-go
