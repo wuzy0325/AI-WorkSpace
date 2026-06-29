@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.3] - 2026-06-29
+
+### Changed
+- 移除轴启用/禁用开关，所有轴始终启用，简化配置流程。
+
+### Fixed
+- 设置 Windows GUI subsystem，正式构建程序不再显示控制台窗口。
+
+### Internal
+- 旧配置文件读入时 enabled 字段自动归一化为 true，无需用户手动迁移。
+
+### Verification
+- `go test ./...`: passed（无测试文件）
+- `npm run typecheck`: passed
+- `npm run build`: passed - vite build, 1788 modules
+- `go build -buildvcs=false`: passed
+- `makensis` 构建安装包: passed - 7.45 MB installer
+
+### Known Issues
+- 暂无。
+
 ## [0.2.2] - 2026-06-26
 
 ### Fixed
