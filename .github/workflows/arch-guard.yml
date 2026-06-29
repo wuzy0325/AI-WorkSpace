@@ -1,0 +1,38 @@
+name: arch-guard
+
+# 架构守卫 CI：在 push / PR 时强制执行工作区六边形架构的零容忍约束。
+# 对应测试计划 TC-ARCH-06（架构守卫接入 CI）。
+# 仅跑结构/import 方向校验脚本，确保架构边界不被破坏；go test / 前端构建由后续维度接入。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch: # 支持手动触发，便于排查
+
+permissions:
+  contents: read
+
+jobs:
+  arch-guard:
+    name: 架构边界守卫
+    runs-on: windows-latest # 工作区是 Windows 桌面应用，校验脚本是 PowerShell，用 Windows runner
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: Go import 方向守卫
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-import-direction.ps1
+
+      - name: 工作区结构守卫
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-structure.ps1
+
+      - name: wind-daq 前端结构守卫
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"
+
+      - name: wind-daq 前端 naive-ui 误导入守卫
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"

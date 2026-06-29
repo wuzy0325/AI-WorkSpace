@@ -1,0 +1,19 @@
+#!/bin/sh
+# pre-commit hook：提交前快速校验工作区六边形架构的 import 方向。
+#
+# 部署方式：运行 scripts/install-hooks.ps1，会把本文件复制到 .git/hooks/pre-commit。
+# 不修改 git core.hooksPath，以保留 .git/hooks/post-commit 等既有 hook（如 Qoder tracker）。
+#
+# 失败时阻止提交；修复违规后重试即可。
+powershell -ExecutionPolicy Bypass -File ./scripts/validate-import-direction.ps1
+status=$?
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "============================================================"
+  echo "  架构 import 方向校验失败，提交已阻止。"
+  echo "  请按上方提示修复违规 import，再重新提交。"
+  echo "  规则依据见 CLAUDE.md 的 Hard Constraints。"
+  echo "============================================================"
+  exit 1
+fi
+exit 0
