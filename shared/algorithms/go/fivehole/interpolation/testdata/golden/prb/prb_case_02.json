@@ -1,0 +1,25 @@
+{
+  "name": "prb_center_alpha0_beta0",
+  "region": "center",
+  "desc": "PRB 中心区原点(region 9): α=0,β=0, Ka=0,Kb=0",
+  "input": {
+    "P1": 100,
+    "P2": 200,
+    "P3": 100,
+    "P4": 100,
+    "P5": 100,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 0,
+    "beta": 0,
+    "machNumber": 0.0367657010376142,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

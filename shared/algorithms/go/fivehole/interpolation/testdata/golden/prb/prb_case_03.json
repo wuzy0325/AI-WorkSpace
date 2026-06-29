@@ -1,0 +1,25 @@
+{
+  "name": "prb_center_alphaneg12_beta18",
+  "region": "center",
+  "desc": "PRB 中心区(region 9): α=-12,β=18, 非网格点, 验证插值精度",
+  "input": {
+    "P1": 91,
+    "P2": 200,
+    "P3": 109,
+    "P4": 94,
+    "P5": 106,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": -12,
+    "beta": 18,
+    "machNumber": 0.0367657010376142,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

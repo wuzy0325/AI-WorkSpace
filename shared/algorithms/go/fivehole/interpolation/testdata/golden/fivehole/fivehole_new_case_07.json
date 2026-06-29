@@ -1,0 +1,25 @@
+{
+  "name": "edge_alpha25_beta5",
+  "region": "edge",
+  "desc": "边缘区(AA2): α=25,β=5, |α|\u003e20 且 |β|\u003c=15, 使用 AA2 公式",
+  "input": {
+    "P1": 95,
+    "P2": 200,
+    "P3": 105,
+    "P4": 125,
+    "P5": 75,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 25,
+    "beta": 5,
+    "machNumber": 0.03752338751065666,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

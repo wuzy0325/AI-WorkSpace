@@ -1,0 +1,25 @@
+{
+  "name": "center_alpha0_beta0",
+  "region": "center",
+  "desc": "中心区原点(AA3): α=0,β=0, 零偏角对称工况",
+  "input": {
+    "P1": 100,
+    "P2": 200,
+    "P3": 100,
+    "P4": 100,
+    "P5": 100,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 0,
+    "beta": 0,
+    "machNumber": 0.03752338751065666,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

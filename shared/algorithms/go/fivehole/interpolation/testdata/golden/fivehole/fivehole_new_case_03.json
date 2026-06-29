@@ -1,0 +1,25 @@
+{
+  "name": "center_alpha10_began10",
+  "region": "center",
+  "desc": "中心区(AA3): α=10,β=-10, 反向偏角, |α|\u003c15 且 |β|\u003c15",
+  "input": {
+    "P1": 110,
+    "P2": 200,
+    "P3": 90,
+    "P4": 110,
+    "P5": 90,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 10,
+    "beta": -10,
+    "machNumber": 0.03752338751065666,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

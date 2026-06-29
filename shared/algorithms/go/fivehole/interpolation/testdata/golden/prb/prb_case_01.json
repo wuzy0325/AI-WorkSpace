@@ -1,0 +1,25 @@
+{
+  "name": "prb_center_alpha10_beta5",
+  "region": "center",
+  "desc": "PRB 中心区(region 9): α=10,β=5, Ka=0.1,Kb=0.05 落在中心网格单元内",
+  "input": {
+    "P1": 97.5,
+    "P2": 200,
+    "P3": 102.5,
+    "P4": 105,
+    "P5": 95,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 10,
+    "beta": 5,
+    "machNumber": 0.0367657010376142,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

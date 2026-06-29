@@ -1,0 +1,25 @@
+{
+  "name": "corner_alpha20_beta20",
+  "region": "corner",
+  "desc": "角区(AA1): α=20,β=20, |α|\u003e15 且 |β|\u003e15, 直接用 AA1 结果",
+  "input": {
+    "P1": 80,
+    "P2": 200,
+    "P3": 120,
+    "P4": 120,
+    "P5": 80,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": 20,
+    "beta": 20,
+    "machNumber": 0.03752338751065666,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}

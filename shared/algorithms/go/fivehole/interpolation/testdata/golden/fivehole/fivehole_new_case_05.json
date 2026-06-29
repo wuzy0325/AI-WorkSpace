@@ -1,0 +1,25 @@
+{
+  "name": "corner_alphaneg25_beta25",
+  "region": "corner",
+  "desc": "角区(AA1): α=-25,β=25, 网格边缘角区, |α|\u003e15 且 |β|\u003e15",
+  "input": {
+    "P1": 75,
+    "P2": 200,
+    "P3": 125,
+    "P4": 75,
+    "P5": 125,
+    "Patm": 101325,
+    "Tatm": 20
+  },
+  "expected": {
+    "alpha": -25,
+    "beta": 25,
+    "machNumber": 0.03752338751065666,
+    "isValid": true
+  },
+  "tolerance": {
+    "alpha": 0.5,
+    "beta": 0.5,
+    "machNumber": 0.05
+  }
+}
