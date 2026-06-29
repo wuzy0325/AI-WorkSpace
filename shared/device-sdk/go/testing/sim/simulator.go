@@ -215,6 +215,19 @@ func (s *Simulator) ClientCount() int {
 	return int(s.clientCount.Load())
 }
 
+// DroppedFrames 返回所有客户端因 writeCh 缓冲满而丢弃的帧总数。
+// 用于测试断言背压丢帧：慢客户端或不读 conn 的客户端会触发 send 的 default
+// 分支丢帧，本方法聚合各 client.dropped 计数。并发安全（best-effort 遍历
+// clients，遍历期间新增/移除的客户端可能不计入，但单帧计数的原子读是准确的）。
+func (s *Simulator) DroppedFrames() int32 {
+	var total int32
+	s.clients.Range(func(_, v any) bool {
+		total += v.(*client).dropped.Load()
+		return true
+	})
+	return total
+}
+
 // SplitAddr 将 "host:port" 拆分为 host 和 port，便于从模拟器地址构造 device.Profile。
 // 端口解析失败时返回 0。
 func SplitAddr(addr string) (string, int) {
@@ -351,14 +364,22 @@ func (s *Simulator) removeClient(c *client) {
 type client struct {
 	conn      net.Conn
 	br        *bufio.Reader
+	// writeCh 故意永不关闭：client.close 只关 done 与 conn，保证 send 向 writeCh
+	// 投递永不会因通道关闭而 panic。即使 client 已关闭，send 先经 closed.Load
+	// 检查快速返回；若检查后并发关闭，select 的 default 分支也只会丢帧而非 panic。
+	// 关闭一个已存在帧的 writeCh 会让 writeLoop 的 range 触发 panic，得不偿失，
+	// 故采用"永不关闭 + closed 标志位 + select default"的组合保证安全。
 	writeCh   chan []byte
 	done      chan struct{} // 关闭时通知 writeLoop 退出
 	closed    atomic.Bool
 	closeOnce sync.Once
+	// dropped 统计因 writeCh 缓冲满而在 send 的 default 分支丢弃的帧数，
+	// 便于测试断言背压丢帧（见 Simulator.DroppedFrames）。
+	dropped atomic.Int32
 }
 
 // close 幂等关闭客户端：关闭 done 通道与连接。
-// 多次调用安全（closeOnce 保护）。
+// 多次调用安全（closeOnce 保护）。注意不关闭 writeCh（见 writeCh 注释）。
 func (c *client) close() {
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
@@ -369,6 +390,8 @@ func (c *client) close() {
 
 // send 非阻塞地向 writeCh 投递一帧。
 // 客户端已关闭或缓冲满时丢弃，避免阻塞调用方（故障注入可在任意 goroutine 调用）。
+// 缓冲满时递增 dropped 计数，便于测试断言背压丢帧（见 Simulator.DroppedFrames）。
+// 安全性依赖 writeCh 永不关闭（见 client.writeCh 注释），故 select 不会 panic。
 func (c *client) send(frame []byte) {
 	if c.closed.Load() {
 		return
@@ -376,6 +399,7 @@ func (c *client) send(frame []byte) {
 	select {
 	case c.writeCh <- frame:
 	default:
-		// 缓冲满：丢帧（慢客户端背压，优于阻塞整个模拟器）
+		// 缓冲满：丢帧（慢客户端背压，优于阻塞整个模拟器），并计数便于诊断
+		c.dropped.Add(1)
 	}
 }

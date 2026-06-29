@@ -241,3 +241,63 @@ func TestSimulator_ConcurrentClients(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_SendCountsDroppedFrames 验证 writeCh 缓冲满时 send 走 default 分支
+// 丢帧并递增 dropped 计数（TDD：先写测试，再实现计数与访问器）。
+//
+// 用容量 1 的 writeCh 构造独立 client，无需经 Simulator，确定性无竞态：
+//   - 第一帧入队；
+//   - 第二、三帧走 default 丢弃，dropped 依次为 1、2。
+func TestClient_SendCountsDroppedFrames(t *testing.T) {
+	c := &client{
+		writeCh: make(chan []byte, 1), // 容量 1，易于填满验证丢帧计数
+		done:    make(chan struct{}),
+	}
+	// 未关闭：第一帧应入队
+	c.send([]byte("frame-1"))
+	if got := len(c.writeCh); got != 1 {
+		t.Fatalf("writeCh len = %d, want 1", got)
+	}
+	// 第二帧应走 default 丢弃，dropped 计数 +1
+	c.send([]byte("frame-2"))
+	if got := c.dropped.Load(); got != 1 {
+		t.Fatalf("第一次丢帧后 dropped = %d, want 1", got)
+	}
+	// 第三帧再次丢弃，计数递增
+	c.send([]byte("frame-3"))
+	if got := c.dropped.Load(); got != 2 {
+		t.Fatalf("第二次丢帧后 dropped = %d, want 2", got)
+	}
+}
+
+// TestSimulator_DroppedFrames 验证 Simulator.DroppedFrames() 聚合所有客户端的
+// 丢帧计数：客户端不读 conn 时，InjectFrame 灌入大量大帧填满 conn 发送缓冲与
+// writeCh(64) 后触发背压丢帧。
+//
+// 原理：echoHandler 不自发帧，用 InjectFrame 主动灌帧。客户端不读 conn，
+// writeLoop 写满 conn 内核发送缓冲后阻塞，writeCh 随之填满，后续 send 走
+// default 分支丢弃并计数。8KB/帧 + 500 帧远超 conn 缓冲 + writeCh(64)，
+// 必定丢帧。Close 经 t.Cleanup 触发，关闭 conn 使阻塞的 writeLoop 退出，无需手动排空。
+func TestSimulator_DroppedFrames(t *testing.T) {
+	s := startEchoSim(t)
+	_ = dialSim(t, s.Addr()) // 建立客户端连接，不读 conn 以触发背压
+	waitClientCount(t, s, 1, time.Second)
+
+	// 初始无丢帧
+	if got := s.DroppedFrames(); got != 0 {
+		t.Fatalf("初始 DroppedFrames = %d, want 0", got)
+	}
+
+	// 灌入大量大帧填满 conn 发送缓冲 + writeCh(64)，触发背压丢帧。
+	bigFrame := make([]byte, 8192) // 8KB/帧，64KB conn 缓冲约容纳 8 帧
+	for i := range bigFrame {
+		bigFrame[i] = 'X'
+	}
+	for i := 0; i < 500; i++ {
+		s.InjectFrame(bigFrame)
+	}
+	if got := s.DroppedFrames(); got == 0 {
+		t.Fatal("期望缓冲满后丢帧，但 DroppedFrames()=0")
+	}
+	t.Logf("DroppedFrames = %d（已验证背压丢帧计数生效）", s.DroppedFrames())
+}
