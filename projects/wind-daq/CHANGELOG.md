@@ -30,12 +30,12 @@
 - 工作区全面测试计划文档。
 
 ### Verification
-- `go test ./...`: 
-- `go vet ./...`: 
-- `npm run typecheck`: 
-- `npm run build`: 
-- `task release`:
-- `makensis` 构建安装包:
+- `go test ./internal/... ./api/...`: passed
+- `go vet ./internal/... ./api/...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `wails3 build` (含前端 + Go 生产二进制): passed
+- `makensis` 构建安装包: passed
 
 ### Known Issues
 - 暂无。
