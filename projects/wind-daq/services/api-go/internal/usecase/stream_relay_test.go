@@ -71,7 +71,9 @@ func TestDataStreamRelayUnsubscribeStopsForwarding(t *testing.T) {
 
 	relay.Unsubscribe("dev-1")
 	// 等待 relay goroutine 退出并完成 hub 侧 unsub()，确保 hub 不再持有订阅
-	time.Sleep(50 * time.Millisecond)
+	// 注意：此处用 sleep 同步 goroutine 退出，不保证精确（源码未暴露 WaitGroup）。
+	// 150ms 在正常环境下足够，慢速 CI 下若仍有 flaky 应考虑在源码侧增加退出同步。
+	time.Sleep(150 * time.Millisecond)
 	// 排空可能在取消前一刻写入缓冲区的残留帧
 	drainPayloads(relay.Payloads())
 
@@ -95,6 +97,8 @@ func TestDataStreamRelayUnsubscribeStopsForwarding(t *testing.T) {
 func TestDataStreamRelayStopClosesAllSubscriptions(t *testing.T) {
 	hub := NewAcquisitionHub(&capturePublisher{}, 100)
 	relay := NewDataStreamRelay(hub)
+	// defer Stop 保证 t.Fatalf 提前退出时也能清理 goroutine，避免泄漏
+	defer relay.Stop()
 
 	relay.Subscribe("dev-1")
 	relay.Subscribe("dev-2")
@@ -122,7 +126,8 @@ func TestDataStreamRelayStopClosesAllSubscriptions(t *testing.T) {
 
 	relay.Stop()
 	// 等待所有 relay goroutine 退出并完成 hub 侧 unsub()
-	time.Sleep(50 * time.Millisecond)
+	// 注意：此处用 sleep 同步 goroutine 退出，不保证精确（源码未暴露 WaitGroup）。
+	time.Sleep(150 * time.Millisecond)
 	// 排空可能在停止前一刻写入缓冲区的残留帧
 	drainPayloads(relay.Payloads())
 
