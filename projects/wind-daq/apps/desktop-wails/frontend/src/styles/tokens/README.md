@@ -5,7 +5,7 @@
 ## Token Files
 
 - `color.css` owns semantic color, status color, surfaces, borders, focus, selection, channel colors, and axis colors.
-- `spacing.css` owns spacing scale values such as `--space-1`, `--space-2`, `--space-3`, and `--space-4`.
+- `spacing.css` owns spacing scale values such as `--space-1`, `--space-2`, `--space-3`, and `--space-4`, plus the `--density-*` semantic tokens for configuration surfaces (see DESIGN.md «Density Spec»).
 - `typography.css` owns font families, font sizes, weights, line heights, and dashboard-specific type aliases.
 - `radius.css` owns radius values.
 - `motion.css` owns transition and animation timing values.

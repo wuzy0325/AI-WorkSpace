@@ -34,6 +34,33 @@ describe('deviceStore', () => {
     expect(store.latestFor('sim-1')?.channels[0]).toBe(1.5)
   })
 
+  it('updates latest but does not append duplicate timestamps to history', () => {
+    const store = useDeviceStore()
+
+    store.pushSnapshot({
+      deviceId: 'sim-1',
+      timestamp: 123,
+      channels: [1.5],
+      channelIndices: [0],
+    })
+    store.pushSnapshot({
+      deviceId: 'sim-1',
+      timestamp: 123,
+      channels: [2.5],
+      channelIndices: [0],
+    })
+    store.pushSnapshot({
+      deviceId: 'sim-1',
+      timestamp: 124,
+      channels: [2.5],
+      channelIndices: [0],
+    })
+
+    expect(store.latestFor('sim-1')?.channels[0]).toBe(2.5)
+    expect(store.historyFor('sim-1')).toHaveLength(2)
+    expect(store.historyFor('sim-1').map((snapshot) => snapshot.timestamp)).toEqual([123, 124])
+  })
+
   it('does not restart acquisition state from a stale snapshot', () => {
     const store = useDeviceStore()
     store.updateStatus('sim-1', {

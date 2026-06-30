@@ -1,5 +1,6 @@
 import { useLogStore } from '@stores/logStore'
 import { request } from './http-client'
+import { isWailsAvailable } from './wails-adapter'
 import type { LogLevel } from './types'
 
 interface LogSseEntry {
@@ -15,8 +16,9 @@ export interface LogSseSubscription {
   unsubscribe: () => void
 }
 
-// Wails 桌面端必须走本地 API 服务器；浏览器开发态保留相对路径以命中 Vite proxy。
-const apiBase = import.meta.env.VITE_API_BASE || (window.location.protocol === 'wails:' ? 'http://127.0.0.1:8900' : '')
+// Wails 桌面端必须走主进程本地 API；浏览器开发态保留相对路径以命中 Vite proxy。
+// Dev 模式可能用 http://127.0.0.1:9245 加载前端，不能只依赖 location.protocol 判断。
+const apiBase = import.meta.env.VITE_API_BASE || (isWailsAvailable() ? 'http://127.0.0.1:8900' : '')
 
 const levelMap: Record<string, LogLevel> = {
   debug: 'debug',
@@ -25,13 +27,15 @@ const levelMap: Record<string, LogLevel> = {
   error: 'error',
 }
 
-// 记录已经警告过的未知 level，避免后端持续返回新值时把控制台刷爆
+// 记录已经警告过的未知 level，避免后端持续返回新值时把控制台刷爆。
+// 限制集合最大 50 条，超过后静默拒绝，防止长期运行内存缓慢增长。
 const warnedUnknownLevels = new Set<string>()
+const MAX_WARNED_UNKNOWN = 50
 
 function resolveLevel(raw: string): LogLevel {
   const mapped = levelMap[raw]
   if (mapped) return mapped
-  if (!warnedUnknownLevels.has(raw)) {
+  if (!warnedUnknownLevels.has(raw) && warnedUnknownLevels.size < MAX_WARNED_UNKNOWN) {
     warnedUnknownLevels.add(raw)
     // 仅首次提示，便于排查后端新增级别未在前端映射的问题
     console.warn(`[logSseClient] 未知日志级别 "${raw}"，已回退为 info`)
@@ -40,6 +44,39 @@ function resolveLevel(raw: string): LogLevel {
 }
 
 let currentSubscription: LogSseSubscription | null = null
+
+interface LogSseParseState {
+  buffer: string
+  event: string
+  data: string
+}
+
+export function parseLogSseChunk(
+  state: LogSseParseState,
+  chunk: string,
+  onEntry: (entry: LogSseEntry) => void,
+): void {
+  state.buffer += chunk
+  const lines = state.buffer.split('\n')
+  state.buffer = lines.pop() ?? ''
+
+  for (const rawLine of lines) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+    // SSE 注释行（以 ':' 开头）仅用于 keep-alive，跳过不处理
+    if (line.startsWith(':')) continue
+    if (line.startsWith('event: ')) {
+      state.event = line.slice(7).trim()
+    } else if (line.startsWith('data: ')) {
+      state.data = state.data ? `${state.data}\n${line.slice(6).trim()}` : line.slice(6).trim()
+    } else if (line === '') {
+      if (state.data && state.event === 'log') {
+        onEntry(JSON.parse(state.data) as LogSseEntry)
+      }
+      state.event = ''
+      state.data = ''
+    }
+  }
+}
 
 export function subscribeLogStream(): LogSseSubscription {
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -75,41 +112,27 @@ export function subscribeLogStream(): LogSseSubscription {
       reader = body.getReader()
       logStore.setStreamStatus('connected', '日志流已连接')
       const decoder = new TextDecoder()
-      let buffer = ''
+      const parseState: LogSseParseState = { buffer: '', event: '', data: '' }
 
       while (!aborted) {
         const { done, value } = await reader.read()
         if (done) break
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        let currentEvent = ''
-        let currentData = ''
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim()
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6).trim()
-          } else if (line === '' && currentData && currentEvent === 'log') {
-            try {
-              const entry = JSON.parse(currentData) as LogSseEntry
-              logStore.pushEntry({
-                id: `log-${entry.id}-${Date.now()}`,
-                timestamp: entry.timestamp,
-                level: resolveLevel(entry.level),
-                source: entry.source,
-                message: entry.message,
-                details: entry.details,
-              })
-            } catch {
-              // 解析失败跳过
-            }
-            currentEvent = ''
-            currentData = ''
-          }
+        try {
+          parseLogSseChunk(parseState, decoder.decode(value, { stream: true }), (entry) => {
+            logStore.pushEntry({
+              id: `log-${entry.id}-${Date.now()}`,
+              timestamp: entry.timestamp,
+              level: resolveLevel(entry.level),
+              source: entry.source,
+              message: entry.message,
+              details: entry.details,
+            })
+          })
+        } catch {
+          // 解析失败跳过当前事件，连接继续保持。
+          parseState.event = ''
+          parseState.data = ''
         }
       }
     } catch {

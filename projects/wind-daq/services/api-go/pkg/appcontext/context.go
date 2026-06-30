@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,17 +32,17 @@ import (
 
 // AppContext holds all core application services
 type AppContext struct {
-	DeviceManager      *usecase.DeviceManager
-	AcquisitionHub     *usecase.AcquisitionHub
-	ReportManager      *usecase.ReportManager
-	MotionManager      windaqports.MotionManager
-	CalibrationMgr     *usecase.CalibrationManager
-	TraversalMgr       *usecase.TraversalManager
-	StorageRecorder    *usecase.StorageRecorder
-	ConfigManager      *usecase.ConfigManager
-	MotionManagerRaw   *motionmanager.MotionManager
-	DataStreamRelay    *usecase.DataStreamRelay
-	configDir          string
+	DeviceManager    *usecase.DeviceManager
+	AcquisitionHub   *usecase.AcquisitionHub
+	ReportManager    *usecase.ReportManager
+	MotionManager    windaqports.MotionManager
+	CalibrationMgr   *usecase.CalibrationManager
+	TraversalMgr     *usecase.TraversalManager
+	StorageRecorder  *usecase.StorageRecorder
+	ConfigManager    *usecase.ConfigManager
+	MotionManagerRaw *motionmanager.MotionManager
+	DataStreamRelay  *usecase.DataStreamRelay
+	configDir        string
 }
 
 // NewAppContext creates and initializes all core services
@@ -74,7 +74,10 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	configMgr := usecase.NewConfigManager(appConfigStore)
 
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
-	recorder := usecase.NewStorageRecorder(storage.NewCSVRecordingSink())
+	recorder, err := NewStorageRecorderFromConfigStore(appConfigStore)
+	if err != nil {
+		return nil, err
+	}
 	reportMgr := usecase.NewReportManager(report.NewCSVReportWriter())
 	rawMotionMgr := motionmanager.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
 		factory := hardware.NewDefaultMotionControllerFactory()
@@ -93,10 +96,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	traversalMgr.RestoreInterpolatorFromPersistedConfig()
 
-	dataSink := func(payload device.DataPayload) {
-		hub.OnData(payload)
-		_ = recorder.HandlePayload(payload)
-	}
+	dataSink := usecase.NewDataSink(hub, recorder)
 
 	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
 	if err != nil {
@@ -105,17 +105,17 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	deviceMgr.SetScanner(scan.NewNetworkScanner())
 
 	return &AppContext{
-		DeviceManager:      deviceMgr,
-		AcquisitionHub:     hub,
-		ReportManager:      reportMgr,
-		MotionManager:      motionMgr,
-		CalibrationMgr:     calibrationMgr,
-		TraversalMgr:       traversalMgr,
-		StorageRecorder:    recorder,
-		ConfigManager:      configMgr,
-		MotionManagerRaw:   rawMotionMgr,
-		DataStreamRelay:    usecase.NewDataStreamRelay(hub),
-		configDir:          configDir,
+		DeviceManager:    deviceMgr,
+		AcquisitionHub:   hub,
+		ReportManager:    reportMgr,
+		MotionManager:    motionMgr,
+		CalibrationMgr:   calibrationMgr,
+		TraversalMgr:     traversalMgr,
+		StorageRecorder:  recorder,
+		ConfigManager:    configMgr,
+		MotionManagerRaw: rawMotionMgr,
+		DataStreamRelay:  usecase.NewDataStreamRelay(hub),
+		configDir:        configDir,
 	}, nil
 }
 
@@ -162,7 +162,11 @@ func ensureJSONFile(path string, fallback any) error {
 		if err := writeDefaultJSON(path, fallback); err != nil {
 			return err
 		}
-		log.Printf("replaced invalid config %s; backup saved at %s", path, backupPath)
+		slog.Warn("replaced invalid config, backup saved",
+			"component", "AppContext",
+			"path", path,
+			"backupPath", backupPath,
+		)
 		return nil
 	}
 	if !os.IsNotExist(err) {

@@ -25,7 +25,12 @@ describe('http-client', () => {
   })
 
   it('throws ApiError on non-ok response', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve('bad request'),
+    } as Response)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 400,
       text: () => Promise.resolve('bad request'),
@@ -60,9 +65,36 @@ describe('http-client', () => {
     await request<Record<string, never>>('/api/test')
     expect(capturedHeaders['Content-Type']).toBe('application/json')
   })
+
+  it('uses the local API server when Wails is available over an HTTP origin', async () => {
+    vi.stubEnv('VITE_API_BASE', '')
+    Object.defineProperty(window, 'chrome', {
+      configurable: true,
+      value: { webview: { postMessage: vi.fn() } },
+    })
+    vi.resetModules()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ success: true }))
+
+    const { request: freshRequest } = await import('@api/http-client')
+    await freshRequest<{ success: boolean }>('/api/daq/latest/dev-1')
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8900/api/daq/latest/dev-1',
+      expect.any(Object),
+    )
+
+    Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
+    vi.resetModules()
+  })
 })
 
 describe('deviceApi', () => {
+  async function flushPromises(times = 5): Promise<void> {
+    for (let i = 0; i < times; i += 1) {
+      await Promise.resolve()
+    }
+  }
+
   beforeEach(async () => {
     vi.restoreAllMocks()
     vi.useRealTimers()
@@ -93,8 +125,8 @@ describe('deviceApi', () => {
       ok: true,
       json: () => Promise.resolve({ deviceId: 'dev-1', timestamp: 1, channels: [], channelIndices: [] }),
     } as Response)
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockReturnValue(1 as never)
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation(() => undefined)
 
     const { deviceApi } = await import('@api/deviceApi')
     const { wailsApi } = await import('@api/wails-adapter')
@@ -102,13 +134,15 @@ describe('deviceApi', () => {
     vi.spyOn(wailsApi.device, 'setPublishRate').mockResolvedValue({ success: true, Success: true })
 
     deviceApi.subscribeToDevice('dev-1')
+    await flushPromises()
     await deviceApi.setPublishRate(5)
+    await flushPromises()
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(1)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(1)
     expect(wailsApi.device.subscribeStream).toHaveBeenNthCalledWith(1, 'dev-1', true)
     expect(wailsApi.device.subscribeStream).toHaveBeenCalledTimes(1)
-    expect(setIntervalSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 50)
-    expect(setIntervalSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 200)
+    expect(setTimeoutSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 50)
+    expect(setTimeoutSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 200)
   })
 
   it('motionApi returns status', async () => {

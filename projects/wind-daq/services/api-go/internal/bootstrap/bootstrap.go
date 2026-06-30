@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 
@@ -19,8 +21,9 @@ import (
 	"wind-daq/services/api-go/internal/adapters/scan"
 	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/device"
-	windaqports "wind-daq/services/api-go/internal/ports"
+	windaqports 	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -29,6 +32,13 @@ const (
 	DefaultProfileStorePath = "config/device-profiles.json"
 )
 
+// 默认采集参数。在配置文件缺失或字段为零值时使用。
+const (
+	defaultPublishHz       = 20.0
+	defaultHistoryCapacity = 256
+)
+
+// Config 装配根配置
 type Config struct {
 	Address          string
 	ProfileStorePath string
@@ -54,8 +64,16 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 		return APIServer{}, err
 	}
 
-	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
-	recorder := usecase.NewStorageRecorder(storageadapter.NewCSVRecordingSink())
+	// 读取采集配置（文件缺失时使用默认值）
+	acqCfg := loadAcquisitionConfig(appConfigStore)
+
+	hub := usecase.NewAcquisitionHubWithHistoryCapacity(noopPublisher{}, acqCfg.PublishHz, acqCfg.HistoryCapacity)
+
+	recorder, err := appcontext.NewStorageRecorderFromConfigStore(appConfigStore)
+	if err != nil {
+		return APIServer{}, err
+	}
+
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 	profileStore := motionprofile.NewMemoryMotionProfileStore()
 	factory := hardware.NewDefaultMotionControllerFactory()
@@ -70,10 +88,8 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()
-	dataSink := func(payload device.DataPayload) {
-		hub.OnData(payload)
-		_ = recorder.HandlePayload(payload)
-	}
+
+	dataSink := usecase.NewDataSink(hub, recorder)
 	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return APIServer{}, err
@@ -95,6 +111,55 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	return APIServer{Address: cfg.Address, Handler: router}, nil
 }
 
+// acquisitionAppConfig 采集 hub 的应用配置（JSON 文件 acquisition.json）。
+// 文件缺失或字段为零值时使用默认值。
+type acquisitionAppConfig struct {
+	PublishHz       float64 `json:"publishHz"`
+	HistoryCapacity int     `json:"historyCapacity"`
+}
+
+// loadAcquisitionConfig 从 app_config_store 读取 acquisition.json。
+// 文件不存在、解析失败或字段为零值时使用默认值。
+func loadAcquisitionConfig(store windaqports.AppConfigStore) acquisitionAppConfig {
+	cfg := acquisitionAppConfig{
+		PublishHz:       defaultPublishHz,
+		HistoryCapacity: defaultHistoryCapacity,
+	}
+	data, err := store.LoadConfig("acquisition")
+	if err != nil {
+		slog.Warn("bootstrap: 读取采集配置失败，使用默认值",
+			"component", "bootstrap",
+			"error", err,
+			"publishHz", cfg.PublishHz,
+			"historyCapacity", cfg.HistoryCapacity,
+		)
+		return cfg
+	}
+	if len(data) == 0 {
+		return cfg
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		slog.Warn("bootstrap: 解析采集配置失败，使用默认值",
+			"component", "bootstrap",
+			"error", err,
+			"publishHz", defaultPublishHz,
+			"historyCapacity", defaultHistoryCapacity,
+		)
+		return acquisitionAppConfig{
+			PublishHz:       defaultPublishHz,
+			HistoryCapacity: defaultHistoryCapacity,
+		}
+	}
+	if cfg.PublishHz <= 0 {
+		cfg.PublishHz = defaultPublishHz
+	}
+	if cfg.HistoryCapacity <= 0 {
+		cfg.HistoryCapacity = defaultHistoryCapacity
+	}
+	return cfg
+}
+
+// 以下保留兼容旧引用的 noopPublisher 与 deviceFactory
 type noopPublisher struct{}
 
 func (noopPublisher) Publish(string, any) {}

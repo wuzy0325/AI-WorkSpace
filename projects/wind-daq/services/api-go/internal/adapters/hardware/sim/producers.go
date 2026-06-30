@@ -82,10 +82,10 @@ func p1604BinaryFrame(seq int, channels int, withDeviceTimestamp bool) ([]byte, 
 		payloadLen += 8
 	}
 	payload := make([]byte, payloadLen)
-	// 5 字节头：0xAA 0x55 使 IsASCIIFrame 返回 false，走二进制解析
-	payload[0] = 0xAA
-	payload[1] = 0x55
-	payload[2] = 0x01
+	// 5 字节头：协议规定 byte0 固定为 0x01，byte1~2 为序号，byte3~4 保留。
+	// 0x01 是非可打印字符，IsASCIIFrame 返回 false，走二进制解析路径。
+	payload[0] = 0x01
+	binary.BigEndian.PutUint16(payload[1:3], uint16(seq&0xFFFF))
 	payload[3] = 0x00
 	payload[4] = 0x00
 	for i := 0; i < 16; i++ {

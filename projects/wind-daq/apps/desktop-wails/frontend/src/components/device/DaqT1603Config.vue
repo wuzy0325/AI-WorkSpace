@@ -109,34 +109,38 @@ function onNumberEmit(fn: (v: number) => void, e: Event): void {
 
 <style scoped>
 .t1603-config {
+  /* VSCode 紧凑密度：字段间 8px，分组内边距 8px 12px */
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-  padding: 1rem;
-  border-radius: 0.75rem;
+  gap: var(--density-field-gap);
+  padding: var(--density-group-padding);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
   border: 1px solid var(--border-default);
 }
 
 .t1603-config__field {
+  /* 字段内：label ↔ control 纵向 2px */
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: var(--density-field-inline);
 }
 
 .t1603-config__label {
   display: block;
   font-size: var(--font-size-2xs);
-  font-weight: 800;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  /* 中文标签不使用 uppercase，保持原形 */
+  letter-spacing: 0.02em;
 }
 
 .t1603-config__input {
   width: 100%;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.5rem;
+  /* 紧凑控件：高度 28px，横向内边距 8px */
+  height: var(--density-control-height);
+  padding: 0 var(--density-control-pad-x);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-default);
   background: rgba(0, 0, 0, 0.2);
   color: var(--text-primary);

@@ -108,7 +108,7 @@ watch(isRunning, (newVal, oldVal) => {
       <div class="main-bottom-bar__stat">
         <span class="main-bottom-bar__stat-label">{{ t.elapsedTime || '运行时间' }}</span>
         <div class="main-bottom-bar__stat-value">
-          <Timer class="w-4 h-4 text-emerald-500" />
+          <Timer class="w-4 h-4 text-[var(--state-success)]" />
           <span class="mono-font">{{ elapsedTime }}</span>
         </div>
       </div>
@@ -117,8 +117,8 @@ watch(isRunning, (newVal, oldVal) => {
       <div class="main-bottom-bar__stat">
         <span class="main-bottom-bar__stat-label">{{ t.systemTime || '系统时间' }}</span>
         <div class="main-bottom-bar__stat-value">
-          <Clock class="w-4 h-4 text-slate-400" />
-          <span class="mono-font text-slate-400">{{ currentTime }}</span>
+          <Clock class="w-4 h-4 text-[var(--text-tertiary)]" />
+          <span class="mono-font text-[var(--text-tertiary)]">{{ currentTime }}</span>
         </div>
       </div>
     </div>

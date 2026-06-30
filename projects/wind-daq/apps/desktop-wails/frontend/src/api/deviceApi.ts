@@ -7,7 +7,6 @@ export { calibrationApi } from './calibrationApi'
 export { traversalApi, storageApi, reportApi } from './otherApis'
 export type { TraversalPoint, MotionAxisStatus, MotionStatus } from './otherApis'
 
-const MAIN_PROCESS_API_BASE = 'http://127.0.0.1:8900'
 const DEFAULT_PUBLISH_RATE_HZ = 20
 const MIN_POLL_INTERVAL_MS = 50
 
@@ -161,14 +160,12 @@ export const deviceApi = {
   },
 
   getLatest: async (id: string): Promise<DataPayload> => {
-    if (isWailsAvailable()) {
-      const result = await fetch(`${MAIN_PROCESS_API_BASE}/api/daq/latest/${id}`).then((resp) => resp.ok ? resp.json() : null)
-      if (result == null || result === false || result === true) {
-        return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
-      }
+    try {
+      const result = await request<DataPayload>(`/api/daq/latest/${id}`)
       return normalizeDataPayload(result, id)
+    } catch {
+      return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
     }
-    return request<DataPayload>(`/api/daq/latest/${id}`)
   },
 
   getPublishRate: async (): Promise<number> => {
@@ -272,33 +269,54 @@ export const deviceApi = {
       void wailsApi.device.subscribeStream(deviceId, true)
       let active = true
       let timer: number | null = null
+      // generation token 用于识别"哪一轮轮询"。
+      // 当 restart() 在 pollLatest 等待 getLatest() 期间被调用时，
+      // 旧 generation 的 pollLatest 即使 finally 块执行，
+      // 也会因为 myGen !== generation 而跳过 setTimeout 调度，
+      // 避免旧轮询 goroutine 仍持有 timer 引用导致重叠轮询。
+      let generation = 0
+      const clearTimer = () => {
+        if (timer !== null) {
+          window.clearTimeout(timer)
+          timer = null
+        }
+      }
       const pollLatest = async () => {
+        const myGen = generation
         if (!active) return
+        const startedAt = Date.now()
         try {
           const payload = await deviceApi.getLatest(deviceId)
           // 以 channels 长度判断是否有有效数据，比 timestamp > 0 更可靠：
           // 模拟设备第一帧的 timestamp 可能恰好为 0（极低概率但边界存在）。
-          if (active && payload.channels.length > 0) {
+          if (active && myGen === generation && payload.channels.length > 0) {
             deviceApi._notifyListeners(payload)
           }
         } catch (error) {
           console.log(`Wails polling for ${deviceId}:`, error)
+        } finally {
+          // 仅当仍属于当前 generation 时才调度下一轮，防止旧轮询 goroutine 重叠
+          if (!active || myGen !== generation) return
+          const intervalMs = publishRateToPollIntervalMs(deviceApi._publishRateHz)
+          const elapsedMs = Date.now() - startedAt
+          timer = window.setTimeout(() => { void pollLatest() }, Math.max(0, intervalMs - elapsedMs))
         }
       }
       const restart = () => {
-        if (timer !== null) window.clearInterval(timer)
+        // 提升 generation 使旧轮询 goroutine 失效，
+        // 清理旧 timer 后启动新一轮轮询
+        generation++
+        clearTimer()
         void pollLatest()
-        timer = window.setInterval(
-          () => { void pollLatest() },
-          publishRateToPollIntervalMs(deviceApi._publishRateHz),
-        )
       }
       restart()
       deviceApi._registerSubscription(deviceId, {
         restart,
         unsubscribe: () => {
           active = false
-          if (timer !== null) window.clearInterval(timer)
+          // 提升 generation 防止 finally 块重新调度
+          generation++
+          clearTimer()
           void wailsApi.device.subscribeStream(deviceId, false)
         },
       })

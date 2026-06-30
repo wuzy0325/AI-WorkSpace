@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>校准工作台</title>
+    <style id="theme-vars">
+/* ==========================================================================
+   Wind-DAQ UI Redesign — Brand Design Tokens
+   Instrument-grade industrial DAQ application
+   Tone: industrial/utilitarian, calm, data-dense
+   ========================================================================== */
+
+/* --- Brand Prefix --- */
+:root {
+  /* ── Primary Color ── */
+  --brand-primary: #2563EB;
+  --brand-primary-light: #3B82F6;
+  --brand-primary-dark: #1D4ED8;
+  --brand-primary-muted: rgba(37, 99, 235, 0.12);
+
+  /* ── Surface Colors ── */
+  --bg-canvas: #F8F9FB;
+  --bg-panel: #FFFFFF;
+  --bg-panel-strong: #F1F3F6;
+  --bg-elevated: #FFFFFF;
+
+  /* ── Text Colors ── */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --text-muted: #9CA3AF;
+  --text-inverse: #FFFFFF;
+
+  /* ── Border Colors ── */
+  --border-default: #E5E7EB;
+  --border-strong: #D1D5DB;
+  --border-subtle: #F3F4F6;
+
+  /* ── State Colors ── */
+  --state-success: #059669;
+  --state-success-bg: rgba(5, 150, 105, 0.08);
+  --state-warning: #D97706;
+  --state-warning-bg: rgba(217, 119, 6, 0.08);
+  --state-error: #DC2626;
+  --state-error-bg: rgba(220, 38, 38, 0.08);
+  --state-info: #2563EB;
+  --state-info-bg: rgba(37, 99, 235, 0.08);
+
+  /* ── Channel Colors (DAQ telemetry) ── */
+  --channel-1: #10B981;
+  --channel-2: #3B82F6;
+  --channel-3: #8B5CF6;
+  --channel-4: #F59E0B;
+  --channel-5: #EC4899;
+  --channel-6: #14B8A6;
+  --channel-7: #F97316;
+  --channel-8: #6366F1;
+
+  /* ── Radius Scale ── */
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* ── Spacing Scale ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* ── Density Tokens (config panels) ── */
+  --density-field-inline: 2px;
+  --density-field-gap: 8px;
+  --density-group-padding: 8px 12px;
+  --density-group-gap: 10px;
+  --density-section-gap: 12px;
+  --density-group-title-gap: 4px;
+  --density-control-height: 28px;
+  --density-control-pad-x: 8px;
+
+  /* ── Typography ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ── Shadow ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 12px 24px rgba(0, 0, 0, 0.08);
+
+  /* ── Motion ── */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Dark Theme ── */
+[data-theme='dark'] {
+  --bg-canvas: #0F1117;
+  --bg-panel: #1A1D27;
+  --bg-panel-strong: #242836;
+  --bg-elevated: #1E2230;
+
+  --text-primary: #F3F4F6;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+
+  --border-default: #2D3348;
+  --border-strong: #3D4460;
+  --border-subtle: #1E2230;
+
+  --state-success-bg: rgba(5, 150, 105, 0.15);
+  --state-warning-bg: rgba(217, 119, 6, 0.15);
+  --state-error-bg: rgba(220, 38, 38, 0.15);
+  --state-info-bg: rgba(37, 99, 235, 0.15);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 12px 24px rgba(0, 0, 0, 0.35);
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-primary: var(--brand-primary);
+  }
+  @layer base {
+    body { background: var(--brand-background); color: var(--brand-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body class="font-sans" style="background:var(--bg-canvas);color:var(--text-primary);margin:0;overflow:hidden;height:100vh;font-family:var(--font-sans);font-size:var(--text-base)">
+
+  <!-- ===== App Frame (Desktop Fixed) ===== -->
+  <div class="flex h-screen w-screen overflow-hidden">
+
+    <!-- Left Rail Nav (64px) -->
+    <aside class="flex flex-col items-center w-16 shrink-0 border-r" style="background:var(--bg-panel);border-color:var(--border-default)">
+      <!-- App Logo -->
+      <div class="flex items-center justify-center w-16 h-14 shrink-0 border-b" style="border-color:var(--border-default)">
+        <div class="w-7 h-7 rounded-md flex items-center justify-center text-white font-bold text-xs" style="background:var(--brand-primary)">W</div>
+      </div>
+      <!-- Nav Items -->
+      <nav class="flex flex-col items-center gap-1 pt-3 flex-1">
+        <!-- SLOT: rail-nav-items — leaf pages inject active states here -->
+        <a class="rail-nav-item group" data-nav-key="dashboard" data-dom-id="nav-dashboard" href="#">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </a>
+        <a class="rail-nav-item group" data-nav-key="traversal" data-dom-id="nav-traversal" href="#">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
+        </a>
+        <a class="rail-nav-item group" data-nav-key="calibration" data-active="true" data-dom-id="nav-calibration" href="#">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+        </a>
+        <a class="rail-nav-item group" data-nav-key="motion" href="#">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a class="rail-nav-item group" data-nav-key="log" href="#">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        </a>
+      </nav>
+      <!-- Footer -->
+      <div class="flex flex-col items-center gap-2 pb-3 pt-2 border-t w-full" style="border-color:var(--border-default)">
+        <a class="rail-nav-item group" data-nav-key="settings" href="#" title="全局设置">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </a>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex flex-col flex-1 min-w-0">
+
+      <!-- Top Bar (56px) -->
+      <header class="flex items-center justify-between shrink-0 px-5 border-b" style="height:56px;background:var(--bg-panel);border-color:var(--border-default)">
+        <div class="flex items-center gap-3 min-w-0">
+          <!-- SLOT: page-title -->
+          <h1 class="text-base font-semibold truncate" style="color:var(--text-primary)">校准工作台</h1>
+          <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background:var(--state-success-bg);color:var(--state-success)">已连接</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors" style="background:var(--brand-primary);color:white" data-dom-id="btn-start-cal">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            开始校准
+          </button>
+          <button class="p-1.5 rounded-md transition-colors hover:opacity-80" style="color:var(--text-secondary)" title="设备管理">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Content Stage -->
+      <!-- SLOT: main-content — 校准工作台页面内容 -->
+      <main class="flex-1 min-h-0 overflow-auto" style="background:var(--bg-canvas)">
+        <div class="flex flex-col h-full">
+
+          <!-- 校准类型选择 Tab 栏 -->
+          <div class="flex items-center gap-0 shrink-0 px-5 border-b" style="height:40px;background:var(--bg-panel);border-color:var(--border-default)">
+            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-semibold transition-colors" data-tab="five-hole" data-active="true"
+                    style="height:40px;border-bottom:2px solid var(--brand-primary);color:var(--brand-primary)">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="5" r="1.5"/><circle cx="17" cy="9" r="1.5"/><circle cx="17" cy="15" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="7" cy="15" r="1.5"/><circle cx="7" cy="9" r="1.5"/></svg>
+              五孔探针
+            </button>
+            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="three-hole"
+                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="15" r="1.5"/><circle cx="6" cy="15" r="1.5"/></svg>
+              三孔探针
+            </button>
+            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="total-pressure"
+                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/></svg>
+              总压
+            </button>
+            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="total-temp"
+                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>
+              总温
+            </button>
+          </div>
+
+          <!-- 主体区域 -->
+          <div class="flex flex-1 min-h-0 p-4 gap-4" style="padding:var(--space-4)">
+
+            <!-- 左侧：校准设置面板（约 280px） -->
+            <aside class="shrink-0 flex flex-col overflow-y-auto rounded-lg border" style="width:280px;background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
+
+              <!-- 角度范围设置组 -->
+              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
+                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
+                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                  <span class="text-xs font-semibold" style="color:var(--text-primary)">角度范围</span>
+                </div>
+                <div class="grid gap-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Min α</label>
+                    <input type="number" value="-60" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Max α</label>
+                    <input type="number" value="60" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Step</label>
+                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+                <div class="grid gap-1 mt-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap);margin-top:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Min β</label>
+                    <input type="number" value="-45" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Max β</label>
+                    <input type="number" value="45" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Step</label>
+                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 速度范围设置组 -->
+              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
+                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
+                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+                  <span class="text-xs font-semibold" style="color:var(--text-primary)">速度范围</span>
+                </div>
+                <div class="grid gap-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">V<sub>min</sub></label>
+                    <input type="number" value="10" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">V<sub>max</sub></label>
+                    <input type="number" value="50" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Points</label>
+                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 采集设置组 -->
+              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
+                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
+                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <span class="text-xs font-semibold" style="color:var(--text-primary)">采集设置</span>
+                </div>
+                <div class="grid gap-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">采样频率 (Hz)</label>
+                    <input type="number" value="100" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">平均次数</label>
+                    <input type="number" value="100" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+                <div class="grid gap-1 mt-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap);margin-top:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">稳定延迟 (ms)</label>
+                    <input type="number" value="2000" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">重复次数</label>
+                    <input type="number" value="3" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 探针信息组 -->
+              <div style="padding:var(--density-group-padding)">
+                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
+                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+                  <span class="text-xs font-semibold" style="color:var(--text-primary)">探针信息</span>
+                </div>
+                <div class="grid gap-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap)">
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">探针编号</label>
+                    <input type="text" value="PRB-001" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
+                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">孔径系数</label>
+                    <input type="number" value="0.85" step="0.01" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
+                  </div>
+                </div>
+              </div>
+
+            </aside>
+
+            <!-- 右侧：校准图表区域 -->
+            <section class="flex-1 min-w-0 flex flex-col rounded-lg border overflow-hidden" style="background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
+
+              <!-- 图表标题栏 -->
+              <div class="flex items-center justify-between shrink-0 px-4 border-b" style="height:32px;background:var(--bg-panel-strong);border-color:var(--border-subtle)">
+                <span class="text-xs font-semibold" style="color:var(--text-secondary)">校准曲线 — Cpq vs α</span>
+                <div class="flex items-center gap-3">
+                  <!-- 曲线图例 -->
+                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
+                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-1)"></span> P1-P5
+                  </span>
+                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
+                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-2)"></span> P2-P5
+                  </span>
+                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
+                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-3)"></span> P3-P5
+                  </span>
+                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
+                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-4)"></span> P4-P5
+                  </span>
+                </div>
+              </div>
+
+              <!-- SVG 图表 -->
+              <div class="flex-1 min-h-0" style="background:var(--bg-canvas)">
+                <svg viewBox="0 0 720 380" preserveAspectRatio="xMidYMid meet" width="100%" height="100%"
+                     style="display:block;font-family:var(--font-sans);font-size:11px">
+                  <defs>
+                    <!-- 图表区域裁剪 -->
+                    <clipPath id="chart-clip">
+                      <rect x="60" y="10" width="640" height="310"/>
+                    </clipPath>
+                  </defs>
+
+                  <!-- 网格线 -->
+                  <g stroke="var(--border-subtle)" stroke-width="1" clip-path="url(#chart-clip)">
+                    <!-- 水平网格 -->
+                    <line x1="60" y1="72.5" x2="700" y2="72.5"/>
+                    <line x1="60" y1="135" x2="700" y2="135"/>
+                    <line x1="60" y1="197.5" x2="700" y2="197.5"/>
+                    <line x1="60" y1="260" x2="700" y2="260"/>
+                    <!-- 垂直网格 -->
+                    <line x1="188.75" y1="10" x2="188.75" y2="320"/>
+                    <line x1="317.5" y1="10" x2="317.5" y2="320"/>
+                    <line x1="446.25" y1="10" x2="446.25" y2="320"/>
+                    <line x1="575" y1="10" x2="575" y2="320"/>
+                  </g>
+
+                  <!-- 坐标轴 -->
+                  <g stroke="var(--border-strong)" stroke-width="1.5">
+                    <!-- Y 轴 -->
+                    <line x1="60" y1="10" x2="60" y2="320"/>
+                    <!-- X 轴 -->
+                    <line x1="60" y1="320" x2="700" y2="320"/>
+                  </g>
+
+                  <!-- Y 轴刻度标签 -->
+                  <g fill="var(--text-muted)" text-anchor="end" font-size="11">
+                    <text x="54" y="324">-1.5</text>
+                    <text x="54" y="263.5">-1.0</text>
+                    <text x="54" y="201">-0.5</text>
+                    <text x="54" y="138.5">0.0</text>
+                    <text x="54" y="76">0.5</text>
+                    <text x="54" y="14">1.0</text>
+                  </g>
+
+                  <!-- X 轴刻度标签 -->
+                  <g fill="var(--text-muted)" text-anchor="middle" font-size="11">
+                    <text x="60" y="338">-60°</text>
+                    <text x="188.75" y="338">-36°</text>
+                    <text x="317.5" y="338">-12°</text>
+                    <text x="446.25" y="338">12°</text>
+                    <text x="575" y="338">36°</text>
+                    <text x="700" y="338">60°</text>
+                  </g>
+
+                  <!-- 校准曲线（模拟数据） -->
+                  <g clip-path="url(#chart-clip)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <!-- P1-P5 曲线 (channel-1: 绿色) -->
+                    <polyline stroke="var(--channel-1)" points="
+                      60,42 90,50 120,65 150,90 180,118 210,148 240,165
+                      270,170 300,160 330,140 360,115 390,88 420,65
+                      450,50 480,42 510,48 540,68 570,100 600,138
+                      630,172 660,200 700,225
+                    "/>
+
+                    <!-- P2-P5 曲线 (channel-2: 蓝色) -->
+                    <polyline stroke="var(--channel-2)" points="
+                      60,100 90,105 120,115 150,130 180,150 210,168 240,180
+                      270,185 300,178 330,160 360,135 390,108 420,85
+                      450,68 480,60 510,62 540,75 570,98 600,130
+                      630,165 660,195 700,220
+                    "/>
+
+                    <!-- P3-P5 曲线 (channel-3: 紫色) -->
+                    <polyline stroke="var(--channel-3)" points="
+                      60,200 90,195 120,185 150,168 180,148 210,125 240,110
+                      270,105 300,112 330,132 360,158 390,188 420,215
+                      450,238 480,250 510,248 540,235 570,210 600,178
+                      630,142 660,108 700,82
+                    "/>
+
+                    <!-- P4-P5 曲线 (channel-4: 橙色) -->
+                    <polyline stroke="var(--channel-4)" points="
+                      60,290 90,280 120,260 150,232 180,200 210,168 240,140
+                      270,120 300,115 330,125 360,148 390,178 420,212
+                      450,242 480,265 510,275 540,268 570,248 600,220
+                      630,185 660,148 700,115
+                    "/>
+                  </g>
+
+                  <!-- 零位参考线 -->
+                  <line x1="60" y1="138.5" x2="700" y2="138.5" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+
+                  <!-- 采样点标记（当前进度指示） -->
+                  <g clip-path="url(#chart-clip)">
+                    <!-- 通道1采样点 -->
+                    <circle cx="317.5" cy="160" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="446.25" cy="50" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="575" cy="100" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
+                    <!-- 通道2采样点 -->
+                    <circle cx="317.5" cy="178" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="446.25" cy="68" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="575" cy="98" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
+                    <!-- 通道3采样点 -->
+                    <circle cx="317.5" cy="112" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="446.25" cy="238" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="575" cy="210" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
+                    <!-- 通道4采样点 -->
+                    <circle cx="317.5" cy="125" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="446.25" cy="242" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
+                    <circle cx="575" cy="220" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
+                  </g>
+
+                  <!-- 坐标轴标签 -->
+                  <text x="380" y="368" fill="var(--text-secondary)" text-anchor="middle" font-size="12" font-weight="500">α (偏转角)</text>
+                  <text x="16" y="170" fill="var(--text-secondary)" text-anchor="middle" font-size="12" font-weight="500" transform="rotate(-90, 16, 170)">Cpq (压力系数)</text>
+                </svg>
+              </div>
+            </section>
+          </div>
+
+          <!-- 底部：校准结果摘要条 -->
+          <div class="flex items-center justify-between shrink-0 px-5 border-t" style="height:48px;background:var(--bg-panel);border-color:var(--border-default)">
+            <div class="flex items-center gap-6">
+              <!-- 校准状态 -->
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" style="background:var(--state-warning);animation:pulse 2s infinite"></div>
+                <span class="text-xs font-medium" style="color:var(--text-secondary)">状态</span>
+                <span class="text-xs font-semibold" style="color:var(--state-warning)">进行中</span>
+              </div>
+              <!-- 已采集点数 -->
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs" style="color:var(--text-muted)">采集进度</span>
+                <span class="text-xs font-mono font-semibold" style="color:var(--text-primary)">384</span>
+                <span class="text-xs" style="color:var(--text-muted)">/</span>
+                <span class="text-xs font-mono" style="color:var(--text-muted)">625</span>
+              </div>
+              <!-- 进度条 -->
+              <div class="w-32 h-1.5 rounded-full overflow-hidden" style="background:var(--bg-panel-strong)">
+                <div class="h-full rounded-full" style="width:61.4%;background:var(--brand-primary)"></div>
+              </div>
+              <!-- RMS 残差 -->
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs" style="color:var(--text-muted)">RMS</span>
+                <span class="text-xs font-mono font-semibold" style="color:var(--state-success)">0.0024</span>
+              </div>
+              <!-- 最近保存 -->
+              <div class="flex items-center gap-1.5">
+                <svg class="w-3 h-3" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span class="text-xs" style="color:var(--text-muted)">最近保存</span>
+                <span class="text-xs font-mono" style="color:var(--text-secondary)">2026-06-30 11:32</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                      style="background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary)">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                保存 PRB
+              </button>
+              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                      style="background:var(--brand-primary);color:white">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                导出
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </main>
+
+      <!-- Bottom Status Bar (72px) -->
+      <footer class="flex items-center shrink-0 px-5 border-t" style="height:72px;background:var(--bg-panel);border-color:var(--border-default)">
+        <div class="flex items-center gap-6 flex-1 min-w-0">
+          <!-- Acquisition Status -->
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full" style="background:var(--state-success)"></div>
+            <span class="text-xs" style="color:var(--text-secondary)">采集中</span>
+            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">00:12:34</span>
+          </div>
+          <!-- Device Count -->
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <span class="text-xs" style="color:var(--text-secondary)">设备 <strong style="color:var(--text-primary)">2</strong>/4</span>
+          </div>
+          <!-- Sample Rate -->
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">100 Hz</span>
+          </div>
+          <!-- Recording Status -->
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full" style="background:var(--state-error);animation:pulse 2s infinite"></div>
+            <span class="text-xs" style="color:var(--text-secondary)">录制中</span>
+            <span class="text-xs font-mono" style="color:var(--text-muted)">run-20260630-112340.csv</span>
+          </div>
+        </div>
+        <!-- Theme Toggle -->
+        <div class="flex items-center gap-2 ml-4 pl-4 border-l" style="border-color:var(--border-default)">
+          <span class="text-xs" style="color:var(--text-muted)">v0.2.0</span>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+
+  <!-- Rail Nav Active State Styles -->
+  <style>
+    .rail-nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      transition: all var(--duration-fast) var(--ease-default);
+      text-decoration: none;
+      position: relative;
+    }
+    .rail-nav-item:hover {
+      background: var(--bg-panel-strong);
+      color: var(--text-secondary);
+    }
+    .rail-nav-item[data-active="true"] {
+      background: var(--brand-primary-muted);
+      color: var(--brand-primary);
+    }
+    .rail-nav-item[data-active="true"]::before {
+      content: '';
+      position: absolute;
+      left: -12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 20px;
+      background: var(--brand-primary);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* 校准设置面板输入框焦点 */
+    input[type="number"]:focus,
+    input[type="text"]:focus {
+      border-color: var(--brand-primary) !important;
+      box-shadow: 0 0 0 1px var(--brand-primary);
+    }
+
+    /* Tab 悬停效果 */
+    .cal-tab:hover {
+      color: var(--text-primary) !important;
+    }
+  </style>
+
+</body>
+</html>

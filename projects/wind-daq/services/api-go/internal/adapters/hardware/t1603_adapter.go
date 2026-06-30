@@ -70,6 +70,9 @@ func (a *T1603Adapter) Connect() error {
 
 	dev.OnReadLoopExit(func(err error) {
 		a.mu.Lock()
+		// readLoop 异常退出说明连接已损坏，必须清理 driver 引用，
+		// 否则下次 Connect 会误以为设备仍在线而在坏连接上继续操作。
+		a.driver = nil
 		a.sink = nil
 		fn := a.onError
 		a.mu.Unlock()

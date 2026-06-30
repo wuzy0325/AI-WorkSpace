@@ -192,8 +192,9 @@ func (a *App) startLocalAPIServer() {
 //     会让 WebView2 返回 EINVAL ("[WebView2] Eval failed: invalid argument")，
 //     同时阻塞 GUI 主线程，导致 startAcquisition / DeviceSubscribeStream 等
 //     Wails binding 调用延迟甚至失败，前端表现为"开始采集后 UI 无数据更新"。
-//   - 修复策略：前端改为 500ms HTTP 轮询 /api/daq/latest/{id} 拿最新数据
-//     （AcquisitionHub.OnData 始终更新 latestByDevice，不受 publishHz 节流影响），
+//   - 修复策略：前端改为按全局刷新频率 HTTP 轮询 /api/daq/latest/{id} 拿最新数据。
+//     轮询间隔由前端 deviceApi.setPublishRate/getPublishRate 同步的 Hz 决定；
+//     AcquisitionHub.OnData 始终更新 latestByDevice，不受 publishHz 节流影响。
 //     后端这里仅 drain relay.Payloads() 通道，避免 relay goroutine 因通道满而
 //     反压 AcquisitionHub；不再调用 app.Event.Emit，彻底消除主线程同步 JS 调用。
 //   - 保留 DataStreamRelay 与 DeviceSubscribeStream binding 是为了不破坏前端

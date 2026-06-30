@@ -162,23 +162,20 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
-	hasDrained := false
-	const maxIters = 200 // safety cap: ~20s at 100ms timeout
+	const maxIters = 3 // 安全上限：最多 3 次读取尝试
 
 	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(buf)
 		if n > 0 {
 			totalDrained += n
-			hasDrained = true
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if hasDrained {
-					break
-				}
-				continue
+				// 当前无残留数据，结束排空
+				break
 			}
+			// 连接已关闭等错误，无需继续
 			break
 		}
 	}

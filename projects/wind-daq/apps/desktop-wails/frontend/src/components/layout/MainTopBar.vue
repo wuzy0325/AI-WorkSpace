@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Play, Square, Circle, Activity, LineChart, Table2, Columns2, LayoutGrid } from '@lucide/vue'
+import { Play, Square, Circle, Activity, LineChart, Grid3X3, Columns2, LayoutGrid } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 
 type MainShellPage = 'dashboard' | 'motion' | 'calibration' | 'traversal' | 'log'
@@ -30,14 +30,14 @@ const dashboardModes: MainViewMode[] = ['chart', 'table', 'both', 'overview']
 
 function modeLabel(mode: MainViewMode): string {
   if (mode === 'chart') return props.t.chartMode || '图表'
-  if (mode === 'table') return props.t.tableMode || '表格'
+  if (mode === 'table') return props.t.tableMode || '卡片'
   if (mode === 'both') return props.t.bothMode || '混合'
   return props.t.overviewMode || '总览'
 }
 
 const modeIcon = {
   chart: LineChart,
-  table: Table2,
+  table: Grid3X3,
   both: Columns2,
   overview: LayoutGrid,
 } as const

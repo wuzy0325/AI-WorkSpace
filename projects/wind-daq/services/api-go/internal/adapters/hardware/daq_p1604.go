@@ -1,9 +1,11 @@
 package hardware
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,10 +18,22 @@ const (
 	DAQ_P_1604_DEFAULT_HOST = "192.168.3.101"
 	DAQ_P_1604_DEFAULT_PORT = 9000
 	DAQ_P_1604_TIMEOUT      = 5 * time.Second
+
+	// maxConsecutiveFrameErrors 是触发自动重同步的连续帧错误阈值。
+	maxConsecutiveFrameErrors = 5
+	// noDataTimeout 是允许的最长无数据时间，超过则判定为连接异常。
+	noDataTimeout = 10 * time.Second
+	// readLoopJoinTimeout 是等待 readLoop 退出的最长时间。
+	readLoopJoinTimeout = 1 * time.Second
 )
+
+// stopReasonUserRequested 表示调用方主动停止（StopAcquisition / Disconnect）。
+// readLoop 识别到该原因后静默退出，避免误判为连接异常。
+const stopReasonUserRequested = "user-requested"
 
 type DAQP1604 struct {
 	mu          sync.RWMutex
+	writeMu     sync.Mutex
 	profile     device.Profile
 	status      device.Status
 	sink        device.DataSink
@@ -27,10 +41,17 @@ type DAQP1604 struct {
 	acquiring   bool
 	conn        net.Conn
 	frameReader *sharedproto.FrameReader
-	recvBuffer  []byte
 	readErrors  int
 	frameErrors int
-	onError     func(err error) // 设备异常退出通知回调
+	// consecutiveFrameErrors 连续帧解析错误计数，用于触发自动重同步。
+	consecutiveFrameErrors int
+	onError                 func(err error)
+
+	// readLoopDone 由 readLoop 退出时关闭，供 Start/Stop/Disconnect 等待协程结束。
+	readLoopDone chan struct{}
+	// stopReason 标记主动停止原因，由停止方在 close(stop) 前设置。
+	stopReason   string
+	stopReasonMu sync.Mutex
 }
 
 func NewDAQP1604(profile device.Profile) *DAQP1604 {
@@ -42,7 +63,6 @@ func NewDAQP1604(profile device.Profile) *DAQP1604 {
 			Type:       profile.Type,
 			Connection: device.ConnectionDisconnected,
 		},
-		recvBuffer: make([]byte, 0, 4096),
 	}
 }
 
@@ -62,11 +82,11 @@ func (d *DAQP1604) ID() string { return d.profile.ID }
 
 func (d *DAQP1604) Connect() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if d.conn != nil {
+		d.mu.Unlock()
 		return nil
 	}
+	d.mu.Unlock()
 
 	host := d.profile.Address
 	if host == "" {
@@ -82,73 +102,133 @@ func (d *DAQP1604) Connect() error {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
 
+	// 启用 TCP keepalive，尽早发现连接中断。
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(10 * time.Second)
+	}
+
+	d.mu.Lock()
 	d.conn = conn
 	d.frameReader = sharedproto.NewFrameReader(conn)
 	d.status.Connection = device.ConnectionConnected
+	d.mu.Unlock()
 	return nil
 }
 
 func (d *DAQP1604) Disconnect() error {
+	d.setStopReason(stopReasonUserRequested)
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	_ = d.stopAcquisitionLocked()
+	done := d.readLoopDone
+	conn := d.conn
+	d.conn = nil
+	d.frameReader = nil
+	d.status.Connection = device.ConnectionDisconnected
+	d.mu.Unlock()
 
-	if d.conn != nil {
-		_ = d.conn.Close()
-		d.conn = nil
-		d.frameReader = nil
+	// 等待 readLoop 退出后再关闭连接，避免 ReadFrame 与 Close 并发。
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(readLoopJoinTimeout):
+			slog.Warn("DAQ-P-1604 readLoop join timeout on disconnect", "device", d.profile.ID)
+		}
 	}
 
-	d.status.Connection = device.ConnectionDisconnected
+	if conn != nil {
+		_ = conn.Close()
+	}
 	return nil
 }
 
 func (d *DAQP1604) StartAcquisition() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.clearStopReason()
 
+	d.mu.Lock()
 	if d.acquiring {
+		d.mu.Unlock()
 		return nil
 	}
 	if d.conn == nil {
+		d.mu.Unlock()
 		return fmt.Errorf("device not connected")
 	}
+
+	// 等待上一次 readLoop 完全退出，避免旧 goroutine 与新采集竞争 conn 或状态。
+	if d.readLoopDone != nil {
+		done := d.readLoopDone
+		d.mu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(readLoopJoinTimeout):
+			slog.Warn("DAQ-P-1604 previous readLoop join timeout on start", "device", d.profile.ID)
+		}
+		d.mu.Lock()
+	}
+
+	// 重置帧读取器并排空连接中的残留数据，防止旧命令响应或流字节污染新采集。
+	if d.frameReader != nil {
+		d.frameReader.Reset()
+	}
+	conn := d.conn
+	d.mu.Unlock()
+	d.drainConnection(conn, 100*time.Millisecond)
 
 	if err := d.initStream(); err != nil {
 		return fmt.Errorf("init stream: %w", err)
 	}
-
 	if err := d.sendCommand("c 01 1"); err != nil {
 		return fmt.Errorf("start stream: %w", err)
 	}
 
+	d.mu.Lock()
 	d.acquiring = true
 	d.status.Acquiring = true
 	d.status.Connection = device.ConnectionAcquiring
 	d.stop = make(chan struct{})
+	d.readLoopDone = make(chan struct{})
 	stop := d.stop
+	d.mu.Unlock()
 
 	go d.readLoop(stop)
 	return nil
 }
 
 func (d *DAQP1604) StopAcquisition() error {
+	d.setStopReason(stopReasonUserRequested)
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.stopAcquisitionLocked()
+	err := d.stopAcquisitionLocked()
+	done := d.readLoopDone
+	connected := d.conn != nil
+	d.mu.Unlock()
+
+	// 等待 readLoop 退出后再发送停止命令，避免命令与读取并发。
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(readLoopJoinTimeout):
+			slog.Warn("DAQ-P-1604 readLoop join timeout on stop", "device", d.profile.ID)
+		}
+	}
+
+	if connected {
+		if stopErr := d.sendCommand("c 02 1"); stopErr != nil {
+			if isConnectionFault(stopErr) {
+				slog.Debug("DAQ-P-1604 stop stream: connection already gone", "device", d.profile.ID, "error", stopErr)
+			} else {
+				slog.Warn("DAQ-P-1604 stop stream command failed", "device", d.profile.ID, "error", stopErr)
+			}
+		}
+	}
+	return err
 }
 
 func (d *DAQP1604) stopAcquisitionLocked() error {
-	if d.acquiring {
-		if d.conn != nil {
-			if err := d.sendCommand("c 02 1"); err != nil {
-				slog.Warn("DAQ-P-1604 stop stream command failed", "device", d.profile.ID, "error", err)
-			}
-		}
-		if d.stop != nil {
-			close(d.stop)
-		}
+	if d.acquiring && d.stop != nil {
+		close(d.stop)
 	}
 	d.acquiring = false
 	d.stop = nil
@@ -234,26 +314,63 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	if d.conn == nil {
 		return fmt.Errorf("not connected")
 	}
-	d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1604_TIMEOUT))
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1604_TIMEOUT))
 	_, err := d.conn.Write([]byte(cmd + "\r\n"))
-	d.conn.SetWriteDeadline(time.Time{}) // 清除写截止时间，避免影响后续操作
+	_ = d.conn.SetWriteDeadline(time.Time{}) // 清除写截止时间，避免影响后续操作
 	return err
 }
 
+// drainConnection 在指定超时内排空连接中的残留数据。
+// 启动新采集前调用，避免旧命令响应或流数据污染帧对齐。
+// 限制最大循环次数并在首次超时且无数据时立即退出，避免长时间阻塞
+// 导致模拟器/设备端的命令读取 goroutine 因 deadline 超时提前退出。
+func (d *DAQP1604) drainConnection(conn net.Conn, timeout time.Duration) {
+	if conn == nil {
+		return
+	}
+	buf := make([]byte, 4096)
+	totalDrained := 0
+	const maxIters = 3 // 安全上限：最多 3 次读取尝试
+	for i := 0; i < maxIters; i++ {
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
+		n, err := conn.Read(buf)
+		if n > 0 {
+			totalDrained += n
+		}
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// 当前无残留数据，结束排空
+				break
+			}
+			// 连接已关闭等错误，无需继续
+			break
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	if totalDrained > 0 {
+		slog.Debug("DAQ-P-1604 drained residual data", "device", d.profile.ID, "bytes", totalDrained)
+	}
+}
+
 func (d *DAQP1604) readLoop(stop <-chan struct{}) {
+	lastDataAt := time.Now()
 	var unexpectedErr error
 
 	defer func() {
-		// 异常退出时更新状态并通知上层
 		if unexpectedErr != nil {
+			// 主动停止场景不视为异常，避免误触发 onError。
+			if d.getStopReason() == stopReasonUserRequested {
+				return
+			}
+
 			d.mu.Lock()
 			d.acquiring = false
 			d.stop = nil
 			d.status.Acquiring = false
 			d.status.LastError = unexpectedErr.Error()
-			if d.status.Connection == device.ConnectionAcquiring {
-				d.status.Connection = device.ConnectionConnected
-			}
+			d.status.Connection = device.ConnectionError
 			fn := d.onError
 			d.mu.Unlock()
 
@@ -264,72 +381,105 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 		}
 	}()
 
+	defer func() {
+		d.mu.Lock()
+		done := d.readLoopDone
+		d.mu.Unlock()
+		if done != nil {
+			close(done)
+		}
+	}()
+
 	for {
 		select {
 		case <-stop:
 			return
 		default:
-			d.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-			payload, err := d.frameReader.ReadFrame()
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
+		}
+
+		d.mu.RLock()
+		fr := d.frameReader
+		d.mu.RUnlock()
+		if fr == nil {
+			return
+		}
+
+		d.mu.RLock()
+		conn := d.conn
+		d.mu.RUnlock()
+		if conn == nil {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+
+		payload, err := fr.ReadFrame()
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if time.Since(lastDataAt) > noDataTimeout {
+					unexpectedErr = fmt.Errorf("no data received for %v", noDataTimeout)
+					return
 				}
-				d.mu.Lock()
-				d.readErrors++
-				d.mu.Unlock()
-				slog.Debug("DAQ-P-1604 read error", "device", d.profile.ID, "error", err)
-				unexpectedErr = err
+				continue
+			}
+			// 主动停止后连接被关闭属于预期行为，静默退出。
+			if d.getStopReason() == stopReasonUserRequested && isClosedConnError(err) {
 				return
 			}
-			if len(payload) > 0 {
-				d.processPayload(payload)
-			}
+			d.mu.Lock()
+			d.readErrors++
+			d.mu.Unlock()
+			slog.Debug("DAQ-P-1604 read error", "device", d.profile.ID, "error", err)
+			unexpectedErr = err
+			return
+		}
+		if len(payload) > 0 {
+			lastDataAt = time.Now()
+			d.processPayload(payload)
 		}
 	}
 }
 
 func (d *DAQP1604) processPayload(data []byte) {
+	// ASCII 帧属于命令响应，不应作为采集数据下发。
+	if sharedproto.IsASCIIFrame(data) {
+		return
+	}
+
 	d.mu.RLock()
-	sink := d.sink
+	fr := d.frameReader
 	useDeviceTs := d.profile.DaqP1604UseDeviceTimestamp
+	sink := d.sink
 	d.mu.RUnlock()
 
 	if sink == nil {
 		return
 	}
 
-	if sharedproto.IsASCIIFrame(data) {
-		channels := d.parseASCIIFrame(data)
-		if len(channels) == 0 {
-			return
-		}
-		indices := make([]int, len(channels))
-		values := make([]float64, len(channels))
-		for i := range channels {
-			indices[i] = i
-			values[i] = channels[i]
-		}
-		payload := device.DataPayload{
-			DeviceID:       d.profile.ID,
-			Timestamp:      device.NowMs(),
-			Channels:       values,
-			ChannelIndices: indices,
-		}
-		sink(payload)
-		return
-	}
-
-	// 使用扩展解析函数，支持可选设备时间戳字段
-	// DAQ-P-1604 始终请求大气数据（0800），所以 hasAtmosphericData = true
+	// DAQ-P-1604 始终请求大气数据（0800），所以 hasAtmosphericData = true。
 	channels, deviceTimestampMs, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
+		d.consecutiveFrameErrors++
+		consecutive := d.consecutiveFrameErrors
 		d.mu.Unlock()
+
 		slog.Debug("DAQ-P-1604 frame parse error", "device", d.profile.ID, "n", len(data), "error", err)
+
+		// 连续帧错误达到阈值时尝试丢弃缓冲区首字节以重新对齐。
+		if consecutive >= maxConsecutiveFrameErrors && fr != nil {
+			slog.Warn("DAQ-P-1604 auto-resync triggered", "device", d.profile.ID, "consecutiveErrors", consecutive)
+			fr.Resync()
+			d.mu.Lock()
+			d.consecutiveFrameErrors = 0
+			d.mu.Unlock()
+		}
 		return
 	}
+
+	d.mu.Lock()
+	d.consecutiveFrameErrors = 0
+	d.mu.Unlock()
 
 	if len(channels) == 0 {
 		return
@@ -348,7 +498,6 @@ func (d *DAQP1604) processPayload(data []byte) {
 		Channels:       values,
 		ChannelIndices: indices,
 	}
-	// 如果开启了设备时间戳且解析到有效时间戳，填入
 	if useDeviceTs && deviceTimestampMs > 0 {
 		payload.DeviceTimestamp = deviceTimestampMs
 	}
@@ -356,19 +505,51 @@ func (d *DAQP1604) processPayload(data []byte) {
 	sink(payload)
 }
 
-func (d *DAQP1604) parseASCIIFrame(data []byte) []float64 {
-	var values []float64
-	start := 0
-	for i, b := range data {
-		if b == ',' || b == '\r' || b == '\n' || b == ' ' {
-			if i > start {
-				var v float64
-				if _, err := fmt.Sscanf(string(data[start:i]), "%f", &v); err == nil {
-					values = append(values, v)
-				}
-			}
-			start = i + 1
-		}
+func (d *DAQP1604) setStopReason(reason string) {
+	d.stopReasonMu.Lock()
+	defer d.stopReasonMu.Unlock()
+	if d.stopReason == "" {
+		d.stopReason = reason
 	}
-	return values
+}
+
+func (d *DAQP1604) getStopReason() string {
+	d.stopReasonMu.Lock()
+	defer d.stopReasonMu.Unlock()
+	return d.stopReason
+}
+
+func (d *DAQP1604) clearStopReason() {
+	d.stopReasonMu.Lock()
+	defer d.stopReasonMu.Unlock()
+	d.stopReason = ""
+}
+
+// isClosedConnError 判断错误是否由连接被主动关闭引起。
+func isClosedConnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "use of closed network connection")
+}
+
+// isConnectionFault 启发式判定错误是否由连接故障引起，用于日志分级。
+func isConnectionFault(err error) bool {
+	if err == nil {
+		return false
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "reset by peer") ||
+		strings.Contains(msg, "use of closed network connection") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "device disconnected")
 }

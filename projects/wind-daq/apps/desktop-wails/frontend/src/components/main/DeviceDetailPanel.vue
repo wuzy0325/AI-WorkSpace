@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref } from 'vue'
+import type { DataPayload } from '@api/types'
 import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useStorageStore } from '@stores/storageStore'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
 // 避免拖慢首屏 LCP。参见 docs/runbooks/perf-frontend-bundle-baseline.md。
 const RealtimeChart = defineAsyncComponent(() => import('@components/device/RealtimeChart.vue'))
@@ -18,6 +20,7 @@ const props = withDefaults(
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
+const storageStore = useStorageStore()
 
 const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#f43f5e', '#06b6d4', '#f97316', '#6366f1']
 
@@ -39,6 +42,9 @@ const chartChannelIndices = computed(() => {
     ? selected
     : channels.filter((channel) => channel.enabled).slice(0, 4).map((channel) => channel.index)
 })
+
+/** 从全局配置读取波形图缓冲区点数，供实时趋势图使用 */
+const waveformBufferSize = computed(() => storageStore.settings.waveformBufferSize)
 
 function channelColor(index: number): string {
   return CHANNEL_COLORS[index % CHANNEL_COLORS.length]
@@ -141,29 +147,85 @@ function setAllChartVisibility(visible: boolean): void {
   })
 }
 
-function sparkBars(channelIndex: number): number[] {
-  const history = deviceStore.historyFor(deviceStore.selectedDeviceId ?? '')
-  const values = history
-    .map((entry) => {
-      const indices = Array.isArray(entry.channelIndices) ? entry.channelIndices : []
-      const channels = Array.isArray(entry.channels) ? entry.channels : []
-      const pos = indices.indexOf(channelIndex)
-      return pos >= 0 ? channels[pos] : null
-    })
-    .filter((v): v is number => v !== null)
-    .slice(-12)
-  if (!values.length) {
-    return Array.from({ length: 12 }, () => 15 + ((channelIndex * 37 + 20) % 60))
+// 计算单个通道的 sparkline 高度数组（0-100 之间）。
+// 采用倒序遍历 + 预分配数组，避免 .map().filter() 产生大量临时数组。
+function computeSparkBars(history: DataPayload[], channelIndex: number): number[] {
+  const values: number[] = []
+  const target = 12
+  for (let i = history.length - 1; i >= 0 && values.length < target; i--) {
+    const entry = history[i]
+    const indices = Array.isArray(entry?.channelIndices) ? entry.channelIndices : []
+    const channels = Array.isArray(entry?.channels) ? entry.channels : []
+    const pos = indices.indexOf(channelIndex)
+    if (pos >= 0) {
+      const v = channels[pos]
+      if (typeof v === 'number') values.push(v)
+    }
   }
-  const mn = Math.min(...values)
-  const mx = Math.max(...values)
+  if (values.length === 0) {
+    return Array.from({ length: target }, (_, i) => 15 + ((channelIndex * 37 + i * 17 + 20) % 60))
+  }
+  let mn = values[0]
+  let mx = values[0]
+  for (let i = 1; i < values.length; i++) {
+    const v = values[i]
+    if (v < mn) mn = v
+    if (v > mx) mx = v
+  }
+  // 归一化到 15%-90% 区间，保留顶部呼吸空间
   const span = mx - mn || 1
-  return values.map((v) => 15 + ((v - mn) / span) * 75)
+  return values.reverse().map((v) => 15 + ((v - mn) / span) * 75)
 }
+
+// 按通道索引缓存 sparkline 数据，只有对应设备历史数据变化时才重新计算。
+const sparkBarsMap = computed(() => {
+  const id = deviceStore.selectedDeviceId ?? ''
+  const history = deviceStore.historyFor(id)
+  const snap = snapshot.value
+  const map = new Map<number, number[]>()
+  if (!snap?.channelIndices) return map
+  for (const idx of snap.channelIndices) {
+    map.set(idx, computeSparkBars(history, idx))
+  }
+  return map
+})
 
 const isPressureScannerDevice = computed(() => {
   const type = profile.value?.type
   return type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre'
+})
+
+// 预计算表格/卡片视图所需的全部通道数据，避免模板渲染时反复调用函数。
+// 将每帧 O(通道数 × 函数调用次数) 的开销压缩为一次 computed 计算。
+const channelCards = computed(() => {
+  const id = deviceStore.selectedDeviceId ?? ''
+  const snap = snapshot.value
+  if (!snap?.channels?.length) return []
+
+  const indices = snap.channelIndices
+  const channels = snap.channels
+  const sparks = sparkBarsMap.value
+  const cards = []
+  for (let i = 0; i < channels.length; i++) {
+    const index = indices[i]
+    const rawValue = channels[i]
+    const tone = detailChannelTone(index, rawValue)
+    cards.push({
+      index,
+      rawValue,
+      formattedValue: formatChannel(index, rawValue),
+      unit: channelUnit(index),
+      tone,
+      isChartVisible: isChartVisible(index),
+      style: channelStyle(index),
+      color: channelColor(index),
+      showTareBadge: deviceStore.getOffset(id, index) !== 0,
+      disableTare: shouldDisableTare(index),
+      sparkBars: sparks.get(index) ?? [],
+      range: channelRange(index),
+    })
+  }
+  return cards
 })
 
 const statusText = computed(() => {
@@ -276,18 +338,22 @@ const connectionButtonLabel = computed(() => {
             通道选择
           </UiButton>
           <div class="detail-panel__chart-info">
-            <span class="detail-panel__chart-label">缓冲区</span>
-            <span class="detail-panel__chart-value mono-font">100 点</span>
+            <span class="detail-panel__chart-label">{{ i18n.t.bufferWindowLabel }}</span>
+            <span class="detail-panel__chart-value mono-font">{{ waveformBufferSize }} {{ i18n.t.pts }}</span>
           </div>
         </div>
       </div>
       <div class="detail-panel__chart-body">
-        <RealtimeChart :device-id="deviceStore.selectedDeviceId ?? ''" :channel-indices="chartChannelIndices" />
+        <RealtimeChart
+          :device-id="deviceStore.selectedDeviceId ?? ''"
+          :channel-indices="chartChannelIndices"
+          :max-points="waveformBufferSize"
+        />
       </div>
       </div>
 
       <div
-        v-if="snapshot?.channels?.length && showTable"
+        v-if="channelCards.length && showTable"
         class="detail-panel__grid"
         :class="{
           'detail-panel__grid--table': isTableMode,
@@ -295,80 +361,80 @@ const connectionButtonLabel = computed(() => {
         }"
       >
         <article
-        v-for="(rawValue, snapshotIndex) in snapshot.channels"
-        :key="snapshot.channelIndices[snapshotIndex]"
-        class="channel-card"
-        :class="{
-          'channel-card--warning': detailChannelTone(snapshot.channelIndices[snapshotIndex], rawValue) === 'warning',
-          'channel-card--selected': isChartVisible(snapshot.channelIndices[snapshotIndex])
-        }"
-        :style="channelStyle(snapshot.channelIndices[snapshotIndex])"
-      >
-        <div class="channel-card__top">
-          <div class="channel-card__top-left">
-            <div
-              v-if="deviceStore.getOffset(deviceStore.selectedDeviceId ?? '', snapshot.channelIndices[snapshotIndex]) !== 0"
-              class="channel-card__tare-badge"
-              :title="i18n.t.tareOffsetApplied || '已应用归零偏移'"
-            />
-            <span class="channel-card__tag mono-font">CH_{{ String(snapshot.channelIndices[snapshotIndex] + 1).padStart(2, '0') }}</span>
+          v-for="card in channelCards"
+          :key="card.index"
+          class="channel-card"
+          :class="{
+            'channel-card--warning': card.tone === 'warning',
+            'channel-card--selected': card.isChartVisible
+          }"
+          :style="card.style"
+        >
+          <div class="channel-card__top">
+            <div class="channel-card__top-left">
+              <div
+                v-if="card.showTareBadge"
+                class="channel-card__tare-badge"
+                :title="i18n.t.tareOffsetApplied || '已应用归零偏移'"
+              />
+              <span class="channel-card__tag mono-font">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
+            </div>
+            <div class="channel-card__id">
+              <span class="channel-card__dot" :style="{ background: card.color }" />
+              <span class="channel-card__id-text mono-font">CH{{ card.index + 1 }}</span>
+            </div>
+            <div class="channel-card__actions">
+              <UiButton
+                variant="ghost"
+                size="sm"
+                :class="{ 'channel-card__action-btn--active': card.isChartVisible }"
+                :aria-label="card.isChartVisible ? '隐藏波形' : '显示波形'"
+                @click.stop="toggleChartVisibility(card.index)"
+              >
+                <template #icon>
+                  <Eye v-if="card.isChartVisible" class="channel-card__icon" />
+                  <EyeOff v-else class="channel-card__icon" />
+                </template>
+              </UiButton>
+              <UiButton
+                variant="ghost"
+                size="sm"
+                :class="{ 'channel-card__action-btn--disabled': card.disableTare }"
+                :aria-label="card.disableTare ? '此通道不支持校零' : '归零'"
+                :disabled="card.disableTare"
+                @click.stop="setTare(card.index, card.rawValue)"
+              >
+                <template #icon>
+                  <Minus class="channel-card__icon" />
+                </template>
+              </UiButton>
+            </div>
           </div>
-          <div class="channel-card__id">
-            <span class="channel-card__dot" :style="{ background: channelColor(snapshot.channelIndices[snapshotIndex]) }" />
-            <span class="channel-card__id-text mono-font">CH{{ snapshot.channelIndices[snapshotIndex] + 1 }}</span>
+          <div class="channel-card__value-area">
+            <div class="channel-card__value-row">
+              <span
+                class="channel-card__value mono-font"
+                :class="{ 'text-amber-500': card.tone === 'warning' }"
+              >
+                {{ card.formattedValue }}
+              </span>
+              <span class="channel-card__unit">{{ card.unit }}</span>
+            </div>
           </div>
-          <div class="channel-card__actions">
-            <UiButton
-              variant="ghost"
-              size="sm"
-              :class="{ 'channel-card__action-btn--active': isChartVisible(snapshot.channelIndices[snapshotIndex]) }"
-              :aria-label="isChartVisible(snapshot.channelIndices[snapshotIndex]) ? '隐藏波形' : '显示波形'"
-              @click.stop="toggleChartVisibility(snapshot.channelIndices[snapshotIndex])"
-            >
-              <template #icon>
-                <Eye v-if="isChartVisible(snapshot.channelIndices[snapshotIndex])" class="channel-card__icon" />
-                <EyeOff v-else class="channel-card__icon" />
-              </template>
-            </UiButton>
-            <UiButton
-              variant="ghost"
-              size="sm"
-              :class="{ 'channel-card__action-btn--disabled': shouldDisableTare(snapshot.channelIndices[snapshotIndex]) }"
-              :aria-label="shouldDisableTare(snapshot.channelIndices[snapshotIndex]) ? '此通道不支持校零' : '归零'"
-              :disabled="shouldDisableTare(snapshot.channelIndices[snapshotIndex])"
-              @click.stop="setTare(snapshot.channelIndices[snapshotIndex], rawValue)"
-            >
-              <template #icon>
-                <Minus class="channel-card__icon" />
-              </template>
-            </UiButton>
-          </div>
-        </div>
-        <div class="channel-card__value-area">
-          <div class="channel-card__value-row">
+          <div v-if="!isMixedMode" class="channel-card__sparkline">
             <span
-              class="channel-card__value mono-font"
-              :class="{ 'text-amber-500': detailChannelTone(snapshot.channelIndices[snapshotIndex], rawValue) === 'warning' }"
-            >
-              {{ formatChannel(snapshot.channelIndices[snapshotIndex], rawValue) }}
-            </span>
-            <span class="channel-card__unit">{{ channelUnit(snapshot.channelIndices[snapshotIndex]) }}</span>
-          </div>
-        </div>
-        <div v-if="!isMixedMode" class="channel-card__sparkline">
-            <span
-              v-for="(h, i) in sparkBars(snapshot.channelIndices[snapshotIndex])"
+              v-for="(h, i) in card.sparkBars"
               :key="i"
               class="channel-card__spark"
-              :class="{ 'channel-card__spark--active': i === sparkBars(snapshot.channelIndices[snapshotIndex]).length - 1 }"
-              :style="{ height: `${h}%`, background: i === sparkBars(snapshot.channelIndices[snapshotIndex]).length - 1 ? channelColor(snapshot.channelIndices[snapshotIndex]) : undefined }"
+              :class="{ 'channel-card__spark--active': i === card.sparkBars.length - 1 }"
+              :style="{ height: `${h}%`, background: i === card.sparkBars.length - 1 ? card.color : undefined }"
             />
-        </div>
-        <div v-if="!isMixedMode" class="channel-card__range mono-font">
-          <span>MIN: {{ channelRange(snapshot.channelIndices[snapshotIndex]).min }}</span>
-          <span>MAX: {{ channelRange(snapshot.channelIndices[snapshotIndex]).max }}</span>
-        </div>
-      </article>
+          </div>
+          <div v-if="!isMixedMode" class="channel-card__range mono-font">
+            <span>MIN: {{ card.range.min }}</span>
+            <span>MAX: {{ card.range.max }}</span>
+          </div>
+        </article>
       </div>
 
       <div v-else-if="showTable" class="detail-panel__empty">

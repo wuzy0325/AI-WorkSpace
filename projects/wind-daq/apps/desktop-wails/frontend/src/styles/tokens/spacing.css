@@ -14,4 +14,35 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
   --space-16: 4rem;
+
+  /* ===================================================================
+     配置画面密度 token（VSCode 风格紧凑档）
+     适用范围：设备/控制器/校准/遍历等配置类画面的字段与分组布局
+     设计依据：DESIGN.md 「Instrument-grade — dense readable telemetry」
+     间距分级：字段内 < 字段间 < 分组间 < 区块间
+     =================================================================== */
+
+  /* 字段内：label 与控件之间的纵向间距（2px） */
+  --density-field-inline: var(--space-0-5);
+
+  /* 字段间：同一分组内相邻字段之间的间距（8px） */
+  --density-field-gap: var(--space-2);
+
+  /* 分组内边距：配置卡片 / boxed section 的 padding（8px 12px） */
+  --density-group-padding: var(--space-2) var(--space-3);
+
+  /* 分组间：相邻配置卡片之间的间距（10px） */
+  --density-group-gap: var(--space-2-5);
+
+  /* 区块间：顶层 section 之间的间距（12px） */
+  --density-section-gap: var(--space-3);
+
+  /* 紧凑控件高度：input / select 的统一高度（28px） */
+  --density-control-height: 1.75rem;
+
+  /* 紧凑控件横向内边距（8px） */
+  --density-control-pad-x: var(--space-2);
+
+  /* 分组标题与正文之间的间距（4px） */
+  --density-group-title-gap: var(--space-1);
 }

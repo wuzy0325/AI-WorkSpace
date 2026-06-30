@@ -628,8 +628,20 @@ function addFromDiscovery(d: ScanResult) {
   if (d.macAddress) draft.value.macAddress = d.macAddress
 }
 
+// 预计算发现设备与已注册 profile 的匹配映射，避免模板中 O(n×m) 重复查找。
+// discovered 列表变化时自动重算；单个发现设备绑定后展示已匹配名称与操作按钮均复用此映射。
+const discoveredProfileMap = computed<Map<ScanResult, DeviceProfile | null>>(() => {
+  const map = new Map<ScanResult, DeviceProfile | null>()
+  for (const d of discovered.value) {
+    const matched = deviceStore.profiles.find((p) => p.type === d.type && p.address === d.address && p.port === d.port)
+    map.set(d, matched ?? null)
+  }
+  return map
+})
+
 function matchedProfileForDiscovered(d: ScanResult): DeviceProfile | null {
-  return deviceStore.profiles.find((p) => p.type === d.type && p.address === d.address && p.port === d.port) ?? null
+  // 回退到预计算映射（调用方未传 computed 结果的场景亦可直接查 map）
+  return discoveredProfileMap.value.get(d) ?? null
 }
 
 function discoveryActionLabel(d: ScanResult): string {
@@ -912,8 +924,8 @@ const enabledOnlyChannels = ref(false)
                   <div v-if="discoveryMetadataEntries(d).length" class="discovered-card-meta">
                     <span v-for="entry in discoveryMetadataEntries(d)" :key="entry.label" class="discovered-meta-badge">{{ entry.label }}: {{ entry.value }}</span>
                   </div>
-                  <div v-if="matchedProfileForDiscovered(d)" class="discovered-matched">
-                    已匹配: {{ matchedProfileForDiscovered(d)?.name }}
+                  <div v-if="discoveredProfileMap.get(d)" class="discovered-matched">
+                    已匹配: {{ discoveredProfileMap.get(d)?.name }}
                   </div>
                 </div>
                 <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
@@ -1679,7 +1691,13 @@ const enabledOnlyChannels = ref(false)
 :deep(.editor-tab):hover { color: var(--text-primary); }
 :deep(.editor-tab.active) { background: var(--bg-panel); color: var(--color-accent); }
 
-.editor-body { padding: 1.5rem; overflow-y: auto; flex: 1; min-height: 0; }
+.editor-body {
+  /* 紧凑密度：编辑器正文内边距收紧到 12px 16px */
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
 
 /* 横幅过渡动画 */
 .banner-enter-active,
@@ -1697,31 +1715,43 @@ const enabledOnlyChannels = ref(false)
 }
 
 .editor-error-banner {
-  display: flex; align-items: center; gap: 0.625rem;
-  padding: 0.875rem 1rem; border-radius: 0.625rem;
+  display: flex; align-items: center; gap: 0.5rem;
+  /* 紧凑密度：错误横幅 padding 收紧 */
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
   background: rgba(244,63,94,0.08); border: 1px solid rgba(244,63,94,0.2);
   font-size: var(--font-size-xs); font-weight: 700; color: var(--color-danger);
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--density-section-gap);
 }
 .editor-readonly-banner {
-  display: flex; align-items: center; gap: 0.625rem;
-  padding: 0.875rem 1rem; border-radius: 0.625rem;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
   background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
   font-size: var(--font-size-xs); font-weight: 700; color: var(--color-warning);
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--density-section-gap);
 }
 .banner-icon {
   flex-shrink: 0;
   opacity: 0.9;
 }
 
-.editor-sections { display: flex; flex-direction: column; gap: 2rem; }
+/* 紧凑密度：区块间 12px（原 32px），让 860px modal 多塞字段 */
+.editor-sections { display: flex; flex-direction: column; gap: var(--density-section-gap); }
 .editor-section { }
-.editor-section-head { margin-bottom: 1rem; }
-.editor-section-title { font-size: var(--font-size-xs); font-weight: 800; letter-spacing: 0.1em; color: var(--text-primary); text-transform: uppercase; margin: 0; }
-.editor-section-desc { font-size: var(--font-size-2xs); font-weight: 700; color: var(--text-muted); margin-top: 0.25rem; }
+/* 紧凑密度：section 标题与正文 4px */
+.editor-section-head { margin-bottom: var(--density-group-title-gap); }
+.editor-section-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  /* 中文标题不 uppercase */
+  text-transform: none;
+  margin: 0;
+}
+.editor-section-desc { font-size: var(--font-size-2xs); font-weight: 600; color: var(--text-muted); margin-top: 0.125rem; }
 
-.editor-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
+/* 紧凑密度：字段间 8px（原 16px） */
+.editor-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--density-field-gap); }
 .editor-field { margin-bottom: 0; }
 .col-2 { grid-column: span 2; }
 .col-3 { grid-column: span 3; }
@@ -1731,10 +1761,21 @@ const enabledOnlyChannels = ref(false)
 .col-7 { grid-column: span 7; }
 .col-12 { grid-column: span 12; }
 
-.editor-label { display: block; margin-bottom: 0.375rem; font-size: var(--font-size-2xs); font-weight: 800; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+/* 紧凑密度：label 与控件 2px，中文标签不 uppercase */
+.editor-label {
+  display: block;
+  margin-bottom: var(--density-field-inline);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
 .editor-input {
-  width: 100%; padding: 0.625rem 0.75rem;
-  border-radius: 0.5rem; border: 1px solid var(--border-default);
+  width: 100%;
+  /* 紧凑控件：高度 28px，横向内边距 8px */
+  height: var(--density-control-height);
+  padding: 0 var(--density-control-pad-x);
+  border-radius: var(--radius-sm); border: 1px solid var(--border-default);
   background: rgba(0, 0, 0, 0.2); color: var(--text-primary);
   font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: 700;
   outline: none; transition: all 0.2s;
@@ -1743,22 +1784,23 @@ const enabledOnlyChannels = ref(false)
 .editor-input:disabled { opacity: 0.6; cursor: not-allowed; }
 .editor-input-readonly {
   display: flex; align-items: center;
-  height: var(--space-10); font-weight: 700; color: var(--text-muted);
+  height: var(--density-control-height); font-weight: 700; color: var(--text-muted);
 }
 :root[data-theme='light'] .editor-input { background: rgba(255, 255, 255, 0.9); border-color: var(--border-strong); color: var(--text-primary); }
 :root[data-theme='light'] .editor-input:focus { background: #ffffff; border-color: var(--accent-primary); }
-.editor-field-error { margin-top: 0.375rem; font-size: var(--font-size-2xs); font-weight: 700; color: var(--color-danger); }
+.editor-field-error { margin-top: var(--density-field-inline); font-size: var(--font-size-2xs); font-weight: 700; color: var(--color-danger); }
 
 .editor-unit-row { display: flex; align-items: center; gap: 0.75rem; }
 .editor-unit-select { flex: 1; }
 .editor-unit-hint { font-size: var(--font-size-2xs); font-weight: 700; color: var(--text-muted); max-width: 200px; line-height: 1.4; }
 
+/* 紧凑密度：大气数据行 padding 收紧 */
 .editor-atmo-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.75rem 1rem; border-radius: 0.5rem;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
   border: 1px solid var(--border-default); background: var(--bg-panel);
 }
-.editor-atmo-toggle { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; }
+.editor-atmo-toggle { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
 .editor-toggle-track {
   width: 44px; height: var(--space-6); border-radius: 999px;
   background: var(--border-default); position: relative; transition: all 0.2s;
@@ -1772,9 +1814,10 @@ const enabledOnlyChannels = ref(false)
 .editor-toggle-thumb.on { transform: translateX(var(--space-5)); }
 .editor-atmo-label { font-size: var(--font-size-xs); font-weight: 700; color: var(--text-primary); }
 
+/* 紧凑密度：自动连接行 padding 收紧 */
 .editor-autoconnect-row {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.75rem 1rem; border-radius: 0.5rem;
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
   background: rgba(59,130,246,0.05);
 }
 .editor-autoconnect-label {
@@ -1783,19 +1826,19 @@ const enabledOnlyChannels = ref(false)
 }
 .editor-autoconnect-check { width: var(--space-4); height: var(--space-4); accent-color: var(--color-accent); }
 
-/* Channels */
-.editor-channels-special { display: flex; flex-direction: column; gap: 1rem; }
+/* Channels — 紧凑密度：分组间 10px */
+.editor-channels-special { display: flex; flex-direction: column; gap: var(--density-group-gap); }
 .editor-channels-hint { font-size: var(--font-size-xs); color: var(--text-muted); margin: 0; }
-.editor-channels-full { display: flex; flex-direction: column; gap: 0.625rem; }
+.editor-channels-full { display: flex; flex-direction: column; gap: var(--density-field-gap); }
 
-.editor-channels-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-.editor-channels-toolbar-left { display: flex; gap: 0.375rem; }
+.editor-channels-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--density-field-gap); }
+.editor-channels-toolbar-left { display: flex; gap: var(--space-1-5); }
 
-/* 批量同步 - 紧凑单行 */
+/* 批量同步 - 紧凑单行：padding 收紧到 4px 8px */
 .editor-ch-batch {
-  display: flex; align-items: center; gap: 1rem;
-  padding: 0.375rem 0.75rem;
-  border-radius: 0.5rem;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-panel-strong) 30%, transparent);
   border: 1px solid var(--border-default);
   flex-wrap: wrap;
@@ -1846,7 +1889,8 @@ const enabledOnlyChannels = ref(false)
   background: var(--bg-panel-strong);
 }
 .editor-channels-table th {
-  padding: 0.375rem 0.625rem;
+  /* 紧凑密度：表头 padding 收紧 */
+  padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0;
@@ -1856,7 +1900,8 @@ const enabledOnlyChannels = ref(false)
   white-space: nowrap;
 }
 .editor-channels-table td {
-  padding: 0.25rem 0.5rem;
+  /* 紧凑密度：单元格 padding 收紧到 2px 6px */
+  padding: var(--space-0-5) var(--space-1-5);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
   font-size: var(--font-size-xs);
   color: var(--text-primary);

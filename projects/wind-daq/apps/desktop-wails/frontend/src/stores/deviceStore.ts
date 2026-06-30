@@ -165,6 +165,9 @@ export const useDeviceStore = defineStore('devices', () => {
       buffer = []
       historyBuffers.value.set(normalized.deviceId, buffer)
     }
+    const last = buffer[buffer.length - 1]
+    if (last?.timestamp === normalized.timestamp) return
+
     buffer.push(normalized)
     if (buffer.length > MAX_HISTORY_POINTS) buffer.shift()
   }

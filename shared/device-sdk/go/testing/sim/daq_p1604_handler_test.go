@@ -29,9 +29,9 @@ func TestBuildP1604Frame_NoTimestamp(t *testing.T) {
 	if got := binary.BigEndian.Uint16(frame[:2]); got != uint16(p1604DefaultPayload+2) {
 		t.Fatalf("长度前缀 = %d, want %d", got, p1604DefaultPayload+2)
 	}
-	// 头部 0xAA 0x55（>0x7E 使 IsASCIIFrame=false）
-	if frame[2] != 0xAA || frame[3] != 0x55 {
-		t.Fatalf("帧头 = %02x %02x, want AA 55", frame[2], frame[3])
+	// 头部 0x01 seq(2B) 0x00 0x00（0x01 使 IsASCIIFrame=false）
+	if frame[2] != 0x01 {
+		t.Fatalf("帧头首字节 = %02x, want 0x01", frame[2])
 	}
 	if sharedproto.IsASCIIFrame(frame[2:]) {
 		t.Fatal("IsASCIIFrame 应为 false（二进制帧）")

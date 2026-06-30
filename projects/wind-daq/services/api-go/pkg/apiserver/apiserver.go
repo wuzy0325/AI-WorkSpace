@@ -24,6 +24,7 @@ import (
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/debugserver"
 	"wind-daq/services/api-go/pkg/logging"
 	"wind-daq/services/api-go/pkg/wiring"
@@ -58,7 +59,11 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	}
 
 	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
-	recorder := usecase.NewStorageRecorder(storageadapter.NewCSVRecordingSink())
+	appConfigStore := configadapter.NewFileAppConfigStore("config/app")
+	recorder, err := appcontext.NewStorageRecorderFromConfigStore(appConfigStore)
+	if err != nil {
+		return nil, err
+	}
 	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
 
 	motionProfileStore := motionprofile.NewFileMotionProfileStore("config/motion-profiles.json")
@@ -72,15 +77,11 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	calMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
 		return storageadapter.NewCalibrationCsvWriterOverwrite(config)
 	})
-	appConfigStore := configadapter.NewFileAppConfigStore("config/app")
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()
-	dataSink := func(payload device.DataPayload) {
-		hub.OnData(payload)
-		_ = recorder.HandlePayload(payload)
-	}
+	dataSink := usecase.NewDataSink(hub, recorder)
 	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, configadapter.NewProfileNormalizer())
 	if err != nil {
 		return nil, err

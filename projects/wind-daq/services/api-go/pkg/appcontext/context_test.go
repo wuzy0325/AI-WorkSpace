@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCopyDefaultProfilesCreatesValidDefaults(t *testing.T) {
@@ -36,6 +37,37 @@ func TestCopyDefaultProfilesRepairsInvalidMotionConfig(t *testing.T) {
 	assertValidJSONArray(t, motionPath)
 	if _, err := os.Stat(motionPath + ".invalid"); err != nil {
 		t.Fatalf("expected invalid config backup: %v", err)
+	}
+}
+
+func TestAppContextSimulatedAcquisitionPreservesPayloadSlices(t *testing.T) {
+	ctx, err := NewAppContext(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewAppContext returned error: %v", err)
+	}
+	if err := ctx.DeviceManager.Connect("sim-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := ctx.DeviceManager.StartAcquisition("sim-1"); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	defer ctx.DeviceManager.StopAcquisition("sim-1")
+
+	deadline := time.After(700 * time.Millisecond)
+	for {
+		payload, ok := ctx.AcquisitionHub.GetLatestData("sim-1")
+		if ok && len(payload.Channels) == 18 && len(payload.ChannelIndices) == 18 {
+			if payload.ChannelIndices[1] != 1 || payload.ChannelIndices[17] != 17 {
+				t.Fatalf("expected preserved channel indices, got %#v", payload.ChannelIndices)
+			}
+			return
+		}
+
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for simulated acquisition data")
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 }
 

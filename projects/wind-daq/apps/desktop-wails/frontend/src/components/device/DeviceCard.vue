@@ -69,20 +69,23 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
         </div>
       </div>
       <div class="device-card-right">
-        <UiButton variant="secondary" size="md" @click="emit('edit')">编辑</UiButton>
-        <!-- 连接按钮：connecting 分组禁用并显示 spinner -->
-        <UiButton
-          size="md"
-          :disabled="group === 'connecting'"
-          @click="emit('connect-toggle')"
-        >
-          <span v-if="group === 'connecting'" class="inline-spinner" aria-hidden="true"></span>
-          {{ connectLabel }}
-        </UiButton>
-        <UiButton v-if="showAcquireBtn()" size="md" @click="emit('toggle-acquisition')">
-          {{ acquiring ? '停止' : '采集' }}
-        </UiButton>
-        <UiButton variant="danger" size="md" @click="emit('remove')">删除</UiButton>
+        <!-- 操作按钮统一使用小尺寸，降低卡片视觉重量 -->
+        <div class="device-card-actions">
+          <UiButton variant="secondary" size="sm" @click="emit('edit')">编辑</UiButton>
+          <!-- 连接按钮：connecting 分组禁用并显示 spinner -->
+          <UiButton
+            size="sm"
+            :disabled="group === 'connecting'"
+            @click="emit('connect-toggle')"
+          >
+            <span v-if="group === 'connecting'" class="inline-spinner" aria-hidden="true"></span>
+            {{ connectLabel }}
+          </UiButton>
+          <UiButton v-if="showAcquireBtn()" size="sm" @click="emit('toggle-acquisition')">
+            {{ acquiring ? '停止' : '采集' }}
+          </UiButton>
+          <UiButton variant="danger" size="sm" @click="emit('remove')">删除</UiButton>
+        </div>
       </div>
     </div>
     <div v-if="showErrorBadge()" class="device-card-error">
@@ -97,6 +100,7 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border-default);
+  /* 紧凑密度：卡片圆角保持，但内部padding统一收紧 */
   border-radius: var(--radius-xl);
   background: var(--bg-panel);
   transition: border-color 0.2s ease;
@@ -132,10 +136,12 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
 
 .device-card-body {
   display: flex;
+  /* 顶部对齐：左侧名称+元信息可能多行，右侧按钮单行，居中对齐会导致视觉错位 */
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-4);
+  gap: var(--space-3);
+  /* 紧凑密度：卡片 body padding 从 1rem 收紧到 12px 16px */
+  padding: var(--space-3) var(--space-4);
 }
 
 .device-card-left {
@@ -148,7 +154,7 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-1-5);
 }
 
 .device-card-name {
@@ -205,7 +211,17 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
 .device-card-right {
   display: flex;
   flex-shrink: 0;
-  flex-direction: column;
+  /* 与左侧顶部对齐，避免按钮在卡片垂直方向漂浮 */
+  align-items: flex-start;
+  padding-top: var(--space-0-5);
+}
+
+/* 小按钮紧凑水平排列，避免单列按钮占用过高 */
+.device-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: flex-start;
   gap: var(--space-1-5);
 }
 
@@ -213,7 +229,8 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
-  margin: 0 var(--space-4) var(--space-3);
+  /* 与上方 body 留出间距，避免错误横幅紧贴内容 */
+  margin: var(--space-2) var(--space-4) var(--space-3);
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   border-radius: var(--radius-lg);

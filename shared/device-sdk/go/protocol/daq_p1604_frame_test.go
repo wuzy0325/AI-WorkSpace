@@ -10,6 +10,7 @@ import (
 
 func TestParseStreamFrame_Valid(t *testing.T) {
 	data := make([]byte, 77)
+	data[0] = 0x01 // 协议规定二进制流帧头第 0 字节固定为 0x01
 	for i := 0; i < 18; i++ {
 		f := float32(i + 1)
 		binary.BigEndian.PutUint32(data[5+i*4:], math.Float32bits(f))
@@ -47,6 +48,7 @@ func TestParseStreamFrame_TooShort(t *testing.T) {
 
 func TestParseStreamFrame_PressureReversal(t *testing.T) {
 	data := make([]byte, 77)
+	data[0] = 0x01 // 协议规定二进制流帧头第 0 字节固定为 0x01
 	for i := 0; i < 16; i++ {
 		f := float32(16 - i)
 		binary.BigEndian.PutUint32(data[5+i*4:], math.Float32bits(f))

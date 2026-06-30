@@ -3,7 +3,14 @@ import { computed, type Component, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
-import { useStorageStore, type StorageSettings, DEFAULT_SETTINGS } from '@stores/storageStore'
+import {
+  useStorageStore,
+  type StorageSettings,
+  DEFAULT_SETTINGS,
+  WAVEFORM_BUFFER_MIN,
+  WAVEFORM_BUFFER_MAX,
+  WAVEFORM_BUFFER_STEP,
+} from '@stores/storageStore'
 import { useThemeStore } from '@stores/themeStore'
 import { deviceApi, storageApi } from '@api/deviceApi'
 import { wailsApi } from '@api/wails-adapter'
@@ -19,6 +26,7 @@ import UiErrorState from '@components/ui/UiErrorState.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
 import UiFormField from '@components/ui/UiFormField.vue'
 import {
+  Activity,
   CheckCircle,
   Clock,
   FileText,
@@ -70,6 +78,8 @@ const rotationDurationMinutes = ref(30)
 const rotationSizeMb = ref(100)
 const refreshRate = ref(20)
 const originalRefreshRate = ref(20)
+const waveformBufferSize = ref(DEFAULT_SETTINGS.waveformBufferSize)
+const originalWaveformBufferSize = ref(DEFAULT_SETTINGS.waveformBufferSize)
 
 /** 字段级校验错误记录 */
 const validationErrors = ref<Record<string, string>>({})
@@ -130,6 +140,9 @@ function applySettings(s: StorageSettings): void {
   rotationEnabled.value = fr.enabled
   rotationDurationMinutes.value = Math.max(1, Math.round(fr.maxDurationMs / 1000 / 60))
   rotationSizeMb.value = Math.max(1, Math.round(fr.maxFileSizeBytes / (1024 * 1024)))
+  // 对从 store 读入的值做边界限制，确保 UI 展示合法
+  waveformBufferSize.value = Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, s.waveformBufferSize ?? DEFAULT_SETTINGS.waveformBufferSize))
+  originalWaveformBufferSize.value = waveformBufferSize.value
 }
 
 function currentSettings(): StorageSettings {
@@ -147,6 +160,8 @@ function currentSettings(): StorageSettings {
       maxFileSizeBytes: rotationSizeMb.value * 1024 * 1024,
       maxDurationMs: rotationDurationMinutes.value * 60 * 1000,
     },
+    // 保存前再次限制范围，防止通过输入框绕过校验
+    waveformBufferSize: Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, waveformBufferSize.value)),
   }
 }
 
@@ -175,6 +190,9 @@ function validateField(field: string): string {
     case 'refreshRate':
       return refreshRate.value < 1 || refreshRate.value > 20
         ? '刷新率范围为 1 到 20 Hz' : ''
+    case 'waveformBufferSize':
+      return waveformBufferSize.value < WAVEFORM_BUFFER_MIN || waveformBufferSize.value > WAVEFORM_BUFFER_MAX
+        ? `波形图缓冲区点数范围为 ${WAVEFORM_BUFFER_MIN} 到 ${WAVEFORM_BUFFER_MAX}` : ''
     default:
       return ''
   }
@@ -195,7 +213,7 @@ function updateFieldError(field: string): void {
 function validate(): boolean {
   const fields = [
     'baseDirectory', 'filePrefix', 'durationMinutes', 'sizeMb',
-    'recordCount', 'rotationDurationMinutes', 'rotationSizeMb', 'refreshRate',
+    'recordCount', 'rotationDurationMinutes', 'rotationSizeMb', 'refreshRate', 'waveformBufferSize',
   ]
   const errs: Record<string, string> = {}
   for (const field of fields) {
@@ -217,6 +235,8 @@ function onReset(): void {
   applySettings(DEFAULT_SETTINGS)
   refreshRate.value = 20
   originalRefreshRate.value = 20
+  waveformBufferSize.value = DEFAULT_SETTINGS.waveformBufferSize
+  originalWaveformBufferSize.value = DEFAULT_SETTINGS.waveformBufferSize
   validationErrors.value = {}
   feedback.pushToast('已恢复默认设置', 'info')
 }
@@ -407,6 +427,54 @@ async function onSave(): Promise<void> {
                       @blur="updateFieldError('refreshRate')"
                     />
                     <span class="input-unit">Hz</span>
+                  </div>
+                </div>
+              </UiFormField>
+            </div>
+          </UiPanel>
+
+          <!-- 波形图缓冲区 -->
+          <UiPanel class="form-card">
+            <template #header>
+              <div class="card-head">
+                <Activity :size="15" />
+                <span class="card-head__title">波形图</span>
+              </div>
+            </template>
+            <div class="form-fields">
+              <UiFormField
+                label="波形图缓冲区点数"
+                :error="validationErrors.waveformBufferSize"
+                hint="较大的缓冲区可显示更长时间趋势，但会占用更多内存"
+              >
+                <div class="refresh-row">
+                  <div class="refresh-slider">
+                    <UiSlider
+                      v-model="waveformBufferSize"
+                      :min="WAVEFORM_BUFFER_MIN"
+                      :max="WAVEFORM_BUFFER_MAX"
+                      :step="WAVEFORM_BUFFER_STEP"
+                      aria-label="波形图缓冲区点数"
+                    />
+                    <div class="refresh-labels">
+                      <span class="refresh-label">{{ WAVEFORM_BUFFER_MIN }} 点</span>
+                      <span
+                        class="refresh-label refresh-label--highlight"
+                        :class="{ 'refresh-label--active': waveformBufferSize >= 100 && waveformBufferSize <= 500 }"
+                      >推荐 100–500 点</span>
+                      <span class="refresh-label">{{ WAVEFORM_BUFFER_MAX }} 点</span>
+                    </div>
+                  </div>
+                  <div class="refresh-value">
+                    <UiInputNumber
+                      v-model="waveformBufferSize"
+                      :min="WAVEFORM_BUFFER_MIN"
+                      :max="WAVEFORM_BUFFER_MAX"
+                      :step="WAVEFORM_BUFFER_STEP"
+                      size="small"
+                      @blur="updateFieldError('waveformBufferSize')"
+                    />
+                    <span class="input-unit">点</span>
                   </div>
                 </div>
               </UiFormField>
@@ -732,7 +800,8 @@ async function onSave(): Promise<void> {
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  /* 紧凑密度：卡片间 10px */
+  gap: var(--density-group-gap);
 }
 
 /* ===== 表单卡片 ===== */
@@ -752,11 +821,11 @@ async function onSave(): Promise<void> {
   color: var(--text-primary);
 }
 
-/* ===== 表单字段区域 ===== */
+/* ===== 表单字段区域 ===== — 紧凑密度：字段间 8px */
 .form-fields {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--density-field-gap);
 }
 
 /* ===== 输入框组合 ===== */
@@ -782,12 +851,12 @@ async function onSave(): Promise<void> {
   white-space: nowrap;
 }
 
-/* ===== 开关行 ===== */
+/* ===== 开关行 ===== — 紧凑密度：padding 收紧到 8px 12px */
 .toggle-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--density-group-padding);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-app);
@@ -853,19 +922,20 @@ async function onSave(): Promise<void> {
   background: var(--bg-panel-strong);
 }
 
-/* ===== 条件行列表 ===== */
+/* ===== 条件行列表 ===== — 紧凑密度：行间 8px */
 .conditions-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--density-field-gap);
 }
 
+/* 紧凑密度：条件行 padding 收紧到 8px 12px */
 .condition-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--density-group-padding);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-app);

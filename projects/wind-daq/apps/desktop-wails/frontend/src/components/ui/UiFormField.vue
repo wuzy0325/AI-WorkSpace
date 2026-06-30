@@ -21,17 +21,19 @@ defineProps<{
 </template>
 
 <style scoped>
+/* 紧凑密度：字段内边距走 density token，统一配置画面间距 */
 .ui-form-field {
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--density-field-gap);
 }
 .ui-form-field__label {
   display: block;
-  margin-bottom: var(--space-1);
+  /* 字段内：label ↔ control 纵向 2px */
+  margin-bottom: var(--density-field-inline);
   font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  /* 中文标签不 uppercase，保持原形 */
+  letter-spacing: 0.02em;
 }
 .ui-form-field__required {
   color: var(--accent-danger);
@@ -41,13 +43,13 @@ defineProps<{
   width: 100%;
 }
 .ui-form-field__error {
-  margin: var(--space-1) 0 0;
+  margin: var(--density-field-inline) 0 0;
   font-size: var(--font-size-xs);
   color: var(--accent-danger);
   line-height: var(--line-height-base);
 }
 .ui-form-field__hint {
-  margin: var(--space-1) 0 0;
+  margin: var(--density-field-inline) 0 0;
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   line-height: var(--line-height-base);

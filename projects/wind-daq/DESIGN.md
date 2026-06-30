@@ -101,3 +101,40 @@ Additional specs to be added: state vocabulary, copy guidelines, motion guidelin
 The old `Cursor DAQ` Electron project is no longer the visual target. It remains in the repository (under `docs/migration/`) only as a feature inventory — what features must exist, what operator workflows must be preserved. Visual layout, color choices, and component composition are no longer constrained by that project.
 
 See `docs/migration/README.md` for the current role of migration docs and `docs/ui-design-audit.md` for the per-screen cleanup backlog.
+
+## Density Spec
+
+配置类画面（设备配置、运动控制器配置、校准设置、遍历设置、全局设置）采用 **VSCode 风格紧凑密度**，目标是在 1600×900 默认窗口内尽量多承载字段，同时保持中文标签 + 数字输入的可读性。密度 token 定义在 `styles/tokens/spacing.css`，前缀统一为 `--density-*`。
+
+### 间距分级
+
+| 层级 | Token | 值 | 用途 |
+|---|---|---|---|
+| 字段内 | `--density-field-inline` | 2px | label ↔ control 纵向间距 |
+| 字段间 | `--density-field-gap` | 8px | 同一分组内相邻字段间距 |
+| 分组内边距 | `--density-group-padding` | 8px 12px | 配置卡片 / boxed section 的 padding |
+| 分组间 | `--density-group-gap` | 10px | 相邻配置卡片之间 |
+| 区块间 | `--density-section-gap` | 12px | 顶层 section 之间 |
+| 分组标题间距 | `--density-group-title-gap` | 4px | 分组标题与正文之间 |
+| 控件高度 | `--density-control-height` | 28px | input / select 统一高度 |
+| 控件横向内边距 | `--density-control-pad-x` | 8px | input / select 横向 padding |
+
+### 应用规则
+
+1. **字段内布局**：label 与控件用 `flex-direction: column; gap: var(--density-field-inline)`。
+2. **字段网格**：同分组字段用 `display: grid; gap: var(--density-field-gap)`，列数根据面板宽度自适应（通常 2–3 列）。
+3. **分组卡片**：`padding: var(--density-group-padding)`，标题与正文之间用 `margin-bottom: var(--density-group-title-gap)`。
+4. **区块容器**：顶层 `display: flex; flex-direction: column; gap: var(--density-section-gap)`。
+5. **控件高度**：所有 input/select/number 输入统一 `height: var(--density-control-height)`，避免画面内高度参差。
+6. **底线**：字段内 label 最小行高 1.25（约 14px line-height），input 最小高度 28px，确保中文与数字可读。
+
+### 禁止事项
+
+- 配置画面内禁止使用 `--space-4`（16px）或更大的字段间距，除非是区块顶层 `--density-section-gap` 之上的留白。
+- 禁止在同一画面混用紧凑档（`--density-*`）与标准档（`--space-3/4`）的间距值，必须统一到本规范。
+- 禁止字段标签使用 `text-transform: uppercase`（仅英文标签可用），中文标签应保持原形并配 `font-weight: 600`。
+
+### 适用范围与例外
+
+- **适用**：DaqT1603Config、MotionControllerConfig、AxisConfigCard、GlobalSettingsModal、FiveHole/ThreeHole/TotalPressure/TotalTemperature Settings、TraversalSettings。
+- **例外**：数据面板（DeviceOverviewPanel、RealtimeChart）、Dashboard 卡片仍使用标准 `--space-*` 档，保持仪表读数的呼吸感；对话框底部操作区（保存/取消按钮）保留 `--space-3` 以上间距，避免误点。

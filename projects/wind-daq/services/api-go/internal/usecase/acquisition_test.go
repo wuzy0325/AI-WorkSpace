@@ -39,11 +39,15 @@ func TestAcquisitionHubRejectsInvalidPublishRate(t *testing.T) {
 	if err := hub.SetPublishRate(0); err == nil {
 		t.Fatal("expected invalid publish rate error")
 	}
-	if err := hub.SetPublishRate(101); err == nil {
+	// maxPublishHz 已从 100 提到 500，覆盖 1kHz 设备的 1/2 采样率直送场景
+	if err := hub.SetPublishRate(501); err == nil {
 		t.Fatal("expected invalid publish rate error")
 	}
 	if err := hub.SetPublishRate(50); err != nil {
 		t.Fatalf("expected 50 Hz to be valid: %v", err)
+	}
+	if err := hub.SetPublishRate(500); err != nil {
+		t.Fatalf("expected 500 Hz to be valid: %v", err)
 	}
 }
 

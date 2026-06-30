@@ -43,9 +43,9 @@ const (
 //   - 真实 adapter 的 sendCommand 只写不读（setup 命令不读响应），故 setup 命令返回 nil
 //     不回写，避免响应帧污染后续 readLoop 的数据帧流。
 //   - 数据帧线上格式：2 字节大端长度前缀(值=payloadLen+2) + payload。
-//     payload = 5 字节头(0xAA 0x55 seq(2B BE) 0x00) + 16×float32 压力(BE)
+//     payload = 5 字节头(0x01 seq(2B BE) 0x00 0x00) + 16×float32 压力(BE)
 //   - 可选 8 字节时间戳 + 2×float32 大气(BE)。
-//     头部 0xAA>0x7E 使 IsASCIIFrame 返回 false，走二进制解析路径。
+//     头部 0x01 为非可打印字符，使 IsASCIIFrame=false，走二进制解析路径。
 type DAQP1604Handler struct {
 	mu          sync.Mutex
 	emit        func(frame []byte) // 由 Simulator 在 StartAcquisition 注入的帧推送回调
@@ -180,13 +180,13 @@ func (h *DAQP1604Handler) emitLoop(stop <-chan struct{}, emit func(frame []byte)
 //
 // payload =
 //
-//	[5 字节头: 0xAA 0x55 seq(2B BE) 0x00]
+//	[5 字节头: 0x01 seq(2B BE) 0x00 0x00]
 //	[16×float32 压力通道(BE)，设备顺序 CH16..CH1]
 //	[可选 8 字节时间戳: uint32 秒 + uint32 纳秒小数]
 //	[2×float32 大气(BE): CH17 大气压 + CH18 大气温]
 //
 // 长度前缀值 = len(payload)+2，对齐 FrameReader.ReadFrame（值-2=payload 长度）。
-// 头部 0xAA>0x7E 使 IsASCIIFrame=false（走二进制解析路径）。
+// 头部 0x01 为非可打印字符，使 IsASCIIFrame=false（走二进制解析路径）。
 func buildP1604Frame(seq uint32, useDeviceTs bool) []byte {
 	tsBytes := 0
 	if useDeviceTs {
@@ -195,10 +195,10 @@ func buildP1604Frame(seq uint32, useDeviceTs bool) []byte {
 	payloadSize := p1604HeaderSize + p1604PressureBytes + tsBytes + p1604Atmospheric*4
 	payload := make([]byte, payloadSize)
 
-	// 5 字节头：0xAA 0x55 标记二进制帧，序号嵌入便于测试排序
-	payload[0] = 0xAA
-	payload[1] = 0x55
-	binary.BigEndian.PutUint16(payload[2:4], uint16(seq&0xFFFF))
+	// 5 字节头：协议规定 byte0 固定为 0x01，byte1~2 为序号，byte3~4 保留。
+	payload[0] = 0x01
+	binary.BigEndian.PutUint16(payload[1:3], uint16(seq&0xFFFF))
+	payload[3] = 0x00
 	payload[4] = 0x00
 
 	// 16 路压力通道（设备顺序 CH16..CH1），值随序号变化便于断言区分

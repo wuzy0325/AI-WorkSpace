@@ -19,9 +19,18 @@ export interface StorageSettings {
     maxRecordCount?: number
   }
   fileRotation: FileRotationSettings
+  /** 实时波形图缓冲区点数 */
+  waveformBufferSize: number
 }
 
 const CONFIG_KEY = 'storage-settings'
+
+/** 波形图缓冲区点数最小值 */
+export const WAVEFORM_BUFFER_MIN = 50
+/** 波形图缓冲区点数最大值 */
+export const WAVEFORM_BUFFER_MAX = 2000
+/** 波形图缓冲区点数步长 */
+export const WAVEFORM_BUFFER_STEP = 50
 
 export const DEFAULT_SETTINGS: StorageSettings = {
   baseDirectory: 'data/recordings',
@@ -29,6 +38,7 @@ export const DEFAULT_SETTINGS: StorageSettings = {
   autoStartOnAcquisition: false,
   stopConditions: {},
   fileRotation: { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 },
+  waveformBufferSize: 100,
 }
 
 export const useStorageStore = defineStore('storage', () => {
@@ -49,12 +59,16 @@ export const useStorageStore = defineStore('storage', () => {
       }
       if (data) {
         const parsed = data as Partial<StorageSettings>
+        // 加载时进行边界限制，避免配置文件中存在非法值导致图表异常
+        const rawBufferSize = parsed.waveformBufferSize ?? DEFAULT_SETTINGS.waveformBufferSize
+        const clampedBufferSize = Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, rawBufferSize))
         settings.value = {
           baseDirectory: parsed.baseDirectory ?? DEFAULT_SETTINGS.baseDirectory,
           filePrefix: parsed.filePrefix ?? DEFAULT_SETTINGS.filePrefix,
           autoStartOnAcquisition: parsed.autoStartOnAcquisition ?? DEFAULT_SETTINGS.autoStartOnAcquisition,
           stopConditions: parsed.stopConditions ?? DEFAULT_SETTINGS.stopConditions,
           fileRotation: parsed.fileRotation ?? DEFAULT_SETTINGS.fileRotation,
+          waveformBufferSize: clampedBufferSize,
         }
       }
       if (isWailsAvailable() && settings.value.baseDirectory) {
