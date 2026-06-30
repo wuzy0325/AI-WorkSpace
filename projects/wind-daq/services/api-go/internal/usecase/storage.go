@@ -87,7 +87,6 @@ func (r *StorageRecorder) HandlePayload(payload device.DataPayload) error {
 	sink := r.sink
 	r.mu.RUnlock()
 	if !recording {
-		slog.Warn("StorageRecorder HandlePayload 跳过：未在录制", "component", "StorageRecorder", "deviceID", payload.DeviceID)
 		return nil
 	}
 	if err := sink.Write(payload); err != nil {

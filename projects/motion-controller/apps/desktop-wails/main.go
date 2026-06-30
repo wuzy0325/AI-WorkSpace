@@ -14,6 +14,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/appicon.png
+var appIcon []byte
+
 func main() {
 	appCtx, err := appcontext.NewAppContext("")
 	if err != nil {
@@ -33,6 +36,7 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(assets),
 		},
+		Icon: appIcon,
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},

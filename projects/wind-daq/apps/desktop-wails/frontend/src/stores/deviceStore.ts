@@ -169,6 +169,13 @@ export const useDeviceStore = defineStore('devices', () => {
     if (buffer.length > MAX_HISTORY_POINTS) buffer.shift()
   }
 
+  // syncSnapshotSubscriptions 根据当前 profiles 列表同步采集数据订阅。
+  //
+  // 注意：本函数在 refreshProfiles 末尾调用（L104），此时 deviceStatuses 中设备的
+  // acquiring 状态可能仍为初始值 false。实际订阅入口在 startAcquisition（L404）——
+  // StartAcquisition 成功后直接调用 subscribeToDevice + subscribedDeviceIds.add，
+  // 不依赖本函数。本函数仅作为防御性同步：如果 profiles 列表在采集过程中发生变化
+  // （新增/删除设备），确保订阅集合与 profiles 保持一致。
   function syncSnapshotSubscriptions() {
     if (!unsubscribeSnapshot) return
 
@@ -467,7 +474,7 @@ export const useDeviceStore = defineStore('devices', () => {
     const startIds = targetIds.filter((id) => statusFor(id) === 'Connected')
     if (startIds.length === 0) {
       console.warn('[startAll] 没有可启动采集的已连接设备，跳过 startAcquisition')
-      await refreshInstances()
+      await refreshAllStatuses()
       return
     }
     const results = await Promise.allSettled(startIds.map((id) => startAcquisition(id)))
@@ -477,7 +484,7 @@ export const useDeviceStore = defineStore('devices', () => {
         console.warn(`[startAll] 设备 "${profile?.name ?? startIds[idx]}" 启动采集失败:`, result.reason)
       }
     })
-    await refreshInstances()
+    await refreshAllStatuses()
   }
 
   async function stopAllAcquisitions(): Promise<void> {
@@ -492,7 +499,7 @@ export const useDeviceStore = defineStore('devices', () => {
         console.warn(`[stopAll] 设备 "${profile?.name ?? acquiringIds[idx]}" 停止采集失败:`, result.reason)
       }
     })
-    await refreshInstances()
+    await refreshAllStatuses()
   }
 
   return {

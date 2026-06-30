@@ -51,29 +51,84 @@ func IsASCIIFrame(data []byte) bool {
 	return true
 }
 
-// ParseStreamFrame parses binary stream frame
+// ParseStreamFrame parses binary stream frame (legacy, no timestamp extraction).
+// Deprecated: use ParseStreamFrameEx for frames that may include device timestamp.
 // Frame: 5-byte header + 18 x float32 (big-endian) = 77 bytes
 // Device order: CH16..CH1 (pressure) + CH17 (atm pressure) + CH18 (atm temp)
 // Reverses first 16 pressure channels to CH1..CH16
 func ParseStreamFrame(data []byte) ([]float64, error) {
+	channels, _, err := ParseStreamFrameEx(data, false, true)
+	return channels, err
+}
+
+// ParseStreamFrameEx 解析二进制流帧，支持可选的设备时间戳字段（0x0400 掩码）。
+//
+// 帧格式（按内容掩码 c 05 决定）：
+//
+//	[5-byte header] [16 x float32 压力通道 CH16..CH1]
+//	[可选 8-byte 设备时间戳：uint32 秒 + uint32 纳秒小数]
+//	[可选 2 x float32 大气数据：CH17 大气压 + CH18 大气温]
+//
+// 参数：
+//   - hasDeviceTimestamp: 是否启用了 0x0400 时间戳掩码
+//   - hasAtmosphericData: 是否启用了 0x0800 大气数据掩码
+//
+// 返回：
+//   - channels: CH1..CH16 压力 + 可选 CH17/CH18 大气数据，全部为 float64
+//   - deviceTimestampMs: 设备时间戳（毫秒），仅当 hasDeviceTimestamp=true 且帧足够长时有效
+func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData bool) (channels []float64, deviceTimestampMs int64, err error) {
 	const headerSize = 5
-	const numChannels = 18
 	const numPressure = 16
-	expectedLen := headerSize + numChannels*4
+	const pressureBytes = numPressure * 4
+	const timestampBytes = 8
+	const atmosphericChannels = 2
 
-	if len(data) < expectedLen {
-		return nil, fmt.Errorf("frame too short: %d, expected %d", len(data), expectedLen)
+	// 计算期望的最小帧长度
+	minLen := headerSize + pressureBytes
+	if hasDeviceTimestamp {
+		minLen += timestampBytes
+	}
+	if hasAtmosphericData {
+		minLen += atmosphericChannels * 4
 	}
 
-	channels := make([]float64, numChannels)
-	for i := 0; i < numChannels; i++ {
+	if len(data) < minLen {
+		return nil, 0, fmt.Errorf("frame too short: %d, expected at least %d", len(data), minLen)
+	}
+
+	// 解析 16 路压力通道（设备顺序 CH16..CH1）
+	pressureValues := make([]float64, numPressure)
+	for i := 0; i < numPressure; i++ {
 		bits := binary.BigEndian.Uint32(data[headerSize+i*4:])
-		channels[i] = float64(math.Float32frombits(bits))
+		pressureValues[i] = float64(math.Float32frombits(bits))
 	}
 
+	// 反转压力通道为 CH1..CH16
 	for i := 0; i < numPressure/2; i++ {
-		channels[i], channels[numPressure-1-i] = channels[numPressure-1-i], channels[i]
+		pressureValues[i], pressureValues[numPressure-1-i] = pressureValues[numPressure-1-i], pressureValues[i]
 	}
 
-	return channels, nil
+	// 解析设备时间戳（8 字节：uint32 秒 + uint32 纳秒小数）
+	// 位于压力通道之后、大气数据之前
+	tsOffset := headerSize + pressureBytes
+	if hasDeviceTimestamp && len(data) >= tsOffset+timestampBytes {
+		seconds := binary.BigEndian.Uint32(data[tsOffset:])
+		fractional := binary.BigEndian.Uint32(data[tsOffset+4:])
+		deviceTimestampMs = int64(seconds)*1000 + int64(math.Round(float64(fractional)/float64(0x100000000)*1000))
+		tsOffset += timestampBytes
+	}
+
+	// 解析大气数据（CH17 大气压 + CH18 大气温）
+	// 位于时间戳之后（如果有时间戳）或压力通道之后
+	channels = pressureValues
+	if hasAtmosphericData && len(data) >= tsOffset+atmosphericChannels*4 {
+		atmoValues := make([]float64, atmosphericChannels)
+		for i := 0; i < atmosphericChannels; i++ {
+			bits := binary.BigEndian.Uint32(data[tsOffset+i*4:])
+			atmoValues[i] = float64(math.Float32frombits(bits))
+		}
+		channels = append(channels, atmoValues...)
+	}
+
+	return channels, deviceTimestampMs, nil
 }

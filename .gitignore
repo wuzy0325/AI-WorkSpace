@@ -49,3 +49,7 @@ tools/wuzy-skills/npm-cache/
 
 # E2E audit artifacts
 wind-daq-*.json
+
+# wind-daq 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
+# OutputDir 运行时通过 MkdirAll 创建，无需入库）
+projects/wind-daq/apps/desktop-wails/data/recordings/

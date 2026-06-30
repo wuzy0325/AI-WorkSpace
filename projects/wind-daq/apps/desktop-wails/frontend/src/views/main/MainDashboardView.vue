@@ -29,13 +29,11 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
-import { deviceApi, storageApi } from '@api/deviceApi'
-import { subscribeDaqStream } from '@api/sse-client'
+import { storageApi } from '@api/deviceApi'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiEmptyState from '@components/ui/UiEmptyState.vue'
 import UiLoadingState from '@components/ui/UiLoadingState.vue'
 import UiButton from '@components/ui/UiButton.vue'
-import { Activity, Wifi, LineChart } from '@lucide/vue'
 
 type MainShellPage = 'dashboard' | 'calibration' | 'traversal' | 'log'
 
@@ -56,8 +54,6 @@ const recordingFilePrefix = ref('run')
 const busy = ref(false)
 const error = ref('')
 const initialLoading = ref(true)
-let sseSub: { unsubscribe: () => void } | null = null
-let wailsUnsub: (() => void) | null = null
 let unsubscribeDeviceSnapshots: (() => void) | null = null
 
 // 采集状态：委托 store 层判断（任一设备正在采集即为 true）
@@ -212,54 +208,6 @@ async function toggleRecording(): Promise<void> {
   }
 }
 
-let isSubscribing = false
-
-function subscribeStream(id: string) {
-  // 防止重复订阅的竞态条件
-  if (isSubscribing) return
-  isSubscribing = true
-  unsubscribeStream()
-  if (isWailsAvailable()) {
-    // Wails 桌面模式：使用 Wails Events 机制接收采集数据
-    void wailsApi.device.subscribeStream(id, true)
-    wailsUnsub = wailsApi.device.onPayload((payload) => {
-      deviceStore.pushSnapshot({
-        deviceId: payload.deviceId ?? '',
-        timestamp: payload.timestamp ?? 0,
-        channels: Array.isArray(payload.channels) ? payload.channels : [],
-        channelIndices: Array.isArray(payload.channelIndices) ? payload.channelIndices : [],
-      })
-    })
-  } else {
-    // Web 模式：使用 HTTP SSE
-    sseSub = subscribeDaqStream(
-      id,
-      (payload) => { deviceStore.pushSnapshot(payload) },
-      (msg) => {
-        if (msg !== 'connected') error.value = msg
-      },
-    )
-  }
-  isSubscribing = false
-}
-
-function unsubscribeStream() {
-  if (sseSub) {
-    sseSub.unsubscribe()
-    sseSub = null
-  }
-  if (wailsUnsub) {
-    const unsub = wailsUnsub
-    wailsUnsub = null
-    unsub()
-    // 使用当前选中的设备ID取消订阅，避免依赖可能已变化的变量
-    const id = deviceStore.selectedDeviceId
-    if (id) {
-      void wailsApi.device.subscribeStream(id, false)
-    }
-  }
-}
-
 onMounted(async () => {
   try {
     const result = await wailsApi.app.getVersion()
@@ -279,7 +227,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  unsubscribeStream()
   unsubscribeDeviceSnapshots?.()
   unsubscribeDeviceSnapshots = null
   window.removeEventListener('keydown', handleKeydown)

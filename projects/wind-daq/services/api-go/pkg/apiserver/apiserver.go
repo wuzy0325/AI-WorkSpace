@@ -25,6 +25,7 @@ import (
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 	"wind-daq/services/api-go/pkg/debugserver"
+	"wind-daq/services/api-go/pkg/logging"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -35,6 +36,20 @@ type Server struct {
 func Start(ctx context.Context, addr string) (*Server, error) {
 	if addr == "" {
 		addr = ":8080"
+	}
+
+	// 初始化统一日志系统：与 Wails 桌面端保持一致，输出到 stderr + 文件 + 内存 ring buffer。
+	// 必须在其他服务之前初始化，确保后续 slog 输出全部被捕获，且日志 SSE / recent 端点有数据。
+	logDir := "data/logs"
+	logOpts := logging.Default(logDir)
+	logOpts.AddSource = false
+	logMgr, err := logging.Init(logOpts)
+	logRing := logging.NewRingBuffer(logOpts.RingCapacity)
+	if err != nil {
+		// 日志初始化失败不阻塞服务启动，但输出到 stderr 兜底
+		fmt.Fprintf(os.Stderr, "logging init failed: %v\n", err)
+	} else {
+		logRing = logMgr.Ring()
 	}
 
 	store := configadapter.NewFileProfileStore("config/device-profiles.json")
@@ -83,6 +98,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		ConfigManager: usecase.NewConfigManager(
 			appConfigStore,
 		),
+		LogRing: logRing,
 	})
 
 	srv := &http.Server{Addr: addr, Handler: handler}

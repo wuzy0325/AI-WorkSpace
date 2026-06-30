@@ -5,6 +5,7 @@ import { deviceApi } from '@api/deviceApi'
 
 describe('deviceStore', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     setActivePinia(createPinia())
   })
 
@@ -84,5 +85,46 @@ describe('deviceStore', () => {
     expect(store.profiles).toHaveLength(1)
     expect(store.profiles[0].channels).toEqual([])
     expect(() => store.selectDevice('legacy-1')).not.toThrow()
+  })
+
+  it('keeps profile list stable when starting all acquisitions', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    store.updateStatus('daq-1', {
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Connected',
+      acquiring: false,
+    })
+
+    const getProfiles = vi.spyOn(deviceApi, 'getProfiles').mockResolvedValue([{
+      id: 'unexpected',
+      name: 'Unexpected Device',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }])
+    vi.spyOn(deviceApi, 'startAcquisition').mockResolvedValue({ success: true })
+    vi.spyOn(deviceApi, 'getStatus').mockResolvedValue({
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Connected',
+      acquiring: true,
+    })
+    vi.spyOn(deviceApi, 'subscribeToDevice').mockImplementation(() => undefined)
+
+    await store.startAllAcquisitions()
+
+    expect(getProfiles).not.toHaveBeenCalled()
+    expect(store.profiles.map((profile) => profile.id)).toEqual(['daq-1'])
+    expect(store.acquiringFor('daq-1')).toBe(true)
   })
 })

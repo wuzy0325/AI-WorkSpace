@@ -42,7 +42,7 @@ func (a *App) startParentWatchdog() {
 			case <-ticker.C:
 				if !processIsAlive(pid) {
 					log.Printf("父进程 (pid=%d) 已退出，运动控制器独立窗口随之关闭", pid)
-					// 优雅关停：先 cancel app ctx 让派生协程退出（MotionStatusPoller 等），
+					// 优雅关停：先 cancel app ctx 让派生协程退出（数据中继等），
 					// 给可能正在执行的 fsync / 配置原子写一个 500ms 完成窗口，再 os.Exit。
 					// 不调用 a.Shutdown：Wails Shutdown 假定 runtime 还在，但此处直接 os.Exit
 					// 是为了避免 Wails GUI 主线程在已无父进程上下文下继续操作。

@@ -129,7 +129,7 @@ build-go:
 
 1. 项目 `apps/desktop-wails/Taskfile.yml` 中 `build-go`（或等价任务）已经包含 `-tags production`。
 2. `build-go` 任务已经设置 `env: GOWORK: off`（或命令行构建时设置了 `GOWORK=off`）。
-3. `wails.json` 中 Wails 版本与 `go.mod` 中实际依赖一致（如 v3 alpha.95 对应 `wails/v3 v3.0.0-alpha.95`）。
+3. 前后端 Wails 版本锁定一致（见 ADR-004 第 7 节）：Go `wails/v3 v3.0.0-alpha2.106` 必须配 npm `@wailsio/runtime 3.0.0-alpha.94`；不要自行替换为其他 `alpha.*` / `alpha2.*` 组合。
 4. 没有 v2 时代遗留的安装产物被混入本次发布。
 
 不满足上述任意一项时，AI agent 必须先修复脚本或文档，再继续打包。

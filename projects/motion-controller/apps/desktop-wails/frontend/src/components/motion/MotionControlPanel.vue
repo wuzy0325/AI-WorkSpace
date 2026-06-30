@@ -325,7 +325,7 @@ watch(
 </script>
 
 <template>
-  <div class="flex gap-4 motion-control-panel">
+  <div class="flex gap-4 motion-control-panel h-full min-h-0">
     <!-- 左侧边栏：控制器列表 -->
     <aside data-test="motion-panel-surface" class="motion-sidebar shrink-0 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)]">
       <!-- 边栏头部 -->
@@ -384,7 +384,7 @@ watch(
     </aside>
 
     <!-- 主内容区 -->
-    <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden h-fit">
+    <section data-test="motion-panel-surface" class="flex-1 bg-[color:var(--bg-panel)] border border-[color:var(--border-default)] rounded-[var(--radius-lg)] flex flex-col shadow-[var(--shadow-panel)] overflow-hidden min-h-0">
       <!-- 面板头部 -->
       <header class="panel-header">
         <div class="panel-header-info">
@@ -1115,6 +1115,9 @@ watch(
   min-height: 0;
   overflow: auto;
   padding: var(--space-3) var(--space-5);
+  /* 让轴网格作为 flex 子项填充整个滚动区高度，避免内容不足时下方出现大片空白 */
+  display: flex;
+  flex-direction: column;
 }
 
 /* ============================================================
@@ -1124,6 +1127,9 @@ watch(
   display: grid;
   grid-template-columns: repeat(1, 1fr);
   gap: var(--space-4);
+  /* 占满 axis-content 的可用高度，使卡片能随窗口高度拉伸 */
+  flex: 1;
+  min-height: 0;
 }
 
 @media (min-width: 768px) {
@@ -1150,7 +1156,8 @@ watch(
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   min-width: 200px;
-  height: fit-content;
+  /* 占满网格单元格高度；内部通过 flex column 保持内容顶部对齐 */
+  height: 100%;
   transition: border-color var(--motion-base) var(--easing-standard),
               box-shadow var(--motion-base) var(--easing-standard);
 }

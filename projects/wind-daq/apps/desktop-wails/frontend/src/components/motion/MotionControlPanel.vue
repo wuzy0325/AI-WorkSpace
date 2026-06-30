@@ -212,11 +212,7 @@ async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): P
     feedback.pushToast(validation.warning || '目标位置超出限位', 'error')
     return
   }
-  if (currentProfile.value?.type === 'B140-MC') {
-    await motion.moveBy(selectedId.value, axis, delta)
-    return
-  }
-  await motion.moveTo(selectedId.value, axis, axisStatus.position + delta)
+  await motion.moveBy(selectedId.value, axis, delta)
 }
 
 async function setZero(axis: AxisName): Promise<void> {

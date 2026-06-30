@@ -42,11 +42,21 @@ export function isMotionStandaloneMode(): boolean {
  * 通过主进程本地 HTTP API 调用运动接口。
  * 仅在 motion 子进程下使用，避免子进程的 wails binding 走自己进程的 MotionManager。
  */
-async function mainProcessRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${MAIN_PROCESS_API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
-  });
+async function mainProcessRequest<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  // timeoutMs 可选：仅对状态查询等需要快速失败的请求设置（如 1500ms），
+  // 避免某控制器卡顿时 fetch 长时间挂起拖停轮询链。命令类请求不传，使用默认无超时。
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  let response: Response;
+  try {
+    response = await fetch(`${MAIN_PROCESS_API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      ...init,
+      signal: controller?.signal,
+    });
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
   const text = await response.text().catch(() => '');
   if (!response.ok) {
     throw new Error(text || `HTTP ${response.status}`);
@@ -131,11 +141,21 @@ function saveProfiles(profiles: MotionControllerProfile[]): void {
 // 内存缓存的 profiles，轮询 tick 不再重复请求后端
 let _cachedProfiles: MotionControllerProfile[] | null = null;
 
-// 轮询速率控制：运动中 250ms 高频刷新，全部空闲时 3000ms 慢速心跳
-const FAST_POLL_MS = 250;
-const SLOW_POLL_MS = 3000;
+// 轮询速率控制：运动中 100ms 高频刷新，全部空闲时 500ms 监控心跳
+// 实测 WTNMC4A Status 耗时 ~132ms（4轴 readLP 串行），setTimeout 串联模式会自动
+// 适应 Status 耗时：实际间隔 = max(FAST_POLL_MS, Status耗时) ≈ 132ms，
+// 1mm 步长运动期间能看到 1-2 次中间位置更新。
+const FAST_POLL_MS = 100;
+const SLOW_POLL_MS = 500;
 const BROWSER_POLL_MS = 3000;
+const COMMAND_FAST_POLL_GRACE_MS = 2000;
+// 当前期望轮询间隔。setTimeout 串联模式下由 scheduleNextStandaloneTick 读取。
+// 修改此值后下一个 tick 周期立即生效，无需重启定时器。
 let _currentPollIntervalMs = FAST_POLL_MS;
+let _fastPollingUntil = 0;
+// 防止 tick 重叠执行的串行锁。前一次 tick 未完成时，跳过本次触发。
+let _standaloneTickInFlight = false;
+let _standaloneActive = false;
 
 /**
  * 仅拉取原始状态数据，不依赖 profiles。
@@ -143,7 +163,9 @@ let _currentPollIntervalMs = FAST_POLL_MS;
  */
 async function fetchRawStatus(): Promise<MotionControllerStatus[]> {
   if (isMotionStandaloneMode()) {
-    return await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status');
+    // 超时 2500ms：B140 四轴编码器场景单次 Status 需 14 次串行 TCP 往返，
+    // 网络抖动时可能逼近 2s；留足余量避免误超时，同时仍远低于原先无超时的 5s 级联阻塞。
+    return await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status', undefined, 2500);
   }
   if (isWailsAvailable()) {
     return await wailsApi.motion.getStatus() as unknown as MotionControllerStatus[];
@@ -209,19 +231,28 @@ async function goStatusToControllerStatus(profiles: MotionControllerProfile[]): 
 
 /**
  * 根据是否有轴正在运动，调整轮询间隔。
- * - 运动中 → 250ms 高频，实时跟踪位置变化
- * - 全部空闲 → 3000ms 慢速心跳，仅保持连接状态刷新
+ * - 运动中或命令刚发出后 → 100ms 高频，实时跟踪位置变化
+ * - 全部空闲 → 500ms 监控心跳，避免独立画面位置长时间不刷新
+ *
+ * 仅更新期望间隔，不重启定时器：setTimeout 串联模式下由 tickStandalone 末尾的
+ * scheduleNextStandaloneTick 读取最新值。这与原来 setInterval 模式有本质区别——
+ * 不再因 clearInterval + setInterval 重置计数器，也不会因 tick 耗时长导致
+ * setInterval 强制触发新 tick 造成请求堆积。
  */
 function adjustPollingRate(hasMoving: boolean): void {
-  const target = hasMoving ? FAST_POLL_MS : SLOW_POLL_MS;
-  if (target === _currentPollIntervalMs) return;
-  _currentPollIntervalMs = target;
+  _currentPollIntervalMs = hasMoving || Date.now() < _fastPollingUntil ? FAST_POLL_MS : SLOW_POLL_MS;
+}
 
-  const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
+/**
+ * 调度下一次 tickStandalone。必须在 tick 完成后调用，保证串行执行。
+ */
+function scheduleNextStandaloneTick(): void {
+  if (!_standaloneActive) return;
+  const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setTimeout> };
   if (slot._standaloneTimer) {
-    clearInterval(slot._standaloneTimer);
+    clearTimeout(slot._standaloneTimer);
   }
-  slot._standaloneTimer = setInterval(() => { void tickStandalone(); }, target);
+  slot._standaloneTimer = setTimeout(() => { void tickStandalone(); }, _currentPollIntervalMs);
 }
 
 /**
@@ -230,7 +261,16 @@ function adjustPollingRate(hasMoving: boolean): void {
  */
 function requestFastPolling(): void {
   if (!isMotionStandaloneMode()) return;
-  adjustPollingRate(true);
+  _currentPollIntervalMs = FAST_POLL_MS;
+  _fastPollingUntil = Date.now() + COMMAND_FAST_POLL_GRACE_MS;
+  // 上一次 tick 仍在进行时，不重复触发，等其完成后用新间隔调度
+  if (_standaloneTickInFlight) return;
+  // 取消尚未触发的 setTimeout，立即执行一次
+  const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setTimeout> };
+  if (slot._standaloneTimer) {
+    clearTimeout(slot._standaloneTimer);
+    slot._standaloneTimer = undefined;
+  }
   void tickStandalone();
 }
 
@@ -238,35 +278,47 @@ function requestFastPolling(): void {
  * 独立窗口（motion 子进程）的轮询 tick。
  * 只拉取 /api/motion/status，用缓存的 profiles 做归一化，
  * 并根据运动状态自动调速。
+ *
+ * 串行执行：tickStandalone 完成后才调度下一次。
+ * 如果 tick 本身耗时超过轮询间隔（WTNMC4A 4 轴状态查询可能超过 100ms），不会发生请求堆积——
+ * 下一次 tick 在前一次返回后才开始，避免主进程 WTNMC4A.Status 因 c.mu.Lock
+ * 排队堆积导致 2500ms 超时，UI 位置更新延迟。
  */
 async function tickStandalone(): Promise<void> {
-  let raw: MotionControllerStatus[] = [];
-  let statusError = '';
+  if (!_standaloneActive) return;
+  _standaloneTickInFlight = true;
   try {
-    raw = await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status');
-    if (!Array.isArray(raw)) raw = [];
-  } catch (err) {
-    statusError = err instanceof Error ? err.message : '主进程状态服务不可用';
-  }
-
-  try {
-    if (!_cachedProfiles) {
-      _cachedProfiles = await motionApi.getProfiles();
+    let raw: MotionControllerStatus[] = [];
+    let statusError = '';
+    try {
+      raw = await mainProcessRequest<MotionControllerStatus[]>('/api/motion/status', undefined, 2500);
+      if (!Array.isArray(raw)) raw = [];
+    } catch (err) {
+      statusError = err instanceof Error ? err.message : '主进程状态服务不可用';
     }
-    const list = mergeStatusWithProfiles(raw, _cachedProfiles, statusError);
 
-    const hasMoving = list.some((s) => s.axes?.some((a) => a.moving));
-    adjustPollingRate(hasMoving);
-
-    motionApi._listeners.forEach((listener) => {
-      try {
-        listener(list);
-      } catch (err) {
-        console.error('[motionApi] status listener threw:', err);
+    try {
+      if (!_cachedProfiles) {
+        _cachedProfiles = await motionApi.getProfiles();
       }
-    });
-  } catch (err) {
-    console.debug('[motionApi] standalone tick failed (will retry):', err);
+      const list = mergeStatusWithProfiles(raw, _cachedProfiles, statusError);
+
+      const hasMoving = list.some((s) => s.axes?.some((a) => a.moving));
+      adjustPollingRate(hasMoving);
+
+      motionApi._listeners.forEach((listener) => {
+        try {
+          listener(list);
+        } catch (err) {
+          console.error('[motionApi] status listener threw:', err);
+        }
+      });
+    } catch (err) {
+      console.debug('[motionApi] standalone tick failed (will retry):', err);
+    }
+  } finally {
+    _standaloneTickInFlight = false;
+    scheduleNextStandaloneTick();
   }
 }
 
@@ -472,19 +524,22 @@ export const motionApi = {
     motionApi._listeners.add(cb);
 
     // 独立窗口（motion 子进程）：通过 HTTP 轮询主进程获取状态，启动时慢速心跳，
-    // 电机运动时自动切换到 250ms 高频轮询，全部停止后降回慢速。
+    // 电机运动时自动切换到高频轮询，全部停止后降回监控心跳。
+    // 使用 setTimeout 串联：前一次 tick 完成后才调度下一次，避免 setInterval
+    // 在 tick 耗时较长时强制触发新 tick，造成请求堆积与 WTNMC4A.Status 锁竞争。
     if (isMotionStandaloneMode()) {
-      const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setInterval> };
-      if (!slot._standaloneTimer) {
+      const slot = motionApi as unknown as { _standaloneTimer?: ReturnType<typeof setTimeout> };
+      if (!_standaloneActive) {
+        _standaloneActive = true;
         _currentPollIntervalMs = SLOW_POLL_MS;
-        slot._standaloneTimer = setInterval(() => { void tickStandalone(); }, SLOW_POLL_MS);
         void tickStandalone();
       }
       return () => {
         motionApi._listeners.delete(cb);
         if (motionApi._listeners.size === 0) {
+          _standaloneActive = false;
           if (slot._standaloneTimer) {
-            clearInterval(slot._standaloneTimer);
+            clearTimeout(slot._standaloneTimer);
             slot._standaloneTimer = undefined;
           }
         }

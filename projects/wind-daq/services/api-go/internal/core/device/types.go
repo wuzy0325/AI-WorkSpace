@@ -39,19 +39,20 @@ type ChannelConfig struct {
 // 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
 // core 层只保留类型定义，不包含基础设施知识
 type Profile struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Type           Type                   `json:"type"`
-	Transport      string                 `json:"transport,omitempty"`
-	Address        string                 `json:"address,omitempty"`
-	Port           int                    `json:"port,omitempty"`
-	SerialPort     string                 `json:"serialPort,omitempty"`
-	BaudRate       int                    `json:"baudRate,omitempty"`
-	AutoConnect    bool                   `json:"autoConnect,omitempty"`
-	MacAddress     string                 `json:"macAddress,omitempty"`
-	SamplingRate   int                    `json:"samplingRate"`
-	Channels       []ChannelConfig        `json:"channels"`
-	DaqT1603Config DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"`
+	Type                  Type                   `json:"type"`
+	Transport             string                 `json:"transport,omitempty"`
+	Address               string                 `json:"address,omitempty"`
+	Port                  int                    `json:"port,omitempty"`
+	SerialPort            string                 `json:"serialPort,omitempty"`
+	BaudRate              int                    `json:"baudRate,omitempty"`
+	AutoConnect           bool                   `json:"autoConnect,omitempty"`
+	MacAddress            string                 `json:"macAddress,omitempty"`
+	SamplingRate          int                    `json:"samplingRate"`
+	Channels              []ChannelConfig        `json:"channels"`
+	DaqP1604UseDeviceTimestamp bool             `json:"daqP1604UseDeviceTimestamp,omitempty"`
+	DaqT1603Config        DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
 }
 
 type DaqT1603HardwareConfig struct {
@@ -106,6 +107,7 @@ type ScanResult struct {
 type DataPayload struct {
 	DeviceID       string    `json:"deviceId"`
 	Timestamp      int64     `json:"timestamp"`
+	DeviceTimestamp int64    `json:"deviceTimestamp,omitempty"` // 设备帧内时间戳（毫秒），仅 DAQ-P-1604 开启设备时间戳时有效
 	Channels       []float64 `json:"channels"`
 	ChannelIndices []int     `json:"channelIndices"`
 }

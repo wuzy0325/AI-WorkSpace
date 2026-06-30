@@ -363,7 +363,6 @@ grep -rn "defer recover"                          → 0 处
 
 文件清单：
 - `internal/usecase/calibration.go:144`
-- `internal/usecase/motion_poller.go:31`
 - `internal/usecase/stream_relay.go:37`
 - `pkg/apiserver/apiserver.go:81, 85`
 - `apps/desktop-wails/backend/app.go:144, 167` (frontend relay)

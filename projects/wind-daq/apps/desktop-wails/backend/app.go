@@ -129,8 +129,12 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	}
 
 	// 主窗口进程：启动全部后台服务
+	// 注意：不再启动后端 MotionStatusPoller。
+	// 该 poller 每 100ms 调一次 StatusAll 但输出被直接丢弃，纯属冗余开销——
+	// MotionManager 并不缓存状态（StatusAll 每次直查硬件），遍历/校准用例也是
+	// 直接调 StatusAll，不依赖该 poller。与 motion-controller 项目保持一致：
+	// 前端 HTTP 轮询是唯一的状态消费者，避免与前端争抢同一把硬件连接锁。
 	a.startDataRelay()
-	a.startMotionPoller()
 	a.startLocalAPIServer()
 	// 主进程启动后，后台异步连接所有标记为 AutoConnect 的位移机构，
 	// 避免用户必须先打开运动控制面板才能触发连接。
@@ -180,6 +184,21 @@ func (a *App) startLocalAPIServer() {
 }
 
 // startDataRelay 启动采集数据中继。
+//
+// 设计说明（2026-06-29 修复）：
+//   - 历史实现通过 app.Event.Emit("daq:payload", payload) 把采集数据推送到前端，
+//     但 Wails v3 的 Emit 内部会通过 InvokeSync 在 GUI 主线程同步执行 WebView2
+//     ExecuteScript。AcquisitionHub 默认 20Hz 节流，每秒 20 次同步主线程 JS 调用
+//     会让 WebView2 返回 EINVAL ("[WebView2] Eval failed: invalid argument")，
+//     同时阻塞 GUI 主线程，导致 startAcquisition / DeviceSubscribeStream 等
+//     Wails binding 调用延迟甚至失败，前端表现为"开始采集后 UI 无数据更新"。
+//   - 修复策略：前端改为 500ms HTTP 轮询 /api/daq/latest/{id} 拿最新数据
+//     （AcquisitionHub.OnData 始终更新 latestByDevice，不受 publishHz 节流影响），
+//     后端这里仅 drain relay.Payloads() 通道，避免 relay goroutine 因通道满而
+//     反压 AcquisitionHub；不再调用 app.Event.Emit，彻底消除主线程同步 JS 调用。
+//   - 保留 DataStreamRelay 与 DeviceSubscribeStream binding 是为了不破坏前端
+//     subscribeStream 调用契约（前端仍会调一次 subscribe 来标记订阅意图，
+//     后端可据此做未来扩展，例如 SSE 推送到 Web 客户端）。
 func (a *App) startDataRelay() {
 	relay := a.appContext.DataStreamRelay
 	if relay == nil {
@@ -200,37 +219,8 @@ func (a *App) startDataRelay() {
 				if a.shuttingDown.Load() {
 					return
 				}
-				// Wails v2.12.0 devserver may panic while JSON-encoding event payloads.
-				// Keep draining the relay so acquisition subscribers cannot block; the
-				// frontend reads snapshots through DeviceGetLatestData instead.
+				// 仅 drain payload，不再 Emit；前端通过 HTTP 轮询拿数据。
 			}
-		}
-	}()
-}
-
-// startMotionPoller 启动运动状态轮询。
-//
-// 设计说明：
-//   - 历史实现通过 runtime.EventsEmit("motion:status", statuses) 推送到前端，
-//     但 Wails v2.12.0 存在已知的 reflect 序列化 bug：在序列化嵌套切片中含有
-//     具名 string 类型（如 ControllerType / AxisName）时，会错误地调用
-//     reflect.Value.IsNil()，导致 "reflect: call of reflect.Value.IsNil on string Value" panic。
-//     B140 点动后状态字段更复杂，必现该问题。
-//   - 解决方案与 motion-controller 项目保持一致：彻底放弃 EventsEmit 推送，
-//     前端改为通过 HTTP GET /api/motion/status 主动轮询，后端用标准库 json 编码，
-//     完全绕开 Wails 的 reflect 桥。
-//   - 仍然启动 poller 并消费其输出 channel：一是维持周期性 StatusAll 调用，
-//     让 MotionManager 内部缓存保持新鲜（traversal 等用例依赖此行为）；
-//     二是消费 channel 防止其 buffer 写满后阻塞 poller 协程。
-func (a *App) startMotionPoller() {
-	poller := a.appContext.MotionStatusPoller
-	if poller == nil {
-		return
-	}
-	poller.Start(a.ctx)
-	go func() {
-		// 仅消费 channel，不再向前端发射事件，避免触发 Wails v2.12.0 reflect bug
-		for range poller.Status() {
 		}
 	}()
 }
@@ -377,9 +367,6 @@ func (a *App) ServiceShutdown() error {
 	// 顺序放在最前是因为子进程仍可能向父进程的日志/HTTP 写数据，先停子再停父更稳。
 	a.terminateMotionWindow()
 
-	if a.appContext != nil && a.appContext.MotionStatusPoller != nil {
-		a.appContext.MotionStatusPoller.Stop()
-	}
 	if a.cancel != nil {
 		a.cancel()
 	}

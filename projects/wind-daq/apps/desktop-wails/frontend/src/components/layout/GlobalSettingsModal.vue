@@ -32,11 +32,10 @@ import {
   X,
   Monitor,
   Globe,
-  Zap,
 } from '@lucide/vue'
 
-/** 设置分组标签页类型 */
-type SettingsTab = 'appearance' | 'storage' | 'acquisition' | 'advanced'
+/** 设置分组标签页类型（按需扩展） */
+type SettingsTab = 'display' | 'recording'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
@@ -54,7 +53,7 @@ const { locale } = storeToRefs(i18nStore)
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref(false)
-const activeTab = ref<SettingsTab>('appearance')
+const activeTab = ref<SettingsTab>('display')
 
 // 表单数据状态
 const baseDirectory = ref('data/recordings')
@@ -84,12 +83,10 @@ const enabledConditionsCount = computed(() =>
   [durationEnabled.value, sizeEnabled.value, countEnabled.value].filter(Boolean).length,
 )
 
-/** Tab 配置列表（静态常量，无需响应式重新创建） */
+/** Tab 配置列表（按需扩展新的分组） */
 const TABS: { key: SettingsTab; label: string; icon: Component }[] = [
-  { key: 'appearance', label: '外观', icon: Monitor },
-  { key: 'storage', label: '存储', icon: HardDrive },
-  { key: 'acquisition', label: '采集', icon: Zap },
-  { key: 'advanced', label: '高级', icon: RefreshCw },
+  { key: 'display', label: '界面', icon: Monitor },
+  { key: 'recording', label: '记录', icon: FileText },
 ]
 
 watch(() => props.open, (open) => { if (open) void loadSettings() })
@@ -275,7 +272,7 @@ async function onSave(): Promise<void> {
       <div class="modal-head">
         <div class="modal-head__info">
           <div class="modal-head__title">全局设置</div>
-          <span class="modal-head__subtitle">数据保存、自动停止条件和实时刷新频率</span>
+          <span class="modal-head__subtitle">界面偏好与数据记录配置</span>
         </div>
         <UiButton quaternary circle size="md" @click="onClose">
           <template #icon><X :size="14" /></template>
@@ -309,13 +306,13 @@ async function onSave(): Promise<void> {
 
       <!-- 右侧内容区 -->
       <div class="settings-content">
-        <!-- 外观与语言 -->
+        <!-- 界面 -->
         <section
-          id="settings-panel-appearance"
+          id="settings-panel-display"
           role="tabpanel"
-          aria-labelledby="settings-tab-appearance"
-          v-show="activeTab === 'appearance'"
-          :aria-hidden="activeTab !== 'appearance'"
+          aria-labelledby="settings-tab-display"
+          v-show="activeTab === 'display'"
+          :aria-hidden="activeTab !== 'display'"
           class="settings-section"
         >
           <UiPanel :segmented="false" class="form-card">
@@ -374,15 +371,56 @@ async function onSave(): Promise<void> {
               </UiFormField>
             </div>
           </UiPanel>
+
+          <!-- 刷新率 -->
+          <UiPanel class="form-card">
+            <template #header>
+              <div class="card-head">
+                <RefreshCw :size="15" />
+                <span class="card-head__title">刷新率</span>
+              </div>
+            </template>
+            <div class="form-fields">
+              <UiFormField
+                label="实时数据刷新频率"
+                :error="validationErrors.refreshRate"
+                hint="较高的刷新率会占用更多系统资源"
+              >
+                <div class="refresh-row">
+                  <div class="refresh-slider">
+                    <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" aria-label="实时数据刷新频率" />
+                    <div class="refresh-labels">
+                      <span class="refresh-label">1 Hz</span>
+                      <span
+                        class="refresh-label refresh-label--highlight"
+                        :class="{ 'refresh-label--active': refreshRate >= 5 && refreshRate <= 15 }"
+                      >推荐 5–15 Hz</span>
+                      <span class="refresh-label">20 Hz</span>
+                    </div>
+                  </div>
+                  <div class="refresh-value">
+                    <UiInputNumber
+                      v-model="refreshRate"
+                      :min="1"
+                      :max="20"
+                      size="small"
+                      @blur="updateFieldError('refreshRate')"
+                    />
+                    <span class="input-unit">Hz</span>
+                  </div>
+                </div>
+              </UiFormField>
+            </div>
+          </UiPanel>
         </section>
 
-        <!-- 数据保存 -->
+        <!-- 记录 -->
         <section
-          id="settings-panel-storage"
+          id="settings-panel-recording"
           role="tabpanel"
-          aria-labelledby="settings-tab-storage"
-          v-show="activeTab === 'storage'"
-          :aria-hidden="activeTab !== 'storage'"
+          aria-labelledby="settings-tab-recording"
+          v-show="activeTab === 'recording'"
+          :aria-hidden="activeTab !== 'recording'"
           class="settings-section"
         >
           <UiPanel :segmented="false" class="form-card">
@@ -468,17 +506,8 @@ async function onSave(): Promise<void> {
               <span>启用后，当采集时长或文件大小达到阈值时，自动滚动到新文件继续记录</span>
             </div>
           </UiPanel>
-        </section>
 
-        <!-- 自动停止条件 -->
-        <section
-          id="settings-panel-acquisition"
-          role="tabpanel"
-          aria-labelledby="settings-tab-acquisition"
-          v-show="activeTab === 'acquisition'"
-          :aria-hidden="activeTab !== 'acquisition'"
-          class="settings-section"
-        >
+          <!-- 自动停止条件 -->
           <UiPanel class="form-card">
             <template #header>
               <div class="card-head">
@@ -576,56 +605,6 @@ async function onSave(): Promise<void> {
             </div>
             <div class="hint-row">
               <span class="hint-text">满足任一条件即自动停止采集，未启用则不限制</span>
-            </div>
-          </UiPanel>
-        </section>
-
-        <!-- 刷新率 -->
-        <section
-          id="settings-panel-advanced"
-          role="tabpanel"
-          aria-labelledby="settings-tab-advanced"
-          v-show="activeTab === 'advanced'"
-          :aria-hidden="activeTab !== 'advanced'"
-          class="settings-section"
-        >
-          <UiPanel class="form-card">
-            <template #header>
-              <div class="card-head">
-                <RefreshCw :size="15" />
-                <span class="card-head__title">刷新率</span>
-              </div>
-            </template>
-            <div class="form-fields">
-              <UiFormField
-                label="实时数据刷新频率"
-                :error="validationErrors.refreshRate"
-                hint="较高的刷新率会占用更多系统资源"
-              >
-                <div class="refresh-row">
-                  <div class="refresh-slider">
-                    <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" aria-label="实时数据刷新频率" />
-                    <div class="refresh-labels">
-                      <span class="refresh-label">1 Hz</span>
-                      <span
-                        class="refresh-label refresh-label--highlight"
-                        :class="{ 'refresh-label--active': refreshRate >= 5 && refreshRate <= 15 }"
-                      >推荐 5–15 Hz</span>
-                      <span class="refresh-label">20 Hz</span>
-                    </div>
-                  </div>
-                  <div class="refresh-value">
-                    <UiInputNumber
-                      v-model="refreshRate"
-                      :min="1"
-                      :max="20"
-                      size="small"
-                      @blur="updateFieldError('refreshRate')"
-                    />
-                    <span class="input-unit">Hz</span>
-                  </div>
-                </div>
-              </UiFormField>
             </div>
           </UiPanel>
         </section>

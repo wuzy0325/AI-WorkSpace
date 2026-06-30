@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -55,13 +56,15 @@ func metricsMiddleware(next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 
-		slog.Info("http.request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", status,
-			"duration_ms", duration.Milliseconds(),
-			"bytes", rec.bytes,
-		)
+		if !isHotTelemetryPath(r.URL.Path) {
+			slog.Info("http.request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", status,
+				"duration_ms", duration.Milliseconds(),
+				"bytes", rec.bytes,
+			)
+		}
 
 		const slowThreshold = 500 * time.Millisecond
 		if duration > slowThreshold {
@@ -73,6 +76,10 @@ func metricsMiddleware(next http.Handler) http.Handler {
 			)
 		}
 	})
+}
+
+func isHotTelemetryPath(path string) bool {
+	return strings.HasPrefix(path, "/api/daq/latest/")
 }
 
 // recoverMiddleware 拦截 handler 中的 panic，记录堆栈并返回 500。

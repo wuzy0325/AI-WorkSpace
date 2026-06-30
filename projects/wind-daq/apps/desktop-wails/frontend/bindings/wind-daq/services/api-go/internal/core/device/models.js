@@ -225,6 +225,14 @@ export class DataPayload {
              */
             this["timestamp"] = 0;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * 设备帧内时间戳（毫秒），仅 DAQ-P-1604 开启设备时间戳时有效
+             * @member
+             * @type {number | undefined}
+             */
+            this["deviceTimestamp"] = undefined;
+        }
         if (!("channels" in $$source)) {
             /**
              * @member
@@ -249,14 +257,14 @@ export class DataPayload {
      * @returns {DataPayload}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType0;
-        const $$createField3_0 = $$createType1;
+        const $$createField3_0 = $$createType0;
+        const $$createField4_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField2_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField3_0($$parsedSource["channels"]);
         }
         if ("channelIndices" in $$parsedSource) {
-            $$parsedSource["channelIndices"] = $$createField3_0($$parsedSource["channelIndices"]);
+            $$parsedSource["channelIndices"] = $$createField4_0($$parsedSource["channelIndices"]);
         }
         return new DataPayload(/** @type {Partial<DataPayload>} */($$parsedSource));
     }
@@ -360,6 +368,13 @@ export class Profile {
         if (/** @type {any} */(false)) {
             /**
              * @member
+             * @type {boolean | undefined}
+             */
+            this["daqP1604UseDeviceTimestamp"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
              * @type {DaqT1603HardwareConfig | undefined}
              */
             this["daqT1603Config"] = undefined;
@@ -375,13 +390,13 @@ export class Profile {
      */
     static createFrom($$source = {}) {
         const $$createField11_0 = $$createType3;
-        const $$createField12_0 = $$createType4;
+        const $$createField13_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
             $$parsedSource["channels"] = $$createField11_0($$parsedSource["channels"]);
         }
         if ("daqT1603Config" in $$parsedSource) {
-            $$parsedSource["daqT1603Config"] = $$createField12_0($$parsedSource["daqT1603Config"]);
+            $$parsedSource["daqT1603Config"] = $$createField13_0($$parsedSource["daqT1603Config"]);
         }
         return new Profile(/** @type {Partial<Profile>} */($$parsedSource));
     }

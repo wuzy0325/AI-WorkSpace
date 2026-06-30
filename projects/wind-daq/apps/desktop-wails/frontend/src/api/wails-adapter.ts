@@ -364,8 +364,13 @@ export const wailsApi = {
 
       const poll = async (): Promise<void> => {
         if (!active) return;
+        // 加 2.5s 超时：避免某个控制器卡顿（B140 单命令超时 5s）时 fetch 长时间挂起，
+        // 拖停整个轮询链导致 UI 长时间不刷新。超时后立即进入下一轮重试。
+        // 阈值 2500ms 容纳 B140 四轴 14 次 TCP 往返的正常耗时，避免误超时。
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
         try {
-          const resp = await fetch(STATUS_API);
+          const resp = await fetch(STATUS_API, { signal: controller.signal });
           if (resp.ok) {
             const statuses = await resp.json();
             if (active && Array.isArray(statuses)) {
@@ -381,7 +386,9 @@ export const wailsApi = {
             }
           }
         } catch {
-          // 网络错误（如主进程尚未启动 HTTP server）静默重试，避免日志噪音
+          // 网络错误或超时（如主进程尚未启动 HTTP server、某控制器卡顿）静默重试，避免日志噪音
+        } finally {
+          clearTimeout(timeoutId);
         }
         scheduleNext(currentInterval);
       };

@@ -295,8 +295,9 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// 配置流返回内容：0810 = 压力 + 大气压力 + 大气温度
-	if err := driver.sendCommand("c 05 1 0810"); err != nil {
+	// 配置流返回内容：0010=压力，0400=设备时间戳，0800=大气压力/温度
+	// 掩码 0C10 = 压力 + 设备时间戳 + 大气数据
+	if err := driver.sendCommand("c 05 1 0C10"); err != nil {
 		a.rollbackAcquisition(id, ch, done)
 		return nil, fmt.Errorf("set stream content: %w", err)
 	}
@@ -560,8 +561,9 @@ func (a *P1604Adapter) processPayload(id string, data []byte) {
 		return
 	}
 
-	// 解析二进制数据帧（ParseStreamFrame 已处理前 16 通道逆序）
-	channels, err := sharedproto.ParseStreamFrame(data)
+	// 解析二进制数据帧（含设备时间戳 + 大气数据）
+	// 掩码 0C10 = 0010(压力) | 0400(设备时间戳) | 0800(大气数据)
+	channels, deviceTimestampMs, err := sharedproto.ParseStreamFrameEx(data, true, true)
 	if err != nil {
 		a.emitLog(DeviceLogEntry{
 			Level: "debug", Category: "hardware", DeviceID: id,
@@ -587,12 +589,18 @@ func (a *P1604Adapter) processPayload(id string, data []byte) {
 	a.mu.RUnlock()
 
 	if sink != nil {
-		sink(core.PressureSnapshot{
+		snapshot := core.PressureSnapshot{
 			DeviceID:  id,
 			Timestamp: core.TimestampMs(),
 			Values:    channels,
 			Unit:      unit,
-		})
+		}
+		// 设备时间戳转换为秒（float64），供 CSV 录制器的时间格式化使用
+		// csv_recorder 将 HardwareTimestamp 解释为秒.纳秒
+		if deviceTimestampMs > 0 {
+			snapshot.HardwareTimestamp = float64(deviceTimestampMs) / 1000.0
+		}
+		sink(snapshot)
 	}
 }
 

@@ -214,7 +214,15 @@ func (d *DAQP1604) initStream() error {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	if err := d.sendCommand("c 05 1 0810"); err != nil {
+	// 配置流返回内容：0010=压力，0400=设备时间戳，0800=大气数据
+	// 掩码计算：压力(0010) + 可选时间戳(0400) + 大气数据(0800)
+	contentMask := 0x0010
+	if d.profile.DaqP1604UseDeviceTimestamp {
+		contentMask |= 0x0400
+	}
+	contentMask |= 0x0800 // 始终包含大气数据
+	contentMaskHex := fmt.Sprintf("%04X", contentMask)
+	if err := d.sendCommand(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
 		return fmt.Errorf("set stream content: %w", err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -284,6 +292,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 func (d *DAQP1604) processPayload(data []byte) {
 	d.mu.RLock()
 	sink := d.sink
+	useDeviceTs := d.profile.DaqP1604UseDeviceTimestamp
 	d.mu.RUnlock()
 
 	if sink == nil {
@@ -301,16 +310,19 @@ func (d *DAQP1604) processPayload(data []byte) {
 			indices[i] = i
 			values[i] = channels[i]
 		}
-		sink(device.DataPayload{
+		payload := device.DataPayload{
 			DeviceID:       d.profile.ID,
 			Timestamp:      device.NowMs(),
 			Channels:       values,
 			ChannelIndices: indices,
-		})
+		}
+		sink(payload)
 		return
 	}
 
-	channels, err := sharedproto.ParseStreamFrame(data)
+	// 使用扩展解析函数，支持可选设备时间戳字段
+	// DAQ-P-1604 始终请求大气数据（0800），所以 hasAtmosphericData = true
+	channels, deviceTimestampMs, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
@@ -330,12 +342,18 @@ func (d *DAQP1604) processPayload(data []byte) {
 		values[i] = channels[i]
 	}
 
-	sink(device.DataPayload{
+	payload := device.DataPayload{
 		DeviceID:       d.profile.ID,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,
-	})
+	}
+	// 如果开启了设备时间戳且解析到有效时间戳，填入
+	if useDeviceTs && deviceTimestampMs > 0 {
+		payload.DeviceTimestamp = deviceTimestampMs
+	}
+
+	sink(payload)
 }
 
 func (d *DAQP1604) parseASCIIFrame(data []byte) []float64 {

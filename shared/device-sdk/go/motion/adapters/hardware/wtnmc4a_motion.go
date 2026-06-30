@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"shared.local/device-sdk/go/motion/core"
@@ -37,6 +38,10 @@ const (
 	line             = 0
 	pDirection int32 = 1
 	mDirection int32 = 0
+
+	// fullStatusInterval 完整状态查询间隔：快速轮询时每隔 500ms 做一次含 getRR1Status 的完整状态，
+	// 刷新限位/报警/归零等慢变信号，中间轮次仅 readLP 读位置。
+	fullStatusInterval = 500 * time.Millisecond
 )
 
 type rr1Status struct {
@@ -117,6 +122,9 @@ type WTNMC4AMotionController struct {
 	procs       dllProcs
 	speedParams map[int]*axisSpeedParams
 
+	// 每 500ms 做一次完整状态（含 getRR1Status），刷新限位/报警/归零等慢变信号。
+	lastFullStatusAt time.Time // 上次完整状态时间
+
 	// atomic 副本：Stop/EmergencyStop 通过 atomic 读取，完全避免锁竞争。
 	// 背景：Status 持 RLock 期间，MoveBy 等待 Lock 时，Go RWMutex 会阻塞所有新 RLock，
 	// 导致 Stop 也被阻塞。用 atomic 彻底消除这个问题。
@@ -177,6 +185,7 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 
 	// 确保重连时不会残留上一轮的DLL句柄或设备句柄
 	c.cleanupConnectionLocked()
+	c.lastFullStatusAt = time.Time{}
 
 	dllPath := wtnmc4aFindDLL()
 	dll, err := syscall.LoadDLL(dllPath)
@@ -271,6 +280,7 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 	// 清除 atomic 副本
 	c.atomicHandle.Store(0)
 	c.atomicConnected.Store(false)
+	c.lastFullStatusAt = time.Time{}
 
 	c.status.Connected = false
 	c.status.EmergencyStopped = false
@@ -283,9 +293,13 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 }
 
 // Status 返回控制器和所有轴的状态。
-// 优化：在 RLock 内仅收集查询信息，释放锁后再调用 DLL（耗时操作），
-// 最后用写锁更新状态。避免长时间持锁阻塞 Stop/EmergencyStop。
+//
+// 快速路径优化：仅当距离上次完整状态 >= 500ms 时才调用 getRR1Status（每轴 1 次 DLL 调用），
+// 中间轮次仅调用 readLP（每轴 1 次 DLL 调用），DLL 调用量减半（4 轴 8→4 次），
+// 运动状态沿用缓存值，避免低速运动时位置未变导致误判停止。限位/报警/归零等慢变信号在完整状态时刷新。
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
+	startTime := time.Now()
+
 	c.mu.RLock()
 	if err := c.checkConnectedLocked(); err != nil {
 		status := c.copyStatusLocked()
@@ -293,14 +307,21 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		return status, err
 	}
 
-	// 在锁内收集需要查询的轴信息（轻量操作）
 	handle := c.handle
+	needFullStatus := time.Since(c.lastFullStatusAt) >= fullStatusInterval
+
 	type axisQuery struct {
 		axisNum int
 		axisIdx int
 		axisCfg core.AxisConfig
 	}
 	queries := make([]axisQuery, 0, len(c.status.Axes))
+
+	// 快速路径所需的缓存值，必须在 RLock 内读取避免数据竞争
+	cachedHomed := make([]bool, len(c.status.Axes))
+	cachedMoving := make([]bool, len(c.status.Axes))
+	cachedPosLimit := make([]bool, len(c.status.Axes))
+	cachedNegLimit := make([]bool, len(c.status.Axes))
 	for i := range c.status.Axes {
 		axisCfg, ok := c.axisConfigLocked(c.status.Axes[i].Name)
 		if !ok {
@@ -311,10 +332,14 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 			axisIdx: i,
 			axisCfg: axisCfg,
 		})
+		cachedHomed[i] = c.status.Axes[i].Homed
+		cachedMoving[i] = c.status.Axes[i].Moving
+		cachedPosLimit[i] = c.status.Axes[i].PosLimit
+		cachedNegLimit[i] = c.status.Axes[i].NegLimit
 	}
 	c.mu.RUnlock()
 
-	// 在锁外调用 DLL（耗时操作），避免长时间持锁阻塞 Stop
+	// 锁外调用 DLL（耗时操作）
 	type axisResult struct {
 		axisIdx  int
 		position float64
@@ -324,22 +349,41 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		negLimit bool
 	}
 	results := make([]axisResult, 0, len(queries))
+
+	dllStart := time.Now()
 	for _, q := range queries {
+		// === 快速路径：仅 readLP 读位置，跳过高开销的 getRR1Status ===
 		lpRet, _, _ := c.procs.readLP.Call(handle, uintptr(q.axisNum))
 		logicalPos := int64(int32(lpRet))
 		position := wtnmc4aPulseToEngineering(q.axisCfg, float64(logicalPos))
-		rr1 := c.getRR1Status(handle, q.axisNum)
-		moving := rr1.ASND || rr1.CNST || rr1.DSND
-		homed := core.IsHomed(position, q.axisCfg)
+
+		var moving, homed, posLimit, negLimit bool
+		if needFullStatus {
+			// 完整状态：readLP + getRR1Status，刷新所有慢变信号
+			rr1 := c.getRR1Status(handle, q.axisNum)
+			moving = rr1.ASND || rr1.CNST || rr1.DSND
+			homed = core.IsHomed(position, q.axisCfg)
+			posLimit = rr1.LMTP
+			negLimit = rr1.LMTM
+		} else {
+			// 快速路径：运动状态从缓存读取，避免低速/刚启动时位置未变误判停止
+			moving = cachedMoving[q.axisIdx]
+			// 限位/报警/归零从 RLock 内读取的缓存值获取（完整状态时刷新）
+			homed = cachedHomed[q.axisIdx]
+			posLimit = cachedPosLimit[q.axisIdx]
+			negLimit = cachedNegLimit[q.axisIdx]
+		}
+
 		results = append(results, axisResult{
 			axisIdx:  q.axisIdx,
 			position: position,
 			moving:   moving,
 			homed:    homed,
-			posLimit: rr1.LMTP,
-			negLimit: rr1.LMTM,
+			posLimit: posLimit,
+			negLimit: negLimit,
 		})
 	}
+	dllDuration := time.Since(dllStart)
 
 	// 写锁更新状态（极短时间）
 	c.mu.Lock()
@@ -355,8 +399,19 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		axisStatus.PositionError = 0
 	}
 	c.status.LastError = ""
+	if needFullStatus {
+		c.lastFullStatusAt = time.Now()
+	}
 	statusCopy := c.copyStatusLocked()
 	c.mu.Unlock()
+
+	totalDuration := time.Since(startTime)
+	slog.Debug("WTNMC4A Status",
+		"dll_ms", dllDuration.Milliseconds(),
+		"total_ms", totalDuration.Milliseconds(),
+		"full", needFullStatus,
+		"axes", len(queries),
+	)
 	return statusCopy, nil
 }
 
@@ -459,6 +514,7 @@ func (c *WTNMC4AMotionController) MoveTo(ctx context.Context, axis core.AxisName
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
 	}
 	c.status.LastError = ""
+	c.setAxisMovingLocked(axis, true)
 	return nil
 }
 
@@ -489,6 +545,7 @@ func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
 	}
 	c.status.LastError = ""
+	c.setAxisMovingLocked(axis, true)
 	return nil
 }
 
@@ -568,6 +625,7 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 		return fmt.Errorf("WTNMC4A 启动轴 %s 点动失败", axis)
 	}
 	c.status.LastError = ""
+	c.setAxisMovingLocked(axis, true)
 	return nil
 }
 
@@ -588,6 +646,7 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 		return fmt.Errorf("WTNMC4A 启动轴 %s 回零失败", axis)
 	}
 	c.status.LastError = ""
+	c.setAxisMovingLocked(axis, true)
 	return nil
 }
 
@@ -608,10 +667,18 @@ func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) 
 		for _, an := range []int{0, 1, 2, 3} {
 			c.procs.instStop.Call(handle, uintptr(an))
 		}
+		c.mu.Lock()
+		for i := range c.status.Axes {
+			c.status.Axes[i].Moving = false
+		}
+		c.mu.Unlock()
 		return nil
 	}
 	an := wtnmc4aAxisNum(axis)
 	c.procs.instStop.Call(handle, uintptr(an))
+	c.mu.Lock()
+	c.setAxisMovingLocked(axis, false)
+	c.mu.Unlock()
 	return nil
 }
 
@@ -629,6 +696,9 @@ func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
 	c.mu.Lock()
 	c.status.EmergencyStopped = true
 	c.status.LastError = ""
+	for i := range c.status.Axes {
+		c.status.Axes[i].Moving = false
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -728,6 +798,15 @@ func (c *WTNMC4AMotionController) axisConfigLocked(axis core.AxisName) (core.Axi
 		}
 	}
 	return core.AxisConfig{}, false
+}
+
+func (c *WTNMC4AMotionController) setAxisMovingLocked(axis core.AxisName, moving bool) {
+	for i := range c.status.Axes {
+		if c.status.Axes[i].Name == axis {
+			c.status.Axes[i].Moving = moving
+			return
+		}
+	}
 }
 
 func (c *WTNMC4AMotionController) copyStatusLocked() core.ControllerStatus {

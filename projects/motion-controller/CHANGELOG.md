@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.6] - 2026-06-29
+
+### Fixed
+- 修复窗口标题栏左上角图标不显示的问题：main.go 缺少 `application.Options.Icon` 设置，导致 Windows 窗口标题栏图标缺失（任务栏图标因 `rsrc.syso` 嵌入 EXE 资源而正常，但窗口图标需要显式提供 PNG 数据）。
+
+### Internal
+- 在 main.go 中添加 `//go:embed build/appicon.png` 和 `var appIcon []byte`，并在 `application.Options` 中设置 `Icon: appIcon`，与 wind-daq、daq-t1603、daq-p1604 等其他项目保持一致。
+
+### Verification
+- `go build -tags production`: passed
+- 冒烟启动测试: passed（窗口左上角图标已正常显示）
+- `makensis` 构建安装包: passed
+
+### Known Issues
+- 暂无。
+
+## [0.2.5] - 2026-06-29
+
+### Fixed
+- 修复窗口缩放时运动控制主面板下方出现大片空白的问题：MotionControlPanel 根容器与主面板 section 未建立完整高度继承链，轴卡片网格未占满可用高度。
+
+### Internal
+- MotionControlPanel 根容器补充 `h-full min-h-0`，主面板 section 移除 `h-fit` 改为 `min-h-0`。
+- `.axis-content` 改为 flex 列布局，`.axis-grid` 增加 `flex: 1; min-height: 0`，`.axis-card` 改为 `height: 100%`，使轴卡片随窗口高度合理填充。
+
+### Verification
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `validate-frontend-structure.ps1`: passed
+- `task release`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.2.4] - 2026-06-29
 
 ### Internal

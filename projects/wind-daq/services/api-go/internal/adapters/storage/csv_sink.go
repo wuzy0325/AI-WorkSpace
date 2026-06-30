@@ -61,12 +61,17 @@ func (s *CSVRecordingSink) Write(payload device.DataPayload) error {
 	if s.file == nil {
 		return fmt.Errorf("recording sink is not started")
 	}
+	// 如果有设备时间戳则优先使用，否则使用系统接收时间戳
+	ts := payload.Timestamp
+	if payload.DeviceTimestamp > 0 {
+		ts = payload.DeviceTimestamp
+	}
 	for i, value := range payload.Channels {
 		channelIndex := i
 		if i < len(payload.ChannelIndices) {
 			channelIndex = payload.ChannelIndices[i]
 		}
-		if _, err := fmt.Fprintf(s.file, "%d,%s,%d,%f\n", payload.Timestamp, payload.DeviceID, channelIndex, value); err != nil {
+		if _, err := fmt.Fprintf(s.file, "%d,%s,%d,%f\n", ts, payload.DeviceID, channelIndex, value); err != nil {
 			return err
 		}
 		s.writeCount++

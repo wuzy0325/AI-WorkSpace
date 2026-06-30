@@ -42,7 +42,6 @@ type AppContext struct {
 	ConfigManager      *usecase.ConfigManager
 	MotionManagerRaw   *motionmanager.MotionManager
 	DataStreamRelay    *usecase.DataStreamRelay
-	MotionStatusPoller *usecase.MotionStatusPoller
 	configDir          string
 }
 
@@ -116,7 +115,6 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		ConfigManager:      configMgr,
 		MotionManagerRaw:   rawMotionMgr,
 		DataStreamRelay:    usecase.NewDataStreamRelay(hub),
-		MotionStatusPoller: usecase.NewMotionStatusPoller(motionMgr),
 		configDir:          configDir,
 	}, nil
 }

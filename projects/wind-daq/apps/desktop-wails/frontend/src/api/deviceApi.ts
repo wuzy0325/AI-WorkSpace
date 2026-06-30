@@ -8,6 +8,8 @@ export { traversalApi, storageApi, reportApi } from './otherApis'
 export type { TraversalPoint, MotionAxisStatus, MotionStatus } from './otherApis'
 
 const MAIN_PROCESS_API_BASE = 'http://127.0.0.1:8900'
+const DEFAULT_PUBLISH_RATE_HZ = 20
+const MIN_POLL_INTERVAL_MS = 50
 
 // 同步备忘：默认设备配置目前共有 4 处副本，修改单位 / 默认范围 / 精度时必须保持一致：
 //   1) projects/wind-daq/apps/desktop-wails/config/device-profiles.json
@@ -47,8 +49,14 @@ export function defaultSimulatedProfile(): DeviceProfile {
 
 type SnapshotCallback = (payload: DataPayload) => void
 type StatusCallback = (status: DeviceStatus[]) => void
+type DeviceSubscription = { unsubscribe: () => void; restart?: () => void }
 
 type WailsResponse = { Success?: boolean; Error?: string; success?: boolean; error?: string }
+
+function publishRateToPollIntervalMs(hz: number): number {
+  if (!Number.isFinite(hz) || hz <= 0) hz = DEFAULT_PUBLISH_RATE_HZ
+  return Math.max(MIN_POLL_INTERVAL_MS, Math.round(1000 / hz))
+}
 
 function normalizeDeviceProfile(profile: DeviceProfile): DeviceProfile {
   return {
@@ -165,16 +173,25 @@ export const deviceApi = {
 
   getPublishRate: async (): Promise<number> => {
     if (isWailsAvailable()) {
-      return await wailsApi.device.getPublishRate()
+      const hz = await wailsApi.device.getPublishRate()
+      deviceApi._publishRateHz = hz
+      return hz
     }
-    return request<{ hz: number }>('/api/daq/publishRate').then((result) => result.hz)
+    return request<{ hz: number }>('/api/daq/publishRate').then((result) => {
+      deviceApi._publishRateHz = result.hz
+      return result.hz
+    })
   },
 
   setPublishRate: async (hz: number): Promise<{ success: boolean }> => {
-    if (isWailsAvailable()) {
-      return wailsOk(await wailsApi.device.setPublishRate(hz))
+    const result = isWailsAvailable()
+      ? wailsOk(await wailsApi.device.setPublishRate(hz))
+      : await request<{ success: boolean }>('/api/daq/publishRate', { method: 'PUT', body: JSON.stringify({ hz }) })
+    if (result.success) {
+      deviceApi._publishRateHz = hz
+      deviceApi._restartPollingSubscriptions()
     }
-    return request<{ success: boolean }>('/api/daq/publishRate', { method: 'PUT', body: JSON.stringify({ hz }) })
+    return result
   },
 
   getDsa3217ScanConfig: async (
@@ -211,8 +228,8 @@ export const deviceApi = {
 
   _snapshotListeners: new Set<SnapshotCallback>(),
   _statusListeners: new Set<StatusCallback>(),
-  _subscriptions: new Map<string, ReturnType<typeof subscribeDaqStream>>(),
-  _wailsPayloadUnsubscribe: null as (() => void) | null,
+  _subscriptions: new Map<string, DeviceSubscription>(),
+  _publishRateHz: DEFAULT_PUBLISH_RATE_HZ,
 
   onSnapshot: (cb: SnapshotCallback): (() => void) => {
     deviceApi._snapshotListeners.add(cb)
@@ -228,29 +245,60 @@ export const deviceApi = {
     deviceApi._snapshotListeners.forEach((cb) => cb(normalizeDataPayload(payload)))
   },
 
+  _restartPollingSubscriptions: (): void => {
+    if (!isWailsAvailable()) return
+    deviceApi._subscriptions.forEach((subscription) => subscription.restart?.())
+  },
+
+  /** 注册设备订阅，返回取消订阅函数（DRY：抽取 Wails/非Wails 分支的公共注册逻辑） */
+  _registerSubscription: (deviceId: string, subscription: DeviceSubscription): void => {
+    deviceApi._subscriptions.set(deviceId, subscription)
+  },
+
+  // Wails 模式下采用 HTTP 轮询而非 Wails Event 推送：
+  // 后端 AcquisitionHub 默认 20Hz 节流，若用 app.Event.Emit("daq:payload") 推送，
+  // Wails v3 的 Emit 内部通过 InvokeSync 在 GUI 主线程同步执行 WebView2 ExecuteScript，
+  // 20Hz 高频同步主线程 JS 调用会让 WebView2 返回 EINVAL
+  // ("[WebView2] Eval failed: invalid argument")，同时阻塞 GUI 主线程，
+  // 导致 startAcquisition 等 Wails binding 调用延迟甚至失败，UI 表现为
+  // "开始采集后无数据更新"。后端 startDataRelay 已配合改为仅 drain payload，
+  // 不再调用 app.Event.Emit；前端这里按全局刷新频率轮询 Go 标准库 HTTP，
+  // 绕开 Wails 反射桥，稳定可靠。AcquisitionHub.OnData 始终更新 latestByDevice，
+  // 不受 publishHz 节流影响；轮询间隔使用全局刷新频率设置，并在保存设置后重建。
   subscribeToDevice: (deviceId: string): void => {
     if (deviceApi._subscriptions.has(deviceId)) return
 
     if (isWailsAvailable()) {
       void wailsApi.device.subscribeStream(deviceId, true)
       let active = true
+      let timer: number | null = null
       const pollLatest = async () => {
         if (!active) return
         try {
           const payload = await deviceApi.getLatest(deviceId)
-          if (active && payload.timestamp > 0) {
+          // 以 channels 长度判断是否有有效数据，比 timestamp > 0 更可靠：
+          // 模拟设备第一帧的 timestamp 可能恰好为 0（极低概率但边界存在）。
+          if (active && payload.channels.length > 0) {
             deviceApi._notifyListeners(payload)
           }
         } catch (error) {
           console.log(`Wails polling for ${deviceId}:`, error)
         }
       }
-      void pollLatest()
-      const timer = window.setInterval(() => { void pollLatest() }, 500)
-      deviceApi._subscriptions.set(deviceId, {
+      const restart = () => {
+        if (timer !== null) window.clearInterval(timer)
+        void pollLatest()
+        timer = window.setInterval(
+          () => { void pollLatest() },
+          publishRateToPollIntervalMs(deviceApi._publishRateHz),
+        )
+      }
+      restart()
+      deviceApi._registerSubscription(deviceId, {
+        restart,
         unsubscribe: () => {
           active = false
-          window.clearInterval(timer)
+          if (timer !== null) window.clearInterval(timer)
           void wailsApi.device.subscribeStream(deviceId, false)
         },
       })
@@ -263,7 +311,7 @@ export const deviceApi = {
       (error) => console.log(`SSE for ${deviceId}:`, error),
     )
 
-    deviceApi._subscriptions.set(deviceId, subscription)
+    deviceApi._registerSubscription(deviceId, { unsubscribe: () => subscription.unsubscribe() })
   },
 
   unsubscribeFromDevice: (deviceId: string): void => {

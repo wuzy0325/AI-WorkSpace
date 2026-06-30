@@ -63,7 +63,15 @@ describe('http-client', () => {
 })
 
 describe('deviceApi', () => {
-  beforeEach(() => { vi.restoreAllMocks(); vi.stubEnv('VITE_API_BASE', 'http://localhost:8080') })
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    vi.stubEnv('VITE_API_BASE', 'http://localhost:8080')
+    Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
+    const { deviceApi } = await import('@api/deviceApi')
+    deviceApi._subscriptions.clear()
+    deviceApi._publishRateHz = 20
+  })
 
   it('constructs correct connect URL', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ success: true }))
@@ -74,6 +82,33 @@ describe('deviceApi', () => {
       'http://localhost:8080/api/device/sim-1/connect',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('restarts Wails polling subscriptions when publish rate changes', async () => {
+    Object.defineProperty(window, 'chrome', {
+      configurable: true,
+      value: { webview: { postMessage: vi.fn() } },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ deviceId: 'dev-1', timestamp: 1, channels: [], channelIndices: [] }),
+    } as Response)
+    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockReturnValue(1 as never)
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
+
+    const { deviceApi } = await import('@api/deviceApi')
+    const { wailsApi } = await import('@api/wails-adapter')
+    vi.spyOn(wailsApi.device, 'subscribeStream').mockResolvedValue({ success: true, Success: true })
+    vi.spyOn(wailsApi.device, 'setPublishRate').mockResolvedValue({ success: true, Success: true })
+
+    deviceApi.subscribeToDevice('dev-1')
+    await deviceApi.setPublishRate(5)
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(1)
+    expect(wailsApi.device.subscribeStream).toHaveBeenNthCalledWith(1, 'dev-1', true)
+    expect(wailsApi.device.subscribeStream).toHaveBeenCalledTimes(1)
+    expect(setIntervalSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 50)
+    expect(setIntervalSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 200)
   })
 
   it('motionApi returns status', async () => {
