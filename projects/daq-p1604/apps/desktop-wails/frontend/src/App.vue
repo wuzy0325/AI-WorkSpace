@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { onPayload, offPayload, onLog, offLog, onDeviceState, offDeviceState } from '@bridge/deviceBridge'
-import type { PressureSnapshot, DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
+import { onLog, offLog, onDeviceState, offDeviceState } from '@bridge/deviceBridge'
+import type { DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
 import MonitorView from '@views/MonitorView.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
@@ -81,10 +81,19 @@ onMounted(async () => {
     const message = err instanceof Error ? err.message : String(err)
     logStore.warn('auto-connect', `自动连接失败: ${message}`)
   }
-  deviceStore.setDisplayRefreshRateHz(displayStore.refreshRateHz)
-  onPayload((snapshot: PressureSnapshot) => {
-    deviceStore.pushSnapshot(snapshot)
-  })
+  // 同步 UI 显示偏好到 deviceStore（渲染刷新率 + 历史时间窗口）
+  deviceStore.applyDisplayPreferences(displayStore.refreshRateHz, displayStore.historyWindowSec)
+  // 监听 UI 显示偏好变化，自动重启渲染节拍与裁剪历史容量
+  watch(
+    () => [displayStore.refreshRateHz, displayStore.historyWindowSec] as const,
+    ([rate, window]) => {
+      deviceStore.applyDisplayPreferences(rate, window)
+    },
+  )
+  // 启动快照轮询：以后端采样率为准的固定周期从内存缓存拉取最新快照
+  // - Wails v3 采用轮询是为规避 Event.Emit 触发 WebView2 同步 ExecuteScript 阻塞
+  // - 与用户选择的 UI 刷新率完全解耦：数据永远新鲜，UI 按用户节奏消费
+  deviceStore.startSnapshotPolling()
   onLog((entry: DeviceLogEvent) => {
     logStore.pushEvent(entry)
   })
@@ -97,7 +106,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   deviceStore.stopDisplayFlush()
-  offPayload()
   offLog()
   offDeviceState()
   recordingStore.stopListening()

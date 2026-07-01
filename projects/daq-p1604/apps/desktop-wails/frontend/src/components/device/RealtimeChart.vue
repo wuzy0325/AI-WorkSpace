@@ -6,16 +6,17 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useDisplayStore } from '@stores/displayStore'
 import { useTheme } from '@composables/useTheme'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
 const props = withDefaults(defineProps<{
   deviceId?: string
-  maxPoints?: number
-}>(), { deviceId: '', maxPoints: 120 })
+}>(), { deviceId: '' })
 
 const deviceStore = useDeviceStore()
+const displayStore = useDisplayStore()
 const { theme } = useTheme()
 
 const COLORS = [
@@ -70,7 +71,23 @@ watch(theme, () => {
 })
 
 const option = computed(() => {
-  const history = deviceStore.historyFor(props.deviceId).slice(-props.maxPoints)
+  // 按"时间窗口(秒)"截取历史：cutoff = 当前时间 - windowMs
+  // 与刷新率解耦：无论用户选 2Hz 还是 30Hz，图表横轴都保留相同的秒数
+  const fullHistory = deviceStore.historyFor(props.deviceId)
+  const windowMs = displayStore.historyWindowSec * 1000
+  const nowMs = fullHistory.length > 0
+    ? fullHistory[fullHistory.length - 1]!.timestamp
+    : Date.now()
+  const cutoff = nowMs - windowMs
+  // 从右向左找到第一个 timestamp < cutoff 的位置作为起点，避免每帧全表遍历
+  let startIdx = 0
+  for (let i = fullHistory.length - 1; i >= 0; i--) {
+    if (fullHistory[i]!.timestamp < cutoff) {
+      startIdx = i + 1
+      break
+    }
+  }
+  const history = fullHistory.slice(startIdx)
   const times = history.map((d) => {
     const date = new Date(d.timestamp)
     return date.toLocaleTimeString('zh-CN', { hour12: false })

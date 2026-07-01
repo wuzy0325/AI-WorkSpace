@@ -2,11 +2,25 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
 import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult } from '@bridge/deviceBridge'
+import { useLogStore } from '@stores/logStore'
 
-const MAX_HISTORY = 200
+const MAX_HISTORY_HARD_CAP = 4000
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
 const APPLY_CONFIG_TIMEOUT_MS = 15000
-const DISPLAY_REFRESH_RATE_FALLBACK_HZ = 10
+/** UI 渲染刷新率默认值（Hz），仅在 store 初始化时使用，运行时由 displayStore 驱动 */
+const RENDER_TICK_FALLBACK_HZ = 10
+/** 图表历史时间窗口默认值（秒），运行时由 displayStore 驱动 */
+const HISTORY_WINDOW_FALLBACK_SEC = 30
+/**
+ * 快照轮询固定周期（毫秒）。
+ * 由后端采样率决定，与前端 UI 刷新率解耦：
+ * - 后端 P1604 默认采样 100ms（10Hz），轮询 100ms 已充分覆盖
+ * - 更高频轮询没有新数据可拉，只会浪费 IPC
+ * - Wails v3 采用轮询是为规避 Event.Emit 触发 WebView2 同步阻塞
+ */
+const SNAPSHOT_POLL_INTERVAL_MS = 100
+/** 定时器周期下限（约 60Hz），保护 WebView2 GUI 线程 */
+const MIN_TIMER_INTERVAL_MS = 16
 
 // 18 通道默认颜色
 const CHANNEL_COLORS = [
@@ -54,18 +68,34 @@ export const useDeviceStore = defineStore('device', () => {
   const statusMap = ref<Record<string, string>>({})
   const errorMap = ref<Record<string, string>>({})
   const historyMap = ref<Record<string, PressureSnapshot[]>>({})
+  // 后端最新快照缓冲：由固定周期轮询写入（10Hz），供内部计算与录制使用
   const snapshotMap = ref<Record<string, PressureSnapshot>>({})
+  // 已渲染快照：由 renderTick 按用户选择的 UI 刷新率发布，UI 组件（数值卡）读取此源
+  // 与 snapshotMap 的区别：snapshotMap 高频更新用于内部逻辑，renderedSnapshotMap 被节流用于视觉呈现
+  const renderedSnapshotMap = ref<Record<string, PressureSnapshot>>({})
+  // 待渲染快照缓冲：轮询命中新时间戳时写入，UI 渲染节拍取出后写入 historyMap + renderedSnapshotMap
+  // 语义：每个设备只保留"最新一份"未渲染快照，避免堆积
   const pendingSnapshotMap = ref<Record<string, PressureSnapshot>>({})
   const chartSelections = ref<Record<string, Set<number>>>({})
   const scanResults = ref<ScanResult[]>([])
   const isScanning = ref(false)
-  const displayFlushTimer = ref<ReturnType<typeof setInterval> | null>(null)
+  // UI 渲染节拍定时器：按 displayStore.refreshRateHz 触发 pending → history
+  const renderTickTimer = ref<ReturnType<typeof setInterval> | null>(null)
+  // 快照轮询定时器：以固定周期从后端拉最新快照，与 UI 刷新率无关
+  const snapshotPollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+  // 轮询并发门闩：上一次 IPC 未完成时跳过本次触发，防止 Promise 堆积
+  const isPolling = ref(false)
+  // 各设备最近一次写入快照的时间戳，用于跳过未变化的快照
+  const lastSnapshotTs = ref<Record<string, number>>({})
+  // 运行时可动态更新的 UI 刷新率与历史窗口，由外部（App.vue / MainTopBar）注入
+  const renderRateHz = ref(RENDER_TICK_FALLBACK_HZ)
+  const historyWindowSec = ref(HISTORY_WINDOW_FALLBACK_SEC)
 
   const selectedProfile = computed(() =>
     profiles.value.find((p) => p.id === selectedId.value) ?? null
   )
   const selectedSnapshot = computed(() =>
-    selectedId.value ? snapshotMap.value[selectedId.value] ?? null : null
+    selectedId.value ? renderedSnapshotMap.value[selectedId.value] ?? null : null
   )
 
   function syncSelectedDevice(): void {
@@ -136,42 +166,139 @@ export const useDeviceStore = defineStore('device', () => {
     pendingSnapshotMap.value[snapshot.deviceId] = snapshot
   }
 
-  function flushPendingSnapshots(): void {
+  /**
+   * 轮询后端获取所有设备最新快照（替代 daq:payload 事件订阅）。
+   *
+   * 设计要点：
+   * - 加 isPolling 门闩：上一次未完成前不重复发起 IPC，避免 Promise 堆积
+   * - 快照时间戳未变化的设备只更新 snapshotMap（内部缓存），
+   *   不入 pendingSnapshotMap（避免图表重复采样同一时间点造成平台化）
+   *   同时不发布到 renderedSnapshotMap（UI 由 renderTick 节流发布，与轮询解耦）
+   * - 静默失败：IPC 异常时下次定时器继续重试，不打断循环
+   */
+  async function pollLatestSnapshots(): Promise<void> {
+    if (isPolling.value) return
+    isPolling.value = true
+    try {
+      let snapshots: Record<string, PressureSnapshot>
+      try {
+        snapshots = await bridge.getLatestSnapshots()
+      } catch {
+        return
+      }
+      if (!snapshots) return
+      for (const [deviceId, snapshot] of Object.entries(snapshots)) {
+        if (!snapshot || !Array.isArray(snapshot.values)) continue
+        const lastTs = lastSnapshotTs.value[deviceId] ?? 0
+        if (snapshot.timestamp <= lastTs) {
+          // 时间戳未变化：仅刷新内部 snapshotMap，不动 pending / rendered
+          snapshotMap.value[deviceId] = snapshot
+          continue
+        }
+        lastSnapshotTs.value[deviceId] = snapshot.timestamp
+        pushSnapshot(snapshot)
+      }
+    } finally {
+      isPolling.value = false
+    }
+  }
+
+  /**
+   * 启动快照轮询定时器。
+   * 周期由后端采样率决定（默认 100ms），与用户在 UI 中选择的刷新率无关。
+   */
+  function startSnapshotPolling(): void {
+    if (snapshotPollTimer.value !== null) return
+    snapshotPollTimer.value = setInterval(() => {
+      void pollLatestSnapshots()
+    }, SNAPSHOT_POLL_INTERVAL_MS)
+  }
+
+  /** 停止快照轮询定时器 */
+  function stopSnapshotPolling(): void {
+    if (snapshotPollTimer.value !== null) {
+      clearInterval(snapshotPollTimer.value)
+      snapshotPollTimer.value = null
+    }
+  }
+
+  /**
+   * 计算当前历史容量上限（点数）。
+   * 容量 = 时间窗口(秒) × 渲染率(Hz)，即在当前刷新率下能画满窗口需要多少点。
+   * 有硬上限 MAX_HISTORY_HARD_CAP 防御异常配置导致内存爆炸。
+   */
+  function computeHistoryCapacity(): number {
+    const cap = Math.round(historyWindowSec.value * renderRateHz.value)
+    return Math.min(Math.max(cap, 10), MAX_HISTORY_HARD_CAP)
+  }
+
+  /**
+   * UI 渲染节拍：将每台设备最新的 pending 快照追加到 historyMap 并发布到 renderedSnapshotMap，
+   * 并按"时间窗口 × 刷新率"的容量裁剪历史。
+   *
+   * 每台设备每个 tick 最多追加 1 个点 —— 这就是"节流"：
+   * 后端产生更快也无所谓，UI 只按用户选择的刷新率消费。
+   * renderedSnapshotMap 与 historyMap 同源同频，保证图表与数值卡节奏一致。
+   */
+  function renderTick(): void {
     const pendingEntries = Object.entries(pendingSnapshotMap.value)
     if (pendingEntries.length === 0) return
 
+    const capacity = computeHistoryCapacity()
     for (const [deviceId, snapshot] of pendingEntries) {
       if (!historyMap.value[deviceId]) {
         historyMap.value[deviceId] = []
       }
       const history = historyMap.value[deviceId]!
       history.push(snapshot)
-      if (history.length > MAX_HISTORY) {
-        history.splice(0, history.length - MAX_HISTORY)
+      if (history.length > capacity) {
+        history.splice(0, history.length - capacity)
       }
+      // 同步发布"已渲染快照"，让数值卡等 UI 组件与图表同频
+      renderedSnapshotMap.value[deviceId] = snapshot
     }
     pendingSnapshotMap.value = {}
   }
 
-  function setDisplayRefreshRateHz(rateHz: number): void {
-    if (!Number.isFinite(rateHz) || rateHz <= 0) return
-    if (displayFlushTimer.value !== null) {
-      clearInterval(displayFlushTimer.value)
-      displayFlushTimer.value = null
+  /**
+   * 应用 UI 显示偏好（渲染刷新率 + 历史时间窗口）。
+   * 唯一入口，负责重启渲染节拍定时器。快照轮询独立运行不受影响。
+   */
+  function applyDisplayPreferences(rateHz: number, windowSec: number): void {
+    if (Number.isFinite(rateHz) && rateHz > 0) {
+      renderRateHz.value = rateHz
     }
-    const intervalMs = Math.max(16, Math.round(1000 / rateHz))
-    displayFlushTimer.value = setInterval(flushPendingSnapshots, intervalMs)
+    if (Number.isFinite(windowSec) && windowSec > 0) {
+      historyWindowSec.value = windowSec
+    }
+    const intervalMs = Math.max(MIN_TIMER_INTERVAL_MS, Math.round(1000 / renderRateHz.value))
+    if (renderTickTimer.value !== null) {
+      clearInterval(renderTickTimer.value)
+      renderTickTimer.value = null
+    }
+    renderTickTimer.value = setInterval(renderTick, intervalMs)
+    // 窗口/刷新率变化会改变容量，立即裁剪一次已有历史避免超限
+    const capacity = computeHistoryCapacity()
+    for (const id of Object.keys(historyMap.value)) {
+      const h = historyMap.value[id]!
+      if (h.length > capacity) {
+        h.splice(0, h.length - capacity)
+      }
+    }
   }
 
+  /** 停止 UI 渲染 + 快照轮询，flush 剩余 pending 数据 */
   function stopDisplayFlush(): void {
-    if (displayFlushTimer.value !== null) {
-      clearInterval(displayFlushTimer.value)
-      displayFlushTimer.value = null
+    if (renderTickTimer.value !== null) {
+      clearInterval(renderTickTimer.value)
+      renderTickTimer.value = null
     }
-    flushPendingSnapshots()
+    stopSnapshotPolling()
+    renderTick()
   }
 
-  setDisplayRefreshRateHz(DISPLAY_REFRESH_RATE_FALLBACK_HZ)
+  // 初始化默认节拍（未连接 displayStore 前的兜底）
+  applyDisplayPreferences(RENDER_TICK_FALLBACK_HZ, HISTORY_WINDOW_FALLBACK_SEC)
 
   /** 初始化指定设备的通道选择为全选 */
   function initChartSelections(id: string, channels: ChannelConfig[]): void {
@@ -390,28 +517,51 @@ export const useDeviceStore = defineStore('device', () => {
     syncSelectedDevice()
   }
 
-  /** 从后端状态变更事件更新前端状态（连接断开等） */
+  /**
+   * 从后端状态变更事件更新前端状态（连接断开等）。
+   * 同时把状态转 'Error' 或带 error 字段的变更写入 logStore，
+   * 让操作员在日志面板可见后端推送的设备异常（如 readLoop 异常退出）。
+   */
   function updateStatusFromBackend(id: string, state: { statusText: string; error?: string }): void {
-    if (statusMap.value[id] !== state.statusText) {
+    const prevStatus = statusMap.value[id]
+    const statusChanged = prevStatus !== state.statusText
+    if (statusChanged) {
       statusMap.value[id] = state.statusText
     }
     // 同步后端推送的错误信息（如连接断开原因）
+    let errorChanged = false
     if (state.error) {
+      errorChanged = errorMap.value[id] !== state.error
       errorMap.value[id] = state.error
     } else if (state.statusText !== 'Error') {
       // 非 Error 状态时清除错误
-      delete errorMap.value[id]
+      if (errorMap.value[id]) {
+        delete errorMap.value[id]
+      }
+    }
+
+    // 仅在状态或错误实际变化时写日志，避免重复刷屏
+    if (statusChanged || errorChanged) {
+      const logStore = useLogStore()
+      if (state.statusText === 'Error' && state.error) {
+        logStore.error('device', `设备 [${id}] 状态异常: ${state.error}`)
+      } else if (statusChanged && state.statusText === 'Disconnected' && prevStatus && prevStatus !== 'Disconnected') {
+        // 后端推送的断开（区别于前端主动断开）—— 记录 info 便于追溯
+        logStore.warn('device', `设备 [${id}] 已断开（后端推送，前一状态: ${prevStatus}）`)
+      }
     }
   }
 
   return {
-    profiles, selectedId, statusMap, errorMap, historyMap, snapshotMap, chartSelections,
+    profiles, selectedId, statusMap, errorMap, historyMap, snapshotMap, renderedSnapshotMap, chartSelections,
     scanResults, isScanning,
     selectedProfile, selectedSnapshot,
+    renderRateHz, historyWindowSec,
     selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
     clearScanResults, scanDevices, addProfile, removeProfile, updateStatusFromBackend,
-    setDisplayRefreshRateHz, stopDisplayFlush,
+    applyDisplayPreferences, stopDisplayFlush,
+    startSnapshotPolling, stopSnapshotPolling,
   }
 })

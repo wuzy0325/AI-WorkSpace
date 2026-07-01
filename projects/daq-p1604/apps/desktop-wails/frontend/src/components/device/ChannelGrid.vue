@@ -26,7 +26,7 @@ const COLORS = [
       <ChannelCard
         v-if="ch.enabled"
         :index="ch.index"
-        :value="deviceStore.snapshotMap[deviceId]?.values[ch.index] ?? NaN"
+        :value="deviceStore.renderedSnapshotMap[deviceId]?.values[ch.index] ?? NaN"
         :unit="ch.unit"
         :color="ch.color || COLORS[ch.index % COLORS.length]"
         :name="ch.name"

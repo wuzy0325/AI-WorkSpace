@@ -30,6 +30,10 @@ const { theme } = useTheme()
 const openConfig = inject<() => void>('shell:openConfig', () => {})
 
 const selected = computed(() => deviceStore.selectedProfile)
+const displayHz = computed(() => {
+  if (!selected.value?.p1604Config?.samplingRate) return '—'
+  return Math.round(1000 / selected.value.p1604Config.samplingRate)
+})
 const status = computed(() => (selected.value ? deviceStore.statusFor(selected.value.id) : ''))
 const errorMessage = computed(() => (selected.value ? deviceStore.errorFor(selected.value.id) : ''))
 const isAcquiring = computed(() => (selected.value ? deviceStore.acquiringFor(selected.value.id) : false))
@@ -161,7 +165,7 @@ function statusLabel(): string {
                   <span class="detail__meta-dot" />
                   <NText depth="3" style="font-size:0.7rem">{{ selected.p1604Config?.unit || 'psi' }}</NText>
                   <span class="detail__meta-dot" />
-                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.samplingRate }} Hz</NText>
+                  <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ displayHz }} Hz</NText>
                 </NSpace>
               </div>
             </div>
@@ -241,7 +245,7 @@ function statusLabel(): string {
             </div>
           </div>
           <div class="detail__chart-body">
-            <RealtimeChart :device-id="selected.id" :max-points="120" />
+            <RealtimeChart :device-id="selected.id" />
           </div>
         </NCard>
       </div>
