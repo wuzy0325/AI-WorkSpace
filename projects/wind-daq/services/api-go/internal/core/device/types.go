@@ -39,20 +39,32 @@ type ChannelConfig struct {
 // 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
 // core 层只保留类型定义，不包含基础设施知识
 type Profile struct {
-	ID                    string                 `json:"id"`
-	Name                  string                 `json:"name"`
-	Type                  Type                   `json:"type"`
-	Transport             string                 `json:"transport,omitempty"`
-	Address               string                 `json:"address,omitempty"`
-	Port                  int                    `json:"port,omitempty"`
-	SerialPort            string                 `json:"serialPort,omitempty"`
-	BaudRate              int                    `json:"baudRate,omitempty"`
-	AutoConnect           bool                   `json:"autoConnect,omitempty"`
-	MacAddress            string                 `json:"macAddress,omitempty"`
-	SamplingRate          int                    `json:"samplingRate"`
-	Channels              []ChannelConfig        `json:"channels"`
-	DaqP1604UseDeviceTimestamp bool             `json:"daqP1604UseDeviceTimestamp,omitempty"`
-	DaqT1603Config        DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
+	ID                         string                 `json:"id"`
+	Name                       string                 `json:"name"`
+	Type                       Type                   `json:"type"`
+	Transport                  string                 `json:"transport,omitempty"`
+	Address                    string                 `json:"address,omitempty"`
+	Port                       int                    `json:"port,omitempty"`
+	SerialPort                 string                 `json:"serialPort,omitempty"`
+	BaudRate                   int                    `json:"baudRate,omitempty"`
+	AutoConnect                bool                   `json:"autoConnect,omitempty"`
+	MacAddress                 string                 `json:"macAddress,omitempty"`
+	SamplingRate               int                    `json:"samplingRate"`
+	Channels                   []ChannelConfig        `json:"channels"`
+	DaqP1604UseDeviceTimestamp *bool                  `json:"daqP1604UseDeviceTimestamp,omitempty"`
+	DaqT1603Config             DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
+}
+
+// UseDeviceTimestampEnabled 返回 DAQ-P-1604 是否启用硬件时间戳。
+// 三态语义（与 daq-p1604 项目对齐）：
+//   - nil（老 profile 缺字段）：默认开启，保证升级后行为与"默认开启"决策一致
+//   - 显式 true：用户开启
+//   - 显式 false：用户关闭，回退到系统时间戳
+func (p Profile) UseDeviceTimestampEnabled() bool {
+	if p.DaqP1604UseDeviceTimestamp == nil {
+		return true
+	}
+	return *p.DaqP1604UseDeviceTimestamp
 }
 
 type DaqT1603HardwareConfig struct {
@@ -105,11 +117,12 @@ type ScanResult struct {
 }
 
 type DataPayload struct {
-	DeviceID       string    `json:"deviceId"`
-	Timestamp      int64     `json:"timestamp"`
-	DeviceTimestamp int64    `json:"deviceTimestamp,omitempty"` // 设备帧内时间戳（毫秒），仅 DAQ-P-1604 开启设备时间戳时有效
-	Channels       []float64 `json:"channels"`
-	ChannelIndices []int     `json:"channelIndices"`
+	DeviceID        string    `json:"deviceId"`
+	DeviceType      Type      `json:"deviceType,omitempty"` // 设备类型，用于 sink 路由（如 CSV 按设备类型分派宽/长格式）
+	Timestamp       int64     `json:"timestamp"`
+	DeviceTimestamp int64     `json:"deviceTimestamp,omitempty"` // 设备帧内时间戳（毫秒），仅 DAQ-P-1604 开启设备时间戳时有效
+	Channels        []float64 `json:"channels"`
+	ChannelIndices  []int     `json:"channelIndices"`
 }
 
 func (p *DataPayload) EnsureNonNilSlices() {

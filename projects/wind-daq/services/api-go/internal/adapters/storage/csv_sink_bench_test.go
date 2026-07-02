@@ -138,10 +138,11 @@ func BenchmarkCSVRecordingSink_EndToEnd_10Devices_60kFrames(b *testing.B) {
 	}
 }
 
-// BenchmarkCSVRecordingSink_WritePayload_FormatOnly 仅测量 writePayload 的格式化开销，
-// 不含 channel 投递、fsync 等。用于隔离 strconv.AppendXxx 相对 fmt.Fprintf 的性能。
+// BenchmarkCSVRecordingSink_WritePayload_FormatOnly 仅测量 writePayloadLong 的格式化开销，
+// 不含 channel 投递、fsync、文件 I/O 等。用于隔离 strconv.AppendXxx 相对 fmt.Fprintf 的性能。
 //
 // 使用 bufio.Writer + io.Discard 作为输出，避免文件 I/O 噪声。
+// 直接构造 perDeviceWriter 注入 discard bw，绕过文件创建路径。
 func BenchmarkCSVRecordingSink_WritePayload_FormatOnly(b *testing.B) {
 	sink := &CSVRecordingSink{}
 	payload := device.DataPayload{
@@ -152,14 +153,19 @@ func BenchmarkCSVRecordingSink_WritePayload_FormatOnly(b *testing.B) {
 	}
 
 	bw := bufio.NewWriter(io.Discard)
+	w := &perDeviceWriter{
+		deviceID:     "dev-1",
+		isWideFormat: false, // 长格式
+		bw:           bw,
+	}
 	var buf []byte
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		if err := sink.writePayload(bw, payload, &buf); err != nil {
-			b.Fatalf("writePayload: %v", err)
+		if err := sink.writePayloadLong(&buf, w, payload); err != nil {
+			b.Fatalf("writePayloadLong: %v", err)
 		}
 		// 每 1024 次 flush 一次，避免 bufio 内部缓冲无限增长
 		if i%1024 == 0 {

@@ -237,6 +237,7 @@ func (d *SimulatedDevice) emit(seconds float64) {
 
 	sink(device.DataPayload{
 		DeviceID:       d.profile.ID,
+		DeviceType:     d.profile.Type,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,

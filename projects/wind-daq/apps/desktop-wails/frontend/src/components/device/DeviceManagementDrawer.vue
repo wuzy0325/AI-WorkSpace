@@ -10,6 +10,7 @@ import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiButton from '@components/ui/UiButton.vue'
+import UiToggle from '@components/ui/UiToggle.vue'
 import { AlertCircle } from '@lucide/vue'
 import DeviceCard from '@components/device/DeviceCard.vue'
 
@@ -287,6 +288,8 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     daqT1603Config: type === 'DAQ-T-1603'
       ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
       : undefined,
+    // DAQ-P-1604 默认开启硬件时间戳（更精确），与 daq-p1604 项目对齐；用户可在"基本信息"中关闭回退到系统时间。
+    daqP1604UseDeviceTimestamp: type === 'DAQ-P-1604' ? true : undefined,
   }
 }
 
@@ -346,20 +349,8 @@ function getFirstDraftError(errors: DraftFieldErrors): string | null {
 }
 
 const channelRows = computed(() => {
-  const kw = channelKeyword.value.trim().toLowerCase()
-  return draft.value.channels
-    .map((channel, originalIndex) => ({ channel, originalIndex }))
-    .filter(({ channel }) => {
-      // 仅启用过滤
-      if (enabledOnlyChannels.value && !channel.enabled) return false
-      // 关键词过滤：匹配通道名称或索引
-      if (kw) {
-        const nameMatch = (channel.name ?? '').toLowerCase().includes(kw)
-        const idxMatch = String(channel.index + 1).includes(kw)
-        if (!nameMatch && !idxMatch) return false
-      }
-      return true
-    })
+  // 通道列表默认全量展示，不再做关键词或启用状态过滤
+  return draft.value.channels.map((channel, originalIndex) => ({ channel, originalIndex }))
 })
 
 function openCreate(type: DeviceType = 'SIMULATED') {
@@ -569,7 +560,11 @@ function clearSelection() {
 
 watch(() => props.open, (v) => {
   if (v) {
-    deviceStore.refreshProfiles()
+    // refreshProfiles 失败时 deviceStore 内部已 console.warn 并保留旧 profiles，
+    // 这里显式 catch 避免未处理的 rejection 警告（drawer 打开是用户主动行为，失败不需要 toast）。
+    void deviceStore.refreshProfiles().catch((e) => {
+      console.warn('[DeviceManagementDrawer] refreshProfiles on open failed:', e)
+    })
     clearSelection()
   }
 })
@@ -715,8 +710,8 @@ async function connectToggle(p: DeviceProfile) {
 async function toggleAcquisition(p: DeviceProfile) {
   const acquiring = deviceStore.acquiringFor(p.id)
   try {
-    if (acquiring) await deviceApi.stopAcquisition(p.id)
-    else await deviceApi.startAcquisition(p.id)
+    if (acquiring) await deviceStore.stopAcquisition(p.id)
+    else await deviceStore.startAcquisition(p.id)
     await deviceStore.refreshStatusFor(p.id)
   } catch (e) { feedback.pushToast(String(e), 'error') }
 }
@@ -764,7 +759,13 @@ async function bulkDelete() {
       await deviceApi.deleteProfile(id)
     } catch { /* 跳过 */ }
   }
-  await deviceStore.refreshProfiles()
+  // refreshProfiles 失败时仍提示删除完成（设备已从后端删除，仅 UI 列表刷新失败），
+  // 显式 catch 避免 unhandled rejection。
+  try {
+    await deviceStore.refreshProfiles()
+  } catch (e) {
+    console.warn('[DeviceManagementDrawer] refreshProfiles after bulk delete failed:', e)
+  }
   clearSelection()
   feedback.pushToast('批量删除完成', 'info')
 }
@@ -847,10 +848,6 @@ const addingAllDiscovered = ref(false)
 const autoConnectAfterBulkAdd = ref(false)
 const bulkError = ref<string | null>(null)
 const scanError = ref<string | null>(null)
-
-// ---- 通道搜索/过滤 ----
-const channelKeyword = ref('')
-const enabledOnlyChannels = ref(false)
 </script>
 
 <template>
@@ -1154,6 +1151,26 @@ const enabledOnlyChannels = ref(false)
                 </div>
               </section>
 
+              <!-- DAQ-P-1604 硬件时间戳开关 -->
+              <section v-if="draft.type === 'DAQ-P-1604'" class="editor-section">
+                <div class="editor-section-head">
+                  <h4 class="editor-section-title">硬件时间戳</h4>
+                  <p class="editor-section-desc">开启后保存的数据时间戳取自设备帧内时间，关闭时使用主机接收时间</p>
+                </div>
+                <div class="editor-atmo-row">
+                  <div class="editor-atmo-toggle">
+                    <UiToggle
+                      :model-value="!!draft.daqP1604UseDeviceTimestamp"
+                      :disabled="isReadOnly"
+                      @update:model-value="draft.daqP1604UseDeviceTimestamp = $event"
+                    />
+                    <span class="editor-atmo-label">
+                      {{ draft.daqP1604UseDeviceTimestamp ? '使用设备帧内硬件时间戳' : '使用主机接收时间戳' }}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
               <!-- DSA3217 扫描参数（在已连接设备的基本信息中显示） -->
               <section v-if="draft.type === 'DSA3217' && statusForDraft === 'Connected'" class="editor-section">
                 <div class="editor-section-head">
@@ -1312,11 +1329,6 @@ const enabledOnlyChannels = ref(false)
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</UiButton>
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
                     <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
-                  </div>
-                  <!-- 通道搜索/过滤 -->
-                  <div class="flex items-center gap-3">
-                    <UiInput v-model="channelKeyword" placeholder="搜索通道..." class="w-40" />
-                    <UiCheckbox v-model:checked="enabledOnlyChannels">仅启用</UiCheckbox>
                   </div>
                 </div>
 

@@ -128,8 +128,10 @@ func TestIntegration_P1604Adapter_InjectFrame(t *testing.T) {
 		n0 := len(frames)
 		mu.Unlock()
 
-		// 注入一帧（producer 生成完整线上字节）
-		frame, err := P1604BinaryFrameProducer(999, 18)
+		// 注入一帧（producer 生成完整线上字节）。
+	// 用带时间戳的 producer 与 adapter 默认行为（useDeviceTs=true）对齐，
+	// 否则 ParseStreamFrameEx 期望时间戳字段但帧内无该字段会解析失败。
+	frame, err := P1604BinaryFrameProducerWithDeviceTimestamp(999, 18)
 		if err != nil {
 			t.Fatalf("producer: %v", err)
 		}
@@ -268,3 +270,48 @@ func TestIntegration_P1604Adapter_MultiDeviceConcurrency(t *testing.T) {
 
 // 确保 slog 包被引用（newQuietLogger 用于需要日志的扩展场景）
 var _ = newQuietLogger
+
+// TestIntegration_P1604Adapter_SetUnitRoundTrip 验证单位切换端到端：
+// 已连接时 SetUnit 通过 v01101 写入模拟器 EU 系数，模拟器保存后，
+// 断连重连时 syncUnitFromHardware 通过 u01101 读回同一系数并反查单位。
+// 这覆盖“硬件是单位转换唯一执行者”链路：SetUnit 写硬件 → 硬件持久 → 重连以硬件为准。
+func TestIntegration_P1604Adapter_SetUnitRoundTrip(t *testing.T) {
+	WithSimulatedDevice(t, device.DeviceDAQP1604, func(sim Simulator, profile device.Profile) {
+		adapter := hardware.NewDAQP1604(profile)
+		adapter.SetDataSink(func(p device.DataPayload) {})
+		adapter.SetOnError(func(err error) {})
+
+		if err := adapter.Connect(); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+
+		// 已连接：SetUnit 应写硬件成功（v01101 -> 模拟器保存系数）
+		if err := adapter.SetUnit("kPa"); err != nil {
+			t.Fatalf("set unit kPa: %v", err)
+		}
+
+		// 断连（保留模拟器状态：模拟器进程未重启，coeff 仍为 kPa 系数）
+		if err := adapter.Disconnect(); err != nil {
+			t.Fatalf("disconnect: %v", err)
+		}
+
+		// 重连：Connect 内部 syncUnitFromHardware 应读回 kPa 系数且不报错
+		if err := adapter.Connect(); err != nil {
+			t.Fatalf("reconnect: %v", err)
+		}
+		defer adapter.Disconnect()
+
+		// 未连接场景：先断开，再 SetUnit 应只更新 profile 不报错
+		if err := adapter.Disconnect(); err != nil {
+			t.Fatalf("disconnect before offline set: %v", err)
+		}
+		if err := adapter.SetUnit("MPa"); err != nil {
+			t.Fatalf("offline set unit MPa: %v", err)
+		}
+
+		// 不支持的单位应报错
+		if err := adapter.SetUnit("bogus"); err == nil {
+			t.Fatal("expected error for unsupported unit, got nil")
+		}
+	})
+}

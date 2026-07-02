@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 const (
@@ -33,7 +34,13 @@ type WTNPXI struct {
 	acquiring  bool
 	conn       net.Conn
 	recvBuffer []byte
+	// onError 由 DeviceManager 在 Connect 阶段注入，readLoop 异常退出时回调，
+	// 用于将设备异常（断网、读错误等）向上传播，由 DeviceManager 统一更新状态。
+	onError    func(err error)
 }
+
+// 编译期断言：WTNPXI 实现 ports.ErrorNotifiable
+var _ ports.ErrorNotifiable = (*WTNPXI)(nil)
 
 func NewWTNPXI(profile device.Profile) *WTNPXI {
 	return &WTNPXI{
@@ -46,6 +53,13 @@ func NewWTNPXI(profile device.Profile) *WTNPXI {
 		},
 		recvBuffer: make([]byte, 0, 8192),
 	}
+}
+
+// SetOnError 实现 ports.ErrorNotifiable：DeviceManager 在 Connect 阶段注入回调。
+func (d *WTNPXI) SetOnError(fn func(err error)) {
+	d.mu.Lock()
+	d.onError = fn
+	d.mu.Unlock()
 }
 
 func (d *WTNPXI) ID() string { return d.profile.ID }
@@ -70,6 +84,7 @@ func (d *WTNPXI) Connect() error {
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
+	slog.Info("WTN_PXI TCP connected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "address", host, "port", port)
 
 	d.conn = conn
 	d.status.Connection = device.ConnectionConnected
@@ -86,6 +101,7 @@ func (d *WTNPXI) Disconnect() error {
 		_ = d.conn.Close()
 		d.conn = nil
 	}
+	slog.Info("WTN_PXI TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 
 	d.status.Connection = device.ConnectionDisconnected
 	return nil
@@ -184,6 +200,7 @@ func (d *WTNPXI) readLoop(stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
+			// 用户主动停止（StopAcquisition/Disconnect），不触发 onError
 			return
 		default:
 			d.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
@@ -192,7 +209,32 @@ func (d *WTNPXI) readLoop(stop <-chan struct{}) {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
 				}
-				slog.Debug("WTN_PXI read error", "device", d.profile.ID, "error", err)
+				// 用户可能在 Read 阻塞期间发起 Stop：close(stop) 后 Read 才返回错误。
+				// 这种情况下错误不是真正的设备异常，不应触发 onError。
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				slog.Warn("WTN_PXI read loop 异常退出", "device", d.profile.ID, "error", err)
+				// 异常退出：清理本地采集状态并向上传播错误
+				d.mu.Lock()
+				if d.acquiring {
+					d.acquiring = false
+					d.stop = nil
+				}
+				if d.conn != nil {
+					_ = d.conn.Close()
+					d.conn = nil
+				}
+				d.status.Acquiring = false
+				// 读取失败通常意味着链路已断
+				d.status.Connection = device.ConnectionDisconnected
+				fn := d.onError
+				d.mu.Unlock()
+				if fn != nil {
+					fn(err)
+				}
 				return
 			}
 			if n > 0 {
@@ -206,6 +248,9 @@ func (d *WTNPXI) processData(data []byte) {
 	d.mu.Lock()
 	d.recvBuffer = append(d.recvBuffer, data...)
 
+	// 在锁内仅做 frame 解析与 payload 切片，避免锁外再访问 recvBuffer；
+	// payloads 在锁外处理，避免持锁状态下 spawn goroutine 与父 Lock 形成 RLock 竞争。
+	payloads := make([][]byte, 0, 8)
 	for len(d.recvBuffer) >= WTN_PXI_LENGTH_PREFIX_BYTES {
 		payloadLen := int(d.recvBuffer[0])<<24 | int(d.recvBuffer[1])<<16 |
 			int(d.recvBuffer[2])<<8 | int(d.recvBuffer[3])
@@ -225,10 +270,17 @@ func (d *WTNPXI) processData(data []byte) {
 		copy(payload, d.recvBuffer[WTN_PXI_LENGTH_PREFIX_BYTES:frameLen])
 
 		d.recvBuffer = d.recvBuffer[frameLen:]
-
-		go d.handlePayload(payload)
+		payloads = append(payloads, payload)
 	}
 	d.mu.Unlock()
+
+	// 锁外同步处理 payload：
+	// - sink 通常是非阻塞 channel 发送，单帧处理在微秒级
+	// - 避免 1000Hz 下无界 spawn goroutine（每秒 1000+ goroutine）
+	// - 避免持锁 spawn 的子 goroutine 与父 Lock 形成 RLock 阻塞
+	for _, p := range payloads {
+		d.handlePayload(p)
+	}
 }
 
 func (d *WTNPXI) handlePayload(payload []byte) {
@@ -236,6 +288,7 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 	acquiring := d.acquiring
 	sink := d.sink
 	channels := d.profile.Channels
+	deviceID := d.profile.ID
 	d.mu.RUnlock()
 
 	if !acquiring || sink == nil {
@@ -264,7 +317,8 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 	}
 
 	sink(device.DataPayload{
-		DeviceID:       d.profile.ID,
+		DeviceID:       deviceID,
+		DeviceType:     d.profile.Type,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,

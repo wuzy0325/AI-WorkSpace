@@ -86,6 +86,7 @@ func (d *DSA3217) Connect() error {
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
+	slog.Info("DSA3217 TCP connected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "address", host, "port", port)
 
 	d.conn = conn
 	d.reader = bufio.NewReader(conn)
@@ -110,6 +111,7 @@ func (d *DSA3217) Disconnect() error {
 		d.conn = nil
 		d.reader = nil
 	}
+	slog.Info("DSA3217 TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 
 	d.status.Connection = device.ConnectionDisconnected
 	return nil
@@ -336,6 +338,7 @@ func (d *DSA3217) parseDataLine(line string) {
 
 	sink(device.DataPayload{
 		DeviceID:       d.profile.ID,
+		DeviceType:     d.profile.Type,
 		Timestamp:      device.NowMs(),
 		Channels:       channelValues,
 		ChannelIndices: indices,
@@ -362,6 +365,8 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 	}()
 
 	conn.SetWriteDeadline(time.Now().Add(DSA3217_TIMEOUT))
+	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
+	slog.Debug("DSA3217 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
 	if _, err := conn.Write([]byte(cmd + "\r\n")); err != nil {
 		return "", err
 	}
@@ -380,7 +385,9 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 		return "", err
 	}
 
-	return strings.TrimRight(resp, "\r\n"), nil
+	trimmed := strings.TrimRight(resp, "\r\n")
+	slog.Debug("DSA3217 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", trimmed)
+	return trimmed, nil
 }
 
 func (d *DSA3217) SetAvg(value int) error {

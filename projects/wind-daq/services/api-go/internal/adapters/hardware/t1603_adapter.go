@@ -1,6 +1,7 @@
 package hardware
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -57,6 +58,26 @@ func (a *T1603Adapter) Connect() error {
 	}
 
 	dev := sharedhw.NewDAQT1603(mapToSharedProfile(a.profile))
+	dev.OnLog(func(entry sharedhw.LogEntry) {
+		// sharedhw 把收发命令 emitLog 为 debug 级别；
+		// 适配器需统一降级到 Debug，避免高频收发把 ring buffer 与日志文件刷爆。
+		// Connect/Disconnect 等链路事件仍走 INFO（sharedhw emitLog 时使用 info 级别）。
+		level := slog.LevelInfo
+		switch entry.Level {
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		case "debug":
+			level = slog.LevelDebug
+		}
+		slog.LogAttrs(context.Background(), level, "DAQ-T-1603 "+entry.Message,
+			slog.String("category", entry.Category),
+			slog.String("component", "hardware"),
+			slog.String("device", entry.DeviceID),
+			slog.String("detail", entry.Detail),
+		)
+	})
 	if a.sink != nil {
 		a.setSharedDataSink(dev)
 	}
@@ -85,6 +106,10 @@ func (a *T1603Adapter) Connect() error {
 
 	if err := dev.Connect(); err != nil {
 		return fmt.Errorf("connect: %w", err)
+	}
+	if cfg, err := dev.GetDaqT1603Config(); err == nil {
+		a.config = mapFromSharedConfig(cfg)
+		a.profile.DaqT1603Config = a.config
 	}
 
 	a.driver = dev
@@ -150,7 +175,7 @@ func (a *T1603Adapter) setSharedDataSink(dev *sharedhw.DAQT1603) {
 		a.mu.RUnlock()
 
 		if fn != nil {
-			fn(mapToDevicePayload(payload))
+			fn(mapToDevicePayload(payload, a.profile.Type))
 		}
 	})
 }
@@ -315,9 +340,10 @@ func mapToDeviceStatus(s sharedcore.Status) device.Status {
 	}
 }
 
-func mapToDevicePayload(p sharedcore.DataPayload) device.DataPayload {
+func mapToDevicePayload(p sharedcore.DataPayload, deviceType device.Type) device.DataPayload {
 	return device.DataPayload{
 		DeviceID:       p.DeviceID,
+		DeviceType:     deviceType,
 		Timestamp:      p.Timestamp,
 		Channels:       p.Channels,
 		ChannelIndices: p.ChannelIndices,

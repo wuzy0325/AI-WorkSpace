@@ -1,7 +1,6 @@
 package hardware
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,13 +22,9 @@ const (
 	maxConsecutiveFrameErrors = 5
 	// noDataTimeout 是允许的最长无数据时间，超过则判定为连接异常。
 	noDataTimeout = 10 * time.Second
-	// readLoopJoinTimeout 是等待 readLoop 退出的最长时间。
-	readLoopJoinTimeout = 1 * time.Second
+	// readLoop 等待超时使用 sharedproto.ReadLoopJoinTimeout（跨项目统一）
+	// 主动停止原因使用 sharedproto.StopReasonUserRequested（跨项目统一）
 )
-
-// stopReasonUserRequested 表示调用方主动停止（StopAcquisition / Disconnect）。
-// readLoop 识别到该原因后静默退出，避免误判为连接异常。
-const stopReasonUserRequested = "user-requested"
 
 type DAQP1604 struct {
 	mu          sync.RWMutex
@@ -45,13 +40,13 @@ type DAQP1604 struct {
 	frameErrors int
 	// consecutiveFrameErrors 连续帧解析错误计数，用于触发自动重同步。
 	consecutiveFrameErrors int
-	onError                 func(err error)
+	onError                func(err error)
 
 	// readLoopDone 由 readLoop 退出时关闭，供 Start/Stop/Disconnect 等待协程结束。
 	readLoopDone chan struct{}
-	// stopReason 标记主动停止原因，由停止方在 close(stop) 前设置。
-	stopReason   string
-	stopReasonMu sync.Mutex
+	// 主动停止原因追踪：嵌入 sharedproto.StopReasonTracker
+	// 提供 SetStopReason / GetStopReason / ClearStopReason 方法，跨项目复用
+	sharedproto.StopReasonTracker
 }
 
 func NewDAQP1604(profile device.Profile) *DAQP1604 {
@@ -101,6 +96,7 @@ func (d *DAQP1604) Connect() error {
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
+	slog.Info("DAQ-P-1604 TCP connected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "address", host, "port", port)
 
 	// 启用 TCP keepalive，尽早发现连接中断。
 	if tcp, ok := conn.(*net.TCPConn); ok {
@@ -113,11 +109,28 @@ func (d *DAQP1604) Connect() error {
 	d.frameReader = sharedproto.NewFrameReader(conn)
 	d.status.Connection = device.ConnectionConnected
 	d.mu.Unlock()
+
+	// 启用长度前缀模式（供后续 FrameReader 读取单位系数 + 数据流帧解析）
+	// 此处启用后整个连接生命周期保持开启，initStream 不再重复发送。
+	if err := d.sendCommand("w1601"); err != nil {
+		d.mu.Lock()
+		d.conn = nil
+		d.frameReader = nil
+		d.status.Connection = device.ConnectionDisconnected
+		d.mu.Unlock()
+		_ = conn.Close()
+		return fmt.Errorf("enable length prefix: %w", err)
+	}
+	// 排空 w1601 的 A 应答，避免污染后续 u01101 的 ReadFrame
+	sharedproto.DrainW1601Response(d.frameReader, conn, 100*time.Millisecond)
+
+	// 读取硬件实际单位并同步 profile（best-effort，失败不阻塞连接）
+	d.syncUnitFromHardware()
 	return nil
 }
 
 func (d *DAQP1604) Disconnect() error {
-	d.setStopReason(stopReasonUserRequested)
+	d.SetStopReason(sharedproto.StopReasonUserRequested)
 
 	d.mu.Lock()
 	_ = d.stopAcquisitionLocked()
@@ -132,7 +145,7 @@ func (d *DAQP1604) Disconnect() error {
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(readLoopJoinTimeout):
+		case <-time.After(sharedproto.ReadLoopJoinTimeout):
 			slog.Warn("DAQ-P-1604 readLoop join timeout on disconnect", "device", d.profile.ID)
 		}
 	}
@@ -140,11 +153,12 @@ func (d *DAQP1604) Disconnect() error {
 	if conn != nil {
 		_ = conn.Close()
 	}
+	slog.Info("DAQ-P-1604 TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 	return nil
 }
 
 func (d *DAQP1604) StartAcquisition() error {
-	d.clearStopReason()
+	d.ClearStopReason()
 
 	d.mu.Lock()
 	if d.acquiring {
@@ -162,7 +176,7 @@ func (d *DAQP1604) StartAcquisition() error {
 		d.mu.Unlock()
 		select {
 		case <-done:
-		case <-time.After(readLoopJoinTimeout):
+		case <-time.After(sharedproto.ReadLoopJoinTimeout):
 			slog.Warn("DAQ-P-1604 previous readLoop join timeout on start", "device", d.profile.ID)
 		}
 		d.mu.Lock()
@@ -174,7 +188,12 @@ func (d *DAQP1604) StartAcquisition() error {
 	}
 	conn := d.conn
 	d.mu.Unlock()
-	d.drainConnection(conn, 100*time.Millisecond)
+	// 排空连接残留数据并记录字节数，便于诊断帧错位问题
+	if drained := sharedproto.DrainConnection(conn, 100*time.Millisecond); drained > 0 {
+		slog.Debug("DAQ-P-1604 drained residual data",
+			"category", "hardware-drain", "component", "hardware",
+			"device", d.profile.ID, "bytes", drained)
+	}
 
 	if err := d.initStream(); err != nil {
 		return fmt.Errorf("init stream: %w", err)
@@ -197,7 +216,7 @@ func (d *DAQP1604) StartAcquisition() error {
 }
 
 func (d *DAQP1604) StopAcquisition() error {
-	d.setStopReason(stopReasonUserRequested)
+	d.SetStopReason(sharedproto.StopReasonUserRequested)
 
 	d.mu.Lock()
 	err := d.stopAcquisitionLocked()
@@ -209,14 +228,14 @@ func (d *DAQP1604) StopAcquisition() error {
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(readLoopJoinTimeout):
+		case <-time.After(sharedproto.ReadLoopJoinTimeout):
 			slog.Warn("DAQ-P-1604 readLoop join timeout on stop", "device", d.profile.ID)
 		}
 	}
 
 	if connected {
 		if stopErr := d.sendCommand("c 02 1"); stopErr != nil {
-			if isConnectionFault(stopErr) {
+			if sharedproto.IsConnectionFault(stopErr) {
 				slog.Debug("DAQ-P-1604 stop stream: connection already gone", "device", d.profile.ID, "error", stopErr)
 			} else {
 				slog.Warn("DAQ-P-1604 stop stream command failed", "device", d.profile.ID, "error", stopErr)
@@ -251,13 +270,100 @@ func (d *DAQP1604) Status() device.Status {
 	return d.status
 }
 
+// SetUnit 切换压力单位。
+//
+// 行为：
+//   - 已连接：写硬件 EU 系数（v01101），硬件实际完成单位转换；成功后才更新 profile
+//   - 未连接：只更新 profile.Unit，下次 Connect 时由 syncUnitFromHardware 以硬件为准同步
+//
+// 设计原则：硬件是单位转换的唯一执行者。软件层不做 PSI↔Pa↔kPa 换算，
+// 避免软件换算与硬件 EU 系数双重转换导致不一致。
 func (d *DAQP1604) SetUnit(unit string) error {
+	unit = strings.TrimSpace(unit)
+	if !sharedproto.P1604IsSupportedUnit(unit) {
+		return fmt.Errorf("unsupported unit: %s", unit)
+	}
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	conn := d.conn
+	fr := d.frameReader
+	d.mu.Unlock()
+
+	// 已连接则写硬件 EU 系数
+	if conn != nil && fr != nil {
+		coeff := sharedproto.P1604PressureUnitCoefficient[unit]
+		d.writeMu.Lock()
+		err := sharedproto.P1604WriteUnitCoefficient(fr, conn, coeff, DAQ_P_1604_TIMEOUT)
+		d.writeMu.Unlock()
+		if err != nil {
+			return fmt.Errorf("write hardware unit coefficient: %w", err)
+		}
+		slog.Info("DAQ-P-1604 hardware unit updated",
+			"category", "hardware-send", "component", "hardware",
+			"device", d.profile.ID, "unit", unit, "coeff", coeff)
+	}
+
+	// 更新 profile（无论是否写硬件，都要保持 profile.Unit 与请求一致）
+	d.mu.Lock()
 	for i := range d.profile.Channels {
 		d.profile.Channels[i].Unit = unit
 	}
+	d.mu.Unlock()
 	return nil
+}
+
+// syncUnitFromHardware 读取硬件实际 EU 系数并同步 profile.Unit。
+//
+// 在 Connect 阶段调用：以硬件实际单位为准覆盖 profile，避免 profile 与硬件脱节
+// 导致"单位标签变了但数据值没变"的现象（硬件 EU 系数没改，数据仍是旧单位量级）。
+//
+// best-effort：读取失败只打 warn 日志，不阻塞连接流程。
+func (d *DAQP1604) syncUnitFromHardware() {
+	d.mu.RLock()
+	conn := d.conn
+	fr := d.frameReader
+	id := d.profile.ID
+	currentUnit := ""
+	if len(d.profile.Channels) > 0 {
+		currentUnit = d.profile.Channels[0].Unit
+	}
+	d.mu.RUnlock()
+
+	if conn == nil || fr == nil {
+		return
+	}
+
+	// 读取硬件 EU 系数（内部发 u01101 并读响应）
+	d.writeMu.Lock()
+	coeff, err := sharedproto.P1604ReadUnitCoefficient(fr, conn, DAQ_P_1604_TIMEOUT)
+	d.writeMu.Unlock()
+	if err != nil {
+		slog.Warn("read hardware unit coefficient failed",
+			"category", "hardware-recv", "component", "hardware",
+			"device", id, "error", err)
+		return
+	}
+
+	hwUnit, ok := sharedproto.P1604MatchUnitByCoefficient(coeff)
+	if !ok {
+		slog.Warn("hardware unit coefficient unmatched to known units",
+			"category", "hardware-recv", "component", "hardware",
+			"device", id, "coeff", coeff)
+		return
+	}
+
+	if currentUnit == hwUnit {
+		return // profile 与硬件一致，无需同步
+	}
+
+	d.mu.Lock()
+	for i := range d.profile.Channels {
+		d.profile.Channels[i].Unit = hwUnit
+	}
+	d.mu.Unlock()
+	slog.Info("DAQ-P-1604 unit synced from hardware",
+		"category", "hardware-recv", "component", "hardware",
+		"device", id, "profile_unit", currentUnit, "hardware_unit", hwUnit, "coeff", coeff)
 }
 
 func (d *DAQP1604) SetTare(channelIndex int, offset float64) error {
@@ -284,11 +390,7 @@ func (d *DAQP1604) ClearTare(channelIndex int) error {
 }
 
 func (d *DAQP1604) initStream() error {
-	if err := d.sendCommand("w1601"); err != nil {
-		return fmt.Errorf("enable length prefix: %w", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-
+	// w1601 已在 Connect 阶段发送并保持开启，此处不重复发送。
 	if err := d.sendCommand("c 00 1 FFFF 1 100 7 0"); err != nil {
 		return fmt.Errorf("set stream params: %w", err)
 	}
@@ -297,7 +399,7 @@ func (d *DAQP1604) initStream() error {
 	// 配置流返回内容：0010=压力，0400=设备时间戳，0800=大气数据
 	// 掩码计算：压力(0010) + 可选时间戳(0400) + 大气数据(0800)
 	contentMask := 0x0010
-	if d.profile.DaqP1604UseDeviceTimestamp {
+	if d.profile.UseDeviceTimestampEnabled() {
 		contentMask |= 0x0400
 	}
 	contentMask |= 0x0800 // 始终包含大气数据
@@ -316,42 +418,12 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
-	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1604_TIMEOUT))
-	_, err := d.conn.Write([]byte(cmd + "\r\n"))
-	_ = d.conn.SetWriteDeadline(time.Time{}) // 清除写截止时间，避免影响后续操作
-	return err
-}
-
-// drainConnection 在指定超时内排空连接中的残留数据。
-// 启动新采集前调用，避免旧命令响应或流数据污染帧对齐。
-// 限制最大循环次数并在首次超时且无数据时立即退出，避免长时间阻塞
-// 导致模拟器/设备端的命令读取 goroutine 因 deadline 超时提前退出。
-func (d *DAQP1604) drainConnection(conn net.Conn, timeout time.Duration) {
-	if conn == nil {
-		return
-	}
-	buf := make([]byte, 4096)
-	totalDrained := 0
-	const maxIters = 3 // 安全上限：最多 3 次读取尝试
-	for i := 0; i < maxIters; i++ {
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		n, err := conn.Read(buf)
-		if n > 0 {
-			totalDrained += n
-		}
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// 当前无残留数据，结束排空
-				break
-			}
-			// 连接已关闭等错误，无需继续
-			break
-		}
-	}
-	_ = conn.SetReadDeadline(time.Time{})
-	if totalDrained > 0 {
-		slog.Debug("DAQ-P-1604 drained residual data", "device", d.profile.ID, "bytes", totalDrained)
-	}
+	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
+	slog.Debug("DAQ-P-1604 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
+	// 命令发送委托给 sharedproto.SendCommandNoNewline：
+	//   - 纯 ASCII，不带换行符（实测设备 w1601 模式下 \r\n 会导致 N05）
+	//   - 内部处理 write deadline 设置与清除
+	return sharedproto.SendCommandNoNewline(d.conn, cmd, DAQ_P_1604_TIMEOUT)
 }
 
 func (d *DAQP1604) readLoop(stop <-chan struct{}) {
@@ -361,7 +433,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 	defer func() {
 		if unexpectedErr != nil {
 			// 主动停止场景不视为异常，避免误触发 onError。
-			if d.getStopReason() == stopReasonUserRequested {
+			if d.GetStopReason() == sharedproto.StopReasonUserRequested {
 				return
 			}
 
@@ -422,7 +494,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 				continue
 			}
 			// 主动停止后连接被关闭属于预期行为，静默退出。
-			if d.getStopReason() == stopReasonUserRequested && isClosedConnError(err) {
+			if d.GetStopReason() == sharedproto.StopReasonUserRequested && sharedproto.IsClosedConnError(err) {
 				return
 			}
 			d.mu.Lock()
@@ -442,12 +514,13 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 func (d *DAQP1604) processPayload(data []byte) {
 	// ASCII 帧属于命令响应，不应作为采集数据下发。
 	if sharedproto.IsASCIIFrame(data) {
+		slog.Debug("DAQ-P-1604 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", strings.TrimSpace(string(data)))
 		return
 	}
 
 	d.mu.RLock()
 	fr := d.frameReader
-	useDeviceTs := d.profile.DaqP1604UseDeviceTimestamp
+	useDeviceTs := d.profile.UseDeviceTimestampEnabled()
 	sink := d.sink
 	d.mu.RUnlock()
 
@@ -494,6 +567,7 @@ func (d *DAQP1604) processPayload(data []byte) {
 
 	payload := device.DataPayload{
 		DeviceID:       d.profile.ID,
+		DeviceType:     d.profile.Type,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,
@@ -505,51 +579,7 @@ func (d *DAQP1604) processPayload(data []byte) {
 	sink(payload)
 }
 
-func (d *DAQP1604) setStopReason(reason string) {
-	d.stopReasonMu.Lock()
-	defer d.stopReasonMu.Unlock()
-	if d.stopReason == "" {
-		d.stopReason = reason
-	}
-}
-
-func (d *DAQP1604) getStopReason() string {
-	d.stopReasonMu.Lock()
-	defer d.stopReasonMu.Unlock()
-	return d.stopReason
-}
-
-func (d *DAQP1604) clearStopReason() {
-	d.stopReasonMu.Lock()
-	defer d.stopReasonMu.Unlock()
-	d.stopReason = ""
-}
-
-// isClosedConnError 判断错误是否由连接被主动关闭引起。
-func isClosedConnError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, net.ErrClosed) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "use of closed network connection")
-}
-
-// isConnectionFault 启发式判定错误是否由连接故障引起，用于日志分级。
-func isConnectionFault(err error) bool {
-	if err == nil {
-		return false
-	}
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "i/o timeout") ||
-		strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "reset by peer") ||
-		strings.Contains(msg, "use of closed network connection") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "device disconnected")
-}
+// 注：stopReason 三件套（SetStopReason/GetStopReason/ClearStopReason）、
+// isConnectionFault、isClosedConnError、drainConnection 已下沉到
+// shared.local/device-sdk/go/protocol（conn_helpers.go），
+// 通过嵌入 sharedproto.StopReasonTracker 和直接调用 sharedproto.* 函数复用。

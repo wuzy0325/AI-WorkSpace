@@ -31,7 +31,10 @@ func ConfigForType(devType device.Type, channels int) SimulatorConfig {
 	}
 	switch devType {
 	case device.DeviceDAQP1604:
-		return SimulatorConfig{P1604BinaryFrameProducer, NewP1604Responder(), false, channels}
+		// 默认 producer 与 adapter 默认行为对齐：
+		// adapter UseDeviceTimestampEnabled() 默认 true（nil 视为 true），
+		// 故模拟器默认用带时间戳的 producer，使 ParseStreamFrameEx(withDeviceTimestamp=true) 能正确解析。
+		return SimulatorConfig{P1604BinaryFrameProducerWithDeviceTimestamp, NewP1604Responder(), false, channels}
 	case device.DeviceDaqT1603:
 		return SimulatorConfig{T1603BinaryFrameProducer, NewT1603Responder(), false, channels}
 	case device.DeviceDSA3217:
