@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +77,10 @@ type p1604Driver struct {
 	conn        net.Conn
 	frameReader *sharedproto.FrameReader
 	acquiring   bool
+	// emit 日志回调（由 adapter 注入），用于在 sendCommand 等底层通信路径
+	// 打印硬件通信日志（category=hardware-send/hardware-recv），便于前端
+	// "通信" 分组展示。driver 不持有 adapter 引用，避免环形依赖。
+	emit func(DeviceLogEntry)
 	// readLoopDone 由 readLoop 在退出时关闭。
 	// Disconnect / StopAcquisition 在 close(stop) 之后等待此 channel，确保
 	// readLoop 不再持有 conn 引用，再安全 conn.Close；同时也避免 Disconnect 返回
@@ -191,10 +196,17 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
 
+	// TCP 连接成功，打印硬件通信日志（前端 "通信" 分组可见）
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
+		Message: "TCP connected", Detail: fmt.Sprintf("%s:%d", host, port),
+	})
+
 	driver := &p1604Driver{
 		profile:     profile,
 		conn:        conn,
 		frameReader: sharedproto.NewFrameReader(conn),
+		emit:        a.emitLog,
 	}
 
 	// 连接后必须先发 w1601 启用长度前缀模式
@@ -206,6 +218,11 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 
 	// 排空 w1601 的 A 应答，避免污染后续 u01101 响应
 	sharedproto.DrainW1601Response(driver.frameReader, conn, p1604W1601DrainTimeout)
+	// 打印 w1601 应答接收日志（A 应答已被排空丢弃，此处仅记录通信事件）
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
+		Message: "Command response", Detail: "w1601 -> A (ack, drained)",
+	})
 
 	// 读取硬件当前 EU 压力转换系数，识别硬件单位
 	// 读硬件失败不阻断连接（兼容旧固件或模拟器），仅记录 warn
@@ -246,9 +263,23 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 // 返回值：
 //   - unit: 识别到的硬件单位（如 "psi"、"kPa"）；读取失败返回 ""
 //   - note: 给日志使用的简短描述（如 "unit=psi (coeff=1.000000)"）
+//
+// 通信日志：u01101 命令通过 sharedproto.P1604ReadUnitCoefficient 发送，
+// 不走 driver.sendCommand，故在此补充 hardware-send/hardware-recv 日志，
+// 让前端 "通信" 分组能看到完整的连接阶段命令交互。
 func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.PressureProfile) (string, string) {
+	// 打印 u01101 命令发送日志
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-send", DeviceID: profile.ID,
+		Message: "Command sent", Detail: "u01101 (read unit coefficient)",
+	})
 	coeff, err := sharedproto.P1604ReadUnitCoefficient(driver.frameReader, driver.conn, p1604UnitSyncTimeout)
 	if err != nil {
+		// 打印 u01101 响应失败日志（通信层）
+		a.emitLog(DeviceLogEntry{
+			Level: "warn", Category: "hardware-recv", DeviceID: profile.ID,
+			Message: "Command response error", Detail: fmt.Sprintf("u01101: %v", err),
+		})
 		// 读硬件失败：保留 profile 单位，记录 warn（不阻断连接）
 		a.emitLog(DeviceLogEntry{
 			Level: "warn", Category: "hardware", DeviceID: profile.ID,
@@ -257,6 +288,11 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 		})
 		return "", fmt.Sprintf("unit=%s (hardware read failed)", profile.P1604Cfg.Unit)
 	}
+	// 打印 u01101 响应日志（通信层，记录解析出的系数）
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
+		Message: "Command response", Detail: fmt.Sprintf("u01101 -> coeff=%f", coeff),
+	})
 	hwUnit, matched := sharedproto.P1604MatchUnitByCoefficient(coeff)
 	if !matched {
 		// 系数不在标准表内：保留 profile 单位，记录 warn 并暴露实际系数便于排查
@@ -344,6 +380,11 @@ func (a *P1604Adapter) Disconnect(id string) error {
 
 	// 通知前端状态变更
 	a.emitState(id)
+	// TCP 断开日志（通信层），归类到 hardware-recv 便于前端 "通信" 分组展示
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: id,
+		Message: "TCP disconnected",
+	})
 	a.emitLog(DeviceLogEntry{
 		Level: "info", Category: "hardware", DeviceID: id,
 		Message: "Device disconnected",
@@ -593,7 +634,17 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 		if !ok {
 			return fmt.Errorf("unsupported unit: %s", cfg.Unit)
 		}
+		// 打印 v01101 命令发送日志（v01101 通过 sharedproto.P1604WriteUnitCoefficient 发送，不走 sendCommand）
+		a.emitLog(DeviceLogEntry{
+			Level: "info", Category: "hardware-send", DeviceID: id,
+			Message: "Command sent", Detail: fmt.Sprintf("v01101 %.6f (write unit coefficient, unit=%s)", coeff, cfg.Unit),
+		})
 		if err := sharedproto.P1604WriteUnitCoefficient(driver.frameReader, driver.conn, coeff, p1604UnitSyncTimeout); err != nil {
+			// 打印 v01101 响应失败日志（通信层）
+			a.emitLog(DeviceLogEntry{
+				Level: "warn", Category: "hardware-recv", DeviceID: id,
+				Message: "Command response error", Detail: fmt.Sprintf("v01101: %v", err),
+			})
 			// 写硬件失败：不更新 profile，让前端感知到失败状态
 			a.emitLog(DeviceLogEntry{
 				Level: "error", Category: "hardware", DeviceID: id,
@@ -602,6 +653,11 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 			})
 			return fmt.Errorf("write hardware unit: %w", err)
 		}
+		// 打印 v01101 响应日志（通信层，写入成功）
+		a.emitLog(DeviceLogEntry{
+			Level: "info", Category: "hardware-recv", DeviceID: id,
+			Message: "Command response", Detail: "v01101 -> A (ack, unit written)",
+		})
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware", DeviceID: id,
 			Message: "Hardware unit updated",
@@ -713,10 +769,21 @@ func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, caus
 }
 
 // processPayload 处理接收到的数据帧
+//
+// 日志策略：
+//   - ASCII 响应帧（命令确认）：打印 hardware-recv 日志，属于硬件通信信息，
+//     频率低（仅连接/配置/启停时出现），可安全输出。
+//   - 二进制数据帧（采集压力数据）：不打印每帧内容，因为采集期间帧率高达
+//     1kHz × 多设备，逐帧打印会刷爆日志文件与前端面板。
+//     仅在解析错误或通道数异常时打印 warn/debug 日志。
 func (a *P1604Adapter) processPayload(id string, data []byte) {
 	// 区分 ASCII 响应和二进制帧
 	if sharedproto.IsASCIIFrame(data) {
-		// ASCII 响应（命令确认等），忽略
+		// ASCII 响应（命令确认等）：打印通信日志后忽略，不作为采集数据下发
+		a.emitLog(DeviceLogEntry{
+			Level: "info", Category: "hardware-recv", DeviceID: id,
+			Message: "Command response", Detail: strings.TrimSpace(string(data)),
+		})
 		return
 	}
 
@@ -777,9 +844,18 @@ func (a *P1604Adapter) processPayload(id string, data []byte) {
 // 命令发送委托给 sharedproto.SendCommandNoNewline：
 //   - 纯 ASCII，不带换行符（实测设备 w1601 模式下 \r\n 会导致 N05）
 //   - 内部处理 write deadline 设置与清除
+//
+// 通信日志：通过 emit 回调打印 category=hardware-send 的日志，便于前端
+// "通信" 分组展示。命令发送频率低（连接/配置/启停采集），不会刷屏。
 func (d *p1604Driver) sendCommand(cmd string) error {
 	if d.conn == nil {
 		return fmt.Errorf("not connected")
+	}
+	if d.emit != nil {
+		d.emit(DeviceLogEntry{
+			Level: "info", Category: "hardware-send", DeviceID: d.profile.ID,
+			Message: "Command sent", Detail: cmd,
+		})
 	}
 	return sharedproto.SendCommandNoNewline(d.conn, cmd, p1604CommandTimeout)
 }
