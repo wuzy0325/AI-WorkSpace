@@ -104,8 +104,14 @@ func (a *T1603Adapter) Connect() error {
 		}
 	})
 
-	if err := dev.Connect(); err != nil {
-		return fmt.Errorf("connect: %w", err)
+	// dev.Connect() 会同步触发 OnConfigSynced 回调，回调内取 a.mu。
+	// 必须先释放 a.mu，否则同 goroutine 重入 a.mu 自死锁。
+	// 顶层 defer a.mu.Unlock() 负责最终释放；此处仅临时让锁。
+	a.mu.Unlock()
+	connectErr := dev.Connect()
+	a.mu.Lock()
+	if connectErr != nil {
+		return fmt.Errorf("connect: %w", connectErr)
 	}
 	if cfg, err := dev.GetDaqT1603Config(); err == nil {
 		a.config = mapFromSharedConfig(cfg)

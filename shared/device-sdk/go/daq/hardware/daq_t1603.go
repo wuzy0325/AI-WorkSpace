@@ -17,6 +17,18 @@ import (
 const noDataTimeout = 10 * time.Second
 const maxConsecutiveFrameErrors = 5
 
+// configSyncTotalTimeout 限制 Connect 阶段配置同步的总耗时预算。
+// 设计动机：readAllConfig 串行发送 8 条 @fd 查询命令，最坏每条 1s + 每字节 100ms，
+// 极端情况下可超过 8s，会踩穿 Wails binding 默认 5s 调用超时，UI 误判连接失败。
+// 4s 预算下：8 条命令平均每条 500ms，正常设备通常 50-200ms 完成，留足重试余量。
+// 超过预算立即返回错误，让 Connect fail-fast，操作员可重新点连接。
+const configSyncTotalTimeout = 4 * time.Second
+
+// configSyncMinRemaining 单条命令执行前剩余时间的最低阈值。
+// 若剩余时间不足此阈值，认为已无法完成下一条命令，提前返回 deadline 错误，
+// 避免单条命令跨过总 deadline 导致总耗时超出预算。
+const configSyncMinRemaining = 200 * time.Millisecond
+
 const (
 	DAQ_T_1603_DEFAULT_HOST = "192.168.1.7"
 	DAQ_T_1603_DEFAULT_PORT = 9000
@@ -51,7 +63,6 @@ type DAQT1603 struct {
 	readErrors             int
 	frameErrors            int
 	consecutiveFrameErrors int
-	configSyncDone         chan struct{}
 	readLoopDone           chan struct{}
 }
 
@@ -162,7 +173,9 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
-	const maxIters = 3 // 安全上限：最多 3 次读取尝试
+	// maxIters=10：单次 drainConnection 总耗时上限约 1s（10 × 100ms），
+	// 足以吸收快速启停后的残留帧；过大的值（如 50 次 5s）会显著拖长 StartAcquisition。
+	const maxIters = 10
 
 	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
@@ -172,7 +185,6 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// 当前无残留数据，结束排空
 				break
 			}
 			// 连接已关闭等错误，无需继续
@@ -215,10 +227,17 @@ func (d *DAQT1603) Connect() error {
 
 	d.conn = conn
 	d.frameReader = protocol.NewT1603FrameReader(conn)
+	d.frameReader.SetBinaryMode(d.config.BinaryFormat)
+	d.frameReader.SetMetadataMode(d.config.ShowTimestamp || d.config.ShowSequence)
 	d.status.Connection = core.ConnectionConnected
-	d.configSyncDone = make(chan struct{})
 
-	go d.syncHardwareConfig()
+	if err := d.syncHardwareConfigLocked(conn); err != nil {
+		_ = conn.Close()
+		d.conn = nil
+		d.frameReader = nil
+		d.status.Connection = core.ConnectionDisconnected
+		return err
+	}
 
 	return nil
 }
@@ -228,15 +247,6 @@ func (d *DAQT1603) Disconnect() error {
 	defer d.mu.Unlock()
 
 	_ = d.stopAcquisitionLocked()
-
-	if d.configSyncDone != nil {
-		select {
-		case <-d.configSyncDone:
-		default:
-			close(d.configSyncDone)
-		}
-		d.configSyncDone = nil
-	}
 
 	if d.conn != nil {
 		_ = d.conn.Close()
@@ -270,21 +280,6 @@ func (d *DAQT1603) StartAcquisition() error {
 		}
 		d.mu.Lock()
 		d.readLoopDone = nil
-	}
-
-	if d.configSyncDone != nil {
-		syncDone := d.configSyncDone
-		d.mu.Unlock()
-		slog.Info("DAQ-T-1603 waiting for config sync before acquisition", "device", d.profile.ID)
-		<-syncDone
-		d.mu.Lock()
-		slog.Info("DAQ-T-1603 config sync done, proceeding with acquisition", "device", d.profile.ID)
-		if d.acquiring {
-			return nil
-		}
-		if d.conn == nil || d.status.Connection == core.ConnectionDisconnected {
-			return fmt.Errorf("device disconnected before acquisition start")
-		}
 	}
 
 	if d.conn != nil {
@@ -602,185 +597,212 @@ func (d *DAQT1603) processPayload(data []byte) {
 	})
 }
 
-func (d *DAQT1603) syncHardwareConfig() {
-	time.Sleep(300 * time.Millisecond)
+func (d *DAQT1603) syncHardwareConfigLocked(conn net.Conn) error {
 	startedAt := time.Now()
-
-	d.mu.RLock()
-	conn := d.conn
-	isConnected := d.status.Connection == core.ConnectionConnected
-	alreadyAcquiring := d.acquiring
-	syncDone := d.configSyncDone
-	d.mu.RUnlock()
-
-	defer func() {
-		if syncDone != nil {
-			select {
-			case <-syncDone:
-			default:
-				close(syncDone)
-			}
-		}
-	}()
-
-	if conn == nil || !isConnected || alreadyAcquiring {
-		return
+	deadline := startedAt.Add(configSyncTotalTimeout)
+	if conn == nil {
+		return fmt.Errorf("device not connected")
 	}
 
 	d.emitLog("info", "system", "Starting config sync", "mode=skill-compatible")
 
 	d.writeMu.Lock()
-	cfg := d.readAllConfig(conn)
-	modeSetOK := false
-	if cfg != nil {
-		// 强制设备使用 64 字节纯二进制帧（无 TIME/HEAD 前缀），帧读取最稳。
-		// 三条命令必须全部成功，否则 FrameReader 与设备模式不一致 → 解析乱码。
-		// 任何一条失败：不修改 cfg.BinaryFormat 等字段，让上层用设备实际状态。
-		if _, err := d.sendCommand(conn, "@fe BIN 1"); err != nil {
-			d.emitLog("warn", "system", "Force BIN mode failed", err.Error())
-		} else if _, err := d.sendCommand(conn, "@fe TIME 0"); err != nil {
-			d.emitLog("warn", "system", "Force TIME=0 failed", err.Error())
-		} else if _, err := d.sendCommand(conn, "@fe HEAD 0"); err != nil {
-			d.emitLog("warn", "system", "Force HEAD=0 failed", err.Error())
-		} else {
-			modeSetOK = true
-		}
-		if modeSetOK {
-			cfg.BinaryFormat = true
-			cfg.ShowTimestamp = false
-			cfg.ShowSequence = false
-		}
-	}
-	d.writeMu.Unlock()
-	if cfg == nil {
-		d.emitLog("warn", "system", "Config sync aborted", "nil config returned")
-		return
+	defer d.writeMu.Unlock()
+
+	cfg, err := d.readAllConfig(conn, deadline)
+	if err != nil {
+		d.emitLog("warn", "system", "Config sync aborted", err.Error())
+		return err
 	}
 
-	d.mu.Lock()
-	if d.conn == nil || d.status.Connection == core.ConnectionDisconnected || d.acquiring {
-		d.mu.Unlock()
-		return
+	// 强制二进制帧（BIN 1）。TIME 前缀按用户配置（d.config.ShowTimestamp）决定：
+	// 启用时设备发 72 字节带时间戳帧，FrameReader 的 metadata 模式在下方同步开启；
+	// 禁用时退回 64 字节纯二进制帧（帧读取最稳，默认行为）。
+	// HEAD（序号前缀）当前未在 UI 暴露，强制关闭。
+	// 三条命令必须全部成功，否则 FrameReader 与设备模式不一致。
+	// 每条命令前检查总 deadline，避免单条命令跨过预算导致总耗时超出。
+	if err := checkConfigSyncDeadline(deadline); err != nil {
+		d.emitLog("warn", "system", "Config sync deadline exceeded before BIN", err.Error())
+		return err
 	}
+	if _, err := d.sendCommand(conn, "@fe BIN 1"); err != nil {
+		d.emitLog("warn", "system", "Force BIN mode failed", err.Error())
+		return fmt.Errorf("force BIN mode: %w", err)
+	}
+	if err := checkConfigSyncDeadline(deadline); err != nil {
+		d.emitLog("warn", "system", "Config sync deadline exceeded before TIME", err.Error())
+		return err
+	}
+	if _, err := d.sendCommand(conn, fmt.Sprintf("@fe TIME %d", boolFlag(d.config.ShowTimestamp))); err != nil {
+		d.emitLog("warn", "system", "Set TIME mode failed", err.Error())
+		return fmt.Errorf("set TIME mode: %w", err)
+	}
+	if err := checkConfigSyncDeadline(deadline); err != nil {
+		d.emitLog("warn", "system", "Config sync deadline exceeded before HEAD", err.Error())
+		return err
+	}
+	if _, err := d.sendCommand(conn, "@fe HEAD 0"); err != nil {
+		d.emitLog("warn", "system", "Force HEAD=0 failed", err.Error())
+		return fmt.Errorf("force HEAD=0: %w", err)
+	}
+	cfg.BinaryFormat = true
+	cfg.ShowTimestamp = d.config.ShowTimestamp
+	cfg.ShowSequence = false
+
 	d.config = *cfg
 	d.profile.DaqT1603Config = *cfg
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(cfg.BinaryFormat)
 		d.frameReader.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
 	}
-	fn := d.onConfigSynced
-	d.mu.Unlock()
 
-	if fn != nil {
+	// 通知上层适配器镜像硬件实际配置（采样率、通道掩码、热电偶类型等）。
+	// 注意：回调在 d.mu 持有期间触发，调用方（适配器 Connect）必须已释放自身锁，
+	// 否则回调重入适配器锁会自死锁（见 daq-t1603 / wind-daq 适配器均在 dev.Connect 前
+	// 释放 a.mu）。
+	if fn := d.onConfigSynced; fn != nil {
 		fn(*cfg)
 	}
 
 	slog.Info("DAQ-T-1603 config sync completed", "device", d.profile.ID)
 	d.emitLog("info", "system", "Config sync completed", fmt.Sprintf("duration=%s mode=skill-compatible", time.Since(startedAt)))
+	return nil
 }
 
-func (d *DAQT1603) readAllConfig(conn net.Conn) *core.DaqT1603HardwareConfig {
+// checkConfigSyncDeadline 检查 config-sync 总预算是否已耗尽。
+// 在每条 @fd/@fe 命令前调用，剩余时间不足 configSyncMinRemaining 即返回 deadline 错误，
+// 让 Connect fail-fast 而不是踩穿 UI 调用超时。
+func checkConfigSyncDeadline(deadline time.Time) error {
+	remaining := time.Until(deadline)
+	if remaining <= configSyncMinRemaining {
+		return fmt.Errorf("config sync deadline exceeded (remaining=%s, budget=%s)", remaining, configSyncTotalTimeout)
+	}
+	return nil
+}
+
+// readAllConfig 逐条查询硬件配置。单条查询失败时记 warn 并保留字段默认值后继续，
+// 不因某条辅助查询（旧固件可能不支持的 @fd AVG/TNUM 等）而整体放弃连接——
+// 这是与同步化之前一致的容错语义。唯一会硬失败的边界是总预算耗尽
+// （checkConfigSyncDeadline），用于对完全不响应的设备 fail-fast。
+// BIN/TIME/HEAD 的读回值随后会被 syncHardwareConfigLocked 的 @fe 强制命令覆盖，
+// 因此其读失败无害。
+func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1603HardwareConfig, error) {
 	cfg := &core.DaqT1603HardwareConfig{
-		ChannelMask:  "FFFF",
-		SamplingRate: 10,
-		AverageCount: 1,
-		TriggerMode:  0,
+		ChannelMask:       "FFFF",
+		SamplingRate:      10,
+		AverageCount:      1,
+		TriggerMode:       0,
+		ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
 	}
 
-	startedAt := time.Now()
-	if resp, err := d.sendCommandExact(conn, "@e3", 16); err == nil && len(resp) == 16 {
-		d.logConfigQuery("@e3", startedAt, resp, nil)
-		cfg.ThermocoupleTypes = resp
-	} else {
-		d.logConfigQuery("@e3", startedAt, "", err)
-		cfg.ThermocoupleTypes = "KKKKKKKKKKKKKKKK"
+	// query 在总预算内发送一条命令；失败时记日志并保留默认值，返回是否成功。
+	// 总预算耗尽时返回 deadline 错误，由调用方硬失败。
+	query := func(cmd string, fn func(resp string)) error {
+		if err := checkConfigSyncDeadline(deadline); err != nil {
+			return err
+		}
+		startedAt := time.Now()
+		resp, err := d.sendCommandIdle(conn, cmd)
+		if err != nil {
+			d.logConfigQuery(cmd, startedAt, "", err)
+			return nil // 单条失败：保留默认值，继续
+		}
+		d.logConfigQuery(cmd, startedAt, resp, nil)
+		fn(resp)
+		return nil
 	}
 
-	startedAt = time.Now()
-	if resp, err := d.sendCommandIdle(conn, "@fd MCH"); err == nil {
-		d.logConfigQuery("@fd MCH", startedAt, resp, nil)
+	// @e3 / @fd BIN/TIME/HEAD 使用定长读，单独处理。
+	readExact := func(cmd string, n int, fn func(resp string)) error {
+		if err := checkConfigSyncDeadline(deadline); err != nil {
+			return err
+		}
+		startedAt := time.Now()
+		resp, err := d.sendCommandExact(conn, cmd, n)
+		if err != nil {
+			d.logConfigQuery(cmd, startedAt, "", err)
+			return nil
+		}
+		d.logConfigQuery(cmd, startedAt, resp, nil)
+		fn(resp)
+		return nil
+	}
+
+	// @e3 热电偶类型（16 字节）
+	if err := readExact("@e3", 16, func(resp string) {
+		if len(resp) == 16 {
+			cfg.ThermocoupleTypes = resp
+		}
+	}); err != nil {
+		return nil, err
+	}
+
+	// @fd MCH 通道掩码
+	if err := query("@fd MCH", func(resp string) {
 		if len(resp) == 4 || len(resp) == 3 {
 			cfg.ChannelMask = strings.TrimSpace(resp)
 		}
-	} else {
-		d.logConfigQuery("@fd MCH", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
 
-	startedAt = time.Now()
-	if resp, err := d.sendCommandIdle(conn, "@fd SPS"); err == nil {
-		d.logConfigQuery("@fd SPS", startedAt, resp, nil)
+	// @fd SPS 采样间隔
+	if err := query("@fd SPS", func(resp string) {
 		if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil && v > 0 {
 			cfg.SamplingRate = v
 		}
-	} else {
-		d.logConfigQuery("@fd SPS", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
 
-	startedAt = time.Now()
-	if resp, err := d.sendCommandExact(conn, "@fd BIN", 1); err == nil {
-		d.logConfigQuery("@fd BIN", startedAt, resp, nil)
+	// @fd BIN / TIME / HEAD：读回值随后被 @fe 强制命令覆盖，读失败无害
+	if err := readExact("@fd BIN", 1, func(resp string) {
 		cfg.BinaryFormat = strings.TrimSpace(resp) == "1"
-	} else {
-		d.logConfigQuery("@fd BIN", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
-
-	startedAt = time.Now()
-	if resp, err := d.sendCommandExact(conn, "@fd TIME", 1); err == nil {
-		d.logConfigQuery("@fd TIME", startedAt, resp, nil)
+	if err := readExact("@fd TIME", 1, func(resp string) {
 		cfg.ShowTimestamp = strings.TrimSpace(resp) == "1"
-	} else {
-		d.logConfigQuery("@fd TIME", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
-
-	startedAt = time.Now()
-	if resp, err := d.sendCommandExact(conn, "@fd HEAD", 1); err == nil {
-		d.logConfigQuery("@fd HEAD", startedAt, resp, nil)
+	if err := readExact("@fd HEAD", 1, func(resp string) {
 		cfg.ShowSequence = strings.TrimSpace(resp) == "1"
-	} else {
-		d.logConfigQuery("@fd HEAD", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
 
-	startedAt = time.Now()
-	if resp, err := d.sendCommandIdle(conn, "@fd AVG"); err == nil {
-		d.logConfigQuery("@fd AVG", startedAt, resp, nil)
+	// 以下为辅助配置，旧固件可能不支持，失败即保留默认值
+	if err := query("@fd AVG", func(resp string) {
 		if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil && v > 0 {
 			cfg.AverageCount = v
 		}
-	} else {
-		d.logConfigQuery("@fd AVG", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
-
-	startedAt = time.Now()
-	if resp, err := d.sendCommandExact(conn, "@fd TYPE", 1); err == nil {
-		d.logConfigQuery("@fd TYPE", startedAt, resp, nil)
+	if err := readExact("@fd TYPE", 1, func(resp string) {
 		if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil {
 			cfg.TriggerMode = v
 		}
-	} else {
-		d.logConfigQuery("@fd TYPE", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
-
-	startedAt = time.Now()
-	if resp, err := d.sendCommandExact(conn, "@fd TRIG", 1); err == nil {
-		d.logConfigQuery("@fd TRIG", startedAt, resp, nil)
+	if err := readExact("@fd TRIG", 1, func(resp string) {
 		if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil {
 			cfg.TriggerEdge = v
 		}
-	} else {
-		d.logConfigQuery("@fd TRIG", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
-
-	startedAt = time.Now()
-	if resp, err := d.sendCommandIdle(conn, "@fd TNUM"); err == nil {
-		d.logConfigQuery("@fd TNUM", startedAt, resp, nil)
+	if err := query("@fd TNUM", func(resp string) {
 		if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil && v > 0 {
 			cfg.TriggerCount = v
 		}
-	} else {
-		d.logConfigQuery("@fd TNUM", startedAt, "", err)
+	}); err != nil {
+		return nil, err
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 func (d *DAQT1603) logConfigQuery(cmd string, startedAt time.Time, value string, err error) {
