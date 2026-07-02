@@ -29,7 +29,9 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'jsdom',
+    // 默认环境用 node，避免额外引入 jsdom 依赖；
+    // 需要 DOM 的测试可用 `// @vitest-environment jsdom` pragma 覆盖
+    environment: 'node',
     globals: true,
     include: ['src/**/*.test.ts'],
   },

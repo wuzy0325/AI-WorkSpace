@@ -5,11 +5,12 @@ import MainBottomBar from './MainBottomBar.vue'
 import LogPanel from './LogPanel.vue'
 import DeviceSidebar from './DeviceSidebar.vue'
 import DaqP1604Config from '@components/device/DaqP1604Config.vue'
-import ScanResultList from '@components/device/ScanResultList.vue'
-import type { ScanResult } from '@bridge/deviceBridge'
+import ScanResultList, { type ScanSelectionItem } from '@components/device/ScanResultList.vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useLogStore } from '@stores/logStore'
 
 const deviceStore = useDeviceStore()
+const logStore = useLogStore()
 
 const showAddDialog = ref(false)
 const showConfig = ref(false)
@@ -19,6 +20,13 @@ const newName = ref('')
 const newAddress = ref('192.168.3.101')
 const newPort = ref(9000)
 const addError = ref<string | null>(null)
+
+/** 扫描弹窗中当前勾选项（由 ScanResultList v-model 维护） */
+const scanSelection = ref<ScanSelectionItem[]>([])
+/** 顶部批量默认开关：新增设备默认启用自动连接（Q2=A：默认开启） */
+const defaultAutoConnectOnAdd = ref(true)
+/** 批量添加操作锁：防止用户在提交过程中重复点击 */
+const isAddingScanned = ref(false)
 
 /** 操作锁：防止快速重复点击导致并发请求 */
 const isToggling = ref(false)
@@ -77,13 +85,9 @@ function openAddDevice(prefill?: { address: string; port: number }) {
 
 function openScanDialog() {
   deviceStore.clearScanResults()
+  scanSelection.value = []
   showScanDialog.value = true
   void deviceStore.scanDevices()
-}
-
-function addFromScanResult(result: ScanResult) {
-  showScanDialog.value = false
-  openAddDevice({ address: result.address, port: result.port })
 }
 
 function openConfig() {
@@ -117,6 +121,78 @@ async function confirmAddDevice() {
     showAddDialog.value = false
   } catch (err) {
     addError.value = err instanceof Error ? err.message : '添加设备失败'
+  }
+}
+
+/**
+ * 批量添加扫描弹窗中已勾选的设备。
+ *
+ * 交互流程（Q1=B）：
+ * 1. 校验非空 + 操作锁
+ * 2. 委托 deviceStore.addScannedProfiles 完成去重/命名/落库
+ * 3. 成功后关闭弹窗、清空选择状态
+ * 4. 失败/跳过条目通过 logStore 汇报
+ */
+async function confirmAddScanned() {
+  if (scanSelection.value.length === 0 || isAddingScanned.value) return
+
+  isAddingScanned.value = true
+  try {
+    const result = await deviceStore.addScannedProfiles(scanSelection.value, {
+      defaultAutoConnect: defaultAutoConnectOnAdd.value,
+    })
+
+    // 汇报被去重跳过的条目（真实调用发生前端极少触发，通常已被 checkbox 置灰拦截）
+    if (result.skipped.length > 0) {
+      logStore.warn(
+        'device',
+        `扫描添加：${result.skipped.length} 台设备因地址重复被跳过 (${result.skipped
+          .map((s) => `${s.address}:${s.port}`)
+          .join(', ')})`,
+      )
+    }
+    // 汇报单条落库失败
+    if (result.failed.length > 0) {
+      for (const f of result.failed) {
+        logStore.error('device', `扫描添加失败：${f.input.name} - ${f.error}`)
+      }
+    }
+    if (result.added.length > 0) {
+      logStore.info('device', `扫描添加：成功新增 ${result.added.length} 台设备`)
+    }
+
+    // 立即触发新加设备的自动连接（不用等应用重启）：
+    // - 只连本次成功新加且 autoConnect=true 的设备
+    // - 用 Promise.allSettled 并发，某台连接失败不影响其它
+    // - 失败信息由 deviceStore.connect 的 errorMap + 状态栏显示；这里另记日志便于回溯
+    if (result.added.length > 0 && defaultAutoConnectOnAdd.value) {
+      const targets = result.added.filter((p) => p.p1604Config?.autoConnect)
+      if (targets.length > 0) {
+        const settled = await Promise.allSettled(
+          targets.map((p) => deviceStore.connect(p.id)),
+        )
+        settled.forEach((res, i) => {
+          if (res.status === 'rejected') {
+            const target = targets[i]!
+            const reason = res.reason instanceof Error ? res.reason.message : String(res.reason)
+            logStore.warn('device', `自动连接失败：${target.name} - ${reason}`)
+          }
+        })
+      }
+    }
+
+    // 关弹窗策略（Q1=B）：仅在有条目落库成功时关闭并清理已勾选状态；
+    // 若 added=0（全部失败或全部被跳过），保持弹窗打开，让用户看到 checkbox 置灰
+    // 或日志面板的错误反馈，避免弹窗一闪而过看不到问题。
+    if (result.added.length > 0) {
+      showScanDialog.value = false
+      scanSelection.value = []
+    } else if (result.failed.length > 0) {
+      // 全部失败：清空选择让用户重新勾选（避免旧勾选状态遮挡视线）
+      scanSelection.value = []
+    }
+  } finally {
+    isAddingScanned.value = false
   }
 }
 </script>
@@ -157,27 +233,40 @@ async function confirmAddDevice() {
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="showScanDialog" class="modal-overlay" @click.self="showScanDialog = false">
-          <div class="modal-panel modal-panel--narrow">
-            <div class="dialog">
+          <div class="modal-panel modal-panel--scan">
+            <div class="dialog dialog--scan">
               <div class="dialog__header">
                 <h3 class="dialog__title">扫描设备</h3>
-                <p class="dialog__subtitle">局域网中发现 DAQ-P-1604 设备</p>
+                <p class="dialog__subtitle">勾选发现的设备后一次性添加</p>
               </div>
-              <div class="dialog__body">
+              <div class="dialog__body dialog__body--scan">
+                <!-- 顶部：默认自动连接开关（Q2=A：默认开启） -->
+                <label class="scan-option">
+                  <input v-model="defaultAutoConnectOnAdd" type="checkbox" />
+                  <span>添加的设备默认启用开机自动连接（本次新加会立即尝试连接）</span>
+                </label>
                 <ScanResultList
+                  v-model="scanSelection"
                   :results="deviceStore.scanResults"
                   :scanning="deviceStore.isScanning"
-                  @add="addFromScanResult"
+                  :existing-keys="deviceStore.existingDeviceKeys"
                 />
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">关闭</button>
+                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">取消</button>
                 <button
                   v-if="!deviceStore.isScanning"
-                  class="dialog__btn dialog__btn--primary"
+                  class="dialog__btn dialog__btn--secondary"
                   @click="void deviceStore.scanDevices()"
                 >
                   重新扫描
+                </button>
+                <button
+                  class="dialog__btn dialog__btn--primary"
+                  :disabled="scanSelection.length === 0 || isAddingScanned"
+                  @click="confirmAddScanned"
+                >
+                  {{ isAddingScanned ? '添加中...' : `添加所选 (${scanSelection.length})` }}
                 </button>
               </div>
             </div>
@@ -273,6 +362,25 @@ async function confirmAddDevice() {
 
 .modal-panel--narrow {
   max-width: 26rem;
+}
+
+/* 扫描弹窗独立尺寸：更宽更高，便于一次浏览多台设备 */
+.modal-panel--scan {
+  max-width: 44rem;
+  max-height: 88vh;
+  height: 80vh;
+}
+
+.dialog--scan {
+  height: 100%;
+}
+
+.dialog__body--scan {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 /* Vue Transition 类 */
@@ -413,6 +521,35 @@ async function confirmAddDevice() {
 
 .dialog__btn--primary:hover {
   box-shadow: 0 6px 16px var(--accent-glow);
+}
+
+.dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* 扫描弹窗顶部选项条：默认自动连接开关 */
+.scan-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.scan-option input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 /* 减少动画偏好 */

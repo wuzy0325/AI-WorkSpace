@@ -3,6 +3,14 @@ import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
 import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult } from '@bridge/deviceBridge'
 import { useLogStore } from '@stores/logStore'
+import {
+  computeExistingKeys,
+  planScannedAdditions,
+  type ScannedDeviceInput,
+  type PlannedProfile,
+  type SkippedScanEntry,
+  type AddScannedResult,
+} from './deviceStoreHelpers'
 
 const MAX_HISTORY_HARD_CAP = 4000
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
@@ -511,6 +519,88 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
+  /**
+   * 已添加设备的 host key 集合（响应式）。
+   * 扫描弹窗用于识别哪些扫描结果已经在 profile 列表中，从而置灰不可重加。
+   */
+  const existingDeviceKeys = computed(() => computeExistingKeys(profiles.value))
+
+  /**
+   * 批量添加扫描到的设备。
+   *
+   * 交互特性：
+   * - 按 host:addr:port 去重（跳过已存在，不阻断其它条目）
+   * - 名字冲突自动追加 (2)/(3)/...
+   * - Profile ID 可复现（有 MAC 用 MAC；无 MAC 用 host-port），便于重扫幂等
+   * - 每条 upsertProfile 独立处理，中途失败不影响已成功条目（Promise.allSettled）
+   *
+   * @param inputs 从扫描结果转换来的最小输入
+   * @param options.defaultAutoConnect 顶部批量默认开关的值
+   */
+  async function addScannedProfiles(
+    inputs: ScannedDeviceInput[],
+    options: { defaultAutoConnect: boolean },
+  ): Promise<AddScannedResult> {
+    // 先规划：去重 + 命名 + ID 生成，纯计算无副作用，便于测试
+    const plan = planScannedAdditions({
+      inputs,
+      existingProfiles: profiles.value,
+      defaultAutoConnect: options.defaultAutoConnect,
+    })
+
+    const added: PressureProfile[] = []
+    const failed: Array<{ input: PlannedProfile; error: string }> = []
+
+    // 逐条构造完整 PressureProfile 并持久化；用 allSettled 保证单条失败不阻断整批
+    const settled = await Promise.allSettled(
+      plan.toAdd.map(async (planned) => {
+        const profile: PressureProfile = {
+          id: planned.id,
+          name: planned.name,
+          address: planned.address,
+          port: planned.port,
+          samplingRate: 100,
+          channels: defaultChannels(),
+          p1604Config: {
+            ...defaultP1604Config(),
+            autoConnect: planned.autoConnect,
+          },
+          createdAt: Date.now(),
+        }
+        // 先写本地 store：保证 UI 立即刷新
+        profiles.value.push(profile)
+        initChartSelections(profile.id, profile.channels)
+        try {
+          await bridge.upsertProfile(profile)
+          return profile
+        } catch (err) {
+          // 回滚本地状态：从 profiles 移除并清理 chartSelections
+          profiles.value = profiles.value.filter((p) => p.id !== profile.id)
+          delete chartSelections.value[profile.id]
+          throw err
+        }
+      }),
+    )
+
+    settled.forEach((result, idx) => {
+      const planned = plan.toAdd[idx]!
+      if (result.status === 'fulfilled') {
+        added.push(result.value)
+      } else {
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        failed.push({ input: planned, error: reason })
+      }
+    })
+
+    // 有成功条目时同步选中设备（若尚未选择）
+    if (added.length > 0) {
+      syncSelectedDevice()
+    }
+
+    return { added, skipped: plan.skipped, failed }
+  }
+
+
   async function removeProfile(id: string): Promise<void> {
     await bridge.deleteProfile(id)
     profiles.value = profiles.value.filter((p) => p.id !== id)
@@ -557,10 +647,11 @@ export const useDeviceStore = defineStore('device', () => {
     scanResults, isScanning,
     selectedProfile, selectedSnapshot,
     renderRateHz, historyWindowSec,
+    existingDeviceKeys,
     selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
-    clearScanResults, scanDevices, addProfile, removeProfile, updateStatusFromBackend,
+    clearScanResults, scanDevices, addProfile, addScannedProfiles, removeProfile, updateStatusFromBackend,
     applyDisplayPreferences, stopDisplayFlush,
     startSnapshotPolling, stopSnapshotPolling,
   }
