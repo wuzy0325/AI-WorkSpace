@@ -132,16 +132,36 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		string(calibration.TypeThreeHole):     true,
 		string(calibration.TypeTotalPressure): true,
 	}
-	var onDataPoint calibration.DataPointSink
+	var csvPointSink calibration.DataPointSink
 	if autoTypes[config.Type] && config.SavePath != "" && m.csvWriter != nil {
 		if err := m.csvWriter.Initialize(config); err != nil {
 			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
 		} else {
 			writer := m.csvWriter
-			onDataPoint = func(dp calibration.DataPoint) {
+			csvPointSink = func(dp calibration.DataPoint) {
 				if err := writer.AppendPoint(dp); err != nil {
 					log.Printf("[CalibrationManager] 实时CSV写入失败: %v", err)
 				}
+			}
+		}
+	}
+
+	var onDataPoint calibration.DataPointSink
+	if autoTypes[config.Type] {
+		onDataPoint = func(dp calibration.DataPoint) {
+			m.mu.Lock()
+			if m.currentStatus.TaskID == config.TaskID {
+				m.currentStatus.DataPoints = append(m.currentStatus.DataPoints, dp)
+				m.currentStatus.CompletedPoints = len(m.currentStatus.DataPoints)
+				m.currentStatus.CurrentPoint = m.currentStatus.CompletedPoints
+				if m.currentStatus.TotalPoints > 0 {
+					m.currentStatus.Progress = float64(m.currentStatus.CompletedPoints) / float64(m.currentStatus.TotalPoints) * 100
+				}
+			}
+			m.mu.Unlock()
+
+			if csvPointSink != nil {
+				csvPointSink(dp)
 			}
 		}
 	}
@@ -176,11 +196,13 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		if err != nil {
-			m.currentStatus.State = calibration.StateError
-			m.currentStatus.LastError = err.Error()
-		} else {
-			m.currentStatus.State = calibration.StateCompleted
+		if m.currentStatus.State != calibration.StateStopped {
+			if err != nil {
+				m.currentStatus.State = calibration.StateError
+				m.currentStatus.LastError = err.Error()
+			} else {
+				m.currentStatus.State = calibration.StateCompleted
+			}
 		}
 
 		// 保存导出载荷，供 SaveCsv 按需写入
@@ -465,8 +487,12 @@ func (m *CalibrationManager) GetResult(taskID string) (calibration.Status, bool)
 // Status 获取当前状态
 func (m *CalibrationManager) Status() calibration.Status {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.currentStatus
+	status := m.currentStatus
+	if status.DataPoints != nil {
+		status.DataPoints = append([]calibration.DataPoint(nil), status.DataPoints...)
+	}
+	m.mu.RUnlock()
+	return status
 }
 
 // GetTotalTemperatureState 获取总温校准专用状态
@@ -693,8 +719,43 @@ func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, posi
 	return f.motion.MoveTo(ctx, axis.ControllerID, motion.AxisName(axis.Axis), position)
 }
 
+// WaitForMotionComplete 轮询所有运动轴状态，直到全部停止运动或超时。
+//
+// 简化实现：扫描所有运动控制器的所有轴，任一轴 Moving=true 即继续等待。
+// 超时返回 error，调用方决定是否继续采集（通常应中止校准）。
+//
+// 注意：此实现扫描所有控制器，不区分本次校准激活的轴。
+// 若校准配置 MotionAxes 已知，应优先使用 runtimeAdapter.WaitForMotionComplete
+// （通过 ports.CalibrationRuntime 注入）。
 func (f *fallbackRuntime) WaitForMotionComplete() error {
-	// 简化实现：等待一段时间
-	time.Sleep(500 * time.Millisecond)
-	return nil
+	if f.motion == nil {
+		return nil // 无运动控制器，无需等待
+	}
+
+	const (
+		pollInterval = 50 * time.Millisecond
+		maxWait      = 30 * time.Second // 单点运动最大等待，超过视为故障
+	)
+	deadline := time.Now().Add(maxWait)
+	ctx := context.Background()
+
+	for time.Now().Before(deadline) {
+		anyMoving := false
+		for _, status := range f.motion.StatusAll(ctx) {
+			for _, axis := range status.Axes {
+				if axis.Moving {
+					anyMoving = true
+					break
+				}
+			}
+			if anyMoving {
+				break
+			}
+		}
+		if !anyMoving {
+			return nil
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("运动超时未完成（>%s）", maxWait)
 }
