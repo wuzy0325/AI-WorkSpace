@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge, FileText, Database } from '@lucide/vue'
+import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { pickDirectory, RecordingFormatCSV, RecordingFormatBinary } from '@bridge/recordingBridge'
-import type { RecordingFormat } from '@bridge/recordingBridge'
+import { pickDirectory } from '@bridge/recordingBridge'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
@@ -48,28 +47,11 @@ function themeToggleLabel(): string {
 async function startSave() {
   const dir = await pickDirectory()
   if (!dir) return
-  await recordingStore.startRecording(dir, 'DAQ-P1604', recordingStore.format)
+  await recordingStore.startRecording(dir, 'DAQ-P1604')
 }
 
 function stopSave() {
   void recordingStore.stopRecording()
-}
-
-// 录制格式切换：CSV 文本格式 / Binary 高吞吐二进制格式
-function toggleRecordingFormat() {
-  recordingStore.format = recordingStore.format === RecordingFormatCSV
-    ? RecordingFormatBinary
-    : RecordingFormatCSV
-}
-
-function recordingFormatLabel(): string {
-  return recordingStore.format === RecordingFormatBinary ? 'BIN' : 'CSV'
-}
-
-function recordingFormatTitle(): string {
-  return recordingStore.format === RecordingFormatBinary
-    ? '当前：二进制格式（高吞吐，点击切换为 CSV）'
-    : '当前：CSV 文本格式（可读性强，点击切换为二进制）'
 }
 
 // --- 刷新率下拉菜单 ---
@@ -173,18 +155,6 @@ onBeforeUnmount(() => {
           >
             <Circle class="topbar__action-icon" />
             <span>{{ recordingStore.isRecording ? '停止保存' : '开始保存' }}</span>
-          </button>
-
-          <button
-            class="topbar__format-btn"
-            :class="{ 'topbar__format-btn--binary': recordingStore.format === 1 }"
-            :title="recordingFormatTitle()"
-            :disabled="recordingStore.isRecording"
-            @click="toggleRecordingFormat"
-          >
-            <FileText v-if="recordingStore.format === 0" class="topbar__format-icon" />
-            <Database v-else class="topbar__format-icon" />
-            <span>{{ recordingFormatLabel() }}</span>
           </button>
         </div>
 
@@ -425,47 +395,6 @@ onBeforeUnmount(() => {
   color: var(--danger);
   border-color: rgba(244, 63, 94, 0.35);
   background: rgba(244, 63, 94, 0.12);
-}
-
-/* 录制格式切换按钮：紧凑的图标+文字按钮，与"开始保存"按钮并列 */
-.topbar__format-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  height: 2.5rem;
-  padding: 0 0.75rem;
-  border-radius: var(--radius-lg);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
-  background: var(--btn-bg);
-  border: 1px solid var(--border-default);
-  transition: all 0.2s ease;
-  font-family: var(--font-family-mono);
-}
-
-.topbar__format-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-}
-
-.topbar__format-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.topbar__format-btn--binary {
-  color: var(--accent);
-  border-color: var(--accent-border);
-  background: var(--accent-muted);
-}
-
-.topbar__format-icon {
-  width: 14px;
-  height: 14px;
 }
 
 .topbar__action-icon {

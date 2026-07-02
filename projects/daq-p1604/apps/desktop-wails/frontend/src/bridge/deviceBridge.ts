@@ -9,6 +9,8 @@ import {
   ApplyConfig,
   GetStatus,
   ScanDevices,
+  GetLatestSnapshot,
+  GetLatestSnapshots,
 } from '../../bindings/daq-p1604/backend/app'
 import { Events } from '@wailsio/runtime'
 
@@ -18,6 +20,7 @@ export interface P1604Config {
   unit: string           // 压力单位
   autoConnect: boolean   // 启动时自动连接
   precision: number      // 全局默认显示精度（小数位数 0-6），单通道精度未设置时回退到此值
+  useDeviceTimestamp?: boolean // 是否使用设备硬件时间戳，undefined=默认开启（兼容老 profile），false=用系统时间
 }
 
 // 通道配置
@@ -132,18 +135,28 @@ export function scanDevices(): Promise<ScanResult[]> {
   return ScanDevices() as any
 }
 
-export function onPayload(handler: (snapshot: PressureSnapshot) => void): void {
-  offPayload()
-  payloadUnsubscribe = Events.On('daq:payload', (event: { data: PressureSnapshot }) => {
-    handler(event.data)
-  })
+// ============================================================================
+// 数据快照轮询 API
+//
+// 替代原 `Events.On('daq:payload')` 事件订阅：
+// Wails v3 的 Event.Emit 会触发 WebView2 在 GUI 线程上同步执行
+// ExecuteScript，频率与设备数线性相关，导致 GUI 阻塞和 Eval errors。
+// 改为前端按固定周期（默认 500ms）轮询后端缓存，避免 GUI 线程压力。
+// ============================================================================
+
+/**
+ * 获取指定设备的最新快照
+ * 返回 [PressureSnapshot, boolean]，第二项为是否存在快照
+ */
+export function getLatestSnapshot(id: string): Promise<[PressureSnapshot, boolean]> {
+  return GetLatestSnapshot(id) as any
 }
 
-export function offPayload(): void {
-  if (payloadUnsubscribe) {
-    payloadUnsubscribe()
-    payloadUnsubscribe = null
-  }
+/**
+ * 批量获取所有设备的最新快照（推荐前端轮询使用，减少 IPC 次数）
+ */
+export function getLatestSnapshots(): Promise<Record<string, PressureSnapshot>> {
+  return GetLatestSnapshots() as any
 }
 
 export function onLog(handler: (entry: DeviceLogEvent) => void): void {
@@ -175,6 +188,5 @@ export function offDeviceState(): void {
   }
 }
 
-let payloadUnsubscribe: (() => void) | null = null
 let logUnsubscribe: (() => void) | null = null
 let deviceStateUnsubscribe: (() => void) | null = null

@@ -127,7 +127,6 @@ func (r *CSVRecorder) Start(config core.RecordingConfig) error {
 		ID:          fmt.Sprintf("rec_%d", now),
 		OutputDir:   cfg.OutputDir,
 		FilePrefix:  cfg.FilePrefix,
-		Format:      core.RecordingFormatCSV,
 		StartTimeMs: now,
 		Status:      core.RecordingActive,
 	}
@@ -199,9 +198,9 @@ func (r *CSVRecorder) Stop() error {
 	// 同步最终状态
 	r.statsMu.Lock()
 	r.session.Status = core.RecordingIdle
-	r.session.DroppedCount = int(r.dropped.Load())
-	r.session.FileCount = r.fileCount
-	r.session.SnapshotCount = int(r.recordCount)
+	r.session.DroppedCount = r.dropped.Load()
+	r.session.FileCount = int64(r.fileCount)
+	r.session.SnapshotCount = r.recordCount
 	r.errMu.RLock()
 	r.session.LastError = r.lastError
 	r.errMu.RUnlock()
@@ -214,9 +213,9 @@ func (r *CSVRecorder) Status() core.RecordingSession {
 	r.statsMu.RLock()
 	defer r.statsMu.RUnlock()
 	s := r.session
-	s.SnapshotCount = int(r.recordCount)
-	s.DroppedCount = int(r.dropped.Load())
-	s.FileCount = r.fileCount
+	s.SnapshotCount = r.recordCount
+	s.DroppedCount = r.dropped.Load()
+	s.FileCount = int64(r.fileCount)
 	r.errMu.RLock()
 	s.LastError = r.lastError
 	r.errMu.RUnlock()
@@ -453,7 +452,7 @@ func (r *CSVRecorder) openNewFile() error {
 	r.fileCount++
 
 	r.statsMu.Lock()
-	r.session.FileCount = r.fileCount
+	r.session.FileCount = int64(r.fileCount)
 	r.session.CurrentFile = filePath
 	r.statsMu.Unlock()
 	return nil

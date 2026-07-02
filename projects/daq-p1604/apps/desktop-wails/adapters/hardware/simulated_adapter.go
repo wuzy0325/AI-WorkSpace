@@ -10,7 +10,16 @@ import (
 	"daq-p1604/ports"
 )
 
-// SimulatedAdapter 模拟设备适配器
+const (
+	// simulatedDefaultPeriodMs 默认采样周期（毫秒）。1kHz = 1ms，100Hz = 10ms。
+	simulatedDefaultPeriodMs = 100
+	// simulatedMinPeriodMs 最小采样周期（1ms = 1kHz），用于性能验证
+	simulatedMinPeriodMs = 1
+	// simulatedChannelCount 模拟通道数（与 P1604 一致：16 压力 + 大气压 + 大温）
+	simulatedChannelCount = 18
+)
+
+// SimulatedAdapter 模拟设备适配器（支持 1kHz 采样率）
 type SimulatedAdapter struct {
 	mu       sync.RWMutex
 	status   map[string]*core.DeviceState
@@ -60,6 +69,7 @@ func (a *SimulatedAdapter) Disconnect(id string) error {
 }
 
 // StartAcquisition 模拟启动采集
+// 采样周期由 profile.P1604Cfg.SamplingRate 决定（毫秒），最小 1ms（1kHz）。
 func (a *SimulatedAdapter) StartAcquisition(id string) (<-chan core.PressureSnapshot, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -69,7 +79,29 @@ func (a *SimulatedAdapter) StartAcquisition(id string) (<-chan core.PressureSnap
 	if _, exists := a.channels[id]; exists {
 		return nil, fmt.Errorf("device %s already acquiring", id)
 	}
-	ch := make(chan core.PressureSnapshot, 64)
+
+	// 解析采样周期
+	periodMs := simulatedDefaultPeriodMs
+	if st, exists := a.status[id]; exists {
+		if st.Profile.P1604Cfg.SamplingRate > 0 {
+			periodMs = st.Profile.P1604Cfg.SamplingRate
+		}
+	}
+	if periodMs < simulatedMinPeriodMs {
+		periodMs = simulatedMinPeriodMs
+	}
+
+	// 队列容量按采样率调整：1kHz 需要更大缓冲避免 readLoop 阻塞
+	// 容量 = max(64, periodMs 对应的 8 秒积压)
+	queueCap := 64
+	if periodMs > 0 {
+		needed := 8000 / periodMs // 8 秒积压
+		if needed > queueCap {
+			queueCap = needed
+		}
+	}
+
+	ch := make(chan core.PressureSnapshot, queueCap)
 	done := make(chan struct{})
 	a.channels[id] = ch
 	a.stopChs[id] = done
@@ -78,13 +110,20 @@ func (a *SimulatedAdapter) StartAcquisition(id string) (<-chan core.PressureSnap
 		st.AcquiringAt = core.TimestampMs()
 	}
 	t0 := time.Now()
-	go a.simulateLoop(id, ch, done, t0)
+	go a.simulateLoop(id, ch, done, t0, time.Duration(periodMs)*time.Millisecond)
 	return ch, nil
 }
 
 // simulateLoop 模拟数据生成循环（18 通道）
-func (a *SimulatedAdapter) simulateLoop(id string, ch chan<- core.PressureSnapshot, done <-chan struct{}, t0 time.Time) {
-	ticker := time.NewTicker(200 * time.Millisecond)
+// 支持可配置采样周期（最小 1ms = 1kHz），用于性能验证。
+// 注：Values 切片投递后所有权转移到 channel 接收方（recorder 异步消费），
+// 因此不复用切片，由 GC 回收。真正的零分配优化在 recorder 内部（buf []byte 复用）。
+//
+// 单位同步：模拟模式下，模拟器即"硬件"，Unit 直接来自 profile.P1604Cfg.Unit，
+// 模拟硬件 EU 系数已转换的语义——压力数值按用户选择的单位呈现，
+// CH17 大气压力固定 Pa、CH18 大气温度固定 °C（这两个物理量不归压力 EU 系数管理）。
+func (a *SimulatedAdapter) simulateLoop(id string, ch chan<- core.PressureSnapshot, done <-chan struct{}, t0 time.Time, period time.Duration) {
+	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 	for {
 		select {
@@ -92,7 +131,8 @@ func (a *SimulatedAdapter) simulateLoop(id string, ch chan<- core.PressureSnapsh
 			return
 		case t := <-ticker.C:
 			elapsed := t.Sub(t0).Seconds()
-			values := make([]float64, 18)
+			// 每帧分配 18 元素切片（1kHz × 10 设备 = 1 万次/sec，约 1.4MB/sec，GC 可接受）
+			values := make([]float64, simulatedChannelCount)
 			// CH1-CH16: 压力值（模拟 0-100 psi 范围波动）
 			for i := 0; i < 16; i++ {
 				base := 50.0 + float64(i)*2.5
@@ -102,11 +142,37 @@ func (a *SimulatedAdapter) simulateLoop(id string, ch chan<- core.PressureSnapsh
 			values[16] = 101325.0 + 50*math.Sin(elapsed*0.2)
 			// CH18: 大气温度（约 25°C）
 			values[17] = 25.0 + 2*math.Sin(elapsed*0.3)
-			ch <- core.PressureSnapshot{
+
+			// 读取当前 profile 单位（模拟硬件 EU 系数已应用的语义）
+			a.mu.RLock()
+			unit := "psi"
+			if st, ok := a.status[id]; ok && st.Profile.P1604Cfg.Unit != "" {
+				unit = st.Profile.P1604Cfg.Unit
+			}
+			a.mu.RUnlock()
+
+			snapshot := core.PressureSnapshot{
 				DeviceID:  id,
 				Timestamp: t.UnixMilli(),
 				Values:    values,
-				Unit:      "psi",
+				Unit:      unit,
+			}
+
+			// 非阻塞投递：先检查 done（退出优先），再尝试投递，最后队列满时丢弃。
+			// 改为嵌套 select：避免 done 与 ch 同时就绪时 Go 随机选择导致退出前多写一条快照。
+			select {
+			case <-done:
+				return
+			default:
+			}
+			select {
+			case ch <- snapshot:
+			case <-done:
+				return
+			default:
+				// 队列满：丢弃（采集 readLoop 不应阻塞 recorder）
+				// 注：recorder 异步投递 + 32k 队列容量，正常场景下极少满
+				continue
 			}
 		}
 	}
@@ -152,8 +218,8 @@ func (a *SimulatedAdapter) ApplyConfig(id string, cfg core.P1604Config) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if st, exists := a.status[id]; exists {
-		if cfg.SamplingRate < 10 {
-			cfg.SamplingRate = 100
+		if cfg.SamplingRate < simulatedMinPeriodMs {
+			cfg.SamplingRate = simulatedDefaultPeriodMs
 		}
 		if cfg.Unit == "" {
 			cfg.Unit = "psi"

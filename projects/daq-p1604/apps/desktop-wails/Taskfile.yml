@@ -1,0 +1,96 @@
+version: '3'
+
+# DAQ-P-1604 Taskfile：定义 wails3 dev / wails3 task 所用的构建与运行任务
+# 策略与 wind-daq 一致：dev 模式不依赖 vite dev server，而是构建前端后内嵌到 Go 二进制
+tasks:
+  default:
+    summary: 一键构建并启动（生产模式，使用内嵌前端资源）
+    cmds:
+      - task: build-frontend
+      - task: build-go
+      - task: run
+
+  dev-frontend:
+    summary: 启动前端开发服务器（热更新，独立调试前端时使用）
+    cmds:
+      - npm --prefix frontend run dev -- --host 127.0.0.1
+    env:
+      BROWSER: none
+
+  build:
+    summary: 构建前端 + Go 二进制
+    cmds:
+      - task: build-frontend
+      - task: build-go
+
+  windows:build:
+    summary: Wails v3 Windows 构建入口
+    cmds:
+      - task: build
+
+  build-frontend:
+    summary: 仅构建前端（npm install + npm run build，输出到 frontend/dist）
+    cmds:
+      - npm --prefix frontend install --no-audit --no-fund
+      - npm --prefix frontend run build
+
+  generate-icon:
+    summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
+    description: |
+      Wails v3 的 wails3 build 不会自动重新生成 syso 资源段文件，
+      导致修改 appicon.png 后 exe 图标不刷新（go build 会链接旧 syso）。
+      本任务确保每次构建都从源 appicon.png 重新生成图标资源。
+      若 build/info.json 或 build/windows.manifest 缺失，则自动调用 wails3 generate build-assets 补齐。
+    cmds:
+      # 确保 build/windows 目录存在；若 info.json/manifest 缺失则补齐 build-assets
+      - powershell -Command "New-Item -ItemType Directory -Force -Path build/windows | Out-Null; if (-not (Test-Path build/info.json) -or -not (Test-Path build/windows.manifest)) { wails3 generate build-assets }"
+      # 由源 appicon.png 生成多尺寸 icon.ico（256/128/64/48/32/16）
+      - wails3 generate icons -input appicon.png -windowsfilename build/windows/icon.ico
+      # 将 icon.ico 打包为 Windows PE 资源段 syso 文件，go build 会自动链接
+      - wails3 generate syso -arch amd64 -icon build/windows/icon.ico -info build/info.json -manifest build/windows.manifest -out wails_windows_amd64.syso
+
+  build-go:
+    summary: 仅构建 Go 二进制（生产模式，含 -tags production 与 -trimpath/-w/-s）
+    deps:
+      - generate-icon
+    env:
+      # 隔离工作空间中其他模块的 wails/v2 间接引用，避免运行时 correct build tags 错误
+      GOWORK: off
+    cmds:
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/daq-p1604.exe .
+
+  run:
+    summary: 运行已构建的桌面应用
+    cmds:
+      - build/bin/daq-p1604.exe
+
+  run-dev:
+    summary: 使用已构建的内嵌前端运行桌面应用（清除 FRONTEND_DEVSERVER_URL 以使用内嵌资源）
+    cmds:
+      - powershell -Command "$env:FRONTEND_DEVSERVER_URL=''; build\bin\daq-p1604.exe"
+
+  dev:
+    summary: 开发模式（构建前端后运行内嵌资源，未启用 production 标签以保留 devtools）
+    deps:
+      - generate-icon
+    cmds:
+      - task: build-frontend
+      - go build -buildvcs=false -o build/bin/daq-p1604.exe .
+      - task: run-dev
+
+  clean:
+    summary: 清理上次打包遗留的二进制，避免与新构建混淆
+    cmds:
+      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+
+  check-bindings:
+    summary: 检查 Wails backend 方法与 frontend bindings 是否一致（方法缺失/多余 + stale 时间戳警告）
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ../../../../scripts/check-wails-bindings.ps1 -Projects daq-p1604
+
+  release:
+    summary: 生产交付构建（清理 + 前端 + Go 生产二进制），用于 NSIS 打包前的前置步骤
+    cmds:
+      - task: clean
+      - task: build-frontend
+      - task: build-go

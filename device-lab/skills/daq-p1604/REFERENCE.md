@@ -7,7 +7,9 @@
 ## 通信基础
 
 - 所有响应前 2 字节为大端长度前缀（**含自身 2 字节**），连接后必须发 `w1601` 启用
-- 命令以纯 ASCII 发送（无换行符）
+- 命令以纯 ASCII 发送，**不得附加任何换行符（\r\n 或 \n）**
+  - 实测设备（型号 9116 / 固件 00F8）在 w1601 长度前缀模式下将换行符视为命令字符的一部分
+  - 对 `u01101` 等命令返回 N05 数据字段错误；仅范围语法 `u01101-05` 对尾部换行符宽容
 - 成功响应 `A`，失败响应 `Nxx`
 
 ## 命令响应码
@@ -131,7 +133,7 @@ c 01 1                           → 启动
 
 **单位系数映射**（psi基准）：psi=1.0, Pa=6894.757, kPa=6.894757, MPa=0.006894757, kgf/cm²=0.070307
 
-读取：`u01101` → 解析 float → 查表匹配（容差 1e-3）→ 得到 `PressureUnit`
+读取：`u01101` → 解析 float → 查表匹配（相对容差 1e-4，覆盖 float32 精度损失）→ 得到 `PressureUnit`
 
 ### 系数索引（u/v 命令详细）
 
@@ -354,15 +356,19 @@ function calibrate_multipoint(pressure_points, avg_per_point=10):
 
 ```
 function read_unit():
+    # u01101 读取全局 EU 压力转换系数（纯 ASCII 发送，不带换行符）
     resp = send_command("u01101")
     coeff = float(resp.trim())
     for unit, expected in UNIT_MAP:
-        if abs(coeff - expected) < 1e-3:
+        # 相对容差 1e-4，覆盖设备 float32 存储精度损失
+        # 例如 Pa 系数 6894.757 在 float32 中为 6894.756836
+        if abs(coeff - expected) / max(abs(expected), 1e-9) < 1e-4:
             return unit
     return "unknown"
 
 function set_unit(unit):
     coeff = UNIT_MAP[unit]
+    # v01101 写入系数（纯 ASCII 发送，不带换行符）
     resp = send_command("v01101 {coeff:.6f}")
     assert resp.trim() == "A"
 ```

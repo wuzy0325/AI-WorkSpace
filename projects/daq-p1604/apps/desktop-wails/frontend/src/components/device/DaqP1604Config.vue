@@ -6,7 +6,7 @@ import type { SelectOption } from './CustomSelect.vue'
 import {
   Settings2, Activity,
   Save, RotateCcw, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Hash, Clock, Wifi, Gauge, Crosshair,
+  SlidersHorizontal, Hash, Clock, Timer, Wifi, Gauge, Crosshair,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -31,12 +31,13 @@ const precisionOptions: SelectOption[] = Array.from({ length: 7 }, (_, i) => ({
   label: `${i} 位小数`,
 }))
 
-// 采样频率（Hz），UI 层展示频率，保存时换算为周期毫秒
-// 频率范围：1000/60000 ≈ 0.017 Hz 到 1000/10 = 100 Hz
+// 采样频率（Hz），UI 层展示整数频率，保存时换算为周期毫秒
+// 频率范围：1 Hz 到 1000 Hz
 const samplingFreq = ref(10)
 const autoConnect = ref(false) // 启动时自动连接
 const pressureUnit = ref('psi') // 全局压力单位
 const globalPrecision = ref(3) // 全局默认精度（小数位数）
+const useDeviceTimestamp = ref(true) // 是否使用设备硬件时间戳（默认开启，关闭时回退到系统时间）
 const channelNames = ref<string[]>(Array(18).fill(''))
 const channelEnabled = ref<boolean[]>(Array(18).fill(true))
 const channelColors = ref<string[]>(Array(18).fill(''))
@@ -63,18 +64,40 @@ function getDefaultChannelName(index: number): string {
   return `通道 ${index + 1}`
 }
 
-/** 采样周期（毫秒）转频率（Hz），保留 2 位小数 */
+/** 采样周期（毫秒）转频率（Hz），限制为 1-1000 的整数 */
 function periodMsToHz(ms: number): number {
-  if (!ms || ms < 10) return 100
-  const hz = 1000 / ms
-  return Math.round(hz * 100) / 100
+  if (!Number.isFinite(ms) || ms <= 0) return 10
+  const hz = Math.round(1000 / ms)
+  return Math.max(1, Math.min(1000, hz))
 }
 
-/** 频率（Hz）转采样周期（毫秒），限制 10-60000 */
+/** 频率（Hz）转采样周期（毫秒），频率限制为 1-1000 的整数 */
 function hzToPeriodMs(hz: number): number {
-  if (!hz || hz <= 0) return 100
-  const ms = Math.round(1000 / hz)
-  return Math.max(10, Math.min(60000, ms))
+  const normalizedHz = normalizeSamplingFreq(hz)
+  return Math.round(1000 / normalizedHz)
+}
+
+/** 标准化采样频率，禁止小数并限制在 1-1000 Hz */
+function normalizeSamplingFreq(value: number): number {
+  if (!Number.isFinite(value)) return 10
+  return Math.max(1, Math.min(1000, Math.trunc(value)))
+}
+
+/**
+ * 根据通道索引和全局压力单位，返回该通道应当使用的单位字符串。
+ *
+ * 物理量约束：
+ *  - CH1-CH16 压力通道：跟随全局压力单位（硬件 EU 系数统一管理）
+ *  - CH17 大气压力：锁定 Pa（独立物理量，不归压力 EU 系数管理）
+ *  - CH18 大气温度：锁定 °C
+ *
+ * 这样保证前端通道卡片显示的单位标签与硬件实际返回的数值语义一致，
+ * 避免 CH17/CH18 被错误标注为 psi/kgf/cm² 等压力单位。
+ */
+function getChannelUnit(index: number, globalPressureUnit: string): string {
+  if (index === 16) return 'Pa'
+  if (index === 17) return '°C'
+  return globalPressureUnit
 }
 
 function syncFormFromProfile(profileData: typeof profile.value) {
@@ -85,6 +108,8 @@ function syncFormFromProfile(profileData: typeof profile.value) {
   autoConnect.value = profileData.p1604Config?.autoConnect ?? false
   pressureUnit.value = profileData.p1604Config?.unit || 'psi'
   globalPrecision.value = profileData.p1604Config?.precision ?? 3
+  // 时间戳开关默认开启：profile 未设置（老配置）或显式 true 均视为开启
+  useDeviceTimestamp.value = profileData.p1604Config?.useDeviceTimestamp ?? true
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
@@ -99,7 +124,7 @@ watch(
   { immediate: true }
 )
 
-watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
+watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   hasChanges.value = true
@@ -117,6 +142,11 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
   if (cur.autoConnect !== nxt.autoConnect) return true
   if (cur.unit !== nxt.unit) return true
   if (cur.precision !== nxt.precision) return true
+  // 时间戳开关变更需要 applyConfig（重启采集切换 content mask）
+  // nil 视为 true（默认开启），与后端 UseDeviceTimestampEnabled() 语义一致
+  const curTs = cur.useDeviceTimestamp ?? true
+  const nxtTs = nxt.useDeviceTimestamp ?? true
+  if (curTs !== nxtTs) return true
   // 通道配置变更
   for (let i = 0; i < current.channels.length; i++) {
     const cc = current.channels[i]
@@ -142,6 +172,7 @@ async function saveConfig() {
         autoConnect: autoConnect.value,
         unit: pressureUnit.value,
         precision: globalPrecision.value,
+        useDeviceTimestamp: useDeviceTimestamp.value,
       },
       channels: profile.value.channels.map((channel, index) => ({
         ...channel,
@@ -149,11 +180,13 @@ async function saveConfig() {
         enabled: channelEnabled.value[index],
         color: channelColors.value[index] || '',
         precision: channelPrecisions.value[index] ?? globalPrecision.value,
+        // 同步全局压力单位到 CH1-CH16；CH17 锁 Pa，CH18 锁 °C
+        unit: getChannelUnit(index, pressureUnit.value),
       })),
     }
+    const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
     await deviceStore.saveProfile(nextProfile)
 
-    const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
     if (hwChanged) {
       try {
         await deviceStore.applyConfig(props.deviceId, nextProfile.p1604Config)
@@ -193,13 +226,11 @@ function applyGlobalPrecisionToAll() {
   }
 }
 
-/** 采样频率输入处理，限制 0.02-100 Hz */
+/** 采样频率输入处理，限制 1-1000 Hz 且仅允许整数 */
 function onFreqInput(e: Event) {
   const target = e.target as HTMLInputElement
-  let v = parseFloat(target.value)
-  if (isNaN(v)) v = 10
-  v = Math.max(0.02, Math.min(100, v))
-  samplingFreq.value = v
+  samplingFreq.value = normalizeSamplingFreq(target.valueAsNumber)
+  target.value = String(samplingFreq.value)
 }
 
 /** 单通道精度变更 */
@@ -247,10 +278,10 @@ function onChannelPrecisionChange(index: number, value: string) {
               <input
                 v-model.number="samplingFreq"
                 type="number"
-                step="0.1"
+                step="1"
                 class="config__rate-input"
-                :min="0.02"
-                :max="100"
+                :min="1"
+                :max="1000"
                 :disabled="isAcquiring"
                 @input="onFreqInput"
               />
@@ -314,6 +345,26 @@ function onChannelPrecisionChange(index: number, value: string) {
                 <span class="config__toggle-thumb"></span>
               </span>
               <span class="config__toggle-text">{{ autoConnect ? '开启' : '关闭' }}</span>
+            </button>
+          </div>
+
+          <!-- 设备硬件时间戳开关：开启后采集帧含硬件时间戳（更精确），关闭时回退到系统时间 -->
+          <div class="config__field">
+            <label class="config__label">
+              <Timer class="config__label-icon" />
+              <span>设备硬件时间戳</span>
+            </label>
+            <button
+              type="button"
+              class="config__toggle"
+              :class="{ 'config__toggle--on': useDeviceTimestamp }"
+              :disabled="isAcquiring"
+              @click="useDeviceTimestamp = !useDeviceTimestamp"
+            >
+              <span class="config__toggle-track">
+                <span class="config__toggle-thumb"></span>
+              </span>
+              <span class="config__toggle-text">{{ useDeviceTimestamp ? '开启' : '关闭' }}</span>
             </button>
           </div>
         </div>

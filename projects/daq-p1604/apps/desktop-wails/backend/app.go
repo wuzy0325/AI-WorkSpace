@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	uiPayloadRefreshInterval    = 100 * time.Millisecond
+	// recordingStatusEmitInterval 录制状态 emit 间隔（仅状态变更通知，不传数据）
 	recordingStatusEmitInterval = time.Second
 )
 
@@ -27,6 +27,10 @@ type App struct {
 	app      *application.App
 	mu       sync.Mutex
 	relays   map[string]*relayControl
+
+	// latestSnapshots 各设备最新快照（前端轮询用，避免 Event.Emit 触发 WebView2 同步阻塞）
+	latestMu         sync.RWMutex
+	latestSnapshots  map[string]core.PressureSnapshot
 }
 
 // relayControl 采集数据中继控制
@@ -55,11 +59,12 @@ type LogFileState struct {
 // NewApp 创建后端应用
 func NewApp(deviceUC *usecase.DeviceUsecase, recordUC *usecase.RecordingUsecase, logUC *usecase.LogUsecase, logDir string) *App {
 	return &App{
-		deviceUC: deviceUC,
-		recordUC: recordUC,
-		logUC:    logUC,
-		logDir:   logDir,
-		relays:   make(map[string]*relayControl),
+		deviceUC:        deviceUC,
+		recordUC:        recordUC,
+		logUC:           logUC,
+		logDir:          logDir,
+		relays:          make(map[string]*relayControl),
+		latestSnapshots: make(map[string]core.PressureSnapshot),
 	}
 }
 
@@ -125,13 +130,6 @@ func (a *App) EmitLog(entry LogEvent) {
 		return
 	}
 	a.app.Event.Emit("daq:log", entry)
-}
-
-func (a *App) emitPayload(snapshot core.PressureSnapshot) {
-	if a.app == nil {
-		return
-	}
-	a.app.Event.Emit("daq:payload", snapshot)
 }
 
 func (a *App) emitRecordingStatus(session core.RecordingSession) {
@@ -200,6 +198,10 @@ func (a *App) Disconnect(id string) error {
 		return err
 	}
 	a.waitRelay(id)
+	// 清理最新快照缓存
+	a.latestMu.Lock()
+	delete(a.latestSnapshots, id)
+	a.latestMu.Unlock()
 	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: id, Source: "device", Message: "Device disconnected"})
 	return nil
 }
@@ -243,6 +245,27 @@ func (a *App) ApplyConfig(id string, cfg core.P1604Config) error {
 	}
 	a.EmitLog(LogEvent{Level: "info", Category: "system", DeviceID: id, Source: "device", Message: "Config applied"})
 	return nil
+}
+
+// GetLatestSnapshot 获取指定设备的最新快照（前端 500ms 轮询调用）
+// 替代原有的 daq:payload Event.Emit，避免 Wails v3 Event.Emit 触发
+// WebView2 同步 ExecuteScript 调用导致的 GUI 线程阻塞和 Eval errors。
+func (a *App) GetLatestSnapshot(id string) (core.PressureSnapshot, bool) {
+	a.latestMu.RLock()
+	defer a.latestMu.RUnlock()
+	s, ok := a.latestSnapshots[id]
+	return s, ok
+}
+
+// GetLatestSnapshots 批量获取所有设备的最新快照（减少前端轮询次数）
+func (a *App) GetLatestSnapshots() map[string]core.PressureSnapshot {
+	a.latestMu.RLock()
+	defer a.latestMu.RUnlock()
+	result := make(map[string]core.PressureSnapshot, len(a.latestSnapshots))
+	for k, v := range a.latestSnapshots {
+		result[k] = v
+	}
+	return result
 }
 
 func (a *App) startRelay(deviceID string, ch <-chan core.PressureSnapshot) {
@@ -304,22 +327,24 @@ func (a *App) clearRelay(deviceID string, control *relayControl) {
 	a.mu.Unlock()
 }
 
-// relayStream 中继数据流到前端
+// relayStream 中继数据流：从设备 channel 读取快照，更新最新快照缓存，异步投递到录制器
+//
+// 与原实现的关键差异：
+//  1. 移除 daq:payload Event.Emit（改为前端 500ms 轮询 GetLatestSnapshot）
+//  2. recordUC.Write 改为异步非阻塞投递（recorder 内部 queue chan + select default）
+//  3. 仅保留最新快照在 latestSnapshots，前端按需轮询
+//  4. 跟踪 recordingActive 状态，检测 recorder auto-stop（I/O 错误）时立即推送最终状态，
+//     避免 IsActive() 变 false 后 statusTicker 不再推送导致前端状态与后端不同步。
 func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.PressureSnapshot) {
-	uiTicker := time.NewTicker(uiPayloadRefreshInterval)
 	statusTicker := time.NewTicker(recordingStatusEmitInterval)
-	defer uiTicker.Stop()
 	defer statusTicker.Stop()
 
-	var latest core.PressureSnapshot
-	hasLatest := false
-
 	defer func() {
-		if hasLatest {
-			a.emitPayload(latest)
-		}
 		a.emitRecordingStatus(a.recordUC.Status())
 	}()
+
+	// 跟踪录制活跃状态，检测 auto-stop（I/O 错误后 started=false）
+	recordingActive := a.recordUC.IsActive()
 
 	for {
 		select {
@@ -329,19 +354,32 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.P
 			if !ok {
 				return
 			}
-			latest = snapshot
-			hasLatest = true
-			if a.recordUC.Status().Status == core.RecordingActive {
+			// 更新最新快照缓存（前端轮询读取）
+			a.latestMu.Lock()
+			a.latestSnapshots[deviceID] = snapshot
+			a.latestMu.Unlock()
+
+			// 异步投递到录制器（非阻塞，队列满时丢弃并计数）
+			// 用无锁 IsActive() 判活，避免每帧 Status() 与 writer goroutine 争用 statsMu
+			if a.recordUC.IsActive() {
+				recordingActive = true // 同步：录制已开始（覆盖初始 false）
 				if err := a.recordUC.Write(snapshot); err != nil {
 					a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: deviceID, Source: "recording", Message: "Record snapshot failed", Detail: err.Error()})
 				}
-			}
-		case <-uiTicker.C:
-			if hasLatest {
-				a.emitPayload(latest)
+			} else if recordingActive {
+				// 检测到 recorder auto-stop（I/O 错误）：立即推送最终状态，
+				// 让前端及时停止录制显示并展示 lastError
+				recordingActive = false
+				a.emitRecordingStatus(a.recordUC.Status())
 			}
 		case <-statusTicker.C:
-			if a.recordUC.Status().Status == core.RecordingActive {
+			nowActive := a.recordUC.IsActive()
+			if nowActive {
+				recordingActive = true // 同步：录制已开始（覆盖初始 false）
+				a.emitRecordingStatus(a.recordUC.Status())
+			} else if recordingActive {
+				// 周期检测到 auto-stop（防止上面 case 路径漏触发）：补推最终状态
+				recordingActive = false
 				a.emitRecordingStatus(a.recordUC.Status())
 			}
 		}
@@ -349,17 +387,65 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.P
 }
 
 // StartRecording 开始录制
+// 多设备精度合并：聚合所有已配置设备的通道精度，避免仅用第一个设备导致精度错误。
 func (a *App) StartRecording(outputDir string, filePrefix string) error {
-	// 取第一个设备的通道配置作为录制精度参考（CSV 为单设备 18 通道格式）
-	var channels []core.ChannelConfig
-	if profiles := a.deviceUC.GetProfiles(); len(profiles) > 0 {
-		channels = profiles[0].Channels
+	return a.StartRecordingWithConfig(outputDir, filePrefix, core.FileRotation{}, core.StopConditions{})
+}
+
+// StartRecordingWithConfig 开始录制（带完整滚动与停止条件配置）
+func (a *App) StartRecordingWithConfig(outputDir string, filePrefix string, rotation core.FileRotation, stopCond core.StopConditions) error {
+	// 聚合所有已配置设备的通道精度：多设备时取每通道精度的最大值，确保不丢失精度
+	// 若所有设备均未配置某通道精度，回退到默认值（由 recorder 内部处理）
+	mergedChannels := mergeChannelPrecisions(a.deviceUC.GetProfiles())
+
+	cfg := core.RecordingConfig{
+		OutputDir:      outputDir,
+		FilePrefix:     filePrefix,
+		Channels:       mergedChannels,
+		Rotation:       rotation,
+		StopConditions: stopCond,
 	}
-	if err := a.recordUC.Start(outputDir, filePrefix, channels); err != nil {
+	if err := a.recordUC.Start(cfg); err != nil {
 		return err
 	}
 	a.emitRecordingStatus(a.recordUC.Status())
 	return nil
+}
+
+// mergeChannelPrecisions 合并多设备通道精度配置
+// 策略：以所有设备中最大的通道数作为模板长度，每通道取所有设备中配置的最大精度
+// （保留更多有效位）。设备通道数不一致时（混合设备类型）按索引对齐，缺该通道的
+// 设备不参与该通道的精度比较；未配置精度的通道由 recorder 回退到默认值。
+func mergeChannelPrecisions(profiles []core.PressureProfile) []core.ChannelConfig {
+	if len(profiles) == 0 {
+		return nil
+	}
+	maxLen := 0
+	for _, p := range profiles {
+		if len(p.Channels) > maxLen {
+			maxLen = len(p.Channels)
+		}
+	}
+	if maxLen == 0 {
+		return nil
+	}
+	// 以第一个设备的通道结构作为模板基础（含通道名/单位等元信息），缺位补零值
+	merged := make([]core.ChannelConfig, maxLen)
+	if t := profiles[0].Channels; len(t) > 0 {
+		copy(merged, t)
+	}
+
+	// 对每通道取所有设备中精度最大值
+	for i := range merged {
+		maxPrecision := merged[i].Precision
+		for _, p := range profiles[1:] {
+			if i < len(p.Channels) && p.Channels[i].Precision > maxPrecision {
+				maxPrecision = p.Channels[i].Precision
+			}
+		}
+		merged[i].Precision = maxPrecision
+	}
+	return merged
 }
 
 // StopRecording 停止录制

@@ -61,11 +61,32 @@ export function EmitLog(entry: $models.LogEvent): $CancellablePromise<void> {
 }
 
 /**
+ * GetLatestSnapshot 获取指定设备的最新快照（前端 500ms 轮询调用）
+ * 替代原有的 daq:payload Event.Emit，避免 Wails v3 Event.Emit 触发
+ * WebView2 同步 ExecuteScript 调用导致的 GUI 线程阻塞和 Eval errors。
+ */
+export function GetLatestSnapshot(id: string): $CancellablePromise<[core$0.PressureSnapshot, boolean]> {
+    return $Call.ByID(309705564, id).then(($result: any) => {
+        $result[0] = $$createType0($result[0]);
+        return $result;
+    });
+}
+
+/**
+ * GetLatestSnapshots 批量获取所有设备的最新快照（减少前端轮询次数）
+ */
+export function GetLatestSnapshots(): $CancellablePromise<{ [key: string]: core$0.PressureSnapshot }> {
+    return $Call.ByID(1045801725).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
+/**
  * GetLogFileState 获取日志文件写入状态
  */
 export function GetLogFileState(): $CancellablePromise<$models.LogFileState> {
     return $Call.ByID(3149353174).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
@@ -74,7 +95,7 @@ export function GetLogFileState(): $CancellablePromise<$models.LogFileState> {
  */
 export function GetProfiles(): $CancellablePromise<core$0.PressureProfile[]> {
     return $Call.ByID(3630054453).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -83,7 +104,7 @@ export function GetProfiles(): $CancellablePromise<core$0.PressureProfile[]> {
  */
 export function GetRecordingStatus(): $CancellablePromise<core$0.RecordingSession> {
     return $Call.ByID(83586696).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
@@ -92,7 +113,7 @@ export function GetRecordingStatus(): $CancellablePromise<core$0.RecordingSessio
  */
 export function GetStatus(id: string): $CancellablePromise<[core$0.DeviceState, boolean]> {
     return $Call.ByID(787649133, id).then(($result: any) => {
-        $result[0] = $$createType4($result[0]);
+        $result[0] = $$createType6($result[0]);
         return $result;
     });
 }
@@ -109,7 +130,7 @@ export function PickDirectory(): $CancellablePromise<string> {
  */
 export function ScanDevices(): $CancellablePromise<core$0.ScanResult[]> {
     return $Call.ByID(394973111).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
@@ -132,6 +153,13 @@ export function StartLogFile(outputDir: string, prefix: string): $CancellablePro
  */
 export function StartRecording(outputDir: string, filePrefix: string): $CancellablePromise<void> {
     return $Call.ByID(2702497030, outputDir, filePrefix);
+}
+
+/**
+ * StartRecordingWithConfig 开始录制（带完整滚动与停止条件配置）
+ */
+export function StartRecordingWithConfig(outputDir: string, filePrefix: string, rotation: core$0.FileRotation, stopCond: core$0.StopConditions): $CancellablePromise<void> {
+    return $Call.ByID(4084016268, outputDir, filePrefix, rotation, stopCond);
 }
 
 /**
@@ -163,10 +191,12 @@ export function UpsertProfile(profile: core$0.PressureProfile): $CancellableProm
 }
 
 // Private type creation functions
-const $$createType0 = $models.LogFileState.createFrom;
-const $$createType1 = core$0.PressureProfile.createFrom;
-const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = core$0.RecordingSession.createFrom;
-const $$createType4 = core$0.DeviceState.createFrom;
-const $$createType5 = core$0.ScanResult.createFrom;
-const $$createType6 = $Create.Array($$createType5);
+const $$createType0 = core$0.PressureSnapshot.createFrom;
+const $$createType1 = $Create.Map($Create.Any, $$createType0);
+const $$createType2 = $models.LogFileState.createFrom;
+const $$createType3 = core$0.PressureProfile.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = core$0.RecordingSession.createFrom;
+const $$createType6 = core$0.DeviceState.createFrom;
+const $$createType7 = core$0.ScanResult.createFrom;
+const $$createType8 = $Create.Array($$createType7);

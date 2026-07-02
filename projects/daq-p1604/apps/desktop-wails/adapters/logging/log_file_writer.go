@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,9 +13,16 @@ import (
 const (
 	logFlushInterval = 3 * time.Second
 	logFlushRows     = 50
+	// logBufferSize bufio 缓冲区大小（256KB）
+	logBufferSize = 256 * 1024
 )
 
 // LogFileWriter 将日志条目追加写入到本地文件
+//
+// 优化点：
+//   - 使用 strings.Builder + strconv 替代 fmt.Sprintf，避免反射开销
+//   - bufio 缓冲 256KB，减少 syscall 次数
+//   - 后台 flushLoop 定时刷盘，Write 路径仅写入 bufio 内存
 type LogFileWriter struct {
 	mu          sync.Mutex
 	file        *os.File
@@ -54,7 +62,7 @@ func (w *LogFileWriter) Start(outputDir string, prefix string) error {
 		return fmt.Errorf("创建日志文件失败: %w", err)
 	}
 
-	w.writer = bufio.NewWriter(f)
+	w.writer = bufio.NewWriterSize(f, logBufferSize)
 	w.file = f
 	w.active = true
 	w.outputDir = outputDir
@@ -64,6 +72,7 @@ func (w *LogFileWriter) Start(outputDir string, prefix string) error {
 	w.stopCh = make(chan struct{})
 	w.doneCh = make(chan struct{})
 
+	// 写入表头（TSV 格式：Timestamp \t Level \t Category \t DeviceID \t Source \t Message \t Detail）
 	header := "# Timestamp\tLevel\tCategory\tDeviceID\tSource\tMessage\tDetail\n"
 	if _, err := w.writer.WriteString(header); err != nil {
 		f.Close()
@@ -78,6 +87,7 @@ func (w *LogFileWriter) Start(outputDir string, prefix string) error {
 }
 
 // Write 写入一条日志到文件
+// 使用 strings.Builder + strconv 替代 fmt.Sprintf，避免反射开销
 func (w *LogFileWriter) Write(timestamp int64, level string, category string, deviceID string, source string, message string, detail string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -87,17 +97,26 @@ func (w *LogFileWriter) Write(timestamp int64, level string, category string, de
 	}
 
 	t := time.UnixMilli(timestamp)
-	line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-		t.Format("2006-01-02 15:04:05.000"),
-		level,
-		category,
-		deviceID,
-		source,
-		message,
-		detail,
-	)
 
-	if _, err := w.writer.WriteString(line); err != nil {
+	// strings.Builder 零拷贝拼接，strconv 替代 fmt 反射
+	var b strings.Builder
+	b.Grow(256) // 预分配，避免多次扩容
+	b.WriteString(t.Format("2006-01-02 15:04:05.000"))
+	b.WriteByte('\t')
+	b.WriteString(level)
+	b.WriteByte('\t')
+	b.WriteString(category)
+	b.WriteByte('\t')
+	b.WriteString(deviceID)
+	b.WriteByte('\t')
+	b.WriteString(source)
+	b.WriteByte('\t')
+	b.WriteString(message)
+	b.WriteByte('\t')
+	b.WriteString(detail)
+	b.WriteByte('\n')
+
+	if _, err := w.writer.WriteString(b.String()); err != nil {
 		return err
 	}
 

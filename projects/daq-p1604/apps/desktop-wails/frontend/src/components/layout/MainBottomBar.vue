@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { Timer, Clock, FolderOpen } from '@lucide/vue'
+import { Timer, Clock, FileText, FolderOpen } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useRecordingStore } from '@stores/recordingStore'
 
@@ -44,6 +44,12 @@ const connectedDevices = computed(
   () => deviceStore.profiles.filter((p) => deviceStore.statusFor(p.id) === 'Connected' || deviceStore.statusFor(p.id) === 'Acquiring').length
 )
 const recordingCount = computed(() => recordingStore.snapshotCount)
+
+// 状态栏显示的保存路径：优先显示当前正在写入的完整文件路径，
+// 缺省时退化为保存目录（例如尚未创建文件或仅设置了目录的场景）
+const savedPath = computed(() => recordingStore.currentFile || recordingStore.outputDir)
+const savedPathLabel = computed(() => (recordingStore.currentFile ? '保存文件' : '保存目录'))
+const savedPathIcon = computed(() => (recordingStore.currentFile ? FileText : FolderOpen))
 
 onMounted(() => {
   updateTime()
@@ -100,10 +106,27 @@ watch(isAcquiring, (newVal, oldVal) => {
         <span class="bottombar__status-label">已记录</span>
         <span class="bottombar__status-value mono" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">{{ recordingCount }}</span>
       </div>
-      <div v-if="recordingStore.outputDir" class="bottombar__rec-folder">
-        <FolderOpen class="bottombar__rec-icon" />
-        <span class="bottombar__rec-label">保存目录</span>
-        <span class="bottombar__rec-path">{{ recordingStore.outputDir }}</span>
+      <div v-if="recordingStore.isRecording" class="bottombar__status-item" data-testid="status-dropped">
+        <span class="bottombar__status-label">丢弃</span>
+        <span
+          class="bottombar__status-value mono"
+          :class="{ 'bottombar__status-value--warn': recordingStore.droppedCount > 0 }"
+        >{{ recordingStore.droppedCount }}</span>
+      </div>
+      <div v-if="recordingStore.isRecording && recordingStore.fileCount > 0" class="bottombar__status-item" data-testid="status-filecount">
+        <span class="bottombar__status-label">文件数</span>
+        <span class="bottombar__status-value mono">{{ recordingStore.fileCount }}</span>
+      </div>
+      <div v-if="recordingStore.lastError" class="bottombar__status-item" data-testid="status-recerror">
+        <span class="bottombar__status-label">录制错误</span>
+        <span class="bottombar__status-value bottombar__status-value--danger" :title="recordingStore.lastError">
+          {{ recordingStore.lastError }}
+        </span>
+      </div>
+      <div v-if="savedPath" class="bottombar__rec-folder" :class="{ 'bottombar__rec-folder--active': recordingStore.isRecording }" :title="savedPath">
+        <component :is="savedPathIcon" class="bottombar__rec-icon" />
+        <span class="bottombar__rec-label">{{ savedPathLabel }}</span>
+        <span class="bottombar__rec-path">{{ savedPath }}</span>
       </div>
     </div>
 
@@ -183,6 +206,19 @@ watch(isAcquiring, (newVal, oldVal) => {
   color: var(--danger);
 }
 
+.bottombar__status-value--warn {
+  color: var(--warning, #f59e0b);
+}
+
+.bottombar__status-value--danger {
+  color: var(--danger);
+  font-weight: 600;
+  max-width: 22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .bottombar__rec-folder {
   display: flex;
   align-items: center;
@@ -192,7 +228,17 @@ watch(isAcquiring, (newVal, oldVal) => {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   min-width: 0;
-  max-width: 22rem;
+  max-width: 32rem;
+}
+
+.bottombar__rec-folder--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--btn-bg));
+}
+
+.bottombar__rec-folder--active .bottombar__rec-icon,
+.bottombar__rec-folder--active .bottombar__rec-path {
+  color: var(--accent);
 }
 
 .bottombar__rec-label {

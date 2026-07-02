@@ -60,11 +60,11 @@ func main() {
 		stateCapableAdapter = p1604Adapter
 		scanner = hardware.NewP1604Scanner()
 	}
-	recorder := recording.NewCSVRecorder()
 	logWriter := logging.NewLogFileWriter()
 
 	deviceUC := usecase.NewDeviceUsecase(devAdapter, cfgStore, scanner)
-	recordUC := usecase.NewRecordingUsecase(recorder)
+	// 注入 CSV 录制器（Binary 格式已移除）
+	recordUC := usecase.NewRecordingUsecase(recording.NewCSVRecorder())
 	logUC := usecase.NewLogUsecase(logWriter)
 
 	app := backend.NewApp(deviceUC, recordUC, logUC, logDir)
