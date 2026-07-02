@@ -50,6 +50,32 @@ type rr1Status struct {
 	LMTP, LMTM, ALARM, EMG       bool
 }
 
+// wtnmc4aRR1Struct 对应 C 结构体 WTNMC4A_PARA_RR1（WTNMC4A.H 第 358-379 行）。
+// SDK 定义为 16 个 UINT 字段（每个 4 字节，总 64 字节），每个字段值为 0 或 1。
+// 必须用此结构体缓冲区传指针给 DLL，不能再用 [4]byte 当位掩码解析——
+// 早期实现这样做导致：
+//   1. DLL 写 64 字节到 4 字节缓冲区，越界破坏栈内存
+//   2. 位掩码解析使 ASND/CNST/DSND 永远读到 0，axis.moving 永远为 false，
+//      运动中停止按钮始终 disabled（B140 走另一条路径不受影响）
+type wtnmc4aRR1Struct struct {
+	CMPP  uint32
+	CMPM  uint32
+	ASND  uint32
+	CNST  uint32
+	DSND  uint32
+	AASND uint32 // S曲线加速度增加
+	ACNST uint32 // S曲线加速度不变
+	ADSND uint32 // S曲线加速度减少
+	IN0   uint32
+	IN1   uint32
+	IN2   uint32
+	IN3   uint32
+	LMTP  uint32
+	LMTM  uint32
+	ALARM uint32
+	EMG   uint32
+}
+
 type dllProcs struct {
 	devCreateA *syscall.Proc
 	devRelease *syscall.Proc
@@ -769,8 +795,9 @@ func (c *WTNMC4AMotionController) verifyConnectionLocked() error {
 	if len(c.profile.Axes) > 0 {
 		axisNum = wtnmc4aAxisNum(c.profile.Axes[0].Name)
 	}
-	var buf [4]byte
-	ret, _, _ := c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
+	// SDK 写入 64 字节结构体，必须用匹配的缓冲区，避免越界破坏栈内存
+	var raw wtnmc4aRR1Struct
+	ret, _, _ := c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: GetRR1Status 无响应", c.profile.Address)
 	}
@@ -859,18 +886,26 @@ func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() error {
 }
 
 // getRR1Status 查询指定轴的状态寄存器（接受 handle 参数，不依赖锁）。
+//
+// SDK 的 WTNMC4A_GetRR1Status 把 64 字节的 WTNMC4A_PARA_RR1 结构体写入调用方提供的缓冲区，
+// 每个字段是 0/1 的 UINT。这里用 wtnmc4aRR1Struct 结构体匹配内存布局，逐字段读取。
 func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) rr1Status {
-	var buf [4]byte
-	c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&buf[0])))
-	status := uint16(buf[0]) | uint16(buf[1])<<8
+	var raw wtnmc4aRR1Struct
+	c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
 	return rr1Status{
-		CMPP: (status & (1 << 0)) != 0, CMPM: (status & (1 << 1)) != 0,
-		ASND: (status & (1 << 2)) != 0, CNST: (status & (1 << 3)) != 0,
-		DSND: (status & (1 << 4)) != 0, IN0: (status & (1 << 5)) != 0,
-		IN1: (status & (1 << 6)) != 0, IN2: (status & (1 << 7)) != 0,
-		IN3: (status & (1 << 8)) != 0, LMTP: (status & (1 << 9)) != 0,
-		LMTM: (status & (1 << 10)) != 0, ALARM: (status & (1 << 11)) != 0,
-		EMG: (status & (1 << 12)) != 0,
+		CMPP:  raw.CMPP != 0,
+		CMPM:  raw.CMPM != 0,
+		ASND:  raw.ASND != 0,
+		CNST:  raw.CNST != 0,
+		DSND:  raw.DSND != 0,
+		IN0:   raw.IN0 != 0,
+		IN1:   raw.IN1 != 0,
+		IN2:   raw.IN2 != 0,
+		IN3:   raw.IN3 != 0,
+		LMTP:  raw.LMTP != 0,
+		LMTM:  raw.LMTM != 0,
+		ALARM: raw.ALARM != 0,
+		EMG:   raw.EMG != 0,
 	}
 }
 

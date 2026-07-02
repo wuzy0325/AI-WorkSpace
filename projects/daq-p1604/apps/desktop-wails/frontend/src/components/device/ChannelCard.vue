@@ -164,9 +164,11 @@ function onColorChange(target: HTMLInputElement) {
 .card__tag {
   font-size: 0.55rem;
   font-weight: 700;
-  color: var(--text-muted);
+  /* 标签文字跟随通道颜色，让卡片与波形颜色快速对应 */
+  color: var(--ch-color);
   letter-spacing: 0.08em;
-  background: var(--btn-bg);
+  /* 背景使用通道颜色的低透明度混合，保持可读性同时强化识别 */
+  background: color-mix(in srgb, var(--ch-color) 12%, transparent);
   padding: 0.1rem 0.3rem;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
@@ -256,9 +258,9 @@ function onColorChange(target: HTMLInputElement) {
   animation: value-flash 0.4s var(--easing-standard);
 }
 
-/* 选中状态数值颜色保持主题强调色，不再随通道颜色变化 */
+/* 选中状态数值颜色跟随通道颜色，与波形/标签形成一致识别 */
 .card--active .card__value {
-  color: var(--accent);
+  color: var(--ch-color);
 }
 
 .card__unit {

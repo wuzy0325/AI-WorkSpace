@@ -35,6 +35,7 @@ type Deps struct {
 	StorageRecorder    *usecase.StorageRecorder
 	ConfigManager      *usecase.ConfigManager
 	LogRing            *logging.RingBuffer
+	LogManager         *logging.Manager // 用于日志分类开关 API
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -52,6 +53,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func NewRouter(deps Deps) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("/api/device/profiles", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -106,10 +114,12 @@ func NewRouter(deps Deps) http.Handler {
 		id := strings.TrimPrefix(r.URL.Path, "/api/daq/latest/")
 		payload, ok := deps.AcquisitionHub.GetLatestData(id)
 		if !ok {
-			writeJSON(w, http.StatusOK, device.DataPayload{DeviceID: id})
+			// 设备无数据时返回仅含 deviceId 的空 payload，保持与前端契约一致
+			writeDataPayloadJSON(w, http.StatusOK, device.DataPayload{DeviceID: id})
 			return
 		}
-		writeJSON(w, http.StatusOK, payload)
+		// 用手写编码绕过 reflect，规避 Go 1.26 structEncoder 偶发 panic
+		writeDataPayloadJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("/api/daq/stream/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -628,15 +638,16 @@ func NewRouter(deps Deps) http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		var body struct {
-			OutputDir  string `json:"outputDir"`
-			FilePrefix string `json:"filePrefix"`
-		}
+		// 接收完整 RecordingConfig：业务级字段（StopConditions/FileRotation/Format）
+		// 直接透传给 StorageRecorder.Start，由 sink 在 writerLoop 内评估。
+		// sink 调优参数（queueCapacity/bufferSize/flush/sync）由装配层从 storage.json
+		// 读取，不在此处覆盖，避免双轨配置冲突。
+		var body storage.RecordingConfig
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := deps.StorageRecorder.Start(storage.RecordingConfig{OutputDir: body.OutputDir, FilePrefix: body.FilePrefix}); err != nil {
+		if err := deps.StorageRecorder.Start(body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -655,14 +666,28 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	// ---- Log API ----
-	if deps.LogRing != nil {
-		mux.HandleFunc("/api/log/stream", func(w http.ResponseWriter, r *http.Request) {
-			handleLogStream(w, r, deps.LogRing)
-		})
-		mux.HandleFunc("/api/log/recent", func(w http.ResponseWriter, r *http.Request) {
-			handleLogRecent(w, r, deps.LogRing)
-		})
-	}
+	// 即使 ring 为 nil，也注册日志端点（返回空数据），避免前端 SSE 连接反复 404
+	mux.HandleFunc("/api/log/stream", func(w http.ResponseWriter, r *http.Request) {
+		if deps.LogRing == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"success": false,
+				"error":   "日志系统未初始化",
+			})
+			return
+		}
+		handleLogStream(w, r, deps.LogRing)
+	})
+	mux.HandleFunc("/api/log/recent", func(w http.ResponseWriter, r *http.Request) {
+		if deps.LogRing == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"entries": []logging.RingEntry{}})
+			return
+		}
+		handleLogRecent(w, r, deps.LogRing)
+	})
+	// 日志分类开关 API：控制各 category 是否写入 ring buffer
+	mux.HandleFunc("/api/log/categories", func(w http.ResponseWriter, r *http.Request) {
+		handleLogCategories(w, r, deps.LogManager)
+	})
 
 	// 中间件链：metrics（最外层，记录所有请求耗时）→ recover（拦截 panic）→ cors → mux
 	// 顺序原因：metrics 需要能看到 recover 后的最终状态码；
@@ -690,10 +715,8 @@ func handleDaqStream(w http.ResponseWriter, r *http.Request, hub *usecase.Acquis
 		case <-r.Context().Done():
 			return
 		case payload := <-subscription:
-			data, err := json.Marshal(payload)
-			if err != nil {
-				continue
-			}
+			// 用手写编码绕过 reflect，规避 Go 1.26 structEncoder 偶发 panic
+			data := marshalDataPayload(payload)
 			_, _ = fmt.Fprintf(w, "event: payload\ndata: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -862,6 +885,88 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+// marshalDataPayload 手写 device.DataPayload 的 JSON 编码，完全绕过 reflect。
+//
+// 背景：在 Go 1.26.1 + 高并发（多设备 500ms 轮询）场景下，标准库
+// encoding/json 的 structEncoder 偶发出现 fields[i].encoder 与
+// fields[i].index 指向的字段类型不匹配（intEncoder 被分派到 string 字段
+// DeviceID），导致 "reflect: call of reflect.Value.Int on string Value"
+// panic。该问题源于 fieldCache（sync.Map）缓存的 structFields.list 内部
+// 不一致，-race 检测器无法捕获。此处通过手写 JSON 输出绕过 structEncoder
+// 反射路径，保证高频轮询接口 /api/daq/latest/{id} 的稳定性。
+//
+// 输出格式与 encoding/json 默认行为对齐：
+//   - deviceId: JSON 字符串（strconv.Quote 处理转义）
+//   - timestamp: int64 十进制
+//   - deviceTimestamp: int64 十进制，omitempty（零值省略）
+//   - channels: []float64，nil 输出 null（与 encoding/json 一致）
+//   - channelIndices: []int，nil 输出 null
+func marshalDataPayload(p device.DataPayload) []byte {
+	// 预估容量：deviceId(uuid+引号)≈42, timestamp≈16, channels(16×24)≈400,
+	// channelIndices(16×8)≈130, 加上键名和分隔符，初始 512 足够多数场景。
+	buf := make([]byte, 0, 512)
+
+	buf = append(buf, '{')
+
+	// deviceId（string）
+	buf = append(buf, `"deviceId":`...)
+	buf = append(buf, strconv.Quote(p.DeviceID)...)
+
+	// timestamp（int64）
+	buf = append(buf, `,"timestamp":`...)
+	buf = strconv.AppendInt(buf, p.Timestamp, 10)
+
+	// deviceTimestamp（int64, omitempty：零值省略，与原 json tag 行为一致）
+	if p.DeviceTimestamp != 0 {
+		buf = append(buf, `,"deviceTimestamp":`...)
+		buf = strconv.AppendInt(buf, p.DeviceTimestamp, 10)
+	}
+
+	// channels（[]float64；nil 输出 null，非 nil 输出数组）
+	buf = append(buf, `,"channels":`...)
+	if p.Channels == nil {
+		buf = append(buf, `null`...)
+	} else {
+		buf = append(buf, '[')
+		for i, v := range p.Channels {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			// 'g' 精度 -1 与 encoding/json floatEncoder(64) 一致
+			buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
+		}
+		buf = append(buf, ']')
+	}
+
+	// channelIndices（[]int；nil 输出 null）
+	buf = append(buf, `,"channelIndices":`...)
+	if p.ChannelIndices == nil {
+		buf = append(buf, `null`...)
+	} else {
+		buf = append(buf, '[')
+		for i, v := range p.ChannelIndices {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, int64(v), 10)
+		}
+		buf = append(buf, ']')
+	}
+
+	buf = append(buf, '}')
+	return buf
+}
+
+// writeDataPayloadJSON 用手写编码输出 DataPayload，规避 reflect 路径的 panic。
+// 末尾追加换行符，与 json.Encoder.Encode 行为一致。
+func writeDataPayloadJSON(w http.ResponseWriter, status int, p device.DataPayload) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	buf := marshalDataPayload(p)
+	buf = append(buf, '\n')
+	_, _ = w.Write(buf)
+}
+
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"success": false, "error": message})
 }
@@ -973,4 +1078,40 @@ func handleLogRecent(w http.ResponseWriter, r *http.Request, ring *logging.RingB
 		entries = []logging.RingEntry{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+// handleLogCategories 处理日志分类开关的读取和设置。
+// GET  /api/log/categories        → 返回所有已显式设置的 category 状态
+// PUT  /api/log/categories        → 设置指定 category 的启用状态
+//       body: {"category": "hardware-send", "enabled": false}
+func handleLogCategories(w http.ResponseWriter, r *http.Request, mgr *logging.Manager) {
+	switch r.Method {
+	case http.MethodGet:
+		states := map[string]bool{}
+		if mgr != nil {
+			states = mgr.GetCategoryStates()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"states": states})
+	case http.MethodPut:
+		if mgr == nil {
+			writeError(w, http.StatusServiceUnavailable, "日志管理器未初始化，无法设置分类开关")
+			return
+		}
+		var body struct {
+			Category string `json:"category"`
+			Enabled  bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.Category == "" {
+			writeError(w, http.StatusBadRequest, "category is required")
+			return
+		}
+		mgr.SetCategoryEnabled(body.Category, body.Enabled)
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }

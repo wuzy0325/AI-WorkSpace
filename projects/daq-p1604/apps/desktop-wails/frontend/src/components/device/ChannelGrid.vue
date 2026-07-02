@@ -10,13 +10,13 @@ const deviceStore = useDeviceStore()
 // 全局精度：作为单通道精度未设置时的回退值
 const globalPrecision = computed(() => deviceStore.selectedProfile?.p1604Config?.precision ?? 3)
 
-// 18 通道颜色方案
+// 18 通道颜色方案：与 RealtimeChart 保持一致，移除易与警告混淆的橙黄色
 const COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
-  '#f43f5e', '#06b6d4', '#f97316', '#6366f1',
-  '#84cc16', '#14b8a6', '#d946ef', '#0ea5e9',
-  '#eab308', '#22c55e', '#ef4444', '#8b5cf6',
-  '#ec4899', '#64748b',
+  '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4',
+  '#f43f5e', '#14b8a6', '#6366f1', '#22c55e',
+  '#a855f7', '#0ea5e9', '#ec4899', '#84cc16',
+  '#64748b', '#d946ef', '#ef4444', '#4f46e5',
+  '#0891b2', '#be185d',
 ]
 </script>
 

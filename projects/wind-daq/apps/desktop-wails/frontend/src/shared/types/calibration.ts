@@ -230,6 +230,8 @@ export interface CalibrationConfig {
   totalTemperatureLayout?: TotalTemperaturePointLayout
   totalTemperatureConfig?: Omit<TotalTemperatureCalibrationConfig, 'type' | 'name' | 'savePath' | 'samplesPerPoint'>
   derivedValuePrecision?: CalibrationDerivedValuePrecision
+  /** 界面实时数据刷新频率（Hz），影响压力/角度等 UI 更新节奏。缺省由 store 默认值决定。 */
+  uiRefreshHz?: number
 }
 
 /** 校准任务状态 */

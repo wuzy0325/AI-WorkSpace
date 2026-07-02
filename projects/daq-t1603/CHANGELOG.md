@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.3.1] - 2026-07-02
+
+### Internal
+- 修复构建配置文件版本滞后：build/config.yml、build/info.json、project.nsi 同步到 0.3.1。
+- v0.3.0 的 NSIS 安装包未正确生成，本次补全。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production`: passed
+- `makensis`: passed
+- 冒烟测试: passed（GUI 启动正常，无"correct build tags"错误）
+
+### Known Issues
+- 暂无。
+
+## [0.3.0] - 2026-07-02
+
+### Added
+- 新增硬件通信日志：驱动层 hardware-send/hardware-recv 的 debug 日志提升为 info，前端通信分组可见完整命令交互流程（TCP 连接/断开、@fd/@fe/@f0 等命令的发送与响应）。采集期间的二进制数据帧不打印，避免高频刷屏。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- 冒烟测试: passed（GUI 启动正常，无"correct build tags"错误）
+
+### Known Issues
+- 暂无。
+
+## [0.2.0] - 2026-07-01
+
+### Added
+- 新增录制背压处理系统：BackpressureEvent 含队列长度/容量/累计丢帧数。
+- 新增 SetBackpressureHandler / SetFatalErrorHandler 回调，录制队列饱和或 I/O 错误时非阻塞通知。
+- RecordingSession 新增 DroppedCount 字段，前端可监控数据完整性。
+- 新增 LogFileState 类型，前端可查询日志文件写入状态。
+- RecordingService 新增背压/fatal 事件限频（每类 1Hz），避免事件刷屏。
+
+### Changed
+- CSV 录制器重写：支持多设备独立写入、非阻塞异步队列、文件滚动。
+- 后端重构：删除 monolithic app.go，拆分 relayStream 到 DeviceService。
+- RecordingService 注入背压和致命错误回调，Hub EmitLog 异步广播。
+- 前端 App.vue/stores 适配新的录制状态和背压事件。
+
+### Internal
+- freqprobe 调试工具小幅调整。
+- AGENTS.md 和 README.md 补充 Release Commands 段。
+- go.mod 更新依赖。
+
+### Verification
+- `go test ./...`: passed
+- `go vet ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production`: passed (wails3 因 go.sum 缺失不可用，改用 go build 直出)
+- `makensis` 构建安装包: passed
+- 冒烟测试: passed (GUI 启动正常，无"correct build tags"错误)
+
+### Known Issues
+- 暂无。
+
 ## [0.1.4] - 2026-06-29
 
 ### Added

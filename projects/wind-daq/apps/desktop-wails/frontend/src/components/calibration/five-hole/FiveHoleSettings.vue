@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, type Component } from 'vue'
+import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
@@ -43,8 +44,10 @@ import {
   Activity,
   Wind,
   Gauge,
+  Zap,
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
+import { reportAllSettledFailures } from '@utils/allSettledReport'
 
 const emit = defineEmits<{
   close: []
@@ -53,6 +56,7 @@ const emit = defineEmits<{
 
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
+const calibrationStore = useCalibrationStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
 const { t } = useI18nStore()
@@ -243,13 +247,19 @@ function generatePoints() { return generateFiveHoleSnakePoints(pointLayout.value
 async function pickSavePath() {
   try {
     const defaultName = `${calibrationName.value.trim() || 'five-hole'}-${new Date().toISOString().slice(0, 10)}.csv`
-    const picked = await storageStore.pickSaveFile('选择校准 CSV 保存位置', defaultName, [
-      { displayName: 'CSV 文件 (*.csv)', pattern: '*.csv' },
-    ])
-    if (picked) savePath.value = picked
+    const picked = await storageStore.pickDirectory()
+    if (picked) savePath.value = joinPath(picked, defaultName)
   } catch (e) {
     feedbackStore.pushToast('选择保存路径失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
+}
+
+// joinPath 把用户选择的目录与文件名拼接为完整路径。
+// 统一归一化为 POSIX 风格（正斜杠），Windows 文件 API 同样接受，
+// 避免根据 dir.includes('\\') 猜测分隔符导致混合路径（如 "C:/Users\\wind-daq/file"）的拼接错误。
+function joinPath(dir: string, fileName: string): string {
+  const normalizedDir = dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
+  return `${normalizedDir}/${fileName}`
 }
 
 async function saveConfig() {
@@ -266,6 +276,7 @@ async function saveConfig() {
       savePath: savePath.value.trim(),
       fiveHoleLayout: pointLayout.value,
       derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
+      uiRefreshHz: calibrationStore.uiRefreshHz,
       sphereTankGate: {
         enabled: sphereTankGateEnabled.value,
         waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
@@ -326,7 +337,12 @@ async function loadSavedConfig() {
 
 onMounted(async () => {
   try {
-    await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()])
+    const results = await Promise.allSettled([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()])
+    reportAllSettledFailures(
+      results,
+      ['设备列表', '运动控制器列表', '五孔校准配置'],
+      feedbackStore.pushToast,
+    )
     if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toLocaleDateString()}`
   } finally { isLoading.value = false }
 })
@@ -338,25 +354,49 @@ const axisOptions = [
   { label: 'U 轴', value: 'U' },
 ]
 
-// 通道表格列定义（三个分组共用）
+// 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
+// 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
+const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: String(i) }))
+
+// 通道表格列定义（所有通道直接罗列，通过分组列标识归属）
 const channelColumns = [
   { key: 'enabled', label: '启用', width: '48px' },
+  { key: 'group', label: '分组', width: '72px' },
   { key: 'name', label: '名称', width: '' },
   { key: 'device', label: '数据源', width: '' },
   { key: 'channel', label: '通道', width: '100px' },
   { key: 'precision', label: '精度', width: '80px' },
 ] as const
+
+// 通道分组简称映射：用于在统一表格中以 tag 形式标识每个通道的归属
+const CHANNEL_GROUP_LABEL: Record<string, string> = {
+  probe: '五孔',
+  atmosphere: '大气',
+  windTunnel: '风洞',
+}
+
+// 根据通道角色反查分组 key，用于在统一表格中显示分组 tag
+function groupKeyOfRole(role: string | undefined): string {
+  if (!role) return ''
+  for (const g of channelGroups.value) {
+    if (g.roles.includes(role)) return g.key
+  }
+  return ''
+}
 </script>
 
 <template>
-  <UiDialog :show="true" width="960px" title="五孔探针校准配置" closable @update:show="emit('close')">
-    <UiSteps :current="currentStep" class="steps-mb">
-      <UiStep v-for="(step, idx) in steps" :key="idx" :title="step.label" :disabled="idx > currentStep" />
-    </UiSteps>
+  <UiDialog :show="true" width="min(92vw, 960px)" title="五孔探针校准配置" closable @update:show="emit('close')">
+  <UiSteps :current="currentStep" class="steps-mb">
+    <UiStep v-for="(step, idx) in steps" :key="idx" :title="step.label" :disabled="idx > currentStep" />
+  </UiSteps>
 
-    <UiSpin v-if="isLoading" class="spinner" />
+  <UiSpin v-if="isLoading" class="spinner" />
 
     <template v-else>
+      <!-- 紧凑布局：左侧主体内容（限制高度内部滚动）+ 右侧 sidebar（统计 + 点阵预览） -->
+      <div class="calib-body">
+      <div class="calib-main">
       <!-- 错误提示：列出全部错误，便于一次性修正 -->
       <UiAlert
         v-if="currentStepErrors.length > 0"
@@ -369,18 +409,33 @@ const channelColumns = [
         </ul>
       </UiAlert>
 
-      <!-- 步骤 1：基本设置 -->
+      <!-- 步骤 1：基本设置（紧凑布局，预览移至右侧 sidebar） -->
       <div v-if="currentStep === 0" class="step-content">
+        <!-- 基础信息：配置名称 + 刷新频率 横向合并 -->
         <UiPanel class="section-card">
           <template #header>
             <div class="section-header">
               <FileText :size="14" />
-              <span>配置名称</span>
+              <span>基础信息</span>
             </div>
           </template>
-          <UiInput v-model="calibrationName" placeholder="例如：五孔探针-2026-001" />
+          <div class="basic-grid">
+            <div class="field">
+              <span class="field-label">配置名称</span>
+              <UiInput v-model="calibrationName" placeholder="例如：五孔探针-2026-001" />
+            </div>
+            <div class="field">
+              <span class="field-label">界面刷新频率</span>
+              <UiSelect
+                :model-value="String(calibrationStore.uiRefreshHz)"
+                :options="Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} Hz`, value: String(i + 1) }))"
+                @update:model-value="calibrationStore.setUiRefreshHz(Number($event))"
+              />
+            </div>
+          </div>
         </UiPanel>
 
+        <!-- 点位布局：α / β 参数横向并排，预览移至 sidebar -->
         <UiPanel class="section-card">
           <template #header>
             <div class="section-header">
@@ -388,120 +443,77 @@ const channelColumns = [
               <span>点位布局</span>
             </div>
           </template>
-          <div class="layout-grid">
-            <!-- 左侧：α / β 参数（扁平布局，避免卡片套卡片） -->
-            <div class="layout-params">
-              <div class="angle-block">
-                <div class="angle-block-header">
-                  <span class="angle-tag alpha-tag">α</span>
-                  <span class="angle-block-title">攻角范围</span>
-                </div>
-                <div class="angle-fields">
-                  <div class="field">
-                    <span class="field-label">最小 (°)</span>
-                    <UiInputNumber v-model="pointLayout.alphaMin" style="width:100%" />
-                  </div>
-                  <div class="field">
-                    <span class="field-label">最大 (°)</span>
-                    <UiInputNumber v-model="pointLayout.alphaMax" style="width:100%" />
-                  </div>
-                  <div class="field">
-                    <span class="field-label">步长 (°)</span>
-                    <UiInputNumber v-model="pointLayout.alphaStep" :min="1" style="width:100%" />
-                  </div>
-                </div>
+          <div class="layout-params">
+            <div class="angle-block">
+              <div class="angle-block-header">
+                <span class="angle-tag alpha-tag">α</span>
+                <span class="angle-block-title">攻角范围</span>
               </div>
-              <div class="angle-block">
-                <div class="angle-block-header">
-                  <span class="angle-tag beta-tag">β</span>
-                  <span class="angle-block-title">侧滑角范围</span>
+              <div class="angle-fields">
+                <div class="field">
+                  <span class="field-label">最小 (°)</span>
+                  <UiInputNumber v-model="pointLayout.alphaMin" style="width:100%" />
                 </div>
-                <div class="angle-fields">
-                  <div class="field">
-                    <span class="field-label">最小 (°)</span>
-                    <UiInputNumber v-model="pointLayout.betaMin" style="width:100%" />
-                  </div>
-                  <div class="field">
-                    <span class="field-label">最大 (°)</span>
-                    <UiInputNumber v-model="pointLayout.betaMax" style="width:100%" />
-                  </div>
-                  <div class="field">
-                    <span class="field-label">步长 (°)</span>
-                    <UiInputNumber v-model="pointLayout.betaStep" :min="1" style="width:100%" />
-                  </div>
+                <div class="field">
+                  <span class="field-label">最大 (°)</span>
+                  <UiInputNumber v-model="pointLayout.alphaMax" style="width:100%" />
+                </div>
+                <div class="field">
+                  <span class="field-label">步长 (°)</span>
+                  <UiInputNumber v-model="pointLayout.alphaStep" :min="1" style="width:100%" />
                 </div>
               </div>
             </div>
-            <!-- 右侧：点阵预览，直观展示 α-β 网格分布 -->
-            <div class="layout-preview">
-              <div class="preview-header">
-                <LayoutGrid :size="14" />
-                <span class="preview-title">点阵预览</span>
+            <div class="angle-block">
+              <div class="angle-block-header">
+                <span class="angle-tag beta-tag">β</span>
+                <span class="angle-block-title">侧滑角范围</span>
               </div>
-              <div class="preview-canvas">
-                <svg viewBox="0 0 200 200" class="preview-svg" aria-hidden="true">
-                  <line x1="20" y1="180" x2="180" y2="180" class="axis-line" />
-                  <line x1="20" y1="20" x2="20" y2="180" class="axis-line" />
-                  <circle
-                    v-for="(dot, i) in previewDots"
-                    :key="i"
-                    :cx="dot.cx"
-                    :cy="dot.cy"
-                    r="2.5"
-                    class="preview-dot"
-                  />
-                  <text x="100" y="196" class="axis-label">α</text>
-                  <text x="12" y="100" class="axis-label" transform="rotate(-90 12 100)">β</text>
-                </svg>
-              </div>
-              <div class="preview-summary">
-                <span class="preview-count-label">总点数</span>
-                <span class="preview-count">{{ pointCount }}</span>
+              <div class="angle-fields">
+                <div class="field">
+                  <span class="field-label">最小 (°)</span>
+                  <UiInputNumber v-model="pointLayout.betaMin" style="width:100%" />
+                </div>
+                <div class="field">
+                  <span class="field-label">最大 (°)</span>
+                  <UiInputNumber v-model="pointLayout.betaMax" style="width:100%" />
+                </div>
+                <div class="field">
+                  <span class="field-label">步长 (°)</span>
+                  <UiInputNumber v-model="pointLayout.betaStep" :min="1" style="width:100%" />
+                </div>
               </div>
             </div>
           </div>
         </UiPanel>
 
-        <!-- 采集参数 / 输出精度：双列面板，职责清晰分离 -->
-        <div class="two-col-panels">
-          <UiPanel class="section-card">
-            <template #header>
-              <div class="section-header">
-                <Timer :size="14" />
-                <span>采集参数</span>
-              </div>
-            </template>
-            <div class="param-grid-2">
-              <div class="field">
-                <span class="field-label">驻留时间 (ms)</span>
-                <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" style="width:100%" />
-              </div>
-              <div class="field">
-                <span class="field-label">每点采样数</span>
-                <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" style="width:100%" />
-              </div>
+        <!-- 采集与输出：采集参数 + 输出精度 合并为 4 字段横排 -->
+        <UiPanel class="section-card">
+          <template #header>
+            <div class="section-header">
+              <Timer :size="14" />
+              <span>采集与输出</span>
             </div>
-          </UiPanel>
-
-          <UiPanel class="section-card">
-            <template #header>
-              <div class="section-header">
-                <Target :size="14" />
-                <span>输出精度</span>
-              </div>
-            </template>
-            <div class="param-grid-2">
-              <div class="field">
-                <span class="field-label">马赫数精度</span>
-                <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" style="width:100%" />
-              </div>
-              <div class="field">
-                <span class="field-label">流速精度 (m/s)</span>
-                <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" style="width:100%" />
-              </div>
+          </template>
+          <div class="param-grid-4">
+            <div class="field">
+              <span class="field-label">驻留时间 (ms)</span>
+              <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" style="width:100%" />
             </div>
-          </UiPanel>
-        </div>
+            <div class="field">
+              <span class="field-label">每点采样数</span>
+              <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" style="width:100%" />
+            </div>
+            <div class="field">
+              <span class="field-label">马赫数精度</span>
+              <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" style="width:100%" />
+            </div>
+            <div class="field">
+              <span class="field-label">流速精度 (m/s)</span>
+              <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" style="width:100%" />
+            </div>
+          </div>
+        </UiPanel>
 
         <UiPanel class="section-card">
           <template #header>
@@ -513,8 +525,8 @@ const channelColumns = [
           <div class="field">
             <span class="field-label">保存路径</span>
             <div class="flex items-center gap-2">
-              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存位置" class="flex-1" />
-              <UiButton size="sm" variant="secondary" @click="pickSavePath">选择文件…</UiButton>
+              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存目录" class="flex-1" />
+              <UiButton size="sm" variant="secondary" @click="pickSavePath">选择目录…</UiButton>
             </div>
           </div>
         </UiPanel>
@@ -534,13 +546,13 @@ const channelColumns = [
           <span class="mapping-progress-text">{{ mappedChannelCount }} / {{ totalRequiredChannelCount }}</span>
         </div>
 
-        <!-- 通道分组（v-for 循环，消除重复代码） -->
-        <UiPanel v-for="group in channelGroups" :key="group.key" class="section-card">
+        <!-- 通道映射：所有通道直接罗列在单个表格中，通过分组列标识归属 -->
+        <UiPanel class="section-card">
           <template #header>
             <div class="section-header">
-              <component :is="group.icon" :size="14" />
-              <span>{{ group.label }}</span>
-              <span class="section-count">{{ group.channels.length }} 通道</span>
+              <Activity :size="14" />
+              <span>通道映射</span>
+              <span class="section-count">{{ probeChannels.length }} 通道</span>
             </div>
           </template>
           <div class="table-wrap">
@@ -551,8 +563,9 @@ const channelColumns = [
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="ch in group.channels" :key="ch.name">
+                <tr v-for="ch in probeChannels" :key="ch.name">
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
+                  <td><span class="group-tag" :data-group="groupKeyOfRole(ch.role)">{{ CHANNEL_GROUP_LABEL[groupKeyOfRole(ch.role)] || '—' }}</span></td>
                   <td><span class="cell-name">{{ ch.name }}</span></td>
                   <td>
                     <UiSelect
@@ -560,9 +573,16 @@ const channelColumns = [
                       :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
                       placeholder="选择设备"
                       :disabled="!ch.enabled"
+                      :fallback="false"
                     />
                   </td>
-                  <td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><UiSelect
+                    :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
+                    @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
+                    :options="channelIndexOptions"
+                    placeholder="未分配"
+                    :disabled="!ch.enabled"
+                  /></td>
                   <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
                 </tr>
               </tbody>
@@ -614,11 +634,16 @@ const channelColumns = [
             </div>
             <div class="field">
               <span class="field-label">稳定通道设备</span>
-              <UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" />
+              <UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" :fallback="false" />
             </div>
             <div class="field">
-              <span class="field-label">稳定通道索引</span>
-              <UiInputNumber v-model="sphereTankStableChannel.channelIndex" :min="0" style="width:100%" />
+              <span class="field-label">稳定通道</span>
+              <UiSelect
+                :model-value="sphereTankStableChannel.channelIndex >= 0 ? String(sphereTankStableChannel.channelIndex) : ''"
+                @update:model-value="sphereTankStableChannel.channelIndex = $event !== '' ? Number($event) : 0"
+                :options="channelIndexOptions"
+                placeholder="选择通道"
+              />
             </div>
             <p class="sphere-hint">球罐压力稳定后才开始采集，避免启动瞬态影响数据质量</p>
           </div>
@@ -685,6 +710,51 @@ const channelColumns = [
           </div>
         </UiPanel>
       </div>
+      </div>
+      <!-- 右侧 sidebar：始终显示统计与点阵预览，跨步骤提供上下文 -->
+      <aside class="calib-sidebar">
+        <div class="sidebar-stats">
+          <div class="sidebar-stat sidebar-stat--highlight">
+            <span class="stat-label">总点数</span>
+            <span class="stat-number">{{ pointCount }}</span>
+          </div>
+          <div class="sidebar-stat">
+            <span class="stat-label">驻留时间</span>
+            <span class="stat-value">{{ dwellTimeMs }}<span class="stat-unit">ms</span></span>
+          </div>
+          <div class="sidebar-stat">
+            <span class="stat-label">采样数</span>
+            <span class="stat-value">{{ samplesPerPoint }}</span>
+          </div>
+        </div>
+        <div class="sidebar-preview">
+          <div class="preview-header">
+            <LayoutGrid :size="14" />
+            <span class="preview-title">点阵预览</span>
+          </div>
+          <div class="preview-canvas">
+            <svg viewBox="0 0 200 200" class="preview-svg" aria-hidden="true">
+              <line x1="20" y1="180" x2="180" y2="180" class="axis-line" />
+              <line x1="20" y1="20" x2="20" y2="180" class="axis-line" />
+              <circle
+                v-for="(dot, i) in previewDots"
+                :key="i"
+                :cx="dot.cx"
+                :cy="dot.cy"
+                r="2.5"
+                class="preview-dot"
+              />
+              <text x="100" y="196" class="axis-label">α</text>
+              <text x="12" y="100" class="axis-label" transform="rotate(-90 12 100)">β</text>
+            </svg>
+          </div>
+          <div class="preview-summary">
+            <span class="preview-count-label">总点数</span>
+            <span class="preview-count">{{ pointCount }}</span>
+          </div>
+        </div>
+      </aside>
+    </div>
     </template>
 
     <template #footer>
@@ -709,7 +779,85 @@ const channelColumns = [
 </template>
 
 <style scoped>
-/* 步骤内容容器：滚动由 UiDialog 内容区统一承载，避免底部按钮被挤出视口 */
+/* 紧凑布局主体：左右分栏，限制最大高度防止内容被拉长（参考遍历测试布局） */
+.calib-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 0;
+  min-height: 0;
+  max-height: 65vh;
+  flex: 1;
+  overflow: hidden;
+}
+
+.calib-main {
+  min-height: 0;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-right: var(--space-3);
+  scrollbar-width: thin;
+}
+
+/* 右侧 sidebar：固定宽度，限制高度，内部可滚动 */
+.calib-sidebar {
+  border-left: 1px solid var(--border-default);
+  background: var(--bg-panel-strong);
+  padding-left: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 65vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.sidebar-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.sidebar-stat {
+  padding: 10px 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-stat--highlight {
+  border-color: var(--accent-primary);
+  background: linear-gradient(180deg, var(--bg-panel) 0%, color-mix(in srgb, var(--accent-primary) 6%, transparent) 100%);
+}
+
+.sidebar-stat--highlight .stat-number {
+  color: var(--accent-primary);
+}
+
+.sidebar-preview {
+  flex: 1 1 auto;
+  min-height: 160px;
+  max-height: 360px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  overflow: hidden;
+}
+
+.stat-label { font-size: var(--text-xs); color: var(--text-tertiary); }
+.stat-number { font-size: 18px; font-weight: 700; color: var(--accent-primary); font-variant-numeric: tabular-nums; }
+.stat-value { font-size: 12px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.stat-unit { font-size: var(--text-xs); color: var(--text-muted); margin-left: 2px; }
+
+/* 步骤内容容器：滚动由主体区域统一承载，避免底部按钮被挤出视口 */
 .step-content {
   display: flex;
   flex-direction: column;
@@ -749,10 +897,13 @@ const channelColumns = [
 .section-header {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: var(--space-1-5);
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-primary);
+  /* 主体变窄后防止分组标题（如“探针五孔”）内部换行 */
+  white-space: nowrap;
 }
 
 .section-count {
@@ -774,18 +925,11 @@ const channelColumns = [
   color: var(--text-tertiary);
 }
 
-/* 点位布局：左侧参数 + 右侧预览 */
-.layout-grid {
-  display: grid;
-  grid-template-columns: 1fr 180px;
-  gap: var(--space-3);
-  align-items: start;
-}
-
+/* 点位布局：α / β 参数横向并排（预览移至 sidebar） */
 .layout-params {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
 }
 
 .angle-block {
@@ -863,8 +1007,10 @@ const channelColumns = [
 }
 
 .preview-svg {
-  width: 148px;
-  height: 148px;
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  aspect-ratio: 1 / 1;
 }
 
 .preview-dot {
@@ -903,7 +1049,7 @@ const channelColumns = [
   font-variant-numeric: tabular-nums;
 }
 
-/* 双列面板：采集参数 + 输出精度 */
+/* 双列面板：采集参数 + 输出精度（历史样式，保留以兼容） */
 .two-col-panels {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -913,6 +1059,21 @@ const channelColumns = [
 .param-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: var(--space-1-5);
+}
+
+/* 基础信息：配置名称 + 刷新频率 横向双列 */
+.basic-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: var(--space-2);
+  align-items: end;
+}
+
+/* 采集与输出：4 字段横排 */
+.param-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-1-5);
 }
 
@@ -993,6 +1154,38 @@ const channelColumns = [
 .cell-name {
   font-size: var(--text-sm);
   color: var(--text-primary);
+}
+
+/* 分组 tag：用颜色区分五孔/大气/风洞三类通道，紧凑不占横向空间 */
+.group-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+
+.group-tag[data-group='probe'] {
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, transparent);
+}
+
+.group-tag[data-group='atmosphere'] {
+  color: var(--success, #16a34a);
+  background: color-mix(in srgb, var(--success, #16a34a) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success, #16a34a) 26%, transparent);
+}
+
+.group-tag[data-group='windTunnel'] {
+  color: var(--warn, #d97706);
+  background: color-mix(in srgb, var(--warn, #d97706) 10%, transparent);
+  border-color: color-mix(in srgb, var(--warn, #d97706) 26%, transparent);
 }
 
 /* 球罐判定门控 */

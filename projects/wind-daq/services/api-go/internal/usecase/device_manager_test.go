@@ -64,6 +64,16 @@ func (simulatedFactory) Create(profile device.Profile) (ports.Device, error) {
 	return &fakeDevice{id: profile.ID}, nil
 }
 
+type captureFactory struct {
+	last *fakeDevice
+}
+
+func (f *captureFactory) Create(profile device.Profile) (ports.Device, error) {
+	dev := &fakeDevice{id: profile.ID}
+	f.last = dev
+	return dev, nil
+}
+
 type fakeDevice struct {
 	id string
 	mu sync.Mutex // protects conn / dataSink / emitDone — accessed from both
@@ -71,6 +81,7 @@ type fakeDevice struct {
 	conn     device.Connection
 	dataSink device.DataSink
 	emitDone chan struct{}
+	unit     string
 }
 
 func (d *fakeDevice) ID() string { return d.id }
@@ -143,6 +154,13 @@ func (d *fakeDevice) SetDataSink(sink device.DataSink) {
 	d.dataSink = sink
 }
 
+func (d *fakeDevice) SetUnit(unit string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.unit = unit
+	return nil
+}
+
 type fakeScanner struct {
 	results []device.ScanResult
 }
@@ -213,6 +231,39 @@ func TestDeviceManagerUpsertProfileNormalizesNoChannels(t *testing.T) {
 	}
 	if len(store.profiles[0].Channels) != 18 {
 		t.Fatalf("expected normalized channels to persist, got %d", len(store.profiles[0].Channels))
+	}
+}
+
+func TestDeviceManagerUpsertProfileAppliesUnitToConnectedDevice(t *testing.T) {
+	profile := newTestProfile("p1604-1", device.DeviceDAQP1604)
+	profile.Channels = []device.ChannelConfig{
+		{Index: 0, Name: "P1", Enabled: true, Unit: "psi"},
+		{Index: 1, Name: "P2", Enabled: true, Unit: "psi"},
+	}
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	factory := &captureFactory{}
+	manager, err := newTestDeviceManager(store, factory, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	if err := manager.Connect("p1604-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+
+	updated := profile
+	updated.Channels = []device.ChannelConfig{
+		{Index: 0, Name: "P1", Enabled: true, Unit: "kPa"},
+		{Index: 1, Name: "P2", Enabled: true, Unit: "kPa"},
+	}
+	if err := manager.UpsertProfile(updated); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
+	}
+
+	factory.last.mu.Lock()
+	got := factory.last.unit
+	factory.last.mu.Unlock()
+	if got != "kPa" {
+		t.Fatalf("expected connected device unit kPa, got %q", got)
 	}
 }
 

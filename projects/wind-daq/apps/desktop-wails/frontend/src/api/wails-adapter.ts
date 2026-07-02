@@ -113,9 +113,49 @@ export interface CalibrationStatus {
   lastError?: string;
 }
 
+// StorageRecordingConfig 与后端 storage.RecordingConfig 对齐，
+// 由 UI 在 Start 时传入，贯穿 usecase -> sink。
+// 字段命名遵循后端 json tag（与 api/server.go 直接 Decode 进 storage.RecordingConfig 一致）。
+export interface StorageRecordingConfig {
+  outputDir: string;
+  filePrefix: string;
+  /** 存储格式："csv"（默认）或 "binary"；为空时由装配层默认值决定 */
+  format?: string;
+  /** 自动停止条件，全部为零值表示不限制 */
+  stopConditions?: {
+    maxDurationMs?: number;
+    maxFileSizeBytes?: number;
+    maxRecordCount?: number;
+  };
+  /** 文件滚动配置 */
+  fileRotation?: {
+    enabled: boolean;
+    maxFileSizeBytes: number;
+    maxDurationMs: number;
+  };
+  /** 是否在采集启动时自动开始录制（仅由编排层消费，sink 不消费） */
+  autoStartOnAcquisition?: boolean;
+}
+
+// StorageRecordingStatus 与后端 storage.RecordingStatus 对齐，
+// 包含运行时统计字段（文件、大小、记录数、丢弃数、错误等）。
 export interface StorageRecordingStatus {
   recording: boolean;
   outputDir?: string;
+  /** 当前写入的文件名（不含目录） */
+  currentFile?: string;
+  /** 当前文件累计字节数 */
+  fileSize?: number;
+  /** 本会话已滚动的文件数（含当前文件，从 1 开始） */
+  fileCount?: number;
+  /** 本会话累计写入的记录条数 */
+  recordCount?: number;
+  /** 本会话累计录制时长（毫秒） */
+  durationMs?: number;
+  /** 因队列满被丢弃的 payload 数 */
+  droppedCount?: number;
+  /** 最近一次 I/O 错误描述（空表示无错误） */
+  lastError?: string;
 }
 
 export interface ReportStatus {
@@ -440,8 +480,10 @@ export const wailsApi = {
 
   // 存储管理
   storage: {
-    startRecording: async (outputDir: string, filePrefix: string): Promise<GenericResponse> => {
-      return await callBindingGeneric('StorageStartRecording', outputDir, filePrefix);
+    // startRecording 接收完整 RecordingConfig，路径解析由后端统一完成。
+    // Wails v3 会按 Go 结构体 json tag 反序列化前端传入的对象。
+    startRecording: async (config: StorageRecordingConfig): Promise<GenericResponse> => {
+      return await callBindingGeneric('StorageStartRecording', config);
     },
     stopRecording: async (): Promise<GenericResponse> => {
       return await callBindingGeneric('StorageStopRecording');

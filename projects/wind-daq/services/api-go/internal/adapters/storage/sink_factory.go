@@ -1,7 +1,10 @@
 // sink_factory.go 存储适配器工厂。
 //
 // 根据存储格式（csv/binary）创建对应的 RecordingSink，
-// 配置由调用方传入，可从 app_config 文件读取后注入。
+// sink 调优参数（队列容量、缓冲大小、flush/sync 间隔）由 SinkConfig 传入。
+//
+// 调用方应在装配根根据 app_config 中的 storage 配置构造 SinkConfig，
+// 然后通过 NewSinkFromConfig 创建 sink，注入到 StorageRecorder。
 package storage
 
 import (
@@ -36,6 +39,9 @@ type SinkConfig struct {
 
 // NewSinkFromConfig 根据配置创建对应的 RecordingSink。
 // format 为空或 "csv" 时返回 CSV sink；"binary" 时返回 Binary sink；其他值返回错误。
+//
+// 注意：sink 的 Start 接收完整的 RecordingConfig（含 StopConditions/FileRotation），
+// 本工厂只决定 sink 类型与异步调优参数，业务配置由 Start 时传入。
 func NewSinkFromConfig(cfg SinkConfig) (ports.RecordingSink, error) {
 	format := cfg.Format
 	if format == "" {

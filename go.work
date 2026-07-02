@@ -11,6 +11,7 @@ use (
 	projects/motion-controller/apps/desktop-wails
 	projects/motion-controller/services/api-go
 	projects/three-hole-interpolator/apps/desktop-wails
+	programs/p1604-unit-diag
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/algorithms/go/fivehole

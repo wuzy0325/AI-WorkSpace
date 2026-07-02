@@ -4,5 +4,6 @@
 
 export {
     ReportStatus,
+    StorageRecordingConfig,
     StorageRecordingStatus
 } from "./models.js";

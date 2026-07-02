@@ -90,13 +90,21 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 
 	// 初始化统一日志系统：stderr + 文件 data/logs/wind-daq-YYYYMMDD.log + 内存 ring buffer
 	// 必须在所有其他后台服务启动之前调用，确保其后的 slog.Info/Warn/Error 全部被捕获。
-	logDir := filepath.Join("data", "logs")
-	opts := logging.Default(logDir)
+	// 日志目录通过 ResolvePath 解析到用户可写目录（%APPDATA%/wind-daq/data/logs），
+	// 避免安装目录不可写导致日志丢失。
+	rawLogDir := filepath.Join("data", "logs")
+	resolvedLogDir, resolveErr := a.ResolvePath(rawLogDir)
+	if resolveErr != nil {
+		// ResolvePath 失败时回退到原始相对路径，至少保证日志能写
+		resolvedLogDir = rawLogDir
+		slog.Warn("[app] 日志目录解析失败，使用相对路径", "component", "app", "raw", rawLogDir, "error", resolveErr)
+	}
+	opts := logging.Default(resolvedLogDir)
 	opts.AddSource = false
 	mgr, err := logging.Init(opts)
 	if err == nil {
 		a.logMgr = mgr
-		slog.Info("[app] 日志系统已初始化", "component", "app", "logDir", logDir, "level", opts.Level.String())
+		slog.Info("[app] 日志系统已初始化", "component", "app", "logDir", resolvedLogDir, "level", opts.Level.String())
 	} else {
 		// 此时 slog 尚未挂上文件/ring sink，但 stderr 兜底仍能看到错误
 		slog.Error("[app] 日志系统初始化失败", "component", "app", "error", err)
@@ -170,6 +178,7 @@ func (a *App) startLocalAPIServer() {
 			StorageRecorder:    a.appContext.StorageRecorder,
 			ConfigManager:      a.appContext.ConfigManager,
 			LogRing:            ring,
+			LogManager:         a.logMgr,
 		}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -492,16 +501,33 @@ func (a *App) OpenMotionWindow() GenericResponse {
 	return GenericResponse{Success: true}
 }
 
-// ResolvePath 将相对路径解析为绝对路径
+// ResolvePath 将相对路径解析到用户可写的应用目录，避免安装目录不可写。
 func (a *App) ResolvePath(p string) (string, error) {
 	if p == "" {
 		return "", nil
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	baseDir, err := writableUserConfigDir()
+	if err == nil {
+		return filepath.Join(baseDir, p), nil
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return p, nil
 	}
 	return abs, nil
+}
+
+// writableUserConfigDir 返回用户可写的应用配置目录（Windows 下为 %APPDATA%\wind-daq）。
+// 命名对齐 os.UserConfigDir() 语义：既是配置目录也是数据目录基础。
+func writableUserConfigDir() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "wind-daq"), nil
 }
 
 // PickDirectory 选择目录对话框
@@ -655,10 +681,101 @@ func (a *App) DeviceDisconnect(id string) GenericResponse {
 	})
 }
 
+// DeviceStartAcquisition 启动指定设备的采集。
+// 采集启动成功后异步触发 autoStart 检查：若 storage-settings 中 autoStartOnAcquisition=true
+// 且当前未在录制，则自动开始录制。失败仅记录日志，不阻塞采集响应。
 func (a *App) DeviceStartAcquisition(id string) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
+	resp := a.callMgr(a.deviceManager(), "设备管理器", func() error {
 		return a.appContext.DeviceManager.StartAcquisition(id)
 	})
+	if resp.Success {
+		go a.tryAutoStartRecording()
+	}
+	return resp
+}
+
+// storageSettingsSchema 镜像前端 StorageSettings 的 JSON schema，
+// 用于从 storage-settings 配置键读取业务级录制配置。
+// 注意：BaseDirectory 对应 RecordingConfig.OutputDir；
+// WaveformBufferSize 是 UI-only 字段，后端忽略。
+type storageSettingsSchema struct {
+	BaseDirectory          string `json:"baseDirectory"`
+	FilePrefix             string `json:"filePrefix"`
+	AutoStartOnAcquisition bool   `json:"autoStartOnAcquisition"`
+	StopConditions         struct {
+		MaxDurationMs    int64 `json:"maxDurationMs,omitempty"`
+		MaxFileSizeBytes int64 `json:"maxFileSizeBytes,omitempty"`
+		MaxRecordCount   int64 `json:"maxRecordCount,omitempty"`
+	} `json:"stopConditions"`
+	FileRotation struct {
+		Enabled          bool  `json:"enabled"`
+		MaxFileSizeBytes int64 `json:"maxFileSizeBytes"`
+		MaxDurationMs    int64 `json:"maxDurationMs"`
+	} `json:"fileRotation"`
+}
+
+// tryAutoStartRecording 读取 storage-settings 配置，
+// 若 autoStartOnAcquisition=true 且当前未在录制，则自动开始录制。
+// 失败仅记录日志，不阻塞采集流程；异步调用，不阻塞 DeviceStartAcquisition 响应。
+func (a *App) tryAutoStartRecording() {
+	if a == nil || a.appContext == nil ||
+		a.appContext.ConfigManager == nil || a.appContext.StorageRecorder == nil {
+		return
+	}
+	// 已经在录制则跳过（如手动已开始录制）
+	if a.appContext.StorageRecorder.Status().Recording {
+		return
+	}
+	data, err := a.appContext.ConfigManager.LoadConfig("storage-settings")
+	if err != nil {
+		slog.Warn("[app] autoStart: 读取 storage-settings 失败",
+			"component", "app", "error", err)
+		return
+	}
+	if len(data) == 0 {
+		return
+	}
+	var settings storageSettingsSchema
+	if err := json.Unmarshal(data, &settings); err != nil {
+		slog.Warn("[app] autoStart: 解析 storage-settings 失败",
+			"component", "app", "error", err)
+		return
+	}
+	if !settings.AutoStartOnAcquisition {
+		return
+	}
+	if settings.BaseDirectory == "" || settings.FilePrefix == "" {
+		slog.Warn("[app] autoStart: baseDirectory 或 filePrefix 为空，跳过自动录制",
+			"component", "app")
+		return
+	}
+	// 解析路径（与 StorageStartRecording 保持一致，统一在后端解析）
+	resolved, err := a.ResolvePath(settings.BaseDirectory)
+	if err != nil {
+		slog.Warn("[app] autoStart: 解析路径失败",
+			"component", "app", "path", settings.BaseDirectory, "error", err)
+		return
+	}
+	// 构造 RecordingConfig：字段类型通过别名间接访问 storage.StopConditions/FileRotation
+	config := wind_usecase.StorageRecordingConfig{
+		OutputDir:              resolved,
+		FilePrefix:             settings.FilePrefix,
+		AutoStartOnAcquisition: true,
+	}
+	config.StopConditions.MaxDurationMs = settings.StopConditions.MaxDurationMs
+	config.StopConditions.MaxFileSizeBytes = settings.StopConditions.MaxFileSizeBytes
+	config.StopConditions.MaxRecordCount = settings.StopConditions.MaxRecordCount
+	config.FileRotation.Enabled = settings.FileRotation.Enabled
+	config.FileRotation.MaxFileSizeBytes = settings.FileRotation.MaxFileSizeBytes
+	config.FileRotation.MaxDurationMs = settings.FileRotation.MaxDurationMs
+
+	if err := a.appContext.StorageRecorder.Start(config); err != nil {
+		slog.Warn("[app] autoStart: 启动录制失败",
+			"component", "app", "error", err)
+	} else {
+		slog.Info("[app] autoStart: 已自动开始录制",
+			"component", "app", "outputDir", resolved, "filePrefix", settings.FilePrefix)
+	}
 }
 
 func (a *App) DeviceStopAcquisition(id string) GenericResponse {
@@ -869,11 +986,17 @@ func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 	return a.appContext.StorageRecorder.Status()
 }
 
-func (a *App) StorageStartRecording(outputDir string, filePrefix string) GenericResponse {
+// StorageStartRecording 启动数据录制。
+// 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
+// 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
+func (a *App) StorageStartRecording(config wind_usecase.StorageRecordingConfig) GenericResponse {
 	return a.callMgr(a.storageRecorder(), "存储记录器", func() error {
-		return a.appContext.StorageRecorder.Start(wind_usecase.StorageRecordingConfig{
-			OutputDir: outputDir, FilePrefix: filePrefix,
-		})
+		resolvedOutputDir, err := a.ResolvePath(config.OutputDir)
+		if err != nil {
+			return err
+		}
+		config.OutputDir = resolvedOutputDir
+		return a.appContext.StorageRecorder.Start(config)
 	})
 }
 

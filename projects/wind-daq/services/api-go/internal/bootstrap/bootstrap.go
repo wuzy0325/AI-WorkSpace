@@ -21,9 +21,10 @@ import (
 	"wind-daq/services/api-go/internal/adapters/scan"
 	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/device"
-	windaqports 	"wind-daq/services/api-go/internal/ports"
+	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 	"wind-daq/services/api-go/pkg/appcontext"
+	"wind-daq/services/api-go/pkg/logging"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -42,6 +43,11 @@ const (
 type Config struct {
 	Address          string
 	ProfileStorePath string
+	// LogRing 可选：若传入，则注册 /api/log/stream 和 /api/log/recent 端点。
+	// 独立服务器模式由 main.go 初始化日志系统后传入；Wails 桌面模式由 app.go 传入。
+	LogRing *logging.RingBuffer
+	// LogManager 可选：若传入，则注册 /api/log/categories 端点用于日志分类开关。
+	LogManager *logging.Manager
 }
 
 type APIServer struct {
@@ -106,7 +112,8 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 		TraversalManager:   travMgr,
 		StorageRecorder:    recorder,
 		ConfigManager:      configMgr,
-		LogRing:            nil,
+		LogRing:            cfg.LogRing,
+		LogManager:         cfg.LogManager,
 	})
 	return APIServer{Address: cfg.Address, Handler: router}, nil
 }

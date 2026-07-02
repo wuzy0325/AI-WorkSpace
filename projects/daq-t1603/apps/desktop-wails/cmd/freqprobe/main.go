@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,8 @@ const (
 var testSPSValues = []int{1, 2, 5, 10, 50, 100, 500, 1000}
 
 func main() {
-	addr := fmt.Sprintf("%s:%d", deviceHost, devicePort)
+	// 用 net.JoinHostPort 拼接地址，正确处理 IPv6 主机（自动加方括号）
+	addr := net.JoinHostPort(deviceHost, strconv.Itoa(devicePort))
 	fmt.Printf("=== DAQ-T-1603 频率测试工具 ===\n")
 	fmt.Printf("目标设备: %s\n", addr)
 	fmt.Printf("SPS 含义: 采集间隔(毫秒), 实际频率 = 1000/SPS\n\n")

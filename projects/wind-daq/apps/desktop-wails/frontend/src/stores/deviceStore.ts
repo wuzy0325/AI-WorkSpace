@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig } from '@api/types'
-import { deviceApi, defaultSimulatedProfile } from '@api/deviceApi'
+import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig } from '@api/types'
+import { deviceApi } from '@api/deviceApi'
 
 const MAX_HISTORY_POINTS = 256
 const MAX_CHART_CHANNELS = 16
@@ -14,6 +14,8 @@ export const useDeviceStore = defineStore('devices', () => {
   const tareOffsets = ref<Map<string, Record<number, number>>>(new Map())
   const chartSelectedIndices = ref<Map<string, Set<number>>>(new Map())
   const deviceStatuses = ref<Map<string, DeviceStatus>>(new Map())
+  const profilesLoading = ref(false)
+  const profilesLoadError = ref<string | null>(null)
 
   let unsubscribeSnapshot: (() => void) | null = null
   let snapshotAttachCount = 0
@@ -88,6 +90,8 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   async function refreshProfiles() {
+    profilesLoading.value = true
+    profilesLoadError.value = null
     try {
       profiles.value = (await deviceApi.getProfiles()).map((profile) => ({
         ...profile,
@@ -95,20 +99,33 @@ export const useDeviceStore = defineStore('devices', () => {
       }))
       // 加载完成后做一次单位兼容迁移，保证旧 kPa 配置自动升级为 Pa
       profiles.value.forEach(migrateAtmPressureUnit)
-      if (!profiles.value.length) {
-        profiles.value = [defaultSimulatedProfile()]
-      }
-    } catch {
-      profiles.value = [defaultSimulatedProfile()]
+    } catch (err) {
+      // 设备配置是持久化资产；一次临时读取失败不能把侧栏已有设备洗空。
+      profilesLoadError.value = err instanceof Error ? err.message : String(err)
+      console.warn('[deviceStore] refreshProfiles failed, keeping previous profiles:', err)
+      throw err
+    } finally {
+      profilesLoading.value = false
     }
     syncSnapshotSubscriptions()
     if (selectedDeviceId.value) initializeDefaultChartSelection(selectedDeviceId.value)
   }
 
   async function refreshInstances() {
-    await refreshProfiles()
+    // refreshProfiles 失败时不能跳过后续状态刷新与订阅同步——否则一次临时
+    // profiles 读取失败会让指示灯失效、正在采集的设备不再轮询快照。失败已由
+    // refreshProfiles 记入 profilesLoadError 并保留旧 profiles，此处吞掉错误
+    // 继续执行后续步骤（调用方若关心 profiles 错误可直接调 refreshProfiles）。
+    await refreshProfiles().catch((err) => {
+      console.warn('[deviceStore] refreshInstances: refreshProfiles failed, continuing with status refresh:', err)
+    })
     // 刷新所有设备的连接和采集状态，确保指示灯能正确显示
     await refreshAllStatuses()
+    // 关键：refreshProfiles 末尾的 syncSnapshotSubscriptions 运行时 deviceStatuses
+    // 尚未刷新，acquiringFor 一律返回 false，subscribeToDevice 不会被调用。
+    // 必须在 refreshAllStatuses 完成后再同步一次订阅，才能让正在采集的设备
+    // 启动 HTTP 轮询，触发 onSnapshot 回调，UI 实时数据才会更新。
+    syncSnapshotSubscriptions()
   }
 
   /** 批量刷新所有已知设备的连接和采集状态 */
@@ -315,6 +332,30 @@ export const useDeviceStore = defineStore('devices', () => {
     return chartSelectedIndices.value.get(id)?.has(channelIndex) ?? false
   }
 
+  /**
+   * 判定一个通道是否为"大气压力 / 大气温度"专用通道。
+   *
+   * 用于波形图默认通道选择 —— 这两类通道量程与常规测量通道差异巨大
+   * （大气压约 99000~106000 Pa，大气温度约 20~25 ℃），与常规通道同图绘制
+   * 会压扁其他通道的有效幅值范围，因此默认不纳入波形图。
+   *
+   * 识别策略基于通道名称（而非索引），以兼容不同设备类型：
+   *   - SIMULATED / DAQ-P-1604：通道 16=大气压、17=大气温度
+   *   - DAQ-T-1603 / DAQ-P-1064Pre / DSA3217：无此类通道
+   *   - WTN_PXI：通道布局完全不同
+   * 命名守卫与 migrateAtmPressureUnit 保持一致，同时支持中英文。
+   */
+  function isAtmosphericChannel(channel: ChannelConfig): boolean {
+    const name = (channel.name ?? '').toLowerCase()
+    return (
+      name.includes('patm') ||
+      name.includes('tatm') ||
+      name.includes('大气压') ||
+      name.includes('大气温度') ||
+      name.includes('atmosphe')
+    )
+  }
+
   function initializeDefaultChartSelection(id: string): void {
     const current = chartSelectedIndices.value.get(id)
     if (current && current.size > 0) return
@@ -322,10 +363,13 @@ export const useDeviceStore = defineStore('devices', () => {
     const profile = profiles.value.find((p) => p.id === id)
     if (!profile) return
 
+    // 默认选中全部 enabled 通道，但排除大气压力 / 大气温度通道
+    // （量程差异过大，同图绘制会压扁常规通道波形）。
+    // 上限受 MAX_CHART_CHANNELS 约束，防止渲染过载。
     const channels = Array.isArray(profile.channels) ? profile.channels : []
     const defaults = channels
-      .filter((channel) => channel.enabled)
-      .slice(0, 4)
+      .filter((channel) => channel.enabled && !isAtmosphericChannel(channel))
+      .slice(0, MAX_CHART_CHANNELS)
       .map((channel) => channel.index)
 
     if (defaults.length > 0) {
@@ -512,6 +556,8 @@ export const useDeviceStore = defineStore('devices', () => {
     selectedProfile,
     selectedSnapshot,
     deviceStatuses,
+    profilesLoading,
+    profilesLoadError,
     statusFor,
     acquiringFor,
     isAnyAcquiring,
@@ -537,6 +583,7 @@ export const useDeviceStore = defineStore('devices', () => {
     toggleChartSelection,
     setAllChartSelection,
     isChartSelected,
+    isAtmosphericChannel,
     initializeDefaultChartSelection,
     connect,
     disconnect,

@@ -88,6 +88,9 @@ func (w *motionManagerWrapper) DefinePosition(ctx context.Context, id string, ax
 	return w.inner.DefinePosition(ctx, id, sharedcore.AxisName(axis), position)
 }
 
+// toProjectProfile 把 shared core profile 转换为 wind-daq 内部 profile。
+// EncoderCompensation 字段类型已对齐 shared core，直接取地址拷贝即可，
+// 不再需要类型转换函数。
 func toProjectProfile(p sharedcore.MotionControllerProfile) motion.MotionControllerProfile {
 	axes := make([]motion.AxisConfig, len(p.Axes))
 	for i, a := range p.Axes {
@@ -174,15 +177,38 @@ func toSharedProfiles(profiles []motion.MotionControllerProfile) []sharedcore.Mo
 	return out
 }
 
+// toProjectEncoderCompensation 直接拷贝指针指向的配置。
+// 字段类型已与 shared core 对齐，无需类型转换。
+func toProjectEncoderCompensation(c *sharedcore.AxisEncoderCompensationConfig) *motion.AxisEncoderCompensationConfig {
+	if c == nil {
+		return nil
+	}
+	out := motion.AxisEncoderCompensationConfig(*c)
+	return &out
+}
+
+// toSharedEncoderCompensation 直接拷贝指针指向的配置。
+// 字段类型已与 shared core 对齐，无需类型转换。
+func toSharedEncoderCompensation(c *motion.AxisEncoderCompensationConfig) *sharedcore.AxisEncoderCompensationConfig {
+	if c == nil {
+		return nil
+	}
+	out := sharedcore.AxisEncoderCompensationConfig(*c)
+	return &out
+}
+
 func toProjectAxisStatus(s sharedcore.AxisStatus) motion.AxisStatus {
 	return motion.AxisStatus{
-		Name:     motion.AxisName(s.Name),
-		Position: s.Position,
-		Velocity: s.Velocity,
-		Moving:   s.Moving,
-		Homed:    s.Homed,
-		PosLimit: s.PosLimit,
-		NegLimit: s.NegLimit,
+		Name:              motion.AxisName(s.Name),
+		Position:          s.Position,
+		Velocity:          s.Velocity,
+		Moving:            s.Moving,
+		Homed:             s.Homed,
+		PosLimit:          s.PosLimit,
+		NegLimit:          s.NegLimit,
+		Compensating:      s.Compensating,
+		CompensationError: s.CompensationError,
+		PositionError:     s.PositionError,
 	}
 }
 
@@ -227,32 +253,4 @@ func float64PtrToIntPtr(v *float64) *int {
 	}
 	n := int(*v)
 	return &n
-}
-
-func toProjectEncoderCompensation(c *sharedcore.AxisEncoderCompensationConfig) *motion.AxisEncoderCompensationConfig {
-	if c == nil {
-		return nil
-	}
-	return &motion.AxisEncoderCompensationConfig{
-		Enabled:   c.Enabled,
-		Tolerance: c.Tolerance,
-		MaxCycles: float64(c.MaxCycles),
-		SettleMs:  float64(c.SettleMs),
-		MinStep:   c.MinStep,
-		TimeoutMs: float64(c.TimeoutMs),
-	}
-}
-
-func toSharedEncoderCompensation(c *motion.AxisEncoderCompensationConfig) *sharedcore.AxisEncoderCompensationConfig {
-	if c == nil {
-		return nil
-	}
-	return &sharedcore.AxisEncoderCompensationConfig{
-		Enabled:   c.Enabled,
-		Tolerance: c.Tolerance,
-		MaxCycles: int(c.MaxCycles),
-		SettleMs:  int(c.SettleMs),
-		MinStep:   c.MinStep,
-		TimeoutMs: int(c.TimeoutMs),
-	}
 }

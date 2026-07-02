@@ -40,7 +40,7 @@ async function toggleRecording() {
       recording.value = false
       feedback.pushToast('录制已停止', 'info')
     } else {
-      await storageApi.start(recordingOutputDir.value, recordingFilePrefix.value)
+      await storageApi.start({ outputDir: recordingOutputDir.value, filePrefix: recordingFilePrefix.value })
       recording.value = true
       feedback.pushToast('录制已开始', 'success')
     }

@@ -49,10 +49,11 @@ func (f *fakeDevicePort) StartAcquisition(id string) (<-chan core.TemperatureSna
 		return nil, errors.New("not connected")
 	}
 	ch := make(chan core.TemperatureSnapshot)
-	f.acquired[id] = make(chan struct{})
+	release := make(chan struct{})
+	f.acquired[id] = release
 	go func() {
 		ch <- core.TemperatureSnapshot{DeviceID: id, Timestamp: 1, Values: make([]float64, 16)}
-		<-f.acquired[id]
+		<-release
 		close(ch)
 	}()
 	return ch, nil
@@ -61,8 +62,8 @@ func (f *fakeDevicePort) StartAcquisition(id string) (<-chan core.TemperatureSna
 func (f *fakeDevicePort) StopAcquisition(id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if ch, ok := f.acquired[id]; ok {
-		close(ch)
+	if release, ok := f.acquired[id]; ok {
+		close(release)
 		delete(f.acquired, id)
 	}
 	return nil
@@ -164,6 +165,16 @@ func (f *fakeRecordingPort) Status() core.RecordingSession {
 		Status:        f.status,
 		SnapshotCount: f.count,
 	}
+}
+
+// SetBackpressureHandler 测试 stub，记录是否被调用即可。
+func (f *fakeRecordingPort) SetBackpressureHandler(handler func(core.BackpressureEvent)) {
+	// 测试环境无需真正注入；保留空实现以满足接口契约
+}
+
+// SetFatalErrorHandler 测试 stub，保留空实现以满足接口契约。
+func (f *fakeRecordingPort) SetFatalErrorHandler(handler func(deviceID string, err error)) {
+	// 测试环境无需真正注入
 }
 
 type fakeScanPort struct {

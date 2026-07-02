@@ -42,6 +42,8 @@ const TCPFrameSizeWithTimestamp = 72 // 8 bytes timestamp header + 64 bytes floa
 // 可覆盖 K/S/R/B 等常见热电偶类型，同时排除明显异常的未初始化内存值。
 const maxReasonableThermocoupleTemp = 1350.0
 const minReasonableThermocoupleTemp = -200.0
+const maxImpossibleThermocoupleTemp = 5000.0
+const minImpossibleThermocoupleTemp = -1000.0
 
 // ParseTCPFrame parses TCP data frame.
 // Auto-detects format based on size:
@@ -87,6 +89,9 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 	for _, temp := range temps {
 		if math.IsNaN(temp) || math.IsInf(temp, 0) {
 			continue
+		}
+		if temp < minImpossibleThermocoupleTemp || temp > maxImpossibleThermocoupleTemp {
+			return false
 		}
 		if temp >= minReasonableThermocoupleTemp && temp <= maxReasonableThermocoupleTemp {
 			reasonableCount++
@@ -320,8 +325,7 @@ func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	r.mu.Lock()
 	frameSize := r.frameSizeLocked()
-	if len(r.buffer) >= frameSize {
-		frame := r.extractFrameLocked(frameSize)
+	if frame, ok := r.extractValidFixedFrameLocked(frameSize); ok {
 		r.mu.Unlock()
 		return frame, nil
 	}
@@ -342,13 +346,31 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
-		if len(r.buffer) >= frameSize {
-			frame := r.extractFrameLocked(frameSize)
+		if frame, ok := r.extractValidFixedFrameLocked(frameSize); ok {
 			r.mu.Unlock()
 			return frame, nil
 		}
 		r.mu.Unlock()
 	}
+}
+
+func (r *T1603FrameReader) extractValidFixedFrameLocked(size int) ([]byte, bool) {
+	for len(r.buffer) >= size {
+		frame := make([]byte, size)
+		copy(frame, r.buffer[:size])
+		if _, err := ParseTCPFrameEx(frame); err == nil {
+			r.buffer = r.buffer[size:]
+			if len(r.buffer) == 0 {
+				r.buffer = make([]byte, 0, 256)
+			}
+			return frame, true
+		}
+
+		// A delayed command ACK or residual byte shifts every fixed-size frame.
+		// Drop one byte and retry before exposing a corrupted frame upstream.
+		r.buffer = r.buffer[1:]
+	}
+	return nil, false
 }
 
 // findFieldEnd scans buf for N space-separated fields and returns the
@@ -561,7 +583,7 @@ func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, erro
 // -- DAQ-T-1603 command/response helpers --
 
 const (
-	cmdTimeout     = 5 * time.Second
+	cmdTimeout     = time.Second
 	cmdTailTimeout = 100 * time.Millisecond
 	cmdIdleWindow  = 30 * time.Millisecond
 	readLineBuffer = 1024

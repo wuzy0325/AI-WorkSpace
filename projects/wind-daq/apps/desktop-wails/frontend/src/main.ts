@@ -5,9 +5,8 @@ import router from './router'
 import { useThemeStore } from './stores/themeStore'
 import { container } from './core/container'
 import { wailsApi, isWailsAvailable } from './api/wails-adapter'
-import { setMotionStandaloneMode, isMotionStandaloneMode } from './api/motionApi'
+import { setMotionStandaloneMode } from './api/motionApi'
 import { initWebVitals } from './utils/webVitals'
-import { startLogSubscription } from './api/logSseClient'
 import './styles.css'
 
 async function resolveRootComponent(): Promise<Component> {
@@ -62,13 +61,6 @@ async function bootstrap(): Promise<void> {
   }
 
   app.mount('#app')
-
-  // 启动后端日志 SSE 订阅，实时推送日志到 LogViewer。
-  // 运动控制器独立窗口（motion 子进程）不启动本地 API 服务器，所有请求都转发到主进程，
-  // 因此无需重复订阅日志；否则子窗口会请求一个不存在的端点导致持续重连。
-  if (!isMotionStandaloneMode()) {
-    startLogSubscription()
-  }
 
   // 启动 Web Vitals 上报（在 mount 后，确保 first paint 已发生）
   initWebVitals()

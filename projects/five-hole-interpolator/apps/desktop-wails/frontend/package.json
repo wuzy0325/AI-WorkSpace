@@ -9,7 +9,7 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@wailsio/runtime": "3.0.0-alpha.94",
+    "@wailsio/runtime": "3.0.0-alpha.95",
     "vue": "^3.5.14",
     "vite": "^5.4.20"
   },

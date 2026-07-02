@@ -25,7 +25,6 @@ import {
   Gauge,
   Thermometer,
   Wind,
-  Zap,
   Timer,
   Target,
   LayoutGrid,
@@ -33,8 +32,6 @@ import {
 } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 import UiButton from '@components/ui/UiButton.vue'
-import UiCheckbox from '@components/ui/UiCheckbox.vue'
-import UiSelect from '@components/ui/UiSelect.vue'
 import UiTooltip from '@components/ui/UiTooltip.vue'
 
 const emit = defineEmits<{
@@ -50,13 +47,11 @@ const {
   isLoading,
   hasConfig,
   currentConfig,
-  sphereTankGate,
   loadSavedConfig,
   pauseCalibration,
   resumeCalibration,
   stopCalibration,
   saveCsv,
-  saveSphereTankGate,
   progressInfo,
   formattedTimeInfo,
   isAcquisitionDeviceConnected,
@@ -204,6 +199,36 @@ const targetPointText = computed(() => {
     return `α=${alpha.toFixed(1)}°, β=${beta.toFixed(1)}°`
   }
   return 'α=0.0°, β=0.0°'
+})
+
+// 实时攻角/侧滑角：从位移机构当前实际位置解析
+// 五孔探针校准的 α/β 本质是旋转轴角度，motionStore.statusList 每 300ms 刷新一次
+// 识别规则：优先按 motionAxes[].name 匹配（兼容 α/alpha/攻角 与 β/beta/侧滑），
+// 命名无法识别时回退按索引——motionAxes[0] 视为 α，motionAxes[1] 视为 β
+const actualAngles = computed<{ alpha?: number; beta?: number }>(() => {
+  const axes = currentConfig.value?.motionAxes
+  if (!axes?.length) return {}
+  const statusList = motionStore.statusList
+  const result: { alpha?: number; beta?: number } = {}
+  axes.forEach((axis, index) => {
+    if (!axis.controllerId) return
+    const status = statusList.find((s) => s.id === axis.controllerId)
+    if (!status) return
+    const axisStatus = status.axes.find((a) => a.name === axis.axis)
+    if (!axisStatus) return
+    const pos = axisStatus.position
+    const name = axis.name.toLowerCase()
+    if (/α|alpha|攻角/.test(name)) {
+      result.alpha = pos
+    } else if (/β|beta|侧滑/.test(name)) {
+      result.beta = pos
+    } else if (index === 0) {
+      result.alpha = pos
+    } else if (index === 1) {
+      result.beta = pos
+    }
+  })
+  return result
 })
 
 function getFiveHoleProbeRole(index: number): ProbeChannelRole {
@@ -732,7 +757,7 @@ onBeforeUnmount(() => {
             <IconCalibrationFiveHole :size="20" />
           </div>
           <div>
-            <h1 class="text-base font-bold leading-tight text-[var(--text-primary)]">五孔探针移位测试</h1>
+            <h1 class="text-base font-bold leading-tight text-[var(--text-primary)]">五孔探针校准</h1>
             <div class="mt-1 flex items-center gap-3">
               <div class="flex items-center gap-1.5">
                 <span
@@ -769,39 +794,6 @@ onBeforeUnmount(() => {
 
       <!-- 右侧：控制区 -->
       <div class="flex items-center gap-2">
-        <!-- 监控参数组 -->
-        <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
-          <Zap class="h-3.5 w-3.5 text-[var(--accent-warning)]" />
-          <span class="text-xs text-[var(--text-muted)]">刷新</span>
-          <UiSelect
-            :model-value="String(calibrationStore.uiRefreshHz)"
-            :options="Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} Hz`, value: String(i + 1) }))"
-            style="width:80px"
-            @update:model-value="calibrationStore.setUiRefreshHz(Number($event))"
-          />
-        </div>
-
-        <!-- 球罐判定 -->
-        <div class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-3 py-1.5">
-          <label class="flex cursor-pointer items-center gap-2 text-[var(--text-primary)]">
-          <UiCheckbox
-            :checked="sphereTankGate.gateEnabled.value"
-            @update:checked="saveSphereTankGate($event, sphereTankGate.waitTimeSec.value)"
-          >
-            <span class="text-xs">球罐判定</span>
-          </UiCheckbox>
-          </label>
-          <div class="h-3.5 w-px bg-[var(--border-default)]"></div>
-          <span class="text-xs text-[var(--text-muted)]">稳定</span>
-          <span class="font-mono text-xs font-bold text-[var(--accent-primary)]">{{ sphereTankGate.stableTimeSec.value === null ? '--' : `${sphereTankGate.stableTimeSec.value.toFixed(1)}s` }}</span>
-          <span
-            class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            :class="sphereTankGate.statusText.value === '稳定' ? 'bg-[var(--accent-success)]/10 text-[var(--accent-success)]' : 'bg-[var(--accent-warning)]/10 text-[var(--accent-warning)]'"
-          >{{ sphereTankGate.statusText.value }}</span>
-        </div>
-
-        <div class="mx-1 h-6 w-px bg-[var(--border-default)]"></div>
-
         <!-- 操作按钮组 -->
         <UiButton size="sm" quaternary @click="emit('openSettings')">
           <Settings :size="14" />配置
@@ -865,12 +857,12 @@ onBeforeUnmount(() => {
                 <div class="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-2">
                   <div class="flex flex-col">
                     <span class="text-[10px] text-[var(--text-muted)]">攻角 α</span>
-                    <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">{{ calibrationStore.angleInfo?.alpha?.toFixed(2) ?? '0.00' }}°</span>
+                    <span class="font-mono text-sm font-semibold" :class="actualAngles.alpha != null ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'">{{ actualAngles.alpha != null ? actualAngles.alpha.toFixed(2) + '°' : '—' }}</span>
                   </div>
                   <div class="h-6 w-px bg-[var(--border-default)]"></div>
                   <div class="flex flex-col text-right">
                     <span class="text-[10px] text-[var(--text-muted)]">侧滑角 β</span>
-                    <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">{{ calibrationStore.angleInfo?.beta?.toFixed(2) ?? '0.00' }}°</span>
+                    <span class="font-mono text-sm font-semibold" :class="actualAngles.beta != null ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'">{{ actualAngles.beta != null ? actualAngles.beta.toFixed(2) + '°' : '—' }}</span>
                   </div>
                 </div>
               </div>
@@ -894,11 +886,9 @@ onBeforeUnmount(() => {
                     {{ formatFiveHoleRealtimeValue(getFiveHoleProbeRole(i), getFiveHoleProbeValue(i)) }}
                   </span>
                 </div>
-                <div class="col-span-2 flex flex-col rounded-[var(--radius-sm)] border border-[var(--accent-primary)]/20 bg-[var(--accent-primary)]/5 p-1.5">
-                  <div class="flex items-center justify-between">
-                    <span class="text-[10px] font-medium text-[var(--accent-primary)]">P5 (中心参考孔)</span>
-                  </div>
-                  <span class="font-mono text-sm font-semibold text-[var(--accent-primary)]">
+                <div class="col-span-2 flex flex-col rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-1.5 transition-colors hover:border-[var(--accent-primary)]/30">
+                  <span class="text-[10px] font-medium text-[var(--text-muted)]">P5</span>
+                  <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
                     {{ formatFiveHoleRealtimeValue('fiveHole.p5', calibrationStore.realtimePressures?.P5) }}
                   </span>
                 </div>

@@ -8,6 +8,7 @@ import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, TotalPres
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
 import UiButton from '@components/ui/UiButton.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
+import { reportAllSettledFailures } from '@utils/allSettledReport'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
@@ -49,6 +50,10 @@ const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Alpha', controllerId: '', a
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
 const REQUIRED_CHANNEL_ROLES = ['totalPressure.pTotal', 'totalPressure.pStatic', 'totalPressure.pAtm', 'totalPressure.tAtm'] as const
+
+// 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
+// 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
+const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: String(i) }))
 
 const currentStepErrors = computed<string[]>(() => {
   const errs: string[] = []
@@ -107,7 +112,16 @@ async function loadSavedConfig() {
   } catch { /* ok */ }
 }
 
-onMounted(async () => { try { await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()]) } finally { isLoading.value = false } })
+onMounted(async () => {
+  try {
+    const results = await Promise.allSettled([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()])
+    reportAllSettledFailures(
+      results,
+      ['设备列表', '运动控制器列表', '总压校准配置'],
+      feedbackStore.pushToast,
+    )
+  } finally { isLoading.value = false }
+})
 </script>
 
 <template>
@@ -146,7 +160,13 @@ onMounted(async () => { try { await Promise.all([deviceStore.refreshProfiles(), 
         <UiPanel class="section-card">
           <template #header><span class="section-header">测点通道映射</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th style="width:48px">启用</th><th>测点名称</th><th>数据源设备</th><th style="width:100px">通道索引</th><th style="width:80px">精度</th></tr></thead>
-            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td><td><span class="cell-name">{{ ch.name }}</span></td><td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" /></td><td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td><td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td></tr></tbody></table></div>
+            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td><td><span class="cell-name">{{ ch.name }}</span></td><td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" :fallback="false" /></td><td><UiSelect
+              :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
+              @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
+              :options="channelIndexOptions"
+              placeholder="未分配"
+              :disabled="!ch.enabled"
+            /></td><td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td></tr></tbody></table></div>
         </UiPanel>
         <UiPanel class="section-card">
           <template #header><span class="section-header">运动轴配置</span></template>
@@ -158,8 +178,13 @@ onMounted(async () => { try { await Promise.all([deviceStore.refreshProfiles(), 
           <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">启用球罐判定</UiCheckbox>
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
             <div><span class="field-label">等待时间 (秒)</span><UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" /></div>
-            <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" /></div>
-            <div><span class="field-label">稳定时间通道</span><UiInputNumber v-model="sphereTankStableChannel.channelIndex" :min="0" style="width:100%" /></div>
+            <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" :fallback="false" /></div>
+            <div><span class="field-label">稳定通道</span><UiSelect
+              :model-value="sphereTankStableChannel.channelIndex >= 0 ? String(sphereTankStableChannel.channelIndex) : ''"
+              @update:model-value="sphereTankStableChannel.channelIndex = $event !== '' ? Number($event) : 0"
+              :options="channelIndexOptions"
+              placeholder="选择通道"
+            /></div>
           </div>
         </UiPanel>
       </div>

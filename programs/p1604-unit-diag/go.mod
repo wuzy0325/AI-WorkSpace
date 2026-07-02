@@ -1,0 +1,7 @@
+module programs.local/p1604-unit-diag
+
+go 1.25.0
+
+require shared.local/device-sdk/go v0.0.0
+
+replace shared.local/device-sdk/go => ../../shared/device-sdk/go

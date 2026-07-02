@@ -154,6 +154,23 @@ export function scanDevices(): Promise<ScanResult[]> {
 /** payload 事件订阅句柄，用于解除监听 */
 let payloadUnsubscribe: (() => void) | null = null
 let logUnsubscribe: (() => void) | null = null
+let deviceStateUnsubscribe: (() => void) | null = null
+let recordingFatalUnsubscribe: (() => void) | null = null
+let recordingBackpressureUnsubscribe: (() => void) | null = null
+
+/** 录制不可恢复错误事件载荷 */
+export interface RecordingFatalEvent {
+  deviceId: string
+  error: string
+}
+
+/** 录制背压丢帧事件载荷 */
+export interface RecordingBackpressureEvent {
+  deviceId: string
+  queueLen: number
+  queueCap: number
+  droppedTotal: number
+}
 
 export function onPayload(handler: (snapshot: TemperatureSnapshot) => void): void {
   offPayload()
@@ -180,5 +197,55 @@ export function offLog(): void {
   if (logUnsubscribe) {
     logUnsubscribe()
     logUnsubscribe = null
+  }
+}
+
+/**
+ * 订阅设备状态变更事件（daq:device-state）。
+ * 后端在设备 connect/disconnect/acquiring/error 等状态变化时推送，
+ * 前端通过此事件实时更新 statusMap 与错误信息，避免依赖轮询。
+ */
+export function onDeviceState(handler: (id: string, state: DeviceState) => void): void {
+  offDeviceState()
+  deviceStateUnsubscribe = Events.On('daq:device-state', (event: { data: [string, DeviceState] }) => {
+    const [id, state] = event.data
+    handler(id, state)
+  })
+}
+
+export function offDeviceState(): void {
+  if (deviceStateUnsubscribe) {
+    deviceStateUnsubscribe()
+    deviceStateUnsubscribe = null
+  }
+}
+
+/** 订阅录制不可恢复错误事件（recorder I/O 错误时触发） */
+export function onRecordingFatal(handler: (event: RecordingFatalEvent) => void): void {
+  offRecordingFatal()
+  recordingFatalUnsubscribe = Events.On('daq:recording-fatal', (event: { data: RecordingFatalEvent }) => {
+    handler(event.data)
+  })
+}
+
+export function offRecordingFatal(): void {
+  if (recordingFatalUnsubscribe) {
+    recordingFatalUnsubscribe()
+    recordingFatalUnsubscribe = null
+  }
+}
+
+/** 订阅录制背压丢帧事件（recorder 队列满丢帧时触发） */
+export function onRecordingBackpressure(handler: (event: RecordingBackpressureEvent) => void): void {
+  offRecordingBackpressure()
+  recordingBackpressureUnsubscribe = Events.On('daq:recording-backpressure', (event: { data: RecordingBackpressureEvent }) => {
+    handler(event.data)
+  })
+}
+
+export function offRecordingBackpressure(): void {
+  if (recordingBackpressureUnsubscribe) {
+    recordingBackpressureUnsubscribe()
+    recordingBackpressureUnsubscribe = null
   }
 }

@@ -103,7 +103,7 @@ function displayStatusLabel(profileId: string): string {
 
 <style scoped>
 .device-sidebar {
-  width: clamp(220px, 24vw, var(--layout-sidebar-width, 244px));
+  width: clamp(196px, 20vw, var(--layout-sidebar-width, 244px));
   height: 100%;
   flex-shrink: 0;
   display: flex;
@@ -121,7 +121,7 @@ function displayStatusLabel(profileId: string): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
@@ -142,7 +142,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__manage-btn {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-0-5) var(--space-2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -171,14 +171,14 @@ function displayStatusLabel(profileId: string): string {
 .device-sidebar__list {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-3);
+  padding: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .device-sidebar__empty {
-  padding: var(--space-8) var(--space-4);
+  padding: var(--space-4) var(--space-2);
   text-align: center;
   font-size: var(--font-size-xs);
   color: var(--text-muted);
@@ -187,10 +187,10 @@ function displayStatusLabel(profileId: string): string {
 .device-sidebar__item {
   width: 100%;
   text-align: left;
-  padding: var(--space-3);
+  padding: var(--space-2);
   background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
   border: 1px solid transparent;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
@@ -243,7 +243,7 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item-name {
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;

@@ -5,32 +5,52 @@ import (
 	"daq-t1603/ports"
 )
 
+// RecordingUsecase 是录制业务逻辑层。
+//
+// 它本身不持有并发状态，所有调用直接透传到 RecordingPort 实现，
+// 保持 usecase 层的薄壳特性（hard constraint: usecase 不直接接触硬件/IO）。
 type RecordingUsecase struct {
-	recorder ports.RecordingPort
+	recording ports.RecordingPort
 }
 
-func NewRecordingUsecase(recorder ports.RecordingPort) *RecordingUsecase {
-	return &RecordingUsecase{recorder: recorder}
+// NewRecordingUsecase 创建录制业务用例。
+func NewRecordingUsecase(recording ports.RecordingPort) *RecordingUsecase {
+	return &RecordingUsecase{recording: recording}
 }
 
+// Start 启动录制。
 func (uc *RecordingUsecase) Start(outputDir string, prefix string) error {
-	return uc.recorder.Start(outputDir, prefix)
+	return uc.recording.Start(outputDir, prefix)
 }
 
+// Write 投递一帧快照到录制队列。
 func (uc *RecordingUsecase) Write(snapshot core.TemperatureSnapshot) error {
-	return uc.recorder.Write(snapshot)
+	return uc.recording.Write(snapshot)
 }
 
+// Stop 停止录制并 flush 所有缓冲。
 func (uc *RecordingUsecase) Stop() error {
-	return uc.recorder.Stop()
+	return uc.recording.Stop()
 }
 
+// Status 返回当前录制会话状态。
 func (uc *RecordingUsecase) Status() core.RecordingSession {
-	return uc.recorder.Status()
+	return uc.recording.Status()
 }
 
-// IsActive 无锁查询当前是否处于录制状态，供热路径（如 relayStream）使用，
-// 避免每条 snapshot 都调用 Status() 引起的锁竞争。
+// IsActive 热路径无锁判活。
 func (uc *RecordingUsecase) IsActive() bool {
-	return uc.recorder.IsActive()
+	return uc.recording.IsActive()
+}
+
+// SetBackpressureHandler 透传背压回调到 recorder 实现。
+// handler 内部禁止回调 usecase/ports 任何方法，避免死锁。
+func (uc *RecordingUsecase) SetBackpressureHandler(handler func(core.BackpressureEvent)) {
+	uc.recording.SetBackpressureHandler(handler)
+}
+
+// SetFatalErrorHandler 透传不可恢复错误回调到 recorder 实现。
+// handler 内部禁止回调 usecase/ports 任何方法，避免死锁。
+func (uc *RecordingUsecase) SetFatalErrorHandler(handler func(deviceID string, err error)) {
+	uc.recording.SetFatalErrorHandler(handler)
 }

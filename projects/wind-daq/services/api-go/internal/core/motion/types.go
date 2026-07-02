@@ -32,13 +32,15 @@ const (
 )
 
 // AxisEncoderCompensationConfig 编码器补偿参数。
+// 字段类型与 shared.local/device-sdk/go/motion/core 对齐，
+// 避免 wrapper.go 中冗余的类型转换函数。
 type AxisEncoderCompensationConfig struct {
 	Enabled   bool    `json:"enabled"`
 	Tolerance float64 `json:"tolerance"`
-	MaxCycles float64 `json:"maxCycles"`
-	SettleMs  float64 `json:"settleMs"`
+	MaxCycles int     `json:"maxCycles"`
+	SettleMs  int     `json:"settleMs"`
 	MinStep   float64 `json:"minStep"`
-	TimeoutMs float64 `json:"timeoutMs"`
+	TimeoutMs int     `json:"timeoutMs"`
 }
 
 // AxisConfig 单轴配置，包含机械、电气及运动限制参数。
@@ -71,13 +73,16 @@ type MotionControllerProfile struct {
 }
 
 type AxisStatus struct {
-	Name     AxisName `json:"name"`
-	Position float64  `json:"position"`
-	Velocity float64  `json:"velocity"`
-	Moving   bool     `json:"moving"`
-	Homed    bool     `json:"homed"`
-	PosLimit bool     `json:"posLimit"`
-	NegLimit bool     `json:"negLimit"`
+	Name              AxisName `json:"name"`
+	Position          float64  `json:"position"`
+	Velocity          float64  `json:"velocity"`
+	Moving            bool     `json:"moving"`
+	Homed             bool     `json:"homed"`
+	PosLimit          bool     `json:"posLimit"`
+	NegLimit          bool     `json:"negLimit"`
+	Compensating      bool     `json:"compensating"`
+	CompensationError string   `json:"compensationError,omitempty"`
+	PositionError     float64  `json:"positionError"`
 }
 
 type ControllerStatus struct {

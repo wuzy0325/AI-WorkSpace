@@ -30,18 +30,60 @@ export interface CalculatedPhysics {
   velocity?: number
 }
 
-export interface AngleInfo {
-  alpha?: number
-  beta?: number
+// 大气数据计算常数（与后端 AtmosphericDataCalculator 保持一致）
+const ATM_GAMMA = 1.4       // 空气绝热指数
+const ATM_C_COEFF = 20.047  // 声速计算系数
+const ATM_RECOVERY = 0.9    // 温度传感器恢复系数
+const ATM_STANDARD_PRESSURE_PA = 101325
+
+/**
+ * 根据实时压力计算气动参数（马赫数、流速）。
+ * 公式与后端 AtmosphericDataCalculator / formulas.go 一致，用于 UI 实时显示，非校准算法。
+ *
+ * 关键：风洞总压/静压通道通常以大气压为参考点输出差压（表压），
+ *   后端公式约定 Pt_abs = P0 + Patm, Ps_abs = Ps + Patm。
+ *   若 Patm 缺失或为 0，实时 UI 使用标准大气压兜底，避免差压通道导致整块空白。
+ *
+ * 马赫数: Ma = sqrt((2/(γ-1)) * ((Pt_abs/Ps_abs)^((γ-1)/γ) - 1))
+ * 静温:   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，需转开尔文）
+ * 流速:   V = Ma * 20.047 * sqrt(SAT)
+ *
+ * 当 P0/Ps/Ttunnel 任一缺失或非法时返回 null（UI 显示 "--"）。
+ */
+function calculateAtmosphericPhysics(p: RealtimePressures): CalculatedPhysics | null {
+  const ptGauge = p.P0
+  const psGauge = p.Ps
+  // 风洞温度通道单位为 ℃，需转换为开尔文
+  const tatK = p.Ttunnel === undefined ? undefined : p.Ttunnel + 273.15
+  // 大气压，用于差压转绝对压；实时 UI 中通道未映射时用标准大气压兜底。
+  const patm = Number.isFinite(p.Patm) && p.Patm > 0 ? p.Patm : ATM_STANDARD_PRESSURE_PA
+
+  if (ptGauge === undefined || psGauge === undefined || tatK === undefined) return null
+  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK)) return null
+
+  const ptAbs = ptGauge + patm
+  const psAbs = psGauge + patm
+
+  if (psAbs <= 0 || ptAbs < psAbs || tatK <= 0) return null
+  if (ptAbs === psAbs) return { machNumber: 0, velocity: 0 }
+
+  const ratio = ptAbs / psAbs
+  const ma = Math.sqrt((2 / (ATM_GAMMA - 1)) * (Math.pow(ratio, (ATM_GAMMA - 1) / ATM_GAMMA) - 1))
+  if (!Number.isFinite(ma) || ma < 0) return null
+
+  const sat = tatK / (1 + ((ATM_GAMMA - 1) / 2) * ATM_RECOVERY * ma * ma)
+  if (!Number.isFinite(sat) || sat <= 0) return null
+
+  const velocity = ma * ATM_C_COEFF * Math.sqrt(sat)
+  if (!Number.isFinite(velocity)) return null
+
+  return { machNumber: ma, velocity }
 }
 
 export interface TimeInfo {
   elapsedTime: number
   estimatedRemaining: number
 }
-
-// 状态轮询定时器
-let statusPollingTimer: ReturnType<typeof setInterval> | null = null
 
 export const useCalibrationStore = defineStore('calibration', () => {
   const status = ref<CalibrationTaskStatus | null>(null)
@@ -51,10 +93,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const dataPoints = ref<CalibrationAnyDataPoint[]>([])
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
-  const angleInfo = ref<AngleInfo | null>(null)
   const timeInfo = ref<TimeInfo | null>(null)
+  // 默认 5Hz：兼顾实时性与性能。CalibrationConfig.uiRefreshHz 在 startCalibration 中同步覆盖。
   const uiRefreshHz = ref(5)
   const uiRefreshIntervalMs = computed(() => 1000 / uiRefreshHz.value)
+
+  // 状态轮询定时器：必须放在 store 内部（而非模块级），
+  // 否则多实例 / HMR 重载时旧 timer 不会随 store dispose 而清理，导致泄漏与重复轮询。
+  let statusPollingTimer: ReturnType<typeof setInterval> | null = null
 
   // 压力数据节流控制
   let lastPressureUpdateAt = 0
@@ -80,15 +126,25 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const now = Date.now()
     const intervalMs = Math.round(uiRefreshIntervalMs.value)
 
+    const applyPressureUpdate = (pressures: RealtimePressures) => {
+      realtimePressures.value = pressures
+      // 同步计算气动参数（马赫数、流速），公式与后端 AtmosphericDataCalculator 一致：
+      //   Ma = sqrt((2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1))
+      //   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，开尔文）
+      //   V   = Ma * 20.047 * sqrt(SAT)
+      // 这是实时显示用的标准大气数据计算，非校准算法。
+      calculatedPhysics.value = calculateAtmosphericPhysics(pressures)
+    }
+
     if (now - lastPressureUpdateAt >= intervalMs) {
-      realtimePressures.value = pendingPressureUpdate
+      applyPressureUpdate(pendingPressureUpdate)
       pendingPressureUpdate = null
       lastPressureUpdateAt = now
     } else {
       const delay = intervalMs - (now - lastPressureUpdateAt)
       pressureThrottleTimer = setTimeout(() => {
         if (pendingPressureUpdate !== null) {
-          realtimePressures.value = pendingPressureUpdate
+          applyPressureUpdate(pendingPressureUpdate)
           pendingPressureUpdate = null
         }
         lastPressureUpdateAt = Date.now()
@@ -209,6 +265,10 @@ export const useCalibrationStore = defineStore('calibration', () => {
   async function startCalibration(config: CalibrationConfig) {
     const taskId = config.taskId || `cal-${Date.now()}`
     const configToStart: CalibrationConfig = { ...config, taskId }
+    // 启动校准时同步配置中持久化的刷新频率，确保用户在设置对话框中的选择立即生效
+    if (typeof config.uiRefreshHz === 'number' && Number.isFinite(config.uiRefreshHz)) {
+      setUiRefreshHz(config.uiRefreshHz)
+    }
     const wails = isWailsAvailable()
     if (wails) {
       const res = await wailsApi.calibration.start(configToStart)
@@ -297,7 +357,6 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints.value = []
     realtimePressures.value = null
     calculatedPhysics.value = null
-    angleInfo.value = null
     timeInfo.value = null
   }
 
@@ -309,7 +368,6 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints,
     realtimePressures,
     calculatedPhysics,
-    angleInfo,
     timeInfo,
     uiRefreshHz,
     uiRefreshIntervalMs,

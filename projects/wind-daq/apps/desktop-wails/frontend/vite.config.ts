@@ -94,7 +94,10 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 9245,
+    // 端口固定为 9246：wind-daq 专属 dev server 端口。
+    // 之前与 daq-t1603 / motion-controller 共用 9245，切换项目时残留进程会占端口，
+    // 配合 strictPort=true 直接启动失败并触发 libuv UV_HANDLE_CLOSING 断言。
+    port: 9246,
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',

@@ -116,8 +116,6 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 	device.conn = client
 	device.frameReader = protocol.NewT1603FrameReader(client)
 	device.status.Connection = core.ConnectionConnected
-	device.configSyncDone = make(chan struct{})
-	close(device.configSyncDone)
 	device.config = core.DaqT1603HardwareConfig{
 		ChannelMask:   "FFFF",
 		TriggerMode:   2,
@@ -176,8 +174,6 @@ func TestDAQT1603StopCommandCompletesBeforeReturn(t *testing.T) {
 	device.conn = client
 	device.frameReader = protocol.NewT1603FrameReader(client)
 	device.status.Connection = core.ConnectionConnected
-	device.configSyncDone = make(chan struct{})
-	close(device.configSyncDone)
 	device.config = core.DaqT1603HardwareConfig{
 		ChannelMask:  "FFFF",
 		BinaryFormat: true,

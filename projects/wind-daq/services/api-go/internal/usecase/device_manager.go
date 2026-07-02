@@ -118,12 +118,40 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	}
 	for i := range m.profiles {
 		if m.profiles[i].ID == profile.ID {
+			if profile.Type == device.DeviceDAQP1604 {
+				prevUnit := firstChannelUnit(m.profiles[i].Channels)
+				nextUnit := firstChannelUnit(profile.Channels)
+				if nextUnit != "" && nextUnit != prevUnit {
+					if dev, ok := m.devices[profile.ID]; ok {
+						if dev.Status().Acquiring {
+							return fmt.Errorf("cannot update DAQ-P-1604 unit while acquiring: %s", profile.ID)
+						}
+						configurable, ok := dev.(ports.UnitConfigurable)
+						if !ok {
+							return fmt.Errorf("device does not support unit configuration: %s", profile.ID)
+						}
+						if err := configurable.SetUnit(nextUnit); err != nil {
+							return err
+						}
+					}
+				}
+			}
 			m.profiles[i] = profile
 			return m.store.SaveProfiles(m.profiles)
 		}
 	}
 	m.profiles = append(m.profiles, profile)
 	return m.store.SaveProfiles(m.profiles)
+}
+
+func firstChannelUnit(channels []device.ChannelConfig) string {
+	for _, channel := range channels {
+		unit := strings.TrimSpace(channel.Unit)
+		if unit != "" {
+			return unit
+		}
+	}
+	return ""
 }
 
 func normalizeProfiles(profiles []device.Profile, normalizer ports.ProfileNormalizer) []device.Profile {

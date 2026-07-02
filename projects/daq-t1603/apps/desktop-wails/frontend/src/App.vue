@@ -5,8 +5,8 @@ import { useDisplayStore } from '@stores/displayStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { onPayload, offPayload, onLog, offLog } from '@bridge/deviceBridge'
-import type { TemperatureSnapshot, DeviceLogEvent } from '@bridge/deviceBridge'
+import { onPayload, offPayload, onLog, offLog, onDeviceState, offDeviceState, onRecordingFatal, offRecordingFatal, onRecordingBackpressure, offRecordingBackpressure } from '@bridge/deviceBridge'
+import type { TemperatureSnapshot, DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
 import MonitorView from '@views/MonitorView.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
@@ -75,11 +75,13 @@ onMounted(async () => {
   // 同步日志文件保存状态（后端启动时已自动开启）
   await logStore.refreshFileState()
   // 自动连接所有开启了自动连接的设备
+  // 注意：单个设备连接失败时后端已通过 daq:log（error 级别）推送详细错误，
+  // 前端 onLog 订阅会写入 logStore，此处仅记录汇总信息，避免重复日志。
   try {
     await deviceStore.autoConnectAll()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    logStore.warn('auto-connect', `自动连接失败: ${message}`)
+    logStore.info('auto-connect', `部分设备自动连接失败: ${message}`)
   }
   deviceStore.setDisplayRefreshRateHz(displayStore.refreshRateHz)
   onPayload((snapshot: TemperatureSnapshot) => {
@@ -88,6 +90,22 @@ onMounted(async () => {
   onLog((entry: DeviceLogEvent) => {
     logStore.pushEvent(entry)
   })
+  // 订阅设备状态变更：后端在 connect/disconnect/acquiring/error 等状态变化时推送，
+  // 前端实时同步 statusMap 与 errorMap，避免依赖轮询。
+  // 注意：daq-t1603 后端当前未主动发射此事件，订阅为前置基础设施，
+  // 待后端补齐 EmitDeviceState 后自动生效。
+  onDeviceState((id: string, state: DeviceState) => {
+    deviceStore.syncStatusFromBackend(id, state)
+  })
+  // 订阅录制 fatal/backpressure 事件：写入 logStore + 更新 recordingStore 状态
+  onRecordingFatal((event) => {
+    logStore.error('acquisition', `录制不可恢复错误 [${event.deviceId}]: ${event.error}`)
+    recordingStore.handleFatalError(event.error)
+  })
+  onRecordingBackpressure((event) => {
+    logStore.warn('acquisition', `录制队列背压丢帧 [${event.deviceId}]: 队列 ${event.queueLen}/${event.queueCap}`)
+    recordingStore.handleBackpressure(event.droppedTotal)
+  })
   recordingStore.startListening()
 })
 
@@ -95,6 +113,9 @@ onUnmounted(() => {
   deviceStore.stopDisplayFlush()
   offPayload()
   offLog()
+  offDeviceState()
+  offRecordingFatal()
+  offRecordingBackpressure()
   recordingStore.stopListening()
 })
 </script>

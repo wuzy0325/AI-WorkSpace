@@ -119,6 +119,7 @@ type ScanResult struct {
 type DataPayload struct {
 	DeviceID        string    `json:"deviceId"`
 	DeviceType      Type      `json:"deviceType,omitempty"` // 设备类型，用于 sink 路由（如 CSV 按设备类型分派宽/长格式）
+	DeviceName      string    `json:"deviceName,omitempty"` // 设备名（profile.Name），用于生成人类可读的文件名（比 UUID 友好）
 	Timestamp       int64     `json:"timestamp"`
 	DeviceTimestamp int64     `json:"deviceTimestamp,omitempty"` // 设备帧内时间戳（毫秒），仅 DAQ-P-1604 开启设备时间戳时有效
 	Channels        []float64 `json:"channels"`

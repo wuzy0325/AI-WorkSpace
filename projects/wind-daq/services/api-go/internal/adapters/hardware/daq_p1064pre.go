@@ -358,6 +358,7 @@ func (d *DAQP1064Pre) handleAcquisitionDataLocked(payload []byte) {
 	sink(device.DataPayload{
 		DeviceID:       deviceID,
 		DeviceType:     d.profile.Type,
+		DeviceName:     d.profile.Name,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,

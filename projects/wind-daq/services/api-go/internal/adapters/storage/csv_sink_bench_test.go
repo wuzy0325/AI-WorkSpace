@@ -26,6 +26,7 @@ func makeBenchPayloads(n int) []device.DataPayload {
 	for i := range payloads {
 		payloads[i] = device.DataPayload{
 			DeviceID:       fmt.Sprintf("dev-%d", i),
+			DeviceName:     fmt.Sprintf("bench-dev-%d", i),
 			Timestamp:      int64(i),
 			Channels:       []float64{1.0, -2.5, 3.14, 0.0, 5.5, -6.6, 7.7, 8.8},
 			ChannelIndices: []int{0, 1, 2, 3, 4, 5, 6, 7},
@@ -138,7 +139,7 @@ func BenchmarkCSVRecordingSink_EndToEnd_10Devices_60kFrames(b *testing.B) {
 	}
 }
 
-// BenchmarkCSVRecordingSink_WritePayload_FormatOnly 仅测量 writePayloadLong 的格式化开销，
+// BenchmarkCSVRecordingSink_WritePayload_FormatOnly 仅测量 writePayloadDynamicWide 的格式化开销，
 // 不含 channel 投递、fsync、文件 I/O 等。用于隔离 strconv.AppendXxx 相对 fmt.Fprintf 的性能。
 //
 // 使用 bufio.Writer + io.Discard 作为输出，避免文件 I/O 噪声。
@@ -153,10 +154,13 @@ func BenchmarkCSVRecordingSink_WritePayload_FormatOnly(b *testing.B) {
 	}
 
 	bw := bufio.NewWriter(io.Discard)
+	// 预置列布局并标记 headerWritten，跳过首帧表头写入路径，聚焦格式化开销
 	w := &perDeviceWriter{
-		deviceID:     "dev-1",
-		isWideFormat: false, // 长格式
-		bw:           bw,
+		deviceID:      "dev-1",
+		isWideFormat:  false, // 动态宽格式路径
+		bw:            bw,
+		columnIndices: []int{0, 1, 2, 3, 4, 5, 6, 7},
+		headerWritten: true,
 	}
 	var buf []byte
 
@@ -164,8 +168,8 @@ func BenchmarkCSVRecordingSink_WritePayload_FormatOnly(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		if err := sink.writePayloadLong(&buf, w, payload); err != nil {
-			b.Fatalf("writePayloadLong: %v", err)
+		if err := sink.writePayloadDynamicWide(&buf, w, payload); err != nil {
+			b.Fatalf("writePayloadDynamicWide: %v", err)
 		}
 		// 每 1024 次 flush 一次，避免 bufio 内部缓冲无限增长
 		if i%1024 == 0 {

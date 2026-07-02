@@ -55,6 +55,7 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 	if config.SavePath == "" {
 		return fmt.Errorf("保存路径为空")
 	}
+	w.schema = calibration.NewCsvSchema(config)
 
 	// 确保目录存在
 	dir := filepath.Dir(config.SavePath)

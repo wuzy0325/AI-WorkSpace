@@ -7,6 +7,7 @@ import { useSphereTankGate } from '@composables/useSphereTankGate'
 import { calibrationApi } from '@api/calibrationApi'
 import type { CalibrationConfig, CalibrationType, ProbeChannelRole } from '@shared/types/calibration'
 import { applyCalibrationPrecisionDefaults } from '@shared/calibrationPrecision'
+import { reportAllSettledFailures } from '@utils/allSettledReport'
 
 export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   const calibrationStore = useCalibrationStore()
@@ -233,16 +234,26 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   })
 
   onMounted(async () => {
-    try {
-      await Promise.all([
-        deviceStore.refreshProfiles(),
-        motionStore.refreshProfiles(),
-        motionStore.refreshStatus(),
-        loadSavedConfig(),
-      ])
-    } finally {
-      isLoading.value = false
-    }
+    // 进入校准画面时并行拉取四类资源：设备 profiles/statuses、运动 profiles、运动 status、本地保存的校准配置。
+    // 使用 allSettled 而非 all：任一请求失败不应阻塞其他资源加载（例如运动控制器离线时仍要展示已保存的配置）。
+    // 失败项由 reportAllSettledFailures 统一弹 toast 提示，store 自身负责保留旧状态 + 暴露 error 字段。
+    // refreshInstances 同时刷新 profiles 与 statuses：
+    // 进入校准画面时必须拿到最新的 acquiring 状态，attachStatusListener →
+    // syncSnapshotSubscriptions 才会调用 subscribeToDevice 启动 HTTP 轮询，
+    // 否则 onSnapshot 回调不会被触发，UI 实时压力/气动参数会一直显示 "--"。
+    // 与 TraversalMain.vue 的做法保持一致。
+    const results = await Promise.allSettled([
+      deviceStore.refreshInstances(),
+      motionStore.refreshProfiles(),
+      motionStore.refreshStatus(),
+      loadSavedConfig(),
+    ])
+    reportAllSettledFailures(
+      results,
+      ['设备实例列表', '运动控制器配置', '运动控制器状态', '校准配置'],
+      (msg, level) => feedbackStore.pushToast(msg, level ?? 'warning'),
+    )
+    isLoading.value = false
   })
 
   return {

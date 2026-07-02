@@ -15,6 +15,8 @@ type RingEntry struct {
 	ID        uint64 `json:"id"`
 	Timestamp string `json:"timestamp"`
 	Level     string `json:"level"`
+	Category  string `json:"category,omitempty"`
+	DeviceID  string `json:"deviceId,omitempty"`
 	Source    string `json:"source"`
 	Message   string `json:"message"`
 	Details   string `json:"details,omitempty"`
@@ -47,9 +49,10 @@ func NewRingBuffer(capacity int) *RingBuffer {
 	}
 }
 
-// Push 向环形缓冲区追加一条条目。同时推送给所有 SSE 订阅者。
+// push 向环形缓冲区追加一条条目。同时推送给所有 SSE 订阅者。
 // 调用方传入的 entry.ID 会被覆盖为单调递增的全局 ID。
-func (rb *RingBuffer) Push(entry RingEntry) {
+// 仅限包内使用（RingHandler），外部不应直接调用。
+func (rb *RingBuffer) push(entry RingEntry) {
 	rb.mu.Lock()
 	rb.nextID++
 	entry.ID = rb.nextID
@@ -92,8 +95,9 @@ func (rb *RingBuffer) Recent(n int) []RingEntry {
 
 // Subscribe 注册一个 SSE 订阅者，返回的 channel 在推送新日志或 context 取消时收到数据。
 // 调用方必须在结束后取消 context 以释放资源。
+// channel 缓冲 256 条，避免高日志量时短时消费不及导致丢帧。
 func (rb *RingBuffer) Subscribe(ctx context.Context) <-chan RingEntry {
-	ch := make(chan RingEntry, 64)
+	ch := make(chan RingEntry, 256)
 	// 使用单调递增 ID，避免 len(subs) 被复用导致并发订阅互相覆盖。
 	subID := rb.subSeq.Add(1)
 
@@ -115,16 +119,20 @@ func (rb *RingBuffer) Subscribe(ctx context.Context) <-chan RingEntry {
 //
 // 同时实现了 slog 的 WithAttrs / WithGroup 语义：通过 logging.WithComponent
 // 等链式调用追加的属性会被保留下来，Handle 时与 Record.Attrs 一起合并写入 RingEntry。
+//
+// 写入前会检查 catFilter：若该 category 被关闭，则跳过不写入 ring buffer。
+// stderr 和文件日志不受 catFilter 影响（它们在 fanoutHandler 的其他 sink 中独立处理）。
 type RingHandler struct {
-	ring   *RingBuffer
-	level  *slog.LevelVar
-	attrs  []slog.Attr // 来自 WithAttrs 链路上的累积属性
-	groups []string    // 来自 WithGroup 的分组栈（仅作为前缀拼接到 detail key）
+	ring      *RingBuffer
+	level     *slog.LevelVar
+	catFilter *categoryFilter // 分类过滤器，nil 表示全放行
+	attrs     []slog.Attr     // 来自 WithAttrs 链路上的累积属性
+	groups    []string        // 来自 WithGroup 的分组栈（仅作为前缀拼接到 detail key）
 }
 
 // NewRingHandler 创建新的 RingHandler。
-func NewRingHandler(ring *RingBuffer, level *slog.LevelVar) *RingHandler {
-	return &RingHandler{ring: ring, level: level}
+func NewRingHandler(ring *RingBuffer, level *slog.LevelVar, catFilter *categoryFilter) *RingHandler {
+	return &RingHandler{ring: ring, level: level, catFilter: catFilter}
 }
 
 func (h *RingHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -183,13 +191,41 @@ func (h *RingHandler) Handle(_ context.Context, r slog.Record) error {
 			entry.Details = entry.Details + " " + string(buf)
 		}
 	}
+	if entry.Category == "" {
+		entry.Category = inferCategory(entry.Source, entry.Message, entry.Details)
+	}
 
-	h.ring.Push(entry)
+	// 检查 category 过滤器：若该分类被关闭，跳过 ring buffer 写入
+	// （stderr 和文件日志已在 fanoutHandler 的其他 sink 中独立写入，不受此影响）
+	if !h.catFilter.isEnabled(entry.Category) {
+		return nil
+	}
+
+	h.ring.push(entry)
 	return nil
 }
 
+func inferCategory(source string, message string, details string) string {
+	haystack := strings.ToLower(source + " " + message + " " + details)
+	// 通信方向优先判定：发送（send）与接收（response/recv）需分开匹配，
+	// 避免把"command"单独关键字误归到 hardware-recv（与前端 CATEGORY_LABELS 口径相反）。
+	// 仅在 entry 未显式指定 category 时作为兜底，所以保守匹配即可。
+	switch {
+	case strings.Contains(haystack, "hardware-send"), strings.Contains(haystack, "command send"), strings.Contains(haystack, "bytes written"):
+		return "hardware-send"
+	case strings.Contains(haystack, "hardware-recv"), strings.Contains(haystack, "command response"), strings.Contains(haystack, "tcp connected"), strings.Contains(haystack, "tcp disconnected"):
+		return "hardware-recv"
+	case strings.Contains(haystack, "acquisition"), strings.Contains(haystack, "采集"):
+		return "acquisition"
+	case strings.Contains(haystack, "calibration"), strings.Contains(haystack, "traversal"), strings.Contains(haystack, "storage"), strings.Contains(haystack, "motion"):
+		return "business"
+	default:
+		return "system"
+	}
+}
+
 // applyAttrToEntry 把一个 slog.Attr 写入 entry / details，
-// component / device_id / session_id / task_id 走结构化字段，其他归到 details。
+// category / component / device_id / device 走结构化字段，其他归到 details。
 func applyAttrToEntry(a slog.Attr, groupPrefix string, entry *RingEntry, details map[string]string) {
 	if a.Equal(slog.Attr{}) {
 		return
@@ -197,9 +233,19 @@ func applyAttrToEntry(a slog.Attr, groupPrefix string, entry *RingEntry, details
 	key := groupPrefix + a.Key
 	val := a.Value.String()
 	switch a.Key {
+	case "category":
+		entry.Category = val
 	case "component":
 		entry.Source = val
-	case "device_id", "session_id", "task_id":
+	case "device_id":
+		// 规范键：直接采用，覆盖任何先前由 "device" 别名写入的值。
+		entry.DeviceID = val
+	case "device":
+		// 兼容别名：仅在规范键 device_id 未设置时填充，避免两者并存时静默覆盖。
+		if entry.DeviceID == "" {
+			entry.DeviceID = val
+		}
+	case "session_id", "task_id":
 		if entry.Details == "" {
 			entry.Details = a.Key + "=" + val
 		} else {
@@ -219,10 +265,11 @@ func (h *RingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	merged = append(merged, h.attrs...)
 	merged = append(merged, attrs...)
 	return &RingHandler{
-		ring:   h.ring,
-		level:  h.level,
-		attrs:  merged,
-		groups: h.groups,
+		ring:      h.ring,
+		level:     h.level,
+		catFilter: h.catFilter,
+		attrs:     merged,
+		groups:    h.groups,
 	}
 }
 
@@ -235,9 +282,10 @@ func (h *RingHandler) WithGroup(name string) slog.Handler {
 	groups = append(groups, h.groups...)
 	groups = append(groups, name)
 	return &RingHandler{
-		ring:   h.ring,
-		level:  h.level,
-		attrs:  h.attrs,
-		groups: groups,
+		ring:      h.ring,
+		level:     h.level,
+		catFilter: h.catFilter,
+		attrs:     h.attrs,
+		groups:    groups,
 	}
 }

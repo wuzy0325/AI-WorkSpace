@@ -181,7 +181,7 @@ func (a *T1603Adapter) setSharedDataSink(dev *sharedhw.DAQT1603) {
 		a.mu.RUnlock()
 
 		if fn != nil {
-			fn(mapToDevicePayload(payload, a.profile.Type))
+			fn(mapToDevicePayload(payload, a.profile.Type, a.profile.Name))
 		}
 	})
 }
@@ -346,10 +346,11 @@ func mapToDeviceStatus(s sharedcore.Status) device.Status {
 	}
 }
 
-func mapToDevicePayload(p sharedcore.DataPayload, deviceType device.Type) device.DataPayload {
+func mapToDevicePayload(p sharedcore.DataPayload, deviceType device.Type, deviceName string) device.DataPayload {
 	return device.DataPayload{
 		DeviceID:       p.DeviceID,
 		DeviceType:     deviceType,
+		DeviceName:     deviceName,
 		Timestamp:      p.Timestamp,
 		Channels:       p.Channels,
 		ChannelIndices: p.ChannelIndices,

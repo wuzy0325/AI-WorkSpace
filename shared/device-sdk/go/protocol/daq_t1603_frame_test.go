@@ -165,6 +165,18 @@ func TestParseTCPFrame_FloatValues(t *testing.T) {
 	}
 }
 
+func TestParseTCPFrame_RejectsShiftedBinaryFrameWithImpossibleValue(t *testing.T) {
+	data := make([]byte, 64)
+	// Real hardware rapid restart failure pattern: most channels decode as 0,
+	// but one shifted float becomes a large finite impossible temperature.
+	binary.LittleEndian.PutUint32(data[4:], math.Float32bits(-10_522_368))
+
+	_, err := ParseTCPFrame(data)
+	if err == nil {
+		t.Fatal("expected error for shifted binary frame with impossible temperature")
+	}
+}
+
 // --- ASCII frame tests ---
 
 func encodeASCIIFrame(values []float64) []byte {
@@ -408,8 +420,8 @@ func TestConsumeOptionalACK_SingleByteA(t *testing.T) {
 	reader.SetBinaryMode(true)
 
 	frame := make([]byte, 64)
-	for i := range frame {
-		frame[i] = byte(i)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(float32(i+1)))
 	}
 
 	go func() {
@@ -447,8 +459,8 @@ func TestConsumeOptionalACK_AWithNewline(t *testing.T) {
 	reader.SetBinaryMode(true)
 
 	frame := make([]byte, 64)
-	for i := range frame {
-		frame[i] = byte(255 - i)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(float32(i+1)))
 	}
 
 	go func() {
@@ -744,6 +756,32 @@ func TestReadFrame_BinaryTimestampModeAfterACK(t *testing.T) {
 		if result.Temperatures[i] != want {
 			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
 		}
+	}
+}
+
+func TestReadFrame_FixedBinarySkipsDelayedACK(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+
+	frame := make([]byte, 64)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(float32(15-i+1)))
+	}
+
+	go func() {
+		_, _ = server.Write(append([]byte{'A'}, frame...))
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if string(raw) != string(frame) {
+		t.Fatalf("ReadFrame did not skip delayed ACK")
 	}
 }
 

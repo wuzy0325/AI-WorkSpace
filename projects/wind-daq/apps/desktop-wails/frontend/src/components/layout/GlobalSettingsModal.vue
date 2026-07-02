@@ -1,46 +1,14 @@
 <script setup lang="ts">
-import { computed, type Component, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
+import { computed, type Component, nextTick, ref, watch } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { useI18nStore } from '@stores/i18nStore'
-import {
-  useStorageStore,
-  type StorageSettings,
-  DEFAULT_SETTINGS,
-  WAVEFORM_BUFFER_MIN,
-  WAVEFORM_BUFFER_MAX,
-  WAVEFORM_BUFFER_STEP,
-} from '@stores/storageStore'
-import { useThemeStore } from '@stores/themeStore'
-import { deviceApi, storageApi } from '@api/deviceApi'
-import { wailsApi } from '@api/wails-adapter'
+import { useStorageStore } from '@stores/storageStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiSpin from '@components/ui/UiSpin.vue'
-import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
-import UiPanel from '@components/ui/UiPanel.vue'
-import UiInput from '@components/ui/UiInput.vue'
-import UiInputNumber from '@components/ui/UiInputNumber.vue'
-import UiSlider from '@components/ui/UiSlider.vue'
-import UiToggle from '@components/ui/UiToggle.vue'
 import UiErrorState from '@components/ui/UiErrorState.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
-import UiFormField from '@components/ui/UiFormField.vue'
-import {
-  Activity,
-  CheckCircle,
-  Clock,
-  FileText,
-  Folder,
-  HardDrive,
-  RefreshCw,
-  RotateCcw,
-  Save,
-  Sun,
-  Moon,
-  X,
-  Monitor,
-  Globe,
-} from '@lucide/vue'
+import DisplaySettingsSection from './DisplaySettingsSection.vue'
+import RecordingSettingsSection from './RecordingSettingsSection.vue'
+import { FileText, Monitor, RotateCcw, Save, X } from '@lucide/vue'
 
 /** 设置分组标签页类型（按需扩展） */
 type SettingsTab = 'display' | 'recording'
@@ -53,45 +21,19 @@ const emit = defineEmits<{
 
 const feedback = useFeedbackStore()
 const storageStore = useStorageStore()
-const themeStore = useThemeStore()
-const i18nStore = useI18nStore()
-const { theme } = storeToRefs(themeStore)
-const { locale } = storeToRefs(i18nStore)
 
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref(false)
 const activeTab = ref<SettingsTab>('display')
 
-// 表单数据状态
-const baseDirectory = ref('data/recordings')
-const filePrefix = ref('run')
-const autoStart = ref(false)
-const durationEnabled = ref(false)
-const durationMinutes = ref(10)
-const sizeEnabled = ref(false)
-const sizeMb = ref(100)
-const countEnabled = ref(false)
-const recordCount = ref(1000000)
-const rotationEnabled = ref(false)
-const rotationDurationMinutes = ref(30)
-const rotationSizeMb = ref(100)
-const refreshRate = ref(20)
-const originalRefreshRate = ref(20)
-const waveformBufferSize = ref(DEFAULT_SETTINGS.waveformBufferSize)
-const originalWaveformBufferSize = ref(DEFAULT_SETTINGS.waveformBufferSize)
-
-/** 字段级校验错误记录 */
-const validationErrors = ref<Record<string, string>>({})
+const displayRef = ref<InstanceType<typeof DisplaySettingsSection>>()
+const recordingRef = ref<InstanceType<typeof RecordingSettingsSection>>()
 
 const isVisible = computed({
   get: () => props.open,
   set: (value) => emit('update:open', value),
 })
-
-const enabledConditionsCount = computed(() =>
-  [durationEnabled.value, sizeEnabled.value, countEnabled.value].filter(Boolean).length,
-)
 
 /** Tab 配置列表（按需扩展新的分组） */
 const TABS: { key: SettingsTab; label: string; icon: Component }[] = [
@@ -104,124 +46,35 @@ watch(() => props.open, (open) => { if (open) void loadSettings() })
 async function loadSettings(): Promise<void> {
   loading.value = true
   loadError.value = false
-  validationErrors.value = {}
-  try {
-    await storageStore.loadSettings()
-    applySettings(storageStore.settings)
-    try {
-      const status = await storageApi.status()
-      if (status.outputDir) baseDirectory.value = status.outputDir
-    } catch { /* ok */ }
-    try {
-      const hz = await deviceApi.getPublishRate()
-      refreshRate.value = Math.round(hz)
-      originalRefreshRate.value = Math.round(hz)
-    } catch { refreshRate.value = originalRefreshRate.value }
-  } catch {
+  // storageStore.loadSettings 内部已 catch 错误并写入 storageStore.loadError（不抛出），
+  // 这里读 loadError 判断是否失败——否则配置加载失败（如 JSON 损坏）会被静默吞掉，
+  // 弹窗显示默认值却无任何错误提示。
+  await storageStore.loadSettings()
+  if (storageStore.loadError) {
     loadError.value = true
-  } finally {
+    console.error('[GlobalSettings] 配置加载失败:', storageStore.loadError)
     loading.value = false
+    return
   }
-}
-
-function applySettings(s: StorageSettings): void {
-  baseDirectory.value = s.baseDirectory || 'data/recordings'
-  filePrefix.value = s.filePrefix || 'run'
-  autoStart.value = s.autoStartOnAcquisition
-  durationEnabled.value = !!s.stopConditions.maxDurationMs
-  durationMinutes.value = s.stopConditions.maxDurationMs
-    ? Math.max(1, Math.round(s.stopConditions.maxDurationMs / 60000)) : 10
-  sizeEnabled.value = !!s.stopConditions.maxFileSizeBytes
-  sizeMb.value = s.stopConditions.maxFileSizeBytes
-    ? Math.max(1, Math.round(s.stopConditions.maxFileSizeBytes / 1048576)) : 100
-  countEnabled.value = !!s.stopConditions.maxRecordCount
-  recordCount.value = s.stopConditions.maxRecordCount || 1000000
-  const fr = s.fileRotation ?? { enabled: false, maxFileSizeBytes: 104857600, maxDurationMs: 1800000 }
-  rotationEnabled.value = fr.enabled
-  rotationDurationMinutes.value = Math.max(1, Math.round(fr.maxDurationMs / 1000 / 60))
-  rotationSizeMb.value = Math.max(1, Math.round(fr.maxFileSizeBytes / (1024 * 1024)))
-  // 对从 store 读入的值做边界限制，确保 UI 展示合法
-  waveformBufferSize.value = Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, s.waveformBufferSize ?? DEFAULT_SETTINGS.waveformBufferSize))
-  originalWaveformBufferSize.value = waveformBufferSize.value
-}
-
-function currentSettings(): StorageSettings {
-  const stopConditions: StorageSettings['stopConditions'] = {}
-  if (durationEnabled.value) stopConditions.maxDurationMs = durationMinutes.value * 60000
-  if (sizeEnabled.value) stopConditions.maxFileSizeBytes = sizeMb.value * 1048576
-  if (countEnabled.value) stopConditions.maxRecordCount = recordCount.value
-  return {
-    baseDirectory: baseDirectory.value.trim(),
-    filePrefix: filePrefix.value.trim(),
-    autoStartOnAcquisition: autoStart.value,
-    stopConditions,
-    fileRotation: {
-      enabled: rotationEnabled.value,
-      maxFileSizeBytes: rotationSizeMb.value * 1024 * 1024,
-      maxDurationMs: rotationDurationMinutes.value * 60 * 1000,
-    },
-    // 保存前再次限制范围，防止通过输入框绕过校验
-    waveformBufferSize: Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, waveformBufferSize.value)),
+  // 必须先结束 loading 再调用子组件 load()：模板中 v-if/v-else 在 loading 期间不渲染
+  // DisplaySettingsSection / RecordingSettingsSection，displayRef/recordingRef 为 undefined。
+  // 这里用显式检查而非 ?. —— 子组件未挂载属于程序错误（如模板漏绑 ref / 时序错乱），
+  // 必须显式暴露（走 loadError 让用户看到"加载失败"），不能用 ?. 静默跳过，
+  // 否则会导致重开弹窗时子组件始终显示本地 ref 初始值却无任何报错。
+  loading.value = false
+  await nextTick()
+  const display = displayRef.value
+  const recording = recordingRef.value
+  if (!display || !recording) {
+    loadError.value = true
+    console.error('[GlobalSettings] 设置子组件未挂载：displayRef/recordingRef 为空，检查模板 ref 绑定')
+    return
   }
-}
-
-/** 校验指定字段，返回错误信息或空字符串 */
-function validateField(field: string): string {
-  switch (field) {
-    case 'baseDirectory':
-      return baseDirectory.value.trim() ? '' : '保存目录不能为空'
-    case 'filePrefix':
-      return filePrefix.value.trim() ? '' : '文件前缀不能为空'
-    case 'durationMinutes':
-      return durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440)
-        ? '定时停止范围为 1 到 1440 分钟' : ''
-    case 'sizeMb':
-      return sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000)
-        ? '文件大小范围为 1 到 10000 MB' : ''
-    case 'recordCount':
-      return countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000)
-        ? '记录数范围为 1 到 100000000' : ''
-    case 'rotationDurationMinutes':
-      return rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440)
-        ? '滚动时长范围为 1 到 1440 分钟' : ''
-    case 'rotationSizeMb':
-      return rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000)
-        ? '滚动大小范围为 1 到 10000 MB' : ''
-    case 'refreshRate':
-      return refreshRate.value < 1 || refreshRate.value > 20
-        ? '刷新率范围为 1 到 20 Hz' : ''
-    case 'waveformBufferSize':
-      return waveformBufferSize.value < WAVEFORM_BUFFER_MIN || waveformBufferSize.value > WAVEFORM_BUFFER_MAX
-        ? `波形图缓冲区点数范围为 ${WAVEFORM_BUFFER_MIN} 到 ${WAVEFORM_BUFFER_MAX}` : ''
-    default:
-      return ''
-  }
-}
-
-/** 更新单个字段的校验状态 */
-function updateFieldError(field: string): void {
-  const error = validateField(field)
-  if (error) {
-    validationErrors.value = { ...validationErrors.value, [field]: error }
-  } else {
-    const { [field]: _, ...rest } = validationErrors.value
-    validationErrors.value = rest as Record<string, string>
-  }
-}
-
-/** 全量校验 */
-function validate(): boolean {
-  const fields = [
-    'baseDirectory', 'filePrefix', 'durationMinutes', 'sizeMb',
-    'recordCount', 'rotationDurationMinutes', 'rotationSizeMb', 'refreshRate', 'waveformBufferSize',
-  ]
-  const errs: Record<string, string> = {}
-  for (const field of fields) {
-    const error = validateField(field)
-    if (error) errs[field] = error
-  }
-  validationErrors.value = errs
-  return Object.keys(errs).length === 0
+  const settings = storageStore.settings
+  await Promise.all([
+    display.load(settings),
+    recording.load(settings),
+  ])
 }
 
 function onClose(): void {
@@ -230,44 +83,52 @@ function onClose(): void {
   emit('close')
 }
 
-/** 恢复默认设置 */
+/** 恢复默认设置（两区段各自重置） */
 function onReset(): void {
-  applySettings(DEFAULT_SETTINGS)
-  refreshRate.value = 20
-  originalRefreshRate.value = 20
-  waveformBufferSize.value = DEFAULT_SETTINGS.waveformBufferSize
-  originalWaveformBufferSize.value = DEFAULT_SETTINGS.waveformBufferSize
-  validationErrors.value = {}
-  feedback.pushToast('已恢复默认设置', 'info')
-}
-
-async function handlePickDirectory(): Promise<void> {
-  try {
-    const dir = await wailsApi.app.pickDirectory()
-    if (dir) {
-      baseDirectory.value = dir
-      updateFieldError('baseDirectory')
-    }
-  } catch {
-    feedback.pushToast('选择目录失败', 'error')
+  const display = displayRef.value
+  const recording = recordingRef.value
+  if (!display || !recording) {
+    // ref 缺失属程序错误，必须显式反馈而非 ?. 静默跳过
+    feedback.pushToast('设置面板未就绪，请重试', 'error')
+    console.error('[GlobalSettings] onReset: 子组件未挂载')
+    return
   }
+  display.reset()
+  recording.reset()
+  feedback.pushToast('已恢复默认设置', 'info')
 }
 
 async function onSave(): Promise<void> {
   saving.value = true
   let saved = false
   try {
-    if (!validate()) {
-      const firstError = Object.values(validationErrors.value).find(Boolean) || '设置无效'
+    const display = displayRef.value
+    const recording = recordingRef.value
+    // ref 缺失属程序错误（如模板漏绑 ref），必须抛错暴露，不能用 ?. 静默跳过。
+    // 否则会发生"提示已保存但实际未保存"的静默失败（参见本次 bug）。
+    if (!display || !recording) {
+      throw new Error('设置子组件未挂载：检查模板 ref 绑定')
+    }
+    const errs = {
+      ...display.validate(),
+      ...recording.validate(),
+    }
+    if (Object.keys(errs).length) {
+      const firstError = Object.values(errs).find(Boolean) || '设置无效'
       feedback.pushToast(firstError, 'warning')
       return
     }
-    await storageStore.saveSettings(currentSettings())
-    if (refreshRate.value !== originalRefreshRate.value) {
-      await deviceApi.setPublishRate(refreshRate.value)
-      originalRefreshRate.value = refreshRate.value
-    }
-    feedback.pushToast('设置已保存', 'success')
+    // 先持久化（recording.save 合入 waveformBufferSize + refreshRateHz 落盘 + sink 调优），
+    // 成功后再 display.save() 下发后端即时生效。顺序不可颠倒：若先下发后持久化，
+    // 持久化失败时后端已是新值而配置仍是旧值，重启后被旧配置回滚，产生不一致。
+    const waveformBufferSize = display.waveformBufferSize
+    const refreshRateHz = display.refreshRate
+    const sinkTuningChanged = await recording.save(waveformBufferSize, refreshRateHz)
+    await display.save()
+    const message = sinkTuningChanged
+      ? '设置已保存（sink 调优参数需重启应用生效）'
+      : '设置已保存'
+    feedback.pushToast(message, 'success')
     saved = true
   } catch {
     feedback.pushToast('保存失败，请重试', 'error')
@@ -282,7 +143,7 @@ async function onSave(): Promise<void> {
   <UiDialog
     v-model:show="isVisible"
     preset="card"
-    :style="{ maxWidth: '48rem', width: '92vw' }"
+    :style="{ maxWidth: '42rem', width: '92vw' }"
     title="全局设置"
     :bordered="false"
     :mask-closable="false"
@@ -326,356 +187,8 @@ async function onSave(): Promise<void> {
 
       <!-- 右侧内容区 -->
       <div class="settings-content">
-        <!-- 界面 -->
-        <section
-          id="settings-panel-display"
-          role="tabpanel"
-          aria-labelledby="settings-tab-display"
-          v-show="activeTab === 'display'"
-          :aria-hidden="activeTab !== 'display'"
-          class="settings-section"
-        >
-          <UiPanel :segmented="false" class="form-card">
-            <template #header>
-              <div class="card-head">
-                <Monitor :size="15" />
-                <span class="card-head__title">外观与语言</span>
-              </div>
-            </template>
-            <div class="form-fields">
-              <!-- 主题切换 -->
-              <UiFormField label="主题模式">
-                <div class="theme-switch">
-                  <UiButton
-                    size="md"
-                    :variant="theme === 'light' ? 'primary' : 'ghost'"
-                    aria-label="切换为浅色主题"
-                    data-test="settings-theme-light"
-                    @click="themeStore.setTheme('light')"
-                  >
-                    <template #icon><Sun :size="14" /></template>浅色
-                  </UiButton>
-                  <UiButton
-                    size="md"
-                    :variant="theme === 'dark' ? 'primary' : 'ghost'"
-                    aria-label="切换为深色主题"
-                    data-test="settings-theme-dark"
-                    @click="themeStore.setTheme('dark')"
-                  >
-                    <template #icon><Moon :size="14" /></template>深色
-                  </UiButton>
-                </div>
-              </UiFormField>
-              <!-- 语言切换 -->
-              <UiFormField label="界面语言">
-                <div class="locale-switch">
-                  <button
-                    class="locale-btn"
-                    :class="{ 'locale-btn--active': locale === 'zh' }"
-                    aria-label="切换为中文界面"
-                    data-test="settings-locale-zh"
-                    @click="i18nStore.setLocale('zh')"
-                  >
-                    <Globe :size="12" />中文
-                  </button>
-                  <button
-                    class="locale-btn"
-                    :class="{ 'locale-btn--active': locale === 'en' }"
-                    aria-label="Switch interface language to English"
-                    data-test="settings-locale-en"
-                    @click="i18nStore.setLocale('en')"
-                  >
-                    <Globe :size="12" />English
-                  </button>
-                </div>
-              </UiFormField>
-            </div>
-          </UiPanel>
-
-          <!-- 刷新率 -->
-          <UiPanel class="form-card">
-            <template #header>
-              <div class="card-head">
-                <RefreshCw :size="15" />
-                <span class="card-head__title">刷新率</span>
-              </div>
-            </template>
-            <div class="form-fields">
-              <UiFormField
-                label="实时数据刷新频率"
-                :error="validationErrors.refreshRate"
-                hint="较高的刷新率会占用更多系统资源"
-              >
-                <div class="refresh-row">
-                  <div class="refresh-slider">
-                    <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" aria-label="实时数据刷新频率" />
-                    <div class="refresh-labels">
-                      <span class="refresh-label">1 Hz</span>
-                      <span
-                        class="refresh-label refresh-label--highlight"
-                        :class="{ 'refresh-label--active': refreshRate >= 5 && refreshRate <= 15 }"
-                      >推荐 5–15 Hz</span>
-                      <span class="refresh-label">20 Hz</span>
-                    </div>
-                  </div>
-                  <div class="refresh-value">
-                    <UiInputNumber
-                      v-model="refreshRate"
-                      :min="1"
-                      :max="20"
-                      size="small"
-                      @blur="updateFieldError('refreshRate')"
-                    />
-                    <span class="input-unit">Hz</span>
-                  </div>
-                </div>
-              </UiFormField>
-            </div>
-          </UiPanel>
-
-          <!-- 波形图缓冲区 -->
-          <UiPanel class="form-card">
-            <template #header>
-              <div class="card-head">
-                <Activity :size="15" />
-                <span class="card-head__title">波形图</span>
-              </div>
-            </template>
-            <div class="form-fields">
-              <UiFormField
-                label="波形图缓冲区点数"
-                :error="validationErrors.waveformBufferSize"
-                hint="较大的缓冲区可显示更长时间趋势，但会占用更多内存"
-              >
-                <div class="refresh-row">
-                  <div class="refresh-slider">
-                    <UiSlider
-                      v-model="waveformBufferSize"
-                      :min="WAVEFORM_BUFFER_MIN"
-                      :max="WAVEFORM_BUFFER_MAX"
-                      :step="WAVEFORM_BUFFER_STEP"
-                      aria-label="波形图缓冲区点数"
-                    />
-                    <div class="refresh-labels">
-                      <span class="refresh-label">{{ WAVEFORM_BUFFER_MIN }} 点</span>
-                      <span
-                        class="refresh-label refresh-label--highlight"
-                        :class="{ 'refresh-label--active': waveformBufferSize >= 100 && waveformBufferSize <= 500 }"
-                      >推荐 100–500 点</span>
-                      <span class="refresh-label">{{ WAVEFORM_BUFFER_MAX }} 点</span>
-                    </div>
-                  </div>
-                  <div class="refresh-value">
-                    <UiInputNumber
-                      v-model="waveformBufferSize"
-                      :min="WAVEFORM_BUFFER_MIN"
-                      :max="WAVEFORM_BUFFER_MAX"
-                      :step="WAVEFORM_BUFFER_STEP"
-                      size="small"
-                      @blur="updateFieldError('waveformBufferSize')"
-                    />
-                    <span class="input-unit">点</span>
-                  </div>
-                </div>
-              </UiFormField>
-            </div>
-          </UiPanel>
-        </section>
-
-        <!-- 记录 -->
-        <section
-          id="settings-panel-recording"
-          role="tabpanel"
-          aria-labelledby="settings-tab-recording"
-          v-show="activeTab === 'recording'"
-          :aria-hidden="activeTab !== 'recording'"
-          class="settings-section"
-        >
-          <UiPanel :segmented="false" class="form-card">
-            <template #header>
-              <div class="card-head">
-                <FileText :size="15" />
-                <span class="card-head__title">数据保存</span>
-              </div>
-            </template>
-            <div class="form-fields">
-              <UiFormField
-                label="保存目录"
-                :error="validationErrors.baseDirectory"
-                hint="数据文件将保存到此目录"
-              >
-                <div class="input-with-action">
-                  <UiInput
-                    v-model="baseDirectory"
-                    placeholder="data/recordings"
-                    @blur="updateFieldError('baseDirectory')"
-                  />
-                  <UiButton size="md" aria-label="选择保存目录" data-test="settings-pick-directory" @click="handlePickDirectory">
-                    <template #icon><Folder :size="14" /></template>选择
-                  </UiButton>
-                </div>
-              </UiFormField>
-              <UiFormField
-                label="文件前缀"
-                :error="validationErrors.filePrefix"
-              >
-                <UiInput
-                  v-model="filePrefix"
-                  placeholder="run"
-                  @blur="updateFieldError('filePrefix')"
-                />
-              </UiFormField>
-              <div class="toggle-row">
-                <UiToggle v-model="autoStart" />
-                <span class="toggle-row__label">开始采集时自动开始记录</span>
-              </div>
-            </div>
-          </UiPanel>
-
-          <UiPanel class="form-card">
-            <template #header>
-              <div class="card-head">
-                <HardDrive :size="15" />
-                <span class="card-head__title">文件滚动保存</span>
-                <UiToggle v-model="rotationEnabled" />
-              </div>
-            </template>
-            <div v-if="rotationEnabled" class="form-fields">
-              <UiFormField
-                label="滚动时长"
-                :error="validationErrors.rotationDurationMinutes"
-              >
-                <div class="input-with-unit">
-                  <UiInputNumber
-                    v-model="rotationDurationMinutes"
-                    :min="1"
-                    :max="1440"
-                    @blur="updateFieldError('rotationDurationMinutes')"
-                  />
-                  <span class="input-unit">分钟</span>
-                </div>
-              </UiFormField>
-              <UiFormField
-                label="滚动大小"
-                :error="validationErrors.rotationSizeMb"
-              >
-                <div class="input-with-unit">
-                  <UiInputNumber
-                    v-model="rotationSizeMb"
-                    :min="1"
-                    :max="10000"
-                    @blur="updateFieldError('rotationSizeMb')"
-                  />
-                  <span class="input-unit">MB</span>
-                </div>
-              </UiFormField>
-            </div>
-            <div v-else class="empty-hint">
-              <span>启用后，当采集时长或文件大小达到阈值时，自动滚动到新文件继续记录</span>
-            </div>
-          </UiPanel>
-
-          <!-- 自动停止条件 -->
-          <UiPanel class="form-card">
-            <template #header>
-              <div class="card-head">
-                <Clock :size="15" />
-                <span class="card-head__title">自动停止条件</span>
-                <UiStatusBadge v-if="enabledConditionsCount > 0" status="connected">
-                  {{ enabledConditionsCount }} 项
-                </UiStatusBadge>
-              </div>
-            </template>
-            <div class="conditions-list">
-              <div
-                class="condition-row"
-                :class="{ 'condition-row--on': durationEnabled }"
-                role="checkbox"
-                :aria-checked="durationEnabled"
-                tabindex="0"
-                @click="durationEnabled = !durationEnabled"
-                @keydown.enter.space.prevent="durationEnabled = !durationEnabled"
-              >
-                <div class="condition-row__main">
-                  <CheckCircle v-if="durationEnabled" :size="14" class="icon-check" />
-                  <div v-else class="icon-circle" />
-                  <span class="condition-row__label" :class="{ 'condition-row__label--on': durationEnabled }">
-                    定时停止
-                  </span>
-                </div>
-                <div v-if="durationEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
-                  <UiInputNumber
-                    v-model="durationMinutes"
-                    :min="1"
-                    :max="1440"
-                    @blur="updateFieldError('durationMinutes')"
-                  />
-                  <span class="input-unit">分钟</span>
-                </div>
-              </div>
-              <p v-if="validationErrors.durationMinutes" class="field-error">{{ validationErrors.durationMinutes }}</p>
-
-              <div
-                class="condition-row"
-                :class="{ 'condition-row--on': sizeEnabled }"
-                role="checkbox"
-                :aria-checked="sizeEnabled"
-                tabindex="0"
-                @click="sizeEnabled = !sizeEnabled"
-                @keydown.enter.space.prevent="sizeEnabled = !sizeEnabled"
-              >
-                <div class="condition-row__main">
-                  <CheckCircle v-if="sizeEnabled" :size="14" class="icon-check" />
-                  <div v-else class="icon-circle" />
-                  <span class="condition-row__label" :class="{ 'condition-row__label--on': sizeEnabled }">
-                    按文件大小停止
-                  </span>
-                </div>
-                <div v-if="sizeEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
-                  <UiInputNumber
-                    v-model="sizeMb"
-                    :min="1"
-                    :max="10000"
-                    @blur="updateFieldError('sizeMb')"
-                  />
-                  <span class="input-unit">MB</span>
-                </div>
-              </div>
-              <p v-if="validationErrors.sizeMb" class="field-error">{{ validationErrors.sizeMb }}</p>
-
-              <div
-                class="condition-row"
-                :class="{ 'condition-row--on': countEnabled }"
-                role="checkbox"
-                :aria-checked="countEnabled"
-                tabindex="0"
-                @click="countEnabled = !countEnabled"
-                @keydown.enter.space.prevent="countEnabled = !countEnabled"
-              >
-                <div class="condition-row__main">
-                  <CheckCircle v-if="countEnabled" :size="14" class="icon-check" />
-                  <div v-else class="icon-circle" />
-                  <span class="condition-row__label" :class="{ 'condition-row__label--on': countEnabled }">
-                    按记录数停止
-                  </span>
-                </div>
-                <div v-if="countEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
-                  <UiInputNumber
-                    v-model="recordCount"
-                    :min="1"
-                    :max="100000000"
-                    @blur="updateFieldError('recordCount')"
-                  />
-                  <span class="input-unit">条</span>
-                </div>
-              </div>
-              <p v-if="validationErrors.recordCount" class="field-error">{{ validationErrors.recordCount }}</p>
-            </div>
-            <div class="hint-row">
-              <span class="hint-text">满足任一条件即自动停止采集，未启用则不限制</span>
-            </div>
-          </UiPanel>
-        </section>
+        <DisplaySettingsSection ref="displayRef" v-show="activeTab === 'display'" />
+        <RecordingSettingsSection ref="recordingRef" v-show="activeTab === 'recording'" />
       </div>
     </div>
 
@@ -734,21 +247,20 @@ async function onSave(): Promise<void> {
   padding: var(--space-10) 0;
 }
 
-/* ===== 左右分栏布局 ===== */
+/* ===== 左右分栏布局 ===== — 紧凑密度：分栏间距 8px */
 .settings-layout {
   display: flex;
-  gap: var(--space-4);
-  min-height: 320px;
+  gap: var(--space-2);
 }
 
-/* 左侧标签导航 */
+/* 左侧标签导航 — 紧凑密度：宽度收窄到 112px */
 .settings-tabs {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  width: 140px;
+  width: 112px;
   flex-shrink: 0;
-  padding-right: var(--space-3);
+  padding-right: var(--space-2);
   border-right: 1px solid var(--border-default);
 }
 
@@ -788,305 +300,17 @@ async function onSave(): Promise<void> {
   background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
 }
 
-/* 右侧内容区 */
+/* 右侧内容区 — 不限制高度，由 UiDialog content-style 控制滚动条 */
 .settings-content {
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
-  max-height: 480px;
-  padding-right: var(--space-2);
 }
 
-.settings-section {
+:deep(.settings-section) {
   display: flex;
   flex-direction: column;
-  /* 紧凑密度：卡片间 10px */
-  gap: var(--density-group-gap);
-}
-
-/* ===== 表单卡片 ===== */
-.form-card {
-  font-size: var(--font-size-sm);
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
+  /* 紧凑密度：卡片间 8px */
   gap: var(--space-2);
-}
-
-.card-head__title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-primary);
-}
-
-/* ===== 表单字段区域 ===== — 紧凑密度：字段间 8px */
-.form-fields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--density-field-gap);
-}
-
-/* ===== 输入框组合 ===== */
-.input-with-action {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.input-with-action :deep(.n-input) {
-  flex: 1;
-  min-width: 0;
-}
-
-.input-with-unit {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.input-unit {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-/* ===== 开关行 ===== — 紧凑密度：padding 收紧到 8px 12px */
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--density-group-padding);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
-  background: var(--bg-app);
-}
-
-.toggle-row__label {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-}
-
-/* ===== 主题切换 ===== */
-.theme-switch {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* ===== 语言切换 ===== */
-.locale-switch {
-  display: flex;
-  align-items: center;
-  padding: var(--space-1);
-  background: var(--bg-panel-strong);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-default);
-  gap: var(--space-1);
-  width: fit-content;
-}
-
-.locale-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-muted);
-  border-radius: var(--radius-md);
-  transition: all var(--motion-fast) var(--easing-standard);
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  letter-spacing: 0.02em;
-}
-
-.locale-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-panel);
-}
-
-.locale-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
-.locale-switch .locale-btn.locale-btn--active {
-  background: var(--bg-panel);
-  color: var(--text-primary);
-  font-weight: var(--font-weight-semibold);
-  box-shadow: var(--shadow-panel);
-}
-
-.locale-switch .locale-btn.locale-btn--active:hover {
-  background: var(--bg-panel-strong);
-}
-
-/* ===== 条件行列表 ===== — 紧凑密度：行间 8px */
-.conditions-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--density-field-gap);
-}
-
-/* 紧凑密度：条件行 padding 收紧到 8px 12px */
-.condition-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--density-group-padding);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
-  background: var(--bg-app);
-  cursor: pointer;
-  transition: all var(--motion-fast) var(--easing-standard);
-  position: relative;
-}
-
-/* 选中态左侧指示条 */
-.condition-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: var(--space-2);
-  bottom: var(--space-2);
-  width: 3px;
-  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
-  background: var(--accent-success);
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--easing-standard);
-}
-
-.condition-row:hover {
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, var(--border-default));
-  background: color-mix(in srgb, var(--accent-primary) 3%, var(--bg-app));
-}
-
-.condition-row:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring-soft), 0 0 0 4px var(--focus-ring);
-}
-
-.condition-row--on {
-  border-color: color-mix(in srgb, var(--accent-success) 30%, var(--border-default));
-  background: color-mix(in srgb, var(--accent-success) 5%, var(--bg-app));
-}
-
-.condition-row--on::before {
-  opacity: 1;
-}
-
-.condition-row--on:hover {
-  border-color: color-mix(in srgb, var(--accent-success) 50%, var(--border-default));
-  background: color-mix(in srgb, var(--accent-success) 8%, var(--bg-app));
-}
-
-.condition-row__main {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-}
-
-.condition-row__label {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  transition: color var(--motion-fast) var(--easing-standard);
-}
-
-.condition-row__label--on {
-  color: var(--text-primary);
-  font-weight: var(--font-weight-medium);
-}
-
-.condition-row__input {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
-}
-
-.icon-check {
-  color: var(--accent-success);
-  flex-shrink: 0;
-}
-
-.icon-circle {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border-strong);
-  flex-shrink: 0;
-}
-
-/* 字段级错误提示 */
-.field-error {
-  margin: calc(var(--space-1) * -1) 0 0 var(--space-5);
-  font-size: var(--font-size-xs);
-  color: var(--accent-danger);
-  line-height: var(--line-height-base);
-}
-
-/* 提示行 */
-.hint-row {
-  padding: var(--space-2) 0 0;
-}
-
-.hint-text {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-/* 空状态提示 */
-.empty-hint {
-  padding: var(--space-2) 0;
-}
-
-.empty-hint span {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  line-height: var(--line-height-base);
-}
-
-/* ===== 刷新率区域 ===== */
-.refresh-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.refresh-slider {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.refresh-labels {
-  display: flex;
-  justify-content: space-between;
-}
-
-.refresh-label {
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted);
-}
-
-.refresh-label--highlight {
-  font-weight: var(--font-weight-medium);
-}
-
-.refresh-label--active {
-  color: var(--accent-primary);
-}
-
-.refresh-value {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
 }
 
 /* ===== 底部操作栏 ===== */

@@ -136,6 +136,26 @@
 
 错误反馈必须说明原因和下一步。禁止只显示“失败”。
 
+### 7.1 共享 Store 边界规则
+
+跨页面共享的 store（例如设备、运动控制器、采集、校准、遍历、存储）必须把“业务资产状态”和“加载错误状态”分开维护。
+
+必须遵守：
+
+- 共享 store 的刷新函数只能在后端明确成功返回时替换业务资产列表。
+- 临时异常、网络失败、Wails binding 失败、状态查询失败不得清空已有业务资产。
+- `[]` 只能表示后端明确返回空列表；异常不能被转换成空列表。
+- 失败分支必须保留上次成功状态，并通过 `loading` / `error` / toast / banner 等可见状态暴露原因。
+- 删除、清空、重置等破坏性状态变化必须来自显式用户动作或明确后端成功响应，不能由“刷新失败”隐式触发。
+- 多个模块初始化时，彼此独立的加载任务应优先使用 `Promise.allSettled` 或等价容错流程，避免设备列表刷新失败拖垮校准、遍历、存储等其他配置加载。
+- 共享 store 的失败语义必须有单测覆盖，至少验证“失败保留旧状态”和“成功清除错误状态”。
+
+禁止：
+
+- 在 `catch` 中把共享业务列表直接置为 `[]`、默认空对象或模拟数据，除非这是用户确认的重置动作。
+- 让功能页面通过调用共享刷新函数间接影响其他页面的核心列表状态。
+- 用一个全局 `loading` 或 `error` 混淆多个独立资源的加载状态。
+
 ## 8. 表单规则
 
 表单必须满足：
@@ -258,3 +278,35 @@
 - 长文本状态
 
 若命令无法运行，AI 必须在最终说明中报告原因和未验证风险。
+
+### 13.1 Wails 绑定同步（强制，零容忍）
+
+**修改任何被 Wails binding 暴露给前端的方法签名后，必须立即运行 `wails3 generate bindings` 重新生成 `frontend/bindings/`。** 这是 Go 与 JS 之间的运行时桥，不会自动跟随 Go 代码变化。
+
+触发场景包括但不限于：
+
+- 改方法参数数量、类型、顺序
+- 改方法返回值类型
+- 改结构体字段（被 binding 暴露的 Go struct）
+- 新增/删除/重命名被 binding 暴露的方法
+
+操作步骤：
+
+1. 改 `apps/desktop-wails/backend/app.go` 或被 binding 引用的 Go 代码后
+2. 在 `apps/desktop-wails` 目录运行：
+   ```powershell
+   wails3 generate bindings -silent
+   ```
+   （默认生成 `.js`；如需 TypeScript 加 `-ts`）
+3. 检查 `frontend/bindings/.../app.js` 中对应方法的签名已更新
+4. 重新运行 `npm run typecheck` 和 `npm run build`
+
+**禁止**：把 typecheck/build/test 全绿当成 binding 已同步的证明。原因：
+
+- `wails-adapter.ts` 用 `@ts-expect-error` 动态 `import('...bindings/.../app.js')`，TypeScript 看不到运行时签名不匹配
+- `vite build` 不校验运行时
+- `vitest` 走 HTTP mock，不经过 Wails binding
+
+Wails binding 错位的典型症状：运行时报 `expects N arguments, got M`、参数被当字符串传入 Go 后反序列化失败、undefined 被当成合法参数导致 Go 端逻辑错乱。
+
+经验教训：2026-06-30 改 `StorageStartRecording` 从 `(outputDir, filePrefix)` 改为 `(config StorageRecordingConfig)` 时漏了重新生成 binding，导致用户在桌面应用点"开始记录"时撞到 `expects 1 arguments, got 2` 错误。typecheck、build、40 个测试全过，但都没触到这层缝隙。

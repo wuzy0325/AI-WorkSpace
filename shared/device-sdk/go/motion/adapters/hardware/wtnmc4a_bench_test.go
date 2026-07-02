@@ -86,9 +86,10 @@ func TestWTNMC4ADLLLatency(t *testing.T) {
 	})
 
 	// 2. 单轴 getRR1Status
-	var buf [4]byte
+	// SDK 写入 64 字节 WTNMC4A_PARA_RR1 结构体，必须用匹配的缓冲区
+	var rr1Buf wtnmc4aRR1Struct
 	measure("getRR1(axis0)", N, func() {
-		procs.getRR1.Call(handle, 0, uintptr(unsafe.Pointer(&buf[0])))
+		procs.getRR1.Call(handle, 0, uintptr(unsafe.Pointer(&rr1Buf)))
 	})
 
 	// 3. 4 轴 readLP 串行
@@ -102,7 +103,7 @@ func TestWTNMC4ADLLLatency(t *testing.T) {
 	measure("readLP+getRR1 x4 serial (full Status)", N, func() {
 		for ax := 0; ax < 4; ax++ {
 			procs.readLP.Call(handle, uintptr(ax))
-			procs.getRR1.Call(handle, uintptr(ax), uintptr(unsafe.Pointer(&buf[0])))
+			procs.getRR1.Call(handle, uintptr(ax), uintptr(unsafe.Pointer(&rr1Buf)))
 		}
 	})
 

@@ -319,6 +319,7 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 	sink(device.DataPayload{
 		DeviceID:       deviceID,
 		DeviceType:     d.profile.Type,
+		DeviceName:     d.profile.Name,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,

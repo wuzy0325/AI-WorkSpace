@@ -38,6 +38,7 @@ import PointsPreview from './PointsPreview.vue'
 import TraversalLayoutStep from './TraversalLayoutStep.vue'
 import TraversalHardwareStep from './TraversalHardwareStep.vue'
 import TraversalPrbStep from './TraversalPrbStep.vue'
+import { reportAllSettledFailures } from '@utils/allSettledReport'
 
 const props = withDefaults(
   defineProps<{
@@ -361,7 +362,17 @@ watch(() => props.show, async (isVisible) => {
   if (!isVisible) return
   isLoading.value = true
   try {
-    await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), storageStore.loadSettings(), loadSavedConfig()])
+    const results = await Promise.allSettled([
+      deviceStore.refreshProfiles(),
+      motionStore.refreshProfiles(),
+      storageStore.loadSettings(),
+      loadSavedConfig()
+    ])
+    reportAllSettledFailures(
+      results,
+      ['设备列表', '运动控制器列表', '存储设置', '遍历配置'],
+      feedbackStore.pushToast,
+    )
     if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
     if (!saveFileName.value.trim()) saveFileName.value = buildDefaultSaveFileName(testName.value)
     // 重置步骤导航到第一步

@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0] - 2026-07-02
+
+### Added
+- CSV sink 按设备切文件：DAQ-P-1604 采用 18 通道宽格式，其余设备长格式；文件名 `prefix-deviceId-YYYYMMDD-HHMMSS-NNN.csv`。
+- DAQ-P-1604 硬件时间戳开关（`DaqP1604UseDeviceTimestamp` 改为三态 *bool，nil 视为开启）。
+- B140 编码器补偿编辑器 UI（预设/自定义参数、实时 warning 校验、光栅尺精度约束提示）。
+- DataPayload 新增 DeviceType 字段，填充 6 个 hardware adapter。
+
+### Changed
+- rotation 路径持 statsMu 写锁，修复与 Status() 的 data race。
+- T1603 驱动同步化 Connect 时序：OnConfigSynced 回调在 Connect 内同步触发。
+
+### Fixed
+- 修复 wind-daq T1603Adapter.Connect() 自死锁：适配器持 a.mu 调 dev.Connect()，而同步 OnConfigSynced 回调重入 a.mu 导致永久死锁。
+- 修复 T1603 硬件时间戳开关不生效：驱动层原本无条件下发 `@fe TIME 0` 并将 ShowTimestamp 置 false，导致 UI 开关一直无效；改为按 `d.config.ShowTimestamp` 下发。
+
+### Internal
+- shared/device-sdk T1603 驱动重构：Connect/OnConfigSynced 时序重排，支持同步配置同步。
+- 编码器补偿校验链路：ValidateCompensationConfig / 三层精度约束链（脉冲当量 ≥ encoderScale ≥ tolerance > minStep）。
+
+### Verification
+- `go test ./internal/... ./api/...`: passed
+- `go vet ./internal/... ./api/...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- 冒烟测试: passed（GUI 启动正常，无"correct build tags"错误）
+
+### Known Issues
+- 暂无。
+
 ## [0.2.0] - 2026-06-30
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "wind-daq-frontend",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.16.0",
-    "@wailsio/runtime": "3.0.0-alpha.94",
+    "@wailsio/runtime": "3.0.0-alpha.95",
     "@vitejs/plugin-vue": "^5.2.4",
     "echarts": "^6.1.0",
     "naive-ui": "^2.44.1",

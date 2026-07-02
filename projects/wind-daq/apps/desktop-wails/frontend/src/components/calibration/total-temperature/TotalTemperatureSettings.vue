@@ -8,6 +8,7 @@ import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, ChannelRe
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
 import UiButton from '@components/ui/UiButton.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
+import { reportAllSettledFailures } from '@utils/allSettledReport'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
@@ -125,11 +126,22 @@ async function loadSavedConfig() {
 }
 
 onMounted(async () => {
-  try { await Promise.all([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()]) }
+  try {
+    const results = await Promise.allSettled([deviceStore.refreshProfiles(), motionStore.refreshProfiles(), loadSavedConfig()])
+    reportAllSettledFailures(
+      results,
+      ['设备列表', '运动控制器列表', '总温校准配置'],
+      feedbackStore.pushToast,
+    )
+  }
   finally { isLoading.value = false }
 })
 
 const axisOptions = [{ label: 'X 轴', value: 'X' }, { label: 'Y 轴', value: 'Y' }, { label: 'Z 轴', value: 'Z' }, { label: 'U 轴', value: 'U' }]
+
+// 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
+// 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
+const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: String(i) }))
 </script>
 
 <template>
@@ -179,8 +191,14 @@ const axisOptions = [{ label: 'X 轴', value: 'X' }, { label: 'Y 轴', value: 'Y
                 <tr v-for="ch in probeChannels" :key="ch.name">
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
                   <td><span class="cell-name">{{ ch.name }}</span></td>
-                  <td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" /></td>
-                  <td><UiInputNumber v-model="ch.channel.channelIndex" :min="-1" :max="100" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" :fallback="false" /></td>
+                  <td><UiSelect
+                    :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
+                    @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
+                    :options="channelIndexOptions"
+                    placeholder="未分配"
+                    :disabled="!ch.enabled"
+                  /></td>
                   <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
                 </tr>
               </tbody>
@@ -206,8 +224,13 @@ const axisOptions = [{ label: 'X 轴', value: 'X' }, { label: 'Y 轴', value: 'Y
           <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">启用球罐判定</UiCheckbox>
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
             <div><span class="field-label">等待时间 (秒)</span><UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" /></div>
-            <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" /></div>
-            <div><span class="field-label">稳定时间通道</span><UiInputNumber v-model="sphereTankStableChannel.channelIndex" :min="0" style="width:100%" /></div>
+            <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" :fallback="false" /></div>
+            <div><span class="field-label">稳定通道</span><UiSelect
+                    :model-value="sphereTankStableChannel.channelIndex >= 0 ? String(sphereTankStableChannel.channelIndex) : ''"
+                    @update:model-value="sphereTankStableChannel.channelIndex = $event !== '' ? Number($event) : 0"
+                    :options="channelIndexOptions"
+                    placeholder="选择通道"
+                  /></div>
             <div class="angle-end"><span class="field-label">采集前需满足：稳定时间 >= 等待时间</span></div>
           </div>
         </UiPanel>

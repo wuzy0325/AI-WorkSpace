@@ -43,6 +43,15 @@ const totalDevices = computed(() => deviceStore.profiles.length)
 const connectedDevices = computed(
   () => deviceStore.profiles.filter((p) => deviceStore.statusFor(p.id) === 'Connected' || deviceStore.statusFor(p.id) === 'Acquiring').length
 )
+/** 处于 Error 状态的设备数（任何设备出错时状态栏变红提示） */
+const errorDeviceCount = computed(
+  () => deviceStore.profiles.filter((p) => deviceStore.statusFor(p.id) === 'Error').length
+)
+/** 选中设备的错误详情（若有） */
+const selectedError = computed(() => {
+  const id = deviceStore.selectedId
+  return id ? deviceStore.errorFor(id) : ''
+})
 const recordingCount = computed(() => recordingStore.snapshotCount)
 
 onMounted(() => {
@@ -104,6 +113,25 @@ watch(isAcquiring, (newVal, oldVal) => {
         <FolderOpen class="bottombar__rec-icon" />
         <span class="bottombar__rec-label">保存目录</span>
         <span class="bottombar__rec-path">{{ recordingStore.outputDir }}</span>
+      </div>
+      <!-- 录制不可恢复错误：磁盘 I/O 失败等，必须显眼提示 -->
+      <div v-if="recordingStore.lastError" class="bottombar__status-item" data-testid="status-recerror">
+        <span class="bottombar__status-label">录制错误</span>
+        <span class="bottombar__status-value bottombar__status-value--danger" :title="recordingStore.lastError">
+          {{ recordingStore.lastError }}
+        </span>
+      </div>
+      <!-- 设备错误计数：任何设备处于 Error 状态时显示 -->
+      <div v-if="errorDeviceCount > 0" class="bottombar__status-item" data-testid="status-device-error">
+        <span class="bottombar__status-label">设备错误</span>
+        <span class="bottombar__status-value bottombar__status-value--danger">{{ errorDeviceCount }} 台异常</span>
+      </div>
+      <!-- 选中设备的错误详情（MonitorView 已显示，状态栏再次暴露便于多任务场景） -->
+      <div v-if="selectedError" class="bottombar__status-item" data-testid="status-selected-error">
+        <span class="bottombar__status-label">当前设备</span>
+        <span class="bottombar__status-value bottombar__status-value--danger" :title="selectedError">
+          {{ selectedError }}
+        </span>
       </div>
     </div>
 
@@ -181,6 +209,15 @@ watch(isAcquiring, (newVal, oldVal) => {
 
 .bottombar__status-value--rec {
   color: var(--danger);
+}
+
+.bottombar__status-value--danger {
+  color: var(--danger);
+  font-weight: 600;
+  max-width: 22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bottombar__rec-folder {

@@ -166,7 +166,7 @@ describe('deviceApi', () => {
     const { storageApi } = await import('@api/deviceApi')
     const status = await storageApi.status()
     expect(status.recording).toBe(false)
-    const start = await storageApi.start('/tmp', 'test')
+    const start = await storageApi.start({ outputDir: '/tmp', filePrefix: 'test' })
     expect(start.success).toBe(true)
     const stop = await storageApi.stop()
     expect(stop.success).toBe(true)

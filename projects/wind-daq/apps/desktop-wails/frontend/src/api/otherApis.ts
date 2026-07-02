@@ -1,6 +1,6 @@
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
-import type { GenericResponse } from '@api/wails-adapter';
+import type { GenericResponse, StorageRecordingConfig, StorageRecordingStatus } from '@api/wails-adapter';
 
 function apiBase(): string {
   if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
@@ -51,17 +51,20 @@ export const traversalApi = {
 };
 
 export const storageApi = {
-  status: async () => {
+  // status 返回扩展后的 RecordingStatus（含 currentFile/fileSize/recordCount/lastError 等）
+  status: async (): Promise<StorageRecordingStatus> => {
     if (isWailsAvailable()) {
       return await wailsApi.storage.getStatus();
     }
-    return apiRequest<{ recording: boolean; outputDir?: string }>('/api/storage/status');
+    return apiRequest<StorageRecordingStatus>('/api/storage/status');
   },
-  start: (outputDir: string, filePrefix: string) =>
+  // start 接收完整 RecordingConfig，路径解析由后端统一完成。
+  // config 中的 stopConditions/fileRotation/format 直接透传给 sink writerLoop 评估。
+  start: (config: StorageRecordingConfig) =>
     wailsSimpleAction(
-      () => wailsApi.storage.startRecording(outputDir, filePrefix),
+      () => wailsApi.storage.startRecording(config),
       '/api/storage/start',
-      { method: 'POST', body: JSON.stringify({ outputDir, filePrefix }) },
+      { method: 'POST', body: JSON.stringify(config) },
     ),
   stop: () =>
     wailsSimpleAction(

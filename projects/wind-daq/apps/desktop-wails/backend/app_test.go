@@ -1,9 +1,13 @@
 package backend
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"wind-daq/services/api-go/pkg/appcontext"
+	wind_usecase "wind-daq/services/api-go/pkg/usecase"
 )
 
 func TestConfigLoadNilAppReturnsError(t *testing.T) {
@@ -45,5 +49,68 @@ func TestConfigLoadReturnsDecodedConfig(t *testing.T) {
 	}
 	if data["filePrefix"] != "run" {
 		t.Fatalf("expected filePrefix run, got %#v", data["filePrefix"])
+	}
+}
+
+// writableAppDataDir 在 Windows 下读 %APPDATA%，在 Linux/macOS 下读 $XDG_CONFIG_HOME 或 $HOME。
+// 这两条测试只验证 Windows 路径解析行为；其他平台跳过，避免 CI 误报。
+func TestResolvePathUsesWritableAppDataForRelativePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ResolvePath AppData 行为仅 Windows 适用")
+	}
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+
+	app := &App{}
+	got, err := app.ResolvePath(filepath.Join("data", "recordings"))
+	if err != nil {
+		t.Fatalf("resolve path failed: %v", err)
+	}
+
+	want := filepath.Join(appData, "wind-daq", "data", "recordings")
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestResolvePathKeepsAbsolutePath(t *testing.T) {
+	abs := filepath.Join(os.TempDir(), "wind-daq-recordings")
+
+	app := &App{}
+	got, err := app.ResolvePath(abs)
+	if err != nil {
+		t.Fatalf("resolve path failed: %v", err)
+	}
+	if got != filepath.Clean(abs) {
+		t.Fatalf("expected %q, got %q", filepath.Clean(abs), got)
+	}
+}
+
+func TestStorageStartRecordingResolvesRelativeOutputDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ResolvePath AppData 行为仅 Windows 适用")
+	}
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+
+	ctx, err := appcontext.NewAppContext(t.TempDir())
+	if err != nil {
+		t.Fatalf("create app context: %v", err)
+	}
+	app := &App{appContext: ctx}
+
+	res := app.StorageStartRecording(wind_usecase.StorageRecordingConfig{
+		OutputDir:   filepath.Join("data", "recordings"),
+		FilePrefix:  "run",
+	})
+	if !res.Success {
+		t.Fatalf("start recording failed: %#v", res)
+	}
+	t.Cleanup(func() { _ = app.appContext.StorageRecorder.Stop() })
+
+	want := filepath.Join(appData, "wind-daq", "data", "recordings")
+	status := app.StorageGetStatus()
+	if status.OutputDir != want {
+		t.Fatalf("expected output dir %q, got %q", want, status.OutputDir)
 	}
 }

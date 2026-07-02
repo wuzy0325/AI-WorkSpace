@@ -202,6 +202,9 @@ func writeDefaultJSON(path string, value any) error {
 }
 
 func defaultDeviceProfiles() []device.Profile {
+	if productionBuild {
+		return []device.Profile{}
+	}
 	return []device.Profile{
 		windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated),
 	}

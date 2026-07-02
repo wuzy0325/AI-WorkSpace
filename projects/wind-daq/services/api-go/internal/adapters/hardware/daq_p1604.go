@@ -285,6 +285,13 @@ func (d *DAQP1604) SetUnit(unit string) error {
 	}
 
 	d.mu.Lock()
+	// adapter 层防御性检查：采集期间禁止写硬件 EU 系数。
+	// 虽然 usecase 层 UpsertProfile 已检查 Acquiring，但 HTTP API 路径（SetUnit）
+	// 未检查，此处兜底避免 v01101 与 readLoop 的 ReadFrame 竞争 frameReader。
+	if d.acquiring {
+		d.mu.Unlock()
+		return fmt.Errorf("cannot change unit while acquiring")
+	}
 	conn := d.conn
 	fr := d.frameReader
 	d.mu.Unlock()
@@ -293,9 +300,26 @@ func (d *DAQP1604) SetUnit(unit string) error {
 	if conn != nil && fr != nil {
 		coeff := sharedproto.P1604PressureUnitCoefficient[unit]
 		d.writeMu.Lock()
+		// 清理 FrameReader 内部 buf 与 TCP 接收缓冲区的残留数据。
+		// 残留来源：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
+		// 或上一条命令延迟到达的应答。若不清理，P1604WriteUnitCoefficient 的
+		// ReadFrame 会把残留当作 v01101 响应读出，触发
+		// "unexpected v01101 response: <二进制乱码>"。
+		// 必须先 fr.Reset()（清 buf）再 DrainConnection（清 TCP 缓冲区），
+		// 顺序不能反：DrainConnection 读裸字节，不会清 FrameReader.buf。
+		fr.Reset()
+		if drained := sharedproto.DrainConnection(conn, 100*time.Millisecond); drained > 0 {
+			slog.Debug("DAQ-P-1604 drained residual data before SetUnit",
+				"category", "hardware-drain", "component", "hardware",
+				"device", d.profile.ID, "bytes", drained)
+		}
 		err := sharedproto.P1604WriteUnitCoefficient(fr, conn, coeff, DAQ_P_1604_TIMEOUT)
 		d.writeMu.Unlock()
 		if err != nil {
+			// 记录 warn 日志便于诊断：此前错误只返回前端，后端 log 画面不可见。
+			slog.Warn("DAQ-P-1604 write hardware unit coefficient failed",
+				"category", "hardware-send", "component", "hardware",
+				"device", d.profile.ID, "unit", unit, "coeff", coeff, "error", err)
 			return fmt.Errorf("write hardware unit coefficient: %w", err)
 		}
 		slog.Info("DAQ-P-1604 hardware unit updated",
@@ -391,7 +415,19 @@ func (d *DAQP1604) ClearTare(channelIndex int) error {
 
 func (d *DAQP1604) initStream() error {
 	// w1601 已在 Connect 阶段发送并保持开启，此处不重复发送。
-	if err := d.sendCommand("c 00 1 FFFF 1 100 7 0"); err != nil {
+	// profile.SamplingRate 单位为 Hz，c 00 命令的第 5 个参数 <per> 单位为毫秒周期，需换算。
+	// 修复历史 bug：原实现硬编码 100ms (10Hz)，导致 UI 设置的采样率被完全忽略。
+	samplingRateHz := d.profile.SamplingRate
+	if samplingRateHz <= 0 {
+		// 兜底默认 20Hz，与项目历史默认值一致（防止 profile 字段缺失或异常导致除零）
+		samplingRateHz = 20
+	}
+	periodMs := 1000 / samplingRateHz
+	if periodMs < 1 {
+		// 最小 1ms = 1000Hz，超过设备物理极限时钳制
+		periodMs = 1
+	}
+	if err := d.sendCommand(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
 		return fmt.Errorf("set stream params: %w", err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -568,6 +604,7 @@ func (d *DAQP1604) processPayload(data []byte) {
 	payload := device.DataPayload{
 		DeviceID:       d.profile.ID,
 		DeviceType:     d.profile.Type,
+		DeviceName:     d.profile.Name,
 		Timestamp:      device.NowMs(),
 		Channels:       values,
 		ChannelIndices: indices,

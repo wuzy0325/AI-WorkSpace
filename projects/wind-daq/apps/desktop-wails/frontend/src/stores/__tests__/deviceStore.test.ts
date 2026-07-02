@@ -97,6 +97,7 @@ describe('deviceStore', () => {
 
   it('normalizes profiles with null channels during refresh', async () => {
     const store = useDeviceStore()
+    store.profilesLoadError = 'previous error'
     vi.spyOn(deviceApi, 'getProfiles').mockResolvedValueOnce([
       {
         id: 'legacy-1',
@@ -111,7 +112,32 @@ describe('deviceStore', () => {
 
     expect(store.profiles).toHaveLength(1)
     expect(store.profiles[0].channels).toEqual([])
+    expect(store.profilesLoading).toBe(false)
+    expect(store.profilesLoadError).toBeNull()
     expect(() => store.selectDevice('legacy-1')).not.toThrow()
+  })
+
+  it('keeps existing profiles when refresh fails', async () => {
+    const store = useDeviceStore()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    vi.spyOn(deviceApi, 'getProfiles').mockRejectedValueOnce(new Error('backend temporarily unavailable'))
+
+    await expect(store.refreshProfiles()).rejects.toThrow('backend temporarily unavailable')
+
+    expect(warn).toHaveBeenCalledWith(
+      '[deviceStore] refreshProfiles failed, keeping previous profiles:',
+      expect.any(Error),
+    )
+    expect(store.profilesLoading).toBe(false)
+    expect(store.profilesLoadError).toBe('backend temporarily unavailable')
+    expect(store.profiles.map((profile) => profile.id)).toEqual(['daq-1'])
   })
 
   it('keeps profile list stable when starting all acquisitions', async () => {
@@ -153,5 +179,40 @@ describe('deviceStore', () => {
     expect(getProfiles).not.toHaveBeenCalled()
     expect(store.profiles.map((profile) => profile.id)).toEqual(['daq-1'])
     expect(store.acquiringFor('daq-1')).toBe(true)
+  })
+
+  it('stops acquisition through store and clears acquiring status', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    store.updateStatus('daq-1', {
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Acquiring',
+      acquiring: true,
+    })
+
+    const stop = vi.spyOn(deviceApi, 'stopAcquisition').mockResolvedValue({ success: true })
+    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeFromDevice').mockImplementation(() => undefined)
+    vi.spyOn(deviceApi, 'getStatus').mockResolvedValue({
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Connected',
+      acquiring: false,
+    })
+
+    await store.stopAcquisition('daq-1')
+
+    expect(stop).toHaveBeenCalledWith('daq-1')
+    expect(unsubscribe).toHaveBeenCalledWith('daq-1')
+    expect(store.acquiringFor('daq-1')).toBe(false)
+    expect(store.statusFor('daq-1')).toBe('Connected')
   })
 })

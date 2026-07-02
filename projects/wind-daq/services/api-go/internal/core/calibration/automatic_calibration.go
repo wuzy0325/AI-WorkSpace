@@ -3,6 +3,7 @@ package calibration
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type RuntimeAccess interface {
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
 // 五孔、三孔、总压校准使用此引擎
 type AutomaticCalibration struct {
+	mu              sync.RWMutex
 	config          Config
 	eventPublisher  EventPublisher
 	runtime         RuntimeAccess
@@ -47,12 +49,16 @@ func NewAutomaticCalibration(config Config, publisher EventPublisher, runtime Ru
 
 // SetTaskID 设置任务ID
 func (a *AutomaticCalibration) SetTaskID(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.taskID = id
 }
 
 // Start 启动自动校准循环
 func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
+	a.mu.Lock()
 	if a.isRunning {
+		a.mu.Unlock()
 		return fmt.Errorf("校准已在运行中")
 	}
 
@@ -61,12 +67,15 @@ func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
 	a.currentPointIdx = 0
 	a.dataPoints = make([]DataPoint, 0)
 	a.startTime = time.Now().UnixMilli()
+	a.mu.Unlock()
 
 	log.Printf("[AutomaticCalibration] 启动校准，共 %d 个测点", len(a.config.Points))
 
 	err := a.runCalibrationLoop(algorithm)
 
+	a.mu.Lock()
 	a.isRunning = false
+	a.mu.Unlock()
 	return err
 }
 
@@ -75,8 +84,8 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 	var pointErrorCount int
 	var lastPointError string
 
-	for i := a.currentPointIdx; i < len(a.config.Points); i++ {
-		if !a.isRunning {
+	for i := a.GetCurrentPointIndex(); i < len(a.config.Points); i++ {
+		if !a.IsRunning() {
 			log.Printf("[AutomaticCalibration] 校准被用户停止")
 			return nil
 		}
@@ -84,11 +93,13 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 		// 等待暂停恢复
 		a.waitWhilePaused()
 
-		if !a.isRunning {
+		if !a.IsRunning() {
 			return nil
 		}
 
+		a.mu.Lock()
 		a.currentPointIdx = i
+		a.mu.Unlock()
 		point := a.config.Points[i]
 
 		log.Printf("[AutomaticCalibration] 处理测点 %d/%d, 坐标: %v", i+1, len(a.config.Points), point.Coordinates)
@@ -119,8 +130,8 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 
 // processPoint 处理单个测点的完整流程
 func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint, index int) error {
-	// 1. 移动到目标点位
-	if err := a.moveToPoint(point); err != nil {
+	// 2. 移动到点位
+	if err := a.moveToPoint(point, algorithm); err != nil {
 		return fmt.Errorf("移动到测点失败: %w", err)
 	}
 
@@ -142,7 +153,9 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	}
 
 	// 5. 保存数据点
+	a.mu.Lock()
 	a.dataPoints = append(a.dataPoints, dataPoint)
+	a.mu.Unlock()
 
 	// 6. 实时持久化回调（逐点写 CSV 等），失败仅记录不中断校准
 	if a.onDataPoint != nil {
@@ -157,7 +170,10 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 
 // moveToPoint 移动到指定点位
 // 默认实现按坐标顺序移动各轴；五孔探针等子类可重写以自定义轴运动顺序
-func (a *AutomaticCalibration) moveToPoint(point CalPoint) error {
+func (a *AutomaticCalibration) moveToPoint(point CalPoint, algorithm Algorithm) error {
+	if algorithm != nil && algorithm.Type() == TypeFiveHole {
+		return a.MoveToPointWithOrder(point, []string{"α", "β"})
+	}
 	if a.runtime == nil {
 		return nil // 无运动控制时跳过
 	}
@@ -231,10 +247,10 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 	maxWaitMs := 300000 // 5分钟超时
 	gateWaitStartAt := time.Now().UnixMilli()
 
-	for a.isRunning {
+	for a.IsRunning() {
 		// 暂停时等待
 		a.waitWhilePaused()
-		if !a.isRunning {
+		if !a.IsRunning() {
 			return nil
 		}
 
@@ -252,7 +268,7 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 		}
 
 		if time.Now().UnixMilli()-gateWaitStartAt > int64(maxWaitMs) {
-			a.isRunning = false
+			a.Stop()
 			return fmt.Errorf("球罐判定等待超时（%d 秒）", maxWaitMs/1000)
 		}
 
@@ -264,7 +280,14 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 
 // waitWhilePaused 等待暂停恢复
 func (a *AutomaticCalibration) waitWhilePaused() {
-	for a.isPaused && a.isRunning {
+	for {
+		a.mu.RLock()
+		paused := a.isPaused
+		running := a.isRunning
+		a.mu.RUnlock()
+		if !paused || !running {
+			return
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -306,6 +329,8 @@ func normalizeAxisName(name string) string {
 
 // Pause 暂停校准
 func (a *AutomaticCalibration) Pause() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if !a.isRunning {
 		return
 	}
@@ -315,6 +340,8 @@ func (a *AutomaticCalibration) Pause() {
 
 // Resume 恢复校准
 func (a *AutomaticCalibration) Resume() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if !a.isRunning {
 		return
 	}
@@ -324,38 +351,52 @@ func (a *AutomaticCalibration) Resume() {
 
 // Stop 停止校准
 func (a *AutomaticCalibration) Stop() {
+	a.mu.Lock()
 	a.isRunning = false
 	a.isPaused = false
+	a.mu.Unlock()
 	log.Printf("[AutomaticCalibration] 已停止")
 }
 
 // IsRunning 是否正在运行
 func (a *AutomaticCalibration) IsRunning() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.isRunning
 }
 
 // IsPaused 是否暂停
 func (a *AutomaticCalibration) IsPaused() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.isPaused
 }
 
 // GetDataPoints 获取已采集的数据点
 func (a *AutomaticCalibration) GetDataPoints() []DataPoint {
-	return a.dataPoints
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return append([]DataPoint(nil), a.dataPoints...)
 }
 
 // GetCurrentPointIndex 获取当前测点索引
 func (a *AutomaticCalibration) GetCurrentPointIndex() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.currentPointIdx
 }
 
 // GetStartTime 获取启动时间
 func (a *AutomaticCalibration) GetStartTime() int64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.startTime
 }
 
 // GetProgress 获取进度百分比
 func (a *AutomaticCalibration) GetProgress() float64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if len(a.config.Points) == 0 {
 		return 0
 	}
@@ -367,11 +408,17 @@ func (a *AutomaticCalibration) sendProgressUpdate(point CalPoint, dataPoint Data
 	if a.eventPublisher == nil {
 		return
 	}
+
+	a.mu.RLock()
+	taskID := a.taskID
+	completedPoints := len(a.dataPoints)
+	a.mu.RUnlock()
+
 	a.eventPublisher.OnProgress(ProgressEvent{
-		TaskID:          a.taskID,
+		TaskID:          taskID,
 		WindowTag:       "calibration",
 		CurrentPoint:    point,
-		CompletedPoints: len(a.dataPoints),
+		CompletedPoints: completedPoints,
 		TotalPoints:     len(a.config.Points),
 		LatestData:      dataPoint,
 		Timestamp:       time.Now().UnixMilli(),
@@ -383,18 +430,25 @@ func (a *AutomaticCalibration) sendCompletionEvent(success bool, errMsg string) 
 	if a.eventPublisher == nil {
 		return
 	}
+
+	a.mu.RLock()
+	startTime := a.startTime
+	taskID := a.taskID
+	successPoints := len(a.dataPoints)
+	a.mu.RUnlock()
+
 	duration := int64(0)
-	if a.startTime > 0 {
-		duration = time.Now().UnixMilli() - a.startTime
+	if startTime > 0 {
+		duration = time.Now().UnixMilli() - startTime
 	}
 	a.eventPublisher.OnComplete(CompleteEvent{
-		TaskID:        a.taskID,
+		TaskID:        taskID,
 		WindowTag:     "calibration",
 		Success:       success,
 		Error:         errMsg,
 		Duration:      duration,
 		TotalPoints:   len(a.config.Points),
-		SuccessPoints: len(a.dataPoints),
+		SuccessPoints: successPoints,
 	})
 }
 
@@ -403,7 +457,10 @@ func (a *AutomaticCalibration) SendRealtimeUpdate(event RealtimeEvent) {
 	if a.eventPublisher == nil {
 		return
 	}
-	event.TaskID = a.taskID
+	a.mu.RLock()
+	taskID := a.taskID
+	a.mu.RUnlock()
+	event.TaskID = taskID
 	event.WindowTag = "calibration"
 	event.Timestamp = time.Now().UnixMilli()
 	a.eventPublisher.OnRealtime(event)

@@ -6,6 +6,7 @@
 //  3. 把旧式 log.Printf / log.Println 通过 log.SetOutput 重定向到 slog 统一管道，
 //     避免历史代码改动量爆炸。
 //  4. 提供 WithComponent 辅助，规范化 component/session_id/device_id 等关联字段。
+//  5. 支持按 category 维度开关 ring buffer 写入（categoryFilter），stderr 和文件日志不受影响。
 //
 // 不引入第三方依赖（zap/zerolog/lumberjack 等），仅使用标准库；
 // 文件按天轮转、按天保留 N 份的逻辑在 dailyRotatingWriter 中实现。
@@ -56,11 +57,58 @@ func Default(logDir string) Options {
 	}
 }
 
+// categoryFilter 控制哪些日志分类的条目被写入 ring buffer。
+// stderr 和文件日志不受影响，始终全量输出。
+// 默认所有 category 均启用，可通过 SetCategoryEnabled 按需关闭。
+type categoryFilter struct {
+	mu      sync.RWMutex
+	enabled map[string]bool // category → 是否启用，未在 map 中的默认为 true
+}
+
+// isEnabled 检查指定 category 是否启用。nil receiver 表示无过滤器，全部放行。
+func (f *categoryFilter) isEnabled(category string) bool {
+	if f == nil {
+		return true
+	}
+	f.mu.RLock()
+	enabled, ok := f.enabled[category]
+	f.mu.RUnlock()
+	if !ok {
+		return true // 未显式设置，默认启用
+	}
+	return enabled
+}
+
+// setEnabled 设置指定 category 的启用状态。
+func (f *categoryFilter) setEnabled(category string, enabled bool) {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	f.enabled[category] = enabled
+	f.mu.Unlock()
+}
+
+// snapshot 返回当前所有 category 的启用状态快照。
+func (f *categoryFilter) snapshot() map[string]bool {
+	if f == nil {
+		return nil
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	result := make(map[string]bool, len(f.enabled))
+	for k, v := range f.enabled {
+		result[k] = v
+	}
+	return result
+}
+
 // Manager 持有全局 logger 资源，便于 Shutdown 时统一释放。
 type Manager struct {
 	ring      *RingBuffer
 	fileSink  *dailyRotatingWriter
 	level     *slog.LevelVar
+	catFilter *categoryFilter // 日志分类过滤器，控制 ring buffer 写入
 	prevSlog  *slog.Logger
 	prevWrite io.Writer // 旧的 log.Default() Output，便于回滚
 	prevFlags int
@@ -99,8 +147,12 @@ func Init(opts Options) (*Manager, error) {
 
 	ring := NewRingBuffer(opts.RingCapacity)
 
-	// 构造 sinks：stderr / file / ring 三路并发
-	sinks := []slog.Handler{NewRingHandler(ring, levelVar)}
+	// 创建 category 过滤器：默认全启用，共享给 RingHandler 和 Manager
+	catFilter := &categoryFilter{enabled: make(map[string]bool)}
+
+	// 构造 sinks：ring（带 category 过滤）/ stderr / file 三路并发
+	// RingHandler 在写入前检查 catFilter，stderr 和 file 不受影响
+	sinks := []slog.Handler{NewRingHandler(ring, levelVar, catFilter)}
 	if opts.WriteStderr {
 		sinks = append(sinks, slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level:     levelVar,
@@ -125,9 +177,10 @@ func Init(opts Options) (*Manager, error) {
 	logger := slog.New(fanout)
 
 	mgr := &Manager{
-		ring:     ring,
-		fileSink: fileSink,
-		level:    levelVar,
+		ring:      ring,
+		fileSink:  fileSink,
+		level:     levelVar,
+		catFilter: catFilter,
 	}
 
 	// 全局状态切换顺序非常关键：
@@ -170,6 +223,24 @@ func (m *Manager) SetLevel(l slog.Level) {
 		return
 	}
 	m.level.Set(l)
+}
+
+// SetCategoryEnabled 控制指定 category 的日志是否写入 ring buffer（不影响 stderr 和文件）。
+// 默认所有 category 均为启用状态。
+func (m *Manager) SetCategoryEnabled(category string, enabled bool) {
+	if m == nil || m.catFilter == nil {
+		return
+	}
+	m.catFilter.setEnabled(category, enabled)
+}
+
+// GetCategoryStates 返回当前所有已显式设置的 category 开关状态快照。
+// 未在返回结果中的 category 默认启用。
+func (m *Manager) GetCategoryStates() map[string]bool {
+	if m == nil || m.catFilter == nil {
+		return nil
+	}
+	return m.catFilter.snapshot()
 }
 
 // Close 释放文件句柄并回滚 slog/log 全局状态。

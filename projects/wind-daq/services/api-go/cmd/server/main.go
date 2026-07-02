@@ -5,15 +5,41 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"time"
 
 	"wind-daq/services/api-go/internal/bootstrap"
 	"wind-daq/services/api-go/pkg/debugserver"
+	"wind-daq/services/api-go/pkg/logging"
 )
 
 func main() {
+	// 初始化日志系统：stderr + 文件轮转 + ring buffer（供 SSE 拉取）
+	// 桌面模式（Wails）在 app.go 中初始化，独立服务器模式在此初始化。
+	logDir := envOrDefault("WIND_DAQ_LOG_DIR", filepath.Join("data", "logs"))
+	logMgr, err := logging.Init(logging.Default(logDir))
+	if err != nil {
+		slog.Error("日志系统初始化失败，使用默认 stderr 输出", "error", err)
+	} else {
+		defer func() {
+			_ = logMgr.Close()
+		}()
+		slog.Info("日志系统已初始化", "component", "main", "logDir", logDir, "level", "info")
+	}
+
+	// 获取 ring buffer 和 manager，传递给 API server（用于日志 SSE 端点和分类开关）
+	var ringBuf *logging.RingBuffer
+	var mgr *logging.Manager
+	if logMgr != nil {
+		ringBuf = logMgr.Ring()
+		mgr = logMgr
+	}
+
 	server, err := bootstrap.BuildAPIServer(bootstrap.Config{
 		Address:          envOrDefault("WIND_DAQ_ADDR", bootstrap.DefaultAddress),
 		ProfileStorePath: envOrDefault("WIND_DAQ_PROFILE_PATH", bootstrap.DefaultProfileStorePath),
+		LogRing:          ringBuf,
+		LogManager:       mgr,
 	})
 	if err != nil {
 		slog.Error("initialize api server", "err", err)
@@ -21,7 +47,7 @@ func main() {
 	}
 
 	// 按需启动 pprof debug server（受 WINDDAQ_PPROF_ADDR 环境变量控制）
-	debugCtx, debugCancel := context.WithCancel(context.Background())
+	debugCtx, debugCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer debugCancel()
 	if _, err := debugserver.Start(debugCtx); err != nil {
 		slog.Warn("debug server start failed", "err", err)

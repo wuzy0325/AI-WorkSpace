@@ -29,6 +29,7 @@
                                    "scripts",
                                    "shared",
                                    "tools",
+                                   "wind-daq-ui-redesign",
                                    "workspace.structure.json",
                                     ".gitnexus",
                                     ".agents",

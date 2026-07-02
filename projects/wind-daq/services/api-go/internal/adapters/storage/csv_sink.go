@@ -2,8 +2,9 @@
 //
 // CSVRecordingSink 采用异步批量写设计，支撑 1kHz × 10 设备的全量保存场景：
 //   - 每设备一个 CSV 文件，按 deviceId 路由（避免多设备数据混杂在同一文件）
-//   - DAQ-P-1604 用宽格式（18 通道列，对齐 daq-p1604 项目）
-//   - 其他设备用长格式（每通道一行：timestamp,deviceId,channelIndex,value）
+//   - 所有设备统一使用"宽格式"（每 payload 一行 = 一个时间戳 + N 个通道值）：
+//     * DAQ-P-1604：固定 18 列（CH01..CH16 + CH17_AtmPressure + CH18_AtmTemp），对齐 daq-p1604 项目
+//     * 其他设备：以首帧的通道 index 顺序动态生成表头 CH01..CHnn（列顺序在会话内固定）
 //   - Write 仅把 payload 投递到带缓冲的 channel，立即返回，不阻塞设备 read loop
 //   - 单独的 writer goroutine 消费 channel，使用 bufio.Writer 聚合写入
 //   - 定时 Flush + 定时 Sync，避免每条记录 fsync 风暴
@@ -95,9 +96,25 @@ func applyCSVSinkDefaults(cfg *CSVSinkConfig) {
 // 每个设备独立持有文件、缓冲、统计，设备间互不干扰。
 // writer goroutine 单线程访问，无需额外同步（Status 读时通过 statsMu 互斥）。
 type perDeviceWriter struct {
-	deviceID        string
-	deviceType      device.Type
-	isWideFormat    bool // DAQ-P-1604 = true（18 通道宽格式），其他 = false（长格式）
+	deviceID   string
+	deviceName string // 用于生成人类可读的文件名（比 UUID 友好）
+	// fileSlug 是文件名中用于标识设备的段（sanitize 后的 deviceName，若与其他设备
+	// 冲突则追加 -<deviceID 前 6 位>）。在 getOrCreateWriter 首次为该设备创建
+	// 文件时确定，之后本会话内所有滚动文件复用同一 slug。
+	fileSlug     string
+	deviceType   device.Type
+	isWideFormat bool // DAQ-P-1604 固定 18 列宽格式；其他设备用动态宽格式
+	// columnIndices 记录本设备"会话内"的列布局（通道 index 顺序）。
+	// - DAQ-P-1604：在首次 openNewFileForLocked 时设为 [0..17]
+	// - 其他设备：首帧到达时按 payload.ChannelIndices 冻结；之后**滚动文件也复用同一布局**，
+	//   保证跨文件列一致，用户可以直接拼接分析
+	columnIndices []int
+	// channelPos 是 channelIndex -> columnIndices 位置的稠密反查表，
+	// 让 writePayloadDynamicWide 每帧 O(1) 定位每列对应的 payload 通道下标。
+	// 长度为 max(columnIndices)+1；未在 columnIndices 中的位置存 -1。
+	// 与 columnIndices 一同在首帧冻结，滚动文件不重建。
+	channelPos      []int
+	headerWritten   bool // 表头是否已写入本文件（每次滚动到新文件都要重置为 false）
 	file            *os.File
 	bw              *bufio.Writer
 	fileName        string
@@ -106,6 +123,8 @@ type perDeviceWriter struct {
 	fileStartedAt   time.Time
 	fileRecordCount int64 // 该设备当前文件记录数（用于 MaxRecordCount 滚动判断）
 	totalRecords    int64 // 该设备累计记录数
+	// warnedIndicesMismatch 首次遇到与 columnIndices 不一致的帧时告警，避免刷屏
+	warnedIndicesMismatch bool
 }
 
 // CSVRecordingSink 异步批量写 CSV 存储适配器。
@@ -513,9 +532,13 @@ func (s *CSVRecordingSink) getOrCreateWriter(payload device.DataPayload) (*perDe
 	}
 	w := &perDeviceWriter{
 		deviceID:     payload.DeviceID,
+		deviceName:   payload.DeviceName,
 		deviceType:   payload.DeviceType,
 		isWideFormat: payload.DeviceType == device.DeviceDAQP1604,
 	}
+	// 计算文件名 slug：sanitize(deviceName)，若与已有 writer 的 slug 冲突则
+	// 追加 -<deviceID 前 6 位> 兜底（同名设备时保证文件名唯一但仍可读）。
+	w.fileSlug = s.uniqueFileSlugLocked(payload.DeviceName, payload.DeviceID)
 	if err := s.openNewFileForLocked(w); err != nil {
 		return nil, err
 	}
@@ -523,6 +546,7 @@ func (s *CSVRecordingSink) getOrCreateWriter(payload device.DataPayload) (*perDe
 	slog.Info("CSVRecordingSink 为设备创建文件",
 		"component", "CSVRecordingSink",
 		"deviceId", payload.DeviceID,
+		"deviceName", payload.DeviceName,
 		"deviceType", payload.DeviceType,
 		"wideFormat", w.isWideFormat,
 		"file", w.fileName,
@@ -530,11 +554,144 @@ func (s *CSVRecordingSink) getOrCreateWriter(payload device.DataPayload) (*perDe
 	return w, nil
 }
 
+// uniqueFileSlugLocked 生成用于文件名的设备段：
+//   - 空 deviceName 或 sanitize 后为空时回退到 "device"
+//   - 若与其他设备已用 slug 冲突，追加 -<deviceID 前 6 位> 保证唯一
+//
+// 调用方必须持 statsMu 锁（读 writers map）。
+func (s *CSVRecordingSink) uniqueFileSlugLocked(deviceName, deviceID string) string {
+	slug := sanitizeFileSegment(deviceName)
+	if slug == "" {
+		slug = "device"
+	}
+	// 遍历现有 writer 检查是否有 slug 冲突（同名设备）
+	conflict := false
+	for _, other := range s.writers {
+		if other.fileSlug == slug {
+			conflict = true
+			break
+		}
+	}
+	if !conflict {
+		return slug
+	}
+	// 冲突时追加 deviceID 前 6 位（UUID 前 6 位重复概率极低），
+	// 若 deviceID 也短则整体使用
+	suffix := deviceID
+	if len(suffix) > 6 {
+		suffix = suffix[:6]
+	}
+	if suffix == "" {
+		return slug
+	}
+	return slug + "-" + suffix
+}
+
+// sanitizeFileSegment 把设备名规范化为可用作文件名的段：
+//   - 替换 Windows/POSIX 非法字符 \/:*?"<>| 及控制字符为 '_'
+//   - 折叠首尾空白和多余的 '_'/'-'
+//   - 限制长度到 40，避免拼上时间戳后超出 Windows MAX_PATH
+//
+// 保留中文、数字、字母、连字符、下划线、点。
+func sanitizeFileSegment(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			b.WriteByte('_')
+		case r == '\\' || r == '/' || r == ':' || r == '*' || r == '?' ||
+			r == '"' || r == '<' || r == '>' || r == '|':
+			b.WriteByte('_')
+		case r == ' ' || r == '\t':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	// 折叠连续的下划线/连字符
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	out = strings.Trim(out, "_-.")
+	if len(out) > 40 {
+		// 按 rune 截断，避免砍出半个中文字符
+		runes := []rune(out)
+		if len(runes) > 40 {
+			runes = runes[:40]
+		}
+		out = string(runes)
+		out = strings.Trim(out, "_-.")
+	}
+	return out
+}
+
 // signalAutoDone 关闭 autoDone channel，幂等。
 func (s *CSVRecordingSink) signalAutoDone() {
 	s.autoDoneOnce.Do(func() {
 		close(s.autoDone)
 	})
+}
+
+// buildChannelPos 构造 channelIndex -> columnIndices 位置 的稠密反查表。
+// 长度 = max(columnIndices)+1，未在 columnIndices 中的位置存 -1。
+// 用于 writePayloadDynamicWide 每帧 O(1) 定位 payload 中每列对应的通道下标。
+func buildChannelPos(columnIndices []int) []int {
+	maxIdx := -1
+	for _, ci := range columnIndices {
+		if ci > maxIdx {
+			maxIdx = ci
+		}
+	}
+	if maxIdx < 0 {
+		return nil
+	}
+	pos := make([]int, maxIdx+1)
+	for i := range pos {
+		pos[i] = -1
+	}
+	for slot, ci := range columnIndices {
+		pos[ci] = slot
+	}
+	return pos
+}
+
+// buildDynamicHeader 生成宽格式 CSV 表头。
+// - isWideFormat=true（DAQ-P-1604）：使用 CH01..CH16 + CH17_AtmPressure + CH18_AtmTemp（对齐 daq-p1604 项目）
+// - 其他设备：Timestamp,CH01,CH02,...,CHnn（编号根据 columnIndices+1）
+func buildDynamicHeader(columnIndices []int, isWideFormat bool) string {
+	if isWideFormat && len(columnIndices) == daqP1604WideFormatChannels {
+		return "Timestamp,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16,CH17_AtmPressure,CH18_AtmTemp\n"
+	}
+	var b strings.Builder
+	b.Grow(16 + len(columnIndices)*6)
+	b.WriteString("Timestamp")
+	for _, idx := range columnIndices {
+		b.WriteByte(',')
+		fmt.Fprintf(&b, "CH%02d", idx+1)
+	}
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// appendCSVTimestamp 追加 CSV 时间戳段（前缀单引号 + 毫秒精度）。
+// 时间来源：DeviceTimestamp > 0 用硬件时间戳，否则系统时间戳。
+// 前缀单引号强制 Excel 按文本显示，秒和毫秒均完整可见。
+func appendCSVTimestamp(b []byte, payload device.DataPayload) []byte {
+	var t time.Time
+	if payload.DeviceTimestamp > 0 {
+		t = time.UnixMilli(payload.DeviceTimestamp)
+	} else {
+		t = time.UnixMilli(payload.Timestamp)
+	}
+	b = append(b, '\'')
+	b = t.AppendFormat(b, "2006-01-02 15:04:05.000")
+	return b
 }
 
 // shouldAutoStop 评估是否满足停止条件（跨设备汇总）。
@@ -560,8 +717,9 @@ func (s *CSVRecordingSink) shouldAutoStop() bool {
 	return false
 }
 
-// writePayload 把单个 payload 格式化写入对应设备的文件。
-// 按 deviceType 分派宽格式（DAQ-P-1604）或长格式（其他）。
+// writePayload 把单个 payload 格式化写入对应设备的文件（统一宽格式）。
+// - DAQ-P-1604：走固定 18 列的严格校验路径
+// - 其他设备：走动态宽格式，列布局由首帧确定
 func (s *CSVRecordingSink) writePayload(buf *[]byte, payload device.DataPayload) error {
 	w, err := s.getOrCreateWriter(payload)
 	if err != nil {
@@ -570,7 +728,7 @@ func (s *CSVRecordingSink) writePayload(buf *[]byte, payload device.DataPayload)
 	if w.isWideFormat {
 		return s.writePayloadWide(buf, w, payload)
 	}
-	return s.writePayloadLong(buf, w, payload)
+	return s.writePayloadDynamicWide(buf, w, payload)
 }
 
 // writePayloadWide 写入 DAQ-P-1604 宽格式（18 通道列，对齐 daq-p1604 项目）。
@@ -592,17 +750,8 @@ func (s *CSVRecordingSink) writePayloadWide(buf *[]byte, w *perDeviceWriter, pay
 	}
 
 	// 时间戳：硬件优先，否则系统
-	var t time.Time
-	if payload.DeviceTimestamp > 0 {
-		t = time.UnixMilli(payload.DeviceTimestamp)
-	} else {
-		t = time.UnixMilli(payload.Timestamp)
-	}
-
 	b := (*buf)[:0]
-	// 前缀单引号强制 Excel 按文本显示，带毫秒保证秒和毫秒均完整可见（对齐 daq-p1604）
-	b = append(b, '\'')
-	b = t.AppendFormat(b, "2006-01-02 15:04:05.000")
+	b = appendCSVTimestamp(b, payload)
 	b = append(b, ',')
 
 	// 写入所有通道值（DAQ-P-1604 固定 18 通道）
@@ -633,47 +782,124 @@ func (s *CSVRecordingSink) writePayloadWide(buf *[]byte, w *perDeviceWriter, pay
 	return nil
 }
 
-// writePayloadLong 写入长格式（每通道一行：timestamp,deviceId,channelIndex,value）。
-// 保留 wind-daq 历史行为，适用于非 DAQ-P-1604 设备。
+// writePayloadDynamicWide 写入非 DAQ-P-1604 设备的动态宽格式。
+//
+// 列布局策略：
+//   - 首帧到达时按 payload.ChannelIndices（若为空则用位置索引）**冻结**列布局，
+//     构造反查数组 channelPos 供后续 O(1) 查找。
+//   - 后续帧和滚动到的新文件全部沿用同一布局，保证跨文件列一致。
+//   - 若后续帧的 ChannelIndices 集合与首帧不一致（用户改配置但未重启录制等情形），
+//     首次不一致时写 warn 日志，但仍按已冻结的布局输出：命中列写值，未命中列空。
+//
+// 行格式：'YYYY-MM-DD HH:MM:SS.mmm,v1,v2,...,vN\n
 // 时间来源：DeviceTimestamp > 0 用硬件时间戳，否则系统时间戳。
-// 使用 strconv.AppendXxx 替代 fmt.Fprintf，避免反射开销。
-func (s *CSVRecordingSink) writePayloadLong(buf *[]byte, w *perDeviceWriter, payload device.DataPayload) error {
-	ts := payload.Timestamp
-	if payload.DeviceTimestamp > 0 {
-		ts = payload.DeviceTimestamp
-	}
-	written := int64(0)
-	for i, value := range payload.Channels {
-		channelIndex := i
-		if i < len(payload.ChannelIndices) {
-			channelIndex = payload.ChannelIndices[i]
+// 前缀单引号强制 Excel 按文本显示（与 DAQ-P-1604 保持一致）。
+func (s *CSVRecordingSink) writePayloadDynamicWide(buf *[]byte, w *perDeviceWriter, payload device.DataPayload) error {
+	// 首次为该设备写数据时冻结列布局；同一会话内滚动文件不再重建，仅 headerWritten 被重置
+	if w.columnIndices == nil {
+		indices := make([]int, len(payload.Channels))
+		if len(payload.ChannelIndices) == len(payload.Channels) {
+			copy(indices, payload.ChannelIndices)
+		} else {
+			for i := range indices {
+				indices[i] = i
+			}
 		}
+		s.statsMu.Lock()
+		w.columnIndices = indices
+		w.channelPos = buildChannelPos(indices)
+		s.statsMu.Unlock()
+	}
 
-		// 复用 buf，避免每次分配
-		b := (*buf)[:0]
-		b = strconv.AppendInt(b, ts, 10)
-		b = append(b, ',')
-		b = append(b, payload.DeviceID...)
-		b = append(b, ',')
-		b = strconv.AppendInt(b, int64(channelIndex), 10)
-		b = append(b, ',')
-		b = strconv.AppendFloat(b, value, 'f', csvFloatPrecision, 64)
-		b = append(b, '\n')
-
-		if _, err := w.bw.Write(b); err != nil {
+	// 当前文件的表头（可能因为滚动而尚未写入本文件）
+	if !w.headerWritten {
+		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat)
+		if _, err := w.bw.Write([]byte(hb)); err != nil {
 			return err
 		}
-		written += int64(len(b))
-		*buf = b
+		s.statsMu.Lock()
+		w.headerWritten = true
+		w.fileSize += int64(len(hb))
+		s.statsMu.Unlock()
 	}
-	// 更新统计（writerLoop 单线程，但仍持锁以与 Status() 互斥）
+
+	// 通道抖动告警（一次性）：payload 中出现了 columnIndices 覆盖不到的通道
+	if !w.warnedIndicesMismatch && payloadHasUnknownChannel(payload, w.channelPos) {
+		slog.Warn("payload 通道 index 与首帧不一致，超出列布局的通道将被丢弃",
+			"component", "CSVRecordingSink",
+			"deviceId", w.deviceID,
+			"columnIndices", w.columnIndices,
+			"payloadIndices", payload.ChannelIndices,
+		)
+		w.warnedIndicesMismatch = true
+	}
+
+	// 组装行：时间戳 + 每列（缺失列输出空）
+	b := (*buf)[:0]
+	b = appendCSVTimestamp(b, payload)
+
+	hasIndices := len(payload.ChannelIndices) == len(payload.Channels)
+ 	for _, colIdx := range w.columnIndices {
+		b = append(b, ',')
+		payloadPos := -1
+		if hasIndices {
+			// 用 channelPos 反查 payload 中该 colIdx 的位置。
+			// 但反查表是 "columnIndices 位置 -> payload 位置"，此处需反向：
+			// 直接在 payload.ChannelIndices 上线性扫描代价 O(cols*payload_channels)；
+			// 更高效的做法：借助 channelPos 已用 columnIndex 反查。这里 payload 的
+			// 每条 index 都要能反查到自己在 payload 里的位置，所以还是要遍历 payload 一次
+			// 建立一次性映射，或让 payload 本身按 columnIndices 顺序（大多数硬件都是这样）。
+			// 由于本调用点热路径每帧 16-64 通道，建议按 payload 顺序快速命中：
+			// 若 payload.ChannelIndices == w.columnIndices 顺序一致，直接同下标取值。
+			if colIdxLE := colIdx; colIdxLE < len(payload.ChannelIndices) && payload.ChannelIndices[colIdxLE] == colIdx {
+				payloadPos = colIdxLE
+			} else {
+				// 顺序不一致才做全表扫描（罕见）
+				for i, pi := range payload.ChannelIndices {
+					if pi == colIdx {
+						payloadPos = i
+						break
+					}
+				}
+			}
+		} else if colIdx < len(payload.Channels) {
+			// payload 无 ChannelIndices 时按位置读
+			payloadPos = colIdx
+		}
+		if payloadPos >= 0 && payloadPos < len(payload.Channels) {
+			b = strconv.AppendFloat(b, payload.Channels[payloadPos], 'f', csvFloatPrecision, 64)
+		}
+		// 缺失列 → 空串，保持列对齐
+	}
+	b = append(b, '\n')
+
+	if _, err := w.bw.Write(b); err != nil {
+		return err
+	}
+	written := int64(len(b))
+	*buf = b
+
 	s.statsMu.Lock()
 	w.fileSize += written
-	w.fileRecordCount += int64(len(payload.Channels))
-	w.totalRecords += int64(len(payload.Channels))
-	s.recordCount += int64(len(payload.Channels))
+	w.fileRecordCount++
+	w.totalRecords++
+	s.recordCount++
 	s.statsMu.Unlock()
 	return nil
+}
+
+// payloadHasUnknownChannel 判断 payload 是否包含 channelPos 覆盖不到的通道 index。
+// 用于一次性触发通道抖动告警。
+func payloadHasUnknownChannel(payload device.DataPayload, channelPos []int) bool {
+	if len(payload.ChannelIndices) != len(payload.Channels) {
+		return false
+	}
+	for _, pi := range payload.ChannelIndices {
+		if pi < 0 || pi >= len(channelPos) || channelPos[pi] < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // openNewFileForLocked 为指定设备创建新文件并写入表头（调用方持 statsMu 锁）。
@@ -684,7 +910,7 @@ func (s *CSVRecordingSink) openNewFileForLocked(w *perDeviceWriter) error {
 	w.fileCount++
 	fileCount := w.fileCount
 
-	base := fmt.Sprintf("%s-%s-%s", config.FilePrefix, w.deviceID, time.Now().Format("20060102-150405"))
+	base := fmt.Sprintf("%s-%s-%s", config.FilePrefix, w.fileSlug, time.Now().Format("20060102-150405"))
 	var name string
 	var file *os.File
 	var err error
@@ -705,24 +931,33 @@ func (s *CSVRecordingSink) openNewFileForLocked(w *perDeviceWriter) error {
 		return err
 	}
 
-	// 表头按格式分派
-	var header string
-	if w.isWideFormat {
-		// 18 列宽格式：Timestamp + CH01..CH16 + CH17_AtmPressure + CH18_AtmTemp（对齐 daq-p1604）
-		header = "Timestamp,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16,CH17_AtmPressure,CH18_AtmTemp\n"
-	} else {
-		// 长格式：每通道一行
-		header = "timestamp,deviceId,channelIndex,value\n"
+	// 表头分派：
+	// - DAQ-P-1604：本设备首次开文件时 columnIndices 为空，此处初始化 [0..17] 并写入固定表头
+	// - 动态宽格式设备的滚动文件：columnIndices 已在首帧冻结，此处按同布局立即写表头
+	// - 动态宽格式设备的首个文件：columnIndices 仍为空，表头延迟到首帧写入
+	w.headerWritten = false
+	w.fileSize = 0
+	if w.isWideFormat && w.columnIndices == nil {
+		indices := make([]int, daqP1604WideFormatChannels)
+		for i := range indices {
+			indices[i] = i
+		}
+		w.columnIndices = indices
+		w.channelPos = buildChannelPos(indices)
 	}
-	if _, err := file.WriteString(header); err != nil {
-		_ = file.Close()
-		return err
+	if w.columnIndices != nil {
+		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat)
+		if _, err := file.WriteString(hb); err != nil {
+			_ = file.Close()
+			return err
+		}
+		w.headerWritten = true
+		w.fileSize = int64(len(hb))
 	}
 
 	w.file = file
 	w.bw = bufio.NewWriterSize(file, s.cfg.BufferSize)
 	w.fileName = name
-	w.fileSize = 0
 	w.fileRecordCount = 0
 	w.fileStartedAt = time.Now()
 

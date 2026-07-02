@@ -112,17 +112,24 @@ async function saveConfig() {
   saveMessage.value = ''
   syncing.value = true
   try {
+    // 关键：在 saveProfile 之前先快照旧 profile。
+    // profile.value 是 computed，saveProfile 内部会同步把新 profile 写入 store，
+    // 之后 profile.value 立即变成 nextProfile。
+    // 如果在 saveProfile 之后才取旧值做对比，hasHardwareConfigChanged 会拿到
+    // 两个完全相同的对象，永远返回 false，导致 samplingRate 等硬件参数变更
+    // 时不触发 applyConfig，设备 SPS 不会下发，UI 显示的频率与硬件实际不符。
+    const previousProfile = profile.value
     const tcTypesStr = channelTcTypes.value.join('')
     const nextProfile = {
-      ...profile.value,
+      ...previousProfile,
       t1603Config: {
-        ...profile.value.t1603Config,
+        ...previousProfile.t1603Config,
         thermocoupleTypes: tcTypesStr,
         samplingRate: samplingRate.value,
         showTimestamp: showTimestamp.value,
         autoConnect: autoConnect.value,
       },
-      channels: profile.value.channels.map((channel, index) => ({
+      channels: previousProfile.channels.map((channel, index) => ({
         ...channel,
         name: channelNames.value[index] || '',
         enabled: channelEnabled.value[index],
@@ -132,7 +139,7 @@ async function saveConfig() {
     }
     await deviceStore.saveProfile(nextProfile)
 
-    const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
+    const hwChanged = hasHardwareConfigChanged(previousProfile, nextProfile)
     if (hwChanged) {
       try {
         await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)

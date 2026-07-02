@@ -6,6 +6,7 @@ import (
 
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/storage"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 type fakeRecordingSink struct {
@@ -13,13 +14,22 @@ type fakeRecordingSink struct {
 	stopped bool
 	writes  []device.DataPayload
 	err     error
+	// doneCh 在 Start 时创建，模拟 sink.Done() 信号；
+	// 测试可通过 close(fakeSink.doneCh) 触发自停止通知。
+	doneCh chan struct{}
 }
+
+// 确保 fakeRecordingSink 实现 ports.RecordingSink 接口。
+var _ ports.RecordingSink = (*fakeRecordingSink)(nil)
 
 func (s *fakeRecordingSink) Start(config storage.RecordingConfig) error {
 	if s.err != nil {
 		return s.err
 	}
 	s.started = true
+	if s.doneCh == nil {
+		s.doneCh = make(chan struct{})
+	}
 	return nil
 }
 
@@ -34,6 +44,21 @@ func (s *fakeRecordingSink) Write(payload device.DataPayload) error {
 func (s *fakeRecordingSink) Stop() error {
 	s.stopped = true
 	return nil
+}
+
+// Status 返回 fake sink 的简化状态，仅用于满足接口契约。
+func (s *fakeRecordingSink) Status() storage.RecordingStatus {
+	return storage.RecordingStatus{
+		Recording: s.started && !s.stopped,
+	}
+}
+
+// Done 返回自停止信号 channel；测试可关闭它以模拟 sink 自停止。
+func (s *fakeRecordingSink) Done() <-chan struct{} {
+	if s.doneCh == nil {
+		s.doneCh = make(chan struct{})
+	}
+	return s.doneCh
 }
 
 func TestStorageRecorderWritesPayloadOnlyWhenRecording(t *testing.T) {

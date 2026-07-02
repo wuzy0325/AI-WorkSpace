@@ -36,8 +36,8 @@
 //
 // # 使用示例
 //
-//	// 1. 实现设备协议处理器
-//	handler := sim.NewDAQP1604Handler()
+//	// 1. 实现设备协议处理器（实现 ProtocolHandler 接口）
+//	handler := &myDeviceHandler{}
 //
 //	// 2. 创建并启动模拟器（端口 0 由系统分配，避免冲突）
 //	s := sim.NewSimulator("127.0.0.1:0", handler)
@@ -46,7 +46,7 @@
 //
 //	// 3. 让真实 adapter 连接模拟器地址
 //	profile.Address, profile.Port = sim.SplitAddr(s.Addr())
-//	adapter := hardware.NewDAQP1604(profile)
+//	adapter := hardware.NewDeviceAdapter(profile)
 //	_ = adapter.Connect()
 //	_ = adapter.StartAcquisition()
 //

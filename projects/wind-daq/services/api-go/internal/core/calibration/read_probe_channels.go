@@ -98,8 +98,7 @@ func ReadProbeChannelsToFiveHoleRaw(
 		"fiveHole.pTunnelStatic": "pStatic",
 	}
 
-	// 必需字段（pTotal和pStatic为可选）
-	required := []string{"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm"}
+	required := []string{"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm", "pTotal", "pStatic"}
 
 	data, err := ReadProbeChannels(probeChannels, reader, roleMap, required, "五孔探针")
 	if err != nil {

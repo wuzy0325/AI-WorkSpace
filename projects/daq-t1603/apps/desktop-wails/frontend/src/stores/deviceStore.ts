@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
-import type { TemperatureProfile, TemperatureSnapshot, T1603Config, ChannelConfig, ScanResult } from '@bridge/deviceBridge'
+import type { TemperatureProfile, TemperatureSnapshot, T1603Config, ChannelConfig, ScanResult, DeviceState } from '@bridge/deviceBridge'
 
 const MAX_HISTORY = 200
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
@@ -57,6 +57,8 @@ export const useDeviceStore = defineStore('device', () => {
   const profiles = ref<TemperatureProfile[]>([])
   const selectedId = ref<string | null>(null)
   const statusMap = ref<Record<string, string>>({})
+  /** 设备级错误详情映射（key 为 deviceId，value 为后端返回的 Error 字段） */
+  const errorMap = ref<Record<string, string>>({})
   const historyMap = ref<Record<string, TemperatureSnapshot[]>>({})
   const snapshotMap = ref<Record<string, TemperatureSnapshot>>({})
   const pendingSnapshotMap = ref<Record<string, TemperatureSnapshot>>({})
@@ -93,8 +95,30 @@ export const useDeviceStore = defineStore('device', () => {
     return statusMap.value[id] ?? 'Disconnected'
   }
 
+  /** 获取设备错误详情（无错误返回空字符串） */
+  function errorFor(id: string): string {
+    return errorMap.value[id] ?? ''
+  }
+
   function acquiringFor(id: string): boolean {
     return statusMap.value[id] === 'Acquiring'
+  }
+
+  /**
+   * 从后端同步设备状态到前端。
+   * 同时更新 statusMap 与 errorMap：
+   *   - 后端返回 error 非空 → 写入 errorMap
+   *   - 后端返回 error 为空且状态非 'Error' → 清除 errorMap
+   *   - 状态为 'Error' 时保留旧 error（若无新 error 信息）
+   */
+  function syncStatusFromBackend(id: string, state: DeviceState | false): void {
+    if (!state || typeof state !== 'object' || !('statusText' in state)) return
+    statusMap.value[id] = state.statusText
+    if (state.error) {
+      errorMap.value[id] = state.error
+    } else if (state.statusText !== 'Error') {
+      delete errorMap.value[id]
+    }
   }
 
   async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -232,18 +256,40 @@ export const useDeviceStore = defineStore('device', () => {
     try {
       await action()
       statusMap.value[id] = targetStatus
+      // 操作成功且目标状态非 Error → 清除错误
+      if (targetStatus !== 'Error') delete errorMap.value[id]
     } catch (err) {
       statusMap.value[id] = prev ?? fallbackStatus
       throw err
     }
   }
 
+  /**
+   * 操作失败后从后端同步真实状态。
+   * 后端在失败时已通过 EmitLog（error 级别）写入日志，前端通过 onLog 订阅即可收到，
+   * 此处不再重复写 logStore，避免同一错误产生中英两条日志。仅同步状态确保 UI 准确。
+   */
+  async function syncAndLogFailure(id: string, _action: string, _err: unknown): Promise<void> {
+    const state = await bridge.getStatus(id).catch(() => false)
+    syncStatusFromBackend(id, state as DeviceState | false)
+  }
+
   async function connect(id: string): Promise<void> {
-    await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
+    try {
+      await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
+    } catch (err) {
+      await syncAndLogFailure(id, '连接设备', err)
+      throw err
+    }
   }
 
   async function disconnect(id: string): Promise<void> {
-    await transitionStatus(id, () => bridge.disconnect(id), 'Disconnected', 'Disconnected')
+    try {
+      await transitionStatus(id, () => bridge.disconnect(id), 'Disconnected', 'Disconnected')
+    } catch (err) {
+      await syncAndLogFailure(id, '断开设备', err)
+      throw err
+    }
   }
 
   async function startAcquisition(id: string): Promise<void> {
@@ -256,10 +302,7 @@ export const useDeviceStore = defineStore('device', () => {
         'Starting',
       )
     } catch (err) {
-      const state = await bridge.getStatus(id).catch(() => false)
-      if (state && typeof state === 'object' && 'statusText' in state) {
-        statusMap.value[id] = (state as any).statusText
-      }
+      await syncAndLogFailure(id, '启动采集', err)
       throw err
     }
   }
@@ -274,10 +317,7 @@ export const useDeviceStore = defineStore('device', () => {
         'Stopping',
       )
     } catch (err) {
-      const state = await bridge.getStatus(id).catch(() => false)
-      if (state && typeof state === 'object' && 'statusText' in state) {
-        statusMap.value[id] = (state as any).statusText
-      }
+      await syncAndLogFailure(id, '停止采集', err)
       throw err
     }
   }
@@ -395,13 +435,15 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   return {
-    profiles, selectedId, statusMap, historyMap, snapshotMap, chartSelections,
+    profiles, selectedId, statusMap, errorMap, historyMap, snapshotMap, chartSelections,
     scanResults, isScanning,
     selectedProfile, selectedSnapshot,
-    selectDevice, statusFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
+    selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateChannel, saveProfile,
     clearScanResults, scanDevices, addProfile, removeProfile, isScanResultAdded,
     setDisplayRefreshRateHz, stopDisplayFlush,
+    // 暴露给 App.vue 订阅 daq:device-state 事件后调用，将后端推送的状态同步进 store
+    syncStatusFromBackend,
   }
 })

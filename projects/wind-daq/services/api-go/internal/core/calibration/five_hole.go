@@ -62,19 +62,23 @@ func (a *FiveHoleAlgorithm) ValidateConfig(config Config) error {
 		return fmt.Errorf("五孔探针校准需要配置探针通道")
 	}
 
-	// 检查必需的通道角色
 	requiredRoles := []string{
 		"fiveHole.p1", "fiveHole.p2", "fiveHole.p3",
 		"fiveHole.p4", "fiveHole.p5", "fiveHole.pAtm",
+		"fiveHole.tAtm", "fiveHole.pTotal", "fiveHole.pTunnelStatic",
 	}
 	roleSet := make(map[string]bool)
 	for _, ch := range config.ProbeChannels {
 		roleSet[ch.Role] = true
 	}
+	var missingRoles []string
 	for _, role := range requiredRoles {
 		if !roleSet[role] {
-			return fmt.Errorf("五孔探针校准缺少必需通道角色: %s", role)
+			missingRoles = append(missingRoles, role)
 		}
+	}
+	if len(missingRoles) > 0 {
+		return fmt.Errorf("五孔探针校准缺少必需通道角色: %v", missingRoles)
 	}
 
 	if config.SamplesPerPoint <= 0 {

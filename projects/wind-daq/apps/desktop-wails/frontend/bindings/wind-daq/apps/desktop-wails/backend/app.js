@@ -238,6 +238,9 @@ export function DeviceSetPublishRate(hz) {
 }
 
 /**
+ * DeviceStartAcquisition 启动指定设备的采集。
+ * 采集启动成功后异步触发 autoStart 检查：若 storage-settings 中 autoStartOnAcquisition=true
+ * 且当前未在录制，则自动开始录制。失败仅记录日志，不阻塞采集响应。
  * @param {string} id
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
@@ -504,7 +507,7 @@ export function ReportGetStatus() {
 }
 
 /**
- * ResolvePath 将相对路径解析为绝对路径
+ * ResolvePath 将相对路径解析到用户可写的应用目录，避免安装目录不可写。
  * @param {string} p
  * @returns {$CancellablePromise<string>}
  */
@@ -533,12 +536,14 @@ export function StorageGetStatus() {
 }
 
 /**
- * @param {string} outputDir
- * @param {string} filePrefix
+ * StorageStartRecording 启动数据录制。
+ * 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
+ * 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
+ * @param {usecase$0.StorageRecordingConfig} config
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
-export function StorageStartRecording(outputDir, filePrefix) {
-    return $Call.ByID(3910835915, outputDir, filePrefix).then(/** @type {($result: any) => any} */(($result) => {
+export function StorageStartRecording(config) {
+    return $Call.ByID(3910835915, config).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }

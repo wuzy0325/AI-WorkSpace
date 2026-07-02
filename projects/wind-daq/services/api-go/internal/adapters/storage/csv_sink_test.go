@@ -36,11 +36,13 @@ func TestCSVRecordingSinkWritesPayloadsToFile(t *testing.T) {
 		t.Fatalf("read recording file: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "timestamp,deviceId,channelIndex,value") {
-		t.Fatalf("expected CSV header, got %q", text)
+	// 新格式：动态宽格式，首帧决定列布局，时间戳使用 'YYYY-MM-DD HH:MM:SS.mmm 前缀单引号
+	if !strings.Contains(text, "Timestamp,CH01,CH02") {
+		t.Fatalf("expected CSV wide header, got %q", text)
 	}
-	if !strings.Contains(text, "123,sim-1,0,1.200000") || !strings.Contains(text, "123,sim-1,1,3.400000") {
-		t.Fatalf("expected payload rows, got %q", text)
+	// 一行应含时间戳 + 两个通道值（值为 6 位小数）
+	if !strings.Contains(text, "1.200000") || !strings.Contains(text, "3.400000") {
+		t.Fatalf("expected payload row with channel values, got %q", text)
 	}
 }
 

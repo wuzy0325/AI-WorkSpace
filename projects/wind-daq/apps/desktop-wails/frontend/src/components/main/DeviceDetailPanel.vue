@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref } from 'vue'
 import type { DataPayload } from '@api/types'
-import { Activity, Settings2, Eye, EyeOff, Minus } from '@lucide/vue'
+import { Activity, Settings2 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
-import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
+import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
+import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
 // 避免拖慢首屏 LCP。参见 docs/runbooks/perf-frontend-bundle-baseline.md。
 const RealtimeChart = defineAsyncComponent(() => import('@components/device/RealtimeChart.vue'))
@@ -33,14 +34,17 @@ const isTableMode = computed(() => props.mode === 'table')
 const chartChannelIndices = computed(() => {
   const id = deviceStore.selectedDeviceId
   const channels = profile.value?.channels ?? []
-  if (!id) return channels.filter((channel) => channel.enabled).slice(0, 4).map((channel) => channel.index)
+  // fallback：默认选中全部 enabled 通道，排除大气压力 / 大气温度通道
+  // （量程差异过大，同图绘制会压扁常规通道波形）。
+  const fallback = channels
+    .filter((channel) => channel.enabled && !deviceStore.isAtmosphericChannel(channel))
+    .map((channel) => channel.index)
+  if (!id) return fallback
 
   const selected = channels
     .filter((channel) => channel.enabled && deviceStore.isChartSelected(id, channel.index))
     .map((channel) => channel.index)
-  return selected.length > 0
-    ? selected
-    : channels.filter((channel) => channel.enabled).slice(0, 4).map((channel) => channel.index)
+  return selected.length > 0 ? selected : fallback
 })
 
 /** 从全局配置读取波形图缓冲区点数，供实时趋势图使用 */
@@ -197,7 +201,7 @@ const isPressureScannerDevice = computed(() => {
 
 // 预计算表格/卡片视图所需的全部通道数据，避免模板渲染时反复调用函数。
 // 将每帧 O(通道数 × 函数调用次数) 的开销压缩为一次 computed 计算。
-const channelCards = computed(() => {
+const channelCards = computed<ChannelCardData[]>(() => {
   const id = deviceStore.selectedDeviceId ?? ''
   const snap = snapshot.value
   if (!snap?.channels?.length) return []
@@ -205,7 +209,7 @@ const channelCards = computed(() => {
   const indices = snap.channelIndices
   const channels = snap.channels
   const sparks = sparkBarsMap.value
-  const cards = []
+  const cards: ChannelCardData[] = []
   for (let i = 0; i < channels.length; i++) {
     const index = indices[i]
     const rawValue = channels[i]
@@ -226,6 +230,18 @@ const channelCards = computed(() => {
     })
   }
   return cards
+})
+
+// 通道选择弹窗的列表项：颜色/样式/可见性预计算，避免子组件持有业务状态。
+const selectorChannels = computed<SelectorChannel[]>(() => {
+  const channels = profile.value?.channels ?? []
+  return channels.map((ch) => ({
+    index: ch.index,
+    name: ch.name,
+    color: channelColor(ch.index),
+    style: channelStyle(ch.index),
+    visible: isChartVisible(ch.index),
+  }))
 })
 
 const statusText = computed(() => {
@@ -325,31 +341,31 @@ const connectionButtonLabel = computed(() => {
 
     <div class="detail-panel__content">
       <div v-if="showChart" class="detail-panel__chart" :class="{ 'detail-panel__chart--compact': isMixedMode }">
-      <div class="detail-panel__chart-header">
-        <div class="detail-panel__chart-title">
-          <Activity class="w-4 h-4 text-emerald-500" />
-          <span>实时趋势</span>
-        </div>
-        <div class="detail-panel__chart-controls">
-          <UiButton variant="secondary" size="sm" @click="openChartSelector">
-            <template #icon>
-              <Settings2 class="w-4 h-4" />
-            </template>
-            通道选择
-          </UiButton>
-          <div class="detail-panel__chart-info">
-            <span class="detail-panel__chart-label">{{ i18n.t.bufferWindowLabel }}</span>
-            <span class="detail-panel__chart-value mono-font">{{ waveformBufferSize }} {{ i18n.t.pts }}</span>
+        <div class="detail-panel__chart-header">
+          <div class="detail-panel__chart-title">
+            <Activity class="w-4 h-4 text-emerald-500" />
+            <span>实时趋势</span>
+          </div>
+          <div class="detail-panel__chart-controls">
+            <UiButton variant="secondary" size="sm" @click="openChartSelector">
+              <template #icon>
+                <Settings2 class="w-4 h-4" />
+              </template>
+              通道选择
+            </UiButton>
+            <div class="detail-panel__chart-info">
+              <span class="detail-panel__chart-label">{{ i18n.t.bufferWindowLabel }}</span>
+              <span class="detail-panel__chart-value mono-font">{{ waveformBufferSize }} {{ i18n.t.pts }}</span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="detail-panel__chart-body">
-        <RealtimeChart
-          :device-id="deviceStore.selectedDeviceId ?? ''"
-          :channel-indices="chartChannelIndices"
-          :max-points="waveformBufferSize"
-        />
-      </div>
+        <div class="detail-panel__chart-body">
+          <RealtimeChart
+            :device-id="deviceStore.selectedDeviceId ?? ''"
+            :channel-indices="chartChannelIndices"
+            :max-points="waveformBufferSize"
+          />
+        </div>
       </div>
 
       <div
@@ -360,81 +376,14 @@ const connectionButtonLabel = computed(() => {
           'detail-panel__grid--mixed': isMixedMode
         }"
       >
-        <article
+        <ChannelCard
           v-for="card in channelCards"
           :key="card.index"
-          class="channel-card"
-          :class="{
-            'channel-card--warning': card.tone === 'warning',
-            'channel-card--selected': card.isChartVisible
-          }"
-          :style="card.style"
-        >
-          <div class="channel-card__top">
-            <div class="channel-card__top-left">
-              <div
-                v-if="card.showTareBadge"
-                class="channel-card__tare-badge"
-                :title="i18n.t.tareOffsetApplied || '已应用归零偏移'"
-              />
-              <span class="channel-card__tag mono-font">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
-            </div>
-            <div class="channel-card__id">
-              <span class="channel-card__dot" :style="{ background: card.color }" />
-              <span class="channel-card__id-text mono-font">CH{{ card.index + 1 }}</span>
-            </div>
-            <div class="channel-card__actions">
-              <UiButton
-                variant="ghost"
-                size="sm"
-                :class="{ 'channel-card__action-btn--active': card.isChartVisible }"
-                :aria-label="card.isChartVisible ? '隐藏波形' : '显示波形'"
-                @click.stop="toggleChartVisibility(card.index)"
-              >
-                <template #icon>
-                  <Eye v-if="card.isChartVisible" class="channel-card__icon" />
-                  <EyeOff v-else class="channel-card__icon" />
-                </template>
-              </UiButton>
-              <UiButton
-                variant="ghost"
-                size="sm"
-                :class="{ 'channel-card__action-btn--disabled': card.disableTare }"
-                :aria-label="card.disableTare ? '此通道不支持校零' : '归零'"
-                :disabled="card.disableTare"
-                @click.stop="setTare(card.index, card.rawValue)"
-              >
-                <template #icon>
-                  <Minus class="channel-card__icon" />
-                </template>
-              </UiButton>
-            </div>
-          </div>
-          <div class="channel-card__value-area">
-            <div class="channel-card__value-row">
-              <span
-                class="channel-card__value mono-font"
-                :class="{ 'text-amber-500': card.tone === 'warning' }"
-              >
-                {{ card.formattedValue }}
-              </span>
-              <span class="channel-card__unit">{{ card.unit }}</span>
-            </div>
-          </div>
-          <div v-if="!isMixedMode" class="channel-card__sparkline">
-            <span
-              v-for="(h, i) in card.sparkBars"
-              :key="i"
-              class="channel-card__spark"
-              :class="{ 'channel-card__spark--active': i === card.sparkBars.length - 1 }"
-              :style="{ height: `${h}%`, background: i === card.sparkBars.length - 1 ? card.color : undefined }"
-            />
-          </div>
-          <div v-if="!isMixedMode" class="channel-card__range mono-font">
-            <span>MIN: {{ card.range.min }}</span>
-            <span>MAX: {{ card.range.max }}</span>
-          </div>
-        </article>
+          :card="card"
+          :compact="isMixedMode"
+          @toggle-chart="toggleChartVisibility"
+          @tare="setTare"
+        />
       </div>
 
       <div v-else-if="showTable" class="detail-panel__empty">
@@ -442,56 +391,16 @@ const connectionButtonLabel = computed(() => {
       </div>
     </div>
 
-    <div v-if="chartSelectorOpen" class="chart-selector" @click.self="closeChartSelector">
-      <div class="chart-selector__panel" @click.stop>
-        <div class="chart-selector__header">
-          <div class="chart-selector__title-row">
-            <h3 class="chart-selector__title">{{ i18n.t.channelSelection || '通道选择' }}</h3>
-            <p class="chart-selector__subtitle">{{ profile?.name }}</p>
-          </div>
-          <UiButton variant="ghost" size="sm" @click="closeChartSelector" aria-label="关闭">
-            <template #icon>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
-            </template>
-          </UiButton>
-        </div>
-
-        <div class="chart-selector__grid">
-          <label
-            v-for="channel in (profile?.channels ?? [])"
-            :key="channel.index"
-            class="chart-selector__item"
-            :class="{ 'chart-selector__item--active': isChartVisible(channel.index) }"
-            :style="channelStyle(channel.index)"
-          >
-            <span class="chart-selector__item-info">
-              <span class="chart-selector__dot" :style="{ background: channelColor(channel.index) }" />
-              <span class="chart-selector__name" :title="channel.name">{{ channel.name }}</span>
-            </span>
-            <span class="chart-selector__channel">CH{{ String(channel.index + 1).padStart(2, '0') }}</span>
-            <UiCheckbox
-              :checked="isChartVisible(channel.index)"
-              @update:checked="toggleChartVisibility(channel.index)"
-            />
-          </label>
-        </div>
-
-        <div class="chart-selector__footer">
-          <div class="chart-selector__footer-left">
-            <span class="chart-selector__count">
-              {{ i18n.t.selectedCount || '已选' }} {{ chartChannelIndices.length }} / {{ profile?.channels?.length ?? 0 }}
-            </span>
-            <UiButton variant="ghost" size="sm" @click="setAllChartVisibility(true)">{{ i18n.t.selectAll || '全选' }}</UiButton>
-            <UiButton variant="ghost" size="sm" @click="setAllChartVisibility(false)">{{ i18n.t.clearAll || '清空' }}</UiButton>
-          </div>
-          <div class="chart-selector__footer-right">
-            <UiButton variant="primary" size="sm" @click="closeChartSelector">{{ i18n.t.done || '完成' }}</UiButton>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ChartSelector
+      v-if="chartSelectorOpen"
+      :profile-name="profile?.name ?? ''"
+      :channels="selectorChannels"
+      :selected-count="chartChannelIndices.length"
+      :total-count="profile?.channels?.length ?? 0"
+      @close="closeChartSelector"
+      @toggle="toggleChartVisibility"
+      @set-all="setAllChartVisibility"
+    />
   </div>
 </template>
 
@@ -579,9 +488,10 @@ const connectionButtonLabel = computed(() => {
   border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
+/* 混合模式：波形图应占据主体可用空间，而非固定 220px 导致底部留白 */
 .detail-panel__chart--compact {
-  flex: 0 0 220px;
-  min-height: 220px;
+  flex: 1;
+  min-height: 280px;
 }
 
 .detail-panel__chart-header {
@@ -610,8 +520,6 @@ const connectionButtonLabel = computed(() => {
   align-items: center;
   gap: var(--space-3);
 }
-
-
 
 .detail-panel__chart-info {
   display: flex;
@@ -654,438 +562,39 @@ const connectionButtonLabel = computed(() => {
   overflow-y: auto;
 }
 
-.detail-panel__grid--table,
-.detail-panel__grid--mixed {
+.detail-panel__grid--table {
   grid-template-columns: repeat(4, 1fr);
 }
 
+/* 混合模式：极简单行卡片网格，行高仅 40px，
+   配合单行卡片布局，最大化把纵向空间让给波形图。 */
+.detail-panel__grid--mixed {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-auto-rows: 40px;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  overflow-y: auto;
+  padding-bottom: 2px;
+}
+
 @media (max-width: 1400px) {
-  .detail-panel__grid {
+  .detail-panel__grid:not(.detail-panel__grid--mixed) {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (max-width: 1100px) {
-  .detail-panel__grid {
+  .detail-panel__grid:not(.detail-panel__grid--mixed) {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
-.channel-card {
-  background: rgba(30, 41, 59, 0.4);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1em;
-  padding: 0.75em;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  position: relative;
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  min-height: 0;
-  font-size: clamp(10px, 2cqw, 20px);
-  container-type: inline-size;
-  container-name: channel-card;
-}
-
-:root[data-theme='light'] .channel-card {
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-/* 仅在警告状态的通道卡片上显示顶部指示线，保持正常卡片简洁 */
-.channel-card--warning::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 0.3rem;
-  background: linear-gradient(90deg, transparent, var(--accent-warning), transparent);
-  opacity: 0.7;
-}
-
-.channel-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--theme-color, var(--accent-primary));
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-}
-
-.channel-card--selected {
-  box-shadow: 0 0 0 1px var(--theme-color, var(--accent-primary)), 0 10px 25px rgba(0, 0, 0, 0.1);
-}
-
-.channel-card--warning {
-  border-color: rgba(245, 158, 11, 0.3);
-}
-
-.channel-card__top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5em;
-  min-height: 1.5em;
-}
-
-.channel-card__top-left {
-  display: flex;
-  align-items: center;
-  gap: 0.375em;
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.channel-card__tag,
-.channel-card__id-text {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--text-secondary);
-  letter-spacing: 0.1em;
-  white-space: nowrap;
-}
-
-.channel-card__id {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.375em;
-  flex: 1 1 auto;
-}
-
-.channel-card__dot {
-  width: 0.5em;
-  height: 0.5em;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.channel-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.25em;
-  flex: 0 0 auto;
-}
-
-.channel-card__action-btn {
-  width: 1.5em;
-  height: 1.5em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.25em;
-  color: var(--text-muted);
-  background: rgba(0, 0, 0, 0.2);
-  transition: all 0.2s ease;
-}
-
-:root[data-theme='light'] .channel-card__action-btn {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.channel-card__action-btn:hover {
-  color: var(--theme-color, var(--accent-primary));
-  background: rgba(16, 185, 129, 0.15);
-}
-
-.channel-card__action-btn--active {
-  color: var(--theme-color, var(--accent-primary));
-  background: var(--theme-color-soft, rgba(16, 185, 129, 0.15));
-}
-
-.channel-card__action-btn--disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.channel-card__icon {
-  width: 0.875em;
-  height: 0.875em;
-  flex-shrink: 0;
-}
-
-.channel-card__tare-badge {
-  width: 0.5em;
-  height: 0.5em;
-  border-radius: 50%;
-  background: var(--accent-warning);
-  flex-shrink: 0;
-}
-
-.channel-card__value-area {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 2em;
-  max-height: 2.5em;
-  padding: 0.125em 0;
-}
-
-.channel-card__value-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5em;
-}
-
-.channel-card__value {
-  font-size: 2.4em;
-  font-weight: var(--font-weight-black);
-  letter-spacing: -0.02em;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-primary, var(--border-default));
-}
-
-.channel-card__value.text-amber-500 {
-  color: var(--accent-warning);
-}
-
-.channel-card__unit {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-black);
-  color: var(--text-muted);
-  font-style: italic;
-  letter-spacing: 0.02em;
-}
-
-.channel-card__sparkline {
-  display: flex;
-  align-items: flex-end;
-  gap: clamp(1px, 0.4cqw, 3px);
-  height: clamp(24px, 6cqw, 40px);
-  padding: 0 clamp(2px, 1cqw, 6px);
-  flex-shrink: 0;
-}
-
-.channel-card__spark {
-  flex: 1;
-  min-height: 2px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 1px 1px 0 0;
-}
-
-:root[data-theme='light'] .channel-card__spark {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.channel-card__spark--active {
-  /* 使用纯色高亮代替发光效果 */
-  opacity: 1;
-}
-
-.channel-card__range {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--text-secondary);
-  margin-top: 0.25em;
-}
-
 .detail-panel__empty {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
-.chart-selector {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.chart-selector__panel {
-  width: 100%;
-  max-width: 48rem;
-  max-height: 78vh;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-default);
-  border-radius: 0.75rem;
-  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.45);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-:root[data-theme='light'] .chart-selector__panel {
-  background: var(--bg-panel);
-  border-color: var(--border-strong);
-}
-
-.chart-selector__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.625rem 0.875rem 0.625rem 1rem;
-  border-bottom: 1px solid var(--border-default);
-  flex-shrink: 0;
-}
-
-:root[data-theme='light'] .chart-selector__header {
-  border-bottom: 1px solid var(--border-default);
-}
-
-.chart-selector__title-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.chart-selector__title {
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.2;
-  margin: 0;
-}
-
-:root[data-theme='light'] .chart-selector__title {
-  color: var(--text-primary);
-}
-
-.chart-selector__subtitle {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--text-muted);
-  line-height: 1.2;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chart-selector__subtitle::before {
-  content: '·';
-  margin-right: 0.375rem;
-  color: var(--border-strong);
-}
-
-.chart-selector__grid {
   flex: 1;
-  overflow-y: auto;
-  padding: 0.5rem 0.75rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-  gap: 0.25rem;
-  align-content: start;
-}
-
-.chart-selector__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.25rem 0.5rem 0.25rem 0.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-  min-width: 0;
-  gap: 0.5rem;
-  min-height: 28px;
-}
-
-:root[data-theme='light'] .chart-selector__item {
-  background: transparent;
-  border: 1px solid transparent;
-}
-
-.chart-selector__item:hover {
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  border-color: var(--border-default);
-}
-
-.chart-selector__item--active {
-  border-color: var(--theme-color-border, rgba(16, 185, 129, 0.35));
-  background: var(--theme-color-soft, rgba(16, 185, 129, 0.08));
-}
-
-.chart-selector__item-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  flex: 1;
-}
-
-.chart-selector__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.chart-selector__name {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.2;
-}
-
-:root[data-theme='light'] .chart-selector__name {
-  color: var(--text-primary);
-}
-
-.chart-selector__channel {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
   color: var(--text-muted);
-  font-family: ui-monospace, monospace;
-  flex-shrink: 0;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-sm);
 }
-
-.chart-selector__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.875rem;
-  border-top: 1px solid var(--border-default);
-  flex-shrink: 0;
-}
-
-.chart-selector__footer-left {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-.chart-selector__footer-right {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-.chart-selector__count {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  margin-right: 0.5rem;
-  font-variant-numeric: tabular-nums;
-}
-
-:root[data-theme='light'] .chart-selector__footer {
-  border-top: 1px solid var(--border-default);
-}
-
-
 </style>

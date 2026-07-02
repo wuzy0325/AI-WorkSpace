@@ -2,7 +2,9 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
@@ -20,6 +22,14 @@ type RecordingService struct {
 
 	mu  sync.Mutex
 	app *application.App
+
+	// bpLastEmitMs 限频背压事件到前端的发射时间戳，避免 10 台同时背压时
+	// Event.Emit 刷屏（默认每设备每秒最多 1 条）。
+	bpLastEmitMs atomic.Int64
+
+	// fatalLastEmitMs 限频 fatal 事件到前端的发射时间戳。
+	// 与 bpLastEmitMs 独立，避免背压事件挤占 fatal 事件配额。
+	fatalLastEmitMs atomic.Int64
 }
 
 // NewRecordingService 创建录制 Service。
@@ -35,11 +45,18 @@ func (s *RecordingService) ServiceName() string {
 	return "RecordingService"
 }
 
-// ServiceStartup 仅缓存 application 引用，供后续事件发送。
+// ServiceStartup 缓存 application 引用，并注入背压/错误回调。
+//
+// 回调由 recorder 在丢帧/不可恢复错误时同步调用，因此必须非阻塞：
+//   - 日志走 hub.EmitLog（已是异步广播）；
+//   - Event.Emit 每类事件 1s 最多 1 次，由对应 atomic 限频。
 func (s *RecordingService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	s.mu.Lock()
 	s.app = application.Get()
 	s.mu.Unlock()
+
+	s.recordUC.SetBackpressureHandler(s.handleBackpressure)
+	s.recordUC.SetFatalErrorHandler(s.handleFatal)
 	return nil
 }
 
@@ -100,4 +117,93 @@ func (s *RecordingService) PickDirectory() (string, error) {
 	app := s.app
 	s.mu.Unlock()
 	return pickDirectory(app)
+}
+
+// handleBackpressure 是 recorder 丢帧时同步调用的回调。
+//
+// 实现约束：
+//   - 必须非阻塞（recorder 持锁内调用）；
+//   - 禁止回调 recordUC 任何方法（死锁）；
+//   - 日志每条都发（前端 LogPanel 可见），Event.Emit 限频到全局 1Hz
+//     避免 10 台并发背压时 WebView2 ExecuteScript 刷屏。
+func (s *RecordingService) handleBackpressure(e core.BackpressureEvent) {
+	if s.hub != nil {
+		s.hub.EmitLog(core.LogEvent{
+			Level:    "warn",
+			Category: "recording",
+			DeviceID: e.DeviceID,
+			Source:   "recorder",
+			Message:  "录制队列背压，丢帧",
+			Detail: detailJSON(e),
+		})
+	}
+
+	now := core.TimestampMs()
+	last := s.bpLastEmitMs.Load()
+	if now-last < 1000 {
+		return
+	}
+	// CAS 限频，多设备并发时只有一个能成功
+	if !s.bpLastEmitMs.CompareAndSwap(last, now) {
+		return
+	}
+
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app == nil {
+		return
+	}
+	app.Event.Emit("daq:recording-backpressure", e)
+}
+
+// detailJSON 构造背压详情的简易 JSON 字符串。
+// 不引入 encoding/json 以避免热路径分配；
+// 字段顺序固定，前端可按需解析。
+func detailJSON(e core.BackpressureEvent) string {
+	return fmt.Sprintf("{\"deviceId\":\"%s\",\"queueLen\":%d,\"queueCap\":%d,\"droppedTotal\":%d}",
+		e.DeviceID, e.QueueLen, e.QueueCap, e.DroppedTotal)
+}
+
+// handleFatal 是 recorder 不可恢复 I/O 错误时同步调用的回调。
+//
+// 触发场景：
+//   - deviceWriter 文件创建失败（磁盘满/权限）→ 每设备每秒最多 1 条 fatal
+//   - bufio.Write 失败（磁盘掉线/网络盘断开）→ 首次错误时 1 条 fatal
+//
+// 实现约束：
+//   - 必须非阻塞（recorder 持锁内调用）；
+//   - 禁止回调 recordUC 任何方法（死锁）；
+//   - 日志每条都发，Event.Emit 限频到 1Hz。
+func (s *RecordingService) handleFatal(deviceID string, err error) {
+	if s.hub != nil {
+		s.hub.EmitLog(core.LogEvent{
+			Level:    "error",
+			Category: "recording",
+			DeviceID: deviceID,
+			Source:   "recorder",
+			Message:  "录制不可恢复错误，该设备后续帧将丢弃",
+			Detail:   fmt.Sprintf("deviceID=%s err=%s", deviceID, err.Error()),
+		})
+	}
+
+	now := core.TimestampMs()
+	last := s.fatalLastEmitMs.Load()
+	if now-last < 1000 {
+		return
+	}
+	if !s.fatalLastEmitMs.CompareAndSwap(last, now) {
+		return
+	}
+
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app == nil {
+		return
+	}
+	app.Event.Emit("daq:recording-fatal", map[string]string{
+		"deviceId": deviceID,
+		"error":    err.Error(),
+	})
 }

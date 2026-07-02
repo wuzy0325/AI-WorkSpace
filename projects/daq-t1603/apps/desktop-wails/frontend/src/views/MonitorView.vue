@@ -31,6 +31,7 @@ const openConfig = inject<() => void>('shell:openConfig', () => {})
 
 const selected = computed(() => deviceStore.selectedProfile)
 const status = computed(() => (selected.value ? deviceStore.statusFor(selected.value.id) : ''))
+const errorMessage = computed(() => (selected.value ? deviceStore.errorFor(selected.value.id) : ''))
 const isAcquiring = computed(() => (selected.value ? deviceStore.acquiringFor(selected.value.id) : false))
 const sampleCount = computed(() => (selected.value ? deviceStore.historyFor(selected.value.id).length : 0))
 const showChannelSelector = ref(false)
@@ -189,6 +190,10 @@ function statusLabel(): string {
                 <template #icon><Settings2 :size="14" /></template>配置
               </NButton>
             </div>
+          </div>
+          <!-- 设备错误详情条：仅在 errorMessage 非空时显示 -->
+          <div v-if="errorMessage" class="detail__error-bar">
+            <NText depth="3" style="font-size:0.72rem;color:var(--danger)">{{ errorMessage }}</NText>
           </div>
         </NCard>
 
@@ -423,6 +428,16 @@ function statusLabel(): string {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
+}
+
+/* 设备错误详情条 */
+.detail__error-bar {
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+  background: var(--danger-muted, rgba(244, 63, 94, 0.1));
+  border: 1px solid var(--danger-border, rgba(244, 63, 94, 0.25));
+  border-radius: var(--radius-md, 6px);
+  word-break: break-all;
 }
 
 .status-dot {

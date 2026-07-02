@@ -6,6 +6,142 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+/**
+ * FileRotation 文件滚动保存配置。
+ * 启用后，sink 在达到大小或时长阈值时关闭当前文件并创建新文件继续录制，
+ * 不影响录制会话的整体生命周期。
+ */
+export class FileRotation {
+    /**
+     * Creates a new FileRotation instance.
+     * @param {Partial<FileRotation>} [$$source = {}] - The source object to create the FileRotation.
+     */
+    constructor($$source = {}) {
+        if (!("enabled" in $$source)) {
+            /**
+             * Enabled 是否启用文件滚动
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+        if (!("maxFileSizeBytes" in $$source)) {
+            /**
+             * MaxFileSizeBytes 单文件大小阈值（字节），达到后滚动到新文件
+             * @member
+             * @type {number}
+             */
+            this["maxFileSizeBytes"] = 0;
+        }
+        if (!("maxDurationMs" in $$source)) {
+            /**
+             * MaxDurationMs 单文件时长阈值（毫秒），达到后滚动到新文件
+             * @member
+             * @type {number}
+             */
+            this["maxDurationMs"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FileRotation instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FileRotation}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FileRotation(/** @type {Partial<FileRotation>} */($$parsedSource));
+    }
+}
+
+/**
+ * RecordingConfig 录制会话配置。
+ * 由 UI 通过 API/Wails binding 传入，贯穿 usecase -> sink。
+ */
+export class RecordingConfig {
+    /**
+     * Creates a new RecordingConfig instance.
+     * @param {Partial<RecordingConfig>} [$$source = {}] - The source object to create the RecordingConfig.
+     */
+    constructor($$source = {}) {
+        if (!("outputDir" in $$source)) {
+            /**
+             * OutputDir 输出目录（绝对路径或相对路径，由后端装配层统一解析）
+             * @member
+             * @type {string}
+             */
+            this["outputDir"] = "";
+        }
+        if (!("filePrefix" in $$source)) {
+            /**
+             * FilePrefix 文件名前缀，最终文件名形如 <prefix>-YYYYMMDD-HHMMSS-NNN.csv
+             * @member
+             * @type {string}
+             */
+            this["filePrefix"] = "";
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * Format 存储格式："csv"（默认）或 "binary"
+             * @member
+             * @type {string | undefined}
+             */
+            this["format"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * StopConditions 自动停止条件（可选）
+             * @member
+             * @type {StopConditions | undefined}
+             */
+            this["stopConditions"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * FileRotation 文件滚动配置（可选）
+             * @member
+             * @type {FileRotation | undefined}
+             */
+            this["fileRotation"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * AutoStartOnAcquisition 是否在采集启动时自动开始录制
+             * 该字段由 UI 写入配置文件，由编排层读取并触发；sink 自身不消费。
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["autoStartOnAcquisition"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RecordingConfig instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {RecordingConfig}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType0;
+        const $$createField4_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("stopConditions" in $$parsedSource) {
+            $$parsedSource["stopConditions"] = $$createField3_0($$parsedSource["stopConditions"]);
+        }
+        if ("fileRotation" in $$parsedSource) {
+            $$parsedSource["fileRotation"] = $$createField4_0($$parsedSource["fileRotation"]);
+        }
+        return new RecordingConfig(/** @type {Partial<RecordingConfig>} */($$parsedSource));
+    }
+}
+
+/**
+ * RecordingStatus 录制会话运行时状态。
+ * 由 sink 维护并通过 atomic 或 mutex 暴露给上层，用于 UI 实时展示与错误反馈。
+ */
 export class RecordingStatus {
     /**
      * Creates a new RecordingStatus instance.
@@ -14,6 +150,7 @@ export class RecordingStatus {
     constructor($$source = {}) {
         if (!("recording" in $$source)) {
             /**
+             * Recording 是否正在录制
              * @member
              * @type {boolean}
              */
@@ -21,10 +158,71 @@ export class RecordingStatus {
         }
         if (/** @type {any} */(false)) {
             /**
+             * OutputDir 当前输出目录
              * @member
              * @type {string | undefined}
              */
             this["outputDir"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CurrentFile 当前写入的文件名（不含目录）
+             * @member
+             * @type {string | undefined}
+             */
+            this["currentFile"] = undefined;
+        }
+        if (!("fileSize" in $$source)) {
+            /**
+             * FileSize 当前文件累计字节数
+             * @member
+             * @type {number}
+             */
+            this["fileSize"] = 0;
+        }
+        if (!("fileCount" in $$source)) {
+            /**
+             * FileCount 本会话已滚动的文件数（含当前文件，从 1 开始）
+             * @member
+             * @type {number}
+             */
+            this["fileCount"] = 0;
+        }
+        if (!("recordCount" in $$source)) {
+            /**
+             * RecordCount 本会话累计写入的"记录"数。
+             * 语义统一为"通道值数"（1 payload × N 通道 = N 条记录）：
+             *   - CSV sink：1 条记录 = 1 行（含 1 个通道值），与 CSV 行数一致
+             *   - Binary sink：1 条记录 = 1 个 float32 通道槽位（1 payload × N 通道 = N 槽位）
+             * 注意：此值不是 payload 帧数。如需帧数请用 RecordCount / 通道数。
+             * @member
+             * @type {number}
+             */
+            this["recordCount"] = 0;
+        }
+        if (!("durationMs" in $$source)) {
+            /**
+             * DurationMs 本会话累计录制时长（毫秒）
+             * @member
+             * @type {number}
+             */
+            this["durationMs"] = 0;
+        }
+        if (!("droppedCount" in $$source)) {
+            /**
+             * DroppedCount 因队列满被丢弃的 payload 数
+             * @member
+             * @type {number}
+             */
+            this["droppedCount"] = 0;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * LastError 最近一次 I/O 错误描述（空表示无错误）
+             * @member
+             * @type {string | undefined}
+             */
+            this["lastError"] = undefined;
         }
 
         Object.assign(this, $$source);
@@ -40,3 +238,59 @@ export class RecordingStatus {
         return new RecordingStatus(/** @type {Partial<RecordingStatus>} */($$parsedSource));
     }
 }
+
+/**
+ * StopConditions 自动停止条件。
+ * 任意条件满足时，sink 应停止接收新数据并触发 StorageRecorder.Stop。
+ * 全部字段为零值表示不限制（永久录制直到用户手动停止）。
+ */
+export class StopConditions {
+    /**
+     * Creates a new StopConditions instance.
+     * @param {Partial<StopConditions>} [$$source = {}] - The source object to create the StopConditions.
+     */
+    constructor($$source = {}) {
+        if (/** @type {any} */(false)) {
+            /**
+             * MaxDurationMs 录制时长上限（毫秒）
+             * @member
+             * @type {number | undefined}
+             */
+            this["maxDurationMs"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * MaxFileSizeBytes 单文件大小上限（字节）
+             * 注意：对启用滚动的场景，该字段同时表示滚动阈值；
+             * 未启用滚动时表示录制总大小上限，达到后停止录制。
+             * @member
+             * @type {number | undefined}
+             */
+            this["maxFileSizeBytes"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * MaxRecordCount 累计记录条数上限
+             * @member
+             * @type {number | undefined}
+             */
+            this["maxRecordCount"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new StopConditions instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {StopConditions}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new StopConditions(/** @type {Partial<StopConditions>} */($$parsedSource));
+    }
+}
+
+// Private type creation functions
+const $$createType0 = StopConditions.createFrom;
+const $$createType1 = FileRotation.createFrom;

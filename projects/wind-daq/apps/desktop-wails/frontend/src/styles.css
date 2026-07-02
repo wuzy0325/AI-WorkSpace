@@ -8,6 +8,7 @@
 @import './styles/themes/dark.css';
 @import './styles/themes/light.css';
 @import './styles/glass.css';
+@import './styles/settings-form.css';
 
 @tailwind base;
 @tailwind components;

@@ -1,5 +1,7 @@
 package calibration
 
+import "sort"
+
 // csv_schema.go — 校准 CSV 持久化格式描述（纯领域知识，无字节 I/O）
 //
 // 本文件遵循 CLAUDE.md "Constraint Clarifications" 规则 1：
@@ -24,10 +26,14 @@ func (s CsvSchema) BuildHeader() []string {
 
 	switch CalibrationType(s.config.Type) {
 	case TypeFiveHole:
-		return append(base,
-			"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm", "pTotal", "pStatic",
-			"Kalpha", "Kbeta", "CPT", "CPS", "machNumber",
-		)
+		header := []string{
+			"点位编号", "α(°)", "β(°)", "P1(Pa)", "P2(Pa)", "P3(Pa)", "P4(Pa)", "P5(Pa)",
+			"P∞(Pa)", "T∞(°C)", "Pt(Pa)", "Ps(Pa)", "Ma", "Kα", "Kβ", "CPT", "CPS", "采样次数", "标准差",
+		}
+		for i := 1; i <= 16; i++ {
+			header = append(header, "CH"+formatInt(i)+"(Pa)")
+		}
+		return header
 	case TypeThreeHole:
 		return append(base,
 			"p1", "p2", "p3", "pAtm", "pTotal",
@@ -82,12 +88,10 @@ func (s CsvSchema) buildFiveHoleRecord(dp *FiveHoleDataPoint) []string {
 		machNumber = formatFloat(*dp.Coefficients.MachNumber)
 	}
 
-	return []string{
+	values := []string{
 		formatInt(dp.PointID),
-		formatInt(dp.SampleCount),
-		formatFloat(dp.StdDev),
-		formatInt64(dp.StartTime),
-		formatInt64(dp.EndTime),
+		formatFloat(dp.Coordinates["α"]),
+		formatFloat(dp.Coordinates["β"]),
 		formatFloat(dp.RawData.P1),
 		formatFloat(dp.RawData.P2),
 		formatFloat(dp.RawData.P3),
@@ -97,12 +101,35 @@ func (s CsvSchema) buildFiveHoleRecord(dp *FiveHoleDataPoint) []string {
 		formatFloat(dp.RawData.TAtm),
 		pTotal,
 		pStatic,
+		machNumber,
 		formatFloat(dp.Coefficients.Kalpha),
 		formatFloat(dp.Coefficients.Kbeta),
 		formatFloat(dp.Coefficients.CPT),
 		formatFloat(dp.Coefficients.CPS),
-		machNumber,
+		formatInt(dp.SampleCount),
+		formatFloat(dp.StdDev),
 	}
+	return append(values, buildFiveHoleRawChannelValues(dp.RawDeviceChannels)...)
+}
+
+func buildFiveHoleRawChannelValues(rawDeviceChannels map[string][]float64) []string {
+	values := make([]string, 16)
+	for i := range values {
+		values[i] = ""
+	}
+	deviceIDs := make([]string, 0, len(rawDeviceChannels))
+	for deviceID := range rawDeviceChannels {
+		deviceIDs = append(deviceIDs, deviceID)
+	}
+	sort.Strings(deviceIDs)
+	for _, deviceID := range deviceIDs {
+		channels := rawDeviceChannels[deviceID]
+		for i := 0; i < len(channels) && i < len(values); i++ {
+			values[i] = formatFloatWithPrecision(channels[i], 3)
+		}
+		break
+	}
+	return values
 }
 
 func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {

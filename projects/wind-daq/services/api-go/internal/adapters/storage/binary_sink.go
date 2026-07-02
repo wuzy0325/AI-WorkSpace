@@ -5,6 +5,7 @@
 //   - 每帧：定长头（时间戳、设备时间戳、deviceId 长度、通道数）+ 变长 payload（deviceId + 通道索引 + 通道值）
 //   - 通道值以 float32 LE 编码，相比 CSV 文本节省 ~50% 空间，且无格式化开销
 //   - 异步 writer goroutine + bufio + 定时 Sync，与 CSVRecordingSink 同设计
+//   - 支持文件滚动（FileRotation）与自动停止条件（StopConditions），与 CSVRecordingSink 对齐
 //
 // 文件格式：
 //
@@ -55,7 +56,8 @@ func DefaultBinarySinkConfig() BinarySinkConfig {
 	return DefaultCSVSinkConfig()
 }
 
-// BinaryRecordingSink 二进制异步批量写存储适配器
+// BinaryRecordingSink 二进制异步批量写存储适配器。
+// 与 CSVRecordingSink 共享同一套异步/统计/滚动/停止条件机制，仅 writePayload 实现不同。
 type BinaryRecordingSink struct {
 	cfg     BinarySinkConfig
 	started atomic.Bool
@@ -64,6 +66,11 @@ type BinaryRecordingSink struct {
 	stopCh chan struct{}
 	doneCh chan struct{}
 
+	// autoDone 在 sink 因停止条件或 I/O 错误自停止时被关闭；
+	// StorageRecorder 通过 Done() 监听该信号以同步自身 recording 状态。
+	autoDone     chan struct{}
+	autoDoneOnce sync.Once
+
 	dropped atomic.Int64 // 队列满时丢弃计数（监控用）
 
 	// drop 节流日志状态：与 CSVRecordingSink 对齐，
@@ -71,6 +78,18 @@ type BinaryRecordingSink struct {
 	// 避免每次丢弃都加锁；仅在节流间隔到达时才进入慢路径更新。
 	droppedSinceLog atomic.Int64
 	lastDropLogAt   atomic.Int64
+
+	// 运行时统计：writerLoop 写、Status 读，用 statsMu 保护。
+	statsMu        sync.RWMutex
+	config         corestorage.RecordingConfig
+	currentFile    string
+	fileSize       int64 // 当前文件累计字节
+	fileCount      int64 // 本会话文件数（含当前文件）
+	recordCount    int64 // 本会话累计记录条数
+	startedAt      time.Time
+	fileStartedAt  time.Time
+	lastError      string
+	initialFilePtr *os.File
 
 	syncErrMu sync.RWMutex
 	syncErr   error
@@ -106,11 +125,75 @@ func (s *BinaryRecordingSink) Start(config corestorage.RecordingConfig) error {
 		return err
 	}
 
-	name := fmt.Sprintf("%s-%s.bin", config.FilePrefix, time.Now().Format("20060102-150405"))
-	file, err := os.Create(filepath.Join(config.OutputDir, name))
+	now := time.Now()
+	s.statsMu.Lock()
+	s.config = config
+	s.fileCount = 0
+	s.recordCount = 0
+	s.lastError = ""
+	s.startedAt = now
+	s.fileStartedAt = now
+	s.statsMu.Unlock()
+
+	s.queue = make(chan device.DataPayload, s.cfg.QueueCapacity)
+	s.stopCh = make(chan struct{})
+	s.doneCh = make(chan struct{})
+	s.autoDone = make(chan struct{})
+
+	s.syncErrMu.Lock()
+	s.syncErr = nil
+	s.syncErrMu.Unlock()
+
+	file, err := s.openNewFile()
 	if err != nil {
 		s.started.Store(false)
 		return err
+	}
+	s.initialFilePtr = file
+
+	slog.Info("BinaryRecordingSink Start 成功",
+		"component", "BinaryRecordingSink",
+		"outputDir", config.OutputDir,
+		"file", s.currentFileName(),
+		"queueCapacity", s.cfg.QueueCapacity,
+		"bufferSize", s.cfg.BufferSize,
+		"flushInterval", s.cfg.FlushInterval,
+		"syncInterval", s.cfg.SyncInterval,
+		"rotationEnabled", config.FileRotation.Enabled,
+		"stopConditions", config.StopConditions,
+	)
+
+	go s.writerLoop()
+	return nil
+}
+
+// openNewFile 创建新的二进制文件并写入文件头。
+// 文件名格式：<prefix>-YYYYMMDD-HHMMSS-NNN.bin，NNN 从 001 开始递增。
+// O_CREATE|O_EXCL 保证不覆盖已存在文件。
+func (s *BinaryRecordingSink) openNewFile() (*os.File, error) {
+	s.statsMu.Lock()
+	config := s.config
+	fileCount := s.fileCount + 1
+	s.statsMu.Unlock()
+
+	base := fmt.Sprintf("%s-%s", config.FilePrefix, time.Now().Format("20060102-150405"))
+	var name string
+	var file *os.File
+	var err error
+	for seq := fileCount; seq < fileCount+1000; seq++ {
+		name = fmt.Sprintf("%s-%03d.bin", base, seq)
+		full := filepath.Join(config.OutputDir, name)
+		file, err = os.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			break
+		}
+		if os.IsExist(err) {
+			continue
+		}
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// 写入文件头：magic + version + reserved (10 bytes zero)
@@ -120,32 +203,22 @@ func (s *BinaryRecordingSink) Start(config corestorage.RecordingConfig) error {
 	// header[6:16] 保留字段，全 0
 	if _, err := file.Write(header); err != nil {
 		_ = file.Close()
-		s.started.Store(false)
-		return err
+		return nil, err
 	}
 
-	bw := bufio.NewWriterSize(file, s.cfg.BufferSize)
-	s.queue = make(chan device.DataPayload, s.cfg.QueueCapacity)
-	s.stopCh = make(chan struct{})
-	s.doneCh = make(chan struct{})
+	s.statsMu.Lock()
+	s.currentFile = name
+	s.fileCount = fileCount
+	s.fileSize = int64(binaryHeaderSize)
+	s.fileStartedAt = time.Now()
+	s.statsMu.Unlock()
+	return file, nil
+}
 
-	// 清除上一次录制可能残留的 I/O 错误，避免 Stop() 返回旧错误
-	s.syncErrMu.Lock()
-	s.syncErr = nil
-	s.syncErrMu.Unlock()
-
-	slog.Info("BinaryRecordingSink Start 成功",
-		"component", "BinaryRecordingSink",
-		"outputDir", config.OutputDir,
-		"file", name,
-		"queueCapacity", s.cfg.QueueCapacity,
-		"bufferSize", s.cfg.BufferSize,
-		"flushInterval", s.cfg.FlushInterval,
-		"syncInterval", s.cfg.SyncInterval,
-	)
-
-	go s.writerLoop(file, bw)
-	return nil
+func (s *BinaryRecordingSink) currentFileName() string {
+	s.statsMu.RLock()
+	defer s.statsMu.RUnlock()
+	return s.currentFile
 }
 
 // Write 非阻塞投递 payload 到队列，队列满时丢弃并计数。
@@ -162,17 +235,14 @@ func (s *BinaryRecordingSink) Write(payload device.DataPayload) error {
 	select {
 	case queue <- payload:
 	default:
-		// 队列满：丢弃并计数（快路径，无锁）
 		totalDropped := s.dropped.Add(1)
 		s.droppedSinceLog.Add(1)
 
-		// 节流检查：上次日志时间距今超过 dropLogInterval 才进入慢路径
 		last := s.lastDropLogAt.Load()
 		now := time.Now().UnixNano()
 		if now-last < int64(dropLogInterval) {
 			return nil
 		}
-		// CAS 抢占日志权：避免多 goroutine 同时输出
 		if !s.lastDropLogAt.CompareAndSwap(last, now) {
 			return nil
 		}
@@ -202,13 +272,40 @@ func (s *BinaryRecordingSink) Stop() error {
 	return err
 }
 
-// DroppedCount 返回累计丢弃的 payload 数（监控用）
+// Status 返回当前录制状态快照
+func (s *BinaryRecordingSink) Status() corestorage.RecordingStatus {
+	s.statsMu.RLock()
+	defer s.statsMu.RUnlock()
+
+	var durationMs int64
+	if !s.startedAt.IsZero() {
+		durationMs = time.Since(s.startedAt).Milliseconds()
+	}
+	return corestorage.RecordingStatus{
+		Recording:    s.started.Load(),
+		OutputDir:    s.config.OutputDir,
+		CurrentFile:  s.currentFile,
+		FileSize:     s.fileSize,
+		FileCount:    s.fileCount,
+		RecordCount:  s.recordCount,
+		DurationMs:   durationMs,
+		DroppedCount: s.dropped.Load(),
+		LastError:    s.lastError,
+	}
+}
+
+// Done 返回 sink 自停止信号 channel
+func (s *BinaryRecordingSink) Done() <-chan struct{} {
+	return s.autoDone
+}
+
+// DroppedCount 返回累计丢弃的 payload 数
 func (s *BinaryRecordingSink) DroppedCount() int64 {
 	return s.dropped.Load()
 }
 
 // writerLoop 与 CSVRecordingSink.writerLoop 结构相同，仅 writePayload 实现不同
-func (s *BinaryRecordingSink) writerLoop(file *os.File, bw *bufio.Writer) {
+func (s *BinaryRecordingSink) writerLoop() {
 	defer close(s.doneCh)
 
 	flushTicker := time.NewTicker(s.cfg.FlushInterval)
@@ -218,6 +315,13 @@ func (s *BinaryRecordingSink) writerLoop(file *os.File, bw *bufio.Writer) {
 
 	// 复用 byte buffer 用于编码单帧
 	var frame []byte
+
+	file := s.takeInitialFile()
+	if file == nil {
+		s.failStopWithMsg("writerLoop: 初始文件未就绪")
+		return
+	}
+	bw := bufio.NewWriterSize(file, s.cfg.BufferSize)
 
 	flushAndSync := func(sync bool) error {
 		if err := bw.Flush(); err != nil {
@@ -235,8 +339,13 @@ func (s *BinaryRecordingSink) writerLoop(file *os.File, bw *bufio.Writer) {
 		s.syncErrMu.Lock()
 		s.syncErr = err
 		s.syncErrMu.Unlock()
+		s.statsMu.Lock()
+		s.lastError = err.Error()
+		s.statsMu.Unlock()
 		_ = bw.Flush()
 		_ = file.Close()
+		s.started.Store(false)
+		s.signalAutoDone()
 	}
 
 	for {
@@ -268,6 +377,41 @@ func (s *BinaryRecordingSink) writerLoop(file *os.File, bw *bufio.Writer) {
 				failStop(err)
 				return
 			}
+			if s.shouldAutoStop() {
+				if err := flushAndSync(true); err != nil {
+					failStop(err)
+					return
+				}
+				if err := file.Close(); err != nil {
+					failStop(err)
+					return
+				}
+				s.started.Store(false)
+				s.signalAutoDone()
+				slog.Info("BinaryRecordingSink 因停止条件自停止",
+					"component", "BinaryRecordingSink",
+					"fileCount", s.Status().FileCount,
+					"recordCount", s.Status().RecordCount,
+				)
+				return
+			}
+			if s.shouldRotate() {
+				if err := flushAndSync(true); err != nil {
+					failStop(err)
+					return
+				}
+				if err := file.Close(); err != nil {
+					failStop(err)
+					return
+				}
+				newFile, err := s.openNewFile()
+				if err != nil {
+					failStop(err)
+					return
+				}
+				file = newFile
+				bw = bufio.NewWriterSize(file, s.cfg.BufferSize)
+			}
 		case <-flushTicker.C:
 			if err := flushAndSync(false); err != nil {
 				failStop(err)
@@ -282,8 +426,68 @@ func (s *BinaryRecordingSink) writerLoop(file *os.File, bw *bufio.Writer) {
 	}
 }
 
+func (s *BinaryRecordingSink) takeInitialFile() *os.File {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	f := s.initialFilePtr
+	s.initialFilePtr = nil
+	return f
+}
+
+// shouldAutoStop 评估是否满足停止条件
+func (s *BinaryRecordingSink) shouldAutoStop() bool {
+	s.statsMu.RLock()
+	defer s.statsMu.RUnlock()
+	sc := s.config.StopConditions
+	if sc.MaxDurationMs > 0 && time.Since(s.startedAt).Milliseconds() >= sc.MaxDurationMs {
+		return true
+	}
+	if sc.MaxFileSizeBytes > 0 && !s.config.FileRotation.Enabled && s.fileSize >= sc.MaxFileSizeBytes {
+		return true
+	}
+	if sc.MaxRecordCount > 0 && s.recordCount >= sc.MaxRecordCount {
+		return true
+	}
+	return false
+}
+
+// shouldRotate 评估是否应滚动到新文件
+func (s *BinaryRecordingSink) shouldRotate() bool {
+	s.statsMu.RLock()
+	defer s.statsMu.RUnlock()
+	if !s.config.FileRotation.Enabled {
+		return false
+	}
+	fr := s.config.FileRotation
+	if fr.MaxFileSizeBytes > 0 && s.fileSize >= fr.MaxFileSizeBytes {
+		return true
+	}
+	if fr.MaxDurationMs > 0 && time.Since(s.fileStartedAt).Milliseconds() >= fr.MaxDurationMs {
+		return true
+	}
+	return false
+}
+
+func (s *BinaryRecordingSink) signalAutoDone() {
+	s.autoDoneOnce.Do(func() {
+		close(s.autoDone)
+	})
+}
+
+func (s *BinaryRecordingSink) failStopWithMsg(msg string) {
+	s.syncErrMu.Lock()
+	s.syncErr = fmt.Errorf("%s", msg)
+	s.syncErrMu.Unlock()
+	s.statsMu.Lock()
+	s.lastError = msg
+	s.statsMu.Unlock()
+	s.started.Store(false)
+	s.signalAutoDone()
+}
+
 // writePayload 编码单个 payload 写入 bufio。
 // 帧格式见文件顶部注释。
+// 写入完成后更新 fileSize 与 recordCount 统计。
 func (s *BinaryRecordingSink) writePayload(bw *bufio.Writer, payload device.DataPayload, frame *[]byte) error {
 	ts := payload.Timestamp
 	if payload.DeviceTimestamp > 0 {
@@ -339,5 +543,11 @@ func (s *BinaryRecordingSink) writePayload(bw *bufio.Writer, payload device.Data
 		return err
 	}
 	*frame = b
+
+	// 更新统计
+	s.statsMu.Lock()
+	s.fileSize += int64(frameSize)
+	s.recordCount += int64(channelCount)
+	s.statsMu.Unlock()
 	return nil
 }

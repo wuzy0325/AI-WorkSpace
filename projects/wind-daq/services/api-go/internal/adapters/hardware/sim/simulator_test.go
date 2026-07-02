@@ -432,16 +432,17 @@ func TestDSA3217FrameProducer_ValidFrame(t *testing.T) {
 func TestP1604Responder_Commands(t *testing.T) {
 	r := NewP1604Responder()
 
+	// 命令以纯 ASCII 发送，不带换行符（与真实设备行为一致）
 	cases := []struct {
 		cmd         string
 		startStream bool
 		stopStream  bool
 	}{
-		{"c 01 1\r\n", true, false},
-		{"c 02 1\r\n", false, true},
-		{"w1601\r\n", false, false},
-		{"c 00 1 FFFF 1 100 7 0\r\n", false, false},
-		{"c 05 1 0810\r\n", false, false},
+		{"c 01 1", true, false},
+		{"c 02 1", false, true},
+		{"w1601", false, false},
+		{"c 00 1 FFFF 1 100 7 0", false, false},
+		{"c 05 1 0810", false, false},
 	}
 	for _, c := range cases {
 		resp, err := r.HandleCommand([]byte(c.cmd))
@@ -455,8 +456,9 @@ func TestP1604Responder_Commands(t *testing.T) {
 			t.Fatalf("cmd %q stopStream=%v want %v", c.cmd, resp.StopStream, c.stopStream)
 		}
 	}
-	if r.ReadMode() != ReadModeLine {
-		t.Fatal("P1604 ReadMode want line")
+	// P1604 adapter 写裸命令（无换行符），模拟器使用空闲模式读取
+	if r.ReadMode() != ReadModeIdle {
+		t.Fatal("P1604 ReadMode want idle")
 	}
 }
 

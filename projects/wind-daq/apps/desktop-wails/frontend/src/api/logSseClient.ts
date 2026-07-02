@@ -1,12 +1,14 @@
 import { useLogStore } from '@stores/logStore'
 import { request } from './http-client'
 import { isWailsAvailable } from './wails-adapter'
-import type { LogLevel } from './types'
+import type { LogCategory, LogLevel } from './types'
 
 interface LogSseEntry {
   id: number
   timestamp: string
   level: string
+  category?: string
+  deviceId?: string
   source: string
   message: string
   details?: string
@@ -27,6 +29,14 @@ const levelMap: Record<string, LogLevel> = {
   error: 'error',
 }
 
+const categoryMap: Record<string, LogCategory> = {
+  system: 'system',
+  'hardware-send': 'hardware-send',
+  'hardware-recv': 'hardware-recv',
+  acquisition: 'acquisition',
+  business: 'business',
+}
+
 // 记录已经警告过的未知 level，避免后端持续返回新值时把控制台刷爆。
 // 限制集合最大 50 条，超过后静默拒绝，防止长期运行内存缓慢增长。
 const warnedUnknownLevels = new Set<string>()
@@ -43,7 +53,34 @@ function resolveLevel(raw: string): LogLevel {
   return 'info'
 }
 
+function resolveCategory(raw: string | undefined): LogCategory | undefined {
+  if (!raw) return undefined
+  return categoryMap[raw]
+}
+
 let currentSubscription: LogSseSubscription | null = null
+
+// waitForLogApi 探测本地日志 API 是否就绪。
+// 设计权衡：
+//   - maxWaitMs=1500：本地 API 通常 200-500ms 启动完成，1.5s 足够覆盖冷启动；
+//     过长（如原 5s）会串行延迟 SSE 连接，让 UI 等待日志流时间过长。
+//   - 轮询间隔 100ms：比原 200ms 更细粒度，正常情况下首次探测即可命中就绪状态。
+//   - 失败由调用方回退到 scheduleReconnect 处理，不会卡死。
+async function waitForLogApi(aborted: () => boolean, maxWaitMs = 1500): Promise<boolean> {
+  const startedAt = Date.now()
+  while (!aborted()) {
+    try {
+      const response = await fetch(`${apiBase}/api/health`, { cache: 'no-store' })
+      if (response.ok) return true
+    } catch {
+      // Local API may still be starting; retry until maxWaitMs expires.
+    }
+
+    if (Date.now() - startedAt >= maxWaitMs) return false
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
 
 interface LogSseParseState {
   buffer: string
@@ -94,6 +131,11 @@ export function subscribeLogStream(): LogSseSubscription {
     logStore.setStreamStatus(reconnecting ? 'reconnecting' : 'connecting', reconnecting ? '日志流重连中' : '正在连接日志流')
     attemptCount++
     try {
+      if (!(await waitForLogApi(() => aborted))) {
+        logStore.setStreamStatus('error', '本地日志服务尚未就绪')
+        scheduleReconnect()
+        return
+      }
       const response = await fetch(`${apiBase}/api/log/stream`)
       if (!response.ok) {
         logStore.setStreamStatus('error', `日志流连接失败: HTTP ${response.status}`)
@@ -124,6 +166,8 @@ export function subscribeLogStream(): LogSseSubscription {
               id: `log-${entry.id}-${Date.now()}`,
               timestamp: entry.timestamp,
               level: resolveLevel(entry.level),
+              category: resolveCategory(entry.category),
+              deviceId: entry.deviceId,
               source: entry.source,
               message: entry.message,
               details: entry.details,
@@ -194,6 +238,8 @@ export async function fetchRecentLogs(limit = 500): Promise<void> {
         id: `recent-${entry.id}`,
         timestamp: entry.timestamp,
         level: resolveLevel(entry.level),
+        category: resolveCategory(entry.category),
+        deviceId: entry.deviceId,
         source: entry.source,
         message: entry.message,
         details: entry.details,
@@ -203,5 +249,31 @@ export async function fetchRecentLogs(limit = 500): Promise<void> {
   } catch {
     // 拉取历史日志失败，静默处理
     logStore.setRecentLoadStatus('error', '历史日志读取失败，请检查后端服务')
+  }
+}
+
+// fetchCategoryStates 获取后端日志分类开关状态。
+export async function fetchCategoryStates(): Promise<void> {
+  try {
+    const data = await request<{ states: Record<string, boolean> }>('/api/log/categories')
+    useLogStore().updateCategoryStates(data.states ?? {})
+  } catch {
+    // 获取失败不影响日志查看，静默处理
+  }
+}
+
+// setCategoryEnabled 向后端设置指定分类的日志开关状态。
+// 同时本地乐观更新 store，确保 UI 即时响应。
+export async function setCategoryEnabled(category: string, enabled: boolean): Promise<void> {
+  const logStore = useLogStore()
+  logStore.setCategoryEnabledState(category, enabled)
+  try {
+    await request('/api/log/categories', {
+      method: 'PUT',
+      body: JSON.stringify({ category, enabled }),
+    })
+  } catch {
+    // 请求失败时回滚本地状态
+    logStore.setCategoryEnabledState(category, !enabled)
   }
 }

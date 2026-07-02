@@ -339,6 +339,7 @@ func (d *DSA3217) parseDataLine(line string) {
 	sink(device.DataPayload{
 		DeviceID:       d.profile.ID,
 		DeviceType:     d.profile.Type,
+		DeviceName:     d.profile.Name,
 		Timestamp:      device.NowMs(),
 		Channels:       channelValues,
 		ChannelIndices: indices,

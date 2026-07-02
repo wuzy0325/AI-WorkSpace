@@ -19,6 +19,14 @@ func TestCopyDefaultProfilesCreatesValidDefaults(t *testing.T) {
 
 	assertValidJSONArray(t, devicePath)
 	assertValidJSONArray(t, motionPath)
+
+	if productionBuild {
+		// 生产构建不预置 sim-1 默认 profile，避免向客户暴露开发样例。
+		assertJSONArrayLen(t, devicePath, 0)
+	} else {
+		// 开发构建必须写入 sim-1 默认 profile，否则前端首次启动会丢失模拟器设备。
+		assertJSONArrayLen(t, devicePath, 1)
+	}
 }
 
 func TestCopyDefaultProfilesRepairsInvalidMotionConfig(t *testing.T) {
@@ -41,6 +49,10 @@ func TestCopyDefaultProfilesRepairsInvalidMotionConfig(t *testing.T) {
 }
 
 func TestAppContextSimulatedAcquisitionPreservesPayloadSlices(t *testing.T) {
+	if productionBuild {
+		t.Skip("production builds do not seed a simulated DAQ profile")
+	}
+
 	ctx, err := NewAppContext(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewAppContext returned error: %v", err)
@@ -81,7 +93,19 @@ func assertValidJSONArray(t *testing.T, path string) {
 	if err := json.Unmarshal(data, &rows); err != nil {
 		t.Fatalf("expected valid JSON array in %s: %v", path, err)
 	}
-	if len(rows) == 0 {
-		t.Fatalf("expected at least one profile in %s", path)
+}
+
+func assertJSONArrayLen(t *testing.T, path string, want int) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) returned error: %v", path, err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatalf("expected valid JSON array in %s: %v", path, err)
+	}
+	if len(rows) != want {
+		t.Fatalf("expected %d profiles in %s, got %d", want, path, len(rows))
 	}
 }

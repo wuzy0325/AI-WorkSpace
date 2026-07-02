@@ -51,6 +51,8 @@ export interface DeviceProfile {
   samplingRate: number
   channels: ChannelConfig[]
   daqT1603Config?: DaqT1603HardwareConfig
+  /** DAQ-P-1604 专属：是否使用设备帧内硬件时间戳（关闭时使用主机接收时间） */
+  daqP1604UseDeviceTimestamp?: boolean
 }
 
 export interface DeviceStatus {
@@ -82,17 +84,24 @@ export interface ScanResult {
 
 export interface DataPayload {
   deviceId: string
+  deviceType?: DeviceType
+  deviceName?: string
   timestamp: number
+  deviceTimestamp?: number
   channels: number[]
   channelIndices: number[]
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+export type LogCategory = 'system' | 'hardware-send' | 'hardware-recv' | 'acquisition' | 'business'
+
 export interface LogEntry {
   id: string
   timestamp: string
   level: LogLevel
+  category?: LogCategory
+  deviceId?: string
   source: string
   message: string
   details?: string

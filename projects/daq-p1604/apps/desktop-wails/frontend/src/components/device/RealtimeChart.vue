@@ -19,12 +19,14 @@ const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
 const { theme } = useTheme()
 
+// 18 通道波形配色：剔除容易与「警告/异常」混淆的橙黄（amber/orange/yellow），
+// 改用蓝青绿紫粉等冷色/中性色，降低视觉噪音并避免误读。
 const COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
-  '#f43f5e', '#06b6d4', '#f97316', '#6366f1',
-  '#84cc16', '#14b8a6', '#d946ef', '#0ea5e9',
-  '#eab308', '#22c55e', '#ef4444', '#8b5cf6',
-  '#ec4899', '#64748b',
+  '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4',
+  '#f43f5e', '#14b8a6', '#6366f1', '#22c55e',
+  '#a855f7', '#0ea5e9', '#ec4899', '#84cc16',
+  '#64748b', '#d946ef', '#ef4444', '#4f46e5',
+  '#0891b2', '#be185d',
 ]
 
 interface ThemeColors {
@@ -140,12 +142,27 @@ const option = computed(() => {
         type: 'line',
         lineStyle: { color: c.text, opacity: 0.4, type: 'dashed' as const },
       },
-      // 按通道精度格式化 tooltip 数值（dataIndex 对应 series 顺序）
-      valueFormatter: (value: unknown, dataIndex: number) => {
-        if (value === null || value === undefined || typeof value !== 'number') return '-'
-        const ch = selectedChannels[dataIndex]
-        const p = ch ? (ch.precision ?? 3) : 3
-        return value.toFixed(p)
+      // 按通道精度格式化 tooltip 数值：axis trigger 下 params 为数组，
+      // 通过 seriesName 匹配通道，避免误用 dataIndex 导致精度错位
+      formatter: (params: unknown) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const first = params[0] as { name?: string }
+        const time = first.name ?? ''
+        const rows = params.map((p: any) => {
+          const seriesName = (p.seriesName as string) ?? ''
+          const ch = selectedChannels.find(
+            (c) => (c.name || `CH${c.index + 1}`) === seriesName,
+          )
+          const precision = ch ? (ch.precision ?? 3) : 3
+          const rawValue = Array.isArray(p.value) ? p.value[1] : p.value
+          const valueText =
+            typeof rawValue === 'number' && !Number.isNaN(rawValue)
+              ? rawValue.toFixed(precision)
+              : '-'
+          const marker = (p.marker as string) ?? ''
+          return `${marker}${seriesName}: <strong>${valueText}</strong>`
+        })
+        return `<div style="font-weight:600;margin-bottom:4px">${time}</div>${rows.join('<br/>')}`
       },
     },
     legend: {

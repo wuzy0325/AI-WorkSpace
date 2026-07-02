@@ -28,7 +28,9 @@ const motionStore = useMotionStore()
 
 function isRequired(c: ProbeChannelConfig) { return isTraversalRequiredProbeChannel(c.role, c.name) }
 
-const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i}`, value: i }))
+// 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
+// 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
+const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: i }))
 const axisOptions = ['X', 'Y', 'Z', 'U'].map(a => ({ label: `${a} 轴`, value: a }))
 const mappingOptions = [
   { label: props.t.mappingAlpha || '攻角', value: 'alpha' },

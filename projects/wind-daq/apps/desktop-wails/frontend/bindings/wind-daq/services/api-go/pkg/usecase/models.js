@@ -26,6 +26,16 @@ export const ReportStatus = report$0.ReportStatus;
 /**
  * Type aliases
  */
+export const StorageRecordingConfig = storage$0.RecordingConfig;
+
+/**
+ * Type aliases
+ * @typedef {storage$0.RecordingConfig} StorageRecordingConfig
+ */
+
+/**
+ * Type aliases
+ */
 export const StorageRecordingStatus = storage$0.RecordingStatus;
 
 /**

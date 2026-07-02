@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,24 +14,78 @@ import (
 // 模拟器需要识别这些命令并返回合理响应，同时通过 StartStream/StopStream 控制
 // 数据帧发送。流式设备（P1064Pre/WTN_PXI）不需要 responder。
 
-// P1604Responder 响应 DAQ-P-1604 的采集控制命令。
-// P1604 adapter 的 sendCommand 只写不读，所以响应 Data 为空；
-// 仅通过 c 01 1 / c 02 1 控制 StartStream/StopStream。
-// 命令以 \r\n 结尾，使用行模式读取。
-type P1604Responder struct{}
+// P1604Responder 响应 DAQ-P-1604 的采集控制与单位系数命令。
+//
+// 命令以纯 ASCII 发送，不带任何换行符（实测设备 w1601 长度前缀模式下
+// 将 \r\n 视为命令字符的一部分，对 u01101 等命令返回 N05）。
+// 因此模拟器使用空闲模式读取：读到数据后短暂无新字节即认为命令完整。
+//
+// 支持的命令：
+//   - w1601        启用长度前缀模式，回 "A" 帧
+//   - u01101       读取全局 EU 压力转换系数，回 "<coeff> " 帧
+//   - v01101 <c>   写入 EU 压力转换系数，回 "A" 帧
+//   - c 01 1       开始发帧（StartStream）
+//   - c 02 1       停止发帧（StopStream）
+//
+// 单位系数响应均以 2 字节大端长度前缀帧返回，对齐设备 w1601 模式与
+// shared/device-sdk/go/protocol 的 FrameReader.ReadFrame 读取逻辑。
+type P1604Responder struct {
+	mu    sync.Mutex
+	coeff float64 // 当前 EU 压力转换系数，默认 psi=1.0
+}
 
-// NewP1604Responder 构造 P1604 命令响应器。
-func NewP1604Responder() *P1604Responder { return &P1604Responder{} }
+// NewP1604Responder 构造 P1604 命令响应器，初始单位系数为 psi（1.0）。
+func NewP1604Responder() *P1604Responder { return &P1604Responder{coeff: 1.0} }
 
-// ReadMode 返回行模式（adapter 写 cmd+"\r\n"）。
-func (r *P1604Responder) ReadMode() ReadMode { return ReadModeLine }
+// ReadMode 返回空闲模式（adapter 写裸命令，不带分隔符）。
+func (r *P1604Responder) ReadMode() ReadMode { return ReadModeIdle }
 
-// HandleCommand 解析 P1604 命令，识别采集启停。
-// adapter initStream 发送 w1601/c 00/c 05 等配置命令（静默接受），
+// prefixedFrame 构造带 2 字节大端长度前缀的响应帧。
+// 长度字段 = 前缀(2) + payload 长度，与设备 w1601 模式一致。
+func prefixedFrame(payload string) []byte {
+	body := []byte(payload)
+	frameLen := uint16(len(body) + 2)
+	buf := make([]byte, 2, len(body)+2)
+	binary.BigEndian.PutUint16(buf, frameLen)
+	return append(buf, body...)
+}
+
+// HandleCommand 解析 P1604 命令，识别采集启停与单位系数读写。
+// adapter Connect 阶段发送 w1601 + u01101，SetUnit 发送 v01101，
+// initStream 发送 c 00/c 05 等配置命令（静默接受），
 // c 01 1 触发开始发帧，c 02 1 触发停止发帧。
 func (r *P1604Responder) HandleCommand(line []byte) (Response, error) {
-	cmd := strings.TrimSpace(strings.TrimRight(string(line), "\r\n"))
+	cmd := strings.TrimSpace(string(line))
 	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return Response{}, nil
+	}
+
+	// w1601：启用长度前缀模式，回 ACK 帧
+	if fields[0] == "w1601" {
+		return Response{Data: prefixedFrame("A")}, nil
+	}
+
+	// u01101：读取全局 EU 压力转换系数，回 "<coeff> " 帧
+	if fields[0] == "u01101" {
+		r.mu.Lock()
+		coeff := r.coeff
+		r.mu.Unlock()
+		return Response{Data: prefixedFrame(fmt.Sprintf("%.6f ", coeff))}, nil
+	}
+
+	// v01101 <coeff>：写入 EU 压力转换系数，回 ACK 帧
+	if fields[0] == "v01101" {
+		if len(fields) >= 2 {
+			if v, err := strconv.ParseFloat(fields[1], 64); err == nil && v > 0 {
+				r.mu.Lock()
+				r.coeff = v
+				r.mu.Unlock()
+			}
+		}
+		return Response{Data: prefixedFrame("A")}, nil
+	}
+
 	if len(fields) < 3 {
 		return Response{}, nil
 	}

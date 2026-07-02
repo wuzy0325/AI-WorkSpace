@@ -11,8 +11,15 @@ const props = withDefaults(
     disabled?: boolean
     ariaLabel?: string
     dataTest?: string
+    /**
+     * value 在 options 中找不到匹配项时的回退行为
+     *
+     * - false：不显示回退内容，直接展示 placeholder（用于"原设备已删除"场景，避免显示原始 UUID）
+     * - 默认 true：显示 value 字符串本身（naive-ui NSelect 默认行为）
+     */
+    fallback?: boolean
   }>(),
-  { modelValue: '', options: () => [], placeholder: '', size: 'sm', disabled: false, ariaLabel: '', dataTest: '' },
+  { modelValue: '', options: () => [], placeholder: '', size: 'sm', disabled: false, ariaLabel: '', dataTest: '', fallback: true },
 )
 
 const naiveSize = computed(() => {
@@ -33,6 +40,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
     :disabled="disabled"
     :aria-label="ariaLabel || undefined"
     :data-test="dataTest || undefined"
+    :fallback="fallback"
     @update:value="emit('update:modelValue', $event ?? '')"
   />
 </template>

@@ -29,7 +29,7 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
-import { storageApi } from '@api/deviceApi'
+import { storageApi, deviceApi } from '@api/deviceApi'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiEmptyState from '@components/ui/UiEmptyState.vue'
 import UiLoadingState from '@components/ui/UiLoadingState.vue'
@@ -41,7 +41,7 @@ const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
-const { t, locale } = storeToRefs(i18n)
+const { t } = storeToRefs(i18n)
 
 const activePage = ref<MainShellPage>('dashboard')
 const appVersion = ref('0.1.0')
@@ -49,12 +49,27 @@ const showDeviceDrawer = ref(false)
 const showSettings = ref(false)
 const viewMode = ref<'overview' | 'chart' | 'table' | 'both'>('both')
 const isRecording = ref(false)
-const recordingOutputDir = ref('data/recordings')
-const recordingFilePrefix = ref('run')
+// 录制状态扩展字段（来自后端 Status()，便于 UI 展示与错误反馈）
+// outputDir/currentFile 在 sink Stop 后仍由后端保留，前端据此在状态栏
+// 显示"上次保存路径"，便于用户停止后定位文件位置。
+const recordingStatus = ref<{
+  outputDir?: string
+  currentFile?: string
+  fileSize?: number
+  fileCount?: number
+  recordCount?: number
+  durationMs?: number
+  droppedCount?: number
+  lastError?: string
+}>({})
 const busy = ref(false)
 const error = ref('')
 const initialLoading = ref(true)
 let unsubscribeDeviceSnapshots: (() => void) | null = null
+// 录制状态轮询句柄；高频采集中也只 2s 轮询一次，避免给本地 HTTP 增加负担
+let recordingStatusTimer: ReturnType<typeof setInterval> | null = null
+// 上一次已上报的 lastError，避免同一错误反复 toast
+let lastReportedError = ''
 
 // 采集状态：委托 store 层判断（任一设备正在采集即为 true）
 const acquiring = computed(() => deviceStore.isAnyAcquiring)
@@ -153,12 +168,10 @@ async function start(): Promise<void> {
     await ensureProfile()
     // 采集编排逻辑委托给 store 层
     await deviceStore.startAllAcquisitions()
-    // 采集启动后检查 autoStartOnAcquisition 配置，自动开始记录
-    if (storageStore.settings.autoStartOnAcquisition && !isRecording.value) {
-      recordingOutputDir.value = storageStore.settings.baseDirectory || 'data/recordings'
-      recordingFilePrefix.value = storageStore.settings.filePrefix || 'run'
-      await toggleRecording()
-    }
+    // autoStart 逻辑已移至后端 DeviceStartAcquisition：
+    // 后端读取 storage-settings 配置，若 autoStartOnAcquisition=true
+    // 且当前未在录制则自动调用 StorageRecorder.Start。
+    // 前端只通过 refreshStorageStatus 轮询观察 recording 状态。
   })
 }
 
@@ -173,34 +186,88 @@ async function stop(): Promise<void> {
   })
 }
 
+// refreshStorageStatus 拉取后端 Status() 并同步本地状态。
+// 同时检测：
+//   - recording 从 true -> false（sink 自停止）：弹出提示
+//   - lastError 出现新值：弹出错误 toast
 async function refreshStorageStatus(): Promise<void> {
   try {
     const status = await storageApi.status()
+    const wasRecording = isRecording.value
     isRecording.value = status.recording
-    if (status.outputDir) recordingOutputDir.value = status.outputDir
-    // 从全局设置同步文件前缀，确保手动录制也使用用户配置的值
-    recordingFilePrefix.value = storageStore.settings.filePrefix || 'run'
+    recordingStatus.value = {
+      outputDir: status.outputDir,
+      currentFile: status.currentFile,
+      fileSize: status.fileSize,
+      fileCount: status.fileCount,
+      recordCount: status.recordCount,
+      durationMs: status.durationMs,
+      droppedCount: status.droppedCount,
+      lastError: status.lastError,
+    }
+    // 检测 sink 自停止：上次还在录制，这次状态显示已停止
+    if (wasRecording && !status.recording) {
+      const reason = status.lastError
+        ? `录制已停止：${status.lastError}`
+        : '录制已停止（达到自动停止条件）'
+      feedbackStore.pushToast(reason, status.lastError ? 'error' : 'info')
+    }
+    // 检测新增错误（仍在录制但出现 I/O 错误，例如队列丢弃告警）
+    if (status.lastError && status.lastError !== lastReportedError) {
+      lastReportedError = status.lastError
+      feedbackStore.pushToast(`录制错误：${status.lastError}`, 'error')
+    } else if (!status.lastError) {
+      // 错误已恢复，重置去重标记
+      lastReportedError = ''
+    }
   } catch {
     // Storage status is non-critical for the main shell.
+  }
+}
+
+// buildRecordingConfig 从 storageStore.settings 构造完整 RecordingConfig。
+// 路径解析由后端 StorageStartRecording 统一完成（前端只传用户输入的原始路径）。
+function buildRecordingConfig() {
+  const s = storageStore.settings
+  return {
+    outputDir: s.baseDirectory || 'data/recordings',
+    filePrefix: s.filePrefix || 'run',
+    stopConditions: { ...s.stopConditions },
+    fileRotation: { ...s.fileRotation },
+    autoStartOnAcquisition: s.autoStartOnAcquisition,
   }
 }
 
 async function toggleRecording(): Promise<void> {
   try {
     if (isRecording.value) {
-      await storageApi.stop()
+      // 先置 false 再 await stop()：避免 2s 轮询 refreshStorageStatus 在 stop()
+      // 进行中触发"wasRecording=true && status.recording=false"，误报"录制已停止（达到自动停止条件）"。
       isRecording.value = false
+      await storageApi.stop()
       feedbackStore.pushToast(t.value.stoppedRecording || '已停止记录', 'success')
       return
     }
 
-    await storageApi.start(recordingOutputDir.value, recordingFilePrefix.value)
+    // 传递完整 config：stopConditions/fileRotation 由 sink writerLoop 评估
+    await storageApi.start(buildRecordingConfig())
     isRecording.value = true
+    lastReportedError = ''
     feedbackStore.pushToast(t.value.startedRecording || '已开始记录数据', 'success')
+    // 立即拉取一次状态，确保 UI 反映后端真实状态
+    await refreshStorageStatus()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    // 停止分支已先把 isRecording 置 false；若 stop() 失败需回滚，否则 UI 与后端状态错位，
+    // 且下方的消息分支判断会误走"启动记录失败"。
+    // 此处用操作意图区分消息，不依赖 isRecording.value 的中间态。
+    const wasStopping = !isRecording.value
+    if (wasStopping) {
+      // stop() 失败：恢复录制状态标记，后端可能仍在录制
+      isRecording.value = true
+    }
     feedbackStore.pushToast(
-      isRecording.value
+      wasStopping
         ? (t.value.failedToStopRecording || '停止记录失败') + ': ' + message
         : (t.value.failedToStartRecording || '启动记录失败') + ': ' + message,
       'error',
@@ -218,18 +285,32 @@ onMounted(async () => {
   await run(ensureProfile)
   unsubscribeDeviceSnapshots = deviceStore.attachStatusListener()
   await storageStore.loadSettings()
+  // 启动时把持久化的刷新率下发后端 AcquisitionHub（后端重启后恒为默认 20Hz），
+  // 并同步前端轮询间隔。失败不阻塞主流程——退回默认 20Hz 仍可用。
+  try {
+    await deviceApi.setPublishRate(storageStore.settings.refreshRateHz)
+  } catch {
+    // ignore：刷新率恢复失败不影响其他功能
+  }
   await refreshStorageStatus()
   initialLoading.value = false
   // 注册键盘快捷键
   window.addEventListener('keydown', handleKeydown)
   // 启动时对所有 autoConnect=true 的设备并行发起连接，失败不阻塞主流程
   void autoConnectProfiles()
+  // 启动录制状态轮询：2s 间隔平衡响应性与 HTTP 开销。
+  // 用于检测后端 sink 自停止（达到条件或 I/O 错误）并反馈到 UI。
+  recordingStatusTimer = setInterval(() => { void refreshStorageStatus() }, 2000)
 })
 
 onBeforeUnmount(() => {
   unsubscribeDeviceSnapshots?.()
   unsubscribeDeviceSnapshots = null
   window.removeEventListener('keydown', handleKeydown)
+  if (recordingStatusTimer !== null) {
+    clearInterval(recordingStatusTimer)
+    recordingStatusTimer = null
+  }
 })
 
 // 键盘快捷键处理：空格键开始/停止采集
@@ -322,6 +403,8 @@ function handleKeydown(e: KeyboardEvent) {
         :is-acquiring="acquiring"
         :t="t"
         :total-devices="deviceStore.profiles?.length ?? 0"
+        :is-recording="isRecording"
+        :recording-stats="recordingStatus"
       />
     </template>
 
@@ -343,7 +426,7 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: var(--space-2);
 }
 
 :root[data-theme='light'] .main-dashboard-stage {
@@ -354,7 +437,7 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: var(--space-2);
   background: transparent;
   display: flex;
   flex-direction: column;
