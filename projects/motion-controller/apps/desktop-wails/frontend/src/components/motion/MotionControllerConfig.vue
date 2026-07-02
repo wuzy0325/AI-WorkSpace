@@ -9,7 +9,7 @@ import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
 
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp } from './motionConfigEditor'
+import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE } from './motionConfigEditor'
 import ProfileSidebar from './ProfileSidebar.vue'
 import AxisConfigCard from './AxisConfigCard.vue'
 import EncoderCompensationEditor from './EncoderCompensationEditor.vue'
@@ -106,7 +106,26 @@ const fieldErrors = computed<FieldErrors>(() => {
   return errors
 })
 
-const validationErrorCount = computed(() => Object.values(fieldErrors.value).filter(Boolean).length)
+// 编码器补偿 error 级告警：与 wind-daq 行为对齐，保存时阻断。
+// 仅收集 severity==='error'（物理不可能，如容差小于编码器分辨率）；warning 级由
+// EncoderCompensationEditor 内联展示，不阻断保存。
+const compensationErrors = computed<string[]>(() => {
+  const errors: string[] = []
+  for (const axis of editing.axes) {
+    if (axis.positionSource !== 'encoder') continue
+    const comp = axis.encoderCompensation
+    if (!comp?.enabled) continue
+    const warns = validateEncoderCompensation({ ...comp, enabled: true }, axis)
+    for (const w of warns) {
+      if (w.severity === 'error') errors.push(`轴 ${axis.name}：${w.message}`)
+    }
+  }
+  return errors
+})
+
+const validationErrorCount = computed(() =>
+  Object.values(fieldErrors.value).filter(Boolean).length + compensationErrors.value.length
+)
 
 /* -- Dirty detection -- */
 const initialDraftSnapshot = ref('')
@@ -200,7 +219,7 @@ async function save(): Promise<void> {
         stepsPerRev: a.stepsPerRev, microSteps: a.microSteps,
         lead: a.lead, gearRatio: a.gearRatio,
         inverted: a.inverted, encoderInverted: a.encoderInverted,
-        positionSource: a.positionSource, encoderScale: a.encoderScale,
+        positionSource: a.positionSource, encoderScale: normalizePositive(a.encoderScale, DEFAULT_ENCODER_SCALE),
         encoderCompensation: a.encoderCompensation,
       })),
     }
@@ -348,6 +367,11 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   editing.axes[index].encoderCompensation = value
   markDirty()
 }
+
+function onUpdateEncoderScale(index: number, value: number): void {
+  editing.axes[index].encoderScale = value
+  markDirty()
+}
 </script>
 
 <template>
@@ -427,7 +451,12 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                   <svg class="validation-banner__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                   </svg>
-                  <span>{{ validationErrorCount }} 项验证错误需要修正</span>
+                  <div class="validation-banner__body">
+                    <span>{{ validationErrorCount }} 项验证错误需要修正</span>
+                    <ul v-if="compensationErrors.length > 0" class="validation-banner__list">
+                      <li v-for="(e, i) in compensationErrors" :key="i">{{ e }}</li>
+                    </ul>
+                  </div>
                 </div>
 
                 <!-- 基本信息区域 -->
@@ -477,6 +506,7 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
                     :axes="editing.axes"
                     :controller-type="editing.type"
                     @update-enc-comp="onUpdateEncComp"
+                    @update-encoder-scale="onUpdateEncoderScale"
                   />
                 </section>
               </main>
@@ -791,6 +821,19 @@ function onUpdateEncComp(index: number, value: AxisEncoderCompensationConfig): v
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
+}
+
+.validation-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.validation-banner__list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 /* ============================================================

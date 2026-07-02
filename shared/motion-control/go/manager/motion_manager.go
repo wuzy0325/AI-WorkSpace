@@ -66,6 +66,13 @@ func (m *MotionManager) GetProfiles() []core.MotionControllerProfile {
 }
 
 func (m *MotionManager) UpsertProfile(profile core.MotionControllerProfile) error {
+	// 边界兜底：阻断物理不可能的编码器补偿配置（如容差小于编码器分辨率，永不收敛）。
+	// 前端校验可被绕过（直接改 profile 文件等），此处作为最后防线。仅阻断 error 级，
+	// warning 级（可忽略的建议）由前端展示，不阻断保存。
+	if err := validateProfileCompensation(profile); err != nil {
+		return err
+	}
+
 	var toDisconnect ports.MotionController
 	var toApplyConfig ports.MotionController
 
@@ -360,4 +367,23 @@ func defaultProfiles() []core.MotionControllerProfile {
 			},
 		},
 	}
+}
+
+// validateProfileCompensation 校验编码器补偿配置的物理合理性，仅阻断 error 级告警。
+// 只对启用编码器位置源且启用补偿的轴校验，与运行时补偿生效条件一致。
+func validateProfileCompensation(profile core.MotionControllerProfile) error {
+	for _, axis := range profile.Axes {
+		if !axis.Enabled || axis.PositionSource != core.PositionSourceEncoder {
+			continue
+		}
+		if axis.EncoderCompensation == nil || !axis.EncoderCompensation.Enabled {
+			continue
+		}
+		for _, w := range core.ValidateCompensationConfig(*axis.EncoderCompensation, axis) {
+			if w.Severity == "error" {
+				return fmt.Errorf("axis %s: %s", axis.Name, w.Message)
+			}
+		}
+	}
+	return nil
 }

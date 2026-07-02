@@ -386,112 +386,189 @@ getAxisStatus(axis):
 ## 7 编码器补偿流程
 
 启用条件：`positionSource = "encoder"` 且 `encoderCompensation.enabled = true`。
+寄存器源轴不补偿（无独立反馈，补偿无意义）。
 
 ### 7.1 两阶段架构
 
-| 阶段 | 说明 |
-|------|------|
-| **挂起请求** (Pending Request) | `moveTo`/`moveBy` 时注册，包含 `targetPulse`、`targetEngineering` 及配置参数 |
-| **活跃任务** (Active Job) | 在下次 `getAxisStatus`/`getAllAxisStatus` 轮询时提升，需检测到运动已启动并停止 |
+补偿不是 `moveTo` 时同步完成，而是分两阶段异步进行：
 
-补偿内部轮询间隔：10 ms。提升（挂起→活跃）发生在状态轮询时（100ms 周期）。
+| 阶段 | 时机 | 内容 |
+|------|------|------|
+| **挂起请求** (Pending) | `moveTo`/`moveBy` 下发 `BG` 后立即注册 | 记录 `targetPulse`、`targetEngineering`，等运动停止 |
+| **活跃任务** (Job) | 下次 `Status()` 轮询发现运动已停止 | 升级为 job，启动独立 goroutine 跑状态机 |
+
+为什么分两阶段：`moveTo` 发完 `PA+BG` 立即返回，硬件还在动；补偿必须等硬件停下来才能读编码器判断误差。`Status()` 是 100ms 周期的轮询入口，在那里检测"运动已停"才安全激活。补偿内部轮询间隔 10ms（`waitForAxisStop`）。
 
 ### 7.2 状态机
 
 ```
-waiting-stop → settling → checking ↔ compensating → succeeded
-                                          └→ failed
-任意状态 → cancelled（同轴新的 move/jog/home/stop/eStop/disconnect）
+waitingStop → settling → checking ↔ compensating → succeeded
+                                     │
+                                     ├──→ failed（限位/超时/超 maxCycles/编码器错误）
+                                     │
+任意状态 ──→ cancelled（代次过期：同轴新 move/jog/home/stop/eStop/disconnect）
 ```
 
 | 状态 | 行为 |
 |------|------|
-| `waiting-stop` | 轮询 TS 直到 bit7 清除。启动宽限期 100ms，需观察到运动后连续 2 次空闲才退出 |
-| `settling` | 等待 `settleMs`（默认 100ms）让机械稳定 |
-| `checking` | 读 TP 取编码器位置，计算误差。若 `|误差| ≤ tolerance` 或 `≤ minStep` 则收敛；同时检查限位 |
-| `compensating` | 发 `PR`+`BG` 修正，`attempts++`，回到 `waiting-stop` |
+| `waitingStop` | 轮询 TS（10ms 间隔）直到 bit7 清除。**单次** bit7=0 即返回（非连续 2 次）。同时读限位，限位触发也立即返回让上层判失败 |
+| `settling` | `sleep(settleMs)`（默认 100ms）让机械震荡衰减，再读编码器 |
+| `checking` | 读 TP 取编码器位置，算误差。`|误差| ≤ tolerance` 或 `≤ minStep` → 收敛；否则查 `maxCycles`，未超则转 `compensating` |
+| `compensating` | 重读编码器算修正量，发 `PR`+`BG`，`attempts++`，回 `waitingStop` |
+| `succeeded`/`failed`/`cancelled` | 终态，goroutine 退出 |
 
-### 7.3 收敛处理
+### 7.3 各状态运算
+
+**checking — 误差计算**
 
 ```
-registerPulse = engineeringToPulse(axis, actualEngineering)
-send DP{axis}=registerPulse           # 将寄存器同步到编码器实际位置
-标记 succeeded
+encoderCount      = TP{axis}                              # 读编码器计数
+encoderEngineering = encoderCount × encoderScale          # → 工程值（如 0.005 mm/count）
+errorEngineering   = targetEngineering - encoderEngineering
+absError           = |errorEngineering|
+
+status.PositionError = absError                           # 实时同步到 UI
+
+# 收敛判定（任一即可）
+if absError <= tolerance  OR  absError <= minStep:
+    收敛 → 见 7.4
+elif attempts >= maxCycles:
+    失败（"exceeded max cycles"）
+else:
+    转 compensating
 ```
 
-### 7.4 取消触发
+**compensating — 修正移动**
 
-以下操作会取消同轴的挂起请求和活跃任务：
-`moveTo`、`moveBy`、`jog`、`home`、`stop(轴)`（停指定轴）、`stop()`（停所有轴）、`emergencyStop()`、`disconnect()`
-
-### 7.5 sendCommandGuarded
-
-补偿流程中用 `sendCommandGuarded(cmd, guard)` 发送命令。`guard()` 在写入
-socket 前被调用，检查补偿代次是否匹配，使取消操作能安全中断命令序列。
-
-### 7.6 补偿流程伪代码
-
-```python
-# moveTo 时注册挂起请求
-moveTo(axis, targetPosition):
-    pulse = engineeringToPulse(axis, targetPosition)
-    cancelCompensation(axis)
-    send(f"PA{axis}={pulse}")
-    send(f"BG{axis}")
-    if 补偿已启用:
-        registerPendingRequest(axis, { targetPulse: pulse,
-          targetEngineering: targetPosition, ... })
-
-# 轮询驱动（getAxisStatus / getAllAxisStatus 时触发）
-compensationPromotion(axis):
-    if noPendingRequest(axis): return
-    if TS.bit7(axis):                    # 还在运动
-        markObservedMotion(axis)
-        return
-    registerReachedTarget = (currentRegisterPulse == pending.targetPulse)
-    # 提升条件：已观察过运动  OR  (启动宽限过了 AND 寄存器已到目标位)
-    if not observedMotion(axis) and not (inStartupGrace(axis) and registerReachedTarget):
-        return                           # 不提升：既没看到运动，也不满足宽限+到目标
-
-    promotePendingToActiveJob(axis, state="checking")
-
-compensationLoop(axis, job):
-    # 等待停止
-    if job.state == "waiting-stop":
-        poll TS until bit7 clears (间隔10ms, 需连续2次空闲)
-    # 检查限位
-    limits = readAllAxisLimits()
-    if limits[axis].forward or limits[axis].reverse:
-        abort(axis, "limit triggered")
-
-    # 等待稳定
-    if job.settleMs > 0:
-        sleep(job.settleMs)
-
-    # 读取编码器
-    encoderCount = send(f"TP{axis}")
-    actualEngineering = encoderCountToEngineering(axis, encoderCount)
-    error = job.targetEngineering - actualEngineering
-
-    # 判断收敛
-    if abs(error) <= job.tolerance or abs(error) <= job.minStep:
-        registerPulse = engineeringToPulse(axis, actualEngineering)
-        sendCommandGuarded(f"DP{axis}={registerPulse}", guard)
-        markSucceeded(axis)
-        return
-
-    # 超过最大循环次数
-    if job.attempts >= job.maxCycles:
-        markFailed(axis)
-        return
-
-    # 修正移动
-    correctionPulse = engineeringToPulse(axis, error)
-    sendCommandGuarded(f"PR{axis}={correctionPulse}", guard)
-    sendCommandGuarded(f"BG{axis}", guard)
-    job.attempts += 1
-    job.state = "waiting-stop"
 ```
+# 重新读一次编码器，避免 settling→checking 间的陈旧数据
+currentCount        = TP{axis}
+correctionEngineering = targetEngineering - (currentCount × encoderScale)
+
+# 最小步长保护：误差小于 minStep 时强制用 minStep 方向补偿，避免无穷小步进
+if |correctionEngineering| < minStep:
+    correctionEngineering = sign(correctionEngineering) × minStep
+
+correctionPulse = round(correctionEngineering × pulsesPerUnit)
+
+if correctionPulse == 0:
+    # 工程变化太小转不出脉冲，认到位
+    收敛 → 见 7.4
+else:
+    PR{axis}=correctionPulse      # 相对移动（可负）
+    BG{axis}
+    attempts += 1
+    state = waitingStop           # 回循环
+```
+
+### 7.4 收敛处理
+
+```
+registerPulse = round(encoderEngineering × pulsesPerUnit)   # 编码器实际位置 → 脉冲
+DP{axis}=registerPulse                                       # 寄存器同步到编码器实际位置
+标记 succeeded，PositionError = 0
+```
+
+`DP` 把寄存器位置（电机理论位置）同步到编码器实际位置，消除机械间隙/丢步造成的静态偏差。
+注意残留量化误差：`DP` 写入值按脉冲分辨率取整，编码器位置来自独立的 `encoderScale`，
+两者分辨率不同时会差半个脉冲（步进系统分辨率足够高时通常可忽略）。
+
+### 7.5 挂起 → 活跃的激活规则
+
+`Status()` 轮询时调 `maybeActivatePendingCompensation`，防静止轴误触发：
+
+```
+if TS.bit7 == 1:                      # 硬件还在运动
+    pending.observedMotion = true     # 标记"看到过运动"
+    return                            # 等下次轮询
+
+# 硬件已停
+if not observedMotion:
+    if 距 issuedAt <= 启动宽限期(100ms):
+        return                        # 硬件可能还没开始动，再等等
+    else:
+        丢弃 pending                  # 判定静止轴误触发（如零移动）
+        return
+
+# 已观察到运动 且 硬件已停 → 升级为 job
+job = { generation, targetPulse, targetEngineering, cfg, state: waitingStop }
+go runAxisCompensation(job)           # 异步跑状态机
+```
+
+宽限期 100ms 避免：`moveTo` 后第一次 `Status` 时硬件还没启动（bit7 仍 0），被误判"没动过"而丢弃。
+
+### 7.6 取消机制
+
+以下操作取消同轴的 pending 和 job（递增 generation，运行中 goroutine 循环顶部检查代次过期即退出）：
+`moveTo`、`moveBy`、`jog`、`home`、`stop(轴)`、`stop()`、`emergencyStop()`、`disconnect()`
+
+**已知局限**：代次检查只在循环顶部和状态切换处，补偿中已发出的 `PR+BG` 会发完才退出，
+不能立即中断命令序列（取消最多滞后一次修正移动）。
+
+### 7.7 参数物理含义与约束
+
+| 参数 | 含义 | 运算角色 |
+|------|------|---------|
+| `encoderScale` | 光栅尺分辨率（mm/count 或 °/count） | `工程值 = count × scale` |
+| `tolerance` | 收敛容差 | `absError ≤ tolerance` → 成功 |
+| `minStep` | 最小修正步长 | ① 误差≤此值也认收敛 ② 修正量小于此值时强制放大到此值 |
+| `maxCycles` | 最大修正次数 | `attempts ≥ maxCycles` → 失败 |
+| `settleMs` | 停后稳定等待 | sleep 后再读编码器 |
+| `timeoutMs` | 整个补偿超时 | 超时 → 失败 |
+
+三层精度约束链（校验在 `ValidateCompensationConfig`）：
+
+```
+脉冲当量 Δp = 1 / pulsesPerUnit                  [电机最小步进]
+    ≥ encoderScale                                [光栅尺可分辨]  warning
+          ≥ tolerance                            [容差可达]      error（阻断保存）
+                > minStep                        [不振荡]        warning
+minStep ≥ Δp                                      [修正有效]      warning
+```
+
+### 7.8 完整运算示例
+
+```
+配置: 直线轴, 步距角 1.8°, 细分 4, 导程 4mm, encoderScale=0.005mm/count
+      tolerance=0.01mm, minStep=0.001mm, maxCycles=3, settleMs=100ms
+      → ppu = (360/1.8)×4/4 = 200 脉冲/mm，脉冲当量 = 0.005 mm/脉冲
+
+MoveTo(1.0mm):
+  pulse = round(1.0 × 200) = 200
+  PA=200, BG
+  pending{ targetEng: 1.0, targetPulse: 200 }
+
+[Status 轮询: bit7 1→0, observedMotion=true] → 升级 job
+
+循环第 1 次:
+  waitingStop: 轮询 TS 直到 bit7=0
+  settling:    sleep(100ms)
+  checking:    TP → count=198
+               encoderEng = 198 × 0.005 = 0.99mm
+               error = 1.0 - 0.99 = 0.01mm
+               absError(0.01) ≤ tolerance(0.01)? 是 → 收敛
+               DP=round(0.99 × 200)=198
+               succeeded ✓
+
+（若误差更大需多次修正时的循环）
+  compensating: 重读 TP → 198
+                correction = 1.0 - 0.99 = 0.01mm
+                correctionPulse = round(0.01 × 200) = 2
+                PR=2, BG, attempts=1, → waitingStop
+  [下一轮 checking 再判收敛]
+```
+
+### 7.9 PositionError 生命周期
+
+```
+checking 阶段:  PositionError = absError        # 实时误差
+succeeded:      PositionError = 0                # 清零
+failed:         PositionError 保留上次值         # ⚠️ 不清零
+disconnect:     PositionError = 0                # 清零
+```
+
+补偿进行中 `AxisStatus.Moving` 被强制设为 true（`syncCompensationStatusLocked`），
+防止上层 `waitForMotionComplete` 误判运动完成。
 
 ## 8 关键注意事项
 
@@ -504,8 +581,9 @@ compensationLoop(axis, job):
 | TS 用法 | 仅使用 bit7（`0x80`）判断运动状态。低位（限位标志）**不使用**——限位通过 `MG _LF`/`MG _LR` 读取 |
 | 速度持久 | `SP` 设置后持久生效。`moveTo`/`moveBy` 不设速度，使用最近一次 SP 设置的值 |
 | 加减速 | B140 代码中**不使用** `AC`/`DC` 命令，使用控制器默认加减速值 |
-| 补偿中的 moving | 补偿活跃时，`moving` 报告 true，直到补偿收敛或失败 |
-| 停止与取消 | `stop(轴)` 取消该轴补偿；`stop()` / `emergencyStop()` / `disconnect()` 取消所有轴补偿 |
+| 补偿中的 moving | 补偿活跃时，`moving` 报告 true，直到补偿收敛、失败或被取消 |
+| 停止与取消 | `stop(轴)` 取消该轴补偿；`stop()` / `emergencyStop()` / `disconnect()` 取消所有轴补偿。取消最多滞后一次修正移动（见 7.6） |
+| 编码器读失败 | `Status()` 中 TP 读取/解析失败不静默回退到寄存器位置，记入 `LastError` 使故障可见；补偿中重读 TP 失败直接判 job 失败，避免误差退化为整段目标造成猛冲 |
 | HM 需配合 BG | `HM{axis}` 只是设置回零模式，**必须**紧接着 `BG{axis}` 才会开始运动 |
 | jog 单位 | jog 移动 **1 个工程单位**（如 1mm），**不是 1 个脉冲**。脉冲数通过 `engineeringToPulse` 计算 |
 | jog 速度截断 | jog 速度上限为 `axis.maxSpeed`，超出时截断。若未传 speed 参数，默认使用 maxSpeed |

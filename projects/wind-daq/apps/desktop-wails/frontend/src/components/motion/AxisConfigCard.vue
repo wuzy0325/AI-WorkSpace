@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import type { AxisConfig, AxisKind, PositionSource, MotionControllerType } from '@shared/types/motion'
-import { getAxisThemeClass } from './motionConfigEditor'
+import { getAxisThemeClass, validateEncoderCompensation, type CompensationWarning } from './motionConfigEditor'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -31,6 +31,22 @@ const positionSourceModel = computed<PositionSource>({
 const supportsEncoder = computed(() => props.controllerType === 'B140-MC')
 
 const encoderComp = computed(() => localAxis.value.encoderCompensation!)
+
+const compWarnings = computed<CompensationWarning[]>(() => {
+  const cfg = localAxis.value.encoderCompensation
+  if (!cfg || !cfg.enabled) return []
+  return validateEncoderCompensation(cfg, localAxis.value)
+})
+
+// 参数帮助文本
+const FIELD_HELP: Record<string, string> = {
+  encoderScale: '每个编码器计数对应的工程单位（mm 或 °）。如光栅尺 0.005mm/计数。tolerance 不可小于此值。',
+  tolerance: '误差 ≤ 此值时认为补偿收敛。不可小于编码器分辨率。',
+  maxCycles: '单次 MoveTo/MoveBy 后补偿循环最大次数。超限未收敛则失败。',
+  settleMs: '运动停止后等待机械稳定的时间(ms)。太短会在轴未稳时读数导致误判。',
+  minStep: '单次修正的最小步长。误差 < 此值不再修正，避免无穷小步进振荡。',
+  timeoutMs: '补偿任务总超时(ms)，超时标记失败。',
+}
 
 /**
  * 仅 B140-MC 支持编码器位置来源；当切换为其他设备类型时，
@@ -182,19 +198,31 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         </div>
         <div class="encoder-section__row">
           <div class="encoder-section__field encoder-section__field--scale">
-            <span class="encoder-section__label">编码器倍率</span>
+            <span class="encoder-section__label">
+              编码器分辨率
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['encoderScale']"
+              >?</span>
+            </span>
             <UiInputNumber
-              :model-value="axis.encoderScale ?? 1"
-              @update:model-value="updateField('encoderScale', $event ?? 1)"
+              :model-value="axis.encoderScale ?? 0.005"
+              @update:model-value="updateField('encoderScale', $event ?? 0.005)"
               class="encoder-section__input"
               :min="0.0001"
               :step="0.0001"
             />
           </div>
         </div>
-        <div class="encoder-section__grid">
+        <div v-if="encoderComp.enabled" class="encoder-section__grid">
           <div class="encoder-section__field">
-            <span class="encoder-section__label">容差</span>
+            <span class="encoder-section__label">
+              容差
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['tolerance']"
+              >?</span>
+            </span>
             <UiInputNumber
               :model-value="encoderComp.tolerance"
               @update:model-value="updateCompensationField('tolerance', $event ?? 0.01)"
@@ -204,27 +232,45 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             />
           </div>
           <div class="encoder-section__field">
-            <span class="encoder-section__label">最大循环</span>
+            <span class="encoder-section__label">
+              最大循环
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['maxCycles']"
+              >?</span>
+            </span>
             <UiInputNumber
               :model-value="encoderComp.maxCycles"
-              @update:model-value="updateCompensationField('maxCycles', $event ?? 10)"
+              @update:model-value="updateCompensationField('maxCycles', $event ?? 3)"
               class="encoder-section__input"
               :min="1"
               :step="1"
             />
           </div>
           <div class="encoder-section__field">
-            <span class="encoder-section__label">稳定 ms</span>
+            <span class="encoder-section__label">
+              稳定 ms
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['settleMs']"
+              >?</span>
+            </span>
             <UiInputNumber
               :model-value="encoderComp.settleMs"
-              @update:model-value="updateCompensationField('settleMs', $event ?? 200)"
+              @update:model-value="updateCompensationField('settleMs', $event ?? 100)"
               class="encoder-section__input"
               :min="10"
               :step="10"
             />
           </div>
           <div class="encoder-section__field">
-            <span class="encoder-section__label">最小白</span>
+            <span class="encoder-section__label">
+              最小步
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['minStep']"
+              >?</span>
+            </span>
             <UiInputNumber
               :model-value="encoderComp.minStep"
               @update:model-value="updateCompensationField('minStep', $event ?? 0.001)"
@@ -234,7 +280,13 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             />
           </div>
           <div class="encoder-section__field">
-            <span class="encoder-section__label">超时 ms</span>
+            <span class="encoder-section__label">
+              超时 ms
+              <span
+                class="enc-help"
+                :title="FIELD_HELP['timeoutMs']"
+              >?</span>
+            </span>
             <UiInputNumber
               :model-value="encoderComp.timeoutMs"
               @update:model-value="updateCompensationField('timeoutMs', $event ?? 5000)"
@@ -242,6 +294,19 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
               :min="100"
               :step="100"
             />
+          </div>
+        </div>
+
+        <!-- 校验警告 -->
+        <div v-if="compWarnings.length > 0" class="encoder-warnings">
+          <div
+            v-for="(w, wi) in compWarnings"
+            :key="wi"
+            class="encoder-warning"
+            :class="'encoder-warning--' + w.severity"
+          >
+            <span class="encoder-warning__icon">{{ w.severity === 'error' ? '!' : '△' }}</span>
+            <span class="encoder-warning__text">{{ w.message }}</span>
           </div>
         </div>
       </div>
@@ -383,6 +448,65 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
 .encoder-section__input :deep(.n-input-number-input) {
   text-align: right;
   font-size: var(--font-size-2xs);
+}
+
+/* 帮助提示图标 ? */
+.enc-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-info) 20%, transparent);
+  cursor: help;
+  vertical-align: middle;
+  margin-left: 0.25rem;
+  transition: all 0.15s ease;
+}
+.enc-help:hover {
+  color: var(--accent-info);
+  border-color: var(--accent-info);
+  background: color-mix(in srgb, var(--accent-info) 15%, transparent);
+}
+
+/* 校验警告 */
+.encoder-warnings {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.encoder-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-2xs);
+  line-height: 1.4;
+}
+.encoder-warning--error {
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
+}
+.encoder-warning--warning {
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+}
+.encoder-warning__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-weight: 700;
+}
+.encoder-warning__text {
+  flex: 1;
 }
 
 @keyframes encoderFadeIn {

@@ -17,7 +17,55 @@ import (
 const (
 	b140DefaultPort    = 23
 	b140CommandTimeout = 5 * time.Second
+
+	// b140CompensationPollInterval 等待运动停止时的轮询间隔。
+	// 太短会刷爆 B140 命令队列，太长会拖慢补偿响应。
+	b140CompensationPollInterval = 20 * time.Millisecond
+
+	// b140CompensationStartupGrace 启动宽限期：moveTo 后这段时间内即使
+	// 硬件未观察到运动也不立即报错，避免硬件响应延迟导致误判。
+	b140CompensationStartupGrace = 200 * time.Millisecond
 )
+
+// b140CompensationJobState 补偿任务状态机取值。
+type b140CompensationJobState int
+
+const (
+	compensationStateWaitingStop   b140CompensationJobState = iota // 等待硬件运动停止
+	compensationStateSettling                                      // 等待机械震荡衰减
+	compensationStateChecking                                      // 检查编码器误差
+	compensationStateCompensating                                  // 下发 PR 微调
+	compensationStateSucceeded                                     // 补偿成功
+	compensationStateFailed                                        // 补偿失败
+	compensationStateCancelled                                     // 被新命令取消
+)
+
+// b140PendingCompensationRequest moveTo 下发后入队的待激活补偿请求。
+// 等状态轮询发现运动已发生且停止后，升级为 b140CompensationJob。
+type b140PendingCompensationRequest struct {
+	targetPulse       int64                       // 目标寄存器脉冲
+	targetEngineering float64                    // 目标工程位置
+	cfg              core.AxisEncoderCompensationConfig // 解析后的补偿参数
+	issuedAt         time.Time                    // moveTo 下发时间，用于启动宽限
+	observedMotion   bool                         // 是否已观察到运动（用于静止轴误触发保护）
+}
+
+// b140CompensationJob 已激活的补偿任务。
+// 一旦激活就在独立 goroutine 中运行 runAxisCompensation 状态机。
+type b140CompensationJob struct {
+	generation        int64                       // 代际号：新命令来时让旧任务自废
+	axis              core.AxisName               // 轴名
+	physical          string                      // 物理轴（A/B/C/D）
+	axisCfg           core.AxisConfig             // 配置快照（避免运行中 profile 被改）
+	cfg               core.AxisEncoderCompensationConfig // 补偿参数
+	targetPulse       int64                       // 目标脉冲
+	targetEngineering float64                      // 目标工程位置
+	state             b140CompensationJobState     // 当前状态
+	attempts          int                          // 已尝试的补偿循环次数
+	startedAt         time.Time                    // 任务激活时间，用于超时判定
+	lastError         string                       // 失败原因（空表示未失败）
+	err               error                        // 失败错误对象
+}
 
 // B140MotionController implements Galil DMC-B140-M TCP ASCII motion control.
 type B140MotionController struct {
@@ -29,6 +77,13 @@ type B140MotionController struct {
 	reader             *bufio.Reader
 	directionSignature string
 	connecting         bool
+
+	// compMu 保护以下三个补偿任务 map。与 c.mu 解耦：补偿 goroutine 持有
+	// compMu 跑状态机，运动命令持有 c.mu 修改配置/状态，两者通过代际号通信。
+	compMu                        sync.Mutex
+	pendingRequests               map[core.AxisName]*b140PendingCompensationRequest
+	jobs                          map[core.AxisName]*b140CompensationJob
+	compensationGenerationCounter int64
 }
 
 // NewB140MotionController creates a B140 motion controller adapter.
@@ -50,7 +105,12 @@ func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionCo
 		}
 	}
 
-	return &B140MotionController{profile: profile, status: status}
+	return &B140MotionController{
+		profile:          profile,
+		status:           status,
+		pendingRequests:  make(map[core.AxisName]*b140PendingCompensationRequest),
+		jobs:             make(map[core.AxisName]*b140CompensationJob),
+	}
 }
 
 // ApplyConfig applies a new controller profile without disconnecting.
@@ -113,11 +173,11 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	dirSignature := c.directionConfigSignatureLocked()
 	c.mu.Unlock()
 
-	if _, err := c.sendCommandLocked(ctx, "SH"); err != nil {
+	if _, err := c.sendCommand(ctx, "SH"); err != nil {
 		return c.connectCleanup(conn, err)
 	}
 	for _, cmd := range dirCmds {
-		if _, err := c.sendCommandLocked(ctx, cmd); err != nil {
+		if _, err := c.sendCommand(ctx, cmd); err != nil {
 			return c.connectCleanup(conn, err)
 		}
 	}
@@ -176,6 +236,9 @@ func (c *B140MotionController) connectCleanup(conn net.Conn, err error) error {
 
 // Disconnect closes TCP connection and clears cached hardware state.
 func (c *B140MotionController) Disconnect(ctx context.Context) error {
+	// 先取消所有补偿任务，避免 disconnect 后 goroutine 还在跑命令。
+	c.cancelAllCompensation("controller disconnecting")
+
 	c.mu.Lock()
 	if c.status.Connected && c.conn != nil {
 		_, _ = c.sendCommandLocked(ctx, "ST")
@@ -201,6 +264,8 @@ func (c *B140MotionController) Disconnect(ctx context.Context) error {
 		c.status.Axes[i].Moving = false
 		c.status.Axes[i].Velocity = 0
 		c.status.Axes[i].Compensating = false
+		c.status.Axes[i].CompensationError = ""
+		c.status.Axes[i].PositionError = 0
 	}
 	c.mu.Unlock()
 	return err
@@ -232,6 +297,7 @@ func (c *B140MotionController) statusError(err error) (core.ControllerStatus, er
 }
 
 // Status reads register position, motion state, and limit switches.
+// 同时承担补偿任务激活入口：发现运动停止时把 pending 升级为 job。
 func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
 	c.mu.Lock()
 	if err := c.checkConnectedLocked(); err != nil {
@@ -255,7 +321,7 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 	copy(axesSnapshot, c.status.Axes)
 	c.mu.Unlock()
 
-	tdPayload, err := c.sendCommandLocked(ctx, "TD")
+	tdPayload, err := c.sendCommand(ctx, "TD")
 	if err != nil {
 		return c.statusError(err)
 	}
@@ -264,7 +330,7 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		return c.statusError(parseErr)
 	}
 
-	tsPayload, err := c.sendCommandLocked(ctx, "TS")
+	tsPayload, err := c.sendCommand(ctx, "TS")
 	if err != nil {
 		return c.statusError(err)
 	}
@@ -282,6 +348,10 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 	}
 	results := make(map[core.AxisName]axisResult)
 
+	// encoderFault 收集编码器源轴的 TP 读取/解析故障。多轴时最后一轴的故障胜出。
+	// 留空则在末尾清空 LastError，保留 Status 成功路径的原有语义。
+	var encoderFault string
+
 	for _, axisSnapshot := range axesSnapshot {
 		axisCfg, ok := axisConfigs[axisSnapshot.Name]
 		if !ok {
@@ -296,21 +366,25 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		position := core.PulseToEngineering(axisCfg, registerPulse)
 
 		if axisCfg.PositionSource == core.PositionSourceEncoder {
-			payload, encErr := c.sendCommandLocked(ctx, "TP"+physical)
-			if encErr == nil {
-				encoderCount, parseErr2 := strconv.ParseFloat(strings.TrimSpace(payload), 64)
-				if parseErr2 == nil {
-					position = core.EncoderCountToEngineering(axisCfg, encoderCount)
-				}
+			payload, encErr := c.sendCommand(ctx, "TP"+physical)
+			if encErr != nil {
+				// 编码器读取失败不静默回退到寄存器位置：寄存器与编码器在补偿
+				// 启用时本就允许有偏差，静默替换会向操作员呈现一个看似合理
+				// 但失真的位置。收集错误使故障可见，位置降级为寄存器换算值。
+				encoderFault = fmt.Sprintf("axis %s encoder read (TP%s): %v", axisSnapshot.Name, physical, encErr)
+			} else if encoderCount, parseErr2 := strconv.ParseFloat(strings.TrimSpace(payload), 64); parseErr2 == nil {
+				position = core.EncoderCountToEngineering(axisCfg, encoderCount)
+			} else {
+				encoderFault = fmt.Sprintf("axis %s encoder parse (TP%s payload %q): %v", axisSnapshot.Name, physical, payload, parseErr2)
 			}
 		}
 
-		forwardPayload, fwErr := c.sendCommandLocked(ctx, "MG _LF"+physical)
+		forwardPayload, fwErr := c.sendCommand(ctx, "MG _LF"+physical)
 		if fwErr != nil {
 			continue
 		}
 
-		reversePayload, rvErr := c.sendCommandLocked(ctx, "MG _LR"+physical)
+		reversePayload, rvErr := c.sendCommand(ctx, "MG _LR"+physical)
 		if rvErr != nil {
 			continue
 		}
@@ -335,89 +409,123 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 			c.status.Axes[i].Homed = r.homed
 			c.status.Axes[i].PosLimit = r.posLimit
 			c.status.Axes[i].NegLimit = r.negLimit
+
+			// 总是调 maybeActivate：内部根据 runtimeMoving 决定是更新 observedMotion
+			// 还是激活/丢弃 pending。早期版本仅在 !moving 时调用，导致 observedMotion
+			// 永远不会被设置，pending 永远激活不了。
+			physical, _, _ := b140PhysicalAxis(c.status.Axes[i].Name)
+			c.maybeActivatePendingCompensationLocked(c.status.Axes[i].Name, physical, r.moving)
 		}
 	}
-	c.status.LastError = ""
+
+	// 同步补偿任务状态到 axis status，并按补偿中状态覆盖 moving 字段。
+	c.syncCompensationStatusLocked()
+	// 编码器故障优先于"成功清空"语义：有故障则暴露，无故障才清空历史错误。
+	c.status.LastError = encoderFault
 	return c.copyStatusLocked(), nil
 }
 
 // MoveTo moves an axis to an absolute engineering position.
 func (c *B140MotionController) MoveTo(ctx context.Context, axis core.AxisName, position float64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// 先取消该轴旧补偿任务，避免与新命令竞争。
+	c.cancelAxisCompensation(axis, "replaced by new MoveTo command")
 
+	c.mu.Lock()
 	axisCfg, physical, err := c.prepareAxisCommandLocked(ctx, axis)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	if err := validateB140Target(axisCfg, position); err != nil {
 		c.status.LastError = err.Error()
+		c.mu.Unlock()
 		return err
 	}
 	pulse := core.EngineeringToPulse(axisCfg, position)
-	if err := c.applyAxisSpeedLocked(ctx, axisCfg, physical); err != nil {
-		c.status.LastError = err.Error()
+	c.mu.Unlock()
+
+	if err := c.applyAxisSpeed(ctx, axisCfg, physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PA%s=%d", physical, pulse)); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("PA%s=%d", physical, pulse)); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "BG"+physical); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, "BG"+physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	c.status.LastError = ""
+
+	// 入队 pending 补偿请求，由 Status 轮询激活。
+	c.enqueuePendingCompensation(axis, physical, axisCfg, pulse, position)
+	c.recordLastError(nil)
 	return nil
 }
 
 // MoveBy moves an axis by a relative engineering delta.
 func (c *B140MotionController) MoveBy(ctx context.Context, axis core.AxisName, delta float64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.cancelAxisCompensation(axis, "replaced by new MoveBy command")
 
+	c.mu.Lock()
 	axisCfg, physical, err := c.prepareAxisCommandLocked(ctx, axis)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	current, err := c.readAxisPositionLocked(ctx, axisCfg, physical)
+	c.mu.Unlock()
+
+	current, err := c.readAxisPosition(ctx, axisCfg, physical)
 	if err != nil {
-		c.status.LastError = err.Error()
+		c.recordLastError(err)
 		return err
 	}
+
+	c.mu.Lock()
 	if err := c.validateB140RelativeMoveLocked(axis, delta, current+delta); err != nil {
 		c.status.LastError = err.Error()
+		c.mu.Unlock()
 		return err
 	}
+	c.mu.Unlock()
+
 	deltaPulse := core.EngineeringToPulse(axisCfg, delta)
 	if deltaPulse == 0 {
 		return nil
 	}
-	if err := c.applyAxisSpeedLocked(ctx, axisCfg, physical); err != nil {
-		c.status.LastError = err.Error()
+	if err := c.applyAxisSpeed(ctx, axisCfg, physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PR%s=%d", physical, deltaPulse)); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("PR%s=%d", physical, deltaPulse)); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "BG"+physical); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, "BG"+physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	c.status.LastError = ""
+
+	// 相对运动的目标 = 当前位置 + delta；用工程位置反算目标脉冲避免累积误差。
+	targetPulse := core.EngineeringToPulse(axisCfg, current+delta)
+	c.enqueuePendingCompensation(axis, physical, axisCfg, targetPulse, current+delta)
+	c.recordLastError(nil)
 	return nil
 }
 
 // Jog moves one engineering unit in the velocity direction.
+// Jog 不入队补偿：单步 jog 后用户通常会再发 jog 或 stop，补偿会与新命令竞争。
 func (c *B140MotionController) Jog(ctx context.Context, axis core.AxisName, velocity float64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.cancelAxisCompensation(axis, "replaced by new Jog command")
 
+	c.mu.Lock()
 	axisCfg, physical, err := c.prepareAxisCommandLocked(ctx, axis)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
+	c.mu.Unlock()
+
 	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, 10)
 	jogSpeed := math.Abs(velocity)
 	if jogSpeed > maxSpeed {
@@ -431,194 +539,149 @@ func (c *B140MotionController) Jog(ctx context.Context, axis core.AxisName, velo
 	if velocity < 0 {
 		step = -1
 	}
-	current, err := c.readAxisPositionLocked(ctx, axisCfg, physical)
+	current, err := c.readAxisPosition(ctx, axisCfg, physical)
 	if err != nil {
-		c.status.LastError = err.Error()
+		c.recordLastError(err)
 		return err
 	}
+
+	c.mu.Lock()
 	if err := c.validateB140RelativeMoveLocked(axis, step, current+step); err != nil {
 		c.status.LastError = err.Error()
+		c.mu.Unlock()
 		return err
 	}
+	c.mu.Unlock()
+
 	stepPulse := core.EngineeringToPulse(axisCfg, step)
 
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed)); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed)); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("PR%s=%d", physical, stepPulse)); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("PR%s=%d", physical, stepPulse)); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "BG"+physical); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, "BG"+physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	c.status.LastError = ""
+	c.recordLastError(nil)
 	return nil
 }
 
 // Home starts the Galil home mode on one axis.
+// Home 后坐标系会被重定义，pending 补偿的目标位置失效，必须取消。
 func (c *B140MotionController) Home(ctx context.Context, axis core.AxisName) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.cancelAxisCompensation(axis, "replaced by new Home command")
 
+	c.mu.Lock()
 	_, physical, err := c.prepareAxisCommandLocked(ctx, axis)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "HM"+physical); err != nil {
-		c.status.LastError = err.Error()
+	c.mu.Unlock()
+
+	if _, err := c.sendCommand(ctx, "HM"+physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "BG"+physical); err != nil {
-		c.status.LastError = err.Error()
+	if _, err := c.sendCommand(ctx, "BG"+physical); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	c.status.LastError = ""
+	c.recordLastError(nil)
 	return nil
 }
 
 // Stop decelerates either one axis or all axes when axis is empty.
 func (c *B140MotionController) Stop(ctx context.Context, axis core.AxisName) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if axis == "" {
+		c.cancelAllCompensation("Stop all axes")
+	} else {
+		c.cancelAxisCompensation(axis, "Stop axis")
+	}
 
+	c.mu.Lock()
 	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	cmd := "ST"
 	if axis != "" {
 		physical, _, err := b140PhysicalAxis(axis)
 		if err != nil {
+			c.mu.Unlock()
 			return err
 		}
 		if _, ok := c.axisConfigLocked(axis); !ok {
+			c.mu.Unlock()
 			return fmt.Errorf("unknown motion axis: %s", axis)
 		}
 		cmd += physical
 	}
-	if _, err := c.sendCommandLocked(ctx, cmd); err != nil {
-		c.status.LastError = err.Error()
+	c.mu.Unlock()
+
+	if _, err := c.sendCommand(ctx, cmd); err != nil {
+		c.recordLastError(err)
 		return err
 	}
-	c.status.LastError = ""
+	c.recordLastError(nil)
 	return nil
 }
 
 // EmergencyStop aborts all motion immediately.
 func (c *B140MotionController) EmergencyStop(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.cancelAllCompensation("EmergencyStop")
 
+	c.mu.Lock()
 	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "AB"); err != nil {
-		c.status.LastError = err.Error()
+	c.mu.Unlock()
+
+	if _, err := c.sendCommand(ctx, "AB"); err != nil {
+		c.recordLastError(err)
 		return err
 	}
+
+	c.mu.Lock()
 	c.status.EmergencyStopped = true
 	c.status.LastError = ""
+	c.mu.Unlock()
 	return nil
 }
 
 // ResetEmergencyStop re-enables servo output and refreshes direction config.
 func (c *B140MotionController) ResetEmergencyStop(ctx context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	if _, err := c.sendCommandLocked(ctx, "SH"); err != nil {
-		c.status.LastError = err.Error()
-		return err
-	}
-	c.directionSignature = ""
-	if err := c.ensureDirectionConfiguredLocked(ctx); err != nil {
-		c.status.LastError = err.Error()
-		return err
-	}
-	c.status.EmergencyStopped = false
-	c.status.LastError = ""
-	return nil
-}
+	c.mu.Unlock()
 
-// DefinePosition sets both register and encoder position counters.
-func (c *B140MotionController) DefinePosition(ctx context.Context, axis core.AxisName, position float64) error {
+	if _, err := c.sendCommand(ctx, "SH"); err != nil {
+		c.recordLastError(err)
+		return err
+	}
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.directionSignature = ""
+	c.mu.Unlock()
 
-	axisCfg, physical, err := c.prepareAxisCommandLocked(ctx, axis)
-	if err != nil {
-		return err
-	}
-	pulse := core.EngineeringToPulse(axisCfg, position)
-	encoderCount := core.EngineeringToEncoderCount(axisCfg, position)
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("DP%s=%d", physical, pulse)); err != nil {
-		c.status.LastError = err.Error()
-		return err
-	}
-	if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("DE%s=%d", physical, encoderCount)); err != nil {
-		c.status.LastError = err.Error()
-		return err
-	}
-	c.status.LastError = ""
-	return nil
-}
-
-func (c *B140MotionController) prepareAxisCommandLocked(ctx context.Context, axis core.AxisName) (core.AxisConfig, string, error) {
-	if err := c.checkReadyLocked(); err != nil {
-		return core.AxisConfig{}, "", err
-	}
-	if err := c.ensureDirectionConfiguredLocked(ctx); err != nil {
-		c.status.LastError = err.Error()
-		return core.AxisConfig{}, "", err
-	}
-	axisCfg, ok := c.axisConfigLocked(axis)
-	if !ok {
-		return core.AxisConfig{}, "", fmt.Errorf("unknown motion axis: %s", axis)
-	}
-	physical, _, err := b140PhysicalAxis(axis)
-	if err != nil {
-		return core.AxisConfig{}, "", err
-	}
-	return axisCfg, physical, nil
-}
-
-func (c *B140MotionController) checkConnectedLocked() error {
-	c.connMu.Lock()
-	connOk := c.conn != nil && c.reader != nil
-	c.connMu.Unlock()
-	if !connOk || !c.status.Connected {
-		return fmt.Errorf("controller not connected")
-	}
-	return nil
-}
-
-func (c *B140MotionController) checkReadyLocked() error {
-	if err := c.checkConnectedLocked(); err != nil {
-		return err
-	}
-	if c.status.EmergencyStopped {
-		return fmt.Errorf("controller is in emergency stop state")
-	}
-	return nil
-}
-
-func (c *B140MotionController) ensureDirectionConfiguredLocked(ctx context.Context) error {
-	signature := c.directionConfigSignatureLocked()
-	if c.directionSignature == signature {
-		return nil
-	}
+	// 重新下方向配置（不持 mu）
+	c.mu.Lock()
 	for _, axisCfg := range c.profile.Axes {
 		if !axisCfg.Enabled {
 			continue
 		}
 		physical, _, err := b140PhysicalAxis(axisCfg.Name)
 		if err != nil {
-			return err
+			continue
 		}
 		motorDirection := 2
 		encoderDirection := 0
@@ -626,28 +689,452 @@ func (c *B140MotionController) ensureDirectionConfiguredLocked(ctx context.Conte
 			motorDirection = -2
 			encoderDirection = 2
 		}
-		if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("MT%s=%d", physical, motorDirection)); err != nil {
+		c.mu.Unlock()
+		if _, err := c.sendCommand(ctx, fmt.Sprintf("MT%s=%d", physical, motorDirection)); err != nil {
+			c.recordLastError(err)
 			return err
 		}
-		if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("CE%s=%d", physical, encoderDirection)); err != nil {
+		if _, err := c.sendCommand(ctx, fmt.Sprintf("CE%s=%d", physical, encoderDirection)); err != nil {
+			c.recordLastError(err)
 			return err
 		}
+		c.mu.Lock()
 	}
-	c.directionSignature = signature
+	c.mu.Unlock()
+
+	c.mu.Lock()
+	c.status.EmergencyStopped = false
+	c.status.LastError = ""
+	c.mu.Unlock()
 	return nil
 }
 
-func (c *B140MotionController) directionConfigSignatureLocked() string {
-	parts := make([]string, 0, len(c.profile.Axes))
-	for _, axisCfg := range c.profile.Axes {
-		if axisCfg.Enabled {
-			parts = append(parts, fmt.Sprintf("%s:%t", axisCfg.Name, axisCfg.Inverted))
-		}
+// DefinePosition sets both register and encoder position counters.
+// DefinePosition 后坐标系重定义，pending 补偿的目标失效，必须取消。
+func (c *B140MotionController) DefinePosition(ctx context.Context, axis core.AxisName, position float64) error {
+	c.cancelAxisCompensation(axis, "replaced by DefinePosition")
+
+	c.mu.Lock()
+	axisCfg, physical, err := c.prepareAxisCommandLocked(ctx, axis)
+	if err != nil {
+		c.mu.Unlock()
+		return err
 	}
-	return strings.Join(parts, "|")
+	c.mu.Unlock()
+
+	pulse := core.EngineeringToPulse(axisCfg, position)
+	encoderCount := core.EngineeringToEncoderCount(axisCfg, position)
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("DP%s=%d", physical, pulse)); err != nil {
+		c.recordLastError(err)
+		return err
+	}
+	if _, err := c.sendCommand(ctx, fmt.Sprintf("DE%s=%d", physical, encoderCount)); err != nil {
+		c.recordLastError(err)
+		return err
+	}
+	c.recordLastError(nil)
+	return nil
 }
 
-func (c *B140MotionController) sendCommandLocked(ctx context.Context, cmd string) (string, error) {
+// ---------- 补偿任务管理 ----------
+
+// enqueuePendingCompensation 入队 pending 补偿请求。
+// 调用时机：MoveTo/MoveBy 下发 BG 之后立即调用，由 Status 轮询发现运动停止后激活。
+// 若该轴未启用补偿则直接返回，不污染 map。
+func (c *B140MotionController) enqueuePendingCompensation(axis core.AxisName, physical string, axisCfg core.AxisConfig, targetPulse int64, targetEngineering float64) {
+	resolved := core.ResolveEncoderCompensation(axisCfg.EncoderCompensation)
+	if !resolved.Enabled {
+		return
+	}
+	// 编码器位置源才需要补偿：寄存器位置源下没有独立反馈，补偿无意义。
+	if axisCfg.PositionSource != core.PositionSourceEncoder {
+		return
+	}
+
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	c.pendingRequests[axis] = &b140PendingCompensationRequest{
+		targetPulse:        targetPulse,
+		targetEngineering:  targetEngineering,
+		cfg:                resolved,
+		issuedAt:           time.Now(),
+		observedMotion:     false,
+	}
+}
+
+// maybeActivatePendingCompensationLocked 在 Status() 中调用，发现硬件运动停止时
+// 把 pending 升级为 job 并启动补偿 goroutine。
+// 调用方必须持有 c.mu（用于读 c.status.Axes）但不持有 c.compMu——本方法内部加 compMu。
+//
+// 激活规则（防静止轴误触发）：
+//   - 硬件正在运动：标记 observedMotion=true，等下一次轮询
+//   - 硬件已停 + 已观察到运动：立即激活
+//   - 硬件已停 + 未观察到运动 + 仍在启动宽限期：保留 pending，等下一次轮询（给硬件反应时间）
+//   - 硬件已停 + 未观察到运动 + 超过启动宽限期：判定为静止轴误触发，丢弃 pending
+func (c *B140MotionController) maybeActivatePendingCompensationLocked(axis core.AxisName, physical string, runtimeMoving bool) {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+
+	pending, ok := c.pendingRequests[axis]
+	if !ok {
+		return
+	}
+
+	if runtimeMoving {
+		// 硬件还在运动：记录已观察到运动，等真正停下来再激活。
+		pending.observedMotion = true
+		return
+	}
+
+	// 硬件已停。判定是否应激活或丢弃。
+	elapsed := time.Since(pending.issuedAt)
+	if !pending.observedMotion {
+		if elapsed <= b140CompensationStartupGrace {
+			// 仍在启动宽限期内：硬件可能只是还没开始动，保留 pending 等下次轮询
+			return
+		}
+		// 超过宽限期仍未观察到运动：判定为静止轴误触发，丢弃
+		delete(c.pendingRequests, axis)
+		return
+	}
+
+	// 已观察到运动且硬件已停：升级为 job
+	c.compensationGenerationCounter++
+	job := &b140CompensationJob{
+		generation:        c.compensationGenerationCounter,
+		axis:              axis,
+		physical:          physical,
+		axisCfg:           c.snapshotAxisCfgLocked(axis),
+		cfg:               pending.cfg,
+		targetPulse:       pending.targetPulse,
+		targetEngineering: pending.targetEngineering,
+		state:             compensationStateWaitingStop,
+		startedAt:         time.Now(),
+	}
+	delete(c.pendingRequests, axis)
+	c.jobs[axis] = job
+
+	// 异步启动补偿状态机。注意：不能持 c.mu 跑循环，否则会死锁。
+	go c.runAxisCompensation(job)
+}
+
+// snapshotAxisCfgLocked 取轴配置快照。调用方持 c.mu。
+func (c *B140MotionController) snapshotAxisCfgLocked(axis core.AxisName) core.AxisConfig {
+	for _, a := range c.profile.Axes {
+		if a.Enabled && a.Name == axis {
+			return a
+		}
+	}
+	return core.AxisConfig{}
+}
+
+// runAxisCompensation 补偿状态机主循环。在独立 goroutine 中运行。
+// 通过 generation 与新命令通信：若 generation 已被取消则自废退出。
+func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
+	timeoutAt := job.startedAt.Add(time.Duration(job.cfg.TimeoutMs) * time.Millisecond)
+	ctx := context.Background()
+
+	for c.isCompensationJobCurrent(job.axis, job.generation) {
+		switch job.state {
+		case compensationStateWaitingStop:
+			snap, err := c.waitForAxisStop(ctx, job)
+			if err != nil {
+				c.failCompensationJob(job, err)
+				return
+			}
+			if snap.limit.forward || snap.limit.reverse {
+				c.failCompensationJob(job, fmt.Errorf("axis %s limit triggered during compensation: forward=%v reverse=%v", job.axis, snap.limit.forward, snap.limit.reverse))
+				return
+			}
+			if !c.isCompensationJobCurrent(job.axis, job.generation) {
+				return
+			}
+			job.state = compensationStateSettling
+
+		case compensationStateSettling:
+			if job.cfg.SettleMs > 0 {
+				select {
+				case <-time.After(time.Duration(job.cfg.SettleMs) * time.Millisecond):
+				case <-ctx.Done():
+					c.failCompensationJob(job, ctx.Err())
+					return
+				}
+			}
+			if time.Now().After(timeoutAt) {
+				c.failCompensationJob(job, fmt.Errorf("compensation timed out after %dms", job.cfg.TimeoutMs))
+				return
+			}
+			job.state = compensationStateChecking
+
+		case compensationStateChecking:
+			encoderCount, err := c.readAxisEncoderPosition(ctx, job.physical)
+			if err != nil {
+				c.failCompensationJob(job, fmt.Errorf("read encoder position: %w", err))
+				return
+			}
+			encoderEngineering := core.EncoderCountToEngineering(job.axisCfg, encoderCount)
+			errorEngineering := job.targetEngineering - encoderEngineering
+			absError := math.Abs(errorEngineering)
+
+			// 更新 PositionError（在锁内同步到 status）
+			c.updateCompensationFields(job, func(s *core.AxisStatus) {
+				s.PositionError = absError
+			})
+
+			if absError <= job.cfg.Tolerance || absError <= job.cfg.MinStep {
+				// 补偿到位：用编码器位置重定义寄存器位置，消除静态偏差。
+				if _, err := c.sendCommand(ctx, fmt.Sprintf("DP%s=%d", job.physical, core.EngineeringToPulse(job.axisCfg, encoderEngineering))); err != nil {
+					c.failCompensationJob(job, fmt.Errorf("sync register position: %w", err))
+					return
+				}
+				c.succeedCompensationJob(job)
+				return
+			}
+
+			if job.attempts >= job.cfg.MaxCycles {
+				c.failCompensationJob(job, fmt.Errorf("compensation exceeded max cycles %d (last error=%.6f)", job.cfg.MaxCycles, absError))
+				return
+			}
+
+			job.state = compensationStateCompensating
+
+		case compensationStateCompensating:
+			job.attempts++
+			// 重新读一次编码器位置以避免使用陈旧数据。
+			// 读取失败必须终止补偿：若静默回退为 0，correctionEngineering 会
+			// 等于整段目标位置，PR+BG 会把轴推向绝对目标，造成机械猛冲。
+			currentCount, err := c.readAxisEncoderPosition(ctx, job.physical)
+			if err != nil {
+				c.failCompensationJob(job, fmt.Errorf("re-read encoder position: %w", err))
+				return
+			}
+			correctionEngineering := job.targetEngineering - core.EncoderCountToEngineering(job.axisCfg, currentCount)
+			absCorrection := math.Abs(correctionEngineering)
+			if absCorrection < job.cfg.MinStep {
+				// 误差小于最小步长，强制用 minStep 方向补偿，避免无穷小步进。
+				if correctionEngineering >= 0 {
+					correctionEngineering = job.cfg.MinStep
+				} else {
+					correctionEngineering = -job.cfg.MinStep
+				}
+			}
+			correctionPulse := core.EngineeringToPulse(job.axisCfg, correctionEngineering)
+			if correctionPulse == 0 {
+				// 工程位置变化太小无法转换为脉冲，认为已到位。
+				c.succeedCompensationJob(job)
+				return
+			}
+
+			if _, err := c.sendCommand(ctx, fmt.Sprintf("PR%s=%d", job.physical, correctionPulse)); err != nil {
+				c.failCompensationJob(job, fmt.Errorf("send correction PR: %w", err))
+				return
+			}
+			if _, err := c.sendCommand(ctx, "BG"+job.physical); err != nil {
+				c.failCompensationJob(job, fmt.Errorf("begin correction: %w", err))
+				return
+			}
+			job.state = compensationStateWaitingStop
+
+		default:
+			// succeeded / failed / cancelled：直接退出
+			return
+		}
+	}
+}
+
+// axisStopSnapshot 单次轮询读出的运动/限位状态。
+type axisStopSnapshot struct {
+	moving bool
+	limit  struct {
+		forward bool
+		reverse bool
+	}
+}
+
+// waitForAxisStop 轮询 TS 命令直到运动停止或超时。
+// 返回最后一次读到的快照。
+func (c *B140MotionController) waitForAxisStop(ctx context.Context, job *b140CompensationJob) (axisStopSnapshot, error) {
+	var last axisStopSnapshot
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(job.cfg.TimeoutMs)*time.Millisecond)
+	defer cancel()
+
+	ticker := time.NewTicker(b140CompensationPollInterval)
+	defer ticker.Stop()
+
+	for {
+		tsPayload, err := c.sendCommand(timeoutCtx, "TS")
+		if err != nil {
+			return last, fmt.Errorf("poll TS: %w", err)
+		}
+		statusBytes, parseErr := parseB140Numbers(tsPayload)
+		if parseErr != nil {
+			return last, fmt.Errorf("parse TS: %w", parseErr)
+		}
+		_, axisIndex, err := b140PhysicalAxis(job.axis)
+		if err != nil {
+			return last, err
+		}
+		last.moving = int(numberAt(statusBytes, axisIndex))&0x80 != 0
+
+		// 同步限位
+		forwardPayload, fwErr := c.sendCommand(timeoutCtx, "MG _LF"+job.physical)
+		if fwErr == nil {
+			last.limit.forward = parseB140Limit(forwardPayload)
+		}
+		reversePayload, rvErr := c.sendCommand(timeoutCtx, "MG _LR"+job.physical)
+		if rvErr == nil {
+			last.limit.reverse = parseB140Limit(reversePayload)
+		}
+
+		if !last.moving {
+			return last, nil
+		}
+		if last.limit.forward || last.limit.reverse {
+			return last, nil
+		}
+
+		select {
+		case <-ticker.C:
+		case <-timeoutCtx.Done():
+			return last, fmt.Errorf("wait for axis stop: %w", timeoutCtx.Err())
+		}
+	}
+}
+
+// readAxisEncoderPosition 读取单轴编码器位置（TP 命令）。
+func (c *B140MotionController) readAxisEncoderPosition(ctx context.Context, physical string) (float64, error) {
+	payload, err := c.sendCommand(ctx, "TP"+physical)
+	if err != nil {
+		return 0, err
+	}
+	count, err := strconv.ParseFloat(strings.TrimSpace(payload), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse encoder count %q: %w", payload, err)
+	}
+	return count, nil
+}
+
+// isCompensationJobCurrent 判断 job 是否仍是当前代际。
+// 调用方不持 c.mu；本方法只持 c.compMu。
+func (c *B140MotionController) isCompensationJobCurrent(axis core.AxisName, generation int64) bool {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	current, ok := c.jobs[axis]
+	if !ok {
+		return false
+	}
+	return current.generation == generation
+}
+
+// cancelAxisCompensation 取消指定轴的补偿任务。
+// 通过覆盖 generation 让运行中的 goroutine 自行退出，并清理 pending。
+func (c *B140MotionController) cancelAxisCompensation(axis core.AxisName, _ string) {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	delete(c.pendingRequests, axis)
+	if job, ok := c.jobs[axis]; ok {
+		job.state = compensationStateCancelled
+		c.compensationGenerationCounter++
+		// 注意：不直接 delete job，让 goroutine 自己读到 cancelled 状态后退出。
+		// 但下一次 enqueue 会覆盖，所以这里也可直接 delete。
+		delete(c.jobs, axis)
+	}
+}
+
+// cancelAllCompensation 取消所有轴的补偿任务。
+func (c *B140MotionController) cancelAllCompensation(_ string) {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	for axis, job := range c.jobs {
+		job.state = compensationStateCancelled
+		_ = axis
+	}
+	c.jobs = make(map[core.AxisName]*b140CompensationJob)
+	c.pendingRequests = make(map[core.AxisName]*b140PendingCompensationRequest)
+}
+
+// succeedCompensationJob 标记补偿成功并清理 job。
+func (c *B140MotionController) succeedCompensationJob(job *b140CompensationJob) {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	if current, ok := c.jobs[job.axis]; ok && current.generation == job.generation {
+		job.state = compensationStateSucceeded
+		delete(c.jobs, job.axis)
+	}
+	// 同步 status
+	c.mu.Lock()
+	for i := range c.status.Axes {
+		if c.status.Axes[i].Name == job.axis {
+			c.status.Axes[i].Compensating = false
+			c.status.Axes[i].CompensationError = ""
+			c.status.Axes[i].PositionError = 0
+		}
+	}
+	c.mu.Unlock()
+}
+
+// failCompensationJob 标记补偿失败并清理 job，把错误透传到 status。
+func (c *B140MotionController) failCompensationJob(job *b140CompensationJob, err error) {
+	c.compMu.Lock()
+	if current, ok := c.jobs[job.axis]; ok && current.generation == job.generation {
+		job.state = compensationStateFailed
+		job.err = err
+		job.lastError = err.Error()
+		delete(c.jobs, job.axis)
+	}
+	c.compMu.Unlock()
+
+	c.mu.Lock()
+	for i := range c.status.Axes {
+		if c.status.Axes[i].Name == job.axis {
+			c.status.Axes[i].Compensating = false
+			c.status.Axes[i].CompensationError = err.Error()
+		}
+	}
+	c.mu.Unlock()
+}
+
+// updateCompensationFields 在锁内更新 axis status 上的补偿字段。
+func (c *B140MotionController) updateCompensationFields(job *b140CompensationJob, mutate func(*core.AxisStatus)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.status.Axes {
+		if c.status.Axes[i].Name == job.axis {
+			mutate(&c.status.Axes[i])
+			return
+		}
+	}
+}
+
+// syncCompensationStatusLocked 把 compMu 下的 job 状态同步到 c.status.Axes。
+// 调用方持 c.mu；本方法内部加 c.compMu。
+// 关键副作用：补偿中的轴 Moving 强制为 true，避免上层误判运动完成。
+func (c *B140MotionController) syncCompensationStatusLocked() {
+	c.compMu.Lock()
+	defer c.compMu.Unlock()
+	for axis, job := range c.jobs {
+		for i := range c.status.Axes {
+			if c.status.Axes[i].Name != axis {
+				continue
+			}
+			c.status.Axes[i].Compensating = job.state == compensationStateWaitingStop ||
+				job.state == compensationStateSettling ||
+				job.state == compensationStateChecking ||
+				job.state == compensationStateCompensating
+			c.status.Axes[i].CompensationError = job.lastError
+			if c.status.Axes[i].Compensating {
+				// 补偿中：Moving 强制 true，防止上层 waitForMotionComplete 误判
+				c.status.Axes[i].Moving = true
+			}
+		}
+	}
+}
+
+// ---------- 命令发送 ----------
+
+// sendCommand 发送命令并读取响应。不要求调用方持 c.mu，仅持 c.connMu。
+// 补偿 goroutine 与运动命令共用此入口。
+func (c *B140MotionController) sendCommand(ctx context.Context, cmd string) (string, error) {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
@@ -706,16 +1193,25 @@ func (c *B140MotionController) sendCommandLocked(ctx context.Context, cmd string
 	}
 }
 
-func (c *B140MotionController) axisConfigLocked(axis core.AxisName) (core.AxisConfig, bool) {
-	for _, axisCfg := range c.profile.Axes {
-		if axisCfg.Enabled && axisCfg.Name == axis {
-			return axisCfg, true
-		}
-	}
-	return core.AxisConfig{}, false
+// sendCommandLocked 旧入口：保留给 Connect/Disconnect 等已持 c.mu 的调用点。
+// 新代码应直接用 sendCommand。
+func (c *B140MotionController) sendCommandLocked(ctx context.Context, cmd string) (string, error) {
+	return c.sendCommand(ctx, cmd)
 }
 
-func (c *B140MotionController) applyAxisSpeedLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) error {
+// recordLastError 把错误写到 status.LastError。nil 时清空。
+func (c *B140MotionController) recordLastError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err == nil {
+		c.status.LastError = ""
+		return
+	}
+	c.status.LastError = err.Error()
+}
+
+// applyAxisSpeed 不持 c.mu 的速度下发版本。
+func (c *B140MotionController) applyAxisSpeed(ctx context.Context, axisCfg core.AxisConfig, physical string) error {
 	maxSpeed := core.ValueOrFloat(axisCfg.MaxSpeed, core.DefaultMaxSpeed)
 	if maxSpeed <= 0 || math.IsNaN(maxSpeed) || math.IsInf(maxSpeed, 0) {
 		maxSpeed = core.DefaultMaxSpeed
@@ -724,11 +1220,17 @@ func (c *B140MotionController) applyAxisSpeedLocked(ctx context.Context, axisCfg
 	if pulseSpeed <= 0 {
 		pulseSpeed = 1
 	}
-	_, err := c.sendCommandLocked(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed))
+	_, err := c.sendCommand(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed))
 	return err
 }
 
-func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) (float64, error) {
+// applyAxisSpeedLocked 旧入口：保留给已持 c.mu 的调用点。
+func (c *B140MotionController) applyAxisSpeedLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) error {
+	return c.applyAxisSpeed(ctx, axisCfg, physical)
+}
+
+// readAxisPosition 不持 c.mu 的位置读取版本。
+func (c *B140MotionController) readAxisPosition(ctx context.Context, axisCfg core.AxisConfig, physical string) (float64, error) {
 	_, axisIndex, err := b140PhysicalAxis(axisCfg.Name)
 	if err != nil {
 		return 0, err
@@ -736,7 +1238,7 @@ func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisC
 
 	var position float64
 	if axisCfg.PositionSource == core.PositionSourceEncoder {
-		payload, err := c.sendCommandLocked(ctx, "TP"+physical)
+		payload, err := c.sendCommand(ctx, "TP"+physical)
 		if err != nil {
 			return 0, err
 		}
@@ -746,7 +1248,7 @@ func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisC
 		}
 		position = core.EncoderCountToEngineering(axisCfg, encoderCount)
 	} else {
-		payload, err := c.sendCommandLocked(ctx, "TD")
+		payload, err := c.sendCommand(ctx, "TD")
 		if err != nil {
 			return 0, err
 		}
@@ -757,13 +1259,92 @@ func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisC
 		position = core.PulseToEngineering(axisCfg, numberAt(registerPositions, axisIndex))
 	}
 
+	c.mu.Lock()
 	for i := range c.status.Axes {
 		if c.status.Axes[i].Name == axisCfg.Name {
 			c.status.Axes[i].Position = position
-			return position, nil
+			break
 		}
 	}
-	return 0, fmt.Errorf("unknown motion axis: %s", axisCfg.Name)
+	c.mu.Unlock()
+	return position, nil
+}
+
+// readAxisPositionLocked 旧入口：保留给已持 c.mu 的调用点。
+func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) (float64, error) {
+	return c.readAxisPosition(ctx, axisCfg, physical)
+}
+
+func (c *B140MotionController) prepareAxisCommandLocked(ctx context.Context, axis core.AxisName) (core.AxisConfig, string, error) {
+	if err := c.checkReadyLocked(); err != nil {
+		return core.AxisConfig{}, "", err
+	}
+	if err := c.ensureDirectionConfiguredLocked(ctx); err != nil {
+		c.status.LastError = err.Error()
+		return core.AxisConfig{}, "", err
+	}
+	axisCfg, ok := c.axisConfigLocked(axis)
+	if !ok {
+		return core.AxisConfig{}, "", fmt.Errorf("unknown motion axis: %s", axis)
+	}
+	physical, _, err := b140PhysicalAxis(axis)
+	if err != nil {
+		return core.AxisConfig{}, "", err
+	}
+	return axisCfg, physical, nil
+}
+
+func (c *B140MotionController) checkConnectedLocked() error {
+	c.connMu.Lock()
+	connOk := c.conn != nil && c.reader != nil
+	c.connMu.Unlock()
+	if !connOk || !c.status.Connected {
+		return fmt.Errorf("controller not connected")
+	}
+	return nil
+}
+
+func (c *B140MotionController) checkReadyLocked() error {
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
+	if c.status.EmergencyStopped {
+		return fmt.Errorf("controller is in emergency stop state")
+	}
+	return nil
+}
+
+func (c *B140MotionController) ensureDirectionConfiguredLocked(ctx context.Context) error {
+	signature := c.directionConfigSignatureLocked()
+	if c.directionSignature == signature {
+		return nil
+	}
+	// 与原实现一致：signature 失效时下发方向命令。命令在锁内执行，
+	// 与 sendCommand 共用 connMu，不会与运动命令竞争。Status 路径上
+	// 调用频率低（只在 signature 变化时），可接受短暂持锁。
+	for _, axisCfg := range c.profile.Axes {
+		if !axisCfg.Enabled {
+			continue
+		}
+		physical, _, err := b140PhysicalAxis(axisCfg.Name)
+		if err != nil {
+			return err
+		}
+		motorDirection := 2
+		encoderDirection := 0
+		if axisCfg.Inverted {
+			motorDirection = -2
+			encoderDirection = 2
+		}
+		if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("MT%s=%d", physical, motorDirection)); err != nil {
+			return err
+		}
+		if _, err := c.sendCommandLocked(ctx, fmt.Sprintf("CE%s=%d", physical, encoderDirection)); err != nil {
+			return err
+		}
+	}
+	c.directionSignature = signature
+	return nil
 }
 
 func validateB140Target(axisCfg core.AxisConfig, target float64) error {
@@ -777,6 +1358,25 @@ func validateB140Target(axisCfg core.AxisConfig, target float64) error {
 		return fmt.Errorf("target %.4f is above max limit %.4f for axis %s", target, *axisCfg.MaxLimit, axisCfg.Name)
 	}
 	return nil
+}
+
+func (c *B140MotionController) directionConfigSignatureLocked() string {
+	parts := make([]string, 0, len(c.profile.Axes))
+	for _, axisCfg := range c.profile.Axes {
+		if axisCfg.Enabled {
+			parts = append(parts, fmt.Sprintf("%s:%t", axisCfg.Name, axisCfg.Inverted))
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
+func (c *B140MotionController) axisConfigLocked(axis core.AxisName) (core.AxisConfig, bool) {
+	for _, axisCfg := range c.profile.Axes {
+		if axisCfg.Enabled && axisCfg.Name == axis {
+			return axisCfg, true
+		}
+	}
+	return core.AxisConfig{}, false
 }
 
 func (c *B140MotionController) validateB140RelativeMoveLocked(axis core.AxisName, delta float64, target float64) error {

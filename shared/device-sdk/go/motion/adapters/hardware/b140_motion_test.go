@@ -232,8 +232,11 @@ type b140FakeServer struct {
 	port      int
 	listener  net.Listener
 	responses map[string]string
-	mu        sync.Mutex
-	received  []string
+	// dynamic 命令处理函数：命中时优先于 responses。
+	// 用于补偿测试中"每次 TP 返回不同值"的场景。
+	dynamic map[string]func() string
+	mu      sync.Mutex
+	received []string
 }
 
 func newB140FakeServer(t *testing.T, responses map[string]string) *b140FakeServer {
@@ -242,7 +245,7 @@ func newB140FakeServer(t *testing.T, responses map[string]string) *b140FakeServe
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &b140FakeServer{listener: listener, responses: responses}
+	server := &b140FakeServer{listener: listener, responses: responses, dynamic: make(map[string]func() string)}
 	server.host, server.port = splitTCPAddr(t, listener.Addr().String())
 	go server.serve()
 	return server
@@ -269,7 +272,27 @@ func (s *b140FakeServer) handle(conn net.Conn) {
 		cmd = strings.TrimSpace(cmd)
 		s.mu.Lock()
 		s.received = append(s.received, cmd)
-		response, ok := s.responses[cmd]
+		// 匹配顺序：
+		//   1. 精确匹配 dynamic（如 "TD"）
+		//   2. 命令前缀匹配 dynamic（如 prefix="PRA" 匹配 "PRA=200"，但不会匹配 "PRB=200"）
+		//   3. 精确匹配 responses（如 "PAA=200"）
+		var response string
+		var ok bool
+		if fn, hasDynamic := s.dynamic[cmd]; hasDynamic {
+			response = fn()
+			ok = true
+		} else {
+			for prefix, fn := range s.dynamic {
+				if isB140CmdPrefix(cmd, prefix) {
+					response = fn()
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				response, ok = s.responses[cmd]
+			}
+		}
 		s.mu.Unlock()
 		if !ok {
 			_, _ = conn.Write([]byte("?"))
@@ -277,6 +300,24 @@ func (s *b140FakeServer) handle(conn net.Conn) {
 		}
 		_, _ = conn.Write([]byte(response + ":"))
 	}
+}
+
+// setDynamic 注册动态响应函数。命中时优先于 responses 表。
+// prefix 既可精确匹配（如 "TD"），也可命令前缀匹配（如 "PRA" 匹配 "PRA=200"）。
+// 不会误匹配兄弟命令（"PRA" 不会匹配 "PRB=200"）。
+func (s *b140FakeServer) setDynamic(cmd string, fn func() string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dynamic[cmd] = fn
+}
+
+// isB140CmdPrefix 判断 prefix 是否为 cmd 的命令名前缀。
+// 等价或 prefix+"=" 前缀，避免 "PRA" 误匹配 "PRB=200"。
+func isB140CmdPrefix(cmd, prefix string) bool {
+	if cmd == prefix {
+		return true
+	}
+	return strings.HasPrefix(cmd, prefix+"=")
 }
 
 func (s *b140FakeServer) commands(minCount int) []string {
