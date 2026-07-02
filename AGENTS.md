@@ -45,6 +45,7 @@ powershell -File .\scripts\new-project.ps1 -Name foo  # New project
 - **Go** (workspace target follows `go.work`) — required for backend and Wails builds.
 - **Node.js** (LTS) — required for Vue 3 frontend builds.
 - **Wails CLI** (v3 for all projects: `wind-daq`, `daq-t1603`, `daq-p1604`, `motion-controller`, `five-hole-interpolator`, `three-hole-interpolator`) — required for desktop app generation/builds. See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
+- **Workspace isolation**: `daq-t1603` is temporarily removed from `go.work` (see `docs/decisions/ADR-006-daq-t1603-workspace-isolation.md`). It must be built/tested with `$env:GOWORK="off"` from its module root. Other projects remain in `go.work` and use the default workspace mode.
 
 ### Pre-submit Checklist
 
@@ -52,9 +53,12 @@ Before committing, run the checks that apply to the touched project:
 
 1. `powershell -File .\scripts\validate-structure.ps1` — must pass
 2. `powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/<name>/apps/desktop-wails/frontend/src"` — when modifying frontend files or directories
-3. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`
+3. Go project checks: `go test ./...` or the project-specific command in `projects/<name>/README.md` / `CLAUDE.md`. For `daq-t1603` (隔离工作空间, ADR-006), prefix with `$env:GOWORK="off"` and run from its module root.
 4. Frontend checks: `npm run typecheck`, `npm run build`, and project tests when present
 5. `powershell -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"` — when modifying wind-daq frontend files (prevents direct naive-ui imports in feature code)
+6. **Wails binding regeneration** — when modifying any method signature or struct exposed via Wails binding in `apps/desktop-wails/backend/`, run `wails3 generate bindings -silent` in the `apps/desktop-wails` directory before committing. typecheck/build/test cannot detect stale bindings. See `docs/runbooks/frontend-ai-rules.zh-CN.md` §13.1.
+   - **Warning (TS binding projects)**: `daq-t1603` and `daq-p1604` use TypeScript bindings under `frontend/bindings/`. Running `wails3 generate bindings` on these projects may **delete existing TS binding files** and regenerate only JS bindings. Do NOT run this command blindly on TS-binding projects; regenerate manually by editing the affected `.ts` binding files. Only `wind-daq` (JS bindings) is safe to run `wails3 generate bindings` directly.
+7. `powershell -File .\scripts\check-wails-bindings.ps1` — verify backend Go methods and frontend bindings are in sync (method name diff + stale timestamp warning). Run after step 6 to confirm regeneration succeeded, or standalone to catch drift. Supports `-Projects wind-daq,daq-t1603` to scope, `-StaleMinutes 30` to tune threshold.
 
 See CLAUDE.md for complete rules, decision tree, and design principles.
 
