@@ -12,6 +12,22 @@ import (
 	"daq-t1603/ports"
 )
 
+const (
+	// adapterChannelCap 采集 channel 缓冲容量。
+	// 65536 帧 = 1000Hz 下约 65 秒缓冲，
+	// 在 relay 偶发卡顿（如 GC stop-the-world）时提供充足余量。
+	adapterChannelCap = 65536
+
+	// adapterChannelBackpressureThreshold 水位告警阈值。
+	// 超过 80% 容量时发 warn 日志，提示 relay 消费速度异常。
+	// 用整数算式避免 float64→int 常量转换错误。
+	adapterChannelBackpressureThreshold = adapterChannelCap * 4 / 5
+
+	// adapterBackpressureWarnIntervalMs 背压 warn 日志限频间隔。
+	// 全局共享：10 台同时背压时 5 秒内最多 1 条 warn，避免日志刷屏。
+	adapterBackpressureWarnIntervalMs = int64(5000)
+)
+
 // hzToSpsMs 将频率(Hz)转换为设备 SPS 采集间隔(毫秒)
 // 设备 SPS 参数含义为采集间隔毫秒，实际频率 = 1000/SPS
 func hzToSpsMs(hz int) int {
@@ -37,6 +53,13 @@ type T1603Adapter struct {
 	channels map[string]chan core.TemperatureSnapshot
 	stopChs  map[string]chan struct{}
 	logSink  func(DeviceLogEntry)
+
+	// bpWarnLastMs per-device 背压 warn 限频时间戳。
+	// 用 mu 保护（directSink 内已 RLock 拿 sink，但 bpWarnLastMs 写入需 Lock）；
+	// 实际上 directSink 调 maybeWarnBackpressure 时不持 a.mu，
+	// 这里独立用 bpMu 保护，避免与 a.mu 嵌套死锁。
+	bpMu         sync.Mutex
+	bpWarnLastMs map[string]int64
 }
 
 type DeviceLogEntry struct {
@@ -49,11 +72,12 @@ type DeviceLogEntry struct {
 
 func NewT1603Adapter() *T1603Adapter {
 	return &T1603Adapter{
-		drivers:  make(map[string]*sharedhw.DAQT1603),
-		status:   make(map[string]*core.DeviceState),
-		sinks:    make(map[string]func(core.TemperatureSnapshot)),
-		channels: make(map[string]chan core.TemperatureSnapshot),
-		stopChs:  make(map[string]chan struct{}),
+		drivers:      make(map[string]*sharedhw.DAQT1603),
+		status:       make(map[string]*core.DeviceState),
+		sinks:        make(map[string]func(core.TemperatureSnapshot)),
+		channels:     make(map[string]chan core.TemperatureSnapshot),
+		stopChs:      make(map[string]chan struct{}),
+		bpWarnLastMs: make(map[string]int64),
 	}
 }
 
@@ -70,6 +94,31 @@ func (a *T1603Adapter) emitLog(entry DeviceLogEntry) {
 	if sink != nil {
 		sink(entry)
 	}
+}
+
+// maybeWarnBackpressure 在采集 channel 水位过高时发 per-device 限频 warn 日志。
+//
+// 限频策略：每设备独立计数，10 台同时背压时各自每
+// adapterBackpressureWarnIntervalMs 最多 1 条 warn。
+// 用独立 bpMu 保护，避免与 a.mu 嵌套死锁。
+func (a *T1603Adapter) maybeWarnBackpressure(deviceID string, queueLen, queueCap int) {
+	now := core.TimestampMs()
+	a.bpMu.Lock()
+	last := a.bpWarnLastMs[deviceID]
+	if now-last < adapterBackpressureWarnIntervalMs {
+		a.bpMu.Unlock()
+		return
+	}
+	a.bpWarnLastMs[deviceID] = now
+	a.bpMu.Unlock()
+
+	a.emitLog(DeviceLogEntry{
+		Level:    "warn",
+		Category: "acquisition",
+		DeviceID: deviceID,
+		Message:  "采集 channel 水位过高，relay 消费异常",
+		Detail:   fmt.Sprintf("queueLen=%d queueCap=%d deviceID=%s", queueLen, queueCap, deviceID),
+	})
 }
 
 var _ ports.DevicePort = (*T1603Adapter)(nil)
@@ -96,11 +145,11 @@ func mapT1603SharedConfig(cfg core.T1603Config) sharedcore.DaqT1603HardwareConfi
 
 func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if _, exists := a.drivers[profile.ID]; exists {
+		a.mu.Unlock()
 		return fmt.Errorf("device %s already connected", profile.ID)
 	}
+	a.mu.Unlock()
 
 	sharedProfile := sharedcore.Profile{
 		ID:             profile.ID,
@@ -131,8 +180,15 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	}
 	dev := sharedhw.NewDAQT1603(sharedProfile)
 	dev.OnLog(func(entry sharedhw.LogEntry) {
+		// 硬件通信日志（hardware-send/hardware-recv）在驱动层是 debug 级别，
+		// 前端默认只显示 info 及以上，导致"通信"分组看不到任何记录。
+		// 在此提升为 info，让操作员在前端日志面板可见完整的命令交互流程。
+		level := entry.Level
+		if (entry.Category == "hardware-send" || entry.Category == "hardware-recv") && level == "debug" {
+			level = "info"
+		}
 		a.emitLog(DeviceLogEntry{
-			Level:    entry.Level,
+			Level:    level,
 			Category: entry.Category,
 			DeviceID: entry.DeviceID,
 			Message:  entry.Message,
@@ -192,7 +248,27 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	if err := dev.Connect(); err != nil {
 		return fmt.Errorf("connect device %s: %w", profile.ID, err)
 	}
+	// TCP 连接成功，打印硬件通信日志（前端"通信"分组可见）
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
+		Message: "TCP connected", Detail: fmt.Sprintf("%s:%d", profile.Address, profile.Port),
+	})
+	if cfg, err := dev.GetDaqT1603Config(); err == nil {
+		profile.T1603Cfg.SamplingRate = spsMsToHz(cfg.SamplingRate) // 采集间隔毫秒 → Hz
+		profile.SamplingRate = profile.T1603Cfg.SamplingRate
+		profile.T1603Cfg.ChannelMask = cfg.ChannelMask
+		profile.T1603Cfg.AverageCount = cfg.AverageCount
+		profile.T1603Cfg.ShowTimestamp = cfg.ShowTimestamp
+		profile.T1603Cfg.ShowSequence = cfg.ShowSequence
+		profile.T1603Cfg.ThermocoupleTypes = cfg.ThermocoupleTypes
+	}
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, exists := a.drivers[profile.ID]; exists {
+		_ = dev.Disconnect()
+		return fmt.Errorf("device %s already connected", profile.ID)
+	}
 	a.drivers[profile.ID] = dev
 	a.status[profile.ID] = &core.DeviceState{
 		Profile:     profile,
@@ -243,6 +319,11 @@ func (a *T1603Adapter) Disconnect(id string) error {
 	if err := dev.Disconnect(); err != nil {
 		return err
 	}
+	// TCP 断开日志（通信层），归类到 hardware-recv 便于前端"通信"分组展示
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: id,
+		Message: "TCP disconnected",
+	})
 	return stopErr
 }
 
@@ -258,14 +339,20 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		return nil, fmt.Errorf("device %s already acquiring", id)
 	}
 
-	// channel 缓冲区大小：65536 帧，在 1000Hz 下提供约 65 秒缓冲，
-	// 多设备场景下确保 CSV flush 阻塞时不会立即反压到硬件 readLoop
-	ch := make(chan core.TemperatureSnapshot, 65536)
+	// channel 缓冲区大小：adapterChannelCap 帧，在 1000Hz 下提供约 65 秒缓冲，
+	// 多设备场景下确保 relay 偶发卡顿时不会立即反压到硬件 readLoop
+	ch := make(chan core.TemperatureSnapshot, adapterChannelCap)
 	done := make(chan struct{})
 	a.channels[id] = ch
 	a.stopChs[id] = done
 
 	directSink := func(snapshot core.TemperatureSnapshot) {
+		// 水位监控：超过阈值时发限频 warn 日志。
+		// 不丢数据（仍 blocking send），因为 device 侧丢帧比 relay 阻塞更糟；
+		// 此处仅做可观测，让操作员感知 relay 消费异常。
+		if l := len(ch); l >= adapterChannelBackpressureThreshold {
+			a.maybeWarnBackpressure(id, l, cap(ch))
+		}
 		select {
 		case ch <- snapshot:
 		case <-done:
