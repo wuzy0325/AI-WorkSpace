@@ -350,6 +350,11 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 
 	// encoderFault 收集编码器源轴的 TP 读取/解析故障。多轴时最后一轴的故障胜出。
 	// 留空则在末尾清空 LastError，保留 Status 成功路径的原有语义。
+	//
+	// 已知局限：故障只进全局 ControllerStatus.LastError，AxisStatus 无 per-axis
+	// error 字段，操作员需翻全局错误才能发现某轴位置是降级值。多轴时若多轴同时
+	// 故障，只暴露最后一个。待引入 AxisStatus.EncoderFault 字段后可逐轴精确暴露
+	//（当前不动 core types 以避免波及 bindings/前端）。
 	var encoderFault string
 
 	for _, axisSnapshot := range axesSnapshot {
