@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { calibrationApi } from '@api/calibrationApi'
 import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, ThreeHolePointLayout, ChannelRef } from '@shared/types/calibration'
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
+import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import UiButton from '@components/ui/UiButton.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
@@ -24,11 +27,12 @@ const emit = defineEmits<{ close: []; saved: [config: CalibrationConfig] }>()
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
+const { t } = storeToRefs(useI18nStore())
 
 const isLoading = ref(true)
 const isSaving = ref(false)
 const currentStep = ref(0)
-const steps = ['基本设置', '硬件配置', '确认保存']
+const steps = computed(() => [t.value.stepBasic || '基本设置', t.value.stepHardware || '硬件配置', t.value.stepConfirm || '确认保存'])
 
 const pointLayout = ref<ThreeHolePointLayout>({ thetaMin: -30, thetaMax: 30, thetaStep: 5 })
 const pointCount = computed(() => Math.floor((pointLayout.value.thetaMax - pointLayout.value.thetaMin) / pointLayout.value.thetaStep) + 1)
@@ -40,11 +44,11 @@ const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
 
 const probeChannels = ref<ProbeChannelConfig[]>([
-  { name: 'P1', role: 'threeHole.p1', channel: { deviceId: '', channelIndex: 0 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P2', role: 'threeHole.p2', channel: { deviceId: '', channelIndex: 1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P3', role: 'threeHole.p3', channel: { deviceId: '', channelIndex: 2 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Atm Pressure', role: 'threeHole.pAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Atm Temp', role: 'threeHole.tAtm', channel: { deviceId: '', channelIndex: 17 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHoleP1'], role: 'threeHole.p1', channel: { deviceId: '', channelIndex: 0 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHoleP2'], role: 'threeHole.p2', channel: { deviceId: '', channelIndex: 1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHoleP3'], role: 'threeHole.p3', channel: { deviceId: '', channelIndex: 2 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHolePAtm'], role: 'threeHole.pAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHoleTAtm'], role: 'threeHole.tAtm', channel: { deviceId: '', channelIndex: 17 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
 ])
 
 const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Theta', controllerId: '', axis: 'X' }])
@@ -73,7 +77,7 @@ const currentStepErrors = computed<string[]>(() => {
 })
 const isStepValid = computed(() => currentStep.value === 2 || currentStepErrors.value.length === 0)
 
-function nextStep() { if (currentStep.value < steps.length - 1) currentStep.value++ }
+function nextStep() { if (currentStep.value < steps.value.length - 1) currentStep.value++ }
 function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
 function generatePoints() {
@@ -161,7 +165,7 @@ onMounted(async () => {
         <UiPanel class="section-card">
           <template #header><span class="section-header">测点通道映射</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th style="width:48px">启用</th><th>测点名称</th><th>数据源设备</th><th style="width:100px">通道索引</th><th style="width:80px">精度</th></tr></thead>
-            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td><td><span class="cell-name">{{ ch.name }}</span></td><td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" :fallback="false" /></td><td><UiSelect
+            <tbody><tr v-for="ch in probeChannels" :key="ch.name"><td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td><td><span class="cell-name">{{ getProbeChannelDisplayName(ch.role, ch.name, t) }}</span></td><td><UiSelect v-model="ch.channel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="min-width:140px" :disabled="!ch.enabled" :fallback="false" /></td><td><UiSelect
               :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
               @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
               :options="channelIndexOptions"

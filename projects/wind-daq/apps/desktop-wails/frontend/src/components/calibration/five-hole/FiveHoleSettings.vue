@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, type Component } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -19,6 +20,7 @@ import {
   DEFAULT_CALIBRATION_PROBE_PRECISION,
   DEFAULT_CALIBRATION_VELOCITY_PRECISION,
 } from '@shared/calibrationPrecision'
+import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import { generateFiveHoleSnakePoints } from './motionCalibrationUtils'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
@@ -59,15 +61,15 @@ const motionStore = useMotionStore()
 const calibrationStore = useCalibrationStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
-const { t } = useI18nStore()
+const { t } = storeToRefs(useI18nStore())
 
 const isLoading = ref(true)
 const isSaving = ref(false)
 const currentStep = ref(0)
 const steps = computed(() => [
-  { label: t.stepBasic || '基本设置' },
-  { label: t.stepHardware || '硬件配置' },
-  { label: t.stepConfirm || '确认保存' },
+  { label: t.value.stepBasic || '基本设置' },
+  { label: t.value.stepHardware || '硬件配置' },
+  { label: t.value.stepConfirm || '确认保存' },
 ])
 
 const pointLayout = ref({
@@ -102,13 +104,13 @@ function validatePointLayout(): { valid: boolean; count: number; errors: string[
   const { alphaMin, alphaMax, alphaStep, betaMin, betaMax, betaStep } = pointLayout.value
   const errors: string[] = []
 
-  if (alphaStep <= 0 || betaStep <= 0) errors.push(t.stepMustPositive || '步长必须为正数')
-  if (alphaMax <= alphaMin || betaMax <= betaMin) errors.push(t.maxGreaterThanMin || '最大值必须大于最小值')
+  if (alphaStep <= 0 || betaStep <= 0) errors.push(t.value.stepMustPositive || '步长必须为正数')
+  if (alphaMax <= alphaMin || betaMax <= betaMin) errors.push(t.value.maxGreaterThanMin || '最大值必须大于最小值')
 
   const alphaRange = alphaMax - alphaMin
   const betaRange = betaMax - betaMin
   const divisible = isRangeDivisible(alphaRange, alphaStep) && isRangeDivisible(betaRange, betaStep)
-  if (!divisible) errors.push(t.rangeDivisible || '范围必须能被步长整除')
+  if (!divisible) errors.push(t.value.rangeDivisible || '范围必须能被步长整除')
 
   let count = 0
   if (errors.length === 0) {
@@ -136,16 +138,16 @@ const machNumberPrecision = ref<number>(DEFAULT_CALIBRATION_MACH_PRECISION)
 const velocityPrecision = ref<number>(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
 
 const probeChannels = ref<ProbeChannelConfig[]>([
-  { name: 'P1 (Lower)', role: 'fiveHole.p1', channel: { deviceId: '', channelIndex: 0 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P2 (Center)', role: 'fiveHole.p2', channel: { deviceId: '', channelIndex: 1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P3 (Upper)', role: 'fiveHole.p3', channel: { deviceId: '', channelIndex: 2 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P4 (Left)', role: 'fiveHole.p4', channel: { deviceId: '', channelIndex: 3 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'P5 (Right)', role: 'fiveHole.p5', channel: { deviceId: '', channelIndex: 4 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Atm Pressure', role: 'fiveHole.pAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Atm Temp', role: 'fiveHole.tAtm', channel: { deviceId: '', channelIndex: 17 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Tunnel Total Pressure', role: 'fiveHole.pTotal', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Tunnel Static Pressure', role: 'fiveHole.pTunnelStatic', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
-  { name: 'Tunnel Temperature', role: 'fiveHole.tTunnel', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleP1'], role: 'fiveHole.p1', channel: { deviceId: '', channelIndex: 0 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleP2'], role: 'fiveHole.p2', channel: { deviceId: '', channelIndex: 1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleP3'], role: 'fiveHole.p3', channel: { deviceId: '', channelIndex: 2 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleP4'], role: 'fiveHole.p4', channel: { deviceId: '', channelIndex: 3 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleP5'], role: 'fiveHole.p5', channel: { deviceId: '', channelIndex: 4 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHolePAtm'], role: 'fiveHole.pAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleTAtm'], role: 'fiveHole.tAtm', channel: { deviceId: '', channelIndex: 17 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHolePTotal'], role: 'fiveHole.pTotal', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHolePTunnelStatic'], role: 'fiveHole.pTunnelStatic', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['fiveHoleTTunnel'], role: 'fiveHole.tTunnel', channel: { deviceId: '', channelIndex: -1 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
 ])
 
 const motionAxes = ref<MotionAxisConfig[]>([
@@ -171,9 +173,9 @@ interface ChannelGroup {
 }
 
 const channelGroups = computed<ChannelGroup[]>(() => [
-  { key: 'probe', label: '探针五孔', icon: Activity, roles: ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'], channels: probeChannels.value.filter((ch) => ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'].includes(ch.role || '')) },
-  { key: 'atmosphere', label: '大气环境', icon: Wind, roles: ['fiveHole.pAtm', 'fiveHole.tAtm'], channels: probeChannels.value.filter((ch) => ['fiveHole.pAtm', 'fiveHole.tAtm'].includes(ch.role || "")) },
-  { key: 'windTunnel', label: '风洞参数', icon: Gauge, roles: ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'], channels: probeChannels.value.filter((ch) => ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'].includes(ch.role || "")) },
+  { key: 'probe', label: t.value.fiveHoleProbeGroup || '探针五孔', icon: Activity, roles: ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'], channels: probeChannels.value.filter((ch) => ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5'].includes(ch.role || '')) },
+  { key: 'atmosphere', label: t.value.atmosphereGroup || '大气环境', icon: Wind, roles: ['fiveHole.pAtm', 'fiveHole.tAtm'], channels: probeChannels.value.filter((ch) => ['fiveHole.pAtm', 'fiveHole.tAtm'].includes(ch.role || "")) },
+  { key: 'windTunnel', label: t.value.windTunnelGroup || '风洞参数', icon: Gauge, roles: ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'], channels: probeChannels.value.filter((ch) => ['fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel'].includes(ch.role || "")) },
 ])
 
 // 通道映射进度：已正确映射的通道数 / 必需通道总数
@@ -209,24 +211,24 @@ const previewDots = computed<{ cx: number; cy: number }[]>(() => {
 const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
-    if (calibrationName.value.trim() === '') errors.push(t.enterConfigName || '请输入配置名称')
+    if (calibrationName.value.trim() === '') errors.push(t.value.enterConfigName || '请输入配置名称')
     if (savePath.value.trim() === '') errors.push('请输入 CSV 保存路径')
     // 点位布局相关错误统一由 validatePointLayout 提供
     errors.push(...pointLayoutValidation.value.errors)
-    if (dwellTimeMs.value < 100) errors.push(t.dwellTimeMin || '驻留时间至少100ms')
-    if (samplesPerPoint.value < 1) errors.push(t.samplesMin || '采样次数至少为1')
+    if (dwellTimeMs.value < 100) errors.push(t.value.dwellTimeMin || '驻留时间至少100ms')
+    if (samplesPerPoint.value < 1) errors.push(t.value.samplesMin || '采样次数至少为1')
     return errors
   }
   if (currentStep.value === 1) {
     const errors: string[] = []
     const enabledRoles = new Set(probeChannels.value.filter((ch) => ch.enabled).map((ch) => ch.role))
     const missingRoles = REQUIRED_CHANNEL_ROLES.filter((role) => !enabledRoles.has(role))
-    if (missingRoles.length > 0) errors.push(t.requiredChannelsMissing || '缺少必需的通道')
+    if (missingRoles.length > 0) errors.push(t.value.requiredChannelsMissing || '缺少必需的通道')
     const invalidChannel = probeChannels.value.find((ch) => ch.enabled && (!ch.channel.deviceId || ch.channel.channelIndex < 0))
-    if (invalidChannel) errors.push(`${t.channelMapIncomplete || '通道映射不完整'}: ${invalidChannel.name}`)
+    if (invalidChannel) errors.push(`${t.value.channelMapIncomplete || '通道映射不完整'}: ${getProbeChannelDisplayName(invalidChannel.role, invalidChannel.name, t.value)}`)
     const missingControllerAxis = motionAxes.value.find((axis) => !axis.controllerId)
-    if (missingControllerAxis) errors.push(`${t.axisNotBound || '轴未绑定'}: ${missingControllerAxis.name}`)
-    if (sphereTankGateEnabled.value && !sphereTankStableChannel.value.deviceId) errors.push(t.sphereTankRequiresDevice || '球罐门控需要选择设备')
+    if (missingControllerAxis) errors.push(`${t.value.axisNotBound || '轴未绑定'}: ${missingControllerAxis.name}`)
+    if (sphereTankGateEnabled.value && !sphereTankStableChannel.value.deviceId) errors.push(t.value.sphereTankRequiresDevice || '球罐门控需要选择设备')
     return errors
   }
   return []
@@ -368,13 +370,6 @@ const channelColumns = [
   { key: 'precision', label: '精度', width: '80px' },
 ] as const
 
-// 通道分组简称映射：用于在统一表格中以 tag 形式标识每个通道的归属
-const CHANNEL_GROUP_LABEL: Record<string, string> = {
-  probe: '五孔',
-  atmosphere: '大气',
-  windTunnel: '风洞',
-}
-
 // 根据通道角色反查分组 key，用于在统一表格中显示分组 tag
 function groupKeyOfRole(role: string | undefined): string {
   if (!role) return ''
@@ -382,6 +377,17 @@ function groupKeyOfRole(role: string | undefined): string {
     if (g.roles.includes(role)) return g.key
   }
   return ''
+}
+
+// 通道分组简称：用于在统一表格中以 tag 形式标识每个通道的归属
+// 改为函数以响应全局语言切换（computed ref 在模板中无法自动解包 [key] 索引访问）
+function getChannelGroupLabel(groupKey: string): string {
+  const labels: Record<string, string> = {
+    probe: t.value.fiveHoleProbeGroupShort || '五孔',
+    atmosphere: t.value.atmosphereGroupShort || '大气',
+    windTunnel: t.value.windTunnelGroupShort || '风洞',
+  }
+  return labels[groupKey] || '—'
 }
 </script>
 
@@ -565,8 +571,8 @@ function groupKeyOfRole(role: string | undefined): string {
               <tbody>
                 <tr v-for="ch in probeChannels" :key="ch.name">
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
-                  <td><span class="group-tag" :data-group="groupKeyOfRole(ch.role)">{{ CHANNEL_GROUP_LABEL[groupKeyOfRole(ch.role)] || '—' }}</span></td>
-                  <td><span class="cell-name">{{ ch.name }}</span></td>
+                  <td><span class="group-tag" :data-group="groupKeyOfRole(ch.role)">{{ getChannelGroupLabel(groupKeyOfRole(ch.role)) }}</span></td>
+                  <td><span class="cell-name">{{ getProbeChannelDisplayName(ch.role, ch.name, t) }}</span></td>
                   <td>
                     <UiSelect
                       v-model="ch.channel.deviceId"

@@ -125,15 +125,17 @@ export function validateEncoderCompensation(
     })
   }
 
-  // 编码器分辨率粗于脉冲当量 → 编码器无法分辨最小步进，补偿盲区大、精度受限
+  // tolerance < 脉冲当量 → 电机走一步即越过容差，补偿会在目标两侧反复振荡。
+  // 注意：编码器分辨率粗于脉冲当量是正常情况（电机比编码器精细），
+  // 补偿精度受限于两者中较粗者，只要 tolerance ≥ 较粗者即可正常工作。
   const ppu = computePulsesPerUnit(axis)
   if (ppu > 0) {
     const pulseQuantum = 1 / ppu
-    if (scale > pulseQuantum) {
+    if (cfg.tolerance! < pulseQuantum) {
       warns.push({
-        field: 'encoderScale',
+        field: 'tolerance',
         severity: 'warning',
-        message: `编码器分辨率(${scale})粗于脉冲当量(${pulseQuantum.toFixed(6)})，电机最小步进无法被编码器分辨，补偿精度受限`,
+        message: `容差(${cfg.tolerance})小于脉冲当量(${pulseQuantum.toFixed(6)})，电机走一步即越过容差，补偿可能在目标两侧反复振荡`,
       })
     }
   }

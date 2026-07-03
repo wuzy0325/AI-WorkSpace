@@ -56,36 +56,41 @@ func TestValidateCompensationToleranceBelowScale(t *testing.T) {
 	}
 }
 
-// encoderScale 粗于脉冲当量（0.005）→ encoderScale warning
-func TestValidateCompensationScaleCoarserThanPulseQuantum(t *testing.T) {
-	axis := linearAxis(0.02) // scale 0.02 > 脉冲当量 0.005
+// tolerance < 脉冲当量（0.005）→ tolerance warning（电机走一步即越过容差，会振荡）
+func TestValidateCompensationToleranceBelowPulseQuantum(t *testing.T) {
+	axis := linearAxis(0.001) // scale 0.001，远小于脉冲当量，避免触发 tolerance < scale
 	cfg := validComp()
-	cfg.Tolerance = 0.03 // > scale，不触发 tolerance error
+	cfg.Tolerance = 0.003 // < 脉冲当量 0.005
 	warns := ValidateCompensationConfig(cfg, axis)
-	if !hasWarningField(warns, "encoderScale") {
-		t.Fatalf("expected encoderScale warning, got: %v", warns)
+	if !hasWarningField(warns, "tolerance") {
+		t.Fatalf("expected tolerance warning, got: %v", warns)
 	}
 }
 
-// encoderScale 等于脉冲当量 → 不报（边界，恰好可分辨）
-func TestValidateCompensationScaleEqualsPulseQuantum(t *testing.T) {
-	axis := linearAxis(0.005) // scale == 脉冲当量 0.005
+// tolerance 等于脉冲当量 → 不报（边界，恰好不过冲）
+func TestValidateCompensationToleranceEqualsPulseQuantum(t *testing.T) {
+	axis := linearAxis(0.001)
 	cfg := validComp()
-	cfg.Tolerance = 0.01
+	cfg.Tolerance = 0.005 // == 脉冲当量 0.005
 	warns := ValidateCompensationConfig(cfg, axis)
-	if hasWarningField(warns, "encoderScale") {
-		t.Fatalf("expected no encoderScale warning at boundary, got: %v", warns)
+	// 仅检查无 tolerance<pulseQuantum 的 warning（可能有其他 warning，不在此测试关注范围）
+	for _, w := range warns {
+		if w.Field == "tolerance" && w.Severity == "warning" {
+			t.Fatalf("expected no tolerance<pulseQuantum warning at boundary, got: %v", warns)
+		}
 	}
 }
 
-// encoderScale 优于脉冲当量 → 不报
-func TestValidateCompensationScaleFinerThanPulseQuantum(t *testing.T) {
-	axis := linearAxis(0.001) // scale 0.001 < 脉冲当量 0.005
+// tolerance > 脉冲当量 → 不报 tolerance warning
+func TestValidateCompensationToleranceAbovePulseQuantum(t *testing.T) {
+	axis := linearAxis(0.001)
 	cfg := validComp()
-	cfg.Tolerance = 0.002
+	cfg.Tolerance = 0.01 // > 脉冲当量 0.005
 	warns := ValidateCompensationConfig(cfg, axis)
-	if hasWarningField(warns, "encoderScale") {
-		t.Fatalf("expected no encoderScale warning for fine scale, got: %v", warns)
+	for _, w := range warns {
+		if w.Field == "tolerance" && w.Severity == "warning" {
+			t.Fatalf("expected no tolerance warning when tolerance > pulseQuantum, got: %v", warns)
+		}
 	}
 }
 
@@ -100,15 +105,22 @@ func TestValidateCompensationDisabledNoWarnings(t *testing.T) {
 	}
 }
 
-// 确认 error 级告警在阻断路径（UpsertProfile）中被检查（间接：severity 字段）
+// 确认 tolerance<pulseQuantum 的告警为 warning 级别（可忽略，非阻断）
 func TestValidateCompensationWarningSeverity(t *testing.T) {
-	axis := linearAxis(0.02)
+	axis := linearAxis(0.001) // scale 0.001，避免触发 tolerance < scale
 	cfg := validComp()
-	cfg.Tolerance = 0.03
+	cfg.Tolerance = 0.003 // < 脉冲当量 0.005，触发 warning
 	warns := ValidateCompensationConfig(cfg, axis)
+	found := false
 	for _, w := range warns {
-		if w.Field == "encoderScale" && w.Severity != "warning" {
-			t.Fatalf("encoderScale should be warning severity, got %s", w.Severity)
+		if w.Field == "tolerance" && w.Severity == "warning" {
+			found = true
 		}
+		if w.Field == "tolerance" && w.Severity != "warning" {
+			t.Fatalf("tolerance<pulseQuantum should be warning severity, got %s", w.Severity)
+		}
+	}
+	if !found {
+		t.Fatalf("expected tolerance warning, got: %v", warns)
 	}
 }

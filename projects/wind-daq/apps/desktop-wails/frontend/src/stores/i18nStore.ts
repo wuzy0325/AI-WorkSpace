@@ -327,6 +327,33 @@ const zh: Record<string, string> = {
   mappingAlpha: '攻角',
   mappingBeta: '侧滑角',
   mappingLabel: '映射',
+
+  // 探针校准通道默认名称（随全局语言切换）
+  fiveHoleP1: 'P1 (下孔)',
+  fiveHoleP2: 'P2 (中心)',
+  fiveHoleP3: 'P3 (上孔)',
+  fiveHoleP4: 'P4 (左侧)',
+  fiveHoleP5: 'P5 (右侧)',
+  fiveHolePAtm: '大气压',
+  fiveHoleTAtm: '大气温度',
+  fiveHolePTotal: '风洞总压',
+  fiveHolePTunnelStatic: '风洞静压',
+  fiveHoleTTunnel: '风洞温度',
+  threeHoleP1: 'P1',
+  threeHoleP2: 'P2',
+  threeHoleP3: 'P3',
+  threeHolePAtm: '大气压',
+  threeHoleTAtm: '大气温度',
+
+  // 五孔探针校准配置分组标签（随全局语言切换）
+  fiveHoleProbeGroup: '探针五孔',
+  atmosphereGroup: '大气环境',
+  windTunnelGroup: '风洞参数',
+  // 分组短标签（用于表格中紧凑展示）
+  fiveHoleProbeGroupShort: '五孔',
+  atmosphereGroupShort: '大气',
+  windTunnelGroupShort: '风洞',
+
   batchConfig: '批量配置',
   unifiedDevice: '统一设备',
   startChannel: '起始通道',
@@ -735,6 +762,33 @@ const en: Record<string, string> = {
   mappingAlpha: 'Alpha',
   mappingBeta: 'Beta',
   mappingLabel: 'Mapping',
+
+  // Probe calibration channel default names (switch with global language)
+  fiveHoleP1: 'P1 (Lower)',
+  fiveHoleP2: 'P2 (Center)',
+  fiveHoleP3: 'P3 (Upper)',
+  fiveHoleP4: 'P4 (Left)',
+  fiveHoleP5: 'P5 (Right)',
+  fiveHolePAtm: 'Atm Pressure',
+  fiveHoleTAtm: 'Atm Temp',
+  fiveHolePTotal: 'Tunnel Total Pressure',
+  fiveHolePTunnelStatic: 'Tunnel Static Pressure',
+  fiveHoleTTunnel: 'Tunnel Temperature',
+  threeHoleP1: 'P1',
+  threeHoleP2: 'P2',
+  threeHoleP3: 'P3',
+  threeHolePAtm: 'Atm Pressure',
+  threeHoleTAtm: 'Atm Temp',
+
+  // Five-hole probe calibration group labels (switch with global language)
+  fiveHoleProbeGroup: 'Probe Five-hole',
+  atmosphereGroup: 'Atmosphere',
+  windTunnelGroup: 'Wind Tunnel',
+  // Short group labels (compact display in tables)
+  fiveHoleProbeGroupShort: 'Probe',
+  atmosphereGroupShort: 'Atm',
+  windTunnelGroupShort: 'Tunnel',
+
   batchConfig: 'Batch Config',
   unifiedDevice: 'Unified Device',
   startChannel: 'Start Channel',
@@ -831,7 +885,7 @@ export const useI18nStore = defineStore('i18n', () => {
     }
   }
 
-  const t = computed(() => (locale.value === 'zh' ? zh : en))
+  const t = computed<Record<string, string>>(() => (locale.value === 'zh' ? zh : en))
 
   return { locale, setLocale, t }
 })

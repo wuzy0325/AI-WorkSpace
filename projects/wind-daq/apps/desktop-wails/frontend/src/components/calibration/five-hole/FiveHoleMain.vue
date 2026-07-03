@@ -59,7 +59,6 @@ const {
   configuredDeviceNames,
   configuredControllerNames,
   statusText,
-  statusColor,
 } = useCalibrationWorkflow('five-hole')
 
 defineExpose({
@@ -758,36 +757,6 @@ onBeforeUnmount(() => {
           </div>
           <div>
             <h1 class="text-base font-bold leading-tight text-[var(--text-primary)]">五孔探针校准</h1>
-            <div class="mt-1 flex items-center gap-3">
-              <div class="flex items-center gap-1.5">
-                <span
-                  class="h-2 w-2 rounded-full"
-                  :class="statusColor === 'success' ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
-                ></span>
-                <p class="text-xs text-[var(--text-muted)]">{{ statusText }}</p>
-              </div>
-              <div class="h-3 w-px bg-[var(--border-default)]"></div>
-              <div
-                class="flex items-center gap-1.5"
-                :title="isAcquisitionDeviceConnected ? '采集设备已连接' : '采集设备未连接'"
-              >
-                <span
-                  class="h-2 w-2 rounded-full"
-                  :class="isAcquisitionDeviceConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
-                ></span>
-                <span class="text-xs text-[var(--text-muted)]">采集</span>
-              </div>
-              <div
-                class="flex items-center gap-1.5"
-                :title="isMotionControllerConnected ? '位移机构已连接' : '位移机构未连接'"
-              >
-                <span
-                  class="h-2 w-2 rounded-full"
-                  :class="isMotionControllerConnected ? 'bg-[var(--accent-success)] shadow-[0_0_6px_var(--accent-success)]' : 'bg-[var(--text-muted)]'"
-                ></span>
-                <span class="text-xs text-[var(--text-muted)]">位移</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>

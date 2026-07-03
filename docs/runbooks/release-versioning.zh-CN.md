@@ -97,7 +97,8 @@ AI agent 在打包前必须执行以下流程：
 15. 用「生产构建」方式构建可执行文件（见下文「生产构建必备构建标签」）。
 16. 通过本机或现场冒烟测试启动一次新构建产物，确认 GUI 正常启动、没有"Wails applications will not build without the correct build tags"等明显错误。
 17. 验证通过后再执行 NSIS 等安装包封装命令。
-18. 最终回复必须包含版本号、主要变更、验证结果、产物路径，以及是否要求用户卸载旧版本。
+18. **归档 installer 到 `releases/bin/`**：执行 `task archive-release`（有 Taskfile 的项目）或直接调用 `scripts/copy-release-artifacts.ps1 -Project <project>`（无 Taskfile 的项目）。详见下文「打包产物归档」。
+19. 最终回复必须包含版本号、主要变更、验证结果、产物路径（含归档路径）、是否要求用户卸载旧版本，以及归档 installer 的 SHA-256。
 
 AI agent 不得在版本号不变且无明确说明的情况下生成新的可交付包。
 
@@ -271,6 +272,91 @@ daq-t1603-0.1.2-amd64-installer.exe
 ```
 
 如果 Wails 默认产物名无法直接控制，最终回复和发布说明中必须记录实际产物路径。
+
+## 打包产物归档
+
+每次完成 NSIS 打包后，必须将 installer 归档到项目 `releases/bin/` 目录，便于现场人员自取和历史版本回溯。
+
+### 归档规则
+
+| 项 | 规则 |
+|---|---|
+| 归档对象 | 仅 NSIS installer（`<project>-<version>-amd64-installer.exe`）；裸 exe 不归档，可随时从源码重建 |
+| 归档路径 | `projects/<project>/releases/bin/`（平铺，文件名带版本号天然区分） |
+| 命名规则 | 沿用 NSIS 输出文件名，不重命名 |
+| SVN 入库 | **不入库**——`releases/bin/` 已加 `svn:ignore`，归档仅本地保留，避免仓库膨胀 |
+| 覆盖策略 | 同版本号重复打包时直接覆盖（同名文件强制替换） |
+
+### 归档命令
+
+**有 Taskfile 的项目**（wind-daq / daq-p1604 / motion-controller / five-hole-interpolator）：
+
+```powershell
+cd projects/<project>/apps/desktop-wails
+# 1. 构建 Go 生产二进制（含 -tags production）
+task release
+# 2. NSIS 打包
+makensis build/windows/installer/project.nsi
+# 3. 归档到 releases/bin/
+task archive-release
+```
+
+**无 Taskfile 的项目**（daq-t1603 / three-hole-interpolator）：
+
+```powershell
+cd projects/<project>/apps/desktop-wails
+$env:GOWORK="off"
+# 1. 构建 Go 生产二进制
+go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
+# 2. NSIS 打包
+makensis build/windows/installer/project.nsi
+# 3. 归档到 releases/bin/（直接调用统一脚本）
+powershell -ExecutionPolicy Bypass -File ../../../../scripts/copy-release-artifacts.ps1 -Project <project>
+```
+
+### 统一脚本说明
+
+`scripts/copy-release-artifacts.ps1` 是所有项目共用的归档脚本，支持以下参数：
+
+| 参数 | 说明 |
+|---|---|
+| `-Project <name[]>` | 必填，项目名（可传多个，空格分隔） |
+| `-Version <ver>` | 可选，不传则读取 `projects/<project>/VERSION` |
+| `-DryRun` | 预演模式，只打印动作不实际拷贝 |
+| `-Quiet` | 静默模式，成功不输出 |
+
+脚本逻辑：
+1. 读取 `projects/<project>/VERSION` 解析版本号
+2. 查找 `apps/desktop-wails/build/bin/<project>-<version>-amd64-installer.exe`
+3. 若不存在则报错（提示先执行 `makensis`）
+4. 创建 `releases/bin/` 目录（不存在时）
+5. 拷贝并覆盖同名文件
+
+### 首次为项目配置 svn:ignore
+
+`releases/bin/` 目录首次创建后，必须设置 SVN 忽略属性，避免归档文件被误入库：
+
+```powershell
+svn propset svn:ignore bin projects/<project>/releases
+svn commit projects/<project>/releases -m "chore: ignore releases/bin/ for local artifact archive"
+```
+
+若项目使用 Git，将 `releases/bin/` 加入项目根 `.gitignore`：
+```text
+projects/<project>/releases/bin/
+```
+
+### 验证归档结果
+
+归档完成后，最终回复必须包含：
+
+- 归档文件路径：`projects/<project>/releases/bin/<project>-<version>-amd64-installer.exe`
+- 文件大小（MB）
+- MD5/SHA-256（可选，用于现场交付校验）
+
+```powershell
+Get-FileHash projects/<project>/releases/bin/<project>-<version>-amd64-installer.exe -Algorithm SHA256
+```
 
 ## 验证要求
 

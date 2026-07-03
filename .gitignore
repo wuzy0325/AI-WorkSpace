@@ -65,3 +65,7 @@ projects/wind-daq/apps/desktop-wails/data/recordings/
 
 # 前端包锁哈希（npm install 自动生成，无需入库）
 **/apps/desktop-wails/frontend/package.json.md5
+
+# Release 归档产物（NSIS installer 拷贝自 build/bin/，按版本号命名，仅本地保留）
+# SVN 项目需另行执行：svn propset svn:ignore bin projects/<project>/releases
+projects/*/releases/bin/

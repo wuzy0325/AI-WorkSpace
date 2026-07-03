@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.3] - 2026-07-03
+
+### Fixed
+
+- 修复 DAQ-P-1604 通道选择器文本被截断的问题；排除大气压通道默认不显示在图表中。
+- DAQ-P-1604 v0.2.4：应用层增加连续超时断连检测，优化 keepalive 参数，提升长时间采集稳定性。
+
+### Internal
+
+- motion 重构：移除轴启用开关，强制所有轴始终启用（简化状态管理）。
+
+### Verification
+
+- `go test ./internal/... ./api/...`: passed
+- `go build -buildvcs=false ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- `makensis` 构建安装包: passed
+- 冒烟测试: passed（GUI 启动正常）
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.2] - 2026-07-03
 
 ### Fixed

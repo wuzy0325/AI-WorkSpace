@@ -103,15 +103,17 @@ func ValidateCompensationConfig(cfg AxisEncoderCompensationConfig, axisCfg AxisC
 		})
 	}
 
-	// 编码器分辨率粗于电机脉冲当量 => 编码器无法分辨最小步进，补偿盲区大、精度受限。
+	// tolerance < 脉冲当量 => 电机走一步即越过容差，补偿会在目标两侧反复振荡。
 	// 脉冲当量 = 1 / PulsesPerUnit（每脉冲工程位移）。
+	// 注意：编码器分辨率粗于脉冲当量是正常情况（电机比编码器精细），
+	// 补偿精度受限于两者中较粗者，只要 tolerance ≥ 较粗者即可正常工作。
 	if ppu > 0 {
 		pulseQuantum := 1.0 / ppu
-		if scale > pulseQuantum {
+		if cfg.Tolerance < pulseQuantum {
 			warns = append(warns, CompensationWarning{
-				Field:    "encoderScale",
+				Field:    "tolerance",
 				Severity: "warning",
-				Message:  fmt.Sprintf("编码器分辨率(%.6f)粗于脉冲当量(%.6f)，电机最小步进无法被编码器分辨，补偿精度受限", scale, pulseQuantum),
+				Message:  fmt.Sprintf("容差(%.6f)小于脉冲当量(%.6f)，电机走一步即越过容差，补偿可能在目标两侧反复振荡", cfg.Tolerance, pulseQuantum),
 			})
 		}
 	}
