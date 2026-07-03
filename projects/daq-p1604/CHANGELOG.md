@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.2.4] - 2026-07-03
+
+### Added
+
+- 新增应用层连续超时断连检测：`readLoop` 维护 `consecutiveTimeouts` 计数器，连续 25 次（5s）ReadFrame 超时即调用 `handleConnectionLost` 主动判定断连，作为 TCP keepalive 之外的快速通道。
+
+### Changed
+
+- `p1604KeepAlivePeriod` 从 `10 * time.Second` 调整为 `3 * time.Second`，Windows ~33s / Linux ~12s 兜底，比原 ~110s 快 3 倍以上。
+- 形成双保险检测架构：采集期 readLoop 活跃时由连续超时计数器主检测（5s），非采集期 readLoop 空闲时由 keepalive 兜底（~33s/12s）。
+
+### Fixed
+
+- 修复通道选择器组件文本溢出截断的问题（v0.2.3 遗漏未发布）。
+- 修复 CH17/CH18 大气通道默认被勾选进实时图表的问题。
+
+### Internal
+
+- 同步更新 `enableTCPKeepalive` 设计注释、`Connect` keepalive 启用块注释、`p1604ConsecutiveTimeoutThreshold` 双保险说明，修正与新版 keepalive 数值（3s/33s）矛盾的过期描述（原 10s/100s/110s）。
+- 同步 6 个版本号文件到 0.2.4：`VERSION`、`apps/desktop-wails/wails.json`、`apps/desktop-wails/frontend/package.json`、`apps/desktop-wails/frontend/package-lock.json`、`apps/desktop-wails/build/config.yml`、`apps/desktop-wails/build/windows/installer/project.nsi`。
+- 通过 `npm install --package-lock-only` 同步 package-lock.json 与 package.json 版本号。
+
+### Verification
+
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go build -buildvcs=false ./...`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis /DARG_WAILS_AMD64_BINARY=build/bin/daq-p1604.exe project.nsi`
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+- 非采集期间无周期性 I/O 触发 keepalive 失败上报，断连检测仍依赖下一次命令调用。
+
 ## [0.2.3] - 2026-07-03
 
 ### Fixed

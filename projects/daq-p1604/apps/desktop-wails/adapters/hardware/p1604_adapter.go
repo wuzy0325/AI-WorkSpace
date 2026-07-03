@@ -38,19 +38,32 @@ const (
 	// w1601 的 A 响应通常即时返回，100ms 内未读到则视为设备未发应答，继续后续流程。
 	p1604W1601DrainTimeout = 100 * time.Millisecond
 
-	// p1604KeepAlivePeriod TCP keepalive 探测间隔。
-	// 解决物理拔网线场景下 TCP 层无 RST/FIN 包的问题：
-	// readLoop 的 SetReadDeadline(200ms) 仅返回 timeout 错误（被 continue 忽略），
-	// 导致设备状态长期停留在 Acquiring 而无法触发 handleConnectionLost。
-	// 启用 keepalive 后，内核周期性探测对端，连续失败会返回非 timeout 错误，
-	// readLoop 据此判定真断连并进入清理流程。
+	// p1604ConsecutiveTimeoutThreshold 连续 ReadFrame 超时次数阈值。
+	// readLoop 每 200ms 读取一次数据帧，若连续 25 次（5s）均超时，
+	// 视为连接断开并触发 handleConnectionLost。
+	// 正常采集（1kHz）时设备每秒发约 1000 帧，200ms 内至少可读到 200 帧，
+	// 因此 5s 无任何数据一定是有问题（网络中断/设备断电/网线脱落）。
 	//
-	// 检测时间估算（Go 标准库 SetKeepAlivePeriod 同时设置 KEEPIDLE 与 KEEPINTVL）：
-	//   - Linux：10s idle + 10s interval × 9 probes（默认 tcp_keepalive_probes）= ~100s
-	//   - Windows：10s idle + 10s interval × 10 retries（默认）= ~110s
-	// 远优于 Linux 默认 7200s/9 探测 = 2 小时。
-	// 注：Go 未暴露 TCP_KEEPCNT 设置，探测次数依赖系统默认值。
-	p1604KeepAlivePeriod = 10 * time.Second
+	// 搭配 TCP keepalive 形成双保险：
+	//   - 快速通道（应用层）：连续超时计数器 → 5s 检出，依赖 readLoop 活跃
+	//   - 慢速兜底（内核层）：TCP keepalive → Windows ~33s / Linux ~12s 检出
+	//     （p1604KeepAlivePeriod=3s × 系统默认探测次数）
+	//     readLoop 空闲（非采集）时仍是唯一主动检测手段
+	// 两路径任一触发都会调用 handleConnectionLost。
+	p1604ConsecutiveTimeoutThreshold = 25
+
+	// p1604KeepAlivePeriod TCP keepalive 探测间隔。
+	// 作为应用层连续超时计数器（5s）的兜底：
+	// - 采集期间 readLoop 活跃时，连续超时计数器是主要检测手段（5s）
+	// - 非采集期间（仅连接无采集）keepalive 是唯一手段（~110s）
+	// - 受限环境（低权限/沙箱）中 keepalive 可能不可用，此时回退到系统 TCP 超时
+	//   （Windows 默认 2 小时，Linux 默认 2 小时 11 分）
+	//
+	// Windows 上 SetKeepAlivePeriod 同时设置 KEEPIDLE 与 KEEPINTVL：
+	//   - Linux：3s idle + 1s interval × 9 probes ≈ 12s
+	//   - Windows：3s idle + 3s interval × 10 retries ≈ 33s
+	// 比原来 110s 快 3 倍以上。
+	p1604KeepAlivePeriod = 3 * time.Second
 )
 
 // DeviceLogEntry 设备日志条目
@@ -182,12 +195,13 @@ func (a *P1604Adapter) emitState(id string) {
 // 设计取舍：
 //   - 仅用 SetKeepAlive + SetKeepAlivePeriod 两个标准库 API，跨平台兼容
 //   - 不引入 syscall.SetSockoptInt 平台相关代码（保持标准库纯净）
-//   - Windows 上 SetKeepAlivePeriod 等同于设置整个 keepalive 间隔（idle+interval 合并），
-//     无法精细控制 idle/count，但 10s 间隔 × 系统默认探测次数已满足 ~100s 检测目标
+//   - Windows 上 SetKeepAlivePeriod 同时设置 KEEPIDLE 与 KEEPINTVL（间隔合并），
+//     无法精细控制 idle/count，但 3s 间隔 × 系统默认探测次数已满足
+//     ~33s（Windows）/ ~12s（Linux）检测目标
 //
 // 返回值语义：失败时返回错误，调用方决定是否中止。keepalive 是拔线检测的优化项
 // 而非连接正确性前提，受限环境（沙箱/低权限）下 SetKeepAlive 可能失败，
-// 调用方可选择仅记 warn 不中止，退化为 readLoop 的 SetReadDeadline 超时检测。
+// 调用方可选择仅记 warn 不中止，退化为 readLoop 的连续超时计数器（采集期）检测。
 //
 // 非 TCP 连接（如测试 mock）返回 nil 保持兼容。
 func enableTCPKeepalive(conn net.Conn) error {
@@ -244,9 +258,10 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 	})
 
 	// 启用 TCP keepalive：物理拔网线场景下 TCP 层无 RST/FIN，
-	// 仅靠 readLoop 的 SetReadDeadline 无法判定真断连（超时被 continue 忽略）。
+	// 采集期 readLoop 的连续超时计数器（5s）是主检测路径，
+	// 非采集期 readLoop 空闲时 keepalive 是唯一主动检测手段（~33s/12s）。
 	// keepalive 探测失败会触发非 timeout 错误，readLoop 据此进入 handleConnectionLost。
-	// 启用失败不中止连接——keepalive 是优化项，受限环境下退化为 readDeadline 检测。
+	// 启用失败不中止连接——keepalive 是优化项，受限环境下退化为连续超时计数器检测。
 	if err := enableTCPKeepalive(conn); err != nil {
 		a.emitLog(DeviceLogEntry{
 			Level: "warn", Category: "hardware", DeviceID: profile.ID,
@@ -764,7 +779,10 @@ func (a *P1604Adapter) SetDataSink(id string, sink func(core.PressureSnapshot)) 
 //
 // 退出路径：
 //  1. stop channel 关闭（调用方主动停止）→ 静默退出。
-//  2. ReadFrame 返回非 timeout 错误：
+//  2. 连续超时达到阈值（p1604ConsecutiveTimeoutThreshold × p1604ReadTimeout）：
+//     - 应用层快速检测，5s 内无任何数据帧即判定连接断开。
+//     - 正常 1kHz 采集时，200ms 内至少可读 ~200 帧，连续 25 次超时不可能。
+//  3. ReadFrame 返回非 timeout 错误：
 //     - 若 driver.stopReason 已置位（调用方刚刚 close(stop) 但 select 尚未轮到）→
 //       静默退出，不修改任何共享状态（避免与 StopAcquisition/Disconnect 的清理冲突）。
 //     - 否则视为连接意外断开，标记设备为 Error 状态并通知前端。
@@ -772,6 +790,8 @@ func (a *P1604Adapter) SetDataSink(id string, sink func(core.PressureSnapshot)) 
 // 退出前必须 close(readLoopDone)，让 Disconnect/StopAcquisition 能 join 到本协程。
 func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan struct{}) {
 	defer close(driver.readLoopDone)
+
+	consecutiveTimeouts := 0
 
 	for {
 		select {
@@ -782,6 +802,15 @@ func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan stru
 			payload, err := driver.frameReader.ReadFrame()
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					consecutiveTimeouts++
+					if consecutiveTimeouts >= p1604ConsecutiveTimeoutThreshold {
+						consecutiveTimeouts = 0
+						a.handleConnectionLost(id, driver,
+							fmt.Errorf("read timeout for %d consecutive attempts (%v)",
+								p1604ConsecutiveTimeoutThreshold,
+								p1604ConsecutiveTimeoutThreshold*p1604ReadTimeout))
+						return
+					}
 					continue
 				}
 				// 调用方主动停止时 ReadFrame 会因 conn 关闭/超时返回错误，
@@ -792,6 +821,7 @@ func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan stru
 				a.handleConnectionLost(id, driver, err)
 				return
 			}
+			consecutiveTimeouts = 0
 			if len(payload) > 0 {
 				a.processPayload(id, payload)
 			}
