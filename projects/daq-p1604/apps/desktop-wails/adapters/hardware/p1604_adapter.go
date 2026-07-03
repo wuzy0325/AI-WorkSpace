@@ -696,6 +696,18 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 		if !ok {
 			return fmt.Errorf("unsupported unit: %s", cfg.Unit)
 		}
+		// 清理 FrameReader 内部 buf 与 TCP 接收缓冲区的残留数据。
+		// 残留来源：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
+		// 或上一条命令延迟到达的应答。若不清理，P1604WriteUnitCoefficient 的
+		// ReadFrame 会把残留当作 v01101 响应读出，触发
+		// "unexpected v01101 response: <二进制乱码>"。
+		// 必须先 fr.Reset()（清 buf）再 DrainConnection（清 TCP 缓冲区），
+		// 顺序不能反：DrainConnection 读裸字节，不会清 FrameReader.buf。
+		driver.frameReader.Reset()
+		if drained := sharedproto.DrainConnection(driver.conn, p1604W1601DrainTimeout); drained > 0 {
+			slog.Debug("DAQ-P-1604 drained residual data before ApplyConfig",
+				"device", id, "bytes", drained)
+		}
 		// 打印 v01101 命令发送日志（v01101 通过 sharedproto.P1604WriteUnitCoefficient 发送，不走 sendCommand）
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware-send", DeviceID: id,

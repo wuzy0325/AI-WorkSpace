@@ -375,6 +375,14 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	if d.frameReader != nil {
 		d.frameReader.Reset()
 	}
+	// 排空 TCP 接收缓冲区中的残留数据帧。
+	// 残留来源：readLoop 退出时设备可能仍有数据帧在传输中（@f1 停止命令
+	// 发出后，设备已排队的帧可能尚未完全到达）。若不排空，后续
+	// ApplyDaqT1603Config 的 sendCommand 会把这些残留帧当作命令响应读出，
+	// 导致配置命令失败。
+	if d.conn != nil {
+		d.drainConnection(d.conn, 100*time.Millisecond)
+	}
 	return nil
 }
 
@@ -438,6 +446,14 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 	d.mu.Unlock()
 
 	if conn != nil {
+		// 排空 TCP 缓冲区中的残留数据帧，防止上次采集停止后的残留数据
+		// 被 sendCommand 误读为命令响应（导致配置命令失败）。
+		// frameReader.Reset 不在此调用：applyHardwareConfig 走 protocol.SendCommand
+		// 读裸字节，不经过 frameReader；且本方法已释放 d.mu，与 StartAcquisition
+		// 并发调用时 Reset 会与 readLoop 的 ReadFrame 竞争 frameReader 内部 buffer。
+		// frameReader 的 Reset 由 stopAcquisitionLocked / StartAcquisition 在持 d.mu
+		// 时统一完成。
+		d.drainConnection(conn, 100*time.Millisecond)
 		d.writeMu.Lock()
 		err := d.applyHardwareConfig(conn, cfg)
 		d.writeMu.Unlock()
