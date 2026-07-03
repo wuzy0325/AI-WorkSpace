@@ -312,11 +312,18 @@ export const useDeviceStore = defineStore('device', () => {
   // 初始化默认节拍（未连接 displayStore 前的兜底）
   applyDisplayPreferences(RENDER_TICK_FALLBACK_HZ, HISTORY_WINDOW_FALLBACK_SEC)
 
-  /** 初始化指定设备的通道选择为全选 */
+  /**
+   * 初始化指定设备的默认图表通道选择。
+   *
+   * 默认仅勾选 CH1-CH16 压力通道；CH17 大气压力、CH18 大气温度因量级与压力通道
+   * 差异巨大（Pa ≈ 100000、°C ≈ 0-100、psi ≈ 0-200），同时勾选会把压力波形挤压成
+   * 几乎水平的直线，影响读图。用户可在"通道选择"中手动勾选这两个通道查看其趋势。
+   */
   function initChartSelections(id: string, channels: ChannelConfig[]): void {
     const set = new Set<number>()
     for (const ch of channels) {
-      if (ch.enabled) set.add(ch.index)
+      // index 0-15 = CH1-CH16 压力通道；16 = CH17 大气压力；17 = CH18 大气温度
+      if (ch.enabled && ch.index < 16) set.add(ch.index)
     }
     chartSelections.value[id] = set
   }

@@ -495,7 +495,7 @@ function statusLabel(): string {
   top: calc(100% + 0.55rem);
   right: 0;
   z-index: 20;
-  width: min(26rem, 90vw);
+  width: min(30rem, 90vw);
   padding: 0.85rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--accent-border);
@@ -521,14 +521,14 @@ function statusLabel(): string {
 
 .detail__channel-selector-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.45rem 0.6rem;
 }
 
 .detail__channel-option {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   min-height: 2rem;
   padding: 0.35rem 0.45rem;
   border-radius: var(--radius-sm);
@@ -537,6 +537,17 @@ function statusLabel(): string {
   transition: all var(--motion-fast) var(--easing-standard);
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* Naive UI NCheckbox 即使不传 label 仍渲染 .n-checkbox__label 并占据 padding-left，
+   导致复选框右侧把 CH01 中的数字挤掉/压住。这里隐藏空 label 槽位并锁定复选框宽度，
+   确保 CH01 编号完整可读。 */
+.detail__channel-option :deep(.n-checkbox) {
+  flex-shrink: 0;
+}
+
+.detail__channel-option :deep(.n-checkbox .n-checkbox__label) {
+  display: none;
 }
 
 .detail__channel-option:hover {
@@ -553,6 +564,9 @@ function statusLabel(): string {
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .detail__channel-option--active .detail__channel-option-label {
@@ -589,6 +603,7 @@ function statusLabel(): string {
 
 @media (max-width: 767px) {
   .detail__channel-selector-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .detail__channel-popover { width: min(22rem, 90vw); }
 }
 
 @media (prefers-reduced-motion: reduce) {
