@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.2] - 2026-07-03
+
+### Fixed
+
+- 修复 T1603 设备停止采集后立即配置参数时命令响应乱码或失败的问题。停止采集后 TCP 缓冲区残留采集数据帧，ApplyDaqT1603Config 的 sendCommand 把残留当作命令响应读出。通过 shared/device-sdk/go/daq/hardware/daq_t1603.go 的修复，在 stopAcquisitionLocked 停止命令后增加 drainConnection 排空残留数据；在 ApplyDaqT1603Config 调用 applyHardwareConfig 前增加 drainConnection。
+
+### Internal
+
+- 修复点位于 shared/device-sdk 共享代码，wind-daq 的 T1603 设备适配器自动受益。
+- motion-controller Taskfile.yml 中 rsrc.syso 清理逻辑改用 Test-Path 显式检查，避免 -LiteralPath -ErrorAction SilentlyContinue 在部分环境下失效。
+- 同步 wails_windows_amd64.syso 上次 release build 产物。
+
+### Verification
+
+- `go test ./internal/... ./api/...`
+- `go build -buildvcs=false ./...`
+- `task release`
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.1] - 2026-07-03
 
 ### Fixed

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.3] - 2026-07-03
+
+### Fixed
+
+- 修复停止采集后立即配置参数时命令响应乱码或失败的问题。停止采集后 TCP 缓冲区残留采集数据帧，ApplyDaqT1603Config 的 sendCommand 把残留当作命令响应读出。在 stopAcquisitionLocked 停止命令后增加 drainConnection 排空残留数据；在 ApplyDaqT1603Config 调用 applyHardwareConfig 前增加 drainConnection。
+
+### Internal
+
+- 修复点位于 shared/device-sdk/go/daq/hardware/daq_t1603.go，wind-daq 的 T1603 设备同样受益。
+
+### Verification
+
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go build -buildvcs=false ./...`
+- `$env:GOWORK="off"; go vet ./...`
+- `task release`（手动 fallback：`go build -tags production` + `makensis`，daq-t1603 无 Taskfile）
+
+### Known Issues
+
+- 暂无。
+
 ## [0.3.2] - 2026-07-03
 
 ### Fixed

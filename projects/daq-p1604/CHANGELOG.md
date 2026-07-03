@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.3] - 2026-07-03
+
+### Fixed
+
+- 修复停止采集后立即配置单位时返回 "unexpected v01101 response" 错误的问题。停止采集后 TCP 缓冲区残留采集数据帧，v01101 命令的 ReadFrame 把残留当作响应读出。在 ApplyConfig 发送 v01101 前增加 frameReader.Reset + DrainConnection 排空残留数据。
+
+### Internal
+
+- 对齐 wind-daq 已有的 SetUnit 缓冲区排空修复方案。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go vet ./...`
+- `task release`
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.2.2] - 2026-07-03
 
 ### Fixed
