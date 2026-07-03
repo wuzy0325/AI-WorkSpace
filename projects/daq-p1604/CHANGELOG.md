@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.0] - 2026-07-03
+
+### Changed
+
+- **CSV 录制改为每设备一个文件**：原单文件设计在多设备同时录制时，两台设备的硬件时间戳交替跳跃写入同一 CSV 文件，时间戳列在两个值之间来回跳变，数据列也混杂。现按 deviceId 路由到独立文件，与 wind-daq 设计对齐。
+- 文件名格式变更（不兼容旧版本）：
+  - 旧：`<prefix>_YYYYMMDD-HHMMSS.csv`
+  - 新：`<prefix>-<deviceSlug>-YYYYMMDD-HHMMSS-NNN.csv`
+  - `deviceSlug` 优先用设备名（sanitize 后），同名冲突时追加 deviceId 前 6 位
+- 文件滚动条件（MaxSize/MaxRecordCount/MaxDuration）改为**按设备独立评估**，停止条件（跨设备汇总）保持不变。
+- 录制启动时不再预创建空文件，改为第一个 payload 到达时按 deviceId 懒创建，避免多设备场景下未投递数据的设备产生空 CSV。
+
+### Internal
+
+- `CSVRecorder` 重构为多 writer 架构：`map[deviceId]*perDeviceWriter`，每设备独立持有文件/缓冲/统计，单 writer goroutine 串行消费 channel 消除多设备锁争用。
+- `core.RecordingConfig` 新增 `DeviceNames map[string]string` 字段，由 backend 在 StartRecording 时从 profiles 一次性填充 deviceId→name 映射，recorder 用于生成人类可读的文件名 slug。
+- `backend/app.go` 的 `StartRecordingWithConfig` 调整为：先取 profiles → 聚合通道精度 → 构建 deviceNames map → 注入 RecordingConfig。
+- 清理 dead code：移除未消费的 `autoDone`/`autoDoneOnce`/`signalAutoDone` 信号机制（靠 `started.CompareAndSwap` + writerLoop 串行 I/O 已保证并发安全），以及 `perDeviceWriter` 的 `deviceID`/`headerWritten`/`totalRecords` 三个未读字段。
+- 同步 6 个版本号文件到 0.3.0：`VERSION`、`apps/desktop-wails/wails.json`、`apps/desktop-wails/frontend/package.json`、`apps/desktop-wails/frontend/package-lock.json`、`apps/desktop-wails/build/config.yml`、`apps/desktop-wails/build/windows/installer/project.nsi`。
+
+### Verification
+
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go build -buildvcs=false ./...`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis /DARG_WAILS_AMD64_BINARY=build/bin/daq-p1604.exe project.nsi`
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+- 多 writer 核心路由逻辑（`getOrCreateWriter` / `sanitizeFileSegment` / `uniqueFileSlugLocked` / `shouldRotate(deviceID)`）暂无单元测试覆盖，依赖实机多设备验证。
+
 ## [0.2.4] - 2026-07-03
 
 ### Added

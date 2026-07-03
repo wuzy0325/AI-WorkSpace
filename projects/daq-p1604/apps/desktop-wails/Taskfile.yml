@@ -91,8 +91,22 @@ tasks:
     cmds:
       - powershell -ExecutionPolicy Bypass -File ../../../../scripts/check-wails-bindings.ps1 -Projects daq-p1604
 
+  archive-release:
+    summary: 将 NSIS installer 拷贝到 projects/daq-p1604/releases/bin/ 归档（按版本号命名，不入库 SVN）
+    description: |
+      读取 projects/daq-p1604/VERSION，从 build/bin/ 中查找 daq-p1604-<version>-amd64-installer.exe，
+      拷贝到 projects/daq-p1604/releases/bin/。
+      前置条件：必须先执行 makensis build/windows/installer/project.nsi 生成 installer。
+      releases/bin/ 已配置 svn:ignore，归档文件不入 SVN，仅本地保留。
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ../../../../scripts/copy-release-artifacts.ps1 -Project daq-p1604
+
   release:
-    summary: 生产交付构建（清理 + 前端 + Go 生产二进制），用于 NSIS 打包前的前置步骤
+    summary: 生产交付构建（清理 + 前端 + Go 生产二进制 + 归档 installer）
+    description: |
+      完整的 release 流程：清理 -> 构建前端 -> 构建 Go 生产二进制。
+      注意：NSIS installer 打包需手动执行 `makensis build/windows/installer/project.nsi`，
+      然后执行 `task archive-release` 归档到 releases/bin/。
     cmds:
       - task: clean
       - task: build-frontend

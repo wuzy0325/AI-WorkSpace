@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,17 +37,42 @@ const (
 	defaultPrecision = 4
 	// maxPrecision 用户允许配置的最大小数位数
 	maxPrecision = 6
+	// fileNameSeqRetry 文件名序号冲突时的最大重试次数（同秒内重启且序号撞上的极小概率场景）
+	fileNameSeqRetry = 1000
 )
 
-// CSVRecorder CSV 异步批量录制器
+// perDeviceWriter 单设备的写入上下文。
+// 每个设备独立持有文件、缓冲、统计，设备间互不干扰。
+// writer goroutine 单线程访问，无需额外同步（Status 读时通过 statsMu 互斥）。
+type perDeviceWriter struct {
+	// deviceName 用于日志可读性（实际文件名用 fileSlug 派生）
+	deviceName string
+	// fileSlug 是文件名中用于标识设备的段（sanitize 后的 deviceName，若与其他设备
+	// 冲突则追加 -<deviceID 前 6 位>）。在 getOrCreateWriter 首次为该设备创建
+	// 文件时确定，之后本会话内所有滚动文件复用同一 slug。
+	fileSlug        string
+	file            *os.File
+	bw              *bufio.Writer
+	fileName        string
+	fileSize        int64 // 当前文件累计字节
+	fileCount       int64 // 该设备本会话文件数（含当前文件）
+	fileStartedAt   time.Time
+	fileRecordCount int64 // 该设备当前文件记录数（用于 MaxRecordCount 滚动判断）
+}
+
+// CSVRecorder CSV 异步批量录制器（每设备一个 CSV 文件）
 //
 // 设计要点：
+//   - 每设备一个 CSV 文件，按 deviceId 路由（避免多设备数据混杂在同一文件，
+//     防止不同设备硬件时间戳交替跳跃）
+//   - 文件名格式：<prefix>-<deviceSlug>-YYYYMMDD-HHMMSS-NNN.csv
+//     deviceSlug 优先用设备名（sanitize 后），同名冲突时追加 deviceId 前 6 位
 //   - Write 通过 select-default 非阻塞投递到 queue channel，绝不阻塞设备 read loop
 //   - 单一 writer goroutine 串行消费 channel 写入文件，消除多设备锁争用
 //   - flush (100ms) 与 fsync (2s) 分离：flush 廉价（仅刷 OS 缓冲），fsync 昂贵（真正落盘）
 //   - strconv.AppendFloat 替代 fmt.Sprintf，避免反射开销，吞吐提升 2-5 倍
-//   - 支持 FileRotation（按大小/时长/记录数滚动到新文件）
-//   - 支持 StopConditions（达到任一条件自动停止录制）
+//   - 支持 FileRotation（按设备独立评估：达到阈值时切换该设备文件）
+//   - 支持 StopConditions（跨设备汇总评估：任一条件满足则整体停止录制）
 //   - Start/Stop 用 atomic.Bool CAS 保护，热路径 Write 无锁
 type CSVRecorder struct {
 	// 配置（Start 时设置，writer goroutine 只读）
@@ -57,31 +83,24 @@ type CSVRecorder struct {
 	stopCh      chan struct{}
 	doneCh      chan struct{}
 	started     atomic.Bool
-	autoDone    chan struct{}   // 自动停止条件触发时关闭，用于通知 Stop 路径
-	autoDoneOnce sync.Once      // 保证 close(autoDone) 幂等，避免重复关闭 panic
 
 	// 运行时状态（writer goroutine 单线程更新，Status 读时加锁）
 	statsMu         sync.RWMutex
 	session         core.RecordingSession
-	fileSize        int64 // 当前文件大小
-	totalSize       int64 // 所有文件累计大小
-	recordCount     int64 // 所有文件累计记录数
-	fileCount       int   // 当前已创建的文件数
-	fileRecordCount int64 // 当前文件记录数（用于 MaxRecordCount 滚动判断）
-	currentStart    int64 // 当前文件起始时间（UnixMilli）
+	writers         map[string]*perDeviceWriter // deviceId -> writer（每设备一个文件）
+	totalSize       int64 // 所有设备所有文件累计大小
+	recordCount     int64 // 所有设备累计记录数
+	fileCount       int  // 所有设备累计文件数
+	startedAt       time.Time
 
 	// 丢弃计数（atomic 无锁）
-	dropped          atomic.Int64
-	droppedSinceLog  atomic.Int64
-	lastDropLogAt    atomic.Int64
+	dropped         atomic.Int64
+	droppedSinceLog atomic.Int64
+	lastDropLogAt   atomic.Int64
 
 	// 错误（writer goroutine 写，Status 读）
-	errMu      sync.RWMutex
-	lastError  string
-
-	// 写入位置（writer goroutine 独占，无需锁）
-	file *os.File
-	bw   *bufio.Writer
+	errMu     sync.RWMutex
+	lastError string
 }
 
 // NewCSVRecorder 创建 CSV 录制器
@@ -107,38 +126,32 @@ func (r *CSVRecorder) Start(config core.RecordingConfig) error {
 	r.queue = make(chan core.PressureSnapshot, cfg.QueueCapacity)
 	r.stopCh = make(chan struct{})
 	r.doneCh = make(chan struct{})
-	r.autoDone = make(chan struct{})
-	r.autoDoneOnce = sync.Once{} // 重置 Once，允许本次会话重新 close(autoDone)
 	r.dropped.Store(0)
 	r.droppedSinceLog.Store(0)
 	r.lastDropLogAt.Store(0)
-	r.fileSize = 0
 	r.totalSize = 0
 	r.recordCount = 0
 	r.fileCount = 0
+	r.writers = make(map[string]*perDeviceWriter)
 	// 重置上次会话的 lastError，避免新会话 Status() 返回旧错误
 	r.errMu.Lock()
 	r.lastError = ""
 	r.errMu.Unlock()
 
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	r.statsMu.Lock()
 	r.session = core.RecordingSession{
-		ID:          fmt.Sprintf("rec_%d", now),
+		ID:          fmt.Sprintf("rec_%d", now.UnixMilli()),
 		OutputDir:   cfg.OutputDir,
 		FilePrefix:  cfg.FilePrefix,
-		StartTimeMs: now,
+		StartTimeMs: now.UnixMilli(),
 		Status:      core.RecordingActive,
 	}
+	r.startedAt = now
 	r.statsMu.Unlock()
 
-	// 同步创建首个文件：保证 Start 返回时 session.CurrentFile 已设置，
-	// 后端 emit 状态时前端可立即显示完整文件路径；失败时直接返回错误，
-	// 避免启动 writer goroutine 后再异步报告错误。
-	if err := r.openNewFile(); err != nil {
-		r.started.Store(false)
-		return err
-	}
+	// 不预创建文件：第一个 payload 到达时按 deviceId 懒创建，
+	// 避免空文件（多设备场景下未投递数据的设备不应产生空 CSV）
 
 	go r.writerLoop()
 	return nil
@@ -246,6 +259,14 @@ func (r *CSVRecorder) Status() core.RecordingSession {
 	s.SnapshotCount = r.recordCount
 	s.DroppedCount = r.dropped.Load()
 	s.FileCount = int64(r.fileCount)
+	// CurrentFile 聚合所有设备当前文件名（逗号分隔），便于 UI 显示
+	var currentFiles []string
+	for _, w := range r.writers {
+		if w.fileName != "" {
+			currentFiles = append(currentFiles, w.fileName)
+		}
+	}
+	s.CurrentFile = strings.Join(currentFiles, ", ")
 	r.errMu.RLock()
 	s.LastError = r.lastError
 	r.errMu.RUnlock()
@@ -267,59 +288,50 @@ func (r *CSVRecorder) writerLoop() {
 
 	var buf []byte // 复用 byte buffer 用于格式化
 
-	// 首个文件已在 Start 中同步创建，此处无需再调用 openNewFile
 	for {
 		select {
 		case <-r.stopCh:
 			// drain 剩余 payload
 			r.drainQueue(&buf)
-			r.flushAndSync(true)
-			r.closeFile()
+			if err := r.flushAndSyncAll(true); err != nil {
+				r.recordError(err)
+			}
+			r.closeAllFiles()
 			return
 		case p := <-r.queue:
 			if err := r.writePayload(&buf, p); err != nil {
-				// I/O 错误：先 flush+close 文件，最后才翻转 started（与 wind-daq 对齐），
+				// I/O 错误：先 flush+close 所有文件，最后才翻转 started（与 wind-daq 对齐），
 				// 避免 started=false 但 writerLoop 仍在做 I/O 的窗口。
 				r.recordError(err)
-				r.flushAndSync(true)
-				r.closeFile()
+				r.flushAndSyncAll(true)
+				r.closeAllFiles()
 				r.markStopped()
 				return
 			}
-			// 评估停止条件 / 文件滚动
+			// 评估停止条件（跨设备汇总）/ 文件滚动（按设备独立）
 			if r.shouldAutoStop() {
 				// 自停止：drain 剩余数据 → flush+close → markStopped。
 				// 全部 I/O 清理完成后才翻转 started，避免与 Stop/Start 重入竞争。
 				r.drainQueue(&buf)
-				r.flushAndSync(true)
-				r.closeFile()
+				r.flushAndSyncAll(true)
+				r.closeAllFiles()
 				r.markStopped()
 				return
-			} else if r.shouldRotate() {
-				if err := r.rotateFile(); err != nil {
+			} else if r.shouldRotate(p.DeviceID) {
+				if err := r.rotateFile(p.DeviceID); err != nil {
 					r.recordError(err)
-					r.flushAndSync(true)
-					r.closeFile()
+					r.flushAndSyncAll(true)
+					r.closeAllFiles()
 					r.markStopped()
 					return
 				}
 			}
 		case <-flushTicker.C:
-			r.flushAndSync(false)
+			r.flushAndSyncAll(false)
 		case <-syncTicker.C:
-			r.flushAndSync(true)
+			r.flushAndSyncAll(true)
 		}
 	}
-}
-
-// signalAutoDone 关闭 autoDone channel。
-// 仅负责关闭信号 channel（幂等），不修改 started / session 状态——
-// 状态翻转由 markStopped 在 I/O 清理完成后统一执行，避免出现
-// "started=false 但 writerLoop 仍在做 I/O" 的窗口（曾导致与 Start 重入竞争）。
-func (r *CSVRecorder) signalAutoDone() {
-	r.autoDoneOnce.Do(func() {
-		close(r.autoDone)
-	})
 }
 
 // markStopped 在 writerLoop 完成所有 I/O 清理（flush+closeFile）后调用，
@@ -330,7 +342,6 @@ func (r *CSVRecorder) markStopped() {
 	r.session.Status = core.RecordingIdle
 	r.statsMu.Unlock()
 	r.started.Store(false)
-	r.signalAutoDone()
 }
 
 // drainQueue 排空队列中剩余 payload
@@ -357,6 +368,11 @@ func (r *CSVRecorder) drainQueue(buf *[]byte) {
 // 且系统毫秒时间戳在 1000Hz 下精度不足。统一截断到秒级，避免展示错误的时间细分。
 // 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式隐藏秒。
 func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) error {
+	w, err := r.getOrCreateWriter(snapshot.DeviceID)
+	if err != nil {
+		return err
+	}
+
 	var t time.Time
 	if snapshot.HardwareTimestamp > 0 {
 		sec := int64(snapshot.HardwareTimestamp)
@@ -367,7 +383,7 @@ func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) 
 	}
 
 	// 复用 buf，避免每次分配
-	// 可读时间戳：截断到秒级（.000000 改为无小数）。
+	// 可读时间戳：截断到秒级（无小数）。
 	// 原因：设备时间戳固件 bug 导致毫秒部分不可信；系统时间毫秒精度在 1000Hz 下不足。
 	// 前缀单引号强制 Excel 按文本显示。
 	b := (*buf)[:0]
@@ -390,7 +406,7 @@ func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) 
 
 	// 去掉末尾逗号，写入换行
 	b[len(b)-1] = '\n'
-	if _, err := r.bw.Write(b); err != nil {
+	if _, err := w.bw.Write(b); err != nil {
 		return err
 	}
 	written := int64(len(b))
@@ -398,39 +414,152 @@ func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) 
 
 	// 更新统计（writer goroutine 单线程，但仍持锁以与 Status() 互斥）
 	r.statsMu.Lock()
+	w.fileSize += written
+	w.fileRecordCount++
 	r.recordCount++
-	r.fileRecordCount++
-	r.fileSize += written
 	r.totalSize += written
 	r.statsMu.Unlock()
 	return nil
 }
 
-// shouldRotate 评估是否需要滚动到新文件
-func (r *CSVRecorder) shouldRotate() bool {
+// getOrCreateWriter 按 deviceId 找/建 perDeviceWriter。
+// 仅在 writerLoop 单线程调用，但 Status() 可能并发读 writers map，故持锁。
+func (r *CSVRecorder) getOrCreateWriter(deviceID string) (*perDeviceWriter, error) {
+	r.statsMu.Lock()
+	defer r.statsMu.Unlock()
+	if w, ok := r.writers[deviceID]; ok {
+		return w, nil
+	}
+	// 从 RecordingConfig.DeviceNames 取设备名，找不到则回退到 deviceId
+	deviceName := deviceID
+	if name, ok := r.cfg.DeviceNames[deviceID]; ok && name != "" {
+		deviceName = name
+	}
+	w := &perDeviceWriter{
+		deviceName: deviceName,
+		fileSlug:   r.uniqueFileSlugLocked(deviceName, deviceID),
+	}
+	if err := r.openNewFileForLocked(w); err != nil {
+		return nil, err
+	}
+	r.writers[deviceID] = w
+	slog.Info("CSVRecorder 为设备创建文件",
+		"component", "CSVRecorder",
+		"deviceId", deviceID,
+		"deviceName", deviceName,
+		"file", w.fileName,
+	)
+	return w, nil
+}
+
+// uniqueFileSlugLocked 生成用于文件名的设备段：
+//   - sanitize(deviceName) 为空时回退到 "device"
+//   - 若与其他设备已用 slug 冲突，追加 -<deviceID 前 6 位> 保证唯一
+//
+// 调用方必须持 statsMu 锁（读 writers map）。
+func (r *CSVRecorder) uniqueFileSlugLocked(deviceName, deviceID string) string {
+	slug := sanitizeFileSegment(deviceName)
+	if slug == "" {
+		slug = "device"
+	}
+	// 遍历现有 writer 检查是否有 slug 冲突（同名设备）
+	conflict := false
+	for _, other := range r.writers {
+		if other.fileSlug == slug {
+			conflict = true
+			break
+		}
+	}
+	if !conflict {
+		return slug
+	}
+	// 冲突时追加 deviceID 前 6 位（UUID 前 6 位重复概率极低），
+	// 若 deviceID 也短则整体使用
+	suffix := deviceID
+	if len(suffix) > 6 {
+		suffix = suffix[:6]
+	}
+	if suffix == "" {
+		return slug
+	}
+	return slug + "-" + suffix
+}
+
+// sanitizeFileSegment 把设备名规范化为可用作文件名的段：
+//   - 替换 Windows/POSIX 非法字符 \/:*?"<>| 及控制字符为 '_'
+//   - 折叠首尾空白和多余的 '_'/'-'
+//   - 限制长度到 40，避免拼上时间戳后超出 Windows MAX_PATH
+//
+// 保留中文、数字、字母、连字符、下划线、点。
+func sanitizeFileSegment(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			b.WriteByte('_')
+		case r == '\\' || r == '/' || r == ':' || r == '*' || r == '?' ||
+			r == '"' || r == '<' || r == '>' || r == '|':
+			b.WriteByte('_')
+		case r == ' ' || r == '\t':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	// 折叠连续的下划线/连字符
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	out = strings.Trim(out, "_-.")
+	if len(out) > 40 {
+		// 按 rune 截断，避免砍出半个中文字符
+		runes := []rune(out)
+		if len(runes) > 40 {
+			runes = runes[:40]
+		}
+		out = string(runes)
+		out = strings.Trim(out, "_-.")
+	}
+	return out
+}
+
+// shouldRotate 评估指定设备是否需要滚动到新文件（按设备独立评估）。
+// 调用方必须不持 statsMu 锁，内部自行加锁。
+func (r *CSVRecorder) shouldRotate(deviceID string) bool {
+	r.statsMu.RLock()
+	defer r.statsMu.RUnlock()
+	w, ok := r.writers[deviceID]
+	if !ok {
+		return false
+	}
 	rot := r.cfg.Rotation
-	if rot.MaxSizeBytes > 0 && r.fileSize >= rot.MaxSizeBytes {
+	if rot.MaxSizeBytes > 0 && w.fileSize >= rot.MaxSizeBytes {
 		return true
 	}
-	if rot.MaxRecordCount > 0 && r.fileRecordCount >= rot.MaxRecordCount {
+	if rot.MaxRecordCount > 0 && w.fileRecordCount >= rot.MaxRecordCount {
 		return true
 	}
-	if rot.MaxDurationMs > 0 {
-		now := time.Now().UnixMilli()
-		if now-r.currentStart >= rot.MaxDurationMs {
+	if rot.MaxDurationMs > 0 && !w.fileStartedAt.IsZero() {
+		if time.Since(w.fileStartedAt).Milliseconds() >= rot.MaxDurationMs {
 			return true
 		}
 	}
 	return false
 }
 
-// shouldAutoStop 评估是否触发自动停止
+// shouldAutoStop 评估是否触发自动停止（跨设备汇总）
 func (r *CSVRecorder) shouldAutoStop() bool {
 	sc := r.cfg.StopConditions
 	r.statsMu.RLock()
 	totalSize := r.totalSize
 	recordCount := r.recordCount
-	startTime := r.session.StartTimeMs
+	startedAt := r.startedAt
 	r.statsMu.RUnlock()
 
 	if sc.MaxFileSizeBytes > 0 && totalSize >= sc.MaxFileSizeBytes {
@@ -439,27 +568,46 @@ func (r *CSVRecorder) shouldAutoStop() bool {
 	if sc.MaxRecordCount > 0 && recordCount >= sc.MaxRecordCount {
 		return true
 	}
-	if sc.MaxDurationMs > 0 {
-		now := time.Now().UnixMilli()
-		if now-startTime >= sc.MaxDurationMs {
+	if sc.MaxDurationMs > 0 && !startedAt.IsZero() {
+		if time.Since(startedAt).Milliseconds() >= sc.MaxDurationMs {
 			return true
 		}
 	}
 	return false
 }
 
-// openNewFile 创建新文件并写入表头
-func (r *CSVRecorder) openNewFile() error {
-	filename := fmt.Sprintf("%s_%s.csv", r.cfg.FilePrefix, time.Now().Format("20060102-150405"))
-	filePath := filepath.Join(r.cfg.OutputDir, filename)
-	f, err := os.Create(filePath)
+// openNewFileForLocked 为指定设备创建新文件并写入表头（调用方持 statsMu 锁）。
+// 文件名格式：<prefix>-<deviceSlug>-YYYYMMDD-HHMMSS-NNN.csv
+// NNN 从该设备当前 fileCount+1 开始递增。若目标文件已存在（同秒内重启且序号撞上），序号 +1 重试。
+func (r *CSVRecorder) openNewFileForLocked(w *perDeviceWriter) error {
+	w.fileCount++
+	fileCount := w.fileCount
+
+	base := fmt.Sprintf("%s-%s-%s", r.cfg.FilePrefix, w.fileSlug, time.Now().Format("20060102-150405"))
+	var name string
+	var file *os.File
+	var err error
+	for seq := fileCount; seq < fileCount+fileNameSeqRetry; seq++ {
+		name = fmt.Sprintf("%s-%03d.csv", base, seq)
+		full := filepath.Join(r.cfg.OutputDir, name)
+		// O_CREATE|O_EXCL 保证不覆盖已存在文件
+		file, err = os.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			break
+		}
+		if os.IsExist(err) {
+			continue
+		}
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
 
-	bw := bufio.NewWriterSize(f, csvDefaultBufferSize)
+	bw := bufio.NewWriterSize(file, csvDefaultBufferSize)
 
 	// 19 列 CSV 表头：Timestamp（秒级精度）+ 16 压力 + 大气压 + 大温
+	// 每个文件（含滚动文件）都要写入表头
 	header := make([]string, 0, numChannels+1)
 	header = append(header, "Timestamp")
 	for i := 0; i < numPressureChannels; i++ {
@@ -468,25 +616,24 @@ func (r *CSVRecorder) openNewFile() error {
 	header = append(header, "CH17_AtmPressure")
 	header = append(header, "CH18_AtmTemp")
 	if _, err := bw.Write([]byte(joinCSVHeader(header))); err != nil {
-		f.Close()
+		file.Close()
 		return fmt.Errorf("write header: %w", err)
 	}
 	if err := bw.Flush(); err != nil {
-		f.Close()
+		file.Close()
 		return fmt.Errorf("flush header: %w", err)
 	}
 
-	r.file = f
-	r.bw = bw
-	r.fileSize = 0
-	r.fileRecordCount = 0
-	r.currentStart = time.Now().UnixMilli()
+	w.file = file
+	w.bw = bw
+	w.fileName = name
+	w.fileSize = 0
+	w.fileRecordCount = 0
+	w.fileStartedAt = time.Now()
 	r.fileCount++
 
-	r.statsMu.Lock()
 	r.session.FileCount = int64(r.fileCount)
-	r.session.CurrentFile = filePath
-	r.statsMu.Unlock()
+	r.session.CurrentFile = name
 	return nil
 }
 
@@ -503,38 +650,76 @@ func joinCSVHeader(fields []string) string {
 	return string(b)
 }
 
-// rotateFile 滚动到新文件
-func (r *CSVRecorder) rotateFile() error {
-	if err := r.flushAndSync(true); err != nil {
-		return err
-	}
-	r.closeFile()
-	return r.openNewFile()
-}
-
-// closeFile 关闭当前文件
-func (r *CSVRecorder) closeFile() {
-	if r.bw != nil {
-		_ = r.bw.Flush()
-		r.bw = nil
-	}
-	if r.file != nil {
-		_ = r.file.Close()
-		r.file = nil
-	}
-}
-
-// flushAndSync flush bufio 到 OS 缓冲；sync=true 时额外 fsync 落盘
-func (r *CSVRecorder) flushAndSync(sync bool) error {
-	if r.bw == nil {
+// rotateFile 滚动指定设备到新文件
+// 仅在 writerLoop 单线程调用，持 statsMu 锁以与 Status() 互斥（防止读 fileName 时被改）。
+func (r *CSVRecorder) rotateFile(deviceID string) error {
+	r.statsMu.Lock()
+	defer r.statsMu.Unlock()
+	w, ok := r.writers[deviceID]
+	if !ok {
 		return nil
 	}
-	if err := r.bw.Flush(); err != nil {
+	if err := flushWriter(w, true); err != nil {
 		return err
 	}
-	if sync && r.file != nil {
-		if err := r.file.Sync(); err != nil {
-			return err
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("close csv file %s: %w", w.fileName, err)
+	}
+	return r.openNewFileForLocked(w)
+}
+
+// closeAllFiles 关闭所有设备文件（正常退出路径）
+func (r *CSVRecorder) closeAllFiles() {
+	r.statsMu.Lock()
+	defer r.statsMu.Unlock()
+	for _, w := range r.writers {
+		if w.bw != nil {
+			_ = w.bw.Flush()
+		}
+		if w.file != nil {
+			_ = w.file.Close()
+		}
+	}
+}
+
+// flushAndSyncAll 遍历所有设备文件执行 flush（+sync）
+// 仅在 writerLoop 单线程调用，与 rotateFile/closeAllFiles 不会并发。
+// 先 RLock 拷贝 writers 列表后释放，避免长时间持锁阻塞 Status()。
+func (r *CSVRecorder) flushAndSyncAll(sync bool) error {
+	r.statsMu.RLock()
+	writers := make([]*perDeviceWriter, 0, len(r.writers))
+	for _, w := range r.writers {
+		writers = append(writers, w)
+	}
+	r.statsMu.RUnlock()
+
+	var firstErr error
+	for _, w := range writers {
+		if err := flushWriter(w, sync); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			slog.Error("CSVRecorder flush/sync 失败",
+				"component", "CSVRecorder",
+				"file", w.fileName,
+				"error", err)
+		}
+	}
+	return firstErr
+}
+
+// flushWriter 刷新单个 writer 的 bufio 缓冲，sync=true 时额外 fsync。
+// 仅在 writerLoop 单线程调用，无需持锁（writer goroutine 独占 w.bw/w.file）。
+func flushWriter(w *perDeviceWriter, sync bool) error {
+	if w.bw == nil {
+		return nil
+	}
+	if err := w.bw.Flush(); err != nil {
+		return fmt.Errorf("flush csv file %s: %w", w.fileName, err)
+	}
+	if sync && w.file != nil {
+		if err := w.file.Sync(); err != nil {
+			return fmt.Errorf("sync csv file %s: %w", w.fileName, err)
 		}
 	}
 	return nil

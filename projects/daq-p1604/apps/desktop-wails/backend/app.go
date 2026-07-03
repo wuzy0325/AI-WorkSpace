@@ -476,9 +476,16 @@ func (a *App) StartRecording(outputDir string, filePrefix string) error {
 
 // StartRecordingWithConfig 开始录制（带完整滚动与停止条件配置）
 func (a *App) StartRecordingWithConfig(outputDir string, filePrefix string, rotation core.FileRotation, stopCond core.StopConditions) error {
+	profiles := a.deviceUC.GetProfiles()
 	// 聚合所有已配置设备的通道精度：多设备时取每通道精度的最大值，确保不丢失精度
 	// 若所有设备均未配置某通道精度，回退到默认值（由 recorder 内部处理）
-	mergedChannels := mergeChannelPrecisions(a.deviceUC.GetProfiles())
+	mergedChannels := mergeChannelPrecisions(profiles)
+	// 构建 deviceId → deviceName 映射，供 recorder 生成人类可读的文件名 slug
+	// 录制期间新增 deviceId 未在此 map 中时，recorder 回退到 deviceId 作为 slug
+	deviceNames := make(map[string]string, len(profiles))
+	for _, p := range profiles {
+		deviceNames[p.ID] = p.Name
+	}
 
 	cfg := core.RecordingConfig{
 		OutputDir:      outputDir,
@@ -486,6 +493,7 @@ func (a *App) StartRecordingWithConfig(outputDir string, filePrefix string, rota
 		Channels:       mergedChannels,
 		Rotation:       rotation,
 		StopConditions: stopCond,
+		DeviceNames:    deviceNames,
 	}
 	if err := a.recordUC.Start(cfg); err != nil {
 		return err

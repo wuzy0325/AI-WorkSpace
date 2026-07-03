@@ -35,6 +35,10 @@ type RecordingConfig struct {
 	FlushIntervalMs int             `json:"flushIntervalMs"`  // bufio flush 间隔（默认 100ms）
 	SyncIntervalSec int             `json:"syncIntervalSec"`  // fsync 间隔（默认 2s）
 	QueueCapacity   int             `json:"queueCapacity"`    // 异步队列容量（默认 32768）
+	// DeviceNames 设备 ID → 设备名映射，由 backend 在 StartRecording 时从 profiles 一次性填充。
+	// recorder 用设备名生成人类可读的文件名 slug（sanitize 后），同名冲突时追加 deviceId 前 6 位兜底。
+	// 录制期间新增 deviceId 未在此 map 中时，回退到 deviceId 作为 slug。
+	DeviceNames     map[string]string `json:"deviceNames,omitempty"`
 }
 
 // RecordingSession 录制会话运行时状态
