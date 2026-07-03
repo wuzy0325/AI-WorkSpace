@@ -8,6 +8,8 @@ import DaqP1604Config from '@components/device/DaqP1604Config.vue'
 import ScanResultList, { type ScanSelectionItem } from '@components/device/ScanResultList.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useLogStore } from '@stores/logStore'
+import pkg from '../../../package.json'
+const appVersion = pkg.version
 
 const deviceStore = useDeviceStore()
 const logStore = useLogStore()
@@ -200,7 +202,7 @@ async function confirmAddScanned() {
 <template>
   <div class="shell">
     <MainTopBar
-      version="0.1.0"
+      :version="appVersion"
       :is-toggling="isToggling"
       @add-device="openAddDevice"
       @open-config="openConfig"
