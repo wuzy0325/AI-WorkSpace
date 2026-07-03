@@ -4,6 +4,15 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
+)
+
+// 走线主轴常量：避免 "x"/"y" 魔法字符串跨层散落，拼写错误难排查。
+// PrimaryAxisLegacy 仅用于内部“未设置”语义，外部持久化/协议不应使用此值。
+const (
+	PrimaryAxisX      = "x" // 先沿 X 方向走完一条线再切换 Y
+	PrimaryAxisY      = "y" // 先沿 Y 方向走完一条线再切换 X（原始行为）
+	PrimaryAxisLegacy = ""  // 缺省：保旧行为（先走 Y），用于升级前保存的 profile 兼容
 )
 
 // InterpolateLinearPath 沿折线插值生成路径点
@@ -96,6 +105,8 @@ func StepValues(start, end float64, segments []StepSegment) []float64 {
 }
 
 // GridPointsFromAxes 从 X/Y 轴值生成网格点
+// 注意：此函数保留“外层 X、内层 Y”的原始遍历顺序（即物理上先沿 Y 方向走完一列再切换 X）。
+// 调用方需要切换主轴顺序时请使用 GridPointsFromAxesOrdered。
 func GridPointsFromAxes(xs, ys []float64) []Point {
 	points := make([]Point, 0, len(xs)*len(ys))
 	for _, x := range xs {
@@ -108,6 +119,7 @@ func GridPointsFromAxes(xs, ys []float64) []Point {
 
 // GridPointsFromAxesSnake 从 X/Y 轴值生成蛇形网格点
 // 蛇形遍历：偶数行（从0开始）正常顺序，奇数行反转Y轴顺序，减少回程时间
+// 注意：此函数保留“外层 X、内层 Y”的原始蛇形顺序。需要切换主轴时使用 GridPointsFromAxesSnakeOrdered。
 func GridPointsFromAxesSnake(xs, ys []float64) []Point {
 	points := make([]Point, 0, len(xs)*len(ys))
 	for i, x := range xs {
@@ -123,6 +135,57 @@ func GridPointsFromAxesSnake(xs, ys []float64) []Point {
 		}
 	}
 	return points
+}
+
+// GridPointsFromAxesOrdered 按指定主轴顺序生成网格点
+// primaryAxis 取值（归一化：大小写不敏感、去空白）：
+//   - PrimaryAxisX ("x")：先走 X 方向，外层 Y、内层 X，每条线沿 X 走完再切换 Y
+//   - PrimaryAxisY ("y")：先走 Y 方向，外层 X、内层 Y，等价于 GridPointsFromAxes
+//   - PrimaryAxisLegacy ("") 或其他未识别值：保旧行为（先走 Y），用于升级前保存的
+//     profile 兼容——避免旧配置缺省时静默反转物理走线方向。
+//
+// 实现上 'x' 分支复用 GridPointsFromAxes(ys, xs) 后转置坐标，避免重复双重循环逻辑。
+// 路径生成非热路径，多一次遍历的开销可忽略，换来单一循环实现降低维护成本。
+//
+// 注意：新 profile 应显式传 "x" 或 "y"；空字符串仅为兼容旧数据保留，不应在新代码中使用。
+func GridPointsFromAxesOrdered(xs, ys []float64, primaryAxis string) []Point {
+	if normalizePrimaryAxis(primaryAxis) != PrimaryAxisX {
+		// 含 "y"、空字符串及任何非 "x" 值都走 legacy（先走 Y）
+		return GridPointsFromAxes(xs, ys)
+	}
+	// 先走 X：交换两轴调用 legacy（外层 Y、内层 X），再转置坐标恢复 (X,Y) 语义
+	return swapPoints(GridPointsFromAxes(ys, xs))
+}
+
+// GridPointsFromAxesSnakeOrdered 按指定主轴顺序生成蛇形网格点
+// primaryAxis 取值（归一化同 GridPointsFromAxesOrdered）：
+//   - PrimaryAxisX ("x")：外层 Y、内层 X，奇数行反转 X 顺序
+//   - PrimaryAxisY ("y")：外层 X、内层 Y，奇数行反转 Y 顺序，等价于 GridPointsFromAxesSnake
+//   - PrimaryAxisLegacy ("") 或其他未识别值：保旧行为
+//
+// 蛇形反转方向跟随主轴：主轴是“长程走线方向”，反转主轴可避免回程空跑。
+// 'x' 分支复用 GridPointsFromAxesSnake(ys, xs) 后转置，逻辑同 GridPointsFromAxesOrdered。
+func GridPointsFromAxesSnakeOrdered(xs, ys []float64, primaryAxis string) []Point {
+	if normalizePrimaryAxis(primaryAxis) != PrimaryAxisX {
+		return GridPointsFromAxesSnake(xs, ys)
+	}
+	return swapPoints(GridPointsFromAxesSnake(ys, xs))
+}
+
+// swapPoints 原地转置点集的 X/Y 坐标。
+// 用于主轴='x' 分支：先以 (ys, xs) 调用 legacy 生成外层 Y、内层 X 的点，
+// 再通过此函数把 (Y, X) 还原为 (X, Y) 语义。
+func swapPoints(points []Point) []Point {
+	for i := range points {
+		points[i].X, points[i].Y = points[i].Y, points[i].X
+	}
+	return points
+}
+
+// normalizePrimaryAxis 归一化主轴字段：去前后空白 + 转小写。
+// 仅用于入口判别，不改变持久化值。返回值与 PrimaryAxisX/Y/Legacy 常量比较即可。
+func normalizePrimaryAxis(primaryAxis string) string {
+	return strings.ToLower(strings.TrimSpace(primaryAxis))
 }
 
 // SectorPointsFromRadiiAngles 从半径和角度生成扇形点
@@ -179,10 +242,16 @@ func ContainsFloat(values []float64, needle float64) bool {
 type LayoutConfig struct {
 	Pattern    string           `json:"pattern"`
 	SnakeOrder bool             `json:"snakeOrder,omitempty"`
-	Line       *LineLayout      `json:"line,omitempty"`
-	Rectangle  *RectangleLayout `json:"rectangle,omitempty"`
-	Sector     *SectorLayout    `json:"sector,omitempty"`
-	Custom     *CustomLayout    `json:"custom,omitempty"`
+	// PrimaryAxis 控制矩形/线型布局的走线主轴（仅 line / rectangle 消费，扇形不消费）：
+	//   - PrimaryAxisX ("x")：先沿 X 走完一条线再切换 Y
+	//   - PrimaryAxisY ("y")：先沿 Y 走完一条线再切换 X（原始行为）
+	//   - PrimaryAxisLegacy ("")：缺省，保旧行为（先走 Y），用于升级前保存的 profile 兼容
+	// 大小写不敏感、去空白。新代码应显式传 "x" 或 "y"。
+	PrimaryAxis string           `json:"primaryAxis,omitempty"`
+	Line        *LineLayout      `json:"line,omitempty"`
+	Rectangle   *RectangleLayout `json:"rectangle,omitempty"`
+	Sector      *SectorLayout    `json:"sector,omitempty"`
+	Custom      *CustomLayout    `json:"custom,omitempty"`
 }
 
 // LineLayout 线型布局
@@ -237,10 +306,11 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		if len(ys) == 0 {
 			ys = []float64{cfg.Line.StartY}
 		}
+		// 走线主轴：见 LayoutConfig.PrimaryAxis 注释（空字符串=保旧行为）
 		if cfg.SnakeOrder {
-			return GridPointsFromAxesSnake(xs, ys)
+			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
 		}
-		return GridPointsFromAxes(xs, ys)
+		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
 	case "rectangle":
 		if cfg.Rectangle == nil {
 			return nil
@@ -248,15 +318,16 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		xs := StepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments)
 		ys := StepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments)
 		if cfg.SnakeOrder {
-			return GridPointsFromAxesSnake(xs, ys)
+			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
 		}
-		return GridPointsFromAxes(xs, ys)
+		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
 	case "sector":
 		if cfg.Sector == nil {
 			return nil
 		}
 		radii := StepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
 		angles := StepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
+		// 扇形布局不消费 PrimaryAxis，保持原“外层半径、内层角度”语义
 		if cfg.SnakeOrder {
 			return SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
 		}

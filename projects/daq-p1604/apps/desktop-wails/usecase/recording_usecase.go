@@ -76,3 +76,15 @@ func (uc *RecordingUsecase) Status() core.RecordingSession {
 	}
 	return uc.recorder.Status()
 }
+
+// StopWithError 转发到 recorder，用于设备断连自动停止场景。
+// 返回值与 recorder.StopWithError 一致：CAS 失败（用户已主动停止）返回 false。
+func (uc *RecordingUsecase) StopWithError(msg string) bool {
+	uc.mu.Lock()
+	recorder := uc.recorder
+	uc.mu.Unlock()
+	if recorder == nil {
+		return false
+	}
+	return recorder.StopWithError(msg)
+}

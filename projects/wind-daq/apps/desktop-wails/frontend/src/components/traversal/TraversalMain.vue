@@ -359,11 +359,6 @@ const estimatedRemainingText = computed(() => {
   return `${hours}h ${remainMinutes}m`
 })
 
-const currentPointSummary = computed(() => ({
-  alpha: traversalStore.status?.currentPoint?.alpha?.toFixed(2) || '--',
-  beta: traversalStore.status?.currentPoint?.beta?.toFixed(2) || '--'
-}))
-
 // 顶栏进度摘要可见性（运行/暂停/已完成时显示）
 const showProgress = computed(() =>
   traversalStore.isRunning ||
@@ -530,7 +525,6 @@ watch(
       <div class="grid h-full gap-4 lg:grid-cols-[280px_1fr] grid-cols-1 auto-rows-auto lg:auto-rows-fr">
         <TraversalLiveMonitor
           :has-config="hasConfig"
-          :current-point-summary="currentPointSummary"
           :axis-positions="axisPositions"
           :acquisition-connection="acquisitionConnection"
           :positioner-connection="positionerConnection"
@@ -539,9 +533,6 @@ watch(
           :labels="{
             monitor: t.travMonitor,
             currentPoint: t.currentPoint,
-            currentPointX: t.currentPointX,
-            currentPointY: t.currentPointY,
-            positioner: t.positioner,
             realtimeCalculation: t.realtimeCalculation,
             realtimePressureData: t.realtimePressureData,
             alpha: t.alpha,

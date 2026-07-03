@@ -88,13 +88,16 @@ AI agent 在打包前必须执行以下流程：
 8. 更新 `apps/desktop-wails/frontend/package.json` 的 `version`。
 9. 如果存在 `package-lock.json`，同步其中根包版本。
 10. 更新 `apps/desktop-wails/build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION`。
-11. 创建或更新 `releases/<version>.md` 单次打包说明，必须包含 `Install / Upgrade` 段。
-12. 清理本地遗留的 `apps/desktop-wails/build/bin/` 和上次打包遗留的 `.syso`、`installer/*.exe` 等中间产物。
-13. 运行目标项目适用的验证命令。
-14. 用「生产构建」方式构建可执行文件（见下文「生产构建必备构建标签」）。
-15. 通过本机或现场冒烟测试启动一次新构建产物，确认 GUI 正常启动、没有"Wails applications will not build without the correct build tags"等明显错误。
-16. 验证通过后再执行 NSIS 等安装包封装命令。
-17. 最终回复必须包含版本号、主要变更、验证结果、产物路径，以及是否要求用户卸载旧版本。
+11. 更新 `apps/desktop-wails/build/config.yml` 的 `info.version`（wails3 build 用它渲染 `build/windows/info.json` 模板生成 wails_tools.nsh）。
+12. 创建或更新 `releases/<version>.md` 单次打包说明，必须包含 `Install / Upgrade` 段。
+13. 清理本地遗留的 `apps/desktop-wails/build/bin/` 和上次打包遗留的 `installer/*.exe` 等中间产物。**注意：`wails_windows_amd64.syso` 是入库的 PE 资源段源文件（由 `generate-icon` 任务管理），不要手动删除；如需刷新图标，执行 `task generate-icon` 重新生成。**
+
+> **注意**：`build/info.json` 和 `build/windows.manifest`（具体值版本）已删除，不再需要手动维护。Taskfile `generate-icon` 任务直接使用 `build/windows/info.json` 和 `build/windows/wails.exe.manifest` 模板文件，`wails3 generate syso` 内部会用 `wails.json` 的 info 字段渲染模板。版本号源统一收敛到 `VERSION` / `wails.json` / `package.json` / `package-lock.json` / `project.nsi` / `build/config.yml` 共 6 个文件。
+14. 运行目标项目适用的验证命令。
+15. 用「生产构建」方式构建可执行文件（见下文「生产构建必备构建标签」）。
+16. 通过本机或现场冒烟测试启动一次新构建产物，确认 GUI 正常启动、没有"Wails applications will not build without the correct build tags"等明显错误。
+17. 验证通过后再执行 NSIS 等安装包封装命令。
+18. 最终回复必须包含版本号、主要变更、验证结果、产物路径，以及是否要求用户卸载旧版本。
 
 AI agent 不得在版本号不变且无明确说明的情况下生成新的可交付包。
 

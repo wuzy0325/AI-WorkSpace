@@ -69,6 +69,117 @@ func TestGridPointsFromAxesSnake(t *testing.T) {
 	}
 }
 
+// TestGridPointsFromAxesOrdered 验证主轴顺序切换与归一化：
+//   - primaryAxis="x"：外层 Y、内层 X，先沿 X 走完一条线
+//   - primaryAxis="y"：外层 X、内层 Y，等价于 GridPointsFromAxes
+//   - 空字符串：保旧行为（先走 Y），用于升级前保存的 profile 兼容
+//   - 大写 "X"/"Y" 与带空白的 " x "：归一化后等价于小写
+func TestGridPointsFromAxesOrdered(t *testing.T) {
+	xs := []float64{0, 1, 2}
+	ys := []float64{0, 1}
+
+	// 先走 X：(0,0), (1,0), (2,0), (0,1), (1,1), (2,1)
+	xFirst := GridPointsFromAxesOrdered(xs, ys, "x")
+	if len(xFirst) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(xFirst))
+	}
+	if xFirst[0].X != 0 || xFirst[0].Y != 0 {
+		t.Fatalf("x-first: expected point[0] (0,0), got (%v,%v)", xFirst[0].X, xFirst[0].Y)
+	}
+	if xFirst[1].X != 1 || xFirst[1].Y != 0 {
+		t.Fatalf("x-first: expected point[1] (1,0), got (%v,%v)", xFirst[1].X, xFirst[1].Y)
+	}
+	if xFirst[2].X != 2 || xFirst[2].Y != 0 {
+		t.Fatalf("x-first: expected point[2] (2,0), got (%v,%v)", xFirst[2].X, xFirst[2].Y)
+	}
+	if xFirst[3].X != 0 || xFirst[3].Y != 1 {
+		t.Fatalf("x-first: expected point[3] (0,1), got (%v,%v)", xFirst[3].X, xFirst[3].Y)
+	}
+
+	// 先走 Y：等价于 GridPointsFromAxes，(0,0), (0,1), (1,0), (1,1), (2,0), (2,1)
+	yFirst := GridPointsFromAxesOrdered(xs, ys, "y")
+	legacy := GridPointsFromAxes(xs, ys)
+	if len(yFirst) != len(legacy) {
+		t.Fatalf("y-first length mismatch: %d vs legacy %d", len(yFirst), len(legacy))
+	}
+	for i := range yFirst {
+		if yFirst[i] != legacy[i] {
+			t.Fatalf("y-first point[%d] = (%v,%v), expected legacy (%v,%v)",
+				i, yFirst[i].X, yFirst[i].Y, legacy[i].X, legacy[i].Y)
+		}
+	}
+
+	// 空字符串保旧行为（先走 Y），等价于 GridPointsFromAxes
+	empty := GridPointsFromAxesOrdered(xs, ys, "")
+	if empty[1].X != 0 || empty[1].Y != 1 {
+		t.Fatalf("empty primaryAxis: expected legacy point[1] (0,1), got (%v,%v)", empty[1].X, empty[1].Y)
+	}
+
+	// 大写 "X" 归一化为 "x"，走先走 X 分支
+	upperX := GridPointsFromAxesOrdered(xs, ys, "X")
+	if upperX[1].X != 1 || upperX[1].Y != 0 {
+		t.Fatalf("upper X: expected point[1] (1,0), got (%v,%v)", upperX[1].X, upperX[1].Y)
+	}
+
+	// 带空白的 " x " 归一化为 "x"
+	trimmed := GridPointsFromAxesOrdered(xs, ys, " x ")
+	if trimmed[1].X != 1 || trimmed[1].Y != 0 {
+		t.Fatalf("trimmed ' x ': expected point[1] (1,0), got (%v,%v)", trimmed[1].X, trimmed[1].Y)
+	}
+
+	// 大写 "Y" 归一化为 "y"，走 legacy 分支
+	upperY := GridPointsFromAxesOrdered(xs, ys, "Y")
+	if upperY[1].X != 0 || upperY[1].Y != 1 {
+		t.Fatalf("upper Y: expected legacy point[1] (0,1), got (%v,%v)", upperY[1].X, upperY[1].Y)
+	}
+}
+
+// TestGridPointsFromAxesSnakeOrdered 验证蛇形主轴顺序切换：
+//   - primaryAxis="x"（默认）：外层 Y、内层 X，奇数行反转 X 顺序
+//   - primaryAxis="y"：等价于 GridPointsFromAxesSnake
+func TestGridPointsFromAxesSnakeOrdered(t *testing.T) {
+	xs := []float64{0, 1, 2}
+	ys := []float64{0, 1}
+
+	// 先走 X 蛇形：(0,0), (1,0), (2,0), (2,1), (1,1), (0,1)
+	xFirst := GridPointsFromAxesSnakeOrdered(xs, ys, "x")
+	if len(xFirst) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(xFirst))
+	}
+	if xFirst[0].X != 0 || xFirst[0].Y != 0 {
+		t.Fatalf("x-first snake: expected point[0] (0,0), got (%v,%v)", xFirst[0].X, xFirst[0].Y)
+	}
+	if xFirst[1].X != 1 || xFirst[1].Y != 0 {
+		t.Fatalf("x-first snake: expected point[1] (1,0), got (%v,%v)", xFirst[1].X, xFirst[1].Y)
+	}
+	if xFirst[2].X != 2 || xFirst[2].Y != 0 {
+		t.Fatalf("x-first snake: expected point[2] (2,0), got (%v,%v)", xFirst[2].X, xFirst[2].Y)
+	}
+	// 奇数行（Y=1）反转 X：(2,1), (1,1), (0,1)
+	if xFirst[3].X != 2 || xFirst[3].Y != 1 {
+		t.Fatalf("x-first snake: expected point[3] (2,1), got (%v,%v)", xFirst[3].X, xFirst[3].Y)
+	}
+	if xFirst[4].X != 1 || xFirst[4].Y != 1 {
+		t.Fatalf("x-first snake: expected point[4] (1,1), got (%v,%v)", xFirst[4].X, xFirst[4].Y)
+	}
+	if xFirst[5].X != 0 || xFirst[5].Y != 1 {
+		t.Fatalf("x-first snake: expected point[5] (0,1), got (%v,%v)", xFirst[5].X, xFirst[5].Y)
+	}
+
+	// 先走 Y 蛇形：等价于 GridPointsFromAxesSnake
+	yFirst := GridPointsFromAxesSnakeOrdered(xs, ys, "y")
+	legacy := GridPointsFromAxesSnake(xs, ys)
+	if len(yFirst) != len(legacy) {
+		t.Fatalf("y-first snake length mismatch: %d vs legacy %d", len(yFirst), len(legacy))
+	}
+	for i := range yFirst {
+		if yFirst[i] != legacy[i] {
+			t.Fatalf("y-first snake point[%d] = (%v,%v), expected legacy (%v,%v)",
+				i, yFirst[i].X, yFirst[i].Y, legacy[i].X, legacy[i].Y)
+		}
+	}
+}
+
 func TestSectorPointsFromRadiiAngles(t *testing.T) {
 	radii := []float64{1}
 	angles := []float64{0, 90}
@@ -117,9 +228,12 @@ func TestPointsFromLayoutRectangle(t *testing.T) {
 }
 
 func TestPointsFromLayoutRectangleSnake(t *testing.T) {
+	// 显式指定 PrimaryAxis="y"，保持原始“外层 X、内层 Y”蛇形预期：
+	// (0,0), (0,1), (1,1), (1,0), (2,0), (2,1)
 	points := PointsFromLayout(LayoutConfig{
-		Pattern:    "rectangle",
-		SnakeOrder: true,
+		Pattern:     "rectangle",
+		SnakeOrder:  true,
+		PrimaryAxis: "y",
 		Rectangle: &RectangleLayout{
 			XMin: 0, XMax: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
 			YMin: 0, YMax: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
@@ -131,6 +245,202 @@ func TestPointsFromLayoutRectangleSnake(t *testing.T) {
 	// 第1行（奇数行）反转：x=1时 y=1 在前
 	if points[2].Y != 1 {
 		t.Fatalf("expected snake order: point[2].Y=1, got %v", points[2].Y)
+	}
+}
+
+// TestPointsFromLayoutRectangleSnakeLegacy 验证空字符串（缺省）保旧行为：
+// 等价于 PrimaryAxis="y"，外层 X、内层 Y，奇数行反转 Y。
+// 此用例保护升级前保存的 profile（无 primaryAxis 字段）行为不变。
+func TestPointsFromLayoutRectangleSnakeLegacy(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:    "rectangle",
+		SnakeOrder: true,
+		// PrimaryAxis 留空，验证缺省 = legacy（先走 Y）
+		Rectangle: &RectangleLayout{
+			XMin: 0, XMax: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			YMin: 0, YMax: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	// legacy 蛇形：(0,0), (0,1), (1,1), (1,0), (2,0), (2,1)
+	if points[0].X != 0 || points[0].Y != 0 {
+		t.Fatalf("legacy: expected point[0] (0,0), got (%v,%v)", points[0].X, points[0].Y)
+	}
+	if points[1].X != 0 || points[1].Y != 1 {
+		t.Fatalf("legacy: expected point[1] (0,1), got (%v,%v)", points[1].X, points[1].Y)
+	}
+	if points[2].X != 1 || points[2].Y != 1 {
+		t.Fatalf("legacy: expected point[2] (1,1), got (%v,%v)", points[2].X, points[2].Y)
+	}
+}
+
+// TestPointsFromLayoutRectangleSnakePrimaryX 验证显式主轴 "x" 下的蛇形顺序：
+// 外层 Y、内层 X，奇数行反转 X，结果应为 (0,0), (1,0), (2,0), (2,1), (1,1), (0,1)
+func TestPointsFromLayoutRectangleSnakePrimaryX(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "rectangle",
+		SnakeOrder:  true,
+		PrimaryAxis: "x", // 显式指定，缺省不再走此分支
+		Rectangle: &RectangleLayout{
+			XMin: 0, XMax: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			YMin: 0, YMax: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+	// 第0行（Y=0）：(0,0), (1,0), (2,0)
+	if points[0].X != 0 || points[0].Y != 0 {
+		t.Fatalf("expected point[0] (0,0), got (%v,%v)", points[0].X, points[0].Y)
+	}
+	if points[1].X != 1 || points[1].Y != 0 {
+		t.Fatalf("expected point[1] (1,0), got (%v,%v)", points[1].X, points[1].Y)
+	}
+	if points[2].X != 2 || points[2].Y != 0 {
+		t.Fatalf("expected point[2] (2,0), got (%v,%v)", points[2].X, points[2].Y)
+	}
+	// 第1行（Y=1）反转 X：(2,1), (1,1), (0,1)
+	if points[3].X != 2 || points[3].Y != 1 {
+		t.Fatalf("expected point[3] (2,1), got (%v,%v)", points[3].X, points[3].Y)
+	}
+	if points[4].X != 1 || points[4].Y != 1 {
+		t.Fatalf("expected point[4] (1,1), got (%v,%v)", points[4].X, points[4].Y)
+	}
+	if points[5].X != 0 || points[5].Y != 1 {
+		t.Fatalf("expected point[5] (0,1), got (%v,%v)", points[5].X, points[5].Y)
+	}
+}
+
+// TestPointsFromLayoutRectanglePrimaryX 验证显式主轴 "x" 下的普通（非蛇形）顺序：
+// 外层 Y、内层 X，结果应为 (0,0), (1,0), (2,0), (0,1), (1,1), (2,1)
+func TestPointsFromLayoutRectanglePrimaryX(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "rectangle",
+		PrimaryAxis: "x", // 显式指定，缺省不再走此分支
+		Rectangle: &RectangleLayout{
+			XMin: 0, XMax: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			YMin: 0, YMax: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+	if points[0].X != 0 || points[0].Y != 0 {
+		t.Fatalf("expected point[0] (0,0), got (%v,%v)", points[0].X, points[0].Y)
+	}
+	if points[1].X != 1 || points[1].Y != 0 {
+		t.Fatalf("expected point[1] (1,0), got (%v,%v)", points[1].X, points[1].Y)
+	}
+	if points[2].X != 2 || points[2].Y != 0 {
+		t.Fatalf("expected point[2] (2,0), got (%v,%v)", points[2].X, points[2].Y)
+	}
+	if points[3].X != 0 || points[3].Y != 1 {
+		t.Fatalf("expected point[3] (0,1), got (%v,%v)", points[3].X, points[3].Y)
+	}
+}
+
+// TestPointsFromLayoutLinePrimaryX 验证 line 布局显式主轴 "x" 的走线顺序：
+// 起始 (0,0)→(2,0) 沿 X 走完，再切到 (0,1)→(2,1)。覆盖 PointsFromLayout 的 line 分支
+// 与 GridPointsFromAxesOrdered 的 'x' 路径，补足此前 line 缺测试的盲区。
+func TestPointsFromLayoutLinePrimaryX(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "line",
+		PrimaryAxis: "x",
+		Line: &LineLayout{
+			StartX: 0, EndX: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			StartY: 0, EndY: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+	// 先走 X：第0行 Y=0 → (0,0), (1,0), (2,0)；第1行 Y=1 → (0,1), (1,1), (2,1)
+	if points[0].X != 0 || points[0].Y != 0 {
+		t.Fatalf("expected point[0] (0,0), got (%v,%v)", points[0].X, points[0].Y)
+	}
+	if points[1].X != 1 || points[1].Y != 0 {
+		t.Fatalf("expected point[1] (1,0), got (%v,%v)", points[1].X, points[1].Y)
+	}
+	if points[2].X != 2 || points[2].Y != 0 {
+		t.Fatalf("expected point[2] (2,0), got (%v,%v)", points[2].X, points[2].Y)
+	}
+	if points[3].X != 0 || points[3].Y != 1 {
+		t.Fatalf("expected point[3] (0,1), got (%v,%v)", points[3].X, points[3].Y)
+	}
+}
+
+// TestPointsFromLayoutLinePrimaryY 验证 line 布局主轴 "y"（legacy）的走线顺序：
+// 起始 (0,0)→(0,1) 沿 Y 走完，再切到 (1,0)→(1,1)，最后 (2,0)→(2,1)。
+func TestPointsFromLayoutLinePrimaryY(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "line",
+		PrimaryAxis: "y",
+		Line: &LineLayout{
+			StartX: 0, EndX: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			StartY: 0, EndY: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+	// 先走 Y：(0,0), (0,1), (1,0), (1,1), (2,0), (2,1)
+	if points[0].X != 0 || points[0].Y != 0 {
+		t.Fatalf("expected point[0] (0,0), got (%v,%v)", points[0].X, points[0].Y)
+	}
+	if points[1].X != 0 || points[1].Y != 1 {
+		t.Fatalf("expected point[1] (0,1), got (%v,%v)", points[1].X, points[1].Y)
+	}
+	if points[2].X != 1 || points[2].Y != 0 {
+		t.Fatalf("expected point[2] (1,0), got (%v,%v)", points[2].X, points[2].Y)
+	}
+}
+
+// TestPointsFromLayoutLineSnakePrimaryX 验证 line 布局 + 蛇形 + 主轴 "x"：
+// 第0行正向 X：(0,0), (1,0), (2,0)；第1行反向 X：(2,1), (1,1), (0,1)
+func TestPointsFromLayoutLineSnakePrimaryX(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "line",
+		SnakeOrder:  true,
+		PrimaryAxis: "x",
+		Line: &LineLayout{
+			StartX: 0, EndX: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			StartY: 0, EndY: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+	if points[2].X != 2 || points[2].Y != 0 {
+		t.Fatalf("expected point[2] (2,0), got (%v,%v)", points[2].X, points[2].Y)
+	}
+	if points[3].X != 2 || points[3].Y != 1 {
+		t.Fatalf("expected point[3] (2,1) [reversed], got (%v,%v)", points[3].X, points[3].Y)
+	}
+	if points[5].X != 0 || points[5].Y != 1 {
+		t.Fatalf("expected point[5] (0,1) [reversed], got (%v,%v)", points[5].X, points[5].Y)
+	}
+}
+
+// TestPointsFromLayoutLineSingleY 验证 line 布局 yStepSegments 为空时归一化为单 Y：
+// 应只沿 X 走一条线，不受 PrimaryAxis 影响（单行无主轴概念）。
+func TestPointsFromLayoutLineSingleY(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern:     "line",
+		PrimaryAxis: "x",
+		Line: &LineLayout{
+			StartX: 0, EndX: 2, XStepSegments: []StepSegment{{Start: 0, End: 2, Step: 1}},
+			StartY: 5, EndY: 5, YStepSegments: nil, // 无 Y 步进
+		},
+	})
+	if len(points) != 3 {
+		t.Fatalf("expected 3 points (single Y), got %d", len(points))
+	}
+	for _, p := range points {
+		if p.Y != 5 {
+			t.Fatalf("expected Y=5 for all points (single Y normalization), got %v", p.Y)
+		}
+	}
+	if points[0].X != 0 || points[1].X != 1 || points[2].X != 2 {
+		t.Fatalf("expected X = 0,1,2, got %v,%v,%v", points[0].X, points[1].X, points[2].X)
 	}
 }
 

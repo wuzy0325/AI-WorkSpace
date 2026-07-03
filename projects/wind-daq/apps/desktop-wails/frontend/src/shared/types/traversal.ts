@@ -76,11 +76,22 @@ export function isTraversalConfigurableProbeChannel(role?: ProbeChannelRole, nam
   })
 }
 
+/** 走线主轴：控制矩形/线型布局的物理走线方向 */
+export type TraversalPrimaryAxis = 'x' | 'y'
+
 /** 布局配置 */
 export interface TraversalLayout {
   pattern: TraversalPattern
   snakeOrder?: boolean // 蛇形遍历：偶数行正常，奇数行反转，减少回程时间
-  
+  /**
+   * 走线主轴：仅 line / rectangle 布局消费，扇形/自定义不消费。
+   *   - 'x'：先沿 X 方向走完一条线再切换 Y
+   *   - 'y'：先沿 Y 方向走完一条线再切换 X（原始行为）
+   *   - undefined / 空字符串：保旧行为（先走 Y），用于升级前保存的 profile 兼容
+   * 大小写不敏感、去空白。详见 gridPointsFromAxes。
+   */
+  primaryAxis?: TraversalPrimaryAxis
+
   line?: {
     startX: number
     startY: number
@@ -89,7 +100,7 @@ export interface TraversalLayout {
     xStepSegments: StepSegment[]
     yStepSegments: StepSegment[]
   }
-  
+
   rectangle?: {
     xMin: number
     xMax: number
@@ -98,7 +109,7 @@ export interface TraversalLayout {
     yMax: number
     yStepSegments: StepSegment[]
   }
-  
+
   sector?: {
     centerX: number
     centerY: number
@@ -109,7 +120,7 @@ export interface TraversalLayout {
     angleEnd: number
     angularStepSegments: StepSegment[]
   }
-  
+
   custom?: {
     points: Array<{ x: number; y: number }>
   }
@@ -146,16 +157,43 @@ export function getTraversalStepValues(start: number, end: number, segments: Ste
   return values.sort((a, b) => a - b)
 }
 
-/** 网格布点（支持蛇形遍历） */
+/**
+ * 网格布点（支持蛇形遍历与走线主轴选择）
+ *
+ * primaryAxis 取值（归一化：大小写不敏感、去空白）：
+ *   - 'x'：外层 Y、内层 X，每条线沿 X 方向走，切换时跳到下一行 Y
+ *   - 'y'：外层 X、内层 Y，每条线沿 Y 方向走（原始行为）
+ *   - undefined / 空字符串 / 其他未识别值：保旧行为（先走 Y），用于升级前保存的 profile 兼容
+ *
+ * 蛇形反转方向跟随主轴：主轴是“长程走线方向”，反转主轴可避免回程空跑。
+ * 必须与后端 path.go 的 GridPointsFromAxesOrdered / GridPointsFromAxesSnakeOrdered 保持一致。
+ *
+ * 实现上 'x' 分支复用 gridPointsFromAxesY（交换 xs/ys）后转置坐标，避免重复双重循环逻辑，
+ * 与后端 swapPoints 模式对齐。
+ */
 function gridPointsFromAxes(
   xs: number[],
   ys: number[],
-  snakeOrder = false
+  snakeOrder = false,
+  primaryAxis: TraversalPrimaryAxis | string = 'y'
 ): TraversalPoint[] {
+  // 归一化：去空白 + 转小写。仅显式 'x' 才走新逻辑，其他（含 undefined/空/'y'）保旧行为
+  const normalized = (primaryAxis ?? '').trim().toLowerCase()
+  if (normalized !== 'x') {
+    return gridPointsFromAxesY(xs, ys, snakeOrder)
+  }
+  // 先走 X：交换两轴调用 legacy（外层 Y、内层 X），再转置坐标恢复 (X,Y) 语义
+  return swapPoints(gridPointsFromAxesY(ys, xs, snakeOrder))
+}
+
+/**
+ * gridPointsFromAxesY 是 legacy 实现：外层 X、内层 Y，蛇形反转 Y。
+ * 抽成独立函数供 'x' 分支转置复用，避免双重循环逻辑散落两处。
+ */
+function gridPointsFromAxesY(xs: number[], ys: number[], snakeOrder: boolean): TraversalPoint[] {
   const points: TraversalPoint[] = []
   for (let i = 0; i < xs.length; i++) {
     if (snakeOrder && i % 2 === 1) {
-      // 奇数行反转Y轴顺序
       for (let j = ys.length - 1; j >= 0; j--) {
         points.push({ x: xs[i], y: ys[j] })
       }
@@ -164,6 +202,16 @@ function gridPointsFromAxes(
         points.push({ x: xs[i], y })
       }
     }
+  }
+  return points
+}
+
+/** swapPoints 原地转置点集的 X/Y 坐标，与后端 swapPoints 模式对齐。 */
+function swapPoints(points: TraversalPoint[]): TraversalPoint[] {
+  for (let i = 0; i < points.length; i++) {
+    const tmp = points[i].x
+    points[i].x = points[i].y
+    points[i].y = tmp
   }
   return points
 }
@@ -205,6 +253,9 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
   }
 
   const snake = layout.snakeOrder ?? false
+  // 走线主轴：undefined / 空字符串走 legacy（先走 Y），保旧行为兼容升级前 profile。
+  // 显式 'x' 才走新逻辑（先走 X）；'y' 等价 legacy。gridPointsFromAxes 内部已归一化。
+  const primaryAxis = layout.primaryAxis
 
   switch (layout.pattern) {
     case 'line': {
@@ -225,7 +276,7 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       if (xSteps.length === 0) {
         return ySteps.map((y) => ({ x: startX, y }))
       }
-      return gridPointsFromAxes(xSteps, ySteps, snake)
+      return gridPointsFromAxes(xSteps, ySteps, snake, primaryAxis)
     }
 
     case 'rectangle': {
@@ -236,7 +287,7 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       const { xMin, xMax, xStepSegments, yMin, yMax, yStepSegments } = layout.rectangle
       const xSteps = getTraversalStepValues(xMin, xMax, xStepSegments)
       const ySteps = getTraversalStepValues(yMin, yMax, yStepSegments)
-      return gridPointsFromAxes(xSteps, ySteps, snake)
+      return gridPointsFromAxes(xSteps, ySteps, snake, primaryAxis)
     }
 
     case 'sector': {
@@ -256,6 +307,7 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       } = layout.sector
       const radii = getTraversalStepValues(radiusMin, radiusMax, radialStepSegments)
       const angles = getTraversalStepValues(angleStart, angleEnd, angularStepSegments)
+      // 扇形布局不消费 primaryAxis，保持原“外层半径、内层角度”语义
       return sectorPointsFromRadiiAngles(centerX, centerY, radii, angles, snake)
     }
 

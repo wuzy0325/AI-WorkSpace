@@ -459,10 +459,12 @@ func (w *deviceWriter) writeOne(snap core.TemperatureSnapshot) {
 	} else {
 		t = time.UnixMilli(snap.Timestamp)
 	}
-	// 单列 Timestamp：前缀单引号强制 Excel 按文本显示，带毫秒保证秒和毫秒均完整可见
-	// （秒精度被 Excel 默认格式识别为时间类型后用 yyyy/m/d h:mm 显示，秒被隐藏）
+	// 单列 Timestamp：截断到秒级。
+	// 原因：DAQ-P-1604 等设备时间戳存在固件 bug（fractional 字段递增不正确），
+	// 且系统毫秒时间戳在 1000Hz 下精度不足。统一秒级避免展示错误的时间细分。
+	// 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式隐藏秒。
 	buf = append(buf, '\'')
-	buf = t.AppendFormat(buf, "2006-01-02 15:04:05.000")
+	buf = t.AppendFormat(buf, "2006-01-02 15:04:05")
 	buf = append(buf, ',')
 
 	// Unit（单位）：10 台设备可能不同，必须落盘

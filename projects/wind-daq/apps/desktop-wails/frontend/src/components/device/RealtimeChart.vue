@@ -91,6 +91,16 @@ const option = computed(() => {
     }
   })
 
+  // 收集当前图表可见通道的单位并去重。
+  // 仅当所有可见通道单位一致时才在纵坐标显示单位标签，
+  // 避免把不同物理量（如 Pa 与 °C）混在同一坐标轴上却只标某一个单位造成误读。
+  const visibleUnits = new Set<string>()
+  for (const ch of props.channelIndices) {
+    const u = metaMap.get(ch)?.unit ?? ''
+    if (u) visibleUnits.add(u)
+  }
+  const yAxisUnit = visibleUnits.size === 1 ? Array.from(visibleUnits)[0] : ''
+
   return {
     tooltip: {
       trigger: 'axis' as const,
@@ -134,7 +144,8 @@ const option = computed(() => {
         return `<div style="font-size:12px;line-height:1.6;"><div style="font-weight:600;margin-bottom:4px;">${escapeHtml(header)}</div>${rows.join('')}</div>`
       },
     },
-    grid: { left: 40, right: 16, top: 8, bottom: 24 },
+    // top 留 22px 给纵坐标单位名称，避免 name 与轴标签重叠
+    grid: { left: 40, right: 16, top: yAxisUnit ? 22 : 8, bottom: 24 },
     xAxis: {
       type: 'category' as const,
       data: times,
@@ -144,6 +155,15 @@ const option = computed(() => {
     },
     yAxis: {
       type: 'value' as const,
+      // 纵坐标名称：显示当前统一单位（如 Pa、°C），位置在轴顶端
+      name: yAxisUnit,
+      nameLocation: 'end' as const,
+      nameGap: 8,
+      nameTextStyle: {
+        fontSize: 10,
+        color: '#64748b',
+        fontWeight: 600,
+      },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
       axisLabel: { fontSize: 10, color: '#64748b' },
     },

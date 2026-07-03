@@ -49,6 +49,7 @@ func (uc *DeviceUsecase) DeleteProfile(id string) error {
 }
 
 // Connect 连接设备
+// 连接后若硬件单位与 profile 配置不一致，以硬件为准自动更新 profile 并持久化到磁盘。
 func (uc *DeviceUsecase) Connect(id string) error {
 	profiles, err := uc.config.LoadProfiles()
 	if err != nil {
@@ -64,7 +65,21 @@ func (uc *DeviceUsecase) Connect(id string) error {
 	if profile == nil {
 		return fmt.Errorf("profile %s not found", id)
 	}
-	return uc.device.Connect(*profile)
+	prevUnit := profile.P1604Cfg.Unit
+	if err := uc.device.Connect(*profile); err != nil {
+		return err
+	}
+	// 连接后检查硬件是否同步了单位：若 adapter 已将单位更新到 status 中的 profile，
+	// 则持久化到磁盘，确保下次启动时前端配置面板显示的是硬件实际单位。
+	state, ok := uc.device.Status(id)
+	if ok && state.Profile.P1604Cfg.Unit != prevUnit {
+		slog.Info("unit synced from hardware, persisting profile",
+			"device", id, "prev", prevUnit, "new", state.Profile.P1604Cfg.Unit)
+		if err := uc.config.SaveProfile(state.Profile); err != nil {
+			slog.Warn("persist synced profile failed", "device", id, "error", err)
+		}
+	}
+	return nil
 }
 
 // Disconnect 断开设备

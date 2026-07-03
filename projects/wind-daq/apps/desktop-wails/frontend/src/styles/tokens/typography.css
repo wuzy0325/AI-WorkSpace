@@ -1,6 +1,12 @@
 :root {
-  --font-family-sans: 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+  /* Inter 优先：与 Cursor DAQ 混合画面字体观感对齐。
+     Inter 渲染数字时配合 tabular-nums + tracking-tight 可获得与原项目一致的紧凑工业感。
+     离线或字体未加载时按顺序回退到 PingFang SC / Microsoft YaHei UI / Segoe UI。 */
+  --font-family-sans: 'Inter', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
   --font-family-mono: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', monospace;
+  /* 数据读数专用字体栈：Inter 优先，回退到系统 sans。
+     与 --font-family-sans 的区别在于：用于大号数值显示，配套 tabular-nums + letter-spacing: -0.02em。 */
+  --font-family-data: 'Inter', 'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', sans-serif;
 
   --font-size-micro: 0.625rem;
   --font-size-2xs: 0.6875rem;

@@ -52,10 +52,12 @@ function onTare(): void {
   >
     <!-- 混合模式：极简单行卡片，仅保留通道名 + 数值 + 单位，
          最大化把纵向空间让给实时波形图。
-         注：混合模式不使用黄色告警配色（用户偏好），仅在卡片模式保留告警高亮 -->
+         注：混合模式不使用黄色告警配色（用户偏好），仅在卡片模式保留告警高亮
+         字体：CH_XX / 数值 均使用 Inter（--font-family-data），对齐 Cursor DAQ 混合画面；
+              数值额外叠加 tabular-nums + tracking-tight，让数字紧凑且纵向对齐。 -->
     <template v-if="compact">
-      <span class="channel-card__compact-tag mono-font">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
-      <span class="channel-card__compact-value mono-font">{{ card.formattedValue }}</span>
+      <span class="channel-card__compact-tag">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
+      <span class="channel-card__compact-value">{{ card.formattedValue }}</span>
       <span class="channel-card__compact-unit">{{ card.unit }}</span>
     </template>
 
@@ -349,8 +351,11 @@ function onTare(): void {
 
 /* ===== 混合模式极简单行卡片 =====
    仅展示通道名 + 数值 + 单位，单行内联布局，
-   行高压到 40px，最大化把纵向空间让给上方波形图。 */
+   行高压到 40px，最大化把纵向空间让给上方波形图。
+   字体：混合模式整张卡片统一使用 Inter（--font-family-data），对齐 Cursor DAQ 混合画面。
+        离线时按 --font-family-data 回退到 PingFang SC / Microsoft YaHei UI。 */
 .channel-card--compact {
+  font-family: var(--font-family-data);
   padding: 0 var(--space-2);
   gap: var(--space-2);
   border-radius: var(--radius-sm);
@@ -390,11 +395,16 @@ function onTare(): void {
 }
 
 .channel-card__compact-value {
-  /* 数值使用主文本色 + 更粗字重，作为卡片视觉焦点 */
+  /* 数值使用 Inter（--font-family-data） + tabular-nums + tracking-tight，
+     对齐 Cursor DAQ 混合画面数值字体观感：数字紧凑、纵向位对齐、西文 sans 工业感。
+     离线或字体未加载时按 --font-family-data 回退到 PingFang SC / Microsoft YaHei UI。 */
+  font-family: var(--font-family-data);
   font-size: var(--font-size-base, 14px);
   font-weight: var(--font-weight-black, 800);
   color: var(--text-primary);
   line-height: 1;
+  letter-spacing: -0.025em; /* Tailwind tracking-tight 等价值 */
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

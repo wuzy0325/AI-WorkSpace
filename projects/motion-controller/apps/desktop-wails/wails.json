@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "motion-controller",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "outputfilename": "motion-controller",
   "frontend": {
     "dir": "frontend",

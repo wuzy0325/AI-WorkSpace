@@ -679,9 +679,11 @@ func buildDynamicHeader(columnIndices []int, isWideFormat bool) string {
 	return b.String()
 }
 
-// appendCSVTimestamp 追加 CSV 时间戳段（前缀单引号 + 毫秒精度）。
+// appendCSVTimestamp 追加 CSV 时间戳段（前缀单引号 + 秒级精度）。
 // 时间来源：DeviceTimestamp > 0 用硬件时间戳，否则系统时间戳。
-// 前缀单引号强制 Excel 按文本显示，秒和毫秒均完整可见。
+// 截断到秒级：DAQ-P-1604 等设备时间戳存在固件 bug（fractional 字段递增不正确），
+// 且系统毫秒时间戳在 1000Hz 下精度不足。统一秒级避免展示错误的时间细分。
+// 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式隐藏秒。
 func appendCSVTimestamp(b []byte, payload device.DataPayload) []byte {
 	var t time.Time
 	if payload.DeviceTimestamp > 0 {
@@ -690,7 +692,7 @@ func appendCSVTimestamp(b []byte, payload device.DataPayload) []byte {
 		t = time.UnixMilli(payload.Timestamp)
 	}
 	b = append(b, '\'')
-	b = t.AppendFormat(b, "2006-01-02 15:04:05.000")
+	b = t.AppendFormat(b, "2006-01-02 15:04:05")
 	return b
 }
 

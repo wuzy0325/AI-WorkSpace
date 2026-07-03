@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin:0; background:#020617; }
+  svg { display:block; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 920 560" width="920" height="560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="flow-arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#d48b52" /></marker>
+    <marker id="axis-arrow-blue" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#3355ff" /></marker>
+    <marker id="axis-arrow-green" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#10b981" /></marker>
+    <marker id="axis-arrow-red" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#ef4444" /></marker>
+    <marker id="alpha-arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#ffaa00" /></marker>
+    <marker id="beta-arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#ff00aa" /></marker>
+    <linearGradient id="probe-body" x1="0" x2="1"><stop offset="0%" stop-color="#f8fafc" /><stop offset="45%" stop-color="#94a3b8" /><stop offset="100%" stop-color="#e2e8f0" /></linearGradient>
+  </defs>
+
+  <path d="M70 430 L160 475 L278 460 L405 394 L560 410 L824 330" fill="none" stroke="#334155" stroke-width="3" opacity="0.55" />
+  <path d="M180 450 L330 450 L500 425 L725 425" fill="none" stroke="#475569" stroke-width="3" opacity="0.35" />
+
+  <line x1="120" y1="300" x2="780" y2="300" stroke="#d48b52" stroke-width="4" stroke-dasharray="14 12" marker-end="url(#flow-arrow)" />
+  <text x="190" y="278" fill="#d48b52" font-size="30" font-weight="bold">流向</text>
+
+  <line x1="450" y1="390" x2="450" y2="150" stroke="#3355ff" stroke-width="6" marker-end="url(#axis-arrow-blue)" />
+  <text x="472" y="178" fill="#3355ff" font-size="36" font-weight="bold">Y</text>
+  <line x1="450" y1="390" x2="610" y2="445" stroke="#10b981" stroke-width="5" marker-end="url(#axis-arrow-green)" />
+  <text x="608" y="468" fill="#10b981" font-size="24" font-weight="bold">-Z</text>
+  <line x1="450" y1="390" x2="340" y2="445" stroke="#ef4444" stroke-width="5" marker-end="url(#axis-arrow-red)" />
+  <text x="304" y="468" fill="#ef4444" font-size="24" font-weight="bold">X probe axis</text>
+
+  <path d="M130 420 C150 350, 195 329.25, 150.5 308.75" fill="none" stroke="#ffaa00" stroke-width="7" marker-end="url(#alpha-arrow)" />
+  <path d="M230 418 C205 366.25, 180 358.75, 158.75 332.5" fill="none" stroke="#ffaa00" stroke-width="7" stroke-dasharray="12 10" marker-end="url(#alpha-arrow)" />
+  <text x="255" y="424" fill="#ffaa00" font-size="36" font-weight="bold">alpha+</text>
+  <text x="255" y="488" fill="#ffaa00" font-size="30" font-weight="bold">alpha-</text>
+  <text x="570" y="96" fill="#ffaa00" font-size="30" font-weight="bold">alpha yaw</text>
+
+  <path d="M398 318 C350 310, 344 254, 247 211" fill="none" stroke="#ff00aa" stroke-width="7" marker-end="url(#beta-arrow)" />
+  <path d="M398 338 C354 354, 350 405, 241 425" fill="none" stroke="#ff00aa" stroke-width="7" stroke-dasharray="12 10" marker-end="url(#beta-arrow)" />
+  <text x="358" y="286" fill="#ff00aa" font-size="36" font-weight="bold">beta+</text>
+  <text x="358" y="404" fill="#ff00aa" font-size="36" font-weight="bold">beta-</text>
+  <text x="570" y="136" fill="#ff00aa" font-size="30" font-weight="bold">beta pitch</text>
+
+  <g transform="translate(565 300)">
+    <ellipse cx="0" cy="0" rx="138" ry="86" fill="url(#probe-body)" opacity="0.98" />
+    <ellipse cx="0" cy="0" rx="92" ry="56" fill="#dbe4ee" opacity="0.96" />
+    <circle cx="0" cy="0" r="27" fill="#020617" />
+    <circle cx="0" cy="-62" r="27" fill="#020617" />
+    <circle cx="82" cy="0" r="27" fill="#020617" />
+    <circle cx="0" cy="62" r="27" fill="#020617" />
+    <circle cx="-82" cy="0" r="27" fill="#020617" />
+    <text x="34" y="8" fill="#2563eb" font-size="30" font-weight="bold">P1</text>
+    <text x="34" y="-50" fill="#2563eb" font-size="30" font-weight="bold">P2</text>
+    <text x="116" y="8" fill="#2563eb" font-size="30" font-weight="bold">P3</text>
+    <text x="-50" y="8" fill="#2563eb" font-size="30" font-weight="bold">P4</text>
+    <text x="34" y="72" fill="#2563eb" font-size="30" font-weight="bold">P5</text>
+    <text x="-62" y="-66" fill="#94a3b8" font-size="22" font-weight="600">P1 center</text>
+    <text x="-68" y="124" fill="#94a3b8" font-size="22" font-weight="600">P2-P5 ring</text>
+  </g>
+</svg>
+</body>
+</html>

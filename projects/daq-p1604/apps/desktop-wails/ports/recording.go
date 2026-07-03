@@ -15,4 +15,10 @@ type RecordingPort interface {
 	IsActive() bool
 	// Status 获取录制会话运行时状态（含丢弃计数、文件数、错误信息等）
 	Status() core.RecordingSession
+	// StopWithError 先填充错误原因再停止录制，CAS 保护原子性：
+	//   - 录制活跃：写入 lastError，drain 队列并关闭文件，返回 true
+	//   - 录制已停止（用户已主动 Stop）：不修改 lastError，返回 false
+	// 用于设备断连自动停止场景，避免与用户主动 StopRecording 竞争时
+	// 把"用户主动停止"误覆盖为"设备断连自动停止"。
+	StopWithError(msg string) bool
 }

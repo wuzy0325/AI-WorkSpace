@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { StepSegment, TraversalPattern } from '@shared/types/traversal'
+import type { StepSegment, TraversalPattern, TraversalPrimaryAxis } from '@shared/types/traversal'
 import { useTraversalSegmentValidation, getSegmentError, hasSegmentError } from '@composables/useTraversalValidation'
 import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
@@ -28,11 +28,24 @@ const sectorConfig = defineModel<{
 const customPoints = defineModel<Array<{ x: number; y: number }>>('customPoints', { required: true })
 const customPointInput = defineModel<{ x: number; y: number }>('customPointInput', { required: true })
 const snakeOrder = defineModel<boolean>('snakeOrder', { required: true })
+// 走线主轴：仅 line / rectangle 布局消费，扇形不显示此选项。
+// 用 default: 'x' 而非 required，避免未来其他父组件漏传时 dev 告警 + radio 无选中项。
+const primaryAxis = defineModel<TraversalPrimaryAxis>('primaryAxis', { default: 'x' })
 
 const props = defineProps<{
   estimatedPointCount: number
   t: Record<string, string>
 }>()
+
+// 走线主轴选项：与 TraversalHardwareStep.vue 的 radio 模式对齐（v-model + options 数组 + active 高亮）
+const primaryAxisOptions = computed(() => [
+  { value: 'x' as const, label: props.t.travPrimaryAxisX || 'X first' },
+  { value: 'y' as const, label: props.t.travPrimaryAxisY || 'Y first' }
+])
+
+// 仅 line / rectangle 布局消费走线主轴；扇形/自定义不显示此选项。
+// 抽成 computed 避免模板里 `pattern === 'line' || pattern === 'rectangle'` 重复。
+const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
 const computedRectangleRange = computed(() => {
   const xs = rectangleConfig.value.xStepSegments
@@ -111,6 +124,21 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
         <UiCheckbox :checked="snakeOrder" size="small" @update:checked="snakeOrder = $event" />
         <span>{{ t.travSnakeOrder || 'Snake scan order' }}</span>
       </label>
+      <!-- 走线主轴：仅 line / rectangle 布局提供，控制物理走线方向 -->
+      <div v-if="supportsPrimaryAxis" class="primary-axis-row">
+        <span class="primary-axis-label">{{ t.travPrimaryAxis || 'Primary axis' }}</span>
+        <div class="radio-group primary-axis-options">
+          <label
+            v-for="opt in primaryAxisOptions"
+            :key="opt.value"
+            class="radio-label"
+            :class="{ active: primaryAxis === opt.value }"
+          >
+            <input v-model="primaryAxis" type="radio" :value="opt.value" />
+            <span>{{ opt.label }}</span>
+          </label>
+        </div>
+      </div>
     </UiPanel>
 
     <UiPanel v-if="pattern === 'line'" class="section-card">
@@ -220,4 +248,38 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 .section-title-block { font-size: 10px; font-weight: 500; display: block; margin-bottom: 6px; color: var(--text-muted) }
 .point-label { font-size: var(--text-xs); color: var(--text-primary) }
 .option-label { display:flex; align-items:center; gap:6px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer }
+
+/* 走线主轴选择行：与蛇形扫描同面板，水平排列标签与单选按钮 */
+.primary-axis-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-default)
+}
+.primary-axis-label { font-size: var(--text-sm); color: var(--text-primary) }
+.primary-axis-options { display: flex; gap: var(--space-2); margin-top: 0 }
+
+/* 复用项目既有 radio 视觉规范（与 TraversalHardwareStep.vue 的 .radio-label 一致）：
+   带 padding/border/hover/active 高亮，避免同项目同名 class 视觉割裂 */
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  min-height: 28px
+}
+.radio-label input[type="radio"] { margin: 0 }
+.radio-label:hover { background: var(--bg-panel-strong) }
+.radio-label.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-primary)
+}
 </style>

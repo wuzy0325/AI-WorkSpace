@@ -303,7 +303,10 @@ type traversalAPIConfig struct {
 	Layout struct {
 		Pattern    string `json:"pattern"`
 		SnakeOrder bool   `json:"snakeOrder"`
-		Line       *struct {
+		// PrimaryAxis 控制矩形/线型布局走线主轴（见 core/traversal.LayoutConfig 注释）：
+		// 缺省或 "y" 走 legacy（先走 Y），显式 "x" 才走新逻辑。omitempty 保持空值不序列化。
+		PrimaryAxis string `json:"primaryAxis,omitempty"`
+		Line        *struct {
 			StartX        float64                 `json:"startX"`
 			StartY        float64                 `json:"startY"`
 			EndX          float64                 `json:"endX"`
@@ -415,8 +418,9 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	}
 
 	points := traversal.PointsFromLayout(traversal.LayoutConfig{
-		Pattern:    cfg.Layout.Pattern,
-		SnakeOrder: cfg.Layout.SnakeOrder,
+		Pattern:     cfg.Layout.Pattern,
+		SnakeOrder:  cfg.Layout.SnakeOrder,
+		PrimaryAxis: cfg.Layout.PrimaryAxis,
 		Line: func() *traversal.LineLayout {
 			if cfg.Layout.Line == nil {
 				return nil

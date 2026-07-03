@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
-import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult } from '@bridge/deviceBridge'
+import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult, DeviceState } from '@bridge/deviceBridge'
 import { useLogStore } from '@stores/logStore'
 import {
   computeExistingKeys,
@@ -67,6 +67,10 @@ function p1604Defaults(cfg: Partial<P1604Config>): P1604Config {
     unit: cfg.unit ?? 'psi',
     autoConnect: cfg.autoConnect ?? false,
     precision: cfg.precision ?? 3,
+    // 透传三态：undefined=默认开启（兼容老 profile），true/false=用户显式设置
+    // 必须透传，否则 ApplyConfig 会把后端 driver.profile.UseDeviceTimestamp 覆盖为 nil，
+    // 导致下次 StartAcquisition 按默认值（true）启用硬件时间戳，与用户关闭意图相反
+    useDeviceTimestamp: cfg.useDeviceTimestamp,
   }
 }
 
@@ -608,11 +612,15 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   /**
-   * 从后端状态变更事件更新前端状态（连接断开等）。
+   * 从后端状态变更事件更新前端状态（连接断开、硬件单位同步等）。
    * 同时把状态转 'Error' 或带 error 字段的变更写入 logStore，
    * 让操作员在日志面板可见后端推送的设备异常（如 readLoop 异常退出）。
+   *
+   * 连接后若后端从硬件读取的单位与 profile 不一致，state.profile
+   * 中已包含以硬件为准的更新值，此处同步到前端 profiles ref，
+   * 确保配置面板显示的是硬件实际单位。
    */
-  function updateStatusFromBackend(id: string, state: { statusText: string; error?: string }): void {
+  function updateStatusFromBackend(id: string, state: DeviceState): void {
     const prevStatus = statusMap.value[id]
     const statusChanged = prevStatus !== state.statusText
     if (statusChanged) {
@@ -627,6 +635,21 @@ export const useDeviceStore = defineStore('device', () => {
       // 非 Error 状态时清除错误
       if (errorMap.value[id]) {
         delete errorMap.value[id]
+      }
+    }
+
+    // 同步后端推送的 profile（如连接时硬件单位与配置不一致，以硬件为准更新）
+    if (state.profile) {
+      const idx = profiles.value.findIndex((p) => p.id === id)
+      if (idx >= 0) {
+        // 仅在实际变化时更新，避免触发不必要的响应式依赖
+        const prevUnit = profiles.value[idx]!.p1604Config.unit
+        const newUnit = state.profile.p1604Config.unit
+        if (prevUnit !== newUnit) {
+          profiles.value[idx] = state.profile
+          const logStore = useLogStore()
+          logStore.info('device', `设备 [${id}] 单位已从硬件同步: ${prevUnit} -> ${newUnit}`)
+        }
       }
     }
 

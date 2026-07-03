@@ -91,10 +91,10 @@ function openScanDialog() {
 }
 
 function openConfig() {
+  // 防御性检查：按钮在无设备时已 disabled，理论上不会进入此分支；
+  // 仍保留判断以防外部直接调用（例如 MonitorView 通过 inject 触发）。
   if (canConfigure.value) {
     showConfig.value = true
-  } else {
-    openAddDevice()
   }
 }
 
@@ -232,7 +232,7 @@ async function confirmAddScanned() {
     <!-- 扫描设备模态框 -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="showScanDialog" class="modal-overlay" @click.self="showScanDialog = false">
+        <div v-if="showScanDialog" class="modal-overlay" @click.self="!deviceStore.isScanning && (showScanDialog = false)">
           <div class="modal-panel modal-panel--scan">
             <div class="dialog dialog--scan">
               <div class="dialog__header">
@@ -253,7 +253,14 @@ async function confirmAddScanned() {
                 />
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">取消</button>
+                <button
+                  class="dialog__btn dialog__btn--secondary"
+                  :disabled="deviceStore.isScanning"
+                  :title="deviceStore.isScanning ? '扫描进行中，请稍候' : '取消'"
+                  @click="showScanDialog = false"
+                >
+                  取消
+                </button>
                 <button
                   v-if="!deviceStore.isScanning"
                   class="dialog__btn dialog__btn--secondary"

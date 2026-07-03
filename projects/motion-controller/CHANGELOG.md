@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0] - 2026-07-02
+
+### Added
+- B140 编码器补偿全链路支持：补偿参数编辑器 UI、两阶段状态机（waitingStop→settling→checking↔compensating）、三层精度约束校验链（脉冲当量 ≥ encoderScale ≥ tolerance > minStep）。
+- 补偿状态机新增 compensating 分支重读 TP 失败告警，不再静默吞错。
+- 光栅尺分辨率可编辑输入入口，支持预设/自定义参数切换。
+
+### Changed
+- encoderScale 归一化显示，配置不合理时告警升级为 error 级阻断保存。
+- Status() 编码器读取失败时收集到 LastError，使故障对操作员可见。
+
+### Internal
+- shared/device-sdk: ValidateCompensationConfig / ResolveEncoderCompensation 物理合理性校验函数。
+- shared/device-sdk: B140 补偿状态机实现（b140_motion.go）。
+- shared/motion-control: UpsertProfile 边界兜底，阻断物理不可能的补偿配置。
+- 测试覆盖：conversions_test (6)、motion_manager_compensation_test (6)、b140_compensation_test（状态机各场景 + 编码器读失败暴露）。
+
+### Verification
+- `go test ./...` (with GOWORK=off): passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.2.6] - 2026-06-29
 
 ### Fixed

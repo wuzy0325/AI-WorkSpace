@@ -565,7 +565,7 @@ func (d *DAQP1604) processPayload(data []byte) {
 	}
 
 	// DAQ-P-1604 始终请求大气数据（0800），所以 hasAtmosphericData = true。
-	channels, deviceTimestampMs, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
+	channels, deviceTimestampMs, _, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++

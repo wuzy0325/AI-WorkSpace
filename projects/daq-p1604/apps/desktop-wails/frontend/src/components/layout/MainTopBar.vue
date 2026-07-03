@@ -40,6 +40,11 @@ const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDev
 /** 采集按钮是否应该被禁用（操作进行中或无可操作设备） */
 const isAcquisitionDisabled = computed(() => !canToggleAcquisition.value || props.isToggling)
 
+/** 设备列表是否为空——空时禁用"打开配置"按钮，避免误进添加设备流程 */
+const hasProfiles = computed(() => deviceStore.profiles.length > 0)
+/** "打开配置"按钮是否应该被禁用（设备列表为空时禁用） */
+const isConfigDisabled = computed(() => !hasProfiles.value)
+
 function themeToggleLabel(): string {
   return theme.value === 'dark' ? '切换为浅色模式' : '切换为深色模式'
 }
@@ -168,7 +173,8 @@ onBeforeUnmount(() => {
 
         <button
           class="topbar__icon-btn"
-          :title="'打开配置'"
+          :disabled="isConfigDisabled"
+          :title="isConfigDisabled ? '请先添加设备' : '打开配置'"
           data-testid="btn-config"
           @click="emit('open-config')"
         >
@@ -420,6 +426,17 @@ onBeforeUnmount(() => {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: var(--accent-border);
+}
+
+.topbar__icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.topbar__icon-btn:disabled:hover {
+  color: var(--text-secondary);
+  background: var(--btn-bg);
+  border-color: var(--border-default);
 }
 
 .topbar__icon {

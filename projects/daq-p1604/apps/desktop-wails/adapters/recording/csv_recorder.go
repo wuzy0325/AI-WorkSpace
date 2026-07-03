@@ -188,9 +188,39 @@ func (r *CSVRecorder) Write(snapshot core.PressureSnapshot) error {
 }
 
 // Stop 停止录制：drain 队列后关闭文件
+// 重复 Stop 是幂等的：CAS 失败（已停止）静默返回 nil，不影响调用方。
 func (r *CSVRecorder) Stop() error {
+	if !r.stopWithErrorLocked("") {
+		// CAS 失败：录制已停止（可能是 auto-stop 或重复 Stop），记录便于排查
+		slog.Debug("CSVRecorder.Stop CAS 失败：录制已停止", "hint", "auto-stop or duplicate stop")
+	}
+	return nil
+}
+
+// StopWithError 先填充错误原因再停止录制，CAS 保护原子性：
+//   - 录制活跃：写入 lastError → drain 队列 → 关闭文件 → 同步 session，返回 true
+//   - 录制已停止：不修改任何状态，返回 false
+//
+// 用途：设备断连自动停止录制场景，避免与用户主动 StopRecording 竞争时
+// 把"用户主动停止"误覆盖为"设备断连自动停止"。
+//
+// msg 为空时等价于 Stop（用于用户主动停止路径，不覆盖既有 lastError）。
+func (r *CSVRecorder) StopWithError(msg string) bool {
+	return r.stopWithErrorLocked(msg)
+}
+
+// stopWithErrorLocked 内部共享实现：CAS 成功后写入 msg（非空时），再 drain + 关文件。
+// msg=="" 时不修改 lastError，保持 Stop 语义不变。
+func (r *CSVRecorder) stopWithErrorLocked(msg string) bool {
 	if !r.started.CompareAndSwap(true, false) {
-		return nil
+		return false
+	}
+	// CAS 成功后没有任何其他路径能再翻转 started；lastError 的写入与后续
+	// session 同步在 statsMu 内串行，对外可见的最终状态一致。
+	if msg != "" {
+		r.errMu.Lock()
+		r.lastError = msg
+		r.errMu.Unlock()
 	}
 	close(r.stopCh)
 	<-r.doneCh
@@ -205,7 +235,7 @@ func (r *CSVRecorder) Stop() error {
 	r.session.LastError = r.lastError
 	r.errMu.RUnlock()
 	r.statsMu.Unlock()
-	return nil
+	return true
 }
 
 // Status 获取录制状态
@@ -322,9 +352,10 @@ func (r *CSVRecorder) drainQueue(buf *[]byte) {
 // 格式：单快照单行 18 列（Timestamp + 16 压力 + 大气压 + 大温）
 // 使用 strconv.AppendFloat 替代 fmt.Sprintf，避免反射开销，吞吐提升 2-5 倍。
 //
-// 时间来源：硬件时间戳优先（snapshot.HardwareTimestamp > 0 时使用，更精确），否则用系统毫秒时间戳。
-// Timestamp 列带毫秒（2006-01-02 15:04:05.000），Excel 会识别为文本类型，
-// 避免被默认的 "yyyy/m/d h:mm" 格式隐藏秒；1000Hz 采样下相邻样本靠毫秒部分区分。
+// 时间来源：硬件时间戳优先（snapshot.HardwareTimestamp > 0 时使用），否则用系统毫秒时间戳。
+// 注意：DAQ-P-1604 设备时间戳存在已知固件 bug（fractional 字段递增不正确），
+// 且系统毫秒时间戳在 1000Hz 下精度不足。统一截断到秒级，避免展示错误的时间细分。
+// 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式隐藏秒。
 func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) error {
 	var t time.Time
 	if snapshot.HardwareTimestamp > 0 {
@@ -336,11 +367,12 @@ func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) 
 	}
 
 	// 复用 buf，避免每次分配
+	// 可读时间戳：截断到秒级（.000000 改为无小数）。
+	// 原因：设备时间戳固件 bug 导致毫秒部分不可信；系统时间毫秒精度在 1000Hz 下不足。
+	// 前缀单引号强制 Excel 按文本显示。
 	b := (*buf)[:0]
-	// 可读时间戳：前缀单引号强制 Excel 按文本显示，带毫秒保证秒和毫秒均完整可见。
-	// 单引号是 Excel 的"文本前缀"语法，仅影响显示格式，不进入单元格内容。
 	b = append(b, '\'')
-	b = t.AppendFormat(b, "2006-01-02 15:04:05.000")
+	b = t.AppendFormat(b, "2006-01-02 15:04:05")
 	b = append(b, ',')
 
 	for i, v := range snapshot.Values {
@@ -427,7 +459,7 @@ func (r *CSVRecorder) openNewFile() error {
 
 	bw := bufio.NewWriterSize(f, csvDefaultBufferSize)
 
-	// 18 列 CSV 表头：Timestamp（带毫秒）+ 16 压力 + 大气压 + 大温
+	// 19 列 CSV 表头：Timestamp（秒级精度）+ 16 压力 + 大气压 + 大温
 	header := make([]string, 0, numChannels+1)
 	header = append(header, "Timestamp")
 	for i := 0; i < numPressureChannels; i++ {

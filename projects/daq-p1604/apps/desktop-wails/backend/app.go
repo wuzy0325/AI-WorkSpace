@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -54,6 +55,15 @@ type LogEvent struct {
 type LogFileState struct {
 	Active    bool   `json:"active"`
 	OutputDir string `json:"outputDir,omitempty"`
+}
+
+// RecordingWarningEvent 录制期间的设备健康度警告事件载荷。
+// 用于多设备录制场景下某台设备断连时通知前端，与 RecordingSession 状态变更分离，
+// 避免前端混淆"录制真的停了"和"只是有设备掉线"。
+type RecordingWarningEvent struct {
+	DeviceID  string `json:"deviceId"`
+	Message   string `json:"message"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // NewApp 创建后端应用
@@ -137,6 +147,26 @@ func (a *App) emitRecordingStatus(session core.RecordingSession) {
 		return
 	}
 	a.app.Event.Emit("daq:recording-status", session)
+}
+
+// emitRecordingWarning 推送设备断连警告事件到前端。
+// 用于多设备录制场景下某台设备断连时通知前端展示黄色警告条，
+// 其他设备继续录制。同时写入日志便于排查。
+func (a *App) emitRecordingWarning(deviceID, msg string) {
+	if a.app != nil {
+		a.app.Event.Emit("daq:recording-warning", RecordingWarningEvent{
+			DeviceID:  deviceID,
+			Message:   msg,
+			Timestamp: core.TimestampMs(),
+		})
+	}
+	a.EmitLog(LogEvent{
+		Level:    "warn",
+		Category: "recording",
+		DeviceID: deviceID,
+		Source:   "recording",
+		Message:  msg,
+	})
 }
 
 // EmitDeviceState 发送设备状态变更事件到前端
@@ -285,19 +315,13 @@ func (a *App) startRelay(deviceID string, ch <-chan core.PressureSnapshot) {
 
 	go func() {
 		defer close(control.done)
+		// handleRelayExit 必须在 clearRelay 之后执行（defer 是 LIFO）：
+		// 此时 relays[deviceID] 已被删除，len(a.relays) 反映的是其他活跃设备数，
+		// 据此判定单设备场景（len==0，自动停止录制）或多设备场景（len>0，emit 警告）。
+		defer a.handleRelayExit(deviceID)
 		defer a.clearRelay(deviceID, control)
 		a.relayStream(ctx, deviceID, ch)
 	}()
-}
-
-func (a *App) stopRelay(deviceID string) {
-	a.mu.Lock()
-	control := a.relays[deviceID]
-	delete(a.relays, deviceID)
-	a.mu.Unlock()
-	if control != nil {
-		control.cancel()
-	}
 }
 
 func (a *App) waitRelay(deviceID string) {
@@ -335,11 +359,19 @@ func (a *App) clearRelay(deviceID string, control *relayControl) {
 //  3. 仅保留最新快照在 latestSnapshots，前端按需轮询
 //  4. 跟踪 recordingActive 状态，检测 recorder auto-stop（I/O 错误）时立即推送最终状态，
 //     避免 IsActive() 变 false 后 statusTicker 不再推送导致前端状态与后端不同步。
+//
+// defer emit 策略：设备处于 StatusError（断连）时跳过 emit，由 handleRelayExit 统一推送
+// 最终状态（Idle + LastError）。避免"先 Active 后 Idle+Error"的双 emit 导致前端 UI 闪烁。
+// 非断连退出（主动 StopAcquisition/Disconnect）仍由此处 emit，此时录制状态无异常变更。
 func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.PressureSnapshot) {
 	statusTicker := time.NewTicker(recordingStatusEmitInterval)
 	defer statusTicker.Stop()
 
 	defer func() {
+		// 设备断连：由 handleRelayExit 负责最终状态推送，此处跳过避免双 emit 闪烁
+		if st, ok := a.deviceUC.GetStatus(deviceID); ok && st.Status == core.StatusError {
+			return
+		}
 		a.emitRecordingStatus(a.recordUC.Status())
 	}()
 
@@ -383,6 +415,56 @@ func (a *App) relayStream(ctx context.Context, deviceID string, ch <-chan core.P
 				a.emitRecordingStatus(a.recordUC.Status())
 			}
 		}
+	}
+}
+
+// handleRelayExit 在 relay goroutine 退出时（clearRelay 之后）判定是否需要
+// 因设备断连而自动停止录制或 emit 警告。
+//
+// 判定逻辑：
+//  1. 检查设备状态：仅当设备处于 StatusError（断连）时才触发自动停止/警告。
+//     主动 StopAcquisition/Disconnect 不会触发（设备状态为 Connected/Disconnected）。
+//  2. 检查录制是否活跃：录制未启动则无需处理。
+//  3. 检查剩余 relay 数：
+//     - len==0：单设备场景或所有设备都断连 → 自动停止录制，LastError 填充断连原因
+//     - len>0：多设备场景 → emit 警告事件，其他设备继续录制
+//
+// 竞态保护：用户主动 StopRecording 与此处自动 Stop 竞争时，recorder.StopWithError
+// 内部 CompareAndSwap 保护，CAS 失败方静默返回 false 且不修改 LastError，
+// 避免把"用户主动停止"误覆盖为"设备断连自动停止"。
+//
+// 阻塞耗时说明：StopWithError 内部 close(stopCh) 后同步等待 writer goroutine
+// drain 队列 + fsync 落盘，单设备断连场景下可能阻塞数百毫秒到秒级（取决于队列
+// 积压量与磁盘 I/O）。此阻塞会延长 relay goroutine 生命周期（延迟 close(control.done)），
+// 但保证了 CAS 成功后才 emit 最终状态的一致性，可接受。
+func (a *App) handleRelayExit(deviceID string) {
+	// 仅当设备处于 Error 状态（断连）时才触发自动停止/警告
+	st, ok := a.deviceUC.GetStatus(deviceID)
+	if !ok || st.Status != core.StatusError {
+		return
+	}
+
+	// 录制未启动则无需处理
+	if !a.recordUC.IsActive() {
+		return
+	}
+
+	a.mu.Lock()
+	remainingRelays := len(a.relays)
+	a.mu.Unlock()
+
+	if remainingRelays == 0 {
+		// 单设备场景或所有设备都断连：自动停止录制。
+		// StopWithError CAS 成功才写 LastError，避免覆盖用户已主动停止的状态。
+		msg := fmt.Sprintf("因设备 %s 断连自动停止录制", deviceID)
+		if a.recordUC.StopWithError(msg) {
+			// 推送最终录制状态，让前端感知录制已停止并展示 LastError
+			a.emitRecordingStatus(a.recordUC.Status())
+		}
+		// CAS 失败：用户已主动 StopRecording，不再 emit 状态（避免重复推送）
+	} else {
+		// 多设备场景：emit 警告，继续录制其他设备
+		a.emitRecordingWarning(deviceID, fmt.Sprintf("设备 %s 断连，其他设备继续录制", deviceID))
 	}
 }
 

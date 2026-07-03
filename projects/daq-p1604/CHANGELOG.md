@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.2] - 2026-07-03
+
+### Fixed
+- 修复 CSV Timestamp 列时间戳错误：DAQ-P-1604 设备硬件时间戳存在固件 bug（fractional 字段以 ~4348Hz 速率递增，每累积约 232ms 跳跃校正），导致 1000Hz 采集下 1 毫秒内出现多帧时间戳；系统毫秒时间戳在 1000Hz 下精度也不足。统一截断到秒级，避免展示错误的时间细分。
+- 修复 `CSVRecorder.Stop()` 缺少 `return nil` 导致的编译错误（预存问题，阻塞验证）。
+- 修复 `csv_recorder.go` 表头注释错误：从「微秒精度」更正为「秒级精度」，与实际格式串一致。
+
+### Internal
+- Taskfile `generate-icon` 任务改用 `build/windows/info.json` 和 `build/windows/wails.exe.manifest` 模板文件，`wails3 generate syso` 内部用 `wails.json` 的 info 字段渲染模板。删除冗余的具体值版本 `build/info.json` 和 `build/windows.manifest`，版本号源从 7 个收敛到 6 个。
+- 重新生成 `wails_windows_amd64.syso` 资源段。
+- 新增项目 `README.md` 和 `CLAUDE.md` 文档，对齐 daq-t1603 / wind-daq 项目。
+
+### Verification
+- `go build ./...`: passed
+- `go vet ./adapters/recording/...`: passed
+- `go test ./adapters/recording/...`: passed (no test files)
+
+### Known Issues
+- 设备硬件时间戳固件 bug 未修复，需联系硬件工程师修复固件后才能恢复毫秒精度时间戳。
+
 ## [0.2.1] - 2026-07-02
 
 ### Added

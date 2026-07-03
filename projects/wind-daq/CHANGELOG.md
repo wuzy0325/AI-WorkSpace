@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.1] - 2026-07-03
+
+### Fixed
+- 修复 CSV Timestamp 列时间戳精度问题：采集 CSV 与测点遍历 CSV 统一截断到秒级（`'YYYY-MM-DD HH:MM:SS`），避免展示错误的时间细分。原因详见 daq-p1604 v0.2.2 release note（DAQ-P-1604 设备硬件时间戳固件 bug）。
+
+### Internal
+- Taskfile `generate-icon` 任务改用 `build/windows/info.json` 和 `build/windows/wails.exe.manifest` 模板文件，`wails3 generate syso` 内部用 `wails.json` 的 info 字段渲染模板。删除冗余的具体值版本 `build/info.json` 和 `build/windows.manifest`，版本号源从 7 个收敛到 6 个。
+- 重新生成 `wails_windows_amd64.syso` 资源段。
+- 同步更新 `build/config.yml` 的 `info.version` 字段，对齐项目版本号。
+
+### Verification
+- `go build ./...`: passed
+- `go vet ./internal/adapters/storage/...`: passed
+- `go test ./internal/adapters/storage/...`: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.3.0] - 2026-07-02
 
 ### Added

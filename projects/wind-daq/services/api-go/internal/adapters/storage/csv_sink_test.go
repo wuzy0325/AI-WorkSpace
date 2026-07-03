@@ -36,7 +36,7 @@ func TestCSVRecordingSinkWritesPayloadsToFile(t *testing.T) {
 		t.Fatalf("read recording file: %v", err)
 	}
 	text := string(content)
-	// 新格式：动态宽格式，首帧决定列布局，时间戳使用 'YYYY-MM-DD HH:MM:SS.mmm 前缀单引号
+	// 新格式：动态宽格式，首帧决定列布局，时间戳使用 'YYYY-MM-DD HH:MM:SS 前缀单引号（秒级）
 	if !strings.Contains(text, "Timestamp,CH01,CH02") {
 		t.Fatalf("expected CSV wide header, got %q", text)
 	}

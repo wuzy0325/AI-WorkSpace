@@ -302,7 +302,7 @@ func TestP1604BinaryFrameProducerWithDeviceTimestamp_ValidFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FrameReader.ReadFrame: %v", err)
 	}
-	channels, deviceTimestampMs, err := protocol.ParseStreamFrameEx(payload, true, true)
+	channels, deviceTimestampMs, _, err := protocol.ParseStreamFrameEx(payload, true, true)
 	if err != nil {
 		t.Fatalf("ParseStreamFrameEx: %v", err)
 	}

@@ -37,6 +37,20 @@ const (
 	// p1604W1601DrainTimeout 排空 w1601 启用应答的最长等待时间。
 	// w1601 的 A 响应通常即时返回，100ms 内未读到则视为设备未发应答，继续后续流程。
 	p1604W1601DrainTimeout = 100 * time.Millisecond
+
+	// p1604KeepAlivePeriod TCP keepalive 探测间隔。
+	// 解决物理拔网线场景下 TCP 层无 RST/FIN 包的问题：
+	// readLoop 的 SetReadDeadline(200ms) 仅返回 timeout 错误（被 continue 忽略），
+	// 导致设备状态长期停留在 Acquiring 而无法触发 handleConnectionLost。
+	// 启用 keepalive 后，内核周期性探测对端，连续失败会返回非 timeout 错误，
+	// readLoop 据此判定真断连并进入清理流程。
+	//
+	// 检测时间估算（Go 标准库 SetKeepAlivePeriod 同时设置 KEEPIDLE 与 KEEPINTVL）：
+	//   - Linux：10s idle + 10s interval × 9 probes（默认 tcp_keepalive_probes）= ~100s
+	//   - Windows：10s idle + 10s interval × 10 retries（默认）= ~110s
+	// 远优于 Linux 默认 7200s/9 探测 = 2 小时。
+	// 注：Go 未暴露 TCP_KEEPCNT 设置，探测次数依赖系统默认值。
+	p1604KeepAlivePeriod = 10 * time.Second
 )
 
 // DeviceLogEntry 设备日志条目
@@ -163,6 +177,33 @@ func (a *P1604Adapter) emitState(id string) {
 	}
 }
 
+// enableTCPKeepalive 在 TCP 拨号成功后启用 keepalive 探测。
+//
+// 设计取舍：
+//   - 仅用 SetKeepAlive + SetKeepAlivePeriod 两个标准库 API，跨平台兼容
+//   - 不引入 syscall.SetSockoptInt 平台相关代码（保持标准库纯净）
+//   - Windows 上 SetKeepAlivePeriod 等同于设置整个 keepalive 间隔（idle+interval 合并），
+//     无法精细控制 idle/count，但 10s 间隔 × 系统默认探测次数已满足 ~100s 检测目标
+//
+// 返回值语义：失败时返回错误，调用方决定是否中止。keepalive 是拔线检测的优化项
+// 而非连接正确性前提，受限环境（沙箱/低权限）下 SetKeepAlive 可能失败，
+// 调用方可选择仅记 warn 不中止，退化为 readLoop 的 SetReadDeadline 超时检测。
+//
+// 非 TCP 连接（如测试 mock）返回 nil 保持兼容。
+func enableTCPKeepalive(conn net.Conn) error {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
+	if err := tcpConn.SetKeepAlive(true); err != nil {
+		return fmt.Errorf("enable keepalive: %w", err)
+	}
+	if err := tcpConn.SetKeepAlivePeriod(p1604KeepAlivePeriod); err != nil {
+		return fmt.Errorf("set keepalive period: %w", err)
+	}
+	return nil
+}
+
 // Connect 连接设备
 // 锁策略：仅在读写共享状态时持锁，TCP 拨号和 w1601 命令在锁外执行
 //
@@ -201,6 +242,18 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
 		Message: "TCP connected", Detail: fmt.Sprintf("%s:%d", host, port),
 	})
+
+	// 启用 TCP keepalive：物理拔网线场景下 TCP 层无 RST/FIN，
+	// 仅靠 readLoop 的 SetReadDeadline 无法判定真断连（超时被 continue 忽略）。
+	// keepalive 探测失败会触发非 timeout 错误，readLoop 据此进入 handleConnectionLost。
+	// 启用失败不中止连接——keepalive 是优化项，受限环境下退化为 readDeadline 检测。
+	if err := enableTCPKeepalive(conn); err != nil {
+		a.emitLog(DeviceLogEntry{
+			Level: "warn", Category: "hardware", DeviceID: profile.ID,
+			Message: "TCP keepalive enable failed, fallback to read-deadline detection",
+			Detail:  err.Error(),
+		})
+	}
 
 	driver := &p1604Driver{
 		profile:     profile,
@@ -343,7 +396,16 @@ func (a *P1604Adapter) Disconnect(id string) error {
 	}
 	delete(shard.sinks, id)
 	if !ok {
+		// driver 不存在（可能已被 handleConnectionLost 清理）：
+		// 仍需把 status 改为 Disconnected，让前端感知用户主动断开意图，
+		// 覆盖之前由 handleConnectionLost 设置的 Error 状态。
+		if st, exists := shard.status[id]; exists {
+			st.SetStatus(core.StatusDisconnected)
+			st.Error = ""
+			st.AcquiringAt = 0
+		}
 		shard.mu.Unlock()
+		a.emitState(id)
 		return nil
 	}
 	delete(shard.drivers, id)
@@ -727,6 +789,17 @@ func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan stru
 
 // handleConnectionLost 处理连接意外断开：清理共享状态并通知前端。
 // 仅由 readLoop 在非主动停止场景调用。
+//
+// 与原实现差异（2026-07-03 改进）：
+//   - 删除 shard.drivers[id]：让设备回到"未连接"状态，重连时不再被
+//     "device already connected" 拒绝，用户无需先 Disconnect 即可直接 Connect
+//   - 锁外关闭 driver.conn：释放底层 fd，避免长期累积导致 fd 泄漏
+//
+// 安全性论证：
+//   - readLoop 是本函数的调用方，本函数 return 后 readLoop 也立即 return，
+//     不存在访问已删除 driver 的窗口
+//   - conn.Close 在锁外执行，避免持锁 I/O 阻塞同分片其他设备；
+//     readLoop 已退出，无并发 ReadFrame 与 Close 竞争
 func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, cause error) {
 	shard := a.shard(id)
 	shard.mu.Lock()
@@ -750,11 +823,20 @@ func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, caus
 		close(ch)
 		delete(shard.channels, id)
 	}
-	driver.acquiring = false
+	// 删除 driver：让设备回到"未连接"状态，重连时不再被 already connected 拒绝。
+	// status[id] 保留（设为 Error），前端设备列表仍能看到该设备及其错误信息，
+	// 用户重新 Connect 时 Connect 函数会重新创建 driver 并覆盖 status。
+	delete(shard.drivers, id)
 	st.SetStatus(core.StatusError)
 	st.Error = fmt.Sprintf("连接断开: %v", cause)
 	st.AcquiringAt = 0
 	shard.mu.Unlock()
+
+	// 锁外关闭 conn：释放底层 fd 资源。
+	// readLoop 已退出（本函数 return 后 readLoop 也 return），无并发竞争。
+	if driver.conn != nil {
+		_ = driver.conn.Close()
+	}
 
 	a.emitState(id)
 	level := "error"
@@ -804,7 +886,7 @@ func (a *P1604Adapter) processPayload(id string, data []byte) {
 	// withDeviceTimestamp 与 StartAcquisition 下发的 content mask 一致：
 	//   开启硬件时间戳 → 帧内含时间戳字段，解析并填充 deviceTimestampMs
 	//   关闭硬件时间戳 → 帧内无时间戳字段，deviceTimestampMs 恒为 0，后续用系统时间
-	channels, deviceTimestampMs, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
+	channels, deviceTimestampMs, deviceTimestampSec, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
 	if err != nil {
 		a.emitLog(DeviceLogEntry{
 			Level: "debug", Category: "hardware", DeviceID: id,
@@ -828,12 +910,15 @@ func (a *P1604Adapter) processPayload(id string, data []byte) {
 			Values:    channels,
 			Unit:      unit,
 		}
-		// 设备时间戳转换为秒（float64），供 CSV 录制器的时间格式化使用
-		// csv_recorder 将 HardwareTimestamp 解释为秒.纳秒
-		// useDeviceTs==false 时 deviceTimestampMs 恒为 0，HardwareTimestamp 留空，
-		// csv_recorder 会自动回退到系统时间（Timestamp 字段）
+		// 设备时间戳转换为秒（float64），供 CSV 录制器的时间格式化使用。
+		// 使用纳秒精度的 deviceTimestampSec（直接由协议帧的 uint32 秒 + uint32 fractional 计算），
+		// 消除 ParseStreamFrameEx 返回 deviceTimestampMs 的 ms 精度截断——
+		// 1000Hz 采样下每毫秒仅一帧，原 float64(deviceTimestampMs)/1000.0 精度损失
+		// 会导致同毫秒内多帧时间戳相同，表现为 CSV 中每毫秒出现多行、部分毫秒被跳过。
+		// useDeviceTs==false 时 deviceTimestampMs 恒为 0，deviceTimestampSec 也恒为 0，
+		// HardwareTimestamp 留空，csv_recorder 会自动回退到系统时间（Timestamp 字段）
 		if deviceTimestampMs > 0 {
-			snapshot.HardwareTimestamp = float64(deviceTimestampMs) / 1000.0
+			snapshot.HardwareTimestamp = deviceTimestampSec
 		}
 		sink(snapshot)
 	}

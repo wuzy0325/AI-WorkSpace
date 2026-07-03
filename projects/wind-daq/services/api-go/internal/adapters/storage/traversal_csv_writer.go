@@ -253,7 +253,8 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		row = append(row, strconv.Itoa(p.PointIndex+1))
 	}
 	if w.options.SaveTimestamp {
-		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05.000")
+		// 截断到秒级：与采集 CSV 时间戳格式对齐，避免展示错误的时间细分。
+		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05")
 		row = append(row, ts)
 	}
 	row = append(row, formatFloat(p.Point.X), formatFloat(p.Point.Y))

@@ -26,7 +26,6 @@ interface AxisPositionDatum {
 
 defineProps<{
   hasConfig: boolean
-  currentPointSummary: { alpha: string; beta: string }
   axisPositions: AxisPositionDatum[]
   acquisitionConnection: ConnectionDisplay
   positionerConnection: ConnectionDisplay
@@ -35,9 +34,6 @@ defineProps<{
   labels: {
     monitor: string
     currentPoint: string
-    currentPointX: string
-    currentPointY: string
-    positioner: string
     realtimeCalculation: string
     realtimePressureData: string
     alpha: string
@@ -91,24 +87,9 @@ defineProps<{
         </div>
       </header>
 
-      <!-- 当前点位 -->
-      <section class="monitor-section">
-        <div class="monitor-section__title">{{ labels.currentPoint }}</div>
-        <div class="grid grid-cols-2" :style="{ gap: 'var(--space-3)' }">
-          <div>
-            <div class="text-xs text-[var(--text-muted)]">{{ labels.currentPointX }}</div>
-            <div class="font-mono text-base font-bold tabular-nums text-[var(--text-primary)]">{{ currentPointSummary.alpha }}°</div>
-          </div>
-          <div>
-            <div class="text-xs text-[var(--text-muted)]">{{ labels.currentPointY }}</div>
-            <div class="font-mono text-base font-bold tabular-nums text-[var(--text-primary)]">{{ currentPointSummary.beta }}°</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 轴位置 -->
+      <!-- 当前点位（按遍历方向 X/Y 展示位移台实际位置，无单位避免平移/旋转台误导） -->
       <section v-if="axisPositions.length && hasConfig" class="monitor-section">
-        <div class="monitor-section__title">{{ labels.positioner }}</div>
+        <div class="monitor-section__title">{{ labels.currentPoint }}</div>
         <div class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-sm tabular-nums">
           <div v-for="axis in axisPositions" :key="axis.label" class="flex items-center gap-1">
             <span class="text-xs text-[var(--text-muted)]">{{ axis.label }}:</span>

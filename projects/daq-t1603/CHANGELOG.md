@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2] - 2026-07-03
+
+### Fixed
+- 修复 CSV Timestamp 列时间戳精度问题：跨项目对齐时间戳格式变更，统一截断到秒级（`'YYYY-MM-DD HH:MM:SS`），避免展示错误的时间细分。原因详见 daq-p1604 v0.2.2 release note（DAQ-P-1604 设备硬件时间戳固件 bug）。
+
+### Verification
+- `$env:GOWORK="off"; go build ./...`: passed（daq-t1603 工作空间隔离，见 ADR-006）
+- `$env:GOWORK="off"; go vet ./adapters/recording/...`: passed
+- `$env:GOWORK="off"; go test ./adapters/recording/...`: passed
+
+### Known Issues
+- 暂无。
+
 ## [0.3.1] - 2026-07-02
 
 ### Internal

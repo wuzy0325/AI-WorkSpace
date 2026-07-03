@@ -117,13 +117,17 @@ export function useHardwareConnectionStatus(
 
   // 轴位置：computed 直接产出对象数组，依赖追踪由 Vue 自动完成；
   // 模板对该数组按引用渲染，position/moving 任一变化都会触发更新。
+  //
+  // label 使用遍历方向名（cfg.name: 'X' | 'Y'）而非物理轴号（cfg.axis: 'X' | 'Y' | 'Z' | 'U'），
+  // 因为操作员脑内模型是"遍历方向"，物理轴号属于配置细节。布点形状（矩形/弧形）不影响方向命名。
+  // 不写死单位（mm/°），避免平移台/旋转台混用时误导（历史 bug：原"当前点位"section 写死 ° 单位）。
   const axisPositions = computed<AxisPositionDatum[]>(() => {
     const axes = currentConfig.value?.channels.motionAxes ?? []
     return axes.map((cfg) => {
       const status = motionStore.statusById(cfg.controllerId)
       const axisStatus = status?.axes.find((a) => a.name === cfg.axis)
       return {
-        label: cfg.axis,
+        label: cfg.name === 'X' ? t.value.currentPointX : t.value.currentPointY,
         position: axisStatus?.position,
         moving: axisStatus?.moving ?? false
       }

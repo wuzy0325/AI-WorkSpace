@@ -210,14 +210,15 @@ function draw() {
         // 等待稳定：黄色
         color = '#fbbf24'
         glowColor = '#fbbf24'
-      } else if (props.currentPointPhase === 'acquiring') {
-        // 采集中：绿色
+      } else if (props.currentPointPhase === 'acquiring' || props.currentPointPhase === 'saving') {
+        // 采集中 / 保存中：绿色
+        // saving 是采集完成后的数据保存阶段，语义上属于采集的延伸，沿用绿色以与图例保持一致
         color = '#10b981'
         glowColor = '#10b981'
       } else {
-        // 默认：橙色
-        color = '#f97316'
-        glowColor = '#f97316'
+        // 兜底默认：绿色（避免出现图例外的橙色）
+        color = '#10b981'
+        glowColor = '#10b981'
       }
 
       // 应用闪烁效果

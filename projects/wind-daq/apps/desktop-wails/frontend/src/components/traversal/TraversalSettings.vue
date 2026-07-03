@@ -21,6 +21,7 @@ import type {
   TraversalLayout,
   TraversalMotionAxisConfig,
   TraversalPattern,
+  TraversalPrimaryAxis,
   TraversalTestConfig,
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
@@ -93,6 +94,12 @@ const saveFileName = ref(buildDefaultSaveFileName(testName.value))
 
 // 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间
 const snakeOrder = ref(false)
+
+// 走线主轴：新建 profile 默认 'x'（先沿 X 走完一条线再切换 Y），用户可切换为 'y'。
+// 仅对 line / rectangle 布局生效；扇形布局不消费此字段。
+// 注意：applySavedLayout 加载旧 profile（无 primaryAxis 字段）时显式落 'y' 保旧行为，
+// 避免静默反转升级前已优化的物理走线方向。
+const primaryAxis = ref<TraversalPrimaryAxis>('x')
 
 // 稳定化配置：fixed 模式使用固定等待时间，adaptive 模式持续监测压力变化
 const stabilizationMode = ref<'fixed' | 'adaptive'>('fixed')
@@ -172,16 +179,19 @@ const saveOptions = ref<TraversalTestConfig['saveOptions']>({
 })
 
 const currentLayout = computed<TraversalLayout>(() => {
-  // 蛇形扫描顺序透传到 layout，供后端按行交替反向遍历
+  // 蛇形扫描顺序 + 走线主轴透传到 layout，供后端按行交替反向遍历并选择主轴方向
   switch (pattern.value) {
-    case 'line': return { pattern: 'line', snakeOrder: snakeOrder.value, line: lineConfig.value }
-    case 'rectangle': return { pattern: 'rectangle', snakeOrder: snakeOrder.value, rectangle: rectangleConfig.value }
+    case 'line': return { pattern: 'line', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, line: lineConfig.value }
+    case 'rectangle': return { pattern: 'rectangle', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, rectangle: rectangleConfig.value }
     case 'sector': return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: sectorConfig.value }
     case 'custom': return { pattern: 'custom', snakeOrder: snakeOrder.value, custom: { points: customPoints.value } }
   }
 })
 
 const estimatedPointCount = computed(() => getTraversalLayoutPointCount(currentLayout.value))
+
+// 仅 line / rectangle 布局消费走线主轴；review 摘要只在支持时显示该行，避免重复条件字面量。
+const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
 const isStepValid = computed(() => {
   if (currentStep.value === 0) return testName.value.trim() !== '' && estimatedPointCount.value > 0
@@ -241,6 +251,9 @@ function applySavedLayout(layout: TraversalLayout) {
   pattern.value = layout.pattern
   // 恢复蛇形扫描顺序，缺省为 false
   snakeOrder.value = layout.snakeOrder ?? false
+  // 恢复走线主轴：旧 profile 无此字段时落 'y'（保旧行为，避免静默反转物理走线方向）；
+  // 新 profile 保存时已显式存 'x' 或 'y'，加载时按持久化值恢复。
+  primaryAxis.value = layout.primaryAxis ?? 'y'
   if (layout.line) lineConfig.value = { ...layout.line, xStepSegments: layout.line.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.line.yStepSegments.map(s => ({ ...s })) }
   if (layout.rectangle) rectangleConfig.value = { ...layout.rectangle, xStepSegments: layout.rectangle.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.rectangle.yStepSegments.map(s => ({ ...s })) }
   if (layout.sector) sectorConfig.value = { ...layout.sector, radialStepSegments: layout.sector.radialStepSegments.map(s => ({ ...s })), angularStepSegments: layout.sector.angularStepSegments.map(s => ({ ...s })) }
@@ -417,6 +430,7 @@ watch(() => props.show, async (isVisible) => {
           v-model:custom-points="customPoints"
           v-model:custom-point-input="customPointInput"
           v-model:snake-order="snakeOrder"
+          v-model:primary-axis="primaryAxis"
           :estimated-point-count="estimatedPointCount"
           :t="(t as unknown as Record<string, string>)"
         />
@@ -453,6 +467,7 @@ watch(() => props.show, async (isVisible) => {
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.interpolationAlgorithm }}</span><span>{{ interpolationAlgorithm === 'new' ? t.algorithmNew : t.algorithmOld }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.prb }}</span><span class="text-ellipsis">{{ interpolationAlgorithm === 'new' ? (calibrationCsvFile ? calibrationCsvFile.fileName : t.none) : (prbFile ? prbFile.fileName : t.none) }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travSnakeOrder }}</span><span>{{ snakeOrder ? t.enabled : t.disabled }}</span></div>
+              <div v-if="supportsPrimaryAxis" class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travPrimaryAxis || 'Primary axis' }}</span><span>{{ primaryAxis === 'x' ? (t.travPrimaryAxisX || 'X first') : (t.travPrimaryAxisY || 'Y first') }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travStableMode }}</span><span>{{ stabilizationMode === 'fixed' ? t.travFixedTime : t.travAdaptive }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travEnableValidation }}</span><span>{{ validationEnabled ? t.enabled : t.disabled }}</span></div>
             </div>

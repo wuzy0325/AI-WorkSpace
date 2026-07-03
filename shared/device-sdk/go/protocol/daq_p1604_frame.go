@@ -138,12 +138,11 @@ func IsASCIIFrame(data []byte) bool {
 }
 
 // ParseStreamFrame parses binary stream frame (legacy, no timestamp extraction).
-// Deprecated: use ParseStreamFrameEx for frames that may include device timestamp.
 // Frame: 5-byte header + 18 x float32 (big-endian) = 77 bytes
 // Device order: CH16..CH1 (pressure) + CH17 (atm pressure) + CH18 (atm temp)
 // Reverses first 16 pressure channels to CH1..CH16
 func ParseStreamFrame(data []byte) ([]float64, error) {
-	channels, _, err := ParseStreamFrameEx(data, false, true)
+	channels, _, _, err := ParseStreamFrameEx(data, false, true)
 	return channels, err
 }
 
@@ -163,7 +162,9 @@ func ParseStreamFrame(data []byte) ([]float64, error) {
 // 返回：
 //   - channels: CH1..CH16 压力 + 可选 CH17/CH18 大气数据，全部为 float64
 //   - deviceTimestampMs: 设备时间戳（毫秒），仅当 hasDeviceTimestamp=true 且帧足够长时有效
-func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData bool) (channels []float64, deviceTimestampMs int64, err error) {
+//   - deviceTimestampSec: 设备时间戳（秒，纳秒精度 float64），同一帧的时间戳的精确值，
+//     消除了 ms 转换的精度截断，适合 CSV 录制器等需要子毫秒精度的场景
+func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData bool) (channels []float64, deviceTimestampMs int64, deviceTimestampSec float64, err error) {
 	const headerSize = 5
 	const numPressure = 16
 	const pressureBytes = numPressure * 4
@@ -179,12 +180,12 @@ func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData
 		expectedLen += atmosphericChannels * 4
 	}
 	if len(data) != expectedLen {
-		return nil, 0, fmt.Errorf("frame length mismatch: got %d, expected %d", len(data), expectedLen)
+		return nil, 0, 0, fmt.Errorf("frame length mismatch: got %d, expected %d", len(data), expectedLen)
 	}
 
 	// 协议规定帧头第 0 字节固定为 0x01，作为二进制帧的同步标记。
 	if data[0] != 0x01 {
-		return nil, 0, fmt.Errorf("invalid stream frame header: expected 0x01, got 0x%02X", data[0])
+		return nil, 0, 0, fmt.Errorf("invalid stream frame header: expected 0x01, got 0x%02X", data[0])
 	}
 
 	// 解析 16 路压力通道（设备顺序 CH16..CH1）
@@ -193,7 +194,7 @@ func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData
 		bits := binary.BigEndian.Uint32(data[headerSize+i*4:])
 		v := math.Float32frombits(bits)
 		if isInvalidFloat32(v) {
-			return nil, 0, fmt.Errorf("pressure channel %d is invalid: %v", i, v)
+			return nil, 0, 0, fmt.Errorf("pressure channel %d is invalid: %v", i, v)
 		}
 		pressureValues[i] = float64(v)
 	}
@@ -209,7 +210,11 @@ func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData
 	if hasDeviceTimestamp {
 		seconds := binary.BigEndian.Uint32(data[tsOffset:])
 		fractional := binary.BigEndian.Uint32(data[tsOffset+4:])
+		// 毫秒精度（向后兼容 wind-daq 等调用方）
 		deviceTimestampMs = int64(seconds)*1000 + int64(math.Round(float64(fractional)/float64(0x100000000)*1000))
+		// 纳秒精度（供 CSV 录制器等需要子毫秒分辨率的场景使用）
+		// float64 可以无损表示 32-bit 秒 + 32-bit 纳秒小数，精度充分（约 1e-10 秒）
+		deviceTimestampSec = float64(seconds) + float64(fractional)/float64(0x100000000)
 		tsOffset += timestampBytes
 	}
 
@@ -222,14 +227,14 @@ func ParseStreamFrameEx(data []byte, hasDeviceTimestamp bool, hasAtmosphericData
 			bits := binary.BigEndian.Uint32(data[tsOffset+i*4:])
 			v := math.Float32frombits(bits)
 			if isInvalidFloat32(v) {
-				return nil, 0, fmt.Errorf("atmospheric channel %d is invalid: %v", i, v)
+				return nil, 0, 0, fmt.Errorf("atmospheric channel %d is invalid: %v", i, v)
 			}
 			atmoValues[i] = float64(v)
 		}
 		channels = append(channels, atmoValues...)
 	}
 
-	return channels, deviceTimestampMs, nil
+	return channels, deviceTimestampMs, deviceTimestampSec, nil
 }
 
 // isInvalidFloat32 判断 float32 是否为 NaN 或 Inf。
