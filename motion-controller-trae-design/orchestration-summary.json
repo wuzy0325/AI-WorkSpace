@@ -1,0 +1,29 @@
+{
+  "project": {
+    "name": "Motion Controller TRAE 重设计",
+    "path": "c:\\Users\\wuzhy\\Documents\\D\\SVN\\SoftWare\\trunk\\AI-Workspace\\motion-controller-trae-design",
+    "operation": "create",
+    "deviceType": "desktop",
+    "language": "zh-CN",
+    "dashboardMode": true,
+    "designDials": { "layoutVariance": 1, "motionIntensity": 1, "visualDensity": 5 },
+    "sharedProjectShellContract": {
+      "typographySystem": "SF Pro Text / SF Pro / JetBrains Mono, body 13px, heading 600 weight",
+      "surfaceDepthModel": "#1a1b1d bg / #222427 secondary / #2a2d31 tertiary",
+      "primaryColorSystem": "#32f08c brand-green for success/connect",
+      "statusColors": "success=#33c192, warning=#d27e24, error=#f65a5a, primary=#387bff",
+      "axisTheme": "X=brand-red-600(#ff6464), Y=brand-blue-600(#64b4ff), Z=brand-green-600(#0fdc78), U=brand-purple-600(#7864ff)"
+    }
+  },
+  "designSource": {
+    "operatingMode": "library-bound",
+    "libraryIdentity": {
+      "name": "TRAE", "id": "dl_builtin_trae", "version": null, "scope": "built-in-global",
+      "path": "c:\\Users\\wuzhy\\.trae-cn\\design_libraries\\dl_builtin_trae",
+      "versionSource": null
+    },
+    "brandPrefix": "trae",
+    "themeMode": "dark",
+    "styleConstraints": { "radiusMax": 10, "spacingBase": 4, "fontSizeBody": 13 }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "data": [
+    {
+      "type": "page",
+      "id": "page-main-control",
+      "title": "运动控制面板",
+      "version": 1,
+      "createdAt": 1751550100000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0
+      },
+      "interactions": [],
+      "devMetadata": {
+        "htmlSrc": "pages/main-control.html"
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": false,
+    "deviceType": "tablet",
+    "projectName": "Motion Controller TRAE 重设计",
+    "designLibrary": {
+      "name": "TRAE",
+      "id": "dl_builtin_trae",
+      "version": null,
+      "scope": "built-in-global",
+      "path": "c:\\Users\\wuzhy\\.trae-cn\\design_libraries\\dl_builtin_trae",
+      "versionSource": null
+    },
+    "windowSize": {
+      "width": 800,
+      "height": 600
+    }
+  }
+}

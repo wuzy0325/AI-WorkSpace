@@ -168,482 +168,401 @@
       }
     </style>
 </head>
-<body class="font-sans" style="background:var(--bg-canvas);color:var(--text-primary);margin:0;overflow:hidden;height:100vh;font-family:var(--font-sans);font-size:var(--text-base)">
+<body style="margin:0; padding:0; background:#1a1a2e; display:flex; justify-content:center; align-items:flex-start; min-height:100vh; overflow:auto; font-family:var(--font-sans); font-size:var(--text-base); color:var(--text-primary);">
 
-  <!-- ===== App Frame (Desktop Fixed) ===== -->
-  <div class="flex h-screen w-screen overflow-hidden">
+<!-- Desktop Window Frame: 1600x900 -->
+<div style="width:1600px; height:900px; display:flex; flex-direction:column; overflow:hidden; border-radius:8px; box-shadow:0 25px 80px rgba(0,0,0,0.4); background:var(--bg-canvas); position:relative;">
 
-    <!-- Left Rail Nav (64px) -->
-    <aside class="flex flex-col items-center w-16 shrink-0 border-r" style="background:var(--bg-panel);border-color:var(--border-default)">
-      <!-- App Logo -->
-      <div class="flex items-center justify-center w-16 h-14 shrink-0 border-b" style="border-color:var(--border-default)">
-        <div class="w-7 h-7 rounded-md flex items-center justify-center text-white font-bold text-xs" style="background:var(--brand-primary)">W</div>
+  <!-- Custom Title Bar (32px) -->
+  <div style="height:32px; display:flex; align-items:center; padding-left:12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; -webkit-app-region:drag;">
+    <div style="display:flex; align-items:center; gap:6px;">
+      <div style="width:14px; height:14px; border-radius:3px; background:var(--brand-primary); display:flex; align-items:center; justify-content:center;">
+        <span style="color:white; font-size:9px; font-weight:700;">W</span>
       </div>
-      <!-- Nav Items -->
-      <nav class="flex flex-col items-center gap-1 pt-3 flex-1">
-        <!-- SLOT: rail-nav-items — leaf pages inject active states here -->
-        <a class="rail-nav-item group" data-nav-key="dashboard" data-dom-id="nav-dashboard" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="traversal" data-dom-id="nav-traversal" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="calibration" data-active="true" data-dom-id="nav-calibration" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="motion" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="log" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-        </a>
-      </nav>
-      <!-- Footer -->
-      <div class="flex flex-col items-center gap-2 pb-3 pt-2 border-t w-full" style="border-color:var(--border-default)">
-        <a class="rail-nav-item group" data-nav-key="settings" href="#" title="全局设置">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-        </a>
-      </div>
-    </aside>
-
-    <!-- Main Content Area -->
-    <div class="flex flex-col flex-1 min-w-0">
-
-      <!-- Top Bar (56px) -->
-      <header class="flex items-center justify-between shrink-0 px-5 border-b" style="height:56px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-3 min-w-0">
-          <!-- SLOT: page-title -->
-          <h1 class="text-base font-semibold truncate" style="color:var(--text-primary)">校准工作台</h1>
-          <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background:var(--state-success-bg);color:var(--state-success)">已连接</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors" style="background:var(--brand-primary);color:white" data-dom-id="btn-start-cal">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            开始校准
-          </button>
-          <button class="p-1.5 rounded-md transition-colors hover:opacity-80" style="color:var(--text-secondary)" title="设备管理">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-          </button>
-        </div>
-      </header>
-
-      <!-- Content Stage -->
-      <!-- SLOT: main-content — 校准工作台页面内容 -->
-      <main class="flex-1 min-h-0 overflow-auto" style="background:var(--bg-canvas)">
-        <div class="flex flex-col h-full">
-
-          <!-- 校准类型选择 Tab 栏 -->
-          <div class="flex items-center gap-0 shrink-0 px-5 border-b" style="height:40px;background:var(--bg-panel);border-color:var(--border-default)">
-            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-semibold transition-colors" data-tab="five-hole" data-active="true"
-                    style="height:40px;border-bottom:2px solid var(--brand-primary);color:var(--brand-primary)">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="5" r="1.5"/><circle cx="17" cy="9" r="1.5"/><circle cx="17" cy="15" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="7" cy="15" r="1.5"/><circle cx="7" cy="9" r="1.5"/></svg>
-              五孔探针
-            </button>
-            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="three-hole"
-                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="15" r="1.5"/><circle cx="6" cy="15" r="1.5"/></svg>
-              三孔探针
-            </button>
-            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="total-pressure"
-                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/></svg>
-              总压
-            </button>
-            <button class="cal-tab flex items-center gap-1.5 px-4 text-xs font-medium transition-colors" data-tab="total-temp"
-                    style="height:40px;border-bottom:2px solid transparent;color:var(--text-secondary)">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>
-              总温
-            </button>
-          </div>
-
-          <!-- 主体区域 -->
-          <div class="flex flex-1 min-h-0 p-4 gap-4" style="padding:var(--space-4)">
-
-            <!-- 左侧：校准设置面板（约 280px） -->
-            <aside class="shrink-0 flex flex-col overflow-y-auto rounded-lg border" style="width:280px;background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
-
-              <!-- 角度范围设置组 -->
-              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
-                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
-                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                  <span class="text-xs font-semibold" style="color:var(--text-primary)">角度范围</span>
-                </div>
-                <div class="grid gap-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Min α</label>
-                    <input type="number" value="-60" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Max α</label>
-                    <input type="number" value="60" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Step</label>
-                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-                <div class="grid gap-1 mt-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap);margin-top:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Min β</label>
-                    <input type="number" value="-45" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Max β</label>
-                    <input type="number" value="45" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Step</label>
-                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-              </div>
-
-              <!-- 速度范围设置组 -->
-              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
-                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
-                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
-                  <span class="text-xs font-semibold" style="color:var(--text-primary)">速度范围</span>
-                </div>
-                <div class="grid gap-1" style="grid-template-columns:1fr 1fr 1fr;gap:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">V<sub>min</sub></label>
-                    <input type="number" value="10" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">V<sub>max</sub></label>
-                    <input type="number" value="50" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">Points</label>
-                    <input type="number" value="5" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-              </div>
-
-              <!-- 采集设置组 -->
-              <div style="padding:var(--density-group-padding);border-bottom:1px solid var(--border-subtle)">
-                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
-                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  <span class="text-xs font-semibold" style="color:var(--text-primary)">采集设置</span>
-                </div>
-                <div class="grid gap-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">采样频率 (Hz)</label>
-                    <input type="number" value="100" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">平均次数</label>
-                    <input type="number" value="100" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-                <div class="grid gap-1 mt-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap);margin-top:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">稳定延迟 (ms)</label>
-                    <input type="number" value="2000" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">重复次数</label>
-                    <input type="number" value="3" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-              </div>
-
-              <!-- 探针信息组 -->
-              <div style="padding:var(--density-group-padding)">
-                <div class="flex items-center gap-1.5 mb-1" style="margin-bottom:var(--density-group-title-gap)">
-                  <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
-                  <span class="text-xs font-semibold" style="color:var(--text-primary)">探针信息</span>
-                </div>
-                <div class="grid gap-1" style="grid-template-columns:1fr 1fr;gap:var(--density-field-gap)">
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">探针编号</label>
-                    <input type="text" value="PRB-001" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                  <div class="flex flex-col gap-0.5" style="gap:var(--density-field-inline)">
-                    <label class="text-xs font-semibold" style="color:var(--text-secondary);font-size:var(--text-xs)">孔径系数</label>
-                    <input type="number" value="0.85" step="0.01" class="rounded" style="height:var(--density-control-height);padding:0 var(--density-control-pad-x);font-size:var(--text-xs);font-family:var(--font-mono);background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary);outline:none" />
-                  </div>
-                </div>
-              </div>
-
-            </aside>
-
-            <!-- 右侧：校准图表区域 -->
-            <section class="flex-1 min-w-0 flex flex-col rounded-lg border overflow-hidden" style="background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
-
-              <!-- 图表标题栏 -->
-              <div class="flex items-center justify-between shrink-0 px-4 border-b" style="height:32px;background:var(--bg-panel-strong);border-color:var(--border-subtle)">
-                <span class="text-xs font-semibold" style="color:var(--text-secondary)">校准曲线 — Cpq vs α</span>
-                <div class="flex items-center gap-3">
-                  <!-- 曲线图例 -->
-                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
-                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-1)"></span> P1-P5
-                  </span>
-                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
-                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-2)"></span> P2-P5
-                  </span>
-                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
-                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-3)"></span> P3-P5
-                  </span>
-                  <span class="flex items-center gap-1 text-xs" style="color:var(--text-muted);font-size:var(--text-xs)">
-                    <span class="inline-block w-3 h-0.5 rounded" style="background:var(--channel-4)"></span> P4-P5
-                  </span>
-                </div>
-              </div>
-
-              <!-- SVG 图表 -->
-              <div class="flex-1 min-h-0" style="background:var(--bg-canvas)">
-                <svg viewBox="0 0 720 380" preserveAspectRatio="xMidYMid meet" width="100%" height="100%"
-                     style="display:block;font-family:var(--font-sans);font-size:11px">
-                  <defs>
-                    <!-- 图表区域裁剪 -->
-                    <clipPath id="chart-clip">
-                      <rect x="60" y="10" width="640" height="310"/>
-                    </clipPath>
-                  </defs>
-
-                  <!-- 网格线 -->
-                  <g stroke="var(--border-subtle)" stroke-width="1" clip-path="url(#chart-clip)">
-                    <!-- 水平网格 -->
-                    <line x1="60" y1="72.5" x2="700" y2="72.5"/>
-                    <line x1="60" y1="135" x2="700" y2="135"/>
-                    <line x1="60" y1="197.5" x2="700" y2="197.5"/>
-                    <line x1="60" y1="260" x2="700" y2="260"/>
-                    <!-- 垂直网格 -->
-                    <line x1="188.75" y1="10" x2="188.75" y2="320"/>
-                    <line x1="317.5" y1="10" x2="317.5" y2="320"/>
-                    <line x1="446.25" y1="10" x2="446.25" y2="320"/>
-                    <line x1="575" y1="10" x2="575" y2="320"/>
-                  </g>
-
-                  <!-- 坐标轴 -->
-                  <g stroke="var(--border-strong)" stroke-width="1.5">
-                    <!-- Y 轴 -->
-                    <line x1="60" y1="10" x2="60" y2="320"/>
-                    <!-- X 轴 -->
-                    <line x1="60" y1="320" x2="700" y2="320"/>
-                  </g>
-
-                  <!-- Y 轴刻度标签 -->
-                  <g fill="var(--text-muted)" text-anchor="end" font-size="11">
-                    <text x="54" y="324">-1.5</text>
-                    <text x="54" y="263.5">-1.0</text>
-                    <text x="54" y="201">-0.5</text>
-                    <text x="54" y="138.5">0.0</text>
-                    <text x="54" y="76">0.5</text>
-                    <text x="54" y="14">1.0</text>
-                  </g>
-
-                  <!-- X 轴刻度标签 -->
-                  <g fill="var(--text-muted)" text-anchor="middle" font-size="11">
-                    <text x="60" y="338">-60°</text>
-                    <text x="188.75" y="338">-36°</text>
-                    <text x="317.5" y="338">-12°</text>
-                    <text x="446.25" y="338">12°</text>
-                    <text x="575" y="338">36°</text>
-                    <text x="700" y="338">60°</text>
-                  </g>
-
-                  <!-- 校准曲线（模拟数据） -->
-                  <g clip-path="url(#chart-clip)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <!-- P1-P5 曲线 (channel-1: 绿色) -->
-                    <polyline stroke="var(--channel-1)" points="
-                      60,42 90,50 120,65 150,90 180,118 210,148 240,165
-                      270,170 300,160 330,140 360,115 390,88 420,65
-                      450,50 480,42 510,48 540,68 570,100 600,138
-                      630,172 660,200 700,225
-                    "/>
-
-                    <!-- P2-P5 曲线 (channel-2: 蓝色) -->
-                    <polyline stroke="var(--channel-2)" points="
-                      60,100 90,105 120,115 150,130 180,150 210,168 240,180
-                      270,185 300,178 330,160 360,135 390,108 420,85
-                      450,68 480,60 510,62 540,75 570,98 600,130
-                      630,165 660,195 700,220
-                    "/>
-
-                    <!-- P3-P5 曲线 (channel-3: 紫色) -->
-                    <polyline stroke="var(--channel-3)" points="
-                      60,200 90,195 120,185 150,168 180,148 210,125 240,110
-                      270,105 300,112 330,132 360,158 390,188 420,215
-                      450,238 480,250 510,248 540,235 570,210 600,178
-                      630,142 660,108 700,82
-                    "/>
-
-                    <!-- P4-P5 曲线 (channel-4: 橙色) -->
-                    <polyline stroke="var(--channel-4)" points="
-                      60,290 90,280 120,260 150,232 180,200 210,168 240,140
-                      270,120 300,115 330,125 360,148 390,178 420,212
-                      450,242 480,265 510,275 540,268 570,248 600,220
-                      630,185 660,148 700,115
-                    "/>
-                  </g>
-
-                  <!-- 零位参考线 -->
-                  <line x1="60" y1="138.5" x2="700" y2="138.5" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
-
-                  <!-- 采样点标记（当前进度指示） -->
-                  <g clip-path="url(#chart-clip)">
-                    <!-- 通道1采样点 -->
-                    <circle cx="317.5" cy="160" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="446.25" cy="50" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="575" cy="100" r="3.5" fill="var(--channel-1)" stroke="white" stroke-width="1.5"/>
-                    <!-- 通道2采样点 -->
-                    <circle cx="317.5" cy="178" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="446.25" cy="68" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="575" cy="98" r="3.5" fill="var(--channel-2)" stroke="white" stroke-width="1.5"/>
-                    <!-- 通道3采样点 -->
-                    <circle cx="317.5" cy="112" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="446.25" cy="238" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="575" cy="210" r="3.5" fill="var(--channel-3)" stroke="white" stroke-width="1.5"/>
-                    <!-- 通道4采样点 -->
-                    <circle cx="317.5" cy="125" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="446.25" cy="242" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
-                    <circle cx="575" cy="220" r="3.5" fill="var(--channel-4)" stroke="white" stroke-width="1.5"/>
-                  </g>
-
-                  <!-- 坐标轴标签 -->
-                  <text x="380" y="368" fill="var(--text-secondary)" text-anchor="middle" font-size="12" font-weight="500">α (偏转角)</text>
-                  <text x="16" y="170" fill="var(--text-secondary)" text-anchor="middle" font-size="12" font-weight="500" transform="rotate(-90, 16, 170)">Cpq (压力系数)</text>
-                </svg>
-              </div>
-            </section>
-          </div>
-
-          <!-- 底部：校准结果摘要条 -->
-          <div class="flex items-center justify-between shrink-0 px-5 border-t" style="height:48px;background:var(--bg-panel);border-color:var(--border-default)">
-            <div class="flex items-center gap-6">
-              <!-- 校准状态 -->
-              <div class="flex items-center gap-2">
-                <div class="w-2 h-2 rounded-full" style="background:var(--state-warning);animation:pulse 2s infinite"></div>
-                <span class="text-xs font-medium" style="color:var(--text-secondary)">状态</span>
-                <span class="text-xs font-semibold" style="color:var(--state-warning)">进行中</span>
-              </div>
-              <!-- 已采集点数 -->
-              <div class="flex items-center gap-1.5">
-                <span class="text-xs" style="color:var(--text-muted)">采集进度</span>
-                <span class="text-xs font-mono font-semibold" style="color:var(--text-primary)">384</span>
-                <span class="text-xs" style="color:var(--text-muted)">/</span>
-                <span class="text-xs font-mono" style="color:var(--text-muted)">625</span>
-              </div>
-              <!-- 进度条 -->
-              <div class="w-32 h-1.5 rounded-full overflow-hidden" style="background:var(--bg-panel-strong)">
-                <div class="h-full rounded-full" style="width:61.4%;background:var(--brand-primary)"></div>
-              </div>
-              <!-- RMS 残差 -->
-              <div class="flex items-center gap-1.5">
-                <span class="text-xs" style="color:var(--text-muted)">RMS</span>
-                <span class="text-xs font-mono font-semibold" style="color:var(--state-success)">0.0024</span>
-              </div>
-              <!-- 最近保存 -->
-              <div class="flex items-center gap-1.5">
-                <svg class="w-3 h-3" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                <span class="text-xs" style="color:var(--text-muted)">最近保存</span>
-                <span class="text-xs font-mono" style="color:var(--text-secondary)">2026-06-30 11:32</span>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-                      style="background:var(--bg-panel-strong);border:1px solid var(--border-default);color:var(--text-primary)">
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
-                保存 PRB
-              </button>
-              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-                      style="background:var(--brand-primary);color:white">
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-                导出
-              </button>
-            </div>
-          </div>
-
-        </div>
-      </main>
-
-      <!-- Bottom Status Bar (72px) -->
-      <footer class="flex items-center shrink-0 px-5 border-t" style="height:72px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-6 flex-1 min-w-0">
-          <!-- Acquisition Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-success)"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">采集中</span>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">00:12:34</span>
-          </div>
-          <!-- Device Count -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            <span class="text-xs" style="color:var(--text-secondary)">设备 <strong style="color:var(--text-primary)">2</strong>/4</span>
-          </div>
-          <!-- Sample Rate -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">100 Hz</span>
-          </div>
-          <!-- Recording Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-error);animation:pulse 2s infinite"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">录制中</span>
-            <span class="text-xs font-mono" style="color:var(--text-muted)">run-20260630-112340.csv</span>
-          </div>
-        </div>
-        <!-- Theme Toggle -->
-        <div class="flex items-center gap-2 ml-4 pl-4 border-l" style="border-color:var(--border-default)">
-          <span class="text-xs" style="color:var(--text-muted)">v0.2.0</span>
-        </div>
-      </footer>
-
+      <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Wind-DAQ</span>
+      <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">v0.2.0</span>
+    </div>
+    <div style="margin-left:auto; display:flex; gap:6px; padding-right:12px;">
+      <div style="width:10px; height:10px; border-radius:50%; background:#FF5F57;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#FEBC2E;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#28C840;"></div>
     </div>
   </div>
 
-  <!-- Rail Nav Active State Styles -->
-  <style>
-    .rail-nav-item {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 40px;
-      height: 40px;
-      border-radius: var(--radius-md);
-      color: var(--text-muted);
-      transition: all var(--duration-fast) var(--ease-default);
-      text-decoration: none;
-      position: relative;
-    }
-    .rail-nav-item:hover {
-      background: var(--bg-panel-strong);
-      color: var(--text-secondary);
-    }
-    .rail-nav-item[data-active="true"] {
-      background: var(--brand-primary-muted);
-      color: var(--brand-primary);
-    }
-    .rail-nav-item[data-active="true"]::before {
-      content: '';
-      position: absolute;
-      left: -12px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 3px;
-      height: 20px;
-      background: var(--brand-primary);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
+  <!-- App Body (868px = 900 - 32) -->
+  <div style="flex:1; display:flex; overflow:hidden;">
 
-    /* 校准设置面板输入框焦点 */
-    input[type="number"]:focus,
-    input[type="text"]:focus {
-      border-color: var(--brand-primary) !important;
-      box-shadow: 0 0 0 1px var(--brand-primary);
-    }
+    <!-- Left Rail Nav (48px) -->
+    <div style="width:48px; display:flex; flex-direction:column; align-items:center; background:var(--bg-panel); border-right:1px solid var(--border-default); flex-shrink:0;">
+      <nav style="display:flex; flex-direction:column; align-items:center; gap:2px; padding-top:8px; flex:1;">
+        <a class="rail-nav" data-nav-key="dashboard" data-dom-id="nav-dashboard" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="traversal" data-dom-id="nav-traversal" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="calibration" data-dom-id="nav-calibration" data-active="true" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="motion" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="log" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        </a>
+      </nav>
+      <div style="padding-bottom:8px;">
+        <a class="rail-nav" data-nav-key="settings" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </a>
+      </div>
+    </div>
 
-    /* Tab 悬停效果 */
-    .cal-tab:hover {
-      color: var(--text-primary) !important;
-    }
-  </style>
+    <!-- Right Content Area (1552px) -->
+    <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+
+      <!-- Top Toolbar (40px) -->
+      <div style="height:40px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; gap:8px;">
+        <span style="font-size:13px; font-weight:600; color:var(--text-primary);">校准工作台</span>
+        <span style="font-size:10px; font-weight:500; padding:1px 6px; border-radius:10px; background:var(--state-info-bg); color:var(--state-info);">就绪</span>
+        <div style="flex:1;"></div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">WTN1605-01</span>
+          <button data-dom-id="btn-start-calibration" style="height:26px; padding:0 10px; display:flex; align-items:center; gap:4px; border:none; border-radius:4px; background:var(--brand-primary); color:white; font-size:11px; font-weight:500; cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            开始校准
+          </button>
+          <button style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:none; border-radius:4px; background:transparent; color:var(--text-secondary); cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Content Stage (796px = 868 - 40 - 32) -->
+      <main style="flex:1; overflow:hidden; background:var(--bg-canvas); display:flex; flex-direction:column;">
+
+        <!-- Tab Bar (32px) -->
+        <div style="height:32px; display:flex; align-items:stretch; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; padding:0 12px;">
+          <button data-tab="five-hole" data-dom-id="tab-five-hole" style="height:32px; padding:0 14px; border:none; background:transparent; font-size:12px; font-weight:500; color:var(--brand-primary); border-bottom:2px solid var(--brand-primary); cursor:pointer; font-family:var(--font-sans);">五孔探针</button>
+          <button data-tab="three-hole" data-dom-id="tab-three-hole" style="height:32px; padding:0 14px; border:none; background:transparent; font-size:12px; font-weight:500; color:var(--text-secondary); border-bottom:2px solid transparent; cursor:pointer; font-family:var(--font-sans);">三孔探针</button>
+          <button data-tab="total-pressure" data-dom-id="tab-total-pressure" style="height:32px; padding:0 14px; border:none; background:transparent; font-size:12px; font-weight:500; color:var(--text-secondary); border-bottom:2px solid transparent; cursor:pointer; font-family:var(--font-sans);">总压</button>
+          <button data-tab="total-temp" data-dom-id="tab-total-temp" style="height:32px; padding:0 14px; border:none; background:transparent; font-size:12px; font-weight:500; color:var(--text-secondary); border-bottom:2px solid transparent; cursor:pointer; font-family:var(--font-sans);">总温</button>
+        </div>
+
+        <!-- Content: Settings Panel + Chart Area -->
+        <div style="flex:1; display:flex; overflow:hidden;">
+
+          <!-- Left Settings Panel (240px) -->
+          <div style="width:240px; flex-shrink:0; background:var(--bg-panel); border-right:1px solid var(--border-default); overflow-y:auto; padding:var(--density-section-gap); display:flex; flex-direction:column; gap:var(--density-section-gap);">
+
+            <!-- Group: 角度范围 -->
+            <div style="padding:var(--density-group-padding); border:1px solid var(--border-default); border-radius:var(--radius-md);">
+              <div style="font-size:var(--text-xs); font-weight:var(--weight-bold); color:var(--text-primary); margin-bottom:var(--density-group-title-gap); text-transform:uppercase; letter-spacing:0.5px;">角度范围</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--density-field-gap);">
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">Min &#945; (&deg;)</label>
+                  <input type="number" value="-180" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">Max &#945; (&deg;)</label>
+                  <input type="number" value="180" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+              </div>
+              <div style="margin-top:var(--density-field-gap);">
+                <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">Step (&deg;)</label>
+                <input type="number" value="5" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+              </div>
+            </div>
+
+            <!-- Group: 速度范围 -->
+            <div style="padding:var(--density-group-padding); border:1px solid var(--border-default); border-radius:var(--radius-md);">
+              <div style="font-size:var(--text-xs); font-weight:var(--weight-bold); color:var(--text-primary); margin-bottom:var(--density-group-title-gap); text-transform:uppercase; letter-spacing:0.5px;">速度范围</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--density-field-gap);">
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">Min V (m/s)</label>
+                  <input type="number" value="5" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">Max V (m/s)</label>
+                  <input type="number" value="60" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+              </div>
+            </div>
+
+            <!-- Group: 采集设置 -->
+            <div style="padding:var(--density-group-padding); border:1px solid var(--border-default); border-radius:var(--radius-md);">
+              <div style="font-size:var(--text-xs); font-weight:var(--weight-bold); color:var(--text-primary); margin-bottom:var(--density-group-title-gap); text-transform:uppercase; letter-spacing:0.5px;">采集设置</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--density-field-gap);">
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">采样率 (Hz)</label>
+                  <input type="number" value="100" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">平均次数</label>
+                  <input type="number" value="1000" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+              </div>
+              <div style="margin-top:var(--density-field-gap);">
+                <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">稳定判据 (%)</label>
+                <input type="number" value="0.5" step="0.1" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 6px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+              </div>
+            </div>
+
+            <!-- Group: 校准系数 -->
+            <div style="padding:var(--density-group-padding); border:1px solid var(--border-default); border-radius:var(--radius-md);">
+              <div style="font-size:var(--text-xs); font-weight:var(--weight-bold); color:var(--text-primary); margin-bottom:var(--density-group-title-gap); text-transform:uppercase; letter-spacing:0.5px;">校准系数</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--density-field-gap);">
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">A1</label>
+                  <input type="text" value="0.0324" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">A2</label>
+                  <input type="text" value="-0.0012" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">A3</label>
+                  <input type="text" value="0.0008" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">B1</label>
+                  <input type="text" value="0.2156" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">B2</label>
+                  <input type="text" value="0.0891" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="font-size:var(--text-xs); color:var(--text-secondary); display:block; margin-bottom:2px;">B3</label>
+                  <input type="text" value="-0.0045" style="width:100%; height:24px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); font-size:var(--text-xs); padding:0 4px; font-family:var(--font-mono); box-sizing:border-box; color:var(--text-primary);">
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Chart Area -->
+          <div style="flex:1; display:flex; flex-direction:column; overflow:hidden; padding:8px;">
+            <!-- Chart Legend -->
+            <div style="display:flex; align-items:center; gap:12px; padding:0 4px 6px 4px; flex-shrink:0;">
+              <div style="display:flex; align-items:center; gap:4px;">
+                <div style="width:12px; height:3px; border-radius:1px; background:var(--channel-1);"></div>
+                <span style="font-size:var(--text-xs); color:var(--text-secondary);">Ch1 P1-P3</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <div style="width:12px; height:3px; border-radius:1px; background:var(--channel-2);"></div>
+                <span style="font-size:var(--text-xs); color:var(--text-secondary);">Ch2 P2-P4</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <div style="width:12px; height:3px; border-radius:1px; background:var(--channel-3);"></div>
+                <span style="font-size:var(--text-xs); color:var(--text-secondary);">Ch3 P3-P5</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <div style="width:12px; height:3px; border-radius:1px; background:var(--channel-4);"></div>
+                <span style="font-size:var(--text-xs); color:var(--text-secondary);">Ch4 P4-P1</span>
+              </div>
+            </div>
+            <!-- SVG Calibration Chart -->
+            <div style="flex:1; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden; position:relative;">
+              <svg width="100%" height="100%" viewBox="0 0 1280 700" preserveAspectRatio="xMidYMid meet" style="display:block;">
+                <!-- Definitions -->
+                <defs>
+                  <clipPath id="chart-clip">
+                    <rect x="60" y="10" width="1190" height="640"/>
+                  </clipPath>
+                </defs>
+
+                <!-- Background -->
+                <rect width="1280" height="700" fill="var(--bg-panel)"/>
+
+                <!-- Grid Lines (vertical) -->
+                <g stroke="var(--border-subtle)" stroke-width="0.5">
+                  <!-- Vertical grid: every 30 degrees, -180 to 180 => 13 lines -->
+                  <line x1="60" y1="10" x2="60" y2="650"/>
+                  <line x1="159" y1="10" x2="159" y2="650"/>
+                  <line x1="258" y1="10" x2="258" y2="650"/>
+                  <line x1="357" y1="10" x2="357" y2="650"/>
+                  <line x1="456" y1="10" x2="456" y2="650"/>
+                  <line x1="555" y1="10" x2="555" y2="650"/>
+                  <line x1="655" y1="10" x2="655" y2="650" stroke="var(--border-default)" stroke-width="1"/>
+                  <line x1="754" y1="10" x2="754" y2="650"/>
+                  <line x1="853" y1="10" x2="853" y2="650"/>
+                  <line x1="952" y1="10" x2="952" y2="650"/>
+                  <line x1="1051" y1="10" x2="1051" y2="650"/>
+                  <line x1="1150" y1="10" x2="1150" y2="650"/>
+                  <line x1="1250" y1="10" x2="1250" y2="650"/>
+                </g>
+
+                <!-- Grid Lines (horizontal) -->
+                <g stroke="var(--border-subtle)" stroke-width="0.5">
+                  <line x1="60" y1="10" x2="1250" y2="10"/>
+                  <line x1="60" y1="170" x2="1250" y2="170"/>
+                  <line x1="60" y1="330" x2="1250" y2="330"/>
+                  <line x1="60" y1="490" x2="1250" y2="490"/>
+                  <line x1="60" y1="650" x2="1250" y2="650"/>
+                </g>
+
+                <!-- Zero line (alpha=0) -->
+                <line x1="655" y1="10" x2="655" y2="650" stroke="var(--border-strong)" stroke-width="0.8" stroke-dasharray="4,3"/>
+
+                <!-- Axes -->
+                <line x1="60" y1="650" x2="1250" y2="650" stroke="var(--text-muted)" stroke-width="1"/>
+                <line x1="60" y1="10" x2="60" y2="650" stroke="var(--text-muted)" stroke-width="1"/>
+
+                <!-- X-axis labels (degrees) -->
+                <g fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)" text-anchor="middle">
+                  <text x="60" y="666">-180</text>
+                  <text x="159" y="666">-150</text>
+                  <text x="258" y="666">-120</text>
+                  <text x="357" y="666">-90</text>
+                  <text x="456" y="666">-60</text>
+                  <text x="555" y="666">-30</text>
+                  <text x="655" y="666">0</text>
+                  <text x="754" y="666">30</text>
+                  <text x="853" y="666">60</text>
+                  <text x="952" y="666">90</text>
+                  <text x="1051" y="666">120</text>
+                  <text x="1150" y="666">150</text>
+                  <text x="1250" y="666">180</text>
+                </g>
+
+                <!-- X-axis title -->
+                <text x="655" y="690" fill="var(--text-secondary)" font-size="11" font-family="var(--font-sans)" text-anchor="middle" font-weight="500">&#945; (&deg;)</text>
+
+                <!-- Y-axis labels (Cpq values) -->
+                <g fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)" text-anchor="end">
+                  <text x="55" y="654">-1.0</text>
+                  <text x="55" y="494">-0.5</text>
+                  <text x="55" y="334">0.0</text>
+                  <text x="55" y="174">0.5</text>
+                  <text x="55" y="14">1.0</text>
+                </g>
+
+                <!-- Y-axis title (rotated) -->
+                <text x="14" y="330" fill="var(--text-secondary)" font-size="11" font-family="var(--font-sans)" text-anchor="middle" font-weight="500" transform="rotate(-90, 14, 330)">Cpq</text>
+
+                <!-- Calibration Curves (clipped to chart area) -->
+                <g clip-path="url(#chart-clip)">
+                  <!-- Channel 1: Cpq vs alpha — bell curve centered at 0 -->
+                  <polyline
+                    fill="none"
+                    stroke="var(--channel-1)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    points="
+                      60,570 109,480 159,390 209,290 258,200 308,120 357,70 407,40 456,30 505,40 555,70 605,120 655,170 705,250 754,360 803,460 853,530 902,580 952,610 1002,625 1051,630 1101,628 1150,620 1200,610 1250,605
+                    "/>
+
+                  <!-- Channel 2: shifted phase -->
+                  <polyline
+                    fill="none"
+                    stroke="var(--channel-2)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    points="
+                      60,610 109,620 159,625 209,630 258,630 308,628 357,620 407,610 456,590 505,560 555,520 605,480 655,440 705,400 754,360 803,310 853,260 902,200 952,140 1002,80 1051,40 1101,30 1150,50 1200,90 1250,140
+                    "/>
+
+                  <!-- Channel 3: double peak -->
+                  <polyline
+                    fill="none"
+                    stroke="var(--channel-3)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    points="
+                      60,380 109,320 159,260 209,210 258,170 308,140 357,120 407,110 456,115 505,130 555,155 605,190 655,230 705,280 754,330 803,380 853,430 902,470 952,500 1002,510 1051,500 1101,480 1150,440 1200,390 1250,340
+                    "/>
+
+                  <!-- Channel 4: negative trend -->
+                  <polyline
+                    fill="none"
+                    stroke="var(--channel-4)"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    points="
+                      60,150 109,200 159,260 209,310 258,360 308,400 357,440 407,470 456,500 505,520 555,540 605,550 655,560 705,570 754,575 803,580 853,582 902,584 952,585 1002,586 1051,586 1101,586 1150,586 1200,586 1250,586
+                    "/>
+
+                  <!-- Zero baseline for reference -->
+                  <line x1="60" y1="330" x2="1250" y2="330" stroke="var(--text-muted)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.6"/>
+                </g>
+
+              </svg>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Bottom Summary Bar (28px) -->
+        <div style="height:28px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-top:1px solid var(--border-default); flex-shrink:0; gap:16px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <div style="width:60px; height:4px; border-radius:2px; background:var(--border-default); overflow:hidden;">
+              <div style="width:61.4%; height:100%; background:var(--brand-primary); border-radius:2px;"></div>
+            </div>
+            <span style="font-size:var(--text-xs); color:var(--text-secondary); font-family:var(--font-mono);">校准进度 384/625</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+            <span style="font-size:var(--text-xs); color:var(--text-secondary);">RMS</span>
+            <span style="font-size:var(--text-xs); font-family:var(--font-mono); color:var(--text-primary); font-weight:var(--weight-medium);">0.0024</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+            <span style="font-size:var(--text-xs); color:var(--text-secondary);">当前角度</span>
+            <span style="font-size:var(--text-xs); font-family:var(--font-mono); color:var(--text-primary); font-weight:var(--weight-medium);">30.0&deg;</span>
+          </div>
+          <div style="flex:1;"></div>
+          <button data-dom-id="btn-save-prb" style="height:22px; padding:0 10px; display:flex; align-items:center; gap:4px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); color:var(--text-secondary); font-size:11px; font-weight:var(--weight-medium); cursor:pointer; font-family:var(--font-sans);">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            保存 PRB
+          </button>
+          <button data-dom-id="btn-export" style="height:22px; padding:0 10px; display:flex; align-items:center; gap:4px; border:1px solid var(--border-default); border-radius:var(--radius-sm); background:var(--bg-panel); color:var(--text-secondary); font-size:11px; font-weight:var(--weight-medium); cursor:pointer; font-family:var(--font-sans);">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            导出
+          </button>
+        </div>
+
+      </main>
+
+      <!-- Bottom Status Bar (32px) -->
+      <div style="height:32px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-top:1px solid var(--border-default); flex-shrink:0; gap:16px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <div style="width:6px; height:6px; border-radius:50%; background:var(--state-info);"></div>
+          <span style="font-size:10px; color:var(--text-secondary);">空闲</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span style="font-size:10px; color:var(--text-secondary);">WTN1605-01</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+          <span style="font-size:10px; font-family:var(--font-mono); color:var(--text-primary);">--</span>
+        </div>
+        <div style="flex:1;"></div>
+        <span style="font-size:9px; color:var(--text-muted);">v0.2.0</span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Rail Nav Styles -->
+<style>
+  .rail-nav:hover { background: var(--bg-panel-strong); color: var(--text-secondary); }
+  .rail-nav[data-active="true"] { background: var(--brand-primary-muted); color: var(--brand-primary); }
+  .rail-nav[data-active="true"]::before {
+    content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 2px; height: 16px; background: var(--brand-primary); border-radius: 0 1px 1px 0;
+  }
+  .rail-nav { position: relative; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  /* Tab active style */
+  [data-tab]:hover { color: var(--text-primary); }
+</style>
 
 </body>
 </html>

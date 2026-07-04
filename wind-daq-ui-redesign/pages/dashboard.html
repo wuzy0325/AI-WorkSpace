@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>仪表盘</title>
+    <title>Wind-DAQ</title>
     <style id="theme-vars">
 /* ==========================================================================
    Wind-DAQ UI Redesign — Brand Design Tokens
@@ -113,7 +113,7 @@
   --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- Dark Theme ── */
+/* --- Dark Theme --- */
 [data-theme='dark'] {
   --bg-canvas: #0F1117;
   --bg-panel: #1A1D27;
@@ -168,488 +168,461 @@
       }
     </style>
 </head>
-<body class="font-sans" style="background:var(--bg-canvas);color:var(--text-primary);margin:0;overflow:hidden;height:100vh;font-family:var(--font-sans);font-size:var(--text-base)">
+<body style="margin:0; padding:0; background:#1a1a2e; display:flex; justify-content:center; align-items:flex-start; min-height:100vh; overflow:auto; font-family:var(--font-sans); font-size:var(--text-base); color:var(--text-primary);">
 
-  <!-- ===== App Frame (Desktop Fixed) ===== -->
-  <div class="flex h-screen w-screen overflow-hidden">
+<!-- Desktop Window Frame: 1600x900 -->
+<div style="width:1600px; height:900px; display:flex; flex-direction:column; overflow:hidden; border-radius:8px; box-shadow:0 25px 80px rgba(0,0,0,0.4); background:var(--bg-canvas); position:relative;">
 
-    <!-- Left Rail Nav (64px) -->
-    <aside class="flex flex-col items-center w-16 shrink-0 border-r" style="background:var(--bg-panel);border-color:var(--border-default)">
-      <!-- App Logo -->
-      <div class="flex items-center justify-center w-16 h-14 shrink-0 border-b" style="border-color:var(--border-default)">
-        <div class="w-7 h-7 rounded-md flex items-center justify-center text-white font-bold text-xs" style="background:var(--brand-primary)">W</div>
+  <!-- Custom Title Bar (32px) - mimics Wails/Electron window chrome -->
+  <div style="height:32px; display:flex; align-items:center; padding-left:12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; -webkit-app-region:drag;">
+    <div style="display:flex; align-items:center; gap:6px;">
+      <div style="width:14px; height:14px; border-radius:3px; background:var(--brand-primary); display:flex; align-items:center; justify-content:center;">
+        <span style="color:white; font-size:9px; font-weight:700;">W</span>
       </div>
-      <!-- Nav Items -->
-      <nav class="flex flex-col items-center gap-1 pt-3 flex-1">
-        <a class="rail-nav-item group" data-nav-key="dashboard" data-active="true" data-dom-id="nav-dashboard" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Wind-DAQ</span>
+      <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">v0.2.0</span>
+    </div>
+    <!-- Window traffic lights (decorative) -->
+    <div style="margin-left:auto; display:flex; gap:6px; padding-right:12px;">
+      <div style="width:10px; height:10px; border-radius:50%; background:#FF5F57;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#FEBC2E;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#28C840;"></div>
+    </div>
+  </div>
+
+  <!-- App Body (868px = 900 - 32) -->
+  <div style="flex:1; display:flex; overflow:hidden;">
+
+    <!-- Left Rail Nav (48px, compact icon rail) -->
+    <div style="width:48px; display:flex; flex-direction:column; align-items:center; background:var(--bg-panel); border-right:1px solid var(--border-default); flex-shrink:0;">
+      <!-- Nav Items - compact, icon-only, 36px hit targets -->
+      <nav style="display:flex; flex-direction:column; align-items:center; gap:2px; padding-top:8px; flex:1;">
+        <a class="rail-nav" data-nav-key="dashboard" data-active="true" data-dom-id="nav-dashboard" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         </a>
-        <a class="rail-nav-item group" data-nav-key="traversal" data-dom-id="nav-traversal" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
+        <a class="rail-nav" data-nav-key="traversal" data-dom-id="nav-traversal" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
         </a>
-        <a class="rail-nav-item group" data-nav-key="calibration" data-dom-id="nav-calibration" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+        <a class="rail-nav" data-nav-key="calibration" data-dom-id="nav-calibration" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
         </a>
-        <a class="rail-nav-item group" data-nav-key="motion" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <a class="rail-nav" data-nav-key="motion" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
-        <a class="rail-nav-item group" data-nav-key="log" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        <a class="rail-nav" data-nav-key="log" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
         </a>
       </nav>
-      <!-- Footer -->
-      <div class="flex flex-col items-center gap-2 pb-3 pt-2 border-t w-full" style="border-color:var(--border-default)">
-        <a class="rail-nav-item group" data-nav-key="settings" href="#" title="全局设置">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      <!-- Bottom settings -->
+      <div style="padding-bottom:8px;">
+        <a class="rail-nav" data-nav-key="settings" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 002 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
         </a>
       </div>
-    </aside>
+    </div>
 
-    <!-- Main Content Area -->
-    <div class="flex flex-col flex-1 min-w-0">
+    <!-- Right Content Area (1552px = 1600 - 48) -->
+    <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
 
-      <!-- Top Bar (56px) -->
-      <header class="flex items-center justify-between shrink-0 px-5 border-b" style="height:56px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-3 min-w-0">
-          <h1 class="text-base font-semibold truncate" style="color:var(--text-primary)">仪表盘</h1>
-          <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background:var(--state-success-bg);color:var(--state-success)">已连接</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors" style="background:var(--brand-primary);color:white" data-dom-id="btn-connect">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-            开始采集
+      <!-- Top Toolbar (40px, compact) -->
+      <div style="height:40px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; gap:8px;">
+        <span style="font-size:13px; font-weight:600; color:var(--text-primary);">仪表盘</span>
+        <span style="font-size:10px; font-weight:500; padding:1px 6px; border-radius:10px; background:var(--state-success-bg); color:var(--state-success);">已连接</span>
+        <div style="flex:1;"></div>
+        <!-- Right actions -->
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">WTN1605-01</span>
+          <button data-dom-id="btn-connect" style="height:26px; padding:0 10px; display:flex; align-items:center; gap:4px; border:none; border-radius:4px; background:var(--brand-primary); color:white; font-size:11px; font-weight:500; cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            采集
           </button>
-          <button class="p-1.5 rounded-md transition-colors hover:opacity-80" style="color:var(--text-secondary)" title="设备管理">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <button style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:none; border-radius:4px; background:transparent; color:var(--text-secondary); cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
           </button>
         </div>
-      </header>
+      </div>
 
-      <!-- Content Stage -->
-      <main class="flex-1 min-h-0 overflow-auto" style="background:var(--bg-canvas)">
+      <!-- Main Content Stage (796px = 868 - 40 - 32) -->
+      <main style="flex:1; overflow:auto; background:var(--bg-canvas); padding:8px; display:flex; flex-direction:column; gap:8px;">
 
-        <!-- ===== 仪表盘布局：设备侧边栏 + 主内容区 ===== -->
-        <div class="flex h-full">
+        <!-- 上方区域：设备列表(200px) + 实时数据面板 -->
+        <div style="display:flex; gap:8px; flex:1; min-height:0;">
 
-          <!-- 左侧设备侧边栏 (244px) -->
-          <aside class="flex flex-col shrink-0 border-r overflow-y-auto no-scrollbar" style="width:244px;background:var(--bg-panel);border-color:var(--border-default)">
-            <!-- 侧边栏标题 -->
-            <div class="flex items-center justify-between px-4 py-3 border-b" style="border-color:var(--border-default)">
-              <span class="text-xs font-semibold uppercase tracking-wider" style="color:var(--text-muted);letter-spacing:0.05em">设备列表</span>
-              <span class="text-xs font-mono" style="color:var(--text-muted);font-variant-numeric:tabular-nums">2 台</span>
+          <!-- 左侧紧凑设备列表 (200px) -->
+          <div style="width:200px; flex-shrink:0; display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden;">
+            <!-- 设备列表标题 -->
+            <div style="height:24px; display:flex; align-items:center; padding:0 8px; border-bottom:1px solid var(--border-default); background:var(--bg-panel-strong);">
+              <span style="font-size:10px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">设备</span>
             </div>
 
-            <!-- 设备 1: WTN1605 压力扫描阀 -->
-            <div class="px-3 py-2 border-b" style="border-color:var(--border-subtle)">
-              <div class="flex items-center gap-2.5 px-2 py-2 rounded-md" style="background:var(--state-success-bg)">
-                <!-- 状态指示灯 -->
-                <div class="w-2 h-2 rounded-full shrink-0" style="background:var(--state-success)"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-xs font-medium truncate" style="color:var(--text-primary)">WTN1605-01</div>
-                  <div class="text-xs truncate" style="color:var(--text-muted)">压力扫描阀</div>
-                </div>
-                <div class="text-xs font-mono px-1.5 py-0.5 rounded" style="background:var(--state-success-bg);color:var(--state-success);font-variant-numeric:tabular-nums">在线</div>
-              </div>
-              <!-- 设备简要参数 -->
-              <div class="grid grid-cols-2 gap-x-3 gap-y-1 px-2 pt-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs" style="color:var(--text-muted)">通道</span>
-                  <span class="text-xs font-mono" style="color:var(--text-primary);font-variant-numeric:tabular-nums">4 / 64</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs" style="color:var(--text-muted)">采样率</span>
-                  <span class="text-xs font-mono" style="color:var(--text-primary);font-variant-numeric:tabular-nums">50 Hz</span>
-                </div>
-              </div>
+            <!-- 设备 1 -->
+            <div style="height:32px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle);">
+              <div style="width:6px; height:6px; border-radius:50%; background:var(--state-success); flex-shrink:0;"></div>
+              <span style="font-size:11px; font-weight:500; color:var(--text-primary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">WTN1605-01</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">PSV</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">4ch</span>
             </div>
-
-            <!-- 设备 2: DPS-P400 压力传感器 -->
-            <div class="px-3 py-2 border-b" style="border-color:var(--border-subtle)">
-              <div class="flex items-center gap-2.5 px-2 py-2 rounded-md" style="background:var(--state-success-bg)">
-                <!-- 状态指示灯 -->
-                <div class="w-2 h-2 rounded-full shrink-0" style="background:var(--state-success)"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-xs font-medium truncate" style="color:var(--text-primary)">DPS-P400-02</div>
-                  <div class="text-xs truncate" style="color:var(--text-muted)">差压传感器</div>
-                </div>
-                <div class="text-xs font-mono px-1.5 py-0.5 rounded" style="background:var(--state-success-bg);color:var(--state-success);font-variant-numeric:tabular-nums">在线</div>
-              </div>
-              <!-- 设备简要参数 -->
-              <div class="grid grid-cols-2 gap-x-3 gap-y-1 px-2 pt-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs" style="color:var(--text-muted)">通道</span>
-                  <span class="text-xs font-mono" style="color:var(--text-primary);font-variant-numeric:tabular-nums">4 / 8</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs" style="color:var(--text-muted)">采样率</span>
-                  <span class="text-xs font-mono" style="color:var(--text-primary);font-variant-numeric:tabular-nums">100 Hz</span>
-                </div>
-              </div>
+            <!-- 设备 2 -->
+            <div style="height:32px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle);">
+              <div style="width:6px; height:6px; border-radius:50%; background:var(--state-success); flex-shrink:0;"></div>
+              <span style="font-size:11px; font-weight:500; color:var(--text-primary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">DPS-P400-02</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">DPS</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">4ch</span>
             </div>
-
-            <!-- 断开状态的设备示例 -->
-            <div class="px-3 py-2">
-              <div class="flex items-center gap-2.5 px-2 py-2 rounded-md" style="opacity:0.5">
-                <div class="w-2 h-2 rounded-full shrink-0" style="background:var(--text-muted)"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-xs font-medium truncate" style="color:var(--text-primary)">DPS-P400-03</div>
-                  <div class="text-xs truncate" style="color:var(--text-muted)">差压传感器</div>
-                </div>
-                <div class="text-xs font-mono px-1.5 py-0.5 rounded" style="background:var(--bg-panel-strong);color:var(--text-muted);font-variant-numeric:tabular-nums">离线</div>
-              </div>
+            <!-- 设备 3 -->
+            <div style="height:32px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle);">
+              <div style="width:6px; height:6px; border-radius:50%; background:var(--state-success); flex-shrink:0;"></div>
+              <span style="font-size:11px; font-weight:500; color:var(--text-primary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">DPS-P400-03</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">DPS</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono);">4ch</span>
+            </div>
+            <!-- 设备 4 -->
+            <div style="height:32px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle);">
+              <div style="width:6px; height:6px; border-radius:50%; background:var(--text-muted); flex-shrink:0;"></div>
+              <span style="font-size:11px; font-weight:500; color:var(--text-primary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.5;">DPS-P400-04</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); opacity:0.5;">DPS</span>
+              <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); opacity:0.5;">4ch</span>
             </div>
 
             <!-- 弹性填充 -->
-            <div class="flex-1"></div>
+            <div style="flex:1;"></div>
 
-            <!-- 侧边栏底部摘要 -->
-            <div class="px-4 py-3 border-t" style="border-color:var(--border-default)">
-              <div class="flex items-center justify-between">
-                <span class="text-xs" style="color:var(--text-muted)">总通道数</span>
-                <span class="text-xs font-mono font-medium" style="color:var(--text-primary);font-variant-numeric:tabular-nums">8</span>
-              </div>
-              <div class="flex items-center justify-between mt-1">
-                <span class="text-xs" style="color:var(--text-muted)">总采样率</span>
-                <span class="text-xs font-mono font-medium" style="color:var(--text-primary);font-variant-numeric:tabular-nums">150 Hz</span>
-              </div>
+            <!-- 底部摘要 -->
+            <div style="height:24px; display:flex; align-items:center; padding:0 8px; border-top:1px solid var(--border-default); background:var(--bg-panel-strong);">
+              <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">4 设备 · 16 通道 · 100Hz</span>
             </div>
-          </aside>
+          </div>
 
-          <!-- 右侧主内容区 -->
-          <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+          <!-- 右侧实时数据面板 (2x2 网格) -->
+          <div style="flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:8px; min-height:0;">
 
-            <!-- 设备概览面板区域 -->
-            <div class="px-5 pt-4 pb-3">
-              <div class="text-xs font-semibold uppercase tracking-wider mb-3" style="color:var(--text-muted);letter-spacing:0.05em">设备概览</div>
-
-              <!-- 两台设备的卡片网格 -->
-              <div class="grid grid-cols-2 gap-4">
-
-                <!-- 设备 1 数据卡片: WTN1605-01 -->
-                <div class="rounded-lg border overflow-hidden" style="background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
-                  <!-- 卡片标题栏 -->
-                  <div class="flex items-center justify-between px-4 py-2.5 border-b" style="border-color:var(--border-subtle)">
-                    <div class="flex items-center gap-2">
-                      <div class="w-1.5 h-1.5 rounded-full" style="background:var(--state-success)"></div>
-                      <span class="text-sm font-medium" style="color:var(--text-primary)">WTN1605-01</span>
-                      <span class="text-xs" style="color:var(--text-muted)">压力扫描阀</span>
-                    </div>
-                    <span class="text-xs font-mono" style="color:var(--text-muted);font-variant-numeric:tabular-nums">50 Hz</span>
-                  </div>
-                  <!-- 通道数据网格 -->
-                  <div class="grid grid-cols-4 gap-0">
-                    <!-- 通道 1 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-1)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH1</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">101.325</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 2 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-2)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH2</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">98.712</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 3 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-3)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH3</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">102.451</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 4 -->
-                    <div class="flex flex-col items-center px-2 py-3">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-4)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH4</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">100.088</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                  </div>
-                  <!-- 卡片底栏: 最新更新时间 -->
-                  <div class="flex items-center justify-between px-4 py-2 border-t" style="border-color:var(--border-subtle);background:var(--bg-panel-strong)">
-                    <span class="text-xs" style="color:var(--text-muted)">最后更新</span>
-                    <span class="text-xs font-mono" style="color:var(--text-secondary);font-variant-numeric:tabular-nums">2026-06-30 14:32:18.432</span>
-                  </div>
+            <!-- 设备 1 数据卡片: WTN1605-01 -->
+            <div style="display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden;">
+              <!-- 卡片标题行 -->
+              <div style="height:22px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle); background:var(--bg-panel-strong); flex-shrink:0;">
+                <div style="width:5px; height:5px; border-radius:50%; background:var(--state-success);"></div>
+                <span style="font-size:11px; font-weight:600; color:var(--text-primary);">WTN1605-01</span>
+                <span style="font-size:10px; color:var(--state-success); font-weight:500;">在线</span>
+                <div style="flex:1;"></div>
+                <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">50Hz</span>
+              </div>
+              <!-- 通道数据网格 -->
+              <div style="flex:1; display:grid; grid-template-columns:repeat(4, 1fr); min-height:0;">
+                <!-- CH1 -->
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-1); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH1</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">101.325</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
                 </div>
-
-                <!-- 设备 2 数据卡片: DPS-P400-02 -->
-                <div class="rounded-lg border overflow-hidden" style="background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm)">
-                  <!-- 卡片标题栏 -->
-                  <div class="flex items-center justify-between px-4 py-2.5 border-b" style="border-color:var(--border-subtle)">
-                    <div class="flex items-center gap-2">
-                      <div class="w-1.5 h-1.5 rounded-full" style="background:var(--state-success)"></div>
-                      <span class="text-sm font-medium" style="color:var(--text-primary)">DPS-P400-02</span>
-                      <span class="text-xs" style="color:var(--text-muted)">差压传感器</span>
-                    </div>
-                    <span class="text-xs font-mono" style="color:var(--text-muted);font-variant-numeric:tabular-nums">100 Hz</span>
-                  </div>
-                  <!-- 通道数据网格 -->
-                  <div class="grid grid-cols-4 gap-0">
-                    <!-- 通道 1 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-1)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH1</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">2.4513</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 2 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-2)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH2</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">-1.0872</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 3 -->
-                    <div class="flex flex-col items-center px-2 py-3 border-r" style="border-color:var(--border-subtle)">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-3)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH3</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">0.3345</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                    <!-- 通道 4 -->
-                    <div class="flex flex-col items-center px-2 py-3">
-                      <div class="w-2 h-2 rounded-full mb-1.5" style="background:var(--channel-4)"></div>
-                      <div class="text-xs mb-0.5" style="color:var(--text-muted)">CH4</div>
-                      <div class="text-lg font-mono font-semibold" style="color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:var(--leading-tight)">3.1028</div>
-                      <div class="text-xs font-mono mt-0.5" style="color:var(--text-muted);font-variant-numeric:tabular-nums">kPa</div>
-                    </div>
-                  </div>
-                  <!-- 卡片底栏: 最新更新时间 -->
-                  <div class="flex items-center justify-between px-4 py-2 border-t" style="border-color:var(--border-subtle);background:var(--bg-panel-strong)">
-                    <span class="text-xs" style="color:var(--text-muted)">最后更新</span>
-                    <span class="text-xs font-mono" style="color:var(--text-secondary);font-variant-numeric:tabular-nums">2026-06-30 14:32:18.516</span>
-                  </div>
+                <!-- CH2 -->
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-2); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH2</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">98.712</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
                 </div>
-
+                <!-- CH3 -->
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-3); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH3</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">102.451</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <!-- CH4 -->
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-4); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH4</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">100.088</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
               </div>
             </div>
 
-            <!-- 实时波形图区域 -->
-            <div class="flex-1 px-5 pb-4 min-h-0">
-              <div class="flex items-center justify-between mb-3">
-                <div class="text-xs font-semibold uppercase tracking-wider" style="color:var(--text-muted);letter-spacing:0.05em">实时波形</div>
-                <div class="flex items-center gap-4">
-                  <!-- 图例 -->
-                  <div class="flex items-center gap-1.5">
-                    <div class="w-3 h-0.5 rounded-full" style="background:var(--channel-1)"></div>
-                    <span class="text-xs" style="color:var(--text-muted)">CH1</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <div class="w-3 h-0.5 rounded-full" style="background:var(--channel-2)"></div>
-                    <span class="text-xs" style="color:var(--text-muted)">CH2</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <div class="w-3 h-0.5 rounded-full" style="background:var(--channel-3)"></div>
-                    <span class="text-xs" style="color:var(--text-muted)">CH3</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <div class="w-3 h-0.5 rounded-full" style="background:var(--channel-4)"></div>
-                    <span class="text-xs" style="color:var(--text-muted)">CH4</span>
-                  </div>
+            <!-- 设备 2 数据卡片: DPS-P400-02 -->
+            <div style="display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden;">
+              <div style="height:22px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle); background:var(--bg-panel-strong); flex-shrink:0;">
+                <div style="width:5px; height:5px; border-radius:50%; background:var(--state-success);"></div>
+                <span style="font-size:11px; font-weight:600; color:var(--text-primary);">DPS-P400-02</span>
+                <span style="font-size:10px; color:var(--state-success); font-weight:500;">在线</span>
+                <div style="flex:1;"></div>
+                <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">100Hz</span>
+              </div>
+              <div style="flex:1; display:grid; grid-template-columns:repeat(4, 1fr); min-height:0;">
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-1); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH1</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">2.4513</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-2); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH2</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">-1.087</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-3); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH3</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">0.3345</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-4); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH4</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">3.1028</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
                 </div>
               </div>
-
-              <!-- 波形图容器 -->
-              <div class="rounded-lg border overflow-hidden flex-1 min-h-0" style="background:var(--bg-panel);border-color:var(--border-default);box-shadow:var(--shadow-sm;height:calc(100% - 32px)">
-                <svg class="w-full h-full" viewBox="0 0 800 300" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-                  <!-- 网格线 (水平) -->
-                  <line x1="0" y1="60" x2="800" y2="60" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="0" y1="120" x2="800" y2="120" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="0" y1="150" x2="800" y2="150" stroke="var(--border-default)" stroke-width="1"/>
-                  <line x1="0" y1="180" x2="800" y2="180" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="0" y1="240" x2="800" y2="240" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-
-                  <!-- 网格线 (垂直) -->
-                  <line x1="100" y1="0" x2="100" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="200" y1="0" x2="200" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="300" y1="0" x2="300" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="400" y1="0" x2="400" y2="300" stroke="var(--border-default)" stroke-width="1"/>
-                  <line x1="500" y1="0" x2="500" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="600" y1="0" x2="600" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-                  <line x1="700" y1="0" x2="700" y2="300" stroke="var(--border-subtle)" stroke-width="1" stroke-dasharray="4 4"/>
-
-                  <!-- Y 轴刻度标签 -->
-                  <text x="8" y="58" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">200</text>
-                  <text x="8" y="118" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">150</text>
-                  <text x="8" y="148" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">100</text>
-                  <text x="8" y="178" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">50</text>
-                  <text x="12" y="238" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">0</text>
-
-                  <!-- X 轴刻度标签 -->
-                  <text x="95" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">1s</text>
-                  <text x="195" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">2s</text>
-                  <text x="295" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">3s</text>
-                  <text x="395" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">4s</text>
-                  <text x="495" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">5s</text>
-                  <text x="595" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">6s</text>
-                  <text x="695" y="295" font-size="10" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">7s</text>
-
-                  <!-- 波形 1: CH1 (绿色, 正弦波) -->
-                  <polyline
-                    fill="none"
-                    stroke="var(--channel-1)"
-                    stroke-width="1.5"
-                    stroke-linejoin="round"
-                    stroke-linecap="round"
-                    points="
-                      40,150 50,135 60,121 70,108 80,98 90,90 100,84 110,82 120,83
-                      130,87 140,95 150,105 160,117 170,130 180,143 190,155 200,165
-                      210,173 220,178 230,180 240,178 250,172 260,163 270,152 280,140
-                      290,127 300,115 310,105 320,98 330,94 340,93 350,96 360,102
-                      370,111 380,122 390,134 400,146 410,157 420,166 430,173 440,177
-                      450,178 460,175 470,169 480,160 490,149 500,138 510,127 520,118
-                      530,111 540,107 550,106 560,109 570,115 580,124 590,134 600,145
-                      610,155 620,164 630,170 640,174 650,175 660,172 670,166 680,157
-                      690,147 700,137 710,128 720,121 730,116 740,114 750,116 760,121
-                    "/>
-
-                  <!-- 波形 2: CH2 (蓝色, 相位偏移正弦波) -->
-                  <polyline
-                    fill="none"
-                    stroke="var(--channel-2)"
-                    stroke-width="1.5"
-                    stroke-linejoin="round"
-                    stroke-linecap="round"
-                    points="
-                      40,120 50,110 60,103 70,100 80,102 90,108 100,119 110,133
-                      120,148 130,163 140,176 150,186 160,192 170,193 180,189 190,181
-                      200,170 210,157 220,144 230,132 240,122 250,115 260,112 270,113
-                      280,118 290,126 300,137 310,149 320,161 330,172 340,179 350,182
-                      360,180 370,173 380,162 390,149 400,135 410,122 420,111 430,104
-                      440,101 450,104 460,111 470,122 480,135 490,149 500,163 510,175
-                      520,183 530,187 540,186 550,181 560,171 570,158 580,144 590,130
-                      600,118 610,110 620,106 630,108 640,114 650,124 660,136 670,149
-                      680,162 690,172 700,179 710,181 720,178 730,170 740,159 750,147
-                      760,135
-                    "/>
-
-                  <!-- 波形 3: CH3 (紫色, 较小振幅正弦波) -->
-                  <polyline
-                    fill="none"
-                    stroke="var(--channel-3)"
-                    stroke-width="1.5"
-                    stroke-linejoin="round"
-                    stroke-linecap="round"
-                    points="
-                      40,140 50,137 60,132 70,126 80,120 90,116 100,114 110,115
-                      120,118 130,124 140,132 150,140 160,148 170,155 180,160 190,163
-                      200,163 210,160 220,155 230,148 240,140 250,133 260,127 270,123
-                      280,122 290,124 300,129 310,136 320,144 330,151 340,157 350,161
-                      360,162 370,159 380,153 390,145 400,136 410,129 420,124 430,122
-                      440,124 450,129 460,136 470,144 480,152 490,158 500,162 510,162
-                      520,159 530,153 540,146 550,138 560,131 570,126 580,124 590,125
-                      600,130 610,136 620,144 630,151 640,157 650,160 660,160 670,157
-                      680,151 690,143 700,135 710,129 720,126 730,126 740,130 750,136
-                      760,143
-                    "/>
-
-                  <!-- 波形 4: CH4 (琥珀色, 不规则低频波) -->
-                  <polyline
-                    fill="none"
-                    stroke="var(--channel-4)"
-                    stroke-width="1.5"
-                    stroke-linejoin="round"
-                    stroke-linecap="round"
-                    points="
-                      40,170 50,168 60,164 70,159 80,155 90,152 100,151 110,153
-                      120,157 130,163 140,169 150,175 160,179 170,182 180,182 190,180
-                      200,175 210,169 220,163 230,158 240,155 250,154 260,156 270,161
-                      280,167 290,174 300,179 310,182 320,182 330,179 340,173 350,166
-                      360,159 370,154 380,152 390,153 400,157 410,163 420,170 430,175
-                      440,179 450,181 460,179 470,174 480,167 490,160 500,155 510,153
-                      520,154 530,158 540,164 550,171 560,176 570,179 580,180 590,177
-                      600,172 610,165 620,158 630,153 640,152 650,154 660,159 670,165
-                      680,171 690,176 700,179 710,178 720,174 730,168 740,161 750,156
-                      760,153
-                    "/>
-
-                  <!-- 当前时间指示线 -->
-                  <line x1="760" y1="0" x2="760" y2="300" stroke="var(--state-error)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
-                </svg>
-              </div>
-
             </div>
 
+            <!-- 设备 3 数据卡片: DPS-P400-03 -->
+            <div style="display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden;">
+              <div style="height:22px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle); background:var(--bg-panel-strong); flex-shrink:0;">
+                <div style="width:5px; height:5px; border-radius:50%; background:var(--state-success);"></div>
+                <span style="font-size:11px; font-weight:600; color:var(--text-primary);">DPS-P400-03</span>
+                <span style="font-size:10px; color:var(--state-success); font-weight:500;">在线</span>
+                <div style="flex:1;"></div>
+                <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">100Hz</span>
+              </div>
+              <div style="flex:1; display:grid; grid-template-columns:repeat(4, 1fr); min-height:0;">
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-1); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH1</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">1.9201</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-2); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH2</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">-0.567</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-3); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH3</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">0.8814</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--channel-4); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH4</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-primary); font-variant-numeric:tabular-nums; line-height:1.2;">2.3356</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 设备 4 数据卡片: DPS-P400-04 (离线) -->
+            <div style="display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden; opacity:0.45;">
+              <div style="height:22px; display:flex; align-items:center; padding:0 8px; gap:6px; border-bottom:1px solid var(--border-subtle); background:var(--bg-panel-strong); flex-shrink:0;">
+                <div style="width:5px; height:5px; border-radius:50%; background:var(--text-muted);"></div>
+                <span style="font-size:11px; font-weight:600; color:var(--text-primary);">DPS-P400-04</span>
+                <span style="font-size:10px; color:var(--text-muted); font-weight:500;">离线</span>
+                <div style="flex:1;"></div>
+                <span style="font-size:9px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">--</span>
+              </div>
+              <div style="flex:1; display:grid; grid-template-columns:repeat(4, 1fr); min-height:0;">
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--border-strong); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH1</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-muted); font-variant-numeric:tabular-nums; line-height:1.2;">--</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--border-strong); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH2</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-muted); font-variant-numeric:tabular-nums; line-height:1.2;">--</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border-right:1px solid var(--border-subtle); position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--border-strong); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH3</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-muted); font-variant-numeric:tabular-nums; line-height:1.2;">--</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">
+                  <div style="position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--border-strong); border-radius:0 2px 2px 0;"></div>
+                  <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">CH4</span>
+                  <span style="font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-muted); font-variant-numeric:tabular-nums; line-height:1.2;">--</span>
+                  <span style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums;">kPa</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 下方区域：实时波形图 -->
+        <div style="height:320px; flex-shrink:0; display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-default); border-radius:var(--radius-md); overflow:hidden;">
+          <!-- 波形标题栏 + 图例 -->
+          <div style="height:24px; display:flex; align-items:center; padding:0 8px; gap:12px; border-bottom:1px solid var(--border-default); background:var(--bg-panel-strong); flex-shrink:0;">
+            <span style="font-size:10px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">实时波形</span>
+            <div style="flex:1;"></div>
+            <!-- 图例 -->
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="display:flex; align-items:center; gap:3px;">
+                <div style="width:12px; height:2px; border-radius:1px; background:var(--channel-1);"></div>
+                <span style="font-size:9px; color:var(--text-muted);">CH1</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:3px;">
+                <div style="width:12px; height:2px; border-radius:1px; background:var(--channel-2);"></div>
+                <span style="font-size:9px; color:var(--text-muted);">CH2</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:3px;">
+                <div style="width:12px; height:2px; border-radius:1px; background:var(--channel-3);"></div>
+                <span style="font-size:9px; color:var(--text-muted);">CH3</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:3px;">
+                <div style="width:12px; height:2px; border-radius:1px; background:var(--channel-4);"></div>
+                <span style="font-size:9px; color:var(--text-muted);">CH4</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SVG 波形区域 -->
+          <div style="flex:1; min-height:0; padding:4px;">
+            <svg width="100%" height="100%" viewBox="0 0 1344 280" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- 网格线 (水平) -->
+              <line x1="0" y1="56" x2="1344" y2="56" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="0" y1="112" x2="1344" y2="112" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="0" y1="140" x2="1344" y2="140" stroke="var(--border-default)" stroke-width="0.5"/>
+              <line x1="0" y1="168" x2="1344" y2="168" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="0" y1="224" x2="1344" y2="224" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+
+              <!-- 网格线 (垂直) -->
+              <line x1="192" y1="0" x2="192" y2="280" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="384" y1="0" x2="384" y2="280" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="576" y1="0" x2="576" y2="280" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="768" y1="0" x2="768" y2="280" stroke="var(--border-default)" stroke-width="0.5"/>
+              <line x1="960" y1="0" x2="960" y2="280" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+              <line x1="1152" y1="0" x2="1152" y2="280" stroke="var(--border-subtle)" stroke-width="0.5" stroke-dasharray="4 4"/>
+
+              <!-- Y 轴刻度标签 -->
+              <text x="4" y="54" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">200</text>
+              <text x="4" y="110" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">150</text>
+              <text x="4" y="138" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">100</text>
+              <text x="8" y="166" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">50</text>
+              <text x="12" y="222" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" font-variant-numeric="tabular-nums">0</text>
+
+              <!-- X 轴刻度标签 -->
+              <text x="188" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">1s</text>
+              <text x="380" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">2s</text>
+              <text x="572" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">3s</text>
+              <text x="764" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">4s</text>
+              <text x="956" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">5s</text>
+              <text x="1148" y="274" font-size="9" font-family="var(--font-mono)" fill="var(--text-muted)" text-anchor="middle" font-variant-numeric="tabular-nums">6s</text>
+
+              <!-- 波形 1: CH1 (绿色, 标准正弦波) -->
+              <polyline fill="none" stroke="var(--channel-1)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"
+                points="
+                  40,140 56,125 72,112 88,101 104,94 120,90 136,89 152,93 168,100
+                  184,110 200,122 216,136 232,150 248,163 264,175 280,184 296,190
+                  312,192 328,189 344,183 360,173 376,161 392,148 408,135 424,123
+                  440,113 456,106 472,102 488,103 504,108 520,117 536,128 552,140
+                  568,153 584,164 600,174 616,181 632,186 648,188 664,185 680,179
+                  696,170 712,158 728,146 744,134 760,124 776,117 792,113 808,114
+                  824,119 840,127 856,137 872,148 888,159 904,169 920,176 936,182
+                  952,184 968,182 984,177 1000,168 1016,157 1032,145 1048,133 1064,123
+                  1080,115 1096,110 1112,109 1128,112 1144,118 1160,128 1176,139 1192,151
+                  1208,162 1224,172 1240,179 1256,183 1272,184 1288,180 1304,174 1320,164
+                  1336,152
+                "/>
+
+              <!-- 波形 2: CH2 (蓝色, 相位偏移正弦波) -->
+              <polyline fill="none" stroke="var(--channel-2)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"
+                points="
+                  40,110 56,103 72,100 88,102 104,110 120,122 136,138 152,155
+                  168,172 184,187 200,198 216,204 232,204 248,199 264,189 280,175
+                  296,159 312,143 328,128 344,116 360,108 376,105 392,108 408,117
+                  424,130 440,147 456,164 472,180 488,193 504,201 520,204 536,201
+                  552,193 568,180 584,164 600,147 616,130 632,117 648,108 664,105
+                  680,108 696,117 712,130 728,147 744,164 760,180 776,193 792,201
+                  808,204 824,201 840,193 856,180 872,164 888,147 904,130 920,117
+                  936,108 952,105 968,108 984,117 1000,130 1016,147 1032,164 1048,180
+                  1064,193 1080,201 1096,204 1112,201 1128,193 1144,180 1160,164 1176,147
+                  1192,130 1208,117 1224,108 1240,105 1256,108 1272,117 1288,130 1304,147
+                  1320,164 1336,180
+                "/>
+
+              <!-- 波形 3: CH3 (紫色, 较小振幅) -->
+              <polyline fill="none" stroke="var(--channel-3)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"
+                points="
+                  40,125 56,121 72,116 88,112 104,110 120,111 136,115 152,121
+                  168,128 184,136 200,143 216,150 232,155 248,157 264,156 280,152
+                  296,146 312,139 328,132 344,125 360,120 376,117 392,117 408,120
+                  424,125 440,132 456,139 472,147 488,153 504,157 520,157 536,155
+                  552,150 568,143 584,136 600,128 616,122 632,118 648,117 664,120
+                  680,125 696,132 712,139 728,146 744,153 760,157 776,157 792,155
+                  808,150 824,143 840,136 856,128 872,122 888,118 904,117 920,120
+                  936,125 952,132 968,139 984,147 1000,153 1016,157 1032,157 1048,155
+                  1064,150 1080,143 1096,136 1112,128 1128,122 1144,118 1160,117 1176,120
+                  1192,125 1208,132 1224,139 1240,146 1256,153 1272,157 1288,157 1304,155
+                  1320,150 1336,143
+                "/>
+
+              <!-- 波形 4: CH4 (琥珀色, 低频不规则波) -->
+              <polyline fill="none" stroke="var(--channel-4)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"
+                points="
+                  40,165 56,162 72,157 88,152 104,149 120,148 136,151 152,157
+                  168,164 184,170 200,175 216,178 232,178 248,175 264,169 280,162
+                  296,156 312,152 328,150 344,152 360,156 376,163 392,170 408,175
+                  424,178 436,178 452,175 468,169 484,162 500,156 516,152 532,151
+                  548,153 564,159 580,166 596,172 612,176 628,178 644,176 660,171
+                  676,164 692,158 708,153 724,151 740,152 756,157 772,163 788,170
+                  804,175 820,178 836,177 852,173 868,167 884,160 900,155 916,152
+                  932,151 948,154 964,160 980,166 996,172 1012,176 1028,178 1044,176
+                  1060,171 1076,164 1092,158 1108,153 1124,151 1140,153 1156,158 1172,164
+                  1188,170 1204,175 1220,178 1236,177 1252,173 1268,167 1284,160 1300,155
+                  1316,152 1332,152
+                "/>
+
+              <!-- 当前时间指示线 -->
+              <line x1="1320" y1="0" x2="1320" y2="280" stroke="var(--state-error)" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+            </svg>
           </div>
         </div>
 
       </main>
 
-      <!-- Bottom Status Bar (72px) -->
-      <footer class="flex items-center shrink-0 px-5 border-t" style="height:72px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-6 flex-1 min-w-0">
-          <!-- Acquisition Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-success)"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">采集中</span>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary);font-variant-numeric:tabular-nums">00:12:34</span>
-          </div>
-          <!-- Device Count -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            <span class="text-xs" style="color:var(--text-secondary)">设备 <strong style="color:var(--text-primary)">2</strong>/4</span>
-          </div>
-          <!-- Sample Rate -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary);font-variant-numeric:tabular-nums">150 Hz</span>
-          </div>
-          <!-- Recording Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-error);animation:pulse 2s infinite"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">录制中</span>
-            <span class="text-xs font-mono" style="color:var(--text-muted);font-family:var(--font-mono)">run-20260630-112340.csv</span>
-          </div>
+      <!-- Bottom Status Bar (32px, very compact) -->
+      <div style="height:32px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-top:1px solid var(--border-default); flex-shrink:0; gap:16px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <div style="width:6px; height:6px; border-radius:50%; background:var(--state-success);"></div>
+          <span style="font-size:10px; color:var(--text-secondary);">采集中</span>
+          <span style="font-size:10px; font-family:var(--font-mono); color:var(--text-primary); font-variant-numeric:tabular-nums;">00:12:34</span>
         </div>
-        <!-- Theme Toggle -->
-        <div class="flex items-center gap-2 ml-4 pl-4 border-l" style="border-color:var(--border-default)">
-          <span class="text-xs" style="color:var(--text-muted)">v0.2.0</span>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span style="font-size:10px; color:var(--text-secondary);">3/4</span>
         </div>
-      </footer>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+          <span style="font-size:10px; font-family:var(--font-mono); color:var(--text-primary);">100Hz</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <div style="width:6px; height:6px; border-radius:50%; background:var(--state-error); animation:pulse 2s infinite;"></div>
+          <span style="font-size:10px; color:var(--text-secondary);">REC</span>
+        </div>
+        <div style="flex:1;"></div>
+        <span style="font-size:9px; color:var(--text-muted);">v0.2.0</span>
+      </div>
 
     </div>
   </div>
+</div>
 
-  <!-- Rail Nav Active State Styles -->
-  <style>
-    .rail-nav-item {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 40px;
-      height: 40px;
-      border-radius: var(--radius-md);
-      color: var(--text-muted);
-      transition: all var(--duration-fast) var(--ease-default);
-      text-decoration: none;
-      position: relative;
-    }
-    .rail-nav-item:hover {
-      background: var(--bg-panel-strong);
-      color: var(--text-secondary);
-    }
-    .rail-nav-item[data-active="true"] {
-      background: var(--brand-primary-muted);
-      color: var(--brand-primary);
-    }
-    .rail-nav-item[data-active="true"]::before {
-      content: '';
-      position: absolute;
-      left: -12px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 3px;
-      height: 20px;
-      background: var(--brand-primary);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-  </style>
+<!-- Rail Nav Styles -->
+<style>
+  .rail-nav:hover { background: var(--bg-panel-strong); color: var(--text-secondary); }
+  .rail-nav[data-active="true"] { background: var(--brand-primary-muted); color: var(--brand-primary); }
+  .rail-nav[data-active="true"]::before {
+    content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 2px; height: 16px; background: var(--brand-primary); border-radius: 0 1px 1px 0;
+  }
+  .rail-nav { position: relative; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+</style>
 
 </body>
 </html>

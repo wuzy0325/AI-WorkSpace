@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Untitled</title>
+    <title>Wind-DAQ</title>
     <style id="theme-vars">
 /* ==========================================================================
    Wind-DAQ UI Redesign — Brand Design Tokens
@@ -168,144 +168,126 @@
       }
     </style>
 </head>
-<body class="font-sans" style="background:var(--bg-canvas);color:var(--text-primary);margin:0;overflow:hidden;height:100vh;font-family:var(--font-sans);font-size:var(--text-base)">
+<body style="margin:0; padding:0; background:#1a1a2e; display:flex; justify-content:center; align-items:center; min-height:100vh; font-family:var(--font-sans); font-size:var(--text-base); color:var(--text-primary);">
 
-  <!-- ===== App Frame (Desktop Fixed) ===== -->
-  <div class="flex h-screen w-screen overflow-hidden">
+<!-- Desktop Window Frame: 1600x900 -->
+<div style="width:1600px; height:900px; display:flex; flex-direction:column; overflow:hidden; border-radius:8px; box-shadow:0 25px 80px rgba(0,0,0,0.4); background:var(--bg-canvas); position:relative;">
 
-    <!-- Left Rail Nav (64px) -->
-    <aside class="flex flex-col items-center w-16 shrink-0 border-r" style="background:var(--bg-panel);border-color:var(--border-default)">
-      <!-- App Logo -->
-      <div class="flex items-center justify-center w-16 h-14 shrink-0 border-b" style="border-color:var(--border-default)">
-        <div class="w-7 h-7 rounded-md flex items-center justify-center text-white font-bold text-xs" style="background:var(--brand-primary)">W</div>
+  <!-- Custom Title Bar (32px) - mimics Wails/Electron window chrome -->
+  <div style="height:32px; display:flex; align-items:center; padding-left:12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; -webkit-app-region:drag;">
+    <div style="display:flex; align-items:center; gap:6px;">
+      <div style="width:14px; height:14px; border-radius:3px; background:var(--brand-primary); display:flex; align-items:center; justify-content:center;">
+        <span style="color:white; font-size:9px; font-weight:700;">W</span>
       </div>
-      <!-- Nav Items -->
-      <nav class="flex flex-col items-center gap-1 pt-3 flex-1">
-        <!-- SLOT: rail-nav-items — leaf pages inject active states here -->
-        <a class="rail-nav-item group" data-nav-key="dashboard" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="traversal" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="calibration" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="motion" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </a>
-        <a class="rail-nav-item group" data-nav-key="log" href="#">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-        </a>
-      </nav>
-      <!-- Footer -->
-      <div class="flex flex-col items-center gap-2 pb-3 pt-2 border-t w-full" style="border-color:var(--border-default)">
-        <a class="rail-nav-item group" data-nav-key="settings" href="#" title="全局设置">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-        </a>
-      </div>
-    </aside>
-
-    <!-- Main Content Area -->
-    <div class="flex flex-col flex-1 min-w-0">
-
-      <!-- Top Bar (56px) -->
-      <header class="flex items-center justify-between shrink-0 px-5 border-b" style="height:56px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-3 min-w-0">
-          <!-- SLOT: page-title -->
-          <h1 class="text-base font-semibold truncate" style="color:var(--text-primary)">Wind-DAQ</h1>
-          <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background:var(--state-success-bg);color:var(--state-success)">已连接</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors" style="background:var(--brand-primary);color:white" data-dom-id="btn-connect">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-            开始采集
-          </button>
-          <button class="p-1.5 rounded-md transition-colors hover:bg-gray-100" style="color:var(--text-secondary)" title="设备管理">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-          </button>
-        </div>
-      </header>
-
-      <!-- Content Stage -->
-      <!-- SLOT: main-content — leaf pages fill this region -->
-      <main class="flex-1 min-h-0 overflow-auto" style="background:var(--bg-canvas)">
-        <!-- Main content region -->
-      </main>
-
-      <!-- Bottom Status Bar (72px) -->
-      <footer class="flex items-center shrink-0 px-5 border-t" style="height:72px;background:var(--bg-panel);border-color:var(--border-default)">
-        <div class="flex items-center gap-6 flex-1 min-w-0">
-          <!-- Acquisition Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-success)"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">采集中</span>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">00:12:34</span>
-          </div>
-          <!-- Device Count -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            <span class="text-xs" style="color:var(--text-secondary)">设备 <strong style="color:var(--text-primary)">2</strong>/4</span>
-          </div>
-          <!-- Sample Rate -->
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
-            <span class="text-xs font-mono tabular-nums" style="color:var(--text-primary)">100 Hz</span>
-          </div>
-          <!-- Recording Status -->
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full" style="background:var(--state-error);animation:pulse 2s infinite"></div>
-            <span class="text-xs" style="color:var(--text-secondary)">录制中</span>
-            <span class="text-xs font-mono" style="color:var(--text-muted)">run-20260630-112340.csv</span>
-          </div>
-        </div>
-        <!-- Theme Toggle -->
-        <div class="flex items-center gap-2 ml-4 pl-4 border-l" style="border-color:var(--border-default)">
-          <span class="text-xs" style="color:var(--text-muted)">v0.2.0</span>
-        </div>
-      </footer>
-
+      <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Wind-DAQ</span>
+      <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">v0.2.0</span>
+    </div>
+    <!-- Window traffic lights (decorative) -->
+    <div style="margin-left:auto; display:flex; gap:6px; padding-right:12px;">
+      <div style="width:10px; height:10px; border-radius:50%; background:#FF5F57;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#FEBC2E;"></div>
+      <div style="width:10px; height:10px; border-radius:50%; background:#28C840;"></div>
     </div>
   </div>
 
-  <!-- Rail Nav Active State Styles -->
-  <style>
-    .rail-nav-item {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 40px;
-      height: 40px;
-      border-radius: var(--radius-md);
-      color: var(--text-muted);
-      transition: all var(--duration-fast) var(--ease-default);
-      text-decoration: none;
-      position: relative;
-    }
-    .rail-nav-item:hover {
-      background: var(--bg-panel-strong);
-      color: var(--text-secondary);
-    }
-    .rail-nav-item[data-active="true"] {
-      background: var(--brand-primary-muted);
-      color: var(--brand-primary);
-    }
-    .rail-nav-item[data-active="true"]::before {
-      content: '';
-      position: absolute;
-      left: -12px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 3px;
-      height: 20px;
-      background: var(--brand-primary);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-  </style>
+  <!-- App Body (868px = 900 - 32) -->
+  <div style="flex:1; display:flex; overflow:hidden;">
+
+    <!-- Left Rail Nav (48px, compact icon rail) -->
+    <div style="width:48px; display:flex; flex-direction:column; align-items:center; background:var(--bg-panel); border-right:1px solid var(--border-default); flex-shrink:0;">
+      <!-- Nav Items - compact, icon-only, 36px hit targets -->
+      <nav style="display:flex; flex-direction:column; align-items:center; gap:2px; padding-top:8px; flex:1;">
+        <!-- SLOT: rail-nav-items -->
+        <a class="rail-nav" data-nav-key="dashboard" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="traversal" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="calibration" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="motion" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a class="rail-nav" data-nav-key="log" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        </a>
+      </nav>
+      <!-- Bottom settings -->
+      <div style="padding-bottom:8px;">
+        <a class="rail-nav" data-nav-key="settings" href="#" style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--text-muted); text-decoration:none; transition:all 120ms;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <!-- Right Content Area (1552px = 1600 - 48) -->
+    <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+
+      <!-- Top Toolbar (40px, compact) -->
+      <div style="height:40px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-bottom:1px solid var(--border-default); flex-shrink:0; gap:8px;">
+        <!-- SLOT: page-title -->
+        <span style="font-size:13px; font-weight:600; color:var(--text-primary);">仪表盘</span>
+        <span style="font-size:10px; font-weight:500; padding:1px 6px; border-radius:10px; background:var(--state-success-bg); color:var(--state-success);">已连接</span>
+        <div style="flex:1;"></div>
+        <!-- Right actions -->
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">WTN1605-01</span>
+          <button data-dom-id="btn-connect" style="height:26px; padding:0 10px; display:flex; align-items:center; gap:4px; border:none; border-radius:4px; background:var(--brand-primary); color:white; font-size:11px; font-weight:500; cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            采集
+          </button>
+          <button style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:none; border-radius:4px; background:transparent; color:var(--text-secondary); cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Content Stage (796px = 868 - 40 - 32) -->
+      <!-- SLOT: main-content -->
+      <main style="flex:1; overflow:auto; background:var(--bg-canvas);">
+
+      </main>
+
+      <!-- Bottom Status Bar (32px, very compact) -->
+      <div style="height:32px; display:flex; align-items:center; padding:0 12px; background:var(--bg-panel); border-top:1px solid var(--border-default); flex-shrink:0; gap:16px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <div style="width:6px; height:6px; border-radius:50%; background:var(--state-success);"></div>
+          <span style="font-size:10px; color:var(--text-secondary);">采集中</span>
+          <span style="font-size:10px; font-family:var(--font-mono); color:var(--text-primary); font-variant-numeric:tabular-nums;">00:12:34</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span style="font-size:10px; color:var(--text-secondary);">2/4</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <svg width="11" height="11" style="color:var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+          <span style="font-size:10px; font-family:var(--font-mono); color:var(--text-primary);">100Hz</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:3px;">
+          <div style="width:6px; height:6px; border-radius:50%; background:var(--state-error); animation:pulse 2s infinite;"></div>
+          <span style="font-size:10px; color:var(--text-secondary);">REC</span>
+        </div>
+        <div style="flex:1;"></div>
+        <span style="font-size:9px; color:var(--text-muted);">v0.2.0</span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Rail Nav Styles -->
+<style>
+  .rail-nav:hover { background: var(--bg-panel-strong); color: var(--text-secondary); }
+  .rail-nav[data-active="true"] { background: var(--brand-primary-muted); color: var(--brand-primary); }
+  .rail-nav[data-active="true"]::before {
+    content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 2px; height: 16px; background: var(--brand-primary); border-radius: 0 1px 1px 0;
+  }
+  .rail-nav { position: relative; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+</style>
 
 </body>
 </html>
