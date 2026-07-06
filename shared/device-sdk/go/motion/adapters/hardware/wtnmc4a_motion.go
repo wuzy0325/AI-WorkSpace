@@ -34,7 +34,15 @@ const (
 	lvdvPulse        = 0
 	lvdvCont         = 1
 	autoDec          = 0
-	cpDir            = 0
+	// 脉冲输出方式：1 = CP/DIR 方式（WTNMC4A_CPDIR），一根脉冲线 + 一根方向线。
+	// 注意 SDK 头文件定义：WTNMC4A_CWCCW=0x0（CW/CCW 方式，两根脉冲线），
+	//                       WTNMC4A_CPDIR=0x1（CP/DIR 方式，脉冲+方向）。
+	// 历史问题：早期常量名 cpDir=0 是命名误导——值 0 实际对应 CW/CCW，
+	// 在该模式下负方向脉冲输出异常，位移台不动；把 PLSLogLever 改为 direction
+	// 反而会让正向脉冲极性反转，正向变反向。
+	// 实测对齐 Cursor DAQ（WTNMC4A_CP_DIR=1）+ PLSLogLever=direction + DIRLogLever=0
+	// 后正反方向均正常。
+	pulseModeCPDir   = 1
 	line             = 0
 	pDirection int32 = 1
 	mDirection int32 = 0
@@ -478,12 +486,18 @@ func (c *WTNMC4AMotionController) moveAxisInit(an int, targetPulse int32) error 
 		DecIncRate:   params.DecIncRate,
 	}
 
+	// 脉冲模式必须用 CP/DIR（pulseModeCPDir=1），不能用 CW/CCW（0）。
+	// PLSLogLever 必须与 Direction 同步，DIRLogLever 固定 0。
+	// 此组合对齐 Cursor DAQ 实测可用的写法（见 WTNMC4AMotionControllerFFI.ts:263-273）。
+	// 历史问题：早期用 cpDir=0（CW/CCW 方式）+ PLSLogLever=0，
+	// 导致负方向时位移台不移动；仅改 PLSLogLever=direction 不改 PulseMode
+	// 会让正向脉冲极性反转，正向变反向。
 	lcData := paraLCData{
 		AxisNum:     int32(an),
 		LVDV:        lvdvPulse,
 		DecMode:     autoDec,
-		PulseMode:   cpDir,
-		PLSLogLever: 0,
+		PulseMode:   pulseModeCPDir,
+		PLSLogLever: direction,
 		DIRLogLever: 0,
 		LineCurve:   line,
 		Direction:   direction,
@@ -623,12 +637,13 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 		DecIncRate:   params.DecIncRate,
 	}
 
+	// 脉冲模式 + PLSLogLever + DIRLogLever 配置与 moveAxisInit 一致（详见其注释）。
 	lcData := paraLCData{
 		AxisNum:     int32(an),
 		LVDV:        lvdvCont,
 		DecMode:     autoDec,
-		PulseMode:   cpDir,
-		PLSLogLever: 0,
+		PulseMode:   pulseModeCPDir,
+		PLSLogLever: direction,
 		DIRLogLever: 0,
 		LineCurve:   line,
 		Direction:   direction,

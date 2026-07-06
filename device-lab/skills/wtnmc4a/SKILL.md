@@ -1,5 +1,26 @@
 # WTNMC4A 运动控制器 — FFI/DLL 参考
 
+## 0 官方资料位置（权威源）
+
+调试 SDK 字段语义、命令格式时**优先查阅这些官方资料**，不要凭记忆推测。
+
+| 资料 | 路径 | 用途 |
+|------|------|------|
+| **官方头文件** | [device-lab/drivers/位移机构/WTNMC4A/SDK/WTNMC4A.H](file:///c:/Users/wuzhy/Documents/D/SVN/SoftWare/trunk/AI-Workspace/device-lab/drivers/位移机构/WTNMC4A/SDK/WTNMC4A.H) | 所有 `#define` 常量、结构体字段定义、函数签名的权威来源 |
+| 官方资源头文件 | [device-lab/drivers/位移机构/WTNMC4A/SDK/WTNMC4ARSV.h](file:///c:/Users/wuzhy/Documents/D/SVN/SoftWare/trunk/AI-Workspace/device-lab/drivers/位移机构/WTNMC4A/SDK/WTNMC4ARSV.h) | 资源 ID 定义 |
+| 静态链接库（32/64 位） | `device-lab/drivers/位移机构/WTNMC4A/SDK/WTNMC4A.lib` / `WTNMC4A_64.lib` | C/C++ 链接用；Go/TS 通过 FFI 调用 DLL 不需要 |
+| **官方 VC 示例** | [device-lab/drivers/位移机构/WTNMC4A/Samples/](file:///c:/Users/wuzhy/Documents/D/SVN/SoftWare/trunk/AI-Workspace/device-lab/drivers/位移机构/WTNMC4A/Samples) | 18 个完整 VC 示例，验证字段组合的最佳参考 |
+| 设备手册 | [device-lab/drivers/位移机构/ACTS1200S_WTNMC4A.pdf](file:///c:/Users/wuzhy/Documents/D/SVN/SoftWare/trunk/AI-Workspace/device-lab/drivers/位移机构/ACTS1200S_WTNMC4A.pdf) | ACTS1200S 机构 + WTNMC4A 控制器综合手册 |
+
+### 最常引用的示例
+
+| 示例 | 适用场景 |
+|------|----------|
+| `Samples/正反方向软件限位/` | 验证 `Direction` / `PLSLogLever` 字段组合 |
+| `Samples/单轴直线S曲线驱动/` | 验证 `InitLVDV` + `StartLVDV` 调用顺序 |
+| `Samples/外部信号启动电机定长或连续驱动/` | 验证定长（`LV_DV=0`）vs 连续（`LV_DV=1`）模式差异 |
+| `Samples/自动原点搜寻/` | 验证 `StartAutoHomeSearch` 用法 |
+
 ## 1 概述
 
 WTNMC4A 是 ART 北京阿尔泰公司的 4 轴步进/伺服运动控制卡。上位机通过 **koffi (FFI)** 调用官方 `WTNMC4A.dll` / `WTNMC4A_64.dll` 来操作硬件。
@@ -491,6 +512,7 @@ IDLE → LOAD_DLL → CONNECTING → CONFIGURING → READY → DISCONNECTING →
 | **速度范围** | `SetV` 的脉冲速度必须在 1~8000 之间，加速度在 125~1000000 之间。超出时 DLL 可能静默失败 |
 | **moveTo 读当前位置** | moveTo 内部需先 `ReadLP` 读当前脉冲位置，计算差值后填入 `nPulseNum`（相对脉冲数） |
 | **Direction 一致性** | `PLSLogLever` 和 `Direction` 保持相同的方向值（`WTNMC4A_PDIRECTION=1` 正方向 / `WTNMC4A_MDIRECTION=0` 反方向） |
+| **PulseMode 必须用 CP/DIR（=1）** | 官方示例虽多用 `WTNMC4A_CWCCW=0`（CW/CCW 方式），但 wind-daq 实测在该模式下负方向位移台不移动。必须用 `WTNMC4A_CPDIR=1`（CP/DIR 方式）+ `PLSLogLever=direction` + `DIRLogLever=0` 的组合，对齐 Cursor DAQ 实测可用写法。详见 [wtnmc4a_motion.go:34-48](file:///c:/Users/wuzhy/Documents/D/SVN/SoftWare/trunk/AI-Workspace/shared/device-sdk/go/motion/adapters/hardware/wtnmc4a_motion.go#L34-L48)。**反面案例**：早期常量名 `cpDir=0` 是命名误导——值 0 实际是 CW/CCW；只改 `PLSLogLever=direction` 不改 `PulseMode` 会让正向脉冲极性反转，正向变反向 |
 | **DecStop vs InstStop** | `DecStop` 减速停止（按设定的减速度），`InstStop` 立即停止（急停，不减速） |
 | **限位直接读取** | DLL 版 RR1 直接包含 `LMTP`/`LMTM` 限位状态，无需额外 MG 命令 |
 | **homed 推断** | `homed` 不是硬件回零标志，由 `abs(engineeringPos) < 0.001` 推断 |

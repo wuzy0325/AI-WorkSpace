@@ -39,14 +39,19 @@ func main() {
 	title := "Wind-DAQ"
 	width, height := 1600, 900
 	minWidth, minHeight := 1440, 900
+	// 独立窗口模式下禁用缩放，避免用户拉小到 4 列轴卡片断点以下导致 UI 错乱
+	disableResize := false
 
 	if *motionOnly || motionOnlyFromEnv {
 		mode = backend.ModeMotion
 		title = "运动控制器 - Wind-DAQ"
-		// 窗口尺寸根据实际内容调整：4 列轴卡片 + 侧边栏 + 头部约 620px 高
-		// 宽度 1280 足够 4 列卡片舒适显示，高度 640 贴合内容避免空白
+		// 独立窗口完全固定尺寸 + 禁用缩放，避免用户拉小到 4 列轴卡片断点以下导致 UI 错乱。
+		// 对齐 motion-controller 独立窗口做法（Min=Max=Default + DisableResize）。
+		// 布局依据：sidebar 244px + gap 16px + section padding 40px + 4 列卡片（lg 断点 ≥1024px）
+		// 实测 1280×640 是容纳 4 列卡片 + 头部 + 操作区的最小舒适尺寸。
 		width, height = 1280, 640
-		minWidth, minHeight = 1100, 580
+		minWidth, minHeight = 1280, 640
+		disableResize = true
 	}
 
 	app := backend.NewApp(mode)
@@ -78,7 +83,7 @@ func main() {
 		MinHeight:     minHeight,
 		URL:           "/",
 		Hidden:        false,
-		DisableResize: false,
+		DisableResize: disableResize,
 		BackgroundColour: application.RGBA{
 			Red:   7,
 			Green: 17,
