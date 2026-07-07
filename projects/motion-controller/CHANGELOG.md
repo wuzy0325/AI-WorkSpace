@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.1] - 2026-07-06
+
+### Changed
+
+- 轴配置卡片布局改进：直线轴显示"导程 mm"、旋转轴显示"传动比"，取代固定双字段，减少混淆。
+- 轴配置标签文案优化：步距角加单位"°"、"反转"→"方向反转"、"位置源"→"位置来源"、"最大速度"自适应显示为"最大转速"（旋转轴）。
+- 轴配置脉冲当量改为 computed 缓存，避免模板每次渲染重复计算。
+- 点动静步默认值从 1 改为 0.1，降低调试时意外碰撞风险。
+
+### Internal
+
+- 将 motion 配置工具函数（createDefaultAxis、computePulsesPerUnit、validateEncoderCompensation 等）提取到 workspace 级 `shared/frontend/motion-utils`，motion-controller 项目通过 re-export 使用，保留项目级 maxSpeed 默认值（低速 10）。
+
+### Verification
+
+- `go test ./...`
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- 暂无。
+
 ## [0.3.0] - 2026-07-02
 
 ### Added
