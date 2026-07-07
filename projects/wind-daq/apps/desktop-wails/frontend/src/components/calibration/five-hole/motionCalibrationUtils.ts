@@ -18,7 +18,8 @@ function generateFiveHoleSnakePointsLocal(layout: FiveHolePointLayout): Calibrat
 
   for (let bi = 0; bi < betaValues.length; bi++) {
     const beta = betaValues[bi]
-    const reverse = bi % 2 === 1
+    // 蛇形走位：奇数行反向遍历 α；默认（raster）每行都从 αMin 升序遍历
+    const reverse = layout.serpentine === true && bi % 2 === 1
     const alphas = reverse ? [...alphaValues].reverse() : alphaValues
     for (const alpha of alphas) {
       points.push({

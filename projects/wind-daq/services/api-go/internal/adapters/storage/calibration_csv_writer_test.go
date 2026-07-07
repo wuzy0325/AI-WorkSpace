@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/csv"
 	"os"
 	"path/filepath"
@@ -25,13 +26,16 @@ func TestCalibrationCsvWriterInitializeRefreshesSchemaFromConfig(t *testing.T) {
 		t.Fatalf("Flush returned error: %v", err)
 	}
 
-	file, err := os.Open(savePath)
+	raw, err := os.ReadFile(savePath)
 	if err != nil {
-		t.Fatalf("open csv: %v", err)
+		t.Fatalf("read csv: %v", err)
 	}
-	defer file.Close()
-
-	records, err := csv.NewReader(file).ReadAll()
+	// 首行应以 UTF-8 BOM 开头，避免 Excel / 中文 Windows 端打开中文表头乱码
+	if !bytes.HasPrefix(raw, utf8BOM) {
+		t.Fatalf("expected CSV to start with UTF-8 BOM, got first bytes: % x", raw[:min(len(raw), 3)])
+	}
+	// 去掉 BOM 后再交给 csv.Reader，否则 BOM 会被并入第一列
+	records, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(raw, utf8BOM))).ReadAll()
 	if err != nil {
 		t.Fatalf("read csv: %v", err)
 	}

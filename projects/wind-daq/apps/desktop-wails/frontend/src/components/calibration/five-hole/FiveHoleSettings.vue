@@ -80,6 +80,7 @@ const pointLayout = ref({
   betaMin: -30,
   betaMax: 30,
   betaStep: 5,
+  serpentine: false,
 })
 
 // 浮点容差：alphaMax-alphaMin 与整数倍 alphaStep 比较时容忍 1e-9 的累加误差
@@ -293,6 +294,7 @@ function sanitizePointLayout(layout: typeof pointLayout.value): typeof pointLayo
     betaMin: fix(layout.betaMin),
     betaMax: fix(layout.betaMax),
     betaStep: fix(layout.betaStep),
+    serpentine: layout.serpentine === true,
   }
 }
 
@@ -344,7 +346,7 @@ async function loadSavedConfig() {
     const config = res.success && res.data ? applyCalibrationPrecisionDefaults(res.data) : null
     if (!config) return
     calibrationName.value = config.name
-    if (config.fiveHoleLayout) pointLayout.value = { ...config.fiveHoleLayout }
+    if (config.fiveHoleLayout) pointLayout.value = { ...pointLayout.value, ...config.fiveHoleLayout, serpentine: config.fiveHoleLayout.serpentine === true }
     if (config.probeChannels) {
       config.probeChannels.forEach((savedCh) => {
         const existingCh = probeChannels.value.find((ch) => ch.role ? ch.role === savedCh.role : ch.name === savedCh.name)
@@ -532,6 +534,11 @@ function getChannelGroupLabel(groupKey: string): string {
                 </div>
               </div>
             </div>
+          </div>
+          <div class="layout-options">
+            <UiCheckbox v-model:checked="pointLayout.serpentine">
+              蛇形走位（奇数行反向遍历 α，减少空行程）
+            </UiCheckbox>
           </div>
         </UiPanel>
 
@@ -757,6 +764,12 @@ function getChannelGroupLabel(groupKey: string): string {
             <div class="summary-row">
               <span class="summary-label">β 范围</span>
               <span class="summary-value">{{ pointLayout.betaMin }}° ~ {{ pointLayout.betaMax }}° (步长 {{ pointLayout.betaStep }}°)</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">走位方式</span>
+              <span class="summary-value" :class="pointLayout.serpentine ? 'accent-bold' : 'muted-text'">
+                {{ pointLayout.serpentine ? '蛇形（奇数行反向）' : '逐行 raster' }}
+              </span>
             </div>
             <div class="summary-row">
               <span class="summary-label">总点数</span>
@@ -1090,6 +1103,14 @@ function getChannelGroupLabel(groupKey: string): string {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-1-5);
+}
+
+.layout-options {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-default);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
 /* 点阵预览 */

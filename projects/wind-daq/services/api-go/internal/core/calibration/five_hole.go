@@ -18,12 +18,13 @@ type FiveHoleSnakePoint struct {
 }
 
 type FiveHolePointLayout struct {
-	AlphaMin  float64 `json:"alphaMin"`
-	AlphaMax  float64 `json:"alphaMax"`
-	AlphaStep float64 `json:"alphaStep"`
-	BetaMin   float64 `json:"betaMin"`
-	BetaMax   float64 `json:"betaMax"`
-	BetaStep  float64 `json:"betaStep"`
+	AlphaMin   float64 `json:"alphaMin"`
+	AlphaMax   float64 `json:"alphaMax"`
+	AlphaStep  float64 `json:"alphaStep"`
+	BetaMin    float64 `json:"betaMin"`
+	BetaMax    float64 `json:"betaMax"`
+	BetaStep   float64 `json:"betaStep"`
+	Serpentine bool    `json:"serpentine,omitempty"`
 }
 
 func GenerateFiveHoleSnakePoints(layout FiveHolePointLayout) ([]FiveHoleSnakePoint, error) {
@@ -36,7 +37,8 @@ func GenerateFiveHoleSnakePoints(layout FiveHolePointLayout) ([]FiveHoleSnakePoi
 	id := 1
 	for bi := 0; bi < betaCount; bi++ {
 		beta := math.Round((layout.BetaMin+float64(bi)*layout.BetaStep)*10) / 10
-		reverse := bi%2 == 1
+		// 蛇形走位：奇数行反向遍历 α；默认（raster）每行都从 αMin 升序遍历
+		reverse := layout.Serpentine && bi%2 == 1
 		for ai := 0; ai < alphaCount; ai++ {
 			alphaIdx := ai
 			if reverse {

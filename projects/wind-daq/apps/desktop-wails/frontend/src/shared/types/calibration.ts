@@ -95,6 +95,8 @@ export interface FiveHolePointLayout {
   betaMin: number
   betaMax: number
   betaStep: number
+  /** 蛇形走位：奇数行反向遍历 α；默认 false 为逐行 raster 扫描 */
+  serpentine?: boolean
 }
 
 /** 三孔探针点位布局配置 */

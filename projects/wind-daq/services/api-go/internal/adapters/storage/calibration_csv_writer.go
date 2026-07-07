@@ -5,6 +5,9 @@
 //
 // 这遵循 CLAUDE.md "Constraint Clarifications" 规则 1：
 // core 定义格式描述，adapters 负责字节 I/O。
+//
+// 首行写入 UTF-8 BOM，避免 Excel / 中文 Windows 端打开中文表头（点位编号、α(°) 等）乱码。
+// 追加模式仅在文件不存在（新建）时写 BOM，覆盖模式始终写 BOM。
 package storage
 
 import (
@@ -74,6 +77,23 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 	w.path = config.SavePath
 
 	// 打开文件：覆盖模式用于按需全量导出，追加模式用于逐点采集
+	// 追加模式下，文件已存在且非空时不应再写 BOM（会出现在数据行中间），故先判断是否新建。
+	// 同时处理 0 字节残留文件：前次 Initialize 在写 BOM 前异常退出会留下空文件，
+	// 此时仍需写 BOM，否则 Excel 打开中文表头乱码。
+	isNewFile := false
+	if w.truncate {
+		isNewFile = true
+	} else {
+		// 追加模式：文件不存在或为空（异常残留）视为新建，需要写 BOM
+		if info, err := os.Stat(w.path); err != nil {
+			if os.IsNotExist(err) {
+				isNewFile = true
+			}
+		} else if info.Size() == 0 {
+			isNewFile = true
+		}
+	}
+
 	flags := os.O_CREATE | os.O_WRONLY
 	if w.truncate {
 		flags |= os.O_TRUNC
@@ -87,6 +107,14 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 
 	w.file = file
 	w.writer = csv.NewWriter(file)
+
+	// 首行写 UTF-8 BOM，避免 Excel / 中文 Windows 端打开中文表头乱码
+	// （仅在新文件时写入；追加模式遇到已有文件不再重复写）
+	if isNewFile {
+		if _, err := file.Write(utf8BOM); err != nil {
+			return fmt.Errorf("写入 BOM 失败: %w", err)
+		}
+	}
 
 	// 写入表头（列布局来自 core 的 CsvSchema）
 	w.header = w.schema.BuildHeader()
