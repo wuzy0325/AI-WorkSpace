@@ -126,7 +126,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         </div>
         <div class="axis-card__field">
           <span class="axis-card__field-label">
-            {{ axis.kind === 'ROTARY' ? '减速比' : '导程 mm' }}
+            {{ axis.kind === 'ROTARY' ? '传动比' : '导程 mm' }}
           </span>
           <UiInputNumber
             v-if="axis.kind === 'ROTARY'"

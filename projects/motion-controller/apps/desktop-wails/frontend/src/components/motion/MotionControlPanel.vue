@@ -4,7 +4,7 @@ import { useMotionStore } from '@stores/motionStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import type { AxisName } from '@shared/types/motion'
-import { getAxisThemeClass } from './motionConfigEditor'
+import { getAxisThemeClass, DEFAULT_JOG_STEP } from './motionConfigEditor'
 import MotionControllerConfig from './MotionControllerConfig.vue'
 
 const motion = useMotionStore()
@@ -30,10 +30,10 @@ const axisLocalState = reactive<Record<string, AxisLocalStateMap>>({})
 function ensureAxisLocalState(controllerId: string, axisName: AxisName): AxisLocalState {
   if (!axisLocalState[controllerId]) {
     axisLocalState[controllerId] = {
-      X: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      Y: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      Z: { targetPosition: 0, step: 1, expandedPanel: 'monitor' },
-      U: { targetPosition: 0, step: 1, expandedPanel: 'monitor' }
+      X: { targetPosition: 0, step: DEFAULT_JOG_STEP, expandedPanel: 'monitor' },
+      Y: { targetPosition: 0, step: DEFAULT_JOG_STEP, expandedPanel: 'monitor' },
+      Z: { targetPosition: 0, step: DEFAULT_JOG_STEP, expandedPanel: 'monitor' },
+      U: { targetPosition: 0, step: DEFAULT_JOG_STEP, expandedPanel: 'monitor' }
     }
   }
   return axisLocalState[controllerId][axisName]

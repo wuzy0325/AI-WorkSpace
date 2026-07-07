@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject } from 'vue'
+import { computed } from 'vue'
 import type { AxisConfig } from '@shared/types/motion'
 import { getAxisThemeClass, getAxisInfoLabel, computePulsesPerUnit } from './motionConfigEditor'
 import UiToggle from '@components/ui/UiToggle.vue'
@@ -13,8 +13,8 @@ const emit = defineEmits<{
   update: [index: number, axis: AxisConfig]
 }>()
 
-const tooltip = inject<(text: string, event: MouseEvent) => void>('showTooltip', () => {})
-const hideTooltip = inject<() => void>('hideTooltip', () => {})
+// 脉冲当量缓存：轴配置变更时才重算，避免模板每次渲染都重复计算
+const pulsesPerUnit = computed(() => computePulsesPerUnit(props.axis))
 
 const POSITIVE_NUMBER_KEYS = new Set(['lead', 'gearRatio', 'stepsPerRev', 'maxSpeed'])
 const POSITIVE_INTEGER_KEYS = new Set(['microSteps'])
@@ -49,25 +49,25 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
 
     <!-- 卡片主体 -->
     <div class="axis-card__body">
-      <!-- 第1行：轴类型 | 丝杆导程 | 传动比 | 反转 -->
+      <!-- 第1行：轴类型 | 动态(导程/传动比) | 方向反转 -->
       <div class="axis-card__row">
         <label class="axis-card__cell">
           <span class="axis-card__cell-label">类型</span>
           <select :value="axis.kind" @change="onAxisUpdate(index, 'kind', ($event.target as HTMLSelectElement).value)" class="axis-card__select config-select">
-            <option value="LINEAR">直线</option>
-            <option value="ROTARY">旋转</option>
+            <option value="LINEAR">直线轴</option>
+            <option value="ROTARY">旋转轴</option>
           </select>
         </label>
-        <label class="axis-card__cell">
-          <span class="axis-card__cell-label">导程</span>
-          <input :value="axis.lead" @input="onAxisUpdate(index, 'lead', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" :disabled="axis.kind === 'ROTARY'" min="0.1" step="0.1" />
+        <label v-if="axis.kind === 'LINEAR'" class="axis-card__cell axis-card__cell--span-2">
+          <span class="axis-card__cell-label">导程 mm</span>
+          <input :value="axis.lead" @input="onAxisUpdate(index, 'lead', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" min="0.1" step="0.1" />
         </label>
-        <label class="axis-card__cell">
+        <label v-else class="axis-card__cell axis-card__cell--span-2">
           <span class="axis-card__cell-label">传动比</span>
-          <input :value="axis.gearRatio" @input="onAxisUpdate(index, 'gearRatio', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" :disabled="axis.kind === 'LINEAR'" min="0.1" step="0.1" />
+          <input :value="axis.gearRatio" @input="onAxisUpdate(index, 'gearRatio', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" min="0.001" step="0.001" />
         </label>
         <label class="axis-card__cell axis-card__cell--toggle">
-          <span class="axis-card__cell-label">反转</span>
+          <span class="axis-card__cell-label">方向反转</span>
           <UiToggle
             size="sm"
             :model-value="axis.inverted"
@@ -77,22 +77,22 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
         </label>
       </div>
 
-      <!-- 第2行：步距角 | 细分数 | 最大速度 | 位置源 -->
+      <!-- 第2行：步距角 | 细分数 | 最大速度(动态标签) | 位置来源 -->
       <div class="axis-card__row">
         <label class="axis-card__cell">
-          <span class="axis-card__cell-label">步距角</span>
+          <span class="axis-card__cell-label">步距角 °</span>
           <input :value="axis.stepsPerRev" @input="onAxisUpdate(index, 'stepsPerRev', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" step="0.1" min="0.1" />
         </label>
         <label class="axis-card__cell">
-          <span class="axis-card__cell-label">细分</span>
+          <span class="axis-card__cell-label">细分数</span>
           <input :value="axis.microSteps" @input="onAxisUpdate(index, 'microSteps', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" min="1" step="1" />
         </label>
         <label class="axis-card__cell">
-          <span class="axis-card__cell-label">最大速度</span>
+          <span class="axis-card__cell-label">{{ axis.kind === 'ROTARY' ? '最大转速' : '最大速度' }}</span>
           <input :value="axis.maxSpeed" @input="onAxisUpdate(index, 'maxSpeed', Number(($event.target as HTMLInputElement).value))" type="number" class="axis-card__input config-input" min="1" />
         </label>
         <label class="axis-card__cell">
-          <span class="axis-card__cell-label">位置源</span>
+          <span class="axis-card__cell-label">位置来源</span>
           <select :value="axis.positionSource" @change="onAxisUpdate(index, 'positionSource', ($event.target as HTMLSelectElement).value)" class="axis-card__select config-select">
             <option value="register">寄存器</option>
             <option value="encoder">编码器</option>
@@ -103,7 +103,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
       <!-- 底部信息栏 -->
       <div class="axis-card__info">
         <span class="axis-card__info-label">{{ getAxisInfoLabel(axis) }}</span>
-        <span class="axis-card__info-value">{{ computePulsesPerUnit(axis).toFixed(2) }}</span>
+        <span class="axis-card__info-value">{{ pulsesPerUnit.toFixed(2) }}</span>
       </div>
     </div>
   </div>
@@ -216,6 +216,11 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
+}
+
+/* 动态字段占 2 列，保持 4 列 grid 视觉平衡（直线轴导程/旋转轴传动比） */
+.axis-card__cell--span-2 {
+  grid-column: span 2;
 }
 
 .axis-card__cell-label {

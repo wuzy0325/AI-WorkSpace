@@ -3,6 +3,8 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+const workspaceRoot = fileURLToPath(new URL('../../../../..', import.meta.url))
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -14,6 +16,8 @@ export default defineConfig({
       '@api': fileURLToPath(new URL('./src/api', import.meta.url)),
       '@styles': fileURLToPath(new URL('./src/styles', import.meta.url)),
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      // workspace 级共享前端模块（motion-utils 等），与 wind-daq 配置保持一致
+      '@shared-frontend': fileURLToPath(new URL('../../../../../shared/frontend', import.meta.url)),
       '@composables': fileURLToPath(new URL('./src/composables', import.meta.url)),
     },
   },
@@ -41,6 +45,10 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',
+    },
+    // 允许 dev server 访问 workspace 根目录下的共享前端模块（@shared-frontend）
+    fs: {
+      allow: [workspaceRoot],
     },
   },
 })

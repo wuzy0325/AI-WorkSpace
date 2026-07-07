@@ -4,6 +4,7 @@ import { useMotionStore } from '@stores/motionStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import type { AxisName } from '@shared/types/motion'
+import { DEFAULT_JOG_STEP } from './motionConfigEditor'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiButton from '@components/ui/UiButton.vue'
 
@@ -31,10 +32,10 @@ const axisLocalState = reactive<Record<string, AxisLocalStateMap>>({})
 function ensureAxisLocalState(controllerId: string, axisName: AxisName): AxisLocalState {
   if (!axisLocalState[controllerId]) {
     axisLocalState[controllerId] = {
-      X: { targetPosition: 0, step: 1 },
-      Y: { targetPosition: 0, step: 1 },
-      Z: { targetPosition: 0, step: 1 },
-      U: { targetPosition: 0, step: 1 }
+      X: { targetPosition: 0, step: DEFAULT_JOG_STEP },
+      Y: { targetPosition: 0, step: DEFAULT_JOG_STEP },
+      Z: { targetPosition: 0, step: DEFAULT_JOG_STEP },
+      U: { targetPosition: 0, step: DEFAULT_JOG_STEP }
     }
   }
   return axisLocalState[controllerId][axisName]
