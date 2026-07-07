@@ -90,6 +90,22 @@ CSS 自定义属性定义。每个 token 文件对应一个维度。
 ### `composables/`
 可复用的 Vue composable。如果是特定领域内使用，放在 `components/<domain>/composables/`。
 
+**强制触发条件**（满足任一即必须建立 `composables/` 目录，不再适用"小项目可省略"豁免）：
+
+- 项目内 Pinia store 数量 ≥ 4 个
+- 项目内业务领域组件（`components/<domain>/*.vue`）数量 ≥ 6 个
+- 任一 `.vue` 文件 `<script setup>` 段超过 200 行
+- 任一 `.vue` 文件 `<script setup>` 内本地函数（非 import、非 store 调用、非生命周期钩子）超过 10 个
+
+满足触发条件但未建立 `composables/` 目录的项目，`validate-frontend-structure.ps1 -CheckFileSize` 会报 error。
+
+composable 命名规则：
+
+- 文件名以 `use` 开头，PascalCase：`useAxisLimits.ts`、`useMotionHistory.ts`
+- 导出函数名与文件名一致：`export function useAxisLimits() { ... }`
+- 跨领域复用放 `src/composables/`，仅领域内复用放 `src/components/<domain>/composables/`
+- composable 必须是纯逻辑，不渲染模板，可在多个组件复用
+
 ### `router/`
 路由配置文件。
 
@@ -129,10 +145,11 @@ CSS 自定义属性定义。每个 token 文件对应一个维度。
 
 ### 大小项目适应
 
-- 小项目（1-3 个页面）：可省略 `router/`、`composables/`、`types/`、`shared/`、`spikes/`
+- 小项目（1-3 个页面）：可省略 `router/`、`types/`、`shared/`、`spikes/`
 - 小项目可以没有 `components/layout/`，layout 组件直接放在 `components/` 下
 - 极简项目只保留 `pages/`、`stores/`、`api/`、`styles/tokens/` 即可
 - `styles/tokens/` 即使只有一个文件也必须存在
+- `composables/` 的豁免不按"项目大小"判断，按上文 §composables 强制触发条件判断——store ≥ 4 或业务组件 ≥ 6 或单文件 setup > 200 行或本地函数 > 10 个时，**必须**建立该目录
 
 ### 与已有项目的关系
 

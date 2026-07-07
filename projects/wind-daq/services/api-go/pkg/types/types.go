@@ -61,7 +61,7 @@ type (
 const (
 	DeviceTypeSimulated   = device.DeviceSimulated
 	DeviceTypeDAQP1604    = device.DeviceDAQP1604
-	DeviceTypeDAQP1064Pre = device.DeviceDAQP1064Pre
+	DeviceTypeDAQP1604Pre = device.DeviceDAQP1604Pre
 	DeviceTypeDaqT1603    = device.DeviceDaqT1603
 	DeviceTypeWTNPXI      = device.DeviceWTNPXI
 	DeviceTypeDSA3217     = device.DeviceDSA3217

@@ -339,7 +339,18 @@
 - `projects/daq-t1603/README.md`
 - `projects/daq-t1603/CLAUDE.md`
 
-### 4.3 Motion Controller
+### 4.3 DAQ-P-1604
+
+项目入口：
+
+- `projects/daq-p1604/AGENTS.md`
+
+常用任务文档：
+
+- `projects/daq-p1604/README.md`
+- `projects/daq-p1604/CLAUDE.md`
+
+### 4.4 Motion Controller
 
 项目入口：
 

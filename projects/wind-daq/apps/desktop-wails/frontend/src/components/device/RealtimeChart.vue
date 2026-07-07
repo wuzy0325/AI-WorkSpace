@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
 import { useDeviceStore } from '@stores/deviceStore'
+import { buildChannelColorMap, CHANNEL_COLORS } from '@utils/channelColors'
 
 /** HTML 转义，防止用户输入的通道名嵌入 tooltip 时产生注入；
  *  虽然当前是本地桌面应用，仍按最佳实践处理不可信输入 */
@@ -29,9 +30,19 @@ const props = withDefaults(
 )
 
 const deviceStore = useDeviceStore()
-const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#f43f5e', '#06b6d4', '#f97316', '#6366f1']
 
 const history = computed(() => deviceStore.historyFor(props.deviceId))
+
+const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
+
+// 通道颜色映射：DAQ-P-1603 按 SensorType 着色（压力蓝、温度橙），
+// 其他设备沿用 8 色循环。颜色按 profile.channels 顺序生成，
+// 与用户在 ChartSelector 中选中的通道集合无关，保证 ChartSelector
+// 卡片颜色与本组件曲线颜色一致。
+const channelColorMap = computed(() => {
+  if (!profile.value) return new Map<number, string>()
+  return buildChannelColorMap(profile.value.type, profile.value.channels ?? [])
+})
 
 /**
  * 通道精度/单位/名称的元数据映射，供 tooltip formatter 使用。
@@ -40,9 +51,8 @@ const history = computed(() => deviceStore.historyFor(props.deviceId))
  */
 const channelMeta = computed(() => {
   const map = new Map<number, { precision: number; unit: string; name: string }>()
-  const profile = deviceStore.profiles.find((p) => p.id === props.deviceId)
-  if (!profile) return map
-  for (const ch of profile.channels ?? []) {
+  if (!profile.value) return map
+  for (const ch of profile.value.channels ?? []) {
     map.set(ch.index, {
       precision: typeof ch.precision === 'number' && ch.precision >= 0 ? ch.precision : 3,
       unit: ch.unit ?? '',
@@ -59,9 +69,11 @@ const option = computed(() => {
     return date.toLocaleTimeString('zh-CN', { hour12: false })
   })
   const metaMap = channelMeta.value
-  const series = props.channelIndices.map((ch, i) => {
+  const colorMap = channelColorMap.value
+  const series = props.channelIndices.map((ch) => {
     const meta = metaMap.get(ch)
     const name = meta?.name || `CH${ch + 1}`
+    const color = colorMap.get(ch) ?? CHANNEL_COLORS[0]
     return {
       // series name 直接带上单位，方便用户识别；tooltip formatter 也基于此 name
       name,
@@ -77,14 +89,14 @@ const option = computed(() => {
       smooth: true,
       symbol: 'none',
       lineStyle: { width: 1.5 },
-      itemStyle: { color: CHANNEL_COLORS[i % CHANNEL_COLORS.length] },
+      itemStyle: { color },
       areaStyle: {
         color: {
           type: 'linear',
           x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [
-            { offset: 0, color: CHANNEL_COLORS[i % CHANNEL_COLORS.length] + '40' },
-            { offset: 1, color: CHANNEL_COLORS[i % CHANNEL_COLORS.length] + '05' },
+            { offset: 0, color: color + '40' },
+            { offset: 1, color: color + '05' },
           ],
         },
       },

@@ -8,7 +8,7 @@
 //   - FrameProducer 负责按设备协议生成线上字节帧（含长度前缀、校验和），
 //     不同设备帧格式差异隔离在 producer 里，simulator 核心与协议解耦。
 //   - CommandResponder 负责处理 SCPI/文本命令并返回响应，只对命令式设备
-//     （DSA3217/T1603/P1604）有意义；流式设备（P1064Pre/WTN_PXI）可不设。
+//     （DSA3217/T1603/P1604）有意义；流式设备（P1604Pre/WTN_PXI）可不设。
 //   - 这样 Simulator 核心只关心 TCP 连接管理 + 帧注入 + 故障注入，可被
 //     任意设备类型复用，新增设备只需提供 producer + responder。
 //
@@ -114,7 +114,7 @@ type TCPSimulator struct {
 // NewTCPSimulator 构造一个模拟器实例。
 //   - producer: 帧生成器（必填）
 //   - responder: 命令响应器（可为 nil，表示流式设备连接后自动发帧）
-//   - autoStart: 连接建立后是否立即开始发帧（P1064Pre/WTN_PXI=true）
+//   - autoStart: 连接建立后是否立即开始发帧（P1604Pre/WTN_PXI=true）
 //   - channels: 通道数，传给 producer
 func NewTCPSimulator(producer FrameProducer, responder CommandResponder, autoStart bool, channels int) *TCPSimulator {
 	return &TCPSimulator{

@@ -60,37 +60,9 @@ Suggested baseline:
 powershell -File .\scripts\validate-structure.ps1
 ```
 
-## 8) Frontend-Backend Separation
+## 8) Design Principles (reference CLAUDE.md)
 
-- Frontend (Vue 3) handles **display and interaction only**: UI state management, user input validation, data visualization.
-- Backend (Go) owns **business logic and data control**: device communication, data processing, calibration algorithms, state machines.
-- The Wails binding layer is a thin bridge with no business logic. Frontend calls backend methods via Wails bindings, never touches hardware or the file system directly.
-- Rule of thumb: if a piece of logic would still work behind a web UI, it belongs in the backend.
+Design principles (frontend-backend separation, program to interfaces, readability first, boundary defense, long-term stability) are defined in [CLAUDE.md §Design Principles](../../CLAUDE.md). This document does not duplicate them.
 
-## 9) Program to Interfaces, Depend on Abstractions
-
-- All external dependencies (devices, databases, message queues) are defined as interfaces in the `ports` layer; upper layers depend only on interfaces.
-- Use the **Strategy pattern** for multi-device adaptation: devices of the same type implement a common interface (e.g. `PressureTransducer`); the business layer is unaware of specific models.
-- Use the **Observer pattern** for real-time data streams: the acquisition service publishes data, the UI layer subscribes, decoupling acquisition rate from render rate.
-- Adding a new device means adding an adapter implementation only — no changes to `core` or `usecase`.
-
-## 10) Readability First
-
-- Functions/methods do one thing; names reveal intent. If over 20 lines, consider splitting.
-- Use business-domain names, not abbreviations. `sampleRate` over `sr`, `calibrationCoeff` over `cc`.
-- Avoid nesting deeper than 3 levels. Use early returns and guard clauses to reduce indentation.
-- Comments explain **why**, never **what** — the code itself should explain what.
-
-## 11) Boundary Defense and Robustness
-
-- Validate at system boundaries (user input, device responses, external files). Trust internal callers.
-- Device communication must have timeouts, retries, and error recovery. Never assume hardware always responds normally.
-- All operations that can fail (file I/O, network, serial port) must handle errors explicitly. Silent error swallowing is prohibited.
-- Long-running acquisition tasks: implement graceful shutdown via context cancellation, never rely on force-killing.
-
-## 12) Long-Term Stability
-
-- Resources must be explicitly released (serial connections, file handles, goroutines). Use `defer` and context to guarantee cleanup.
-- Avoid frequent memory allocation on hot paths (high-frequency acquisition). Pre-allocate and reuse buffers.
-- Log state changes for post-mortem analysis. Key operations (calibration, device connect/disconnect) at info level; communication details at debug level.
-- Externalize configuration: serial port names, sample rates, device addresses — never hardcode. Read from config files or database.
+For frontend-specific coding rules, see [frontend-ai-rules.zh-CN.md](frontend-ai-rules.zh-CN.md).
+For general code structure standards, see [code-standards.zh-CN.md](code-standards.zh-CN.md).

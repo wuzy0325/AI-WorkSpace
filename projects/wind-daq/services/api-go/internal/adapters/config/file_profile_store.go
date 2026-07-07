@@ -46,6 +46,8 @@ func (s *FileProfileStore) LoadProfiles() ([]device.Profile, error) {
 		}
 	}
 
+	normalizeSensorTypes(profiles)
+
 	return profiles, nil
 }
 
@@ -53,7 +55,7 @@ var legacyTypeMap = map[string]device.Type{
 	"simulated":     device.DeviceSimulated,
 	"DAQ_P_1604":    device.DeviceDAQP1604,
 	"DAQ_T_1603":    device.DeviceDaqT1603,
-	"DAQ_P_1064Pre": device.DeviceDAQP1064Pre,
+	"DAQ_P_1604Pre": device.DeviceDAQP1604Pre,
 }
 
 func migrateDeviceTypes(content []byte, path string) bool {
@@ -74,6 +76,20 @@ func migrateDeviceTypes(content []byte, path string) bool {
 		_ = os.WriteFile(path, []byte(raw), 0o600)
 	}
 	return changed
+}
+
+// normalizeSensorTypes 确保所有 ChannelConfig.SensorType 不为空。
+// 旧 profile（DAQ-P-1604 / DAQ-T-1603 / 历史 SIMULATED）不含 sensorType 字段，
+// 反序列化后该字段为零值空字符串。统一在加载入口兜底为 "pressure"，
+// 让所有读路径拿到的 ChannelConfig 都有合法的 SensorType 值。
+func normalizeSensorTypes(profiles []device.Profile) {
+	for i := range profiles {
+		for j := range profiles[i].Channels {
+			if profiles[i].Channels[j].SensorType == "" {
+				profiles[i].Channels[j].SensorType = device.SensorPressure
+			}
+		}
+	}
 }
 
 func (s *FileProfileStore) SaveProfiles(profiles []device.Profile) error {

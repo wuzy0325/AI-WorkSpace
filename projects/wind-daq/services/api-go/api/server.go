@@ -647,6 +647,24 @@ func NewRouter(deps Deps) http.Handler {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// 注入通道元数据：仅收集 DAQ-P-1603 profile 的 channels，供 sink 生成带单位后缀的 CSV 表头
+		// （CH01_Pa/CH02_degC）。
+		//
+		// 限定 DAQ-P-1603 的原因：
+		//   - ChannelConfig.UnmarshalJSON 将缺省 SensorType 兜底为 "pressure"
+		//   - DAQ-T-1603 / WTN_PXI 等历史设备的默认 profile 未显式设置 SensorType，
+		//     但 Unit 是 "degC"——若一视同仁注入，温度通道会被误标为 _Pa，与实际单位冲突
+		//   - DAQ-P-1604 走 isWideFormat 固定表头分支，不需要 channelConfigs
+		//
+		// 录制中后连接的 DAQ-P-1603 若未在此映射中，sink 回退到通用 CH01..CHnn 表头（保持兼容）。
+		// 即便前端 body 已携带 DeviceChannels（理论上不会），也以服务端实际 profile 为准覆盖。
+		profiles := deps.DeviceManager.GetProfiles()
+		body.DeviceChannels = make(map[string][]device.ChannelConfig, len(profiles))
+		for _, profile := range profiles {
+			if profile.Type == device.DeviceDAQP1603 && len(profile.Channels) > 0 {
+				body.DeviceChannels[profile.ID] = profile.Channels
+			}
+		}
 		if err := deps.StorageRecorder.Start(body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -812,6 +830,30 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 			return
 		}
 		verify, err := deps.DeviceManager.ApplyDsa3217ScanConfig(id, body.Avg, body.Period)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": verify})
+	case r.Method == http.MethodGet && action == "daqP1603Config":
+		// DAQ-P-1603 配置回读：已连接设备从 driver 获取最新 profile，
+		// 未连接设备返回持久化的 profile（前端用于回显）。
+		config, err := deps.DeviceManager.GetDAQP1603Config(id)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": config})
+	case r.Method == http.MethodPut && action == "daqP1603Config":
+		// DAQ-P-1603 配置应用：已连接设备同步到硬件（ReleaseTask →
+		// VerifyParam → InitTask），回读 profile 验证生效值。
+		// 未连接设备返回错误（无法同步到未连接设备）。
+		var config device.Profile
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		verify, err := deps.DeviceManager.ApplyDAQP1603Config(id, config)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

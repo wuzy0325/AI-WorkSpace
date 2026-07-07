@@ -21,7 +21,7 @@ const (
 	daqT1603DefaultPort   = 9000
 
 	daqP1064PreDiscoveryPort = 1901
-	daqP1064PreDefaultPort   = 23
+	daqP1064PreDefaultPort   = 23 // 1604Pre 默认 TCP 端口（参考 Cursor DAQ 实测值，旧值 9001 不正确）
 
 	defaultScanTimeout = 3 * time.Second
 	limitedBroadcast   = "255.255.255.255"
@@ -30,7 +30,7 @@ const (
 const (
 	scanDaqP1604Prefix    = "scan-daq-p-1604"
 	scanDaqT1603Prefix    = "scan-daq-t-1603"
-	scanDaqP1064PrePrefix = "scan-daq-p-1064pre"
+	scanDaqP1604PrePrefix = "scan-daq-p-1604pre"
 )
 
 var commonDiscoveryOctets = []int{7, 9, 101, 102, 104, 200, 202, 254}
@@ -79,7 +79,7 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 	tasks := []scanTask{
 		{cmd: daqT1603DiscoveryCmd, port: daqT1603DiscoveryPort, parser: deviceDispatcher},
 		{cmd: daqP1604DiscoveryCmd, port: daqP1604DiscoveryPort, parser: deviceDispatcher},
-		{cmd: "\xFF\x01\x01\x02", port: daqP1064PreDiscoveryPort, parser: parseDaqP1064PreResponse},
+		{cmd: "\xFF\x01\x01\x02", port: daqP1064PreDiscoveryPort, parser: parseDaqP1604PreResponse},
 	}
 
 	seen := make(map[string]bool)
@@ -172,9 +172,9 @@ func deviceDispatcher(data []byte, remoteAddr string) *device.ScanResult {
 		return dispatchJsonResponse(jsonData, remoteHost)
 	}
 
-	// 二进制响应：P1064Pre
+	// 二进制响应：1604Pre
 	if len(data) >= 36 && !isASCIIPrintable(data) {
-		if result := parseDaqP1064PreResponse(data, remoteAddr); result != nil {
+		if result := parseDaqP1604PreResponse(data, remoteAddr); result != nil {
 			return result
 		}
 	}
@@ -417,7 +417,7 @@ func parseDaqT1603Csv(parts []string, remoteHost string) *device.ScanResult {
 	return result
 }
 
-func parseDaqP1064PreResponse(data []byte, remoteAddr string) *device.ScanResult {
+func parseDaqP1604PreResponse(data []byte, remoteAddr string) *device.ScanResult {
 	if len(data) < 36 {
 		return nil
 	}
@@ -427,9 +427,9 @@ func parseDaqP1064PreResponse(data []byte, remoteAddr string) *device.ScanResult
 		data[9], data[10], data[11], data[12], data[13], data[14])
 
 	return &device.ScanResult{
-		ID:         fmt.Sprintf("scan-daq-p-1064pre-%s-%d", ip, daqP1064PreDefaultPort),
-		Name:       "Discovered DAQ-P-1064Pre",
-		Type:       device.DeviceDAQP1064Pre,
+		ID:         fmt.Sprintf("scan-daq-p-1604pre-%s-%d", ip, daqP1064PreDefaultPort),
+		Name:       "Discovered DAQ-P-1604Pre",
+		Type:       device.DeviceDAQP1604Pre,
 		Available:  true,
 		Address:    ip,
 		Port:       daqP1064PreDefaultPort,

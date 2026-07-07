@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.4] - 2026-07-06
+
+### Fixed
+
+- 修复 motion 独立窗口可被拉小导致 UI 错乱的问题：禁用缩放，固定最小尺寸为 1280×640，对齐 motion-controller 做法。
+- 修复 WTNMC4A 运动控制器负方向点动/定位时位移台不移动的问题：`PLSLogLever` 未与 `Direction` 同步导致 CP 脉冲方向电平不翻转，电机驱动器收不到反向脉冲。
+
+### Verification
+
+- `go test ./internal/... ./api/...`
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+- 冒烟测试
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.3] - 2026-07-03
 
 ### Fixed

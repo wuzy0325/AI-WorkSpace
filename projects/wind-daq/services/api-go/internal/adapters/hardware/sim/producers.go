@@ -18,25 +18,25 @@ import (
 //   - DAQ-P-1604: 18（16 压力 + 大气压 + 大气温度，见 ParseStreamFrame）
 //   - DAQ-T-1603: 16（16 路热电偶，见 TCPFrameSize=64）
 //   - DSA3217:   16（扫描数据行 16 个值）
-//   - DAQ-P-1064Pre: 16（16 路压力，handleAcquisitionData 读 16×float32 LE）
+//   - DAQ-P-1604Pre: 18（16 压力 + 大气压 + 大气温度，见 P1604PreFrameProducer）
 //   - WTN_PXI:   8（WTN_PXI_REQUIRED_CHANNELS）
 
 const (
 	p1604DefaultChannels    = 18
 	t1603DefaultChannels    = 16
 	dsa3217DefaultChannels  = 16
-	p1064preDefaultChannels = 16
+	p1604preDefaultChannels = 18
 	wtnpxiDefaultChannels   = 8
 
 	// p1604StreamHeader 是 P1604 二进制帧的 5 字节头。
 	// 包含 0xAA（>0x7E）确保 IsASCIIFrame 返回 false，走二进制解析路径。
 	p1604StreamHeaderSize = 5
 
-	// p1064preCmdAcquisition 是 DAQ-P-1064Pre 采集数据命令码，
-	// adapter.processData 据此识别采集帧（CMD_ACQUISITION_CTRL=0x10）。
-	p1064preCmdAcquisition = 0x10
-	// p1064preAcqDataLen 是采集帧 data 段长度：8 字节头 + 16×float32 = 72 字节。
-	p1064preAcqDataLen = 72
+	// p1604preCmdAcquisition 是 DAQ-P-1604Pre 采集数据命令码，
+	// 参考 Cursor DAQ 实测值 0x14（旧值 0x10 设备不识别）
+	p1604preCmdAcquisition = 0x14
+	// p1604preAcqDataLen 是采集帧 data 段长度：8 字节头 + 16×float32 = 72 字节。
+	p1604preAcqDataLen = 72
 )
 
 // DefaultChannelsForType 返回设备类型的默认通道数。
@@ -48,8 +48,8 @@ func DefaultChannelsForType(devType string) int {
 		return t1603DefaultChannels
 	case "DSA3217":
 		return dsa3217DefaultChannels
-	case "DAQ-P-1064Pre":
-		return p1064preDefaultChannels
+	case "DAQ-P-1604Pre":
+		return p1604preDefaultChannels
 	case "WTN_PXI":
 		return wtnpxiDefaultChannels
 	default:
@@ -164,15 +164,25 @@ func DSA3217FrameProducer(seq int, channels int) ([]byte, error) {
 	return []byte(sb.String()), nil
 }
 
-// P1064PreFrameProducer 生成 DAQ-P-1064Pre 采集帧。
-// 线上格式：0xA5 0x5A 头 + cmd(0x10) + len(2字节大端) + 72字节data + 1字节累加和校验。
-// adapter 的 processData 按此格式组帧、校验，handleAcquisitionData 从 data[8:] 读 16×float32 LE。
-func P1064PreFrameProducer(seq int, channels int) ([]byte, error) {
+// P1604PreFrameProducer 生成 DAQ-P-1604Pre 采集帧。
+// 线上格式：0xA5 0x5A 头 + cmd(0x14) + len(2字节大端) + 72字节data + 1字节累加和校验。
+//
+// data 段布局（72 字节，与实测设备一致）：
+//
+//	[0..3]  大气压（float32 LE，单位 Pa，模拟 ~101325）
+//	[4..7]  大气温度（float32 LE，单位 °C，模拟 ~25）
+//	[8..71] 16 路压力（16×float32 LE，单位 Pa）
+//
+// adapter handleAcquisitionDataLocked 按此布局解析并分发到对应通道。
+func P1604PreFrameProducer(seq int, channels int) ([]byte, error) {
 	if channels <= 0 {
-		channels = p1064preDefaultChannels
+		channels = p1604preDefaultChannels
 	}
-	data := make([]byte, p1064preAcqDataLen)
-	// data 前 8 字节为设备头（adapter 从 offset 8 读 float32），内容不限
+	data := make([]byte, p1604preAcqDataLen)
+	// 前 8 字节为气象数据（大气压 + 大气温度）
+	binary.LittleEndian.PutUint32(data[0:4], math.Float32bits(float32(101325.0+math.Sin(float64(seq)*0.05)*50.0)))
+	binary.LittleEndian.PutUint32(data[4:8], math.Float32bits(float32(25.0+math.Sin(float64(seq)*0.03)*2.0)))
+	// data[8..71] 为 16 路压力数据
 	for i := 0; i < channels && i < 16; i++ {
 		v := float32(100.0 + float64(i)*10.0 + math.Sin(float64(seq)*0.1+float64(i))*5.0)
 		binary.LittleEndian.PutUint32(data[8+i*4:], math.Float32bits(v))
@@ -180,7 +190,7 @@ func P1064PreFrameProducer(seq int, channels int) ([]byte, error) {
 
 	// 组帧：头(2) + cmd(1) + len(2) + data + checksum(1)
 	frame := make([]byte, 0, 6+len(data))
-	frame = append(frame, 0xA5, 0x5A, p1064preCmdAcquisition)
+	frame = append(frame, 0xA5, 0x5A, p1604preCmdAcquisition)
 	frame = append(frame, byte(len(data)>>8), byte(len(data)&0xFF))
 	frame = append(frame, data...)
 	// 校验和 = 头到 data 末尾的累加和（低 8 位）

@@ -23,7 +23,7 @@ func TestSimulatedScannerReturnsMultipleDeviceTypes(t *testing.T) {
 	}{
 		{"scan-daq-p-1604-sim-192.168.1.100-9000", device.DeviceDAQP1604, "192.168.1.100", 9000},
 		{"scan-daq-t-1603-sim-192.168.1.101-9000", device.DeviceDaqT1603, "192.168.1.101", 9000},
-		{"scan-daq-p-1064pre-sim-192.168.1.102-23", device.DeviceDAQP1064Pre, "192.168.1.102", 23},
+		{"scan-daq-p-1604pre-sim-192.168.1.102-23", device.DeviceDAQP1604Pre, "192.168.1.102", 23},
 	}
 
 	for i, exp := range expected {

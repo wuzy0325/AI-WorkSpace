@@ -27,9 +27,9 @@ func (SimulatedScanner) Scan() ([]device.ScanResult, error) {
 			Port:      9000,
 		},
 		{
-			ID:        "scan-daq-p-1064pre-sim-192.168.1.102-23",
-			Name:      "Discovered DAQ-P-1064Pre (Sim)",
-			Type:      device.DeviceDAQP1064Pre,
+			ID:        "scan-daq-p-1604pre-sim-192.168.1.102-23",
+			Name:      "Discovered DAQ-P-1604Pre (Sim)",
+			Type:      device.DeviceDAQP1604Pre,
 			Available: true,
 			Address:   "192.168.1.102",
 			Port:      23,

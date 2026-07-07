@@ -25,6 +25,12 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		profile.Address = "192.168.3.101"
 		profile.Port = 9000
 		profile.Channels = defaultDAQP1604Channels()
+	case device.DeviceDAQP1603:
+		// DAQ-P-1603：DLL 内部封装 TCP，profile.Address 留空让用户在 UI 手动输入。
+		// Port 字段对 1603 无意义（DLL 自管端口），保留 0 占位。
+		// 默认采样率 500Hz，与项目 spec 中 DAQ-P-1603 采样率上限一致。
+		profile.SamplingRate = 500
+		profile.Channels = defaultDAQP1603Channels()
 	case device.DeviceDaqT1603:
 		profile.Address = "192.168.3.101"
 		profile.Port = 9000
@@ -36,10 +42,11 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 			BinaryFormat:      false,
 			AverageCount:      1,
 		}
-	case device.DeviceDAQP1064Pre:
-		profile.Address = "192.168.1.100"
-		profile.Port = 5000
-		profile.Channels = defaultDAQP1064PreChannels()
+	case device.DeviceDAQP1604Pre:
+		// 实测 DAQ-P-1604Pre 默认 IP/Port（与 Cursor DAQ 一致）
+		profile.Address = "192.168.3.232"
+		profile.Port = 23
+		profile.Channels = defaultDAQP1604PreChannels()
 	case device.DeviceWTNPXI:
 		profile.Address = "192.168.3.101"
 		profile.Port = 9000
@@ -82,7 +89,44 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 	if profile.Type == device.DeviceDaqT1603 {
 		profile.DaqT1603Config = normalizeDaqT1603Config(profile.DaqT1603Config, defaultProfile.DaqT1603Config)
 	}
+	// DAQ-P-1604Pre 兼容升级：旧 profile 仅 16 通道压力，不包含气象通道。
+	// 此处补齐 Atm (Index=16) 与 AtmTemp (Index=17)，保留用户对前 16 通道的自定义。
+	// 不整体重置 channels，避免覆盖用户已调整的精度/单位/量程。
+	if profile.Type == device.DeviceDAQP1604Pre {
+		profile.Channels = ensureP1604PreAtmosphericChannels(profile.Channels)
+	}
 	return profile
+}
+
+// ensureP1604PreAtmosphericChannels 确保 1604Pre profile 含 18 通道。
+// 行为：
+//   - 若已存在 Index==P1604PreAtmChannelIndex / Index==P1604PreAtmTempChannelIndex 的通道，认为已升级，直接返回
+//   - 否则在末尾追加缺失的气象通道（默认配置由 defaultP1604PreAtmChannel / defaultP1604PreAtmTempChannel 提供）
+//
+// 设计原则：升级是幂等的，多次调用结果一致；不破坏用户对前 16 通道的自定义。
+// 注意：判定仅看 Index 是否存在，不校验 Name/SensorType —— 用户若自定义了 Index=16 的非 Atm 通道，
+// 视为已升级跳过追加（保留用户自定义优先于自动补齐）。
+func ensureP1604PreAtmosphericChannels(channels []device.ChannelConfig) []device.ChannelConfig {
+	hasAtm := false
+	hasAtmTemp := false
+	for i := range channels {
+		switch channels[i].Index {
+		case device.P1604PreAtmChannelIndex:
+			hasAtm = true
+		case device.P1604PreAtmTempChannelIndex:
+			hasAtmTemp = true
+		}
+	}
+	if hasAtm && hasAtmTemp {
+		return channels
+	}
+	if !hasAtm {
+		channels = append(channels, defaultP1604PreAtmChannel())
+	}
+	if !hasAtmTemp {
+		channels = append(channels, defaultP1604PreAtmTempChannel())
+	}
+	return channels
 }
 
 func normalizeDaqT1603Config(config device.DaqT1603HardwareConfig, defaults device.DaqT1603HardwareConfig) device.DaqT1603HardwareConfig {
@@ -157,7 +201,75 @@ func defaultDAQP1604Channels() []device.ChannelConfig {
 	return channels
 }
 
-func defaultDAQP1064PreChannels() []device.ChannelConfig {
+// defaultDAQP1604PreChannels 生成 DAQ-P-1604Pre 的 18 通道默认配置。
+//
+// 通道布局（与 1604Pre 协议数据帧一致）：
+//   - CH1..CH16：16 路压力通道（payload[8..71]，小端 float32，单位 Pa）
+//   - Atm：大气压通道（payload[0..3]，单位 Pa，典型值 ~101325）
+//   - AtmTemp：大气温度通道（payload[4..7]，单位 °C，典型值 ~25）
+//
+// 设计说明：
+//   - 气象通道放在通道列表末尾（Index=16/17），保持 16 路压力通道索引与历史 profile 兼容
+//   - adapter handleAcquisitionDataLocked 按 Index 决定 payload 偏移：
+//     Index<16 读 payload[8+i*4]，Index==16 读 payload[0]，Index==17 读 payload[4]
+//   - 旧 profile（仅 16 通道）仍可工作，只是不显示气象数据
+//   - 气象通道构造复用 defaultP1604PreAtmChannel / defaultP1604PreAtmTempChannel，
+//     ensureP1604PreAtmosphericChannels 也引用这两个函数，保证单点修改
+func defaultDAQP1604PreChannels() []device.ChannelConfig {
+	channels := make([]device.ChannelConfig, 0, device.P1604PrePressureChannelCount+2)
+	// 16 路压力通道
+	for i := 0; i < device.P1604PrePressureChannelCount; i++ {
+		channels = append(channels, device.ChannelConfig{
+			Index:     i,
+			Name:      fmt.Sprintf("CH%d", i+1),
+			Enabled:   true,
+			Unit:      "Pa",
+			Precision: 2,
+			RangeMin:  -5000,
+			RangeMax:  5000,
+		})
+	}
+	channels = append(channels, defaultP1604PreAtmChannel())
+	channels = append(channels, defaultP1604PreAtmTempChannel())
+	return channels
+}
+
+// defaultP1604PreAtmChannel 返回 1604Pre 大气压通道默认配置。
+// 单独提取以供 defaultDAQP1604PreChannels 与 ensureP1604PreAtmosphericChannels 复用，
+// 避免通道属性散落多处导致修改时漂移。
+func defaultP1604PreAtmChannel() device.ChannelConfig {
+	return device.ChannelConfig{
+		Index:      device.P1604PreAtmChannelIndex,
+		Name:       "Atm",
+		Enabled:    true,
+		Unit:       "Pa",
+		Precision:  1,
+		RangeMin:   80000,
+		RangeMax:   120000,
+		SensorType: device.SensorPressure,
+	}
+}
+
+// defaultP1604PreAtmTempChannel 返回 1604Pre 大气温度通道默认配置。
+func defaultP1604PreAtmTempChannel() device.ChannelConfig {
+	return device.ChannelConfig{
+		Index:      device.P1604PreAtmTempChannelIndex,
+		Name:       "AtmTemp",
+		Enabled:    true,
+		Unit:       "°C",
+		Precision:  2,
+		RangeMin:   -40,
+		RangeMax:   85,
+		SensorType: device.SensorTemperature,
+	}
+}
+
+// defaultDAQP1603Channels 生成 DAQ-P-1603 的 16 通道默认配置。
+// 与 DAQ-P-1604 不同：1603 不包含大气压/温度通道（用户决策无大气数据），
+// 每通道默认单位 Pa，精度 3 位小数（适配 ±10V 量程下的小信号）。
+// 通道传感器类型（pressure/temperature）由前端 DaqP1603Config.vue 配置，
+// 不在默认 profile 中预设，避免与 ChannelConfig.SensorType 反序列化兜底逻辑冲突。
+func defaultDAQP1603Channels() []device.ChannelConfig {
 	channels := make([]device.ChannelConfig, 16)
 	for i := range channels {
 		channels[i] = device.ChannelConfig{
@@ -165,7 +277,7 @@ func defaultDAQP1064PreChannels() []device.ChannelConfig {
 			Name:      fmt.Sprintf("CH%d", i+1),
 			Enabled:   true,
 			Unit:      "Pa",
-			Precision: 2,
+			Precision: 3,
 			RangeMin:  -5000,
 			RangeMax:  5000,
 		}

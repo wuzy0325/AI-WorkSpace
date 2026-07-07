@@ -120,7 +120,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
       <div class="overview-panel__header-row flex min-w-full items-start justify-between gap-4">
         <UiSectionHeader :title="i18n.t.allDevicesOverview || '设备总览'" />
         <div class="flex items-center gap-2">
-          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="() => { (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1064Pre').forEach((p) => deviceStore.tareAllEnabled(p.id)) }">
+          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="() => { (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1604Pre').forEach((p) => deviceStore.tareAllEnabled(p.id)) }">
             {{ i18n.t.allDevicesTare || '全部归零' }}
           </UiButton>
         </div>

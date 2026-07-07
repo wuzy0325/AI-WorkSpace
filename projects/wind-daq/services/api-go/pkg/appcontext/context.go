@@ -129,7 +129,7 @@ func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) 
 	switch profile.Type {
 	case device.DeviceDAQP1604:
 		return windaqhardware.NewDAQP1604(profile), nil
-	case device.DeviceDAQP1064Pre:
+	case device.DeviceDAQP1604Pre:
 		return windaqhardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:
 		return windaqhardware.NewT1603Adapter(profile), nil

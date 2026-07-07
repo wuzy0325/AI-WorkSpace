@@ -12,7 +12,7 @@ import (
 //
 // 命令式设备（DSA3217/T1603/P1604）的 adapter 会发送 SCPI/文本命令并读取响应，
 // 模拟器需要识别这些命令并返回合理响应，同时通过 StartStream/StopStream 控制
-// 数据帧发送。流式设备（P1064Pre/WTN_PXI）不需要 responder。
+// 数据帧发送。流式设备（P1604Pre/WTN_PXI）不需要 responder。
 
 // P1604Responder 响应 DAQ-P-1604 的采集控制与单位系数命令。
 //

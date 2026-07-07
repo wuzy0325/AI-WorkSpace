@@ -323,6 +323,60 @@ func (m *DeviceManager) ApplyDsa3217ScanConfig(id string, avg int, period int) (
 	return configurable.ApplyDsa3217ScanConfig(avg, period)
 }
 
+// GetDAQP1603Config 获取 DAQ-P-1603 设备的当前配置 profile。
+//
+// 已连接设备：通过 DAQP1603Configurable 接口从驱动获取最新 profile（含硬件实际值），
+//   驱动返回的是 profile 拷贝，外部修改不会污染内部状态。
+// 未连接设备：返回持久化的 profile（与 m.profiles 中保持一致）。
+//
+// 用于前端在打开配置面板时回显当前实际生效的配置。
+func (m *DeviceManager) GetDAQP1603Config(id string) (device.Profile, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.DAQP1603Configurable); ok {
+			return configurable.GetDAQP1603Config()
+		}
+	}
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return device.Profile{}, fmt.Errorf("device profile not found: %s", id)
+	}
+	return profile, nil
+}
+
+// ApplyDAQP1603Config 同步 DAQ-P-1603 配置到硬件并回读验证。
+//
+// 已连接设备：通过 DAQP1603Configurable 接口执行 ReleaseTask → VerifyParam → InitTask
+//
+//	重新初始化任务（DLL 不支持热更新参数），随后回读 profile 验证生效值。
+//
+// 未连接设备：返回错误（无法同步到未连接设备）。
+// 注意：此方法不更新 m.profiles，调用方应通过 upsertProfile 持久化配置。
+// 设计依据：与 ApplyDsa3217ScanConfig 对齐，前端 saveDraft 流程为
+//
+//	upsertProfile（持久化）→ applyDaqP1603Config（同步硬件 + 回读）。
+func (m *DeviceManager) ApplyDAQP1603Config(id string, profile device.Profile) (device.Profile, error) {
+	m.mu.RLock()
+	dev, ok := m.devices[id]
+	m.mu.RUnlock()
+
+	if !ok {
+		return device.Profile{}, fmt.Errorf("device not connected: %s", id)
+	}
+	configurable, ok := dev.(ports.DAQP1603Configurable)
+	if !ok {
+		return device.Profile{}, fmt.Errorf("device does not support DAQ-P-1603 configuration: %s", id)
+	}
+	if err := configurable.ApplyDAQP1603Config(profile); err != nil {
+		return device.Profile{}, err
+	}
+	// 回读 driver 内部 profile（已被 ApplyDAQP1603Config 更新），
+	// 让前端能拿到硬件实际生效的采样率与通道配置。
+	return configurable.GetDAQP1603Config()
+}
+
 // Connect 连接设备（并发安全）。
 // 通过 per-id 互斥锁串行化同一设备的 Connect/Disconnect/DeleteProfile，
 // 避免对同一物理设备并发执行硬件 I/O（TCP/串口设备只允许一个会话）。

@@ -4,6 +4,10 @@
 // 由 usecase 与 adapters 层共同使用。
 package storage
 
+import (
+	"wind-daq/services/api-go/internal/core/device"
+)
+
 // StopConditions 自动停止条件。
 // 任意条件满足时，sink 应停止接收新数据并触发 StorageRecorder.Stop。
 // 全部字段为零值表示不限制（永久录制直到用户手动停止）。
@@ -46,6 +50,20 @@ type RecordingConfig struct {
 	// AutoStartOnAcquisition 是否在采集启动时自动开始录制
 	// 该字段由 UI 写入配置文件，由编排层读取并触发；sink 自身不消费。
 	AutoStartOnAcquisition bool `json:"autoStartOnAcquisition,omitempty"`
+
+	// DeviceChannels 按设备 ID 注入的通道元数据，供 sink 构造按设备类型分支的 CSV 表头。
+	//
+	// 设计动机：
+	//   - DataPayload 只携带 Channels []float64 + ChannelIndices []int，不含 Unit/Name/SensorType
+	//   - DAQ-P-1603 等设备要求 CSV 表头按通道类型动态生成（如 CH01_Pa, CH02_degC）
+	//   - sink 在首帧冻结列布局时一次性消费此映射，本会话内不再变更
+	//
+	// 注入时机：
+	//   - server.go /api/storage/start 入口从 DeviceManager.GetProfiles() 收集所有 profile 的 channels
+	//   - 录制中后连接的设备若未在此映射中，sink 回退到通用 CH01..CHnn 表头（保持兼容）
+	//
+	// 可选字段；为空时所有设备使用通用表头。
+	DeviceChannels map[string][]device.ChannelConfig `json:"deviceChannels,omitempty"`
 }
 
 // RecordingStatus 录制会话运行时状态。

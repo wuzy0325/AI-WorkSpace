@@ -223,6 +223,27 @@ export const deviceApi = {
     })
   },
 
+  // DAQ-P-1603 配置 API
+  // 与 getLatest 模式对齐：完全走本地 HTTP API（Wails 环境下 backend 启动
+  // 了 127.0.0.1:8900 本地 API server），不通过 Wails binding 调用，
+  // 避免在 backend/app.go 中新增 binding 方法并重新生成 bindings。
+  // 后端 server.go 的 daqP1603Config 端点已统一处理 Wails/HTTP 两种环境。
+  getDaqP1603Config: async (
+    id: string
+  ): Promise<{ success: boolean; data?: DeviceProfile; error?: string }> => {
+    return request<{ success: boolean; data?: DeviceProfile; error?: string }>(`/api/device/${id}/daqP1603Config`)
+  },
+
+  applyDaqP1603Config: async (
+    id: string,
+    profile: DeviceProfile
+  ): Promise<{ success: boolean; data?: DeviceProfile; error?: string }> => {
+    return request<{ success: boolean; data?: DeviceProfile; error?: string }>(`/api/device/${id}/daqP1603Config`, {
+      method: 'PUT',
+      body: JSON.stringify(profile),
+    })
+  },
+
   _snapshotListeners: new Set<SnapshotCallback>(),
   _statusListeners: new Set<StatusCallback>(),
   _subscriptions: new Map<string, DeviceSubscription>(),

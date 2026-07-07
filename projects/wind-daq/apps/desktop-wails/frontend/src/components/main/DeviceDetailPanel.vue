@@ -6,6 +6,7 @@ import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
+import { buildChannelColorMap, CHANNEL_COLORS } from '@utils/channelColors'
 import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
 import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -22,8 +23,6 @@ const props = withDefaults(
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
 const storageStore = useStorageStore()
-
-const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#f43f5e', '#06b6d4', '#f97316', '#6366f1']
 
 const profile = computed(() => deviceStore.selectedProfile)
 const snapshot = computed(() => deviceStore.selectedSnapshot)
@@ -50,8 +49,17 @@ const chartChannelIndices = computed(() => {
 /** 从全局配置读取波形图缓冲区点数，供实时趋势图使用 */
 const waveformBufferSize = computed(() => storageStore.settings.waveformBufferSize)
 
+// 通道颜色映射：与 RealtimeChart 共享同一份 buildChannelColorMap 逻辑，
+// 保证 ChartSelector 通道卡片颜色与实时曲线颜色完全一致。
+// DAQ-P-1603 按 SensorType 着色（压力蓝、温度橙），其他设备沿用 8 色循环。
+const channelColorMap = computed(() => {
+  const p = profile.value
+  if (!p) return new Map<number, string>()
+  return buildChannelColorMap(p.type, p.channels ?? [])
+})
+
 function channelColor(index: number): string {
-  return CHANNEL_COLORS[index % CHANNEL_COLORS.length]
+  return channelColorMap.value.get(index) ?? CHANNEL_COLORS[0]
 }
 
 function channelStyle(index: number): Record<string, string> {
@@ -119,7 +127,7 @@ function toggleChartVisibility(channelIndex: number): void {
 
 function shouldDisableTare(channelIndex: number): boolean {
   const type = String(profile.value?.type ?? '')
-  if (type !== 'DAQ-P-1604' && type !== 'DAQ-P-1064Pre') return true
+  if (type !== 'DAQ-P-1604' && type !== 'DAQ-P-1604Pre') return true
   return channelIndex === 16 || channelIndex === 17
 }
 
@@ -196,7 +204,7 @@ const sparkBarsMap = computed(() => {
 
 const isPressureScannerDevice = computed(() => {
   const type = profile.value?.type
-  return type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre'
+  return type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre'
 })
 
 // 预计算表格/卡片视图所需的全部通道数据，避免模板渲染时反复调用函数。

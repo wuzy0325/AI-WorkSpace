@@ -369,22 +369,22 @@ func TestT1603BinaryFrameProducer_ValidFrame(t *testing.T) {
 	}
 }
 
-// TestP1064PreFrameProducer_ValidFrame 验证 0xA5 0x5A 头与校验和格式。
-func TestP1064PreFrameProducer_ValidFrame(t *testing.T) {
-	frame, err := P1064PreFrameProducer(0, 16)
+// TestP1604PreFrameProducer_ValidFrame 验证 0xA5 0x5A 头与校验和格式。
+func TestP1604PreFrameProducer_ValidFrame(t *testing.T) {
+	frame, err := P1604PreFrameProducer(0, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if frame[0] != 0xA5 || frame[1] != 0x5A {
 		t.Fatalf("header %x %x want A5 5A", frame[0], frame[1])
 	}
-	if frame[2] != p1064preCmdAcquisition {
-		t.Fatalf("cmd %x want %x", frame[2], p1064preCmdAcquisition)
+	if frame[2] != p1604preCmdAcquisition {
+		t.Fatalf("cmd %x want %x", frame[2], p1604preCmdAcquisition)
 	}
 	// 校验和验证：累加和（头到 data 末尾）低 8 位
 	dataLen := int(binary.BigEndian.Uint16(frame[3:5]))
-	if dataLen != p1064preAcqDataLen {
-		t.Fatalf("dataLen=%d want %d", dataLen, p1064preAcqDataLen)
+	if dataLen != p1604preAcqDataLen {
+		t.Fatalf("dataLen=%d want %d", dataLen, p1604preAcqDataLen)
 	}
 	var sum byte
 	for i := 0; i < len(frame)-1; i++ {
@@ -530,7 +530,7 @@ func TestStartSimulatorForDeviceType(t *testing.T) {
 		device.DeviceDAQP1604,
 		device.DeviceDaqT1603,
 		device.DeviceDSA3217,
-		device.DeviceDAQP1064Pre,
+		device.DeviceDAQP1604Pre,
 		device.DeviceWTNPXI,
 	}
 	for _, dt := range types {

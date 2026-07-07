@@ -39,8 +39,8 @@ func ConfigForType(devType device.Type, channels int) SimulatorConfig {
 		return SimulatorConfig{T1603BinaryFrameProducer, NewT1603Responder(), false, channels}
 	case device.DeviceDSA3217:
 		return SimulatorConfig{DSA3217FrameProducer, NewDSA3217Responder(), false, channels}
-	case device.DeviceDAQP1064Pre:
-		return SimulatorConfig{P1064PreFrameProducer, nil, true, channels}
+	case device.DeviceDAQP1604Pre:
+		return SimulatorConfig{P1604PreFrameProducer, nil, true, channels}
 	case device.DeviceWTNPXI:
 		return SimulatorConfig{WTNPXIFrameProducer, nil, true, channels}
 	default:

@@ -341,7 +341,7 @@ export const useDeviceStore = defineStore('devices', () => {
    *
    * 识别策略基于通道名称（而非索引），以兼容不同设备类型：
    *   - SIMULATED / DAQ-P-1604：通道 16=大气压、17=大气温度
-   *   - DAQ-T-1603 / DAQ-P-1064Pre / DSA3217：无此类通道
+   *   - DAQ-T-1603 / DAQ-P-1604Pre / DSA3217：无此类通道
    *   - WTN_PXI：通道布局完全不同
    * 命名守卫与 migrateAtmPressureUnit 保持一致，同时支持中英文。
    */
@@ -489,6 +489,31 @@ export const useDeviceStore = defineStore('devices', () => {
     return result.data ?? null
   }
 
+  // DAQ-P-1603 配置回读：失败时返回 null，由调用方决定如何提示
+  // （打开配置面板时回读失败不阻塞编辑，仅 console.warn）。
+  async function getDaqP1603Config(id: string): Promise<DeviceProfile | null> {
+    try {
+      const result = await deviceApi.getDaqP1603Config(id)
+      return result?.data ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // DAQ-P-1603 配置应用：同步到硬件并回读验证。
+  // 失败时抛错，由 saveDraft 上层 try/catch 捕获并向用户展示错误提示。
+  // 成功时返回回读的 profile，调用方可用其更新本地 draft（拿硬件实际值）。
+  async function applyDaqP1603Config(
+    id: string,
+    profile: DeviceProfile,
+  ): Promise<DeviceProfile | null> {
+    const result = await deviceApi.applyDaqP1603Config(id, profile)
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to sync DAQ-P-1603 config')
+    }
+    return result.data ?? null
+  }
+
   // ==================== 全局采集编排 ====================
 
   const isAnyAcquiring = computed(() =>
@@ -591,5 +616,7 @@ export const useDeviceStore = defineStore('devices', () => {
     stopAcquisition,
     getDsa3217ScanConfig,
     applyDsa3217ScanConfig,
+    getDaqP1603Config,
+    applyDaqP1603Config,
   }
 })

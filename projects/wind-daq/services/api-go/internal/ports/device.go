@@ -21,6 +21,16 @@ type DaqT1603Configurable interface {
 	ApplyDaqT1603Config(config device.DaqT1603HardwareConfig) error
 }
 
+// DAQP1603Configurable DAQ-P-1603 运行时配置接口。
+// 与 DaqT1603Configurable 不同：1603 的配置直接以完整 profile 形式提交，
+// 因为采样率、通道传感器类型、单位、精度都需要在已连接时同步到 DLL
+// （通过 ReleaseTask → VerifyParam → InitTask 重新初始化任务）。
+// GetDAQP1603Config 返回当前 profile 拷贝，避免外部修改污染内部状态。
+type DAQP1603Configurable interface {
+	GetDAQP1603Config() (device.Profile, error)
+	ApplyDAQP1603Config(profile device.Profile) error
+}
+
 // DSA3217Configurable DSA3217 扫描配置接口
 type DSA3217Configurable interface {
 	GetDsa3217ScanConfig() (device.DSA3217ScanConfig, error)

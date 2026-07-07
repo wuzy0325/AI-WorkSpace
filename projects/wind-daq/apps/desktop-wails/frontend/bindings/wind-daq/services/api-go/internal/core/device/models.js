@@ -604,7 +604,7 @@ export const Type = {
     DeviceSimulated: "SIMULATED",
     DeviceDAQP1604: "DAQ-P-1604",
     DeviceDaqT1603: "DAQ-T-1603",
-    DeviceDAQP1064Pre: "DAQ-P-1064Pre",
+    DeviceDAQP1604Pre: "DAQ-P-1604Pre",
     DeviceWTNPXI: "WTN_PXI",
     DeviceDSA3217: "DSA3217",
 };

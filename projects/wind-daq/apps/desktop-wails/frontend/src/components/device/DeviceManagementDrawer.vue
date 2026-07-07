@@ -3,9 +3,10 @@ import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { deviceApi } from '@api/deviceApi'
-import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig } from '@api/types'
+import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig, ChannelSensorType } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
+import DaqP1603Config from '@components/device/DaqP1603Config.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
@@ -82,7 +83,8 @@ const PRESSURE_UNIT_OPTIONS = ['Pa', 'kPa', 'MPa', 'psi', 'kgf/cm2'] as const
 const DISCOVERED_TYPE_ICON: Record<string, string> = {
   'DAQ-T-1603': 'T',
   'DAQ-P-1604': 'P',
-  'DAQ-P-1064Pre': 'S',
+  'DAQ-P-1603': 'P',
+  'DAQ-P-1604Pre': 'S',
 }
 
 const WTN_PXI_CHANNEL_NAMES = [
@@ -93,7 +95,8 @@ const WTN_PXI_CHANNEL_NAMES = [
 const deviceTypeOptions = computed(() => [
   { value: 'SIMULATED', label: 'SIMULATED' },
   { value: 'DAQ-P-1604', label: 'DAQ-P-1604' },
-  { value: 'DAQ-P-1064Pre', label: 'DAQ-P-1064Pre' },
+  { value: 'DAQ-P-1603', label: 'DAQ-P-1603' },
+  { value: 'DAQ-P-1604Pre', label: 'DAQ-P-1604Pre' },
   { value: 'DAQ-T-1603', label: 'DAQ-T-1603' },
   { value: 'WTN_PXI', label: 'WTN_PXI' },
   { value: 'DSA3217', label: 'DSA3217' },
@@ -109,11 +112,19 @@ const pressureUnitOptions = computed(() =>
 )
 
 function isTcpType(t: DeviceType): boolean {
-  return t === 'DAQ-P-1604' || t === 'DAQ-P-1064Pre' || t === 'DAQ-T-1603' || t === 'WTN_PXI' || t === 'DSA3217'
+  // DAQ-P-1603 走 DLL FFI 路径，DLL 内部封装 TCP，对外仍属 TCP 类型
+  return t === 'DAQ-P-1604' || t === 'DAQ-P-1603' || t === 'DAQ-P-1604Pre' || t === 'DAQ-T-1603' || t === 'WTN_PXI' || t === 'DSA3217'
 }
 
 function supportsTransportSwitch(t: DeviceType): boolean {
-  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1064Pre' && t !== 'DSA3217'
+  // DAQ-P-1603 由 DLL 管理通信，不支持切串口
+  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1603' && t !== 'DAQ-P-1604Pre' && t !== 'DSA3217'
+}
+
+function isPortRequired(t: DeviceType): boolean {
+  // DAQ-P-1603 通过 WTNDAQ16H_64.dll 内部封装 TCP 通信，
+  // profile.Port 字段不使用（DLL 自管端口），无需 UI 输入与校验。
+  return t !== 'DAQ-P-1603'
 }
 
 function isTempUnitFixed(t: DeviceType): boolean {
@@ -179,7 +190,7 @@ function applyFixedUnitsIfNeeded(type: DeviceType, channels: ChannelConfig[]): v
     }
     return
   }
-  const has18 = (type === 'DAQ-P-1604' || type === 'DAQ-P-1064Pre') && channels.length >= 18
+  const has18 = (type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre') && channels.length >= 18
   if (!has18) {
     // SIMULATED 设备大气通道使用 Pa / degC，与后端默认值一致
     if (type === 'SIMULATED' && channels.length >= 18) {
@@ -245,7 +256,14 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
         { index: 16, name: '大气压', enabled: false, unit: 'Pa', precision: 2 },
         { index: 17, name: '大气温度', enabled: false, unit: 'degC', precision: 2 },
       ]
-    case 'DAQ-P-1064Pre':
+    case 'DAQ-P-1603':
+      // DAQ-P-1603：16 通道通用 AI，每通道可接入压力或温度传感器。
+      // 默认全部为压力通道（sensorType='pressure'），用户可在通道配置中切为温度。
+      // 不含大气通道（用户决策无大气数据）。
+      return Array.from({ length: 16 }, (_, i) => ({
+        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType,
+      }))
+    case 'DAQ-P-1604Pre':
     case 'DSA3217':
       return Array.from({ length: 16 }, (_, i) => ({
         index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 2, rangeMin: -5000, rangeMax: 5000,
@@ -269,11 +287,12 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
   const channels = createDefaultChannels(type)
   let address = '127.0.0.1'
   let port = 0
+  let samplingRate = 20
   if (type === 'DAQ-P-1604' || type === 'DAQ-T-1603' || type === 'WTN_PXI') {
     address = '192.168.3.101'
     port = 9000
   }
-  if (type === 'DAQ-P-1064Pre') {
+  if (type === 'DAQ-P-1604Pre') {
     address = '192.168.1.100'
     port = 5000
   }
@@ -281,9 +300,16 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     address = '192.168.1.254'
     port = 5000
   }
+  if (type === 'DAQ-P-1603') {
+    // DAQ-P-1603：DLL 自管 TCP 端口，profile.Port 不使用；
+    // IP 留空让用户在"基本信息"面板手动输入（参考代码无扫描 API）。
+    address = ''
+    port = 0
+    samplingRate = 500
+  }
   return {
     id, name: '', type, transport: 'tcp', address, port,
-    serialPort: '', baudRate: 115200, samplingRate: 20,
+    serialPort: '', baudRate: 115200, samplingRate,
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
       ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
@@ -330,7 +356,8 @@ const fieldErrors = computed<DraftFieldErrors>(() => {
       if (!Number.isFinite(p.baudRate ?? 0) || (p.baudRate ?? 0) <= 0) errors.baudRate = '波特率无效'
     } else {
       if (!p.address?.trim()) errors.address = 'IP 地址不能为空'
-      if (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0) errors.port = '端口号无效'
+      // DAQ-P-1603 由 DLL 自管端口，profile.Port 不使用，跳过端口校验
+      if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = '端口号无效'
     }
   }
   if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) errors.samplingRate = '采样率无效'
@@ -413,6 +440,11 @@ function openEdit(p: DeviceProfile) {
   if (draft.value.type === 'DSA3217' && statusForDraft.value === 'Connected') {
     void loadDsa3217Config()
   }
+  // DAQ-P-1603 已连接时回读硬件实际配置（采样率、通道传感器类型等），
+  // 让用户看到硬件当前生效的值而非持久化的旧值。回读失败不阻塞编辑。
+  if (draft.value.type === 'DAQ-P-1603' && statusForDraft.value === 'Connected') {
+    void loadDaqP1603Config()
+  }
 }
 
 async function onTypeChanged(next: DeviceType) {
@@ -442,7 +474,7 @@ async function onTypeChanged(next: DeviceType) {
   } else if (next === 'DAQ-P-1604' || next === 'WTN_PXI') {
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
-  } else if (next === 'DAQ-P-1064Pre') {
+  } else if (next === 'DAQ-P-1604Pre') {
     draft.value.address = '192.168.1.100'
     draft.value.port = 5000
   } else if (next === 'DSA3217') {
@@ -511,6 +543,17 @@ async function saveDraft() {
         }
       } catch (e) {
         console.warn('同步 DSA3217 扫描参数失败:', e)
+      }
+    }
+    // DAQ-P-1603：已连接时同步配置到硬件（ReleaseTask → VerifyParam →
+    // InitTask 重新初始化任务），并回读实际生效的 profile。同步失败时
+    // 向用户暴露错误（与 DSA3217 的 console.warn 不同：1603 的配置变更
+    // 是用户主要操作意图，失败必须明确告知）。
+    if (normalized.type === 'DAQ-P-1603' && statusForDraft.value === 'Connected') {
+      const verify = await deviceStore.applyDaqP1603Config(normalized.id, normalized)
+      if (verify) {
+        // 用硬件实际生效值更新本地 draft（避免下次保存时再次下发未生效的值）
+        draft.value = { ...draft.value, ...verify }
       }
     }
     if (normalized.autoConnect) {
@@ -584,12 +627,44 @@ async function loadDsa3217Config(): Promise<void> {
   }
 }
 
-// DSA3217 连接成功后自动读取扫描参数
+// DAQ-P-1603 回读硬件实际配置：已连接设备从 driver 获取最新 profile
+// （含采样率、通道传感器类型、单位、量程等），用其覆盖 draft 以反映硬件
+// 当前真实状态。回读失败不阻塞编辑（用户仍可基于持久化值修改）。
+async function loadDaqP1603Config(): Promise<void> {
+  try {
+    const hardware = await deviceStore.getDaqP1603Config(draft.value.id)
+    if (hardware) {
+      // 保留 draft.id（hardware.id 应与 draft.id 一致，但避免意外覆盖）
+      // 保留 draft.name（用户可见的设备名，不应被硬件值覆盖）
+      // 其余字段（samplingRate、channels 等）采用硬件实际值
+      draft.value = {
+        ...draft.value,
+        ...hardware,
+        id: draft.value.id,
+        name: draft.value.name,
+      }
+      // 同步批量同步输入框的初始值（取首个通道的量程/精度）
+      const range = getDeviceRangeFromChannels(draft.value.channels)
+      deviceRangeMin.value = range?.min ?? null
+      deviceRangeMax.value = range?.max ?? null
+      devicePrecision.value = getDevicePrecisionFromChannels(draft.value.channels)
+      // 重置 dirty 基准：回读的值就是硬件当前生效值，不算未保存变更
+      initialDraftSnapshot.value = snapshotDraft(draft.value)
+    }
+  } catch (e) {
+    console.warn('读取 DAQ-P-1603 配置失败:', e)
+  }
+}
+
+// DSA3217 / DAQ-P-1603 连接成功后自动读取硬件配置
 watch(
   statusForDraft,
   (status) => {
-    if (status === 'Connected' && draft.value.type === 'DSA3217' && editorOpen.value) {
+    if (status !== 'Connected' || !editorOpen.value) return
+    if (draft.value.type === 'DSA3217') {
       void loadDsa3217Config()
+    } else if (draft.value.type === 'DAQ-P-1603') {
+      void loadDaqP1603Config()
     }
   }
 )
@@ -1223,12 +1298,12 @@ const scanError = ref<string | null>(null)
                   </div>
 
                   <template v-if="isTcpType(draft.type) && draft.transport === 'tcp'">
-                    <div class="editor-field col-5">
+                    <div :class="['editor-field', isPortRequired(draft.type) ? 'col-5' : 'col-8']">
                       <label class="editor-label">IP 地址 *</label>
                       <UiInput v-model="draft.address" :disabled="isReadOnly" placeholder="192.168.1.100" />
                       <div v-if="fieldErrors.address" class="editor-field-error">● {{ fieldErrors.address }}</div>
                     </div>
-                    <div class="editor-field col-3">
+                    <div v-if="isPortRequired(draft.type)" class="editor-field col-3">
                       <label class="editor-label">端口 *</label>
                       <UiInputNumber v-model="draft.port" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
@@ -1297,6 +1372,18 @@ const scanError = ref<string | null>(null)
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              <!-- DAQ-P-1603 专用配置：16 通道传感器类型/单位/量程独立配置 -->
+              <div v-else-if="draft.type === 'DAQ-P-1603'" class="editor-channels-special">
+                <DaqP1603Config
+                  v-model:channels="draft.channels"
+                  v-model:sampling-rate="draft.samplingRate"
+                  v-model:range-min="deviceRangeMin"
+                  v-model:range-max="deviceRangeMax"
+                  v-model:precision="devicePrecision"
+                  :disabled="isReadOnly"
+                />
               </div>
 
               <!-- WTN_PXI 固定通道 -->

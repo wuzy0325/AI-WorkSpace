@@ -10,9 +10,44 @@ const (
 	DeviceSimulated   Type = "SIMULATED"
 	DeviceDAQP1604    Type = "DAQ-P-1604"
 	DeviceDaqT1603    Type = "DAQ-T-1603"
-	DeviceDAQP1064Pre Type = "DAQ-P-1064Pre"
+	DeviceDAQP1604Pre Type = "DAQ-P-1604Pre" // 原 DAQ-P-1064Pre，统一为 1604Pre
 	DeviceWTNPXI      Type = "WTN_PXI"
 	DeviceDSA3217     Type = "DSA3217"
+	// DeviceDAQP1603 DAQ-P-1603 16 通道通用 AI 采集设备。
+	// 与 shared SDK 的 core.DeviceDAQP1603 字面量保持一致，
+	// 驱动 bootstrap 工厂 switch 与 profile JSON 反序列化时的类型路由。
+	DeviceDAQP1603 Type = "DAQ-P-1603"
+)
+
+// ChannelSensorType 通道传感器类型枚举（仅 DAQ-P-1603 使用）。
+// 字面量与 shared/device-sdk/go/daq/core.ChannelSensorType 保持一致，
+// 保证 adapter 层做类型翻译时无需额外转换。
+type ChannelSensorType string
+
+const (
+	// SensorPressure 压力通道（Pa/kPa/MPa/mmH2O）
+	SensorPressure ChannelSensorType = "pressure"
+	// SensorTemperature 温度通道（℃/℉）
+	SensorTemperature ChannelSensorType = "temperature"
+)
+
+// DAQ-P-1604Pre 通道布局常量
+// 数据帧 payload 共 72 字节，按以下布局解析：
+//
+//	[0..3]  大气压     → P1604PreAtmChannelIndex (16)
+//	[4..7]  大气温度   → P1604PreAtmTempChannelIndex (17)
+//	[8..71] 16 路压力  → Index 0..15
+//
+// 这些常量在 adapter 数据解析、profile 默认值、normalize 升级三处共用，
+// 避免硬编码 16/17 导致修改时遗漏。提取到 core/device 包是为了让 adapter
+// 与 usecase 都能引用，同时不引入硬件协议细节（仅是通道索引约定）。
+const (
+	// P1604PreAtmChannelIndex 大气压通道在 profile.Channels 中的索引
+	P1604PreAtmChannelIndex = 16
+	// P1604PreAtmTempChannelIndex 大气温度通道在 profile.Channels 中的索引
+	P1604PreAtmTempChannelIndex = 17
+	// P1604PrePressureChannelCount 1604Pre 压力通道数量
+	P1604PrePressureChannelCount = 16
 )
 
 type Connection string
@@ -25,15 +60,22 @@ const (
 )
 
 type ChannelConfig struct {
-	Index      int     `json:"index"`
-	Name       string  `json:"name"`
-	Enabled    bool    `json:"enabled"`
-	Unit       string  `json:"unit"`
-	Precision  int     `json:"precision"`
-	RangeMin   float64 `json:"rangeMin,omitempty"`
-	RangeMax   float64 `json:"rangeMax,omitempty"`
-	TareOffset float64 `json:"tareOffset,omitempty"`
+	Index      int                `json:"index"`
+	Name       string             `json:"name"`
+	Enabled    bool               `json:"enabled"`
+	Unit       string             `json:"unit"`
+	Precision  int                `json:"precision"`
+	RangeMin   float64            `json:"rangeMin,omitempty"`
+	RangeMax   float64            `json:"rangeMax,omitempty"`
+	TareOffset float64            `json:"tareOffset,omitempty"`
+	// SensorType 通道传感器类型（pressure/temperature），仅 DAQ-P-1603 使用。
+	// 旧 profile（含 DAQ-P-1604 / DAQ-T-1603 / 历史 SIMULATED）无此字段，
+	// 反序列化时由 UnmarshalJSON 兜底为 "pressure"，
+	// 保证读路径拿到的 ChannelConfig 永远有合法 SensorType 值，避免业务层到处判空。
+	SensorType ChannelSensorType `json:"sensorType,omitempty"`
 }
+
+
 
 // Profile 设备配置档案
 // 注意：硬件特定的默认值生成已迁移到 adapters/config 包，

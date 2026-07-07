@@ -1,12 +1,30 @@
 package core
 
-import "time"
+import (
+	"time"
+)
 
 type Type string
 
 const (
 	DeviceDAQP1604 Type = "DAQ-P-1604"
 	DeviceDaqT1603 Type = "DAQ-T-1603"
+	// DeviceDAQP1603 DAQ-P-1603 16 通道通用 AI 采集设备。
+	// 与 DAQ-P-1604 并列存在：1604 为压力专用、1603 每通道可接入压力或温度传感器，
+	// 因此在 ChannelConfig 上扩展 SensorType 字段以区分通道用途。
+	DeviceDAQP1603 Type = "DAQ-P-1603"
+)
+
+// ChannelSensorType 通道传感器类型枚举。
+// 设计原因：DAQ-P-1603 每通道物理接口既可接压力传感器也可接温度传感器，
+// 单位换算与 CSV 表头生成需要按通道类型分支，使用强类型避免裸字符串散落各处。
+type ChannelSensorType string
+
+const (
+	// SensorPressure 压力通道（Pa/kPa/MPa/mmH2O）
+	SensorPressure ChannelSensorType = "pressure"
+	// SensorTemperature 温度通道（℃/℉）
+	SensorTemperature ChannelSensorType = "temperature"
 )
 
 type Connection string
@@ -19,15 +37,22 @@ const (
 )
 
 type ChannelConfig struct {
-	Index      int     `json:"index"`
-	Name       string  `json:"name"`
-	Enabled    bool    `json:"enabled"`
-	Unit       string  `json:"unit"`
-	Precision  int     `json:"precision"`
-	RangeMin   float64 `json:"rangeMin,omitempty"`
-	RangeMax   float64 `json:"rangeMax,omitempty"`
-	TareOffset float64 `json:"tareOffset,omitempty"`
+	Index      int                `json:"index"`
+	Name       string             `json:"name"`
+	Enabled    bool               `json:"enabled"`
+	Unit       string             `json:"unit"`
+	Precision  int                `json:"precision"`
+	RangeMin   float64            `json:"rangeMin,omitempty"`
+	RangeMax   float64            `json:"rangeMax,omitempty"`
+	TareOffset float64            `json:"tareOffset,omitempty"`
+	// SensorType 通道传感器类型（pressure/temperature）。
+	// 仅 DAQ-P-1603 使用：每通道物理接口可接入压力或温度传感器。
+	// 旧 profile（DAQ-P-1604 / DAQ-T-1603）无此字段，反序列化时由 UnmarshalJSON 默认填充 "pressure"，
+	// 保证向后兼容——历史设备本就以压力通道为主，零值空字符串不应进入业务逻辑。
+	SensorType ChannelSensorType `json:"sensorType,omitempty"`
 }
+
+
 
 type Profile struct {
 	ID             string                 `json:"id"`

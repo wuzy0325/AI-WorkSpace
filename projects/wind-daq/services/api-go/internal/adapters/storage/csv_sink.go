@@ -104,6 +104,10 @@ type perDeviceWriter struct {
 	fileSlug     string
 	deviceType   device.Type
 	isWideFormat bool // DAQ-P-1604 固定 18 列宽格式；其他设备用动态宽格式
+	// channelConfigs 由 RecordingConfig.DeviceChannels 在首次创建 writer 时注入的通道元数据。
+	// 仅用于生成带单位后缀的 CSV 表头（如 CH01_Pa, CH02_degC），不影响数据行写入路径。
+	// 当前仅 DAQ-P-1603 设备会注入；为空时表头退化为通用 CH01..CHnn。
+	channelConfigs []device.ChannelConfig
 	// columnIndices 记录本设备"会话内"的列布局（通道 index 顺序）。
 	// - DAQ-P-1604：在首次 openNewFileForLocked 时设为 [0..17]
 	// - 其他设备：首帧到达时按 payload.ChannelIndices 冻结；之后**滚动文件也复用同一布局**，
@@ -536,6 +540,12 @@ func (s *CSVRecordingSink) getOrCreateWriter(payload device.DataPayload) (*perDe
 		deviceType:   payload.DeviceType,
 		isWideFormat: payload.DeviceType == device.DeviceDAQP1604,
 	}
+	// 注入通道元数据（仅用于表头生成）。
+	// RecordingConfig.DeviceChannels 由 server.go /api/storage/start 入口从 DeviceManager.GetProfiles()
+	// 收集后填充；录制中后连接的设备若未在此映射中，channelConfigs 为空，表头退化为通用 CH01..CHnn。
+	if cfgs, ok := s.config.DeviceChannels[payload.DeviceID]; ok && len(cfgs) > 0 {
+		w.channelConfigs = cfgs
+	}
 	// 计算文件名 slug：sanitize(deviceName)，若与已有 writer 的 slug 冲突则
 	// 追加 -<deviceID 前 6 位> 兜底（同名设备时保证文件名唯一但仍可读）。
 	w.fileSlug = s.uniqueFileSlugLocked(payload.DeviceName, payload.DeviceID)
@@ -662,21 +672,55 @@ func buildChannelPos(columnIndices []int) []int {
 }
 
 // buildDynamicHeader 生成宽格式 CSV 表头。
-// - isWideFormat=true（DAQ-P-1604）：使用 CH01..CH16 + CH17_AtmPressure + CH18_AtmTemp（对齐 daq-p1604 项目）
-// - 其他设备：Timestamp,CH01,CH02,...,CHnn（编号根据 columnIndices+1）
-func buildDynamicHeader(columnIndices []int, isWideFormat bool) string {
+//   - isWideFormat=true（DAQ-P-1604）：使用 CH01..CH16 + CH17_AtmPressure + CH18_AtmTemp（对齐 daq-p1604 项目）
+//   - DAQ-P-1603 且 channelConfigs 非空：按 columnIndices 顺序查 channelConfigs 的 SensorType 生成带单位后缀表头
+//     （pressure→CHxx_Pa，temperature→CHxx_degC），避免直接用 Unit 字段（含 ℃ 等 ASCII 字符导致 Excel 编码问题）
+//   - 其他设备：Timestamp,CH01,CH02,...,CHnn（编号根据 columnIndices+1）
+func buildDynamicHeader(columnIndices []int, isWideFormat bool, channelConfigs []device.ChannelConfig) string {
 	if isWideFormat && len(columnIndices) == daqP1604WideFormatChannels {
 		return "Timestamp,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16,CH17_AtmPressure,CH18_AtmTemp\n"
 	}
 	var b strings.Builder
-	b.Grow(16 + len(columnIndices)*6)
+	b.Grow(16 + len(columnIndices)*10)
 	b.WriteString("Timestamp")
 	for _, idx := range columnIndices {
 		b.WriteByte(',')
 		fmt.Fprintf(&b, "CH%02d", idx+1)
+		// 仅在注入了通道元数据时追加单位后缀。
+		// 避免每次循环都线性扫描 channelConfigs：实际通道数 ≤16，开销可忽略；
+		// 若未来扩展到更多通道可改为预先构建 idx→ChannelConfig 映射。
+		if cfg := findChannelConfig(channelConfigs, idx); cfg != nil {
+			b.WriteString(channelSuffixBySensorType(cfg.SensorType))
+		}
 	}
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// findChannelConfig 在 channelConfigs 中按 Index 查找对应通道配置。
+// 通道数通常 ≤16，线性扫描开销可忽略；返回 nil 表示未找到（表头退化为无后缀）。
+func findChannelConfig(channelConfigs []device.ChannelConfig, idx int) *device.ChannelConfig {
+	for i := range channelConfigs {
+		if channelConfigs[i].Index == idx {
+			return &channelConfigs[i]
+		}
+	}
+	return nil
+}
+
+// channelSuffixBySensorType 按 SensorType 返回规范化的表头后缀。
+// 不直接用 ChannelConfig.Unit 字段（可能含 ℃ 等 ASCII 字符），
+// 统一英文标识保证 CSV 表头在 Excel 默认 GBK 解析下不乱码。
+// 未知 SensorType（不应出现，反序列化已兜底为 pressure）返回空串。
+func channelSuffixBySensorType(t device.ChannelSensorType) string {
+	switch t {
+	case device.SensorTemperature:
+		return "_degC"
+	case device.SensorPressure:
+		return "_Pa"
+	default:
+		return ""
+	}
 }
 
 // appendCSVTimestamp 追加 CSV 时间戳段（前缀单引号 + 秒级精度）。
@@ -815,7 +859,7 @@ func (s *CSVRecordingSink) writePayloadDynamicWide(buf *[]byte, w *perDeviceWrit
 
 	// 当前文件的表头（可能因为滚动而尚未写入本文件）
 	if !w.headerWritten {
-		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat)
+		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat, w.channelConfigs)
 		if _, err := w.bw.Write([]byte(hb)); err != nil {
 			return err
 		}
@@ -948,7 +992,7 @@ func (s *CSVRecordingSink) openNewFileForLocked(w *perDeviceWriter) error {
 		w.channelPos = buildChannelPos(indices)
 	}
 	if w.columnIndices != nil {
-		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat)
+		hb := buildDynamicHeader(w.columnIndices, w.isWideFormat, w.channelConfigs)
 		if _, err := file.WriteString(hb); err != nil {
 			_ = file.Close()
 			return err

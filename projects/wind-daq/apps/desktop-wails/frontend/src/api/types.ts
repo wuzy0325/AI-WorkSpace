@@ -1,4 +1,11 @@
-export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-T-1603' | 'DAQ-P-1064Pre' | 'WTN_PXI' | 'DSA3217'
+export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-P-1603' | 'DAQ-T-1603' | 'DAQ-P-1604Pre' | 'WTN_PXI' | 'DSA3217'
+
+/**
+ * 通道传感器类型（仅 DAQ-P-1603 使用）。
+ * 反序列化时由后端 ChannelConfig.UnmarshalJSON 兜底为 'pressure'，
+ * 前端读取时可假定非空；写入时显式传入 'pressure' | 'temperature'。
+ */
+export type ChannelSensorType = 'pressure' | 'temperature'
 
 export interface ChannelConfig {
   index: number
@@ -9,6 +16,8 @@ export interface ChannelConfig {
   rangeMin?: number
   rangeMax?: number
   thermocoupleType?: string
+  /** 通道传感器类型，仅 DAQ-P-1603 使用 */
+  sensorType?: ChannelSensorType
 }
 
 export interface DaqT1603HardwareConfig {

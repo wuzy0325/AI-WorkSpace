@@ -218,7 +218,7 @@ func TestParseDaqT1603ResponseShort(t *testing.T) {
 	}
 }
 
-func TestParseDaqP1064PreResponse(t *testing.T) {
+func TestParseDaqP1604PreResponse(t *testing.T) {
 	data := make([]byte, 36)
 	data[5] = 192
 	data[6] = 168
@@ -231,13 +231,13 @@ func TestParseDaqP1064PreResponse(t *testing.T) {
 	data[13] = 0xEE
 	data[14] = 0xFF
 
-	result := parseDaqP1064PreResponse(data, "192.168.1.50:1901")
+	result := parseDaqP1604PreResponse(data, "192.168.1.50:1901")
 
 	if result == nil {
 		t.Fatal("expected parsed result")
 	}
-	if result.Type != "DAQ-P-1064Pre" {
-		t.Fatalf("expected DAQ-P-1064Pre type, got %s", result.Type)
+	if result.Type != "DAQ-P-1604Pre" {
+		t.Fatalf("expected DAQ-P-1604Pre type, got %s", result.Type)
 	}
 	if result.Address != "192.168.1.50" {
 		t.Fatalf("expected address 192.168.1.50, got %s", result.Address)
@@ -250,9 +250,9 @@ func TestParseDaqP1064PreResponse(t *testing.T) {
 	}
 }
 
-func TestParseDaqP1064PreResponseTooShort(t *testing.T) {
+func TestParseDaqP1604PreResponseTooShort(t *testing.T) {
 	data := make([]byte, 10)
-	result := parseDaqP1064PreResponse(data, "192.168.1.50:1901")
+	result := parseDaqP1604PreResponse(data, "192.168.1.50:1901")
 	if result != nil {
 		t.Fatal("expected nil for short response")
 	}

@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math"
@@ -14,8 +15,10 @@ import (
 )
 
 const (
-	DAQ_P_1064PRE_DEFAULT_HOST = "192.168.1.100"
-	DAQ_P_1064PRE_DEFAULT_PORT = 9001
+	// DAQ-P-1604Pre 默认连接参数（与 Cursor DAQ 实测一致）
+	// 旧值 192.168.0.7:9001 是参考设备文档写的，实际设备是 192.168.3.232:23
+	DAQ_P_1064PRE_DEFAULT_HOST = "192.168.3.232"
+	DAQ_P_1064PRE_DEFAULT_PORT = 23
 	DAQ_P_1064PRE_TIMEOUT      = 5 * time.Second
 )
 
@@ -23,20 +26,20 @@ const (
 	CMD_READ_STATUS       = 0x00
 	CMD_READ_RANGE        = 0x01
 	CMD_READ_CALIBRATION  = 0x03
+	CMD_READ_EXT_TRIGGER  = 0x13
+	CMD_ACQUISITION_CTRL  = 0x14 // 采集控制命令码（参考 Cursor DAQ 实测值，旧值 0x10 设备不识别）
 	CMD_WRITE_RANGE       = 0x81
 	CMD_WRITE_CALIBRATION = 0x83
 	CMD_FACTORY_RESET     = 0x84
-	CMD_READ_EXT_TRIGGER  = 0x13
 	CMD_WRITE_EXT_TRIGGER = 0x93
-	CMD_ACQUISITION_CTRL  = 0x10
 )
 
 const (
-	ACQ_ACTION_STOP       = 0
-	ACQ_ACTION_SINGLE     = 1
-	ACQ_ACTION_CONTINUOUS = 2
-	ACQ_DATA_MODE_RAW     = 0
-	ACQ_DATA_MODE_CALIB   = 1
+	ACQ_ACTION_STOP       = 0x00  // 停止采集
+	ACQ_ACTION_SINGLE     = 0x01  // 单次采集
+	ACQ_ACTION_CONTINUOUS = 0xFF  // 连续采集（参考 Cursor DAQ 实测值，旧值 2 设备不识别）
+	ACQ_DATA_MODE_RAW     = 0x11  // 原始 AD 数据
+	ACQ_DATA_MODE_CALIB   = 0x13  // 校准后工程单位数据（参考 Cursor DAQ 实测值，旧值 1 设备不识别）
 )
 
 type CalibrationParams struct {
@@ -61,6 +64,8 @@ type DAQP1064Pre struct {
 	streamFrameSeq   uint32
 	pendingResponses []pendingResponse
 	recvBuffer       []byte
+	// firstDataLogged 首次收到数据时打印 hex dump，用于诊断协议格式
+	firstDataLogged  bool
 	// onError 由 DeviceManager 在 Connect 阶段注入，readLoop 异常退出时回调，
 	// 用于将设备异常（断网、读错误等）向上传播，由 DeviceManager 统一更新状态。
 	onError          func(err error)
@@ -141,14 +146,23 @@ func (d *DAQP1064Pre) Disconnect() error {
 }
 
 func (d *DAQP1064Pre) StartAcquisition() error {
+	slog.Info("1064Pre: StartAcquisition called", "device", d.profile.Name, "id", d.profile.ID)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.acquiring {
+		slog.Info("1064Pre: already acquiring, skip", "device", d.profile.Name)
 		return nil
 	}
 	if d.conn == nil {
+		slog.Error("1064Pre: StartAcquisition failed - not connected", "device", d.profile.Name)
 		return fmt.Errorf("device not connected")
+	}
+
+	// 发送启动采集命令（CMD_ACQUISITION_CTRL = 0x10）
+	// 设备收到此命令后开始推送 72B 采集数据帧，无需等待响应帧
+	if err := d.sendStartAcquisitionLocked(); err != nil {
+		return fmt.Errorf("start acquisition command failed: %w", err)
 	}
 
 	d.acquiring = true
@@ -177,6 +191,49 @@ func (d *DAQP1064Pre) stopAcquisitionLocked() error {
 	if d.status.Connection == device.ConnectionAcquiring {
 		d.status.Connection = device.ConnectionConnected
 	}
+	return nil
+}
+
+// sendStartAcquisitionLocked 发送启动采集命令（调用方已持有 d.mu 锁）
+//
+// 命令帧格式：A5 5A 0x10 len(2B BE) data(7B) checksum
+// data 载荷按 1064Pre 协议规范构造：
+//
+//	data[0] = ACQ_ACTION_CONTINUOUS (2)  // 连续采集模式
+//	data[1] = ACQ_DATA_MODE_CALIB (1)    // 工程单位（校准后数据）
+//	data[2:4] = 采样周期（ms，LE uint16） // 1000 / SamplingRate(Hz)
+//	data[4:6] = 通道使能（LE uint16）    // 0xFFFF = 全部通道
+//	data[6] = 气象数据开关（1 = 包含）    // 含大气压/温度
+func (d *DAQP1064Pre) sendStartAcquisitionLocked() error {
+	samplingRate := d.profile.SamplingRate
+	if samplingRate <= 0 {
+		samplingRate = 10 // 默认 10Hz
+	}
+	periodMs := uint16(1000 / samplingRate)
+
+	data := make([]byte, 7)
+	data[0] = ACQ_ACTION_CONTINUOUS
+	data[1] = ACQ_DATA_MODE_CALIB
+	binary.LittleEndian.PutUint16(data[2:4], periodMs)
+	binary.LittleEndian.PutUint16(data[4:6], 0xFFFF)
+	data[6] = 1
+
+	frame := d.buildFrame(CMD_ACQUISITION_CTRL, data)
+
+	slog.Info("1064Pre: sending acquisition start frame",
+		"device", d.profile.Name,
+		"hex", hex.EncodeToString(frame),
+		"samplingRate", samplingRate, "periodMs", periodMs)
+
+	_ = d.conn.SetWriteDeadline(time.Now().Add(DAQ_P_1064PRE_TIMEOUT))
+	defer d.conn.SetWriteDeadline(time.Time{})
+	_, err := d.conn.Write(frame)
+	if err != nil {
+		slog.Error("1064Pre: send start acquisition command failed",
+			"device", d.profile.Name, "error", err)
+		return err
+	}
+	slog.Info("1064Pre: acquisition start command sent", "device", d.profile.Name)
 	return nil
 }
 
@@ -281,8 +338,25 @@ func (d *DAQP1064Pre) processData(data []byte) {
 	d.mu.Lock()
 	d.recvBuffer = append(d.recvBuffer, data...)
 
+	if !d.firstDataLogged && len(d.recvBuffer) > 0 {
+		d.firstDataLogged = true
+		dumpLen := len(d.recvBuffer)
+		if dumpLen > 128 {
+			dumpLen = 128
+		}
+		slog.Info("1064Pre: first data received after start",
+			"device", d.profile.Name,
+			"totalBytes", len(d.recvBuffer),
+			"hex", hex.EncodeToString(d.recvBuffer[:dumpLen]))
+	}
+
 	for len(d.recvBuffer) >= 6 {
 		if d.recvBuffer[0] != 0xA5 || d.recvBuffer[1] != 0x5A {
+			if len(d.recvBuffer) >= 2 {
+				slog.Debug("1064Pre: bad frame header, resyncing",
+					"device", d.profile.Name, "buf0", d.recvBuffer[0], "buf1", d.recvBuffer[1],
+					"buf[0:2] hex", hex.EncodeToString(d.recvBuffer[:2]))
+			}
 			d.recvBuffer = d.recvBuffer[1:]
 			continue
 		}
@@ -304,11 +378,15 @@ func (d *DAQP1064Pre) processData(data []byte) {
 			slog.Debug("DAQ-P-1064Pre checksum mismatch", "device", d.profile.ID)
 		}
 
-		// 注意：此处已持有 d.mu.Lock（写锁）。
-		// handleAcquisitionData 必须以 "Locked" 变体调用，避免再次 RLock 导致死锁。
-		// Go 的 sync.RWMutex 不支持递归读锁：同一 goroutine 持有 Lock 后再 RLock 会永久阻塞。
 		if cmd == CMD_ACQUISITION_CTRL && d.acquiring && dataLen == 72 {
+			slog.Debug("1064Pre: received valid data frame",
+				"device", d.profile.Name, "dataLen", dataLen)
 			d.handleAcquisitionDataLocked(payload)
+		} else {
+			if d.acquiring {
+				slog.Debug("1064Pre: non-data frame ignored",
+					"device", d.profile.Name, "cmd", cmd, "dataLen", dataLen, "expectedCmd", CMD_ACQUISITION_CTRL, "expectedLen", 72)
+			}
 		}
 
 		d.recvBuffer = d.recvBuffer[frameLen:]
@@ -326,6 +404,20 @@ func (d *DAQP1064Pre) calculateChecksum(data []byte) byte {
 
 // handleAcquisitionDataLocked 在调用方已持有 d.mu.Lock 的前提下运行。
 // 不再内部 RLock，避免与父 processData 的 Lock 形成自死锁。
+//
+// 1604Pre 数据帧 payload 布局（72 字节）：
+//
+//	[0..3]  大气压（float32 LE，单位 Pa）
+//	[4..7]  大气温度（float32 LE，单位 °C）
+//	[8..71] 16 路压力（16×float32 LE，单位 Pa）
+//
+// 通道映射（与 defaultDAQP1604PreChannels 一致）：
+//
+//	Index 0..15 → payload[8+i*4]  压力通道
+//	Index 16    → payload[0..3]   大气压
+//	Index 17    → payload[4..7]   大气温度
+//
+// 兼容性：若 profile.Channels 仅 16 通道（历史 profile），不读气象数据，不影响功能。
 func (d *DAQP1064Pre) handleAcquisitionDataLocked(payload []byte) {
 	if len(payload) < 72 {
 		return
@@ -343,12 +435,22 @@ func (d *DAQP1064Pre) handleAcquisitionDataLocked(payload []byte) {
 	values := make([]float64, 0, len(channels))
 	indices := make([]int, 0, len(channels))
 
-	for i := 0; i < 16 && i < len(channels); i++ {
+	for i := 0; i < len(channels); i++ {
 		if !channels[i].Enabled {
 			continue
 		}
-		val := float64(readFloat32LE(payload, 8+i*4))
-		indices = append(indices, i)
+		var val float64
+		switch channels[i].Index {
+		case device.P1604PreAtmChannelIndex: // 大气压
+			val = float64(readFloat32LE(payload, 0))
+		case device.P1604PreAtmTempChannelIndex: // 大气温度
+			val = float64(readFloat32LE(payload, 4))
+		default: // 16 路压力通道（Index 0..15）
+			if channels[i].Index >= 0 && channels[i].Index < device.P1604PrePressureChannelCount {
+				val = float64(readFloat32LE(payload, 8+channels[i].Index*4))
+			}
+		}
+		indices = append(indices, channels[i].Index)
 		values = append(values, val)
 	}
 
