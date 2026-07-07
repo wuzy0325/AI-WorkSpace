@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -16,7 +17,18 @@ type RuntimeAccess interface {
 	MoveToPosition(axis MotionAxisConfig, position float64) error
 	// WaitForMotionComplete 等待所有轴运动完成
 	WaitForMotionComplete() error
+	// StopMotion 立即停止所有运动轴。暂停时用于打断当前点位运动，
+	// 使 WaitForMotionComplete 尽快返回。
+	StopMotion() error
 }
+
+// errPointAborted 暂停打断当前测点的哨兵错误。
+// runCalibrationLoop 识别此错误后回退循环索引以重跑同一点，
+// 不计入 pointErrorCount。
+var errPointAborted = fmt.Errorf("测点被暂停打断")
+
+// ErrPointAborted 对外暴露的暂停打断错误（供测试与上层识别）。
+var ErrPointAborted = errPointAborted
 
 // AutomaticCalibration 自动循环校准引擎
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
@@ -105,6 +117,17 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 		log.Printf("[AutomaticCalibration] 处理测点 %d/%d, 坐标: %v", i+1, len(a.config.Points), point.Coordinates)
 
 		if err := a.processPoint(algorithm, point, i); err != nil {
+			// 暂停打断：回退索引以重跑同一点，不计入错误计数。
+			// 循环顶部会再次调用 waitWhilePaused 阻塞到恢复，无需在此重复等待。
+			if errors.Is(err, ErrPointAborted) {
+				log.Printf("[AutomaticCalibration] 测点 %d 被暂停打断，等待恢复后重跑", i+1)
+				if !a.IsRunning() {
+					return nil
+				}
+				i-- // 抵消循环自增，重跑该点
+				continue
+			}
+
 			log.Printf("[AutomaticCalibration] 测点 %d 采集失败: %v", i+1, err)
 			pointErrorCount++
 			lastPointError = err.Error()
@@ -135,14 +158,30 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 		return fmt.Errorf("移动到测点失败: %w", err)
 	}
 
+	// 移动完成后检查暂停——运动可能在过程中被 Pause 打断，
+	// StopMotion 会使 WaitForMotionComplete 提前返回，此处捕获暂停态。
+	if err := a.checkPausedAndAbort(); err != nil {
+		return err
+	}
+
 	// 2. 等待驻留时间（让压力稳定）
 	if a.config.DwellTimeMs > 0 {
 		time.Sleep(time.Duration(a.config.DwellTimeMs) * time.Millisecond)
 	}
 
+	// 驻留后检查暂停
+	if err := a.checkPausedAndAbort(); err != nil {
+		return err
+	}
+
 	// 3. 等待球罐闸门条件（如果启用）
 	if err := a.waitForSphereTankGateIfNeeded(); err != nil {
 		return fmt.Errorf("球罐闸门等待失败: %w", err)
+	}
+
+	// 闸门条件满足后、采集前检查暂停
+	if err := a.checkPausedAndAbort(); err != nil {
+		return err
 	}
 
 	// 4. 采集数据
@@ -166,6 +205,23 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	a.sendProgressUpdate(point, dataPoint)
 
 	return nil
+}
+
+// checkPausedAndAbort 在点位流程阶段切换处检查暂停态。
+// 若已暂停：调用 runtime.StopMotion() 确保运动已停止（幂等），返回 errPointAborted。
+// 调用方据此中止当前点并回退循环索引以重跑该点。
+func (a *AutomaticCalibration) checkPausedAndAbort() error {
+	a.mu.RLock()
+	paused := a.isPaused
+	a.mu.RUnlock()
+	if !paused {
+		return nil
+	}
+	// 已暂停，确保运动停止（Pause 路径通常已下发，此处为防御性幂等调用）。
+	if a.runtime != nil {
+		_ = a.runtime.StopMotion()
+	}
+	return errPointAborted
 }
 
 // moveToPoint 移动到指定点位
@@ -234,6 +290,9 @@ func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []
 }
 
 // waitForSphereTankGateIfNeeded 等待球罐闸门条件
+//
+// 总超时取 gate.TimeoutSec，<=0 时使用默认 300 秒（5 分钟）。
+// 超时后停止校准并返回错误，避免无限等待卡死整个流程。
 func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 	gate := NormalizeSphereTankGateConfig(a.config)
 	if gate == nil || !gate.Enabled {
@@ -244,7 +303,12 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 		return err
 	}
 
-	maxWaitMs := 300000 // 5分钟超时
+	// 球罐判定总超时（秒）。0 表示使用默认 300 秒。
+	maxWaitSec := gate.TimeoutSec
+	if maxWaitSec <= 0 {
+		maxWaitSec = 300
+	}
+	maxWaitMs := maxWaitSec * 1000
 	gateWaitStartAt := time.Now().UnixMilli()
 
 	for a.IsRunning() {
@@ -269,7 +333,7 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 
 		if time.Now().UnixMilli()-gateWaitStartAt > int64(maxWaitMs) {
 			a.Stop()
-			return fmt.Errorf("球罐判定等待超时（%d 秒）", maxWaitMs/1000)
+			return fmt.Errorf("球罐判定等待超时（%d 秒）", maxWaitSec)
 		}
 
 		time.Sleep(100 * time.Millisecond)
@@ -328,13 +392,26 @@ func normalizeAxisName(name string) string {
 }
 
 // Pause 暂停校准
+//
+// 立即下发运动停止命令（普通 Stop，非急停），打断当前点位的运动；
+// 当前正在执行的测点被视为未完成，恢复时由 runCalibrationLoop 回退索引重跑该点。
+// 点间暂停（当前点已完成）时不影响已采集数据。
 func (a *AutomaticCalibration) Pause() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if !a.isRunning {
+		a.mu.Unlock()
 		return
 	}
 	a.isPaused = true
+	runtime := a.runtime
+	a.mu.Unlock()
+
+	// 立即停止运动（幂等：点间暂停时无运动轴也会返回 nil）
+	if runtime != nil {
+		if err := runtime.StopMotion(); err != nil {
+			log.Printf("[AutomaticCalibration] 暂停时停止运动失败: %v", err)
+		}
+	}
 	log.Printf("[AutomaticCalibration] 已暂停")
 }
 

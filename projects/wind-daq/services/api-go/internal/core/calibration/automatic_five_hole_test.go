@@ -8,8 +8,9 @@ import (
 )
 
 type fakeCalibrationRuntime struct {
-	values map[string]float64
-	moves  []string
+	values    map[string]float64
+	moves     []string
+	stopCalls int
 }
 
 func TestFiveHoleValidateConfigRequiresCursorDAQReferenceChannels(t *testing.T) {
@@ -115,6 +116,11 @@ func (f *fakeCalibrationRuntime) MoveToPosition(axis MotionAxisConfig, position 
 }
 
 func (f *fakeCalibrationRuntime) WaitForMotionComplete() error { return nil }
+
+func (f *fakeCalibrationRuntime) StopMotion() error {
+	f.stopCalls++
+	return nil
+}
 
 func completeFiveHoleProbeChannels() []ProbeChannel {
 	return []ProbeChannel{

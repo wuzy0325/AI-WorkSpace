@@ -50,6 +50,7 @@ import {
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
+import { useChannelBatchOperations } from '@composables/useChannelBatchOperations'
 
 const emit = defineEmits<{
   close: []
@@ -158,6 +159,19 @@ const motionAxes = ref<MotionAxisConfig[]>([
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
 
+// 批量操作：统一选择设备 + 通道号自动递增填充（仿照遍历测试模块）
+const {
+  batchDeviceId,
+  autoFillStartIndex,
+  applyDeviceToAll,
+  autoFillChannelIndices,
+} = useChannelBatchOperations(probeChannels)
+
+// 设备下拉选项（批量工具栏与单通道选择共用）
+const deviceOptions = computed(() =>
+  deviceList.value.map((d) => ({ label: `${d.name} (${d.type})`, value: d.id })),
+)
+
 const REQUIRED_CHANNEL_ROLES = [
   'fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5',
   'fiveHole.pAtm', 'fiveHole.tAtm', 'fiveHole.pTotal', 'fiveHole.pTunnelStatic', 'fiveHole.tTunnel',
@@ -243,8 +257,8 @@ function nextStep() { if (currentStep.value < steps.value.length - 1) currentSte
 
 function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
-// generatePoints 是同步函数（蛇形顺序点位生成），调用处无需 await
-function generatePoints() { return generateFiveHoleSnakePoints(pointLayout.value) }
+// generateFiveHoleSnakePoints 由 saveConfig 在归一化 layout 后直接调用，
+// 不再在这里包一层同步包装函数，避免误用未归一化的 pointLayout.value。
 
 async function pickSavePath() {
   try {
@@ -264,19 +278,47 @@ function joinPath(dir: string, fileName: string): string {
   return `${normalizedDir}/${fileName}`
 }
 
+// 把 UiInputNumber 在输入中间态 emit 的 null 归一化为 number，
+// 避免 pointLayout 字段残留 null/NaN 导致生成点位错乱、保存到磁盘的 fiveHoleLayout 与 points 不一致。
+// 规则：null/NaN/Infinity 一律回退为 0；同时返回全新对象避免污染 ref。
+function sanitizePointLayout(layout: typeof pointLayout.value): typeof pointLayout.value {
+  const fix = (v: number | null | undefined): number => {
+    if (v === null || v === undefined || !Number.isFinite(v)) return 0
+    return v
+  }
+  return {
+    alphaMin: fix(layout.alphaMin),
+    alphaMax: fix(layout.alphaMax),
+    alphaStep: fix(layout.alphaStep),
+    betaMin: fix(layout.betaMin),
+    betaMax: fix(layout.betaMax),
+    betaStep: fix(layout.betaStep),
+  }
+}
+
 async function saveConfig() {
   isSaving.value = true
   try {
+    // 保存前显式校验点位布局：UiInputNumber 在清空-输入中间态会 emit null，
+    // 此时 isStepValid 在 step 2 仍为 true（见 line 252），保存按钮可点，
+    // 必须在此拦截避免脏值落盘。
+    if (!pointLayoutValidation.value.valid) {
+      feedbackStore.pushToast('点位布局参数无效: ' + pointLayoutValidation.value.errors.join('；'), 'warning')
+      return
+    }
+    // 归一化后的 layout 作为本次保存的真值，同时用于生成 points 与 fiveHoleLayout 字段，
+    // 保证磁盘上两个字段永远一致，消除双真值源。
+    const sanitizedLayout = sanitizePointLayout(pointLayout.value)
     const config: CalibrationConfig = {
       type: 'five-hole',
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
-      points: await generatePoints(),
+      points: await generateFiveHoleSnakePoints(sanitizedLayout),
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
       savePath: savePath.value.trim(),
-      fiveHoleLayout: pointLayout.value,
+      fiveHoleLayout: sanitizedLayout,
       derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
       uiRefreshHz: calibrationStore.uiRefreshHz,
       sphereTankGate: {
@@ -550,6 +592,39 @@ function getChannelGroupLabel(groupKey: string): string {
             />
           </div>
           <span class="mapping-progress-text">{{ mappedChannelCount }} / {{ totalRequiredChannelCount }}</span>
+        </div>
+
+        <!-- 批量操作工具栏：统一选择设备 + 通道号自动递增填充 -->
+        <div class="batch-toolbar">
+          <div class="batch-toolbar-row">
+            <div class="batch-cell">
+              <span class="batch-label">统一设备</span>
+              <UiSelect
+                v-model="batchDeviceId"
+                :options="deviceOptions"
+                placeholder="选择设备"
+                class="batch-select"
+              />
+            </div>
+            <div class="batch-cell">
+              <UiButton size="sm" variant="primary" :disabled="!batchDeviceId" @click="applyDeviceToAll">应用到全部通道</UiButton>
+            </div>
+          </div>
+          <div class="batch-toolbar-row">
+            <div class="batch-cell">
+              <span class="batch-label">起始通道</span>
+              <UiSelect
+                :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
+                @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
+                :options="channelIndexOptions"
+                placeholder="选择起始通道号"
+                class="batch-select"
+              />
+            </div>
+            <div class="batch-cell">
+              <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null" @click="autoFillChannelIndices">自动递增填充</UiButton>
+            </div>
+          </div>
         </div>
 
         <!-- 通道映射：所有通道直接罗列在单个表格中，通过分组列标识归属 -->
@@ -893,6 +968,41 @@ function getChannelGroupLabel(groupKey: string): string {
 
 .hardware-step .ntable td {
   padding: var(--space-0-5) var(--space-2);
+}
+
+/* 批量操作工具栏：扁平化工具条，与右侧统计卡片风格协调 */
+.batch-toolbar {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.batch-toolbar-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  align-items: end;
+  gap: 10px;
+}
+
+.batch-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.batch-select {
+  width: 100%;
 }
 
 .section-card {

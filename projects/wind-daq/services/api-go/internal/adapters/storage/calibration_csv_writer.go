@@ -48,12 +48,19 @@ func NewCalibrationCsvWriterOverwrite(config calibration.Config) *CalibrationCsv
 }
 
 // Initialize 初始化 CSV 文件，写入表头
+//
+// 路径约定：config.SavePath 必须是完整的文件路径（含扩展名，如 .csv）。
+// 不再做"无扩展名则视为目录"的二义性兜底——前端统一拼好完整路径传入，
+// 调用方（backend / api server）负责在调用前做路径归一（ResolvePath / Abs）。
 func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if config.SavePath == "" {
 		return fmt.Errorf("保存路径为空")
+	}
+	if filepath.Ext(config.SavePath) == "" {
+		return fmt.Errorf("保存路径必须是完整的文件路径（含 .csv 扩展名），当前传入: %q", config.SavePath)
 	}
 	w.schema = calibration.NewCsvSchema(config)
 
@@ -63,11 +70,8 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 		return fmt.Errorf("创建目录失败: %w", err)
 	}
 
-	// 构建文件路径
+	// 文件路径直接使用 SavePath（已是完整文件路径）
 	w.path = config.SavePath
-	if filepath.Ext(w.path) == "" {
-		w.path = filepath.Join(w.path, fmt.Sprintf("calibration_%s.csv", config.TaskID))
-	}
 
 	// 打开文件：覆盖模式用于按需全量导出，追加模式用于逐点采集
 	flags := os.O_CREATE | os.O_WRONLY

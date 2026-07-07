@@ -178,8 +178,11 @@ type TotalPressureDataPoint struct {
 	RawData      TotalPressureRawData      `json:"rawData"`
 	Coefficients TotalPressureCoefficients `json:"coefficients"`
 	SampleCount  int                       `json:"sampleCount"`
-	StartTime    int64                     `json:"startTime"`
-	EndTime      int64                     `json:"endTime"`
+	// StdDev 多次采样探针总压的样本标准差（Pa），用于判断采样稳定性。
+	// 与 FiveHole/ThreeHole/TotalTemperature 保持一致的字段命名，便于 CSV/UI 统一展示。
+	StdDev    float64 `json:"stdDev"`
+	StartTime int64   `json:"startTime"`
+	EndTime   int64   `json:"endTime"`
 }
 
 // ==================== 总温探针类型 ====================
@@ -250,6 +253,7 @@ type MotionAxisConfig struct {
 type SphereTankGateConfig struct {
 	Enabled           bool       `json:"enabled"`           // 是否启用球罐判定
 	WaitTimeSec       float64    `json:"waitTimeSec"`       // 等待稳定时间（秒）
+	TimeoutSec        int        `json:"timeoutSec,omitempty"` // 球罐判定总超时（秒），<=0 时使用默认 300 秒
 	StableTimeChannel ChannelRef `json:"stableTimeChannel"` // 稳定时间通道引用
 }
 

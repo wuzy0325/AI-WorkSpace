@@ -215,12 +215,15 @@ func TestCalculateTotalPressureCoefficients(t *testing.T) {
 
 	coeffs := CalculateTotalPressureCoefficients(data)
 
-	// CPT = PProbeTotal / PTunnelTotal = 4900 / 5000 = 0.98
-	if math.Abs(coeffs.CPT-0.98) > epsilon {
-		t.Errorf("CPT 期望 0.98, 实际 %v", coeffs.CPT)
+	// CPT = (PProbeTotal+PAtm) / (PTunnelTotal+PAtm) = 106225 / 106325 ≈ 0.9990595
+	// 量纲一致：分子分母均为绝对压力，物理含义为探针总压恢复系数
+	expectedCPT := 106225.0 / 106325.0
+	if math.Abs(coeffs.CPT-expectedCPT) > epsilon {
+		t.Errorf("CPT 期望 %v, 实际 %v", expectedCPT, coeffs.CPT)
 	}
 
-	// 误差 = (4900 - 5000) / (5000 + 101325) * 100 = -100 / 106325 * 100 ≈ -0.094%
+	// 误差 = ((PProbeTotal+PAtm) - (PTunnelTotal+PAtm)) / (PTunnelTotal+PAtm) * 100
+	//     = (106225 - 106325) / 106325 * 100 ≈ -0.094%
 	expectedError := -100.0 / 106325.0 * 100
 	if math.Abs(coeffs.Error-expectedError) > 0.01 {
 		t.Errorf("误差期望 %v%%, 实际 %v%%", expectedError, coeffs.Error)
@@ -229,6 +232,68 @@ func TestCalculateTotalPressureCoefficients(t *testing.T) {
 	// 马赫数应大于0
 	if coeffs.MachNumber <= 0 {
 		t.Errorf("马赫数应大于0, 实际 %v", coeffs.MachNumber)
+	}
+}
+
+// TestCalculateTotalPressureCoefficients_AboveThreshold 验证风洞建立有效压差时 CPT/误差正常计算
+func TestCalculateTotalPressureCoefficients_AboveThreshold(t *testing.T) {
+	data := TotalPressureRawData{
+		PAtm:          101325.0,
+		PTunnelTotal:  5000.0, // 表压 5000 Pa > 100 阈值，风洞已建立压差
+		PTunnelStatic: 3000.0,
+		PProbeTotal:   4900.0,
+	}
+
+	coeffs := CalculateTotalPressureCoefficients(data)
+
+	if coeffs.CPT <= 0 {
+		t.Errorf("风洞总压高于阈值时 CPT 应大于 0, 实际 %v", coeffs.CPT)
+	}
+	if coeffs.Error == 0 {
+		t.Errorf("风洞总压高于阈值时误差应非 0, 实际 %v", coeffs.Error)
+	}
+}
+
+// TestCalculateTotalPressureCoefficients_BelowThreshold 验证风洞未建立压差时 CPT/误差置 0
+//
+// 关键：使用真实大气压 pAtm=101325 Pa，pTunnelTotal=30 Pa（表压）低于 100 Pa 阈值。
+// 旧实现检查 pTunnelTotalAbs（=101355）> 100 仍然计算 CPT，导致风洞未运行时
+// 输出 CPT=1.0、误差=0% 误导操作员。修复后检查表压，正确置 0。
+func TestCalculateTotalPressureCoefficients_BelowThreshold(t *testing.T) {
+	data := TotalPressureRawData{
+		PAtm:          101325.0, // 真实大气压
+		PTunnelTotal:  30.0,     // 表压 30 Pa < 100 阈值，风洞未建立有效压差
+		PTunnelStatic: 20.0,
+		PProbeTotal:   25.0,
+	}
+
+	coeffs := CalculateTotalPressureCoefficients(data)
+
+	if coeffs.CPT != 0 {
+		t.Errorf("风洞表压低于阈值时 CPT 应为 0, 实际 %v", coeffs.CPT)
+	}
+	if coeffs.Error != 0 {
+		t.Errorf("风洞表压低于阈值时误差应为 0, 实际 %v", coeffs.Error)
+	}
+}
+
+// TestCalculateTotalPressureStdDev 验证总压探针多次采样的样本标准差
+func TestCalculateTotalPressureStdDev(t *testing.T) {
+	// 单样本：返回 0
+	if v := CalculateTotalPressureStdDev([]TotalPressureRawData{{PProbeTotal: 100}}); v != 0 {
+		t.Errorf("单样本 stdDev 应为 0, 实际 %v", v)
+	}
+
+	// 多样本：标准差应与直接对 PProbeTotal 序列计算一致
+	samples := []TotalPressureRawData{
+		{PProbeTotal: 100},
+		{PProbeTotal: 102},
+		{PProbeTotal: 98},
+		{PProbeTotal: 101},
+	}
+	expected := StdDev([]float64{100, 102, 98, 101})
+	if math.Abs(CalculateTotalPressureStdDev(samples)-expected) > epsilon {
+		t.Errorf("stdDev 期望 %v, 实际 %v", expected, CalculateTotalPressureStdDev(samples))
 	}
 }
 

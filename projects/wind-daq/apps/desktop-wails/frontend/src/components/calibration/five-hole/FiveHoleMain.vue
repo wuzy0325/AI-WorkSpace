@@ -6,7 +6,7 @@ import type { CalibrationConfig, CalibrationDataPoint, ProbeChannelRole } from '
 import type { DataPayload } from '@api/types'
 import { isFiveHoleDataPoint } from '@shared/calibrationDataGuards'
 import { getDerivedValuePrecision, getProbeChannelPrecision } from '@shared/calibrationPrecision'
-import { formatFiveHoleActualPosition, generateFiveHoleSnakePoints } from './motionCalibrationUtils'
+import { formatFiveHoleActualPosition } from './motionCalibrationUtils'
 import { drawFiveHoleChartScaffold, resolveKAlphaKbetaBounds, drawNoDataHint, drawAxisTicks, setupCanvas, CHART_COLORS } from './fiveHoleChartUtils'
 import {
   ArrowLeft,
@@ -109,7 +109,13 @@ watch(isLoading, (loading) => {
   }, 300)
 }, { immediate: true })
 
-// 开始校准 (五孔特化：自动生成 snake 点)
+// 开始校准 (五孔特化：直接使用保存时已生成的 points，避免 fiveHoleLayout 与 points 双真值源不一致)
+//
+// 链路说明：
+//   保存配置时 FiveHoleSettings.saveConfig 已用 pointLayout 生成 points 并一起落盘；
+//   后端 CalibrationConfigDTO 也只接收 Points 字段（无 FiveHoleLayout）。
+//   因此启动校准时直接用 currentConfig.points 即可，不再用 fiveHoleLayout 重新生成，
+//   避免重生成路径（Wails 模式走本地兜底）与 layout 字段脏值（null/NaN）导致起始角度错乱。
 async function startCalibration() {
   if (!canStartCalibration.value || !currentConfig.value) {
     feedbackStore.pushToast(startDisabledReason.value || '请先完成校准前检查', 'warning')
@@ -118,9 +124,7 @@ async function startCalibration() {
   try {
     const configToStart: CalibrationConfig = {
       ...currentConfig.value,
-      points: currentConfig.value.fiveHoleLayout
-        ? await generateFiveHoleSnakePoints(currentConfig.value.fiveHoleLayout)
-        : currentConfig.value.points,
+      points: currentConfig.value.points,
     }
     await calibrationStore.startCalibration(configToStart)
   } catch (err) {

@@ -30,6 +30,9 @@ type CalibrationRuntime interface {
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
 	MoveToPosition(axis calibration.MotionAxisConfig, position float64) error
 	WaitForMotionComplete() error
+	// StopMotion 立即停止所有运动轴。用于"暂停"打断当前点位运动，
+	// 与停止按钮的归零路径共用，但不改变校准状态机。
+	StopMotion() error
 }
 
 // DeviceStatusProvider 设备状态查询端口

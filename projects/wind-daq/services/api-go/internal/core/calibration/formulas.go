@@ -280,39 +280,54 @@ func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KStd, Cv
 
 // CalculateTotalPressureCoefficients 计算总压探针系数
 //
-// 所有压力值均为表压，需要转换为绝对压力进行计算
+// 输入的所有压力均为表压（相对大气压），统一转换为绝对压力后计算，保证量纲一致：
 //
-//	CPT = Pt_probe / Pt_tunnel（简化公式）
-//	误差(%) = (Pt_probe - Pt_tunnel) / (Pt_tunnel + P∞) × 100%
-//	Ma = √[2×(Pt_tunnel_abs - Ps_tunnel_abs) / (γ × Ps_tunnel_abs)]
+//	Pt_probe_abs   = pProbeTotal   + pAtm
+//	Pt_tunnel_abs  = pTunnelTotal  + pAtm
+//	Ps_tunnel_abs  = pTunnelStatic + pAtm
+//
+//	CPT     = Pt_probe_abs / Pt_tunnel_abs
+//	          （探针总压恢复系数，绝对总压相除）
+//	误差(%) = (Pt_probe_abs - Pt_tunnel_abs) / Pt_tunnel_abs × 100
+//	          （探针总压相对于风洞总压的相对偏差，量纲一致）
+//	Ma      = √[2×(Pt_tunnel_abs - Ps_tunnel_abs) / (γ × Ps_tunnel_abs)]
+//
+// 阈值 pressureValidThresholdPa 用于判断"风洞是否建立有效压差"：
+// 检查对象是表压 pTunnelTotal（即风洞总压相对于大气压的差值），
+// 而非绝对压力 pTunnelTotalAbs——因为后者包含 pAtm（~101325 Pa），
+// 即使风洞未运行也会远超阈值，导致 CPT=1.0、误差=0% 的误导输出。
+const pressureValidThresholdPa = 100.0 // 100 Pa 表压阈值：风洞总压表压低于此值视为未建立有效压差
+
 func CalculateTotalPressureCoefficients(rawData TotalPressureRawData) TotalPressureCoefficients {
 	pAtm := rawData.PAtm
-	pTunnelTotal := rawData.PTunnelTotal
-	pTunnelStatic := rawData.PTunnelStatic
-	pProbeTotal := rawData.PProbeTotal
 
-	// 将表压转换为绝对压力
-	pTunnelTotalAbs := pTunnelTotal + pAtm
-	pTunnelStaticAbs := pTunnelStatic + pAtm
+	// 转换为绝对压力，避免表压/绝对压力混用导致的量纲不一致
+	pProbeTotalAbs := rawData.PProbeTotal + pAtm
+	pTunnelTotalAbs := rawData.PTunnelTotal + pAtm
+	pTunnelStaticAbs := rawData.PTunnelStatic + pAtm
 
-	// 计算 CPT
+	// 阈值过滤：检查表压（风洞建立的压差），而非绝对压力。
+	// 风洞未运行时 pTunnelTotal≈0，CPT/误差无物理意义，置 0 避免误导。
+	tunnelTotalGaugeValid := rawData.PTunnelTotal > pressureValidThresholdPa
+
+	// 计算 CPT：仅在风洞建立有效压差时才有意义
 	var CPT float64
-	if math.Abs(pTunnelTotal) > 1e-6 {
-		CPT = pProbeTotal / pTunnelTotal
+	if tunnelTotalGaugeValid {
+		CPT = pProbeTotalAbs / pTunnelTotalAbs
 	}
 
-	// 计算误差
+	// 计算误差(%)：分子分母均为绝对压力，量纲一致
 	var err float64
-	if math.Abs(pTunnelTotalAbs) > 1e-6 {
-		err = ((pProbeTotal - pTunnelTotal) / pTunnelTotalAbs) * 100
+	if tunnelTotalGaugeValid {
+		err = ((pProbeTotalAbs - pTunnelTotalAbs) / pTunnelTotalAbs) * 100
 	}
 
 	// 计算马赫数（使用 AtmosphericDataCalculator）
 	var machNumber float64
 	calc := NewAtmosphericDataCalculator()
 	if pTunnelStaticAbs > 0 && pTunnelTotalAbs > pTunnelStaticAbs {
-		ma, err := calc.CalculateMach(pTunnelTotalAbs, pTunnelStaticAbs)
-		if err == nil {
+		ma, calcErr := calc.CalculateMach(pTunnelTotalAbs, pTunnelStaticAbs)
+		if calcErr == nil {
 			machNumber = ma
 		}
 	}
@@ -349,6 +364,23 @@ func CalculateTotalPressureAverage(samples []TotalPressureRawData) TotalPressure
 		TTunnel:       sum.TTunnel / n,
 		PProbeTotal:   sum.PProbeTotal / n,
 	}
+}
+
+// CalculateTotalPressureStdDev 计算总压探针多次采样中探针总压的样本标准差（Pa）。
+//
+// 选择 PProbeTotal 作为稳定性指标：
+//   - 探针总压是校准的核心被测量，其波动直接反映流场稳定性与采样质量
+//   - 与 FiveHole/ThreeHole 使用 P1 标准差的口径保持一致（核心被测量）
+//   - StdDev 使用样本标准差（n-1 自由度），n<2 时返回 0
+func CalculateTotalPressureStdDev(samples []TotalPressureRawData) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+	values := make([]float64, len(samples))
+	for i, s := range samples {
+		values[i] = s.PProbeTotal
+	}
+	return StdDev(values)
 }
 
 // ==================== 总温探针公式 ====================

@@ -924,6 +924,15 @@ func (a *App) MotionResetEmergencyStop(id string) GenericResponse {
 func (a *App) CalibrationStart(dto types.CalibrationConfigDTO) GenericResponse {
 	config := dto.ToCore()
 	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
+		// 路径归一：相对 savePath 解析到 %APPDATA%\wind-daq\<相对>，
+		// 与 StorageStartRecording 范式一致，避免依赖工作目录。
+		if config.SavePath != "" {
+			resolved, err := a.ResolvePath(config.SavePath)
+			if err != nil {
+				return err
+			}
+			config.SavePath = resolved
+		}
 		return a.appContext.CalibrationMgr.Start(config)
 	})
 }
@@ -969,6 +978,15 @@ func (a *App) CalibrationGetResult(taskID string) (types.CalibrationStatus, bool
 func (a *App) CalibrationSaveCsv(taskID string, savePath string) FileResponse {
 	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return FileResponse{Success: false, Error: "校准管理器未初始化"}
+	}
+	// 路径归一：相对 savePath 解析到 %APPDATA%\wind-daq\<相对>，
+	// 与 StorageStartRecording / CalibrationStart 范式一致。
+	if savePath != "" {
+		resolved, err := a.ResolvePath(savePath)
+		if err != nil {
+			return FileResponse{Success: false, Error: err.Error()}
+		}
+		savePath = resolved
 	}
 	path, err := a.appContext.CalibrationMgr.SaveCsv(taskID, savePath)
 	if err != nil {

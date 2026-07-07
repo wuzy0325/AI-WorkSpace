@@ -40,8 +40,6 @@ export type ProbeChannelRole =
   | 'totalPressure.pTunnelStatic'
   | 'totalPressure.tTunnel'
   | 'totalPressure.pProbeTotal'
-  | 'totalPressure.pTotal'
-  | 'totalPressure.pStatic'
   | 'totalTemperature.tTotal'
   | 'totalTemperature.tStatic'
   | 'totalTemperature.tAtm'
@@ -77,6 +75,8 @@ export interface CalibrationPoint {
 export interface SphereTankGateConfig {
   enabled: boolean
   waitTimeSec: number
+  /** 球罐判定总超时（秒），<=0 时使用默认 300 秒 */
+  timeoutSec?: number
   stableTimeChannel: ChannelRef
 }
 

@@ -51,7 +51,7 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     })
   }
 
-  async function startCalibration(configOverrides?: Partial<CalibrationConfig>) {
+  async function startCalibration() {
     if (!canStartCalibration.value || !currentConfig.value) {
       feedbackStore.pushToast(startDisabledReason.value || '请先完成校准前检查', 'warning')
       return

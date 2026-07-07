@@ -58,9 +58,12 @@ const latestRawData = computed(() => {
   if (!points.length) return null
   const lastPoint = points[points.length - 1]
   if (isTotalPressureDataPoint(lastPoint)) return {
-    pTotal: lastPoint.rawData.pProbeTotal,
-    pStatic: lastPoint.rawData.pTunnelStatic,
-    pAtm: lastPoint.rawData.pAtm
+    pProbeTotal: lastPoint.rawData.pProbeTotal,
+    pTunnelTotal: lastPoint.rawData.pTunnelTotal,
+    pTunnelStatic: lastPoint.rawData.pTunnelStatic,
+    pAtm: lastPoint.rawData.pAtm,
+    tAtm: lastPoint.rawData.tAtm,
+    stdDev: lastPoint.stdDev,
   }
   return null
 })
@@ -105,19 +108,27 @@ const totalPressureLayout = computed(() => {
 })
 
 function formatValue(value: number | undefined | null, precision?: number): string {
-  if (value === undefined || value === null) return '--'
+  if (value === undefined || value === null || Number.isNaN(value)) return '--'
   return value.toFixed(precision ?? 3)
 }
 
+// getChannelValue 直接从 deviceStore 实时快照按 channel 配置取值，
+// 不再依赖 calibrationStore.realtimePressures（后者是 FiveHole 流程的状态残留，
+// 总压探针主界面未订阅更新，会导致显示陈旧或全 '--'）。
+//
+// 实现路径：probeChannels 配置 → deviceId + channelIndex → latestFor(deviceId) →
+// 在 snapshot.channelIndices 中查找 channelIndex 的位置 → 取 channels[pos]。
+// 任一环节缺失返回 '--'，避免错位显示其他通道值。
 function getChannelValue(role: string): string {
-  const pressures = calibrationStore.realtimePressures
-  if (!pressures) return '--'
-  switch (role) {
-    case 'totalPressure.pTotal': return formatValue(pressures.P0, getProbeChannelPrecision(currentConfig.value, role))
-    case 'totalPressure.pStatic': return formatValue(pressures.Patm, getProbeChannelPrecision(currentConfig.value, role))
-    case 'totalPressure.pAtm': return formatValue(pressures.Patm, getProbeChannelPrecision(currentConfig.value, role))
-    default: return '--'
-  }
+  const ch = probeChannels.value.find((c: { role?: string }) => c.role === role)
+  if (!ch || !ch.channel.deviceId || ch.channel.channelIndex < 0) return '--'
+  const snapshot = deviceStore.latestFor(ch.channel.deviceId)
+  if (!snapshot) return '--'
+  const indices = Array.isArray(snapshot.channelIndices) ? snapshot.channelIndices : []
+  const channels = Array.isArray(snapshot.channels) ? snapshot.channels : []
+  const pos = indices.indexOf(ch.channel.channelIndex)
+  if (pos < 0 || pos >= channels.length) return '--'
+  return formatValue(channels[pos], getProbeChannelPrecision(currentConfig.value, role))
 }
 
 function getChannelUnit(role: string): string {
@@ -415,16 +426,28 @@ onUnmounted(() => {
               </div>
               <div v-if="latestRawData" class="space-y-2">
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">总压</span>
-                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pTotal, 3) }} Pa</span>
+                  <span class="text-xs text-[var(--text-muted)]">探针总压</span>
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pProbeTotal, 3) }} Pa</span>
                 </div>
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">静压</span>
-                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pStatic, 3) }} Pa</span>
+                  <span class="text-xs text-[var(--text-muted)]">风洞总压</span>
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pTunnelTotal, 3) }} Pa</span>
+                </div>
+                <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                  <span class="text-xs text-[var(--text-muted)]">风洞静压</span>
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pTunnelStatic, 3) }} Pa</span>
                 </div>
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                   <span class="text-xs text-[var(--text-muted)]">大气压</span>
                   <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.pAtm, 3) }} Pa</span>
+                </div>
+                <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                  <span class="text-xs text-[var(--text-muted)]">大气温度</span>
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.tAtm, 3) }} ℃</span>
+                </div>
+                <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                  <span class="text-xs text-[var(--text-muted)]">采样标准差</span>
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.stdDev, 3) }} Pa</span>
                 </div>
               </div>
               <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">暂无原始数据</div>

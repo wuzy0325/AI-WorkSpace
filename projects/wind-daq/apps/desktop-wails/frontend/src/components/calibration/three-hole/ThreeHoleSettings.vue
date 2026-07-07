@@ -22,6 +22,7 @@ import UiSpin from '@components/ui/UiSpin.vue'
 import UiStep from '@components/ui/UiStep.vue'
 import UiSteps from '@components/ui/UiSteps.vue'
 import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
+import { useChannelBatchOperations } from '@composables/useChannelBatchOperations'
 
 const emit = defineEmits<{ close: []; saved: [config: CalibrationConfig] }>()
 const deviceStore = useDeviceStore()
@@ -55,6 +56,19 @@ const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Theta', controllerId: '', a
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
 const REQUIRED_CHANNEL_ROLES = ['threeHole.p1', 'threeHole.p2', 'threeHole.p3', 'threeHole.pAtm', 'threeHole.tAtm'] as const
+
+// 批量操作：统一选择设备 + 通道号自动递增填充（仿照遍历测试模块）
+const {
+  batchDeviceId,
+  autoFillStartIndex,
+  applyDeviceToAll,
+  autoFillChannelIndices,
+} = useChannelBatchOperations(probeChannels)
+
+// 设备下拉选项（批量工具栏与单通道选择共用）
+const deviceOptions = computed(() =>
+  deviceList.value.map((d) => ({ label: `${d.name} (${d.type})`, value: d.id })),
+)
 
 // 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
 // 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
@@ -162,6 +176,34 @@ onMounted(async () => {
       </div>
 
       <div v-if="currentStep === 1" class="step-content">
+        <!-- 批量操作工具栏：统一选择设备 + 通道号自动递增填充 -->
+        <div class="batch-toolbar">
+          <div class="batch-toolbar-row">
+            <div class="batch-cell">
+              <span class="batch-label">统一设备</span>
+              <UiSelect v-model="batchDeviceId" :options="deviceOptions" placeholder="选择设备" class="batch-select" />
+            </div>
+            <div class="batch-cell">
+              <UiButton size="sm" variant="primary" :disabled="!batchDeviceId" @click="applyDeviceToAll">应用到全部通道</UiButton>
+            </div>
+          </div>
+          <div class="batch-toolbar-row">
+            <div class="batch-cell">
+              <span class="batch-label">起始通道</span>
+              <UiSelect
+                :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
+                @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
+                :options="channelIndexOptions"
+                placeholder="选择起始通道号"
+                class="batch-select"
+              />
+            </div>
+            <div class="batch-cell">
+              <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null" @click="autoFillChannelIndices">自动递增填充</UiButton>
+            </div>
+          </div>
+        </div>
+
         <UiPanel class="section-card">
           <template #header><span class="section-header">测点通道映射</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th style="width:48px">启用</th><th>测点名称</th><th>数据源设备</th><th style="width:100px">通道索引</th><th style="width:80px">精度</th></tr></thead>
@@ -211,6 +253,21 @@ onMounted(async () => {
 <style scoped>
 .step-content { display:flex; flex-direction:column; gap:var(--space-3); }
 .section-card { font-size:var(--text-sm); }
+
+/* 批量操作工具栏：扁平化工具条，与面板风格协调 */
+.batch-toolbar {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.batch-toolbar-row { display:grid; grid-template-columns:160px 1fr; align-items:end; gap:10px }
+.batch-cell { display:flex; flex-direction:column; gap:4px }
+.batch-label { font-size:var(--text-xs); font-weight:500; color:var(--text-secondary); white-space:nowrap }
+.batch-select { width:100% }
 .mach-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-2); margin-bottom:var(--space-3); }
 .point-summary { display:flex; align-items:center; gap:var(--space-2); padding:10px; border-radius:var(--radius-md); border:1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent); background:color-mix(in srgb, var(--accent-primary) 5%, transparent); }
 .param-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,6 +13,27 @@ import (
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/ports"
 )
+
+// resolveSavePath 归一化校准 CSV 保存路径，保证行为确定性。
+//
+// 规则：
+//   - 空路径原样返回（由调用方决定是否允许空）
+//   - 绝对路径：filepath.Clean 规整分隔符与 ".."
+//   - 相对路径：filepath.Abs 基于当前工作目录转绝对，避免 os.MkdirAll
+//     在不同工作目录下创建到不同位置（行为不稳定）
+//
+// 这是所有调用入口（Wails backend、HTTP API）的统一防御性兜底。
+// Wails backend 会先做 ResolvePath（相对路径→%APPDATA%\wind-daq\<相对>），
+// 此时路径已是绝对，本函数仅做 Clean，无副作用。
+func resolveSavePath(p string) (string, error) {
+	if p == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	return filepath.Abs(p)
+}
 
 const defaultSampleInterval = 50 * time.Millisecond
 
@@ -112,6 +134,17 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	}
 	if config.SamplesPerPoint <= 0 {
 		config.SamplesPerPoint = 1
+	}
+
+	// 归一化保存路径：相对路径转绝对，避免 csv_writer 的 os.MkdirAll
+	// 基于不确定的工作目录创建目录。空路径保留（自动校准类型允许为空，
+	// 表示不实时落盘 CSV）。
+	if config.SavePath != "" {
+		resolved, err := resolveSavePath(config.SavePath)
+		if err != nil {
+			return fmt.Errorf("解析保存路径失败: %w", err)
+		}
+		config.SavePath = resolved
 	}
 
 	m.currentConfig = config
@@ -241,34 +274,41 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 }
 
 // Pause 暂停校准
+//
+// 锁内只做状态校验与切换，autoEngine.Pause()（含 runtime.StopMotion() 硬件下发）
+// 移到锁外执行，避免硬件通信阻塞时长时间持有 m.mu 阻塞 Status/Start 等查询路径。
 func (m *CalibrationManager) Pause() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.currentStatus.State != calibration.StateRunning {
+		m.mu.Unlock()
 		return fmt.Errorf("校准未在运行中")
 	}
-
-	if m.autoEngine != nil {
-		m.autoEngine.Pause()
-	}
 	m.currentStatus.State = calibration.StatePaused
+	engine := m.autoEngine
+	m.mu.Unlock()
+
+	if engine != nil {
+		engine.Pause()
+	}
 	return nil
 }
 
 // Resume 恢复校准
+//
+// 同 Pause：锁内只切状态，autoEngine.Resume() 移到锁外执行。
 func (m *CalibrationManager) Resume() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.currentStatus.State != calibration.StatePaused {
+		m.mu.Unlock()
 		return fmt.Errorf("校准未在暂停状态")
 	}
-
-	if m.autoEngine != nil {
-		m.autoEngine.Resume()
-	}
 	m.currentStatus.State = calibration.StateRunning
+	engine := m.autoEngine
+	m.mu.Unlock()
+
+	if engine != nil {
+		engine.Resume()
+	}
 	return nil
 }
 
@@ -435,6 +475,13 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 	if m.csvWriterFactory == nil {
 		return "", fmt.Errorf("CSV写入器未配置")
 	}
+
+	// 归一化保存路径：相对路径转绝对，保证 csv_writer 写入位置确定
+	resolvedPath, err := resolveSavePath(savePath)
+	if err != nil {
+		return "", fmt.Errorf("解析保存路径失败: %w", err)
+	}
+	savePath = resolvedPath
 
 	m.mu.RLock()
 	var payload calibration.ExportPayload
@@ -607,17 +654,7 @@ func (m *CalibrationManager) stopMotion() {
 	if m.motion == nil {
 		return
 	}
-
-	ctx := context.Background()
-	for _, status := range m.motion.StatusAll(ctx) {
-		for _, axis := range status.Axes {
-			if axis.Moving {
-				if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil {
-					log.Printf("[CalibrationManager] 停止运动失败 %s/%s: %v", status.ID, axis.Name, err)
-				}
-			}
-		}
-	}
+	_ = stopAllMotion(m.motion)
 }
 
 // fail 设置错误状态
@@ -681,6 +718,10 @@ func (r *runtimeAdapter) MoveToPosition(axis calibration.MotionAxisConfig, posit
 
 func (r *runtimeAdapter) WaitForMotionComplete() error {
 	return r.runtime.WaitForMotionComplete()
+}
+
+func (r *runtimeAdapter) StopMotion() error {
+	return r.runtime.StopMotion()
 }
 
 // fallbackRuntime 回退运行时（使用旧的 reader 和 motion 接口）
@@ -758,4 +799,33 @@ func (f *fallbackRuntime) WaitForMotionComplete() error {
 		time.Sleep(pollInterval)
 	}
 	return fmt.Errorf("运动超时未完成（>%s）", maxWait)
+}
+
+// StopMotion 立即停止所有运动轴（普通 Stop）。
+// 与 CalibrationManager.stopMotion 同语义，暂停时由引擎调用以打断当前点位运动。
+func (f *fallbackRuntime) StopMotion() error {
+	if f.motion == nil {
+		return nil
+	}
+	return stopAllMotion(f.motion)
+}
+
+// stopAllMotion 停止所有运动控制器中 Moving=true 的轴。
+// CalibrationManager.stopMotion 与 fallbackRuntime.StopMotion 共用此逻辑。
+func stopAllMotion(mgr ports.MotionManager) error {
+	ctx := context.Background()
+	var firstErr error
+	for _, status := range mgr.StatusAll(ctx) {
+		for _, axis := range status.Axes {
+			if axis.Moving {
+				if err := mgr.Stop(ctx, status.ID, axis.Name); err != nil {
+					log.Printf("[CalibrationManager] 停止运动失败 %s/%s: %v", status.ID, axis.Name, err)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+			}
+		}
+	}
+	return firstErr
 }

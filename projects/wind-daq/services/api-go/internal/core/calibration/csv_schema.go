@@ -159,7 +159,7 @@ func (s CsvSchema) buildTotalPressureRecord(dp *TotalPressureDataPoint) []string
 	return []string{
 		formatInt(dp.PointID),
 		formatInt(dp.SampleCount),
-		"0", // stdDev not in this type
+		formatFloat(dp.StdDev),
 		formatInt64(dp.StartTime),
 		formatInt64(dp.EndTime),
 		formatFloat(dp.Alpha),

@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"path/filepath"
 	"testing"
 
 	"wind-daq/services/api-go/internal/core/calibration"
@@ -51,8 +52,9 @@ func TestCalibrationManagerSaveCsvUsesStoredExportPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save csv: %v", err)
 	}
-	if path != "D:/data/five-hole.csv" {
-		t.Fatalf("expected saved path, got %q", path)
+	// SaveCsv 入口会对 savePath 做 filepath.Clean 归一（Windows 下 / → \）
+	if want := filepath.Clean("D:/data/five-hole.csv"); path != want {
+		t.Fatalf("expected saved path %q, got %q", want, path)
 	}
 	if len(writer.points) != 1 || !writer.flushed {
 		t.Fatalf("expected one flushed point, points=%d flushed=%v", len(writer.points), writer.flushed)

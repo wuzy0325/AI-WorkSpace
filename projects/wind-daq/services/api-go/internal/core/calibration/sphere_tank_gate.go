@@ -26,11 +26,17 @@ func normalizeGate(gate *SphereTankGateConfig) *SphereTankGateConfig {
 		waitTimeSec = 0
 	}
 
+	timeoutSec := gate.TimeoutSec
+	if timeoutSec < 0 {
+		timeoutSec = 0
+	}
+
 	channelIndex := gate.StableTimeChannel.ChannelIndex
 
 	return &SphereTankGateConfig{
 		Enabled:     gate.Enabled,
 		WaitTimeSec: waitTimeSec,
+		TimeoutSec:  timeoutSec,
 		StableTimeChannel: ChannelRef{
 			DeviceID:     gate.StableTimeChannel.DeviceID,
 			ChannelIndex: channelIndex,
