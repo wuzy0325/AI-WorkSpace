@@ -183,23 +183,42 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
       <div class="seg-grid">
         <div class="seg-side">
           <span class="section-title">{{ t.pointLayout }}</span>
-          <div class="seg-pts">
-            <div><span class="label-tiny">{{ t.centerX }}</span><UiInputNumber v-model="sectorConfig.centerX" class="w-full" /></div>
-            <div><span class="label-tiny">{{ t.centerY }}</span><UiInputNumber v-model="sectorConfig.centerY" class="w-full" /></div>
-            <div><span class="label-tiny">{{ t.radiusMin }}</span><UiInputNumber v-model="sectorConfig.radiusMin" class="w-full" /></div>
-            <div><span class="label-tiny">{{ t.radiusMax }}</span><UiInputNumber v-model="sectorConfig.radiusMax" class="w-full" /></div>
-            <div><span class="label-tiny">{{ t.angleStart }}</span><UiInputNumber v-model="sectorConfig.angleStart" class="w-full" /></div>
-            <div><span class="label-tiny">{{ t.angleEnd }}</span><UiInputNumber v-model="sectorConfig.angleEnd" class="w-full" /></div>
+          <!-- 半径范围:圆心不输入,默认第一个测点=当前位置=原点(0,0)。 -->
+          <div class="sector-group">
+            <span class="sector-group-title">{{ t.sectorRadiusRange }}</span>
+            <div class="seg-pts">
+              <div><span class="label-tiny">{{ t.radiusMin }}</span><UiInputNumber v-model="sectorConfig.radiusMin" :min="0" class="w-full" /></div>
+              <div><span class="label-tiny">{{ t.radiusMax }}</span><UiInputNumber v-model="sectorConfig.radiusMax" :min="0" class="w-full" /></div>
+            </div>
           </div>
+          <!-- 角度范围:0°=+X 方向,逆时针为正。 -->
+          <div class="sector-group">
+            <span class="sector-group-title">{{ t.sectorAngleRange }}</span>
+            <div class="seg-pts">
+              <div><span class="label-tiny">{{ t.angleStart }}</span><UiInputNumber v-model="sectorConfig.angleStart" :step="5" class="w-full" /></div>
+              <div><span class="label-tiny">{{ t.angleEnd }}</span><UiInputNumber v-model="sectorConfig.angleEnd" :step="5" class="w-full" /></div>
+            </div>
+          </div>
+          <p class="sector-start-hint">ⓘ {{ t.sectorStartHint }}</p>
         </div>
         <div class="seg-col-list">
           <div class="seg-list"><div class="seg-header"><span class="seg-header-label">{{ t.radiusSegments }}</span><UiButton size="sm" secondary @click="addSectorRadialSegment">{{ t.addSegment }}</UiButton></div>
             <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
-            <div v-for="(s, i) in sectorConfig.radialStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="sectorConfig.radialStepSegments.length === 1" @click="removeSectorRadialSegment(i)">{{ t.del }}</UiButton></div>
+            <div v-for="(s, i) in sectorConfig.radialStepSegments" :key="i" class="seg-row">
+              <div class="seg-cell"><UiInputNumber v-model="s.start" class="flex-1" /><span v-if="getSegmentError(srSegErrs, i, 'start')" class="seg-err">{{ getSegmentError(srSegErrs, i, 'start') }}</span></div>
+              <div class="seg-cell"><UiInputNumber v-model="s.end" class="flex-1" /><span v-if="getSegmentError(srSegErrs, i, 'end')" class="seg-err">{{ getSegmentError(srSegErrs, i, 'end') }}</span></div>
+              <div class="seg-cell"><UiInputNumber v-model="s.step" class="flex-1" /><span v-if="getSegmentError(srSegErrs, i, 'step')" class="seg-err">{{ getSegmentError(srSegErrs, i, 'step') }}</span></div>
+              <UiButton size="sm" secondary :disabled="sectorConfig.radialStepSegments.length === 1" :title="sectorConfig.radialStepSegments.length === 1 ? (t.atLeastOneSegment || 'At least one segment required') : ''" @click="removeSectorRadialSegment(i)">{{ t.del }}</UiButton>
+            </div>
           </div>
           <div class="seg-list"><div class="seg-header"><span class="seg-header-label">{{ t.angleSegments }}</span><UiButton size="sm" secondary @click="addSectorAngularSegment">{{ t.addSegment }}</UiButton></div>
             <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
-            <div v-for="(s, i) in sectorConfig.angularStepSegments" :key="i" class="seg-row"><UiInputNumber v-model="s.start" class="flex-1" /><UiInputNumber v-model="s.end" class="flex-1" /><UiInputNumber v-model="s.step" class="flex-1" /><UiButton size="sm" secondary :disabled="sectorConfig.angularStepSegments.length === 1" @click="removeSectorAngularSegment(i)">{{ t.del }}</UiButton></div>
+            <div v-for="(s, i) in sectorConfig.angularStepSegments" :key="i" class="seg-row">
+              <div class="seg-cell"><UiInputNumber v-model="s.start" class="flex-1" /><span v-if="getSegmentError(saSegErrs, i, 'start')" class="seg-err">{{ getSegmentError(saSegErrs, i, 'start') }}</span></div>
+              <div class="seg-cell"><UiInputNumber v-model="s.end" class="flex-1" /><span v-if="getSegmentError(saSegErrs, i, 'end')" class="seg-err">{{ getSegmentError(saSegErrs, i, 'end') }}</span></div>
+              <div class="seg-cell"><UiInputNumber v-model="s.step" class="flex-1" /><span v-if="getSegmentError(saSegErrs, i, 'step')" class="seg-err">{{ getSegmentError(saSegErrs, i, 'step') }}</span></div>
+              <UiButton size="sm" secondary :disabled="sectorConfig.angularStepSegments.length === 1" :title="sectorConfig.angularStepSegments.length === 1 ? (t.atLeastOneSegment || 'At least one segment required') : ''" @click="removeSectorAngularSegment(i)">{{ t.del }}</UiButton>
+            </div>
           </div>
         </div>
       </div>
@@ -233,12 +252,17 @@ function removeCustomPoint(i: number) { customPoints.value.splice(i, 1) }
 .seg-col-list { display:flex; flex-direction:column; gap:6px; }
 .seg-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
 .seg-labels { display:flex; gap:6px; padding:0 2px 4px; }
-.seg-row { display:flex; gap:6px; align-items:center; margin-bottom:4px; }
+.seg-row { display:flex; gap:6px; align-items:flex-start; margin-bottom:4px; }
+.seg-cell { display:flex; flex-direction:column; flex:1; min-width:0; }
+.seg-err { font-size:9px; color:var(--accent-error, #ef4444); margin-top:2px; line-height:1.2; }
 .pt-list { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
 .pt-row { display:flex; align-items:center; justify-content:space-between; padding:4px 6px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
 .label-helper { font-size: 10px; color: var(--text-muted) }
 .label-tiny { font-size: 9px; color: var(--text-muted) }
 .section-title { font-size: 10px; font-weight: 500; color: var(--text-muted) }
+.sector-group { margin-top:6px; }
+.sector-group-title { font-size: 10px; font-weight: 500; display:block; margin-bottom:2px; color: var(--text-secondary, var(--text-primary)); }
+.sector-start-hint { font-size: 10px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.4; }
 .seg-header-label { font-size: 10px; text-transform: uppercase; color: var(--text-muted) }
 .col-label { font-size: 9px; flex: 1; color: var(--text-muted) }
 .flex-1 { flex: 1 }

@@ -17,7 +17,10 @@ type Algorithm interface {
 	// checkAbort：可选中止检查闭包，由 AutomaticCalibration 注入；
 	// 返回 true 时算法应立即返回 ErrPointAborted，使主循环回退索引重跑该点。
 	// 传 nil 时等同于不检查（向后兼容）。
-	AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error)
+	// onSampleProgress：可选采样进度回调，每次采样后由算法调用，
+	// 传入当前采样序号（从 1 开始）和总采样数，用于 UI 显示"当前点采样 3/10"。
+	// 传 nil 时等同于不推送（向后兼容）。
+	AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool, onSampleProgress func(current, total int)) (DataPoint, error)
 
 	// ValidateConfig 验证校准配置是否有效
 	ValidateConfig(config Config) error

@@ -249,10 +249,30 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
            isMotionControllerConnected.value
   })
 
+  // 设备连接态细分：区分"未连接"和"已连接未采集"，给操作员更精准的下一步指引
+  const acquisitionDeviceState = computed<'noDevice' | 'disconnected' | 'connectedNotAcquiring' | 'ready'>(() => {
+    if (!currentConfig.value?.probeChannels) return 'noDevice'
+    const deviceIds = new Set<string>()
+    currentConfig.value.probeChannels.forEach((ch) => {
+      if (ch.enabled && ch.channel.deviceId) deviceIds.add(ch.channel.deviceId)
+    })
+    if (deviceIds.size === 0) return 'noDevice'
+    for (const deviceId of deviceIds) {
+      const device = deviceStore.profiles?.find((d) => d.id === deviceId)
+      if (!device) return 'disconnected'
+      if (deviceStore.statusFor(deviceId) !== 'Connected') return 'disconnected'
+      if (!deviceStore.acquiringFor(deviceId)) return 'connectedNotAcquiring'
+    }
+    return 'ready'
+  })
+
   const startDisabledReason = computed(() => {
     if (isLoading.value) return '正在加载配置，请稍候'
     if (!hasConfig.value) return '请先配置校准参数'
-    if (!isAcquisitionDeviceConnected.value) return '采集设备未连接'
+    // 细分采集设备状态：未连接 vs 已连接但未开始采集，后者给操作员直接可执行的指引
+    if (acquisitionDeviceState.value === 'noDevice') return '未配置采集设备通道'
+    if (acquisitionDeviceState.value === 'disconnected') return '采集设备未连接，请到设备管理连接'
+    if (acquisitionDeviceState.value === 'connectedNotAcquiring') return '采集设备已连接但未开始采集，请到设备管理启动采集'
     if (!isMotionControllerConnected.value) return '运动控制器未连接'
     return ''
   })

@@ -10,6 +10,7 @@ import { useTraversalStore } from '@stores/traversalStore'
 import {
   createDefaultTraversalProbeChannels,
   getTraversalLayoutPointCount,
+  getTraversalStepValues,
   isTraversalConfigurableProbeChannel,
   isTraversalRequiredProbeChannel
 } from '@shared/types/traversal'
@@ -183,7 +184,19 @@ const currentLayout = computed<TraversalLayout>(() => {
   switch (pattern.value) {
     case 'line': return { pattern: 'line', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, line: lineConfig.value }
     case 'rectangle': return { pattern: 'rectangle', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, rectangle: rectangleConfig.value }
-    case 'sector': return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: sectorConfig.value }
+    case 'sector': {
+      // 扇形圆心不输入，默认“第一个测点 = 当前位置 = 坐标原点 (0,0)”。
+      // 由第一个测点 (r₁, θ₁) 反推圆心，使第一点坐标 = (0,0)，
+      // 后续点位相对第一点计算。装配时用户手动把探针定位到第一个测点。
+      const radii = getTraversalStepValues(sectorConfig.value.radiusMin, sectorConfig.value.radiusMax, sectorConfig.value.radialStepSegments)
+      const angles = getTraversalStepValues(sectorConfig.value.angleStart, sectorConfig.value.angleEnd, sectorConfig.value.angularStepSegments)
+      const r1 = radii[0] ?? 0
+      const t1 = ((angles[0] ?? 0) * Math.PI) / 180
+      const hasData = radii.length > 0 && angles.length > 0
+      const centerX = hasData ? -r1 * Math.cos(t1) : 0
+      const centerY = hasData ? -r1 * Math.sin(t1) : 0
+      return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: { ...sectorConfig.value, centerX, centerY } }
+    }
     case 'custom': return { pattern: 'custom', snakeOrder: snakeOrder.value, custom: { points: customPoints.value } }
   }
 })

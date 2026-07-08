@@ -181,6 +181,23 @@ const latestRawData = computed(() => {
 const completedPoints = computed(() => calibrationStore.dataPoints.length)
 const totalPoints = computed(() => currentConfig.value?.points.length ?? 0)
 
+// 当前点采样子进度：calibrationStore.status 透传后端 autoEngine.GetSampleProgress()
+// currentSample=0 表示当前点尚未开始采集或已采集完成（下一轮 processPoint 开头重置）
+const sampleProgress = computed(() => {
+  const s = calibrationStore.status
+  if (!s) return null
+  const current = s.currentSample ?? 0
+  const total = s.samplesPerPoint ?? 0
+  if (total <= 0 || current <= 0) return null
+  return { current, total, percent: Math.round((current / total) * 100) }
+})
+
+// 错误详情：后端 StateError 时 lastError 非空，顶部栏展示供操作员排查
+const lastError = computed(() => calibrationStore.status?.lastError ?? '')
+
+// 实时 CSV 路径：校准启动后操作员需知道数据写到哪，避免"存了找不到"
+const csvSavePath = computed(() => currentConfig.value?.savePath ?? '')
+
 const progressPercent = computed(() => {
   if (!totalPoints.value) return 0
   return Math.round((completedPoints.value / totalPoints.value) * 100)
@@ -394,6 +411,26 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- 当前点采样子进度：操作员盯着屏幕知道还要等多久 -->
+      <div v-if="sampleProgress" class="flex items-center gap-2 border-l border-[var(--border-default)] pl-4">
+        <span class="text-xs text-[var(--text-muted)]">采样</span>
+        <span class="font-mono text-sm font-bold text-[var(--accent-primary)]">{{ sampleProgress.current }}/{{ sampleProgress.total }}</span>
+        <div class="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
+          <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-200" :style="{ width: sampleProgress.percent + '%' }"></div>
+        </div>
+      </div>
+
+      <!-- 实时 CSV 路径：操作员需知道数据写到哪 -->
+      <div v-if="csvSavePath" class="flex items-center gap-1 border-l border-[var(--border-default)] pl-4 min-w-0" :title="csvSavePath">
+        <FileText class="h-3.5 w-3.5 text-[var(--text-muted)] flex-shrink-0" />
+        <span class="text-xs text-[var(--text-muted)] truncate max-w-[180px]">{{ csvSavePath }}</span>
+      </div>
+
+      <!-- 错误详情：后端 StateError 时展示，供操作员排查 -->
+      <div v-if="lastError" class="flex items-center gap-1 border-l border-[var(--border-default)] pl-4" :title="lastError">
+        <span class="text-xs font-medium" :style="{ color: `var(--accent-danger)` }">⚠ {{ lastError.length > 30 ? lastError.slice(0, 30) + '...' : lastError }}</span>
+      </div>
+
       <!-- 配置摘要折叠：校准中几乎不看，压缩到角落 -->
       <button class="ml-auto flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]" @click="showConfigSummary = !showConfigSummary">
         <Settings class="h-3.5 w-3.5" />
@@ -479,7 +516,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 球罐门控状态条：压缩为一行，不占独立卡片 -->
+        <!-- 球罐门控状态条：压缩为一行，不占独立卡片；附"编辑"入口跳配置界面 -->
         <div class="mt-auto border-t border-[var(--border-default)] p-3">
           <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
             <div class="flex items-center gap-2">
@@ -492,6 +529,7 @@ onUnmounted(() => {
               </span>
               <span class="text-[var(--text-muted)]">|</span>
               <span class="font-mono font-bold text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</span>
+              <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" title="编辑球罐门控配置" @click="emit('openSettings')">编辑</button>
             </div>
           </div>
         </div>
@@ -584,24 +622,24 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 右列：三条曲线（Kb-θ / Kt-θ / Sb-θ），概览页隐藏 X/Y 轴标签节省空间 -->
+              <!-- 右列：三条曲线（Kb-θ / Kt-θ / Sb-θ），概览页隐藏 Y 轴标题节省空间，X 轴数值仍显示 -->
               <div class="flex flex-1 flex-col gap-3 min-w-0">
-                <div class="flex-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)]">Kb - θ 曲线</h3>
-                  <div class="h-[calc(100%-1.25rem)]">
-                    <ThreeHoleChart ref="kbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" :show-x-axis-labels="false" />
+                <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Kb - θ 曲线</h3>
+                  <div class="flex-1 min-h-0">
+                    <ThreeHoleChart ref="kbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" />
                   </div>
                 </div>
-                <div class="flex-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)]">Kt - θ 曲线</h3>
-                  <div class="h-[calc(100%-1.25rem)]">
-                    <ThreeHoleChart ref="ktChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" :show-x-axis-labels="false" />
+                <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Kt - θ 曲线</h3>
+                  <div class="flex-1 min-h-0">
+                    <ThreeHoleChart ref="ktChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" />
                   </div>
                 </div>
-                <div class="flex-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)]">Sb - θ 曲线</h3>
-                  <div class="h-[calc(100%-1.25rem)]">
-                    <ThreeHoleChart ref="sbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" :show-x-axis-labels="false" />
+                <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Sb - θ 曲线</h3>
+                  <div class="flex-1 min-h-0">
+                    <ThreeHoleChart ref="sbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" />
                   </div>
                 </div>
               </div>
@@ -609,25 +647,25 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 图表 Tab：放大查看三条曲线 -->
+        <!-- 图表 Tab：放大查看三条曲线，不显示 Y 轴标题（卡片标题已标明系数名） -->
         <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-4">
           <div class="grid h-full grid-cols-2 gap-3">
-            <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)]">Kb - θ 曲线</h3>
-              <div class="h-[calc(100%-2rem)]">
-                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" y-label="Kb" />
+            <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Kb - θ 曲线</h3>
+              <div class="flex-1 min-h-0">
+                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" />
               </div>
             </div>
-            <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)]">Kt - θ 曲线</h3>
-              <div class="h-[calc(100%-2rem)]">
-                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" y-label="Kt" />
+            <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Kt - θ 曲线</h3>
+              <div class="flex-1 min-h-0">
+                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" />
               </div>
             </div>
-            <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)]">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)]">Sb - θ 曲线</h3>
-              <div class="h-[calc(100%-2rem)]">
-                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" y-label="Sb" />
+            <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Sb - θ 曲线</h3>
+              <div class="flex-1 min-h-0">
+                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" />
               </div>
             </div>
           </div>

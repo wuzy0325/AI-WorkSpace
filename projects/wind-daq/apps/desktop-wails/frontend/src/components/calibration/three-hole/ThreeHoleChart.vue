@@ -21,13 +21,23 @@ const props = defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
 
-// 从 CSS 变量读取颜色，组件挂载后 document.documentElement 才有完整 token
-// 提供 fallback 避免首次渲染时 getComputedStyle 返回空值导致绘图异常
-function readColor(varName: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback
-  const style = getComputedStyle(document.documentElement)
-  return style.getPropertyValue(varName).trim() || fallback
-}
+// Canvas 绘图直接用硬编码颜色，不读 CSS 变量。
+// 之前 readColor('--text-muted') 拿到的是 "var(--gray-11)" 这种未解析引用，
+// Canvas 不认 var() 语法 → fillStyle 静默无效 → 刻度文字不渲染。
+// 改用临时元素读 computed color 可行，但主题切换时 canvas 不会自动重绘，
+// 且实现复杂。硬编码颜色 + 主题感知 class 更简单可靠。
+const COLOR_ACCENT = '#3b82f6'
+const COLOR_LAST = '#10b981'
+const COLOR_TEXT_MUTED = '#64748b'
+const COLOR_TEXT_PRIMARY = '#1e293b'
+const COLOR_BORDER = '#cbd5e1'
+const COLOR_GRID = '#e2e8f0'
+const COLOR_POINT_STROKE = '#ffffff'
+
+// Canvas font 最保险用系统通用字体名 sans-serif。
+// 之前读 CSS 变量 / computed style 拿到多字体栈或带引号名字，导致 fillText 静默失败。
+// 刻度文字可读性优先于字体美观一致性，直接硬编码 sans-serif。
+const CANVAS_FONT = 'sans-serif'
 
 // 从 dataPoints 提取 (x, y) 散点：xKey='theta' 时取 coordinates['θ']，否则取 coefficients
 function extractPoints(): { x: number; y: number }[] {
@@ -57,31 +67,20 @@ function draw(): void {
 
   const width = rect.width
   const height = rect.height
-  // 概览页隐藏 X 轴标签时底部只留 8px，图表 Tab 显示标签时留 28px
+  // X 轴刻度画在绘图区底部内侧（textBaseline=bottom），padBottom 只需小余量避免散点贴底
   const showXLabels = props.showXAxisLabels !== false
-  const padLeft = 44
+  const padLeft = 48
   const padRight = 12
   const padTop = 12
-  const padBottom = showXLabels ? 28 : 8
+  const padBottom = 8
 
   ctx.clearRect(0, 0, width, height)
 
   const points = extractPoints()
 
-  // 读取设计 token 颜色
-  const accentColor = readColor('--accent-primary', '#3b82f6')
-  const textMuted = readColor('--text-muted', '#64748b')
-  const textPrimary = readColor('--text-primary', '#1e293b')
-  const borderColor = readColor('--border-default', '#e2e8f0')
-  const gridColor = readColor('--bg-panel-strong', '#f1f5f9')
-	// 最新点高亮色：通过 CSS 变量读取，与"运动中"指示器保持视觉一致
-	const lastPointColor = readColor('--accent-success', '#10b981')
-	// Canvas 字体：跟随应用主题字体设定，避免与 UI 其他部分字体不一致
-	const themeFont = readColor('--font-family-base', '') || getComputedStyle(document.documentElement).fontFamily || 'sans-serif'
-
   if (points.length === 0) {
-    ctx.fillStyle = textMuted
-    ctx.font = `13px ${themeFont}`
+    ctx.fillStyle = COLOR_TEXT_MUTED
+    ctx.font = `13px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText('暂无数据', width / 2, height / 2)
@@ -111,18 +110,10 @@ function draw(): void {
   const xScale = (x: number) => padLeft + ((x - xMin) / (xMax - xMin)) * plotW
   const yScale = (y: number) => padTop + plotH - ((y - yMin) / (yMax - yMin)) * plotH
 
-  // 画网格线（浅色，在数据点下方）
-  ctx.strokeStyle = gridColor
+  // Y 轴网格线（水平）
+  ctx.strokeStyle = COLOR_GRID
   ctx.lineWidth = 1
-  const xTicks = 5
   const yTicks = 4
-  for (let i = 0; i <= xTicks; i++) {
-    const x = padLeft + (plotW * i) / xTicks
-    ctx.beginPath()
-    ctx.moveTo(x, padTop)
-    ctx.lineTo(x, padTop + plotH)
-    ctx.stroke()
-  }
   for (let i = 0; i <= yTicks; i++) {
     const y = padTop + (plotH * i) / yTicks
     ctx.beginPath()
@@ -132,7 +123,7 @@ function draw(): void {
   }
 
   // 画坐标轴（左竖线 + 底横线）
-  ctx.strokeStyle = borderColor
+  ctx.strokeStyle = COLOR_BORDER
   ctx.lineWidth = 1.5
   ctx.beginPath()
   ctx.moveTo(padLeft, padTop)
@@ -140,20 +131,22 @@ function draw(): void {
   ctx.lineTo(padLeft + plotW, padTop + plotH)
   ctx.stroke()
 
-  // X 轴刻度标签：概览页隐藏时跳过（showXAxisLabels=false）
-  if (showXLabels) {
-    ctx.fillStyle = textMuted
-    ctx.font = `11px ${themeFont}`
+  // X 轴刻度：每个数据点位置显示其 θ 值，去重按升序排列
+  {
+    const tickValues = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b)
+    ctx.fillStyle = COLOR_TEXT_MUTED
+    ctx.font = `11px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    for (let i = 0; i <= xTicks; i++) {
-      const val = xMin + ((xMax - xMin) * i) / xTicks
-      const x = padLeft + (plotW * i) / xTicks
-      ctx.fillText(val.toFixed(1), x, padTop + plotH + 4)
+    ctx.textBaseline = 'bottom'
+    for (const val of tickValues) {
+      const x = xScale(val)
+      ctx.fillText(val.toFixed(1), x, padTop + plotH - 2)
     }
   }
 
   // Y 轴刻度标签
+  ctx.fillStyle = COLOR_TEXT_MUTED
+  ctx.font = `11px ${CANVAS_FONT}`
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
   for (let i = 0; i <= yTicks; i++) {
@@ -162,15 +155,11 @@ function draw(): void {
     ctx.fillText(val.toFixed(3), padLeft - 6, y)
   }
 
-  // 轴标签：X 轴标题仅在显示刻度标签时绘制，Y 轴标题仅在传入非空字符串时绘制
-  ctx.fillStyle = textPrimary
-  ctx.font = `12px ${themeFont}`
-  if (showXLabels) {
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'bottom'
-    ctx.fillText(props.xLabel, padLeft + plotW / 2, height - 2)
-  }
+  // 轴标题：X 轴标题省略（卡片 h3 已标明"Kb - θ 曲线"，且 canvas 底部空间不足以再画标题）
+  // Y 轴标题仅在传入非空字符串时绘制（图表 Tab 可选）
   if (props.yLabel) {
+    ctx.fillStyle = COLOR_TEXT_PRIMARY
+    ctx.font = `12px ${CANVAS_FONT}`
     ctx.save()
     ctx.translate(10, padTop + plotH / 2)
     ctx.rotate(-Math.PI / 2)
@@ -180,15 +169,33 @@ function draw(): void {
     ctx.restore()
   }
 
-  // 画散点：最后一个点用高亮色，其余用主题色
-  points.forEach((point, index) => {
+  // 按_x 升序排序后绘制折线，确保 θ 递增时曲线连续不回环
+  // 校准数据点本身就是按 θ 顺序采集的，排序仅防御外部传入乱序的情况
+  const sortedPoints = [...points].sort((a, b) => a.x - b.x)
+
+  // 画折线：主题色细线，连接所有采样点，让趋势一目了然
+  if (sortedPoints.length >= 2) {
+    ctx.strokeStyle = COLOR_ACCENT
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    sortedPoints.forEach((p, i) => {
+      const x = xScale(p.x)
+      const y = yScale(p.y)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    ctx.stroke()
+  }
+
+  // 画散点：折线上叠加圆点，最后一个点用高亮色标识"最新采集位置"
+  sortedPoints.forEach((point, index) => {
     const x = xScale(point.x)
     const y = yScale(point.y)
     ctx.beginPath()
     ctx.arc(x, y, 4, 0, Math.PI * 2)
-    ctx.fillStyle = index === points.length - 1 ? lastPointColor : accentColor
+    ctx.fillStyle = index === sortedPoints.length - 1 ? COLOR_LAST : COLOR_ACCENT
     ctx.fill()
-    ctx.strokeStyle = readColor('--bg-panel', '#ffffff')
+    ctx.strokeStyle = COLOR_POINT_STROKE
     ctx.lineWidth = 1.5
     ctx.stroke()
   })

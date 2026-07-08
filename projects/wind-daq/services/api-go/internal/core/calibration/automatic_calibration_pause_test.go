@@ -93,7 +93,7 @@ func (noopAlgorithm) Type() CalibrationType { return TypeTotalPressure }
 func (noopAlgorithm) AcquireData(point CalPoint, _ ChannelValueReader, _ int) (DataPoint, error) {
 	return &PointResult{PointIndex: point.ID}, nil
 }
-func (noopAlgorithm) AcquireDataWithConfig(point CalPoint, _ ChannelValueReader, _ Config, _ func() bool) (DataPoint, error) {
+func (noopAlgorithm) AcquireDataWithConfig(point CalPoint, _ ChannelValueReader, _ Config, _ func() bool, _ func(current, total int)) (DataPoint, error) {
 	return &PointResult{PointIndex: point.ID}, nil
 }
 func (noopAlgorithm) ValidateConfig(Config) error { return nil }

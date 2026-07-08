@@ -52,13 +52,22 @@ func (a *TotalPressureAlgorithm) ValidateConfig(config Config) error {
 		return fmt.Errorf("samplesPerPoint 必须大于0")
 	}
 
+	// 采样间隔与超时联动校验：避免 BatchPollIntervalMs > BatchTimeoutMs 导致每帧都超时
+	if config.AcquisitionSampling != nil {
+		intervalMs := config.AcquisitionSampling.BatchPollIntervalMs
+		timeoutMs := config.AcquisitionSampling.BatchTimeoutMs
+		if intervalMs > 0 && timeoutMs > 0 && intervalMs > timeoutMs {
+			return fmt.Errorf("采样间隔(BatchPollIntervalMs=%dms)不能大于每帧超时(BatchTimeoutMs=%dms)", intervalMs, timeoutMs)
+		}
+	}
+
 	return nil
 }
 
 // AcquireDataWithConfig 自动校准引擎调用入口：使用完整配置（含 ProbeChannels）采集单点。
 // 采样间隔优先取 AcquisitionSampling.BatchPollIntervalMs，缺省回退到 10ms（与 five-hole 一致）。
-func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling, checkAbort, config.TimestampReader)
+func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool, onSampleProgress func(current, total int)) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling, checkAbort, config.TimestampReader, onSampleProgress)
 }
 
 // AcquireData 旧接口实现，仅作 Algorithm 接口兼容。
@@ -87,6 +96,7 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 	sampling *AcquisitionSamplingConfig,
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	onSampleProgress func(current, total int),
 ) (*TotalPressureDataPoint, error) {
 	alpha, ok := point.Coordinates["α"]
 	if !ok {
@@ -103,6 +113,12 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 		perSampleTimeout = time.Duration(sampling.BatchTimeoutMs) * time.Millisecond
 	}
 
+	sampleIntervalMs := 10
+	if sampling != nil && sampling.BatchPollIntervalMs > 0 {
+		sampleIntervalMs = sampling.BatchPollIntervalMs
+	}
+	sampleInterval := time.Duration(sampleIntervalMs) * time.Millisecond
+
 	samples := make([]TotalPressureRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
 		if checkAbort != nil && checkAbort() {
@@ -118,8 +134,8 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 					return nil, fmt.Errorf("等待新数据帧超时: %w", err)
 				}
 			} else {
-				// 无设备时间戳读取能力时退化为固定间隔 sleep（默认 10ms），避免全速空转读到同一帧缓存
-				time.Sleep(10 * time.Millisecond)
+				// 无设备时间戳读取能力时退化为间隔 sleep，避免全速空转读到同一帧缓存
+				time.Sleep(sampleInterval)
 			}
 		}
 
@@ -128,6 +144,11 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 			return nil, fmt.Errorf("读取总压探针通道失败: %w", err)
 		}
 		samples = append(samples, rawData)
+
+		// 采样进度回调：每次采完一个样本通知上层，驱动 UI 显示"当前点采样 i+1/N"
+		if onSampleProgress != nil {
+			onSampleProgress(i+1, samplesPerPoint)
+		}
 
 		if timestampReader != nil {
 			recordLastTimestamps(deviceIDs, timestampReader, lastTimestamps)

@@ -397,7 +397,7 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
 
-	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader())
+	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader(), nil)
 	if err != nil {
 		return m.fail("采集当前工况点失败: %v", err)
 	}
@@ -539,6 +539,13 @@ func (m *CalibrationManager) Status() calibration.Status {
 		status.DataPoints = append([]calibration.DataPoint(nil), status.DataPoints...)
 	}
 	m.mu.RUnlock()
+	// 附加当前点采样进度：从 autoEngine 读取算法采集循环实时更新的 currentSample/samplesPerPoint，
+	// 驱动前端"当前点采样 i/N"子进度显示。autoEngine 为 nil（未启动/总温手动模式）时跳过。
+	if m.autoEngine != nil {
+		current, total := m.autoEngine.GetSampleProgress()
+		status.CurrentSample = current
+		status.SamplesPerPoint = total
+	}
 	return status
 }
 

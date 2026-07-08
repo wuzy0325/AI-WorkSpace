@@ -59,8 +59,9 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithConfig(
 	channelReader ChannelValueReader,
 	config Config,
 	checkAbort func() bool,
+	onSampleProgress func(current, total int),
 ) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader)
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, onSampleProgress)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
@@ -76,6 +77,7 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 	onRealtime func(ThreeHoleRawData, ThreeHoleCoefficients),
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	onSampleProgress func(current, total int),
 ) (*ThreeHoleDataPoint, error) {
 	startTime := time.Now().UnixMilli()
 
@@ -110,6 +112,11 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 			return nil, fmt.Errorf("读取三孔探针通道失败: %w", err)
 		}
 		samples = append(samples, rawData)
+
+		// 采样进度回调：每次采完一个样本通知上层，驱动 UI 显示"当前点采样 i+1/N"
+		if onSampleProgress != nil {
+			onSampleProgress(i+1, samplesPerPoint)
+		}
 
 		if timestampReader != nil {
 			recordLastTimestamps(deviceIDs, timestampReader, lastTimestamps)

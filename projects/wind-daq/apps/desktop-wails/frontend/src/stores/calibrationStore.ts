@@ -263,6 +263,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
         progress,
         startTime: typeof startTime === 'number' && startTime > 0 ? startTime : undefined,
         dataPoints: Array.isArray(backendDataPoints) ? backendDataPoints : [],
+        currentSample: calStatus.currentSample ?? calStatus.CurrentSample ?? 0,
+        samplesPerPoint: calStatus.samplesPerPoint ?? calStatus.SamplesPerPoint ?? 0,
       }
     } else {
       status.value.status = mappedState
@@ -275,6 +277,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
       }
       if (Array.isArray(backendDataPoints)) {
         status.value.dataPoints = backendDataPoints
+      }
+      // 采样进度透传：仅 Running 态需要实时采样进度，非 Running 态强制清零避免残留旧值
+      if (mappedState === 'running' || state === 'running') {
+        status.value.currentSample = calStatus.currentSample ?? calStatus.CurrentSample ?? 0
+        status.value.samplesPerPoint = calStatus.samplesPerPoint ?? calStatus.SamplesPerPoint ?? 0
+      } else {
+        status.value.currentSample = 0
+        status.value.samplesPerPoint = 0
       }
     }
 

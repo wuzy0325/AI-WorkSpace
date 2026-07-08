@@ -44,6 +44,8 @@ const samplesPerPoint = ref(10)
 const calibrationName = ref(`三孔探针校准-${new Date().toISOString().slice(0, 10)}`)
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
+// 球罐判定总超时（秒）：后端 <=0 时使用默认 300 秒，前端默认 300 显式暴露给操作员
+const sphereTankTimeoutSec = ref(300)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
 
 const probeChannels = ref<ProbeChannelConfig[]>([
@@ -112,7 +114,7 @@ async function saveConfig() {
       type: 'three-hole', name: calibrationName.value, probeChannels: probeChannels.value.filter(ch => ch.enabled),
       motionAxes: motionAxes.value, points: generatePoints(), dwellTimeMs: dwellTimeMs.value, samplesPerPoint: samplesPerPoint.value, savePath: '',
       threeHoleLayout: pointLayout.value,
-      sphereTankGate: { enabled: sphereTankGateEnabled.value, waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value), stableTimeChannel: { ...sphereTankStableChannel.value } }
+      sphereTankGate: { enabled: sphereTankGateEnabled.value, waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value), timeoutSec: Math.max(0, sphereTankTimeoutSec.value), stableTimeChannel: { ...sphereTankStableChannel.value } }
     }
     const res = await calibrationApi.saveConfig('three-hole', JSON.parse(JSON.stringify(applyCalibrationPrecisionDefaults(config))))
     if (!res.success) throw new Error(res.error || '保存失败')
@@ -131,7 +133,7 @@ async function loadSavedConfig() {
     config.probeChannels?.forEach(sc => { const ec = probeChannels.value.find(c => c.role ? c.role === sc.role : c.name === sc.name); if (ec) { ec.channel = { ...sc.channel }; ec.enabled = sc.enabled; ec.role = sc.role; ec.precision = sc.precision } })
     config.motionAxes?.forEach((sa, i) => { if (motionAxes.value[i]) motionAxes.value[i] = { ...sa } })
     dwellTimeMs.value = config.dwellTimeMs; samplesPerPoint.value = config.samplesPerPoint
-    if (config.sphereTankGate) { sphereTankGateEnabled.value = config.sphereTankGate.enabled; sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec; sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel } }
+    if (config.sphereTankGate) { sphereTankGateEnabled.value = config.sphereTankGate.enabled; sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec; sphereTankTimeoutSec.value = config.sphereTankGate.timeoutSec ?? 300; sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel } }
   } catch { /* ok */ }
 }
 
@@ -229,6 +231,7 @@ onMounted(async () => {
           <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">启用球罐判定</UiCheckbox>
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
             <div><span class="field-label">等待时间 (秒)</span><UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" /></div>
+            <div><span class="field-label">总超时 (秒)</span><UiInputNumber v-model="sphereTankTimeoutSec" :min="0" :step="30" style="width:100%" /><span class="text-xs text-[var(--text-muted)]">≤0 使用默认 300 秒</span></div>
             <div><span class="field-label">PXI 设备</span><UiSelect v-model="sphereTankStableChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" placeholder="选择设备" style="width:100%" :fallback="false" /></div>
             <div><span class="field-label">稳定通道</span><UiSelect
               :model-value="sphereTankStableChannel.channelIndex >= 0 ? String(sphereTankStableChannel.channelIndex) : ''"

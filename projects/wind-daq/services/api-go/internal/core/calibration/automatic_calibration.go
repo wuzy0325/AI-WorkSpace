@@ -38,6 +38,11 @@ type AutomaticCalibration struct {
 	currentPointIdx int
 	dataPoints      []DataPoint
 	startTime       int64
+	// 当前点采样进度（由算法采集循环通过 onSampleProgress 回调更新）
+	// currentSample：当前点已采样本数（1..samplesPerPoint），0 表示尚未开始
+	// samplesPerPoint：当前点总采样数，用于 UI 显示"采样 3/10"
+	currentSample   int
+	samplesPerPoint int
 }
 
 // NewAutomaticCalibration 创建自动校准引擎
@@ -72,6 +77,7 @@ func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
 	a.currentPointIdx = 0
 	a.dataPoints = make([]DataPoint, 0)
 	a.startTime = time.Now().UnixMilli()
+	a.config.TimestampReader = a.makeTimestampReader()
 	a.mu.Unlock()
 
 	log.Printf("[AutomaticCalibration] 启动校准，共 %d 个测点", len(a.config.Points))
@@ -179,13 +185,27 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 
 	// 4. 采集数据
 	channelReader := a.makeChannelReader()
-	// 注入数据新鲜度检查：校准引擎运行时向算法提供设备时间戳读取能力，
-	// 算法在多次采样间等待设备推送新帧后才计入有效采样。
-	a.config.TimestampReader = a.makeTimestampReader()
 	checkAbort := func() bool {
 		return !a.IsRunning() || a.IsPaused()
 	}
-	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config, checkAbort)
+	// 采样进度回调：算法每次采完一个样本调用，更新 AutomaticCalibration 的共享状态，
+	// 供 Status() 查询路径读取，驱动前端"当前点采样 i+1/N"显示。
+	// 采集开始前先重置为 0，避免显示上一点的残留值。
+	a.mu.Lock()
+	a.currentSample = 0
+	a.samplesPerPoint = a.config.SamplesPerPoint
+	a.mu.Unlock()
+	onSampleProgress := func(current, total int) {
+		a.mu.Lock()
+		a.currentSample = current
+		a.samplesPerPoint = total
+		a.mu.Unlock()
+	}
+	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config, checkAbort, onSampleProgress)
+	// 采集完成后立即清零采样进度，避免移动/驻留/球罐等待期间 UI 仍显示"采样 N/N"
+	a.mu.Lock()
+	a.currentSample = 0
+	a.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("数据采集失败: %w", err)
 	}
@@ -470,6 +490,15 @@ func (a *AutomaticCalibration) GetCurrentPointIndex() int {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.currentPointIdx
+}
+
+// GetSampleProgress 获取当前点采样进度（currentSample, samplesPerPoint）
+// 供 usecase 层 Status() 查询路径读取驱动前端"当前点采样 i/N"显示。
+// currentSample=0 表示当前点尚未开始采集或已采集完成（下一轮 processPoint 开头会重置）。
+func (a *AutomaticCalibration) GetSampleProgress() (int, int) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.currentSample, a.samplesPerPoint
 }
 
 // GetStartTime 获取启动时间

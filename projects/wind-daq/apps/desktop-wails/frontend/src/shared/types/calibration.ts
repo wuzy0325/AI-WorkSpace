@@ -259,6 +259,10 @@ export interface CalibrationTaskStatus {
   estimatedTimeRemaining?: number
   lastError?: string
   dataPoints: CalibrationAnyDataPoint[]
+  /** 当前点已采样本数（1..samplesPerPoint），0 表示未开始/已完成 */
+  currentSample?: number
+  /** 当前点总采样数，UI 据此显示"当前点采样 i/N"子进度 */
+  samplesPerPoint?: number
 }
 
 export interface CalibrationModuleResult {
