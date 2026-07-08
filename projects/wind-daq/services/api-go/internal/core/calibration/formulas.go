@@ -181,39 +181,37 @@ func CalculateFiveHoleCoefficientsStdDev(dataList []FiveHoleRawData) (KalphaStd,
 
 // ==================== 三孔探针公式 ====================
 
-// CalculateThreeHoleCoefficients 计算三孔探针系数
+// CalculateThreeHoleCoefficients 计算三孔探针校准系数
 //
-// 公式：
+// 口径与插值器 PRB 文件对齐（shared/algorithms/go/threehole/interpolation/three_hole.go），
+// 使用孔间差压 ΔP 而非对大气压表压，确保校准产物可直接导出为 PRB 供插值器消费：
 //
-//	K = (P2 - P3) / (P1 - P∞)  —— 方向系数
-//	Cv = (P1 - P∞) / (Pt - P∞)  —— 速度系数（需要总压）
-//	Cp = (P1 - P∞) / (Pt - P∞)  —— 总压系数
+//	ΔP = 2·P2 - P1 - P3            中心孔(P2)与两侧孔(P1/P3)的差压
+//	Kb = (P3 - P1) / ΔP            方向系数（仅需孔压，始终可算）
+//	Kt = (Pt - P2) / ΔP            总压恢复系数（需 PTotal；缺失置 0，不发误导值）
+//	Sb = (Pt - Ps) / ΔP            静压恢复系数（需 PTotal + PStatic；缺失置 0）
+//
+// 插值时由 Kt/Sb 反演：Pt = P2 + Kt·ΔP，Ps = Pt - Sb·ΔP。
+// 当 |ΔP| < 1e-6（流场未立）时三系数全部置 0，避免除零与误导性输出。
 func CalculateThreeHoleCoefficients(data ThreeHoleRawData) ThreeHoleCoefficients {
-	// 计算方向系数 K
-	denominator := data.P1 - data.PAtm
-	if math.Abs(denominator) < 1e-6 {
-		denominator = 1e-6
-	}
-	K := (data.P2 - data.P3) / denominator
-
-	// 计算速度系数 Cv
-	var Cv float64
-	if data.PTotal != nil && math.Abs(*data.PTotal-data.PAtm) >= 1e-6 {
-		Cv = (data.P1 - data.PAtm) / (*data.PTotal - data.PAtm)
+	deltaP := 2*data.P2 - data.P1 - data.P3
+	if math.Abs(deltaP) < 1e-6 {
+		return ThreeHoleCoefficients{}
 	}
 
-	// 计算总压系数 Cp
-	var Cp float64
-	if data.PTotal != nil && math.Abs(*data.PTotal-data.PAtm) >= 1e-6 {
-		Cp = Cv
-	} else {
-		dynamicPressure := math.Abs(data.P1 - data.PAtm)
-		if dynamicPressure > 1e-6 {
-			Cp = 1.0
-		}
+	kb := (data.P3 - data.P1) / deltaP
+
+	var kt float64
+	if data.PTotal != nil {
+		kt = (*data.PTotal - data.P2) / deltaP
 	}
 
-	return ThreeHoleCoefficients{K: K, Cv: Cv, Cp: Cp}
+	var sb float64
+	if data.PTotal != nil && data.PStatic != nil {
+		sb = (*data.PTotal - *data.PStatic) / deltaP
+	}
+
+	return ThreeHoleCoefficients{Kb: kb, Kt: kt, Sb: sb}
 }
 
 // CalculateThreeHoleAverage 计算三孔探针多次采样平均值
@@ -222,17 +220,22 @@ func CalculateThreeHoleAverage(dataList []ThreeHoleRawData) ThreeHoleRawData {
 		return ThreeHoleRawData{}
 	}
 
-	var sumP1, sumP2, sumP3, sumPAtm, sumPTotal float64
-	var pTotalCount int
+	var sumP1, sumP2, sumP3, sumPAtm, sumTAtm, sumPTotal, sumPStatic float64
+	var pTotalCount, pStaticCount int
 
 	for _, d := range dataList {
 		sumP1 += d.P1
 		sumP2 += d.P2
 		sumP3 += d.P3
 		sumPAtm += d.PAtm
+		sumTAtm += d.TAtm
 		if d.PTotal != nil {
 			sumPTotal += *d.PTotal
 			pTotalCount++
+		}
+		if d.PStatic != nil {
+			sumPStatic += *d.PStatic
+			pStaticCount++
 		}
 	}
 
@@ -242,18 +245,23 @@ func CalculateThreeHoleAverage(dataList []ThreeHoleRawData) ThreeHoleRawData {
 		P2:   sumP2 / n,
 		P3:   sumP3 / n,
 		PAtm: sumPAtm / n,
+		TAtm: sumTAtm / n,
 	}
 
 	if pTotalCount > 0 {
 		avg := sumPTotal / float64(pTotalCount)
 		result.PTotal = &avg
 	}
+	if pStaticCount > 0 {
+		avg := sumPStatic / float64(pStaticCount)
+		result.PStatic = &avg
+	}
 
 	return result
 }
 
 // CalculateThreeHoleCoefficientsStdDev 计算三孔探针系数的标准差
-func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KStd, CvStd, CpStd float64) {
+func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KbStd, KtStd, SbStd float64) {
 	if len(dataList) < 2 {
 		return 0, 0, 0
 	}
@@ -263,17 +271,17 @@ func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KStd, Cv
 		coefficientsList[i] = CalculateThreeHoleCoefficients(d)
 	}
 
-	kVals := make([]float64, len(coefficientsList))
-	cvVals := make([]float64, len(coefficientsList))
-	cpVals := make([]float64, len(coefficientsList))
+	kbVals := make([]float64, len(coefficientsList))
+	ktVals := make([]float64, len(coefficientsList))
+	sbVals := make([]float64, len(coefficientsList))
 
 	for i, c := range coefficientsList {
-		kVals[i] = c.K
-		cvVals[i] = c.Cv
-		cpVals[i] = c.Cp
+		kbVals[i] = c.Kb
+		ktVals[i] = c.Kt
+		sbVals[i] = c.Sb
 	}
 
-	return StdDev(kVals), StdDev(cvVals), StdDev(cpVals)
+	return StdDev(kbVals), StdDev(ktVals), StdDev(sbVals)
 }
 
 // ==================== 总压探针公式 ====================

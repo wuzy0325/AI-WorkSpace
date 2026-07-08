@@ -21,6 +21,7 @@ func NewCsvSchema(config Config) CsvSchema {
 
 // BuildHeader 返回 CSV 表头行
 // 列顺序由校准类型决定，每种类型有专属的列集合
+// 三孔表头用中文，与五孔风格对齐；去掉 startTime/endTime 两列（校准过程时间戳不参与数据分析）
 func (s CsvSchema) BuildHeader() []string {
 	base := []string{"pointId", "sampleCount", "stdDev", "startTime", "endTime"}
 
@@ -35,10 +36,13 @@ func (s CsvSchema) BuildHeader() []string {
 		}
 		return header
 	case TypeThreeHole:
-		return append(base,
-			"p1", "p2", "p3", "pAtm", "pTotal",
-			"K", "Cv", "Cp",
-		)
+		// 三孔表头全中文，与五孔风格一致；不含 startTime/endTime
+		return []string{
+			"点位编号", "θ(°)",
+			"P1(Pa)", "P2(Pa)", "P3(Pa)", "P∞(Pa)", "T∞(°C)", "Pt(Pa)", "Ps(Pa)",
+			"Kb", "Kt", "Sb",
+			"采样次数", "标准差",
+		}
 	case TypeTotalPressure:
 		return append(base,
 			"alpha",
@@ -135,23 +139,30 @@ func buildFiveHoleRawChannelValues(rawDeviceChannels map[string][]float64) []str
 func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 	pTotal := ""
 	if dp.RawData.PTotal != nil {
-		pTotal = formatFloat(*dp.RawData.PTotal)
+		pTotal = formatFloatWithPrecision(*dp.RawData.PTotal, threeHolePressurePrecision)
+	}
+	pStatic := ""
+	if dp.RawData.PStatic != nil {
+		pStatic = formatFloatWithPrecision(*dp.RawData.PStatic, threeHolePressurePrecision)
 	}
 
+	// 精度与前端 ThreeHoleMain.vue 显示一致：
+	// θ 1 位（formatValue(point.coordinates['θ'], 1)）、压力 3 位（probePrecision 默认 3）、系数 4 位（formatValue(Kb, 4)）、标准差 4 位
 	return []string{
 		formatInt(dp.PointID),
-		formatInt(dp.SampleCount),
-		formatFloat(dp.StdDev),
-		formatInt64(dp.StartTime),
-		formatInt64(dp.EndTime),
-		formatFloat(dp.RawData.P1),
-		formatFloat(dp.RawData.P2),
-		formatFloat(dp.RawData.P3),
-		formatFloat(dp.RawData.PAtm),
+		formatFloatWithPrecision(dp.Coordinates["θ"], threeHoleThetaPrecision),
+		formatFloatWithPrecision(dp.RawData.P1, threeHolePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.P2, threeHolePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.P3, threeHolePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.PAtm, threeHolePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.TAtm, threeHolePressurePrecision),
 		pTotal,
-		formatFloat(dp.Coefficients.K),
-		formatFloat(dp.Coefficients.Cv),
-		formatFloat(dp.Coefficients.Cp),
+		pStatic,
+		formatFloatWithPrecision(dp.Coefficients.Kb, threeHoleCoeffPrecision),
+		formatFloatWithPrecision(dp.Coefficients.Kt, threeHoleCoeffPrecision),
+		formatFloatWithPrecision(dp.Coefficients.Sb, threeHoleCoeffPrecision),
+		formatInt(dp.SampleCount),
+		formatFloatWithPrecision(dp.StdDev, threeHoleStdDevPrecision),
 	}
 }
 

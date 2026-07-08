@@ -110,6 +110,8 @@ func (f *fakeCalibrationRuntime) GetChannelValue(deviceID string, channelIndex i
 	return v, ok
 }
 
+func (f *fakeCalibrationRuntime) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
+
 func (f *fakeCalibrationRuntime) MoveToPosition(axis MotionAxisConfig, position float64) error {
 	f.moves = append(f.moves, fmt.Sprintf("%s=%g", axis.Name, position))
 	return nil

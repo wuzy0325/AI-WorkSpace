@@ -397,7 +397,7 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
 
-	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval)
+	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader())
 	if err != nil {
 		return m.fail("采集当前工况点失败: %v", err)
 	}
@@ -635,6 +635,19 @@ func (m *CalibrationManager) makeChannelReader() calibration.ChannelValueReader 
 	}
 }
 
+// makeTimestampReader 创建设备时间戳读取函数
+func (m *CalibrationManager) makeTimestampReader() calibration.TimestampReader {
+	return func(deviceID string) (int64, bool) {
+		if m.runtime != nil {
+			return m.runtime.GetLatestTimestamp(deviceID)
+		}
+		if m.reader == nil {
+			return 0, false
+		}
+		return m.reader.GetLatestTimestamp(deviceID)
+	}
+}
+
 // returnToHomePosition 运动归零
 func (m *CalibrationManager) returnToHomePosition(config calibration.Config) {
 	if m.motion == nil || len(config.MotionAxes) == 0 {
@@ -712,6 +725,10 @@ func (r *runtimeAdapter) GetChannelValue(deviceID string, channelIndex int) (flo
 	return r.runtime.GetChannelValue(deviceID, channelIndex)
 }
 
+func (r *runtimeAdapter) GetLatestTimestamp(deviceID string) (int64, bool) {
+	return r.runtime.GetLatestTimestamp(deviceID)
+}
+
 func (r *runtimeAdapter) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {
 	return r.runtime.MoveToPosition(axis, position)
 }
@@ -739,6 +756,13 @@ func (f *fallbackRuntime) GetChannelValue(deviceID string, channelIndex int) (fl
 		return 0, false
 	}
 	return valuesForChannelIndex(payload, channelIndex), true
+}
+
+func (f *fallbackRuntime) GetLatestTimestamp(deviceID string) (int64, bool) {
+	if f.reader == nil {
+		return 0, false
+	}
+	return f.reader.GetLatestTimestamp(deviceID)
 }
 
 func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {

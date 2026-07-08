@@ -344,6 +344,8 @@ const zh: Record<string, string> = {
   threeHoleP3: 'P3',
   threeHolePAtm: '大气压',
   threeHoleTAtm: '大气温度',
+  threeHolePTotal: '风洞总压',
+  threeHolePStatic: '风洞静压',
 
   // 五孔探针校准配置分组标签（随全局语言切换）
   fiveHoleProbeGroup: '探针五孔',
@@ -779,6 +781,8 @@ const en: Record<string, string> = {
   threeHoleP3: 'P3',
   threeHolePAtm: 'Atm Pressure',
   threeHoleTAtm: 'Atm Temp',
+  threeHolePTotal: 'Tunnel Total Pressure',
+  threeHolePStatic: 'Tunnel Static Pressure',
 
   // Five-hole probe calibration group labels (switch with global language)
   fiveHoleProbeGroup: 'Probe Five-hole',

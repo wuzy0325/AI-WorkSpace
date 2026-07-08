@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.5] - 2026-07-06
+
+### Changed
+
+- 三孔/五孔/总压/总温校准算法重构：校验方向统一为"来流为正"，消除各算法间符号约定不一致的问题。
+- CSV 模式配置重构：区分用户模式（user）和 CSV 模式（csv），校准选项仅在 CSV 模式下可配置。
+- 校准暂停/恢复逻辑优化：暂停时自动保存中间状态，恢复时从断点继续。
+
+### Internal
+
+- 校准核心类型定义重构（types.go），预定义通道转换为运行时初始化。
+- CSV 格式定义（csv_schema.go）重构，统一各算法表头生成。
+- 前端校准工作流 composable（useCalibrationWorkflow）重构，优化状态管理。
+
+### Verification
+
+- `go test ./internal/... ./api/...`
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+- 冒烟测试
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.4] - 2026-07-06
 
 ### Fixed

@@ -265,6 +265,17 @@ func (h *AcquisitionHub) GetLatestData(deviceID string) (device.DataPayload, boo
 	return payload, ok
 }
 
+func (h *AcquisitionHub) GetLatestTimestamp(deviceID string) (int64, bool) {
+	shard := &h.shards[shardIndexForDevice(deviceID)]
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+	payload, ok := shard.latest[deviceID]
+	if !ok {
+		return 0, false
+	}
+	return payload.Timestamp, true
+}
+
 func (h *AcquisitionHub) GetRecentData(deviceID string, limit int) []device.DataPayload {
 	shard := &h.shards[shardIndexForDevice(deviceID)]
 	shard.mu.RLock()

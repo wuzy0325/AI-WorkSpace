@@ -11,24 +11,17 @@ import (
 // RuntimeAccess 校准运行时依赖注入接口
 // 由 CalibrationManager 注入，提供通道读取、运动控制等能力
 type RuntimeAccess interface {
-	// GetChannelValue 获取指定设备通道的当前值
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
-	// MoveToPosition 移动指定轴到目标位置
+	GetLatestTimestamp(deviceID string) (int64, bool)
 	MoveToPosition(axis MotionAxisConfig, position float64) error
-	// WaitForMotionComplete 等待所有轴运动完成
 	WaitForMotionComplete() error
-	// StopMotion 立即停止所有运动轴。暂停时用于打断当前点位运动，
-	// 使 WaitForMotionComplete 尽快返回。
 	StopMotion() error
 }
 
-// errPointAborted 暂停打断当前测点的哨兵错误。
+// ErrPointAborted 暂停打断当前测点的哨兵错误。
 // runCalibrationLoop 识别此错误后回退循环索引以重跑同一点，
 // 不计入 pointErrorCount。
-var errPointAborted = fmt.Errorf("测点被暂停打断")
-
-// ErrPointAborted 对外暴露的暂停打断错误（供测试与上层识别）。
-var ErrPointAborted = errPointAborted
+var ErrPointAborted = errors.New("测点被暂停打断")
 
 // AutomaticCalibration 自动循环校准引擎
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
@@ -186,7 +179,13 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 
 	// 4. 采集数据
 	channelReader := a.makeChannelReader()
-	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config)
+	// 注入数据新鲜度检查：校准引擎运行时向算法提供设备时间戳读取能力，
+	// 算法在多次采样间等待设备推送新帧后才计入有效采样。
+	a.config.TimestampReader = a.makeTimestampReader()
+	checkAbort := func() bool {
+		return !a.IsRunning() || a.IsPaused()
+	}
+	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config, checkAbort)
 	if err != nil {
 		return fmt.Errorf("数据采集失败: %w", err)
 	}
@@ -221,7 +220,7 @@ func (a *AutomaticCalibration) checkPausedAndAbort() error {
 	if a.runtime != nil {
 		_ = a.runtime.StopMotion()
 	}
-	return errPointAborted
+	return ErrPointAborted
 }
 
 // moveToPoint 移动到指定点位
@@ -363,6 +362,16 @@ func (a *AutomaticCalibration) makeChannelReader() ChannelValueReader {
 			return 0, false
 		}
 		return a.runtime.GetChannelValue(deviceID, channelIndex)
+	}
+}
+
+// makeTimestampReader 创建设备时间戳读取函数
+func (a *AutomaticCalibration) makeTimestampReader() TimestampReader {
+	return func(deviceID string) (int64, bool) {
+		if a.runtime == nil {
+			return 0, false
+		}
+		return a.runtime.GetLatestTimestamp(deviceID)
 	}
 }
 

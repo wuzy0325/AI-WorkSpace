@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -56,8 +57,8 @@ func (a *TotalPressureAlgorithm) ValidateConfig(config Config) error {
 
 // AcquireDataWithConfig 自动校准引擎调用入口：使用完整配置（含 ProbeChannels）采集单点。
 // 采样间隔优先取 AcquisitionSampling.BatchPollIntervalMs，缺省回退到 10ms（与 five-hole 一致）。
-func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling)
+func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling, checkAbort, config.TimestampReader)
 }
 
 // AcquireData 旧接口实现，仅作 Algorithm 接口兼容。
@@ -73,17 +74,19 @@ func (a *TotalPressureAlgorithm) AcquireData(point CalPoint, channelReader Chann
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
 //
 // 采样策略：
-//   - samplesPerPoint 次读取，每次间隔 sampleIntervalMs（默认 10ms，与 five-hole/three-hole 一致；
-//     可由 AcquisitionSampling.BatchPollIntervalMs 覆盖——该字段原义为批量读取轮询间隔，
-//     此处复用为多次采样间的睡眠间隔，语义相近：控制对设备的轮询频率）
-//   - 任一次读取失败立即返回错误，避免用零值静默填充样本（曾导致 CPT=0、马赫数=0 无告警）
-//   - 采集完成后计算平均值、系数、探针总压样本标准差
+//
+//		samplesPerPoint 次读取，每次间隔 10ms（默认兜底，与 five-hole/three-hole 一致）；
+//		当 timestampReader 可用时优先等待设备新帧，不可用时退化为固定间隔 sleep 避免全速空转。
+//	  - 任一次读取失败立即返回错误，避免用零值静默填充样本（曾导致 CPT=0、马赫数=0 无告警）
+//	  - 采集完成后计算平均值、系数、探针总压样本标准差
 func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 	point CalPoint,
 	channelReader ChannelValueReader,
 	probeChannels []ProbeChannel,
 	samplesPerPoint int,
 	sampling *AcquisitionSamplingConfig,
+	checkAbort func() bool,
+	timestampReader TimestampReader,
 ) (*TotalPressureDataPoint, error) {
 	alpha, ok := point.Coordinates["α"]
 	if !ok {
@@ -92,22 +95,42 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 
 	startTime := time.Now().UnixMilli()
 
-	// 默认 10ms 与 five-hole.go / three-hole.go 保持一致，确保各校准类型采样行为统一。
-	sampleIntervalMs := 10
-	if sampling != nil && sampling.BatchPollIntervalMs > 0 {
-		sampleIntervalMs = sampling.BatchPollIntervalMs
+	deviceIDs := collectUniqueDeviceIDs(probeChannels)
+	lastTimestamps := make(map[string]int64)
+
+	perSampleTimeout := freshnessDefaultTimeout
+	if sampling != nil && sampling.BatchTimeoutMs > 0 {
+		perSampleTimeout = time.Duration(sampling.BatchTimeoutMs) * time.Millisecond
 	}
-	sampleInterval := time.Duration(sampleIntervalMs) * time.Millisecond
 
 	samples := make([]TotalPressureRawData, 0, samplesPerPoint)
 	for i := 0; i < samplesPerPoint; i++ {
+		if checkAbort != nil && checkAbort() {
+			return nil, ErrPointAborted
+		}
+
+		if i > 0 {
+			if timestampReader != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, perSampleTimeout, checkAbort); err != nil {
+					if errors.Is(err, ErrPointAborted) {
+						return nil, err
+					}
+					return nil, fmt.Errorf("等待新数据帧超时: %w", err)
+				}
+			} else {
+				// 无设备时间戳读取能力时退化为固定间隔 sleep（默认 10ms），避免全速空转读到同一帧缓存
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+
 		rawData, err := ReadProbeChannelsToTotalPressureRaw(probeChannels, channelReader)
 		if err != nil {
 			return nil, fmt.Errorf("读取总压探针通道失败: %w", err)
 		}
 		samples = append(samples, rawData)
-		if i < samplesPerPoint-1 {
-			time.Sleep(sampleInterval)
+
+		if timestampReader != nil {
+			recordLastTimestamps(deviceIDs, timestampReader, lastTimestamps)
 		}
 	}
 

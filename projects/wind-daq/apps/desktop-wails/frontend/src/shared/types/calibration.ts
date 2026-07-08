@@ -24,6 +24,7 @@ export type ProbeChannelRole =
   | 'threeHole.pAtm'
   | 'threeHole.tAtm'
   | 'threeHole.pTotal'
+  | 'threeHole.pStatic'
   | 'fiveHole.p1'
   | 'fiveHole.p2'
   | 'fiveHole.p3'
@@ -106,20 +107,29 @@ export interface ThreeHolePointLayout {
   thetaStep: number
 }
 
-/** 三孔探针原始数据 */
+/** 三孔探针原始数据
+ *
+ * 孔序约定（与 shared/algorithms/go/threehole/interpolation 对齐）：
+ *   P1 = 侧孔1（左孔）
+ *   P2 = 中心孔
+ *   P3 = 侧孔2（右孔）
+ *   ΔP = 2·P2 - P1 - P3
+ */
 export interface ThreeHoleRawData {
   p1: number
   p2: number
   p3: number
   pAtm: number
+  tAtm: number
   pTotal?: number
+  pStatic?: number
 }
 
-/** 三孔探针系数 */
+/** 三孔探针系数（与插值器 PRB 文件列对齐） */
 export interface ThreeHoleCoefficients {
-  K: number
-  Cv: number
-  Cp: number
+  Kb: number
+  Kt: number
+  Sb: number
 }
 
 /** 三孔探针数据点 */

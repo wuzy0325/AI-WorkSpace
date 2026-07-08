@@ -30,6 +30,8 @@ const THREE_HOLE_ROLE_I18N_KEY: Record<string, string> = {
   'threeHole.p3': 'threeHoleP3',
   'threeHole.pAtm': 'threeHolePAtm',
   'threeHole.tAtm': 'threeHoleTAtm',
+  'threeHole.pTotal': 'threeHolePTotal',
+  'threeHole.pStatic': 'threeHolePStatic',
 }
 
 // 合并后的统一映射表，供所有探针类型共用

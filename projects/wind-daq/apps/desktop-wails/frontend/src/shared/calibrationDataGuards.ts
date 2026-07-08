@@ -12,7 +12,7 @@ export function isFiveHoleDataPoint(point: CalibrationAnyDataPoint): point is Ca
 }
 
 export function isThreeHoleDataPoint(point: CalibrationAnyDataPoint): point is ThreeHoleDataPoint {
-  return 'coefficients' in point && 'K' in (point as ThreeHoleDataPoint).coefficients
+  return 'coefficients' in point && 'Kb' in (point as ThreeHoleDataPoint).coefficients
 }
 
 export function isTotalPressureDataPoint(point: CalibrationAnyDataPoint): point is TotalPressureDataPoint {

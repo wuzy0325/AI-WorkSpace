@@ -39,7 +39,9 @@ const pointLayout = ref<ThreeHolePointLayout>({ thetaMin: -30, thetaMax: 30, the
 const pointCount = computed(() => Math.floor((pointLayout.value.thetaMax - pointLayout.value.thetaMin) / pointLayout.value.thetaStep) + 1)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
-const calibrationName = ref(`三孔探针校准-${new Date().toLocaleDateString()}`)
+// 默认名用 ISO 日期（YYYY-MM-DD），避免 toLocaleDateString 在中文环境返回"2026/7/8"
+// 含斜杠——斜杠在文件名里非法，会导致保存按钮默认文件名被原生对话框解析为路径。
+const calibrationName = ref(`三孔探针校准-${new Date().toISOString().slice(0, 10)}`)
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
@@ -50,12 +52,14 @@ const probeChannels = ref<ProbeChannelConfig[]>([
   { name: t.value['threeHoleP3'], role: 'threeHole.p3', channel: { deviceId: '', channelIndex: 2 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
   { name: t.value['threeHolePAtm'], role: 'threeHole.pAtm', channel: { deviceId: '', channelIndex: 16 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
   { name: t.value['threeHoleTAtm'], role: 'threeHole.tAtm', channel: { deviceId: '', channelIndex: 17 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHolePTotal'], role: 'threeHole.pTotal', channel: { deviceId: '', channelIndex: 3 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
+  { name: t.value['threeHolePStatic'], role: 'threeHole.pStatic', channel: { deviceId: '', channelIndex: 4 }, enabled: true, precision: DEFAULT_CALIBRATION_PROBE_PRECISION },
 ])
 
 const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Theta', controllerId: '', axis: 'X' }])
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
-const REQUIRED_CHANNEL_ROLES = ['threeHole.p1', 'threeHole.p2', 'threeHole.p3', 'threeHole.pAtm', 'threeHole.tAtm'] as const
+const REQUIRED_CHANNEL_ROLES = ['threeHole.p1', 'threeHole.p2', 'threeHole.p3', 'threeHole.pAtm', 'threeHole.tAtm', 'threeHole.pTotal', 'threeHole.pStatic'] as const
 
 // 批量操作：统一选择设备 + 通道号自动递增填充（仿照遍历测试模块）
 const {
@@ -97,7 +101,7 @@ function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 function generatePoints() {
   const points = []
   for (let t = pointLayout.value.thetaMin; t <= pointLayout.value.thetaMax; t += pointLayout.value.thetaStep)
-    points.push({ id: points.length, coordinates: { Theta: Math.round(t * 100) / 100 } })
+    points.push({ id: points.length, coordinates: { 'θ': Math.round(t * 100) / 100 } })
   return points
 }
 

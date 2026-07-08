@@ -41,6 +41,9 @@ type Config struct {
 	SphereTankGate         *SphereTankGateConfig      `json:"sphereTankGate,omitempty"`         // 球罐闸门配置
 	AcquisitionSampling    *AcquisitionSamplingConfig `json:"acquisitionSampling,omitempty"`    // 采集采样配置
 	TotalTemperatureConfig *TotalTemperatureConfig    `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
+	// TimestampReader 设备时间戳读取函数（仅运行时注入，不序列化）。
+	// 非 nil 时各算法在多次采样间等待设备推送新数据帧后才计入有效采样，避免重复读缓存旧数据。
+	TimestampReader TimestampReader `json:"-"`
 }
 
 // ProbeChannel 探针通道配置，将逻辑角色映射到物理通道
@@ -125,19 +128,38 @@ type FiveHoleDataPoint struct {
 // ==================== 三孔探针类型 ====================
 
 // ThreeHoleRawData 三孔探针原始数据
+//
+// 孔序约定（与 shared/algorithms/go/threehole/interpolation 对齐）：
+//
+//	P1 = 侧孔1（左孔）
+//	P2 = 中心孔（ΔP 中心参考）
+//	P3 = 侧孔2（右孔）
+//
+// 插值器：ΔP = 2·P2 - P1 - P3，Kb = (P3 - P1) / ΔP。
 type ThreeHoleRawData struct {
-	P1     float64  `json:"p1"`               // 中心孔压力
-	P2     float64  `json:"p2"`               // 侧孔1压力
-	P3     float64  `json:"p3"`               // 侧孔2压力
-	PAtm   float64  `json:"pAtm"`             // 大气压力
-	PTotal *float64 `json:"pTotal,omitempty"` // 风洞总压（可选）
+	P1      float64  `json:"p1"`                // 侧孔1压力（左孔）
+	P2      float64  `json:"p2"`                // 中心孔压力
+	P3      float64  `json:"p3"`                // 侧孔2压力（右孔）
+	PAtm    float64  `json:"pAtm"`              // 大气压力
+	TAtm    float64  `json:"tAtm"`              // 大气温度
+	PTotal  *float64 `json:"pTotal,omitempty"`  // 风洞总压（必需，用于 Kt/Sb）
+	PStatic *float64 `json:"pStatic,omitempty"` // 风洞静压（必需，用于 Sb）
 }
 
-// ThreeHoleCoefficients 三孔探针系数
+// ThreeHoleCoefficients 三孔探针校准系数
+//
+// 口径与插值器 PRB 文件列对齐（shared/algorithms/go/threehole/interpolation/three_hole.go）：
+//
+//	ΔP = 2·P2 - P1 - P3           中心孔与侧孔差压
+//	Kb = (P3 - P1) / ΔP           方向系数（仅孔压）
+//	Kt = (Pt - P2) / ΔP           总压恢复系数（需 PTotal）
+//	Sb = (Pt - Ps) / ΔP           静压恢复系数（需 PTotal + PStatic）
+//
+// 插值时：Pt = P2 + Kt·ΔP, Ps = Pt - Sb·ΔP
 type ThreeHoleCoefficients struct {
-	K  float64 `json:"K"`  // 方向系数
-	Cv float64 `json:"Cv"` // 速度系数
-	Cp float64 `json:"Cp"` // 总压系数
+	Kb float64 `json:"Kb"` // 方向系数
+	Kt float64 `json:"Kt"` // 总压恢复系数
+	Sb float64 `json:"Sb"` // 静压恢复系数
 }
 
 // ThreeHoleDataPoint 三孔探针校准数据点
@@ -251,10 +273,10 @@ type MotionAxisConfig struct {
 
 // SphereTankGateConfig 球罐闸门判定配置
 type SphereTankGateConfig struct {
-	Enabled           bool       `json:"enabled"`           // 是否启用球罐判定
-	WaitTimeSec       float64    `json:"waitTimeSec"`       // 等待稳定时间（秒）
+	Enabled           bool       `json:"enabled"`              // 是否启用球罐判定
+	WaitTimeSec       float64    `json:"waitTimeSec"`          // 等待稳定时间（秒）
 	TimeoutSec        int        `json:"timeoutSec,omitempty"` // 球罐判定总超时（秒），<=0 时使用默认 300 秒
-	StableTimeChannel ChannelRef `json:"stableTimeChannel"` // 稳定时间通道引用
+	StableTimeChannel ChannelRef `json:"stableTimeChannel"`    // 稳定时间通道引用
 }
 
 // ==================== 采集采样配置 ====================
@@ -293,13 +315,15 @@ type CompleteEvent struct {
 
 // RealtimeEvent 校准实时数据事件
 type RealtimeEvent struct {
-	TaskID               string                `json:"taskId"`
-	WindowTag            string                `json:"windowTag"`
-	Type                 CalibrationType       `json:"type"`
-	Timestamp            int64                 `json:"timestamp"`
-	FiveHoleRaw          *FiveHoleRawData      `json:"fiveHoleRaw,omitempty"`
-	FiveHoleCoefficients *FiveHoleCoefficients `json:"fiveHoleCoefficients,omitempty"`
-	Point                *CalPoint             `json:"point,omitempty"`
+	TaskID                string                 `json:"taskId"`
+	WindowTag             string                 `json:"windowTag"`
+	Type                  CalibrationType        `json:"type"`
+	Timestamp             int64                  `json:"timestamp"`
+	FiveHoleRaw           *FiveHoleRawData       `json:"fiveHoleRaw,omitempty"`
+	FiveHoleCoefficients  *FiveHoleCoefficients  `json:"fiveHoleCoefficients,omitempty"`
+	ThreeHoleRaw          *ThreeHoleRawData      `json:"threeHoleRaw,omitempty"`
+	ThreeHoleCoefficients *ThreeHoleCoefficients `json:"threeHoleCoefficients,omitempty"`
+	Point                 *CalPoint              `json:"point,omitempty"`
 }
 
 // EventPublisher 校准事件发布接口

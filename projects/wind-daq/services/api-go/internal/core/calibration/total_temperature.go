@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -54,29 +55,31 @@ func (a *TotalTemperatureAlgorithm) AcquireData(point CalPoint, channelReader Ch
 	return nil, fmt.Errorf("总温校准使用手动控制模式，请使用 AcquireDataWithChannels 方法")
 }
 
-func (a *TotalTemperatureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
+func (a *TotalTemperatureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error) {
 	sampleInterval := time.Duration(50) * time.Millisecond
 	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval)
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, checkAbort, config.TimestampReader)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据
 // 总温校准不使用运动控制，而是用户手动调整工况后触发采集
+// checkAbort：可选中止检查闭包，传 nil 时不检查（手动模式通常无需中断）
 func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 	point CalPoint,
 	channelReader ChannelValueReader,
 	probeChannels []ProbeChannel,
 	samplesPerPoint int,
 	sampleInterval time.Duration,
+	checkAbort func() bool,
+	timestampReader TimestampReader,
 ) (*TotalTemperatureDataPoint, error) {
 	targetMa, ok := point.Coordinates["Ma"]
 	if !ok {
 		return nil, fmt.Errorf("测点缺少 Ma 坐标")
 	}
 
-	// 构建通道角色映射
 	channels := make(map[string]ChannelRef)
 	for _, ch := range probeChannels {
 		if ch.Enabled {
@@ -87,11 +90,30 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 		}
 	}
 
-	// 采集多次取平均
+	deviceIDs := collectUniqueDeviceIDs(probeChannels)
+	lastTimestamps := make(map[string]int64)
+
 	var testSamples []float64
 	var standardSamples []float64
 
 	for i := 0; i < samplesPerPoint; i++ {
+		if checkAbort != nil && checkAbort() {
+			return nil, ErrPointAborted
+		}
+
+		if i > 0 {
+			if timestampReader != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+					if errors.Is(err, ErrPointAborted) {
+						return nil, err
+					}
+					return nil, fmt.Errorf("等待新数据帧超时: %w", err)
+				}
+			} else {
+				time.Sleep(sampleInterval)
+			}
+		}
+
 		testTemp := a.getChannelData(channelReader, channels, "testProbe")
 		standardTemp := a.getChannelData(channelReader, channels, "standardProbe")
 
@@ -102,8 +124,8 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 			standardSamples = append(standardSamples, *standardTemp)
 		}
 
-		if i < samplesPerPoint-1 {
-			time.Sleep(sampleInterval)
+		if timestampReader != nil {
+			recordLastTimestamps(deviceIDs, timestampReader, lastTimestamps)
 		}
 	}
 
@@ -159,7 +181,7 @@ func (a *TotalTemperatureAlgorithm) ReacquirePoint(
 	samplesPerPoint int,
 	sampleInterval time.Duration,
 ) (*TotalTemperatureDataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, probeChannels, samplesPerPoint, sampleInterval)
+	return a.AcquireDataWithChannels(point, channelReader, probeChannels, samplesPerPoint, sampleInterval, nil, nil)
 }
 
 // CheckStability 检测温度稳定性

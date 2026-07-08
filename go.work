@@ -1,8 +1,10 @@
 go 1.26.1
 
 use (
+	./projects/1604Cal
 	./projects/three-hole-interpolator/apps/desktop-win7
 	./projects/three-hole-interpolator/apps/desktop-win7-walk
+	programs/p1604-unit-diag
 	projects/daq-p1604/apps/desktop-wails
 	// 试点期间临时摘除 daq-t1603, 避免 v3 alpha 与其他 v2 项目的间接依赖冲突;
 	// 验证通过后再合并回 use 列表。
@@ -11,7 +13,6 @@ use (
 	projects/motion-controller/apps/desktop-wails
 	projects/motion-controller/services/api-go
 	projects/three-hole-interpolator/apps/desktop-wails
-	programs/p1604-unit-diag
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/algorithms/go/fivehole

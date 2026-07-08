@@ -158,46 +158,115 @@ func TestCalculateFiveHoleAverage(t *testing.T) {
 
 // ==================== 三孔探针系数测试 ====================
 
+// TestCalculateThreeHoleCoefficients 验证 ΔP 口径下 Kb/Kt/Sb 计算
+//
+// 口径与插值器（shared/algorithms/go/threehole/interpolation/three_hole.go）对齐：
+//
+//	ΔP = 2·P2 - P1 - P3
+//	Kb = (P3 - P1) / ΔP
+//	Kt = (Pt - P2) / ΔP
+//	Sb = (Pt - Ps) / ΔP
 func TestCalculateThreeHoleCoefficients(t *testing.T) {
-	pTotal := 500.0
+	pTotal := 1500.0
+	pStatic := 800.0
 	data := ThreeHoleRawData{
-		P1:     300.0, // 中心孔
-		P2:     350.0, // 侧孔1
-		P3:     250.0, // 侧孔2
-		PAtm:   101325.0,
-		PTotal: &pTotal,
-	}
-
-	_ = CalculateThreeHoleCoefficients(data)
-
-	// K = (P2 - P3) / (P1 - PAtm) = (350 - 250) / (300 - 101325)
-	// 注意：这里 P1 - PAtm 是一个非常大的负数，实际场景中 P1 应该是表压
-	// 让我们用表压场景重新测试
-}
-
-func TestCalculateThreeHoleCoefficients_GaugePressure(t *testing.T) {
-	// 使用表压值（相对大气压）
-	pTotal := 500.0
-	data := ThreeHoleRawData{
-		P1:     300.0, // 中心孔表压
-		P2:     350.0, // 侧孔1表压
-		P3:     250.0, // 侧孔2表压
-		PAtm:   0.0,   // 大气压参考为0（表压模式）
-		PTotal: &pTotal,
+		P1:      100.0, // 侧孔1（左孔）
+		P2:      300.0, // 中心孔
+		P3:      200.0, // 侧孔2（右孔）
+		PAtm:    101325.0,
+		TAtm:    20.0,
+		PTotal:  &pTotal,
+		PStatic: &pStatic,
 	}
 
 	coeffs := CalculateThreeHoleCoefficients(data)
 
-	// K = (350 - 250) / (300 - 0) = 100/300 ≈ 0.333
-	expectedK := 100.0 / 300.0
-	if math.Abs(coeffs.K-expectedK) > epsilon {
-		t.Errorf("K 期望 %v, 实际 %v", expectedK, coeffs.K)
+	// ΔP = 2*300 - 100 - 200 = 300
+	// Kb = (200 - 100) / 300 = 1/3
+	expectedKb := 100.0 / 300.0
+	if math.Abs(coeffs.Kb-expectedKb) > epsilon {
+		t.Errorf("Kb 期望 %v, 实际 %v", expectedKb, coeffs.Kb)
 	}
 
-	// Cv = (300 - 0) / (500 - 0) = 0.6
-	expectedCv := 300.0 / 500.0
-	if math.Abs(coeffs.Cv-expectedCv) > epsilon {
-		t.Errorf("Cv 期望 %v, 实际 %v", expectedCv, coeffs.Cv)
+	// Kt = (1500 - 300) / 300 = 4.0
+	expectedKt := (1500.0 - 300.0) / 300.0
+	if math.Abs(coeffs.Kt-expectedKt) > epsilon {
+		t.Errorf("Kt 期望 %v, 实际 %v", expectedKt, coeffs.Kt)
+	}
+
+	// Sb = (1500 - 800) / 300 = 7/3
+	expectedSb := (1500.0 - 800.0) / 300.0
+	if math.Abs(coeffs.Sb-expectedSb) > epsilon {
+		t.Errorf("Sb 期望 %v, 实际 %v", expectedSb, coeffs.Sb)
+	}
+}
+
+// TestCalculateThreeHoleCoefficients_InterpolatorParity 验证与插值器同样的输入产出同样的 Kb
+func TestCalculateThreeHoleCoefficients_InterpolatorParity(t *testing.T) {
+	// 用插值器 customer test 的一组典型输入：P1=侧孔, P2=中心, P3=侧孔
+	data := ThreeHoleRawData{
+		P1:   250.0,
+		P2:   350.0,
+		P3:   100.0,
+		PAtm: 101425.0,
+		TAtm: 20.0,
+	}
+
+	coeffs := CalculateThreeHoleCoefficients(data)
+
+	// 与插值器 three_hole.go:91 一致：kbTemp = (p3 - p1) / deltaP
+	deltaP := 2*data.P2 - data.P1 - data.P3
+	expectedKb := (data.P3 - data.P1) / deltaP
+	if math.Abs(coeffs.Kb-expectedKb) > epsilon {
+		t.Errorf("Kb 与插值器不一致: 期望 %v, 实际 %v", expectedKb, coeffs.Kb)
+	}
+}
+
+// TestCalculateThreeHoleCoefficients_NoTotalPressure 验证 PTotal/PStatic 缺失时 Kt/Sb 置 0（不发误导值）
+func TestCalculateThreeHoleCoefficients_NoTotalPressure(t *testing.T) {
+	data := ThreeHoleRawData{
+		P1:   100.0,
+		P2:   300.0,
+		P3:   200.0,
+		PAtm: 101325.0,
+		TAtm: 20.0,
+		// PTotal / PStatic 均为 nil
+	}
+
+	coeffs := CalculateThreeHoleCoefficients(data)
+
+	// Kb 仍可计算
+	expectedKb := 100.0 / 300.0
+	if math.Abs(coeffs.Kb-expectedKb) > epsilon {
+		t.Errorf("Kb 期望 %v, 实际 %v", expectedKb, coeffs.Kb)
+	}
+	// Kt/Sb 必须为 0，不得回退到误导性常量
+	if coeffs.Kt != 0 {
+		t.Errorf("PTotal 缺失时 Kt 应为 0, 实际 %v", coeffs.Kt)
+	}
+	if coeffs.Sb != 0 {
+		t.Errorf("PStatic 缺失时 Sb 应为 0, 实际 %v", coeffs.Sb)
+	}
+}
+
+// TestCalculateThreeHoleCoefficients_ZeroDeltaP 验证 ΔP≈0 时三系数全部置 0
+func TestCalculateThreeHoleCoefficients_ZeroDeltaP(t *testing.T) {
+	pTotal := 1500.0
+	pStatic := 800.0
+	// 三孔压相等 → ΔP = 0
+	data := ThreeHoleRawData{
+		P1:      200.0,
+		P2:      200.0,
+		P3:      200.0,
+		PAtm:    101325.0,
+		PTotal:  &pTotal,
+		PStatic: &pStatic,
+	}
+
+	coeffs := CalculateThreeHoleCoefficients(data)
+
+	if coeffs.Kb != 0 || coeffs.Kt != 0 || coeffs.Sb != 0 {
+		t.Errorf("ΔP≈0 时三系数应全为 0, 实际 Kb=%v Kt=%v Sb=%v", coeffs.Kb, coeffs.Kt, coeffs.Sb)
 	}
 }
 

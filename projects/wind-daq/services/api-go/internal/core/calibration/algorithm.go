@@ -14,7 +14,10 @@ type Algorithm interface {
 
 	// AcquireDataWithConfig 使用完整校准配置采集单个点位数据。
 	// 自动校准流程使用该方法，确保通道映射、采样策略等配置参与采集。
-	AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error)
+	// checkAbort：可选中止检查闭包，由 AutomaticCalibration 注入；
+	// 返回 true 时算法应立即返回 ErrPointAborted，使主循环回退索引重跑该点。
+	// 传 nil 时等同于不检查（向后兼容）。
+	AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error)
 
 	// ValidateConfig 验证校准配置是否有效
 	ValidateConfig(config Config) error
@@ -23,6 +26,11 @@ type Algorithm interface {
 // ChannelValueReader 通道数据读取函数类型
 // 输入设备ID和通道索引，返回当前通道值
 type ChannelValueReader func(deviceID string, channelIndex int) (float64, bool)
+
+// TimestampReader 设备时间戳读取函数类型
+// 输入设备ID，返回该设备最新数据帧的时间戳（毫秒）和是否可用。
+// 校准算法通过此函数判断设备是否产出新帧，避免重复读取缓存旧数据。
+type TimestampReader func(deviceID string) (int64, bool)
 
 // DataPointSink 单个数据点采集完成后的回调类型，用于实时持久化（如逐点写 CSV）。
 type DataPointSink func(DataPoint)

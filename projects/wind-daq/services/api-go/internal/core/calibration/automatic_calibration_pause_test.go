@@ -36,6 +36,8 @@ func (r *pauseTestRuntime) GetChannelValue(deviceID string, channelIndex int) (f
 	return v, ok
 }
 
+func (r *pauseTestRuntime) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
+
 func (r *pauseTestRuntime) MoveToPosition(axis MotionAxisConfig, position float64) error {
 	r.mu.Lock()
 	r.moves = append(r.moves, axis.Name)
@@ -91,7 +93,7 @@ func (noopAlgorithm) Type() CalibrationType { return TypeTotalPressure }
 func (noopAlgorithm) AcquireData(point CalPoint, _ ChannelValueReader, _ int) (DataPoint, error) {
 	return &PointResult{PointIndex: point.ID}, nil
 }
-func (noopAlgorithm) AcquireDataWithConfig(point CalPoint, _ ChannelValueReader, _ Config) (DataPoint, error) {
+func (noopAlgorithm) AcquireDataWithConfig(point CalPoint, _ ChannelValueReader, _ Config, _ func() bool) (DataPoint, error) {
 	return &PointResult{PointIndex: point.ID}, nil
 }
 func (noopAlgorithm) ValidateConfig(Config) error { return nil }
@@ -263,6 +265,7 @@ type nonBlockingRuntime struct {
 }
 
 func (r *nonBlockingRuntime) GetChannelValue(string, int) (float64, bool) { return 0, false }
+func (r *nonBlockingRuntime) GetLatestTimestamp(string) (int64, bool)   { return 0, false }
 func (r *nonBlockingRuntime) MoveToPosition(axis MotionAxisConfig, _ float64) error {
 	r.moves = append(r.moves, axis.Name)
 	return nil

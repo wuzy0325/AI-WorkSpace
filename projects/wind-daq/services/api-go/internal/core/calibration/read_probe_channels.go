@@ -3,6 +3,7 @@ package calibration
 import (
 	"fmt"
 	"log"
+	"time"
 )
 
 // ReadProbeChannels 从探针通道配置和通道读取器中读取原始数据
@@ -131,11 +132,13 @@ func ReadProbeChannelsToThreeHoleRaw(
 	reader ChannelValueReader,
 ) (ThreeHoleRawData, error) {
 	roleMap := map[string]string{
-		"threeHole.p1":     "p1",
-		"threeHole.p2":     "p2",
-		"threeHole.p3":     "p3",
-		"threeHole.pAtm":   "pAtm",
-		"threeHole.pTotal": "pTotal",
+		"threeHole.p1":      "p1",
+		"threeHole.p2":      "p2",
+		"threeHole.p3":      "p3",
+		"threeHole.pAtm":    "pAtm",
+		"threeHole.tAtm":    "tAtm",
+		"threeHole.pTotal":  "pTotal",
+		"threeHole.pStatic": "pStatic",
 	}
 
 	required := []string{"p1", "p2", "p3", "pAtm"}
@@ -150,10 +153,14 @@ func ReadProbeChannelsToThreeHoleRaw(
 		P2:   data["p2"],
 		P3:   data["p3"],
 		PAtm: data["pAtm"],
+		TAtm: data["tAtm"],
 	}
 
 	if v, ok := data["pTotal"]; ok {
 		result.PTotal = &v
+	}
+	if v, ok := data["pStatic"]; ok {
+		result.PStatic = &v
 	}
 
 	return result, nil
@@ -188,4 +195,64 @@ func ReadProbeChannelsToTotalPressureRaw(
 		TTunnel:       data["tTunnel"],
 		PProbeTotal:   data["pProbeTotal"],
 	}, nil
+}
+
+const (
+	freshnessPollInterval   = 10 * time.Millisecond
+	freshnessDefaultTimeout = 5 * time.Second
+)
+
+func collectUniqueDeviceIDs(probeChannels []ProbeChannel) []string {
+	seen := make(map[string]bool)
+	ids := make([]string, 0)
+	for _, ch := range probeChannels {
+		if ch.Enabled && ch.DeviceID != "" && !seen[ch.DeviceID] {
+			seen[ch.DeviceID] = true
+			ids = append(ids, ch.DeviceID)
+		}
+	}
+	return ids
+}
+
+func waitForFreshData(
+	deviceIDs []string,
+	timestampReader TimestampReader,
+	lastTimestamps map[string]int64,
+	timeout time.Duration,
+	checkAbort func() bool,
+) error {
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if checkAbort != nil && checkAbort() {
+			return ErrPointAborted
+		}
+		allFresh := true
+		for _, deviceID := range deviceIDs {
+			ts, ok := timestampReader(deviceID)
+			if !ok {
+				allFresh = false
+				break
+			}
+			if lastTS, exists := lastTimestamps[deviceID]; exists && ts <= lastTS {
+				allFresh = false
+				break
+			}
+		}
+		if allFresh {
+			return nil
+		}
+		time.Sleep(freshnessPollInterval)
+	}
+	return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
+}
+
+func recordLastTimestamps(deviceIDs []string, timestampReader TimestampReader, dst map[string]int64) {
+	for _, deviceID := range deviceIDs {
+		if ts, ok := timestampReader(deviceID); ok {
+			dst[deviceID] = ts
+		}
+	}
 }

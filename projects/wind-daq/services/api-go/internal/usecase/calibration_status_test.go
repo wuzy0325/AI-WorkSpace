@@ -17,6 +17,8 @@ func (r calibrationStatusLatestReader) GetLatestData(_ string) (device.DataPaylo
 	}, true
 }
 
+func (r calibrationStatusLatestReader) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
+
 func TestCalibrationManagerStatusUpdatesDuringRunningAutomaticCalibration(t *testing.T) {
 	manager := NewCalibrationManager(calibrationStatusLatestReader{}, nil, nil, nil)
 	config := fiveHoleStatusTestConfig("cal-live-status")

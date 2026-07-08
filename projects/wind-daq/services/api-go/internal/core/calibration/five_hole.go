@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -90,59 +91,17 @@ func (a *FiveHoleAlgorithm) ValidateConfig(config Config) error {
 	return nil
 }
 
-// AcquireData 采集单个点位数据（实现 Algorithm 接口）
-// 使用探针通道配置读取原始数据，支持实时推送
+// AcquireData 旧接口实现，仅作 Algorithm 接口兼容。
+//
+// 五孔自动校准流程实际走 AcquireDataWithConfig（携带 ProbeChannels），
+// 此入口因缺乏通道配置无法完成真实采集——直接返回明确错误，
+// 避免悄悄走"零值 fallback"老路径导致 Kα=0/Kβ=0/CPT=0 无告警。
 func (a *FiveHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error) {
-	startTime := time.Now().UnixMilli()
-
-	// 多次采样
-	samples := make([]FiveHoleRawData, 0, samplesPerPoint)
-	for i := 0; i < samplesPerPoint; i++ {
-		// 使用带校验的探针通道读取
-		rawData, err := ReadProbeChannelsToFiveHoleRaw(nil, channelReader)
-		// 如果没有 probeChannels 配置，使用简化的直接读取
-		if err != nil {
-			rawData = readFiveHoleFromChannelReader(channelReader)
-		}
-		samples = append(samples, rawData)
-		if i < samplesPerPoint-1 {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	endTime := time.Now().UnixMilli()
-
-	// 计算平均值
-	avgData := CalculateFiveHoleAverage(samples)
-
-	// 计算系数
-	coefficients := CalculateFiveHoleCoefficients(avgData)
-
-	// 计算标准差（使用第一个压力通道作为参考）
-	p1Values := make([]float64, len(samples))
-	for i, s := range samples {
-		p1Values[i] = s.P1
-	}
-	stdDev := StdDev(p1Values)
-
-	// 读取扫描阀16通道原始数据
-	rawDeviceChannels := readRawDeviceChannelsFromReader(channelReader)
-
-	return &FiveHoleDataPoint{
-		PointID:           point.ID,
-		Coordinates:       point.Coordinates,
-		RawData:           avgData,
-		Coefficients:      coefficients,
-		SampleCount:       len(samples),
-		StdDev:            stdDev,
-		StartTime:         startTime,
-		EndTime:           endTime,
-		RawDeviceChannels: rawDeviceChannels,
-	}, nil
+	return nil, fmt.Errorf("五孔探针 AcquireData 缺少探针通道配置，请通过 AcquireDataWithConfig 调用")
 }
 
-func (a *FiveHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil)
+func (a *FiveHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool) (DataPoint, error) {
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
@@ -153,32 +112,52 @@ func (a *FiveHoleAlgorithm) AcquireDataWithChannels(
 	probeChannels []ProbeChannel,
 	samplesPerPoint int,
 	onRealtime func(FiveHoleRawData, FiveHoleCoefficients),
+	checkAbort func() bool,
+	timestampReader TimestampReader,
 ) (*FiveHoleDataPoint, error) {
 	startTime := time.Now().UnixMilli()
 
-	// 多次采样
+	deviceIDs := collectUniqueDeviceIDs(probeChannels)
+	lastTimestamps := make(map[string]int64)
+
 	samples := make([]FiveHoleRawData, 0, samplesPerPoint)
 	realtimeIntervalMs := int64(100)
 	lastRealtimeSentAt := int64(0)
 
 	for i := 0; i < samplesPerPoint; i++ {
-		// 使用带校验的探针通道读取
+		if checkAbort != nil && checkAbort() {
+			return nil, ErrPointAborted
+		}
+
+		if i > 0 {
+			if timestampReader != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+					if errors.Is(err, ErrPointAborted) {
+						return nil, err
+					}
+					return nil, fmt.Errorf("等待新数据帧超时: %w", err)
+				}
+			} else {
+				// 无设备时间戳读取能力时退化为固定间隔 sleep，避免全速空转读到同一帧缓存
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+
 		rawData, err := ReadProbeChannelsToFiveHoleRaw(probeChannels, channelReader)
 		if err != nil {
 			return nil, fmt.Errorf("读取五孔探针通道失败: %w", err)
 		}
 		samples = append(samples, rawData)
 
-		// 实时推送当前样本的数据与瞬时系数（节流100ms）
+		if timestampReader != nil {
+			recordLastTimestamps(deviceIDs, timestampReader, lastTimestamps)
+		}
+
 		now := time.Now().UnixMilli()
 		if onRealtime != nil && (now-lastRealtimeSentAt >= realtimeIntervalMs || i == samplesPerPoint-1) {
 			realtimeCoeffs := CalculateFiveHoleCoefficients(rawData)
 			onRealtime(rawData, realtimeCoeffs)
 			lastRealtimeSentAt = now
-		}
-
-		if i < samplesPerPoint-1 {
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 

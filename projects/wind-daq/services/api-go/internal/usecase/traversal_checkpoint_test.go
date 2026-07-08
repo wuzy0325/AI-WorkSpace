@@ -26,6 +26,8 @@ func (r *mockLatestDataReader) GetLatestData(deviceID string) (device.DataPayloa
 	return r.data, true
 }
 
+func (r *mockLatestDataReader) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
+
 // mockMotionAccess 模拟运动控制访问，记录 MoveTo 调用并返回静止状态
 type mockMotionAccess struct {
 	moveToCalls []struct {

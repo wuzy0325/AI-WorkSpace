@@ -32,6 +32,14 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       const res = await calibrationApi.getConfig(calibrationType)
       if (res.success && res.data) {
         currentConfig.value = applyCalibrationPrecisionDefaults(res.data)
+        // coordinates 键名迁移：旧版生成 'Theta'，新版统一使用 'θ'（与后端 normalizer 对齐）
+        // 存量配置若不迁移，所有 coordinates['θ'] 读取出 undefined → UI 显示 '--'
+        currentConfig.value.points?.forEach((p) => {
+          if (p.coordinates && typeof p.coordinates['θ'] !== 'number' && typeof p.coordinates['Theta'] === 'number') {
+            p.coordinates['θ'] = p.coordinates['Theta']
+            delete p.coordinates['Theta']
+          }
+        })
         hasConfig.value = true
       }
     } catch (err) {
@@ -94,7 +102,14 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     try {
       const { useStorageStore } = await import('@stores/storageStore')
       const storageStore = useStorageStore()
-      const defaultName = `${currentConfig.value?.name || 'calibration'}-${new Date().toISOString().slice(0, 10)}.csv`
+      // 默认文件名清洗：配置名可能含日期斜杠（如"三孔探针校准-2026/7/8"）
+      // 或其他文件名非法字符（/ \ : * ? " < > |），直接拼进默认文件名会被
+      // 原生保存对话框解析为路径分隔符，导致默认名非法或落到错误目录。
+      const rawName = currentConfig.value?.name || 'calibration'
+      const safeName = rawName.replace(/[\\/:*?"<>|]/g, '-').trim() || 'calibration'
+      // 配置名末尾若已含 ISO 日期（YYYY-MM-DD），不再追加当天日期避免重复
+      const dateSuffix = /\d{4}-\d{2}-\d{2}$/.test(safeName) ? '' : `-${new Date().toISOString().slice(0, 10)}`
+      const defaultName = `${safeName}${dateSuffix}.csv`
       const target = await storageStore.pickSaveFile('选择校准 CSV 导出位置', defaultName, [
         { displayName: 'CSV 文件 (*.csv)', pattern: '*.csv' },
       ])
@@ -122,11 +137,20 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   const progressInfo = computed(() => {
     const status = calibrationStore.status
     if (!status) return null
+    // 后端 calibration.Status.CurrentPoint 是 int 索引（= CompletedPoints，点完成后才推进），
+    // 而前端 CalibrationTaskStatus.currentPoint 期望 CalibrationPoint 对象（含 coordinates）。
+    // store 的 updateStatusFromBackend 未写入 currentPoint，因此这里用 completedPoints 作为索引
+    // 从当前配置 points 中查出对应点的 coordinates，供 UI 显示"当前位置"角度。
+    const points = currentConfig.value?.points ?? []
+    const idx = Math.min(status.completedPoints, points.length - 1)
+    // 仅在运行中或暂停时才返回当前目标点，idle/completed/error 态下无"当前目标"
+    const validState = status.status === 'running' || status.status === 'paused'
+    const currentPoint = validState && idx >= 0 ? points[idx] : undefined
     return {
       current: status.completedPoints,
       total: status.totalPoints,
       percent: status.progress.toFixed(1),
-      currentPoint: status.currentPoint?.coordinates,
+      currentPoint: currentPoint?.coordinates,
     }
   })
 
