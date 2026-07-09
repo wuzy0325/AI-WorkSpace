@@ -38,6 +38,9 @@ describe('calibrationStore', () => {
     vi.clearAllMocks()
   })
 
+  // 测试前置：构造实时压力，Patm>0 且 P0=Ps（绝对压相等），Ttunnel 有效
+  // 测试步骤：调用 store.updateRealtimePressures
+  // 期待结果：calculatedPhysics 为 { machNumber: 0, velocity: 0 }（ratio=1 时 Ma=0）
   it('shows zero aerodynamic values when tunnel total and static pressure are equal', () => {
     const store = useCalibrationStore()
 
@@ -47,7 +50,7 @@ describe('calibrationStore', () => {
       P3: 0,
       P4: 0,
       P5: 0,
-      Patm: 0,
+      Patm: 101325,
       Tatm: 25,
       P0: 0,
       Ps: 0,
@@ -57,7 +60,10 @@ describe('calibrationStore', () => {
     expect(store.calculatedPhysics).toEqual({ machNumber: 0, velocity: 0 })
   })
 
-  it('uses standard atmosphere fallback for live aerodynamic display when Patm channel is zero', () => {
+  // 测试前置：构造实时压力，Patm=0（必需通道缺失），P0>0
+  // 测试步骤：调用 store.updateRealtimePressures
+  // 期待结果：calculatedPhysics 为 null（与后端 §22 对齐：pAtm 为必需通道，缺失时不兜底）
+  it('returns null when Patm channel is zero (required channel, no fallback)', () => {
     const store = useCalibrationStore()
 
     store.updateRealtimePressures({
@@ -73,8 +79,7 @@ describe('calibrationStore', () => {
       Ttunnel: 25,
     })
 
-    expect(store.calculatedPhysics?.machNumber).toBeGreaterThan(0)
-    expect(store.calculatedPhysics?.velocity).toBeGreaterThan(0)
+    expect(store.calculatedPhysics).toBeNull()
   })
 
   it('initializes timeInfo with non-null elapsedTime immediately after startCalibration', async () => {

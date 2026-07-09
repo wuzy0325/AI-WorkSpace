@@ -15,15 +15,15 @@ const (
 	deltaPTol     = 1e-6
 
 	// 空气比热比温度修正系数（-40°C ~ +60°C 范围内误差 <0.1%）
-	k0        = 1.4    // 20°C时的参考比热比
+	gammaRef  = 1.4    // 20°C时的参考比热比（γ）
 	tempRef   = 20.0   // 参考温度(°C)
-	tempCoeff = 0.0002 // 温度修正系数 k ≈ k0 - tempCoeff*(T-tempRef)
+	tempCoeff = 0.0002 // 温度修正系数 γ ≈ gammaRef - tempCoeff*(T-tempRef)
 )
 
 type calibrationItem struct {
-	Kb    float64
-	Kt    float64
-	Sb    float64
+	Kb    float64 // 角度系数 Kβ（仅孔压，始终可算）
+	K0    float64 // 总压系数 K0（反演 Pt = P2 + K0·ΔP）
+	Kv    float64 // 速度系数 Kv（反演 Ps = Pt - Kv·ΔP）
 	Alpha float64
 }
 
@@ -45,8 +45,8 @@ type ThreeHoleInterpolator struct {
 type kbAlphaEntry struct {
 	Kb    float64
 	Alpha float64
-	Kt    float64
-	Sb    float64
+	K0    float64
+	Kv    float64
 }
 
 func NewThreeHoleInterpolator() *ThreeHoleInterpolator {
@@ -110,8 +110,8 @@ func (t *ThreeHoleInterpolator) Calculate(input InterpolationInput) (Interpolati
 			break
 		}
 
-		pt := p2 + match.Kt*deltaP
-		ps := pt - match.Sb*deltaP
+		pt := p2 + match.K0*deltaP
+		ps := pt - match.Kv*deltaP
 		newMa := calcMach(pt, ps, pa, tatm)
 
 		if math.Abs(newMa-currentMa) < convergeTol {
@@ -139,8 +139,8 @@ func (t *ThreeHoleInterpolator) Calculate(input InterpolationInput) (Interpolati
 		}, nil
 	}
 
-	pt := p2 + finalMatch.Kt*deltaP
-	ps := pt - finalMatch.Sb*deltaP
+	pt := p2 + finalMatch.K0*deltaP
+	ps := pt - finalMatch.Kv*deltaP
 	mach := calcMach(pt, ps, pa, tatm)
 
 	var warnings []string
@@ -209,13 +209,13 @@ func (t *ThreeHoleInterpolator) interpolateWithWarning(kbMeasured, ma float64) (
 
 	for i := 0; i < len(t.alphaSeq); i++ {
 		kb := calib1.Items[i].Kb + ratio*(calib2.Items[i].Kb-calib1.Items[i].Kb)
-		kt := calib1.Items[i].Kt + ratio*(calib2.Items[i].Kt-calib1.Items[i].Kt)
-		sb := calib1.Items[i].Sb + ratio*(calib2.Items[i].Sb-calib1.Items[i].Sb)
+		k0 := calib1.Items[i].K0 + ratio*(calib2.Items[i].K0-calib1.Items[i].K0)
+		kv := calib1.Items[i].Kv + ratio*(calib2.Items[i].Kv-calib1.Items[i].Kv)
 		entries = append(entries, kbAlphaEntry{
 			Kb:    kb,
 			Alpha: t.alphaSeq[i],
-			Kt:    kt,
-			Sb:    sb,
+			K0:    k0,
+			Kv:    kv,
 		})
 	}
 
@@ -228,8 +228,8 @@ func (t *ThreeHoleInterpolator) interpolateWithWarning(kbMeasured, ma float64) (
 			kbExtrapolated = true
 		}
 		return &calibrationItem{
-			Kb: entries[0].Kb, Kt: entries[0].Kt,
-			Sb: entries[0].Sb, Alpha: entries[0].Alpha,
+			Kb: entries[0].Kb, K0: entries[0].K0,
+			Kv: entries[0].Kv, Alpha: entries[0].Alpha,
 		}, kbExtrapolated
 	}
 	if kbMeasured >= entries[len(entries)-1].Kb {
@@ -238,8 +238,8 @@ func (t *ThreeHoleInterpolator) interpolateWithWarning(kbMeasured, ma float64) (
 		}
 		last := entries[len(entries)-1]
 		return &calibrationItem{
-			Kb: last.Kb, Kt: last.Kt,
-			Sb: last.Sb, Alpha: last.Alpha,
+			Kb: last.Kb, K0: last.K0,
+			Kv: last.Kv, Alpha: last.Alpha,
 		}, kbExtrapolated
 	}
 
@@ -248,8 +248,8 @@ func (t *ThreeHoleInterpolator) interpolateWithWarning(kbMeasured, ma float64) (
 			r := (kbMeasured - entries[j].Kb) / (entries[j+1].Kb - entries[j].Kb)
 			return &calibrationItem{
 				Kb:    kbMeasured,
-				Kt:    entries[j].Kt + r*(entries[j+1].Kt-entries[j].Kt),
-				Sb:    entries[j].Sb + r*(entries[j+1].Sb-entries[j].Sb),
+				K0:    entries[j].K0 + r*(entries[j+1].K0-entries[j].K0),
+				Kv:    entries[j].Kv + r*(entries[j+1].Kv-entries[j].Kv),
 				Alpha: entries[j].Alpha + r*(entries[j+1].Alpha-entries[j].Alpha),
 			}, kbExtrapolated
 		}
@@ -275,12 +275,12 @@ func calcMach(pt, ps, pa, tatm float64) float64 {
 }
 
 func calcGamma(tatm float64) float64 {
-	// 空气比热比随温度近似变化 k ≈ k0 - tempCoeff*(T-tempRef)
+	// 空气比热比随温度近似变化 γ ≈ gammaRef - tempCoeff*(T-tempRef)
 	// 在 -40°C ~ +60°C 范围内误差 <0.1%
 	if math.IsNaN(tatm) || math.IsInf(tatm, 0) {
-		return k0
+		return gammaRef
 	}
-	return k0 - tempCoeff*(tatm-tempRef)
+	return gammaRef - tempCoeff*(tatm-tempRef)
 }
 
 func (t *ThreeHoleInterpolator) LoadPrbData(fileData []PrbFileData) (*LoadPrbResult, error) {
@@ -397,7 +397,7 @@ func parsePrbLines(lines []string) (calibrationData, error) {
 	for i := 0; i < nalpha; i++ {
 		parts := strings.Fields(dataLines[i])
 		if len(parts) != 4 {
-			return calibrationData{}, fmt.Errorf("第%d行需要4列数值(Ka Kt Sb Alpha)", i+3)
+			return calibrationData{}, fmt.Errorf("第%d行需要4列数值(Kb K0 Kv Alpha)", i+3)
 		}
 
 		vals := make([]float64, 4)
@@ -411,8 +411,8 @@ func parsePrbLines(lines []string) (calibrationData, error) {
 
 		cal.Items = append(cal.Items, calibrationItem{
 			Kb:    vals[0],
-			Kt:    vals[1],
-			Sb:    vals[2],
+			K0:    vals[1],
+			Kv:    vals[2],
 			Alpha: vals[3],
 		})
 	}

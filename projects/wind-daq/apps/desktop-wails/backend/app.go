@@ -588,6 +588,40 @@ func (a *App) PickFiles(title string, filters []application.FileFilter) ([]strin
 	return app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{Title: title, Filters: filters}).PromptForMultipleSelection()
 }
 
+// FileExists 检查指定路径的文件是否存在。
+// 用于校准 Start 前检测 CSV 文件是否已存在，提示用户决定是否覆盖。
+// 路径不存在或指向目录时返回 false，不报错。
+func (a *App) FileExists(path string) (bool, error) {
+	if path == "" {
+		return false, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return !info.IsDir(), nil
+}
+
+// RemoveFile 删除指定路径的文件。
+// 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件，
+// 让后续追加模式 writer 当作新文件写入（BOM + 表头）。
+// 路径不存在视为已删除，不报错。
+func (a *App) RemoveFile(path string) (bool, error) {
+	if path == "" {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // callMgr 通用 manager 方法调用辅助
 func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 	if a == nil || a.appContext == nil || mgr == nil {

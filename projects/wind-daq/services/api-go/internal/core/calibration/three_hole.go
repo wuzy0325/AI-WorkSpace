@@ -21,7 +21,7 @@ func (a *ThreeHoleAlgorithm) ValidateConfig(config Config) error {
 		return fmt.Errorf("三孔探针校准需要配置探针通道")
 	}
 
-	// pTotal/pStatic 为可选：Kt/Sb 系数依赖二者，但公式层在缺失时有优雅降级（kt=0, sb=0）；
+	// pTotal/pStatic 为可选：K0/Kv 系数依赖二者，但公式层在缺失时有优雅降级（k0=0, kv=0）；
 	// 此处不做硬校验，允许用户在不配置风洞总压/静压时仍能执行纯方向校准。
 	requiredRoles := []string{
 		"threeHole.p1", "threeHole.p2", "threeHole.p3",
@@ -49,7 +49,7 @@ func (a *ThreeHoleAlgorithm) ValidateConfig(config Config) error {
 // 注意：此方法签名不携带探针通道配置（ProbeChannels），无法正确读取三孔原始数据。
 // 生产路径通过 AutomaticCalibration → AcquireDataWithConfig → AcquireDataWithChannels 调用，
 // 此方法仅供接口契约兼容。若被直接调用，返回错误而非零值数据点，避免静默产出
-// 物理上错误但表面合法的"圾数据"（Kb=0, Kt=0, Sb=0）。
+// 物理上错误但表面合法的"圾数据"（Kb=0, K0=0, Kv=0）。
 func (a *ThreeHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelValueReader, samplesPerPoint int) (DataPoint, error) {
 	return nil, fmt.Errorf("三孔探针 AcquireData 缺少探针通道配置，请通过 AcquireDataWithConfig 调用")
 }

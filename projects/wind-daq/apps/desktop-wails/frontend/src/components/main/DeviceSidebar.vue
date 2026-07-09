@@ -2,6 +2,7 @@
 import { CheckCircle2 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 
 const props = defineProps<{
   t?: Record<string, string>
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 
 function statusGlowClass(profileId: string): string {
   const status = deviceStore.statusFor(profileId)
@@ -34,12 +36,12 @@ function statusTextClass(profileId: string): string {
 }
 
 function displayStatusLabel(profileId: string): string {
-  if (deviceStore.acquiringFor(profileId)) return props.t?.acquiring || '采集中'
+  if (deviceStore.acquiringFor(profileId)) return i18n.t.acquiring
   const status = deviceStore.statusFor(profileId)
-  if (status === 'Connected') return props.t?.connectedState || 'Connected'
-  if (status === 'Connecting') return props.t?.connectingState || 'Connecting'
-  if (status === 'Error') return props.t?.warningState || 'Warning'
-  return props.t?.disconnectedState || 'Disconnected'
+  if (status === 'Connected') return i18n.t.connectedState
+  if (status === 'Connecting') return i18n.t.connectingState
+  if (status === 'Error') return i18n.t.warningState
+  return i18n.t.disconnectedState
 }
 </script>
 
@@ -50,20 +52,20 @@ function displayStatusLabel(profileId: string): string {
   >
     <!-- Header -->
     <div class="device-sidebar__header">
-      <span class="device-sidebar__title">{{ t?.deviceList || '设备列表' }}</span>
+      <span class="device-sidebar__title">{{ i18n.t.deviceList }}</span>
       <button
         class="device-sidebar__manage-btn"
         @click="emit('open-manage')"
-        :title="t?.manage || '管理设备'"
+        :title="i18n.t.dev_manageDevices"
       >
-        {{ t?.manage || '管理' }}
+        {{ i18n.t.manage }}
       </button>
     </div>
 
     <!-- Device List -->
     <div data-test="device-sidebar-list" class="device-sidebar__list no-scrollbar">
       <div v-if="!deviceStore.profiles || deviceStore.profiles.length === 0" class="device-sidebar__empty">
-        {{ t?.noDevices || '暂无设备' }}
+        {{ i18n.t.noDevices }}
       </div>
 
       <template v-else>
@@ -80,7 +82,7 @@ function displayStatusLabel(profileId: string): string {
           @click="deviceStore.selectDevice(p.id)"
         >
           <div class="device-sidebar__item-header">
-            <span class="device-sidebar__item-name">{{ p.name || t?.unnamed || '未命名' }}</span>
+            <span class="device-sidebar__item-name">{{ p.name || i18n.t.unnamed }}</span>
             <div
               class="device-sidebar__status-dot"
               :class="statusGlowClass(p.id)"

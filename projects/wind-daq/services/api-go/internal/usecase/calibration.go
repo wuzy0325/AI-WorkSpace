@@ -179,6 +179,19 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		}
 	}
 
+	// 总温校准走手动 CollectCurrentPoint 路径（autoTypes 不含它），
+	// 但同样需要在 Start 时 Initialize csvWriter 打开文件并写表头，
+	// 否则后续 CollectCurrentPoint 调用 AppendPoint 会因 writer 未初始化
+	// 直接返回 "CSV写入器未初始化" 错误，CSV 文件不会被创建。
+	// Initialize 失败（路径不可写/磁盘满）时直接返回错误，让 Start 失败而非
+	// 让用户在 CollectCurrentPoint 时才发现 CSV 写不进去——后者会让校准员误以为
+	// 已采集的数据已落盘，实际全部丢失。
+	if config.Type == string(calibration.TypeTotalTemperature) && config.SavePath != "" && m.csvWriter != nil {
+		if err := m.csvWriter.Initialize(config); err != nil {
+			return fmt.Errorf("总温校准 CSV 写入器初始化失败: %w", err)
+		}
+	}
+
 	var onDataPoint calibration.DataPointSink
 	if autoTypes[config.Type] {
 		onDataPoint = func(dp calibration.DataPoint) {
@@ -186,7 +199,10 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 			if m.currentStatus.TaskID == config.TaskID {
 				m.currentStatus.DataPoints = append(m.currentStatus.DataPoints, dp)
 				m.currentStatus.CompletedPoints = len(m.currentStatus.DataPoints)
-				m.currentStatus.CurrentPoint = m.currentStatus.CompletedPoints
+				// CurrentPoint 不在此处设置：它表示"当前正在处理的点索引"，
+				// 由 Status() 从 autoEngine.GetCurrentPointIndex() 实时读取。
+				// currentPointIdx 在 processPoint 循环顶部推进（早于 moveToPoint），
+				// 让前端"目标角度"先于"实际角度"变化，符合校准员"目标先行"的直觉。
 				if m.currentStatus.TotalPoints > 0 {
 					m.currentStatus.Progress = float64(m.currentStatus.CompletedPoints) / float64(m.currentStatus.TotalPoints) * 100
 				}
@@ -539,12 +555,18 @@ func (m *CalibrationManager) Status() calibration.Status {
 		status.DataPoints = append([]calibration.DataPoint(nil), status.DataPoints...)
 	}
 	m.mu.RUnlock()
-	// 附加当前点采样进度：从 autoEngine 读取算法采集循环实时更新的 currentSample/samplesPerPoint，
-	// 驱动前端"当前点采样 i/N"子进度显示。autoEngine 为 nil（未启动/总温手动模式）时跳过。
+	// 附加当前点采样进度与当前目标点索引：从 autoEngine 读取算法采集循环实时更新的状态。
+	// autoEngine 为 nil（未启动/总温手动模式）时跳过。
+	//
+	// CurrentPoint 用 currentPointIdx（循环顶部推进）而非 CompletedPoints：
+	// currentPointIdx 在 processPoint 循环顶部就推进，早于 moveToPoint，
+	// 前端据此显示"目标角度"，能在运动控制器移动前就更新到下一个目标点，
+	// 符合校准员"目标先行于实际"的直觉。CompletedPoints 仍代表"已完成采集的点数"。
 	if m.autoEngine != nil {
 		current, total := m.autoEngine.GetSampleProgress()
 		status.CurrentSample = current
 		status.SamplesPerPoint = total
+		status.CurrentPoint = m.autoEngine.GetCurrentPointIndex()
 	}
 	return status
 }

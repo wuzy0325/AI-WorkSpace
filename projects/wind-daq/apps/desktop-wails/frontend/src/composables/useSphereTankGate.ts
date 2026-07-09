@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { calibrationApi } from '@api/calibrationApi'
 import { deviceApi } from '@api/deviceApi'
+import { useI18nStore } from '@stores/i18nStore'
 import type { CalibrationConfig, CalibrationType, ChannelRef, SphereTankGateConfig } from '@shared/types/calibration'
 
 interface UseSphereTankGateOptions {

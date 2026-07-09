@@ -222,14 +222,15 @@ function getIconComponent(type: CalibrationType) {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  /* 主体背景跟随主题 token：浅色为浅灰渐变，暗色为深蓝渐变，无需媒体查询 */
+  background: linear-gradient(180deg, var(--bg-canvas) 0%, var(--bg-app) 100%);
 }
 
 /* 头部 */
 .header {
   flex-shrink: 0;
-  border-bottom: 1px solid #e2e8f0;
-  background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient(90deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 1rem 1.5rem;
 }
 
@@ -246,6 +247,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
+  /* 品牌 icon 渐变保留为品牌色，主题切换不应改变品牌视觉语言 */
   background: linear-gradient(135deg, #3b82f6, #4f46e5);
   color: white;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
@@ -284,7 +286,7 @@ function getIconComponent(type: CalibrationType) {
   min-height: 100%;
 }
 
-/* 卡片 */
+/* 卡片：基础背景使用 panel token，--card-bg 仅作为品牌色叠加层（半透明） */
 .card {
   position: relative;
   display: flex;
@@ -292,7 +294,7 @@ function getIconComponent(type: CalibrationType) {
   cursor: pointer;
   border-radius: 1rem;
   border: 2px solid var(--card-border);
-  background: linear-gradient(145deg, #ffffff 0%, var(--card-bg) 100%);
+  background: linear-gradient(145deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 1.25rem 1.5rem 1.5rem;
   overflow: hidden;
   transition: border-color 200ms ease, box-shadow 240ms ease, transform 240ms ease, background 240ms ease;
@@ -303,7 +305,7 @@ function getIconComponent(type: CalibrationType) {
   border-color: var(--card-border-hover);
   box-shadow: 0 20px 40px -12px var(--card-shadow), 0 8px 16px -8px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
-  background: linear-gradient(145deg, #ffffff 0%, var(--card-bg-hover) 100%);
+  background: linear-gradient(145deg, var(--bg-panel-strong) 0%, var(--bg-panel) 100%);
 }
 
 /* 顶部渐变装饰条 */
@@ -412,7 +414,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--card-bg);
+  background: var(--bg-panel-strong);
   color: var(--card-text-light);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   border: 2px solid var(--card-border);
@@ -461,7 +463,7 @@ function getIconComponent(type: CalibrationType) {
   gap: 0.375rem;
   border-radius: 0.5rem;
   padding: 0.375rem 0.625rem;
-  background: var(--card-bg);
+  background: var(--bg-panel-strong);
   border: 1.5px solid var(--card-border);
   transition: background 200ms ease, border-color 200ms ease;
 }
@@ -503,8 +505,8 @@ function getIconComponent(type: CalibrationType) {
 /* 底部 */
 .footer {
   flex-shrink: 0;
-  border-top: 1px solid #e2e8f0;
-  background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+  border-top: 1px solid var(--border-default);
+  background: linear-gradient(90deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 0.75rem 1.25rem;
 }
 
@@ -521,6 +523,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
+  /* 警告色品牌渐变，保留跨主题一致 */
   background: linear-gradient(135deg, #fbbf24, #f97316);
   color: white;
   flex-shrink: 0;
@@ -540,13 +543,13 @@ function getIconComponent(type: CalibrationType) {
 
 .footer-label {
   font-weight: 600;
-  color: #334155;
+  color: var(--text-secondary);
 }
 
 .footer-status {
   margin-left: 0.25rem;
-  color: #059669;
   font-weight: 600;
+  /* 成功色渐变保留为品牌色，跨主题一致 */
   background: linear-gradient(90deg, #059669, #10b981);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -555,60 +558,10 @@ function getIconComponent(type: CalibrationType) {
 
 .footer-separator {
   margin: 0 0.5rem;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 
 .footer-hint {
   color: var(--text-tertiary);
-}
-
-/* 暗色模式 */
-@media (prefers-color-scheme: dark) {
-  .calibration-home {
-    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-  }
-
-  .header {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-    border-color: #334155;
-  }
-
-  .header-title {
-    color: #f1f5f9;
-  }
-
-  .card {
-    background: linear-gradient(145deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
-    border-color: var(--card-primary-dark);
-  }
-
-  .card:hover {
-    background: linear-gradient(145deg, rgba(30, 41, 59, 1) 0%, rgba(15, 23, 42, 1) 100%);
-  }
-
-  .card-name {
-    color: #f1f5f9;
-  }
-
-  .card-description {
-    color: var(--text-muted);
-  }
-
-  .feature-tag {
-    background: rgba(15, 23, 42, 0.6);
-  }
-
-  .card-arrow {
-    background: rgba(15, 23, 42, 0.6);
-  }
-
-  .footer {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-    border-color: #334155;
-  }
-
-  .footer-label {
-    color: #cbd5e1;
-  }
 }
 </style>

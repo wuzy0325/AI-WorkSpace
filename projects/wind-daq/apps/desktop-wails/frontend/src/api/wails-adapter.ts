@@ -543,6 +543,12 @@ export const wailsApi = {
     ): Promise<string> => {
       return await callBinding('PickSaveFile', title, defaultFilename, filters);
     },
+    fileExists: async (path: string): Promise<boolean> => {
+      return await callBinding('FileExists', path);
+    },
+    removeFile: async (path: string): Promise<boolean> => {
+      return await callBinding('RemoveFile', path);
+    },
     // 获取启动模式："normal" 或 "motion"
     getStartupMode: async (): Promise<string> => {
       return await callBinding('GetStartupMode');

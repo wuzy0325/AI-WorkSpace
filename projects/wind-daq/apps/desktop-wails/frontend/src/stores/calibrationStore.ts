@@ -23,6 +23,9 @@ export interface RealtimePressures {
   P0?: number
   Ps?: number
   Ttunnel?: number
+  // 总压探针核心通道：探针总压不参与 Ma/V 计算（仅风洞总压/静压参与），
+  // 但需在侧边栏显示，单独字段供 TotalPressureMain 读取，与三孔从 store 读通道值的模式一致。
+  PprobeTotal?: number
 }
 
 export interface CalculatedPhysics {
@@ -34,7 +37,6 @@ export interface CalculatedPhysics {
 const ATM_GAMMA = 1.4       // 空气绝热指数
 const ATM_C_COEFF = 20.047  // 声速计算系数
 const ATM_RECOVERY = 0.9    // 温度传感器恢复系数
-const ATM_STANDARD_PRESSURE_PA = 101325
 
 /**
  * 根据实时压力计算气动参数（马赫数、流速）。
@@ -55,11 +57,14 @@ function calculateAtmosphericPhysics(p: RealtimePressures): CalculatedPhysics | 
   const psGauge = p.Ps
   // 风洞温度通道单位为 ℃，需转换为开尔文
   const tatK = p.Ttunnel === undefined ? undefined : p.Ttunnel + 273.15
-  // 大气压，用于差压转绝对压；实时 UI 中通道未映射时用标准大气压兜底。
-  const patm = Number.isFinite(p.Patm) && p.Patm > 0 ? p.Patm : ATM_STANDARD_PRESSURE_PA
+  // 大气压：与后端 formulas.go 口径一致——Patm 缺失或 <=0 时不计算 Ma/V，
+  // 返回 null 让 UI 显示 "--"、CSV 写空。避免前端兜底标准大气压而后端置 nil
+  // 导致"UI 显示数值、CSV 对应列为空"的不一致（§22: pAtm 为必需通道）。
+  const patm = p.Patm
 
-  if (ptGauge === undefined || psGauge === undefined || tatK === undefined) return null
-  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK)) return null
+  if (ptGauge === undefined || psGauge === undefined || tatK === undefined || patm === undefined) return null
+  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK) || !Number.isFinite(patm)) return null
+  if (patm <= 0) return null
 
   const ptAbs = ptGauge + patm
   const psAbs = psGauge + patm
@@ -244,7 +249,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const taskId = calStatus.taskId ?? calStatus.TaskID ?? calStatus.TaskId ?? ''
     const type = calStatus.type ?? calStatus.Type ?? 'five-hole'
     const totalPoints = calStatus.totalPoints ?? calStatus.TotalPoints ?? 0
-    const completedPoints = calStatus.completedPoints ?? calStatus.CompletedPoints ?? calStatus.currentPoint ?? calStatus.CurrentPoint ?? 0
+    // completedPoints 只读后端 completedPoints 字段，不再回退到 currentPoint：
+    // 后端 CurrentPoint 语义已改为"当前正在处理的点索引"（currentPointIdx，循环顶部推进），
+    // 不再等于 CompletedPoints。回退会导致 completedPoints 多 1，进度条/百分比计算错误。
+    const completedPoints = calStatus.completedPoints ?? calStatus.CompletedPoints ?? 0
+    // currentPointIndex：后端 autoEngine.GetCurrentPointIndex()，循环顶部推进（早于 moveToPoint）。
+    // 前端 progressInfo 优先用此索引查 config.points 得到"目标点"，让目标角度先于实际角度变化。
+    // 后端 autoEngine 为 nil（未启动/总温手动模式）时缺失，progressInfo 回退到 completedPoints。
+    const currentPointIndex = calStatus.currentPoint
     const backendDataPoints = calStatus.dataPoints ?? calStatus.DataPoints
     const progress = calStatus.progress ?? calStatus.Progress ?? (totalPoints > 0 ? (completedPoints / totalPoints) * 100 : 0)
     // 读取后端返回的启动时间戳（calibration.Status.StartTime，JSON 字段 startTime）。
@@ -265,12 +277,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
         dataPoints: Array.isArray(backendDataPoints) ? backendDataPoints : [],
         currentSample: calStatus.currentSample ?? calStatus.CurrentSample ?? 0,
         samplesPerPoint: calStatus.samplesPerPoint ?? calStatus.SamplesPerPoint ?? 0,
+        currentPointIndex: typeof currentPointIndex === 'number' ? currentPointIndex : undefined,
       }
     } else {
       status.value.status = mappedState
       status.value.completedPoints = completedPoints
       status.value.totalPoints = totalPoints
       status.value.progress = progress
+      status.value.currentPointIndex = typeof currentPointIndex === 'number' ? currentPointIndex : undefined
       // 后端在 Start 时才写入 StartTime；首次轮询可能还没拿到，需要每次都尝试补齐
       if (typeof startTime === 'number' && startTime > 0) {
         status.value.startTime = startTime

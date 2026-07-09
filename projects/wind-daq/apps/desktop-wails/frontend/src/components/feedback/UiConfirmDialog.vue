@@ -34,7 +34,9 @@ const feedbackStore = useFeedbackStore()
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 110;
+  /* z-index 必须高于 Naive UI NModal 默认起始值（2000），否则从 NModal 内部
+     触发的 confirm（如遍历测试配置画面切换插值算法时的确认框）会被遮挡。 */
+  z-index: 3000;
   display: flex;
   align-items: center;
   justify-content: center;

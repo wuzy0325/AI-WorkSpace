@@ -23,8 +23,10 @@ withDefaults(
     items?: AppRailNavItem[]
     // footerItems 渲染在底部区（设置按钮上方），用于独立窗口等特殊入口
     footerItems?: AppRailNavItem[]
+    // 国际化翻译表
+    t?: Record<string, string>
   }>(),
-  { items: () => [], footerItems: () => [] },
+  { items: () => [], footerItems: () => [], t: () => ({}) },
 )
 
 const emit = defineEmits<{
@@ -124,28 +126,28 @@ function handleClick(item: AppRailNavItem): void {
         quaternary
         size="sm"
         class="app-rail-nav__button app-rail-nav__button--toggle"
-        :aria-label="isExpanded ? '收起导航' : '展开导航'"
-        :title="isExpanded ? '收起导航' : '展开导航'"
+        :aria-label="isExpanded ? (t.collapseNav || '收起导航') : (t.expandNav || '展开导航')"
+        :title="isExpanded ? (t.collapseNav || '收起导航') : (t.expandNav || '展开导航')"
         @click="toggleExpand"
       >
         <template #icon>
           <svg v-if="isExpanded" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>
           <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
         </template>
-        <span v-if="isExpanded" class="app-rail-nav__label">收起</span>
+        <span v-if="isExpanded" class="app-rail-nav__label">{{ t.collapse || '收起' }}</span>
       </UiButton>
       <UiButton
         quaternary
         size="sm"
         class="app-rail-nav__button app-rail-nav__button--settings"
-        aria-label="设置"
-        title="设置"
+        :aria-label="t.settings || '设置'"
+        :title="t.settings || '设置'"
         @click="emit('open-settings')"
       >
         <template #icon>
           <Settings class="w-5 h-5" />
         </template>
-        <span v-if="isExpanded" class="app-rail-nav__label">设置</span>
+        <span v-if="isExpanded" class="app-rail-nav__label">{{ t.settings || '设置' }}</span>
       </UiButton>
       <slot />
     </div>

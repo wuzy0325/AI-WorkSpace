@@ -2,6 +2,10 @@
 
 ## [0.3.5] - 2026-07-06
 
+### Added
+
+- 校准采集数据新鲜度检查：各算法在多次采样间通过设备时间戳判断是否新帧，避免重复读取缓存旧数据导致标准差为0。
+
 ### Changed
 
 - 三孔/五孔/总压/总温校准算法重构：校验方向统一为"来流为正"，消除各算法间符号约定不一致的问题。
@@ -13,15 +17,15 @@
 - 校准核心类型定义重构（types.go），预定义通道转换为运行时初始化。
 - CSV 格式定义（csv_schema.go）重构，统一各算法表头生成。
 - 前端校准工作流 composable（useCalibrationWorkflow）重构，优化状态管理。
+- 新增 TimestampReader 类型与 AcquisitionHub.GetLatestTimestamp，校准引擎注入到 Config.TimestampReader。
+- total_pressure.go fallback sleep 恢复 BatchPollIntervalMs 配置感知。
 
 ### Verification
 
-- `go test ./internal/... ./api/...`
-- `npm run typecheck`
-- `npm run build`
+- `go test ./...`
+- `go build -buildvcs=false ./...`
 - `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
 - `makensis` 构建安装包
-- 冒烟测试
 
 ### Known Issues
 

@@ -127,6 +127,11 @@ func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) 
 	switch profile.Type {
 	case device.DeviceDAQP1604:
 		return windaqhardware.NewDAQP1604(profile), nil
+	case device.DeviceDAQP1603:
+		// DAQ-P-1603：16 通道通用 AI 采集，走 shared SDK + DLL FFI 路径。
+		// 必须显式匹配此 case，否则落入 default 创建 SimulatedDevice，
+		// 后续 ApplyDAQP1603Config 类型断言会失败。与 appcontext.deviceFactory 对齐。
+		return windaqhardware.NewDAQP1603Adapter(profile), nil
 	case device.DeviceDAQP1604Pre:
 		return windaqhardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:

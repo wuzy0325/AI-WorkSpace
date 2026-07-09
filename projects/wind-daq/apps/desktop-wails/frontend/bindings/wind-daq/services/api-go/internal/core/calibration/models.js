@@ -212,6 +212,14 @@ export class SphereTankGateConfig {
              */
             this["waitTimeSec"] = 0;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * 球罐判定总超时（秒），<=0 时使用默认 300 秒
+             * @member
+             * @type {number | undefined}
+             */
+            this["timeoutSec"] = undefined;
+        }
         if (!("stableTimeChannel" in $$source)) {
             /**
              * 稳定时间通道引用
@@ -230,10 +238,10 @@ export class SphereTankGateConfig {
      * @returns {SphereTankGateConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType1;
+        const $$createField3_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stableTimeChannel" in $$parsedSource) {
-            $$parsedSource["stableTimeChannel"] = $$createField2_0($$parsedSource["stableTimeChannel"]);
+            $$parsedSource["stableTimeChannel"] = $$createField3_0($$parsedSource["stableTimeChannel"]);
         }
         return new SphereTankGateConfig(/** @type {Partial<SphereTankGateConfig>} */($$parsedSource));
     }
@@ -283,6 +291,9 @@ export class Status {
         }
         if (!("currentPoint" in $$source)) {
             /**
+             * CurrentPoint 当前正在处理的点索引（autoEngine.currentPointIdx，processPoint 循环顶部推进，早于 moveToPoint）。
+             * 非"已完成点数"——后者见 CompletedPoints。前端 progressInfo 据此索引查 config.points 得到"目标点"，
+             * 让目标角度先于实际角度变化。autoEngine 为 nil（未启动/总温手动模式）时为 0。
              * @member
              * @type {number}
              */
@@ -337,6 +348,22 @@ export class Status {
              * @type {DataPoint[] | undefined}
              */
             this["dataPoints"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 当前点采样进度：CurrentSample=当前点已采样本数（1..SamplesPerPoint），0 表示未开始/已完成
+             * SamplesPerPoint=当前点总采样数。前端据此显示"当前点采样 3/10"子进度。
+             * @member
+             * @type {number | undefined}
+             */
+            this["currentSample"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["samplesPerPoint"] = undefined;
         }
 
         Object.assign(this, $$source);

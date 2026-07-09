@@ -3,10 +3,12 @@ import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useSphereTankGate } from '@composables/useSphereTankGate'
 import { calibrationApi } from '@api/calibrationApi'
 import type { CalibrationConfig, CalibrationType, ProbeChannelRole } from '@shared/types/calibration'
 import { applyCalibrationPrecisionDefaults } from '@shared/calibrationPrecision'
+import { buildCalibrationCsvName } from '@shared/calibrationCsvPath'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
 
 export function useCalibrationWorkflow(calibrationType: CalibrationType) {
@@ -14,6 +16,7 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   const deviceStore = useDeviceStore()
   const motionStore = useMotionStore()
   const feedbackStore = useFeedbackStore()
+  const i18n = useI18nStore()
 
   const isLoading = ref(true)
   const hasConfig = ref(false)
@@ -23,7 +26,7 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     calibrationType,
     config: currentConfig,
     onError: (message) => {
-      feedbackStore.pushToast('球罐判定更新失败: ' + message, 'error')
+      feedbackStore.pushToast(i18n.t.wf_sphereTankUpdateFailed + ': ' + message, 'error')
     },
   })
 
@@ -32,12 +35,20 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       const res = await calibrationApi.getConfig(calibrationType)
       if (res.success && res.data) {
         currentConfig.value = applyCalibrationPrecisionDefaults(res.data)
-        // coordinates 键名迁移：旧版生成 'Theta'，新版统一使用 'θ'（与后端 normalizer 对齐）
-        // 存量配置若不迁移，所有 coordinates['θ'] 读取出 undefined → UI 显示 '--'
+        // coordinates 键名迁移：旧版前端生成 'Theta'/'Alpha'（英文），新版统一使用 'θ'/'α'（希腊字母）
+        // 与后端 normalizer / total_pressure.go:101 point.Coordinates["α"] 对齐。
+        // 存量配置若不迁移：三孔 coordinates['θ'] 读出 undefined → UI 显示 '--'；
+        // 总压第一个点就报"测点缺少 α 坐标"，校准启动后进度永远 0。
+        // 单次遍历同时处理两个键，避免重复扫两遍 points。
         currentConfig.value.points?.forEach((p) => {
-          if (p.coordinates && typeof p.coordinates['θ'] !== 'number' && typeof p.coordinates['Theta'] === 'number') {
+          if (!p.coordinates) return
+          if (typeof p.coordinates['θ'] !== 'number' && typeof p.coordinates['Theta'] === 'number') {
             p.coordinates['θ'] = p.coordinates['Theta']
             delete p.coordinates['Theta']
+          }
+          if (typeof p.coordinates['α'] !== 'number' && typeof p.coordinates['Alpha'] === 'number') {
+            p.coordinates['α'] = p.coordinates['Alpha']
+            delete p.coordinates['Alpha']
           }
         })
         hasConfig.value = true
@@ -61,14 +72,50 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
 
   async function startCalibration() {
     if (!canStartCalibration.value || !currentConfig.value) {
-      feedbackStore.pushToast(startDisabledReason.value || '请先完成校准前检查', 'warning')
+      feedbackStore.pushToast(startDisabledReason.value || i18n.t.wf_pleaseCompletePreCheck, 'warning')
       return
+    }
+    // CSV 文件覆盖检测：配置名不改时 savePath 与上次相同，后端追加模式 writer 会在
+    // 旧文件末尾续写（已修表头重复 bug），但两次校准数据混在一起容易混淆分析。
+    // 因此检测到文件已存在时弹窗让用户决定：覆盖（删旧文件后 Start）或取消（改路径再来）。
+    const savePath = currentConfig.value.savePath?.trim()
+    if (savePath) {
+      try {
+        const { useStorageStore } = await import('@stores/storageStore')
+        const storageStore = useStorageStore()
+        const exists = await storageStore.fileExists(savePath)
+        if (exists) {
+          const accepted = await feedbackStore.confirm(
+            i18n.t.wf_csvOverwriteConfirm.replace('{path}', savePath),
+            {
+              title: i18n.t.wf_fileExists,
+              confirmText: i18n.t.wf_overwrite,
+              cancelText: i18n.t.cancel,
+            },
+          )
+          if (!accepted) {
+            feedbackStore.pushToast(i18n.t.wf_startCancelled, 'info')
+            return
+          }
+          // 检查 removeFile 返回值：Wails 不可用或权限不足时返回 false，
+          // 若不阻断启动，后端会按追加模式续写，两次校准数据混在一起。
+          const removed = await storageStore.removeFile(savePath)
+          if (!removed) {
+            feedbackStore.pushToast(i18n.t.wf_removeOldCsvFailed, 'warning')
+            return
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check/remove CSV file:', err)
+        feedbackStore.pushToast(i18n.t.wf_checkCsvFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'warning')
+        // 检测失败不阻断启动，让后端按追加模式处理
+      }
     }
     try {
       await calibrationStore.startCalibration(currentConfig.value)
     } catch (err) {
       console.error('Failed to start calibration:', err)
-      feedbackStore.pushToast('启动校准失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+      feedbackStore.pushToast(i18n.t.wf_startCalibrationFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
     }
   }
 
@@ -81,17 +128,17 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   }
 
   async function stopCalibration() {
-    const accepted = await feedbackStore.confirm('确定要停止校准吗？当前进度将丢失。', {
-      title: '停止校准',
-      confirmText: '停止',
-      cancelText: '取消',
+    const accepted = await feedbackStore.confirm(i18n.t.wf_stopCalibrationConfirm, {
+      title: i18n.t.wf_stopCalibrationTitle,
+      confirmText: i18n.t.stop,
+      cancelText: i18n.t.cancel,
     })
     if (accepted) {
       try {
         await calibrationStore.stop()
       } catch (err) {
         console.error('Failed to stop:', err)
-        feedbackStore.pushToast('停止校准失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+        feedbackStore.pushToast(i18n.t.wf_stopCalibrationFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
       }
     }
   }
@@ -102,47 +149,47 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     try {
       const { useStorageStore } = await import('@stores/storageStore')
       const storageStore = useStorageStore()
-      // 默认文件名清洗：配置名可能含日期斜杠（如"三孔探针校准-2026/7/8"）
-      // 或其他文件名非法字符（/ \ : * ? " < > |），直接拼进默认文件名会被
-      // 原生保存对话框解析为路径分隔符，导致默认名非法或落到错误目录。
-      const rawName = currentConfig.value?.name || 'calibration'
-      const safeName = rawName.replace(/[\\/:*?"<>|]/g, '-').trim() || 'calibration'
-      // 配置名末尾若已含 ISO 日期（YYYY-MM-DD），不再追加当天日期避免重复
-      const dateSuffix = /\d{4}-\d{2}-\d{2}$/.test(safeName) ? '' : `-${new Date().toISOString().slice(0, 10)}`
-      const defaultName = `${safeName}${dateSuffix}.csv`
-      const target = await storageStore.pickSaveFile('选择校准 CSV 导出位置', defaultName, [
-        { displayName: 'CSV 文件 (*.csv)', pattern: '*.csv' },
+      // 默认文件名清洗：buildCalibrationCsvName 统一处理非法字符替换 + 日期去重，
+      // 与四个 Settings 组件的 pickSavePath 共用同一份清洗逻辑。
+      const defaultName = buildCalibrationCsvName(currentConfig.value?.name || '', 'calibration')
+      const target = await storageStore.pickSaveFile(i18n.t.wf_selectCsvExportLocation, defaultName, [
+        { displayName: i18n.t.wf_csvFileFilter, pattern: '*.csv' },
       ])
       if (!target) return
       const res = await calibrationStore.saveData(target)
       if (!res.success) {
-        feedbackStore.pushToast('导出失败: ' + (res.error || '未知错误'), 'error')
+        feedbackStore.pushToast(i18n.t.wf_exportFailed + ': ' + (res.error || i18n.t.unknownError), 'error')
         return
       }
-      feedbackStore.pushToast('已导出: ' + (res.filepath || target), 'success')
+      feedbackStore.pushToast(i18n.t.wf_exported + ': ' + (res.filepath || target), 'success')
     } catch (e) {
-      feedbackStore.pushToast('导出失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
+      feedbackStore.pushToast(i18n.t.wf_exportFailed + ': ' + (e instanceof Error ? e.message : String(e)), 'error')
     }
   }
 
   async function exportReport() {
     const res = await calibrationStore.exportReport()
     if (!res.success) {
-      feedbackStore.pushToast('导出失败: ' + (res.error || '未知错误'), 'error')
+      feedbackStore.pushToast(i18n.t.wf_exportFailed + ': ' + (res.error || i18n.t.unknownError), 'error')
       return
     }
-    feedbackStore.pushToast('已导出: ' + (res.filepath || ''), 'success')
+    feedbackStore.pushToast(i18n.t.wf_exported + ': ' + (res.filepath || ''), 'success')
   }
 
   const progressInfo = computed(() => {
     const status = calibrationStore.status
     if (!status) return null
-    // 后端 calibration.Status.CurrentPoint 是 int 索引（= CompletedPoints，点完成后才推进），
-    // 而前端 CalibrationTaskStatus.currentPoint 期望 CalibrationPoint 对象（含 coordinates）。
-    // store 的 updateStatusFromBackend 未写入 currentPoint，因此这里用 completedPoints 作为索引
-    // 从当前配置 points 中查出对应点的 coordinates，供 UI 显示"当前位置"角度。
+    // 目标点索引取 max(currentPointIndex, completedPoints)：
+    //   - 自动模式（五孔/三孔/总压）：autoEngine 在 processPoint 循环顶部推进 currentPointIdx，
+    //     使其领先 completedPoints 1 个点，实现"目标角度先于实际角度变化"的直觉。
+    //   - 手动模式（总温）：autoEngine 为 nil，后端 CurrentPoint 始终为 0（int 无 omitempty），
+    //     此时 max(0, completedPoints) = completedPoints，正确指向下一个待采点。
+    //   - 边界：两者均超出 points.length 时由 Math.min 截断到最后一个点，不会越界。
+    // completedPoints 仍用于进度条/百分比（表示"已完成采集的点数"）。
     const points = currentConfig.value?.points ?? []
-    const idx = Math.min(status.completedPoints, points.length - 1)
+    const autoIdx = typeof status.currentPointIndex === 'number' ? status.currentPointIndex : 0
+    const targetIdx = Math.max(autoIdx, status.completedPoints)
+    const idx = Math.min(targetIdx, points.length - 1)
     // 仅在运行中或暂停时才返回当前目标点，idle/completed/error 态下无"当前目标"
     const validState = status.status === 'running' || status.status === 'paused'
     const currentPoint = validState && idx >= 0 ? points[idx] : undefined
@@ -150,7 +197,12 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       current: status.completedPoints,
       total: status.totalPoints,
       percent: status.progress.toFixed(1),
+      // currentPoint 直接返回 coordinates（Record<string, number>），
+      // 与三孔/总压/总温组件读法（progressInfo.currentPoint?.['θ']）保持一致。
       currentPoint: currentPoint?.coordinates,
+      // currentPointId 单独暴露：FiveHoleMain 高亮当前点时需要 id 匹配数据点 pointId，
+      // 不让 currentPoint 升级为 CalPoint 对象破坏其他三处组件的现有用法。
+      currentPointId: currentPoint?.id,
     }
   })
 
@@ -221,14 +273,14 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   })
 
   const statusText = computed(() => {
-    if (!calibrationStore.status) return '空闲'
+    if (!calibrationStore.status) return i18n.t.idle
     switch (calibrationStore.status.status) {
-      case 'idle': return '空闲'
-      case 'running': return '运行中'
-      case 'paused': return '已暂停'
-      case 'completed': return '已完成'
-      case 'error': return '错误'
-      default: return '空闲'
+      case 'idle': return i18n.t.idle
+      case 'running': return i18n.t.running
+      case 'paused': return i18n.t.statusPaused
+      case 'completed': return i18n.t.completed
+      case 'error': return i18n.t.error
+      default: return i18n.t.idle
     }
   })
 
@@ -267,13 +319,13 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   })
 
   const startDisabledReason = computed(() => {
-    if (isLoading.value) return '正在加载配置，请稍候'
-    if (!hasConfig.value) return '请先配置校准参数'
+    if (isLoading.value) return i18n.t.wf_loadingConfig
+    if (!hasConfig.value) return i18n.t.wf_pleaseConfigCalibration
     // 细分采集设备状态：未连接 vs 已连接但未开始采集，后者给操作员直接可执行的指引
-    if (acquisitionDeviceState.value === 'noDevice') return '未配置采集设备通道'
-    if (acquisitionDeviceState.value === 'disconnected') return '采集设备未连接，请到设备管理连接'
-    if (acquisitionDeviceState.value === 'connectedNotAcquiring') return '采集设备已连接但未开始采集，请到设备管理启动采集'
-    if (!isMotionControllerConnected.value) return '运动控制器未连接'
+    if (acquisitionDeviceState.value === 'noDevice') return i18n.t.wf_noAcquisitionChannel
+    if (acquisitionDeviceState.value === 'disconnected') return i18n.t.wf_acquisitionDeviceDisconnected
+    if (acquisitionDeviceState.value === 'connectedNotAcquiring') return i18n.t.wf_acquisitionDeviceNotAcquiring
+    if (!isMotionControllerConnected.value) return i18n.t.wf_motionControllerDisconnected
     return ''
   })
 
@@ -294,7 +346,7 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     ])
     reportAllSettledFailures(
       results,
-      ['设备实例列表', '运动控制器配置', '运动控制器状态', '校准配置'],
+      [i18n.t.wf_labelDeviceInstances, i18n.t.wf_labelMotionProfiles, i18n.t.wf_labelMotionStatus, i18n.t.wf_labelCalibrationConfig],
       (msg, level) => feedbackStore.pushToast(msg, level ?? 'warning'),
     )
     isLoading.value = false

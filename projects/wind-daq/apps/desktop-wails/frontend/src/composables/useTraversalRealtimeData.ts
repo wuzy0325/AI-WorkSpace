@@ -15,6 +15,7 @@ import type {
   TraversalInterpolationInput
 } from '@shared/types/traversal'
 import type { DataPayload } from '@api/types'
+import { findChannelValue } from '@shared/calibrationSnapshotValue'
 import type { ProbeChannelRole } from '@shared/types/calibration'
 import { deviceApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -49,26 +50,14 @@ function buildRealtimePressuresFromSnapshots(
   config: TraversalTestConfig,
   snapshots: DataPayload[]
 ): LivePressureMap | null {
-  // 根据设备 ID 和通道索引从快照中提取数值
-  const toValue = (deviceId: string, channelIndex: number): number | undefined => {
-    const payload = snapshots.find((entry) => entry.deviceId === deviceId)
-    if (!payload) return undefined
-    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
-    const channels = Array.isArray(payload.channels) ? payload.channels : []
-    const index = indices.indexOf(channelIndex)
-    if (index < 0) return undefined
-    const value = channels[index]
-    return typeof value === 'number' ? value : undefined
-  }
-
   const result: LivePressureMap = {}
   let matchedChannelCount = 0
 
   for (const channel of config.channels.probeChannels) {
     if (!channel.enabled || !channel.channel.deviceId) continue
 
-    const value = toValue(channel.channel.deviceId, channel.channel.channelIndex)
-    if (typeof value !== 'number') continue
+    const value = findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex)
+    if (value === null) continue
 
     switch (channel.role) {
       case 'fiveHole.p1':

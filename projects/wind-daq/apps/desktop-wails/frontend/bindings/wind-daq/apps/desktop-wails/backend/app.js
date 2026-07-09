@@ -283,6 +283,17 @@ export function DeviceUpsertProfile(profile) {
 }
 
 /**
+ * FileExists 检查指定路径的文件是否存在。
+ * 用于校准 Start 前检测 CSV 文件是否已存在，提示用户决定是否覆盖。
+ * 路径不存在或指向目录时返回 false，不报错。
+ * @param {string} path
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function FileExists(path) {
+    return $Call.ByID(2380099457, path);
+}
+
+/**
  * GetStartupMode 获取当前应用启动模式
  * 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）
  * @returns {$CancellablePromise<string>}
@@ -495,6 +506,18 @@ export function PickFiles(title, filters) {
  */
 export function PickSaveFile(title, defaultFilename, filters) {
     return $Call.ByID(4198979769, title, defaultFilename, filters);
+}
+
+/**
+ * RemoveFile 删除指定路径的文件。
+ * 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件，
+ * 让后续追加模式 writer 当作新文件写入（BOM + 表头）。
+ * 路径不存在视为已删除，不报错。
+ * @param {string} path
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function RemoveFile(path) {
+    return $Call.ByID(2642457797, path);
 }
 
 /**

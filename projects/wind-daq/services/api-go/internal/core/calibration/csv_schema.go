@@ -37,18 +37,26 @@ func (s CsvSchema) BuildHeader() []string {
 		return header
 	case TypeThreeHole:
 		// 三孔表头全中文，与五孔风格一致；不含 startTime/endTime
+		// 马赫数/速度列头中文+英文表达，与五孔 "Ma" 列风格对齐
 		return []string{
 			"点位编号", "θ(°)",
 			"P1(Pa)", "P2(Pa)", "P3(Pa)", "P∞(Pa)", "T∞(°C)", "Pt(Pa)", "Ps(Pa)",
-			"Kb", "Kt", "Sb",
+			"Kβ", "K0", "Kv",
+			"马赫数(Ma)", "速度V(m/s)",
 			"采样次数", "标准差",
 		}
 	case TypeTotalPressure:
-		return append(base,
-			"alpha",
-			"pAtm", "tAtm", "pTunnelTotal", "pTunnelStatic", "tTunnel", "pProbeTotal",
-			"CPT", "error", "machNumber",
-		)
+		// 中文带单位，与五孔/三孔风格对齐；列顺序与 buildTotalPressureRecord 严格一致
+		// 马赫数/速度列与三孔表头一致，便于跨模块数据合并分析
+		// 去掉采样次数/标准差/开始时间/结束时间四列：操作员反馈这些列对校准结果分析无价值
+		// 采样次数/标准差反映"过程稳定性"，但 Ma/V/CPT 已能反映"流场质量"，过程列冗余；
+		// 开始时间/结束时间是过程时间戳，不参与校准曲线分析，去掉与三孔表头风格一致
+		return []string{
+			"点位编号",
+			"α(°)",
+			"P∞(Pa)", "T∞(°C)", "Pt风洞(Pa)", "Ps风洞(Pa)", "T风洞(°C)", "Pt探针(Pa)",
+			"CPT", "误差(%)", "马赫数(Ma)", "速度V(m/s)",
+		}
 	case TypeTotalTemperature:
 		return []string{
 			"id", "targetMachNumber", "actualMachNumber",
@@ -145,9 +153,19 @@ func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 	if dp.RawData.PStatic != nil {
 		pStatic = formatFloatWithPrecision(*dp.RawData.PStatic, threeHolePressurePrecision)
 	}
+	// 马赫数/速度：可选字段，nil 时写空字符串（与 Pt/Ps 可选字段处理方式一致）
+	machNumber := ""
+	if dp.Coefficients.MachNumber != nil {
+		machNumber = formatFloatWithPrecision(*dp.Coefficients.MachNumber, threeHoleMachPrecision)
+	}
+	velocity := ""
+	if dp.Coefficients.Velocity != nil {
+		velocity = formatFloatWithPrecision(*dp.Coefficients.Velocity, threeHoleVelocityPrecision)
+	}
 
 	// 精度与前端 ThreeHoleMain.vue 显示一致：
 	// θ 1 位（formatValue(point.coordinates['θ'], 1)）、压力 3 位（probePrecision 默认 3）、系数 4 位（formatValue(Kb, 4)）、标准差 4 位
+	// 马赫数 3 位、速度 1 位（与前端 physics.machNumber.toFixed(3) / velocity.toFixed(1) 一致）
 	return []string{
 		formatInt(dp.PointID),
 		formatFloatWithPrecision(dp.Coordinates["θ"], threeHoleThetaPrecision),
@@ -159,30 +177,42 @@ func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 		pTotal,
 		pStatic,
 		formatFloatWithPrecision(dp.Coefficients.Kb, threeHoleCoeffPrecision),
-		formatFloatWithPrecision(dp.Coefficients.Kt, threeHoleCoeffPrecision),
-		formatFloatWithPrecision(dp.Coefficients.Sb, threeHoleCoeffPrecision),
+		formatFloatWithPrecision(dp.Coefficients.K0, threeHoleCoeffPrecision),
+		formatFloatWithPrecision(dp.Coefficients.Kv, threeHoleCoeffPrecision),
+		machNumber,
+		velocity,
 		formatInt(dp.SampleCount),
 		formatFloatWithPrecision(dp.StdDev, threeHoleStdDevPrecision),
 	}
 }
 
 func (s CsvSchema) buildTotalPressureRecord(dp *TotalPressureDataPoint) []string {
+	// 马赫数/速度：可选指针字段，nil 时写空字符串（与三孔/五孔 Pt/Ps 可选字段处理一致）
+	machNumber := ""
+	if dp.Coefficients.MachNumber != nil {
+		machNumber = formatFloatWithPrecision(*dp.Coefficients.MachNumber, totalPressureMachPrecision)
+	}
+	velocity := ""
+	if dp.Coefficients.Velocity != nil {
+		velocity = formatFloatWithPrecision(*dp.Coefficients.Velocity, totalPressureVelocityPrecision)
+	}
+
+	// 列顺序与 BuildHeader TypeTotalPressure 严格一致；
+	// 精度与前端 TotalPressureMain.vue 显示精度严格对齐：
+	//   α 1 位、压力 1 位、温度 1 位、CPT/误差 4 位、Ma 3 位、V 1 位
 	return []string{
 		formatInt(dp.PointID),
-		formatInt(dp.SampleCount),
-		formatFloat(dp.StdDev),
-		formatInt64(dp.StartTime),
-		formatInt64(dp.EndTime),
-		formatFloat(dp.Alpha),
-		formatFloat(dp.RawData.PAtm),
-		formatFloat(dp.RawData.TAtm),
-		formatFloat(dp.RawData.PTunnelTotal),
-		formatFloat(dp.RawData.PTunnelStatic),
-		formatFloat(dp.RawData.TTunnel),
-		formatFloat(dp.RawData.PProbeTotal),
-		formatFloat(dp.Coefficients.CPT),
-		formatFloat(dp.Coefficients.Error),
-		formatFloat(dp.Coefficients.MachNumber),
+		formatFloatWithPrecision(dp.Alpha, totalPressureAlphaPrecision),
+		formatFloatWithPrecision(dp.RawData.PAtm, totalPressurePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.TAtm, totalPressureTempPrecision),
+		formatFloatWithPrecision(dp.RawData.PTunnelTotal, totalPressurePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.PTunnelStatic, totalPressurePressurePrecision),
+		formatFloatWithPrecision(dp.RawData.TTunnel, totalPressureTempPrecision),
+		formatFloatWithPrecision(dp.RawData.PProbeTotal, totalPressurePressurePrecision),
+		formatFloatWithPrecision(dp.Coefficients.CPT, totalPressureCoeffPrecision),
+		formatFloatWithPrecision(dp.Coefficients.Error, totalPressureCoeffPrecision),
+		machNumber,
+		velocity,
 	}
 }
 

@@ -78,6 +78,9 @@ type PointResult struct {
 type Status struct {
 	TaskID          string      `json:"taskId"`
 	State           State       `json:"state"`
+	// CurrentPoint 当前正在处理的点索引（autoEngine.currentPointIdx，processPoint 循环顶部推进，早于 moveToPoint）。
+	// 非"已完成点数"——后者见 CompletedPoints。前端 progressInfo 据此索引查 config.points 得到"目标点"，
+	// 让目标角度先于实际角度变化。autoEngine 为 nil（未启动/总温手动模式）时为 0。
 	CurrentPoint    int         `json:"currentPoint"`
 	TotalPoints     int         `json:"totalPoints"`
 	LastError       string      `json:"lastError,omitempty"`
@@ -146,24 +149,30 @@ type ThreeHoleRawData struct {
 	P3      float64  `json:"p3"`                // 侧孔2压力（右孔）
 	PAtm    float64  `json:"pAtm"`              // 大气压力
 	TAtm    float64  `json:"tAtm"`              // 大气温度
-	PTotal  *float64 `json:"pTotal,omitempty"`  // 风洞总压（必需，用于 Kt/Sb）
-	PStatic *float64 `json:"pStatic,omitempty"` // 风洞静压（必需，用于 Sb）
+	PTotal  *float64 `json:"pTotal,omitempty"`  // 风洞总压（必需，用于 K0/Kv）
+	PStatic *float64 `json:"pStatic,omitempty"` // 风洞静压（必需，用于 Kv）
 }
 
 // ThreeHoleCoefficients 三孔探针校准系数
 //
-// 口径与插值器 PRB 文件列对齐（shared/algorithms/go/threehole/interpolation/three_hole.go）：
+// 工程命名：Kb(Kβ) / K0 / Kv，与插值器 PRB 文件列对齐
+// （shared/algorithms/go/threehole/interpolation/three_hole.go）：
 //
 //	ΔP = 2·P2 - P1 - P3           中心孔与侧孔差压
-//	Kb = (P3 - P1) / ΔP           方向系数（仅孔压）
-//	Kt = (Pt - P2) / ΔP           总压恢复系数（需 PTotal）
-//	Sb = (Pt - Ps) / ΔP           静压恢复系数（需 PTotal + PStatic）
+//	Kb = (P3 - P1) / ΔP           角度系数 Kβ（仅孔压，始终可算）
+//	K0 = (Pt - P2) / ΔP           总压系数 K0（需 PTotal；缺失置 0，不发误导值）
+//	Kv = (Pt - Ps) / ΔP           速度系数 Kv（需 PTotal + PStatic；缺失置 0）
 //
-// 插值时：Pt = P2 + Kt·ΔP, Ps = Pt - Sb·ΔP
+// 插值时反演：Pt = P2 + K0·ΔP, Ps = Pt - Kv·ΔP
+//
+// MachNumber/Velocity 为实时气动参数（可选）：需 PTotal + PStatic + PAtm + TAtm 齐全时计算，
+// 缺失任一通道时为 nil，CSV 写空字符串、UI 显示 "--"。
 type ThreeHoleCoefficients struct {
-	Kb float64 `json:"Kb"` // 方向系数
-	Kt float64 `json:"Kt"` // 总压恢复系数
-	Sb float64 `json:"Sb"` // 静压恢复系数
+	Kb         float64  `json:"Kb"`                   // 角度系数 Kβ
+	K0         float64  `json:"K0"`                   // 总压系数 K0
+	Kv         float64  `json:"Kv"`                   // 速度系数 Kv
+	MachNumber *float64 `json:"machNumber,omitempty"` // 马赫数（可选，需风洞总压/静压/大气压/温度齐全）
+	Velocity   *float64 `json:"velocity,omitempty"`   // 速度 m/s（可选，需风洞总压/静压/大气压/温度齐全）
 }
 
 // ThreeHoleDataPoint 三孔探针校准数据点
@@ -191,10 +200,16 @@ type TotalPressureRawData struct {
 }
 
 // TotalPressureCoefficients 总压探针系数
+//
+// MachNumber/Velocity 为实时气动参数（可选指针）：
+// 需风洞总压/静压/大气压/温度齐全且物理合法时才计算，
+// 风洞未建立有效压差或通道缺失时为 nil，CSV 写空字符串、UI 显示 "--"。
+// 与 ThreeHoleCoefficients 保持一致的 nil 语义，避免 0 值误导操作员。
 type TotalPressureCoefficients struct {
-	CPT        float64 `json:"CPT"`        // 总压恢复系数
-	Error      float64 `json:"error"`      // 误差(%)
-	MachNumber float64 `json:"machNumber"` // 马赫数
+	CPT        float64  `json:"CPT"`                   // 总压恢复系数
+	Error      float64  `json:"error"`                 // 误差(%)
+	MachNumber *float64 `json:"machNumber,omitempty"`  // 马赫数（可选，需风洞总压/静压/大气压/温度齐全）
+	Velocity   *float64 `json:"velocity,omitempty"`    // 速度 m/s（可选，需风洞总压/静压/大气压/温度齐全）
 }
 
 // TotalPressureDataPoint 总压探针校准数据点

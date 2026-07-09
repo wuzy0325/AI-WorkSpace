@@ -1,24 +1,25 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { storeToRefs } from 'pinia'
+import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useI18nStore } from '@stores/i18nStore'
-import type { ThreeHoleDataPoint, ThreeHoleCoefficients } from '@shared/types/calibration'
+import type { TotalPressureDataPoint, TotalPressureCoefficients } from '@shared/types/calibration'
 
-const { t } = storeToRefs(useI18nStore())
+// i18n：Canvas 内的"暂无数据"等文本随语言切换重绘
+const i18n = useI18nStore()
+const t = computed(() => i18n.t)
 
 // 图表 X 轴数据源：
-// - 'theta'：从 point.coordinates['θ'] 取角度（三孔探针的旋转角）
-// - Kβ/K0/Kv：从 point.coefficients 取对应系数（用于系数-系数散点图，字段名为 Kb）
-type ChartXKey = 'theta' | keyof ThreeHoleCoefficients
+// - 'alpha'：从 point.alpha 取攻角（总压探针的旋转角，单轴）
+// - CPT/error/machNumber/velocity：从 point.coefficients 取对应系数（用于系数-系数散点图）
+type ChartXKey = 'alpha' | keyof TotalPressureCoefficients
 
 const props = defineProps<{
-  dataPoints: ThreeHoleDataPoint[]
+  dataPoints: TotalPressureDataPoint[]
   xKey: ChartXKey
-  yKey: keyof ThreeHoleCoefficients
+  yKey: keyof TotalPressureCoefficients
   xLabel: string
   // Y 轴标签可选：概览页空间紧凑时传空字符串隐藏，图表 Tab 传完整标签
   yLabel?: string
-  // X 轴刻度标签和轴标题开关：概览页空间紧凑时传 false 隐藏，图表 Tab 传 true
+  // X 轴刻度标签开关：概览页空间紧凑时传 false 隐藏，图表 Tab 传 true
   showXAxisLabels?: boolean
 }>()
 
@@ -70,13 +71,13 @@ function resolveChartColors(): ChartColors {
 // 刻度文字可读性优先于字体美观一致性，直接硬编码 sans-serif。
 const CANVAS_FONT = 'sans-serif'
 
-// 从 dataPoints 提取 (x, y) 散点：xKey='theta' 时取 coordinates['θ']，否则取 coefficients
-// 类型谓词 filter 确保 x/y 收窄为 number（ThreeHoleCoefficients 含可选字段，索引访问返回 number | undefined）
+// 从 dataPoints 提取 (x, y) 散点：xKey='alpha' 时取 point.alpha，否则取 coefficients
+// 类型谓词 filter 确保 x/y 收窄为 number（TotalPressureCoefficients 含可选字段，索引访问返回 number | undefined）
 function extractPoints(): { x: number; y: number }[] {
   return props.dataPoints
     .map((p) => {
-      const x = props.xKey === 'theta' ? p.coordinates['θ'] : p.coefficients[props.xKey as keyof ThreeHoleCoefficients]
-      const y = p.coefficients[props.yKey as keyof ThreeHoleCoefficients]
+      const x = props.xKey === 'alpha' ? p.alpha : p.coefficients[props.xKey as keyof TotalPressureCoefficients]
+      const y = p.coefficients[props.yKey as keyof TotalPressureCoefficients]
       return { x, y }
     })
     .filter((p): p is { x: number; y: number } => typeof p.x === 'number' && isFinite(p.x) && typeof p.y === 'number' && isFinite(p.y))
@@ -108,7 +109,7 @@ function draw(): void {
   const padLeft = 48
   const padRight = 12
   const padTop = 12
-  const padBottom = 8
+  const padBottom = showXLabels ? 22 : 8
 
   ctx.clearRect(0, 0, width, height)
 
@@ -119,7 +120,7 @@ function draw(): void {
     ctx.font = `13px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(t.value.th_noData, width / 2, height / 2)
+    ctx.fillText(t.value.tp_noData, width / 2, height / 2)
     return
   }
 
@@ -167,8 +168,8 @@ function draw(): void {
   ctx.lineTo(padLeft + plotW, padTop + plotH)
   ctx.stroke()
 
-  // X 轴刻度：每个数据点位置显示其 θ 值，去重按升序排列
-  {
+  // X 轴刻度：每个数据点位置显示其 α 值，去重按升序排列
+  if (showXLabels) {
     const tickValues = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b)
     ctx.fillStyle = colors.textMuted
     ctx.font = `11px ${CANVAS_FONT}`
@@ -191,7 +192,6 @@ function draw(): void {
     ctx.fillText(val.toFixed(3), padLeft - 6, y)
   }
 
-  // 轴标题：X 轴标题省略（卡片 h3 已标明"Kβ - θ 曲线"，且 canvas 底部空间不足以再画标题）
   // Y 轴标题仅在传入非空字符串时绘制（图表 Tab 可选）
   if (props.yLabel) {
     ctx.fillStyle = colors.textPrimary
@@ -205,8 +205,8 @@ function draw(): void {
     ctx.restore()
   }
 
-  // 按_x 升序排序后绘制折线，确保 θ 递增时曲线连续不回环
-  // 校准数据点本身就是按 θ 顺序采集的，排序仅防御外部传入乱序的情况
+  // 按 x 升序排序后绘制折线，确保 α 递增时曲线连续不回环
+  // 校准数据点本身就是按 α 顺序采集的，排序仅防御外部传入乱序的情况
   const sortedPoints = [...points].sort((a, b) => a.x - b.x)
 
   // 画折线：主题色细线，连接所有采样点，让趋势一目了然
@@ -241,6 +241,11 @@ function draw(): void {
 watch(() => props.dataPoints, () => {
   void nextTick(draw)
 }, { deep: true })
+
+// 语言切换时重绘：Canvas 内的"暂无数据"等文本依赖 i18n.t，需主动触发重绘
+watch(t, () => {
+  void nextTick(draw)
+})
 
 onMounted(() => {
   void nextTick(draw)

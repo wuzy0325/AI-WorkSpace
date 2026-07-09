@@ -125,11 +125,17 @@ export interface ThreeHoleRawData {
   pStatic?: number
 }
 
-/** 三孔探针系数（与插值器 PRB 文件列对齐） */
+/** 三孔探针系数（与插值器 PRB 文件列对齐）
+ *
+ * 工程命名：Kb(Kβ) 角度系数 / K0 总压系数 / Kv 速度系数
+ * MachNumber/Velocity 为实时气动参数（可选）：需 PTotal + PStatic + PAtm + TAtm 齐全时计算
+ */
 export interface ThreeHoleCoefficients {
   Kb: number
-  Kt: number
-  Sb: number
+  K0: number
+  Kv: number
+  machNumber?: number
+  velocity?: number
 }
 
 /** 三孔探针数据点 */
@@ -187,7 +193,10 @@ export interface TotalPressureRawData {
 export interface TotalPressureCoefficients {
   CPT: number
   error: number
-  machNumber: number
+  /** 马赫数（可选，需风洞总压/静压/大气压/温度齐全；与后端 *float64 nil 语义一致） */
+  machNumber?: number
+  /** 速度 m/s（可选，需风洞总压/静压/大气压/温度齐全；与后端 *float64 nil 语义一致） */
+  velocity?: number
 }
 
 /** 总压探针数据点 */
@@ -253,7 +262,6 @@ export interface CalibrationTaskStatus {
   status: CalibrationStatus
   totalPoints: number
   completedPoints: number
-  currentPoint?: CalibrationPoint
   progress: number
   startTime?: number
   estimatedTimeRemaining?: number
@@ -263,6 +271,10 @@ export interface CalibrationTaskStatus {
   currentSample?: number
   /** 当前点总采样数，UI 据此显示"当前点采样 i/N"子进度 */
   samplesPerPoint?: number
+  /** 当前正在处理的点索引（后端 currentPointIdx，循环顶部推进，早于 moveToPoint）。
+   *  前端 progressInfo 优先用此索引查 config.points 得到"目标点"，
+   *  让目标角度先于实际角度变化。后端 autoEngine 为 nil 时此字段缺失，回退到 completedPoints。 */
+  currentPointIndex?: number
 }
 
 export interface CalibrationModuleResult {

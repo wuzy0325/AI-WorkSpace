@@ -11,7 +11,9 @@ import UiSelect from '@components/ui/UiSelect.vue'
 // DAQ-P-1603 专属配置面板
 // ------------------------------------------------------------
 // 与 DAQ-T-1603 不同：DAQ-P-1603 每通道可独立配置为压力或温度传感器，
-// 单位下拉选项随传感器类型切换（压力→Pa/kPa/MPa/mmH2O，温度→℃/℉）。
+// 单位下拉选项随传感器类型切换（压力→Pa/kPa/MPa/kgf/cm2/psi，温度→℃/℉）。
+// 压力单位切换时按换算系数同步转换该通道工程量程（rangeMin/rangeMax），
+// 保证物理量一致（例：Pa 下 -5000~5000 切到 kPa → -5~5）。
 // 采样率上限 500Hz（spec D-2），越界时红色提示并禁用提交（由父组件
 // 通过 samplingRateExceedsMax slot prop 或本组件的 invalid 状态判断）。
 //
@@ -53,13 +55,24 @@ const emit = defineEmits<{
 // 采样率上限常量（与后端 sharedhw.DAQP1603MaxSampleRate 对齐）
 const MAX_SAMPLE_RATE = 500
 
-// 压力单位选项
+// 压力单位选项（与 DeviceManagementDrawer 全局压力单位保持一致）
 const PRESSURE_UNIT_OPTIONS = [
   { value: 'Pa', label: 'Pa' },
   { value: 'kPa', label: 'kPa' },
   { value: 'MPa', label: 'MPa' },
-  { value: 'mmH2O', label: 'mmH2O' },
+  { value: 'kgf/cm2', label: 'kgf/cm2' },
+  { value: 'psi', label: 'psi' },
 ]
+
+// 压力单位到 Pa 的换算系数（1 单位 = factor Pa）
+// 用于单位切换时按比例换算工程量程，保证物理量一致
+const PRESSURE_UNIT_TO_PA_FACTOR: Record<string, number> = {
+  Pa: 1,
+  kPa: 1000,
+  MPa: 1_000_000,
+  'kgf/cm2': 98066.5,
+  psi: 6894.757293168,
+}
 
 // 温度单位选项
 const TEMPERATURE_UNIT_OPTIONS = [
@@ -119,9 +132,33 @@ function onSensorTypeChange(index: number, nextType: string): void {
   })
 }
 
-// 单位切换：仅更新单位字段
+// 单位切换：按换算系数同步转换该通道的工程量程上下限
+// 例：Pa 下 -5000~5000 切到 kPa → -5~5；切到 MPa → -0.005~0.005
+// 仅在旧/新单位均在系数表中时换算；否则只更新单位，保留原量程数值
 function onUnitChange(index: number, unit: string): void {
-  patchChannel(index, { unit })
+  const channel = props.channels[index]
+  if (!channel) {
+    patchChannel(index, { unit })
+    return
+  }
+  const oldUnit = channel.unit
+  const factorOld = oldUnit ? PRESSURE_UNIT_TO_PA_FACTOR[oldUnit] : undefined
+  const factorNew = PRESSURE_UNIT_TO_PA_FACTOR[unit]
+  // 单位不在换算表（如温度单位误入）或系数为 0 时，只更新单位字段
+  if (factorOld == null || factorNew == null || factorNew === 0) {
+    patchChannel(index, { unit })
+    return
+  }
+  const ratio = factorOld / factorNew
+  const convert = (v: number | undefined): number | undefined => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return v
+    return v * ratio
+  }
+  patchChannel(index, {
+    unit,
+    rangeMin: convert(channel.rangeMin),
+    rangeMax: convert(channel.rangeMax),
+  })
 }
 
 // 启用切换

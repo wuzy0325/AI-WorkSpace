@@ -62,12 +62,18 @@ const channelMeta = computed(() => {
   return map
 })
 
+/**
+ * 将时间戳格式化为 HH:MM:SS 文本，用于 tooltip 与 axisLabel 显示。
+ * 统一使用 zh-CN 24 小时制，避免各浏览器 locale 实现差异。
+ */
+function formatTime(ts: number): string {
+  const date = new Date(ts)
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 const option = computed(() => {
   const data = history.value.slice(-props.maxPoints)
-  const times = data.map((d) => {
-    const date = new Date(d.timestamp)
-    return date.toLocaleTimeString('zh-CN', { hour12: false })
-  })
   const metaMap = channelMeta.value
   const colorMap = channelColorMap.value
   const series = props.channelIndices.map((ch) => {
@@ -80,11 +86,13 @@ const option = computed(() => {
       // 私有字段：把通道 index 携带下去，tooltip formatter 用它反查 precision/unit
       _channelIndex: ch,
       type: 'line' as const,
+      // time 轴使用 [timestamp, value] 二元组，ECharts 会自动根据时间跨度
+      // 计算合适的标签密度，避免刚开始数据点密集在同一秒时类目标签重叠。
       data: data.map((d) => {
         const indices = Array.isArray(d.channelIndices) ? d.channelIndices : []
         const channels = Array.isArray(d.channels) ? d.channels : []
         const pos = indices.indexOf(ch)
-        return pos >= 0 ? channels[pos] : null
+        return pos >= 0 ? [d.timestamp, channels[pos]] : [d.timestamp, null]
       }),
       smooth: true,
       symbol: 'none',
@@ -123,8 +131,10 @@ const option = computed(() => {
       formatter: (params: unknown): string => {
         const list = Array.isArray(params) ? params : [params]
         if (list.length === 0) return ''
-        const first = list[0] as { axisValueLabel?: string; axisValue?: string }
-        const header = first.axisValueLabel ?? first.axisValue ?? ''
+        const first = list[0] as { axisValueLabel?: string; axisValue?: string | number }
+        // time 轴下 axisValue 为时间戳数值，统一按 HH:MM:SS 格式化显示
+        const rawTs = first.axisValue
+        const header = typeof rawTs === 'number' ? formatTime(rawTs) : (first.axisValueLabel ?? '')
         const rows = list.map((item) => {
           const p = item as {
             seriesName?: string
@@ -159,11 +169,18 @@ const option = computed(() => {
     // top 留 22px 给纵坐标单位名称，避免 name 与轴标签重叠
     grid: { left: 40, right: 16, top: yAxisUnit ? 22 : 8, bottom: 24 },
     xAxis: {
-      type: 'category' as const,
-      data: times,
+      type: 'time' as const,
+      // time 轴自动根据数据范围计算标签步长，防止刚开始采集时
+      // 多个样本落在同一秒内造成类目标签堆叠重叠。
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { fontSize: 10, color: '#64748b' },
+      axisLabel: {
+        fontSize: 10,
+        color: '#64748b',
+        // 统一使用 HH:MM:SS 格式，避免自动格式化在长轴上产生不同精度混排
+        formatter: (value: number) => formatTime(value),
+      },
+      splitLine: { show: false },
     },
     yAxis: {
       type: 'value' as const,

@@ -158,6 +158,14 @@ func (a *TotalPressureAlgorithm) AcquireDataWithChannels(
 	endTime := time.Now().UnixMilli()
 
 	avgRawData := CalculateTotalPressureAverage(samples)
+
+	// 大气压物理范围守门：PAtm 进入绝对压力计算（pProbeTotal + pAtm），
+	// 若传感器返回 0 或负值会得到表压当绝对压，CPT 严重偏高且无告警。
+	// 此处拦截异常值并明确报错，避免静默产出误导性系数。
+	if avgRawData.PAtm <= 0 {
+		return nil, fmt.Errorf("大气压采样平均值异常: PAtm=%.2f Pa，请检查大气压传感器通道", avgRawData.PAtm)
+	}
+
 	coefficients := CalculateTotalPressureCoefficients(avgRawData)
 	stdDev := CalculateTotalPressureStdDev(samples)
 

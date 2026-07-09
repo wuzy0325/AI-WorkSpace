@@ -155,5 +155,23 @@ export const useStorageStore = defineStore('storage', () => {
     return ''
   }
 
-  return { settings, loadError, loadSettings, saveSettings, pickDirectory, pickSaveFile }
+  // fileExists 检查文件是否存在。Wails 不可用时返回 false。
+  // 用于校准 Start 前检测 CSV 文件是否已存在，提示用户决定是否覆盖。
+  async function fileExists(path: string): Promise<boolean> {
+    if (isWailsAvailable()) {
+      return await wailsApi.app.fileExists(path)
+    }
+    return false
+  }
+
+  // removeFile 删除文件。Wails 不可用时返回 false。
+  // 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件。
+  async function removeFile(path: string): Promise<boolean> {
+    if (isWailsAvailable()) {
+      return await wailsApi.app.removeFile(path)
+    }
+    return false
+  }
+
+  return { settings, loadError, loadSettings, saveSettings, pickDirectory, pickSaveFile, fileExists, removeFile }
 })

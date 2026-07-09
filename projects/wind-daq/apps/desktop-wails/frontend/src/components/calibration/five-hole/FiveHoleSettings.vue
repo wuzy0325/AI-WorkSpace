@@ -7,6 +7,7 @@ import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
+import { buildCalibrationCsvName, joinCalibrationPath } from '@shared/calibrationCsvPath'
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
@@ -261,22 +262,16 @@ function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 // generateFiveHoleSnakePoints 由 saveConfig 在归一化 layout 后直接调用，
 // 不再在这里包一层同步包装函数，避免误用未归一化的 pointLayout.value。
 
+// 选择 CSV 保存目录：用 buildCalibrationCsvName 生成清洗后的默认文件名，
+// joinCalibrationPath 拼接目录与文件名（POSIX 风格，避免 Windows 反斜杠混用）。
 async function pickSavePath() {
   try {
-    const defaultName = `${calibrationName.value.trim() || 'five-hole'}-${new Date().toISOString().slice(0, 10)}.csv`
+    const defaultName = buildCalibrationCsvName(calibrationName.value.trim(), 'five-hole')
     const picked = await storageStore.pickDirectory()
-    if (picked) savePath.value = joinPath(picked, defaultName)
+    if (picked) savePath.value = joinCalibrationPath(picked, defaultName)
   } catch (e) {
     feedbackStore.pushToast('选择保存路径失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
-}
-
-// joinPath 把用户选择的目录与文件名拼接为完整路径。
-// 统一归一化为 POSIX 风格（正斜杠），Windows 文件 API 同样接受，
-// 避免根据 dir.includes('\\') 猜测分隔符导致混合路径（如 "C:/Users\\wind-daq/file"）的拼接错误。
-function joinPath(dir: string, fileName: string): string {
-  const normalizedDir = dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
-  return `${normalizedDir}/${fileName}`
 }
 
 // 把 UiInputNumber 在输入中间态 emit 的 null 归一化为 number，
@@ -406,12 +401,12 @@ const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${
 
 // 通道表格列定义（所有通道直接罗列，通过分组列标识归属）
 const channelColumns = [
-  { key: 'enabled', label: '启用', width: '48px' },
-  { key: 'group', label: '分组', width: '72px' },
-  { key: 'name', label: '名称', width: '' },
-  { key: 'device', label: '数据源', width: '' },
-  { key: 'channel', label: '通道', width: '100px' },
-  { key: 'precision', label: '精度', width: '80px' },
+  { key: 'enabled', label: '启用' },
+  { key: 'group', label: '分组' },
+  { key: 'name', label: '名称' },
+  { key: 'device', label: '数据源' },
+  { key: 'channel', label: '通道' },
+  { key: 'precision', label: '精度' },
 ] as const
 
 // 根据通道角色反查分组 key，用于在统一表格中显示分组 tag
@@ -474,7 +469,7 @@ function getChannelGroupLabel(groupKey: string): string {
               <span class="field-label">配置名称</span>
               <UiInput v-model="calibrationName" placeholder="例如：五孔探针-2026-001" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <span class="field-label">界面刷新频率</span>
               <UiSelect
                 :model-value="String(calibrationStore.uiRefreshHz)"
@@ -502,15 +497,15 @@ function getChannelGroupLabel(groupKey: string): string {
               <div class="angle-fields">
                 <div class="field">
                   <span class="field-label">最小 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaMin" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaMin" />
                 </div>
                 <div class="field">
                   <span class="field-label">最大 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaMax" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaMax" />
                 </div>
                 <div class="field">
                   <span class="field-label">步长 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaStep" :min="1" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaStep" :min="1" />
                 </div>
               </div>
             </div>
@@ -522,15 +517,15 @@ function getChannelGroupLabel(groupKey: string): string {
               <div class="angle-fields">
                 <div class="field">
                   <span class="field-label">最小 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaMin" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaMin" />
                 </div>
                 <div class="field">
                   <span class="field-label">最大 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaMax" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaMax" />
                 </div>
                 <div class="field">
                   <span class="field-label">步长 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaStep" :min="1" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaStep" :min="1" />
                 </div>
               </div>
             </div>
@@ -553,19 +548,19 @@ function getChannelGroupLabel(groupKey: string): string {
           <div class="param-grid-4">
             <div class="field">
               <span class="field-label">驻留时间 (ms)</span>
-              <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" style="width:100%" />
+              <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" />
             </div>
             <div class="field">
               <span class="field-label">每点采样数</span>
-              <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" style="width:100%" />
+              <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" />
             </div>
             <div class="field">
               <span class="field-label">马赫数精度</span>
-              <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" style="width:100%" />
+              <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" />
             </div>
             <div class="field">
               <span class="field-label">流速精度 (m/s)</span>
-              <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" style="width:100%" />
+              <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" />
             </div>
           </div>
         </UiPanel>
@@ -647,7 +642,7 @@ function getChannelGroupLabel(groupKey: string): string {
             <table class="ntable">
               <thead>
                 <tr>
-                  <th v-for="col in channelColumns" :key="col.key" :style="col.width ? { width: col.width } : {}">{{ col.label }}</th>
+                  <th v-for="col in channelColumns" :key="col.key">{{ col.label }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -655,7 +650,7 @@ function getChannelGroupLabel(groupKey: string): string {
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
                   <td><span class="group-tag" :data-group="groupKeyOfRole(ch.role)">{{ getChannelGroupLabel(groupKeyOfRole(ch.role)) }}</span></td>
                   <td><span class="cell-name">{{ getProbeChannelDisplayName(ch.role, ch.name, t) }}</span></td>
-                  <td>
+                  <td class="cell-device">
                     <UiSelect
                       v-model="ch.channel.deviceId"
                       :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
@@ -664,14 +659,14 @@ function getChannelGroupLabel(groupKey: string): string {
                       :fallback="false"
                     />
                   </td>
-                  <td><UiSelect
+                  <td class="cell-channel"><UiSelect
                     :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
                     @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
                     :options="channelIndexOptions"
                     placeholder="未分配"
                     :disabled="!ch.enabled"
                   /></td>
-                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" :disabled="!ch.enabled" /></td>
                 </tr>
               </tbody>
             </table>
@@ -688,7 +683,7 @@ function getChannelGroupLabel(groupKey: string): string {
           </template>
           <div class="table-wrap">
             <table class="ntable">
-              <thead><tr><th>坐标轴</th><th>运动控制器</th><th>物理轴</th></tr></thead>
+              <thead><tr><th>坐标轴</th><th class="col-controller">运动控制器</th><th class="col-axis">物理轴</th></tr></thead>
               <tbody>
                 <tr v-for="axis in motionAxes" :key="axis.name">
                   <td><UiStatusBadge status="connected">{{ axis.name }}</UiStatusBadge></td>
@@ -718,7 +713,7 @@ function getChannelGroupLabel(groupKey: string): string {
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
             <div class="field">
               <span class="field-label">等待时间 (秒)</span>
-              <UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" />
+              <UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" />
             </div>
             <div class="field">
               <span class="field-label">稳定通道设备</span>
@@ -873,10 +868,29 @@ function getChannelGroupLabel(groupKey: string): string {
 </template>
 
 <style scoped>
+/* ============================================================
+   枚举控件（NSelect）宽度稳定化
+   所有 UiSelect 统一撑满父容器，防止选项文字长短导致宽度跳动
+   ============================================================ */
+.field :deep(.n-select),
+.batch-cell :deep(.n-select),
+.ntable td :deep(.n-select),
+.sphere-grid :deep(.n-select) {
+  width: 100% !important;
+  min-width: 0;
+}
+
+/* UiInputNumber 同样撑满字段容器，避免移除内联 style 后宽度回退 */
+.field :deep(.n-input-number),
+.ntable td :deep(.n-input-number) {
+  width: 100% !important;
+  min-width: 0;
+}
+
 /* 紧凑布局主体：左右分栏，限制最大高度防止内容被拉长（参考遍历测试布局） */
 .calib-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 0;
   min-height: 0;
   max-height: 65vh;
@@ -912,7 +926,7 @@ function getChannelGroupLabel(groupKey: string): string {
 }
 
 .sidebar-stat {
-  padding: 10px 6px;
+  padding: 8px 6px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
@@ -934,8 +948,8 @@ function getChannelGroupLabel(groupKey: string): string {
 
 .sidebar-preview {
   flex: 1 1 auto;
-  min-height: 160px;
-  max-height: 360px;
+  min-height: 140px;
+  max-height: 320px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
@@ -947,7 +961,7 @@ function getChannelGroupLabel(groupKey: string): string {
 }
 
 .stat-label { font-size: var(--text-xs); color: var(--text-tertiary); }
-.stat-number { font-size: 18px; font-weight: 700; color: var(--accent-primary); font-variant-numeric: tabular-nums; }
+.stat-number { font-size: 16px; font-weight: 700; color: var(--accent-primary); font-variant-numeric: tabular-nums; }
 .stat-value { font-size: 12px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .stat-unit { font-size: var(--text-xs); color: var(--text-muted); margin-left: 2px; }
 
@@ -983,20 +997,20 @@ function getChannelGroupLabel(groupKey: string): string {
   padding: var(--space-0-5) var(--space-2);
 }
 
-/* 批量操作工具栏：扁平化工具条，与右侧统计卡片风格协调 */
+/* 批量操作工具栏：扁平化工具条 */
 .batch-toolbar {
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .batch-toolbar-row {
   display: grid;
-  grid-template-columns: 160px 1fr;
+  grid-template-columns: 180px 1fr;
   align-items: end;
   gap: 10px;
 }
@@ -1047,6 +1061,13 @@ function getChannelGroupLabel(groupKey: string): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-0-5);
+  /* 确保内部 NSelect / NInputNumber 撑满字段宽度 */
+  min-width: 0;
+}
+
+/* 固定宽度字段修饰：用于不需要弹性伸缩的短控件（如刷新频率下拉） */
+.field--fixed {
+  flex-shrink: 0;
 }
 
 .field-label {
@@ -1102,7 +1123,7 @@ function getChannelGroupLabel(groupKey: string): string {
 .angle-fields {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-1-5);
+  gap: var(--space-1);
 }
 
 .layout-options {
@@ -1111,17 +1132,6 @@ function getChannelGroupLabel(groupKey: string): string {
   border-top: 1px solid var(--border-default);
   font-size: var(--text-xs);
   color: var(--text-secondary);
-}
-
-/* 点阵预览 */
-.layout-preview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1-5);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
-  background: var(--bg-panel-strong);
 }
 
 .preview-header {
@@ -1186,23 +1196,10 @@ function getChannelGroupLabel(groupKey: string): string {
   font-variant-numeric: tabular-nums;
 }
 
-/* 双列面板：采集参数 + 输出精度（历史样式，保留以兼容） */
-.two-col-panels {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.param-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-1-5);
-}
-
-/* 基础信息：配置名称 + 刷新频率 横向双列 */
+/* 基础信息：配置名称弹性 + 刷新频率固定宽度 */
 .basic-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-columns: minmax(0, 1fr) 160px;
   gap: var(--space-2);
   align-items: end;
 }
@@ -1263,6 +1260,7 @@ function getChannelGroupLabel(groupKey: string): string {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--text-sm);
+  table-layout: fixed;
 }
 
 .ntable th {
@@ -1275,9 +1273,23 @@ function getChannelGroupLabel(groupKey: string): string {
   border-bottom: 1px solid var(--border-default);
 }
 
+/* 通道映射表格固定列宽：启用 | 分组 | 名称(弹性) | 数据源(弹性) | 通道 | 精度 */
+.ntable th:nth-child(1),
+.ntable td:nth-child(1) { width: 48px; }
+
+.ntable th:nth-child(2),
+.ntable td:nth-child(2) { width: 56px; }
+
+.ntable th:nth-child(5),
+.ntable td:nth-child(5) { width: 96px; }
+
+.ntable th:nth-child(6),
+.ntable td:nth-child(6) { width: 80px; }
+
 .ntable td {
   padding: var(--space-1) 8px;
   border-bottom: 1px solid var(--border-default);
+  overflow: hidden;
 }
 
 .ntable tbody tr:hover {
@@ -1291,7 +1303,20 @@ function getChannelGroupLabel(groupKey: string): string {
 .cell-name {
   font-size: var(--text-sm);
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+/* 设备下拉所在单元格：允许下拉弹出层溢出 */
+.cell-device,
+.cell-channel {
+  overflow: visible;
+}
+
+/* 运动轴表格列宽比例 */
+.col-controller { width: 40%; }
+.col-axis { width: 25%; }
 
 /* 分组 tag：用颜色区分五孔/大气/风洞三类通道，紧凑不占横向空间 */
 .group-tag {
@@ -1331,9 +1356,10 @@ function getChannelGroupLabel(groupKey: string): string {
   font-size: var(--text-xs);
 }
 
+/* 3列：等待时间(窄) | 设备(宽弹性) | 通道(窄) */
 .sphere-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 120px 1fr 120px;
   gap: var(--space-2);
   align-items: start;
 }

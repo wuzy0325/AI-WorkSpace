@@ -158,14 +158,14 @@ func TestCalculateFiveHoleAverage(t *testing.T) {
 
 // ==================== 三孔探针系数测试 ====================
 
-// TestCalculateThreeHoleCoefficients 验证 ΔP 口径下 Kb/Kt/Sb 计算
+// TestCalculateThreeHoleCoefficients 验证 ΔP 口径下 Kb/K0/Kv 计算
 //
 // 口径与插值器（shared/algorithms/go/threehole/interpolation/three_hole.go）对齐：
 //
 //	ΔP = 2·P2 - P1 - P3
 //	Kb = (P3 - P1) / ΔP
-//	Kt = (Pt - P2) / ΔP
-//	Sb = (Pt - Ps) / ΔP
+//	K0 = (Pt - P2) / ΔP
+//	Kv = (Pt - Ps) / ΔP
 func TestCalculateThreeHoleCoefficients(t *testing.T) {
 	pTotal := 1500.0
 	pStatic := 800.0
@@ -188,16 +188,16 @@ func TestCalculateThreeHoleCoefficients(t *testing.T) {
 		t.Errorf("Kb 期望 %v, 实际 %v", expectedKb, coeffs.Kb)
 	}
 
-	// Kt = (1500 - 300) / 300 = 4.0
-	expectedKt := (1500.0 - 300.0) / 300.0
-	if math.Abs(coeffs.Kt-expectedKt) > epsilon {
-		t.Errorf("Kt 期望 %v, 实际 %v", expectedKt, coeffs.Kt)
+	// K0 = (1500 - 300) / 300 = 4.0
+	expectedK0 := (1500.0 - 300.0) / 300.0
+	if math.Abs(coeffs.K0-expectedK0) > epsilon {
+		t.Errorf("K0 期望 %v, 实际 %v", expectedK0, coeffs.K0)
 	}
 
-	// Sb = (1500 - 800) / 300 = 7/3
-	expectedSb := (1500.0 - 800.0) / 300.0
-	if math.Abs(coeffs.Sb-expectedSb) > epsilon {
-		t.Errorf("Sb 期望 %v, 实际 %v", expectedSb, coeffs.Sb)
+	// Kv = (1500 - 800) / 300 = 7/3
+	expectedKv := (1500.0 - 800.0) / 300.0
+	if math.Abs(coeffs.Kv-expectedKv) > epsilon {
+		t.Errorf("Kv 期望 %v, 实际 %v", expectedKv, coeffs.Kv)
 	}
 }
 
@@ -222,7 +222,7 @@ func TestCalculateThreeHoleCoefficients_InterpolatorParity(t *testing.T) {
 	}
 }
 
-// TestCalculateThreeHoleCoefficients_NoTotalPressure 验证 PTotal/PStatic 缺失时 Kt/Sb 置 0（不发误导值）
+// TestCalculateThreeHoleCoefficients_NoTotalPressure 验证 PTotal/PStatic 缺失时 K0/Kv 置 0（不发误导值）
 func TestCalculateThreeHoleCoefficients_NoTotalPressure(t *testing.T) {
 	data := ThreeHoleRawData{
 		P1:   100.0,
@@ -240,12 +240,12 @@ func TestCalculateThreeHoleCoefficients_NoTotalPressure(t *testing.T) {
 	if math.Abs(coeffs.Kb-expectedKb) > epsilon {
 		t.Errorf("Kb 期望 %v, 实际 %v", expectedKb, coeffs.Kb)
 	}
-	// Kt/Sb 必须为 0，不得回退到误导性常量
-	if coeffs.Kt != 0 {
-		t.Errorf("PTotal 缺失时 Kt 应为 0, 实际 %v", coeffs.Kt)
+	// K0/Kv 必须为 0，不得回退到误导性常量
+	if coeffs.K0 != 0 {
+		t.Errorf("PTotal 缺失时 K0 应为 0, 实际 %v", coeffs.K0)
 	}
-	if coeffs.Sb != 0 {
-		t.Errorf("PStatic 缺失时 Sb 应为 0, 实际 %v", coeffs.Sb)
+	if coeffs.Kv != 0 {
+		t.Errorf("PStatic 缺失时 Kv 应为 0, 实际 %v", coeffs.Kv)
 	}
 }
 
@@ -265,8 +265,74 @@ func TestCalculateThreeHoleCoefficients_ZeroDeltaP(t *testing.T) {
 
 	coeffs := CalculateThreeHoleCoefficients(data)
 
-	if coeffs.Kb != 0 || coeffs.Kt != 0 || coeffs.Sb != 0 {
-		t.Errorf("ΔP≈0 时三系数应全为 0, 实际 Kb=%v Kt=%v Sb=%v", coeffs.Kb, coeffs.Kt, coeffs.Sb)
+	if coeffs.Kb != 0 || coeffs.K0 != 0 || coeffs.Kv != 0 {
+		t.Errorf("ΔP≈0 时三系数应全为 0, 实际 Kb=%v K0=%v Kv=%v", coeffs.Kb, coeffs.K0, coeffs.Kv)
+	}
+}
+
+// TestCalculateThreeHoleCoefficients_MachNumberAndVelocity 验证全通道齐全时 Ma/V 非 nil 且在合理范围
+// 测试前置：构造三孔数据，PTotal/PStatic/PAtm/TAtm 齐全，Pt > Ps
+// 测试步骤：调用 CalculateThreeHoleCoefficients
+// 期待结果：MachNumber/Velocity 非 nil，Ma 在 0.15~0.3 范围（与五孔同量级）
+func TestCalculateThreeHoleCoefficients_MachNumberAndVelocity(t *testing.T) {
+	// PTotal/PStatic 为表压（相对大气压），Pt_abs = 5691 + 101325 = 107016, Ps_abs = 101325
+	// Ma = sqrt(5 * ((107016/101325)^(2/7) - 1)) ≈ 0.197
+	pTotal := 5691.0
+	pStatic := 0.0
+	data := ThreeHoleRawData{
+		P1:      100.0,
+		P2:      300.0,
+		P3:      200.0,
+		PAtm:    101325.0,
+		TAtm:    20.0,
+		PTotal:  &pTotal,
+		PStatic: &pStatic,
+	}
+
+	coeffs := CalculateThreeHoleCoefficients(data)
+
+	if coeffs.MachNumber == nil {
+		t.Fatal("全通道齐全时 MachNumber 不应为 nil")
+	}
+	if coeffs.Velocity == nil {
+		t.Fatal("全通道齐全时 Velocity 不应为 nil")
+	}
+	ma := *coeffs.MachNumber
+	if ma < 0.15 || ma > 0.3 {
+		t.Errorf("马赫数应在 0.15~0.3 范围内, 实际 %v", ma)
+	}
+	v := *coeffs.Velocity
+	if v <= 0 {
+		t.Errorf("速度应大于 0, 实际 %v", v)
+	}
+}
+
+// TestCalculateThreeHoleCoefficients_NoMachNumberWhenChannelsMissing 验证 PTotal/PStatic/PAtm 缺失时 Ma/V 为 nil
+// 测试前置：构造三孔数据，分别缺 PTotal/PStatic、PAtm<=0
+// 测试步骤：调用 CalculateThreeHoleCoefficients
+// 期待结果：MachNumber/Velocity 均为 nil（CSV 写空、UI 显示 "--"）
+func TestCalculateThreeHoleCoefficients_NoMachNumberWhenChannelsMissing(t *testing.T) {
+	// Case 1: PTotal/PStatic 均为 nil
+	dataNoTunnel := ThreeHoleRawData{
+		P1: 100.0, P2: 300.0, P3: 200.0,
+		PAtm: 101325.0, TAtm: 20.0,
+	}
+	coeffs := CalculateThreeHoleCoefficients(dataNoTunnel)
+	if coeffs.MachNumber != nil || coeffs.Velocity != nil {
+		t.Errorf("PTotal/PStatic 缺失时 Ma/V 应为 nil, 实际 Ma=%v V=%v", coeffs.MachNumber, coeffs.Velocity)
+	}
+
+	// Case 2: PAtm <= 0（通道未映射）
+	pTotal := 5691.0
+	pStatic := 0.0
+	dataNoAtm := ThreeHoleRawData{
+		P1: 100.0, P2: 300.0, P3: 200.0,
+		PAtm: 0, TAtm: 20.0,
+		PTotal: &pTotal, PStatic: &pStatic,
+	}
+	coeffs = CalculateThreeHoleCoefficients(dataNoAtm)
+	if coeffs.MachNumber != nil || coeffs.Velocity != nil {
+		t.Errorf("PAtm<=0 时 Ma/V 应为 nil, 实际 Ma=%v V=%v", coeffs.MachNumber, coeffs.Velocity)
 	}
 }
 
@@ -298,9 +364,13 @@ func TestCalculateTotalPressureCoefficients(t *testing.T) {
 		t.Errorf("误差期望 %v%%, 实际 %v%%", expectedError, coeffs.Error)
 	}
 
-	// 马赫数应大于0
-	if coeffs.MachNumber <= 0 {
+	// 马赫数应大于0（指针字段，nil 表示通道缺失或物理非法；与三孔一致的 nil 语义）
+	if coeffs.MachNumber == nil || *coeffs.MachNumber <= 0 {
 		t.Errorf("马赫数应大于0, 实际 %v", coeffs.MachNumber)
+	}
+	// 速度应大于0（与马赫数同步计算，TAT 取 TTunnel=25°C 转开尔文后有效）
+	if coeffs.Velocity == nil || *coeffs.Velocity <= 0 {
+		t.Errorf("速度应大于0, 实际 %v", coeffs.Velocity)
 	}
 }
 

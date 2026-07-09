@@ -101,7 +101,7 @@ const motionLaunching = ref(false)
 async function handleOpenExternal(id: string): Promise<void> {
   if (id !== 'motion') return
   if (!isWailsAvailable()) {
-    feedbackStore.pushToast('当前环境不支持独立窗口', 'error')
+    feedbackStore.pushToast(t.value.app_independentWindowNotSupported, 'error')
     return
   }
   if (motionLaunching.value) return
@@ -109,10 +109,10 @@ async function handleOpenExternal(id: string): Promise<void> {
   try {
     const res = await wailsApi.app.openMotionWindow()
     if (!res.Success) {
-      feedbackStore.pushToast('启动独立窗口失败: ' + (res.Error || '未知错误'), 'error')
+      feedbackStore.pushToast(t.value.app_openIndependentWindowFailed + ': ' + (res.Error || t.value.unknownError), 'error')
     }
   } catch (e) {
-    feedbackStore.pushToast('启动独立窗口异常: ' + String(e), 'error')
+    feedbackStore.pushToast(t.value.app_openIndependentWindowException + ': ' + String(e), 'error')
   } finally {
     setTimeout(() => { motionLaunching.value = false }, 1000)
   }
@@ -208,14 +208,14 @@ async function refreshStorageStatus(): Promise<void> {
     // 检测 sink 自停止：上次还在录制，这次状态显示已停止
     if (wasRecording && !status.recording) {
       const reason = status.lastError
-        ? `录制已停止：${status.lastError}`
-        : '录制已停止（达到自动停止条件）'
+        ? `${t.value.app_recordingStoppedWithError}${status.lastError}`
+        : t.value.app_recordingStoppedAuto
       feedbackStore.pushToast(reason, status.lastError ? 'error' : 'info')
     }
     // 检测新增错误（仍在录制但出现 I/O 错误，例如队列丢弃告警）
     if (status.lastError && status.lastError !== lastReportedError) {
       lastReportedError = status.lastError
-      feedbackStore.pushToast(`录制错误：${status.lastError}`, 'error')
+      feedbackStore.pushToast(`${t.value.app_recordingError}${status.lastError}`, 'error')
     } else if (!status.lastError) {
       // 错误已恢复，重置去重标记
       lastReportedError = ''
@@ -245,7 +245,7 @@ async function toggleRecording(): Promise<void> {
       // 进行中触发"wasRecording=true && status.recording=false"，误报"录制已停止（达到自动停止条件）"。
       isRecording.value = false
       await storageApi.stop()
-      feedbackStore.pushToast(t.value.stoppedRecording || '已停止记录', 'success')
+      feedbackStore.pushToast(t.value.stoppedRecording, 'success')
       return
     }
 
@@ -253,7 +253,7 @@ async function toggleRecording(): Promise<void> {
     await storageApi.start(buildRecordingConfig())
     isRecording.value = true
     lastReportedError = ''
-    feedbackStore.pushToast(t.value.startedRecording || '已开始记录数据', 'success')
+    feedbackStore.pushToast(t.value.startedRecording, 'success')
     // 立即拉取一次状态，确保 UI 反映后端真实状态
     await refreshStorageStatus()
   } catch (err) {
@@ -268,8 +268,8 @@ async function toggleRecording(): Promise<void> {
     }
     feedbackStore.pushToast(
       wasStopping
-        ? (t.value.failedToStopRecording || '停止记录失败') + ': ' + message
-        : (t.value.failedToStartRecording || '启动记录失败') + ': ' + message,
+        ? t.value.failedToStopRecording + ': ' + message
+        : t.value.failedToStartRecording + ': ' + message,
       'error',
     )
   }
@@ -352,6 +352,7 @@ function handleKeydown(e: KeyboardEvent) {
       <AppRailNav
         :items="railItems"
         :footer-items="railFooterItems"
+        :t="t"
         @select="handleRailSelect"
         @open-external="handleOpenExternal"
         @open-settings="showSettings = true"
@@ -363,7 +364,7 @@ function handleKeydown(e: KeyboardEvent) {
     </template>
 
     <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
-      <UiLoadingState v-if="initialLoading" :loading="true" text="正在加载设备..." />
+      <UiLoadingState v-if="initialLoading" :loading="true" :text="t.app_loadingDevices" />
 
       <template v-else>
         <UiAlert v-if="error" type="error" :closable="true" class="mb-3" @close="error = ''">
@@ -379,12 +380,12 @@ function handleKeydown(e: KeyboardEvent) {
 
       <UiEmptyState
         v-else
-        title="选择一个设备"
-        :description="t.selectDevicePrompt || '请从左侧设备列表中选择一台设备开始监控'"
+        :title="t.app_selectDeviceTitle"
+        :description="t.selectDevicePrompt"
       >
         <template #action>
           <UiButton size="sm" variant="primary" @click="showDeviceDrawer = true">
-            {{ t.openDeviceManager || '打开设备管理器' }}
+            {{ t.openDeviceManager }}
           </UiButton>
         </template>
       </UiEmptyState>

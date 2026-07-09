@@ -56,7 +56,9 @@ func metricsMiddleware(next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 
-		if !isHotTelemetryPath(r.URL.Path) {
+		// 跳过内部观测类请求日志：前端心跳、日志服务自身端点、高频遥测拉取。
+		// 这些请求对用户无业务价值，记录到 LOG 画面只会产生噪音。
+		if !isInternalObservationPath(r.URL.Path) {
 			slog.Info("http.request",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -67,7 +69,8 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		}
 
 		const slowThreshold = 500 * time.Millisecond
-		if duration > slowThreshold {
+		// 慢请求仍要告警，但日志服务自身的拉取/流式端点不纳入慢请求统计。
+		if duration > slowThreshold && !isLogServicePath(r.URL.Path) {
 			slog.Warn("http.slow_request",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -78,8 +81,18 @@ func metricsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func isHotTelemetryPath(path string) bool {
-	return strings.HasPrefix(path, "/api/daq/latest/")
+// isInternalObservationPath 判断是否为系统内部观测/自查询路径。
+// 这类请求不携带业务语义，记录到用户日志只会形成噪音，应过滤 http.request 输出。
+func isInternalObservationPath(path string) bool {
+	return strings.HasPrefix(path, "/api/daq/latest/") ||
+		path == "/api/health" ||
+		isLogServicePath(path)
+}
+
+// isLogServicePath 判断是否为日志服务自身端点（拉取、分类、SSE 流）。
+// 这些端点由 LOG 画面自身产生，对用户不是业务事件。
+func isLogServicePath(path string) bool {
+	return strings.HasPrefix(path, "/api/log/")
 }
 
 // recoverMiddleware 拦截 handler 中的 panic，记录堆栈并返回 500。

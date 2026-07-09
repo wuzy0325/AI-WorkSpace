@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { deviceApi } from '@api/deviceApi'
 import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig, ChannelSensorType } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -20,6 +21,7 @@ const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
 
 const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 
 const scanning = ref(false)
 const discovered = ref<ScanResult[]>([])
@@ -104,7 +106,7 @@ const deviceTypeOptions = computed(() => [
 
 const transportOptions = computed(() => [
   { value: 'tcp', label: 'TCP/IP' },
-  { value: 'serial', label: '串口 RS232' },
+  { value: 'serial', label: i18n.t.dev_serialRs232 },
 ])
 
 const pressureUnitOptions = computed(() =>
@@ -333,6 +335,19 @@ const isDirty = computed(() => snapshotDraft(draft.value) !== initialDraftSnapsh
 const isReadOnly = computed(() => editorMode.value === 'edit' && deviceStore.acquiringFor(draft.value.id))
 const statusForDraft = computed(() => deviceStore.statusFor(draft.value.id))
 
+// IP 地址字段的网格列宽：根据是否显示"传输方式"与"端口"字段动态计算，
+// 让 IP 输入框填满剩余空间。
+// 修复点：原先 DAQ-P-1603（无传输方式、无端口）使用未定义的 col-8 类，
+// grid item 默认只占 1 列导致 IP 输入框极小。
+// 12 列网格分配：传输方式 4 列 + 端口 3 列 + IP 占剩余列数。
+const ipFieldColClass = computed(() => {
+  const type = draft.value.type
+  const showTransport = isTcpType(type) && supportsTransportSwitch(type)
+  const showPort = isPortRequired(type)
+  const ipCols = 12 - (showTransport ? 4 : 0) - (showPort ? 3 : 0)
+  return `col-${ipCols}`
+})
+
 interface DraftFieldErrors {
   name?: string
   address?: string
@@ -345,22 +360,22 @@ interface DraftFieldErrors {
 const fieldErrors = computed<DraftFieldErrors>(() => {
   const errors: DraftFieldErrors = {}
   const p = draft.value
-  if (!p.name.trim()) errors.name = '设备名称不能为空'
+  if (!p.name.trim()) errors.name = i18n.t.dev_deviceNameEmpty
   else {
     const hasDup = deviceStore.profiles.some((e) => e.id !== p.id && e.name.trim() === p.name.trim())
-    if (hasDup) errors.name = '设备名称已存在'
+    if (hasDup) errors.name = i18n.t.dev_deviceNameExists
   }
   if (isTcpType(p.type)) {
     if (p.transport === 'serial') {
-      if (!p.serialPort?.trim()) errors.serialPort = '串口号不能为空'
-      if (!Number.isFinite(p.baudRate ?? 0) || (p.baudRate ?? 0) <= 0) errors.baudRate = '波特率无效'
+      if (!p.serialPort?.trim()) errors.serialPort = i18n.t.dev_serialPortEmpty
+      if (!Number.isFinite(p.baudRate ?? 0) || (p.baudRate ?? 0) <= 0) errors.baudRate = i18n.t.dev_baudRateInvalid
     } else {
-      if (!p.address?.trim()) errors.address = 'IP 地址不能为空'
+      if (!p.address?.trim()) errors.address = i18n.t.dev_ipAddressEmpty
       // DAQ-P-1603 由 DLL 自管端口，profile.Port 不使用，跳过端口校验
-      if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = '端口号无效'
+      if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = i18n.t.dev_portInvalid
     }
   }
-  if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) errors.samplingRate = '采样率无效'
+  if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) errors.samplingRate = i18n.t.dev_samplingRateInvalid
   return errors
 })
 
@@ -560,7 +575,7 @@ async function saveDraft() {
       // 走 store.connect 以触发乐观更新，UI 可立即显示"连接中"
       try { await deviceStore.connect(normalized.id) } catch { /* 连接失败不阻塞保存 */ }
     }
-    feedback.pushToast(`设备 "${normalized.name}" 已保存`, 'success')
+    feedback.pushToast(i18n.t.dev_deviceSaved.replace('{name}', normalized.name), 'success')
     initialDraftSnapshot.value = snapshotDraft(normalized)
     editorOpen.value = false
   } catch (err) {
@@ -572,7 +587,7 @@ async function saveDraft() {
 
 async function tryCloseEditor() {
   if (!isDirty.value) { editorOpen.value = false; return }
-  const ok = await feedback.confirm('当前有未保存变更，确认关闭吗？')
+  const ok = await feedback.confirm(i18n.t.dev_unsavedChangesCloseConfirm)
   if (!ok) return
   editorOpen.value = false
 }
@@ -675,12 +690,12 @@ async function runScan() {
   try {
     const results = await deviceApi.scanDevices()
     discovered.value = results
-    if (results.length) feedback.pushToast(`发现 ${results.length} 个设备`, 'info')
-    else feedback.pushToast('未发现新设备', 'info')
+    if (results.length) feedback.pushToast(i18n.t.dev_devicesDiscovered.replace('{count}', String(results.length)), 'info')
+    else feedback.pushToast(i18n.t.dev_noNewDevices, 'info')
   } catch (err) {
     discovered.value = []
     scanError.value = err instanceof Error ? err.message : String(err)
-    feedback.pushToast(`扫描失败: ${scanError.value}`, 'error')
+    feedback.pushToast(i18n.t.dev_scanFailedMsg.replace('{msg}', scanError.value), 'error')
   } finally {
     scanning.value = false
   }
@@ -715,7 +730,7 @@ function matchedProfileForDiscovered(d: ScanResult): DeviceProfile | null {
 }
 
 function discoveryActionLabel(d: ScanResult): string {
-  return matchedProfileForDiscovered(d) ? '编辑' : '添加'
+  return matchedProfileForDiscovered(d) ? i18n.t.dev_edit : i18n.t.dev_add
 }
 
 function handleDiscoveredDeviceAction(d: ScanResult) {
@@ -734,7 +749,7 @@ async function addAllDiscoveredDevices() {
   if (addingAllDiscovered.value) return
   bulkError.value = null
   const addable = discovered.value.filter((d) => !matchedProfileForDiscovered(d))
-  if (!addable.length) { feedback.pushToast('没有可添加的设备', 'info'); return }
+  if (!addable.length) { feedback.pushToast(i18n.t.dev_noDevicesToAdd, 'info'); return }
   const existingNames = new Set(deviceStore.profiles.map((p) => p.name.trim()).filter((n) => n))
   addingAllDiscovered.value = true
   try {
@@ -762,7 +777,8 @@ async function addAllDiscoveredDevices() {
       }
     }
     await deviceStore.refreshProfiles()
-    feedback.pushToast(`已添加 ${addedProfiles.length} 个设备${autoConnectAfterBulkAdd.value ? '并连接' : ''}`, 'success')
+    const toastKey = autoConnectAfterBulkAdd.value ? 'dev_devicesAddedAndConnected' : 'dev_devicesAdded'
+    feedback.pushToast(i18n.t[toastKey].replace('{count}', String(addedProfiles.length)), 'success')
     clearDiscovered()
   } catch (e) {
     bulkError.value = e instanceof Error ? e.message : String(e)
@@ -792,14 +808,14 @@ async function toggleAcquisition(p: DeviceProfile) {
 }
 
 async function removeProfile(p: DeviceProfile) {
-  const ok = await feedback.confirm('确认删除此设备配置？')
+  const ok = await feedback.confirm(i18n.t.dev_confirmDeleteDevice)
   if (!ok) return
   try {
     await deviceApi.disconnect(p.id).catch(() => {})
     await deviceApi.stopAcquisition(p.id).catch(() => {})
     await deviceApi.deleteProfile(p.id)
     await deviceStore.refreshProfiles()
-    feedback.pushToast('设备配置已删除', 'info')
+    feedback.pushToast(i18n.t.dev_deviceDeleted, 'info')
   } catch (e) { feedback.pushToast(String(e), 'error') }
 }
 
@@ -809,7 +825,7 @@ async function bulkConnect() {
     try { await deviceStore.connect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
-  feedback.pushToast('批量连接完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkConnectDone, 'info')
 }
 
 async function bulkDisconnect() {
@@ -821,11 +837,11 @@ async function bulkDisconnect() {
     try { await deviceStore.disconnect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
-  feedback.pushToast('批量断开完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkDisconnectDone, 'info')
 }
 
 async function bulkDelete() {
-  const ok = await feedback.confirm(`确认删除选中的 ${selectedIds.value.length} 个设备？`)
+  const ok = await feedback.confirm(i18n.t.dev_confirmBulkDelete.replace('{count}', String(selectedIds.value.length)))
   if (!ok) return
   for (const id of selectedIds.value) {
     try {
@@ -842,7 +858,7 @@ async function bulkDelete() {
     console.warn('[DeviceManagementDrawer] refreshProfiles after bulk delete failed:', e)
   }
   clearSelection()
-  feedback.pushToast('批量删除完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkDeleteDone, 'info')
 }
 
 function close() {
@@ -858,21 +874,21 @@ function statusClass(p: DeviceProfile) {
 }
 
 function statusLabel(p: DeviceProfile) {
-  if (deviceStore.acquiringFor(p.id)) return '采集中'
+  if (deviceStore.acquiringFor(p.id)) return i18n.t.acquiring
   const s = deviceStore.statusFor(p.id)
-  if (s === 'Connected') return '已连接'
-  if (s === 'Connecting') return '连接中'
-  if (s === 'Error') return '错误'
-  return '已断开'
+  if (s === 'Connected') return i18n.t.connectedState
+  if (s === 'Connecting') return i18n.t.connectingState
+  if (s === 'Error') return i18n.t.error
+  return i18n.t.disconnectedState
 }
 
 function connectLabel(p: DeviceProfile) {
   const acquiring = deviceStore.acquiringFor(p.id)
   const st = deviceStore.statusFor(p.id)
   // 连接中：明确显示"连接中..."并配合按钮 disabled 防止重复点击
-  if (st === 'Connecting') return '连接中...'
-  if (acquiring || st === 'Connected') return '断开'
-  return '连接'
+  if (st === 'Connecting') return i18n.t.dev_connectingDots
+  if (acquiring || st === 'Connected') return i18n.t.disconnectBtn
+  return i18n.t.connectBtn
 }
 
 function channelLabel(c: ChannelConfig): string {
@@ -931,29 +947,29 @@ const scanError = ref<string | null>(null)
       <div class="drawer-shell">
         <header class="drawer-header">
           <div>
-            <h2 class="drawer-title">设备管理</h2>
-            <p class="drawer-subtitle">管理设备配置、扫描和连接</p>
+            <h2 class="drawer-title">{{ i18n.t.dev_deviceManagement }}</h2>
+            <p class="drawer-subtitle">{{ i18n.t.dev_deviceManagementSubtitle }}</p>
           </div>
           <UiButton quaternary size="md" @click="close">✕</UiButton>
         </header>
 
         <div class="drawer-toolbar">
           <UiButton variant="primary" size="md" @click="openCreate()">
-            <span class="btn-icon">+</span> 新建设备
+            <span class="btn-icon">+</span> {{ i18n.t.dev_newDevice }}
           </UiButton>
           <UiButton secondary size="md" :disabled="scanning" @click="runScan">
             <span class="btn-icon" :class="{ spin: scanning }">⟳</span>
-            {{ scanning ? '扫描中...' : '扫描' }}
+            {{ scanning ? i18n.t.dev_scanning : i18n.t.dev_scan }}
           </UiButton>
           <div class="drawer-total">
-            设备: {{ deviceStore.profiles.length }}
+            {{ i18n.t.totalDevices }}: {{ deviceStore.profiles.length }}
           </div>
         </div>
 
         <!-- 扫描错误提示 -->
         <div v-if="scanError" class="drawer-banner drawer-banner--error">
           <AlertCircle :size="14" />
-          扫描失败: {{ scanError }}
+          {{ i18n.t.dev_scanFailed }}: {{ scanError }}
         </div>
 
         <!-- 发现的设备区域：可折叠，减少认知负荷 -->
@@ -961,13 +977,13 @@ const scanError = ref<string | null>(null)
           <div class="drawer-discovered-head" @click="showDiscovered = !showDiscovered" style="cursor: pointer;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
               <span class="drawer-discovered-dot" aria-hidden="true"></span>
-              <span class="drawer-discovered-label">发现的设备</span>
+              <span class="drawer-discovered-label">{{ i18n.t.dev_discoveredDevices }}</span>
               <span class="discovered-count">{{ discovered.length }}</span>
             </div>
             <div class="drawer-discovered-actions">
               <UiButton variant="primary" size="sm" :disabled="addingAllDiscovered" @click.stop="addAllDiscoveredDevices">
                 <span v-if="addingAllDiscovered" class="inline-spinner" aria-hidden="true"></span>
-                {{ addingAllDiscovered ? '添加中...' : '全部添加' }}
+                {{ addingAllDiscovered ? i18n.t.dev_adding : i18n.t.dev_addAll }}
               </UiButton>
               <UiButton quaternary size="sm" @click.stop="clearDiscovered">✕</UiButton>
               <span class="discovered-toggle" :class="{ 'discovered-toggle--open': showDiscovered }">▼</span>
@@ -975,7 +991,7 @@ const scanError = ref<string | null>(null)
           </div>
           <!-- 批量添加自动连接复选框 -->
           <div class="drawer-discovered-extra">
-            <UiCheckbox v-model:checked="autoConnectAfterBulkAdd">添加后自动连接</UiCheckbox>
+            <UiCheckbox v-model:checked="autoConnectAfterBulkAdd">{{ i18n.t.dev_autoConnectAfterAdd }}</UiCheckbox>
           </div>
           <!-- 批量添加错误提示 -->
           <div v-if="bulkError" class="drawer-discovered-error">
@@ -997,7 +1013,7 @@ const scanError = ref<string | null>(null)
                     <span v-for="entry in discoveryMetadataEntries(d)" :key="entry.label" class="discovered-meta-badge">{{ entry.label }}: {{ entry.value }}</span>
                   </div>
                   <div v-if="discoveredProfileMap.get(d)" class="discovered-matched">
-                    已匹配: {{ discoveredProfileMap.get(d)?.name }}
+                    {{ i18n.t.dev_matched }}: {{ discoveredProfileMap.get(d)?.name }}
                   </div>
                 </div>
                 <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
@@ -1011,12 +1027,12 @@ const scanError = ref<string | null>(null)
         <!-- 设备列表：按连接状态分组（已连接 / 连接中 / 等待连接 + 错误） -->
         <main class="drawer-list">
           <div v-if="!deviceStore.profiles.length" class="drawer-empty">
-            暂无设备配置。点击"新建设备"创建。
+            {{ i18n.t.dev_noDeviceConfigHint }}
           </div>
 
           <!-- 已连接组 -->
           <template v-if="connectedProfiles.length">
-            <div class="device-group-label">已连接 · {{ connectedProfiles.length }}</div>
+            <div class="device-group-label">{{ i18n.t.connectedState }} · {{ connectedProfiles.length }}</div>
             <DeviceCard
               v-for="p in connectedProfiles"
               :key="p.id"
@@ -1038,7 +1054,7 @@ const scanError = ref<string | null>(null)
           <!-- 连接中组 -->
           <template v-if="connectingProfiles.length">
             <div class="device-group-label" :class="connectedProfiles.length ? 'device-group-label--spaced' : ''">
-              连接中 · {{ connectingProfiles.length }}
+              {{ i18n.t.connectingState }} · {{ connectingProfiles.length }}
             </div>
             <DeviceCard
               v-for="p in connectingProfiles"
@@ -1062,7 +1078,7 @@ const scanError = ref<string | null>(null)
           <template v-if="pendingProfiles.length">
             <div class="device-group-label"
               :class="(connectedProfiles.length || connectingProfiles.length) ? 'device-group-label--spaced' : ''">
-              等待连接 · {{ pendingProfiles.length }}
+              {{ i18n.t.dev_pendingConnection }} · {{ pendingProfiles.length }}
             </div>
             <DeviceCard
               v-for="p in pendingProfiles"
@@ -1085,12 +1101,12 @@ const scanError = ref<string | null>(null)
 
         <!-- 批量操作栏 -->
         <div v-if="selectedIds.length" class="drawer-bulk">
-          <span>已选 <strong>{{ selectedCount }}</strong></span>
+          <span>{{ i18n.t.selectedCount }} <strong>{{ selectedCount }}</strong></span>
           <div class="drawer-bulk-actions">
-            <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">批量连接</UiButton>
-            <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</UiButton>
-            <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">批量删除</UiButton>
-            <UiButton quaternary size="sm" @click="clearSelection">清除</UiButton>
+            <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">{{ i18n.t.dev_bulkConnect }}</UiButton>
+            <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">{{ i18n.t.dev_bulkDisconnect }}</UiButton>
+            <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">{{ i18n.t.dev_bulkDelete }}</UiButton>
+            <UiButton quaternary size="sm" @click="clearSelection">{{ i18n.t.dev_clear }}</UiButton>
           </div>
         </div>
       </div>
@@ -1104,7 +1120,7 @@ const scanError = ref<string | null>(null)
                 <span>{{ isReadOnly ? '🔒' : editorMode === 'create' ? '+' : '✎' }}</span>
               </div>
               <div>
-                <h3 class="editor-title">{{ editorMode === 'create' ? '新建设备' : isReadOnly ? '查看设备（只读）' : '编辑设备' }}</h3>
+                <h3 class="editor-title">{{ editorMode === 'create' ? i18n.t.dev_newDevice : isReadOnly ? i18n.t.dev_viewDeviceReadOnly : i18n.t.dev_editDevice }}</h3>
                 <div class="editor-status-row">
                   <span class="editor-status-dot" :class="statusClass({ id: draft.id, name: '', type: 'SIMULATED', samplingRate: 20, channels: [] })" />
                   <span class="editor-status-text">{{ statusLabel({ id: draft.id, name: '', type: 'SIMULATED', samplingRate: 20, channels: [] }) }}</span>
@@ -1124,7 +1140,7 @@ const scanError = ref<string | null>(null)
                 :class="{ active: editorTab === 'basic' }"
                 @click="editorTab = 'basic'"
               >
-                基本信息
+                {{ i18n.t.dev_basicInfo }}
               </UiButton>
               <UiButton
                 quaternary
@@ -1133,7 +1149,7 @@ const scanError = ref<string | null>(null)
                 :class="{ active: editorTab === 'channels' }"
                 @click="editorTab = 'channels'"
               >
-                通道配置
+                {{ i18n.t.dev_channelConfig }}
               </UiButton>
             </div>
           </div>
@@ -1147,7 +1163,7 @@ const scanError = ref<string | null>(null)
                   <line x1="12" y1="8" x2="12" y2="12"/>
                   <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                <span>保存失败: {{ saveError }}</span>
+                <span>{{ i18n.t.dev_saveFailed }}: {{ saveError }}</span>
               </div>
             </Transition>
 
@@ -1158,7 +1174,7 @@ const scanError = ref<string | null>(null)
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                <span>设备正在采集中，无法修改配置</span>
+                <span>{{ i18n.t.dev_deviceAcquiringReadOnly }}</span>
               </div>
             </Transition>
 
@@ -1166,17 +1182,17 @@ const scanError = ref<string | null>(null)
             <div v-if="editorTab === 'basic'" class="editor-sections">
               <section class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">设备识别 · Identity</h4>
-                  <p class="editor-section-desc">基础型号与命名空间</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_deviceIdentity }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_deviceIdentityDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div class="editor-field col-6">
-                    <label class="editor-label">设备名称 *</label>
-                    <UiInput v-model="draft.name" :disabled="isReadOnly" placeholder="输入设备名称" />
+                    <label class="editor-label">{{ i18n.t.dev_deviceName }} *</label>
+                    <UiInput v-model="draft.name" :disabled="isReadOnly" :placeholder="i18n.t.dev_enterDeviceName" />
                     <div v-if="fieldErrors.name" class="editor-field-error">● {{ fieldErrors.name }}</div>
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">设备型号</label>
+                    <label class="editor-label">{{ i18n.t.dev_deviceModel }}</label>
                     <UiSelect
                       :model-value="draft.type"
                       :options="deviceTypeOptions"
@@ -1185,12 +1201,12 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div v-if="draft.type !== 'DSA3217'" class="editor-field col-2">
-                    <label class="editor-label">采样率 (Hz)</label>
+                    <label class="editor-label">{{ i18n.t.dev_samplingRateHz }}</label>
                     <UiInputNumber v-model="draft.samplingRate" class="w-full" :disabled="isReadOnly" />
                     <div v-if="fieldErrors.samplingRate" class="editor-field-error">● {{ fieldErrors.samplingRate }}</div>
                   </div>
                   <div class="editor-field col-12">
-                    <label class="editor-label">设备单位 (全局)</label>
+                    <label class="editor-label">{{ i18n.t.dev_deviceUnitGlobal }}</label>
                     <div class="editor-unit-row">
                       <div class="editor-unit-select">
                         <UiSelect
@@ -1201,10 +1217,10 @@ const scanError = ref<string | null>(null)
                           @update:model-value="deviceUnit = String($event)"
                         />
                         <div v-else class="editor-input editor-input-readonly">
-                          {{ isWtnPxiType(draft.type) ? 'WTN_PXI 固定配置' : 'DAQ-T-1603 固定单位: ℃' }}
+                          {{ isWtnPxiType(draft.type) ? i18n.t.dev_wtnPxiFixedConfig : i18n.t.dev_daqT1603FixedUnit }}
                         </div>
                       </div>
-                      <p class="editor-unit-hint">设置 CH1~CH16 的全局工程单位</p>
+                      <p class="editor-unit-hint">{{ i18n.t.dev_deviceUnitHint }}</p>
                     </div>
                   </div>
                 </div>
@@ -1213,15 +1229,15 @@ const scanError = ref<string | null>(null)
               <!-- 大气数据开关（SIMULATED / DAQ-P-1604） -->
               <section v-if="draft.type === 'DAQ-P-1604' || draft.type === 'SIMULATED'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">大气数据</h4>
-                  <p class="editor-section-desc">控制是否采集大气压 (CH17) 与大气温度 (CH18)</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_atmosphericData }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_atmosphericDataDesc }}</p>
                 </div>
                 <div class="editor-atmo-row">
                   <div class="editor-atmo-toggle" @click="!isReadOnly && toggleAtmosphericData(!enableAtmospheric)">
                     <div class="editor-toggle-track" :class="{ on: enableAtmospheric }">
                       <span class="editor-toggle-thumb" :class="{ on: enableAtmospheric }" />
                     </div>
-                    <span class="editor-atmo-label">{{ enableAtmospheric ? '包含大气压与大气温度数据' : '仅采集 16 路压力数据' }}</span>
+                    <span class="editor-atmo-label">{{ enableAtmospheric ? i18n.t.dev_atmosphericEnabled : i18n.t.dev_atmosphericDisabled }}</span>
                   </div>
                 </div>
               </section>
@@ -1229,8 +1245,8 @@ const scanError = ref<string | null>(null)
               <!-- DAQ-P-1604 硬件时间戳开关 -->
               <section v-if="draft.type === 'DAQ-P-1604'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">硬件时间戳</h4>
-                  <p class="editor-section-desc">开启后保存的数据时间戳取自设备帧内时间，关闭时使用主机接收时间</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_hardwareTimestamp }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_hardwareTimestampDesc }}</p>
                 </div>
                 <div class="editor-atmo-row">
                   <div class="editor-atmo-toggle">
@@ -1240,7 +1256,7 @@ const scanError = ref<string | null>(null)
                       @update:model-value="draft.daqP1604UseDeviceTimestamp = $event"
                     />
                     <span class="editor-atmo-label">
-                      {{ draft.daqP1604UseDeviceTimestamp ? '使用设备帧内硬件时间戳' : '使用主机接收时间戳' }}
+                      {{ draft.daqP1604UseDeviceTimestamp ? i18n.t.dev_useDeviceTimestamp : i18n.t.dev_useHostTimestamp }}
                     </span>
                   </div>
                 </div>
@@ -1249,12 +1265,12 @@ const scanError = ref<string | null>(null)
               <!-- DSA3217 扫描参数（在已连接设备的基本信息中显示） -->
               <section v-if="draft.type === 'DSA3217' && statusForDraft === 'Connected'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">DSA3217 扫描参数</h4>
-                  <p class="editor-section-desc">平均值、周期与数据帧率（保存设备配置时自动写入）</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_dsa3217ScanParams }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_dsa3217ScanParamsDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div class="editor-field col-4">
-                    <label class="editor-label">AVG（平均值 1~240）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Avg }}</label>
                     <UiInputNumber
                       v-model="dsa3217Avg"
                       :min="1" :max="240"
@@ -1263,7 +1279,7 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">PERIOD（周期 73~65535 μs）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Period }}</label>
                     <UiInputNumber
                       v-model="dsa3217Period"
                       :min="73" :max="65535"
@@ -1272,7 +1288,7 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">FPS（数据帧率 Hz）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Fps }}</label>
                     <div class="editor-input editor-input-readonly">
                       {{ dsa3217Fps }}
                     </div>
@@ -1283,12 +1299,12 @@ const scanError = ref<string | null>(null)
               <!-- 通信协议 -->
               <section class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">通信协议 · Transport</h4>
-                  <p class="editor-section-desc">TCP/IP 网络或 RS232 串口链路</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_transportProtocol }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_transportProtocolDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div v-if="isTcpType(draft.type) && supportsTransportSwitch(draft.type)" class="editor-field col-4">
-                    <label class="editor-label">传输方式</label>
+                    <label class="editor-label">{{ i18n.t.dev_transportMode }}</label>
                     <UiSelect
                       :model-value="draft.transport ?? 'tcp'"
                       :options="transportOptions"
@@ -1298,13 +1314,13 @@ const scanError = ref<string | null>(null)
                   </div>
 
                   <template v-if="isTcpType(draft.type) && draft.transport === 'tcp'">
-                    <div :class="['editor-field', isPortRequired(draft.type) ? 'col-5' : 'col-8']">
-                      <label class="editor-label">IP 地址 *</label>
+                    <div :class="['editor-field', ipFieldColClass]">
+                      <label class="editor-label">{{ i18n.t.dev_ipAddress }} *</label>
                       <UiInput v-model="draft.address" :disabled="isReadOnly" placeholder="192.168.1.100" />
                       <div v-if="fieldErrors.address" class="editor-field-error">● {{ fieldErrors.address }}</div>
                     </div>
                     <div v-if="isPortRequired(draft.type)" class="editor-field col-3">
-                      <label class="editor-label">端口 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_port }} *</label>
                       <UiInputNumber v-model="draft.port" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
                     </div>
@@ -1312,12 +1328,12 @@ const scanError = ref<string | null>(null)
 
                   <template v-if="isTcpType(draft.type) && draft.transport === 'serial'">
                     <div class="editor-field col-7">
-                      <label class="editor-label">串口号 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_serialPort }} *</label>
                       <UiInput v-model="draft.serialPort" :disabled="isReadOnly" placeholder="COM1" />
                       <div v-if="fieldErrors.serialPort" class="editor-field-error">● {{ fieldErrors.serialPort }}</div>
                     </div>
                     <div class="editor-field col-5">
-                      <label class="editor-label">波特率 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_baudRate }} *</label>
                       <UiInputNumber v-model="draft.baudRate" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.baudRate" class="editor-field-error">● {{ fieldErrors.baudRate }}</div>
                     </div>
@@ -1326,7 +1342,7 @@ const scanError = ref<string | null>(null)
                   <div class="editor-field col-12">
                     <div class="editor-autoconnect-row">
                       <UiCheckbox v-model:checked="draft.autoConnect" :disabled="isReadOnly">
-                        自动连接（应用启动时及保存后自动连接）
+                        {{ i18n.t.dev_autoConnectHint }}
                       </UiCheckbox>
                     </div>
                   </div>
@@ -1353,9 +1369,9 @@ const scanError = ref<string | null>(null)
                     <thead>
                       <tr>
                         <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th>热电偶类型</th>
-                        <th class="w-20 text-right">单位</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th>{{ i18n.t.dev_thermocoupleType }}</th>
+                        <th class="w-20 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1388,14 +1404,14 @@ const scanError = ref<string | null>(null)
 
               <!-- WTN_PXI 固定通道 -->
               <div v-else-if="draft.type === 'WTN_PXI'" class="editor-channels-special">
-                <p class="editor-channels-hint">WTN_PXI 通道定义固定，不支持编辑。</p>
+                <p class="editor-channels-hint">{{ i18n.t.dev_wtnPxiChannelsFixed }}</p>
                 <div class="editor-channels-table-wrap">
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
                         <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th class="w-20 text-right">单位</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th class="w-20 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1413,33 +1429,33 @@ const scanError = ref<string | null>(null)
               <div v-else class="editor-channels-full">
                 <div class="editor-channels-toolbar">
                   <div class="editor-channels-toolbar-left">
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</UiButton>
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">{{ i18n.t.dev_enableAll }}</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">{{ i18n.t.dev_disableAll }}</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">{{ i18n.t.dev_reset }}</UiButton>
                   </div>
                 </div>
 
                 <!-- 批量同步：紧凑单行 -->
                 <div class="editor-ch-batch">
-                  <span class="editor-ch-batch-label">批量应用到 1~16CH:</span>
+                  <span class="editor-ch-batch-label">{{ i18n.t.dev_batchApplyTo }}</span>
                   <div class="editor-ch-batch-field">
-                    <span class="editor-ch-batch-field-label">量程</span>
+                    <span class="editor-ch-batch-field-label">{{ i18n.t.dev_range }}</span>
                     <UiInputNumber
                       v-model="deviceRangeMin"
                       class="editor-ch-batch-num"
                       :disabled="isReadOnly"
-                      placeholder="最小"
+                      :placeholder="i18n.t.dev_minPlaceholder"
                     />
                     <span class="editor-ch-batch-sep">~</span>
                     <UiInputNumber
                       v-model="deviceRangeMax"
                       class="editor-ch-batch-num"
                       :disabled="isReadOnly"
-                      placeholder="最大"
+                      :placeholder="i18n.t.dev_maxPlaceholder"
                     />
                   </div>
                   <div class="editor-ch-batch-field">
-                    <span class="editor-ch-batch-field-label">精度</span>
+                    <span class="editor-ch-batch-field-label">{{ i18n.t.channelPrecision }}</span>
                     <UiInputNumber
                       v-model="devicePrecision"
                       class="editor-ch-batch-num editor-ch-batch-num--narrow"
@@ -1447,7 +1463,7 @@ const scanError = ref<string | null>(null)
                       :disabled="isReadOnly"
                       placeholder="0"
                     />
-                    <span class="editor-ch-batch-field-suffix">位小数</span>
+                    <span class="editor-ch-batch-field-suffix">{{ i18n.t.dev_decimalPlaces }}</span>
                   </div>
                 </div>
 
@@ -1456,11 +1472,11 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">启用</th>
+                        <th class="w-14">{{ i18n.t.channelEnabled }}</th>
                         <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th class="w-36 text-center">工程量程</th>
-                        <th class="w-20 text-right">精度</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th class="w-36 text-center">{{ i18n.t.dev_engineeringRange }}</th>
+                        <th class="w-20 text-right">{{ i18n.t.channelPrecision }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1498,7 +1514,7 @@ const scanError = ref<string | null>(null)
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                只读模式
+                {{ i18n.t.dev_readOnlyMode }}
               </div>
               <!-- 校验错误状态指示 -->
               <div v-else-if="validationErrorCount > 0" class="editor-footer-errors">
@@ -1507,7 +1523,7 @@ const scanError = ref<string | null>(null)
                   <line x1="12" y1="8" x2="12" y2="12"/>
                   <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                校验失败: {{ validationErrorCount }} 项错误
+                {{ i18n.t.dev_validationFailed }}: {{ validationErrorCount }} {{ i18n.t.dev_errorsCount }}
               </div>
               <!-- 正常状态指示 -->
               <div v-else class="editor-footer-status" :class="{ dirty: isDirty }">
@@ -1519,11 +1535,11 @@ const scanError = ref<string | null>(null)
                 <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
-                {{ isDirty ? '检测到未保存的变更' : '配置已同步' }}
+                {{ isDirty ? i18n.t.dev_unsavedChanges : i18n.t.dev_configSynced }}
               </div>
             </div>
             <div class="editor-footer-right">
-              <UiButton secondary @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</UiButton>
+              <UiButton secondary @click="tryCloseEditor">{{ isReadOnly ? i18n.t.close : i18n.t.cancel }}</UiButton>
               <UiButton
                 v-if="!isReadOnly"
                 variant="primary"
@@ -1532,7 +1548,7 @@ const scanError = ref<string | null>(null)
                 @click="saveDraft"
               >
                 <span v-if="saving" class="btn-spinner" />
-                {{ saving ? '保存中...' : '保存' }}
+                {{ saving ? i18n.t.saving : i18n.t.save }}
               </UiButton>
             </div>
           </footer>
@@ -1858,6 +1874,7 @@ const scanError = ref<string | null>(null)
 .col-5 { grid-column: span 5; }
 .col-6 { grid-column: span 6; }
 .col-7 { grid-column: span 7; }
+.col-9 { grid-column: span 9; }
 .col-12 { grid-column: span 12; }
 
 /* 紧凑密度：label 与控件 2px，中文标签不 uppercase */

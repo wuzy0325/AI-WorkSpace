@@ -177,8 +177,9 @@ func TestTemperatureEffect(t *testing.T) {
 		t.Fatalf("LoadPrbData failed: %v", err)
 	}
 
-	input20 := InterpolationInput{P1: 98000, P2: 100300, P3: 102600, PAtm: 101325, TAtm: 20}
-	input50 := InterpolationInput{P1: 98000, P2: 100300, P3: 102600, PAtm: 101325, TAtm: 50}
+	// P2 偏离 P1/P3 均值以产生非零 ΔP，否则 calcMach 提前返回，温度修正无法生效
+	input20 := InterpolationInput{P1: 98000, P2: 100400, P3: 102600, PAtm: 101325, TAtm: 20}
+	input50 := InterpolationInput{P1: 98000, P2: 100400, P3: 102600, PAtm: 101325, TAtm: 50}
 
 	res20, err := interp.Calculate(input20)
 	if err != nil {

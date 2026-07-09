@@ -117,7 +117,15 @@ func (w *CalibrationCsvWriter) Initialize(config calibration.Config) error {
 	}
 
 	// 写入表头（列布局来自 core 的 CsvSchema）
+	// 追加模式下文件已存在且非空时跳过表头：否则重复校准同名文件时，
+	// 第二次 Start 会再写一行表头，Excel 打开时该表头被当成数据行，
+	// 列对齐错乱（参见 calibration_csv_writer_test.go 的追加去重用例）。
+	// 覆盖模式（truncate）或新文件仍需写表头。
 	w.header = w.schema.BuildHeader()
+	if !w.truncate && !isNewFile {
+		// 追加模式 + 文件已存在且非空：跳过表头，仅记录 schema 供 AppendPoint 使用
+		return nil
+	}
 	if err := w.writer.Write(w.header); err != nil {
 		return fmt.Errorf("写入CSV表头失败: %w", err)
 	}

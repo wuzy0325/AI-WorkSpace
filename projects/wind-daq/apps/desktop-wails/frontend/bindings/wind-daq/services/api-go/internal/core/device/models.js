@@ -68,6 +68,17 @@ export class ChannelConfig {
              */
             this["tareOffset"] = undefined;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * SensorType 通道传感器类型（pressure/temperature），仅 DAQ-P-1603 使用。
+             * 旧 profile（含 DAQ-P-1604 / DAQ-T-1603 / 历史 SIMULATED）无此字段，
+             * 反序列化时由 UnmarshalJSON 兜底为 "pressure"，
+             * 保证读路径拿到的 ChannelConfig 永远有合法 SensorType 值，避免业务层到处判空。
+             * @member
+             * @type {ChannelSensorType | undefined}
+             */
+            this["sensorType"] = undefined;
+        }
 
         Object.assign(this, $$source);
     }
@@ -82,6 +93,30 @@ export class ChannelConfig {
         return new ChannelConfig(/** @type {Partial<ChannelConfig>} */($$parsedSource));
     }
 }
+
+/**
+ * ChannelSensorType 通道传感器类型枚举（仅 DAQ-P-1603 使用）。
+ * 字面量与 shared/device-sdk/go/daq/core.ChannelSensorType 保持一致，
+ * 保证 adapter 层做类型翻译时无需额外转换。
+ * @readonly
+ * @enum {string}
+ */
+export const ChannelSensorType = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    /**
+     * SensorPressure 压力通道（Pa/kPa/MPa/mmH2O）
+     */
+    SensorPressure: "pressure",
+
+    /**
+     * SensorTemperature 温度通道（℃/℉）
+     */
+    SensorTemperature: "temperature",
+};
 
 /**
  * @readonly
@@ -218,6 +253,22 @@ export class DataPayload {
              */
             this["deviceId"] = "";
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * 设备类型，用于 sink 路由（如 CSV 按设备类型分派宽/长格式）
+             * @member
+             * @type {Type | undefined}
+             */
+            this["deviceType"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 设备名（profile.Name），用于生成人类可读的文件名（比 UUID 友好）
+             * @member
+             * @type {string | undefined}
+             */
+            this["deviceName"] = undefined;
+        }
         if (!("timestamp" in $$source)) {
             /**
              * @member
@@ -257,14 +308,14 @@ export class DataPayload {
      * @returns {DataPayload}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType0;
-        const $$createField4_0 = $$createType1;
+        const $$createField5_0 = $$createType0;
+        const $$createField6_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField3_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField5_0($$parsedSource["channels"]);
         }
         if ("channelIndices" in $$parsedSource) {
-            $$parsedSource["channelIndices"] = $$createField4_0($$parsedSource["channelIndices"]);
+            $$parsedSource["channelIndices"] = $$createField6_0($$parsedSource["channelIndices"]);
         }
         return new DataPayload(/** @type {Partial<DataPayload>} */($$parsedSource));
     }
@@ -368,7 +419,7 @@ export class Profile {
         if (/** @type {any} */(false)) {
             /**
              * @member
-             * @type {boolean | undefined}
+             * @type {boolean | null | undefined}
              */
             this["daqP1604UseDeviceTimestamp"] = undefined;
         }
@@ -604,9 +655,20 @@ export const Type = {
     DeviceSimulated: "SIMULATED",
     DeviceDAQP1604: "DAQ-P-1604",
     DeviceDaqT1603: "DAQ-T-1603",
+
+    /**
+     * 原 DAQ-P-1064Pre，统一为 1604Pre
+     */
     DeviceDAQP1604Pre: "DAQ-P-1604Pre",
     DeviceWTNPXI: "WTN_PXI",
     DeviceDSA3217: "DSA3217",
+
+    /**
+     * DeviceDAQP1603 DAQ-P-1603 16 通道通用 AI 采集设备。
+     * 与 shared SDK 的 core.DeviceDAQP1603 字面量保持一致，
+     * 驱动 bootstrap 工厂 switch 与 profile JSON 反序列化时的类型路由。
+     */
+    DeviceDAQP1603: "DAQ-P-1603",
 };
 
 // Private type creation functions

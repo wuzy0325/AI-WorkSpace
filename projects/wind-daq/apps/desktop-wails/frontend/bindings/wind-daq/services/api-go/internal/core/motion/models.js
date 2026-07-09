@@ -141,6 +141,8 @@ export class AxisConfig {
 
 /**
  * AxisEncoderCompensationConfig 编码器补偿参数。
+ * 字段类型与 shared.local/device-sdk/go/motion/core 对齐，
+ * 避免 wrapper.go 中冗余的类型转换函数。
  */
 export class AxisEncoderCompensationConfig {
     /**

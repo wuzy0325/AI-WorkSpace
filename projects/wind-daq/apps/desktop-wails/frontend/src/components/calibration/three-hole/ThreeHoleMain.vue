@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
 import type { ProbeChannelRole } from '@shared/types/calibration'
 import { getProbeChannelPrecision } from '@shared/calibrationPrecision'
+import { findChannelValue } from '@shared/calibrationSnapshotValue'
 import { isThreeHoleDataPoint } from '@shared/calibrationDataGuards'
 import { deviceApi } from '@api/deviceApi'
 import type { DataPayload } from '@api/types'
 import UiButton from '@components/ui/UiButton.vue'
 import ThreeHoleChart from './ThreeHoleChart.vue'
 import {
-  Play, Pause, Square, Settings, ArrowLeft, Save, FileText, RotateCcw,
+  Play, Pause, Square, Settings, ArrowLeft, Save, FileText,
   ChevronDown, ChevronUp, Gauge, TrendingUp, Target, Wind
 } from '@lucide/vue'
 
@@ -27,6 +30,7 @@ const calibrationStore = useCalibrationStore()
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
+const { t } = storeToRefs(useI18nStore())
 
 const workflow = useCalibrationWorkflow('three-hole')
 const sphereTankGate = workflow.sphereTankGate
@@ -39,8 +43,8 @@ const latestSnapshots = ref<Map<string, DataPayload>>(new Map())
 // 三个图表的 ref，用于切换 Tab 后主动触发重绘
 // 使用 InstanceType 让 Vue 自动推导子组件暴露的类型，避免手写与 defineExpose 耦合
 const kbChartRef = ref<InstanceType<typeof ThreeHoleChart> | null>(null)
-const ktChartRef = ref<InstanceType<typeof ThreeHoleChart> | null>(null)
-const sbChartRef = ref<InstanceType<typeof ThreeHoleChart> | null>(null)
+const k0ChartRef = ref<InstanceType<typeof ThreeHoleChart> | null>(null)
+const kvChartRef = ref<InstanceType<typeof ThreeHoleChart> | null>(null)
 
 // 实时采集快照订阅：deviceApi.onSnapshot 推送设备通道原始数据，
 // 由 buildRealtimePressuresFromSnapshots 映射到 RealtimePressures 喂给 store，
@@ -70,17 +74,6 @@ function buildRealtimePressuresFromSnapshots(
   config: import('@shared/types/calibration').CalibrationConfig,
   snapshots: DataPayload[],
 ): import('@stores/calibrationStore').RealtimePressures | null {
-  const toValue = (deviceId: string, channelIndex: number): number | null => {
-    const payload = snapshots.find((p) => p.deviceId === deviceId)
-    if (!payload) return null
-    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
-    const channels = Array.isArray(payload.channels) ? payload.channels : []
-    const i = indices.indexOf(channelIndex)
-    if (i === -1) return null
-    const v = channels[i]
-    return typeof v === 'number' ? v : null
-  }
-
   const result = {
     P1: 0,
     P2: 0,
@@ -97,14 +90,20 @@ function buildRealtimePressuresFromSnapshots(
 
   for (const ch of config.probeChannels) {
     if (!ch.enabled) continue
-    const rawValue = toValue(ch.channel.deviceId, ch.channel.channelIndex)
+    const rawValue = findChannelValue(snapshots, ch.channel.deviceId, ch.channel.channelIndex)
     if (rawValue === null) continue
     switch (ch.role as ProbeChannelRole) {
       case 'threeHole.p1': result.P1 = rawValue; matchedChannelCount += 1; break
       case 'threeHole.p2': result.P2 = rawValue; matchedChannelCount += 1; break
       case 'threeHole.p3': result.P3 = rawValue; matchedChannelCount += 1; break
       case 'threeHole.pAtm': result.Patm = rawValue; matchedChannelCount += 1; break
-      case 'threeHole.tAtm': result.Tatm = rawValue; matchedChannelCount += 1; break
+      case 'threeHole.tAtm':
+        result.Tatm = rawValue
+        // 三孔校准无独立风洞温度传感器，用大气温度近似风洞总温（TAT），
+        // 供 calculateAtmosphericPhysics 计算马赫数/速度。低速风洞下误差可接受。
+        result.Ttunnel = rawValue
+        matchedChannelCount += 1
+        break
       case 'threeHole.pTotal': result.P0 = rawValue; matchedChannelCount += 1; break
       case 'threeHole.pStatic': result.Ps = rawValue; matchedChannelCount += 1; break
       default: break
@@ -147,7 +146,8 @@ const liveAxisPositions = computed<LiveAxisPosition[]>(() => {
 })
 
 // 当前目标角度：从 progressInfo.currentPoint.coordinates['θ'] 取
-// progressInfo 用 completedPoints 作索引从 config.points 查出当前点
+// progressInfo 优先用 currentPointIndex（循环顶部推进，早于 moveToPoint）作索引从 config.points 查出当前点，
+// 让目标角度先于实际角度变化；后端 autoEngine 为 nil 时回退到 completedPoints。
 const targetTheta = computed(() => {
   const coords = progressInfo.value?.currentPoint
   const theta = coords?.['θ']
@@ -169,6 +169,10 @@ const latestCoefficients = computed(() => {
   if (isThreeHoleDataPoint(lastPoint)) return lastPoint.coefficients
   return null
 })
+
+// 实时气动参数（马赫数/速度）：由 calibrationStore.calculateAtmosphericPhysics 基于实时压力计算，
+// 三孔校准用大气温度近似风洞总温，低速风洞下误差可接受。
+const physics = computed(() => calibrationStore.calculatedPhysics)
 
 const latestRawData = computed(() => {
   const points = calibrationStore.dataPoints
@@ -207,11 +211,16 @@ const formattedProgress = computed(() => {
   return `${completedPoints.value} / ${totalPoints.value} (${progressPercent.value}%)`
 })
 
+// 数据 Tab 顶部"共 X 条记录"文案：复用 {count} 占位符替换约定
+const recordCountText = computed(() =>
+  t.value.th_recordCount.replace('{count}', String(calibrationStore.dataPoints.length)),
+)
+
 const statusText = computed(() => {
-  if (calibrationStore.isPaused) return '已暂停'
-  if (calibrationStore.isRunning) return '运行中'
-  if (calibrationStore.completeEvent) return '已完成'
-  return '空闲'
+  if (calibrationStore.isPaused) return t.value.statusPaused
+  if (calibrationStore.isRunning) return t.value.running
+  if (calibrationStore.completeEvent) return t.value.completed
+  return t.value.idle
 })
 
 const statusColor = computed(() => {
@@ -266,6 +275,16 @@ function formatValue(value: number | undefined | null, precision?: number): stri
   return value.toFixed(precision ?? 3)
 }
 
+// 马赫数/速度格式化：与 CSV 精度一致（马赫数 3 位、速度 1 位）
+function formatMach(value: number | undefined): string {
+  if (value === undefined || value === null) return '--'
+  return value.toFixed(3)
+}
+function formatVelocity(value: number | undefined): string {
+  if (value === undefined || value === null) return '--'
+  return value.toFixed(1)
+}
+
 function getChannelValue(role: string): string {
   const pressures = calibrationStore.realtimePressures
   if (!pressures) return '--'
@@ -318,8 +337,8 @@ watch(activeTab, (tab) => {
   if (tab === 'chart') {
     requestAnimationFrame(() => {
       kbChartRef.value?.draw()
-      ktChartRef.value?.draw()
-      sbChartRef.value?.draw()
+      k0ChartRef.value?.draw()
+      kvChartRef.value?.draw()
     })
   }
 })
@@ -328,7 +347,7 @@ onMounted(async () => {
   try {
     // loadSavedConfig 已在 useCalibrationWorkflow.onMounted 中调用，不重复请求
     if (!workflow.hasConfig.value) {
-      feedbackStore.pushToast('请先配置三孔探针校准参数', 'warning')
+      feedbackStore.pushToast(t.value.th_pleaseConfigureThreeHoleFirst, 'warning')
     }
   } finally {
     isLoading.value = false
@@ -349,18 +368,23 @@ onUnmounted(() => {
           <ArrowLeft class="h-4 w-4" />
         </UiButton>
         <div>
-          <h1 class="text-base font-bold text-[var(--text-primary)]">三孔探针校准</h1>
+          <h1 class="text-base font-bold text-[var(--text-primary)]">{{ t.th_threeHoleCalibration }}</h1>
           <p class="text-xs text-[var(--text-muted)]">Three-Hole Probe Calibration</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <!-- 开始按钮：从左侧栏移到 Header，与"配置"并列便于一键启动 -->
+        <UiButton v-if="!calibrationStore.isRunning && !calibrationStore.isPaused" variant="primary" size="sm" :disabled="!canStartCalibration" :title="startDisabledReason || undefined" @click="workflow.startCalibration()">
+          <Play class="h-4 w-4" />
+          <span class="ml-1">{{ t.startRun }}</span>
+        </UiButton>
         <UiButton variant="secondary" size="sm" @click="emit('openSettings')">
           <Settings class="h-4 w-4" />
-          <span class="ml-1">配置</span>
+          <span class="ml-1">{{ t.configBtn }}</span>
         </UiButton>
         <UiButton variant="secondary" size="sm" :disabled="!canSave" @click="workflow.saveCsv">
           <Save class="h-4 w-4" />
-          <span class="ml-1">保存</span>
+          <span class="ml-1">{{ t.save }}</span>
         </UiButton>
       </div>
     </div>
@@ -376,7 +400,7 @@ onUnmounted(() => {
       >{{ statusText }}</span>
 
       <div class="flex items-center gap-2 min-w-[180px] flex-1 max-w-[280px]">
-        <span class="text-xs text-[var(--text-muted)] whitespace-nowrap">进度</span>
+        <span class="text-xs text-[var(--text-muted)] whitespace-nowrap">{{ t.travProgress }}</span>
         <div class="h-2 flex-1 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
           <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300" :style="{ width: progressPercent + '%' }"></div>
         </div>
@@ -385,11 +409,11 @@ onUnmounted(() => {
 
       <div v-if="formattedTimeInfo" class="flex items-center gap-3 text-xs">
         <div class="flex items-center gap-1">
-          <span class="text-[var(--text-muted)]">已用</span>
+          <span class="text-[var(--text-muted)]">{{ t.travElapsed }}</span>
           <span class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.elapsed }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="text-[var(--text-muted)]">剩余</span>
+          <span class="text-[var(--text-muted)]">{{ t.travRemaining }}</span>
           <span class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.remaining }}</span>
         </div>
       </div>
@@ -398,22 +422,22 @@ onUnmounted(() => {
       <div class="flex items-center gap-4 border-l border-[var(--border-default)] pl-4">
         <div class="flex items-center gap-1.5">
           <Target class="h-4 w-4 text-[var(--text-muted)]" />
-          <span class="text-xs text-[var(--text-muted)]">目标</span>
+          <span class="text-xs text-[var(--text-muted)]">{{ t.travTarget }}</span>
           <span class="font-mono text-base font-bold text-[var(--text-primary)]">{{ targetTheta !== null ? targetTheta.toFixed(1) + '°' : '--' }}</span>
         </div>
         <div class="flex items-center gap-1.5">
-          <span class="text-xs text-[var(--text-muted)]">实际</span>
+          <span class="text-xs text-[var(--text-muted)]">{{ t.travActual }}</span>
           <span class="font-mono text-base font-bold" :style="{ color: isMoving ? `var(--accent-success)` : `var(--accent-primary)` }">{{ actualTheta !== null ? actualTheta.toFixed(2) + '°' : '--' }}</span>
           <span v-if="isMoving" class="flex items-center gap-1 text-xs" :style="{ color: `var(--accent-success)` }">
             <span class="h-1.5 w-1.5 animate-pulse rounded-full" :style="{ backgroundColor: `var(--accent-success)` }"></span>
-            运动中
+            {{ t.moving }}
           </span>
         </div>
       </div>
 
       <!-- 当前点采样子进度：操作员盯着屏幕知道还要等多久 -->
       <div v-if="sampleProgress" class="flex items-center gap-2 border-l border-[var(--border-default)] pl-4">
-        <span class="text-xs text-[var(--text-muted)]">采样</span>
+        <span class="text-xs text-[var(--text-muted)]">{{ t.samples }}</span>
         <span class="font-mono text-sm font-bold text-[var(--accent-primary)]">{{ sampleProgress.current }}/{{ sampleProgress.total }}</span>
         <div class="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
           <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-200" :style="{ width: sampleProgress.percent + '%' }"></div>
@@ -434,7 +458,7 @@ onUnmounted(() => {
       <!-- 配置摘要折叠：校准中几乎不看，压缩到角落 -->
       <button class="ml-auto flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]" @click="showConfigSummary = !showConfigSummary">
         <Settings class="h-3.5 w-3.5" />
-        配置
+        {{ t.configBtn }}
         <ChevronDown v-if="showConfigSummary" class="h-3 w-3" />
         <ChevronUp v-else class="h-3 w-3" />
       </button>
@@ -442,94 +466,107 @@ onUnmounted(() => {
 
     <!-- 配置摘要展开面板（默认收起） -->
     <div v-if="showConfigSummary" class="flex items-center gap-6 border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-5 py-2 text-xs">
-      <div><span class="text-[var(--text-muted)]">名称：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || '未配置' }}</span></div>
+      <div><span class="text-[var(--text-muted)]">{{ t.name }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || t.unconfigured }}</span></div>
       <div v-if="threeHoleLayout">
-        <span class="text-[var(--text-muted)]">θ 范围：</span>
+        <span class="text-[var(--text-muted)]">{{ t.th_thetaRange }}：</span>
         <span class="font-medium text-[var(--text-primary)]">{{ threeHoleLayout.thetaMin }}° ~ {{ threeHoleLayout.thetaMax }}° ({{ threeHoleLayout.thetaStep }}°)</span>
       </div>
-      <div><span class="text-[var(--text-muted)]">总点数：</span><span class="font-medium text-[var(--text-primary)]">{{ totalPoints }}</span></div>
-      <div><span class="text-[var(--text-muted)]">驻留：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms</span></div>
-      <div><span class="text-[var(--text-muted)]">采样数：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.samplesPerPoint || 0 }}</span></div>
+      <div><span class="text-[var(--text-muted)]">{{ t.totalPoints }}：</span><span class="font-medium text-[var(--text-primary)]">{{ totalPoints }}</span></div>
+      <div><span class="text-[var(--text-muted)]">{{ t.dwell }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms</span></div>
+      <div><span class="text-[var(--text-muted)]">{{ t.th_samplesCount }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.samplesPerPoint || 0 }}</span></div>
     </div>
 
     <div class="flex flex-1 overflow-hidden">
-      <!-- 左侧栏：384px，控制按钮 + 核心通道大字 + 次要通道折叠 + 球罐状态条 -->
+      <!-- 左侧栏：384px，控制按钮(固定) + 通道/气动参数(可滚动) + 球罐状态条(固定底部) -->
       <div class="flex w-96 flex-col border-r border-[var(--border-default)] bg-[var(--bg-panel)] flex-shrink-0 overflow-hidden">
-        <!-- 控制按钮 -->
-        <div class="border-b border-[var(--border-default)] p-3">
+        <!-- 控制按钮（固定顶部） -->
+        <div class="flex-shrink-0 border-b border-[var(--border-default)] p-3">
           <div class="grid grid-cols-2 gap-2">
-            <UiButton v-if="!calibrationStore.isRunning && !calibrationStore.isPaused" variant="primary" :disabled="!canStartCalibration" @click="workflow.startCalibration()">
-              <Play class="h-4 w-4" />
-              <span class="ml-1">开始</span>
-            </UiButton>
             <UiButton v-if="canPause" variant="warning" @click="workflow.pauseCalibration">
               <Pause class="h-4 w-4" />
-              <span class="ml-1">暂停</span>
+              <span class="ml-1">{{ t.travPause }}</span>
             </UiButton>
             <UiButton v-if="canResume" variant="primary" @click="workflow.resumeCalibration">
               <Play class="h-4 w-4" />
-              <span class="ml-1">继续</span>
+              <span class="ml-1">{{ t.travResume }}</span>
             </UiButton>
             <UiButton v-if="canStop" variant="danger" @click="workflow.stopCalibration">
               <Square class="h-4 w-4" />
-              <span class="ml-1">停止</span>
-            </UiButton>
-            <UiButton variant="secondary" @click="calibrationStore.reset">
-              <RotateCcw class="h-4 w-4" />
-              <span class="ml-1">重置</span>
+              <span class="ml-1">{{ t.travStop }}</span>
             </UiButton>
           </div>
           <div v-if="startDisabledReason" class="mt-2 text-xs" :style="{ color: `var(--accent-warning)` }">{{ startDisabledReason }}</div>
         </div>
 
-        <!-- 核心通道（P1/P2/P3）大字显示 -->
-        <div class="border-b border-[var(--border-default)] p-3">
-          <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
-            <Gauge class="h-4 w-4 text-[var(--accent-primary)]" />
-            核心压力
-          </div>
-          <div class="space-y-2">
-            <div v-for="channel in coreChannels" :key="channel.name" class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-              <div>
-                <div class="text-xs text-[var(--text-muted)]">{{ channel.name }}</div>
-                <div class="text-xs text-[var(--text-muted)]">{{ getChannelUnit(channel.role || '') }}</div>
+        <!-- 中间内容区（可滚动）：关键数据(P1/P2/P3 + Ma/V) + 其他通道 -->
+        <div class="flex-1 overflow-y-auto">
+          <!-- 关键数据：核心压力 P1/P2/P3 + 实时气动参数 Ma/V，合并为单卡片节省垂直空间 -->
+          <div class="border-b border-[var(--border-default)] p-3">
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+              <Gauge class="h-4 w-4 text-[var(--accent-primary)]" />
+              {{ t.th_keyData }}
+            </div>
+            <div class="space-y-1.5">
+              <!-- P1/P2/P3 核心压力：单位移到数值右侧，左侧单行以压缩高度，避免侧边栏滚动 -->
+              <div v-for="channel in coreChannels" :key="channel.name" class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-1">
+                <span class="text-xs text-[var(--text-muted)]">{{ channel.name }}</span>
+                <div class="text-right">
+                  <span class="font-mono text-2xl font-bold text-[var(--accent-primary)]">{{ getChannelValue(channel.role || '') }}</span>
+                  <span class="ml-1 text-xs text-[var(--text-muted)]">{{ getChannelUnit(channel.role || '') }}</span>
+                </div>
               </div>
-              <span class="font-mono text-2xl font-bold text-[var(--accent-primary)]">{{ getChannelValue(channel.role || '') }}</span>
+              <!-- 马赫数 Ma：绿色强调，区别于压力通道 -->
+              <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                <div>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.th_machMa }}</span>
+                </div>
+                <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
+              </div>
+              <!-- 速度 V：绿色强调，单位 m/s -->
+              <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                <div>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.th_velocityV }}</span>
+                </div>
+                <div class="text-right">
+                  <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                  <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 其他通道：保留标签，始终展示，不再折叠 -->
+          <div class="p-3">
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+              <Wind class="h-4 w-4 text-[var(--accent-primary)]" />
+              {{ t.th_otherChannels }}
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="channel in secondaryChannels" :key="channel.name" class="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--bg-panel-strong)]">
+                <span class="text-xs text-[var(--text-muted)]">{{ channel.name }}</span>
+                <div class="text-right">
+                  <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ getChannelValue(channel.role || '') }}</span>
+                  <span class="ml-1 text-xs text-[var(--text-muted)]">{{ getChannelUnit(channel.role || '') }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- 其他通道：保留标签，始终展示，不再折叠 -->
-        <div class="border-b border-[var(--border-default)] p-3">
-          <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
-            <Wind class="h-4 w-4 text-[var(--accent-primary)]" />
-            其他通道
-          </div>
-          <div class="space-y-1.5">
-            <div v-for="channel in secondaryChannels" :key="channel.name" class="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--bg-panel-strong)]">
-              <span class="text-xs text-[var(--text-muted)]">{{ channel.name }}</span>
-              <div class="text-right">
-                <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ getChannelValue(channel.role || '') }}</span>
-                <span class="ml-1 text-xs text-[var(--text-muted)]">{{ getChannelUnit(channel.role || '') }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 球罐门控状态条：压缩为一行，不占独立卡片；附"编辑"入口跳配置界面 -->
-        <div class="mt-auto border-t border-[var(--border-default)] p-3">
+        <!-- 球罐门控状态条（固定底部）：压缩为一行，不占独立卡片；附"编辑"入口跳配置界面 -->
+        <div class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
           <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
             <div class="flex items-center gap-2">
               <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
-              <span class="text-xs text-[var(--text-muted)]">球罐门控</span>
+              <span class="text-xs text-[var(--text-muted)]">{{ t.th_sphereTankGate }}</span>
             </div>
             <div class="flex items-center gap-3 text-xs">
               <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">
-                {{ sphereTankGate.isActive.value ? '已激活' : sphereTankGate.statusText.value }}
+                {{ sphereTankGate.isActive.value ? t.th_activated : sphereTankGate.statusText.value }}
               </span>
               <span class="text-[var(--text-muted)]">|</span>
               <span class="font-mono font-bold text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</span>
-              <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" title="编辑球罐门控配置" @click="emit('openSettings')">编辑</button>
+              <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" :title="t.th_editSphereTankGateConfig" @click="emit('openSettings')">{{ t.th_edit }}</button>
             </div>
           </div>
         </div>
@@ -541,17 +578,17 @@ onUnmounted(() => {
         <div class="flex border-b border-[var(--border-default)] bg-[var(--bg-panel)]">
           <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'overview' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'overview'">
             <TrendingUp class="h-4 w-4" />
-            概览
+            {{ t.th_overview }}
             <span v-if="activeTab === 'overview'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
           <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'chart' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'chart'">
             <TrendingUp class="h-4 w-4" />
-            图表
+            {{ t.chart }}
             <span v-if="activeTab === 'chart'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
           <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'data' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'data'">
             <FileText class="h-4 w-4" />
-            数据
+            {{ t.data }}
             <span v-if="activeTab === 'data'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
         </div>
@@ -567,30 +604,42 @@ onUnmounted(() => {
                 <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
                   <div class="mb-3 flex items-center gap-2">
                     <TrendingUp class="h-4 w-4 text-[var(--accent-primary)]" />
-                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">最新系数</h3>
+                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.th_latestCoefficients }}</h3>
                   </div>
                   <div v-if="latestCoefficients" class="space-y-2">
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">Kb</span>
+                      <span class="text-xs text-[var(--text-muted)]">Kβ</span>
                       <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.Kb, 4) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">Kt</span>
-                      <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.Kt, 4) }}</span>
+                      <span class="text-xs text-[var(--text-muted)]">K0</span>
+                      <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.K0, 4) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">Sb</span>
-                      <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.Sb, 4) }}</span>
+                      <span class="text-xs text-[var(--text-muted)]">Kv</span>
+                      <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.Kv, 4) }}</span>
+                    </div>
+                    <!-- 实时马赫数/速度：与系数同卡展示，便于校准员关联系数与流场状态 -->
+                    <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 border-t border-[var(--border-default)] mt-2 pt-2">
+                      <span class="text-xs text-[var(--text-muted)]">Ma</span>
+                      <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
+                    </div>
+                    <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                      <span class="text-xs text-[var(--text-muted)]">V</span>
+                      <div class="text-right">
+                        <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                        <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
+                      </div>
                     </div>
                   </div>
-                  <div v-else class="flex h-24 items-center justify-center text-sm text-[var(--text-muted)]">暂无系数数据</div>
+                  <div v-else class="flex h-24 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.th_noCoefficientsData }}</div>
                 </div>
 
                 <!-- 原始数据卡片：与系数卡片风格一致，全宽上下并列 -->
                 <div class="flex-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
                   <div class="mb-3 flex items-center gap-2">
                     <Wind class="h-4 w-4 text-[var(--accent-primary)]" />
-                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">原始数据</h3>
+                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.th_rawData }}</h3>
                   </div>
                   <div v-if="latestRawData" class="space-y-2">
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
@@ -606,40 +655,40 @@ onUnmounted(() => {
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.p3, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">大气压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.threeHolePAtm }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pAtm, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">总压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.P0 }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pTotal, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">静压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.Ps }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pStatic, 1) }}</span>
                     </div>
                   </div>
-                  <div v-else class="flex h-20 items-center justify-center text-sm text-[var(--text-muted)]">暂无原始数据</div>
+                  <div v-else class="flex h-20 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.th_noRawData }}</div>
                 </div>
               </div>
 
-              <!-- 右列：三条曲线（Kb-θ / Kt-θ / Sb-θ），概览页隐藏 Y 轴标题节省空间，X 轴数值仍显示 -->
+              <!-- 右列：三条曲线（Kβ-θ / K0-θ / Kv-θ），概览页隐藏 Y 轴标题节省空间，X 轴数值仍显示 -->
               <div class="flex flex-1 flex-col gap-3 min-w-0">
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Kb - θ 曲线</h3>
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.th_kbThetaCurve }}</h3>
                   <div class="flex-1 min-h-0">
                     <ThreeHoleChart ref="kbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" />
                   </div>
                 </div>
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Kt - θ 曲线</h3>
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.th_k0ThetaCurve }}</h3>
                   <div class="flex-1 min-h-0">
-                    <ThreeHoleChart ref="ktChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" />
+                    <ThreeHoleChart ref="k0ChartRef" :data-points="threeHolePoints" x-key="theta" y-key="K0" x-label="θ (°)" />
                   </div>
                 </div>
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Sb - θ 曲线</h3>
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.th_kvThetaCurve }}</h3>
                   <div class="flex-1 min-h-0">
-                    <ThreeHoleChart ref="sbChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" />
+                    <ThreeHoleChart ref="kvChartRef" :data-points="threeHolePoints" x-key="theta" y-key="Kv" x-label="θ (°)" />
                   </div>
                 </div>
               </div>
@@ -651,21 +700,21 @@ onUnmounted(() => {
         <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-4">
           <div class="grid h-full grid-cols-2 gap-3">
             <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Kb - θ 曲线</h3>
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.th_kbThetaCurve }}</h3>
               <div class="flex-1 min-h-0">
                 <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kb" x-label="θ (°)" />
               </div>
             </div>
             <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Kt - θ 曲线</h3>
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.th_k0ThetaCurve }}</h3>
               <div class="flex-1 min-h-0">
-                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kt" x-label="θ (°)" />
+                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="K0" x-label="θ (°)" />
               </div>
             </div>
             <div class="flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Sb - θ 曲线</h3>
+              <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.th_kvThetaCurve }}</h3>
               <div class="flex-1 min-h-0">
-                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Sb" x-label="θ (°)" />
+                <ThreeHoleChart :data-points="threeHolePoints" x-key="theta" y-key="Kv" x-label="θ (°)" />
               </div>
             </div>
           </div>
@@ -676,20 +725,22 @@ onUnmounted(() => {
           <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
             <div class="mb-3 flex items-center gap-2">
               <FileText class="h-5 w-5 text-[var(--accent-primary)]" />
-              <h3 class="text-base font-semibold text-[var(--text-primary)]">校准数据记录</h3>
-              <span class="ml-auto text-sm text-[var(--text-muted)]">共 {{ calibrationStore.dataPoints.length }} 条记录</span>
+              <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.th_calibrationDataRecords }}</h3>
+              <span class="ml-auto text-sm text-[var(--text-muted)]">{{ recordCountText }}</span>
             </div>
             <div class="overflow-auto">
               <table class="w-full text-sm">
                 <thead class="bg-[var(--bg-panel-strong)]">
                   <tr>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">序号</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.th_index }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">θ</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kb</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kt</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Sb</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">采样数</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">标准差</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kβ</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">K0</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kv</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.th_machNumberMa }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.th_velocityMs }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.th_samplesCount }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.th_stdDev }}</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-[var(--border-default)]">
@@ -697,14 +748,16 @@ onUnmounted(() => {
                     <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ index + 1 }}</td>
                     <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coordinates['θ'], 1) : '--' }}</td>
                     <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coefficients.Kb, 4) : '--' }}</td>
-                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coefficients.Kt, 4) : '--' }}</td>
-                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coefficients.Sb, 4) : '--' }}</td>
+                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coefficients.K0, 4) : '--' }}</td>
+                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatValue(point.coefficients.Kv, 4) : '--' }}</td>
+                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatMach(point.coefficients.machNumber) : '--' }}</td>
+                    <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ isThreeHoleDataPoint(point) ? formatVelocity(point.coefficients.velocity) : '--' }}</td>
                     <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ 'sampleCount' in point ? point.sampleCount : '--' }}</td>
                     <td class="px-3 py-2 font-mono text-[var(--text-primary)]">{{ formatValue(point.stdDev, 4) }}</td>
                   </tr>
                 </tbody>
               </table>
-              <div v-if="calibrationStore.dataPoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">暂无数据记录</div>
+              <div v-if="calibrationStore.dataPoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">{{ t.th_noDataRecords }}</div>
             </div>
           </div>
         </div>
