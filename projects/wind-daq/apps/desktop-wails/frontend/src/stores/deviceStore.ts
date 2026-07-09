@@ -1,15 +1,20 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig } from '@api/types'
 import { deviceApi } from '@api/deviceApi'
+import { createRingBuffer, type RingBuffer } from '@composables/ringBuffer'
+import { useStorageStore, WAVEFORM_BUFFER_MAX } from '@stores/storageStore'
 
-const MAX_HISTORY_POINTS = 256
+/** 安全硬上限：环形缓冲区容量不会超过此值，防止异常配置导致内存爆炸 */
+const MAX_HISTORY_POINTS = 2000
 const MAX_CHART_CHANNELS = 16
 
 export const useDeviceStore = defineStore('devices', () => {
   const profiles = ref<DeviceProfile[]>([])
   const latestSnapshots = ref<DataPayload[]>([])
-  const historyBuffers = ref<Map<string, DataPayload[]>>(new Map())
+  const historyBuffers = shallowRef<Map<string, RingBuffer<DataPayload>>>(new Map())
+  /** 历史数据版本号：每次 pushSnapshot 成功写入后递增，供 RealtimeChart computed 依赖 */
+  const historyVersion = ref<number>(0)
   const selectedDeviceId = ref<string | null>(null)
   const tareOffsets = ref<Map<string, Record<number, number>>>(new Map())
   const chartSelectedIndices = ref<Map<string, Set<number>>>(new Map())
@@ -32,7 +37,10 @@ export const useDeviceStore = defineStore('devices', () => {
   const acquiringFor = (id: string): boolean => deviceStatuses.value.get(id)?.acquiring ?? false
   const latestFor = (id: string): DataPayload | undefined =>
     latestSnapshots.value.find((s) => s.deviceId === id)
-  const historyFor = (id: string): DataPayload[] => historyBuffers.value.get(id) ?? []
+  const historyFor = (id: string): DataPayload[] => {
+    const ring = historyBuffers.value.get(id)
+    return ring ? ring.toArray() as DataPayload[] : []
+  }
 
   function selectDevice(id: string | null) {
     selectedDeviceId.value = id
@@ -148,6 +156,11 @@ export const useDeviceStore = defineStore('devices', () => {
     deviceStatuses.value.set(id, status)
   }
 
+  /**
+   * 将设备快照追加到环形缓冲区（O(1)）。
+   * 容量 = min(waveformBufferSize, MAX_HISTORY_POINTS)，以用户设置为权威。
+   * Settings 变化时自动重建 ring（丢弃旧数据）。
+   */
   function pushSnapshot(payload: DataPayload) {
     if (!payload || !payload.deviceId) return
     const normalized: DataPayload = {
@@ -177,16 +190,32 @@ export const useDeviceStore = defineStore('devices', () => {
       latestSnapshots.value.push(normalized)
     }
 
-    let buffer = historyBuffers.value.get(normalized.deviceId)
-    if (!buffer) {
-      buffer = []
-      historyBuffers.value.set(normalized.deviceId, buffer)
-    }
-    const last = buffer[buffer.length - 1]
-    if (last?.timestamp === normalized.timestamp) return
+    // 获取期望容量：用户设置优先，MAX_HISTORY_POINTS 兜底
+    const storageStore = useStorageStore()
+    const expectedCapacity = Math.min(
+      storageStore.settings.waveformBufferSize,
+      MAX_HISTORY_POINTS,
+    )
 
-    buffer.push(normalized)
-    if (buffer.length > MAX_HISTORY_POINTS) buffer.shift()
+    const currentMap = historyBuffers.value
+    let ring = currentMap.get(normalized.deviceId)
+
+    // 容量变化时重建环形缓冲：丢弃旧数据，使用新容量
+    if (!ring || ring.capacity !== expectedCapacity) {
+      ring = createRingBuffer<DataPayload>(expectedCapacity)
+      // shallowRef 需要整体替换 Map 才能触发响应式
+      const newMap = new Map(currentMap)
+      newMap.set(normalized.deviceId, ring)
+      historyBuffers.value = newMap
+    } else {
+      // 同 timestamp 去重：不重复写入
+      const arr = ring.toArray()
+      const last = arr.length > 0 ? arr[arr.length - 1] : null
+      if (last?.timestamp === normalized.timestamp) return
+    }
+
+    ring.push(normalized)
+    historyVersion.value += 1
   }
 
   // syncSnapshotSubscriptions 根据当前 profiles 列表同步采集数据订阅。
@@ -595,6 +624,7 @@ export const useDeviceStore = defineStore('devices', () => {
     refreshStatusFor,
     updateStatus,
     pushSnapshot,
+    historyVersion,
     attachStatusListener,
     latestFor,
     historyFor,

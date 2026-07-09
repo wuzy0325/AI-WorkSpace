@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -204,18 +204,15 @@ onBeforeUnmount(() => {
   rAF.dispose()
 })
 
-// chartReady：VChart 挂载后首次全量初始化
+// chartReady：VChart 实例初始化完成后为 true，供 rAF 增量 setOption 守卫
 const chartReady = ref(false)
 
-function onChartReady() {
+// VChart ref 变为非 null 后立即全量初始化图表
+watch(vchartRef, (ref) => {
+  if (!ref?.chart) return
+  ref.chart.setOption({ ...optionBase.value, series: seriesData.value }, { notMerge: true })
   chartReady.value = true
-  nextTick(() => {
-    const chart = vchartRef.value?.chart
-    if (chart) {
-      chart.setOption(optionBase.value, { notMerge: true })
-    }
-  })
-}
+}, { flush: 'post' })
 
 const hasData = computed(() => deviceStore.historyFor(props.deviceId).length > 0)
 
@@ -232,11 +229,10 @@ const selectedChannelCount = computed(() => {
 <template>
   <div class="realtime-chart">
     <VChart
-      v-if="hasData && chartReady && selectedChannelCount > 0"
+      v-if="hasData && selectedChannelCount > 0"
       ref="vchartRef"
       autoresize
       class="realtime-chart__canvas"
-      @rendered="onChartReady"
     />
     <div v-else class="realtime-chart__empty">等待实时数据...</div>
   </div>
