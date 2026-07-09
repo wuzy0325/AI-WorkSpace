@@ -99,17 +99,27 @@ function getAxisLimits(axisName: AxisName): { min: number | undefined; max: numb
 function validateTargetPosition(axisName: AxisName, targetPosition: number): { valid: boolean; warning?: string } {
   const limits = getAxisLimits(axisName)
   if (limits.min !== undefined && targetPosition < limits.min) {
-    return { valid: false, warning: `目标位置 ${targetPosition.toFixed(2)} 超出负限位 ${limits.min.toFixed(2)}` }
+    return {
+      valid: false,
+      warning: i18n.t.motion_targetExceedsNegLimit
+        .replace('{pos}', targetPosition.toFixed(2))
+        .replace('{limit}', limits.min.toFixed(2))
+    }
   }
   if (limits.max !== undefined && targetPosition > limits.max) {
-    return { valid: false, warning: `目标位置 ${targetPosition.toFixed(2)} 超出正限位 ${limits.max.toFixed(2)}` }
+    return {
+      valid: false,
+      warning: i18n.t.motion_targetExceedsPosLimit
+        .replace('{pos}', targetPosition.toFixed(2))
+        .replace('{limit}', limits.max.toFixed(2))
+    }
   }
   // 接近限位预警 (90% 范围内)
   if (limits.min !== undefined && limits.max !== undefined) {
     const range = limits.max - limits.min
     const margin = range * 0.1
     if (targetPosition < limits.min + margin || targetPosition > limits.max - margin) {
-      return { valid: true, warning: '接近限位，请谨慎操作' }
+      return { valid: true, warning: i18n.t.motion_approachingLimit }
     }
   }
   return { valid: true }
@@ -158,7 +168,7 @@ async function move(axis: AxisName): Promise<void> {
   // 软限位校验
   const validation = validateTargetPosition(axis, absoluteTarget)
   if (!validation.valid) {
-    feedback.pushToast(validation.warning || '目标位置超出限位', 'error')
+    feedback.pushToast(validation.warning || i18n.t.motion_targetOutOfLimit, 'error')
     return
   }
   if (validation.warning) {
@@ -200,17 +210,17 @@ async function adjustByStep(axis: AxisName, direction: 'forward' | 'reverse'): P
   const axisStatus = currentStatus.value.axes.find((a) => a.name === axis)
   if (!axisStatus) return
   if (!Number.isFinite(state.step) || state.step <= 0) {
-    feedback.pushToast('步长必须为正数', 'error')
+    feedback.pushToast(i18n.t.motion_stepMustBePositive, 'error')
     return
   }
   const delta = direction === 'forward' ? state.step : -state.step
   if ((delta > 0 && axisStatus.posLimit) || (delta < 0 && axisStatus.negLimit)) {
-    feedback.pushToast('当前方向限位已触发，禁止继续点动', 'error')
+    feedback.pushToast(i18n.t.motion_limitTriggered, 'error')
     return
   }
   const validation = validateTargetPosition(axis, axisStatus.position + delta)
   if (!validation.valid) {
-    feedback.pushToast(validation.warning || '目标位置超出限位', 'error')
+    feedback.pushToast(validation.warning || i18n.t.motion_targetOutOfLimit, 'error')
     return
   }
   await motion.moveBy(selectedId.value, axis, delta)
@@ -430,7 +440,7 @@ watch(
             secondary size="sm"
             @click="handleConnect"
             :disabled="!selectedId || currentStatus?.connected"
-            :title="!selectedId ? '请先选择控制器' : i18n.t.connectBtn"
+            :title="!selectedId ? i18n.t.motion_pleaseSelectController : i18n.t.connectBtn"
           >
             {{ i18n.t.connectBtn }}
           </UiButton>
@@ -438,7 +448,7 @@ watch(
             secondary size="sm"
             @click="handleDisconnect"
             :disabled="!selectedId || !currentStatus?.connected"
-            :title="!selectedId ? '请先选择控制器' : i18n.t.disconnectBtn"
+            :title="!selectedId ? i18n.t.motion_pleaseSelectController : i18n.t.disconnectBtn"
           >
             {{ i18n.t.disconnectBtn }}
           </UiButton>
@@ -459,7 +469,7 @@ watch(
             class="estop-btn"
             @click="emergencyStop"
             :disabled="!selectedId"
-            title="紧急停止 (快捷键: Esc)"
+            :title="i18n.t.motion_eStopShortcut"
           >
             <template #icon>
               <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -527,14 +537,14 @@ watch(
               <path d="M2 12h4"/>
               <path d="m4.9 4.9 2.9 2.9"/>
             </svg>
-            <p class="text-sm font-semibold">{{ i18n.t.noAxesConfigured || '未配置运动轴' }}</p>
-            <p class="text-xs mt-1 opacity-60">{{ i18n.t.checkProfileAxes || '请在配置中启用至少一个轴' }}</p>
+            <p class="text-sm font-semibold">{{ i18n.t.motion_noAxesConfigured }}</p>
+            <p class="text-xs mt-1 opacity-60">{{ i18n.t.motion_checkProfileAxes }}</p>
             <UiButton
               class="mt-3"
               secondary size="sm"
               @click="showConfig = true"
             >
-              {{ i18n.t.openConfig || '打开配置' }}
+              {{ i18n.t.motion_openConfig }}
             </UiButton>
           </div>
           <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -572,7 +582,7 @@ watch(
                   <div class="text-[11px] font-semibold text-[color:var(--text-muted)] uppercase tracking-wider shrink-0 ml-2">{{ getAxisUnit(axis.name as AxisName) }}</div>
                 </div>
                 <div class="mt-0.5">
-                  <span class="text-[10px] text-[color:var(--text-muted)]">当前位置</span>
+                  <span class="text-[10px] text-[color:var(--text-muted)]">{{ i18n.t.motion_currentPosition }}</span>
                 </div>
                 <div class="readout-sparkline" :style="historyBarStyle(axis.name as AxisName)"></div>
               </div>
@@ -581,7 +591,7 @@ watch(
               <div class="axis-section">
                 <div class="axis-section-title">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                  监视
+                  {{ i18n.t.motion_monitor }}
                 </div>
                 <div class="space-y-1.5">
                   <!-- 限位指示 -->
@@ -615,7 +625,7 @@ watch(
               <div class="axis-section">
                 <div class="axis-section-title">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="m5 15 7 7 7-7"/></svg>
-                  点动
+                  {{ i18n.t.motion_jog }}
                 </div>
                 <div class="jog-control-row">
                     <UiButton
@@ -643,7 +653,7 @@ watch(
               <div class="axis-section">
                 <div class="axis-section-title">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
-                  定位
+                  {{ i18n.t.motion_positioning }}
                 </div>
                 <div class="move-control-row">
                   <div class="move-input-wrap">

@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { CATEGORY_LABELS, LOG_GROUP_LABELS, mapCategoryToGroup, useLogStore } from '@stores/logStore'
 import type { LogGroup } from '@stores/logStore'
 import type { LogCategory, LogEntry, LogLevel } from '@api/types'
+import { useI18nStore } from '@stores/i18nStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import { fetchRecentLogs, startLogSubscription, stopLogSubscription, fetchCategoryStates, setCategoryEnabled } from '@api/logSseClient'
@@ -13,6 +14,7 @@ defineProps<{
 }>()
 
 const logStore = useLogStore()
+const i18n = useI18nStore()
 const { filteredEntries } = storeToRefs(logStore)
 const containerRef = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
@@ -52,6 +54,7 @@ function isCategoryEnabled(category: LogCategory): boolean {
 
 // 级别过滤选项：minLevel 语义，显示该级别及更高严重度。
 // 默认 'info' 隐藏 Debug，避免采集期间高频命令收发日志刷屏（对齐 daq-t1603）。
+// label 保持英文标准缩写，不参与语言切换。
 const LEVELS: Array<{ value: LogLevel; label: string }> = [
   { value: 'debug', label: 'Debug' },
   { value: 'info', label: 'Info' },
@@ -59,14 +62,14 @@ const LEVELS: Array<{ value: LogLevel; label: string }> = [
   { value: 'error', label: 'Error' },
 ]
 
-// 分组过滤选项：'all' 表示全部
-const GROUPS: Array<{ value: LogGroup | 'all'; label: string }> = [
-  { value: 'all', label: '全部' },
+// 分组过滤选项：'all' 表示全部。用 computed 依赖 i18n，跟随语言切换刷新。
+const GROUPS = computed<Array<{ value: LogGroup | 'all'; label: string }>>(() => [
+  { value: 'all', label: i18n.t.log_all },
   { value: 'system', label: LOG_GROUP_LABELS.system },
   { value: 'communication', label: LOG_GROUP_LABELS.communication },
   { value: 'acquisition', label: LOG_GROUP_LABELS.acquisition },
   { value: 'business', label: LOG_GROUP_LABELS.business },
-]
+])
 
 const hasActiveFilter = computed(
   () =>
@@ -79,17 +82,23 @@ const hasActiveFilter = computed(
 const streamStatusText = computed(() => {
   switch (logStore.streamStatus) {
     case 'connected':
-      return '已连接'
+      return i18n.t.log_streamConnected
     case 'connecting':
-      return '连接中'
+      return i18n.t.log_streamConnecting
     case 'reconnecting':
-      return '重连中'
+      return i18n.t.log_streamReconnecting
     case 'error':
-      return '异常'
+      return i18n.t.log_streamError
     default:
-      return '未启动'
+      return i18n.t.log_streamIdle
   }
 })
+
+// 类型开关 aria-label：根据当前状态选择「开启/关闭」+ 分类名
+function categoryToggleAria(cat: { value: LogCategory; label: string }): string {
+  const enabled = isCategoryEnabled(cat.value)
+  return (enabled ? i18n.t.log_turnOffCategoryAria : i18n.t.log_turnOnCategoryAria).replace('{category}', cat.label)
+}
 
 function onScroll(): void {
   if (!containerRef.value) return
@@ -175,36 +184,36 @@ onBeforeUnmount(() => {
     <!-- 简化标题栏：标题 + 状态 + 计数 + 操作按钮，对齐 daq-t1603 的简洁头部 -->
     <header class="log-header">
       <div class="log-header__left">
-        <h1 class="log-header__title">日志</h1>
+        <h1 class="log-header__title">{{ i18n.t.log_title }}</h1>
         <span class="log-header__status" :class="`stream-${logStore.streamStatus}`">
           {{ streamStatusText }}
         </span>
-        <span class="log-header__count">{{ filteredEntries.length }} / {{ logStore.entries.length }} 条</span>
+        <span class="log-header__count">{{ filteredEntries.length }} / {{ logStore.entries.length }} {{ i18n.t.entries }}</span>
       </div>
       <div class="log-header__actions">
         <UiButton
           size="sm"
           variant="secondary"
           :class="{ 'is-paused': logStore.isPaused }"
-          :aria-label="logStore.isPaused ? '恢复日志滚动' : '暂停日志滚动'"
+          :aria-label="logStore.isPaused ? i18n.t.log_resumeScrollAria : i18n.t.log_pauseScrollAria"
           @click="logStore.togglePause()"
         >
-          {{ logStore.isPaused ? `恢复 (${logStore.bufferCount})` : '暂停' }}
+          {{ logStore.isPaused ? `${i18n.t.log_resume} (${logStore.bufferCount})` : i18n.t.log_pause }}
         </UiButton>
-        <UiButton size="sm" variant="secondary" aria-label="复制当前筛选日志" @click="copyLogs">
-          复制
+        <UiButton size="sm" variant="secondary" :aria-label="i18n.t.log_copyAria" @click="copyLogs">
+          {{ i18n.t.log_copy }}
         </UiButton>
-        <UiButton size="sm" variant="danger" aria-label="清空前端日志缓冲" @click="logStore.clear()">
-          清空
+        <UiButton size="sm" variant="danger" :aria-label="i18n.t.log_clearAria" @click="logStore.clear()">
+          {{ i18n.t.log_clear }}
         </UiButton>
       </div>
     </header>
 
     <!-- 工具栏：级别 chip + 分类 chip + 搜索框，参考 daq-t1603 的两行布局 -->
-    <section class="log-toolbar" aria-label="日志筛选">
+    <section class="log-toolbar" :aria-label="i18n.t.log_filterAria">
       <div class="log-toolbar__row">
         <div class="log-toolbar__group">
-          <span class="log-toolbar__label">级别</span>
+          <span class="log-toolbar__label">{{ i18n.t.log_level }}</span>
           <button
             v-for="level in LEVELS"
             :key="level.label"
@@ -221,7 +230,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="log-toolbar__group">
-          <span class="log-toolbar__label">分类</span>
+          <span class="log-toolbar__label">{{ i18n.t.log_category }}</span>
           <button
             v-for="group in GROUPS"
             :key="group.value"
@@ -239,8 +248,8 @@ onBeforeUnmount(() => {
         <UiInput
           v-model="logStore.filterSearch"
           class="log-toolbar__search"
-          placeholder="搜索消息、来源或详情"
-          aria-label="搜索日志"
+          :placeholder="i18n.t.log_searchPlaceholder"
+          :aria-label="i18n.t.log_searchAria"
         >
           <template #prefix>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -250,25 +259,25 @@ onBeforeUnmount(() => {
           </template>
         </UiInput>
         <UiButton v-if="hasActiveFilter" size="sm" variant="ghost" @click="clearFilters">
-          清除筛选
+          {{ i18n.t.log_clearFilter }}
         </UiButton>
         <UiButton
           size="sm"
           variant="ghost"
           :class="{ 'is-active': showCategoryPanel }"
           :aria-expanded="showCategoryPanel"
-          aria-label="展开日志类型开关"
+          :aria-label="i18n.t.log_categoryToggleAria"
           @click="showCategoryPanel = !showCategoryPanel"
         >
-          类型开关
+          {{ i18n.t.log_categoryToggle }}
         </UiButton>
       </div>
 
       <!-- 日志类型开关面板：默认收起，点击「类型开关」展开 -->
       <div v-if="showCategoryPanel" class="category-panel">
         <div class="category-panel__header">
-          <span>后端日志分类开关</span>
-          <small>关闭后该类日志不写入前端缓冲，文件和 stderr 仍完整输出</small>
+          <span>{{ i18n.t.log_categoryPanelTitle }}</span>
+          <small>{{ i18n.t.log_categoryPanelHint }}</small>
         </div>
         <div class="category-panel__list">
           <label
@@ -282,7 +291,7 @@ onBeforeUnmount(() => {
               type="button"
               role="switch"
               :aria-checked="isCategoryEnabled(cat.value)"
-              :aria-label="`${isCategoryEnabled(cat.value) ? '关闭' : '开启'} ${cat.label} 日志`"
+              :aria-label="categoryToggleAria(cat)"
               class="category-toggle__switch"
               :class="{ 'is-on': isCategoryEnabled(cat.value) }"
               :disabled="togglingCategories.has(cat.value)"
@@ -296,13 +305,13 @@ onBeforeUnmount(() => {
     </section>
 
     <!-- 日志列表：5 列网格，时间/级别/分类/来源/消息 -->
-    <section class="log-table" aria-label="日志列表">
+    <section class="log-table" :aria-label="i18n.t.log_listAria">
       <div class="log-table__head" aria-hidden="true">
-        <span>时间</span>
-        <span>级别</span>
-        <span>分类</span>
-        <span>来源</span>
-        <span>消息</span>
+        <span>{{ i18n.t.log_time }}</span>
+        <span>{{ i18n.t.log_level }}</span>
+        <span>{{ i18n.t.log_category }}</span>
+        <span>{{ i18n.t.log_source }}</span>
+        <span>{{ i18n.t.log_message }}</span>
       </div>
       <div ref="containerRef" class="log-entries" @scroll="onScroll">
         <article
@@ -323,9 +332,9 @@ onBeforeUnmount(() => {
         </article>
 
         <div v-if="filteredEntries.length === 0" class="log-empty">
-          <strong>{{ logStore.entries.length === 0 ? '还没有收到日志' : '没有匹配当前筛选的日志' }}</strong>
-          <span>{{ logStore.entries.length === 0 ? '检查后端服务是否启动，或查看实时通道状态。' : '放宽级别或关键字筛选后再查看。' }}</span>
-          <UiButton v-if="hasActiveFilter" size="sm" variant="secondary" @click="clearFilters">显示全部日志</UiButton>
+          <strong>{{ logStore.entries.length === 0 ? i18n.t.log_noLogsYet : i18n.t.log_noMatchingLogs }}</strong>
+          <span>{{ logStore.entries.length === 0 ? i18n.t.log_noLogsHint : i18n.t.log_noMatchingHint }}</span>
+          <UiButton v-if="hasActiveFilter" size="sm" variant="secondary" @click="clearFilters">{{ i18n.t.log_showAll }}</UiButton>
         </div>
       </div>
     </section>

@@ -5,6 +5,7 @@ import { getAxisThemeClass, validateEncoderCompensation, type CompensationWarnin
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import { useI18nStore } from '@stores/i18nStore'
 
 const props = defineProps<{
   axis: AxisConfig
@@ -15,6 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   update: [index: number, axis: AxisConfig]
 }>()
+
+const i18n = useI18nStore()
 
 const localAxis = computed<AxisConfig>({
   get: () => props.axis,
@@ -38,15 +41,15 @@ const compWarnings = computed<CompensationWarning[]>(() => {
   return validateEncoderCompensation(cfg, localAxis.value)
 })
 
-// 参数帮助文本
-const FIELD_HELP: Record<string, string> = {
-  encoderScale: '每个编码器计数对应的工程单位（mm 或 °）。如光栅尺 0.005mm/计数。tolerance 不可小于此值。',
-  tolerance: '误差 ≤ 此值时认为补偿收敛。不可小于编码器分辨率。',
-  maxCycles: '单次 MoveTo/MoveBy 后补偿循环最大次数。超限未收敛则失败。',
-  settleMs: '运动停止后等待机械稳定的时间(ms)。太短会在轴未稳时读数导致误判。',
-  minStep: '单次修正的最小步长。误差 < 此值不再修正，避免无穷小步进振荡。',
-  timeoutMs: '补偿任务总超时(ms)，超时标记失败。',
-}
+// 参数帮助文本（随语言切换）
+const fieldHelp = computed<Record<string, string>>(() => ({
+  encoderScale: i18n.t.motion_help_encoderScale,
+  tolerance: i18n.t.motion_help_tolerance,
+  maxCycles: i18n.t.motion_help_maxCycles,
+  settleMs: i18n.t.motion_help_settleMs,
+  minStep: i18n.t.motion_help_minStep,
+  timeoutMs: i18n.t.motion_help_timeoutMs,
+}))
 
 /**
  * 仅 B140-MC 支持编码器位置来源；当切换为其他设备类型时，
@@ -91,11 +94,11 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           :model-value="axis.kind"
           @update:model-value="updateField('kind', $event as AxisKind)"
           width-class="w-20"
-          :aria-label="`${axis.name} 轴类型`"
+          :aria-label="`${axis.name} ${i18n.t.motion_axisKind}`"
           :data-test="`motion-axis-${axis.name}-kind`"
           :options="[
-            { value: 'LINEAR', label: '直线轴' },
-            { value: 'ROTARY', label: '旋转轴' },
+            { value: 'LINEAR', label: i18n.t.motion_linearAxis },
+            { value: 'ROTARY', label: i18n.t.motion_rotaryAxis },
           ]"
         />
       </div>
@@ -105,7 +108,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
     <div class="axis-card__body">
       <div class="axis-card__grid">
         <div class="axis-card__field">
-          <span class="axis-card__field-label">步距角 °</span>
+          <span class="axis-card__field-label">{{ i18n.t.motion_stepAngle }}</span>
           <UiInputNumber
             :model-value="axis.stepsPerRev ?? 1.8"
             @update:model-value="updateField('stepsPerRev', $event ?? 1.8)"
@@ -115,7 +118,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           />
         </div>
         <div class="axis-card__field">
-          <span class="axis-card__field-label">细分数</span>
+          <span class="axis-card__field-label">{{ i18n.t.motion_microSteps }}</span>
           <UiInputNumber
             :model-value="axis.microSteps ?? 4"
             @update:model-value="updateField('microSteps', $event ?? 4)"
@@ -126,7 +129,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         </div>
         <div class="axis-card__field">
           <span class="axis-card__field-label">
-            {{ axis.kind === 'ROTARY' ? '传动比' : '导程 mm' }}
+            {{ axis.kind === 'ROTARY' ? i18n.t.motion_gearRatio : i18n.t.motion_lead }}
           </span>
           <UiInputNumber
             v-if="axis.kind === 'ROTARY'"
@@ -147,7 +150,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         </div>
         <div class="axis-card__field">
           <span class="axis-card__field-label axis-card__field-label--highlight">
-            {{ axis.kind === 'ROTARY' ? '最大转速' : '最大速度' }}
+            {{ axis.kind === 'ROTARY' ? i18n.t.motion_maxRpm : i18n.t.motion_maxSpeed }}
           </span>
           <UiInputNumber
             :model-value="axis.maxSpeed ?? 100"
@@ -166,19 +169,19 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
             :checked="axis.inverted"
             @update:checked="updateField('inverted', $event)"
           />
-          <span class="axis-card__footer-label">方向反转</span>
+          <span class="axis-card__footer-label">{{ i18n.t.motion_directionInverted }}</span>
         </label>
         <div class="axis-card__footer-item">
-          <span class="axis-card__footer-label">位置来源</span>
+          <span class="axis-card__footer-label">{{ i18n.t.motion_positionSource }}</span>
           <UiSelect
             v-model="positionSourceModel"
             class="w-20"
-            :aria-label="`${axis.name} 位置来源`"
+            :aria-label="`${axis.name} ${i18n.t.motion_positionSource}`"
             :data-test="`motion-axis-${axis.name}-position-source`"
             :disabled="!supportsEncoder"
             :options="[
-              { value: 'register', label: '寄存器' },
-              { value: 'encoder', label: '编码器' },
+              { value: 'register', label: i18n.t.motion_register },
+              { value: 'encoder', label: i18n.t.motion_encoder },
             ]"
           />
         </div>
@@ -187,22 +190,22 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
       <!-- 编码器补偿区域（仅 B140-MC 且位置来源为编码器时显示） -->
       <div v-if="supportsEncoder && axis.positionSource === 'encoder'" class="encoder-section">
         <div class="encoder-section__header">
-          <span class="encoder-section__title">编码器补偿</span>
+          <span class="encoder-section__title">{{ i18n.t.motion_encoderCompensation }}</span>
           <label class="flex items-center gap-1 cursor-pointer">
             <UiCheckbox
               :checked="encoderComp.enabled"
               @update:checked="updateCompensationField('enabled', $event)"
             />
-            <span class="encoder-section__label">启用</span>
+            <span class="encoder-section__label">{{ i18n.t.motion_enable }}</span>
           </label>
         </div>
         <div class="encoder-section__row">
           <div class="encoder-section__field encoder-section__field--scale">
             <span class="encoder-section__label">
-              编码器分辨率
+              {{ i18n.t.motion_encoderResolution }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['encoderScale']"
+                :title="fieldHelp['encoderScale']"
               >?</span>
             </span>
             <UiInputNumber
@@ -217,10 +220,10 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         <div v-if="encoderComp.enabled" class="encoder-section__grid">
           <div class="encoder-section__field">
             <span class="encoder-section__label">
-              容差
+              {{ i18n.t.motion_tolerance }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['tolerance']"
+                :title="fieldHelp['tolerance']"
               >?</span>
             </span>
             <UiInputNumber
@@ -233,10 +236,10 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           </div>
           <div class="encoder-section__field">
             <span class="encoder-section__label">
-              最大循环
+              {{ i18n.t.motion_maxCycles }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['maxCycles']"
+                :title="fieldHelp['maxCycles']"
               >?</span>
             </span>
             <UiInputNumber
@@ -249,10 +252,10 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           </div>
           <div class="encoder-section__field">
             <span class="encoder-section__label">
-              稳定 ms
+              {{ i18n.t.motion_settleMs }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['settleMs']"
+                :title="fieldHelp['settleMs']"
               >?</span>
             </span>
             <UiInputNumber
@@ -265,10 +268,10 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           </div>
           <div class="encoder-section__field">
             <span class="encoder-section__label">
-              最小步
+              {{ i18n.t.motion_minStep }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['minStep']"
+                :title="fieldHelp['minStep']"
               >?</span>
             </span>
             <UiInputNumber
@@ -281,10 +284,10 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
           </div>
           <div class="encoder-section__field">
             <span class="encoder-section__label">
-              超时 ms
+              {{ i18n.t.motion_timeoutMs }}
               <span
                 class="enc-help"
-                :title="FIELD_HELP['timeoutMs']"
+                :title="fieldHelp['timeoutMs']"
               >?</span>
             </span>
             <UiInputNumber

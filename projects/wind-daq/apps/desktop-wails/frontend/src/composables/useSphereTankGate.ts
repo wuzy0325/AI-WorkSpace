@@ -23,6 +23,7 @@ function pickDefaultChannel(config: CalibrationConfig): ChannelRef {
 }
 
 export function useSphereTankGate(options: UseSphereTankGateOptions) {
+  const i18n = useI18nStore()
   const gateEnabled = ref(false)
   const waitTimeSec = ref(3)
   const stableTimeSec = ref<number | null>(null)
@@ -31,10 +32,10 @@ export function useSphereTankGate(options: UseSphereTankGateOptions) {
   const isActive = computed(() => gateEnabled.value && stableTimeSec.value !== null)
 
   const statusText = computed(() => {
-    if (!gateEnabled.value) return '未启用'
-    if (stableTimeSec.value === null) return '暂无数据'
-    if (stableTimeSec.value >= waitTimeSec.value) return '稳定'
-    return '等待中'
+    if (!gateEnabled.value) return i18n.t.wf_sphereGateNotEnabled
+    if (stableTimeSec.value === null) return i18n.t.wf_sphereGateNoData
+    if (stableTimeSec.value >= waitTimeSec.value) return i18n.t.wf_sphereGateStable
+    return i18n.t.wf_sphereGateWaiting
   })
 
   function ensureGate(config: CalibrationConfig): SphereTankGateConfig {
@@ -91,7 +92,7 @@ export function useSphereTankGate(options: UseSphereTankGateOptions) {
       const snapshot = cloneConfig(config)
       const saveRes = await calibrationApi.saveConfig(options.calibrationType, snapshot)
       if (!saveRes.success) {
-        throw new Error(saveRes.error || '保存球罐判定配置失败')
+        throw new Error(saveRes.error || i18n.t.wf_sphereGateSaveFailed)
       }
 
       gateEnabled.value = gate.enabled

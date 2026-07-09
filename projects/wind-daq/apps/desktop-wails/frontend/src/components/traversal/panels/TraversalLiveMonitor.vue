@@ -56,24 +56,32 @@ defineProps<{
     hardwareStatus: string
     acquisitionDevice: string
     positionerDevice: string
+    moving: string
   }
 }>()
 </script>
 
 <template>
   <div class="flex h-full w-96 flex-col flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-panel)] overflow-hidden">
-    <!-- 目标点 + 实际位置：合并为一张卡片，X/Y 两轴并排展示，避免重复标签分散 -->
+    <!-- 目标点 + 实际位置：同一张卡片内上下两段，结构完全对称（两列 + 大字号 + 标签一致） -->
     <section class="flex-shrink-0 border-b border-[var(--border-default)] p-2.5">
-      <div class="rounded-xl bg-[var(--bg-panel-strong)] p-3">
-        <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs text-[var(--text-muted)]">{{ labels.target }}</span>
-          <span class="font-mono text-lg font-bold text-[var(--accent-info)]">
-            <template v-if="targetPoint">
-              α{{ targetPoint.alpha.toFixed(1) }}° β{{ targetPoint.beta.toFixed(1) }}°
-            </template>
-            <template v-else>--</template>
-          </span>
+      <div class="rounded-xl bg-[var(--bg-panel-strong)] p-3 space-y-2">
+        <!-- 目标位置：α / β 两列，与实际位置结构完全一致 -->
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex flex-col">
+            <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} α</span>
+            <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
+              {{ targetPoint ? targetPoint.alpha.toFixed(1) + '°' : '--' }}
+            </span>
+          </div>
+          <div class="flex flex-col">
+            <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} β</span>
+            <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
+              {{ targetPoint ? targetPoint.beta.toFixed(1) + '°' : '--' }}
+            </span>
+          </div>
         </div>
+        <!-- 实际位置：两列，标签/字号/颜色与目标位置对齐，运动中高亮 -->
         <div class="grid grid-cols-2 gap-2 border-t border-[var(--border-default)] pt-2">
           <template v-if="actualPositions.length">
             <div
@@ -82,15 +90,14 @@ defineProps<{
               class="flex flex-col"
             >
               <div class="mb-0.5 flex items-center gap-1.5">
-                <span class="text-[10px] text-[var(--text-muted)]">{{ labels.actual }}</span>
-                <span class="text-xs font-medium text-[var(--text-secondary)]">{{ axis.label }}</span>
+                <span class="text-[10px] text-[var(--text-muted)]">{{ labels.actual }} {{ axis.label }}</span>
                 <span
                   v-if="axis.moving"
                   class="ml-auto flex items-center gap-1 text-[10px]"
                   :style="{ color: `var(--accent-success)` }"
                 >
                   <span class="h-1.5 w-1.5 animate-pulse rounded-full" :style="{ backgroundColor: `var(--accent-success)` }"></span>
-                  运动中
+                  {{ labels.moving }}
                 </span>
               </div>
               <span
@@ -107,10 +114,7 @@ defineProps<{
               :key="placeholder"
               class="flex flex-col"
             >
-              <div class="mb-0.5 flex items-center gap-1.5">
-                <span class="text-[10px] text-[var(--text-muted)]">{{ labels.actual }}</span>
-                <span class="text-xs font-medium text-[var(--text-secondary)]">{{ placeholder }}</span>
-              </div>
+              <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.actual }} {{ placeholder }}</span>
               <span class="font-mono text-xl font-bold tabular-nums text-[var(--text-primary)]">--</span>
             </div>
           </template>

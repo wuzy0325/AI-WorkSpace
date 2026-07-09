@@ -31,23 +31,24 @@ function isRequired(c: ProbeChannelConfig) { return isTraversalRequiredProbeChan
 // 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
 // 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
 const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: i }))
-const axisOptions = ['X', 'Y', 'Z', 'U'].map(a => ({ label: `${a} 轴`, value: a }))
+// 轴选项标签需随语言切换刷新，故用 computed 派生
+const axisOptions = computed(() => ['X', 'Y', 'Z', 'U'].map(a => ({ label: props.t.travAxisSuffix.replace('{axis}', a), value: a })))
 const mappingOptions = [
-  { label: props.t.mappingAlpha || '攻角', value: 'alpha' },
-  { label: props.t.mappingBeta || '侧滑角', value: 'beta' },
+  { label: props.t.mappingAlpha, value: 'alpha' },
+  { label: props.t.mappingBeta, value: 'beta' },
 ]
 
 // 数据验证错误策略选项
 const errorStrategyOptions = [
-  { label: props.t.travStrategyContinue || 'Continue', value: 'continue' },
-  { label: props.t.travStrategyRetry || 'Retry', value: 'retry' },
-  { label: props.t.travStrategySkip || 'Skip', value: 'skip' },
+  { label: props.t.travStrategyContinue, value: 'continue' },
+  { label: props.t.travStrategyRetry, value: 'retry' },
+  { label: props.t.travStrategySkip, value: 'skip' },
 ]
 
 // 稳定化模式选项
 const stabilizationOptions = [
-  { label: props.t.travFixedTime || 'Fixed time', value: 'fixed' },
-  { label: props.t.travAdaptive || 'Adaptive', value: 'adaptive' },
+  { label: props.t.travFixedTime, value: 'fixed' },
+  { label: props.t.travAdaptive, value: 'adaptive' },
 ]
 
 // ---- 设备连接状态映射 ----
@@ -97,35 +98,35 @@ function autoFillChannelIndices(): void {
       <div class="batch-toolbar-row">
         <!-- 统一选择设备 -->
         <div class="batch-cell">
-          <span class="batch-label">{{ t.unifiedDevice || '统一设备' }}</span>
-          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice || '选择设备'" class="batch-select" :disabled="isLoading" />
+          <span class="batch-label">{{ t.unifiedDevice }}</span>
+          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
         </div>
         <div class="batch-cell">
-          <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels || '应用到全部通道' }}</UiButton>
+          <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels }}</UiButton>
         </div>
       </div>
       <div class="batch-toolbar-row">
         <!-- 通道号自动递增 -->
         <div class="batch-cell">
-          <span class="batch-label">{{ t.startChannel || '起始通道' }}</span>
+          <span class="batch-label">{{ t.startChannel }}</span>
           <UiSelect
             :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
             @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
             :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
-            :placeholder="t.selectStartChannel || '选择起始通道号'"
+            :placeholder="t.selectStartChannel"
             class="batch-select"
             :disabled="isLoading"
           />
         </div>
         <div class="batch-cell">
-          <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill || '自动递增填充' }}</UiButton>
+          <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill }}</UiButton>
         </div>
       </div>
     </div>
 
     <!-- 探头通道配置 -->
     <UiPanel class="section-card">
-      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span><span class="hdr-w80">{{ t.channelPrecision || '精度' }}</span></div>
+      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span><span class="hdr-w80">{{ t.channelPrecision }}</span></div>
       <div v-for="ch in probeChannels" :key="ch.name" class="hw-row">
         <div class="row-check"><UiCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" /></div>
         <div class="row-content">
@@ -135,7 +136,7 @@ function autoFillChannelIndices(): void {
           </div>
         </div>
         <div class="device-select-wrap">
-          <UiSelect v-model="ch.channel.deviceId" :options="deviceOptions" :placeholder="t.selectDevice || '选择设备'" class="sel-w150" :disabled="!ch.enabled || isLoading" />
+          <UiSelect v-model="ch.channel.deviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="sel-w150" :disabled="!ch.enabled || isLoading" />
           <span
             v-if="ch.channel.deviceId"
             class="device-status-dot"
@@ -150,10 +151,10 @@ function autoFillChannelIndices(): void {
 
     <!-- 运动轴配置 -->
     <UiPanel class="section-card">
-      <div class="hw-head"><span class="hdr-w50">{{ t.coordinateAxis }}</span><span class="hdr-name">{{ t.motionControllerLabel }}</span><span class="hdr-w80">{{ t.physicalAxis }}</span><span class="hdr-w90">{{ t.mappingLabel || 'Mapping' }}</span></div>
+      <div class="hw-head"><span class="hdr-w50">{{ t.coordinateAxis }}</span><span class="hdr-name">{{ t.motionControllerLabel }}</span><span class="hdr-w80">{{ t.physicalAxis }}</span><span class="hdr-w90">{{ t.mappingLabel }}</span></div>
       <div v-for="ax in motionAxes" :key="ax.name" class="hw-row">
         <span class="axis-name">{{ ax.name }}</span>
-        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" :placeholder="t.selectController || '选择控制器'" class="sel-flex" :disabled="isLoading" />
+        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" :placeholder="t.selectController" class="sel-flex" :disabled="isLoading" />
         <UiSelect v-model="ax.axis" :options="axisOptions" class="sel-w80" />
         <UiSelect v-model="ax.angleMapping!.type" :options="mappingOptions" class="sel-w90" />
       </div>
@@ -161,17 +162,17 @@ function autoFillChannelIndices(): void {
 
     <!-- 数据验证与稳定化配置：合并为紧凑的辅助配置区块 -->
     <UiPanel class="section-card compact-panel" :padded="false">
-      <template #header><span class="batch-title">{{ t.travAdvancedConfig || '辅助配置' }}</span></template>
+      <template #header><span class="batch-title">{{ t.travAdvancedConfig }}</span></template>
 
       <div class="compact-panel-inner">
         <!-- 数据验证：可选，用于校验压力范围和异常尖峰 -->
         <div class="compact-config-row">
           <label class="compact-option-label">
             <UiCheckbox v-model:checked="validationEnabled" size="small" />
-            <span class="compact-label-text">{{ t.travEnableValidation || '启用数据验证' }}</span>
+            <span class="compact-label-text">{{ t.travEnableValidation }}</span>
           </label>
           <div v-if="validationEnabled" class="sub-config-inline">
-            <span class="sub-config-label">{{ t.travErrorStrategy || '错误策略' }}</span>
+            <span class="sub-config-label">{{ t.travErrorStrategy }}</span>
             <div class="radio-group compact-radio-group">
               <label v-for="opt in errorStrategyOptions" :key="opt.value" class="radio-label" :class="{ active: validationConfig.onInvalid === opt.value }">
                 <input v-model="validationConfig.onInvalid" type="radio" :value="opt.value" />
@@ -186,7 +187,7 @@ function autoFillChannelIndices(): void {
 
         <!-- 稳定化模式：fixed 使用固定等待时间，adaptive 持续监测压力变化 -->
         <div class="compact-config-row">
-          <span class="compact-label-text">{{ t.travStableMode || '稳定模式' }}</span>
+          <span class="compact-label-text">{{ t.travStableMode }}</span>
           <div class="radio-group compact-radio-group">
             <label v-for="opt in stabilizationOptions" :key="opt.value" class="radio-label" :class="{ active: stabilizationMode === opt.value }">
               <input v-model="stabilizationMode" type="radio" :value="opt.value" />
@@ -194,10 +195,10 @@ function autoFillChannelIndices(): void {
             </label>
           </div>
           <div v-if="stabilizationMode === 'fixed'" class="sub-config-inline">
-            <span class="sub-config-label">{{ t.travWaitTime || '等待时间 (ms)' }}</span>
+            <span class="sub-config-label">{{ t.travWaitTime }}</span>
             <UiInputNumber v-model="stabilizationConfig.fixedTimeMs" :min="100" :max="60000" class="compact-input" />
           </div>
-          <div v-else class="sub-config-hint compact-hint">{{ t.travAdaptiveHint || '自适应模式：自动监测压力稳定性' }}</div>
+          <div v-else class="sub-config-hint compact-hint">{{ t.travAdaptiveHint }}</div>
         </div>
       </div>
     </UiPanel>

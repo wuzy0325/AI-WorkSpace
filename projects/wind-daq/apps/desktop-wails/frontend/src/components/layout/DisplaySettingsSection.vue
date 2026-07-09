@@ -56,10 +56,14 @@ function validateField(field: string): string {
   switch (field) {
     case 'refreshRate':
       return refreshRate.value < REFRESH_RATE_MIN || refreshRate.value > REFRESH_RATE_MAX
-        ? `刷新率范围为 ${REFRESH_RATE_MIN} 到 ${REFRESH_RATE_MAX} Hz` : ''
+        ? i18nStore.t.set_refreshRateRangeError
+          .replace('{min}', String(REFRESH_RATE_MIN))
+          .replace('{max}', String(REFRESH_RATE_MAX)) : ''
     case 'waveformBufferSize':
       return waveformBufferSize.value < WAVEFORM_BUFFER_MIN || waveformBufferSize.value > WAVEFORM_BUFFER_MAX
-        ? `波形图缓冲区点数范围为 ${WAVEFORM_BUFFER_MIN} 到 ${WAVEFORM_BUFFER_MAX}` : ''
+        ? i18nStore.t.set_waveformBufferRangeError
+          .replace('{min}', String(WAVEFORM_BUFFER_MIN))
+          .replace('{max}', String(WAVEFORM_BUFFER_MAX)) : ''
     default:
       return ''
   }
@@ -116,49 +120,49 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
       <template #header>
         <div class="card-head">
           <Monitor :size="15" />
-          <span class="card-head__title">外观与语言</span>
+          <span class="card-head__title">{{ i18nStore.t.set_appearanceLanguage }}</span>
         </div>
       </template>
       <div class="form-fields">
         <!-- 主题切换 -->
-        <UiFormField label="主题模式">
+        <UiFormField :label="i18nStore.t.set_themeMode">
           <div class="theme-switch">
             <UiButton
               size="md"
               :variant="theme === 'light' ? 'primary' : 'ghost'"
-              aria-label="切换为浅色主题"
+              :aria-label="i18nStore.t.set_toggleToLightTheme"
               data-test="settings-theme-light"
               @click="themeStore.setTheme('light')"
             >
-              <template #icon><Sun :size="14" /></template>浅色
+              <template #icon><Sun :size="14" /></template>{{ i18nStore.t.set_light }}
             </UiButton>
             <UiButton
               size="md"
               :variant="theme === 'dark' ? 'primary' : 'ghost'"
-              aria-label="切换为深色主题"
+              :aria-label="i18nStore.t.set_toggleToDarkTheme"
               data-test="settings-theme-dark"
               @click="themeStore.setTheme('dark')"
             >
-              <template #icon><Moon :size="14" /></template>深色
+              <template #icon><Moon :size="14" /></template>{{ i18nStore.t.set_dark }}
             </UiButton>
           </div>
         </UiFormField>
         <!-- 语言切换 -->
-        <UiFormField label="界面语言">
+        <UiFormField :label="i18nStore.t.set_interfaceLanguage">
           <div class="locale-switch">
             <button
               class="locale-btn"
               :class="{ 'locale-btn--active': locale === 'zh' }"
-              aria-label="切换为中文界面"
+              :aria-label="i18nStore.t.set_switchToChinese"
               data-test="settings-locale-zh"
               @click="i18nStore.setLocale('zh')"
             >
-              <Globe :size="12" />中文
+              <Globe :size="12" />{{ i18nStore.t.set_chinese }}
             </button>
             <button
               class="locale-btn"
               :class="{ 'locale-btn--active': locale === 'en' }"
-              aria-label="Switch interface language to English"
+              :aria-label="i18nStore.t.set_switchToEnglish"
               data-test="settings-locale-en"
               @click="i18nStore.setLocale('en')"
             >
@@ -174,24 +178,24 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
       <template #header>
         <div class="card-head">
           <RefreshCw :size="15" />
-          <span class="card-head__title">刷新率</span>
+          <span class="card-head__title">{{ i18nStore.t.set_refreshRate }}</span>
         </div>
       </template>
       <div class="form-fields">
         <UiFormField
-          label="实时数据刷新频率"
+          :label="i18nStore.t.set_refreshFrequency"
           :error="validationErrors.refreshRate"
-          hint="较高的刷新率会占用更多系统资源"
+          :hint="i18nStore.t.set_refreshHint"
         >
           <div class="refresh-row">
             <div class="refresh-slider">
-              <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" aria-label="实时数据刷新频率" />
+              <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" :aria-label="i18nStore.t.set_refreshFrequency" />
               <div class="refresh-labels">
                 <span class="refresh-label">1 Hz</span>
                 <span
                   class="refresh-label refresh-label--highlight"
                   :class="{ 'refresh-label--active': refreshRate >= 5 && refreshRate <= 15 }"
-                >推荐 5–15 Hz</span>
+                >{{ i18nStore.t.set_recommendedRefresh }}</span>
                 <span class="refresh-label">20 Hz</span>
               </div>
             </div>
@@ -215,14 +219,14 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
       <template #header>
         <div class="card-head">
           <Activity :size="15" />
-          <span class="card-head__title">波形图</span>
+          <span class="card-head__title">{{ i18nStore.t.set_waveform }}</span>
         </div>
       </template>
       <div class="form-fields">
         <UiFormField
-          label="波形图缓冲区点数"
+          :label="i18nStore.t.waveformBufferSizeLabel"
           :error="validationErrors.waveformBufferSize"
-          hint="较大的缓冲区可显示更长时间趋势，但会占用更多内存"
+          :hint="i18nStore.t.waveformBufferSizeHint"
         >
           <div class="refresh-row">
             <div class="refresh-slider">
@@ -231,15 +235,15 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
                 :min="WAVEFORM_BUFFER_MIN"
                 :max="WAVEFORM_BUFFER_MAX"
                 :step="WAVEFORM_BUFFER_STEP"
-                aria-label="波形图缓冲区点数"
+                :aria-label="i18nStore.t.waveformBufferSizeLabel"
               />
               <div class="refresh-labels">
-                <span class="refresh-label">{{ WAVEFORM_BUFFER_MIN }} 点</span>
+                <span class="refresh-label">{{ WAVEFORM_BUFFER_MIN }} {{ i18nStore.t.pts }}</span>
                 <span
                   class="refresh-label refresh-label--highlight"
                   :class="{ 'refresh-label--active': waveformBufferSize >= 100 && waveformBufferSize <= 500 }"
-                >推荐 100–500 点</span>
-                <span class="refresh-label">{{ WAVEFORM_BUFFER_MAX }} 点</span>
+                >{{ i18nStore.t.set_recommendedBuffer }}</span>
+                <span class="refresh-label">{{ WAVEFORM_BUFFER_MAX }} {{ i18nStore.t.pts }}</span>
               </div>
             </div>
             <div class="refresh-value">
@@ -251,7 +255,7 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
                 size="small"
                 @blur="updateFieldError('waveformBufferSize')"
               />
-              <span class="input-unit">点</span>
+              <span class="input-unit">{{ i18nStore.t.pts }}</span>
             </div>
           </div>
         </UiFormField>

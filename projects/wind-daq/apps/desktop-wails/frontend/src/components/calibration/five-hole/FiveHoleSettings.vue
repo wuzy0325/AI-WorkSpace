@@ -228,7 +228,7 @@ const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
     if (calibrationName.value.trim() === '') errors.push(t.value.enterConfigName || '请输入配置名称')
-    if (savePath.value.trim() === '') errors.push('请输入 CSV 保存路径')
+    if (savePath.value.trim() === '') errors.push(t.value.fh_pleaseSelectCsvPath)
     // 点位布局相关错误统一由 validatePointLayout 提供
     errors.push(...pointLayoutValidation.value.errors)
     if (dwellTimeMs.value < 100) errors.push(t.value.dwellTimeMin || '驻留时间至少100ms')
@@ -326,11 +326,11 @@ async function saveConfig() {
     }
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
     const res = await calibrationApi.saveConfig('five-hole', normalizedConfig)
-    if (!res.success) throw new Error(res.error || '保存失败')
+    if (!res.success) throw new Error(res.error || t.value.fh_saveFailed)
     emit('saved', normalizedConfig)
     emit('close')
   } catch (err) {
-    feedbackStore.pushToast('保存失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+    feedbackStore.pushToast(t.value.fh_saveFailedColon + (err instanceof Error ? err.message : String(err)), 'error')
   } finally { isSaving.value = false }
 }
 

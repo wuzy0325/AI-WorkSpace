@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component, nextTick, ref, watch } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiSpin from '@components/ui/UiSpin.vue'
@@ -20,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 const storageStore = useStorageStore()
 
 const loading = ref(false)
@@ -35,11 +37,11 @@ const isVisible = computed({
   set: (value) => emit('update:open', value),
 })
 
-/** Tab 配置列表（按需扩展新的分组） */
-const TABS: { key: SettingsTab; label: string; icon: Component }[] = [
-  { key: 'display', label: '界面', icon: Monitor },
-  { key: 'recording', label: '记录', icon: FileText },
-]
+/** Tab 配置列表（按需扩展新的分组；label 跟随全局语言切换） */
+const TABS = computed<{ key: SettingsTab; label: string; icon: Component }[]>(() => [
+  { key: 'display', label: i18n.t.set_tabDisplay, icon: Monitor },
+  { key: 'recording', label: i18n.t.set_tabRecording, icon: FileText },
+])
 
 watch(() => props.open, (open) => { if (open) void loadSettings() })
 
@@ -89,13 +91,13 @@ function onReset(): void {
   const recording = recordingRef.value
   if (!display || !recording) {
     // ref 缺失属程序错误，必须显式反馈而非 ?. 静默跳过
-    feedback.pushToast('设置面板未就绪，请重试', 'error')
+    feedback.pushToast(i18n.t.set_panelNotReady, 'error')
     console.error('[GlobalSettings] onReset: 子组件未挂载')
     return
   }
   display.reset()
   recording.reset()
-  feedback.pushToast('已恢复默认设置', 'info')
+  feedback.pushToast(i18n.t.set_defaultsRestored, 'info')
 }
 
 async function onSave(): Promise<void> {
@@ -114,7 +116,7 @@ async function onSave(): Promise<void> {
       ...recording.validate(),
     }
     if (Object.keys(errs).length) {
-      const firstError = Object.values(errs).find(Boolean) || '设置无效'
+      const firstError = Object.values(errs).find(Boolean) || i18n.t.set_invalidSettings
       feedback.pushToast(firstError, 'warning')
       return
     }
@@ -126,12 +128,12 @@ async function onSave(): Promise<void> {
     const sinkTuningChanged = await recording.save(waveformBufferSize, refreshRateHz)
     await display.save()
     const message = sinkTuningChanged
-      ? '设置已保存（sink 调优参数需重启应用生效）'
-      : '设置已保存'
+      ? i18n.t.set_savedWithRestart
+      : i18n.t.set_saved
     feedback.pushToast(message, 'success')
     saved = true
   } catch {
-    feedback.pushToast('保存失败，请重试', 'error')
+    feedback.pushToast(i18n.t.set_saveFailed, 'error')
   } finally {
     saving.value = false
   }
@@ -144,7 +146,7 @@ async function onSave(): Promise<void> {
     v-model:show="isVisible"
     preset="card"
     :style="{ maxWidth: '42rem', width: '92vw' }"
-    title="全局设置"
+    :title="i18n.t.set_globalSettings"
     :bordered="false"
     :mask-closable="false"
     @close="onClose"
@@ -152,8 +154,8 @@ async function onSave(): Promise<void> {
     <template #header>
       <div class="modal-head">
         <div class="modal-head__info">
-          <div class="modal-head__title">全局设置</div>
-          <span class="modal-head__subtitle">界面偏好与数据记录配置</span>
+          <div class="modal-head__title">{{ i18n.t.set_globalSettings }}</div>
+          <span class="modal-head__subtitle">{{ i18n.t.set_globalSettingsSubtitle }}</span>
         </div>
         <UiButton quaternary circle size="md" @click="onClose">
           <template #icon><X :size="14" /></template>
@@ -162,13 +164,13 @@ async function onSave(): Promise<void> {
     </template>
 
     <UiSpin v-if="loading" class="loading-wrap" />
-    <UiErrorState v-else-if="loadError" title="设置加载失败" message="请检查后端连接">
-      <template #action><UiButton size="md" @click="loadSettings">重试</UiButton></template>
+    <UiErrorState v-else-if="loadError" :title="i18n.t.set_loadFailed" :message="i18n.t.set_checkBackend">
+      <template #action><UiButton size="md" @click="loadSettings">{{ i18n.t.set_retry }}</UiButton></template>
     </UiErrorState>
 
     <div v-else class="settings-layout">
       <!-- 左侧标签导航 -->
-      <nav class="settings-tabs" role="tablist" aria-label="设置分组">
+      <nav class="settings-tabs" role="tablist" :aria-label="i18n.t.set_settingsGroup">
         <button
           v-for="tab in TABS"
           :id="`settings-tab-${tab.key}`"
@@ -184,7 +186,6 @@ async function onSave(): Promise<void> {
           <span>{{ tab.label }}</span>
         </button>
       </nav>
-
       <!-- 右侧内容区 -->
       <div class="settings-content">
         <DisplaySettingsSection ref="displayRef" v-show="activeTab === 'display'" />
@@ -196,14 +197,14 @@ async function onSave(): Promise<void> {
       <div class="modal-foot">
         <div class="modal-foot__left">
           <UiButton size="md" variant="ghost" :disabled="saving" @click="onReset">
-            <template #icon><RotateCcw :size="14" /></template>恢复默认
+            <template #icon><RotateCcw :size="14" /></template>{{ i18n.t.set_restoreDefaults }}
           </UiButton>
-          <span class="foot-hint">保存后对当前桌面会话生效</span>
+          <span class="foot-hint">{{ i18n.t.set_saveHint }}</span>
         </div>
         <div class="flex gap-2">
-          <UiButton size="md" :disabled="saving" @click="onClose">取消</UiButton>
+          <UiButton size="md" :disabled="saving" @click="onClose">{{ i18n.t.cancel }}</UiButton>
           <UiButton size="md" variant="primary" :loading="saving" :disabled="loading" @click="onSave">
-            <template #icon><Save :size="14" /></template>保存设置
+            <template #icon><Save :size="14" /></template>{{ i18n.t.set_saveSettings }}
           </UiButton>
         </div>
       </div>

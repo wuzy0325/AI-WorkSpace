@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, type ComponentPublicInstance } from 'vue'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
 import { deviceApi } from '@api/deviceApi'
+import { useI18nStore } from '@stores/i18nStore'
 import type { CalibrationConfig, CalibrationDataPoint, ProbeChannelRole } from '@shared/types/calibration'
 import type { DataPayload } from '@api/types'
 import { isFiveHoleDataPoint } from '@shared/calibrationDataGuards'
@@ -52,6 +53,9 @@ const {
   isMotionControllerConnected,
   sphereTankGate,
 } = useCalibrationWorkflow('five-hole')
+
+const i18n = useI18nStore()
+const t = i18n.t
 
 defineExpose({
   reloadSavedConfig: loadSavedConfig,
@@ -119,7 +123,7 @@ watch(isLoading, (loading) => {
 //   避免重生成路径（Wails 模式走本地兜底）与 layout 字段脏值（null/NaN）导致起始角度错乱。
 async function startCalibration() {
   if (!canStartCalibration.value || !currentConfig.value) {
-    feedbackStore.pushToast(startDisabledReason.value || '请先完成校准前检查', 'warning')
+    feedbackStore.pushToast(startDisabledReason.value || t.fh_preCheckNotDone, 'warning')
     return
   }
   try {
@@ -130,7 +134,7 @@ async function startCalibration() {
     await calibrationStore.startCalibration(configToStart)
   } catch (err) {
     console.error('Failed to start calibration:', err)
-    feedbackStore.pushToast('启动校准失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+    feedbackStore.pushToast(t.fh_startFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
   }
 }
 
@@ -185,11 +189,11 @@ const canStartCalibration = computed(() => {
 })
 
 const startDisabledReason = computed(() => {
-  if (isLoading.value) return '正在加载配置，请稍候'
-  if (!hasConfig.value) return '请先完成校准配置'
-  if (!hasRequiredWindTunnelChannels.value) return '请配置风洞总压、风洞静压、风洞温度通道'
-  if (!isAcquisitionDeviceConnected.value) return '采集设备未连接或未开始采集'
-  if (!isMotionControllerConnected.value) return '运动控制器未连接'
+  if (isLoading.value) return t.fh_loadingConfig
+  if (!hasConfig.value) return t.fh_noConfig
+  if (!hasRequiredWindTunnelChannels.value) return t.fh_noWindTunnelChannels
+  if (!isAcquisitionDeviceConnected.value) return t.fh_deviceNotReady
+  if (!isMotionControllerConnected.value) return t.fh_motionNotConnected
   return ''
 })
 

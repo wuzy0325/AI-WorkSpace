@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import UiSlider from '@components/ui/UiSlider.vue'
+import { useI18nStore } from '@stores/i18nStore'
+
+const i18n = useI18nStore()
+const t = computed(() => i18n.t)
 
 // 五孔探针角度示意：
 // - alpha：偏航角（绕 Y 轴旋转），正值表示流向右偏
@@ -77,7 +81,7 @@ const betaMinusPath = computed(() => {
     <div class="relative flex-1 min-w-0">
       <div class="probe-glow absolute inset-0"></div>
 
-      <svg viewBox="0 0 720 540" role="img" aria-label="五孔探针角度示意" class="relative z-10 h-full w-full">
+      <svg viewBox="0 0 720 540" role="img" :aria-label="t.travProbeDiagramTitle" class="relative z-10 h-full w-full">
         <defs>
           <marker id="flow-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
             <path d="M0,0 L12,6 L0,12 Z" fill="#d48b52" />
@@ -105,12 +109,12 @@ const betaMinusPath = computed(() => {
         </defs>
 
         <!-- 顶部标题文字 -->
-        <text x="40" y="40" fill="#ffaa00" font-size="16" font-weight="bold">alpha: 偏航角（Yaw）</text>
-        <text x="40" y="62" fill="#ff00aa" font-size="16" font-weight="bold">beta: 俯仰角（Pitch）</text>
+        <text x="40" y="40" fill="#ffaa00" font-size="16" font-weight="bold">{{ t.travProbeAlphaYaw }}</text>
+        <text x="40" y="62" fill="#ff00aa" font-size="16" font-weight="bold">{{ t.travProbeBetaPitch }}</text>
 
         <!-- 流向箭头：横穿探针中心 -->
         <line x1="40" y1="260" x2="680" y2="260" stroke="#d48b52" stroke-width="3" stroke-dasharray="12 10" marker-end="url(#flow-arrow)" />
-        <text x="60" y="248" fill="#d48b52" font-size="18" font-weight="bold">流向 Flow</text>
+        <text x="60" y="248" fill="#d48b52" font-size="18" font-weight="bold">{{ t.travProbeFlowDir }}</text>
 
         <!-- 坐标轴系：原点统一在探针中心 (360, 260) -->
         <!-- Y 轴（蓝色，向上） -->
@@ -166,24 +170,24 @@ const betaMinusPath = computed(() => {
 
     <!-- 右侧：角度控制面板，固定宽度，不再覆盖 SVG -->
     <aside class="probe-sidebar w-[300px] shrink-0 p-5">
-      <h3 class="probe-sidebar-title mb-4 border-b pb-3 text-base font-semibold">五孔探针角度示意</h3>
+      <h3 class="probe-sidebar-title mb-4 border-b pb-3 text-base font-semibold">{{ t.travProbeDiagramTitle }}</h3>
 
       <label class="mb-2 flex justify-between text-xs">
-        <span>alpha: 偏航角（偏航面）</span>
+        <span>{{ t.travProbeAlphaYawPlane }}</span>
         <span class="font-bold" style="color: #ffaa00">{{ alpha }} deg</span>
       </label>
       <UiSlider v-model="alpha" :min="-60" :max="60" class="mb-4 w-full" />
 
       <label class="mb-2 flex justify-between text-xs">
-        <span>beta: 俯仰角（俯仰面）</span>
+        <span>{{ t.travProbeBetaPitchPlane }}</span>
         <span class="font-bold" style="color: #ff00aa">{{ beta }} deg</span>
       </label>
       <UiSlider v-model="beta" :min="-60" :max="60" class="mb-4 w-full" />
 
       <div class="info-box space-y-1 rounded-xl p-3 text-xs leading-5">
-        <div><span class="font-bold" style="color: #ffaa00">alpha+</span>: flow offset in the yaw plane; alpha- is the opposite direction.</div>
-        <div><span class="font-bold" style="color: #ff00aa">beta+</span>: flow offset in the pitch plane; beta- is the opposite direction.</div>
-        <div>The dashed line indicates incoming flow direction. Probe axis and -Z orientation are labeled in the diagram.</div>
+        <div><span class="font-bold" style="color: #ffaa00">alpha+</span>: {{ t.travProbeAlphaPlusHint }}</div>
+        <div><span class="font-bold" style="color: #ff00aa">beta+</span>: {{ t.travProbeBetaPlusHint }}</div>
+        <div>{{ t.travProbeDashedHint }}</div>
       </div>
     </aside>
   </section>

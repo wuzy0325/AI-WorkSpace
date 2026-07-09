@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { storageApi, reportApi } from '@api/deviceApi'
 import UiButton from '@components/ui/UiButton.vue'
 import UiInput from '@components/ui/UiInput.vue'
@@ -11,6 +12,7 @@ import UiErrorState from '@components/ui/UiErrorState.vue'
 
 const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 
 const recording = ref(false)
 const recordingOutputDir = ref('data/recordings')
@@ -38,11 +40,11 @@ async function toggleRecording() {
     if (recording.value) {
       await storageApi.stop()
       recording.value = false
-      feedback.pushToast('录制已停止', 'info')
+      feedback.pushToast(i18n.t.stor_recordingStopped, 'info')
     } else {
       await storageApi.start({ outputDir: recordingOutputDir.value, filePrefix: recordingFilePrefix.value })
       recording.value = true
-      feedback.pushToast('录制已开始', 'success')
+      feedback.pushToast(i18n.t.stor_recordingStarted, 'success')
     }
   } catch (err) { feedback.pushToast(String(err), 'error') }
   finally { busy.value = false }
@@ -53,7 +55,7 @@ async function generateReport() {
   try {
     const result = await reportApi.generate(reportOutputDir.value, reportFilePrefix.value, reportDeviceId.value)
     lastReportPath.value = result.path
-    feedback.pushToast('报告已生成: ' + result.path, 'success')
+    feedback.pushToast(i18n.t.stor_reportGenerated.replace('{path}', result.path), 'success')
   } catch (err) { error.value = String(err); feedback.pushToast(String(err), 'error') }
   finally { busy.value = false; generating.value = false }
 }
@@ -65,36 +67,36 @@ onMounted(refreshStatus)
   <div class="storage-view">
     <div class="storage-view__head">
       <p class="eyebrow">Storage &amp; Reports</p>
-      <h2>数据存储与报告</h2>
+      <h2>{{ i18n.t.stor_pageTitle }}</h2>
     </div>
 
     <section class="state-panel">
       <div class="state-panel__indicator" />
       <div>
-        <h3>存储与报告 API 已接入</h3>
-        <p>录制控制与报告生成已通过 HTTP API 接入后端；开始录制后数据写入 CSV，报告生成通过 CSV writer 导出。</p>
+        <h3>{{ i18n.t.stor_apiReadyTitle }}</h3>
+        <p>{{ i18n.t.stor_apiReadyHint }}</p>
       </div>
     </section>
 
     <UiErrorState
       v-if="error"
-      title="操作失败"
+      :title="i18n.t.stor_operationFailed"
       :message="error"
     >
       <template #action>
         <UiButton variant="secondary" size="sm" @click="error = ''">
-          关闭
+          {{ i18n.t.close }}
         </UiButton>
       </template>
     </UiErrorState>
 
     <div class="storage-grid">
       <section class="storage-card">
-        <h3>录制控制</h3>
-        <UiFormField label="输出目录">
+        <h3>{{ i18n.t.stor_recordingControl }}</h3>
+        <UiFormField :label="i18n.t.outputDirectory">
           <UiInput v-model="recordingOutputDir" placeholder="data/recordings" />
         </UiFormField>
-        <UiFormField label="文件前缀">
+        <UiFormField :label="i18n.t.stor_filePrefix">
           <UiInput v-model="recordingFilePrefix" placeholder="run" />
         </UiFormField>
         <div class="storage-card__actions">
@@ -104,31 +106,31 @@ onMounted(refreshStatus)
             :disabled="busy"
             @click="toggleRecording"
           >
-            {{ recording ? '停止录制' : '开始录制' }}
+            {{ recording ? i18n.t.stor_stopRecording : i18n.t.stor_startRecording }}
           </UiButton>
           <span v-if="recording" class="recording-indicator">REC</span>
         </div>
         <p class="storage-card__hint">
-          {{ recording ? '正在录制采集数据到 ' + recordingOutputDir : '录制未启动' }}
+          {{ recording ? i18n.t.stor_recordingTo.replace('{dir}', recordingOutputDir) : i18n.t.stor_recordingNotStarted }}
         </p>
       </section>
 
       <section class="storage-card">
-        <h3>报告生成</h3>
-        <UiFormField label="输出目录">
+        <h3>{{ i18n.t.stor_reportGeneration }}</h3>
+        <UiFormField :label="i18n.t.outputDirectory">
           <UiInput v-model="reportOutputDir" placeholder="data/reports" />
         </UiFormField>
-        <UiFormField label="文件前缀">
+        <UiFormField :label="i18n.t.stor_filePrefix">
           <UiInput v-model="reportFilePrefix" placeholder="report" />
         </UiFormField>
-        <UiFormField label="设备 ID">
+        <UiFormField :label="i18n.t.stor_deviceId">
           <UiSelect v-model="reportDeviceId" :options="deviceStore.profiles.map(p => ({value: p.id, label: p.name}))" />
         </UiFormField>
         <UiButton variant="primary" size="sm" :disabled="busy || generating" @click="generateReport">
-          {{ generating ? '生成中...' : '生成报告' }}
+          {{ generating ? i18n.t.stor_generating : i18n.t.stor_generateReport }}
         </UiButton>
         <p v-if="lastReportPath" class="storage-card__result">
-          上次报告: {{ lastReportPath }}
+          {{ i18n.t.stor_lastReport.replace('{path}', lastReportPath) }}
         </p>
       </section>
     </div>

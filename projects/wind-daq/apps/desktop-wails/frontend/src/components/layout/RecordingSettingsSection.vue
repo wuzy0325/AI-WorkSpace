@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import {
   useStorageStore,
   type StorageSettings,
@@ -63,6 +64,7 @@ const SINK_TUNING_MAX = {
 }
 
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 const storageStore = useStorageStore()
 
 // 表单数据状态
@@ -89,6 +91,28 @@ const advancedExpanded = ref(false)
 
 /** 字段级校验错误记录 */
 const validationErrors = ref<Record<string, string>>({})
+
+/** sink 调优参数动态提示：将 {min}/{max} 占位符替换为实际数值 */
+const queueCapacityHint = computed(() =>
+  i18n.t.set_queueCapacityHint
+    .replace('{min}', String(SINK_TUNING_MIN.queueCapacity))
+    .replace('{max}', String(SINK_TUNING_MAX.queueCapacity))
+)
+const bufferSizeHint = computed(() =>
+  i18n.t.set_bufferSizeHint
+    .replace('{min}', String(SINK_TUNING_MIN.bufferSize))
+    .replace('{max}', String(SINK_TUNING_MAX.bufferSize))
+)
+const flushIntervalHint = computed(() =>
+  i18n.t.set_flushIntervalHint
+    .replace('{min}', String(SINK_TUNING_MIN.flushIntervalMs))
+    .replace('{max}', String(SINK_TUNING_MAX.flushIntervalMs))
+)
+const syncIntervalHint = computed(() =>
+  i18n.t.set_syncIntervalHint
+    .replace('{min}', String(SINK_TUNING_MIN.syncIntervalSec))
+    .replace('{max}', String(SINK_TUNING_MAX.syncIntervalSec))
+)
 
 const enabledConditionsCount = () =>
   [durationEnabled.value, sizeEnabled.value, countEnabled.value].filter(Boolean).length
@@ -196,24 +220,24 @@ function buildRecordingSettings(waveformBufferSize: number, refreshRateHz: numbe
 function validateField(field: string): string {
   switch (field) {
     case 'baseDirectory':
-      return baseDirectory.value.trim() ? '' : '保存目录不能为空'
+      return baseDirectory.value.trim() ? '' : i18n.t.set_baseDirRequired
     case 'filePrefix':
-      return filePrefix.value.trim() ? '' : '文件前缀不能为空'
+      return filePrefix.value.trim() ? '' : i18n.t.set_filePrefixRequired
     case 'durationMinutes':
       return durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440)
-        ? '定时停止范围为 1 到 1440 分钟' : ''
+        ? i18n.t.set_durationRangeError : ''
     case 'sizeMb':
       return sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000)
-        ? '文件大小范围为 1 到 10000 MB' : ''
+        ? i18n.t.set_sizeRangeError : ''
     case 'recordCount':
       return countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000)
-        ? '记录数范围为 1 到 100000000' : ''
+        ? i18n.t.set_recordCountRangeError : ''
     case 'rotationDurationMinutes':
       return rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440)
-        ? '滚动时长范围为 1 到 1440 分钟' : ''
+        ? i18n.t.set_rotationDurationRangeError : ''
     case 'rotationSizeMb':
       return rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000)
-        ? '滚动大小范围为 1 到 10000 MB' : ''
+        ? i18n.t.set_rotationSizeRangeError : ''
     default:
       return ''
   }
@@ -273,7 +297,7 @@ async function handlePickDirectory(): Promise<void> {
       updateFieldError('baseDirectory')
     }
   } catch {
-    feedback.pushToast('选择目录失败', 'error')
+    feedback.pushToast(i18n.t.failedChooseDirectory, 'error')
   }
 }
 
@@ -326,14 +350,14 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <FileText :size="15" />
-          <span class="card-head__title">数据保存</span>
+          <span class="card-head__title">{{ i18n.t.set_dataSave }}</span>
         </div>
       </template>
       <div class="form-fields">
         <UiFormField
-          label="保存目录"
+          :label="i18n.t.set_saveDir"
           :error="validationErrors.baseDirectory"
-          hint="数据文件将保存到此目录"
+          :hint="i18n.t.set_saveDirHint"
         >
           <div class="input-with-action">
             <UiInput
@@ -341,13 +365,13 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               placeholder="data/recordings"
               @blur="updateFieldError('baseDirectory')"
             />
-            <UiButton size="md" aria-label="选择保存目录" data-test="settings-pick-directory" @click="handlePickDirectory">
-              <template #icon><Folder :size="14" /></template>选择
+            <UiButton size="md" :aria-label="i18n.t.set_pickSaveDir" data-test="settings-pick-directory" @click="handlePickDirectory">
+              <template #icon><Folder :size="14" /></template>{{ i18n.t.set_choose }}
             </UiButton>
           </div>
         </UiFormField>
         <UiFormField
-          label="文件前缀"
+          :label="i18n.t.set_filePrefix"
           :error="validationErrors.filePrefix"
         >
           <UiInput
@@ -358,12 +382,12 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
         </UiFormField>
         <div class="toggle-row">
           <UiToggle v-model="autoStart" />
-          <span class="toggle-row__label">开始采集时自动开始记录</span>
+          <span class="toggle-row__label">{{ i18n.t.set_autoStartOnAcquisition }}</span>
         </div>
         <!-- 存储格式选择：csv（文本，可读性强）或 binary（紧凑，性能高） -->
         <UiFormField
-          label="存储格式"
-          hint="CSV 易于排查与外部工具读取；Binary 紧凑且 I/O 负担更低（修改后需重启应用生效）"
+          :label="i18n.t.set_storageFormat"
+          :hint="i18n.t.set_formatHint"
         >
           <div class="format-switch">
             <button
@@ -397,12 +421,12 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             @click="advancedExpanded = !advancedExpanded"
           >
             <component :is="advancedExpanded ? ChevronDown : ChevronRight" :size="14" />
-            <span>高级设置（写入器调优）</span>
+            <span>{{ i18n.t.set_advancedSettings }}</span>
           </button>
           <div v-if="advancedExpanded" class="advanced-body">
             <UiFormField
-              label="队列容量（条数）"
-              :hint="`范围 ${SINK_TUNING_MIN.queueCapacity} – ${SINK_TUNING_MAX.queueCapacity}；满载时新数据被丢弃`"
+              :label="i18n.t.set_queueCapacity"
+              :hint="queueCapacityHint"
             >
               <div class="input-with-unit">
                 <UiInputNumber
@@ -413,12 +437,12 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
                   size="small"
                   data-test="settings-sink-queue"
                 />
-                <span class="input-unit">条</span>
+                <span class="input-unit">{{ i18n.t.countUnitLabel }}</span>
               </div>
             </UiFormField>
             <UiFormField
-              label="缓冲区大小"
-              :hint="`范围 ${SINK_TUNING_MIN.bufferSize} – ${SINK_TUNING_MAX.bufferSize} 字节；写入 bufio 缓冲`"
+              :label="i18n.t.set_bufferSize"
+              :hint="bufferSizeHint"
             >
               <div class="input-with-unit">
                 <UiInputNumber
@@ -433,8 +457,8 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               </div>
             </UiFormField>
             <UiFormField
-              label="Flush 间隔"
-              :hint="`范围 ${SINK_TUNING_MIN.flushIntervalMs} – ${SINK_TUNING_MAX.flushIntervalMs} ms；越小实时性越强、CPU 越高`"
+              :label="i18n.t.set_flushInterval"
+              :hint="flushIntervalHint"
             >
               <div class="input-with-unit">
                 <UiInputNumber
@@ -449,8 +473,8 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               </div>
             </UiFormField>
             <UiFormField
-              label="Sync 间隔"
-              :hint="`范围 ${SINK_TUNING_MIN.syncIntervalSec} – ${SINK_TUNING_MAX.syncIntervalSec} s；fsync 落盘周期，过短会拖慢写入`"
+              :label="i18n.t.set_syncInterval"
+              :hint="syncIntervalHint"
             >
               <div class="input-with-unit">
                 <UiInputNumber
@@ -465,7 +489,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               </div>
             </UiFormField>
             <p class="advanced-warn">
-              注意：以上参数在 sink 装配时读取，运行时不重建 sink，修改后需重启应用生效。
+              {{ i18n.t.set_advancedWarn }}
             </p>
           </div>
         </div>
@@ -476,13 +500,13 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <HardDrive :size="15" />
-          <span class="card-head__title">文件滚动保存</span>
+          <span class="card-head__title">{{ i18n.t.rotationLabel }}</span>
           <UiToggle v-model="rotationEnabled" />
         </div>
       </template>
       <div v-if="rotationEnabled" class="form-fields">
         <UiFormField
-          label="滚动时长"
+          :label="i18n.t.set_rotationDuration"
           :error="validationErrors.rotationDurationMinutes"
         >
           <div class="input-with-unit">
@@ -492,11 +516,11 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="1440"
               @blur="updateFieldError('rotationDurationMinutes')"
             />
-            <span class="input-unit">分钟</span>
+            <span class="input-unit">{{ i18n.t.set_minutes }}</span>
           </div>
         </UiFormField>
         <UiFormField
-          label="滚动大小"
+          :label="i18n.t.set_rotationSize"
           :error="validationErrors.rotationSizeMb"
         >
           <div class="input-with-unit">
@@ -511,7 +535,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
         </UiFormField>
       </div>
       <div v-else class="empty-hint">
-        <span>启用后，当采集时长或文件大小达到阈值时，自动滚动到新文件继续记录</span>
+        <span>{{ i18n.t.set_rotationEmptyHint }}</span>
       </div>
     </UiPanel>
 
@@ -520,9 +544,9 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <Clock :size="15" />
-          <span class="card-head__title">自动停止条件</span>
+          <span class="card-head__title">{{ i18n.t.set_autoStopConditions }}</span>
           <UiStatusBadge v-if="enabledConditionsCount() > 0" status="connected">
-            {{ enabledConditionsCount() }} 项
+            {{ enabledConditionsCount() }} {{ i18n.t.set_items }}
           </UiStatusBadge>
         </div>
       </template>
@@ -540,7 +564,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="durationEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': durationEnabled }">
-              定时停止
+              {{ i18n.t.set_durationStop }}
             </span>
           </div>
           <div v-if="durationEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -550,7 +574,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="1440"
               @blur="updateFieldError('durationMinutes')"
             />
-            <span class="input-unit">分钟</span>
+            <span class="input-unit">{{ i18n.t.set_minutes }}</span>
           </div>
         </div>
         <p v-if="validationErrors.durationMinutes" class="field-error">{{ validationErrors.durationMinutes }}</p>
@@ -568,7 +592,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="sizeEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': sizeEnabled }">
-              按文件大小停止
+              {{ i18n.t.set_sizeStop }}
             </span>
           </div>
           <div v-if="sizeEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -596,7 +620,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="countEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': countEnabled }">
-              按记录数停止
+              {{ i18n.t.set_countStop }}
             </span>
           </div>
           <div v-if="countEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -606,13 +630,13 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="100000000"
               @blur="updateFieldError('recordCount')"
             />
-            <span class="input-unit">条</span>
+            <span class="input-unit">{{ i18n.t.countUnitLabel }}</span>
           </div>
         </div>
         <p v-if="validationErrors.recordCount" class="field-error">{{ validationErrors.recordCount }}</p>
       </div>
       <div class="hint-row">
-        <span class="hint-text">满足任一条件即自动停止采集，未启用则不限制</span>
+        <span class="hint-text">{{ i18n.t.set_stopConditionsHint }}</span>
       </div>
     </UiPanel>
   </section>

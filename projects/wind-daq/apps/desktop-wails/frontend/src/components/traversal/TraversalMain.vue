@@ -538,7 +538,7 @@ watch(
         type="button"
         class="trav-interp-banner__close"
         @click="traversalStore.interpolatorRestoreMessage = null"
-      >知道了</button>
+      >{{ t.travGotIt }}</button>
     </div>
 
     <!-- 断点恢复横幅 -->
@@ -595,6 +595,7 @@ watch(
           hardwareStatus: t.travHardwareStatus,
           acquisitionDevice: t.travAcquisitionDevice,
           positionerDevice: t.travPositionerDevice,
+          moving: t.moving,
         }"
       />
 

@@ -127,8 +127,14 @@ function toggleChartVisibility(channelIndex: number): void {
 
 function shouldDisableTare(channelIndex: number): boolean {
   const type = String(profile.value?.type ?? '')
-  if (type !== 'DAQ-P-1604' && type !== 'DAQ-P-1604Pre') return true
-  return channelIndex === 16 || channelIndex === 17
+  // 仅压力扫描类设备支持归零：DAQ-P-1604 / DAQ-P-1604Pre / DAQ-P-1603
+  if (type !== 'DAQ-P-1604' && type !== 'DAQ-P-1604Pre' && type !== 'DAQ-P-1603') return true
+  // DAQ-P-1604 的通道 16/17 为大气压/大气温度辅助通道，不参与归零；
+  // DAQ-P-1603 仅 16 个采集通道（索引 0-15），无辅助通道，全部可归零。
+  if (type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre') {
+    return channelIndex === 16 || channelIndex === 17
+  }
+  return false
 }
 
 function setTare(channelIndex: number, rawValue: number): void {
@@ -204,7 +210,8 @@ const sparkBarsMap = computed(() => {
 
 const isPressureScannerDevice = computed(() => {
   const type = profile.value?.type
-  return type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre'
+  // DAQ-P-1603 为 16 通道通用 AI 压力采集设备，归零能力与 DAQ-P-1604 对齐
+  return type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre' || type === 'DAQ-P-1603'
 })
 
 // 预计算表格/卡片视图所需的全部通道数据，避免模板渲染时反复调用函数。

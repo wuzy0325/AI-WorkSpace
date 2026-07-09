@@ -4,6 +4,7 @@ import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
 import type { CalibrationConfig, TotalTemperatureCalibrationPoint } from '@shared/types/calibration'
 import { getProbeChannelPrecision } from '@shared/calibrationPrecision'
@@ -24,6 +25,8 @@ const calibrationStore = useCalibrationStore()
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
+const i18n = useI18nStore()
+const t = computed(() => i18n.t)
 
 const workflow = useCalibrationWorkflow('total-temperature')
 const sphereTankGate = workflow.sphereTankGate
@@ -74,10 +77,10 @@ const formattedProgress = computed(() => {
 })
 
 const statusText = computed(() => {
-  if (calibrationStore.isPaused) return '已暂停'
-  if (calibrationStore.isRunning) return '运行中'
-  if (calibrationStore.completeEvent) return '已完成'
-  return '空闲'
+  if (calibrationStore.isPaused) return t.value.statusPaused
+  if (calibrationStore.isRunning) return t.value.running
+  if (calibrationStore.completeEvent) return t.value.completed
+  return t.value.idle
 })
 
 const statusColor = computed(() => {
@@ -98,6 +101,11 @@ const probeChannels = computed(() => {
 
 const totalTemperatureLayout = computed(() => {
   return currentConfig.value?.totalTemperatureConfig?.machRange
+})
+
+// 数据记录条数文案：复用 i18n 占位符替换，避免模板中拼接破坏语序
+const recordCountText = computed(() => {
+  return t.value.tt_recordCount.replace('{count}', String(calibrationStore.dataPoints.length))
 })
 
 function formatValue(value: number | undefined | null, precision?: number): string {
@@ -151,7 +159,7 @@ function drawChart() {
     ctx.font = '14px sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('暂无数据', width / 2, height / 2)
+    ctx.fillText(t.value.tt_noData, width / 2, height / 2)
     return
   }
 
@@ -203,7 +211,7 @@ onMounted(async () => {
   try {
     await workflow.loadSavedConfig()
     if (!workflow.hasConfig.value) {
-      feedbackStore.pushToast('请先配置总温探针校准参数', 'warning')
+      feedbackStore.pushToast(t.value.tt_pleaseConfigureFirst, 'warning')
     }
   } finally {
     isLoading.value = false
@@ -223,22 +231,22 @@ onUnmounted(() => {
           <ArrowLeft class="h-4 w-4" />
         </UiButton>
         <div>
-          <h1 class="text-base font-bold text-[var(--text-primary)]">总温探针校准</h1>
+          <h1 class="text-base font-bold text-[var(--text-primary)]">{{ t.tt_totalTemperatureCalibration }}</h1>
           <p class="text-xs text-[var(--text-muted)]">Total Temperature Probe Calibration</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
         <UiButton variant="secondary" size="sm" @click="emit('openSettings')">
           <Settings class="h-4 w-4" />
-          <span class="ml-1">配置</span>
+          <span class="ml-1">{{ t.config }}</span>
         </UiButton>
         <UiButton variant="secondary" size="sm" :disabled="!canSave" @click="workflow.saveCsv">
           <Save class="h-4 w-4" />
-          <span class="ml-1">保存</span>
+          <span class="ml-1">{{ t.save }}</span>
         </UiButton>
         <UiButton variant="secondary" size="sm" :disabled="!canSave" @click="workflow.exportReport">
           <FileText class="h-4 w-4" />
-          <span class="ml-1">导出</span>
+          <span class="ml-1">{{ t.tt_export }}</span>
         </UiButton>
       </div>
     </div>
@@ -248,7 +256,7 @@ onUnmounted(() => {
       <div class="flex w-80 flex-col border-r border-[var(--border-default)] bg-[var(--bg-panel)] overflow-y-auto flex-shrink-0">
         <div class="border-b border-[var(--border-default)] p-4">
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-[var(--text-muted)]">状态</span>
+            <span class="text-sm text-[var(--text-muted)]">{{ t.status }}</span>
             <span class="rounded-full px-2 py-0.5 text-xs font-medium"
               :class="{
                 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400': statusColor === 'success',
@@ -260,7 +268,7 @@ onUnmounted(() => {
           </div>
           <div class="mb-2">
             <div class="mb-1 flex justify-between text-xs">
-              <span class="text-[var(--text-muted)]">进度</span>
+              <span class="text-[var(--text-muted)]">{{ t.travProgress }}</span>
               <span class="text-[var(--text-primary)]">{{ formattedProgress }}</span>
             </div>
             <div class="h-2 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
@@ -269,11 +277,11 @@ onUnmounted(() => {
           </div>
           <div v-if="formattedTimeInfo" class="grid grid-cols-2 gap-2 text-xs">
             <div class="rounded-lg bg-[var(--bg-panel-strong)] p-2">
-              <div class="text-[var(--text-muted)]">已用时间</div>
+              <div class="text-[var(--text-muted)]">{{ t.tt_elapsedTime }}</div>
               <div class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.elapsed }}</div>
             </div>
             <div class="rounded-lg bg-[var(--bg-panel-strong)] p-2">
-              <div class="text-[var(--text-muted)]">预计剩余</div>
+              <div class="text-[var(--text-muted)]">{{ t.travEstimatedRemaining }}</div>
               <div class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.remaining }}</div>
             </div>
           </div>
@@ -283,23 +291,23 @@ onUnmounted(() => {
           <div class="grid grid-cols-2 gap-2">
             <UiButton v-if="!calibrationStore.isRunning && !calibrationStore.isPaused" variant="primary" :disabled="!canStartCalibration" @click="workflow.startCalibration()">
               <Play class="h-4 w-4" />
-              <span class="ml-1">开始</span>
+              <span class="ml-1">{{ t.startRun }}</span>
             </UiButton>
             <UiButton v-if="canPause" variant="warning" @click="workflow.pauseCalibration">
               <Pause class="h-4 w-4" />
-              <span class="ml-1">暂停</span>
+              <span class="ml-1">{{ t.travPause }}</span>
             </UiButton>
             <UiButton v-if="canResume" variant="primary" @click="workflow.resumeCalibration">
               <Play class="h-4 w-4" />
-              <span class="ml-1">继续</span>
+              <span class="ml-1">{{ t.travResume }}</span>
             </UiButton>
             <UiButton v-if="canStop" variant="danger" @click="workflow.stopCalibration">
               <Square class="h-4 w-4" />
-              <span class="ml-1">停止</span>
+              <span class="ml-1">{{ t.travStop }}</span>
             </UiButton>
             <UiButton variant="secondary" @click="calibrationStore.reset">
               <RotateCcw class="h-4 w-4" />
-              <span class="ml-1">重置</span>
+              <span class="ml-1">{{ t.tt_reset }}</span>
             </UiButton>
           </div>
           <div v-if="startDisabledReason" class="mt-2 text-xs text-amber-500">{{ startDisabledReason }}</div>
@@ -308,31 +316,31 @@ onUnmounted(() => {
         <div class="border-b border-[var(--border-default)] p-4">
           <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
             <Target class="h-4 w-4 text-[var(--accent-primary)]" />
-            当前位置
+            {{ t.tt_currentPosition }}
           </div>
           <div v-if="currentMach !== null" class="rounded-lg bg-[var(--bg-panel-strong)] p-3 text-center">
-            <div class="text-xs text-[var(--text-muted)]">马赫数</div>
+            <div class="text-xs text-[var(--text-muted)]">{{ t.machNumber }}</div>
             <div class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ currentMach.toFixed(2) }}</div>
           </div>
           <div v-else class="rounded-lg bg-[var(--bg-panel-strong)] p-3 text-center text-sm text-[var(--text-muted)]">
-            未开始校准
+            {{ t.tt_notStarted }}
           </div>
         </div>
 
         <div class="border-b border-[var(--border-default)] p-4">
           <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
             <Activity class="h-4 w-4 text-[var(--accent-primary)]" />
-            球罐判定门控
+            {{ t.tt_sphereTankGate }}
           </div>
           <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] p-3">
             <div>
-              <div class="text-xs text-[var(--text-muted)]">状态</div>
+              <div class="text-xs text-[var(--text-muted)]">{{ t.status }}</div>
               <div class="text-sm font-medium" :class="sphereTankGate.isActive.value ? 'text-emerald-500' : 'text-[var(--text-muted)]'">
-                {{ sphereTankGate.isActive.value ? '已激活' : sphereTankGate.statusText.value }}
+                {{ sphereTankGate.isActive.value ? t.tt_activated : sphereTankGate.statusText.value }}
               </div>
             </div>
             <div class="text-right">
-              <div class="text-xs text-[var(--text-muted)]">等待时间</div>
+              <div class="text-xs text-[var(--text-muted)]">{{ t.tt_waitTime }}</div>
               <div class="font-mono text-sm text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</div>
             </div>
           </div>
@@ -342,7 +350,7 @@ onUnmounted(() => {
           <div class="flex cursor-pointer items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] p-3" @click="showChannelPanel = !showChannelPanel">
             <div class="flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
               <Gauge class="h-4 w-4 text-[var(--accent-primary)]" />
-              实时通道数据
+              {{ t.tt_realtimeChannelData }}
             </div>
             <ChevronDown v-if="showChannelPanel" class="h-4 w-4 text-[var(--text-muted)]" />
             <ChevronUp v-else class="h-4 w-4 text-[var(--text-muted)]" />
@@ -365,17 +373,17 @@ onUnmounted(() => {
         <div class="flex border-b border-[var(--border-default)] bg-[var(--bg-panel)]">
           <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'overview' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'overview'">
             <Activity class="h-4 w-4" />
-            概览
+            {{ t.overview }}
             <span v-if="activeTab === 'overview'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
           <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'chart' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'chart'">
             <TrendingUp class="h-4 w-4" />
-            图表
+            {{ t.chart }}
             <span v-if="activeTab === 'chart'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
           <UiButton quaternary size="sm" class="relative px-5 py-3 text-sm font-medium transition-colors" :class="activeTab === 'data' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'data'">
             <FileText class="h-4 w-4" />
-            数据
+            {{ t.data }}
             <span v-if="activeTab === 'data'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
           </UiButton>
         </div>
@@ -385,65 +393,65 @@ onUnmounted(() => {
             <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
               <div class="mb-4 flex items-center gap-2">
                 <TrendingUp class="h-5 w-5 text-[var(--accent-primary)]" />
-                <h3 class="text-base font-semibold text-[var(--text-primary)]">最新系数</h3>
+                <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.tt_latestCoefficients }}</h3>
               </div>
               <div v-if="latestCoefficients" class="grid grid-cols-2 gap-3">
                 <div class="rounded-lg bg-[var(--bg-panel-strong)] p-3">
-                  <div class="text-xs text-[var(--text-muted)]">恢复系数</div>
+                  <div class="text-xs text-[var(--text-muted)]">{{ t.tt_recoveryCoeff }}</div>
                   <div class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.recoveryFactor, 4) }}</div>
                 </div>
               </div>
-              <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">暂无系数数据</div>
+              <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.tt_noCoefficientData }}</div>
             </div>
 
             <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
               <div class="mb-4 flex items-center gap-2">
                 <Wind class="h-5 w-5 text-[var(--accent-primary)]" />
-                <h3 class="text-base font-semibold text-[var(--text-primary)]">最新原始数据</h3>
+                <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.tt_latestRawData }}</h3>
               </div>
               <div v-if="latestRawData" class="space-y-2">
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">总温</span>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.tt_totalTemp }}</span>
                   <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.tTotal, 3) }} °C</span>
                 </div>
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">静温</span>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.tt_staticTemp }}</span>
                   <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.tStatic, 3) }} °C</span>
                 </div>
                 <div class="flex justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">大气温度</span>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.tt_ambientTemp }}</span>
                   <span class="font-mono text-sm font-bold text-[var(--text-primary)]">{{ formatValue(latestRawData.tAtm, 3) }} °C</span>
                 </div>
               </div>
-              <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">暂无原始数据</div>
+              <div v-else class="flex h-32 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.tt_noRawData }}</div>
             </div>
 
             <div class="md:col-span-2 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
               <div class="mb-4 flex items-center gap-2">
                 <Settings class="h-5 w-5 text-[var(--accent-primary)]" />
-                <h3 class="text-base font-semibold text-[var(--text-primary)]">配置信息</h3>
+                <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.tt_configInfo }}</h3>
               </div>
               <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
-                  <div class="text-xs text-[var(--text-muted)]">配置名称</div>
-                  <div class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || '未配置' }}</div>
+                  <div class="text-xs text-[var(--text-muted)]">{{ t.tt_configName }}</div>
+                  <div class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || t.unconfigured }}</div>
                 </div>
                 <div>
-                  <div class="text-xs text-[var(--text-muted)]">点位布局</div>
+                  <div class="text-xs text-[var(--text-muted)]">{{ t.pointLayout }}</div>
                   <div class="font-medium text-[var(--text-primary)]">
                     <span v-if="totalTemperatureLayout">
                       Mach: {{ totalTemperatureLayout.min }}~{{ totalTemperatureLayout.max }} ({{ totalTemperatureLayout.step }})
                     </span>
-                    <span v-else>未配置</span>
+                    <span v-else>{{ t.unconfigured }}</span>
                   </div>
                 </div>
                 <div>
-                  <div class="text-xs text-[var(--text-muted)]">总点数</div>
-                  <div class="font-medium text-[var(--text-primary)]">{{ totalPoints }} 点</div>
+                  <div class="text-xs text-[var(--text-muted)]">{{ t.totalPoints }}</div>
+                  <div class="font-medium text-[var(--text-primary)]">{{ totalPoints }} {{ t.point }}</div>
                 </div>
                 <div>
-                  <div class="text-xs text-[var(--text-muted)]">采集参数</div>
-                  <div class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms / {{ currentConfig?.samplesPerPoint || 0 }}次</div>
+                  <div class="text-xs text-[var(--text-muted)]">{{ t.tt_acquisitionParams }}</div>
+                  <div class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms / {{ currentConfig?.samplesPerPoint || 0 }} {{ t.tt_timesUnit }}</div>
                 </div>
               </div>
             </div>
@@ -452,7 +460,7 @@ onUnmounted(() => {
 
         <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-5">
           <div class="h-full rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
-            <h3 class="mb-4 text-base font-semibold text-[var(--text-primary)]">恢复系数-Mach 曲线</h3>
+            <h3 class="mb-4 text-base font-semibold text-[var(--text-primary)]">{{ t.tt_recoveryCoeffMachCurve }}</h3>
             <canvas ref="recoveryCanvas" class="h-[calc(100%-3rem)] w-full"></canvas>
           </div>
         </div>
@@ -461,18 +469,18 @@ onUnmounted(() => {
           <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-5 shadow-[var(--shadow-panel)]">
             <div class="mb-4 flex items-center gap-2">
               <FileText class="h-5 w-5 text-[var(--accent-primary)]" />
-              <h3 class="text-base font-semibold text-[var(--text-primary)]">校准数据记录</h3>
-              <span class="ml-auto text-sm text-[var(--text-muted)]">共 {{ calibrationStore.dataPoints.length }} 条记录</span>
+              <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.tt_calibrationDataRecords }}</h3>
+              <span class="ml-auto text-sm text-[var(--text-muted)]">{{ recordCountText }}</span>
             </div>
             <div class="overflow-x-auto max-h-[calc(100vh-300px)]">
               <table class="w-full text-sm">
                 <thead class="bg-[var(--bg-panel-strong)]">
                   <tr>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">序号</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.tt_index }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Mach</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">恢复系数</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">采样数</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">标准差</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.tt_recoveryCoeff }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.tt_sampleCount }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.tt_stdDev }}</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-[var(--border-default)]">
@@ -485,7 +493,7 @@ onUnmounted(() => {
                   </tr>
                 </tbody>
               </table>
-              <div v-if="calibrationStore.dataPoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">暂无数据记录</div>
+              <div v-if="calibrationStore.dataPoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">{{ t.tt_noDataRecords }}</div>
             </div>
           </div>
         </div>
