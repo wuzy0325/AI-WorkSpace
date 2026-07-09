@@ -1,0 +1,16 @@
+# DAQ-T-1603 Win7 版 Python 依赖
+#
+# 兼容性矩阵(已验证可在 Win7 SP1 x64 运行):
+#   - Python 3.8.10 (官方最后支持 Win7 的版本,需 Win7 SP1)
+#   - PyQt5 5.15.x (最后一个支持 Win7 的 Qt 绑定系列)
+#   - pyinstaller 4.x (打包工具,5.x 起要求 Win8+)
+#
+# 安装步骤:
+#   1. 在 Win7 机器上安装 Python 3.8.10 (勾选 Add to PATH)
+#   2. pip install -r requirements.txt
+#   3. python main.py  即可运行
+#
+# 如需打包成单 exe: 执行 build.bat
+
+PyQt5==5.15.10
+pyinstaller==4.10
