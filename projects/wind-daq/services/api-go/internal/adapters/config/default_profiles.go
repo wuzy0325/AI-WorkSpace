@@ -28,8 +28,9 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 	case device.DeviceDAQP1603:
 		// DAQ-P-1603：DLL 内部封装 TCP，profile.Address 留空让用户在 UI 手动输入。
 		// Port 字段对 1603 无意义（DLL 自管端口），保留 0 占位。
-		// 默认采样率 500Hz，与项目 spec 中 DAQ-P-1603 采样率上限一致。
-		profile.SamplingRate = 500
+		// 默认采样率 100Hz（用户采样率=每秒数据条目数）。
+		// 底层硬件采样率固定 1000Hz，100Hz 意味着每 10 个原始点取平均输出 1 条。
+		profile.SamplingRate = 100
 		profile.Channels = defaultDAQP1603Channels()
 	case device.DeviceDaqT1603:
 		profile.Address = "192.168.3.101"
@@ -60,8 +61,15 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 }
 
 // NormalizeProfile 补全配置中的缺失字段（使用硬件默认值填充）
-// 注意：此函数依赖硬件特定默认值，属于 adapter 层职责
+// 注意：此函数依赖硬件特定默认值，属于 adapter 层职责。
+//
+// 执行顺序：先 v1→v2 迁移（TareOffset→CalibrationOffset），再补全缺失字段。
+// 迁移幂等：Version >= 2 跳过。
 func NormalizeProfile(profile device.Profile) device.Profile {
+	// v1→v2 迁移：TareOffset → CalibrationOffset（在补全默认值之前执行，
+	// 因为旧 TareOffset 需在通道被重置前完成迁移）
+	profile = migrateProfile(profile)
+
 	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603
 	var defaultProfile device.Profile
 	if needsDefaultProfile {

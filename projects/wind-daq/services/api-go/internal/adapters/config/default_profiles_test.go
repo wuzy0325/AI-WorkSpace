@@ -55,7 +55,7 @@ func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 
 // 测试前置：调用 NewDefaultProfile 生成 DAQ-P-1603 默认 profile。
 // 期待结果：16 通道全部启用，单位 Pa，精度 3，地址留空（由 UI 手动输入），
-// 采样率 500Hz。
+// 采样率 100Hz（用户采样率=每秒数据条目数，底层硬件采样率固定 1000Hz）。
 func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 	profile := NewDefaultProfile("p1603-1", device.DeviceDAQP1603)
 
@@ -83,8 +83,8 @@ func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 	if profile.Address != "" {
 		t.Fatalf("expected empty address for manual IP input, got %q", profile.Address)
 	}
-	if profile.SamplingRate != 500 {
-		t.Fatalf("expected default sampling rate 500, got %d", profile.SamplingRate)
+	if profile.SamplingRate != 100 {
+		t.Fatalf("expected default sampling rate 100, got %d", profile.SamplingRate)
 	}
 }
 

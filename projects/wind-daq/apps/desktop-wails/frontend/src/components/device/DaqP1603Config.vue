@@ -14,8 +14,8 @@ import UiSelect from '@components/ui/UiSelect.vue'
 // 单位下拉选项随传感器类型切换（压力→Pa/kPa/MPa/kgf/cm2/psi，温度→℃/℉）。
 // 压力单位切换时按换算系数同步转换该通道工程量程（rangeMin/rangeMax），
 // 保证物理量一致（例：Pa 下 -5000~5000 切到 kPa → -5~5）。
-// 采样率上限 500Hz（spec D-2），越界时红色提示并禁用提交（由父组件
-// 通过 samplingRateExceedsMax slot prop 或本组件的 invalid 状态判断）。
+// 采样率范围 1~500Hz（用户采样率=每秒数据条目数，底层硬件固定 1000Hz 通过多点平均实现），
+// 越界时红色提示并禁用提交（由父组件通过 samplingRateInvalid slot prop 或本组件的 invalid 状态判断）。
 //
 // 组件为 controlled 模式：所有状态由父组件通过 v-model 传入，
 // 组件内部不持有任何状态，保证父组件 draft 的唯一真相源。
@@ -52,7 +52,10 @@ const emit = defineEmits<{
   (e: 'update:precision', v: number | null): void
 }>()
 
-// 采样率上限常量（与后端 sharedhw.DAQP1603MaxSampleRate 对齐）
+// 采样率有效范围常量（与后端 hardware.DAQP1603MinSampleRate/DAQP1603MaxSampleRate 保持同步）
+// 用户采样率 = 每秒输出数据条目数，底层硬件采样率固定 1000Hz，
+// 低频时通过多点平均实现（如 20Hz → 每 50 个原始点取平均输出 1 条）。
+const MIN_SAMPLE_RATE = 1
 const MAX_SAMPLE_RATE = 500
 
 // 压力单位选项（与 DeviceManagementDrawer 全局压力单位保持一致）
@@ -95,9 +98,9 @@ const DEFAULTS_BY_SENSOR_TYPE: Record<
   temperature: { unit: '℃', rangeMin: -50, rangeMax: 150 },
 }
 
-// 采样率是否超过上限（用于红色提示与禁用提交）
-const samplingRateExceedsMax = computed(
-  () => props.samplingRate > MAX_SAMPLE_RATE || props.samplingRate <= 0,
+// 采样率是否越界（用于红色提示与禁用提交）
+const samplingRateInvalid = computed(
+  () => props.samplingRate < MIN_SAMPLE_RATE || props.samplingRate > MAX_SAMPLE_RATE,
 )
 
 // 根据通道传感器类型返回对应的单位选项
@@ -260,7 +263,7 @@ function resetChannelsToDefault(): void {
       <label class="p1603-config__label">采样率 (Hz)</label>
       <UiInputNumber
         :model-value="samplingRate"
-        :min="1"
+        :min="MIN_SAMPLE_RATE"
         :max="MAX_SAMPLE_RATE"
         :disabled="disabled"
         class="p1603-config__sampling-rate-input"
@@ -268,9 +271,9 @@ function resetChannelsToDefault(): void {
       />
       <span
         class="p1603-config__hint"
-        :class="{ 'p1603-config__hint--error': samplingRateExceedsMax }"
+        :class="{ 'p1603-config__hint--error': samplingRateInvalid }"
       >
-        上限 {{ MAX_SAMPLE_RATE }} Hz
+        范围 {{ MIN_SAMPLE_RATE }} ~ {{ MAX_SAMPLE_RATE }} Hz
       </span>
     </div>
 
@@ -327,13 +330,13 @@ function resetChannelsToDefault(): void {
       <table class="p1603-config__table">
         <thead>
           <tr>
-            <th class="w-14">启用</th>
-            <th class="w-14">#</th>
+            <th class="w-12">启用</th>
+            <th class="w-12">#</th>
             <th>通道名称</th>
             <th class="w-28">传感器类型</th>
             <th class="w-24">单位</th>
-            <th class="w-36 text-center">工程量程</th>
-            <th class="w-20 text-right">精度</th>
+            <th class="w-56 text-center">工程量程</th>
+            <th class="w-18 text-right">精度</th>
           </tr>
         </thead>
         <tbody>
@@ -470,11 +473,11 @@ function resetChannelsToDefault(): void {
 }
 
 .p1603-config__batch-num {
-  width: 100px;
+  width: 96px;
 }
 
 .p1603-config__batch-num--narrow {
-  width: 60px;
+  width: 64px;
 }
 
 .p1603-config__batch-sep {
@@ -516,11 +519,14 @@ function resetChannelsToDefault(): void {
   gap: 4px;
 }
 
-.w-14 { width: 56px; }
-.w-20 { width: 80px; }
-.w-24 { width: 96px; }
-.w-28 { width: 112px; }
-.w-36 { width: 144px; }
+/* 通道表格列宽：与 DeviceManagementDrawer 保持一致
+   - w-12/w-24/w-28 是 Tailwind 标准类，JIT 会自动生成，显式定义仅为确定性
+   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义 */
+.w-12 { width: 48px; }   /* 启用复选框、# 序号列 */
+.w-18 { width: 72px; }   /* 精度列 */
+.w-24 { width: 96px; }   /* 单位列 */
+.w-28 { width: 112px; }  /* 传感器类型列 */
+.w-56 { width: 224px; }  /* 工程量程列（两个 w-full 输入框 + "~" 分隔符 + 单元格 padding） */
 .text-center { text-align: center; }
 .text-right { text-align: right; }
 .font-mono { font-family: var(--font-mono, monospace); }

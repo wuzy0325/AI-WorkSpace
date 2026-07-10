@@ -46,9 +46,26 @@ import (
 // 任意步骤失败进入 Error 态，LastError 记录原因。
 // ============================================================
 
-// DAQP1603MaxSampleRate 是 DAQ-P-1603 的采样率上限。
-// 硬件限制 500Hz（WTNDAQ16H DLL 内部定时器精度限制），前后端均有校验拒绝越界值。
-const DAQP1603MaxSampleRate = 500
+// DAQ-P-1603 用户采样率有效范围。
+//
+// 用户采样率 = 每秒输出数据条目数，与底层硬件采样率解耦：
+//   - 底层硬件采样率固定为厂家下限 1000Hz（WTNDAQ16H.H:101），保证 DLL 稳定工作
+//   - 低频时通过多点平均实现：sampsPerChan = 1000 / userRate
+//   - 例：用户设 20Hz → 底层 1000Hz 采集 50 个点取平均 → 输出 1 条
+//
+// 上限 500Hz：sampsPerChan=2，每 2 个原始点取平均输出 1 条。
+// 超过 500Hz 时 sampsPerChan=1 不再平均，但硬件采样率需高于 1000Hz，
+// 这会触发 fSampleRate×16 ≤ 250000 的约束问题，故上限设为 500Hz。
+const (
+	DAQP1603MinSampleRate = 1    // 用户采样率下限：每秒 1 条数据
+	DAQP1603MaxSampleRate = 500  // 用户采样率上限：每秒 500 条数据
+
+	// daqP1603HardwareSampleRate 底层硬件采样率，固定为厂家下限 1000Hz。
+	// 厂家头文件 WTNDAQ16H.H:101 规定 fSampleRate ∈ [1000, 500000] sps，
+	// 且 ×nChannelCount ≤ 250000 → 16 通道时最大 15625Hz。
+	// 低频采集不需要高硬件采样率，固定 1000Hz 即可满足 1~500Hz 全部用户需求。
+	daqP1603HardwareSampleRate = 1000.0
+)
 
 // 4-20mA 电流环传感器的电气量程。
 // 所有 DAQ-P-1603 通道固定使用 0-20mA 硬件量程（SAMPRANGE_0_20mA），
@@ -500,10 +517,11 @@ func scaleCurrentToEngineering(current, engMin, engMax float64) float64 {
 
 // readLoop 是采集主循环 goroutine。
 //
-// 数据流：
-//   ReadBinary → binBuf(U16) → Go端directScaleToCurrent → currentBuf(mA) → scaleCurrentToEngineering → engValues
+// 数据流（多点平均模式）：
+//   ReadBinary(sampsPerChan) → binBuf(U16, 通道交错) → 逐通道求均值 → 均值码值 → 电流(mA) → 工程量 → DataPayload
 //
-// 每帧读取 1 sample/chan，两步换算后组装 DataPayload 投递到 sink。
+// 每帧读取 sampsPerChan 个点/通道，取算术平均后输出 1 条 DataPayload。
+// 输出频率 ≈ 硬件采样率 / sampsPerChan ≈ 用户设置的采样率。
 //
 // 异常退出处理：
 //   - ReadBinary 错误：日志 + 设置 status.Error + 调用 onReadLoopExit
@@ -516,6 +534,7 @@ func (d *DAQP1603) readLoop() {
 	deviceID := d.profile.ID
 	done := d.readLoopDone
 	stop := d.stop
+	sampsPerChan := d.calcSampsPerChanLocked() // 每次读取的点数（平均窗口）
 	d.mu.RUnlock()
 
 	scales := buildChannelScales(channels)
@@ -528,9 +547,11 @@ func (d *DAQP1603) readLoop() {
 		return
 	}
 
-	binBuf := make([]uint16, ffi.WTNDAQ16H_AI_MAX_CHANNELS) // InitTask 强制 16 通道，ReadBinary buffer 必须匹配
-	currentBuf := make([]float64, nChans)
-	const sampsPerChan = uint32(1)
+	// binBuf 容量 = 16 通道 × sampsPerChan 点，布局为通道交错：
+	// [ch0_s0, ch1_s0, ..., ch15_s0, ch0_s1, ch1_s1, ..., ch15_s1, ...]
+	// 参考厂家示例 Cont Acq-Int ClkV/Sys.cpp:112: fBinArray[nChannel+nIndex*channelCount]
+	binBuf := make([]uint16, ffi.WTNDAQ16H_AI_MAX_CHANNELS*sampsPerChan)
+	sumBuf := make([]float64, nChans) // 每通道原始码值累加器，用于多点平均
 	const readTimeout = 10.0
 	const maxConsecutiveTimeouts = 6
 
@@ -619,21 +640,30 @@ func (d *DAQP1603) readLoop() {
 		}
 		consecutiveTimeouts = 0
 
-		// Step 1: U16 码值 → 电流值(mA)
-		// 0-20mA 量程下，U16 满量程 65535 对应 20mA。
-		// InitTask 强制 16 通道全开，ReadBinary 返回 16 通道数据，
-		// 按 scales[].origIndex 从 binBuf 抽取已启用通道。
+		// 多点平均：对每通道的 sampsRead 个原始码值取算术平均，再换算为工程量。
+		//
+		// 数据布局（通道交错，参考厂家示例 Sys.cpp:112）：
+		//   binBuf[chanIndex + sampleIndex * WTNDAQ16H_AI_MAX_CHANNELS]
+		// 即 [ch0_s0, ch1_s0, ..., ch15_s0, ch0_s1, ch1_s1, ..., ch15_s1, ...]
+		//
+		// sampsRead 可能小于 sampsPerChan（部分读取时），按实际读取点数做平均。
+		// 0-20mA 量程下 U16 满量程 65535 对应 20mA。
 		const u16FullScale = 65535.0
 		const currentFullScale = 20.0
 		for i := uint32(0); i < nChans; i++ {
-			currentBuf[i] = float64(binBuf[scales[i].origIndex]) / u16FullScale * currentFullScale
-		}
-
-		// Step 2: 电流值(mA) → 工程量(Pa/kPa/℃ 等)
-		// 使用 4-20mA 标准映射：4mA=engMin, 20mA=engMax
-		for i := uint32(0); i < nChans; i++ {
-			engValues[i] = scaleCurrentToEngineering(currentBuf[i], scales[i].engMin, scales[i].engMax)
-			indices[i] = scales[i].origIndex
+			origIdx := scales[i].origIndex
+			sumBuf[i] = 0
+			for s := uint32(0); s < sampsRead; s++ {
+				// 通道交错布局：binBuf[origIdx + s * MAX_CHANNELS]
+				// origIdx 是 int（来自 profile 通道索引），s/MAX_CHANNELS 是 uint32，
+				// 需统一为 uint32 才能相加并用作切片下标
+				sumBuf[i] += float64(binBuf[uint32(origIdx)+s*ffi.WTNDAQ16H_AI_MAX_CHANNELS])
+			}
+			// 平均码值 → 平均电流值(mA) → 工程量
+			avgCode := sumBuf[i] / float64(sampsRead)
+			avgCurrent := avgCode / u16FullScale * currentFullScale
+			engValues[i] = scaleCurrentToEngineering(avgCurrent, scales[i].engMin, scales[i].engMax)
+			indices[i] = origIdx
 		}
 
 		payload := core.DataPayload{
@@ -682,7 +712,8 @@ func (d *DAQP1603) GetProfile() core.Profile {
 //
 // 校验规则：
 //   - profile.Type 必须为 DeviceDAQP1603
-//   - SamplingRate 必须 >0 且 ≤DAQP1603MaxSampleRate（500Hz，spec D-2）
+//   - SamplingRate 必须在 [DAQP1603MinSampleRate, DAQP1603MaxSampleRate] 范围内
+//     （用户采样率 = 每秒数据条目数 1~500Hz，与底层硬件固定 1000Hz 解耦，低频通过多点平均实现）
 //   - 采集进行中拒绝（acquiring==true），避免运行时改参数导致 DLL 内部状态不一致
 //
 // 同步硬件策略：
@@ -698,12 +729,12 @@ func (d *DAQP1603) ApplyConfig(profile core.Profile) error {
 	if profile.Type != core.DeviceDAQP1603 {
 		return fmt.Errorf("DAQ-P-1603 apply config: type mismatch, got %q", profile.Type)
 	}
-	if profile.SamplingRate <= 0 {
-		return fmt.Errorf("DAQ-P-1603 apply config: sampling rate must be > 0, got %d", profile.SamplingRate)
-	}
-	if profile.SamplingRate > DAQP1603MaxSampleRate {
-		return fmt.Errorf("DAQ-P-1603 apply config: sampling rate %d exceeds max %d (spec D-2)",
-			profile.SamplingRate, DAQP1603MaxSampleRate)
+	// 用户采样率 = 每秒数据条目数，与底层硬件采样率（固定 1000Hz）解耦。
+	// 低频通过多点平均实现：硬件以 1000Hz 采集，readLoop 每次读取 sampsPerChan 点取平均后输出 1 条。
+	// 例：用户设 20Hz → sampsPerChan=50 → 每 50 个原始点平均输出 1 条 → 输出频率 20Hz。
+	if profile.SamplingRate < DAQP1603MinSampleRate || profile.SamplingRate > DAQP1603MaxSampleRate {
+		return fmt.Errorf("DAQ-P-1603 apply config: sampling rate %d out of range [%d, %d] (user rate=每秒数据条目数, Hz)",
+			profile.SamplingRate, DAQP1603MinSampleRate, DAQP1603MaxSampleRate)
 	}
 
 	d.mu.Lock()
@@ -805,6 +836,12 @@ func (d *DAQP1603) setStatusErrorLocked(err error) {
 // buildAIParamLocked 根据当前 profile 构造 FFI 调用所需的 WTNDAQ16HAIParam。
 // 调用方必须持有 d.mu（读 d.profile）。
 //
+// 采样率策略（用户采样率与硬件采样率解耦）：
+//   - 硬件采样率 fSampleRate 固定 1000Hz（厂家下限），保证 DLL 稳定工作
+//   - 用户采样率 profile.SamplingRate 控制每秒输出数据条目数（1~500Hz）
+//   - sampsPerChan = 1000 / userRate，每次 ReadBinary 读取多点取平均后输出 1 条
+//   - 例：用户设 20Hz → fSampleRate=1000, sampsPerChan=50 → 每 50 个原始点平均输出
+//
 // 通道数策略：InitTask 将 16 通道全部初始化（SampChanCount=16）。历史上曾观察到
 // SampChanCount<16 时数据异常，遂固定为 16；readLoop 侧再按 profile.Channels[].Enabled
 // 过滤，仅处理已启用通道的数据。
@@ -819,7 +856,7 @@ func (d *DAQP1603) setStatusErrorLocked(err error) {
 //   - 时钟源：本地时钟（LOCAL）
 //   - 量程：0-20mA（SAMPRANGE_0_20mA）
 //   - 触发：禁用（无 DTriggerEn / ATriggerEn）
-//   - SampsPerChan：1024
+//   - SampsPerChan：max(1024, calcSampsPerChan())，确保 DLL 内部缓冲区足够
 func (d *DAQP1603) buildAIParamLocked() ffi.WTNDAQ16HAIParam {
 	var p ffi.WTNDAQ16HAIParam
 
@@ -839,14 +876,42 @@ func (d *DAQP1603) buildAIParamLocked() ffi.WTNDAQ16HAIParam {
 	p.SampleSignal = ffi.WTNDAQ16H_AI_SAMPSIGNAL_AI
 
 	p.SampleMode = ffi.WTNDAQ16H_AI_SAMPMODE_CONTINUOUS
-	p.SampsPerChan = 1024
 
-	rate := float64(d.profile.SamplingRate)
-	if rate <= 0 {
-		rate = 500
+	// 硬件采样率固定 1000Hz（用户采样率与硬件采样率解耦，详见常量注释）
+	p.SampleRate = daqP1603HardwareSampleRate
+
+	// DLL 内部缓冲区点数：取 1024 和 sampsPerChan 的较大值，
+	// 确保 ReadBinary 读取 sampsPerChan 个点时缓冲区不会欠载。
+	// 头文件 WTNDAQ16H.H:100 规定连续模式下 nSampsPerChan ∈ [2, 1024*1024]。
+	sampsPerChan := d.calcSampsPerChanLocked()
+	if sampsPerChan > 1024 {
+		p.SampsPerChan = sampsPerChan
+	} else {
+		p.SampsPerChan = 1024
 	}
-	p.SampleRate = rate
+
 	p.ClockSource = ffi.WTNDAQ16H_AI_CLKSRC_LOCAL
 
 	return p
+}
+
+// calcSampsPerChanLocked 计算每次 ReadBinary 应读取的点数（平均窗口大小）。
+//
+// sampsPerChan = 硬件采样率 / 用户采样率，向下取整，最小 1。
+// 用户设 1Hz → 1000 点取平均；20Hz → 50 点；500Hz → 2 点。
+//
+// 调用方必须持有 d.mu（读 d.profile）。
+func (d *DAQP1603) calcSampsPerChanLocked() uint32 {
+	userRate := float64(d.profile.SamplingRate)
+	if userRate < DAQP1603MinSampleRate {
+		userRate = DAQP1603MinSampleRate
+	}
+	if userRate > DAQP1603MaxSampleRate {
+		userRate = DAQP1603MaxSampleRate
+	}
+	sampsPerChan := uint32(daqP1603HardwareSampleRate / userRate)
+	if sampsPerChan < 1 {
+		sampsPerChan = 1
+	}
+	return sampsPerChan
 }

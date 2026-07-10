@@ -396,7 +396,7 @@ watch(() => props.show, async (isVisible) => {
     ])
     reportAllSettledFailures(
       results,
-      [t.value.travErrDeviceList, t.value.travErrMotionList, t.value.travErrStorage, t.value.travErrTraversalConfig],
+      ['设备列表', '运动控制器列表', '存储设置', '遍历配置'],
       feedbackStore.pushToast,
     )
     if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''

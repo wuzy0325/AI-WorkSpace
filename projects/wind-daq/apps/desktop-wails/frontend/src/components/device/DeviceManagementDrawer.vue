@@ -305,9 +305,11 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
   if (type === 'DAQ-P-1603') {
     // DAQ-P-1603：DLL 自管 TCP 端口，profile.Port 不使用；
     // IP 留空让用户在"基本信息"面板手动输入（参考代码无扫描 API）。
+    // 默认采样率 100Hz（用户采样率=每秒数据条目数）。
+    // 底层硬件采样率固定 1000Hz，100Hz 意味着每 10 个原始点取平均输出 1 条。
     address = ''
     port = 0
-    samplingRate = 500
+    samplingRate = 100
   }
   return {
     id, name: '', type, transport: 'tcp', address, port,
@@ -375,7 +377,15 @@ const fieldErrors = computed<DraftFieldErrors>(() => {
       if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = i18n.t.dev_portInvalid
     }
   }
-  if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) errors.samplingRate = i18n.t.dev_samplingRateInvalid
+  // DAQ-P-1603 采样率范围 [1, 500] Hz（用户采样率=每秒数据条目数）。
+  // 底层硬件采样率固定 1000Hz，低频时通过多点平均实现。
+  if (p.type === 'DAQ-P-1603') {
+    if (!Number.isFinite(p.samplingRate) || p.samplingRate < 1 || p.samplingRate > 500) {
+      errors.samplingRate = i18n.t.dev_samplingRateInvalid
+    }
+  } else if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) {
+    errors.samplingRate = i18n.t.dev_samplingRateInvalid
+  }
   return errors
 })
 
@@ -1368,10 +1378,10 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">#</th>
+                        <th class="w-12">#</th>
                         <th>{{ i18n.t.dev_channelName }}</th>
-                        <th>{{ i18n.t.dev_thermocoupleType }}</th>
-                        <th class="w-20 text-right">{{ i18n.t.unit }}</th>
+                        <th class="w-24">{{ i18n.t.dev_thermocoupleType }}</th>
+                        <th class="w-16 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1409,9 +1419,9 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">#</th>
+                        <th class="w-12">#</th>
                         <th>{{ i18n.t.dev_channelName }}</th>
-                        <th class="w-20 text-right">{{ i18n.t.unit }}</th>
+                        <th class="w-16 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1472,11 +1482,11 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">{{ i18n.t.channelEnabled }}</th>
-                        <th class="w-14">#</th>
+                        <th class="w-12">{{ i18n.t.channelEnabled }}</th>
+                        <th class="w-12">#</th>
                         <th>{{ i18n.t.dev_channelName }}</th>
-                        <th class="w-36 text-center">{{ i18n.t.dev_engineeringRange }}</th>
-                        <th class="w-20 text-right">{{ i18n.t.channelPrecision }}</th>
+                        <th class="w-56 text-center">{{ i18n.t.dev_engineeringRange }}</th>
+                        <th class="w-18 text-right">{{ i18n.t.channelPrecision }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1979,8 +1989,8 @@ const scanError = ref<string | null>(null)
   color: var(--text-muted);
   white-space: nowrap;
 }
-.editor-ch-batch-num { width: 88px; }
-.editor-ch-batch-num--narrow { width: 56px; }
+.editor-ch-batch-num { width: 96px; }
+.editor-ch-batch-num--narrow { width: 64px; }
 .editor-ch-batch-sep {
   font-size: var(--font-size-xs);
   font-weight: 700;
@@ -2218,6 +2228,15 @@ const scanError = ref<string | null>(null)
   animation: btn-spin 0.8s linear infinite;
 }
 .w-full { width: 100%; }
+/* 通道表格列宽定义
+   - w-12/w-16/w-24 是 Tailwind 标准类，JIT 会自动生成，
+     这里显式定义是为了在 scoped 作用域内提供确定性，避免依赖 Tailwind 配置。
+   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义才能生效。 */
+.w-12 { width: 48px; }   /* 启用复选框、# 序号列 */
+.w-16 { width: 64px; }   /* 单位列（℃ 等单字符单位） */
+.w-18 { width: 72px; }   /* 精度列（3 位数字） */
+.w-24 { width: 96px; }   /* 热电偶类型下拉列 */
+.w-56 { width: 224px; }  /* 工程量程列（两个 w-full 输入框 + "~" 分隔符 + 单元格 padding） */
 .editor-ch-select-min-width { min-width: 80px; }
 @keyframes btn-spin {
   to { transform: translateY(-50%) rotate(360deg); }
