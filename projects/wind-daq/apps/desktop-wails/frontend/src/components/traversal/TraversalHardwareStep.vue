@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ProbeChannelConfig, TraversalMotionAxisConfig, DataValidationConfig, StabilizationConfig } from '@shared/types/traversal'
+import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/types/traversal'
 import { isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -13,14 +13,17 @@ import UiInputNumber from '@components/ui/UiInputNumber.vue'
 
 const probeChannels = defineModel<ProbeChannelConfig[]>('probeChannels', { required: true })
 const motionAxes = defineModel<TraversalMotionAxisConfig[]>('motionAxes', { required: true })
-const validationEnabled = defineModel<boolean>('validationEnabled', { required: true })
-const validationConfig = defineModel<DataValidationConfig>('validationConfig', { required: true })
-const stabilizationMode = defineModel<'fixed' | 'adaptive'>('stabilizationMode', { required: true })
-const stabilizationConfig = defineModel<StabilizationConfig>('stabilizationConfig', { required: true })
 
 const props = defineProps<{
   t: Record<string, string>
   isLoading: boolean
+  /**
+   * 五孔探针 P1-P5 通道的压力传感器类型。
+   * 由父组件 TraversalSettings 传入，仅用于在通道映射面板展示提示，
+   * 告知用户 P1-P5 将按何种类型在后端归一化（表压不减 Patm / 绝压减 Patm）。
+   * 不在此组件内修改，单一数据源在父组件。
+   */
+  pProbePressureType?: 'gauge' | 'absolute'
 }>()
 
 const deviceStore = useDeviceStore()
@@ -31,24 +34,20 @@ function isRequired(c: ProbeChannelConfig) { return isTraversalRequiredProbeChan
 // 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
 // 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
 const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: i }))
-const axisOptions = ['X', 'Y', 'Z', 'U'].map(a => ({ label: `${a} 轴`, value: a }))
+// 轴选项标签需随语言切换刷新，故用 computed 派生
+const axisOptions = computed(() => ['X', 'Y', 'Z', 'U'].map(a => ({ label: props.t.travAxisSuffix.replace('{axis}', a), value: a })))
 const mappingOptions = [
-  { label: props.t.mappingAlpha || '攻角', value: 'alpha' },
-  { label: props.t.mappingBeta || '侧滑角', value: 'beta' },
+  { label: props.t.mappingAlpha, value: 'alpha' },
+  { label: props.t.mappingBeta, value: 'beta' },
 ]
 
-// 数据验证错误策略选项
-const errorStrategyOptions = [
-  { label: props.t.travStrategyContinue || 'Continue', value: 'continue' },
-  { label: props.t.travStrategyRetry || 'Retry', value: 'retry' },
-  { label: props.t.travStrategySkip || 'Skip', value: 'skip' },
-]
-
-// 稳定化模式选项
-const stabilizationOptions = [
-  { label: props.t.travFixedTime || 'Fixed time', value: 'fixed' },
-  { label: props.t.travAdaptive || 'Adaptive', value: 'adaptive' },
-]
+// 五孔压力类型提示文本：随 pProbePressureType 变化（表压/绝压），提醒用户 P1-P5 将如何归一化。
+// 用 computed 派生以响应父组件开关变化；缺省（undefined）按 'gauge' 展示，与后端兜底一致。
+const pProbePressureTypeHint = computed(() => {
+  return props.pProbePressureType === 'absolute'
+    ? props.t.travPressureTypeHintAbsolute
+    : props.t.travPressureTypeHintGauge
+})
 
 // ---- 设备连接状态映射 ----
 function getDeviceStatus(deviceId: string): 'idle' | 'connected' | 'acquiring' | 'error' | 'warning' {
@@ -92,50 +91,58 @@ function autoFillChannelIndices(): void {
 
 <template>
   <div class="step-content">
-    <!-- 批量操作工具栏 -->
+    <!-- 批量操作工具栏：紧凑横排，标签+控件+按钮一行内完成 -->
     <div class="batch-toolbar">
       <div class="batch-toolbar-row">
         <!-- 统一选择设备 -->
         <div class="batch-cell">
-          <span class="batch-label">{{ t.unifiedDevice || '统一设备' }}</span>
-          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice || '选择设备'" class="batch-select" :disabled="isLoading" />
+          <span class="batch-label">{{ t.unifiedDevice }}</span>
+          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
         </div>
-        <div class="batch-cell">
-          <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels || '应用到全部通道' }}</UiButton>
-        </div>
+        <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels }}</UiButton>
       </div>
       <div class="batch-toolbar-row">
         <!-- 通道号自动递增 -->
         <div class="batch-cell">
-          <span class="batch-label">{{ t.startChannel || '起始通道' }}</span>
+          <span class="batch-label">{{ t.startChannel }}</span>
           <UiSelect
             :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
             @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
             :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
-            :placeholder="t.selectStartChannel || '选择起始通道号'"
+            :placeholder="t.selectStartChannel"
             class="batch-select"
             :disabled="isLoading"
           />
         </div>
-        <div class="batch-cell">
-          <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill || '自动递增填充' }}</UiButton>
-        </div>
+        <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill }}</UiButton>
       </div>
     </div>
 
     <!-- 探头通道配置 -->
     <UiPanel class="section-card">
-      <div class="hw-head"><span class="hdr-enabled">{{ t.channelEnabled }}</span><span class="hdr-name">{{ t.channelProbeName }}</span><span class="hdr-device">{{ t.channelDataSource }}</span><span class="hdr-w80">{{ t.channelIndexLabel }}</span><span class="hdr-w80">{{ t.channelPrecision || '精度' }}</span></div>
+      <!-- 五孔压力类型提示：随父组件开关变化，提醒用户 P1-P5 将按何种类型归一化 -->
+      <div class="pressure-type-hint-bar">
+        <span class="pressure-type-hint-label">{{ t.travPressureType }}:</span>
+        <span class="pressure-type-hint-value">{{ pProbePressureType === 'absolute' ? t.travPressureTypeAbsolute : t.travPressureTypeGauge }}</span>
+        <span class="pressure-type-hint-desc">{{ pProbePressureTypeHint }}</span>
+      </div>
+      <div class="hw-head">
+        <span class="hdr-enabled">{{ t.channelEnabled }}</span>
+        <span class="hdr-name">{{ t.channelProbeName }}</span>
+        <span class="hdr-device">{{ t.channelDataSource }}</span>
+        <span class="hdr-w80">{{ t.channelIndexLabel }}</span>
+        <span class="hdr-w80">{{ t.channelPrecision }}</span>
+      </div>
       <div v-for="ch in probeChannels" :key="ch.name" class="hw-row">
         <div class="row-check"><UiCheckbox v-model:checked="ch.enabled" :disabled="isRequired(ch)" /></div>
         <div class="row-content">
-          <div class="flex items-center gap-2">
+          <div class="chan-name-wrap">
             <span class="chan-name">{{ ch.name }}</span>
             <UiStatusBadge v-if="isRequired(ch)" status="connected">Required</UiStatusBadge>
           </div>
         </div>
         <div class="device-select-wrap">
-          <UiSelect v-model="ch.channel.deviceId" :options="deviceOptions" :placeholder="t.selectDevice || '选择设备'" class="sel-w150" :disabled="!ch.enabled || isLoading" />
+          <UiSelect v-model="ch.channel.deviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="sel-w150" :disabled="!ch.enabled || isLoading" />
           <span
             v-if="ch.channel.deviceId"
             class="device-status-dot"
@@ -150,124 +157,128 @@ function autoFillChannelIndices(): void {
 
     <!-- 运动轴配置 -->
     <UiPanel class="section-card">
-      <div class="hw-head"><span class="hdr-w50">{{ t.coordinateAxis }}</span><span class="hdr-name">{{ t.motionControllerLabel }}</span><span class="hdr-w80">{{ t.physicalAxis }}</span><span class="hdr-w90">{{ t.mappingLabel || 'Mapping' }}</span></div>
+      <div class="hw-head">
+        <span class="hdr-w50">{{ t.coordinateAxis }}</span>
+        <span class="hdr-name">{{ t.motionControllerLabel }}</span>
+        <span class="hdr-w80">{{ t.physicalAxis }}</span>
+        <span class="hdr-w90">{{ t.mappingLabel }}</span>
+      </div>
       <div v-for="ax in motionAxes" :key="ax.name" class="hw-row">
         <span class="axis-name">{{ ax.name }}</span>
-        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" :placeholder="t.selectController || '选择控制器'" class="sel-flex" :disabled="isLoading" />
+        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" :placeholder="t.selectController" class="sel-flex" :disabled="isLoading" />
         <UiSelect v-model="ax.axis" :options="axisOptions" class="sel-w80" />
         <UiSelect v-model="ax.angleMapping!.type" :options="mappingOptions" class="sel-w90" />
-      </div>
-    </UiPanel>
-
-    <!-- 数据验证与稳定化配置：合并为紧凑的辅助配置区块 -->
-    <UiPanel class="section-card compact-panel" :padded="false">
-      <template #header><span class="batch-title">{{ t.travAdvancedConfig || '辅助配置' }}</span></template>
-
-      <div class="compact-panel-inner">
-        <!-- 数据验证：可选，用于校验压力范围和异常尖峰 -->
-        <div class="compact-config-row">
-          <label class="compact-option-label">
-            <UiCheckbox v-model:checked="validationEnabled" size="small" />
-            <span class="compact-label-text">{{ t.travEnableValidation || '启用数据验证' }}</span>
-          </label>
-          <div v-if="validationEnabled" class="sub-config-inline">
-            <span class="sub-config-label">{{ t.travErrorStrategy || '错误策略' }}</span>
-            <div class="radio-group compact-radio-group">
-              <label v-for="opt in errorStrategyOptions" :key="opt.value" class="radio-label" :class="{ active: validationConfig.onInvalid === opt.value }">
-                <input v-model="validationConfig.onInvalid" type="radio" :value="opt.value" />
-                <span>{{ opt.label }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- 分割线 -->
-        <div class="compact-divider"></div>
-
-        <!-- 稳定化模式：fixed 使用固定等待时间，adaptive 持续监测压力变化 -->
-        <div class="compact-config-row">
-          <span class="compact-label-text">{{ t.travStableMode || '稳定模式' }}</span>
-          <div class="radio-group compact-radio-group">
-            <label v-for="opt in stabilizationOptions" :key="opt.value" class="radio-label" :class="{ active: stabilizationMode === opt.value }">
-              <input v-model="stabilizationMode" type="radio" :value="opt.value" />
-              <span>{{ opt.label }}</span>
-            </label>
-          </div>
-          <div v-if="stabilizationMode === 'fixed'" class="sub-config-inline">
-            <span class="sub-config-label">{{ t.travWaitTime || '等待时间 (ms)' }}</span>
-            <UiInputNumber v-model="stabilizationConfig.fixedTimeMs" :min="100" :max="60000" class="compact-input" />
-          </div>
-          <div v-else class="sub-config-hint compact-hint">{{ t.travAdaptiveHint || '自适应模式：自动监测压力稳定性' }}</div>
-        </div>
       </div>
     </UiPanel>
   </div>
 </template>
 
 <style scoped>
-.step-content { display:flex; flex-direction:column; gap:var(--space-2) }
-.section-card { font-size:var(--text-sm) }
+/* 步骤内容：紧凑垂直间距，与 Layout/Review 步骤视觉一致 */
+.step-content { display: flex; flex-direction: column; gap: var(--space-2) }
+.section-card { font-size: var(--text-sm) }
 
-/* 批量操作栏：扁平化工具条，与右侧统计卡片风格协调 */
-.batch-toolbar { padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--bg-panel); display:flex; flex-direction:column; gap:8px }
-.batch-toolbar-row { display:grid; grid-template-columns:160px 1fr; align-items:end; gap:10px }
-.batch-cell { display:flex; flex-direction:column; gap:4px }
-.batch-label { font-size:var(--text-xs); font-weight:500; color:var(--text-secondary); white-space:nowrap }
-.batch-select { width:100% }
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，覆盖为更紧凑的 6px 10px；
+   仅作用于本组件内的 NCard content，避免污染全局 UiPanel 视觉 */
+.section-card :deep(.n-card__content) {
+  padding: 6px 10px
+}
+/* 带 header 的面板（如运动轴配置无 header，但保留兜底）收紧 header padding */
+.section-card :deep(.n-card-header) {
+  padding: 6px 10px
+}
 
-.hw-head { display:flex; align-items:center; gap:var(--space-2); padding-bottom:6px; border-bottom:1px solid var(--border-default) }
-.hw-row { display:flex; align-items:center; gap:var(--space-2); padding:4px 0 }
-.hw-row:hover { background:var(--bg-panel-strong); border-radius:var(--radius-md) }
-.hdr-enabled { font-size:var(--text-xs);flex:0 0 32px;color:var(--text-muted) }
-.hdr-name { font-size:var(--text-xs);flex:1;color:var(--text-muted) }
-.hdr-device { font-size:var(--text-xs);width:150px;color:var(--text-muted) }
-.hdr-w80 { font-size:var(--text-xs);width:80px;color:var(--text-muted) }
-.hdr-w50 { font-size:var(--text-xs);width:50px;color:var(--text-muted) }
-.hdr-w90 { font-size:var(--text-xs);width:90px;color:var(--text-muted) }
-.row-check { flex:0 0 32px }
-.row-content { flex:1;min-width:0 }
-.chan-name { font-size:var(--text-sm);color:var(--text-primary) }
-.axis-name { font-size:var(--text-sm);font-weight:600;width:50px;color:var(--text-primary) }
-.sel-w150 { width:150px }
-.sel-w120 { width:120px }
-.sel-w80 { width:80px }
-.sel-w90 { width:90px }
-.sel-flex { flex:1 }
-.option-label { display:flex; align-items:center; gap:8px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer; min-height:36px }
-.sub-config-block { margin-top:var(--space-2); padding-left:var(--space-4); display:flex; flex-direction:column; gap:4px }
-.sub-config-label { font-size:var(--text-xs); color:var(--text-tertiary) }
-.sub-config-hint { margin-top:var(--space-2); font-size:var(--text-xs); color:var(--text-tertiary); line-height:1.5 }
-.radio-group { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-top:4px }
-.radio-label { display:flex; align-items:center; gap:8px; padding:8px 10px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer; border-radius:var(--radius-md); border:1px solid var(--border-default); min-height:36px }
-.radio-label input[type="radio"] { margin:0 }
-.radio-label:hover { background:var(--bg-panel-strong) }
-.radio-label.active { border-color:var(--color-primary); background:var(--color-primary-light, rgba(59,130,246,0.1)); color:var(--color-primary) }
-.w-full { width:100% }
+/* 五孔压力类型提示条：通道映射面板顶部，单行紧凑展示 */
+.pressure-type-hint-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  font-size: var(--text-xs)
+}
+.pressure-type-hint-label { color: var(--text-tertiary); white-space: nowrap }
+.pressure-type-hint-value { font-weight: 500; color: var(--text-primary); white-space: nowrap }
+.pressure-type-hint-desc { color: var(--text-secondary); min-width: 0; flex: 1 }
 
-/* 紧凑布局：合并数据验证和稳定模式为单个面板，使用自定义内边距消除多余空白 */
-.compact-panel :deep(.n-card__content) { padding: 0 }
-.compact-panel .compact-panel-inner { padding: var(--space-2) var(--space-3) }
-.compact-panel .compact-config-row { padding: 2px 0 }
-.compact-panel .compact-option-label { display:flex; align-items:center; gap:8px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer; min-height:24px }
-.compact-panel .compact-label-text { font-size:var(--text-sm); font-weight:500; color:var(--text-primary) }
-.compact-panel .compact-divider { height:1px; background:var(--border-default); margin:4px 0 }
-.compact-panel .sub-config-inline { margin-top:2px; display:flex; flex-direction:column; gap:2px }
-.compact-panel .compact-radio-group { margin-top:2px; gap:6px }
-.compact-panel .compact-radio-group .radio-label { padding:4px 8px; min-height:28px; font-size:var(--text-xs) }
-.compact-panel .compact-input { width:140px }
-.compact-panel .compact-hint { margin-top:2px; font-size:var(--text-xs) }
+/* 批量操作栏：扁平化工具条，与右侧统计卡片风格协调；
+   紧凑行高 + 单行内标签/控件/按钮居中对齐，避免大卡片视觉割裂 */
+.batch-toolbar {
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px
+}
+/* 行内布局：标签+控件 占主轴，按钮固定尾部，align-items:center 保证垂直对齐 */
+.batch-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px
+}
+.batch-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0
+}
+.batch-label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap
+}
+.batch-select { flex: 1; min-width: 0 }
+
+/* 通道/运动轴表头与行：紧凑高度，列宽固定对齐 */
+.hw-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-default)
+}
+.hw-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0
+}
+.hw-row:hover { background: var(--bg-panel-strong); border-radius: var(--radius-md) }
+.hdr-enabled { font-size: var(--text-xs); flex: 0 0 32px; color: var(--text-muted) }
+.hdr-name { font-size: var(--text-xs); flex: 1; color: var(--text-muted) }
+.hdr-device { font-size: var(--text-xs); width: 150px; color: var(--text-muted) }
+.hdr-w80 { font-size: var(--text-xs); width: 80px; color: var(--text-muted) }
+.hdr-w50 { font-size: var(--text-xs); width: 50px; color: var(--text-muted) }
+.hdr-w90 { font-size: var(--text-xs); width: 90px; color: var(--text-muted) }
+.row-check { flex: 0 0 32px }
+.row-content { flex: 1; min-width: 0 }
+.chan-name-wrap { display: flex; align-items: center; gap: 6px }
+.chan-name { font-size: var(--text-sm); color: var(--text-primary) }
+.axis-name { font-size: var(--text-sm); font-weight: 600; width: 50px; color: var(--text-primary) }
+.sel-w150 { width: 150px }
+.sel-w80 { width: 80px }
+.sel-w90 { width: 90px }
+.sel-flex { flex: 1 }
 
 /* 设备选择器与状态指示 */
-.device-select-wrap { display:flex; align-items:center; gap:6px; width:150px }
-.device-status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0 }
-.device-status-dot--idle { background:var(--text-muted); }
-.device-status-dot--connected { background:var(--color-success, #22c55e); }
-.device-status-dot--acquiring { background:var(--color-success, #22c55e); box-shadow:0 0 0 2px rgba(34,197,94,0.3); animation:pulse-dot 1.5s ease-in-out infinite; }
-.device-status-dot--warning { background:var(--color-warning, #f59e0b); }
-.device-status-dot--error { background:var(--color-error, #ef4444); }
+.device-select-wrap { display: flex; align-items: center; gap: 6px; width: 150px }
+.device-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0 }
+.device-status-dot--idle { background: var(--text-muted); }
+.device-status-dot--connected { background: var(--color-success, #22c55e); }
+.device-status-dot--acquiring { background: var(--color-success, #22c55e); box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3); animation: pulse-dot 1.5s ease-in-out infinite; }
+.device-status-dot--warning { background: var(--color-warning, #f59e0b); }
+.device-status-dot--error { background: var(--color-error, #ef4444); }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity:1; transform:scale(1); }
-  50% { opacity:0.5; transform:scale(0.8); }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
 }
 </style>
