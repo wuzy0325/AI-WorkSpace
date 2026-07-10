@@ -3,11 +3,29 @@ import { computed, ref, shallowRef } from 'vue'
 import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig } from '@api/types'
 import { deviceApi } from '@api/deviceApi'
 import { createRingBuffer, type RingBuffer } from '@composables/ringBuffer'
-import { useStorageStore, WAVEFORM_BUFFER_MAX } from '@stores/storageStore'
+import { useStorageStore, computeHistoryCapacity, HISTORY_CAPACITY_HARD_CAP } from '@stores/storageStore'
 
-/** 安全硬上限：环形缓冲区容量不会超过此值，防止异常配置导致内存爆炸 */
-const MAX_HISTORY_POINTS = 2000
+/** 波形图同时显示的最大通道数，超过时不渲染（避免内存/渲染爆炸） */
 const MAX_CHART_CHANNELS = 16
+
+/**
+ * 波形图渲染节拍（Hz）。
+ *
+ * 借鉴 daq-p1604 的架构：把"后端推送频率"与"波形图写入频率"解耦。
+ *   - 后端按 refreshRateHz 轮询（默认 5Hz），每次都更新 latestSnapshots（通道卡片实时显示）
+ *   - 但波形图只在 RENDER_TICK_HZ 频率下消费 pendingSnapshots 中的最新一帧写入 historyBuffers
+ *
+ * 这样：
+ *   - 无论后端推多快，波形图每秒最多新增 RENDER_TICK_HZ 个点，GC 压力可控
+ *   - 通道卡片不受影响，仍按后端推送频率实时更新
+ *   - 用户配置的时间窗口与刷新率决定环形缓冲容量上限
+ *
+ * RENDER_TICK_HZ 决定波形图写入频率，是性能护栏，与刷新率上限 REFRESH_RATE_MAX=10Hz 对齐。
+ * 时间窗口和刷新率决定环形缓冲容量，最大容量由 storageStore.HISTORY_CAPACITY_HARD_CAP=300 兜底。
+ * 高于 10Hz 在 300 点缓冲下仍可能因 ECharts setOption 重算 times/series 导致卡顿。
+ */
+const RENDER_TICK_HZ = 10
+const RENDER_TICK_INTERVAL_MS = Math.round(1000 / RENDER_TICK_HZ)
 
 export const useDeviceStore = defineStore('devices', () => {
   const profiles = ref<DeviceProfile[]>([])
@@ -21,6 +39,13 @@ export const useDeviceStore = defineStore('devices', () => {
   const deviceStatuses = ref<Map<string, DeviceStatus>>(new Map())
   const profilesLoading = ref(false)
   const profilesLoadError = ref<string | null>(null)
+
+  // pendingSnapshots：暂存每台设备最新一帧，等待 renderTick 消费。
+  // 后端按用户配置 refreshRateHz 推送（默认 10Hz），每帧覆盖旧 pending（只保留最新），
+  // renderTick 以 RENDER_TICK_HZ (10Hz) 消费 → 波形图每秒最多新增 10 个点，
+  // 避免 10Hz 全量推送导致的 GC 压力，同时与刷新率对齐防止数据丢失。
+  const pendingSnapshots = new Map<string, DataPayload>()
+  let renderTickTimer: ReturnType<typeof setInterval> | null = null
 
   let unsubscribeSnapshot: (() => void) | null = null
   let snapshotAttachCount = 0
@@ -157,9 +182,14 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   /**
-   * 将设备快照追加到环形缓冲区（O(1)）。
-   * 容量 = min(waveformBufferSize, MAX_HISTORY_POINTS)，以用户设置为权威。
-   * Settings 变化时自动重建 ring（丢弃旧数据）。
+   * 将设备快照推送到前端。
+   *
+   * 职责拆分（借鉴 daq-p1604 架构）：
+   *   1. 立即更新 latestSnapshots（通道卡片实时显示，需要低延迟）
+   *   2. 暂存到 pendingSnapshots（波形图专用，等 renderTick 节流消费）
+   *
+   * 不直接写入 historyBuffers——避免后端按 refreshRateHz 推送时波形图每帧重算 + GC 压力。
+   * renderTick 以 RENDER_TICK_HZ (10Hz) 频率消费 pending，每设备每 tick 只写 1 个点。
    */
   function pushSnapshot(payload: DataPayload) {
     if (!payload || !payload.deviceId) return
@@ -183,6 +213,7 @@ export const useDeviceStore = defineStore('devices', () => {
       })
     }
 
+    // 职责 1：立即更新 latestSnapshots（通道卡片读取，实时性优先）
     const idx = latestSnapshots.value.findIndex((s) => s.deviceId === normalized.deviceId)
     if (idx >= 0) {
       latestSnapshots.value[idx] = normalized
@@ -190,32 +221,79 @@ export const useDeviceStore = defineStore('devices', () => {
       latestSnapshots.value.push(normalized)
     }
 
-    // 获取期望容量：用户设置优先，MAX_HISTORY_POINTS 兜底
+    // 职责 2：暂存到 pendingSnapshots，等 renderTick 节流消费
+    // 覆盖式写入：若上一帧还没被 renderTick 消费，直接覆盖
+    // → renderTick 消费时只拿到最新一帧，避免历史数据堆积
+    pendingSnapshots.set(normalized.deviceId, normalized)
+  }
+
+  /**
+   * 波形图渲染节拍：消费 pendingSnapshots，每设备每 tick 写入 1 个点到 historyBuffers。
+   *
+   * - 借鉴 daq-p1604 的 renderTick 设计：把"后端推送频率"与"波形图写入频率"解耦
+   * - 10Hz：与默认 refreshRateHz 对齐，波形图每秒最多新增 10 个点
+   * - 组件层用单个 computed option + watch flush:'post'，避免 setTimeout 节流叠加
+   */
+  function flushPendingToHistory(): void {
+    if (pendingSnapshots.size === 0) return
+
     const storageStore = useStorageStore()
-    const expectedCapacity = Math.min(
-      storageStore.settings.waveformBufferSize,
-      MAX_HISTORY_POINTS,
+    // 容量 = 时间窗口 × 刷新率，clamp 到硬上限
+    // 用户改"时间窗口"调的是看多久的历史；改"刷新率"调的是波形密度
+    // 容量自动随两者变化，不再让用户直接配点数
+    const expectedCapacity = computeHistoryCapacity(
+      storageStore.settings.historyWindowSec,
+      storageStore.settings.refreshRateHz,
     )
 
+    let dirty = false
     const currentMap = historyBuffers.value
-    let ring = currentMap.get(normalized.deviceId)
 
-    // 容量变化时重建环形缓冲：丢弃旧数据，使用新容量
-    if (!ring || ring.capacity !== expectedCapacity) {
-      ring = createRingBuffer<DataPayload>(expectedCapacity)
-      // shallowRef 需要整体替换 Map 才能触发响应式
-      const newMap = new Map(currentMap)
-      newMap.set(normalized.deviceId, ring)
-      historyBuffers.value = newMap
-    } else {
+    for (const [deviceId, snapshot] of pendingSnapshots) {
+      let ring = currentMap.get(deviceId)
+
+      // 容量变化时重建环形缓冲：丢弃旧数据，使用新容量
+      if (!ring || ring.capacity !== expectedCapacity) {
+        ring = createRingBuffer<DataPayload>(expectedCapacity)
+        const newMap = new Map(currentMap)
+        newMap.set(deviceId, ring)
+        historyBuffers.value = newMap
+        // 注意：historyBuffers.value 已替换为 newMap，后续迭代需用新 Map
+        // 但这里我们继续用 currentMap 引用——下面 ring.push 写入的是 newMap 中的 ring 对象
+        // 因为 createRingBuffer 返回的 ring 是引用，newMap.set(deviceId, ring) 和 currentMap.get(deviceId) 是同一个对象
+        // 所以 push 操作会反映到 newMap 中
+      }
+
       // 同 timestamp 去重：不重复写入
-      const arr = ring.toArray()
-      const last = arr.length > 0 ? arr[arr.length - 1] : null
-      if (last?.timestamp === normalized.timestamp) return
+      // 用 peekLast() O(1) 访问最新元素，避免 toArray() 在 cap 满后每帧 O(N) 数组重建
+      // （此前是 30 秒后卡顿的主要根因之一）
+      const last = ring.peekLast()
+      if (last?.timestamp === snapshot.timestamp) continue
+
+      ring.push(snapshot)
+      dirty = true
     }
 
-    ring.push(normalized)
-    historyVersion.value += 1
+    if (dirty) {
+      historyVersion.value += 1
+    }
+    pendingSnapshots.clear()
+  }
+
+  /**
+   * 启动 renderTick 定时器。重复调用安全（已启动则跳过）。
+   * 在 attachStatusListener 时自动启动，detach 时自动停止。
+   */
+  function startRenderTick(): void {
+    if (renderTickTimer !== null) return
+    renderTickTimer = setInterval(flushPendingToHistory, RENDER_TICK_INTERVAL_MS)
+  }
+
+  function stopRenderTick(): void {
+    if (renderTickTimer !== null) {
+      clearInterval(renderTickTimer)
+      renderTickTimer = null
+    }
   }
 
   // syncSnapshotSubscriptions 根据当前 profiles 列表同步采集数据订阅。
@@ -258,6 +336,8 @@ export const useDeviceStore = defineStore('devices', () => {
         pushSnapshot(payload)
       })
     }
+    // 启动 renderTick：以固定频率消费 pendingSnapshots → historyBuffers
+    startRenderTick()
     syncSnapshotSubscriptions()
 
     return () => {
@@ -265,6 +345,10 @@ export const useDeviceStore = defineStore('devices', () => {
       if (snapshotAttachCount === 0 && unsubscribeSnapshot) {
         unsubscribeSnapshot()
         unsubscribeSnapshot = null
+        // 最后一次 detach 时停止 renderTick，避免空转
+        stopRenderTick()
+        // 清空 pending 防止下次 attach 时残留旧数据被立即消费
+        pendingSnapshots.clear()
         cleanupSnapshotSubscriptions()
       }
     }
@@ -624,6 +708,7 @@ export const useDeviceStore = defineStore('devices', () => {
     refreshStatusFor,
     updateStatus,
     pushSnapshot,
+    flushPendingToHistory,
     historyVersion,
     attachStatusListener,
     latestFor,

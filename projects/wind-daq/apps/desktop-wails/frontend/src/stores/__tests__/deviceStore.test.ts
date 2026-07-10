@@ -3,32 +3,48 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
 import { deviceApi } from '@api/deviceApi'
 
-// mock useStorageStore：默认 waveformBufferSize=100
-const mockWaveformBufferSize = vi.hoisted(() => {
-  let value = 100
+// mock useStorageStore：默认 historyWindowSec=30 + refreshRateHz=10 = 容量 300
+// 测试用例通过 setWindowSec/setRefreshHz 模拟用户改配置
+const mockSettings = vi.hoisted(() => {
+  let windowSec = 30
+  let refreshHz = 10
   return {
-    get: () => value,
-    set: (v: number) => { value = v },
-    settings: () => ({ waveformBufferSize: value }),
+    getWindowSec: () => windowSec,
+    setWindowSec: (v: number) => { windowSec = v },
+    getRefreshHz: () => refreshHz,
+    setRefreshHz: (v: number) => { refreshHz = v },
+    settings: () => ({
+      historyWindowSec: windowSec,
+      refreshRateHz: refreshHz,
+    }),
   }
 })
 
-vi.mock('@stores/storageStore', () => ({
-  useStorageStore: () => ({
-    settings: {
-      get waveformBufferSize() { return mockWaveformBufferSize.get() },
-    },
-  }),
-  WAVEFORM_BUFFER_MAX: 2000,
-  WAVEFORM_BUFFER_MIN: 50,
-  WAVEFORM_BUFFER_STEP: 50,
-}))
+// 复用 storageStore 的真实 computeHistoryCapacity 和 HISTORY_CAPACITY_HARD_CAP，
+// 这样测试能真正验证生产代码的容量计算逻辑；只 mock useStorageStore 的返回值。
+vi.mock('@stores/storageStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stores/storageStore')>()
+  return {
+    ...actual,
+    useStorageStore: () => ({
+      settings: {
+        get historyWindowSec() { return mockSettings.getWindowSec() },
+        get refreshRateHz() { return mockSettings.getRefreshHz() },
+      },
+    }),
+  }
+})
+
+// 默认容量：30 秒 × 10Hz = 300 点（保持与 mock 默认值一致）
+const DEFAULT_CAP = 30 * 10
 
 describe('deviceStore', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     setActivePinia(createPinia())
-    mockWaveformBufferSize.set(100)
+    // 重置 mock 配置为默认值：30 秒 × 10Hz = 300 点
+    mockSettings.setWindowSec(30)
+    mockSettings.setRefreshHz(10)
   })
 
   it('initializes with no profiles', () => {
@@ -65,18 +81,21 @@ describe('deviceStore', () => {
       channels: [1.5],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
     store.pushSnapshot({
       deviceId: 'sim-1',
       timestamp: 123,
       channels: [2.5],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
     store.pushSnapshot({
       deviceId: 'sim-1',
       timestamp: 124,
       channels: [2.5],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
 
     expect(store.latestFor('sim-1')?.channels[0]).toBe(2.5)
     expect(store.historyFor('sim-1')).toHaveLength(2)
@@ -103,7 +122,7 @@ describe('deviceStore', () => {
     expect(store.acquiringFor('sim-1')).toBe(false)
   })
 
-  it('keeps history buffer within capacity（环形缓冲默认 100）', () => {
+  it('keeps history buffer within capacity（环形缓冲默认 300 = 30s × 10Hz）', () => {
     const store = useDeviceStore()
     const payload = {
       deviceId: 'sim-1',
@@ -111,11 +130,13 @@ describe('deviceStore', () => {
       channels: [1],
       channelIndices: [0],
     }
-    for (let i = 0; i < 300; i++) {
+    // 模拟 renderTick 节流：每次 push 后立即 flush（与 store 内 setInterval 行为等价）
+    for (let i = 0; i < DEFAULT_CAP + 100; i++) {
       store.pushSnapshot({ ...payload, timestamp: i })
+      store.flushPendingToHistory()
     }
-    // 默认 waveformBufferSize=100，缓冲区不会超过这个值
-    expect(store.historyFor('sim-1').length).toBe(100)
+    // 默认 30s × 10Hz = 300 点，缓冲区不会超过这个值
+    expect(store.historyFor('sim-1').length).toBe(DEFAULT_CAP)
   })
 
   it('normalizes profiles with null channels during refresh', async () => {
@@ -243,7 +264,7 @@ describe('deviceStore', () => {
 
   it('环形缓冲满后覆盖最旧，length 不超过 capacity', () => {
     const store = useDeviceStore()
-    const cap = 100 // 默认 waveformBufferSize
+    const cap = DEFAULT_CAP // 默认 30s × 10Hz = 300
     for (let i = 0; i < cap + 10; i++) {
       store.pushSnapshot({
         deviceId: 'sim-1',
@@ -251,6 +272,7 @@ describe('deviceStore', () => {
         channels: [i],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
     const history = store.historyFor('sim-1')
     expect(history.length).toBe(cap)
@@ -259,7 +281,7 @@ describe('deviceStore', () => {
     expect(history[history.length - 1].timestamp).toBe(cap + 9)
   })
 
-  it('每次 push 后 historyVersion 递增', () => {
+  it('每次 flush 后 historyVersion 递增', () => {
     const store = useDeviceStore()
     const v0 = store.historyVersion
     store.pushSnapshot({
@@ -268,6 +290,7 @@ describe('deviceStore', () => {
       channels: [1],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
     expect(store.historyVersion).toBe(v0 + 1)
     store.pushSnapshot({
       deviceId: 'sim-1',
@@ -275,67 +298,70 @@ describe('deviceStore', () => {
       channels: [1],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
     expect(store.historyVersion).toBe(v0 + 2)
   })
 
-  it('容量对齐：mock waveformBufferSize=1500 → ring.capacity=1500', () => {
-    mockWaveformBufferSize.set(1500)
+  it('容量对齐：mock historyWindowSec=50 + refreshRateHz=10 → ring.capacity=300（被 HARD_CAP 截断）', () => {
+    // 50s × 10Hz = 500 点，但当前 HISTORY_CAPACITY_HARD_CAP=300 兜底
+    mockSettings.setWindowSec(50)
+    mockSettings.setRefreshHz(10)
     const store = useDeviceStore()
-    store.pushSnapshot({
-      deviceId: 'sim-1',
-      timestamp: 1,
-      channels: [1],
-      channelIndices: [0],
-    })
-    // 还未写满，但 capacity 已经是 1500
-    for (let i = 0; i < 1500 + 10; i++) {
-      store.pushSnapshot({
-        deviceId: 'sim-1',
-        timestamp: i + 2,
-        channels: [i],
-        channelIndices: [0],
-      })
-    }
-    expect(store.historyFor('sim-1').length).toBe(1500)
-  })
-
-  it('安全上限：mock waveformBufferSize=2500 → ring.capacity=2000（MAX 兜底）', () => {
-    mockWaveformBufferSize.set(2500)
-    const store = useDeviceStore()
-    for (let i = 0; i < 2100; i++) {
+    for (let i = 0; i < 300 + 10; i++) {
       store.pushSnapshot({
         deviceId: 'sim-1',
         timestamp: i,
         channels: [i],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
-    // MAX_HISTORY_POINTS = 2000 硬上限
-    expect(store.historyFor('sim-1').length).toBe(2000)
+    expect(store.historyFor('sim-1').length).toBe(300)
   })
 
-  it('容量变化重建：先写满默认 100，缩小 waveformBufferSize=50 → 下次 push 后 ring 重建', () => {
+  it('安全上限：mock historyWindowSec=30 + refreshRateHz=10 → ring.capacity=300（HARD_CAP 兜底）', () => {
+    // 30s × 10Hz = 300 点，正好等于 HISTORY_CAPACITY_HARD_CAP=300
+    mockSettings.setWindowSec(30)
+    mockSettings.setRefreshHz(10)
     const store = useDeviceStore()
-    // 先写 100 帧（默认波形缓容量 100）
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 350; i++) {
       store.pushSnapshot({
         deviceId: 'sim-1',
         timestamp: i,
         channels: [i],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
-    expect(store.historyFor('sim-1').length).toBe(100)
+    // HISTORY_CAPACITY_HARD_CAP = 300 硬上限
+    expect(store.historyFor('sim-1').length).toBe(300)
+  })
 
-    // 缩小容量至 50
-    mockWaveformBufferSize.set(50)
-    // 下次 push 检测 ring.capacity(100) ≠ 期望容量(50) → 自动重建
+  it('容量变化重建：先写满默认 300，缩小时间窗口 → 下次 flush 后 ring 重建', () => {
+    const store = useDeviceStore()
+    // 先写 DEFAULT_CAP 帧（30s × 10Hz = 300）
+    for (let i = 0; i < DEFAULT_CAP; i++) {
+      store.pushSnapshot({
+        deviceId: 'sim-1',
+        timestamp: i,
+        channels: [i],
+        channelIndices: [0],
+      })
+      store.flushPendingToHistory()
+    }
+    expect(store.historyFor('sim-1').length).toBe(DEFAULT_CAP)
+
+    // 缩小时间窗口至 5s × 10Hz = 50 点
+    mockSettings.setWindowSec(5)
+    mockSettings.setRefreshHz(10)
+    // 下次 flush 检测 ring.capacity(300) ≠ 期望容量(50) → 自动重建
     store.pushSnapshot({
       deviceId: 'sim-1',
       timestamp: 200,
       channels: [200],
       channelIndices: [0],
     })
+    store.flushPendingToHistory()
     // 旧 ring 被丢弃，新 ring capacity=50，只有刚 push 的 1 条
     expect(store.historyFor('sim-1').length).toBe(1)
 
@@ -347,20 +373,24 @@ describe('deviceStore', () => {
         channels: [200 + i],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
     expect(store.historyFor('sim-1').length).toBe(50)
   })
 
   it('多个设备各自独立的环形缓冲', () => {
     const store = useDeviceStore()
-    for (let i = 0; i < 120; i++) {
+    // dev-a 超过 DEFAULT_CAP（300），会被裁剪
+    for (let i = 0; i < DEFAULT_CAP + 50; i++) {
       store.pushSnapshot({
         deviceId: 'dev-a',
         timestamp: i,
         channels: [i],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
+    // dev-b 未满
     for (let i = 0; i < 60; i++) {
       store.pushSnapshot({
         deviceId: 'dev-b',
@@ -368,11 +398,27 @@ describe('deviceStore', () => {
         channels: [i * 10],
         channelIndices: [0],
       })
+      store.flushPendingToHistory()
     }
-    // dev-a 超出容量 100，被裁剪
-    expect(store.historyFor('dev-a').length).toBe(100)
-    expect(store.historyFor('dev-a')[0].timestamp).toBe(20)
+    // dev-a 超出容量 300，被裁剪
+    expect(store.historyFor('dev-a').length).toBe(DEFAULT_CAP)
+    expect(store.historyFor('dev-a')[0].timestamp).toBe(50)
     // dev-b 未满
     expect(store.historyFor('dev-b').length).toBe(60)
+  })
+
+  it('renderTick 节流：连续 push 多次同设备，pending 只保留最新一帧', () => {
+    // 验证节流架构：后端按 refreshRateHz 推送但 renderTick 10Hz 消费时，
+    // pendingSnapshots 覆盖式写入，flush 后只写入 1 个点
+    const store = useDeviceStore()
+    store.pushSnapshot({ deviceId: 'sim-1', timestamp: 1, channels: [1], channelIndices: [0] })
+    store.pushSnapshot({ deviceId: 'sim-1', timestamp: 2, channels: [2], channelIndices: [0] })
+    store.pushSnapshot({ deviceId: 'sim-1', timestamp: 3, channels: [3], channelIndices: [0] })
+    // 三次 push 都没 flush，pending 只保留 timestamp=3 的帧
+    store.flushPendingToHistory()
+    expect(store.historyFor('sim-1').length).toBe(1)
+    expect(store.historyFor('sim-1')[0].timestamp).toBe(3)
+    // 但 latestSnapshots 仍是最新值（通道卡片实时性不受影响）
+    expect(store.latestFor('sim-1')?.channels[0]).toBe(3)
   })
 })

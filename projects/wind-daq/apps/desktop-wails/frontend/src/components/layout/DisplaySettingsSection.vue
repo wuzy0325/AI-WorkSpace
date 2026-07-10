@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18nStore } from '@stores/i18nStore'
 import {
   type StorageSettings,
   DEFAULT_SETTINGS,
   DEFAULT_REFRESH_RATE_HZ,
+  DEFAULT_HISTORY_WINDOW_SEC,
   REFRESH_RATE_MIN,
   REFRESH_RATE_MAX,
   clampRefreshHz,
-  WAVEFORM_BUFFER_MIN,
-  WAVEFORM_BUFFER_MAX,
-  WAVEFORM_BUFFER_STEP,
+  HISTORY_WINDOW_MIN_SEC,
+  HISTORY_WINDOW_MAX_SEC,
+  HISTORY_WINDOW_STEP_SEC,
+  clampHistoryWindowSec,
+  computeHistoryCapacity,
+  HISTORY_CAPACITY_HARD_CAP,
 } from '@stores/storageStore'
 import { useThemeStore } from '@stores/themeStore'
 import { deviceApi } from '@api/deviceApi'
@@ -35,7 +39,12 @@ const { theme } = storeToRefs(themeStore)
 const { locale } = storeToRefs(i18nStore)
 
 const refreshRate = ref(DEFAULT_REFRESH_RATE_HZ)
-const waveformBufferSize = ref(DEFAULT_SETTINGS.waveformBufferSize)
+const historyWindowSec = ref(DEFAULT_HISTORY_WINDOW_SEC)
+
+/** 计算容量预览：时间窗口 × 刷新率，clamp 到硬上限。展示给用户看实际点数 */
+const estimatedCapacity = computed(() =>
+  computeHistoryCapacity(historyWindowSec.value, refreshRate.value),
+)
 
 /** 字段级校验错误记录 */
 const validationErrors = ref<Record<string, string>>({})
@@ -46,7 +55,7 @@ const validationErrors = ref<Record<string, string>>({})
 async function load(settings: StorageSettings): Promise<void> {
   validationErrors.value = {}
   // 对从 store 读入的值做边界限制，确保 UI 展示合法
-  waveformBufferSize.value = Math.max(WAVEFORM_BUFFER_MIN, Math.min(WAVEFORM_BUFFER_MAX, settings.waveformBufferSize ?? DEFAULT_SETTINGS.waveformBufferSize))
+  historyWindowSec.value = clampHistoryWindowSec(settings.historyWindowSec ?? DEFAULT_SETTINGS.historyWindowSec)
   const hz = clampRefreshHz(settings.refreshRateHz ?? DEFAULT_REFRESH_RATE_HZ)
   refreshRate.value = hz
 }
@@ -59,11 +68,11 @@ function validateField(field: string): string {
         ? i18nStore.t.set_refreshRateRangeError
           .replace('{min}', String(REFRESH_RATE_MIN))
           .replace('{max}', String(REFRESH_RATE_MAX)) : ''
-    case 'waveformBufferSize':
-      return waveformBufferSize.value < WAVEFORM_BUFFER_MIN || waveformBufferSize.value > WAVEFORM_BUFFER_MAX
-        ? i18nStore.t.set_waveformBufferRangeError
-          .replace('{min}', String(WAVEFORM_BUFFER_MIN))
-          .replace('{max}', String(WAVEFORM_BUFFER_MAX)) : ''
+    case 'historyWindowSec':
+      return historyWindowSec.value < HISTORY_WINDOW_MIN_SEC || historyWindowSec.value > HISTORY_WINDOW_MAX_SEC
+        ? i18nStore.t.historyWindowRangeError
+          .replace('{min}', String(HISTORY_WINDOW_MIN_SEC))
+          .replace('{max}', String(HISTORY_WINDOW_MAX_SEC)) : ''
     default:
       return ''
   }
@@ -83,7 +92,7 @@ function updateFieldError(field: string): void {
 /** 全量校验，返回错误映射（空对象表示通过） */
 function validate(): Record<string, string> {
   const errs: Record<string, string> = {}
-  for (const field of ['refreshRate', 'waveformBufferSize']) {
+  for (const field of ['refreshRate', 'historyWindowSec']) {
     const error = validateField(field)
     if (error) errs[field] = error
   }
@@ -94,7 +103,7 @@ function validate(): Record<string, string> {
 /** 恢复默认设置 */
 function reset(): void {
   refreshRate.value = DEFAULT_REFRESH_RATE_HZ
-  waveformBufferSize.value = DEFAULT_SETTINGS.waveformBufferSize
+  historyWindowSec.value = DEFAULT_HISTORY_WINDOW_SEC
   validationErrors.value = {}
 }
 
@@ -106,7 +115,7 @@ async function save(): Promise<void> {
   await deviceApi.setPublishRate(refreshRate.value)
 }
 
-defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
+defineExpose({ load, save, reset, validate, historyWindowSec, refreshRate })
 </script>
 
 <template>
@@ -189,21 +198,21 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
         >
           <div class="refresh-row">
             <div class="refresh-slider">
-              <UiSlider v-model="refreshRate" :min="1" :max="20" :step="1" :aria-label="i18nStore.t.set_refreshFrequency" />
+              <UiSlider v-model="refreshRate" :min="REFRESH_RATE_MIN" :max="REFRESH_RATE_MAX" :step="1" :aria-label="i18nStore.t.set_refreshFrequency" />
               <div class="refresh-labels">
-                <span class="refresh-label">1 Hz</span>
+                <span class="refresh-label">{{ REFRESH_RATE_MIN }} Hz</span>
                 <span
                   class="refresh-label refresh-label--highlight"
-                  :class="{ 'refresh-label--active': refreshRate >= 5 && refreshRate <= 15 }"
+                  :class="{ 'refresh-label--active': refreshRate >= 3 && refreshRate <= 7 }"
                 >{{ i18nStore.t.set_recommendedRefresh }}</span>
-                <span class="refresh-label">20 Hz</span>
+                <span class="refresh-label">{{ REFRESH_RATE_MAX }} Hz</span>
               </div>
             </div>
             <div class="refresh-value">
               <UiInputNumber
                 v-model="refreshRate"
-                :min="1"
-                :max="20"
+                :min="REFRESH_RATE_MIN"
+                :max="REFRESH_RATE_MAX"
                 size="small"
                 @blur="updateFieldError('refreshRate')"
               />
@@ -214,7 +223,7 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
       </div>
     </UiPanel>
 
-    <!-- 波形图缓冲区 -->
+    <!-- 波形图时间窗口 -->
     <UiPanel class="form-card">
       <template #header>
         <div class="card-head">
@@ -224,42 +233,61 @@ defineExpose({ load, save, reset, validate, waveformBufferSize, refreshRate })
       </template>
       <div class="form-fields">
         <UiFormField
-          :label="i18nStore.t.waveformBufferSizeLabel"
-          :error="validationErrors.waveformBufferSize"
-          :hint="i18nStore.t.waveformBufferSizeHint"
+          :label="i18nStore.t.historyWindowLabel"
+          :error="validationErrors.historyWindowSec"
+          :hint="i18nStore.t.historyWindowHint"
         >
           <div class="refresh-row">
             <div class="refresh-slider">
               <UiSlider
-                v-model="waveformBufferSize"
-                :min="WAVEFORM_BUFFER_MIN"
-                :max="WAVEFORM_BUFFER_MAX"
-                :step="WAVEFORM_BUFFER_STEP"
-                :aria-label="i18nStore.t.waveformBufferSizeLabel"
+                v-model="historyWindowSec"
+                :min="HISTORY_WINDOW_MIN_SEC"
+                :max="HISTORY_WINDOW_MAX_SEC"
+                :step="HISTORY_WINDOW_STEP_SEC"
+                :aria-label="i18nStore.t.historyWindowLabel"
               />
               <div class="refresh-labels">
-                <span class="refresh-label">{{ WAVEFORM_BUFFER_MIN }} {{ i18nStore.t.pts }}</span>
+                <span class="refresh-label">{{ HISTORY_WINDOW_MIN_SEC }} {{ i18nStore.t.sec }}</span>
                 <span
                   class="refresh-label refresh-label--highlight"
-                  :class="{ 'refresh-label--active': waveformBufferSize >= 100 && waveformBufferSize <= 500 }"
-                >{{ i18nStore.t.set_recommendedBuffer }}</span>
-                <span class="refresh-label">{{ WAVEFORM_BUFFER_MAX }} {{ i18nStore.t.pts }}</span>
+                  :class="{ 'refresh-label--active': historyWindowSec >= 15 && historyWindowSec <= 60 }"
+                >{{ i18nStore.t.set_recommendedWindow }}</span>
+                <span class="refresh-label">{{ HISTORY_WINDOW_MAX_SEC }} {{ i18nStore.t.sec }}</span>
               </div>
             </div>
             <div class="refresh-value">
               <UiInputNumber
-                v-model="waveformBufferSize"
-                :min="WAVEFORM_BUFFER_MIN"
-                :max="WAVEFORM_BUFFER_MAX"
-                :step="WAVEFORM_BUFFER_STEP"
+                v-model="historyWindowSec"
+                :min="HISTORY_WINDOW_MIN_SEC"
+                :max="HISTORY_WINDOW_MAX_SEC"
+                :step="HISTORY_WINDOW_STEP_SEC"
                 size="small"
-                @blur="updateFieldError('waveformBufferSize')"
+                @blur="updateFieldError('historyWindowSec')"
               />
-              <span class="input-unit">{{ i18nStore.t.pts }}</span>
+              <span class="input-unit">{{ i18nStore.t.sec }}</span>
             </div>
           </div>
         </UiFormField>
+        <!-- 容量预览：时间窗口 × 刷新率 = 实际存储点数，帮助用户理解配置含义 -->
+        <div class="capacity-preview">
+          <span class="capacity-preview__label">{{ i18nStore.t.pts }}: {{ estimatedCapacity }} / {{ HISTORY_CAPACITY_HARD_CAP }}</span>
+        </div>
       </div>
     </UiPanel>
   </section>
 </template>
+
+<style scoped>
+.capacity-preview {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--bg-secondary, rgba(148, 163, 184, 0.08));
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  text-align: right;
+}
+.capacity-preview__label {
+  font-family: ui-monospace, monospace;
+}
+</style>
