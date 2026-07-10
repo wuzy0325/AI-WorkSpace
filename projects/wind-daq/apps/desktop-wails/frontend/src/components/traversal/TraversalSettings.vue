@@ -25,14 +25,13 @@ import type {
   TraversalPrimaryAxis,
   TraversalTestConfig,
   CalibrationCsvFileInfo,
-  InterpolationAlgorithm,
-  StabilizationConfig,
-  DataValidationConfig
+  InterpolationAlgorithm
 } from '@shared/types/traversal'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiSelect from '@components/ui/UiSelect.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
 import UiStep from '@components/ui/UiStep.vue'
 import UiSteps from '@components/ui/UiSteps.vue'
@@ -41,6 +40,9 @@ import TraversalLayoutStep from './TraversalLayoutStep.vue'
 import TraversalHardwareStep from './TraversalHardwareStep.vue'
 import TraversalPrbStep from './TraversalPrbStep.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
+// 复用校准模块共享的 CSV 文件名清洗工具：与三孔/五孔/总压/总温校准画面统一行为，
+// 避免在移位测试画面重复维护一份"非法字符过滤 + 日期去重 + Windows 保留名兜底"逻辑。
+import { buildCalibrationCsvName } from '@shared/calibrationCsvPath'
 
 const props = withDefaults(
   defineProps<{
@@ -64,13 +66,6 @@ const feedbackStore = useFeedbackStore()
 
 const t = computed(() => i18n.t)
 
-const INVALID_FILE_NAME_CHARS = /[<>:"/\\|?*\u0000-\u001F]+/g
-const WINDOWS_RESERVED_FILE_NAMES = new Set([
-  'CON', 'PRN', 'AUX', 'NUL',
-  'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
-  'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'
-])
-
 const isLoading = ref(true)
 const isSaving = ref(false)
 const currentStep = ref(0)
@@ -79,7 +74,10 @@ const steps = computed(() => [t.value.stepLayout, t.value.stepHardware, t.value.
 // 记录用户已访问过的步骤索引，用于支持步骤导航点击跳转
 const visitedSteps = ref<Set<number>>(new Set([0]))
 
-const testName = ref(`Traversal-${new Date().toLocaleDateString()}`)
+// 测试名默认带 ISO 日期（YYYY-MM-DD），与三孔/五孔校准画面一致。
+// 早期用 toLocaleDateString() 在中文环境返回含斜杠的 "2026/7/10"，会被 buildCalibrationCsvName
+// 当作路径分隔符清洗掉，导致文件名缺失日期段。直接用 ISO 切片避免本地化差异。
+const testName = ref(`Traversal-${new Date().toISOString().slice(0, 10)}`)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
 const pattern = ref<TraversalPattern>('line')
@@ -91,7 +89,9 @@ const multiPrbFiles = ref<PrbFileInfo[]>([])
 const multiPrbMachNumbers = ref<number[]>([])
 const multiPrbInterpolationMode = ref<MultiPrbInterpolationMode>('linear')
 const savePath = ref('')
-const saveFileName = ref(buildDefaultSaveFileName(testName.value))
+// 默认文件名复用校准模块共享工具：buildCalibrationCsvName 会自动检测 testName 末尾
+// 已含 ISO 日期，不再追加，最终得到 "Traversal-2026-07-10.csv"。
+const saveFileName = ref(buildCalibrationCsvName(testName.value, 'Traversal'))
 
 // 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间
 const snakeOrder = ref(false)
@@ -102,53 +102,20 @@ const snakeOrder = ref(false)
 // 避免静默反转升级前已优化的物理走线方向。
 const primaryAxis = ref<TraversalPrimaryAxis>('x')
 
-// 稳定化配置：fixed 模式使用固定等待时间，adaptive 模式持续监测压力变化
-const stabilizationMode = ref<'fixed' | 'adaptive'>('fixed')
-const stabilizationConfig = ref<StabilizationConfig>({
-  mode: 'fixed',
-  fixedTimeMs: 2000
-})
+// 五孔探针压力类型：'gauge' 表压（默认）/ 'absolute' 绝压。
+// 后端 BuildRawPressure 归一化时按此字段决定 P1-P5 是否减去 Patm。
+// 旧配置无此字段时 applySavedConfig 兜底为 'gauge'，与历史行为一致。
+const pProbePressureType = ref<'gauge' | 'absolute'>('gauge')
 
-// 数据验证配置：可选，用于校验压力范围和异常尖峰
-const validationEnabled = ref(false)
-const validationConfig = ref<DataValidationConfig>({
-  enabled: false,
-  pressureRange: {},
-  onInvalid: 'continue'
-})
-
-// 稳定化模式切换时，重建 stabilizationConfig 以保留/初始化子配置
-watch(stabilizationMode, (mode) => {
-  stabilizationConfig.value = {
-    mode,
-    fixedTimeMs: stabilizationConfig.value.fixedTimeMs ?? 2000,
-    adaptive: mode === 'adaptive'
-      ? (stabilizationConfig.value.adaptive ?? {
-          maxWaitMs: 10000,
-          minWaitMs: 2000,
-          stabilityThreshold: 1,
-          checkIntervalMs: 200,
-          consecutiveChecks: 3
-        })
-      : undefined
-  }
-})
-
-// 保持 dwellTimeMs（布局步骤中的输入）与 stabilizationConfig.fixedTimeMs（review 步骤中的输入）同步
-// 二者代表同一物理量（固定模式下的等待时间），需双向同步以避免保存时数据不一致
-watch(dwellTimeMs, (v) => {
-  if (stabilizationConfig.value.mode === 'fixed' && stabilizationConfig.value.fixedTimeMs !== v) {
-    stabilizationConfig.value = { ...stabilizationConfig.value, fixedTimeMs: v }
-  }
-})
-watch(() => stabilizationConfig.value.fixedTimeMs, (v) => {
-  if (stabilizationConfig.value.mode === 'fixed' && v !== undefined && v !== dwellTimeMs.value) {
-    dwellTimeMs.value = v
-  }
-})
+// 压力类型下拉选项：label 随 i18n 切换刷新，故用 computed 派生
+const pProbePressureTypeOptions = computed(() => [
+  { value: 'gauge', label: t.value.travPressureTypeGauge },
+  { value: 'absolute', label: t.value.travPressureTypeAbsolute }
+])
 
 const lineConfig = ref({
-  startX: -30, startY: 0, endX: 30, endY: 0,
+  startX: -30, startY: -30,
+  endX: 30, endY: 30,
   xStepSegments: [{ start: -30, end: 30, step: 5 }],
   yStepSegments: [] as StepSegment[]
 })
@@ -168,8 +135,8 @@ const sectorConfig = ref({
   angularStepSegments: [{ start: -30, end: 30, step: 5 }]
 })
 
-const customPoints = ref<Array<{ x: number; y: number }>>([])
-const customPointInput = ref({ x: 0, y: 0 })
+const customPoints = ref<Array<{ x: number; y: number; z: number; u: number }>>([])
+const customPointInput = ref({ x: 0, y: 0, z: 0, u: 0 })
 const probeChannels = ref<ProbeChannelConfig[]>(createDefaultTraversalProbeChannels())
 const motionAxes = ref<TraversalMotionAxisConfig[]>([
   { name: 'X', controllerId: '', axis: 'X', angleMapping: { type: 'alpha' } },
@@ -221,20 +188,14 @@ const isStepValid = computed(() => {
   return true
 })
 
+// testName 变化时同步刷新默认 saveFileName：仅当用户未手动修改（仍为空或等于上一默认值）时覆盖，
+// 避免覆盖用户手动输入的文件名。复用共享工具保证清洗规则与校准画面一致。
 watch(testName, (next, prev) => {
-  const prevDefault = buildDefaultSaveFileName(prev)
+  const prevDefault = buildCalibrationCsvName(prev, 'Traversal')
   if (saveFileName.value === '' || saveFileName.value === prevDefault)
-    saveFileName.value = buildDefaultSaveFileName(next)
+    saveFileName.value = buildCalibrationCsvName(next, 'Traversal')
 })
 
-function buildDefaultSaveFileName(name: string) { return sanitizeCsvFileName(name, 'Traversal') }
-function sanitizeFileNameStem(value: string, fallback: string): string {
-  const normFallback = fallback.trim().replace(INVALID_FILE_NAME_CHARS, '-').replace(/\s+/g, ' ').replace(/-+/g, '-').trim().replace(/^[.\s-]+/, '').replace(/[.\s-]+$/, '') || 'Traversal'
-  const stem = value.trim().replace(/\.csv$/i, '').replace(INVALID_FILE_NAME_CHARS, '-').replace(/\s+/g, ' ').replace(/-+/g, '-').trim().replace(/^[.\s-]+/, '').replace(/[.\s-]+$/, '') || normFallback
-  return WINDOWS_RESERVED_FILE_NAMES.has(stem.toUpperCase()) ? `${stem}-file` : stem
-}
-function sanitizeCsvFileName(fileName: string, fallback: string) { return `${sanitizeFileNameStem(fileName, fallback)}.csv` }
-function normalizeSaveFileName(fileName: string) { return sanitizeCsvFileName(fileName, testName.value) }
 function isRequiredProbeChannel(c: ProbeChannelConfig) { return isTraversalRequiredProbeChannel(c.role, c.name) }
 function normalizeProbeChannel(c: ProbeChannelConfig) { return { ...c, channel: { ...c.channel }, enabled: isRequiredProbeChannel(c) ? true : c.enabled } }
 function clonePrbFileInfo(f: PrbFileInfo) { return { ...f, validRange: { ...f.validRange } } }
@@ -266,17 +227,26 @@ function applySavedLayout(layout: TraversalLayout) {
   snakeOrder.value = layout.snakeOrder ?? false
   // 恢复走线主轴：旧 profile 无此字段时落 'y'（保旧行为，避免静默反转物理走线方向）；
   // 新 profile 保存时已显式存 'x' 或 'y'，加载时按持久化值恢复。
-  primaryAxis.value = layout.primaryAxis ?? 'y'
-  if (layout.line) lineConfig.value = { ...layout.line, xStepSegments: layout.line.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.line.yStepSegments.map(s => ({ ...s })) }
+  // line 模式不再消费 primaryAxis（单行点位无走线方向概念），加载时重置为 'x'
+  // 避免持久化的 'y' 误导未来维护者以为 line 仍走 Y 方向。
+  if (layout.pattern === 'line') {
+    primaryAxis.value = 'x'
+  } else {
+    primaryAxis.value = layout.primaryAxis ?? 'y'
+  }
+  if (layout.line) lineConfig.value = { ...layout.line, xStepSegments: layout.line.xStepSegments.map(s => ({ ...s })) }
   if (layout.rectangle) rectangleConfig.value = { ...layout.rectangle, xStepSegments: layout.rectangle.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.rectangle.yStepSegments.map(s => ({ ...s })) }
   if (layout.sector) sectorConfig.value = { ...layout.sector, radialStepSegments: layout.sector.radialStepSegments.map(s => ({ ...s })), angularStepSegments: layout.sector.angularStepSegments.map(s => ({ ...s })) }
-  customPoints.value = layout.custom?.points.map(p => ({ ...p })) ?? []
+  customPoints.value = layout.custom?.points.map(p => ({ x: p.x, y: p.y, z: 0, u: 0 })) ?? []
 }
 
 function applySavedConfig(config: TraversalTestConfig) {
   const c = JSON.parse(JSON.stringify(config)) as TraversalTestConfig
   testName.value = c.name; dwellTimeMs.value = c.dwellTimeMs; samplesPerPoint.value = c.samplesPerPoint
-  savePath.value = c.savePath; saveFileName.value = sanitizeCsvFileName(c.saveFileName, c.name)
+  // 持久化的 saveFileName 已带 .csv 后缀，buildCalibrationCsvName 不剥离后缀会
+  // 把 ".csv" 当作普通字符串清洗后再次追加 .csv，得到 "xxx.csv-2026-07-10.csv"。
+  // 先剥离 .csv 后缀再交给共享工具，与原 sanitizeFileNameStem 行为对齐。
+  savePath.value = c.savePath; saveFileName.value = buildCalibrationCsvName(c.saveFileName.replace(/\.csv$/i, ''), c.name)
   const useMulti = Boolean((c.useMultiPrb ?? false) && c.multiPrb?.files.length)
   prbMode.value = useMulti ? 'multi' : 'single'
   prbFile.value = useMulti ? null : c.prbFile ? clonePrbFileInfo(c.prbFile) : null
@@ -307,31 +277,9 @@ function applySavedConfig(config: TraversalTestConfig) {
   interpolationAlgorithm.value = c.interpolationAlgorithm ?? 'old'
   calibrationCsvFile.value = c.calibrationCsvFile ? { ...c.calibrationCsvFile } : null
 
-  // 恢复数据验证配置：未保存时使用默认禁用状态
-  if (c.validation) {
-    validationEnabled.value = c.validation.enabled
-    validationConfig.value = {
-      enabled: c.validation.enabled,
-      pressureRange: c.validation.pressureRange ? { ...c.validation.pressureRange } : {},
-      onInvalid: c.validation.onInvalid ?? 'continue'
-    }
-  } else {
-    validationEnabled.value = false
-    validationConfig.value = { enabled: false, pressureRange: {}, onInvalid: 'continue' }
-  }
-
-  // 恢复稳定化配置：未保存时使用默认 fixed 模式
-  if (c.stabilization) {
-    stabilizationMode.value = c.stabilization.mode
-    stabilizationConfig.value = {
-      mode: c.stabilization.mode,
-      fixedTimeMs: c.stabilization.fixedTimeMs ?? 2000,
-      adaptive: c.stabilization.adaptive ? { ...c.stabilization.adaptive } : undefined
-    }
-  } else {
-    stabilizationMode.value = 'fixed'
-    stabilizationConfig.value = { mode: 'fixed', fixedTimeMs: 2000 }
-  }
+  // 恢复五孔压力类型：旧配置无此字段时兜底为 'gauge'（与历史行为一致）。
+  // 显式校验值域，避免后端 ParseAndStartTraversal 兜底前 UI 显示脏值。
+  pProbePressureType.value = c.pProbePressureType === 'absolute' ? 'absolute' : 'gauge'
 }
 
 async function loadSavedConfig() {
@@ -355,10 +303,14 @@ async function saveConfig() {
   }
   isSaving.value = true
   try {
-    const normName = normalizeSaveFileName(saveFileName.value)
+    // 保存前再次清洗 saveFileName：用户可能手动输入了非法字符或未带 .csv 后缀。
+    // 剥离 .csv 后缀后交给共享工具，fallback 用 testName 保证空文件名也能落到有意义的默认值。
+    const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), testName.value)
     saveFileName.value = normName
     const useMulti = prbMode.value === 'multi' && multiPrbFiles.value.length > 0
-    // dwellTimeMs 与 stabilizationConfig.fixedTimeMs 保持同步：固定模式下二者一致
+    // 稳定化使用驻留时间（dwellTimeMs）：后端 waitForStabilization 在 stab==nil 或 mode=="fixed"
+    // 时回退到 dwellTimeMs，因此前端不再单独保存 stabilization/validation 配置，
+    // 旧 profile 持久化的字段会被后端忽略，无需迁移。
     const raw = {
       name: testName.value, layout: currentLayout.value,
       channels: { probeChannels: probeChannels.value.filter(c => c.enabled && isConfigurableProbeChannel(c)), motionAxes: motionAxes.value },
@@ -366,13 +318,11 @@ async function saveConfig() {
       multiPrb: useMulti ? { files: multiPrbFiles.value.map(f => clonePrbFileInfo(f)), machNumbers: multiPrbMachNumbers.value.map(n => Number(n)), interpolationMode: multiPrbInterpolationMode.value } : undefined,
       useMultiPrb: useMulti, interpolationAlgorithm: interpolationAlgorithm.value,
       calibrationCsvFile: interpolationAlgorithm.value === 'new' ? calibrationCsvFile.value : null,
-      dwellTimeMs: stabilizationConfig.value.fixedTimeMs ?? dwellTimeMs.value,
+      dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
       savePath: savePath.value.trim(), saveFileName: normName, saveOptions: saveOptions.value,
-      // 仅在启用时保存验证配置，与 Cursor DAQ 行为一致
-      validation: validationEnabled.value ? validationConfig.value : undefined,
-      // 稳定化配置始终保存，后端依据 mode 决定使用固定时间或自适应逻辑
-      stabilization: stabilizationConfig.value
+      // 五孔压力类型始终保存，后端 BuildRawPressure 归一化依据此字段
+      pProbePressureType: pProbePressureType.value
     }
     const config: TraversalTestConfig = JSON.parse(JSON.stringify(raw))
     const ok = await traversalStore.saveConfig(config)
@@ -396,11 +346,11 @@ watch(() => props.show, async (isVisible) => {
     ])
     reportAllSettledFailures(
       results,
-      ['设备列表', '运动控制器列表', '存储设置', '遍历配置'],
+      [t.value.travErrDeviceList, t.value.travErrMotionList, t.value.travErrStorage, t.value.travErrTraversalConfig],
       feedbackStore.pushToast,
     )
     if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
-    if (!saveFileName.value.trim()) saveFileName.value = buildDefaultSaveFileName(testName.value)
+    if (!saveFileName.value.trim()) saveFileName.value = buildCalibrationCsvName(testName.value, 'Traversal')
     // 重置步骤导航到第一步
     currentStep.value = 0
     visitedSteps.value = new Set([0])
@@ -447,17 +397,32 @@ watch(() => props.show, async (isVisible) => {
           :estimated-point-count="estimatedPointCount"
           :t="(t as unknown as Record<string, string>)"
         />
-        <TraversalHardwareStep
-          v-else-if="currentStep === 1"
-          v-model:probe-channels="probeChannels"
-          v-model:motion-axes="motionAxes"
-          v-model:validation-enabled="validationEnabled"
-          v-model:validation-config="validationConfig"
-          v-model:stabilization-mode="stabilizationMode"
-          v-model:stabilization-config="stabilizationConfig"
-          :t="(t as unknown as Record<string, string>)"
-          :is-loading="isLoading"
-        />
+        <div v-else-if="currentStep === 1" class="step-content">
+          <!-- 五孔压力类型开关：与通道配置同屏，决定 P1-P5 在后端归一化时是否减去 Patm -->
+          <UiPanel class="section-card pressure-type-card">
+            <div class="pressure-type-row">
+              <div class="pressure-type-label">
+                <span class="pressure-type-title">{{ t.travPressureType }}</span>
+                <span class="pressure-type-hint">{{ t.travPressureTypeHint }}</span>
+              </div>
+              <UiSelect
+                :model-value="pProbePressureType"
+                :options="pProbePressureTypeOptions"
+                size="sm"
+                class="pressure-type-select"
+                :aria-label="t.travPressureType"
+                @update:model-value="(v: string) => pProbePressureType = (v === 'absolute' ? 'absolute' : 'gauge')"
+              />
+            </div>
+          </UiPanel>
+          <TraversalHardwareStep
+            v-model:probe-channels="probeChannels"
+            v-model:motion-axes="motionAxes"
+            :t="(t as unknown as Record<string, string>)"
+            :is-loading="isLoading"
+            :p-probe-pressure-type="pProbePressureType"
+          />
+        </div>
         <TraversalPrbStep
           v-else-if="currentStep === 2"
           v-model:prb-mode="prbMode"
@@ -481,8 +446,6 @@ watch(() => props.show, async (isVisible) => {
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.prb }}</span><span class="text-ellipsis">{{ interpolationAlgorithm === 'new' ? (calibrationCsvFile ? calibrationCsvFile.fileName : t.none) : (prbFile ? prbFile.fileName : t.none) }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travSnakeOrder }}</span><span>{{ snakeOrder ? t.enabled : t.disabled }}</span></div>
               <div v-if="supportsPrimaryAxis" class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travPrimaryAxis || 'Primary axis' }}</span><span>{{ primaryAxis === 'x' ? (t.travPrimaryAxisX || 'X first') : (t.travPrimaryAxisY || 'Y first') }}</span></div>
-              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travStableMode }}</span><span>{{ stabilizationMode === 'fixed' ? t.travFixedTime : t.travAdaptive }}</span></div>
-              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travEnableValidation }}</span><span>{{ validationEnabled ? t.enabled : t.disabled }}</span></div>
             </div>
           </UiPanel>
 
@@ -552,22 +515,24 @@ watch(() => props.show, async (isVisible) => {
 </template>
 
 <style scoped>
-/* 遍历测试配置画面主体布局：左右分栏，限制最大高度防止被拉长 */
+/* 遍历测试配置画面主体布局：左右分栏，限制最大高度防止被拉长。
+   左侧主内容区设置最小宽度 420px，避免在窄视口或对话框缩小时文字被压成竖排。
+   整体收紧 max-height 至 60vh，让对话框更紧凑、避免大量留白。 */
 .traversal-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(420px, 1fr) 280px;
   gap: 0;
   min-height: 0;
-  max-height: 65vh;
+  max-height: 60vh;
   flex: 1;
   overflow: hidden
 }
 
 .traversal-main {
   min-height: 0;
-  max-height: 65vh;
+  max-height: 60vh;
   overflow-y: auto;
-  padding-right: var(--space-3);
+  padding-right: var(--space-2);
   scrollbar-width: thin
 }
 
@@ -581,16 +546,67 @@ watch(() => props.show, async (isVisible) => {
   font-size: var(--text-sm)
 }
 
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，
+   覆盖为 6px 10px 让摘要/保存/选项卡片更紧凑、与硬件步骤视觉对齐 */
+.section-card :deep(.n-card__content) {
+  padding: 6px 10px
+}
+.section-card :deep(.n-card-header) {
+  padding: 6px 10px
+}
+
+/* 五孔压力类型开关卡片：单行紧凑布局，标签+提示左对齐，下拉右对齐。
+   缩小 padding 与最小宽度，让卡片高度收紧与下方硬件步骤对齐。 */
+.pressure-type-card {
+  padding: var(--space-1) var(--space-2)
+}
+
+.pressure-type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap
+}
+
+.pressure-type-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 180px;
+  word-break: normal;
+  overflow-wrap: anywhere
+}
+
+.pressure-type-title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary)
+}
+
+.pressure-type-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.4
+}
+
+.pressure-type-select {
+  min-width: 140px;
+  flex-shrink: 0
+}
+
 .summary-grid {
   display: flex;
   flex-direction: column
 }
 
+/* 摘要行：收紧垂直内边距，避免视觉松散 */
 .summary-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border-default);
   gap: var(--space-3);
   font-size: var(--text-sm)
@@ -611,11 +627,12 @@ watch(() => props.show, async (isVisible) => {
   gap: var(--space-1)
 }
 
+/* 保存选项标签：紧凑高度，与其他卡片行高对齐 */
 .option-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px var(--space-2);
+  padding: 2px var(--space-2);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--text-primary);
@@ -627,15 +644,16 @@ watch(() => props.show, async (isVisible) => {
   background: var(--bg-panel-strong)
 }
 
-/* 右侧边栏：固定宽度，限制高度，内部可滚动 */
+/* 右侧边栏：固定宽度，限制高度，内部可滚动；
+   收紧宽度至 280px 减少视觉占用 */
 .traversal-sidebar {
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
-  padding-left: var(--space-3);
+  padding-left: var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 65vh;
+  max-height: 60vh;
   overflow-y: auto;
   scrollbar-width: thin
 }
@@ -646,8 +664,9 @@ watch(() => props.show, async (isVisible) => {
   gap: var(--space-2)
 }
 
+/* 侧栏统计卡片：收紧内边距，三卡同高对齐 */
 .sidebar-stat {
-  padding: 10px 6px;
+  padding: 6px 4px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
@@ -670,8 +689,8 @@ watch(() => props.show, async (isVisible) => {
 /* 点阵预览区域：使用自适应高度替代固定最小高度，防止撑大对话框 */
 .sidebar-preview {
   flex: 1 1 auto;
-  min-height: 160px;
-  max-height: 360px;
+  min-height: 140px;
+  max-height: 320px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
@@ -692,16 +711,16 @@ watch(() => props.show, async (isVisible) => {
 }
 
 .setup-overline { font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.2em;color:var(--text-tertiary) }
-.setup-title { font-size:18px;font-weight:600;margin-top:2px;display:block }
+.setup-title { font-size:16px;font-weight:600;margin-top:2px;display:block }
 /* 步骤导航栏：减小下方间距，与内容区域更紧凑 */
 .steps-nav { margin-bottom:var(--space-2) }
 .summary-section-title { font-size:var(--text-sm);font-weight:600 }
 .summary-accent { color:var(--color-accent);font-weight:700 }
 .text-ellipsis { max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 .flex-input { flex:1 }
-.save-hint { font-size:var(--text-xs);display:block;margin-top:6px;color:var(--text-tertiary) }
+.save-hint { font-size:var(--text-xs);display:block;margin-top:4px;color:var(--text-tertiary) }
 .stat-label { font-size:var(--text-xs);color:var(--text-tertiary) }
-.stat-number { font-size:18px;font-weight:700;color:var(--color-accent) }
+.stat-number { font-size:16px;font-weight:700;color:var(--color-accent) }
 .stat-value { font-size:12px;font-weight:600 }
 .stat-unit { font-size:var(--text-xs) }
 
@@ -716,47 +735,5 @@ watch(() => props.show, async (isVisible) => {
   display: flex;
   align-items: center;
   gap: var(--space-1)
-}
-
-/* 子配置区块：数据验证策略、稳定化模式等嵌套配置 */
-.sub-config-block {
-  margin-top: var(--space-2);
-  padding-left: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: 4px
-}
-
-.sub-config-label {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary)
-}
-
-.sub-config-hint {
-  margin-top: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  line-height: 1.5
-}
-
-/* 单选按钮组：稳定化模式、错误处理策略 */
-.radio-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: 4px
-}
-
-.radio-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  cursor: pointer
-}
-
-.radio-label input[type="radio"] {
-  margin: 0
 }
 </style>
