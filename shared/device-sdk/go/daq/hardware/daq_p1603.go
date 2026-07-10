@@ -19,12 +19,25 @@ import (
 // DLL（WTNDAQ16H_64.dll）封装 TCP/IP 通信，Go 端只持有 DLL
 // 返回的 device handle（uintptr），不直接管理 net.Conn。
 //
-// 采集流程（Phase 4 Task 9）：
+// 硬件配置（固定，所有 16 通道一致）：
+//   - 量程：0-20mA（WTNDAQ16H_AI_SAMPRANGE_0_20mA）
+//   - 传感器：4-20mA 工业标准电流环
+//
+// 数据转换链（两步）：
+//   Step 1: U16 原始码值 → 电流值(mA)
+//     Go 端按公式 current = code / 65535 * 20 换算（0-20mA 量程下满量程对应 20mA）
+//     例：U16=39700 → 39700/65535*20 ≈ 12.12 mA
+//     不调用 DLL 的 ScaleBinToVolt，该函数为电压模式设计，电流模式下会崩溃。
+//   Step 2: 电流值(mA) → 工程量(Pa/kPa/℃ 等)
+//     scaleCurrentToEngineering 使用 4-20mA 标准映射：
+//     4mA → engMin, 20mA → engMax
+//     公式：engValue = engMin + (current-4)/16 * (engMax-engMin)
+//
+// 采集流程：
 //   1. StartAcquisition: ffi.StartTask + ffi.SendSoftTrig → 启动 readLoop goroutine
-//   2. readLoop: 循环 ReadBinary(1 sample/chan) → ScaleBinToVolt → 按通道
-//      SensorType 端点插值到工程量 → 组装 DataPayload → 投递 sink
-//   3. StopAcquisition: 设置 StopReasonUserRequested → close(stop) → ffi.StopTask
-//      → 等待 readLoopDone（1 秒超时）
+//   2. readLoop: 循环 ReadBinary → Go 端换算(mA)
+//      → scaleCurrentToEngineering(工程量) → 组装 DataPayload → 投递 sink
+//   3. StopAcquisition: close(stop) → ffi.StopTask → 等待 readLoopDone（1 秒超时）
 //
 // 状态机：
 //   Disconnected ──Connect()──▶ Connected ──StartAcquisition()──▶ Acquiring
@@ -33,24 +46,18 @@ import (
 // 任意步骤失败进入 Error 态，LastError 记录原因。
 // ============================================================
 
-// ErrDAQP1603NotImplemented 标记尚未实现的方法。
-// Phase 2 阶段 StartAcquisition/StopAcquisition 返回此错误，
-// 防止上层在能力未就绪时进入采集流程。
-var ErrDAQP1603NotImplemented = fmt.Errorf("DAQ-P-1603 acquisition not implemented (Task 9)")
-
-// DAQP1603MaxSampleRate 是 DAQ-P-1603 的采样率上限（500Hz）。
-// 项目 spec D-2 决策：低速定制版本，上限 500Hz。
-// 前端 UI 与后端 ApplyConfig 都做校验，越界拒绝提交并返回错误。
-// 双重校验保证即使前端被绕过（如直接调 API），后端仍能拦截非法值。
+// DAQP1603MaxSampleRate 是 DAQ-P-1603 的采样率上限。
+// 硬件限制 500Hz（WTNDAQ16H DLL 内部定时器精度限制），前后端均有校验拒绝越界值。
 const DAQP1603MaxSampleRate = 500
 
-// 电压量程上下限（与 buildAIParamLocked 默认 SAMPRANGE_N10_P10V 对齐）。
-// 端点线性插值公式：E = rangeMin + (V - vMin) / (vMax - vMin) * (rangeMax - rangeMin)
-// 用户在 profile 中配置的 rangeMin/rangeMax 已隐含所选单位（Pa/kPa/℃ 等），
-// 因此采集层无需二次单位换算；℃ → ℉ 等显示转换是 UI 层职责。
+// 4-20mA 电流环传感器的电气量程。
+// 所有 DAQ-P-1603 通道固定使用 0-20mA 硬件量程（SAMPRANGE_0_20mA），
+// 传感器遵循 4-20mA 工业标准：4mA=量程下限，20mA=量程上限。
+// 低于 4mA 表示传感器故障/断线，输出值会低于 engMin（前端可据此告警）。
 const (
-	daqP1603VoltMin = -10.0
-	daqP1603VoltMax = 10.0
+	daqP1603CurrentMin  = 4.0  // 4mA 活零点，对应工程量下限
+	daqP1603CurrentMax  = 20.0 // 20mA 满量程，对应工程量上限
+	daqP1603CurrentSpan = daqP1603CurrentMax - daqP1603CurrentMin // 16mA 量程跨度
 )
 
 // DAQP1603 实现 core.Device 接口。
@@ -151,8 +158,12 @@ func (d *DAQP1603) Connect() error {
 		return err
 	}
 
-	// 1. 建立 TCP 连接（DLL 内部封装，超时 0 表示用 DLL 默认 200ms）
-	handle, err := ffi.WTNDAQ16HDevCreate(ip, 0, 0)
+	// 1. 建立 TCP 连接（DLL 内部封装）
+	// sendTimeout/recvTimeout 对应 C 头文件 WTNDAQ16H_DEV_CreateA 的
+	// nSendTimeout/nRecvTimeout 参数（默认 200ms）。C++ 默认参数仅在编译期
+	// 由编译器填充，通过 Go FFI 调用时必须显式传值，传 0 会导致 0ms 超时
+	// 使 TCP 连接来不及握手即超时断开。
+	handle, err := ffi.WTNDAQ16HDevCreate(ip, 200, 200)
 	if err != nil {
 		d.setStatusErrorLocked(err)
 		return fmt.Errorf("DAQ-P-1603 connect %s: %w", ip, err)
@@ -252,17 +263,121 @@ func (d *DAQP1603) StartAcquisition() error {
 	}
 
 	handle := d.handle
-	if err := ffi.WTNDAQ16HStartTask(handle); err != nil {
-		d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 start task: %w", err))
-		return fmt.Errorf("DAQ-P-1603 start task: %w", err)
+	ip := d.profile.Address
+
+	// startAndCheck 封装 StartTask + SendSoftTrig + 分步 GetStatus 诊断。
+	// 返回 true 表示任务已成功启动（TaskState==2）；false 表示启动后停滞在 idle 态。
+	startAndCheck := func(h uintptr) (bool, error) {
+		if err := ffi.WTNDAQ16HStartTask(h); err != nil {
+			return false, fmt.Errorf("start task: %w", err)
+		}
+		// 诊断点 A：StartTask 后立即查 TaskState
+		var sA ffi.WTNDAQ16HAIStatus
+		_ = ffi.WTNDAQ16HGetStatus(h, &sA)
+
+		if err := ffi.WTNDAQ16HSendSoftTrig(h); err != nil {
+			slog.Error("DAQ-P-1603 SendSoftTrig failed, taskState after StartTask",
+				"device", d.profile.ID,
+				"taskStateAfterStartTask", sA.TaskState,
+				"err", err)
+			_ = ffi.WTNDAQ16HStopTask(h)
+			return false, fmt.Errorf("send soft trig: %w", err)
+		}
+		// 诊断点 B：SendSoftTrig 后查 TaskState
+		// 按厂商头文件 WTNDAQ16H.H 第 154 行：nTaskState =1 表示"正常(运行中)"，
+		// 其他值才表示异常。曾经误把 TaskState==2 当成 running，导致 StartTask+SendSoftTrig
+		// 后 TaskState=1（正常态）被误判为"未运行"，触发无效 reconnect 重试并最终误报
+		// "DLL global state corrupted"。
+		var sB ffi.WTNDAQ16HAIStatus
+		if err := ffi.WTNDAQ16HGetStatus(h, &sB); err != nil {
+			_ = ffi.WTNDAQ16HStopTask(h)
+			return false, fmt.Errorf("post-start GetStatus: %w", err)
+		}
+		if sB.TaskState != 1 {
+			slog.Warn("DAQ-P-1603 TaskState abnormal after StartTask+SendSoftTrig",
+				"device", d.profile.ID,
+				"taskStateAfterStartTask", sA.TaskState,
+				"taskStateAfterSendSoftTrig", sB.TaskState,
+				"note", "expected=1(running) per WTNDAQ16H.H")
+			_ = ffi.WTNDAQ16HStopTask(h)
+			return false, nil
+		}
+		return true, nil
 	}
-	// 连续采集模式下仍需 SendSoftTrig 触发首帧数据流（厂商示例行为）
-	if err := ffi.WTNDAQ16HSendSoftTrig(handle); err != nil {
-		// 启动失败需回滚 StartTask，避免 DLL 内部状态卡在"已启动但无触发"
+
+	ok, err := startAndCheck(handle)
+	if err != nil {
+		d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 start acquisition: %w", err))
+		return fmt.Errorf("DAQ-P-1603 start acquisition: %w", err)
+	}
+	if !ok {
+		// 首次启动失败，尝试自愈：Disconnect → Connect 重建 DLL 会话。
+		// 触发条件：StartTask+SendSoftTrig 后 TaskState 不是 1（按 WTNDAQ16H.H 第 154 行
+		// 1=正常,其它值=异常）。
+		// 历史背景：曾因 ScaleBinToVolt 在电流模式下 Access Violation 污染 DLL 进程级状态，
+		// 重建会话可清理 per-handle 残留状态。当前已改为 Go 端换算，该风险已消除，
+		// 此分支仅作为 DLL 异常状态的兜底自愈，常规情况下不会触发。
+		slog.Warn("DAQ-P-1603 first StartTask abnormal, retrying with reconnect",
+			"device", d.profile.ID, "ip", ip)
+
 		_ = ffi.WTNDAQ16HStopTask(handle)
-		d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 send soft trig: %w", err))
-		return fmt.Errorf("DAQ-P-1603 send soft trig: %w", err)
+		_ = ffi.WTNDAQ16HReleaseTask(handle)
+		_ = ffi.WTNDAQ16HDevRelease(handle)
+		d.handle = 0
+
+		// 重新 Connect。若重连后 TaskState 仍非 1（即仍异常），说明 DLL 进程级状态已坏，
+		// per-handle 重建无法修复，需完全退出 Go 进程再启动。
+		newHandle, connErr := ffi.WTNDAQ16HDevCreate(ip, 200, 200)
+		if connErr != nil {
+			d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 reconnect failed: %w", connErr))
+			return fmt.Errorf("DAQ-P-1603 reconnect failed: %w", connErr)
+		}
+		param := d.buildAIParamLocked()
+		if verifyErr := ffi.WTNDAQ16HVerifyParam(newHandle, &param); verifyErr != nil {
+			_ = ffi.WTNDAQ16HDevRelease(newHandle)
+			d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 reconnect verify param: %w", verifyErr))
+			return fmt.Errorf("DAQ-P-1603 reconnect verify param: %w", verifyErr)
+		}
+		if initErr := ffi.WTNDAQ16HInitTask(newHandle, &param, 0); initErr != nil {
+			_ = ffi.WTNDAQ16HDevRelease(newHandle)
+			d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 reconnect init task: %w", initErr))
+			return fmt.Errorf("DAQ-P-1603 reconnect init task: %w", initErr)
+		}
+		d.handle = newHandle
+		handle = newHandle
+
+		ok, err = startAndCheck(handle)
+		if err != nil {
+			d.setStatusErrorLocked(fmt.Errorf("DAQ-P-1603 start acquisition (retry): %w", err))
+			return fmt.Errorf("DAQ-P-1603 start acquisition (retry): %w", err)
+		}
+		if !ok {
+			// 两次 StartTask+SendSoftTrig 后 TaskState 均非 1（异常） → DLL 进程级状态已坏，
+			// per-handle 重建无法修复，需完全退出 Go 进程再启动
+			err := fmt.Errorf("DAQ-P-1603 start acquisition: DLL TaskState still abnormal after reconnect — DLL global state corrupted, exit & restart (ip=%s)", ip)
+			d.setStatusErrorLocked(err)
+			return err
+		}
 	}
+
+	// 自检通过后读取最终状态用于日志
+	var aiStatus ffi.WTNDAQ16HAIStatus
+	_ = ffi.WTNDAQ16HGetStatus(handle, &aiStatus)
+
+	enabledChans := 0
+	for _, ch := range d.profile.Channels {
+		if ch.Enabled {
+			enabledChans++
+		}
+	}
+	slog.Info("DAQ-P-1603 acquisition starting readLoop",
+		"device", d.profile.ID,
+		"ip", ip,
+		"rate", d.profile.SamplingRate,
+		"enabledChans", enabledChans,
+		"totalChans", len(d.profile.Channels),
+		"taskState", aiStatus.TaskState,
+		"availSampsPerChan", aiStatus.AvailSampsPerChan)
 
 	d.acquiring = true
 	d.status.Acquiring = true
@@ -339,22 +454,17 @@ func (d *DAQP1603) StopAcquisition() error {
 }
 
 // chanScale 是 readLoop 内部使用的单通道换算参数。
-// 提取为包级私有类型便于在 readLoop 与 buildChannelScales 间传递。
 type chanScale struct {
 	origIndex int     // 通道在 profile.Channels 中的原始索引（用户可见通道号）
-	rangeMin  float64 // 工程量下限（隐含单位：Pa / kPa / ℃ 等）
-	rangeMax  float64 // 工程量上限
+	engMin    float64 // 工程量下限（隐含单位：Pa / kPa / ℃ 等，由 profile 配置）
+	engMax    float64 // 工程量上限
 }
 
 // buildChannelScales 根据通道配置构造换算参数切片。
 //
-// 设计动机：把"扫描 profile.Channels + 过滤启用 + 量程兜底"的纯逻辑
-// 从 readLoop 中提取出来，便于单元测试覆盖通道过滤与量程兜底分支。
-//
-// 兜底策略：当某通道 rangeMin==0 && rangeMax==0 时，用 ±10V 兜底
-// （与电压量程一致，相当于"无换算"），避免除零或负斜率。
-//
-// 上限截断：profile.Channels 长度可能 >16（用户误配），按 WTNDAQ16H_AI_MAX_CHANNELS 截断。
+// 兜底策略：当某通道 RangeMin==0 && RangeMax==0 时，用 4-20mA 电流范围兜底，
+// 相当于"无换算"——输出值就是电流值(mA)，便于用户在没有配置工程量程时
+// 仍能看到原始电流数据。
 func buildChannelScales(channels []core.ChannelConfig) []chanScale {
 	scales := make([]chanScale, 0, len(channels))
 	for i, ch := range channels {
@@ -364,54 +474,41 @@ func buildChannelScales(channels []core.ChannelConfig) []chanScale {
 		if !ch.Enabled {
 			continue
 		}
-		rMin, rMax := ch.RangeMin, ch.RangeMax
-		if rMin == 0 && rMax == 0 {
-			rMin, rMax = daqP1603VoltMin, daqP1603VoltMax
+		engMin, engMax := ch.RangeMin, ch.RangeMax
+		if engMin == 0 && engMax == 0 {
+			engMin, engMax = daqP1603CurrentMin, daqP1603CurrentMax
 		}
-		scales = append(scales, chanScale{origIndex: i, rangeMin: rMin, rangeMax: rMax})
+		scales = append(scales, chanScale{origIndex: i, engMin: engMin, engMax: engMax})
 	}
 	return scales
 }
 
-// scaleVoltToEngineering 将电压值按端点线性插值换算为工程量。
+// scaleCurrentToEngineering 将电流值(mA)按 4-20mA 标准映射换算为工程量。
 //
-// 公式：E = rangeMin + (V - vMin) / (vMax - vMin) * (rangeMax - rangeMin)
-//   - vMin/vMax = ±10V（与 buildAIParamLocked 的 SAMPRANGE_N10_P10V 对齐）
-//   - rangeMin/rangeMax 由用户在 profile 中配置，隐含所选单位（Pa/kPa/℃ 等）
-//   - 压力通道与温度通道走同一公式，区别仅在于 rangeMin/rangeMax 的语义
-//
-// 提取为独立函数便于单元测试覆盖：
-//   - 端点边界（V == vMin / V == vMax）
-//   - 中点（V == 0）
-//   - 越界（V > vMax 或 V < vMin，理论上不应发生但需可处理）
-func scaleVoltToEngineering(volt, rMin, rMax float64) float64 {
-	voltSpan := daqP1603VoltMax - daqP1603VoltMin
-	return rMin + (volt-daqP1603VoltMin)/voltSpan*(rMax-rMin)
+// 公式：engValue = engMin + (current - 4) / (20 - 4) * (engMax - engMin)
+//   - current：ScaleBinToVolt 输出的电流值(mA)，范围 0~20
+//   - 4mA 对应 engMin（量程下限），20mA 对应 engMax（量程上限）
+//   - 压力通道与温度通道走同一公式，区别仅在于 engMin/engMax 的语义
+//   - current < 4mA 时输出值低于 engMin，表示传感器故障/断线
+func scaleCurrentToEngineering(current, engMin, engMax float64) float64 {
+	// current < 0 在正常工作中不会发生（DLL 输出 ≥0），但防御性截断为 engMin
+	if current < 0 {
+		return engMin
+	}
+	return engMin + (current-daqP1603CurrentMin)/daqP1603CurrentSpan*(engMax-engMin)
 }
 
 // readLoop 是采集主循环 goroutine。
 //
-// 设计要点：
-//   - 启动时持锁快照 handle/sink/profile（含 channels 的 SensorType），
-//     之后整个循环不持锁，所有 FFI 调用与 sink 投递并发安全（单 goroutine 串行）
-//   - 每帧 ReadBinary 读取 1 sample/chan（即所有启用通道的一个时间点快照）
-//   - ScaleBinToVolt 将 U16 码值换算为电压（V）
-//   - 按通道 SensorType 端点线性插值到工程量（rangeMin/rangeMax 隐含单位）
-//   - select stop 通道实现优雅退出（StopAcquisition close 后立即返回）
+// 数据流：
+//   ReadBinary → binBuf(U16) → Go端directScaleToCurrent → currentBuf(mA) → scaleCurrentToEngineering → engValues
+//
+// 每帧读取 1 sample/chan，两步换算后组装 DataPayload 投递到 sink。
 //
 // 异常退出处理：
-//   - ReadBinary/ScaleBinToVolt 错误：日志 + 设置 status.Error + 调用 onReadLoopExit
+//   - ReadBinary 错误：日志 + 设置 status.Error + 调用 onReadLoopExit
 //   - 主动停止（StopReasonUserRequested）：不上报，静默退出
-//
-// 通道索引映射：
-//   - binArray 布局：[s0_ch0, s0_ch1, ..., s0_chN-1, s1_ch0, ...]（按通道顺序排列）
-//   - 取每帧第 0 个 sample：binArray[0..N-1] 对应 N 个启用通道
-//   - DataPayload.ChannelIndices = 启用通道的原始 index（用户可见通道号）
-//   - DataPayload.Channels = 工程量值（按 ChannelIndices 顺序）
 func (d *DAQP1603) readLoop() {
-	// 持锁快照：避免循环中反复加锁，且保证 profile.Channels 一致性。
-	// 关键：stop channel 必须快照，StopAcquisition 会将 d.stop 置 nil，
-	// 循环中若直接读 d.stop 会变成 nil channel（永久阻塞），无法响应停止。
 	d.mu.RLock()
 	handle := d.handle
 	sink := d.sink
@@ -424,7 +521,6 @@ func (d *DAQP1603) readLoop() {
 	scales := buildChannelScales(channels)
 	nChans := uint32(len(scales))
 	if nChans == 0 {
-		// 无启用通道：直接退出并标记错误（不应发生，Connect 时已兜底全启用）
 		d.handleReadLoopExit(fmt.Errorf("DAQ-P-1603 readLoop: no enabled channels"))
 		if done != nil {
 			close(done)
@@ -432,11 +528,33 @@ func (d *DAQP1603) readLoop() {
 		return
 	}
 
-	// 缓冲区：每帧 1 sample/chan，binArray 长度 = nChans
-	binBuf := make([]uint16, nChans)
-	voltBuf := make([]float64, nChans)
+	binBuf := make([]uint16, ffi.WTNDAQ16H_AI_MAX_CHANNELS) // InitTask 强制 16 通道，ReadBinary buffer 必须匹配
+	currentBuf := make([]float64, nChans)
 	const sampsPerChan = uint32(1)
-	const readTimeout = 1.0 // 秒，覆盖 500Hz 下 2 帧间隔
+	const readTimeout = 10.0
+	const maxConsecutiveTimeouts = 6
+
+	select {
+	case <-stop:
+		if done != nil {
+			close(done)
+		}
+		return
+	default:
+	}
+
+	// [诊断] readLoop 启动时查询 GetStatus，确认 DLL 侧任务状态
+	var aiStatus ffi.WTNDAQ16HAIStatus
+	if err := ffi.WTNDAQ16HGetStatus(handle, &aiStatus); err != nil {
+		slog.Error("DAQ-P-1603 readLoop GetStatus failed", "device", deviceID, "err", err)
+	} else {
+		slog.Info("DAQ-P-1603 readLoop pre-loop status",
+			"device", deviceID,
+			"taskState", aiStatus.TaskState,
+			"availSampsPerChan", aiStatus.AvailSampsPerChan,
+			"sampsPerChanAcquired", aiStatus.SampsPerChanAcquired,
+			"nChans", nChans)
+	}
 
 	defer func() {
 		// readLoop 退出时确保 acquiring=false（StopAcquisition 路径已设置，
@@ -453,19 +571,37 @@ func (d *DAQP1603) readLoop() {
 		}
 	}()
 
+	// 预分配：engValues 和 indices 复用以避免每帧 make，scales 元数据不变
+	engValues := make([]float64, nChans)
+	indices := make([]int, nChans)
+
+	// 连续超时计数器：设备启动稳定期可能首次超时，容忍 maxConsecutiveTimeouts 次后判定故障
+	consecutiveTimeouts := 0
+	firstReadLogged := false
+
 	for {
-		// 优先检查 stop 信号，避免在停止后仍执行一次 ReadBinary（可能阻塞 1 秒）
 		select {
 		case <-stop:
-			// 主动停止：优雅退出，不上报错误
 			return
 		default:
 		}
 
-		sampsRead, _, err := ffi.WTNDAQ16HReadBinary(handle, binBuf, sampsPerChan, readTimeout)
+		readStart := time.Now()
+		sampsRead, avail, err := ffi.WTNDAQ16HReadBinary(handle, binBuf, sampsPerChan, readTimeout)
+		readElapsed := time.Since(readStart).Truncate(time.Millisecond)
+		if !firstReadLogged {
+			slog.Info("DAQ-P-1603 readLoop first ReadBinary result",
+				"device", deviceID,
+				"sampsRead", sampsRead,
+				"avail", avail,
+				"err", err,
+				"elapsed", readElapsed.String(),
+				"nChans", nChans,
+				"timeout", readTimeout)
+			firstReadLogged = true
+		}
 		if err != nil {
-			// 主动停止时 stop channel 已 close，但 ReadBinary 可能仍返回 timeout 错误
-			// → 检查 stopReason 区分
+			// 仅参数非法（空缓冲区）会走到这里；主动停止时检查 stopReason 跳过上报
 			if d.stopReason.GetStopReason() == protocol.StopReasonUserRequested {
 				return
 			}
@@ -473,25 +609,30 @@ func (d *DAQP1603) readLoop() {
 			return
 		}
 		if sampsRead == 0 {
-			// timeout 但无错误：继续下一轮（可能设备暂未产生数据）
-			continue
-		}
-
-		// U16 → 电压（V）。ScaleBinToVolt 的 rangeInfo 用 nil 表示使用 InitTask 时的量程，
-		// gainInfo 用 nil 表示无增益（与 buildAIParamLocked 默认配置一致）。
-		if _, err := ffi.WTNDAQ16HScaleBinToVolt(nil, nil, voltBuf, binBuf, nChans); err != nil {
-			if d.stopReason.GetStopReason() == protocol.StopReasonUserRequested {
+			// 超时未读到数据：设备启动稳定期可能首次超时，容忍若干次后判定故障
+			consecutiveTimeouts++
+			if consecutiveTimeouts >= maxConsecutiveTimeouts {
+				d.handleReadLoopExit(fmt.Errorf("DAQ-P-1603 read binary: %d consecutive timeouts (read=0, avail=%d)", consecutiveTimeouts, avail))
 				return
 			}
-			d.handleReadLoopExit(fmt.Errorf("DAQ-P-1603 scale to volt: %w", err))
-			return
+			continue
+		}
+		consecutiveTimeouts = 0
+
+		// Step 1: U16 码值 → 电流值(mA)
+		// 0-20mA 量程下，U16 满量程 65535 对应 20mA。
+		// InitTask 强制 16 通道全开，ReadBinary 返回 16 通道数据，
+		// 按 scales[].origIndex 从 binBuf 抽取已启用通道。
+		const u16FullScale = 65535.0
+		const currentFullScale = 20.0
+		for i := uint32(0); i < nChans; i++ {
+			currentBuf[i] = float64(binBuf[scales[i].origIndex]) / u16FullScale * currentFullScale
 		}
 
-		// 按通道端点线性插值到工程量（压力/温度通道走同一公式，区别在 rangeMin/rangeMax）
-		engValues := make([]float64, nChans)
-		indices := make([]int, nChans)
+		// Step 2: 电流值(mA) → 工程量(Pa/kPa/℃ 等)
+		// 使用 4-20mA 标准映射：4mA=engMin, 20mA=engMax
 		for i := uint32(0); i < nChans; i++ {
-			engValues[i] = scaleVoltToEngineering(voltBuf[i], scales[i].rangeMin, scales[i].rangeMax)
+			engValues[i] = scaleCurrentToEngineering(currentBuf[i], scales[i].engMin, scales[i].engMax)
 			indices[i] = scales[i].origIndex
 		}
 
@@ -615,6 +756,43 @@ func (d *DAQP1603) ApplyConfig(profile core.Profile) error {
 	return nil
 }
 
+// SetTare 设置指定通道的归零偏移（tare offset）。
+//
+// 归零语义：UI 层展示值 = 原始工程量 - TareOffset。
+// 与 DAQ-P-1604 / DSA3217 / DAQ-T-1603 保持一致：偏移持久化到 profile.Channels[i].TareOffset，
+// 采集 readLoop 输出的 DataPayload.Channels 仍为原始值，由前端 deviceStore.applyDisplayTare
+// 在展示侧减去偏移。这样归零可即时生效且不影响采集数据流完整性。
+//
+// 通道越界返回错误，避免静默写入导致下游 GetTare 读取错位。
+func (d *DAQP1603) SetTare(channelIndex int, offset float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return fmt.Errorf("DAQ-P-1603 set tare: invalid channel index %d (valid 0-%d)",
+			channelIndex, len(d.profile.Channels)-1)
+	}
+	d.profile.Channels[channelIndex].TareOffset = offset
+	return nil
+}
+
+// GetTare 读取指定通道的归零偏移。
+// 未连接时同样可读（profile 在 Connect 前已由 ApplyConfig 或构造器填充）。
+func (d *DAQP1603) GetTare(channelIndex int) (float64, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if channelIndex < 0 || channelIndex >= len(d.profile.Channels) {
+		return 0, fmt.Errorf("DAQ-P-1603 get tare: invalid channel index %d (valid 0-%d)",
+			channelIndex, len(d.profile.Channels)-1)
+	}
+	return d.profile.Channels[channelIndex].TareOffset, nil
+}
+
+// ClearTare 清除指定通道的归零偏移（置 0）。
+// 等价于 SetTare(channelIndex, 0)，单独提供以匹配 ports.TareConfigurable 接口语义。
+func (d *DAQP1603) ClearTare(channelIndex int) error {
+	return d.SetTare(channelIndex, 0)
+}
+
 // ---- 内部辅助方法 ----
 
 // setStatusErrorLocked 将状态置为 Error 并记录最近错误信息。
@@ -627,53 +805,37 @@ func (d *DAQP1603) setStatusErrorLocked(err error) {
 // buildAIParamLocked 根据当前 profile 构造 FFI 调用所需的 WTNDAQ16HAIParam。
 // 调用方必须持有 d.mu（读 d.profile）。
 //
-// 默认配置策略：
-//   - 通道扫描模式：连续扫描（CONTINUOUS），覆盖所有启用通道
-//   - 采样信号：AI 通道信号（SAMPSIGNAL_AI）
-//   - 采样模式：连续采集（CONTINUOUS），适合长时间压力/温度监测
-//   - 时钟源：本地时钟（LOCAL）
-//   - 量程：±10V（N10_P10V），后续 Task 6 ApplyConfig 时按通道覆盖
-//   - 触发：禁用（无 DTriggerEn / ATriggerEn）
-//   - SampsPerChan：1024，连续模式下表示 DLL 内部环形缓冲区大小
+// 通道数策略：InitTask 将 16 通道全部初始化（SampChanCount=16）。历史上曾观察到
+// SampChanCount<16 时数据异常，遂固定为 16；readLoop 侧再按 profile.Channels[].Enabled
+// 过滤，仅处理已启用通道的数据。
+// 注：厂商头文件 WTNDAQ16H.H 第 154 行 nTaskState=1 即"正常(运行中)"——早期代码误以为
+// "TaskState=2 才算 running"，把 16 通道下的 TaskState=1（正常态）当成 idle，错误归因到
+// SampChanCount 上；2026-07 修复 TaskState 判断后该结论需 HIL 重新验证，暂保持 16 通道。
 //
-// 通道配置：
-//   - 优先使用 profile.Channels 中 Enabled=true 的通道
-//   - 若无启用通道，默认启用全部 16 通道
+// 其他配置策略：
+//   - 通道扫描模式：连续扫描（CONTINUOUS）
+//   - 采样信号：AI 通道信号（SAMPSIGNAL_AI）
+//   - 采样模式：连续采集（CONTINUOUS）
+//   - 时钟源：本地时钟（LOCAL）
+//   - 量程：0-20mA（SAMPRANGE_0_20mA）
+//   - 触发：禁用（无 DTriggerEn / ATriggerEn）
+//   - SampsPerChan：1024
 func (d *DAQP1603) buildAIParamLocked() ffi.WTNDAQ16HAIParam {
 	var p ffi.WTNDAQ16HAIParam
 
-	enabledCount := uint32(0)
-	for i, ch := range d.profile.Channels {
-		if i >= ffi.WTNDAQ16H_AI_MAX_CHANNELS {
-			break
-		}
-		if !ch.Enabled {
-			continue
-		}
-		p.CHParam[enabledCount] = ffi.WTNDAQ16HAIChParam{
-			Channel:     uint32(i),
-			SampleRange: ffi.WTNDAQ16H_AI_SAMPRANGE_N10_P10V,
+	// 全部 16 通道统一初始化（历史结论，见上方函数注释）
+	p.SampChanCount = ffi.WTNDAQ16H_AI_MAX_CHANNELS
+	for i := uint32(0); i < ffi.WTNDAQ16H_AI_MAX_CHANNELS; i++ {
+		p.CHParam[i] = ffi.WTNDAQ16HAIChParam{
+			Channel:     i,
+			SampleRange: ffi.WTNDAQ16H_AI_SAMPRANGE_0_20mA,
 			RefGround:   ffi.WTNDAQ16H_AI_REFGND_DIFF,
 		}
-		enabledCount++
 	}
 
-	// 无启用通道时默认全部 16 通道，保证 Connect 阶段能完成 InitTask。
-	// 实际通道屏蔽由 Task 6 ApplyConfig 在运行时调整。
-	if enabledCount == 0 {
-		enabledCount = ffi.WTNDAQ16H_AI_MAX_CHANNELS
-		for i := uint32(0); i < ffi.WTNDAQ16H_AI_MAX_CHANNELS; i++ {
-			p.CHParam[i] = ffi.WTNDAQ16HAIChParam{
-				Channel:     i,
-				SampleRange: ffi.WTNDAQ16H_AI_SAMPRANGE_N10_P10V,
-				RefGround:   ffi.WTNDAQ16H_AI_REFGND_DIFF,
-			}
-		}
-	}
-
-	p.SampChanCount = enabledCount
 	p.ChanScanMode = ffi.WTNDAQ16H_AI_CHAN_SCANMODE_CONTINUOUS
 	p.GroupLoops = 1
+	p.GroupInterval = 1 // 厂家示例设为 1，0 会导致采集异常
 	p.SampleSignal = ffi.WTNDAQ16H_AI_SAMPSIGNAL_AI
 
 	p.SampleMode = ffi.WTNDAQ16H_AI_SAMPMODE_CONTINUOUS
@@ -681,7 +843,6 @@ func (d *DAQP1603) buildAIParamLocked() ffi.WTNDAQ16HAIParam {
 
 	rate := float64(d.profile.SamplingRate)
 	if rate <= 0 {
-		// 默认 500Hz：与项目 spec 中 DAQ-P-1603 的采样率上限一致
 		rate = 500
 	}
 	p.SampleRate = rate
