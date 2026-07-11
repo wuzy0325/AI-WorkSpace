@@ -69,3 +69,21 @@ projects/wind-daq/apps/desktop-wails/data/recordings/
 # Release 归档产物（NSIS installer 拷贝自 build/bin/，按版本号命名，仅本地保留）
 # SVN 项目需另行执行：svn propset svn:ignore bin projects/<project>/releases
 projects/*/releases/bin/
+
+# 临时脚本与数据（一次性生成 i18n / 调试用的 tmp_ 前缀文件，不入库）
+tmp_*.py
+tmp_*.txt
+tmp_*.json
+
+# 设备 DLL 本地配置（WTNDAQ16H_64.dll 运行时配置，由厂商 SDK 生成，不应入库）
+*.ini
+
+# AI 工具工作目录（.workbuddy/ 等，本地会话缓存）
+.workbuddy/
+
+# 想法草稿与待沉淀的笔记（docs/ideas/ 为草稿区，正式文档归 docs/ 或 docs/specs/）
+docs/ideas/
+projects/*/docs/ideas/
+
+# 未成型的实验性项目（1604Cal 等仅本地探索，正式立项后再入库）
+projects/1604Cal/
