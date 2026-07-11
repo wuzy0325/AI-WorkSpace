@@ -100,7 +100,13 @@ export default defineConfig({
     port: 9246,
     strictPort: true,
     proxy: {
-      '/api': 'http://localhost:8080',
+      // Wails dev 模式后端 API 在 8900；非 Wails 模式（独立前端 dev）在 8080。
+      // 通过 VITE_API_TARGET 环境变量切换，避免硬编码导致切换场景时需要改代码。
+      // 默认 8900（Wails 主场景），独立前端 dev 时设 VITE_API_TARGET=http://127.0.0.1:8080。
+      '/api': {
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8900',
+        changeOrigin: true,
+      },
     },
     fs: {
       allow: [workspaceRoot],

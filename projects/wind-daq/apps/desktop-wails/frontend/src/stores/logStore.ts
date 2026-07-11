@@ -42,9 +42,9 @@ function inferCategory(entry: LogEntry): LogCategory {
   return 'system'
 }
 
-// 级别权重：用于 minLevel 过滤（显示该级别及更高严重度的日志）。
-// 默认 minLevel='info'，隐藏 Debug 级别的高频命令收发日志，避免采集期间刷屏。
-// 需要排查通信细节时手动切到 Debug。
+// 级别权重：仅用于内部判定，不再作为单一 minLevel 阈值过滤。
+// 改为三个独立开关（showInfo / showDebug / showHardware）分别控制可见性，
+// 这样用户可以独立打开"硬件通信"而不被普通 info 刷屏。
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -52,12 +52,62 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
   error: 3,
 }
 
+// localStorage 持久化键：用户对开关的偏好跨会话保留，
+// 避免每次进入 LOG 画面都要重新切换。
+const STORAGE_KEY = 'wind-daq.log-viewer.prefs.v1'
+
+interface LogViewerPrefs {
+  showHardware: boolean
+  showInfo: boolean
+  showDebug: boolean
+  filterGroup: LogGroup | 'all'
+}
+
+const DEFAULT_PREFS: LogViewerPrefs = {
+  // 硬件通信默认开：用户需要看到发送/接收帧用于排查设备问题
+  showHardware: true,
+  // 普通 info 默认关：避免系统启动、配置加载等常态事件刷屏
+  showInfo: false,
+  // 普通 debug 默认关：仅排查问题时手动打开
+  showDebug: false,
+  filterGroup: 'all',
+}
+
+function loadPrefs(): LogViewerPrefs {
+  if (typeof localStorage === 'undefined') return { ...DEFAULT_PREFS }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { ...DEFAULT_PREFS }
+    const parsed = JSON.parse(raw) as Partial<LogViewerPrefs>
+    return {
+      showHardware: parsed.showHardware ?? DEFAULT_PREFS.showHardware,
+      showInfo: parsed.showInfo ?? DEFAULT_PREFS.showInfo,
+      showDebug: parsed.showDebug ?? DEFAULT_PREFS.showDebug,
+      filterGroup: parsed.filterGroup ?? DEFAULT_PREFS.filterGroup,
+    }
+  } catch {
+    return { ...DEFAULT_PREFS }
+  }
+}
+
+function savePrefs(prefs: LogViewerPrefs): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs))
+  } catch {
+    // localStorage 满或被禁用时静默降级，不影响功能
+  }
+}
+
 export const useLogStore = defineStore('log', () => {
   const entries = ref<LogEntry[]>([])
-  // minLevel 语义：显示该级别及更高严重度的日志（对齐 daq-t1603）。
-  // 默认 'info' 隐藏 Debug，避免高频 hardware-send/hardware-recv 命令日志刷屏。
-  const minLevel = ref<LogLevel>('info')
-  const filterGroup = ref<LogGroup | 'all'>('all')
+  const initialPrefs = loadPrefs()
+  // 三个独立可见性开关，默认值由 STORAGE_KEY 控制（首次进入即默认值）。
+  // 设计原因：单一 minLevel 无法表达"显示硬件通信但隐藏普通 info"这种组合需求。
+  const showHardware = ref(initialPrefs.showHardware)
+  const showInfo = ref(initialPrefs.showInfo)
+  const showDebug = ref(initialPrefs.showDebug)
+  const filterGroup = ref<LogGroup | 'all'>(initialPrefs.filterGroup)
   const filterSearch = ref('')
   const isPaused = ref(false)
   const buffer = ref<LogEntry[]>([])
@@ -69,11 +119,40 @@ export const useLogStore = defineStore('log', () => {
   // 后端日志分类开关状态：key=category, value=是否启用（默认全部 true）
   const categoryEnabled = ref<Record<string, boolean>>({})
 
+  // 持久化偏好：开关或分组变化时写回 localStorage
+  function persistPrefs(): void {
+    savePrefs({
+      showHardware: showHardware.value,
+      showInfo: showInfo.value,
+      showDebug: showDebug.value,
+      filterGroup: filterGroup.value,
+    })
+  }
+
+  // 可见性判定核心规则：
+  //   1. warn / error 永远显示（异常必须可见，避免漏排查）。
+  //      这条优先于一切，包括硬件分类 —— 即使用户关掉「硬件通信」开关，
+  //      硬件层的 Warn/Error（如 SetUnit 写入失败、单位系数不匹配）仍要露出。
+  //   2. hardware-send / hardware-recv 的 debug/info：仅由 showHardware 控制可见性，
+  //      不受 showInfo / showDebug 影响。这样用户可以在普通 info 关闭的情况下
+  //      仍看到硬件收发帧（这对排查设备问题是必需的）。
+  //   3. 其他类别的 info：仅当 showInfo=true 显示
+  //   4. 其他类别的 debug：仅当 showDebug=true 显示
+  function isEntryVisible(entry: LogEntry): boolean {
+    const weight = LEVEL_WEIGHT[entry.level]
+    if (weight >= LEVEL_WEIGHT.warn) return true
+    if (entry.category === 'hardware-send' || entry.category === 'hardware-recv') {
+      return showHardware.value
+    }
+    if (entry.level === 'info') return showInfo.value
+    if (entry.level === 'debug') return showDebug.value
+    return false
+  }
+
   const filteredEntries = computed(() => {
     let result = entries.value
-    // minLevel 过滤：只保留级别权重 >= 当前 minLevel 的日志
-    const minWeight = LEVEL_WEIGHT[minLevel.value]
-    result = result.filter((e) => LEVEL_WEIGHT[e.level] >= minWeight)
+    // 级别 + 硬件开关过滤
+    result = result.filter(isEntryVisible)
     if (filterGroup.value !== 'all') {
       // entry.category 在 pushEntry 入库时已统一填充，这里直接 mapCategoryToGroup 即可，
       // 避免 2000 条日志 × 每次过滤触发 inferCategory 字符串拼接。
@@ -114,12 +193,24 @@ export const useLogStore = defineStore('log', () => {
     initialized = false
   }
 
-  function setMinLevel(level: LogLevel): void {
-    minLevel.value = level
+  function toggleHardware(): void {
+    showHardware.value = !showHardware.value
+    persistPrefs()
+  }
+
+  function toggleInfo(): void {
+    showInfo.value = !showInfo.value
+    persistPrefs()
+  }
+
+  function toggleDebug(): void {
+    showDebug.value = !showDebug.value
+    persistPrefs()
   }
 
   function setFilterGroup(group: LogGroup | 'all'): void {
     filterGroup.value = group
+    persistPrefs()
   }
 
   function setFilterSearch(text: string): void {
@@ -182,7 +273,9 @@ export const useLogStore = defineStore('log', () => {
 
   return {
     entries,
-    minLevel,
+    showHardware,
+    showInfo,
+    showDebug,
     filterGroup,
     filterSearch,
     isPaused,
@@ -196,7 +289,9 @@ export const useLogStore = defineStore('log', () => {
     bufferCount,
     init,
     destroy,
-    setMinLevel,
+    toggleHardware,
+    toggleInfo,
+    toggleDebug,
     setFilterGroup,
     setFilterSearch,
     setStreamStatus,

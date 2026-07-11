@@ -52,15 +52,33 @@ function isCategoryEnabled(category: LogCategory): boolean {
   return states[category]
 }
 
-// 级别过滤选项：minLevel 语义，显示该级别及更高严重度。
-// 默认 'info' 隐藏 Debug，避免采集期间高频命令收发日志刷屏（对齐 daq-t1603）。
-// label 保持英文标准缩写，不参与语言切换。
-const LEVELS: Array<{ value: LogLevel; label: string }> = [
-  { value: 'debug', label: 'Debug' },
-  { value: 'info', label: 'Info' },
-  { value: 'warn', label: 'Warn' },
-  { value: 'error', label: 'Error' },
-]
+// 三个独立可见性开关：硬件通信 / 信息 / 调试。
+// 替代原 minLevel 单选 chip，原因：
+//   - 用户需要"显示硬件收发但隐藏普通 info"的组合，minLevel 无法表达
+//   - 开关语义更直观，符合"加开关，默认关闭"的产品描述
+const VISIBILITY_TOGGLES = computed<Array<{ key: 'hardware' | 'info' | 'debug'; label: string; hint: string; active: boolean; onToggle: () => void }>>(() => [
+  {
+    key: 'hardware',
+    label: i18n.t.log_showHardware,
+    hint: i18n.t.log_showHardwareHint,
+    active: logStore.showHardware,
+    onToggle: () => logStore.toggleHardware(),
+  },
+  {
+    key: 'info',
+    label: i18n.t.log_showInfo,
+    hint: i18n.t.log_showInfoHint,
+    active: logStore.showInfo,
+    onToggle: () => logStore.toggleInfo(),
+  },
+  {
+    key: 'debug',
+    label: i18n.t.log_showDebug,
+    hint: i18n.t.log_showDebugHint,
+    active: logStore.showDebug,
+    onToggle: () => logStore.toggleDebug(),
+  },
+])
 
 // 分组过滤选项：'all' 表示全部。用 computed 依赖 i18n，跟随语言切换刷新。
 const GROUPS = computed<Array<{ value: LogGroup | 'all'; label: string }>>(() => [
@@ -71,9 +89,10 @@ const GROUPS = computed<Array<{ value: LogGroup | 'all'; label: string }>>(() =>
   { value: 'business', label: LOG_GROUP_LABELS.business },
 ])
 
+// hasActiveFilter：搜索关键字或分组非 all 时认为有激活的筛选。
+// 三个可见性开关不计入"激活筛选"，因为它们是常态偏好而非临时筛选。
 const hasActiveFilter = computed(
   () =>
-    logStore.minLevel !== 'debug' ||
     logStore.filterGroup !== 'all' ||
     logStore.filterSearch.trim().length > 0,
 )
@@ -127,8 +146,20 @@ function formatTime(iso: string): string {
   )
 }
 
-function setLevel(level: LogLevel): void {
-  logStore.setMinLevel(level)
+// 级别单字母徽章：D/I/W/E，节省横向空间
+function levelBadge(level: LogLevel): string {
+  switch (level) {
+    case 'debug':
+      return 'D'
+    case 'info':
+      return 'I'
+    case 'warn':
+      return 'W'
+    case 'error':
+      return 'E'
+    default:
+      return '?'
+  }
 }
 
 function setGroup(group: LogGroup | 'all'): void {
@@ -136,8 +167,7 @@ function setGroup(group: LogGroup | 'all'): void {
 }
 
 function clearFilters(): void {
-  // 重置为 Debug（最低级）= 显示全部级别
-  logStore.setMinLevel('debug')
+  // 仅清除临时筛选（分组 + 搜索），可见性开关是用户偏好不重置
   logStore.setFilterGroup('all')
   logStore.setFilterSearch('')
 }
@@ -181,7 +211,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="log-viewer" :class="{ 'embedded-mode': embedded }">
-    <!-- 简化标题栏：标题 + 状态 + 计数 + 操作按钮，对齐 daq-t1603 的简洁头部 -->
+    <!-- 紧凑标题栏：标题 + 状态 + 计数 + 操作按钮 -->
     <header class="log-header">
       <div class="log-header__left">
         <h1 class="log-header__title">{{ i18n.t.log_title }}</h1>
@@ -209,28 +239,31 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <!-- 工具栏：级别 chip + 分类 chip + 搜索框，参考 daq-t1603 的两行布局 -->
+    <!-- 工具栏：可见性开关 + 分组 chip + 搜索框，单行紧凑布局 -->
     <section class="log-toolbar" :aria-label="i18n.t.log_filterAria">
       <div class="log-toolbar__row">
+        <!-- 可见性开关 chip：点击切换开关状态，激活时高亮 -->
         <div class="log-toolbar__group">
-          <span class="log-toolbar__label">{{ i18n.t.log_level }}</span>
           <button
-            v-for="level in LEVELS"
-            :key="level.label"
+            v-for="toggle in VISIBILITY_TOGGLES"
+            :key="toggle.key"
             type="button"
-            class="log-chip"
-            :class="[
-              { active: logStore.minLevel === level.value },
-              `log-chip--${level.value}`,
-            ]"
-            @click="setLevel(level.value)"
+            class="log-toggle"
+            :class="{ 'log-toggle--active': toggle.active, [`log-toggle--${toggle.key}`]: true }"
+            :title="toggle.hint"
+            :aria-pressed="toggle.active"
+            :aria-label="`${toggle.label}: ${toggle.active ? i18n.t.log_toggleOnAria : i18n.t.log_toggleOffAria}`"
+            @click="toggle.onToggle()"
           >
-            {{ level.label }}
+            <span class="log-toggle__dot" :class="{ 'is-on': toggle.active }"></span>
+            <span>{{ toggle.label }}</span>
           </button>
         </div>
 
+        <span class="log-toolbar__divider" aria-hidden="true"></span>
+
+        <!-- 分组过滤 chip -->
         <div class="log-toolbar__group">
-          <span class="log-toolbar__label">{{ i18n.t.log_category }}</span>
           <button
             v-for="group in GROUPS"
             :key="group.value"
@@ -242,9 +275,7 @@ onBeforeUnmount(() => {
             {{ group.label }}
           </button>
         </div>
-      </div>
 
-      <div class="log-toolbar__row log-toolbar__row--search">
         <UiInput
           v-model="logStore.filterSearch"
           class="log-toolbar__search"
@@ -252,7 +283,7 @@ onBeforeUnmount(() => {
           :aria-label="i18n.t.log_searchAria"
         >
           <template #prefix>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
@@ -304,13 +335,12 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- 日志列表：5 列网格，时间/级别/分类/来源/消息 -->
+    <!-- 日志列表：4 列紧凑网格，时间/级别/分类/消息(含 source 小字) -->
     <section class="log-table" :aria-label="i18n.t.log_listAria">
       <div class="log-table__head" aria-hidden="true">
         <span>{{ i18n.t.log_time }}</span>
-        <span>{{ i18n.t.log_level }}</span>
+        <span>L</span>
         <span>{{ i18n.t.log_category }}</span>
-        <span>{{ i18n.t.log_source }}</span>
         <span>{{ i18n.t.log_message }}</span>
       </div>
       <div ref="containerRef" class="log-entries" @scroll="onScroll">
@@ -321,12 +351,12 @@ onBeforeUnmount(() => {
           :class="`log-entry--${entry.level}`"
         >
           <time class="log-time" :datetime="entry.timestamp">{{ formatTime(entry.timestamp) }}</time>
-          <span class="log-badge" :class="`log-badge--${entry.level}`">{{ entry.level.toUpperCase() }}</span>
+          <span class="log-badge" :class="`log-badge--${entry.level}`" :title="entry.level">{{ levelBadge(entry.level) }}</span>
           <span class="log-category" :class="`log-category--${mapCategoryToGroup(entry.category)}`">{{ categoryLabel(entry) }}</span>
-          <span class="log-source" :title="entry.source">{{ entry.source }}</span>
           <span class="log-message">
-            <span>{{ entry.message }}</span>
-            <small v-if="entry.deviceId" class="log-device">device={{ entry.deviceId }}</small>
+            <span class="log-message__text">{{ entry.message }}</span>
+            <span v-if="entry.source" class="log-source" :title="entry.source">· {{ entry.source }}</span>
+            <span v-if="entry.deviceId" class="log-device">· dev={{ entry.deviceId }}</span>
             <code v-if="entry.details" class="log-details">{{ entry.details }}</code>
           </span>
         </article>
@@ -344,7 +374,8 @@ onBeforeUnmount(() => {
 <style scoped>
 /* ============================================
    日志视图：标题栏 + 工具栏 + 日志列表
-   布局对齐 daq-t1603 的简洁风格，去除诊断摘要卡片和侧边面板
+   紧凑布局：4 列网格，单字母级别徽章，消息内联 source 小字
+   单屏可见行数比旧版提升约 60%
    ============================================ */
 .log-viewer {
   display: flex;
@@ -352,7 +383,7 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   padding: var(--space-2);
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   background: var(--bg-app);
   color: var(--text-primary);
   overflow: hidden;
@@ -368,7 +399,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-1-5) var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-panel);
@@ -446,8 +477,8 @@ onBeforeUnmount(() => {
 .log-toolbar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1-5);
-  padding: var(--space-1-5) var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-panel);
@@ -458,43 +489,91 @@ onBeforeUnmount(() => {
 .log-toolbar__row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   flex-wrap: wrap;
   min-width: 0;
-}
-
-.log-toolbar__row--search {
-  justify-content: flex-end;
 }
 
 .log-toolbar__group {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-0-5);
   flex-wrap: wrap;
   min-width: 0;
 }
 
-.log-toolbar__label {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.log-toolbar__divider {
+  width: 1px;
+  height: 1rem;
+  background: var(--border-default);
   flex-shrink: 0;
-  margin-right: var(--space-0-5);
 }
 
 .log-toolbar__search {
   flex: 1;
-  min-width: 12rem;
-  max-width: 24rem;
+  min-width: 10rem;
+  max-width: 20rem;
 }
 
-/* ---- 筛选 chip ---- */
+/* ---- 可见性开关 chip（带状态圆点） ---- */
+.log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  min-height: 1.5rem;
+  padding: 0 var(--space-1-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.log-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover, var(--accent-primary));
+}
+
+.log-toggle--active {
+  color: var(--text-on-accent, #fff);
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+/* 硬件通信开关激活时使用青色（区别于普通级别筛选） */
+.log-toggle--hardware.log-toggle--active {
+  background: var(--accent-info);
+  border-color: var(--accent-info);
+}
+
+/* 调试开关激活时使用 warning 色（橙/琥珀）。
+ * 原先用 var(--text-secondary) 作为背景，深色主题下文本色与背景对比度仅 2:1，
+ * 不满足 WCAG AA 4.5:1 标准。改用 accent token 保证可读性。*/
+.log-toggle--debug.log-toggle--active {
+  background: var(--accent-warning);
+  border-color: var(--accent-warning);
+}
+
+.log-toggle__dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background 0.15s ease;
+}
+
+.log-toggle__dot.is-on {
+  background: #fff;
+}
+
+/* ---- 分组筛选 chip ---- */
 .log-chip {
-  min-height: 1.65rem;
-  padding: var(--space-0-5) var(--space-1-5);
+  min-height: 1.5rem;
+  padding: 0 var(--space-1);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
   background: var(--bg-panel);
@@ -518,16 +597,6 @@ onBeforeUnmount(() => {
   border-color: var(--accent-primary);
 }
 
-.log-chip--error.active {
-  background: var(--accent-danger);
-  border-color: var(--accent-danger);
-}
-
-.log-chip--warn.active {
-  background: var(--accent-warning);
-  border-color: var(--accent-warning);
-}
-
 :deep(.is-active) {
   color: var(--accent-primary);
   border-color: var(--accent-primary);
@@ -536,7 +605,7 @@ onBeforeUnmount(() => {
 
 /* ---- 日志类型开关面板（默认收起） ---- */
 .category-panel {
-  padding: var(--space-1-5) var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-top: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
   border-radius: var(--radius-md);
@@ -546,7 +615,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-0-5);
-  margin-bottom: var(--space-1-5);
+  margin-bottom: var(--space-1);
 }
 
 .category-panel__header span {
@@ -566,7 +635,7 @@ onBeforeUnmount(() => {
 .category-panel__list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: var(--space-1-5);
+  gap: var(--space-1);
 }
 
 .category-toggle {
@@ -632,7 +701,7 @@ onBeforeUnmount(() => {
   transform: translateX(0.9rem);
 }
 
-/* ---- 日志表格 ---- */
+/* ---- 日志表格（4 列紧凑网格） ---- */
 .log-table {
   display: flex;
   flex-direction: column;
@@ -645,19 +714,25 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* 列宽说明：
+   - 时间 7.5rem：HH:MM:SS.mmm 等宽显示
+   - 级别 1.5rem：单字母徽章
+   - 分类 3rem：2-3 字中文标签
+   - 消息 1fr：消息主体 + source 小字内联
+*/
 .log-table__head,
 .log-entry {
   display: grid;
-  grid-template-columns: 6.75rem 3.8rem 4rem 7rem minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: start;
+  grid-template-columns: 7.5rem 1.5rem 3rem minmax(0, 1fr);
+  gap: var(--space-1-5);
+  align-items: baseline;
 }
 
 .log-table__head {
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-0-5) var(--space-2);
   border-bottom: 1px solid var(--border-default);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: 0.625rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -670,13 +745,13 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-  font-size: var(--font-size-xs);
-  line-height: 1.35;
+  font-size: 0.6875rem;
+  line-height: 1.4;
 }
 
 .log-entry {
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 55%, transparent);
+  padding: 0.1rem var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
 }
 
 .log-entry:hover {
@@ -691,9 +766,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--accent-warning) 5%, transparent);
 }
 
-.log-time,
-.log-source,
-.log-category {
+.log-time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -701,31 +774,17 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.log-category {
-  font-weight: 700;
-}
-
-.log-category--communication {
-  color: var(--accent-info);
-}
-
-.log-category--acquisition {
-  color: var(--accent-success);
-}
-
-.log-category--business {
-  color: var(--accent-warning);
-}
-
 .log-badge {
-  width: fit-content;
-  min-width: 3.25rem;
-  padding: var(--space-0-5) var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
   border-radius: var(--radius-sm);
   text-align: center;
   font-size: 0.625rem;
   font-weight: 800;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
 }
 
 .log-badge--debug {
@@ -748,29 +807,70 @@ onBeforeUnmount(() => {
   color: var(--accent-danger);
 }
 
+.log-category {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.625rem;
+}
+
+.log-category--communication {
+  color: var(--accent-info);
+}
+
+.log-category--acquisition {
+  color: var(--accent-success);
+}
+
+.log-category--business {
+  color: var(--accent-warning);
+}
+
 .log-message {
   min-width: 0;
   color: var(--text-primary);
   word-break: break-word;
   user-select: text;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.log-message__text {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.log-source {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.log-device {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .log-details {
   display: block;
-  margin-top: var(--space-0-5);
-  padding: var(--space-1);
+  flex-basis: 100%;
+  margin-top: 0.1rem;
+  padding: 0.1rem var(--space-1);
   border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-app) 62%, transparent);
   color: var(--text-secondary);
   white-space: pre-wrap;
-}
-
-.log-device {
-  display: block;
-  margin-top: var(--space-0-5);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+  font-size: 0.625rem;
 }
 
 .log-empty {
@@ -796,8 +896,8 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
   }
 
-  .log-toolbar__row--search {
-    justify-content: flex-start;
+  .log-toolbar__search {
+    max-width: none;
   }
 }
 </style>

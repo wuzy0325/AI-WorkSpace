@@ -102,7 +102,14 @@ const chartReady = ref(false)
 
 onMounted(() => {
   requestAnimationFrame(() => {
+    // 标记 chart 就绪 → 解锁 v-if 渲染 VChart
     chartReady.value = true
+    // vue-echarts v8 已移除 chart-ready 事件（emits: {} 为空），
+    // 不能依赖 @chart-ready 触发首次 option 构建。
+    // 这里在 chartReady 解锁后立即构建 initialOption，使 VChart 挂载时
+    // 即携带完整 option；否则从总览切回混合时 profile/channelIndices 未变、
+    // watch 不触发，initialOption 保持 {} 导致波形图空白。
+    rebuildInitialOption()
   })
 })
 
@@ -327,13 +334,6 @@ watch(
   },
 )
 
-// 图表初始化回调：首次挂载时传完整 option
-function onChartInit() {
-  nextTick(() => {
-    rebuildInitialOption()
-  })
-}
-
 // ========== 数据增量更新（高性能路径）==========
 // historyVersion 变化时仅更新 series.data + xAxis.data，不触碰 grid/tooltip/legend/yAxis
 // 等不变部分，也不重建 seriesStyle（由 ECharts merge 保留）。
@@ -406,7 +406,6 @@ watch(
       :option="initialOption"
       autoresize
       class="realtime-chart__canvas"
-      @chart-ready="onChartInit"
     />
     <div v-else class="realtime-chart__empty">
       <div class="realtime-chart__empty-pulse"></div>

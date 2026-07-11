@@ -120,17 +120,14 @@ async function onSave(): Promise<void> {
       feedback.pushToast(firstError, 'warning')
       return
     }
-    // 先持久化（recording.save 合入 waveformBufferSize + refreshRateHz 落盘 + sink 调优），
+    // 先持久化（recording.save 合入 historyWindowSec + refreshRateHz 落盘），
     // 成功后再 display.save() 下发后端即时生效。顺序不可颠倒：若先下发后持久化，
     // 持久化失败时后端已是新值而配置仍是旧值，重启后被旧配置回滚，产生不一致。
-    const waveformBufferSize = display.waveformBufferSize
+    const historyWindowSec = display.historyWindowSec
     const refreshRateHz = display.refreshRate
-    const sinkTuningChanged = await recording.save(waveformBufferSize, refreshRateHz)
+    await recording.save(historyWindowSec, refreshRateHz)
     await display.save()
-    const message = sinkTuningChanged
-      ? i18n.t.set_savedWithRestart
-      : i18n.t.set_saved
-    feedback.pushToast(message, 'success')
+    feedback.pushToast(i18n.t.set_saved, 'success')
     saved = true
   } catch {
     feedback.pushToast(i18n.t.set_saveFailed, 'error')
