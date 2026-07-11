@@ -37,7 +37,9 @@ Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `
 
 This project is indexed by GitNexus as **AI-WorkSpace** (27250 symbols, 54998 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+GitNexus skills are platform-agnostic — they work in **Claude Code**, **OpenCode**, **Trae**, **Cursor**, **Codex**, and any AI coding assistant with MCP access.
+
+> If any GitNexus tool warns the index is stale, run `node .gitnexus/run.cjs analyze` in terminal first (or `npx gitnexus analyze` if no local runner exists).
 
 ## Always Do
 
@@ -63,15 +65,29 @@ This project is indexed by GitNexus as **AI-WorkSpace** (27250 symbols, 54998 re
 | `gitnexus://repo/AI-WorkSpace/processes` | All execution flows |
 | `gitnexus://repo/AI-WorkSpace/process/{name}` | Step-by-step execution trace |
 
-## CLI
+## Skills (platform-agnostic)
 
-| Task | Read this skill file |
+These SKILL.md files are registered for Claude Code (`~/.claude/skills/gitnexus/`), **OpenCode** (via `device-lab/skills/`), **Trae** (via `~/.trae/skills/`), and **Cursor** (via `.cursor/rules/`):
+
+| Task | Skill file reference |
 |------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Understand architecture / "How does X work?" | `gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `gitnexus-cli/SKILL.md` |
+
+## MCP Configuration
+
+MCP server config for each IDE:
+
+| Platform | Config location |
+|----------|----------------|
+| **Claude Code** | `claude mcp add gitnexus -- npx -y gitnexus@latest mcp` |
+| **OpenCode** | `~/.config/opencode/config.json → mcp.gitnexus` |
+| **Trae** | `.trae/mcp.json` or IDE settings |
+| **Cursor** | `~/.cursor/mcp.json → mcpServers.gitnexus` |
+| **Codex** | `codex mcp add gitnexus -- npx -y gitnexus@latest mcp` |
 
 <!-- gitnexus:end -->

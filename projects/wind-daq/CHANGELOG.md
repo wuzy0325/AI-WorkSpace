@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.4.0] - 2026-07-10
+
+### Added
+
+- 全面国际化 i18n 重构：新增 `i18nStore` 全局语言管理，覆盖设备、校准、遍历、存储、布局、设置等所有 UI 模块的中英文切换。
+- 遍历测试 UI 大改：左侧栏与布点画布 UI 全面优化，前端补算预估剩余时间。
+- 校准采样进度实时反馈：自动校准流程增加进度上报，用户可实时观察采样状态。
+- 三孔系数重命名与马赫数指针化：`Kt→K0`、`Sb→Kv`，马赫数改用指针避免零值歧义。
+- 总温 CSV 修复：表头与单位修正，适配中文表头。
+- DAQ-T1603 Win7 兼容版温度采集程序（`projects/daq-t1603-win7-python/`）：纯 Python 实现，支持 Win7 无 .NET 环境。
+
+### Changed
+
+- 五孔/三孔/总压/总温校准 UI 全面重构：组件拆分、配置面板重排、表单校验增强。
+- 日志查看器（LogViewer）布局重构：更清晰的过滤器与日志流展示。
+- DeviceManagementDrawer 重构：设备管理抽屉布局优化。
+- `shared/device-sdk` DAQ-P-1603 驱动重构：FFI 超时参数传指针修复 readLoop 立即退出，提升长时间采集稳定性。
+- 存储设置（StorageSettings）与全局设置（GlobalSettings）重构：对齐新 i18n 体系。
+
+### Fixed
+
+- 修复遍历测试中绝压假表压与混合单位输入的问题：`traversal_view.go` 单位转换逻辑修正 + 单元测试覆盖。
+- 修复 DAQ-P-1603 FFI timeout 参数传指针导致 readLoop 立即超时退出。
+
+### Internal
+
+- `i18nStore` 新增 1078 行中英文字典，覆盖全部 UI 模块。
+- 校准 CSV writer 新增中文表头支持（BOM 前缀）。
+- 前端 `useCalibrationWorkflow` composable 重构，优化校准状态管理。
+- 后端 `calibration_total_temperature_csv_test.go`、`total_pressure_test.go` 等新增测试。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.5] - 2026-07-06
 
 ### Added
