@@ -9,10 +9,12 @@ import { useStorageStore } from '@stores/storageStore'
 import { useTraversalStore } from '@stores/traversalStore'
 import {
   createDefaultTraversalProbeChannels,
+  deriveRangeFromSegments,
   getTraversalLayoutPointCount,
   getTraversalStepValues,
   isTraversalConfigurableProbeChannel,
-  isTraversalRequiredProbeChannel
+  isTraversalRequiredProbeChannel,
+  normalizeTraversalLayoutRanges
 } from '@shared/types/traversal'
 import type {
   MultiPrbInterpolationMode,
@@ -102,6 +104,12 @@ const snakeOrder = ref(false)
 // 避免静默反转升级前已优化的物理走线方向。
 const primaryAxis = ref<TraversalPrimaryAxis>('x')
 
+// 预览画布横/纵轴选择：4 轴扩展后允许用户在 X/Y/Z/U 任意两轴组合间切换预览。
+// 默认 'x'/'y' 与历史行为一致；custom 模式下若点位含非零 z/u，用户可切换到 X-Z / X-U 等组合查看。
+// 这两个 ref 仅影响预览渲染，不进入 TraversalLayout 持久化（轴对选择是 UI 临时状态）。
+const previewHAxis = ref<'x' | 'y' | 'z' | 'u'>('x')
+const previewVAxis = ref<'x' | 'y' | 'z' | 'u'>('y')
+
 // 五孔探针压力类型：'gauge' 表压（默认）/ 'absolute' 绝压。
 // 后端 BuildRawPressure 归一化时按此字段决定 P1-P5 是否减去 Patm。
 // 旧配置无此字段时 applySavedConfig 兜底为 'gauge'，与历史行为一致。
@@ -114,8 +122,8 @@ const pProbePressureTypeOptions = computed(() => [
 ])
 
 const lineConfig = ref({
-  startX: -30, startY: -30,
-  endX: 30, endY: 30,
+  startX: -30, startY: 0,
+  endX: 30, endY: 0,
   xStepSegments: [{ start: -30, end: 30, step: 5 }],
   yStepSegments: [] as StepSegment[]
 })
@@ -150,19 +158,36 @@ const currentLayout = computed<TraversalLayout>(() => {
   // 蛇形扫描顺序 + 走线主轴透传到 layout，供后端按行交替反向遍历并选择主轴方向
   switch (pattern.value) {
     case 'line': return { pattern: 'line', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, line: lineConfig.value }
-    case 'rectangle': return { pattern: 'rectangle', snakeOrder: snakeOrder.value, primaryAxis: primaryAxis.value, rectangle: rectangleConfig.value }
+    case 'rectangle': {
+      return normalizeTraversalLayoutRanges({
+        pattern: 'rectangle',
+        snakeOrder: snakeOrder.value,
+        primaryAxis: primaryAxis.value,
+        rectangle: rectangleConfig.value
+      })
+    }
     case 'sector': {
       // 扇形圆心不输入，默认“第一个测点 = 当前位置 = 坐标原点 (0,0)”。
       // 由第一个测点 (r₁, θ₁) 反推圆心，使第一点坐标 = (0,0)，
       // 后续点位相对第一点计算。装配时用户手动把探针定位到第一个测点。
-      const radii = getTraversalStepValues(sectorConfig.value.radiusMin, sectorConfig.value.radiusMax, sectorConfig.value.radialStepSegments)
-      const angles = getTraversalStepValues(sectorConfig.value.angleStart, sectorConfig.value.angleEnd, sectorConfig.value.angularStepSegments)
+      // radiusMin/radiusMax/angleStart/angleEnd 保留用户输入值（sector 模板有输入框），
+      // 仅对 undefined/NaN（加载旧 profile 缺字段）走 segments 派生兜底。
+      const rs = sectorConfig.value.radialStepSegments
+      const as = sectorConfig.value.angularStepSegments
+      const rRange = deriveRangeFromSegments(rs)
+      const aRange = deriveRangeFromSegments(as)
+      const radiusMin = Number.isFinite(sectorConfig.value.radiusMin) ? sectorConfig.value.radiusMin : rRange.min
+      const radiusMax = Number.isFinite(sectorConfig.value.radiusMax) ? sectorConfig.value.radiusMax : rRange.max
+      const angleStart = Number.isFinite(sectorConfig.value.angleStart) ? sectorConfig.value.angleStart : aRange.min
+      const angleEnd = Number.isFinite(sectorConfig.value.angleEnd) ? sectorConfig.value.angleEnd : aRange.max
+      const radii = getTraversalStepValues(radiusMin, radiusMax, rs)
+      const angles = getTraversalStepValues(angleStart, angleEnd, as)
       const r1 = radii[0] ?? 0
       const t1 = ((angles[0] ?? 0) * Math.PI) / 180
       const hasData = radii.length > 0 && angles.length > 0
       const centerX = hasData ? -r1 * Math.cos(t1) : 0
       const centerY = hasData ? -r1 * Math.sin(t1) : 0
-      return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: { ...sectorConfig.value, centerX, centerY } }
+      return { pattern: 'sector', snakeOrder: snakeOrder.value, sector: { ...sectorConfig.value, radiusMin, radiusMax, angleStart, angleEnd, centerX, centerY } }
     }
     case 'custom': return { pattern: 'custom', snakeOrder: snakeOrder.value, custom: { points: customPoints.value } }
   }
@@ -170,11 +195,18 @@ const currentLayout = computed<TraversalLayout>(() => {
 
 const estimatedPointCount = computed(() => getTraversalLayoutPointCount(currentLayout.value))
 
+const rectangleHasArea = computed(() => {
+  if (pattern.value !== 'rectangle') return true
+  const xRange = deriveRangeFromSegments(rectangleConfig.value.xStepSegments)
+  const yRange = deriveRangeFromSegments(rectangleConfig.value.yStepSegments)
+  return xRange.max > xRange.min && yRange.max > yRange.min
+})
+
 // 仅 line / rectangle 布局消费走线主轴；review 摘要只在支持时显示该行，避免重复条件字面量。
 const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
 const isStepValid = computed(() => {
-  if (currentStep.value === 0) return testName.value.trim() !== '' && estimatedPointCount.value > 0
+  if (currentStep.value === 0) return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value
   if (currentStep.value === 1) {
     return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0) &&
       motionAxes.value.every((a) => a.controllerId !== '')
@@ -234,10 +266,45 @@ function applySavedLayout(layout: TraversalLayout) {
   } else {
     primaryAxis.value = layout.primaryAxis ?? 'y'
   }
-  if (layout.line) lineConfig.value = { ...layout.line, xStepSegments: layout.line.xStepSegments.map(s => ({ ...s })) }
-  if (layout.rectangle) rectangleConfig.value = { ...layout.rectangle, xStepSegments: layout.rectangle.xStepSegments.map(s => ({ ...s })), yStepSegments: layout.rectangle.yStepSegments.map(s => ({ ...s })) }
-  if (layout.sector) sectorConfig.value = { ...layout.sector, radialStepSegments: layout.sector.radialStepSegments.map(s => ({ ...s })), angularStepSegments: layout.sector.angularStepSegments.map(s => ({ ...s })) }
-  customPoints.value = layout.custom?.points.map(p => ({ x: p.x, y: p.y, z: 0, u: 0 })) ?? []
+  if (layout.line) {
+    const legacyUsesY = layout.line.startX === layout.line.endX && layout.line.startY !== layout.line.endY
+    const xSegments = legacyUsesY ? layout.line.yStepSegments : layout.line.xStepSegments
+    lineConfig.value = {
+      ...layout.line,
+      startX: legacyUsesY ? layout.line.startY : layout.line.startX,
+      endX: legacyUsesY ? layout.line.endY : layout.line.endX,
+      startY: 0,
+      endY: 0,
+      xStepSegments: xSegments.map(s => ({ ...s })),
+      yStepSegments: []
+    }
+  }
+  if (layout.rectangle) {
+    const normalized = normalizeTraversalLayoutRanges(layout).rectangle!
+    rectangleConfig.value = {
+      ...normalized,
+      xStepSegments: normalized.xStepSegments.map(s => ({ ...s })),
+      yStepSegments: normalized.yStepSegments.map(s => ({ ...s }))
+    }
+  }
+  if (layout.sector) {
+    // radiusMin/radiusMax/angleStart/angleEnd 同样兜底，避免旧 profile 缺字段导致校验失效
+    const rRange = deriveRangeFromSegments(layout.sector.radialStepSegments)
+    const aRange = deriveRangeFromSegments(layout.sector.angularStepSegments)
+    sectorConfig.value = {
+      ...layout.sector,
+      radiusMin: Number.isFinite(layout.sector.radiusMin) ? layout.sector.radiusMin : rRange.min,
+      radiusMax: Number.isFinite(layout.sector.radiusMax) ? layout.sector.radiusMax : rRange.max,
+      angleStart: Number.isFinite(layout.sector.angleStart) ? layout.sector.angleStart : aRange.min,
+      angleEnd: Number.isFinite(layout.sector.angleEnd) ? layout.sector.angleEnd : aRange.max,
+      radialStepSegments: layout.sector.radialStepSegments.map(s => ({ ...s })),
+      angularStepSegments: layout.sector.angularStepSegments.map(s => ({ ...s }))
+    }
+  }
+  // 4 轴扩展后 customPoints 必须包含 z/u：从持久化 layout 读取时直接传 z/u，
+  // 后端 traversal_config.go 已在反序列化时映射 Z/U，故 layout.custom.points 元素必含这两字段。
+  // 不再用 z:0/u:0 兜底，否则 4 轴自定义点配置加载后会丢失 Z/U 数据。
+  customPoints.value = (layout.custom?.points ?? []).map(p => ({ x: p.x, y: p.y, z: p.z, u: p.u }))
 }
 
 function applySavedConfig(config: TraversalTestConfig) {
@@ -398,29 +465,26 @@ watch(() => props.show, async (isVisible) => {
           :t="(t as unknown as Record<string, string>)"
         />
         <div v-else-if="currentStep === 1" class="step-content">
-          <!-- 五孔压力类型开关：与通道配置同屏，决定 P1-P5 在后端归一化时是否减去 Patm -->
-          <UiPanel class="section-card pressure-type-card">
-            <div class="pressure-type-row">
-              <div class="pressure-type-label">
-                <span class="pressure-type-title">{{ t.travPressureType }}</span>
-                <span class="pressure-type-hint">{{ t.travPressureTypeHint }}</span>
-              </div>
-              <UiSelect
-                :model-value="pProbePressureType"
-                :options="pProbePressureTypeOptions"
-                size="sm"
-                class="pressure-type-select"
-                :aria-label="t.travPressureType"
-                @update:model-value="(v: string) => pProbePressureType = (v === 'absolute' ? 'absolute' : 'gauge')"
-              />
+          <!-- 五孔压力类型开关：与批量工具栏同处一行，避免额外卡片占用垂直空间 -->
+          <div class="pressure-type-bar">
+            <div class="pressure-type-label">
+              <span class="pressure-type-title">{{ t.travPressureType }}</span>
+              <span class="pressure-type-hint">{{ t.travPressureTypeHint }}</span>
             </div>
-          </UiPanel>
+            <UiSelect
+              :model-value="pProbePressureType"
+              :options="pProbePressureTypeOptions"
+              size="sm"
+              class="pressure-type-select"
+              :aria-label="t.travPressureType"
+              @update:model-value="(v: string) => pProbePressureType = (v === 'absolute' ? 'absolute' : 'gauge')"
+            />
+          </div>
           <TraversalHardwareStep
             v-model:probe-channels="probeChannels"
             v-model:motion-axes="motionAxes"
             :t="(t as unknown as Record<string, string>)"
             :is-loading="isLoading"
-            :p-probe-pressure-type="pProbePressureType"
           />
         </div>
         <TraversalPrbStep
@@ -494,7 +558,7 @@ watch(() => props.show, async (isVisible) => {
           </div>
         </div>
         <div class="sidebar-preview">
-          <PointsPreview :layout="currentLayout" />
+          <PointsPreview v-model:h-axis="previewHAxis" v-model:v-axis="previewVAxis" :layout="currentLayout" />
         </div>
       </aside>
     </div>
@@ -515,22 +579,23 @@ watch(() => props.show, async (isVisible) => {
 </template>
 
 <style scoped>
-/* 遍历测试配置画面主体布局：左右分栏，限制最大高度防止被拉长。
+/* 遍历测试配置画面主体布局：左右分栏，固定高度确保步骤切换时画面尺寸稳定。
    左侧主内容区设置最小宽度 420px，避免在窄视口或对话框缩小时文字被压成竖排。
-   整体收紧 max-height 至 60vh，让对话框更紧凑、避免大量留白。 */
+   关键：使用 height: 60vh（而非 max-height），让内容少时主体保持固定高度、
+   内容多时内部滚动，避免步骤切换时对话框整体高度跳动破坏视觉锚点。 */
 .traversal-body {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) 280px;
   gap: 0;
   min-height: 0;
-  max-height: 60vh;
+  height: 60vh;
   flex: 1;
   overflow: hidden
 }
 
 .traversal-main {
   min-height: 0;
-  max-height: 60vh;
+  height: 60vh;
   overflow-y: auto;
   padding-right: var(--space-2);
   scrollbar-width: thin
@@ -539,7 +604,7 @@ watch(() => props.show, async (isVisible) => {
 .step-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2)
+  gap: 6px
 }
 
 .section-card {
@@ -547,52 +612,54 @@ watch(() => props.show, async (isVisible) => {
 }
 
 /* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，
-   覆盖为 6px 10px 让摘要/保存/选项卡片更紧凑、与硬件步骤视觉对齐 */
+   覆盖为 4px 8px 让摘要/保存/选项卡片更紧凑、与硬件步骤视觉对齐 */
 .section-card :deep(.n-card__content) {
-  padding: 6px 10px
+  padding: 4px 8px
 }
 .section-card :deep(.n-card-header) {
-  padding: 6px 10px
+  padding: 4px 8px
 }
 
-/* 五孔压力类型开关卡片：单行紧凑布局，标签+提示左对齐，下拉右对齐。
-   缩小 padding 与最小宽度，让卡片高度收紧与下方硬件步骤对齐。 */
-.pressure-type-card {
-  padding: var(--space-1) var(--space-2)
-}
-
-.pressure-type-row {
+/* 五孔压力类型开关：不再使用独立卡片，改为扁平工具条，与批量工具栏视觉同级。
+   标题和提示水平排列，下拉固定右侧，整行高度与下方工具栏一致。 */
+.pressure-type-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  flex-wrap: wrap
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel)
 }
 
 .pressure-type-label {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: var(--space-2);
   flex: 1;
-  min-width: 180px;
-  word-break: normal;
-  overflow-wrap: anywhere
+  min-width: 0
 }
 
 .pressure-type-title {
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--text-primary)
+  color: var(--text-primary);
+  white-space: nowrap
 }
 
 .pressure-type-hint {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
-  line-height: 1.4
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .pressure-type-select {
-  min-width: 140px;
+  width: 120px;
   flex-shrink: 0
 }
 
@@ -644,8 +711,10 @@ watch(() => props.show, async (isVisible) => {
   background: var(--bg-panel-strong)
 }
 
-/* 右侧边栏：固定宽度，限制高度，内部可滚动；
-   收紧宽度至 280px 减少视觉占用 */
+/* 右侧边栏：固定宽度，固定高度（与主体 60vh 对齐），内部可滚动；
+   收紧宽度至 280px 减少视觉占用。
+   使用 height 而非 max-height，确保不同步骤下边栏与主体等高、
+   点位预览图尺寸稳定，避免横向对比时预览大小漂移。 */
 .traversal-sidebar {
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
@@ -653,7 +722,7 @@ watch(() => props.show, async (isVisible) => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 60vh;
+  height: 60vh;
   overflow-y: auto;
   scrollbar-width: thin
 }

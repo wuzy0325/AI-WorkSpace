@@ -83,6 +83,12 @@ type TraversalManager struct {
 	// 插值器加载端口（用于启动恢复时按路径加载 PRB / CSV / 多 PRB），
 	// nil 表示未注入加载器，启动恢复将被跳过并写入相应错误消息。
 	interpLoader ports.InterpolatorLoader
+
+	// 通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit 才能换算到 Pa。nil 表示未注入，归一化走降级路径
+	//（跳过换算并记 warning，保证旧测试不崩）。
+	// 由 DeviceManager 实现，装配点通过 SetUnitProvider 注入。
+	unitProvider ports.ChannelUnitProvider
 }
 
 // 遍历配置持久化存储的 key
@@ -160,6 +166,23 @@ func (m *TraversalManager) SetInterpolatorLoader(loader ports.InterpolatorLoader
 	m.mu.Unlock()
 }
 
+// SetUnitProvider 注入通道单位提供端口，供 BuildRawPressure 归一化时
+// 按 (deviceID, channelIndex) 查询通道 Unit。
+//
+// 为什么不在构造函数追加可变参数：
+//   - Go 不允许两个 variadic 参数（configStore 已占用 variadic 槽位）；
+//   - 装配阶段 DeviceManager 创建顺序在 TraversalManager 之后，构造期注入
+//     无法表达"先创建 mgr 再创建 manager 再回填"的依赖；
+//   - 与 SetInterpolatorLoader 同模式（setter 注入），保持装配风格一致。
+//
+// 调用时机：装配根创建 DeviceManager 之后立即调用，确保遍历启动时
+// unitProvider 字段非 nil，归一化路径生效。
+func (m *TraversalManager) SetUnitProvider(provider ports.ChannelUnitProvider) {
+	m.mu.Lock()
+	m.unitProvider = provider
+	m.mu.Unlock()
+}
+
 // InterpolatorRestoreErr 返回最近一次启动恢复 / 显式 RestoreInterpolatorFromPersistedConfig
 // 调用所遗留的错误消息，主要供测试与 CheckPreconditions 读取。空字符串表示无错误。
 func (m *TraversalManager) InterpolatorRestoreErr() string {
@@ -190,7 +213,10 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 	m.stabilization = config
 }
 
-func (m *TraversalManager) CheckPreconditions() map[string]any {
+// CheckPreconditions 校验遍历测试启动前的前置条件。
+// 若传入待启动配置（启动确认对话框场景），则基于该配置中的 ChannelLabels 校验 Patm/Tatm；
+// 若传入 nil，则回退到当前 manager 持有的 m.config（如 verifyInterpolatorWithBackend 场景）。
+func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
 	hasInterpolator := m.HasLoadedInterpolator()
 	hasMotion := m.motion != nil
 	hasReader := m.reader != nil
@@ -198,18 +224,44 @@ func (m *TraversalManager) CheckPreconditions() map[string]any {
 	// PRB 项默认消息；若启动恢复时记录了失败原因，则使用真实原因，
 	// 便于前端在 PRB 文件被删除/移动等情况下直接展示根因。
 	prbMessage := "Load PRB or calibration CSV before running interpolation"
+	// ChannelMap 校验：扫描 ChannelLabels 是否包含 Patm + Tatm 标签。
+	// P1-P5 标签存在性由 BuildRawPressure 返回的 ok 标志在运行时承担，
+	// 此处只做前置硬性校验——Patm/Tatm 缺失会让归一化与大气计算无法进行。
+	hasPatm := false
+	hasTatm := false
 	m.mu.RLock()
 	if !hasInterpolator && m.lastInterpolatorRestoreErr != "" {
 		prbMessage = m.lastInterpolatorRestoreErr
 	}
+	cfg := m.config
+	if config != nil {
+		cfg = *config
+	}
+	for _, label := range cfg.ChannelLabels {
+		switch label {
+		case "Patm":
+			hasPatm = true
+		case "Tatm":
+			hasTatm = true
+		}
+	}
 	m.mu.RUnlock()
+
+	channelMapPassed := hasPatm && hasTatm
+	channelMapMessage := "All required channel labels are mapped"
+	if !hasPatm {
+		channelMapMessage = "Patm channel label is required for pressure normalization"
+	} else if !hasTatm {
+		channelMapMessage = "Tatm channel label is required for atmospheric calculation"
+	}
 
 	checks := []map[string]any{
 		{"name": "PRB", "passed": hasInterpolator, "message": prbMessage},
 		{"name": "Motion", "passed": hasMotion, "message": "Motion manager is available"},
 		{"name": "DAQ", "passed": hasReader, "message": "DAQ acquisition hub is available"},
+		{"name": "ChannelMap", "passed": channelMapPassed, "message": channelMapMessage},
 	}
-	allPassed := hasInterpolator && hasMotion && hasReader
+	allPassed := hasInterpolator && hasMotion && hasReader && channelMapPassed
 	return map[string]any{"allPassed": allPassed, "checks": checks}
 }
 
@@ -540,7 +592,8 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 			completed := curStatus.CurrentPoint
 			total := curStatus.TotalPoints
 			if completed > 0 && (completed%checkpointInterval == 0 || completed >= total) {
-				slog.Info("traversal progress",
+				// 进度信息已通过 status API 推送到 UI 状态栏，LOG 画面里属于刷屏噪音，降级为 Debug。
+				slog.Debug("traversal progress",
 					"component", "traversal",
 					"task_id", curStatus.TaskID,
 					"completed_points", completed,

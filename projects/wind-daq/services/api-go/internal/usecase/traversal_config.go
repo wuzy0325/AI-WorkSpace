@@ -306,13 +306,12 @@ type traversalAPIConfig struct {
 		// PrimaryAxis 控制矩形/线型布局走线主轴（见 core/traversal.LayoutConfig 注释）：
 		// 缺省或 "y" 走 legacy（先走 Y），显式 "x" 才走新逻辑。omitempty 保持空值不序列化。
 		PrimaryAxis string `json:"primaryAxis,omitempty"`
-		Line        *struct {
+		// Line 仅沿 X 轴布点，Y 恒为 0（详见 core/traversal.LineLayout 注释）。
+		// 旧配置中残留的 startY/endY/yStepSegments 字段会被 JSON 反序列化时静默忽略。
+		Line *struct {
 			StartX        float64                 `json:"startX"`
-			StartY        float64                 `json:"startY"`
 			EndX          float64                 `json:"endX"`
-			EndY          float64                 `json:"endY"`
 			XStepSegments []traversal.StepSegment `json:"xStepSegments"`
-			YStepSegments []traversal.StepSegment `json:"yStepSegments"`
 		} `json:"line"`
 		Rectangle *struct {
 			XMin          float64                 `json:"xMin"`
@@ -336,6 +335,8 @@ type traversalAPIConfig struct {
 			Points []struct {
 				X float64 `json:"x"`
 				Y float64 `json:"y"`
+				Z float64 `json:"z"`
+				U float64 `json:"u"`
 			} `json:"points"`
 		} `json:"custom"`
 	} `json:"layout"`
@@ -358,6 +359,9 @@ type traversalAPIConfig struct {
 	Validation        *traversal.DataValidationConfig `json:"validation,omitempty"`
 	Stabilization     *traversal.StabilizationConfig  `json:"stabilization,omitempty"`
 	InterpolationMode string                          `json:"interpolationMode,omitempty"`
+	// PProbePressureType 五孔探针 P1-P5 压力类型："gauge"（默认）/ "absolute"。
+	// 空串在 ParseAndStartTraversal 中兜底为 "gauge"，保证旧配置兼容。
+	PProbePressureType string `json:"pProbePressureType,omitempty"`
 }
 
 // roleToLabel 将前端 ProbeChannelConfig.role 转为压力标签
@@ -383,7 +387,10 @@ func roleToLabel(role, name string) string {
 	return name
 }
 
-func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, error) {
+// ParseConfig 将前端遍历配置 JSON 解析为内部 traversal.Config。
+// 与 ParseAndStartTraversal 共享同一套解析逻辑，但只返回配置不启动任务，
+// 供 CheckPreconditions 在启动前基于最新配置校验 Patm/Tatm 等映射。
+func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, error) {
 	var legacy struct {
 		TaskID   string            `json:"taskId"`
 		DeviceID string            `json:"deviceId"`
@@ -401,11 +408,7 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 			"device_id", config.DeviceID,
 			"total_points", len(config.Path),
 		)
-		if err := m.Start(config); err != nil {
-			return "", err
-		}
-		m.SaveConfigRaw(raw)
-		return config.TaskID, nil
+		return config, nil
 	}
 
 	var cfg traversalAPIConfig
@@ -414,7 +417,7 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 			"component", "traversal",
 			"error", err,
 		)
-		return "", fmt.Errorf("invalid request: %w", err)
+		return traversal.Config{}, fmt.Errorf("invalid request: %w", err)
 	}
 
 	points := traversal.PointsFromLayout(traversal.LayoutConfig{
@@ -426,10 +429,9 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 				return nil
 			}
 			return &traversal.LineLayout{
-				StartX: cfg.Layout.Line.StartX, StartY: cfg.Layout.Line.StartY,
-				EndX: cfg.Layout.Line.EndX, EndY: cfg.Layout.Line.EndY,
+				StartX:        cfg.Layout.Line.StartX,
+				EndX:          cfg.Layout.Line.EndX,
 				XStepSegments: cfg.Layout.Line.XStepSegments,
-				YStepSegments: cfg.Layout.Line.YStepSegments,
 			}
 		}(),
 		Rectangle: func() *traversal.RectangleLayout {
@@ -465,7 +467,9 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 				cl.Points = append(cl.Points, struct {
 					X float64 `json:"x"`
 					Y float64 `json:"y"`
-				}{X: p.X, Y: p.Y})
+					Z float64 `json:"z"`
+					U float64 `json:"u"`
+				}{X: p.X, Y: p.Y, Z: p.Z, U: p.U})
 			}
 			return cl
 		}(),
@@ -490,17 +494,17 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	if deviceID == "" {
 		err := fmt.Errorf("deviceId is required")
 		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
-		return "", err
+		return traversal.Config{}, err
 	}
 	if len(channels) == 0 {
 		err := fmt.Errorf("channels are required")
 		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
-		return "", err
+		return traversal.Config{}, err
 	}
 	if len(points) == 0 {
 		err := fmt.Errorf("path is required")
 		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
-		return "", err
+		return traversal.Config{}, err
 	}
 
 	dwell := time.Duration(cfg.DwellTimeMs) * time.Millisecond
@@ -524,6 +528,12 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		ChannelLabels:     channelLabels,
 		InterpolationMode: cfg.InterpolationMode,
 	}
+	// 压力类型兜底：空串与缺失均落 "gauge"，与历史行为一致，避免归一化逻辑误判绝压。
+	pressureType := cfg.PProbePressureType
+	if pressureType != "gauge" && pressureType != "absolute" {
+		pressureType = "gauge"
+	}
+	config.PProbePressureType = pressureType
 	// 注入数据验证与稳定等待配置（前端可选传入）
 	m.SetValidation(cfg.Validation)
 	m.SetStabilization(cfg.Stabilization)
@@ -538,16 +548,26 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		"dwell_ms", cfg.DwellTimeMs,
 	)
 
+	return config, nil
+}
+
+func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, error) {
+	config, err := m.ParseConfig(raw)
+	if err != nil {
+		return "", err
+	}
+
 	if err := m.Start(config); err != nil {
 		return "", err
 	}
 	m.SaveConfigRaw(raw)
+	dwell := time.Duration(config.DwellTimeMs) * time.Millisecond
 	if dwell > 0 {
 		go m.RunTraversalLoop(dwell)
 		slog.Info("traversal loop launched from ParseAndStartTraversal",
 			"component", "traversal",
 			"task_id", config.TaskID,
-			"dwell_ms", cfg.DwellTimeMs,
+			"dwell_ms", config.DwellTimeMs,
 		)
 	}
 	return config.TaskID, nil

@@ -368,7 +368,7 @@ func TestBuildRawPressure_LegacyLabelsSkipped(t *testing.T) {
 //   - TraversalManager 实例，config.ChannelLabels 仅包含 Tatm（缺 Patm）
 //
 // 测试步骤：
-//   - 调用 mgr.CheckPreconditions()
+//   - 调用 mgr.CheckPreconditions(nil)
 //
 // 期待结果：
 //   - checks 数组包含 name="ChannelMap" 项
@@ -381,7 +381,7 @@ func TestCheckPreconditions_MissingPatm(t *testing.T) {
 	mgr.config.ChannelLabels = map[int]string{0: "P1", 6: "Tatm"} // 缺 Patm
 	mgr.mu.Unlock()
 
-	result := mgr.CheckPreconditions()
+	result := mgr.CheckPreconditions(nil)
 
 	checks, _ := result["checks"].([]map[string]any)
 	var channelMap map[string]any
@@ -412,7 +412,7 @@ func TestCheckPreconditions_MissingPatm(t *testing.T) {
 //   - TraversalManager 实例，config.ChannelLabels 包含 P1-P5 + Patm + Tatm 全部 7 标签
 //
 // 测试步骤：
-//   - 调用 mgr.CheckPreconditions()
+//   - 调用 mgr.CheckPreconditions(nil)
 //
 // 期待结果：
 //   - ChannelMap 项 passed=true
@@ -426,7 +426,7 @@ func TestCheckPreconditions_AllChannelsMapped(t *testing.T) {
 	}
 	mgr.mu.Unlock()
 
-	result := mgr.CheckPreconditions()
+	result := mgr.CheckPreconditions(nil)
 
 	checks, _ := result["checks"].([]map[string]any)
 	var channelMap map[string]any

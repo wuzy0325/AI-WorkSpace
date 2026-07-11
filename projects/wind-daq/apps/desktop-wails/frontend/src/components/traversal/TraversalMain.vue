@@ -570,21 +570,32 @@ watch(
     <!-- 主工作区：左侧栏 384px + 右侧 Tab 工作区，flex 布局占满空间 -->
     <div v-else class="flex flex-1 overflow-hidden">
       <TraversalLiveMonitor
-        :has-config="hasConfig"
-        :axis-positions="axisPositions"
+        :target-point="targetPoint"
+        :actual-positions="axisPositions"
+        :mach-number="machNumber"
+        :velocity="velocity"
+        :csv-save-path="csvSavePath"
+        :last-error="lastError"
+        :validation-warnings="traversalStore.status?.validationWarnings"
         :acquisition-connection="acquisitionConnection"
         :positioner-connection="positionerConnection"
         :pressure-items="pressureItems"
         :realtime-result="traversalStore.realtimeResult"
         :labels="{
-          monitor: t.travMonitor,
-          currentPoint: t.currentPoint,
+          target: t.travTarget,
+          actual: t.travActual,
           mach: t.mach,
           velocity: t.velocity,
           realtimeCalculation: t.realtimeCalculation,
           realtimePressureData: t.realtimePressureData,
           alpha: t.alpha,
           beta: t.beta,
+          csvPath: t.travCsvPath,
+          validationWarnings: t.travValidationWarnings,
+          hardwareStatus: t.travHardwareStatus,
+          acquisitionDevice: t.travAcquisitionDevice,
+          positionerDevice: t.travPositionerDevice,
+          moving: t.moving,
         }"
       />
 

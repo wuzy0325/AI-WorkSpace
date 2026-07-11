@@ -49,10 +49,10 @@ func TestTraversalCsvWriterWritesRowsAndReportsOutputPath(t *testing.T) {
 		t.Fatalf("read traversal csv: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "PointId,Timestamp,X,Y,P1,P3,Alpha,Beta,Pt,Ps,Mach,SampleCount,DwellMs") {
+	if !strings.Contains(text, "PointId,Timestamp,X,Y,Z,U,P1,P3,Alpha,Beta,Pt,Ps,Mach,SampleCount,DwellMs") {
 		t.Fatalf("expected traversal CSV header, got %q", text)
 	}
-	if !strings.Contains(text, "1,2026-06-24 10:30:00,1.000000,2.000000,11.500000,33.250000,,,,,,4,1000") {
+	if !strings.Contains(text, "1,2026-06-24 10:30:00,1.000000,2.000000,0.000000,0.000000,11.500000,33.250000,,,,,,4,1000") {
 		t.Fatalf("expected traversal CSV row, got %q", text)
 	}
 }

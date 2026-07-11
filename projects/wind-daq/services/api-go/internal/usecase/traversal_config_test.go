@@ -448,3 +448,55 @@ func TestParseAndStartTraversal_RectangleLayout(t *testing.T) {
 		t.Logf("Stop 返回错误 (可忽略): %v", err)
 	}
 }
+
+// ParseAndStartTraversal 线型布局字段映射测试：验证简化后的 line 模式
+// 仅消费 startX/endX/xStepSegments 三个字段，Y 恒为 0，不再消费 startY/endY/yStepSegments。
+// 同时验证残留的旧字段（startY/endY/yStepSegments）会被 JSON 反序列化静默忽略，不报错。
+// X: -10~10 步长 5 → 5 个点（-10, -5, 0, 5, 10）；Y 固定 0 → 单行 5 点
+func TestParseAndStartTraversal_LineLayout(t *testing.T) {
+	mgr := newConfigTestManager(t)
+
+	// 故意在 JSON 中携带旧字段 startY/endY/yStepSegments，验证它们被静默忽略
+	raw := json.RawMessage(`{
+		"name": "line-test",
+		"layout": {
+			"pattern": "line",
+			"snakeOrder": true,
+			"primaryAxis": "y",
+			"line": {
+				"startX": -10, "endX": 10,
+				"xStepSegments": [{"start":-10,"end":10,"step":5}],
+				"startY": 99, "endY": 99, "yStepSegments": [{"start":0,"end":1,"step":1}]
+			}
+		},
+		"channels": {
+			"probeChannels": [
+				{"name":"P1","role":"fiveHole.p1","channel":{"deviceId":"sim-1","channelIndex":0},"enabled":true}
+			]
+		},
+		"dwellTimeMs": 100,
+		"samplesPerPoint": 1,
+		"savePath": "/tmp/test.csv"
+	}`)
+
+	taskID, err := mgr.ParseAndStartTraversal(raw)
+	if err != nil {
+		t.Fatalf("ParseAndStartTraversal 失败: %v", err)
+	}
+	if taskID == "" {
+		t.Fatalf("taskID 不应为空")
+	}
+
+	// 验证总点数：5 个 X 步进点 × 1 行（Y=0）= 5
+	status := mgr.Status()
+	wantTotal := 5
+	if status.TotalPoints != wantTotal {
+		t.Fatalf("线型布局总点数错误: 期望 %d, 实际 %d (若仍消费 Y 字段会是 10)",
+			wantTotal, status.TotalPoints)
+	}
+
+	// 清理
+	if err := mgr.Stop(); err != nil {
+		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	}
+}

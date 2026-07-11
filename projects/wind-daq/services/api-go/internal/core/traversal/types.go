@@ -32,11 +32,13 @@ const (
 	PhaseSaving      PointPhase = "saving"
 )
 
-// Point 遍历测试点坐标
+// Point 遍历测试点坐标（4 轴：X/Y/Z/U，对应位移机构全轴能力）
+// U 字段零值为 0，旧配置文件无 u 字段时 Go JSON 反序列化自动填 0，向后兼容
 type Point struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 	Z float64 `json:"z"`
+	U float64 `json:"u"`
 }
 
 // SaveOptions CSV 落盘选项（与前端 TraversalSaveOptions 对齐）
@@ -65,6 +67,11 @@ type Config struct {
 	// InterpolationMode 多 PRB 插值模式："normal" / "linear" / "nearest"
 	// 仅对 MultiPrbInterpolator 生效；为空时使用插值器自身默认（normal）
 	InterpolationMode string `json:"interpolationMode,omitempty"`
+	// PProbePressureType 五孔探针 P1-P5 通道的压力传感器类型："gauge"（表压，默认）/ "absolute"（绝压）。
+	// 约束：P1-P5 必须为同一类型（5 孔传感器物理上同型号），由全局开关统一表达。
+	// Patm 通道始终视为绝压，不消费此字段。
+	// 空串在 ParseAndStartTraversal 中兜底为 "gauge"，保证旧配置反序列化兼容。
+	PProbePressureType string `json:"pProbePressureType,omitempty"`
 }
 
 // GridConfig 网格配置（旧接口兼容）

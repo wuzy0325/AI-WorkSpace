@@ -4,6 +4,7 @@ import { traversalApi } from '@api/traversalApi'
 
 import { useUiRefreshThrottle } from '@composables/useUiRefreshThrottle'
 import { useI18nStore } from '@stores/i18nStore'
+import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
 
 function formatApiError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
@@ -482,7 +483,10 @@ export const useTraversalStore = defineStore('traversal', () => {
   async function loadConfig(): Promise<void> {
     const res = await traversalApi.getConfig()
     if (res.success) {
-      config.value = res.data ?? null
+      const loadedConfig = res.data ?? null
+      config.value = loadedConfig
+        ? { ...loadedConfig, layout: normalizeTraversalLayoutRanges(loadedConfig.layout) }
+        : null
       inferInterpolatorState()
       // 启动恢复时通过后端 API 校验插值器实际加载状态，
       // 避免 PRB 文件被删除/移动后前端误判为已加载（导致实时插值静默失败）

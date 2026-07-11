@@ -28,28 +28,53 @@ func InterpolateLinearPath(points []Point, step float64) ([]Point, error) {
 	for i := 0; i < len(points)-1; i++ {
 		from := points[i]
 		to := points[i+1]
-		d := distance(from, to)
-		if d == 0 {
+		segments := maxSegments(from, to, step)
+		if segments == 0 {
 			continue
 		}
-		segments := int(math.Ceil(d / step))
 		for segment := 1; segment <= segments; segment++ {
 			ratio := float64(segment) / float64(segments)
+			// 4 轴线性插值：U 轴与 X/Y/Z 同等对待，避免旋转/第四轴位移被静默丢弃
 			path = append(path, Point{
 				X: from.X + (to.X-from.X)*ratio,
 				Y: from.Y + (to.Y-from.Y)*ratio,
 				Z: from.Z + (to.Z-from.Z)*ratio,
+				U: from.U + (to.U-from.U)*ratio,
 			})
 		}
 	}
 	return path, nil
 }
 
-func distance(a Point, b Point) float64 {
-	dx := b.X - a.X
-	dy := b.Y - a.Y
-	dz := b.Z - a.Z
-	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+// maxSegments 计算两点间各轴所需的插值段数，取最大值。
+//
+// 设计动机：原先使用 distance() 计算 4 轴欧氏距离再除以 step 得到段数，
+// 但 X/Y/Z（mm）与 U（角度）物理量纲不同，混合求距在数学上无意义，
+// 可能导致某些轴插值段数不足（如纯 U 轴旋转 90° + step=1mm → d=90 → 90 段，
+// 但若 X 轴位移 100mm + U 轴旋转 0.5° → d≈100 → 100 段，U 轴分辨率过高）。
+//
+// 按轴分别计算段数取 max，确保每个轴都获得足够的插值点，
+// 同时避免混合量纲导致的距离无意义问题。
+// step 的单位由调用方根据主运动轴选择（通常为 mm）。
+func maxSegments(a, b Point, step float64) int {
+	if step <= 0 {
+		return 1
+	}
+	dx := math.Abs(b.X - a.X)
+	dy := math.Abs(b.Y - a.Y)
+	dz := math.Abs(b.Z - a.Z)
+	du := math.Abs(b.U - a.U)
+	sx := int(math.Ceil(dx / step))
+	sy := int(math.Ceil(dy / step))
+	sz := int(math.Ceil(dz / step))
+	su := int(math.Ceil(du / step))
+	max := sx
+	for _, s := range [3]int{sy, sz, su} {
+		if s > max {
+			max = s
+		}
+	}
+	return max
 }
 
 // GenerateGridPath 生成网格路径（旧接口兼容）
@@ -254,14 +279,14 @@ type LayoutConfig struct {
 	Custom      *CustomLayout    `json:"custom,omitempty"`
 }
 
-// LineLayout 线型布局
+// LineLayout 线型布局：仅沿 X 轴布点，Y 恒为 0。
+// 设计取舍：line 模式语义本质是"沿一条直线布点"，不需要 Y 步进。
+// 若需要 2D 平面布点，应使用 rectangle 或 sector 模式。
+// 旧配置中残留的 startY/endY/yStepSegments 字段会被 JSON 反序列化时静默忽略，无需 migration。
 type LineLayout struct {
 	StartX        float64       `json:"startX"`
-	StartY        float64       `json:"startY"`
 	EndX          float64       `json:"endX"`
-	EndY          float64       `json:"endY"`
 	XStepSegments []StepSegment `json:"xStepSegments"`
-	YStepSegments []StepSegment `json:"yStepSegments"`
 }
 
 // RectangleLayout 矩形布局
@@ -287,10 +312,13 @@ type SectorLayout struct {
 }
 
 // CustomLayout 自定义布局
+// Z 和 U 字段为零值填充语义：无此字段的旧配置自动填 0
 type CustomLayout struct {
 	Points []struct {
 		X float64 `json:"x"`
 		Y float64 `json:"y"`
+		Z float64 `json:"z"`
+		U float64 `json:"u"`
 	} `json:"points"`
 }
 
@@ -301,16 +329,13 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		if cfg.Line == nil {
 			return nil
 		}
+		// line 模式仅沿 X 轴布点，Y 固定为 0（详见 LineLayout 注释）。
+		// 不再消费 PrimaryAxis / SnakeOrder：单行点位无走线方向概念。
+		// 旧配置若携带 SnakeOrder=true 也会被忽略，避免单行点位产生无意义的蛇形走线。
+		// primaryAxis 固定传 "x"：ys 只有一个值时 GridPointsFromAxesOrdered 的主轴参数不影响结果。
 		xs := StepValues(cfg.Line.StartX, cfg.Line.EndX, cfg.Line.XStepSegments)
-		ys := StepValues(cfg.Line.StartY, cfg.Line.EndY, cfg.Line.YStepSegments)
-		if len(ys) == 0 {
-			ys = []float64{cfg.Line.StartY}
-		}
-		// 走线主轴：见 LayoutConfig.PrimaryAxis 注释（空字符串=保旧行为）
-		if cfg.SnakeOrder {
-			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
-		}
-		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
+		ys := []float64{0}
+		return GridPointsFromAxesOrdered(xs, ys, "x")
 	case "rectangle":
 		if cfg.Rectangle == nil {
 			return nil
@@ -338,7 +363,7 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		}
 		points := make([]Point, 0, len(cfg.Custom.Points))
 		for _, point := range cfg.Custom.Points {
-			points = append(points, Point{X: point.X, Y: point.Y})
+			points = append(points, Point{X: point.X, Y: point.Y, Z: point.Z, U: point.U})
 		}
 		return points
 	default:

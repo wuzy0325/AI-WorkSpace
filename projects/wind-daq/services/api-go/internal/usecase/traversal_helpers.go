@@ -89,6 +89,10 @@ func availableAxisTargets(status motion.ControllerStatus, point traversal.Point)
 			targets[axis.Name] = point.Y
 		case motion.AxisZ:
 			targets[axis.Name] = point.Z
+		// U 轴仅在 motion.ControllerStatus.Axes 含 AxisU 时生效
+		// （如旋转台 / 第四轴位移机构），无 U 轴的控制器 profile 会自动跳过此 case
+		case motion.AxisU:
+			targets[axis.Name] = point.U
 		}
 	}
 	return targets

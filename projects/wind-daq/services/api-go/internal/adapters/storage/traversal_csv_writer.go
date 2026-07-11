@@ -231,7 +231,7 @@ func (w *TraversalCsvWriter) buildHeader() []string {
 	if w.options.SaveTimestamp {
 		cols = append(cols, "Timestamp")
 	}
-	cols = append(cols, "X", "Y")
+	cols = append(cols, "X", "Y", "Z", "U")
 	if w.options.SaveRawPressure {
 		for _, e := range w.labels {
 			cols = append(cols, e.Label)
@@ -257,7 +257,7 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05")
 		row = append(row, ts)
 	}
-	row = append(row, formatFloat(p.Point.X), formatFloat(p.Point.Y))
+	row = append(row, formatFloat(p.Point.X), formatFloat(p.Point.Y), formatFloat(p.Point.Z), formatFloat(p.Point.U))
 	if w.options.SaveRawPressure {
 		for _, e := range w.labels {
 			if v, ok := p.Values[e.Channel]; ok {

@@ -134,17 +134,24 @@ defineProps<{
             { label: labels.alpha, value: realtimeResult?.alpha?.toFixed(2), unit: '°', accent: true },
             { label: labels.beta, value: realtimeResult?.beta?.toFixed(2), unit: '°', accent: true },
             { label: labels.mach, value: realtimeResult?.machNumber?.toFixed(3), unit: '', accent: true },
-            { label: labels.velocity, value: realtimeResult?.velocity?.toFixed(1), unit: ' m/s', accent: true },
-            { label: 'P0', value: realtimeResult?.P0?.toFixed(2), unit: '', accent: false },
-            { label: 'Ps', value: realtimeResult?.Ps?.toFixed(2), unit: '', accent: false },
+            { label: labels.velocity, value: realtimeResult?.velocity?.toFixed(1), unit: 'm/s', accent: true },
+            { label: 'P0', value: realtimeResult?.P0?.toFixed(2), unit: 'Pa', accent: false },
+            { label: 'Ps', value: realtimeResult?.Ps?.toFixed(2), unit: 'Pa', accent: false },
           ]"
           :key="metric.label"
           class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-1.5 min-w-0"
         >
           <span class="text-[11px] text-[var(--text-muted)]">{{ metric.label }}</span>
-          <span class="font-mono text-lg font-bold tabular-nums truncate" :style="{ color: metric.accent ? 'var(--accent-info)' : 'var(--text-primary)' }">
-            {{ (metric.value ?? '--') + metric.unit }}
-          </span>
+          <div class="flex items-baseline gap-1 min-w-0">
+            <span
+              class="font-mono text-lg font-bold tabular-nums truncate"
+              :style="{ color: metric.accent ? 'var(--accent-info)' : 'var(--text-primary)' }"
+            >{{ metric.value ?? '--' }}</span>
+            <span
+              v-if="metric.unit"
+              class="text-[10px] font-medium flex-shrink-0 text-[var(--text-muted)]"
+            >{{ metric.unit }}</span>
+          </div>
         </div>
       </div>
     </section>
@@ -167,7 +174,17 @@ defineProps<{
           }"
         >
           <span class="text-[11px] font-medium" :style="{ color: item.disabled ? 'var(--text-muted)' : 'var(--text-secondary)' }">{{ item.label }}</span>
-          <span class="font-mono text-lg font-bold tabular-nums truncate" :style="{ color: item.disabled ? 'var(--text-muted)' : 'var(--text-primary)' }">{{ item.value }}</span>
+          <div class="flex items-baseline gap-1 min-w-0">
+            <span
+              class="font-mono text-lg font-bold tabular-nums truncate"
+              :style="{ color: item.disabled ? 'var(--text-muted)' : 'var(--text-primary)' }"
+            >{{ item.value }}</span>
+            <span
+              v-if="item.unit"
+              class="text-[10px] font-medium flex-shrink-0"
+              :style="{ color: item.disabled ? 'var(--text-muted)' : 'var(--text-secondary)' }"
+            >{{ item.unit }}</span>
+          </div>
         </div>
       </div>
     </section>
@@ -209,7 +226,11 @@ defineProps<{
         }"
         :title="lastError"
       >
-        <span class="text-[10px] font-medium" :style="{ color: `var(--accent-danger)` }">⚠ {{ lastError.length > 36 ? lastError.slice(0, 36) + '...' : lastError }}</span>
+        <!-- 错误文本：用 CSS truncate 替代 JS 截断魔法值 36。
+             CJK 与拉丁字符宽度差异导致固定字符数截断宽度不均；
+             max-w-[220px] + truncate 让浏览器按实际渲染宽度截断，
+             完整错误信息通过父 div 的 :title tooltip 提供。 -->
+        <span class="text-[10px] font-medium truncate max-w-[220px]" :style="{ color: `var(--accent-danger)` }">⚠ {{ lastError }}</span>
       </div>
 
       <!-- 硬件状态：明确标注“采集设备/位移机构”，避免两个灯看不出含义 -->

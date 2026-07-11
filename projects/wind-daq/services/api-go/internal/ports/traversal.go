@@ -46,3 +46,17 @@ type CheckpointStore interface {
 	// Remove 删除文件（不存在时返回 nil）
 	Remove(path string) error
 }
+
+// ChannelUnitProvider 提供指定设备通道的工程单位查询。
+//
+// 为什么需要此端口：遍历测试压力归一化（BuildRawPressure）需要查每个通道的 Unit
+// 才能换算到 Pa，但 LatestDataReader（ports/calibration.go）只暴露 GetLatestData /
+// GetLatestTimestamp，不暴露 ChannelConfig。通过此窄端口让 TraversalManager
+// 在不直接依赖 usecase 兄弟包（DeviceManager）的前提下获得单位查询能力。
+//
+// 实现由 DeviceManager 提供（持有 profiles），装配点通过 SetUnitProvider 注入。
+// 通道不存在或设备未找到时返回 error，调用方按 error 决定是否走降级路径。
+type ChannelUnitProvider interface {
+	// ChannelUnit 返回指定设备通道的工程单位字符串（如 "Pa"/"kPa"/"MPa"）。
+	ChannelUnit(deviceID string, channelIndex int) (string, error)
+}

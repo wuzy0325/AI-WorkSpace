@@ -15,9 +15,13 @@ export interface StepSegment {
   step: number
 }
 
+/** 遍历测试点坐标（4 轴：X/Y/Z/U，与后端 traversal.Point 对齐）。
+ *  z/u 为必填：旧配置加载时由 applySavedLayout 显式补 0，避免 undefined 与后端 float64(0) 语义不一致。 */
 export interface TraversalPoint {
   x: number
   y: number
+  z: number
+  u: number
 }
 
 export interface TraversalProbeChannelPreset {
@@ -122,11 +126,18 @@ export interface TraversalLayout {
   }
 
   custom?: {
-    points: Array<{ x: number; y: number }>
+    points: Array<{ x: number; y: number; z: number; u: number }>
   }
 }
 
 export function getTraversalStepValues(start: number, end: number, segments: StepSegment[] = []): number[] {
+  // finite 校验：start/end 为 undefined/NaN 时直接返回空数组。
+  // 若不拦截，Math.max(seg.start, undefined)=NaN 会让循环不执行，
+  // 随后 fallback 分支 push(undefined)，最终导致 PointsPreview bounds 塌缩成 NaN、画布空白。
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return []
+  }
+
   const values: number[] = []
   const sortedSegments = [...segments].sort((a, b) => a.start - b.start)
 
@@ -155,6 +166,57 @@ export function getTraversalStepValues(start: number, end: number, segments: Ste
   }
 
   return values.sort((a, b) => a - b)
+}
+
+/**
+ * 从步进区段派生范围 [min, max]。
+ *
+ * 用于 rectangle/sector 布局的 xMin/xMax、yMin/yMax、radiusMin/Max、angleStart/End 兜底：
+ * 当持久化 profile 缺这些字段（旧版本）或 TraversalLayoutStep 副作用未执行时，
+ * 从 segments 的 start/end 实时派生，避免 undefined 传播到 getTraversalStepValues 导致画布塌缩。
+ *
+ * 空 segments 时返回 { min: 0, max: 0 }，与 TraversalLayoutStep 的 computedRectangleRange 旧逻辑一致。
+ */
+export function deriveRangeFromSegments(segments: StepSegment[] = []): { min: number; max: number } {
+  if (segments.length === 0) {
+    return { min: 0, max: 0 }
+  }
+  return {
+    min: Math.min(...segments.map((s) => s.start)),
+    max: Math.max(...segments.map((s) => s.end))
+  }
+}
+
+/** 矩形布局的范围由分段输入唯一决定，避免旧范围裁剪新分段后退化成单行或单列。 */
+export function normalizeTraversalLayoutRanges(layout: TraversalLayout): TraversalLayout {
+  if (layout.pattern !== 'rectangle' || !layout.rectangle) {
+    return layout
+  }
+
+  const normalizeAxis = (segments: StepSegment[]): StepSegment[] => {
+    const range = deriveRangeFromSegments(segments)
+    if (range.max > range.min) return segments
+
+    const step = segments.find((segment) => segment.step > 0)?.step ?? 5
+    return [{ start: -30, end: 30, step }]
+  }
+
+  const xStepSegments = normalizeAxis(layout.rectangle.xStepSegments)
+  const yStepSegments = normalizeAxis(layout.rectangle.yStepSegments)
+  const xRange = deriveRangeFromSegments(xStepSegments)
+  const yRange = deriveRangeFromSegments(yStepSegments)
+  return {
+    ...layout,
+    rectangle: {
+      ...layout.rectangle,
+      xMin: xRange.min,
+      xMax: xRange.max,
+      xStepSegments,
+      yMin: yRange.min,
+      yMax: yRange.max,
+      yStepSegments
+    }
+  }
 }
 
 /**
@@ -195,11 +257,12 @@ function gridPointsFromAxesY(xs: number[], ys: number[], snakeOrder: boolean): T
   for (let i = 0; i < xs.length; i++) {
     if (snakeOrder && i % 2 === 1) {
       for (let j = ys.length - 1; j >= 0; j--) {
-        points.push({ x: xs[i], y: ys[j] })
+        // 网格布点不消费 Z/U：固定补 0，与后端 path.go GridPointsFromAxesOrdered 对齐
+        points.push({ x: xs[i], y: ys[j], z: 0, u: 0 })
       }
     } else {
       for (const y of ys) {
-        points.push({ x: xs[i], y })
+        points.push({ x: xs[i], y, z: 0, u: 0 })
       }
     }
   }
@@ -229,9 +292,12 @@ function sectorPointsFromRadiiAngles(
     if (snakeOrder && i % 2 === 1) {
       for (let j = angles.length - 1; j >= 0; j--) {
         const radian = (angles[j] * Math.PI) / 180
+        // 扇形布点不消费 Z/U：固定补 0，与后端 path.go SectorPointsFromRadiiAngles 对齐
         points.push({
           x: centerX + radii[i] * Math.cos(radian),
-          y: centerY + radii[i] * Math.sin(radian)
+          y: centerY + radii[i] * Math.sin(radian),
+          z: 0,
+          u: 0
         })
       }
     } else {
@@ -239,7 +305,9 @@ function sectorPointsFromRadiiAngles(
         const radian = (angle * Math.PI) / 180
         points.push({
           x: centerX + radii[i] * Math.cos(radian),
-          y: centerY + radii[i] * Math.sin(radian)
+          y: centerY + radii[i] * Math.sin(radian),
+          z: 0,
+          u: 0
         })
       }
     }
@@ -268,13 +336,14 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
       const ySteps = getTraversalStepValues(startY, endY, yStepSegments)
 
       if (xSteps.length === 0 && ySteps.length === 0) {
-        return [{ x: startX, y: startY }]
+        // line 布局退化场景：仅起止点重合，Z/U 补 0
+        return [{ x: startX, y: startY, z: 0, u: 0 }]
       }
       if (ySteps.length === 0) {
-        return xSteps.map((x) => ({ x, y: startY }))
+        return xSteps.map((x) => ({ x, y: startY, z: 0, u: 0 }))
       }
       if (xSteps.length === 0) {
-        return ySteps.map((y) => ({ x: startX, y }))
+        return ySteps.map((y) => ({ x: startX, y, z: 0, u: 0 }))
       }
       return gridPointsFromAxes(xSteps, ySteps, snake, primaryAxis)
     }
@@ -284,9 +353,14 @@ export function getTraversalLayoutPoints(layout?: TraversalLayout): TraversalPoi
         return []
       }
 
-      const { xMin, xMax, xStepSegments, yMin, yMax, yStepSegments } = layout.rectangle
-      const xSteps = getTraversalStepValues(xMin, xMax, xStepSegments)
-      const ySteps = getTraversalStepValues(yMin, yMax, yStepSegments)
+      const rectangle = normalizeTraversalLayoutRanges(layout).rectangle!
+      const { xStepSegments, yStepSegments } = rectangle
+      // 矩形编辑器只暴露分段输入，因此分段是实际布点范围的单一数据源。
+      // 不能优先使用持久化的 xMin/xMax/yMin/yMax，否则编辑分段后旧范围会裁剪新点集。
+      const xRange = deriveRangeFromSegments(xStepSegments)
+      const yRange = deriveRangeFromSegments(yStepSegments)
+      const xSteps = getTraversalStepValues(xRange.min, xRange.max, xStepSegments)
+      const ySteps = getTraversalStepValues(yRange.min, yRange.max, yStepSegments)
       return gridPointsFromAxes(xSteps, ySteps, snake, primaryAxis)
     }
 
@@ -430,6 +504,8 @@ export interface TraversalTestConfig {
   useMultiPrb?: boolean // 是否使用多PRB模式
   interpolationAlgorithm?: InterpolationAlgorithm // 插值算法选择，默认 'old'
   calibrationCsvFile?: CalibrationCsvFileInfo | null // 新算法的CSV校准数据文件
+  /** 五孔探针压力类型：'gauge' 表压(默认) | 'absolute' 绝压 */
+  pProbePressureType?: 'gauge' | 'absolute'
   dwellTimeMs: number
   samplesPerPoint: number
   savePath: string

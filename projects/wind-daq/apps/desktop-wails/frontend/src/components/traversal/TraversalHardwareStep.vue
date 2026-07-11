@@ -17,13 +17,6 @@ const motionAxes = defineModel<TraversalMotionAxisConfig[]>('motionAxes', { requ
 const props = defineProps<{
   t: Record<string, string>
   isLoading: boolean
-  /**
-   * 五孔探针 P1-P5 通道的压力传感器类型。
-   * 由父组件 TraversalSettings 传入，仅用于在通道映射面板展示提示，
-   * 告知用户 P1-P5 将按何种类型在后端归一化（表压不减 Patm / 绝压减 Patm）。
-   * 不在此组件内修改，单一数据源在父组件。
-   */
-  pProbePressureType?: 'gauge' | 'absolute'
 }>()
 
 const deviceStore = useDeviceStore()
@@ -40,14 +33,6 @@ const mappingOptions = [
   { label: props.t.mappingAlpha, value: 'alpha' },
   { label: props.t.mappingBeta, value: 'beta' },
 ]
-
-// 五孔压力类型提示文本：随 pProbePressureType 变化（表压/绝压），提醒用户 P1-P5 将如何归一化。
-// 用 computed 派生以响应父组件开关变化；缺省（undefined）按 'gauge' 展示，与后端兜底一致。
-const pProbePressureTypeHint = computed(() => {
-  return props.pProbePressureType === 'absolute'
-    ? props.t.travPressureTypeHintAbsolute
-    : props.t.travPressureTypeHintGauge
-})
 
 // ---- 设备连接状态映射 ----
 function getDeviceStatus(deviceId: string): 'idle' | 'connected' | 'acquiring' | 'error' | 'warning' {
@@ -91,41 +76,31 @@ function autoFillChannelIndices(): void {
 
 <template>
   <div class="step-content">
-    <!-- 批量操作工具栏：紧凑横排，标签+控件+按钮一行内完成 -->
+    <!-- 批量操作工具栏：所有快捷操作合并为单行，空间不足时自动换行，减少垂直占用 -->
     <div class="batch-toolbar">
-      <div class="batch-toolbar-row">
-        <!-- 统一选择设备 -->
-        <div class="batch-cell">
-          <span class="batch-label">{{ t.unifiedDevice }}</span>
-          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
-        </div>
+      <!-- 统一选择设备 -->
+      <div class="batch-group">
+        <span class="batch-label">{{ t.unifiedDevice }}</span>
+        <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
         <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels }}</UiButton>
       </div>
-      <div class="batch-toolbar-row">
-        <!-- 通道号自动递增 -->
-        <div class="batch-cell">
-          <span class="batch-label">{{ t.startChannel }}</span>
-          <UiSelect
-            :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
-            @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
-            :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
-            :placeholder="t.selectStartChannel"
-            class="batch-select"
-            :disabled="isLoading"
-          />
-        </div>
+      <!-- 通道号自动递增 -->
+      <div class="batch-group">
+        <span class="batch-label">{{ t.startChannel }}</span>
+        <UiSelect
+          :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
+          @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
+          :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
+          :placeholder="t.selectStartChannel"
+          class="batch-select"
+          :disabled="isLoading"
+        />
         <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill }}</UiButton>
       </div>
     </div>
 
     <!-- 探头通道配置 -->
     <UiPanel class="section-card">
-      <!-- 五孔压力类型提示：随父组件开关变化，提醒用户 P1-P5 将按何种类型归一化 -->
-      <div class="pressure-type-hint-bar">
-        <span class="pressure-type-hint-label">{{ t.travPressureType }}:</span>
-        <span class="pressure-type-hint-value">{{ pProbePressureType === 'absolute' ? t.travPressureTypeAbsolute : t.travPressureTypeGauge }}</span>
-        <span class="pressure-type-hint-desc">{{ pProbePressureTypeHint }}</span>
-      </div>
       <div class="hw-head">
         <span class="hdr-enabled">{{ t.channelEnabled }}</span>
         <span class="hdr-name">{{ t.channelProbeName }}</span>
@@ -175,59 +150,41 @@ function autoFillChannelIndices(): void {
 
 <style scoped>
 /* 步骤内容：紧凑垂直间距，与 Layout/Review 步骤视觉一致 */
-.step-content { display: flex; flex-direction: column; gap: var(--space-2) }
+.step-content { display: flex; flex-direction: column; gap: 6px }
 .section-card { font-size: var(--text-sm) }
 
-/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，覆盖为更紧凑的 6px 10px；
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，覆盖为更紧凑的 4px 8px；
    仅作用于本组件内的 NCard content，避免污染全局 UiPanel 视觉 */
 .section-card :deep(.n-card__content) {
-  padding: 6px 10px
+  padding: 4px 8px
 }
 /* 带 header 的面板（如运动轴配置无 header，但保留兜底）收紧 header padding */
 .section-card :deep(.n-card-header) {
-  padding: 6px 10px
+  padding: 4px 8px
 }
 
-/* 五孔压力类型提示条：通道映射面板顶部，单行紧凑展示 */
-.pressure-type-hint-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  margin-bottom: 4px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-default);
-  font-size: var(--text-xs)
-}
-.pressure-type-hint-label { color: var(--text-tertiary); white-space: nowrap }
-.pressure-type-hint-value { font-weight: 500; color: var(--text-primary); white-space: nowrap }
-.pressure-type-hint-desc { color: var(--text-secondary); min-width: 0; flex: 1 }
-
-/* 批量操作栏：扁平化工具条，与右侧统计卡片风格协调；
-   紧凑行高 + 单行内标签/控件/按钮居中对齐，避免大卡片视觉割裂 */
+/* 批量操作栏：扁平化工具条，所有快捷操作合并为单行，空间不足时自动换行。
+   用 .batch-group 包裹“标签+下拉+按钮”，组内紧凑对齐，组间用分隔线或 gap 区分。 */
 .batch-toolbar {
-  padding: 6px 10px;
+  padding: 4px 8px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
   display: flex;
-  flex-direction: column;
-  gap: 6px
-}
-/* 行内布局：标签+控件 占主轴，按钮固定尾部，align-items:center 保证垂直对齐 */
-.batch-toolbar-row {
-  display: flex;
   align-items: center;
-  gap: 8px
+  flex-wrap: wrap;
+  gap: 4px 12px
 }
-.batch-cell {
+.batch-group {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  min-width: 0
+  flex: 1 1 auto;
+  min-width: 240px
+}
+.batch-group + .batch-group {
+  border-left: 1px solid var(--border-default);
+  padding-left: 12px
 }
 .batch-label {
   font-size: var(--text-xs);
@@ -235,21 +192,21 @@ function autoFillChannelIndices(): void {
   color: var(--text-secondary);
   white-space: nowrap
 }
-.batch-select { flex: 1; min-width: 0 }
+.batch-select { flex: 1; min-width: 80px; max-width: 160px }
 
 /* 通道/运动轴表头与行：紧凑高度，列宽固定对齐 */
 .hw-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding-bottom: 4px;
+  padding-bottom: 3px;
   border-bottom: 1px solid var(--border-default)
 }
 .hw-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 3px 0
+  padding: 2px 0
 }
 .hw-row:hover { background: var(--bg-panel-strong); border-radius: var(--radius-md) }
 .hdr-enabled { font-size: var(--text-xs); flex: 0 0 32px; color: var(--text-muted) }

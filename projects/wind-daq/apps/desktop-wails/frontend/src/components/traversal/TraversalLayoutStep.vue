@@ -51,6 +51,12 @@ const primaryAxisOptions = computed(() => [
 // 抽成 computed 避免模板里 `pattern === 'line' || pattern === 'rectangle'` 重复。
 const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
+// computedRectangleRange/computedSectorRange 改为纯 computed（无副作用）：
+// 旧实现在此处写 rectangleConfig.value.xMin/xMax/yMin/yMax 是 Vue 反模式——
+// computed 是惰性求值，副作用只在模板访问时触发；当 TraversalLayoutStep 被
+// v-if="currentStep === 0" 销毁（用户切到 step 1）时，副作用停止，xMin/xMax 停在旧值，
+// 与 segments 不同步。现在 xMin/xMax 由 TraversalSettings.vue 的 currentLayout 实时派生，
+// 此处仅用于模板显示（line 240 的 "X: ... Y: ..." 文本）。
 const computedRectangleRange = computed(() => {
   const xs = rectangleConfig.value.xStepSegments
   const ys = rectangleConfig.value.yStepSegments
@@ -58,11 +64,22 @@ const computedRectangleRange = computed(() => {
   const xMax = xs.length > 0 ? Math.max(...xs.map(s => s.end)) : 0
   const yMin = ys.length > 0 ? Math.min(...ys.map(s => s.start)) : 0
   const yMax = ys.length > 0 ? Math.max(...ys.map(s => s.end)) : 0
-  rectangleConfig.value.xMin = xMin; rectangleConfig.value.xMax = xMax
-  rectangleConfig.value.yMin = yMin; rectangleConfig.value.yMax = yMax
   return { xMin, xMax, yMin, yMax }
 })
 
+const rectangleRangeError = computed(() => {
+  if (computedRectangleRange.value.xMax <= computedRectangleRange.value.xMin) {
+    return `X: ${props.t.maxGreaterThanMin || 'Max must be greater than min'}`
+  }
+  if (computedRectangleRange.value.yMax <= computedRectangleRange.value.yMin) {
+    return `Y: ${props.t.maxGreaterThanMin || 'Max must be greater than min'}`
+  }
+  return ''
+})
+
+// sector 同理：移除写 sectorConfig.value 的副作用。
+// 注意：sector 模板有 radiusMin/radiusMax/angleStart/angleEnd 的输入框（v-model），
+// 旧副作用会覆盖用户手动输入的值——这也是 bug。现在用户输入值得以保留。
 const computedSectorRange = computed(() => {
   const rs = sectorConfig.value.radialStepSegments
   const as = sectorConfig.value.angularStepSegments
@@ -70,8 +87,6 @@ const computedSectorRange = computed(() => {
   const radiusMax = rs.length > 0 ? Math.max(...rs.map(s => s.end)) : 0
   const angleStart = as.length > 0 ? Math.min(...as.map(s => s.start)) : 0
   const angleEnd = as.length > 0 ? Math.max(...as.map(s => s.end)) : 0
-  sectorConfig.value.radiusMin = radiusMin; sectorConfig.value.radiusMax = radiusMax
-  sectorConfig.value.angleStart = angleStart; sectorConfig.value.angleEnd = angleEnd
   return { radiusMin, radiusMax, angleStart, angleEnd }
 })
 
@@ -238,6 +253,7 @@ function cancelImportReplace() {
 
     <UiPanel v-else-if="pattern === 'rectangle'" class="section-card">
       <span class="section-title-block">{{ t.pointLayout }} (X: {{ computedRectangleRange.xMin }}..{{ computedRectangleRange.xMax }}, Y: {{ computedRectangleRange.yMin }}..{{ computedRectangleRange.yMax }})</span>
+      <span v-if="rectangleRangeError" class="rectangle-range-error">{{ rectangleRangeError }}</span>
       <div class="seg-col-list">
         <div class="seg-list"><div class="seg-header"><span class="seg-header-label">X {{ t.xSegments }}</span><UiButton size="sm" secondary @click="addRectangleXSegment">{{ t.addSegment }}</UiButton></div>
           <div class="seg-labels"><span class="col-label">{{ t.start }}</span><span class="col-label">{{ t.end }}</span><span class="col-label">{{ t.step }}</span><div class="w-40px"></div></div>
@@ -365,6 +381,7 @@ function cancelImportReplace() {
 .seg-row { display:flex; gap:6px; align-items:flex-start; margin-bottom:4px; }
 .seg-cell { display:flex; flex-direction:column; flex:1; min-width:0; }
 .seg-err { font-size:var(--font-size-micro); color:var(--accent-error, #ef4444); margin-top:2px; line-height:1.2; }
+.rectangle-range-error { display:block; margin:-2px 0 6px; font-size:var(--font-size-2xs); color:var(--accent-error, #ef4444); }
 .pt-list { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
 .pt-row { display:flex; align-items:center; justify-content:space-between; padding:4px 6px; border-radius:4px; border:1px solid var(--border-default); background:var(--bg-panel-strong); }
 

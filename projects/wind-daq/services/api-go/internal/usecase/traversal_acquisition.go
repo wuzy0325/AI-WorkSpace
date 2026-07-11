@@ -45,18 +45,25 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		return fmt.Errorf("all traversal points are already complete")
 	}
 	config := m.config
+	// unitProvider 与 config 同步取出，供 BuildRawPressure 归一化使用。
+	// 在锁内取避免与 SetUnitProvider 写入并发竞争。
+	unitProvider := m.unitProvider
 	pointIndex := m.status.CurrentPoint
 	point := config.Path[pointIndex]
 	m.mu.Unlock()
 
 	taskID := config.TaskID
 
-	slog.Info("traversal running point",
+	// 每个遍历点都会触发一次，属于高频日志，降级为 Debug 避免刷屏。
+	// 进度信息已经通过 status API 推送到 UI，LOG 画面里只在调试时才需要看到。
+	// 4 轴全输出：系统已支持 X/Y/Z/U 四轴运动控制，调试时需看到完整坐标
+	// 才能排查 4 轴定位/插值问题，仅输出 X/Y 会丢失 Z/U 上下文。
+	slog.Debug("traversal running point",
 		"component", "traversal",
 		"task_id", taskID,
 		"point_index", pointIndex+1,
 		"total_points", len(config.Path),
-		"coordinates", fmt.Sprintf("(%.2f, %.2f)", point.X, point.Y),
+		"coordinates", fmt.Sprintf("(X=%.2f, Y=%.2f, Z=%.2f, U=%.2f)", point.X, point.Y, point.Z, point.U),
 	)
 
 	// 阶段1：移动中
@@ -224,8 +231,10 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	m.updatePhase(taskID, traversal.StateSaving, traversal.PhaseSaving, pointIndex, len(config.Path))
 
 	dwellTime := config.DwellTimeMs
-	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存
-	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels)
+	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存。
+	// BuildRawPressure 内部按 unitProvider 查通道 Unit 并归一化到 Pa+表压，
+	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
+	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels, config.DeviceID, unitProvider, config.PProbePressureType)
 	var calculated *traversal.CalculatedResult
 	if hasAll {
 		interpRes, interpErr := m.CalculateRealtime(input)
