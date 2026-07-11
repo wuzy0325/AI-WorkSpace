@@ -845,6 +845,12 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 				nextProfiles[pi].Channels[j].CalibrationOffset = r.Offset
 				nextProfiles[pi].Channels[j].CalibrationUnit = r.Unit
 				nextProfiles[pi].Channels[j].CalibrationAt = r.At
+				// 用户主动校零此通道 = 希望应用偏移。
+				// 此前不重置 CalibrationEnabled，导致用户先前通过 toggle 关闭后，
+				// 即使重新校零落库了新 offset，Apply 阶段仍因 enabled=false 跳过，
+				// 通道值不变化——表现为"校零使能不回来"。
+				// 此处对成功采样的通道强制 enabled=true，让校零结果立即生效。
+				nextProfiles[pi].Channels[j].CalibrationEnabled = true
 				found = true
 				break
 			}
