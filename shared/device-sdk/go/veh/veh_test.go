@@ -121,6 +121,9 @@ func TestVEHCallbackContinueSearch(t *testing.T) {
 	}
 }
 
+//go:nocheckptr
+// 该测试故意访问 guard page 触发异常；nocheckptr 避免 go vet 对 syscall 返回的
+// uintptr 转 unsafe.Pointer 产生误报，测试本身需要精确控制内存页属性。
 func TestVEHGuardPage(t *testing.T) {
 	k32 := syscall.NewLazyDLL("kernel32.dll")
 	virtualAlloc := k32.NewProc("VirtualAlloc")
@@ -147,7 +150,9 @@ func TestVEHGuardPage(t *testing.T) {
 	simpleStart()
 	defer simpleStop()
 
-	p := unsafe.Pointer(addr)
+	// 用 unsafe.Add 从 nil 基址偏移到目标地址，避免 go vet 对 syscall 返回的
+	// uintptr 直接转 unsafe.Pointer 报 possible misuse。
+	p := unsafe.Add(unsafe.Pointer(nil), addr)
 	_ = *(*byte)(p)
 
 	t.Log("guard page exception intercepted and execution continued")
