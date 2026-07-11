@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig } from '@api/types'
+import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig, CalibrationResult } from '@api/types'
 import { deviceApi } from '@api/deviceApi'
 import { createRingBuffer, type RingBuffer } from '@composables/ringBuffer'
 import { useStorageStore, computeHistoryCapacity, HISTORY_CAPACITY_HARD_CAP } from '@stores/storageStore'
+import { useI18nStore } from '@stores/i18nStore'
 
 /** 波形图同时显示的最大通道数，超过时不渲染（避免内存/渲染爆炸） */
 const MAX_CHART_CHANNELS = 16
@@ -27,14 +28,34 @@ const MAX_CHART_CHANNELS = 16
 const RENDER_TICK_HZ = 10
 const RENDER_TICK_INTERVAL_MS = Math.round(1000 / RENDER_TICK_HZ)
 
+export interface DeviceCalibrationOperation {
+  state: 'running' | 'completed' | 'cancelled' | 'error'
+  channelIndex?: number
+  elapsedSeconds: number
+  sampleCount: number
+  results?: CalibrationResult[]
+  error?: string
+}
+
 export const useDeviceStore = defineStore('devices', () => {
+  // 国际化：store 抛出的错误消息需随语言切换（如"请先开始采集"），故引入 i18n store。
+  // 与 traversalStore 保持一致，避免在调用方重复维护中英文映射。
+  const i18n = useI18nStore()
   const profiles = ref<DeviceProfile[]>([])
   const latestSnapshots = ref<DataPayload[]>([])
   const historyBuffers = shallowRef<Map<string, RingBuffer<DataPayload>>>(new Map())
   /** 历史数据版本号：每次 pushSnapshot 成功写入后递增，供 RealtimeChart computed 依赖 */
   const historyVersion = ref<number>(0)
   const selectedDeviceId = ref<string | null>(null)
-  const tareOffsets = ref<Map<string, Record<number, number>>>(new Map())
+  const calibrationOperations = ref<Map<string, DeviceCalibrationOperation>>(new Map())
+  const calibrationControllers = new Map<string, AbortController>()
+  /**
+   * 校零采样时长（秒），从后端 /api/v1/calibrationConfig 加载。
+   * 前端所有 /5s 显示与 Math.min(5, ...) 上限都引用此值，避免与后端默认时长脱节。
+   * 加载失败时回退到 5 秒，保证功能可用。
+   */
+  const calibrationDurationSec = ref<number>(5)
+  let calibrationConfigLoaded = false
   const chartSelectedIndices = ref<Map<string, Set<number>>>(new Map())
   const deviceStatuses = ref<Map<string, DeviceStatus>>(new Map())
   const profilesLoading = ref(false)
@@ -139,6 +160,17 @@ export const useDeviceStore = defineStore('devices', () => {
       throw err
     } finally {
       profilesLoading.value = false
+    }
+    // 懒加载校零配置（仅一次），失败回退到默认 5 秒不影响主流程。
+    if (!calibrationConfigLoaded) {
+      calibrationConfigLoaded = true
+      deviceApi.getCalibrationConfig().then((cfg) => {
+        if (Number.isFinite(cfg.durationSec) && cfg.durationSec > 0) {
+          calibrationDurationSec.value = cfg.durationSec
+        }
+      }).catch((err) => {
+        console.warn('[deviceStore] load calibrationConfig failed, fallback to 5s:', err)
+      })
     }
     syncSnapshotSubscriptions()
     if (selectedDeviceId.value) initializeDefaultChartSelection(selectedDeviceId.value)
@@ -355,45 +387,90 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   const formatValue = (id: string, channelIndex: number, rawValue: number): string => {
-    const value = applyDisplayTare(id, channelIndex, rawValue)
-    if (!Number.isFinite(value)) return ''
-    return value.toFixed(getChannelPrecision(id, channelIndex))
+    if (!Number.isFinite(rawValue)) return ''
+    return rawValue.toFixed(getChannelPrecision(id, channelIndex))
   }
 
-  const applyDisplayTare = (id: string, channelIndex: number, rawValue: number): number => {
-    const offset = tareOffsets.value.get(id)?.[channelIndex] ?? 0
-    return rawValue - offset
+  function setCalibrationOperation(id: string, operation: DeviceCalibrationOperation): void {
+    calibrationOperations.value = new Map(calibrationOperations.value).set(id, operation)
   }
 
-  function setTare(id: string, channelIndex: number, value: number) {
-    let deviceTares = tareOffsets.value.get(id)
-    if (!deviceTares) {
-      deviceTares = {}
-      tareOffsets.value.set(id, deviceTares)
-    }
-    deviceTares[channelIndex] = value
+  function calibrationOperationFor(id: string): DeviceCalibrationOperation | undefined {
+    return calibrationOperations.value.get(id)
   }
 
-  function tareAllEnabled(id: string) {
-    const profile = profiles.value.find((p) => p.id === id)
-    if (!profile) return
-    const snapshot = latestSnapshots.value.find((s) => s.deviceId === id)
-    if (!snapshot) return
-    const indices = Array.isArray(snapshot.channelIndices) ? snapshot.channelIndices : []
-    const channels = Array.isArray(snapshot.channels) ? snapshot.channels : []
-
-    const profileChannels = Array.isArray(profile.channels) ? profile.channels : []
-    profileChannels.forEach((channel) => {
-      if (!channel.enabled) return
-      const pos = indices.indexOf(channel.index)
-      if (pos >= 0) {
-        setTare(id, channel.index, channels[pos])
+  async function calibrate(id: string, channelIndex?: number): Promise<CalibrationResult[]> {
+    if (!acquiringFor(id)) throw new Error(i18n.t.pleaseStartAcquisitionFirst || '请先开始采集')
+    if (calibrationControllers.has(id)) throw new Error(i18n.t.calibrationInProgress || '校零正在进行中')
+    const controller = new AbortController()
+    calibrationControllers.set(id, controller)
+    const startedAt = Date.now()
+    const durationSec = calibrationDurationSec.value
+    // P2-17：前端总超时兑底。后端已有 fallback deadline（sampleDuration + 2s），
+    // 但 HTTP 请求可能因网络代理缓冲、keep-alive 死锁等原因永不返回，
+    // 前端必须有自己的超时兜底，否则用户会被卡在校零中状态无法恢复。
+    // 超时 = 采样时长 + 5s（比后端 fallback 多 3s，给后端响应留窗口）。
+    const totalTimeoutMs = (durationSec + 5) * 1000
+    const totalTimeoutTimer = setTimeout(() => {
+      // 触发 abort → fetch 抛 AbortError → catch 块标记为 cancelled
+      controller.abort()
+    }, totalTimeoutMs)
+    setCalibrationOperation(id, { state: 'running', channelIndex, elapsedSeconds: 0, sampleCount: 0 })
+    let progressRequestRunning = false
+    const timer = setInterval(async () => {
+      const current = calibrationOperationFor(id)
+      if (current?.state === 'running' && !progressRequestRunning) {
+        progressRequestRunning = true
+        try {
+          const progress = await deviceApi.getCalibrationProgress(id)
+          const latestOperation = calibrationOperationFor(id)
+          if (latestOperation?.state === 'running') {
+            setCalibrationOperation(id, {
+              ...latestOperation,
+              elapsedSeconds: Math.min(durationSec, Math.floor(progress.elapsedMs / 1000)),
+              sampleCount: progress.sampleCount,
+            })
+          }
+        } catch {
+          const latestOperation = calibrationOperationFor(id)
+          if (latestOperation?.state === 'running') {
+            setCalibrationOperation(id, { ...latestOperation, elapsedSeconds: Math.min(durationSec, Math.floor((Date.now() - startedAt) / 1000)) })
+          }
+        } finally {
+          progressRequestRunning = false
+        }
       }
-    })
+    }, 250)
+    try {
+      const results = await deviceApi.calibrate(id, channelIndex, controller.signal)
+      await refreshProfiles()
+      setCalibrationOperation(id, { state: 'completed', channelIndex, elapsedSeconds: durationSec, sampleCount: results.reduce((sum, result) => sum + result.sampleCount, 0), results })
+      return results
+    } catch (error) {
+      const cancelled = controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')
+      setCalibrationOperation(id, cancelled
+        ? { state: 'cancelled', channelIndex, elapsedSeconds: Math.min(durationSec, Math.floor((Date.now() - startedAt) / 1000)), sampleCount: calibrationOperationFor(id)?.sampleCount ?? 0 }
+        : { state: 'error', channelIndex, elapsedSeconds: Math.min(durationSec, Math.floor((Date.now() - startedAt) / 1000)), sampleCount: calibrationOperationFor(id)?.sampleCount ?? 0, error: error instanceof Error ? error.message : String(error) })
+      throw error
+    } finally {
+      clearInterval(timer)
+      clearTimeout(totalTimeoutTimer)
+      calibrationControllers.delete(id)
+    }
   }
 
-  function getOffset(id: string, channelIndex: number): number {
-    return tareOffsets.value.get(id)?.[channelIndex] ?? 0
+  function cancelCalibration(id: string): void {
+    calibrationControllers.get(id)?.abort()
+  }
+
+  async function clearCalibration(id: string, channelIndex: number): Promise<void> {
+    await deviceApi.clearCalibration(id, channelIndex)
+    await refreshProfiles()
+  }
+
+  async function setCalibrationEnabled(id: string, channelIndex: number, enabled: boolean): Promise<void> {
+    await deviceApi.setCalibrationEnabled(id, channelIndex, enabled)
+    await refreshProfiles()
   }
 
   function findChannel(id: string, channelIndex: number) {
@@ -714,10 +791,13 @@ export const useDeviceStore = defineStore('devices', () => {
     latestFor,
     historyFor,
     formatValue,
-    applyDisplayTare,
-    setTare,
-    tareAllEnabled,
-    getOffset,
+    calibrationOperations,
+    calibrationOperationFor,
+    calibrationDurationSec,
+    calibrate,
+    cancelCalibration,
+    clearCalibration,
+    setCalibrationEnabled,
     getChannelRange,
     getChannelPrecision,
     toggleChartSelection,

@@ -60,27 +60,47 @@ const (
 )
 
 type ChannelConfig struct {
-	Index      int                `json:"index"`
-	Name       string             `json:"name"`
-	Enabled    bool               `json:"enabled"`
-	Unit       string             `json:"unit"`
-	Precision  int                `json:"precision"`
-	RangeMin   float64            `json:"rangeMin,omitempty"`
-	RangeMax   float64            `json:"rangeMax,omitempty"`
-	TareOffset float64            `json:"tareOffset,omitempty"`
+	Index     int     `json:"index"`
+	Name      string  `json:"name"`
+	Enabled   bool    `json:"enabled"`
+	Unit      string  `json:"unit"`
+	Precision int     `json:"precision"`
+	RangeMin  float64 `json:"rangeMin,omitempty"`
+	RangeMax  float64 `json:"rangeMax,omitempty"`
+	// 【废弃】TareOffset 瞬时归零偏移，v2 迁移后由 CalibrationOffset 接管。
+	// 迁移逻辑见 adapters/config/migration.go。保留字段以确保向后兼容旧 JSON 反序列化。
+	TareOffset float64 `json:"tareOffset,omitempty"`
 	// SensorType 通道传感器类型（pressure/temperature），仅 DAQ-P-1603 使用。
 	// 旧 profile（含 DAQ-P-1604 / DAQ-T-1603 / 历史 SIMULATED）无此字段，
 	// 反序列化时由 UnmarshalJSON 兜底为 "pressure"，
 	// 保证读路径拿到的 ChannelConfig 永远有合法 SensorType 值，避免业务层到处判空。
 	SensorType ChannelSensorType `json:"sensorType,omitempty"`
+
+	// ---- v2 校零字段 ----
+	// CalibrationOffset 校零偏移值（已转为基单位，如 Pa/℃）。
+	// 零值表示未校零。CalibrationApplier 将此值从 DataPayload.Channels 中减去。
+	CalibrationOffset float64 `json:"calibrationOffset,omitempty"`
+	// CalibrationUnit 校零时的原始单位（如 "kPa"、"℉"），用于迁移校验与审计。
+	// 注意：存储值已转为基单位，此字段仅作元数据记录，不参与实时计算。
+	CalibrationUnit string `json:"calibrationUnit,omitempty"`
+	// CalibrationAt 校零时间戳（unix ms），用于 UI 展示"上次校零于 xxx"。
+	CalibrationAt int64 `json:"calibrationAt,omitempty"`
+	// CalibrationEnabled 校零使能开关（仅 DAQ-P-1603 在 UI 暴露逐通道配置）。
+	// 关闭时 CalibrationApplier 跳过该通道偏移。其他设备默认 true。
+	CalibrationEnabled bool `json:"calibrationEnabled,omitempty"`
 }
-
-
 
 // Profile 设备配置档案
 // 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
 // core 层只保留类型定义，不包含基础设施知识
+//
+// Version 字段说明（v2）：
+//
+//	1 = 旧格式（TareOffset 瞬时归零）
+//	2 = 新格式（CalibrationOffset 校零）。LoadProfiles 时自动迁移 1→2。
 type Profile struct {
+	// Version profile 格式版本，默认 1（旧格式），迁移后为 2。
+	Version                    int                    `json:"version"`
 	ID                         string                 `json:"id"`
 	Name                       string                 `json:"name"`
 	Type                       Type                   `json:"type"`
@@ -182,3 +202,42 @@ type DataSink func(payload DataPayload)
 func NowMs() int64 {
 	return time.Now().UnixMilli()
 }
+
+// ---- v2 校零相关类型 ----
+
+// CalibrationResult 单通道校零结果，由 CalibrationSampler 计算后返回。
+type CalibrationResult struct {
+	ChannelIndex int     `json:"channelIndex"`
+	Offset       float64 `json:"offset"` // 已转为基单位的校零偏移
+	Unit         string  `json:"unit"`   // 校零时的原始单位
+	At           int64   `json:"at"`     // unix ms 时间戳
+	SampleCount  int     `json:"sampleCount"`
+}
+
+type CalibrationRecord struct {
+	ChannelIndex int     `json:"channelIndex"`
+	Offset       float64 `json:"offset"`
+	Unit         string  `json:"unit"`
+	At           int64   `json:"at"`
+	Enabled      bool    `json:"enabled"`
+}
+
+type CalibrationProgress struct {
+	Running      bool  `json:"running"`
+	ChannelIndex *int  `json:"channelIndex,omitempty"`
+	ElapsedMs    int64 `json:"elapsedMs"`
+	SampleCount  int   `json:"sampleCount"`
+}
+
+// CalibrationOffsets 设备级校零偏移快照，供 CalibrationApplier 高频读取。
+// key = channelIndex, value = CalibrationOffset。
+// 所有值已转为基单位（Pa/℃），CalibrationApplier 需按当前单位换算后再减偏移。
+type CalibrationOffsets map[int]float64
+
+// CalibrationDurationSec 校零采样时长（秒）。
+// 前后端共享此常量定义，避免前端硬编码 5 处 "/5s" 与后端默认时长脱节。
+// 前端通过 GET /api/v1/calibrationConfig 获取此值。
+const CalibrationDurationSec = 5
+
+// CurrentProfileVersion 当前 profile 格式版本号。
+const CurrentProfileVersion = 2

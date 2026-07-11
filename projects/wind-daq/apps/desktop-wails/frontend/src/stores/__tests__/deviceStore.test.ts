@@ -60,6 +60,39 @@ describe('deviceStore', () => {
     expect(store.selectedDeviceId).toBeNull()
   })
 
+  it('formats backend-calibrated values without applying a frontend offset', () => {
+    const store = useDeviceStore()
+    expect(store.formatValue('sim-1', 0, 1.25)).toBe('1.250')
+    expect('applyDisplayTare' in store).toBe(false)
+    expect('tareAllEnabled' in store).toBe(false)
+  })
+
+  it('runs device calibration and refreshes persisted profile metadata', async () => {
+    const profile = {
+      id: 'pressure-1', name: 'Pressure', type: 'DAQ-P-1604' as const, samplingRate: 20,
+      channels: [{ index: 0, name: 'CH1', enabled: true, unit: 'Pa', precision: 2 }],
+    }
+    vi.spyOn(deviceApi, 'getProfiles').mockResolvedValue([profile])
+    vi.spyOn(deviceApi, 'calibrate').mockResolvedValue([
+      { channelIndex: 0, offset: 12, unit: 'Pa', at: 123, sampleCount: 10 },
+    ])
+    vi.spyOn(deviceApi, 'getCalibrationProgress').mockResolvedValue({ running: true, elapsedMs: 1000, sampleCount: 5 })
+    const store = useDeviceStore()
+    await store.refreshProfiles()
+    store.updateStatus('pressure-1', { id: 'pressure-1', name: 'Pressure', type: 'DAQ-P-1604', connection: 'Acquiring', acquiring: true })
+
+    const results = await store.calibrate('pressure-1', 0)
+
+    expect(deviceApi.calibrate).toHaveBeenCalledWith('pressure-1', 0, expect.any(AbortSignal))
+    expect(results[0]?.offset).toBe(12)
+    expect(store.calibrationOperationFor('pressure-1')).toMatchObject({ state: 'completed', sampleCount: 10 })
+  })
+
+  it('rejects calibration before acquisition starts', async () => {
+    const store = useDeviceStore()
+    await expect(store.calibrate('pressure-1')).rejects.toThrow('请先开始采集')
+  })
+
   it('pushes a snapshot and makes it available via latestFor', () => {
     const store = useDeviceStore()
     store.pushSnapshot({

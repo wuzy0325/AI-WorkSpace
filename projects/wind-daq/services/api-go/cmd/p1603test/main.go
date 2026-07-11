@@ -203,12 +203,19 @@ func main() {
 		fmt.Printf("\n  采集完成：总读取 %d 次，超时 %d 次\n\n", totalReads, totalTimeouts)
 	} else if *continuous > 0 {
 		// 持续采集模式：模拟 wind-daq readLoop 行为（单线程）
+		// 同时通过 SampsPerChanAcquired 增量计算真实硬件采样率，
+		// 用于验证 fSampleRate 设置值与 DLL 实际采样率是否一致。
 		fmt.Printf("[5/5] 持续采集 %v（单线程模式，每秒打印状态）...\n\n", *continuous)
 		deadline := time.Now().Add(*continuous)
 		startTime := time.Now()
 		totalReads := 0
 		totalTimeouts := 0
 		lastReport := time.Now()
+
+		// 记录上一秒的 SampsPerChanAcquired 用于计算每秒真实采样率
+		var prevAcquired int64
+		// 起始基准：跳过首秒（采集启动稳定期 avail 不准）
+		firstReport := true
 
 		for time.Now().Before(deadline) {
 			sampsRead, avail, err := ffi.WTNDAQ16HReadBinary(handle, binBuf, readSamps, 10.0)
@@ -234,12 +241,28 @@ func main() {
 
 			if time.Since(lastReport) >= time.Second {
 				elapsed := time.Since(startTime).Truncate(time.Second)
+
+				// 查询 DLL 内部记录的真实采集数
+				var st ffi.WTNDAQ16HAIStatus
+				acquiredDelta := int64(0)
+				actualRate := 0.0
+				if err := ffi.WTNDAQ16HGetStatus(handle, &st); err == nil {
+					if !firstReport {
+						acquiredDelta = st.SampsPerChanAcquired - prevAcquired
+						actualRate = float64(acquiredDelta)
+					}
+					prevAcquired = st.SampsPerChanAcquired
+					firstReport = false
+				}
+
 				if *nChans >= 16 {
-					fmt.Printf("  [%v] reads=%d timeouts=%d avail=%d CH00=%d CH07=%d CH15=%d\n",
-						elapsed, totalReads, totalTimeouts, avail, binBuf[0], binBuf[7], binBuf[15])
+					fmt.Printf("  [%v] reads=%d timeouts=%d avail=%d acquired=%d Δacq=%d realRate=%.1fHz CH00=%d CH07=%d CH15=%d\n",
+						elapsed, totalReads, totalTimeouts, avail, st.SampsPerChanAcquired, acquiredDelta, actualRate,
+						binBuf[0], binBuf[7], binBuf[15])
 				} else {
-					fmt.Printf("  [%v] reads=%d timeouts=%d avail=%d CH00=%d\n",
-						elapsed, totalReads, totalTimeouts, avail, binBuf[0])
+					fmt.Printf("  [%v] reads=%d timeouts=%d avail=%d acquired=%d Δacq=%d realRate=%.1fHz CH00=%d\n",
+						elapsed, totalReads, totalTimeouts, avail, st.SampsPerChanAcquired, acquiredDelta, actualRate,
+						binBuf[0])
 				}
 				lastReport = time.Now()
 			}

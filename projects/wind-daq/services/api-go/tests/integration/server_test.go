@@ -44,6 +44,15 @@ func (apiDeviceFactory) Create(profile device.Profile) (windaqports.Device, erro
 	return &simulatedDevice{profile: profile}, nil
 }
 
+type calibrationDeviceFactory struct {
+	device *simulatedDevice
+}
+
+func (f *calibrationDeviceFactory) Create(profile device.Profile) (windaqports.Device, error) {
+	f.device = &simulatedDevice{profile: profile}
+	return f.device, nil
+}
+
 type simulatedDevice struct {
 	profile   device.Profile
 	dataSink  device.DataSink
@@ -226,8 +235,82 @@ func TestDeviceConfigurationHTTPFlow(t *testing.T) {
 		t.Fatalf("unexpected daqT1603 config: %+v", got)
 	}
 
-	request(t, router, http.MethodGet, "/api/device/temp-1/tare?channelIndex=not-a-number", nil, http.StatusBadRequest)
-	request(t, router, http.MethodPost, "/api/device/temp-1/clearTare?channelIndex=-1", nil, http.StatusBadRequest)
+	request(t, router, http.MethodGet, "/api/v1/devices/temp-1/calibration?channelIndex=not-a-number", nil, http.StatusBadRequest)
+	request(t, router, http.MethodPost, "/api/v1/devices/temp-1/clearCalibration?channelIndex=-1", nil, http.StatusBadRequest)
+}
+
+func TestDeviceCalibrationRequiresAcquisition(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	store := &apiProfileStore{profiles: []device.Profile{windaqconfig.NewDefaultProfile("pressure-1", device.DeviceDAQP1604)}}
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, apiDeviceFactory{}, nil, windaqconfig.NewProfileNormalizer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	usecase.AssembleDataSinkWithCalibration(hub, nil, manager, 20*time.Millisecond)
+	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	request(t, router, http.MethodPut, "/api/device/pressure-1/calibrate", nil, http.StatusBadRequest)
+}
+
+func TestDeviceCalibrationHTTPFlow(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	profile := windaqconfig.NewDefaultProfile("pressure-1", device.DeviceDAQP1604)
+	profile.Channels = profile.Channels[:1]
+	store := &apiProfileStore{profiles: []device.Profile{profile}}
+	factory := &calibrationDeviceFactory{}
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, factory, nil, windaqconfig.NewProfileNormalizer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	usecase.AssembleDataSinkWithCalibration(hub, nil, manager, 30*time.Millisecond)
+	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	request(t, router, http.MethodPost, "/api/device/pressure-1/connect", nil, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/device/pressure-1/startAcquisition", nil, http.StatusOK)
+	stopFrames := make(chan struct{})
+	defer close(stopFrames)
+	go func() {
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopFrames:
+				return
+			case <-ticker.C:
+				factory.device.dataSink(device.DataPayload{DeviceID: "pressure-1", Timestamp: device.NowMs(), Channels: []float64{1}, ChannelIndices: []int{0}})
+			}
+		}
+	}()
+
+	resp := request(t, router, http.MethodPut, "/api/v1/devices/pressure-1/calibrate?channelIndex=0", nil, http.StatusOK)
+	var calibrated struct {
+		Success bool                       `json:"success"`
+		Data    []device.CalibrationResult `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &calibrated); err != nil {
+		t.Fatal(err)
+	}
+	if !calibrated.Success || len(calibrated.Data) != 1 || calibrated.Data[0].Offset != 1 {
+		t.Fatalf("unexpected calibration response: %+v", calibrated)
+	}
+
+	recordResp := request(t, router, http.MethodGet, "/api/device/pressure-1/calibration?channelIndex=0", nil, http.StatusOK)
+	var record device.CalibrationRecord
+	if err := json.Unmarshal(recordResp.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Offset != 1 || record.Unit != "Pa" || record.At == 0 {
+		t.Fatalf("unexpected calibration record: %+v", record)
+	}
+
+	request(t, router, http.MethodPost, "/api/device/pressure-1/clearCalibration?channelIndex=0", nil, http.StatusOK)
+	recordResp = request(t, router, http.MethodGet, "/api/device/pressure-1/calibration?channelIndex=0", nil, http.StatusOK)
+	if err := json.Unmarshal(recordResp.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Offset != 0 {
+		t.Fatalf("expected cleared calibration, got %+v", record)
+	}
 }
 
 func TestDaqStreamSendsServerSentEvents(t *testing.T) {

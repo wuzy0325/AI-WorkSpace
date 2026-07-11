@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
@@ -95,12 +96,21 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()
 
-	dataSink := usecase.NewDataSink(hub, recorder)
-	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
+	// v2 校零组件 + dataSink 统一装配：
+	// 之前在本文件内联实现，appcontext/apiserver 各自复制一份时遗漏了 calApplier/channels
+	// 闭包，导致桌面生产路径与独立 API 服务器路径校零整段失效。
+	// 现统一调用 usecase.AssembleDataSinkWithCalibration，任何装配根都无法绕过正确顺序。
+	// 装配函数内部会调用 manager.SetCalibrationComponents 与 manager.UpdateDataSink。
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, nil, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return APIServer{}, err
 	}
 	manager.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, manager, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。manager 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	travMgr.SetUnitProvider(manager)
 
 	router := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

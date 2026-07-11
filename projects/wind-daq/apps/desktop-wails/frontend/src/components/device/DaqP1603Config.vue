@@ -6,6 +6,7 @@ import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import { useI18nStore } from '@stores/i18nStore'
 
 // ============================================================
 // DAQ-P-1603 专属配置面板
@@ -51,6 +52,10 @@ const emit = defineEmits<{
   (e: 'update:rangeMax', v: number | null): void
   (e: 'update:precision', v: number | null): void
 }>()
+
+// 校零相关文案随全局语言切换（表头与温度通道禁用提示），
+// 其他表头沿用本文件既有中文约定，与 DaqT1603Config.vue 保持一致。
+const i18n = useI18nStore()
 
 // 采样率有效范围常量（与后端 hardware.DAQP1603MinSampleRate/DAQP1603MaxSampleRate 保持同步）
 // 用户采样率 = 每秒输出数据条目数，底层硬件采样率固定 1000Hz，
@@ -127,11 +132,16 @@ function patchChannel(index: number, patch: Partial<ChannelConfig>): void {
 function onSensorTypeChange(index: number, nextType: string): void {
   const typed = nextType as ChannelSensorType
   const defaults = DEFAULTS_BY_SENSOR_TYPE[typed]
+  const channel = props.channels[index]
   patchChannel(index, {
     sensorType: typed,
     unit: defaults.unit,
     rangeMin: defaults.rangeMin,
     rangeMax: defaults.rangeMax,
+    calibrationEnabled: typed === 'pressure',
+    calibrationOffset: typed === 'pressure' ? channel?.calibrationOffset : 0,
+    calibrationUnit: typed === 'pressure' ? channel?.calibrationUnit : '',
+    calibrationAt: typed === 'pressure' ? channel?.calibrationAt : 0,
   })
 }
 
@@ -251,6 +261,7 @@ function resetChannelsToDefault(): void {
     rangeMin: -5000,
     rangeMax: 5000,
     sensorType: 'pressure' as ChannelSensorType,
+    calibrationEnabled: true,
   }))
   emit('update:channels', next)
 }
@@ -331,6 +342,7 @@ function resetChannelsToDefault(): void {
         <thead>
           <tr>
             <th class="w-12">启用</th>
+            <th class="w-16">{{ i18n.t.tareApplyColumn || '校零应用' }}</th>
             <th class="w-12">#</th>
             <th>通道名称</th>
             <th class="w-28">传感器类型</th>
@@ -346,6 +358,14 @@ function resetChannelsToDefault(): void {
                 :checked="c.enabled"
                 :disabled="disabled"
                 @update:checked="(v) => onEnabledChange(i, v)"
+              />
+            </td>
+            <td class="text-center">
+              <UiCheckbox
+                :checked="c.calibrationEnabled ?? true"
+                :disabled="disabled || c.sensorType === 'temperature'"
+                :title="c.sensorType === 'temperature' ? (i18n.t.temperatureChannelNotSupported || '温度通道不支持校零') : undefined"
+                @update:checked="(v) => patchChannel(i, { calibrationEnabled: v })"
               />
             </td>
             <td class="font-mono">{{ channelLabel(c.index) }}</td>

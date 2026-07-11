@@ -43,6 +43,17 @@ type TareConfigurable interface {
 	ClearTare(channelIndex int) error
 }
 
+type Calibratable interface {
+	Calibrate(deviceID string) ([]device.CalibrationResult, error)
+	GetCalibration(channelIndex int) (device.CalibrationRecord, error)
+	ClearCalibration(channelIndex int) error
+}
+
+type CalibrationEnabledConfigurable interface {
+	SetCalibrationEnabled(channelIndex int, enabled bool) error
+	GetCalibrationEnabled(channelIndex int) (bool, error)
+}
+
 // ErrorNotifiable 设备异常通知接口
 // 适配器实现此接口后，DeviceManager 可在设备 readLoop 异常退出时收到回调，
 // 统一更新状态并通知前端，避免设备断开后状态仍显示为 Connected/Acquiring。

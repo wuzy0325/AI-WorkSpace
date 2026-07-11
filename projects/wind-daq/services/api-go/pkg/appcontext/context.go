@@ -96,13 +96,20 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	traversalMgr.RestoreInterpolatorFromPersistedConfig()
 
-	dataSink := usecase.NewDataSink(hub, recorder)
-
-	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
+	// 先创建 manager（dataSink 暂传 nil），再统一装配 v2 校零组件 + dataSink。
+	// 之前此处 NewDataSink(hub, recorder, nil, nil) 把 calApplier/channels 都置 nil，
+	// 导致桌面生产路径校零热路径整段跳过——用户点校零按钮也不生效（Critical BUG #1）。
+	// 现统一调用 AssembleDataSinkWithCalibration，与 bootstrap/apiserver 走同一条装配路径。
+	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, nil, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return nil, err
 	}
 	deviceMgr.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, deviceMgr, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。deviceMgr 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	traversalMgr.SetUnitProvider(deviceMgr)
 
 	return &AppContext{
 		DeviceManager:    deviceMgr,

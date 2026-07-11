@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	ai-workspace/shared/algorithms/go/fivehole v0.0.0
+	golang.org/x/sys v0.43.0
 	shared.local/device-sdk/go v0.0.0
 	shared.local/motion-control/go v0.0.0
 )

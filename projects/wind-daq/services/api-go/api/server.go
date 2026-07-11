@@ -110,6 +110,21 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("/api/device/", func(w http.ResponseWriter, r *http.Request) {
 		handleDeviceByID(w, r, deps)
 	})
+	mux.HandleFunc("/api/v1/devices/", func(w http.ResponseWriter, r *http.Request) {
+		cloned := r.Clone(r.Context())
+		cloned.URL.Path = "/api/device/" + strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
+		handleDeviceByID(w, cloned, deps)
+	})
+	// calibrationConfig 暴露校零采样时长等配置，供前端避免硬编码 5s。
+	mux.HandleFunc("/api/v1/calibrationConfig", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"durationSec": device.CalibrationDurationSec,
+		})
+	})
 	mux.HandleFunc("/api/daq/latest/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/daq/latest/")
 		payload, ok := deps.AcquisitionHub.GetLatestData(id)
@@ -451,7 +466,21 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			writeJSON(w, http.StatusOK, deps.TraversalManager.CheckPreconditions())
+			var body struct {
+				Config json.RawMessage `json:"config"`
+			}
+			// 解析失败不阻断：无 config 时回退到 manager 当前配置
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			var config *traversal.Config
+			if len(body.Config) > 0 {
+				cfg, err := deps.TraversalManager.ParseConfig(body.Config)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				config = &cfg
+			}
+			writeJSON(w, http.StatusOK, deps.TraversalManager.CheckPreconditions(config))
 		case "generateGrid":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -859,39 +888,84 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": verify})
-	case r.Method == http.MethodPut && action == "tare":
+	// ---- v2 校零 API ----
+	// Calibrate 同步阻塞 5 秒（hub 订阅均值采样），HTTP 客户端需设置 ≥6s 超时。
+	// 使用 r.Context() 支持客户端取消（断开连接自动终止采样）。
+	case r.Method == http.MethodPut && action == "calibrate":
+		var targetChannel *int
+		if raw := strings.TrimSpace(r.URL.Query().Get("channelIndex")); raw != "" {
+			channelIndex, err := parseChannelIndex(r)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			targetChannel = &channelIndex
+		}
+		results, err := deps.DeviceManager.Calibrate(id, r.Context(), targetChannel)
+		if err != nil {
+			// 部分成功场景：Calibrate 返回 (results, err) 表示"已计算但落盘失败"，
+			// 此时偏移值已计算但未持久化、未同步到 applier。
+			// 返回 207 Multi-Status + warning 字段，让前端知道部分结果已可用，
+			// 而非简单 400 丢弃 results。
+			if len(results) > 0 {
+				writeJSON(w, http.StatusMultiStatus, map[string]any{
+					"success": false,
+					"data":    results,
+					"warning": err.Error(),
+				})
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": results})
+	case r.Method == http.MethodGet && action == "calibration":
+		channelIndex, err := parseChannelIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		record, err := deps.DeviceManager.GetCalibration(id, channelIndex)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, record)
+	case r.Method == http.MethodGet && action == "calibrationProgress":
+		writeJSON(w, http.StatusOK, deps.DeviceManager.GetCalibrationProgress(id))
+	case r.Method == http.MethodPost && action == "clearCalibration":
+		channelIndex, err := parseChannelIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := deps.DeviceManager.ClearCalibration(id, channelIndex); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	case r.Method == http.MethodGet && action == "calibrationEnabled":
+		channelIndex, err := parseChannelIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		enabled, err := deps.DeviceManager.GetCalibrationEnabled(id, channelIndex)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+	case r.Method == http.MethodPut && action == "calibrationEnabled":
 		var body struct {
-			ChannelIndex int     `json:"channelIndex"`
-			Offset       float64 `json:"offset"`
+			ChannelIndex int  `json:"channelIndex"`
+			Enabled      bool `json:"enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := deps.DeviceManager.SetTare(id, body.ChannelIndex, body.Offset); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-	case r.Method == http.MethodGet && action == "tare":
-		channelIndex, err := parseChannelIndex(r)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		offset, err := deps.DeviceManager.GetTare(id, channelIndex)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]float64{"offset": offset})
-	case r.Method == http.MethodPost && action == "clearTare":
-		channelIndex, err := parseChannelIndex(r)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := deps.DeviceManager.ClearTare(id, channelIndex); err != nil {
+		if err := deps.DeviceManager.SetCalibrationEnabled(id, body.ChannelIndex, body.Enabled); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -1125,7 +1199,8 @@ func handleLogRecent(w http.ResponseWriter, r *http.Request, ring *logging.RingB
 // handleLogCategories 处理日志分类开关的读取和设置。
 // GET  /api/log/categories        → 返回所有已显式设置的 category 状态
 // PUT  /api/log/categories        → 设置指定 category 的启用状态
-//       body: {"category": "hardware-send", "enabled": false}
+//
+//	body: {"category": "hardware-send", "enabled": false}
 func handleLogCategories(w http.ResponseWriter, r *http.Request, mgr *logging.Manager) {
 	switch r.Method {
 	case http.MethodGet:

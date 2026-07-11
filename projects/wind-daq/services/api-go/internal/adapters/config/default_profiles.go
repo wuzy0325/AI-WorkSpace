@@ -10,6 +10,7 @@ import (
 // 注意：此函数包含基础设施默认值（IP地址、端口等），属于 adapter 层职责
 func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 	profile := device.Profile{
+		Version:      device.CurrentProfileVersion,
 		ID:           id,
 		Name:         id,
 		Type:         deviceType,
@@ -57,6 +58,10 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		profile.Port = 5000
 		profile.Channels = defaultDSA3217Channels()
 	}
+	converter := device.NewUnitConverter()
+	for i := range profile.Channels {
+		profile.Channels[i].CalibrationEnabled = converter.SupportsZeroCalibration(profile.Channels[i].Unit)
+	}
 	return profile
 }
 
@@ -69,6 +74,13 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 	// v1→v2 迁移：TareOffset → CalibrationOffset（在补全默认值之前执行，
 	// 因为旧 TareOffset 需在通道被重置前完成迁移）
 	profile = migrateProfile(profile)
+	converter := device.NewUnitConverter()
+	for i := range profile.Channels {
+		supports := converter.SupportsZeroCalibration(profile.Channels[i].Unit)
+		if profile.Type != device.DeviceDAQP1603 {
+			profile.Channels[i].CalibrationEnabled = supports
+		}
+	}
 
 	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603
 	var defaultProfile device.Profile

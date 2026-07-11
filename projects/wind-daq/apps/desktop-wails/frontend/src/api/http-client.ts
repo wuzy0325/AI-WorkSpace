@@ -28,7 +28,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text().catch(() => '')
 
   if (!response.ok) {
-    throw new ApiError(text || `HTTP ${response.status}`, response.status)
+    let message = text || `HTTP ${response.status}`
+    try {
+      const body = JSON.parse(text) as { error?: unknown }
+      if (typeof body.error === 'string' && body.error) message = body.error
+    } catch {
+      // Keep the raw response when the backend did not return JSON.
+    }
+    throw new ApiError(message, response.status)
   }
 
   try {

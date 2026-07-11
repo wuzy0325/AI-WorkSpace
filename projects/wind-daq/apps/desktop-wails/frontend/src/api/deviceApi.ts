@@ -1,5 +1,5 @@
 import { request } from '@api/http-client'
-import type { DeviceProfile, DeviceStatus, DataPayload, ScanResult, DSA3217ScanConfig } from '@api/types'
+import type { DeviceProfile, DeviceStatus, DataPayload, ScanResult, DSA3217ScanConfig, CalibrationResult, CalibrationRecord, CalibrationProgress } from '@api/types'
 import { subscribeDaqStream } from '@api/sse-client'
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter'
 export { motionApi } from './motionApi'
@@ -243,6 +243,39 @@ export const deviceApi = {
       body: JSON.stringify(profile),
     })
   },
+
+  calibrate: async (id: string, channelIndex?: number, signal?: AbortSignal): Promise<CalibrationResult[]> => {
+    const query = channelIndex == null ? '' : `?channelIndex=${encodeURIComponent(channelIndex)}`
+    const result = await request<{ success: boolean; data: CalibrationResult[] }>(`/api/v1/devices/${id}/calibrate${query}`, {
+      method: 'PUT',
+      signal,
+    })
+    return result.data ?? []
+  },
+
+  getCalibration: async (id: string, channelIndex: number): Promise<CalibrationRecord> =>
+    request<CalibrationRecord>(`/api/v1/devices/${id}/calibration?channelIndex=${encodeURIComponent(channelIndex)}`),
+
+  getCalibrationProgress: async (id: string): Promise<CalibrationProgress> =>
+    request<CalibrationProgress>(`/api/v1/devices/${id}/calibrationProgress`),
+
+  clearCalibration: async (id: string, channelIndex: number): Promise<{ success: boolean }> =>
+    request<{ success: boolean }>(`/api/v1/devices/${id}/clearCalibration?channelIndex=${encodeURIComponent(channelIndex)}`, { method: 'POST' }),
+
+  setCalibrationEnabled: async (id: string, channelIndex: number, enabled: boolean): Promise<{ success: boolean }> =>
+    request<{ success: boolean }>(`/api/v1/devices/${id}/calibrationEnabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ channelIndex, enabled }),
+    }),
+
+  getCalibrationEnabled: async (id: string, channelIndex: number): Promise<boolean> => {
+    const result = await request<{ enabled: boolean }>(`/api/v1/devices/${id}/calibrationEnabled?channelIndex=${encodeURIComponent(channelIndex)}`)
+    return result.enabled
+  },
+
+  // 校零配置元数据（采样时长等），供前端避免硬编码 5s。
+  getCalibrationConfig: async (): Promise<{ durationSec: number }> =>
+    request<{ durationSec: number }>(`/api/v1/calibrationConfig`),
 
   _snapshotListeners: new Set<SnapshotCallback>(),
   _statusListeners: new Set<StatusCallback>(),

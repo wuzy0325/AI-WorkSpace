@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"shared.local/device-sdk/go/ffi"
+
 	"wind-daq/services/api-go/internal/bootstrap"
 	"wind-daq/services/api-go/pkg/debugserver"
 	"wind-daq/services/api-go/pkg/logging"
@@ -26,6 +28,11 @@ func main() {
 		}()
 		slog.Info("日志系统已初始化", "component", "main", "logDir", logDir, "level", "info")
 	}
+
+	// 初始化 WTNDAQ16H DLL（DAQ-P-1603 16 通道 AI 采集设备所需）。
+	// 路径：环境变量 WTNDAQ16H_DLL_PATH 或可执行文件同目录。
+	// 加载失败不阻止启动——无 DAQ-P-1603 设备时仍可正常使用其他设备类型。
+	ffi.InitWTNDAQ16HFromEnv()
 
 	// 获取 ring buffer 和 manager，传递给 API server（用于日志 SSE 端点和分类开关）
 	var ringBuf *logging.RingBuffer

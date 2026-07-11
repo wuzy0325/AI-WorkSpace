@@ -16,7 +16,8 @@ func NewConfigManager(store ports.AppConfigStore) *ConfigManager {
 }
 
 func (m *ConfigManager) LoadConfig(key string) (json.RawMessage, error) {
-	slog.Info("ConfigManager LoadConfig 开始", "component", "ConfigManager", "key", key)
+	// 前端启动会批量拉取多个配置，频繁刷屏，降级为 Debug；保留 Error/Warn 用于异常排查。
+	slog.Debug("ConfigManager LoadConfig 开始", "component", "ConfigManager", "key", key)
 	data, err := m.store.LoadConfig(key)
 	if err != nil {
 		slog.Error("ConfigManager LoadConfig 失败", "component", "ConfigManager", "key", key, "error", err)
@@ -26,17 +27,17 @@ func (m *ConfigManager) LoadConfig(key string) (json.RawMessage, error) {
 		slog.Warn("ConfigManager LoadConfig 未找到配置", "component", "ConfigManager", "key", key)
 		return nil, nil
 	}
-	slog.Info("ConfigManager LoadConfig 成功", "component", "ConfigManager", "key", key, "size", len(data))
+	slog.Debug("ConfigManager LoadConfig 成功", "component", "ConfigManager", "key", key, "size", len(data))
 	return json.RawMessage(data), nil
 }
 
 func (m *ConfigManager) SaveConfig(key string, config json.RawMessage) error {
-	slog.Info("ConfigManager SaveConfig 开始", "component", "ConfigManager", "key", key, "size", len(config))
+	slog.Debug("ConfigManager SaveConfig 开始", "component", "ConfigManager", "key", key, "size", len(config))
 	err := m.store.SaveConfig(key, []byte(config))
 	if err != nil {
 		slog.Error("ConfigManager SaveConfig 失败", "component", "ConfigManager", "key", key, "error", err)
 		return err
 	}
-	slog.Info("ConfigManager SaveConfig 成功", "component", "ConfigManager", "key", key)
+	slog.Debug("ConfigManager SaveConfig 成功", "component", "ConfigManager", "key", key)
 	return nil
 }

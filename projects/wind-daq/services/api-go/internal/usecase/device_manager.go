@@ -1,12 +1,15 @@
 package usecase
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/ports"
@@ -29,6 +32,13 @@ type DeviceManager struct {
 	dataSink     device.DataSink
 	scanInFlight *scanPending
 
+	// v2 校零组件
+	calApplier    *CalibrationApplier
+	calSampler    *CalibrationSampler
+	calibrating   map[string]struct{}
+	calProgress   map[string]device.CalibrationProgress
+	calProgressMu sync.RWMutex
+
 	// connMu 序列化同一 device id 上的 Connect/Disconnect/DeleteProfile，
 	// 防止重连场景下两个 goroutine 同时操作同一物理设备（TCP/串口设备
 	// 只允许一个会话）。与 m.mu 配合使用：m.mu 保护内存结构，connMu
@@ -43,18 +53,25 @@ func NewDeviceManager(store ports.ProfileStore, factory ports.DeviceFactory, dat
 // NewDeviceManagerWithNormalizer 创建 DeviceManager 并注入配置规范化器。
 // normalizer 可为 nil（跳过规范化）；由装配根注入 adapters/config 实现。
 func NewDeviceManagerWithNormalizer(store ports.ProfileStore, factory ports.DeviceFactory, dataSink device.DataSink, normalizer ports.ProfileNormalizer) (*DeviceManager, error) {
-	profiles, err := store.LoadProfiles()
+	loadedProfiles, err := store.LoadProfiles()
 	if err != nil {
 		return nil, err
 	}
-	profiles = normalizeProfiles(profiles, normalizer)
+	profiles := normalizeProfiles(loadedProfiles, normalizer)
+	if !reflect.DeepEqual(loadedProfiles, profiles) {
+		if err := store.SaveProfiles(profiles); err != nil {
+			return nil, fmt.Errorf("persist normalized profiles: %w", err)
+		}
+	}
 	return &DeviceManager{
-		profiles:   profiles,
-		devices:    make(map[string]ports.Device),
-		store:      store,
-		factory:    factory,
-		normalizer: normalizer,
-		dataSink:   dataSink,
+		profiles:    profiles,
+		devices:     make(map[string]ports.Device),
+		store:       store,
+		factory:     factory,
+		normalizer:  normalizer,
+		dataSink:    dataSink,
+		calibrating: make(map[string]struct{}),
+		calProgress: make(map[string]device.CalibrationProgress),
 	}, nil
 }
 
@@ -122,6 +139,11 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 				prevUnit := firstChannelUnit(m.profiles[i].Channels)
 				nextUnit := firstChannelUnit(profile.Channels)
 				if nextUnit != "" && nextUnit != prevUnit {
+					// 防御：校零进行中切换单位会触发 Calibrate 阶段 3 的 TOCTOU 静默丢弃，
+					// 此处提前拒绝，与 SetUnit 行为一致。
+					if _, running := m.calibrating[profile.ID]; running {
+						return fmt.Errorf("cannot change unit while calibration is in progress")
+					}
 					if dev, ok := m.devices[profile.ID]; ok {
 						if dev.Status().Acquiring {
 							return fmt.Errorf("cannot update DAQ-P-1604 unit while acquiring: %s", profile.ID)
@@ -137,11 +159,19 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 				}
 			}
 			m.profiles[i] = profile
-			return m.store.SaveProfiles(m.profiles)
+			if err := m.store.SaveProfiles(m.profiles); err != nil {
+				return err
+			}
+			m.loadCalibrationOffsetsLocked(profile.ID)
+			return nil
 		}
 	}
 	m.profiles = append(m.profiles, profile)
-	return m.store.SaveProfiles(m.profiles)
+	if err := m.store.SaveProfiles(m.profiles); err != nil {
+		return err
+	}
+	m.loadCalibrationOffsetsLocked(profile.ID)
+	return nil
 }
 
 func firstChannelUnit(channels []device.ChannelConfig) string {
@@ -202,7 +232,19 @@ func (m *DeviceManager) DeleteProfile(id string) error {
 	m.profiles = nextProfiles
 	devToDisconnect := m.devices[id]
 	delete(m.devices, id)
+	if m.calApplier != nil {
+		m.calApplier.RemoveDevice(id)
+	}
+	// P2-14：清理校零运行时状态，避免删除后残留：
+	//   - calibrating[id]：若删除时正在校零，Calibrate 的 defer 会再次 delete（幂等），
+	//     但若不清理，同 ID 新设备复用时会误判"校零进行中"。
+	//   - calProgress[id]：Calibrate defer 会写回 {Running:false,...} 重新创建条目，
+	//     属轻微泄漏；此处清理后即使被写回，下次 Calibrate 会覆盖，无功能影响。
+	delete(m.calibrating, id)
 	m.mu.Unlock()
+	m.calProgressMu.Lock()
+	delete(m.calProgress, id)
+	m.calProgressMu.Unlock()
 
 	// Phase 4: 断开硬件（在 connMu 保护下，与同 id 的 Connect/Disconnect 互斥）。
 	if devToDisconnect != nil {
@@ -226,6 +268,13 @@ func (m *DeviceManager) SetUnit(id string, unit string) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 防御：校零进行中切换单位会导致 TOCTOU —— Calibrate 阶段 3 检测到单位变化
+	// 会静默丢弃该通道的偏移结果，用户收到 200 OK 但偏移未生效且无显式错误。
+	// 此处提前拒绝，让用户收到明确错误反馈。
+	if _, running := m.calibrating[id]; running {
+		return fmt.Errorf("cannot change unit while calibration is in progress")
+	}
 
 	profileIndex, ok := m.findProfileIndexLocked(id)
 	if !ok {
@@ -326,7 +375,9 @@ func (m *DeviceManager) ApplyDsa3217ScanConfig(id string, avg int, period int) (
 // GetDAQP1603Config 获取 DAQ-P-1603 设备的当前配置 profile。
 //
 // 已连接设备：通过 DAQP1603Configurable 接口从驱动获取最新 profile（含硬件实际值），
-//   驱动返回的是 profile 拷贝，外部修改不会污染内部状态。
+//
+//	驱动返回的是 profile 拷贝，外部修改不会污染内部状态。
+//
 // 未连接设备：返回持久化的 profile（与 m.profiles 中保持一致）。
 //
 // 用于前端在打开配置面板时回显当前实际生效的配置。
@@ -375,6 +426,29 @@ func (m *DeviceManager) ApplyDAQP1603Config(id string, profile device.Profile) (
 	// 回读 driver 内部 profile（已被 ApplyDAQP1603Config 更新），
 	// 让前端能拿到硬件实际生效的采样率与通道配置。
 	return configurable.GetDAQP1603Config()
+}
+
+// ChannelUnit 实现 ports.ChannelUnitProvider。
+//
+// 为什么这样设计：遍历测试压力归一化（BuildRawPressure）需要查每个通道的 Unit
+// 才能换算到 Pa，但 TraversalManager 不能直接依赖 usecase 兄弟包，通过此方法
+// 提供"设备→通道→Unit"的窄查询。从 profiles 中查找，找不到返回 error 让调用方
+// 走降级路径（跳过换算记 warning）。
+//
+// 注意：调用方应容忍 error（如设备未连接或通道不存在），不应中断遍历流程。
+func (m *DeviceManager) ChannelUnit(deviceID string, channelIndex int) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	profile, ok := m.findProfileLocked(deviceID)
+	if !ok {
+		return "", fmt.Errorf("device profile not found: %s", deviceID)
+	}
+	for _, ch := range profile.Channels {
+		if ch.Index == channelIndex {
+			return ch.Unit, nil
+		}
+	}
+	return "", fmt.Errorf("channel %d not found in device %s", channelIndex, deviceID)
 }
 
 // Connect 连接设备（并发安全）。
@@ -594,6 +668,320 @@ func (m *DeviceManager) ClearTare(id string, channelIndex int) error {
 	return m.SetTare(id, channelIndex, 0)
 }
 
+// ---- v2 校零方法 ----
+
+// SetCalibrationComponents 注入校零组件（由 bootstrap 调用）。
+// 注入后自动遍历已加载 profiles，将存量 CalibrationOffset 写入 calApplier 快照，
+// 避免重启后已校零设备在下次 Calibrate 前偏移不生效（冷启动问题）。
+//
+// 锁策略：整段持写锁完成。原先先 Lock 写组件再释放后 RLock 读 profiles，
+// 释放与重锁之间存在窗口，并发 LoadProfiles / UpsertProfile 可能修改 profiles，
+// 导致同步到 applier 的偏移已过期。合并为单次 Lock 消除 TOCTOU。
+// applier.UpdateOffsets 内部自有独立锁，不会与 m.mu 形成死锁。
+func (m *DeviceManager) SetCalibrationComponents(applier *CalibrationApplier, sampler *CalibrationSampler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calApplier = applier
+	m.calSampler = sampler
+
+	// 冷启动：将已加载 profile 中的校零偏移同步到 CalibrationApplier
+	if applier != nil {
+		for _, p := range m.profiles {
+			offsets := make(device.CalibrationOffsets)
+			for _, ch := range p.Channels {
+				if ch.CalibrationOffset != 0 {
+					offsets[ch.Index] = ch.CalibrationOffset
+				}
+			}
+			if len(offsets) > 0 {
+				applier.UpdateOffsets(p.ID, offsets)
+			}
+		}
+	}
+}
+
+// UpdateDataSink 更新 dataSink 回调（由 bootstrap 在 manager 创建后调用，
+// 注入含校零功能的 dataSink）。
+func (m *DeviceManager) UpdateDataSink(sink device.DataSink) {
+	m.mu.Lock()
+	m.dataSink = sink
+	m.mu.Unlock()
+}
+
+// GetChannelsForCalibration 获取设备的通道配置（供 data_sink CalibrationApplier 使用）。
+// 返回深拷贝，避免 data_sink 高频并发读写与 SetUnit/UpsertProfile 的写操作竞争底层数组。
+func (m *DeviceManager) GetChannelsForCalibration(deviceID string) []device.ChannelConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for i := range m.profiles {
+		if m.profiles[i].ID == deviceID {
+			cp := make([]device.ChannelConfig, len(m.profiles[i].Channels))
+			copy(cp, m.profiles[i].Channels)
+			return cp
+		}
+	}
+	return nil
+}
+
+// loadCalibrationOffsetsLocked 从 m.profiles 加载指定设备的校零偏移快照到 CalibrationApplier。
+// 调用方必须持有 m.mu 读锁。
+func (m *DeviceManager) loadCalibrationOffsetsLocked(deviceID string) {
+	if m.calApplier == nil {
+		return
+	}
+	for i := range m.profiles {
+		if m.profiles[i].ID == deviceID {
+			offsets := make(device.CalibrationOffsets)
+			for _, ch := range m.profiles[i].Channels {
+				if ch.CalibrationOffset != 0 {
+					offsets[ch.Index] = ch.CalibrationOffset
+				}
+			}
+			m.calApplier.UpdateOffsets(deviceID, offsets)
+			return
+		}
+	}
+}
+
+// Calibrate 执行校零：订阅 hub 5 秒取均值 → 转为基单位 → 落库 → 更新 CalibrationApplier 快照。
+// 所有启用通道并行采样，耗时固定 5 秒。
+//
+// 取消机制：依赖传入的 ctx（HTTP 层为 r.Context()）链式取消。
+// 兜底机制：额外派生 sampleDuration + 2s 的 deadline context，防御 HTTP
+// keep-alive 或代理缓冲导致 r.Context() 延迟/丢失连接断开信号的场景，
+// 避免后端无限期占用硬件资源。
+func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel *int) ([]device.CalibrationResult, error) {
+	if m.calSampler == nil {
+		return nil, fmt.Errorf("calibration sampler not available")
+	}
+	// 兜底 deadline：采样时长 + 2s 缓冲（落库 + 网络往返）。
+	// 超过此时间即使 ctx 未 cancel 也强制终止，防止硬件资源被无限占用。
+	sampleDuration := m.calSampler.duration
+	fallbackDeadline := sampleDuration + 2*time.Second
+	ctx, cancel := context.WithTimeout(ctx, fallbackDeadline)
+	defer cancel()
+
+	m.mu.Lock()
+	profileIndex, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("device profile not found: %s", id)
+	}
+	dev, connected := m.devices[id]
+	if !connected || !dev.Status().Acquiring {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("请先开始采集")
+	}
+	if _, running := m.calibrating[id]; running {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("calibration already in progress")
+	}
+	if targetChannel != nil {
+		if _, found := findChannelPosition(m.profiles[profileIndex].Channels, *targetChannel); !found {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("invalid channel index: %d", *targetChannel)
+		}
+	}
+	m.calibrating[id] = struct{}{}
+	startedAt := time.Now()
+	m.calProgressMu.Lock()
+	m.calProgress[id] = device.CalibrationProgress{Running: true, ChannelIndex: targetChannel}
+	m.calProgressMu.Unlock()
+	// 深拷贝：Sample 会阻塞 5 秒，期间 SetUnit / UpsertProfile / SetTare 等写操作
+	// 可能修改 m.profiles[profileIndex].Channels 的底层数组。若直接共享 slice header，
+	// 采样器读到的数据会被并发修改（race），最坏情况读到半截新半截旧的不一致快照。
+	// 与 GetChannelsForCalibration 保持一致的深拷贝策略。
+	src := m.profiles[profileIndex].Channels
+	channels := make([]device.ChannelConfig, len(src))
+	copy(channels, src)
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.calibrating, id)
+		m.mu.Unlock()
+		m.calProgressMu.Lock()
+		progress := m.calProgress[id]
+		progress.Running = false
+		progress.ElapsedMs = time.Since(startedAt).Milliseconds()
+		m.calProgress[id] = progress
+		m.calProgressMu.Unlock()
+	}()
+
+	results, err := m.calSampler.Sample(ctx, id, channels, targetChannel, func(sampleCount int) {
+		m.calProgressMu.Lock()
+		m.calProgress[id] = device.CalibrationProgress{Running: true, ChannelIndex: targetChannel, ElapsedMs: time.Since(startedAt).Milliseconds(), SampleCount: sampleCount}
+		m.calProgressMu.Unlock()
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 落库到 profile + 更新 CalibrationApplier 快照
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pi, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return nil, fmt.Errorf("device profile not found: %s", id)
+	}
+	nextProfiles := cloneProfiles(m.profiles)
+	for _, r := range results {
+		found := false
+		for j := range nextProfiles[pi].Channels {
+			if nextProfiles[pi].Channels[j].Index == r.ChannelIndex {
+				// TOCTOU 防御：Sample 阻塞 5 秒，期间 SetUnit 可能修改通道单位。
+				// 若当前单位与采样时单位不一致，偏移值的物理含义已不匹配
+				// （如采样时 kPa，当前变为 Pa，减偏移会得到 1000 倍错误值）。
+				// 此时跳过该通道的落库，避免写入语义错误的偏移。
+				if nextProfiles[pi].Channels[j].Unit != r.Unit {
+					slog.Warn("calibrate unit changed during sampling, skip offset",
+						"device", id,
+						"channel", r.ChannelIndex,
+						"sampledUnit", r.Unit,
+						"currentUnit", nextProfiles[pi].Channels[j].Unit)
+					found = true
+					break
+				}
+				nextProfiles[pi].Channels[j].CalibrationOffset = r.Offset
+				nextProfiles[pi].Channels[j].CalibrationUnit = r.Unit
+				nextProfiles[pi].Channels[j].CalibrationAt = r.At
+				found = true
+				break
+			}
+		}
+		if !found {
+			slog.Warn("calibrate result channel not in profile", "device", id, "channel", r.ChannelIndex)
+			continue
+		}
+	}
+
+	if err := m.store.SaveProfiles(nextProfiles); err != nil {
+		return results, fmt.Errorf("save profiles after calibrate: %w", err)
+	}
+	m.profiles = nextProfiles
+	m.loadCalibrationOffsetsLocked(id)
+	return results, nil
+}
+
+func (m *DeviceManager) GetCalibrationProgress(id string) device.CalibrationProgress {
+	m.calProgressMu.RLock()
+	defer m.calProgressMu.RUnlock()
+	return m.calProgress[id]
+}
+
+// GetCalibration 读取通道的完整校零记录。
+func (m *DeviceManager) GetCalibration(id string, channelIndex int) (device.CalibrationRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return device.CalibrationRecord{}, fmt.Errorf("device profile not found: %s", id)
+	}
+	position, found := findChannelPosition(profile.Channels, channelIndex)
+	if !found {
+		return device.CalibrationRecord{}, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	channel := profile.Channels[position]
+	return device.CalibrationRecord{ChannelIndex: channel.Index, Offset: channel.CalibrationOffset, Unit: channel.CalibrationUnit, At: channel.CalibrationAt, Enabled: calibrationEnabledForProfile(profile.Type, channel)}, nil
+}
+
+// ClearCalibration 清除通道的校零偏移。
+func (m *DeviceManager) ClearCalibration(id string, channelIndex int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pi, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	nextProfiles := cloneProfiles(m.profiles)
+	position, found := findChannelPosition(nextProfiles[pi].Channels, channelIndex)
+	if !found {
+		return fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	nextProfiles[pi].Channels[position].CalibrationOffset = 0
+	nextProfiles[pi].Channels[position].CalibrationUnit = ""
+	nextProfiles[pi].Channels[position].CalibrationAt = 0
+	if err := m.store.SaveProfiles(nextProfiles); err != nil {
+		return err
+	}
+	m.profiles = nextProfiles
+	m.loadCalibrationOffsetsLocked(id)
+	return nil
+}
+
+// SetCalibrationEnabled 设置通道校零使能开关（仅 DAQ-P-1603）。
+func (m *DeviceManager) SetCalibrationEnabled(id string, channelIndex int, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pi, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	if m.profiles[pi].Type != device.DeviceDAQP1603 {
+		return fmt.Errorf("calibration enable is only configurable for DAQ-P-1603")
+	}
+	nextProfiles := cloneProfiles(m.profiles)
+	position, found := findChannelPosition(nextProfiles[pi].Channels, channelIndex)
+	if !found {
+		return fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	if !device.NewUnitConverter().SupportsZeroCalibration(nextProfiles[pi].Channels[position].Unit) {
+		return fmt.Errorf("channel %d does not support zero calibration", channelIndex)
+	}
+	nextProfiles[pi].Channels[position].CalibrationEnabled = enabled
+	if err := m.store.SaveProfiles(nextProfiles); err != nil {
+		return err
+	}
+	m.profiles = nextProfiles
+	return nil
+}
+
+// GetCalibrationEnabled 读取通道校零使能状态。
+func (m *DeviceManager) GetCalibrationEnabled(id string, channelIndex int) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return false, fmt.Errorf("device profile not found: %s", id)
+	}
+	position, found := findChannelPosition(profile.Channels, channelIndex)
+	if !found {
+		return false, fmt.Errorf("invalid channel index: %d", channelIndex)
+	}
+	return calibrationEnabledForProfile(profile.Type, profile.Channels[position]), nil
+}
+
+func findChannelPosition(channels []device.ChannelConfig, channelIndex int) (int, bool) {
+	for i := range channels {
+		if channels[i].Index == channelIndex {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func calibrationEnabledForProfile(profileType device.Type, channel device.ChannelConfig) bool {
+	if !device.NewUnitConverter().SupportsZeroCalibration(channel.Unit) {
+		return false
+	}
+	if profileType != device.DeviceDAQP1603 {
+		return true
+	}
+	return channel.CalibrationEnabled
+}
+
+func cloneProfiles(profiles []device.Profile) []device.Profile {
+	cloned := append([]device.Profile(nil), profiles...)
+	for i := range cloned {
+		cloned[i].Channels = append([]device.ChannelConfig(nil), profiles[i].Channels...)
+	}
+	return cloned
+}
+
 func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 	if strings.TrimSpace(config.ThermocoupleTypes) == "" {
 		return fmt.Errorf("thermocoupleTypes is required")
@@ -634,3 +1022,7 @@ func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 	}
 	return nil
 }
+
+// 编译期接口断言：保证 DeviceManager 实现 ports.ChannelUnitProvider。
+// 若 ChannelUnit 签名变更导致不再实现，编译期立即报错而非运行时崩溃。
+var _ ports.ChannelUnitProvider = (*DeviceManager)(nil)

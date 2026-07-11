@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
@@ -81,12 +82,20 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()
-	dataSink := usecase.NewDataSink(hub, recorder)
-	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, configadapter.NewProfileNormalizer())
+	// 先创建 manager（dataSink 暂传 nil），再统一装配 v2 校零组件 + dataSink。
+	// 之前此处 NewDataSink(hub, recorder, nil, nil) 把 calApplier/channels 都置 nil，
+	// 导致独立 API 服务器路径校零热路径整段跳过（Critical BUG #1）。
+	// 现统一调用 AssembleDataSinkWithCalibration，与 bootstrap/appcontext 走同一条装配路径。
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, nil, configadapter.NewProfileNormalizer())
 	if err != nil {
 		return nil, err
 	}
 	manager.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, manager, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。manager 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	travMgr.SetUnitProvider(manager)
 
 	handler := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

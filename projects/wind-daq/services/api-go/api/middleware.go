@@ -42,8 +42,10 @@ func (r *statusRecorder) Flush() {
 // metricsMiddleware 记录每条 HTTP 请求的方法、路径、状态码、耗时与响应字节数。
 // 输出到 slog，调用方可通过 slog handler 决定落盘 / 控制台。
 //
-// 选择 INFO 级别是因为这些条目是常规观测数据，不是异常；
-// 慢请求（>500ms）额外打一条 WARN，便于通过 level 过滤。
+// 级别策略（避免 LOG 画面被高频请求刷屏）：
+//   - 常规请求 → Debug：HTTP 请求是常态事件，对用户无业务价值，
+//     默认 LOG 画面 minLevel=warn 即可隐藏；调试网络问题时手动打开 Debug 开关。
+//   - 慢请求（>500ms）→ Warn：仍属于异常情况，需要醒目提示。
 func metricsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -56,10 +58,10 @@ func metricsMiddleware(next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 
-		// 跳过内部观测类请求日志：前端心跳、日志服务自身端点、高频遥测拉取。
-		// 这些请求对用户无业务价值，记录到 LOG 画面只会产生噪音。
+		// 内部观测类路径（前端心跳、日志服务自身端点、高频遥测拉取）完全不打日志；
+		// 其他业务请求打 Debug 级别，便于按需排查但不污染默认日志视图。
 		if !isInternalObservationPath(r.URL.Path) {
-			slog.Info("http.request",
+			slog.Debug("http.request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", status,

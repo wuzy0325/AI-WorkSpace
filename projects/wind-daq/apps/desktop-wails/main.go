@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 
+	"shared.local/device-sdk/go/ffi"
+
 	"wind-daq/apps/desktop-wails/backend"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -33,6 +35,10 @@ func main() {
 			parentPIDValue = pid
 		}
 	}
+
+	// 初始化 WTNDAQ16H DLL（DAQ-P-1603 设备所需）。
+	// 运动控制器独立窗口不需要此 DLL，但 sync.Once 保证安全。
+	ffi.InitWTNDAQ16HFromEnv()
 
 	// 根据启动模式确定模式字符串与窗口参数
 	mode := backend.ModeNormal

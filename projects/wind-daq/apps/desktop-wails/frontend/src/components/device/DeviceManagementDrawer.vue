@@ -263,7 +263,7 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       // 默认全部为压力通道（sensorType='pressure'），用户可在通道配置中切为温度。
       // 不含大气通道（用户决策无大气数据）。
       return Array.from({ length: 16 }, (_, i) => ({
-        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType,
+        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType, calibrationEnabled: true,
       }))
     case 'DAQ-P-1604Pre':
     case 'DSA3217':

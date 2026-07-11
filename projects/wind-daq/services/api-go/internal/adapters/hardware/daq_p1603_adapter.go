@@ -36,10 +36,12 @@ type DAQP1603Adapter struct {
 	onError func(err error)
 }
 
-// 编译期断言：DAQP1603Adapter 实现 ports.Device 与 ports.DAQP1603Configurable。
+// 编译期断言：DAQP1603Adapter 实现 ports.Device 、 ports.DAQP1603Configurable
+// 与 ports.TareConfigurable。归零能力与其他压力扫描设备（DAQ-P-1604 / DSA3217）对齐。
 var (
 	_ ports.Device               = (*DAQP1603Adapter)(nil)
 	_ ports.DAQP1603Configurable = (*DAQP1603Adapter)(nil)
+	_ ports.TareConfigurable     = (*DAQP1603Adapter)(nil)
 )
 
 // NewDAQP1603Adapter 构造一个 DAQ-P-1603 适配器。
@@ -230,6 +232,67 @@ func (a *DAQP1603Adapter) ApplyDAQP1603Config(profile device.Profile) error {
 	return nil
 }
 
+// SetTare 设置指定通道的归零偏移。
+//
+// 双写策略：
+//   - 已连接：委托 driver.SetTare 写入 shared SDK 内部 profile。该旧字段仅用于
+//     v1 profile 兼容，新校零由 usecase CalibrationApplier 统一应用。
+//   - 未连接：直接写 adapter 缓存的 profile，Connect 时通过 mapToSharedProfileP1603
+//     传递到 driver，避免归零在连接前丢失
+//
+// 同时更新 adapter 缓存 profile，保证 GetDAQP1603Config 在 driver 释放后仍返回最新值。
+// 通道越界校验在 Lock 内前置执行：避免先写 driver 后才发现 channelIndex 非法，
+// 导致硬件已写入错误通道而 adapter 缓存却因越界未更新（数据不一致）。
+func (a *DAQP1603Adapter) SetTare(channelIndex int, offset float64) error {
+	a.mu.Lock()
+	// 越界校验前置：driver.SetTare 成功后再发现越界已无法回滚硬件状态。
+	if channelIndex < 0 || channelIndex >= len(a.profile.Channels) {
+		a.mu.Unlock()
+		return fmt.Errorf("DAQ-P-1603 set tare: invalid channel index %d (valid 0-%d)",
+			channelIndex, len(a.profile.Channels)-1)
+	}
+	dev := a.driver
+	a.profile.Channels[channelIndex].TareOffset = offset
+	a.mu.Unlock()
+
+	// driver 调用不持 adapter 锁：driver 内部自有锁，持 adapter 锁嵌套会阻塞其他 adapter 操作。
+	// driver.SetTare 失败不影响 profile 缓存——这是设计意图（未连接时缓存，连接时通过 driver 同步）。
+	if dev != nil {
+		if err := dev.SetTare(channelIndex, offset); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetTare 读取指定通道的归零偏移。
+// 已连接时优先从 driver 读取（反映运行时最新值）；未连接时回退到 adapter 缓存 profile。
+// 越界校验与 profile 读取必须在同一 RLock 区间内：释放锁后读 profile.Channels[idx]
+// 会与 SetTare 的写操作竞争底层数组（race），slice header 复制不等于底层数组隔离。
+func (a *DAQP1603Adapter) GetTare(channelIndex int) (float64, error) {
+	a.mu.RLock()
+	dev := a.driver
+	if channelIndex < 0 || channelIndex >= len(a.profile.Channels) {
+		a.mu.RUnlock()
+		return 0, fmt.Errorf("DAQ-P-1603 get tare: invalid channel index %d (valid 0-%d)",
+			channelIndex, len(a.profile.Channels)-1)
+	}
+	tare := a.profile.Channels[channelIndex].TareOffset
+	a.mu.RUnlock()
+
+	// driver 调用不持 adapter 锁：driver 内部自有锁，避免锁嵌套。
+	if dev != nil {
+		return dev.GetTare(channelIndex)
+	}
+	return tare, nil
+}
+
+// ClearTare 清除指定通道的归零偏移（置 0）。
+// 等价于 SetTare(channelIndex, 0)，保留独立方法以匹配 ports.TareConfigurable 接口。
+func (a *DAQP1603Adapter) ClearTare(channelIndex int) error {
+	return a.SetTare(channelIndex, 0)
+}
+
 // ---- 类型转换辅助 ----
 
 // mapToSharedProfileP1603 将 wind-daq 的 device.Profile 转为 shared SDK 的 Profile。
@@ -255,15 +318,19 @@ func mapToSharedProfileP1603(p device.Profile) sharedcore.Profile {
 			sensorType = sharedcore.SensorTemperature
 		}
 		channels = append(channels, sharedcore.ChannelConfig{
-			Index:      ch.Index,
-			Name:       ch.Name,
-			Enabled:    ch.Enabled,
-			Unit:       ch.Unit,
-			Precision:  ch.Precision,
-			RangeMin:   ch.RangeMin,
-			RangeMax:   ch.RangeMax,
-			TareOffset: ch.TareOffset,
-			SensorType: sensorType,
+			Index:              ch.Index,
+			Name:               ch.Name,
+			Enabled:            ch.Enabled,
+			Unit:               ch.Unit,
+			Precision:          ch.Precision,
+			RangeMin:           ch.RangeMin,
+			RangeMax:           ch.RangeMax,
+			TareOffset:         ch.TareOffset,
+			SensorType:         sensorType,
+			CalibrationOffset:  ch.CalibrationOffset,
+			CalibrationUnit:    ch.CalibrationUnit,
+			CalibrationAt:      ch.CalibrationAt,
+			CalibrationEnabled: ch.CalibrationEnabled,
 		})
 	}
 
@@ -311,19 +378,24 @@ func mapFromSharedProfileP1603(s sharedcore.Profile, fallback device.Profile) de
 			sensorType = device.SensorTemperature
 		}
 		channels = append(channels, device.ChannelConfig{
-			Index:      ch.Index,
-			Name:       ch.Name,
-			Enabled:    ch.Enabled,
-			Unit:       ch.Unit,
-			Precision:  ch.Precision,
-			RangeMin:   ch.RangeMin,
-			RangeMax:   ch.RangeMax,
-			TareOffset: ch.TareOffset,
-			SensorType: sensorType,
+			Index:              ch.Index,
+			Name:               ch.Name,
+			Enabled:            ch.Enabled,
+			Unit:               ch.Unit,
+			Precision:          ch.Precision,
+			RangeMin:           ch.RangeMin,
+			RangeMax:           ch.RangeMax,
+			TareOffset:         ch.TareOffset,
+			SensorType:         sensorType,
+			CalibrationOffset:  ch.CalibrationOffset,
+			CalibrationUnit:    ch.CalibrationUnit,
+			CalibrationAt:      ch.CalibrationAt,
+			CalibrationEnabled: ch.CalibrationEnabled,
 		})
 	}
 
 	return device.Profile{
+		Version:                    fallback.Version,
 		ID:                         s.ID,
 		Name:                       s.Name,
 		Type:                       device.DeviceDAQP1603,

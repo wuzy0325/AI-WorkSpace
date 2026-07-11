@@ -78,6 +78,12 @@ func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 		if ch.Name != fmt.Sprintf("CH%d", i+1) {
 			t.Fatalf("expected channel %d name CH%d, got %q", i, i+1, ch.Name)
 		}
+		if !ch.CalibrationEnabled {
+			t.Fatalf("expected calibration enabled for channel %d", i)
+		}
+	}
+	if profile.Version != device.CurrentProfileVersion {
+		t.Fatalf("expected profile version %d, got %d", device.CurrentProfileVersion, profile.Version)
 	}
 	// Address 留空：DLL 内部封装 TCP，IP 由用户在 UI 手动输入
 	if profile.Address != "" {
@@ -85,6 +91,66 @@ func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 	}
 	if profile.SamplingRate != 100 {
 		t.Fatalf("expected default sampling rate 100, got %d", profile.SamplingRate)
+	}
+}
+
+func TestNormalizeProfileMigratesTareOffsetToBaseUnit(t *testing.T) {
+	profile := device.Profile{
+		ID:      "legacy",
+		Type:    device.DeviceDAQP1604,
+		Version: 1,
+		Channels: []device.ChannelConfig{{
+			Index: 0, Enabled: true, Unit: "kPa", TareOffset: 1.25,
+		}},
+	}
+
+	got := NormalizeProfile(profile)
+	channel := got.Channels[0]
+	if channel.CalibrationOffset != 1250 {
+		t.Fatalf("expected 1.25 kPa migrated to 1250 Pa, got %v", channel.CalibrationOffset)
+	}
+	if channel.TareOffset != 0 || channel.CalibrationUnit != "kPa" || !channel.CalibrationEnabled {
+		t.Fatalf("unexpected migrated channel: %+v", channel)
+	}
+	if got.Version != device.CurrentProfileVersion {
+		t.Fatalf("expected version %d, got %d", device.CurrentProfileVersion, got.Version)
+	}
+}
+
+func TestNormalizeProfileDropsLegacyTemperatureTare(t *testing.T) {
+	profile := device.Profile{
+		ID:      "legacy-temperature",
+		Type:    device.DeviceDaqT1603,
+		Version: 1,
+		Channels: []device.ChannelConfig{{
+			Index: 0, Enabled: true, Unit: "degC", TareOffset: 25,
+		}},
+	}
+
+	got := NormalizeProfile(profile).Channels[0]
+	if got.TareOffset != 0 || got.CalibrationOffset != 0 || got.CalibrationEnabled {
+		t.Fatalf("temperature tare must be removed during migration, got %+v", got)
+	}
+}
+
+func TestNormalizeProfileClearsVersionTwoTemperatureCalibration(t *testing.T) {
+	profile := device.Profile{
+		ID:      "temperature-v2",
+		Type:    device.DeviceDAQP1603,
+		Version: device.CurrentProfileVersion,
+		Channels: []device.ChannelConfig{{
+			Index: 0, Unit: "℃", SensorType: device.SensorTemperature,
+			CalibrationOffset: 25, CalibrationUnit: "℃", CalibrationAt: 123,
+			CalibrationEnabled: true,
+		}},
+	}
+
+	got := NormalizeProfile(profile).Channels[0]
+	if got.CalibrationOffset != 25 || got.CalibrationUnit != "℃" || got.CalibrationAt != 123 {
+		t.Fatalf("calibration data must be preserved (safety enforced by Applier/Sampler/API), got %+v", got)
+	}
+	if !got.CalibrationEnabled {
+		t.Fatalf("DAQ-P-1603 calibration enabled must be preserved as user-configured, got %+v", got)
 	}
 }
 
