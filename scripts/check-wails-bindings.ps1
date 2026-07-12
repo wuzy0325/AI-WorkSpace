@@ -173,14 +173,14 @@ foreach ($proj in $targetProjects) {
     }
 
     # 5.2 缺失检查：backend 有但 binding 没有
-    $missingInBinding = $backendMethods | Where-Object { $_ -notin $bindingExports }
+    $missingInBinding = @($backendMethods | Where-Object { $_ -notin $bindingExports })
     foreach ($m in $missingInBinding) {
         $sourceFile = $backendResult.Files[$m]
         $errors.Add("[$proj] backend 方法 '$m' (定义在 $sourceFile) 在 binding 中缺失——需运行 'wails3 generate bindings'")
     }
 
     # 5.3 多余检查：binding 有但 backend 没有（可能是改了名但没重新生成）
-    $extraInBinding = $bindingExports | Where-Object { $_ -notin $backendMethods }
+    $extraInBinding = @($bindingExports | Where-Object { $_ -notin $backendMethods })
     foreach ($m in $extraInBinding) {
         $bindingFile = $bindingResult.Files[$m]
         $warnings.Add("[$proj] binding export '$m' (在 $bindingFile) 在 backend 中已不存在——可能是改名后未重新生成 binding")
@@ -211,14 +211,34 @@ foreach ($proj in $targetProjects) {
         }
     }
 
+    # 方法层面是否一致：缺失和多余都为 0 时，backend 与 binding 的方法集合完全匹配。
+    # 此时 stale 时间戳差异只能来自函数体内部变更（不影响 binding），降级为 info；
+    # 方法层面不一致时，stale 保持 warning（可能是改名/新增后未重新生成）。
+    $methodConsistent = ($missingInBinding.Count -eq 0) -and ($extraInBinding.Count -eq 0)
+
     if ($backendProdNewest -and $bindingNewest) {
         $diffMinutes = ($backendProdNewest - $bindingNewest).TotalMinutes
         if ($diffMinutes -gt $StaleMinutes) {
-            $warnings.Add("[$proj] backend 生产代码 ($backendProdNewestFile @ $($backendProdNewest.ToString('yyyy-MM-dd HH:mm'))) 比 binding 最新文件 ($bindingNewestFile @ $($bindingNewest.ToString('yyyy-MM-dd HH:mm'))) 新 $([math]::Round($diffMinutes, 1)) 分钟——若改了方法签名需运行 'wails3 generate bindings'")
+            $msg = "[$proj] backend 生产代码 ($backendProdNewestFile @ $($backendProdNewest.ToString('yyyy-MM-dd HH:mm'))) 比 binding 最新文件 ($bindingNewestFile @ $($bindingNewest.ToString('yyyy-MM-dd HH:mm'))) 新 $([math]::Round($diffMinutes, 1)) 分钟"
+            if ($methodConsistent) {
+                # 方法层面一致：函数体内部变更不影响 binding，降级为 info（不计入 warnings，不阻断提交）
+                if (-not $Quiet) {
+                    Write-Host "  INFO: $msg——方法签名未变（函数体内部变更），binding 无需重新生成" -ForegroundColor DarkGray
+                }
+            } else {
+                # 方法层面不一致：可能是改名/新增后未重新生成，保持 warning
+                $warnings.Add("$msg——方法签名有变更，需运行 'wails3 generate bindings'")
+            }
         }
         if (-not $Quiet) {
-            $status = if ($diffMinutes -gt $StaleMinutes) { "STALE 风险" } elseif ($diffMinutes -gt 0) { "略新" } else { "OK" }
-            $color = if ($diffMinutes -gt $StaleMinutes) { "Yellow" } elseif ($diffMinutes -gt 0) { "DarkGray" } else { "Green" }
+            if ($diffMinutes -gt $StaleMinutes) {
+                $status = if ($methodConsistent) { "STALE（方法一致）" } else { "STALE 风险" }
+                $color = if ($methodConsistent) { "DarkGray" } else { "Yellow" }
+            } elseif ($diffMinutes -gt 0) {
+                $status = "略新"; $color = "DarkGray"
+            } else {
+                $status = "OK"; $color = "Green"
+            }
             Write-Host "  时间戳对比: $status (backend $([math]::Round($diffMinutes, 1)) 分钟 vs binding)" -ForegroundColor $color
         }
     }
