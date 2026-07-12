@@ -8,9 +8,14 @@
 package storage
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +24,7 @@ import (
 	"time"
 
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 // utf8BOM Excel 等中文环境需要 BOM 才能正确识别 UTF-8 编码
@@ -36,6 +42,10 @@ type TraversalCsvWriter struct {
 	labels []labelEntry
 	// customFieldNames 已排序的自定义字段名，保证列顺序稳定
 	customFieldNames []string
+	header           []string
+	rows             int
+	commitSeq        uint64
+	headerHash       string
 }
 
 // labelEntry 单个标签列的元信息
@@ -47,6 +57,253 @@ type labelEntry struct {
 // NewTraversalCsvWriter 创建遍历 CSV 写入器（构造时不打开文件）
 func NewTraversalCsvWriter() *TraversalCsvWriter {
 	return &TraversalCsvWriter{}
+}
+
+func (w *TraversalCsvWriter) Open(ctx context.Context, session ports.TraversalOutputSession) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file != nil {
+		return errors.New("遍历 CSV 会话已打开")
+	}
+	if session.Path == "" {
+		return errors.New("遍历 CSV 路径不能为空")
+	}
+	w.options = traversal.SaveOptions{SavePointId: true, SaveTimestamp: true, SaveRawPressure: true, SaveCalculatedResult: true}
+	w.header = w.buildHeader()
+	w.headerHash = hashCSVRecord(w.header)
+	if session.HeaderHash != "" && session.HeaderHash != w.headerHash {
+		return errors.New("遍历 CSV 表头摘要不匹配")
+	}
+	if session.Mode == ports.TraversalOutputResume {
+		return w.openResumeLocked(session)
+	}
+	return w.openCreateLocked(session.Path)
+}
+
+func (w *TraversalCsvWriter) Append(ctx context.Context, result traversal.PointResult) (ports.TraversalRowSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.TraversalRowSummary{}, err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.writer == nil || w.file == nil {
+		return ports.TraversalRowSummary{}, errors.New("遍历 CSV 写入器未初始化")
+	}
+	row := w.buildRow(result)
+	if err := w.writer.Write(row); err != nil {
+		return ports.TraversalRowSummary{}, fmt.Errorf("写入遍历 CSV 行失败: %w", err)
+	}
+	w.writer.Flush()
+	if err := w.writer.Error(); err != nil {
+		return ports.TraversalRowSummary{}, fmt.Errorf("刷新遍历 CSV 行失败: %w", err)
+	}
+	w.rows++
+	w.commitSeq = result.CommitSeq
+	return ports.TraversalRowSummary{CommitSeq: result.CommitSeq, RowHash: hashCSVRecord(row)}, nil
+}
+
+func (w *TraversalCsvWriter) Sync(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.writer == nil || w.file == nil {
+		return errors.New("遍历 CSV 写入器未初始化")
+	}
+	if err := w.flushLocked("刷新遍历 CSV 文件失败"); err != nil {
+		return err
+	}
+	if err := w.file.Sync(); err != nil {
+		return fmt.Errorf("同步遍历 CSV 文件失败: %w", err)
+	}
+	return nil
+}
+
+func (w *TraversalCsvWriter) Inspect(ctx context.Context) (ports.TraversalOutputState, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.TraversalOutputState{}, err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return ports.TraversalOutputState{}, errors.New("遍历 CSV 写入器未初始化")
+	}
+	return ports.TraversalOutputState{Path: w.path, HeaderHash: w.headerHash, Rows: w.rows, CommitSeq: w.commitSeq, TailValid: true}, nil
+}
+
+func (w *TraversalCsvWriter) TruncateAfter(ctx context.Context, commitSeq uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.truncateAfterLocked(commitSeq)
+}
+
+func (w *TraversalCsvWriter) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return w.FinalizeTraversal()
+}
+
+func (w *TraversalCsvWriter) openCreateLocked(path string) error {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("创建遍历输出目录失败: %w", err)
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("创建遍历 CSV 文件失败: %w", err)
+	}
+	w.file, w.path, w.writer = file, path, csv.NewWriter(file)
+	if _, err := file.Write(utf8BOM); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("写入 BOM 失败: %w", err)
+	}
+	if err := w.writer.Write(w.header); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("写入遍历 CSV 表头失败: %w", err)
+	}
+	if err := w.flushLocked("刷新遍历 CSV 表头失败"); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return nil
+}
+
+func (w *TraversalCsvWriter) openResumeLocked(session ports.TraversalOutputSession) error {
+	records, err := readCSVRecords(session.Path)
+	if err != nil {
+		return err
+	}
+	if len(records) == 0 || !equalCSVRecord(records[0], w.header) {
+		return errors.New("遍历 CSV 表头不匹配")
+	}
+	if uint64(len(records)-1) < session.CommittedSeq {
+		return fmt.Errorf("遍历 CSV 行数少于提交水位: rows=%d commitSeq=%d", len(records)-1, session.CommittedSeq)
+	}
+	file, err := os.OpenFile(session.Path, os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("打开遍历 CSV 恢复文件失败: %w", err)
+	}
+	w.file, w.path, w.writer = file, session.Path, csv.NewWriter(file)
+	w.rows, w.commitSeq = len(records)-1, uint64(len(records)-1)
+	if err := w.truncateAfterLocked(session.CommittedSeq); err != nil {
+		_ = file.Close()
+		w.file, w.writer = nil, nil
+		return err
+	}
+	return nil
+}
+
+// truncateAfterLocked 原子化截断 CSV 文件至 commitSeq 对应的提交水位。
+//
+// 实现策略（与 file_checkpoint_store.go 的原子替换模式对齐）：
+//  1. 先关闭当前打开的文件句柄（Windows 上替换文件需要独占）
+//  2. 将保留的 BOM + records[:commitSeq+1] 写入同目录临时文件
+//  3. Sync + Close 临时文件，确保数据落盘
+//  4. 用 MoveFileEx (Windows) / os.Rename (Unix) 原子替换原文件
+//  5. 重新以追加模式打开文件，定位到末尾，重建 csv.Writer
+//
+// 这样即使在第 3 步前崩溃，原文件仍完整；在第 4 步崩溃则原文件被临时文件覆盖
+// （临时文件已 Sync，数据完整）。避免了原实现 Truncate+Seek+Write 在原文件上
+// 操作时崩溃导致半写入状态的问题。
+func (w *TraversalCsvWriter) truncateAfterLocked(commitSeq uint64) error {
+	if w.file == nil {
+		return errors.New("遍历 CSV 写入器未初始化")
+	}
+	records, err := readCSVRecords(w.path)
+	if err != nil {
+		return err
+	}
+	if commitSeq > uint64(len(records)-1) {
+		return fmt.Errorf("提交水位超出遍历 CSV 行数: rows=%d commitSeq=%d", len(records)-1, commitSeq)
+	}
+
+	// 构造保留行：BOM + 表头 + commitSeq 行数据
+	var buffer bytes.Buffer
+	buffer.Write(utf8BOM)
+	writer := csv.NewWriter(&buffer)
+	for _, record := range records[:commitSeq+1] {
+		if err := writer.Write(record); err != nil {
+			return err
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return err
+	}
+
+	// 关闭当前句柄：Windows 上替换文件需要独占；Unix 上保留句柄替换文件不会报错但语义混乱
+	if err := w.flushLocked("刷新遍历 CSV 失败"); err != nil {
+		return err
+	}
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("关闭遍历 CSV 文件失败: %w", err)
+	}
+	w.file, w.writer = nil, nil
+
+	// 原子替换原文件
+	if err := atomicReplaceFile(w.path, buffer.Bytes(), 0o644); err != nil {
+		// 原子替换失败后，writer 已无效，调用方应停止使用本 sink
+		return fmt.Errorf("原子替换遍历 CSV 失败: %w", err)
+	}
+
+	// 重新以追加模式打开文件，定位到末尾
+	file, err := os.OpenFile(w.path, os.O_RDWR|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("重新打开遍历 CSV 文件失败: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("定位遍历 CSV 末尾失败: %w", err)
+	}
+	w.file = file
+	w.writer = csv.NewWriter(file)
+	w.rows, w.commitSeq = int(commitSeq), commitSeq
+	return nil
+}
+
+func readCSVRecords(path string) ([][]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取遍历 CSV 失败: %w", err)
+	}
+	if !bytes.HasPrefix(data, utf8BOM) {
+		return nil, errors.New("遍历 CSV 缺少 UTF-8 BOM")
+	}
+	records, err := csv.NewReader(bytes.NewReader(data[len(utf8BOM):])).ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("解析遍历 CSV 失败: %w", err)
+	}
+	return records, nil
+}
+
+func equalCSVRecord(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func hashCSVRecord(record []string) string {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write(record)
+	writer.Flush()
+	sum := sha256.Sum256(buffer.Bytes())
+	return hex.EncodeToString(sum[:])
 }
 
 // resolveOutputPath 根据 SavePath/SaveFileName/TaskID 计算最终 CSV 文件路径

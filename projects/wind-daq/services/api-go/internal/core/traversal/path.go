@@ -79,21 +79,20 @@ func maxSegments(a, b Point, step float64) int {
 
 // GenerateGridPath 生成网格路径（旧接口兼容）
 func GenerateGridPath(cfg GridConfig) ([]Point, error) {
-	if cfg.XStep <= 0 || cfg.YStep <= 0 {
-		return nil, fmt.Errorf("step must be greater than zero")
-	}
 	if cfg.XStart > cfg.XEnd || cfg.YStart > cfg.YEnd {
 		return nil, fmt.Errorf("start must be less than or equal to end")
 	}
-	xSteps := int(math.Round((cfg.XEnd - cfg.XStart) / cfg.XStep))
-	ySteps := int(math.Round((cfg.YEnd - cfg.YStart) / cfg.YStep))
-	path := make([]Point, 0, (xSteps+1)*(ySteps+1))
-	for xi := 0; xi <= xSteps; xi++ {
-		x := cfg.XStart + float64(xi)*cfg.XStep
-		for yi := 0; yi <= ySteps; yi++ {
-			y := cfg.YStart + float64(yi)*cfg.YStep
-			path = append(path, Point{X: x, Y: y, Z: cfg.ZStart})
-		}
+	xs, err := StrictStepValues(cfg.XStart, cfg.XEnd, []StepSegment{{Start: cfg.XStart, End: cfg.XEnd, Step: cfg.XStep}})
+	if err != nil {
+		return nil, fmt.Errorf("x axis: %w", err)
+	}
+	ys, err := StrictStepValues(cfg.YStart, cfg.YEnd, []StepSegment{{Start: cfg.YStart, End: cfg.YEnd, Step: cfg.YStep}})
+	if err != nil {
+		return nil, fmt.Errorf("y axis: %w", err)
+	}
+	path := GridPointsFromAxes(xs, ys)
+	for index := range path {
+		path[index].Z = cfg.ZStart
 	}
 	return path, nil
 }
@@ -103,6 +102,75 @@ type StepSegment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Step  float64 `json:"step"`
+}
+
+func StrictStepValues(start, end float64, segments []StepSegment) ([]float64, error) {
+	if !isFinite(start) || !isFinite(end) {
+		return nil, fmt.Errorf("bounds must be finite")
+	}
+	if start == end {
+		return []float64{start}, nil
+	}
+	if len(segments) == 0 {
+		return []float64{start, end}, nil
+	}
+
+	ascending := start < end
+	values := make([]float64, 0)
+	// appendUnique 全局去重：跨段重复值也要过滤。
+	// 原实现仅与最后一个值比较，相邻段衔接处可能去重，但段中间出现的重复值
+	//（如 segment1 已生成 5.0，segment2 中部又出现 5.0）会被静默追加，
+	// 导致网格点重复采样。改用 ContainsFloat 全局扫描，与 StepValues 风格一致。
+	// 网格点数量通常在数百到数千级别，O(n²) 开销可忽略；浮点数作 map key
+	// 存在精度问题，故不使用 map 加速。
+	appendUnique := func(value float64) {
+		if !ContainsFloat(values, value) {
+			values = append(values, value)
+		}
+	}
+	for _, segment := range segments {
+		if !isFinite(segment.Start) || !isFinite(segment.End) || !isFinite(segment.Step) || segment.Step <= 0 {
+			return nil, fmt.Errorf("segment bounds and step must be finite and step greater than zero")
+		}
+		segmentStart, segmentEnd := segment.Start, segment.End
+		if ascending {
+			segmentStart = math.Max(segmentStart, start)
+			segmentEnd = math.Min(segmentEnd, end)
+			if segmentStart > segmentEnd {
+				continue
+			}
+			appendUnique(segmentStart)
+			for value := segmentStart + segment.Step; value < segmentEnd-1e-9; value += segment.Step {
+				appendUnique(value)
+			}
+			appendUnique(segmentEnd)
+			continue
+		}
+		segmentStart = math.Min(segmentStart, start)
+		segmentEnd = math.Max(segmentEnd, end)
+		if segmentStart < segmentEnd {
+			continue
+		}
+		appendUnique(segmentStart)
+		for value := segmentStart - segment.Step; value > segmentEnd+1e-9; value -= segment.Step {
+			appendUnique(value)
+		}
+		appendUnique(segmentEnd)
+	}
+	if len(values) == 0 {
+		return []float64{start, end}, nil
+	}
+	if math.Abs(values[0]-start) > 1e-9 {
+		values = append([]float64{start}, values...)
+	}
+	if math.Abs(values[len(values)-1]-end) > 1e-9 {
+		values = append(values, end)
+	}
+	return values, nil
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 // StepValues 从多个步进段生成步进值序列
@@ -265,8 +333,8 @@ func ContainsFloat(values []float64, needle float64) bool {
 
 // LayoutConfig 遍历布局配置
 type LayoutConfig struct {
-	Pattern    string           `json:"pattern"`
-	SnakeOrder bool             `json:"snakeOrder,omitempty"`
+	Pattern    string `json:"pattern"`
+	SnakeOrder bool   `json:"snakeOrder,omitempty"`
 	// PrimaryAxis 控制矩形/线型布局的走线主轴（仅 line / rectangle 消费，扇形不消费）：
 	//   - PrimaryAxisX ("x")：先沿 X 走完一条线再切换 Y
 	//   - PrimaryAxisY ("y")：先沿 Y 走完一条线再切换 X（原始行为）
@@ -324,50 +392,67 @@ type CustomLayout struct {
 
 // PointsFromLayout 根据布局配置生成遍历点
 func PointsFromLayout(cfg LayoutConfig) []Point {
+	points, _ := StrictPointsFromLayout(cfg)
+	return points
+}
+
+func StrictPointsFromLayout(cfg LayoutConfig) ([]Point, error) {
 	switch cfg.Pattern {
 	case "line":
 		if cfg.Line == nil {
-			return nil
+			return nil, fmt.Errorf("line layout is required")
 		}
-		// line 模式仅沿 X 轴布点，Y 固定为 0（详见 LineLayout 注释）。
-		// 不再消费 PrimaryAxis / SnakeOrder：单行点位无走线方向概念。
-		// 旧配置若携带 SnakeOrder=true 也会被忽略，避免单行点位产生无意义的蛇形走线。
-		// primaryAxis 固定传 "x"：ys 只有一个值时 GridPointsFromAxesOrdered 的主轴参数不影响结果。
-		xs := StepValues(cfg.Line.StartX, cfg.Line.EndX, cfg.Line.XStepSegments)
-		ys := []float64{0}
-		return GridPointsFromAxesOrdered(xs, ys, "x")
+		xs, err := StrictStepValues(cfg.Line.StartX, cfg.Line.EndX, cfg.Line.XStepSegments)
+		if err != nil {
+			return nil, fmt.Errorf("line x axis: %w", err)
+		}
+		return GridPointsFromAxesOrdered(xs, []float64{0}, "x"), nil
 	case "rectangle":
 		if cfg.Rectangle == nil {
-			return nil
+			return nil, fmt.Errorf("rectangle layout is required")
 		}
-		xs := StepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments)
-		ys := StepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments)
+		xs, err := StrictStepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments)
+		if err != nil {
+			return nil, fmt.Errorf("rectangle x axis: %w", err)
+		}
+		ys, err := StrictStepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments)
+		if err != nil {
+			return nil, fmt.Errorf("rectangle y axis: %w", err)
+		}
 		if cfg.SnakeOrder {
-			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
+			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis), nil
 		}
-		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
+		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis), nil
 	case "sector":
 		if cfg.Sector == nil {
-			return nil
+			return nil, fmt.Errorf("sector layout is required")
 		}
-		radii := StepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
-		angles := StepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
-		// 扇形布局不消费 PrimaryAxis，保持原“外层半径、内层角度”语义
+		radii, err := StrictStepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
+		if err != nil {
+			return nil, fmt.Errorf("sector radius: %w", err)
+		}
+		angles, err := StrictStepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
+		if err != nil {
+			return nil, fmt.Errorf("sector angle: %w", err)
+		}
 		if cfg.SnakeOrder {
-			return SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+			return SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles), nil
 		}
-		return SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+		return SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles), nil
 	case "custom":
-		if cfg.Custom == nil {
-			return nil
+		if cfg.Custom == nil || len(cfg.Custom.Points) == 0 {
+			return nil, fmt.Errorf("custom points are required")
 		}
 		points := make([]Point, 0, len(cfg.Custom.Points))
 		for _, point := range cfg.Custom.Points {
+			if !isFinite(point.X) || !isFinite(point.Y) || !isFinite(point.Z) || !isFinite(point.U) {
+				return nil, fmt.Errorf("custom point coordinates must be finite")
+			}
 			points = append(points, Point{X: point.X, Y: point.Y, Z: point.Z, U: point.U})
 		}
-		return points
+		return points, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("unsupported layout pattern %q", cfg.Pattern)
 	}
 }
 

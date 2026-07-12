@@ -96,17 +96,35 @@ type CalculatedResult struct {
 	Mach  float64 `json:"mach"`
 }
 
+type PointStatus string
+
+const (
+	PointStatusCompleted PointStatus = "completed"
+	PointStatusSkipped   PointStatus = "skipped"
+	PointStatusFailed    PointStatus = "failed"
+)
+
+func (s PointStatus) IsCommitted() bool {
+	return s == PointStatusCompleted || s == PointStatusSkipped
+}
+
 // PointResult 单点测试结果
 type PointResult struct {
-	PointIndex       int               `json:"pointIndex"`
-	Point            Point             `json:"point"`
-	Timestamp        int64             `json:"timestamp"`
-	Values           map[int]float64   `json:"values"`
-	SampleCount      int               `json:"sampleCount"`
-	DwellTimeElapsed int               `json:"dwellTimeElapsed"`
-	Calculated       *CalculatedResult `json:"calculated,omitempty"`
-	// CustomValues 用户自定义字段值（key=字段名，value=字符串化值）
-	CustomValues map[string]string `json:"customValues,omitempty"`
+	TaskID             string            `json:"taskId,omitempty"`
+	CommitSeq          uint64            `json:"commitSeq,omitempty"`
+	PointIndex         int               `json:"pointIndex"`
+	PointStatus        PointStatus       `json:"pointStatus,omitempty"`
+	Point              Point             `json:"point"`
+	Timestamp          int64             `json:"timestamp"`
+	StartedAt          int64             `json:"startedAt,omitempty"`
+	CompletedAt        int64             `json:"completedAt,omitempty"`
+	Values             map[int]float64   `json:"values"`
+	SampleCount        int               `json:"sampleCount"`
+	DwellTimeElapsed   int               `json:"dwellTimeElapsed"`
+	Calculated         *CalculatedResult `json:"calculated,omitempty"`
+	ValidationWarnings []string          `json:"validationWarnings,omitempty"`
+	CSVRowHash         string            `json:"csvRowHash,omitempty"`
+	CustomValues       map[string]string `json:"customValues,omitempty"`
 }
 
 // ErrorCode 遍历测试错误码
@@ -125,6 +143,8 @@ type Status struct {
 	TaskID                  string        `json:"taskId"`
 	State                   State         `json:"state"`
 	CurrentPoint            int           `json:"currentPoint"`
+	CommittedPoints         int           `json:"committedPoints"`
+	CurrentPointIndex       int           `json:"currentPointIndex"`
 	CurrentPointCoordinates *Point        `json:"currentPointCoordinates,omitempty"`
 	CurrentPointPhase       PointPhase    `json:"currentPointPhase,omitempty"`
 	TotalPoints             int           `json:"totalPoints"`
@@ -135,15 +155,40 @@ type Status struct {
 	ValidationWarnings      []string      `json:"validationWarnings,omitempty"`
 }
 
+const CheckpointVersion = 2
+
+type TraversalRunSnapshot struct {
+	Config               Config                `json:"config"`
+	Validation           *DataValidationConfig `json:"validation,omitempty"`
+	Stabilization        *StabilizationConfig  `json:"stabilization,omitempty"`
+	InterpolatorIdentity string                `json:"interpolatorIdentity,omitempty"`
+	SaveOptions          *SaveOptions          `json:"saveOptions,omitempty"`
+	TotalPoints          int                   `json:"totalPoints"`
+	CommittedPoints      int                   `json:"committedPoints"`
+	CommitSeq            uint64                `json:"commitSeq"`
+	CSVPath              string                `json:"csvPath"`
+	ResultLogPath        string                `json:"resultLogPath"`
+	CSVHeaderHash        string                `json:"csvHeaderHash,omitempty"`
+	LastCommitHash       string                `json:"lastCommitHash,omitempty"`
+}
+
 // Checkpoint 断点恢复信息
+// Config 字段同时写入 Snapshot.Config，读取侧优先读 Config，
+// 为空时回退到 Snapshot.Config（兼容 v2 新路径只写 Snapshot 的场景）。
 type Checkpoint struct {
-	TaskID          string `json:"taskId"`
-	Config          []byte `json:"config,omitempty"` // 完整测试配置（用于恢复，原始 JSON 字节）
-	CompletedPoints int    `json:"completedPoints"`
-	TotalPoints     int    `json:"totalPoints"`
-	LastPoint       *Point `json:"lastPoint,omitempty"`
-	SavePath        string `json:"savePath"`
-	CreatedAt       int64  `json:"createdAt"`
+	Version         int                  `json:"version"`
+	TaskID          string               `json:"taskId"`
+	State           State                `json:"state"`
+	Snapshot        TraversalRunSnapshot `json:"snapshot"`
+	// Config 保存遍历配置的原始 JSON 字节，由 usecase 层通过 json.Marshal 生成。
+	// 使用 []byte 而非 json.RawMessage：core/ 禁止导入 encoding/json（六边形架构硬约束）。
+	// JSON 序列化时 []byte 会编码为 base64 字符串，反序列化时自动解码，仍可正常往返。
+	Config          []byte               `json:"config,omitempty"`
+	CompletedPoints int                  `json:"completedPoints"`
+	TotalPoints     int                  `json:"totalPoints"`
+	LastPoint       *Point               `json:"lastPoint,omitempty"`
+	SavePath        string               `json:"savePath"`
+	CreatedAt       int64                `json:"createdAt"`
 }
 
 // DataValidationConfig 数据验证配置

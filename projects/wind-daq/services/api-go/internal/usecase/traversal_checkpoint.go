@@ -78,8 +78,9 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 	}
 
 	checkpoint := traversal.Checkpoint{
+		Version:         traversal.CheckpointVersion,
 		TaskID:          taskID,
-		Config:          []byte(configPayload),
+		Config:          json.RawMessage(configPayload),
 		CompletedPoints: completedCount,
 		TotalPoints:     len(points),
 		LastPoint:       lastPoint,
@@ -176,13 +177,16 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		return "", err
 	}
 
-	// 从断点的 Config 字段恢复完整配置
+	// 从断点恢复完整配置：
+	// 优先读顶层 Config（旧路径写入），为空时回退到 Snapshot.Config（v2 新路径写入）
 	var config traversal.Config
 	if len(cp.Config) > 0 {
 		if err := json.Unmarshal(cp.Config, &config); err != nil {
 			slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
 			return "", fmt.Errorf("parse checkpoint config: %w", err)
 		}
+	} else if cp.Snapshot.Config.TaskID != "" {
+		config = cp.Snapshot.Config
 	} else {
 		err := fmt.Errorf("checkpoint config is empty")
 		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
@@ -206,7 +210,14 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 
 	m.mu.Lock()
 	m.config = config
-	m.configRaw = append(json.RawMessage(nil), cp.Config...)
+	// 优先使用顶层 Config 原始 JSON，为空时从 Snapshot.Config 重新序列化
+	if len(cp.Config) > 0 {
+		m.configRaw = append(json.RawMessage(nil), cp.Config...)
+	} else {
+		if raw, err := json.Marshal(config); err == nil {
+			m.configRaw = append(json.RawMessage(nil), raw...)
+		}
+	}
 	m.isStopped = false
 	m.isPaused = false
 	m.motionPauseCancelled = false
