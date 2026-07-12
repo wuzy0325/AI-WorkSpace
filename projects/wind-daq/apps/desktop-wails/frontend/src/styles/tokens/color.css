@@ -56,6 +56,9 @@
   --bg-grid-dot: color-mix(in srgb, var(--border-default) 28%, transparent);
 
   --shadow-panel: 0 10px 30px color-mix(in srgb, #020617 28%, transparent);
+  /* 遮罩/模态框用深色 overlay 阴影：通过 color-mix 与主题无关，深浅色模式均可用 */
+  --shadow-overlay-md: 0 25px 50px color-mix(in srgb, #020617 30%, transparent);
+  --shadow-overlay-lg: 0 32px 64px -12px color-mix(in srgb, #020617 50%, transparent);
 
   --color-success: var(--accent-success);
   --color-danger: var(--accent-danger);

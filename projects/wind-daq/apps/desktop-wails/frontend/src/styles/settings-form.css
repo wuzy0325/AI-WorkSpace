@@ -4,22 +4,30 @@
  * RecordingSettingsSection）共用，故放在全局作用域而非 <style scoped>，
  * 避免 scoped 样式无法穿透子组件导致布局回归。
  * 类名均带设置表单语义前缀，全局污染风险低。
+ *
+ * 整改要点：
+ * 1. 表单字段改为水平栅格（120px 标签列 + 1fr 控件列），英文标签不被压缩换行
+ * 2. 文件滚动保存等短字段支持并排（.form-row--inline）
+ * 3. 滑块行改为三列网格（滑块 | 输入+单位 | 容量徽章），消除右侧空白
+ * 4. 条件行固定三列网格，开关后输入框位置不跳动
+ * 5. 开关行套用 form-field 占位，与上方输入框左对齐
  */
 
-/* ===== 表单卡片 ===== — 紧凑密度：覆盖 UiPanel 默认 padding 为 8px 12px */
+/* ===== 表单卡片 ===== — 紧凑密度：覆盖 UiPanel 默认 padding */
 .form-card {
   font-size: var(--font-size-sm);
 }
 
-.form-card :deep(.n-card__content) {
-  padding: var(--space-2) var(--space-3);
+/* Naive UI 的 .n-card__content 等是全局类名，无需 :deep() */
+.form-card .n-card__content {
+  padding: var(--space-1-5) var(--space-2-5);
 }
 
-.form-card :deep(.n-card-header) {
-  padding: var(--space-1-5) var(--space-3);
+.form-card .n-card-header {
+  padding: var(--space-1) var(--space-2-5);
 }
 
-.form-card :deep(.n-card-header__main) {
+.form-card .n-card-header__main {
   font-size: var(--font-size-xs);
 }
 
@@ -42,21 +50,144 @@
   gap: var(--space-1-5);
 }
 
+/* ===== 水平栅格字段 =====
+ * 用于刷新率/波形图等标签短、控件长的场景：标签列 + 控件列。
+ * 标签列固定 90px（中文短标签够用），英文场景不压缩换行。
+ * 仅作用于 .form-card 内部，不影响其他场景的 UiFormField。
+ * 双重类名提高特异性，压过 UiFormField scoped 样式的 margin-bottom */
+.form-card .ui-form-field.ui-form-field {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-1-5);
+  margin-bottom: 0;
+}
+
+.form-card .ui-form-field__label {
+  /* 标签右对齐，垂直居中对齐控件高度 */
+  padding-top: calc((var(--density-control-height) - var(--line-height-base) * var(--font-size-2xs)) / 2);
+  margin-bottom: 0;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  text-align: right;
+  line-height: var(--line-height-base);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.form-card .ui-form-field__control {
+  min-width: 0;
+}
+
+.form-card .ui-form-field__error,
+.form-card .ui-form-field__hint {
+  grid-column: 2;
+  margin-top: var(--space-0-5);
+  font-size: var(--font-size-micro);
+  line-height: var(--line-height-base);
+}
+
+/* ===== 垂直堆叠字段 =====
+ * 用于数据保存、文件滚动保存等需要与条件行左侧对齐线统一的场景。
+ * 标签在控件上方，所有内容从卡片左内边距开始，不再额外缩进标签列。 */
+.form-fields--stacked .ui-form-field.ui-form-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-0-5);
+}
+
+.form-fields--stacked .ui-form-field__label {
+  padding-top: 0;
+  text-align: left;
+}
+
+.form-fields--stacked .ui-form-field__error,
+.form-fields--stacked .ui-form-field__hint {
+  grid-column: auto;
+}
+
+.form-card .ui-form-field__error {
+  color: var(--accent-danger);
+}
+
+.form-card .ui-form-field__hint {
+  color: var(--text-tertiary);
+}
+
+/* ===== 紧凑型双字段并排 =====
+ * 用于文件滚动保存等短字段，两字段一行消除右侧空白。
+ * 在 form-fields--stacked 内为垂直标签布局。 */
+.form-row--inline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.form-row--inline > .ui-form-field.ui-form-field {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.form-row--inline > .ui-form-field__label {
+  text-align: left;
+  padding-top: 0;
+  white-space: nowrap;
+}
+
+/* 在垂直堆叠容器内覆盖为垂直布局 */
+.form-fields--stacked.form-row--inline {
+  display: grid;
+}
+
+.form-fields--stacked.form-row--inline > .ui-form-field.ui-form-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-0-5);
+}
+
+/* ===== 无标签占位字段 =====
+ * 用于开关行等无需标签但需要与上方输入框左对齐的场景 */
+.form-field--no-label {
+  grid-template-columns: 90px minmax(0, 1fr);
+}
+
+.form-field--no-label .ui-form-field__label {
+  /* 空标签占位，仅占宽度不渲染文字 */
+  visibility: hidden;
+  padding-top: 0;
+}
+
 /* ===== 输入框组合 ===== */
 .input-with-action {
   display: flex;
   gap: var(--space-2);
+  /* 限制最大宽度，避免短内容输入框在宽卡片中过度拉伸，造成标签与控件间视觉空白 */
+  max-width: 24rem;
 }
 
-.input-with-action :deep(.n-input) {
+/* Naive UI 的 .n-input 是全局类名，无需 :deep() */
+.input-with-action .n-input {
   flex: 1;
   min-width: 0;
 }
 
 .input-with-unit {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  width: 100%;
+}
+
+/* Naive UI 的 .n-input-number 是全局类名，无需 :deep()
+ * 注意：:deep() 仅在 Vue <style scoped> 中有效，全局 CSS 中为无效选择器 */
+.input-with-unit .n-input-number {
+  flex: 1 1 auto;
+  min-width: 3.5rem;
+  max-width: 7rem;
 }
 
 .input-unit {
@@ -65,10 +196,11 @@
   white-space: nowrap;
 }
 
-/* ===== 开关行 ===== — 紧凑密度：padding 收紧到 6px 10px */
+/* ===== 开关行 ===== — 紧凑密度：padding 收紧 */
 .toggle-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-1-5) var(--space-2-5);
   border-radius: var(--radius-md);
@@ -84,44 +216,98 @@
 /* 字段级错误提示 */
 .field-error {
   margin: calc(var(--space-1) * -1) 0 0 var(--space-5);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-micro);
   color: var(--accent-danger);
   line-height: var(--line-height-base);
 }
 
 /* 提示行 */
 .hint-row {
-  padding: var(--space-2) 0 0;
+  padding: var(--space-1) 0 0;
 }
 
 .hint-text {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-micro);
   color: var(--text-muted);
 }
 
-/* 空状态提示 */
+/* ===== 空状态提示 */
 .empty-hint {
-  padding: var(--space-2) 0;
+  padding: var(--space-1) 0;
 }
 
 .empty-hint span {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
   line-height: var(--line-height-base);
 }
 
-/* ===== 刷新率区域 ===== — 紧凑密度：slider 与数值间距 12px */
-.refresh-row {
+/* ===== 左侧/顶部分段控制器 =====
+ * GlobalSettingsModal 左侧标签导航与 DeviceManagementDrawer 顶部编辑 tab 共用。
+ * 容器 .settings-tabs 决定排列方向（column / inline-flex），按钮样式统一在此。
+ * 抽出到全局避免两个组件 scoped style 重复定义，降低后续视觉规范变更维护成本。 */
+.settings-tabs {
   display: flex;
+}
+
+.settings-tab {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
+  text-align: left;
+}
+
+.settings-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+
+.settings-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-soft), 0 0 0 4px var(--focus-ring);
+}
+
+.settings-tab--active {
+  color: var(--accent-primary);
+  background: var(--accent-primary-muted);
+  font-weight: var(--font-weight-semibold);
+}
+
+.settings-tab--active:hover {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+/* ===== 滑块行 =====
+ * 两列网格（滑块 | 输入+单位），容量预览放在 slider 下方 label 中间，
+ * 避免在输入右侧加徽章导致行拥挤、上下不美观。 */
+.refresh-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1-5);
 }
 
 .refresh-slider {
-  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-0-5);
+  /* 强制最小高度，避免被右侧输入框撑高的行压缩到看不见 slider track */
+  min-height: 40px;
+  justify-content: center;
+}
+
+.refresh-slider .n-slider {
+  margin: 0;
 }
 
 .refresh-labels {
@@ -130,8 +316,9 @@
 }
 
 .refresh-label {
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-micro);
   color: var(--text-muted);
+  line-height: 1.2;
 }
 
 .refresh-label--highlight {
@@ -143,36 +330,45 @@
 }
 
 .refresh-value {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   flex-shrink: 0;
 }
 
-/* ===== 主题切换 ===== */
-.theme-switch {
-  display: flex;
-  gap: var(--space-2);
+/* 刷新率/波形图输入框固定宽度，避免数字输入框过长 */
+.refresh-value .n-input-number {
+  width: 4rem;
 }
 
-/* ===== 语言切换 ===== */
+/* ===== 主题切换：改为分段控制器样式 ===== */
+.theme-switch {
+  display: inline-flex;
+  padding: var(--space-0-5);
+  gap: var(--space-0-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+}
+
+/* ===== 语言切换：分段控制器 ===== */
 .locale-switch {
-  display: flex;
-  align-items: center;
-  padding: var(--space-1);
+  display: inline-flex;
+  padding: var(--space-0-5);
   background: var(--bg-panel-strong);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-default);
-  gap: var(--space-1);
+  gap: var(--space-0-5);
   width: fit-content;
 }
 
 .locale-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--font-size-2xs);
+  height: calc(var(--density-control-height) - 2px);
+  padding: 0 var(--space-2-5);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   border-radius: var(--radius-md);
@@ -181,11 +377,11 @@
   background: transparent;
   cursor: pointer;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .locale-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-panel);
 }
 
 .locale-btn:focus-visible {
@@ -200,10 +396,6 @@
   box-shadow: var(--shadow-panel);
 }
 
-.locale-switch .locale-btn.locale-btn--active:hover {
-  background: var(--bg-panel-strong);
-}
-
 /* ===== 条件行列表 ===== — 紧凑密度：行间 6px */
 .conditions-list {
   display: flex;
@@ -211,11 +403,15 @@
   gap: var(--space-1-5);
 }
 
-/* 紧凑密度：条件行 padding 收紧到 6px 10px */
+/* 整改：条件行改为两列网格（左侧标签区 | 右侧输入区），
+ * 内容从卡片左内边距开始，与数据保存卡片对齐线统一，
+ * 开关后输入框位置不跳动 */
 .condition-row {
-  display: flex;
+  display: grid;
+  /* 两列：左侧标签区自适应 | 右侧固定宽度的输入区，
+   * 确保三个条件行的输入框左边缘和单位都对齐 */
+  grid-template-columns: 1fr auto;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-1-5) var(--space-2-5);
   border-radius: var(--radius-md);
@@ -265,10 +461,10 @@
 }
 
 .condition-row__main {
+  /* 左侧标签区：指示器 + 标签自然左对齐 */
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex: 1;
   min-width: 0;
 }
 
@@ -284,10 +480,24 @@
 }
 
 .condition-row__input {
+  /* 固定宽度输入区，三个条件行的输入框和单位都严格对齐 */
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  width: 8rem;
   flex-shrink: 0;
+}
+
+/* 条件行中的数字输入框固定 5.5rem，避免内容长度影响视觉宽度 */
+.condition-row__input .n-input-number {
+  flex: 1 1 5.5rem;
+  min-width: 0;
+}
+
+.condition-row__input .input-unit {
+  /* 单位固定宽度并对齐，避免不同单位长度导致右侧参差 */
+  width: 1.75rem;
+  text-align: left;
 }
 
 .icon-check {

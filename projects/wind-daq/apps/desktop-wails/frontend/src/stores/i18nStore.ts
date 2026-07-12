@@ -117,6 +117,8 @@ const zh: Record<string, string> = {
   toggleAll: '全选',
   apply: '确定',
   pts: '点',
+  approx: '约',
+  capped: '上限',
   bufferWindowLabel: '缓冲区',
   waveformBufferSizeLabel: '波形图缓冲区点数',
   waveformBufferSizeHint: '较大的缓冲区可显示更长时间趋势，但会占用更多内存',
@@ -748,6 +750,33 @@ const zh: Record<string, string> = {
   dev_configSynced: '配置已同步',
   dev_manageDevices: '管理设备',
 
+  // DAQ-T-1603 专属配置字段（dev_t1603_）
+  dev_t1603_sectionTitle: 'DAQ-T-1603 采集参数',
+  dev_t1603_sectionDesc: '通道掩码、采样率、二进制格式与触发配置',
+  dev_t1603_channelMask: '通道掩码',
+  dev_t1603_channelMaskPlaceholder: '0000-FFFF',
+  dev_t1603_samplingRate: '采样率',
+  dev_t1603_binaryFormat: '二进制格式',
+  dev_t1603_triggerMode: '触发模式',
+  dev_t1603_triggerEdge: '触发边沿',
+  dev_t1603_triggerCount: '触发计数',
+  dev_t1603_showTimestamp: '显示时间戳',
+  dev_t1603_openCircuitCheck: '开路检测',
+  dev_t1603_openCircuitPlaceholder: '十六进制掩码',
+  dev_t1603_triggerModeSoftware: '软件触发',
+  dev_t1603_triggerModeHardware: '硬件触发',
+  dev_t1603_triggerEdgeRising: '上升沿',
+  dev_t1603_triggerEdgeFalling: '下降沿',
+  dev_t1603_triggerEdgeToggle: '跳变',
+
+  // DAQ-P-1603 专属配置字段（dev_p1603_）
+  dev_p1603_samplingRate: '采样率 (Hz)',
+  dev_p1603_samplingRateRangeHint: '范围 {min} ~ {max} Hz',
+  dev_p1603_sensorType: '传感器类型',
+  dev_p1603_sensorTypePressure: '压力',
+  dev_p1603_sensorTypeTemperature: '温度',
+  dev_p1603_temperatureUnitPlaceholder: '℃',
+
   // 主面板与工作流（app_ / wf_）
   app_independentWindowNotSupported: '当前环境不支持独立窗口',
   app_openIndependentWindowFailed: '启动独立窗口失败',
@@ -845,6 +874,13 @@ const zh: Record<string, string> = {
   set_recommendedBuffer: '推荐 100~500 点',
   set_refreshRateRangeError: '刷新率应在 {min}~{max} Hz 之间',
   set_waveformBufferRangeError: '缓冲区点数应在 {min}~{max} 之间',
+  // 波形图时间窗口配置（与刷新率解耦：容量 = 时间窗口 × 刷新率）
+  // 缺失这些 key 会导致 UiFormField 的 label 不渲染，grid 标签列塌缩，slider 宽度被挤为 0
+  historyWindowLabel: '时间窗口',
+  historyWindowHint: '波形图横轴显示的秒数，容量 = 时间窗口 × 刷新率',
+  historyWindowRangeError: '时间窗口应在 {min}~{max} 秒之间',
+  set_recommendedWindow: '推荐 15~60 秒',
+  sec: '秒',
   set_tabDisplay: '界面',
   set_tabRecording: '记录',
   set_panelNotReady: '设置面板未就绪，请重试',
@@ -1263,6 +1299,8 @@ const en: Record<string, string> = {
   toggleAll: 'Select All',
   apply: 'Apply',
   pts: 'pts',
+  approx: '~',
+  capped: 'cap',
   bufferWindowLabel: 'Buffer',
   waveformBufferSizeLabel: 'Waveform buffer size',
   waveformBufferSizeHint: 'Larger buffers show longer trends but consume more memory',
@@ -1894,6 +1932,33 @@ const en: Record<string, string> = {
   dev_configSynced: 'Configuration synced',
   dev_manageDevices: 'Manage Devices',
 
+  // DAQ-T-1603 specific config fields (dev_t1603_)
+  dev_t1603_sectionTitle: 'DAQ-T-1603 Acquisition Parameters',
+  dev_t1603_sectionDesc: 'Channel mask, sampling rate, binary format and trigger config',
+  dev_t1603_channelMask: 'Channel Mask',
+  dev_t1603_channelMaskPlaceholder: '0000-FFFF',
+  dev_t1603_samplingRate: 'Sampling Rate',
+  dev_t1603_binaryFormat: 'Binary Format',
+  dev_t1603_triggerMode: 'Trigger Mode',
+  dev_t1603_triggerEdge: 'Trigger Edge',
+  dev_t1603_triggerCount: 'Trigger Count',
+  dev_t1603_showTimestamp: 'Show Timestamp',
+  dev_t1603_openCircuitCheck: 'Open Circuit Check',
+  dev_t1603_openCircuitPlaceholder: 'hex mask',
+  dev_t1603_triggerModeSoftware: 'Software',
+  dev_t1603_triggerModeHardware: 'Hardware',
+  dev_t1603_triggerEdgeRising: 'Rising',
+  dev_t1603_triggerEdgeFalling: 'Falling',
+  dev_t1603_triggerEdgeToggle: 'Toggle',
+
+  // DAQ-P-1603 specific config fields (dev_p1603_)
+  dev_p1603_samplingRate: 'Sampling Rate (Hz)',
+  dev_p1603_samplingRateRangeHint: 'Range {min} ~ {max} Hz',
+  dev_p1603_sensorType: 'Sensor Type',
+  dev_p1603_sensorTypePressure: 'Pressure',
+  dev_p1603_sensorTypeTemperature: 'Temperature',
+  dev_p1603_temperatureUnitPlaceholder: '℃',
+
   // Dashboard & Workflow (app_ / wf_)
   app_independentWindowNotSupported: 'Independent window not supported in current environment',
   app_openIndependentWindowFailed: 'Failed to launch independent window',
@@ -1991,6 +2056,13 @@ const en: Record<string, string> = {
   set_recommendedBuffer: 'Recommended 100~500 pts',
   set_refreshRateRangeError: 'Refresh rate must be between {min} and {max} Hz',
   set_waveformBufferRangeError: 'Buffer size must be between {min} and {max}',
+  // Waveform time window config (decoupled from refresh rate: capacity = time window × refresh rate)
+  // Missing these keys causes UiFormField label not to render, grid label column collapses, slider width becomes 0
+  historyWindowLabel: 'Time Window',
+  historyWindowHint: 'Seconds shown on waveform x-axis. Capacity = time window × refresh rate',
+  historyWindowRangeError: 'Time window must be between {min} and {max} seconds',
+  set_recommendedWindow: 'Recommended 15~60 sec',
+  sec: 'sec',
   set_tabDisplay: 'Display',
   set_tabRecording: 'Recording',
   set_panelNotReady: 'Settings panel not ready, please retry',
@@ -2298,8 +2370,38 @@ const en: Record<string, string> = {
 export const useI18nStore = defineStore('i18n', () => {
   const locale = ref<Locale>('zh')
 
-  function setLocale(newLocale: Locale) {
-    locale.value = newLocale
+  async function initLocale() {
+    const saved = readSavedLocale()
+    if (saved === 'zh' || saved === 'en') {
+      locale.value = saved
+      return
+    }
+    await applyInstallerLocale()
+  }
+
+  function readSavedLocale(): string | null {
+    try {
+      return localStorage.getItem('wind-daq.locale')
+    } catch {
+      return null
+    }
+  }
+
+  async function applyInstallerLocale() {
+    try {
+      const { wailsApi, isWailsAvailable } = await import('@/api/wails-adapter')
+      if (!isWailsAvailable()) return
+      const installerLang = await wailsApi.app.getInstallerLanguage()
+      if (installerLang === 'zh' || installerLang === 'en') {
+        locale.value = installerLang
+        saveToLocalStorage(installerLang)
+      }
+    } catch {
+      // backend not available (browser preview / dev mode)
+    }
+  }
+
+  function saveToLocalStorage(newLocale: Locale) {
     try {
       localStorage.setItem('wind-daq.locale', newLocale)
     } catch {
@@ -2307,7 +2409,12 @@ export const useI18nStore = defineStore('i18n', () => {
     }
   }
 
+  function setLocale(newLocale: Locale) {
+    locale.value = newLocale
+    saveToLocalStorage(newLocale)
+  }
+
   const t = computed<Record<string, string>>(() => (locale.value === 'zh' ? zh : en))
 
-  return { locale, setLocale, t }
+  return { locale, setLocale, t, initLocale }
 })

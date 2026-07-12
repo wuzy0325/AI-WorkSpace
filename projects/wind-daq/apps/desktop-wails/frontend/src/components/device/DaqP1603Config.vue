@@ -53,8 +53,6 @@ const emit = defineEmits<{
   (e: 'update:precision', v: number | null): void
 }>()
 
-// 校零相关文案随全局语言切换（表头与温度通道禁用提示），
-// 其他表头沿用本文件既有中文约定，与 DaqT1603Config.vue 保持一致。
 const i18n = useI18nStore()
 
 // 采样率有效范围常量（与后端 hardware.DAQP1603MinSampleRate/DAQP1603MaxSampleRate 保持同步）
@@ -88,11 +86,11 @@ const TEMPERATURE_UNIT_OPTIONS = [
   { value: '℉', label: '℉' },
 ]
 
-// 传感器类型选项
-const SENSOR_TYPE_OPTIONS = [
-  { value: 'pressure', label: '压力' },
-  { value: 'temperature', label: '温度' },
-]
+// 传感器类型选项（响应式，随全局语言切换）
+const SENSOR_TYPE_OPTIONS = computed(() => [
+  { value: 'pressure', label: i18n.t.dev_p1603_sensorTypePressure },
+  { value: 'temperature', label: i18n.t.dev_p1603_sensorTypeTemperature },
+])
 
 // 各传感器类型的默认单位与量程（类型切换时重置）
 const DEFAULTS_BY_SENSOR_TYPE: Record<
@@ -106,6 +104,13 @@ const DEFAULTS_BY_SENSOR_TYPE: Record<
 // 采样率是否越界（用于红色提示与禁用提交）
 const samplingRateInvalid = computed(
   () => props.samplingRate < MIN_SAMPLE_RATE || props.samplingRate > MAX_SAMPLE_RATE,
+)
+
+// 采样率范围提示文案（响应式，注入 {min}/{max} 占位符）
+const samplingRateRangeHint = computed(() =>
+  i18n.t.dev_p1603_samplingRateRangeHint
+    .replace('{min}', String(MIN_SAMPLE_RATE))
+    .replace('{max}', String(MAX_SAMPLE_RATE)),
 )
 
 // 根据通道传感器类型返回对应的单位选项
@@ -271,7 +276,7 @@ function resetChannelsToDefault(): void {
   <div class="p1603-config">
     <!-- 采样率输入区 -->
     <div class="p1603-config__sampling-rate">
-      <label class="p1603-config__label">采样率 (Hz)</label>
+      <label class="p1603-config__label">{{ i18n.t.dev_p1603_samplingRate }}</label>
       <UiInputNumber
         :model-value="samplingRate"
         :min="MIN_SAMPLE_RATE"
@@ -284,33 +289,33 @@ function resetChannelsToDefault(): void {
         class="p1603-config__hint"
         :class="{ 'p1603-config__hint--error': samplingRateInvalid }"
       >
-        范围 {{ MIN_SAMPLE_RATE }} ~ {{ MAX_SAMPLE_RATE }} Hz
+        {{ samplingRateRangeHint }}
       </span>
     </div>
 
     <!-- 工具栏 -->
     <div class="p1603-config__toolbar">
       <UiButton secondary size="sm" :disabled="disabled" @click="setAllChannelsEnabled(true)">
-        全部启用
+        {{ i18n.t.dev_enableAll }}
       </UiButton>
       <UiButton secondary size="sm" :disabled="disabled" @click="setAllChannelsEnabled(false)">
-        全部禁用
+        {{ i18n.t.dev_disableAll }}
       </UiButton>
       <UiButton secondary size="sm" :disabled="disabled" @click="resetChannelsToDefault">
-        重置
+        {{ i18n.t.dev_reset }}
       </UiButton>
     </div>
 
     <!-- 批量同步 -->
     <div class="p1603-config__batch">
-      <span class="p1603-config__batch-label">批量应用到 1~16CH:</span>
+      <span class="p1603-config__batch-label">{{ i18n.t.dev_batchApplyTo }}</span>
       <div class="p1603-config__batch-field">
-        <span class="p1603-config__batch-field-label">量程</span>
+        <span class="p1603-config__batch-field-label">{{ i18n.t.dev_range }}</span>
         <UiInputNumber
           :model-value="rangeMin ?? undefined"
           class="p1603-config__batch-num"
           :disabled="disabled"
-          placeholder="最小"
+          :placeholder="i18n.t.dev_minPlaceholder"
           @update:model-value="onBatchRangeMinChange"
         />
         <span class="p1603-config__batch-sep">~</span>
@@ -318,12 +323,12 @@ function resetChannelsToDefault(): void {
           :model-value="rangeMax ?? undefined"
           class="p1603-config__batch-num"
           :disabled="disabled"
-          placeholder="最大"
+          :placeholder="i18n.t.dev_maxPlaceholder"
           @update:model-value="onBatchRangeMaxChange"
         />
       </div>
       <div class="p1603-config__batch-field">
-        <span class="p1603-config__batch-field-label">精度</span>
+        <span class="p1603-config__batch-field-label">{{ i18n.t.channelPrecision }}</span>
         <UiInputNumber
           :model-value="precision ?? undefined"
           class="p1603-config__batch-num p1603-config__batch-num--narrow"
@@ -332,7 +337,7 @@ function resetChannelsToDefault(): void {
           placeholder="0"
           @update:model-value="onBatchPrecisionChange"
         />
-        <span class="p1603-config__batch-field-suffix">位小数</span>
+        <span class="p1603-config__batch-field-suffix">{{ i18n.t.dev_decimalPlaces }}</span>
       </div>
     </div>
 
@@ -341,14 +346,14 @@ function resetChannelsToDefault(): void {
       <table class="p1603-config__table">
         <thead>
           <tr>
-            <th class="w-12">启用</th>
-            <th class="w-16">{{ i18n.t.tareApplyColumn || '校零应用' }}</th>
+            <th class="w-12">{{ i18n.t.channelEnabled }}</th>
+            <th class="w-16">{{ i18n.t.tareApplyColumn }}</th>
             <th class="w-12">#</th>
-            <th>通道名称</th>
-            <th class="w-28">传感器类型</th>
-            <th class="w-24">单位</th>
-            <th class="w-56 text-center">工程量程</th>
-            <th class="w-18 text-right">精度</th>
+            <th>{{ i18n.t.dev_channelName }}</th>
+            <th class="w-28">{{ i18n.t.dev_p1603_sensorType }}</th>
+            <th class="w-24">{{ i18n.t.unit }}</th>
+            <th class="w-56 text-center">{{ i18n.t.dev_engineeringRange }}</th>
+            <th class="w-18 text-right">{{ i18n.t.channelPrecision }}</th>
           </tr>
         </thead>
         <tbody>
@@ -364,7 +369,7 @@ function resetChannelsToDefault(): void {
               <UiCheckbox
                 :checked="c.calibrationEnabled ?? true"
                 :disabled="disabled || c.sensorType === 'temperature'"
-                :title="c.sensorType === 'temperature' ? (i18n.t.temperatureChannelNotSupported || '温度通道不支持校零') : undefined"
+                :title="c.sensorType === 'temperature' ? i18n.t.temperatureChannelNotSupported : undefined"
                 @update:checked="(v) => patchChannel(i, { calibrationEnabled: v })"
               />
             </td>
@@ -426,87 +431,90 @@ function resetChannelsToDefault(): void {
 </template>
 
 <style scoped>
+/* 卡片容器：与全局 form-card 风格一致，但保留 p1603 自有的纵向堆叠布局 */
 .p1603-config {
   display: flex;
   flex-direction: column;
-  gap: var(--density-field-gap, 8px);
-  padding: var(--density-group-padding, 8px 12px);
-  border-radius: var(--radius-md, 6px);
-  background: color-mix(in srgb, var(--bg-panel-strong, #1e1e1e) 40%, transparent);
-  border: 1px solid var(--border-default, #333);
+  gap: var(--density-field-gap);
+  padding: var(--density-group-padding);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
+  border: 1px solid var(--border-default);
 }
 
+/* 采样率行：标签 + 输入 + 范围提示水平排列 */
 .p1603-config__sampling-rate {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .p1603-config__sampling-rate-input {
-  width: 120px;
+  width: 7.5rem;
 }
 
 .p1603-config__label {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: var(--font-weight-semibold, 600);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
   letter-spacing: 0.02em;
 }
 
 .p1603-config__hint {
-  font-size: var(--font-size-micro, 11px);
-  font-weight: 700;
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-muted);
 }
 
 .p1603-config__hint--error {
-  color: var(--color-danger, #e5484d);
+  color: var(--accent-danger);
 }
 
 .p1603-config__toolbar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .p1603-config__batch {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .p1603-config__batch-label {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: 700;
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-muted);
 }
 
 .p1603-config__batch-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .p1603-config__batch-field-label {
-  font-size: var(--font-size-2xs, 12px);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
+/* 批量输入框尺寸：§29 规范——量程 96px、精度 64px */
 .p1603-config__batch-num {
-  width: 96px;
+  width: 6rem;
 }
 
 .p1603-config__batch-num--narrow {
-  width: 64px;
+  width: 4rem;
 }
 
 .p1603-config__batch-sep {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .p1603-config__batch-field-suffix {
-  font-size: var(--font-size-2xs, 12px);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
 .p1603-config__table-wrap {
@@ -516,38 +524,42 @@ function resetChannelsToDefault(): void {
 .p1603-config__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--font-size-sm, 13px);
+  font-size: var(--font-size-sm);
 }
 
 .p1603-config__table th,
 .p1603-config__table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-default, #333);
+  padding: var(--space-1-5) var(--space-2);
+  border-bottom: 1px solid var(--border-default);
   text-align: left;
   vertical-align: middle;
 }
 
 .p1603-config__table th {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: var(--font-weight-semibold, 600);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
 }
 
 .p1603-config__range {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
-/* 通道表格列宽：与 DeviceManagementDrawer 保持一致
-   - w-12/w-24/w-28 是 Tailwind 标准类，JIT 会自动生成，显式定义仅为确定性
-   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义 */
+/* ===== §29 通道表格列宽规范 =====
+ *   - w-12/w-16/w-24/w-28 是 Tailwind 标准类，JIT 会自动生成，显式定义仅为确定性
+ *   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义
+ *   - w-28 用于 DAQ-P-1603 传感器类型列（含中文"温度/压力"）
+ *   - w-16 用于校零应用列（与 DAQ-T-1603/WTN_PXI 单位列保持一致） */
 .w-12 { width: 48px; }   /* 启用复选框、# 序号列 */
+.w-16 { width: 64px; }   /* 校零应用列、单位列 */
 .w-18 { width: 72px; }   /* 精度列 */
 .w-24 { width: 96px; }   /* 单位列 */
 .w-28 { width: 112px; }  /* 传感器类型列 */
 .w-56 { width: 224px; }  /* 工程量程列（两个 w-full 输入框 + "~" 分隔符 + 单元格 padding） */
+.w-full { width: 100%; }
 .text-center { text-align: center; }
 .text-right { text-align: right; }
-.font-mono { font-family: var(--font-mono, monospace); }
+.font-mono { font-family: var(--font-family-mono); }
 </style>
