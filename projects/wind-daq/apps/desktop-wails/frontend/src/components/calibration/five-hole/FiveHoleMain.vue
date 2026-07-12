@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, type ComponentPublicInstance } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
 import { deviceApi } from '@api/deviceApi'
 import { useI18nStore } from '@stores/i18nStore'
@@ -54,8 +55,7 @@ const {
   sphereTankGate,
 } = useCalibrationWorkflow('five-hole')
 
-const i18n = useI18nStore()
-const t = i18n.t
+const { t } = storeToRefs(useI18nStore())
 
 defineExpose({
   reloadSavedConfig: loadSavedConfig,
@@ -123,7 +123,7 @@ watch(isLoading, (loading) => {
 //   避免重生成路径（Wails 模式走本地兜底）与 layout 字段脏值（null/NaN）导致起始角度错乱。
 async function startCalibration() {
   if (!canStartCalibration.value || !currentConfig.value) {
-    feedbackStore.pushToast(startDisabledReason.value || t.fh_preCheckNotDone, 'warning')
+    feedbackStore.pushToast(startDisabledReason.value || t.value.fh_preCheckNotDone, 'warning')
     return
   }
   try {
@@ -134,7 +134,7 @@ async function startCalibration() {
     await calibrationStore.startCalibration(configToStart)
   } catch (err) {
     console.error('Failed to start calibration:', err)
-    feedbackStore.pushToast(t.fh_startFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
+    feedbackStore.pushToast(t.value.fh_startFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
   }
 }
 
@@ -189,11 +189,11 @@ const canStartCalibration = computed(() => {
 })
 
 const startDisabledReason = computed(() => {
-  if (isLoading.value) return t.fh_loadingConfig
-  if (!hasConfig.value) return t.fh_noConfig
-  if (!hasRequiredWindTunnelChannels.value) return t.fh_noWindTunnelChannels
-  if (!isAcquisitionDeviceConnected.value) return t.fh_deviceNotReady
-  if (!isMotionControllerConnected.value) return t.fh_motionNotConnected
+  if (isLoading.value) return t.value.fh_loadingConfig
+  if (!hasConfig.value) return t.value.fh_noConfig
+  if (!hasRequiredWindTunnelChannels.value) return t.value.fh_noWindTunnelChannels
+  if (!isAcquisitionDeviceConnected.value) return t.value.fh_deviceNotReady
+  if (!isMotionControllerConnected.value) return t.value.fh_motionNotConnected
   return ''
 })
 

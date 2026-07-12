@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { CalibrationType } from '@shared/types/calibration'
+import { storeToRefs } from 'pinia'
+import { useI18nStore } from '@stores/i18nStore'
 import { ArrowRight, CheckCircle2, Info } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 import IconCalibrationThreeHole from '@components/icons/IconCalibrationThreeHole.vue'
@@ -10,13 +12,15 @@ const emit = defineEmits<{
   selectCalibration: [type: CalibrationType]
 }>()
 
+const { t } = storeToRefs(useI18nStore())
+
 const calibrationTypes = [
   {
     type: 'five-hole' as CalibrationType,
-    name: '五孔探针校准',
+    nameKey: 'ch_fiveHoleName',
     subtitle: 'Five-Hole Probe',
-    description: '三维空间流动测量，支持攻角(α)与侧滑角(β)双轴联动标定。',
-    features: ['Kα-Kβ系数空间计算', 'CPT/CPS气动系数', '81点自动矩阵扫描'],
+    descKey: 'ch_fiveHoleDesc',
+    featureKeys: ['ch_fiveHoleFeat1', 'ch_fiveHoleFeat2', 'ch_fiveHoleFeat3'],
     colors: {
       primary: '#3b82f6',
       primaryLight: '#60a5fa',
@@ -35,10 +39,10 @@ const calibrationTypes = [
   },
   {
     type: 'three-hole' as CalibrationType,
-    name: '三孔探针校准',
+    nameKey: 'ch_threeHoleName',
     subtitle: 'Three-Hole Probe',
-    description: '二维平面流动测量，专注于偏航角(θ)的精准方向标定。',
-    features: ['方向系数K线性拟合', '速度系数Cv修正', '13点标准角度标定'],
+    descKey: 'ch_threeHoleDesc',
+    featureKeys: ['ch_threeHoleFeat1', 'ch_threeHoleFeat2', 'ch_threeHoleFeat3'],
     colors: {
       primary: '#10b981',
       primaryLight: '#34d399',
@@ -57,10 +61,10 @@ const calibrationTypes = [
   },
   {
     type: 'total-pressure' as CalibrationType,
-    name: '总压探针校准',
+    nameKey: 'ch_totalPressureName',
     subtitle: 'Total Pressure',
-    description: '总压测量精度验证，自动分析不同攻角下的压力恢复系数。',
-    features: ['CPT恢复系数分析', '角度敏感度误差评估', '31点高精度步进'],
+    descKey: 'ch_totalPressureDesc',
+    featureKeys: ['ch_totalPressureFeat1', 'ch_totalPressureFeat2', 'ch_totalPressureFeat3'],
     colors: {
       primary: '#f59e0b',
       primaryLight: '#fbbf24',
@@ -79,10 +83,10 @@ const calibrationTypes = [
   },
   {
     type: 'total-temperature' as CalibrationType,
-    name: '总温探针校准',
+    nameKey: 'ch_totalTemperatureName',
     subtitle: 'Total Temperature',
-    description: '总温传感器特性研究，分析不同马赫数下的恢复系数r。',
-    features: ['恢复系数r-Ma曲线', '多工况点温度平衡测试', '滞止温度对比修正'],
+    descKey: 'ch_totalTemperatureDesc',
+    featureKeys: ['ch_totalTemperatureFeat1', 'ch_totalTemperatureFeat2', 'ch_totalTemperatureFeat3'],
     colors: {
       primary: '#f43f5e',
       primaryLight: '#fb7185',
@@ -125,7 +129,7 @@ function getIconComponent(type: CalibrationType) {
           <IconCalibrationFiveHole :size="22" />
         </div>
         <div>
-          <h1 class="header-title">探针校准控制中心</h1>
+          <h1 class="header-title">{{ t.ch_homeTitle }}</h1>
           <p class="header-subtitle">Probe Calibration & Aerodynamic Analysis System</p>
         </div>
       </div>
@@ -168,7 +172,7 @@ function getIconComponent(type: CalibrationType) {
                 <component :is="getIconComponent(item.type)" :size="32" />
               </div>
               <div>
-                <h3 class="card-name">{{ item.name }}</h3>
+                <h3 class="card-name">{{ t[item.nameKey] }}</h3>
                 <p class="card-subtitle">{{ item.subtitle }}</p>
               </div>
             </div>
@@ -178,17 +182,17 @@ function getIconComponent(type: CalibrationType) {
             </div>
           </div>
 
-          <p class="card-description">{{ item.description }}</p>
+          <p class="card-description">{{ t[item.descKey] }}</p>
 
           <!-- 特性标签 -->
           <div class="card-features">
             <div
-              v-for="(feature, idx) in item.features"
+              v-for="(feature, idx) in item.featureKeys"
               :key="idx"
               class="feature-tag"
             >
               <CheckCircle2 class="feature-icon" />
-              <span class="feature-text">{{ feature }}</span>
+              <span class="feature-text">{{ t[feature] }}</span>
             </div>
           </div>
 
@@ -208,7 +212,7 @@ function getIconComponent(type: CalibrationType) {
           <span class="footer-label">System Ready:</span>
           <span class="footer-status">✓ HW Check Passed</span>
           <span class="footer-separator">|</span>
-          <span class="footer-hint">请在开始自动化校准前，手动验证各压力通道零位及运动控制器归零状态。</span>
+          <span class="footer-hint">{{ t.ch_footerHint }}</span>
         </p>
       </div>
     </div>

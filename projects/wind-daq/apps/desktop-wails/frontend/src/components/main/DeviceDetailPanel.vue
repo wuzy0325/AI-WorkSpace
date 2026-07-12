@@ -389,14 +389,14 @@ const connectionButtonLabel = computed(() => {
         <div class="detail-panel__chart-header">
           <div class="detail-panel__chart-title">
             <Activity class="w-4 h-4 text-emerald-500" />
-            <span>实时趋势</span>
+            <span>{{ i18n.t.realtimeTrend || 'Realtime Trend' }}</span>
           </div>
           <div class="detail-panel__chart-controls">
             <UiButton variant="secondary" size="sm" @click="openChartSelector">
               <template #icon>
                 <Settings2 class="w-4 h-4" />
               </template>
-              通道选择
+              {{ i18n.t.channelSelect || 'Ch Select' }}
             </UiButton>
             <div class="detail-panel__chart-info">
               <span class="detail-panel__chart-label">{{ i18n.t.bufferWindowLabel }}</span>
