@@ -742,11 +742,16 @@ const formattedProgress = computed(() => {
   return `${completedPoints.value} / ${totalPoints.value} (${progressPercent.value}%)`
 })
 
+// 数据 Tab 顶部"共 X 条记录"文案：复用 {count} 占位符替换约定（与 ThreeHoleMain 一致）
+const recordCountText = computed(() =>
+  t.value.fh_recordCount.replace('{count}', String(calibrationStore.dataPoints.length)),
+)
+
 const statusText = computed(() => {
-  if (calibrationStore.isPaused) return '已暂停'
-  if (calibrationStore.isRunning) return '运行中'
-  if (calibrationStore.completeEvent) return '已完成'
-  return '空闲'
+  if (calibrationStore.isPaused) return t.value.statusPaused
+  if (calibrationStore.isRunning) return t.value.running
+  if (calibrationStore.completeEvent) return t.value.completed
+  return t.value.idle
 })
 
 const statusColor = computed(() => {
@@ -874,7 +879,7 @@ function getChannelUnit(role: string): string {
           <ArrowLeft class="h-4 w-4" />
         </UiButton>
         <div>
-          <h1 class="text-base font-bold text-[var(--text-primary)]">五孔探针校准</h1>
+          <h1 class="text-base font-bold text-[var(--text-primary)]">{{ t.fh_fiveHoleCalibration }}</h1>
           <p class="text-xs text-[var(--text-muted)]">Five-Hole Probe Calibration</p>
         </div>
       </div>
@@ -883,15 +888,15 @@ function getChannelUnit(role: string): string {
              点击仍走本地 startCalibration（含风洞通道校验特化逻辑） -->
         <UiButton v-if="!calibrationStore.isRunning && !calibrationStore.isPaused" variant="primary" size="sm" :disabled="!canStartCalibration" :title="startDisabledReason || undefined" @click="startCalibration">
           <Play class="h-4 w-4" />
-          <span class="ml-1">开始</span>
+          <span class="ml-1">{{ t.startRun }}</span>
         </UiButton>
         <UiButton variant="secondary" size="sm" @click="emit('openSettings')">
           <Settings class="h-4 w-4" />
-          <span class="ml-1">配置</span>
+          <span class="ml-1">{{ t.configBtn }}</span>
         </UiButton>
         <UiButton variant="secondary" size="sm" :disabled="!canSave" @click="saveCsv">
           <Save class="h-4 w-4" />
-          <span class="ml-1">保存</span>
+          <span class="ml-1">{{ t.save }}</span>
         </UiButton>
       </div>
     </div>
@@ -900,7 +905,7 @@ function getChannelUnit(role: string): string {
     <div v-if="isLoading" class="flex flex-1 items-center justify-center">
       <div class="text-center">
         <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--accent-primary)] border-t-transparent"></div>
-        <p class="text-[var(--text-muted)]">正在加载...</p>
+        <p class="text-[var(--text-muted)]">{{ t.fh_loading }}</p>
       </div>
     </div>
 
@@ -916,7 +921,7 @@ function getChannelUnit(role: string): string {
         >{{ statusText }}</span>
 
         <div class="flex items-center gap-2 min-w-[180px] flex-1 max-w-[280px]">
-          <span class="text-xs text-[var(--text-muted)] whitespace-nowrap">进度</span>
+          <span class="text-xs text-[var(--text-muted)] whitespace-nowrap">{{ t.travProgress }}</span>
           <div class="h-2 flex-1 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
             <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300" :style="{ width: progressPercent + '%' }"></div>
           </div>
@@ -925,11 +930,11 @@ function getChannelUnit(role: string): string {
 
         <div v-if="formattedTimeInfo" class="flex items-center gap-3 text-xs">
           <div class="flex items-center gap-1">
-            <span class="text-[var(--text-muted)]">已用</span>
+            <span class="text-[var(--text-muted)]">{{ t.travElapsed }}</span>
             <span class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.elapsed }}</span>
           </div>
           <div class="flex items-center gap-1">
-            <span class="text-[var(--text-muted)]">剩余</span>
+            <span class="text-[var(--text-muted)]">{{ t.travRemaining }}</span>
             <span class="font-mono font-bold text-[var(--text-primary)]">{{ formattedTimeInfo.remaining }}</span>
           </div>
         </div>
@@ -938,7 +943,7 @@ function getChannelUnit(role: string): string {
         <div class="flex items-center gap-4 border-l border-[var(--border-default)] pl-4">
           <div class="flex items-center gap-1.5">
             <Target class="h-4 w-4 text-[var(--text-muted)]" />
-            <span class="text-xs text-[var(--text-muted)]">目标</span>
+            <span class="text-xs text-[var(--text-muted)]">{{ t.travTarget }}</span>
             <span class="font-mono text-base font-bold text-[var(--text-primary)]">
               α{{ targetAngles.alpha !== null ? targetAngles.alpha.toFixed(1) + '°' : '--' }}
               <span class="mx-1 text-[var(--text-muted)]">/</span>
@@ -946,7 +951,7 @@ function getChannelUnit(role: string): string {
             </span>
           </div>
           <div class="flex items-center gap-1.5">
-            <span class="text-xs text-[var(--text-muted)]">实际</span>
+            <span class="text-xs text-[var(--text-muted)]">{{ t.travActual }}</span>
             <span class="font-mono text-base font-bold" :style="{ color: isMoving ? `var(--accent-success)` : `var(--accent-primary)` }">
               α{{ actualAngles.alpha != null ? actualAngles.alpha.toFixed(2) + '°' : '--' }}
               <span class="mx-1 text-[var(--text-muted)]">/</span>
@@ -954,14 +959,14 @@ function getChannelUnit(role: string): string {
             </span>
             <span v-if="isMoving" class="flex items-center gap-1 text-xs" :style="{ color: `var(--accent-success)` }">
               <span class="h-1.5 w-1.5 animate-pulse rounded-full" :style="{ backgroundColor: `var(--accent-success)` }"></span>
-              运动中
+              {{ t.moving }}
             </span>
           </div>
         </div>
 
         <!-- 当前点采样子进度 -->
         <div v-if="sampleProgress" class="flex items-center gap-2 border-l border-[var(--border-default)] pl-4">
-          <span class="text-xs text-[var(--text-muted)]">采样</span>
+          <span class="text-xs text-[var(--text-muted)]">{{ t.samples }}</span>
           <span class="font-mono text-sm font-bold text-[var(--accent-primary)]">{{ sampleProgress.current }}/{{ sampleProgress.total }}</span>
           <div class="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
             <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-200" :style="{ width: sampleProgress.percent + '%' }"></div>
@@ -982,7 +987,7 @@ function getChannelUnit(role: string): string {
         <!-- 配置摘要折叠：校准中几乎不看，压缩到角落 -->
         <button class="ml-auto flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]" @click="showConfigSummary = !showConfigSummary">
           <Settings class="h-3.5 w-3.5" />
-          配置
+          {{ t.configBtn }}
           <ChevronDown v-if="showConfigSummary" class="h-3 w-3" />
           <ChevronUp v-else class="h-3 w-3" />
         </button>
@@ -990,18 +995,18 @@ function getChannelUnit(role: string): string {
 
       <!-- 配置摘要展开面板（默认收起） -->
       <div v-if="showConfigSummary" class="flex flex-wrap items-center gap-6 border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-5 py-2 text-xs">
-        <div><span class="text-[var(--text-muted)]">名称：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || '未配置' }}</span></div>
+        <div><span class="text-[var(--text-muted)]">{{ t.name }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.name || t.unconfigured }}</span></div>
         <div v-if="fiveHoleLayout">
-          <span class="text-[var(--text-muted)]">α 范围：</span>
+          <span class="text-[var(--text-muted)]">{{ t.fh_alphaRange }}：</span>
           <span class="font-medium text-[var(--text-primary)]">{{ fiveHoleLayout.alphaMin }}° ~ {{ fiveHoleLayout.alphaMax }}° ({{ fiveHoleLayout.alphaStep }}°)</span>
         </div>
         <div v-if="fiveHoleLayout">
-          <span class="text-[var(--text-muted)]">β 范围：</span>
+          <span class="text-[var(--text-muted)]">{{ t.fh_betaRange }}：</span>
           <span class="font-medium text-[var(--text-primary)]">{{ fiveHoleLayout.betaMin }}° ~ {{ fiveHoleLayout.betaMax }}° ({{ fiveHoleLayout.betaStep }}°)</span>
         </div>
-        <div><span class="text-[var(--text-muted)]">总点数：</span><span class="font-medium text-[var(--text-primary)]">{{ totalPoints }}</span></div>
-        <div><span class="text-[var(--text-muted)]">驻留：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms</span></div>
-        <div><span class="text-[var(--text-muted)]">采样数：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.samplesPerPoint || 0 }}</span></div>
+        <div><span class="text-[var(--text-muted)]">{{ t.totalPoints }}：</span><span class="font-medium text-[var(--text-primary)]">{{ totalPoints }}</span></div>
+        <div><span class="text-[var(--text-muted)]">{{ t.dwell }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.dwellTimeMs || 0 }}ms</span></div>
+        <div><span class="text-[var(--text-muted)]">{{ t.samples }}：</span><span class="font-medium text-[var(--text-primary)]">{{ currentConfig?.samplesPerPoint || 0 }}</span></div>
       </div>
 
       <div class="flex flex-1 overflow-hidden">
@@ -1012,15 +1017,15 @@ function getChannelUnit(role: string): string {
             <div class="grid grid-cols-2 gap-2">
               <UiButton v-if="canPause" variant="warning" @click="pauseCalibration">
                 <Pause class="h-4 w-4" />
-                <span class="ml-1">暂停</span>
+                <span class="ml-1">{{ t.fh_pause }}</span>
               </UiButton>
               <UiButton v-if="canResume" variant="primary" @click="resumeCalibration">
                 <Play class="h-4 w-4" />
-                <span class="ml-1">继续</span>
+                <span class="ml-1">{{ t.fh_resume }}</span>
               </UiButton>
               <UiButton v-if="canStop" variant="danger" @click="stopCalibration">
                 <Square class="h-4 w-4" />
-                <span class="ml-1">停止</span>
+                <span class="ml-1">{{ t.travStop }}</span>
               </UiButton>
             </div>
             <div v-if="startDisabledReason" class="mt-2 text-xs" :style="{ color: `var(--accent-warning)` }">{{ startDisabledReason }}</div>
@@ -1032,7 +1037,7 @@ function getChannelUnit(role: string): string {
             <div class="border-b border-[var(--border-default)] p-3">
               <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <Gauge class="h-4 w-4 text-[var(--accent-primary)]" />
-                关键数据
+                {{ t.fh_keyData }}
               </div>
               <div class="space-y-1.5">
                 <!-- P1-P5 核心压力：大字突出 -->
@@ -1045,12 +1050,12 @@ function getChannelUnit(role: string): string {
                 </div>
                 <!-- 马赫数 Ma：绿色强调，区别于压力通道 -->
                 <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">马赫数 Ma</span>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.fh_machMa }}</span>
                   <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
                 </div>
                 <!-- 速度 V：绿色强调 -->
                 <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                  <span class="text-xs text-[var(--text-muted)]">速度 V</span>
+                  <span class="text-xs text-[var(--text-muted)]">{{ t.fh_velocityV }}</span>
                   <div class="text-right">
                     <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
                     <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
@@ -1063,7 +1068,7 @@ function getChannelUnit(role: string): string {
             <div class="p-3">
               <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <Wind class="h-4 w-4 text-[var(--accent-primary)]" />
-                其他通道
+                {{ t.fh_otherChannels }}
               </div>
               <div class="space-y-1.5">
                 <div v-for="channel in secondaryChannels" :key="channel.name" class="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--bg-panel-strong)]">
@@ -1075,7 +1080,7 @@ function getChannelUnit(role: string): string {
                 </div>
                 <!-- 兜底：若未配置任何次要通道，提示操作员去配置 -->
                 <div v-if="secondaryChannels.length === 0" class="px-2 py-2 text-xs text-[var(--text-muted)]">
-                  尚未配置风洞总压/静压/温度通道
+                  {{ t.fh_noSecondaryChannels }}
                 </div>
               </div>
             </div>
@@ -1086,15 +1091,15 @@ function getChannelUnit(role: string): string {
             <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
               <div class="flex items-center gap-2">
                 <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
-                <span class="text-xs text-[var(--text-muted)]">球罐门控</span>
+                <span class="text-xs text-[var(--text-muted)]">{{ t.fh_sphereTankGate }}</span>
               </div>
               <div class="flex items-center gap-3 text-xs">
                 <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">
-                  {{ sphereTankGate.isActive.value ? '已激活' : sphereTankGate.statusText.value }}
+                  {{ sphereTankGate.isActive.value ? t.fh_activated : sphereTankGate.statusText.value }}
                 </span>
                 <span class="text-[var(--text-muted)]">|</span>
                 <span class="font-mono font-bold text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</span>
-                <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" title="编辑球罐门控配置" @click="emit('openSettings')">编辑</button>
+                <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" :title="t.fh_editSphereTankConfig" @click="emit('openSettings')">{{ t.fh_edit }}</button>
               </div>
             </div>
           </div>
@@ -1106,17 +1111,17 @@ function getChannelUnit(role: string): string {
           <div class="flex border-b border-[var(--border-default)] bg-[var(--bg-panel)]">
             <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'overview' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'overview'">
               <TrendingUp class="h-4 w-4" />
-              概览
+              {{ t.fh_overview }}
               <span v-if="activeTab === 'overview'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
             </UiButton>
             <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'chart' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'chart'">
               <Navigation2 class="h-4 w-4" />
-              图表
+              {{ t.fh_chart }}
               <span v-if="activeTab === 'chart'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
             </UiButton>
             <UiButton quaternary size="sm" class="relative px-5 py-2.5 text-sm font-medium transition-colors" :class="activeTab === 'data' ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'" @click="activeTab = 'data'">
               <FileText class="h-4 w-4" />
-              数据
+              {{ t.fh_data }}
               <span v-if="activeTab === 'data'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full"></span>
             </UiButton>
           </div>
@@ -1130,7 +1135,7 @@ function getChannelUnit(role: string): string {
                 <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
                   <div class="mb-3 flex items-center gap-2">
                     <TrendingUp class="h-4 w-4 text-[var(--accent-primary)]" />
-                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">最新系数</h3>
+                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.fh_latestCoefficients }}</h3>
                   </div>
                   <div v-if="latestCoefficients" class="space-y-2">
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
@@ -1162,14 +1167,14 @@ function getChannelUnit(role: string): string {
                       </div>
                     </div>
                   </div>
-                  <div v-else class="flex h-24 items-center justify-center text-sm text-[var(--text-muted)]">暂无系数数据</div>
+                  <div v-else class="flex h-24 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.fh_noCoefficientsData }}</div>
                 </div>
 
                 <!-- 原始数据卡片：与系数卡片风格一致 -->
                 <div class="flex-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)] overflow-y-auto">
                   <div class="mb-3 flex items-center gap-2">
                     <Wind class="h-4 w-4 text-[var(--accent-primary)]" />
-                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">原始数据</h3>
+                    <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.fh_rawData }}</h3>
                   </div>
                   <div v-if="latestRawData" class="space-y-2">
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
@@ -1193,19 +1198,19 @@ function getChannelUnit(role: string): string {
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.p5, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">大气压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.Patm }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pAtm, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">风洞总压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.fh_windTunnelTotalPressure }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pTotal, 1) }}</span>
                     </div>
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-                      <span class="text-xs text-[var(--text-muted)]">风洞静压</span>
+                      <span class="text-xs text-[var(--text-muted)]">{{ t.fh_windTunnelStaticPressure }}</span>
                       <span class="font-mono text-lg font-bold text-[var(--accent-primary)]">{{ formatValue(latestRawData.pStatic, 1) }}</span>
                     </div>
                   </div>
-                  <div v-else class="flex h-20 items-center justify-center text-sm text-[var(--text-muted)]">暂无原始数据</div>
+                  <div v-else class="flex h-20 items-center justify-center text-sm text-[var(--text-muted)]">{{ t.fh_noRawData }}</div>
                 </div>
               </div>
 
@@ -1213,7 +1218,7 @@ function getChannelUnit(role: string): string {
               <div class="flex flex-1 flex-col gap-3 min-w-0">
                 <!-- Kα-Kβ 主图：占上半区，是五孔校准核心特征空间 -->
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">Kα - Kβ 系数特征空间</h3>
+                  <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.fh_kAlphaKbetaSpace }}</h3>
                   <div class="flex-1 min-h-0">
                     <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
                   </div>
@@ -1221,13 +1226,13 @@ function getChannelUnit(role: string): string {
                 <!-- CPT-α / CPS-α 副图：并列占下半区 -->
                 <div class="flex flex-[0.85] gap-3 min-h-0">
                   <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                    <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">CPT - α 曲线</h3>
+                    <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.fh_cptCurve }}</h3>
                     <div class="flex-1 min-h-0">
                       <canvas :ref="setCptAlphaCanvasRef" class="h-full w-full"></canvas>
                     </div>
                   </div>
                   <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                    <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">CPS - α 曲线</h3>
+                    <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.fh_cpsCurve }}</h3>
                     <div class="flex-1 min-h-0">
                       <canvas :ref="setCpsAlphaCanvasRef" class="h-full w-full"></canvas>
                     </div>
@@ -1241,20 +1246,20 @@ function getChannelUnit(role: string): string {
           <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-4">
             <div class="flex h-full flex-col gap-3 min-h-0">
               <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">Kα - Kβ 系数特征空间</h3>
+                <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.fh_kAlphaKbetaSpace }}</h3>
                 <div class="flex-1 min-h-0">
                   <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
                 </div>
               </div>
               <div class="flex flex-[0.85] gap-3 min-h-0">
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">CPT - α 曲线</h3>
+                  <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.fh_cptCurve }}</h3>
                   <div class="flex-1 min-h-0">
                     <canvas :ref="setCptAlphaCanvasRef" class="h-full w-full"></canvas>
                   </div>
                 </div>
                 <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                  <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">CPS - α 曲线</h3>
+                  <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.fh_cpsCurve }}</h3>
                   <div class="flex-1 min-h-0">
                     <canvas :ref="setCpsAlphaCanvasRef" class="h-full w-full"></canvas>
                   </div>
@@ -1268,23 +1273,23 @@ function getChannelUnit(role: string): string {
             <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-4 shadow-[var(--shadow-panel)]">
               <div class="mb-3 flex items-center gap-2">
                 <FileText class="h-5 w-5 text-[var(--accent-primary)]" />
-                <h3 class="text-base font-semibold text-[var(--text-primary)]">校准数据记录</h3>
-                <span class="ml-auto text-sm text-[var(--text-muted)]">共 {{ calibrationStore.dataPoints.length }} 条记录</span>
+                <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ t.fh_calibrationDataRecords }}</h3>
+                <span class="ml-auto text-sm text-[var(--text-muted)]">{{ recordCountText }}</span>
               </div>
               <div class="overflow-auto">
                 <table class="w-full text-sm">
                   <thead class="bg-[var(--bg-panel-strong)]">
                     <tr>
-                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">序号</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.fh_sequenceNumber }}</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">α (°)</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">β (°)</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kα</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">Kβ</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">CPT</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">CPS</th>
-                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">马赫数(Ma)</th>
-                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">采样数</th>
-                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">标准差</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.fh_machMaHeader }}</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.samples }}</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-[var(--text-muted)]">{{ t.fh_stdDev }}</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-[var(--border-default)]">
@@ -1302,7 +1307,7 @@ function getChannelUnit(role: string): string {
                     </tr>
                   </tbody>
                 </table>
-                <div v-if="fiveHolePoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">暂无数据记录</div>
+                <div v-if="fiveHolePoints.length === 0" class="py-8 text-center text-sm text-[var(--text-muted)]">{{ t.fh_noDataRecords }}</div>
               </div>
             </div>
           </div>
