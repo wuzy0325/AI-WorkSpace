@@ -35,8 +35,10 @@ const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
 
-/* 导航栏展开状态：使用点击切换代替 hover，避免误触和布局跳动 */
-const isExpanded = ref(false)
+/* 导航栏展开状态：使用点击切换代替 hover，避免误触和布局跳动。
+   默认展开——启动时露出导航项文字标签，便于新用户识别各入口用途；
+   用户点击底部切换按钮收起后仅保留图标列，节省横向空间。 */
+const isExpanded = ref(true)
 
 function toggleExpand(): void {
   isExpanded.value = !isExpanded.value

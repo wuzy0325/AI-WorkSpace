@@ -41,10 +41,24 @@ const { locale } = storeToRefs(i18nStore)
 const refreshRate = ref(DEFAULT_REFRESH_RATE_HZ)
 const historyWindowSec = ref(DEFAULT_HISTORY_WINDOW_SEC)
 
-/** 计算容量预览：时间窗口 × 刷新率，clamp 到硬上限。展示给用户看实际点数 */
-const estimatedCapacity = computed(() =>
+/** 真实容量（未 clamp）：时间窗口 × 刷新率。
+ * 用户想看到"60 秒 × 10 Hz = 600 点"，而不是被硬上限截断后的 300。 */
+const rawCapacity = computed(() => historyWindowSec.value * refreshRate.value)
+
+/** 实际落库容量：真实容量 clamp 到硬上限，供 deviceStore 分配 ringBuffer 使用 */
+const appliedCapacity = computed(() =>
   computeHistoryCapacity(historyWindowSec.value, refreshRate.value),
 )
+
+/** 容量显示文本：真实值，超限时提示上限 */
+const capacityDisplay = computed(() => {
+  const raw = rawCapacity.value
+  const cap = HISTORY_CAPACITY_HARD_CAP
+  if (raw > cap) {
+    return `${i18nStore.t.approx} ${raw} ${i18nStore.t.pts} (${i18nStore.t.capped} ${cap})`
+  }
+  return `${i18nStore.t.approx} ${raw} ${i18nStore.t.pts}`
+})
 
 /** 字段级校验错误记录 */
 const validationErrors = ref<Record<string, string>>({})
@@ -198,7 +212,7 @@ defineExpose({ load, save, reset, validate, historyWindowSec, refreshRate })
         >
           <div class="refresh-row">
             <div class="refresh-slider">
-              <UiSlider v-model="refreshRate" :min="REFRESH_RATE_MIN" :max="REFRESH_RATE_MAX" :step="1" :aria-label="i18nStore.t.set_refreshFrequency" />
+              <UiSlider v-model="refreshRate" :min="REFRESH_RATE_MIN" :max="REFRESH_RATE_MAX" :step="1" :aria-label="i18nStore.t.set_refreshFrequency" :tooltip="false" />
               <div class="refresh-labels">
                 <span class="refresh-label">{{ REFRESH_RATE_MIN }} Hz</span>
                 <span
@@ -245,13 +259,17 @@ defineExpose({ load, save, reset, validate, historyWindowSec, refreshRate })
                 :max="HISTORY_WINDOW_MAX_SEC"
                 :step="HISTORY_WINDOW_STEP_SEC"
                 :aria-label="i18nStore.t.historyWindowLabel"
+                :tooltip="false"
               />
               <div class="refresh-labels">
                 <span class="refresh-label">{{ HISTORY_WINDOW_MIN_SEC }} {{ i18nStore.t.sec }}</span>
+                <!-- 容量预览放到 slider 下方中间，替代原来的"推荐"文本，
+                     避免在输入框右侧独占空间导致行拥挤 -->
                 <span
                   class="refresh-label refresh-label--highlight"
-                  :class="{ 'refresh-label--active': historyWindowSec >= 15 && historyWindowSec <= 60 }"
-                >{{ i18nStore.t.set_recommendedWindow }}</span>
+                  :class="{ 'refresh-label--active': rawCapacity > HISTORY_CAPACITY_HARD_CAP }"
+                  :title="i18nStore.t.historyWindowHint"
+                >{{ capacityDisplay }}</span>
                 <span class="refresh-label">{{ HISTORY_WINDOW_MAX_SEC }} {{ i18nStore.t.sec }}</span>
               </div>
             </div>
@@ -268,26 +286,11 @@ defineExpose({ load, save, reset, validate, historyWindowSec, refreshRate })
             </div>
           </div>
         </UiFormField>
-        <!-- 容量预览：时间窗口 × 刷新率 = 实际存储点数，帮助用户理解配置含义 -->
-        <div class="capacity-preview">
-          <span class="capacity-preview__label">{{ i18nStore.t.pts }}: {{ estimatedCapacity }} / {{ HISTORY_CAPACITY_HARD_CAP }}</span>
-        </div>
       </div>
     </UiPanel>
   </section>
 </template>
 
 <style scoped>
-.capacity-preview {
-  margin-top: 8px;
-  padding: 6px 10px;
-  border-radius: 4px;
-  background: var(--bg-secondary, rgba(148, 163, 184, 0.08));
-  font-size: 11px;
-  color: var(--text-muted, #64748b);
-  text-align: right;
-}
-.capacity-preview__label {
-  font-family: ui-monospace, monospace;
-}
+/* 所有样式已迁移至 settings-form.css 全局共享样式 */
 </style>
