@@ -1,11 +1,9 @@
 ---
 name: gitnexus-debugging
-description: "Use when the user is debugging a bug, tracing an error, or asking why something fails. Works in Claude Code, OpenCode, Trae, Cursor, Codex. Examples: \"Why is X failing?\", \"Where does this error come from?\", \"Trace this bug\""
+description: "Use when the user is debugging a bug, tracing an error, or asking why something fails. Examples: \"Why is X failing?\", \"Where does this error come from?\", \"Trace this bug\""
 ---
 
 # Debugging with GitNexus
-
-Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI assistant with MCP access to the GitNexus server.
 
 ## When to Use
 
@@ -18,14 +16,13 @@ Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI as
 ## Workflow
 
 ```
-1. gitnexus_query({query: "<error or symptom>"})       → Find related execution flows
-2. gitnexus_context({name: "<suspect>"})                      → See callers/callees/processes
-3. READ gitnexus://repo/{name}/process/{name}                  → Trace execution flow
-4. gitnexus_cypher({query: "MATCH path..."})                   → Custom traces if needed
-5. gitnexus_trace({from: "<entry>", to: "<suspect>"})          → Shortest call chain in one call
+1. gitnexus_query({query: "<error or symptom>"})            → Find related execution flows
+2. gitnexus_context({name: "<suspect>"})                    → See callers/callees/processes
+3. READ gitnexus://repo/{name}/process/{name}                → Trace execution flow
+4. gitnexus_cypher({query: "MATCH path..."})                 → Custom traces if needed
 ```
 
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> If "Index is stale" → run `npx gitnexus analyze` in terminal.
 
 ## Checklist
 
@@ -34,7 +31,6 @@ Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI as
 - [ ] gitnexus_query for error text or related code
 - [ ] Identify the suspect function from returned processes
 - [ ] gitnexus_context to see callers and callees
-- [ ] gitnexus_trace between entry point and suspect for shortest path
 - [ ] Trace execution flow via process resource if applicable
 - [ ] gitnexus_cypher for custom call chain traces if needed
 - [ ] Read source files to confirm root cause
@@ -42,14 +38,13 @@ Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI as
 
 ## Debugging Patterns
 
-| Symptom              | GitNexus Approach                                                  |
-| -------------------- | ------------------------------------------------------------------ |
-| Error message        | `gitnexus_query` for error text → `gitnexus_context` on throw sites|
-| Wrong return value   | `gitnexus_context` on the function → trace callees for data flow   |
-| Intermittent failure | `gitnexus_context` → look for external calls, async deps           |
-| Performance issue    | `gitnexus_context` → find symbols with many callers (hot paths)    |
-| Recent regression    | `gitnexus_detect_changes` to see what your changes affect          |
-| "How does A reach B?"| `gitnexus_trace` between the two symbols — shortest call chain     |
+| Symptom              | GitNexus Approach                                          |
+| -------------------- | ---------------------------------------------------------- |
+| Error message        | `gitnexus_query` for error text → `context` on throw sites |
+| Wrong return value   | `context` on the function → trace callees for data flow    |
+| Intermittent failure | `context` → look for external calls, async deps            |
+| Performance issue    | `context` → find symbols with many callers (hot paths)     |
+| Recent regression    | `detect_changes` to see what your changes affect           |
 
 ## Tools
 
@@ -69,16 +64,6 @@ gitnexus_context({name: "validatePayment"})
 → Outgoing calls: verifyCard, fetchRates (external API!)
 → Processes: CheckoutFlow (step 3/7)
 ```
-
-**gitnexus_trace** — shortest call chain between two symbols (one call instead of chaining `context` hops):
-
-```
-gitnexus_trace({ from: "processCheckout", to: "fetchRates" })
-→ status: ok, hopCount: 3
-→ hops: processCheckout → validatePayment → verifyCard → fetchRates
-```
-
-When no path exists, reports the furthest reachable node — where the chain breaks.
 
 **gitnexus_cypher** — custom call chain traces:
 
