@@ -8,6 +8,7 @@ package usecase
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -17,6 +18,68 @@ import (
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
+
+// nullIfNaN 在 v 为 NaN 时返回 nil（JSON 序列化为 null），否则返回原值。
+// 用于 API 响应中的坐标字段：line/rectangle/sector 模式未配置的轴标记为 NaN，
+// encoding/json 不支持 NaN/Inf 的序列化，必须转为 nil 避免整个响应崩溃。
+func nullIfNaN(v float64) any {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil
+	}
+	return v
+}
+
+// sanitizePointForJSON 清洗点坐标中的 NaN/Inf，避免 status.results 直接序列化崩溃。
+// line/rectangle/sector 路径会通过 markAxesNaN 将未配置轴标记为 NaN；
+// 若 results 原样塞进 JSON，encoding/json 会返回 "unsupported value: NaN"，
+// 导致 /api/traversal/status 写响应失败，前端轮询停在最后一次成功状态（常见为稳定中）。
+func sanitizePointForJSON(point traversal.Point) map[string]any {
+	return map[string]any{
+		"x": nullIfNaN(point.X),
+		"y": nullIfNaN(point.Y),
+		"z": nullIfNaN(point.Z),
+		"u": nullIfNaN(point.U),
+	}
+}
+
+// sanitizeResultsForJSON 将 PointResult 列表转为 JSON 安全结构。
+// 前端主路径消费 dataPoints；results 仅作兼容字段，但仍必须可序列化。
+// values（传感器读数）和 calculated（插值结果）中的 NaN/Inf 也必须清洗——
+// 通信异常或 Ps=0 等边界可导致 NaN/Inf，原样序列化会崩整个 status API。
+func sanitizeResultsForJSON(results []traversal.PointResult) []map[string]any {
+	out := make([]map[string]any, 0, len(results))
+	for _, result := range results {
+		// values: map[int]float64 → map[int]any，NaN/Inf → nil
+		sanitizedValues := make(map[int]any, len(result.Values))
+		for k, v := range result.Values {
+			sanitizedValues[k] = nullIfNaN(v)
+		}
+		item := map[string]any{
+			"pointIndex":       result.PointIndex,
+			"point":            sanitizePointForJSON(result.Point),
+			"timestamp":        result.Timestamp,
+			"values":           sanitizedValues,
+			"sampleCount":      result.SampleCount,
+			"dwellTimeElapsed": result.DwellTimeElapsed,
+		}
+		if result.Calculated != nil {
+			// calculated: 逐字段清洗 NaN/Inf
+			item["calculated"] = map[string]any{
+				"valid": result.Calculated.Valid,
+				"alpha": nullIfNaN(result.Calculated.Alpha),
+				"beta":  nullIfNaN(result.Calculated.Beta),
+				"pt":    nullIfNaN(result.Calculated.Pt),
+				"ps":    nullIfNaN(result.Calculated.Ps),
+				"mach":  nullIfNaN(result.Calculated.Mach),
+			}
+		}
+		if len(result.CustomValues) > 0 {
+			item["customValues"] = result.CustomValues
+		}
+		out = append(out, item)
+	}
+	return out
+}
 
 func (m *TraversalManager) finalizeSink() {
 	m.mu.Lock()
@@ -82,10 +145,14 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	if status.TotalPoints > 0 {
 		progress = float64(status.CurrentPoint) / float64(status.TotalPoints) * 100
 	}
-	var currentPoint map[string]float64
+	// currentPoint 用 map[string]any 而非 map[string]float64：
+	// line/rectangle/sector 模式通过 markAxesNaN 将未配置轴标记为 NaN，
+	// encoding/json 遇到 NaN 会返回 "unsupported value" 错误导致整个 status API 崩溃。
+	// NaN 时输出 nil（JSON null），前端用 optional chaining 处理。
+	var currentPoint map[string]any
 	if status.CurrentPointCoordinates != nil {
 		point := *status.CurrentPointCoordinates
-		currentPoint = map[string]float64{"alpha": point.X, "beta": point.Y}
+		currentPoint = map[string]any{"alpha": nullIfNaN(point.X), "beta": nullIfNaN(point.Y)}
 	}
 	dataPoints := m.BuildDataPoints(status.Results)
 	var latestData any
@@ -105,10 +172,11 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 		"startTime":               status.StartedAt,
 		"lastError":               status.LastError,
 		"lastErrorCode":           string(status.LastErrorCode),
-		"results":                 status.Results,
-		"dataPoints":              dataPoints,
-		"latestData":              latestData,
-		"validationWarnings":      status.ValidationWarnings,
+		// results 必须清洗 NaN：line 模式首点保存后 Y/Z/U=NaN，原样序列化会让 status API 崩溃。
+		"results":            sanitizeResultsForJSON(status.Results),
+		"dataPoints":         dataPoints,
+		"latestData":         latestData,
+		"validationWarnings": status.ValidationWarnings,
 	}
 }
 
@@ -136,8 +204,9 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 			}
 		}
 		dataPoints = append(dataPoints, map[string]any{
-			"pointId":             result.PointIndex + 1,
-			"coordinates":         map[string]float64{"alpha": result.Point.X, "beta": result.Point.Y},
+			"pointId": result.PointIndex + 1,
+			// coordinates 用 map[string]any：NaN 轴输出 null 避免 JSON 序列化失败（见 currentPoint 注释）
+			"coordinates":         map[string]any{"alpha": nullIfNaN(result.Point.X), "beta": nullIfNaN(result.Point.Y)},
 			"rawPressure":         rawPressure,
 			"interpolationResult": interpolationResult,
 			"sampleCount":         result.SampleCount,

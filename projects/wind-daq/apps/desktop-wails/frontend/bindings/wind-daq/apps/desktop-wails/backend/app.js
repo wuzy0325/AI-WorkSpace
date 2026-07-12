@@ -294,6 +294,16 @@ export function FileExists(path) {
 }
 
 /**
+ * GetInstallerLanguage 读取安装程序写入的语言偏好
+ * 安装时在 NSIS 中写入 HKCU\Software\<Company>\<Product>\InstallerLanguage
+ * 返回 "zh"、"en" 或空字符串（未由安装程序设置时）
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetInstallerLanguage() {
+    return $Call.ByID(3938139493);
+}
+
+/**
  * GetStartupMode 获取当前应用启动模式
  * 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）
  * @returns {$CancellablePromise<string>}

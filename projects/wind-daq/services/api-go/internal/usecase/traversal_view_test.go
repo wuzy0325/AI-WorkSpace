@@ -1,10 +1,13 @@
 package usecase
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
+	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
 
@@ -445,6 +448,70 @@ func TestCheckPreconditions_AllChannelsMapped(t *testing.T) {
 	msg, _ := channelMap["message"].(string)
 	if msg != "All required channel labels are mapped" {
 		t.Errorf("ChannelMap message: expect 'All required channel labels are mapped', got %q", msg)
+	}
+}
+
+// TestBuildStatusResponse_LineModeNaNResultsSerializable
+//
+// 测试前置：
+//   - line 模式点位 Y/Z/U=NaN（markAxesNaN 行为）
+//   - status.Results 已写入首个 PointResult
+//
+// 测试步骤：
+//   - 调用 BuildStatusResponse()
+//   - 对返回 map 做 encoding/json 序列化
+//
+// 期待结果：
+//   - 序列化成功，不返回 "unsupported value: NaN"
+//   - results[0].point.y/z/u 为 null
+func TestBuildStatusResponse_LineModeNaNResultsSerializable(t *testing.T) {
+	mgr := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.status = traversal.Status{
+		TaskID:       "task-nan-results",
+		State:        traversal.StateRunning,
+		CurrentPoint: 1,
+		TotalPoints:  2,
+		Results: []traversal.PointResult{{
+			PointIndex: 0,
+			Point: traversal.Point{
+				X: 10,
+				Y: math.NaN(),
+				Z: math.NaN(),
+				U: math.NaN(),
+			},
+			Timestamp:   time.Now().UnixMilli(),
+			Values:      map[int]float64{0: 1.23},
+			SampleCount: 1,
+		}},
+	}
+	mgr.mu.Unlock()
+
+	resp := mgr.BuildStatusResponse()
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("BuildStatusResponse must be JSON-serializable after line-mode first point save, got err=%v", err)
+	}
+	if string(data) == "" {
+		t.Fatal("expected non-empty JSON payload")
+	}
+
+	// 校验 results 中未配置轴被清洗为 null
+	rawResults, ok := resp["results"].([]map[string]any)
+	if !ok || len(rawResults) != 1 {
+		t.Fatalf("results: expect 1 sanitized item, got %T len=%v", resp["results"], len(rawResults))
+	}
+	point, ok := rawResults[0]["point"].(map[string]any)
+	if !ok {
+		t.Fatalf("results[0].point: expect map, got %T", rawResults[0]["point"])
+	}
+	if point["x"] != float64(10) {
+		t.Errorf("results[0].point.x: expect 10, got %v", point["x"])
+	}
+	for _, axis := range []string{"y", "z", "u"} {
+		if point[axis] != nil {
+			t.Errorf("results[0].point.%s: expect nil (NaN sanitized), got %v", axis, point[axis])
+		}
 	}
 }
 

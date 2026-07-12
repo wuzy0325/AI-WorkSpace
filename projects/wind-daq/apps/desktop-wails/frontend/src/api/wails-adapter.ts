@@ -553,6 +553,10 @@ export const wailsApi = {
     getStartupMode: async (): Promise<string> => {
       return await callBinding('GetStartupMode');
     },
+    // 获取安装程序写入的语言偏好：返回 "zh"、"en" 或空字符串
+    getInstallerLanguage: async (): Promise<string> => {
+      return await callBinding('GetInstallerLanguage');
+    },
     // 启动运动控制器独立窗口（独立进程）
     openMotionWindow: async (): Promise<GenericResponse> => {
       return await callBindingGeneric('OpenMotionWindow');

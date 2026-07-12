@@ -6,12 +6,23 @@ package usecase
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 )
+
+// formatCoord 格式化坐标值用于日志输出。
+// NaN 表示该轴不参与遍历运动（line/rectangle/sector 模式 markAxesNaN 标记），
+// 输出 "N/A" 比 "NaN" 更直观，避免日志排查时误判为浮点异常。
+func formatCoord(v float64) string {
+	if math.IsNaN(v) {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.2f", v)
+}
 
 func (m *TraversalManager) fail(format string, args ...any) error {
 	return m.failWithCode(format, traversal.ErrUnknown, args...)
@@ -79,23 +90,140 @@ func valuesForChannels(payload device.DataPayload, channels []int) map[int]float
 	return values
 }
 
-func availableAxisTargets(status motion.ControllerStatus, point traversal.Point) map[motion.AxisName]float64 {
+// resolveMotionAxes 在调用 availableAxisTargets 前对 motionAxes 做容错预处理。
+//
+// 回退规则：若所有非空 controllerId 都不匹配任何**已连接**控制器的 ID，
+// 视为旧配置 / 错误配置（典型表现：前端用别名 "sim-motion-1" 而后端 profile.ID
+// 是 UUID），统一把 controllerId 清空，回退到「按轴名匹配」的旧行为。
+//
+// 这样既保留了「多控制器同时连接时严格按 controllerId 过滤」的能力，
+// 又避免了 controllerId 不匹配时 availableAxisTargets 对所有控制器返回 nil、
+// 遍历跳过运动直接进入「稳定中」阶段的空转 bug。
+//
+// 注意：本函数仅做一次全局判断，不会改变部分匹配场景下的行为——
+// 只要存在任意一个绑定匹配（或 controllerId 为空通配），原 motionAxes 原样返回。
+func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []motion.ControllerStatus) []traversal.MotionAxisBinding {
+	if len(motionAxes) == 0 {
+		return motionAxes
+	}
+	// 收集已连接控制器的 ID 集合
+	connectedIDs := make(map[string]bool, len(statuses))
+	for _, s := range statuses {
+		if s.Connected {
+			connectedIDs[s.ID] = true
+		}
+	}
+	// 任意一个绑定匹配（含空 controllerId 视为通配）→ 不需要回退
+	for _, b := range motionAxes {
+		if b.ControllerID == "" {
+			return motionAxes
+		}
+		if connectedIDs[b.ControllerID] {
+			return motionAxes
+		}
+	}
+	// 全部不匹配：清空 controllerId，回退到按轴名匹配
+	slog.Warn("traversal motionAxes controllerId mismatched, falling back to axis-name matching",
+		"component", "traversal",
+		"connected_controller_count", len(connectedIDs),
+	)
+	fallback := make([]traversal.MotionAxisBinding, len(motionAxes))
+	for i, b := range motionAxes {
+		fallback[i] = traversal.MotionAxisBinding{
+			ControllerID: "",
+			Axis:         b.Axis,
+		}
+	}
+	return fallback
+}
+
+// motionTargetsReached 判断当前状态快照中的所有有效运动目标是否到位。
+// 必须至少检查到一个已连接控制器上的目标轴；零目标不等于全部完成，避免状态缺失时提前进入稳定阶段。
+// 当 checkedTargets==0 且 motionAxes 非空时，说明轴名配置与已连接控制器不匹配，
+// 打 warning 日志暴露根因，避免 120s 静默超时。
+func motionTargetsReached(statuses []motion.ControllerStatus, point traversal.Point, motionAxes []traversal.MotionAxisBinding) bool {
+	checkedTargets := 0
+	for _, status := range statuses {
+		if !status.Connected {
+			continue
+		}
+		targets := availableAxisTargets(status, point, motionAxes)
+		for _, axis := range status.Axes {
+			target, hasTarget := targets[axis.Name]
+			if !hasTarget {
+				continue
+			}
+			checkedTargets++
+			if axis.Moving || math.Abs(axis.Position-target) > 0.01 {
+				return false
+			}
+		}
+	}
+	if checkedTargets == 0 && len(motionAxes) > 0 {
+		slog.Warn("traversal motionTargetsReached: no axis matched motionAxes config, will timeout",
+			"component", "traversal",
+			"motion_axes", motionAxes,
+		)
+	}
+	return checkedTargets > 0
+}
+
+// availableAxisTargets 根据遍历点坐标和参与运动的轴绑定，生成 (轴名→目标位置) 映射。
+// motionAxes 为参与遍历运动的「控制器+轴」绑定；仅匹配当前 status.ID 的轴会生成目标。
+// 为空时（旧配置兼容）保持原行为：对 status.Axes 中所有轴生成目标。
+//
+// NaN 目标跳过：line/rectangle/sector 模式会通过 markAxesNaN 将未配置的轴标记为 NaN，
+// 表示"该轴不参与遍历运动"。此函数跳过 NaN 目标轴，既不发 MoveTo 也不参与到位判定，
+// 避免把 Z/U 等未配置轴强制归零（曾导致 9ed66bb 后遍历卡死 120s 超时）。
+//
+// 控制器过滤：绑定了 controllerId 时，仅对对应控制器生成目标。否则若模拟控制器与
+// 真实 WTNMC4A 同时连接，会对真实控制器也等待到位，表现为「模拟轴已到位仍超时」。
+//
+// 调用方应先调用 resolveMotionAxes 预处理 motionAxes：当配置的所有 controllerId
+// 都不匹配任何已连接控制器时，回退到按轴名匹配，避免遍历空转。
+func availableAxisTargets(status motion.ControllerStatus, point traversal.Point, motionAxes []traversal.MotionAxisBinding) map[motion.AxisName]float64 {
+	// 构建当前控制器允许的轴名集合；空列表表示不过滤（旧配置兼容）
+	// ControllerID 为空的绑定表示「任意控制器的该轴」
+	allowed := make(map[string]bool, len(motionAxes))
+	for _, binding := range motionAxes {
+		if binding.Axis == "" {
+			continue
+		}
+		if binding.ControllerID != "" && binding.ControllerID != status.ID {
+			continue
+		}
+		allowed[binding.Axis] = true
+	}
+	// 配置了绑定，但当前控制器不在任何绑定中 → 不生成目标（跳过该控制器）
+	if len(motionAxes) > 0 && len(allowed) == 0 {
+		return nil
+	}
 	targets := make(map[motion.AxisName]float64, len(status.Axes))
 	for _, axis := range status.Axes {
+		// motionAxes 非空时，仅对白名单中的轴生成目标，避免对未配置/未接硬件的轴强制归零
+		if len(motionAxes) > 0 && !allowed[string(axis.Name)] {
+			continue
+		}
+		var target float64
 		switch axis.Name {
 		case motion.AxisX:
-			targets[axis.Name] = point.X
+			target = point.X
 		case motion.AxisY:
-			targets[axis.Name] = point.Y
+			target = point.Y
 		case motion.AxisZ:
-			targets[axis.Name] = point.Z
+			target = point.Z
 		// U 轴仅在 motion.ControllerStatus.Axes 含 AxisU 时生效
 		// （如旋转台 / 第四轴位移机构），无 U 轴的控制器 profile 会自动跳过此 case
 		case motion.AxisU:
-			targets[axis.Name] = point.U
+			target = point.U
+		default:
+			continue
 		}
+		// NaN 目标表示该轴不参与遍历运动（如 line 模式的 Y/Z/U），跳过不发 MoveTo
+		if math.IsNaN(target) {
+			continue
+		}
+		targets[axis.Name] = target
 	}
 	return targets
 }
-
-// RunTraversalLoop 主循环：按 dwell 间隔驱动 RunCurrentPoint，直至完成/停止/错误

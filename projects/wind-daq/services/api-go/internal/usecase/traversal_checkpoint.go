@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -74,6 +75,22 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 	var lastPoint *traversal.Point
 	if completedCount > 0 && completedCount <= len(points) {
 		lp := points[completedCount-1]
+		// 清洗 NaN：line/rectangle/sector 模式通过 markAxesNaN 将未配置轴标记为 NaN，
+		// encoding/json 不支持 NaN 序列化会导致 checkpoint 写入失败。
+		// LastPoint 仅用于显示"上次跑到哪个点"，恢复运动用 Config.Path 而非 LastPoint，
+		// 所以 NaN→0 不影响恢复正确性（availableAxisTargets 仍按 Path 中的 NaN 跳过对应轴）。
+		if math.IsNaN(lp.X) {
+			lp.X = 0
+		}
+		if math.IsNaN(lp.Y) {
+			lp.Y = 0
+		}
+		if math.IsNaN(lp.Z) {
+			lp.Z = 0
+		}
+		if math.IsNaN(lp.U) {
+			lp.U = 0
+		}
 		lastPoint = &lp
 	}
 
@@ -209,7 +226,6 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	m.configRaw = append(json.RawMessage(nil), cp.Config...)
 	m.isStopped = false
 	m.isPaused = false
-	m.motionPauseCancelled = false
 	m.status = traversal.Status{
 		TaskID:       cp.TaskID,
 		State:        traversal.StateRunning,
@@ -226,11 +242,7 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	m.mu.Unlock()
 
 	// 启动后台循环
-	dwell := time.Duration(config.DwellTimeMs) * time.Millisecond
-	if dwell <= 0 {
-		dwell = 100 * time.Millisecond
-	}
-	go m.RunTraversalLoop(dwell)
+	go m.RunTraversalLoop()
 
 	slog.Info("traversal checkpoint resume success",
 		"component", "traversal",

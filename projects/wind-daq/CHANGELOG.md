@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.1] - 2026-07-10
+
+### Changed
+
+- 遍历测试 UI 样式优化：PointsPreview 布点画布增强（渐变背景、轨迹线、立体点渲染），WorkspaceArea 顶栏极简化（去掉装饰条、分隔线分组），TopBar 状态指示改用圆点+文字替代徽章、进度条颜色对齐主题色。
+- 整体视觉更轻盈现代，降低视觉重量。
+
+### Internal
+
+- 3 个 Vue 组件纯前端样式调整，无逻辑或接口变更。
+
+### Verification
+
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.4.0] - 2026-07-10
 
 ### Added

@@ -72,6 +72,20 @@ type Config struct {
 	// Patm 通道始终视为绝压，不消费此字段。
 	// 空串在 ParseAndStartTraversal 中兜底为 "gauge"，保证旧配置反序列化兼容。
 	PProbePressureType string `json:"pProbePressureType,omitempty"`
+
+	// MotionAxes 参与遍历运动的轴绑定列表，来自前端 motionAxes 配置。
+	// 仅对这些「控制器+轴」发送 MoveTo 并等待到位，避免：
+	// 1) 对未配置/未接硬件的轴（如 Z/U）强制归零；
+	// 2) 对未绑定的真实控制器（即使 autoConnect 已连接）发指令并卡死等待。
+	// 为空时（旧配置兼容）保持原行为：对所有已连接控制器的所有轴生成目标。
+	MotionAxes []MotionAxisBinding `json:"motionAxes,omitempty"`
+}
+
+// MotionAxisBinding 遍历运动轴绑定：指定由哪台控制器的哪个轴执行运动。
+// ControllerID 为空时表示不限制控制器（仅按轴名过滤，兼容旧数据）。
+type MotionAxisBinding struct {
+	ControllerID string `json:"controllerId,omitempty"`
+	Axis         string `json:"axis"`
 }
 
 // GridConfig 网格配置（旧接口兼容）

@@ -53,28 +53,52 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	m.mu.Unlock()
 
 	taskID := config.TaskID
+	// motionAxes 决定哪些轴参与遍历运动；为空时（旧配置）保持原行为对所有轴发 MoveTo
+	motionAxes := config.MotionAxes
 
 	// 每个遍历点都会触发一次，属于高频日志，降级为 Debug 避免刷屏。
 	// 进度信息已经通过 status API 推送到 UI，LOG 画面里只在调试时才需要看到。
 	// 4 轴全输出：系统已支持 X/Y/Z/U 四轴运动控制，调试时需看到完整坐标
 	// 才能排查 4 轴定位/插值问题，仅输出 X/Y 会丢失 Z/U 上下文。
+	// NaN 显示为 "N/A"：line/rectangle/sector 模式未配置的轴标记为 NaN，避免日志出现 "NaN" 干扰排查。
 	slog.Debug("traversal running point",
 		"component", "traversal",
 		"task_id", taskID,
 		"point_index", pointIndex+1,
 		"total_points", len(config.Path),
-		"coordinates", fmt.Sprintf("(X=%.2f, Y=%.2f, Z=%.2f, U=%.2f)", point.X, point.Y, point.Z, point.U),
+		"coordinates", fmt.Sprintf("(X=%s, Y=%s, Z=%s, U=%s)",
+			formatCoord(point.X), formatCoord(point.Y), formatCoord(point.Z), formatCoord(point.U)),
 	)
 
 	// 阶段1：移动中
 	m.updatePhase(taskID, traversal.StateMoving, traversal.PhaseMoving, pointIndex, len(config.Path))
 	ctx := context.Background()
 	controllerStatuses := m.motion.StatusAll(ctx)
+	// 容错预处理：controllerId 全部不匹配已连接控制器时（如前端用别名 "sim-motion-1"
+	// 而后端 profile.ID 是 UUID），回退到按轴名匹配，避免遍历空转卡在「稳定中」阶段。
+	motionAxes = resolveMotionAxes(motionAxes, controllerStatuses)
+	// 诊断日志：记录运动阶段开始时的关键信息，便于排查「卡在稳定中」类问题。
+	// 属于硬件通信日志范畴，默认随硬件通信开关显示。
+	connectedIDs := make([]string, 0)
+	for _, s := range controllerStatuses {
+		if s.Connected {
+			connectedIDs = append(connectedIDs, s.ID)
+		}
+	}
+	slog.Info("traversal motion phase started",
+		"component", "traversal",
+		"task_id", taskID,
+		"point_index", pointIndex+1,
+		"connected_controllers", connectedIDs,
+		"motion_axes", motionAxes,
+		"point", fmt.Sprintf("(X=%s, Y=%s, Z=%s, U=%s)",
+			formatCoord(point.X), formatCoord(point.Y), formatCoord(point.Z), formatCoord(point.U)),
+	)
 	for _, status := range controllerStatuses {
 		if !status.Connected {
 			continue
 		}
-		for axis, position := range availableAxisTargets(status, point) {
+		for axis, position := range availableAxisTargets(status, point, motionAxes) {
 			if err := m.motion.MoveTo(ctx, status.ID, axis, position); err != nil {
 				slog.Error("traversal move failed",
 					"component", "traversal",
@@ -85,20 +109,26 @@ func (m *TraversalManager) RunCurrentPoint() error {
 				)
 				return m.failWithCode("move %s axis: %v", traversal.ErrMotionFailed, axis, err)
 			}
+			slog.Info("traversal move sent",
+				"component", "traversal",
+				"task_id", taskID,
+				"controller", status.ID,
+				"axis", string(axis),
+				"target", position,
+			)
 		}
 	}
 
-	motionComplete := m.waitForMotionComplete(ctx, point, taskID)
+	motionComplete, paused := m.waitForMotionComplete(ctx, point, taskID)
+	slog.Info("traversal motion phase ended",
+		"component", "traversal",
+		"task_id", taskID,
+		"point_index", pointIndex+1,
+		"motion_complete", motionComplete,
+		"paused", paused,
+	)
 	if !motionComplete {
 		m.stopMotionAxes()
-		// 在锁内读取并清零 motionPauseCancelled，避免与 waitForMotionComplete /
-		// ResumeFromCheckpoint 的写并发产生数据竞争。
-		m.mu.Lock()
-		paused := m.motionPauseCancelled
-		if paused {
-			m.motionPauseCancelled = false
-		}
-		m.mu.Unlock()
 		if paused {
 			slog.Info("traversal motion interrupted by pause",
 				"component", "traversal",
@@ -498,51 +528,48 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	return averaged, nil
 }
 
-// waitForMotionComplete 等待运动完成（带超时和取消检查）
-func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string) bool {
+// waitForMotionComplete 等待运动完成（带超时和取消检查）。
+// 返回值：(completed, paused)
+//   - completed=true：所有参与运动的轴已到位
+//   - completed=false, paused=true：因暂停中断（非错误，RunCurrentPoint 应静默退出）
+//   - completed=false, paused=false：超时或停止中断（错误路径）
+//
+// 暂停信息通过返回值传递而非全局标志位，避免与 Resume 并发清零产生竞态。
+func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string) (completed bool, paused bool) {
 	ticker := time.NewTicker(motionCompletePoll)
 	defer ticker.Stop()
 	deadline := time.Now().Add(motionCompleteTimeout)
 
+	// 读取 motionAxes 配置，仅检查参与遍历运动的轴是否到位
+	m.mu.RLock()
+	motionAxes := m.config.MotionAxes
+	m.mu.RUnlock()
+	// 容错预处理：与 RunCurrentPoint 保持一致，否则 controllerId 全部不匹配时
+	// targets 为 nil → allReached 恒为 true → 跳过运动直接进入「稳定中」阶段
+	motionAxes = resolveMotionAxes(motionAxes, m.motion.StatusAll(ctx))
+
 	for {
 		select {
 		case <-ctx.Done():
-			return false
+			return false, false
 		case <-ticker.C:
-			// 检查是否暂停或停止；若已暂停顺手在同一把写锁内置位 motionPauseCancelled，
-			// 让 RunCurrentPoint 在锁内读到的状态保持一致，避免与 Resume 的清零并发竞态。
+			// 优先检查到位：运动在 deadline 边界附近完成时，先判到位避免假超时
+			if motionTargetsReached(m.motion.StatusAll(ctx), point, motionAxes) {
+				return true, false
+			}
+			// 再检查暂停/停止
 			m.mu.Lock()
 			isPaused := m.isPaused
-			stopped := m.isStopped || isPaused
-			if stopped && isPaused {
-				m.motionPauseCancelled = true
-			}
+			stopped := m.isStopped
 			m.mu.Unlock()
 			if stopped {
-				return false
+				return false, false
 			}
-
+			if isPaused {
+				return false, true
+			}
 			if time.Now().After(deadline) {
-				return false
-			}
-			allReached := true
-			for _, status := range m.motion.StatusAll(ctx) {
-				for _, axis := range status.Axes {
-					target, hasTarget := availableAxisTargets(status, point)[axis.Name]
-					if !hasTarget {
-						continue
-					}
-					if axis.Moving || math.Abs(axis.Position-target) > 0.01 {
-						allReached = false
-						break
-					}
-				}
-				if !allReached {
-					break
-				}
-			}
-			if allReached {
-				return true
+				return false, false
 			}
 		}
 	}

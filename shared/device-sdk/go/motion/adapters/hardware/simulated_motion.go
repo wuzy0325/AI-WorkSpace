@@ -440,6 +440,14 @@ func (c *SimulatedMotionController) cancelAxisLocked(axis core.AxisName) {
 	}
 }
 
+// ownsAxisCommandLocked 判断异步运动协程是否仍拥有当前轴命令。
+// 仅依赖关闭取消通道无法阻止已经进入 ticker 分支、正在等待互斥锁的旧协程；
+// 通过比较通道身份，确保被新命令替换的旧协程不能再写位置或清除 Moving 状态。
+func (c *SimulatedMotionController) ownsAxisCommandLocked(axis core.AxisName, cancelCh chan struct{}) bool {
+	current, ok := c.cancelChs[axis]
+	return ok && current == cancelCh
+}
+
 // checkReadyLocked 检查控制器是否就绪（需要持有锁）
 func (c *SimulatedMotionController) checkReadyLocked() error {
 	if !c.status.Connected {
@@ -505,6 +513,10 @@ func (c *SimulatedMotionController) simulateMovement(axisIndex int, axis core.Ax
 			if elapsed >= duration {
 				// 运动完成
 				c.mu.Lock()
+				if !c.ownsAxisCommandLocked(axis, cancelCh) {
+					c.mu.Unlock()
+					return
+				}
 				if axisIndex < len(c.status.Axes) {
 					c.status.Axes[axisIndex].Position = targetPosition
 					c.status.Axes[axisIndex].Moving = false
@@ -516,7 +528,7 @@ func (c *SimulatedMotionController) simulateMovement(axisIndex int, axis core.Ax
 			}
 
 			c.mu.Lock()
-			if axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
+			if !c.ownsAxisCommandLocked(axis, cancelCh) || axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
 				c.mu.Unlock()
 				return
 			}
@@ -565,6 +577,10 @@ func (c *SimulatedMotionController) simulateJog(axisIndex int, axis core.AxisNam
 			return
 		case <-jogTimer.C:
 			c.mu.Lock()
+			if !c.ownsAxisCommandLocked(axis, cancelCh) {
+				c.mu.Unlock()
+				return
+			}
 			if axisIndex < len(c.status.Axes) {
 				c.status.Axes[axisIndex].Moving = false
 				c.status.Axes[axisIndex].Velocity = 0
@@ -573,7 +589,7 @@ func (c *SimulatedMotionController) simulateJog(axisIndex int, axis core.AxisNam
 			return
 		case <-ticker.C:
 			c.mu.Lock()
-			if axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
+			if !c.ownsAxisCommandLocked(axis, cancelCh) || axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
 				c.mu.Unlock()
 				return
 			}
@@ -644,6 +660,10 @@ func (c *SimulatedMotionController) simulateHome(axisIndex int, axis core.AxisNa
 			if elapsed >= homeDuration {
 				// 归位完成
 				c.mu.Lock()
+				if !c.ownsAxisCommandLocked(axis, cancelCh) {
+					c.mu.Unlock()
+					return
+				}
 				if axisIndex < len(c.status.Axes) {
 					c.status.Axes[axisIndex].Position = 0
 					c.status.Axes[axisIndex].Velocity = 0
@@ -656,7 +676,7 @@ func (c *SimulatedMotionController) simulateHome(axisIndex int, axis core.AxisNa
 			}
 
 			c.mu.Lock()
-			if axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
+			if !c.ownsAxisCommandLocked(axis, cancelCh) || axisIndex >= len(c.status.Axes) || !c.status.Axes[axisIndex].Moving {
 				c.mu.Unlock()
 				return
 			}

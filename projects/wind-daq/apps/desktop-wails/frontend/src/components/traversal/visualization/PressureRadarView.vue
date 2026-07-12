@@ -36,6 +36,12 @@ const radarValues = computed(() => {
   return rawPressures.value.map((value) => ((value - min) / span) * 100)
 })
 
+/** 安全格式化坐标：null/NaN 显示为 '--'，避免 toFixed 崩溃 */
+function formatCoord(v: number | null | undefined, digits = 2): string {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '--'
+  return v.toFixed(digits)
+}
+
 watch(() => props.dataPoints.length, (length) => {
   if (length === 0) {
     selectedIndex.value = 0
@@ -56,7 +62,10 @@ function updateChart(): void {
     backgroundColor: theme.panelColor,
     title: {
       text: point ? `${t.value.pressureRadar} #${selectedIndex.value + 1}` : t.value.pressureRadar,
-      subtext: point ? `alpha=${point.coordinates.alpha.toFixed(2)} deg beta=${point.coordinates.beta.toFixed(2)} deg` : '',
+      // alpha/beta 允许 null（line 模式 Y 轴 NaN），toFixed 前必须做 number 守卫
+      subtext: point
+        ? `alpha=${formatCoord(point.coordinates.alpha)} deg beta=${formatCoord(point.coordinates.beta)} deg`
+        : '',
       left: 'center',
       textStyle: { color: theme.textColor, fontSize: 14, fontWeight: 600 },
       subtextStyle: { color: theme.textColor }
@@ -125,7 +134,7 @@ watch([chart, selectedPoint, radarValues, chartTheme, t], updateChart, { immedia
           :class="selectedIndex === index ? 'bg-blue-500/15 text-blue-500' : ''"
           @click="selectedIndex = index"
         >
-          #{{ point.pointId }} alpha={{ point.coordinates.alpha.toFixed(1) }} beta={{ point.coordinates.beta.toFixed(1) }}
+          #{{ point.pointId }} alpha={{ formatCoord(point.coordinates.alpha, 1) }} beta={{ formatCoord(point.coordinates.beta, 1) }}
         </UiButton>
       </div>
     </aside>

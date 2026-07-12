@@ -11,6 +11,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -296,7 +297,13 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 	return row
 }
 
+// formatFloat 格式化浮点数为 CSV 单元格字符串。
+// NaN 输出空字符串：line/rectangle/sector 模式通过 markAxesNaN 将未配置的轴标记为 NaN，
+// CSV 中对应列留空比输出 "NaN" 更易读，且不会干扰 Excel 数值解析。
 func formatFloat(v float64) string {
+	if math.IsNaN(v) {
+		return ""
+	}
 	return strconv.FormatFloat(v, 'f', 6, 64)
 }
 

@@ -24,7 +24,14 @@ const { exportScreenshot } = useScreenshotExport(chart)
 const sectionType = ref<'beta' | 'alpha'>('beta')
 const sectionValue = ref<number | null>(null)
 
-const validPoints = computed(() => props.dataPoints.filter((point) => point.interpolationResult.isValid))
+// 插值有效 + alpha/beta 均为有限数才参与截面图（line 模式 beta=null 时跳过）
+const validPoints = computed(() => props.dataPoints.filter((point) =>
+  point.interpolationResult.isValid
+  && typeof point.coordinates.alpha === 'number'
+  && Number.isFinite(point.coordinates.alpha)
+  && typeof point.coordinates.beta === 'number'
+  && Number.isFinite(point.coordinates.beta)
+))
 const paramConfig = computed(() => VISUALIZATION_PARAM_CONFIG[props.param])
 const paramLabel = computed(() => t.value[paramConfig.value.labelKey] ?? paramConfig.value.fallbackLabel)
 
@@ -34,7 +41,7 @@ function uniqueSorted(values: number[]): number[] {
 
 const sectionOptions = computed(() => {
   const key = sectionType.value
-  return uniqueSorted(validPoints.value.map((point) => point.coordinates[key]))
+  return uniqueSorted(validPoints.value.map((point) => point.coordinates[key] as number))
 })
 
 const chartData = computed<[number, number][]>(() => {
@@ -47,7 +54,9 @@ const chartData = computed<[number, number][]>(() => {
     .filter((point) => point.coordinates[fixedKey] === sectionValue.value)
     .map((point): [number, number] | null => {
       const value = getParamValue(point.interpolationResult, props.param)
-      return value === null ? null : [point.coordinates[xKey], value]
+      const x = point.coordinates[xKey]
+      if (value === null || typeof x !== 'number' || !Number.isFinite(x)) return null
+      return [x, value]
     })
     .filter((point): point is [number, number] => point !== null)
     .sort((a, b) => a[0] - b[0])

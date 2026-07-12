@@ -1,6 +1,9 @@
 package traversal
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestInterpolateLinearPathIncludesEndpoints(t *testing.T) {
 	path, err := InterpolateLinearPath([]Point{
@@ -338,9 +341,9 @@ func TestPointsFromLayoutRectanglePrimaryX(t *testing.T) {
 	}
 }
 
-// TestPointsFromLayoutLinePrimaryX 验证 line 布局简化后仅沿 X 轴布点：
-// Y 恒为 0，不再消费 PrimaryAxis/SnakeOrder/YStepSegments。
-// 覆盖 PointsFromLayout 的 line 分支 + GridPointsFromAxesOrdered 单行路径。
+// TestPointsFromLayoutLinePrimaryX 验证 line 布局仅沿 X 轴布点：
+// Y/Z/U 标记为 NaN 表示"不参与遍历运动"（markAxesNaN），availableAxisTargets 会跳过 NaN 轴。
+// 旧实现 Y 固定为 0，配合 motionAxes 默认含 Y 会把 Y 轴强制归零——已修复。
 func TestPointsFromLayoutLinePrimaryX(t *testing.T) {
 	points := PointsFromLayout(LayoutConfig{
 		Pattern:     "line",
@@ -352,11 +355,21 @@ func TestPointsFromLayoutLinePrimaryX(t *testing.T) {
 	if len(points) != 3 {
 		t.Fatalf("expected 3 points (single line), got %d", len(points))
 	}
-	// 单行：(0,0), (1,0), (2,0)
-	expected := []struct{ x, y float64 }{{0, 0}, {1, 0}, {2, 0}}
-	for i, exp := range expected {
-		if points[i].X != exp.x || points[i].Y != exp.y {
-			t.Fatalf("point[%d] expected (%v,%v), got (%v,%v)", i, exp.x, exp.y, points[i].X, points[i].Y)
+	// 单行 X 坐标：0, 1, 2
+	expectedX := []float64{0, 1, 2}
+	for i, expX := range expectedX {
+		if points[i].X != expX {
+			t.Fatalf("point[%d].X expected %v, got %v", i, expX, points[i].X)
+		}
+		// Y/Z/U 应为 NaN：line 模式仅沿 X 运动，未配置轴标记 NaN 避免被强制归零
+		if !math.IsNaN(points[i].Y) {
+			t.Fatalf("point[%d].Y expected NaN, got %v", i, points[i].Y)
+		}
+		if !math.IsNaN(points[i].Z) {
+			t.Fatalf("point[%d].Z expected NaN, got %v", i, points[i].Z)
+		}
+		if !math.IsNaN(points[i].U) {
+			t.Fatalf("point[%d].U expected NaN, got %v", i, points[i].U)
 		}
 	}
 }
@@ -387,9 +400,10 @@ func TestPointsFromLayoutLineIgnoresSnakeAndPrimaryY(t *testing.T) {
 			if len(points) != 3 {
 				t.Fatalf("expected 3 points for %s, got %d", c.name, len(points))
 			}
+			// Y 应为 NaN（line 模式仅沿 X 运动），不再检查 Y==0
 			for i, p := range points {
-				if p.Y != 0 {
-					t.Fatalf("%s: point[%d].Y expected 0, got %v", c.name, i, p.Y)
+				if !math.IsNaN(p.Y) {
+					t.Fatalf("%s: point[%d].Y expected NaN, got %v", c.name, i, p.Y)
 				}
 			}
 		})
@@ -423,6 +437,150 @@ func TestPointsFromLayoutUnknown(t *testing.T) {
 	points := PointsFromLayout(LayoutConfig{Pattern: "unknown"})
 	if points != nil {
 		t.Fatalf("expected nil for unknown pattern, got %v", points)
+	}
+}
+
+// === StepValues 重写后的测试（2026-07-12）===
+
+// TestStepValuesAscending 验证递增方向步进
+func TestStepValuesAscending(t *testing.T) {
+	values := StepValues(0, 10, []StepSegment{{Start: 0, End: 10, Step: 2}})
+	expected := []float64{0, 2, 4, 6, 8, 10}
+	if len(values) != len(expected) {
+		t.Fatalf("expected %d values, got %d: %v", len(expected), len(values), values)
+	}
+	for i, exp := range expected {
+		if math.Abs(values[i]-exp) > 1e-9 {
+			t.Fatalf("values[%d] expected %v, got %v", i, exp, values[i])
+		}
+	}
+}
+
+// TestStepValuesDescending 验证递减方向步进（P0-1 回归测试）
+// 旧实现循环条件 `value <= actualEnd` 在 start > end 时立即退出导致丢点
+func TestStepValuesDescending(t *testing.T) {
+	values := StepValues(180, 0, []StepSegment{{Start: 180, End: 0, Step: 30}})
+	expected := []float64{180, 150, 120, 90, 60, 30, 0}
+	if len(values) != len(expected) {
+		t.Fatalf("expected %d values, got %d: %v", len(expected), len(values), values)
+	}
+	for i, exp := range expected {
+		if math.Abs(values[i]-exp) > 1e-9 {
+			t.Fatalf("values[%d] expected %v, got %v", i, exp, values[i])
+		}
+	}
+}
+
+// TestStepValuesDedup 验证量化 map 去重（P1-1 回归测试）
+// 多个 segment 重叠时去重，O(N) 而非 O(N²)
+func TestStepValuesDedup(t *testing.T) {
+	values := StepValues(0, 10, []StepSegment{
+		{Start: 0, End: 5, Step: 1},
+		{Start: 3, End: 10, Step: 1},
+	})
+	// 0,1,2,3,4,5,3,4,5,6,7,8,9,10 → 去重后 0..10 共 11 个
+	expected := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	if len(values) != len(expected) {
+		t.Fatalf("expected %d values after dedup, got %d: %v", len(expected), len(values), values)
+	}
+	for i, exp := range expected {
+		if math.Abs(values[i]-exp) > 1e-9 {
+			t.Fatalf("values[%d] expected %v, got %v", i, exp, values[i])
+		}
+	}
+}
+
+// TestStepValuesNoAccumulationError 验证整数索引步进避免浮点累加误差（P1-3 回归测试）
+// 旧实现 0.1 累加 100 次得到 9.99999999999998，新实现用 float64(i)*step 得到精确 10.0
+func TestStepValuesNoAccumulationError(t *testing.T) {
+	values := StepValues(0, 1, []StepSegment{{Start: 0, End: 1, Step: 0.1}})
+	if len(values) != 11 {
+		t.Fatalf("expected 11 values, got %d: %v", len(values), values)
+	}
+	// 最后一个值应为 1.0 而非 0.99999999999999
+	if math.Abs(values[10]-1.0) > 1e-9 {
+		t.Fatalf("last value expected 1.0, got %v", values[10])
+	}
+}
+
+// TestStepValuesSegmentsUnorderedSorted 验证 segments 乱序时最终排序（P0-3 回归测试）
+// 旧实现按 segments 顺序追加不排序，导致点位跳走
+func TestStepValuesSegmentsUnorderedSorted(t *testing.T) {
+	values := StepValues(0, 10, []StepSegment{
+		{Start: 5, End: 10, Step: 1},
+		{Start: 0, End: 4, Step: 1},
+	})
+	// 最终应单调递增 0..10，而非 [5,6,7,8,9,10,0,1,2,3,4]
+	for i := 1; i < len(values); i++ {
+		if values[i] < values[i-1]-1e-9 {
+			t.Fatalf("values not monotonically increasing at index %d: %v", i, values)
+		}
+	}
+}
+
+// TestStepValuesEmptySegmentsFallback 验证空 segments 回退为 [start, end]
+func TestStepValuesEmptySegmentsFallback(t *testing.T) {
+	values := StepValues(0, 10, nil)
+	if len(values) != 2 {
+		t.Fatalf("expected 2 values [start, end], got %d: %v", len(values), values)
+	}
+	if values[0] != 0 || values[1] != 10 {
+		t.Fatalf("expected [0, 10], got %v", values)
+	}
+}
+
+// TestStepValuesSameStartEnd 验证 start == end 返回单点
+func TestStepValuesSameStartEnd(t *testing.T) {
+	values := StepValues(5, 5, nil)
+	if len(values) != 1 || values[0] != 5 {
+		t.Fatalf("expected [5], got %v", values)
+	}
+}
+
+// TestPointsFromLayoutRectangleZUNaN 验证 rectangle 模式 Z/U 标记为 NaN（P0-2 回归测试）
+func TestPointsFromLayoutRectangleZUNaN(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern: "rectangle",
+		Rectangle: &RectangleLayout{
+			XMin: 0, XMax: 1, XStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+			YMin: 0, YMax: 1, YStepSegments: []StepSegment{{Start: 0, End: 1, Step: 1}},
+		},
+	})
+	if len(points) != 4 {
+		t.Fatalf("expected 4 points, got %d", len(points))
+	}
+	for i, p := range points {
+		if !math.IsNaN(p.Z) {
+			t.Fatalf("point[%d].Z expected NaN, got %v", i, p.Z)
+		}
+		if !math.IsNaN(p.U) {
+			t.Fatalf("point[%d].U expected NaN, got %v", i, p.U)
+		}
+	}
+}
+
+// TestPointsFromLayoutSectorZUNaN 验证 sector 模式 Z/U 标记为 NaN（P0-2 回归测试）
+func TestPointsFromLayoutSectorZUNaN(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern: "sector",
+		Sector: &SectorLayout{
+			CenterX: 0, CenterY: 0,
+			RadiusMin: 1, RadiusMax: 2,
+			RadialStepSegments:  []StepSegment{{Start: 1, End: 2, Step: 1}},
+			AngleStart:          0, AngleEnd: 90,
+			AngularStepSegments: []StepSegment{{Start: 0, End: 90, Step: 90}},
+		},
+	})
+	if len(points) != 4 {
+		t.Fatalf("expected 4 points, got %d", len(points))
+	}
+	for i, p := range points {
+		if !math.IsNaN(p.Z) {
+			t.Fatalf("point[%d].Z expected NaN, got %v", i, p.Z)
+		}
+		if !math.IsNaN(p.U) {
+			t.Fatalf("point[%d].U expected NaN, got %v", i, p.U)
+		}
 	}
 }
 

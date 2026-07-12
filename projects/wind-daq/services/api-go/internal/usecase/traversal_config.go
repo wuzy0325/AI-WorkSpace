@@ -293,6 +293,8 @@ func (m *TraversalManager) setInterpolatorRestoreErr(msg string) {
 	m.mu.Unlock()
 }
 
+// isSubState 判断是否为运行中的子状态（moving/stabilizing/acquiring/saving/preparing）。
+// RunTraversalLoop 用此区分"运行中"和"已终止"（Idle/Error/Completed/Stopped）。
 func isSubState(s traversal.State) bool {
 	return s == traversal.StateMoving || s == traversal.StateStabilizing ||
 		s == traversal.StateAcquiring || s == traversal.StateSaving || s == traversal.StatePreparing
@@ -350,6 +352,13 @@ type traversalAPIConfig struct {
 			} `json:"channel"`
 			Enabled bool `json:"enabled"`
 		} `json:"probeChannels"`
+		// MotionAxes 前端配置的运动轴列表，指定哪些轴参与遍历运动。
+		// 后端据此过滤 availableAxisTargets，避免对未配置/未接硬件的轴强制归零。
+		MotionAxes []struct {
+			Name         string `json:"name"`
+			ControllerID string `json:"controllerId"`
+			Axis         string `json:"axis"`
+		} `json:"motionAxes"`
 	} `json:"channels"`
 	DwellTimeMs       int                             `json:"dwellTimeMs"`
 	SamplesPerPoint   int                             `json:"samplesPerPoint"`
@@ -491,6 +500,28 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 			channelLabels[probe.Channel.ChannelIndex] = label
 		}
 	}
+
+	// 解析 motionAxes：保留 controllerId+axis 绑定，仅这些轴参与遍历运动。
+	// 空列表（旧配置未传 motionAxes）保持原行为：对所有已连接轴生成目标。
+	// 必须保留 controllerId：否则会对其它 autoConnect 的真实控制器也发 MoveTo/等待到位，
+	// 导致模拟控制器已到位仍卡在「移动中」直至超时。
+	motionAxes := make([]traversal.MotionAxisBinding, 0, len(cfg.Channels.MotionAxes))
+	seen := make(map[string]bool, len(cfg.Channels.MotionAxes))
+	for _, ma := range cfg.Channels.MotionAxes {
+		if ma.Axis == "" {
+			continue
+		}
+		// 同一控制器+轴去重；不同控制器可绑定同名轴
+		key := ma.ControllerID + "\x00" + ma.Axis
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		motionAxes = append(motionAxes, traversal.MotionAxisBinding{
+			ControllerID: ma.ControllerID,
+			Axis:         ma.Axis,
+		})
+	}
 	if deviceID == "" {
 		err := fmt.Errorf("deviceId is required")
 		slog.Error("parse traversal config failed", "component", "traversal", "error", err)
@@ -527,6 +558,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		SaveOptions:       cfg.SaveOptions,
 		ChannelLabels:     channelLabels,
 		InterpolationMode: cfg.InterpolationMode,
+		MotionAxes:        motionAxes,
 	}
 	// 压力类型兜底：空串与缺失均落 "gauge"，与历史行为一致，避免归一化逻辑误判绝压。
 	pressureType := cfg.PProbePressureType
@@ -561,15 +593,12 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		return "", err
 	}
 	m.SaveConfigRaw(raw)
-	dwell := time.Duration(config.DwellTimeMs) * time.Millisecond
-	if dwell > 0 {
-		go m.RunTraversalLoop(dwell)
-		slog.Info("traversal loop launched from ParseAndStartTraversal",
-			"component", "traversal",
-			"task_id", config.TaskID,
-			"dwell_ms", config.DwellTimeMs,
-		)
-	}
+	go m.RunTraversalLoop()
+	slog.Info("traversal loop launched from ParseAndStartTraversal",
+		"component", "traversal",
+		"task_id", config.TaskID,
+		"dwell_ms", config.DwellTimeMs,
+	)
 	return config.TaskID, nil
 }
 

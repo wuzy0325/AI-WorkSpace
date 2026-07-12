@@ -32,10 +32,17 @@ interface VectorPoint {
   directionRad: number
 }
 
+// 插值有效 + alpha/beta 均为有限数才参与矢量场（line 模式 beta=null 时跳过）
 const vectorData = computed<VectorPoint[]>(() => props.dataPoints
-  .filter((point) => point.interpolationResult.isValid)
+  .filter((point) =>
+    point.interpolationResult.isValid
+    && typeof point.coordinates.alpha === 'number'
+    && Number.isFinite(point.coordinates.alpha)
+    && typeof point.coordinates.beta === 'number'
+    && Number.isFinite(point.coordinates.beta)
+  )
   .map((point) => ({
-    value: [point.coordinates.alpha, point.coordinates.beta, point.interpolationResult.velocity],
+    value: [point.coordinates.alpha as number, point.coordinates.beta as number, point.interpolationResult.velocity],
     measuredAlpha: point.interpolationResult.alpha,
     measuredBeta: point.interpolationResult.beta,
     directionRad: Math.atan2(point.interpolationResult.beta, point.interpolationResult.alpha)

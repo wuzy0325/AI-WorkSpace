@@ -517,10 +517,23 @@ export interface TraversalTestConfig {
   stabilization?: StabilizationConfig
 }
 
+/**
+ * 遍历点坐标（API 响应）。
+ * alpha/beta 允许 null：line/rectangle/sector 模式通过 markAxesNaN 将未配置轴标记为 NaN，
+ * 后端 JSON 序列化为 null。前端消费方必须做 number 类型守卫，禁止直接 toFixed。
+ */
+export type TraversalCoordValue = number | null
+
+export interface TraversalCoordPoint {
+  alpha: TraversalCoordValue
+  beta: TraversalCoordValue
+}
+
 /** 测试数据点 */
 export interface TraversalDataPoint {
   pointId: number
-  coordinates: { alpha: number; beta: number }
+  // alpha/beta 允许 null：line 模式 Y 轴 NaN 序列化为 null
+  coordinates: TraversalCoordPoint
   rawPressure: TraversalRawPressure
   interpolationResult: InterpolationResult
   sampleCount: number
@@ -542,7 +555,7 @@ export interface TraversalTestStatus {
   status: TraversalTestStatusType
   totalPoints: number
   completedPoints: number
-  currentPoint?: { alpha: number; beta: number }
+  currentPoint?: TraversalCoordPoint
   currentPointPhase?: TraversalPointPhase
   latestData?: TraversalDataPoint
   dataPoints?: TraversalDataPoint[]
@@ -582,7 +595,7 @@ export interface TraversalProgressEvent {
   taskId: string
   completedPoints: number
   totalPoints: number
-  currentPoint: { alpha: number; beta: number }
+  currentPoint: TraversalCoordPoint
   currentPointPhase?: TraversalPointPhase
   latestData?: TraversalDataPoint
   timestamp: number

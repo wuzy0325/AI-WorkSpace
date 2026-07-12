@@ -63,6 +63,8 @@ export class ChannelConfig {
         }
         if (/** @type {any} */(false)) {
             /**
+             * 【废弃】TareOffset 瞬时归零偏移，v2 迁移后由 CalibrationOffset 接管。
+             * 迁移逻辑见 adapters/config/migration.go。保留字段以确保向后兼容旧 JSON 反序列化。
              * @member
              * @type {number | undefined}
              */
@@ -78,6 +80,42 @@ export class ChannelConfig {
              * @type {ChannelSensorType | undefined}
              */
             this["sensorType"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * ---- v2 校零字段 ----
+             * CalibrationOffset 校零偏移值（已转为基单位，如 Pa/℃）。
+             * 零值表示未校零。CalibrationApplier 将此值从 DataPayload.Channels 中减去。
+             * @member
+             * @type {number | undefined}
+             */
+            this["calibrationOffset"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CalibrationUnit 校零时的原始单位（如 "kPa"、"℉"），用于迁移校验与审计。
+             * 注意：存储值已转为基单位，此字段仅作元数据记录，不参与实时计算。
+             * @member
+             * @type {string | undefined}
+             */
+            this["calibrationUnit"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CalibrationAt 校零时间戳（unix ms），用于 UI 展示"上次校零于 xxx"。
+             * @member
+             * @type {number | undefined}
+             */
+            this["calibrationAt"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CalibrationEnabled 校零使能开关（仅 DAQ-P-1603 在 UI 暴露逐通道配置）。
+             * 关闭时 CalibrationApplier 跳过该通道偏移。其他设备默认 true。
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["calibrationEnabled"] = undefined;
         }
 
         Object.assign(this, $$source);
@@ -325,6 +363,11 @@ export class DataPayload {
  * Profile 设备配置档案
  * 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
  * core 层只保留类型定义，不包含基础设施知识
+ * 
+ * Version 字段说明（v2）：
+ * 
+ * 	1 = 旧格式（TareOffset 瞬时归零）
+ * 	2 = 新格式（CalibrationOffset 校零）。LoadProfiles 时自动迁移 1→2。
  */
 export class Profile {
     /**
@@ -332,6 +375,14 @@ export class Profile {
      * @param {Partial<Profile>} [$$source = {}] - The source object to create the Profile.
      */
     constructor($$source = {}) {
+        if (!("version" in $$source)) {
+            /**
+             * Version profile 格式版本，默认 1（旧格式），迁移后为 2。
+             * @member
+             * @type {number}
+             */
+            this["version"] = 0;
+        }
         if (!("id" in $$source)) {
             /**
              * @member
@@ -440,14 +491,14 @@ export class Profile {
      * @returns {Profile}
      */
     static createFrom($$source = {}) {
-        const $$createField11_0 = $$createType3;
-        const $$createField13_0 = $$createType4;
+        const $$createField12_0 = $$createType3;
+        const $$createField14_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField11_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField12_0($$parsedSource["channels"]);
         }
         if ("daqT1603Config" in $$parsedSource) {
-            $$parsedSource["daqT1603Config"] = $$createField13_0($$parsedSource["daqT1603Config"]);
+            $$parsedSource["daqT1603Config"] = $$createField14_0($$parsedSource["daqT1603Config"]);
         }
         return new Profile(/** @type {Partial<Profile>} */($$parsedSource));
     }

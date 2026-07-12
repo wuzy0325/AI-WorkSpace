@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getTraversalLayoutPoints } from '@shared/types/traversal'
-import type { TraversalLayout, TraversalPoint, TraversalPointPhase } from '@shared/types/traversal'
+import type { TraversalLayout, TraversalPoint, TraversalPointPhase, TraversalCoordPoint } from '@shared/types/traversal'
 import { useThemeStore } from '@stores/themeStore'
 import { useI18nStore } from '@stores/i18nStore'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -12,7 +12,8 @@ const AXIS_KEYS: readonly AxisKey[] = ['x', 'y', 'z', 'u'] as const
 
 const props = defineProps<{
   layout?: TraversalLayout
-  currentPoint?: { alpha: number; beta: number }
+  // alpha/beta 允许 null：line 模式 Y 轴 NaN 序列化为 null
+  currentPoint?: TraversalCoordPoint
   completedPoints?: number
   currentPointPhase?: TraversalPointPhase
   /** 父组件传入的可见性：当前 Tab 非 preview 时应暂停动画以节省资源 */

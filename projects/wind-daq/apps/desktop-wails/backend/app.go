@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"golang.org/x/sys/windows/registry"
 	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/logging"
@@ -434,6 +435,23 @@ func (a *App) GetVersion() VersionInfo {
 // 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）
 func (a *App) GetStartupMode() string {
 	return a.mode
+}
+
+// GetInstallerLanguage 读取安装程序写入的语言偏好
+// 安装时在 NSIS 中写入 HKCU\Software\<Company>\<Product>\InstallerLanguage
+// 返回 "zh"、"en" 或空字符串（未由安装程序设置时）
+func (a *App) GetInstallerLanguage() string {
+	keyPath := fmt.Sprintf(`Software\%s\%s`, "wind-daq", "wind-daq")
+	k, err := registry.OpenKey(registry.CURRENT_USER, keyPath, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	val, _, err := k.GetStringValue("InstallerLanguage")
+	if err != nil {
+		return ""
+	}
+	return val
 }
 
 // OpenMotionWindow 启动运动控制器独立窗口（独立进程）

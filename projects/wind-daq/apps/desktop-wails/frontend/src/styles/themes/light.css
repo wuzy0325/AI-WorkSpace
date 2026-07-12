@@ -36,4 +36,29 @@
   --axis-z-soft: #cffafe;
   --axis-u: #d97706;
   --axis-u-soft: #fef3c7;
+
+  /* 图表 token — 浅色面板可读性（见 chart-spec / monitor-workspace-spec） */
+  --chart-bg: var(--bg-panel);
+  --chart-grid-line: #e2e8f0;
+  --chart-grid-line-faint: #f1f5f9;
+  --chart-axis-text: #475569;
+  --chart-axis-line: #cbd5e1;
+  --chart-crosshair: color-mix(in srgb, #0f172a 40%, transparent);
+  --chart-cursor: var(--accent-info);
+  --chart-selection-fill: color-mix(in srgb, var(--accent-info) 12%, transparent);
+  --chart-selection-stroke: color-mix(in srgb, var(--accent-info) 40%, transparent);
+  --chart-band-warning: color-mix(in srgb, var(--accent-warning) 12%, transparent);
+  --chart-band-danger: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  --chart-out-of-range: var(--accent-danger);
+  --chart-readout-bg: #fbfcfd;
+
+  /* 浅色通道色（≥ AA 于白底；与 chart-spec 提案对齐） */
+  --color-channel-1: #1d4ed8;
+  --color-channel-2: #0d9488;
+  --color-channel-3: #3730a3;
+  --color-channel-4: #a16207;
+  --color-channel-5: #c2410c;
+  --color-channel-6: #b45309;
+  --color-channel-7: #9333ea;
+  --color-channel-8: #15803d;
 }

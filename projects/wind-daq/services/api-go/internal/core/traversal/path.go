@@ -105,26 +105,82 @@ type StepSegment struct {
 	Step  float64 `json:"step"`
 }
 
-// StepValues 从多个步进段生成步进值序列
+// StepValues 从多个步进段生成步进值序列。
+//
+// 设计要点（2026-07-12 重写，修复三个缺陷）：
+//  1. 双向步进：start > end 时按递减方向生成，支持扇形角度递减扫描、矩形反向布点。
+//     旧实现循环条件固定 `value <= actualEnd`，递减场景下立即退出导致丢点。
+//  2. 整数索引步进：`value = lo + float64(i)*step`，避免 `value += step` 的浮点累加误差
+//     （旧实现 100 次 += 0.1 后得到 9.99999999999998 而非 10.0，CSV 坐标不整齐）。
+//  3. 量化 map 去重 O(N)：旧实现 ContainsFloat 每次 O(N) 线性查找，总体 O(N²)，
+//     100×100=10000 点时约 5×10⁷ 次比较。改用 int64 量化 key（精度 1e-6）。
+//
+// 段方向无关：segment.Start/End 仅定义区间，与整体 [start, end] 求交集后按整体方向生成。
+// 最终按方向排序保证单调，避免 segments 乱序导致点位跳走。
 func StepValues(start, end float64, segments []StepSegment) []float64 {
+	ascending := start <= end
+	// 量化精度 1e-6：典型步进值（mm/度）的最小分辨粒度，足以区分相邻步进点
+	const quant = 1e6
+	seen := make(map[int64]bool)
 	var values []float64
+
+	// add 量化去重：把 float64 映射为 int64 key，避免浮点 map key 精度问题
+	add := func(v float64) {
+		key := int64(math.Round(v * quant))
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		values = append(values, v)
+	}
+
 	for _, segment := range segments {
 		if segment.Step <= 0 {
 			continue
 		}
-		actualStart := math.Max(segment.Start, start)
-		actualEnd := math.Min(segment.End, end)
-		for value := actualStart; value <= actualEnd+1e-9; value += segment.Step {
-			if !ContainsFloat(values, value) {
-				values = append(values, value)
+		if ascending {
+			// 递增：段区间与 [start, end] 求交集，从 lo 递增到 hi
+			lo := math.Max(segment.Start, start)
+			hi := math.Min(segment.End, end)
+			if lo > hi {
+				continue
+			}
+			n := int(math.Round((hi - lo) / segment.Step))
+			for i := 0; i <= n; i++ {
+				add(lo + float64(i)*segment.Step)
+			}
+		} else {
+			// 递减：start > end，段区间与 [end, start] 求交集，从 hi 递减到 lo
+			// 注意 segment.Start/End 可能递增或递减定义，统一取 [min, max] 后再与整体区间求交
+			segLo := math.Min(segment.Start, segment.End)
+			segHi := math.Max(segment.Start, segment.End)
+			lo := math.Max(segLo, end)
+			hi := math.Min(segHi, start)
+			if lo > hi {
+				continue
+			}
+			n := int(math.Round((hi - lo) / segment.Step))
+			for i := 0; i <= n; i++ {
+				add(hi - float64(i)*segment.Step)
 			}
 		}
 	}
+
 	if len(values) == 0 {
+		// 空 segments 回退：start == end 返回单点，否则返回 [start, end] 两端点
 		if start == end {
 			return []float64{start}
 		}
 		return []float64{start, end}
+	}
+
+	// 按方向排序保证单调，避免 segments 乱序导致点位跳走
+	sort.Float64s(values)
+	if !ascending {
+		// 递减：反转 slice 使其单调递减
+		for i, j := 0, len(values)-1; i < j; i, j = i+1, j-1 {
+			values[i], values[j] = values[j], values[i]
+		}
 	}
 	return values
 }
@@ -215,7 +271,7 @@ func normalizePrimaryAxis(primaryAxis string) string {
 
 // SectorPointsFromRadiiAngles 从半径和角度生成扇形点
 func SectorPointsFromRadiiAngles(centerX, centerY float64, radii, angles []float64) []Point {
-	var points []Point
+	points := make([]Point, 0, len(radii)*len(angles))
 	for _, radius := range radii {
 		for _, angle := range angles {
 			radian := angle * math.Pi / 180
@@ -230,7 +286,7 @@ func SectorPointsFromRadiiAngles(centerX, centerY float64, radii, angles []float
 
 // SectorPointsFromRadiiAnglesSnake 从半径和角度生成蛇形扇形点
 func SectorPointsFromRadiiAnglesSnake(centerX, centerY float64, radii, angles []float64) []Point {
-	var points []Point
+	points := make([]Point, 0, len(radii)*len(angles))
 	for i, radius := range radii {
 		if i%2 == 1 {
 			for j := len(angles) - 1; j >= 0; j-- {
@@ -322,6 +378,24 @@ type CustomLayout struct {
 	} `json:"points"`
 }
 
+// markAxesNaN 将指定轴的坐标标记为 NaN，表示"该轴不参与遍历运动"。
+// availableAxisTargets 和 waitForMotionComplete 会跳过 NaN 目标轴，不发 MoveTo 也不检查到位。
+// 用于 line/rectangle/sector 模式：未在布局中显式配置的轴不应被强制归零。
+func markAxesNaN(points []Point, markY, markZ, markU bool) []Point {
+	for i := range points {
+		if markY {
+			points[i].Y = math.NaN()
+		}
+		if markZ {
+			points[i].Z = math.NaN()
+		}
+		if markU {
+			points[i].U = math.NaN()
+		}
+	}
+	return points
+}
+
 // PointsFromLayout 根据布局配置生成遍历点
 func PointsFromLayout(cfg LayoutConfig) []Point {
 	switch cfg.Pattern {
@@ -329,23 +403,28 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		if cfg.Line == nil {
 			return nil
 		}
-		// line 模式仅沿 X 轴布点，Y 固定为 0（详见 LineLayout 注释）。
+		// line 模式仅沿 X 轴布点，Y/Z/U 标记为 NaN 表示"不运动"。
+		// 旧实现 Y 固定为 0，配合 motionAxes 默认含 Y 会把 Y 轴强制归零——已修复。
 		// 不再消费 PrimaryAxis / SnakeOrder：单行点位无走线方向概念。
-		// 旧配置若携带 SnakeOrder=true 也会被忽略，避免单行点位产生无意义的蛇形走线。
 		// primaryAxis 固定传 "x"：ys 只有一个值时 GridPointsFromAxesOrdered 的主轴参数不影响结果。
 		xs := StepValues(cfg.Line.StartX, cfg.Line.EndX, cfg.Line.XStepSegments)
 		ys := []float64{0}
-		return GridPointsFromAxesOrdered(xs, ys, "x")
+		points := GridPointsFromAxesOrdered(xs, ys, "x")
+		return markAxesNaN(points, true, true, true)
 	case "rectangle":
 		if cfg.Rectangle == nil {
 			return nil
 		}
 		xs := StepValues(cfg.Rectangle.XMin, cfg.Rectangle.XMax, cfg.Rectangle.XStepSegments)
 		ys := StepValues(cfg.Rectangle.YMin, cfg.Rectangle.YMax, cfg.Rectangle.YStepSegments)
+		var points []Point
 		if cfg.SnakeOrder {
-			return GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
+			points = GridPointsFromAxesSnakeOrdered(xs, ys, cfg.PrimaryAxis)
+		} else {
+			points = GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
 		}
-		return GridPointsFromAxesOrdered(xs, ys, cfg.PrimaryAxis)
+		// rectangle 模式仅在 XY 平面布点，Z/U 标记为 NaN 表示"不运动"
+		return markAxesNaN(points, false, true, true)
 	case "sector":
 		if cfg.Sector == nil {
 			return nil
@@ -353,10 +432,14 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		radii := StepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
 		angles := StepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
 		// 扇形布局不消费 PrimaryAxis，保持原“外层半径、内层角度”语义
+		var points []Point
 		if cfg.SnakeOrder {
-			return SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+			points = SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+		} else {
+			points = SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
 		}
-		return SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+		// sector 模式仅在 XY 平面布点，Z/U 标记为 NaN 表示"不运动"
+		return markAxesNaN(points, false, true, true)
 	case "custom":
 		if cfg.Custom == nil {
 			return nil

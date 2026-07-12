@@ -73,4 +73,20 @@
   --axis-z-soft: color-mix(in srgb, #06b6d4 20%, transparent);
   --axis-u: #f59e0b;
   --axis-u-soft: color-mix(in srgb, #f59e0b 20%, transparent);
+
+  /* 图表专用（实时波形 / 校准图 / 历史曲线）。勿与 --axis-* 空间轴混淆。
+     细则见 docs/design/chart-spec.md 与 docs/design/monitor-workspace-spec.md */
+  --chart-bg: var(--bg-panel);
+  --chart-grid-line: color-mix(in srgb, #ffffff 8%, transparent);
+  --chart-grid-line-faint: color-mix(in srgb, #ffffff 4%, transparent);
+  --chart-axis-text: #94a3b8;
+  --chart-axis-line: #475569;
+  --chart-crosshair: color-mix(in srgb, #e2e8f0 35%, transparent);
+  --chart-cursor: var(--accent-info);
+  --chart-selection-fill: color-mix(in srgb, var(--accent-info) 12%, transparent);
+  --chart-selection-stroke: color-mix(in srgb, var(--accent-info) 40%, transparent);
+  --chart-band-warning: color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  --chart-band-danger: color-mix(in srgb, var(--accent-danger) 18%, transparent);
+  --chart-out-of-range: var(--accent-danger);
+  --chart-readout-bg: var(--bg-panel-strong);
 }

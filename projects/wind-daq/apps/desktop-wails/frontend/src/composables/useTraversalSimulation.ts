@@ -21,7 +21,8 @@ import {
 import type {
   TraversalTestConfig,
   TraversalTestStatus,
-  TraversalPointPhase
+  TraversalPointPhase,
+  TraversalCoordPoint
 } from '@shared/types/traversal'
 
 /** 各阶段模拟延迟（毫秒） */
@@ -119,7 +120,8 @@ export function useTraversalSimulation() {
     status: 'running' | 'completed' | 'stopped',
     completedPoints: number,
     totalPoints: number,
-    currentPoint?: { alpha: number; beta: number },
+    // alpha/beta 允许 null：与后端 markAxesNaN 语义一致
+    currentPoint?: TraversalCoordPoint,
     currentPointPhase?: TraversalPointPhase
   ): TraversalTestStatus {
     return {

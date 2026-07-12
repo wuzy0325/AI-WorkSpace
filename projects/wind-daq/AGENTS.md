@@ -12,8 +12,9 @@ Load project context in this order unless the task is trivial:
 4. `README.md` — project overview, commands, folder notes, migration entry points
 5. `CLAUDE.md` — Wind-DAQ project addendum and migration constraints
 6. `DESIGN.md` — only for frontend UI / layout / visual parity work
-7. `docs/migration/*` — only for migration or parity work
-8. touched source files and tests — always read before editing
+7. `docs/design/monitor-workspace-spec.md` — when changing dashboard hybrid/monitor layout, action scope, channel cards, or live chart chrome
+8. `docs/migration/*` — only for migration or parity work
+9. touched source files and tests — always read before editing
 
 Do not load the entire `docs/` tree by default.
 

@@ -209,7 +209,9 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
           <span class="card-head__title">{{ i18n.t.set_dataSave }}</span>
         </div>
       </template>
-      <div class="form-fields">
+      <!-- 整改：数据保存字段改为垂直堆叠（标签在上、控件在下），
+           与文件滚动保存、自动停止条件卡片的左侧对齐线统一 -->
+      <div class="form-fields form-fields--stacked">
         <UiFormField
           :label="i18n.t.set_saveDir"
           :error="validationErrors.baseDirectory"
@@ -236,9 +238,10 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             @blur="updateFieldError('filePrefix')"
           />
         </UiFormField>
+        <!-- 开关行不再套 UiFormField，直接作为一行使用 toggle-row，保持左对齐 -->
         <div class="toggle-row">
-          <UiToggle v-model="autoStart" />
           <span class="toggle-row__label">{{ i18n.t.set_autoStartOnAcquisition }}</span>
+          <UiToggle v-model="autoStart" />
         </div>
       </div>
     </UiPanel>
@@ -251,7 +254,8 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
           <UiToggle v-model="rotationEnabled" />
         </div>
       </template>
-      <div v-if="rotationEnabled" class="form-fields">
+      <!-- 整改：两个短字段并排，标签在上，与数据保存卡片左侧对齐线统一 -->
+      <div v-if="rotationEnabled" class="form-fields form-fields--stacked form-row--inline">
         <UiFormField
           :label="i18n.t.set_rotationDuration"
           :error="validationErrors.rotationDurationMinutes"

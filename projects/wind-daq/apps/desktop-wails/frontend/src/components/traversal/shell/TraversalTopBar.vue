@@ -3,8 +3,13 @@
  * 遍历测试顶栏：单行 Header（标题+状态点+控制按钮+配置）。
  *
  * 与 ThreeHoleMain.vue 保持一致：
- *   - 顶栏只保留最高频信息：标题、状态徽章、进度条、已用/剩余时间
+ *   - 顶栏只保留最高频信息：标题、状态点、进度条、已用/剩余时间
  *   - 目标/实际/Ma/V 已足够在侧边栏突出展示，避免顶栏信息过载
+ *
+ * 视觉风格（2026-07）：
+ *   - 极简信息栏，去掉卡片化和彩色装饰
+ *   - 标题图标改为浅色描边，状态用圆点+文字，用分隔线划分区域
+ *   - 整体更轻盈、更现代，降低视觉重量
  */
 import { Pause, Play, Square, Settings } from '@lucide/vue'
 import { ref } from 'vue'
@@ -69,15 +74,20 @@ defineExpose({ focusStart })
 <template>
   <div
     data-test="traversal-top-toolbar"
-    class="flex items-center justify-between border-b px-4 py-2 flex-shrink-0"
+    class="flex items-center justify-between border-b px-5 py-2.5 flex-shrink-0"
     :style="{ borderColor: 'var(--border-default)', background: 'var(--bg-panel)' }"
   >
-    <!-- 左侧：标题 + 状态徽章 + 进度 -->
+    <!-- 左侧：标题 + 状态指示 + 进度信息 -->
     <div class="flex items-center gap-4">
+      <!-- 标题块：图标改为浅色描边，降低视觉冲击 -->
       <div class="flex items-center gap-2.5">
         <div
-          class="flex h-7 w-7 items-center justify-center rounded-md text-white"
-          :style="{ background: 'var(--accent-info)' }"
+          class="flex h-7 w-7 items-center justify-center rounded-md"
+          :style="{
+            background: 'var(--bg-panel-strong)',
+            color: 'var(--accent-primary)',
+            border: '1px solid var(--border-default)',
+          }"
         >
           <IconTraversal :size="14" />
         </div>
@@ -87,37 +97,44 @@ defineExpose({ focusStart })
         </div>
       </div>
 
-      <!-- 状态徽章 -->
-      <span
-        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-        :style="{
-          backgroundColor: `color-mix(in srgb, var(${statusColorToken}) 15%, transparent)`,
-          color: `var(${statusColorToken})`,
-        }"
-      >{{ statusText }}</span>
+      <!-- 分隔线 -->
+      <div class="h-4 w-px" :style="{ background: 'var(--border-default)' }"></div>
 
-      <!-- 进度条 -->
-      <div v-if="showProgress" class="flex items-center gap-2 min-w-[160px] w-[220px]">
-        <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
-          <div
-            class="h-full rounded-full transition-all duration-300"
-            :style="{ width: progressPercent + '%', background: 'var(--accent-info)' }"
-          ></div>
-        </div>
-        <span class="text-[11px] font-mono font-bold text-[var(--text-primary)] whitespace-nowrap">{{ progressSummary }} ({{ progressPercent }}%)</span>
+      <!-- 状态指示：圆点 + 文字，取代徽章 -->
+      <div class="flex items-center gap-1.5">
+        <span
+          class="h-2 w-2 rounded-full"
+          :style="{ background: `var(${statusColorToken})` }"
+        ></span>
+        <span class="text-xs font-medium" :style="{ color: `var(${statusColorToken})` }">{{ statusText }}</span>
       </div>
 
-      <!-- 已用 / 剩余时间 -->
-      <div v-if="showProgress" class="flex items-center gap-3 text-[11px]">
-        <div class="flex items-center gap-1">
-          <span class="text-[var(--text-muted)]">{{ labels.elapsed }}</span>
-          <span class="font-mono font-bold text-[var(--text-primary)]">{{ elapsedText }}</span>
+      <!-- 进度条 + 进度摘要 -->
+      <template v-if="showProgress">
+        <div class="h-4 w-px" :style="{ background: 'var(--border-default)' }"></div>
+
+        <div class="flex items-center gap-2 min-w-[140px]">
+          <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
+            <div
+              class="h-full rounded-full transition-all duration-300"
+              :style="{ width: progressPercent + '%', background: 'var(--accent-primary)' }"
+            ></div>
+          </div>
+          <span class="text-[11px] font-mono font-bold text-[var(--text-primary)] whitespace-nowrap">{{ progressSummary }}</span>
         </div>
-        <div class="flex items-center gap-1">
-          <span class="text-[var(--text-muted)]">{{ labels.remaining }}</span>
-          <span class="font-mono font-bold text-[var(--text-primary)]">{{ estimatedRemainingText }}</span>
+
+        <!-- 已用 / 剩余时间 -->
+        <div class="flex items-center gap-3 text-[11px]">
+          <div class="flex items-center gap-1">
+            <span class="text-[var(--text-muted)]">{{ labels.elapsed }}</span>
+            <span class="font-mono font-bold text-[var(--text-primary)]">{{ elapsedText }}</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-[var(--text-muted)]">{{ labels.remaining }}</span>
+            <span class="font-mono font-bold text-[var(--text-primary)]">{{ estimatedRemainingText }}</span>
+          </div>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- 右侧：控制按钮 + 配置 -->

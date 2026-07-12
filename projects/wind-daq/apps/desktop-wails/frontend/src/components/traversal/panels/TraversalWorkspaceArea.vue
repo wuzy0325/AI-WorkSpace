@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /**
- * Right-side workspace area: tab switcher + content (preview / visualization / reference).
- * Phase C: segmented-control tab style aligned with MainTopBar; tighter header.
+ * 右侧工作区：Tab 切换 + 内容（点位预览 / 可视化 / 探针参考）。
+ * 视觉风格与 TraversalTopBar 方案C保持一致：
+ *   - 极简信息栏，去掉厚装饰条
+ *   - 标题与 Tab 同排，用分隔线自然划分
+ *   - 图例改为更轻量的浮动圆角条
  */
 import { Settings, ClipboardList, LayoutGrid, BarChart3, BookOpen } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import PointsPreview from '../PointsPreview.vue'
 import ProbeReferenceCard from '../ProbeReferenceCard.vue'
 import TraversalVisualization from '../visualization/TraversalVisualization.vue'
-import type { TraversalTestConfig, TraversalPointPhase } from '@shared/types/traversal'
+import type { TraversalTestConfig, TraversalPointPhase, TraversalCoordPoint } from '@shared/types/traversal'
 
 export type WorkspaceTab = 'preview' | 'visualization' | 'reference'
 
@@ -22,7 +25,8 @@ defineProps<{
   tabs: TabOption[]
   tabMeta: { title: string; subtitle: string }
   currentConfig: TraversalTestConfig | null
-  currentPoint: { alpha: number; beta: number } | undefined
+  // alpha/beta 允许 null：line 模式 Y 轴 NaN 序列化为 null
+  currentPoint: TraversalCoordPoint | undefined
   completedPoints: number | undefined
   currentPointPhase: TraversalPointPhase | undefined
   labels: {
@@ -51,72 +55,65 @@ const tabIcon = {
 
 <template>
   <div data-test="traversal-workspace-primary" class="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg-panel)]">
-    <!-- 工作区头部：扁平 Tab 导航 -->
+    <!-- 工作区头部：单行，标题 + 分隔线 + Tab 导航 -->
     <div
-      class="flex flex-wrap items-center justify-between gap-3 border-b flex-shrink-0"
-      :style="{
-        borderColor: 'var(--border-default)',
-        background: 'var(--bg-panel)',
-        padding: 'var(--space-2) var(--space-4)',
-      }"
+      class="flex items-center justify-between border-b px-5 py-2.5 flex-shrink-0"
+      :style="{ borderColor: 'var(--border-default)', background: 'var(--bg-panel)' }"
     >
-      <div class="flex items-center gap-2">
-        <div class="h-4 w-1 rounded-full" :style="{ background: 'var(--accent-info)' }"></div>
+      <div class="flex items-center gap-3">
         <div>
           <h3 class="text-sm font-semibold leading-tight text-[var(--text-primary)]">{{ tabMeta.title }}</h3>
-          <p class="text-[10px] leading-tight text-[var(--text-muted)]">{{ tabMeta.subtitle }}</p>
+          <p class="text-[11px] leading-tight text-[var(--text-muted)]">{{ tabMeta.subtitle }}</p>
         </div>
+        <div class="h-4 w-px" :style="{ background: 'var(--border-default)' }"></div>
+        <nav class="flex items-center">
+          <button
+            v-for="tab in tabs"
+            :key="tab.value"
+            type="button"
+            class="traversal-tab-underline"
+            :class="{ 'traversal-tab-underline--active': activeTab === tab.value }"
+            :title="tab.label"
+            @click="$emit('update:activeTab', tab.value)"
+          >
+            <component :is="tabIcon[tab.value]" class="h-3.5 w-3.5 flex-shrink-0" />
+            <span>{{ tab.label }}</span>
+          </button>
+        </nav>
       </div>
-
-      <!-- 三个 Tab 采用三孔校准同款下划线导航 -->
-      <nav class="flex items-center">
-        <button
-          v-for="tab in tabs"
-          :key="tab.value"
-          type="button"
-          class="traversal-tab-underline"
-          :class="{ 'traversal-tab-underline--active': activeTab === tab.value }"
-          :title="tab.label"
-          @click="$emit('update:activeTab', tab.value)"
-        >
-          <component :is="tabIcon[tab.value]" class="h-4 w-4 flex-shrink-0" />
-          <span>{{ tab.label }}</span>
-        </button>
-      </nav>
     </div>
 
     <!-- 内容区 -->
     <div class="flex-1 overflow-hidden relative">
-      <!-- 点位预览图例：颜色须与 PointsPreview.vue Canvas 绘制保持同步 -->
+      <!-- 点位预览图例：浮动在右上角，更轻量 -->
       <div
         v-if="activeTab === 'preview'"
-        class="absolute right-4 top-3 z-10 flex items-center gap-3 rounded-full border px-3 py-1 text-[10px]"
+        class="absolute right-4 top-3 z-10 flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px]"
         :style="{ borderColor: 'var(--border-default)', background: 'var(--bg-panel)' }"
       >
         <div class="flex items-center gap-1">
-          <span class="h-2 w-2 rounded-full" style="background: #3b82f6"></span>
+          <span class="h-1.5 w-1.5 rounded-full" style="background: #3b82f6"></span>
           <span class="text-[var(--text-muted)]">{{ labels.moving }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="h-2 w-2 rounded-full" style="background: #fbbf24"></span>
+          <span class="h-1.5 w-1.5 rounded-full" style="background: #fbbf24"></span>
           <span class="text-[var(--text-muted)]">{{ labels.stabilizing }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="h-2 w-2 rounded-full" style="background: #10b981"></span>
+          <span class="h-1.5 w-1.5 rounded-full" style="background: #10b981"></span>
           <span class="text-[var(--text-muted)]">{{ labels.acquiring }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="h-2 w-2 rounded-full" style="background: #8b5cf6"></span>
+          <span class="h-1.5 w-1.5 rounded-full" style="background: #8b5cf6"></span>
           <span class="text-[var(--text-muted)]">{{ labels.completed }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="h-2 w-2 rounded-full" style="background: rgba(148, 163, 184, 0.3)"></span>
+          <span class="h-1.5 w-1.5 rounded-full" style="background: rgba(148, 163, 184, 0.3)"></span>
           <span class="text-[var(--text-muted)]">{{ labels.untested }}</span>
         </div>
       </div>
 
       <template v-if="activeTab === 'preview'">
-        <!-- 布点画布用卡片容器居中展示，四周留 margin，避免直接平铺到画面边缘 -->
         <div
           v-if="currentConfig?.layout"
           class="absolute inset-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] overflow-hidden"
@@ -156,13 +153,13 @@ const tabIcon = {
 </template>
 
 <style scoped>
-/* 三孔校准同款下划线 Tab */
+/* 与 ThreeHole 同款下划线 Tab，调整 padding 更紧凑 */
 .traversal-tab-underline {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -186,9 +183,9 @@ const tabIcon = {
 .traversal-tab-underline--active::after {
   content: '';
   position: absolute;
-  right: 0;
+  right: 0.5rem;
   bottom: 0;
-  left: 0;
+  left: 0.5rem;
   height: 2px;
   background: var(--accent-primary);
   border-radius: 2px 2px 0 0;

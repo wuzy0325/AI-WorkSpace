@@ -28,8 +28,13 @@ interface ActualPosition {
   moving: boolean
 }
 
+// 目标点坐标允许 null：line 模式 Y 轴标记为 NaN 后后端序列化为 null，
+// 表示该轴不参与遍历运动。前端必须在 toFixed 前做 number 类型守卫，
+// 否则 null.toFixed 抛 TypeError 导致整个侧边栏组件崩溃（只剩布点图）。
+type TargetCoord = number | null
+
 defineProps<{
-  targetPoint: { alpha: number; beta: number } | undefined
+  targetPoint: { alpha: TargetCoord; beta: TargetCoord } | undefined
   actualPositions: ActualPosition[]
   machNumber: number | undefined
   velocity: number | undefined
@@ -59,6 +64,12 @@ defineProps<{
     moving: string
   }
 }>()
+
+/** 安全格式化坐标：null/undefined/NaN 显示为 '--'，避免 toFixed 崩溃 */
+function formatCoord(v: TargetCoord | undefined, digits = 1): string {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '--'
+  return v.toFixed(digits) + '°'
+}
 </script>
 
 <template>
@@ -71,13 +82,13 @@ defineProps<{
           <div class="flex flex-col">
             <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} α</span>
             <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
-              {{ targetPoint ? targetPoint.alpha.toFixed(1) + '°' : '--' }}
+              {{ formatCoord(targetPoint?.alpha) }}
             </span>
           </div>
           <div class="flex flex-col">
             <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} β</span>
             <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
-              {{ targetPoint ? targetPoint.beta.toFixed(1) + '°' : '--' }}
+              {{ formatCoord(targetPoint?.beta) }}
             </span>
           </div>
         </div>

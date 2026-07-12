@@ -23,6 +23,7 @@ import (
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/realtime"
 	"wind-daq/services/api-go/internal/core/resourcelock"
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -65,9 +66,8 @@ type TraversalManager struct {
 	lastCheckpointPath string
 
 	// 暂停/停止控制
-	isStopped            bool
-	isPaused             bool
-	motionPauseCancelled bool
+	isStopped bool
+	isPaused  bool
 
 	// 数据验证配置
 	validation *traversal.DataValidationConfig
@@ -352,7 +352,6 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	m.config = config
 	m.isStopped = false
 	m.isPaused = false
-	m.motionPauseCancelled = false
 	m.status = traversal.Status{
 		TaskID:      config.TaskID,
 		State:       traversal.StateRunning,
@@ -438,7 +437,6 @@ func (m *TraversalManager) Resume() error {
 		return err
 	}
 	m.isPaused = false
-	m.motionPauseCancelled = false
 	m.status.State = traversal.StateRunning
 	slog.Info("traversal resumed",
 		"component", "traversal",
@@ -524,19 +522,44 @@ func (m *TraversalManager) Stop() error {
 	return stopErr
 }
 
-// stopMotionAxes 停止所有运动轴，返回第一个遇到的错误
+// stopMotionAxes 停止遍历相关运动轴，返回第一个遇到的错误。
+// 仅停止当前配置绑定的控制器/轴，避免误停其它已连接但未参与遍历的控制器。
 func (m *TraversalManager) stopMotionAxes() error {
 	if m.motion == nil {
 		return nil
 	}
+	m.mu.RLock()
+	motionAxes := m.config.MotionAxes
+	m.mu.RUnlock()
+
 	var firstErr error
 	ctx := context.Background()
-	for _, status := range m.motion.StatusAll(ctx) {
-		for _, axis := range status.Axes {
-			if axis.Moving {
-				if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil && firstErr == nil {
-					firstErr = err
+	// 容错预处理：与 RunCurrentPoint 保持一致，避免停止时也因 controllerId 不匹配
+	// 而无法停止运动中的轴
+	statuses := m.motion.StatusAll(ctx)
+	motionAxes = resolveMotionAxes(motionAxes, statuses)
+	for _, status := range statuses {
+		// 无绑定配置时保持旧行为：停止所有运动中的轴
+		if len(motionAxes) == 0 {
+			for _, axis := range status.Axes {
+				if axis.Moving {
+					if err := m.motion.Stop(ctx, status.ID, axis.Name); err != nil && firstErr == nil {
+						firstErr = err
+					}
 				}
+			}
+			continue
+		}
+		// 仅停止绑定到该控制器的轴（与当前位置无关，直接按绑定表过滤）
+		for _, binding := range motionAxes {
+			if binding.Axis == "" {
+				continue
+			}
+			if binding.ControllerID != "" && binding.ControllerID != status.ID {
+				continue
+			}
+			if err := m.motion.Stop(ctx, status.ID, motion.AxisName(binding.Axis)); err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 	}
@@ -551,11 +574,11 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	return m.store.Get(taskID)
 }
 
-// isSubState 判断是否为运行中的子状态
-func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
-	if dwell <= 0 {
-		dwell = 100 * time.Millisecond
-	}
+// RunTraversalLoop 主循环：按点驱动 RunCurrentPoint，直至完成/停止/错误。
+// 稳定等待由 RunCurrentPoint → waitForStabilization 内部执行，
+// 点间不再额外 sleep——旧实现点间再睡一次会使状态长时间停留在 saving，
+// UI 观感像“卡在不动”，且每个点实际等待时间翻倍。
+func (m *TraversalManager) RunTraversalLoop() {
 	defer m.finalizeSink() // 所有退出路径统一关闭 sink
 
 	initStatus := m.Status()
@@ -601,7 +624,6 @@ func (m *TraversalManager) RunTraversalLoop(dwell time.Duration) {
 					"progress_pct", fmt.Sprintf("%.1f", float64(completed)/float64(total)*100),
 				)
 			}
-			time.Sleep(dwell)
 		case status.State == traversal.StatePaused:
 			time.Sleep(pausedLoopIdle)
 		default:

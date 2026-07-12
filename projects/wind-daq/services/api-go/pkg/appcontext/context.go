@@ -91,7 +91,11 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		return storage.NewCalibrationCsvWriterOverwrite(config)
 	})
 	travStore := calstore.NewTraversalResultStore()
-	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore, storage.NewFileCheckpointStore(), appConfigStore)
+	// 注入遍历 CSV 写入 sink，承担测试结果落盘。
+	// 此前此处传 nil 导致桌面生产路径下遍历测试静默不输出 CSV（与 bootstrap.go 路径行为分裂），
+	// 属于与校零 NewDataSink(nil,nil) 同类的 Critical BUG，现与 bootstrap.go:93 对齐统一注入。
+	travSink := storage.NewTraversalCsvWriter()
+	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, travStore, storage.NewFileCheckpointStore(), appConfigStore)
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	traversalMgr.RestoreInterpolatorFromPersistedConfig()
