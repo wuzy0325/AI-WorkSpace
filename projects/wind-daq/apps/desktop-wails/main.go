@@ -3,10 +3,13 @@ package main
 import (
 	"embed"
 	"flag"
-	"log"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
+	"time"
 
 	"shared.local/device-sdk/go/ffi"
 
@@ -22,6 +25,16 @@ var assets embed.FS
 var appIcon []byte
 
 func main() {
+	// 早期 panic recovery：捕获所有 main goroutine 启动期 panic 并写入 crash log。
+	// 必要性：windowsgui 子系统下 stderr 不可见，Wails 日志系统尚未初始化时
+	// 任何 panic 都会让进程静默退出，用户看不到任何错误。crash log 是唯一的诊断手段。
+	defer func() {
+		if r := recover(); r != nil {
+			writeCrashLog(fmt.Sprintf("启动 panic: %v", r))
+			os.Exit(1)
+		}
+	}()
+
 	// 解析命令行参数：
 	//   --motion-only 启动运动控制器独立窗口
 	//   --parent-pid  仅子进程使用，传入父进程 PID，父进程消失时子进程自杀
@@ -98,7 +111,53 @@ func main() {
 		},
 	})
 
+	// wailsApp.Run() 失败时写 crash log 而非 log.Fatal。
+	// windowsgui 子系统下 stderr 不可见，log.Fatal 输出用户看不到。
+	// 常见失败原因：WebView2 Runtime 缺失（日志会显示 "no webview2 found"）。
 	if err := wailsApp.Run(); err != nil {
-		log.Fatal(err)
+		writeCrashLog(fmt.Sprintf("wailsApp.Run() 失败: %v", err))
+		os.Exit(1)
 	}
+}
+
+// writeCrashLog 将启动期 panic 或致命错误写入 crash log 文件。
+// 路径优先级：%APPDATA%\wind-daq\crash-YYYYMMDD-HHMMSS.log → exe 同目录 → 当前工作目录。
+// 设计意图：windowsgui 子系统下 stderr 不可见，Wails 日志系统可能尚未初始化，
+// crash log 是启动失败时唯一的诊断手段。
+func writeCrashLog(message string) {
+	// 获取调用栈
+	buf := make([]byte, 64*1024)
+	n := runtime.Stack(buf, false)
+	stackTrace := string(buf[:n])
+
+	// 构造 crash 信息
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	content := fmt.Sprintf(
+		"Wind-DAQ 启动崩溃报告\n"+
+			"时间: %s\n"+
+			"错误: %s\n\n"+
+			"调用栈:\n%s\n",
+		timestamp, message, stackTrace)
+
+	// 确定日志目录：优先 %APPDATA%\wind-daq，回退到 exe 同目录
+	var crashDir string
+	if configDir, err := os.UserConfigDir(); err == nil {
+		crashDir = filepath.Join(configDir, "wind-daq")
+	} else if exePath, err := os.Executable(); err == nil {
+		crashDir = filepath.Dir(exePath)
+	} else {
+		crashDir = "."
+	}
+	_ = os.MkdirAll(crashDir, 0o755)
+
+	// 写入 crash log（文件名含时间戳，避免覆盖历史 crash 记录）
+	crashFile := filepath.Join(crashDir,
+		fmt.Sprintf("crash-%s.log", time.Now().Format("20060102-150405")))
+	if err := os.WriteFile(crashFile, []byte(content), 0o644); err != nil {
+		// 写入失败时只能放弃，避免因日志写入失败再次 panic
+		return
+	}
+
+	// stderr 兜底输出（windowsgui 下不可见，但 console 模式下可见）
+	fmt.Fprintf(os.Stderr, "Wind-DAQ 启动崩溃: %s\n崩溃日志已写入: %s\n", message, crashFile)
 }
