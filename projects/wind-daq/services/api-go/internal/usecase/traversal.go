@@ -17,6 +17,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -46,8 +47,37 @@ const (
 	checkpointInterval      = 10                     // 每完成10个点保存一次断点
 )
 
+type TraversalRunSession struct {
+	taskID   string
+	snapshot traversal.TraversalRunSnapshot
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	doneOnce sync.Once
+}
+
+func newTraversalRunSession(parent context.Context, taskID string, snapshot traversal.TraversalRunSnapshot) *TraversalRunSession {
+	ctx, cancel := context.WithCancel(parent)
+	return &TraversalRunSession{taskID: taskID, snapshot: snapshot, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+}
+
+func (s *TraversalRunSession) Context() context.Context { return s.ctx }
+func (s *TraversalRunSession) Done() <-chan struct{}    { return s.done }
+func (s *TraversalRunSession) Cancel()                  { s.cancel() }
+func (s *TraversalRunSession) MarkDone()                { s.doneOnce.Do(func() { close(s.done) }) }
+
+func (s *TraversalRunSession) IsDone() bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
+}
+
 type TraversalManager struct {
 	mu              sync.RWMutex
+	session         *TraversalRunSession
 	reader          ports.LatestDataReader
 	motion          ports.MotionAccess
 	sink            ports.TraversalPointSink
@@ -89,6 +119,17 @@ type TraversalManager struct {
 	//（跳过换算并记 warning，保证旧测试不崩）。
 	// 由 DeviceManager 实现，装配点通过 SetUnitProvider 注入。
 	unitProvider ports.ChannelUnitProvider
+
+	// v2 可靠存储端口（Task 4-8）：三阶段提交与崩溃恢复所需
+	// csvPort      CSV 落盘端口（支持新建/恢复、Sync、截断）
+	// resultLogPort JSONL 完整结果日志端口（支持 AppendPrepared、Sync、ValidateTail）
+	// checkpointPortFactory 结构化断点端口工厂（按 SavePath 动态创建，支持 Save/Load/Find/Unregister）
+	// activeIndex   活动任务索引（taskId → checkpointPath），支持进程重启发现
+	csvPort              ports.TraversalCSVPort
+	resultLogPort        ports.TraversalResultLogPort
+	checkpointPort       ports.TraversalCheckpointPort // 当前活动任务的断点端口（Start 时动态创建）
+	checkpointPortFactory ports.TraversalCheckpointPortFactory
+	activeIndex          ports.TraversalActiveIndex
 }
 
 // 遍历配置持久化存储的 key
@@ -180,6 +221,43 @@ func (m *TraversalManager) SetInterpolatorLoader(loader ports.InterpolatorLoader
 func (m *TraversalManager) SetUnitProvider(provider ports.ChannelUnitProvider) {
 	m.mu.Lock()
 	m.unitProvider = provider
+	m.mu.Unlock()
+}
+
+// SetCsvPort 注入遍历 CSV 端口（v2 可靠存储）。
+// 支持新建/恢复模式、行级摘要、尾部截断与 Sync。
+// 装配阶段调用；若未注入，遍历仍可通过旧 sink 路径落盘，但无崩溃恢复能力。
+func (m *TraversalManager) SetCsvPort(port ports.TraversalCSVPort) {
+	m.mu.Lock()
+	m.csvPort = port
+	m.mu.Unlock()
+}
+
+// SetResultLogPort 注入 JSONL 完整结果日志端口（v2 可靠存储）。
+// 用于三阶段提交中的结果日志阶段，作为崩溃恢复的权威数据源。
+// 装配阶段调用；若未注入，遍历仍运行但无可靠恢复能力。
+func (m *TraversalManager) SetResultLogPort(port ports.TraversalResultLogPort) {
+	m.mu.Lock()
+	m.resultLogPort = port
+	m.mu.Unlock()
+}
+
+// SetCheckpointPortFactory 注入断点端口工厂（v2 可靠存储）。
+// 由于每个任务的 SavePath 不同，断点文件路径需在 Start 时按 SavePath 确定。
+// 工厂在 Start 时被调用，为当前任务创建专属的 checkpointPort。
+// 装配阶段调用。
+func (m *TraversalManager) SetCheckpointPortFactory(factory ports.TraversalCheckpointPortFactory) {
+	m.mu.Lock()
+	m.checkpointPortFactory = factory
+	m.mu.Unlock()
+}
+
+// SetActiveIndex 注入活动任务索引（v2 可靠存储）。
+// 用于启动时发现未完成的遍历任务，支持断点续跑。
+// 装配阶段调用。
+func (m *TraversalManager) SetActiveIndex(index ports.TraversalActiveIndex) {
+	m.mu.Lock()
+	m.activeIndex = index
 	m.mu.Unlock()
 }
 
@@ -306,6 +384,16 @@ func (m *TraversalManager) HasLoadedInterpolator() bool {
 	return m.interpolator != nil && m.interpolator.IsLoaded()
 }
 
+func (m *TraversalManager) beginSession(parent context.Context, taskID string, snapshot traversal.TraversalRunSnapshot) (*TraversalRunSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.session != nil && !m.session.IsDone() {
+		return nil, fmt.Errorf("traversal session %s is still active", m.session.taskID)
+	}
+	m.session = newTraversalRunSession(parent, taskID, snapshot)
+	return m.session, nil
+}
+
 func (m *TraversalManager) Start(config traversal.Config) error {
 	slog.Info("traversal starting",
 		"component", "traversal",
@@ -335,9 +423,31 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		return err
 	}
 
+	// v2：使用 beginSession 活动会话门禁，防止旧 taskId 污染新任务
+	snapshot := traversal.TraversalRunSnapshot{
+		Config:               config,
+		Validation:           m.validation,
+		Stabilization:        m.stabilization,
+		InterpolatorIdentity: m.interpolatorIdentity(),
+		SaveOptions:          config.SaveOptions,
+		TotalPoints:          len(config.Path),
+		CommittedPoints:      0,
+		CommitSeq:            0,
+		CSVPath:              config.SavePath,
+		ResultLogPath:        config.SavePath + ".results.jsonl",
+	}
+	parentCtx := context.Background()
+	session, err := m.beginSession(parentCtx, config.TaskID, snapshot)
+	if err != nil {
+		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+		return err
+	}
+
 	m.mu.Lock()
 	if m.status.State == traversal.StateRunning || m.status.State == traversal.StatePaused {
 		m.mu.Unlock()
+		session.Cancel()
+		session.MarkDone()
 		err := fmt.Errorf("a traversal is already %s", m.status.State)
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
@@ -346,6 +456,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
 	if err := resourcelock.Default().Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
 		m.mu.Unlock()
+		session.Cancel()
+		session.MarkDone()
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return fmt.Errorf("acquire traversal lock: %w", err)
 	}
@@ -358,23 +470,61 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		TotalPoints: len(config.Path),
 		StartedAt:   time.Now().UnixMilli(),
 	}
+	// 快照 v2 端口（可能为 nil，表示未注入 v2 组件）
+	csvPort := m.csvPort
+	resultLogPort := m.resultLogPort
+	activeIndex := m.activeIndex
+	checkpointPortFactory := m.checkpointPortFactory
 	sink := m.sink
 	m.mu.Unlock()
 
-	// 在锁外调用 sink.Initialize，避免阻塞其他状态读取
+	// v2：通过工厂按 SavePath 动态创建 checkpointPort（每个任务 SavePath 不同）
+	var checkpointPort ports.TraversalCheckpointPort
+	if checkpointPortFactory != nil && config.SavePath != "" {
+		checkpointPort = checkpointPortFactory.Create(config.SavePath)
+		m.mu.Lock()
+		m.checkpointPort = checkpointPort
+		m.mu.Unlock()
+	}
+
+	// v2 存储初始化：CSV 与结果日志
+	if csvPort != nil {
+		csvSession := ports.TraversalOutputSession{
+			TaskID: config.TaskID,
+			Mode:   ports.TraversalOutputCreate,
+			Path:   snapshot.CSVPath,
+		}
+		if err := csvPort.Open(session.ctx, csvSession); err != nil {
+			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("csv open failed: %v", err), traversal.ErrSaveFailed)
+			return err
+		}
+	}
+	if resultLogPort != nil {
+		logSession := ports.TraversalOutputSession{
+			TaskID: config.TaskID,
+			Mode:   ports.TraversalOutputCreate,
+			Path:   snapshot.ResultLogPath,
+		}
+		if err := resultLogPort.Open(session.ctx, logSession); err != nil {
+			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("result log open failed: %v", err), traversal.ErrSaveFailed)
+			return err
+		}
+	}
+	// 注册活动索引，支持进程重启发现
+	if activeIndex != nil && checkpointPort != nil {
+		checkpointPath := config.SavePath + ".checkpoint.json"
+		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
+			slog.Warn("traversal active index register failed",
+				"component", "traversal", "task_id", config.TaskID, "error", err)
+			// 非阻塞：索引注册失败不影响任务启动，仅影响重启发现
+		}
+	}
+
+	// 在锁外调用旧 sink.Initialize，避免阻塞其他状态读取（向后兼容）
 	if sink != nil {
 		if err := sink.InitializeTraversal(config); err != nil {
 			// 初始化失败：回滚状态并释放锁，避免半启动
-			m.mu.Lock()
-			m.status.State = traversal.StateError
-			m.status.LastError = fmt.Sprintf("sink init failed: %v", err)
-			m.status.LastErrorCode = traversal.ErrSaveFailed
-			m.mu.Unlock()
-			_ = resourcelock.Default().Release(traversalLockResource, config.TaskID)
-			slog.Error("traversal start failed",
-				"component", "traversal", "task_id", config.TaskID,
-				"error", fmt.Sprintf("sink init failed: %v", err),
-			)
+			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("sink init failed: %v", err), traversal.ErrSaveFailed)
 			return err
 		}
 	}
@@ -385,6 +535,72 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		"total_points", len(config.Path),
 	)
 	return nil
+}
+
+// abortStartLocked 启动失败时的统一回滚：设置错误状态、关闭已打开的 v2 端口、
+// 关闭 session、释放工作流锁。
+//
+// 必须清理已打开的 v2 端口（csvPort/resultLogPort），否则：
+//   - csvPort.Open 已创建 CSV 文件并写入表头，未关闭会导致后续 Start 时 Open 失败
+//     （"会话已打开"错误），半启动的文件句柄也会泄漏
+//   - resultLogPort 同理，已打开的 JSONL 文件句柄不会被 GC 回收
+//
+// 端口关闭顺序与 finalizeSink 一致：先结果日志后 CSV，确保刷盘顺序正确。
+// 关闭失败仅记录日志，不影响错误状态传播（启动失败的根因优先暴露给调用方）。
+func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID, message string, code traversal.ErrorCode) {
+	m.mu.Lock()
+	m.status.State = traversal.StateError
+	m.status.LastError = message
+	m.status.LastErrorCode = code
+	csvPort := m.csvPort
+	resultLogPort := m.resultLogPort
+	checkpointPort := m.checkpointPort
+	activeIndex := m.activeIndex
+	m.checkpointPort = nil // 清理当前任务的断点端口引用，避免下一次 Start 复用错误实例
+	m.mu.Unlock()
+	session.Cancel()
+	session.MarkDone()
+
+	// 在锁外执行可能阻塞的端口关闭操作
+	ctx := context.Background()
+	if resultLogPort != nil {
+		if err := resultLogPort.Close(ctx); err != nil {
+			slog.Warn("traversal abort close result log failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	if csvPort != nil {
+		if err := csvPort.Close(ctx); err != nil {
+			slog.Warn("traversal abort close csv failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	// 清理活动索引注册（启动时已 Register，失败必须 Unregister 否则下次启动会发现"幽灵任务"）
+	if activeIndex != nil && checkpointPort != nil && taskID != "" {
+		if err := activeIndex.Unregister(ctx, taskID); err != nil {
+			slog.Warn("traversal abort unregister active index failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	_ = resourcelock.Default().Release(traversalLockResource, taskID)
+	slog.Error("traversal start failed",
+		"component", "traversal", "task_id", taskID,
+		"error", message,
+	)
+}
+
+// interpolatorIdentity 返回当前插值器的身份标识（用于快照）
+func (m *TraversalManager) interpolatorIdentity() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.interpolator == nil {
+		return ""
+	}
+	// 优先使用已实现 Identity() 的插值器
+	if id, ok := m.interpolator.(interface{ Identity() string }); ok {
+		return id.Identity()
+	}
+	return ""
 }
 
 func (m *TraversalManager) Status() traversal.Status {
@@ -446,13 +662,35 @@ func (m *TraversalManager) Resume() error {
 	return nil
 }
 
+// Stop 停止遍历测试。
+//
+// 端口关闭竞态修复（Fix 6）：
+//   - 旧实现直接关闭 csvPort/resultLogPort/sink，与 RunCurrentPoint.commitPointV2
+//     中的并发写入产生竞态（Close 期间 commitPointV2 可能写入已关闭的文件句柄）
+//   - 新实现：Stop 只设置停止标志 + Cancel session，端口关闭集中到 finalizeSink
+//     （由 RunTraversalLoop 的 defer 调用）
+//   - Stop 等待 session.done 确保 RunTraversalLoop 已退出（commitPointV2 已完成），
+//     超时 5s 保护避免 RunTraversalLoop 卡死导致 Stop 永久阻塞
+//
+// 错误聚合（Fix 7）：
+//   - 旧实现 store.Save 失败时直接 return，导致后续清理（活动索引/锁）被跳过
+//   - 新实现用 errors.Join 聚合 stopErr + store.Save 错误，所有清理都执行
 func (m *TraversalManager) Stop() error {
 	// 先设置停止标志，让运行中的循环能尽快感知
 	m.mu.Lock()
+	if m.isStopped {
+		// 已停止，幂等返回（用户连续点 Stop 时避免重复清理）
+		m.mu.Unlock()
+		return nil
+	}
 	m.isStopped = true
 	m.isPaused = false
 	m.status.State = traversal.StateStopped
-	sink := m.sink
+	// v2：取消活动会话，让 RunCurrentPoint 中的 ctx 检查立即失败
+	session := m.session
+	if session != nil {
+		session.Cancel()
+	}
 	// 在持锁时快照 TaskID，避免 Resume/Start 并发改写 m.config 导致的数据竞争
 	taskID := m.config.TaskID
 	completedPoints := m.status.CurrentPoint
@@ -467,6 +705,23 @@ func (m *TraversalManager) Stop() error {
 	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
 	stopErr := m.stopMotionAxes()
 
+	// 等待 RunTraversalLoop 退出：其 defer finalizeSink 会关闭所有端口，
+	// 保证 commitPointV2 已完成，避免 Stop 与 commitPointV2 竞态。
+	// 超时 5s 保护：RunTraversalLoop 可能卡在 motion.MoveTo 等不响应 ctx 的调用上。
+	if session != nil && !session.IsDone() {
+		select {
+		case <-session.Done():
+			// RunTraversalLoop 已退出，finalizeSink 已执行
+		case <-time.After(5 * time.Second):
+			slog.Warn("traversal stop timeout waiting for loop exit, force finalizing sink",
+				"component", "traversal",
+				"task_id", taskID,
+			)
+			// 超时强制关闭端口（finalizeSink 幂等，重复调用安全）
+			m.finalizeSink()
+		}
+	}
+
 	// 先在锁内收集 Save 所需快照，再到锁外执行可能耗时的 store.Save
 	m.mu.Lock()
 	var savePending bool
@@ -478,6 +733,7 @@ func (m *TraversalManager) Stop() error {
 		saveStatus = m.status
 		saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
 	}
+	activeIndex := m.activeIndex
 	m.mu.Unlock()
 
 	if savePending {
@@ -487,22 +743,25 @@ func (m *TraversalManager) Stop() error {
 				"task_id", taskID,
 				"error", err,
 			)
-			return fmt.Errorf("save traversal result: %v", err)
-		}
-		slog.Info("traversal result saved on stop",
-			"component", "traversal",
-			"task_id", taskID,
-		)
-	}
-
-	// 在锁外关闭 sink，确保 CSV 缓冲被刷盘
-	if sink != nil {
-		if err := sink.FinalizeTraversal(); err != nil && stopErr == nil {
-			stopErr = err
+			// 聚合错误而非提前返回，确保后续清理（活动索引/锁）仍执行
+			stopErr = errors.Join(stopErr, fmt.Errorf("save traversal result: %w", err))
+		} else {
+			slog.Info("traversal result saved on stop",
+				"component", "traversal",
+				"task_id", taskID,
+			)
 		}
 	}
 
-	// 释放工作流级互斥锁；幂等
+	// 清理活动索引
+	if activeIndex != nil && taskID != "" {
+		if err := activeIndex.Unregister(context.Background(), taskID); err != nil {
+			slog.Warn("traversal active index unregister failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+
+	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）
 	if taskID != "" {
 		_ = resourcelock.Default().Release(traversalLockResource, taskID)
 	}
@@ -579,6 +838,13 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 // 点间不再额外 sleep——旧实现点间再睡一次会使状态长时间停留在 saving，
 // UI 观感像“卡在不动”，且每个点实际等待时间翻倍。
 func (m *TraversalManager) RunTraversalLoop() {
+	m.mu.RLock()
+	session := m.session
+	m.mu.RUnlock()
+	if session == nil {
+		return
+	}
+	defer session.MarkDone()
 	defer m.finalizeSink() // 所有退出路径统一关闭 sink
 
 	initStatus := m.Status()
@@ -590,6 +856,14 @@ func (m *TraversalManager) RunTraversalLoop() {
 	)
 
 	for {
+		// v2：检查活动会话是否被取消（Stop 调用 session.Cancel() 后）
+		if session.IsDone() {
+			slog.Info("traversal loop exiting: session cancelled",
+				"component", "traversal",
+				"task_id", session.taskID,
+			)
+			return
+		}
 		status := m.Status()
 		switch {
 		case status.State == traversal.StateRunning || isSubState(status.State):

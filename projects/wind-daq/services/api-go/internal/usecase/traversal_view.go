@@ -6,6 +6,7 @@
 package usecase
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
@@ -84,6 +85,8 @@ func sanitizeResultsForJSON(results []traversal.PointResult) []map[string]any {
 func (m *TraversalManager) finalizeSink() {
 	m.mu.Lock()
 	sink := m.sink
+	csvPort := m.csvPort
+	resultLogPort := m.resultLogPort
 	taskID := m.config.TaskID
 	m.mu.Unlock()
 
@@ -92,6 +95,20 @@ func (m *TraversalManager) finalizeSink() {
 		"task_id", taskID,
 	)
 
+	// v2：先关闭结果日志，再关闭 CSV，确保顺序一致
+	ctx := context.Background()
+	if resultLogPort != nil {
+		if err := resultLogPort.Close(ctx); err != nil {
+			slog.Error("traversal finalize result log failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	if csvPort != nil {
+		if err := csvPort.Close(ctx); err != nil {
+			slog.Error("traversal finalize csv failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
 	if sink != nil {
 		// FinalizeTraversal 自身需保证幂等（多次调用安全）
 		if err := sink.FinalizeTraversal(); err != nil {

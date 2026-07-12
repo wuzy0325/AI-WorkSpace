@@ -429,7 +429,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		return traversal.Config{}, fmt.Errorf("invalid request: %w", err)
 	}
 
-	points := traversal.PointsFromLayout(traversal.LayoutConfig{
+	layout := traversal.LayoutConfig{
 		Pattern:     cfg.Layout.Pattern,
 		SnakeOrder:  cfg.Layout.SnakeOrder,
 		PrimaryAxis: cfg.Layout.PrimaryAxis,
@@ -482,7 +482,11 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 			}
 			return cl
 		}(),
-	})
+	}
+	points := traversal.PointsFromLayout(layout)
+	if len(points) == 0 {
+		return traversal.Config{}, fmt.Errorf("invalid layout: no points generated for pattern %q", layout.Pattern)
+	}
 
 	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
 	channelLabels := make(map[int]string)

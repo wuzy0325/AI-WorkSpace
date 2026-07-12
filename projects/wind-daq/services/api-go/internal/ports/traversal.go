@@ -33,6 +33,81 @@ type TraversalResultStore interface {
 	Get(taskID string) (traversal.Status, bool)
 }
 
+type TraversalOutputMode string
+
+const (
+	TraversalOutputCreate TraversalOutputMode = "create"
+	TraversalOutputResume TraversalOutputMode = "resume"
+)
+
+type TraversalOutputSession struct {
+	TaskID       string
+	Mode         TraversalOutputMode
+	Path         string
+	HeaderHash   string
+	CommittedSeq uint64
+}
+
+type TraversalRowSummary struct {
+	CommitSeq uint64
+	RowHash   string
+}
+
+type TraversalOutputState struct {
+	Path       string
+	HeaderHash string
+	Rows       int
+	CommitSeq  uint64
+	TailValid  bool
+}
+
+type TraversalCSVPort interface {
+	Open(ctx context.Context, session TraversalOutputSession) error
+	Append(ctx context.Context, result traversal.PointResult) (TraversalRowSummary, error)
+	Sync(ctx context.Context) error
+	Inspect(ctx context.Context) (TraversalOutputState, error)
+	TruncateAfter(ctx context.Context, commitSeq uint64) error
+	Close(ctx context.Context) error
+}
+
+type TraversalResultLogPort interface {
+	Open(ctx context.Context, session TraversalOutputSession) error
+	AppendPrepared(ctx context.Context, result traversal.PointResult) error
+	Sync(ctx context.Context) error
+	ReadCommitted(ctx context.Context, commitSeq uint64) ([]traversal.PointResult, error)
+	ValidateTail(ctx context.Context, commitSeq uint64) error
+	TruncateAfter(ctx context.Context, commitSeq uint64) error
+	Close(ctx context.Context) error
+}
+
+type TraversalCheckpointRef struct {
+	TaskID string
+	Path   string
+}
+
+type TraversalCheckpointPort interface {
+	Save(ctx context.Context, checkpoint traversal.Checkpoint) error
+	Load(ctx context.Context, taskID string) (traversal.Checkpoint, error)
+	Find(ctx context.Context, taskID string) (TraversalCheckpointRef, bool, error)
+	Unregister(ctx context.Context, taskID string) error
+}
+
+// TraversalCheckpointPortFactory 按 SavePath 动态创建断点端口。
+// 由于每个遍历任务的 SavePath 不同，断点文件路径需在 Start 时按 SavePath 确定，
+// 不能在装配阶段静态注入。装配根提供工厂，usecase 在 Start 时调用。
+type TraversalCheckpointPortFactory interface {
+	// Create 按 basePath（通常为 config.SavePath）创建断点端口实例。
+	Create(basePath string) TraversalCheckpointPort
+}
+
+// TraversalActiveIndex 活动任务索引：taskId → checkpointPath。
+// 支持进程重启后发现未完成的遍历任务，实现断点续跑。
+type TraversalActiveIndex interface {
+	Register(ctx context.Context, taskID, checkpointPath string) error
+	Find(ctx context.Context, taskID string) (TraversalCheckpointRef, bool, error)
+	Unregister(ctx context.Context, taskID string) error
+}
+
 // CheckpointStore 断点文件存储端口
 // 抽象断点文件的字节 I/O（Stat/Read/Write/Remove/Rename），
 // 使 usecase 不直接依赖 os。实现见 adapters/storage.FileCheckpointStore。

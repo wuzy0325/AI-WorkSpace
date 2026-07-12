@@ -1,11 +1,9 @@
 ---
 name: gitnexus-impact-analysis
-description: "Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Works in Claude Code, OpenCode, Trae, Cursor, Codex. Examples: \"Is it safe to change X?\", \"What depends on this?\", \"What will break?\""
+description: "Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Examples: \"Is it safe to change X?\", \"What depends on this?\", \"What will break?\""
 ---
 
 # Impact Analysis with GitNexus
-
-Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI assistant with MCP access to the GitNexus server.
 
 ## When to Use
 
@@ -25,7 +23,7 @@ Compatible with Claude Code, **OpenCode**, **Trae**, Cursor, Codex — any AI as
 4. Assess risk and report to user
 ```
 
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> If "Index is stale" → run `npx gitnexus analyze` in terminal.
 
 ## Checklist
 
@@ -75,7 +73,7 @@ gitnexus_impact({
   - authRouter (src/routes/auth.ts:22) [CALLS, 95%]
 ```
 
-**gitnexus_detect_changes** — git-diff based impact analysis (pre-commit check):
+**gitnexus_detect_changes** — git-diff based impact analysis:
 
 ```
 gitnexus_detect_changes({scope: "staged"})
@@ -84,8 +82,6 @@ gitnexus_detect_changes({scope: "staged"})
 → Affected: LoginFlow, TokenRefresh, APIMiddlewarePipeline
 → Risk: MEDIUM
 ```
-
-Supports `scope`: `"unstaged"` (default), `"staged"`, `"all"`, or `"compare"` with `base_ref`.
 
 ## Example: "What breaks if I change validateUser?"
 

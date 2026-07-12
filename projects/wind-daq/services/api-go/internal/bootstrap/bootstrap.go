@@ -91,7 +91,19 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
 	// 注入遍历 CSV 写入 sink，承担测试结果落盘
 	travSink := storageadapter.NewTraversalCsvWriter()
-	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
+	checkpointStore := storageadapter.NewFileCheckpointStore()
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), checkpointStore, appConfigStore)
+	// v2 可靠存储端口注入（Task 4-8）：三阶段提交与崩溃恢复
+	// csvPort 复用 travSink（TraversalCsvWriter 同时实现旧 sink 与新 TraversalCSVPort）
+	travMgr.SetCsvPort(travSink)
+	travMgr.SetResultLogPort(storageadapter.NewTraversalResultLog())
+	// checkpointPort 按 SavePath 动态创建（工厂模式），支持多任务隔离
+	travMgr.SetCheckpointPortFactory(storageadapter.NewFileCheckpointPortFactory(checkpointStore))
+	dataDir := filepath.Dir(cfg.ProfileStorePath)
+	travMgr.SetActiveIndex(storageadapter.NewTraversalActiveIndex(
+		filepath.Join(dataDir, "traversal-active-index.json"),
+		dataDir,
+	))
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()

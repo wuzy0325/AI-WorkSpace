@@ -91,11 +91,21 @@ func NewAppContext(configDir string) (*AppContext, error) {
 		return storage.NewCalibrationCsvWriterOverwrite(config)
 	})
 	travStore := calstore.NewTraversalResultStore()
-	// 注入遍历 CSV 写入 sink，承担测试结果落盘。
+	// §40 对齐：桌面生产路径必须与 bootstrap/apiserver 保持一致的 sink 注入，
+	// 避免旧 sink 路径在桌面端完全跳过（InitializeTraversal/FinalizeTraversal 副作用丢失）。
 	// 此前此处传 nil 导致桌面生产路径下遍历测试静默不输出 CSV（与 bootstrap.go 路径行为分裂），
 	// 属于与校零 NewDataSink(nil,nil) 同类的 Critical BUG，现与 bootstrap.go:93 对齐统一注入。
-	travSink := storage.NewTraversalCsvWriter()
-	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, travStore, storage.NewFileCheckpointStore(), appConfigStore)
+	travSinkV2 := storage.NewTraversalCsvWriter()
+	checkpointStore := storage.NewFileCheckpointStore()
+	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, travSinkV2, travStore, checkpointStore, appConfigStore)
+	// v2 可靠存储端口注入（Task 4-8）：三阶段提交与崩溃恢复
+	traversalMgr.SetCsvPort(travSinkV2)
+	traversalMgr.SetResultLogPort(storage.NewTraversalResultLog())
+	traversalMgr.SetCheckpointPortFactory(storage.NewFileCheckpointPortFactory(checkpointStore))
+	traversalMgr.SetActiveIndex(storage.NewTraversalActiveIndex(
+		filepath.Join(configDir, "traversal-active-index.json"),
+		configDir,
+	))
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	traversalMgr.RestoreInterpolatorFromPersistedConfig()
