@@ -795,6 +795,13 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	validSamples := 0
 	deadline := time.Now().Add(acquisitionBatchTimeout)
 
+	// 自诊断：无有效样本时区分"设备未在采集"与"通道索引对不上"两类根因。
+	// everOk=false → GetLatestData 始终返回 ok=false（设备未采集或 deviceID 不匹配）；
+	// everOk=true 但 validSamples==0 → 设备有数据，但 payload 通道集合不包含请求的通道。
+	var everOk bool
+	var lastIndices []int
+	var lastChannelCount int
+
 	for validSamples < samplesPerPoint {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
 		if m.isTaskCancelled(taskID) {
@@ -820,6 +827,9 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 			time.Sleep(acquisitionBatchPoll)
 			continue
 		}
+		everOk = true
+		lastChannelCount = len(payload.Channels)
+		lastIndices = append(lastIndices[:0], payload.ChannelIndices...)
 		values := valuesForChannels(payload, channels)
 		if len(values) == len(channels) {
 			for k, v := range values {
@@ -834,6 +844,11 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 		slog.Error("traversal no valid samples",
 			"component", "traversal",
 			"task_id", taskID,
+			"device_id", deviceID,
+			"requested_channels", channels,
+			"device_ever_answered", everOk,
+			"last_payload_channel_count", lastChannelCount,
+			"last_payload_channel_indices", lastIndices,
 		)
 		return nil, fmt.Errorf("no valid samples collected within timeout")
 	}
