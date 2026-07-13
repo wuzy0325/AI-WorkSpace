@@ -1,5 +1,90 @@
 # Changelog
 
+## [0.6.0] - 2026-07-14
+
+### Added
+
+- 设备类型扩展：`DeviceTypeDAQP1603`、`DeviceTypeDAQT1603` 等新设备类型支持。
+- 默认配置迁移：新增默认配置版本迁移逻辑，支持旧配置文件自动升级。
+- 默认配置测试：`default_profiles_test.go` 新增 94 行测试覆盖。
+
+### Changed
+
+- DAQ-P-1603 配置面板（DaqP1603Config）UI 改进。
+- 设备管理抽屉（DeviceManagementDrawer）UI 优化。
+- `shared/device-sdk` 核心类型扩展：新增设备类型常量。
+- i18n 补充：覆盖新增设备类型文本。
+- 安装程序语言选择后不再卡顿：WebView2 安装移至正式安装阶段，并保留离线包优先、在线下载回退能力。
+
+### Fixed
+
+- 修复 DAQ-P-1603 已关闭“校零应用”的通道仍可发起校零的问题；全部校零会跳过这些通道，并保持用户的使能设置。
+- 修复设备所有压力通道均关闭“校零应用”后，前端设备级校零按钮仍可点击的问题。
+
+### Internal
+
+- `shared/device-sdk/go/daq/core/types.go` 新增设备类型枚举值。
+- `internal/core/device/types.go` 同步扩展。
+- `internal/adapters/config/migration.go` 新增迁移入口。
+- `internal/adapters/config/default_profiles.go` 新增默认配置项。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.4] - 2026-07-13
+
+### Changed
+
+- 遍历采集采样循环日志增强：区分"设备无数据"与"通道不匹配"两类失败，便于排查采集异常。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.3] - 2026-07-13
+
+### Changed
+
+- 遍历活动索引（TraversalActiveIndex）重构：接口简化，逻辑清理。
+- 遍历采集（traversal_acquisition）微调。
+
+### Internal
+
+- 新增 `traversal_acquisition_test.go` 测试覆盖。
+- `traversal_active_index_test.go` 更新适配重构。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.5.2] - 2026-07-13
 
 ### Added

@@ -1371,7 +1371,7 @@ const en: Record<string, string> = {
   noCalibratableDevice: 'No device supports zero calibration',
   cancelTare: 'Cancel calibration',
   tareProgress: 'Cancel ({elapsed}/{duration}s · {samples} samples)',
-  tareApplyColumn: 'Apply',
+  tareApplyColumn: 'Zero Cal. Apply',
   temperatureChannelNotSupported: 'Temperature channel does not support zero calibration',
   cannotChangeUnitDuringCalibration: 'Cannot change unit while calibration is in progress',
   toggleToLightTheme: 'Switch to light theme',

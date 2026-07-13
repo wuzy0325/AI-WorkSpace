@@ -8,7 +8,11 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore, computeHistoryCapacity } from '@stores/storageStore'
 import { useDeviceZeroCalibration } from '@composables/useDeviceZeroCalibration'
 import { buildChannelColorMap, CHANNEL_COLORS } from '@utils/channelColors'
-import { isCalibratableDeviceType, isTemperatureUnit } from '@utils/deviceCalibration'
+import {
+  isCalibratableDeviceType,
+  isChannelCalibrationEnabled,
+  isTemperatureUnit,
+} from '@utils/deviceCalibration'
 import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
 import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -140,8 +144,9 @@ function shouldDisableTare(channelIndex: number): boolean {
   const channel = profile.value?.channels.find((item) => item.index === channelIndex)
   if (!channel || channel.sensorType === 'temperature') return true
   if (isTemperatureUnit(channel.unit)) return true
+  if (!isChannelCalibrationEnabled(type, channel.calibrationEnabled)) return true
   // DAQ-P-1604 的通道 16/17 为大气压/大气温度辅助通道，不参与归零；
-  // DAQ-P-1603 仅 16 个采集通道（索引 0-15），无辅助通道，全部可归零。
+  // DAQ-P-1603 仅 16 个采集通道（索引 0-15），无辅助通道。
   if (type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre') {
     return channelIndex === 16 || channelIndex === 17
   }

@@ -808,7 +808,8 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 		return nil, fmt.Errorf("calibration already in progress")
 	}
 	if targetChannel != nil {
-		if _, found := findChannelPosition(m.profiles[profileIndex].Channels, *targetChannel); !found {
+		position, found := findChannelPosition(m.profiles[profileIndex].Channels, *targetChannel)
+		if !found {
 			m.mu.Unlock()
 			return nil, fmt.Errorf("invalid channel index: %d", *targetChannel)
 		}
@@ -818,6 +819,14 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 		if device.IsAtmosphericChannel(m.profiles[profileIndex].Type, *targetChannel) {
 			m.mu.Unlock()
 			return nil, fmt.Errorf("大气压辅助通道不支持校零")
+		}
+		// 用户通过 UI "校零应用"复选框显式关闭的通道不参与校零——
+		// 既不采样、不偏移，也不被落库阶段强制改回 true。
+		// 此前缺少此拦截，导致用户禁用 CH01/CH02 后点单通道校零仍被执行，
+		// 且落库时 CalibrationEnabled 被强制覆盖为 true，用户禁用状态被抹掉。
+		if !calibrationEnabledForProfile(m.profiles[profileIndex].Type, m.profiles[profileIndex].Channels[position]) {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("通道 %d 已禁用校零应用，请先在设备配置中启用", *targetChannel)
 		}
 	}
 	m.calibrating[id] = struct{}{}
@@ -832,17 +841,23 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 	src := m.profiles[profileIndex].Channels
 	channels := make([]device.ChannelConfig, len(src))
 	copy(channels, src)
-	// 全部校零（targetChannel==nil）时过滤掉大气压/大气温度辅助通道。
-	// 这些通道 Unit 为 Pa/℃ 会通过 SupportsZeroCalibration 检查，但物理上是
-	// 环境量——校零会写入 ~101325 Pa 偏移，导致后续大气压读数恒为 ~0。
+	// 全部校零（targetChannel==nil）时过滤掉两类通道：
+	//  1. 大气压/大气温度辅助通道：Unit 为 Pa/℃ 会通过 SupportsZeroCalibration 检查，
+	//     但物理上是环境量——校零会写入 ~101325 Pa 偏移，导致后续大气压读数恒为 ~0。
+	//  2. CalibrationEnabled=false 的通道：用户显式禁用校零应用的通道不参与采样，
+	//     避免落库阶段写入偏移并强制覆盖使能位（见下方落库循环注释）。
 	// 单通道校零已在上方 targetChannel!=nil 分支拒绝。与前端 shouldDisableTare 对齐。
 	profileType := m.profiles[profileIndex].Type
 	if targetChannel == nil {
 		filtered := make([]device.ChannelConfig, 0, len(channels))
 		for _, ch := range channels {
-			if !device.IsAtmosphericChannel(profileType, ch.Index) {
-				filtered = append(filtered, ch)
+			if device.IsAtmosphericChannel(profileType, ch.Index) {
+				continue
 			}
+			if !calibrationEnabledForProfile(profileType, ch) {
+				continue
+			}
+			filtered = append(filtered, ch)
 		}
 		channels = filtered
 	}
@@ -897,12 +912,14 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 				nextProfiles[pi].Channels[j].CalibrationOffset = r.Offset
 				nextProfiles[pi].Channels[j].CalibrationUnit = r.Unit
 				nextProfiles[pi].Channels[j].CalibrationAt = r.At
-				// 用户主动校零此通道 = 希望应用偏移。
-				// 此前不重置 CalibrationEnabled，导致用户先前通过 toggle 关闭后，
-				// 即使重新校零落库了新 offset，Apply 阶段仍因 enabled=false 跳过，
-				// 通道值不变化——表现为"校零使能不回来"。
-				// 此处对成功采样的通道强制 enabled=true，让校零结果立即生效。
-				nextProfiles[pi].Channels[j].CalibrationEnabled = true
+				// 不强制覆盖 CalibrationEnabled：使能位由用户通过 UI "校零应用"复选框
+				// 独占制，校零操作只责写偏移，不改变使能状态。
+				// 上方采样前已对 CalibrationEnabled=false 的通道做了拦截（全部模式过滤、
+				// 单通道模式拒绝），能进入 results 的通道采样时都是 enabled=true，
+				// 此处保持原值即可——既不会把用户的"关闭"误改回"开启"，
+				// 也保留了"用户开启的通道校零后立即生效"的语义。
+				// 此前在此强制 = true 会抹掉用户对 CH01/CH02 的禁用设置，
+				// 导致用户禁用后校零仍被应用，是"禁用了还给我校零"问题的根因。
 				found = true
 				break
 			}

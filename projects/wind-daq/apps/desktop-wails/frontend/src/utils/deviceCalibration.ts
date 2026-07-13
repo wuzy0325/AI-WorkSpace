@@ -11,7 +11,7 @@ import type { DeviceType } from '@api/types'
  * 支持校零的设备类型白名单。
  * 与后端 usecase.calibrationEnabledForProfile 行为对齐：
  *   - DAQ-P-1604 / DAQ-P-1604Pre：16 个压力通道可校零，CH17/CH18 为大气辅助通道不可校零
- *   - DAQ-P-1603：16 个通道全部可校零
+ *   - DAQ-P-1603：仅 calibrationEnabled=true 的压力通道可校零
  *   - DSA3217：压力通道可校零
  * 其他设备类型（SIMULATED / DAQ-T-1603 / WTN_PXI）不支持校零。
  */
@@ -39,4 +39,9 @@ export function isCalibratableDeviceType(type: string): boolean {
  */
 export function isTemperatureUnit(unit: string): boolean {
   return (TEMPERATURE_UNITS as readonly string[]).includes(unit)
+}
+
+/** 与后端 calibrationEnabledForProfile 对齐，DAQ-P-1603 尊重通道校零应用开关。 */
+export function isChannelCalibrationEnabled(type: string, enabled: boolean | undefined): boolean {
+  return type !== 'DAQ-P-1603' || enabled === true
 }
