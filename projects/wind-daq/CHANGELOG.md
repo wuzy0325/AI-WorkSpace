@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.5.2] - 2026-07-13
+
+### Added
+
+- 校准授权对话框（`CalibrationLicenseDialog`）：首次进入校准功能时展示授权信息，支持确认/关闭交互。
+- 前端 i18n 补充：`i18nStore` 新增 36 条翻译项，覆盖新增授权对话框及面板文本。
+
+### Changed
+
+- 遍历步骤面板（TraversalLayoutStep）UI 改进（对齐新配置步骤顺序 Hardware→Probe→Layout→Review）。
+- MotionView 控制器配置 UI 优化。
+- MainDashboardView 布局调整。
+
+### Fixed
+
+- 安装程序语言选择对话框中文乱码：`MUI_LANGDLL_INFO` 中文字符修复。
+- DAQ-P-1604 校零范围限制：大气压/温度辅助通道禁止校零操作。
+- 遍历前置检查纳入运动控制器连接态检测：避免"已装配但全部离线"时仍显示绿色就绪状态。
+- 五孔探针 PRB 插值算法重构：精简代码约 160 行，提高可维护性。
+
+### Behavior Changes
+
+- 五孔探针 PRB 插值器：超范围输入（压力系数落在 ±30° 校准网格凸包外）不再钳位到角点 (±30, ±30)；
+  改为返回 `IsValid=false` 并附 Warning `"压力系数超出PRB校准网格，旧算法不支持外推"`。
+  下游消费者需显式处理 `IsValid=false` 路径。
+
+### Changed
+
+- 遍历配置步骤顺序调整：Hardware → Probe → Layout → Review。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.5.1] - 2026-07-13
 
 ### Fixed
