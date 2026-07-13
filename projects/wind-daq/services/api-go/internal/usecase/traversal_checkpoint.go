@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -150,7 +152,12 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 		return
 	}
 
-	checkpointPath := savePath + ".checkpoint.json"
+	// 检查点放在 CSV 同目录的 .traversal/ 隐藏子目录，避免用户看到内部文件
+	ext := filepath.Ext(savePath)
+	base := strings.TrimSuffix(savePath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
 	if m.checkpointStore == nil {
 		return
 	}
@@ -353,10 +360,13 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		return "", err
 	}
 	// 注册活动索引，支持进程重启发现。
-	// checkpointPath 同样基于 snapshot.CSVPath 派生，保证与 factory.Create / saveCheckpoint
-	// 三者路径一致；旧格式 checkpoint 的 cp.SavePath 可能是目录，禁止直接拼接。
+	// checkpointPath 与 saveCheckpoint 派生规则一致：CSV 同目录 .traversal/ 隐藏子目录。
 	if activeIndex != nil && checkpointPort != nil {
-		checkpointPath := snapshot.CSVPath + ".checkpoint.json"
+		ext := filepath.Ext(snapshot.CSVPath)
+		base := strings.TrimSuffix(snapshot.CSVPath, ext)
+		dir := filepath.Dir(base)
+		stem := filepath.Base(base)
+		checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
 		if err := activeIndex.Register(session.ctx, cp.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
 				"component", "traversal", "task_id", cp.TaskID, "error", err)

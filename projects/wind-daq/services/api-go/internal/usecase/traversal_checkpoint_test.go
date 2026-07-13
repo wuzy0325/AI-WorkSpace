@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -13,6 +14,16 @@ import (
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/pkg/wiring"
 )
+
+// resolveTestCheckpointPath 返回测试用的 checkpoint 路径，与 FileCheckpointPort.path() 派生规则一致。
+// 路径格式：${dir}/.traversal/${stem}.checkpoint.json
+func resolveTestCheckpointPath(savePath string) string {
+	ext := filepath.Ext(savePath)
+	base := strings.TrimSuffix(savePath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	return filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+}
 
 // ===== 测试用 mock 实现 =====
 
@@ -164,7 +175,7 @@ func TestSaveAndLoadCheckpoint(t *testing.T) {
 	mgr.saveCheckpoint(points, 2, savePath)
 
 	// 验证文件存在
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 	if _, err := os.Stat(checkpointPath); err != nil {
 		t.Fatalf("checkpoint file not created: %v", err)
 	}
@@ -232,7 +243,7 @@ func TestLoadCheckpointFileDeleted(t *testing.T) {
 	mgr.mu.Unlock()
 
 	mgr.saveCheckpoint(config.Path, 1, savePath)
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 
 	// 外部删除文件
 	if err := os.Remove(checkpointPath); err != nil {
@@ -270,7 +281,7 @@ func TestClearCheckpoint(t *testing.T) {
 	mgr.mu.Unlock()
 
 	mgr.saveCheckpoint(config.Path, 1, savePath)
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 
 	// 文件应存在
 	if _, err := os.Stat(checkpointPath); err != nil {
@@ -442,7 +453,7 @@ func TestSaveCheckpointAtomicWrite(t *testing.T) {
 	}
 
 	// 验证最终文件存在且内容可解析
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 	data, err := os.ReadFile(checkpointPath)
 	if err != nil {
 		t.Fatalf("read checkpoint file failed: %v", err)

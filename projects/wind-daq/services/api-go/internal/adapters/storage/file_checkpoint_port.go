@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -28,16 +31,25 @@ type FileCheckpointPort struct {
 var _ ports.TraversalCheckpointPort = (*FileCheckpointPort)(nil)
 
 // NewFileCheckpointPort 创建文件系统断点端口适配器。
-// basePath 为 checkpoint 文件的基础路径（如 SavePath），实际文件名为 basePath + ".checkpoint.json"。
-// 由于每个遍历任务的 SavePath 不同，自然实现按任务隔离。
+// basePath 为 checkpoint 文件的基础路径（如 CSV 路径），实际文件放在 basePath 同目录的
+// .traversal/ 隐藏子目录下，避免用户看到内部文件。
+// 由于每个遍历任务的 CSV 路径不同，自然实现按任务隔离。
 func NewFileCheckpointPort(store ports.CheckpointStore, basePath string) *FileCheckpointPort {
 	return &FileCheckpointPort{store: store, basePath: basePath}
 }
 
-// path 返回 checkpoint 文件路径。
-// basePath 已包含任务唯一性（来自 SavePath），无需额外拼 taskID。
+// path 返回 checkpoint 文件路径，放在 CSV 同目录的 .traversal/ 隐藏子目录下。
+// 派生规则：basePath = dir/stem.csv → checkpointPath = dir/.traversal/stem.checkpoint.json
+// 确保 .traversal/ 父目录存在，避免首次写入因目录缺失失败。
 func (p *FileCheckpointPort) path() string {
-	return p.basePath + ".checkpoint.json"
+	ext := filepath.Ext(p.basePath)
+	base := strings.TrimSuffix(p.basePath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	cpPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+	// 确保父目录存在
+	_ = os.MkdirAll(filepath.Dir(cpPath), 0o755)
+	return cpPath
 }
 
 // Save 原子写入断点文件（JSON 序列化 + CheckpointStore.Write 原子替换）

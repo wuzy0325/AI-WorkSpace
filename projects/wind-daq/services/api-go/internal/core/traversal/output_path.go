@@ -53,8 +53,9 @@ func ResolveOutputPath(cfg Config) string {
 	return filepath.Join(savePath, saveName)
 }
 
-// ResolveResultLogPath 返回与 CSV 同目录、同 stem 的结果日志路径（.results.jsonl）。
-// 保证 CSV 与结果日志落在同一目录下，避免结果日志被错放到 SavePath 的父目录。
+// ResolveResultLogPath 返回与 CSV 同目录下隐藏子目录 .traversal/ 中的结果日志路径。
+// 路径格式：${dir}/.traversal/${stem}.results.jsonl
+// 保证 CSV 与结果日志落在同一目录下的隐藏子目录，避免用户看到多余文件。
 //
 // 前置条件：ResolveOutputPath 返回值必带 .csv 后缀（大小写不敏感）。
 // ext 直接取自 csvPath，TrimSuffix 大小写敏感但 ext 与 csvPath 末尾子串完全相同，
@@ -63,5 +64,7 @@ func ResolveResultLogPath(cfg Config) string {
 	csvPath := ResolveOutputPath(cfg)
 	ext := filepath.Ext(csvPath)
 	base := strings.TrimSuffix(csvPath, ext)
-	return base + ".results.jsonl"
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	return filepath.Join(dir, ".traversal", stem + ".results.jsonl")
 }

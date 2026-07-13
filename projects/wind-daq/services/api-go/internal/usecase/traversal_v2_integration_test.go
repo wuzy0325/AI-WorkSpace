@@ -76,6 +76,16 @@ func splitNonEmptyLines(data []byte) [][]byte {
 	return lines
 }
 
+// resolveTestResultLogPath 返回测试用的结果日志路径，与 ResolveResultLogPath 派生规则一致。
+// 路径格式：${dir}/.traversal/${stem}.results.jsonl
+func resolveTestResultLogPath(csvPath string) string {
+	ext := filepath.Ext(csvPath)
+	base := strings.TrimSuffix(csvPath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	return filepath.Join(dir, ".traversal", stem + ".results.jsonl")
+}
+
 // TestResumeReliabilityPorts_TruncatesResultLogTailToCommittedSeq 验证 Resume 模式下
 // openReliabilityPorts 对结果日志执行 ValidateTail + TruncateAfter，丢弃崩溃前未 Sync 的
 // 半写入记录（commitSeq=3），让水位严格对齐 snapshot.CommitSeq=2（Critical-2 回归网）。
@@ -97,7 +107,7 @@ func splitNonEmptyLines(data []byte) [][]byte {
 func TestResumeReliabilityPorts_TruncatesResultLogTailToCommittedSeq(t *testing.T) {
 	tmpDir := t.TempDir()
 	csvPath := filepath.Join(tmpDir, "result.csv")
-	logPath := csvPath + ".results.jsonl"
+	logPath := resolveTestResultLogPath(csvPath)
 	ctx := context.Background()
 
 	// 前置 1：csvPort 写入 3 行（模拟崩溃前 commitSeq=3 已写入 CSV 但 checkpoint 未提交）
@@ -218,7 +228,7 @@ func TestResumeReliabilityPorts_TruncatesResultLogTailToCommittedSeq(t *testing.
 func TestResumeReliabilityPorts_RejectsGapInResultLog(t *testing.T) {
 	tmpDir := t.TempDir()
 	csvPath := filepath.Join(tmpDir, "result.csv")
-	logPath := csvPath + ".results.jsonl"
+	logPath := resolveTestResultLogPath(csvPath)
 	ctx := context.Background()
 
 	// 前置 1：csv 写 commitSeq=1,2
@@ -299,7 +309,7 @@ func TestResumeReliabilityPorts_RejectsGapInResultLog(t *testing.T) {
 func TestResumeReliabilityPorts_AppliesColumnConfigInHeader(t *testing.T) {
 	tmpDir := t.TempDir()
 	csvPath := filepath.Join(tmpDir, "result.csv")
-	logPath := csvPath + ".results.jsonl"
+	logPath := resolveTestResultLogPath(csvPath)
 	ctx := context.Background()
 
 	// 前置：用完整列配置创建 CSV，并写 1 行 commitSeq=1
@@ -375,10 +385,10 @@ func TestResumeReliabilityPorts_AppliesColumnConfigInHeader(t *testing.T) {
 //       Snapshot.CSVPath = ""（旧格式没有此字段）
 //       Snapshot.Config.SavePath = tmpDir（目录）+ SaveFileName = "result"
 //       CompletedPoints = 1, TotalPoints = 3, CommitSeq = 1
-//   - 同步在 tmpDir 内预先创建 result.csv（含 BOM+表头+1 行数据）与 result.results.jsonl
-//     （1 行 commitSeq=1），模拟旧版本写入的真实数据文件
+//   - 同步在 tmpDir 内预先创建 result.csv（含 BOM+表头+1 行数据）与
+//     .traversal/result.results.jsonl（1 行 commitSeq=1），模拟旧版本写入的真实数据文件
 //     路径派生须与 core/traversal.ResolveResultLogPath 保持一致：
-//     csvPath=result.csv → 去 .csv 后缀 → 加 .results.jsonl → result.results.jsonl
+//     csvPath=result.csv → .traversal/result.results.jsonl
 //
 // 测试步骤：
 //   - 调用 mgr.ResumeFromCheckpoint(cp)
@@ -393,11 +403,9 @@ func TestResumeReliabilityPorts_AppliesColumnConfigInHeader(t *testing.T) {
 func TestResumeFromCheckpoint_LegacySavePathIsDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	csvPath := filepath.Join(tmpDir, "result.csv")
-	// logPath 必须与 traversal.ResolveResultLogPath 派生规则一致：
-	// csvPath 去 .csv 后缀加 .results.jsonl → result.results.jsonl
-	// 不能写 csvPath + ".results.jsonl"（会变成 result.csv.results.jsonl，
-	// 与 ResumeFromCheckpoint 内 ResolveResultLogPath 的产物不匹配，Open 时报"找不到文件"）
-	logPath := filepath.Join(tmpDir, "result.results.jsonl")
+	// logPath 与 traversal.ResolveResultLogPath 派生规则一致：
+	// .traversal/ 隐藏子目录，避免用户看到内部文件。
+	logPath := resolveTestResultLogPath(csvPath)
 	ctx := context.Background()
 
 	// 前置 1：预创建 CSV（BOM+表头+1 行 commitSeq=1），模拟旧版本写入的数据文件
@@ -484,7 +492,11 @@ func TestResumeFromCheckpoint_LegacySavePathIsDirectory(t *testing.T) {
 	if !ok {
 		t.Fatalf("active index missing task-legacy entry (validatePath rejected checkpoint path — #3 fix regressed)")
 	}
-	expectedCheckpoint, err := filepath.Abs(csvPath + ".checkpoint.json")
+	ext := filepath.Ext(csvPath)
+	base := strings.TrimSuffix(csvPath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	expectedCheckpoint, err := filepath.Abs(filepath.Join(dir, ".traversal", stem + ".checkpoint.json"))
 	if err != nil {
 		t.Fatalf("abs checkpoint path: %v", err)
 	}
@@ -494,7 +506,7 @@ func TestResumeFromCheckpoint_LegacySavePathIsDirectory(t *testing.T) {
 
 	// 期待结果 2：父目录残留 checkpoint 不存在
 	// 旧代码用 cp.SavePath 派生会落到父目录的 "tmpDir.checkpoint.json"，
-	// 修复后路径严格落在 tmpDir 内。此处作为残留路径检查。
+	// 修复后路径严格落在 .traversal/ 子目录内。此处作为残留路径检查。
 	parentCheckpoint := tmpDir + ".checkpoint.json"
 	if _, err := os.Stat(parentCheckpoint); err == nil {
 		t.Errorf("checkpoint incorrectly created at parent directory: %s (旧 savePath 语义残留)", parentCheckpoint)
@@ -526,7 +538,7 @@ func TestResumeFromCheckpoint_LegacySavePathIsDirectory(t *testing.T) {
 func TestCommitPointV2_SanitizesNaNInPointResult(t *testing.T) {
 	tmpDir := t.TempDir()
 	csvPath := filepath.Join(tmpDir, "result.csv")
-	logPath := filepath.Join(tmpDir, "result.results.jsonl")
+	logPath := resolveTestResultLogPath(csvPath)
 	ctx := context.Background()
 
 	// 前置 1：构造 manager 注入真实 v2 端口

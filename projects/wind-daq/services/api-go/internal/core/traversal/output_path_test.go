@@ -91,7 +91,7 @@ func TestResolveOutputPath(t *testing.T) {
 	}
 }
 
-// TestResolveResultLogPath 锁定结果日志与 CSV 同目录、同 stem。
+// TestResolveResultLogPath 锁定结果日志落在 CSV 同目录下的 .traversal/ 隐藏子目录。
 // 覆盖三个分支：目录+文件名、SavePath 已带 .csv、SavePath 为空。
 func TestResolveResultLogPath(t *testing.T) {
 	cases := []struct {
@@ -100,24 +100,24 @@ func TestResolveResultLogPath(t *testing.T) {
 		want string
 	}{
 		{
-			name: "目录+文件名 → 同 stem .results.jsonl",
+			name: "目录+文件名 → .traversal/ 隐藏子目录",
 			cfg:  Config{TaskID: "t1", SavePath: "D:/data", SaveFileName: "Traversal-2026-07-13.csv"},
-			want: filepath.Join("D:/data", "Traversal-2026-07-13.results.jsonl"),
+			want: filepath.Join("D:/data", ".traversal", "Traversal-2026-07-13.results.jsonl"),
 		},
 		{
-			name: "SavePath 已带 .csv → 同 stem .results.jsonl",
+			name: "SavePath 已带 .csv → .traversal/ 隐藏子目录",
 			cfg:  Config{TaskID: "t1", SavePath: "D:/data/my.csv"},
-			want: filepath.Clean("D:/data/my.results.jsonl"),
+			want: filepath.Join("D:/data", ".traversal", "my.results.jsonl"),
 		},
 		{
-			name: "SavePath 已带 .CSV 大写 → 同 stem .results.jsonl（保留原大小写 stem）",
+			name: "SavePath 已带 .CSV 大写 → .traversal/ 隐藏子目录（保留原大小写 stem）",
 			cfg:  Config{TaskID: "t1", SavePath: "D:/data/my.CSV"},
-			want: filepath.Clean("D:/data/my.results.jsonl"),
+			want: filepath.Join("D:/data", ".traversal", "my.results.jsonl"),
 		},
 		{
-			name: "SavePath 为空 → 相对路径 .results.jsonl",
+			name: "SavePath 为空 → 相对路径 .traversal/ 隐藏子目录",
 			cfg:  Config{TaskID: "abc123"},
-			want: "traversal_abc123.results.jsonl",
+			want: filepath.Join(".traversal", "traversal_abc123.results.jsonl"),
 		},
 	}
 	for _, c := range cases {

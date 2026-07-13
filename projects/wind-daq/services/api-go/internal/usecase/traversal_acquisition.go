@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -629,8 +631,15 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 		data, marshalErr := json.MarshalIndent(cp, "", "  ")
 		if marshalErr != nil {
 			checkpointErr = fmt.Errorf("marshal checkpoint: %w", marshalErr)
-		} else if err := checkpointStore.Write(snapshot.CSVPath+".checkpoint.json", data); err != nil {
-			checkpointErr = fmt.Errorf("checkpoint write: %w", err)
+		} else {
+			ext := filepath.Ext(snapshot.CSVPath)
+			base := strings.TrimSuffix(snapshot.CSVPath, ext)
+			dir := filepath.Dir(base)
+			stem := filepath.Base(base)
+			cpPath := filepath.Join(dir, ".traversal", stem+".checkpoint.json")
+			if err := checkpointStore.Write(cpPath, data); err != nil {
+				checkpointErr = fmt.Errorf("checkpoint write: %w", err)
+			}
 		}
 	}
 	if checkpointErr != nil {

@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -531,8 +533,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 
 	// v2：通过工厂按解析后的 CSVPath 动态创建 checkpointPort。
 	// 必须用 snapshot.CSVPath（= ResolveOutputPath(config)）而非 config.SavePath：
-	//   - SavePath 可能是目录（如 "D:/data"），factory.Create 派生 .checkpoint.json
-	//     会得到 "D:/data.checkpoint.json"（落在父目录），与 Resume 路径不一致。
+	//   - SavePath 可能是目录（如 "D:/data"），factory.Create 基于它派生 checkpoint 路径
+	//     会落在 ".traversal/" 同目录下，但 SavePath 是目录时 Ext 为空，派生结果错乱。
 	//   - ResumeFromCheckpoint 用 snapshot.CSVPath 创建 checkpointPort（见 traversal_checkpoint.go），
 	//     Start 必须用同一 basePath 才能保证崩溃恢复链路一致。
 	//   - activeIndex.Register 与 saveCheckpoint/loadCheckpoint 全部基于 snapshot.CSVPath 派生，
@@ -565,10 +567,13 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		return err
 	}
 	// 注册活动索引，支持进程重启发现。
-	// checkpointPath 基于 snapshot.CSVPath 派生，与 factory.Create / saveCheckpoint
-	// 三者路径一致；禁止用 config.SavePath 派生（可能是目录，导致路径错乱）。
+	// checkpointPath 与 FileCheckpointPort.path() 派生规则一致：CSV 同目录 .traversal/ 隐藏子目录。
 	if activeIndex != nil && checkpointPort != nil {
-		checkpointPath := snapshot.CSVPath + ".checkpoint.json"
+		ext := filepath.Ext(snapshot.CSVPath)
+		base := strings.TrimSuffix(snapshot.CSVPath, ext)
+		dir := filepath.Dir(base)
+		stem := filepath.Base(base)
+		checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
 		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
 				"component", "traversal", "task_id", config.TaskID, "error", err)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -49,6 +50,13 @@ func (l *TraversalResultLog) Open(ctx context.Context, session ports.TraversalOu
 	}
 	if session.Path == "" || session.TaskID == "" {
 		return errors.New("遍历结果日志路径和任务标识不能为空")
+	}
+	// 确保父目录存在：ResolveResultLogPath 把结果日志放在 .traversal/ 隐藏子目录下，
+	// 该目录不会自动创建，需要在此处 MkdirAll。
+	if dir := filepath.Dir(session.Path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("创建遍历结果日志目录失败: %w", err)
+		}
 	}
 	var file *os.File
 	var path string

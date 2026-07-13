@@ -360,6 +360,26 @@ onBeforeUnmount(() => {
   }
 })
 
+// 终态冻结锚点：测试进入终态（completed/stopped/error）那一刻记录时间戳，
+// 用于"已用时间"冻结，避免完成后 Elapsed 继续随 now 增长（见 elapsedText）。
+// 重新进入运行态时清空，确保下一轮测试能再次正确记录。
+const finishedAt = ref<number | null>(null)
+function isTerminalStatusValue(s: string | undefined): boolean {
+  return s === 'completed' || s === 'error' || s === 'stopped'
+}
+watch(
+  () => traversalStore.status?.status,
+  (newStatus) => {
+    if (isTerminalStatusValue(newStatus)) {
+      if (finishedAt.value === null) {
+        finishedAt.value = Date.now()
+      }
+    } else {
+      finishedAt.value = null
+    }
+  }
+)
+
 // 预估剩余时间：后端不返回该字段，前端基于已用时间 + 已完成点数自行估算
 // 公式：平均单点耗时 = 已用时间 / 已完成点数；剩余时间 = 平均单点耗时 × 剩余点数
 const estimatedRemainingText = computed(() => {
@@ -387,7 +407,16 @@ const estimatedRemainingText = computed(() => {
 const elapsedText = computed(() => {
   const startTime = traversalStore.status?.startTime
   if (typeof startTime !== 'number' || startTime <= 0) return '--'
-  const elapsedMs = Math.max(0, now.value - startTime)
+  let elapsedMs: number
+  if (traversalStore.isTerminal) {
+    // 终态：冻结已用时间，不再随 now 增长。
+    // 优先使用后端返回的真实耗时（TraversalCompleteEvent.duration，毫秒），
+    // 缺失时回退到进入终态那一刻 now - startTime 冻结值。
+    const dur = traversalStore.completeEvent?.duration
+    elapsedMs = dur && dur > 0 ? dur : Math.max(0, (finishedAt.value ?? now.value) - startTime)
+  } else {
+    elapsedMs = Math.max(0, now.value - startTime)
+  }
   const seconds = Math.floor(elapsedMs / 1000)
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
