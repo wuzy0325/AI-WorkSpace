@@ -71,7 +71,12 @@ const t = computed(() => i18n.t)
 const isLoading = ref(true)
 const isSaving = ref(false)
 const currentStep = ref(0)
-const steps = computed(() => [t.value.stepLayout, t.value.stepHardware, t.value.stepPrb, t.value.stepReview])
+// 步骤顺序：通道 → prb → 布点 → 摘要。
+// 调整原因：多数用户每次都用默认布点，但通道和探针配置每次必做。
+// 把布点挪到第3步后，用户可在前两步完成核心配置后直接 Next 通过默认布点，
+// 避免每次打开配置画面先看到不关心的布点界面。
+// 注意：isStepValid 和模板 v-if 分支的 currentStep 索引与此处顺序强绑定，改动需同步。
+const steps = computed(() => [t.value.stepHardware, t.value.stepPrb, t.value.stepLayout, t.value.stepReview])
 
 // 记录用户已访问过的步骤索引，用于支持步骤导航点击跳转
 const visitedSteps = ref<Set<number>>(new Set([0]))
@@ -205,17 +210,22 @@ const rectangleHasArea = computed(() => {
 // 仅 line / rectangle 布局消费走线主轴；review 摘要只在支持时显示该行，避免重复条件字面量。
 const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
+// 步骤校验：索引与新顺序 [Hardware(0), Prb(1), Layout(2), Review(3)] 对齐。
+// - 第0步 Hardware：探针通道必须绑定设备+通道号，运动轴必须绑定控制器
+// - 第1步 Prb：新算法要求 CSV 文件；多 prb 模式要求至少1个 prb；单 prb 模式要求 prbFile
+// - 第2步 Layout：测试名非空 + 估算点数>0 + rectangle 模式下区域面积>0
+// - 最后一步 Review：保存路径和文件名非空
 const isStepValid = computed(() => {
-  if (currentStep.value === 0) return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value
-  if (currentStep.value === 1) {
+  if (currentStep.value === 0) {
     return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0) &&
       motionAxes.value.every((a) => a.controllerId !== '')
   }
-  if (currentStep.value === 2) {
+  if (currentStep.value === 1) {
     if (interpolationAlgorithm.value === 'new') return calibrationCsvFile.value !== null
     if (prbMode.value === 'multi') return multiPrbFiles.value.length > 0
     return prbFile.value !== null
   }
+  if (currentStep.value === 2) return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value
   if (currentStep.value === steps.value.length - 1) return savePath.value.trim() !== '' && saveFileName.value.trim() !== ''
   return true
 })
@@ -444,23 +454,7 @@ watch(() => props.show, async (isVisible) => {
 
     <div class="traversal-body">
       <div class="traversal-main">
-        <TraversalLayoutStep
-          v-if="currentStep === 0"
-          v-model:test-name="testName"
-          v-model:dwell-time-ms="dwellTimeMs"
-          v-model:samples-per-point="samplesPerPoint"
-          v-model:pattern="pattern"
-          v-model:line-config="lineConfig"
-          v-model:rectangle-config="rectangleConfig"
-          v-model:sector-config="sectorConfig"
-          v-model:custom-points="customPoints"
-          v-model:custom-point-input="customPointInput"
-          v-model:snake-order="snakeOrder"
-          v-model:primary-axis="primaryAxis"
-          :estimated-point-count="estimatedPointCount"
-          :t="(t as unknown as Record<string, string>)"
-        />
-        <div v-else-if="currentStep === 1" class="step-content">
+        <div v-if="currentStep === 0" class="step-content">
           <!-- 五孔压力类型开关：与批量工具栏同处一行，避免额外卡片占用垂直空间 -->
           <div class="pressure-type-bar">
             <div class="pressure-type-label">
@@ -484,7 +478,7 @@ watch(() => props.show, async (isVisible) => {
           />
         </div>
         <TraversalPrbStep
-          v-else-if="currentStep === 2"
+          v-else-if="currentStep === 1"
           v-model:prb-mode="prbMode"
           v-model:interpolation-algorithm="interpolationAlgorithm"
           v-model:prb-file="prbFile"
@@ -492,6 +486,22 @@ watch(() => props.show, async (isVisible) => {
           v-model:multi-prb-mach-numbers="multiPrbMachNumbers"
           v-model:multi-prb-interpolation-mode="multiPrbInterpolationMode"
           v-model:calibration-csv-file="calibrationCsvFile"
+          :t="(t as unknown as Record<string, string>)"
+        />
+        <TraversalLayoutStep
+          v-else-if="currentStep === 2"
+          v-model:test-name="testName"
+          v-model:dwell-time-ms="dwellTimeMs"
+          v-model:samples-per-point="samplesPerPoint"
+          v-model:pattern="pattern"
+          v-model:line-config="lineConfig"
+          v-model:rectangle-config="rectangleConfig"
+          v-model:sector-config="sectorConfig"
+          v-model:custom-points="customPoints"
+          v-model:custom-point-input="customPointInput"
+          v-model:snake-order="snakeOrder"
+          v-model:primary-axis="primaryAxis"
+          :estimated-point-count="estimatedPointCount"
           :t="(t as unknown as Record<string, string>)"
         />
         <div v-else class="step-content">
