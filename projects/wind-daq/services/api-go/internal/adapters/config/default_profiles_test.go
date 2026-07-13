@@ -56,6 +56,8 @@ func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 // 测试前置：调用 NewDefaultProfile 生成 DAQ-P-1603 默认 profile。
 // 期待结果：16 通道全部启用，单位 Pa，精度 3，地址留空（由 UI 手动输入），
 // 采样率 100Hz（用户采样率=每秒数据条目数，底层硬件采样率固定 1000Hz）。
+// 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（CalibrationEnabled=false），
+// 其余通道（index 2~15）启用校零。
 func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 	profile := NewDefaultProfile("p1603-1", device.DeviceDAQP1603)
 
@@ -78,8 +80,10 @@ func TestDefaultDaqP1603ProfileHasPressureChannels(t *testing.T) {
 		if ch.Name != fmt.Sprintf("CH%d", i+1) {
 			t.Fatalf("expected channel %d name CH%d, got %q", i, i+1, ch.Name)
 		}
-		if !ch.CalibrationEnabled {
-			t.Fatalf("expected calibration enabled for channel %d", i)
+		// DAQ-P-1603 设备特殊默认：CH01/CH02（index 0/1）不应用校零
+		wantCalibrationEnabled := i >= 2
+		if ch.CalibrationEnabled != wantCalibrationEnabled {
+			t.Fatalf("expected channel %d calibrationEnabled=%v, got %v", i, wantCalibrationEnabled, ch.CalibrationEnabled)
 		}
 	}
 	if profile.Version != device.CurrentProfileVersion {
@@ -306,5 +310,91 @@ func TestNormalizeProfilePreservesDaqT1603ConfigValues(t *testing.T) {
 
 	if normalized.DaqT1603Config != profile.DaqT1603Config {
 		t.Fatalf("expected config to be preserved, got %+v", normalized.DaqT1603Config)
+	}
+}
+
+// TestMigrateProfile_DaqP1603_PreservesTareOffsetOnFirstChannels 验证 Critical
+// 回归场景：v1 时代用户对 DAQ-P-1603 CH01（index 0，本应默认关闭校零）做过校零，
+// profile 中 TareOffset 非零。v1→v2 迁移必须
+//   - 将 TareOffset 换算为 CalibrationOffset（kPa → Pa）
+//   - 强制 CalibrationEnabled = true（用户显式校零优先于"CH01/CH02 默认关闭"规则）
+//   - 清空 TareOffset，补齐 CalibrationUnit / CalibrationAt
+// 回归症状：若迁移逻辑把"默认关闭"放在 TareOffset 迁移之前且不重新置 true，
+// CalibrationApplier 会因 CalibrationEnabled=false 跳过该通道，用户历史校零静默失效。
+func TestMigrateProfile_DaqP1603_PreservesTareOffsetOnFirstChannels(t *testing.T) {
+	profile := device.Profile{
+		ID:      "p1603-legacy",
+		Type:    device.DeviceDAQP1603,
+		Version: 1,
+		Channels: []device.ChannelConfig{
+			{Index: 0, Enabled: true, Unit: "kPa", TareOffset: 1.25}, // CH01，用户曾校零
+			{Index: 1, Enabled: true, Unit: "Pa", TareOffset: 0},     // CH02，未校零 → 默认关闭
+			{Index: 2, Enabled: true, Unit: "Pa", TareOffset: 0},     // CH03，未校零 → 默认启用
+		},
+	}
+
+	got := NormalizeProfile(profile)
+
+	if got.Version != device.CurrentProfileVersion {
+		t.Fatalf("expected version %d, got %d", device.CurrentProfileVersion, got.Version)
+	}
+
+	ch0 := got.Channels[0]
+	if ch0.CalibrationOffset != 1250 {
+		t.Errorf("CH01: expected 1.25 kPa migrated to 1250 Pa, got %v", ch0.CalibrationOffset)
+	}
+	if ch0.TareOffset != 0 {
+		t.Errorf("CH01: expected TareOffset cleared, got %v", ch0.TareOffset)
+	}
+	if ch0.CalibrationUnit != "kPa" {
+		t.Errorf("CH01: expected CalibrationUnit kPa, got %q", ch0.CalibrationUnit)
+	}
+	if ch0.CalibrationAt == 0 {
+		t.Errorf("CH01: expected CalibrationAt set, got 0")
+	}
+	if !ch0.CalibrationEnabled {
+		t.Errorf("CH01: expected CalibrationEnabled=true (user explicit calibration must override device default), got false")
+	}
+
+	// CH02：v1 未校零，应用 1603 设备特殊默认（关闭）
+	if got.Channels[1].CalibrationEnabled {
+		t.Errorf("CH02: expected CalibrationEnabled=false (DAQ-P-1603 default), got true")
+	}
+	if got.Channels[1].CalibrationOffset != 0 {
+		t.Errorf("CH02: expected CalibrationOffset=0, got %v", got.Channels[1].CalibrationOffset)
+	}
+
+	// CH03：v1 未校零，按单位推断 → 启用
+	if !got.Channels[2].CalibrationEnabled {
+		t.Errorf("CH03: expected CalibrationEnabled=true (Pa supports zero calibration), got false")
+	}
+}
+
+// TestMigrateProfile_DaqP1603_DefaultDisablesFirstTwoChannels 验证 v1 1603 profile
+// 在没有任何 TareOffset 的情况下迁移后，CH01/CH02 应用设备特殊默认（关闭校零），
+// 其余通道按单位推断启用。覆盖"新设备从未校零"的常见路径。
+func TestMigrateProfile_DaqP1603_DefaultDisablesFirstTwoChannels(t *testing.T) {
+	profile := device.Profile{
+		ID:      "p1603-clean",
+		Type:    device.DeviceDAQP1603,
+		Version: 1,
+		Channels: []device.ChannelConfig{
+			{Index: 0, Enabled: true, Unit: "Pa", TareOffset: 0},
+			{Index: 1, Enabled: true, Unit: "Pa", TareOffset: 0},
+			{Index: 2, Enabled: true, Unit: "Pa", TareOffset: 0},
+			{Index: 3, Enabled: true, Unit: "Pa", TareOffset: 0},
+		},
+	}
+
+	got := NormalizeProfile(profile)
+
+	for i, ch := range got.Channels {
+		wantEnabled := i >= 2
+		if ch.CalibrationEnabled != wantEnabled {
+			t.Errorf("channel %d: expected CalibrationEnabled=%v, got %v", i, wantEnabled, ch.CalibrationEnabled)
+		}
+		if ch.CalibrationOffset != 0 {
+			t.Errorf("channel %d: expected CalibrationOffset=0, got %v", i, ch.CalibrationOffset)
+		}
 	}
 }

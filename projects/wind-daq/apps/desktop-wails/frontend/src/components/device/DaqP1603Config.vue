@@ -257,6 +257,8 @@ function setAllChannelsEnabled(enabled: boolean): void {
 }
 
 function resetChannelsToDefault(): void {
+  // 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（calibrationEnabled=false），
+  // 与 DeviceManagementDrawer.createDefaultChannels 及后端 NewDefaultProfile 保持一致。
   const next: ChannelConfig[] = Array.from({ length: 16 }, (_, i) => ({
     index: i,
     name: `CH${i + 1}`,
@@ -266,7 +268,7 @@ function resetChannelsToDefault(): void {
     rangeMin: -5000,
     rangeMax: 5000,
     sensorType: 'pressure' as ChannelSensorType,
-    calibrationEnabled: true,
+    calibrationEnabled: i >= 2,
   }))
   emit('update:channels', next)
 }

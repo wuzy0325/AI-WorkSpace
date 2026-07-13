@@ -266,8 +266,11 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       // DAQ-P-1603：16 通道通用 AI，每通道可接入压力或温度传感器。
       // 默认全部为压力通道（sensorType='pressure'），用户可在通道配置中切为温度。
       // 不含大气通道（用户决策无大气数据）。
+      // 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（calibrationEnabled=false），
+      // 前两路通常接入不参与校零的传感器（如总压/静压参考通道），与 DAQ-P-1604 区分。
+      // 与后端 default_profiles.go NewDefaultProfile 的默认规则保持一致。
       return Array.from({ length: 16 }, (_, i) => ({
-        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType, calibrationEnabled: true,
+        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType, calibrationEnabled: i >= 2,
       }))
     case 'DAQ-P-1604Pre':
     case 'DSA3217':

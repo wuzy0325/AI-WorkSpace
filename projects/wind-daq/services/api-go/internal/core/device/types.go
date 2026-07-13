@@ -108,7 +108,11 @@ type ChannelConfig struct {
 	CalibrationAt int64 `json:"calibrationAt,omitempty"`
 	// CalibrationEnabled 校零使能开关（仅 DAQ-P-1603 在 UI 暴露逐通道配置）。
 	// 关闭时 CalibrationApplier 跳过该通道偏移。其他设备默认 true。
-	CalibrationEnabled bool `json:"calibrationEnabled,omitempty"`
+	// 注意：不使用 omitempty——false 是用户主动设置的合法值（"该通道不应用校零"），
+	// 若加 omitempty，序列化（持久化 / HTTP 回读 / Wails binding）会丢弃该字段，
+	// 导致前端 draft 被回读值覆盖后 UI 复选框跳回勾选状态，给用户造成"无法保存"的假象。
+	// 与 Enabled 字段保持一致：布尔关必须显式输出，区分"未设置"与"显式 false"。
+	CalibrationEnabled bool `json:"calibrationEnabled"`
 }
 
 // Profile 设备配置档案

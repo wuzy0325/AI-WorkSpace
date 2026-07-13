@@ -60,7 +60,14 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 	}
 	converter := device.NewUnitConverter()
 	for i := range profile.Channels {
+		// 默认规则：支持校零的单位 → 启用校零。
+		// DAQ-P-1603 设备特殊默认：CH01/CH02（index 0/1）强制关闭校零应用，
+		// 覆盖按单位推断的结果。前两路通常接入参与校零的传感器
+		// （如总压/静压参考通道），与 DAQ-P-1604"全部启用"默认区分。
 		profile.Channels[i].CalibrationEnabled = converter.SupportsZeroCalibration(profile.Channels[i].Unit)
+		if profile.Type == device.DeviceDAQP1603 && i < 2 {
+			profile.Channels[i].CalibrationEnabled = false
+		}
 	}
 	return profile
 }
@@ -289,6 +296,12 @@ func defaultP1604PreAtmTempChannel() device.ChannelConfig {
 // 每通道默认单位 Pa，精度 3 位小数（适配 ±10V 量程下的小信号）。
 // 通道传感器类型（pressure/temperature）由前端 DaqP1603Config.vue 配置，
 // 不在默认 profile 中预设，避免与 ChannelConfig.SensorType 反序列化兜底逻辑冲突。
+//
+// 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（CalibrationEnabled=false）。
+// 业务原因：DAQ-P-1603 前两路通常接入不参与校零的传感器（如总压/静压参考通道），
+// 与其他 16 通道压力设备（DAQ-P-1604）的"全部启用校零"默认行为有意区分。
+// 注意：此处的值会被下方 NewDefaultProfile 末尾的"按单位 SupportsZeroCalibration 重置"
+// 覆盖，因此把 1603 的关闭逻辑挪到该重置循环中按 Type 判断，确保不被覆盖。
 func defaultDAQP1603Channels() []device.ChannelConfig {
 	channels := make([]device.ChannelConfig, 16)
 	for i := range channels {
