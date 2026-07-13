@@ -20,6 +20,7 @@ import {
   DEFAULT_ENCODER_COMPENSATION_TIMEOUT_MS,
   createDefaultAxis,
   createDefaultEncoderCompensation,
+  defaultMaxSpeedForType,
   normalizeAxisForEditing,
   normalizePositive,
 } from './motionConfigEditor';
@@ -43,7 +44,7 @@ const editing = reactive<MotionControllerProfile>({
   address: '127.0.0.1',
   port: 9000,
   autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name))),
+  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, 'SIMULATED-MC'))),
 });
 
 const isEdit = computed(() => !!editing.id);
@@ -65,7 +66,7 @@ function newProfile(): void {
   editing.address = '127.0.0.1';
   editing.port = 9000;
   editing.autoConnect = false;
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name)));
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, editing.type)));
 }
 
 function editProfile(src: MotionControllerProfile): void {
@@ -234,6 +235,24 @@ watch(() => editing.type, (type, oldType) => {
   if (!oldType || type === oldType) return;
   if (editing.port === defaultPortForType(oldType)) {
     editing.port = defaultPortForType(type);
+  }
+  // 新建态下切换控制器类型时，按新类型的默认速度重新生成轴配置
+  // （MC4A / B140 默认 4，模拟控制器沿用共享默认值）
+  if (isCreatingNew.value) {
+    editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, type)));
+    return;
+  }
+  // 编辑态切换到硬件控制器时，若现有 maxSpeed 超过硬件安全上限则 clamp，
+  // 避免遗留的模拟控制器速度（100）被带到 B140/WTNMC4A 引发碰撞风险
+  const hardwareCap = defaultMaxSpeedForType(type, Number.POSITIVE_INFINITY);
+  if (Number.isFinite(hardwareCap)) {
+    editing.axes = editing.axes.map((axis) => {
+      const current = axis.maxSpeed ?? 0;
+      if (current > hardwareCap) {
+        return { ...axis, maxSpeed: hardwareCap };
+      }
+      return axis;
+    });
   }
 });
 

@@ -53,6 +53,19 @@ export const DEFAULT_GEAR_RATIO = 1
 /** 默认最大速度，wind-daq 主项目值；motion-controller 可在本地包装中覆盖为 10（测试工具低速）。 */
 export const DEFAULT_MAX_SPEED = 100
 
+/** 硬件运动控制器（MC4A、B140）新建设备时的默认最大速度，低速更安全。 */
+export const HARDWARE_CONTROLLER_DEFAULT_MAX_SPEED = 4
+
+/**
+ * 根据控制器类型返回默认最大速度。
+ * B140-MC / WTNMC4A-MC 返回硬件低速默认值（4），其余（模拟控制器）返回项目既定默认值。
+ * 使 MC4A / B140 新建设备默认速度为 4，同时不影响模拟控制器既有的默认值。
+ */
+export function defaultMaxSpeedForType(type: string | undefined, simulatedDefault: number = DEFAULT_MAX_SPEED): number {
+  if (type === 'B140-MC' || type === 'WTNMC4A-MC') return HARDWARE_CONTROLLER_DEFAULT_MAX_SPEED
+  return simulatedDefault
+}
+
 /** 默认编码器分辨率（工程单位/计数），与 Go core DefaultScale 对齐。 */
 export const DEFAULT_ENCODER_SCALE = 0.005
 

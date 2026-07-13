@@ -9,7 +9,7 @@ import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
 
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE } from './motionConfigEditor'
+import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE, defaultMaxSpeedForType } from './motionConfigEditor'
 import ProfileSidebar from './ProfileSidebar.vue'
 import AxisConfigCard from './AxisConfigCard.vue'
 import EncoderCompensationEditor from './EncoderCompensationEditor.vue'
@@ -51,7 +51,7 @@ function defaultPortForType(type: string): number {
 /* -- Form state -- */
 const editing = reactive<MotionControllerProfile>({
   id: '', name: '', type: DEFAULT_TYPE, address: DEFAULT_ADDRESS, port: DEFAULT_PORT, autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name)),
+  axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, DEFAULT_TYPE)),
 })
 
 const isEdit = computed(() => !!editing.id)
@@ -165,7 +165,7 @@ function newProfile(): void {
   editing.address = DEFAULT_ADDRESS
   editing.port = DEFAULT_PORT
   editing.autoConnect = false
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name))
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, editing.type))
   isCreatingNew.value = true
   captureSnapshot()
   // 下一微任务恢复监听，确保 captureSnapshot 已完成
@@ -343,6 +343,24 @@ watch(() => editing.type, (type, oldType) => {
   if (!oldType || type === oldType) return
   if (editing.port === defaultPortForType(oldType)) {
     editing.port = defaultPortForType(type)
+  }
+  // 新建态下切换控制器类型时，按新类型的默认速度重新生成轴配置
+  // （MC4A / B140 默认 4，模拟控制器沿用项目低速默认值）
+  if (isCreatingNew.value) {
+    editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, type))
+    return
+  }
+  // 编辑态切换到硬件控制器时，若现有 maxSpeed 超过硬件安全上限则 clamp，
+  // 避免遗留的模拟控制器速度（100）被带到 B140/WTNMC4A 引发碰撞风险
+  const hardwareCap = defaultMaxSpeedForType(type, Number.POSITIVE_INFINITY)
+  if (Number.isFinite(hardwareCap)) {
+    editing.axes = editing.axes.map((axis) => {
+      const current = axis.maxSpeed ?? 0
+      if (current > hardwareCap) {
+        return { ...axis, maxSpeed: hardwareCap }
+      }
+      return axis
+    })
   }
 })
 

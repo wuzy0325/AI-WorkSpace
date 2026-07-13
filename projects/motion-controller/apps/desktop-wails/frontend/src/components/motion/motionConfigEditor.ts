@@ -36,7 +36,10 @@ export {
   type CompensationWarning,
 } from '@shared-frontend/motion-utils'
 
-import { createDefaultAxis as createDefaultAxisBase } from '@shared-frontend/motion-utils'
+import { createDefaultAxis as createDefaultAxisBase, defaultMaxSpeedForType } from '@shared-frontend/motion-utils'
+
+// 显式 re-export，供项目内组件直接引用
+export { defaultMaxSpeedForType }
 
 /** motion-controller 项目级默认最大速度：测试工具用低速，避免调试时意外碰撞。 */
 export const MOTION_CONTROLLER_DEFAULT_MAX_SPEED = 10
@@ -45,8 +48,8 @@ export const MOTION_CONTROLLER_DEFAULT_MAX_SPEED = 10
  * 创建默认轴配置（项目级包装）
  *
  * 覆盖共享模块的 maxSpeed 默认值（100）为 motion-controller 的低速默认值（10），
- * 其余字段完全复用共享实现。
+ * 其余字段完全复用共享实现。B140 / WTNMC4A 硬件控制器则使用更低速的 4（见 defaultMaxSpeedForType）。
  */
-export function createDefaultAxis(name: AxisName): AxisConfig {
-  return createDefaultAxisBase(name, MOTION_CONTROLLER_DEFAULT_MAX_SPEED)
+export function createDefaultAxis(name: AxisName, type?: string): AxisConfig {
+  return createDefaultAxisBase(name, defaultMaxSpeedForType(type, MOTION_CONTROLLER_DEFAULT_MAX_SPEED))
 }
