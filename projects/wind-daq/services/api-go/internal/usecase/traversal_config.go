@@ -488,9 +488,23 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		return traversal.Config{}, fmt.Errorf("invalid layout: no points generated for pattern %q", layout.Pattern)
 	}
 
+	// channels 收集：检测重复 ChannelIndex 并报错，禁止静默去重。
+	//
+	// 重复 channelIndex 意味着多个 ProbeChannel 绑定到同一硬件通道，
+	// 这会导致两个致命问题：
+	//   1. valuesForChannels 用 map[channelIndex] 去重后长度校验失败（采集超时）
+	//   2. BuildRawPressure 用 channelLabels[chIdx] 反查压力标签，map 覆盖后
+	//      丢失其中一个压力输入（如 P1 被 Patm 覆盖 → P1=0，插值结果静默错误）
+	//
+	// 典型触发场景：用户把 P1 和 Patm 都绑到了 channelIndex=0。
+	// 处理方式：直接返回错误强制用户修正配置，不静默降级。
 	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
 	channelLabels := make(map[int]string)
+	// firstProbeName 记录每个 channelIndex 首次占用者的 probe.Name，
+	// 用于重复报错时给出双方 probe 名称，避免歧义的 "channel" 占位符。
+	firstProbeName := make(map[int]string, len(cfg.Channels.ProbeChannels))
 	deviceID := ""
+	seenChannels := make(map[int]bool, len(cfg.Channels.ProbeChannels))
 	for _, probe := range cfg.Channels.ProbeChannels {
 		if !probe.Enabled || probe.Channel.ChannelIndex < 0 {
 			continue
@@ -498,10 +512,19 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		if deviceID == "" {
 			deviceID = probe.Channel.DeviceID
 		}
-		channels = append(channels, probe.Channel.ChannelIndex)
+		chIdx := probe.Channel.ChannelIndex
+		if seenChannels[chIdx] {
+			return traversal.Config{}, fmt.Errorf(
+				"duplicate channel index %d: probes %q and %q are bound to the same hardware channel",
+				chIdx, firstProbeName[chIdx], probe.Name,
+			)
+		}
+		seenChannels[chIdx] = true
+		firstProbeName[chIdx] = probe.Name
+		channels = append(channels, chIdx)
 		// 通过 role/name 显式建立 channelIndex→label 映射，避免依赖通道索引顺序
 		if label := roleToLabel(probe.Role, probe.Name); label != "" {
-			channelLabels[probe.Channel.ChannelIndex] = label
+			channelLabels[chIdx] = label
 		}
 	}
 
@@ -582,6 +605,8 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		"layout_pattern", cfg.Layout.Pattern,
 		"samples_per_point", samplesPerPoint,
 		"dwell_ms", cfg.DwellTimeMs,
+		"channels", config.Channels,
+		"probe_channels_input_count", len(cfg.Channels.ProbeChannels),
 	)
 
 	return config, nil

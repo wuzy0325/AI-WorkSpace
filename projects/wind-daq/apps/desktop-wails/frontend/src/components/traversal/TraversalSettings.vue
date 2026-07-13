@@ -12,6 +12,7 @@ import {
   deriveRangeFromSegments,
   getTraversalLayoutPointCount,
   getTraversalStepValues,
+  hasDuplicateChannel,
   isTraversalConfigurableProbeChannel,
   isTraversalRequiredProbeChannel,
   normalizeTraversalLayoutRanges
@@ -211,12 +212,20 @@ const rectangleHasArea = computed(() => {
 const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
 // 步骤校验：索引与新顺序 [Hardware(0), Prb(1), Layout(2), Review(3)] 对齐。
-// - 第0步 Hardware：探针通道必须绑定设备+通道号，运动轴必须绑定控制器
+// - 第0步 Hardware：探针通道必须绑定设备+通道号，无重复索引，运动轴必须绑定控制器
 // - 第1步 Prb：新算法要求 CSV 文件；多 prb 模式要求至少1个 prb；单 prb 模式要求 prbFile
 // - 第2步 Layout：测试名非空 + 估算点数>0 + rectangle 模式下区域面积>0
 // - 最后一步 Review：保存路径和文件名非空
+//
+// 通道号重复检测：多个启用通道选了同一 channelIndex 时阻断保存。
+// 后端 ParseConfig 对重复索引直接返回错误不启动测试（见 traversal_config.go channels 收集）。
+// 前端在 isStepValid 中提前阻止进入下一步，避免"配置保存成功但测试启动报错"的体验断裂。
+// 检测算法共享 shared/types/traversal.ts 的 hasDuplicateChannel，与 TraversalHardwareStep.vue 视觉提示共用同一真相源。
+const hasDuplicateChannelFlag = computed(() => hasDuplicateChannel(probeChannels.value))
+
 const isStepValid = computed(() => {
   if (currentStep.value === 0) {
+    if (hasDuplicateChannelFlag.value) return false
     return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0) &&
       motionAxes.value.every((a) => a.controllerId !== '')
   }

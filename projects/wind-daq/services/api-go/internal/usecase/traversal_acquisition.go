@@ -801,6 +801,9 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	var everOk bool
 	var lastIndices []int
 	var lastChannelCount int
+	// 采样失败计数：区分"设备无数据"与"通道不匹配"两类失败
+	var noDataCount int
+	var channelMismatchCount int
 
 	for validSamples < samplesPerPoint {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
@@ -819,11 +822,15 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 				"task_id", taskID,
 				"valid_samples", validSamples,
 				"target_samples", samplesPerPoint,
+				"no_data_count", noDataCount,
+				"channel_mismatch_count", channelMismatchCount,
+				"device_ever_answered", everOk,
 			)
 			break // 超时保护：不再继续采样
 		}
 		payload, ok := m.reader.GetLatestData(deviceID)
 		if !ok {
+			noDataCount++
 			time.Sleep(acquisitionBatchPoll)
 			continue
 		}
@@ -836,6 +843,8 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 				totals[k] += v
 			}
 			validSamples++
+		} else {
+			channelMismatchCount++
 		}
 		time.Sleep(acquisitionBatchPoll)
 	}

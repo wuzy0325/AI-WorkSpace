@@ -60,6 +60,35 @@ export function createDefaultTraversalProbeChannels(): ProbeChannelConfig[] {
   }))
 }
 
+/**
+ * 检测启用通道中重复的 channelIndex，返回所有出现次数 > 1 的索引集合。
+ *
+ * 仅检测 enabled 通道：未启用通道不参与后端采样，重复无影响。
+ * channelIndex < 0 视为未分配，跳过检测。
+ *
+ * 与后端 traversal_config.go 的 ParseConfig 重复检测策略对齐：
+ * 后端遇到重复 channelIndex 直接返回错误不启动测试，因此前端需在保存前阻断。
+ * 此函数作为前后端共享真相源，避免 TraversalHardwareStep.vue 的视觉提示
+ * 与 TraversalSettings.vue 的 isStepValid 阻断逻辑使用两份独立实现。
+ */
+export function findDuplicateChannelIndices(channels: ProbeChannelConfig[]): Set<number> {
+  const counts = new Map<number, number>()
+  for (const ch of channels) {
+    if (!ch.enabled || ch.channel.channelIndex == null || ch.channel.channelIndex < 0) continue
+    counts.set(ch.channel.channelIndex, (counts.get(ch.channel.channelIndex) ?? 0) + 1)
+  }
+  const dupes = new Set<number>()
+  for (const [idx, count] of counts) {
+    if (count > 1) dupes.add(idx)
+  }
+  return dupes
+}
+
+/** 是存在重复通道索引——findDuplicateChannelIndices 的布尔快捷形式 */
+export function hasDuplicateChannel(channels: ProbeChannelConfig[]): boolean {
+  return findDuplicateChannelIndices(channels).size > 0
+}
+
 export function isTraversalRequiredProbeChannel(role?: ProbeChannelRole, name?: string): boolean {
   return TRAVERSAL_PROBE_CHANNEL_PRESETS.some((preset) => {
     if (role && preset.role === role) {

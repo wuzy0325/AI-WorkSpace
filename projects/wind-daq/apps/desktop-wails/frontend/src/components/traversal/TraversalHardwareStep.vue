@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/types/traversal'
-import { isTraversalRequiredProbeChannel } from '@shared/types/traversal'
+import { findDuplicateChannelIndices, isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import UiPanel from '@components/ui/UiPanel.vue'
@@ -72,6 +72,19 @@ function autoFillChannelIndices(): void {
     }
   })
 }
+
+// 通道号重复检测：多个 enabled 通道选择同一 channelIndex 时给出视觉错误提示。
+// 后端 ParseConfig 检测到重复会直接返回错误不启动测试（见 traversal_config.go channels 收集），
+// 因此前端必须阻断保存——视觉错误样式在此处，实际阻断在 TraversalSettings.vue 的 isStepValid。
+// 仅检测 enabled 通道；未启用通道不参与采样，重复无影响。
+// 重复检测算法提取到 shared/types/traversal.ts 的 findDuplicateChannelIndices，
+// 与 TraversalSettings.vue 的 isStepValid 共享同一真相源，避免双实现漂移。
+const duplicateChannelIndices = computed<Set<number>>(() => findDuplicateChannelIndices(probeChannels.value))
+
+function isChannelDuplicate(ch: ProbeChannelConfig): boolean {
+  if (!ch.enabled || ch.channel.channelIndex == null || ch.channel.channelIndex < 0) return false
+  return duplicateChannelIndices.value.has(ch.channel.channelIndex)
+}
 </script>
 
 <template>
@@ -129,7 +142,16 @@ function autoFillChannelIndices(): void {
             :title="deviceStore.statusFor(ch.channel.deviceId)"
           />
         </div>
-        <UiSelect :model-value="ch.channel.channelIndex != null ? String(ch.channel.channelIndex) : ''" @update:model-value="ch.channel.channelIndex = Number($event)" :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))" placeholder="Unassigned" class="sel-w80" :disabled="!ch.enabled" />
+        <UiSelect
+          :model-value="ch.channel.channelIndex != null ? String(ch.channel.channelIndex) : ''"
+          @update:model-value="ch.channel.channelIndex = Number($event)"
+          :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
+          placeholder="Unassigned"
+          class="sel-w80"
+          :class="{ 'sel-channel-error': isChannelDuplicate(ch) }"
+          :disabled="!ch.enabled"
+          :title="isChannelDuplicate(ch) ? t.channelDuplicateHint : undefined"
+        />
         <UiInputNumber v-model="ch.precision" :min="0" :max="8" class="sel-w80" :disabled="!ch.enabled" />
       </div>
     </UiPanel>
@@ -236,6 +258,15 @@ function autoFillChannelIndices(): void {
 .sel-w80 { width: 80px }
 .sel-w90 { width: 90px }
 .sel-flex { flex: 1 }
+
+/* 通道号重复错误：选择器边框高亮错误色，hover title 显示原因。
+   多个探针通道绑定了同一通道号，后端 ParseConfig 会直接报错返回不启动测试，
+   因此前端必须阻断保存，在 isStepValid 中返回 false 阻止进入下一步。
+   sel-channel-error 仅做视觉提示，实际阻断在 TraversalSettings.vue 的 isStepValid 中实施。 */
+.sel-channel-error :deep(.n-base-selection) {
+  border-color: var(--color-error, #ef4444) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
 
 /* 设备选择器与状态指示 */
 .device-select-wrap { display: flex; align-items: center; gap: 6px; width: 150px; min-width: 0 }
