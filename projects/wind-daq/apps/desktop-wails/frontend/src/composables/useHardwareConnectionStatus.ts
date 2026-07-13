@@ -179,7 +179,14 @@ export function useHardwareConnectionStatus(
 
     let state: AcquisitionState = 'unconfigured'
     if (deviceIds.length > 0) {
-      const allConnected = deviceIds.every((deviceId) => deviceStore.statusFor(deviceId) === 'Connected')
+      // "已连接"语义与后端 DeviceManager.IsConnected 对齐：非 Disconnected 且非 Error 即视为已连接。
+      // 不能用 === 'Connected' 严格判断——adapter 在 StartAcquisition 时会把 Connection
+      // 改为 'Acquiring'，若严格要求 'Connected' 会导致设备正在采集时被误判为 disconnected，
+      // 侧边栏状态停留在"已连接"而无法切换到"采集中"。
+      const allConnected = deviceIds.every((deviceId) => {
+        const conn = deviceStore.statusFor(deviceId)
+        return conn !== 'Disconnected' && conn !== 'Error'
+      })
       if (!allConnected) {
         state = 'disconnected'
       } else {
