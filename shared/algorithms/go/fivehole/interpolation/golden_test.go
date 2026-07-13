@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -159,7 +160,7 @@ func goldenFiveHoleCases() []goldenCase {
 }
 
 // goldenPrbCases PRB 插值器黄金用例(4 个)
-// 覆盖 9 区域策略: 中心区(region 9)/角区(region 1)
+// 覆盖网格内插值和网格外拒绝外推
 // 注意 Kβ=(P3-P1), 与 FiveHoleNew 符号相反
 func goldenPrbCases() []goldenCase {
 	defaultTol := goldenTolerance{Alpha: 0.5, Beta: 0.5, MachNumber: 0.05}
@@ -190,17 +191,11 @@ func goldenPrbCases() []goldenCase {
 		},
 		{
 			Name:      "prb_corner_alphaneg40_beganeg40",
-			Region:    "corner",
-			Desc:      "PRB 角区(region 1): α=-40,β=-40, Ka=Kb=-0.4 超出角点(-0.3,-0.3), 解析为(-30,-30)",
+			Region:    "out-of-range",
+			Desc:      "PRB 网格外: α=-40,β=-40, Ka=Kb=-0.4 超出校准凸包, 返回无效零值且不外推",
 			Input:     prbInputForAngles(-40, -40),
-			Expected:  goldenExpected{Alpha: -30, Beta: -30},
+			Expected:  goldenExpected{Alpha: 0, Beta: 0, IsValid: false},
 			Tolerance: defaultTol,
-			// SkipFields: 跳过 isValid 断言
-			// 原因: 该用例输入(α=-40,β=-40)超出网格范围, PRB 钳位到(-30,-30) 但 IsValid=true, Warning=""
-			// 审查发现这是 PRB 的 bug(超范围静默钳位无 Warning). 此处不锁死 IsValid=true,
-			// 仅验证 Alpha/Beta 回归(-30,-30). 未来若修复让超范围 IsValid=false 或加 Warning, golden 不会 FAIL.
-			// 修复后应移除此 SkipFields 并重新生成 golden 确定期望值.
-			SkipFields: []string{"isValid"},
 		},
 	}
 }
@@ -238,7 +233,6 @@ func loadGoldenCases(t *testing.T, dir string) []goldenCase {
 
 // assertGoldenResult 断言插值结果符合黄金用例期望
 // 支持 gc.SkipFields 跳过指定字段(对应 expected 的 JSON key: alpha/beta/machNumber/isValid)
-// 用于"不锁死已知 bug 行为"——记录当前实现输出但不强断言, 未来修复后可移除 skipFields
 func assertGoldenResult(t *testing.T, gc goldenCase, result InterpolationResult) {
 	t.Helper()
 	skipped := buildSkipSet(gc.SkipFields)
@@ -274,8 +268,6 @@ func assertGoldenResult(t *testing.T, gc goldenCase, result InterpolationResult)
 	}
 
 	// IsValid 断言(可跳过)
-	// 典型场景: PRB 角区超范围静默钳位返回 IsValid=true 是已知 bug, 不锁死
-	// 未来若修复让超范围 IsValid=false 或加 Warning, golden 不会因此 FAIL
 	if !skipped["isValid"] {
 		if result.IsValid != gc.Expected.IsValid {
 			t.Errorf("IsValid = %v, 期望 %v (用例 %s, Warning=%q)",
@@ -703,7 +695,7 @@ func TestPrb_Boundary_PtLessThanPs(t *testing.T) {
 }
 
 // TestPrb_Boundary_OutOfRange 超出网格范围
-// α=50 → Ka=0.5 超出角点(0.3,0.3), 角区(region 5)解析为(30,30)
+// α=50 → Ka=0.5 超出校准凸包，返回明确的无效结果且不外推
 func TestPrb_Boundary_OutOfRange(t *testing.T) {
 	interpolator := NewPrbInterpolator()
 	if err := interpolator.LoadPrbLines(syntheticPrbLines(0.05, 0.01), "0.5Ma.prb"); err != nil {
@@ -715,9 +707,14 @@ func TestPrb_Boundary_OutOfRange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Calculate 错误: %v", err)
 		}
-		// PRB 角区解析将超出点钳位到角点(30,30), 角度仍在 [-30,30] 范围
-		if !isFinite(result.Alpha) || !isFinite(result.Beta) {
-			t.Errorf("Alpha/Beta 应为有限值: Alpha=%v Beta=%v", result.Alpha, result.Beta)
+		if result.IsValid {
+			t.Errorf("超出网格应返回 IsValid=false, 实际=true")
+		}
+		if result.Alpha != 0 || result.Beta != 0 {
+			t.Errorf("超出网格不应返回钳位角度: Alpha=%v Beta=%v", result.Alpha, result.Beta)
+		}
+		if !strings.Contains(result.Warning, "不支持外推") {
+			t.Errorf("超出网格应返回明确 Warning, 实际=%q", result.Warning)
 		}
 		t.Logf("超出网格(α=50,β=50): Alpha=%.3f Beta=%.3f IsValid=%v Warning=%q",
 			result.Alpha, result.Beta, result.IsValid, result.Warning)
