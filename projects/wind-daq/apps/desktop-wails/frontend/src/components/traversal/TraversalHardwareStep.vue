@@ -76,26 +76,30 @@ function autoFillChannelIndices(): void {
 
 <template>
   <div class="step-content">
-    <!-- 批量操作工具栏：所有快捷操作合并为单行，空间不足时自动换行，减少垂直占用 -->
+    <!-- 批量操作工具栏：每个批量组内部"标签在上、控件在下"垂直堆叠，两组并排排列，极窄视口才换行 -->
     <div class="batch-toolbar">
-      <!-- 统一选择设备 -->
+      <!-- 统一选择设备：标签在上、控件在下垂直堆叠，组内紧凑、组间并排，避免对话框常见宽度下整组换行 -->
       <div class="batch-group">
         <span class="batch-label">{{ t.unifiedDevice }}</span>
-        <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
-        <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels }}</UiButton>
+        <div class="batch-row">
+          <UiSelect v-model="batchDeviceId" :options="deviceOptions" :placeholder="t.selectDevice" class="batch-select" :disabled="isLoading" />
+          <UiButton size="sm" variant="primary" :disabled="!batchDeviceId || isLoading" @click="applyDeviceToAll">{{ t.applyToAllChannels }}</UiButton>
+        </div>
       </div>
       <!-- 通道号自动递增 -->
       <div class="batch-group">
         <span class="batch-label">{{ t.startChannel }}</span>
-        <UiSelect
-          :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
-          @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
-          :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
-          :placeholder="t.selectStartChannel"
-          class="batch-select"
-          :disabled="isLoading"
-        />
-        <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill }}</UiButton>
+        <div class="batch-row">
+          <UiSelect
+            :model-value="autoFillStartIndex !== null ? String(autoFillStartIndex) : ''"
+            @update:model-value="autoFillStartIndex = $event !== '' ? Number($event) : null"
+            :options="channelIndexOptions.map(o => ({ label: o.label, value: String(o.value) }))"
+            :placeholder="t.selectStartChannel"
+            class="batch-select"
+            :disabled="isLoading"
+          />
+          <UiButton size="sm" variant="primary" :disabled="autoFillStartIndex === null || isLoading" @click="autoFillChannelIndices">{{ t.autoIncrementFill }}</UiButton>
+        </div>
       </div>
     </div>
 
@@ -163,28 +167,31 @@ function autoFillChannelIndices(): void {
   padding: 4px 8px
 }
 
-/* 批量操作栏：扁平化工具条，所有快捷操作合并为单行，空间不足时自动换行。
-   用 .batch-group 包裹“标签+下拉+按钮”，组内紧凑对齐，组间用分隔线或 gap 区分。 */
+/* 批量操作栏：扁平化工具条，每个批量组内部采用“标签在上、控件在下”的紧凑垂直堆叠，
+   让两个组在常见对话框宽度下稳定并排；组间用分隔线区分，极窄视口才允许换行。 */
 .batch-toolbar {
-  padding: 4px 8px;
+  padding: 6px 8px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px
 }
 .batch-group {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1 1 auto;
-  min-width: 240px
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0
 }
 .batch-group + .batch-group {
   border-left: 1px solid var(--border-default);
   padding-left: 12px
+}
+.batch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px
 }
 .batch-label {
   font-size: var(--text-xs);
@@ -192,7 +199,12 @@ function autoFillChannelIndices(): void {
   color: var(--text-secondary);
   white-space: nowrap
 }
-.batch-select { flex: 1; min-width: 80px; max-width: 160px }
+.batch-select { flex: 1; min-width: 60px; max-width: none }
+
+@media (max-width: 640px) {
+  .batch-toolbar { grid-template-columns: minmax(0, 1fr) }
+  .batch-group + .batch-group { border-left: 0; padding-left: 0 }
+}
 
 /* 通道/运动轴表头与行：紧凑高度，列宽固定对齐 */
 .hw-head {
@@ -226,7 +238,8 @@ function autoFillChannelIndices(): void {
 .sel-flex { flex: 1 }
 
 /* 设备选择器与状态指示 */
-.device-select-wrap { display: flex; align-items: center; gap: 6px; width: 150px }
+.device-select-wrap { display: flex; align-items: center; gap: 6px; width: 150px; min-width: 0 }
+.device-select-wrap .sel-w150 { width: auto; min-width: 0; flex: 1 }
 .device-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0 }
 .device-status-dot--idle { background: var(--text-muted); }
 .device-status-dot--connected { background: var(--color-success, #22c55e); }

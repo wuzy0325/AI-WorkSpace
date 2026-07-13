@@ -73,6 +73,25 @@ const portLabelPos: Record<string, { x: number; y: number; anchor: 'start' | 'mi
   P4: { x: CX - PORT_OFF - 40, y: CY + 4, anchor: 'end' },
   P5: { x: 360, y: CY + 4, anchor: 'start' },
 }
+
+// 标签白底 rect 左上角 x：让 rect 相对锚点居中
+// - middle：rect 中心 = pos.x  → rect.x = pos.x - 16
+// - end：rect 右边 = pos.x     → rect.x = pos.x - 32
+// - start：rect 左边 = pos.x   → rect.x = pos.x
+function portLabelRectX(id: string): number {
+  const p = portLabelPos[id]
+  if (p.anchor === 'end') return p.x - 32
+  if (p.anchor === 'start') return p.x
+  return p.x - 16
+}
+
+// 标签 text x：在 SVG 中 text 锚点由 text-anchor 决定
+// - middle：text 中心 = pos.x
+// - end：text 右边 = pos.x（贴 rect 右内边）
+// - start：text 左边 = pos.x（贴 rect 左内边）
+function portLabelTextX(id: string): number {
+  return portLabelPos[id].x
+}
 </script>
 
 <template>
@@ -111,11 +130,6 @@ const portLabelPos: Record<string, { x: number; y: number; anchor: 'start' | 'mi
             <stop offset="45%" stop-color="#cbd5e1" />
             <stop offset="100%" stop-color="#94a3b8" />
           </radialGradient>
-          <linearGradient id="body-metal" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#e2e8f0" />
-            <stop offset="50%" stop-color="#94a3b8" />
-            <stop offset="100%" stop-color="#64748b" />
-          </linearGradient>
           <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
             <feDropShadow dx="1.5" dy="3" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.16" />
           </filter>
@@ -155,7 +169,7 @@ const portLabelPos: Record<string, { x: number; y: number; anchor: 'start' | 'mi
         <template v-for="p in ports" :key="'lbl-' + p.id">
           <g v-if="!p.inside">
             <rect
-              :x="portLabelPos[p.id].anchor === 'middle' ? portLabelPos[p.id].x - 16 : portLabelPos[p.id].anchor === 'end' ? portLabelPos[p.id].x - 26 : portLabelPos[p.id].x - 2"
+              :x="portLabelRectX(p.id)"
               :y="portLabelPos[p.id].y - 13"
               width="32"
               height="20"
@@ -164,12 +178,12 @@ const portLabelPos: Record<string, { x: number; y: number; anchor: 'start' | 'mi
               stroke="#cbd5e1"
             />
             <text
-              :x="portLabelPos[p.id].x"
+              :x="portLabelTextX(p.id)"
               :y="portLabelPos[p.id].y + 3"
               fill="#1e40af"
               font-size="13"
               font-weight="700"
-              text-anchor="middle"
+              :text-anchor="portLabelPos[p.id].anchor"
             >
               {{ p.id }}
             </text>
