@@ -133,6 +133,11 @@ foreach ($f in $goFiles) {
         foreach ($imp in $imports) {
             foreach ($rule in $forbidden) {
                 if ($imp -match $rule.Pattern) {
+                    # 例外：core/ 层定义 MarshalJSON/UnmarshalJSON 是标准 Go 领域建模模式，
+                    # 不是真正的 I/O 操作。JSON 序列化文件（文件名含 json）允许 encoding/json 导入。
+                    if ($imp -eq 'encoding/json' -and ($f.Name -match 'json')) {
+                        continue
+                    }
                     $errors.Add("CORE:    $relPath -> $imp  ($($rule.Msg))")
                 }
             }

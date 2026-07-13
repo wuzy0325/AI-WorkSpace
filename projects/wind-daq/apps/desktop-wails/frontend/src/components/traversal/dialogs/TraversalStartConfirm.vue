@@ -7,7 +7,7 @@
 import { CheckCircle, Play, XCircle } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
-import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
 import {
   getTraversalLayoutPointCount,
   type PreconditionCheckResult,
@@ -31,8 +31,7 @@ defineProps<{
   }
 }>()
 
-const i18n = useI18nStore()
-const t = computed(() => i18n.t)
+const { t } = storeToRefs(useI18nStore())
 
 // 后端 checks[].message 为硬编码英文，此处按精确文案映射到 i18n key，
 // 使前置条件检查项在中文/英文界面下跟随语言；未命中（如动态 restore 错误）回退原 message。

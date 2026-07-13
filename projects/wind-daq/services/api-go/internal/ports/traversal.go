@@ -46,6 +46,16 @@ type TraversalOutputSession struct {
 	Path         string
 	HeaderHash   string
 	CommittedSeq uint64
+
+	// 列配置（v2 Open 路径必须应用，否则表头缺少通道列）：
+	//   - SaveOptions     控制哪些列输出；nil 时由 adapter 兜底为全开
+	//   - Channels        原始压力通道索引列表，用于稳定列顺序
+	//   - ChannelLabels   通道索引→标签映射（如 {0:"P1", 16:"Patm"}），可空
+	// 这些字段在 v2 装配下由 usecase 从 traversal.Config 复制；
+	// 旧 sink 路径走 InitializeTraversal(config)，不消费这些字段，保持向后兼容。
+	SaveOptions     *traversal.SaveOptions
+	Channels        []int
+	ChannelLabels   map[int]string
 }
 
 type TraversalRowSummary struct {
@@ -85,19 +95,30 @@ type TraversalCheckpointRef struct {
 	Path   string
 }
 
+// TraversalCheckpointPort 断点端口的完整生命周期接口。
+//
+// 生命周期：
+//   - Save / Load / Find / Unregister 在任务运行期被 usecase 调用
+//   - Close 在任务结束（Stop / Complete / Error）时由 finalizeSink 调用，
+//     释放底层资源（文件句柄/锁）。FileCheckpointPort 当前无句柄资源，
+//     Close 仍必须实现以满足接口契约，并便于未来切换到带句柄的实现。
 type TraversalCheckpointPort interface {
 	Save(ctx context.Context, checkpoint traversal.Checkpoint) error
 	Load(ctx context.Context, taskID string) (traversal.Checkpoint, error)
 	Find(ctx context.Context, taskID string) (TraversalCheckpointRef, bool, error)
 	Unregister(ctx context.Context, taskID string) error
+	Close(ctx context.Context) error
 }
 
 // TraversalCheckpointPortFactory 按 SavePath 动态创建断点端口。
 // 由于每个遍历任务的 SavePath 不同，断点文件路径需在 Start 时按 SavePath 确定，
 // 不能在装配阶段静态注入。装配根提供工厂，usecase 在 Start 时调用。
+//
+// Create 返回 error 用于未来扩展（如基于 mmap / DB 的实现需要初始化连接）；
+// 当前 FileCheckpointPort 实现始终返回 nil error。
 type TraversalCheckpointPortFactory interface {
 	// Create 按 basePath（通常为 config.SavePath）创建断点端口实例。
-	Create(basePath string) TraversalCheckpointPort
+	Create(ctx context.Context, basePath string) (TraversalCheckpointPort, error)
 }
 
 // TraversalActiveIndex 活动任务索引：taskId → checkpointPath。

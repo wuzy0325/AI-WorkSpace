@@ -32,7 +32,7 @@ const sectorConfig = defineModel<{
 const customPoints = defineModel<Array<{ x: number; y: number; z: number; u: number }>>('customPoints', { required: true })
 const customPointInput = defineModel<{ x: number; y: number; z: number; u: number }>('customPointInput', { required: true })
 const snakeOrder = defineModel<boolean>('snakeOrder', { required: true })
-// 走线主轴：仅 line / rectangle 布局消费，扇形不显示此选项。
+// 走线主轴：仅 rectangle 布局消费（line 单行无主轴概念，sector 固定先走半径）。
 // 用 default: 'x' 而非 required，避免未来其他父组件漏传时 dev 告警 + radio 无选中项。
 const primaryAxis = defineModel<TraversalPrimaryAxis>('primaryAxis', { default: 'x' })
 
@@ -47,9 +47,13 @@ const primaryAxisOptions = computed(() => [
   { value: 'y' as const, label: props.t.travPrimaryAxisY || 'Y first' }
 ])
 
-// 仅 line / rectangle 布局消费走线主轴；扇形/自定义不显示此选项。
-// 抽成 computed 避免模板里 `pattern === 'line' || pattern === 'rectangle'` 重复。
-const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
+// 遍历顺序适用性：与后端 path.go:399-455 的消费矩阵严格对齐。
+// - 蛇形 snakeOrder：仅 rectangle（行列反转）+ sector（半径环反转角度）有意义；
+//   line 单行无"行"概念，custom 用户已自定序，勾选无效果。
+// - 走线主轴 primaryAxis：仅 rectangle 消费（line 单行无主轴，sector 固定先走半径）。
+// 抽成 computed 避免模板里重复 pattern 判断。
+const supportsSnakeOrder = computed(() => pattern.value === 'rectangle' || pattern.value === 'sector')
+const supportsPrimaryAxis = computed(() => pattern.value === 'rectangle')
 
 // computedRectangleRange/computedSectorRange 改为纯 computed（无副作用）：
 // 旧实现在此处写 rectangleConfig.value.xMin/xMax/yMin/yMax 是 Vue 反模式——
@@ -205,13 +209,14 @@ function cancelImportReplace() {
       <UiButton v-for="p in (['line', 'rectangle', 'sector', 'custom'] as const)" :key="p" size="sm" :type="pattern === p ? 'primary' : 'default'" secondary @click="pattern = p">{{ getPatternLabel(p) }}</UiButton>
     </div>
 
-    <!-- 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间 -->
-    <UiPanel class="section-card">
-      <label class="option-label">
+    <!-- 遍历顺序面板：仅对支持蛇形/主轴的布点显示对应控件，避免无效勾选 -->
+    <UiPanel v-if="supportsSnakeOrder || supportsPrimaryAxis" class="section-card">
+      <!-- 蛇形扫描顺序：偶数行正向，奇数行反向，减少回程时间（仅 rectangle/sector） -->
+      <label v-if="supportsSnakeOrder" class="option-label">
         <UiCheckbox :checked="snakeOrder" size="small" @update:checked="snakeOrder = $event" />
         <span>{{ t.travSnakeOrder || 'Snake scan order' }}</span>
       </label>
-      <!-- 走线主轴：仅 line / rectangle 布局提供，控制物理走线方向 -->
+      <!-- 走线主轴：仅 rectangle 布局提供，控制物理走线方向 -->
       <div v-if="supportsPrimaryAxis" class="primary-axis-row">
         <span class="primary-axis-label">{{ t.travPrimaryAxis || 'Primary axis' }}</span>
         <div class="radio-group primary-axis-options">
@@ -227,6 +232,10 @@ function cancelImportReplace() {
         </div>
       </div>
     </UiPanel>
+    <!-- line/custom 布点不支持遍历顺序：用灰字提示替代控件，避免界面"空着"让用户以为没加载完 -->
+    <div v-else class="traversal-order-hint">
+      {{ t.travOrderNotApplicable || '当前布点不支持遍历顺序设置' }}
+    </div>
 
     <UiPanel v-if="pattern === 'line'" class="section-card">
       <div class="seg-grid">
@@ -403,6 +412,15 @@ function cancelImportReplace() {
 .section-title-block { font-size: var(--font-size-2xs); font-weight: 500; display: block; margin-bottom: 6px; color: var(--text-muted) }
 .point-label { font-size: var(--font-size-xs); color: var(--text-primary); white-space: nowrap; }
 .option-label { display:flex; align-items:center; gap:6px; font-size:var(--text-sm); color:var(--text-primary); cursor:pointer }
+
+/* line/custom 布点遍历顺序占位提示：用 --text-muted 灰字 + 内边距与 UiPanel 视觉对齐，
+   让用户明确"此处无可用配置"而非界面未加载 */
+.traversal-order-hint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  padding: 6px 10px;
+  line-height: 1.4;
+}
 
 /* 走线主轴选择行：与蛇形扫描同面板，水平排列标签与单选按钮 */
 .primary-axis-row {

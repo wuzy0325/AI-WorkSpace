@@ -82,12 +82,36 @@ func sanitizeResultsForJSON(results []traversal.PointResult) []map[string]any {
 	return out
 }
 
+// finalizeSink 关闭 sink 并释放工作流级互斥锁
+//
+// 并发关闭防御（v2 关键）：
+// Stop 5s 超时路径与 RunTraversalLoop 的 defer 都会调用 finalizeSink，
+// 两者可能并发执行。finalizeSink 在锁内快照端口后锁外调用 Close，
+// 两次 Close 不互斥。若 adapter 的 Close 不幂等（如已关闭文件句柄再 Close 报错），
+// 会触发 panic 或返回错误。用 sync.Once 包裹实际关闭逻辑，确保只执行一次。
+//
+// 注意：Stop() 路径会主动 Finalize，此处再次 Finalize 是幂等操作
 func (m *TraversalManager) finalizeSink() {
+	// finalizeOnce 在第一次 finalizeSink 调用时执行实际关闭，
+	// 后续调用（Stop 超时 + RunTraversalLoop defer 并发）直接返回。
+	m.finalizeOnce.Do(func() {
+		m.finalizeSinkInternal()
+	})
+}
+
+// finalizeSinkInternal 执行实际的端口关闭与锁释放，仅由 finalizeSink 通过
+// sync.Once 调用一次。提取为独立方法是为了让 sync.Once 闭包保持简洁。
+func (m *TraversalManager) finalizeSinkInternal() {
 	m.mu.Lock()
 	sink := m.sink
 	csvPort := m.csvPort
 	resultLogPort := m.resultLogPort
+	checkpointPort := m.checkpointPort
 	taskID := m.config.TaskID
+	// 清理当前任务的 checkpointPort 引用：与 abortStartLocked 一致，
+	// 避免下一次 Start 复用已关闭的实例。csvPort/resultLogPort 是跨任务共享实例
+	// （appcontext 装配一次），不能置 nil，需保证 Open 可在 Close 后再次调用。
+	m.checkpointPort = nil
 	m.mu.Unlock()
 
 	slog.Info("traversal finalizing sink",
@@ -95,7 +119,8 @@ func (m *TraversalManager) finalizeSink() {
 		"task_id", taskID,
 	)
 
-	// v2：先关闭结果日志，再关闭 CSV，确保顺序一致
+	// v2：先关闭结果日志，再关闭 CSV，最后关闭 checkpoint（与打开顺序相反）
+	// 顺序一致确保刷盘顺序正确，避免 CSV 未刷盘就关闭结果日志导致数据不一致。
 	ctx := context.Background()
 	if resultLogPort != nil {
 		if err := resultLogPort.Close(ctx); err != nil {
@@ -109,7 +134,19 @@ func (m *TraversalManager) finalizeSink() {
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
-	if sink != nil {
+	// checkpointPort 是按任务动态创建的（factory.Create），任务结束必须 Close
+	// 释放底层资源（文件句柄/锁），高频启停场景下避免泄漏
+	if checkpointPort != nil {
+		if err := checkpointPort.Close(ctx); err != nil {
+			slog.Warn("traversal finalize checkpoint port failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	// 若 sink 与 csvPort 为同一实例（v2 装配下常见），csvPort.Close 已通过
+	// TraversalCsvWriter.Close → FinalizeTraversal 关闭文件，再调用 sink.FinalizeTraversal
+	// 会触发 P1-I6 的双重初始化防御（"遍历 CSV 会话已打开，拒绝重复初始化"反向场景：
+	// 文件已关闭但状态机仍记为已初始化）。sinkIsCsvPort 通过指针比较跳过重复 Finalize。
+	if sink != nil && !sinkIsCsvPort(sink, csvPort) {
 		// FinalizeTraversal 自身需保证幂等（多次调用安全）
 		if err := sink.FinalizeTraversal(); err != nil {
 			m.mu.Lock()

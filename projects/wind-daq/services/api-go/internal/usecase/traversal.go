@@ -89,6 +89,12 @@ type TraversalManager struct {
 	configRaw       json.RawMessage
 	interpolator    coreinterp.Interpolator
 
+	// finalizeOnce 确保 finalizeSink 只执行一次实际关闭逻辑。
+	// Stop 5s 超时路径与 RunTraversalLoop 的 defer 可能并发调用 finalizeSink，
+	// sync.Once 保证端口 Close 不会重入。每次 Start/Resume 时通过 resetFinalizeOnce
+	// 重置，让新任务可重新触发关闭流程。
+	finalizeOnce sync.Once
+
 	// 实时插值缓存（量化键 + LRU + 容差匹配，对应 Cursor DAQ InterpolationCache）
 	interpCache *realtime.InterpolationCache
 
@@ -394,6 +400,47 @@ func (m *TraversalManager) beginSession(parent context.Context, taskID string, s
 	return m.session, nil
 }
 
+// resetFinalizeOnce 重置 finalizeOnce，让下一次 Start/ResumeFromCheckpoint 可重新触发
+// finalizeSinkInternal。sync.Once 一旦执行就永久标记 done，必须在每次新任务开始前
+// 通过整体赋值清空，否则新任务的 finalizeSink 会直接返回，端口不会被关闭。
+//
+// 调用时机：Start / ResumeFromCheckpoint 在 beginSession 成功之后、打开 v2 端口之前
+// 调用，保证 finalizeOnce 与 session 生命周期严格对齐。
+//
+// 并发安全：整体赋值 sync.Once 持有 m.mu，与 finalizeSinkInternal 中的
+// m.finalizeOnce.Do(...) 互斥。即使 Stop 5s 超时强制 finalizeSink 后用户立即调 Start，
+// 也不会与 RunTraversalLoop 的 defer finalizeSink 并发赋值触发 race。
+// 之前的实现不持锁，依赖"Start/Resume 入口互斥"上游不变量；但 Stop 超时路径会
+// 在 RunTraversalLoop 仍在跑时强制 finalize，破坏该不变量。
+func (m *TraversalManager) resetFinalizeOnce() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.finalizeOnce = sync.Once{}
+}
+
+// sinkIsCsvPort 检查 sink 是否与 csvPort 是同一实例。
+//
+// 装配根（bootstrap.go / context.go）将同一个 TraversalCsvWriter 同时注入为
+// sink（ports.TraversalPointSink）和 csvPort（ports.TraversalCSVPort）。此时：
+//   - csvPort.Open 已完成文件初始化，sink.InitializeTraversal 必须跳过，
+//     否则触发双重初始化防御（P1-I6）返回错误；
+//   - sink.WriteTraversalPoint 必须跳过，否则同一行被写两次；
+//   - sink.FinalizeTraversal 必须跳过，避免重复关闭（虽然当前实现幂等，但语义混乱）。
+//
+// 当 csvPort 为 nil（旧装配 / 测试路径）时返回 false，sink 路径正常执行。
+// 当 sink 与 csvPort 是不同实例时（理论上未使用的混合装配）返回 false，
+// 两条路径并行执行，保持向后兼容。
+func sinkIsCsvPort(sink ports.TraversalPointSink, csvPort ports.TraversalCSVPort) bool {
+	if sink == nil || csvPort == nil {
+		return false
+	}
+	csvPortAsSink, ok := csvPort.(ports.TraversalPointSink)
+	if !ok {
+		return false
+	}
+	return sink == csvPortAsSink
+}
+
 func (m *TraversalManager) Start(config traversal.Config) error {
 	slog.Info("traversal starting",
 		"component", "traversal",
@@ -433,8 +480,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		TotalPoints:          len(config.Path),
 		CommittedPoints:      0,
 		CommitSeq:            0,
-		CSVPath:              config.SavePath,
-		ResultLogPath:        config.SavePath + ".results.jsonl",
+		CSVPath:              traversal.ResolveOutputPath(config),
+		ResultLogPath:        traversal.ResolveResultLogPath(config),
 	}
 	parentCtx := context.Background()
 	session, err := m.beginSession(parentCtx, config.TaskID, snapshot)
@@ -442,6 +489,9 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
+	// 重置 finalizeOnce：上一次任务结束（Stop/Complete）已消费 once，
+	// 新任务必须重新武装 finalizeSink 才能在结束时正确关闭端口。
+	m.resetFinalizeOnce()
 
 	m.mu.Lock()
 	if m.status.State == traversal.StateRunning || m.status.State == traversal.StatePaused {
@@ -471,48 +521,54 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		StartedAt:   time.Now().UnixMilli(),
 	}
 	// 快照 v2 端口（可能为 nil，表示未注入 v2 组件）
+	// csvPort 用于 sinkIsCsvPort 同实例检测；resultLogPort 由 openReliabilityPorts 内部读取，
+	// 不在此处快照，避免未使用变量。
 	csvPort := m.csvPort
-	resultLogPort := m.resultLogPort
 	activeIndex := m.activeIndex
 	checkpointPortFactory := m.checkpointPortFactory
 	sink := m.sink
 	m.mu.Unlock()
 
-	// v2：通过工厂按 SavePath 动态创建 checkpointPort（每个任务 SavePath 不同）
+	// v2：通过工厂按解析后的 CSVPath 动态创建 checkpointPort。
+	// 必须用 snapshot.CSVPath（= ResolveOutputPath(config)）而非 config.SavePath：
+	//   - SavePath 可能是目录（如 "D:/data"），factory.Create 派生 .checkpoint.json
+	//     会得到 "D:/data.checkpoint.json"（落在父目录），与 Resume 路径不一致。
+	//   - ResumeFromCheckpoint 用 snapshot.CSVPath 创建 checkpointPort（见 traversal_checkpoint.go），
+	//     Start 必须用同一 basePath 才能保证崩溃恢复链路一致。
+	//   - activeIndex.Register 与 saveCheckpoint/loadCheckpoint 全部基于 snapshot.CSVPath 派生，
+	//     形成单一真相源。
 	var checkpointPort ports.TraversalCheckpointPort
-	if checkpointPortFactory != nil && config.SavePath != "" {
-		checkpointPort = checkpointPortFactory.Create(config.SavePath)
+	if checkpointPortFactory != nil && snapshot.CSVPath != "" {
+		var cpErr error
+		checkpointPort, cpErr = checkpointPortFactory.Create(session.ctx, snapshot.CSVPath)
+		if cpErr != nil {
+			// 工厂创建失败：回滚已 Begin 的 session 并释放工作流锁
+			m.mu.Lock()
+			m.checkpointPort = nil
+			m.mu.Unlock()
+			session.Cancel()
+			session.MarkDone()
+			_ = resourcelock.Default().Release(traversalLockResource, config.TaskID)
+			slog.Error("traversal start failed: create checkpoint port",
+				"component", "traversal", "task_id", config.TaskID, "error", cpErr)
+			return fmt.Errorf("create checkpoint port: %w", cpErr)
+		}
 		m.mu.Lock()
 		m.checkpointPort = checkpointPort
 		m.mu.Unlock()
 	}
 
-	// v2 存储初始化：CSV 与结果日志
-	if csvPort != nil {
-		csvSession := ports.TraversalOutputSession{
-			TaskID: config.TaskID,
-			Mode:   ports.TraversalOutputCreate,
-			Path:   snapshot.CSVPath,
-		}
-		if err := csvPort.Open(session.ctx, csvSession); err != nil {
-			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("csv open failed: %v", err), traversal.ErrSaveFailed)
-			return err
-		}
+	// v2 存储初始化：CSV 与结果日志（Create 模式，不截断）
+	// 列配置通过 helper 内部从 config 复制到 session，确保 v2 表头与旧 sink 一致。
+	if err := m.openReliabilityPorts(session, ports.TraversalOutputCreate, snapshot, config); err != nil {
+		m.abortStartLocked(session, config.TaskID, err.Error(), traversal.ErrSaveFailed)
+		return err
 	}
-	if resultLogPort != nil {
-		logSession := ports.TraversalOutputSession{
-			TaskID: config.TaskID,
-			Mode:   ports.TraversalOutputCreate,
-			Path:   snapshot.ResultLogPath,
-		}
-		if err := resultLogPort.Open(session.ctx, logSession); err != nil {
-			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("result log open failed: %v", err), traversal.ErrSaveFailed)
-			return err
-		}
-	}
-	// 注册活动索引，支持进程重启发现
+	// 注册活动索引，支持进程重启发现。
+	// checkpointPath 基于 snapshot.CSVPath 派生，与 factory.Create / saveCheckpoint
+	// 三者路径一致；禁止用 config.SavePath 派生（可能是目录，导致路径错乱）。
 	if activeIndex != nil && checkpointPort != nil {
-		checkpointPath := config.SavePath + ".checkpoint.json"
+		checkpointPath := snapshot.CSVPath + ".checkpoint.json"
 		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
 				"component", "traversal", "task_id", config.TaskID, "error", err)
@@ -520,8 +576,10 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		}
 	}
 
-	// 在锁外调用旧 sink.Initialize，避免阻塞其他状态读取（向后兼容）
-	if sink != nil {
+	// 在锁外调用旧 sink.Initialize（向后兼容）。
+	// sink 与 csvPort 是同一实例时跳过：csvPort.Open 已完成文件初始化，
+	// 再次 InitializeTraversal 会触发双重初始化防御（P1-I6）返回错误。
+	if sink != nil && !sinkIsCsvPort(sink, csvPort) {
 		if err := sink.InitializeTraversal(config); err != nil {
 			// 初始化失败：回滚状态并释放锁，避免半启动
 			m.abortStartLocked(session, config.TaskID, fmt.Sprintf("sink init failed: %v", err), traversal.ErrSaveFailed)
@@ -537,13 +595,83 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	return nil
 }
 
+// openReliabilityPorts 打开 v2 可靠存储端口（CSV + 结果日志）。
+//
+// Create 模式：仅 Open，不截断。
+// Resume 模式：Open 后对结果日志执行 ValidateTail + TruncateAfter，
+//   丢弃崩溃前未 Sync 的半写入记录，水位严格对齐 CommittedSeq。
+//   CSV 截断由 csvPort.Open 内部根据 CommittedSeq 完成（openResumeLocked）。
+//
+// 列配置（SaveOptions/Channels/ChannelLabels）从 config 复制到 session，
+// 让 csvPort.Open 构建与 InitializeTraversal 一致的表头/labels，避免 v2 主路径
+// 表头缺少通道列（Critical-3）。
+//
+// 调用方负责：beginSession + resetFinalizeOnce + Acquire(traversalLockResource)；
+// 失败时调用 abortStartLocked 回滚已打开的端口。
+func (m *TraversalManager) openReliabilityPorts(
+	session *TraversalRunSession,
+	mode ports.TraversalOutputMode,
+	snapshot traversal.TraversalRunSnapshot,
+	config traversal.Config,
+) error {
+	m.mu.RLock()
+	csvPort := m.csvPort
+	resultLogPort := m.resultLogPort
+	m.mu.RUnlock()
+
+	if csvPort != nil {
+		csvSession := ports.TraversalOutputSession{
+			TaskID:        config.TaskID,
+			Mode:          mode,
+			Path:          snapshot.CSVPath,
+			CommittedSeq:  snapshot.CommitSeq,
+			SaveOptions:   config.SaveOptions,
+			Channels:      config.Channels,
+			ChannelLabels: config.ChannelLabels,
+		}
+		if err := csvPort.Open(session.ctx, csvSession); err != nil {
+			return fmt.Errorf("csv open: %w", err)
+		}
+	}
+	if resultLogPort != nil {
+		logSession := ports.TraversalOutputSession{
+			TaskID:       config.TaskID,
+			Mode:         mode,
+			Path:         snapshot.ResultLogPath,
+			CommittedSeq: snapshot.CommitSeq,
+			// 结果日志是 JSONL（每行一个完整 PointResult），不消费列配置字段；
+			// 仍填入是为了字段对称，便于未来扩展（如 header hash 校验）。
+			SaveOptions:   config.SaveOptions,
+			Channels:      config.Channels,
+			ChannelLabels: config.ChannelLabels,
+		}
+		if err := resultLogPort.Open(session.ctx, logSession); err != nil {
+			return fmt.Errorf("result log open: %w", err)
+		}
+		// Resume 模式：Open 仅追加打开，不做水位对齐。必须显式 ValidateTail +
+		// TruncateAfter，丢弃崩溃前未 Sync 的半写入记录，保证权威日志与
+		// CommittedSeq 严格一致（Critical-2）。CSV 已在 Open 内部按 CommittedSeq 截断。
+		if mode == ports.TraversalOutputResume {
+			if err := resultLogPort.ValidateTail(session.ctx, snapshot.CommitSeq); err != nil {
+				return fmt.Errorf("result log validate tail: %w", err)
+			}
+			if err := resultLogPort.TruncateAfter(session.ctx, snapshot.CommitSeq); err != nil {
+				return fmt.Errorf("result log truncate: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // abortStartLocked 启动失败时的统一回滚：设置错误状态、关闭已打开的 v2 端口、
 // 关闭 session、释放工作流锁。
 //
-// 必须清理已打开的 v2 端口（csvPort/resultLogPort），否则：
+// 必须清理已打开的 v2 端口（csvPort/resultLogPort/checkpointPort），否则：
 //   - csvPort.Open 已创建 CSV 文件并写入表头，未关闭会导致后续 Start 时 Open 失败
 //     （"会话已打开"错误），半启动的文件句柄也会泄漏
 //   - resultLogPort 同理，已打开的 JSONL 文件句柄不会被 GC 回收
+//   - checkpointPort 由 factory.Create 动态创建，必须 Close 释放底层资源（与
+//     finalizeSinkInternal 对称，避免换实现后句柄泄漏）
 //
 // 端口关闭顺序与 finalizeSink 一致：先结果日志后 CSV，确保刷盘顺序正确。
 // 关闭失败仅记录日志，不影响错误状态传播（启动失败的根因优先暴露给调用方）。
@@ -572,6 +700,14 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 	if csvPort != nil {
 		if err := csvPort.Close(ctx); err != nil {
 			slog.Warn("traversal abort close csv failed",
+				"component", "traversal", "task_id", taskID, "error", err)
+		}
+	}
+	// checkpointPort 由 factory.Create 动态创建，必须 Close 释放底层资源。
+	// 与 finalizeSinkInternal 对称，避免未来切换到带句柄的实现后泄漏。
+	if checkpointPort != nil {
+		if err := checkpointPort.Close(ctx); err != nil {
+			slog.Warn("traversal abort close checkpoint port failed",
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
@@ -910,6 +1046,3 @@ func (m *TraversalManager) RunTraversalLoop() {
 		}
 	}
 }
-
-// finalizeSink 关闭 sink 并释放工作流级互斥锁
-// 注意：Stop() 路径会主动 Finalize，此处再次 Finalize 是幂等操作

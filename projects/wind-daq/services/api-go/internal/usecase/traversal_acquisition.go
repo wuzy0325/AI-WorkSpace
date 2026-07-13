@@ -285,9 +285,11 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		if err := m.commitPointV2(taskID, &skipResult); err != nil {
 			return m.failWithCode("commit skip point %d failed: %v", traversal.ErrSaveFailed, pointIndex+1, err)
 		}
-		// 提交成功后才推进 snapshot.CommitSeq（线性化点 = Checkpoint 持久化成功）
+		// 提交成功后才推进 snapshot.CommitSeq 和 CommittedPoints（线性化点 = Checkpoint 持久化成功）
+		// CommittedPoints 同步更新，与正常分支保持一致，避免 session.snapshot 字段陈旧
 		m.mu.Lock()
 		session.snapshot.CommitSeq = commitSeq
+		session.snapshot.CommittedPoints = int(commitSeq)
 		m.status.Results = append(m.status.Results, skipResult)
 		m.status.CurrentPoint++
 		m.status.CommittedPoints = int(commitSeq)
@@ -357,13 +359,19 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		return m.failWithCode("commit point %d failed: %v", traversal.ErrSaveFailed, pointIndex+1, err)
 	}
 
-	// v2：提交成功后才推进 snapshot.CommitSeq
+	// v2：提交成功后才推进 snapshot.CommitSeq 和 CommittedPoints
+	// CommittedPoints 必须同步更新：session.snapshot 作为"运行态权威快照"，
+	// CommittedPoints 恒为 0 会让任何读取该字段的代码（调试端点/未来扩展）拿到错误值。
 	m.mu.Lock()
 	runSession.snapshot.CommitSeq = commitSeq
+	runSession.snapshot.CommittedPoints = int(commitSeq)
 	m.mu.Unlock()
 
 	// 向后兼容：旧 sink 路径仍执行，但不参与事务回滚
-	if m.sink != nil {
+	// 若 sink 与 csvPort 为同一实例（v2 装配下常见），CSV 已通过 csvPort.Append 写入，
+	// 这里再调用 sink.WriteTraversalPoint 会重复落盘同一行，破坏 CSV 行号 ↔ commitSeq 一致性。
+	// sinkIsCsvPort 通过类型断言 + 指针比较检测同实例，跳过重复写入。
+	if m.sink != nil && !sinkIsCsvPort(m.sink, m.csvPort) {
 		if err := m.sink.WriteTraversalPoint(result); err != nil {
 			slog.Error("traversal old sink save failed",
 				"component", "traversal",
@@ -374,7 +382,15 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			// 旧 sink 失败不触发 v2 回滚，避免双写冲突导致数据丢失
 		}
 	}
-	checkpointSavePath := config.SavePath
+	// 旧 saveCheckpoint 路径基址：必须用 ResolveOutputPath 解析出完整 CSV 文件路径，
+	// 不能直接用 config.SavePath（可能是目录）。
+	// 否则 saveCheckpoint 派生 .checkpoint.json 时会拼成 "目录.checkpoint.json"，
+	// 落在父目录而非数据目录内；旧格式 checkpoint 的 SavePath 为目录还会污染 Resume 回退路径
+	// （ResumeFromCheckpoint 已统一改用 ResolveOutputPath 重算，这里保持一致源头）。
+	// 若 sink 实现了 OutputPath()（如 TraversalCsvWriter 在 InitializeTraversal 后可提供），
+	// 优先用 sink 实际打开的文件路径——v2 装配下 sink/csvPort 同实例，
+	// sink.OutputPath() 即 csvPort.Open 实际创建的文件路径（含 -2/-3 撞名后缀）。
+	checkpointSavePath := traversal.ResolveOutputPath(config)
 	if pathSink, ok := m.sink.(interface{ OutputPath() string }); ok {
 		if outputPath := pathSink.OutputPath(); outputPath != "" {
 			checkpointSavePath = outputPath
@@ -415,7 +431,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 				"task_id", saveTaskID,
 				"error", err,
 			)
-			return fmt.Errorf("save traversal result: %v", err)
+			return fmt.Errorf("save traversal result: %w", err)
 		}
 		slog.Info("traversal result saved on completion",
 			"component", "traversal",
@@ -442,6 +458,52 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		m.ClearCheckpoint()
 	}
 	return nil
+}
+
+// sanitizePointResultNaN 原地清洗 PointResult 中设备层异常可能引入的 NaN→0。
+//
+// 仅清洗 Calculated 与 Values：
+//   - Calculated：插值器极端输入可能产出 NaN，且有 IsValid 守卫，清洗为 0 不影响
+//     "是否有效"的判定（消费方先看 Valid 再读数值）。
+//   - Values：设备层异常可能返回 NaN 采集值，前端无对应 null 语义契约，清洗为 0
+//     保留通道存在性（不删 key），让前端仍能看到该通道有数据。
+//
+// 不清洗 Point.X/Y/Z/U：
+//   - traversal.Point 已实现 MarshalJSON（point_json.go），NaN 会序列化为 null，
+//     与前端 TraversalCoordValue = number | null 契约对齐；
+//   - markAxesNaN 把"未配置轴"标记为 NaN 是运动恢复语义依据，清洗为 0 会让
+//     availableAxisTargets 把这些轴当成"目标位置 0"发 MoveTo，破坏运动正确性。
+//
+// 此函数仅做设备层异常的防御性清洗，Point 的 NaN 由 Point.MarshalJSON 处理。
+func sanitizePointResultNaN(result *traversal.PointResult) {
+	if result == nil {
+		return
+	}
+	if result.Calculated != nil {
+		c := result.Calculated
+		if math.IsNaN(c.Alpha) {
+			c.Alpha = 0
+		}
+		if math.IsNaN(c.Beta) {
+			c.Beta = 0
+		}
+		if math.IsNaN(c.Pt) {
+			c.Pt = 0
+		}
+		if math.IsNaN(c.Ps) {
+			c.Ps = 0
+		}
+		if math.IsNaN(c.Mach) {
+			c.Mach = 0
+		}
+	}
+	// Values 是 map[int]float64，设备层异常可能返回 NaN。遍历清洗避免序列化失败。
+	// 不删除 key（保留通道存在性），仅把 NaN 值改 0，前端仍能看到该通道有数据。
+	for ch, v := range result.Values {
+		if math.IsNaN(v) {
+			result.Values[ch] = 0
+		}
+	}
 }
 
 // commitPointV2 三阶段提交：CSV → 结果日志 → Checkpoint。
@@ -474,14 +536,30 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 		return nil
 	}
 
-	// 使用 session ctx：Stop 调用 session.Cancel() 后能立即中断 I/O，
+	// 使用 session ctx：Stop 调用 session.Cancel() 后能立即中断正常路径 I/O，
 	// 避免 commitPointV2 在已停止的任务上继续刷盘。
 	// session 为 nil 时（理论上不应发生，Start 必创建 session）回退到 Background。
+	//
+	// 回滚专用 ctx：阶段1/2/3 任何一步因 ctx 取消而失败时，回滚操作必须用独立 ctx。
+	// 若沿用 session.ctx，port 实现会立即返回 ctx.Err()，导致刚 Append 的行无法截断，
+	// 崩溃恢复时结果日志包含未确认的"半提交"记录，破坏权威数据源一致性。
 	ctx := context.Background()
+	rollbackCtx := context.Background()
 	if session != nil {
 		ctx = session.ctx
 	}
 	commitSeq := result.CommitSeq
+
+	// NaN 清洗：仅对 Calculated 与 Values 做防御性清洗（设备层/插值器极端异常）。
+	//
+	// Point.X/Y/Z/U 不清洗：traversal.Point 已实现 MarshalJSON（point_json.go），
+	// NaN 会序列化为 null，与前端 TraversalCoordValue = number | null 契约对齐。
+	// markAxesNaN 标记的"未配置轴"NaN 在 result log / checkpoint 序列化时输出 null，
+	// 反序列化时还原为 NaN，运动恢复（availableAxisTargets）仍能正确跳过这些轴。
+	//
+	// Calculated 有 IsValid 守卫但极端输入可能产出 NaN 数值，Values 来自设备层
+	// 异常可能含 NaN，前端无 null 语义契约，清洗为 0 避免序列化失败阻塞整个提交。
+	sanitizePointResultNaN(result)
 
 	// 阶段1：CSV Append + Sync（可读视图，先拿 RowHash 写回 result）
 	if csvPort != nil {
@@ -498,7 +576,8 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 				"component", "traversal", "task_id", taskID,
 				"commit_seq", commitSeq, "error", err)
 			// CSV Sync 失败：截断刚写入但未持久化的 CSV 行
-			rbErr := rollbackCSV(ctx, csvPort, commitSeq-1)
+			// 回滚用独立 ctx，避免 session 已取消时截断也失败
+			rbErr := rollbackCSV(rollbackCtx, csvPort, commitSeq-1)
 			return errors.Join(fmt.Errorf("csv sync: %w", err), rbErr)
 		}
 	}
@@ -510,7 +589,7 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 				"component", "traversal", "task_id", taskID,
 				"commit_seq", commitSeq, "error", err)
 			// 结果日志 Append 失败：回滚 CSV 到 commitSeq-1
-			rbErr := rollbackCSV(ctx, csvPort, commitSeq-1)
+			rbErr := rollbackCSV(rollbackCtx, csvPort, commitSeq-1)
 			return errors.Join(fmt.Errorf("result log append: %w", err), rbErr)
 		}
 		if err := resultLogPort.Sync(ctx); err != nil {
@@ -518,11 +597,12 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 				"component", "traversal", "task_id", taskID,
 				"commit_seq", commitSeq, "error", err)
 			// 结果日志 Sync 失败：截断结果日志 + 回滚 CSV
+			// 回滚用独立 ctx，避免 session 已取消时截断也失败
 			var rbErrs []error
-			if rbErr := resultLogPort.TruncateAfter(ctx, commitSeq-1); rbErr != nil {
+			if rbErr := resultLogPort.TruncateAfter(rollbackCtx, commitSeq-1); rbErr != nil {
 				rbErrs = append(rbErrs, fmt.Errorf("result log rollback: %w", rbErr))
 			}
-			if rbErr := rollbackCSV(ctx, csvPort, commitSeq-1); rbErr != nil {
+			if rbErr := rollbackCSV(rollbackCtx, csvPort, commitSeq-1); rbErr != nil {
 				rbErrs = append(rbErrs, rbErr)
 			}
 			return errors.Join(append([]error{fmt.Errorf("result log sync: %w", err)}, rbErrs...)...)
@@ -530,28 +610,16 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 	}
 
 	// 阶段3：Checkpoint 原子替换（恢复锚点）
-	// cp.Snapshot 显式设置 CommitSeq = commitSeq，使 checkpoint 内部一致
-	// （反映"本次提交完成后的状态"），ResumeFromCheckpoint 读取时无需再推断。
+	// 通过 buildCheckpoint 统一构造 DTO（Important-5），与 saveCheckpoint 共享逻辑，
+	// 保证字段语义一致。CommitSeq = commitSeq 是本次提交的权威水位，
+	// helper 内部会强制 cp.Snapshot.CommitSeq/CommittedPoints/CompletedPoints 三者对齐。
 	m.mu.RLock()
 	var snapshot traversal.TraversalRunSnapshot
 	if session != nil {
 		snapshot = session.snapshot
 	}
 	m.mu.RUnlock()
-	snapshot.CommitSeq = commitSeq
-	snapshot.CommittedPoints = int(commitSeq)
-	configJSON, _ := json.Marshal(snapshot.Config)
-	cp := traversal.Checkpoint{
-		Version:         traversal.CheckpointVersion,
-		TaskID:          taskID,
-		State:           traversal.StateRunning,
-		Snapshot:        snapshot,
-		Config:          configJSON,
-		CompletedPoints: int(commitSeq),
-		TotalPoints:     snapshot.TotalPoints,
-		SavePath:        snapshot.CSVPath,
-		CreatedAt:       time.Now().UnixMilli(),
-	}
+	cp := buildCheckpoint(taskID, snapshot, commitSeq, snapshot.CSVPath, nil, traversal.StateRunning)
 
 	var checkpointErr error
 	if checkpointPort != nil {
@@ -570,12 +638,13 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 			"component", "traversal", "task_id", taskID,
 			"commit_seq", commitSeq, "error", checkpointErr)
 		// Checkpoint 失败：回滚 CSV + 结果日志到 commitSeq-1
+		// 回滚用独立 ctx，避免 session 已取消时截断也失败
 		var rbErrs []error
-		if rbErr := rollbackCSV(ctx, csvPort, commitSeq-1); rbErr != nil {
+		if rbErr := rollbackCSV(rollbackCtx, csvPort, commitSeq-1); rbErr != nil {
 			rbErrs = append(rbErrs, rbErr)
 		}
 		if resultLogPort != nil {
-			if rbErr := resultLogPort.TruncateAfter(ctx, commitSeq-1); rbErr != nil {
+			if rbErr := resultLogPort.TruncateAfter(rollbackCtx, commitSeq-1); rbErr != nil {
 				rbErrs = append(rbErrs, fmt.Errorf("result log rollback: %w", rbErr))
 			}
 		}

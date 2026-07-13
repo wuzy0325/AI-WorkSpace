@@ -118,6 +118,10 @@ const (
 	PointStatusFailed    PointStatus = "failed"
 )
 
+// IsCommitted 判断该点是否算"已确认提交"——commitPointV2 成功后即认为提交，
+// 含正常完成（Completed）与跳过（Skipped）两类。
+// Skipped 之所以算 Committed：跳过的点已通过 commitPointV2 持久化到结果日志与 checkpoint，
+// 崩溃恢复时不应重新采点，否则会出现"同一物理位置采两次"的语义错误。
 func (s PointStatus) IsCommitted() bool {
 	return s == PointStatusCompleted || s == PointStatusSkipped
 }
@@ -187,17 +191,15 @@ type TraversalRunSnapshot struct {
 }
 
 // Checkpoint 断点恢复信息
-// Config 字段同时写入 Snapshot.Config，读取侧优先读 Config，
-// 为空时回退到 Snapshot.Config（兼容 v2 新路径只写 Snapshot 的场景）。
+//
+// 配置单源真相：Config 只通过 Snapshot.Config 持有，不再保留独立的 []byte 副本。
+// 早期版本同时写入 Config []byte 与 Snapshot.Config 两份，存在双份冗余且
+// 增加同步维护成本；v2 统一从 Snapshot.Config 读取，节省存储空间并避免分歧。
 type Checkpoint struct {
 	Version         int                  `json:"version"`
 	TaskID          string               `json:"taskId"`
 	State           State                `json:"state"`
 	Snapshot        TraversalRunSnapshot `json:"snapshot"`
-	// Config 保存遍历配置的原始 JSON 字节，由 usecase 层通过 json.Marshal 生成。
-	// 使用 []byte 而非 json.RawMessage：core/ 禁止导入 encoding/json（六边形架构硬约束）。
-	// JSON 序列化时 []byte 会编码为 base64 字符串，反序列化时自动解码，仍可正常往返。
-	Config          []byte               `json:"config,omitempty"`
 	CompletedPoints int                  `json:"completedPoints"`
 	TotalPoints     int                  `json:"totalPoints"`
 	LastPoint       *Point               `json:"lastPoint,omitempty"`

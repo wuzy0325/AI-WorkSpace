@@ -307,9 +307,9 @@
     .form-field {
       display: grid;
       /* 整改：固定标签列宽，避免英文标签被压缩换行 */
-      grid-template-columns: 120px minmax(0, 1fr);
+      grid-template-columns: 140px minmax(0, 1fr);
       align-items: start;
-      gap: var(--space-2);
+      gap: var(--space-3);
     }
     .form-field__label {
       padding-top: calc((var(--density-control-height) - var(--line-height-base) * var(--font-size-xs)) / 2);
@@ -321,7 +321,6 @@
       word-break: keep-all;
       overflow-wrap: break-word;
     }
-    .form-field__label:empty { padding-top: 0; }
     .form-field__control {
       min-width: 0;
       display: flex;
@@ -329,10 +328,9 @@
       gap: var(--density-field-inline);
     }
     .form-field__hint {
-      font-size: var(--font-size-micro);
+      font-size: var(--font-size-2xs);
       color: var(--text-tertiary);
       line-height: var(--line-height-base);
-      margin: 0;
     }
     .form-field__error {
       font-size: var(--font-size-2xs);
@@ -370,40 +368,12 @@
     .input-with-unit {
       display: inline-flex;
       align-items: center;
-      gap: var(--space-1);
-      width: 100%;
-    }
-    .input-with-unit .input--number {
-      flex: 1 1 auto;
-      min-width: 3.5rem;
-      max-width: 7rem;
-      width: auto;
+      gap: var(--space-2);
     }
     .input-unit {
       font-size: var(--font-size-xs);
       color: var(--text-muted);
       white-space: nowrap;
-    }
-
-    /* 紧凑型双字段并排：文件滚动保存等短字段 */
-    .form-row--inline {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--space-3);
-    }
-    .form-row--inline .form-field {
-      grid-template-columns: auto minmax(0, 1fr);
-      gap: var(--space-2);
-      align-items: center;
-    }
-    .form-row--inline .form-field__label {
-      text-align: left;
-      padding-top: 0;
-      white-space: nowrap;
-    }
-    .form-row--inline .form-field__control {
-      flex-direction: row;
-      align-items: center;
     }
 
     /* 按钮 */
@@ -526,16 +496,16 @@
 
     /* Slider */
     .slider-row {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
+      display: flex;
       align-items: center;
-      gap: var(--space-2);
+      gap: var(--space-3);
     }
     .slider {
+      flex: 1;
       min-width: 0;
       display: flex;
       flex-direction: column;
-      gap: var(--space-0-5);
+      gap: var(--space-1);
     }
     .slider__track {
       position: relative;
@@ -568,9 +538,8 @@
     .slider__labels {
       display: flex;
       justify-content: space-between;
-      font-size: var(--font-size-micro);
+      font-size: var(--font-size-2xs);
       color: var(--text-muted);
-      line-height: 1.2;
     }
     .slider__recommend {
       color: var(--accent-primary);
@@ -582,14 +551,14 @@
       display: inline-flex;
       align-items: center;
       gap: var(--space-1);
-      padding: 1px var(--space-1-5);
+      padding: var(--space-0-5) var(--space-2);
       border-radius: var(--radius-pill);
       background: var(--accent-primary-muted);
       color: var(--accent-primary);
-      font-size: var(--font-size-micro);
+      font-size: var(--font-size-2xs);
       font-family: var(--font-family-mono);
       font-weight: var(--font-weight-semibold);
-      white-space: nowrap;
+      width: fit-content;
     }
 
     /* 自动停止条件行 */
@@ -749,17 +718,6 @@
         text-align: left;
         padding-top: 0;
       }
-      .form-row--inline {
-        grid-template-columns: 1fr;
-      }
-      .form-row--inline .form-field {
-        grid-template-columns: 1fr;
-        align-items: start;
-      }
-      .form-row--inline .form-field__control {
-        flex-direction: column;
-        align-items: stretch;
-      }
     }
   </style>
 </head>
@@ -768,15 +726,14 @@
   <aside class="audit-note">
     <h2>整改要点</h2>
     <ul>
-      <li>模态宽度固定 <kbd>46rem</kbd>，紧凑且英文不局促</li>
-      <li>左侧标签栏 <kbd>120px</kbd>，标签不顶边</li>
-      <li>表单采用 <kbd>120px 标签列 + 1fr 控件列</kbd>，标签不压缩</li>
+      <li>模态宽度由 <kbd>42rem</kbd> 扩至 <kbd>52rem</kbd>，内容区更宽松</li>
+      <li>左侧标签栏由 <kbd>112px</kbd> 扩至 <kbd>140px</kbd>，英文不顶边</li>
+      <li>表单采用 <kbd>140px 标签列 + 1fr 控件列</kbd> 栅格，英文标签不再被压缩换行</li>
       <li>主题/语言改为分段控制器，节省空间且意图明确</li>
-      <li>文件滚动保存两字段并排，消除右侧大片空白</li>
       <li>自动停止条件行固定三列网格，开关后输入框位置不跳动</li>
       <li>容量预览改为徽章，贴合对应字段</li>
       <li>统一使用 design token，消除硬编码 rgba 与 px</li>
-      <li>小屏响应式：标签栏横向、标签上移、并排字段自动堆叠</li>
+      <li>小屏响应式：标签栏横向、标签上移</li>
     </ul>
   </aside>
 
@@ -902,9 +859,9 @@
                       <input type="number" class="input input--number" value="15" min="1" max="60" />
                       <span class="input-unit" data-i18n="sec">秒</span>
                     </div>
-                    <div class="capacity-badge">
-                      <span data-i18n="pts">点</span>: 75 / 300
-                    </div>
+                  </div>
+                  <div class="capacity-badge">
+                    <span data-i18n="pts">点</span>: 75 / 300
                   </div>
                   <p class="form-field__hint" data-i18n="historyWindowHint">时间窗口 × 刷新率 = 实际缓存点数</p>
                 </div>
@@ -935,17 +892,12 @@
               <div class="form-field">
                 <label class="form-field__label" data-i18n="set_filePrefix">文件前缀</label>
                 <div class="form-field__control">
-                  <input type="text" class="input" value="run" />
+                  <input type="text" class="input" value="run" style="max-width: 12rem;" />
                 </div>
               </div>
-              <div class="form-field">
-                <div class="form-field__label"></div>
-                <div class="form-field__control">
-                  <div class="toggle-row" role="checkbox" aria-checked="false" tabindex="0">
-                    <span class="toggle-row__label" data-i18n="set_autoStartOnAcquisition">采集时自动开始记录</span>
-                    <span class="toggle"></span>
-                  </div>
-                </div>
+              <div class="toggle-row" role="checkbox" aria-checked="false" tabindex="0">
+                <span class="toggle-row__label" data-i18n="set_autoStartOnAcquisition">采集时自动开始记录</span>
+                <span class="toggle"></span>
               </div>
             </div>
           </div>
@@ -959,7 +911,7 @@
                 <span class="toggle toggle--on"></span>
               </div>
             </div>
-            <div class="form-card__body form-row--inline">
+            <div class="form-card__body">
               <div class="form-field">
                 <label class="form-field__label" data-i18n="set_rotationDuration">单文件时长</label>
                 <div class="form-field__control">

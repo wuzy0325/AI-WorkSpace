@@ -259,13 +259,9 @@ function applySavedLayout(layout: TraversalLayout) {
   snakeOrder.value = layout.snakeOrder ?? false
   // 恢复走线主轴：旧 profile 无此字段时落 'y'（保旧行为，避免静默反转物理走线方向）；
   // 新 profile 保存时已显式存 'x' 或 'y'，加载时按持久化值恢复。
-  // line 模式不再消费 primaryAxis（单行点位无走线方向概念），加载时重置为 'x'
-  // 避免持久化的 'y' 误导未来维护者以为 line 仍走 Y 方向。
-  if (layout.pattern === 'line') {
-    primaryAxis.value = 'x'
-  } else {
-    primaryAxis.value = layout.primaryAxis ?? 'y'
-  }
+  // primaryAxis 仅 rectangle 消费（UI 已对 line/sector/custom 隐藏主轴 radio），
+  // 这里按持久化值恢复，用户切回 rectangle 时能找回原选择，不强制清空。
+  primaryAxis.value = layout.primaryAxis ?? 'y'
   if (layout.line) {
     const legacyUsesY = layout.line.startX === layout.line.endX && layout.line.startY !== layout.line.endY
     const xSegments = legacyUsesY ? layout.line.yStepSegments : layout.line.xStepSegments

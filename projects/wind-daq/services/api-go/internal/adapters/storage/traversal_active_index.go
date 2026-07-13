@@ -20,6 +20,12 @@ type traversalActiveIndexFile struct {
 	Tasks   map[string]string `json:"tasks"`
 }
 
+// TraversalActiveIndex 活动遍历任务索引（taskId → checkpointPath）。
+//
+// 编译期接口断言哨兵：确保 TraversalActiveIndex 始终满足 ports.TraversalActiveIndex
+// 接口契约，方法签名漂移会在编译期立即暴露，而非运行期断言失败。
+var _ ports.TraversalActiveIndex = (*TraversalActiveIndex)(nil)
+
 type TraversalActiveIndex struct {
 	mu      sync.Mutex
 	path    string
@@ -89,8 +95,13 @@ func (i *TraversalActiveIndex) Unregister(ctx context.Context, taskID string) er
 	return i.saveLocked(index)
 }
 
+// loadLocked 读取活动索引文件。
+//
+// 通过 store.Read 而非裸 os.ReadFile 读取：store 内部的 RWMutex 与 store.Write
+// 互斥，避免读期间遇到原子替换的临时窗口（tmp rename 到正式路径的间隙）。
+// mu.Lock 已保护本实例并发调用，但 store 锁跨实例共享，防御性更强。
 func (i *TraversalActiveIndex) loadLocked() (traversalActiveIndexFile, error) {
-	data, err := os.ReadFile(i.path)
+	data, err := i.store.Read(i.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return traversalActiveIndexFile{Version: traversalActiveIndexVersion, Tasks: make(map[string]string)}, nil
 	}
@@ -118,6 +129,13 @@ func (i *TraversalActiveIndex) saveLocked(index traversalActiveIndexFile) error 
 	return nil
 }
 
+// validatePath 校验 checkpoint 路径必须位于 dataDir 之内，防止路径遍历攻击
+// （如 taskID 注入 "../../../etc/passwd" 写入系统任意位置）。
+//
+// 边界处理：
+//   - relative == "."：checkpoint 路径等于 dataDir 本身，不是合法文件 → 拒绝
+//   - relative == ".." 或以 "../" 开头：路径逃逸出 dataDir → 拒绝
+//   - filepath.IsAbs(relative)：Windows 上不同盘符会让 Rel 返回绝对路径 → 拒绝
 func (i *TraversalActiveIndex) validatePath(path string) (string, error) {
 	absoluteDataDir, err := filepath.Abs(i.dataDir)
 	if err != nil {
@@ -131,7 +149,7 @@ func (i *TraversalActiveIndex) validatePath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("校验 checkpoint 路径失败: %w", err)
 	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return "", errors.New("checkpoint 路径超出活动遍历数据目录")
 	}
 	return absolutePath, nil

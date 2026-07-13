@@ -31,6 +31,9 @@ type TraversalResultLog struct {
 	taskID string
 }
 
+// 编译期接口断言哨兵：确保 TraversalResultLog 始终满足 ports.TraversalResultLogPort 接口契约。
+var _ ports.TraversalResultLogPort = (*TraversalResultLog)(nil)
+
 func NewTraversalResultLog() *TraversalResultLog {
 	return &TraversalResultLog{}
 }
@@ -47,11 +50,17 @@ func (l *TraversalResultLog) Open(ctx context.Context, session ports.TraversalOu
 	if session.Path == "" || session.TaskID == "" {
 		return errors.New("遍历结果日志路径和任务标识不能为空")
 	}
-	flags := os.O_RDWR | os.O_CREATE
+	var file *os.File
+	var path string
+	var err error
 	if session.Mode == ports.TraversalOutputCreate {
-		flags |= os.O_EXCL
+		// 创建模式：若目标已存在（同一天、同名重跑），自动追加 -2/-3 另存，
+		// 与遍历 CSV 保持一致，避免报错拒绝启动、也不覆盖历史数据。
+		file, path, err = openCreateUnique(session.Path)
+	} else {
+		file, err = os.OpenFile(session.Path, os.O_RDWR, 0o644)
+		path = session.Path
 	}
-	file, err := os.OpenFile(session.Path, flags, 0o644)
 	if err != nil {
 		return fmt.Errorf("打开遍历结果日志失败: %w", err)
 	}
@@ -59,7 +68,7 @@ func (l *TraversalResultLog) Open(ctx context.Context, session ports.TraversalOu
 		_ = file.Close()
 		return fmt.Errorf("定位遍历结果日志末尾失败: %w", err)
 	}
-	l.file, l.writer, l.path, l.taskID = file, bufio.NewWriter(file), session.Path, session.TaskID
+	l.file, l.writer, l.path, l.taskID = file, bufio.NewWriter(file), path, session.TaskID
 	return nil
 }
 

@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.5.0] - 2026-07-13
+
+### Added
+
+- 遍历测点 Point JSON 序列化（`point_json.go`）：NaN↔null 往返契约，支持 line/rectangle/sector 模式未配置轴标记，运动恢复语义完整保留。
+- 遍历输出路径集中管理（`output_path.go`）：`ResolveOutputPath` 统一路径派生，消除 CSV/checkpoint/result log 路径碎片。
+- 跨平台原子文件操作：`atomic_replace.go` 拆分为 `atomic_replace_common.go` / `_unix.go` / `_windows.go`，支持 Windows 平台安全原子替换。
+- 遍历 v2 端口集成测试（`traversal_v2_integration_test.go`，593 行）：覆盖 Resume 截断、ValidateTail 抗损坏、列配置 Open 路径、旧格式兼容性、NaN 往返一致性。
+- 遍历 CSV writer 崩溃恢复可靠存储：表头 fsync 落盘、`openCreateUnique` 自动编号防覆盖、双重初始化防御、`applyConfigLocked` 共享列配置逻辑。
+- 前端 i18n 国际化补充：FiveHoleMain 模板文案、探针校准入口、设备详情面板。
+
+### Changed
+
+- 遍历采集 `commitPointV2` 三阶段提交增加 NaN 清洗（设备层异常防御），Point 字段 NaN 保持运动恢复语义，Calculated 字段 NaN 清洗为 0。
+- 遍历断点重构：`FileCheckpointPort` 增加 `Close` 和 `checkOpen`，`FileCheckpointPortFactory.Create` 接受 `ctx` 参数。
+- 遍历活动索引安全加固：`validatePath` 增加 `.` 禁止和 store-based read，防止路径遍历攻击。
+- 遍历结果日志：`TraversalResultLog.Open` 支持 `openCreateUnique` 自动编号，与 CSV 行为一致。
+- 编译期接口断言哨兵：`TraversalCsvWriter`（2 个：TraversalCSVPort + TraversalPointSink）、`FileCheckpointPort`、`FileCheckpointPortFactory`、`FileCheckpointStore`、`TraversalActiveIndex`、`TraversalResultLog` 共 7 个断言，覆盖 6 个 adapter 文件。
+- 前端设备面板优化：DeviceCard、ChartSelector、DeviceDetailPanel UI 调整。
+
+### Fixed
+
+- 修复遍历 Resume 时旧格式 checkpoint（SavePath=目录）被当文件传给 Open 的 bug，通过 `ResolveOutputPath` 重算修复。
+- 修复遍历 CSV 表头在 v2 Open 路径缺少通道列的问题（`applyConfigLocked` 共享逻辑）。
+- 修复遍历 Resume 时 CSV 文件因已存在直接报错拒绝启动，改为自动编号另存。
+- 修复遍历断点文件在 v2 装配下双重初始化导致句柄泄漏 + 文件残留。
+- 修复 Point JSON 序列化 NaN 导致 `json.Marshal` 返回 "unsupported value: NaN" 错误。
+
+### Internal
+
+- 遍历核心类型 `types.go` 增加 SaveOptions、CustomFields 等结构字段。
+- `ports/traversal.go` 接口扩展（TraversalCSVPort、TraversalCheckpointPort.Close 等）。
+- 遍历 usecase 大幅重构：checkpoint 加载/保存、acquisition 状态管理、session 生命周期。
+- `traversal_checkpoint_test.go` 适配新接口签名。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.4.1] - 2026-07-10
 
 ### Changed

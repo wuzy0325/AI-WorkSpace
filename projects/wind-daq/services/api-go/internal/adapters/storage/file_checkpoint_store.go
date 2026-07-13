@@ -1,13 +1,20 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"sync"
+
+	"wind-daq/services/api-go/internal/ports"
 )
 
 // FileCheckpointStore 基于 os 文件系统的断点存储实现
 // 实现 ports.CheckpointStore，封装断点文件的字节 I/O。
 // usecase 通过 port 接口调用，避免直接 import os。
+//
+// 编译期接口断言哨兵：确保 FileCheckpointStore 始终满足 ports.CheckpointStore 接口契约。
+var _ ports.CheckpointStore = (*FileCheckpointStore)(nil)
+
 type FileCheckpointStore struct {
 	mu sync.RWMutex
 }
@@ -18,6 +25,9 @@ func NewFileCheckpointStore() *FileCheckpointStore {
 }
 
 // Stat 返回路径是否存在
+// 错误检查统一用 errors.Is(err, os.ErrNotExist)，与同包 traversal_active_index.go /
+// traversal_csv_writer.go 保持一致；os.IsNotExist 在 Go 1.16+ 已被弃用且不能识别
+// 包装错误（fmt.Errorf("...: %w", os.ErrNotExist)）。
 func (s *FileCheckpointStore) Stat(path string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -25,7 +35,7 @@ func (s *FileCheckpointStore) Stat(path string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	return false, err
@@ -54,7 +64,7 @@ func (s *FileCheckpointStore) Remove(path string) error {
 	if err == nil {
 		return nil
 	}
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err

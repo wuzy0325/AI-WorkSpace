@@ -196,11 +196,8 @@ func TestSaveAndLoadCheckpoint(t *testing.T) {
 		t.Errorf("expected savePath %q, got %q", savePath, cp.SavePath)
 	}
 
-	// 验证 Config 字段可反序列化为原始配置
-	var restoredConfig traversal.Config
-	if err := json.Unmarshal(cp.Config, &restoredConfig); err != nil {
-		t.Fatalf("unmarshal checkpoint config failed: %v", err)
-	}
+	// 验证 Snapshot.Config 可还原为原始配置（P0-C4：Config 单源真相）
+	restoredConfig := cp.Snapshot.Config
 	if restoredConfig.TaskID != config.TaskID {
 		t.Errorf("restored config taskId mismatch: %q vs %q", restoredConfig.TaskID, config.TaskID)
 	}
@@ -310,7 +307,6 @@ func TestResumeFromCheckpoint(t *testing.T) {
 	savePath := filepath.Join(tmpDir, "result.csv")
 
 	config := makeTestConfig(savePath)
-	configRaw, _ := json.Marshal(config)
 
 	// 预置 store 中已有 1 个已完成点的结果（模拟之前中断时的状态）
 	prevStatus := traversal.Status{
@@ -324,7 +320,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 
 	cp := traversal.Checkpoint{
 		TaskID:          config.TaskID,
-		Config:          configRaw,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 1, CommitSeq: 1, CSVPath: savePath},
 		CompletedPoints: 1,
 		TotalPoints:     3,
 		LastPoint:       &config.Path[0],
@@ -371,7 +367,7 @@ func TestResumeFromCheckpointInvalid(t *testing.T) {
 	}{
 		{
 			name: "empty taskId",
-			cp:   traversal.Checkpoint{CompletedPoints: 0, TotalPoints: 3, Config: json.RawMessage(`{}`)},
+			cp:   traversal.Checkpoint{CompletedPoints: 0, TotalPoints: 3},
 			err:  "checkpoint taskId is required",
 		},
 		{
@@ -381,7 +377,7 @@ func TestResumeFromCheckpointInvalid(t *testing.T) {
 		},
 		{
 			name: "completedPoints out of range (negative)",
-			cp:   traversal.Checkpoint{TaskID: "t1", CompletedPoints: -1, TotalPoints: 3, Config: json.RawMessage(`{}`)},
+			cp:   traversal.Checkpoint{TaskID: "t1", CompletedPoints: -1, TotalPoints: 3},
 			err:  "checkpoint completedPoints out of range",
 		},
 	}
@@ -406,11 +402,10 @@ func TestResumeFromCheckpointAlreadyCompleted(t *testing.T) {
 	savePath := filepath.Join(tmpDir, "result.csv")
 
 	config := makeTestConfig(savePath)
-	configRaw, _ := json.Marshal(config)
 
 	cp := traversal.Checkpoint{
 		TaskID:          config.TaskID,
-		Config:          configRaw,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 3, CommitSeq: 3, CSVPath: savePath},
 		CompletedPoints: 3, // 等于总点数
 		TotalPoints:     3,
 		SavePath:        savePath,

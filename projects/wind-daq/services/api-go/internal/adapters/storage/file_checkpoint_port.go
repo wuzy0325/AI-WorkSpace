@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"sync"
 
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
@@ -12,10 +12,20 @@ import (
 
 // FileCheckpointPort 将底层 CheckpointStore（字节 I/O）适配为 TraversalCheckpointPort。
 // 负责 JSON 序列化/反序列化和路径构造，使 usecase 层不直接操作文件路径。
+//
+// 资源语义：底层 CheckpointStore（字节 I/O）无持久句柄，每次 Save/Load 都通过
+// store.Read/Write 短暂打开文件。Close 仅标记 closed 状态防止误用，不释放句柄。
 type FileCheckpointPort struct {
 	store    ports.CheckpointStore
 	basePath string // checkpoint 文件基础路径（通常取自 SavePath）
+
+	mu     sync.RWMutex
+	closed bool // Close 后拒绝后续 Save/Load/Find/Unregister，避免使用已释放端口
 }
+
+// 编译期接口断言：确保 FileCheckpointPort 始终满足 ports.TraversalCheckpointPort 契约。
+// 接口方法签名变更时立即在编译期暴露，避免运行期才发现缺失方法。
+var _ ports.TraversalCheckpointPort = (*FileCheckpointPort)(nil)
 
 // NewFileCheckpointPort 创建文件系统断点端口适配器。
 // basePath 为 checkpoint 文件的基础路径（如 SavePath），实际文件名为 basePath + ".checkpoint.json"。
@@ -26,8 +36,7 @@ func NewFileCheckpointPort(store ports.CheckpointStore, basePath string) *FileCh
 
 // path 返回 checkpoint 文件路径。
 // basePath 已包含任务唯一性（来自 SavePath），无需额外拼 taskID。
-// taskID 参数保留用于未来扩展（如多任务同目录场景）。
-func (p *FileCheckpointPort) path(taskID string) string {
+func (p *FileCheckpointPort) path() string {
 	return p.basePath + ".checkpoint.json"
 }
 
@@ -36,11 +45,14 @@ func (p *FileCheckpointPort) Save(ctx context.Context, checkpoint traversal.Chec
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := p.checkOpen(); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(checkpoint, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}
-	if err := p.store.Write(p.path(checkpoint.TaskID), data); err != nil {
+	if err := p.store.Write(p.path(), data); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 	return nil
@@ -51,14 +63,17 @@ func (p *FileCheckpointPort) Load(ctx context.Context, taskID string) (traversal
 	if err := ctx.Err(); err != nil {
 		return traversal.Checkpoint{}, err
 	}
-	exists, err := p.store.Stat(p.path(taskID))
+	if err := p.checkOpen(); err != nil {
+		return traversal.Checkpoint{}, err
+	}
+	exists, err := p.store.Stat(p.path())
 	if err != nil {
 		return traversal.Checkpoint{}, fmt.Errorf("stat checkpoint: %w", err)
 	}
 	if !exists {
 		return traversal.Checkpoint{}, fmt.Errorf("checkpoint not found for task %s", taskID)
 	}
-	data, err := p.store.Read(p.path(taskID))
+	data, err := p.store.Read(p.path())
 	if err != nil {
 		return traversal.Checkpoint{}, fmt.Errorf("read checkpoint: %w", err)
 	}
@@ -74,7 +89,10 @@ func (p *FileCheckpointPort) Find(ctx context.Context, taskID string) (ports.Tra
 	if err := ctx.Err(); err != nil {
 		return ports.TraversalCheckpointRef{}, false, err
 	}
-	cpPath := p.path(taskID)
+	if err := p.checkOpen(); err != nil {
+		return ports.TraversalCheckpointRef{}, false, err
+	}
+	cpPath := p.path()
 	exists, err := p.store.Stat(cpPath)
 	if err != nil {
 		return ports.TraversalCheckpointRef{}, false, fmt.Errorf("stat checkpoint: %w", err)
@@ -90,14 +108,36 @@ func (p *FileCheckpointPort) Unregister(ctx context.Context, taskID string) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.store.Remove(p.path(taskID)); err != nil {
+	if err := p.checkOpen(); err != nil {
+		return err
+	}
+	if err := p.store.Remove(p.path()); err != nil {
 		return fmt.Errorf("remove checkpoint: %w", err)
 	}
 	return nil
 }
 
-// ResolveCheckpointPath 根据 basePath 和 taskID 解析 checkpoint 路径。
-// 供装配根在注入 SetCheckpointPort 时使用，确保路径与 FileCheckpointPort 内部一致。
-func ResolveCheckpointPath(basePath string) string {
-	return filepath.Base(basePath) + ".checkpoint.json"
+// Close 标记端口为已关闭。FileCheckpointPort 无底层句柄资源，Close 仅做状态标记，
+// 防止任务结束后误用已 Close 的端口（如 finalizeSink 重入时再次 Save）。
+// 幂等：重复调用返回 nil。
+func (p *FileCheckpointPort) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	return nil
+}
+
+// checkOpen 在锁外读取 closed 标志，已 Close 时返回错误。
+// 用 RLock 而非 mu.Lock 是为了与 Save/Load 等读路径并发安全；
+// closed 标志一旦置 true 不会回退，读后立即释放锁是安全的。
+func (p *FileCheckpointPort) checkOpen() error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.closed {
+		return fmt.Errorf("checkpoint port already closed")
+	}
+	return nil
 }

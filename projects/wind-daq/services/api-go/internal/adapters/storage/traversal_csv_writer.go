@@ -33,13 +33,24 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // TraversalCsvWriter 遍历测试 CSV 写入器
 // 每完成一个测试点追加写入一行；Stop/Complete 时关闭文件
+//
+// 编译期接口断言哨兵：
+//   - 同时实现 ports.TraversalCSVPort（v2 路径，支持 Open/Append/Sync/Truncate/Close）
+//   - 兼容实现 ports.TraversalPointSink（旧路径，InitializeTraversal/WriteTraversalPoint/FinalizeTraversal）
+//
+// 装配根将同一实例注入两个端口，让 usecase 通过 sinkIsCsvPort 检测同实例并跳过重复调用。
 type TraversalCsvWriter struct {
 	mu      sync.Mutex
 	file    *os.File
 	writer  *csv.Writer
 	path    string
 	options traversal.SaveOptions
-	// labels 通道索引→标签（如 0→P1, 16→Patm），用于稳定输出列顺序
+	// broken 标记 sink 已进入不可恢复的损坏状态（truncateAfterLocked 在 atomicReplaceFile
+	// 或重新 OpenFile 失败后置 true）。此时文件可能已被改写但 sink 内部无句柄，
+	// 后续 Append/Sync/Inspect/Close 必须拒绝并返回明确错误，避免静默成功掩盖损坏。
+	// Open 在新会话开始时重置为 false。
+	broken bool
+	// labels  通道索引→标签（如 0→P1, 16→Patm），用于稳定输出列顺序
 	labels []labelEntry
 	// customFieldNames 已排序的自定义字段名，保证列顺序稳定
 	customFieldNames []string
@@ -48,6 +59,11 @@ type TraversalCsvWriter struct {
 	commitSeq        uint64
 	headerHash       string
 }
+
+var (
+	_ ports.TraversalCSVPort    = (*TraversalCsvWriter)(nil)
+	_ ports.TraversalPointSink  = (*TraversalCsvWriter)(nil)
+)
 
 // labelEntry 单个标签列的元信息
 type labelEntry struct {
@@ -72,7 +88,12 @@ func (w *TraversalCsvWriter) Open(ctx context.Context, session ports.TraversalOu
 	if session.Path == "" {
 		return errors.New("遍历 CSV 路径不能为空")
 	}
-	w.options = traversal.SaveOptions{SavePointId: true, SaveTimestamp: true, SaveRawPressure: true, SaveCalculatedResult: true}
+	// 新会话开始：重置 broken 标志（前一会话的损坏状态不带入新会话）
+	w.broken = false
+	// 应用列配置：v2 Open 路径必须构建与 InitializeTraversal 一致的 labels /
+	// customFieldNames / header，否则 v2 主路径表头会缺少通道列、Resume 时
+	// HeaderHash 校验也会失败。applyConfigLocked 与 InitializeTraversal 共享逻辑。
+	w.applyConfigLocked(session.SaveOptions, session.Channels, session.ChannelLabels)
 	w.header = w.buildHeader()
 	w.headerHash = hashCSVRecord(w.header)
 	if session.HeaderHash != "" && session.HeaderHash != w.headerHash {
@@ -90,6 +111,9 @@ func (w *TraversalCsvWriter) Append(ctx context.Context, result traversal.PointR
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.broken {
+		return ports.TraversalRowSummary{}, errors.New("遍历 CSV 写入器已损坏，不可恢复（truncate 失败后 sink 无句柄）")
+	}
 	if w.writer == nil || w.file == nil {
 		return ports.TraversalRowSummary{}, errors.New("遍历 CSV 写入器未初始化")
 	}
@@ -112,6 +136,9 @@ func (w *TraversalCsvWriter) Sync(ctx context.Context) error {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.broken {
+		return errors.New("遍历 CSV 写入器已损坏，不可恢复（truncate 失败后 sink 无句柄）")
+	}
 	if w.writer == nil || w.file == nil {
 		return errors.New("遍历 CSV 写入器未初始化")
 	}
@@ -130,6 +157,9 @@ func (w *TraversalCsvWriter) Inspect(ctx context.Context) (ports.TraversalOutput
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.broken {
+		return ports.TraversalOutputState{}, errors.New("遍历 CSV 写入器已损坏，不可恢复（truncate 失败后 sink 无句柄）")
+	}
 	if w.file == nil {
 		return ports.TraversalOutputState{}, errors.New("遍历 CSV 写入器未初始化")
 	}
@@ -158,24 +188,56 @@ func (w *TraversalCsvWriter) openCreateLocked(path string) error {
 			return fmt.Errorf("创建遍历输出目录失败: %w", err)
 		}
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	// 以 O_EXCL 创建目标文件；若已存在（同一天、同名重跑），自动追加 -2/-3
+	// 生成唯一文件，避免静默覆盖历史数据，也不再以报错拒绝启动。
+	file, finalPath, err := openCreateUnique(path)
 	if err != nil {
-		return fmt.Errorf("创建遍历 CSV 文件失败: %w", err)
+		return err
 	}
-	w.file, w.path, w.writer = file, path, csv.NewWriter(file)
+	w.file, w.path, w.writer = file, finalPath, csv.NewWriter(file)
 	if _, err := file.Write(utf8BOM); err != nil {
 		_ = file.Close()
+		_ = os.Remove(finalPath) // 失败时清理已创建文件，避免残留空文件污染数据目录
+		w.file, w.writer = nil, nil
 		return fmt.Errorf("写入 BOM 失败: %w", err)
 	}
 	if err := w.writer.Write(w.header); err != nil {
 		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
 		return fmt.Errorf("写入遍历 CSV 表头失败: %w", err)
 	}
 	if err := w.flushLocked("刷新遍历 CSV 表头失败"); err != nil {
 		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
 		return err
 	}
+	// 表头落盘：本次提交核心目标是"崩溃恢复与可靠存储"，
+	// 若仅 flush（用户态缓冲）不 fsync（OS page cache），崩溃后表头丢失会让
+	// 恢复时 readCSVRecords 因缺 BOM 或表头损坏而失败。
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
+		return fmt.Errorf("同步遍历 CSV 表头失败: %w", err)
+	}
 	return nil
+}
+
+// openCreateUnique 以 O_EXCL 创建目标文件；若目标已存在（如同一天、同名重跑），
+// 自动追加 -2/-3 后缀生成唯一文件，保护历史实验数据不被覆盖。
+// 返回已打开的文件句柄与最终使用的（可能带后缀的）路径。
+func openCreateUnique(path string) (*os.File, string, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err == nil {
+		return f, path, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return nil, "", fmt.Errorf("创建遍历 CSV 文件失败: %w", err)
+	}
+	// 目标已存在：自动编号另存，与 legacy InitializeTraversal 行为一致
+	return createUniqueFile(path)
 }
 
 func (w *TraversalCsvWriter) openResumeLocked(session ports.TraversalOutputSession) error {
@@ -252,17 +314,23 @@ func (w *TraversalCsvWriter) truncateAfterLocked(commitSeq uint64) error {
 
 	// 原子替换原文件
 	if err := atomicReplaceFile(w.path, buffer.Bytes(), 0o644); err != nil {
-		// 原子替换失败后，writer 已无效，调用方应停止使用本 sink
+		// 原子替换失败：文件可能已被改写也可能未变，但 sink 无句柄且无法重新打开，
+		// 标记 broken 让后续 Append/Sync/Inspect/Close 拒绝静默成功。
+		// 调用方应停止使用本 sink 并触发任务 abort。
+		w.broken = true
 		return fmt.Errorf("原子替换遍历 CSV 失败: %w", err)
 	}
 
 	// 重新以追加模式打开文件，定位到末尾
 	file, err := os.OpenFile(w.path, os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
+		// 重新打开失败：文件已替换为新内容但 sink 无法继续写入，标记 broken
+		w.broken = true
 		return fmt.Errorf("重新打开遍历 CSV 文件失败: %w", err)
 	}
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
 		_ = file.Close()
+		w.broken = true
 		return fmt.Errorf("定位遍历 CSV 末尾失败: %w", err)
 	}
 	w.file = file
@@ -307,35 +375,51 @@ func hashCSVRecord(record []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// resolveOutputPath 根据 SavePath/SaveFileName/TaskID 计算最终 CSV 文件路径
-//   - SavePath 为目录或为空 → 拼接 saveFileName / 默认名 + .csv
-//   - SavePath 已经带 .csv → 直接使用
+// resolveOutputPath 委托给 core/traversal.ResolveOutputPath，避免路径拼接逻辑重复。
 func resolveOutputPath(cfg traversal.Config) string {
-	savePath := cfg.SavePath
-	saveName := cfg.SaveFileName
-	if saveName == "" {
-		saveName = fmt.Sprintf("traversal_%s", cfg.TaskID)
-	}
-	if savePath == "" {
-		// 空路径回退到当前工作目录
-		if filepath.Ext(saveName) != ".csv" {
-			saveName += ".csv"
+	return traversal.ResolveOutputPath(cfg)
+}
+
+// applyConfigLocked 应用列配置（SaveOptions + Channels + ChannelLabels），
+// 设置 w.options / w.labels / w.customFieldNames。
+//
+// Open 与 InitializeTraversal 共享此方法，保证 v2 路径与旧 sink 路径
+// 表头构建一致：相同输入 → 相同 labels 顺序 → 相同 HeaderHash。
+//
+// 调用约束：必须持 w.mu。
+func (w *TraversalCsvWriter) applyConfigLocked(opts *traversal.SaveOptions, channels []int, labels map[int]string) {
+	// 默认所有列都开启（兼容前端未传 saveOptions 的情况）
+	if opts != nil {
+		w.options = *opts
+	} else {
+		w.options = traversal.SaveOptions{
+			SavePointId:          true,
+			SaveTimestamp:        true,
+			SaveRawPressure:      true,
+			SaveCalculatedResult: true,
 		}
-		return saveName
 	}
-	if filepath.Ext(savePath) == ".csv" {
-		return savePath
-	}
-	if filepath.Ext(saveName) != ".csv" {
-		saveName += ".csv"
-	}
-	return filepath.Join(savePath, saveName)
+	// 通道→标签列表（稳定排序）：先按已知标签优先级，再按通道索引兜底
+	w.labels = buildLabelEntries(channels, labels)
+	// 自定义字段：按字典序固定列顺序（避免每次 map 遍历顺序变动）
+	w.customFieldNames = enabledCustomFieldNames(w.options.CustomFields)
 }
 
 // InitializeTraversal 创建文件并写入表头
+//
+// 双重初始化防御（v2 装配下关键）：
+// 装配根（bootstrap.go / appcontext/context.go）把同一个 TraversalCsvWriter
+// 实例同时注入为旧 TraversalPointSink 与新 TraversalCSVPort。Start 路径会先调用
+// csvPort.Open 创建文件 A，再调用 sink.InitializeTraversal；若不防御，createUniqueFile
+// 会因 A 已存在生成 -2 后缀的文件 B 并直接覆盖 w.file，导致 fileA 句柄泄漏 +
+// 残留垃圾 CSV + 状态机不一致。检测到已打开直接返回错误，让调用方感知并修正装配。
 func (w *TraversalCsvWriter) InitializeTraversal(cfg traversal.Config) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// 双重初始化防御：csvPort.Open 已创建文件时拒绝再次初始化
+	if w.file != nil {
+		return errors.New("遍历 CSV 会话已打开，拒绝重复初始化")
+	}
 
 	if cfg.SavePath == "" && cfg.SaveFileName == "" {
 		// 用户未指定输出文件 → 不写盘（视为禁用 sink）
@@ -345,22 +429,8 @@ func (w *TraversalCsvWriter) InitializeTraversal(cfg traversal.Config) error {
 		return nil
 	}
 
-	// 默认所有列都开启（兼容前端未传 saveOptions 的情况）
-	if cfg.SaveOptions != nil {
-		w.options = *cfg.SaveOptions
-	} else {
-		w.options = traversal.SaveOptions{
-			SavePointId:          true,
-			SaveTimestamp:        true,
-			SaveRawPressure:      true,
-			SaveCalculatedResult: true,
-		}
-	}
-
-	// 通道→标签列表（稳定排序）：先按已知标签优先级，再按通道索引兜底
-	w.labels = buildLabelEntries(cfg.Channels, cfg.ChannelLabels)
-	// 自定义字段：按字典序固定列顺序（避免每次 map 遍历顺序变动）
-	w.customFieldNames = enabledCustomFieldNames(w.options.CustomFields)
+	// 共享列配置应用逻辑（与 Open 路径一致）
+	w.applyConfigLocked(cfg.SaveOptions, cfg.Channels, cfg.ChannelLabels)
 
 	basePath := resolveOutputPath(cfg)
 	if dir := filepath.Dir(basePath); dir != "." && dir != "" {
@@ -380,14 +450,33 @@ func (w *TraversalCsvWriter) InitializeTraversal(cfg traversal.Config) error {
 
 	// 首行写 UTF-8 BOM，Excel 等环境才能识别 UTF-8 中文
 	if _, err := file.Write(utf8BOM); err != nil {
+		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
 		return fmt.Errorf("写入 BOM 失败: %w", err)
 	}
 
 	header := w.buildHeader()
 	if err := w.writer.Write(header); err != nil {
+		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
 		return fmt.Errorf("写入遍历 CSV 表头失败: %w", err)
 	}
-	return w.flushLocked("刷新遍历 CSV 表头失败")
+	if err := w.flushLocked("刷新遍历 CSV 表头失败"); err != nil {
+		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
+		return err
+	}
+	// 表头 fsync：崩溃后表头不丢失，resume 时 readCSVRecords 才能成功
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(finalPath)
+		w.file, w.writer = nil, nil
+		return fmt.Errorf("同步遍历 CSV 表头失败: %w", err)
+	}
+	return nil
 }
 
 // createUniqueFile 在 basePath 已存在时，在文件名 stem 后追加 -2/-3/... 自增直到找到空位
