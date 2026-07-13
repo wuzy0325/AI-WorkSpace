@@ -137,11 +137,11 @@ type TraversalManager struct {
 	// resultLogPort JSONL 完整结果日志端口（支持 AppendPrepared、Sync、ValidateTail）
 	// checkpointPortFactory 结构化断点端口工厂（按 SavePath 动态创建，支持 Save/Load/Find/Unregister）
 	// activeIndex   活动任务索引（taskId → checkpointPath），支持进程重启发现
-	csvPort              ports.TraversalCSVPort
-	resultLogPort        ports.TraversalResultLogPort
-	checkpointPort       ports.TraversalCheckpointPort // 当前活动任务的断点端口（Start 时动态创建）
+	csvPort               ports.TraversalCSVPort
+	resultLogPort         ports.TraversalResultLogPort
+	checkpointPort        ports.TraversalCheckpointPort // 当前活动任务的断点端口（Start 时动态创建）
 	checkpointPortFactory ports.TraversalCheckpointPortFactory
-	activeIndex          ports.TraversalActiveIndex
+	activeIndex           ports.TraversalActiveIndex
 }
 
 // 遍历配置持久化存储的 key
@@ -329,6 +329,12 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 // 这两项替代了旧版"DAQ hub 是否注入"对运行态的失真反映——hub 注入只代表基础设施
 // 就绪，不代表目标设备正在持续产帧。新增两项让"全部通过"真实可信赖。
 // acquisitionController 为 nil（旧装配）时保持原 4 项检查不变，向后兼容。
+//
+// 运动控制器连接态校验（m.motion 非 nil 时启用）：
+//   - Motion 项 passed 同时要求"端口已注入"且"至少有一个 Connected=true 的控制器"。
+//   - 遍历测试运行时不绑定特定 motion ID，按 StatusAll 遍历所有已连接控制器调度，
+//     故"目标控制器"语义为"至少一个已连接"。仅查 m.motion != nil 会让"端口注入但
+//     实际全部离线"的配置通过前置检查（假绿），到 RunCurrentPoint 才发现无可用控制器。
 func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
 	hasInterpolator := m.HasLoadedInterpolator()
 	hasMotion := m.motion != nil
@@ -398,9 +404,33 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 		}
 	}
 
+	// 运动控制器连接态校验：仅当端口注入时启用，避免旧装配回归。
+	// 与 DeviceConnected 同理——仅查端口注入会让"已装配但全部离线"的配置假绿通过。
+	// StatusAll 加 2s 超时保护：前置检查在用户点击"开始"后立即触发，UI 响应敏感；
+	// 若实现内部 TCP 超时（典型 5~30s）会让确认对话框长时间无响应。
+	// ctx.WithTimeout 在 StatusAll 实现支持 ctx 取消时才生效，但即使不支持，
+	// 也不会比现状更差——RunCurrentPoint 同样以 ctx.Background 调用 StatusAll。
+	motionConnected := true
+	motionMessage := "Motion manager is available"
+	if hasMotion {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		statuses := m.motion.StatusAll(ctx)
+		cancel()
+		motionConnected = false
+		for _, s := range statuses {
+			if s.Connected {
+				motionConnected = true
+				break
+			}
+		}
+		if !motionConnected {
+			motionMessage = "No motion controller is connected, please connect one first"
+		}
+	}
+
 	checks := []map[string]any{
 		{"name": "PRB", "passed": hasInterpolator, "message": prbMessage},
-		{"name": "Motion", "passed": hasMotion, "message": "Motion manager is available"},
+		{"name": "Motion", "passed": hasMotion && motionConnected, "message": motionMessage},
 		{"name": "DAQ", "passed": hasReader, "message": "DAQ acquisition hub is available"},
 		{"name": "ChannelMap", "passed": channelMapPassed, "message": channelMapMessage},
 	}
@@ -414,7 +444,9 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	// 会在启动 loop 之前主动调用 StartAcquisition 拉起采集。该项仅用于提示用户
 	// "将自动启动"，而非阻止开始测试。DeviceConnected 仍必须纳入 allPassed，
 	// 因为未连接时无法通过任何自动操作恢复。
-	allPassed := hasInterpolator && hasMotion && hasReader && channelMapPassed
+	// Motion 项 passed 同时纳入"端口注入"与"已连接"两个条件：未连接的运动控制器
+	// 无法通过自动操作恢复（与 DeviceAcquiring 不同），必须阻塞用户开始测试。
+	allPassed := hasInterpolator && hasMotion && motionConnected && hasReader && channelMapPassed
 	if acqController != nil {
 		allPassed = allPassed && deviceConnected
 	}
@@ -674,8 +706,9 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 //
 // Create 模式：仅 Open，不截断。
 // Resume 模式：Open 后对结果日志执行 ValidateTail + TruncateAfter，
-//   丢弃崩溃前未 Sync 的半写入记录，水位严格对齐 CommittedSeq。
-//   CSV 截断由 csvPort.Open 内部根据 CommittedSeq 完成（openResumeLocked）。
+//
+//	丢弃崩溃前未 Sync 的半写入记录，水位严格对齐 CommittedSeq。
+//	CSV 截断由 csvPort.Open 内部根据 CommittedSeq 完成（openResumeLocked）。
 //
 // 列配置（SaveOptions/Channels/ChannelLabels）从 config 复制到 session，
 // 让 csvPort.Open 构建与 InitializeTraversal 一致的表头/labels，避免 v2 主路径

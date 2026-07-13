@@ -22,7 +22,7 @@ func resolveTestCheckpointPath(savePath string) string {
 	base := strings.TrimSuffix(savePath, ext)
 	dir := filepath.Dir(base)
 	stem := filepath.Base(base)
-	return filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+	return filepath.Join(dir, ".traversal", stem+".checkpoint.json")
 }
 
 // ===== 测试用 mock 实现 =====
@@ -39,8 +39,13 @@ func (r *mockLatestDataReader) GetLatestData(deviceID string) (device.DataPayloa
 
 func (r *mockLatestDataReader) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
 
-// mockMotionAccess 模拟运动控制访问，记录 MoveTo 调用并返回静止状态
+// mockMotionAccess 模拟运动控制访问，记录 MoveTo 调用并返回静止状态。
+//
+// statuses 字段用于覆写 StatusAll 返回值：未设置时回退默认（单个 Connected=true
+// 控制器），设置后原样返回。新测试用例（如"运动控制器未连接"前置检查）通过
+// 显式注入 statuses 模拟断开场景，原有测试不设置该字段即可保持旧行为。
 type mockMotionAccess struct {
+	statuses    []motion.ControllerStatus
 	moveToCalls []struct {
 		id       string
 		axis     motion.AxisName
@@ -49,6 +54,9 @@ type mockMotionAccess struct {
 }
 
 func (m *mockMotionAccess) StatusAll(ctx context.Context) []motion.ControllerStatus {
+	if m.statuses != nil {
+		return m.statuses
+	}
 	return []motion.ControllerStatus{
 		{ID: "mc-1", Connected: true, Axes: []motion.AxisStatus{
 			{Name: motion.AxisX, Position: 0, Homed: true, Moving: false},

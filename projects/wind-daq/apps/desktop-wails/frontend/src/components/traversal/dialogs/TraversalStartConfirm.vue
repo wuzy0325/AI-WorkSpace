@@ -39,6 +39,7 @@ const { t } = storeToRefs(useI18nStore())
 const MESSAGE_I18N: Record<string, string> = {
   'Load PRB or calibration CSV before running interpolation': 'checkPRBMessage',
   'Motion manager is available': 'checkMotionMessage',
+  'No motion controller is connected, please connect one first': 'checkMotionNotConnected',
   'DAQ acquisition hub is available': 'checkDAQMessage',
   'All required channel labels are mapped': 'checkChannelMapOk',
   'Patm channel label is required for pressure normalization': 'checkChannelMapFailPatm',

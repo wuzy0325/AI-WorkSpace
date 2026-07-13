@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
@@ -534,9 +535,9 @@ func indexOf(s, sub string) int {
 // 按 deviceID 返回预设 connected / acquiring / startErr；
 // 调用 StartAcquisition 时计 startCalls，便于断言主动启动是否触发。
 type mockAcquisitionController struct {
-	connected map[string]bool
-	acquiring map[string]bool
-	startErr  error
+	connected  map[string]bool
+	acquiring  map[string]bool
+	startErr   error
 	startCalls []string
 }
 
@@ -727,6 +728,89 @@ func TestCheckPreconditions_DeviceAcquiring(t *testing.T) {
 	deviceAcq := findCheck(checks, "DeviceAcquiring")
 	if deviceAcq["passed"] != true {
 		t.Errorf("DeviceAcquiring passed: expect true (acquiring), got %v", deviceAcq["passed"])
+	}
+}
+
+// TestCheckPreconditions_MotionConnected 运动控制器已连接。
+//
+// 测试前置：
+//   - TraversalManager 实例，注入 mockMotionAccess（StatusAll 默认返回 Connected=true 的控制器）
+//   - config.ChannelLabels 齐全
+//   - 未注入 reader / interpolator / acquisitionController，避免其他项干扰
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(config)
+//
+// 期待结果：
+//   - Motion 项 passed=true
+//   - Motion 项 message 为 "Motion manager is available"
+func TestCheckPreconditions_MotionConnected(t *testing.T) {
+	motionAccess := &mockMotionAccess{}
+	mgr := NewTraversalManager(nil, motionAccess, nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+
+	cfg := &traversal.Config{ChannelLabels: map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	motionCheck := findCheck(checks, "Motion")
+	if motionCheck == nil {
+		t.Fatalf("expected Motion check item, got nil")
+	}
+	if motionCheck["passed"] != true {
+		t.Errorf("Motion passed: expect true (controller connected), got %v", motionCheck["passed"])
+	}
+	msg, _ := motionCheck["message"].(string)
+	if msg != "Motion manager is available" {
+		t.Errorf("Motion message: expect 'Motion manager is available', got %q", msg)
+	}
+}
+
+// TestCheckPreconditions_MotionNotConnected 运动控制器已注入但全部未连接。
+//
+// 测试前置：
+//   - TraversalManager 实例，注入 mockMotionAccess（StatusAll 返回单个 Connected=false 控制器）
+//   - config.ChannelLabels 齐全
+//   - 注入 mockInterpolator 让 PRB 项通过，使 allPassed 仅受 Motion 项影响
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(config)
+//
+// 期待结果：
+//   - Motion 项 passed=false
+//   - Motion 项 message 包含 "not connected"
+//   - allPassed=false（未连接的运动控制器无法自动恢复，必须阻塞开始测试）
+func TestCheckPreconditions_MotionNotConnected(t *testing.T) {
+	motionAccess := &mockMotionAccess{
+		statuses: []motion.ControllerStatus{
+			{ID: "mc-1", Connected: false},
+		},
+	}
+	mgr := NewTraversalManager(nil, motionAccess, nil, nil, nil)
+	mgr.SetInterpolator(&mockInterpolator{})
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+
+	cfg := &traversal.Config{ChannelLabels: map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	motionCheck := findCheck(checks, "Motion")
+	if motionCheck == nil {
+		t.Fatalf("expected Motion check item, got nil")
+	}
+	if motionCheck["passed"] != false {
+		t.Errorf("Motion passed: expect false (no controller connected), got %v", motionCheck["passed"])
+	}
+	msg, _ := motionCheck["message"].(string)
+	if !contains(msg, "No motion controller") {
+		t.Errorf("Motion message: expect contains 'No motion controller', got %q", msg)
+	}
+	if result["allPassed"] != false {
+		t.Errorf("allPassed: expect false (motion not connected must block start), got %v", result["allPassed"])
 	}
 }
 
