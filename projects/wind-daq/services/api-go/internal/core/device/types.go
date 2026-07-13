@@ -50,6 +50,27 @@ const (
 	P1604PrePressureChannelCount = 16
 )
 
+// IsAtmosphericChannel 判断指定设备类型的通道是否为大气压/大气温度辅助通道。
+//
+// DAQ-P-1604 / DAQ-P-1604Pre 的 Index 16/17 为大气辅助通道（环境量），典型值
+// 大气压 ~101325 Pa、大气温度 ~25 ℃，与常规测量通道（±5000 Pa 量级）物理含义不同。
+// 这类通道不得参与校零——若被校零，采样均值 ~101325 Pa 会被写入 CalibrationOffset，
+// 后续采集时 CalibrationApplier 减去该偏移，导致大气压读数恒为 ~0，完全失真。
+//
+// 与前端 shouldDisableTare（DeviceDetailPanel.vue）逻辑对齐，避免前端禁用了单通道
+// 校零按钮、后端却在"设备级校零/全部校零"（targetChannel==nil）路径上误校零。
+//
+// 其他设备类型（DAQ-P-1603 / DAQ-T-1603 / DSA3217 / WTN_PXI / SIMULATED）
+// 无大气辅助通道，统一返回 false。
+func IsAtmosphericChannel(profileType Type, channelIndex int) bool {
+	switch profileType {
+	case DeviceDAQP1604, DeviceDAQP1604Pre:
+		return channelIndex == P1604PreAtmChannelIndex || channelIndex == P1604PreAtmTempChannelIndex
+	default:
+		return false
+	}
+}
+
 type Connection string
 
 const (

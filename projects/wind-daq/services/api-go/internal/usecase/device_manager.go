@@ -812,6 +812,13 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 			m.mu.Unlock()
 			return nil, fmt.Errorf("invalid channel index: %d", *targetChannel)
 		}
+		// 大气压/大气温度辅助通道为环境量（典型值 ~101325 Pa / ~25 ℃），
+		// 校零会写入与量程无关的巨大偏移导致后续读数失真。
+		// 与前端 shouldDisableTare 对齐，拒绝单通道校零请求。
+		if device.IsAtmosphericChannel(m.profiles[profileIndex].Type, *targetChannel) {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("大气压辅助通道不支持校零")
+		}
 	}
 	m.calibrating[id] = struct{}{}
 	startedAt := time.Now()
@@ -825,6 +832,20 @@ func (m *DeviceManager) Calibrate(id string, ctx context.Context, targetChannel 
 	src := m.profiles[profileIndex].Channels
 	channels := make([]device.ChannelConfig, len(src))
 	copy(channels, src)
+	// 全部校零（targetChannel==nil）时过滤掉大气压/大气温度辅助通道。
+	// 这些通道 Unit 为 Pa/℃ 会通过 SupportsZeroCalibration 检查，但物理上是
+	// 环境量——校零会写入 ~101325 Pa 偏移，导致后续大气压读数恒为 ~0。
+	// 单通道校零已在上方 targetChannel!=nil 分支拒绝。与前端 shouldDisableTare 对齐。
+	profileType := m.profiles[profileIndex].Type
+	if targetChannel == nil {
+		filtered := make([]device.ChannelConfig, 0, len(channels))
+		for _, ch := range channels {
+			if !device.IsAtmosphericChannel(profileType, ch.Index) {
+				filtered = append(filtered, ch)
+			}
+		}
+		channels = filtered
+	}
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
@@ -1003,6 +1024,12 @@ func findChannelPosition(channels []device.ChannelConfig, channelIndex int) (int
 
 func calibrationEnabledForProfile(profileType device.Type, channel device.ChannelConfig) bool {
 	if !device.NewUnitConverter().SupportsZeroCalibration(channel.Unit) {
+		return false
+	}
+	// 大气压/大气温度辅助通道为环境量，不参与校零。与前端 shouldDisableTare
+	// 及 Calibrate 入口过滤逻辑三方对齐，避免 GetCalibrationEnabled 查询
+	// 返回 true 而校零操作却被拒绝的语义分裂。
+	if device.IsAtmosphericChannel(profileType, channel.Index) {
 		return false
 	}
 	if profileType != device.DeviceDAQP1603 {
