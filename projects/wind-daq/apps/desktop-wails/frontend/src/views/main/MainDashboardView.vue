@@ -25,10 +25,14 @@ const LogViewer = defineAsyncComponent(() => import('@views/LogViewer.vue'))
 //      该错误若发生在首屏同步 import 链上会阻断主画面渲染（白屏）。
 //      改为异步后，加载失败只影响 drawer 本身，主画面照常可用。
 const DeviceManagementDrawer = defineAsyncComponent(() => import('@components/device/DeviceManagementDrawer.vue'))
+// 探针校准许可证对话框：仅在用户点击「探针校准」且未解锁时才需要，
+// 异步加载避免将解锁逻辑打进首屏 chunk。
+const CalibrationLicenseDialog = defineAsyncComponent(() => import('@components/calibration/CalibrationLicenseDialog.vue'))
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
+import { useCalibrationLicenseStore } from '@stores/calibrationLicenseStore'
 import { storageApi, deviceApi } from '@api/deviceApi'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiEmptyState from '@components/ui/UiEmptyState.vue'
@@ -41,12 +45,16 @@ const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
+const licenseStore = useCalibrationLicenseStore()
 const { t } = storeToRefs(i18n)
 
 const activePage = ref<MainShellPage>('dashboard')
 const appVersion = ref('0.1.0')
 const showDeviceDrawer = ref(false)
 const showSettings = ref(false)
+// 探针校准许可证对话框：点击「探针校准」入口且未解锁时弹出。
+// 已解锁（licenseStore.isUnlocked=true）时不会显示，直接放行。
+const showLicenseDialog = ref(false)
 const viewMode = ref<'overview' | 'chart' | 'table' | 'both'>('both')
 const isRecording = ref(false)
 // 录制状态扩展字段（来自后端 Status()，便于 UI 展示与错误反馈）
@@ -76,7 +84,8 @@ const acquiring = computed(() => deviceStore.isAnyAcquiring)
 
 const railItems = computed<AppRailNavItem[]>(() => [
   { id: 'dashboard', label: t.value.dashboardHome, icon: 'IO', active: activePage.value === 'dashboard' },
-  { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration' },
+  // locked 跟随解锁状态响应式变化：解锁后角标自动消失，无需刷新页面
+  { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration', locked: !licenseStore.isUnlocked },
   { id: 'traversal', label: t.value.traversalTest, icon: 'TR', active: activePage.value === 'traversal' },
   { id: 'log', label: t.value.logViewer || 'Logs', icon: 'LG', active: activePage.value === 'log' }
 ])
@@ -89,9 +98,25 @@ const railFooterItems = computed<AppRailNavItem[]>(() => [
 const VALID_MAIN_PAGES = new Set(['dashboard', 'calibration', 'traversal', 'log'])
 
 function handleRailSelect(id: string): void {
-  if (VALID_MAIN_PAGES.has(id)) {
-    activePage.value = id as MainShellPage
+  if (!VALID_MAIN_PAGES.has(id)) return
+  // 探针校准是付费模块：未解锁时不直接进入，先弹出验证码对话框。
+  // 已解锁（localStorage 持久化）则直接放行，无感进入。
+  if (id === 'calibration' && !licenseStore.isUnlocked) {
+    showLicenseDialog.value = true
+    return
   }
+  activePage.value = id as MainShellPage
+}
+
+// 许可证对话框：验证码正确，已解锁——放行进入探针校准画面
+function handleLicenseUnlocked(): void {
+  activePage.value = 'calibration'
+  feedbackStore.pushToast(t.value.calLicenseUnlockedSuccess || '探针校准模块已解锁', 'success')
+}
+
+// 许可证对话框：用户取消或关闭——保持原页面，不跳转
+function handleLicenseCancel(): void {
+  // 不切换 activePage，用户停留在当前页面
 }
 
 // 独立窗口启动中状态，避免重复点击
@@ -411,6 +436,13 @@ function handleKeydown(e: KeyboardEvent) {
 
     <DeviceManagementDrawer v-model:open="showDeviceDrawer" />
     <GlobalSettingsModal v-model:open="showSettings" @close="showSettings = false" />
+    <!-- 探针校准付费模块解锁对话框：仅在未解锁时由 handleRailSelect 触发 -->
+    <CalibrationLicenseDialog
+      v-model:show="showLicenseDialog"
+      :t="t"
+      @unlocked="handleLicenseUnlocked"
+      @cancel="handleLicenseCancel"
+    />
   </MainView>
 </template>
 

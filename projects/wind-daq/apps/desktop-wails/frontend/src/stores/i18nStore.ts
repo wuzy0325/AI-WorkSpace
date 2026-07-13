@@ -508,6 +508,12 @@ const zh: Record<string, string> = {
   deselectAll: '取消全选',
 
   // 运动控制模块（motion_）
+  motion_windowTitle: '运动控制器 - Wind-DAQ',
+  motion_shellTitle: '运动控制器',
+  motion_shellSubtitle: '轴控制与监视',
+  motion_shellHelpTooltip: '控制风洞测试中的运动轴（如迎角、侧滑角等）的位置和速度',
+  motion_closeWindow: '关闭窗口',
+  motion_helpAriaLabel: '帮助',
   motion_linearAxis: '直线轴',
   motion_rotaryAxis: '旋转轴',
   motion_axisKind: '轴类型',
@@ -1263,6 +1269,21 @@ const zh: Record<string, string> = {
   fh_overview: '概览',
   fh_chart: '图表',
   fh_data: '数据',
+
+  // 付费模块未解锁锁角标的 aria-label / title
+  locked: '付费模块，点击解锁',
+
+  // 探针校准模块许可证（付费模块解锁）
+  calLicenseTitle: '探针校准模块',
+  calLicensePaidModule: '此为付费模块',
+  calLicenseHint: '请输入验证码以解锁探针校准功能。解锁后此设备可永久使用。',
+  calLicenseCodeLabel: '验证码',
+  calLicensePlaceholder: '请输入验证码',
+  calLicensePleaseInput: '请输入验证码',
+  calLicenseInvalidCode: '验证码不正确，请重新输入',
+  calLicenseCancel: '取消',
+  calLicenseConfirm: '确认解锁',
+  calLicenseUnlockedSuccess: '探针校准模块已解锁',
 }
 
 const en: Record<string, string> = {
@@ -1770,6 +1791,12 @@ const en: Record<string, string> = {
   deselectAll: 'Deselect All',
 
   // Motion control module (motion_)
+  motion_windowTitle: 'Motion Controller - Wind-DAQ',
+  motion_shellTitle: 'Motion Controller',
+  motion_shellSubtitle: 'Axis Control & Monitor',
+  motion_shellHelpTooltip: 'Control position and speed of motion axes (e.g., angle of attack, sideslip angle) in wind tunnel tests',
+  motion_closeWindow: 'Close Window',
+  motion_helpAriaLabel: 'Help',
   motion_linearAxis: 'Linear Axis',
   motion_rotaryAxis: 'Rotary Axis',
   motion_axisKind: 'Axis Type',
@@ -2525,6 +2552,21 @@ const en: Record<string, string> = {
   fh_overview: 'Overview',
   fh_chart: 'Chart',
   fh_data: 'Data',
+
+  // Paid module lock badge aria-label / title
+  locked: 'Paid module, click to unlock',
+
+  // Probe Calibration Module License (paid module unlock)
+  calLicenseTitle: 'Probe Calibration Module',
+  calLicensePaidModule: 'This is a paid module',
+  calLicenseHint: 'Enter the activation code to unlock probe calibration. Once unlocked, this device can use it permanently.',
+  calLicenseCodeLabel: 'Activation Code',
+  calLicensePlaceholder: 'Enter activation code',
+  calLicensePleaseInput: 'Please enter the activation code',
+  calLicenseInvalidCode: 'Incorrect activation code, please try again',
+  calLicenseCancel: 'Cancel',
+  calLicenseConfirm: 'Unlock',
+  calLicenseUnlockedSuccess: 'Probe calibration module unlocked',
 }
 
 export const useI18nStore = defineStore('i18n', () => {
