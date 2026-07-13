@@ -9,7 +9,7 @@
 ####
 
 ; Version must match projects/wind-daq/VERSION.
-!define INFO_PRODUCTVERSION "0.5.1"
+!define INFO_PRODUCTVERSION "0.5.2"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -57,7 +57,7 @@ ManifestDPIAware true
 
 # Language selection dialog (zh/en)
 !define MUI_LANGDLL_ALLLANGUAGES
-!define MUI_LANGDLL_INFO "Please select the installation language:$\n��ѡ��װ�������ԣ�"
+!define MUI_LANGDLL_INFO "Please select the installation language:$\n请选择安装程序语言："
 
 # Custom welcome/directory/finish text via LangString
 !define MUI_WELCOMEPAGE_TITLE "$(INST_WELCOME_TITLE)"
