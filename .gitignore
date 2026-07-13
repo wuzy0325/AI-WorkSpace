@@ -10,6 +10,7 @@ build/
 !projects/wind-daq/apps/desktop-wails/build/
 projects/wind-daq/apps/desktop-wails/build/*
 !projects/wind-daq/apps/desktop-wails/build/config.yml
+!projects/wind-daq/apps/desktop-wails/build/windows/installer/project.nsi
 target/
 *.exe
 *.syso

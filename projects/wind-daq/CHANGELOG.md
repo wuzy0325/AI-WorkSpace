@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.1] - 2026-07-13
+
+### Fixed
+
+- DAQ-P-1604 校零范围限制：大气压/温度辅助通道禁止校零操作，防止误操作导致设备状态异常。
+- 遍历前置检查改进：纳入运动控制器连接态检测，避免"已装配但全部离线"时仍显示绿色就绪状态。
+
+### Changed
+
+- 遍历配置步骤顺序调整：由原顺序改为 Hardware → Probe → Layout → Review，优化用户体验。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.5.0] - 2026-07-13
 
 ### Added
