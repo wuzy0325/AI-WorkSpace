@@ -22,6 +22,7 @@ func (traversalPortContractFake) Inspect(context.Context) (ports.TraversalOutput
 }
 func (traversalPortContractFake) TruncateAfter(context.Context, uint64) error { return nil }
 func (traversalPortContractFake) Close(context.Context) error                 { return nil }
+func (traversalPortContractFake) OutputPath() string                          { return "" }
 
 func (traversalPortContractFake) AppendPrepared(context.Context, traversal.PointResult) error {
 	return nil
@@ -39,6 +40,7 @@ func (traversalPortContractFake) Find(context.Context, string) (ports.TraversalC
 	return ports.TraversalCheckpointRef{}, false, nil
 }
 func (traversalPortContractFake) Unregister(context.Context, string) error { return nil }
+func (traversalPortContractFake) SetBasePath(string)                       {}
 
 func TestTraversalCSVPortContract(t *testing.T) {
 	var port ports.TraversalCSVPort = traversalPortContractFake{}

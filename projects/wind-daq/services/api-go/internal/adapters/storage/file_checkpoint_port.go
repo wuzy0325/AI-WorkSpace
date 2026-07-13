@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -18,9 +15,12 @@ import (
 //
 // 资源语义：底层 CheckpointStore（字节 I/O）无持久句柄，每次 Save/Load 都通过
 // store.Read/Write 短暂打开文件。Close 仅标记 closed 状态防止误用，不释放句柄。
+//
+// basePath 在 csvPort.Open 后由 usecase 层通过 SetBasePath 更新为实际落盘的 CSV 路径
+// （撞名 -2/-3 后与 ResolveOutputPath(config) 不同），保证 checkpoint stem 与 CSV stem 一致。
 type FileCheckpointPort struct {
 	store    ports.CheckpointStore
-	basePath string // checkpoint 文件基础路径（通常取自 SavePath）
+	basePath string // 实际落盘的 CSV 路径（撞名后由 SetBasePath 更新）
 
 	mu     sync.RWMutex
 	closed bool // Close 后拒绝后续 Save/Load/Find/Unregister，避免使用已释放端口
@@ -31,25 +31,28 @@ type FileCheckpointPort struct {
 var _ ports.TraversalCheckpointPort = (*FileCheckpointPort)(nil)
 
 // NewFileCheckpointPort 创建文件系统断点端口适配器。
-// basePath 为 checkpoint 文件的基础路径（如 CSV 路径），实际文件放在 basePath 同目录的
-// .traversal/ 隐藏子目录下，避免用户看到内部文件。
-// 由于每个遍历任务的 CSV 路径不同，自然实现按任务隔离。
+// basePath 初始为 ResolveOutputPath(config) 返回的预期 CSV 路径；
+// csvPort.Open 后 usecase 层应调 SetBasePath 更新为实际撞名后路径。
 func NewFileCheckpointPort(store ports.CheckpointStore, basePath string) *FileCheckpointPort {
 	return &FileCheckpointPort{store: store, basePath: basePath}
 }
 
+// SetBasePath 更新 basePath 为 csvPort 实际落盘的 CSV 路径。
+// 在 csvPort.Open(Create) 成功后调用，把 basePath 从"预期路径"切换为"实际路径"，
+// 保证 checkpoint 文件名 stem 与 CSV 撞名后的 stem 一致，避免 Resume 打开错误 CSV。
+func (p *FileCheckpointPort) SetBasePath(csvPath string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.basePath = csvPath
+}
+
 // path 返回 checkpoint 文件路径，放在 CSV 同目录的 .traversal/ 隐藏子目录下。
-// 派生规则：basePath = dir/stem.csv → checkpointPath = dir/.traversal/stem.checkpoint.json
-// 确保 .traversal/ 父目录存在，避免首次写入因目录缺失失败。
+// 派生规则由 traversal.ResolveCheckpointPathFromCSV 单一函数定义，本方法仅包装。
+// 父目录由 store.Write → atomicReplaceFile 内部 MkdirAll 兜底创建，无需在此重复。
 func (p *FileCheckpointPort) path() string {
-	ext := filepath.Ext(p.basePath)
-	base := strings.TrimSuffix(p.basePath, ext)
-	dir := filepath.Dir(base)
-	stem := filepath.Base(base)
-	cpPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
-	// 确保父目录存在
-	_ = os.MkdirAll(filepath.Dir(cpPath), 0o755)
-	return cpPath
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return traversal.ResolveCheckpointPathFromCSV(p.basePath)
 }
 
 // Save 原子写入断点文件（JSON 序列化 + CheckpointStore.Write 原子替换）

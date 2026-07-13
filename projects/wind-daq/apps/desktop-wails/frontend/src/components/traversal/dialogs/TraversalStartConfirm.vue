@@ -4,10 +4,11 @@
  * Phase C: switched to UiDialog primitive. Focus trap is handled by NModal
  * internally, so we no longer need the manual trap-tab plumbing.
  */
-import { CheckCircle, Play, XCircle } from '@lucide/vue'
+import { CheckCircle, Info, Play, XCircle } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
 import { storeToRefs } from 'pinia'
+import { computed } from 'vue'
 import {
   getTraversalLayoutPointCount,
   type PreconditionCheckResult,
@@ -15,7 +16,7 @@ import {
 } from '@shared/types/traversal'
 import { useI18nStore } from '@stores/i18nStore'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
   currentConfig: TraversalTestConfig | null
   isCheckingPreconditions: boolean
@@ -42,6 +43,10 @@ const MESSAGE_I18N: Record<string, string> = {
   'All required channel labels are mapped': 'checkChannelMapOk',
   'Patm channel label is required for pressure normalization': 'checkChannelMapFailPatm',
   'Tatm channel label is required for atmospheric calculation': 'checkChannelMapFailTatm',
+  'Target device is connected': 'checkDeviceConnected',
+  'Target device is not connected, please connect it first': 'checkDeviceNotConnected',
+  'Target device is acquiring': 'checkDeviceAcquiring',
+  'Target device is not acquiring (will auto-start on confirm)': 'checkDeviceNotAcquiring',
 }
 
 function checkMessage(check: { message?: string; name: string }): string {
@@ -52,6 +57,25 @@ function checkMessage(check: { message?: string; name: string }): string {
   }
   return check.name
 }
+
+// showAutoStartHint 仅当"设备已连接但未采集"时为 true。
+// 与 ParseAndStartTraversal 主动启动逻辑呼应：让用户在确认前预知隐式自动操作。
+// 为什么不直接看 DeviceAcquiring=false：未连接场景下 DeviceAcquiring 也是 false，
+// 此时显示"将自动启动"会误导用户以为连接问题能被自动解决——故同时要求 DeviceConnected=true。
+// 旧装配（无 DeviceConnected/DeviceAcquiring 项）不显示提示，与后端降级路径一致。
+const showAutoStartHint = computed(() => {
+  const checks = props.preconditionResult?.checks
+  if (!checks) return false
+  let connected = false
+  let acquiring = true
+  for (const c of checks) {
+    if (c.name === 'DeviceConnected') connected = c.passed
+    if (c.name === 'DeviceAcquiring') acquiring = c.passed
+  }
+  return connected && !acquiring
+})
+
+const autoStartHintText = computed(() => (t.value as Record<string, string>).autoStartAcquisitionHint)
 
 defineEmits<{
   confirm: []
@@ -113,6 +137,16 @@ defineEmits<{
             <span class="truncate text-[var(--text-secondary)]">{{ currentConfig.savePath || '--' }}</span>
           </div>
         </div>
+      </div>
+
+      <!-- 主动启动采集提示：仅当设备已连接但未采集时显示，与后端 ParseAndStartTraversal 主动启动逻辑呼应 -->
+      <div
+        v-if="showAutoStartHint"
+        class="flex items-center gap-1.5 rounded-md p-2 text-xs"
+        :style="{ background: 'var(--accent-info-bg, var(--bg-panel-strong))', color: 'var(--accent-info)' }"
+      >
+        <Info :size="14" />
+        <span>{{ autoStartHintText }}</span>
       </div>
     </div>
 

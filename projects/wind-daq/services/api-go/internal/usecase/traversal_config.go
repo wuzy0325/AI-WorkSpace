@@ -593,6 +593,41 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		return "", err
 	}
 
+	// 主动建立"目标设备正在采集"这一前提（前置于 m.Start）。
+	//
+	// 为什么放在 Start 之前：
+	//   - Start 会切换状态 Idle → Running 并初始化 session/sink。若 StartAcquisition 失败，
+	//     此时状态机尚未变更，无需调 Stop 回滚——直接返回 error 即可，避免旧实现
+	//     "Start 后失败 → 调 Stop → Stop 等 session.Done() 必然 5s 超时"的阻塞路径；
+	//   - ParseConfig 已完成 TaskID/DeviceID/Channels/Path 校验，StartAcquisition 失败时
+	//     这些校验结果仍有效，用户修正后重试无需重新解析。
+	//
+	// 旧版只在 RunTraversalLoop 内 GetLatestData 时才暴露"未采集"问题，导致用户看到
+	// "全部通过"后立刻报 no data available。此处同步路径提前拉起采集，失败立即可见。
+	//
+	// 端口为 nil（旧装配）时跳过整段逻辑，保持向后兼容。
+	// 注意：StartAcquisition 成功但后续 m.Start 失败时，不回滚采集——设备采集是独立
+	// 资源，用户可能想继续看实时数据（与"测试结束后不自动停止采集"同决策）。
+	m.mu.RLock()
+	acqController := m.acquisitionController
+	m.mu.RUnlock()
+	if acqController != nil && !acqController.IsAcquiring(config.DeviceID) {
+		if startErr := acqController.StartAcquisition(config.DeviceID); startErr != nil {
+			slog.Error("traversal auto-start acquisition failed",
+				"component", "traversal",
+				"task_id", config.TaskID,
+				"device_id", config.DeviceID,
+				"err", startErr,
+			)
+			return "", fmt.Errorf("auto-start acquisition failed for device %s: %w", config.DeviceID, startErr)
+		}
+		slog.Info("traversal auto-started device acquisition",
+			"component", "traversal",
+			"task_id", config.TaskID,
+			"device_id", config.DeviceID,
+		)
+	}
+
 	if err := m.Start(config); err != nil {
 		return "", err
 	}

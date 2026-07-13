@@ -500,3 +500,165 @@ func TestParseAndStartTraversal_LineLayout(t *testing.T) {
 		t.Logf("Stop 返回错误 (可忽略): %v", err)
 	}
 }
+
+// buildAutoStartTestRaw 构造 ParseAndStartTraversal 测试用 JSON。
+// 复用 line 布局最小配置：deviceId=sim-1，5 个点，dwell 100ms。
+// 避免每个测试重复构造大段 JSON。
+func buildAutoStartTestRaw() json.RawMessage {
+	return json.RawMessage(`{
+		"name": "auto-start-test",
+		"layout": {
+			"pattern": "line",
+			"line": {
+				"startX": 0, "endX": 4,
+				"xStepSegments": [{"start":0,"end":4,"step":1}]
+			}
+		},
+		"channels": {
+			"probeChannels": [
+				{"name":"P1","role":"fiveHole.p1","channel":{"deviceId":"sim-1","channelIndex":0},"enabled":true}
+			]
+		},
+		"dwellTimeMs": 100,
+		"samplesPerPoint": 1,
+		"savePath": "/tmp/test.csv"
+	}`)
+}
+
+// TestParseAndStartTraversal_NilAcquisitionController 端口未注入时不调用 StartAcquisition。
+//
+// 测试前置：
+//   - newConfigTestManager 创建 mgr，未调用 SetAcquisitionController
+//
+// 测试步骤：
+//   - 调用 mgr.ParseAndStartTraversal(raw)
+//
+// 期待结果：
+//   - 不返回 error（向后兼容，loop 正常启动）
+//   - taskID 非空
+//   - 未触发任何采集启动调用（无端口可调）
+func TestParseAndStartTraversal_NilAcquisitionController(t *testing.T) {
+	mgr := newConfigTestManager(t)
+
+	taskID, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw())
+	if err != nil {
+		t.Fatalf("ParseAndStartTraversal 失败（端口 nil 应保持向后兼容）: %v", err)
+	}
+	if taskID == "" {
+		t.Fatalf("taskID 不应为空")
+	}
+
+	if err := mgr.Stop(); err != nil {
+		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	}
+}
+
+// TestParseAndStartTraversal_AlreadyAcquiring 设备已采集时跳过 StartAcquisition。
+//
+// 测试前置：
+//   - mgr 注入 mockAcquisitionController，acquiring["sim-1"]=true
+//
+// 测试步骤：
+//   - 调用 mgr.ParseAndStartTraversal(raw)
+//
+// 期待结果：
+//   - 不返回 error
+//   - mock.startCalls 长度 = 0（已采集，跳过主动启动）
+func TestParseAndStartTraversal_AlreadyAcquiring(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	ctrl := &mockAcquisitionController{
+		connected: map[string]bool{"sim-1": true},
+		acquiring: map[string]bool{"sim-1": true},
+	}
+	mgr.SetAcquisitionController(ctrl)
+
+	if _, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw()); err != nil {
+		t.Fatalf("ParseAndStartTraversal 失败: %v", err)
+	}
+
+	if len(ctrl.startCalls) != 0 {
+		t.Errorf("StartAcquisition 不应被调用（设备已采集），实际调用 %d 次: %v",
+			len(ctrl.startCalls), ctrl.startCalls)
+	}
+
+	if err := mgr.Stop(); err != nil {
+		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	}
+}
+
+// TestParseAndStartTraversal_AutoStartSucceeds 设备未采集时主动启动成功。
+//
+// 测试前置：
+//   - mgr 注入 mockAcquisitionController，acquiring["sim-1"]=false，startErr=nil
+//
+// 测试步骤：
+//   - 调用 mgr.ParseAndStartTraversal(raw)
+//
+// 期待结果：
+//   - 不返回 error
+//   - mock.startCalls = ["sim-1"]（主动启动被触发）
+func TestParseAndStartTraversal_AutoStartSucceeds(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	ctrl := &mockAcquisitionController{
+		connected: map[string]bool{"sim-1": true},
+		acquiring: map[string]bool{"sim-1": false},
+		startErr:  nil,
+	}
+	mgr.SetAcquisitionController(ctrl)
+
+	if _, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw()); err != nil {
+		t.Fatalf("ParseAndStartTraversal 失败: %v", err)
+	}
+
+	if len(ctrl.startCalls) != 1 || ctrl.startCalls[0] != "sim-1" {
+		t.Errorf("StartAcquisition 应被调用一次 (sim-1)，实际: %v", ctrl.startCalls)
+	}
+
+	if err := mgr.Stop(); err != nil {
+		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	}
+}
+
+// TestParseAndStartTraversal_AutoStartFails 设备未采集且启动失败时直接返回错误。
+//
+// 方案 B 后：StartAcquisition 前置于 m.Start，失败时状态机尚未变更（Idle），
+// 无需回滚，直接返回 error。避免旧实现"Start 后失败 → Stop → 5s 超时"阻塞。
+//
+// 测试前置：
+//   - mgr 注入 mockAcquisitionController，acquiring["sim-1"]=false，startErr=设备拒绝
+//
+// 测试步骤：
+//   - 调用 mgr.ParseAndStartTraversal(raw)
+//
+// 期待结果：
+//   - 返回 error，包含 "auto-start acquisition failed"
+//   - mock.startCalls = ["sim-1"]（尝试启动）
+//   - mgr.Status().State != "running"（Start 未执行，状态保持 Idle）
+func TestParseAndStartTraversal_AutoStartFails(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	ctrl := &mockAcquisitionController{
+		connected: map[string]bool{"sim-1": true},
+		acquiring: map[string]bool{"sim-1": false},
+		startErr:  errors.New("device rejected start command"),
+	}
+	mgr.SetAcquisitionController(ctrl)
+
+	_, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw())
+	if err == nil {
+		t.Fatalf("期望返回 error（启动采集失败），实际 nil")
+	}
+	if !contains(err.Error(), "auto-start acquisition failed") {
+		t.Errorf("error 应包含 'auto-start acquisition failed'，实际: %v", err)
+	}
+
+	if len(ctrl.startCalls) != 1 || ctrl.startCalls[0] != "sim-1" {
+		t.Errorf("StartAcquisition 应被调用一次 (sim-1)，实际: %v", ctrl.startCalls)
+	}
+
+	// 状态验证：StartAcquisition 前置于 m.Start，失败时 m.Start 未执行，
+	// 状态应保持 Idle（非 Running），无需回滚。
+	status := mgr.Status()
+	if status.State == "running" {
+		t.Errorf("失败后状态不应为 running（Start 未执行），实际: %v", status.State)
+	}
+}

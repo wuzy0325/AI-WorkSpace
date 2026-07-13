@@ -62,9 +62,34 @@ func ResolveOutputPath(cfg Config) string {
 // 故无需 EqualFold。
 func ResolveResultLogPath(cfg Config) string {
 	csvPath := ResolveOutputPath(cfg)
+	return ResolveResultLogPathFromCSV(csvPath)
+}
+
+// ResolveResultLogPathFromCSV 从 CSV 文件路径派生结果日志路径。
+// 用于 csvPort.Open 后用实际撞名后路径回写 snapshot.ResultLogPath 的场景。
+// 路径格式：${dir}/.traversal/${stem}.results.jsonl
+func ResolveResultLogPathFromCSV(csvPath string) string {
 	ext := filepath.Ext(csvPath)
 	base := strings.TrimSuffix(csvPath, ext)
 	dir := filepath.Dir(base)
 	stem := filepath.Base(base)
 	return filepath.Join(dir, ".traversal", stem + ".results.jsonl")
+}
+
+// ResolveCheckpointPathFromCSV 从 CSV 文件路径派生 checkpoint 路径。
+// 路径格式：${dir}/.traversal/${stem}.checkpoint.json
+//
+// 单一真相源：所有 checkpoint 路径派生（saveCheckpoint / commitPointV2 fallback /
+// activeIndex.Register / FileCheckpointPort.path）都应调用本函数，避免散落 6 处的
+// 内联派生逻辑漂移（曾导致 v2 撞名后 snapshot.CSVPath 与实际 CSV 不一致时，
+// checkpoint stem 与 CSV stem 错位，Resume 打开错误 CSV 污染旧数据）。
+//
+// 调用方应传入"实际落盘的 CSV 路径"（如 csvPort.OutputPath() 返回值），而非
+// ResolveOutputPath(config) 返回的"预期路径"——撞名 -2/-3 后两者不同。
+func ResolveCheckpointPathFromCSV(csvPath string) string {
+	ext := filepath.Ext(csvPath)
+	base := strings.TrimSuffix(csvPath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	return filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
 }

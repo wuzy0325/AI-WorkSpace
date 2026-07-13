@@ -652,6 +652,26 @@ export const useDeviceStore = defineStore('devices', () => {
     return result.success
   }
 
+  /**
+   * 确保目标设备的数据轮询订阅已建立，但不发送 startAcquisition 命令。
+   *
+   * 使用场景：遍历测试由后端 ParseAndStartTraversal 自动启动采集后，
+   * 前端仅需建立轮询订阅即可接收实时数据，无需重复发送启动命令。
+   *
+   * 与 startAcquisition 的区别：不调用 deviceApi.startAcquisition（避免冗余
+   * 后端命令），但同样执行 subscribeToDevice + subscribedDeviceIds.add，
+   * 保证 cleanupSnapshotSubscriptions 在最后一个 listener detach 时能正确
+   * 清理轮询定时器，避免资源泄漏。
+   *
+   * 幂等：subscribeToDevice 内部按 deviceId 去重，subscribedDeviceIds 是
+   * Set，重复调用安全。
+   */
+  function ensureSubscribed(id: string): void {
+    if (!id) return
+    deviceApi.subscribeToDevice(id)
+    subscribedDeviceIds.add(id)
+  }
+
   async function stopAcquisition(id: string): Promise<void> {
     await deviceApi.stopAcquisition(id)
     deviceApi.unsubscribeFromDevice(id)
@@ -808,6 +828,7 @@ export const useDeviceStore = defineStore('devices', () => {
     connect,
     disconnect,
     startAcquisition,
+    ensureSubscribed,
     stopAcquisition,
     getDsa3217ScanConfig,
     applyDsa3217ScanConfig,

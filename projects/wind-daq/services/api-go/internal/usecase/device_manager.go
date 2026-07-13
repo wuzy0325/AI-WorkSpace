@@ -606,6 +606,37 @@ func (m *DeviceManager) GetStatus(id string) (device.Status, bool) {
 	return dev.Status(), true
 }
 
+// IsConnected 实现 ports.AcquisitionController。
+// 复用 GetStatus 查询，避免在端口适配层重复设备 map 锁逻辑。
+//
+// "已连接"语义：非 Disconnected 且非 Error 即视为已连接。
+// 不能用 == ConnectionConnected 判断——adapter 在 StartAcquisition 时会把
+// Connection 改为 ConnectionAcquiring，若严格要求 Connected 会导致设备正在采集时
+// IsConnected 误报 false，进而让 CheckPreconditions 的 DeviceConnected 项在
+// 设备已采集场景下显示红色"未连接"。
+func (m *DeviceManager) IsConnected(id string) bool {
+	status, ok := m.GetStatus(id)
+	if !ok {
+		return false
+	}
+	return status.Connection != device.ConnectionDisconnected && status.Connection != device.ConnectionError
+}
+
+// IsAcquiring 实现 ports.AcquisitionController。
+// 仅当设备存在且 Status.Acquiring=true 时返回 true。
+// 遍历测试 CheckPreconditions 据此真实反映"是否正在持续产帧"。
+func (m *DeviceManager) IsAcquiring(id string) bool {
+	status, ok := m.GetStatus(id)
+	if !ok {
+		return false
+	}
+	return status.Acquiring
+}
+
+// 编译期断言：DeviceManager 实现 ports.AcquisitionController。
+// StartAcquisition 已存在（device_manager.go:569），加上 IsConnected/IsAcquiring 即满足接口。
+var _ ports.AcquisitionController = (*DeviceManager)(nil)
+
 func (m *DeviceManager) findProfileLocked(id string) (device.Profile, bool) {
 	for _, profile := range m.profiles {
 		if profile.ID == id {

@@ -151,6 +151,13 @@ func (l *TraversalResultLog) TruncateAfter(ctx context.Context, commitSeq uint64
 	return l.file.Sync()
 }
 
+// OutputPath 返回 Open 后实际落盘的结果日志路径（撞名后可能与 session.Path 不同）。
+func (l *TraversalResultLog) OutputPath() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.path
+}
+
 func (l *TraversalResultLog) Close(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err

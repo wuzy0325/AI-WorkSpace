@@ -37,6 +37,7 @@ import type {
   TraversalCheckpoint,
   PreconditionCheckResult
 } from '@shared/types/traversal'
+import { joinCalibrationPath } from '@shared/calibrationCsvPath'
 import { useTraversalSimulation } from '@composables/useTraversalSimulation'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
@@ -81,6 +82,7 @@ const {
   liveInterpolationInput,
   pressureItems,
   subscribeSnapshot,
+  ensureSubscribed,
 } = useTraversalRealtimeData(currentConfig)
 
 const i18n = useI18nStore()
@@ -126,6 +128,11 @@ onMounted(async () => {
 
   // 恢复已保存的配置，确保指示灯和 UI 能正确反映设备/机构状态
   await traversalStore.loadConfig()
+  // 配置恢复后确保数据订阅已建立：设备可能已在其他页面开始采集，
+  // 也可能后续由遍历测试自动启动采集。走 deviceStore.ensureSubscribed
+  // 而非 deviceApi.subscribeToDevice，确保 subscribedDeviceIds 同步更新，
+  // 离开页面时 cleanupSnapshotSubscriptions 能正确清理轮询定时器。
+  ensureSubscribed()
 
   // 恢复正在进行的移位测试状态
   await traversalStore.refreshStatus()
@@ -156,6 +163,9 @@ async function resumeFromCheckpoint(): Promise<void> {
   try {
     await traversalStore.resumeFromCheckpoint(checkpoint.value)
     checkpoint.value = null
+    // 断点恢复后同样确保数据订阅：用户可能从其他页面返回，
+    // 之前的订阅可能已取消；幂等调用不会重复建立。
+    ensureSubscribed()
   } catch (err) {
     feedbackStore.pushToast(
       t.value.failedResume + '：' + (err instanceof Error ? err.message : String(err)),
@@ -248,6 +258,9 @@ async function confirmStartTest(): Promise<void> {
   isStartRequestPending.value = true
   try {
     await traversalStore.startTest(currentConfig.value)
+    // 后端可能在此自动启动了采集；确保前端数据订阅已建立，
+    // 否则 onSnapshot 不会收到持续数据，左侧栏会"编一个点才更新一次"。
+    ensureSubscribed()
   } catch (err) {
     feedbackStore.pushToast(
       t.value.failedStartTraversal + '：' + (err instanceof Error ? err.message : String(err)),
@@ -293,6 +306,16 @@ async function resumeTest(): Promise<void> {
 }
 
 async function stopTest(): Promise<void> {
+  // 停止测试会丢失当前进度且未保存数据无法恢复，需弹出二次确认防止误触。
+  // 与校准模块 stopCalibration 行为一致：使用 feedbackStore.confirm 等待用户决定，
+  // 仅在用户确认后才调用 store.stop() 触发后端停止流程。
+  const accepted = await feedbackStore.confirm(t.value.travStopConfirm, {
+    title: t.value.travStopTitle,
+    confirmText: t.value.stop,
+    cancelText: t.value.cancel,
+  })
+  if (!accepted) return
+
   try {
     await traversalStore.stop()
   } catch (err) {
@@ -441,8 +464,30 @@ const targetPoint = computed(() => traversalStore.status?.currentPoint)
 const machNumber = computed(() => traversalStore.realtimeResult?.machNumber)
 const velocity = computed(() => traversalStore.realtimeResult?.velocity)
 
-// CSV 保存路径：操作员需知道数据写到哪
-const csvSavePath = computed(() => currentConfig.value?.savePath ?? '')
+// CSV 保存路径：操作员需知道数据写到哪。
+// 与后端 ResolveOutputPath 语义对齐：
+//   - savePath 为空 → 返回空串，侧边栏不展示该卡片
+//   - savePath 已带 .csv 后缀（大小写不敏感）→ 视为完整文件路径，直接展示
+//   - 否则 → 拼接 savePath + saveFileName，并保证文件名带 .csv 后缀
+// 注意：仅进入 TraversalSettings 会通过 buildCalibrationCsvName 归一化 saveFileName；
+// 若用户仅进入主页（loadConfig 直读后端），持久化 saveFileName 可能为旧值不带 .csv，
+// 故此处必须显式补齐 .csv，否则侧边栏展示路径与实际落盘文件名不一致。
+// saveFileName 缺失时不强行 fallback，避免展示后端 taskID 派生的默认名
+// （taskID 在前端启动前未确定，展示假名反而误导）。
+const csvSavePath = computed(() => {
+  const cfg = currentConfig.value
+  if (!cfg) return ''
+  const dir = cfg.savePath?.trim() ?? ''
+  if (!dir) return ''
+  // savePath 已带 .csv 后缀：直接当完整文件路径展示
+  if (/\.csv$/i.test(dir)) return dir
+  let fileName = cfg.saveFileName?.trim() ?? ''
+  if (!fileName) return dir
+  // 与后端 ResolveOutputPath 行为对齐：saveFileName 缺 .csv 后缀时自动补齐，
+  // 避免旧配置展示的路径与实际落盘文件名不一致
+  if (!/\.csv$/i.test(fileName)) fileName += '.csv'
+  return joinCalibrationPath(dir, fileName)
+})
 
 // 错误信息：优先 status.lastError，其次 store.error
 const lastError = computed(() => traversalStore.status?.lastError ?? traversalStore.error ?? '')

@@ -98,7 +98,7 @@ func resolveTestResultLogPath(csvPath string) string {
 //   - beginSession
 //
 // 测试步骤：
-//   - 调用 openReliabilityPorts(session, Resume, snapshot, config)
+//   - 调用 openReliabilityPorts(session, Resume, config)
 //
 // 期待结果：
 //   - 不返回 error
@@ -184,7 +184,7 @@ func TestResumeReliabilityPorts_TruncatesResultLogTailToCommittedSeq(t *testing.
 	}
 
 	// 测试步骤：调用 openReliabilityPorts(Resume)
-	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputResume, snapshot, config); err != nil {
+	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputResume, config); err != nil {
 		t.Fatalf("openReliabilityPorts resume: %v", err)
 	}
 
@@ -277,7 +277,7 @@ func TestResumeReliabilityPorts_RejectsGapInResultLog(t *testing.T) {
 		t.Fatalf("beginSession: %v", err)
 	}
 
-	err = mgr.openReliabilityPorts(session, ports.TraversalOutputResume, snapshot, config)
+	err = mgr.openReliabilityPorts(session, ports.TraversalOutputResume, config)
 	if err == nil {
 		t.Fatal("expected ValidateTail to reject corrupted log, got nil error")
 	}
@@ -367,7 +367,7 @@ func TestResumeReliabilityPorts_AppliesColumnConfigInHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("beginSession: %v", err)
 	}
-	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputResume, snapshot, config); err != nil {
+	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputResume, config); err != nil {
 		t.Fatalf("openReliabilityPorts resume: %v", err)
 	}
 	_ = mgr.csvPort.Close(ctx)
@@ -569,7 +569,7 @@ func TestCommitPointV2_SanitizesNaNInPointResult(t *testing.T) {
 		t.Fatalf("beginSession: %v", err)
 	}
 	// Create 模式打开 CSV / result log
-	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputCreate, snapshot, config); err != nil {
+	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputCreate, config); err != nil {
 		t.Fatalf("openReliabilityPorts create: %v", err)
 	}
 
@@ -648,4 +648,157 @@ func TestCommitPointV2_SanitizesNaNInPointResult(t *testing.T) {
 	// 清理：关闭 v2 端口
 	_ = mgr.csvPort.Close(ctx)
 	_ = mgr.resultLogPort.Close(ctx)
+}
+
+// TestOpenReliabilityPorts_WriteBackCollisionPath 验证 v2 撞名 -2/-3 后回写
+// session.snapshot.CSVPath / ResultLogPath 并同步 checkpointPort.basePath 的修复
+// （Critical-1：撞名 stem 错位修复回归网）。
+//
+// 测试前置：
+//   - tmpDir/result.csv 已存在（让 csvPort.Open(Create) 撞名 → 实际落盘 result-2.csv）
+//   - tmpDir/.traversal/result.results.jsonl 已存在（让 resultLogPort.Open(Create) 撞名
+//     → 实际落盘 result-2.results.jsonl）
+//   - newV2IntegrationManager 注入真实 v2 端口
+//
+// 测试步骤：
+//   - 调用 openReliabilityPorts(session, Create, config)
+//   - 读取 session.snapshot.CSVPath / ResultLogPath
+//   - 调 checkpointPort.Save 写入 checkpoint
+//
+// 期待结果：
+//   - session.snapshot.CSVPath 已回写为 .../result-2.csv（实际撞名后路径）
+//   - session.snapshot.ResultLogPath 已回写为 .../.traversal/result-2.results.jsonl
+//   - checkpoint 文件落在 .traversal/result-2.checkpoint.json（与实际 CSV stem 一致）
+//   - .traversal/result.checkpoint.json 不存在（旧 stem 未被错误使用）
+//
+// 反面案例（修复前）：snapshot.CSVPath 不回写，checkpointPort.basePath 保持原预期路径，
+// checkpoint 写到 .traversal/result.checkpoint.json，Resume 时打开 result.csv 污染旧数据。
+func TestOpenReliabilityPorts_WriteBackCollisionPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "result.csv")
+	logPath := resolveTestResultLogPath(csvPath)
+	ctx := context.Background()
+
+	// 前置 1：预创建 result.csv（BOM+表头+1 行数据），让后续 csvPort.Open(Create) 撞名
+	csvWriter := storage.NewTraversalCsvWriter()
+	if err := csvWriter.Open(ctx, ports.TraversalOutputSession{
+		TaskID: "task-pre", Mode: ports.TraversalOutputCreate, Path: csvPath,
+		Channels: []int{0, 1, 2, 3, 4}, ChannelLabels: v2ChannelLabels,
+	}); err != nil {
+		t.Fatalf("pre-create csv open: %v", err)
+	}
+	if _, err := csvWriter.Append(ctx, makeV2Result("task-pre", 1)); err != nil {
+		t.Fatalf("pre-create csv append: %v", err)
+	}
+	_ = csvWriter.Sync(ctx)
+	_ = csvWriter.Close(ctx)
+
+	// 前置 2：预创建 .traversal/result.results.jsonl（1 行 commitSeq=1），让后续
+	// resultLogPort.Open(Create) 撞名
+	resultLog := storage.NewTraversalResultLog()
+	if err := resultLog.Open(ctx, ports.TraversalOutputSession{
+		TaskID: "task-pre", Mode: ports.TraversalOutputCreate, Path: logPath,
+	}); err != nil {
+		t.Fatalf("pre-create log open: %v", err)
+	}
+	if err := resultLog.AppendPrepared(ctx, makeV2Result("task-pre", 1)); err != nil {
+		t.Fatalf("pre-create log append: %v", err)
+	}
+	_ = resultLog.Sync(ctx)
+	_ = resultLog.Close(ctx)
+
+	// 测试步骤：调用 openReliabilityPorts(Create)
+	mgr := newV2IntegrationManager(t, tmpDir)
+	config := traversal.Config{
+		TaskID:          "task-collide",
+		DeviceID:        "sim-1",
+		Channels:        []int{0, 1, 2, 3, 4},
+		ChannelLabels:   v2ChannelLabels,
+		Path:            []traversal.Point{{X: 0}, {X: 1}, {X: 2}},
+		DwellTimeMs:     10,
+		SamplesPerPoint: 1,
+		SavePath:        tmpDir,
+		SaveFileName:    "result",
+	}
+	// snapshot.CSVPath = 预期路径（撞名前），openReliabilityPorts 内部应回写为实际路径
+	snapshot := traversal.TraversalRunSnapshot{
+		Config:        config,
+		TotalPoints:   3,
+		CSVPath:       csvPath,
+		ResultLogPath: logPath,
+	}
+	session, err := mgr.beginSession(context.Background(), config.TaskID, snapshot)
+	if err != nil {
+		t.Fatalf("beginSession: %v", err)
+	}
+	// 工厂创建 checkpointPort（basePath 初始为预期路径 csvPath）
+	checkpointPort, err := storage.NewFileCheckpointPortFactory(wiring.NewFileCheckpointStore()).
+		Create(ctx, csvPath)
+	if err != nil {
+		t.Fatalf("create checkpoint port: %v", err)
+	}
+	mgr.mu.Lock()
+	mgr.checkpointPort = checkpointPort
+	mgr.mu.Unlock()
+
+	if err := mgr.openReliabilityPorts(session, ports.TraversalOutputCreate, config); err != nil {
+		t.Fatalf("openReliabilityPorts create: %v", err)
+	}
+
+	// 期待结果 1：session.snapshot.CSVPath 已回写为 result-2.csv（CSV 撞名规则：
+	// filepath.Ext(.csv)=.csv，stem=result，撞名后 result-2.csv）
+	expectedCSV := filepath.Join(tmpDir, "result-2.csv")
+	if session.snapshot.CSVPath != expectedCSV {
+		t.Errorf("session.snapshot.CSVPath not written back: got=%s want=%s",
+			session.snapshot.CSVPath, expectedCSV)
+	}
+	// 验证实际落盘文件确实存在
+	if _, err := os.Stat(expectedCSV); err != nil {
+		t.Errorf("expected collision file %s not created: %v", expectedCSV, err)
+	}
+
+	// 期待结果 2：session.snapshot.ResultLogPath 已回写为撞名后路径
+	// （resultLogPort 用 openCreateUnique，filepath.Ext(.jsonl)=.jsonl，stem=result.results，
+	// 撞名后 result.results-2.jsonl —— 与 CSV 撞名 stem 不同，但都是 OutputPath 返回的真实路径）
+	if session.snapshot.ResultLogPath == logPath {
+		t.Errorf("session.snapshot.ResultLogPath not written back: still original %s", logPath)
+	}
+	if session.snapshot.ResultLogPath == "" {
+		t.Errorf("session.snapshot.ResultLogPath is empty after openReliabilityPorts")
+	}
+	if _, err := os.Stat(session.snapshot.ResultLogPath); err != nil {
+		t.Errorf("expected collision log file %s not created: %v",
+			session.snapshot.ResultLogPath, err)
+	}
+
+	// 期待结果 3：checkpointPort.Save 写入的文件路径与实际 CSV stem 一致
+	// 用 session.snapshot.CSVPath（已回写）派生期望路径，与 ResolveCheckpointPathFromCSV 单一真相源一致
+	expectedCheckpoint := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
+	cp := traversal.Checkpoint{
+		Version:         traversal.CheckpointVersion,
+		TaskID:          config.TaskID,
+		State:           traversal.StateRunning,
+		CompletedPoints: 0,
+		TotalPoints:     3,
+	}
+	cp.Snapshot.Config = config
+	if err := checkpointPort.Save(ctx, cp); err != nil {
+		t.Fatalf("checkpoint save: %v", err)
+	}
+	if _, err := os.Stat(expectedCheckpoint); err != nil {
+		t.Errorf("expected checkpoint at actual-collision stem %s, got stat err: %v",
+			expectedCheckpoint, err)
+	}
+
+	// 期待结果 4：旧 stem 的 checkpoint 不存在（修复前会错误落在此处）
+	staleCheckpoint := traversal.ResolveCheckpointPathFromCSV(csvPath)
+	if _, err := os.Stat(staleCheckpoint); err == nil {
+		t.Errorf("stale checkpoint at expected-stem path should NOT exist, but found: %s",
+			staleCheckpoint)
+	}
+
+	// 清理：关闭 v2 端口
+	_ = mgr.csvPort.Close(ctx)
+	_ = mgr.resultLogPort.Close(ctx)
+	_ = checkpointPort.Close(ctx)
 }

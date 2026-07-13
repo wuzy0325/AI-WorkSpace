@@ -528,3 +528,206 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// mockAcquisitionController 测试用 ports.AcquisitionController 实现。
+//
+// 按 deviceID 返回预设 connected / acquiring / startErr；
+// 调用 StartAcquisition 时计 startCalls，便于断言主动启动是否触发。
+type mockAcquisitionController struct {
+	connected map[string]bool
+	acquiring map[string]bool
+	startErr  error
+	startCalls []string
+}
+
+func (m *mockAcquisitionController) IsConnected(id string) bool {
+	return m.connected[id]
+}
+
+func (m *mockAcquisitionController) IsAcquiring(id string) bool {
+	return m.acquiring[id]
+}
+
+func (m *mockAcquisitionController) StartAcquisition(id string) error {
+	m.startCalls = append(m.startCalls, id)
+	return m.startErr
+}
+
+// findCheck 在 CheckPreconditions 返回的 checks 数组中按 name 定位单项。
+func findCheck(checks []map[string]any, name string) map[string]any {
+	for _, c := range checks {
+		if c["name"] == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// TestCheckPreconditions_NilAcquisitionController 端口未注入时保持向后兼容。
+//
+// 测试前置：
+//   - TraversalManager 实例，未调用 SetAcquisitionController
+//   - config.ChannelLabels 齐全（避免 ChannelMap 项干扰判定）
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(nil)
+//
+// 期待结果：
+//   - checks 数组长度 = 4（PRB / Motion / DAQ / ChannelMap），无 DeviceConnected / DeviceAcquiring
+//   - allPassed 不含设备采集态判定（与旧版行为一致）
+func TestCheckPreconditions_NilAcquisitionController(t *testing.T) {
+	mgr := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+
+	result := mgr.CheckPreconditions(nil)
+
+	checks, _ := result["checks"].([]map[string]any)
+	if len(checks) != 4 {
+		t.Errorf("checks length: expect 4 (no acquisition controller injected), got %d", len(checks))
+	}
+	if findCheck(checks, "DeviceConnected") != nil {
+		t.Errorf("DeviceConnected check should not exist when controller is nil")
+	}
+	if findCheck(checks, "DeviceAcquiring") != nil {
+		t.Errorf("DeviceAcquiring check should not exist when controller is nil")
+	}
+}
+
+// TestCheckPreconditions_DeviceNotConnected 端口注入但目标设备未连接。
+//
+// 测试前置：
+//   - TraversalManager 实例，注入 mockAcquisitionController
+//   - mock.connected["dev-1"] = false
+//   - config.ChannelLabels 齐全
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(config)，config.DeviceID = "dev-1"
+//
+// 期待结果：
+//   - DeviceConnected 项 passed=false，message 包含 "not connected"
+//   - allPassed=false
+func TestCheckPreconditions_DeviceNotConnected(t *testing.T) {
+	mgr := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"dev-1": false},
+		acquiring: map[string]bool{"dev-1": false},
+	})
+
+	cfg := &traversal.Config{DeviceID: "dev-1"}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	deviceConn := findCheck(checks, "DeviceConnected")
+	if deviceConn == nil {
+		t.Fatalf("expected DeviceConnected check item, got nil")
+	}
+	if deviceConn["passed"] != false {
+		t.Errorf("DeviceConnected passed: expect false (not connected), got %v", deviceConn["passed"])
+	}
+	msg, _ := deviceConn["message"].(string)
+	if !contains(msg, "not connected") {
+		t.Errorf("DeviceConnected message: expect contains 'not connected', got %q", msg)
+	}
+	if result["allPassed"] != false {
+		t.Errorf("allPassed: expect false (device not connected), got %v", result["allPassed"])
+	}
+}
+
+// TestCheckPreconditions_DeviceConnectedNotAcquiring 设备已连接但未采集。
+//
+// 测试前置：
+//   - TraversalManager 实例，注入 mockAcquisitionController
+//   - mock.connected["dev-1"] = true，mock.acquiring["dev-1"] = false
+//   - config.ChannelLabels 齐全
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(config)，config.DeviceID = "dev-1"
+//
+// 期待结果：
+//   - DeviceConnected 项 passed=true
+//   - DeviceAcquiring 项 passed=false，message 包含 "will auto-start"
+//   - allPassed=true（DeviceAcquiring 不纳入 allPassed；未采集会自动拉起，不阻止开始）
+func TestCheckPreconditions_DeviceConnectedNotAcquiring(t *testing.T) {
+	// 使用 newConfigTestManager 注入 reader/motion/sink，再 SetInterpolator 让 PRB 项通过，
+	// 从而只验证 DeviceAcquiring 对 allPassed 的影响。
+	mgr := newConfigTestManager(t)
+	mgr.SetInterpolator(&mockInterpolator{})
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"sim-1": true},
+		acquiring: map[string]bool{"sim-1": false},
+	})
+
+	cfg := &traversal.Config{
+		DeviceID:      "sim-1",
+		ChannelLabels: map[int]string{0: "P1", 5: "Patm", 6: "Tatm"},
+	}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	deviceConn := findCheck(checks, "DeviceConnected")
+	if deviceConn["passed"] != true {
+		t.Errorf("DeviceConnected passed: expect true (connected), got %v", deviceConn["passed"])
+	}
+	deviceAcq := findCheck(checks, "DeviceAcquiring")
+	if deviceAcq == nil {
+		t.Fatalf("expected DeviceAcquiring check item, got nil")
+	}
+	if deviceAcq["passed"] != false {
+		t.Errorf("DeviceAcquiring passed: expect false (not acquiring), got %v", deviceAcq["passed"])
+	}
+	msg, _ := deviceAcq["message"].(string)
+	if !contains(msg, "will auto-start") {
+		t.Errorf("DeviceAcquiring message: expect contains 'will auto-start', got %q", msg)
+	}
+	if result["allPassed"] != true {
+		t.Errorf("allPassed: expect true (DeviceAcquiring 不阻止开始), got %v", result["allPassed"])
+	}
+}
+
+// TestCheckPreconditions_DeviceAcquiring 设备已连接且正在采集。
+//
+// 测试前置：
+//   - TraversalManager 实例，注入 mockAcquisitionController
+//   - mock.connected["dev-1"] = true，mock.acquiring["dev-1"] = true
+//   - config.ChannelLabels 齐全
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(config)，config.DeviceID = "dev-1"
+//
+// 期待结果：
+//   - DeviceConnected 项 passed=true
+//   - DeviceAcquiring 项 passed=true
+//   - allPassed 受其他项影响，但设备采集态两项均通过
+func TestCheckPreconditions_DeviceAcquiring(t *testing.T) {
+	mgr := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"dev-1": true},
+		acquiring: map[string]bool{"dev-1": true},
+	})
+
+	cfg := &traversal.Config{DeviceID: "dev-1"}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	deviceConn := findCheck(checks, "DeviceConnected")
+	if deviceConn["passed"] != true {
+		t.Errorf("DeviceConnected passed: expect true (connected), got %v", deviceConn["passed"])
+	}
+	deviceAcq := findCheck(checks, "DeviceAcquiring")
+	if deviceAcq["passed"] != true {
+		t.Errorf("DeviceAcquiring passed: expect true (acquiring), got %v", deviceAcq["passed"])
+	}
+}
+
+var _ ports.AcquisitionController = (*mockAcquisitionController)(nil)

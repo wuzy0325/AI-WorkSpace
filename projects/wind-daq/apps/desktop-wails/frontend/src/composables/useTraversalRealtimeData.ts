@@ -97,6 +97,24 @@ function buildRealtimePressuresFromSnapshots(
 }
 
 /**
+ * 从遍历配置中提取目标设备 ID。
+ *
+ * 后端 ParseConfig 以第一个启用的探针通道的 deviceId 作为遍历任务的
+ * DeviceID，前端这里保持相同语义，确保自动启动采集后订阅正确的设备。
+ *
+ * @param config 遍历测试配置
+ * @returns 设备 ID，或 null（配置无效/无启用通道）
+ */
+function getTraversalDeviceId(config: TraversalTestConfig | null): string | null {
+  if (!config) return null
+  const enabledChannels = config.channels.probeChannels.filter(
+    (c) => c.enabled && c.channel.deviceId
+  )
+  if (enabledChannels.length === 0) return null
+  return enabledChannels[0].channel.deviceId
+}
+
+/**
  * 将实时压力映射转换为插值输入
  *
  * 仅当所有 7 个通道（P1~P5、Patm、Tatm）均存在时才返回有效输入，
@@ -209,6 +227,28 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
   })
 
   /**
+   * 确保目标设备的数据订阅已建立。
+   *
+   * 背景：遍历测试可能由后端自动启动采集（用户未在设备管理页点击
+   * "开始采集"），此时 deviceStore.startAcquisition 未被调用，也就
+   * 不会触发 deviceApi.subscribeToDevice。本函数在页面加载和测试
+   * 启动后主动订阅，保证实时数据能持续推送到 onSnapshot 监听器。
+   *
+   * 走 deviceStore.ensureSubscribed 而非直接调 deviceApi.subscribeToDevice：
+   *   store 内部会同时 subscribedDeviceIds.add(id)，让
+   *   cleanupSnapshotSubscriptions 在最后一个 listener detach 时能
+   *   正确清理轮询定时器，避免离开页面后 20Hz 轮询泄漏。
+   *
+   * 幂等：store 内部 subscribeToDevice 按 deviceId 去重，Set.add 重复安全。
+   */
+  function ensureSubscribed(): void {
+    const deviceId = getTraversalDeviceId(config.value)
+    if (deviceId) {
+      deviceStore.ensureSubscribed(deviceId)
+    }
+  }
+
+  /**
    * 订阅 DAQ snapshot 事件
    *
    * 每次收到快照时，按 deviceId 替换已有条目，确保 latestSnapshots
@@ -229,6 +269,7 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     pressureItems,
     latestSnapshots,
     subscribeSnapshot,
+    ensureSubscribed,
     hasRealtimeResult
   }
 }

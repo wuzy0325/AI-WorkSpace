@@ -20,8 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +126,12 @@ type TraversalManager struct {
 	// 由 DeviceManager 实现，装配点通过 SetUnitProvider 注入。
 	unitProvider ports.ChannelUnitProvider
 
+	// 设备采集控制端口：用于 CheckPreconditions 真实校验目标设备已连接/正在采集，
+	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
+	// nil 表示未注入，前置检查与主动启动逻辑均走降级路径（保持旧装配向后兼容）。
+	// 由 DeviceManager 实现，装配点通过 SetAcquisitionController 注入。
+	acquisitionController ports.AcquisitionController
+
 	// v2 可靠存储端口（Task 4-8）：三阶段提交与崩溃恢复所需
 	// csvPort      CSV 落盘端口（支持新建/恢复、Sync、截断）
 	// resultLogPort JSONL 完整结果日志端口（支持 AppendPrepared、Sync、ValidateTail）
@@ -232,6 +236,21 @@ func (m *TraversalManager) SetUnitProvider(provider ports.ChannelUnitProvider) {
 	m.mu.Unlock()
 }
 
+// SetAcquisitionController 注入设备采集控制端口，供遍历启动前
+//   - CheckPreconditions 真实校验目标设备已连接 / 正在采集；
+//   - ParseAndStartTraversal 在启动 loop 之前主动拉起采集。
+//
+// 与 SetUnitProvider 同模式（setter 注入）：DeviceManager 创建顺序在
+// TraversalManager 之后，构造期无法表达"先创建 mgr 再回填"的依赖。
+//
+// 调用时机：装配根创建 DeviceManager 之后立即调用，与 SetUnitProvider
+// 紧邻；未注入时所有调用方走降级路径（保持旧装配向后兼容）。
+func (m *TraversalManager) SetAcquisitionController(controller ports.AcquisitionController) {
+	m.mu.Lock()
+	m.acquisitionController = controller
+	m.mu.Unlock()
+}
+
 // SetCsvPort 注入遍历 CSV 端口（v2 可靠存储）。
 // 支持新建/恢复模式、行级摘要、尾部截断与 Sync。
 // 装配阶段调用；若未注入，遍历仍可通过旧 sink 路径落盘，但无崩溃恢复能力。
@@ -302,6 +321,14 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 // CheckPreconditions 校验遍历测试启动前的前置条件。
 // 若传入待启动配置（启动确认对话框场景），则基于该配置中的 ChannelLabels 校验 Patm/Tatm；
 // 若传入 nil，则回退到当前 manager 持有的 m.config（如 verifyInterpolatorWithBackend 场景）。
+//
+// 设备采集态校验（acquisitionController 非 nil 时启用）：
+//   - DeviceConnected：目标设备是否已连接；
+//   - DeviceAcquiring：目标设备是否正在采集。
+//
+// 这两项替代了旧版"DAQ hub 是否注入"对运行态的失真反映——hub 注入只代表基础设施
+// 就绪，不代表目标设备正在持续产帧。新增两项让"全部通过"真实可信赖。
+// acquisitionController 为 nil（旧装配）时保持原 4 项检查不变，向后兼容。
 func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
 	hasInterpolator := m.HasLoadedInterpolator()
 	hasMotion := m.motion != nil
@@ -331,6 +358,9 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 			hasTatm = true
 		}
 	}
+	// acquisitionController 在锁内取一次：与 SetAcquisitionController 写入互斥，
+	// 同时避免锁外单独再读 m.acquisitionController 产生数据竞争。
+	acqController := m.acquisitionController
 	m.mu.RUnlock()
 
 	channelMapPassed := hasPatm && hasTatm
@@ -341,13 +371,53 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 		channelMapMessage = "Tatm channel label is required for atmospheric calculation"
 	}
 
+	// 设备采集态校验：仅当端口注入时启用，避免旧装配回归。
+	// DeviceAcquiring 项文案区分"未连接"与"未采集"两种失败，
+	// 让用户在确认对话框中能直接看到根因而非反推。
+	//
+	// 为什么锁外调用 IsConnected/IsAcquiring：
+	//   acqController 实现为 DeviceManager.GetStatus，内部持 DeviceManager.mu.RLock。
+	//   若在 TraversalManager.mu 持锁期间调用，会形成"TraversalManager.mu → DeviceManager.mu"
+	//   嵌套锁顺序。虽然当前 DeviceManager 不会回调 TraversalManager，但持锁调用外部接口
+	//   是反模式——接口实现若耗时（如未来扩展为网络查询）会阻塞 TraversalManager 的其他操作。
+	//   故有意锁外调用，acqController 局部变量已是接口指针的原子快照，无数据竞争。
+	deviceConnected := true
+	deviceConnectedMsg := "Target device is connected"
+	deviceAcquiring := true
+	deviceAcquiringMsg := "Target device is acquiring"
+	if acqController != nil {
+		deviceConnected = acqController.IsConnected(cfg.DeviceID)
+		if !deviceConnected {
+			deviceConnectedMsg = "Target device is not connected, please connect it first"
+		}
+		deviceAcquiring = acqController.IsAcquiring(cfg.DeviceID)
+		if !deviceAcquiring {
+			// 未在采集时给出"将自动启动"的提示，与 ParseAndStartTraversal 主动启动逻辑呼应，
+			// 让用户在确认对话框预知行为而非看到隐式自动操作。
+			deviceAcquiringMsg = "Target device is not acquiring (will auto-start on confirm)"
+		}
+	}
+
 	checks := []map[string]any{
 		{"name": "PRB", "passed": hasInterpolator, "message": prbMessage},
 		{"name": "Motion", "passed": hasMotion, "message": "Motion manager is available"},
 		{"name": "DAQ", "passed": hasReader, "message": "DAQ acquisition hub is available"},
 		{"name": "ChannelMap", "passed": channelMapPassed, "message": channelMapMessage},
 	}
+	if acqController != nil {
+		checks = append(checks,
+			map[string]any{"name": "DeviceConnected", "passed": deviceConnected, "message": deviceConnectedMsg},
+			map[string]any{"name": "DeviceAcquiring", "passed": deviceAcquiring, "message": deviceAcquiringMsg},
+		)
+	}
+	// DeviceAcquiring 不纳入 allPassed：设备未采集时，ParseAndStartTraversal
+	// 会在启动 loop 之前主动调用 StartAcquisition 拉起采集。该项仅用于提示用户
+	// "将自动启动"，而非阻止开始测试。DeviceConnected 仍必须纳入 allPassed，
+	// 因为未连接时无法通过任何自动操作恢复。
 	allPassed := hasInterpolator && hasMotion && hasReader && channelMapPassed
+	if acqController != nil {
+		allPassed = allPassed && deviceConnected
+	}
 	return map[string]any{"allPassed": allPassed, "checks": checks}
 }
 
@@ -562,18 +632,18 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 
 	// v2 存储初始化：CSV 与结果日志（Create 模式，不截断）
 	// 列配置通过 helper 内部从 config 复制到 session，确保 v2 表头与旧 sink 一致。
-	if err := m.openReliabilityPorts(session, ports.TraversalOutputCreate, snapshot, config); err != nil {
+	// openReliabilityPorts 内部会在撞名 -2/-3 时回写 session.snapshot.CSVPath / ResultLogPath，
+	// 调用方在函数返回后用 session.snapshot.CSVPath 即可拿到实际落盘路径。
+	if err := m.openReliabilityPorts(session, ports.TraversalOutputCreate, config); err != nil {
 		m.abortStartLocked(session, config.TaskID, err.Error(), traversal.ErrSaveFailed)
 		return err
 	}
 	// 注册活动索引，支持进程重启发现。
-	// checkpointPath 与 FileCheckpointPort.path() 派生规则一致：CSV 同目录 .traversal/ 隐藏子目录。
+	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
+	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
+	// 用 session.snapshot.CSVPath（撞名回写后的实际路径）派生，避免与实际 CSV stem 错位。
 	if activeIndex != nil && checkpointPort != nil {
-		ext := filepath.Ext(snapshot.CSVPath)
-		base := strings.TrimSuffix(snapshot.CSVPath, ext)
-		dir := filepath.Dir(base)
-		stem := filepath.Base(base)
-		checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+		checkpointPath := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
 		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
 				"component", "traversal", "task_id", config.TaskID, "error", err)
@@ -611,18 +681,29 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 // 让 csvPort.Open 构建与 InitializeTraversal 一致的表头/labels，避免 v2 主路径
 // 表头缺少通道列（Critical-3）。
 //
+// 撞名回写（Critical：v2 撞名 stem 错位修复）：
+//   - csvPort.Open(Create) 在文件已存在时会自动加 -2/-3 后缀（openCreateUnique），
+//     实际落盘路径可能与 session.snapshot.CSVPath 不同；
+//   - Open 后必须用 csvPort.OutputPath() 拿真实路径回写 session.snapshot.CSVPath，
+//     并调 checkpointPort.SetBasePath(actualCSVPath) 让后续 Save 派生路径与实际 CSV 一致；
+//   - resultLogPort.Open 同理回写 session.snapshot.ResultLogPath。
+//
 // 调用方负责：beginSession + resetFinalizeOnce + Acquire(traversalLockResource)；
 // 失败时调用 abortStartLocked 回滚已打开的端口。
 func (m *TraversalManager) openReliabilityPorts(
 	session *TraversalRunSession,
 	mode ports.TraversalOutputMode,
-	snapshot traversal.TraversalRunSnapshot,
 	config traversal.Config,
 ) error {
 	m.mu.RLock()
 	csvPort := m.csvPort
 	resultLogPort := m.resultLogPort
+	checkpointPort := m.checkpointPort
 	m.mu.RUnlock()
+
+	// 从 session.snapshot 读取路径：openReliabilityPorts 内部回写后，
+	// 调用方在函数返回后用 session.snapshot.CSVPath 即可拿到实际落盘路径。
+	snapshot := session.snapshot
 
 	if csvPort != nil {
 		csvSession := ports.TraversalOutputSession{
@@ -636,6 +717,20 @@ func (m *TraversalManager) openReliabilityPorts(
 		}
 		if err := csvPort.Open(session.ctx, csvSession); err != nil {
 			return fmt.Errorf("csv open: %w", err)
+		}
+		// 撞名回写：csvPort.Open 实际落盘路径可能与传入的 snapshot.CSVPath 不同
+		// （Create 模式撞名 -2/-3）。回写 session.snapshot.CSVPath 让后续
+		// activeIndex.Register / saveCheckpoint / commitPointV2 fallback 派生的
+		// checkpoint 路径与实际 CSV stem 一致，避免 Resume 打开错误 CSV 污染旧数据。
+		actualCSVPath := csvPort.OutputPath()
+		if actualCSVPath != "" && actualCSVPath != snapshot.CSVPath {
+			session.snapshot.CSVPath = actualCSVPath
+			// 同步更新 checkpointPort.basePath，让 Save/Load/Find/Unregister
+			// 派生路径与新 CSV stem 一致。Resume 模式下撞名不会发生（Open 不创建文件），
+			// 但 SetBasePath 仍是无副作用的幂等操作。
+			if checkpointPort != nil {
+				checkpointPort.SetBasePath(actualCSVPath)
+			}
 		}
 	}
 	if resultLogPort != nil {
@@ -652,6 +747,12 @@ func (m *TraversalManager) openReliabilityPorts(
 		}
 		if err := resultLogPort.Open(session.ctx, logSession); err != nil {
 			return fmt.Errorf("result log open: %w", err)
+		}
+		// 撞名回写：与 csvPort 同理，结果日志 Create 模式撞名时实际路径不同，
+		// 回写 session.snapshot.ResultLogPath 保证后续恢复/状态展示一致。
+		actualLogPath := resultLogPort.OutputPath()
+		if actualLogPath != "" && actualLogPath != snapshot.ResultLogPath {
+			session.snapshot.ResultLogPath = actualLogPath
 		}
 		// Resume 模式：Open 仅追加打开，不做水位对齐。必须显式 ValidateTail +
 		// TruncateAfter，丢弃崩溃前未 Sync 的半写入记录，保证权威日志与

@@ -78,6 +78,11 @@ type TraversalCSVPort interface {
 	Inspect(ctx context.Context) (TraversalOutputState, error)
 	TruncateAfter(ctx context.Context, commitSeq uint64) error
 	Close(ctx context.Context) error
+	// OutputPath 返回 Open 后实际落盘的 CSV 文件路径。
+	// 撞名 -2/-3 场景下，实际路径可能与 session.Path 不同；调用方必须用本方法
+	// 拿真实路径回写 snapshot.CSVPath / 派生 checkpoint 路径，否则崩溃恢复会
+	// 打开错误的 CSV 文件污染旧数据。
+	OutputPath() string
 }
 
 type TraversalResultLogPort interface {
@@ -88,6 +93,9 @@ type TraversalResultLogPort interface {
 	ValidateTail(ctx context.Context, commitSeq uint64) error
 	TruncateAfter(ctx context.Context, commitSeq uint64) error
 	Close(ctx context.Context) error
+	// OutputPath 返回 Open 后实际落盘的结果日志路径。
+	// 撞名场景下实际路径可能与 session.Path 不同，调用方应回写 snapshot.ResultLogPath。
+	OutputPath() string
 }
 
 type TraversalCheckpointRef struct {
@@ -108,6 +116,10 @@ type TraversalCheckpointPort interface {
 	Find(ctx context.Context, taskID string) (TraversalCheckpointRef, bool, error)
 	Unregister(ctx context.Context, taskID string) error
 	Close(ctx context.Context) error
+	// SetBasePath 在 csvPort.Open 成功后由 usecase 调用，
+	// 把 basePath 从"预期 CSV 路径"切换为"实际落盘 CSV 路径"（含 -2/-3 撞名后缀）。
+	// 实现必须保证后续 Save/Load/Find/Unregister 派生的路径与新 basePath 一致。
+	SetBasePath(csvPath string)
 }
 
 // TraversalCheckpointPortFactory 按 SavePath 动态创建断点端口。

@@ -96,6 +96,9 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	// 查询通道 Unit。manager 在此处已初始化完成，可安全注入。
 	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
 	travMgr.SetUnitProvider(manager)
+	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
+	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
+	travMgr.SetAcquisitionController(manager)
 
 	handler := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

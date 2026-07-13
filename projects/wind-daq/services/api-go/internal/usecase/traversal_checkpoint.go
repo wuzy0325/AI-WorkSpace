@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -152,12 +150,10 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 		return
 	}
 
-	// 检查点放在 CSV 同目录的 .traversal/ 隐藏子目录，避免用户看到内部文件
-	ext := filepath.Ext(savePath)
-	base := strings.TrimSuffix(savePath, ext)
-	dir := filepath.Dir(base)
-	stem := filepath.Base(base)
-	checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+	// 检查点放在 CSV 同目录的 .traversal/ 隐藏子目录，避免用户看到内部文件。
+	// 路径派生收敛到 ResolveCheckpointPathFromCSV 单一真相源，
+	// 与 FileCheckpointPort.path() / activeIndex.Register / commitPointV2 fallback 保持一致。
+	checkpointPath := traversal.ResolveCheckpointPathFromCSV(savePath)
 	if m.checkpointStore == nil {
 		return
 	}
@@ -355,18 +351,18 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	// v2 存储初始化：CSV 与结果日志以 Resume 模式 Open，helper 内部对结果日志
 	// 执行 ValidateTail + TruncateAfter，让水位严格对齐 CommittedSeq
 	// （CSV 截断由 csvPort.Open 内部根据 CommittedSeq 完成）。
-	if err := m.openReliabilityPorts(session, ports.TraversalOutputResume, snapshot, config); err != nil {
+	// openReliabilityPorts 内部会在撞名 -2/-3 时回写 session.snapshot.CSVPath / ResultLogPath，
+	// 调用方在函数返回后用 session.snapshot.CSVPath 即可拿到实际落盘路径。
+	if err := m.openReliabilityPorts(session, ports.TraversalOutputResume, config); err != nil {
 		m.abortStartLocked(session, cp.TaskID, err.Error(), traversal.ErrSaveFailed)
 		return "", err
 	}
 	// 注册活动索引，支持进程重启发现。
-	// checkpointPath 与 saveCheckpoint 派生规则一致：CSV 同目录 .traversal/ 隐藏子目录。
+	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
+	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
+	// 用 session.snapshot.CSVPath（撞名回写后的实际路径）派生，避免与实际 CSV stem 错位。
 	if activeIndex != nil && checkpointPort != nil {
-		ext := filepath.Ext(snapshot.CSVPath)
-		base := strings.TrimSuffix(snapshot.CSVPath, ext)
-		dir := filepath.Dir(base)
-		stem := filepath.Base(base)
-		checkpointPath := filepath.Join(dir, ".traversal", stem + ".checkpoint.json")
+		checkpointPath := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
 		if err := activeIndex.Register(session.ctx, cp.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
 				"component", "traversal", "task_id", cp.TaskID, "error", err)
