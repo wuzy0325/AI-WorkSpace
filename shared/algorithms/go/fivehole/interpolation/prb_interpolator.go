@@ -349,6 +349,15 @@ func createGridAngles() []float64 {
 }
 
 func gridPointKey(alpha, beta float64) string {
+	// 归一化负零：math.Trunc 对 (-5,0) 范围内的负数返回 -0，
+	// 乘以 gridStep 后仍为 -0，导致 Sprintf 输出 "-0" 与实际键 "0" 不匹配，
+	// 进而 GetExactGridPointOrThrow 失败，interpolateOutputValue 返回 0
+	if alpha == 0 {
+		alpha = 0
+	}
+	if beta == 0 {
+		beta = 0
+	}
 	return fmt.Sprintf("%.0f,%.0f", alpha, beta)
 }
 
