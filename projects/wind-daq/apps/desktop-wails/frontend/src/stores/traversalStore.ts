@@ -4,6 +4,7 @@ import { traversalApi } from '@api/traversalApi'
 
 import { useUiRefreshThrottle } from '@composables/useUiRefreshThrottle'
 import { useI18nStore } from '@stores/i18nStore'
+import { useDeviceStore } from '@stores/deviceStore'
 import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
 
 function formatApiError(err: unknown): string {
@@ -39,6 +40,11 @@ export type RealtimePressures = TraversalRawPressure
 export const useTraversalStore = defineStore('traversal', () => {
   // 国际化：store 内部错误消息需随语言切换，故引入 i18n store
   const i18n = useI18nStore()
+  // 设备 store：遍历测试启动/停止会在后端隐式 StartAcquisition/StopAcquisition
+  // （见 traversal_config.go ParseAndStartTraversal），前端 deviceStatuses 不会自动同步，
+  // 故在 start/stop 成功后主动 refreshAllStatuses，否则侧边栏 acquiringFor 一律返回 false，
+  // 采集状态指示灯停在"已连接"无法切换到"采集中"。
+  const deviceStore = useDeviceStore()
   const statusRecoveryFailed = ref(false)
   // 启动防重入标志：避免用户连续点击"开始"导致并发启动
   const isStarting = ref(false)
@@ -654,6 +660,13 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
 
       await refreshStatus()
+      // 后端 ParseAndStartTraversal 已隐式启动设备采集，前端 deviceStatuses 需同步刷新，
+      // 否则侧边栏 acquiringFor 返回 false，采集状态指示灯停在"已连接"。
+      // 不阻塞启动主流程：refreshAllStatuses 内部 catch 所有错误，最坏情况是指示灯延迟更新，
+      // 不影响测试启动成功语义。
+      deviceStore.refreshAllStatuses().catch((err) => {
+        console.warn('[traversalStore] startTest: refreshAllStatuses failed:', err)
+      })
       return startRes.data.taskId
     } catch (err) {
       clearStartupWindow()
@@ -686,6 +699,11 @@ export const useTraversalStore = defineStore('traversal', () => {
     const res = await traversalApi.stop()
     if (!res.success) throw new Error(res.error || i18n.t.travErrStop)
     await refreshStatus()
+    // 后端 stop 会隐式停止设备采集（若由遍历启动），前端需同步刷新，
+    // 否则侧边栏 acquiringFor 仍返回 true，指示灯停在"采集中"
+    deviceStore.refreshAllStatuses().catch((err) => {
+      console.warn('[traversalStore] stop: refreshAllStatuses failed:', err)
+    })
   }
 
   async function refreshStatus(): Promise<void> {
