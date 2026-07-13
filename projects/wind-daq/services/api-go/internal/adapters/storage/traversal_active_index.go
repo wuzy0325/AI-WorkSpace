@@ -27,14 +27,13 @@ type traversalActiveIndexFile struct {
 var _ ports.TraversalActiveIndex = (*TraversalActiveIndex)(nil)
 
 type TraversalActiveIndex struct {
-	mu      sync.Mutex
-	path    string
-	dataDir string
-	store   *FileCheckpointStore
+	mu    sync.Mutex
+	path  string
+	store *FileCheckpointStore
 }
 
-func NewTraversalActiveIndex(path, dataDir string) *TraversalActiveIndex {
-	return &TraversalActiveIndex{path: filepath.Clean(path), dataDir: filepath.Clean(dataDir), store: NewFileCheckpointStore()}
+func NewTraversalActiveIndex(path, _ string) *TraversalActiveIndex {
+	return &TraversalActiveIndex{path: filepath.Clean(path), store: NewFileCheckpointStore()}
 }
 
 func (i *TraversalActiveIndex) Register(ctx context.Context, taskID, checkpointPath string) error {
@@ -129,28 +128,17 @@ func (i *TraversalActiveIndex) saveLocked(index traversalActiveIndexFile) error 
 	return nil
 }
 
-// validatePath 校验 checkpoint 路径必须位于 dataDir 之内，防止路径遍历攻击
-// （如 taskID 注入 "../../../etc/passwd" 写入系统任意位置）。
-//
-// 边界处理：
-//   - relative == "."：checkpoint 路径等于 dataDir 本身，不是合法文件 → 拒绝
-//   - relative == ".." 或以 "../" 开头：路径逃逸出 dataDir → 拒绝
-//   - filepath.IsAbs(relative)：Windows 上不同盘符会让 Rel 返回绝对路径 → 拒绝
+// validatePath 将 checkpoint 路径规范化为绝对路径，并限制为 checkpoint JSON 文件。
+// checkpoint 与 CSV 同目录，用户可将遍历结果保存到配置目录之外，因此不能按
+// 活动索引文件所在目录限制路径范围。路径由后端从实际 CSV 路径派生，不接受客户端
+// 提供的任意文件类型。
 func (i *TraversalActiveIndex) validatePath(path string) (string, error) {
-	absoluteDataDir, err := filepath.Abs(i.dataDir)
-	if err != nil {
-		return "", fmt.Errorf("解析活动遍历数据目录失败: %w", err)
-	}
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("解析 checkpoint 路径失败: %w", err)
 	}
-	relative, err := filepath.Rel(absoluteDataDir, absolutePath)
-	if err != nil {
-		return "", fmt.Errorf("校验 checkpoint 路径失败: %w", err)
-	}
-	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
-		return "", errors.New("checkpoint 路径超出活动遍历数据目录")
+	if !strings.HasSuffix(strings.ToLower(filepath.Base(absolutePath)), ".checkpoint.json") {
+		return "", errors.New("活动遍历索引仅允许 checkpoint JSON 路径")
 	}
 	return absolutePath, nil
 }

@@ -38,13 +38,29 @@ func TestTraversalActiveIndexRegistersFindsUpdatesAndUnregistersTasks(t *testing
 	}
 }
 
-func TestTraversalActiveIndexRejectsPathsOutsideDataDirectoryAndCorruption(t *testing.T) {
+func TestTraversalActiveIndexAcceptsCheckpointInExternalOutputDirectory(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	outputDir := t.TempDir()
+	path := filepath.Join(dir, "active.json")
+	index := NewTraversalActiveIndex(path, dir)
+	checkpointPath := filepath.Join(outputDir, "run.checkpoint.json")
+	if err := index.Register(ctx, "task-1", checkpointPath); err != nil {
+		t.Fatalf("Register external checkpoint returned error: %v", err)
+	}
+	ref, found, err := index.Find(ctx, "task-1")
+	if err != nil || !found || ref.Path != checkpointPath {
+		t.Fatalf("Find external checkpoint = %+v, %v, %v", ref, found, err)
+	}
+}
+
+func TestTraversalActiveIndexRejectsInvalidCheckpointPathAndCorruption(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "active.json")
 	index := NewTraversalActiveIndex(path, dir)
-	if err := index.Register(ctx, "task-1", filepath.Join(filepath.Dir(dir), "outside.json")); err == nil {
-		t.Fatal("expected outside data directory error")
+	if err := index.Register(ctx, "task-1", filepath.Join(dir, "outside.json")); err == nil {
+		t.Fatal("expected invalid checkpoint path error")
 	}
 	if err := os.WriteFile(path, []byte("{broken"), 0o644); err != nil {
 		t.Fatalf("write corrupt index: %v", err)

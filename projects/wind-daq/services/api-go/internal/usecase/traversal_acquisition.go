@@ -795,7 +795,7 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	validSamples := 0
 	deadline := time.Now().Add(acquisitionBatchTimeout)
 
-	for i := 0; i < samplesPerPoint; i++ {
+	for validSamples < samplesPerPoint {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
 		if m.isTaskCancelled(taskID) {
 			slog.Warn("traversal averaged sampling cancelled",
@@ -817,6 +817,7 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 		}
 		payload, ok := m.reader.GetLatestData(deviceID)
 		if !ok {
+			time.Sleep(acquisitionBatchPoll)
 			continue
 		}
 		values := valuesForChannels(payload, channels)
