@@ -145,6 +145,7 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE},0"
 !macroend
 
 !macro wails.associateFiles
