@@ -88,3 +88,7 @@ projects/*/docs/ideas/
 
 # 未成型的实验性项目（1604Cal 等仅本地探索，正式立项后再入库）
 projects/1604Cal/
+
+# 本地分析产物与临时文件
+analysis/
+temp/
