@@ -366,18 +366,29 @@ const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${
   min-width: 0;
 }
 
-/* 步骤内容：紧凑布局 + 限制最大高度避免对话框被拉长 */
+/* 步骤内容：使用固定 height（而非 max-height）确保步骤切换时画面尺寸稳定。
+   关键：用 height: 60vh 让内容少时主体保持固定高度、内容多时内部滚动，
+   避免步骤切换时对话框整体高度跳动破坏视觉锚点（与遍历测试一致）。 */
 .step-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  max-height: 62vh;
+  gap: 6px;
+  height: 60vh;
   overflow-y: auto;
   scrollbar-width: thin;
   padding-right: var(--space-1);
 }
 
 .section-card { font-size: var(--text-sm); }
+
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，
+   覆盖为 4px 8px 让卡片视觉更紧凑、与遍历测试一致。 */
+.section-card :deep(.n-card__content) {
+  padding: 4px 8px;
+}
+.section-card :deep(.n-card-header) {
+  padding: 4px 8px;
+}
 
 /* 批量操作工具栏：扁平化工具条，与面板风格协调 */
 .batch-toolbar {

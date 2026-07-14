@@ -887,26 +887,30 @@ function getChannelGroupLabel(groupKey: string): string {
   min-width: 0;
 }
 
-/* 紧凑布局主体：左右分栏，限制最大高度防止内容被拉长（参考遍历测试布局） */
+/* 紧凑布局主体：左右分栏，使用固定 height（而非 max-height）确保步骤切换时画面尺寸稳定。
+   关键：用 height: 60vh 让内容少时主体保持固定高度、内容多时内部滚动，
+   避免步骤切换时对话框整体高度跳动破坏视觉锚点（与遍历测试一致）。 */
 .calib-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;
   gap: 0;
   min-height: 0;
-  max-height: 65vh;
+  height: 60vh;
   flex: 1;
   overflow: hidden;
 }
 
 .calib-main {
   min-height: 0;
-  max-height: 65vh;
+  height: 60vh;
   overflow-y: auto;
   padding-right: var(--space-3);
   scrollbar-width: thin;
 }
 
-/* 右侧 sidebar：固定宽度，限制高度，内部可滚动 */
+/* 右侧 sidebar：固定宽度，与主体等高（60vh），内部可滚动；
+   使用 height 而非 max-height 确保不同步骤下边栏与主体等高、
+   点阵预览图尺寸稳定（与遍历测试一致）。 */
 .calib-sidebar {
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
@@ -914,9 +918,19 @@ function getChannelGroupLabel(groupKey: string): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 65vh;
+  height: 60vh;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，
+   覆盖为 4px 8px 让所有步骤的卡片视觉对齐、与遍历测试一致。
+   仅对非 hardware-step 生效，hardware-step 已有专属覆盖保持原行为。 */
+.step-content:not(.hardware-step) .section-card :deep(.n-card__content) {
+  padding: 4px 8px;
+}
+.step-content:not(.hardware-step) .section-card :deep(.n-card-header) {
+  padding: 4px 8px;
 }
 
 .sidebar-stats {
