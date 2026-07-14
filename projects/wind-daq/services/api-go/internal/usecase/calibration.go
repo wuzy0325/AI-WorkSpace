@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"sync"
 	"time"
@@ -772,8 +773,15 @@ func (r *runtimeAdapter) StopMotion() error {
 
 // fallbackRuntime 回退运行时（使用旧的 reader 和 motion 接口）
 type fallbackRuntime struct {
-	reader ports.LatestDataReader
-	motion ports.MotionManager
+	reader  ports.LatestDataReader
+	motion  ports.MotionManager
+	mu      sync.Mutex
+	targets map[calibrationMotionAxis]float64
+}
+
+type calibrationMotionAxis struct {
+	controllerID string
+	axis         motion.AxisName
 }
 
 func (f *fallbackRuntime) GetChannelValue(deviceID string, channelIndex int) (float64, bool) {
@@ -810,12 +818,22 @@ func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, posi
 			return fmt.Errorf("运动控制器未连接: %s", axis.ControllerID)
 		}
 	}
-	return f.motion.MoveTo(ctx, axis.ControllerID, motion.AxisName(axis.Axis), position)
+	axisName := motion.AxisName(axis.Axis)
+	if err := f.motion.MoveTo(ctx, axis.ControllerID, axisName, position); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	if f.targets == nil {
+		f.targets = make(map[calibrationMotionAxis]float64)
+	}
+	f.targets[calibrationMotionAxis{controllerID: axis.ControllerID, axis: axisName}] = position
+	f.mu.Unlock()
+	return nil
 }
 
-// WaitForMotionComplete 轮询所有运动轴状态，直到全部停止运动或超时。
-//
-// 简化实现：扫描所有运动控制器的所有轴，任一轴 Moving=true 即继续等待。
+// WaitForMotionComplete waits until every commanded calibration axis is both
+// stopped and at its target. Checking Moving alone races with controllers whose
+// motion bit is set shortly after the move command returns.
 // 超时返回 error，调用方决定是否继续采集（通常应中止校准）。
 //
 // 注意：此实现扫描所有控制器，不区分本次校准激活的轴。
@@ -832,26 +850,57 @@ func (f *fallbackRuntime) WaitForMotionComplete() error {
 	)
 	deadline := time.Now().Add(maxWait)
 	ctx := context.Background()
+	f.mu.Lock()
+	targets := make(map[calibrationMotionAxis]float64, len(f.targets))
+	for axis, target := range f.targets {
+		targets[axis] = target
+	}
+	f.mu.Unlock()
+	if len(targets) == 0 {
+		return nil
+	}
 
 	for time.Now().Before(deadline) {
-		anyMoving := false
+		remaining := len(targets)
 		for _, status := range f.motion.StatusAll(ctx) {
-			for _, axis := range status.Axes {
-				if axis.Moving {
-					anyMoving = true
-					break
+			if !status.Connected {
+				continue
+			}
+			for _, axisStatus := range status.Axes {
+				key := calibrationMotionAxis{controllerID: status.ID, axis: axisStatus.Name}
+				target, ok := targets[key]
+				if !ok {
+					continue
+				}
+				if !axisStatus.Moving && math.Abs(axisStatus.Position-target) <= calibrationPositionTolerance(f.motion, key) {
+					remaining--
 				}
 			}
-			if anyMoving {
-				break
-			}
 		}
-		if !anyMoving {
+		if remaining == 0 {
+			f.mu.Lock()
+			f.targets = nil
+			f.mu.Unlock()
 			return nil
 		}
 		time.Sleep(pollInterval)
 	}
 	return fmt.Errorf("运动超时未完成（>%s）", maxWait)
+}
+
+func calibrationPositionTolerance(mgr ports.MotionManager, target calibrationMotionAxis) float64 {
+	const defaultTolerance = 0.01
+	for _, profile := range mgr.GetProfiles() {
+		if profile.ID != target.controllerID {
+			continue
+		}
+		for _, axis := range profile.Axes {
+			if axis.Name == target.axis && axis.EncoderCompensation != nil && axis.EncoderCompensation.Tolerance > 0 {
+				return axis.EncoderCompensation.Tolerance
+			}
+		}
+	}
+	return defaultTolerance
 }
 
 // StopMotion 立即停止所有运动轴（普通 Stop）。
@@ -860,7 +909,11 @@ func (f *fallbackRuntime) StopMotion() error {
 	if f.motion == nil {
 		return nil
 	}
-	return stopAllMotion(f.motion)
+	err := stopAllMotion(f.motion)
+	f.mu.Lock()
+	f.targets = nil
+	f.mu.Unlock()
+	return err
 }
 
 // stopAllMotion 停止所有运动控制器中 Moving=true 的轴。

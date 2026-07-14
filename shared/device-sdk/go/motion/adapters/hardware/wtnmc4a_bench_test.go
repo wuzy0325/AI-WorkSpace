@@ -5,7 +5,9 @@ package hardware
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +16,70 @@ import (
 	"shared.local/device-sdk/go/motion/core"
 )
 
+// TestWTNMC4AReadOnlyStability performs only position/status reads. It never
+// sends movement, stop, reset, homing, or register-write commands.
+func TestWTNMC4AReadOnlyStability(t *testing.T) {
+	ip := os.Getenv("WTNMC4A_READONLY_IP")
+	if ip == "" {
+		t.Skip("set WTNMC4A_READONLY_IP to run this read-only hardware test")
+	}
+	iterations := 2500 // Four axes per Status call = 10,000 position reads.
+	if raw := os.Getenv("WTNMC4A_READONLY_ITERATIONS"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			t.Fatalf("invalid WTNMC4A_READONLY_ITERATIONS %q", raw)
+		}
+		iterations = value
+	}
+
+	profile := wtnmc4aTestProfile()
+	profile.Address = ip
+	profile.Axes = []core.AxisConfig{
+		{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), MaxSpeed: core.PtrFloat64(10)},
+		{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), MaxSpeed: core.PtrFloat64(10)},
+		{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), Lead: core.PtrFloat64(4), MaxSpeed: core.PtrFloat64(10)},
+		{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, StepsPerRev: core.PtrFloat64(1.8), MicroSteps: core.PtrInt(4), GearRatio: core.PtrFloat64(1), MaxSpeed: core.PtrFloat64(10)},
+	}
+
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctx := context.Background()
+	if err := ctrl.Connect(ctx); err != nil {
+		t.Fatalf("connect %s failed: %v", ip, err)
+	}
+	defer ctrl.Disconnect(ctx)
+
+	minDuration := time.Duration(math.MaxInt64)
+	var maxDuration, totalDuration time.Duration
+	for i := 0; i < iterations; i++ {
+		started := time.Now()
+		status, err := ctrl.Status(ctx)
+		duration := time.Since(started)
+		if err != nil {
+			t.Fatalf("status iteration %d failed after %s: %v", i, duration, err)
+		}
+		if duration < minDuration {
+			minDuration = duration
+		}
+		if duration > maxDuration {
+			maxDuration = duration
+		}
+		totalDuration += duration
+		for _, axis := range status.Axes {
+			if math.IsNaN(axis.Position) || math.IsInf(axis.Position, 0) {
+				t.Fatalf("iteration %d axis %s returned non-finite position %v", i, axis.Name, axis.Position)
+			}
+		}
+	}
+
+	t.Logf("read-only stability: statuses=%d position_reads=%d avg=%s min=%s max=%s",
+		iterations, iterations*len(profile.Axes), totalDuration/time.Duration(iterations), minDuration, maxDuration)
+}
+
 // TestWTNMC4ADLLLatency 连接真实控制器并测量各 DLL 调用耗时。
 // 用法：
-//   set WTNMC4A_BENCH_IP=192.168.3.141
-//   go test ./adapters/hardware/ -run TestWTNMC4ADLLLatency -v -timeout 120s
+//
+//	set WTNMC4A_BENCH_IP=192.168.3.141
+//	go test ./adapters/hardware/ -run TestWTNMC4ADLLLatency -v -timeout 120s
 //
 // 该测试只在 WTNMC4A_BENCH_IP 环境变量设置时运行，否则 skip。
 func TestWTNMC4ADLLLatency(t *testing.T) {

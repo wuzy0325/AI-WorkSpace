@@ -23,6 +23,11 @@ type RuntimeAccess interface {
 // 不计入 pointErrorCount。
 var ErrPointAborted = errors.New("测点被暂停打断")
 
+// ErrMotionControl marks motion failures that must stop the calibration run.
+// Continuing to later points would only advance the displayed target while the
+// probe remains at an unknown physical position.
+var ErrMotionControl = errors.New("运动控制失败")
+
 // AutomaticCalibration 自动循环校准引擎
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
 // 五孔、三孔、总压校准使用此引擎
@@ -126,6 +131,9 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 				i-- // 抵消循环自增，重跑该点
 				continue
 			}
+			if errors.Is(err, ErrMotionControl) {
+				return fmt.Errorf("测点 %d 运动失败: %w", i+1, err)
+			}
 
 			log.Printf("[AutomaticCalibration] 测点 %d 采集失败: %v", i+1, err)
 			pointErrorCount++
@@ -154,7 +162,7 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint, index int) error {
 	// 2. 移动到点位
 	if err := a.moveToPoint(point, algorithm); err != nil {
-		return fmt.Errorf("移动到测点失败: %w", err)
+		return fmt.Errorf("%w: 移动到测点失败: %w", ErrMotionControl, err)
 	}
 
 	// 移动完成后检查暂停——运动可能在过程中被 Pause 打断，

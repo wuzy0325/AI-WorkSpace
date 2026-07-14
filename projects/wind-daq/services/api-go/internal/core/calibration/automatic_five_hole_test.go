@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -11,6 +12,7 @@ type fakeCalibrationRuntime struct {
 	values    map[string]float64
 	moves     []string
 	stopCalls int
+	moveErr   error
 }
 
 func TestFiveHoleValidateConfigRequiresCursorDAQReferenceChannels(t *testing.T) {
@@ -59,6 +61,25 @@ func TestAutomaticFiveHoleCalibrationMovesAlphaBeforeBeta(t *testing.T) {
 	expected := []string{"α=1", "β=2"}
 	if !reflect.DeepEqual(runtime.moves, expected) {
 		t.Fatalf("expected move order %v, got %v", expected, runtime.moves)
+	}
+}
+
+func TestAutomaticCalibrationStopsAfterMotionFailure(t *testing.T) {
+	config := completeFiveHoleConfig()
+	config.MotionAxes = []MotionAxisConfig{{Name: "α", ControllerID: "motion-1", Axis: "X"}}
+	config.Points = []CalPoint{
+		{ID: 1, Coordinates: map[string]float64{"α": 1, "β": 0}},
+		{ID: 2, Coordinates: map[string]float64{"α": 2, "β": 0}},
+	}
+	runtime := &fakeCalibrationRuntime{values: completeFiveHoleValues(), moveErr: fmt.Errorf("injected move failure")}
+
+	engine := NewAutomaticCalibration(config, nil, runtime, nil)
+	err := engine.Start(NewFiveHoleAlgorithm())
+	if !errors.Is(err, ErrMotionControl) {
+		t.Fatalf("expected motion-control failure, got %v", err)
+	}
+	if len(runtime.moves) != 1 {
+		t.Fatalf("motion failure advanced to later targets: moves=%v", runtime.moves)
 	}
 }
 
@@ -114,7 +135,7 @@ func (f *fakeCalibrationRuntime) GetLatestTimestamp(_ string) (int64, bool) { re
 
 func (f *fakeCalibrationRuntime) MoveToPosition(axis MotionAxisConfig, position float64) error {
 	f.moves = append(f.moves, fmt.Sprintf("%s=%g", axis.Name, position))
-	return nil
+	return f.moveErr
 }
 
 func (f *fakeCalibrationRuntime) WaitForMotionComplete() error { return nil }
