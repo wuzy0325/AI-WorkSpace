@@ -1,320 +1,611 @@
 <script setup lang="ts">
 /**
- * 五孔探针参考图 —— 以「表达清楚」为第一目标
- *
- * 孔序（与 core/calibration + fivehole interpolation 一致）：
- *   P1 下 · P2 中心 · P3 上 · P4 左 · P5 右
- *
- * 布局（单一示意图，元素互不重叠）：
- *   中心：端面 + 五孔（孔序正确）
- *   下方：α 偏航角（橙弧，随滑块变大）
- *   右侧：β 俯仰角（粉弧，随滑块变大）
- *   顶部：来流方向（棕色虚线）
- *   左下：X / Y / −Z 坐标 triad
- *   侧栏：滑块 + 当前角度 + 说明
+ * 五孔探针三维参考图。探针轴为 Z，端面前方为 -Z；Y 竖直向上，
+ * X 位于偏转面。α、β 分别显示在 X-Z、Y-Z 平面中。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UiSlider from '@components/ui/UiSlider.vue'
 import { useI18nStore } from '@stores/i18nStore'
 
+type Point3 = { x: number; y: number; z: number }
+type ViewName = 'iso' | 'face' | 'top' | 'side'
+
 const i18n = useI18nStore()
 const t = computed(() => i18n.t)
-
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const stageRef = ref<HTMLElement | null>(null)
 const alpha = ref(25)
 const beta = ref(20)
+const activeView = ref<ViewName>('iso')
 
-// 角度制极坐标：deg=0 右，90 上，180 左，270 下（SVG y 轴向下）
-function polar(cx: number, cy: number, r: number, deg: number) {
-  const rad = (deg * Math.PI) / 180
-  return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) }
+const camera = { yaw: -0.62, pitch: 0.34, zoom: 1 }
+const views: Record<ViewName, typeof camera> = {
+  iso: { yaw: -0.62, pitch: 0.34, zoom: 1 },
+  face: { yaw: -Math.PI / 2, pitch: 0, zoom: 1.1 },
+  top: { yaw: 0, pitch: Math.PI / 2, zoom: 1.04 },
+  side: { yaw: 0, pitch: 0, zoom: 1.04 },
 }
 
-function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: number): string {
-  const s = polar(cx, cy, r, startDeg)
-  const e = polar(cx, cy, r, endDeg)
-  const delta = endDeg - startDeg
-  const large = Math.abs(delta) > 180 ? 1 : 0
-  const sweep = delta >= 0 ? 1 : 0
-  return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} A ${r} ${r} 0 ${large} ${sweep} ${e.x.toFixed(1)} ${e.y.toFixed(1)}`
+let resizeObserver: ResizeObserver | null = null
+let themeObserver: MutationObserver | null = null
+let dragging = false
+let lastPointerX = 0
+let lastPointerY = 0
+let frameId = 0
+
+const point = (x: number, y: number, z: number): Point3 => ({ x, y, z })
+const multiply = (p: Point3, factor: number): Point3 => point(p.x * factor, p.y * factor, p.z * factor)
+const normalize = (p: Point3): Point3 => {
+  const length = Math.hypot(p.x, p.y, p.z) || 1
+  return multiply(p, 1 / length)
+}
+const radians = (degrees: number) => degrees * Math.PI / 180
+const signedAngle = (value: number) => `${value > 0 ? '+' : ''}${value}°`
+
+function cssColor(name: string, fallback: string) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-// 弧跨度随滑块增大；标签固定在安全位置，不随弧跑
-function spanOf(v: number) {
-  return 16 + (Math.min(Math.abs(v), 60) / 60) * 44
+function colors() {
+  return {
+    flow: cssColor('--accent-info', '#38bdf8'),
+    alpha: cssColor('--accent-warning', '#f59e0b'),
+    beta: cssColor('--accent-danger', '#ef5b47'),
+    x: cssColor('--accent-danger', '#ef5b47'),
+    y: cssColor('--accent-info', '#38bdf8'),
+    z: cssColor('--accent-success', '#22c55e'),
+    text: cssColor('--text-primary', '#e2e8f0'),
+    muted: cssColor('--text-muted', '#94a3b8'),
+    border: cssColor('--border-strong', '#475569'),
+    panel: cssColor('--bg-panel', '#172338'),
+    canvas: cssColor('--bg-canvas', '#111c31'),
+  }
 }
 
-// ── 端面中心 ──
-const CX = 250
-const CY = 235
-const FACE_RO = 74
-const FACE_RI = 58
-const PORT_OFF = 42
-
-const aSpan = computed(() => spanOf(alpha.value))
-const bSpan = computed(() => spanOf(beta.value))
-
-// α 在下方（270° 附近）
-const alphaArc = computed(() => arcPath(CX, CY, 116, 270 - aSpan.value / 2, 270 + aSpan.value / 2))
-// β 在右侧（0° 附近）
-const betaArc = computed(() => arcPath(CX, CY, 98, -bSpan.value / 2, bSpan.value / 2))
-
-const ports = [
-  { id: 'P2', dx: 0, dy: 0, inside: true },
-  { id: 'P3', dx: 0, dy: -PORT_OFF, inside: false },
-  { id: 'P1', dx: 0, dy: PORT_OFF, inside: false },
-  { id: 'P4', dx: -PORT_OFF, dy: 0, inside: false },
-  { id: 'P5', dx: PORT_OFF, dy: 0, inside: false },
-] as const
-
-// 孔标签白底小牌位置（远离弧与坐标，保证可读）
-const portLabelPos: Record<string, { x: number; y: number; anchor: 'start' | 'middle' | 'end' }> = {
-  P3: { x: CX, y: 145, anchor: 'middle' },
-  P1: { x: CX, y: 332, anchor: 'middle' },
-  P4: { x: CX - PORT_OFF - 40, y: CY + 4, anchor: 'end' },
-  P5: { x: 360, y: CY + 4, anchor: 'start' },
+function scheduleDraw() {
+  cancelAnimationFrame(frameId)
+  frameId = requestAnimationFrame(draw)
 }
 
-// 标签白底 rect 左上角 x：让 rect 相对锚点居中
-// - middle：rect 中心 = pos.x  → rect.x = pos.x - 16
-// - end：rect 右边 = pos.x     → rect.x = pos.x - 32
-// - start：rect 左边 = pos.x   → rect.x = pos.x
-function portLabelRectX(id: string): number {
-  const p = portLabelPos[id]
-  if (p.anchor === 'end') return p.x - 32
-  if (p.anchor === 'start') return p.x
-  return p.x - 16
+function resizeCanvas() {
+  const canvas = canvasRef.value
+  const stage = stageRef.value
+  if (!canvas || !stage) return
+  const rect = stage.getBoundingClientRect()
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  canvas.width = Math.round(rect.width * dpr)
+  canvas.height = Math.round(rect.height * dpr)
+  canvas.style.width = `${rect.width}px`
+  canvas.style.height = `${rect.height}px`
+  scheduleDraw()
 }
 
-// 标签 text x：在 SVG 中 text 锚点由 text-anchor 决定
-// - middle：text 中心 = pos.x
-// - end：text 右边 = pos.x（贴 rect 右内边）
-// - start：text 左边 = pos.x（贴 rect 左内边）
-function portLabelTextX(id: string): number {
-  return portLabelPos[id].x
+function rotate(p: Point3): Point3 {
+  const cosYaw = Math.cos(camera.yaw)
+  const sinYaw = Math.sin(camera.yaw)
+  const cosPitch = Math.cos(camera.pitch)
+  const sinPitch = Math.sin(camera.pitch)
+  const x = p.x * cosYaw + p.z * sinYaw
+  const z = -p.x * sinYaw + p.z * cosYaw
+  return point(x, p.y * cosPitch - z * sinPitch, p.y * sinPitch + z * cosPitch)
 }
+
+function draw() {
+  const canvas = canvasRef.value
+  const stage = stageRef.value
+  if (!canvas || !stage) return
+  const canvasContext = canvas.getContext('2d')
+  if (!canvasContext) return
+  const context: CanvasRenderingContext2D = canvasContext
+
+  const rect = stage.getBoundingClientRect()
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+  const palette = colors()
+
+  function project(p: Point3) {
+    const rotated = rotate(p)
+    const scale = Math.min(rect.width, rect.height) * 0.105 * camera.zoom
+    const perspective = 1 / Math.max(0.64, 1 - rotated.z / 18)
+    return {
+      x: rect.width * 0.48 + rotated.x * scale * perspective,
+      y: rect.height * 0.53 - rotated.y * scale * perspective,
+      depth: rotated.z,
+    }
+  }
+
+  function line(start: Point3, end: Point3, color: string, width = 1, dash: number[] = []) {
+    const a = project(start)
+    const b = project(end)
+    context.save()
+    context.beginPath()
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.setLineDash(dash)
+    context.stroke()
+    context.restore()
+  }
+
+  function polygon(points: Point3[], fill: string, stroke: string, width = 1) {
+    const projected = points.map(project)
+    context.beginPath()
+    context.moveTo(projected[0].x, projected[0].y)
+    for (let index = 1; index < projected.length; index++) {
+      context.lineTo(projected[index].x, projected[index].y)
+    }
+    context.closePath()
+    context.fillStyle = fill
+    context.fill()
+    context.strokeStyle = stroke
+    context.lineWidth = width
+    context.stroke()
+  }
+
+  function label(text: string, position: Point3, color = palette.text, font = '700 12px monospace') {
+    const p = project(position)
+    context.save()
+    context.font = font
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineWidth = 4
+    context.strokeStyle = palette.canvas
+    context.strokeText(text, p.x, p.y)
+    context.fillStyle = color
+    context.fillText(text, p.x, p.y)
+    context.restore()
+  }
+
+  function arrow(start: Point3, end: Point3, color: string, width: number) {
+    const a = project(start)
+    const b = project(end)
+    const angle = Math.atan2(b.y - a.y, b.x - a.x)
+    const head = 10 + width
+    context.save()
+    context.beginPath()
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.lineCap = 'round'
+    context.stroke()
+    context.beginPath()
+    context.moveTo(b.x, b.y)
+    context.lineTo(b.x - head * Math.cos(angle - 0.42), b.y - head * Math.sin(angle - 0.42))
+    context.lineTo(b.x - head * Math.cos(angle + 0.42), b.y - head * Math.sin(angle + 0.42))
+    context.closePath()
+    context.fillStyle = color
+    context.fill()
+    context.restore()
+  }
+
+  function polyline(points: Point3[], color: string, width: number) {
+    const projected = points.map(project)
+    context.beginPath()
+    context.moveTo(projected[0].x, projected[0].y)
+    for (let index = 1; index < projected.length; index++) {
+      context.lineTo(projected[index].x, projected[index].y)
+    }
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.lineCap = 'round'
+    context.stroke()
+  }
+
+  function planeGrid(kind: 'xz' | 'yz', color: string) {
+    context.save()
+    context.globalAlpha = 0.34
+    const span = 5.3
+    if (kind === 'xz') {
+      polygon([point(-5.2, 0, -span), point(1.1, 0, -span), point(1.1, 0, span), point(-5.2, 0, span)], palette.canvas, color)
+      for (let z = -5; z <= 5; z++) line(point(-5.2, 0, z), point(1.1, 0, z), color, 0.6)
+    } else {
+      polygon([point(-5.2, -span, 0), point(1.1, -span, 0), point(1.1, span, 0), point(-5.2, span, 0)], palette.canvas, color)
+      for (let y = -5; y <= 5; y++) line(point(-5.2, y, 0), point(1.1, y, 0), color, 0.6)
+    }
+    context.restore()
+  }
+
+  function drawProbe() {
+    const segments = 24
+    const radius = 0.62
+    const faces: Array<{ points: Point3[]; depth: number; shade: number }> = []
+    for (let index = 0; index < segments; index++) {
+      const a = index / segments * Math.PI * 2
+      const b = (index + 1) / segments * Math.PI * 2
+      const points = [
+        point(0.08, Math.cos(a) * radius, Math.sin(a) * radius),
+        point(4.7, Math.cos(a) * radius, Math.sin(a) * radius),
+        point(4.7, Math.cos(b) * radius, Math.sin(b) * radius),
+        point(0.08, Math.cos(b) * radius, Math.sin(b) * radius),
+      ]
+      faces.push({
+        points,
+        depth: points.reduce((sum, p) => sum + rotate(p).z, 0) / points.length,
+        shade: 38 + Math.round(Math.max(0, Math.cos(a - 0.7)) * 24),
+      })
+    }
+    faces.sort((a, b) => a.depth - b.depth)
+    faces.forEach(face => {
+      context.save()
+      context.globalAlpha = face.shade / 100
+      polygon(face.points, palette.text, palette.border, 0.6)
+      context.restore()
+    })
+
+    const face = Array.from({ length: segments }, (_, index) => {
+      const angle = index / segments * Math.PI * 2
+      return point(0, Math.cos(angle) * radius, Math.sin(angle) * radius)
+    })
+    polygon(face, palette.muted, palette.text, 1.2)
+
+    const ports = [
+      { id: 'P2', y: 0, z: 0, labelY: 0, labelZ: 0 },
+      { id: 'P3', y: 0.34, z: 0, labelY: 0.53, labelZ: 0 },
+      { id: 'P1', y: -0.34, z: 0, labelY: -0.53, labelZ: 0 },
+      { id: 'P4', y: 0, z: -0.34, labelY: 0, labelZ: -0.53 },
+      { id: 'P5', y: 0, z: 0.34, labelY: 0, labelZ: 0.53 },
+    ]
+    ports.forEach(port => {
+      const hole = Array.from({ length: 16 }, (_, index) => {
+        const angle = index / 16 * Math.PI * 2
+        return point(-0.03, port.y + Math.cos(angle) * 0.09, port.z + Math.sin(angle) * 0.09)
+      })
+      polygon(hole, palette.canvas, palette.text, 0.7)
+      label(port.id, point(-0.08, port.labelY, port.labelZ), palette.text, '700 10px monospace')
+    })
+  }
+
+  function arc(plane: 'xz' | 'yz', angle: number, radius: number) {
+    if (angle === 0) return
+    const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3))
+    const points = Array.from({ length: steps + 1 }, (_, index) => {
+      const value = radians(angle * index / steps)
+      return plane === 'xz'
+        ? point(-Math.cos(value) * radius, 0, -Math.sin(value) * radius)
+        : point(-Math.cos(value) * radius, Math.sin(value) * radius, 0)
+    })
+    polyline(points, plane === 'xz' ? palette.alpha : palette.beta, 3)
+  }
+
+  planeGrid('xz', palette.alpha)
+  planeGrid('yz', palette.beta)
+
+  // 内部几何 x 对应探针 Z 轴，z 对应 X 轴。
+  arrow(point(0, 0, 0), point(-5.25, 0, 0), palette.z, 2)
+  arrow(point(0, 0, 0), point(0, 2.35, 0), palette.y, 2)
+  arrow(point(0, 0, 0), point(0, 0, 2.35), palette.x, 2)
+  label('-Z', point(-5.58, 0, 0), palette.z, '700 15px monospace')
+  label('Y', point(0, 2.67, 0), palette.y, '700 15px monospace')
+  label('X', point(0, 0, 2.67), palette.x, '700 15px monospace')
+
+  const alphaTangent = Math.tan(radians(alpha.value))
+  const betaTangent = Math.tan(radians(beta.value))
+  const flow = normalize(point(1, -betaTangent, alphaTangent))
+  const flowStart = multiply(flow, -6.2)
+  const facePoint = point(-0.08, 0, 0)
+  const alphaProjection = normalize(point(1, 0, alphaTangent))
+  const betaProjection = normalize(point(1, -betaTangent, 0))
+  line(multiply(alphaProjection, -5.55), facePoint, palette.alpha, 1.5, [7, 5])
+  line(multiply(betaProjection, -5.55), facePoint, palette.beta, 1.5, [7, 5])
+  line(flowStart, multiply(alphaProjection, -5.55), palette.alpha, 1, [3, 5])
+  line(flowStart, multiply(betaProjection, -5.55), palette.beta, 1, [3, 5])
+  arc('xz', alpha.value, 1.42)
+  arc('yz', beta.value, 1.05)
+
+  drawProbe()
+  arrow(flowStart, facePoint, palette.flow, 5)
+  label(t.value.travProbeFlowDir, multiply(flow, -5.85), palette.flow, '700 11px sans-serif')
+  label(`α ${signedAngle(alpha.value)}`, point(-1.7, 0.08, -0.45), palette.alpha)
+  label(`β ${signedAngle(beta.value)}`, point(-1.35, beta.value >= 0 ? 0.52 : -0.52, 0.08), palette.beta)
+}
+
+function setView(view: ViewName) {
+  Object.assign(camera, views[view])
+  activeView.value = view
+  scheduleDraw()
+}
+
+function onPointerDown(event: PointerEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  dragging = true
+  lastPointerX = event.clientX
+  lastPointerY = event.clientY
+  canvas.setPointerCapture(event.pointerId)
+}
+
+function onPointerMove(event: PointerEvent) {
+  if (!dragging) return
+  camera.yaw += (event.clientX - lastPointerX) * 0.008
+  camera.pitch = Math.max(-1.45, Math.min(1.45, camera.pitch + (event.clientY - lastPointerY) * 0.008))
+  lastPointerX = event.clientX
+  lastPointerY = event.clientY
+  activeView.value = 'iso'
+  scheduleDraw()
+}
+
+function onPointerUp(event: PointerEvent) {
+  dragging = false
+  const canvas = canvasRef.value
+  if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+}
+
+function onWheel(event: WheelEvent) {
+  event.preventDefault()
+  camera.zoom = Math.max(0.7, Math.min(1.5, camera.zoom * Math.exp(-event.deltaY * 0.001)))
+  scheduleDraw()
+}
+
+watch([alpha, beta], scheduleDraw)
+
+onMounted(async () => {
+  await nextTick()
+  if (stageRef.value) {
+    resizeObserver = new ResizeObserver(resizeCanvas)
+    resizeObserver.observe(stageRef.value)
+  }
+  themeObserver = new MutationObserver(scheduleDraw)
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  resizeCanvas()
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  themeObserver?.disconnect()
+  cancelAnimationFrame(frameId)
+})
 </script>
 
 <template>
-  <section class="probe-card flex h-full min-h-[480px] overflow-hidden rounded-xl">
-    <!-- 主图 -->
-    <div class="relative flex-1 min-w-0">
-      <div class="probe-glow absolute inset-0" />
-
-      <svg
-        viewBox="0 0 560 470"
-        role="img"
+  <section class="probe-reference">
+    <div ref="stageRef" class="probe-stage">
+      <canvas
+        ref="canvasRef"
         :aria-label="t.travProbeDiagramTitle"
-        class="relative z-10 h-full w-full"
-      >
-        <defs>
-          <marker id="mk-flow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
-            <path d="M0,0 L10,5 L0,10 Z" fill="#b45309" />
-          </marker>
-          <marker id="mk-a" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
-            <path d="M0,0 L9,4.5 L0,9 Z" fill="#e67700" />
-          </marker>
-          <marker id="mk-b" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
-            <path d="M0,0 L9,4.5 L0,9 Z" fill="#c2255c" />
-          </marker>
-          <marker id="mk-x" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-            <path d="M0,0 L9,4.5 L0,9 Z" fill="#e03131" />
-          </marker>
-          <marker id="mk-y" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-            <path d="M0,0 L9,4.5 L0,9 Z" fill="#364fc7" />
-          </marker>
-          <marker id="mk-z" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-            <path d="M0,0 L9,4.5 L0,9 Z" fill="#0ca678" />
-          </marker>
-          <radialGradient id="face-metal" cx="38%" cy="34%" r="75%">
-            <stop offset="0%" stop-color="#f8fafc" />
-            <stop offset="45%" stop-color="#cbd5e1" />
-            <stop offset="100%" stop-color="#94a3b8" />
-          </radialGradient>
-          <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="1.5" dy="3" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.16" />
-          </filter>
-        </defs>
-
-        <!-- 探针轴（参考虚线，置于底层） -->
-        <line :x1="CX" :y1="CY" :x2="CX" :y2="330" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4" />
-        <text :x="CX + 8" :y="252" fill="#64748b" font-size="10" font-weight="600">
-          {{ t.travProbeAxisLabel }}
-        </text>
-
-        <!-- 来流（顶部，棕色虚线，指向端面） -->
-        <line x1="250" y1="38" x2="250" y2="112" stroke="#b45309" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#mk-flow)" />
-        <text x="250" y="28" fill="#b45309" font-size="12" font-weight="700" text-anchor="middle">
-          {{ t.travProbeFlowDir }}
-        </text>
-
-        <!-- 端面（金属质感 + 阴影，体现立体） -->
-        <g filter="url(#soft)">
-          <circle :cx="CX" :cy="CY" :r="FACE_RO" fill="url(#face-metal)" stroke="#64748b" stroke-width="1.5" />
-          <circle :cx="CX" :cy="CY" :r="FACE_RI" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1" />
-          <!-- 左上高光，强化球面感 -->
-          <path d="M 212 200 A 74 74 0 0 1 285 192" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.5" />
-          <!-- 五孔 -->
-          <template v-for="p in ports" :key="p.id">
-            <circle
-              :cx="CX + p.dx"
-              :cy="CY + p.dy"
-              :r="p.id === 'P2' ? 13 : 11"
-              fill="#0f172a"
-            />
-            <circle :cx="CX + p.dx - 2" :cy="CY + p.dy - 2" r="2.5" fill="#ffffff" opacity="0.25" />
-          </template>
-        </g>
-
-        <!-- 孔标签（白底小牌，永远可读、不互相压） -->
-        <template v-for="p in ports" :key="'lbl-' + p.id">
-          <g v-if="!p.inside">
-            <rect
-              :x="portLabelRectX(p.id)"
-              :y="portLabelPos[p.id].y - 13"
-              width="32"
-              height="20"
-              rx="5"
-              fill="#ffffff"
-              stroke="#cbd5e1"
-            />
-            <text
-              :x="portLabelTextX(p.id)"
-              :y="portLabelPos[p.id].y + 3"
-              fill="#1e40af"
-              font-size="13"
-              font-weight="700"
-              :text-anchor="portLabelPos[p.id].anchor"
-            >
-              {{ p.id }}
-            </text>
-          </g>
-          <text v-else :x="CX" :y="CY + 4" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">
-            P2
-          </text>
-        </template>
-
-        <!-- α 弧（橙，下方） + 读数牌 -->
-        <path :d="alphaArc" fill="none" stroke="#e67700" stroke-width="3" marker-end="url(#mk-a)" />
-        <g>
-          <rect x="214" y="366" width="72" height="22" rx="6" fill="#fff7ed" stroke="#e67700" />
-          <text x="250" y="381" fill="#e67700" font-size="13" font-weight="700" text-anchor="middle">
-            α = {{ alpha }}°
-          </text>
-        </g>
-
-        <!-- β 弧（粉，右侧） + 读数牌 -->
-        <path :d="betaArc" fill="none" stroke="#c2255c" stroke-width="3" marker-end="url(#mk-b)" />
-        <g>
-          <rect x="372" y="224" width="72" height="22" rx="6" fill="#fff0f6" stroke="#c2255c" />
-          <text x="408" y="239" fill="#c2255c" font-size="13" font-weight="700" text-anchor="middle">
-            β = {{ beta }}°
-          </text>
-        </g>
-
-        <!-- 坐标 triad（左下角，独立不重叠） -->
-        <g>
-          <line x1="64" y1="424" x2="138" y2="424" stroke="#e03131" stroke-width="2.4" marker-end="url(#mk-x)" />
-          <text x="144" y="428" fill="#e03131" font-size="14" font-weight="700">X</text>
-          <line x1="64" y1="424" x2="64" y2="358" stroke="#364fc7" stroke-width="2.4" marker-end="url(#mk-y)" />
-          <text x="68" y="352" fill="#364fc7" font-size="14" font-weight="700">Y</text>
-          <line x1="64" y1="424" x2="24" y2="386" stroke="#0ca678" stroke-width="2.4" marker-end="url(#mk-z)" />
-          <text x="6" y="384" fill="#0ca678" font-size="13" font-weight="700">−Z</text>
-        </g>
-      </svg>
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @dblclick="setView('iso')"
+        @wheel="onWheel"
+      />
+      <div class="stage-help">{{ t.travProbe3dHelp }}</div>
+      <div class="stage-legend" aria-hidden="true">
+        <span class="legend-item legend-flow">{{ t.travProbeFlowDir }}</span>
+        <span class="legend-item legend-alpha">α · X-Z</span>
+        <span class="legend-item legend-beta">β · Y-Z</span>
+      </div>
     </div>
 
-    <!-- 右侧控制 -->
-    <aside class="probe-sidebar w-[300px] shrink-0 p-5">
-      <h3 class="probe-sidebar-title mb-1 border-b pb-3 text-base font-semibold">
-        {{ t.travProbeDiagramTitle }}
-      </h3>
-      <p class="mb-4 text-[11px] leading-relaxed text-[var(--text-muted)]">
-        {{ t.travProbeDiagramHint }}
-      </p>
+    <aside class="probe-controls">
+      <div>
+        <h3 class="control-title">{{ t.travProbeDiagramTitle }}</h3>
+        <p class="control-hint">{{ t.travProbe3dHint }}</p>
+      </div>
 
-      <label class="mb-2 flex items-center justify-between text-xs">
-        <span class="flex items-center gap-1.5">
-          <span class="legend-dot" style="background:#e67700" />
-          {{ t.travProbeAlphaYaw }}
-        </span>
-        <span class="font-bold tabular-nums" style="color:#e67700">{{ alpha }}°</span>
-      </label>
-      <UiSlider v-model="alpha" :min="-60" :max="60" class="mb-5 w-full" />
+      <div class="control-group alpha-control">
+        <label class="control-label">
+          <span>{{ t.travProbeAlphaYaw }}</span>
+          <strong>{{ signedAngle(alpha) }}</strong>
+        </label>
+        <UiSlider v-model="alpha" :min="-60" :max="60" :aria-label="t.travProbeAlphaYaw" />
+        <div class="scale-labels"><span>-60°</span><span>0°</span><span>+60°</span></div>
+      </div>
 
-      <label class="mb-2 flex items-center justify-between text-xs">
-        <span class="flex items-center gap-1.5">
-          <span class="legend-dot" style="background:#c2255c" />
-          {{ t.travProbeBetaPitch }}
-        </span>
-        <span class="font-bold tabular-nums" style="color:#c2255c">{{ beta }}°</span>
-      </label>
-      <UiSlider v-model="beta" :min="-60" :max="60" class="mb-5 w-full" />
+      <div class="control-group beta-control">
+        <label class="control-label">
+          <span>{{ t.travProbeBetaPitch }}</span>
+          <strong>{{ signedAngle(beta) }}</strong>
+        </label>
+        <UiSlider v-model="beta" :min="-60" :max="60" :aria-label="t.travProbeBetaPitch" />
+        <div class="scale-labels"><span>-60°</span><span>0°</span><span>+60°</span></div>
+      </div>
 
-      <div class="info-box space-y-2.5 rounded-xl p-3.5 text-xs leading-5">
-        <div class="info-row">
-          <span class="info-key" style="color:#e67700">α</span>
-          <span>{{ t.travProbeAlphaPlusHint }}</span>
+      <div class="control-group">
+        <div class="view-grid">
+          <button
+            v-for="view in (['iso', 'face', 'top', 'side'] as ViewName[])"
+            :key="view"
+            type="button"
+            class="view-button"
+            :class="{ 'view-button--active': activeView === view }"
+            @click="setView(view)"
+          >
+            {{ t[`travProbeView_${view}`] }}
+          </button>
         </div>
-        <div class="info-row">
-          <span class="info-key" style="color:#c2255c">β</span>
-          <span>{{ t.travProbeBetaPlusHint }}</span>
-        </div>
-        <div class="info-row info-row--muted">
-          <span>{{ t.travProbeDashedHint }}</span>
-        </div>
-        <div class="info-row info-row--muted">
-          <span>{{ t.travProbePortsHint }}</span>
-        </div>
+      </div>
+
+      <div class="reference-notes">
+        <p><strong class="alpha-text">α</strong>{{ t.travProbeAlpha3dHint }}</p>
+        <p><strong class="beta-text">β</strong>{{ t.travProbeBeta3dHint }}</p>
+        <p>{{ t.travProbeAxis3dHint }}</p>
+        <p>{{ t.travProbePortsHint }}</p>
       </div>
     </aside>
   </section>
 </template>
 
 <style scoped>
-.probe-card {
-  border: 1px solid var(--border-default);
-  background: var(--bg-canvas);
+.probe-reference {
+  --probe-alpha: var(--accent-warning);
+  --probe-beta: var(--accent-danger);
+  --probe-flow: var(--accent-info);
+  display: flex;
+  min-width: 0;
   min-height: 480px;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-canvas);
 }
-.probe-sidebar {
+
+.probe-stage {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+.probe-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.probe-stage canvas:active { cursor: grabbing; }
+
+.stage-help,
+.stage-legend {
+  position: absolute;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+
+.stage-help {
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.stage-legend {
+  bottom: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+}
+
+.legend-item::before {
+  content: '';
+  display: inline-block;
+  width: 1rem;
+  height: 2px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  background: currentColor;
+}
+
+.legend-flow { color: var(--probe-flow); }
+.legend-alpha { color: var(--probe-alpha); }
+.legend-beta { color: var(--probe-beta); }
+
+.probe-controls {
+  width: 280px;
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow-y: auto;
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel);
   color: var(--text-primary);
 }
-.probe-sidebar-title {
+
+.control-title {
+  margin: 0;
   color: var(--text-primary);
-  border-color: var(--border-default);
+  font-size: var(--font-size-base);
+  font-weight: 650;
 }
-.probe-glow {
-  background:
-    radial-gradient(circle at 30% 42%, color-mix(in srgb, var(--color-accent) 8%, transparent) 0%, transparent 42%),
-    radial-gradient(circle at 70% 50%, color-mix(in srgb, var(--color-info) 7%, transparent) 0%, transparent 40%);
-}
-.info-box {
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-panel) 80%, var(--bg-canvas));
+
+.control-hint {
+  margin: var(--space-1) 0 0;
   color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
 }
-.info-row {
+
+.control-group {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+
+.control-label {
   display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
 }
-.info-key {
-  flex-shrink: 0;
-  font-weight: 700;
-  min-width: 1.25rem;
+
+.control-label strong {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
 }
-.info-row--muted {
+
+.alpha-control .control-label strong,
+.alpha-text { color: var(--probe-alpha); }
+.beta-control .control-label strong,
+.beta-text { color: var(--probe-beta); }
+
+.scale-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-1);
   color: var(--text-muted);
-  padding-top: 0.25rem;
-  border-top: 1px dashed var(--border-default);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
 }
-.legend-dot {
+
+.view-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.view-button {
+  min-height: 30px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.view-button:hover,
+.view-button:focus-visible,
+.view-button--active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  outline: none;
+}
+
+.reference-notes {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.reference-notes p { margin: 0; }
+.reference-notes strong {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
+  width: 1.25rem;
+}
+
+@media (max-width: 1100px) {
+  .probe-reference { min-width: 900px; }
 }
 </style>

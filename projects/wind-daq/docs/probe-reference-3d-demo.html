@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>五孔探针三维来流参考</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07101c;
+      --panel: #0d1928;
+      --panel-strong: #132235;
+      --line: #26384d;
+      --line-strong: #3a526b;
+      --text: #e6edf5;
+      --muted: #91a3b7;
+      --faint: #60758c;
+      --flow: #31d6c4;
+      --alpha: #ffad42;
+      --beta: #ff6b72;
+      --x: #55b7ff;
+      --y: #73df91;
+      --z: #c28cff;
+      --shadow: 0 24px 60px rgb(0 0 0 / 32%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      min-width: 1040px;
+      height: 100%;
+      min-height: 720px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    }
+
+    body {
+      background-image:
+        linear-gradient(rgb(255 255 255 / 1.5%) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(255 255 255 / 1.5%) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+
+    button, input { font: inherit; }
+
+    .app {
+      display: grid;
+      grid-template-rows: 66px minmax(0, 1fr) 34px;
+      height: 100%;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(7 16 28 / 92%);
+    }
+
+    .title-block {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .index-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      color: var(--flow);
+      font: 700 12px/1 Consolas, monospace;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: .02em;
+    }
+
+    .subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--muted);
+      font: 11px/1 Consolas, monospace;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--flow);
+      box-shadow: 0 0 12px rgb(49 214 196 / 65%);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      min-height: 0;
+      padding: 14px;
+      gap: 14px;
+    }
+
+    .viewport {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background:
+        radial-gradient(circle at 50% 48%, #142941 0, #0a1726 44%, #07111d 76%);
+      box-shadow: var(--shadow);
+    }
+
+    #scene {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #scene:active { cursor: grabbing; }
+
+    .view-badge {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      width: 196px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: rgb(9 20 34 / 84%);
+      pointer-events: none;
+    }
+
+    .view-badge strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .view-badge span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .angle-hud {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .hud-item {
+      min-width: 94px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: rgb(9 20 34 / 84%);
+    }
+
+    .hud-item span {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .hud-item strong {
+      float: right;
+      font: 700 13px/1 Consolas, monospace;
+    }
+
+    .hud-alpha strong { color: var(--alpha); }
+    .hud-beta strong { color: var(--beta); }
+
+    .viewport-legend {
+      position: absolute;
+      left: 16px;
+      bottom: 15px;
+      display: flex;
+      gap: 18px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: rgb(9 20 34 / 84%);
+      pointer-events: none;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .legend-line {
+      width: 20px;
+      height: 2px;
+      background: currentColor;
+    }
+
+    .legend-flow { color: var(--flow); }
+    .legend-alpha { color: var(--alpha); }
+    .legend-beta { color: var(--beta); }
+
+    .control-panel {
+      min-height: 0;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-section {
+      padding: 17px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-section:last-child { border-bottom: 0; }
+
+    .section-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin: 0 0 14px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .section-title small {
+      color: var(--faint);
+      font: 10px/1 Consolas, monospace;
+      font-weight: 400;
+    }
+
+    .angle-control + .angle-control { margin-top: 18px; }
+
+    .angle-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .angle-label strong {
+      font: 700 14px/1 Consolas, monospace;
+    }
+
+    .alpha-value { color: var(--alpha); }
+    .beta-value { color: var(--beta); }
+
+    input[type="range"] {
+      width: 100%;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--flow);
+      cursor: pointer;
+    }
+
+    .range-scale {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 2px;
+      color: var(--faint);
+      font: 9px/1 Consolas, monospace;
+    }
+
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px;
+    }
+
+    .tool-button {
+      height: 31px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      background: var(--panel-strong);
+      color: var(--muted);
+      font-size: 10px;
+      cursor: pointer;
+      transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+    }
+
+    .tool-button:hover,
+    .tool-button:focus-visible {
+      border-color: var(--flow);
+      color: var(--text);
+      outline: none;
+    }
+
+    .tool-button.active {
+      border-color: var(--flow);
+      background: rgb(49 214 196 / 10%);
+      color: var(--flow);
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 28px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .toggle-row + .toggle-row { margin-top: 7px; }
+
+    .toggle {
+      position: relative;
+      width: 34px;
+      height: 18px;
+    }
+
+    .toggle input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: #081321;
+      cursor: pointer;
+    }
+
+    .toggle-track::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 150ms ease, background 150ms ease;
+    }
+
+    .toggle input:checked + .toggle-track {
+      border-color: var(--flow);
+      background: rgb(49 214 196 / 12%);
+    }
+
+    .toggle input:checked + .toggle-track::after {
+      transform: translateX(16px);
+      background: var(--flow);
+    }
+
+    .definition {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+    }
+
+    .definition-row {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .definition-row dt {
+      margin: 0;
+      font: 700 13px/1.5 Consolas, monospace;
+    }
+
+    .definition-row dd { margin: 0; }
+    .definition-row.alpha dt { color: var(--alpha); }
+    .definition-row.beta dt { color: var(--beta); }
+
+    .formula {
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #081321;
+      color: var(--muted);
+      font: 10px/1.65 Consolas, monospace;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-top: 1px solid var(--line);
+      background: #07101c;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .footer kbd {
+      padding: 2px 5px;
+      border: 1px solid var(--line-strong);
+      border-radius: 3px;
+      background: var(--panel);
+      color: var(--muted);
+      font: 9px Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="title-block">
+        <div class="index-mark">3D</div>
+        <div>
+          <h1>五孔探针三维来流参考</h1>
+          <div class="subtitle">空间角度、孔位与来流方向统一表达</div>
+        </div>
+      </div>
+      <div class="status-pill"><span class="status-dot"></span>INTERACTIVE REFERENCE</div>
+    </header>
+
+    <section class="workspace">
+      <div class="viewport" id="viewport">
+        <canvas id="scene" aria-label="可旋转的五孔探针三维来流示意图"></canvas>
+
+        <div class="view-badge">
+          <strong>拖拽模型观察空间关系</strong>
+          <span>滚轮缩放。青色箭头指向探针端面；两张半透明辅助面分别承载 α 与 β。</span>
+        </div>
+
+        <div class="angle-hud">
+          <div class="hud-item hud-alpha"><span>YAW α</span><strong id="hudAlpha">+25°</strong></div>
+          <div class="hud-item hud-beta"><span>PITCH β</span><strong id="hudBeta">+20°</strong></div>
+        </div>
+
+        <div class="viewport-legend">
+          <div class="legend-item legend-flow"><span class="legend-line"></span>真实来流</div>
+          <div class="legend-item legend-alpha"><span class="legend-line"></span>α · X-Z</div>
+          <div class="legend-item legend-beta"><span class="legend-line"></span>β · Y-Z</div>
+        </div>
+      </div>
+
+      <aside class="control-panel">
+        <section class="panel-section">
+          <h2 class="section-title">来流角度 <small>FLOW ANGLES</small></h2>
+          <div class="angle-control">
+            <label class="angle-label" for="alpha">
+              <span>α · 偏航角 / Yaw</span>
+              <strong class="alpha-value" id="alphaValue">+25°</strong>
+            </label>
+            <input id="alpha" type="range" min="-60" max="60" value="25">
+            <div class="range-scale"><span>-60°</span><span>0°</span><span>+60°</span></div>
+          </div>
+          <div class="angle-control">
+            <label class="angle-label" for="beta">
+              <span>β · 俯仰角 / Pitch</span>
+              <strong class="beta-value" id="betaValue">+20°</strong>
+            </label>
+            <input id="beta" type="range" min="-60" max="60" value="20">
+            <div class="range-scale"><span>-60°</span><span>0°</span><span>+60°</span></div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">标准视角 <small>CAMERA</small></h2>
+          <div class="button-grid" id="viewButtons">
+            <button class="tool-button active" data-view="iso">等轴测</button>
+            <button class="tool-button" data-view="face">端面孔位</button>
+            <button class="tool-button" data-view="top">俯视 · α</button>
+            <button class="tool-button" data-view="side">侧视 · β</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">显示内容 <small>LAYERS</small></h2>
+          <div class="toggle-row">
+            <span>角度辅助面与投影</span>
+            <label class="toggle"><input id="showGuides" type="checkbox" checked><span class="toggle-track"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span>五孔编号</span>
+            <label class="toggle"><input id="showPorts" type="checkbox" checked><span class="toggle-track"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span>自动缓慢旋转</span>
+            <label class="toggle"><input id="autoRotate" type="checkbox"><span class="toggle-track"></span></label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">读图说明 <small>DEFINITION</small></h2>
+          <dl class="definition">
+            <div class="definition-row alpha">
+              <dt>α</dt>
+              <dd>来流在 X-Z 平面的投影与探针轴之间的夹角。正值向 +Z。</dd>
+            </div>
+            <div class="definition-row beta">
+              <dt>β</dt>
+              <dd>来流在 Y-Z 平面的投影与探针轴之间的夹角。正值向 +Y。</dd>
+            </div>
+          </dl>
+          <div class="formula">
+            Ka = (P4 - P5) / δ<br>
+            Kb = (P3 - P1) / δ<br>
+            δ = P2 - avg(P1,P3,P4,P5)
+          </div>
+        </section>
+      </aside>
+    </section>
+
+    <footer class="footer">
+      <span><kbd>拖拽</kbd> 旋转　<kbd>滚轮</kbd> 缩放　<kbd>双击</kbd> 恢复等轴测</span>
+      <span>端面孔序：P1 下 · P2 中心 · P3 上 · P4 左 · P5 右</span>
+    </footer>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('scene');
+    const viewport = document.getElementById('viewport');
+    const ctx = canvas.getContext('2d');
+    const alphaInput = document.getElementById('alpha');
+    const betaInput = document.getElementById('beta');
+    const alphaValue = document.getElementById('alphaValue');
+    const betaValue = document.getElementById('betaValue');
+    const hudAlpha = document.getElementById('hudAlpha');
+    const hudBeta = document.getElementById('hudBeta');
+    const showGuides = document.getElementById('showGuides');
+    const showPorts = document.getElementById('showPorts');
+    const autoRotate = document.getElementById('autoRotate');
+
+    const C = {
+      flow: '#31d6c4', alpha: '#ffad42', beta: '#ff6b72',
+      x: '#ff5f68', y: '#668cff', z: '#35d28a',
+      text: '#e6edf5', muted: '#91a3b7', faint: '#60758c',
+      grid: '#27415b', body: '#7890a8', bodyDark: '#26394e', face: '#b7c5d3', port: '#07101c'
+    };
+
+    const state = {
+      alpha: 25,
+      beta: 20,
+      yaw: -0.62,
+      pitch: 0.34,
+      zoom: 1,
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      lastTime: performance.now()
+    };
+
+    const views = {
+      iso: { yaw: -0.62, pitch: 0.34, zoom: 1 },
+      face: { yaw: -Math.PI / 2, pitch: 0, zoom: 1.12 },
+      top: { yaw: 0, pitch: Math.PI / 2, zoom: 1.05 },
+      side: { yaw: 0, pitch: 0, zoom: 1.05 }
+    };
+
+    const v3 = (x, y, z) => ({ x, y, z });
+    const add = (a, b) => v3(a.x + b.x, a.y + b.y, a.z + b.z);
+    const mul = (a, n) => v3(a.x * n, a.y * n, a.z * n);
+    const length = (a) => Math.hypot(a.x, a.y, a.z);
+    const normalize = (a) => mul(a, 1 / (length(a) || 1));
+    const rad = (degrees) => degrees * Math.PI / 180;
+    const signed = (value) => `${value > 0 ? '+' : ''}${value}°`;
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = viewport.getBoundingClientRect();
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function rotatePoint(p) {
+      const cy = Math.cos(state.yaw);
+      const sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch);
+      const sp = Math.sin(state.pitch);
+      const x1 = p.x * cy + p.z * sy;
+      const z1 = -p.x * sy + p.z * cy;
+      return v3(x1, p.y * cp - z1 * sp, p.y * sp + z1 * cp);
+    }
+
+    function project(p) {
+      const rect = viewport.getBoundingClientRect();
+      const r = rotatePoint(p);
+      const base = Math.min(rect.width, rect.height) * 0.102 * state.zoom;
+      const perspective = 1 / Math.max(0.62, 1 - r.z / 18);
+      return {
+        x: rect.width * 0.48 + r.x * base * perspective,
+        y: rect.height * 0.53 - r.y * base * perspective,
+        depth: r.z,
+        scale: perspective
+      };
+    }
+
+    function polygon(points, fill, stroke, width = 1) {
+      const ps = points.map(project);
+      ctx.beginPath();
+      ctx.moveTo(ps[0].x, ps[0].y);
+      for (let i = 1; i < ps.length; i++) ctx.lineTo(ps[i].x, ps[i].y);
+      ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
+    }
+
+    function line3(a, b, color, width = 1, dash = []) {
+      const p1 = project(a);
+      const p2 = project(b);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function polyline3(points, color, width = 1, dash = []) {
+      const ps = points.map(project);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(ps[0].x, ps[0].y);
+      for (let i = 1; i < ps.length; i++) ctx.lineTo(ps[i].x, ps[i].y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function label3(text, point, color = C.text, align = 'center', font = '600 11px Consolas') {
+      const p = project(point);
+      ctx.save();
+      ctx.font = font;
+      ctx.textAlign = align;
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(7,16,28,.9)';
+      ctx.strokeText(text, p.x, p.y);
+      ctx.fillStyle = color;
+      ctx.fillText(text, p.x, p.y);
+      ctx.restore();
+    }
+
+    function arrow3(start, end, color, width = 3, label = '') {
+      const a = project(start);
+      const b = project(end);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const angle = Math.atan2(dy, dx);
+      const head = 12 + width;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = width > 3 ? 12 : 0;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - head * Math.cos(angle - .42), b.y - head * Math.sin(angle - .42));
+      ctx.lineTo(b.x - head * Math.cos(angle + .42), b.y - head * Math.sin(angle + .42));
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+      if (label) {
+        ctx.font = '700 11px Consolas';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'left';
+        ctx.fillText(label, a.x + 8, a.y - 10);
+      }
+      ctx.restore();
+    }
+
+    function planeGrid(kind, color) {
+      const span = 5.8;
+      const step = 1;
+      ctx.save();
+      ctx.globalAlpha = .48;
+      if (kind === 'xz') {
+        polygon([v3(-5.4, 0, -span), v3(1.2, 0, -span), v3(1.2, 0, span), v3(-5.4, 0, span)], 'rgba(255,173,66,.035)', color, 1);
+        for (let z = -5; z <= 5; z += step) line3(v3(-5.4, 0, z), v3(1.2, 0, z), color, .65);
+        for (let x = -5; x <= 1; x += step) line3(v3(x, 0, -span), v3(x, 0, span), color, .65);
+      } else {
+        polygon([v3(-5.4, -span, 0), v3(1.2, -span, 0), v3(1.2, span, 0), v3(-5.4, span, 0)], 'rgba(255,107,114,.03)', color, 1);
+        for (let y = -5; y <= 5; y += step) line3(v3(-5.4, y, 0), v3(1.2, y, 0), color, .65);
+        for (let x = -5; x <= 1; x += step) line3(v3(x, -span, 0), v3(x, span, 0), color, .65);
+      }
+      ctx.restore();
+    }
+
+    function drawCylinder() {
+      const segments = 28;
+      const rings = [0.08, 4.7];
+      const radius = .62;
+      const faces = [];
+      for (let i = 0; i < segments; i++) {
+        const a1 = i / segments * Math.PI * 2;
+        const a2 = (i + 1) / segments * Math.PI * 2;
+        const points = [
+          v3(rings[0], Math.cos(a1) * radius, Math.sin(a1) * radius),
+          v3(rings[1], Math.cos(a1) * radius, Math.sin(a1) * radius),
+          v3(rings[1], Math.cos(a2) * radius, Math.sin(a2) * radius),
+          v3(rings[0], Math.cos(a2) * radius, Math.sin(a2) * radius)
+        ];
+        const depth = points.reduce((sum, p) => sum + rotatePoint(p).z, 0) / points.length;
+        const light = .34 + .46 * Math.max(0, Math.cos(a1 - .7));
+        faces.push({ points, depth, fill: `rgba(${Math.round(75 + light * 70)},${Math.round(96 + light * 65)},${Math.round(118 + light * 58)},.96)` });
+      }
+      faces.sort((a, b) => a.depth - b.depth);
+      faces.forEach(face => polygon(face.points, face.fill, '#40556a', .55));
+
+      const faceRing = [];
+      for (let i = 0; i < segments; i++) {
+        const a = i / segments * Math.PI * 2;
+        faceRing.push(v3(0, Math.cos(a) * radius, Math.sin(a) * radius));
+      }
+      polygon(faceRing, '#9cafc1', '#d3deE8', 1.2);
+
+      const innerRing = faceRing.map(p => v3(-.015, p.y * .83, p.z * .83));
+      polygon(innerRing, '#72879b', '#c1cfda', .7);
+
+      if (showPorts.checked) drawPorts();
+    }
+
+    function drawPorts() {
+      const ports = [
+        { id: 'P2', y: 0, z: 0 },
+        { id: 'P3', y: .34, z: 0 },
+        { id: 'P1', y: -.34, z: 0 },
+        { id: 'P4', y: 0, z: -.34 },
+        { id: 'P5', y: 0, z: .34 }
+      ];
+      const segments = 18;
+      ports.forEach(port => {
+        const ring = [];
+        const radius = port.id === 'P2' ? .105 : .09;
+        for (let i = 0; i < segments; i++) {
+          const a = i / segments * Math.PI * 2;
+          ring.push(v3(-.035, port.y + Math.cos(a) * radius, port.z + Math.sin(a) * radius));
+        }
+        polygon(ring, C.port, '#d8e4ee', .7);
+        label3(port.id, v3(-.08, port.y + (port.y > 0 ? .14 : port.y < 0 ? -.14 : 0), port.z + (port.z > 0 ? .14 : port.z < 0 ? -.14 : 0)), C.text, 'center', '700 9px Consolas');
+      });
+    }
+
+    function arcPoints(plane, angle, radiusValue) {
+      const points = [];
+      const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3));
+      for (let i = 0; i <= steps; i++) {
+        const a = rad(angle * i / steps);
+        if (plane === 'xz') points.push(v3(-Math.cos(a) * radiusValue, 0, -Math.sin(a) * radiusValue));
+        else points.push(v3(-Math.cos(a) * radiusValue, -Math.sin(a) * radiusValue, 0));
+      }
+      return points;
+    }
+
+    function drawScene() {
+      const rect = viewport.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      if (showGuides.checked) {
+        planeGrid('xz', 'rgba(255,173,66,.22)');
+        planeGrid('xy', 'rgba(255,107,114,.20)');
+      }
+
+      const axisLength = 5.25;
+      arrow3(v3(0, 0, 0), v3(-axisLength, 0, 0), C.z, 1.7);
+      arrow3(v3(0, 0, 0), v3(0, 2.3, 0), C.y, 1.7);
+      arrow3(v3(0, 0, 0), v3(0, 0, 2.3), C.x, 1.7);
+      label3('-Z', v3(-axisLength - .28, 0, 0), C.z, 'center', '700 15px Consolas');
+      label3('Y', v3(0, 2.58, 0), C.y, 'center', '700 15px Consolas');
+      label3('X', v3(0, 0, 2.58), C.x, 'center', '700 15px Consolas');
+
+      const ta = Math.tan(rad(state.alpha));
+      const tb = Math.tan(rad(state.beta));
+      const flow = normalize(v3(1, tb, ta));
+      const flowStart = mul(flow, -6.2);
+      const facePoint = v3(-.08, 0, 0);
+
+      if (showGuides.checked) {
+        const alphaDirection = normalize(v3(1, 0, ta));
+        const betaDirection = normalize(v3(1, tb, 0));
+        line3(mul(alphaDirection, -5.55), facePoint, C.alpha, 1.5, [7, 5]);
+        line3(mul(betaDirection, -5.55), facePoint, C.beta, 1.5, [7, 5]);
+        line3(flowStart, mul(alphaDirection, -5.55), C.alpha, 1, [3, 5]);
+        line3(flowStart, mul(betaDirection, -5.55), C.beta, 1, [3, 5]);
+        line3(v3(-5.7, 0, 0), facePoint, C.faint, 1.2, [7, 6]);
+
+        if (state.alpha !== 0) {
+          polyline3(arcPoints('xz', state.alpha, 1.45), C.alpha, 3);
+          const mid = rad(state.alpha / 2);
+          label3(`α ${signed(state.alpha)}`, v3(-Math.cos(mid) * 1.82, .03, -Math.sin(mid) * 1.82), C.alpha);
+        }
+        if (state.beta !== 0) {
+          polyline3(arcPoints('xy', state.beta, 1.08), C.beta, 3);
+          const mid = rad(state.beta / 2);
+          label3(`β ${signed(state.beta)}`, v3(-Math.cos(mid) * 1.46, -Math.sin(mid) * 1.46, .03), C.beta);
+        }
+      }
+
+      drawCylinder();
+      arrow3(flowStart, facePoint, C.flow, 5, 'V∞ 来流');
+      label3('探针轴', v3(3.9, .84, 0), C.muted, 'center', '600 10px "Microsoft YaHei UI"');
+    }
+
+    function updateAngles() {
+      state.alpha = Number(alphaInput.value);
+      state.beta = Number(betaInput.value);
+      alphaValue.textContent = hudAlpha.textContent = signed(state.alpha);
+      betaValue.textContent = hudBeta.textContent = signed(state.beta);
+    }
+
+    function setView(name) {
+      Object.assign(state, views[name]);
+      document.querySelectorAll('[data-view]').forEach(button => {
+        button.classList.toggle('active', button.dataset.view === name);
+      });
+    }
+
+    alphaInput.addEventListener('input', updateAngles);
+    betaInput.addEventListener('input', updateAngles);
+    document.getElementById('viewButtons').addEventListener('click', event => {
+      const button = event.target.closest('[data-view]');
+      if (button) setView(button.dataset.view);
+    });
+
+    canvas.addEventListener('pointerdown', event => {
+      state.dragging = true;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      canvas.setPointerCapture(event.pointerId);
+      document.querySelectorAll('[data-view]').forEach(button => button.classList.remove('active'));
+    });
+
+    canvas.addEventListener('pointermove', event => {
+      if (!state.dragging) return;
+      const dx = event.clientX - state.lastX;
+      const dy = event.clientY - state.lastY;
+      state.yaw += dx * .008;
+      state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + dy * .008));
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+    });
+
+    const stopDragging = event => {
+      state.dragging = false;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    };
+    canvas.addEventListener('pointerup', stopDragging);
+    canvas.addEventListener('pointercancel', stopDragging);
+    canvas.addEventListener('dblclick', () => setView('iso'));
+    canvas.addEventListener('wheel', event => {
+      event.preventDefault();
+      state.zoom = Math.max(.68, Math.min(1.55, state.zoom * Math.exp(-event.deltaY * .001)));
+    }, { passive: false });
+
+    function animate(now) {
+      const dt = Math.min(.05, (now - state.lastTime) / 1000);
+      state.lastTime = now;
+      if (autoRotate.checked && !state.dragging) {
+        state.yaw += dt * .18;
+        document.querySelectorAll('[data-view]').forEach(button => button.classList.remove('active'));
+      }
+      drawScene();
+      requestAnimationFrame(animate);
+    }
+
+    new ResizeObserver(resize).observe(viewport);
+    updateAngles();
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
