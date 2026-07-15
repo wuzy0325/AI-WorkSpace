@@ -59,6 +59,7 @@ type CalibrationManager struct {
 	currentConfig    calibration.Config
 	currentStatus    calibration.Status
 	currentTaskID    string
+	pauseStartedAt   time.Time
 	csvWriter        ports.CalibrationCsvWriter
 	csvWriterFactory func(calibration.Config) ports.CalibrationCsvWriter
 	lastExport       *calibration.ExportPayload
@@ -238,6 +239,7 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		TotalPoints: len(config.Points),
 		StartTime:   time.Now().UnixMilli(),
 	}
+	m.pauseStartedAt = time.Time{}
 
 	// 根据校准类型选择算法并启动
 	algorithm, err := m.createAlgorithm(config)
@@ -311,6 +313,7 @@ func (m *CalibrationManager) Pause() error {
 		return fmt.Errorf("校准未在运行中")
 	}
 	m.currentStatus.State = calibration.StatePaused
+	m.pauseStartedAt = time.Now()
 	engine := m.autoEngine
 	m.mu.Unlock()
 
@@ -330,6 +333,7 @@ func (m *CalibrationManager) Resume() error {
 		return fmt.Errorf("校准未在暂停状态")
 	}
 	m.currentStatus.State = calibration.StateRunning
+	m.settlePauseDurationLocked(time.Now())
 	engine := m.autoEngine
 	m.mu.Unlock()
 
@@ -347,6 +351,7 @@ func (m *CalibrationManager) Stop() error {
 		m.autoEngine.Stop()
 	}
 
+	m.settlePauseDurationLocked(time.Now())
 	m.currentStatus.State = calibration.StateStopped
 
 	// 保存导出载荷
@@ -564,6 +569,9 @@ func (m *CalibrationManager) GetResult(taskID string) (calibration.Status, bool)
 func (m *CalibrationManager) Status() calibration.Status {
 	m.mu.RLock()
 	status := m.currentStatus
+	if !m.pauseStartedAt.IsZero() {
+		status.PausedDurationMs += time.Since(m.pauseStartedAt).Milliseconds()
+	}
 	if status.DataPoints != nil {
 		status.DataPoints = append([]calibration.DataPoint(nil), status.DataPoints...)
 	}
@@ -582,6 +590,14 @@ func (m *CalibrationManager) Status() calibration.Status {
 		status.CurrentPoint = m.autoEngine.GetCurrentPointIndex()
 	}
 	return status
+}
+
+func (m *CalibrationManager) settlePauseDurationLocked(now time.Time) {
+	if m.pauseStartedAt.IsZero() {
+		return
+	}
+	m.currentStatus.PausedDurationMs += now.Sub(m.pauseStartedAt).Milliseconds()
+	m.pauseStartedAt = time.Time{}
 }
 
 // GetTotalTemperatureState 获取总温校准专用状态

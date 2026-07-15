@@ -60,6 +60,25 @@ type rr1Status struct {
 	LMTP, LMTM, ALARM, EMG       bool
 }
 
+// rr0Status 对应 SDK WTNMC4A 状态寄存器 RR0 的驱动状态位。
+// XDRV=1 表示 X 轴正在驱动（控制器正在输出运动脉冲），
+// 0 表示 X 轴已停止。Y/Z/U 同理。
+// RR0 是 SDK 明确定义的轴驱动/停止状态来源，不带阶段位残留问题。
+type rr0Status struct {
+	XDRV, YDRV, ZDRV, UDRV bool
+}
+
+// wtnmc4aRR0Struct 对应 C 结构体 WTNMC4A_PARA_RR0。
+// XDRV/YDRV/ZDRV/UDRV 是 SDK 明确定义的各轴驱动状态，不能用 RR1 的
+// 加速/定速/减速阶段位替代，否则阶段位残留会让停止轴持续显示 Moving=true。
+type wtnmc4aRR0Struct struct {
+	XDRV, YDRV, ZDRV, UDRV         uint32
+	XERROR, YERROR, ZERROR, UERROR uint32
+	IDRV, CNEXT                    uint32
+	ZONE0, ZONE1, ZONE2            uint32
+	BPSC0, BPSC1                   uint32
+}
+
 // wtnmc4aRR1Struct 对应 C 结构体 WTNMC4A_PARA_RR1（WTNMC4A.H 第 358-379 行）。
 // SDK 定义为 16 个 UINT 字段（每个 4 字节，总 64 字节），每个字段值为 0 或 1。
 // 必须用此结构体缓冲区传指针给 DLL，不能再用 [4]byte 当位掩码解析——
@@ -105,6 +124,7 @@ type dllProcs struct {
 	readEP     *syscall.Proc
 	readCV     *syscall.Proc
 	readCA     *syscall.Proc
+	getRR0     *syscall.Proc
 	getRR1     *syscall.Proc
 	startHome  *syscall.Proc
 	clearLimit *syscall.Proc
@@ -168,6 +188,7 @@ type WTNMC4AMotionController struct {
 
 	// Test seams for deterministic DLL failure and concurrency tests.
 	readLP    func(handle uintptr, axis int) int32
+	readRR0   func(handle uintptr) (rr0Status, error)
 	readRR1   func(handle uintptr, axis int) (rr1Status, error)
 	startMove func(axis int, pulse int32) error
 	stopAxis  func(handle uintptr, axis int) error
@@ -265,6 +286,7 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 		readEP:     dll.MustFindProc("WTNMC4A_ReadEP"),
 		readCV:     dll.MustFindProc("WTNMC4A_ReadCV"),
 		readCA:     dll.MustFindProc("WTNMC4A_ReadCA"),
+		getRR0:     dll.MustFindProc("WTNMC4A_GetRR0Status"),
 		getRR1:     dll.MustFindProc("WTNMC4A_GetRR1Status"),
 		startHome:  dll.MustFindProc("WTNMC4A_StartAutoHomeSearch"),
 		clearLimit: dll.MustFindProc("WTNMC4A_ClearSoftwareLimit"),
@@ -344,9 +366,13 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 
 // Status 返回控制器和所有轴的状态。
 //
-// 快速路径优化：仅当距离上次完整状态 >= 500ms 时才调用 getRR1Status（每轴 1 次 DLL 调用），
-// 中间轮次仅调用 readLP（每轴 1 次 DLL 调用），DLL 调用量减半（4 轴 8→4 次），
-// 运动状态沿用缓存值，避免低速运动时位置未变导致误判停止。限位/报警/归零等慢变信号在完整状态时刷新。
+// 快速路径优化：仅当距离上次完整状态 >= 500ms 时才调用 getRR0Status + getRR1Status（1+4 次 DLL 调用），
+// 中间轮次仅调用 readLP（每轴 1 次 DLL 调用），DLL 调用量减少，限位/报警/归零等慢变信号在完整状态时刷新。
+//
+// 运动判定来源为 SDK RR0 寄存器的 XDRV/YDRV/ZDRV/UDRV 驱动状态位（每控制器 1 次 DLL 调用），
+// 而非 RR1 的 ASND/CNST/DSND 加速/定速/减速阶段位（每轴 1 次）。RR0 是 SDK 明确指定用于判断
+// 轴是否正在驱动的寄存器，不因阶段位残留而误判为运动中。
+// RR1 继续只用于限位（LMTP/LMTM）、报警（ALARM/EMG）等轴级状态。
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
 	startTime := time.Now()
 
@@ -404,6 +430,22 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 	var statusErrors []error
 
 	dllStart := time.Now()
+	// 一次性读取 RR0 寄存器（所有轴驱动状态），用于后续逐轴的 moving 判定。
+	// 在完整状态窗口中提前查询，避免在每个轴的 ioMu 锁内重复读 RR0。
+	var rr0 rr0Status
+	var rr0Err error
+	if needFullStatus {
+		c.ioMu.Lock()
+		if !c.connectionMatches(handle) {
+			rr0Err = fmt.Errorf("控制器连接已变更")
+		} else {
+			rr0, rr0Err = c.getRR0Status(handle)
+		}
+		c.ioMu.Unlock()
+		if rr0Err != nil {
+			statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 驱动状态读取失败: %w", rr0Err))
+		}
+	}
 	for _, q := range queries {
 		// Serialize one axis query at a time so Stop/EmergencyStop can run between
 		// axes instead of waiting for an entire four-axis status batch.
@@ -443,8 +485,11 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 			c.ioMu.Unlock()
 			if rrErr != nil {
 				statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 轴 %s 状态读取失败: %w", q.axisCfg.Name, rrErr))
-			} else {
-				moving = rr1.ASND || rr1.CNST || rr1.DSND
+			} else if rr0Err == nil {
+				// 使用 RR0 驱动状态位判定运动/停止，RR1 只取限位信号。
+				// 不能用 RR1 的 ASND/CNST/DSND 替代：控制器停止后阶段位可能残留，
+				// 而上层看门狗依赖准确的 Moving=false 来做到位判定。
+				moving = rr0.axisDriving(q.axisNum)
 				posLimit = rr1.LMTP
 				negLimit = rr1.LMTM
 				statusValid = true
@@ -542,6 +587,24 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		"axes", len(queries),
 	)
 	return statusCopy, statusErr
+}
+
+// axisDriving 根据轴序号返回 RR0 中对应轴的驱动状态。
+// axisNum 映射：0→XDRV, 1→YDRV, 2→ZDRV, 3→UDRV。
+// 未知轴号返回 false（保守处理，不误判为运动中）。
+func (s rr0Status) axisDriving(axisNum int) bool {
+	switch axisNum {
+	case 0:
+		return s.XDRV
+	case 1:
+		return s.YDRV
+	case 2:
+		return s.ZDRV
+	case 3:
+		return s.UDRV
+	default:
+		return false
+	}
 }
 
 // InitLVDV + StartLVDV 启动轴的运动（参照标准SDK示例用法）。
@@ -1129,6 +1192,30 @@ func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) (rr1
 		LMTM:  raw.LMTM != 0,
 		ALARM: raw.ALARM != 0,
 		EMG:   raw.EMG != 0,
+	}, nil
+}
+
+// getRR0Status 查询 RR0 状态寄存器（所有轴统一查询，不依赖锁）。
+//
+// SDK 的 WTNMC4A_GetRR0Status 把 12 个 UINT 字段结构体写入调用方提供的缓冲区，
+// 每个字段是 0/1 的值。这里用 wtnmc4aRR0Struct 匹配内存布局，仅提取 4 个轴驱动位。
+// RR0 不分轴号：一次调用返回 X/Y/Z/U 全部轴的驱动状态。
+//
+// 与 getRR1Status 的区别：RR1 查询的是单轴状态且需逐个调用，RR0 一次查询所有轴。
+func (c *WTNMC4AMotionController) getRR0Status(handle uintptr) (rr0Status, error) {
+	if c.readRR0 != nil {
+		return c.readRR0(handle)
+	}
+	var raw wtnmc4aRR0Struct
+	ret, _, _ := c.procs.getRR0.Call(handle, uintptr(unsafe.Pointer(&raw)))
+	if ret == 0 {
+		return rr0Status{}, fmt.Errorf("GetRR0Status 返回失败")
+	}
+	return rr0Status{
+		XDRV: raw.XDRV != 0,
+		YDRV: raw.YDRV != 0,
+		ZDRV: raw.ZDRV != 0,
+		UDRV: raw.UDRV != 0,
 	}, nil
 }
 

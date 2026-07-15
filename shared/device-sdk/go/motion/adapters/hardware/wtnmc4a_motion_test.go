@@ -71,6 +71,7 @@ func TestWTNMC4AStatusKeepsLastTrustedPositionAfterRepeatedBadReads(t *testing.T
 		}
 		return math.MaxInt32
 	}
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{}, nil }
 	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) { return rr1Status{}, nil }
 
 	first, err := ctrl.Status(context.Background())
@@ -386,6 +387,7 @@ func TestWTNMC4AStatusSerializesDLLReads(t *testing.T) {
 		active.Add(-1)
 		return 0
 	}
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{}, nil }
 	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) { return rr1Status{}, nil }
 
 	var wg sync.WaitGroup
@@ -428,6 +430,7 @@ func TestWTNMC4AStatusPreservesCachedFlagsWhenRR1Fails(t *testing.T) {
 	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) {
 		return rr1Status{}, fmt.Errorf("injected RR1 failure")
 	}
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{XDRV: true}, nil }
 
 	got, err := ctrl.Status(context.Background())
 	if err == nil {
@@ -438,6 +441,37 @@ func TestWTNMC4AStatusPreservesCachedFlagsWhenRR1Fails(t *testing.T) {
 	}
 	if !ctrl.lastFullStatusAt.IsZero() {
 		t.Fatalf("failed RR1 read advanced full-status timestamp to %v", ctrl.lastFullStatusAt)
+	}
+}
+
+func TestWTNMC4AStatusPreservesCachedFlagsWhenRR0Fails(t *testing.T) {
+	// 测试前置：轴在 Moving=true 状态，RR0 注入查询失败
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.status.Axes[0].Moving = true
+	ctrl.status.Axes[0].PosLimit = true
+	ctrl.readLP = func(uintptr, int) int32 { return 0 }
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) {
+		return rr0Status{}, fmt.Errorf("injected RR0 failure")
+	}
+	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) { return rr1Status{}, nil }
+
+	// 测试步骤：完整状态窗口下 RR0 失败
+	got, err := ctrl.Status(context.Background())
+
+	// 期待结果：
+	//   - 返回 RR0 失败的错误
+	//   - Moving/PosLimit 保留缓存值（通信失败不丢弃已知状态）
+	//   - lastFullStatusAt 不推进（下次轮询继续尝试完整状态）
+	if err == nil {
+		t.Fatal("expected RR0 failure to be returned")
+	}
+	if !got.Axes[0].Moving || !got.Axes[0].PosLimit {
+		t.Fatalf("RR0 failure replaced cached flags: %+v", got.Axes[0])
+	}
+	if !ctrl.lastFullStatusAt.IsZero() {
+		t.Fatalf("failed RR0 read advanced full-status timestamp to %v", ctrl.lastFullStatusAt)
 	}
 }
 
@@ -453,6 +487,7 @@ func TestWTNMC4AStatusRefreshesPositionWhenAxisStops(t *testing.T) {
 	ctrl.readLP = func(uintptr, int) int32 {
 		return positions[reads.Add(1)-1]
 	}
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{}, nil }
 	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) { return rr1Status{}, nil }
 
 	got, err := ctrl.Status(context.Background())
@@ -468,6 +503,31 @@ func TestWTNMC4AStatusRefreshesPositionWhenAxisStops(t *testing.T) {
 	}
 	if reads.Load() != 2 {
 		t.Fatalf("ReadLP calls = %d, want 2", reads.Load())
+	}
+}
+
+func TestWTNMC4AStatusUsesRR0DriveStateInsteadOfRR1MotionPhase(t *testing.T) {
+	// 测试前置：RR0 表示轴已停（XDRV=false），但 RR1 的阶段位仍有 CNST=true 残留
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.status.Axes[0].Moving = true
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 1000, at: time.Now()}
+	ctrl.readLP = func(uintptr, int) int32 { return 1000 }
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{XDRV: false}, nil }
+	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) {
+		return rr1Status{CNST: true}, nil
+	}
+
+	// 测试步骤：完整状态查询
+	got, err := ctrl.Status(context.Background())
+
+	// 期待结果：应以 RR0 驱动状态为准，Moving=false，忽略 RR1 的阶段位残留
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if got.Axes[0].Moving {
+		t.Fatal("stale RR1 motion phase overrode stopped RR0 drive state")
 	}
 }
 
@@ -601,6 +661,7 @@ func TestWTNMC4AQueuedStatusDoesNotOverwriteStopState(t *testing.T) {
 	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) {
 		return rr1Status{CNST: true}, nil
 	}
+	ctrl.readRR0 = func(uintptr) (rr0Status, error) { return rr0Status{XDRV: true}, nil }
 	ctrl.stopAxis = func(uintptr, int) error { return nil }
 
 	statusDone := make(chan error, 1)
