@@ -2,12 +2,13 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
+import type { RealtimePressures } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
-import type { ProbeChannelRole } from '@shared/types/calibration'
+import type { CalibrationConfig, ProbeChannelRole } from '@shared/types/calibration'
 import { getProbeChannelPrecision } from '@shared/calibrationPrecision'
 import { findChannelValue } from '@shared/calibrationSnapshotValue'
 import { isThreeHoleDataPoint } from '@shared/calibrationDataGuards'
@@ -15,6 +16,7 @@ import { deviceApi } from '@api/deviceApi'
 import type { DataPayload } from '@api/types'
 import UiButton from '@components/ui/UiButton.vue'
 import ThreeHoleChart from './ThreeHoleChart.vue'
+import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 import {
   Play, Pause, Square, Settings, ArrowLeft, Save, FileText,
   ChevronDown, ChevronUp, Gauge, TrendingUp, Target, Wind
@@ -71,9 +73,9 @@ function cleanupSubscriptions(): void {
 
 // buildRealtimePressuresFromSnapshots 按三孔通道角色映射将设备快照转为 RealtimePressures
 function buildRealtimePressuresFromSnapshots(
-  config: import('@shared/types/calibration').CalibrationConfig,
+  config: CalibrationConfig,
   snapshots: DataPayload[],
-): import('@stores/calibrationStore').RealtimePressures | null {
+): RealtimePressures | null {
   const result = {
     P1: 0,
     P2: 0,
@@ -198,6 +200,10 @@ const sampleProgress = computed(() => {
 
 // 错误详情：后端 StateError 时 lastError 非空，顶部栏展示供操作员排查
 const lastError = computed(() => calibrationStore.status?.lastError ?? '')
+
+// 运动安全故障现场快照：从 calibrationStore.status.motionSafetyFailure 取，
+// 后端在故障发生时写入、恢复时清空。告警卡片据此渲染/隐藏。
+const motionSafetyFailure = computed(() => calibrationStore.status?.motionSafetyFailure ?? null)
 
 // 实时 CSV 路径：校准启动后操作员需知道数据写到哪，避免"存了找不到"
 const csvSavePath = computed(() => currentConfig.value?.savePath ?? '')
@@ -463,6 +469,14 @@ onUnmounted(() => {
         <ChevronUp v-else class="h-3 w-3" />
       </button>
     </div>
+
+    <!-- 运动安全故障告警卡片：仅在 motionSafetyFailure 存在时渲染。
+         独立卡片承载 6 字段结构化信息（控制器/轴/目标/实际/偏差/点号），
+         单行状态栏无法承载这些信息。与遍历测试模块共用同一告警卡片组件。 -->
+    <MotionSafetyAlertCard
+      :failure="motionSafetyFailure"
+      :t="(t as unknown as Record<string, string>)"
+    />
 
     <!-- 配置摘要展开面板（默认收起） -->
     <div v-if="showConfigSummary" class="flex items-center gap-6 border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-5 py-2 text-xs">

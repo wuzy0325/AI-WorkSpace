@@ -1,4 +1,4 @@
-import type { CalibrationConfig, CalibrationType, SphereTankGateConfig } from '@shared/types/calibration';
+import type { CalibrationConfig, CalibrationErrorCode, CalibrationType, MotionSafetyFailure, SphereTankGateConfig } from '@shared/types/calibration';
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
@@ -20,6 +20,20 @@ export interface CalibrationStatus {
   currentPoint: number;
   totalPoints: number;
   lastError?: string;
+  /**
+   * 结构化错误码（与 shared/types/calibration.CalibrationErrorCode 对齐）。
+   *
+   * 旧 Wails binding 未自动同步此字段时为 undefined，前端需做 fallback；
+   * 新 binding 重新生成后会与后端 LastErrorCode 同步。
+   */
+  lastErrorCode?: CalibrationErrorCode;
+  /**
+   * 运动安全故障现场快照（与 shared/types/calibration.MotionSafetyFailure 对齐）。
+   *
+   * 旧 Wails binding 未自动同步此字段时为 undefined；新 binding 重新生成后会与后端同步。
+   * 前端据此展示故障现场告警卡片。
+   */
+  motionSafetyFailure?: MotionSafetyFailure | null;
   results?: CalibrationPointResult[];
 }
 

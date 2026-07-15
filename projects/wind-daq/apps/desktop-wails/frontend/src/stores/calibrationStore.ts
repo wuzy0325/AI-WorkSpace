@@ -262,6 +262,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 读取后端返回的启动时间戳（calibration.Status.StartTime，JSON 字段 startTime）。
     // 这是 elapsed 计时的基准——比前端本地记 Date.now() 更准：用户切换页面/刷新后仍能基于后端真实启动时刻恢复已用时。
     const startTime = calStatus.startTime ?? calStatus.StartTime
+    // 运动安全错误码 + 故障现场快照（与 core/calibration.Status.LastErrorCode /
+    // MotionSafetyFailure 对齐）。Wails binding 重新生成前 PascalCase 字段缺失，需做 fallback。
+    // 这两个字段决定前端告警卡片是否渲染、Start 是否阻塞——必须在每次轮询时刷新，
+    // 否则故障恢复后卡片不会自动消失（后端在故障恢复时会清空 MotionSafetyFailure）。
+    const lastErrorCode = calStatus.lastErrorCode ?? calStatus.LastErrorCode ?? undefined
+    const motionSafetyFailure = calStatus.motionSafetyFailure ?? calStatus.MotionSafetyFailure ?? null
     const mappedState = mapCalibrationState(state)
 
     if (!status.value) {
@@ -278,6 +284,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
         currentSample: calStatus.currentSample ?? calStatus.CurrentSample ?? 0,
         samplesPerPoint: calStatus.samplesPerPoint ?? calStatus.SamplesPerPoint ?? 0,
         currentPointIndex: typeof currentPointIndex === 'number' ? currentPointIndex : undefined,
+        lastErrorCode,
+        motionSafetyFailure,
       }
     } else {
       status.value.status = mappedState
@@ -300,6 +308,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
         status.value.currentSample = 0
         status.value.samplesPerPoint = 0
       }
+      // 运动安全错误码 + 故障现场快照每次轮询刷新：
+      //   - 故障发生时后端写入，前端展示告警卡片
+      //   - 故障恢复后后端清空（MotionSafetyFailure = nil），前端卡片自动消失
+      // 不做"只在 error 态保留"的特殊处理，因为后端在 paused/stopped 态也可能保留快照供操作员复盘
+      status.value.lastErrorCode = lastErrorCode
+      status.value.motionSafetyFailure = motionSafetyFailure
     }
 
     if (Array.isArray(backendDataPoints)) {

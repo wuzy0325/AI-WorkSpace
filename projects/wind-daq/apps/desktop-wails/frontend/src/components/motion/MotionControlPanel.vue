@@ -196,6 +196,19 @@ async function emergencyStop(): Promise<void> {
   await motion.emergencyStop(selectedId.value)
 }
 
+// 解除急停：当控制器被遍历测试/校准自动触发急停后，独立运动画面需提供显式解除入口，
+// 否则用户只能通过断开重连或重启应用恢复，体验差且易误操作
+async function handleResetEmergencyStop(): Promise<void> {
+  if (!selectedId.value) return
+  // 复位可能因硬件仍处报警态、连接断开等原因失败，需显式提示用户根因，
+  // 否则用户反复点按钮无反馈，无法判断是按钮坏了还是硬件问题
+  try {
+    await motion.resetEmergencyStop(selectedId.value)
+  } catch (e) {
+    feedback.pushToast(`解除急停失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
+  }
+}
+
 function clearCurrentError(): void {
   if (!selectedId.value) return
   const status = motion.statusById(selectedId.value)
@@ -482,6 +495,28 @@ watch(
           </UiButton>
         </div>
       </header>
+
+      <!-- 急停激活横幅：控制器被锁死时显式提示并给出解除入口 -->
+      <div
+        v-if="currentStatus?.emergencyStopped"
+        class="mx-5 mt-3 p-3 rounded-[var(--radius-md)] border border-[color:var(--accent-warning)]/40 bg-[color:var(--accent-warning)]/10 flex items-center gap-3"
+      >
+        <svg class="w-4 h-4 shrink-0 text-[color:var(--accent-warning)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <div class="flex-1 min-w-0">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--accent-warning)]">{{ i18n.t.eStopActive }}</p>
+          <p class="text-xs font-medium text-[color:var(--text-primary)] truncate">{{ i18n.t.eStopResetHint }}</p>
+        </div>
+        <UiButton
+          secondary size="sm"
+          @click="handleResetEmergencyStop"
+        >
+          {{ i18n.t.eStopReset }}
+        </UiButton>
+      </div>
 
       <div
         v-if="currentStatus?.lastError"

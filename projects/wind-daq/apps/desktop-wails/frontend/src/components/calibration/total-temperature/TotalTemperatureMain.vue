@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -10,6 +11,7 @@ import type { CalibrationConfig, TotalTemperatureCalibrationPoint } from '@share
 import { getProbeChannelPrecision } from '@shared/calibrationPrecision'
 import { isTotalTemperatureDataPoint } from '@shared/calibrationDataGuards'
 import UiButton from '@components/ui/UiButton.vue'
+import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 import {
   Play, Pause, Square, Settings, ArrowLeft, Save, FileText, RotateCcw,
   ChevronDown, ChevronUp, Activity, Gauge, Wind, Timer, Target, TrendingUp
@@ -25,8 +27,7 @@ const calibrationStore = useCalibrationStore()
 const deviceStore = useDeviceStore()
 const motionStore = useMotionStore()
 const feedbackStore = useFeedbackStore()
-const i18n = useI18nStore()
-const t = computed(() => i18n.t)
+const { t } = storeToRefs(useI18nStore())
 
 const workflow = useCalibrationWorkflow('total-temperature')
 const sphereTankGate = workflow.sphereTankGate
@@ -90,10 +91,25 @@ const statusColor = computed(() => {
   return 'normal'
 })
 
+// 状态色 CSS 变量标识：将 statusColor 转为设计 token，替代 Tailwind 调色板硬编码。
+// 与 ThreeHoleMain/TotalPressureMain 一致，统一用 color-mix 派生背景色，避免暗色主题割裂。
+const statusColorToken = computed(() => {
+  switch (statusColor.value) {
+    case 'success': return '--accent-success'
+    case 'warning': return '--accent-warning'
+    case 'info': return '--accent-info'
+    default: return '--text-muted'
+  }
+})
+
 const canPause = computed(() => calibrationStore.isRunning && !calibrationStore.isPaused)
 const canResume = computed(() => calibrationStore.isPaused)
 const canStop = computed(() => calibrationStore.isRunning || calibrationStore.isPaused)
 const canSave = computed(() => calibrationStore.completeEvent !== null || calibrationStore.dataPoints.length > 0)
+
+// 运动安全故障现场快照：从 calibrationStore.status.motionSafetyFailure 取，
+// 后端在故障发生时写入、恢复时清空。告警卡片据此渲染/隐藏。
+const motionSafetyFailure = computed(() => calibrationStore.status?.motionSafetyFailure ?? null)
 
 const probeChannels = computed(() => {
   return currentConfig.value?.probeChannels ?? []
@@ -113,12 +129,26 @@ function formatValue(value: number | undefined | null, precision?: number): stri
   return value.toFixed(precision ?? 3)
 }
 
+// 角色到 RealtimePressures 字段的映射。
+//
+// 设计约束：RealtimePressures 类型只暴露 Tatm（大气温度）一个温度字段，
+// tTotal/tStatic 在该类型中无对应字段——后端未通过此通道下发试验探针/标准探针温度。
+// 早期实现把三个角色都映射到 Tatm，导致侧栏三列温度同值，操作员无法区分三类温度，
+// 也无法判断试验探针/标准探针温度是否已稳定。
+//
+// 当前修复策略：
+//   - tAtm：读 pressures.Tatm（仅此角色有真值）
+//   - tTotal / tStatic：返回 '--'，明确"该通道实时值未通过 RealtimePressures 暴露"
+//     操作员若需查看试验探针/标准探针温度，参考右侧 latestRawData 卡片（从 dataPoints
+//     最后一条读取 testProbeTemp / standardProbeTemp / ambientTemp）。
+//
+// 若后续后端在 RealtimePressures 中补 Ttunnel 或独立 Tprobe 字段，可在此处补 case。
 function getChannelValue(role: string): string {
   const pressures = calibrationStore.realtimePressures
   if (!pressures) return '--'
   switch (role) {
-    case 'totalTemperature.tTotal': return formatValue(pressures.Tatm, getProbeChannelPrecision(currentConfig.value, role))
-    case 'totalTemperature.tStatic': return formatValue(pressures.Tatm, getProbeChannelPrecision(currentConfig.value, role))
+    case 'totalTemperature.tTotal': return '--'
+    case 'totalTemperature.tStatic': return '--'
     case 'totalTemperature.tAtm': return formatValue(pressures.Tatm, getProbeChannelPrecision(currentConfig.value, role))
     default: return '--'
   }
@@ -251,6 +281,14 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- 运动安全故障告警卡片：仅在 motionSafetyFailure 存在时渲染。
+         独立卡片承载 6 字段结构化信息（控制器/轴/目标/实际/偏差/点号），
+         单行状态栏无法承载这些信息。与遍历测试模块共用同一告警卡片组件。 -->
+    <MotionSafetyAlertCard
+      :failure="motionSafetyFailure"
+      :t="(t as unknown as Record<string, string>)"
+    />
+
     <div class="flex flex-1 overflow-hidden">
       <!-- 左侧边栏：固定宽度 320px，可滚动 -->
       <div class="flex w-80 flex-col border-r border-[var(--border-default)] bg-[var(--bg-panel)] overflow-y-auto flex-shrink-0">
@@ -258,11 +296,9 @@ onUnmounted(() => {
           <div class="mb-3 flex items-center justify-between">
             <span class="text-sm text-[var(--text-muted)]">{{ t.status }}</span>
             <span class="rounded-full px-2 py-0.5 text-xs font-medium"
-              :class="{
-                'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400': statusColor === 'success',
-                'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400': statusColor === 'warning',
-                'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400': statusColor === 'info',
-                'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400': statusColor === 'normal',
+              :style="{
+                backgroundColor: `color-mix(in srgb, var(${statusColorToken}) 15%, transparent)`,
+                color: `var(${statusColorToken})`,
               }"
             >{{ statusText }}</span>
           </div>

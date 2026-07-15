@@ -2,6 +2,30 @@
  * 校准模块类型定义
  */
 
+import type {
+  MotionSafetyConfig,
+  MotionSafetyFailure,
+  TraversalErrorCode,
+} from './traversal'
+
+/**
+ * 运动安全相关类型 re-export（与后端 core/calibration 引用 core/traversal 同构）。
+ *
+ * 设计动机：校准模块的运动安全机制从遍历模块移植，类型定义完全一致；
+ * 通过 re-export 让消费方从 `@shared/types/calibration` 一处导入，
+ * 避免 UI 组件同时引用两个 type 模块。
+ */
+export type {
+  MotionSafetyConfig,
+  MotionSafetyFailure,
+  MotionSafetyVerdict,
+} from './traversal'
+export {
+  DEFAULT_MOTION_SAFETY,
+  isMotionSafetyEmergency,
+  isMotionSafetyFailure,
+} from './traversal'
+
 /** 校准类型 */
 export type CalibrationType = 'five-hole' | 'three-hole' | 'total-pressure' | 'total-temperature'
 
@@ -231,6 +255,15 @@ export type CalibrationAnyDataPoint =
   | TotalPressureDataPoint
   | TotalTemperatureCalibrationPoint
 
+/**
+ * 校准错误码（与后端 traversal.ErrorCode 一一对应）。
+ *
+ * 设计决策：校准模块复用遍历模块的错误码集合，避免重复定义；后端通过
+ * traversal.ErrorCodeFor(verdict) 返回的字符串值与 TraversalErrorCode 联合类型保持一致。
+ * 前端据此区分告警级别（普通停止类 vs 急停类），驱动告警卡片配色与是否需要人工复位提示。
+ */
+export type CalibrationErrorCode = TraversalErrorCode
+
 /** 校准配置 */
 export interface CalibrationConfig {
   taskId?: string
@@ -241,7 +274,11 @@ export interface CalibrationConfig {
   points: CalibrationPoint[]
   dwellTimeMs: number
   samplesPerPoint: number
+  // 后端 csv_writer 约定 SavePath 必须是含 .csv 扩展名的完整文件路径。
+  // 前端持久化时同时写入 saveFileName（仅文件名），加载时优先使用 saveFileName
+  // 还原 UI 的"目录 + 文件名"分离展示，避免每次加载都从完整路径反拆文件名。
   savePath: string
+  saveFileName?: string
   stopOnError?: boolean
   sphereTankGate?: SphereTankGateConfig
   acquisitionSampling?: AcquisitionSamplingConfig
@@ -253,6 +290,17 @@ export interface CalibrationConfig {
   derivedValuePrecision?: CalibrationDerivedValuePrecision
   /** 界面实时数据刷新频率（Hz），影响压力/角度等 UI 更新节奏。缺省由 store 默认值决定。 */
   uiRefreshHz?: number
+  /**
+   * 运动安全配置（可选，与后端 core/calibration.Config.MotionSafety 对齐）。
+   *
+   * 留空时后端使用 traversal.DefaultMotionSafety() 兜底（arrivalTolerance=0.2、
+   * criticalDeviationLimit=5.0 等）。配置非法（如 criticalDeviationLimit <
+   * arrivalTolerance）会在 Start 阶段被 validateCalibrationMotionSafetyConfig 拒绝。
+   *
+   * 前端配置面板复用遍历模块的 MotionSafetyPanel.vue（Task 9 迁移到共享组件目录），
+   * 通过 v-model 双向绑定到此字段。
+   */
+  motionSafety?: MotionSafetyConfig
 }
 
 /** 校准任务状态 */
@@ -266,6 +314,27 @@ export interface CalibrationTaskStatus {
   startTime?: number
   estimatedTimeRemaining?: number
   lastError?: string
+  /**
+   * 结构化错误码（与后端 core/calibration.Status.LastErrorCode 对齐）。
+   *
+   * 后端在 failWithCode 调用时写入；空字符串表示无结构化错误码（旧路径 fallback）。
+   * 前端据此区分告警级别（急停类 vs 普通停止类），决定告警卡片颜色与是否提示"需人工复位"。
+   * 当 lastErrorCode 为急停类（CRITICAL_POSITION_DEVIATION / LIMIT_SWITCH_TRIGGERED /
+   * MOTION_STATUS_UNAVAILABLE / EMERGENCY_STOP_FAILED）时，前端必须阻塞后续 Start 操作，
+   * 强制要求操作员点击"复位"按钮才能继续。
+   */
+  lastErrorCode?: CalibrationErrorCode
+  /**
+   * 运动安全故障现场快照（与后端 core/calibration.Status.MotionSafetyFailure 对齐）。
+   *
+   * 后端在检测到运动安全故障时立即构造并写入 Status；failWithCode 会清空此字段，
+   * 之后由 recordMotionSafetyFailure 重新写入（保证快照与错误码同源同时刻）。
+   *
+   * 前端展示：
+   *   - null / undefined：无故障（正常状态或非运动安全错误路径）
+   *   - 非 null：展示告警卡片，含 controllerId / axis / verdict / target / actual / pointIndex
+   */
+  motionSafetyFailure?: MotionSafetyFailure | null
   dataPoints: CalibrationAnyDataPoint[]
   /** 当前点已采样本数（1..samplesPerPoint），0 表示未开始/已完成 */
   currentSample?: number

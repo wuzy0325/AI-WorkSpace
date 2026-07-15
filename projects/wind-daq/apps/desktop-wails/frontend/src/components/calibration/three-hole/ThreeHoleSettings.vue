@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
-import { buildCalibrationCsvName, joinCalibrationPath } from '@shared/calibrationCsvPath'
+import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath } from '@shared/calibrationCsvPath'
 import { calibrationApi } from '@api/calibrationApi'
 import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, ThreeHolePointLayout, ChannelRef } from '@shared/types/calibration'
+import type { MotionSafetyConfig } from '@shared/types/traversal'
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
 import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
+import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
@@ -47,7 +49,15 @@ const samplesPerPoint = ref(10)
 const calibrationName = ref(`${t.value.th_threeHoleCalibration}-${new Date().toISOString().slice(0, 10)}`)
 // CSV 保存路径：自动校准启动时后端按此路径覆盖初始化 csvWriter，逐点实时写入，
 // 崩溃/断电不丢已采集点。空字符串将导致后端跳过实时写入（仅靠校准结束全量导出）。
+//
+// 拆分为目录 (savePath) + 文件名 (saveFileName) 两个独立字段（与遍历测试一致）：
+//   - savePath 仅保存目录，pickSavePath 只选目录不拼接文件名，避免用户改文件名时
+//     必须重新点选目录的繁琐交互；
+//   - saveFileName 用户可见可手动编辑，watch calibrationName 自动同步默认值，
+//     保存前再次清洗（剥离 .csv 后缀 + 非法字符过滤），加载时同样剥离后缀再清洗，
+//     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
 const savePath = ref('')
+const saveFileName = ref(buildCalibrationCsvName(calibrationName.value.trim(), 'three-hole'))
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 // 球罐判定总超时（秒）：后端 <=0 时使用默认 300 秒，前端默认 300 显式暴露给操作员
@@ -65,6 +75,11 @@ const probeChannels = ref<ProbeChannelConfig[]>([
 ])
 
 const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Theta', controllerId: '', axis: 'X' }])
+
+// 运动安全配置：4 个全局阈值 + 按轴覆盖，留空字段等价于"使用后端默认值"。
+// 与遍历测试模块共享同一份 MotionSafetyConfig 类型与 MotionSafetyPanel 组件，
+// 保证校准与遍历的运动安全语义完全一致。
+const motionSafety = ref<MotionSafetyConfig | undefined>(undefined)
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
 const REQUIRED_CHANNEL_ROLES = ['threeHole.p1', 'threeHole.p2', 'threeHole.p3', 'threeHole.pAtm', 'threeHole.tAtm', 'threeHole.pTotal', 'threeHole.pStatic'] as const
@@ -103,6 +118,7 @@ const currentStepErrors = computed<string[]>(() => {
     if (dwellTimeMs.value < 100) errs.push(t.value.th_dwellTimeCannotBeLessThan100)
     if (samplesPerPoint.value < 1) errs.push(t.value.th_samplesCannotBeLessThan1)
     if (!savePath.value.trim()) errs.push(t.value.th_pleaseSelectCsvPath)
+    if (!saveFileName.value.trim()) errs.push(t.value.th_pleaseInputCsvFileName)
   }
   if (currentStep.value === 1) {
     if (probeChannels.value.filter(ch => ch.enabled).some(ch => !ch.channel.deviceId || ch.channel.channelIndex < 0)) errs.push(t.value.th_channelMappingIncomplete)
@@ -115,31 +131,58 @@ const isStepValid = computed(() => currentStep.value === 2 || currentStepErrors.
 function nextStep() { if (currentStep.value < steps.value.length - 1) currentStep.value++ }
 function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 
+// generatePoints 使用整数步数循环而非浮点累加，避免 (min + i*step) 浮点误差导致
+// 实际生成点数与 pointCount 显示不一致（如 step=0.1 时 0.1+0.2+...≠0.6，可能漏点或重点）。
+// 与 TotalPressureSettings.generatePoints 同构，保持四个校准模块点位生成逻辑一致。
 function generatePoints() {
+  const { thetaMin, thetaMax, thetaStep } = pointLayout.value
+  if (thetaStep <= 0 || thetaMax < thetaMin) return []
+  const count = Math.floor((thetaMax - thetaMin) / thetaStep) + 1
   const points = []
-  for (let t = pointLayout.value.thetaMin; t <= pointLayout.value.thetaMax; t += pointLayout.value.thetaStep)
-    points.push({ id: points.length, coordinates: { 'θ': Math.round(t * 100) / 100 } })
+  for (let i = 0; i < count; i++) {
+    const t = thetaMin + i * thetaStep
+    // 坐标键名必须用希腊字母 'θ'，与后端 three_hole.go point.Coordinates["θ"] 对齐。
+    points.push({ id: i, coordinates: { 'θ': Math.round(t * 100) / 100 } })
+  }
   return points
 }
 
-// 选择 CSV 保存目录：用 buildCalibrationCsvName 生成清洗后的默认文件名，
-// joinCalibrationPath 拼接目录与文件名（POSIX 风格，避免 Windows 反斜杠混用）。
+// 选择 CSV 保存目录：与遍历测试一致，只选目录赋给 savePath，
+// 文件名由独立的 saveFileName 字段管理（用户可见可编辑），避免每次改文件名都要重选目录。
 async function pickSavePath() {
   try {
-    const defaultName = buildCalibrationCsvName(calibrationName.value.trim(), 'three-hole')
     const picked = await storageStore.pickDirectory()
-    if (picked) savePath.value = joinCalibrationPath(picked, defaultName)
+    if (picked) savePath.value = picked
   } catch (e) {
     feedbackStore.pushToast(t.value.th_failedToSelectSavePath + ': ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
 }
 
+// calibrationName 变化时同步刷新默认 saveFileName：仅当用户未手动修改（仍为空或等于上一默认值）时覆盖，
+// 避免覆盖用户手动输入的文件名。复用共享工具保证清洗规则与遍历测试画面一致。
+watch(calibrationName, (next, prev) => {
+  const prevDefault = buildCalibrationCsvName(prev.trim(), 'three-hole')
+  if (saveFileName.value === '' || saveFileName.value === prevDefault)
+    saveFileName.value = buildCalibrationCsvName(next.trim(), 'three-hole')
+})
+
 async function saveConfig() {
   isSaving.value = true
   try {
+    // 保存前再次清洗 saveFileName：用户可能手动输入了非法字符或未带 .csv 后缀。
+    // 剥离 .csv 后缀后交给共享工具，fallback 用 calibrationName 保证空文件名也能落到有意义的默认值。
+    const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), calibrationName.value.trim())
+    saveFileName.value = normName
+    // 后端 csv_writer 约定 SavePath 必须是含 .csv 扩展名的完整文件路径，
+    // 故前端在保存时把目录与文件名拼接为完整路径再传给后端，同时持久化 saveFileName
+    // 便于下次加载时分离展示。
+    const fullSavePath = savePath.value.trim() ? joinCalibrationPath(savePath.value.trim(), normName) : ''
     const config: CalibrationConfig = {
       type: 'three-hole', name: calibrationName.value, probeChannels: probeChannels.value.filter(ch => ch.enabled),
-      motionAxes: motionAxes.value, points: generatePoints(), dwellTimeMs: dwellTimeMs.value, samplesPerPoint: samplesPerPoint.value, savePath: savePath.value.trim(),
+      motionAxes: motionAxes.value,
+      // 运动安全配置透传：未配置字段为 undefined，后端 Resolve() 时合并默认值
+      motionSafety: motionSafety.value,
+      points: generatePoints(), dwellTimeMs: dwellTimeMs.value, samplesPerPoint: samplesPerPoint.value, savePath: fullSavePath, saveFileName: normName,
       threeHoleLayout: pointLayout.value,
       sphereTankGate: { enabled: sphereTankGateEnabled.value, waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value), timeoutSec: Math.max(0, sphereTankTimeoutSec.value), stableTimeChannel: { ...sphereTankStableChannel.value } }
     }
@@ -159,10 +202,35 @@ async function loadSavedConfig() {
     if (config.threeHoleLayout) pointLayout.value = { ...config.threeHoleLayout }
     config.probeChannels?.forEach(sc => { const ec = probeChannels.value.find(c => c.role ? c.role === sc.role : c.name === sc.name); if (ec) { ec.channel = { ...sc.channel }; ec.enabled = sc.enabled; ec.role = sc.role; ec.precision = sc.precision } })
     config.motionAxes?.forEach((sa, i) => { if (motionAxes.value[i]) motionAxes.value[i] = { ...sa } })
+    // 还原运动安全配置：浅拷贝避免修改持久化对象，未配置字段保持 undefined
+    if (config.motionSafety) {
+      motionSafety.value = { ...config.motionSafety }
+    } else {
+      motionSafety.value = undefined
+    }
     dwellTimeMs.value = config.dwellTimeMs; samplesPerPoint.value = config.samplesPerPoint
-    savePath.value = config.savePath || ''
+    // 还原 savePath 与 saveFileName：
+    //   - 优先使用持久化的 saveFileName（新配置），剥离 .csv 后缀再交给共享工具重新清洗，
+    //     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
+    //   - 旧配置无 saveFileName 字段时，用 splitCalibrationSavePath 从完整 savePath
+    //     反拆 basename 作为兜底，兼容升级前已落盘的配置；dir 还原为纯目录。
+    if (config.saveFileName) {
+      saveFileName.value = buildCalibrationCsvName(config.saveFileName.replace(/\.csv$/i, ''), config.name)
+    } else if (config.savePath) {
+      const { baseName } = splitCalibrationSavePath(config.savePath)
+      saveFileName.value = buildCalibrationCsvName(baseName.replace(/\.csv$/i, ''), config.name)
+    }
+    const { dir: restoredDir } = splitCalibrationSavePath(config.savePath || '')
+    savePath.value = restoredDir
     if (config.sphereTankGate) { sphereTankGateEnabled.value = config.sphereTankGate.enabled; sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec; sphereTankTimeoutSec.value = config.sphereTankGate.timeoutSec ?? 300; sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel } }
-  } catch { /* ok */ }
+  } catch (err) {
+    // 与 FiveHoleSettings 对齐：首次打开无配置（404）属正常，其他异常需提示。
+    // 静默吞错会让用户误以为已成功加载，可能用空表单覆盖已有配置导致数据丢失。
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('404') && !msg.includes('not found')) {
+      feedbackStore.pushToast(t.value.wf_loadConfigFailed + msg, 'warning')
+    }
+  }
 }
 
 onMounted(async () => {
@@ -173,6 +241,9 @@ onMounted(async () => {
       [t.value.deviceList, t.value.th_motionControllerListLabel, t.value.th_threeHoleCalibrationConfigLabel],
       feedbackStore.pushToast,
     )
+    // 加载后若 savePath 仍为空，回退到全局基础目录，与遍历测试体验一致：
+    // 用户首次打开对话框不必先点选目录就能完成保存。
+    if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
   } finally { isLoading.value = false }
 })
 </script>
@@ -209,7 +280,8 @@ onMounted(async () => {
         <UiPanel class="section-card">
           <template #header><span class="section-header">{{ t.th_csvSavePath }}</span></template>
           <div class="save-path-row">
-            <UiInput v-model="savePath" :placeholder="t.th_clickRightBtnToSelectDir" class="flex-1" />
+            <UiInput v-model="savePath" :placeholder="t.th_clickRightBtnToSelectDir" class="flex-1" :title="savePath" />
+            <UiInput v-model="saveFileName" :placeholder="t.th_csvFileNamePlaceholder" class="flex-1" />
             <UiButton variant="secondary" size="sm" @click="pickSavePath">{{ t.th_selectDir }}</UiButton>
           </div>
           <span class="hint-text">{{ t.th_realtimeWriteHint }}</span>
@@ -261,6 +333,16 @@ onMounted(async () => {
           <div class="table-wrap"><table class="ntable"><thead><tr><th>{{ t.coordinateAxis }}</th><th class="col-controller">{{ t.motionControllerLabel }}</th><th class="col-axis">{{ t.physicalAxis }}</th></tr></thead>
             <tbody><tr v-for="ax in motionAxes" :key="ax.name"><td><UiStatusBadge status="connected">{{ ax.name }}</UiStatusBadge></td><td><UiSelect v-model="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" :placeholder="t.selectController" /></td><td><UiSelect v-model="ax.axis" :options="axisOptions" /></td></tr></tbody></table></div>
         </UiPanel>
+
+        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
+             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
+        <MotionSafetyPanel
+          v-model:motion-safety="motionSafety"
+          :motion-axes="motionAxes"
+          :t="(t as unknown as Record<string, string>)"
+        />
+
         <UiPanel class="section-card">
           <template #header><span class="section-header">{{ t.th_sphereTankStableCheck }}</span></template>
           <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">{{ t.th_enableSphereTankCheck }}</UiCheckbox>
@@ -282,7 +364,7 @@ onMounted(async () => {
       <div v-if="currentStep === 2" class="step-content">
         <UiPanel class="section-card">
           <template #header><span class="section-header">{{ t.summaryTitle }}</span></template>
-          <div class="summary-grid"><div class="summary-row"><span class="summary-label">{{ t.th_configName }}</span><span class="summary-value">{{ calibrationName }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_calibrationType }}</span><span class="summary-value">{{ t.th_threeHoleProbe }}</span></div><div class="summary-row"><span class="summary-label">{{ t.pointLayout }}</span><span class="summary-value">θ: {{ pointLayout.thetaMin }}° ~ {{ pointLayout.thetaMax }}°（{{ t.step }} {{ pointLayout.thetaStep }}°）</span></div><div class="summary-row"><span class="summary-label">{{ t.totalPoints }}</span><span class="accent-bold">{{ pointCount }} {{ t.th_pointsUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_enabledPoints }}</span><span class="summary-value">{{ probeChannels.filter(ch => ch.enabled).length }} {{ t.th_countUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_stableTime }}</span><span class="summary-value">{{ dwellTimeMs }} ms</span></div><div class="summary-row"><span class="summary-label">{{ t.th_samplesPerPointShort }}</span><span class="summary-value">{{ samplesPerPoint }} {{ t.th_timesUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_csvPath }}</span><span class="summary-value">{{ savePath || t.th_notSelected }}</span></div></div>
+          <div class="summary-grid"><div class="summary-row"><span class="summary-label">{{ t.th_configName }}</span><span class="summary-value">{{ calibrationName }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_calibrationType }}</span><span class="summary-value">{{ t.th_threeHoleProbe }}</span></div><div class="summary-row"><span class="summary-label">{{ t.pointLayout }}</span><span class="summary-value">θ: {{ pointLayout.thetaMin }}° ~ {{ pointLayout.thetaMax }}°（{{ t.step }} {{ pointLayout.thetaStep }}°）</span></div><div class="summary-row"><span class="summary-label">{{ t.totalPoints }}</span><span class="accent-bold">{{ pointCount }} {{ t.th_pointsUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_enabledPoints }}</span><span class="summary-value">{{ probeChannels.filter(ch => ch.enabled).length }} {{ t.th_countUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_stableTime }}</span><span class="summary-value">{{ dwellTimeMs }} ms</span></div><div class="summary-row"><span class="summary-label">{{ t.th_samplesPerPointShort }}</span><span class="summary-value">{{ samplesPerPoint }} {{ t.th_timesUnit }}</span></div><div class="summary-row"><span class="summary-label">{{ t.th_csvPath }}</span><span class="summary-value">{{ savePath && saveFileName ? joinCalibrationPath(savePath, saveFileName) : (savePath || t.th_notSelected) }}</span></div></div>
         </UiPanel>
       </div>
     </template>

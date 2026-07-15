@@ -27,6 +27,7 @@ import {
   Navigation2,
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
+import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 
 const emit = defineEmits<{
   openSettings: []
@@ -792,6 +793,10 @@ const sampleProgress = computed(() => {
 // 错误详情：后端 StateError 时 lastError 非空，顶部栏展示供操作员排查
 const lastError = computed(() => calibrationStore.status?.lastError ?? '')
 
+// 运动安全故障现场快照：从 calibrationStore.status.motionSafetyFailure 取，
+// 后端在故障发生时写入、恢复时清空。告警卡片据此渲染/隐藏。
+const motionSafetyFailure = computed(() => calibrationStore.status?.motionSafetyFailure ?? null)
+
 // 实时 CSV 路径：校准启动后操作员需知道数据写到哪
 const csvSavePath = computed(() => currentConfig.value?.savePath ?? '')
 
@@ -849,10 +854,10 @@ function getChannelValue(role: string): string {
     case 'fiveHole.p4': return formatFiveHoleRealtimeValue('fiveHole.p4', pressures.P4)
     case 'fiveHole.p5': return formatFiveHoleRealtimeValue('fiveHole.p5', pressures.P5)
     case 'fiveHole.pAtm': return formatFiveHoleRealtimeValue('fiveHole.pAtm', pressures.Patm)
-    case 'fiveHole.tAtm': return formatFiveHoleRealtimeValue('fiveHole.tAtm', pressures.Tatm, '°C')
+    case 'fiveHole.tAtm': return formatFiveHoleRealtimeValue('fiveHole.tAtm', pressures.Tatm)
     case 'fiveHole.pTotal': return formatFiveHoleRealtimeValue('fiveHole.pTotal', pressures.P0)
     case 'fiveHole.pTunnelStatic': return formatFiveHoleRealtimeValue('fiveHole.pTunnelStatic', pressures.Ps)
-    case 'fiveHole.tTunnel': return formatFiveHoleRealtimeValue('fiveHole.tTunnel', pressures.Ttunnel, '°C')
+    case 'fiveHole.tTunnel': return formatFiveHoleRealtimeValue('fiveHole.tTunnel', pressures.Ttunnel)
     default: return '--'
   }
 }
@@ -910,8 +915,9 @@ function getChannelUnit(role: string): string {
     </div>
 
     <template v-else>
-      <!-- 顶部状态栏：跨全宽，校准员最频繁看的信息（状态/进度/时间/目标α/β/实际α/β/Ma/V） -->
-      <div class="flex items-center gap-4 border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-5 py-2.5">
+      <!-- 顶部状态栏：跨全宽，校准员最频繁看的信息（状态/进度/时间/目标α/β/实际α/β/Ma/V）
+           sticky 定位确保运动控制器运行时内容区滚动不会导致状态栏位置跳动 -->
+      <div class="sticky top-0 z-10 flex items-center gap-4 border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-5 py-2.5">
         <span
           class="rounded-full px-2 py-0.5 text-xs font-medium"
           :style="{
@@ -973,12 +979,6 @@ function getChannelUnit(role: string): string {
           </div>
         </div>
 
-        <!-- 实时 CSV 路径 -->
-        <div v-if="csvSavePath" class="flex items-center gap-1 border-l border-[var(--border-default)] pl-4 min-w-0" :title="csvSavePath">
-          <FileText class="h-3.5 w-3.5 text-[var(--text-muted)] flex-shrink-0" />
-          <span class="text-xs text-[var(--text-muted)] truncate max-w-[180px]">{{ csvSavePath }}</span>
-        </div>
-
         <!-- 错误详情 -->
         <div v-if="lastError" class="flex items-center gap-1 border-l border-[var(--border-default)] pl-4" :title="lastError">
           <span class="text-xs font-medium" :style="{ color: `var(--accent-danger)` }">⚠ {{ lastError.length > 30 ? lastError.slice(0, 30) + '...' : lastError }}</span>
@@ -992,6 +992,14 @@ function getChannelUnit(role: string): string {
           <ChevronUp v-else class="h-3 w-3" />
         </button>
       </div>
+
+      <!-- 运动安全故障告警卡片：仅在 motionSafetyFailure 存在时渲染。
+           独立卡片承载 6 字段结构化信息（控制器/轴/目标/实际/偏差/点号），
+           单行状态栏无法承载这些信息。与遍历测试模块共用同一告警卡片组件。 -->
+      <MotionSafetyAlertCard
+        :failure="motionSafetyFailure"
+        :t="(t as unknown as Record<string, string>)"
+      />
 
       <!-- 配置摘要展开面板（默认收起） -->
       <div v-if="showConfigSummary" class="flex flex-wrap items-center gap-6 border-b border-[var(--border-default)] bg-[var(--bg-panel-strong)] px-5 py-2 text-xs">

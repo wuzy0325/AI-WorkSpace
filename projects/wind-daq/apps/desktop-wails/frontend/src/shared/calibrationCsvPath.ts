@@ -41,3 +41,29 @@ export function joinCalibrationPath(dir: string, fileName: string): string {
   const normalizedDir = dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
   return `${normalizedDir}/${fileName}`
 }
+
+/**
+ * 从完整保存路径反拆目录与文件名（加载旧配置时使用）。
+ *
+ * 旧配置仅持久化完整 savePath（含 .csv 后缀），无独立 saveFileName 字段；
+ * 加载时需要拆为目录 + 文件名以还原"目录 + 文件名"分离展示。
+ *
+ * 实现要点：
+ *   - 先把 Windows 反斜杠归一化为正斜杠，避免 lastIndexOf('\\') 与
+ *     lastIndexOf('/') 在不同系统/不同写入源下行为不一致；
+ *   - 完整路径不含分隔符时（仅文件名），dir 返回空串，baseName 返回原值，
+ *     由调用方决定如何处理（通常与 savePath 为空分支一致）。
+ *
+ * @param fullPath 完整保存路径，可能为空字符串
+ * @returns `{ dir, baseName }`：dir 不含末尾分隔符；fullPath 为空时两者均为空串
+ */
+export function splitCalibrationSavePath(fullPath: string): { dir: string; baseName: string } {
+  if (!fullPath) return { dir: '', baseName: '' }
+  const normalized = fullPath.replace(/\\/g, '/')
+  const lastSlash = normalized.lastIndexOf('/')
+  if (lastSlash < 0) return { dir: '', baseName: normalized }
+  return {
+    dir: normalized.slice(0, lastSlash),
+    baseName: normalized.slice(lastSlash + 1),
+  }
+}

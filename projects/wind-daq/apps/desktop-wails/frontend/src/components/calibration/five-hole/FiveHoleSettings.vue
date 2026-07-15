@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, type Component } from 'vue'
+import { ref, computed, onMounted, watch, type Component } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -7,7 +7,7 @@ import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
-import { buildCalibrationCsvName, joinCalibrationPath } from '@shared/calibrationCsvPath'
+import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath } from '@shared/calibrationCsvPath'
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
@@ -15,6 +15,7 @@ import type {
   MotionAxisConfig,
   ChannelRef,
 } from '@shared/types/calibration'
+import type { MotionSafetyConfig } from '@shared/types/traversal'
 import {
   applyCalibrationPrecisionDefaults,
   DEFAULT_CALIBRATION_MACH_PRECISION,
@@ -23,6 +24,7 @@ import {
 } from '@shared/calibrationPrecision'
 import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import { generateFiveHoleSnakePoints } from './motionCalibrationUtils'
+import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
@@ -133,7 +135,20 @@ const pointCount = computed(() => pointLayoutValidation.value.count)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
 const calibrationName = ref('')
+// CSV 保存路径：自动校准启动时后端按此路径覆盖初始化 csvWriter，逐点实时写入，
+// 崩溃/断电不丢已采集点。空字符串将导致后端跳过实时写入（仅靠校准结束全量导出）。
+//
+// 拆分为目录 (savePath) + 文件名 (saveFileName) 两个独立字段（与遍历测试一致）：
+//   - savePath 仅保存目录，pickSavePath 只选目录不拼接文件名，避免用户改文件名时
+//     必须重新点选目录的繁琐交互；
+//   - saveFileName 用户可见可手动编辑，watch calibrationName 自动同步默认值，
+//     保存前再次清洗（剥离 .csv 后缀 + 非法字符过滤），加载时同样剥离后缀再清洗，
+//     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
+//
+// 注意：初始值为空字符串而非 buildCalibrationCsvName(...)，因为 calibrationName 初始也是空，
+// onMounted 加载配置完成后若仍为空会兜底为"五孔探针-<日期>"，watch 会同步刷新默认文件名。
 const savePath = ref('')
+const saveFileName = ref('')
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
@@ -157,6 +172,11 @@ const motionAxes = ref<MotionAxisConfig[]>([
   { name: 'Alpha', controllerId: '', axis: 'X' },
   { name: 'Beta', controllerId: '', axis: 'Y' },
 ])
+
+// 运动安全配置：4 个全局阈值 + 按轴覆盖，留空字段等价于"使用后端默认值"。
+// 与遍历测试模块共享同一份 MotionSafetyConfig 类型与 MotionSafetyPanel 组件，
+// 保证校准与遍历的运动安全语义完全一致。
+const motionSafety = ref<MotionSafetyConfig | undefined>(undefined)
 
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
@@ -229,6 +249,7 @@ const currentStepErrors = computed<string[]>(() => {
     const errors: string[] = []
     if (calibrationName.value.trim() === '') errors.push(t.value.enterConfigName || '请输入配置名称')
     if (savePath.value.trim() === '') errors.push(t.value.fh_pleaseSelectCsvPath)
+    if (saveFileName.value.trim() === '') errors.push(t.value.fh_pleaseInputCsvFileName)
     // 点位布局相关错误统一由 validatePointLayout 提供
     errors.push(...pointLayoutValidation.value.errors)
     if (dwellTimeMs.value < 100) errors.push(t.value.dwellTimeMin || '驻留时间至少100ms')
@@ -262,17 +283,27 @@ function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 // generateFiveHoleSnakePoints 由 saveConfig 在归一化 layout 后直接调用，
 // 不再在这里包一层同步包装函数，避免误用未归一化的 pointLayout.value。
 
-// 选择 CSV 保存目录：用 buildCalibrationCsvName 生成清洗后的默认文件名，
-// joinCalibrationPath 拼接目录与文件名（POSIX 风格，避免 Windows 反斜杠混用）。
+// 选择 CSV 保存目录：与遍历测试一致，只选目录赋给 savePath，
+// 文件名由独立的 saveFileName 字段管理（用户可见可编辑），避免每次改文件名都要重选目录。
 async function pickSavePath() {
   try {
-    const defaultName = buildCalibrationCsvName(calibrationName.value.trim(), 'five-hole')
     const picked = await storageStore.pickDirectory()
-    if (picked) savePath.value = joinCalibrationPath(picked, defaultName)
+    if (picked) savePath.value = picked
   } catch (e) {
     feedbackStore.pushToast('选择保存路径失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
 }
+
+// calibrationName 变化时同步刷新默认 saveFileName：仅当用户未手动修改（仍为空或等于上一默认值）时覆盖，
+// 避免覆盖用户手动输入的文件名。复用共享工具保证清洗规则与遍历测试画面一致。
+// 注意：Vue 3 watch 默认 pre 模式异步触发，onMounted 中 calibrationName 兜底设值后
+// 并不依赖本 watch 同步刷新 saveFileName——onMounted 显式兜底语句会先把它填好，
+// 本 watch 仅在用户后续手动改 calibrationName 时接力同步默认文件名。
+watch(calibrationName, (next, prev) => {
+  const prevDefault = prev.trim() ? buildCalibrationCsvName(prev.trim(), 'five-hole') : ''
+  if (saveFileName.value === '' || saveFileName.value === prevDefault)
+    saveFileName.value = buildCalibrationCsvName(next.trim(), 'five-hole')
+})
 
 // 把 UiInputNumber 在输入中间态 emit 的 null 归一化为 number，
 // 避免 pointLayout 字段残留 null/NaN 导致生成点位错乱、保存到磁盘的 fiveHoleLayout 与 points 不一致。
@@ -303,6 +334,14 @@ async function saveConfig() {
       feedbackStore.pushToast('点位布局参数无效: ' + pointLayoutValidation.value.errors.join('；'), 'warning')
       return
     }
+    // 保存前再次清洗 saveFileName：用户可能手动输入了非法字符或未带 .csv 后缀。
+    // 剥离 .csv 后缀后交给共享工具，fallback 用 calibrationName 保证空文件名也能落到有意义的默认值。
+    const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), calibrationName.value.trim())
+    saveFileName.value = normName
+    // 后端 csv_writer 约定 SavePath 必须是含 .csv 扩展名的完整文件路径，
+    // 故前端在保存时把目录与文件名拼接为完整路径再传给后端，同时持久化 saveFileName
+    // 便于下次加载时分离展示。
+    const fullSavePath = savePath.value.trim() ? joinCalibrationPath(savePath.value.trim(), normName) : ''
     // 归一化后的 layout 作为本次保存的真值，同时用于生成 points 与 fiveHoleLayout 字段，
     // 保证磁盘上两个字段永远一致，消除双真值源。
     const sanitizedLayout = sanitizePointLayout(pointLayout.value)
@@ -311,10 +350,13 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
+      // 运动安全配置透传：未配置字段为 undefined，后端 Resolve() 时合并默认值
+      motionSafety: motionSafety.value,
       points: await generateFiveHoleSnakePoints(sanitizedLayout),
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
-      savePath: savePath.value.trim(),
+      savePath: fullSavePath,
+      saveFileName: normName,
       fiveHoleLayout: sanitizedLayout,
       derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
       uiRefreshHz: calibrationStore.uiRefreshHz,
@@ -357,9 +399,27 @@ async function loadSavedConfig() {
         if (motionAxes.value[index]) motionAxes.value[index] = { ...savedAxis }
       })
     }
+    // 还原运动安全配置：浅拷贝避免修改持久化对象，未配置字段保持 undefined
+    if (config.motionSafety) {
+      motionSafety.value = { ...config.motionSafety }
+    } else {
+      motionSafety.value = undefined
+    }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
-    savePath.value = config.savePath || ''
+    // 还原 savePath 与 saveFileName：
+    //   - 优先使用持久化的 saveFileName（新配置），剥离 .csv 后缀再交给共享工具重新清洗，
+    //     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
+    //   - 旧配置无 saveFileName 字段时，用 splitCalibrationSavePath 从完整 savePath
+    //     反拆 basename 作为兜底，兼容升级前已落盘的配置；dir 还原为纯目录。
+    if (config.saveFileName) {
+      saveFileName.value = buildCalibrationCsvName(config.saveFileName.replace(/\.csv$/i, ''), config.name)
+    } else if (config.savePath) {
+      const { baseName } = splitCalibrationSavePath(config.savePath)
+      saveFileName.value = buildCalibrationCsvName(baseName.replace(/\.csv$/i, ''), config.name)
+    }
+    const { dir: restoredDir } = splitCalibrationSavePath(config.savePath || '')
+    savePath.value = restoredDir
     machNumberPrecision.value = config.derivedValuePrecision?.machNumber ?? DEFAULT_CALIBRATION_MACH_PRECISION
     velocityPrecision.value = config.derivedValuePrecision?.velocity ?? DEFAULT_CALIBRATION_VELOCITY_PRECISION
     if (config.sphereTankGate) {
@@ -371,7 +431,7 @@ async function loadSavedConfig() {
     // 首次打开无配置（404）属正常，其他异常需提示
     const msg = err instanceof Error ? err.message : String(err)
     if (!msg.includes('404') && !msg.includes('not found')) {
-      feedbackStore.pushToast('加载配置失败: ' + msg, 'warning')
+      feedbackStore.pushToast(t.value.wf_loadConfigFailed + msg, 'warning')
     }
   }
 }
@@ -384,7 +444,14 @@ onMounted(async () => {
       ['设备列表', '运动控制器列表', '五孔校准配置'],
       feedbackStore.pushToast,
     )
-    if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toLocaleDateString()}`
+    // calibrationName 兜底：用 ISO 日期（YYYY-MM-DD），避免 toLocaleDateString 在中文环境返回含斜杠的日期
+    // 被下游 buildCalibrationCsvName 当作路径分隔符清洗掉。
+    if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toISOString().slice(0, 10)}`
+    // watch calibrationName 兜底设值时会同步刷新 saveFileName，避免首次进入对话框文件名输入框空白。
+    if (!saveFileName.value.trim()) saveFileName.value = buildCalibrationCsvName(calibrationName.value.trim(), 'five-hole')
+    // 加载后若 savePath 仍为空，回退到全局基础目录，与遍历测试体验一致：
+    // 用户首次打开对话框不必先点选目录就能完成保存。
+    if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
   } finally { isLoading.value = false }
 })
 
@@ -572,12 +639,17 @@ function getChannelGroupLabel(groupKey: string): string {
               <span>CSV 保存</span>
             </div>
           </template>
+          <!-- 目录与文件名分离展示（与遍历测试一致）：目录用浏览按钮选，文件名用户可见可手动编辑 -->
           <div class="field">
-            <span class="field-label">保存路径</span>
+            <span class="field-label">保存目录</span>
             <div class="flex items-center gap-2">
-              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存目录" class="flex-1" />
+              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存目录" class="flex-1" :title="savePath" />
               <UiButton size="sm" variant="secondary" @click="pickSavePath">选择目录…</UiButton>
             </div>
+          </div>
+          <div class="field">
+            <span class="field-label">CSV 文件名</span>
+            <UiInput v-model="saveFileName" :placeholder="t.fh_pleaseInputCsvFileName" class="flex-1" />
           </div>
         </UiPanel>
       </div>
@@ -701,6 +773,15 @@ function getChannelGroupLabel(groupKey: string): string {
           </div>
         </UiPanel>
 
+        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
+             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
+        <MotionSafetyPanel
+          v-model:motion-safety="motionSafety"
+          :motion-axes="motionAxes"
+          :t="(t as unknown as Record<string, string>)"
+        />
+
         <!-- 球罐判定门控 -->
         <UiPanel class="section-card">
           <template #header>
@@ -794,7 +875,7 @@ function getChannelGroupLabel(groupKey: string): string {
             </div>
             <div class="summary-row">
               <span class="summary-label">CSV 保存</span>
-              <span class="summary-value">{{ savePath }}</span>
+              <span class="summary-value">{{ savePath && saveFileName ? joinCalibrationPath(savePath, saveFileName) : savePath }}</span>
             </div>
           </div>
         </UiPanel>
