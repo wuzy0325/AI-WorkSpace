@@ -408,7 +408,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: previousStatus?.lastError,
       lastErrorCode: previousStatus?.lastErrorCode,
-      validationWarnings: previousStatus?.validationWarnings
+      validationWarnings: previousStatus?.validationWarnings,
+      // 保留后端写入的实际 CSV 路径：progress 事件不携带此字段，
+      // 必须从 previousStatus 透传，避免轮询刷新后丢失真实文件名（撞名 -2/-3 后缀）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {
@@ -441,7 +444,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: event.error,
-      lastErrorCode: event.code as TraversalErrorCode
+      lastErrorCode: event.code as TraversalErrorCode,
+      // 保留实际 CSV 路径：错误事件不携带此字段，必须从 previousStatus 透传，
+      // 否则侧边栏会回退到 config 静态拼接的预期路径（撞名 -2/-3 时为错误路径）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {
@@ -472,7 +478,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: completionStatus === 'completed' ? undefined : (event.error ?? previousStatus?.lastError),
-      lastErrorCode: completionStatus === 'completed' ? undefined : previousStatus?.lastErrorCode
+      lastErrorCode: completionStatus === 'completed' ? undefined : previousStatus?.lastErrorCode,
+      // 保留实际 CSV 路径：完成事件 filePath 在轮询路径下未填充，必须从 previousStatus 透传，
+      // 否则侧边栏会回退到 config 静态拼接的预期路径（撞名 -2/-3 时为错误路径）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {

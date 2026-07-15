@@ -11,9 +11,11 @@
  * 所有数据项统一使用 bg-panel-strong 圆角卡片，
  * 标签左/数值右，数值字号 20px+，整体填满侧边栏不溢出。
  */
+import { computed } from 'vue'
 import { Activity, AlertTriangle, Cpu, FileText, Wind } from '@lucide/vue'
 import type { PressureItem } from '@composables/useTraversalRealtimeData'
-import type { InterpolationResult } from '@shared/types/traversal'
+import type { InterpolationResult, MotionSafetyFailure, MotionSafetyVerdict } from '@shared/types/traversal'
+import { getMotionSafetyVerdictLabel, isMotionSafetyEmergency } from '@shared/types/traversal'
 
 interface ConnectionDisplay {
   label: string
@@ -33,7 +35,7 @@ interface ActualPosition {
 // 否则 null.toFixed 抛 TypeError 导致整个侧边栏组件崩溃（只剩布点图）。
 type TargetCoord = number | null
 
-defineProps<{
+const props = defineProps<{
   targetPoint: { alpha: TargetCoord; beta: TargetCoord } | undefined
   actualPositions: ActualPosition[]
   machNumber: number | undefined
@@ -41,6 +43,8 @@ defineProps<{
   csvSavePath: string
   lastError: string
   validationWarnings: readonly string[] | undefined
+  /** 运动安全故障现场快照（仅 lastErrorCode 为运动安全错误码时存在） */
+  motionSafetyFailure: MotionSafetyFailure | null | undefined
 
   acquisitionConnection: ConnectionDisplay
   positionerConnection: ConnectionDisplay
@@ -62,6 +66,23 @@ defineProps<{
     acquisitionDevice: string
     positionerDevice: string
     moving: string
+    /** 运动安全故障告警卡片文案 */
+    motionSafetyAlert: string
+    motionSafetyAlertEmergency: string
+    motionSafetyAxis: string
+    motionSafetyTarget: string
+    motionSafetyActual: string
+    motionSafetyDeviation: string
+    motionSafetyPointIndex: string
+    motionSafetyController: string
+    motionSafetyVerdictOk: string
+    motionSafetyVerdictArrived: string
+    motionSafetyVerdictDeviation: string
+    motionSafetyVerdictCriticalDeviation: string
+    motionSafetyVerdictLimitTriggered: string
+    motionSafetyVerdictNoProgress: string
+    motionSafetyVerdictOvershoot: string
+    motionSafetyVerdictStatusUnavailable: string
   }
 }>()
 
@@ -70,6 +91,24 @@ function formatCoord(v: TargetCoord | undefined, digits = 1): string {
   if (typeof v !== 'number' || Number.isNaN(v)) return '--'
   return v.toFixed(digits) + '°'
 }
+
+/**
+ * verdict → 本地化文案映射（响应式）。
+ *
+ * 以 computed 暴露给模板，使语言切换后 verdict 标签即时刷新。
+ * 实际的 verdict 查表与缺省回退由共享函数 getMotionSafetyVerdictLabel 统一维护，
+ * 避免与 MotionSafetyAlertCard 各持一份 switch 实现导致行为分叉。
+ */
+const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() => ({
+  ok: props.labels.motionSafetyVerdictOk,
+  arrived: props.labels.motionSafetyVerdictArrived,
+  deviation: props.labels.motionSafetyVerdictDeviation,
+  critical_deviation: props.labels.motionSafetyVerdictCriticalDeviation,
+  limit_triggered: props.labels.motionSafetyVerdictLimitTriggered,
+  no_progress: props.labels.motionSafetyVerdictNoProgress,
+  overshoot: props.labels.motionSafetyVerdictOvershoot,
+  status_unavailable: props.labels.motionSafetyVerdictStatusUnavailable
+}))
 </script>
 
 <template>
@@ -242,6 +281,68 @@ function formatCoord(v: TargetCoord | undefined, digits = 1): string {
              max-w-[220px] + truncate 让浏览器按实际渲染宽度截断，
              完整错误信息通过父 div 的 :title tooltip 提供。 -->
         <span class="text-[10px] font-medium truncate max-w-[220px]" :style="{ color: `var(--accent-danger)` }">⚠ {{ lastError }}</span>
+      </div>
+
+      <!-- 运动安全故障现场：仅在 motionSafetyFailure 存在时显示。
+           急停类（critical_deviation / limit_triggered）用红色高亮强调严重性，
+           普通停止类（deviation / overshoot / no_progress）用橙色提示。
+           现场信息（控制器/轴/目标/实际/偏差/点号）直接展示，避免操作员从 lastError 字符串解析。 -->
+      <div
+        v-if="motionSafetyFailure"
+        class="rounded-md px-2.5 py-2 space-y-1"
+        :style="{
+          background: isMotionSafetyEmergency(motionSafetyFailure.verdict)
+            ? 'color-mix(in srgb, var(--accent-danger) 14%, transparent)'
+            : 'color-mix(in srgb, var(--state-warning) 12%, transparent)',
+          border: `1px solid ${isMotionSafetyEmergency(motionSafetyFailure.verdict) ? 'var(--accent-danger)' : 'var(--state-warning)'}`,
+        }"
+      >
+        <div class="flex items-center gap-1.5">
+          <AlertTriangle
+            class="h-3 w-3 flex-shrink-0"
+            :style="{ color: isMotionSafetyEmergency(motionSafetyFailure.verdict) ? 'var(--accent-danger)' : 'var(--state-warning)' }"
+          />
+          <span
+            class="text-[10px] font-bold uppercase tracking-wider"
+            :style="{ color: isMotionSafetyEmergency(motionSafetyFailure.verdict) ? 'var(--accent-danger)' : 'var(--state-warning)' }"
+          >
+            {{ isMotionSafetyEmergency(motionSafetyFailure.verdict) ? labels.motionSafetyAlertEmergency : labels.motionSafetyAlert }}
+            · {{ getMotionSafetyVerdictLabel(motionSafetyFailure.verdict, verdictLabels) }}
+          </span>
+        </div>
+        <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyController }}</span>
+            <span class="text-[var(--text-secondary)] truncate max-w-[100px]" :title="motionSafetyFailure.controllerId">
+              {{ motionSafetyFailure.controllerId || '--' }}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyAxis }}</span>
+            <span class="text-[var(--text-secondary)]">{{ motionSafetyFailure.axis || '--' }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyTarget }}</span>
+            <span class="text-[var(--text-secondary)]">{{ motionSafetyFailure.target.toFixed(3) }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyActual }}</span>
+            <span class="text-[var(--text-secondary)]">{{ motionSafetyFailure.actual.toFixed(3) }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyDeviation }}</span>
+            <span
+              class="font-medium"
+              :style="{ color: isMotionSafetyEmergency(motionSafetyFailure.verdict) ? 'var(--accent-danger)' : 'var(--state-warning)' }"
+            >
+              {{ (motionSafetyFailure.actual - motionSafetyFailure.target).toFixed(3) }}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--text-muted)]">{{ labels.motionSafetyPointIndex }}</span>
+            <span class="text-[var(--text-secondary)]">{{ motionSafetyFailure.pointIndex }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- 硬件状态：明确标注“采集设备/位移机构”，避免两个灯看不出含义 -->

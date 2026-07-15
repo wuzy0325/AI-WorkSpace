@@ -544,6 +544,13 @@ export interface TraversalTestConfig {
   validation?: DataValidationConfig
   /** 稳定等待配置（可选，与 Cursor DAQ 行为一致） */
   stabilization?: StabilizationConfig
+  /**
+   * 运动安全配置（可选）。
+   * 为 undefined 时后端使用 DefaultMotionSafety（arrivalTolerance=0.2,
+   * criticalDeviationLimit=5.0, noProgressTimeoutMs=2000, progressEpsilon=0.001）。
+   * 通过 checkpoint 持久化，Resume 时从 snapshot 还原，不重新读取前端当前配置。
+   */
+  motionSafety?: MotionSafetyConfig
 }
 
 /**
@@ -594,6 +601,22 @@ export interface TraversalTestStatus {
   lastError?: string
   lastErrorCode?: TraversalErrorCode
   validationWarnings?: string[]
+  /**
+   * 实际落盘的 CSV 文件完整路径（撞名 -2/-3 后缀后的真实路径）。
+   * 后端 Start/ResumeFromCheckpoint 在 openReliabilityPorts 之后写入：
+   * csvPort.Open 在 Create 模式撞名时会自动追加 -2/-3 后缀，
+   * 实际路径可能与 config.savePath + saveFileName 拼接的预期路径不同。
+   * 侧边栏优先用此字段展示真实文件名；空串表示尚未启动或后端未注入 v2 csvPort，
+   * 此时回退到 config 静态拼接的预期路径。
+   */
+  csvPath?: string
+  /**
+   * 运动安全故障现场快照（仅 lastErrorCode 为运动安全错误码时存在）。
+   * 后端 handleMotionSafetyFailure 写入，前端据此在运行状态栏展示
+   * "故障发生在哪个控制器/轴/第几个点，目标 vs 实际" 等关键诊断信息。
+   * nil/null 表示无运动安全故障或故障已清除。
+   */
+  motionSafetyFailure?: MotionSafetyFailure | null
 }
 
 export interface TraversalModuleResult {
@@ -648,6 +671,17 @@ export type TraversalErrorCode =
   | 'SAVE_FAILED'
   | 'INTERPOLATION_FAILED'
   | 'UNKNOWN'
+  // 运动安全错误码（与后端 traversal.ErrorCode 一一对应）
+  // 普通停止类：故障不严重，调用 Stop 后可继续操作
+  | 'POSITION_DEVIATION'
+  | 'MOTION_OVERSHOOT'
+  | 'MOTION_NO_PROGRESS'
+  | 'MOTION_TIMEOUT'
+  // 急停类：故障严重，调用 EmergencyStop 防止撞机
+  | 'CRITICAL_POSITION_DEVIATION'
+  | 'LIMIT_SWITCH_TRIGGERED'
+  | 'MOTION_STATUS_UNAVAILABLE'
+  | 'EMERGENCY_STOP_FAILED'
 
 export interface TraversalErrorEvent {
   taskId: string
@@ -679,6 +713,121 @@ export interface StabilizationConfig {
     checkIntervalMs: number
     consecutiveChecks: number // 连续稳定检查次数
   }
+}
+
+/**
+ * 运动安全配置（与后端 traversal.MotionSafetyConfig 一一对应）。
+ *
+ * 所有数值字段为可选——为 undefined 时后端使用 DefaultMotionSafety 中的默认值。
+ * 通过指针字段实现"零值即默认"，避免前端必须填全 4 个字段才能保存配置。
+ *
+ * 字段语义：
+ *   - arrivalTolerance: 到位容差（mm/°）。轴停且 |actual-target| ≤ tolerance 视为到位
+ *   - criticalDeviationLimit: 严重偏离阈值。轴停且 |actual-target| ≥ limit 触发急停
+ *   - noProgressTimeoutMs: 无进展超时（ms）。运动中位置长时间无变化判卡死
+ *   - progressEpsilon: 进展判定阈值。位置变化超过该值视为"有进展"
+ *   - axisOverrides: 按轴覆盖（key 为轴名 "X"/"Y"/"Z"/"U"）。
+ *       覆盖项中未指定的字段继承全局配置。
+ */
+export interface MotionSafetyConfig {
+  arrivalTolerance?: number
+  criticalDeviationLimit?: number
+  noProgressTimeoutMs?: number
+  progressEpsilon?: number
+  axisOverrides?: Record<string, MotionSafetyConfig>
+}
+
+/**
+ * 默认运动安全阈值（与后端 core/traversal.DefaultMotionSafety() 一一对应）。
+ *
+ * 这里的值是"安全的保守起点"，覆盖大多数设备类型；生产部署前必须通过 HIL
+ * 测试根据具体设备精度调整（参见 spec §Confirmed Decisions #8）。
+ *
+ * 前端用途：
+ *   - 配置面板输入框 placeholder 显示具体默认值，让操作员一眼看到留空的生效值
+ *   - 按轴覆盖留空时 placeholder 显示"继承全局（或默认）"，必须取此处的兜底值
+ *
+ * 同步约束：后端 defaultArrivalTolerance/defaultCriticalDeviationLimit/
+ * defaultNoProgressTimeoutMs/defaultProgressEpsilon 修改时必须同步更新此处。
+ */
+export const DEFAULT_MOTION_SAFETY: Required<
+  Pick<MotionSafetyConfig, 'arrivalTolerance' | 'criticalDeviationLimit' | 'noProgressTimeoutMs' | 'progressEpsilon'>
+> = {
+  arrivalTolerance: 0.2,
+  criticalDeviationLimit: 5.0,
+  noProgressTimeoutMs: 2000,
+  progressEpsilon: 0.001,
+}
+
+/**
+ * 运动安全判定结果（与后端 MotionSafetyVerdict 一一对应）。
+ *
+ * - 'ok': 正常运动中，继续等待
+ * - 'arrived': 已到位（轴停且偏差 ≤ arrivalTolerance）
+ * - 'deviation': 超差——轴已停但偏差 > tolerance 且 < criticalDeviationLimit
+ * - 'critical_deviation': 严重偏离——轴已停且偏差 ≥ criticalDeviationLimit，需急停
+ * - 'limit_triggered': 撞限位——PosLimit 或 NegLimit 触发，需急停
+ * - 'no_progress': 运动中无进展——Moving=true 但位置长时间无变化
+ * - 'overshoot': 越过目标——Moving=true 且位置已穿越目标位置
+ * - 'status_unavailable': 状态不可用——控制器掉线/已急停/目标轴连续缺失，需急停
+ */
+export type MotionSafetyVerdict =
+  | 'ok'
+  | 'arrived'
+  | 'deviation'
+  | 'critical_deviation'
+  | 'limit_triggered'
+  | 'no_progress'
+  | 'overshoot'
+  | 'status_unavailable'
+
+/**
+ * 运动安全故障快照（与后端 MotionSafetyFailure 一一对应）。
+ *
+ * 故障发生时由遍历层立即构造并停止运动，包含故障现场的关键信息：
+ *   - controllerId/axis: 故障发生的控制器与轴
+ *   - verdict: 判定结果（决定停机策略：Stop 或 EmergencyStop）
+ *   - target/actual: 故障时刻的目标位置与实际位置
+ *   - pointIndex: 故障发生在哪个遍历点（用于日志定位）
+ */
+export interface MotionSafetyFailure {
+  controllerId: string
+  controllerName?: string
+  axis: string
+  verdict: MotionSafetyVerdict
+  target: number
+  actual: number
+  pointIndex: number
+}
+
+/** 是否需要急停——前端展示告警时按 verdict 严重级别区分颜色 */
+export function isMotionSafetyEmergency(verdict: MotionSafetyVerdict): boolean {
+  return verdict === 'critical_deviation' || verdict === 'limit_triggered' || verdict === 'status_unavailable'
+}
+
+/** 是否为故障 verdict（非 ok / arrived） */
+export function isMotionSafetyFailure(verdict: MotionSafetyVerdict): boolean {
+  return verdict !== 'ok' && verdict !== 'arrived'
+}
+
+/**
+ * 运动安全 verdict → 本地化标签映射（共享函数）。
+ *
+ * verdict 值与后端 traversal.MotionSafetyVerdict 一一对应（'ok'/'arrived'/'deviation' 等）。
+ * ok/arrived 不会出现在故障快照中（仅作为运行中判定结果），缺省 verdict 返回其原值。
+ *
+ * 抽取为共享函数：校准告警卡片（MotionSafetyAlertCard）与遍历实时监控侧边栏
+ * （TraversalLiveMonitor）均通过此函数获取本地化标签，避免两处独立 switch
+ * 实现产生行为分叉（新增 verdict 时一处漏改）。
+ *
+ * @param verdict 运动安全判定结果
+ * @param labels verdict → 本地化字符串映射；缺省 verdict 返回其原值
+ */
+export function getMotionSafetyVerdictLabel(
+  verdict: MotionSafetyVerdict,
+  labels: Partial<Record<MotionSafetyVerdict, string>>
+): string {
+  return labels[verdict] ?? verdict
 }
 
 /** 断点恢复信息 */

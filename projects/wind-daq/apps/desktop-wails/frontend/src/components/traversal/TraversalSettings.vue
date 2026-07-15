@@ -28,7 +28,8 @@ import type {
   TraversalPrimaryAxis,
   TraversalTestConfig,
   CalibrationCsvFileInfo,
-  InterpolationAlgorithm
+  InterpolationAlgorithm,
+  MotionSafetyConfig
 } from '@shared/types/traversal'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
@@ -42,6 +43,9 @@ import PointsPreview from './PointsPreview.vue'
 import TraversalLayoutStep from './TraversalLayoutStep.vue'
 import TraversalHardwareStep from './TraversalHardwareStep.vue'
 import TraversalPrbStep from './TraversalPrbStep.vue'
+// 引用共享运动安全面板：原 components/traversal/MotionSafetyPanel.vue 已迁移至
+// components/shared/MotionSafetyPanel.vue，校准与遍历通过结构化类型 MotionSafetyPanelAxis 复用。
+import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
 // 复用校准模块共享的 CSV 文件名清洗工具：与三孔/五孔/总压/总温校准画面统一行为，
 // 避免在移位测试画面重复维护一份"非法字符过滤 + 日期去重 + Windows 保留名兜底"逻辑。
@@ -156,6 +160,14 @@ const motionAxes = ref<TraversalMotionAxisConfig[]>([
   { name: 'X', controllerId: '', axis: 'X', angleMapping: { type: 'alpha' } },
   { name: 'Y', controllerId: '', axis: 'Y', angleMapping: { type: 'beta' } }
 ])
+// 运动安全配置（与后端 traversal.MotionSafetyConfig 一一对应）。
+// undefined 表示"用户未显式配置"，后端使用 DefaultMotionSafety（arrivalTolerance=0.01,
+// criticalDeviationLimit=5.0, noProgressTimeoutMs=2000, progressEpsilon=0.001）。
+// 通过 checkpoint 持久化，Resume 时从 snapshot 还原，不重新读取前端当前配置。
+// MotionSafetyPanel 通过 v-model:motion-safety 双向绑定，留空字段等价于"使用默认值"。
+const motionSafety = ref<MotionSafetyConfig | undefined>(undefined)
+// MotionSafetyPanel 实例引用，用于保存前调用 isValid 阻断非法配置
+const motionSafetyPanelRef = ref<InstanceType<typeof MotionSafetyPanel> | null>(null)
 const saveOptions = ref<TraversalTestConfig['saveOptions']>({
   savePointId: true, saveTimestamp: true, saveRawPressure: true, saveCalculatedResult: true
 })
@@ -319,7 +331,17 @@ function applySavedLayout(layout: TraversalLayout) {
   // 4 轴扩展后 customPoints 必须包含 z/u：从持久化 layout 读取时直接传 z/u，
   // 后端 traversal_config.go 已在反序列化时映射 Z/U，故 layout.custom.points 元素必含这两字段。
   // 不再用 z:0/u:0 兜底，否则 4 轴自定义点配置加载后会丢失 Z/U 数据。
-  customPoints.value = (layout.custom?.points ?? []).map(p => ({ x: p.x, y: p.y, z: p.z, u: p.u }))
+  //
+  // 运行时校验：手动编辑或旧 profile 反序列化可能产生 NaN/Infinity/undefined 数值，
+  // 直接传给后端会导致运动控制器收到非法坐标。这里对 4 个轴坐标都做 Number.isFinite 校验，
+  // 非有限数的字段兜底为 0（与 TraversalPoint 注释"旧配置加载时显式补 0"语义一致），
+  // 避免单点异常导致整个 custom 配置无法加载或运动控制器异常运动。
+  customPoints.value = (layout.custom?.points ?? []).map(p => ({
+    x: Number.isFinite(p.x) ? p.x : 0,
+    y: Number.isFinite(p.y) ? p.y : 0,
+    z: Number.isFinite(p.z) ? p.z : 0,
+    u: Number.isFinite(p.u) ? p.u : 0,
+  }))
 }
 
 function applySavedConfig(config: TraversalTestConfig) {
@@ -362,6 +384,34 @@ function applySavedConfig(config: TraversalTestConfig) {
   // 恢复五孔压力类型：旧配置无此字段时兜底为 'gauge'（与历史行为一致）。
   // 显式校验值域，避免后端 ParseAndStartTraversal 兜底前 UI 显示脏值。
   pProbePressureType.value = c.pProbePressureType === 'absolute' ? 'absolute' : 'gauge'
+
+  // 恢复运动安全配置：深拷贝避免持久化对象被面板内部修改意外回写。
+  // 旧配置无此字段时为 undefined，面板显示为"全空（使用默认值）"。
+  // axisOverrides 内的覆盖项同样深拷贝，避免与持久化对象共享引用。
+  if (c.motionSafety) {
+    const src = c.motionSafety
+    const next: MotionSafetyConfig = {}
+    if (src.arrivalTolerance !== undefined) next.arrivalTolerance = src.arrivalTolerance
+    if (src.criticalDeviationLimit !== undefined) next.criticalDeviationLimit = src.criticalDeviationLimit
+    if (src.noProgressTimeoutMs !== undefined) next.noProgressTimeoutMs = src.noProgressTimeoutMs
+    if (src.progressEpsilon !== undefined) next.progressEpsilon = src.progressEpsilon
+    if (src.axisOverrides) {
+      const overrides: Record<string, MotionSafetyConfig> = {}
+      for (const [axis, cfg] of Object.entries(src.axisOverrides)) {
+        if (!cfg) continue
+        const o: MotionSafetyConfig = {}
+        if (cfg.arrivalTolerance !== undefined) o.arrivalTolerance = cfg.arrivalTolerance
+        if (cfg.criticalDeviationLimit !== undefined) o.criticalDeviationLimit = cfg.criticalDeviationLimit
+        if (cfg.noProgressTimeoutMs !== undefined) o.noProgressTimeoutMs = cfg.noProgressTimeoutMs
+        if (cfg.progressEpsilon !== undefined) o.progressEpsilon = cfg.progressEpsilon
+        overrides[axis] = o
+      }
+      if (Object.keys(overrides).length > 0) next.axisOverrides = overrides
+    }
+    motionSafety.value = next
+  } else {
+    motionSafety.value = undefined
+  }
 }
 
 async function loadSavedConfig() {
@@ -390,6 +440,13 @@ async function saveConfig() {
     const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), testName.value)
     saveFileName.value = normName
     const useMulti = prbMode.value === 'multi' && multiPrbFiles.value.length > 0
+    // 运动安全配置校验：面板内部已实时显示错误，保存前再次调用 isValid 阻断非法值。
+    // 阻断保存避免用户误把"严重偏离阈值 < 到位容差"这类语义错误配置持久化到后端。
+    // finally 块会重置 isSaving，无需在此显式设置。
+    if (motionSafetyPanelRef.value && !motionSafetyPanelRef.value.isValid) {
+      feedbackStore.pushToast(t.value.travMotionSafetyErrCriticalGreaterThanArrival, 'error')
+      return
+    }
     // 稳定化使用驻留时间（dwellTimeMs）：后端 waitForStabilization 在 stab==nil 或 mode=="fixed"
     // 时回退到 dwellTimeMs，因此前端不再单独保存 stabilization/validation 配置，
     // 旧 profile 持久化的字段会被后端忽略，无需迁移。
@@ -404,7 +461,10 @@ async function saveConfig() {
       samplesPerPoint: samplesPerPoint.value,
       savePath: savePath.value.trim(), saveFileName: normName, saveOptions: saveOptions.value,
       // 五孔压力类型始终保存，后端 BuildRawPressure 归一化依据此字段
-      pProbePressureType: pProbePressureType.value
+      pProbePressureType: pProbePressureType.value,
+      // 运动安全配置：undefined 时后端使用 DefaultMotionSafety。
+      // 通过深拷贝避免与面板内部 reactive 对象共享引用，确保持久化的是当前快照。
+      motionSafety: motionSafety.value ? JSON.parse(JSON.stringify(motionSafety.value)) : undefined
     }
     const config: TraversalTestConfig = JSON.parse(JSON.stringify(raw))
     const ok = await traversalStore.saveConfig(config)
@@ -484,6 +544,14 @@ watch(() => props.show, async (isVisible) => {
             v-model:motion-axes="motionAxes"
             :t="(t as unknown as Record<string, string>)"
             :is-loading="isLoading"
+          />
+          <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+               留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。 -->
+          <MotionSafetyPanel
+            ref="motionSafetyPanelRef"
+            v-model:motion-safety="motionSafety"
+            :motion-axes="motionAxes"
+            :t="(t as unknown as Record<string, string>)"
           />
         </div>
         <TraversalPrbStep

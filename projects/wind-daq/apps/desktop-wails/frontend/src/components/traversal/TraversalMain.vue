@@ -28,6 +28,7 @@
  */
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -85,8 +86,7 @@ const {
   ensureSubscribed,
 } = useTraversalRealtimeData(currentConfig)
 
-const i18n = useI18nStore()
-const t = computed(() => i18n.t)
+const { t } = storeToRefs(useI18nStore())
 
 const activeWorkspaceTab = ref<WorkspaceTab>('preview')
 // 启动请求防重入标志（与 store.isStarting 配合，避免重复触发）
@@ -465,7 +465,8 @@ const machNumber = computed(() => traversalStore.realtimeResult?.machNumber)
 const velocity = computed(() => traversalStore.realtimeResult?.velocity)
 
 // CSV 保存路径：操作员需知道数据写到哪。
-// 与后端 ResolveOutputPath 语义对齐：
+// 优先使用后端 Status.csvPath（实际落盘路径，含撞名 -2/-3 后缀），
+// 回退到 config 静态拼接的预期路径（与后端 ResolveOutputPath 语义对齐）：
 //   - savePath 为空 → 返回空串，侧边栏不展示该卡片
 //   - savePath 已带 .csv 后缀（大小写不敏感）→ 视为完整文件路径，直接展示
 //   - 否则 → 拼接 savePath + saveFileName，并保证文件名带 .csv 后缀
@@ -475,6 +476,11 @@ const velocity = computed(() => traversalStore.realtimeResult?.velocity)
 // saveFileName 缺失时不强行 fallback，避免展示后端 taskID 派生的默认名
 // （taskID 在前端启动前未确定，展示假名反而误导）。
 const csvSavePath = computed(() => {
+  // 测试启动后优先展示后端实际落盘路径（撞名 -2/-3 后缀后的真实文件名）；
+  // 启动前或未注入 v2 csvPort 时 status.csvPath 为空，回退到 config 静态拼接的预期路径
+  const actualPath = traversalStore.status?.csvPath?.trim()
+  if (actualPath) return actualPath
+
   const cfg = currentConfig.value
   if (!cfg) return ''
   const dir = cfg.savePath?.trim() ?? ''
@@ -651,6 +657,7 @@ watch(
         :csv-save-path="csvSavePath"
         :last-error="lastError"
         :validation-warnings="traversalStore.status?.validationWarnings"
+        :motion-safety-failure="traversalStore.status?.motionSafetyFailure"
         :acquisition-connection="acquisitionConnection"
         :positioner-connection="positionerConnection"
         :pressure-items="pressureItems"
@@ -670,6 +677,22 @@ watch(
           acquisitionDevice: t.travAcquisitionDevice,
           positionerDevice: t.travPositionerDevice,
           moving: t.moving,
+          motionSafetyAlert: t.travMotionSafetyAlert,
+          motionSafetyAlertEmergency: t.travMotionSafetyAlertEmergency,
+          motionSafetyAxis: t.travMotionSafetyAxis,
+          motionSafetyTarget: t.travMotionSafetyTarget,
+          motionSafetyActual: t.travMotionSafetyActual,
+          motionSafetyDeviation: t.travMotionSafetyDeviation,
+          motionSafetyPointIndex: t.travMotionSafetyPointIndex,
+          motionSafetyController: t.travMotionSafetyController,
+          motionSafetyVerdictOk: t.travMotionSafetyVerdictOk,
+          motionSafetyVerdictArrived: t.travMotionSafetyVerdictArrived,
+          motionSafetyVerdictDeviation: t.travMotionSafetyVerdictDeviation,
+          motionSafetyVerdictCriticalDeviation: t.travMotionSafetyVerdictCriticalDeviation,
+          motionSafetyVerdictLimitTriggered: t.travMotionSafetyVerdictLimitTriggered,
+          motionSafetyVerdictNoProgress: t.travMotionSafetyVerdictNoProgress,
+          motionSafetyVerdictOvershoot: t.travMotionSafetyVerdictOvershoot,
+          motionSafetyVerdictStatusUnavailable: t.travMotionSafetyVerdictStatusUnavailable,
         }"
       />
 
