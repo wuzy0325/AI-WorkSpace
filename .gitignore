@@ -92,3 +92,8 @@ projects/1604Cal/
 # 本地分析产物与临时文件
 analysis/
 temp/
+
+# AI 工具私有目录（IDE/agent 本地配置与会话缓存，不应入库）
+.codebuddy/
+.trae/
+.opencode/

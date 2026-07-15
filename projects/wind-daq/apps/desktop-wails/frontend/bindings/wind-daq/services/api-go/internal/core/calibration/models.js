@@ -6,6 +6,10 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as traversal$0 from "../traversal/models.js";
+
 /**
  * AcquisitionSamplingConfig 采集采样参数配置
  */
@@ -313,6 +317,27 @@ export class Status {
              */
             this["lastError"] = undefined;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
+             * 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
+             * 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。
+             * @member
+             * @type {string | undefined}
+             */
+            this["lastErrorCode"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * MotionSafetyFailure 运动安全故障现场快照。
+             * 仅在运动安全故障路径写入，其他错误路径（采集失败/保存失败等）保持 nil。
+             * 前端轮询拿到后用于展示故障现场（控制器/轴/verdict/目标/实际/点号），
+             * 避免 lastError 字符串正则解析的不稳定。
+             * @member
+             * @type {traversal$0.MotionSafetyFailure | null | undefined}
+             */
+            this["motionSafetyFailure"] = undefined;
+        }
         if (!("type" in $$source)) {
             /**
              * @member
@@ -375,10 +400,14 @@ export class Status {
      * @returns {Status}
      */
     static createFrom($$source = {}) {
-        const $$createField9_0 = $$createType2;
+        const $$createField6_0 = $$createType3;
+        const $$createField11_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("motionSafetyFailure" in $$parsedSource) {
+            $$parsedSource["motionSafetyFailure"] = $$createField6_0($$parsedSource["motionSafetyFailure"]);
+        }
         if ("dataPoints" in $$parsedSource) {
-            $$parsedSource["dataPoints"] = $$createField9_0($$parsedSource["dataPoints"]);
+            $$parsedSource["dataPoints"] = $$createField11_0($$parsedSource["dataPoints"]);
         }
         return new Status(/** @type {Partial<Status>} */($$parsedSource));
     }
@@ -499,9 +528,9 @@ export class TotalTemperatureConfig {
      * @returns {TotalTemperatureConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType3;
-        const $$createField1_0 = $$createType4;
-        const $$createField3_0 = $$createType5;
+        const $$createField0_0 = $$createType5;
+        const $$createField1_0 = $$createType6;
+        const $$createField3_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("probeChannels" in $$parsedSource) {
             $$parsedSource["probeChannels"] = $$createField0_0($$parsedSource["probeChannels"]);
@@ -519,7 +548,9 @@ export class TotalTemperatureConfig {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = ChannelRef.createFrom;
-const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = $Create.Map($Create.Any, $$createType1);
+const $$createType2 = traversal$0.MotionSafetyFailure.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
 const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = TemperatureStabilityConfig.createFrom;
+const $$createType5 = $Create.Map($Create.Any, $$createType1);
+const $$createType6 = $Create.Array($Create.Any);
+const $$createType7 = TemperatureStabilityConfig.createFrom;

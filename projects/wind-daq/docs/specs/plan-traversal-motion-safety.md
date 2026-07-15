@@ -27,7 +27,7 @@
 
 **Acceptance criteria:**
 - [ ] `MotionSafetyConfig` 包含 `ArrivalTolerance`、`CriticalDeviationLimit`、`NoProgressTimeoutMs`、`ProgressEpsilon`、`AxisOverrides` 5 个字段，全部用指针支持零值即默认
-- [ ] `DefaultMotionSafety` 提供默认值（`ArrivalTolerance=0.01`、`CriticalDeviationLimit=5.0`、`NoProgressTimeoutMs=2000`、`ProgressEpsilon=0.001`）
+- [ ] `DefaultMotionSafety` 提供默认值（`ArrivalTolerance=0.2`、`CriticalDeviationLimit=5.0`、`NoProgressTimeoutMs=2000`、`ProgressEpsilon=0.001`）
 - [ ] `Resolve(axis)` 返回"默认 > 全局 > 按轴覆盖"合并后的有效配置
 - [ ] `Config.MotionSafety` 字段为 `*MotionSafetyConfig`，零值时下游使用 `DefaultMotionSafety`
 - [ ] JSON tag 使用 `omitempty`，旧配置无此字段时反序列化不报错

@@ -129,7 +129,7 @@ type MotionSafetyConfig struct {
 // DefaultMotionSafety 默认运动安全配置。
 // 阈值基于经验值，应在真机回归后调整。
 var DefaultMotionSafety = MotionSafetyConfig{
-    ArrivalTolerance:       ptr(0.01),  // mm
+    ArrivalTolerance:       ptr(0.2),   // mm，兼顾定位精度与机械抖动/背隙
     CriticalDeviationLimit: ptr(5.0),   // mm
     NoProgressTimeoutMs:    ptr(2000),
     ProgressEpsilon:        ptr(0.001), // mm
