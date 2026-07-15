@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"wind-daq/services/api-go/internal/core/traversal"
 )
 
 // pauseTestRuntime 可控运行时：MoveToPosition/WaitForMotionComplete/StopMotion
@@ -45,7 +47,7 @@ func (r *pauseTestRuntime) MoveToPosition(axis MotionAxisConfig, position float6
 	return nil
 }
 
-func (r *pauseTestRuntime) WaitForMotionComplete() error {
+func (r *pauseTestRuntime) WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure) {
 	// 仅在第一次调用时阻塞，模拟运动进行中；后续调用（如重跑）直接返回。
 	r.mu.Lock()
 	shouldBlock := !r.waitBlocked
@@ -60,7 +62,7 @@ func (r *pauseTestRuntime) WaitForMotionComplete() error {
 			// 测试超时保护
 		}
 	}
-	return nil
+	return true, traversal.MotionInterruptNone, nil
 }
 
 func (r *pauseTestRuntime) StopMotion() error {
@@ -110,7 +112,7 @@ func TestPauseTriggersStopMotion(t *testing.T) {
 		},
 		Points: []CalPoint{{ID: 1, Coordinates: map[string]float64{"α": 10}}},
 	}
-	engine := NewAutomaticCalibration(config, nil, rt, nil)
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
 	engine.SetTaskID(config.TaskID)
 
 	go func() { _ = engine.Start(noopAlgorithm{}) }()
@@ -153,7 +155,7 @@ func TestPauseMidPointRerunsPointOnResume(t *testing.T) {
 			{ID: 2, Coordinates: map[string]float64{"α": 20}},
 		},
 	}
-	engine := NewAutomaticCalibration(config, nil, rt, nil)
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
 	engine.SetTaskID(config.TaskID)
 
 	done := make(chan error, 1)
@@ -215,7 +217,7 @@ func TestPauseBetweenPointsAdvancesOnResume(t *testing.T) {
 			{ID: 2, Coordinates: map[string]float64{"α": 20}},
 		},
 	}
-	engine := NewAutomaticCalibration(config, nil, rt, nil)
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
 	engine.SetTaskID(config.TaskID)
 
 	done := make(chan error, 1)
@@ -270,7 +272,9 @@ func (r *nonBlockingRuntime) MoveToPosition(axis MotionAxisConfig, _ float64) er
 	r.moves = append(r.moves, axis.Name)
 	return nil
 }
-func (r *nonBlockingRuntime) WaitForMotionComplete() error { return nil }
+func (r *nonBlockingRuntime) WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure) {
+	return true, traversal.MotionInterruptNone, nil
+}
 func (r *nonBlockingRuntime) StopMotion() error {
 	r.stopCalls++
 	return nil

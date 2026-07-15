@@ -448,6 +448,21 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 				posLimit = rr1.LMTP
 				negLimit = rr1.LMTM
 				statusValid = true
+				// ReadLP precedes GetRR1Status, so an axis can stop between the two
+				// calls. Pair the stopped state with a fresh final position instead
+				// of exposing the earlier in-motion sample as a stopped position.
+				if cachedMoving[q.axisIdx] && !moving {
+					c.ioMu.Lock()
+					if !c.connectionMatches(handle) {
+						positionErr = fmt.Errorf("控制器连接已变更")
+					} else {
+						position, positionErr = c.readTrustedPosition(handle, q.axisNum, q.axisCfg)
+					}
+					c.ioMu.Unlock()
+					if positionErr != nil {
+						statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 轴 %s 停止后位置读取失败: %w", q.axisCfg.Name, positionErr))
+					}
+				}
 			}
 			if positionErr == nil {
 				homed = core.IsHomed(position, q.axisCfg)
@@ -634,10 +649,7 @@ func (c *WTNMC4AMotionController) MoveTo(ctx context.Context, axis core.AxisName
 		return fmt.Errorf("WTNMC4A 轴 %s 运动距离超出硬件范围: %d", axis, deltaPulse)
 	}
 
-	startMove := c.startMove
-	if startMove == nil {
-		startMove = c.moveAxisInit
-	}
+	startMove := c.resolveStartMove()
 	if err := startMove(an, int32(deltaPulse)); err != nil {
 		c.status.LastError = fmt.Sprintf("轴 %s 运动失败: %v", axis, err)
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
@@ -679,10 +691,7 @@ func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName
 		return fmt.Errorf("WTNMC4A 轴 %s 运动距离超出硬件范围: %d", axis, deltaPulse)
 	}
 
-	startMove := c.startMove
-	if startMove == nil {
-		startMove = c.moveAxisInit
-	}
+	startMove := c.resolveStartMove()
 	if err := startMove(an, int32(deltaPulse)); err != nil {
 		c.status.LastError = fmt.Sprintf("轴 %s 运动失败: %v", axis, err)
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
@@ -691,6 +700,27 @@ func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName
 	c.setAxisMovingLocked(axis, true)
 	c.stateVersion++
 	return nil
+}
+
+// resolveStartMove 解析运动启动函数的测试 seam：c.startMove 为 nil 时回退到生产实现 moveAxisInit。
+//
+// 抽取自 MoveTo/MoveBy 两处相同的兜底模板，避免新增字段时漏改某一处。
+// Jog 走 InitLVDV+StartLVDV 连续模式路径，不经过此 seam。
+func (c *WTNMC4AMotionController) resolveStartMove() func(axis int, pulse int32) error {
+	if c.startMove != nil {
+		return c.startMove
+	}
+	return c.moveAxisInit
+}
+
+// resolveStopAxis 解析轴停止函数的测试 seam：c.stopAxis 为 nil 时回退到生产实现 callInstStop。
+//
+// 抽取自 Stop 单轴分支与 stopAllAxesLocked 内相同的兜底模板，与 resolveStartMove 对称。
+func (c *WTNMC4AMotionController) resolveStopAxis() func(handle uintptr, axis int) error {
+	if c.stopAxis != nil {
+		return c.stopAxis
+	}
+	return c.callInstStop
 }
 
 // Jog 连续运动：参照标准SDK用法，使用 InitLVDV（连续模式 LVDV=1）+ StartLVDV
@@ -814,35 +844,8 @@ func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) 
 		return fmt.Errorf("控制器未连接")
 	}
 
-	stopAxis := c.stopAxis
-	if stopAxis == nil {
-		stopAxis = c.callInstStop
-	}
 	if axis == "" {
-		var stopErrors []error
-		stoppedAxes := make(map[int]bool, 4)
-		for _, an := range []int{0, 1, 2, 3} {
-			if err := stopAxis(handle, an); err != nil {
-				stopErrors = append(stopErrors, fmt.Errorf("轴%d停止失败: %w", an, err))
-				continue
-			}
-			stoppedAxes[an] = true
-		}
-		stopErr := errors.Join(stopErrors...)
-		c.mu.Lock()
-		for i := range c.status.Axes {
-			if stoppedAxes[wtnmc4aAxisNum(c.status.Axes[i].Name)] {
-				c.status.Axes[i].Moving = false
-			}
-		}
-		if stopErr != nil {
-			c.status.LastError = stopErr.Error()
-		} else {
-			c.status.LastError = ""
-		}
-		c.stateVersion++
-		c.mu.Unlock()
-		return stopErr
+		return c.stopAllAxesLocked(handle, "停止")
 	}
 	c.mu.RLock()
 	_, axisExists := c.axisConfigLocked(axis)
@@ -851,6 +854,7 @@ func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) 
 		return fmt.Errorf("未知或未启用的运动轴: %s", axis)
 	}
 	an := wtnmc4aAxisNum(axis)
+	stopAxis := c.resolveStopAxis()
 	if err := stopAxis(handle, an); err != nil {
 		return fmt.Errorf("WTNMC4A 轴 %s 停止失败: %w", axis, err)
 	}
@@ -862,6 +866,13 @@ func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) 
 }
 
 // EmergencyStop serializes immediate-stop commands with the vendor DLL handle.
+//
+// 标志位置位时序（安全优先）：
+//   - 先置位 EmergencyStopped，再调用 stopAllAxesLocked。即使后续停止调用失败，
+//     标志已锁存，可阻止并发的 MoveTo/MoveBy/Jog 等运动命令发起 DLL 调用。
+//   - 若先停止再置位，存在时间窗：停止执行期间其他 goroutine 可能发起新运动。
+//   - 急停失败也保留标志位（不回滚），由调用方通过返回的 error 诊断现场，
+//     需显式调用 ResetEmergencyStop 才能清除。
 func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
 	c.ioMu.Lock()
 	defer c.ioMu.Unlock()
@@ -873,22 +884,38 @@ func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
 		return fmt.Errorf("控制器未连接")
 	}
 
-	stopAxis := c.stopAxis
-	if stopAxis == nil {
-		stopAxis = c.callInstStop
-	}
+	c.mu.Lock()
+	c.status.EmergencyStopped = true
+	c.mu.Unlock()
+	return c.stopAllAxesLocked(handle, "急停")
+}
+
+// stopAllAxesLocked 在已校验 handle/connected 后，依次停止 0~3 号轴并更新 status。
+//
+// 抽取自 Stop(axis="") 与 EmergencyStop 的共用逻辑：
+//   - 解析 stopAxis 注入点（测试 seam，nil 时回退到 callInstStop）
+//   - 依次对 4 个轴调用 stopAxis，记录成功轴索引到 stoppedAxes
+//   - 拿 mu 锁，仅将成功停止的轴的 Moving 置 false（失败轴保留原状态，
+//     由调用方通过 LastError 诊断）；同步刷新 LastError 与 stateVersion
+//
+// 不设置 EmergencyStopped 标志：该标志仅 EmergencyStop 应置位，调用方按语义处理。
+// errLabel 用于错误消息文案区分（"停止" / "急停"），保留与原实现一致的中文消息。
+//
+// 调用方约束：必须已持有 ioMu（保证与同控制器的其他命令串行）；
+// 调用本方法期间不得持有 mu（方法内部加锁更新 status 后释放）。
+func (c *WTNMC4AMotionController) stopAllAxesLocked(handle uintptr, errLabel string) error {
+	stopAxis := c.resolveStopAxis()
 	var stopErrors []error
 	stoppedAxes := make(map[int]bool, 4)
 	for _, an := range []int{0, 1, 2, 3} {
 		if err := stopAxis(handle, an); err != nil {
-			stopErrors = append(stopErrors, fmt.Errorf("轴%d急停失败: %w", an, err))
+			stopErrors = append(stopErrors, fmt.Errorf("轴%d%s失败: %w", an, errLabel, err))
 			continue
 		}
 		stoppedAxes[an] = true
 	}
 	stopErr := errors.Join(stopErrors...)
 	c.mu.Lock()
-	c.status.EmergencyStopped = true
 	for i := range c.status.Axes {
 		if stoppedAxes[wtnmc4aAxisNum(c.status.Axes[i].Name)] {
 			c.status.Axes[i].Moving = false

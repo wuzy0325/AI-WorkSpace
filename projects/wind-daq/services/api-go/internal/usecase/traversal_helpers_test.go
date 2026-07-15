@@ -47,30 +47,36 @@ func TestAvailableAxisTargets_FiltersByControllerID(t *testing.T) {
 	}
 }
 
-func TestMotionTargetsReached_RequiresAtLeastOneConnectedTarget(t *testing.T) {
+// 测试前置：构造 point/bindings，使用 nil cfg 触发默认 0.2 容差（与生产回退路径一致）
+// 测试步骤：分别传入空状态列表、断开连接的控制器、缺少绑定轴的控制器
+// 期待结果：三种情况下 (allReached, checkedTargets) 均为 (false, 0)，避免状态缺失时提前进入稳定阶段
+func TestMotionTargetsReachedWithTolerance_RequiresAtLeastOneConnectedTarget(t *testing.T) {
 	point := traversal.Point{X: 10}
 	bindings := []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}}
 
-	if motionTargetsReached(nil, point, bindings) {
-		t.Fatal("空状态列表不能判定运动完成")
+	if allReached, checked := motionTargetsReachedWithTolerance(nil, point, bindings, nil); allReached || checked != 0 {
+		t.Fatalf("空状态列表不能判定运动完成: allReached=%v checked=%d", allReached, checked)
 	}
-	if motionTargetsReached([]motion.ControllerStatus{{
+	if allReached, checked := motionTargetsReachedWithTolerance([]motion.ControllerStatus{{
 		ID:        "mc-1",
 		Connected: false,
 		Axes:      []motion.AxisStatus{{Name: motion.AxisX, Position: 10}},
-	}}, point, bindings) {
-		t.Fatal("断开连接的目标轴不能判定运动完成")
+	}}, point, bindings, nil); allReached || checked != 0 {
+		t.Fatalf("断开连接的目标轴不能判定运动完成: allReached=%v checked=%d", allReached, checked)
 	}
-	if motionTargetsReached([]motion.ControllerStatus{{
+	if allReached, checked := motionTargetsReachedWithTolerance([]motion.ControllerStatus{{
 		ID:        "mc-1",
 		Connected: true,
 		Axes:      []motion.AxisStatus{{Name: motion.AxisY, Position: 10}},
-	}}, point, bindings) {
-		t.Fatal("缺少绑定轴时不能判定运动完成")
+	}}, point, bindings, nil); allReached || checked != 0 {
+		t.Fatalf("缺少绑定轴时不能判定运动完成: allReached=%v checked=%d", allReached, checked)
 	}
 }
 
-func TestMotionTargetsReached_RejectsMovingAxisAndAcceptsReachedAxis(t *testing.T) {
+// 测试前置：构造 axis.Moving=true 与 axis.Moving=false 两种状态，位置与目标一致（偏差 0）
+// 测试步骤：先测 Moving=true 应判未到位，再测 Moving=false 且偏差 0 应判到位
+// 期待结果：Moving=true → allReached=false；Moving=false 且 |position-target|=0 ≤ 默认容差 → allReached=true
+func TestMotionTargetsReachedWithTolerance_RejectsMovingAxisAndAcceptsReachedAxis(t *testing.T) {
 	point := traversal.Point{X: 10}
 	bindings := []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}}
 	status := motion.ControllerStatus{
@@ -78,11 +84,11 @@ func TestMotionTargetsReached_RejectsMovingAxisAndAcceptsReachedAxis(t *testing.
 		Connected: true,
 		Axes:      []motion.AxisStatus{{Name: motion.AxisX, Position: 10, Moving: true}},
 	}
-	if motionTargetsReached([]motion.ControllerStatus{status}, point, bindings) {
+	if allReached, _ := motionTargetsReachedWithTolerance([]motion.ControllerStatus{status}, point, bindings, nil); allReached {
 		t.Fatal("位置更新中的轴不能判定运动完成")
 	}
 	status.Axes[0].Moving = false
-	if !motionTargetsReached([]motion.ControllerStatus{status}, point, bindings) {
+	if allReached, _ := motionTargetsReachedWithTolerance([]motion.ControllerStatus{status}, point, bindings, nil); !allReached {
 		t.Fatal("已停止且到达目标的轴应判定运动完成")
 	}
 }

@@ -20,10 +20,10 @@ import (
 	"wind-daq/services/api-go/internal/ports"
 )
 
-// nullIfNaN 在 v 为 NaN 时返回 nil（JSON 序列化为 null），否则返回原值。
+// nullIfNonFinite 在 v 为 NaN 时返回 nil（JSON 序列化为 null），否则返回原值。
 // 用于 API 响应中的坐标字段：line/rectangle/sector 模式未配置的轴标记为 NaN，
 // encoding/json 不支持 NaN/Inf 的序列化，必须转为 nil 避免整个响应崩溃。
-func nullIfNaN(v float64) any {
+func nullIfNonFinite(v float64) any {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return nil
 	}
@@ -36,10 +36,10 @@ func nullIfNaN(v float64) any {
 // 导致 /api/traversal/status 写响应失败，前端轮询停在最后一次成功状态（常见为稳定中）。
 func sanitizePointForJSON(point traversal.Point) map[string]any {
 	return map[string]any{
-		"x": nullIfNaN(point.X),
-		"y": nullIfNaN(point.Y),
-		"z": nullIfNaN(point.Z),
-		"u": nullIfNaN(point.U),
+		"x": nullIfNonFinite(point.X),
+		"y": nullIfNonFinite(point.Y),
+		"z": nullIfNonFinite(point.Z),
+		"u": nullIfNonFinite(point.U),
 	}
 }
 
@@ -53,7 +53,7 @@ func sanitizeResultsForJSON(results []traversal.PointResult) []map[string]any {
 		// values: map[int]float64 → map[int]any，NaN/Inf → nil
 		sanitizedValues := make(map[int]any, len(result.Values))
 		for k, v := range result.Values {
-			sanitizedValues[k] = nullIfNaN(v)
+			sanitizedValues[k] = nullIfNonFinite(v)
 		}
 		item := map[string]any{
 			"pointIndex":       result.PointIndex,
@@ -67,11 +67,11 @@ func sanitizeResultsForJSON(results []traversal.PointResult) []map[string]any {
 			// calculated: 逐字段清洗 NaN/Inf
 			item["calculated"] = map[string]any{
 				"valid": result.Calculated.Valid,
-				"alpha": nullIfNaN(result.Calculated.Alpha),
-				"beta":  nullIfNaN(result.Calculated.Beta),
-				"pt":    nullIfNaN(result.Calculated.Pt),
-				"ps":    nullIfNaN(result.Calculated.Ps),
-				"mach":  nullIfNaN(result.Calculated.Mach),
+				"alpha": nullIfNonFinite(result.Calculated.Alpha),
+				"beta":  nullIfNonFinite(result.Calculated.Beta),
+				"pt":    nullIfNonFinite(result.Calculated.Pt),
+				"ps":    nullIfNonFinite(result.Calculated.Ps),
+				"mach":  nullIfNonFinite(result.Calculated.Mach),
 			}
 		}
 		if len(result.CustomValues) > 0 {
@@ -206,7 +206,7 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	var currentPoint map[string]any
 	if status.CurrentPointCoordinates != nil {
 		point := *status.CurrentPointCoordinates
-		currentPoint = map[string]any{"alpha": nullIfNaN(point.X), "beta": nullIfNaN(point.Y)}
+		currentPoint = map[string]any{"alpha": nullIfNonFinite(point.X), "beta": nullIfNonFinite(point.Y)}
 	}
 	dataPoints := m.BuildDataPoints(status.Results)
 	var latestData any
@@ -231,6 +231,10 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 		"dataPoints":         dataPoints,
 		"latestData":         latestData,
 		"validationWarnings": status.ValidationWarnings,
+		// 运动安全故障现场快照：仅 handleMotionSafetyFailure 路径写入，前端据此展示
+		// "故障发生在哪个控制器/轴/第几个点，目标 vs 实际" 等关键诊断信息。
+		// nil 时 JSON 序列化为 null，前端用 optional chaining 处理。
+		"motionSafetyFailure": status.MotionSafetyFailure,
 	}
 }
 
@@ -260,7 +264,7 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 		dataPoints = append(dataPoints, map[string]any{
 			"pointId": result.PointIndex + 1,
 			// coordinates 用 map[string]any：NaN 轴输出 null 避免 JSON 序列化失败（见 currentPoint 注释）
-			"coordinates":         map[string]any{"alpha": nullIfNaN(result.Point.X), "beta": nullIfNaN(result.Point.Y)},
+			"coordinates":         map[string]any{"alpha": nullIfNonFinite(result.Point.X), "beta": nullIfNonFinite(result.Point.Y)},
 			"rawPressure":         rawPressure,
 			"interpolationResult": interpolationResult,
 			"sampleCount":         result.SampleCount,

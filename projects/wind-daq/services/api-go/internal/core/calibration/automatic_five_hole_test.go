@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"wind-daq/services/api-go/internal/core/traversal"
 )
 
 type fakeCalibrationRuntime struct {
@@ -53,7 +55,7 @@ func TestAutomaticFiveHoleCalibrationMovesAlphaBeforeBeta(t *testing.T) {
 	config.Points = []CalPoint{{ID: 1, Coordinates: map[string]float64{"β": 2, "α": 1}}}
 	runtime := &fakeCalibrationRuntime{values: completeFiveHoleValues()}
 
-	engine := NewAutomaticCalibration(config, nil, runtime, nil)
+	engine := NewAutomaticCalibration(config, nil, runtime, nil, nil)
 	if err := engine.Start(NewFiveHoleAlgorithm()); err != nil {
 		t.Fatalf("start calibration: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestAutomaticCalibrationStopsAfterMotionFailure(t *testing.T) {
 	}
 	runtime := &fakeCalibrationRuntime{values: completeFiveHoleValues(), moveErr: fmt.Errorf("injected move failure")}
 
-	engine := NewAutomaticCalibration(config, nil, runtime, nil)
+	engine := NewAutomaticCalibration(config, nil, runtime, nil, nil)
 	err := engine.Start(NewFiveHoleAlgorithm())
 	if !errors.Is(err, ErrMotionControl) {
 		t.Fatalf("expected motion-control failure, got %v", err)
@@ -138,7 +140,9 @@ func (f *fakeCalibrationRuntime) MoveToPosition(axis MotionAxisConfig, position 
 	return f.moveErr
 }
 
-func (f *fakeCalibrationRuntime) WaitForMotionComplete() error { return nil }
+func (f *fakeCalibrationRuntime) WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure) {
+	return true, traversal.MotionInterruptNone, nil
+}
 
 func (f *fakeCalibrationRuntime) StopMotion() error {
 	f.stopCalls++
@@ -184,7 +188,7 @@ func TestAutomaticFiveHoleCalibrationUsesConfiguredProbeChannels(t *testing.T) {
 	config := completeFiveHoleConfig()
 	runtime := &fakeCalibrationRuntime{values: completeFiveHoleValues()}
 
-	engine := NewAutomaticCalibration(config, nil, runtime, nil)
+	engine := NewAutomaticCalibration(config, nil, runtime, nil, nil)
 	if err := engine.Start(NewFiveHoleAlgorithm()); err != nil {
 		t.Fatalf("start calibration: %v", err)
 	}
@@ -213,7 +217,7 @@ func TestAutomaticCalibrationInvokesOnDataPointForEachPoint(t *testing.T) {
 
 	var received []DataPoint
 	sink := func(dp DataPoint) { received = append(received, dp) }
-	engine := NewAutomaticCalibration(config, nil, runtime, sink)
+	engine := NewAutomaticCalibration(config, nil, runtime, sink, nil)
 	if err := engine.Start(NewFiveHoleAlgorithm()); err != nil {
 		t.Fatalf("start calibration: %v", err)
 	}

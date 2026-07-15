@@ -662,3 +662,24 @@ func TestParseAndStartTraversal_AutoStartFails(t *testing.T) {
 		t.Errorf("失败后状态不应为 running（Start 未执行），实际: %v", status.State)
 	}
 }
+
+// TestMotionCompletePollMsForValidation_MatchesRuntimePoll 校验
+// traversal_config.go 中 motionCompletePollMsForValidation 与 traversal.go 中
+// motionCompletePoll 两个常量保持一致。
+//
+// 设计动机：motionCompletePollMsForValidation 是 validateMotionSafetyConfig
+// 校验 NoProgressTimeoutMs 下限的硬编码常量（避免循环引用不能直接引用 motionCompletePoll），
+// 如果未来修改了运行时轮询间隔却忘记同步校验常量，校验规则会与运行时去抖逻辑脱钩
+// （例如看门狗比轮询还快误触发，或校验通过但运行时仍频繁触发）。
+//
+// 测试前置：两个常量分别定义在 traversal_config.go / traversal.go，package usecase 内可直接访问。
+// 测试步骤：将 motionCompletePoll 转换为毫秒，与 motionCompletePollMsForValidation 比较。
+// 期待结果：两者相等，确保校验侧与运行时侧语义一致。
+func TestMotionCompletePollMsForValidation_MatchesRuntimePoll(t *testing.T) {
+	runtimePollMs := int(motionCompletePoll / time.Millisecond)
+	if runtimePollMs != motionCompletePollMsForValidation {
+		t.Errorf("motionCompletePollMsForValidation 与运行时常量脱钩: 校验侧=%dms, 运行时侧=%dms"+
+			"（请同步修改 traversal_config.go 中的 motionCompletePollMsForValidation）",
+			motionCompletePollMsForValidation, runtimePollMs)
+	}
+}

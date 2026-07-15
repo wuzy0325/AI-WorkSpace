@@ -49,6 +49,11 @@ func (m *TraversalManager) setErrorLocked(message string, code traversal.ErrorCo
 	m.status.State = traversal.StateError
 	m.status.LastError = message
 	m.status.LastErrorCode = code
+	// 清空运动安全故障快照：setErrorLocked 是所有错误路径的公共出口，
+	// 非运动安全故障（采集失败/保存失败等）不应残留上一次的故障现场。
+	// handleMotionSafetyFailure 在调用 failWithCode 之后会单独写入快照，
+	// 此处清空不会覆盖运动安全故障路径的写入。
+	m.status.MotionSafetyFailure = nil
 }
 
 // isTaskCancelled 检查任务是否已取消
@@ -137,11 +142,21 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 	return fallback
 }
 
-// motionTargetsReached 判断当前状态快照中的所有有效运动目标是否到位。
+// motionTargetsReachedWithTolerance 判断当前状态快照中的所有有效运动目标是否到位。
+//
+// 到位容差从 MotionSafetyConfig 读取，支持按轴覆盖。当 cfg 为 nil 时回退到默认值（0.2mm）。
 // 必须至少检查到一个已连接控制器上的目标轴；零目标不等于全部完成，避免状态缺失时提前进入稳定阶段。
 // 当 checkedTargets==0 且 motionAxes 非空时，说明轴名配置与已连接控制器不匹配，
 // 打 warning 日志暴露根因，避免 120s 静默超时。
-func motionTargetsReached(statuses []motion.ControllerStatus, point traversal.Point, motionAxes []traversal.MotionAxisBinding) bool {
+// 返回 (allReached, checkedTargets)：
+//   - allReached: 所有目标轴均到位
+//   - checkedTargets: 实际检查的目标轴数（用于空配置检测）
+func motionTargetsReachedWithTolerance(
+	statuses []motion.ControllerStatus,
+	point traversal.Point,
+	motionAxes []traversal.MotionAxisBinding,
+	cfg *traversal.MotionSafetyConfig,
+) (bool, int) {
 	checkedTargets := 0
 	for _, status := range statuses {
 		if !status.Connected {
@@ -154,8 +169,10 @@ func motionTargetsReached(statuses []motion.ControllerStatus, point traversal.Po
 				continue
 			}
 			checkedTargets++
-			if axis.Moving || math.Abs(axis.Position-target) > 0.01 {
-				return false
+			resolved := cfg.Resolve(string(axis.Name))
+			tolerance := *resolved.ArrivalTolerance
+			if axis.Moving || math.Abs(axis.Position-target) > tolerance {
+				return false, checkedTargets
 			}
 		}
 	}
@@ -165,7 +182,63 @@ func motionTargetsReached(statuses []motion.ControllerStatus, point traversal.Po
 			"motion_axes", motionAxes,
 		)
 	}
-	return checkedTargets > 0
+	return checkedTargets > 0, checkedTargets
+}
+
+// EvaluateMotionSafety 运动安全判定纯函数
+//
+// 根据**单次快照**的轴状态、目标位置和已解析的 MotionSafetyConfig，
+// 返回运动安全判定结果。函数无副作用、不访问硬件，全部判定逻辑可单测覆盖。
+//
+// 判定优先级（spec §EvaluateMotionSafety）：
+//  1. 撞限位（PosLimit/NegLimit）→ LimitTriggered（急停）
+//  2. 运动中（Moving=true）→ OK（不判偏差，交给看门狗检测卡死/越过）
+//  3. 轴已停 → 检查偏差：
+//     - deviation ≤ ArrivalTolerance → Arrived
+//     - deviation ≥ CriticalDeviationLimit → CriticalDeviation（急停）
+//     - 其他 → Deviation（普通停止）
+//
+// 参数 cfg 必须是 Resolve() 后的有效配置（指针字段非 nil）。
+// 调用方负责按轴名解析覆盖项，本函数不做覆盖合并。
+//
+// NoProgress 和 Overshoot 不在本函数职责内——它们需要跨样本历史，
+// 由 motionWatchdog.Observe 维护。
+func EvaluateMotionSafety(
+	axis motion.AxisStatus,
+	target float64,
+	cfg traversal.MotionSafetyConfig,
+) traversal.MotionSafetyVerdict {
+	// 1. 撞限位优先级最高，无论运动状态如何都立即判定为急停场景
+	if axis.PosLimit || axis.NegLimit {
+		return traversal.MotionSafetyLimitTriggered
+	}
+
+	// 2. 运动中不判偏差——运动中距目标远是正常现象，不能误判为超差。
+	// 卡死和越过目标由跨样本看门狗识别。
+	if axis.Moving {
+		return traversal.MotionSafetyOK
+	}
+
+	// 3. 轴已停，独立验证是否到位
+	deviation := math.Abs(axis.Position - target)
+	tolerance := 0.0
+	if cfg.ArrivalTolerance != nil {
+		tolerance = *cfg.ArrivalTolerance
+	}
+	if deviation <= tolerance {
+		return traversal.MotionSafetyArrived
+	}
+
+	critical := 0.0
+	if cfg.CriticalDeviationLimit != nil {
+		critical = *cfg.CriticalDeviationLimit
+	}
+	if deviation >= critical {
+		return traversal.MotionSafetyCriticalDeviation
+	}
+
+	// 4. 偏差超过到位容差但未达严重偏离阈值——普通超差
+	return traversal.MotionSafetyDeviation
 }
 
 // availableAxisTargets 根据遍历点坐标和参与运动的轴绑定，生成 (轴名→目标位置) 映射。

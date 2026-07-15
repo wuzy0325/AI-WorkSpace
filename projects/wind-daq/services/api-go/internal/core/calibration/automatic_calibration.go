@@ -6,15 +6,22 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"wind-daq/services/api-go/internal/core/traversal"
 )
 
 // RuntimeAccess 校准运行时依赖注入接口
 // 由 CalibrationManager 注入，提供通道读取、运动控制等能力
+//
+// WaitForMotionComplete 返回三元组 (completed, reason, failure)：
+//   - completed=true, reason=none, failure=nil：所有参与运动的轴已到位
+//   - completed=false, failure!=nil：检测到运动安全故障（调用方应调用 onMotionSafetyFailure 回调）
+//   - completed=false, failure=nil, reason≠none：因暂停/停止/取消/超时中断
 type RuntimeAccess interface {
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
 	GetLatestTimestamp(deviceID string) (int64, bool)
 	MoveToPosition(axis MotionAxisConfig, position float64) error
-	WaitForMotionComplete() error
+	WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure)
 	StopMotion() error
 }
 
@@ -37,6 +44,11 @@ type AutomaticCalibration struct {
 	eventPublisher  EventPublisher
 	runtime         RuntimeAccess
 	onDataPoint     func(DataPoint) // 每个点采集完成后的回调（用于实时 CSV 写入等）
+	// onMotionSafetyFailure 运动安全故障回调（由 CalibrationManager 注入）。
+	// 引擎层检测到运动安全故障时调用，委托 Manager 执行急停 + 状态写入。
+	// core/ 不能导入 usecase/（六边形架构硬约束），通过回调反转依赖。
+	// 可为 nil（未注入时故障仅返回 ErrMotionControl，不触发急停和状态快照写入）。
+	onMotionSafetyFailure func(*traversal.MotionSafetyFailure) error
 	taskID          string
 	isRunning       bool
 	isPaused        bool
@@ -52,13 +64,21 @@ type AutomaticCalibration struct {
 
 // NewAutomaticCalibration 创建自动校准引擎
 // onDataPoint 可为 nil；非 nil 时每个点采集完成后同步调用，调用方负责持久化等 I/O。
-func NewAutomaticCalibration(config Config, publisher EventPublisher, runtime RuntimeAccess, onDataPoint func(DataPoint)) *AutomaticCalibration {
+// onMotionSafetyFailure 可为 nil；非 nil 时运动安全故障由回调处理（急停 + 状态写入）。
+func NewAutomaticCalibration(
+	config Config,
+	publisher EventPublisher,
+	runtime RuntimeAccess,
+	onDataPoint func(DataPoint),
+	onMotionSafetyFailure func(*traversal.MotionSafetyFailure) error,
+) *AutomaticCalibration {
 	return &AutomaticCalibration{
-		config:         config,
-		eventPublisher: publisher,
-		runtime:        runtime,
-		onDataPoint:    onDataPoint,
-		dataPoints:     make([]DataPoint, 0),
+		config:                config,
+		eventPublisher:        publisher,
+		runtime:               runtime,
+		onDataPoint:           onDataPoint,
+		onMotionSafetyFailure: onMotionSafetyFailure,
+		dataPoints:            make([]DataPoint, 0),
 	}
 }
 
@@ -278,12 +298,46 @@ func (a *AutomaticCalibration) moveToPoint(point CalPoint, algorithm Algorithm) 
 		}
 	}
 
-	// 等待所有轴运动完成
-	if err := a.runtime.WaitForMotionComplete(); err != nil {
-		return fmt.Errorf("等待运动完成超时: %w", err)
+	// 等待所有轴运动完成（三元组返回值）
+	return a.waitMotionCompleteOrAbort()
+}
+
+// waitMotionCompleteOrAbort 等待运动完成并按返回值分支处理。
+//
+// 分支策略：
+//   - failure != nil：委托 onMotionSafetyFailure 回调处理急停 + 状态写入，返回 ErrMotionControl 终止校准
+//   - completed=true：正常到位，返回 nil
+//   - reason=Paused：返回 ErrPointAborted，runCalibrationLoop 回退索引重跑该点
+//   - reason=Stopped/Cancelled：返回 ErrMotionControl 终止校准（不重跑）
+//   - reason=Timeout：返回包装 ErrMotionControl 的超时错误
+func (a *AutomaticCalibration) waitMotionCompleteOrAbort() error {
+	completed, reason, failure := a.runtime.WaitForMotionComplete()
+
+	// 1. 运动安全故障 → 委托 Manager 处理急停 + 状态写入
+	if failure != nil {
+		if a.onMotionSafetyFailure != nil {
+			return a.onMotionSafetyFailure(failure)
+		}
+		return fmt.Errorf("%w: 运动安全故障: verdict=%s axis=%s target=%.3f actual=%.3f",
+			ErrMotionControl, failure.Verdict, failure.Axis, failure.Target, failure.Actual)
 	}
 
-	return nil
+	// 2. 正常到位
+	if completed {
+		return nil
+	}
+
+	// 3. 按 reason 分支（非故障中断）
+	switch reason {
+	case traversal.MotionInterruptPaused:
+		return ErrPointAborted // 暂停，回退索引重跑
+	case traversal.MotionInterruptStopped, traversal.MotionInterruptCancelled:
+		return fmt.Errorf("%w: 用户停止/取消", ErrMotionControl)
+	case traversal.MotionInterruptTimeout:
+		return fmt.Errorf("%w: 运动超时未完成（>120s）", ErrMotionControl)
+	default:
+		return nil
+	}
 }
 
 // MoveToPointWithOrder 按指定轴顺序移动到点位（五孔探针专用：先α后β）
@@ -309,11 +363,8 @@ func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []
 		}
 	}
 
-	if err := a.runtime.WaitForMotionComplete(); err != nil {
-		return fmt.Errorf("等待运动完成超时: %w", err)
-	}
-
-	return nil
+	// 等待所有轴运动完成（三元组返回值，五孔分轴顺序下每次独立判定）
+	return a.waitMotionCompleteOrAbort()
 }
 
 // waitForSphereTankGateIfNeeded 等待球罐闸门条件

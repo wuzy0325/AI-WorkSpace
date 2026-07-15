@@ -1,5 +1,9 @@
 package calibration
 
+import (
+	"wind-daq/services/api-go/internal/core/traversal"
+)
+
 // State 表示校准任务的状态
 type State string
 
@@ -24,23 +28,27 @@ const (
 
 // Config 校准任务通用配置
 type Config struct {
-	TaskID                 string                     `json:"taskId"`
-	DeviceID               string                     `json:"deviceId"`
-	Type                   string                     `json:"type"`
-	Channels               []int                      `json:"channels"`
-	PressurePoints         []float64                  `json:"pressurePoints"`
-	AverageSamples         int                        `json:"averageSamples"`
-	ProbeChannels          []ProbeChannel             `json:"probeChannels,omitempty"`
-	Points                 []CalPoint                 `json:"points,omitempty"`
-	SamplesPerPoint        int                        `json:"samplesPerPoint,omitempty"`
-	DwellTimeMs            int                        `json:"dwellTimeMs,omitempty"`
-	StopOnError            bool                       `json:"stopOnError,omitempty"`
-	Name                   string                     `json:"name"`                             // 校准任务名称
-	SavePath               string                     `json:"savePath,omitempty"`               // 数据保存路径
-	MotionAxes             []MotionAxisConfig         `json:"motionAxes,omitempty"`             // 运动轴配置
-	SphereTankGate         *SphereTankGateConfig      `json:"sphereTankGate,omitempty"`         // 球罐闸门配置
-	AcquisitionSampling    *AcquisitionSamplingConfig `json:"acquisitionSampling,omitempty"`    // 采集采样配置
-	TotalTemperatureConfig *TotalTemperatureConfig    `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
+	TaskID          string             `json:"taskId"`
+	DeviceID        string             `json:"deviceId"`
+	Type            string             `json:"type"`
+	Channels        []int              `json:"channels"`
+	PressurePoints  []float64          `json:"pressurePoints"`
+	AverageSamples  int                `json:"averageSamples"`
+	ProbeChannels   []ProbeChannel     `json:"probeChannels,omitempty"`
+	Points          []CalPoint         `json:"points,omitempty"`
+	SamplesPerPoint int                `json:"samplesPerPoint,omitempty"`
+	DwellTimeMs     int                `json:"dwellTimeMs,omitempty"`
+	StopOnError     bool               `json:"stopOnError,omitempty"`
+	Name            string             `json:"name"`                 // 校准任务名称
+	SavePath        string             `json:"savePath,omitempty"`   // 数据保存路径
+	MotionAxes      []MotionAxisConfig `json:"motionAxes,omitempty"` // 运动轴配置
+	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
+	// 为 nil 时下游使用 traversal.DefaultMotionSafety，保证旧配置反序列化兼容。
+	// 类型复用 core/traversal.MotionSafetyConfig，与遍历测试共用同一套阈值语义和 Resolve/Merge 方法。
+	MotionSafety           *traversal.MotionSafetyConfig `json:"motionSafety,omitempty"`           // 运动安全配置
+	SphereTankGate         *SphereTankGateConfig         `json:"sphereTankGate,omitempty"`         // 球罐闸门配置
+	AcquisitionSampling    *AcquisitionSamplingConfig    `json:"acquisitionSampling,omitempty"`    // 采集采样配置
+	TotalTemperatureConfig *TotalTemperatureConfig       `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
 	// TimestampReader 设备时间戳读取函数（仅运行时注入，不序列化）。
 	// 非 nil 时各算法在多次采样间等待设备推送新数据帧后才计入有效采样，避免重复读缓存旧数据。
 	TimestampReader TimestampReader `json:"-"`
@@ -76,23 +84,32 @@ type PointResult struct {
 
 // Status 校准任务状态
 type Status struct {
-	TaskID          string      `json:"taskId"`
-	State           State       `json:"state"`
+	TaskID string `json:"taskId"`
+	State  State  `json:"state"`
 	// CurrentPoint 当前正在处理的点索引（autoEngine.currentPointIdx，processPoint 循环顶部推进，早于 moveToPoint）。
 	// 非"已完成点数"——后者见 CompletedPoints。前端 progressInfo 据此索引查 config.points 得到"目标点"，
 	// 让目标角度先于实际角度变化。autoEngine 为 nil（未启动/总温手动模式）时为 0。
-	CurrentPoint    int         `json:"currentPoint"`
-	TotalPoints     int         `json:"totalPoints"`
-	LastError       string      `json:"lastError,omitempty"`
-	Type            string      `json:"type"`
-	CompletedPoints int         `json:"completedPoints"`
-	Progress        float64     `json:"progress"` // 百分比 0-100
-	StartTime       int64       `json:"startTime,omitempty"`
-	DataPoints      []DataPoint `json:"dataPoints,omitempty"`
+	CurrentPoint int    `json:"currentPoint"`
+	TotalPoints  int    `json:"totalPoints"`
+	LastError    string `json:"lastError,omitempty"`
+	// LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
+	// 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
+	// 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。
+	LastErrorCode string `json:"lastErrorCode,omitempty"`
+	// MotionSafetyFailure 运动安全故障现场快照。
+	// 仅在运动安全故障路径写入，其他错误路径（采集失败/保存失败等）保持 nil。
+	// 前端轮询拿到后用于展示故障现场（控制器/轴/verdict/目标/实际/点号），
+	// 避免 lastError 字符串正则解析的不稳定。
+	MotionSafetyFailure *traversal.MotionSafetyFailure `json:"motionSafetyFailure,omitempty"`
+	Type                string                         `json:"type"`
+	CompletedPoints     int                            `json:"completedPoints"`
+	Progress            float64                        `json:"progress"` // 百分比 0-100
+	StartTime           int64                          `json:"startTime,omitempty"`
+	DataPoints          []DataPoint                    `json:"dataPoints,omitempty"`
 	// 当前点采样进度：CurrentSample=当前点已采样本数（1..SamplesPerPoint），0 表示未开始/已完成
 	// SamplesPerPoint=当前点总采样数。前端据此显示"当前点采样 3/10"子进度。
-	CurrentSample   int         `json:"currentSample,omitempty"`
-	SamplesPerPoint int         `json:"samplesPerPoint,omitempty"`
+	CurrentSample   int `json:"currentSample,omitempty"`
+	SamplesPerPoint int `json:"samplesPerPoint,omitempty"`
 }
 
 // ==================== 五孔探针类型 ====================
@@ -206,10 +223,10 @@ type TotalPressureRawData struct {
 // 风洞未建立有效压差或通道缺失时为 nil，CSV 写空字符串、UI 显示 "--"。
 // 与 ThreeHoleCoefficients 保持一致的 nil 语义，避免 0 值误导操作员。
 type TotalPressureCoefficients struct {
-	CPT        float64  `json:"CPT"`                   // 总压恢复系数
-	Error      float64  `json:"error"`                 // 误差(%)
-	MachNumber *float64 `json:"machNumber,omitempty"`  // 马赫数（可选，需风洞总压/静压/大气压/温度齐全）
-	Velocity   *float64 `json:"velocity,omitempty"`    // 速度 m/s（可选，需风洞总压/静压/大气压/温度齐全）
+	CPT        float64  `json:"CPT"`                  // 总压恢复系数
+	Error      float64  `json:"error"`                // 误差(%)
+	MachNumber *float64 `json:"machNumber,omitempty"` // 马赫数（可选，需风洞总压/静压/大气压/温度齐全）
+	Velocity   *float64 `json:"velocity,omitempty"`   // 速度 m/s（可选，需风洞总压/静压/大气压/温度齐全）
 }
 
 // TotalPressureDataPoint 总压探针校准数据点

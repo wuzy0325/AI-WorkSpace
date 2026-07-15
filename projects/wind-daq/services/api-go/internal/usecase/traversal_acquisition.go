@@ -13,6 +13,7 @@ import (
 	"math"
 	"time"
 
+	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
@@ -21,6 +22,9 @@ import (
 // 当 |prevVal| 小于该值时，切换为绝对差阈值比较，避免极小分母放大波动。
 // 取值理由：传感器分辨率典型量级（< 1e-3 物理单位）远大于该值，不会误判正常读数。
 const stabilityNearZeroEpsilon = 1e-9
+
+// 注：motionInterruptReason 类型和常量已提升到 core/traversal 包为导出类型
+// traversal.MotionInterruptReason，校准模块跨包引用（spec AD-1）。
 
 func (m *TraversalManager) RunCurrentPoint() error {
 	m.mu.Lock()
@@ -121,35 +125,66 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 	}
 
-	motionComplete, paused := m.waitForMotionComplete(ctx, point, taskID)
+	motionComplete, reason, failure := m.waitForMotionComplete(ctx, point, taskID, pointIndex)
 	slog.Info("traversal motion phase ended",
 		"component", "traversal",
 		"task_id", taskID,
 		"point_index", pointIndex+1,
 		"motion_complete", motionComplete,
-		"paused", paused,
+		"reason", reason,
+		"has_failure", failure != nil,
 	)
+	// 运动安全故障：立即调用 handleMotionSafetyFailure 分发 Stop/EmergencyStop
+	// 故障现场已由 waitForMotionComplete 快照到 failure 中，本路径不再读硬件
+	if failure != nil {
+		return m.handleMotionSafetyFailure(failure)
+	}
 	if !motionComplete {
-		m.stopMotionAxes()
-		if paused {
+		// 非故障中断：按 waitForMotionComplete 返回的不可变 reason 分支处理。
+		// 原实现事后读 m.isPaused 推断中断类型，Resume 在等待函数返回与读取之间
+		// 清零标志会导致暂停被误判为超时；改为直接用 reason 判断避免竞态。
+		switch reason {
+		case traversal.MotionInterruptPaused:
 			slog.Info("traversal motion interrupted by pause",
 				"component", "traversal",
 				"task_id", taskID,
 				"point_index", pointIndex+1,
 			)
 			return nil // 暂停导致的中断，不算错误
+		case traversal.MotionInterruptStopped, traversal.MotionInterruptCancelled:
+			// 用户停止 / ctx 取消——停止运动轴，由上层 RunTraversalLoop 通过 session.IsDone() 退出
+			m.stopMotionAxes()
+			slog.Info("traversal motion interrupted by stop/cancel",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+				"reason", reason,
+			)
+			return nil
+		case traversal.MotionInterruptTimeout:
+			// 120s 兜底超时——停止运动轴并返回 ErrMotionTimeout
+			m.stopMotionAxes()
+			slog.Error("traversal motion timeout",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+			)
+			return m.failWithCode("motion did not complete for point %d (timeout)", traversal.ErrMotionTimeout, pointIndex+1)
+		default:
+			// traversal.MotionInterruptNone 不应到达（completed=false 时 reason 必非 None）
+			m.stopMotionAxes()
+			return m.failWithCode("motion did not complete for point %d (unknown reason)", traversal.ErrUnknown, pointIndex+1)
 		}
-		slog.Error("traversal motion timeout",
-			"component", "traversal",
-			"task_id", taskID,
-			"point_index", pointIndex+1,
-		)
-		return m.failWithCode("motion did not complete for point %d", traversal.ErrMotionFailed, pointIndex+1)
 	}
 
 	// 阶段2：等待稳定
 	m.updatePhase(taskID, traversal.StateStabilizing, traversal.PhaseStabilizing, pointIndex, len(config.Path))
-	m.waitForStabilization(taskID)
+	stabFailure := m.waitForStabilization(taskID, point, pointIndex)
+	// 稳定阶段检测到运动安全故障：立即停止并返回错误
+	// 与 Moving 阶段共用 handleMotionSafetyFailure，保持故障处理一致性
+	if stabFailure != nil {
+		return m.handleMotionSafetyFailure(stabFailure)
+	}
 
 	// v2：检查会话是否被取消（Stop 调用后快速退出）
 	m.mu.RLock()
@@ -688,17 +723,34 @@ func (m *TraversalManager) updatePhase(taskID string, state traversal.State, pha
 	m.status.TotalPoints = totalPoints
 }
 
-// waitForStabilization 等待数据稳定
-func (m *TraversalManager) waitForStabilization(taskID string) {
+// waitForStabilization 等待数据稳定，期间持续进行运动安全复检。
+//
+// 与 Moving 阶段的安全判定差异：
+//   - 轴应已停止——EvaluateMotionSafety 期望 Arrived，任何其他故障 verdict 都表示异常
+//   - 跨样本看门狗仍调用，但轴停止时 Observe 内部返回 nil（仅防御性观察意外运动）
+//   - validateMotionStatuses 检查控制器掉线/急停（连续 3 快照）
+//
+// 返回 *MotionSafetyFailure 表示检测到故障，调用方应走 handleMotionSafetyFailure；
+// 返回 nil 表示稳定等待正常结束（含暂停/停止中断，由调用方按非故障路径处理）。
+//
+// 复检间隔：fixed 与 adaptive 模式均使用 motionCompletePoll（100ms），
+// 与 Moving 阶段对齐，保证故障检测延迟一致。
+func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int) *traversal.MotionSafetyFailure {
 	m.mu.RLock()
 	stab := m.stabilization
 	dwellMs := m.config.DwellTimeMs
 	deviceID := m.config.DeviceID
 	channels := m.config.Channels
+	motionAxes := m.config.MotionAxes
+	safetyCfg := m.config.MotionSafety
 	m.mu.RUnlock()
 
+	// 稳定阶段独立看门狗——Moving 阶段的看门狗已随 waitForMotionComplete 退出而销毁
+	watchdog := newMotionWatchdog()
+	statusMissCounter := make(map[string]int)
+
 	if stab == nil || stab.Mode == "fixed" {
-		// 固定等待模式
+		// 固定等待模式：将原 sleepWithTaskCheck 替换为周期性复检循环
 		waitMs := dwellMs
 		if stab != nil && stab.FixedTimeMs > 0 {
 			waitMs = stab.FixedTimeMs
@@ -706,14 +758,39 @@ func (m *TraversalManager) waitForStabilization(taskID string) {
 		if waitMs <= 0 {
 			waitMs = 1000
 		}
-		m.sleepWithTaskCheck(taskID, time.Duration(waitMs)*time.Millisecond)
-		return
+		deadline := time.Now().Add(time.Duration(waitMs) * time.Millisecond)
+		ticker := time.NewTicker(motionCompletePoll)
+		defer ticker.Stop()
+		for time.Now().Before(deadline) {
+			if m.isTaskCancelled(taskID) {
+				return nil
+			}
+			// 安全复检：任一故障立即返回
+			if f := m.recheckMotionSafety(motionAxes, safetyCfg, point, pointIndex, watchdog, statusMissCounter); f != nil {
+				return f
+			}
+			// 等待下一个复检周期
+			<-ticker.C
+		}
+		return nil
 	}
 
 	// 自适应稳定模式
 	if stab.Adaptive == nil {
-		m.sleepWithTaskCheck(taskID, time.Duration(dwellMs)*time.Millisecond)
-		return
+		// 退化为固定等待
+		deadline := time.Now().Add(time.Duration(dwellMs) * time.Millisecond)
+		ticker := time.NewTicker(motionCompletePoll)
+		defer ticker.Stop()
+		for time.Now().Before(deadline) {
+			if m.isTaskCancelled(taskID) {
+				return nil
+			}
+			if f := m.recheckMotionSafety(motionAxes, safetyCfg, point, pointIndex, watchdog, statusMissCounter); f != nil {
+				return f
+			}
+			<-ticker.C
+		}
+		return nil
 	}
 
 	adaptive := stab.Adaptive
@@ -722,8 +799,19 @@ func (m *TraversalManager) waitForStabilization(taskID string) {
 	checkInterval := time.Duration(adaptive.CheckIntervalMs) * time.Millisecond
 	threshold := adaptive.StabilityThreshold
 
-	// 至少等待最小时间
-	m.sleepWithTaskCheck(taskID, minWait)
+	// 至少等待最小时间——期间同样进行安全复检
+	minDeadline := time.Now().Add(minWait)
+	minTicker := time.NewTicker(motionCompletePoll)
+	defer minTicker.Stop()
+	for time.Now().Before(minDeadline) {
+		if m.isTaskCancelled(taskID) {
+			return nil
+		}
+		if f := m.recheckMotionSafety(motionAxes, safetyCfg, point, pointIndex, watchdog, statusMissCounter); f != nil {
+			return f
+		}
+		<-minTicker.C
+	}
 
 	// 读取初始参考值
 	prevValues := m.readCurrentValues(deviceID, channels)
@@ -732,7 +820,11 @@ func (m *TraversalManager) waitForStabilization(taskID string) {
 
 	for time.Since(start) < maxWait && stableCount < adaptive.ConsecutiveChecks {
 		if m.isTaskCancelled(taskID) {
-			return
+			return nil
+		}
+		// 自适应采样前先做安全复检——任何故障立即中断
+		if f := m.recheckMotionSafety(motionAxes, safetyCfg, point, pointIndex, watchdog, statusMissCounter); f != nil {
+			return f
 		}
 		m.sleepWithTaskCheck(taskID, checkInterval)
 
@@ -745,6 +837,70 @@ func (m *TraversalManager) waitForStabilization(taskID string) {
 		}
 		prevValues = curValues
 	}
+	return nil
+}
+
+// recheckMotionSafety 稳定阶段运动安全复检。
+//
+// 与 waitForMotionComplete 中的判定逻辑一致，但使用独立的看门狗与计数器，
+// 因为稳定阶段是新的判定周期（Moving 阶段的状态已销毁）。
+//
+// 检查项：
+//  1. validateMotionStatuses——控制器掉线/急停/目标轴连续缺失
+//  2. 每轴 EvaluateMotionSafety——撞限位/到位/超差/严重偏离
+//  3. 跨样本看门狗 Observe——无进展/越过目标（防御性，轴应已停）
+//
+// 任一故障立即返回 *MotionSafetyFailure；nil 表示状态正常。
+func (m *TraversalManager) recheckMotionSafety(
+	motionAxes []traversal.MotionAxisBinding,
+	safetyCfg *traversal.MotionSafetyConfig,
+	point traversal.Point,
+	pointIndex int,
+	watchdog *motionWatchdog,
+	statusMissCounter map[string]int,
+) *traversal.MotionSafetyFailure {
+	if m.motion == nil {
+		return nil
+	}
+	ctx := context.Background()
+	statuses := m.motion.StatusAll(ctx)
+
+	// 1. 状态可用性校验
+	if f := m.validateMotionStatuses(statuses, motionAxes, statusMissCounter, pointIndex); f != nil {
+		return f
+	}
+
+	// 2. 每轴 EvaluateMotionSafety + 看门狗 Observe
+	for _, status := range statuses {
+		if !status.Connected {
+			continue
+		}
+		targets := availableAxisTargets(status, point, motionAxes)
+		for _, axis := range status.Axes {
+			target, hasTarget := targets[axis.Name]
+			if !hasTarget {
+				continue
+			}
+			resolved := safetyCfg.Resolve(string(axis.Name))
+			verdict := EvaluateMotionSafety(axis, target, resolved)
+			if verdict.IsFailure() {
+				return &traversal.MotionSafetyFailure{
+					ControllerID:   status.ID,
+					ControllerName: status.Name,
+					Axis:           string(axis.Name),
+					Verdict:        verdict,
+					Target:         target,
+					Actual:         axis.Position,
+					PointIndex:     pointIndex,
+				}
+			}
+			if f := watchdog.Observe(status.ID, axis, target, resolved, pointIndex); f != nil {
+				f.ControllerName = status.Name
+				return f
+			}
+		}
+	}
+	return nil
 }
 
 // readCurrentValues 读取当前设备数据值
@@ -804,6 +960,10 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	// 采样失败计数：区分"设备无数据"与"通道不匹配"两类失败
 	var noDataCount int
 	var channelMismatchCount int
+	// 时间戳去重：跳过同一帧的重复读取。
+	// 当设备刷新周期 > 轮询间隔（10ms）时，多次 GetLatestData 可能返回同一帧，
+	// 直接累加会导致假平均（同一帧的值反复相加）。此处用时间戳确保每帧只采一次。
+	var lastTimestamp int64 = -1
 
 	for validSamples < samplesPerPoint {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
@@ -835,6 +995,12 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 			continue
 		}
 		everOk = true
+		if payload.Timestamp <= lastTimestamp {
+			noDataCount++
+			time.Sleep(acquisitionBatchPoll)
+			continue
+		}
+		lastTimestamp = payload.Timestamp
 		lastChannelCount = len(payload.Channels)
 		lastIndices = append(lastIndices[:0], payload.ChannelIndices...)
 		values := valuesForChannels(payload, channels)
@@ -869,49 +1035,222 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	return averaged, nil
 }
 
-// waitForMotionComplete 等待运动完成（带超时和取消检查）。
-// 返回值：(completed, paused)
-//   - completed=true：所有参与运动的轴已到位
-//   - completed=false, paused=true：因暂停中断（非错误，RunCurrentPoint 应静默退出）
-//   - completed=false, paused=false：超时或停止中断（错误路径）
+// waitForMotionComplete 等待运动完成，集成运动安全判定与跨样本看门狗。
 //
-// 暂停信息通过返回值传递而非全局标志位，避免与 Resume 并发清零产生竞态。
-func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string) (completed bool, paused bool) {
+// 返回值：
+//   - completed=true, reason=none, failure=nil：所有参与运动的轴已到位
+//   - completed=false, failure!=nil：检测到运动安全故障（调用方应调用 handleMotionSafetyFailure）
+//   - completed=false, failure=nil, reason≠none：因暂停/停止/取消/超时中断
+//     （调用方按 reason 分支处理，不再读 m.isPaused/m.isStopped 推断，避免竞态）
+//
+// 故障判定优先级（spec §waitForMotionComplete）：
+//  1. ctx 取消（虽然当前传 Background 不会触发，保留语义以备未来改造）
+//  2. 到位检查（motionTargetsReachedWithTolerance）——deadline 边界附近先判到位避免假超时
+//  3. 暂停/停止标志——用户主动中断，不算故障
+//  4. validateMotionStatuses——已绑定控制器掉线/已急停/目标轴连续 3 快照缺失
+//  5. 每轴 EvaluateMotionSafety 单次快照判定（撞限位/到位/超差/严重偏离）
+//  6. 跨样本看门狗 Observe（无进展/越过目标）
+//  7. 120s 兜底超时——返回 (false, timeout, nil)，调用方按 ErrMotionTimeout 处理
+//
+// 故障现场快照原则：检测到故障时立即构造 MotionSafetyFailure，错误处理阶段不再读硬件。
+func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string, pointIndex int) (completed bool, reason traversal.MotionInterruptReason, failure *traversal.MotionSafetyFailure) {
 	ticker := time.NewTicker(motionCompletePoll)
 	defer ticker.Stop()
 	deadline := time.Now().Add(motionCompleteTimeout)
 
-	// 读取 motionAxes 配置，仅检查参与遍历运动的轴是否到位
+	// 读取 motionAxes 与运动安全配置；motionAxes 为空时（旧配置兼容）对所有已连接控制器判定
 	m.mu.RLock()
 	motionAxes := m.config.MotionAxes
+	safetyCfg := m.config.MotionSafety
 	m.mu.RUnlock()
+	statusValidationAxes := motionAxes
+
 	// 容错预处理：与 RunCurrentPoint 保持一致，否则 controllerId 全部不匹配时
 	// targets 为 nil → allReached 恒为 true → 跳过运动直接进入「稳定中」阶段
 	motionAxes = resolveMotionAxes(motionAxes, m.motion.StatusAll(ctx))
 
+	// 跨样本看门狗：每点位独立，新点位开始时构造新实例
+	watchdog := newMotionWatchdog()
+
+	// 状态缺失抖动计数器：(controllerID|axis) → 连续缺失次数
+	// 连续 3 快照缺失才升级为 StatusUnavailable，避免单帧抖动误报
+	statusMissCounter := make(map[string]int)
+
 	for {
 		select {
 		case <-ctx.Done():
-			return false, false
+			// ctx 取消优先于故障判定——外部 Stop 调用后立即返回，不再触发故障处理
+			return false, traversal.MotionInterruptCancelled, nil
 		case <-ticker.C:
-			// 优先检查到位：运动在 deadline 边界附近完成时，先判到位避免假超时
-			if motionTargetsReached(m.motion.StatusAll(ctx), point, motionAxes) {
-				return true, false
+			// 1. 优先检查到位：运动在 deadline 边界附近完成时，先判到位避免假超时
+			statuses := m.motion.StatusAll(ctx)
+			allReached, _ := motionTargetsReachedWithTolerance(statuses, point, motionAxes, safetyCfg)
+			if allReached {
+				return true, traversal.MotionInterruptNone, nil
 			}
-			// 再检查暂停/停止
+
+			// 2. 暂停/停止检查（非故障中断）——拆分判断以返回不可变原因
+			// 原实现合并 stopped||isPaused 返回 (false, nil) 再事后读 m.isPaused，
+			// Resume 在两者之间清零标志会导致暂停被误判为超时
 			m.mu.Lock()
 			isPaused := m.isPaused
 			stopped := m.isStopped
 			m.mu.Unlock()
 			if stopped {
-				return false, false
+				return false, traversal.MotionInterruptStopped, nil
 			}
 			if isPaused {
-				return false, true
+				return false, traversal.MotionInterruptPaused, nil
 			}
+
+			// 3. 状态可用性校验：控制器掉线/已急停/目标轴连续缺失
+			if f := m.validateMotionStatuses(statuses, statusValidationAxes, statusMissCounter, pointIndex); f != nil {
+				return false, traversal.MotionInterruptNone, f
+			}
+
+			// 4. 每轴 EvaluateMotionSafety + 看门狗 Observe
+			for _, status := range statuses {
+				if !status.Connected {
+					continue
+				}
+				targets := availableAxisTargets(status, point, motionAxes)
+				for _, axis := range status.Axes {
+					target, hasTarget := targets[axis.Name]
+					if !hasTarget {
+						continue
+					}
+
+					// 按轴解析有效配置（合并默认值 + 全局 + 按轴覆盖）
+					resolved := safetyCfg.Resolve(string(axis.Name))
+
+					// 单次快照判定：撞限位/到位/超差/严重偏离
+					verdict := EvaluateMotionSafety(axis, target, resolved)
+					if verdict.IsFailure() {
+						return false, traversal.MotionInterruptNone, &traversal.MotionSafetyFailure{
+							ControllerID:   status.ID,
+							ControllerName: status.Name,
+							Axis:           string(axis.Name),
+							Verdict:        verdict,
+							Target:         target,
+							Actual:         axis.Position,
+							PointIndex:     pointIndex,
+						}
+					}
+
+					// 跨样本看门狗：仅运动中观察，识别无进展/越过目标
+					// 轴已停时 Observe 内部会清空历史并返回 nil
+					if f := watchdog.Observe(status.ID, axis, target, resolved, pointIndex); f != nil {
+						f.ControllerName = status.Name
+						return false, traversal.MotionInterruptNone, f
+					}
+				}
+			}
+
+			// 5. 120s 兜底超时——返回 (false, timeout, nil)，调用方按 ErrMotionTimeout 处理
 			if time.Now().After(deadline) {
-				return false, false
+				return false, traversal.MotionInterruptTimeout, nil
 			}
 		}
 	}
+}
+
+// validateMotionStatuses 校验运动状态可用性，检测三类异常：
+//  1. 已绑定控制器掉线（Connected=false 或不在 statuses 中）
+//  2. 已绑定控制器已急停（EmergencyStopped=true）
+//  3. 目标轴连续 3 快照缺失（status.Axes 中找不到绑定轴名）
+//
+// 连续 3 快照缺失才升级为故障，避免单帧抖动（如设备临时未响应）误报。
+// statusMissCounter 由调用方持有，跨快照累积计数；找到轴时清零对应计数。
+//
+// 返回 *MotionSafetyFailure 表示需立即停止；nil 表示状态正常或仅瞬时抖动。
+//
+// 注意：本函数不读硬件——statuses 由调用方传入，已是当前快照。
+func (m *TraversalManager) validateMotionStatuses(
+	statuses []motion.ControllerStatus,
+	motionAxes []traversal.MotionAxisBinding,
+	statusMissCounter map[string]int,
+	pointIndex int,
+) *traversal.MotionSafetyFailure {
+	// 无绑定配置时跳过校验（旧行为兼容：对所有已连接控制器判定）
+	if len(motionAxes) == 0 {
+		return nil
+	}
+
+	// 构建当前快照的控制器索引（ID → ControllerStatus）便于按 ID 查找
+	statusByController := make(map[string]motion.ControllerStatus, len(statuses))
+	for _, s := range statuses {
+		statusByController[s.ID] = s
+	}
+
+	// 遍历绑定，逐项检查控制器与轴可用性
+	for _, binding := range motionAxes {
+		if binding.Axis == "" {
+			continue
+		}
+
+		// 已绑定 controllerId 时严格按 ID 查找；为空时按轴名匹配（已在 resolveMotionAxes 回退）
+		// 这里仅检查 controllerId 非空的绑定，空 controllerId 的绑定由 availableAxisTargets 处理
+		if binding.ControllerID == "" {
+			continue
+		}
+
+		status, exists := statusByController[binding.ControllerID]
+		missKey := binding.ControllerID + "|" + binding.Axis
+
+		// 1. 控制器掉线（不在 statuses 或 Connected=false）
+		if !exists || !status.Connected {
+			statusMissCounter[missKey]++
+			if statusMissCounter[missKey] >= 3 {
+				return &traversal.MotionSafetyFailure{
+					ControllerID: binding.ControllerID,
+					Axis:         binding.Axis,
+					Verdict:      traversal.MotionSafetyStatusUnavailable,
+					Target:       0,
+					Actual:       0,
+					PointIndex:   pointIndex,
+				}
+			}
+			continue
+		}
+
+		// 2. 控制器已急停——硬件层已触发急停，遍历层应立即停止避免继续下发指令
+		if status.EmergencyStopped {
+			return &traversal.MotionSafetyFailure{
+				ControllerID: binding.ControllerID,
+				Axis:         binding.Axis,
+				Verdict:      traversal.MotionSafetyStatusUnavailable,
+				Target:       0,
+				Actual:       0,
+				PointIndex:   pointIndex,
+			}
+		}
+
+		// 3. 目标轴连续 3 快照缺失
+		axisFound := false
+		for _, axis := range status.Axes {
+			if string(axis.Name) == binding.Axis {
+				axisFound = true
+				break
+			}
+		}
+		if !axisFound {
+			statusMissCounter[missKey]++
+			if statusMissCounter[missKey] >= 3 {
+				return &traversal.MotionSafetyFailure{
+					ControllerID: binding.ControllerID,
+					Axis:         binding.Axis,
+					Verdict:      traversal.MotionSafetyStatusUnavailable,
+					Target:       0,
+					Actual:       0,
+					PointIndex:   pointIndex,
+				}
+			}
+			continue
+		}
+
+		// 轴存在：清零该绑定的缺失计数
+		delete(statusMissCounter, missKey)
+	}
+
+	return nil
 }

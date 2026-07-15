@@ -9,6 +9,7 @@ import (
 
 type delayedLatestDataReader struct {
 	calls int
+	seq   int64
 }
 
 func (r *delayedLatestDataReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
@@ -16,8 +17,10 @@ func (r *delayedLatestDataReader) GetLatestData(deviceID string) (device.DataPay
 	if r.calls <= 2 {
 		return device.DataPayload{}, false
 	}
+	r.seq++
 	return device.DataPayload{
 		DeviceID:       deviceID,
+		Timestamp:      r.seq,
 		Channels:       []float64{12.5},
 		ChannelIndices: []int{0},
 	}, true

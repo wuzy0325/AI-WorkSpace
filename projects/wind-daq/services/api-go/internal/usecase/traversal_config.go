@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -371,6 +372,8 @@ type traversalAPIConfig struct {
 	// PProbePressureType 五孔探针 P1-P5 压力类型："gauge"（默认）/ "absolute"。
 	// 空串在 ParseAndStartTraversal 中兜底为 "gauge"，保证旧配置兼容。
 	PProbePressureType string `json:"pProbePressureType,omitempty"`
+	// MotionSafety 运动安全配置。为空时下游使用 DefaultMotionSafety。
+	MotionSafety *traversal.MotionSafetyConfig `json:"motionSafety,omitempty"`
 }
 
 // roleToLabel 将前端 ProbeChannelConfig.role 转为压力标签
@@ -573,6 +576,17 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 	if samplesPerPoint <= 0 {
 		samplesPerPoint = 1
 	}
+	// 校验运动安全配置——校验失败时直接返回错误，不获取工作流锁、不创建文件、不下发运动命令。
+	// 必须在构造 config 前完成，避免污染状态机。
+	if cfg.MotionSafety != nil {
+		if err := validateMotionSafetyConfig(cfg.MotionSafety, motionAxes); err != nil {
+			slog.Error("parse traversal config: invalid motionSafety",
+				"component", "traversal",
+				"error", err,
+			)
+			return traversal.Config{}, fmt.Errorf("invalid motionSafety: %w", err)
+		}
+	}
 	config := traversal.Config{
 		TaskID:            fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
 		DeviceID:          deviceID,
@@ -586,6 +600,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		ChannelLabels:     channelLabels,
 		InterpolationMode: cfg.InterpolationMode,
 		MotionAxes:        motionAxes,
+		MotionSafety:      cfg.MotionSafety,
 	}
 	// 压力类型兜底：空串与缺失均落 "gauge"，与历史行为一致，避免归一化逻辑误判绝压。
 	pressureType := cfg.PProbePressureType
@@ -664,6 +679,124 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		"dwell_ms", config.DwellTimeMs,
 	)
 	return config.TaskID, nil
+}
+
+// motionCompletePoll 运动到位轮询间隔（毫秒）。
+// 在 traversal_acquisition.go 中定义为 const，这里仅供 validateMotionSafetyConfig 引用。
+// 为避免循环，将值拷贝在此并加测试断言二者一致。
+const motionCompletePollMsForValidation = 100
+
+// validateMotionSafetyConfig 校验 MotionSafetyConfig 合法性。
+//
+// 校验规则：
+//  1. 浮点字段必须有限（非 NaN、非 Inf）
+//  2. ArrivalTolerance > 0、ProgressEpsilon > 0
+//  3. CriticalDeviationLimit > ArrivalTolerance（避免阈值倒置导致永远走不到 Deviation 分支）
+//  4. NoProgressTimeoutMs >= 2*motionCompletePollMsForValidation（避免看门狗比轮询还快误触发）
+//  5. AxisOverrides 键必须是 motionAxes 中已绑定的轴名
+//  6. AxisOverrides 项内不允许嵌套 AxisOverrides（递归无意义）
+//  7. 每个绑定轴 Resolve(axis) 后的合并值必须满足 CriticalDeviationLimit > ArrivalTolerance
+//     （防止"全局 + 轴覆盖"组合倒置绕过单对象校验）
+//
+// 校验失败时返回错误，调用方应在创建任何文件/状态机副作用前返回。
+func validateMotionSafetyConfig(cfg *traversal.MotionSafetyConfig, motionAxes []traversal.MotionAxisBinding) error {
+	if cfg == nil {
+		return nil
+	}
+	if err := validateMotionSafetyFields(cfg, ""); err != nil {
+		return err
+	}
+
+	// 校验 AxisOverrides
+	boundAxes := make(map[string]bool, len(motionAxes))
+	for _, b := range motionAxes {
+		if b.Axis != "" {
+			boundAxes[b.Axis] = true
+		}
+	}
+	for axisName, override := range cfg.AxisOverrides {
+		if !boundAxes[axisName] {
+			return fmt.Errorf("axisOverrides[%q]: axis not bound in motionAxes", axisName)
+		}
+		if override == nil {
+			continue
+		}
+		// 递归覆盖无意义且增加解析复杂度
+		if len(override.AxisOverrides) > 0 {
+			return fmt.Errorf("axisOverrides[%q]: nested axisOverrides not allowed", axisName)
+		}
+		if err := validateMotionSafetyFields(override, axisName); err != nil {
+			return err
+		}
+	}
+
+	// 跨字段合并校验：对每个绑定轴调用 Resolve(axis)，校验解析后的合并值满足跨字段约束。
+	// 必要性：validateMotionSafetyFields 只校验"同一对象内"的 criticalDeviationLimit > arrivalTolerance，
+	// 无法覆盖"全局 arrivalTolerance + 轴覆盖 criticalDeviationLimit"的组合——
+	// 例如全局 arrivalTolerance=10、X 轴覆盖 criticalDeviationLimit=5 会通过单对象校验，
+	// 但 Resolve(X) 后得到 arrivalTolerance=10, criticalDeviationLimit=5，阈值倒置，
+	// 运行时偏差 5–10 会先被到位检查接受，不会触发急停。
+	// Resolve 返回的配置所有字段都有值（默认兜底），此处只校验跨字段约束，
+	// 单字段范围校验已由上面的 validateMotionSafetyFields 完成。
+	for _, b := range motionAxes {
+		if b.Axis == "" {
+			continue
+		}
+		resolved := cfg.Resolve(b.Axis)
+		if *resolved.CriticalDeviationLimit <= *resolved.ArrivalTolerance {
+			return fmt.Errorf("axis %q: resolved criticalDeviationLimit (%v) must be > arrivalTolerance (%v) after merging global + override",
+				b.Axis, *resolved.CriticalDeviationLimit, *resolved.ArrivalTolerance)
+		}
+	}
+	return nil
+}
+
+// validateMotionSafetyFields 校验单个 MotionSafetyConfig 的字段合法性。
+// prefix 用于错误信息定位（"" 表示全局，轴名表示按轴覆盖）。
+func validateMotionSafetyFields(cfg *traversal.MotionSafetyConfig, prefix string) error {
+	pfx := ""
+	if prefix != "" {
+		pfx = "axisOverrides[" + prefix + "]."
+	}
+	if cfg.ArrivalTolerance != nil {
+		v := *cfg.ArrivalTolerance
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("%sarrivalTolerance: must be finite, got %v", pfx, v)
+		}
+		if v <= 0 {
+			return fmt.Errorf("%sarrivalTolerance: must be > 0, got %v", pfx, v)
+		}
+	}
+	if cfg.CriticalDeviationLimit != nil {
+		v := *cfg.CriticalDeviationLimit
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("%scriticalDeviationLimit: must be finite, got %v", pfx, v)
+		}
+		if v <= 0 {
+			return fmt.Errorf("%scriticalDeviationLimit: must be > 0, got %v", pfx, v)
+		}
+		// 阈值关系：CriticalDeviationLimit > ArrivalTolerance
+		if cfg.ArrivalTolerance != nil && v <= *cfg.ArrivalTolerance {
+			return fmt.Errorf("%scriticalDeviationLimit (%v) must be > arrivalTolerance (%v)", pfx, v, *cfg.ArrivalTolerance)
+		}
+	}
+	if cfg.NoProgressTimeoutMs != nil {
+		v := *cfg.NoProgressTimeoutMs
+		if v < 2*motionCompletePollMsForValidation {
+			return fmt.Errorf("%snoProgressTimeoutMs: must be >= %d (2x poll interval), got %d",
+				pfx, 2*motionCompletePollMsForValidation, v)
+		}
+	}
+	if cfg.ProgressEpsilon != nil {
+		v := *cfg.ProgressEpsilon
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("%sprogressEpsilon: must be finite, got %v", pfx, v)
+		}
+		if v <= 0 {
+			return fmt.Errorf("%sprogressEpsilon: must be > 0, got %v", pfx, v)
+		}
+	}
+	return nil
 }
 
 // 任何退出路径都会调用 sink.FinalizeTraversal 关闭文件，保证落盘

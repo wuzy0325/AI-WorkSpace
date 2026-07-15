@@ -31,40 +31,40 @@ const (
 type b140CompensationJobState int
 
 const (
-	compensationStateWaitingStop   b140CompensationJobState = iota // 等待硬件运动停止
-	compensationStateSettling                                      // 等待机械震荡衰减
-	compensationStateChecking                                      // 检查编码器误差
-	compensationStateCompensating                                  // 下发 PR 微调
-	compensationStateSucceeded                                     // 补偿成功
-	compensationStateFailed                                        // 补偿失败
-	compensationStateCancelled                                     // 被新命令取消
+	compensationStateWaitingStop  b140CompensationJobState = iota // 等待硬件运动停止
+	compensationStateSettling                                     // 等待机械震荡衰减
+	compensationStateChecking                                     // 检查编码器误差
+	compensationStateCompensating                                 // 下发 PR 微调
+	compensationStateSucceeded                                    // 补偿成功
+	compensationStateFailed                                       // 补偿失败
+	compensationStateCancelled                                    // 被新命令取消
 )
 
 // b140PendingCompensationRequest moveTo 下发后入队的待激活补偿请求。
 // 等状态轮询发现运动已发生且停止后，升级为 b140CompensationJob。
 type b140PendingCompensationRequest struct {
-	targetPulse       int64                       // 目标寄存器脉冲
-	targetEngineering float64                    // 目标工程位置
-	cfg              core.AxisEncoderCompensationConfig // 解析后的补偿参数
-	issuedAt         time.Time                    // moveTo 下发时间，用于启动宽限
-	observedMotion   bool                         // 是否已观察到运动（用于静止轴误触发保护）
+	targetPulse       int64                              // 目标寄存器脉冲
+	targetEngineering float64                            // 目标工程位置
+	cfg               core.AxisEncoderCompensationConfig // 解析后的补偿参数
+	issuedAt          time.Time                          // moveTo 下发时间，用于启动宽限
+	observedMotion    bool                               // 是否已观察到运动（用于静止轴误触发保护）
 }
 
 // b140CompensationJob 已激活的补偿任务。
 // 一旦激活就在独立 goroutine 中运行 runAxisCompensation 状态机。
 type b140CompensationJob struct {
-	generation        int64                       // 代际号：新命令来时让旧任务自废
-	axis              core.AxisName               // 轴名
-	physical          string                      // 物理轴（A/B/C/D）
-	axisCfg           core.AxisConfig             // 配置快照（避免运行中 profile 被改）
+	generation        int64                              // 代际号：新命令来时让旧任务自废
+	axis              core.AxisName                      // 轴名
+	physical          string                             // 物理轴（A/B/C/D）
+	axisCfg           core.AxisConfig                    // 配置快照（避免运行中 profile 被改）
 	cfg               core.AxisEncoderCompensationConfig // 补偿参数
-	targetPulse       int64                       // 目标脉冲
-	targetEngineering float64                      // 目标工程位置
-	state             b140CompensationJobState     // 当前状态
-	attempts          int                          // 已尝试的补偿循环次数
-	startedAt         time.Time                    // 任务激活时间，用于超时判定
-	lastError         string                       // 失败原因（空表示未失败）
-	err               error                        // 失败错误对象
+	targetPulse       int64                              // 目标脉冲
+	targetEngineering float64                            // 目标工程位置
+	state             b140CompensationJobState           // 当前状态
+	attempts          int                                // 已尝试的补偿循环次数
+	startedAt         time.Time                          // 任务激活时间，用于超时判定
+	lastError         string                             // 失败原因（空表示未失败）
+	err               error                              // 失败错误对象
 }
 
 // B140MotionController implements Galil DMC-B140-M TCP ASCII motion control.
@@ -106,10 +106,10 @@ func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionCo
 	}
 
 	return &B140MotionController{
-		profile:          profile,
-		status:           status,
-		pendingRequests:  make(map[core.AxisName]*b140PendingCompensationRequest),
-		jobs:             make(map[core.AxisName]*b140CompensationJob),
+		profile:         profile,
+		status:          status,
+		pendingRequests: make(map[core.AxisName]*b140PendingCompensationRequest),
+		jobs:            make(map[core.AxisName]*b140CompensationJob),
 	}
 }
 
@@ -369,10 +369,12 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 
 		registerPulse := numberAt(registerPositions, axisIndex)
 		position := core.PulseToEngineering(axisCfg, registerPulse)
+		positionSourceReadValid := true
 
 		if axisCfg.PositionSource == core.PositionSourceEncoder {
 			payload, encErr := c.sendCommand(ctx, "TP"+physical)
 			if encErr != nil {
+				positionSourceReadValid = false
 				// 编码器读取失败不静默回退到寄存器位置：寄存器与编码器在补偿
 				// 启用时本就允许有偏差，静默替换会向操作员呈现一个看似合理
 				// 但失真的位置。收集错误使故障可见，位置降级为寄存器换算值。
@@ -380,6 +382,7 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 			} else if encoderCount, parseErr2 := strconv.ParseFloat(strings.TrimSpace(payload), 64); parseErr2 == nil {
 				position = core.EncoderCountToEngineering(axisCfg, encoderCount)
 			} else {
+				positionSourceReadValid = false
 				encoderFault = fmt.Sprintf("axis %s encoder parse (TP%s payload %q): %v", axisSnapshot.Name, physical, payload, parseErr2)
 			}
 		}
@@ -395,6 +398,32 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		}
 
 		moving := int(numberAt(statusBytes, axisIndex))&0x80 != 0
+		if axisSnapshot.Moving && !moving && positionSourceReadValid {
+			// TD/TP is read before TS, so the axis can stop between the position
+			// and motion-state queries. Refresh the configured position source to
+			// keep a stopped snapshot from carrying an earlier in-motion position.
+			if axisCfg.PositionSource == core.PositionSourceEncoder {
+				payload, refreshErr := c.sendCommand(ctx, "TP"+physical)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final encoder read (TP%s): %w", axisSnapshot.Name, physical, refreshErr))
+				}
+				encoderCount, refreshErr := strconv.ParseFloat(strings.TrimSpace(payload), 64)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final encoder parse (TP%s payload %q): %w", axisSnapshot.Name, physical, payload, refreshErr))
+				}
+				position = core.EncoderCountToEngineering(axisCfg, encoderCount)
+			} else {
+				payload, refreshErr := c.sendCommand(ctx, "TD")
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final register read: %w", axisSnapshot.Name, refreshErr))
+				}
+				positions, refreshErr := parseB140Numbers(payload)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final register parse: %w", axisSnapshot.Name, refreshErr))
+				}
+				position = core.PulseToEngineering(axisCfg, numberAt(positions, axisIndex))
+			}
+		}
 
 		results[axisSnapshot.Name] = axisResult{
 			position: position,
@@ -759,11 +788,11 @@ func (c *B140MotionController) enqueuePendingCompensation(axis core.AxisName, ph
 	c.compMu.Lock()
 	defer c.compMu.Unlock()
 	c.pendingRequests[axis] = &b140PendingCompensationRequest{
-		targetPulse:        targetPulse,
-		targetEngineering:  targetEngineering,
-		cfg:                resolved,
-		issuedAt:           time.Now(),
-		observedMotion:     false,
+		targetPulse:       targetPulse,
+		targetEngineering: targetEngineering,
+		cfg:               resolved,
+		issuedAt:          time.Now(),
+		observedMotion:    false,
 	}
 }
 

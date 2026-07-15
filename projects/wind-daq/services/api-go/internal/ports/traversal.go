@@ -12,6 +12,11 @@ type MotionAccess interface {
 	StatusAll(ctx context.Context) []motion.ControllerStatus
 	MoveTo(ctx context.Context, id string, axis motion.AxisName, position float64) error
 	Stop(ctx context.Context, id string, axis motion.AxisName) error
+	// EmergencyStop 对指定控制器触发急停（所有轴瞬时停止）。
+	// 用于运动安全判定检测到严重异常（撞限位、严重偏离）时快速停机。
+	// 与 Stop 的差异：Stop 是单轴减速停止，EmergencyStop 是控制器级瞬时停止。
+	// 急停后通常需要人工复位才能恢复运动。
+	EmergencyStop(ctx context.Context, id string) error
 }
 
 // TraversalPointSink 遍历点结果的写入端口（用于 CSV 落盘等）

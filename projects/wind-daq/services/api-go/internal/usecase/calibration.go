@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
+	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
 
@@ -155,8 +157,13 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	// 创建事件发布适配器
 	publisher := m.createEventPublisher()
 
-	// 创建运行时适配器
-	runtime := m.createRuntime()
+	// 运动安全配置校验：非法阈值/未绑定轴在启动前拒绝，避免运动中才发现配置错误
+	if err := validateCalibrationMotionSafetyConfig(config.MotionSafety, config.MotionAxes); err != nil {
+		return fmt.Errorf("运动安全配置校验失败: %w", err)
+	}
+
+	// 创建运行时适配器（注入运动安全配置 + isPaused 回调）
+	runtime := m.createRuntime(config.MotionSafety)
 
 	// CSV 实时写入：自动校准类型在 Start 时以覆盖模式初始化 csvWriter，
 	// 每个点采集完成后通过 onDataPoint 回调逐点写入，崩溃/断电不丢已采集点。
@@ -216,8 +223,11 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		}
 	}
 
-	// 创建自动校准引擎
-	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime, onDataPoint)
+	// 创建自动校准引擎（注入运动安全故障回调，引擎层通过回调委托 Manager 执行急停 + 状态写入）
+	onMotionSafetyFailure := func(failure *traversal.MotionSafetyFailure) error {
+		return m.handleCalibrationMotionSafetyFailure(runtime, failure)
+	}
+	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime, onDataPoint, onMotionSafetyFailure)
 	m.autoEngine.SetTaskID(config.TaskID)
 
 	// 更新状态
@@ -373,8 +383,10 @@ func (m *CalibrationManager) Stop() error {
 		}
 	}
 
-	// 停止运动
-	m.stopMotion()
+	// 停止运动（用户主动停止路径，错误仅记录不影响流程）
+	if err := m.stopMotion(); err != nil {
+		log.Printf("[CalibrationManager] Stop 停止运动失败: %v", err)
+	}
 
 	return nil
 }
@@ -641,11 +653,26 @@ func (m *CalibrationManager) createEventPublisher() calibration.EventPublisher {
 }
 
 // createRuntime 创建运行时适配器
-func (m *CalibrationManager) createRuntime() calibration.RuntimeAccess {
+//
+// 参数 motionSafety 为运动安全配置（来自 config.MotionSafety），注入到 fallbackRuntime
+// 用于运动安全循环中的到位容差/严重偏离/看门狗判定。为 nil 时下游使用默认值。
+// isPaused 回调延迟绑定到 m.autoEngine（autoEngine 在本函数返回后创建，
+// 闭包捕获 m 引用，运行时读取 m.autoEngine.IsPaused()）。
+func (m *CalibrationManager) createRuntime(motionSafety *traversal.MotionSafetyConfig) calibration.RuntimeAccess {
 	if m.runtime != nil {
 		return &runtimeAdapter{runtime: m.runtime}
 	}
-	return &fallbackRuntime{reader: m.reader, motion: m.motion}
+	return &fallbackRuntime{
+		reader:       m.reader,
+		motion:       m.motion,
+		motionSafety: motionSafety,
+		isPaused: func() bool {
+			m.mu.RLock()
+			engine := m.autoEngine
+			m.mu.RUnlock()
+			return engine != nil && engine.IsPaused()
+		},
+	}
 }
 
 // makeChannelReader 创建通道读取函数
@@ -678,6 +705,37 @@ func (m *CalibrationManager) makeTimestampReader() calibration.TimestampReader {
 	}
 }
 
+// validateCalibrationMotionSafetyConfig 校准模块运动安全配置校验入口。
+//
+// 校准模块使用 calibration.MotionAxisConfig（带逻辑名 Name），而 traversal
+// 的 validateMotionSafetyConfig 期望 traversal.MotionAxisBinding（仅 ControllerID/Axis）。
+// 本函数负责类型转换后委托给 traversal 模块的统一校验逻辑，避免重复实现校验规则。
+//
+// 校验规则（详见 traversal_config.go::validateMotionSafetyConfig）：
+//  1. 浮点字段有限（非 NaN/Inf）
+//  2. ArrivalTolerance > 0、ProgressEpsilon > 0
+//  3. CriticalDeviationLimit > ArrivalTolerance（合并后跨字段校验）
+//  4. NoProgressTimeoutMs >= 2*轮询周期
+//  5. AxisOverrides 键必须为已绑定轴名
+//
+// cfg 为 nil 时直接返回 nil（旧配置兼容，下游使用默认值）。
+func validateCalibrationMotionSafetyConfig(cfg *traversal.MotionSafetyConfig, motionAxes []calibration.MotionAxisConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	bindings := make([]traversal.MotionAxisBinding, 0, len(motionAxes))
+	for _, a := range motionAxes {
+		if a.Axis == "" {
+			continue
+		}
+		bindings = append(bindings, traversal.MotionAxisBinding{
+			ControllerID: a.ControllerID,
+			Axis:         a.Axis,
+		})
+	}
+	return validateMotionSafetyConfig(cfg, bindings)
+}
+
 // returnToHomePosition 运动归零
 func (m *CalibrationManager) returnToHomePosition(config calibration.Config) {
 	if m.motion == nil || len(config.MotionAxes) == 0 {
@@ -692,22 +750,125 @@ func (m *CalibrationManager) returnToHomePosition(config calibration.Config) {
 	}
 }
 
-// stopMotion 停止所有运动
-func (m *CalibrationManager) stopMotion() {
+// stopMotion 停止所有运动并返回第一处错误。
+//
+// 返回 error 而非 void：handleCalibrationMotionSafetyFailure 需要据此
+// 区分"停止成功"与"停止也失败"两种场景，前者走标准故障错误链，
+// 后者需附加 stop 错误到错误链以暴露根因。旧 void 调用方（Stop）
+// 直接忽略返回值即可。
+func (m *CalibrationManager) stopMotion() error {
 	if m.motion == nil {
-		return
+		return nil
 	}
-	_ = stopAllMotion(m.motion)
+	return stopAllMotion(m.motion)
 }
 
-// fail 设置错误状态
+// fail 设置错误状态（薄包装，向后兼容既有调用方；内部委托 failWithCode 写入空错误码）
 func (m *CalibrationManager) fail(format string, args ...any) error {
+	return m.failWithCode(format, "", args...)
+}
+
+// failWithCode 设置错误状态并写入结构化错误码。
+//
+// 行为：
+//   - 设置 StateError + LastError(format 格式化结果) + LastErrorCode(code)
+//   - 清空 MotionSafetyFailure（避免非运动安全错误路径残留快照；运动安全路径在 failWithCode 之后单独调用 recordMotionSafetyFailure 写入）
+//   - 返回格式化后的 error
+//
+// 注意：与遍历测试 failWithCode 签名一致 (format, code, args...)，便于跨模块维护。
+func (m *CalibrationManager) failWithCode(format string, code string, args ...any) error {
 	message := fmt.Sprintf(format, args...)
 	m.mu.Lock()
 	m.currentStatus.State = calibration.StateError
 	m.currentStatus.LastError = message
+	m.currentStatus.LastErrorCode = code
+	// 清空运动安全故障快照：failWithCode 是所有错误路径的公共出口，
+	// 非运动安全错误路径不应残留上一次的故障快照。
+	// 运动安全路径在 failWithCode 之后调用 recordMotionSafetyFailure 重新写入。
+	m.currentStatus.MotionSafetyFailure = nil
+	taskID := m.currentStatus.TaskID
 	m.mu.Unlock()
+
+	log.Printf("[CalibrationManager] 校准失败 taskID=%s code=%s err=%s", taskID, code, message)
 	return fmt.Errorf("%s", message)
+}
+
+// recordMotionSafetyFailure 写入运动安全故障现场快照（不影响 state/lastError）。
+//
+// 由 handleCalibrationMotionSafetyFailure 在 failWithCode 之后调用，
+// 将故障现场写入 currentStatus.MotionSafetyFailure，供前端轮询展示。
+// 必须在 failWithCode 之后调用——failWithCode 会清空该字段。
+func (m *CalibrationManager) recordMotionSafetyFailure(failure *traversal.MotionSafetyFailure) {
+	if failure == nil {
+		return
+	}
+	// 拷贝一份避免外部修改影响 status 中的快照
+	snapshot := *failure
+	m.mu.Lock()
+	m.currentStatus.MotionSafetyFailure = &snapshot
+	m.mu.Unlock()
+}
+
+// handleCalibrationMotionSafetyFailure 运动安全故障处理（由引擎层通过 onMotionSafetyFailure 回调调用）。
+//
+// 处理步骤：
+//  1. 急停类裁决（CriticalDeviation/LimitTriggered/StatusUnavailable）：
+//     通过 ports.EmergencyStopProvider 类型断言获取急停能力；
+//     可用则 EmergencyStopMotion；不可用或失败时 fallback 到 StopMotion。
+//  2. 普通停止类裁决（Deviation/NoProgress/Overshoot）：StopMotion。
+//  3. failWithCode 写入 StateError + LastError + LastErrorCode。
+//  4. recordMotionSafetyFailure 写入故障现场快照（在 failWithCode 之后，避免被清空）。
+//
+// 返回值：运动安全故障错误，引擎层据此终止校准（ErrMotionControl 语义）。
+func (m *CalibrationManager) handleCalibrationMotionSafetyFailure(runtime calibration.RuntimeAccess, failure *traversal.MotionSafetyFailure) error {
+	if failure == nil {
+		return nil
+	}
+
+	deviation := failure.Actual - failure.Target
+	log.Printf("[CalibrationManager] 运动安全故障 controller=%s axis=%s verdict=%s target=%.3f actual=%.3f deviation=%.3f pointIndex=%d requiresEmergencyStop=%v",
+		failure.ControllerID, failure.Axis, failure.Verdict,
+		failure.Target, failure.Actual, deviation, failure.PointIndex,
+		failure.Verdict.RequiresEmergencyStop())
+
+	// 1. 急停类裁决 → EmergencyStopProvider 类型断言
+	var stopErr error
+	if failure.Verdict.RequiresEmergencyStop() {
+		if es, ok := runtime.(ports.EmergencyStopProvider); ok {
+			stopErr = es.EmergencyStopMotion()
+			if stopErr != nil {
+				// 急停失败：错误码升级为 ErrEmergencyStopFailed，fallback 到 StopMotion
+				log.Printf("[CalibrationManager] 急停失败，回退到普通停止: %v", stopErr)
+				_ = runtime.StopMotion()
+				m.failWithCode("motion safety failure (verdict=%s axis=%s target=%.3f actual=%.3f) and emergency stop also failed: %v",
+					string(traversal.ErrEmergencyStopFailed),
+					failure.Verdict, failure.Axis, failure.Target, failure.Actual, stopErr)
+				// 急停失败路径同样写入故障快照：前端需要据此区分"急停调用失败"场景
+				m.recordMotionSafetyFailure(failure)
+				return fmt.Errorf("emergency stop failed after %s: %w", failure.Verdict, stopErr)
+			}
+		} else {
+			// runtime 不支持急停，fallback 到 StopMotion
+			log.Printf("[CalibrationManager] runtime 不支持急停，回退到普通停止")
+			stopErr = runtime.StopMotion()
+		}
+	} else {
+		// 2. 普通停止类 → StopMotion
+		stopErr = runtime.StopMotion()
+	}
+
+	// 3. 写入结构化错误 + 4. 写入故障现场快照（必须在 failWithCode 之后）
+	errorCode := traversal.ErrorCodeFor(failure.Verdict)
+	m.failWithCode("motion safety failure: verdict=%s axis=%s target=%.3f actual=%.3f deviation=%.3f",
+		string(errorCode),
+		failure.Verdict, failure.Axis, failure.Target, failure.Actual, deviation)
+	m.recordMotionSafetyFailure(failure)
+
+	if stopErr != nil {
+		return fmt.Errorf("motion safety %s (stop also failed: %w)", failure.Verdict, stopErr)
+	}
+	return fmt.Errorf("motion safety %s on axis %s (target=%.3f actual=%.3f)",
+		failure.Verdict, failure.Axis, failure.Target, failure.Actual)
 }
 
 // valuesForChannelIndex 从数据载荷中提取指定通道索引的值
@@ -747,6 +908,16 @@ func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent) {}
 func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent) {}
 
 // runtimeAdapter 运行时适配器
+//
+// 包装 ports.CalibrationRuntime（外部注入，常为 Wails binding 适配器），
+// 桥接到 calibration.RuntimeAccess（引擎层期望的接口）。
+//
+// 接口适配策略：
+//   - WaitForMotionComplete：通过 ports.MotionSafetyAwareRuntime 类型断言判断
+//     被包装对象是否提供运动安全感知能力。支持时透传三元组；不支持时
+//     fallback 到旧 WaitForMotionComplete() error，错误映射为 (false, timeout, nil)。
+//   - EmergencyStopMotion：始终实现，内部类型断言被包装对象是否支持
+//     ports.EmergencyStopProvider。支持时透传；不支持时 fallback 到 StopMotion。
 type runtimeAdapter struct {
 	runtime ports.CalibrationRuntime
 }
@@ -763,20 +934,63 @@ func (r *runtimeAdapter) MoveToPosition(axis calibration.MotionAxisConfig, posit
 	return r.runtime.MoveToPosition(axis, position)
 }
 
-func (r *runtimeAdapter) WaitForMotionComplete() error {
-	return r.runtime.WaitForMotionComplete()
+// WaitForMotionComplete 返回运动等待结果的三元组（completed, reason, failure）。
+//
+// 若被包装的 runtime 实现 ports.MotionSafetyAwareRuntime，透传其三元组语义；
+// 否则 fallback 到旧 WaitForMotionComplete() error：
+//   - nil  → (true, MotionInterruptNone, nil) 表示已到位
+//   - err  → (false, MotionInterruptTimeout, nil) 表示等待失败但无故障快照
+//
+// fallback 映射为 Timeout 而非 None：旧实现返回 error 通常代表超时，
+// 引擎层据此走 ErrMotionControl 终止路径，符合"无法确认到位则不再继续"的安全语义。
+func (r *runtimeAdapter) WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure) {
+	if safety, ok := r.runtime.(ports.MotionSafetyAwareRuntime); ok {
+		return safety.WaitForMotionCompleteWithSafety()
+	}
+	if err := r.runtime.WaitForMotionComplete(); err != nil {
+		return false, traversal.MotionInterruptTimeout, nil
+	}
+	return true, traversal.MotionInterruptNone, nil
 }
 
+// StopMotion 透传到被包装的 runtime。
 func (r *runtimeAdapter) StopMotion() error {
 	return r.runtime.StopMotion()
 }
 
-// fallbackRuntime 回退运行时（使用旧的 reader 和 motion 接口）
+// EmergencyStopMotion 急停所有参与校准的运动控制器。
+//
+// 始终实现 ports.EmergencyStopProvider：内部类型断言被包装对象是否支持急停。
+// 支持时透传；不支持时 fallback 到 StopMotion——保证任何 runtime 注入都能
+// 至少做到减速停止，避免 handleCalibrationMotionSafetyFailure 中类型断言失败
+// 导致急停类故障被静默降级。
+func (r *runtimeAdapter) EmergencyStopMotion() error {
+	if es, ok := r.runtime.(ports.EmergencyStopProvider); ok {
+		return es.EmergencyStopMotion()
+	}
+	return r.runtime.StopMotion()
+}
+
+// fallbackRuntime 回退运行时（直接使用 reader 和 motion 端口）
+//
+// 在未注入 ports.CalibrationRuntime 时由 createRuntime 构造，提供完整的
+// 运动安全循环（到位判定 + EvaluateMotionSafety + 跨样本看门狗 + 120s 兜底）。
+//
+// 字段：
+//   - motionSafety：运动安全配置（来自 config.MotionSafety），nil 时下游使用 traversal.DefaultMotionSafety。
+//     注意：调用方允许传 nil——(*MotionSafetyConfig).Resolve 首行 `if c != nil` 兜底，
+//     nil 时直接返回 DefaultMotionSafety()，不会 panic（参见 core/traversal/types.go 的 Resolve）。
+//     fallbackRuntime.calibrationTargetsReached 与 WaitForMotionComplete 内部均依赖此 nil-safe 行为，
+//     修改 Resolve 时必须保留 nil 兜底，否则 fallbackRuntime 路径会崩溃。
+//   - isPaused：暂停态回调（延迟绑定到 CalibrationManager.autoEngine.IsPaused），
+//     运动循环每轮询周期检查；返回 true 时立即返回 (false, MotionInterruptPaused, nil)
 type fallbackRuntime struct {
-	reader  ports.LatestDataReader
-	motion  ports.MotionManager
-	mu      sync.Mutex
-	targets map[calibrationMotionAxis]float64
+	reader       ports.LatestDataReader
+	motion       ports.MotionManager
+	mu           sync.Mutex
+	targets      map[calibrationMotionAxis]float64
+	motionSafety *traversal.MotionSafetyConfig
+	isPaused     func() bool
 }
 
 type calibrationMotionAxis struct {
@@ -831,25 +1045,30 @@ func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, posi
 	return nil
 }
 
-// WaitForMotionComplete waits until every commanded calibration axis is both
-// stopped and at its target. Checking Moving alone races with controllers whose
-// motion bit is set shortly after the move command returns.
-// 超时返回 error，调用方决定是否继续采集（通常应中止校准）。
+// WaitForMotionComplete 等待所有目标轴到位或检测到运动安全故障。
 //
-// 注意：此实现扫描所有控制器，不区分本次校准激活的轴。
-// 若校准配置 MotionAxes 已知，应优先使用 runtimeAdapter.WaitForMotionComplete
-// （通过 ports.CalibrationRuntime 注入）。
-func (f *fallbackRuntime) WaitForMotionComplete() error {
+// 返回三元组 (completed, reason, failure)：
+//   - completed=true, reason=none, failure=nil：所有目标轴到位
+//   - completed=false, failure!=nil：检测到运动安全故障（撞限位/超差/严重偏离/无进展/越过目标）
+//   - completed=false, failure=nil, reason≠none：暂停/超时等非故障中断
+//
+// 实现移植自 usecase/traversal_acquisition.go::waitForMotionComplete，
+// 保持判定优先级与故障快照原则一致：
+//  1. 到位检查（motionTargetsReachedForCalibration）
+//  2. 暂停检查（isPaused 回调，避免事后读共享状态产生竞态）
+//  3. 每轴 EvaluateMotionSafety 单次快照判定（撞限位/到位/超差/严重偏离）
+//  4. 跨样本看门狗 Observe（无进展/越过目标）
+//  5. 120s 兜底超时（返回 (false, timeout, nil)）
+//
+// 与遍历实现的差异：fallbackRuntime 不持有 ctx 取消信号（calibration 引擎层
+// 通过 isPaused/isRunning 检查实现中断），故省略 ctx.Done() 分支。
+// pointIndex 取自 fallbackRuntime 自身记录的最新点位（由下次 MoveToPosition 时更新）。
+func (f *fallbackRuntime) WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure) {
 	if f.motion == nil {
-		return nil // 无运动控制器，无需等待
+		return true, traversal.MotionInterruptNone, nil
 	}
 
-	const (
-		pollInterval = 50 * time.Millisecond
-		maxWait      = 30 * time.Second // 单点运动最大等待，超过视为故障
-	)
-	deadline := time.Now().Add(maxWait)
-	ctx := context.Background()
+	// 拷贝目标快照避免长时间持锁
 	f.mu.Lock()
 	targets := make(map[calibrationMotionAxis]float64, len(f.targets))
 	for axis, target := range f.targets {
@@ -857,54 +1076,215 @@ func (f *fallbackRuntime) WaitForMotionComplete() error {
 	}
 	f.mu.Unlock()
 	if len(targets) == 0 {
-		return nil
+		return true, traversal.MotionInterruptNone, nil
 	}
 
-	for time.Now().Before(deadline) {
-		remaining := len(targets)
-		for _, status := range f.motion.StatusAll(ctx) {
-			if !status.Connected {
-				continue
+	ticker := time.NewTicker(motionCompletePoll)
+	defer ticker.Stop()
+	deadline := time.Now().Add(motionCompleteTimeout)
+	ctx := context.Background()
+	watchdog := newMotionWatchdog()
+	statusMissCounter := make(map[calibrationMotionAxis]int)
+
+	for {
+		select {
+		case <-ticker.C:
+			// 1. 优先检查到位：deadline 边界附近先判到位避免假超时
+			statuses := f.motion.StatusAll(ctx)
+			if f.calibrationTargetsReached(statuses, targets) {
+				f.mu.Lock()
+				f.targets = nil
+				f.mu.Unlock()
+				return true, traversal.MotionInterruptNone, nil
 			}
-			for _, axisStatus := range status.Axes {
-				key := calibrationMotionAxis{controllerID: status.ID, axis: axisStatus.Name}
-				target, ok := targets[key]
-				if !ok {
+
+			// 2. 暂停检查（非故障中断，返回不可变原因避免竞态）
+			if f.isPaused != nil && f.isPaused() {
+				return false, traversal.MotionInterruptPaused, nil
+			}
+
+			if failure := validateCalibrationMotionStatuses(statuses, targets, statusMissCounter); failure != nil {
+				return false, traversal.MotionInterruptNone, failure
+			}
+
+			// 3+4. 每轴 EvaluateMotionSafety + 跨样本看门狗 Observe
+			for _, status := range statuses {
+				if !status.Connected {
 					continue
 				}
-				if !axisStatus.Moving && math.Abs(axisStatus.Position-target) <= calibrationPositionTolerance(f.motion, key) {
-					remaining--
+				for _, axisStatus := range status.Axes {
+					key := calibrationMotionAxis{controllerID: status.ID, axis: axisStatus.Name}
+					target, hasTarget := targets[key]
+					if !hasTarget {
+						continue
+					}
+					// 按轴解析有效配置（合并默认值 + 全局 + 按轴覆盖）；
+					// motionSafety 为 nil 时 Resolve 走 DefaultMotionSafety
+					resolved := f.motionSafety.Resolve(string(axisStatus.Name))
+					verdict := EvaluateMotionSafety(axisStatus, target, resolved)
+					if verdict.IsFailure() {
+						return false, traversal.MotionInterruptNone, &traversal.MotionSafetyFailure{
+							ControllerID:   status.ID,
+							ControllerName: status.Name,
+							Axis:           string(axisStatus.Name),
+							Verdict:        verdict,
+							Target:         target,
+							Actual:         axisStatus.Position,
+							PointIndex:     0, // fallbackRuntime 不持有当前点索引，引擎层在错误包装时附加
+						}
+					}
+					if fl := watchdog.Observe(status.ID, axisStatus, target, resolved, 0); fl != nil {
+						fl.ControllerName = status.Name
+						return false, traversal.MotionInterruptNone, fl
+					}
 				}
 			}
-		}
-		if remaining == 0 {
-			f.mu.Lock()
-			f.targets = nil
-			f.mu.Unlock()
-			return nil
-		}
-		time.Sleep(pollInterval)
-	}
-	return fmt.Errorf("运动超时未完成（>%s）", maxWait)
-}
 
-func calibrationPositionTolerance(mgr ports.MotionManager, target calibrationMotionAxis) float64 {
-	const defaultTolerance = 0.01
-	for _, profile := range mgr.GetProfiles() {
-		if profile.ID != target.controllerID {
-			continue
-		}
-		for _, axis := range profile.Axes {
-			if axis.Name == target.axis && axis.EncoderCompensation != nil && axis.EncoderCompensation.Tolerance > 0 {
-				return axis.EncoderCompensation.Tolerance
+			// 5. 120s 兜底超时
+			if time.Now().After(deadline) {
+				return false, traversal.MotionInterruptTimeout, nil
 			}
 		}
 	}
-	return defaultTolerance
 }
 
-// StopMotion 立即停止所有运动轴（普通 Stop）。
-// 与 CalibrationManager.stopMotion 同语义，暂停时由引擎调用以打断当前点位运动。
+func validateCalibrationMotionStatuses(
+	statuses []motion.ControllerStatus,
+	targets map[calibrationMotionAxis]float64,
+	statusMissCounter map[calibrationMotionAxis]int,
+) *traversal.MotionSafetyFailure {
+	statusByController := make(map[string]motion.ControllerStatus, len(statuses))
+	for _, status := range statuses {
+		statusByController[status.ID] = status
+	}
+
+	for targetAxis, target := range targets {
+		status, exists := statusByController[targetAxis.controllerID]
+		if !exists || !status.Connected {
+			statusMissCounter[targetAxis]++
+			if statusMissCounter[targetAxis] >= 3 {
+				return calibrationStatusUnavailableFailure(targetAxis, target, 0)
+			}
+			continue
+		}
+		if status.EmergencyStopped {
+			return calibrationStatusUnavailableFailure(targetAxis, target, 0)
+		}
+
+		axisFound := false
+		for _, axis := range status.Axes {
+			if axis.Name == targetAxis.axis {
+				axisFound = true
+				break
+			}
+		}
+		if !axisFound {
+			statusMissCounter[targetAxis]++
+			if statusMissCounter[targetAxis] >= 3 {
+				return calibrationStatusUnavailableFailure(targetAxis, target, 0)
+			}
+			continue
+		}
+		delete(statusMissCounter, targetAxis)
+	}
+	return nil
+}
+
+func calibrationStatusUnavailableFailure(axis calibrationMotionAxis, target, actual float64) *traversal.MotionSafetyFailure {
+	return &traversal.MotionSafetyFailure{
+		ControllerID: axis.controllerID,
+		Axis:         string(axis.axis),
+		Verdict:      traversal.MotionSafetyStatusUnavailable,
+		Target:       target,
+		Actual:       actual,
+	}
+}
+
+// calibrationTargetsReached 判断所有目标轴是否到位。
+// 到位条件：轴已停（!Moving）且 |position-target| ≤ ArrivalTolerance（按轴解析）。
+// 与遍历模块 motionTargetsReachedWithTolerance 等价，但目标以 (controllerID,axis)→position
+// 映射表达（fallbackRuntime 内部跟踪格式），而非遍历的 traversal.Point+MotionAxes。
+func (f *fallbackRuntime) calibrationTargetsReached(
+	statuses []motion.ControllerStatus,
+	targets map[calibrationMotionAxis]float64,
+) bool {
+	checked := 0
+	for _, status := range statuses {
+		if !status.Connected {
+			continue
+		}
+		for _, axisStatus := range status.Axes {
+			key := calibrationMotionAxis{controllerID: status.ID, axis: axisStatus.Name}
+			target, hasTarget := targets[key]
+			if !hasTarget {
+				continue
+			}
+			checked++
+			resolved := f.motionSafety.Resolve(string(axisStatus.Name))
+			tolerance := *resolved.ArrivalTolerance
+			if axisStatus.Moving || math.Abs(axisStatus.Position-target) > tolerance {
+				return false
+			}
+		}
+	}
+	return checked > 0
+}
+
+// EmergencyStopMotion 急停所有参与校准的运动控制器。
+//
+// 始终实现 ports.EmergencyStopProvider：对每个有目标位置记录的控制器调用
+// motion.EmergencyStop（控制器级，所有轴瞬时停止）。
+// 至少一台急停失败时 fallback 到 stopAllMotion 减速停，保证不会"全部急停失败仍继续运动"。
+// 聚合所有错误返回，调用方据此决定是否升级错误码。
+func (f *fallbackRuntime) EmergencyStopMotion() error {
+	if f.motion == nil {
+		return nil
+	}
+	f.mu.Lock()
+	controllerIDs := make(map[string]bool, len(f.targets))
+	for k := range f.targets {
+		if k.controllerID != "" {
+			controllerIDs[k.controllerID] = true
+		}
+	}
+	f.mu.Unlock()
+
+	if len(controllerIDs) == 0 {
+		// 无目标记录：对所有已连接控制器急停（防御性兜底）
+		ctx := context.Background()
+		for _, status := range f.motion.StatusAll(ctx) {
+			if status.Connected {
+				controllerIDs[status.ID] = true
+			}
+		}
+	}
+
+	ctx := context.Background()
+	var errs []error
+	for controllerID := range controllerIDs {
+		if err := f.motion.EmergencyStop(ctx, controllerID); err != nil {
+			log.Printf("[CalibrationManager] 急停失败 %s: %v", controllerID, err)
+			errs = append(errs, fmt.Errorf("controller %s: %w", controllerID, err))
+		}
+	}
+	if len(errs) > 0 {
+		// 至少一台失败：fallback 减速停，避免剩余运动轴继续运动
+		if stopErr := stopAllMotion(f.motion); stopErr != nil {
+			errs = append(errs, fmt.Errorf("fallback stop also failed: %w", stopErr))
+		}
+		f.mu.Lock()
+		f.targets = nil
+		f.mu.Unlock()
+		return errors.Join(errs...)
+	}
+	f.mu.Lock()
+	f.targets = nil
+	f.mu.Unlock()
+	return nil
+}
+
+// StopMotion 立即停止所有运动轴（普通 Stop，减速停止）。
+// 暂停时由引擎调用以打断当前点位运动；与 EmergencyStopMotion 的差异见 ports.EmergencyStopProvider 文档。
 func (f *fallbackRuntime) StopMotion() error {
 	if f.motion == nil {
 		return nil

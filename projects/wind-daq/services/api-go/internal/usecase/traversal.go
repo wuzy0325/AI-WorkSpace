@@ -670,6 +670,18 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		m.abortStartLocked(session, config.TaskID, err.Error(), traversal.ErrSaveFailed)
 		return err
 	}
+	// 同步实际落盘 CSV 路径到 m.status.CSVPath：
+	// openReliabilityPorts 内部 csvPort.Open 撞名时会追加 -2/-3 后缀，
+	// session.snapshot.CSVPath 已被回写为真实路径（见 openReliabilityPorts 注释）。
+	// 前端 Status() 轮询拿到后用于侧边栏展示真实文件名，避免显示预期路径。
+	// 实际路径为空时（v2 csvPort 未注入）跳过写入，保持 status.CSVPath 为零值，
+	// 前端回退到 config 静态拼接的预期路径。
+	actualCSVPath := session.snapshot.CSVPath
+	if actualCSVPath != "" {
+		m.mu.Lock()
+		m.status.CSVPath = actualCSVPath
+		m.mu.Unlock()
+	}
 	// 注册活动索引，支持进程重启发现。
 	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
 	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
@@ -1106,6 +1118,145 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 		return traversal.Status{}, false
 	}
 	return m.store.Get(taskID)
+}
+
+// emergencyStopMotionControllers 对所有参与遍历的控制器逐台触发急停。
+//
+// 与 stopMotionAxes 的差异：
+//   - 作用域：EmergencyStop 是控制器级（所有轴瞬时停止），Stop 是单轴减速
+//   - 容错策略：逐台调用，聚合所有错误，不因首台失败跳过后续——
+//     即使一台控制器急停失败，其他控制器仍需急停避免继续运动
+//   - fallback：急停全部失败时调用 stopMotionAxes 兜底，至少减速停
+//
+// 返回聚合错误（含所有失败控制器的错误信息），调用方需将其包装为 ErrEmergencyStopFailed。
+func (m *TraversalManager) emergencyStopMotionControllers() error {
+	if m.motion == nil {
+		return nil
+	}
+	m.mu.RLock()
+	motionAxes := m.config.MotionAxes
+	m.mu.RUnlock()
+
+	ctx := context.Background()
+	statuses := m.motion.StatusAll(ctx)
+	motionAxes = resolveMotionAxes(motionAxes, statuses)
+
+	// 收集参与遍历的唯一 controllerID 集合
+	controllerIDs := make(map[string]bool)
+	for _, binding := range motionAxes {
+		if binding.ControllerID != "" {
+			controllerIDs[binding.ControllerID] = true
+		}
+	}
+	// 无绑定配置时退化为对所有已连接控制器急停
+	if len(controllerIDs) == 0 {
+		for _, status := range statuses {
+			if status.Connected {
+				controllerIDs[status.ID] = true
+			}
+		}
+	}
+
+	var errs []error
+	for controllerID := range controllerIDs {
+		if err := m.motion.EmergencyStop(ctx, controllerID); err != nil {
+			slog.Warn("traversal emergency stop failed for controller",
+				"component", "traversal",
+				"controller_id", controllerID,
+				"err", err,
+			)
+			errs = append(errs, fmt.Errorf("controller %s: %w", controllerID, err))
+		} else {
+			slog.Warn("traversal emergency stop triggered",
+				"component", "traversal",
+				"controller_id", controllerID,
+			)
+		}
+	}
+
+	if len(errs) > 0 {
+		// 至少有一台急停失败：尝试 stopMotionAxes 兜底减速停
+		if stopErr := m.stopMotionAxes(); stopErr != nil {
+			errs = append(errs, fmt.Errorf("fallback stop also failed: %w", stopErr))
+		}
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+// handleMotionSafetyFailure 处理运动安全故障，按 verdict 严重级别分发停机策略。
+//
+// 处理流程：
+//  1. 记录故障日志（含完整事故现场：controllerID/axis/verdict/target/actual/pointIndex）
+//  2. 按 verdict.RequiresEmergencyStop() 分发：
+//     - true：调用 emergencyStopMotionControllers；失败则返回 ErrEmergencyStopFailed
+//     - false：调用 stopMotionAxes；失败则附加到错误链
+//  3. 设置状态机错误码并写入故障快照到 status.MotionSafetyFailure（供前端轮询展示）
+//
+// 注意：本函数不再读硬件状态——failure 已携带事故现场快照。
+// 故障快照写入必须在 failWithCode 之后，因为 setErrorLocked 会清空 MotionSafetyFailure
+// 字段（避免非运动安全错误路径残留快照），写入顺序错位会导致前端拿不到现场。
+func (m *TraversalManager) handleMotionSafetyFailure(failure *traversal.MotionSafetyFailure) error {
+	if failure == nil {
+		return nil
+	}
+
+	code := traversal.ErrorCodeFor(failure.Verdict)
+	deviation := failure.Actual - failure.Target
+
+	slog.Warn("traversal motion safety failure",
+		"component", "traversal",
+		"controller_id", failure.ControllerID,
+		"axis", failure.Axis,
+		"verdict", string(failure.Verdict),
+		"target", failure.Target,
+		"actual", failure.Actual,
+		"deviation", deviation,
+		"point_index", failure.PointIndex,
+		"requires_emergency_stop", failure.Verdict.RequiresEmergencyStop(),
+	)
+
+	var stopErr error
+	if failure.Verdict.RequiresEmergencyStop() {
+		stopErr = m.emergencyStopMotionControllers()
+		if stopErr != nil {
+			// 急停失败：错误码升级为 ErrEmergencyStopFailed，但保留原始 verdict 信息
+			m.failWithCode("motion safety failure (verdict=%s axis=%s target=%.3f actual=%.3f) and emergency stop also failed: %v",
+				traversal.ErrEmergencyStopFailed,
+				failure.Verdict, failure.Axis, failure.Target, failure.Actual, stopErr)
+			// 急停失败路径同样写入故障快照：前端需要据此区分"急停调用失败"场景，
+			// verdict 仍保留原始判定（如 critical_deviation），便于追溯根因
+			m.recordMotionSafetyFailure(failure)
+			return fmt.Errorf("emergency stop failed after %s: %w", failure.Verdict, stopErr)
+		}
+	} else {
+		stopErr = m.stopMotionAxes()
+	}
+
+	m.failWithCode("motion safety failure: verdict=%s axis=%s target=%.3f actual=%.3f deviation=%.3f",
+		code,
+		failure.Verdict, failure.Axis, failure.Target, failure.Actual, deviation)
+	// failWithCode 内部 setErrorLocked 会清空 MotionSafetyFailure，必须在之后写入。
+	// 拷贝一份避免外部调用方修改影响持久化快照。
+	m.recordMotionSafetyFailure(failure)
+	if stopErr != nil {
+		return fmt.Errorf("motion safety %s (stop also failed: %w)", failure.Verdict, stopErr)
+	}
+	return fmt.Errorf("motion safety %s on axis %s (target=%.3f actual=%.3f)",
+		failure.Verdict, failure.Axis, failure.Target, failure.Actual)
+}
+
+// recordMotionSafetyFailure 将故障快照写入 status.MotionSafetyFailure。
+// 必须在 failWithCode 之后调用——setErrorLocked 会清空该字段。
+// 拷贝 failure 内容到新结构体，避免外部修改影响 status 中的快照。
+func (m *TraversalManager) recordMotionSafetyFailure(failure *traversal.MotionSafetyFailure) {
+	if failure == nil {
+		return
+	}
+	snapshot := *failure
+	m.mu.Lock()
+	m.status.MotionSafetyFailure = &snapshot
+	m.mu.Unlock()
 }
 
 // RunTraversalLoop 主循环：按点驱动 RunCurrentPoint，直至完成/停止/错误。

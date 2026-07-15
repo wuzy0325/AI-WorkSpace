@@ -191,6 +191,153 @@ func TestWTNMC4AMoveByRejectsResultOutsideSoftLimits(t *testing.T) {
 	}
 }
 
+// TestWTNMC4AMoveTo_SoftLimit_BoundaryAllowsExecution 验证目标恰好等于
+// MinLimit 或 MaxLimit 时允许执行——闭区间语义。
+// 测试前置：配置 MinLimit=-1, MaxLimit=1，注入 startMove 计数器
+// 测试步骤：MoveTo 到边界值 -1 和 1
+// 期待结果：无错误返回，startMove 被调用 2 次（每次边界都触发运动）
+func TestWTNMC4AMoveTo_SoftLimit_BoundaryAllowsExecution(t *testing.T) {
+	profile := wtnmc4aTestProfile()
+	profile.Axes[0].MinLimit = core.PtrFloat64(-1)
+	profile.Axes[0].MaxLimit = core.PtrFloat64(1)
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 0, at: time.Now()}
+	ctrl.readLP = func(uintptr, int) int32 { return 0 }
+
+	var starts atomic.Int32
+	ctrl.startMove = func(int, int32) error {
+		starts.Add(1)
+		return nil
+	}
+
+	// 边界值 -1（恰好等于 MinLimit）
+	if err := ctrl.MoveTo(context.Background(), core.AxisX, -1); err != nil {
+		t.Fatalf("MoveTo to MinLimit boundary should succeed, got error: %v", err)
+	}
+	// 边界值 1（恰好等于 MaxLimit）——将当前脉冲设为 100（≈0.5mm，区间内但 ≠ 1mm）
+	// 使 deltaPulse 非零从而触发 startMove；同时不破坏 trustedPositions 校验
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 100, at: time.Now()}
+	ctrl.readLP = func(uintptr, int) int32 { return 100 }
+	if err := ctrl.MoveTo(context.Background(), core.AxisX, 1); err != nil {
+		t.Fatalf("MoveTo to MaxLimit boundary should succeed, got error: %v", err)
+	}
+	if starts.Load() != 2 {
+		t.Fatalf("expected startMove called 2 times for boundary targets, got %d", starts.Load())
+	}
+}
+
+// TestWTNMC4AMoveTo_SoftLimit_SingleSidedOnlyChecksThatSide 验证单侧限位
+// 只校验已配置的一侧，未配置的一侧不限制。
+// 测试前置：仅配置 MinLimit=-1（无 MaxLimit）
+// 测试步骤：MoveTo 到 -0.5（合法）和 -2（小于 MinLimit，非法），以及 100（无 MaxLimit，合法）
+// 期待结果：-0.5 与 100 成功，-2 失败
+func TestWTNMC4AMoveTo_SoftLimit_SingleSidedOnlyChecksThatSide(t *testing.T) {
+	profile := wtnmc4aTestProfile()
+	profile.Axes[0].MinLimit = core.PtrFloat64(-1)
+	// MaxLimit 未配置
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 0, at: time.Now()}
+	ctrl.readLP = func(uintptr, int) int32 { return 0 }
+
+	var starts atomic.Int32
+	ctrl.startMove = func(int, int32) error {
+		starts.Add(1)
+		return nil
+	}
+
+	// -0.5 合法（在 [-1, +∞) 区间内）
+	if err := ctrl.MoveTo(context.Background(), core.AxisX, -0.5); err != nil {
+		t.Fatalf("MoveTo to -0.5 with only MinLimit=-1 should succeed, got: %v", err)
+	}
+	// 100 合法（无 MaxLimit，正方向无限制）
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 0, at: time.Now()}
+	if err := ctrl.MoveTo(context.Background(), core.AxisX, 100); err != nil {
+		t.Fatalf("MoveTo to 100 with only MinLimit=-1 should succeed (no MaxLimit), got: %v", err)
+	}
+	// -2 非法（小于 MinLimit）
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 0, at: time.Now()}
+	err := ctrl.MoveTo(context.Background(), core.AxisX, -2)
+	if err == nil {
+		t.Fatal("MoveTo to -2 with MinLimit=-1 should be rejected")
+	}
+	if starts.Load() != 2 {
+		t.Fatalf("expected startMove called 2 times (only valid targets), got %d", starts.Load())
+	}
+}
+
+// TestWTNMC4AMoveTo_SoftLimit_MinGreaterThanMaxRejected 验证 MinLimit > MaxLimit
+// 配置错误在 MoveTo 入口被拒绝。
+// 测试前置：配置 MinLimit=10, MaxLimit=-10（配置颠倒）
+// 测试步骤：MoveTo 到 0（在 [MinLimit, MaxLimit] 之外因 Min>Max）
+// 期待结果：返回错误，startMove 未被调用
+func TestWTNMC4AMoveTo_SoftLimit_MinGreaterThanMaxRejected(t *testing.T) {
+	profile := wtnmc4aTestProfile()
+	profile.Axes[0].MinLimit = core.PtrFloat64(10)
+	profile.Axes[0].MaxLimit = core.PtrFloat64(-10)
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: 0, at: time.Now()}
+	ctrl.readLP = func(uintptr, int) int32 { return 0 }
+
+	var starts atomic.Int32
+	ctrl.startMove = func(int, int32) error {
+		starts.Add(1)
+		return nil
+	}
+
+	err := ctrl.MoveTo(context.Background(), core.AxisX, 0)
+	if err == nil {
+		t.Fatal("expected MinLimit > MaxLimit config error to be rejected")
+	}
+	if starts.Load() != 0 {
+		t.Fatalf("expected 0 startMove calls on config error, got %d", starts.Load())
+	}
+}
+
+// TestWTNMC4AMoveTo_SoftLimit_FailureDoesNotCallSDK 验证所有校验失败场景
+// 都不会调用 SDK（readLP 与 startMove 都为 0）。
+// 测试前置：配置 MinLimit=-1, MaxLimit=1
+// 测试步骤：MoveTo 到 NaN, Inf, 2（超上限）, -2（超下限）
+// 期待结果：每个都返回错误，reads 与 starts 始终为 0
+func TestWTNMC4AMoveTo_SoftLimit_FailureDoesNotCallSDK(t *testing.T) {
+	profile := wtnmc4aTestProfile()
+	profile.Axes[0].MinLimit = core.PtrFloat64(-1)
+	profile.Axes[0].MaxLimit = core.PtrFloat64(1)
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+
+	var reads atomic.Int32
+	var starts atomic.Int32
+	ctrl.readLP = func(uintptr, int) int32 {
+		reads.Add(1)
+		return 0
+	}
+	ctrl.startMove = func(int, int32) error {
+		starts.Add(1)
+		return nil
+	}
+
+	invalidTargets := []float64{math.NaN(), math.Inf(1), math.Inf(-1), 2.0, -2.0}
+	for i, target := range invalidTargets {
+		err := ctrl.MoveTo(context.Background(), core.AxisX, target)
+		if err == nil {
+			t.Fatalf("case %d: target %v should be rejected", i, target)
+		}
+	}
+	if reads.Load() != 0 {
+		t.Fatalf("expected 0 readLP calls for invalid targets, got %d", reads.Load())
+	}
+	if starts.Load() != 0 {
+		t.Fatalf("expected 0 startMove calls for invalid targets, got %d", starts.Load())
+	}
+}
+
 func TestWTNMC4AMoveByUsesInjectedStartMove(t *testing.T) {
 	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
 	ctrl.handle = 1
@@ -291,6 +438,36 @@ func TestWTNMC4AStatusPreservesCachedFlagsWhenRR1Fails(t *testing.T) {
 	}
 	if !ctrl.lastFullStatusAt.IsZero() {
 		t.Fatalf("failed RR1 read advanced full-status timestamp to %v", ctrl.lastFullStatusAt)
+	}
+}
+
+func TestWTNMC4AStatusRefreshesPositionWhenAxisStops(t *testing.T) {
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.handle = 1
+	ctrl.status.Connected = true
+	ctrl.status.Axes[0].Moving = true
+	ctrl.trustedPositions[0] = trustedPositionSample{pulse: -5876, at: time.Now()}
+
+	positions := []int32{-5876, -6000}
+	var reads atomic.Int32
+	ctrl.readLP = func(uintptr, int) int32 {
+		return positions[reads.Add(1)-1]
+	}
+	ctrl.readRR1 = func(uintptr, int) (rr1Status, error) { return rr1Status{}, nil }
+
+	got, err := ctrl.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if got.Axes[0].Moving {
+		t.Fatal("stopped axis remained marked moving")
+	}
+	want := wtnmc4aPulseToEngineering(ctrl.profile.Axes[0], -6000)
+	if got.Axes[0].Position != want {
+		t.Fatalf("stopped position = %v, want refreshed position %v", got.Axes[0].Position, want)
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("ReadLP calls = %d, want 2", reads.Load())
 	}
 }
 

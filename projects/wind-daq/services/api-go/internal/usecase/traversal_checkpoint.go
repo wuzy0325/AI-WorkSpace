@@ -297,6 +297,18 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		return "", fmt.Errorf("acquire traversal lock: %w", err)
 	}
 
+	// snapshot.MotionSafety 为 nil（旧 checkpoint 或前端未配置）时填充默认值。
+	// 这里的填充只作用于本次恢复后的运行态 m.config，不回写 checkpoint 文件，
+	// 避免老 checkpoint 在恢复时被静默改写。下游 EvaluateMotionSafety / Resolve
+	// 虽然也能处理 nil，但显式填充让"使用 DefaultMotionSafety"语义可观察、可单测。
+	//
+	// 关键不变量：m.config.MotionSafety 始终来源于 cp.Snapshot.Config，
+	// 不重新读取前端当前配置——避免前端在崩溃后修改配置导致恢复行为漂移。
+	if config.MotionSafety == nil {
+		defaultSafety := traversal.DefaultMotionSafety()
+		config.MotionSafety = &defaultSafety
+	}
+
 	m.mu.Lock()
 	m.config = config
 	// 重新序列化 Snapshot.Config 得到 configRaw，用于持久化精确还原前端原始 JSON。
@@ -356,6 +368,16 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	if err := m.openReliabilityPorts(session, ports.TraversalOutputResume, config); err != nil {
 		m.abortStartLocked(session, cp.TaskID, err.Error(), traversal.ErrSaveFailed)
 		return "", err
+	}
+	// 同步实际落盘 CSV 路径到 m.status.CSVPath：
+	// Resume 模式 csvPort.Open 不会撞名（不创建新文件），session.snapshot.CSVPath
+	// 即为恢复目标文件路径。同步到 status 让前端侧边栏显示与 Start 一致的真实路径，
+	// 而非 checkpoint 中可能为旧格式的 SavePath。
+	actualCSVPath := session.snapshot.CSVPath
+	if actualCSVPath != "" {
+		m.mu.Lock()
+		m.status.CSVPath = actualCSVPath
+		m.mu.Unlock()
 	}
 	// 注册活动索引，支持进程重启发现。
 	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，

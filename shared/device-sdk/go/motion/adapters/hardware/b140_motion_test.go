@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -227,6 +228,87 @@ func TestB140StatusParsesPositionAndSwitches(t *testing.T) {
 	}
 }
 
+func TestB140StatusRefreshesRegisterPositionWhenAxisStops(t *testing.T) {
+	server := newB140FakeServer(t, map[string]string{
+		"SH":      "",
+		"MTA=2":   "",
+		"CEA=0":   "",
+		"TS":      "0,0,0,0",
+		"MG _LFA": "1.0000",
+		"MG _LRA": "1.0000",
+	})
+	defer server.close()
+
+	positions := []string{"-5876,0,0,0", "-6000,0,0,0"}
+	var reads atomic.Int32
+	server.setDynamic("TD", func() string {
+		return positions[reads.Add(1)-1]
+	})
+
+	ctrl := newTestB140WithServer(t, server)
+	if err := ctrl.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	ctrl.status.Axes[0].Moving = true
+
+	status, err := ctrl.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	axis := status.Axes[0]
+	if axis.Moving {
+		t.Fatal("stopped axis remained marked moving")
+	}
+	if axis.Position != -30 {
+		t.Fatalf("axis.Position = %v, want refreshed position -30", axis.Position)
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("TD calls = %d, want 2", reads.Load())
+	}
+}
+
+func TestB140StatusRefreshesEncoderPositionWhenAxisStops(t *testing.T) {
+	server := newB140FakeServer(t, map[string]string{
+		"SH":      "",
+		"MTA=2":   "",
+		"CEA=0":   "",
+		"TD":      "-6000,0,0,0",
+		"TS":      "0,0,0,0",
+		"MG _LFA": "1.0000",
+		"MG _LRA": "1.0000",
+	})
+	defer server.close()
+
+	positions := []string{"-5876", "-6000"}
+	var reads atomic.Int32
+	server.setDynamic("TPA", func() string {
+		return positions[reads.Add(1)-1]
+	})
+
+	ctrl := newTestB140WithServer(t, server)
+	ctrl.profile.Axes[0].PositionSource = core.PositionSourceEncoder
+	ctrl.profile.Axes[0].EncoderScale = core.PtrFloat64(0.005)
+	if err := ctrl.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	ctrl.status.Axes[0].Moving = true
+
+	status, err := ctrl.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	axis := status.Axes[0]
+	if axis.Moving {
+		t.Fatal("stopped axis remained marked moving")
+	}
+	if axis.Position != -30 {
+		t.Fatalf("axis.Position = %v, want refreshed position -30", axis.Position)
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("TPA calls = %d, want 2", reads.Load())
+	}
+}
+
 type b140FakeServer struct {
 	host      string
 	port      int
@@ -234,8 +316,8 @@ type b140FakeServer struct {
 	responses map[string]string
 	// dynamic 命令处理函数：命中时优先于 responses。
 	// 用于补偿测试中"每次 TP 返回不同值"的场景。
-	dynamic map[string]func() string
-	mu      sync.Mutex
+	dynamic  map[string]func() string
+	mu       sync.Mutex
 	received []string
 }
 
