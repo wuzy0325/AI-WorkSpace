@@ -32,22 +32,19 @@ export function useHeatmapData(
 
   const heatmapData = computed<HeatmapCell[]>(() => {
     const currentParam = unref(param)
-    const alphaIndexByValue = new Map(alphaValues.value.map((value, index) => [value, index]))
-    const betaIndexByValue = new Map(betaValues.value.map((value, index) => [value, index]))
 
+    // xAxis/yAxis 改为 value 类型后，热力图 data 用真实坐标 [alpha, beta, value]，
+    // 不再用索引 [alphaIndex, betaIndex, value]——后者会让单元格按索引等距排列，
+    // 非均匀布点时视觉失真。
     return validPoints.value.flatMap((point) => {
       const value = getParamValue(point.interpolationResult, currentParam)
       const alpha = point.coordinates.alpha as number
       const beta = point.coordinates.beta as number
-      const alphaIndex = alphaIndexByValue.get(alpha)
-      const betaIndex = betaIndexByValue.get(beta)
 
-      if (value === null || alphaIndex === undefined || betaIndex === undefined) {
-        return []
-      }
+      if (value === null) return []
 
       return [{
-        value: [alphaIndex, betaIndex, value],
+        value: [alpha, beta, value],
         alpha,
         beta
       }]

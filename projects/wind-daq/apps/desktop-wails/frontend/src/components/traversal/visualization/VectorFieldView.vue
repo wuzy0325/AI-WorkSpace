@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type {
   CustomSeriesRenderItem,
@@ -13,6 +13,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useECharts } from './composables/useECharts'
 import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
+import { useThrottledChartUpdate } from './composables/useThrottledChartUpdate'
 
 const props = defineProps<{
   dataPoints: TraversalDataPoint[]
@@ -29,6 +30,9 @@ interface VectorPoint {
   value: [number, number, number]
   measuredAlpha: number
   measuredBeta: number
+  // 方向用 α（攻角）作为偏航极角——遍历测试中 α/β 是探针姿态控制变量，
+  // 来流方向固定为风洞轴向；箭头沿 α 方向投射、长度为速度大小，
+  // 物理上反映"该姿态下来流相对探针的偏置方向与速度量级"。
   directionRad: number
 }
 
@@ -45,7 +49,7 @@ const vectorData = computed<VectorPoint[]>(() => props.dataPoints
     value: [point.coordinates.alpha as number, point.coordinates.beta as number, point.interpolationResult.velocity],
     measuredAlpha: point.interpolationResult.alpha,
     measuredBeta: point.interpolationResult.beta,
-    directionRad: Math.atan2(point.interpolationResult.beta, point.interpolationResult.alpha)
+    directionRad: (point.coordinates.alpha as number) * Math.PI / 180
   })))
 
 const hasData = computed(() => vectorData.value.length > 0)
@@ -64,6 +68,20 @@ interface VectorTooltipParam {
 
 function isVectorTooltipParam(value: unknown): value is VectorTooltipParam {
   return typeof value === 'object' && value !== null && 'data' in value
+}
+
+// visualMap.dimension 对 custom series 不生效——原代码声明 dimension: 2 但 renderVector
+// 内固定用 '#38bdf8'，所有箭头同色。这里手动根据 normalizedVelocity 在 theme.heatmapColors
+// 之间插值取色，让箭头颜色随 velocity 渐变。
+function pickColorByVelocity(normalized: number, colors: string[]): string {
+  if (colors.length === 0) return '#38bdf8'
+  if (colors.length === 1) return colors[0]
+  const clamped = Math.min(1, Math.max(0, normalized))
+  const idx = clamped * (colors.length - 1)
+  const lo = Math.floor(idx)
+  const hi = Math.min(colors.length - 1, lo + 1)
+  // 简化处理：取就近的颜色（避免在 hex 字符串上做 RGB 插值的复杂度）
+  return idx - lo < 0.5 ? colors[lo] : colors[hi]
 }
 
 const renderVector: CustomSeriesRenderItem = (
@@ -86,6 +104,8 @@ const renderVector: CustomSeriesRenderItem = (
   const y2 = point[1] + Math.sin(rad) * arrowLength * 0.5
   const left = rad + Math.PI * 0.78
   const right = rad - Math.PI * 0.78
+  // 箭头颜色按 velocity 从 theme.heatmapColors 取色
+  const arrowColor = pickColorByVelocity(normalizedVelocity, chartTheme.value.heatmapColors)
 
   return {
     type: 'group',
@@ -93,7 +113,7 @@ const renderVector: CustomSeriesRenderItem = (
       {
         type: 'line',
         shape: { x1, y1, x2, y2 },
-        style: { stroke: '#38bdf8', lineWidth: 2 }
+        style: { stroke: arrowColor, lineWidth: 2 }
       },
       {
         type: 'polygon',
@@ -104,7 +124,7 @@ const renderVector: CustomSeriesRenderItem = (
             [x2 + Math.cos(right) * headLength, y2 + Math.sin(right) * headLength]
           ]
         },
-        style: { fill: '#38bdf8' }
+        style: { fill: arrowColor }
       }
     ]
   }
@@ -121,7 +141,7 @@ function updateChart(): void {
     backgroundColor: theme.panelColor,
     title: {
       text: t.value.vectorField,
-      subtext: 'direction: interpolated alpha/beta, length: velocity',
+      subtext: t.value.vectorFieldSubtext,
       left: 'center',
       textStyle: { color: theme.textColor, fontSize: 14, fontWeight: 600 },
       subtextStyle: { color: theme.textColor }
@@ -134,7 +154,7 @@ function updateChart(): void {
       formatter: (params: unknown) => {
         if (!isVectorTooltipParam(params) || !params.data) return ''
         const [alpha, beta, velocity] = params.data.value
-        return `point alpha: ${alpha.toFixed(2)} deg<br/>point beta: ${beta.toFixed(2)} deg<br/>flow alpha: ${params.data.measuredAlpha.toFixed(2)} deg<br/>flow beta: ${params.data.measuredBeta.toFixed(2)} deg<br/>velocity: ${velocity.toFixed(3)} m/s`
+        return `${t.value.pointAlpha}: ${alpha.toFixed(2)} deg<br/>${t.value.pointBeta}: ${beta.toFixed(2)} deg<br/>${t.value.flowAlpha}: ${params.data.measuredAlpha.toFixed(2)} deg<br/>${t.value.flowBeta}: ${params.data.measuredBeta.toFixed(2)} deg<br/>${t.value.velocityLabel}: ${velocity.toFixed(3)} m/s`
       }
     },
     grid: { left: 56, right: 88, top: 64, bottom: 48 },
@@ -142,7 +162,7 @@ function updateChart(): void {
       type: 'value',
       min: alphaRange[0],
       max: alphaRange[1],
-      name: 'alpha (deg)',
+      name: t.value.alphaAxis,
       nameLocation: 'middle',
       nameGap: 30,
       axisLine: { lineStyle: { color: theme.axisColor } },
@@ -154,7 +174,7 @@ function updateChart(): void {
       type: 'value',
       min: betaRange[0],
       max: betaRange[1],
-      name: 'beta (deg)',
+      name: t.value.betaAxis,
       nameLocation: 'middle',
       nameGap: 42,
       axisLine: { lineStyle: { color: theme.axisColor } },
@@ -182,7 +202,8 @@ function updateChart(): void {
   chart.value.setOption(option, true)
 }
 
-watch([chart, vectorData, chartTheme, t], updateChart, { immediate: true })
+// rAF 节流：高频推送下避免每帧多次 setOption 全量重绘
+useThrottledChartUpdate([chart, vectorData, chartTheme, t], updateChart, { immediate: true })
 </script>
 
 <template>

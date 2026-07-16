@@ -542,6 +542,20 @@ const zh: Record<string, string> = {
   fixedBeta: '固定侧滑角',
   sectionType: '剖面类型',
   sectionValue: '剖面值',
+  // 可视化模块坐标轴与提示文案——axis/tooltip/subtext 此前硬编码英文，违反 §16 国际化规范
+  alphaAxis: '攻角 α (deg)',
+  betaAxis: '侧滑角 β (deg)',
+  // 不带单位的短标签——PressureRadar 雷达图 subtext 和点位列表用，
+  // 避免从 alphaAxis strip " (deg)" 的脆弱设计
+  alphaLabel: '攻角 α',
+  betaLabel: '侧滑角 β',
+  vectorFieldSubtext: '方向：α 偏航角，长度：速度',
+  pointAlpha: '点位 α',
+  pointBeta: '点位 β',
+  flowAlpha: '来流 α',
+  flowBeta: '来流 β',
+  velocityLabel: '速度',
+  pressureUnit: 'kPa',
   width: '宽度',
   height: '高度',
   target: '目标',
@@ -911,6 +925,17 @@ const zh: Record<string, string> = {
   wf_labelMotionProfiles: '运动控制器配置',
   wf_labelMotionStatus: '运动控制器状态',
   wf_labelCalibrationConfig: '校准配置',
+  // spec Calibration View State Recovery：recovery 流程相关文案
+  wf_labelCalibrationStatus: '校准任务状态',
+  wf_recoveryFailed: '恢复校准状态失败',
+  wf_recoveryFailedTitle: '恢复校准状态失败',
+  wf_recovering: '正在恢复校准状态...',
+  wf_statusStopped: '已停止',
+  // spec Task 7：跨类型切换拦截确认框文案
+  // 占位符 {from} / {to} 由 CalibrationWindow 替换为探针类型中文名（复用 ch_xxxName）
+  wf_switchTypeTitle: '切换校准类型',
+  wf_switchTypeConfirm: '当前有 {from} 校准任务进行中，是否停止并切换到 {to}？',
+  wf_stopAndSwitch: '停止并切换',
   wf_sphereGateNotEnabled: '未启用',
   wf_sphereGateNoData: '暂无数据',
   wf_sphereGateStable: '稳定',
@@ -1314,6 +1339,10 @@ const zh: Record<string, string> = {
   ch_totalTemperatureFeat3: '滞止温度对比修正',
   ch_homeTitle: '探针校准控制中心',
   ch_footerHint: '请在开始自动化校准前，手动验证各压力通道零位及运动控制器归零状态。',
+  // spec Task 8：Home 卡片后台任务进行中标识文案
+  // 复用 ch_xxxName 拼接成「校准进行中：五孔探针校准」格式
+  ch_calibrationRunning: '校准进行中',
+  ch_calibrationPaused: '已暂停',
   // --- 五孔主界面 FiveHoleMain 模板文案 ---
   fh_fiveHoleCalibration: '五孔探针校准',
   fh_loading: '正在加载...',
@@ -1903,6 +1932,17 @@ const en: Record<string, string> = {
   fixedBeta: 'Fixed Beta',
   sectionType: 'Section Type',
   sectionValue: 'Section Value',
+  alphaAxis: 'Alpha (deg)',
+  betaAxis: 'Beta (deg)',
+  alphaLabel: 'Alpha',
+  betaLabel: 'Beta',
+  vectorFieldSubtext: 'direction: alpha yaw, length: velocity',
+  pointAlpha: 'Point Alpha',
+  pointBeta: 'Point Beta',
+  flowAlpha: 'Flow Alpha',
+  flowBeta: 'Flow Beta',
+  velocityLabel: 'Velocity',
+  pressureUnit: 'kPa',
   width: 'Width',
   height: 'Height',
   target: 'Target',
@@ -2272,6 +2312,17 @@ const en: Record<string, string> = {
   wf_labelMotionProfiles: 'Motion controller profiles',
   wf_labelMotionStatus: 'Motion controller status',
   wf_labelCalibrationConfig: 'Calibration config',
+  // spec Calibration View State Recovery: recovery flow labels
+  wf_labelCalibrationStatus: 'Calibration task status',
+  wf_recoveryFailed: 'Failed to recover calibration state',
+  wf_recoveryFailedTitle: 'State recovery failed',
+  wf_recovering: 'Recovering calibration state...',
+  wf_statusStopped: 'Stopped',
+  // spec Task 7: cross-type switch confirm dialog labels
+  // Placeholders {from} / {to} are replaced by CalibrationWindow with localized probe type names
+  wf_switchTypeTitle: 'Switch Calibration Type',
+  wf_switchTypeConfirm: 'A {from} calibration task is in progress. Stop and switch to {to}?',
+  wf_stopAndSwitch: 'Stop and Switch',
   wf_sphereGateNotEnabled: 'Disabled',
   wf_sphereGateNoData: 'No data',
   wf_sphereGateStable: 'Stable',
@@ -2675,6 +2726,9 @@ const en: Record<string, string> = {
   ch_totalTemperatureFeat3: 'Stagnation temperature comparison correction',
   ch_homeTitle: 'Probe Calibration Control Center',
   ch_footerHint: 'Before starting automated calibration, manually verify pressure channel zeroing and motion controller homing.',
+  // spec Task 8: Home card background-task indicator labels
+  ch_calibrationRunning: 'Calibration Running',
+  ch_calibrationPaused: 'Paused',
   // --- Five-Hole Main (FiveHoleMain) template ---
   fh_fiveHoleCalibration: 'Five-Hole Probe Calibration',
   fh_loading: 'Loading...',
