@@ -367,6 +367,14 @@ export class Status {
              */
             this["startTime"] = undefined;
         }
+        if (!("pausedDurationMs" in $$source)) {
+            /**
+             * PausedDurationMs 是截至本次状态快照时累计的暂停时长，包含当前尚未结束的暂停段。
+             * @member
+             * @type {number}
+             */
+            this["pausedDurationMs"] = 0;
+        }
         if (/** @type {any} */(false)) {
             /**
              * @member
@@ -401,13 +409,13 @@ export class Status {
      */
     static createFrom($$source = {}) {
         const $$createField6_0 = $$createType3;
-        const $$createField11_0 = $$createType4;
+        const $$createField12_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("motionSafetyFailure" in $$parsedSource) {
             $$parsedSource["motionSafetyFailure"] = $$createField6_0($$parsedSource["motionSafetyFailure"]);
         }
         if ("dataPoints" in $$parsedSource) {
-            $$parsedSource["dataPoints"] = $$createField11_0($$parsedSource["dataPoints"]);
+            $$parsedSource["dataPoints"] = $$createField12_0($$parsedSource["dataPoints"]);
         }
         return new Status(/** @type {Partial<Status>} */($$parsedSource));
     }

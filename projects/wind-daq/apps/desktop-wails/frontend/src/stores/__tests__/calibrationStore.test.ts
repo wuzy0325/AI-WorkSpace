@@ -7,13 +7,19 @@ vi.mock('@api/wails-adapter', () => ({
   wailsApi: {},
 }))
 
-// Mock calibrationApi：startCalibration 直接返回 success，不发 HTTP 请求
+// Mock calibrationApi：startCalibration 直接返回 success，status 由各测试用例通过 mockImplementation 覆盖
 vi.mock('@api/calibrationApi', () => ({
   calibrationApi: {
     startCalibration: vi.fn(async () => ({ success: true })),
     pauseCalibration: vi.fn(async () => ({ success: true })),
     resumeCalibration: vi.fn(async () => ({ success: true })),
     stopCalibration: vi.fn(async () => ({ success: true })),
+    status: vi.fn(async () => ({
+      taskId: 'test',
+      state: 'idle',
+      currentPoint: 0,
+      totalPoints: 0,
+    })),
   },
 }))
 
@@ -132,5 +138,255 @@ describe('calibrationStore', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // ============ spec Task 9: recovery / acquire-release / stop / start 清空 ============
+
+  describe('recoveryFromBackend', () => {
+    // 测试前置：mock calibrationApi.status 返回 running 状态
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：store.status.status === 'running'，isRunning=true，isPaused=false，isRecovering=false，recoveryError=null
+    it('syncs running state from backend status', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-running',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 2,
+        totalPoints: 10,
+        completedPoints: 1,
+        progress: 10,
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      expect(store.status?.status).toBe('running')
+      expect(store.isRunning).toBe(true)
+      expect(store.isPaused).toBe(false)
+      expect(store.isRecovering).toBe(false)
+      expect(store.recoveryError).toBeNull()
+      expect(store.lastRecoveryAt).toBeGreaterThan(0)
+    })
+
+    it('excludes historical pauses when recovering a running task', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        vi.setSystemTime(new Date('2026-07-15T12:00:10.000Z'))
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+          taskId: 'cal-running-after-pause',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 2,
+          totalPoints: 10,
+          completedPoints: 1,
+          progress: 10,
+          startTime: Date.now() - 10_000,
+          pausedDurationMs: 4_000,
+        } as any)
+
+        await store.recoveryFromBackend()
+
+        expect(store.timeInfo?.elapsedTime).toBe(6_000)
+        vi.advanceTimersByTime(1_000)
+        expect(store.timeInfo?.elapsedTime).toBe(7_000)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：mock calibrationApi.status 返回 paused 状态
+    // 期待结果：status.status === 'paused'，isPaused=true
+    it('syncs paused state from backend status', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-paused',
+        type: 'three-hole',
+        state: 'paused',
+        currentPoint: 3,
+        totalPoints: 10,
+        completedPoints: 3,
+        progress: 30,
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      expect(store.status?.status).toBe('paused')
+      expect(store.isPaused).toBe(true)
+      expect(store.isRunning).toBe(false)
+    })
+
+    it('freezes elapsed time from a paused backend snapshot after cold recovery', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        vi.setSystemTime(new Date('2026-07-15T12:00:10.000Z'))
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+          taskId: 'cal-cold-paused',
+          type: 'five-hole',
+          state: 'paused',
+          currentPoint: 2,
+          totalPoints: 10,
+          completedPoints: 1,
+          progress: 10,
+          startTime: Date.now() - 10_000,
+          pausedDurationMs: 4_000,
+        } as any)
+
+        await store.recoveryFromBackend()
+
+        expect(store.timeInfo?.elapsedTime).toBe(6_000)
+        vi.advanceTimersByTime(2_000)
+        expect(store.timeInfo?.elapsedTime).toBe(6_000)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：mock calibrationApi.status 返回 stopped 状态（spec Decision #4 / I7）
+    // 期待结果：status.status === 'stopped'，与 idle 区分
+    it('syncs stopped state from backend status (distinguishable from idle)', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-stopped',
+        type: 'five-hole',
+        state: 'stopped',
+        currentPoint: 5,
+        totalPoints: 10,
+        completedPoints: 5,
+        progress: 50,
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      expect(store.status?.status).toBe('stopped')
+      expect(store.isRunning).toBe(false)
+      expect(store.isPaused).toBe(false)
+    })
+
+    // 测试前置：mock calibrationApi.status 返回 idle 状态
+    // 期待结果：status.status === 'idle'，isRunning=false，isPaused=false
+    it('syncs idle state from backend status', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: '',
+        type: 'five-hole',
+        state: 'idle',
+        currentPoint: 0,
+        totalPoints: 0,
+        completedPoints: 0,
+        progress: 0,
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      expect(store.status?.status).toBe('idle')
+      expect(store.isRunning).toBe(false)
+      expect(store.isPaused).toBe(false)
+    })
+
+    // 测试前置：先 startCalibration 让 store 有 running 状态 + dataPoints，再 mock status 抛错
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：recoveryError 非空，旧 status.dataPoints 保留（spec Recovery UX：失败不 reset）
+    it('preserves existing store state when status() throws', async () => {
+      const store = useCalibrationStore()
+      await store.startCalibration(baseConfig)
+      // 模拟旧 dataPoints：用 any 强类型断言避免联合类型字段差异（不同探针 dataPoint 结构不同）
+      const oldPoint = { pointId: 'p1' } as any
+      store.dataPoints = [oldPoint]
+
+      vi.mocked(calibrationApi.status).mockRejectedValueOnce(new Error('network down'))
+
+      await store.recoveryFromBackend()
+
+      expect(store.recoveryError).toBe('network down')
+      expect(store.isRecovering).toBe(false)
+      // 旧状态保留：dataPoints 不被清空
+      expect(store.dataPoints.length).toBe(1)
+      expect((store.dataPoints[0] as any).pointId).toBe('p1')
+    })
+  })
+
+  describe('acquireView / releaseView', () => {
+    // 测试前置：store 处于 idle，无 running/paused 任务
+    // 测试步骤：连续 acquireView 两次、releaseView 一次
+    // 期待结果：activeViewCount 从 0→1→2→1，acquire/release 不修改 status/dataPoints
+    it('increments and decrements activeViewCount without clearing session state', () => {
+      const store = useCalibrationStore()
+      // 预设一个 status，验证 acquire/release 不会清空它
+      store.startCalibration(baseConfig)
+
+      const initialStatus = store.status
+      const initialDataPoints = store.dataPoints.length
+
+      store.acquireView()
+      expect(store.activeViewCount).toBe(1)
+
+      store.acquireView()
+      expect(store.activeViewCount).toBe(2)
+
+      store.releaseView()
+      expect(store.activeViewCount).toBe(1)
+
+      // 状态保留：acquire/release 不动 status / dataPoints
+      expect(store.status).toBe(initialStatus)
+      expect(store.dataPoints.length).toBe(initialDataPoints)
+    })
+
+    // 测试前置：store.activeViewCount=0
+    // 测试步骤：releaseView() 调用多次
+    // 期待结果：activeViewCount 不为负（下限 0），spec Task 1 明确要求
+    it('clamps activeViewCount at 0 when releaseView is called too many times', () => {
+      const store = useCalibrationStore()
+      store.releaseView()
+      store.releaseView()
+      store.releaseView()
+      expect(store.activeViewCount).toBe(0)
+    })
+  })
+
+  describe('stop', () => {
+    // 测试前置：startCalibration 后塞入 dataPoints
+    // 测试步骤：调 store.stop()
+    // 期待结果：status.status === 'stopped'，dataPoints 保留（spec Decision #4 / I7）
+    it('keeps dataPoints and sets status to stopped (not idle)', async () => {
+      const store = useCalibrationStore()
+      await store.startCalibration(baseConfig)
+      store.dataPoints = [
+        { pointId: 'p1' } as any,
+        { pointId: 'p2' } as any,
+      ]
+
+      await store.stop()
+
+      expect(store.status?.status).toBe('stopped')
+      expect(store.isRunning).toBe(false)
+      expect(store.isPaused).toBe(false)
+      // 关键不变量：dataPoints 保留供导出 / 复盘
+      expect(store.dataPoints.length).toBe(2)
+    })
+  })
+
+  describe('startCalibration session reset', () => {
+    // 测试前置：第一趟 start + stop 后 store 有 stopped 状态 + dataPoints + completeEvent
+    // 测试步骤：第二趟 startCalibration
+    // 期待结果：旧 dataPoints 清空、completeEvent=null、status 重新初始化为 running
+    it('clears previous session dataPoints and completeEvent on new start', async () => {
+      const store = useCalibrationStore()
+      // 第一趟
+      await store.startCalibration(baseConfig)
+      store.dataPoints = [{ pointId: 'old' } as any]
+      await store.stop()
+      // stop 后 status='stopped'，dataPoints 保留
+      expect(store.dataPoints.length).toBe(1)
+
+      // 第二趟：resetSession 应清旧会话
+      await store.startCalibration(baseConfig)
+
+      expect(store.dataPoints.length).toBe(0)
+      expect(store.completeEvent).toBeNull()
+      expect(store.status?.status).toBe('running')
+      expect(store.isRunning).toBe(true)
+    })
   })
 })

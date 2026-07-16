@@ -174,9 +174,17 @@ type trustedPositionSample struct {
 	at    time.Time
 }
 
+type statusQueryFlight struct {
+	done   chan struct{}
+	status core.ControllerStatus
+	err    error
+}
+
 type WTNMC4AMotionController struct {
 	mu               sync.RWMutex
 	ioMu             sync.Mutex
+	statusQueryMu    sync.Mutex
+	statusQuery      *statusQueryFlight
 	profile          core.MotionControllerProfile
 	status           core.ControllerStatus
 	handle           uintptr
@@ -373,7 +381,51 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 // 而非 RR1 的 ASND/CNST/DSND 加速/定速/减速阶段位（每轴 1 次）。RR0 是 SDK 明确指定用于判断
 // 轴是否正在驱动的寄存器，不因阶段位残留而误判为运动中。
 // RR1 继续只用于限位（LMTP/LMTM）、报警（ALARM/EMG）等轴级状态。
+//
+// Single-flight 合并：同一时刻每台控制器最多运行一轮 RR0/RR1/LP 查询，后续调用者共享
+// 第一轮的结果（成功或失败）。这是 spec Decision 2 "一个控制器一个采集 flight" 在 WTNMC4A
+// adapter 层的最小落地，避免多消费者在 ioMu 上排队后重复访问 DLL。
+//
+// 注意：等待者 ctx 取消时返回的 status 是当前缓存快照（c.copyStatusLocked），
+// 不是发起者最终结果——两者可能不一致（发起者可能稍后成功更新缓存）。
+// 调用方拿到 (status, ctx.Err()) 时只能把 status 当作"最近一次已知状态"
+// 用于诊断/兜底，不能当作本轮采集结果。如需本轮结果必须用非取消的 ctx
+// 重新调用 Status。
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
+	c.statusQueryMu.Lock()
+	if active := c.statusQuery; active != nil {
+		c.statusQueryMu.Unlock()
+		select {
+		case <-active.done:
+			return active.status, active.err
+		case <-ctx.Done():
+			c.mu.RLock()
+			status := c.copyStatusLocked()
+			c.mu.RUnlock()
+			return status, ctx.Err()
+		}
+	}
+
+	flight := &statusQueryFlight{done: make(chan struct{})}
+	c.statusQuery = flight
+	c.statusQueryMu.Unlock()
+
+	status, err := c.queryStatus(ctx)
+
+	c.statusQueryMu.Lock()
+	flight.status = status
+	flight.err = err
+	if c.statusQuery == flight {
+		c.statusQuery = nil
+	}
+	close(flight.done)
+	c.statusQueryMu.Unlock()
+	return status, err
+}
+
+// queryStatus 执行一轮真实硬件查询。Status 保证同一控制器同一时刻仅运行一轮，
+// 其他并发调用等待并复用结果，避免多个轮询源在 ioMu 上排队后重复访问 DLL。
+func (c *WTNMC4AMotionController) queryStatus(ctx context.Context) (core.ControllerStatus, error) {
 	startTime := time.Now()
 
 	c.mu.RLock()

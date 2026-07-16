@@ -19,6 +19,7 @@ export interface CalibrationStatus {
   state: string;
   currentPoint: number;
   totalPoints: number;
+  pausedDurationMs?: number;
   lastError?: string;
   /**
    * 结构化错误码（与 shared/types/calibration.CalibrationErrorCode 对齐）。
@@ -181,12 +182,7 @@ export const calibrationApi = {
     if (isWailsAvailable()) {
       return await wailsApi.calibration.status();
     } else {
-      return {
-        taskId: 'test',
-        state: 'idle',
-        currentPoint: 0,
-        totalPoints: 0,
-      };
+      return await request<CalibrationStatus>('/api/calibration/status');
     }
   },
 

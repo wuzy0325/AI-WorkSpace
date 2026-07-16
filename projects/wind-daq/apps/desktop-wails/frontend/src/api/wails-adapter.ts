@@ -109,6 +109,7 @@ export interface CalibrationStatus {
   state: string;
   currentPoint: number;
   totalPoints: number;
+  pausedDurationMs?: number;
   results: any[];
   lastError?: string;
 }

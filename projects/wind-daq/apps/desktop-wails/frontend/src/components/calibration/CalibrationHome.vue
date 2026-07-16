@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { CalibrationType } from '@shared/types/calibration'
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18nStore } from '@stores/i18nStore'
+import { useCalibrationStore } from '@stores/calibrationStore'
+import type { CalibrationStatus } from '@shared/types/calibration'
 import { ArrowRight, CheckCircle2, Info } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 import IconCalibrationThreeHole from '@components/icons/IconCalibrationThreeHole.vue'
@@ -13,7 +16,33 @@ const emit = defineEmits<{
 }>()
 
 const { t } = storeToRefs(useI18nStore())
+const calibrationStore = useCalibrationStore()
 
+type BadgeInfo = { text: string; kind: 'running' | 'paused' }
+
+// spec Task 8：后台任务进行中标识（按探针类型缓存，避免模板内重复调用多次）
+//   - 仅 running / paused 态显示徽章（idle/completed/error/stopped 不显示，stopped 后立即消失）
+//   - running 显示绿色脉动徽章 + 「校准进行中」，paused 显示黄色徽章 + 「已暂停」
+//   - 跨画面切换时 Main 释放视图（releaseView）但任务继续后台，store 状态不变，徽章仍显示
+const badgesByType = computed<Partial<Record<CalibrationType, BadgeInfo>>>(() => {
+  const runningType = calibrationStore.status?.type
+  const s: CalibrationStatus | undefined = calibrationStore.status?.status
+  if (!runningType || !s) return {}
+  if (s === 'running') return { [runningType]: { text: t.value.ch_calibrationRunning, kind: 'running' } }
+  if (s === 'paused') return { [runningType]: { text: t.value.ch_calibrationPaused, kind: 'paused' } }
+  return {}
+})
+
+// 校准类型卡片配置。
+//
+// 颜色规范说明（§28 例外）：
+//   - colors 中的十六进制颜色是各校准类型的「品牌色种子」，跨主题一致，
+//     用于让用户在视觉上区分五孔/三孔/总压/总温四类探针校准
+//   - 这些颜色通过 CSS 自定义属性（--card-primary 等）传递给 <style scoped>，
+//     并在样式表中与设计 token（如 var(--bg-elevated)、var(--text-primary)）
+//     协同使用——主题切换时背景/文字/边框等通用层仍走 token，仅品牌色不变
+//   - 这是 §28「禁止硬编码颜色值」的合理例外，类似品牌 Logo 色，不应改用 token
+//   - 如需调整某类型的品牌色，在此处统一修改即可，无需改动样式表
 const calibrationTypes = [
   {
     type: 'five-hole' as CalibrationType,
@@ -164,6 +193,17 @@ function getIconComponent(type: CalibrationType) {
 
           <!-- 背景装饰圆 -->
           <div class="card-bg-decoration" />
+
+          <!-- spec Task 8：后台任务进行中徽章（绝对定位卡片右上角，不影响卡片原有布局） -->
+          <!-- running 绿色脉动 / paused 黄色静态；idle/completed/error/stopped 不渲染 -->
+          <div
+            v-if="badgesByType[item.type]"
+            class="card-badge"
+            :class="`card-badge--${badgesByType[item.type]!.kind}`"
+          >
+            <span class="card-badge-dot" />
+            <span class="card-badge-text">{{ badgesByType[item.type]!.text }}</span>
+          </div>
 
           <div class="card-header">
             <div class="card-title-row">
@@ -339,6 +379,59 @@ function getIconComponent(type: CalibrationType) {
 .card:hover .card-bg-decoration {
   opacity: 0.12;
   transform: scale(1.1);
+}
+
+/* spec Task 8：后台任务进行中徽章 —— 绝对定位在卡片右上角，不影响卡片原有布局 */
+.card-badge {
+  position: absolute;
+  top: 0.875rem;
+  right: 1rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* running：绿色脉动（圆点 pulse 动画提示"正在运动/采集"） */
+.card-badge--running {
+  background: color-mix(in srgb, var(--accent-success) 18%, transparent);
+  color: var(--accent-success);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 45%, transparent);
+}
+
+/* paused：黄色静态（无脉动，让用户一眼区分"暂停"vs"运行中"） */
+.card-badge--paused {
+  background: color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  color: var(--accent-warning);
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 45%, transparent);
+}
+
+.card-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.card-badge--running .card-badge-dot {
+  animation: card-badge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes card-badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
+.card-badge-text {
+  line-height: 1;
 }
 
 .card-header {

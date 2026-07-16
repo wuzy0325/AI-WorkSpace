@@ -351,6 +351,23 @@ func TestMotionWatchdog_NoProgressTriggersAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestMotionWatchdog_NoProgressIgnoredWithinArrivalTolerance(t *testing.T) {
+	w := newMotionWatchdog()
+	cfg := makeWatchdogConfig()
+	target := 15.0
+	axis := motion.AxisStatus{Name: motion.AxisY, Position: 15.0, Moving: true}
+
+	if f := w.Observe("ctrl-1", axis, target, cfg, 0); f != nil {
+		t.Fatalf("first Observe should return nil, got %v", f.Verdict)
+	}
+	state := w.states[watchdogKey("ctrl-1", "Y")]
+	state.lastProgressAt = time.Now().Add(-3 * time.Second)
+
+	if f := w.Observe("ctrl-1", axis, target, cfg, 0); f != nil {
+		t.Fatalf("axis within arrival tolerance should not report no progress, got %v", f.Verdict)
+	}
+}
+
 func TestMotionWatchdog_ProgressResetsWatchdog(t *testing.T) {
 	// 测试前置：看门狗 + 默认配置
 	w := newMotionWatchdog()
@@ -501,6 +518,79 @@ func TestMotionWatchdog_MultipleAxesIndependent(t *testing.T) {
 	// 期待结果：nil——两轴状态独立，互不影响
 	if f != nil {
 		t.Errorf("independent axis first Observe should return nil, got %v", f.Verdict)
+	}
+}
+
+// TestMotionWatchdog_OvershootAfterPassingThroughToleranceRegion 验证：
+// 轴穿越容差区后再冲出目标时，看门狗必须正确触发 Overshoot。
+//
+// 回归场景：29.5（左侧，容差区外） → 30.0（容差区内） → 31.0（右侧，容差区外）。
+// 旧实现：进入容差区时清除 initialized，导致离开容差区时被当作首次观察，
+// 丢失穿越前的 lastSide=-1，不会报告 Overshoot。
+//
+// 修复后：进入容差区保留 lastSide，离开容差区时检测到侧向翻转（-1 → +1）触发 Overshoot。
+func TestMotionWatchdog_OvershootAfterPassingThroughToleranceRegion(t *testing.T) {
+	// 测试前置：看门狗 + 默认配置（tolerance=0.01），目标 30.0
+	w := newMotionWatchdog()
+	cfg := makeWatchdogConfig()
+	target := 30.0
+
+	// 测试步骤：三帧观察
+	// 帧 1: 位置 29.5（左侧，容差区外，moving=true）—— 初始化 lastSide=-1
+	axis1 := motion.AxisStatus{Name: motion.AxisX, Position: 29.5, Moving: true}
+	if f := w.Observe("ctrl-1", axis1, target, cfg, 0); f != nil {
+		t.Fatalf("frame 1 (approach from left): expected nil, got %v", f.Verdict)
+	}
+
+	// 帧 2: 位置 30.0（容差区内，moving=true）—— 进入容差区
+	axis2 := motion.AxisStatus{Name: motion.AxisX, Position: 30.0, Moving: true}
+	if f := w.Observe("ctrl-1", axis2, target, cfg, 0); f != nil {
+		t.Fatalf("frame 2 (within tolerance): expected nil, got %v", f.Verdict)
+	}
+
+	// 帧 3: 位置 31.0（右侧，容差区外，moving=true）—— 冲出目标
+	axis3 := motion.AxisStatus{Name: motion.AxisX, Position: 31.0, Moving: true}
+	f := w.Observe("ctrl-1", axis3, target, cfg, 0)
+
+	// 期待结果：Overshoot 故障（侧向从 -1 翻转为 +1，偏差 1.0 > tolerance 0.01）
+	if f == nil {
+		t.Fatal("frame 3 (overshoot through tolerance): expected Overshoot failure, got nil")
+	}
+	if f.Verdict != traversal.MotionSafetyOvershoot {
+		t.Errorf("verdict = %v, want Overshoot", f.Verdict)
+	}
+	if f.Target != 30.0 || f.Actual != 31.0 {
+		t.Errorf("failure target=%v actual=%v, want 30/31", f.Target, f.Actual)
+	}
+}
+
+// TestMotionWatchdog_NoOvershootWhenReturningToSameSideAfterTolerance 验证：
+// 轴进入容差区后回到原侧（未穿越目标），不应误触发 Overshoot。
+//
+// 场景：29.5（左侧） → 30.0（容差区内） → 29.8（左侧，容差区外）。
+// 修复后：进入容差区保留 lastSide=-1，离开容差区时 currentSide=-1 == lastSide=-1，不触发 Overshoot。
+func TestMotionWatchdog_NoOvershootWhenReturningToSameSideAfterTolerance(t *testing.T) {
+	// 测试前置：看门狗 + 默认配置（tolerance=0.01），目标 30.0
+	w := newMotionWatchdog()
+	cfg := makeWatchdogConfig()
+	target := 30.0
+
+	// 测试步骤：三帧观察
+	// 帧 1: 位置 29.5（左侧，容差区外）—— 初始化 lastSide=-1
+	axis1 := motion.AxisStatus{Name: motion.AxisX, Position: 29.5, Moving: true}
+	w.Observe("ctrl-1", axis1, target, cfg, 0)
+
+	// 帧 2: 位置 30.0（容差区内）—— 进入容差区
+	axis2 := motion.AxisStatus{Name: motion.AxisX, Position: 30.0, Moving: true}
+	w.Observe("ctrl-1", axis2, target, cfg, 0)
+
+	// 帧 3: 位置 29.8（左侧，容差区外）—— 回到原侧
+	axis3 := motion.AxisStatus{Name: motion.AxisX, Position: 29.8, Moving: true}
+	f := w.Observe("ctrl-1", axis3, target, cfg, 0)
+
+	// 期待结果：nil——回到原侧（同侧），不算穿越
+	if f != nil {
+		t.Errorf("returning to same side after tolerance: expected nil, got %v", f.Verdict)
 	}
 }
 

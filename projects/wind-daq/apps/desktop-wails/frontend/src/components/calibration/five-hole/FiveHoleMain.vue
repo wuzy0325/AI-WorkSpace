@@ -58,6 +58,11 @@ const {
 
 const { t } = storeToRefs(useI18nStore())
 
+// 暴露 reloadSavedConfig 给父组件 CalibrationWindow：
+// Settings 保存配置后父组件调 currentMainRef.reloadSavedConfig() 触发重新加载，
+// 否则 currentConfig 仍是挂载时的旧值，canStartCalibration 不刷新，会一直提示"未配置"。
+// 与 ThreeHoleMain / TotalPressureMain / TotalTemperatureMain 保持一致，
+// 由 calibrationMainExpose.contract.test.ts 在编译期断言本暴露存在。
 defineExpose({
   reloadSavedConfig: loadSavedConfig,
 })
@@ -728,7 +733,8 @@ watch(activeTab, (tab) => {
 onBeforeUnmount(() => {
   if (chartTimer) clearInterval(chartTimer)
   cleanupSubscriptions()
-  calibrationStore.reset()
+  // spec Decision #3 / I1：unmount 不再调 calibrationStore.reset()，保留会话状态供切回 / 导出。
+  // releaseView（引用计数-1 + 降频 polling）已由 useCalibrationWorkflow.onBeforeUnmount 统一处理。
 })
 
 // ===== 顶部状态栏派生状态（参考 ThreeHoleMain.vue）=====
@@ -749,16 +755,24 @@ const recordCountText = computed(() =>
 )
 
 const statusText = computed(() => {
-  if (calibrationStore.isPaused) return t.value.statusPaused
-  if (calibrationStore.isRunning) return t.value.running
-  if (calibrationStore.completeEvent) return t.value.completed
+  // spec Decision #15 / I7：按 status.status 精确映射，避免 stop 后退化为「空闲」
+  const s = calibrationStore.status?.status
+  if (s === 'running') return t.value.running
+  if (s === 'paused') return t.value.statusPaused
+  if (s === 'stopped') return t.value.wf_statusStopped
+  if (s === 'completed') return t.value.completed
+  if (s === 'error') return t.value.error
   return t.value.idle
 })
 
 const statusColor = computed(() => {
-  if (calibrationStore.isPaused) return 'warning'
-  if (calibrationStore.isRunning) return 'success'
-  if (calibrationStore.completeEvent) return 'info'
+  const s = calibrationStore.status?.status
+  if (s === 'running') return 'success'
+  if (s === 'paused') return 'warning'
+  // 已停止：黄色警示色，与 idle（normal）区分，提示「保留数据可导出」
+  if (s === 'stopped') return 'warning'
+  if (s === 'completed') return 'info'
+  if (s === 'error') return 'danger'
   return 'normal'
 })
 

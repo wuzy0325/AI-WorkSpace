@@ -75,6 +75,61 @@ func TestWTNMC4AReadOnlyStability(t *testing.T) {
 		iterations, iterations*len(profile.Axes), totalDuration/time.Duration(iterations), minDuration, maxDuration)
 }
 
+// TestWTNMC4AReadOnlyConcurrentStatus verifies that overlapping status callers
+// share one hardware query. It performs no movement or register writes.
+func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
+	ip := os.Getenv("WTNMC4A_READONLY_IP")
+	if ip == "" {
+		t.Skip("set WTNMC4A_READONLY_IP to run this read-only hardware test")
+	}
+
+	profile := wtnmc4aTestProfile()
+	profile.Address = ip
+	ctrl := NewWTNMC4AMotionController(profile)
+	ctx := context.Background()
+	if err := ctrl.Connect(ctx); err != nil {
+		t.Fatalf("connect %s failed: %v", ip, err)
+	}
+	defer ctrl.Disconnect(ctx)
+
+	const (
+		batches = 30
+		callers = 3
+	)
+	var total, maximum time.Duration
+	for batch := 0; batch < batches; batch++ {
+		ready := make(chan struct{})
+		errs := make(chan error, callers)
+		var wg sync.WaitGroup
+		started := time.Now()
+		for range callers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-ready
+				_, err := ctrl.Status(ctx)
+				errs <- err
+			}()
+		}
+		close(ready)
+		wg.Wait()
+		duration := time.Since(started)
+		total += duration
+		if duration > maximum {
+			maximum = duration
+		}
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("batch %d status failed: %v", batch, err)
+			}
+		}
+	}
+
+	t.Logf("read-only concurrent status: batches=%d callers=%d avg_batch=%s max_batch=%s",
+		batches, callers, total/batches, maximum)
+}
+
 // TestWTNMC4ADLLLatency 连接真实控制器并测量各 DLL 调用耗时。
 // 用法：
 //

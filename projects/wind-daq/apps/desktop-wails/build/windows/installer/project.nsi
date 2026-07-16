@@ -1,4 +1,4 @@
-﻿Unicode true
+Unicode true
 
 ####
 ## Wind-DAQ NSIS installer script (custom version).
@@ -9,7 +9,7 @@
 ####
 
 ; Version must match projects/wind-daq/VERSION.
-!define INFO_PRODUCTVERSION "0.6.0"
+!define INFO_PRODUCTVERSION "0.7.0"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -102,10 +102,26 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${INFO_PRODUCTVERSION}-${ARCH}-installer.
 InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 ShowInstDetails show
 
-# Init: language selection -> architecture check
+# Init: language selection -> architecture check -> offline webview2
 Function .onInit
     !insertmacro MUI_LANGDLL_DISPLAY
     !insertmacro wails.checkArchitecture
+
+    # Check for offline WebView2 installer alongside installer.exe
+    StrCpy $0 "$EXEDIR\${WEBVIEW2_OFFLINE_INSTALLER}"
+    ${If} ${FileExists} "$0"
+        DetailPrint "Found WebView2 offline installer: $0"
+        DetailPrint "Installing WebView2 Runtime (offline)..."
+        ExecWait '"$0" /silent /install' $1
+        ${If} $1 == 0
+            DetailPrint "WebView2 Runtime installed successfully (offline)"
+        ${Else}
+            DetailPrint "WebView2 offline installer returned: $1 (may already be installed, continuing)"
+        ${EndIf}
+    ${Else}
+        DetailPrint "No offline WebView2 installer found at $0"
+        DetailPrint "Will use online download as fallback"
+    ${EndIf}
 FunctionEnd
 
 Function IsWebView2Installed
@@ -127,20 +143,10 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
-    # WebView2: prefer the offline installer beside this installer, then fall back online
+    # WebView2: check if already installed before downloading
     Call IsWebView2Installed
     ${If} $R0 == "0"
-        StrCpy $0 "$EXEDIR\${WEBVIEW2_OFFLINE_INSTALLER}"
-        ${If} ${FileExists} "$0"
-            DetailPrint "Installing WebView2 Runtime from $0"
-            ExecWait '"$0" /silent /install' $1
-            ${If} $1 != 0
-                DetailPrint "WebView2 offline installer returned $1 (continuing installation)"
-            ${EndIf}
-        ${Else}
-            DetailPrint "WebView2 offline installer not found, using online download"
-            !insertmacro wails.webview2runtime
-        ${EndIf}
+        !insertmacro wails.webview2runtime
     ${Else}
         DetailPrint "WebView2 Runtime already installed, skipping download"
     ${EndIf}

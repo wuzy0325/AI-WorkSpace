@@ -105,7 +105,9 @@ type Status struct {
 	CompletedPoints     int                            `json:"completedPoints"`
 	Progress            float64                        `json:"progress"` // 百分比 0-100
 	StartTime           int64                          `json:"startTime,omitempty"`
-	DataPoints          []DataPoint                    `json:"dataPoints,omitempty"`
+	// PausedDurationMs 是截至本次状态快照时累计的暂停时长，包含当前尚未结束的暂停段。
+	PausedDurationMs int64       `json:"pausedDurationMs"`
+	DataPoints       []DataPoint `json:"dataPoints,omitempty"`
 	// 当前点采样进度：CurrentSample=当前点已采样本数（1..SamplesPerPoint），0 表示未开始/已完成
 	// SamplesPerPoint=当前点总采样数。前端据此显示"当前点采样 3/10"子进度。
 	CurrentSample   int `json:"currentSample,omitempty"`

@@ -1,4 +1,4 @@
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -278,6 +278,8 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       case 'idle': return i18n.t.idle
       case 'running': return i18n.t.running
       case 'paused': return i18n.t.statusPaused
+      // spec Decision #15 / I7：stop 后显示「已停止」，与 idle 区分（保留数据可导出）
+      case 'stopped': return i18n.t.wf_statusStopped
       case 'completed': return i18n.t.completed
       case 'error': return i18n.t.error
       default: return i18n.t.idle
@@ -289,6 +291,8 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     switch (calibrationStore.status.status) {
       case 'running': return 'success'
       case 'paused': return 'warning'
+      // 已停止：黄色警示色，与 idle（normal）区分
+      case 'stopped': return 'warning'
       case 'completed': return 'info'
       case 'error': return 'danger'
       default: return 'normal'
@@ -330,7 +334,21 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   })
 
   onMounted(async () => {
-    // 进入校准画面时并行拉取四类资源：设备 profiles/statuses、运动 profiles、运动 status、本地保存的校准配置。
+    // spec I4 / Recovery UX：进入校准画面统一恢复协议
+    //   acquireView → 并行 recovery + 资源加载 → 依后端状态设频
+    // acquireView 先行：引用计数+1，按需升频 polling + 重启 elapsedTick（仅 running/paused）
+    calibrationStore.acquireView()
+
+    // spec Decision #14：lastRecoveryAt 2s 内跳过二次 recovery，复用 Window 模块级恢复结果，
+    // 避免 isRecovering 闪两次 / 重复 loading
+    const recoveryAgeMs = Date.now() - (calibrationStore.lastRecoveryAt || 0)
+    const shouldRecover = recoveryAgeMs > 2000
+    // recoveryPromise 与其他 Promise<void> 资源请求类型对齐，避免 allSettled 推断出混合类型
+    const recoveryPromise: Promise<void> = shouldRecover
+      ? calibrationStore.recoveryFromBackend()
+      : Promise.resolve()
+
+    // 进入校准画面时并行拉取四类资源 + recovery。
     // 使用 allSettled 而非 all：任一请求失败不应阻塞其他资源加载（例如运动控制器离线时仍要展示已保存的配置）。
     // 失败项由 reportAllSettledFailures 统一弹 toast 提示，store 自身负责保留旧状态 + 暴露 error 字段。
     // refreshInstances 同时刷新 profiles 与 statuses：
@@ -343,13 +361,41 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       motionStore.refreshProfiles(),
       motionStore.refreshStatus(),
       loadSavedConfig(),
+      recoveryPromise,
     ])
     reportAllSettledFailures(
       results,
-      [i18n.t.wf_labelDeviceInstances, i18n.t.wf_labelMotionProfiles, i18n.t.wf_labelMotionStatus, i18n.t.wf_labelCalibrationConfig],
+      [
+        i18n.t.wf_labelDeviceInstances,
+        i18n.t.wf_labelMotionProfiles,
+        i18n.t.wf_labelMotionStatus,
+        i18n.t.wf_labelCalibrationConfig,
+        i18n.t.wf_labelCalibrationStatus,
+      ],
       (msg, level) => feedbackStore.pushToast(msg, level ?? 'warning'),
     )
+
+    // recovery 失败提示（不阻塞渲染，UI 用 recoveryError 显示错误条 + 可重试）
+    if (calibrationStore.recoveryError) {
+      feedbackStore.pushToast(i18n.t.wf_recoveryFailed + ': ' + calibrationStore.recoveryError, 'error')
+    }
+
+    // U16：running/paused 态下若 hasConfig=false（loadSavedConfig 失败），强制再 load 一次，
+    // 避免通道面板/按钮因 hasConfig=false 空白
+    if ((calibrationStore.isRunning || calibrationStore.isPaused) && !hasConfig.value) {
+      await loadSavedConfig()
+    }
+
+    // 依后端状态设频：running/paused 升 uiRefreshHz，否则 1Hz 心跳（recovery 内 stopStatusPolling 防竞态）
+    calibrationStore.restartPollingForCurrentState()
+
     isLoading.value = false
+  })
+
+  // spec I3 / I4：unmount 只释放视图级资源（引用计数-1），不清空会话状态
+  // releaseView 由 composable 统一处理，Main 组件的 onBeforeUnmount 只清局部订阅 / 定时器
+  onBeforeUnmount(() => {
+    calibrationStore.releaseView()
   })
 
   return {
@@ -379,6 +425,9 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
     statusColor,
     canStartCalibration,
     startDisabledReason,
+    // spec I8：暴露 recovery 状态给 Main 渲染 loading / 错误条
+    isRecovering: computed(() => calibrationStore.isRecovering),
+    recoveryError: computed(() => calibrationStore.recoveryError),
   }
 }
 

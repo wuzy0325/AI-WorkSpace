@@ -30,7 +30,8 @@ export {
 export type CalibrationType = 'five-hole' | 'three-hole' | 'total-pressure' | 'total-temperature'
 
 /** 校准状态 */
-export type CalibrationStatus = 'idle' | 'configuring' | 'running' | 'paused' | 'completed' | 'error'
+// 'stopped'：用户主动 stop 后的终态（spec Decision #4 / I7）——保留已采数据可导出，与 idle 区分
+export type CalibrationStatus = 'idle' | 'configuring' | 'running' | 'paused' | 'completed' | 'error' | 'stopped'
 
 /** 通道引用（设备ID + 通道索引） */
 export interface ChannelRef {
@@ -312,6 +313,7 @@ export interface CalibrationTaskStatus {
   completedPoints: number
   progress: number
   startTime?: number
+  pausedDurationMs?: number
   estimatedTimeRemaining?: number
   lastError?: string
   /**
@@ -457,4 +459,19 @@ export interface TotalTemperatureCalibrationState {
   temperatureStable: boolean
   points: TotalTemperatureCalibrationPoint[]
   startTime: number
+}
+
+/**
+ * 校准 Main 组件对外暴露的契约接口。
+ *
+ * 用途：CalibrationWindow.handleSettingsSaved 通过 currentMainRef.reloadSavedConfig()
+ *   在 Settings 保存后触发对应 Main 重新加载配置——否则 currentConfig 保留挂载时旧值，
+ *   canStartCalibration 不会重算，UI 一直提示"未配置"，必须切走再切回才生效。
+ *
+ * 强制约束：四个 Main 组件（FiveHoleMain / ThreeHoleMain / TotalPressureMain /
+ *   TotalTemperatureMain）必须通过 defineExpose 暴露本接口，
+ *   由 calibrationMainExpose.contract.ts 在编译期断言，缺暴露时 vue-tsc 报错。
+ */
+export interface CalibrationMainExpose {
+  reloadSavedConfig: () => Promise<void> | void
 }

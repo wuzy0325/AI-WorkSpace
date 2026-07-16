@@ -107,6 +107,19 @@ export const useCalibrationStore = defineStore('calibration', () => {
   // 否则多实例 / HMR 重载时旧 timer 不会随 store dispose 而清理，导致泄漏与重复轮询。
   let statusPollingTimer: ReturnType<typeof setInterval> | null = null
 
+  // 画面活跃性计数：驱动 polling 频率切换（spec I4）
+  // - count > 0：至少一个校准 Main 可见，polling 用 uiRefreshHz（默认 5Hz）
+  // - count == 0：全部切走，polling 降到 1Hz 心跳，让"切走期间完成/失败/停止"仍能被前端捕获
+  // acquire/release 仅控制频率，不清理会话状态（status/dataPoints/completeEvent），参见 I1/I3
+  const activeViewCount = ref(0)
+
+  // 恢复中状态：recoveryFromBackend 期间为 true，UI 显示 loading 占位（spec I8 / Recovery UX）
+  const isRecovering = ref(false)
+  // 恢复失败原因：null 表示无错误。失败时保留旧 store 状态，UI 显示错误条 + 可重试
+  const recoveryError = ref<string | null>(null)
+  // 上次 recovery 完成时刻（ms 时间戳）：调用方用于"2s 内跳过二次 recovery"判定（spec Decision #14）
+  const lastRecoveryAt = ref(0)
+
   // 已用时 tick 定时器：固定 1Hz，独立于 statusPolling 频率。
   // 已用时显示精度到秒，1Hz 足够；不必跟随 uiRefreshHz（5Hz~60Hz）浪费主线程。
   let elapsedTickTimer: ReturnType<typeof setInterval> | null = null
@@ -178,8 +191,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
   }
 
   // 开始轮询校准状态
-  function startStatusPolling() {
+  // 参数 intervalMs：显式指定轮询间隔（用于 acquire/release 切换频率）。
+  //   默认 undefined 时按 activeViewCount 自动选择：count>0 用 uiRefreshHz，count==0 用 1Hz 心跳。
+  //   spec I4：禁止并发写竞态，调用方需先 stopStatusPolling() 再 start。
+  function startStatusPolling(intervalMs?: number) {
     stopStatusPolling()
+    const interval = intervalMs ?? (activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000)
     statusPollingTimer = setInterval(async () => {
       if (!isWailsAvailable()) return
       try {
@@ -191,7 +208,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
       } catch (err) {
         console.error('轮询校准状态失败:', err)
       }
-    }, Math.round(uiRefreshIntervalMs.value))
+    }, Math.round(interval))
   }
 
   // 停止轮询
@@ -217,6 +234,49 @@ export const useCalibrationStore = defineStore('calibration', () => {
       clearInterval(elapsedTickTimer)
       elapsedTickTimer = null
     }
+  }
+
+  // 画面活跃性 acquire：引用计数+1。从 0→1 时升频（spec I4 / Recovery UX）：
+  //   - 仅 running/paused 态需要高频 polling + elapsedTick（终态/idle 无需轮询）
+  //   - acquire 不动 status/dataPoints/completeEvent，仅控制 polling 频率
+  function acquireView() {
+    const wasZero = activeViewCount.value === 0
+    activeViewCount.value++
+    if (wasZero && (isRunning.value || isPaused.value)) {
+      if (isWailsAvailable()) {
+        startStatusPolling(Math.round(uiRefreshIntervalMs.value))
+      }
+      startElapsedTick()
+    }
+  }
+
+  // 画面活跃性 release：引用计数-1（下限 0）。1→0 时降频（spec I4 / I6）：
+  //   - polling 降到 1Hz 心跳（仅 running/paused 态保留，捕获切走期间终态写入 store）
+  //   - elapsedTick 停止（无画面无需刷新时间显示）
+  //   - 不清空会话状态（spec I1/I3/I7）
+  function releaseView() {
+    if (activeViewCount.value > 0) {
+      activeViewCount.value--
+    }
+    if (activeViewCount.value === 0) {
+      if ((isRunning.value || isPaused.value) && isWailsAvailable()) {
+        startStatusPolling(1000)
+      }
+      stopElapsedTick()
+    }
+  }
+
+  // recovery 完成后由调用方调用，依当前 store 状态重启 polling（spec Recovery UX 第 5 步）：
+  //   - running/paused && activeViewCount > 0：高频 uiRefreshHz（至少一个 Main 可见）
+  //   - running/paused && activeViewCount == 0：1Hz 心跳（全部切走，捕获终态写入）
+  //   - 其他（终态/idle）：不动——updateStatusFromBackend 终态分支已 stop polling
+  // 为什么需要这个：recoveryFromBackend 内部 stopStatusPolling 防竞态但不重启，
+  //   调用方必须显式依后端返回状态设频，避免 polling 一直停着。
+  function restartPollingForCurrentState() {
+    if (!isRunning.value && !isPaused.value) return
+    if (!isWailsAvailable()) return
+    const interval = activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000
+    startStatusPolling(Math.round(interval))
   }
 
   // 基于 status.startTime + pausedAccumulatedMs 计算 elapsedTime 与 estimatedRemaining。
@@ -262,6 +322,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 读取后端返回的启动时间戳（calibration.Status.StartTime，JSON 字段 startTime）。
     // 这是 elapsed 计时的基准——比前端本地记 Date.now() 更准：用户切换页面/刷新后仍能基于后端真实启动时刻恢复已用时。
     const startTime = calStatus.startTime ?? calStatus.StartTime
+    const backendPausedDurationMs = calStatus.pausedDurationMs ?? calStatus.PausedDurationMs
     // 运动安全错误码 + 故障现场快照（与 core/calibration.Status.LastErrorCode /
     // MotionSafetyFailure 对齐）。Wails binding 重新生成前 PascalCase 字段缺失，需做 fallback。
     // 这两个字段决定前端告警卡片是否渲染、Start 是否阻塞——必须在每次轮询时刷新，
@@ -293,6 +354,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
       status.value.totalPoints = totalPoints
       status.value.progress = progress
       status.value.currentPointIndex = typeof currentPointIndex === 'number' ? currentPointIndex : undefined
+      // 任务身份同步：每次后端快照都更新 taskId 和 type。
+      //   场景：任务由另一个窗口、HTTP 客户端或后端生命周期替换（stop+start 新任务）时，
+      //   前端 store 仍持有旧 taskId/type，会继续用旧任务 ID 停止/导出，并可能打开错误类型的 Main。
+      //   后端快照是身份真值来源，必须每次覆盖本地。
+      status.value.taskId = taskId
+      status.value.type = type
       // 后端在 Start 时才写入 StartTime；首次轮询可能还没拿到，需要每次都尝试补齐
       if (typeof startTime === 'number' && startTime > 0) {
         status.value.startTime = startTime
@@ -324,6 +391,10 @@ export const useCalibrationStore = defineStore('calibration', () => {
     isRunning.value = state === 'running'
     isPaused.value = state === 'paused'
 
+    if (typeof backendPausedDurationMs === 'number' && backendPausedDurationMs >= 0) {
+      pausedAccumulatedMs = backendPausedDurationMs
+    }
+
     // 运行/暂停态都需要 tick：暂停时 tick 内部会跳过 elapsed 累加，但保留 timer
     // 以便 resume 后立即恢复递增，无需重启 timer。
     if (state === 'running' || state === 'paused') {
@@ -331,12 +402,18 @@ export const useCalibrationStore = defineStore('calibration', () => {
         if (state === 'running' && lastPauseAt !== null) {
           // 后端从 paused 切回 running，但本地 lastPauseAt 未清——说明 resume 路径未走 store
           // （例如页面刷新后后端已是 running）：补一次累计避免 elapsed 偏大
-          pausedAccumulatedMs += Date.now() - lastPauseAt
+          if (typeof backendPausedDurationMs !== 'number') {
+            pausedAccumulatedMs += Date.now() - lastPauseAt
+          }
           lastPauseAt = null
         }
-        if (state === 'paused' && lastPauseAt === null) {
-          // 反向边缘情况：页面刷新后从后端读到 paused 态，本地没有 lastPauseAt——
-          // 用当前时刻兜底，避免 tick 把暂停期间的时长计入 elapsed
+        if (state === 'paused' && (lastPauseAt === null || typeof backendPausedDurationMs === 'number')) {
+          // 后端 pausedDurationMs 包含当前暂停段，因此每个状态快照都能重建准确 elapsed；
+          // lastPauseAt 只负责在两次快照之间冻结本地 tick。
+          timeInfo.value = {
+            elapsedTime: Math.max(0, Date.now() - status.value.startTime - pausedAccumulatedMs),
+            estimatedRemaining: 0,
+          }
           lastPauseAt = Date.now()
         }
         updateTimeInfo()
@@ -347,9 +424,21 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 检查是否完成
     if (state === 'completed' || state === 'error' || state === 'stopped') {
       if (status.value) {
-        // 完成时刷新一次最终 elapsed，让 UI 显示真实总耗时
-        if (lastPauseAt !== null) {
-          pausedAccumulatedMs += Date.now() - lastPauseAt
+        // 完成时刷新一次最终 elapsed，让 UI 显示真实总耗时。
+        // 关键约束：终态快照若提供后端完整 pausedDurationMs，已在 L388 赋值给
+        // pausedAccumulatedMs，此处不得再累加 Date.now() - lastPauseAt——
+        // 否则最后一个暂停段会被重复结算，导致 elapsed 偏小（paused 时间被多算）。
+        // 场景：paused 快照设置 lastPauseAt 后，下一帧直接变为 completed，
+        //   旧代码在 422 累加 Date.now() - lastPauseAt，但后端 pausedDurationMs
+        //   已包含该段，造成重复累计。
+        if (typeof backendPausedDurationMs !== 'number') {
+          // 后端未提供暂停时长：结算本地暂停段（兼容旧后端）
+          if (lastPauseAt !== null) {
+            pausedAccumulatedMs += Date.now() - lastPauseAt
+            lastPauseAt = null
+          }
+        } else {
+          // 后端已提供完整暂停时长：仅清 lastPauseAt，不再累加本地段
           lastPauseAt = null
         }
         updateTimeInfo()
@@ -368,6 +457,39 @@ export const useCalibrationStore = defineStore('calibration', () => {
     }
   }
 
+  // 从后端拉取一次完整 status 兜底，用于画面切回 / 再次进入时恢复状态（spec I2 / Decision #2）。
+  //
+  // 为什么：组件 remount 后本地 store 可能为空或过期，不能信任本地时效性；
+  //   必须以后端为准。recovery 仅同步状态字段，不重启 polling——
+  //   polling 频率由调用方依返回的 status 状态决定（running/paused 升 5Hz，否则 1Hz 心跳）。
+  //
+  // 失败时保留旧 store 状态（不 reset），让 UI 显示错误条 + 可重试（spec Recovery UX / I8）。
+  //
+  // @returns 映射后的前端任务状态；后端无任务（idle）时返回当时 store 中的 status（可能为 null）
+  async function recoveryFromBackend(): Promise<void> {
+    isRecovering.value = true
+    recoveryError.value = null
+    // 停掉 polling 避免与本次 recovery 并发写 status.value（spec I4 / Risks：竞态保护）
+    stopStatusPolling()
+    try {
+      // wails 模式直接走 binding；http 模式调 calibrationApi.status() 兜底（API 名为 status，非 getStatus）
+      const calStatus = isWailsAvailable()
+        ? await wailsApi.calibration.status()
+        : await calibrationApi.status()
+      if (calStatus) {
+        // 复用 updateStatusFromBackend 同步 status/dataPoints/completeEvent/timeInfo 等
+        updateStatusFromBackend(calStatus)
+      }
+      lastRecoveryAt.value = Date.now()
+    } catch (err: unknown) {
+      // 失败：保留旧 store 状态（不 reset），让 UI 显示错误条 + 可重试
+      const msg = err instanceof Error ? err.message : '恢复校准状态失败'
+      recoveryError.value = msg
+    } finally {
+      isRecovering.value = false
+    }
+  }
+
   // 映射后端状态字符串到前端状态
   function mapCalibrationState(state: string): any {
     switch (state) {
@@ -375,6 +497,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
       case 'paused': return 'paused'
       case 'completed': return 'completed'
       case 'error': return 'error'
+      // spec Decision #4 / I7：stop 后 status='stopped'，与 idle 区分（保留数据可导出）
+      case 'stopped': return 'stopped'
       default: return 'idle'
     }
   }
@@ -385,6 +509,24 @@ export const useCalibrationStore = defineStore('calibration', () => {
       startStatusPolling()
     }
   })
+
+  // 内部会话清空：仅用于"开始新任务"场景（spec Decision #3 / I1）。
+  // 不暴露给外部——unmount / stop 不应调，避免抹掉上一趟结果。
+  // 注意：不调 stopStatusPolling，由 startCalibration 后续 startStatusPolling 重启。
+  function resetSession() {
+    cancelPressureThrottle()
+    stopElapsedTick()
+    pausedAccumulatedMs = 0
+    lastPauseAt = null
+    status.value = null
+    isRunning.value = false
+    isPaused.value = false
+    completeEvent.value = null
+    dataPoints.value = []
+    realtimePressures.value = null
+    calculatedPhysics.value = null
+    timeInfo.value = null
+  }
 
   async function startCalibration(config: CalibrationConfig) {
     const taskId = config.taskId || `cal-${Date.now()}`
@@ -401,15 +543,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
       const res = await calibrationApi.startCalibration(configToStart)
       if (!res.success) throw new Error(res.error || '启动校准失败')
     }
+    // spec Decision #3 / I1：后端 start 成功后才清旧会话；失败保留上一趟 stopped 结果，
+    // 避免"start 失败把上趟数据抹了"。resetSession 不停 polling，下面 startStatusPolling 会重启。
+    resetSession()
     isRunning.value = true
     isPaused.value = false
-    completeEvent.value = null
-    dataPoints.value = []
     // 启动时刻前端先记录一份本地 startTime 作为兜底：后端 status 首次轮询返回前，UI 已能用上 elapsed。
     // 后端返回真实 StartTime 后会在 updateStatusFromBackend 中覆盖，误差通常 < 一次轮询间隔（200ms）。
     const localStartTime = Date.now()
-    pausedAccumulatedMs = 0
-    lastPauseAt = null
     status.value = {
       taskId,
       type: configToStart.type,
@@ -486,9 +627,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
       lastPauseAt = null
     }
     updateTimeInfo()
-    stopStatusPolling()
+    // spec Decision #4 / I7：stop 保留 dataPoints，status='stopped' 与 idle 区分（可导出 / 复盘）
+    if (status.value) status.value.status = 'stopped'
+    // 定格已用时；继续 poll 一次等后端 stopped 回包（updateStatusFromBackend 终态分支会 stopStatusPolling），
+    // 避免高频空转等待。
     stopElapsedTick()
-    if (status.value) status.value.status = 'idle'
+    if (isWailsAvailable()) {
+      startStatusPolling(1000)
+    }
   }
 
   async function saveData(savePath: string): Promise<{ success: boolean; filepath?: string; error?: string }> {
@@ -528,8 +674,16 @@ export const useCalibrationStore = defineStore('calibration', () => {
     timeInfo,
     uiRefreshHz,
     uiRefreshIntervalMs,
+    activeViewCount,
+    isRecovering,
+    recoveryError,
+    lastRecoveryAt,
     setUiRefreshHz,
     updateRealtimePressures,
+    acquireView,
+    releaseView,
+    recoveryFromBackend,
+    restartPollingForCurrentState,
     startCalibration,
     pause,
     resume,

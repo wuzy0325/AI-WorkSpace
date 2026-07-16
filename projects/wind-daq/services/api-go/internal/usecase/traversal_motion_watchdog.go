@@ -105,6 +105,25 @@ func (w *motionWatchdog) Observe(
 
 	now := time.Now()
 	currentSide := signPosition(axis.Position - target)
+	tolerance := resolveFloat64Ptr(cfg.ArrivalTolerance, 0.0)
+
+	// 驱动状态可能晚于位置到位清零。轴已进入到位容差时继续等待 Moving=false，
+	// 但不能把目标位置上的静止误判为卡死；离开容差后再重新开始计时。
+	//
+	// 关键约束：不能清除 initialized——清除会丢失穿越前的 lastSide，
+	// 导致 29.5 → 30.0（容差区内） → 31.0 这类连续运动在第三帧被当作首次观察，
+	// 不会报告 Overshoot。修复方案：保留 lastSide 用于后续穿越检测，
+	// 仅重置 lastProgressAt 避免静止在目标位被误判为 NoProgress。
+	// 若首次观察就落在容差区内（如 30.005），先初始化基线（currentSide 可能为 0 或 ±1）。
+	if math.Abs(axis.Position-target) <= tolerance {
+		if !state.initialized {
+			state.initialized = true
+			state.lastPosition = axis.Position
+			state.lastSide = currentSide
+		}
+		state.lastProgressAt = now
+		return nil
+	}
 
 	// 首次观察运动：初始化基线
 	if !state.initialized {
@@ -117,7 +136,6 @@ func (w *motionWatchdog) Observe(
 
 	// 检测越过目标：侧向翻转且偏差大于到位容差
 	// 仅当 lastSide 非零（之前确实在目标某一侧）且 currentSide 也非零（确实穿越到另一侧）时触发
-	tolerance := resolveFloat64Ptr(cfg.ArrivalTolerance, 0.0)
 	if state.lastSide != 0 && currentSide != 0 && state.lastSide != currentSide {
 		deviation := math.Abs(axis.Position - target)
 		if deviation > tolerance {

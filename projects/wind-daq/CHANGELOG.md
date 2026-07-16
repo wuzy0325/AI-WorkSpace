@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.7.0] - 2026-07-15
+
+### Added
+
+- 运动安全机制：遍历与校准运行过程中按轴实时监控目标-实际偏差、临界偏离、限位触发、卡死无进展等异常，触发即停止运动并快照现场。
+- 共享组件 `MotionSafetyAlertCard`（故障现场卡片，红色急停 / 橙色停止双色）与 `MotionSafetyPanel`（运动安全配置面板）。
+- 遍历设置面板新增运动安全配置区，支持全局与按轴覆盖（到达容差、临界偏离限、无进展超时、进展阈值）。
+- 五种校准类型（五孔 / 三孔 / 总压 / 总温 / 总压探针）设置面板与主界面接入运动安全配置与告警展示。
+- 运动安全 spec 文档：`spec-traversal-motion-safety.md` 与 `spec-calibration-motion-safety.md` 共同构成需求契约。
+
+### Changed
+
+- b140 / wtnmc4a 控制器停止 / 急停逻辑收敛：`stopAllAxesLocked` 共享、`resolveStartMove` / `resolveStopAxis` 测试 seam 统一。
+- `coalesceFloat64Ptr` / `coalesceIntPtr` 统一 `MotionSafetyConfig.Resolve` / `Merge` 的指针字段合并语义。
+- 前端 `getMotionSafetyVerdictLabel` 共享函数消除两处独立 switch 实现。
+
+### Fixed
+
+- 校准运动等待竞态：运动安全机制接入后等待逻辑收敛到统一时序。
+- WTNMC4A 急停标志位时序：先置位 `EmergencyStopped` 再调用停止，避免停止执行期间其他 goroutine 发起新运动命令的时间窗。
+
+### Internal
+
+- 后端新增 `traversal_motion_watchdog` 看门狗与 `MotionSafetyConfig` / `MotionSafetyFailure` / `MotionSafetyVerdict` 类型体系。
+- 新增 `traversal_motion_safety_test` / `calibration_motion_safety_test` 覆盖 verdict 判定、看门狗触发、急停锁存、按轴停止等关键路径（+2380 行测试）。
+- Wails binding 同步：重新生成 traversal / calibration / device 的 JS binding，新增 `internal/core/traversal/` 目录。
+- `.gitignore` 追加 `.codebuddy/` / `.trae/` / `.opencode/` 三条 AI 工具私有目录规则。
+
+### Verification
+
+- `go build ./...`
+- `go test ./internal/core/... ./internal/usecase/... ./internal/ports/...`
+- `go test ./...` (device-sdk/go/motion)
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+- 运动安全机制目前仅覆盖遍历与校准运行场景，手动 Jog / MoveTo 不接入监控。
+
 ## [0.6.0] - 2026-07-14
 
 ### Added

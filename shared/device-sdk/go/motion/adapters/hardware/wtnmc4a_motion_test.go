@@ -374,7 +374,9 @@ func TestWTNMC4AStatusSerializesDLLReads(t *testing.T) {
 	release := make(chan struct{})
 	var active atomic.Int32
 	var maxActive atomic.Int32
+	var readCount atomic.Int32
 	ctrl.readLP = func(uintptr, int) int32 {
+		readCount.Add(1)
 		current := active.Add(1)
 		for {
 			maximum := maxActive.Load()
@@ -417,6 +419,9 @@ func TestWTNMC4AStatusSerializesDLLReads(t *testing.T) {
 	}
 	if maxActive.Load() != 1 {
 		t.Fatalf("maximum concurrent DLL reads = %d, want 1", maxActive.Load())
+	}
+	if readCount.Load() != 1 {
+		t.Fatalf("concurrent Status calls performed %d position reads, want 1 shared query", readCount.Load())
 	}
 }
 
