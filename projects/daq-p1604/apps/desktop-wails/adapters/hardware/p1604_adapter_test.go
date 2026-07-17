@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"daq-p1604/core"
+	sharedproto "shared.local/device-sdk/go/protocol"
 )
 
 // TestEnableTCPKeepalive_TCPConn 验证对真实 TCP 连接启用 keepalive 成功。
@@ -256,4 +257,226 @@ func TestHandleConnectionLost_SkipsAlreadyDisconnected(t *testing.T) {
 	if _, _, ok := collector.lastState(); ok {
 		t.Error("emitState should NOT be called when already disconnected")
 	}
+}
+
+// TestSyncUnitFromHardware_EOFReturnsError 验证：u01101 读到 io.EOF 时
+// syncUnitFromHardware 必须返回 error（连接已死），不能当作软错误吞掉。
+//
+// 场景：设备拔网线后重连，TCP 拨号成功、w1601 发送成功，但 u01101 交换时
+// 设备主动 FIN 关闭连接（对端 EOF）。若吞掉此错误，后续 StartAcquisition
+// 的 c 00 命令会爆 WSAECONNABORTED。
+//
+// 模拟方式：net.Pipe 服务端读掉 u01101 命令后 sleep 让客户端进入 Read 阻塞，
+// 再 Close 触发客户端 Read 返回 io.EOF。
+//
+// 时序要求：必须让客户端先进入 Read 阻塞再 Close。若 Close 先于 Read 调用，
+// 客户端会返回 "use of closed network connection"——该错误由 IsClosedConnError
+// 匹配，但 IsConnResetByPeer 并不匹配（IsConnResetByPeer 只覆盖对端 FIN/RST
+// 硬证据，不覆盖本地主动 Close）。sleep 50ms 确保走 io.EOF 路径，断言更精确。
+func TestSyncUnitFromHardware_EOFReturnsError(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// 服务端：读掉 u01101 命令 → 让客户端进入 Read 阻塞 → Close 触发 EOF
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf) // 读掉 u01101
+		time.Sleep(50 * time.Millisecond) // 等客户端进入 Read 阻塞
+		server.Close()                    // 触发客户端 Read 返回 io.EOF
+	}()
+
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-eof"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+
+	_, _, err := a.syncUnitFromHardware(driver, core.PressureProfile{
+		ID:       "test-eof",
+		P1604Cfg: core.P1604Config{Unit: "Pa"},
+	})
+	if err == nil {
+		t.Fatal("syncUnitFromHardware should return error on EOF, got nil")
+	}
+	if !sharedproto.IsConnResetByPeer(err) {
+		t.Errorf("returned error should be detected as conn reset, got: %v", err)
+	}
+}
+
+// TestSyncUnitFromHardware_TimeoutKeepsProfileUnit 验证：u01101 超时（软错误）
+// 不返回 error，保留 profile 单位继续连接流程——兼容旧固件/模拟器。
+func TestSyncUnitFromHardware_TimeoutKeepsProfileUnit(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// 服务端：读掉 u01101 但永远不回响应，让客户端 SetReadDeadline 超时
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 不写任何响应，阻塞到测试结束
+		time.Sleep(5 * time.Second)
+	}()
+
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-timeout"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+
+	// 缩短超时避免测试卡太久：直接调 P1604ReadUnitCoefficient 模拟超时路径
+	// syncUnitFromHardware 内部用 p1604UnitSyncTimeout（2s），测试容忍 2s 等待
+	unit, note, err := a.syncUnitFromHardware(driver, core.PressureProfile{
+		ID:       "test-timeout",
+		P1604Cfg: core.P1604Config{Unit: "Pa"},
+	})
+	if err != nil {
+		t.Fatalf("syncUnitFromHardware should NOT return error on timeout, got: %v", err)
+	}
+	if unit != "" {
+		t.Errorf("unit should be empty on timeout (keep profile), got %q", unit)
+	}
+	if note == "" {
+		t.Error("note should describe the failure")
+	}
+}
+
+// TestApplyConfig_V01101EOFTriggersConnectionLost 验证：ApplyConfig 写 v01101 时
+// 设备 FIN 关闭连接，应触发 handleConnectionLost 清理 driver，避免后续
+// StartAcquisition 爆 WSAECONNABORTED。
+//
+// 模拟方式：net.Pipe 服务端读掉 v01101 命令后 sleep 让客户端进入 Read 阻塞，
+// 再 Close 触发客户端 Read 返回 io.EOF（与 syncUnitFromHardware EOF 测试同构）。
+//
+// 预期：
+//   - ApplyConfig 返回 error
+//   - shard.drivers[id] 被删除（handleConnectionLost 清理）
+//   - shard.status[id] 保留且 Status=Error
+//   - conn 被 Close
+func TestApplyConfig_V01101EOFTriggersConnectionLost(t *testing.T) {
+	server, client := net.Pipe()
+
+	a := NewP1604Adapter()
+	id := "test-apply-eof"
+	profile := core.PressureProfile{
+		ID:       id,
+		P1604Cfg: core.P1604Config{Unit: "Pa"},
+	}
+	driver := &p1604Driver{
+		profile:     profile,
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	// 服务端：读掉 v01101 → sleep → Close 触发客户端 Read 返回 io.EOF
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		time.Sleep(50 * time.Millisecond)
+		server.Close()
+	}()
+
+	// 单位从 Pa → psi，触发 v01101 写入路径
+	err := a.ApplyConfig(id, core.P1604Config{Unit: "psi"})
+
+	// 1. ApplyConfig 必须返回 error
+	if err == nil {
+		t.Fatal("ApplyConfig should return error on v01101 EOF, got nil")
+	}
+	// 2. driver 应被 handleConnectionLost 清理
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted by handleConnectionLost after v01101 EOF")
+	}
+	// 3. status 应保留且为 Error
+	if !statusExists {
+		t.Fatal("status should still exist (set to Error) for frontend visibility")
+	}
+	if st.Status != core.StatusError {
+		t.Errorf("status should be Error, got %v", st.Status)
+	}
+	if st.Error == "" {
+		t.Error("status.Error should be populated with disconnect cause")
+	}
+
+	// 关闭 client（server 已在 goroutine 内 Close），避免 fd 泄漏告警
+	_ = client.Close()
+}
+
+// TestApplyConfig_V01101SoftErrorKeepsDriver 验证：v01101 软错误（如设备返回 N05）
+// 不触发 handleConnectionLost，driver 保留在 shard，前端可继续 Disconnect/重试。
+//
+// 模拟方式：服务端回复一个非 A 的 ASCII 帧（模拟设备拒绝）。
+// 注意：P1604WriteUnitCoefficient 对非 A 非 N 的响应会返回 "unexpected v01101 response"，
+// 对 N 开头返回 "device rejected unit change"。这里用 N01 触发后者（软错误）。
+func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
+	server, client := net.Pipe()
+
+	a := NewP1604Adapter()
+	id := "test-apply-soft"
+	profile := core.PressureProfile{
+		ID:       id,
+		P1604Cfg: core.P1604Config{Unit: "Pa"},
+	}
+	driver := &p1604Driver{
+		profile:     profile,
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	// 服务端：读掉 v01101 → 回复 N01 帧（设备拒绝，软错误）
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 写一个长度前缀帧：2 字节大端长度 + payload "N01"
+		_, _ = server.Write([]byte{0x00, 0x03, 'N', '0', '1'})
+	}()
+
+	err := a.ApplyConfig(id, core.P1604Config{Unit: "psi"})
+
+	// 1. ApplyConfig 必须返回 error（设备拒绝）
+	if err == nil {
+		t.Fatal("ApplyConfig should return error on v01101 N01, got nil")
+	}
+	// 2. driver 必须保留（软错误不触发 handleConnectionLost）
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	shard.mu.RUnlock()
+	if !driverExists {
+		t.Error("driver should REMAIN after soft error (N01), handleConnectionLost must NOT be triggered")
+	}
+	// 3. status 应仍为 Connected（不是 Error）
+	shard.mu.RLock()
+	st, _ := shard.status[id]
+	shard.mu.RUnlock()
+	if st.Status != core.StatusConnected {
+		t.Errorf("status should remain Connected after soft error, got %v", st.Status)
+	}
+
+	_ = server.Close()
+	_ = client.Close()
 }
