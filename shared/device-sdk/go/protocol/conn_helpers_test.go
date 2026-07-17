@@ -2,6 +2,8 @@ package protocol
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -88,6 +90,36 @@ func TestIsClosedConnError(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := IsClosedConnError(c.err); got != c.want {
+			t.Errorf("%s: want %v, got %v", c.name, c.want, got)
+		}
+	}
+}
+
+// TestIsConnResetByPeer 验证"对端已 FIN/RST"判定。
+// 仅匹配硬证据（EOF / reset / broken pipe / WSAECONNABORTED），
+// 不匹配 timeout（软错误，连接可能仍可用）。
+func TestIsConnResetByPeer(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"io.EOF", io.EOF, true},
+		{"wrapped EOF", fmt.Errorf("read frame: %w", io.EOF), true},
+		{"connection reset by peer", errors.New("read tcp: connection reset by peer"), true},
+		{"broken pipe", errors.New("write tcp: broken pipe"), true},
+		{"wsasend aborted", errors.New("write tcp 192.168.1.11:64695->192.168.1.7:9000: wsasend: An established connection was aborted by the software in your host machine."), true},
+		{"wsarecv aborted", errors.New("read tcp: wsarecv: An existing connection was forcibly closed"), true},
+		{"connection abort", errors.New("connection abort"), true},
+		// 软错误不匹配
+		{"i/o timeout", errors.New("read tcp: i/o timeout"), false},
+		{"timeout net error", &timeoutErr{}, false},
+		{"device error N05", errors.New("device returned error: N05"), false},
+		{"parse error", errors.New("parse coefficient \"abc\": strconv.ParseFloat: invalid syntax"), false},
+	}
+	for _, c := range cases {
+		if got := IsConnResetByPeer(c.err); got != c.want {
 			t.Errorf("%s: want %v, got %v", c.name, c.want, got)
 		}
 	}
