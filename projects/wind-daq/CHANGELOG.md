@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.8.0] - 2026-07-18
+
+### Added
+
+- 遍历采集支持多设备并行采集，采集结果按设备/通道归并写入。
+- 遍历 CSV 计算结果新增 `StartedAt` / `CompletedAt` 两列：记录单点采集真实起止时间戳（秒级，与 `Timestamp` 列格式一致），用户可直接用 `CompletedAt - StartedAt` 算出单点总耗时，不再依赖"点数×10ms"回填公式。0 值写空字符串，兼容旧数据/异常路径。
+- 自定义布点步骤内新增运动轴绑定，布点与运动轴配置合并到同一步骤。
+
+### Changed
+
+- 自定义布点交互改造：布点 UX 重排，运动轴绑定迁入布点步骤。
+- 实时刷新率统一到全局 `storageStore.settings.refreshRateHz`（默认 5Hz）：遍历实时插值节流间隔改为派生自全局刷新率，压力卡片与插值卡片同频，消除"刷新节奏不一致"的视觉错位。移除独立的 `useUiRefreshThrottle` composable。
+
+### Fixed
+
+- 无有效样本失败时记录设备应答与通道索引，便于现场定位。
+
+### Internal
+
+- 校准 JSON 序列化测试从 core 迁移到 adapters/storage 层，符合分层边界。
+- 七孔校准 spec/plan/tasks 文档与 skill 脚本补充。
+- `http-client` 测试冻结 `Date.now`，修复 `deviceApi.pollLatest` 中 `setTimeout` 首次参数从 50 变 49 的 flaky。
+
+### Verification
+
+- `go test ./...`
+- `npm run typecheck`
+- `npm run build`
+- `npm run test`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+- 冒烟测试：启动新构建产物确认 GUI 正常
+
+### Known Issues
+
+- 暂无。
+
+### Compatibility
+
+- 数据文件格式：兼容。CSV 仅新增可选列 `StartedAt` / `CompletedAt`，旧文件与旧解析逻辑仍可用。
+- 配置文件格式：兼容。
+- 设备协议行为：无变化。
+
 ## [0.7.0] - 2026-07-15
 
 ### Added
