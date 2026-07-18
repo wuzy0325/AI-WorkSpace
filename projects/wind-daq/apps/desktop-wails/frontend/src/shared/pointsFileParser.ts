@@ -31,8 +31,9 @@ export interface ParsedPoint {
  * - X: "x", "posx", "pos_x"
  * - Y: "y", "posy", "pos_y"
  * - Z: "z", "posz", "pos_z"
- * - U: "u", "posu", "pos_u", "α", "alpha"
+ * - U: "u", "posu", "pos_u"
  *
+ * U 轴与其他三轴对称，不接受 α/alpha 别名。
  * 不匹配返回 null
  */
 export function normalizeAxisName(raw: string): AxisKey | null {
@@ -42,8 +43,8 @@ export function normalizeAxisName(raw: string): AxisKey | null {
   if (/^(x|pos[_]?x)$/.test(base)) return 'x'
   if (/^(y|pos[_]?y)$/.test(base)) return 'y'
   if (/^(z|pos[_]?z)$/.test(base)) return 'z'
-  // U 轴别名包含希腊字母 α 和英文 alpha
-  if (/^(u|pos[_]?u|[α]|alpha)$/.test(base)) return 'u'
+  // U 轴与其他三轴一视同仁，仅识别 u/posu/pos_u，不接受 α/alpha 别名
+  if (/^(u|pos[_]?u)$/.test(base)) return 'u'
   return null
 }
 

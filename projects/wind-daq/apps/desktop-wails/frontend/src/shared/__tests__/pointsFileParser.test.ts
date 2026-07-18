@@ -18,20 +18,23 @@ describe('normalizeAxisName', () => {
     expect(normalizeAxisName('PosX')).toBe('x')
   })
 
-  it('识别 U/α/alpha/U(°)', () => {
-    // 测试前置：U 轴列名变体（含希腊字母）
-    // 期待结果：均返回 'u'
+  it('识别 U/pos_u/U(°)，但不识别 α/alpha（四轴一视同仁）', () => {
+    // 测试前置：U 轴列名变体
+    // 期待结果：U/pos_u/U(°) 返回 'u'；α/alpha 不再映射到 U 轴，返回 null
     expect(normalizeAxisName('U')).toBe('u')
-    expect(normalizeAxisName('α')).toBe('u')
-    expect(normalizeAxisName('alpha')).toBe('u')
     expect(normalizeAxisName('U(°)')).toBe('u')
     expect(normalizeAxisName('pos_u')).toBe('u')
+    // 四轴一视同仁：U 轴不特殊识别 α/alpha 别名
+    expect(normalizeAxisName('α')).toBeNull()
+    expect(normalizeAxisName('alpha')).toBeNull()
   })
 
   it('未识别返回 null', () => {
     expect(normalizeAxisName('foo')).toBeNull()
     expect(normalizeAxisName('1')).toBeNull()
     expect(normalizeAxisName('')).toBeNull()
+    expect(normalizeAxisName('α')).toBeNull()
+    expect(normalizeAxisName('alpha')).toBeNull()
   })
 })
 
@@ -75,10 +78,10 @@ describe('parsePointsFile', () => {
     ])
   })
 
-  it('用例 5：含 α/alpha 列名（仅 U 列映射，其余 0）', () => {
-    // 测试前置：表头 α,alpha — 两列都映射到 U 轴
+  it('用例 5：同轴多列后列覆盖前列（pos_u,U 都映射到 U 轴）', () => {
+    // 测试前置：表头 pos_u,U — 两列都映射到 U 轴
     // 期待结果：同轴多列时后列覆盖前列，最终 u=2，其余轴 0
-    const text = 'α,alpha\n1,2'
+    const text = 'pos_u,U\n1,2'
     const result = parsePointsFile(text)
     expect(result).toEqual([{ x: 0, y: 0, z: 0, u: 2 }])
   })
