@@ -100,3 +100,16 @@ temp/
 
 # UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
 wind-daq-trae-work-prototype/
+projects/wind-daq/docs/ui-views-prototype-v4*.png
+projects/wind-daq/docs/ui-views-prototype-v4*.html
+
+# PDF QA 产物（PDF 转 PNG 截图，QA 工具本地输出）
+pdf-qa/
+
+# 七孔校准实验数据（CSV 原始数据，按项目编号归档，不入库）
+projects/wind-daq/docs/W532.*.P.*-*/
+
+# 软件介绍材料（HTML/PDF 产物 + 配图，本地生成不入库）
+wind-daq-software-introduction.html
+wind-daq-software-introduction.pdf
+wind-daq-intro-images/
