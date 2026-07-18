@@ -40,10 +40,8 @@ export type RealtimePressures = TraversalRawPressure
 export const useTraversalStore = defineStore('traversal', () => {
   // 国际化：store 内部错误消息需随语言切换，故引入 i18n store
   const i18n = useI18nStore()
-  // 设备 store：遍历测试启动/停止会在后端隐式 StartAcquisition/StopAcquisition
-  // （见 traversal_config.go ParseAndStartTraversal），前端 deviceStatuses 不会自动同步，
-  // 故在 start/stop 成功后主动 refreshAllStatuses，否则侧边栏 acquiringFor 一律返回 false，
-  // 采集状态指示灯停在"已连接"无法切换到"采集中"。
+  // 设备 store：用于同步采集状态指示。遍历测试不控制设备采集生命周期，
+  // 开始前要求操作员已在设备管理中启动采集。
   const deviceStore = useDeviceStore()
   const statusRecoveryFailed = ref(false)
   // 启动防重入标志：避免用户连续点击"开始"导致并发启动
@@ -321,7 +319,8 @@ export const useTraversalStore = defineStore('traversal', () => {
           ...nextStatus,
           currentPoint: nextStatus.currentPoint ?? previousStatus.currentPoint,
           currentPointPhase: nextStatus.currentPointPhase ?? previousStatus.currentPointPhase,
-          validationWarnings: nextStatus.validationWarnings ?? previousStatus.validationWarnings
+          validationWarnings: nextStatus.validationWarnings ?? previousStatus.validationWarnings,
+          warning: nextStatus.warning ?? previousStatus.warning
         }
       : nextStatus
 
@@ -409,6 +408,7 @@ export const useTraversalStore = defineStore('traversal', () => {
       lastError: previousStatus?.lastError,
       lastErrorCode: previousStatus?.lastErrorCode,
       validationWarnings: previousStatus?.validationWarnings,
+      warning: previousStatus?.warning,
       // 保留后端写入的实际 CSV 路径：progress 事件不携带此字段，
       // 必须从 previousStatus 透传，避免轮询刷新后丢失真实文件名（撞名 -2/-3 后缀）
       csvPath: previousStatus?.csvPath
@@ -568,6 +568,22 @@ export const useTraversalStore = defineStore('traversal', () => {
     const res = await traversalApi.saveConfig(cfg)
     if (res.success) {
       config.value = cfg
+      // 修复 Bug 1: 保存配置（通常意味着用户重新布局/调整了点位）后，
+      // 若当前非运行/暂停态，清空上一轮测试残留的已完成点状态、完成事件与数据点，
+      // 让布点预览画面回到"未测试"状态（紫色完成点恢复为灰色未完成点）。
+      // 运行/暂停态下不清空，避免抹掉正在进行的测试进度。
+      // 同步清空 statusRecoveryFailed：status=null + 残留 statusRecoveryFailed=true
+      // 会让 statusType 退化为 'unknown'，canStart 误判为 false 阻塞下一次启动。
+      // 同步清空 realtimePressures/realtimeResult：与 start/reset 路径一致，
+      // 避免新一轮测试实时监控画面短暂闪现上一轮最后一帧的值，直到新帧到达才覆盖。
+      if (!isRunning.value && !isPaused.value) {
+        status.value = null
+        completeEvent.value = null
+        dataPoints.value = []
+        statusRecoveryFailed.value = false
+        realtimePressures.value = null
+        realtimeResult.value = null
+      }
       return true
     }
     error.value = res.error || i18n.t.travErrSaveConfig

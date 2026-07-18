@@ -119,6 +119,13 @@ export const useLogStore = defineStore('log', () => {
   // 后端日志分类开关状态：key=category, value=是否启用（默认全部 true）
   const categoryEnabled = ref<Record<string, boolean>>({})
 
+  // ── 去重：记录已入库的后端条目 ID，防止 fetchRecentLogs 与 SSE Recent(200) 重复推送 ──
+  // 场景：onMounted 并行调用 fetchRecentLogs(500) + startLogSubscription()，
+  //       SSE stream 服务端会再发一次 ring.Recent(200)，导致同一条日志被 push 两次，
+  //       且 SSE 因网络延迟后到达，造成时间乱序（新日志出现在旧日志前面）。
+  const seenBackendIds = new Set<number>()
+  let maxSeenId = 0
+
   // 持久化偏好：开关或分组变化时写回 localStorage
   function persistPrefs(): void {
     savePrefs({
@@ -241,19 +248,26 @@ export const useLogStore = defineStore('log', () => {
   function clear(): void {
     entries.value = []
     buffer.value = []
+    seenBackendIds.clear()
+    maxSeenId = 0
   }
 
-  // 更新后端日志分类开关状态（从 API 返回的快照）
-  function updateCategoryStates(states: Record<string, boolean>): void {
-    categoryEnabled.value = { ...states }
-  }
-
-  // 设置单个分类的启用状态（本地乐观更新 + 后端同步）
-  function setCategoryEnabledState(category: string, enabled: boolean): void {
-    categoryEnabled.value = { ...categoryEnabled.value, [category]: enabled }
+  // 从前端 entry.id 中提取后端数字 ID。
+  // id 格式：recent-{backendId} 或 log-{backendId}-{Date.now()} 或 init-1（返回 0）
+  function extractBackendId(id: string): number {
+    const m = id.match(/^(?:recent|log)-(\d+)/)
+    return m ? parseInt(m[1], 10) : 0
   }
 
   function pushEntry(entry: LogEntry): void {
+    // ── 后端 ID 去重：防止 fetchRecentLogs 与 SSE Recent(200) 重复推送 ──
+    const backendId = extractBackendId(entry.id)
+    if (backendId > 0) {
+      if (seenBackendIds.has(backendId)) return // 已存在，跳过重复
+      seenBackendIds.add(backendId)
+      if (backendId > maxSeenId) maxSeenId = backendId
+    }
+
     // 入库前确保 category 已填充，避免 filteredEntries 在每次重算时重复执行 inferCategory。
     // 复制 entry 而非原地修改，避免污染调用方持有的引用。
     const normalized: LogEntry = entry.category ? entry : { ...entry, category: inferCategory(entry) }
@@ -269,6 +283,16 @@ export const useLogStore = defineStore('log', () => {
         entries.value.shift()
       }
     }
+  }
+
+  // 更新后端日志分类开关状态（从 API 返回的快照）
+  function updateCategoryStates(states: Record<string, boolean>): void {
+    categoryEnabled.value = { ...states }
+  }
+
+  // 设置单个分类的启用状态（本地乐观更新 + 后端同步）
+  function setCategoryEnabledState(category: string, enabled: boolean): void {
+    categoryEnabled.value = { ...categoryEnabled.value, [category]: enabled }
   }
 
   return {

@@ -10,9 +10,11 @@ import { useTraversalStore } from '@stores/traversalStore'
 import {
   createDefaultTraversalProbeChannels,
   deriveRangeFromSegments,
+  findTraversalAxisKindIssues,
   getTraversalLayoutPointCount,
   getTraversalStepValues,
   hasDuplicateChannel,
+  hasDuplicateMotionAxis,
   isTraversalConfigurableProbeChannel,
   isTraversalRequiredProbeChannel,
   normalizeTraversalLayoutRanges
@@ -156,9 +158,17 @@ const sectorConfig = ref({
 const customPoints = ref<Array<{ x: number; y: number; z: number; u: number }>>([])
 const customPointInput = ref({ x: 0, y: 0, z: 0, u: 0 })
 const probeChannels = ref<ProbeChannelConfig[]>(createDefaultTraversalProbeChannels())
+// 运动轴绑定默认包含全部 4 个逻辑目标（X/Y/Z/U）。
+// - custom 模式：4 行全部显示并可配置，后端按白名单下发 Z/U 的 MoveTo
+// - rectangle/sector 模式：UI 仅显示 X/Y 行（displayedMotionAxes 过滤），
+//   Z/U 行的 controllerId 可留空——后端 path.go 把 Z/U 标记为 NaN，
+//   availableAxisTargets 跳过 NaN 目标，不消费 Z/U 绑定
+// - line 模式：UI 仅显示 X 行，Y/Z/U 同样被 markAxesNaN 跳过
 const motionAxes = ref<TraversalMotionAxisConfig[]>([
-  { name: 'X', controllerId: '', axis: 'X', angleMapping: { type: 'alpha' } },
-  { name: 'Y', controllerId: '', axis: 'Y', angleMapping: { type: 'beta' } }
+  { name: 'X', controllerId: '', axis: 'X' },
+  { name: 'Y', controllerId: '', axis: 'Y' },
+  { name: 'Z', controllerId: '', axis: 'Z' },
+  { name: 'U', controllerId: '', axis: 'U' }
 ])
 // 运动安全配置（与后端 traversal.MotionSafetyConfig 一一对应）。
 // undefined 表示"用户未显式配置"，后端使用 DefaultMotionSafety（arrivalTolerance=0.01,
@@ -224,29 +234,54 @@ const rectangleHasArea = computed(() => {
 const supportsPrimaryAxis = computed(() => pattern.value === 'line' || pattern.value === 'rectangle')
 
 // 步骤校验：索引与新顺序 [Hardware(0), Prb(1), Layout(2), Review(3)] 对齐。
-// - 第0步 Hardware：探针通道必须绑定设备+通道号，无重复索引，运动轴必须绑定控制器
+// - 第0步 Hardware：探针通道必须绑定设备+通道号，无重复索引
 // - 第1步 Prb：新算法要求 CSV 文件；多 prb 模式要求至少1个 prb；单 prb 模式要求 prbFile
-// - 第2步 Layout：测试名非空 + 估算点数>0 + rectangle 模式下区域面积>0
+// - 第2步 Layout：测试名非空 + 估算点数>0 + rectangle 模式下区域面积>0 + 运动轴必须绑定控制器
 // - 最后一步 Review：保存路径和文件名非空
 //
-// 通道号重复检测：多个启用通道选了同一 channelIndex 时阻断保存。
-// 后端 ParseConfig 对重复索引直接返回错误不启动测试（见 traversal_config.go channels 收集）。
+// 通道绑定重复检测：多个启用通道绑定同一「设备+通道号」时阻断保存。
+// 不同设备的通道号允许重复（各设备独立编号，如五孔在设备 A 的 1 通道、
+// 大气压/温度在设备 B 的 1 通道），不视为冲突。
+// 后端 ParseConfig 按设备+通道号判定重复并拒绝启动（见 traversal_config.go channels 收集）。
 // 前端在 isStepValid 中提前阻止进入下一步，避免"配置保存成功但测试启动报错"的体验断裂。
 // 检测算法共享 shared/types/traversal.ts 的 hasDuplicateChannel，与 TraversalHardwareStep.vue 视觉提示共用同一真相源。
 const hasDuplicateChannelFlag = computed(() => hasDuplicateChannel(probeChannels.value))
 
+// 扇形布点轴类型约束：X 方向必须绑定直线轴（平移台）、Y 方向必须绑定旋转轴（旋转台）。
+// 轴绑定与布点模式同在第 2 步（Layout），校验只在 currentStep >= 2 时参与阻断：
+// 若对所有步骤统一阻断，加载不合规旧配置时对话框打开即停在第 0 步（visitedSteps 只有 0、
+// goToStep 只能跳已访问步骤），用户永远到不了第 2 步的修复入口，形成死锁。
+// 第 0/1 步放行导航，让用户能走到 Layout 步修复；第 2 步 Next 与最后一步 Save 仍被阻断。
+const axisKindIssues = computed(() => findTraversalAxisKindIssues(motionAxes.value, motionStore.profiles, pattern.value))
+
 const isStepValid = computed(() => {
+  if (axisKindIssues.value.length > 0 && currentStep.value >= 2) return false
   if (currentStep.value === 0) {
     if (hasDuplicateChannelFlag.value) return false
-    return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0) &&
-      motionAxes.value.every((a) => a.controllerId !== '')
+    return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0)
   }
   if (currentStep.value === 1) {
     if (interpolationAlgorithm.value === 'new') return calibrationCsvFile.value !== null
     if (prbMode.value === 'multi') return multiPrbFiles.value.length > 0
     return prbFile.value !== null
   }
-  if (currentStep.value === 2) return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value
+  if (currentStep.value === 2) {
+    // 各模式按"后端实际消费的轴"校验 controllerId 非空，避免强制用户填冗余绑定：
+    // - line：仅沿 X 轴布点，Y/Z/U 被 markAxesNaN 跳过 → 仅校验 X
+    // - rectangle/sector：仅沿 X/Y 平面布点，Z/U 被 markAxesNaN 跳过 → 校验 X+Y
+    // - custom：4 轴全部参与（用户填的 Z/U 坐标必须下发）→ 校验全部 4 行
+    const axesToValidate = pattern.value === 'line'
+      ? motionAxes.value.filter((a) => a.name === 'X')
+      : pattern.value === 'custom'
+        ? motionAxes.value
+        : motionAxes.value.filter((a) => a.name === 'X' || a.name === 'Y')
+    // 同控制器同一物理轴被多个方向绑定时阻断——后到 MoveTo 会覆盖先到目标，
+    // 另一方向静默丢失。仅校验 axesToValidate：未参与判定的行不阻断（与 UI 高亮一致）
+    const noDuplicateBinding = !hasDuplicateMotionAxis(axesToValidate)
+    return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value &&
+      noDuplicateBinding &&
+      axesToValidate.every((a) => a.controllerId !== '')
+  }
   if (currentStep.value === steps.value.length - 1) return savePath.value.trim() !== '' && saveFileName.value.trim() !== ''
   return true
 })
@@ -373,7 +408,7 @@ function applySavedConfig(config: TraversalTestConfig) {
     const next = [...motionAxes.value]
     for (const sa of c.channels.motionAxes) {
       const idx = next.findIndex(x => x.name === sa.name)
-      const normalized = { ...sa, angleMapping: sa.angleMapping ? { ...sa.angleMapping } : undefined }
+      const normalized = { name: sa.name, controllerId: sa.controllerId, axis: sa.axis }
       if (idx >= 0) next[idx] = normalized; else next.push(normalized)
     }
     motionAxes.value = next
@@ -541,12 +576,12 @@ watch(() => props.show, async (isVisible) => {
           </div>
           <TraversalHardwareStep
             v-model:probe-channels="probeChannels"
-            v-model:motion-axes="motionAxes"
             :t="(t as unknown as Record<string, string>)"
             :is-loading="isLoading"
           />
-          <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
-               留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。 -->
+          <!-- 运动安全配置：阈值类硬件参数，与探针通道同属硬件步骤。
+               运动轴绑定已迁至布点步骤（TraversalLayoutStep），本面板的按轴覆盖表
+               仍以 motionAxes 绑定为行，默认 X→X、Y→Y 绑定下可正常编辑。 -->
           <MotionSafetyPanel
             ref="motionSafetyPanelRef"
             v-model:motion-safety="motionSafety"
@@ -578,6 +613,7 @@ watch(() => props.show, async (isVisible) => {
           v-model:custom-point-input="customPointInput"
           v-model:snake-order="snakeOrder"
           v-model:primary-axis="primaryAxis"
+          v-model:motion-axes="motionAxes"
           :estimated-point-count="estimatedPointCount"
           :t="(t as unknown as Record<string, string>)"
         />

@@ -183,37 +183,35 @@ func TestGridPointsFromAxesSnakeOrdered(t *testing.T) {
 	}
 }
 
-func TestSectorPointsFromRadiiAngles(t *testing.T) {
-	radii := []float64{1}
-	angles := []float64{0, 90}
-	points := SectorPointsFromRadiiAngles(0, 0, radii, angles)
-	if len(points) != 2 {
-		t.Fatalf("expected 2 points, got %d", len(points))
-	}
-	// 0度: (1, 0)
-	if points[0].X < 0.99 || points[0].Y > 0.01 {
-		t.Fatalf("expected point[0] near (1,0), got (%v,%v)", points[0].X, points[0].Y)
-	}
-	// 90度: (0, 1)
-	if points[1].X > 0.01 || points[1].Y < 0.99 {
-		t.Fatalf("expected point[1] near (0,1), got (%v,%v)", points[1].X, points[1].Y)
-	}
-}
+// 注：SectorPointsFromRadiiAngles / SectorPointsFromRadiiAnglesSnake 及其测试已删除（B4）——
+// 扇形布点改走 GridPointsFromAxes 后这两个函数仅余自身测试引用，无生产消费方；
+// 扇形相对目标行为由下面的 TestPointsFromLayoutSectorUsesRelativeRadiusAndAngleTargets 覆盖。
 
-func TestSectorPointsFromRadiiAnglesSnake(t *testing.T) {
-	radii := []float64{1, 2}
-	angles := []float64{0, 90}
-	points := SectorPointsFromRadiiAnglesSnake(0, 0, radii, angles)
-	if len(points) != 4 {
-		t.Fatalf("expected 4 points, got %d", len(points))
+// 扇形机构由一个径向平移轴和一个旋转轴组成。第一个测点是当前机械位置，
+// 后续目标必须表达为相对首点的 (半径增量, 角度增量)，不能把预览图的笛卡尔坐标发给运动轴。
+func TestPointsFromLayoutSectorUsesRelativeRadiusAndAngleTargets(t *testing.T) {
+	points := PointsFromLayout(LayoutConfig{
+		Pattern: "sector",
+		Sector: &SectorLayout{
+			RadiusMin: 100, RadiusMax: 150,
+			RadialStepSegments: []StepSegment{{Start: 100, End: 150, Step: 50}},
+			AngleStart:         -30, AngleEnd: 30,
+			AngularStepSegments: []StepSegment{{Start: -30, End: 30, Step: 30}},
+		},
+	})
+
+	expected := []Point{
+		{X: 0, Y: 0}, {X: 0, Y: 30}, {X: 0, Y: 60},
+		{X: 50, Y: 0}, {X: 50, Y: 30}, {X: 50, Y: 60},
 	}
-	// 第0行（偶数行）：0度, 90度
-	// 第1行（奇数行）：90度, 0度（反转）
-	if points[2].X > 0.01 || points[2].Y < 1.99 {
-		t.Fatalf("expected point[2] near (0,2) [90deg], got (%v,%v)", points[2].X, points[2].Y)
+	if len(points) != len(expected) {
+		t.Fatalf("expected %d points, got %d", len(expected), len(points))
 	}
-	if points[3].X < 1.99 || points[3].Y > 0.01 {
-		t.Fatalf("expected point[3] near (2,0) [0deg], got (%v,%v)", points[3].X, points[3].Y)
+	for i, want := range expected {
+		if points[i].X != want.X || points[i].Y != want.Y {
+			t.Fatalf("point[%d] = (%v,%v), want relative radius/angle target (%v,%v)",
+				i, points[i].X, points[i].Y, want.X, want.Y)
+		}
 	}
 }
 
@@ -566,8 +564,8 @@ func TestPointsFromLayoutSectorZUNaN(t *testing.T) {
 		Sector: &SectorLayout{
 			CenterX: 0, CenterY: 0,
 			RadiusMin: 1, RadiusMax: 2,
-			RadialStepSegments:  []StepSegment{{Start: 1, End: 2, Step: 1}},
-			AngleStart:          0, AngleEnd: 90,
+			RadialStepSegments: []StepSegment{{Start: 1, End: 2, Step: 1}},
+			AngleStart:         0, AngleEnd: 90,
 			AngularStepSegments: []StepSegment{{Start: 0, End: 90, Step: 90}},
 		},
 	})

@@ -54,9 +54,27 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// unitProvider 与 config 同步取出，供 BuildRawPressure 归一化使用。
 	// 在锁内取避免与 SetUnitProvider 写入并发竞争。
 	unitProvider := m.unitProvider
+	acqController := m.acquisitionController
 	pointIndex := m.status.CurrentPoint
 	point := config.Path[pointIndex]
 	m.mu.Unlock()
+	// 多设备采集态校验：通道可能跨设备绑定（如五孔在 A、大气压/温度在 B），
+	// 逐台去重校验，任一设备未采集都在动设备前失败。
+	if acqController != nil {
+		checked := make(map[string]bool)
+		for _, ref := range config.ResolvedChannelRefs() {
+			if checked[ref.DeviceID] {
+				continue
+			}
+			checked[ref.DeviceID] = true
+			if !acqController.IsAcquiring(ref.DeviceID) {
+				return m.failWithCode("device %s is not acquiring; traversal will not move to point %d", traversal.ErrAcquisitionFailed, ref.DeviceID, pointIndex+1)
+			}
+		}
+	}
+	// 采样通道按设备分组：每组内部键 ↔ 硬件索引一一对应，
+	// 采集/稳定等待共用，避免每次调用重复解析 ChannelRefs。
+	channelGroups := groupChannelsByDevice(config.Channels, config.ResolvedChannelRefs())
 
 	taskID := config.TaskID
 	// motionAxes 决定哪些轴参与遍历运动；为空时（旧配置）保持原行为对所有轴发 MoveTo
@@ -179,7 +197,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	// 阶段2：等待稳定
 	m.updatePhase(taskID, traversal.StateStabilizing, traversal.PhaseStabilizing, pointIndex, len(config.Path))
-	stabFailure := m.waitForStabilization(taskID, point, pointIndex)
+	stabFailure := m.waitForStabilization(taskID, point, pointIndex, channelGroups)
 	// 稳定阶段检测到运动安全故障：立即停止并返回错误
 	// 与 Moving 阶段共用 handleMotionSafetyFailure，保持故障处理一致性
 	if stabFailure != nil {
@@ -222,33 +240,17 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	var lastWarnings []string
 	skipPoint := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// 单次或多次采样
-		if samplesPerPoint == 1 {
-			payload, ok := m.reader.GetLatestData(config.DeviceID)
-			if !ok {
-				slog.Error("traversal acquisition failed",
-					"component", "traversal",
-					"task_id", taskID,
-					"point_index", pointIndex+1,
-					"device_id", config.DeviceID,
-					"error", "no data available",
-				)
-				return m.failWithCode("no data available for device %s", traversal.ErrAcquisitionFailed, config.DeviceID)
-			}
-			resultValues = valuesForChannels(payload, config.Channels)
-		} else {
-			averaged, err := m.collectAveragedSamples(taskID, config.DeviceID, config.Channels, samplesPerPoint)
-			if err != nil {
-				slog.Error("traversal averaged sampling failed",
-					"component", "traversal",
-					"task_id", taskID,
-					"point_index", pointIndex+1,
-					"error", err,
-				)
-				return m.failWithCode("averaged sampling failed: %v", traversal.ErrAcquisitionFailed, err)
-			}
-			resultValues = averaged
+		averaged, err := m.collectAveragedSamples(taskID, channelGroups, samplesPerPoint)
+		if err != nil {
+			slog.Error("traversal sampling failed",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+				"error", err,
+			)
+			return m.failWithCode("sampling failed: %v", traversal.ErrAcquisitionFailed, err)
 		}
+		resultValues = averaged
 
 		if len(resultValues) != len(config.Channels) {
 			slog.Error("traversal channel mismatch",
@@ -330,12 +332,45 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		m.status.CommittedPoints = int(commitSeq)
 		m.status.ValidationWarnings = nil
 		allDone := m.status.CurrentPoint >= len(m.config.Path)
+		completedCount := m.status.CurrentPoint
+		// store.Save 所需快照在置 Completed 之后的锁内捕获（见下），与正常分支一致；
+		// 在置 Completed 之前捕获会把过期状态快照持久化到 result store。
+		var pendingSave bool
+		var saveTaskID string
+		var saveStatus traversal.Status
 		m.mu.Unlock()
 		if allDone {
+			if err := m.completeAfterReturnToOrigin(taskID, m.returnToOrigin(taskID, len(config.Path))); err != nil {
+				return err
+			}
 			m.mu.Lock()
 			m.status.State = traversal.StateCompleted
 			m.status.CurrentPointPhase = ""
+			if m.store != nil {
+				pendingSave = true
+				saveTaskID = m.config.TaskID
+				saveStatus = m.status
+				saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
+			}
 			m.mu.Unlock()
+			// 与正常分支一致：完成后持久化最终态并清理断点文件，
+			// 否则 skip 末点会让 result store 缺最终态、checkpoint 残留导致 resume 误判。
+			if pendingSave {
+				if err := m.store.Save(saveTaskID, saveStatus); err != nil {
+					slog.Error("traversal final save failed",
+						"component", "traversal",
+						"task_id", saveTaskID,
+						"error", err,
+					)
+					return fmt.Errorf("save traversal result: %w", err)
+				}
+				slog.Info("traversal result saved on completion",
+					"component", "traversal",
+					"task_id", saveTaskID,
+					"completed_points", completedCount,
+				)
+			}
+			m.ClearCheckpoint()
 		}
 		return nil
 	}
@@ -347,7 +382,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存。
 	// BuildRawPressure 内部按 unitProvider 查通道 Unit 并归一化到 Pa+表压，
 	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
-	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels, config.DeviceID, unitProvider, config.PProbePressureType)
+	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels, config.ResolvedChannelRefs(), unitProvider, config.PProbePressureType)
 	var calculated *traversal.CalculatedResult
 	if hasAll {
 		interpRes, interpErr := m.CalculateRealtime(input)
@@ -444,7 +479,16 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	var pendingSave bool
 	var saveTaskID string
 	var saveStatus traversal.Status
+	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
+	checkpointPath := checkpointSavePath
+	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
+	m.mu.Unlock()
+
 	if allDone {
+		if err := m.completeAfterReturnToOrigin(taskID, m.returnToOrigin(taskID, len(config.Path))); err != nil {
+			return err
+		}
+		m.mu.Lock()
 		m.status.State = traversal.StateCompleted
 		m.status.CurrentPointPhase = ""
 		if m.store != nil {
@@ -453,11 +497,8 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			saveStatus = m.status
 			saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
 		}
+		m.mu.Unlock()
 	}
-	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
-	checkpointPath := checkpointSavePath
-	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
-	m.mu.Unlock()
 
 	if pendingSave {
 		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
@@ -493,6 +534,139 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		m.ClearCheckpoint()
 	}
 	return nil
+}
+
+// errReturnToOriginAborted 标记回零被用户停止/取消（区别于回零运动失败/超时）。
+// 完成阶段调用点据此区分：中止运行维持原语义返回错误；运动失败仅提示并照常完成。
+var errReturnToOriginAborted = errors.New("return to origin cancelled")
+
+// returnToOrigin moves every configured traversal axis back to coordinate zero
+// and waits for the same motion-safety checks used at regular traversal points.
+func (m *TraversalManager) returnToOrigin(taskID string, pointIndex int) error {
+	m.mu.RLock()
+	motionAccess := m.motion
+	motionAxes := append([]traversal.MotionAxisBinding(nil), m.config.MotionAxes...)
+	path := append([]traversal.Point(nil), m.config.Path...)
+	session := m.session
+	m.mu.RUnlock()
+	if motionAccess == nil {
+		return m.failWithCode("return to origin: motion manager is required", traversal.ErrMotionFailed)
+	}
+
+	ctx := context.Background()
+	if session != nil {
+		ctx = session.Context()
+	}
+	origin := originForPath(path)
+	m.updatePhase(taskID, traversal.StateMoving, traversal.PhaseMoving, pointIndex, pointIndex)
+	statuses := motionAccess.StatusAll(ctx)
+	motionAxes = resolveMotionAxes(motionAxes, statuses)
+
+	for _, status := range statuses {
+		if !status.Connected {
+			continue
+		}
+		for axis := range availableAxisTargets(status, origin, motionAxes) {
+			if err := motionAccess.MoveTo(ctx, status.ID, axis, 0); err != nil {
+				return m.failWithCode("return %s axis to origin: %v", traversal.ErrMotionFailed, axis, err)
+			}
+		}
+	}
+
+	for {
+		completed, reason, failure := m.waitForMotionComplete(ctx, origin, taskID, pointIndex)
+		if failure != nil {
+			return m.handleMotionSafetyFailure(failure)
+		}
+		if completed {
+			m.mu.RLock()
+			paused := m.isPaused
+			m.mu.RUnlock()
+			if paused {
+				if err := m.waitUntilResumed(ctx); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		switch reason {
+		case traversal.MotionInterruptStopped, traversal.MotionInterruptCancelled:
+			return errReturnToOriginAborted
+		case traversal.MotionInterruptPaused:
+			if err := m.waitUntilResumed(ctx); err != nil {
+				return err
+			}
+		default:
+			return m.failWithCode("return to origin timed out", traversal.ErrMotionTimeout)
+		}
+	}
+}
+
+// completeAfterReturnToOrigin 处理完成阶段的回零结果。
+// 数据此时已全部采完，回零失败不判测试失败：
+//   - 用户停止/取消（errReturnToOriginAborted）：维持中止语义，原样返回错误；
+//   - 运动失败/超时等：降级为 Status.Warning 提示，清除 returnToOrigin 内部
+//     failWithCode 写入的错误态与故障快照，返回 nil 让流程继续置 Completed。
+func (m *TraversalManager) completeAfterReturnToOrigin(taskID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errReturnToOriginAborted) {
+		return err
+	}
+	m.mu.Lock()
+	m.status.Warning = err.Error()
+	m.status.LastError = ""
+	m.status.LastErrorCode = ""
+	m.status.MotionSafetyFailure = nil
+	m.mu.Unlock()
+	slog.Warn("traversal return to origin failed; run still completes",
+		"component", "traversal",
+		"task_id", taskID,
+		"error", err,
+	)
+	return nil
+}
+
+func originForPath(path []traversal.Point) traversal.Point {
+	origin := traversal.Point{X: math.NaN(), Y: math.NaN(), Z: math.NaN(), U: math.NaN()}
+	for _, point := range path {
+		if !math.IsNaN(point.X) {
+			origin.X = 0
+		}
+		if !math.IsNaN(point.Y) {
+			origin.Y = 0
+		}
+		if !math.IsNaN(point.Z) {
+			origin.Z = 0
+		}
+		if !math.IsNaN(point.U) {
+			origin.U = 0
+		}
+	}
+	return origin
+}
+
+func (m *TraversalManager) waitUntilResumed(ctx context.Context) error {
+	ticker := time.NewTicker(pausedLoopIdle)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return errReturnToOriginAborted
+		case <-ticker.C:
+			m.mu.RLock()
+			paused := m.isPaused
+			stopped := m.isStopped
+			m.mu.RUnlock()
+			if stopped {
+				return errReturnToOriginAborted
+			}
+			if !paused {
+				return nil
+			}
+		}
+	}
 }
 
 // sanitizePointResultNaN 原地清洗 PointResult 中设备层异常可能引入的 NaN→0。
@@ -735,12 +909,10 @@ func (m *TraversalManager) updatePhase(taskID string, state traversal.State, pha
 //
 // 复检间隔：fixed 与 adaptive 模式均使用 motionCompletePoll（100ms），
 // 与 Moving 阶段对齐，保证故障检测延迟一致。
-func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int) *traversal.MotionSafetyFailure {
+func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int, channelGroups []deviceChannelGroup) *traversal.MotionSafetyFailure {
 	m.mu.RLock()
 	stab := m.stabilization
 	dwellMs := m.config.DwellTimeMs
-	deviceID := m.config.DeviceID
-	channels := m.config.Channels
 	motionAxes := m.config.MotionAxes
 	safetyCfg := m.config.MotionSafety
 	m.mu.RUnlock()
@@ -814,7 +986,7 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 	}
 
 	// 读取初始参考值
-	prevValues := m.readCurrentValues(deviceID, channels)
+	prevValues := m.readCurrentValues(channelGroups)
 	start := time.Now()
 	stableCount := 0
 
@@ -829,7 +1001,7 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 		m.sleepWithTaskCheck(taskID, checkInterval)
 
 		// 读取当前值并判断稳定性
-		curValues := m.readCurrentValues(deviceID, channels)
+		curValues := m.readCurrentValues(channelGroups)
 		if m.isStable(prevValues, curValues, threshold) {
 			stableCount++
 		} else {
@@ -903,16 +1075,30 @@ func (m *TraversalManager) recheckMotionSafety(
 	return nil
 }
 
-// readCurrentValues 读取当前设备数据值
-func (m *TraversalManager) readCurrentValues(deviceID string, channels []int) map[int]float64 {
+// readCurrentValues 读取各设备最新数据并按内部通道键合并。
+// 供稳定等待做前后值对比，无新鲜度要求（同一帧多次读取不影响稳定性判定）。
+// 任一设备无数据即返回 nil——isStable 对 nil 判不稳定，与旧单设备行为等价。
+func (m *TraversalManager) readCurrentValues(groups []deviceChannelGroup) map[int]float64 {
 	if m.reader == nil {
 		return nil
 	}
-	payload, ok := m.reader.GetLatestData(deviceID)
-	if !ok {
+	merged := make(map[int]float64)
+	for _, g := range groups {
+		payload, ok := m.reader.GetLatestData(g.deviceID)
+		if !ok {
+			return nil
+		}
+		values := valuesForChannels(payload, g.hwIndices)
+		for i, key := range g.keys {
+			if v, ok := values[g.hwIndices[i]]; ok {
+				merged[key] = v
+			}
+		}
+	}
+	if len(merged) == 0 {
 		return nil
 	}
-	return valuesForChannels(payload, channels)
+	return merged
 }
 
 // isStable 判断两组数据是否在稳定性阈值内
@@ -945,14 +1131,64 @@ func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64
 	return true
 }
 
-// collectAveragedSamples 多次采样取平均（带总体超时保护、暂停/停止响应）
-func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, channels []int, samplesPerPoint int) (map[int]float64, error) {
+// deviceChannelGroup 单台设备上需要采样的通道集合。
+// keys 为内部通道键（与 Config.Channels / PointResult.Values / ChannelLabels 一致），
+// hwIndices 为该设备 profile 内的硬件通道索引，二者按下标一一对应。
+type deviceChannelGroup struct {
+	deviceID  string
+	keys      []int
+	hwIndices []int
+}
+
+// groupChannelsByDevice 把内部通道键按物理设备分组。
+// 设备顺序按通道首次出现顺序确定，保证采样与日志输出确定性。
+// refs 必须覆盖 channels 的每个键（Config.ResolvedChannelRefs 语义保证）；
+// 缺失的键会被跳过并记日志，最终由采样长度校验暴露为通道不匹配。
+func groupChannelsByDevice(channels []int, refs map[int]traversal.ChannelRef) []deviceChannelGroup {
+	groups := make([]deviceChannelGroup, 0, 2)
+	groupIndex := make(map[string]int)
+	for _, key := range channels {
+		ref, ok := refs[key]
+		if !ok {
+			slog.Error("traversal channel missing physical ref",
+				"component", "traversal",
+				"channel_key", key,
+			)
+			continue
+		}
+		gi, ok := groupIndex[ref.DeviceID]
+		if !ok {
+			gi = len(groups)
+			groupIndex[ref.DeviceID] = gi
+			groups = append(groups, deviceChannelGroup{deviceID: ref.DeviceID})
+		}
+		groups[gi].keys = append(groups[gi].keys, key)
+		groups[gi].hwIndices = append(groups[gi].hwIndices, ref.Index)
+	}
+	return groups
+}
+
+// collectAveragedSamples 多设备分组采样取平均（带总体超时保护、暂停/停止响应）。
+//
+// 有效样本语义（多设备）：
+// 所有参与设备都产出至少一帧「新数据」（时间戳晚于本样本起始边界）才计 1 个
+// 有效样本——保证同一样本内各设备的值都是最新的，凑满 samplesPerPoint 个才返回。
+// 设备刷新周期不同（如 20Hz 与 5Hz 混采）时采样节奏以慢设备为准。
+//
+// 时间戳去重：设备刷新周期 > 轮询间隔（10ms）时，多次 GetLatestData 返回同一帧，
+// 直接累加会导致假平均（同一帧的值反复相加），故每台设备独立记录已消费时间戳。
+func (m *TraversalManager) collectAveragedSamples(taskID string, groups []deviceChannelGroup, samplesPerPoint int) (map[int]float64, error) {
 	totals := make(map[int]float64)
 	validSamples := 0
-	deadline := time.Now().Add(acquisitionBatchTimeout)
+	// 停滞超时：每凑满一个有效样本即重置，只惩罚"长时间凑不齐新样本"
+	// （设备停采/断链/通道配置错误），不惩罚正常低频设备的多样本采集
+	// （帧去重要求每个样本都是新帧，2Hz 设备采 10 个样本需约 5s，固定总超时会必然失败）。
+	// 注意按"完成样本"而非"任意新帧"重置：多设备混采时若某台设备死透，
+	// 其余设备的新帧不会掩盖停滞，凑不齐样本仍会超时。
+	stallDeadline := time.Now().Add(acquisitionStallTimeout)
 
 	// 自诊断：无有效样本时区分"设备未在采集"与"通道索引对不上"两类根因。
-	// everOk=false → GetLatestData 始终返回 ok=false（设备未采集或 deviceID 不匹配）；
+	// everOk=false → 所有设备 GetLatestData 始终 ok=false（设备未采集或 deviceID 不匹配）；
 	// everOk=true 但 validSamples==0 → 设备有数据，但 payload 通道集合不包含请求的通道。
 	var everOk bool
 	var lastIndices []int
@@ -960,10 +1196,25 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 	// 采样失败计数：区分"设备无数据"与"通道不匹配"两类失败
 	var noDataCount int
 	var channelMismatchCount int
-	// 时间戳去重：跳过同一帧的重复读取。
-	// 当设备刷新周期 > 轮询间隔（10ms）时，多次 GetLatestData 可能返回同一帧，
-	// 直接累加会导致假平均（同一帧的值反复相加）。此处用时间戳确保每帧只采一次。
-	var lastTimestamp int64 = -1
+
+	// 每台设备独立的时间戳去重与"本样本已就绪"标记。
+	// 起始时间戳取采样开始前的最新帧，确保只累计采样开始后新产出的帧（fresh 语义）。
+	lastTimestamps := make(map[string]int64, len(groups))
+	fresh := make(map[string]bool, len(groups))
+	pending := make(map[string]map[int]float64, len(groups)) // deviceID → hwIndex → value
+	for _, g := range groups {
+		lastTs := int64(-1)
+		if ts, ok := m.reader.GetLatestTimestamp(g.deviceID); ok {
+			lastTs = ts
+		}
+		lastTimestamps[g.deviceID] = lastTs
+	}
+
+	// 采集态控制器在测试运行期间不会变更（仅 SetAcquisitionController 装配阶段会写），
+	// 循环外读一次即可，避免每个 polling tick 重复拿 m.mu.RLock 放大锁竞争。
+	m.mu.RLock()
+	acqController := m.acquisitionController
+	m.mu.RUnlock()
 
 	for validSamples < samplesPerPoint {
 		// 暂停或停止时立即中断采集，避免出现"测试已停止仍在累加"的情况
@@ -976,8 +1227,15 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 			)
 			return nil, fmt.Errorf("acquisition cancelled")
 		}
-		if time.Now().After(deadline) {
-			slog.Warn("traversal averaged sampling timeout",
+		if acqController != nil {
+			for _, g := range groups {
+				if !acqController.IsAcquiring(g.deviceID) {
+					return nil, fmt.Errorf("device %s stopped acquiring after %d/%d samples", g.deviceID, validSamples, samplesPerPoint)
+				}
+			}
+		}
+		if time.Now().After(stallDeadline) {
+			slog.Warn("traversal averaged sampling stalled",
 				"component", "traversal",
 				"task_id", taskID,
 				"valid_samples", validSamples,
@@ -985,47 +1243,72 @@ func (m *TraversalManager) collectAveragedSamples(taskID, deviceID string, chann
 				"no_data_count", noDataCount,
 				"channel_mismatch_count", channelMismatchCount,
 				"device_ever_answered", everOk,
+				"stall_timeout", acquisitionStallTimeout.String(),
 			)
-			break // 超时保护：不再继续采样
+			break // 停滞超时保护：不再继续采样
 		}
-		payload, ok := m.reader.GetLatestData(deviceID)
-		if !ok {
-			noDataCount++
-			time.Sleep(acquisitionBatchPoll)
-			continue
+
+		for _, g := range groups {
+			if fresh[g.deviceID] {
+				continue // 本样本内该设备已就绪，等其余设备
+			}
+			payload, ok := m.reader.GetLatestData(g.deviceID)
+			if !ok {
+				noDataCount++
+				continue
+			}
+			everOk = true
+			if payload.Timestamp <= lastTimestamps[g.deviceID] {
+				noDataCount++
+				continue // 同一帧重复读取，跳过
+			}
+			lastTimestamps[g.deviceID] = payload.Timestamp
+			lastChannelCount = len(payload.Channels)
+			lastIndices = append(lastIndices[:0], payload.ChannelIndices...)
+			values := valuesForChannels(payload, g.hwIndices)
+			if len(values) != len(g.hwIndices) {
+				// 新帧但不含全部请求通道：不计入本样本，等下一帧；
+				// 若配置错误（通道在别的设备上）会持续不匹配直至超时，由日志暴露。
+				channelMismatchCount++
+				continue
+			}
+			pending[g.deviceID] = values
+			fresh[g.deviceID] = true
 		}
-		everOk = true
-		if payload.Timestamp <= lastTimestamp {
-			noDataCount++
-			time.Sleep(acquisitionBatchPoll)
-			continue
+
+		// 所有设备都出了新帧 → 合并为 1 个有效样本
+		allFresh := len(groups) > 0
+		for _, g := range groups {
+			if !fresh[g.deviceID] {
+				allFresh = false
+				break
+			}
 		}
-		lastTimestamp = payload.Timestamp
-		lastChannelCount = len(payload.Channels)
-		lastIndices = append(lastIndices[:0], payload.ChannelIndices...)
-		values := valuesForChannels(payload, channels)
-		if len(values) == len(channels) {
-			for k, v := range values {
-				totals[k] += v
+		if allFresh {
+			for _, g := range groups {
+				vals := pending[g.deviceID]
+				for i, key := range g.keys {
+					totals[key] += vals[g.hwIndices[i]]
+				}
+				fresh[g.deviceID] = false
 			}
 			validSamples++
-		} else {
-			channelMismatchCount++
+			// 完成一个样本即重置停滞超时：样本节奏由最慢设备决定，帧间隔不计入停滞
+			stallDeadline = time.Now().Add(acquisitionStallTimeout)
 		}
 		time.Sleep(acquisitionBatchPoll)
 	}
 
-	if validSamples == 0 {
+	if validSamples != samplesPerPoint {
 		slog.Error("traversal no valid samples",
 			"component", "traversal",
 			"task_id", taskID,
-			"device_id", deviceID,
-			"requested_channels", channels,
+			"device_groups", groups,
 			"device_ever_answered", everOk,
 			"last_payload_channel_count", lastChannelCount,
 			"last_payload_channel_indices", lastIndices,
 		)
-		return nil, fmt.Errorf("no valid samples collected within timeout")
+		return nil, fmt.Errorf("collected %d/%d fresh samples (no new complete sample for %s)", validSamples, samplesPerPoint, acquisitionStallTimeout)
 	}
 
 	averaged := make(map[int]float64, len(totals))

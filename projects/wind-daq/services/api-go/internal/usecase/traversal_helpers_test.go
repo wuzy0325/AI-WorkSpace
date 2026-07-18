@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"wind-daq/services/api-go/internal/core/motion"
@@ -123,6 +124,107 @@ func TestAvailableAxisTargets_EmptyControllerIDMatchesAnyController(t *testing.T
 	targets := availableAxisTargets(status, point, bindings)
 	if len(targets) != 1 || targets[motion.AxisX] != 5 {
 		t.Fatalf("empty controllerId should match any controller X axis, got %#v", targets)
+	}
+}
+
+func TestAvailableAxisTargets_MapsLogicalTargetsToSelectedPhysicalAxes(t *testing.T) {
+	status := motion.ControllerStatus{
+		ID: "mc-1",
+		Axes: []motion.AxisStatus{
+			{Name: motion.AxisZ},
+			{Name: motion.AxisU},
+		},
+	}
+	point := traversal.Point{X: 25, Y: 45, Z: math.NaN(), U: math.NaN()}
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "mc-1", Axis: "Z"},
+		{Name: "Y", ControllerID: "mc-1", Axis: "U"},
+	}
+
+	targets := availableAxisTargets(status, point, bindings)
+	if len(targets) != 2 || targets[motion.AxisZ] != 25 || targets[motion.AxisU] != 45 {
+		t.Fatalf("logical X/Y targets should map to physical Z/U axes, got %#v", targets)
+	}
+}
+
+func TestValidateSectorOrigin_RequiresBoundAxesAtZero(t *testing.T) {
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "mc-1", Axis: "Z"},
+		{Name: "Y", ControllerID: "mc-1", Axis: "U"},
+	}
+	statuses := []motion.ControllerStatus{{
+		ID: "mc-1", Connected: true,
+		Axes: []motion.AxisStatus{
+			{Name: motion.AxisZ, Position: 0.05},
+			{Name: motion.AxisU, Position: 2.5},
+		},
+	}}
+
+	err := validateSectorOrigin(statuses, bindings, nil)
+	if err == nil || !strings.Contains(err.Error(), "U") || !strings.Contains(err.Error(), "2.5") {
+		t.Fatalf("expected non-zero U axis error with current position, got %v", err)
+	}
+
+	statuses[0].Axes[1].Position = 0.1
+	if err := validateSectorOrigin(statuses, bindings, nil); err != nil {
+		t.Fatalf("positions within default arrival tolerance should pass: %v", err)
+	}
+}
+
+func TestValidateSectorOrigin_RejectsMovingAxis(t *testing.T) {
+	bindings := []traversal.MotionAxisBinding{{Name: "X", ControllerID: "mc-1", Axis: "X"}}
+	statuses := []motion.ControllerStatus{{
+		ID: "mc-1", Connected: true,
+		Axes: []motion.AxisStatus{{Name: motion.AxisX, Position: 0, Moving: true}},
+	}}
+
+	err := validateSectorOrigin(statuses, bindings, nil)
+	if err == nil || !strings.Contains(err.Error(), "moving") {
+		t.Fatalf("expected moving axis error, got %v", err)
+	}
+}
+
+// TestValidateSectorOrigin_RejectsNaNPosition 回归测试（B3）：
+// 轴位置为 NaN 时 math.Abs(NaN) > tolerance 恒为 false，
+// 不显式拦截会让位置反馈缺失的轴静默通过原点校验。
+func TestValidateSectorOrigin_RejectsNaNPosition(t *testing.T) {
+	bindings := []traversal.MotionAxisBinding{{Name: "X", ControllerID: "mc-1", Axis: "X"}}
+	statuses := []motion.ControllerStatus{{
+		ID: "mc-1", Connected: true,
+		Axes: []motion.AxisStatus{{Name: motion.AxisX, Position: math.NaN()}},
+	}}
+
+	err := validateSectorOrigin(statuses, bindings, nil)
+	if err == nil || !strings.Contains(err.Error(), "NaN") {
+		t.Fatalf("expected NaN position error, got %v", err)
+	}
+}
+
+func TestValidateSectorOriginRejectsMismatchedController(t *testing.T) {
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "missing", Axis: "X"},
+		{Name: "Y", ControllerID: "missing", Axis: "Y"},
+	}
+	statuses := []motion.ControllerStatus{{
+		ID: "other", Connected: true,
+		Axes: []motion.AxisStatus{{Name: motion.AxisX}, {Name: motion.AxisY}},
+	}}
+
+	err := validateSectorOrigin(statuses, bindings, nil)
+	if err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("mismatched controller must not fall back by axis name, got %v", err)
+	}
+}
+
+func TestValidateSectorOriginRequiresExplicitController(t *testing.T) {
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", Axis: "X"},
+		{Name: "Y", Axis: "Y"},
+	}
+
+	err := validateSectorOrigin(nil, bindings, nil)
+	if err == nil || !strings.Contains(err.Error(), "explicit controller") {
+		t.Fatalf("sector origin must require explicit controller bindings, got %v", err)
 	}
 }
 

@@ -241,20 +241,25 @@ func defaultDeviceProfiles() []device.Profile {
 	}
 }
 
+// defaultMotionProfiles 返回首次安装时写入的默认运动控制器 profile。
+// 默认配置为 B140 控制器（IP 192.168.3.121 / 端口 23 / 细分数 40 / MaxSpeed 4），
+// 旋转轴 U 默认传动比 180（产品出厂常用减速比），与产品出厂硬件默认对齐，安装后立即可用。
+// 注意：仅在 motion-profiles.json 不存在时写入一次，已存在配置不会被覆盖。
 func defaultMotionProfiles() []core.MotionControllerProfile {
 	return []core.MotionControllerProfile{
 		{
-			ID:          "sim-motion-1",
-			Name:        "Simulated Motion Controller",
-			Type:        core.ControllerTypeSimulated,
-			Address:     "127.0.0.1",
-			Port:        9000,
+			ID:          "b140-motion-1",
+			Name:        "B140 Motion Controller",
+			Type:        core.ControllerTypeB140,
+			Address:     "192.168.3.121",
+			Port:        23,
 			AutoConnect: false,
 			Axes: []core.AxisConfig{
-				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				// U 轴为旋转轴，传动比默认 180（产品出厂常用减速比）
+				{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40), GearRatio: core.PtrFloat64(180)},
 			},
 		},
 	}

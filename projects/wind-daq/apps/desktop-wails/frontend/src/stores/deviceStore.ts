@@ -69,6 +69,7 @@ export const useDeviceStore = defineStore('devices', () => {
   let renderTickTimer: ReturnType<typeof setInterval> | null = null
 
   let unsubscribeSnapshot: (() => void) | null = null
+  let unsubscribeDeviceLost: (() => void) | null = null
   let snapshotAttachCount = 0
   const subscribedDeviceIds = new Set<string>()
 
@@ -368,6 +369,27 @@ export const useDeviceStore = defineStore('devices', () => {
         pushSnapshot(payload)
       })
     }
+    if (!unsubscribeDeviceLost) {
+      // 监听设备异常退出：轮询/SSE 拿到 404 时触发。
+      // 更新本地状态为 Error + acquiring=false，并停止该设备的数据订阅。
+      // 必须更新本地状态——后端 GetStatus 返回 404 后 refreshStatusFor 的 catch
+      // 会"保留旧状态"（原本是 Acquiring），不主动置 Error 就会永远显示"采集中"。
+      unsubscribeDeviceLost = deviceApi.onDeviceLost((deviceId) => {
+        const prev = deviceStatuses.value.get(deviceId)
+        const profile = profiles.value.find((p) => p.id === deviceId)
+        deviceStatuses.value.set(deviceId, {
+          id: deviceId,
+          name: prev?.name ?? profile?.name ?? deviceId,
+          type: prev?.type ?? profile?.type ?? 'Unknown',
+          connection: 'Error',
+          acquiring: false,
+          lastError: '设备连接已断开',
+        })
+        // 停止该设备的数据订阅，避免继续轮询已不存在的设备
+        deviceApi.unsubscribeFromDevice(deviceId)
+        subscribedDeviceIds.delete(deviceId)
+      })
+    }
     // 启动 renderTick：以固定频率消费 pendingSnapshots → historyBuffers
     startRenderTick()
     syncSnapshotSubscriptions()
@@ -377,6 +399,10 @@ export const useDeviceStore = defineStore('devices', () => {
       if (snapshotAttachCount === 0 && unsubscribeSnapshot) {
         unsubscribeSnapshot()
         unsubscribeSnapshot = null
+        if (unsubscribeDeviceLost) {
+          unsubscribeDeviceLost()
+          unsubscribeDeviceLost = null
+        }
         // 最后一次 detach 时停止 renderTick，避免空转
         stopRenderTick()
         // 清空 pending 防止下次 attach 时残留旧数据被立即消费

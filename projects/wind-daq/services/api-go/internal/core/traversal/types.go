@@ -54,6 +54,7 @@ type SaveOptions struct {
 type Config struct {
 	TaskID          string       `json:"taskId"`
 	DeviceID        string       `json:"deviceId"`
+	LayoutPattern   string       `json:"layoutPattern,omitempty"`
 	Channels        []int        `json:"channels"`
 	Path            []Point      `json:"path"`
 	DwellTimeMs     int          `json:"dwellTimeMs"`
@@ -64,6 +65,17 @@ type Config struct {
 	// ChannelLabels 通道索引→标签的显式映射（如 {0:"P1", 16:"Patm", 17:"Tatm"}）
 	// 由前端 ProbeChannelConfig.role 推导而来；为空时回退到"按通道索引升序"的旧行为
 	ChannelLabels map[int]string `json:"channelLabels,omitempty"`
+	// ChannelRefs 内部通道键→物理通道（设备+硬件通道索引）的映射。
+	//
+	// 背景：遍历支持跨设备绑定通道（如五孔压力在设备 A、大气压力/温度在设备 B），
+	// 且不同设备的硬件通道序号允许重复（各设备均从 0 开始编号）。
+	// Channels/ChannelLabels/PointResult.Values 使用的 int 键是"内部键"，
+	// 单设备或无冲突时等于硬件通道索引；跨设备序号冲突时为冲突通道分配空闲整数。
+	// 采样/归一化等需要访问硬件的路径必须经 ChannelRefs 还原真实设备与通道。
+	//
+	// 为空（旧配置/旧断点）时由 ResolvedChannelRefs 回退合成：
+	// 内部键=硬件通道索引、设备=DeviceID，行为与历史单设备完全一致。
+	ChannelRefs map[int]ChannelRef `json:"channelRefs,omitempty"`
 	// InterpolationMode 多 PRB 插值模式："normal" / "linear" / "nearest"
 	// 仅对 MultiPrbInterpolator 生效；为空时使用插值器自身默认（normal）
 	InterpolationMode string `json:"interpolationMode,omitempty"`
@@ -85,9 +97,33 @@ type Config struct {
 	MotionSafety *MotionSafetyConfig `json:"motionSafety,omitempty"`
 }
 
-// MotionAxisBinding 遍历运动轴绑定：指定由哪台控制器的哪个轴执行运动。
+// ChannelRef 物理通道引用：内部通道键对应的真实设备与硬件通道索引。
+// Index 为该设备 profile 内的硬件通道序号（各设备独立编号，允许跨设备重复）。
+type ChannelRef struct {
+	DeviceID string `json:"deviceId"`
+	Index    int    `json:"index"`
+}
+
+// ResolvedChannelRefs 返回内部通道键→物理通道的有效映射。
+//
+// Config.ChannelRefs 非空时直接返回；为空（旧配置/旧断点/手工构造）时
+// 按历史单设备语义合成：每个 Channels 条目的内部键即硬件通道索引、设备为 DeviceID。
+// 调用方不应假定返回 map 可写——需要修改时请自行拷贝。
+func (c Config) ResolvedChannelRefs() map[int]ChannelRef {
+	if len(c.ChannelRefs) > 0 {
+		return c.ChannelRefs
+	}
+	refs := make(map[int]ChannelRef, len(c.Channels))
+	for _, ch := range c.Channels {
+		refs[ch] = ChannelRef{DeviceID: c.DeviceID, Index: ch}
+	}
+	return refs
+}
+
+// MotionAxisBinding 遍历运动轴绑定：指定逻辑目标由哪台控制器的哪个物理轴执行。
 // ControllerID 为空时表示不限制控制器（仅按轴名过滤，兼容旧数据）。
 type MotionAxisBinding struct {
+	Name         string `json:"name,omitempty"`
 	ControllerID string `json:"controllerId,omitempty"`
 	Axis         string `json:"axis"`
 }
@@ -463,6 +499,10 @@ type Status struct {
 	LastErrorCode           ErrorCode     `json:"lastErrorCode,omitempty"`
 	StartedAt               int64         `json:"startedAt,omitempty"`
 	ValidationWarnings      []string      `json:"validationWarnings,omitempty"`
+	// Warning 非致命运行警告（当前唯一来源：回零失败）。
+	// 数据全部采完后回零失败不判测试失败（State 仍为 Completed），仅在此记录提示，
+	// 前端据此向操作员展示"回零未完成"警告。
+	Warning string `json:"warning,omitempty"`
 	// CSVPath 实际落盘的 CSV 文件完整路径。
 	// 由 Start/ResumeFromCheckpoint 在 openReliabilityPorts 之后写入：
 	// csvPort.Open 在 Create 模式撞名时会自动追加 -2/-3 后缀（openCreateUnique），

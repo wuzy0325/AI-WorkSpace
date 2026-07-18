@@ -1,6 +1,6 @@
-import { request } from '@api/http-client'
+import { ApiError, request } from '@api/http-client'
 import type { DeviceProfile, DeviceStatus, DataPayload, ScanResult, DSA3217ScanConfig, CalibrationResult, CalibrationRecord, CalibrationProgress } from '@api/types'
-import { subscribeDaqStream } from '@api/sse-client'
+import { subscribeDaqStream, type SseSubscription } from '@api/sse-client'
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter'
 export { motionApi } from './motionApi'
 export { calibrationApi } from './calibrationApi'
@@ -48,6 +48,9 @@ export function defaultSimulatedProfile(): DeviceProfile {
 
 type SnapshotCallback = (payload: DataPayload) => void
 type StatusCallback = (status: DeviceStatus[]) => void
+// 设备异常退出回调：轮询 getLatest 拿到 404 时触发，
+// 让 deviceStore 更新 UI 状态为 Error，避免 UI 永远显示"采集中"。
+type DeviceLostCallback = (deviceId: string) => void
 type DeviceSubscription = { unsubscribe: () => void; restart?: () => void }
 
 type WailsResponse = { Success?: boolean; Error?: string; success?: boolean; error?: string }
@@ -163,7 +166,13 @@ export const deviceApi = {
     try {
       const result = await request<DataPayload>(`/api/daq/latest/${id}`)
       return normalizeDataPayload(result, id)
-    } catch {
+    } catch (err) {
+      // 404 表示设备已断开/异常退出（DeviceManager 从 map 删除）。
+      // 必须向上抛出，让轮询层感知断连并更新 UI 状态，避免 UI 永远显示"采集中"。
+      // 其它错误（网络抖动、临时 5xx）仍返回空 payload，保持轮询容错。
+      if (err instanceof ApiError && err.status === 404) {
+        throw err
+      }
       return { deviceId: id, timestamp: 0, channels: [], channelIndices: [] }
     }
   },
@@ -279,6 +288,7 @@ export const deviceApi = {
 
   _snapshotListeners: new Set<SnapshotCallback>(),
   _statusListeners: new Set<StatusCallback>(),
+  _deviceLostListeners: new Set<DeviceLostCallback>(),
   _subscriptions: new Map<string, DeviceSubscription>(),
   _publishRateHz: DEFAULT_PUBLISH_RATE_HZ,
 
@@ -290,6 +300,17 @@ export const deviceApi = {
   onStatusUpdated: (cb: StatusCallback): (() => void) => {
     deviceApi._statusListeners.add(cb)
     return () => { deviceApi._statusListeners.delete(cb) }
+  },
+
+  // 注册设备异常退出回调。轮询 getLatest 拿到 404 时触发，
+  // 让订阅者（deviceStore）更新 UI 状态为 Error。
+  onDeviceLost: (cb: DeviceLostCallback): (() => void) => {
+    deviceApi._deviceLostListeners.add(cb)
+    return () => { deviceApi._deviceLostListeners.delete(cb) }
+  },
+
+  _notifyDeviceLost: (deviceId: string): void => {
+    deviceApi._deviceLostListeners.forEach((cb) => cb(deviceId))
   },
 
   _notifyListeners: (payload: unknown) => {
@@ -347,6 +368,16 @@ export const deviceApi = {
             deviceApi._notifyListeners(payload)
           }
         } catch (error) {
+          // 404 表示设备已断开/异常退出：通知 deviceStore 更新 UI 状态为 Error，
+          // 并停止当前设备的轮询（设备已不在 map 中，继续轮询浪费资源）。
+          // 其它错误（网络抖动等）仍按原逻辑静默吞掉，保留轮询容错。
+          if (error instanceof ApiError && error.status === 404) {
+            active = false
+            generation++
+            clearTimer()
+            deviceApi._notifyDeviceLost(deviceId)
+            return
+          }
           console.log(`Wails polling for ${deviceId}:`, error)
         } finally {
           // 仅当仍属于当前 generation 时才调度下一轮，防止旧轮询 goroutine 重叠
@@ -377,10 +408,26 @@ export const deviceApi = {
       return
     }
 
-    const subscription = subscribeDaqStream(
+    // 提前声明 subscription：onError 在 sse-client 内部异步触发（fetch 完成后才调），
+    // 当前不会触发 TDZ，但显式 let 提前声明可消除"调用时是否已赋值"的隐性时序耦合。
+    let subscription: SseSubscription
+    subscription = subscribeDaqStream(
       deviceId,
       deviceApi._notifyListeners,
-      (error) => console.log(`SSE for ${deviceId}:`, error),
+      (error) => {
+        // SSE 拿到 404 表示设备已断开/异常退出：通知 deviceStore 更新 UI 状态为 Error。
+        // 通知后由 deviceStore 通过 unsubscribeFromDevice 统一清理订阅
+        // （_registerSubscription 注册的 unsubscribe wrapper 会调 subscription.unsubscribe()），
+        // 这里不重复调用，避免职责重叠。
+        // 严格相等匹配 sse-client.ts:28 的 `SSE HTTP ${status}` 错误格式，
+        // 避免 'redirect HTTP 404 ...' 等子串误匹配。
+        // 其它错误（连接丢失/解析错误等）仍按原逻辑静默重连，保留容错。
+        if (error === 'SSE HTTP 404') {
+          deviceApi._notifyDeviceLost(deviceId)
+          return
+        }
+        console.log(`SSE for ${deviceId}:`, error)
+      },
     )
 
     deviceApi._registerSubscription(deviceId, { unsubscribe: () => subscription.unsubscribe() })

@@ -8,6 +8,7 @@ import type {
   PreconditionCheckResult,
   TraversalCheckpoint,
   TraversalCompleteEvent,
+  TraversalCoordPoint,
   TraversalErrorEvent,
   TraversalErrorCode,
   TraversalInterpolationInput,
@@ -118,8 +119,9 @@ function createPollingSubscription<T>(
 
 /** 后端返回的原始状态响应类型（包含后端额外字段） */
 type TraversalStatusRawResponse = Omit<TraversalTestStatus, 'state' | 'lastErrorCode' | 'validationWarnings'> & {
-  currentPointCoordinates?: { alpha: number; beta: number }
-  currentPoint?: number | { alpha: number; beta: number }
+  // 兼容后端既有 JSON 字段名；这里承载的是遍历逻辑目标 X/Y/Z/U（z/u 仅 custom 有值），不是插值结果 α/β。
+  currentPointCoordinates?: TraversalCoordPoint
+  currentPoint?: number | TraversalCoordPoint
   state?: string
   lastErrorCode?: TraversalErrorCode
   validationWarnings?: string[]
@@ -216,6 +218,7 @@ export const traversalApi = {
         success: status.status === 'completed',
         status: status.status as TraversalCompleteEvent['status'],
         totalPoints: status.totalPoints,
+        filePath: status.csvPath,
         error: status.lastError,
         duration: status.startTime ? Date.now() - status.startTime : 0,
       }

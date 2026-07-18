@@ -37,10 +37,17 @@ const traversalLockResource = "workflow:traversal"
 // 运动完成等待超时和轮询间隔
 // 使用 time.Duration 类型以避免 time.NewTicker / time.Now().Add 误把裸数当 ns 使用
 const (
-	motionCompleteTimeout   = 120 * time.Second      // 单点运动到位最大等待
-	motionCompletePoll      = 100 * time.Millisecond // 运动到位轮询间隔
-	acquisitionBatchTimeout = 2 * time.Second        // 多次采样总体超时
-	acquisitionBatchPoll    = 10 * time.Millisecond  // 采样间隔
+	motionCompleteTimeout = 120 * time.Second      // 单点运动到位最大等待
+	motionCompletePoll    = 100 * time.Millisecond // 运动到位轮询间隔
+	acquisitionBatchPoll  = 10 * time.Millisecond  // 采样间隔
+	// acquisitionStallTimeout 采样停滞超时：超过该时长未凑齐新样本才判超时，
+	// 每凑满一个有效样本即重置。不能用固定总体超时——帧去重要求每个样本都是新帧，
+	// 低频设备（如 2Hz）采 N 个样本需要 N/帧率 秒（10 个需约 5s），总超时会必然失败。
+	// 取 10s 留足低频设备（含 0.5Hz 慢扫描传感器）首帧到达窗口：2s 在 0.5Hz 设备
+	// + samplesPerPoint=1 时可能误判超时（首帧需 2s 到达，与 stallDeadline 边界竞态）。
+	// 设备死透/断链场景仍能正常超时——stallDeadline 仅按"完成样本"重置，无新帧时
+	// 永远不会重置，最多 10s 即报错退出。
+	acquisitionStallTimeout = 10 * time.Second
 	cancelCheckPoll         = 100 * time.Millisecond // 任务取消检查间隔
 	pausedLoopIdle          = 200 * time.Millisecond // 暂停态主循环空转间隔
 	retryWaitInterval       = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
@@ -126,9 +133,9 @@ type TraversalManager struct {
 	// 由 DeviceManager 实现，装配点通过 SetUnitProvider 注入。
 	unitProvider ports.ChannelUnitProvider
 
-	// 设备采集控制端口：用于 CheckPreconditions 真实校验目标设备已连接/正在采集，
-	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
-	// nil 表示未注入，前置检查与主动启动逻辑均走降级路径（保持旧装配向后兼容）。
+	// 设备采集控制端口：用于 CheckPreconditions 和运行时采样真实校验目标设备
+	// 已连接且正在采集。遍历测试不控制设备采集生命周期。
+	// nil 表示未注入，采集态校验走降级路径（保持旧装配向后兼容）。
 	// 由 DeviceManager 实现，装配点通过 SetAcquisitionController 注入。
 	acquisitionController ports.AcquisitionController
 
@@ -398,9 +405,7 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 		}
 		deviceAcquiring = acqController.IsAcquiring(cfg.DeviceID)
 		if !deviceAcquiring {
-			// 未在采集时给出"将自动启动"的提示，与 ParseAndStartTraversal 主动启动逻辑呼应，
-			// 让用户在确认对话框预知行为而非看到隐式自动操作。
-			deviceAcquiringMsg = "Target device is not acquiring (will auto-start on confirm)"
+			deviceAcquiringMsg = "Target device is not acquiring, please start acquisition first"
 		}
 	}
 
@@ -412,12 +417,13 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	// 也不会比现状更差——RunCurrentPoint 同样以 ctx.Background 调用 StatusAll。
 	motionConnected := true
 	motionMessage := "Motion manager is available"
+	var motionStatuses []motion.ControllerStatus
 	if hasMotion {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		statuses := m.motion.StatusAll(ctx)
+		motionStatuses = m.motion.StatusAll(ctx)
 		cancel()
 		motionConnected = false
-		for _, s := range statuses {
+		for _, s := range motionStatuses {
 			if s.Connected {
 				motionConnected = true
 				break
@@ -440,16 +446,27 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 			map[string]any{"name": "DeviceAcquiring", "passed": deviceAcquiring, "message": deviceAcquiringMsg},
 		)
 	}
-	// DeviceAcquiring 不纳入 allPassed：设备未采集时，ParseAndStartTraversal
-	// 会在启动 loop 之前主动调用 StartAcquisition 拉起采集。该项仅用于提示用户
-	// "将自动启动"，而非阻止开始测试。DeviceConnected 仍必须纳入 allPassed，
-	// 因为未连接时无法通过任何自动操作恢复。
-	// Motion 项 passed 同时纳入"端口注入"与"已连接"两个条件：未连接的运动控制器
-	// 无法通过自动操作恢复（与 DeviceAcquiring 不同），必须阻塞用户开始测试。
+	sectorOriginPassed := true
+	if cfg.LayoutPattern == "sector" {
+		sectorOriginMessage := "Radial and rotation axes are zeroed at the first measurement point"
+		if !hasMotion {
+			sectorOriginPassed = false
+			sectorOriginMessage = "Motion manager is unavailable; cannot verify the sector origin"
+		} else if err := validateSectorOrigin(motionStatuses, cfg.MotionAxes, cfg.MotionSafety); err != nil {
+			sectorOriginPassed = false
+			sectorOriginMessage = err.Error()
+		}
+		checks = append(checks, map[string]any{
+			"name": "SectorOrigin", "passed": sectorOriginPassed, "message": sectorOriginMessage,
+		})
+	}
+	// 采集设备必须已连接且正在采集。遍历测试不隐式操作设备采集生命周期，
+	// 与五孔探针校准保持一致，由操作员先在设备管理中开始采集。
 	allPassed := hasInterpolator && hasMotion && motionConnected && hasReader && channelMapPassed
 	if acqController != nil {
-		allPassed = allPassed && deviceConnected
+		allPassed = allPassed && deviceConnected && deviceAcquiring
 	}
+	allPassed = allPassed && sectorOriginPassed
 	return map[string]any{"allPassed": allPassed, "checks": checks}
 }
 
@@ -759,6 +776,9 @@ func (m *TraversalManager) openReliabilityPorts(
 			SaveOptions:   config.SaveOptions,
 			Channels:      config.Channels,
 			ChannelLabels: config.ChannelLabels,
+			// 透传 motionAxes 让 CSV writer 按物理轴映射列数据，
+			// 修复"逻辑 X 绑到物理 Z 时数据仍写 X 列"的错位 bug。
+			MotionAxes: config.MotionAxes,
 		}
 		if err := csvPort.Open(session.ctx, csvSession); err != nil {
 			return fmt.Errorf("csv open: %w", err)

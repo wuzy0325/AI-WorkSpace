@@ -223,6 +223,11 @@ async function startTest(): Promise<void> {
     return
   }
 
+  if (startDisabledReason.value) {
+    feedbackStore.pushToast(startDisabledReason.value, 'warning')
+    return
+  }
+
   if (!currentConfig.value) {
     feedbackStore.pushToast(t.value.pleaseConfigureFirst, 'warning')
     return
@@ -405,18 +410,27 @@ watch(
 
 // 预估剩余时间：后端不返回该字段，前端基于已用时间 + 已完成点数自行估算
 // 公式：平均单点耗时 = 已用时间 / 已完成点数；剩余时间 = 平均单点耗时 × 剩余点数
+//
+// 首点（completed=0）估算策略：
+//   后端 CurrentPoint 在每个点采完后才递增（traversal_acquisition.go:331/472），
+//   采首点期间 completedPoints=0，旧逻辑直接返回 '--'，UI 长时间无剩余时间显示。
+//   现用首点已用时间作为单点耗时估算（会偏小，但比 '--' 更有参考价值）；
+//   首点完成后自动切换为 elapsed/completed 的精确平均值。
 const estimatedRemainingText = computed(() => {
   const status = traversalStore.status
   const startTime = status?.startTime
   const completed = status?.completedPoints ?? 0
   const total = status?.totalPoints ?? 0
   if (typeof startTime !== 'number' || startTime <= 0) return '--'
-  if (completed <= 0 || total <= completed) return '--'
+  if (total <= 0) return '--'
+  // 终态或全部完成：剩余 0
+  if (traversalStore.isTerminal || total <= completed) return '0s'
   const elapsedMs = Math.max(0, now.value - startTime)
   if (elapsedMs <= 0) return '--'
-  const avgPerPoint = elapsedMs / completed
+  // completed=0 时用首点已用时间作为单点耗时下界估算（偏小，首点完成后自动修正）
+  const avgPerPoint = completed > 0 ? elapsedMs / completed : elapsedMs
   const remainingMs = Math.round(avgPerPoint * (total - completed))
-  if (remainingMs <= 0) return '--'
+  if (remainingMs <= 0) return '0s'
   const seconds = Math.ceil(remainingMs / 1000)
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
@@ -457,7 +471,7 @@ const showProgress = computed(() =>
   traversalStore.status?.status === 'completed'
 )
 
-// 目标点位：来自后端 status.currentPoint（α/β）
+// 目标点位：来自后端 status.currentPoint。兼容字段名为 alpha/beta，实际语义是逻辑 X/Y 目标。
 const targetPoint = computed(() => traversalStore.status?.currentPoint)
 
 // 实时马赫数/速度：来自 traversalStore.realtimeResult
@@ -505,6 +519,25 @@ const {
   positionerConnection,
   acquisitionConnection
 } = useHardwareConnectionStatus(currentConfig)
+
+const startDisabledReason = computed(() => {
+  if (!hasConfig.value) return t.value.pleaseConfigureFirst
+  // state 取自 useHardwareConnectionStatus，按严重度从高到低判定：
+  //   'acquiring'    → 正常，不禁用
+  //   'connected'    → 已连接但未采集（提示先开始采集）
+  //   'unconfigured' → 配置里没有任何已启用的采集通道绑定（与"未连接"是两种状态，文案分开）
+  //   其他（含 'disconnected'）→ 未连接
+  switch (acquisitionConnection.value.state) {
+    case 'acquiring':
+      return ''
+    case 'connected':
+      return t.value.wf_acquisitionDeviceNotAcquiring
+    case 'unconfigured':
+      return t.value.wf_acquisitionDeviceUnconfigured
+    default:
+      return t.value.wf_acquisitionDeviceDisconnected
+  }
+})
 
 // 实时插值节流：交由 store 统一管理定时器，避免组件内重复实现
 // 监听插值输入与插值器加载状态变化，触发 store 的节流插值
@@ -580,6 +613,8 @@ watch(
       :is-starting="traversalStore.isStarting"
       :show-real-controls="showRealControls"
       :can-start="traversalStore.canStart"
+      :start-disabled="!!startDisabledReason"
+      :start-disabled-reason="startDisabledReason"
       :can-pause="traversalStore.canPause"
       :can-resume="traversalStore.canResume"
       :show-progress="showProgress"
@@ -651,12 +686,14 @@ watch(
     <div v-else class="flex flex-1 overflow-hidden">
       <TraversalLiveMonitor
         :target-point="targetPoint"
+        :pattern="currentConfig?.layout.pattern"
         :actual-positions="axisPositions"
         :mach-number="machNumber"
         :velocity="velocity"
         :csv-save-path="csvSavePath"
         :last-error="lastError"
         :validation-warnings="traversalStore.status?.validationWarnings"
+        :warning="traversalStore.status?.warning"
         :motion-safety-failure="traversalStore.status?.motionSafetyFailure"
         :acquisition-connection="acquisitionConnection"
         :positioner-connection="positionerConnection"
@@ -664,6 +701,10 @@ watch(
         :realtime-result="traversalStore.realtimeResult"
         :labels="{
           target: t.travTarget,
+          targetXDirection: t.travTargetXDirection,
+          targetYDirection: t.travTargetYDirection,
+          targetZDirection: t.travTargetZDirection,
+          targetUDirection: t.travTargetUDirection,
           actual: t.travActual,
           mach: t.mach,
           velocity: t.velocity,
@@ -673,6 +714,7 @@ watch(
           beta: t.beta,
           csvPath: t.travCsvPath,
           validationWarnings: t.travValidationWarnings,
+          returnToOriginWarning: t.travReturnToOriginWarning,
           hardwareStatus: t.travHardwareStatus,
           acquisitionDevice: t.travAcquisitionDevice,
           positionerDevice: t.travPositionerDevice,

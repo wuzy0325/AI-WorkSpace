@@ -27,6 +27,8 @@ defineProps<{
   isStarting: boolean
   showRealControls: boolean
   canStart: boolean
+  startDisabled: boolean
+  startDisabledReason: string
   canPause: boolean
   canResume: boolean
 
@@ -145,7 +147,8 @@ defineExpose({ focusStart })
           ref="startButtonRef"
           variant="primary"
           size="sm"
-          :disabled="!hasConfig"
+          :disabled="!hasConfig || startDisabled"
+          :title="startDisabledReason || undefined"
           @click="emit('start')"
         >
           <Play class="h-3.5 w-3.5" />

@@ -24,6 +24,11 @@ const (
 	TypeThreeHole        CalibrationType = "three-hole"
 	TypeTotalPressure    CalibrationType = "total-pressure"
 	TypeTotalTemperature CalibrationType = "total-temperature"
+	// TypeSevenHole 七孔探针校准类型。
+	// 七孔探针含外围 6 孔（P1~P6，按 60° 等分环形分布）+ 中心孔 P7，
+	// 通过最大压力孔编号将来流划分为内区（7 区，θ≤30°）与外区（1~6 区，θ≥30°），
+	// 内区用 (α,β) 坐标系、外区用 (θ,φ) 坐标系，两套坐标系通过 §3.3 公式相互换算。
+	TypeSevenHole CalibrationType = "seven-hole"
 )
 
 // Config 校准任务通用配置
@@ -69,9 +74,28 @@ type ProbeChannel struct {
 // core 层禁止做字节级 I/O（CLAUDE.md 零容忍约束），struct tag 仅描述序列化字段名，不是 I/O。
 
 // CalPoint 校准测点定义
+//
+// 双坐标模型（七孔探针校准引入，spec §3.4）：
+//   - Coordinates（逻辑坐标）：业务语义角度，用于配置生成、CSV 落盘、系数计算、图表绘制。
+//     内区表示为 (α,β)，外区表示为 (θ,φ)。
+//   - MotionCoordinates（运动坐标）：运动控制器实际下发的目标角度，统一为 (α,β) 双轴。
+//     外区点由 (θ,φ) 按 spec §3.3 正向公式换算（α=-arctan(tanθ×sinφ)，负号必须保留）。
+//
+// 向后兼容：五孔/三孔/总压/总温等已有模块不填 MotionCoordinates/Region/Sector 时，
+// moveToPoint 默认走 Coordinates 路径（已有行为），新字段 omitempty 不影响序列化结果。
+// 仅 TypeSevenHole 在点位生成阶段（GenerateSevenHolePoints）显式填充双坐标。
 type CalPoint struct {
 	ID          int                `json:"id"`
 	Coordinates map[string]float64 `json:"coordinates"`
+	// MotionCoordinates 运动坐标（运动控制器下发用，统一为 α-β 双轴）。
+	// 为 nil 时 moveToPoint 回退到 Coordinates（向后兼容）。
+	// 消费方（moveToPoint 七孔分支）在 Task 10 落地。
+	MotionCoordinates map[string]float64 `json:"motionCoordinates,omitempty"`
+	// Region 流场分区："inner"（内区，7 区）或 "outer"（外区，1~6 区）。
+	// 仅七孔校准填充，其他类型留空。
+	Region string `json:"region,omitempty"`
+	// Sector 外区扇区编号 1~6；内区固定 7；其他类型留空（零值）。
+	Sector int `json:"sector,omitempty"`
 }
 
 // PointResult 通用校准点位结果
@@ -298,6 +322,105 @@ type TotalTemperatureDataPoint struct {
 	Timestamp              int64   `json:"timestamp"`
 }
 
+// ==================== 七孔探针类型 ====================
+//
+// 压力基准三分离声明（spec §2.1）：
+//   - A 基准（通道原始值）：P1~P7、p_t、p_s 全部为表压（相对环境大气压，可正可负）。
+//   - B 基准（系数计算值）：与 A 同基准——系数是压差比，分子分母同基准时表压与绝压等价，
+//     因此系数公式（4.1/4.2 节）直接使用通道原始值，不做转换。
+//   - C 基准（大气计算值）：仅马赫数/速度公式（4.4 节）入口处将 p_t、p_s 转绝压，
+//     公式 p_abs = p_gauge + 大气压力。禁止在系数计算阶段提前转绝压。
+//
+// 上述基准分离是 spec §2.1 解决"绝压/表压混用导致大气压重复叠加"问题的硬约束。
+
+// SevenHoleRawData 七孔探针原始数据
+//
+// 字段语义：
+//   - P1~P6：外围 6 孔压力（表压，A 基准），按 60° 等分环形分布。
+//   - P7：中心孔压力（表压，A 基准），朝向来流。
+//   - PAtm/TAtm：大气压力（绝压）/ 大气温度，用于 A→C 边界转换与静温/真空速计算。
+//   - PTotal/PStatic/TTunnel：风洞参考总压/静压/温度（表压），指针类型，
+//     缺失时为 nil——此时马赫数/速度无法计算（CSV 写空字符串、UI 显示 "--"）。
+type SevenHoleRawData struct {
+	P1      float64  `json:"p1"`                // 外围孔 1（方位角 0°，+Y 方向）压力
+	P2      float64  `json:"p2"`                // 外围孔 2（方位角 60°）压力
+	P3      float64  `json:"p3"`                // 外围孔 3（方位角 120°）压力
+	P4      float64  `json:"p4"`                // 外围孔 4（方位角 180°，-Y 方向）压力
+	P5      float64  `json:"p5"`                // 外围孔 5（方位角 240°）压力
+	P6      float64  `json:"p6"`                // 外围孔 6（方位角 300°）压力
+	P7      float64  `json:"p7"`                // 中心孔压力
+	PAtm    float64  `json:"pAtm"`              // 大气压力（绝压）
+	TAtm    float64  `json:"tAtm"`              // 大气温度（°C）
+	PTotal  *float64 `json:"pTotal,omitempty"`  // 风洞参考总压（表压，必需用于 K0/Ks/Ma）
+	PStatic *float64 `json:"pStatic,omitempty"` // 风洞参考静压（表压，必需用于 Ks/Ma）
+	TTunnel *float64 `json:"tTunnel,omitempty"` // 风洞温度（°C，可选，优先于 TAtm 用于静温计算）
+}
+
+// SevenHoleCoefficients 七孔探针校准系数
+//
+// 内区系数（P7 为最大压力孔时，spec §4.1 公式 1-8）：
+//   - Kalpha/Kbeta：α/β 角度系数
+//   - K0：内区总压系数 (P7-p_t)/(p_t-p_s)
+//   - Ks：内区静压系数 (p_s-P̄)/(p_t-p_s)，P̄=(P1+...+P6)/6
+//
+// 外区系数（Pn 为最大压力孔时，n∈{1..6}，spec §4.2 公式 9-12）：
+//   - Ktheta/Kphi：θ/φ 角度系数（环形取模：n=1 时 n-1=6，n=6 时 n+1=1）
+//   - K0Outer/KsOuter：外区总/静压系数
+//   - 扇区编号 n 不在系数结构内单独表示，由 SevenHoleDataPoint.Sector 字段携带
+//
+// 实时气动参数（指针，缺失时为 nil）：
+//   - MachNumber：马赫数（spec §4.4，需 PTotal+PStatic+PAtm 齐全，仅在 Ma 计算入口转绝压）
+//   - Velocity：速度 m/s（需 MachNumber + 温度齐全）
+type SevenHoleCoefficients struct {
+	// 内区系数（P7 最大时填充，外区点这些字段保持零值）
+	Kalpha float64 `json:"Kalpha"` // 内区 α 角度系数
+	Kbeta  float64 `json:"Kbeta"`  // 内区 β 角度系数
+	K0     float64 `json:"K0"`     // 内区总压系数
+	Ks     float64 `json:"Ks"`     // 内区静压系数
+	// 外区系数（Pn 最大时填充，内区点这些字段保持零值）
+	// 扇区编号 n 由 SevenHoleDataPoint.Sector 字段携带，CSV 表头按 Kθ[n]/Kφ[n]/K0[n]/Ks[n] 标注
+	Ktheta  float64 `json:"Ktheta"`  // 外区 θ 角度系数
+	Kphi    float64 `json:"Kphi"`    // 外区 φ 角度系数（边界符号反转不取绝对值，spec §4.3）
+	K0Outer float64 `json:"K0Outer"` // 外区总压系数
+	KsOuter float64 `json:"KsOuter"` // 外区静压系数
+	// 实时气动参数（可选指针，缺失时为 nil）
+	MachNumber *float64 `json:"machNumber,omitempty"` // 马赫数（需 PTotal/PStatic/PAtm 齐全）
+	Velocity   *float64 `json:"velocity,omitempty"`   // 速度 m/s（需 Ma + 温度齐全）
+}
+
+// SevenHoleDataPoint 七孔探针校准数据点
+//
+// 双坐标模型（spec §3.4）：
+//   - Coordinates：逻辑坐标（业务语义，CSV 落盘用）——内区 (α,β)，外区 (θ,φ)
+//   - MotionCoordinates：运动坐标（运动控制器下发用，统一 (α,β)）——外区由 (θ,φ) 换算得来
+//
+// 分区信息：
+//   - Region："inner"（7 区）或 "outer"（1~6 区）
+//   - Sector：外区扇区编号 1~6；内区固定 7
+//   - BoundaryFlag：边界点标记（spec §3.2），非边界点为空串；标记格式如 "P7-P1"、"P1-P2"
+//
+// 不确定度字段（指针，缺失时为 nil）由 Task 4 的 UncertaintyCalculator 填充。
+type SevenHoleDataPoint struct {
+	PointID           int                   `json:"pointId"`
+	Coordinates       map[string]float64    `json:"coordinates"` // 逻辑坐标
+	MotionCoordinates map[string]float64    `json:"motionCoordinates,omitempty"`
+	Region            string                `json:"region"` // "inner" / "outer"
+	Sector            int                   `json:"sector"` // 内区 7；外区 1~6
+	BoundaryFlag      string                `json:"boundaryFlag,omitempty"`
+	RawData           SevenHoleRawData      `json:"rawData"`
+	Coefficients      SevenHoleCoefficients `json:"coefficients"`
+	SampleCount       int                   `json:"sampleCount"`
+	StdDev            float64               `json:"stdDev"`
+	StartTime         int64                 `json:"startTime"`
+	EndTime           int64                 `json:"endTime"`
+	RawDeviceChannels map[string][]float64  `json:"rawDeviceChannels,omitempty"`
+	// 不确定度字段（spec §5，Task 4 填充）
+	UncertaintyKalpha *float64 `json:"uncertaintyKalpha,omitempty"`
+	UncertaintyKbeta  *float64 `json:"uncertaintyKbeta,omitempty"`
+	UncertaintyK0     *float64 `json:"uncertaintyK0,omitempty"`
+	UncertaintyKs     *float64 `json:"uncertaintyKs,omitempty"`
+}
+
 // ==================== 运动轴配置 ====================
 
 // MotionAxisConfig 校准运动轴配置，将逻辑轴名映射到物理运动控制器
@@ -352,6 +475,9 @@ type CompleteEvent struct {
 }
 
 // RealtimeEvent 校准实时数据事件
+//
+// 各类型实时数据字段（FiveHoleRaw/ThreeHoleRaw/SevenHoleRaw 等）均为指针 + omitempty，
+// 仅对应类型的校准任务填充——五孔场景序列化结果不会出现 sevenHoleRaw key（向后兼容）。
 type RealtimeEvent struct {
 	TaskID                string                 `json:"taskId"`
 	WindowTag             string                 `json:"windowTag"`
@@ -361,6 +487,9 @@ type RealtimeEvent struct {
 	FiveHoleCoefficients  *FiveHoleCoefficients  `json:"fiveHoleCoefficients,omitempty"`
 	ThreeHoleRaw          *ThreeHoleRawData      `json:"threeHoleRaw,omitempty"`
 	ThreeHoleCoefficients *ThreeHoleCoefficients `json:"threeHoleCoefficients,omitempty"`
+	// 七孔实时数据（仅 TypeSevenHole 填充，其他类型留空确保向后兼容）
+	SevenHoleRaw          *SevenHoleRawData      `json:"sevenHoleRaw,omitempty"`
+	SevenHoleCoefficients *SevenHoleCoefficients `json:"sevenHoleCoefficients,omitempty"`
 	Point                 *CalPoint              `json:"point,omitempty"`
 }
 

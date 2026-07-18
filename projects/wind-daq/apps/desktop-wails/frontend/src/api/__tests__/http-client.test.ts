@@ -102,6 +102,7 @@ describe('deviceApi', () => {
     Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
     const { deviceApi } = await import('@api/deviceApi')
     deviceApi._subscriptions.clear()
+    deviceApi._deviceLostListeners.clear()
     deviceApi._publishRateHz = 20
   })
 
@@ -143,6 +144,64 @@ describe('deviceApi', () => {
     expect(wailsApi.device.subscribeStream).toHaveBeenCalledTimes(1)
     expect(setTimeoutSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 50)
     expect(setTimeoutSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 200)
+  })
+
+  // 验证：轮询 getLatest 拿到 404 时，deviceApi 触发 onDeviceLost 回调，
+  // 让 deviceStore 能感知设备异常退出并更新 UI 状态为 Error。
+  // 此前 getLatest catch 块静默吞掉所有错误，UI 永远显示"采集中"。
+  it('triggers onDeviceLost when polling returns 404', async () => {
+    Object.defineProperty(window, 'chrome', {
+      configurable: true,
+      value: { webview: { postMessage: vi.fn() } },
+    })
+    // fetch 返回 404（设备已断开/异常退出）
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(JSON.stringify({ error: 'device not connected' })),
+    } as Response)
+    vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
+
+    const { deviceApi } = await import('@api/deviceApi')
+    const { wailsApi } = await import('@api/wails-adapter')
+    vi.spyOn(wailsApi.device, 'subscribeStream').mockResolvedValue({ success: true, Success: true })
+
+    const lostDevices: string[] = []
+    deviceApi.onDeviceLost((id) => lostDevices.push(id))
+
+    deviceApi.subscribeToDevice('dev-lost')
+    await flushPromises()
+
+    expect(lostDevices).toContain('dev-lost')
+    // 轮询应已停止（subscription 仍存在但 active=false，不再调度下次 setTimeout）
+    // setTimeout 在 catch 块 return 前不会被调用调度下一轮
+  })
+
+  // 验证 SSE 模式（非 Wails）下，sse-client fetch 拿到 404 时同样触发 onDeviceLost。
+  // sse-client.ts:28 触发 `SSE HTTP ${status}` 错误字符串，deviceApi 严格相等匹配
+  // 'SSE HTTP 404' 后通知订阅者。
+  it('triggers onDeviceLost when SSE returns 404', async () => {
+    // 非 Wails 模式（无 window.chrome）→ deviceApi.subscribeToDevice 走 SSE 分支
+    Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
+    // fetch 返回 404 → sse-client 触发 onError('SSE HTTP 404')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(JSON.stringify({ error: 'device offline' })),
+    } as Response)
+
+    const { deviceApi } = await import('@api/deviceApi')
+    const lostDevices: string[] = []
+    deviceApi.onDeviceLost((id) => {
+      lostDevices.push(id)
+      // 模拟 deviceStore 行为：触发后立即 unsubscribe 避免 SSE 重连卡测试
+      deviceApi.unsubscribeFromDevice(id)
+    })
+
+    deviceApi.subscribeToDevice('dev-lost-sse')
+    await flushPromises()
+
+    expect(lostDevices).toContain('dev-lost-sse')
   })
 
   it('motionApi returns status', async () => {

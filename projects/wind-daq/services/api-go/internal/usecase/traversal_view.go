@@ -203,10 +203,17 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	// line/rectangle/sector 模式通过 markAxesNaN 将未配置轴标记为 NaN，
 	// encoding/json 遇到 NaN 会返回 "unsupported value" 错误导致整个 status API 崩溃。
 	// NaN 时输出 nil（JSON null），前端用 optional chaining 处理。
+	// alpha/beta 为历史兼容字段名（语义是逻辑目标 X/Y），z/u 为后加的逻辑目标 Z/U
+	// （仅 custom 模式有实际值；line/rectangle/sector 经 markAxesNaN → null）。
 	var currentPoint map[string]any
 	if status.CurrentPointCoordinates != nil {
 		point := *status.CurrentPointCoordinates
-		currentPoint = map[string]any{"alpha": nullIfNonFinite(point.X), "beta": nullIfNonFinite(point.Y)}
+		currentPoint = map[string]any{
+			"alpha": nullIfNonFinite(point.X),
+			"beta":  nullIfNonFinite(point.Y),
+			"z":     nullIfNonFinite(point.Z),
+			"u":     nullIfNonFinite(point.U),
+		}
 	}
 	dataPoints := m.BuildDataPoints(status.Results)
 	var latestData any
@@ -226,6 +233,10 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 		"startTime":               status.StartedAt,
 		"lastError":               status.LastError,
 		"lastErrorCode":           string(status.LastErrorCode),
+		// 非致命警告（当前唯一来源：回零失败）。State 为 Completed 时仍可能存在，
+		// 前端据此提示"回零未完成"而不影响完成态判定。
+		"warning": status.Warning,
+		"csvPath": status.CSVPath,
 		// results 必须清洗 NaN：line 模式首点保存后 Y/Z/U=NaN，原样序列化会让 status API 崩溃。
 		"results":            sanitizeResultsForJSON(status.Results),
 		"dataPoints":         dataPoints,
@@ -241,17 +252,18 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 // BuildDataPoints 从遍历结果构建数据点
 func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []map[string]any {
 	dataPoints := make([]map[string]any, 0, len(results))
-	// 一次性读取归一化所需配置：channelLabels（channelIndex→label）、
-	// DeviceID（unitProvider 查询）、PProbePressureType（绝压/表压）、unitProvider。
+	// 一次性读取归一化所需配置：channelLabels（内部键→label）、
+	// ChannelRefs（内部键→设备+硬件通道，unitProvider 查询）、
+	// PProbePressureType（绝压/表压）、unitProvider。
 	// 多字段一次 RLock 避免循环内重复加锁。
 	m.mu.RLock()
 	channelLabels := m.config.ChannelLabels
-	deviceID := m.config.DeviceID
+	channelRefs := m.config.ResolvedChannelRefs()
 	pressureType := m.config.PProbePressureType
 	unitProvider := m.unitProvider
 	m.mu.RUnlock()
 	for _, result := range results {
-		rawPressure, input, ok := BuildRawPressure(result.Values, channelLabels, deviceID, unitProvider, pressureType)
+		rawPressure, input, ok := BuildRawPressure(result.Values, channelLabels, channelRefs, unitProvider, pressureType)
 		interpolationResult := coreinterp.InterpolationResult{IsValid: false}
 		if ok {
 			calculated, err := m.CalculateRealtime(input)
@@ -287,27 +299,28 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 //   - 查询单位失败：跳过该通道换算记 warning，其他通道正常归一化
 //
 // 参数：
-//   - values: 通道索引→原始读数
-//   - labels: 通道索引→标签（P1-P5/Patm/Tatm）
-//   - deviceID: 设备 ID，用于 unitProvider 查询通道 Unit
+//   - values: 内部通道键→原始读数
+//   - labels: 内部通道键→标签（P1-P5/Patm/Tatm）
+//   - refs: 内部通道键→物理通道（设备+硬件通道索引），用于 unitProvider 按
+//     真实设备查询通道 Unit；跨设备绑定（五孔在 A、大气压/温度在 B）时必须正确传入
 //   - unitProvider: 通道单位提供端口，nil 时走降级路径
 //   - pressureType: "gauge"|"absolute"，空串按 "gauge" 兜底（由 pressure.NormalizePressureToGaugePa 处理）
 func BuildRawPressure(
 	values map[int]float64,
 	labels map[int]string,
-	deviceID string,
+	refs map[int]traversal.ChannelRef,
 	unitProvider ports.ChannelUnitProvider,
 	pressureType string,
 ) (map[string]float64, coreinterp.InterpolationInput, bool) {
 	raw := make(map[string]float64, 7)
-	// labelToChannel 反查表：label→channelIndex，供 unitProvider.ChannelUnit 查询。
-	// labels 是 channelIndex→label，遍历一次建反查避免后续重复扫描。
-	labelToChannel := make(map[string]int, len(labels))
+	// labelToRef 反查表：label→物理通道，供 unitProvider.ChannelUnit 按真实设备查询。
+	// labels 是 内部键→label，遍历一次建反查避免后续重复扫描。
+	labelToRef := make(map[string]traversal.ChannelRef, len(labels))
 	if len(labels) > 0 {
 		for chIdx, value := range values {
 			if label, ok := labels[chIdx]; ok && label != "" {
 				raw[label] = value
-				labelToChannel[label] = chIdx
+				labelToRef[label] = refs[chIdx]
 			}
 		}
 	} else {
@@ -323,7 +336,7 @@ func BuildRawPressure(
 				continue
 			}
 			raw[label] = values[orderedKeys[i]]
-			labelToChannel[label] = orderedKeys[i]
+			labelToRef[label] = refs[orderedKeys[i]]
 		}
 	}
 
@@ -337,17 +350,15 @@ func BuildRawPressure(
 	if unitProvider == nil {
 		slog.Warn("traversal BuildRawPressure: unitProvider is nil, skip normalization",
 			"component", "traversal",
-			"device_id", deviceID,
 		)
 	} else if len(labels) == 0 {
 		// legacy 路径：按索引猜标签不可靠（设备通道顺序可能与 P1..Tatm 不一致），
 		// 跳过归一化避免基于错误标签换算产生静默错误。
 		slog.Warn("traversal BuildRawPressure: labels empty (legacy mode), skip normalization",
 			"component", "traversal",
-			"device_id", deviceID,
 		)
 	} else {
-		normalized = normalizeRawPressure(raw, labelToChannel, deviceID, unitProvider, pressureType)
+		normalized = normalizeRawPressure(raw, labelToRef, unitProvider, pressureType)
 	}
 
 	input := coreinterp.InterpolationInput{
@@ -396,8 +407,7 @@ var sharedUnitConverter = device.NewUnitConverter()
 //   - 表压 + Patm 失败：P1-P5 仍可归一化（不减 Patm），但 Patm 字段保留原值非 Pa，normalized=false
 func normalizeRawPressure(
 	raw map[string]float64,
-	labelToChannel map[string]int,
-	deviceID string,
+	labelToRef map[string]traversal.ChannelRef,
 	unitProvider ports.ChannelUnitProvider,
 	pressureType string,
 ) bool {
@@ -406,8 +416,8 @@ func normalizeRawPressure(
 	// 表压场景虽不减但插值器仍需 Patm 为 Pa 单位，故任一场景 Patm 失败都判 normalized=false。
 	patmValid := false
 	patmPa := 0.0
-	if chIdx, ok := labelToChannel["Patm"]; ok {
-		if unit, err := unitProvider.ChannelUnit(deviceID, chIdx); err == nil {
+	if ref, ok := labelToRef["Patm"]; ok {
+		if unit, err := unitProvider.ChannelUnit(ref.DeviceID, ref.Index); err == nil {
 			if pa, err := pressure.ConvertToPa(raw["Patm"], unit, sharedUnitConverter); err == nil {
 				patmPa = pa
 				raw["Patm"] = pa
@@ -415,7 +425,7 @@ func normalizeRawPressure(
 			} else {
 				slog.Warn("traversal BuildRawPressure: convert Patm unit failed, keep raw value",
 					"component", "traversal",
-					"device_id", deviceID,
+					"device_id", ref.DeviceID,
 					"unit", unit,
 					"error", err,
 				)
@@ -423,7 +433,7 @@ func normalizeRawPressure(
 		} else {
 			slog.Warn("traversal BuildRawPressure: query Patm channel unit failed, keep raw value",
 				"component", "traversal",
-				"device_id", deviceID,
+				"device_id", ref.DeviceID,
 				"error", err,
 			)
 		}
@@ -435,7 +445,6 @@ func normalizeRawPressure(
 	if pressure.PressureType(pressureType) == pressure.PressureTypeAbsolute && !patmValid {
 		slog.Warn("traversal BuildRawPressure: absolute pressure type requires valid Patm, skip P1-P5 normalization",
 			"component", "traversal",
-			"device_id", deviceID,
 		)
 		return false
 	}
@@ -445,18 +454,18 @@ func normalizeRawPressure(
 	probeLabels := []string{"P1", "P2", "P3", "P4", "P5"}
 	allProbeNormalized := true
 	for _, label := range probeLabels {
-		chIdx, ok := labelToChannel[label]
+		ref, ok := labelToRef[label]
 		if !ok {
 			// 标签缺失由 hasAllLabels 兜底，此处不重复记 warning
 			allProbeNormalized = false
 			continue
 		}
-		unit, err := unitProvider.ChannelUnit(deviceID, chIdx)
+		unit, err := unitProvider.ChannelUnit(ref.DeviceID, ref.Index)
 		if err != nil {
 			slog.Warn("traversal BuildRawPressure: query channel unit failed, skip normalization",
 				"component", "traversal",
 				"label", label,
-				"device_id", deviceID,
+				"device_id", ref.DeviceID,
 				"error", err,
 			)
 			allProbeNormalized = false
@@ -467,7 +476,7 @@ func normalizeRawPressure(
 			slog.Warn("traversal BuildRawPressure: convert unit failed, skip normalization",
 				"component", "traversal",
 				"label", label,
-				"device_id", deviceID,
+				"device_id", ref.DeviceID,
 				"unit", unit,
 				"error", err,
 			)

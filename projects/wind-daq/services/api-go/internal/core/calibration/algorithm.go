@@ -79,6 +79,18 @@ func (d *TotalTemperatureDataPoint) GetCoordinates() map[string]float64 {
 	return map[string]float64{"Ma": d.TargetMachNumber}
 }
 
+// ==================== 七孔探针数据点适配 ====================
+
+// 确保 SevenHoleDataPoint 实现 DataPoint 接口
+var _ DataPoint = (*SevenHoleDataPoint)(nil)
+
+// GetPointID 返回七孔校准点 ID
+func (d *SevenHoleDataPoint) GetPointID() int { return d.PointID }
+
+// GetCoordinates 返回逻辑坐标（业务语义，CSV 落盘用）
+// 内区返回 (α,β)，外区返回 (θ,φ)；运动坐标通过 MotionCoordinates 字段单独访问。
+func (d *SevenHoleDataPoint) GetCoordinates() map[string]float64 { return d.Coordinates }
+
 // ==================== 通用点位结果适配 ====================
 
 // 确保 PointResult 实现 DataPoint 接口

@@ -30,9 +30,33 @@ func (m *mockChannelUnitProvider) ChannelUnit(_ string, channelIndex int) (strin
 // 编译期断言：mockChannelUnitProvider 实现 ports.ChannelUnitProvider。
 var _ ports.ChannelUnitProvider = (*mockChannelUnitProvider)(nil)
 
+// singleDeviceRefs 构造单设备 ChannelRefs：内部键=硬件索引、设备统一，
+// 与旧 BuildRawPressure 签名的 deviceID 参数语义一致。
+func singleDeviceRefs(deviceID string, labels map[int]string) map[int]traversal.ChannelRef {
+	refs := make(map[int]traversal.ChannelRef, len(labels))
+	for k := range labels {
+		refs[k] = traversal.ChannelRef{DeviceID: deviceID, Index: k}
+	}
+	return refs
+}
+
 // floatEq 浮点近似比较（归一化涉及多次乘法，1e-6 容差足够）。
 func floatEq(a, b float64) bool {
 	return math.Abs(a-b) < 1e-6
+}
+
+func TestBuildStatusResponseIncludesActualCSVPath(t *testing.T) {
+	manager := NewTraversalManager(nil, nil, nil, nil, nil)
+	manager.status = traversal.Status{
+		TaskID:  "trav-csv-path",
+		State:   traversal.StateCompleted,
+		CSVPath: `C:\data\Traversal-2026-07-16-2.csv`,
+	}
+
+	response := manager.BuildStatusResponse()
+	if got, want := response["csvPath"], manager.status.CSVPath; got != want {
+		t.Fatalf("csvPath = %q, want %q", got, want)
+	}
 }
 
 // TestBuildRawPressure_AbsoluteNormalization 绝压类型归一化集成测试。
@@ -56,7 +80,7 @@ func TestBuildRawPressure_AbsoluteNormalization(t *testing.T) {
 		0: "kPa", 1: "kPa", 2: "kPa", 3: "kPa", 4: "kPa", 5: "kPa", 6: "degC",
 	}}
 
-	raw, input, ok := BuildRawPressure(values, labels, "dev-abs", provider, "absolute")
+	raw, input, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-abs", labels), provider, "absolute")
 
 	if !ok {
 		t.Fatalf("expected ok=true (all 7 labels present), got false")
@@ -101,7 +125,7 @@ func TestBuildRawPressure_GaugeNormalization(t *testing.T) {
 		0: "kPa", 1: "kPa", 2: "kPa", 3: "kPa", 4: "kPa", 5: "kPa", 6: "degC",
 	}}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-gauge", provider, "gauge")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-gauge", labels), provider, "gauge")
 
 	if !ok {
 		t.Fatalf("expected ok=true, got false")
@@ -135,7 +159,7 @@ func TestBuildRawPressure_DegradedNilProvider(t *testing.T) {
 	labels := map[int]string{0: "P1", 1: "P2", 2: "P3", 3: "P4", 4: "P5", 5: "Patm", 6: "Tatm"}
 	values := map[int]float64{0: 200, 1: 200, 2: 200, 3: 200, 4: 200, 5: 101.325, 6: 25}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-degraded", nil, "gauge")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-degraded", labels), nil, "gauge")
 
 	// 降级路径：normalized=false，避免插值器拿到非 Pa 单位输入产生错误结果
 	if ok {
@@ -177,7 +201,7 @@ func TestBuildRawPressure_PartialChannelUnitFailure(t *testing.T) {
 		5: "kPa", // 仅 Patm 配置
 	}}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-partial", provider, "gauge")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-partial", labels), provider, "gauge")
 
 	// 修复后：P2-P5 归一化失败 → normalized=false → ok=false
 	// 避免插值器拿到 P1=200000Pa + P2-P5=200kPa(原值) 的混合单位输入
@@ -225,7 +249,7 @@ func TestBuildRawPressure_AbsolutePatmQueryFailure(t *testing.T) {
 		0: "kPa", 1: "kPa", 2: "kPa", 3: "kPa", 4: "kPa",
 	}}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-abs-patm-fail", provider, "absolute")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-abs-patm-fail", labels), provider, "absolute")
 
 	// 绝压 + Patm 失败 → 跳过 P1-P5 归一化 → normalized=false → ok=false
 	if ok {
@@ -268,7 +292,7 @@ func TestBuildRawPressure_AbsolutePatmConvertFailure(t *testing.T) {
 		5: "degC",
 	}}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-abs-patm-convert-fail", provider, "absolute")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-abs-patm-convert-fail", labels), provider, "absolute")
 
 	if ok {
 		t.Fatalf("expected ok=false (Patm convert failed, skip P1-P5), got true")
@@ -307,7 +331,7 @@ func TestBuildRawPressure_AbsolutePartialProbeFailure(t *testing.T) {
 		5: "kPa", // 仅 Patm
 	}}
 
-	raw, _, ok := BuildRawPressure(values, labels, "dev-abs-partial", provider, "absolute")
+	raw, _, ok := BuildRawPressure(values, labels, singleDeviceRefs("dev-abs-partial", labels), provider, "absolute")
 
 	// P2-P5 失败 → normalized=false → ok=false
 	if ok {
@@ -351,7 +375,7 @@ func TestBuildRawPressure_LegacyLabelsSkipped(t *testing.T) {
 		0: "kPa", 1: "kPa", 2: "kPa", 3: "kPa", 4: "kPa", 5: "kPa", 6: "degC",
 	}}
 
-	raw, _, ok := BuildRawPressure(values, nil, "dev-legacy", provider, "gauge")
+	raw, _, ok := BuildRawPressure(values, nil, nil, provider, "gauge")
 
 	// legacy 路径：normalized=false，避免基于错误标签换算
 	if ok {
@@ -651,8 +675,8 @@ func TestCheckPreconditions_DeviceNotConnected(t *testing.T) {
 //
 // 期待结果：
 //   - DeviceConnected 项 passed=true
-//   - DeviceAcquiring 项 passed=false，message 包含 "will auto-start"
-//   - allPassed=true（DeviceAcquiring 不纳入 allPassed；未采集会自动拉起，不阻止开始）
+//   - DeviceAcquiring 项 passed=false，message 提示先开始采集
+//   - allPassed=false，阻止开始遍历
 func TestCheckPreconditions_DeviceConnectedNotAcquiring(t *testing.T) {
 	// 使用 newConfigTestManager 注入 reader/motion/sink，再 SetInterpolator 让 PRB 项通过，
 	// 从而只验证 DeviceAcquiring 对 allPassed 的影响。
@@ -685,11 +709,11 @@ func TestCheckPreconditions_DeviceConnectedNotAcquiring(t *testing.T) {
 		t.Errorf("DeviceAcquiring passed: expect false (not acquiring), got %v", deviceAcq["passed"])
 	}
 	msg, _ := deviceAcq["message"].(string)
-	if !contains(msg, "will auto-start") {
-		t.Errorf("DeviceAcquiring message: expect contains 'will auto-start', got %q", msg)
+	if !contains(msg, "start acquisition first") {
+		t.Errorf("DeviceAcquiring message: expect start instruction, got %q", msg)
 	}
-	if result["allPassed"] != true {
-		t.Errorf("allPassed: expect true (DeviceAcquiring 不阻止开始), got %v", result["allPassed"])
+	if result["allPassed"] != false {
+		t.Errorf("allPassed: expect false when device is not acquiring, got %v", result["allPassed"])
 	}
 }
 
@@ -765,6 +789,38 @@ func TestCheckPreconditions_MotionConnected(t *testing.T) {
 	msg, _ := motionCheck["message"].(string)
 	if msg != "Motion manager is available" {
 		t.Errorf("Motion message: expect 'Motion manager is available', got %q", msg)
+	}
+}
+
+func TestCheckPreconditions_SectorOriginNotZero(t *testing.T) {
+	motionAccess := &mockMotionAccess{statuses: []motion.ControllerStatus{{
+		ID: "mc-1", Connected: true,
+		Axes: []motion.AxisStatus{
+			{Name: motion.AxisZ, Position: 0},
+			{Name: motion.AxisU, Position: 12.5},
+		},
+	}}}
+	mgr := NewTraversalManager(nil, motionAccess, nil, nil, nil)
+	cfg := &traversal.Config{
+		LayoutPattern: "sector",
+		MotionAxes: []traversal.MotionAxisBinding{
+			{Name: "X", ControllerID: "mc-1", Axis: "Z"},
+			{Name: "Y", ControllerID: "mc-1", Axis: "U"},
+		},
+	}
+
+	result := mgr.CheckPreconditions(cfg)
+	checks, _ := result["checks"].([]map[string]any)
+	originCheck := findCheck(checks, "SectorOrigin")
+	if originCheck == nil || originCheck["passed"] != false {
+		t.Fatalf("expected failed SectorOrigin check, got %#v", originCheck)
+	}
+	msg, _ := originCheck["message"].(string)
+	if !contains(msg, "U") || !contains(msg, "12.5") {
+		t.Fatalf("expected physical axis and current position in message, got %q", msg)
+	}
+	if result["allPassed"] != false {
+		t.Fatalf("non-zero sector origin must block start")
 	}
 }
 

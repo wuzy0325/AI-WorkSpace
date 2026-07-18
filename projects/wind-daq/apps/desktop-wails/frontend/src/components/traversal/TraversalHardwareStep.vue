@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ProbeChannelConfig, TraversalMotionAxisConfig } from '@shared/types/traversal'
-import { findDuplicateChannelIndices, isTraversalRequiredProbeChannel } from '@shared/types/traversal'
+import type { ProbeChannelConfig } from '@shared/types/traversal'
+import { findDuplicateChannelBindings, channelBindingKey, isTraversalRequiredProbeChannel } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
-import { useMotionStore } from '@stores/motionStore'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -12,27 +11,19 @@ import UiButton from '@components/ui/UiButton.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 
 const probeChannels = defineModel<ProbeChannelConfig[]>('probeChannels', { required: true })
-const motionAxes = defineModel<TraversalMotionAxisConfig[]>('motionAxes', { required: true })
 
-const props = defineProps<{
+defineProps<{
   t: Record<string, string>
   isLoading: boolean
 }>()
 
 const deviceStore = useDeviceStore()
-const motionStore = useMotionStore()
 
 function isRequired(c: ProbeChannelConfig) { return isTraversalRequiredProbeChannel(c.role, c.name) }
 
 // 通道索引枚举选项：UI 显示 CH1~CH18（1-based），内部 value 仍为数组索引 0~17
 // 通道序号从 1 开始更符合操作员直觉，对应底层数组的 0-based 索引
 const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${i + 1}`, value: i }))
-// 轴选项标签需随语言切换刷新，故用 computed 派生
-const axisOptions = computed(() => ['X', 'Y', 'Z', 'U'].map(a => ({ label: props.t.travAxisSuffix.replace('{axis}', a), value: a })))
-const mappingOptions = [
-  { label: props.t.mappingAlpha, value: 'alpha' },
-  { label: props.t.mappingBeta, value: 'beta' },
-]
 
 // ---- 设备连接状态映射 ----
 function getDeviceStatus(deviceId: string): 'idle' | 'connected' | 'acquiring' | 'error' | 'warning' {
@@ -73,17 +64,18 @@ function autoFillChannelIndices(): void {
   })
 }
 
-// 通道号重复检测：多个 enabled 通道选择同一 channelIndex 时给出视觉错误提示。
-// 后端 ParseConfig 检测到重复会直接返回错误不启动测试（见 traversal_config.go channels 收集），
+// 通道绑定重复检测：多个 enabled 通道绑定同一「设备+通道号」时给出视觉错误提示。
+// 不同设备的通道号允许重复（各设备独立编号），跨设备绑定不算冲突。
+// 后端 ParseConfig 按设备+通道号检测重复并拒绝启动（见 traversal_config.go channels 收集），
 // 因此前端必须阻断保存——视觉错误样式在此处，实际阻断在 TraversalSettings.vue 的 isStepValid。
 // 仅检测 enabled 通道；未启用通道不参与采样，重复无影响。
-// 重复检测算法提取到 shared/types/traversal.ts 的 findDuplicateChannelIndices，
+// 重复检测算法提取到 shared/types/traversal.ts 的 findDuplicateChannelBindings，
 // 与 TraversalSettings.vue 的 isStepValid 共享同一真相源，避免双实现漂移。
-const duplicateChannelIndices = computed<Set<number>>(() => findDuplicateChannelIndices(probeChannels.value))
+const duplicateChannelBindings = computed<Set<string>>(() => findDuplicateChannelBindings(probeChannels.value))
 
 function isChannelDuplicate(ch: ProbeChannelConfig): boolean {
   if (!ch.enabled || ch.channel.channelIndex == null || ch.channel.channelIndex < 0) return false
-  return duplicateChannelIndices.value.has(ch.channel.channelIndex)
+  return duplicateChannelBindings.value.has(channelBindingKey(ch))
 }
 </script>
 
@@ -153,22 +145,6 @@ function isChannelDuplicate(ch: ProbeChannelConfig): boolean {
           :title="isChannelDuplicate(ch) ? t.channelDuplicateHint : undefined"
         />
         <UiInputNumber v-model="ch.precision" :min="0" :max="8" class="sel-w80" :disabled="!ch.enabled" />
-      </div>
-    </UiPanel>
-
-    <!-- 运动轴配置 -->
-    <UiPanel class="section-card">
-      <div class="hw-head">
-        <span class="hdr-w50">{{ t.coordinateAxis }}</span>
-        <span class="hdr-name">{{ t.motionControllerLabel }}</span>
-        <span class="hdr-w80">{{ t.physicalAxis }}</span>
-        <span class="hdr-w90">{{ t.mappingLabel }}</span>
-      </div>
-      <div v-for="ax in motionAxes" :key="ax.name" class="hw-row">
-        <span class="axis-name">{{ ax.name }}</span>
-        <UiSelect v-model="ax.controllerId" :options="motionStore.profiles.map(c => ({ label: c.name, value: c.id }))" :placeholder="t.selectController" class="sel-flex" :disabled="isLoading" />
-        <UiSelect v-model="ax.axis" :options="axisOptions" class="sel-w80" />
-        <UiSelect v-model="ax.angleMapping!.type" :options="mappingOptions" class="sel-w90" />
       </div>
     </UiPanel>
   </div>
@@ -247,25 +223,20 @@ function isChannelDuplicate(ch: ProbeChannelConfig): boolean {
 .hdr-name { font-size: var(--text-xs); flex: 1; color: var(--text-muted) }
 .hdr-device { font-size: var(--text-xs); width: 150px; color: var(--text-muted) }
 .hdr-w80 { font-size: var(--text-xs); width: 80px; color: var(--text-muted) }
-.hdr-w50 { font-size: var(--text-xs); width: 50px; color: var(--text-muted) }
-.hdr-w90 { font-size: var(--text-xs); width: 90px; color: var(--text-muted) }
 .row-check { flex: 0 0 32px }
 .row-content { flex: 1; min-width: 0 }
 .chan-name-wrap { display: flex; align-items: center; gap: 6px }
 .chan-name { font-size: var(--text-sm); color: var(--text-primary) }
-.axis-name { font-size: var(--text-sm); font-weight: 600; width: 50px; color: var(--text-primary) }
 .sel-w150 { width: 150px }
 .sel-w80 { width: 80px }
-.sel-w90 { width: 90px }
-.sel-flex { flex: 1 }
 
 /* 通道号重复错误：选择器边框高亮错误色，hover title 显示原因。
-   多个探针通道绑定了同一通道号，后端 ParseConfig 会直接报错返回不启动测试，
-   因此前端必须阻断保存，在 isStepValid 中返回 false 阻止进入下一步。
-   sel-channel-error 仅做视觉提示，实际阻断在 TraversalSettings.vue 的 isStepValid 中实施。 */
+   多个探针通道绑定了同一通道号，后端 ParseConfig 会直接报错不启动测试；
+   仅做视觉提示，实际阻断在 TraversalSettings.vue 的 isStepValid 中实施。
+   扇形轴类型不匹配（.sel-axis-error）已随运动轴配置迁至 TraversalLayoutStep.vue。 */
 .sel-channel-error :deep(.n-base-selection) {
-  border-color: var(--color-error, #ef4444) !important;
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+  border-color: var(--state-error) !important;
+  box-shadow: 0 0 0 2px var(--chart-band-danger);
 }
 
 /* 设备选择器与状态指示 */

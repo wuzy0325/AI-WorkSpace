@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
@@ -491,47 +492,67 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		return traversal.Config{}, fmt.Errorf("invalid layout: no points generated for pattern %q", layout.Pattern)
 	}
 
-	// channels 收集：检测重复 ChannelIndex 并报错，禁止静默去重。
+	// channels 收集：按「设备+硬件通道索引」检测重复绑定并报错，禁止静默去重。
 	//
-	// 重复 channelIndex 意味着多个 ProbeChannel 绑定到同一硬件通道，
+	// 重复绑定同一物理通道意味着多个 ProbeChannel 抢一路硬件数据，
 	// 这会导致两个致命问题：
-	//   1. valuesForChannels 用 map[channelIndex] 去重后长度校验失败（采集超时）
-	//   2. BuildRawPressure 用 channelLabels[chIdx] 反查压力标签，map 覆盖后
+	//   1. valuesForChannels 用 map[内部键] 去重后长度校验失败（采集超时）
+	//   2. BuildRawPressure 用 channelLabels[内部键] 反查压力标签，map 覆盖后
 	//      丢失其中一个压力输入（如 P1 被 Patm 覆盖 → P1=0，插值结果静默错误）
 	//
-	// 典型触发场景：用户把 P1 和 Patm 都绑到了 channelIndex=0。
+	// 注意：不同设备的硬件通道序号允许重复（各设备 profile 均从 0 编号），
+	// 只有「同一设备同一通道」被多个探针绑定才报错。
+	// 典型触发场景：用户把 P1 和 Patm 都绑到了同一设备的 channelIndex=0。
 	// 处理方式：直接返回错误强制用户修正配置，不静默降级。
 	channels := make([]int, 0, len(cfg.Channels.ProbeChannels))
 	channelLabels := make(map[int]string)
-	// firstProbeName 记录每个 channelIndex 首次占用者的 probe.Name，
+	channelRefs := make(map[int]traversal.ChannelRef)
+	// firstProbeName 记录每个物理通道（设备+硬件索引）首次占用者的 probe.Name，
 	// 用于重复报错时给出双方 probe 名称，避免歧义的 "channel" 占位符。
-	firstProbeName := make(map[int]string, len(cfg.Channels.ProbeChannels))
+	firstProbeName := make(map[string]string, len(cfg.Channels.ProbeChannels))
 	deviceID := ""
-	seenChannels := make(map[int]bool, len(cfg.Channels.ProbeChannels))
+	seenPhysical := make(map[string]bool, len(cfg.Channels.ProbeChannels))
+	usedKeys := make(map[int]bool, len(cfg.Channels.ProbeChannels))
 	for _, probe := range cfg.Channels.ProbeChannels {
 		if !probe.Enabled || probe.Channel.ChannelIndex < 0 {
 			continue
 		}
-		if deviceID == "" {
-			deviceID = probe.Channel.DeviceID
-		}
-		chIdx := probe.Channel.ChannelIndex
-		if seenChannels[chIdx] {
+		devID := probe.Channel.DeviceID
+		if devID == "" {
 			return traversal.Config{}, fmt.Errorf(
-				"duplicate channel index %d: probes %q and %q are bound to the same hardware channel",
-				chIdx, firstProbeName[chIdx], probe.Name,
+				"probe %q: deviceId is required for channel binding", probe.Name,
 			)
 		}
-		seenChannels[chIdx] = true
-		firstProbeName[chIdx] = probe.Name
-		channels = append(channels, chIdx)
-		// 通过 role/name 显式建立 channelIndex→label 映射，避免依赖通道索引顺序
+		if deviceID == "" {
+			deviceID = devID
+		}
+		chIdx := probe.Channel.ChannelIndex
+		physKey := devID + "\x00" + strconv.Itoa(chIdx)
+		if seenPhysical[physKey] {
+			return traversal.Config{}, fmt.Errorf(
+				"duplicate channel %d on device %s: probes %q and %q are bound to the same hardware channel",
+				chIdx, devID, firstProbeName[physKey], probe.Name,
+			)
+		}
+		seenPhysical[physKey] = true
+		firstProbeName[physKey] = probe.Name
+		// 内部键分配：优先沿用硬件索引（单设备/无冲突时与历史行为一致），
+		// 跨设备序号冲突时分配下一个空闲整数，保证 Channels/Values/ChannelLabels
+		// 的 int 键全局唯一；ChannelRefs 记录每个内部键的真实物理通道。
+		key := chIdx
+		for usedKeys[key] {
+			key++
+		}
+		usedKeys[key] = true
+		channels = append(channels, key)
+		channelRefs[key] = traversal.ChannelRef{DeviceID: devID, Index: chIdx}
+		// 通过 role/name 显式建立 内部键→label 映射，避免依赖通道索引顺序
 		if label := roleToLabel(probe.Role, probe.Name); label != "" {
-			channelLabels[chIdx] = label
+			channelLabels[key] = label
 		}
 	}
 
-	// 解析 motionAxes：保留 controllerId+axis 绑定，仅这些轴参与遍历运动。
+	// 解析 motionAxes：保留逻辑目标名及 controllerId+axis 绑定，仅这些轴参与遍历运动。
 	// 空列表（旧配置未传 motionAxes）保持原行为：对所有已连接轴生成目标。
 	// 必须保留 controllerId：否则会对其它 autoConnect 的真实控制器也发 MoveTo/等待到位，
 	// 导致模拟控制器已到位仍卡在「移动中」直至超时。
@@ -548,6 +569,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		}
 		seen[key] = true
 		motionAxes = append(motionAxes, traversal.MotionAxisBinding{
+			Name:         ma.Name,
 			ControllerID: ma.ControllerID,
 			Axis:         ma.Axis,
 		})
@@ -590,6 +612,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 	config := traversal.Config{
 		TaskID:            fmt.Sprintf("trav-%d", time.Now().UnixMilli()),
 		DeviceID:          deviceID,
+		LayoutPattern:     layout.Pattern,
 		Channels:          channels,
 		Path:              points,
 		DwellTimeMs:       cfg.DwellTimeMs,
@@ -598,6 +621,7 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		SaveFileName:      cfg.SaveFileName,
 		SaveOptions:       cfg.SaveOptions,
 		ChannelLabels:     channelLabels,
+		ChannelRefs:       channelRefs,
 		InterpolationMode: cfg.InterpolationMode,
 		MotionAxes:        motionAxes,
 		MotionSafety:      cfg.MotionSafety,
@@ -633,39 +657,35 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 		return "", err
 	}
 
-	// 主动建立"目标设备正在采集"这一前提（前置于 m.Start）。
-	//
-	// 为什么放在 Start 之前：
-	//   - Start 会切换状态 Idle → Running 并初始化 session/sink。若 StartAcquisition 失败，
-	//     此时状态机尚未变更，无需调 Stop 回滚——直接返回 error 即可，避免旧实现
-	//     "Start 后失败 → 调 Stop → Stop 等 session.Done() 必然 5s 超时"的阻塞路径；
-	//   - ParseConfig 已完成 TaskID/DeviceID/Channels/Path 校验，StartAcquisition 失败时
-	//     这些校验结果仍有效，用户修正后重试无需重新解析。
-	//
-	// 旧版只在 RunTraversalLoop 内 GetLatestData 时才暴露"未采集"问题，导致用户看到
-	// "全部通过"后立刻报 no data available。此处同步路径提前拉起采集，失败立即可见。
-	//
-	// 端口为 nil（旧装配）时跳过整段逻辑，保持向后兼容。
-	// 注意：StartAcquisition 成功但后续 m.Start 失败时，不回滚采集——设备采集是独立
-	// 资源，用户可能想继续看实时数据（与"测试结束后不自动停止采集"同决策）。
+	// 后端再次校验采集态，防止绕过前端禁用按钮或确认对话框直接调用启动 API。
+	// 遍历测试不再隐式发送 StartAcquisition，设备采集生命周期由操作员管理。
+	// 多设备通道绑定（如五孔在设备 A、大气压/温度在设备 B）时逐台校验，
+	// 任一设备未采集都拒绝启动，避免运行到首个点才暴露采样超时。
 	m.mu.RLock()
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
-	if acqController != nil && !acqController.IsAcquiring(config.DeviceID) {
-		if startErr := acqController.StartAcquisition(config.DeviceID); startErr != nil {
-			slog.Error("traversal auto-start acquisition failed",
-				"component", "traversal",
-				"task_id", config.TaskID,
-				"device_id", config.DeviceID,
-				"err", startErr,
-			)
-			return "", fmt.Errorf("auto-start acquisition failed for device %s: %w", config.DeviceID, startErr)
+	if acqController != nil {
+		checked := make(map[string]bool)
+		for _, ref := range config.ResolvedChannelRefs() {
+			if checked[ref.DeviceID] {
+				continue
+			}
+			checked[ref.DeviceID] = true
+			if !acqController.IsAcquiring(ref.DeviceID) {
+				return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", ref.DeviceID)
+			}
 		}
-		slog.Info("traversal auto-started device acquisition",
-			"component", "traversal",
-			"task_id", config.TaskID,
-			"device_id", config.DeviceID,
-		)
+	}
+	if config.LayoutPattern == "sector" {
+		if m.motion == nil {
+			return "", fmt.Errorf("sector origin check requires a motion manager")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		statuses := m.motion.StatusAll(ctx)
+		cancel()
+		if err := validateSectorOrigin(statuses, config.MotionAxes, config.MotionSafety); err != nil {
+			return "", err
+		}
 	}
 
 	if err := m.Start(config); err != nil {

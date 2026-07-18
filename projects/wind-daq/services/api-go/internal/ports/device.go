@@ -88,11 +88,10 @@ type ProfileNormalizer interface {
 
 // AcquisitionController 设备采集控制端口。
 //
-// 用于遍历测试在启动前主动建立"目标设备正在采集"这一前提：
-//   - IsConnected / IsAcquiring 供 CheckPreconditions 真实反映设备状态，
-//     替代旧版"hub 是否注入"这种与设备运行态脱节的假绿检查；
-//   - StartAcquisition 供 ParseAndStartTraversal 在启动 loop 之前主动拉起采集，
-//     避免用户看到"全部通过"后立刻报 no data available。
+// 用于遍历测试校验"目标设备正在采集"这一前提：
+//   - IsConnected / IsAcquiring 供启动前检查与运行时采样校验真实反映设备状态；
+//   - StartAcquisition 是 DeviceManager 已有能力，但遍历测试不会调用它，采集生命周期
+//     由操作员在设备管理中控制。
 //
 // 实现由 DeviceManager 提供（持有 devices map + GetStatus + StartAcquisition），
 // 装配点通过 usecase.SetAcquisitionController 注入。

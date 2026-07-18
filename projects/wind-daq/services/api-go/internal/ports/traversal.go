@@ -61,6 +61,11 @@ type TraversalOutputSession struct {
 	SaveOptions     *traversal.SaveOptions
 	Channels        []int
 	ChannelLabels   map[int]string
+	// MotionAxes 逻辑方向→物理轴绑定（来自前端 motionAxes 配置）。
+	// CSV writer 按此把 Point.X/Y/Z/U 逻辑坐标值映射到对应物理轴列，
+	// 未绑定的物理轴列留空，避免"逻辑 X 绑到物理 Z 时数据仍写入 X 列"的错位 bug。
+	// 表头固定输出 X/Y/Z/U 四列（物理轴名），仅列数据按 motionAxes 重映射。
+	MotionAxes      []traversal.MotionAxisBinding
 }
 
 type TraversalRowSummary struct {

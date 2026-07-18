@@ -14,8 +14,8 @@
 import { computed } from 'vue'
 import { Activity, AlertTriangle, Cpu, FileText, Wind } from '@lucide/vue'
 import type { PressureItem } from '@composables/useTraversalRealtimeData'
-import type { InterpolationResult, MotionSafetyFailure, MotionSafetyVerdict } from '@shared/types/traversal'
-import { getMotionSafetyVerdictLabel, isMotionSafetyEmergency } from '@shared/types/traversal'
+import type { InterpolationResult, MotionSafetyFailure, MotionSafetyVerdict, TraversalCoordPoint, TraversalPattern } from '@shared/types/traversal'
+import { getMotionSafetyVerdictLabel, getTraversalDisplayedAxisNames, isMotionSafetyEmergency } from '@shared/types/traversal'
 
 interface ConnectionDisplay {
   label: string
@@ -36,13 +36,20 @@ interface ActualPosition {
 type TargetCoord = number | null
 
 const props = defineProps<{
-  targetPoint: { alpha: TargetCoord; beta: TargetCoord } | undefined
+  // 后端兼容字段仍名为 alpha/beta，实际语义是遍历逻辑目标 X/Y，不是插值结果攻角/侧滑角；
+  // z/u 为逻辑目标 Z/U（仅 custom 模式有实际值，其余模式为 null 或缺失）。
+  targetPoint: TraversalCoordPoint | undefined
+  /** 布点模式：决定目标点面板显示的轴数（line=1、rectangle/sector=2、custom=4）。
+   *  undefined（配置未加载）时回退 X/Y 两轴，与旧固定两轴视图行为一致。 */
+  pattern: TraversalPattern | undefined
   actualPositions: ActualPosition[]
   machNumber: number | undefined
   velocity: number | undefined
   csvSavePath: string
   lastError: string
   validationWarnings: readonly string[] | undefined
+  /** 非致命运行警告（当前唯一来源：回零失败，数据已采完仅提示） */
+  warning: string | undefined
   /** 运动安全故障现场快照（仅 lastErrorCode 为运动安全错误码时存在） */
   motionSafetyFailure: MotionSafetyFailure | null | undefined
 
@@ -53,6 +60,10 @@ const props = defineProps<{
 
   labels: {
     target: string
+    targetXDirection: string
+    targetYDirection: string
+    targetZDirection: string
+    targetUDirection: string
     actual: string
     mach: string
     velocity: string
@@ -62,6 +73,8 @@ const props = defineProps<{
     beta: string
     csvPath: string
     validationWarnings: string
+    /** 回零失败警告条文案 */
+    returnToOriginWarning: string
     hardwareStatus: string
     acquisitionDevice: string
     positionerDevice: string
@@ -89,8 +102,36 @@ const props = defineProps<{
 /** 安全格式化坐标：null/undefined/NaN 显示为 '--'，避免 toFixed 崩溃 */
 function formatCoord(v: TargetCoord | undefined, digits = 1): string {
   if (typeof v !== 'number' || Number.isNaN(v)) return '--'
-  return v.toFixed(digits) + '°'
+  return v.toFixed(digits)
 }
+
+// 目标点/实际位置面板显示的轴：按布点模式动态生成（line → X；rectangle/sector → X/Y；
+// custom → X/Y/Z/U），与配置屏 TraversalLayoutStep 共用 shared 层同一真相源。
+const displayedAxisNames = computed(() => getTraversalDisplayedAxisNames(props.pattern ?? 'rectangle'))
+
+// 轴名 → 目标点字段映射：与后端 status.currentPointCoordinates 对齐（alpha=X、beta=Y、z=Z、u=U）。
+// 用 Record 映射代替 switch，扩展第五轴时仅改映射表（与 TraversalLayoutStep directionLabelKey 同模式）。
+const targetRows = computed(() => {
+  const valueFor: Record<'X' | 'Y' | 'Z' | 'U', TargetCoord | undefined> = {
+    X: props.targetPoint?.alpha,
+    Y: props.targetPoint?.beta,
+    Z: props.targetPoint?.z,
+    U: props.targetPoint?.u
+  }
+  const labelFor: Record<'X' | 'Y' | 'Z' | 'U', string> = {
+    X: props.labels.targetXDirection,
+    Y: props.labels.targetYDirection,
+    Z: props.labels.targetZDirection,
+    U: props.labels.targetUDirection
+  }
+  return displayedAxisNames.value.map((name) => ({ name, label: labelFor[name], value: valueFor[name] }))
+})
+
+// 网格列数：单轴（line）独占一行，多轴两列换行（custom 4 轴排成 2×2），
+// 目标位置与实际位置两段结构保持完全对称。
+const positionGridClass = computed(() =>
+  displayedAxisNames.value.length > 1 ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-1 gap-2'
+)
 
 /**
  * verdict → 本地化文案映射（响应式）。
@@ -116,23 +157,21 @@ const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() 
     <!-- 目标点 + 实际位置：同一张卡片内上下两段，结构完全对称（两列 + 大字号 + 标签一致） -->
     <section class="flex-shrink-0 border-b border-[var(--border-default)] p-2.5">
       <div class="rounded-xl bg-[var(--bg-panel-strong)] p-3 space-y-2">
-        <!-- 目标位置：α / β 两列，与实际位置结构完全一致 -->
-        <div class="grid grid-cols-2 gap-2">
-          <div class="flex flex-col">
-            <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} α</span>
+        <!-- 目标位置：行数按布点模式动态生成（line=1、rectangle/sector=2、custom=4），与实际位置结构完全一致 -->
+        <div :class="positionGridClass">
+          <div
+            v-for="row in targetRows"
+            :key="row.name"
+            class="flex flex-col"
+          >
+            <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} {{ row.label }}</span>
             <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
-              {{ formatCoord(targetPoint?.alpha) }}
-            </span>
-          </div>
-          <div class="flex flex-col">
-            <span class="mb-0.5 text-[10px] text-[var(--text-muted)]">{{ labels.target }} β</span>
-            <span class="font-mono text-xl font-bold tabular-nums text-[var(--accent-info)]">
-              {{ formatCoord(targetPoint?.beta) }}
+              {{ formatCoord(row.value) }}
             </span>
           </div>
         </div>
-        <!-- 实际位置：两列，标签/字号/颜色与目标位置对齐，运动中高亮 -->
-        <div class="grid grid-cols-2 gap-2 border-t border-[var(--border-default)] pt-2">
+        <!-- 实际位置：列数与目标位置一致，标签/字号/颜色与目标位置对齐，运动中高亮 -->
+        <div :class="[positionGridClass, 'border-t border-[var(--border-default)] pt-2']">
           <template v-if="actualPositions.length">
             <div
               v-for="axis in actualPositions"
@@ -160,7 +199,7 @@ const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() 
           </template>
           <template v-else>
             <div
-              v-for="placeholder in ['X', 'Y']"
+              v-for="placeholder in displayedAxisNames"
               :key="placeholder"
               class="flex flex-col"
             >
@@ -264,6 +303,21 @@ const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() 
         <AlertTriangle class="h-3 w-3 text-[var(--state-warning)] flex-shrink-0" />
         <span class="text-[10px] text-[var(--state-warning)]">
           {{ labels.validationWarnings.replace('{count}', String(validationWarnings.length)) }}
+        </span>
+      </div>
+
+      <!-- 回零警告：数据已全部采完，回零失败不判测试失败，仅以 warning 样式提示 -->
+      <div
+        v-if="warning"
+        class="flex items-center gap-1.5 rounded-md px-2.5 py-1"
+        :style="{
+          background: 'color-mix(in srgb, var(--state-warning) 10%, transparent)',
+        }"
+        :title="warning"
+      >
+        <AlertTriangle class="h-3 w-3 text-[var(--state-warning)] flex-shrink-0" />
+        <span class="text-[10px] text-[var(--state-warning)] truncate max-w-[220px]">
+          {{ labels.returnToOriginWarning }}
         </span>
       </div>
 

@@ -127,9 +127,18 @@ func NewRouter(deps Deps) http.Handler {
 	})
 	mux.HandleFunc("/api/daq/latest/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/daq/latest/")
+		// 设备不存在（已断开/异常退出被 DeviceManager 从 map 删除）时返回 404，
+		// 让前端轮询能感知断连并更新 UI 状态。
+		// 此前返回 200 + 空 payload 导致前端轮询静默吞掉，UI 永远显示"采集中"。
+		if _, ok := deps.DeviceManager.GetStatus(id); !ok {
+			// 错误消息用 "device offline" 而非 "not connected"：覆盖更广
+			// （含未连接、已断开、异常退出三态），避免语义误导。
+			writeError(w, http.StatusNotFound, "device offline")
+			return
+		}
 		payload, ok := deps.AcquisitionHub.GetLatestData(id)
 		if !ok {
-			// 设备无数据时返回仅含 deviceId 的空 payload，保持与前端契约一致
+			// 设备已连接但尚未出第一帧：返回仅含 deviceId 的空 payload
 			writeDataPayloadJSON(w, http.StatusOK, device.DataPayload{DeviceID: id})
 			return
 		}

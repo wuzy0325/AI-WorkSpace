@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,10 @@ type TraversalCsvWriter struct {
 	labels []labelEntry
 	// customFieldNames 已排序的自定义字段名，保证列顺序稳定
 	customFieldNames []string
+	// motionAxes 逻辑方向→物理轴绑定（来自 config.MotionAxes）。
+	// buildRow 按此把 Point.X/Y/Z/U 逻辑坐标值映射到对应物理轴列，
+	// 未绑定的物理轴列留空。为空（旧配置兼容）时保持原行为：按 Point 字段顺序直接填值。
+	motionAxes       []traversal.MotionAxisBinding
 	header           []string
 	rows             int
 	commitSeq        uint64
@@ -93,7 +98,7 @@ func (w *TraversalCsvWriter) Open(ctx context.Context, session ports.TraversalOu
 	// 应用列配置：v2 Open 路径必须构建与 InitializeTraversal 一致的 labels /
 	// customFieldNames / header，否则 v2 主路径表头会缺少通道列、Resume 时
 	// HeaderHash 校验也会失败。applyConfigLocked 与 InitializeTraversal 共享逻辑。
-	w.applyConfigLocked(session.SaveOptions, session.Channels, session.ChannelLabels)
+	w.applyConfigLocked(session.SaveOptions, session.Channels, session.ChannelLabels, session.MotionAxes)
 	w.header = w.buildHeader()
 	w.headerHash = hashCSVRecord(w.header)
 	if session.HeaderHash != "" && session.HeaderHash != w.headerHash {
@@ -380,14 +385,14 @@ func resolveOutputPath(cfg traversal.Config) string {
 	return traversal.ResolveOutputPath(cfg)
 }
 
-// applyConfigLocked 应用列配置（SaveOptions + Channels + ChannelLabels），
-// 设置 w.options / w.labels / w.customFieldNames。
+// applyConfigLocked 应用列配置（SaveOptions + Channels + ChannelLabels + MotionAxes），
+// 设置 w.options / w.labels / w.customFieldNames / w.motionAxes。
 //
 // Open 与 InitializeTraversal 共享此方法，保证 v2 路径与旧 sink 路径
 // 表头构建一致：相同输入 → 相同 labels 顺序 → 相同 HeaderHash。
 //
 // 调用约束：必须持 w.mu。
-func (w *TraversalCsvWriter) applyConfigLocked(opts *traversal.SaveOptions, channels []int, labels map[int]string) {
+func (w *TraversalCsvWriter) applyConfigLocked(opts *traversal.SaveOptions, channels []int, labels map[int]string, motionAxes []traversal.MotionAxisBinding) {
 	// 默认所有列都开启（兼容前端未传 saveOptions 的情况）
 	if opts != nil {
 		w.options = *opts
@@ -403,6 +408,8 @@ func (w *TraversalCsvWriter) applyConfigLocked(opts *traversal.SaveOptions, chan
 	w.labels = buildLabelEntries(channels, labels)
 	// 自定义字段：按字典序固定列顺序（避免每次 map 遍历顺序变动）
 	w.customFieldNames = enabledCustomFieldNames(w.options.CustomFields)
+	// 物理轴绑定：拷贝一份避免外部修改影响 writer 内部状态
+	w.motionAxes = append([]traversal.MotionAxisBinding(nil), motionAxes...)
 }
 
 // InitializeTraversal 创建文件并写入表头
@@ -430,7 +437,7 @@ func (w *TraversalCsvWriter) InitializeTraversal(cfg traversal.Config) error {
 	}
 
 	// 共享列配置应用逻辑（与 Open 路径一致）
-	w.applyConfigLocked(cfg.SaveOptions, cfg.Channels, cfg.ChannelLabels)
+	w.applyConfigLocked(cfg.SaveOptions, cfg.Channels, cfg.ChannelLabels, cfg.MotionAxes)
 
 	basePath := resolveOutputPath(cfg)
 	if dir := filepath.Dir(basePath); dir != "." && dir != "" {
@@ -604,7 +611,10 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05")
 		row = append(row, ts)
 	}
-	row = append(row, formatFloat(p.Point.X), formatFloat(p.Point.Y), formatFloat(p.Point.Z), formatFloat(p.Point.U))
+	// 4 轴列：表头固定 X/Y/Z/U（物理轴名），数据按 motionAxes 把逻辑坐标映射到对应物理轴列。
+	// 修复 Bug 2: 旧实现硬编码 formatFloat(p.Point.X/Y/Z/U)，导致用户把逻辑 X 绑到物理 Z 轴时
+	// 数据仍写入 X 列，与表头不一致。改为按 motionAxes 重映射，未绑定的物理轴列留空。
+	row = append(row, w.buildAxisRowValues(p.Point)...)
 	if w.options.SaveRawPressure {
 		for _, e := range w.labels {
 			if v, ok := p.Values[e.Channel]; ok {
@@ -641,6 +651,70 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		row = append(row, "")
 	}
 	return row
+}
+
+// buildAxisRowValues 构建 4 轴列（X/Y/Z/U）的字符串切片。
+//
+// 输出列固定为物理轴名顺序 ["X","Y","Z","U"]，与 buildHeader 的 cols = "X","Y","Z","U" 对齐。
+// 数据填充规则：
+//   - motionAxes 为空（旧配置兼容）：保持原行为，按 Point.X/Y/Z/U 字段顺序直接填值，
+//     NaN 由 formatFloat 转空字符串。这样不影响未升级 motionAxes 配置的存量任务。
+//   - motionAxes 非空：按每个绑定的 Name→Axis 把逻辑坐标值填到对应物理轴列；
+//     未出现在任何绑定中的物理轴列输出空字符串（区别于"绑定为 0"）。
+//
+// 例：motionAxes=[{Name:"X",Axis:"Z"},{Name:"Y",Axis:"U"}]，Point={X:10, Y:5, Z:NaN, U:NaN}
+//
+//	输出 ["", "", "10.000000", "5.000000"] —— 物理 Z 列承载逻辑 X 方向，
+//	物理 U 列承载逻辑 Y 方向，物理 X/Y 列留空。
+func (w *TraversalCsvWriter) buildAxisRowValues(p traversal.Point) []string {
+	// 旧配置兼容路径：未配置 motionAxes 时按原行为直接输出 Point 字段
+	if len(w.motionAxes) == 0 {
+		return []string{
+			formatFloat(p.X),
+			formatFloat(p.Y),
+			formatFloat(p.Z),
+			formatFloat(p.U),
+		}
+	}
+	// 逻辑方向名 → Point 字段值（用于按 binding.Name 取出逻辑坐标）
+	logical := map[string]float64{
+		"X": p.X,
+		"Y": p.Y,
+		"Z": p.Z,
+		"U": p.U,
+	}
+	// 物理轴名 → 已绑定的逻辑坐标值。
+	// 用 map 配合 ok 模式区分"未绑定"（输出空字符串）与"绑定为 0"（输出 "0.000000"）。
+	bound := make(map[string]float64, len(w.motionAxes))
+	for _, b := range w.motionAxes {
+		// Axis 字段在 MotionAxisBinding 中是必填（前端约束），
+		// Name 字段可能为空（旧数据），跳过无法映射的绑定
+		if b.Axis == "" || b.Name == "" {
+			continue
+		}
+		// 大小写防御：用户绕过前端直接构造 JSON 可能传小写 axis/name，
+		// map key 大小写敏感，不规范化会导致小写绑定的值静默丢失。
+		// 前端始终发大写，此规范化仅作兜底，不影响正常路径。
+		axis := strings.ToUpper(b.Axis)
+		name := strings.ToUpper(b.Name)
+		if v, ok := logical[name]; ok {
+			bound[axis] = v
+		}
+	}
+	return []string{
+		formatAxisCell(bound, "X"),
+		formatAxisCell(bound, "Y"),
+		formatAxisCell(bound, "Z"),
+		formatAxisCell(bound, "U"),
+	}
+}
+
+// formatAxisCell 输出物理轴列值：未绑定输出空字符串，已绑定走 formatFloat（NaN 也输出空字符串）。
+func formatAxisCell(bound map[string]float64, axis string) string {
+	if v, ok := bound[axis]; ok {
+		return formatFloat(v)
+	}
+	return ""
 }
 
 // formatFloat 格式化浮点数为 CSV 单元格字符串。

@@ -3,6 +3,7 @@
  */
 
 import type { ProbeChannelConfig, ProbeChannelRole } from './calibration'
+import type { AxisKind, AxisName } from './motion'
 export type { ProbeChannelConfig } from './calibration'
 
 /** 布点模式类型 */
@@ -61,32 +62,43 @@ export function createDefaultTraversalProbeChannels(): ProbeChannelConfig[] {
 }
 
 /**
- * 检测启用通道中重复的 channelIndex，返回所有出现次数 > 1 的索引集合。
+ * 通道绑定的唯一键：设备 + 硬件通道号。
+ * 不同设备的通道号允许重复（各设备 profile 均从 0 编号），
+ * 只有「同一设备同一通道」被多个探针绑定才是冲突。
+ */
+export function channelBindingKey(ch: ProbeChannelConfig): string {
+  return `${ch.channel.deviceId} ${ch.channel.channelIndex}`
+}
+
+/**
+ * 检测启用通道中重复的物理通道绑定（同一设备同一通道号），返回冲突绑定键集合。
  *
  * 仅检测 enabled 通道：未启用通道不参与后端采样，重复无影响。
  * channelIndex < 0 视为未分配，跳过检测。
  *
  * 与后端 traversal_config.go 的 ParseConfig 重复检测策略对齐：
- * 后端遇到重复 channelIndex 直接返回错误不启动测试，因此前端需在保存前阻断。
+ * 后端按「设备+通道号」判定重复并直接返回错误不启动测试，因此前端需在保存前阻断。
+ * 跨设备绑定（如五孔在设备 A、大气压/温度在设备 B）通道号相同不算冲突。
  * 此函数作为前后端共享真相源，避免 TraversalHardwareStep.vue 的视觉提示
  * 与 TraversalSettings.vue 的 isStepValid 阻断逻辑使用两份独立实现。
  */
-export function findDuplicateChannelIndices(channels: ProbeChannelConfig[]): Set<number> {
-  const counts = new Map<number, number>()
+export function findDuplicateChannelBindings(channels: ProbeChannelConfig[]): Set<string> {
+  const counts = new Map<string, number>()
   for (const ch of channels) {
     if (!ch.enabled || ch.channel.channelIndex == null || ch.channel.channelIndex < 0) continue
-    counts.set(ch.channel.channelIndex, (counts.get(ch.channel.channelIndex) ?? 0) + 1)
+    const key = channelBindingKey(ch)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
   }
-  const dupes = new Set<number>()
-  for (const [idx, count] of counts) {
-    if (count > 1) dupes.add(idx)
+  const dupes = new Set<string>()
+  for (const [key, count] of counts) {
+    if (count > 1) dupes.add(key)
   }
   return dupes
 }
 
-/** 是存在重复通道索引——findDuplicateChannelIndices 的布尔快捷形式 */
+/** 是否存在重复通道绑定——findDuplicateChannelBindings 的布尔快捷形式 */
 export function hasDuplicateChannel(channels: ProbeChannelConfig[]): boolean {
-  return findDuplicateChannelIndices(channels).size > 0
+  return findDuplicateChannelBindings(channels).size > 0
 }
 
 export function isTraversalRequiredProbeChannel(role?: ProbeChannelRole, name?: string): boolean {
@@ -321,7 +333,7 @@ function sectorPointsFromRadiiAngles(
     if (snakeOrder && i % 2 === 1) {
       for (let j = angles.length - 1; j >= 0; j--) {
         const radian = (angles[j] * Math.PI) / 180
-        // 扇形布点不消费 Z/U：固定补 0，与后端 path.go SectorPointsFromRadiiAngles 对齐
+        // 扇形布点不消费 Z/U：固定补 0。仅前端预览用；后端扇形生产路径已改走 GridPointsFromAxes 相对坐标
         points.push({
           x: centerX + radii[i] * Math.cos(radian),
           y: centerY + radii[i] * Math.sin(radian),
@@ -426,16 +438,214 @@ export function getTraversalLayoutPointCount(layout?: TraversalLayout): number {
   return getTraversalLayoutPoints(layout).length
 }
 
-/** 运动轴配置（X/Y 到α/β映射） */
+/** 遍历目标方向到物理运动轴的绑定。
+ *
+ * name 为逻辑目标名（'X'/'Y'/'Z'/'U'）——对应遍历点 Point 的 X/Y/Z/U 字段。
+ * custom 模式允许绑定全部 4 个逻辑目标；line/rectangle/sector 模式仅消费 X/Y
+ * （后端 path.go 把 Z/U 标记为 NaN，availableAxisTargets 自动跳过）。
+ * axis 为该逻辑目标对应的物理轴名（控制器 profile 中的轴名）。 */
 export interface TraversalMotionAxisConfig {
-  name: 'X' | 'Y'
+  name: 'X' | 'Y' | 'Z' | 'U'
   controllerId: string
   axis: 'X' | 'Y' | 'Z' | 'U'
+  /** @deprecated 仅用于读取旧 profile；攻角和侧滑角由测点压力插值计算。 */
   angleMapping?: {
     type: 'alpha' | 'beta'
     offset?: number
     scale?: number
   }
+}
+
+/**
+ * 扇形布点对运动轴类型的约束：
+ * - X 方向驱动径向（半径）运动 → 必须绑定直线轴（平移台）
+ * - Y 方向驱动角度运动 → 必须绑定旋转轴（旋转台）
+ * 其余布局（line/rectangle/custom）所有方向都是笛卡尔直线运动，无类型约束，返回 null。
+ *
+ * target 取 'Z'/'U' 时始终返回 null：扇形布局只消费 X/Y 两个逻辑目标，
+ * Z/U 行（custom 模式下存在的绑定）不参与扇形轴类型校验。
+ *
+ * 与 findTraversalAxisKindIssues / filterTraversalAxisOptions 一起作为
+ * TraversalHardwareStep.vue 的选项过滤 + 视觉提示和 TraversalSettings.vue
+ * isStepValid 阻断逻辑的共享真相源（与 findDuplicateChannelBindings 同模式）。
+ */
+export function requiredTraversalAxisKind(pattern: TraversalPattern, target: 'X' | 'Y' | 'Z' | 'U'): AxisKind | null {
+  if (pattern !== 'sector') return null
+  // 扇形仅约束 X/Y；Z/U 不参与扇形布点（path.go 把扇形点的 Z/U 标记为 NaN）
+  if (target !== 'X' && target !== 'Y') return null
+  return target === 'X' ? 'LINEAR' : 'ROTARY'
+}
+
+/** 轴类型校验所需的控制器 profile 最小结构（MotionControllerProfile 满足此接口）。 */
+export interface TraversalAxisKindProfileLike {
+  id: string
+  axes: ReadonlyArray<{ name: AxisName; kind: AxisKind; enabled?: boolean }>
+}
+
+/** 单条不满足布点模式轴类型要求的绑定。actualKind 为 null 表示 profile 中找不到该轴配置。 */
+export interface TraversalAxisKindIssue {
+  name: 'X' | 'Y' | 'Z' | 'U'
+  axis: AxisName
+  requiredKind: AxisKind
+  actualKind: AxisKind | null
+  /** 轴种类匹配但被停用（enabled === false）时置 true；停用轴同样不合规。 */
+  disabled?: boolean
+}
+
+/**
+ * 找出不满足布点模式轴类型要求的运动轴绑定。
+ * 仅在 controllerId 已选且 profile 存在时判定；控制器未绑定或 profile 缺失由既有校验
+ * （isStepValid 的 controllerId !== ''）兜底，此处跳过避免重复报错。
+ * 已停用（enabled === false）的轴视为不合规：filterTraversalAxisOptions 会把停用轴
+ * 排除在可选项外，若校验放行则出现"选不了的轴却能通过校验"的矛盾。
+ *
+ * Z/U 行（custom 模式下存在的绑定）由 requiredTraversalAxisKind 返回 null 跳过，
+ * 不参与扇形轴类型校验——扇形布局只消费 X/Y 两个逻辑目标。
+ */
+export function findTraversalAxisKindIssues(
+  motionAxes: TraversalMotionAxisConfig[],
+  profiles: ReadonlyArray<TraversalAxisKindProfileLike>,
+  pattern: TraversalPattern
+): TraversalAxisKindIssue[] {
+  const issues: TraversalAxisKindIssue[] = []
+  for (const ma of motionAxes) {
+    const requiredKind = requiredTraversalAxisKind(pattern, ma.name)
+    if (!requiredKind || !ma.controllerId) continue
+    const profile = profiles.find((p) => p.id === ma.controllerId)
+    if (!profile) continue
+    const axisCfg = profile.axes.find((a) => a.name === ma.axis)
+    const actualKind = axisCfg?.kind ?? null
+    const disabled = axisCfg?.enabled === false
+    if (actualKind !== requiredKind || disabled) {
+      issues.push({ name: ma.name, axis: ma.axis, requiredKind, actualKind, ...(disabled ? { disabled: true } : {}) })
+    }
+  }
+  return issues
+}
+
+/**
+ * 指定控制器下满足布点模式轴类型要求的可选物理轴列表。
+ * 返回 null 表示不过滤：非扇形布局本就不限制；控制器未选择 / profile 缺失时
+ * 无法判定类型，保持显示全部轴，类型不符由 findTraversalAxisKindIssues 视觉提示兜底。
+ * 已停用（enabled === false）的轴不作为可选项。
+ *
+ * target 为 'Z'/'U' 时返回 null：扇形不约束 Z/U，沿 axisOptionsFor 旧路径显示全部 4 轴。
+ */
+export function filterTraversalAxisOptions(
+  profile: TraversalAxisKindProfileLike | null | undefined,
+  pattern: TraversalPattern,
+  target: 'X' | 'Y' | 'Z' | 'U'
+): AxisName[] | null {
+  const requiredKind = requiredTraversalAxisKind(pattern, target)
+  if (!requiredKind || !profile) return null
+  return profile.axes
+    .filter((a) => a.enabled !== false && a.kind === requiredKind)
+    .map((a) => a.name)
+}
+
+/**
+ * 运动轴绑定唯一键：控制器 ID + 物理轴名。
+ *
+ * 同一控制器内一根物理轴只能被一个方向（X/Y/Z/U）绑定——否则两个方向都会向
+ * 同一根物理轴下发 MoveTo，最终只剩最后一个方向的目标生效，另一个方向静默丢失。
+ * 跨控制器的同名物理轴互不影响（各控制器独立编号），不算冲突。
+ *
+ * 与 channelBindingKey 同模式：用于检测重复 + 视觉高亮，键格式稳定可序列化。
+ */
+export function motionAxisBindingKey(ax: TraversalMotionAxisConfig): string {
+  return `${ax.controllerId} ${ax.axis}`
+}
+
+/**
+ * 检测已绑定控制器的运动轴中"同控制器同一物理轴"被多个方向绑定的冲突。
+ *
+ * 仅检测 controllerId 非空的绑定：
+ *   - controllerId 为空表示尚未绑定控制器，没有"同控制器"概念，跳过；
+ *   - axis 为空理论上不会发生（UI 强制选 4 轴之一），同样跳过。
+ *
+ * 跨设备绑定（如 X→控制器A.X、Y→控制器B.X）不算冲突——各控制器物理轴独立编号。
+ *
+ * 与 findDuplicateChannelBindings 同模式：返回冲突绑定键集合，供
+ * TraversalLayoutStep.vue 的视觉高亮与 TraversalSettings.vue isStepValid 阻断共用，
+ * 避免两份独立判定实现。
+ */
+export function findDuplicateMotionAxisBindings(motionAxes: TraversalMotionAxisConfig[]): Set<string> {
+  const counts = new Map<string, number>()
+  for (const ax of motionAxes) {
+    if (!ax.controllerId || !ax.axis) continue
+    const key = motionAxisBindingKey(ax)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const dupes = new Set<string>()
+  for (const [key, count] of counts) {
+    if (count > 1) dupes.add(key)
+  }
+  return dupes
+}
+
+/** 是否存在重复运动轴绑定——findDuplicateMotionAxisBindings 的布尔快捷形式 */
+export function hasDuplicateMotionAxis(motionAxes: TraversalMotionAxisConfig[]): boolean {
+  return findDuplicateMotionAxisBindings(motionAxes).size > 0
+}
+
+/**
+ * 查询"当前方向行之外、同一控制器上已绑定物理轴"的占用映射：物理轴名 → 占用它的方向名列表。
+ *
+ * 与 findDuplicateMotionAxisBindings 的事后告警互补：重复检测只能在用户选完后红框 + 横幅
+ * 拦截，本函数在选项渲染前暴露占用关系，让 TraversalLayoutStep 能在下拉选项 label 上追加
+ * "已被 X 方向占用"后缀——用户点开下拉即可预见冲突，而不是选完才被拦截。
+ *
+ * 判定规则与重复检测保持一致：
+ *   - 仅统计 controllerId 与 axis 均已设置的行（未绑定行没有"占用"概念）；
+ *   - 仅同控制器内比较（跨控制器同名物理轴独立编号，互不占用）；
+ *   - 排除当前行自身（按 name 即方向名识别）——自己绑定的轴不是"被他人占用"，
+ *     否则当前选中项会自我标注，误导用户以为与别人冲突。
+ *
+ * currentRow.controllerId 为空时结果恒为空：当前行尚未选定控制器，无所谓"同控制器占用"。
+ * 返回值不含未被占用的轴；同一物理轴被多个其他方向占用时按行顺序全部列出
+ * （custom 模式交换两行绑定的中间态会出现，此时两行都被后缀预告，交换即可完成）。
+ */
+export function findOccupiedMotionAxisDirections(
+  motionAxes: TraversalMotionAxisConfig[],
+  currentRow: TraversalMotionAxisConfig
+): Map<string, Array<'X' | 'Y' | 'Z' | 'U'>> {
+  const occupied = new Map<string, Array<'X' | 'Y' | 'Z' | 'U'>>()
+  for (const ax of motionAxes) {
+    if (ax.name === currentRow.name) continue
+    if (!ax.controllerId || !ax.axis) continue
+    if (ax.controllerId !== currentRow.controllerId) continue
+    const list = occupied.get(ax.axis)
+    if (list) list.push(ax.name)
+    else occupied.set(ax.axis, [ax.name])
+  }
+  return occupied
+}
+
+/**
+ * 布点模式实际参与遍历运动的逻辑轴名列表。
+ * - line：仅沿 X 轴布点，Y/Z/U 被后端 path.go markAxesNaN → ['X']
+ * - rectangle/sector：仅沿 X/Y 平面布点，Z/U 被 markAxesNaN → ['X', 'Y']
+ * - custom：4 轴全部参与（用户填的 Z/U 坐标必须下发）→ ['X', 'Y', 'Z', 'U']
+ *
+ * 与后端 path.go markAxesNaN 的消费矩阵严格对齐，作为配置屏（TraversalLayoutStep）
+ * 与运行屏（TraversalLiveMonitor / useHardwareConnectionStatus）显示轴数的共享真相源。
+ */
+export function getTraversalDisplayedAxisNames(pattern: TraversalPattern): Array<'X' | 'Y' | 'Z' | 'U'> {
+  if (pattern === 'line') return ['X']
+  if (pattern === 'custom') return ['X', 'Y', 'Z', 'U']
+  return ['X', 'Y']
+}
+
+/**
+ * 按布点模式过滤"实际参与遍历运动"的运动轴绑定（getTraversalDisplayedAxisNames 的绑定级形式）。
+ * 过滤规则与轴名列表一致：line 仅 X，rectangle/sector 为 X/Y，custom 全部 4 轴。
+ */
+export function getTraversalDisplayedAxes(
+  pattern: TraversalPattern,
+  motionAxes: TraversalMotionAxisConfig[]
+): TraversalMotionAxisConfig[] {
+  const names = getTraversalDisplayedAxisNames(pattern)
+  return motionAxes.filter((ax) => names.includes(ax.name))
 }
 
 /** PRB 文件信息 */
@@ -557,12 +767,20 @@ export interface TraversalTestConfig {
  * 遍历点坐标（API 响应）。
  * alpha/beta 允许 null：line/rectangle/sector 模式通过 markAxesNaN 将未配置轴标记为 NaN，
  * 后端 JSON 序列化为 null。前端消费方必须做 number 类型守卫，禁止直接 toFixed。
+ *
+ * 兼容字段名 alpha/beta 实际语义是遍历逻辑目标 X/Y（非插值结果攻角/侧滑角）；
+ * z/u 为逻辑目标 Z/U，仅 custom 模式有实际值，line/rectangle/sector 为 null。
+ * z/u 为可选字段：旧后端不返回，消费方按缺失即不显示处理。
  */
 export type TraversalCoordValue = number | null
 
 export interface TraversalCoordPoint {
   alpha: TraversalCoordValue
   beta: TraversalCoordValue
+  /** 逻辑目标 Z（后端 currentPointCoordinates.z）；非 custom 模式为 null，旧后端可能缺失 */
+  z?: TraversalCoordValue
+  /** 逻辑目标 U（后端 currentPointCoordinates.u）；非 custom 模式为 null，旧后端可能缺失 */
+  u?: TraversalCoordValue
 }
 
 /** 测试数据点 */
@@ -601,6 +819,12 @@ export interface TraversalTestStatus {
   lastError?: string
   lastErrorCode?: TraversalErrorCode
   validationWarnings?: string[]
+  /**
+   * 非致命运行警告（当前唯一来源：回零失败）。
+   * 数据全部采完后回零失败不判测试失败（status 仍为 completed），
+   * 后端在此字段写入提示，前端在侧边栏以 warning 样式展示。
+   */
+  warning?: string
   /**
    * 实际落盘的 CSV 文件完整路径（撞名 -2/-3 后缀后的真实路径）。
    * 后端 Start/ResumeFromCheckpoint 在 openReliabilityPorts 之后写入：

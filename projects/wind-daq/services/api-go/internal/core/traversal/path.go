@@ -269,46 +269,6 @@ func normalizePrimaryAxis(primaryAxis string) string {
 	return strings.ToLower(strings.TrimSpace(primaryAxis))
 }
 
-// SectorPointsFromRadiiAngles 从半径和角度生成扇形点
-func SectorPointsFromRadiiAngles(centerX, centerY float64, radii, angles []float64) []Point {
-	points := make([]Point, 0, len(radii)*len(angles))
-	for _, radius := range radii {
-		for _, angle := range angles {
-			radian := angle * math.Pi / 180
-			points = append(points, Point{
-				X: centerX + radius*math.Cos(radian),
-				Y: centerY + radius*math.Sin(radian),
-			})
-		}
-	}
-	return points
-}
-
-// SectorPointsFromRadiiAnglesSnake 从半径和角度生成蛇形扇形点
-func SectorPointsFromRadiiAnglesSnake(centerX, centerY float64, radii, angles []float64) []Point {
-	points := make([]Point, 0, len(radii)*len(angles))
-	for i, radius := range radii {
-		if i%2 == 1 {
-			for j := len(angles) - 1; j >= 0; j-- {
-				radian := angles[j] * math.Pi / 180
-				points = append(points, Point{
-					X: centerX + radius*math.Cos(radian),
-					Y: centerY + radius*math.Sin(radian),
-				})
-			}
-		} else {
-			for _, angle := range angles {
-				radian := angle * math.Pi / 180
-				points = append(points, Point{
-					X: centerX + radius*math.Cos(radian),
-					Y: centerY + radius*math.Sin(radian),
-				})
-			}
-		}
-	}
-	return points
-}
-
 // ContainsFloat 检查浮点数切片是否包含指定值（容差 1e-9）
 func ContainsFloat(values []float64, needle float64) bool {
 	for _, value := range values {
@@ -321,8 +281,8 @@ func ContainsFloat(values []float64, needle float64) bool {
 
 // LayoutConfig 遍历布局配置
 type LayoutConfig struct {
-	Pattern    string           `json:"pattern"`
-	SnakeOrder bool             `json:"snakeOrder,omitempty"`
+	Pattern    string `json:"pattern"`
+	SnakeOrder bool   `json:"snakeOrder,omitempty"`
 	// PrimaryAxis 控制矩形/线型布局的走线主轴（仅 line / rectangle 消费，扇形不消费）：
 	//   - PrimaryAxisX ("x")：先沿 X 走完一条线再切换 Y
 	//   - PrimaryAxisY ("y")：先沿 Y 走完一条线再切换 X（原始行为）
@@ -357,6 +317,9 @@ type RectangleLayout struct {
 
 // SectorLayout 扇形布局
 type SectorLayout struct {
+	// CenterX/CenterY 仅作配置往返/序列化字段保留：前端 TraversalSettings 计算并下发，
+	// 由 usecase traversal_config.go 的 API DTO 映射原样接收；PointsFromLayout 不消费
+	// （扇形点已改走相对首点归零的 GridPointsFromAxes 逻辑目标路径，不再需要绝对圆心）。
 	CenterX             float64       `json:"centerX"`
 	CenterY             float64       `json:"centerY"`
 	RadiusMin           float64       `json:"radiusMin"`
@@ -431,14 +394,26 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		}
 		radii := StepValues(cfg.Sector.RadiusMin, cfg.Sector.RadiusMax, cfg.Sector.RadialStepSegments)
 		angles := StepValues(cfg.Sector.AngleStart, cfg.Sector.AngleEnd, cfg.Sector.AngularStepSegments)
-		// 扇形布局不消费 PrimaryAxis，保持原“外层半径、内层角度”语义
+		if len(radii) == 0 || len(angles) == 0 {
+			return nil
+		}
+		// 扇形机构的 X/Y 是逻辑运动目标：X=径向平移，Y=旋转角度。
+		// 第一个测点由操作员预先定位，因此所有目标都相对首点归零。
+		relativeRadii := make([]float64, len(radii))
+		relativeAngles := make([]float64, len(angles))
+		for i, radius := range radii {
+			relativeRadii[i] = radius - radii[0]
+		}
+		for i, angle := range angles {
+			relativeAngles[i] = angle - angles[0]
+		}
 		var points []Point
 		if cfg.SnakeOrder {
-			points = SectorPointsFromRadiiAnglesSnake(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+			points = GridPointsFromAxesSnake(relativeRadii, relativeAngles)
 		} else {
-			points = SectorPointsFromRadiiAngles(cfg.Sector.CenterX, cfg.Sector.CenterY, radii, angles)
+			points = GridPointsFromAxes(relativeRadii, relativeAngles)
 		}
-		// sector 模式仅在 XY 平面布点，Z/U 标记为 NaN 表示"不运动"
+		// 扇形只消费径向和旋转两个逻辑目标，Z/U 不参与运动。
 		return markAxesNaN(points, false, true, true)
 	case "custom":
 		if cfg.Custom == nil {

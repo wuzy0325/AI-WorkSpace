@@ -293,6 +293,60 @@ describe('deviceStore', () => {
     expect(store.statusFor('daq-1')).toBe('Connected')
   })
 
+  // 验证：设备异常退出（onDeviceLost）后，用户重连 + 重启采集能恢复订阅。
+  // 业务场景：采集中拔网线 → 后端 onError 把 dev 从 map 删除 → /api/daq/latest 返回 404
+  // → deviceApi._notifyDeviceLost → deviceStore 置 Error + subscribedDeviceIds.delete
+  // → 用户重新点击"连接"和"开始采集" → 订阅应能恢复，UI 重新进入采集中。
+  // 此前不验证此链路会留下回归盲点：onDeviceLost 清理后路径是否能再次建立订阅。
+  it('recovers subscription after deviceLost via reconnect + restartAcquisition', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+
+    // mock deviceApi：startAcquisition 成功，subscribeToDevice/unsubscribeFromDevice 不做实际副作用
+    vi.spyOn(deviceApi, 'startAcquisition').mockResolvedValue({ success: true })
+    const subscribe = vi.spyOn(deviceApi, 'subscribeToDevice').mockImplementation(() => undefined)
+    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeFromDevice').mockImplementation(() => undefined)
+    // 重连时 refreshStatusFor 拿到 Acquiring
+    vi.spyOn(deviceApi, 'getStatus').mockResolvedValue({
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Acquiring',
+      acquiring: true,
+    })
+    vi.spyOn(deviceApi, 'connect').mockResolvedValue({ success: true })
+
+    // 步骤 1：用户开始采集 → 订阅建立
+    const detach = store.attachStatusListener()
+    await store.startAcquisition('daq-1')
+    expect(store.acquiringFor('daq-1')).toBe(true)
+    expect(subscribe).toHaveBeenCalledWith('daq-1')
+
+    // 步骤 2：模拟设备异常退出（拔网线后轮询 404）
+    // deviceApi._notifyDeviceLost 会同步触发所有 onDeviceLost 回调，
+    // 包括 attachStatusListener 内部注册的回调（置 Error + unsubscribe）
+    deviceApi._notifyDeviceLost('daq-1')
+    expect(store.statusFor('daq-1')).toBe('Error')
+    expect(store.acquiringFor('daq-1')).toBe(false)
+    // onDeviceLost 回调应主动 unsubscribe，避免继续轮询已不存在的设备
+    expect(unsubscribe).toHaveBeenCalledWith('daq-1')
+
+    // 步骤 3：用户重连 + 重启采集 → 订阅应恢复
+    await store.connect('daq-1')
+    await store.startAcquisition('daq-1')
+    expect(store.acquiringFor('daq-1')).toBe(true)
+    // subscribeToDevice 应被再次调用（startAcquisition 内部触发）
+    expect(subscribe).toHaveBeenCalledTimes(2)
+
+    detach()
+  })
+
   // ===== 环形缓冲区新增测试 =====
 
   it('环形缓冲满后覆盖最旧，length 不超过 capacity', () => {

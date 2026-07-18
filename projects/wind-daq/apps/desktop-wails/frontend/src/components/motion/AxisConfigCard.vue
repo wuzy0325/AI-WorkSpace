@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import type { AxisConfig, AxisKind, PositionSource, MotionControllerType } from '@shared/types/motion'
-import { getAxisThemeClass, validateEncoderCompensation, type CompensationWarning } from './motionConfigEditor'
+import { getAxisThemeClass, validateEncoderCompensation, applyAxisKindDefaults, type CompensationWarning } from './motionConfigEditor'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -69,6 +69,14 @@ function updateField<K extends keyof AxisConfig>(key: K, value: AxisConfig[K]): 
   localAxis.value = { ...localAxis.value, [key]: value }
 }
 
+/**
+ * 切换轴类型时的默认值联动，规则实现见共享纯函数 applyAxisKindDefaults
+ * （切 ROTARY 仅在 gearRatio 仍为默认 1 时填 180；切 LINEAR 仅在 lead == null 时填 4）。
+ */
+function updateAxisKind(kind: AxisKind): void {
+  localAxis.value = applyAxisKindDefaults(localAxis.value, kind)
+}
+
 function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoderCompensation']>>(
   key: K,
   value: NonNullable<AxisConfig['encoderCompensation']>[K]
@@ -92,7 +100,7 @@ function updateCompensationField<K extends keyof NonNullable<AxisConfig['encoder
         <div class="axis-card__badge">{{ axis.name }}</div>
         <UiSelect
           :model-value="axis.kind"
-          @update:model-value="updateField('kind', $event as AxisKind)"
+          @update:model-value="updateAxisKind($event as AxisKind)"
           width-class="w-20"
           :aria-label="`${axis.name} ${i18n.t.motion_axisKind}`"
           :data-test="`motion-axis-${axis.name}-kind`"

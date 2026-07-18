@@ -135,11 +135,68 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 	fallback := make([]traversal.MotionAxisBinding, len(motionAxes))
 	for i, b := range motionAxes {
 		fallback[i] = traversal.MotionAxisBinding{
+			Name:         b.Name,
 			ControllerID: "",
 			Axis:         b.Axis,
 		}
 	}
 	return fallback
+}
+
+// validateSectorOrigin 确认扇形机构的径向轴和旋转轴已由操作员在首测点手动置零。
+// 扇形路径使用相对目标，未置零时绝对 MoveTo(0) 会把机构拉回控制器原点。
+func validateSectorOrigin(statuses []motion.ControllerStatus, motionAxes []traversal.MotionAxisBinding, safety *traversal.MotionSafetyConfig) error {
+	if len(motionAxes) == 0 {
+		return fmt.Errorf("sector origin check requires X and Y motion axis bindings")
+	}
+
+	foundLogical := map[string]bool{"X": false, "Y": false}
+	for _, binding := range motionAxes {
+		if binding.Name != "X" && binding.Name != "Y" {
+			continue
+		}
+		if binding.ControllerID == "" {
+			return fmt.Errorf("sector origin check requires an explicit controller binding for %s target", binding.Name)
+		}
+		foundLogical[binding.Name] = true
+		matched := false
+		for _, status := range statuses {
+			if !status.Connected || binding.ControllerID != status.ID {
+				continue
+			}
+			for _, axis := range status.Axes {
+				if string(axis.Name) != binding.Axis {
+					continue
+				}
+				matched = true
+				if axis.Moving {
+					return fmt.Errorf("sector origin check failed: controller %s axis %s is moving", status.ID, axis.Name)
+				}
+				resolved := safety.Resolve(binding.Axis)
+				tolerance := *resolved.ArrivalTolerance
+				// NaN 位置必须显式判失败：math.Abs(NaN) > tolerance 恒为 false，
+				// 不拦截会让位置反馈缺失的轴静默通过原点校验。
+				if math.IsNaN(axis.Position) {
+					return fmt.Errorf("sector origin check failed: controller %s axis %s current position is NaN (position feedback unavailable); re-home the axis and zero both axes", status.ID, axis.Name)
+				}
+				if math.Abs(axis.Position) > tolerance {
+					return fmt.Errorf("sector origin check failed: controller %s axis %s current position %.6g is not zero (tolerance %.6g); move to the first point and zero both axes",
+						status.ID, axis.Name, axis.Position, tolerance)
+				}
+				break
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("sector origin check failed: physical axis %s for %s target is unavailable", binding.Axis, binding.Name)
+		}
+	}
+	if !foundLogical["X"] || !foundLogical["Y"] {
+		return fmt.Errorf("sector origin check requires both X (radial) and Y (rotation) target bindings")
+	}
+	return nil
 }
 
 // motionTargetsReachedWithTolerance 判断当前状态快照中的所有有效运动目标是否到位。
@@ -255,9 +312,9 @@ func EvaluateMotionSafety(
 // 调用方应先调用 resolveMotionAxes 预处理 motionAxes：当配置的所有 controllerId
 // 都不匹配任何已连接控制器时，回退到按轴名匹配，避免遍历空转。
 func availableAxisTargets(status motion.ControllerStatus, point traversal.Point, motionAxes []traversal.MotionAxisBinding) map[motion.AxisName]float64 {
-	// 构建当前控制器允许的轴名集合；空列表表示不过滤（旧配置兼容）
-	// ControllerID 为空的绑定表示「任意控制器的该轴」
-	allowed := make(map[string]bool, len(motionAxes))
+	// 按物理轴名索引当前控制器生效的绑定：跳过 Axis 为空的绑定，
+	// 以及 ControllerID 非空且不匹配本控制器的绑定；ControllerID 为空的绑定表示「任意控制器的该轴」
+	bindingsByAxis := make(map[string]traversal.MotionAxisBinding, len(motionAxes))
 	for _, binding := range motionAxes {
 		if binding.Axis == "" {
 			continue
@@ -265,29 +322,37 @@ func availableAxisTargets(status motion.ControllerStatus, point traversal.Point,
 		if binding.ControllerID != "" && binding.ControllerID != status.ID {
 			continue
 		}
-		allowed[binding.Axis] = true
+		bindingsByAxis[binding.Axis] = binding
 	}
 	// 配置了绑定，但当前控制器不在任何绑定中 → 不生成目标（跳过该控制器）
-	if len(motionAxes) > 0 && len(allowed) == 0 {
+	if len(motionAxes) > 0 && len(bindingsByAxis) == 0 {
 		return nil
 	}
 	targets := make(map[motion.AxisName]float64, len(status.Axes))
 	for _, axis := range status.Axes {
 		// motionAxes 非空时，仅对白名单中的轴生成目标，避免对未配置/未接硬件的轴强制归零
-		if len(motionAxes) > 0 && !allowed[string(axis.Name)] {
-			continue
-		}
 		var target float64
-		switch axis.Name {
-		case motion.AxisX:
+		logicalAxis := string(axis.Name)
+		if len(motionAxes) > 0 {
+			binding, ok := bindingsByAxis[string(axis.Name)]
+			if !ok {
+				continue
+			}
+			// Name 是 UI 中的逻辑目标（X方向/Y方向）；旧配置无 Name 时按物理轴名取值。
+			if binding.Name != "" {
+				logicalAxis = binding.Name
+			}
+		}
+		switch logicalAxis {
+		case string(motion.AxisX):
 			target = point.X
-		case motion.AxisY:
+		case string(motion.AxisY):
 			target = point.Y
-		case motion.AxisZ:
+		case string(motion.AxisZ):
 			target = point.Z
 		// U 轴仅在 motion.ControllerStatus.Axes 含 AxisU 时生效
 		// （如旋转台 / 第四轴位移机构），无 U 轴的控制器 profile 会自动跳过此 case
-		case motion.AxisU:
+		case string(motion.AxisU):
 			target = point.U
 		default:
 			continue

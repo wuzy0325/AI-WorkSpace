@@ -37,14 +37,16 @@ const i18n = useI18nStore();
 /** 补偿超时验证的缓冲时间(ms)，用于计算最小超时 = maxCycles × settleMs + 缓冲 */
 const COMPENSATION_TIMEOUT_BUFFER_MS = 500;
 
+// 默认控制器类型为 B140-MC（出厂硬件默认），IP 192.168.3.121 / 端口 23。
+// 与后端 defaultMotionProfiles() 对齐，安装后立即可用。
 const editing = reactive<MotionControllerProfile>({
   id: '',
   name: '',
-  type: 'SIMULATED-MC',
-  address: '127.0.0.1',
-  port: 9000,
+  type: 'B140-MC',
+  address: '192.168.3.121',
+  port: 23,
   autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, 'SIMULATED-MC'))),
+  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, 'B140-MC'))),
 });
 
 const isEdit = computed(() => !!editing.id);
@@ -54,6 +56,9 @@ const isCreatingNew = ref(false);
 function defaultPortForType(type: string): number {
   if (type === 'B140-MC') return 23;
   if (type === 'WTNMC4A-MC') return 5000;
+  // 模拟控制器显式固定 9000：不依赖 fallback 返回值，
+  // 防止未来调整 fallback 时模拟控制器默认端口被静默改写（与 motion-controller 孪生实现同构）。
+  if (type === 'SIMULATED-MC') return 9000;
   return 9000;
 }
 
@@ -61,10 +66,11 @@ function newProfile(): void {
   isCreatingNew.value = true;
   validationErrors.value = [];
   editing.id = '';
-  editing.name = i18n.t.motion_simulatedController;
-  editing.type = 'SIMULATED-MC';
-  editing.address = '127.0.0.1';
-  editing.port = 9000;
+  // 默认新建 B140 控制器，与后端 defaultMotionProfiles 出厂默认一致
+  editing.name = i18n.t.motion_b140Controller;
+  editing.type = 'B140-MC';
+  editing.address = '192.168.3.121';
+  editing.port = 23;
   editing.autoConnect = false;
   editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, editing.type)));
 }

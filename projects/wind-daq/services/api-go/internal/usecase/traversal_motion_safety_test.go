@@ -1439,7 +1439,7 @@ func TestWaitForStabilization_DeviationTriggersFailure(t *testing.T) {
 	// 测试步骤：等待稳定
 	done := make(chan *traversal.MotionSafetyFailure, 1)
 	go func() {
-		done <- mgr.waitForStabilization("test-task", point, 0)
+		done <- mgr.waitForStabilization("test-task", point, 0, nil)
 	}()
 
 	select {
@@ -1475,7 +1475,7 @@ func TestWaitForStabilization_LimitTriggeredTriggersFailure(t *testing.T) {
 	// 测试步骤：等待稳定
 	done := make(chan *traversal.MotionSafetyFailure, 1)
 	go func() {
-		done <- mgr.waitForStabilization("test-task", point, 0)
+		done <- mgr.waitForStabilization("test-task", point, 0, nil)
 	}()
 
 	select {
@@ -1510,7 +1510,7 @@ func TestWaitForStabilization_ArrivedNoFailure(t *testing.T) {
 	// 测试步骤：等待稳定
 	done := make(chan *traversal.MotionSafetyFailure, 1)
 	go func() {
-		done <- mgr.waitForStabilization("test-task", point, 0)
+		done <- mgr.waitForStabilization("test-task", point, 0, nil)
 	}()
 
 	select {

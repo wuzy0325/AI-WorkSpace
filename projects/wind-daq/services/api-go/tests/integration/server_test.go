@@ -183,6 +183,38 @@ func TestDeviceDisconnectAndDeleteProfileHTTPFlow(t *testing.T) {
 	request(t, router, http.MethodGet, "/api/device/sim-1/status", nil, http.StatusNotFound)
 }
 
+// TestDaqLatestReturns404WhenDeviceNotConnected 验证：设备从 DeviceManager 删除后
+// （异常退出或主动断开），/api/daq/latest/{id} 必须返回 404，让前端轮询能感知
+// 断连并更新 UI 状态。
+//
+// 此前该接口在设备不存在时返回 200 + 空 payload，导致前端轮询静默吞掉，
+// UI 永远显示"采集中"——拔网线后用户无法感知断连。
+func TestDaqLatestReturns404WhenDeviceNotConnected(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	store := &apiProfileStore{}
+	manager, err := usecase.NewDeviceManager(store, apiDeviceFactory{}, hub.OnData)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	// 未连接时：404
+	request(t, router, http.MethodGet, "/api/daq/latest/sim-1", nil, http.StatusNotFound)
+
+	// 连接后：200（可能空 payload，因为还没出第一帧）
+	profileBody, err := json.Marshal(windaqconfig.NewDefaultProfile("sim-1", device.DeviceSimulated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, router, http.MethodPut, "/api/device/profiles", profileBody, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/device/sim-1/connect", nil, http.StatusOK)
+	request(t, router, http.MethodGet, "/api/daq/latest/sim-1", nil, http.StatusOK)
+
+	// 断开后：404（核心断言）
+	request(t, router, http.MethodPost, "/api/device/sim-1/disconnect", nil, http.StatusOK)
+	request(t, router, http.MethodGet, "/api/daq/latest/sim-1", nil, http.StatusNotFound)
+}
+
 func TestDeviceScanHTTPFlow(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
 	manager, err := usecase.NewDeviceManager(&apiProfileStore{}, apiDeviceFactory{}, hub.OnData)

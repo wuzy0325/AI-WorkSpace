@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	"wind-daq/services/api-go/internal/adapters/storage"
+	"wind-daq/services/api-go/internal/core/motion"
 )
 
 // ===== InterpolatorLoader mock 实现 =====
@@ -449,6 +451,90 @@ func TestParseAndStartTraversal_RectangleLayout(t *testing.T) {
 	}
 }
 
+func TestParseConfig_PreservesLogicalMotionTargetNames(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	raw := json.RawMessage(`{
+		"name": "sector-axis-binding-test",
+		"layout": {
+			"pattern": "sector",
+			"sector": {
+				"radiusMin": 100, "radiusMax": 100,
+				"radialStepSegments": [{"start":100,"end":100,"step":10}],
+				"angleStart": 0, "angleEnd": 10,
+				"angularStepSegments": [{"start":0,"end":10,"step":10}]
+			}
+		},
+		"channels": {
+			"probeChannels": [
+				{"name":"P1","role":"fiveHole.p1","channel":{"deviceId":"sim-1","channelIndex":0},"enabled":true}
+			],
+			"motionAxes": [
+				{"name":"X","controllerId":"mc-1","axis":"Z"},
+				{"name":"Y","controllerId":"mc-1","axis":"U"}
+			]
+		},
+		"dwellTimeMs": 100,
+		"samplesPerPoint": 1
+	}`)
+
+	config, err := mgr.ParseConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	if len(config.MotionAxes) != 2 {
+		t.Fatalf("expected 2 motion bindings, got %#v", config.MotionAxes)
+	}
+	if config.MotionAxes[0].Name != "X" || config.MotionAxes[0].Axis != "Z" ||
+		config.MotionAxes[1].Name != "Y" || config.MotionAxes[1].Axis != "U" {
+		t.Fatalf("logical target names were not preserved: %#v", config.MotionAxes)
+	}
+	if config.LayoutPattern != "sector" {
+		t.Fatalf("layout pattern was not preserved: %q", config.LayoutPattern)
+	}
+}
+
+func TestParseAndStartTraversal_RejectsSectorAxesThatAreNotZeroed(t *testing.T) {
+	motionAccess := &mockMotionAccess{statuses: []motion.ControllerStatus{{
+		ID: "mc-1", Connected: true,
+		Axes: []motion.AxisStatus{
+			{Name: motion.AxisX, Position: 5},
+			{Name: motion.AxisY, Position: 0},
+		},
+	}}}
+	mgr := NewTraversalManager(&mockLatestDataReader{}, motionAccess, &mockTraversalPointSink{}, newMockTraversalResultStore(), storage.NewFileCheckpointStore())
+	raw := json.RawMessage(`{
+		"name": "sector-origin-test",
+		"layout": {
+			"pattern": "sector",
+			"sector": {
+				"radiusMin": 100, "radiusMax": 100,
+				"radialStepSegments": [{"start":100,"end":100,"step":10}],
+				"angleStart": 0, "angleEnd": 10,
+				"angularStepSegments": [{"start":0,"end":10,"step":10}]
+			}
+		},
+		"channels": {
+			"probeChannels": [
+				{"name":"P1","role":"fiveHole.p1","channel":{"deviceId":"sim-1","channelIndex":0},"enabled":true}
+			],
+			"motionAxes": [
+				{"name":"X","controllerId":"mc-1","axis":"X"},
+				{"name":"Y","controllerId":"mc-1","axis":"Y"}
+			]
+		},
+		"dwellTimeMs": 100,
+		"samplesPerPoint": 1
+	}`)
+
+	_, err := mgr.ParseAndStartTraversal(raw)
+	if err == nil || !strings.Contains(err.Error(), "axis X current position 5") {
+		t.Fatalf("expected hard start rejection for non-zero sector axis, got %v", err)
+	}
+	if len(motionAccess.moveToCalls) != 0 {
+		t.Fatalf("origin validation failure must not send motion commands: %#v", motionAccess.moveToCalls)
+	}
+}
+
 // ParseAndStartTraversal 线型布局字段映射测试：验证简化后的 line 模式
 // 仅消费 startX/endX/xStepSegments 三个字段，Y 恒为 0，不再消费 startY/endY/yStepSegments。
 // 同时验证残留的旧字段（startY/endY/yStepSegments）会被 JSON 反序列化静默忽略，不报错。
@@ -586,7 +672,7 @@ func TestParseAndStartTraversal_AlreadyAcquiring(t *testing.T) {
 	}
 }
 
-// TestParseAndStartTraversal_AutoStartSucceeds 设备未采集时主动启动成功。
+// TestParseAndStartTraversal_NotAcquiringRejectsStart 设备未采集时拒绝启动。
 //
 // 测试前置：
 //   - mgr 注入 mockAcquisitionController，acquiring["sim-1"]=false，startErr=nil
@@ -595,9 +681,9 @@ func TestParseAndStartTraversal_AlreadyAcquiring(t *testing.T) {
 //   - 调用 mgr.ParseAndStartTraversal(raw)
 //
 // 期待结果：
-//   - 不返回 error
-//   - mock.startCalls = ["sim-1"]（主动启动被触发）
-func TestParseAndStartTraversal_AutoStartSucceeds(t *testing.T) {
+//   - 返回 error，提示先开始采集
+//   - 不发送 StartAcquisition
+func TestParseAndStartTraversal_NotAcquiringRejectsStart(t *testing.T) {
 	mgr := newConfigTestManager(t)
 	ctrl := &mockAcquisitionController{
 		connected: map[string]bool{"sim-1": true},
@@ -606,23 +692,17 @@ func TestParseAndStartTraversal_AutoStartSucceeds(t *testing.T) {
 	}
 	mgr.SetAcquisitionController(ctrl)
 
-	if _, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw()); err != nil {
-		t.Fatalf("ParseAndStartTraversal 失败: %v", err)
+	_, err := mgr.ParseAndStartTraversal(buildAutoStartTestRaw())
+	if err == nil || !contains(err.Error(), "not acquiring") {
+		t.Fatalf("expected not acquiring error, got %v", err)
 	}
 
-	if len(ctrl.startCalls) != 1 || ctrl.startCalls[0] != "sim-1" {
-		t.Errorf("StartAcquisition 应被调用一次 (sim-1)，实际: %v", ctrl.startCalls)
-	}
-
-	if err := mgr.Stop(); err != nil {
-		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	if len(ctrl.startCalls) != 0 {
+		t.Errorf("StartAcquisition must not be called, got %v", ctrl.startCalls)
 	}
 }
 
-// TestParseAndStartTraversal_AutoStartFails 设备未采集且启动失败时直接返回错误。
-//
-// 方案 B 后：StartAcquisition 前置于 m.Start，失败时状态机尚未变更（Idle），
-// 无需回滚，直接返回 error。避免旧实现"Start 后失败 → Stop → 5s 超时"阻塞。
+// TestParseAndStartTraversal_DoesNotSendAcquisitionCommand 设备未采集时不发送启动命令。
 //
 // 测试前置：
 //   - mgr 注入 mockAcquisitionController，acquiring["sim-1"]=false，startErr=设备拒绝
@@ -631,10 +711,10 @@ func TestParseAndStartTraversal_AutoStartSucceeds(t *testing.T) {
 //   - 调用 mgr.ParseAndStartTraversal(raw)
 //
 // 期待结果：
-//   - 返回 error，包含 "auto-start acquisition failed"
-//   - mock.startCalls = ["sim-1"]（尝试启动）
+//   - 返回 error，提示设备未采集
+//   - mock.startCalls 为空
 //   - mgr.Status().State != "running"（Start 未执行，状态保持 Idle）
-func TestParseAndStartTraversal_AutoStartFails(t *testing.T) {
+func TestParseAndStartTraversal_DoesNotSendAcquisitionCommand(t *testing.T) {
 	mgr := newConfigTestManager(t)
 	ctrl := &mockAcquisitionController{
 		connected: map[string]bool{"sim-1": true},
@@ -647,16 +727,15 @@ func TestParseAndStartTraversal_AutoStartFails(t *testing.T) {
 	if err == nil {
 		t.Fatalf("期望返回 error（启动采集失败），实际 nil")
 	}
-	if !contains(err.Error(), "auto-start acquisition failed") {
-		t.Errorf("error 应包含 'auto-start acquisition failed'，实际: %v", err)
+	if !contains(err.Error(), "not acquiring") {
+		t.Errorf("error should report not acquiring, got: %v", err)
 	}
 
-	if len(ctrl.startCalls) != 1 || ctrl.startCalls[0] != "sim-1" {
-		t.Errorf("StartAcquisition 应被调用一次 (sim-1)，实际: %v", ctrl.startCalls)
+	if len(ctrl.startCalls) != 0 {
+		t.Errorf("StartAcquisition must not be called, got %v", ctrl.startCalls)
 	}
 
-	// 状态验证：StartAcquisition 前置于 m.Start，失败时 m.Start 未执行，
-	// 状态应保持 Idle（非 Running），无需回滚。
+	// 状态验证：采集态校验在 m.Start 前失败，状态应保持 Idle。
 	status := mgr.Status()
 	if status.State == "running" {
 		t.Errorf("失败后状态不应为 running（Start 未执行），实际: %v", status.State)

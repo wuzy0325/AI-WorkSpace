@@ -13,6 +13,7 @@
 // Phase B (2026-06): 颜色值改为 CSS 变量字符串（token），消费方用 :style 绑定。
 import { computed, type ComputedRef } from 'vue'
 import type { TraversalTestConfig } from '@shared/types/traversal'
+import { getTraversalDisplayedAxes } from '@shared/types/traversal'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useI18nStore } from '@stores/i18nStore'
@@ -118,16 +119,30 @@ export function useHardwareConnectionStatus(
   // 轴位置：computed 直接产出对象数组，依赖追踪由 Vue 自动完成；
   // 模板对该数组按引用渲染，position/moving 任一变化都会触发更新。
   //
-  // label 使用遍历方向名（cfg.name: 'X' | 'Y'）而非物理轴号（cfg.axis: 'X' | 'Y' | 'Z' | 'U'），
+  // label 使用遍历方向名（cfg.name: 'X' | 'Y' | 'Z' | 'U'）而非物理轴号（cfg.axis），
   // 因为操作员脑内模型是"遍历方向"，物理轴号属于配置细节。布点形状（矩形/弧形）不影响方向命名。
   // 不写死单位（mm/°），避免平移台/旋转台混用时误导（历史 bug：原"当前点位"section 写死 ° 单位）。
+  //
+  // 显示行数按布点模式过滤（getTraversalDisplayedAxes，与配置屏同一真相源）：
+  // line 仅 X，rectangle/sector 为 X/Y，custom 为 X/Y/Z/U——未参与运动的轴不显示，
+  // 避免 line 模式下 Z/U 行恒显示 "--" 造成"轴掉线"的误读。
+  // 方向名 → 本地化轴标签的映射用 Record 而非三元，扩展第五轴时仅改映射表。
+  const axisDirectionLabel: Record<'X' | 'Y' | 'Z' | 'U', () => string> = {
+    X: () => t.value.currentPointX,
+    Y: () => t.value.currentPointY,
+    Z: () => t.value.currentPointZ,
+    U: () => t.value.currentPointU
+  }
   const axisPositions = computed<AxisPositionDatum[]>(() => {
-    const axes = currentConfig.value?.channels.motionAxes ?? []
+    const config = currentConfig.value
+    if (!config) return []
+    // pattern 缺失（旧配置/异常数据）时回退 rectangle 两轴视图，与旧固定两轴运行屏行为一致
+    const axes = getTraversalDisplayedAxes(config.layout?.pattern ?? 'rectangle', config.channels.motionAxes ?? [])
     return axes.map((cfg) => {
       const status = motionStore.statusById(cfg.controllerId)
       const axisStatus = status?.axes.find((a) => a.name === cfg.axis)
       return {
-        label: cfg.name === 'X' ? t.value.currentPointX : t.value.currentPointY,
+        label: axisDirectionLabel[cfg.name]?.() ?? cfg.name,
         position: axisStatus?.position,
         moving: axisStatus?.moving ?? false
       }
