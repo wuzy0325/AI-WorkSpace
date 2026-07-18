@@ -97,3 +97,6 @@ temp/
 .codebuddy/
 .trae/
 .opencode/
+
+# UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
+wind-daq-trae-work-prototype/
