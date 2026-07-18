@@ -20,11 +20,14 @@ const MOTION_STORAGE_KEY = 'motion-controller.profiles';
 // 绕开 Wails v2.12.0 reflect 序列化 bug
 export const MOTION_HTTP_BASE = 'http://127.0.0.1:16888';
 
+// 默认轴配置：microSteps=40 与共享模块 DEFAULT_MICRO_STEPS 对齐（B140 出厂常用细分）。
+// 旋转轴 U 的 gearRatio=180 与共享模块 DEFAULT_ROTARY_GEAR_RATIO 对齐（产品出厂常用减速比）。
+// 其余参数保持 motion-controller 项目级默认（maxSpeed=10 测试工具低速）。
 const DEFAULT_AXES: import('@shared/types/motion').AxisConfig[] = [
-  { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
-  { name: 'U', enabled: true, kind: 'ROTARY' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 4, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'X', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 40, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'Y', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 40, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'Z', enabled: true, kind: 'LINEAR' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 40, lead: 4, gearRatio: 1, positionSource: 'register', encoderScale: 0.005 },
+  { name: 'U', enabled: true, kind: 'ROTARY' as const, maxSpeed: 10, stepsPerRev: 1.8, microSteps: 40, lead: 4, gearRatio: 180, positionSource: 'register', encoderScale: 0.005 },
 ];
 
 function normalizeMotionProfile(profile: MotionControllerProfile): MotionControllerProfile {
@@ -49,12 +52,13 @@ function storedProfiles(): MotionControllerProfile[] {
     const raw = window.localStorage.getItem(MOTION_STORAGE_KEY);
     if (raw) return normalizeMotionProfiles(JSON.parse(raw));
   } catch { /* ignore */ }
+  // 首次安装默认 B140 控制器（IP 192.168.3.121 / 端口 23），与 wind-daq 出厂默认对齐
   return [{
-    id: 'sim-mc-1',
-    name: 'Simulated Controller 1',
-    type: 'SIMULATED-MC' as const,
-    address: '127.0.0.1',
-    port: 5176,
+    id: 'b140-mc-1',
+    name: 'B140 Controller 1',
+    type: 'B140-MC' as const,
+    address: '192.168.3.121',
+    port: 23,
     autoConnect: false,
     axes: DEFAULT_AXES.map((a) => ({ ...a })),
   }];

@@ -16,6 +16,9 @@ export {
   DEFAULT_MICRO_STEPS,
   DEFAULT_LEAD,
   DEFAULT_GEAR_RATIO,
+  DEFAULT_ROTARY_GEAR_RATIO,
+  defaultGearRatioForKind,
+  applyAxisKindDefaults,
   DEFAULT_ENCODER_SCALE,
   DEFAULT_JOG_STEP,
   DEFAULT_ENCODER_COMPENSATION_TOLERANCE,
@@ -36,7 +39,7 @@ export {
   type CompensationWarning,
 } from '@shared-frontend/motion-utils'
 
-import { createDefaultAxis as createDefaultAxisBase, defaultMaxSpeedForType } from '@shared-frontend/motion-utils'
+import { createDefaultAxis as createDefaultAxisBase, defaultMaxSpeedForType, normalizeAxisForEditing } from '@shared-frontend/motion-utils'
 
 // 显式 re-export，供项目内组件直接引用
 export { defaultMaxSpeedForType }
@@ -52,4 +55,12 @@ export const MOTION_CONTROLLER_DEFAULT_MAX_SPEED = 10
  */
 export function createDefaultAxis(name: AxisName, type?: string): AxisConfig {
   return createDefaultAxisBase(name, defaultMaxSpeedForType(type, MOTION_CONTROLLER_DEFAULT_MAX_SPEED))
+}
+
+/** 补齐旧配置，同时保留 motion-controller 项目的低速默认策略。 */
+export function normalizeAxisForMotionController(axis: AxisConfig, type?: string): AxisConfig {
+  return normalizeAxisForEditing({
+    ...axis,
+    maxSpeed: axis.maxSpeed ?? defaultMaxSpeedForType(type, MOTION_CONTROLLER_DEFAULT_MAX_SPEED),
+  })
 }

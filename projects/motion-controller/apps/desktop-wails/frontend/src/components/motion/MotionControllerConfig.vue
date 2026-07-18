@@ -9,7 +9,7 @@ import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
 
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE, defaultMaxSpeedForType } from './motionConfigEditor'
+import { DEFAULT_AXIS_NAMES, createDefaultAxis, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE, defaultMaxSpeedForType, normalizeAxisForMotionController } from './motionConfigEditor'
 import ProfileSidebar from './ProfileSidebar.vue'
 import AxisConfigCard from './AxisConfigCard.vue'
 import EncoderCompensationEditor from './EncoderCompensationEditor.vue'
@@ -36,15 +36,20 @@ provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip)
 provide<() => void>('hideTooltip', hideTooltip)
 
 /* -- 控制器默认值常量 -- */
+// 默认类型为 B140-MC（出厂硬件默认），IP 192.168.3.121 / 端口 23。
+// 与 wind-daq 后端 defaultMotionProfiles 出厂默认对齐，安装后立即可用。
 const DEFAULT_NAME = '新控制器'
-const DEFAULT_TYPE = 'SIMULATED-MC'
-const DEFAULT_ADDRESS = '127.0.0.1'
-const DEFAULT_PORT = 5176
+const DEFAULT_TYPE = 'B140-MC'
+const DEFAULT_ADDRESS = '192.168.3.121'
+const DEFAULT_PORT = 23
 const MAX_PORT = 65535
 
 function defaultPortForType(type: string): number {
   if (type === 'B140-MC') return 23
   if (type === 'WTNMC4A-MC') return 5000
+  // 模拟控制器显式固定 5176：不能依赖 fallback（DEFAULT_PORT），
+  // 否则 DEFAULT_PORT 变动会把新建控制器切换类型时的端口静默改写。
+  if (type === 'SIMULATED-MC') return 5176
   return DEFAULT_PORT
 }
 
@@ -63,8 +68,9 @@ const isCreatingNew = ref(false)
 const saving = ref(false)
 
 /* -- Controller type options -- */
+// 选项顺序与 DEFAULT_TYPE 解耦：默认新建 B140，但下拉仍按"模拟/B140/WTNMC4A"展示
 const controllerTypeOptions = computed<UiSelectOption[]>(() => [
-  { value: DEFAULT_TYPE, label: '模拟控制器' },
+  { value: 'SIMULATED-MC', label: '模拟控制器' },
   { value: 'B140-MC', label: 'B140 控制器' },
   { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
 ])
@@ -181,17 +187,10 @@ function editProfile(src: MotionControllerProfile): void {
   editing.address = src.address
   editing.port = src.port
   editing.autoConnect = src.autoConnect
-  editing.axes = src.axes.map((a) => ({
-    ...a,
-    enabled: true,
-    stepsPerRev: a.stepsPerRev ?? 1.8,
-    microSteps: a.microSteps ?? 4,
-    lead: a.lead ?? 4,
-    gearRatio: a.gearRatio ?? 1,
-    positionSource: a.positionSource ?? 'register',
-    encoderScale: a.encoderScale ?? 0.005,
-    encoderCompensation: a.encoderCompensation ?? defaultEncComp(),
-  }))
+  // 字段补齐统一走项目包装，与 wind-daq 保持字段一致并保留本项目低速默认值，
+  // 覆盖 kind/maxSpeed/inverted/encoderInverted 等 old profile 可能缺字段的场景，
+  // 并合并 encoderCompensation 的部分字段（避免仅 {enabled:true} 时其余字段为 undefined）
+  editing.axes = src.axes.map((a) => normalizeAxisForMotionController(a, editing.type))
   isCreatingNew.value = false
   captureSnapshot()
   // 下一微任务恢复监听，确保 captureSnapshot 已完成
