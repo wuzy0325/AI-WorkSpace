@@ -2,9 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { traversalApi } from '@api/traversalApi'
 
-import { useUiRefreshThrottle } from '@composables/useUiRefreshThrottle'
 import { useI18nStore } from '@stores/i18nStore'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useStorageStore } from '@stores/storageStore'
 import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
 
 function formatApiError(err: unknown): string {
@@ -88,7 +88,10 @@ export const useTraversalStore = defineStore('traversal', () => {
   // 模拟模式标志：纯前端模拟时为 true，不调用后端硬件接口
   const isSimulation = ref(false)
 
-  const { uiRefreshHz, uiRefreshIntervalMs, setUiRefreshHz } = useUiRefreshThrottle('traversal.uiRefreshHz')
+  // 实时插值节流间隔：复用全局 storageStore.settings.refreshRateHz（默认 5Hz），
+  // 与实时压力数据同频，避免出现"压力卡片与插值卡片刷新节奏不一致"的视觉错位。
+  // refreshRateHz 已在 storageStore 内 clamp 到 1–10Hz（系统边界），此处直接消费不再二次保护。
+  const uiRefreshIntervalMs = computed(() => Math.round(1000 / useStorageStore().settings.refreshRateHz))
 
   // 断点恢复信息（应用启动时加载，用于判断是否展示"恢复"横幅）
   const checkpoint = ref<TraversalCheckpoint | null>(null)
@@ -104,7 +107,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   let recoveryRequestId = 0
   let startupBlockedTaskId: string | null = null
   let startupPendingTaskId: string | null = null
-  // 实时插值节流相关状态（与 Cursor DAQ 一致：基于定时器的节流，避免高频刷新压垮 UI）
+  // 实时插值节流相关状态：基于定时器的节流，间隔由 storageStore.settings.refreshRateHz 派生
   let realtimeInterpolationTimer: ReturnType<typeof setTimeout> | null = null
   let pendingRealtimeInterpolationInput: TraversalInterpolationInput | null = null
   let pendingRealtimeInterpolationConfig: TraversalTestConfig | null = null
@@ -186,7 +189,8 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   /**
    * 同步实时插值输入（节流入口）
-   * 与 Cursor DAQ 一致：基于 uiRefreshIntervalMs 节流，避免高频输入压垮后端
+   * 基于 uiRefreshIntervalMs 节流（派生自全局 storageStore.settings.refreshRateHz），
+   * 避免高频输入压垮后端；同时与实时压力数据同频，避免视觉错位
    * 若距离上次计算未达到节流间隔，则暂存输入并设置定时器；否则立即计算
    */
   function syncRealtimeInterpolation(
@@ -905,7 +909,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     isSimulation,
     checkpoint,
     hasCheckpoint,
-    uiRefreshHz,
     uiRefreshIntervalMs,
     loadConfig,
     recoverRendererState,
@@ -926,7 +929,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     clearCheckpoint,
     clearError,
     reset,
-    setUiRefreshHz,
     syncRealtimeInterpolation,
     requestRealtimeResult
   }

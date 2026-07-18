@@ -128,6 +128,10 @@ describe('deviceApi', () => {
     } as Response)
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation(() => undefined)
+    // 冻结 Date.now：deviceApi.pollLatest 用 Date.now() - startedAt 计算已耗时，
+    // 用于从 intervalMs 中扣除本次 fetch 耗时。不冻结时 mock fetch resolve 会让
+    // 时钟前进 1ms，导致 setTimeout 第 1 次参数从 50 变成 49（flaky）。
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
 
     const { deviceApi } = await import('@api/deviceApi')
     const { wailsApi } = await import('@api/wails-adapter')

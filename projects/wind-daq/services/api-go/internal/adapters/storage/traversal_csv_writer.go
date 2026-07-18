@@ -592,8 +592,10 @@ func (w *TraversalCsvWriter) buildHeader() []string {
 		}
 	}
 	if w.options.SaveCalculatedResult {
-		// 计算结果列：插值器输出的关键空气动力量 + 采样元数据
-		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "SampleCount", "DwellMs")
+		// 计算结果列：插值器输出的关键空气动力量 + 采样元数据 + 单点起止时间
+		// StartedAt/CompletedAt：单点采集的真实起止时间戳（秒级字符串，与 Timestamp 列格式一致），
+		// 用户可直接用 CompletedAt - StartedAt 算出单点总耗时，不再依赖"点数×10ms"回填公式
+		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "SampleCount", "DwellMs", "StartedAt", "CompletedAt")
 	}
 	// 自定义字段列（按字典序）
 	cols = append(cols, w.customFieldNames...)
@@ -639,6 +641,9 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 			row = append(row, "", "", "", "", "")
 		}
 		row = append(row, strconv.Itoa(p.SampleCount), strconv.Itoa(p.DwellTimeElapsed))
+		// StartedAt/CompletedAt：与 Timestamp 同为秒级字符串。
+		// 0 值写空字符串（兼容旧数据或异常路径未赋值的场景），避免显示"1970-01-01 08:00:00"误导用户
+		row = append(row, formatUnixMilli(p.StartedAt), formatUnixMilli(p.CompletedAt))
 	}
 	// 自定义字段：以 PointResult.CustomValues 为准；缺失写空
 	for _, name := range w.customFieldNames {
@@ -725,6 +730,15 @@ func formatFloat(v float64) string {
 		return ""
 	}
 	return strconv.FormatFloat(v, 'f', 6, 64)
+}
+
+// formatUnixMilli 格式化 UnixMilli 时间戳为 CSV 单元格字符串（秒级，与 Timestamp 列一致）。
+// 0 值输出空字符串：兼容旧数据或异常路径未赋值场景，避免显示"1970-01-01 08:00:00"误导用户。
+func formatUnixMilli(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	return time.UnixMilli(ms).Format("2006-01-02 15:04:05")
 }
 
 // buildLabelEntries 构建通道→标签的稳定排序列表

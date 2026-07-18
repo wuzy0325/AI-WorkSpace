@@ -192,7 +192,8 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
   // 精度取自配置中各通道的 precision 字段，用户可在硬件配置步骤中调整
   //
   // 性能：roleToPrecision 在 config 变化时一次性构建 Map<role, precision>，
-  // pressureItems 在每帧（20Hz）渲染时只做 7 次 O(1) Map 查询，避免原本的 7×N 数组遍历。
+  // pressureItems 每帧渲染时只做 7 次 O(1) Map 查询，避免原本的 7×N 数组遍历。
+  // 帧率由 storageStore.settings.refreshRateHz 决定（默认 5Hz），与全局刷新率一致。
   const roleToPrecision: ComputedRef<Map<string, number>> = computed(() => {
     const map = new Map<string, number>()
     const channels = config.value?.channels.probeChannels
@@ -237,7 +238,7 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
    * 走 deviceStore.ensureSubscribed 而非直接调 deviceApi.subscribeToDevice：
    *   store 内部会同时 subscribedDeviceIds.add(id)，让
    *   cleanupSnapshotSubscriptions 在最后一个 listener detach 时能
-   *   正确清理轮询定时器，避免离开页面后 20Hz 轮询泄漏。
+   *   正确清理轮询定时器，避免离开页面后轮询泄漏（轮询频率由全局 refreshRateHz 控制，默认 5Hz）。
    *
    * 幂等：store 内部 subscribeToDevice 按 deviceId 去重，Set.add 重复安全。
    */
