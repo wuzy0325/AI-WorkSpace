@@ -240,6 +240,16 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		st.AcquiringAt = 0
 		a.mu.Unlock()
 
+		// emitLog 在锁外调用：emitLog 内部 RLock a.mu，与上文持有的 Lock 互斥。
+		// 此日志对操作员可见"为什么下次 Start 报 not connected"，是排查断线/卡顿问题的关键线索。
+		a.emitLog(DeviceLogEntry{
+			Level:    "warn",
+			Category: "system",
+			DeviceID: profile.ID,
+			Message:  "Device disconnected due to readLoop exit",
+			Detail:   err.Error(),
+		})
+
 		if driver != nil {
 			driver.Disconnect()
 		}
