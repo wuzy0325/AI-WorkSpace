@@ -603,14 +603,15 @@ function onUpdateEncoderScale(index: number, value: number): void {
    ============================================================ */
 .config-panel {
   width: 100%;
-  max-width: 900px;
-  max-height: 600px;
+  max-width: 960px;
+  max-height: 640px;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 8px;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
   outline: none;
   overflow: hidden;
   transition: border-color var(--motion-medium) var(--easing-standard),
@@ -632,9 +633,9 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-panel);
+  background: var(--bg-panel-strong);
   flex-shrink: 0;
   position: relative;
   transition: background var(--motion-medium) var(--easing-standard);
@@ -710,14 +711,15 @@ function onUpdateEncoderScale(index: number, value: number): void {
 }
 
 .config-panel__close {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   color: var(--text-muted);
-  background: var(--bg-panel-strong);
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
   cursor: pointer;
   transition: all var(--motion-fast) var(--easing-standard);
@@ -825,9 +827,10 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
+  padding: 9px 12px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--accent-danger);
   background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
@@ -946,9 +949,9 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: 11px 16px;
   border-top: 1px solid var(--border-default);
-  background: var(--bg-panel);
+  background: var(--bg-panel-strong);
   flex-shrink: 0;
   gap: var(--space-3);
   transition: background var(--motion-medium) var(--easing-standard);
@@ -997,15 +1000,16 @@ function onUpdateEncoderScale(index: number, value: number): void {
 .field-tooltip {
   position: fixed;
   z-index: 9999;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
+  padding: 7px 11px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-primary);
-  background: var(--bg-app);
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 </style>

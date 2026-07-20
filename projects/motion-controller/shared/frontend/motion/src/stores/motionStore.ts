@@ -113,7 +113,7 @@ export const useMotionStore = defineStore('motion', () => {
       const api = getMotionApi();
       await api.jog(id, axis, direction, speed);
     } catch (e) {
-      toast.pushToast(`点动失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+      toast.pushToast(`步进失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
     }
   }
 

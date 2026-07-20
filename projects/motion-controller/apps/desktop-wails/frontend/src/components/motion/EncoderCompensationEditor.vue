@@ -418,9 +418,10 @@ const enabledAxes = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: 11px 12px;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--bg-panel-strong);
 }
 
@@ -436,9 +437,10 @@ const enabledAxes = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--axis-hue, var(--accent-primary));
-  color: white;
+  color: #0b0e13;
   font-size: 0.75rem;
   font-weight: 800;
   flex-shrink: 0;
@@ -604,8 +606,9 @@ const enabledAxes = computed(() => {
   display: flex;
   align-items: flex-start;
   gap: var(--space-1-5);
-  padding: var(--space-1-5) var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 3px;
   font-size: 0.6875rem;
   line-height: 1.4;
 }
@@ -643,6 +646,7 @@ const enabledAxes = computed(() => {
   font-size: 0.75rem;
   background: var(--bg-panel-strong);
   border: 1px dashed var(--border-default);
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
 }
 </style>

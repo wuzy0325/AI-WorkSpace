@@ -36,9 +36,9 @@ const zh: Record<string, string> = {
   completed: '已完成',
   untested: '未测试',
   idle: '空闲',
-  jogStep: '点动步长',
+  jogStep: '步长',
   targetPosition: '目标位置',
-  move: '移动',
+  move: '目标',
   setZero: '置零',
   stop: '停止',
   negLimit: '负限位',
@@ -327,7 +327,7 @@ const zh: Record<string, string> = {
   standaloneWindowAxisControlAndMonitor: '独立窗口 • 轴控制与监控',
   currentPosition: '当前位置',
   monitor: '监控',
-  jog: '点动',
+  jog: '步进',
   homeStatus: '回零状态',
   notHomed: '未回零',
   homed: '已回零',
@@ -338,6 +338,15 @@ const zh: Record<string, string> = {
   switchToLightTheme: '切换为浅色模式',
   switchToDarkTheme: '切换为深色模式',
   eStopShortcut: '紧急停止 (快捷键: Esc)',
+  jogReverse: '反向步进',
+  jogForward: '正向步进',
+  stopAxis: '停止单轴',
+  clearError: '清除错误',
+  noControllerSelected: '未选择控制器',
+  targetPositionInvalid: '无效的目标位置',
+  targetPositionOutOfRange: '目标位置超出限位',
+  stepMustBePositive: '步长必须为正数',
+  limitTriggeredDirectionForbidden: '当前方向限位已触发，禁止继续步进',
 }
 
 const en: Record<string, string> = {
@@ -675,6 +684,15 @@ const en: Record<string, string> = {
   switchToLightTheme: 'Switch to light theme',
   switchToDarkTheme: 'Switch to dark theme',
   eStopShortcut: 'Emergency Stop (Shortcut: Esc)',
+  jogReverse: 'Reverse jog',
+  jogForward: 'Forward jog',
+  stopAxis: 'Stop axis',
+  clearError: 'Clear error',
+  noControllerSelected: 'No controller selected',
+  targetPositionInvalid: 'Invalid target position',
+  targetPositionOutOfRange: 'Target position out of limit range',
+  stepMustBePositive: 'Step must be positive',
+  limitTriggeredDirectionForbidden: 'Limit triggered in this direction, jog forbidden',
 }
 
 export const useI18nStore = defineStore('i18n', () => {

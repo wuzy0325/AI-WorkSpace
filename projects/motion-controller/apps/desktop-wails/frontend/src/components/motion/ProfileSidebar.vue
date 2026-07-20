@@ -125,7 +125,8 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 3px;
   color: var(--accent-success);
   background: color-mix(in srgb, var(--accent-success) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-success) 20%, transparent);
@@ -152,8 +153,9 @@ const emit = defineEmits<{
 .config-sidebar__item {
   display: block;
   width: 100%;
-  padding: var(--space-2) var(--space-2-5);
-  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--bg-panel-strong);
   border: 1px solid var(--border-default);
   cursor: pointer;

@@ -124,7 +124,8 @@ function onKindChange(index: number, kind: AxisKind) {
 .axis-card {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-lg);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 6px;
   border: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   overflow: hidden;
@@ -167,9 +168,10 @@ function onKindChange(index: number, kind: AxisKind) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--axis-hue);
-  color: white;
+  color: #0b0e13;
   font-size: 0.75rem;
   font-weight: 800;
   flex-shrink: 0;

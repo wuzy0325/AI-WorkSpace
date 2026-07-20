@@ -20,34 +20,34 @@ function toggleLanguage(): void {
 </script>
 
 <template>
-  <div data-test="motion-shell" class="motion-view" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
-    <!-- 顶部标题栏 -->
-    <header class="motion-view-header">
-      <div class="motion-view-header-left">
-        <h1 class="motion-view-title">运动控制器</h1>
-        <p class="motion-view-subtitle">{{ embedded ? '轴控制与监控' : '独立窗口 · 轴控制与监控' }}</p>
+  <div data-test="motion-shell" class="motion-win" :class="embedded ? 'h-full min-h-0' : 'h-screen'">
+    <!-- 顶部标题栏（仪器窗口式 titlebar） -->
+    <header class="motion-titlebar">
+      <div class="motion-lights" aria-hidden="true">
+        <i class="r"></i><i class="y"></i><i class="g"></i>
       </div>
-      <div class="motion-view-header-actions">
-        <button
-          class="header-action-btn"
-          :title="theme.mode === 'dark' ? i18n.t.switchToLightTheme : i18n.t.switchToDarkTheme"
-          @click="theme.toggleTheme"
-        >
-          <Sun v-if="theme.mode === 'dark'" class="w-4 h-4" />
-          <Moon v-else class="w-4 h-4" />
-        </button>
-        <button
-          class="header-action-btn header-action-btn--text"
-          :title="i18n.locale === 'zh' ? i18n.t.switchToEnglish : i18n.t.switchToChinese"
-          @click="toggleLanguage"
-        >
-          {{ i18n.locale === 'zh' ? 'EN' : '中文' }}
-        </button>
-      </div>
+      <div class="motion-name">{{ i18n.t.motionController }}</div>
+      <div class="motion-spacer"></div>
+      <button
+        class="motion-tb-btn"
+        :title="theme.mode === 'dark' ? i18n.t.switchToLightTheme : i18n.t.switchToDarkTheme"
+        @click="theme.toggleTheme"
+      >
+        <Sun v-if="theme.mode === 'dark'" class="w-3.5 h-3.5" />
+        <Moon v-else class="w-3.5 h-3.5" />
+        <span>{{ i18n.t.theme }}</span>
+      </button>
+      <button
+        class="motion-tb-btn"
+        :title="i18n.locale === 'zh' ? i18n.t.switchToEnglish : i18n.t.switchToChinese"
+        @click="toggleLanguage"
+      >
+        {{ i18n.locale === 'zh' ? '中 / EN' : 'EN / 中' }}
+      </button>
     </header>
 
     <!-- 主内容区 -->
-    <main class="motion-view-main">
+    <main class="motion-body">
       <MotionControlPanel />
     </main>
   </div>
@@ -55,96 +55,92 @@ function toggleLanguage(): void {
 
 <style scoped>
 /* ============================================================
-   主视图容器
+   仪器窗口容器
    ============================================================ */
-.motion-view {
+.motion-win {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-family-sans, 'Microsoft YaHei UI', sans-serif);
+  border: 1px solid var(--border-default);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 8px;
 }
 
 /* ============================================================
-   顶部标题栏
+   顶部标题栏（macOS 风格 titlebar）
    ============================================================ */
-.motion-view-header {
+.motion-titlebar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  padding: var(--space-3) var(--space-5);
-  background: var(--bg-panel);
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--bg-panel-strong);
   border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
 }
 
-.motion-view-header-left {
+.motion-lights {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
+  gap: 7px;
+  flex-shrink: 0;
 }
 
-.motion-view-title {
-  font-size: 0.875rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-  line-height: 1.3;
+.motion-lights i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  display: block;
 }
 
-.motion-view-subtitle {
-  font-size: 0.625rem;
+.motion-lights .r { background: #ff5f57; }
+.motion-lights .y { background: #febc2e; }
+.motion-lights .g { background: #28c840; }
+
+.motion-name {
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.3px;
   color: var(--text-muted);
 }
 
-.motion-view-header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.motion-spacer {
+  flex: 1;
 }
 
-/* 头部操作按钮 */
-.header-action-btn {
+.motion-tb-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  height: 2rem;
-  min-width: 2rem;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
-  font-weight: 600;
+  gap: 6px;
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
   color: var(--text-muted);
-  background: transparent;
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 12px;
   cursor: pointer;
-  transition: all var(--motion-fast) var(--easing-standard);
+  transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
-.header-action-btn:hover {
+.motion-tb-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-panel-strong);
-  border-color: var(--border-strong);
+  border-color: var(--accent-primary);
 }
 
-.header-action-btn:active {
-  transform: scale(0.95);
-}
-
-.header-action-btn--text {
-  padding: 0 var(--space-3);
+.motion-tb-btn:active {
+  transform: scale(0.96);
 }
 
 /* ============================================================
    主内容区
    ============================================================ */
-.motion-view-main {
+.motion-body {
   flex: 1;
   min-height: 0;
+  display: flex;
   background: var(--bg-canvas);
 }
 </style>

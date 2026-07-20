@@ -116,7 +116,7 @@ export const useMotionStore = defineStore('motion', () => {
     try {
       await motionApi.jog(id, axis, direction, speed)
     } catch (e) {
-      feedback.pushToast(`点动失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
+      feedback.pushToast(`步进失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
     }
   }
 
