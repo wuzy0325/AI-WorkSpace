@@ -43,7 +43,7 @@ func TestTotalPressureCsvSchemaChineseHeader(t *testing.T) {
 //   - 温度通道: formatValue(latestRawData.tAtm, 1) → 1 位
 //   - CPT/误差: formatValue(CPT, 4) / formatValue(error, 4) → 4 位
 //   - 马赫数: machNumber.toFixed(3) → 3 位
-//   - 速度: velocity.toFixed(1) → 1 位
+//   - 速度: velocity.toFixed(3) → 3 位
 func TestTotalPressureCsvRecordPrecision(t *testing.T) {
 	mach := 0.8234567
 	velocity := 278.96123
@@ -88,7 +88,7 @@ func TestTotalPressureCsvRecordPrecision(t *testing.T) {
 		{8, "0.9877"},
 		{9, "0.1235"},
 		{10, "0.823"},
-		{11, "279.0"},
+		{11, "278.961"},
 	}
 	for _, c := range cases {
 		if record[c.index] != c.expected {

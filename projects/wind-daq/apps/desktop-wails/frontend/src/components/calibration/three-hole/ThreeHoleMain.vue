@@ -298,14 +298,14 @@ function formatValue(value: number | undefined | null, precision?: number): stri
   return value.toFixed(precision ?? 3)
 }
 
-// 马赫数/速度格式化：与 CSV 精度一致（马赫数 3 位、速度 1 位）
+// 马赫数/速度格式化：与 CSV 精度一致（马赫数 3 位、速度 3 位）
 function formatMach(value: number | undefined): string {
   if (value === undefined || value === null) return '--'
   return value.toFixed(3)
 }
 function formatVelocity(value: number | undefined): string {
   if (value === undefined || value === null) return '--'
-  return value.toFixed(1)
+  return value.toFixed(3)
 }
 
 function getChannelValue(role: string): string {
@@ -553,13 +553,13 @@ onUnmounted(() => {
                 </div>
                 <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
               </div>
-              <!-- 速度 V：绿色强调，单位 m/s -->
+              <!-- 速度 V：绿色强调，单位 m/s。侧边栏统一保留 3 位小数，与马赫数精度对齐 -->
               <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                 <div>
                   <span class="text-xs text-[var(--text-muted)]">{{ t.th_velocityV }}</span>
                 </div>
                 <div class="text-right">
-                  <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                  <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}</span>
                   <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
                 </div>
               </div>
@@ -658,7 +658,7 @@ onUnmounted(() => {
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                       <span class="text-xs text-[var(--text-muted)]">V</span>
                       <div class="text-right">
-                        <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                        <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}</span>
                         <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
                       </div>
                     </div>

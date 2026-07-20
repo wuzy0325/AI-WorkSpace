@@ -46,7 +46,7 @@ func TestThreeHoleCsvSchemaChineseHeader(t *testing.T) {
 // TestThreeHoleCsvRecordPrecision 验证三孔 CSV 数据行精度与前端显示一致
 // 测试前置：构造三孔数据点，θ=15.5°，压力值带多位小数，系数带多位小数，马赫数/速度带多位小数
 // 测试步骤：调用 BuildRecord 获取数据行
-// 期待结果：θ 1 位、压力 3 位、系数 4 位、马赫数 3 位、速度 1 位、标准差 4 位
+// 期待结果：θ 1 位、压力 3 位、系数 4 位、马赫数 3 位、速度 3 位、标准差 4 位
 func TestThreeHoleCsvRecordPrecision(t *testing.T) {
 	pTotal := 80.123456
 	pStatic := 15.987654
@@ -87,9 +87,9 @@ func TestThreeHoleCsvRecordPrecision(t *testing.T) {
 	if record[12] != "0.235" {
 		t.Fatalf("MachNumber precision: expected 0.235, got %s", record[12])
 	}
-	// 速度应为 79.0（1 位小数）
-	if record[13] != "79.0" {
-		t.Fatalf("Velocity precision: expected 79.0, got %s", record[13])
+	// 速度应为 78.967（3 位小数）
+	if record[13] != "78.967" {
+		t.Fatalf("Velocity precision: expected 78.967, got %s", record[13])
 	}
 	// 标准差应为 0.0123（4 位小数）
 	if record[15] != "0.0123" {

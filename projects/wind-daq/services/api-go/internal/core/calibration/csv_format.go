@@ -10,7 +10,7 @@ const (
 	threeHoleCoeffPrecision    = 4 // 系数 Kb/K0/Kv：前端 formatValue(Kb, 4)
 	threeHoleStdDevPrecision   = 4 // 标准差：前端 formatValue(point.stdDev, 4)
 	threeHoleMachPrecision     = 3 // 马赫数：前端 physics.machNumber.toFixed(3)
-	threeHoleVelocityPrecision = 1 // 速度 m/s：前端 physics.velocity.toFixed(1)
+	threeHoleVelocityPrecision = 3 // 速度 m/s：前端 physics.velocity.toFixed(3)，与马赫数精度对齐
 )
 
 // 总压 CSV 数据精度常量——与前端 TotalPressureMain.vue 的 formatValue 调用保持一致，
@@ -22,7 +22,7 @@ const (
 	totalPressureTempPrecision     = 1 // 温度通道：前端 formatValue(latestRawData.tAtm, 1)
 	totalPressureCoeffPrecision    = 4 // 系数 CPT/误差：前端 formatValue(CPT, 4) / formatValue(error, 4)
 	totalPressureMachPrecision     = 3 // 马赫数：前端 machNumber.toFixed(3)
-	totalPressureVelocityPrecision = 1 // 速度 m/s：前端 velocity.toFixed(1)
+	totalPressureVelocityPrecision = 3 // 速度 m/s：前端 velocity.toFixed(3)，与马赫数精度对齐
 )
 
 func formatFloat(v float64) string {

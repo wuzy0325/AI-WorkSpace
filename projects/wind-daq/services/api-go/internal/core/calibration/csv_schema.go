@@ -165,7 +165,7 @@ func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 
 	// 精度与前端 ThreeHoleMain.vue 显示一致：
 	// θ 1 位（formatValue(point.coordinates['θ'], 1)）、压力 3 位（probePrecision 默认 3）、系数 4 位（formatValue(Kb, 4)）、标准差 4 位
-	// 马赫数 3 位、速度 1 位（与前端 physics.machNumber.toFixed(3) / velocity.toFixed(1) 一致）
+	// 马赫数 3 位、速度 3 位（与前端 physics.machNumber.toFixed(3) / velocity.toFixed(3) 一致）
 	return []string{
 		formatInt(dp.PointID),
 		formatFloatWithPrecision(dp.Coordinates["θ"], threeHoleThetaPrecision),

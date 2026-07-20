@@ -1075,11 +1075,11 @@ function getChannelUnit(role: string): string {
                   <span class="text-xs text-[var(--text-muted)]">{{ t.fh_machMa }}</span>
                   <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
                 </div>
-                <!-- 速度 V：绿色强调 -->
+                <!-- 速度 V：绿色强调。侧边栏统一保留 3 位小数，与马赫数精度对齐 -->
                 <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                   <span class="text-xs text-[var(--text-muted)]">{{ t.fh_velocityV }}</span>
                   <div class="text-right">
-                    <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                    <span class="font-mono text-2xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}</span>
                     <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
                   </div>
                 </div>
@@ -1184,7 +1184,7 @@ function getChannelUnit(role: string): string {
                     <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                       <span class="text-xs text-[var(--text-muted)]">V</span>
                       <div class="text-right">
-                        <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(1) : '--' }}</span>
+                        <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}</span>
                         <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
                       </div>
                     </div>
