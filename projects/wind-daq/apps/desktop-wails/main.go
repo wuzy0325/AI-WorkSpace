@@ -94,7 +94,7 @@ func main() {
 		},
 	})
 
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         title,
 		Width:         width,
 		Height:        height,
@@ -110,6 +110,12 @@ func main() {
 			Alpha: 1,
 		},
 	})
+
+	// 注册窗口关闭确认 hook：拦截 X 按钮关闭，由前端弹出确认对话框。
+	// 仅在主窗口注册（normal 模式）；motion-only 模式保持现状，关闭即退出子进程。
+	if mode == backend.ModeNormal {
+		app.RegisterExitConfirmationHook(mainWindow)
+	}
 
 	// wailsApp.Run() 失败时写 crash log 而非 log.Fatal。
 	// windowsgui 子系统下 stderr 不可见，log.Fatal 输出用户看不到。

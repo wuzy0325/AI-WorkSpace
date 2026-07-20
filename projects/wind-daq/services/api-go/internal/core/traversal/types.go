@@ -85,6 +85,13 @@ type Config struct {
 	// 空串在 ParseAndStartTraversal 中兜底为 "gauge"，保证旧配置反序列化兼容。
 	PProbePressureType string `json:"pProbePressureType,omitempty"`
 
+	// ProbeType selects the probe interpolation path: "five-hole" (default;
+	// an empty value read from a legacy config normalizes to it) or
+	// "seven-hole". It drives interpolator selection, channel label sets and
+	// raw-pressure assembly; it does not affect the state machine, layout,
+	// acquisition or CSV main flow.
+	ProbeType string `json:"probeType,omitempty"`
+
 	// MotionAxes 参与遍历运动的轴绑定列表，来自前端 motionAxes 配置。
 	// 仅对这些「控制器+轴」发送 MoveTo 并等待到位，避免：
 	// 1) 对未配置/未接硬件的轴（如 Z/U）强制归零；
@@ -95,6 +102,22 @@ type Config struct {
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 为 nil 时下游使用 DefaultMotionSafety，保证旧配置反序列化兼容。
 	MotionSafety *MotionSafetyConfig `json:"motionSafety,omitempty"`
+}
+
+// Probe type values for Config.ProbeType (spec-seven-hole-traversal section 2.3).
+const (
+	// ProbeTypeFiveHole is the default probe; an empty ProbeType read from a
+	// legacy config normalizes to this value at the parsing boundary.
+	ProbeTypeFiveHole = "five-hole"
+	// ProbeTypeSevenHole selects the seven-hole probe interpolation path.
+	ProbeTypeSevenHole = "seven-hole"
+)
+
+// IsSevenHole reports whether the config selects the seven-hole probe. The
+// empty legacy value counts as five-hole; unknown non-empty values are
+// rejected at the parsing boundary and never reach runtime.
+func (c Config) IsSevenHole() bool {
+	return c.ProbeType == ProbeTypeSevenHole
 }
 
 // ChannelRef 物理通道引用：内部通道键对应的真实设备与硬件通道索引。

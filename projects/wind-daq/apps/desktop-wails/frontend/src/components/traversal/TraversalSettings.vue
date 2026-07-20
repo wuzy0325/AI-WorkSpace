@@ -9,6 +9,7 @@ import { useStorageStore } from '@stores/storageStore'
 import { useTraversalStore } from '@stores/traversalStore'
 import {
   createDefaultTraversalProbeChannels,
+  createSevenHoleTraversalProbeChannels,
   deriveRangeFromSegments,
   findTraversalAxisKindIssues,
   getTraversalLayoutPointCount,
@@ -17,7 +18,8 @@ import {
   hasDuplicateMotionAxis,
   isTraversalConfigurableProbeChannel,
   isTraversalRequiredProbeChannel,
-  normalizeTraversalLayoutRanges
+  normalizeTraversalLayoutRanges,
+  TRAVERSAL_PROBE_PRESENTATION
 } from '@shared/types/traversal'
 import type {
   MultiPrbInterpolationMode,
@@ -28,10 +30,12 @@ import type {
   TraversalMotionAxisConfig,
   TraversalPattern,
   TraversalPrimaryAxis,
+  TraversalProbeType,
   TraversalTestConfig,
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
-  MotionSafetyConfig
+  MotionSafetyConfig,
+  SevenHolePrbDraft
 } from '@shared/types/traversal'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
@@ -132,6 +136,99 @@ const pProbePressureTypeOptions = computed(() => [
   { value: 'gauge', label: t.value.travPressureTypeGauge },
   { value: 'absolute', label: t.value.travPressureTypeAbsolute }
 ])
+
+// 探针类型（双变体语义）：五孔/七孔两套配置各自保留，切换直接换入换出，
+// 不重置、不弹确认——后端按激活 probeType 经策略表取用对应插值器，
+// 未激活插值器保持挂载但对计算/前置检查不可达。
+const probeType = ref<TraversalProbeType>('five-hole')
+const probeTypeOptions = computed(() => [
+  { value: 'five-hole' as TraversalProbeType, label: t.value.travProbeTypeFiveHole },
+  { value: 'seven-hole' as TraversalProbeType, label: t.value.travProbeTypeSevenHole }
+])
+
+// 五孔配置包：切换探针时整体换入换出
+interface FiveHoleProbeState {
+  probeChannels: ProbeChannelConfig[]
+  prbFile: PrbFileInfo | null
+  multiPrbFiles: PrbFileInfo[]
+  multiPrbMachNumbers: number[]
+  multiPrbInterpolationMode: MultiPrbInterpolationMode
+  calibrationCsvFile: CalibrationCsvFileInfo | null
+  interpolationAlgorithm: InterpolationAlgorithm
+  prbMode: 'single' | 'multi'
+}
+
+// 七孔配置包：通道绑定 + PRB 槽位
+interface SevenHoleProbeState {
+  probeChannels: ProbeChannelConfig[]
+  sevenHolePrbDraft: SevenHolePrbDraft
+}
+
+// 未激活侧暂存：切换探针时暂存当前侧配置，切回时原样恢复
+const fiveHoleStash = ref<FiveHoleProbeState | null>(null)
+const sevenHoleStash = ref<SevenHoleProbeState | null>(null)
+
+// 七孔 PRB 编辑态（1 内区 + 6 扇区槽位；空槽位=未导入；source 记录数据源格式）。
+// 持久化前必须补全（isStepValid 第 1 步校验）。
+const sevenHolePrbDraft = ref<SevenHolePrbDraft>({
+  source: 'prb',
+  innerFile: null,
+  outerFiles: [null, null, null, null, null, null]
+})
+
+function emptySevenHolePrbDraft(): SevenHolePrbDraft {
+  return { source: 'prb', innerFile: null, outerFiles: [null, null, null, null, null, null] }
+}
+
+/**
+ * 探针类型切换（双变体语义）：暂存当前侧 → 载入目标侧（首次用预设），
+ * 两套配置互不丢失；store 仅切换激活 probeType（activateProbeType）。
+ */
+function onProbeTypeChange(next: TraversalProbeType): void {
+  if (next === probeType.value) return
+  // 暂存当前侧
+  if (probeType.value === 'five-hole') {
+    fiveHoleStash.value = {
+      probeChannels: probeChannels.value,
+      prbFile: prbFile.value,
+      multiPrbFiles: multiPrbFiles.value,
+      multiPrbMachNumbers: multiPrbMachNumbers.value,
+      multiPrbInterpolationMode: multiPrbInterpolationMode.value,
+      calibrationCsvFile: calibrationCsvFile.value,
+      interpolationAlgorithm: interpolationAlgorithm.value,
+      prbMode: prbMode.value
+    }
+  } else {
+    sevenHoleStash.value = {
+      probeChannels: probeChannels.value,
+      sevenHolePrbDraft: sevenHolePrbDraft.value
+    }
+  }
+  // 载入目标侧（无暂存时用预设）
+  if (next === 'five-hole') {
+    const b = fiveHoleStash.value
+    probeChannels.value = b?.probeChannels ?? createDefaultTraversalProbeChannels()
+    prbFile.value = b?.prbFile ?? null
+    multiPrbFiles.value = b?.multiPrbFiles ?? []
+    multiPrbMachNumbers.value = b?.multiPrbMachNumbers ?? []
+    multiPrbInterpolationMode.value = b?.multiPrbInterpolationMode ?? 'linear'
+    calibrationCsvFile.value = b?.calibrationCsvFile ?? null
+    interpolationAlgorithm.value = b?.interpolationAlgorithm ?? 'old'
+    prbMode.value = b?.prbMode ?? 'single'
+  } else {
+    const b = sevenHoleStash.value
+    probeChannels.value = b?.probeChannels ?? createSevenHoleTraversalProbeChannels()
+    sevenHolePrbDraft.value = b?.sevenHolePrbDraft ?? emptySevenHolePrbDraft()
+  }
+  probeType.value = next
+  traversalStore.activateProbeType(next)
+}
+
+// 向导对话框标题随探针类型切换（与主画面共用 TRAVERSAL_PROBE_PRESENTATION 语义）
+const wizardTitleText = computed(() => {
+  const key = TRAVERSAL_PROBE_PRESENTATION[probeType.value].titleKey as keyof typeof t.value
+  return (t.value[key] as string | undefined) ?? t.value.traversalWorkbenchConfig
+})
 
 const lineConfig = ref({
   startX: -30, startY: 0,
@@ -261,6 +358,11 @@ const isStepValid = computed(() => {
     return probeChannels.value.filter((c) => c.enabled).every((c) => c.channel.deviceId !== '' && c.channel.channelIndex >= 0)
   }
   if (currentStep.value === 1) {
+    // 七孔：七孔文件集（1 内区 + 6 扇区）齐备才可继续（导入成功才填槽位）
+    if (probeType.value === 'seven-hole') {
+      const d = sevenHolePrbDraft.value
+      return d.innerFile !== null && d.outerFiles.every((f) => f !== null)
+    }
     if (interpolationAlgorithm.value === 'new') return calibrationCsvFile.value !== null
     if (prbMode.value === 'multi') return multiPrbFiles.value.length > 0
     return prbFile.value !== null
@@ -299,6 +401,18 @@ function normalizeProbeChannel(c: ProbeChannelConfig) { return { ...c, channel: 
 function clonePrbFileInfo(f: PrbFileInfo) { return { ...f, validRange: { ...f.validRange } } }
 function normalizeMultiPrbMachNumbers(files: PrbFileInfo[], nums: number[] = []) { return files.map((f, i) => { const v = nums[i] ?? f.machNumber ?? f.validRange.machMin; return Number.isFinite(v) ? v : 0 }) }
 function isConfigurableProbeChannel(c: ProbeChannelConfig) { return isTraversalConfigurableProbeChannel(c.role, c.name) }
+
+/** 把已保存通道合并到预设基准（按 role/name 匹配；未匹配项追加） */
+function mergeChannelsIntoPreset(preset: ProbeChannelConfig[], saved: ProbeChannelConfig[]): ProbeChannelConfig[] {
+  const next = [...preset]
+  for (const sc of saved) {
+    if (!isConfigurableProbeChannel(sc)) continue
+    const idx = next.findIndex(x => x.role ? x.role === sc.role : x.name === sc.name)
+    if (idx >= 0) next[idx] = normalizeProbeChannel({ ...next[idx], ...sc, channel: { ...sc.channel } })
+    else next.push(normalizeProbeChannel({ ...sc, channel: { ...sc.channel } }))
+  }
+  return next
+}
 function nextStep() {
   if (currentStep.value < steps.value.length - 1 && isStepValid.value) {
     currentStep.value++
@@ -386,23 +500,86 @@ function applySavedConfig(config: TraversalTestConfig) {
   // 把 ".csv" 当作普通字符串清洗后再次追加 .csv，得到 "xxx.csv-2026-07-10.csv"。
   // 先剥离 .csv 后缀再交给共享工具，与原 sanitizeFileNameStem 行为对齐。
   savePath.value = c.savePath; saveFileName.value = buildCalibrationCsvName(c.saveFileName.replace(/\.csv$/i, ''), c.name)
-  const useMulti = Boolean((c.useMultiPrb ?? false) && c.multiPrb?.files.length)
-  prbMode.value = useMulti ? 'multi' : 'single'
-  prbFile.value = useMulti ? null : c.prbFile ? clonePrbFileInfo(c.prbFile) : null
-  multiPrbFiles.value = useMulti ? (c.multiPrb?.files ?? []).map(f => clonePrbFileInfo(f)) : []
-  multiPrbMachNumbers.value = useMulti ? normalizeMultiPrbMachNumbers(multiPrbFiles.value, c.multiPrb?.machNumbers) : []
-  multiPrbInterpolationMode.value = c.multiPrb?.interpolationMode ?? 'linear'
+
+  // 恢复探针类型（双变体语义）：缺省（旧配置）按五孔；两套配置分别恢复到
+  // 激活 refs 与未激活暂存（stash），切换时原样换回。
+  probeType.value = c.probeType === 'seven-hole' ? 'seven-hole' : 'five-hole'
+  const isSevenActive = probeType.value === 'seven-hole'
+
+  // 五孔插值状态（激活 refs 或未激活暂存共用同一内容源）
+  const useMultiSaved = Boolean((c.useMultiPrb ?? false) && c.multiPrb?.files.length)
+  const fiveState: FiveHoleProbeState = {
+    probeChannels: createDefaultTraversalProbeChannels(),
+    prbFile: useMultiSaved ? null : c.prbFile ? clonePrbFileInfo(c.prbFile) : null,
+    multiPrbFiles: useMultiSaved ? (c.multiPrb?.files ?? []).map(f => clonePrbFileInfo(f)) : [],
+    multiPrbMachNumbers: useMultiSaved
+      ? normalizeMultiPrbMachNumbers(c.multiPrb?.files ?? [], c.multiPrb?.machNumbers)
+      : [],
+    multiPrbInterpolationMode: c.multiPrb?.interpolationMode ?? 'linear',
+    calibrationCsvFile: c.calibrationCsvFile ? { ...c.calibrationCsvFile } : null,
+    interpolationAlgorithm: c.interpolationAlgorithm ?? 'old',
+    prbMode: useMultiSaved ? 'multi' : 'single'
+  }
+  const hasFiveHoleContent = Boolean(
+    fiveState.prbFile || fiveState.multiPrbFiles.length > 0 || fiveState.calibrationCsvFile
+  )
+  // 七孔插值状态（仅持久化 sevenHolePrb 齐全时存在；source 从 kind 还原）
+  const sevenState: SevenHoleProbeState | null = c.sevenHolePrb?.kind === 'seven-hole-prb-set' || c.sevenHolePrb?.kind === 'seven-hole-calibration-csv'
+    ? {
+        probeChannels: createSevenHoleTraversalProbeChannels(),
+        sevenHolePrbDraft: {
+          source: c.sevenHolePrb.kind === 'seven-hole-calibration-csv' ? 'calibration-csv' : 'prb',
+          innerFile: { ...c.sevenHolePrb.innerFile },
+          outerFiles: c.sevenHolePrb.outerFiles.map((f) => ({ ...f }))
+        }
+      }
+    : null
+
+  if (isSevenActive) {
+    sevenHolePrbDraft.value = sevenState?.sevenHolePrbDraft ?? emptySevenHolePrbDraft()
+    probeChannels.value = sevenState?.probeChannels ?? createSevenHoleTraversalProbeChannels()
+    // 五孔侧进暂存（无内容时为 null，切换时用预设）
+    fiveHoleStash.value = hasFiveHoleContent ? fiveState : null
+    // 同步五孔 refs 到持久化内容（供切回后与 stash 一致）
+    prbFile.value = fiveState.prbFile
+    multiPrbFiles.value = fiveState.multiPrbFiles
+    multiPrbMachNumbers.value = fiveState.multiPrbMachNumbers
+    multiPrbInterpolationMode.value = fiveState.multiPrbInterpolationMode
+    calibrationCsvFile.value = fiveState.calibrationCsvFile
+    interpolationAlgorithm.value = fiveState.interpolationAlgorithm
+    prbMode.value = fiveState.prbMode
+  } else {
+    // 五孔激活：状态进 refs（现状行为）
+    prbMode.value = fiveState.prbMode
+    prbFile.value = fiveState.prbFile
+    multiPrbFiles.value = fiveState.multiPrbFiles
+    multiPrbMachNumbers.value = fiveState.multiPrbMachNumbers
+    multiPrbInterpolationMode.value = fiveState.multiPrbInterpolationMode
+    calibrationCsvFile.value = fiveState.calibrationCsvFile
+    interpolationAlgorithm.value = fiveState.interpolationAlgorithm
+    probeChannels.value = fiveState.probeChannels
+    // 七孔侧进暂存
+    sevenHoleStash.value = sevenState
+    sevenHolePrbDraft.value = sevenState?.sevenHolePrbDraft ?? emptySevenHolePrbDraft()
+  }
+
   saveOptions.value = { ...saveOptions.value, ...c.saveOptions, customFields: c.saveOptions.customFields ? { ...c.saveOptions.customFields } : undefined }
   applySavedLayout(c.layout)
+  // 激活通道合并到对应预设基准；未激活通道合并到暂存侧预设
   if (c.channels.probeChannels.length > 0) {
-    const next = [...probeChannels.value]
-    for (const sc of c.channels.probeChannels) {
-      if (!isConfigurableProbeChannel(sc)) continue
-      const idx = next.findIndex(x => x.role ? x.role === sc.role : x.name === sc.name)
-      if (idx >= 0) next[idx] = normalizeProbeChannel({ ...next[idx], ...sc, channel: { ...sc.channel } })
-      else next.push(normalizeProbeChannel({ ...sc, channel: { ...sc.channel } }))
+    probeChannels.value = mergeChannelsIntoPreset(probeChannels.value, c.channels.probeChannels)
+  }
+  const inactiveSaved = c.inactiveProbeChannels ?? []
+  if (inactiveSaved.length > 0) {
+    if (isSevenActive) {
+      const base = fiveHoleStash.value?.probeChannels ?? createDefaultTraversalProbeChannels()
+      const merged = mergeChannelsIntoPreset(base, inactiveSaved)
+      if (fiveHoleStash.value) fiveHoleStash.value.probeChannels = merged
+    } else {
+      const base = sevenHoleStash.value?.probeChannels ?? createSevenHoleTraversalProbeChannels()
+      const merged = mergeChannelsIntoPreset(base, inactiveSaved)
+      if (sevenHoleStash.value) sevenHoleStash.value.probeChannels = merged
     }
-    probeChannels.value = next
   }
   if (c.channels.motionAxes.length > 0) {
     const next = [...motionAxes.value]
@@ -413,8 +590,6 @@ function applySavedConfig(config: TraversalTestConfig) {
     }
     motionAxes.value = next
   }
-  interpolationAlgorithm.value = c.interpolationAlgorithm ?? 'old'
-  calibrationCsvFile.value = c.calibrationCsvFile ? { ...c.calibrationCsvFile } : null
 
   // 恢复五孔压力类型：旧配置无此字段时兜底为 'gauge'（与历史行为一致）。
   // 显式校验值域，避免后端 ParseAndStartTraversal 兜底前 UI 显示脏值。
@@ -474,7 +649,6 @@ async function saveConfig() {
     // 剥离 .csv 后缀后交给共享工具，fallback 用 testName 保证空文件名也能落到有意义的默认值。
     const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), testName.value)
     saveFileName.value = normName
-    const useMulti = prbMode.value === 'multi' && multiPrbFiles.value.length > 0
     // 运动安全配置校验：面板内部已实时显示错误，保存前再次调用 isValid 阻断非法值。
     // 阻断保存避免用户误把"严重偏离阈值 < 到位容差"这类语义错误配置持久化到后端。
     // finally 块会重置 isSaving，无需在此显式设置。
@@ -485,23 +659,63 @@ async function saveConfig() {
     // 稳定化使用驻留时间（dwellTimeMs）：后端 waitForStabilization 在 stab==nil 或 mode=="fixed"
     // 时回退到 dwellTimeMs，因此前端不再单独保存 stabilization/validation 配置，
     // 旧 profile 持久化的字段会被后端忽略，无需迁移。
-    const raw = {
+    const isSeven = probeType.value === 'seven-hole'
+    // 双变体持久化：激活侧取当前 refs，未激活侧取暂存；两侧插值配置并存于配置 JSON，
+    // 后端按 probeType 仅恢复激活变体（§5.2.1 第 6 条）。
+    const fiveSrc: FiveHoleProbeState | null = isSeven
+      ? fiveHoleStash.value
+      : {
+          probeChannels: probeChannels.value,
+          prbFile: prbFile.value,
+          multiPrbFiles: multiPrbFiles.value,
+          multiPrbMachNumbers: multiPrbMachNumbers.value,
+          multiPrbInterpolationMode: multiPrbInterpolationMode.value,
+          calibrationCsvFile: calibrationCsvFile.value,
+          interpolationAlgorithm: interpolationAlgorithm.value,
+          prbMode: prbMode.value
+        }
+    const sevenSrc: SevenHolePrbDraft | null = isSeven
+      ? sevenHolePrbDraft.value
+      : (sevenHoleStash.value?.sevenHolePrbDraft ?? null)
+    const inactiveChannels = isSeven
+      ? (fiveHoleStash.value?.probeChannels ?? null)
+      : (sevenHoleStash.value?.probeChannels ?? null)
+
+    const raw: Record<string, unknown> = {
       name: testName.value, layout: currentLayout.value,
       channels: { probeChannels: probeChannels.value.filter(c => c.enabled && isConfigurableProbeChannel(c)), motionAxes: motionAxes.value },
-      prbFile: useMulti ? null : prbFile.value,
-      multiPrb: useMulti ? { files: multiPrbFiles.value.map(f => clonePrbFileInfo(f)), machNumbers: multiPrbMachNumbers.value.map(n => Number(n)), interpolationMode: multiPrbInterpolationMode.value } : undefined,
-      useMultiPrb: useMulti, interpolationAlgorithm: interpolationAlgorithm.value,
-      calibrationCsvFile: interpolationAlgorithm.value === 'new' ? calibrationCsvFile.value : null,
+      // 探针类型与双变体插值配置（spec §2.3 双变体语义）：probeType 仅标记激活方
+      probeType: probeType.value,
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
       savePath: savePath.value.trim(), saveFileName: normName, saveOptions: saveOptions.value,
-      // 五孔压力类型始终保存，后端 BuildRawPressure 归一化依据此字段
+      // 压力类型开关对五孔/七孔探针孔道同样适用（spec 附录假设 5）
       pProbePressureType: pProbePressureType.value,
       // 运动安全配置：undefined 时后端使用 DefaultMotionSafety。
       // 通过深拷贝避免与面板内部 reactive 对象共享引用，确保持久化的是当前快照。
       motionSafety: motionSafety.value ? JSON.parse(JSON.stringify(motionSafety.value)) : undefined
     }
-    const config: TraversalTestConfig = JSON.parse(JSON.stringify(raw))
+    if (inactiveChannels && inactiveChannels.length > 0) {
+      raw.inactiveProbeChannels = inactiveChannels.filter(c => c.enabled && isConfigurableProbeChannel(c))
+    }
+    if (fiveSrc) {
+      const useMulti = fiveSrc.prbMode === 'multi' && fiveSrc.multiPrbFiles.length > 0
+      raw.prbFile = useMulti ? null : fiveSrc.prbFile
+      raw.multiPrb = useMulti
+        ? { files: fiveSrc.multiPrbFiles.map(f => clonePrbFileInfo(f)), machNumbers: fiveSrc.multiPrbMachNumbers.map(n => Number(n)), interpolationMode: fiveSrc.multiPrbInterpolationMode }
+        : undefined
+      raw.useMultiPrb = useMulti
+      raw.interpolationAlgorithm = fiveSrc.interpolationAlgorithm
+      raw.calibrationCsvFile = fiveSrc.interpolationAlgorithm === 'new' ? fiveSrc.calibrationCsvFile : null
+    }
+    if (sevenSrc && sevenSrc.innerFile && sevenSrc.outerFiles.every((f) => f !== null)) {
+      raw.sevenHolePrb = {
+        kind: sevenSrc.source === 'calibration-csv' ? 'seven-hole-calibration-csv' : 'seven-hole-prb-set',
+        innerFile: { ...sevenSrc.innerFile },
+        outerFiles: sevenSrc.outerFiles.map((f) => ({ ...f! }))
+      }
+    }
+    const config: TraversalTestConfig = JSON.parse(JSON.stringify(raw)) as TraversalTestConfig
     const ok = await traversalStore.saveConfig(config)
     if (!ok) throw new Error(traversalStore.error || t.value.failedSaveConfig)
     emit('saved', config); emit('close')
@@ -541,7 +755,7 @@ watch(() => props.show, async (isVisible) => {
     <template #header>
       <div>
           <span class="setup-overline">{{ t.traversalSetup }}</span>
-          <span class="setup-title">{{ t.traversalWorkbenchConfig }}</span>
+          <span class="setup-title">{{ wizardTitleText }}</span>
       </div>
     </template>
 
@@ -559,7 +773,22 @@ watch(() => props.show, async (isVisible) => {
     <div class="traversal-body">
       <div class="traversal-main">
         <div v-if="currentStep === 0" class="step-content">
-          <!-- 五孔压力类型开关：与批量工具栏同处一行，避免额外卡片占用垂直空间 -->
+          <!-- 探针类型选择（spec §6.2）：切换经确认后事务式重置通道与 PRB 配置 -->
+          <div class="pressure-type-bar">
+            <div class="pressure-type-label">
+              <span class="pressure-type-title">{{ t.travProbeType }}</span>
+              <span class="pressure-type-hint">{{ t.travProbeTypeHint }}</span>
+            </div>
+            <UiSelect
+              :model-value="probeType"
+              :options="probeTypeOptions"
+              size="sm"
+              class="pressure-type-select"
+              :aria-label="t.travProbeType"
+              @update:model-value="(v: string) => void onProbeTypeChange(v === 'seven-hole' ? 'seven-hole' : 'five-hole')"
+            />
+          </div>
+          <!-- 压力类型开关：与批量工具栏同处一行，避免额外卡片占用垂直空间 -->
           <div class="pressure-type-bar">
             <div class="pressure-type-label">
               <span class="pressure-type-title">{{ t.travPressureType }}</span>
@@ -591,6 +820,8 @@ watch(() => props.show, async (isVisible) => {
         </div>
         <TraversalPrbStep
           v-else-if="currentStep === 1"
+          v-model:probe-type="probeType"
+          v-model:seven-hole-prb-draft="sevenHolePrbDraft"
           v-model:prb-mode="prbMode"
           v-model:interpolation-algorithm="interpolationAlgorithm"
           v-model:prb-file="prbFile"
@@ -623,10 +854,11 @@ watch(() => props.show, async (isVisible) => {
             <template #header><span class="summary-section-title">{{ t.summaryTitle }}</span></template>
             <div class="summary-grid">
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.name }}</span><span>{{ testName }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travProbeType }}</span><span>{{ probeType === 'seven-hole' ? t.travProbeTypeSevenHole : t.travProbeTypeFiveHole }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.pattern }}</span><span>{{ pattern }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.estimatedPoints }}</span><span class="summary-accent">{{ estimatedPointCount }}</span></div>
-              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.interpolationAlgorithm }}</span><span>{{ interpolationAlgorithm === 'new' ? t.algorithmNew : t.algorithmOld }}</span></div>
-              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.prb }}</span><span class="text-ellipsis">{{ interpolationAlgorithm === 'new' ? (calibrationCsvFile ? calibrationCsvFile.fileName : t.none) : (prbFile ? prbFile.fileName : t.none) }}</span></div>
+              <div v-if="probeType !== 'seven-hole'" class="summary-row"><span style="color:var(--text-tertiary)">{{ t.interpolationAlgorithm }}</span><span>{{ interpolationAlgorithm === 'new' ? t.algorithmNew : t.algorithmOld }}</span></div>
+              <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.prb }}</span><span class="text-ellipsis">{{ probeType === 'seven-hole' ? (sevenHolePrbDraft.innerFile ? t.sevenHolePrbTitle : t.none) : (interpolationAlgorithm === 'new' ? (calibrationCsvFile ? calibrationCsvFile.fileName : t.none) : (prbFile ? prbFile.fileName : t.none)) }}</span></div>
               <div class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travSnakeOrder }}</span><span>{{ snakeOrder ? t.enabled : t.disabled }}</span></div>
               <div v-if="supportsPrimaryAxis" class="summary-row"><span style="color:var(--text-tertiary)">{{ t.travPrimaryAxis || 'Primary axis' }}</span><span>{{ primaryAxis === 'x' ? (t.travPrimaryAxisX || 'X first') : (t.travPrimaryAxisY || 'Y first') }}</span></div>
             </div>

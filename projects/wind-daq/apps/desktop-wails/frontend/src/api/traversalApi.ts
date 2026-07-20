@@ -6,13 +6,15 @@ import type {
   MultiPrbInterpolationMode,
   PrbFileInfo,
   PreconditionCheckResult,
+  SevenHolePrbFileInfo,
   TraversalCheckpoint,
   TraversalCompleteEvent,
   TraversalCoordPoint,
   TraversalErrorEvent,
   TraversalErrorCode,
-  TraversalInterpolationInput,
+  TraversalProbeType,
   TraversalProgressEvent,
+  TraversalRealtimeInput,
   TraversalTestConfig,
   TraversalTestStatus,
 } from '@shared/types/traversal'
@@ -147,11 +149,31 @@ export const traversalApi = {
   ): Promise<{ success: boolean; data?: { files: PrbFileInfo[]; machNumbers: number[]; warnings: string[] }; error?: string }> =>
     invoke('/api/traversal/importMultiPrb', { filePaths, machNumbers, interpolationMode }),
 
+  /** 七孔 PRB 文件集导入（spec §5.6）：1 个内区文件 + 按孔号 1..6 顺序的 6 个扇区文件 */
+  importSevenHolePrb: async (
+    innerFilePath: string,
+    outerFilePaths: string[],
+  ): Promise<{ success: boolean; data?: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }; error?: string }> =>
+    invoke('/api/traversal/importSevenHolePrb', { innerFilePath, outerFilePaths }),
+
+  /** 七孔校准 CSV 文件集导入（校准导出直接导入，免导出 .prb） */
+  importSevenHoleCalibrationCsv: async (
+    innerFilePath: string,
+    outerFilePaths: string[],
+  ): Promise<{ success: boolean; data?: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }; error?: string }> =>
+    invoke('/api/traversal/importSevenHoleCalibrationCsv', { innerFilePath, outerFilePaths }),
+
+  /** 显式清理指定探针类型的插值器（spec §5.2.1；探针切换事务的第一步） */
+  clearInterpolator: async (probeType: TraversalProbeType): Promise<{ success: boolean; data?: { cleared: boolean }; error?: string }> =>
+    invoke('/api/traversal/clearInterpolator', { probeType }),
+
   calculateRealtime: async (
-    pressures: TraversalInterpolationInput,
+    pressures: TraversalRealtimeInput,
     config?: TraversalTestConfig,
+    probeType?: TraversalProbeType,
   ): Promise<{ success: boolean; data?: InterpolationResult; error?: string }> =>
-    invoke<InterpolationResult>('/api/traversal/calculateRealtime', { pressures, config }),
+    // 五孔请求体与旧版逐字节一致（省略 probeType）；七孔必须显式携带（spec §5.6）
+    invoke<InterpolationResult>('/api/traversal/calculateRealtime', { pressures, config, ...(probeType ? { probeType } : {}) }),
 
   checkPreconditions: async (config?: TraversalTestConfig): Promise<{ success: boolean; data?: PreconditionCheckResult; error?: string }> =>
     invoke<PreconditionCheckResult>('/api/traversal/checkPreconditions', { config }),

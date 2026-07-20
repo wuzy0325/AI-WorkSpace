@@ -11,6 +11,7 @@ const settingsComponents: Record<string, Component> = {
   'three-hole': defineAsyncComponent(() => import('./three-hole/ThreeHoleSettings.vue')),
   'total-pressure': defineAsyncComponent(() => import('./total-pressure/TotalPressureSettings.vue')),
   'total-temperature': defineAsyncComponent(() => import('./total-temperature/TotalTemperatureSettings.vue')),
+  'seven-hole': defineAsyncComponent(() => import('./seven-hole/SevenHoleSettings.vue')),
 }
 
 const mainComponents: Record<string, Component> = {
@@ -18,6 +19,7 @@ const mainComponents: Record<string, Component> = {
   'three-hole': defineAsyncComponent(() => import('./three-hole/ThreeHoleMain.vue')),
   'total-pressure': defineAsyncComponent(() => import('./total-pressure/TotalPressureMain.vue')),
   'total-temperature': defineAsyncComponent(() => import('./total-temperature/TotalTemperatureMain.vue')),
+  'seven-hole': defineAsyncComponent(() => import('./seven-hole/SevenHoleMain.vue')),
 }
 
 const calibrationStore = useCalibrationStore()
@@ -46,6 +48,7 @@ function getCalibrationTypeName(type: CalibrationType): string {
     case 'three-hole': return i18n.t.ch_threeHoleName
     case 'total-pressure': return i18n.t.ch_totalPressureName
     case 'total-temperature': return i18n.t.ch_totalTemperatureName
+    case 'seven-hole': return i18n.t.ch_sevenHoleName
   }
 }
 

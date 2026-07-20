@@ -1,7 +1,10 @@
 package config
 
 import (
+	"strings"
 	"testing"
+
+	"wind-daq/services/api-go/internal/core/calibration"
 )
 
 // TestDecodeCalibrationConfig_NestedFrontendShape 验证前端发送的嵌套 channel 格式
@@ -238,5 +241,258 @@ func TestDecodeCalibrationConfig_EmptyProbeChannelsArray(t *testing.T) {
 	}
 	if cfg.ProbeChannels != nil {
 		t.Fatalf("expected nil ProbeChannels for empty array, got %v", cfg.ProbeChannels)
+	}
+}
+
+// ==================== 七孔探针校准 DTO 集成测试（Task 8） ====================
+//
+// 七孔 DTO 无需扩展结构——CalibrationConfigDTO 的 ProbeChannels []ProbeChannelDTO
+// 字段是类型无关的通用容器，11 个 sevenHole.* 角色字符串原样保留即可。
+// 这些测试验证「DTO 通用解码 + SevenHoleAlgorithm.ValidateConfig 校验」的端到端链路。
+
+// sevenHoleAllRolesJSON 构造 11 角色齐全的七孔 DTO JSON（前端嵌套 channel shape）。
+// 复用此常量避免在多个测试中重复 11 行 probeChannels 定义。
+const sevenHoleAllRolesJSON = `{
+	"taskId": "cal-7h",
+	"deviceId": "dev-7h",
+	"type": "seven-hole",
+	"name": "七孔校准-全角色",
+	"samplesPerPoint": 10,
+	"probeChannels": [
+		{"role":"sevenHole.p1","name":"P1","channel":{"deviceId":"dev-7h","channelIndex":1},"enabled":true},
+		{"role":"sevenHole.p2","name":"P2","channel":{"deviceId":"dev-7h","channelIndex":2},"enabled":true},
+		{"role":"sevenHole.p3","name":"P3","channel":{"deviceId":"dev-7h","channelIndex":3},"enabled":true},
+		{"role":"sevenHole.p4","name":"P4","channel":{"deviceId":"dev-7h","channelIndex":4},"enabled":true},
+		{"role":"sevenHole.p5","name":"P5","channel":{"deviceId":"dev-7h","channelIndex":5},"enabled":true},
+		{"role":"sevenHole.p6","name":"P6","channel":{"deviceId":"dev-7h","channelIndex":6},"enabled":true},
+		{"role":"sevenHole.p7","name":"P7","channel":{"deviceId":"dev-7h","channelIndex":7},"enabled":true},
+		{"role":"sevenHole.pTotal","name":"Pt","channel":{"deviceId":"dev-7h","channelIndex":8},"enabled":true},
+		{"role":"sevenHole.pTunnelStatic","name":"Ps","channel":{"deviceId":"dev-7h","channelIndex":9},"enabled":true},
+		{"role":"sevenHole.pAtm","name":"P∞","channel":{"deviceId":"dev-7h","channelIndex":10},"enabled":true},
+		{"role":"sevenHole.tAtm","name":"T∞","channel":{"deviceId":"dev-7h","channelIndex":11},"enabled":true}
+	]
+}`
+
+// TestDecodeCalibrationConfig_SevenHoleAllRoles 验证 11 角色齐全的七孔 DTO 解码后通过 ValidateConfig
+//
+// 测试前置：构造含 11 个 sevenHole.* 角色的 DTO JSON（前端嵌套 channel shape）
+// 测试步骤：DecodeCalibrationConfig 解码 → SevenHoleAlgorithm.ValidateConfig 校验
+// 期待结果：解码无错，11 个 ProbeChannels 角色字符串原样保留，ValidateConfig 返回 nil
+func TestDecodeCalibrationConfig_SevenHoleAllRoles(t *testing.T) {
+	cfg, err := DecodeCalibrationConfig([]byte(sevenHoleAllRolesJSON))
+	if err != nil {
+		t.Fatalf("decode seven-hole config: %v", err)
+	}
+
+	// DTO 通用字段断言
+	if cfg.Type != string(calibration.TypeSevenHole) {
+		t.Fatalf("Type: expected %q, got %q", calibration.TypeSevenHole, cfg.Type)
+	}
+	if cfg.TaskID != "cal-7h" || cfg.DeviceID != "dev-7h" {
+		t.Fatalf("unexpected header: %+v", cfg)
+	}
+	if cfg.SamplesPerPoint != 10 {
+		t.Fatalf("SamplesPerPoint: expected 10, got %d", cfg.SamplesPerPoint)
+	}
+
+	// 11 角色齐全断言
+	if len(cfg.ProbeChannels) != 11 {
+		t.Fatalf("expected 11 probe channels, got %d", len(cfg.ProbeChannels))
+	}
+	// 抽查 P7（中心孔）和 tAtm（温度）两个关键角色，确保嵌套 channel 解码后角色字符串原样保留
+	roleSet := make(map[string]calibration.ProbeChannel, len(cfg.ProbeChannels))
+	for _, ch := range cfg.ProbeChannels {
+		roleSet[ch.Role] = ch
+	}
+	if pc, ok := roleSet["sevenHole.p7"]; !ok {
+		t.Fatalf("missing role sevenHole.p7")
+	} else if pc.DeviceID != "dev-7h" || pc.ChannelIndex != 7 || !pc.Enabled {
+		t.Fatalf("sevenHole.p7 fields not preserved: %+v", pc)
+	}
+	if pc, ok := roleSet["sevenHole.tAtm"]; !ok {
+		t.Fatalf("missing role sevenHole.tAtm")
+	} else if pc.ChannelIndex != 11 {
+		t.Fatalf("sevenHole.tAtm channelIndex: expected 11, got %d", pc.ChannelIndex)
+	}
+
+	// 端到端：解码后的 Config 必须通过 SevenHoleAlgorithm.ValidateConfig
+	algo := calibration.NewSevenHoleAlgorithm()
+	if err := algo.ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig should pass with all 11 roles: %v", err)
+	}
+}
+
+// TestDecodeCalibrationConfig_SevenHoleMissingP7 验证缺少 sevenHole.p7 时 ValidateConfig 返回错误
+//
+// 测试前置：从 sevenHoleAllRolesJSON 中删除 sevenHole.p7 角色行
+// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
+// 期待结果：解码无错（DTO 不校验角色），但 ValidateConfig 返回 "缺少必需通道角色" 错误
+//
+// 此测试对应 spec Task 8 验收标准 "构造缺 sevenHole.p7 的 DTO JSON，解码后 ValidateConfig 返回错误"。
+// 选 p7 是因为中心孔是七孔探针的核心角色（内区公式分母 P7-P̄ 依赖 P7），
+// 缺失会导致内区所有系数无法计算。
+func TestDecodeCalibrationConfig_SevenHoleMissingP7(t *testing.T) {
+	// 通过字符串替换删除 sevenHole.p7 行——保留其他 10 个角色
+	missingP7JSON := strings.Replace(sevenHoleAllRolesJSON,
+		`		{"role":"sevenHole.p7","name":"P7","channel":{"deviceId":"dev-7h","channelIndex":7},"enabled":true},
+`, "", 1)
+
+	cfg, err := DecodeCalibrationConfig([]byte(missingP7JSON))
+	if err != nil {
+		t.Fatalf("decode seven-hole config without p7: %v", err)
+	}
+	// DTO 解码不校验角色——只保留 10 个 ProbeChannels
+	if len(cfg.ProbeChannels) != 10 {
+		t.Fatalf("expected 10 probe channels (missing p7), got %d", len(cfg.ProbeChannels))
+	}
+
+	// ValidateConfig 必须捕获缺失角色
+	algo := calibration.NewSevenHoleAlgorithm()
+	err = algo.ValidateConfig(cfg)
+	if err == nil {
+		t.Fatal("ValidateConfig should return error when sevenHole.p7 is missing")
+	}
+	if !strings.Contains(err.Error(), "sevenHole.p7") {
+		t.Fatalf("error should mention sevenHole.p7, got: %v", err)
+	}
+}
+
+// TestDecodeCalibrationConfig_SevenHoleMissingMultipleRoles 验证缺多个角色时错误信息列出全部缺失角色
+//
+// 测试前置：从 sevenHoleAllRolesJSON 中删除 pTotal 和 pAtm 两个角色
+// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
+// 期待结果：ValidateConfig 返回错误，错误信息同时包含 "sevenHole.pTotal" 和 "sevenHole.pAtm"
+//
+// 此测试覆盖 spec §3.2 规则之外的另一种缺失场景——多角色缺失时错误信息完整。
+// 操作员根据错误信息一次性补齐所有缺失角色，避免逐个补齐多次试错。
+func TestDecodeCalibrationConfig_SevenHoleMissingMultipleRoles(t *testing.T) {
+	missingMultipleJSON := strings.Replace(sevenHoleAllRolesJSON,
+		`		{"role":"sevenHole.pTotal","name":"Pt","channel":{"deviceId":"dev-7h","channelIndex":8},"enabled":true},
+`, "", 1)
+	missingMultipleJSON = strings.Replace(missingMultipleJSON,
+		`		{"role":"sevenHole.pAtm","name":"P∞","channel":{"deviceId":"dev-7h","channelIndex":10},"enabled":true},
+`, "", 1)
+
+	cfg, err := DecodeCalibrationConfig([]byte(missingMultipleJSON))
+	if err != nil {
+		t.Fatalf("decode seven-hole config without pTotal/pAtm: %v", err)
+	}
+	if len(cfg.ProbeChannels) != 9 {
+		t.Fatalf("expected 9 probe channels (missing pTotal+pAtm), got %d", len(cfg.ProbeChannels))
+	}
+
+	algo := calibration.NewSevenHoleAlgorithm()
+	err = algo.ValidateConfig(cfg)
+	if err == nil {
+		t.Fatal("ValidateConfig should return error when multiple roles are missing")
+	}
+	if !strings.Contains(err.Error(), "sevenHole.pTotal") {
+		t.Fatalf("error should mention sevenHole.pTotal, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "sevenHole.pAtm") {
+		t.Fatalf("error should mention sevenHole.pAtm, got: %v", err)
+	}
+}
+
+// TestDecodeCalibrationConfig_SevenHoleDualCoordinates 验证七孔点位的 MotionCoordinates/Region/Sector 字段
+// 通过 DTO 原样保留（CalPoint 在 Task 1 已扩展这三个字段，DTO 的 Points []calibration.CalPoint 直接复用）
+//
+// 测试前置：在 sevenHoleAllRolesJSON 基础上追加两个点位（内区 + 外区各一个），含双坐标
+// 测试步骤：DecodeCalibrationConfig 解码 → 检查 Points 字段
+// 期待结果：内区点 Coordinates={"α":5,"β":-3}，MotionCoordinates={"α":5,"β":-3}，Region="inner"，Sector=7
+//          外区点 Coordinates={"θ":35,"φ":60}，MotionCoordinates={"α":..,"β":..}（按正向公式换算），Region="outer"，Sector=2
+//
+// 此测试覆盖 spec §3.4 双坐标模型——点位生成阶段一次性填 Coordinates + MotionCoordinates，
+// 运行时 moveToPoint 只读 MotionCoordinates，避免运行时换算。
+func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
+	jsonData := sevenHoleAllRolesJSON[:len(sevenHoleAllRolesJSON)-2] + `,
+	"points": [
+		{
+			"id": 1,
+			"coordinates": {"α": 5.0, "β": -3.0},
+			"motionCoordinates": {"α": 5.0, "β": -3.0},
+			"region": "inner",
+			"sector": 7
+		},
+		{
+			"id": 170,
+			"coordinates": {"θ": 35.0, "φ": 60.0},
+			"motionCoordinates": {"α": -20.0, "β": 17.5},
+			"region": "outer",
+			"sector": 2
+		}
+	]
+}`
+
+	cfg, err := DecodeCalibrationConfig([]byte(jsonData))
+	if err != nil {
+		t.Fatalf("decode seven-hole config with dual coordinates: %v", err)
+	}
+
+	if len(cfg.Points) != 2 {
+		t.Fatalf("expected 2 points, got %d", len(cfg.Points))
+	}
+
+	// 内区点
+	inner := cfg.Points[0]
+	if inner.ID != 1 {
+		t.Fatalf("inner point ID: expected 1, got %d", inner.ID)
+	}
+	if inner.Coordinates["α"] != 5.0 || inner.Coordinates["β"] != -3.0 {
+		t.Fatalf("inner Coordinates: expected α=5 β=-3, got %+v", inner.Coordinates)
+	}
+	if inner.MotionCoordinates["α"] != 5.0 || inner.MotionCoordinates["β"] != -3.0 {
+		t.Fatalf("inner MotionCoordinates: expected α=5 β=-3, got %+v", inner.MotionCoordinates)
+	}
+	if inner.Region != "inner" || inner.Sector != 7 {
+		t.Fatalf("inner Region/Sector: expected inner/7, got %q/%d", inner.Region, inner.Sector)
+	}
+
+	// 外区点
+	outer := cfg.Points[1]
+	if outer.ID != 170 {
+		t.Fatalf("outer point ID: expected 170, got %d", outer.ID)
+	}
+	if outer.Coordinates["θ"] != 35.0 || outer.Coordinates["φ"] != 60.0 {
+		t.Fatalf("outer Coordinates: expected θ=35 φ=60, got %+v", outer.Coordinates)
+	}
+	if outer.MotionCoordinates["α"] != -20.0 || outer.MotionCoordinates["β"] != 17.5 {
+		t.Fatalf("outer MotionCoordinates: expected α=-20 β=17.5, got %+v", outer.MotionCoordinates)
+	}
+	if outer.Region != "outer" || outer.Sector != 2 {
+		t.Fatalf("outer Region/Sector: expected outer/2, got %q/%d", outer.Region, outer.Sector)
+	}
+
+	// 端到端：含双坐标点位的 Config 也必须通过 ValidateConfig
+	algo := calibration.NewSevenHoleAlgorithm()
+	if err := algo.ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig should pass with dual coordinates: %v", err)
+	}
+}
+
+// TestDecodeCalibrationConfig_SevenHoleSamplesPerPointZero 验证 SamplesPerPoint=0 时 ValidateConfig 返回错误
+//
+// 测试前置：在 sevenHoleAllRolesJSON 基础上把 samplesPerPoint 改为 0
+// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
+// 期待结果：ValidateConfig 返回 "samplesPerPoint 必须大于0" 错误
+//
+// 此测试覆盖 spec Task 5 中 ValidateConfig 的另一条校验路径——
+// 即使 11 角色齐全，SamplesPerPoint=0 也无法采集（会导致除零或无限循环）。
+func TestDecodeCalibrationConfig_SevenHoleSamplesPerPointZero(t *testing.T) {
+	zeroSamplesJSON := strings.Replace(sevenHoleAllRolesJSON,
+		`"samplesPerPoint": 10`, `"samplesPerPoint": 0`, 1)
+
+	cfg, err := DecodeCalibrationConfig([]byte(zeroSamplesJSON))
+	if err != nil {
+		t.Fatalf("decode seven-hole config with samplesPerPoint=0: %v", err)
+	}
+
+	algo := calibration.NewSevenHoleAlgorithm()
+	err = algo.ValidateConfig(cfg)
+	if err == nil {
+		t.Fatal("ValidateConfig should return error when samplesPerPoint=0")
+	}
+	if !strings.Contains(err.Error(), "samplesPerPoint") {
+		t.Fatalf("error should mention samplesPerPoint, got: %v", err)
 	}
 }

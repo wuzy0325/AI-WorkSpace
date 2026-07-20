@@ -41,7 +41,7 @@ export function getParamValue(result: InterpolationResult, param: VisualizationP
     case 'dynamicPressure':
       return result.dynamicPressure
     case 'density':
-      return result.density
+      return result.density ?? null
     case 'alpha':
       return result.alpha
     case 'beta':

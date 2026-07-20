@@ -96,3 +96,29 @@ export const MotionControllerProfile = motion$0.MotionControllerProfile;
  * ==================== Motion Types ====================
  * @typedef {motion$0.MotionControllerProfile} MotionControllerProfile
  */
+
+/**
+ * ==================== Calibration Types ====================
+ *
+ * 七孔探针校准相关类型（spec Task 13）
+ * SevenHoleConfigDTO：前端"配置向导"提交的七孔点位生成参数（α/β/θ/φ 范围与步长），
+ *   经 backend binding 透传到 usecase.PreviewSevenHolePoints，纯计算不涉及 I/O。
+ * SevenHolePreviewResult：点位预览结果，含完整点位列表 + 内/外区聚合统计，
+ *   供前端在启动校准前确认点位规模（如 673 点 = 169 内区 + 504 外区）。
+ * SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点类型，
+ *   Wails binding 通过 GenericResponse.Data 暴露给前端。
+ */
+export const SevenHoleConfigDTO = calibration$0.SevenHoleConfig;
+
+/**
+ * ==================== Calibration Types ====================
+ *
+ * 七孔探针校准相关类型（spec Task 13）
+ * SevenHoleConfigDTO：前端"配置向导"提交的七孔点位生成参数（α/β/θ/φ 范围与步长），
+ *   经 backend binding 透传到 usecase.PreviewSevenHolePoints，纯计算不涉及 I/O。
+ * SevenHolePreviewResult：点位预览结果，含完整点位列表 + 内/外区聚合统计，
+ *   供前端在启动校准前确认点位规模（如 673 点 = 169 内区 + 504 外区）。
+ * SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点类型，
+ *   Wails binding 通过 GenericResponse.Data 暴露给前端。
+ * @typedef {calibration$0.SevenHoleConfig} SevenHoleConfigDTO
+ */

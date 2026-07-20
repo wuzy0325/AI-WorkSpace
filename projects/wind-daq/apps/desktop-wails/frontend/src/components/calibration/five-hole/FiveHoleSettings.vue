@@ -152,6 +152,8 @@ const saveFileName = ref('')
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
+// 球罐压力通道：仅用于前端实时显示压力值，不参与闸门判定；未配置 deviceId 时 UI 显示"暂无数据"
+const sphereTankPressureChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
 const machNumberPrecision = ref<number>(DEFAULT_CALIBRATION_MACH_PRECISION)
 const velocityPrecision = ref<number>(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
 
@@ -364,6 +366,10 @@ async function saveConfig() {
         enabled: sphereTankGateEnabled.value,
         waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
         stableTimeChannel: { ...sphereTankStableChannel.value },
+        // 仅当配置了压力通道 deviceId 时才落盘，避免写入空 ChannelRef 造成后端误订阅
+        ...(sphereTankPressureChannel.value.deviceId
+          ? { pressureChannel: { ...sphereTankPressureChannel.value } }
+          : {}),
       },
     }
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
@@ -426,6 +432,10 @@ async function loadSavedConfig() {
       sphereTankGateEnabled.value = config.sphereTankGate.enabled
       sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
       sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
+      // 压力通道为可选字段，未配置时回退为空 deviceId（UI 显示"暂无数据"）
+      sphereTankPressureChannel.value = config.sphereTankGate.pressureChannel
+        ? { ...config.sphereTankGate.pressureChannel }
+        : { deviceId: '', channelIndex: 0 }
     }
   } catch (err) {
     // 首次打开无配置（404）属正常，其他异常需提示
@@ -773,16 +783,7 @@ function getChannelGroupLabel(groupKey: string): string {
           </div>
         </UiPanel>
 
-        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
-             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
-             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
-        <MotionSafetyPanel
-          v-model:motion-safety="motionSafety"
-          :motion-axes="motionAxes"
-          :t="(t as unknown as Record<string, string>)"
-        />
-
-        <!-- 球罐判定门控 -->
+        <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
         <UiPanel class="section-card">
           <template #header>
             <div class="section-header">
@@ -809,10 +810,34 @@ function getChannelGroupLabel(groupKey: string): string {
                 placeholder="选择通道"
               />
             </div>
+            <!-- 球罐压力通道：仅用于实时显示压力值，不参与闸门判定 -->
+            <div class="field">
+              <span class="field-label">{{ t.wf_spherePressureDevice }}</span>
+              <UiSelect v-model="sphereTankPressureChannel.deviceId" :options="deviceList.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" :fallback="false" />
+            </div>
+            <div class="field">
+              <span class="field-label">{{ t.wf_spherePressureChannel }}</span>
+              <UiSelect
+                :model-value="sphereTankPressureChannel.channelIndex >= 0 ? String(sphereTankPressureChannel.channelIndex) : ''"
+                @update:model-value="sphereTankPressureChannel.channelIndex = $event !== '' ? Number($event) : 0"
+                :options="channelIndexOptions"
+                placeholder="选择通道"
+              />
+            </div>
             <p class="sphere-hint">球罐压力稳定后才开始采集，避免启动瞬态影响数据质量</p>
+            <p class="sphere-hint muted">{{ t.wf_spherePressureHint }}</p>
           </div>
           <p v-else class="empty-hint">未启用球罐判定，校准将按驻留时间直接采集</p>
         </UiPanel>
+
+        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
+             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
+        <MotionSafetyPanel
+          v-model:motion-safety="motionSafety"
+          :motion-axes="motionAxes"
+          :t="(t as unknown as Record<string, string>)"
+        />
       </div>
 
       <!-- 步骤 3：确认保存 -->

@@ -27,7 +27,7 @@ export {
 } from './traversal'
 
 /** 校准类型 */
-export type CalibrationType = 'five-hole' | 'three-hole' | 'total-pressure' | 'total-temperature'
+export type CalibrationType = 'five-hole' | 'three-hole' | 'total-pressure' | 'total-temperature' | 'seven-hole'
 
 /** 校准状态 */
 // 'stopped'：用户主动 stop 后的终态（spec Decision #4 / I7）——保留已采数据可导出，与 idle 区分
@@ -69,6 +69,23 @@ export type ProbeChannelRole =
   | 'totalTemperature.tTotal'
   | 'totalTemperature.tStatic'
   | 'totalTemperature.tAtm'
+  // 七孔探针 11 个必需角色（spec §6.1）：
+  //   - sevenHole.p1~p7：7 个压力孔（外围 6 孔 P1~P6 + 中心孔 P7）
+  //   - sevenHole.pTotal：风洞参考总压（K0/Ks/Ma 公式分母来源）
+  //   - sevenHole.pTunnelStatic：风洞参考静压（Ks/Ma 公式分母来源）
+  //   - sevenHole.pAtm：大气压力（A→C 边界转换用）
+  //   - sevenHole.tAtm：大气温度（静温/真空速计算用）
+  | 'sevenHole.p1'
+  | 'sevenHole.p2'
+  | 'sevenHole.p3'
+  | 'sevenHole.p4'
+  | 'sevenHole.p5'
+  | 'sevenHole.p6'
+  | 'sevenHole.p7'
+  | 'sevenHole.pTotal'
+  | 'sevenHole.pTunnelStatic'
+  | 'sevenHole.pAtm'
+  | 'sevenHole.tAtm'
 
 /** 测点配置 */
 export interface ProbeChannelConfig {
@@ -104,6 +121,8 @@ export interface SphereTankGateConfig {
   /** 球罐判定总超时（秒），<=0 时使用默认 300 秒 */
   timeoutSec?: number
   stableTimeChannel: ChannelRef
+  /** 球罐压力通道引用，仅用于前端实时显示当前球罐压力值，不参与闸门判定逻辑 */
+  pressureChannel?: ChannelRef
 }
 
 /** 采样批量读取策略 */
@@ -236,6 +255,140 @@ export interface TotalPressureDataPoint {
   endTime: number
 }
 
+// ==================== 七孔探针校准类型（spec Task 18） ====================
+//
+// 与后端 internal/core/calibration/seven_hole.go 同名结构对齐：
+//   - SevenHoleMode：校准模式枚举（完整 / 数据集）
+//   - SevenHoleConfig：点位生成参数（α/β/θ/φ 范围与步长），透传到后端 GenerateSevenHolePoints
+//   - SevenHolePreviewResult：点位预览结果（点位列表 + 内/外区点数聚合）
+//   - SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点
+//
+// 字段语义参考 spec §3.1 / §4.1 / §4.2 / §6.2，及后端 seven_hole.go 同名结构注释。
+
+/** 七孔校准模式（spec §3.1）
+ * - 'full'：完整模式，外区 θ/φ 由用户配置范围+步长生成（最多 673 点 = 169 内 + 504 外）
+ * - 'dataset'：数据集模式，外区 θ 硬编码 {30°,35°,40°,45°}，φ 按扇区独立配置（481 点 = 169 内 + 312 外）
+ */
+export type SevenHoleMode = 'full' | 'dataset'
+
+/** 七孔点位生成配置（与后端 calibration.SevenHoleConfig 对齐）
+ *
+ * 字段语义（后端 seven_hole.go L486-510）：
+ *   - mode：校准模式（full / dataset），决定外区 θ 与 φ 的取值策略
+ *   - innerAlphaMin/Max/Step：内区 α 范围与步长（度），完整/数据集模式都使用此配置
+ *   - innerBetaMin/Max/Step：内区 β 范围与步长（度）
+ *   - outerThetaMin/Max/Step：外区 θ 范围与步长（度），仅完整模式生效；数据集模式忽略并使用硬编码 {30°,35°,40°,45°}
+ *   - outerPhiMin/Max/Step：外区 φ 范围与步长（度），仅完整模式生效；数据集模式按扇区独立配置
+ *   - serpentine：是否启用蛇形走位（true 时奇数行 α/θ 反向）
+ */
+export interface SevenHoleConfig {
+  mode: SevenHoleMode
+  innerAlphaMin: number
+  innerAlphaMax: number
+  innerAlphaStep: number
+  innerBetaMin: number
+  innerBetaMax: number
+  innerBetaStep: number
+  outerThetaMin: number
+  outerThetaMax: number
+  outerThetaStep: number
+  outerPhiMin: number
+  outerPhiMax: number
+  outerPhiStep: number
+  serpentine: boolean
+}
+
+/** 七孔点位预览结果（与后端 calibration.SevenHolePreviewResult 对齐）
+ *
+ * 用于"配置向导"实时显示总点数（如 673 点 = 169 内区 + 504 外区），
+ * 帮助用户在启动校准前确认点位规模与预计耗时。
+ */
+export interface SevenHolePreviewResult {
+  /** 完整点位列表（含内区+外区，按蛇形/数据集顺序排列） */
+  points: CalibrationPoint[]
+  /** 总点数 = innerCount + outerCount */
+  totalCount: number
+  /** 内区点数（α-β 网格点数） */
+  innerCount: number
+  /** 外区点数（6 扇区 × θ × φ 网格点数） */
+  outerCount: number
+}
+
+/** 七孔探针原始数据（与后端 SevenHoleRawData 对齐）
+ *
+ * 压力基准（spec §2.1）：
+ *   - P1~P7、pTotal、pStatic 全部为表压（A 基准，相对环境大气压，可正可负）
+ *   - 系数计算直接使用表压（B 基准 = A 基准，因压差比同基准等价）
+ *   - 仅马赫数计算入口处把 pTotal/pStatic 转绝压（A→C 边界，仅转换一次）
+ *
+ * 指针字段语义：pTotal/pStatic/tTunnel 为可选（缺失时 K0/Ks/Ma/V 跳过计算），
+ * 与五孔/三孔/总压的 *float64 nil 语义一致。
+ */
+export interface SevenHoleRawData {
+  p1: number
+  p2: number
+  p3: number
+  p4: number
+  p5: number
+  p6: number
+  p7: number
+  pAtm: number
+  tAtm: number
+  pTotal?: number
+  pStatic?: number
+  tTunnel?: number
+}
+
+/** 七孔探针系数（与后端 SevenHoleCoefficients 对齐）
+ *
+ * 内区系数（P7 最大时，spec §4.1 公式 1-8）：
+ *   - Kalpha / Kbeta：方向系数
+ *   - K0 / Ks：总压/静压系数
+ *
+ * 外区系数（Pn 最大时 n∈{1..6}，spec §4.2 公式 9-12）：
+ *   - Ktheta / Kphi：方向系数（Kphi 不取绝对值，spec §4.3）
+ *   - K0Outer / KsOuter：外区总压/静压系数
+ *
+ * 马赫数/速度（可选，需 pTotal/pStatic/pAtm 齐全）：
+ *   - machNumber / velocity
+ */
+export interface SevenHoleCoefficients {
+  // 内区系数
+  Kalpha: number
+  Kbeta: number
+  K0: number
+  Ks: number
+  // 外区系数
+  Ktheta: number
+  Kphi: number
+  K0Outer: number
+  KsOuter: number
+  // 气动参数（可选）
+  machNumber?: number
+  velocity?: number
+}
+
+/** 七孔探针数据点（与后端 SevenHoleDataPoint 对齐） */
+export interface SevenHoleDataPoint {
+  pointId: number
+  /** 双坐标（spec §3.4）：logicalCoordinates=θ/φ（外区）或 α/β（内区），motionCoordinates=α/β（运动下发） */
+  coordinates: Record<string, number>
+  /** 运动下发坐标（α/β 顺序，spec Task 10） */
+  motionCoordinates?: Record<string, number>
+  /** 当前分区（"inner" / "outer"） */
+  region: string
+  /** 当前扇区编号（内区=7，外区=1..6） */
+  sector: number
+  /** 边界点标记（空串=非边界，"P7-Pn"或"Pn-Pm"=并列边界） */
+  boundaryFlag: string
+  rawData: SevenHoleRawData
+  coefficients: SevenHoleCoefficients
+  sampleCount: number
+  stdDev?: number
+  startTime: number
+  endTime: number
+}
+
 /** 校准数据点（完整记录） */
 export interface CalibrationDataPoint {
   pointId: number
@@ -255,6 +408,7 @@ export type CalibrationAnyDataPoint =
   | ThreeHoleDataPoint
   | TotalPressureDataPoint
   | TotalTemperatureCalibrationPoint
+  | SevenHoleDataPoint
 
 /**
  * 校准错误码（与后端 traversal.ErrorCode 一一对应）。
@@ -287,6 +441,8 @@ export interface CalibrationConfig {
   threeHoleLayout?: ThreeHolePointLayout
   totalPressureLayout?: TotalPressurePointLayout
   totalTemperatureLayout?: TotalTemperaturePointLayout
+  /** 七孔探针点位布局配置（type='seven-hole' 时必填） */
+  sevenHoleLayout?: SevenHoleConfig
   totalTemperatureConfig?: Omit<TotalTemperatureCalibrationConfig, 'type' | 'name' | 'savePath' | 'samplesPerPoint'>
   derivedValuePrecision?: CalibrationDerivedValuePrecision
   /** 界面实时数据刷新频率（Hz），影响压力/角度等 UI 更新节奏。缺省由 store 默认值决定。 */

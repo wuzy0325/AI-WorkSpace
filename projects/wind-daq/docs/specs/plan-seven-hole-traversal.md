@@ -3,7 +3,7 @@
 > 关联规格：[spec-seven-hole-traversal.md](./spec-seven-hole-traversal.md)
 > 关联任务：[tasks-seven-hole-traversal.md](./tasks-seven-hole-traversal.md)
 > 关联文档（同套流程先例）：[plan-seven-hole-calibration.md](./plan-seven-hole-calibration.md)
-> 状态：**待人工批准后进入 BUILD**
+> 状态：**已完成**（2026-07 修订：探针切换改为双变体并存语义，见 §2.3/§5.2.1/§6.2）
 > 日期：2026-07-17
 
 ## Overview
@@ -19,7 +19,7 @@
 | usecase 结构重构 | 唯一一处：新增 `traversal_probe.go` per-probe 策略注册表（`pressureLabels / isLoaded / calculate`，显式 receiver 签名），`BuildRawPressure` 与 CSV 标签归一化改为查表；probeType 变更时清空非激活探针插值器字段 | 消除 P1..P5 硬编码散点（spec 附录 B「五孔硬编码点」）；五孔行为由既有测试锁定不变；防陈旧校准误过前置检查 |
 | 策略实例语义 | 包级策略表保持无状态，所有函数显式接收 `*TraversalManager` | 避免闭包捕获 Manager，保证多实例运行和并行测试之间不共享状态 |
 | Manager 插值器持有方式 | 新增独立字段 `sevenHoleInterpolator` + `SetSevenHoleInterpolator` + `ClearProbeInterpolator`，五孔字段与访问器原样 | 类型不同且语义独立；通过显式 clear API 管理生命周期，五孔路径（含 `Interpolator()`、`CheckPreconditions`、`InterpolationCache`）零接触 |
-| 插值器生命周期 | 增加按探针类型清除能力和 `clearInterpolator` API；切换探针时后端清除成功后才原子更新前端配置 | 防止只清前端布尔值而继续复用陈旧 PRB；清除失败时完整保留原状态 |
+| 插值器生命周期 | 双变体并存：切换探针不清理任何插值器；`clearInterpolator` API 仅作显式清除能力保留（2026-07 修订，替代原"切换时清除成功后才原子更新前端配置"） | 计算/前置检查始终经策略表按当前 `config.ProbeType` 取用插值器，未激活插值器保持挂载但不可达，无需随切换清除；两套配置互不丢失，用户体验更好 |
 | 越界行为 | 不外推，`IsValid=false` + 明确 Warning；不实现 SKILL.md §3.8 `beyond_border` 外推 | 与五孔包既定行为对齐（spec §4）；外推会静默放大误差 |
 | Pt<Ps 处理 | 返回 error——SKILL.md §5 明确指出 Python `math.fabs` 静默取绝对值是缺陷，Go 有意不复刻（与 Python 行为的有意差异，spec §4） | 防止无效 Pt 继续代入开方；有意的跨包差异，usecase 侧按「插值失败、该点不写计算列」处理（spec §4） |
 | 外区 .prb 行数 | 每份 52 数据行（4×13 网格；首行表头仅跳过不解析，兼容尺寸/列名表头） | `big_create_square` 12 区间需 13 条网格线；数据集每区 52 个标定点佐证（spec §2.1） |
@@ -27,7 +27,7 @@
 | `calculateRealtime` 请求体 | 增加可选 `probeType` 判别字段并升级为含 P6/P7 的超集 DTO；七孔必须显式传类型 | 旧五孔 body 仍是合法子集；避免依赖 Manager 隐式状态或 P6/P7 数值猜测请求类型 |
 | 七孔实时缓存 | 一期不复用 `internal/core/realtime.InterpolationCache`（其类型绑定五孔） | 泛化缓存属独立优化（spec §10 Q1）；七孔为新增路径，无回归风险 |
 | `GetValidRange` 语义 | 返回内区网格角域 ±30°（取自 7.prb 数据行），仅供 UI 参考，不用于事后 invalid | 角度有效性已由模式判定的多边形测试内含（spec §2.2 GetValidRange 语义注） |
-| 配置模型 | 前端内部使用 `probeType` 判别联合；旧扁平五孔 JSON 仅在读取边界兼容并立即规范化 | 使五孔/七孔混合配置不可表示；未知非空 `probeType` 必须报错 |
+| 配置模型 | 持久化 JSON 双变体并存（五孔字段 + `sevenHolePrb` + `inactiveProbeChannels`），`probeType` 仅标记激活方；类型层按激活变体判别联合建模（2026-07 修订，替代原"互斥变体"决策） | 两套探针配置各自独立保留、切换不丢失；未激活变体仅作持久化数据透传，不进入运行时判别配置；未知非空 `probeType` 仍必须报错 |
 | 前端组件边界 | 一个 `TraversalPrbStep` 公共壳 + `FiveHolePrbConfig` / `SevenHolePrbConfig` 两个子组件 | 复用同一遍历 UI，又避免大型向导累积两套条件状态 |
 | 角度展示语义 | 用 `TRAVERSAL_PROBE_PRESENTATION` 元数据统一标题及 Alpha/Beta 标签 | 保持公共结果字段兼容，同时防止七孔角度被按五孔语义误读 |
 | CSV 原始列序 | `buildLabelEntries` 优先级表追加 `"P6","P7"`（其余零改动；计算列不变） | 全 CSV 写入路径共用此函数，是控制列序的唯一最小改动点 |
@@ -42,7 +42,7 @@
 4. 配置中 `probeType` 缺省时仅在读取旧配置边界按五孔处理；未知非空值报错，不得静默降级。
 5. `traversal.pProbePressureType` 的表压/绝压开关语义对七孔 P1..P7 同样适用（作用于探针孔道，Patm/Tatm 不参与）。
 6. 无标签原始数据的 legacy 回退（按 CH 顺序映射 P1..P5）仅服务五孔旧配置；七孔配置必定携带 9 角色标签（spec §5.2）。
-7. 新保存的七孔配置不携带五孔专属字段；API/保存边界发现混合字段时返回校验错误。只有读取历史五孔配置时允许兼容适配。
+7. 五孔字段与 `sevenHolePrb` 在配置 JSON 中并存合法（双变体语义）；`probeType` 仅标记激活方，后端仅恢复激活变体数据源；激活七孔必须 1+6 文件齐全，未知非空 `probeType` 报错。只有读取历史五孔配置（无 probeType）时按五孔规范化。
 8. 七孔校准模块（types.go 骨架之后的 tasks 2-24）未实施不影响本模块：遍历只依赖 `.prb` 文件集，来源不限。
 9. 外区角域上限为 θ=45°（a∈{30,35,40,45}，每份 52 数据行）。若未来产品要求 θ>45°，`.prb` 必须增加 a 网格线（行数不再是 52），加载校验与对拍夹具须同步更新——属 spec §10 Q3 的另立增补，本期不预留兼容。
 
@@ -86,7 +86,7 @@ Phase 4  端到端验收 —— 依赖 Task 15 完成
 | θ=30° 边界处大小角度判定抖动 | 边界点无效或角度跳变 | 判定纯数据驱动（`little_create_line` 边界点射线法），不写死角度阈值；边界用例（±30°、交界网格点）进对拍集合；交界网格点被两边同时覆盖时按内区优先（与 Python 分支顺序一致） |
 | 前端向导复杂度上升（七孔 7 文件选择易选错） | 配置错误、用户困惑 | 探针选择放第 1 步（硬件），切换时重置通道预设并清空 PRB 状态（带确认提示）；七孔模式隐藏无关控件（老/新算法、单/多 PRB）；内区文件单独置顶 + 六扇区固定顺序标签；复用泛型组件（`TraversalHardwareStep` 通道表零改动） |
 | 公共向导累积大量五孔/七孔条件状态 | 修改一类探针误伤另一类，恢复逻辑难验证 | `TraversalPrbStep` 只作公共壳；两类 PRB 配置各自独立组件；`TraversalSettings` 只持有一个判别配置对象 |
-| 切换探针后端仍保留旧插值器 | 前端显示未加载但计算仍使用旧 PRB | 切换确认后先调用 `clearInterpolator`；失败则不改变选择；成功后原子重置配置和实时结果 |
+| 切换探针后陈旧校准被误用 | 非激活插值器的结果被用于计算/前置检查 | 计算与前置检查仅经策略表按当前 `config.ProbeType` 取用插值器（未激活插值器保持挂载但不可达）；切换后前端经 `checkPreconditions` 复核后端真实加载状态；`clearInterpolator` 保留为显式清除能力 |
 | 数据集 GBK 编码读取乱码 | 夹具生成失败或数值错 | 夹具脚本先转码副本（不改原文件），按列位置读数值；生成后对 481 点做完整性断言（行数、NaN 检查） |
 | 夹具脚本与 `seven_hole.py` API 漂移 | 夹具无法重建或静默生成错误 golden | 脚本文件头记录依赖的 `cal_ab` 契约；生成时断言 481 点和每份 PRB 行数；Python API/格式/数据集变化时强制重生成并审查产物 diff |
 | 「不外推」与需求方预期不符 | 验收争议 | spec §4 已记录决策与五孔证据；评审时显式确认；如改为允许外推，仅影响 `outer_zone` 一个函数 + 对拍加用例，改动面可控 |

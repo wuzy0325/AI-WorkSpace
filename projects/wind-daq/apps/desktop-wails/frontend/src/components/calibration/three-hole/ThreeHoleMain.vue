@@ -392,7 +392,6 @@ onUnmounted(() => {
         </UiButton>
         <div>
           <h1 class="text-base font-bold text-[var(--text-primary)]">{{ t.th_threeHoleCalibration }}</h1>
-          <p class="text-xs text-[var(--text-muted)]">Three-Hole Probe Calibration</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -597,7 +596,14 @@ onUnmounted(() => {
               </span>
               <span class="text-[var(--text-muted)]">|</span>
               <span class="font-mono font-bold text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</span>
-              <button class="text-[var(--text-muted)] hover:text-[var(--accent-primary)]" :title="t.th_editSphereTankGateConfig" @click="emit('openSettings')">{{ t.th_edit }}</button>
+              <!-- 球罐压力实时显示：仅展示，不参与判定；
+                   无数据时显示固定宽度占位"--.--"避免布局抖动，单位 kPa 始终显示避免"没配置"错觉 -->
+              <span class="text-[var(--text-muted)]">|</span>
+              <span class="text-[var(--text-muted)]">{{ t.wf_spherePressureLabel }}</span>
+              <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[56px] text-right">
+                {{ sphereTankGate.pressureValue.value !== null ? sphereTankGate.pressureValue.value.toFixed(2) : '--.--' }}
+              </span>
+              <span class="text-[var(--text-muted)]">{{ t.wf_spherePressureUnit }}</span>
             </div>
           </div>
         </div>

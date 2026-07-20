@@ -34,10 +34,27 @@ const THREE_HOLE_ROLE_I18N_KEY: Record<string, string> = {
   'threeHole.pStatic': 'threeHolePStatic',
 }
 
+// 七孔探针通道角色 → i18n key（spec Task 20）
+// 11 个必需角色：7 个压力孔 + 风洞总压/静压 + 大气压/温度
+const SEVEN_HOLE_ROLE_I18N_KEY: Record<string, string> = {
+  'sevenHole.p1': 'sh_sevenHoleP1',
+  'sevenHole.p2': 'sh_sevenHoleP2',
+  'sevenHole.p3': 'sh_sevenHoleP3',
+  'sevenHole.p4': 'sh_sevenHoleP4',
+  'sevenHole.p5': 'sh_sevenHoleP5',
+  'sevenHole.p6': 'sh_sevenHoleP6',
+  'sevenHole.p7': 'sh_sevenHoleP7',
+  'sevenHole.pAtm': 'sh_sevenHolePAtm',
+  'sevenHole.tAtm': 'sh_sevenHoleTAtm',
+  'sevenHole.pTotal': 'sh_sevenHolePTotal',
+  'sevenHole.pTunnelStatic': 'sh_sevenHolePTunnelStatic',
+}
+
 // 合并后的统一映射表，供所有探针类型共用
 export const PROBE_CHANNEL_ROLE_I18N_KEY: Record<string, string> = {
   ...FIVE_HOLE_ROLE_I18N_KEY,
   ...THREE_HOLE_ROLE_I18N_KEY,
+  ...SEVEN_HOLE_ROLE_I18N_KEY,
 }
 
 /**

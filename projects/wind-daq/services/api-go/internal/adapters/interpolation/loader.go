@@ -2,6 +2,7 @@ package interpolation
 
 import (
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 )
 
 // Loader 实现 ports.InterpolatorLoader，负责将 PRB / CSV / 多 PRB 文件
@@ -46,4 +47,24 @@ func (Loader) LoadMultiPRB(filePaths []string, machNumbers []float64, mode corei
 		interpolator.SetInterpolationMode(mode)
 	}
 	return interpolator, nil
+}
+
+// LoadSevenHolePRB 加载七孔 .prb 文件集，错误透传。
+// 同 LoadPRB：失败路径必须显式返回 nil 接口值，防止外层接口判 nil 失效。
+func (Loader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+	interp, err := LoadSevenHolePrbFiles(innerPath, outerPaths)
+	if err != nil {
+		return nil, err
+	}
+	return interp, nil
+}
+
+// LoadSevenHoleCalibrationCSV 从七孔校准 CSV 文件集构建插值器，错误透传。
+// 同 LoadPRB：失败路径显式返回 nil 接口值（typed-nil 防护）。
+func (Loader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+	interp, err := LoadSevenHoleCalibrationCsvFiles(innerPath, outerPaths)
+	if err != nil {
+		return nil, err
+	}
+	return interp, nil
 }

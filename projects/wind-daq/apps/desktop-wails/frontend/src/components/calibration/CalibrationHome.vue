@@ -10,6 +10,7 @@ import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.v
 import IconCalibrationThreeHole from '@components/icons/IconCalibrationThreeHole.vue'
 import IconCalibrationTotalPressure from '@components/icons/IconCalibrationTotalPressure.vue'
 import IconCalibrationTotalTemperature from '@components/icons/IconCalibrationTotalTemperature.vue'
+import IconCalibrationSevenHole from '@components/icons/IconCalibrationSevenHole.vue'
 
 const emit = defineEmits<{
   selectCalibration: [type: CalibrationType]
@@ -131,6 +132,31 @@ const calibrationTypes = [
       gradient: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)',
       gradientSoft: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
     }
+  },
+  // 七孔探针校准卡片（spec Task 24）
+  // 品牌色 #7c3aed（紫色）—— spec Task 24 Acceptance criteria 明确指定
+  // 位置在五孔/三孔/总压/总温之后，与既有四类卡片范式一致
+  {
+    type: 'seven-hole' as CalibrationType,
+    nameKey: 'ch_sevenHoleName',
+    subtitle: 'Seven-Hole Probe',
+    descKey: 'ch_sevenHoleDesc',
+    featureKeys: ['ch_sevenHoleFeat1', 'ch_sevenHoleFeat2', 'ch_sevenHoleFeat3'],
+    colors: {
+      primary: '#7c3aed',
+      primaryLight: '#a78bfa',
+      primaryDark: '#5b21b6',
+      bg: '#f5f3ff',
+      bgHover: '#ede9fe',
+      border: '#ddd6fe',
+      borderHover: '#7c3aed',
+      text: '#4c1d95',
+      textLight: '#7c3aed',
+      accent: '#6d28d9',
+      shadow: 'rgba(124, 58, 237, 0.15)',
+      gradient: 'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
+      gradientSoft: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+    }
   }
 ]
 
@@ -144,6 +170,7 @@ function getIconComponent(type: CalibrationType) {
     case 'three-hole': return IconCalibrationThreeHole
     case 'total-pressure': return IconCalibrationTotalPressure
     case 'total-temperature': return IconCalibrationTotalTemperature
+    case 'seven-hole': return IconCalibrationSevenHole
     default: return IconCalibrationFiveHole
   }
 }

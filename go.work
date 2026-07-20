@@ -2,6 +2,7 @@ go 1.26.1
 
 use (
 	./projects/1604Cal
+	./projects/probe-interpolator/apps/desktop-wails
 	./projects/three-hole-interpolator/apps/desktop-win7
 	./projects/three-hole-interpolator/apps/desktop-win7-walk
 	programs/p1604-unit-diag
@@ -16,6 +17,7 @@ use (
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/algorithms/go/fivehole
+	shared/algorithms/go/sevenhole
 	shared/device-sdk/go
 	shared/motion-control/go
 )

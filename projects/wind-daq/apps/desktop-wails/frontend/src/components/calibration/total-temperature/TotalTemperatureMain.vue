@@ -279,7 +279,6 @@ onUnmounted(() => {
         </UiButton>
         <div>
           <h1 class="text-base font-bold text-[var(--text-primary)]">{{ t.tt_totalTemperatureCalibration }}</h1>
-          <p class="text-xs text-[var(--text-muted)]">Total Temperature Probe Calibration</p>
         </div>
       </div>
       <div class="flex items-center gap-2">

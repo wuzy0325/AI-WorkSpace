@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { useThemeStore } from '@stores/themeStore'
+import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
+import { wailsApi, isWailsAvailable } from '@api/wails-adapter'
 import UiToastHost from '@components/feedback/UiToastHost.vue'
 import UiConfirmDialog from '@components/feedback/UiConfirmDialog.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
-import { computed } from 'vue'
+import { computed, onMounted, onBeforeUnmount } from 'vue'
 import type { GlobalThemeOverrides } from 'naive-ui'
 
 const themeStore = useThemeStore()
+const feedbackStore = useFeedbackStore()
+const i18n = useI18nStore()
 
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const isDark = themeStore.theme === 'dark'
@@ -79,6 +84,48 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
       color: isDark ? 'rgba(255, 255, 255, 0.03)' : '#ffffff',
     },
   }
+})
+
+// 退出确认对话框状态：
+//   - exitDialogShowing 防止用户连续点 X 触发多次 confirm 弹窗
+//   - 用户在 confirm 弹窗中点"退出" → 调用后端 RequestExit 触发完整关闭流程
+//   - 用户点"取消" → 关闭弹窗，应用保持运行
+let exitDialogShowing = false
+let cleanupExitListener: (() => void) | null = null
+
+async function handleExitRequest(): Promise<void> {
+  // 防止重复弹窗（用户连续点 X 时后端会推多次 app:exit-requested 事件）
+  if (exitDialogShowing) return
+  exitDialogShowing = true
+  try {
+    const confirmed = await feedbackStore.confirm(i18n.t.exitConfirmMessage, {
+      title: i18n.t.exitConfirmTitle,
+      confirmText: i18n.t.exitConfirmOk,
+      cancelText: i18n.t.exitConfirmCancel,
+    })
+    if (confirmed) {
+      // 用户确认退出，调用后端 RequestExit binding
+      // 后端置 userConfirmedExit=true 后调用 application.Quit()，
+      // cleanup → window.Close() → hook 再次触发但 userConfirmedExit=true 放行 → 真正关闭
+      await wailsApi.app.requestExit()
+    }
+  } finally {
+    exitDialogShowing = false
+  }
+}
+
+onMounted(() => {
+  // 仅在 Wails 环境注册退出请求监听（浏览器预览/Spike 模式无后端事件源）
+  if (isWailsAvailable()) {
+    cleanupExitListener = wailsApi.app.onExitRequested(() => {
+      void handleExitRequest()
+    })
+  }
+})
+
+onBeforeUnmount(() => {
+  cleanupExitListener?.()
+  cleanupExitListener = null
 })
 </script>
 

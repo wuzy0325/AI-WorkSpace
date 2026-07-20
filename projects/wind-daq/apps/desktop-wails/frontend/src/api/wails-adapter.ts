@@ -11,6 +11,18 @@ export interface GenericResponse {
   Success: boolean;
   /** @deprecated Wails 实际返回小写 error；保留 Error 仅用于兼容旧调用点 */
   Error?: string;
+  /**
+   * 返回数据载荷（与后端 GenericResponse.Data 对齐，spec Task 13 起新增）。
+   *
+   * 仅在需要返回数据的 binding（如 CalibrationPreviewSevenHole 返回点位预览结果）中填充；
+   * 简单成功/失败响应不填此字段，运行时 omitempty 省略。
+   *
+   * 类型由调用方按需断言（如 `res.Data as SevenHolePreviewResult`），
+   * 此处保留 unknown 以保持 GenericResponse 通用性。
+   */
+  data?: unknown;
+  /** @deprecated 与 data 同义，保留 Data 仅为兼容大写字段旧调用点 */
+  Data?: unknown;
 }
 
 export interface FileResponse extends GenericResponse {
@@ -112,6 +124,26 @@ export interface CalibrationStatus {
   pausedDurationMs?: number;
   results: any[];
   lastError?: string;
+}
+
+// SevenHoleConfig 与 shared/types/calibration.SevenHoleConfig 对齐，
+// 用于 CalibrationPreviewSevenHole binding 调用——透传到后端 GenerateSevenHolePoints。
+// 字段命名遵循后端 json tag（SevenHoleConfigDTO 直接是 calibration.SevenHoleConfig 别名）。
+export interface SevenHoleConfig {
+  mode: string; // 'full' | 'dataset'
+  innerAlphaMin: number;
+  innerAlphaMax: number;
+  innerAlphaStep: number;
+  innerBetaMin: number;
+  innerBetaMax: number;
+  innerBetaStep: number;
+  outerThetaMin: number;
+  outerThetaMax: number;
+  outerThetaStep: number;
+  outerPhiMin: number;
+  outerPhiMax: number;
+  outerPhiStep: number;
+  serpentine: boolean;
 }
 
 // StorageRecordingConfig 与后端 storage.RecordingConfig 对齐，
@@ -237,7 +269,10 @@ function normalizeGenericResponse(raw: unknown): GenericResponse {
   const obj = (raw ?? {}) as Record<string, unknown>;
   const success = (obj.success ?? obj.Success ?? false) as boolean;
   const error = (obj.error ?? obj.Error) as string | undefined;
-  return { success, error, Success: success, Error: error };
+  // Data 字段双写：Wails JSON 反序列化后是小写 data，这里同时填充 data/Data
+  // 以便调用方按需使用任意大小写读法（与 success/Success 双写策略一致）
+  const data = (obj.data ?? obj.Data) as unknown;
+  return { success, error, Success: success, Error: error, data, Data: data };
 }
 
 async function callBindingGeneric(methodName: string, ...args: any[]): Promise<GenericResponse> {
@@ -476,6 +511,20 @@ export const wailsApi = {
       const obj = (raw ?? {}) as Record<string, unknown>;
       const filepath = (obj.filepath ?? obj.Filepath) as string | undefined;
       return { ...normalized, filepath, Filepath: filepath };
+    },
+    /**
+     * 七孔点位预览（spec Task 13/18）
+     *
+     * 调用后端 CalibrationPreviewSevenHole binding，纯计算不涉及 I/O：
+     *   - 接收前端配置向导提交的 SevenHoleConfig（α/β/θ/φ 范围与步长）
+     *   - 调用 usecase.PreviewSevenHolePoints 生成完整点位 + 内/外区聚合统计
+     *   - 返回 SevenHolePreviewResult（points + totalCount + innerCount + outerCount）
+     *
+     * 返回 GenericResponse：Success=false 时 Error 透传 GenerateSevenHolePoints 错误
+     * （如步长 ≤ 0、范围 min > max）；Success=true 时 Data 字段为 SevenHolePreviewResult。
+     */
+    previewSevenHole: async (config: SevenHoleConfig): Promise<GenericResponse> => {
+      return await callBindingGeneric('CalibrationPreviewSevenHole', config);
     }
   },
 
@@ -561,6 +610,32 @@ export const wailsApi = {
     // 启动运动控制器独立窗口（独立进程）
     openMotionWindow: async (): Promise<GenericResponse> => {
       return await callBindingGeneric('OpenMotionWindow');
-    }
+    },
+    /**
+     * 请求退出应用：用户在确认对话框中点击"退出"后调用。
+     * 后端置 userConfirmedExit=true 后通过 application.Quit() 触发完整关闭流程
+     * （cleanup → ServiceShutdown → 关闭所有窗口 → 最后一个窗口关闭后退出消息循环）。
+     */
+    requestExit: async (): Promise<GenericResponse> => {
+      return await callBindingGeneric('RequestExit');
+    },
+    /**
+     * 监听后端推送的退出请求事件（用户点 X 按钮触发 WindowClosing hook 时推送）。
+     * 调用方应在回调中弹出确认对话框，根据用户选择决定是否调用 requestExit()。
+     * 返回取消监听函数。
+     */
+    onExitRequested: (callback: () => void): (() => void) => {
+      if (!isWailsAvailable()) return () => {};
+      let cleanup: (() => void) | null = null;
+      let active = true;
+      void import('@wailsio/runtime').then(({ Events }) => {
+        if (!active) return;
+        cleanup = Events.On('app:exit-requested', () => callback());
+      });
+      return () => {
+        active = false;
+        cleanup?.();
+      };
+    },
   }
 };

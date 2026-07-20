@@ -7,7 +7,7 @@
 > 关联规范：[spec-seven-hole-calibration.md](./spec-seven-hole-calibration.md)（七孔校准流程规范，压力基准三分离、角度坐标系、孔位布局均以该规范为准）。
 > 参考实现：五孔遍历插值链路（`shared/algorithms/go/fivehole/interpolation/`、`services/api-go/internal/usecase/traversal*.go`）。
 > 日期：2026-07-17
-> 状态：待人工批准后进入 BUILD
+> 状态：已完成（2026-07 修订：探针切换改为双变体并存语义，见 §2.3/§5.2.1/§6.2）
 
 ---
 
@@ -135,34 +135,34 @@ type InterpolationResult struct {
 
 ```go
 // ProbeType 探针类型："five-hole"（默认，空串等价）/ "seven-hole"。
-// 驱动插值器选择、通道标签集与输入装配；不影响状态机/布点/落盘主流程。
+// 仅标记当前激活的探针，驱动插值器选择、通道标签集与输入装配；
+// 不影响状态机/布点/落盘主流程。
 ProbeType string `json:"probeType,omitempty"`
 ```
 
-配置在 JSON/API 边界必须按 `probeType` 形成**互斥变体**，禁止把五孔和七孔插值配置视为一组可任意组合的 optional 字段：
+配置在 JSON/API 边界采用**双变体并存**模型（2026-07 修订，替代原"互斥变体"决策）：五孔扁平字段与 `sevenHolePrb` 允许同时出现在同一份配置 JSON 中，`probeType` 仅标记**当前激活**的探针变体。前端为两种探针各维护一套完整配置（通道绑定 + 插值配置），切换探针时换入换出、互不丢失：
 
 ```ts
-type TraversalProbeConfig =
-  | {
-      probeType: 'five-hole'
-      probeChannels: ProbeChannelConfig[]
-      interpolation: FiveHoleTraversalInterpolationConfig
-    }
-  | {
-      probeType: 'seven-hole'
-      probeChannels: ProbeChannelConfig[]
-      interpolation: SevenHoleTraversalInterpolationConfig
-    }
-
-type SevenHoleTraversalInterpolationConfig = {
-  kind: 'seven-hole-prb-set'
-  innerFile: SevenHolePrbFileInfo
-  outerFiles: [SevenHolePrbFileInfo, SevenHolePrbFileInfo, SevenHolePrbFileInfo,
-               SevenHolePrbFileInfo, SevenHolePrbFileInfo, SevenHolePrbFileInfo]
+// 持久化 JSON 允许双变体并存：
+{
+  "probeType": "seven-hole",                    // 激活方
+  "prbFile": { ... },                            // 五孔变体字段（未激活，原样保留）
+  "multiPrb": { ... },
+  "sevenHolePrb": {                              // 七孔变体字段（激活，必须齐全）
+    "kind": "seven-hole-prb-set",
+    "innerFile":  { "filePath": "D:/cal/7.prb" },
+    "outerFiles": [ { "filePath": "D:/cal/1.prb" }, …共 6 份… ]
+  },
+  "inactiveProbeChannels": [ ... ]               // 未激活侧通道绑定（后端忽略）
 }
 ```
 
-为兼容已持久化的五孔 JSON，前端读取层和后端 `ParseConfig` 可接受旧扁平字段；但必须立即规范化为上述内部变体。保存新配置时只写当前变体，`probeType="seven-hole"` 携带五孔 PRB/CSV 字段或七孔文件不齐均在边界返回校验错误，不允许进入 usecase。空 `probeType` 仅在读取旧配置时归一化为 `five-hole`；未知非空值必须报错，不得静默按五孔执行。
+类型层仍按激活变体建模（`TraversalProbeConfig` 判别联合，见 §6.1），未激活变体字段在持久化往返中原样透传、不进入运行时判别配置。边界规则：
+
+- **未知非空 `probeType` 必须报错**（前后端一致），不得静默降级；
+- **激活七孔**时 `sevenHolePrb` 必须 `kind="seven-hole-prb-set"` 且 1+6 文件齐全，否则边界报错；
+- 空 `probeType` 仅在读取旧配置时归一化为 `five-hole`；
+- 旧扁平五孔 JSON（无 `probeType`、无 `sevenHolePrb`）在读取边界兼容并规范化。
 
 `CalculatedResult{Valid, Alpha, Beta, Pt, Ps, Mach}` **不改动**——七孔输出经 §3.3 坐标变换后与五孔输出形状一致。
 
@@ -329,17 +329,17 @@ var probeStrategies = map[string]probeStrategy{
 4. `CalculateRealtime(input coreinterp.InterpolationInput)` 导出方法保留（五孔 + 既有测试/调用方）；新增 `CalculateRealtimeByProbe(in probeCalcInput) (probeCalcResult, error)` 按 `m.config.ProbeType` 分发，供采集落盘与 API 使用。
 5. **七孔一期不复用 `realtime.InterpolationCache`**：该缓存类型绑定五孔 `coreinterp.InterpolationInput/Result`（`core/realtime/realtime.go` L26/L62），泛化属于 core 改动，本期规避（七孔单次计算为 O(169+2×52) 网格扫描，耗时微秒级，缓存收益可忽略）。列入 plan 的 Out of Scope。
 
-### 5.2.1 活动探针与插值器生命周期
+### 5.2.1 活动探针与插值器生命周期（2026-07 修订：双变体语义）
 
-`probeType`、当前探针配置和可用插值器必须保持一致，不能仅清前端布尔值：
+`probeType`、当前探针配置和可用插值器必须保持一致；**后端所有计算与前置检查仅通过当前 `config.ProbeType` 对应的策略访问插值器**（§5.2 策略注册表），这是防止陈旧校准被误用的唯一机制——未激活插值器保持挂载但对计算/前置检查不可达，无需随切换清除：
 
-1. Manager 可分别持有五孔/七孔插值器，但所有计算和前置检查只允许通过当前 `config.ProbeType` 对应的策略访问。
-2. 新增 `ClearProbeInterpolator(probeType string)`；API 新增 `POST /api/traversal/clearInterpolator`，请求 `{ "probeType": "five-hole" | "seven-hole" }`。
-3. UI 切换探针类型时先弹确认；确认后调用后端清除**切换前类型**的插值器。调用失败则保留原选择与原配置，不进行半切换。
-4. 清除成功后再原子更新本地 `probeType`、通道预设和 PRB 配置，并清空实时结果。新类型文件未完整导入前 `isStepValid=false`。
-5. 导入成功只设置请求中明确指定类型的插值器；不得通过 P6/P7 是否出现猜测探针类型。
-6. 启动恢复只恢复当前 `probeType` 对应的数据源；新格式若携带另一类型字段应在规范化阶段报错，旧兼容字段仅在明确的历史五孔读取路径中转换。
-7. **探针切换必须显式清理非激活插值器**：前端切换流程先调用 `clearInterpolator` API，后端调用 `ClearProbeInterpolator`；成功后才更新本地判别配置。`SaveConfigRaw` 不承担隐式清理职责，但后端计算/前置检查始终只访问当前 `config.ProbeType` 对应的插值器，防止陈旧校准数据被使用。
+1. Manager 可分别持有五孔/七孔插值器；两者同时挂载互不影响（`interpolator` 与 `sevenHoleInterpolator` 独立字段）。
+2. 保留 `ClearProbeInterpolator(probeType string)` 与 `POST /api/traversal/clearInterpolator` 作为**显式清除**能力（如用户移除校准文件后主动失效），探针切换**不调用**该接口。
+3. 前端切换探针类型时**不重置、不弹确认**：向导为两种探针各存一份配置包（通道绑定 + PRB 状态），切换即时换入换出；`activateProbeType` 仅切换激活 `probeType` 并按激活变体重新推导 `hasLoadedInterpolator`，随后经 `checkPreconditions` 复核后端真实加载状态。
+4. 导入成功只设置请求中明确指定类型的插值器；不得通过 P6/P7 是否出现猜测探针类型。
+5. 启动恢复只恢复当前 `probeType` 对应的数据源；配置 JSON 允许双变体并存，未激活变体字段仅作持久化数据透传，不进入 usecase。
+6. 双变体并存下，重启后切到未恢复侧时：`hasLoadedInterpolator` 经 `checkPreconditions` 纠正为未加载并展示根因，用户重新导入即可（与五孔 PRB 文件被删除时的既有体验一致）。
+7. `SaveConfigRaw` 将 `probeType` 同步到 `m.config.ProbeType`（导入后、Start 前的实时计算一致性校验依赖）；`SaveConfigRaw` 不承担隐式清理职责。
 
 ### 5.3 ports 与 adapters 加载链
 
@@ -363,7 +363,7 @@ LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolat
 
 `traversalAPIConfig`（`traversal_config.go` L304）新增 `ProbeType string \`json:"probeType,omitempty"\``；`ParseConfig`（L405）写入 `config.ProbeType`，空串兜底 `"five-hole"`。`roleToLabel()`（L381）新增 §2.3 的 9 条七孔映射。
 
-**持久化配置 JSON**（`/api/traversal/config` 保存的前端配置）新增：
+**持久化配置 JSON**（`/api/traversal/config` 保存的前端配置）采用双变体并存（§2.3 修订）：五孔字段、`probeType` 与七孔文件集可同存一份配置，另含未激活侧通道（后端忽略）：
 
 ```json
 {
@@ -371,14 +371,17 @@ LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolat
   "sevenHolePrb": {
     "innerFile":  { "filePath": "D:/cal/7.prb" },
     "outerFiles": [ { "filePath": "D:/cal/1.prb" }, …共 6 份… ]
-  }
+  },
+  "prbFile": { "filePath": "D:/cal/five.prb" },
+  "inactiveProbeChannels": [ …未激活侧通道绑定… ]
 }
 ```
 
-`restoreInterpolatorFromConfig()` 分支优先级调整为：
+`restoreInterpolatorFromConfig()` 分支优先级（仅恢复激活变体，§5.2.1 第 5 条）：
 
-1. `probeType == "seven-hole"` → 读取规范化 `sevenHolePrb` 的 7 份路径调 `loader.LoadSevenHolePRB`（唯一七孔路径；七孔无 CSV/多 PRB 模式）；
-2. 否则保持既有五孔优先级不变：新算法 CSV > 多 PRB > 单 PRB。
+1. `probeType == "seven-hole"` → 读取规范化 `sevenHolePrb` 的 7 份路径调 `loader.LoadSevenHolePRB`（唯一七孔路径；七孔无 CSV/多 PRB 模式；七孔要求 1+6 文件齐全，否则记恢复错误）；
+2. 否则保持既有五孔优先级不变：新算法 CSV > 多 PRB > 单 PRB；
+3. 未激活变体字段仅作持久化数据透传，不进入 usecase；未知非空 `probeType` 记恢复错误且不启动 loader。
 
 失败语义复用既有机制：`setInterpolatorRestoreErr` 记录、`CheckPreconditions` PRB 项暴露、`runLoaderWithTimeout` 5s 超时。
 
@@ -411,7 +414,7 @@ Response 400: { "error": "加载七孔PRB文件集失败：3.prb 必须包含 52
 
 > **形状约定**：导入 API 请求体收**路径数组**（`innerFilePath` + `outerFilePaths`，对齐 `importMultiPrb` 的 `filePaths []string` 风格）；持久化配置（§5.4）与响应层则组装为逐文件信息对象。三层形状各自稳定，由 handler 与前端 store 转换。
 
-**新增 action `clearInterpolator`**（五孔/七孔通用，供前端切换探针类型时主动失效陈旧校准，§5.2 第 6 条）：
+**保留 action `clearInterpolator`**（五孔/七孔通用，作为显式清除能力——如用户移除校准文件后主动失效；双变体语义下探针切换**不调用**本接口，§5.2.1）：
 
 ```
 POST /api/traversal/clearInterpolator
@@ -446,13 +449,14 @@ API 解码 DTO 的 `P6`/`P7` 必须使用 `*float64`：`nil` 表示字段缺失�
 
 ### 6.2 向导探针类型选择
 
-`TraversalSettings.vue` 第 1 步（硬件配置，`currentStep === 0`）顶部、压力类型开关之侧，新增**探针类型选择**（UiSelect：五孔探针/七孔探针）。切换时：
+`TraversalSettings.vue` 第 1 步（硬件配置，`currentStep === 0`）顶部、压力类型开关之侧，提供**探针类型选择**（UiSelect：五孔探针/七孔探针）。切换采用**双变体换入换出**（2026-07 修订，替代原"确认后重置"流程）：
 
-1. `probeChannels` 重置为对应预设（9 通道或 7 通道），已有通道绑定**不保留**（通道语义不同，强行映射会错位）并给用户确认提示；
-2. 按 §5.2.1 调后端清除旧类型插值器；成功后原子切换判别配置、清空实时结果，失败则保留原选择与原配置；
-3. `interpolationAlgorithm`/`prbMode` 仅对五孔有意义，七孔时在 PRB 步骤隐藏（见 §6.3）。
+1. **不重置、不弹确认**：向导为两种探针各维护一份配置包（五孔：通道 + PRB/多 PRB/校准 CSV/算法选择；七孔：通道 + 7 文件槽位），切换时暂存当前侧、载入目标侧（首次使用对应预设），两套配置互不丢失；
+2. 通道绑定按探针类型各自保留（通道语义不同，不互相映射）；未激活侧通道随配置持久化到 `inactiveProbeChannels`；
+3. store 侧仅 `activateProbeType` 切换激活 `probeType` 并复核后端加载状态，**不清理任何插值器**；后端按激活 `probeType` 经策略表取用对应插值器（§5.2.1）；
+4. `interpolationAlgorithm`/`prbMode` 仅对五孔有意义，七孔时在 PRB 步骤隐藏（见 §6.3）。
 
-`saveConfig()` 组装配置时写入 `probeType` 与（七孔时）`sevenHolePrb`；`loadSavedConfig()` 恢复二者并按 `probeType` 初始化预设与步骤 UI。第 4 步摘要区增加探针类型行。`TraversalHardwareStep.vue` 按 `probeChannels` 泛型渲染（现为 `v-for` 行），无需结构改动。
+`saveConfig()` 组装配置时**两侧变体都写入**：五孔字段、`sevenHolePrb`、`probeType`（激活方）与 `inactiveProbeChannels`；`loadSavedConfig()` 恢复时两侧分别装入激活 refs 与未激活暂存。第 4 步摘要区显示探针类型行。`TraversalHardwareStep.vue` 按 `probeChannels` 泛型渲染（现为 `v-for` 行），无需结构改动。
 
 ### 6.3 PRB 步骤组件边界
 
@@ -462,14 +466,14 @@ API 解码 DTO 的 `P6`/`P7` 必须使用 `*float64`：`nil` 表示字段缺失�
 - `SevenHolePrbConfig.vue`：承载 1 个 7.prb 槽位 + 6 个 n.prb 槽位；7 份齐备后调用 store 导入动作，展示逐文件 pointCount/validRange；任一份缺失时无效。
 - 两个子组件只通过类型化 `modelValue`/事件交换各自的判别配置，不读取或清理对方字段。
 
-`TraversalSettings.vue` 只持有当前 `TraversalProbeConfig`，不得继续新增 `prbFile/multiPrb*/sevenHolePrb` 等平行 ref。探针切换、保存和恢复通过纯函数 `normalizeTraversalProbeConfig` 完成，避免大型组件内出现两套配置状态机。
+`TraversalSettings.vue` 为两种探针各维护一份配置包（五孔 refs 组 / 七孔 Draft + 通道），探针切换、保存和恢复通过各自的 bundle 与纯函数 `normalizeTraversalProbeConfig`（仅抽取激活变体）完成，避免大型组件内出现两套配置状态机。
 
 ### 6.4 store 与 API
 
 | 文件 | 改动 |
 |---|---|
-| `api/traversalApi.ts` | 新增 `importSevenHolePrb(innerFilePath, outerFilePaths)` → POST `/api/traversal/importSevenHolePrb`；新增 `clearInterpolator(probeType)` → POST `/api/traversal/clearInterpolator` |
-| `stores/traversalStore.ts` | 新增 `importSevenHolePrbFiles()` 与异步 `clearProbeInterpolator()`；状态从判别配置派生，导入/清除失败不得只修改前端布尔值；`verifyInterpolatorWithBackend()` 按当前探针检查 |
+| `api/traversalApi.ts` | 新增 `importSevenHolePrb(innerFilePath, outerFilePaths)` → POST `/api/traversal/importSevenHolePrb`；新增 `clearInterpolator(probeType)` → POST `/api/traversal/clearInterpolator`（显式清除能力，探针切换不调用） |
+| `stores/traversalStore.ts` | 新增 `importSevenHolePrbFiles()`、`clearProbeInterpolator()`（显式清除用）与 `activateProbeType()`（双变体激活切换：仅改 `config.probeType` 并复核后端加载状态，不清理插值器）；`hasLoadedInterpolator` 从激活变体配置与后端校验结果派生 |
 
 ### 6.5 展示语义注册表
 
@@ -488,7 +492,7 @@ const TRAVERSAL_PROBE_PRESENTATION = {
 
 ### 6.6 i18n（`stores/i18nStore.ts`，zh + en 双份）
 
-新增键（命名沿用 `ch_fiveHole*`/`fiveHoleTraversalTest` 风格）：`travProbeType`、`travProbeTypeFiveHole`、`travProbeTypeSevenHole`、`travProbeTypeSwitchConfirm`、`sevenHolePrbTitle`、`sevenHolePrbInnerFile`、`sevenHolePrbOuterFile`（带 {n} 占位）、`sevenHolePrbIncomplete`、`travErrImportSevenHolePrb`、`sevenHoleTraversalTest`（主画面标题按探针类型切换）。所有新增 UI 文案禁止硬编码。
+新增键（命名沿用 `ch_fiveHole*`/`fiveHoleTraversalTest` 风格）：`travProbeType`、`travProbeTypeFiveHole`、`travProbeTypeSevenHole`、`travProbeTypeHint`（双变体语义提示）、`sevenHolePrbTitle`、`sevenHolePrbInnerFile`、`sevenHolePrbOuterFile`（带 {n} 占位）、`sevenHolePrbIncomplete`、`travErrImportSevenHolePrb`、`travErrClearInterpolator`、`sevenHoleTraversalTest`（主画面标题按探针类型切换）、`angleOfAttack`、`sideslipAngle`（展示语义注册表用）。所有新增 UI 文案禁止硬编码。
 
 ---
 
@@ -508,6 +512,10 @@ const TRAVERSAL_PROBE_PRESENTATION = {
 **精度声明**：CSV 系数仅 4 位小数、压力 3 位小数（spec-seven-hole-calibration.md §7.4 数值精度），重建 .prb 的绝对精度受 CSV 舍入限制；但对拍双方使用**同一份 .prb 与同一输入**，输出差仅来自实现差异（Go 解析闭式 vs Python sympy 消元，数学等价），容差不受 CSV 舍入影响。
 
 **容差**：角度 α/β 绝对误差 ≤ 1e-4°；Pt/Ps 对每个值按显式公式验收：`|got - want| <= max(|want| * 1e-6, 1e-4 Pa)`；Ma/V 相对误差 ≤ 1e-6。
+
+> **实施注记（2026-07）**：
+> 1. 数据集 CSV 系数仅 3 位小数，相邻网格点 ka/kb 存在精确相等值；Python 参考实现的四边形边斜率计算遇垂直边（Δka=0）即 `ZeroDivisionError` 崩溃，481 点中 195 点原本不可对拍。夹具生成脚本（`gen_traversal_fixtures.py`）对精确相等的退化边加确定性 ≤1e-7 抖动以恢复可比性（对拍双方读同一 `.prb`，等价性不受影响）。
+> 2. 481 点中 46 点落在所有候选多边形外（Python 走 `beyond_border` 外推路径）。Go 按 §4 不外推：这些点在 golden 测试中断言 `IsValid=false` + 越界 Warning（属 Go 产品契约断言，非数值对拍）；其余 435 点（240 小角度 + 195 大角度）在容差内 100% 数值对拍通过。
 
 ### 7.2 边界用例
 
@@ -575,7 +583,7 @@ const TRAVERSAL_PROBE_PRESENTATION = {
 | 编号 | 待确认事项 | 现状与选项 |
 |---|---|---|
 | Q1 | 七孔一期是否接入 `InterpolationCache` | 建议**不接入**（§5.2 第 5 条，避免泛化 `core/realtime`）；如需接入另立议题 |
-| Q2 | 校准 CSV → 七孔插值数据源 | 待七孔**校准**模块 tasks 2-24 落地后增补 spec；本期仅 .prb 文件集 |
+| Q2 | 校准 CSV → 七孔插值数据源 | **已落地（2026-07 遍历侧）**：新增 `importSevenHoleCalibrationCsv` API 与 `LoadSevenHoleCalibrationCSV` 加载链（adapters 层 GBK/列位置解析 + 退化边抖动 → .prb 行集 → 既有 loader 强校验），配置 `kind="seven-hole-calibration-csv"` 与恢复分支贯通；向导七孔 PRB 步提供「PRB 文件集 / 校准 CSV」数据源切换与批量导入。校准模块自身的 CSV 导出对接沿用同一格式契约（列位置：内区 a=col0,b=col1、外区 θ=col1,φ=col0、系数 col12..15） |
 | Q3 | 外区越界外推（SKILL.md §3.8） | 本期**不实现**（§4）；如现场确有 θ>45° 需求，另立 spec 增补并加 UI 标注 |
 | Q4 | 对拍 golden 是否纳入版本库 | **已决策并采纳**：纳入 `testdata/`（481 点 JSON + 7 份 .prb，体积约数百 KB），保证 CI 可复现；见 plan Architecture Decisions |
 

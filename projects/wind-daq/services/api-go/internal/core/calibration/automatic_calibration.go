@@ -60,6 +60,14 @@ type AutomaticCalibration struct {
 	// samplesPerPoint：当前点总采样数，用于 UI 显示"采样 3/10"
 	currentSample   int
 	samplesPerPoint int
+	// prevRegion/prevSector 七孔流场分区判定的滞回状态（spec Task 10 + §3.2 规则 3）。
+	// 由本引擎在每点采集后从 SevenHoleDataPoint.Region/Sector 更新，
+	// 下一点采集前注入 config.PrevRegion/PrevSector 传给 DetermineRegion。
+	// 首点前为零值（PrevRegion=""，PrevSector=0），符合 spec "首点跳过滞回"语义。
+	// 仅 TypeSevenHole 使用，其他类型忽略。
+	// 访问模型：runCalibrationLoop → processPoint 单线程串行访问，无需加锁。
+	prevRegion string
+	prevSector int
 }
 
 // NewAutomaticCalibration 创建自动校准引擎
@@ -229,6 +237,22 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 		a.samplesPerPoint = total
 		a.mu.Unlock()
 	}
+	// 七孔专用：每点采集前注入 RealtimeCallback + PrevRegion/PrevSector（spec Task 10）。
+	// RealtimeCallback：将七孔算法的实时数据包装为 RealtimeEvent 后调 eventPublisher.OnRealtime，
+	// core 层不依赖具体发布器实现（六边形架构：core 仅依赖 EventPublisher 接口）。
+	// PrevRegion/PrevSector：取自引擎自身持有的滞回状态（首点为零值，跳过滞回判定）。
+	// 通过 config 注入而非算法参数：Algorithm.AcquireDataWithConfig 签名固定（spec Task 5 约束）。
+	//
+	// 并发安全（code-review C2 修复）：
+	//   - prevRegion/prevSector 与 GetCurrentRegion/GetCurrentSector 共用 a.mu 保护
+	//   - 这里在 RLock 内读取快照后注入 config，避免与 Status() 路径并发读取产生数据竞争
+	if algorithm.Type() == TypeSevenHole {
+		a.config.RealtimeCallback = a.makeSevenHoleRealtimeCallback(point)
+		a.mu.RLock()
+		a.config.PrevRegion = a.prevRegion
+		a.config.PrevSector = a.prevSector
+		a.mu.RUnlock()
+	}
 	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, a.config, checkAbort, onSampleProgress)
 	// 采集完成后立即清零采样进度，避免移动/驻留/球罐等待期间 UI 仍显示"采样 N/N"
 	a.mu.Lock()
@@ -243,6 +267,29 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	a.dataPoints = append(a.dataPoints, dataPoint)
 	a.mu.Unlock()
 
+	// 七孔专用：从数据点取 Region/Sector，先推送分区变更事件，再更新引擎滞回状态（spec Task 10 + Task 11）。
+	// 顺序敏感：必须在更新前推送，使 RegionChangedEvent.PrevRegion/PrevSector 反映上一时刻值。
+	// 类型断言失败不阻塞流程（仅记日志，下一点按首点语义处理）。
+	//
+	// 并发安全（code-review C2 修复）：
+	//   - prevRegion/prevSector 通过 a.mu 保护——与 GetCurrentRegion/GetCurrentSector 共用同一锁
+	//   - 锁内读取 prev 值并写入新值（原子），锁外调用 sendRegionChangedEvent（避免持锁调用外部 I/O）
+	//   - 事件参数携带 prev 值，避免 sendRegionChangedEvent 内部再次无锁读取（I3 修复）
+	if algorithm.Type() == TypeSevenHole {
+		newRegion, newSector, ok := extractSevenHoleRegionSector(dataPoint)
+		if ok {
+			a.mu.Lock()
+			prevRegion := a.prevRegion
+			prevSector := a.prevSector
+			a.prevRegion = newRegion
+			a.prevSector = newSector
+			a.mu.Unlock()
+			a.sendRegionChangedEvent(newRegion, newSector, prevRegion, prevSector, index)
+		} else {
+			log.Printf("[AutomaticCalibration] 七孔数据点类型断言失败: %T，跳过滞回状态更新", dataPoint)
+		}
+	}
+
 	// 6. 实时持久化回调（逐点写 CSV 等），失败仅记录不中断校准
 	if a.onDataPoint != nil {
 		a.onDataPoint(dataPoint)
@@ -252,6 +299,43 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	a.sendProgressUpdate(point, dataPoint)
 
 	return nil
+}
+
+// makeSevenHoleRealtimeCallback 构造七孔实时数据推送回调。
+//
+// 将 SevenHoleAlgorithm 的实时回调签名
+// (raw, coeffs, region, sector) 包装为 RealtimeEvent 后调
+// eventPublisher.OnRealtime，core 层不依赖具体发布器实现。
+//
+// eventPublisher 为 nil 时返回 nil（算法侧会跳过推送，spec Task 5 已约定）。
+// point 在闭包内捕获，用于填充 RealtimeEvent.Point（前端展示当前目标点位）。
+func (a *AutomaticCalibration) makeSevenHoleRealtimeCallback(point CalPoint) SevenHoleRealtimeCallback {
+	if a.eventPublisher == nil {
+		return nil
+	}
+	publisher := a.eventPublisher
+	// 闭包内不持有 a 的引用（避免循环引用 + 显式只读 publisher），
+	// point 为值传递的 CalPoint 副本，避免外部修改影响。
+	pointCopy := point
+	return func(raw SevenHoleRawData, coeffs SevenHoleCoefficients, region string, sector int) {
+		// rawData/coeffs 取地址构造指针字段，符合 RealtimeEvent 七孔字段语义
+		// （指针 + omitempty，非七孔类型序列化时不出现 sevenHoleRaw key）。
+		rawCopy := raw
+		coeffsCopy := coeffs
+		evt := RealtimeEvent{
+			Type:                  TypeSevenHole,
+			FiveHoleRaw:           nil,
+			FiveHoleCoefficients:  nil,
+			ThreeHoleRaw:          nil,
+			ThreeHoleCoefficients: nil,
+			SevenHoleRaw:          &rawCopy,
+			SevenHoleCoefficients: &coeffsCopy,
+			Point:                 &pointCopy,
+		}
+		// region/sector 通过 Point 字段已携带（CalPoint.Region/Sector），
+		// RealtimeEvent 自身不重复暴露——避免字段语义重叠。
+		publisher.OnRealtime(evt)
+	}
 }
 
 // checkPausedAndAbort 在点位流程阶段切换处检查暂停态。
@@ -272,9 +356,15 @@ func (a *AutomaticCalibration) checkPausedAndAbort() error {
 }
 
 // moveToPoint 移动到指定点位
-// 默认实现按坐标顺序移动各轴；五孔探针等子类可重写以自定义轴运动顺序
+// 默认实现按坐标顺序移动各轴；五孔/七孔探针走 MoveToPointWithOrder 严格 α→β 顺序
 func (a *AutomaticCalibration) moveToPoint(point CalPoint, algorithm Algorithm) error {
 	if algorithm != nil && algorithm.Type() == TypeFiveHole {
+		return a.MoveToPointWithOrder(point, []string{"α", "β"})
+	}
+	if algorithm != nil && algorithm.Type() == TypeSevenHole {
+		// 七孔按 α→β 顺序下发运动控制器（spec §3.4 + Task 10）。
+		// 双坐标模型：MoveToPointWithOrder 优先读 point.MotionCoordinates，
+		// 外区点由 (θ,φ) 换算得到的 (α',β')；内区点 MotionCoordinates==Coordinates。
 		return a.MoveToPointWithOrder(point, []string{"α", "β"})
 	}
 	if a.runtime == nil {
@@ -340,14 +430,19 @@ func (a *AutomaticCalibration) waitMotionCompleteOrAbort() error {
 	}
 }
 
-// MoveToPointWithOrder 按指定轴顺序移动到点位（五孔探针专用：先α后β）
+// MoveToPointWithOrder 按指定轴顺序移动到点位（五孔/七孔共用：先α后β）
+//
+// 双坐标优先级（spec §3.4 + Task 10）：
+//   - 优先读 point.MotionCoordinates[axisName]——七孔外区点由 (θ,φ) 换算得到的 (α',β')
+//   - MotionCoordinates 为 nil 或不含该轴时回退到 point.Coordinates[axisName]
+//     （五孔/三孔/总压/总温等不填 MotionCoordinates 的场景保持原行为）
 func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []string) error {
 	if a.runtime == nil || len(a.config.MotionAxes) == 0 {
 		return nil
 	}
 
 	for _, axisName := range axisOrder {
-		position, ok := point.Coordinates[axisName]
+		position, ok := lookupAxisPosition(point, axisName)
 		if !ok {
 			return fmt.Errorf("测点缺少 %s 坐标", axisName)
 		}
@@ -363,8 +458,25 @@ func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []
 		}
 	}
 
-	// 等待所有轴运动完成（三元组返回值，五孔分轴顺序下每次独立判定）
+	// 等待所有轴运动完成（三元组返回值，五孔/七孔分轴顺序下每次独立判定）
 	return a.waitMotionCompleteOrAbort()
+}
+
+// lookupAxisPosition 按双坐标优先级查找轴位置（spec §3.4 + Task 10）：
+//  1. point.MotionCoordinates 非 nil 且包含 axisName → 用 MotionCoordinates 值
+//     （七孔外区点的运动坐标 (α',β')，由 GenerateSevenHolePoints 按 §3.3 正向公式换算）
+//  2. 否则回退到 point.Coordinates[axisName]（五孔/三孔/总压/总温及七孔内区点路径）
+//  3. 两处都没有 → ok=false（调用方按"测点缺少坐标"报错）
+func lookupAxisPosition(point CalPoint, axisName string) (float64, bool) {
+	if point.MotionCoordinates != nil {
+		if v, ok := point.MotionCoordinates[axisName]; ok {
+			return v, true
+		}
+	}
+	if v, ok := point.Coordinates[axisName]; ok {
+		return v, true
+	}
+	return 0, false
 }
 
 // waitForSphereTankGateIfNeeded 等待球罐闸门条件
@@ -638,4 +750,100 @@ func (a *AutomaticCalibration) SendRealtimeUpdate(event RealtimeEvent) {
 	event.WindowTag = "calibration"
 	event.Timestamp = time.Now().UnixMilli()
 	a.eventPublisher.OnRealtime(event)
+}
+
+// sendRegionChangedEvent 推送七孔流场分区变更事件（spec Task 11）。
+//
+// 推送规则：
+//   - 首点（index==0）：必推送一次，PrevRegion=nil、PrevSector=nil（JSON 序列化为 null），
+//     BoundaryFlag="first"
+//   - 后续点：当 region 或 sector 与上一时刻（prevRegion/prevSector 参数）不同时推送：
+//   - inner↔outer 切换 → BoundaryFlag="inner-outer"
+//   - 同 outer 但扇区变化 → BoundaryFlag="sector-switch"
+//   - region 与 sector 均不变时不推送（避免噪声）
+//
+// 调用时机：调用方在 a.mu 锁内读取并更新 prevRegion/prevSector 后调用本方法，
+// 通过参数显式传入 prev 值——避免本函数内再次无锁读取 a.prevRegion/prevSector
+// 产生数据竞争（code-review I3 修复）。
+//
+// taskID/totalPoints 读取与 sendProgressUpdate 一致：在 RLock 下读取后释放再调用 OnRegionChanged，
+// 避免持有锁调用外部代码（OnRegionChanged 实现可能触发 SSE/Wails EventEmit 等 I/O）。
+func (a *AutomaticCalibration) sendRegionChangedEvent(region string, sector int, prevRegion string, prevSector int, index int) {
+	if a.eventPublisher == nil {
+		return
+	}
+
+	a.mu.RLock()
+	taskID := a.taskID
+	totalPoints := len(a.config.Points)
+	a.mu.RUnlock()
+
+	publisher := a.eventPublisher
+
+	// 首点：PrevRegion/PrevSector 必为 nil（JSON null），BoundaryFlag="first"
+	if index == 0 {
+		publisher.OnRegionChanged(RegionChangedEvent{
+			TaskID:       taskID,
+			WindowTag:    "calibration",
+			Region:       region,
+			Sector:       sector,
+			PrevRegion:   nil,
+			PrevSector:   nil,
+			BoundaryFlag: "first",
+			PointIndex:   index,
+			TotalPoints:  totalPoints,
+			Timestamp:    time.Now().UnixMilli(),
+		})
+		return
+	}
+
+	// 后续点：region 与 sector 均不变时跳过推送
+	if region == prevRegion && sector == prevSector {
+		return
+	}
+
+	// 区域切换：inner↔outer；扇区切换：同 outer 但扇区编号变化
+	boundaryFlag := "sector-switch"
+	if prevRegion != region {
+		boundaryFlag = "inner-outer"
+	}
+	publisher.OnRegionChanged(RegionChangedEvent{
+		TaskID:       taskID,
+		WindowTag:    "calibration",
+		Region:       region,
+		Sector:       sector,
+		PrevRegion:   &prevRegion,
+		PrevSector:   &prevSector,
+		BoundaryFlag: boundaryFlag,
+		PointIndex:   index,
+		TotalPoints:  totalPoints,
+		Timestamp:    time.Now().UnixMilli(),
+	})
+}
+
+// extractSevenHoleRegionSector 从 DataPoint 提取七孔的 Region/Sector 字段。
+// 类型断言失败返回 ok=false，调用方据此决定是否跳过滞回状态更新与分区事件推送。
+func extractSevenHoleRegionSector(dp DataPoint) (region string, sector int, ok bool) {
+	sh, okT := dp.(*SevenHoleDataPoint)
+	if !okT {
+		return "", 0, false
+	}
+	return sh.Region, sh.Sector, true
+}
+
+// GetCurrentRegion 返回当前七孔流场分区（spec Task 11）。
+// 语义：返回最近一次采集完成后的 Region；校准启动后首点采集完成前为 ""（前端 omitempty 忽略）。
+// 五孔/三孔/总压/总温类型返回零值。
+func (a *AutomaticCalibration) GetCurrentRegion() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.prevRegion
+}
+
+// GetCurrentSector 返回当前七孔流场扇区（spec Task 11）。
+// 语义：返回最近一次采集完成后的 Sector；首点采集完成前为 0（前端 omitempty 忽略）。
+func (a *AutomaticCalibration) GetCurrentSector() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.prevSector
 }

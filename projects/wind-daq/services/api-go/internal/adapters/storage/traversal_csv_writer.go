@@ -742,10 +742,12 @@ func formatUnixMilli(ms int64) string {
 }
 
 // buildLabelEntries 构建通道→标签的稳定排序列表
-//   - 已知标签优先级：P1,P2,P3,P4,P5,Patm,Tatm
+//   - 已知标签优先级：P1,P2,P3,P4,P5,P6,P7,Patm,Tatm（七孔为 P1..P7 全序）
 //   - 其余按通道索引升序追加
 func buildLabelEntries(channels []int, labelMap map[int]string) []labelEntry {
-	priority := []string{"P1", "P2", "P3", "P4", "P5", "Patm", "Tatm"}
+	// P6/P7 追加在 P5 之后、Patm 之前（spec-seven-hole-traversal §5.5 唯一改动点），
+	// 五孔输出不受新增项影响（五孔标签集不含 P6/P7）。
+	priority := []string{"P1", "P2", "P3", "P4", "P5", "P6", "P7", "Patm", "Tatm"}
 	priorityIdx := make(map[string]int, len(priority))
 	for i, l := range priority {
 		priorityIdx[l] = i

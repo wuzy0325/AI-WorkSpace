@@ -33,6 +33,12 @@ func normalizeGate(gate *SphereTankGateConfig) *SphereTankGateConfig {
 
 	channelIndex := gate.StableTimeChannel.ChannelIndex
 
+	// PressureChannel 仅用于前端实时显示压力值，不参与闸门判定，因此归一化时只需保证 ChannelIndex 非负
+	pressureChannelIndex := gate.PressureChannel.ChannelIndex
+	if pressureChannelIndex < 0 {
+		pressureChannelIndex = 0
+	}
+
 	return &SphereTankGateConfig{
 		Enabled:     gate.Enabled,
 		WaitTimeSec: waitTimeSec,
@@ -40,6 +46,10 @@ func normalizeGate(gate *SphereTankGateConfig) *SphereTankGateConfig {
 		StableTimeChannel: ChannelRef{
 			DeviceID:     gate.StableTimeChannel.DeviceID,
 			ChannelIndex: channelIndex,
+		},
+		PressureChannel: ChannelRef{
+			DeviceID:     gate.PressureChannel.DeviceID,
+			ChannelIndex: pressureChannelIndex,
 		},
 	}
 }
@@ -74,6 +84,10 @@ func ValidateSphereTankGateConfig(gate *SphereTankGateConfig) error {
 	}
 	if gate.StableTimeChannel.ChannelIndex < 0 {
 		return fmt.Errorf("球罐判定已启用，但稳定时间通道索引无效")
+	}
+	// PressureChannel 为可选配置：仅当填了 DeviceID 时才校验 ChannelIndex 合法性
+	if gate.PressureChannel.DeviceID != "" && gate.PressureChannel.ChannelIndex < 0 {
+		return fmt.Errorf("球罐压力通道索引无效")
 	}
 	return nil
 }

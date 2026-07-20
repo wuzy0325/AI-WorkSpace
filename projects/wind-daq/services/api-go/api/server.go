@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	motionhttp "shared.local/motion-control/go/httpapi"
 	configadapter "wind-daq/services/api-go/internal/adapters/config"
 	interpfiles "wind-daq/services/api-go/internal/adapters/interpolation"
@@ -304,6 +306,12 @@ func NewRouter(deps Deps) http.Handler {
 			})
 		case "fivehole":
 			handleFiveholeSnakePoints(w, r)
+		case "sevenhole-preview":
+			// 七孔点位预览（spec Task 12）：前端"配置向导"调整 α/β/θ/φ 范围与步长时
+			// 实时显示总点数与内/外区分布，让操作员在启动校准前确认点位规模。
+			// sevenhole-start 不单独路由——走现有 start 路由，type 字段为 "seven-hole"，
+			// usecase.Start 内部按 config.Type 分发到 createAlgorithm 七孔分支。
+			handleSevenHolePreview(w, r, deps.CalibrationManager)
 		case "pause":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -452,19 +460,182 @@ func NewRouter(deps Deps) http.Handler {
 				})
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"files": files, "machNumbers": result.MachNumbers, "warnings": result.Warnings})
-		case "calculateRealtime":
+		case "importSevenHolePrb":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
+			// 七孔 .prb 文件集导入（spec §5.6）：1 个内区文件 + 恰 6 个扇区文件，
+			// 成功后仅设置七孔插值器（不影响五孔字段），返回逐文件信息。
 			var body struct {
-				Pressures coreinterp.InterpolationInput `json:"pressures"`
+				InnerFilePath string   `json:"innerFilePath"`
+				OuterFilePaths []string `json:"outerFilePaths"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			result, err := deps.TraversalManager.CalculateRealtime(body.Pressures)
+			if body.InnerFilePath == "" {
+				writeError(w, http.StatusBadRequest, "innerFilePath 不能为空（七孔内区 7.prb）")
+				return
+			}
+			if len(body.OuterFilePaths) != 6 {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("outerFilePaths 必须恰为 6 份扇区文件（按孔号 1..6 顺序），实际 %d 份", len(body.OuterFilePaths)))
+				return
+			}
+			var outerPaths [6]string
+			copy(outerPaths[:], body.OuterFilePaths)
+			interpolator, err := interpfiles.LoadSevenHolePrbFiles(body.InnerFilePath, outerPaths)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("加载七孔PRB文件集失败：%v", err))
+				return
+			}
+			deps.TraversalManager.SetSevenHoleInterpolator(interpolator)
+			loadedAt := time.Now().UnixMilli()
+			sevenFiles := make([]map[string]any, 0, 7)
+			sevenFiles = append(sevenFiles, map[string]any{
+				"filePath": body.InnerFilePath, "fileName": filepath.Base(body.InnerFilePath),
+				"sector": 7, "pointCount": 169, "loadedAt": loadedAt,
+			})
+			for i, p := range body.OuterFilePaths {
+				sevenFiles = append(sevenFiles, map[string]any{
+					"filePath": p, "fileName": filepath.Base(p),
+					"sector": i + 1, "pointCount": 52, "loadedAt": loadedAt,
+				})
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"files":      sevenFiles,
+				"validRange": interpolator.GetValidRange(),
+			})
+		case "importSevenHoleCalibrationCsv":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			// 七孔校准 CSV 文件集导入（校准 CSV → 插值网格，spec §10 Q2 落地）：
+			// 与 importSevenHolePrb 同 DTO（1 内区 + 6 扇区路径），
+			// adapters 层完成 GBK/列位置解析与网格转换，成功后仅设置七孔插值器。
+			var body struct {
+				InnerFilePath string   `json:"innerFilePath"`
+				OuterFilePaths []string `json:"outerFilePaths"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if body.InnerFilePath == "" {
+				writeError(w, http.StatusBadRequest, "innerFilePath 不能为空（七孔内区校准 CSV）")
+				return
+			}
+			if len(body.OuterFilePaths) != 6 {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("outerFilePaths 必须恰为 6 份扇区校准 CSV（按孔号 1..6 顺序），实际 %d 份", len(body.OuterFilePaths)))
+				return
+			}
+			var outerCsvPaths [6]string
+			copy(outerCsvPaths[:], body.OuterFilePaths)
+			interpolator, err := interpfiles.LoadSevenHoleCalibrationCsvFiles(body.InnerFilePath, outerCsvPaths)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("加载七孔校准CSV文件集失败：%v", err))
+				return
+			}
+			deps.TraversalManager.SetSevenHoleInterpolator(interpolator)
+			loadedAt := time.Now().UnixMilli()
+			csvFiles := make([]map[string]any, 0, 7)
+			csvFiles = append(csvFiles, map[string]any{
+				"filePath": body.InnerFilePath, "fileName": filepath.Base(body.InnerFilePath),
+				"sector": 7, "pointCount": 169, "loadedAt": loadedAt,
+			})
+			for i, p := range body.OuterFilePaths {
+				csvFiles = append(csvFiles, map[string]any{
+					"filePath": p, "fileName": filepath.Base(p),
+					"sector": i + 1, "pointCount": 52, "loadedAt": loadedAt,
+				})
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"files":      csvFiles,
+				"validRange": interpolator.GetValidRange(),
+			})
+		case "clearInterpolator":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			// 显式清理指定探针类型的插值器（spec §5.2.1）：probeType 必填，
+			// 不允许缺省猜测当前类型，供前端切换探针前失效陈旧校准。
+			var body struct {
+				ProbeType string `json:"probeType"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if body.ProbeType == "" {
+				writeError(w, http.StatusBadRequest, "probeType 必填（five-hole / seven-hole）")
+				return
+			}
+			if err := deps.TraversalManager.ClearProbeInterpolator(body.ProbeType); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"cleared": true})
+		case "calculateRealtime":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			// 请求体为五孔超集（spec §5.6）：旧五孔 body 可省略 probeType；
+			// 七孔必须显式传 "seven-hole" 且携带 P6/P7（*float64：nil=缺失，
+			// 非 nil 含 0=已提供，禁止以零值猜测类型）。
+			var body struct {
+				ProbeType string `json:"probeType"`
+				Pressures struct {
+					P1   float64  `json:"P1"`
+					P2   float64  `json:"P2"`
+					P3   float64  `json:"P3"`
+					P4   float64  `json:"P4"`
+					P5   float64  `json:"P5"`
+					P6   *float64 `json:"P6"`
+					P7   *float64 `json:"P7"`
+					PAtm float64  `json:"Patm"`
+					TAtm float64  `json:"Tatm"`
+				} `json:"pressures"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if body.ProbeType == string(traversal.ProbeTypeSevenHole) {
+				if body.Pressures.P6 == nil || body.Pressures.P7 == nil {
+					writeError(w, http.StatusBadRequest, "七孔实时计算必须显式提供 P6/P7 压力字段")
+					return
+				}
+				result, err := deps.TraversalManager.CalculateSevenHoleRealtime(seveninterp.InterpolationInput{
+					P1:   body.Pressures.P1,
+					P2:   body.Pressures.P2,
+					P3:   body.Pressures.P3,
+					P4:   body.Pressures.P4,
+					P5:   body.Pressures.P5,
+					P6:   *body.Pressures.P6,
+					P7:   *body.Pressures.P7,
+					PAtm: body.Pressures.PAtm,
+					TAtm: body.Pressures.TAtm,
+				})
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusOK, result)
+				return
+			}
+			result, err := deps.TraversalManager.CalculateRealtime(coreinterp.InterpolationInput{
+				P1:   body.Pressures.P1,
+				P2:   body.Pressures.P2,
+				P3:   body.Pressures.P3,
+				P4:   body.Pressures.P4,
+				P5:   body.Pressures.P5,
+				PAtm: body.Pressures.PAtm,
+				TAtm: body.Pressures.TAtm,
+			})
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -1112,6 +1283,97 @@ func handleFiveholeSnakePoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, points)
+}
+
+// handleSevenHolePreview 七孔点位预览 handler（spec Task 12）
+//
+// 接收前端"配置向导"提交的 SevenHoleConfig，调用 CalibrationManager.PreviewSevenHolePoints
+// 生成完整点位列表，并按 region 聚合统计内/外区点数，返回 SevenHolePreviewResult 包装。
+//
+// 与 fivehole 路由的区别：
+//   - fivehole 直接调 core.GenerateFiveHoleSnakePoints，返回 []CalPoint
+//   - sevenhole-preview 走 usecase 层 PreviewSevenHolePoints，返回带聚合统计的
+//     SevenHolePreviewResult（TotalCount/InnerCount/OuterCount）供前端状态栏直接显示
+//
+// NaN 哨兵清洗（spec §38）：CalPoint.Coordinates/MotionCoordinates 为 map[string]float64，
+// Go 的 encoding/json 默认会把 NaN/Inf 序列化为 "NaN"/"+Inf" 字符串（非法 JSON）。
+// GenerateSevenHolePoints 实际不会产生 NaN（所有边界检查后的算术运算），
+// 但作为防御性兜底，序列化前清洗一遍：NaN/Inf 替换为 nil（JSON null），
+// 前端读取 undefined 后可自行处理缺失字段（如内区点缺 θ/φ、外区点缺 α/β）。
+//
+// 错误处理：
+//   - JSON 解码失败 → 400
+//   - 配置非法（步长 ≤ 0、范围 min > max）→ 400，透传 GenerateSevenHolePoints 错误
+func handleSevenHolePreview(w http.ResponseWriter, r *http.Request, mgr *usecase.CalibrationManager) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body calibration.SevenHoleConfig
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := mgr.PreviewSevenHolePoints(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sanitizeSevenHolePreview(result))
+}
+
+// sanitizedCalPoint 七孔点位清洗后结构（spec §38 NaN 哨兵清洗）
+//
+// Coordinates/MotionCoordinates 用 map[string]any 替代 map[string]float64，
+// 让 NaN/Inf 值替换为 nil（JSON null），避免 Go encoding/json 序列化失败。
+type sanitizedCalPoint struct {
+	ID                int            `json:"id"`
+	Coordinates       map[string]any `json:"coordinates"`
+	MotionCoordinates map[string]any `json:"motionCoordinates,omitempty"`
+	Region            string         `json:"region,omitempty"`
+	Sector            int            `json:"sector,omitempty"`
+}
+
+// sanitizeSevenHolePreview 清洗 SevenHolePreviewResult 中的 NaN/Inf 值。
+//
+// 遍历每个 CalPoint 的 Coordinates 和 MotionCoordinates，将 NaN/Inf 替换为 nil，
+// 返回新的 sanitizedCalPoint 切片（不影响原始数据，避免污染 usecase 缓存）。
+func sanitizeSevenHolePreview(result calibration.SevenHolePreviewResult) map[string]any {
+	points := make([]sanitizedCalPoint, 0, len(result.Points))
+	for _, p := range result.Points {
+		points = append(points, sanitizedCalPoint{
+			ID:                p.ID,
+			Coordinates:       sanitizeFloatMap(p.Coordinates),
+			MotionCoordinates: sanitizeFloatMap(p.MotionCoordinates),
+			Region:            p.Region,
+			Sector:            p.Sector,
+		})
+	}
+	return map[string]any{
+		"points":     points,
+		"totalCount": result.TotalCount,
+		"innerCount": result.InnerCount,
+		"outerCount": result.OuterCount,
+	}
+}
+
+// sanitizeFloatMap 将 map[string]float64 中的 NaN/Inf 替换为 nil，返回 map[string]any。
+//
+// nil map 输入返回 nil（保持 omitempty 行为）；空 map 返回空 map（保持 JSON {} 而非 null）。
+// 正常值原样保留为 float64，前端可按 typeof===number 判断。
+func sanitizeFloatMap(m map[string]float64) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			out[k] = nil
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func prbFileInfo(filePath string, validRange coreinterp.PrbValidRange) map[string]any {

@@ -212,3 +212,102 @@ func TestLoadMultiPrbFiles_WithEmptyLines(t *testing.T) {
 		t.Fatal("expected interpolator to be loaded despite blank lines")
 	}
 }
+
+// ==================== LoadSevenHolePrbFiles ====================
+
+// sevenHoleFixtureDir 定位七孔对拍夹具目录（tasks-seven-hole-traversal Task 6 产物）。
+func sevenHoleFixtureDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join("..", "..", "..", "..", "..", "..", "..",
+		"shared", "algorithms", "go", "sevenhole", "interpolation", "testdata", "prb")
+	if _, err := os.Stat(filepath.Join(dir, "7.prb")); err != nil {
+		t.Skipf("seven-hole fixture set not available: %v", err)
+	}
+	return dir
+}
+
+func sevenHolePaths(dir string) (string, [6]string) {
+	var outer [6]string
+	for i := range outer {
+		outer[i] = filepath.Join(dir, fmt.Sprintf("%d.prb", i+1))
+	}
+	return filepath.Join(dir, "7.prb"), outer
+}
+
+func TestLoadSevenHolePrbFiles_Success(t *testing.T) {
+	dir := sevenHoleFixtureDir(t)
+	inner, outer := sevenHolePaths(dir)
+	interp, err := LoadSevenHolePrbFiles(inner, outer)
+	if err != nil {
+		t.Fatalf("LoadSevenHolePrbFiles: %v", err)
+	}
+	if !interp.IsLoaded() {
+		t.Fatal("expected interpolator to be loaded after 7-file set")
+	}
+	vr := interp.GetValidRange()
+	assertNear(t, "alphaMin", vr.AlphaMin, -30, 1e-9)
+	assertNear(t, "alphaMax", vr.AlphaMax, 30, 1e-9)
+	assertNear(t, "betaMin", vr.BetaMin, -30, 1e-9)
+	assertNear(t, "betaMax", vr.BetaMax, 30, 1e-9)
+}
+
+func TestLoadSevenHolePrbFiles_MissingInner(t *testing.T) {
+	dir := sevenHoleFixtureDir(t)
+	_, outer := sevenHolePaths(dir)
+	_, err := LoadSevenHolePrbFiles(filepath.Join(dir, "missing-inner.prb"), outer)
+	if err == nil {
+		t.Fatal("expected error for missing inner file")
+	}
+	if !strings.Contains(err.Error(), "missing-inner.prb") {
+		t.Errorf("error must name the file path, got: %v", err)
+	}
+}
+
+func TestLoadSevenHolePrbFiles_MissingOuter(t *testing.T) {
+	dir := sevenHoleFixtureDir(t)
+	inner, outer := sevenHolePaths(dir)
+	outer[2] = filepath.Join(dir, "missing-3.prb")
+	_, err := LoadSevenHolePrbFiles(inner, outer)
+	if err == nil {
+		t.Fatal("expected error for missing outer file")
+	}
+	if !strings.Contains(err.Error(), "missing-3.prb") {
+		t.Errorf("error must name the file path, got: %v", err)
+	}
+}
+
+func TestLoadSevenHolePrbFiles_BadRowCount(t *testing.T) {
+	dir := sevenHoleFixtureDir(t)
+	inner, outer := sevenHolePaths(dir)
+	outer[0] = inner // 169 行冒充外区文件（应为 52 行）
+	_, err := LoadSevenHolePrbFiles(inner, outer)
+	if err == nil {
+		t.Fatal("expected row-count error")
+	}
+	if !strings.Contains(err.Error(), "52") {
+		t.Errorf("error must mention expected row count 52, got: %v", err)
+	}
+}
+
+// TestLoaderLoadSevenHolePRB ports 层加载：成功返回已加载插值器；
+// 失败路径返回 nil 接口（typed-nil 防护注释同既有 Load 方法）。
+func TestLoaderLoadSevenHolePRB(t *testing.T) {
+	dir := sevenHoleFixtureDir(t)
+	inner, outer := sevenHolePaths(dir)
+	interp, err := NewLoader().LoadSevenHolePRB(inner, outer)
+	if err != nil {
+		t.Fatalf("Loader.LoadSevenHolePRB: %v", err)
+	}
+	if interp == nil || !interp.IsLoaded() {
+		t.Fatal("expected loaded interpolator from Loader")
+	}
+	badOuter := outer
+	badOuter[5] = filepath.Join(dir, "missing-6.prb")
+	bad, err := NewLoader().LoadSevenHolePRB(inner, badOuter)
+	if err == nil {
+		t.Fatal("expected error for missing sector file")
+	}
+	if bad != nil {
+		t.Error("failure must return nil interface (typed-nil guard)")
+	}
+}

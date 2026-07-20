@@ -197,6 +197,67 @@ func ReadProbeChannelsToTotalPressureRaw(
 	}, nil
 }
 
+// ReadProbeChannelsToSevenHoleRaw 读取七孔探针原始数据（带校验，11 通道）
+//
+// 角色映射（spec §6.1，与 SevenHoleAlgorithm.ValidateConfig 严格对应）：
+//   - sevenHole.p1 ~ p7：7 个压力孔（外围 6 孔 + 中心孔 P7）
+//   - sevenHole.pAtm：大气压力（绝压，A→C 边界转换用）
+//   - sevenHole.tAtm：大气温度（静温/真空速计算用）
+//   - sevenHole.pTotal：风洞参考总压（K0/Ks/Ma 公式分母来源）
+//   - sevenHole.pTunnelStatic：风洞参考静压（Ks/Ma 公式分母来源）
+//
+// 角色命名说明：pTunnelStatic 与五孔保持一致（避免前端 ProbeChannelRole 枚举分裂），
+// 内部映射到 SevenHoleRawData.PStatic 字段（指针类型，缺失时为 nil）。
+//
+// 必需字段全部 11 项——任一缺失返回错误，避免静默用零值产出误导性系数。
+func ReadProbeChannelsToSevenHoleRaw(
+	probeChannels []ProbeChannel,
+	reader ChannelValueReader,
+) (SevenHoleRawData, error) {
+	roleMap := map[string]string{
+		"sevenHole.p1":            "p1",
+		"sevenHole.p2":            "p2",
+		"sevenHole.p3":            "p3",
+		"sevenHole.p4":            "p4",
+		"sevenHole.p5":            "p5",
+		"sevenHole.p6":            "p6",
+		"sevenHole.p7":            "p7",
+		"sevenHole.pAtm":          "pAtm",
+		"sevenHole.tAtm":          "tAtm",
+		"sevenHole.pTotal":        "pTotal",
+		"sevenHole.pTunnelStatic": "pStatic",
+	}
+
+	required := []string{"p1", "p2", "p3", "p4", "p5", "p6", "p7", "pAtm", "tAtm", "pTotal", "pStatic"}
+
+	data, err := ReadProbeChannels(probeChannels, reader, roleMap, required, "七孔探针")
+	if err != nil {
+		return SevenHoleRawData{}, err
+	}
+
+	result := SevenHoleRawData{
+		P1:   data["p1"],
+		P2:   data["p2"],
+		P3:   data["p3"],
+		P4:   data["p4"],
+		P5:   data["p5"],
+		P6:   data["p6"],
+		P7:   data["p7"],
+		PAtm: data["pAtm"],
+		TAtm: data["tAtm"],
+	}
+
+	// 指针字段：风洞总压/静压/温度缺失时保持 nil（与五孔/三孔语义一致）
+	if v, ok := data["pTotal"]; ok {
+		result.PTotal = &v
+	}
+	if v, ok := data["pStatic"]; ok {
+		result.PStatic = &v
+	}
+
+	return result, nil
+}
+
 const (
 	freshnessPollInterval   = 10 * time.Millisecond
 	freshnessDefaultTimeout = 5 * time.Second

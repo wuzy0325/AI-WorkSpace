@@ -11,6 +11,7 @@ require (
 
 replace (
 	ai-workspace/shared/algorithms/go/fivehole => ../../../../shared/algorithms/go/fivehole
+	ai-workspace/shared/algorithms/go/sevenhole => ../../../../shared/algorithms/go/sevenhole
 	shared.local/device-sdk/go => ../../../../shared/device-sdk/go
 	shared.local/motion-control/go => ../../../../shared/motion-control/go
 	wind-daq/services/api-go => ../../services/api-go
@@ -18,6 +19,7 @@ replace (
 
 require (
 	ai-workspace/shared/algorithms/go/fivehole v0.0.0 // indirect
+	ai-workspace/shared/algorithms/go/sevenhole v0.0.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -26,5 +28,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/wailsapp/wails/webview2 v1.0.27 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	shared.local/motion-control/go v0.0.0 // indirect
 )

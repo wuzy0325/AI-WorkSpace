@@ -113,3 +113,10 @@ projects/wind-daq/docs/W532.*.P.*-*/
 wind-daq-software-introduction.html
 wind-daq-software-introduction.pdf
 wind-daq-intro-images/
+
+# 七孔夹具生成脚本的临时转码产物（可由 gen_traversal_fixtures.py 重新生成）
+device-lab/skills/seven-hole-probe/tools/_transcoded/
+
+# Python 缓存
+__pycache__/
+*.pyc

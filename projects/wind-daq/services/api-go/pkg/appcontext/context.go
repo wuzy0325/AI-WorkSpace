@@ -86,10 +86,14 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	motionMgr := wiring.WrapMotionManager(rawMotionMgr)
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
-	calibrationMgr.SetCsvWriter(storage.NewCalibrationCsvWriter(calibration.Config{}))
+	// csvWriter 实例同时实现 CalibrationCsvWriter（单 writer 场景）与
+	// CalibrationWriterFactory（七孔多 writer 场景）接口，故复用同一实例注入两端口。
+	csvWriterInstance := storage.NewCalibrationCsvWriter(calibration.Config{})
+	calibrationMgr.SetCsvWriter(csvWriterInstance)
 	calibrationMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
 		return storage.NewCalibrationCsvWriterOverwrite(config)
 	})
+	calibrationMgr.SetSevenHoleWriterFactory(csvWriterInstance)
 	travStore := calstore.NewTraversalResultStore()
 	// §40 对齐：桌面生产路径必须与 bootstrap/apiserver 保持一致的 sink 注入，
 	// 避免旧 sink 路径在桌面端完全跳过（InitializeTraversal/FinalizeTraversal 副作用丢失）。

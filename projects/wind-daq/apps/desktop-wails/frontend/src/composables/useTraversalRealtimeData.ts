@@ -12,7 +12,7 @@
 import { computed, type ComputedRef, type Ref, ref } from 'vue'
 import type {
   TraversalTestConfig,
-  TraversalInterpolationInput
+  TraversalRealtimeInput
 } from '@shared/types/traversal'
 import type { DataPayload } from '@api/types'
 import { findChannelValue } from '@shared/calibrationSnapshotValue'
@@ -21,8 +21,8 @@ import { deviceApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useTraversalStore } from '@stores/traversalStore'
 
-/** 实时压力通道键名 */
-type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'Patm' | 'Tatm'
+/** 实时压力通道键名（五孔 7 项 + 七孔扩展 P6/P7） */
+type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'Patm' | 'Tatm'
 
 /** 实时压力映射（部分通道可能缺失） */
 type LivePressureMap = Partial<Record<LivePressureKey, number>>
@@ -61,30 +61,45 @@ function buildRealtimePressuresFromSnapshots(
 
     switch (channel.role) {
       case 'fiveHole.p1':
+      case 'sevenHole.p1':
         result.P1 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p2':
+      case 'sevenHole.p2':
         result.P2 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p3':
+      case 'sevenHole.p3':
         result.P3 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p4':
+      case 'sevenHole.p4':
         result.P4 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p5':
+      case 'sevenHole.p5':
         result.P5 = value
         matchedChannelCount += 1
         break
+      case 'sevenHole.p6':
+        result.P6 = value
+        matchedChannelCount += 1
+        break
+      case 'sevenHole.p7':
+        result.P7 = value
+        matchedChannelCount += 1
+        break
       case 'fiveHole.pAtm':
+      case 'sevenHole.pAtm':
         result.Patm = value
         matchedChannelCount += 1
         break
       case 'fiveHole.tAtm':
+      case 'sevenHole.tAtm':
         result.Tatm = value
         matchedChannelCount += 1
         break
@@ -117,18 +132,23 @@ function getTraversalDeviceId(config: TraversalTestConfig | null): string | null
 /**
  * 将实时压力映射转换为插值输入
  *
- * 仅当所有 7 个通道（P1~P5、Patm、Tatm）均存在时才返回有效输入，
+ * 五孔仅当 7 个通道（P1~P5、Patm、Tatm）齐全时返回有效输入；
+ * 七孔额外要求 P6/P7（spec §5.6：七孔实时计算必须携带 9 个压力字段），
  * 否则返回 null（插值计算需要完整的压力数据）。
  *
  * @param pressures 实时压力映射
+ * @param probeType 探针类型（缺省按五孔）
  * @returns 完整的插值输入，或 null
  */
-function toRealtimeInterpolationInput(pressures: LivePressureMap | null): TraversalInterpolationInput | null {
+function toRealtimeInterpolationInput(
+  pressures: LivePressureMap | null,
+  probeType: 'five-hole' | 'seven-hole' = 'five-hole'
+): TraversalRealtimeInput | null {
   if (!pressures) {
     return null
   }
 
-  const { P1, P2, P3, P4, P5, Patm, Tatm } = pressures
+  const { P1, P2, P3, P4, P5, P6, P7, Patm, Tatm } = pressures
   if (
     typeof P1 !== 'number'
     || typeof P2 !== 'number'
@@ -141,6 +161,12 @@ function toRealtimeInterpolationInput(pressures: LivePressureMap | null): Traver
     return null
   }
 
+  if (probeType === 'seven-hole') {
+    if (typeof P6 !== 'number' || typeof P7 !== 'number') {
+      return null
+    }
+    return { P1, P2, P3, P4, P5, P6, P7, Patm, Tatm }
+  }
   return { P1, P2, P3, P4, P5, Patm, Tatm }
 }
 
@@ -178,9 +204,9 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     return buildRealtimePressuresFromSnapshots(config.value, latestSnapshots.value)
   })
 
-  // 实时插值输入：所有通道齐全时可用于插值计算
-  const liveInterpolationInput: ComputedRef<TraversalInterpolationInput | null> = computed(
-    () => toRealtimeInterpolationInput(livePressures.value)
+  // 实时插值输入：所有通道齐全时可用于插值计算（按探针类型判定齐全性）
+  const liveInterpolationInput: ComputedRef<TraversalRealtimeInput | null> = computed(
+    () => toRealtimeInterpolationInput(livePressures.value, config.value?.probeType ?? 'five-hole')
   )
 
   // 是否存在实时计算结果
@@ -216,6 +242,25 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     const getChannelPrecision = (role: string): number => precisionMap.get(role) ?? 3
     const formatValue = (value?: number, precision?: number): string =>
       (typeof value === 'number' ? value.toFixed(precision ?? 3) : '--')
+    if ((config.value?.probeType ?? 'five-hole') === 'seven-hole') {
+      // 七孔 9 通道：P1..P7 + Patm + Tatm（sevenHole.* 角色）
+      const items: PressureItem[] = ([1, 2, 3, 4, 5, 6, 7] as const).map((n) => {
+        const role = `sevenHole.p${n}` as ProbeChannelRole
+        const key = `P${n}` as const
+        return {
+          key,
+          label: key,
+          unit: getChannelUnit(role, 'Pa'),
+          value: formatValue(data?.[key], getChannelPrecision(role)),
+          disabled: !hasConfig
+        }
+      })
+      items.push(
+        { key: 'Patm', label: 'Patm', unit: getChannelUnit('sevenHole.pAtm', 'Pa'), value: formatValue(data?.Patm, getChannelPrecision('sevenHole.pAtm')), disabled: !hasConfig },
+        { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('sevenHole.tAtm', '°C'), value: formatValue(data?.Tatm, getChannelPrecision('sevenHole.tAtm')), disabled: !hasConfig }
+      )
+      return items
+    }
     return [
       { key: 'P1', label: 'P1', unit: getChannelUnit('fiveHole.p1', 'Pa'), value: formatValue(data?.P1, getChannelPrecision('fiveHole.p1')), disabled: !hasConfig },
       { key: 'P2', label: 'P2', unit: getChannelUnit('fiveHole.p2', 'Pa'), value: formatValue(data?.P2, getChannelPrecision('fiveHole.p2')), disabled: !hasConfig },

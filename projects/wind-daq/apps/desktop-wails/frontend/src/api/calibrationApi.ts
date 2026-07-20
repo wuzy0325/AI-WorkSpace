@@ -1,4 +1,4 @@
-import type { CalibrationConfig, CalibrationErrorCode, CalibrationType, MotionSafetyFailure, SphereTankGateConfig } from '@shared/types/calibration';
+import type { CalibrationConfig, CalibrationErrorCode, CalibrationType, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
@@ -269,6 +269,51 @@ export const calibrationApi = {
       })
     } catch {
       return []
+    }
+  },
+
+  /**
+   * 七孔点位预览（spec Task 18）
+   *
+   * 在"配置向导"调整 α/β/θ/φ 范围与步长时实时调用后端，获取真实点位列表 + 内/外区点数聚合，
+   * 用于侧边栏点阵预览与总点数显示。
+   *
+   * 实现策略（与 generateFiveHoleSnakePoints 形成对照）：
+   *   - Wails 模式：调用 wailsApi.calibration.previewSevenHole(config) binding
+   *     禁止像五孔那样 `return []`——必须真实调用后端 API（spec Task 18 Acceptance criteria）
+   *   - HTTP 模式：POST /api/calibration/sevenhole-preview
+   *   - 离线场景（Wails 不可用 + HTTP 失败）：抛错，不 fallback 到本地点位生成
+   *
+   * 返回 SevenHolePreviewResult：
+   *   - points: 完整点位列表（含内区+外区，按蛇形/数据集顺序）
+   *   - totalCount / innerCount / outerCount: 点数聚合统计
+   *
+   * 错误处理：
+   *   - 配置非法（步长 ≤ 0、范围 min > max）：后端返回 Success=false + Error 透传
+   *   - 离线场景：抛 Error，调用方应显示"请先连接后端"提示
+   */
+  previewSevenHolePoints: async (config: SevenHoleConfig): Promise<SevenHolePreviewResult> => {
+    if (isWailsAvailable()) {
+      // Wails 模式：调用 CalibrationPreviewSevenHole binding（GenericResponse 包装）
+      // 禁止 `return { points: [], totalCount: 0, ... }`——必须真实调用后端 API（spec 强约束）
+      const res = await wailsApi.calibration.previewSevenHole(config);
+      if (!res.Success) {
+        throw new Error(res.Error || '七孔点位预览失败：后端返回 Success=false');
+      }
+      // GenericResponse.Data 字段为 SevenHolePreviewResult（后端 JSON 序列化后字段名小驼峰）
+      // 若 Data 为 null/undefined（binding 未同步或后端未填充），视为配置非法
+      if (!res.Data) {
+        throw new Error('七孔点位预览失败：后端未返回 Data 字段');
+      }
+      return res.Data as SevenHolePreviewResult;
+    } else {
+      // HTTP 模式：POST /api/calibration/sevenhole-preview
+      // 后端 handleSevenHolePreview 直接返回 SevenHolePreviewResult JSON
+      // 离线场景（HTTP 失败）：request 抛错，由调用方捕获显示"请先连接后端"
+      return await request<SevenHolePreviewResult>('/api/calibration/sevenhole-preview', {
+        method: 'POST',
+        body: JSON.stringify(config),
+      });
     }
   },
 

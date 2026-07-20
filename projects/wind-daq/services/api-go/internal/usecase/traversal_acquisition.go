@@ -380,20 +380,23 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	dwellTime := config.DwellTimeMs
 	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存。
-	// BuildRawPressure 内部按 unitProvider 查通道 Unit 并归一化到 Pa+表压，
+	// buildRawPressureForProbe 按当前探针类型的策略标签集装配并归一化到 Pa+表压，
 	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
-	_, input, hasAll := BuildRawPressure(resultValues, config.ChannelLabels, config.ResolvedChannelRefs(), unitProvider, config.PProbePressureType)
+	strategy, strategyOK := probeStrategyFor(config.ProbeType)
 	var calculated *traversal.CalculatedResult
-	if hasAll {
-		interpRes, interpErr := m.CalculateRealtime(input)
-		if interpErr == nil && interpRes.IsValid {
-			calculated = &traversal.CalculatedResult{
-				Valid: true,
-				Alpha: interpRes.Alpha,
-				Beta:  interpRes.Beta,
-				Pt:    interpRes.TotalPressure,
-				Ps:    interpRes.StaticPressure,
-				Mach:  interpRes.MachNumber,
+	if strategyOK {
+		_, probeIn, hasAll := buildRawPressureForProbe(resultValues, config.ChannelLabels, config.ResolvedChannelRefs(), unitProvider, config.PProbePressureType, strategy)
+		if hasAll {
+			interpRes, interpErr := m.CalculateRealtimeByProbe(config.ProbeType, probeIn)
+			if interpErr == nil && interpRes.IsValid {
+				calculated = &traversal.CalculatedResult{
+					Valid: true,
+					Alpha: interpRes.Alpha,
+					Beta:  interpRes.Beta,
+					Pt:    interpRes.Pt,
+					Ps:    interpRes.Ps,
+					Mach:  interpRes.Mach,
+				}
 			}
 		}
 	}

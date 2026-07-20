@@ -6,6 +6,10 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useStorageStore } from '@stores/storageStore'
 import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
+import {
+  createDefaultTraversalProbeChannels,
+  createSevenHoleTraversalProbeChannels
+} from '@shared/types/traversal'
 
 function formatApiError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
@@ -32,7 +36,11 @@ import type {
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
   TraversalCheckpoint,
-  TraversalErrorCode
+  TraversalErrorCode,
+  TraversalProbeType,
+  TraversalRealtimeInput,
+  SevenHolePrbFileInfo,
+  SevenHoleTraversalInterpolationConfig
 } from '@shared/types/traversal'
 
 export type RealtimePressures = TraversalRawPressure
@@ -109,7 +117,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   let startupPendingTaskId: string | null = null
   // 实时插值节流相关状态：基于定时器的节流，间隔由 storageStore.settings.refreshRateHz 派生
   let realtimeInterpolationTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingRealtimeInterpolationInput: TraversalInterpolationInput | null = null
+  let pendingRealtimeInterpolationInput: TraversalRealtimeInput | null = null
   let pendingRealtimeInterpolationConfig: TraversalTestConfig | null = null
   let lastRealtimeInterpolationAt = 0
   let realtimeInterpolationRequestId = 0
@@ -178,7 +186,9 @@ export const useTraversalStore = defineStore('traversal', () => {
 
     const res = await traversalApi.calculateRealtime(
       input,
-      configOverride ? toSerializableConfig(configOverride) : undefined
+      configOverride ? toSerializableConfig(configOverride) : undefined,
+      // 七孔必须显式携带 probeType（spec §5.6）；五孔省略保持旧请求体
+      (configOverride?.probeType ?? 'five-hole') === 'seven-hole' ? 'seven-hole' : undefined
     )
     if (requestId !== realtimeInterpolationRequestId) {
       return
@@ -194,7 +204,7 @@ export const useTraversalStore = defineStore('traversal', () => {
    * 若距离上次计算未达到节流间隔，则暂存输入并设置定时器；否则立即计算
    */
   function syncRealtimeInterpolation(
-    input: TraversalInterpolationInput | null,
+    input: TraversalRealtimeInput | null,
     configOverride: TraversalTestConfig | null = null
   ): void {
     // 后端插值器已加载即可进行实时插值，无需等待配置保存
@@ -232,7 +242,7 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   // 兼容旧接口：直接请求实时插值（内部走节流）
   async function requestRealtimeResult(
-    input: TraversalInterpolationInput,
+    input: TraversalRealtimeInput,
     configOverride?: TraversalTestConfig
   ): Promise<void> {
     syncRealtimeInterpolation(input, configOverride ?? null)
@@ -650,6 +660,94 @@ export const useTraversalStore = defineStore('traversal', () => {
     return null
   }
 
+  /**
+   * 七孔文件集导入的公共处理：成功后置已加载、按响应逐文件信息回填 sevenHolePrb 配置。
+   */
+  function applySevenHoleImport(
+    kind: SevenHoleTraversalInterpolationConfig['kind'],
+    data: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }
+  ): void {
+    hasLoadedInterpolator.value = true
+    if (config.value) {
+      const files = data.files
+      const inner = files.find((f) => f.sector === 7)
+      const outer = [1, 2, 3, 4, 5, 6].map((n) => files.find((f) => f.sector === n))
+      if (inner && outer.every((f): f is SevenHolePrbFileInfo => f != null)) {
+        config.value.sevenHolePrb = {
+          kind,
+          innerFile: inner,
+          outerFiles: outer as SevenHoleTraversalInterpolationConfig['outerFiles']
+        }
+      }
+    }
+  }
+
+  /**
+   * 导入七孔 PRB 文件集（1 内区 + 6 扇区，spec §5.6）。
+   * 成功后：插值器已加载、sevenHolePrb 配置按响应逐文件信息回填；
+   * 返回完整响应（files + validRange）供向导展示。
+   */
+  async function importSevenHolePrbFiles(
+    innerFilePath: string,
+    outerFilePaths: string[]
+  ): Promise<{ files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] } | null> {
+    const res = await traversalApi.importSevenHolePrb(innerFilePath, outerFilePaths)
+    if (res.success && res.data) {
+      applySevenHoleImport('seven-hole-prb-set', res.data)
+      return res.data
+    }
+    error.value = res.error || i18n.t.travErrImportSevenHolePrb
+    return null
+  }
+
+  /**
+   * 导入七孔校准 CSV 文件集（校准导出直接导入，免导出 .prb；spec §10 Q2 落地）。
+   * 与 PRB 文件集同槽位语义（1 内区 + 6 扇区），kind 记录为 calibration-csv 供恢复。
+   */
+  async function importSevenHoleCalibrationCsvFiles(
+    innerFilePath: string,
+    outerFilePaths: string[]
+  ): Promise<{ files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] } | null> {
+    const res = await traversalApi.importSevenHoleCalibrationCsv(innerFilePath, outerFilePaths)
+    if (res.success && res.data) {
+      applySevenHoleImport('seven-hole-calibration-csv', res.data)
+      return res.data
+    }
+    error.value = res.error || i18n.t.travErrImportSevenHoleCsv
+    return null
+  }
+
+  /**
+   * 异步清理指定探针类型的插值器（先清后端再改本地；后端失败不动本地状态）。
+   * 返回是否成功；失败时 error 已填充。探针切换不清插值器（双变体语义），
+   * 本动作保留给"显式移除校准文件"类场景使用。
+   */
+  async function clearProbeInterpolator(probeType: TraversalProbeType): Promise<boolean> {
+    const res = await traversalApi.clearInterpolator(probeType)
+    if (!res.success) {
+      error.value = res.error || i18n.t.travErrClearInterpolator
+      return false
+    }
+    return true
+  }
+
+  /**
+   * 切换激活探针类型（双变体语义）：
+   * 仅更新 config.probeType 并按激活变体重新推导 hasLoadedInterpolator，
+   * 不清理后端任何插值器、不重置任何变体字段——五孔字段与 sevenHolePrb
+   * 在配置中并存，后端按激活 probeType 经策略表取用对应插值器，
+   * 未激活插值器保持挂载但对计算/前置检查不可达（traversal_probe.go）。
+   * 切换后立即经 checkPreconditions 复核后端真实加载状态（应用重启只恢复
+   * 激活变体，切到未恢复侧时由 verify 纠正推断并展示根因）。
+   */
+  function activateProbeType(next: TraversalProbeType): void {
+    if (config.value) {
+      config.value.probeType = next
+    }
+    inferInterpolatorState()
+    void verifyInterpolatorWithBackend()
+  }
+
   async function checkPreconditions(cfg?: TraversalTestConfig): Promise<PreconditionCheckResult> {
     const res = await traversalApi.checkPreconditions(cfg ? toSerializableConfig(cfg) : undefined)
     return res.success ? (res.data ?? { allPassed: false, checks: [] }) : { allPassed: false, checks: [] }
@@ -807,11 +905,22 @@ export const useTraversalStore = defineStore('traversal', () => {
     realtimeResult.value = null
   }
 
-  // 根据已加载的配置推断后端插值器是否已就绪
+  // 根据已加载的配置推断后端插值器是否已就绪（按探针类型判别）
   function inferInterpolatorState(): void {
     const cfg = config.value
     if (!cfg) {
       hasLoadedInterpolator.value = false
+      return
+    }
+    if ((cfg.probeType ?? 'five-hole') === 'seven-hole') {
+      const prb = cfg.sevenHolePrb
+      const knownKind = prb?.kind === 'seven-hole-prb-set' || prb?.kind === 'seven-hole-calibration-csv'
+      hasLoadedInterpolator.value = !!(
+        knownKind &&
+        prb?.innerFile?.filePath &&
+        prb.outerFiles?.length === 6 &&
+        prb.outerFiles.every((f) => !!f?.filePath)
+      )
       return
     }
     hasLoadedInterpolator.value = !!(
@@ -918,6 +1027,10 @@ export const useTraversalStore = defineStore('traversal', () => {
     importCalibrationCsvFile,
     setInterpolationAlgorithm,
     importMultiPrbFiles,
+    importSevenHolePrbFiles,
+    importSevenHoleCalibrationCsvFiles,
+    clearProbeInterpolator,
+    activateProbeType,
     checkPreconditions,
     startTest,
     pause,

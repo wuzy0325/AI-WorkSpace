@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"golang.org/x/sys/windows/registry"
 	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/pkg/appcontext"
@@ -37,9 +38,13 @@ type VersionInfo struct {
 }
 
 // GenericResponse 通用响应结构
+//
+// Data 字段用于需要返回数据的 binding（如 CalibrationPreviewSevenHole 返回点位预览结果）。
+// 简单的成功/失败响应（如 CalibrationStart/Pause/Stop）不填 Data，序列化时 omitempty 省略。
 type GenericResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
 type FileResponse struct {
@@ -66,6 +71,14 @@ type App struct {
 	shuttingDown atomic.Bool
 	// parentPID 仅 ModeMotion 子进程使用：父进程消失时本进程自杀，避免成为孤儿
 	parentPID int
+	// mainWindow 主窗口引用，注册 WindowClosing hook 用以拦截 X 按钮关闭
+	mainWindow *application.WebviewWindow
+	// userConfirmedExit 用户已确认退出的标志位
+	// RegisterExitConfirmationHook 内 hook 检查该标志：
+	//   - false → event.Cancel() 阻止默认关闭 listener，并 EmitEvent 通知前端弹确认对话框
+	//   - true  → 放行，默认 listener 真正关闭窗口
+	// 由 RequestExit binding 在用户确认后置 true，避免 hook 二次触发时再次 Cancel 导致死循环
+	userConfirmedExit atomic.Bool
 }
 
 // NewApp 创建新的 App 实例
@@ -82,6 +95,57 @@ func NewApp(mode string) *App {
 // 解决任务管理器强杀父进程导致子进程成为孤儿的问题。
 func (a *App) SetParentPID(pid int) {
 	a.parentPID = pid
+}
+
+// RegisterExitConfirmationHook 注册主窗口的 WindowClosing hook，
+// 拦截 X 按钮关闭流程：未确认时取消默认关闭并向前端推送确认请求事件。
+//
+// 设计要点（基于 Wails v3 alpha2.106 事件分发机制）：
+//   - 点 X → WM_CLOSE → emit events.Common.WindowClosing → hook 同步先跑 → 默认 listener 后跑
+//     （默认 listener 会置 unconditionallyClose=1 并调用 impl.close() 真正销毁窗口）
+//   - hook 内必须调用 event.Cancel() 才能阻止默认 listener 执行，否则窗口立刻关闭
+//   - hook 内禁止阻塞弹模态对话框（会卡住事件分发），故通过 EmitEvent 异步通知前端
+//   - 前端 confirm 后调 RequestExit binding，置 userConfirmedExit=true 并触发 application.Quit()
+//     → cleanup() → window.Close() → hook 再次触发，此时 userConfirmedExit=true 放行
+//
+// 必须在 main.go 中 WailsApp.Run 之前调用，确保 hook 注册先于任何 WindowClosing 事件。
+func (a *App) RegisterExitConfirmationHook(win *application.WebviewWindow) {
+	a.mainWindow = win
+	win.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		// 用户已确认退出 → 放行默认关闭 listener，让窗口真正销毁
+		if a.userConfirmedExit.Load() {
+			return
+		}
+		// 应用正在关闭中（如 ServiceShutdown 已触发）→ 放行避免阻塞退出流程
+		if a.shuttingDown.Load() {
+			return
+		}
+		// 阻止默认关闭 listener，窗口保持打开
+		event.Cancel()
+		// 异步推送事件给前端，避免阻塞事件分发 goroutine
+		go func() {
+			app := application.Get()
+			if app == nil {
+				return
+			}
+			app.Event.Emit("app:exit-requested")
+		}()
+	})
+}
+
+// RequestExit 由前端在用户确认退出对话框后调用。
+// 置 userConfirmedExit=true 让后续 hook 放行，然后调用 application.Quit() 触发完整退出流程
+// （cleanup → ServiceShutdown → 关闭所有窗口 → 最后一个窗口关闭后 PostQuitMessage 退出）。
+func (a *App) RequestExit() GenericResponse {
+	a.userConfirmedExit.Store(true)
+	go func() {
+		app := application.Get()
+		if app == nil {
+			return
+		}
+		app.Quit()
+	}()
+	return GenericResponse{Success: true}
 }
 
 // ServiceStartup is called by Wails v3 when the bound service starts.
@@ -987,6 +1051,30 @@ func (a *App) CalibrationStart(dto types.CalibrationConfigDTO) GenericResponse {
 		}
 		return a.appContext.CalibrationMgr.Start(config)
 	})
+}
+
+// CalibrationPreviewSevenHole 七孔点位预览（spec Task 13）
+//
+// 接收前端"配置向导"提交的 SevenHoleConfigDTO（α/β/θ/φ 范围与步长），
+// 调用 CalibrationManager.PreviewSevenHolePoints 生成完整点位列表 + 内/外区聚合统计，
+// 返回 SevenHolePreviewResult 供前端实时显示总点数（如 673 点 = 169 内区 + 504 外区）。
+//
+// 与 CalibrationStart 的区别：
+//   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+//   - 不需要路径归一（无 SavePath）
+//   - 不需要 ToCore 转换（SevenHoleConfigDTO 直接是 calibration.SevenHoleConfig 别名）
+//
+// 错误处理：配置非法（步长 ≤ 0、范围 min > max）返回 Success=false + Error 透传 GenerateSevenHolePoints 错误。
+// 注意：无法复用 callMgr（它只返回成功/失败不带 Data），这里手写响应构造。
+func (a *App) CalibrationPreviewSevenHole(dto types.SevenHoleConfigDTO) GenericResponse {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
+		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
+	}
+	result, err := a.appContext.CalibrationMgr.PreviewSevenHolePoints(dto)
+	if err != nil {
+		return GenericResponse{Success: false, Error: err.Error()}
+	}
+	return GenericResponse{Success: true, Data: result}
 }
 
 func (a *App) CalibrationStatus() types.CalibrationStatus {

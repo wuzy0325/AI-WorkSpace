@@ -3,7 +3,7 @@
 > 关联规格：[spec-seven-hole-traversal.md](./spec-seven-hole-traversal.md)
 > 关联计划：[plan-seven-hole-traversal.md](./plan-seven-hole-traversal.md)
 > 关联文档（同套流程先例）：[tasks-seven-hole-calibration.md](./tasks-seven-hole-calibration.md)
-> 状态：**待人工批准后进入 BUILD**
+> 状态：**已完成**（2026-07 修订：探针切换改为双变体并存语义，见 Task 10/14/15 修订说明）
 > 日期：2026-07-17
 
 ## 总体约定
@@ -201,7 +201,8 @@
 
 **Acceptance criteria**
 
-- [ ] (a) 481 点 golden + 8 边界用例全部位于合法网格内，与 Python 对拍在容差内 100% 通过；任一点失败时测试输出该点的中间量（ka/kb/系数/Pt/Ps）供二分定位
+- [ ] (a) 网格内标定点 golden（实测 435/481：240 小角度 + 195 大角度）+ 8 边界用例，与 Python 对拍在容差内 100% 通过；任一点失败时测试输出该点的中间量（ka/kb/系数/Pt/Ps）供二分定位。其余 46 点落在所有多边形外（Python 走 `beyond_border` 外推），Go 按 §4 不外推，断言 `IsValid=false`+Warning 而非数值对拍（2026-07 实施记录）
+- [ ] (a2) 夹具抖动说明：数据集 CSV 系数仅 3 位小数，相邻网格点 ka/kb 产生精确相等值，Python 扫描到垂直边即 `ZeroDivisionError` 崩溃（195/481 点原本不可对拍）；夹具生成脚本对精确相等的退化边加确定性 ≤1e-7 抖动（双方读同一 `.prb`，等价性不受影响），已在脚本头注释记录（2026-07 实施记录）
 - [ ] (b) Go 产品策略守卫用例按 spec §4/§7.2 断言通过（越界 invalid、Pt<Ps error、1e-12 系列、负 radicand、压力比 <1、NaN/Inf）；断言不引用 Python 行为作依据（仅 1e-12 分母等 Python 同报错情形允许双向对照）
 - [ ] 负表压合法输入用例通过（数据集大角度 1 区 P3≈-2771 Pa 点包含在 golden 内）；「单孔压力为负」「P7=0」不被拒绝
 - [ ] 负号保护：删除坐标变换负号后重跑，对拍/单测必须失败（spec §8.1）
@@ -266,7 +267,7 @@
 
 **Description**
 
-新增 `internal/usecase/traversal_probe.go`：`probeStrategy` 采用显式 receiver 签名（与 spec §5.2 一致，不用包级无参闭包）——`pressureLabels []string`、`isLoaded func(m *TraversalManager) bool`、`calculate func(m *TraversalManager, in probeCalcInput) (probeCalcResult, error)`；`probeStrategies map[string]probeStrategy` 是无状态包级表（`"five-hole"` / `"seven-hole"` 两项）。Manager 新增字段 `sevenHoleInterpolator seveninterp.Interpolator` 与方法 `SetSevenHoleInterpolator`、`ClearProbeInterpolator(probeType string) error`；五孔字段、`SetInterpolator`、`Interpolator()` **原样不动**。`HasLoadedInterpolator()` 改为按 `m.config.ProbeType` 经策略表判定，`CheckPreconditions` 自动获得探针感知。`BuildRawPressure` 签名不变，内部改走 `buildRawPressureForProbe(...)` 查表取标签；`normalizeRawPressure` 的硬编码 P1..P5 同样改为查表。新增 `CalculateRealtimeByProbe(probeType string, in probeCalcInput)`：先校验显式请求类型与当前 `m.config.ProbeType` 一致，再由对应策略分发；七孔直接调 `m.sevenHoleInterpolator.Calculate(...)`，五孔委托既有 `CalculateRealtime`。插值器清理由显式 `ClearProbeInterpolator` 执行，不在 `SaveConfigRaw` 中隐式发生；UI 切换通过 Task 12/14 的 clear API 实现可失败、可回滚的原子流程。`interpolatorIdentity` 经可选能力类型断言取用，基础接口不含 `Identity`。
+新增 `internal/usecase/traversal_probe.go`：`probeStrategy` 采用显式 receiver 签名（与 spec §5.2 一致，不用包级无参闭包）——`pressureLabels []string`、`isLoaded func(m *TraversalManager) bool`、`calculate func(m *TraversalManager, in probeCalcInput) (probeCalcResult, error)`；`probeStrategies map[string]probeStrategy` 是无状态包级表（`"five-hole"` / `"seven-hole"` 两项）。Manager 新增字段 `sevenHoleInterpolator seveninterp.Interpolator` 与方法 `SetSevenHoleInterpolator`、`ClearProbeInterpolator(probeType string) error`；五孔字段、`SetInterpolator`、`Interpolator()` **原样不动**。`HasLoadedInterpolator()` 改为按 `m.config.ProbeType` 经策略表判定，`CheckPreconditions` 自动获得探针感知。`BuildRawPressure` 签名不变，内部改走 `buildRawPressureForProbe(...)` 查表取标签；`normalizeRawPressure` 的硬编码 P1..P5 同样改为查表。新增 `CalculateRealtimeByProbe(probeType string, in probeCalcInput)`：先校验显式请求类型与当前 `m.config.ProbeType` 一致，再由对应策略分发；七孔直接调 `m.sevenHoleInterpolator.Calculate(...)`，五孔委托既有 `CalculateRealtime`。插值器清理由显式 `ClearProbeInterpolator` 执行（显式清除能力，探针切换不调用——双变体语义，见 Task 14 修订说明），不在 `SaveConfigRaw` 中隐式发生。`interpolatorIdentity` 经可选能力类型断言取用，基础接口不含 `Identity`。
 
 **Acceptance criteria**
 
@@ -331,7 +332,7 @@
 
 **Description**
 
-`traversalAPIConfig` 在兼容旧扁平五孔 JSON 的读取 DTO 之外，新增 `probeType` 与探针判别配置 DTO。`ParseConfig` 在边界规范化：缺省类型仅对旧配置归一化为五孔；未知非空类型报错；七孔必须使用 `kind="seven-hole-prb-set"` 且 1+6 文件齐全；新格式出现五孔/七孔混合字段时报错，不允许静默忽略。规范化后再透传 `core.Config.ProbeType`。`roleToLabel` 新增七孔 9 角色映射。恢复分支只读取规范化后的当前变体：七孔调 `LoadSevenHolePRB` + `SetSevenHoleInterpolator`，五孔保持原优先级链；非当前变体字段不进入 usecase。
+`traversalAPIConfig` 在兼容旧扁平五孔 JSON 的读取 DTO 之外，新增 `probeType` 与 `sevenHolePrb` DTO。`ParseConfig` 在边界规范化（2026-07 修订为双变体语义）：缺省类型归一化为五孔；未知非空类型报错；激活七孔必须使用 `kind="seven-hole-prb-set"` 且 1+6 文件齐全；五孔字段与 `sevenHolePrb` 并存合法（持久化双变体），不再按"混合配置"拒绝。规范化后再透传 `core.Config.ProbeType`。`roleToLabel` 新增七孔 9 角色映射。恢复分支只恢复当前激活变体：七孔调 `LoadSevenHolePRB` + `SetSevenHoleInterpolator`，五孔保持原优先级链；未激活变体字段仅作持久化数据透传，不进入 usecase。
 
 **Acceptance criteria**
 
@@ -339,7 +340,7 @@
 - [ ] 七孔配置持久化→重启恢复→七孔 probeType 下 `HasLoadedInterpolator()==true`
 - [ ] `roleToLabel` 七孔 9 角色映射逐项正确；五孔映射不变
 - [ ] 七孔配置缺 outerFiles 或数量≠6 时恢复报错且消息可读
-- [ ] 未知非空 probeType、五孔/七孔混合新配置均返回校验 error；不启动任何 loader
+- [ ] 未知非空 probeType 返回校验 error 且不启动任何 loader；五孔/七孔字段并存的双变体配置按激活方正常恢复（2026-07 修订）
 - [ ] 旧扁平五孔配置仍可读取，并被规范化为 five-hole 变体后恢复
 
 **Verification**
@@ -390,7 +391,7 @@
 
 **Description**
 
-`/api/traversal/` 路由表新增 `importSevenHolePrb`：请求路径 DTO `innerFilePath + outerFilePaths[6]`，加载成功后只设置七孔插值器并返回逐文件信息对象。新增 `clearInterpolator`：请求必须显式携带合法 `probeType`，调用 `ClearProbeInterpolator`；不允许缺省猜测当前类型。`calculateRealtime` 请求体增加可选 `probeType` + `pressures` 超集：旧五孔 body 可省略类型并按 five-hole 兼容；七孔必须显式传 seven-hole。API 解码 DTO 的 `P6`/`P7` 使用 `*float64`，`nil` 表示缺失，非 nil（包括 0）表示已提供；handler 校验后再解引用装配内部输入。禁止以普通 float64 零值或 P6/P7 是否出现猜测类型。既有五孔 action 和响应不变。
+`/api/traversal/` 路由表新增 `importSevenHolePrb`：请求路径 DTO `innerFilePath + outerFilePaths[6]`，加载成功后只设置七孔插值器并返回逐文件信息对象。新增 `clearInterpolator`：请求必须显式携带合法 `probeType`，调用 `ClearProbeInterpolator`；不允许缺省猜测当前类型（显式清除能力，2026-07 修订：双变体语义下探针切换**不调用**本接口，保留给"移除校准文件后主动失效"类场景）。`calculateRealtime` 请求体增加可选 `probeType` + `pressures` 超集：旧五孔 body 可省略类型并按 five-hole 兼容；七孔必须显式传 seven-hole。API 解码 DTO 的 `P6`/`P7` 使用 `*float64`，`nil` 表示缺失，非 nil（包括 0）表示已提供；handler 校验后再解引用装配内部输入。禁止以普通 float64 零值或 P6/P7 是否出现猜测类型。既有五孔 action 和响应不变。
 
 **Acceptance criteria**
 
@@ -460,7 +461,7 @@
 
 **Description**
 
-`api/traversalApi.ts` 新增七孔导入和显式 `clearInterpolator(probeType)`，`calculateRealtime` 对七孔传 `probeType`。`traversalStore.ts` 新增七孔导入与异步 `clearProbeInterpolator(probeType)`。探针切换采用事务式动作：先 await 后端清理；成功后一次性替换 `TraversalProbeConfig`、通道预设、loaded 状态和实时结果；失败时不修改任何本地探针状态。`hasLoadedInterpolator` 从当前判别配置和后端校验结果派生，不允许单独的 no-op 五孔动作掩盖非法调用；五孔专属动作接收 five-hole 变体并由类型系统限制调用。
+`api/traversalApi.ts` 新增七孔导入和显式 `clearInterpolator(probeType)`，`calculateRealtime` 对七孔传 `probeType`。`traversalStore.ts` 新增七孔导入、显式清除用 `clearProbeInterpolator(probeType)` 与 `activateProbeType(probeType)`。探针切换采用**双变体激活切换**（2026-07 修订，替代原"事务式清理"）：仅更新 `config.probeType` 并按激活变体重新推导 `hasLoadedInterpolator`，随后经 `checkPreconditions` 复核后端真实加载状态；**不清理任何插值器、不重置任何变体字段**——五孔字段与 `sevenHolePrb` 在配置中并存，未激活插值器保持挂载但对计算/前置检查不可达。`hasLoadedInterpolator` 从激活变体配置和后端校验结果派生，不允许单独的 no-op 五孔动作掩盖非法调用；五孔专属动作接收 five-hole 变体并由类型系统限制调用。
 
 **Acceptance criteria**
 
@@ -490,16 +491,16 @@
 
 **Description**
 
-`TraversalSettings.vue` 保持四步公共向导壳，只持有一个当前 `TraversalProbeConfig`，不新增两套平行 PRB refs。第 1 步新增探针选择；确认后调用 Task 14 的事务式切换，失败时选择器回滚。`TraversalPrbStep.vue` 仅作公共壳，根据判别类型渲染 `FiveHolePrbConfig.vue` 或 `SevenHolePrbConfig.vue`：前者从现有 PRB UI 原样抽取，后者管理 1+6 文件槽位；两个组件只接收各自类型的 model，不读取对方字段。`TraversalMain.vue`、实时监视和摘要从 `TRAVERSAL_PROBE_PRESENTATION` 读取标题和 Alpha/Beta 标签。补齐 zh/en i18n；前端不得包含插值公式。
+`TraversalSettings.vue` 保持四步公共向导壳，为两种探针各维护一份配置包（五孔 refs 组 / 七孔 Draft + 通道），不新增两套平行 PRB refs。第 1 步新增探针选择；切换采用双变体换入换出（暂存当前侧、载入目标侧），**不重置、不弹确认**（2026-07 修订）。`TraversalPrbStep.vue` 仅作公共壳，根据判别类型渲染 `FiveHolePrbConfig.vue` 或 `SevenHolePrbConfig.vue`：前者从现有 PRB UI 原样抽取，后者管理 1+6 文件槽位；两个组件只接收各自类型的 model，不读取对方字段。`TraversalMain.vue`、实时监视和摘要从 `TRAVERSAL_PROBE_PRESENTATION` 读取标题和 Alpha/Beta 标签。补齐 zh/en i18n；前端不得包含插值公式。
 
 **Acceptance criteria**
 
 - [ ] 选择七孔 → 硬件步通道表变为 9 行预设；PRB 步显示 7 文件选择器且无算法/模式控件
-- [ ] 切换探针类型弹出确认；成功后原子重置，后端清理失败时 UI 选择和原配置完整回滚
+- [ ] 切换探针类型即时生效（不重置、不弹确认）：两套配置包换入换出互不丢失，回切后通道与 PRB 配置原样恢复（2026-07 修订，替代原"确认+重置+回滚"语义）
 - [ ] `TraversalPrbStep` 公共壳不持有五孔/七孔算法状态；两个子组件不存在读取对方配置字段的 prop/event
 - [ ] 五孔向导全流程 UI 与行为零变化（手动对照）
 - [ ] zh/en 双语无缺失键（界面无 raw key 显示）
-- [ ] 保存 JSON 只含当前探针变体；重进向导恢复正确；七孔主画面显示 Alpha=侧滑角、Beta=迎角
+- [ ] 保存 JSON 双变体并存（五孔字段 + `sevenHolePrb` + `inactiveProbeChannels`），`probeType` 标记激活方；重进向导两侧恢复正确；七孔主画面显示 Alpha=侧滑角、Beta=迎角
 
 **Verification**
 

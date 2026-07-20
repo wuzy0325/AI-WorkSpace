@@ -62,6 +62,34 @@ export function createDefaultTraversalProbeChannels(): ProbeChannelConfig[] {
 }
 
 /**
+ * 七孔探针 9 通道预设（spec-seven-hole-traversal §2.3）：
+ * 外围 6 孔 P1~P6（CH1~CH6）+ 中心孔 P7（CH7）+ 大气压力（CH17）+ 大气温度（CH18）。
+ * 角色与 spec-seven-hole-calibration §9.4 共用同一 sevenHole.* 命名空间。
+ */
+export const SEVEN_HOLE_TRAVERSAL_PROBE_CHANNEL_PRESETS: readonly TraversalProbeChannelPreset[] = [
+  { name: 'P1', role: 'sevenHole.p1', defaultChannelIndex: 0, required: true, enabledByDefault: true },
+  { name: 'P2', role: 'sevenHole.p2', defaultChannelIndex: 1, required: true, enabledByDefault: true },
+  { name: 'P3', role: 'sevenHole.p3', defaultChannelIndex: 2, required: true, enabledByDefault: true },
+  { name: 'P4', role: 'sevenHole.p4', defaultChannelIndex: 3, required: true, enabledByDefault: true },
+  { name: 'P5', role: 'sevenHole.p5', defaultChannelIndex: 4, required: true, enabledByDefault: true },
+  { name: 'P6', role: 'sevenHole.p6', defaultChannelIndex: 5, required: true, enabledByDefault: true },
+  { name: 'P7', role: 'sevenHole.p7', defaultChannelIndex: 6, required: true, enabledByDefault: true },
+  { name: 'Patm', role: 'sevenHole.pAtm', defaultChannelIndex: 16, required: true, enabledByDefault: true },
+  { name: 'Tatm', role: 'sevenHole.tAtm', defaultChannelIndex: 17, required: true, enabledByDefault: true }
+] as const
+
+/** 七孔遍历默认通道（与 createDefaultTraversalProbeChannels 同构） */
+export function createSevenHoleTraversalProbeChannels(): ProbeChannelConfig[] {
+  return SEVEN_HOLE_TRAVERSAL_PROBE_CHANNEL_PRESETS.map((preset) => ({
+    name: preset.name,
+    role: preset.role,
+    channel: { deviceId: '', channelIndex: preset.defaultChannelIndex },
+    enabled: preset.enabledByDefault,
+    precision: TRAVERSAL_DEFAULT_PROBE_PRECISION
+  }))
+}
+
+/**
  * 通道绑定的唯一键：设备 + 硬件通道号。
  * 不同设备的通道号允许重复（各设备 profile 均从 0 编号），
  * 只有「同一设备同一通道」被多个探针绑定才是冲突。
@@ -101,8 +129,14 @@ export function hasDuplicateChannel(channels: ProbeChannelConfig[]): boolean {
   return findDuplicateChannelBindings(channels).size > 0
 }
 
+/** 遍历通道预设全集（五孔 7 项 + 七孔 9 项），供 required/configurable 判定共用 */
+const ALL_TRAVERSAL_PROBE_CHANNEL_PRESETS: readonly TraversalProbeChannelPreset[] = [
+  ...TRAVERSAL_PROBE_CHANNEL_PRESETS,
+  ...SEVEN_HOLE_TRAVERSAL_PROBE_CHANNEL_PRESETS
+]
+
 export function isTraversalRequiredProbeChannel(role?: ProbeChannelRole, name?: string): boolean {
-  return TRAVERSAL_PROBE_CHANNEL_PRESETS.some((preset) => {
+  return ALL_TRAVERSAL_PROBE_CHANNEL_PRESETS.some((preset) => {
     if (role && preset.role === role) {
       return preset.required
     }
@@ -112,7 +146,7 @@ export function isTraversalRequiredProbeChannel(role?: ProbeChannelRole, name?: 
 }
 
 export function isTraversalConfigurableProbeChannel(role?: ProbeChannelRole, name?: string): boolean {
-  return TRAVERSAL_PROBE_CHANNEL_PRESETS.some((preset) => {
+  return ALL_TRAVERSAL_PROBE_CHANNEL_PRESETS.some((preset) => {
     if (role && preset.role === role) {
       return true
     }
@@ -674,12 +708,259 @@ export interface MultiPrbConfig {
   interpolationMode: MultiPrbInterpolationMode
 }
 
+// =====================================================================
+// 七孔探针：类型、判别配置、展示元数据（spec-seven-hole-traversal §2.3/§6.5）
+// =====================================================================
+
+/** 探针类型判别字段：'five-hole'（默认，旧配置缺省等价）/ 'seven-hole' */
+export type TraversalProbeType = 'five-hole' | 'seven-hole'
+
+/**
+ * 七孔 PRB 文件信息（importSevenHolePrb 响应逐文件项 + 持久化）。
+ * 持久化时后端仅消费 filePath；其余字段为前端展示保留。
+ */
+export interface SevenHolePrbFileInfo {
+  filePath: string
+  fileName?: string
+  /** 7=内区（7.prb），1..6=扇区（n.prb） */
+  sector?: number
+  /** 169（内区）/ 52（扇区） */
+  pointCount?: number
+  loadedAt?: number
+}
+
+/** 七孔批量导入的文件名→槽位分配结果 */
+export interface SevenHoleFileAssignment {
+  innerFile: SevenHolePrbFileInfo | null
+  outerFiles: Map<number, SevenHolePrbFileInfo>
+  /** 无法按规范命名分配的文件（由用户逐槽手动选择） */
+  unmatched: string[]
+}
+
+/**
+ * 按文件名把批量选择的 .prb 分配到七孔槽位：
+ * 7.prb → 内区；1.prb~6.prb → 扇区 1..6（大小写不敏感，仅认规范命名）。
+ * 同一槽位重复命中时后来者覆盖；不匹配的文件列入 unmatched。
+ */
+export function assignSevenHoleFilesByName(paths: string[]): SevenHoleFileAssignment {
+  const outerFiles = new Map<number, SevenHolePrbFileInfo>()
+  const unmatched: string[] = []
+  let innerFile: SevenHolePrbFileInfo | null = null
+  for (const path of paths) {
+    const fileName = path.split(/[\\/]/).pop() ?? path
+    const m = /^(\d+)\.prb$/i.exec(fileName)
+    if (m) {
+      const n = Number(m[1])
+      if (n === 7) {
+        innerFile = { filePath: path, fileName, sector: 7 }
+        continue
+      }
+      if (n >= 1 && n <= 6) {
+        outerFiles.set(n, { filePath: path, fileName, sector: n })
+        continue
+      }
+    }
+    unmatched.push(path)
+  }
+  return { innerFile, outerFiles, unmatched }
+}
+
+/** 七孔批量导入格式探测：全 .prb / 全 .csv / 混合 / 空 */
+export function detectSevenHoleBatchFormat(paths: string[]): 'prb' | 'calibration-csv' | 'mixed' | 'empty' {
+  if (paths.length === 0) return 'empty'
+  const allPrb = paths.every((p) => /\.prb$/i.test(p))
+  if (allPrb) return 'prb'
+  const allCsv = paths.every((p) => /\.csv$/i.test(p))
+  if (allCsv) return 'calibration-csv'
+  return 'mixed'
+}
+
+/**
+ * 按文件名把批量选择的七孔校准 CSV 分配到槽位：
+ * 含「小角度区」→ 内区；含「大角度N区」（N=1..6）→ 扇区 N（校准导出规范命名）。
+ * 不匹配的文件列入 unmatched。
+ */
+export function assignSevenHoleCsvFilesByName(paths: string[]): SevenHoleFileAssignment {
+  const outerFiles = new Map<number, SevenHolePrbFileInfo>()
+  const unmatched: string[] = []
+  let innerFile: SevenHolePrbFileInfo | null = null
+  for (const path of paths) {
+    const fileName = path.split(/[\\/]/).pop() ?? path
+    if (fileName.includes('小角度区')) {
+      innerFile = { filePath: path, fileName, sector: 7 }
+      continue
+    }
+    const m = /大角度([1-6])区/.exec(fileName)
+    if (m) {
+      const n = Number(m[1])
+      outerFiles.set(n, { filePath: path, fileName, sector: n })
+      continue
+    }
+    unmatched.push(path)
+  }
+  return { innerFile, outerFiles, unmatched }
+}
+
+/** 七孔插值配置（判别变体，spec §2.3）：1 个内区文件 + 恰 6 个扇区文件 */
+export interface SevenHoleTraversalInterpolationConfig {
+  /** prb-set=.prb 文件集；calibration-csv=七孔校准 CSV 文件集（校准导出直接导入） */
+  kind: 'seven-hole-prb-set' | 'seven-hole-calibration-csv'
+  innerFile: SevenHolePrbFileInfo
+  outerFiles: [
+    SevenHolePrbFileInfo, SevenHolePrbFileInfo, SevenHolePrbFileInfo,
+    SevenHolePrbFileInfo, SevenHolePrbFileInfo, SevenHolePrbFileInfo
+  ]
+}
+
+/** 七孔数据源格式（向导文件选择与导入动作判别） */
+export type SevenHolePrbSource = 'prb' | 'calibration-csv'
+
+/** 七孔 PRB 编辑态（向导内允许空槽位；持久化前必须补全为 SevenHoleTraversalInterpolationConfig） */
+export interface SevenHolePrbDraft {
+  source: SevenHolePrbSource
+  innerFile: SevenHolePrbFileInfo | null
+  outerFiles: (SevenHolePrbFileInfo | null)[]
+}
+
+/**
+ * 五孔插值配置变体：由旧扁平字段（prbFile/multiPrb/useMultiPrb/
+ * interpolationAlgorithm/calibrationCsvFile）规范化而来；
+ * 优先级与后端恢复链一致：校准 CSV > 多 PRB > 单 PRB > 未配置。
+ */
+export type FiveHoleTraversalInterpolationConfig =
+  | { kind: 'calibration-csv'; file: CalibrationCsvFileInfo }
+  | { kind: 'multi-prb'; config: MultiPrbConfig }
+  | { kind: 'single-prb'; file: PrbFileInfo }
+  | { kind: 'none' }
+
+/**
+ * 探针判别配置（spec §2.3 激活变体）：五孔/七孔各自的插值配置在类型层互斥。
+ * 持久化 JSON 允许双变体并存（五孔字段 + sevenHolePrb），probeType 标记激活方；
+ * 未知 probeType 或激活七孔文件集不齐在 normalizeTraversalProbeConfig 边界报错。
+ */
+export type TraversalProbeConfig =
+  | {
+      probeType: 'five-hole'
+      probeChannels: ProbeChannelConfig[]
+      interpolation: FiveHoleTraversalInterpolationConfig
+    }
+  | {
+      probeType: 'seven-hole'
+      probeChannels: ProbeChannelConfig[]
+      interpolation: SevenHoleTraversalInterpolationConfig
+    }
+
+/** 探针展示元数据（仅标题与 Alpha/Beta 标签键，不含任何计算逻辑，spec §6.5） */
+export interface TraversalProbePresentation {
+  titleKey: string
+  alphaLabelKey: string
+  betaLabelKey: string
+}
+
+/**
+ * 角度语义注册表：五孔 Alpha=攻角/Beta=侧滑角；七孔 Alpha=侧滑角/Beta=迎角
+ * （与后端字段名复用但物理含义不同，UI 必须按探针类型查表标注）。
+ */
+export const TRAVERSAL_PROBE_PRESENTATION: Record<TraversalProbeType, TraversalProbePresentation> = {
+  'five-hole': { titleKey: 'fiveHoleTraversalTest', alphaLabelKey: 'angleOfAttack', betaLabelKey: 'sideslipAngle' },
+  'seven-hole': { titleKey: 'sevenHoleTraversalTest', alphaLabelKey: 'sideslipAngle', betaLabelKey: 'angleOfAttack' }
+} as const
+
+/** 旧扁平五孔字段集合（用于五孔插值配置抽取；字段均可缺省） */
+type FiveHoleFlatFields = {
+  prbFile?: PrbFileInfo | null
+  multiPrb?: MultiPrbConfig
+  useMultiPrb?: boolean
+  interpolationAlgorithm?: InterpolationAlgorithm
+  calibrationCsvFile?: CalibrationCsvFileInfo | null
+}
+
+/** 旧扁平五孔字段 → 五孔插值配置变体（优先级：CSV > 多 PRB > 单 PRB > 未配置） */
+function fiveHoleInterpolationFromRaw(cfg: FiveHoleFlatFields): FiveHoleTraversalInterpolationConfig {
+  if (cfg.interpolationAlgorithm === 'new' && cfg.calibrationCsvFile) {
+    return { kind: 'calibration-csv', file: cfg.calibrationCsvFile }
+  }
+  if (cfg.useMultiPrb && cfg.multiPrb) {
+    return { kind: 'multi-prb', config: cfg.multiPrb }
+  }
+  if (cfg.prbFile) {
+    return { kind: 'single-prb', file: cfg.prbFile }
+  }
+  return { kind: 'none' }
+}
+
+/** 七孔文件集边界校验（与后端 normalizeAndValidateProbeType 同契约） */
+function normalizeSevenHoleInterpolation(raw: unknown): SevenHoleTraversalInterpolationConfig {
+  const prb = (raw ?? {}) as {
+    kind?: string
+    innerFile?: SevenHolePrbFileInfo
+    outerFiles?: (SevenHolePrbFileInfo | null)[]
+  }
+  if (prb.kind != null && prb.kind !== 'seven-hole-prb-set' && prb.kind !== 'seven-hole-calibration-csv') {
+    throw new Error(`七孔插值配置 kind 必须为 'seven-hole-prb-set' 或 'seven-hole-calibration-csv'，实际 ${String(prb.kind)}`)
+  }
+  if (!prb.innerFile?.filePath) {
+    throw new Error('七孔配置缺少内区文件 (sevenHolePrb.innerFile)')
+  }
+  const outer = prb.outerFiles
+  if (!Array.isArray(outer) || outer.length !== 6) {
+    throw new Error(`七孔配置扇区文件必须恰为 6 份，实际 ${Array.isArray(outer) ? outer.length : 0} 份`)
+  }
+  outer.forEach((f, i) => {
+    if (!f?.filePath) {
+      throw new Error(`七孔配置扇区 ${i + 1} 文件路径为空`)
+    }
+  })
+  return {
+    kind: (prb.kind as SevenHoleTraversalInterpolationConfig['kind'] | undefined) ?? 'seven-hole-prb-set',
+    innerFile: prb.innerFile,
+    outerFiles: outer as SevenHoleTraversalInterpolationConfig['outerFiles']
+  }
+}
+
+/**
+ * normalizeTraversalProbeConfig：把持久化配置 JSON 规范化为「激活」探针判别配置。
+ *
+ * 双变体语义：五孔字段与 sevenHolePrb 在持久化 JSON 中并存合法，probeType 仅
+ * 标记激活方。本函数只抽取激活变体；未激活变体字段留在原始配置对象中由
+ * 持久化往返携带，不进入返回的判别配置。
+ *
+ * 规则：
+ *   - 旧扁平五孔 JSON（无 probeType）→ five-hole 变体；
+ *   - 未知 probeType → 抛错（不静默降级）；
+ *   - 激活七孔时 sevenHolePrb 必须齐全，否则抛错。
+ */
+export function normalizeTraversalProbeConfig(raw: unknown): TraversalProbeConfig {
+  const cfg = (raw ?? {}) as Partial<TraversalTestConfig> & { probeType?: string }
+  const probeType = cfg.probeType ?? ''
+  switch (probeType) {
+    case '':
+    case 'five-hole':
+      return {
+        probeType: 'five-hole',
+        probeChannels: cfg.channels?.probeChannels ?? [],
+        interpolation: fiveHoleInterpolationFromRaw(cfg)
+      }
+    case 'seven-hole':
+      return {
+        probeType: 'seven-hole',
+        probeChannels: cfg.channels?.probeChannels ?? [],
+        interpolation: normalizeSevenHoleInterpolation(cfg.sevenHolePrb)
+      }
+    default:
+      throw new Error(`未知探针类型: ${probeType}（仅支持 five-hole / seven-hole）`)
+  }
+}
+
 export interface TraversalRawPressure {
   P1: number
   P2: number
   P3: number
   P4: number
   P5: number
+  /** 七孔外围孔 P6/P7（仅 seven-hole；五孔响应中缺失） */
+  P6?: number
+  P7?: number
   Patm: number
   Tatm: number
   P0?: number
@@ -691,6 +972,9 @@ export type TraversalInterpolationInput = Pick<
   'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'Patm' | 'Tatm'
 >
 
+/** 实时插值请求输入：五孔字段 + 七孔可选 P6/P7（七孔时必填，spec §5.6 超集 DTO） */
+export type TraversalRealtimeInput = TraversalInterpolationInput & { P6?: number; P7?: number }
+
 /** 插值计算结果 */
 export interface InterpolationResult {
   alpha: number
@@ -698,7 +982,8 @@ export interface InterpolationResult {
   machNumber: number
   velocity: number
   dynamicPressure: number
-  density: number
+  /** 密度（七孔结果不含此字段；五孔新算法路径才有值） */
+  density?: number
   P0?: number
   Ps?: number
   isValid: boolean
@@ -745,6 +1030,21 @@ export interface TraversalTestConfig {
   calibrationCsvFile?: CalibrationCsvFileInfo | null // 新算法的CSV校准数据文件
   /** 五孔探针压力类型：'gauge' 表压(默认) | 'absolute' 绝压 */
   pProbePressureType?: 'gauge' | 'absolute'
+  /**
+   * 探针类型：'five-hole'(默认，旧配置缺省等价) | 'seven-hole'。
+   * 驱动插值器选择、通道标签集与输入装配（spec-seven-hole-traversal §2.3）。
+   */
+  probeType?: TraversalProbeType
+  /**
+   * 七孔 PRB 文件集（七孔变体数据；与五孔字段并存合法，probeType 标记激活方）。
+   */
+  sevenHolePrb?: SevenHoleTraversalInterpolationConfig | null
+  /**
+   * 未激活探针类型的通道绑定（双变体持久化）。
+   * 激活通道在 channels.probeChannels；未激活侧通道存于此（后端忽略此字段，
+   * 启动遍历只用激活集合）。
+   */
+  inactiveProbeChannels?: ProbeChannelConfig[]
   dwellTimeMs: number
   samplesPerPoint: number
   savePath: string

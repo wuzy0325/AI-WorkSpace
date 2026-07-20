@@ -9,5 +9,6 @@ export {
     DeviceProfile,
     DeviceScanResult,
     DeviceStatus,
-    MotionControllerProfile
+    MotionControllerProfile,
+    SevenHoleConfigDTO
 } from "./models.js";

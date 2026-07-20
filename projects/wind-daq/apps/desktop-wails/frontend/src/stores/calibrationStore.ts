@@ -18,6 +18,10 @@ export interface RealtimePressures {
   P3: number
   P4: number
   P5: number
+  // 七孔探针扩展（spec Task 19）：P6/P7 为可选字段，五孔/三孔/总压/总温数据不填时为 undefined。
+  // 与后端 SevenHoleRawData.P6/P7 对齐——P6 是外区第 6 孔，P7 是中心孔。
+  P6?: number
+  P7?: number
   Patm: number
   Tatm: number
   P0?: number
@@ -99,6 +103,15 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
   const timeInfo = ref<TimeInfo | null>(null)
+  // 七孔探针实时分区状态（spec Task 19）：
+  //   - currentRegion: "inner"（内区，7 区）或 "outer"（外区，1~6 区）
+  //   - currentSector: 内区固定 7，外区 1..6；首点之前为 0
+  //   - boundaryFlag: 边界点标记，空串=非边界，"P7-Pn"或"Pn-Pm"=并列边界
+  // 由 OnRegionChanged 事件（Wails）或 5Hz status 轮询（HTTP）更新；
+  // 五孔/三孔/总压/总温类型不使用这些字段，保持默认空值。
+  const currentRegion = ref<string>('')
+  const currentSector = ref<number>(0)
+  const boundaryFlag = ref<string>('')
   // 默认 5Hz：兼顾实时性与性能。CalibrationConfig.uiRefreshHz 在 startCalibration 中同步覆盖。
   const uiRefreshHz = ref(5)
   const uiRefreshIntervalMs = computed(() => 1000 / uiRefreshHz.value)
@@ -188,6 +201,34 @@ export const useCalibrationStore = defineStore('calibration', () => {
   function updateRealtimePressures(pressures: RealtimePressures) {
     pendingPressureUpdate = pressures
     flushPendingPressureIfReady()
+  }
+
+  // updateRegion 更新七孔探针实时分区状态（spec Task 19 / Task 23）
+  //
+  // 调用源：
+  //   1. Wails 模式 OnRegionChanged 事件订阅（SevenHoleMain.vue onMounted 注册）
+  //   2. HTTP 模式 5Hz status 轮询时从 status.CurrentRegion/CurrentSector/BoundaryFlag 同步
+  //   3. recoveryFromBackend 时从后端 status 同步当前分区
+  //
+  // 设计：直接赋值，不做节流——分区切换是低频事件（每点最多 1 次），
+  // 节流反而可能丢失关键切换瞬间。UI 通过响应式 ref 自动刷新。
+  //
+  // 入参字段宽松处理：
+  //   - region 空串视为未初始化（首点之前），保持 store 当前值不变
+  //   - sector 内区固定 7，外区 1..6；非法值（0/-1/8）不更新
+  //   - boundaryFlag 空串表示非边界点（覆盖之前的边界标记）
+  function updateRegion(region: string, sector: number, flag: string) {
+    if (region !== '' && region !== 'inner' && region !== 'outer') {
+      // 非法 region 值，保持当前状态不变（防御性）
+      return
+    }
+    if (region !== '') {
+      currentRegion.value = region
+    }
+    if (sector >= 0 && sector <= 7) {
+      currentSector.value = sector
+    }
+    boundaryFlag.value = flag
   }
 
   // 开始轮询校准状态
@@ -387,6 +428,17 @@ export const useCalibrationStore = defineStore('calibration', () => {
       dataPoints.value = backendDataPoints
     }
 
+    // 七孔探针实时分区状态同步（spec Task 19 / Task 23）
+    // 后端 Status.CurrentRegion/CurrentSector/BoundaryFlag 字段在每点采集完成后刷新，
+    // 5Hz 轮询时同步到 store；五孔/三孔/总压/总温类型后端不填这些字段，保持空值。
+    // region 空串表示任务未启动或类型非七孔，跳过更新避免覆盖 OnRegionChanged 事件已设置的值。
+    const backendRegion = calStatus.currentRegion ?? calStatus.CurrentRegion ?? ''
+    const backendSector = calStatus.currentSector ?? calStatus.CurrentSector ?? 0
+    const backendBoundaryFlag = calStatus.boundaryFlag ?? calStatus.BoundaryFlag ?? ''
+    if (backendRegion !== '') {
+      updateRegion(backendRegion, backendSector, backendBoundaryFlag)
+    }
+
     // 更新运行状态
     isRunning.value = state === 'running'
     isPaused.value = state === 'paused'
@@ -526,6 +578,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures.value = null
     calculatedPhysics.value = null
     timeInfo.value = null
+    // 七孔探针实时分区状态清空（spec Task 19）
+    // 启动新任务前必须清空，避免上一趟的分区状态残留导致 UI 显示错误的"外区 n 区"
+    currentRegion.value = ''
+    currentSector.value = 0
+    boundaryFlag.value = ''
   }
 
   async function startCalibration(config: CalibrationConfig) {
@@ -672,6 +729,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures,
     calculatedPhysics,
     timeInfo,
+    // 七孔探针实时分区状态（spec Task 19）
+    currentRegion,
+    currentSector,
+    boundaryFlag,
+    updateRegion,
     uiRefreshHz,
     uiRefreshIntervalMs,
     activeViewCount,

@@ -1,0 +1,21 @@
+{
+  "name": "probe-interpolator-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@wailsio/runtime": "3.0.0-alpha.95",
+    "vue": "^3.5.14",
+    "vite": "^5.4.20"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "^5.8.3",
+    "vue-tsc": "^2.2.10"
+  }
+}

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/realtime"
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -95,6 +96,10 @@ type TraversalManager struct {
 	status          traversal.Status
 	configRaw       json.RawMessage
 	interpolator    coreinterp.Interpolator
+	// sevenHoleInterpolator 七孔插值器（与五孔 interpolator 字段相互独立）。
+	// 生命周期由 SetSevenHoleInterpolator / ClearProbeInterpolator 显式管理，
+	// 计算与前置检查仅经策略表按 config.ProbeType 访问（traversal_probe.go）。
+	sevenHoleInterpolator seveninterp.Interpolator
 
 	// finalizeOnce 确保 finalizeSink 只执行一次实际关闭逻辑。
 	// Stop 5s 超时路径与 RunTraversalLoop 的 defer 可能并发调用 finalizeSink，
@@ -191,6 +196,15 @@ func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]trav
 func (m *TraversalManager) SaveConfigRaw(config json.RawMessage) {
 	m.mu.Lock()
 	m.configRaw = append(json.RawMessage(nil), config...)
+	// 同步探针类型到当前配置：导入/切换探针后、Start 前的实时计算
+	// （CalculateRealtimeByProbe 的一致性校验）依赖 config.ProbeType 有效；
+	// 未携带 probeType 的旧配置不改变现状（spec §5.2.1 状态一致性）。
+	var probe struct {
+		ProbeType string `json:"probeType"`
+	}
+	if err := json.Unmarshal(config, &probe); err == nil && probe.ProbeType != "" {
+		m.config.ProbeType = probe.ProbeType
+	}
 	m.mu.Unlock()
 	// 持久化到磁盘，确保重启后配置不丢失
 	if m.configStore != nil {
@@ -343,7 +357,15 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 //     故"目标控制器"语义为"至少一个已连接"。仅查 m.motion != nil 会让"端口注入但
 //     实际全部离线"的配置通过前置检查（假绿），到 RunCurrentPoint 才发现无可用控制器。
 func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
-	hasInterpolator := m.HasLoadedInterpolator()
+	// 有效探针类型：优先请求配置（向导未启动前 Manager 尚无 config.ProbeType），
+	// 回退 Manager 当前配置；PRB 项经策略表按该类型判定（traversal_probe.go）。
+	m.mu.RLock()
+	effectiveProbeType := m.config.ProbeType
+	m.mu.RUnlock()
+	if config != nil && config.ProbeType != "" {
+		effectiveProbeType = config.ProbeType
+	}
+	hasInterpolator := m.hasLoadedInterpolatorFor(effectiveProbeType)
 	hasMotion := m.motion != nil
 	hasReader := m.reader != nil
 
@@ -507,8 +529,21 @@ func (m *TraversalManager) CalculateRealtime(input coreinterp.InterpolationInput
 
 func (m *TraversalManager) HasLoadedInterpolator() bool {
 	m.mu.RLock()
+	probeType := m.config.ProbeType
+	m.mu.RUnlock()
+	return m.hasLoadedInterpolatorFor(probeType)
+}
+
+// hasLoadedInterpolatorFor 按给定探针类型经策略表判定插值器是否已加载；
+// 未知类型失败关闭（配置边界另行报错）。
+func (m *TraversalManager) hasLoadedInterpolatorFor(probeType string) bool {
+	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.interpolator != nil && m.interpolator.IsLoaded()
+	strategy, ok := probeStrategyFor(probeType)
+	if !ok {
+		return false
+	}
+	return strategy.isLoaded(m)
 }
 
 func (m *TraversalManager) beginSession(parent context.Context, taskID string, snapshot traversal.TraversalRunSnapshot) (*TraversalRunSession, error) {
@@ -896,10 +931,21 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 	)
 }
 
-// interpolatorIdentity 返回当前插值器的身份标识（用于快照）
+// interpolatorIdentity 返回当前插值器的身份标识（用于快照）。
+// 七孔配置取 sevenHoleInterpolator，五孔取 interpolator（spec §5.2.1：
+// 快照只记录当前探针类型的插值器）。
 func (m *TraversalManager) interpolatorIdentity() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.config.IsSevenHole() {
+		if m.sevenHoleInterpolator == nil {
+			return ""
+		}
+		if id, ok := m.sevenHoleInterpolator.(interface{ Identity() string }); ok {
+			return id.Identity()
+		}
+		return ""
+	}
 	if m.interpolator == nil {
 		return ""
 	}

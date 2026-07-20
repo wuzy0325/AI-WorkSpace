@@ -260,18 +260,22 @@ func (m *TraversalManager) BuildDataPoints(results []traversal.PointResult) []ma
 	channelLabels := m.config.ChannelLabels
 	channelRefs := m.config.ResolvedChannelRefs()
 	pressureType := m.config.PProbePressureType
+	probeType := m.config.ProbeType
 	unitProvider := m.unitProvider
 	m.mu.RUnlock()
+	strategy, strategyOK := probeStrategyFor(probeType)
 	for _, result := range results {
-		rawPressure, input, ok := BuildRawPressure(result.Values, channelLabels, channelRefs, unitProvider, pressureType)
-		interpolationResult := coreinterp.InterpolationResult{IsValid: false}
-		if ok {
-			calculated, err := m.CalculateRealtime(input)
-			if err == nil {
-				interpolationResult = calculated
-			} else {
-				interpolationResult.Warning = err.Error()
-			}
+		var rawPressure map[string]float64
+		var interpolationResult any
+		if !strategyOK {
+			// 未知探针类型在配置边界被拒绝；防御路径返回零结果而非静默降级。
+			rawPressure = map[string]float64{}
+			interpolationResult = coreinterp.InterpolationResult{IsValid: false, Warning: fmt.Sprintf("未知探针类型: %q", probeType)}
+		} else {
+			var probeIn probeCalcInput
+			var assembled bool
+			rawPressure, probeIn, assembled = buildRawPressureForProbe(result.Values, channelLabels, channelRefs, unitProvider, pressureType, strategy)
+			interpolationResult = strategy.viewCalculate(m, probeIn, assembled)
 		}
 		dataPoints = append(dataPoints, map[string]any{
 			"pointId": result.PointIndex + 1,
@@ -312,10 +316,38 @@ func BuildRawPressure(
 	unitProvider ports.ChannelUnitProvider,
 	pressureType string,
 ) (map[string]float64, coreinterp.InterpolationInput, bool) {
-	raw := make(map[string]float64, 7)
+	// BuildRawPressure 是五孔专用稳定入口：签名固定返回 coreinterp.InterpolationInput，
+	// 内部调用 buildRawPressureForProbe 仅消费 raw/ok，丢弃 probeIn（七孔走
+	// probeStrategies[ProbeTypeSevenHole] 独立路径，不经此函数）。
+	raw, _, ok := buildRawPressureForProbe(values, labels, refs, unitProvider, pressureType, probeStrategies[traversal.ProbeTypeFiveHole])
+	input := coreinterp.InterpolationInput{
+		P1:   raw["P1"],
+		P2:   raw["P2"],
+		P3:   raw["P3"],
+		P4:   raw["P4"],
+		P5:   raw["P5"],
+		PAtm: raw["Patm"],
+		TAtm: raw["Tatm"],
+	}
+	return raw, input, ok
+}
+
+// buildRawPressureForProbe 探针感知的原始压力装配：标签集与齐全性校验由
+// strategy.pressureLabels 驱动（五孔 P1..P5 / 七孔 P1..P7）。legacy 无标签
+// 回退（按 CH 顺序映射 P1..P5）仅服务五孔旧配置（spec 附录假设 6）。
+func buildRawPressureForProbe(
+	values map[int]float64,
+	labels map[int]string,
+	refs map[int]traversal.ChannelRef,
+	unitProvider ports.ChannelUnitProvider,
+	pressureType string,
+	strategy probeStrategy,
+) (map[string]float64, probeCalcInput, bool) {
+	raw := make(map[string]float64, 9)
 	// labelToRef 反查表：label→物理通道，供 unitProvider.ChannelUnit 按真实设备查询。
 	// labels 是 内部键→label，遍历一次建反查避免后续重复扫描。
 	labelToRef := make(map[string]traversal.ChannelRef, len(labels))
+	isFiveHole := len(strategy.pressureLabels) == 5
 	if len(labels) > 0 {
 		for chIdx, value := range values {
 			if label, ok := labels[chIdx]; ok && label != "" {
@@ -323,8 +355,8 @@ func BuildRawPressure(
 				labelToRef[label] = refs[chIdx]
 			}
 		}
-	} else {
-		// 兼容旧行为：通道索引升序对应 P1..Tatm
+	} else if isFiveHole {
+		// 兼容旧行为：通道索引升序对应 P1..Tatm（仅五孔 legacy 配置）
 		orderedKeys := make([]int, 0, len(values))
 		for key := range values {
 			orderedKeys = append(orderedKeys, key)
@@ -358,26 +390,26 @@ func BuildRawPressure(
 			"component", "traversal",
 		)
 	} else {
-		normalized = normalizeRawPressure(raw, labelToRef, unitProvider, pressureType)
+		normalized = normalizeRawPressure(raw, labelToRef, unitProvider, pressureType, strategy.pressureLabels)
 	}
 
-	input := coreinterp.InterpolationInput{
-		P1:   raw["P1"],
-		P2:   raw["P2"],
-		P3:   raw["P3"],
-		P4:   raw["P4"],
-		P5:   raw["P5"],
-		PAtm: raw["Patm"],
-		TAtm: raw["Tatm"],
+	input := probeCalcInput{PAtm: raw["Patm"], TAtm: raw["Tatm"]}
+	for i, label := range strategy.pressureLabels {
+		input.P[i] = raw[label]
 	}
-	_, hasP1 := raw["P1"]
-	_, hasP2 := raw["P2"]
-	_, hasP3 := raw["P3"]
-	_, hasP4 := raw["P4"]
-	_, hasP5 := raw["P5"]
-	_, hasPatm := raw["Patm"]
-	_, hasTatm := raw["Tatm"]
-	hasAllLabels := hasP1 && hasP2 && hasP3 && hasP4 && hasP5 && hasPatm && hasTatm
+	hasAllLabels := true
+	for _, label := range strategy.pressureLabels {
+		if _, ok := raw[label]; !ok {
+			hasAllLabels = false
+			break
+		}
+	}
+	if _, ok := raw["Patm"]; !ok {
+		hasAllLabels = false
+	}
+	if _, ok := raw["Tatm"]; !ok {
+		hasAllLabels = false
+	}
 	// ok 语义：标签齐全 && 全部归一化成功。
 	// 调用方在 ok=true 时才调用插值器，避免混合单位或假表压输入。
 	return raw, input, hasAllLabels && normalized
@@ -395,21 +427,24 @@ var sharedUnitConverter = device.NewUnitConverter()
 //
 // 归一化顺序：
 //  1. 先用 ConvertToPa 归一化 Patm（得到 Pa 单位的绝压值）；
-//  2. 再用 NormalizePressureToGaugePa 归一化 P1-P5（绝压类型时减去 Patm）；
+//  2. 再用 NormalizePressureToGaugePa 归一化探针孔道（绝压类型时减去 Patm）；
 //  3. Tatm 不参与。
 //
-// 返回值 normalized：所有压力通道（Patm + P1-P5）是否全部成功归一化到 Pa+表压。
+// 返回值 normalized：所有压力通道（Patm + 探针孔道）是否全部成功归一化到 Pa+表压。
 // false 时调用方应跳过插值，避免混合单位输入或假表压。
 //
 // 失败处理：
 //   - 单位查询/换算失败：跳过该通道（保留原值），记 warning，normalized=false
-//   - 绝压 + Patm 失败：跳过 P1-P5 归一化（避免 patmPa=0 导致假表压），normalized=false
-//   - 表压 + Patm 失败：P1-P5 仍可归一化（不减 Patm），但 Patm 字段保留原值非 Pa，normalized=false
+//   - 绝压 + Patm 失败：跳过探针孔道归一化（避免 patmPa=0 导致假表压），normalized=false
+//   - 表压 + Patm 失败：探针孔道仍可归一化（不减 Patm），但 Patm 字段保留原值非 Pa，normalized=false
+//
+// probeLabels 探针孔道标签集（五孔 P1..P5 / 七孔 P1..P7），由策略表传入。
 func normalizeRawPressure(
 	raw map[string]float64,
 	labelToRef map[string]traversal.ChannelRef,
 	unitProvider ports.ChannelUnitProvider,
 	pressureType string,
+	probeLabels []string,
 ) bool {
 	// Step 1: 归一化 Patm（仅单位换算，不减）。
 	// patmValid 跟踪 Patm 是否成功归一化：绝压场景需要 patmPa 做减法，
@@ -449,9 +484,8 @@ func normalizeRawPressure(
 		return false
 	}
 
-	// Step 2: 归一化 P1-P5（绝压类型减 patmPa）。
+	// Step 2: 归一化探针孔道（绝压类型减 patmPa）。
 	// 单位查询/换算失败时跳过该通道，保留原值，allProbeNormalized=false。
-	probeLabels := []string{"P1", "P2", "P3", "P4", "P5"}
 	allProbeNormalized := true
 	for _, label := range probeLabels {
 		ref, ok := labelToRef[label]

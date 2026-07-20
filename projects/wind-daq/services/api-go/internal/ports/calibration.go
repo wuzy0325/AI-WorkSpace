@@ -25,6 +25,9 @@ type CalibrationEventPublisher interface {
 	PublishProgress(event calibration.ProgressEvent)
 	PublishComplete(event calibration.CompleteEvent)
 	PublishRealtime(event calibration.RealtimeEvent)
+	// PublishRegionChanged 七孔流场分区变更事件（spec Task 11）。
+	// 仅七孔校准首点及分区切换时调用；其他类型不触发，实现可空实现（no-op）。
+	PublishRegionChanged(event calibration.RegionChangedEvent)
 }
 
 // CalibrationRuntime 校准运行时端口，提供通道读取和运动控制能力
@@ -89,4 +92,25 @@ type CalibrationCsvWriter interface {
 	AppendPoint(dataPoint calibration.DataPoint) error
 	Flush() error
 	Path() string
+}
+
+// CalibrationWriterFactory 校准 CSV 写入器工厂端口
+//
+// 用于七孔校准"双 CSV writer 路由"场景（spec Task 9 + §7.1）：
+//   - 七孔按 region+sector 分文件落盘（1 内区 + 6 外区，共 7 个 CSV 文件）
+//   - 每个文件有独立的列布局（外区表头 Kθ[n] 中 n 由 sector 替换为具体扇区编号）
+//   - 单一 CalibrationCsvWriter 实例的 schema 在 Initialize 时由 config.Type 重建，
+//     无法承载多 schema 路由——故引入工厂端口，按需创建独立 writer 实例
+//
+// 装配根（pkg/appcontext）注入同一个 adapters/storage.CalibrationCsvWriter 实例：
+// 该实例同时实现 CalibrationCsvWriter（供五孔/三孔/总压/总温单 writer 场景使用）
+// 与 CalibrationWriterFactory（供七孔多 writer 场景使用）。
+//
+// 调用契约：
+//   - NewWriter 创建并 Initialize 一个独立 writer（写表头 + BOM）
+//   - 调用方负责在适当时机（任务结束/Stop）调用返回 writer 的 Flush
+//   - path 必须是完整文件路径（含 .csv 扩展名），由调用方拼接 region/sector 后缀
+//   - schema 由调用方通过 core/calibration.NewSevenHoleCsvSchema 构建后注入
+type CalibrationWriterFactory interface {
+	NewWriter(path string, schema calibration.CsvSchema) (CalibrationCsvWriter, error)
 }

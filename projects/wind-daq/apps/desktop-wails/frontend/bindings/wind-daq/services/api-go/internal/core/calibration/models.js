@@ -60,6 +60,16 @@ export class AcquisitionSamplingConfig {
 
 /**
  * CalPoint 校准测点定义
+ * 
+ * 双坐标模型（七孔探针校准引入，spec §3.4）：
+ *   - Coordinates（逻辑坐标）：业务语义角度，用于配置生成、CSV 落盘、系数计算、图表绘制。
+ *     内区表示为 (α,β)，外区表示为 (θ,φ)。
+ *   - MotionCoordinates（运动坐标）：运动控制器实际下发的目标角度，统一为 (α,β) 双轴。
+ *     外区点由 (θ,φ) 按 spec §3.3 正向公式换算（α=-arctan(tanθ×sinφ)，负号必须保留）。
+ * 
+ * 向后兼容：五孔/三孔/总压/总温等已有模块不填 MotionCoordinates/Region/Sector 时，
+ * moveToPoint 默认走 Coordinates 路径（已有行为），新字段 omitempty 不影响序列化结果。
+ * 仅 TypeSevenHole 在点位生成阶段（GenerateSevenHolePoints）显式填充双坐标。
  */
 export class CalPoint {
     /**
@@ -81,6 +91,33 @@ export class CalPoint {
              */
             this["coordinates"] = {};
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * MotionCoordinates 运动坐标（运动控制器下发用，统一为 α-β 双轴）。
+             * 为 nil 时 moveToPoint 回退到 Coordinates（向后兼容）。
+             * 消费方（moveToPoint 七孔分支）在 Task 10 落地。
+             * @member
+             * @type {{ [_ in string]?: number } | undefined}
+             */
+            this["motionCoordinates"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * Region 流场分区："inner"（内区，7 区）或 "outer"（外区，1~6 区）。
+             * 仅七孔校准填充，其他类型留空。
+             * @member
+             * @type {string | undefined}
+             */
+            this["region"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * Sector 外区扇区编号 1~6；内区固定 7；其他类型留空（零值）。
+             * @member
+             * @type {number | undefined}
+             */
+            this["sector"] = undefined;
+        }
 
         Object.assign(this, $$source);
     }
@@ -92,9 +129,13 @@ export class CalPoint {
      */
     static createFrom($$source = {}) {
         const $$createField1_0 = $$createType0;
+        const $$createField2_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("coordinates" in $$parsedSource) {
             $$parsedSource["coordinates"] = $$createField1_0($$parsedSource["coordinates"]);
+        }
+        if ("motionCoordinates" in $$parsedSource) {
+            $$parsedSource["motionCoordinates"] = $$createField2_0($$parsedSource["motionCoordinates"]);
         }
         return new CalPoint(/** @type {Partial<CalPoint>} */($$parsedSource));
     }
@@ -192,6 +233,165 @@ export class MotionAxisConfig {
 }
 
 /**
+ * SevenHoleConfig 七孔校准点位生成配置
+ * 
+ * 字段语义：
+ *   - Mode：校准模式（"full"/"dataset"），决定外区 θ 与 φ 的取值策略
+ *   - InnerAlphaMin/Max/Step：内区 α 范围与步长（度），完整/数据集模式都使用此配置
+ *   - InnerBetaMin/Max/Step：内区 β 范围与步长（度）
+ *   - OuterThetaMin/Max/Step：外区 θ 范围与步长（度），仅完整模式生效；数据集模式忽略并使用硬编码 {30°,35°,40°,45°}
+ *   - OuterPhiMin/Max/Step：外区 φ 范围与步长（度），仅完整模式生效；数据集模式按扇区独立配置
+ *   - Serpentine：是否启用蛇形走位（true 时奇数行 α/θ 反向）
+ * 
+ * 推荐默认值（spec §6.2）：内区 [-30°,30°] 步长 5°；外区 θ [30°,60°] 步长 5°、φ [0°,355°] 步长 5°
+ */
+export class SevenHoleConfig {
+    /**
+     * Creates a new SevenHoleConfig instance.
+     * @param {Partial<SevenHoleConfig>} [$$source = {}] - The source object to create the SevenHoleConfig.
+     */
+    constructor($$source = {}) {
+        if (!("mode" in $$source)) {
+            /**
+             * @member
+             * @type {SevenHoleMode}
+             */
+            this["mode"] = SevenHoleMode.$zero;
+        }
+        if (!("innerAlphaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaMin"] = 0;
+        }
+        if (!("innerAlphaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaMax"] = 0;
+        }
+        if (!("innerAlphaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaStep"] = 0;
+        }
+        if (!("innerBetaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaMin"] = 0;
+        }
+        if (!("innerBetaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaMax"] = 0;
+        }
+        if (!("innerBetaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaStep"] = 0;
+        }
+        if (!("outerThetaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaMin"] = 0;
+        }
+        if (!("outerThetaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaMax"] = 0;
+        }
+        if (!("outerThetaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaStep"] = 0;
+        }
+        if (!("outerPhiMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiMin"] = 0;
+        }
+        if (!("outerPhiMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiMax"] = 0;
+        }
+        if (!("outerPhiStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiStep"] = 0;
+        }
+        if (!("serpentine" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["serpentine"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SevenHoleConfig instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SevenHoleConfig}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SevenHoleConfig(/** @type {Partial<SevenHoleConfig>} */($$parsedSource));
+    }
+}
+
+/**
+ * SevenHoleMode 七孔校准模式枚举
+ * @readonly
+ * @enum {string}
+ */
+export const SevenHoleMode = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    /**
+     * SevenHoleModeFull 完整模式（产品默认，673 点）
+     * 内区 α∈[-30°,30°] 步长 5° × β∈[-30°,30°] 步长 5° = 169 点
+     * 外区 θ∈[30°,60°] 步长 5° × φ∈[0°,355°] 步长 5° = 504 点
+     */
+    SevenHoleModeFull: "full",
+
+    /**
+     * SevenHoleModeDataset 数据集模式（验证基准，481 点）
+     * 内区 169 点同完整模式
+     * 外区 θ∈{30°,35°,40°,45°}（4 个值，不可配置）× 每扇区 φ 跨 60° 步长 5° = 13 点/扇区 × 6 扇区 = 312 点
+     * 扇区边界不共享，无需去重（spec §6.2 / Task 6 验收标准）
+     */
+    SevenHoleModeDataset: "dataset",
+};
+
+/**
  * SphereTankGateConfig 球罐闸门判定配置
  */
 export class SphereTankGateConfig {
@@ -232,6 +432,16 @@ export class SphereTankGateConfig {
              */
             this["stableTimeChannel"] = (new ChannelRef());
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * PressureChannel 球罐压力通道引用，仅用于前端实时显示当前球罐压力值，不参与闸门判定逻辑
+             * 当配置了有效 DeviceID 时，采集协调器会自动订阅该设备，以便前端能收到实时快照
+             * 球罐压力通道引用（仅显示，不参与判定）
+             * @member
+             * @type {ChannelRef | undefined}
+             */
+            this["pressureChannel"] = undefined;
+        }
 
         Object.assign(this, $$source);
     }
@@ -243,9 +453,13 @@ export class SphereTankGateConfig {
      */
     static createFrom($$source = {}) {
         const $$createField3_0 = $$createType1;
+        const $$createField4_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stableTimeChannel" in $$parsedSource) {
             $$parsedSource["stableTimeChannel"] = $$createField3_0($$parsedSource["stableTimeChannel"]);
+        }
+        if ("pressureChannel" in $$parsedSource) {
+            $$parsedSource["pressureChannel"] = $$createField4_0($$parsedSource["pressureChannel"]);
         }
         return new SphereTankGateConfig(/** @type {Partial<SphereTankGateConfig>} */($$parsedSource));
     }
@@ -397,6 +611,23 @@ export class Status {
              * @type {number | undefined}
              */
             this["samplesPerPoint"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CurrentRegion/CurrentSector 七孔流场分区当前状态（spec Task 11）。
+             * 仅 TypeSevenHole 校准期间有值，供前端 5Hz 轮询 status 时展示"当前区域 inner / 扇区 3"。
+             * 其他类型保持零值（omitempty 在 Region="" 时省略字段，Sector=0 时省略字段）。
+             * @member
+             * @type {string | undefined}
+             */
+            this["currentRegion"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["currentSector"] = undefined;
         }
 
         Object.assign(this, $$source);

@@ -57,7 +57,40 @@ type Config struct {
 	// TimestampReader 设备时间戳读取函数（仅运行时注入，不序列化）。
 	// 非 nil 时各算法在多次采样间等待设备推送新数据帧后才计入有效采样，避免重复读缓存旧数据。
 	TimestampReader TimestampReader `json:"-"`
+
+	// ==================== 七孔探针专用注入字段（spec Task 5） ====================
+	//
+	// 七孔算法的实时回调与滞回状态通过 Config 注入而非算法参数传递——
+	// 原因：Algorithm 接口的 AcquireDataWithConfig 签名固定，无法新增 onRealtime 参数；
+	// 同时七孔的滞回状态需要跨点持续（由 AutomaticCalibration 持有），
+	// 通过 Config 注入可让 SevenHoleAlgorithm 保持空结构体（无状态，spec Task 3 约束）。
+	//
+	// 非七孔类型忽略这三个字段（保持零值），不影响五孔/三孔/总压的现有行为。
+
+	// RealtimeCallback 七孔实时数据推送回调（仅 TypeSevenHole 使用）。
+	// 非 nil 时算法在采样循环中按 100ms 节流推送 (rawData, coeffs, region, sector)。
+	// 五孔/三孔/总压走各自的 onRealtime 参数路径，不读此字段。
+	RealtimeCallback SevenHoleRealtimeCallback `json:"-"`
+
+	// PrevRegion/PrevSector 七孔流场分区判定的滞回状态（spec §3.2 规则 3）。
+	// 由 AutomaticCalibration 在每个点采集前注入：
+	//   - 首点：PrevRegion="", PrevSector=0（跳过滞回，仅按规则 1、2 判定）
+	//   - 后续点：上一时刻的 region/sector（用于规则 3 滞回判定，避免边界点分区抖动）
+	PrevRegion string `json:"-"`
+	PrevSector int    `json:"-"`
 }
+
+// SevenHoleRealtimeCallback 七孔实时数据推送回调类型
+//
+// 参数语义：
+//   - raw：当前样本的 11 通道原始数据
+//   - coeffs：基于当前样本实时计算的系数（内区或外区，按当前分区判定结果选择公式）
+//   - region：当前分区判定结果（"inner"/"outer"）
+//   - sector：当前扇区编号（内区 7，外区 1..6）
+//
+// 节流策略：调用方（SevenHoleAlgorithm）按 100ms 节流间隔调用，
+// 最后一个样本必发——确保前端拿到最终系数用于显示。
+type SevenHoleRealtimeCallback func(raw SevenHoleRawData, coeffs SevenHoleCoefficients, region string, sector int)
 
 // ProbeChannel 探针通道配置，将逻辑角色映射到物理通道
 type ProbeChannel struct {
@@ -136,6 +169,11 @@ type Status struct {
 	// SamplesPerPoint=当前点总采样数。前端据此显示"当前点采样 3/10"子进度。
 	CurrentSample   int `json:"currentSample,omitempty"`
 	SamplesPerPoint int `json:"samplesPerPoint,omitempty"`
+	// CurrentRegion/CurrentSector 七孔流场分区当前状态（spec Task 11）。
+	// 仅 TypeSevenHole 校准期间有值，供前端 5Hz 轮询 status 时展示"当前区域 inner / 扇区 3"。
+	// 其他类型保持零值（omitempty 在 Region="" 时省略字段，Sector=0 时省略字段）。
+	CurrentRegion string `json:"currentRegion,omitempty"`
+	CurrentSector int    `json:"currentSector,omitempty"`
 }
 
 // ==================== 五孔探针类型 ====================
@@ -438,6 +476,9 @@ type SphereTankGateConfig struct {
 	WaitTimeSec       float64    `json:"waitTimeSec"`          // 等待稳定时间（秒）
 	TimeoutSec        int        `json:"timeoutSec,omitempty"` // 球罐判定总超时（秒），<=0 时使用默认 300 秒
 	StableTimeChannel ChannelRef `json:"stableTimeChannel"`    // 稳定时间通道引用
+	// PressureChannel 球罐压力通道引用，仅用于前端实时显示当前球罐压力值，不参与闸门判定逻辑
+	// 当配置了有效 DeviceID 时，采集协调器会自动订阅该设备，以便前端能收到实时快照
+	PressureChannel ChannelRef `json:"pressureChannel,omitempty"` // 球罐压力通道引用（仅显示，不参与判定）
 }
 
 // ==================== 采集采样配置 ====================
@@ -493,11 +534,38 @@ type RealtimeEvent struct {
 	Point                 *CalPoint              `json:"point,omitempty"`
 }
 
+// RegionChangedEvent 七孔流场分区变更事件（spec Task 11 + §3.2）
+//
+// 仅 TypeSevenHole 推送；五孔/三孔/总压/总温不触发，EventPublisher 实现可空实现。
+//
+// 推送时机（processPoint 流程内）：
+//   - 首点：必推送一次，PrevRegion/PrevSector=nil（JSON 序列化为 null）
+//   - 后续点：当 region 或 sector 与上一时刻不同时立即推送，PrevRegion/PrevSector 指向上一时刻值
+//   - 不变时不推送（避免噪声）
+//
+// PrevRegion/PrevSector 为指针类型——首点时 nil（JSON null）与合法零值（"inner"/0）明确区分，
+// 此设计与 spec §9.4 的 JSON null 契约一致，前端可通过 ===null 判断"无前序"。
+type RegionChangedEvent struct {
+	TaskID       string  `json:"taskId"`
+	WindowTag    string  `json:"windowTag"`
+	Region       string  `json:"region"`             // 当前区域："inner" 或 "outer"
+	Sector       int     `json:"sector"`              // 当前扇区：1~6（外区）或 7（内区）
+	PrevRegion   *string `json:"prevRegion"`          // 上一时刻区域，首点 nil（JSON null）
+	PrevSector   *int    `json:"prevSector"`          // 上一时刻扇区，首点 nil（JSON null）
+	BoundaryFlag string  `json:"boundaryFlag"`        // 边界标志："first" / "inner-outer" / "sector-switch" / "same-region"
+	PointIndex   int     `json:"pointIndex"`          // 当前点索引（0-based）
+	TotalPoints  int     `json:"totalPoints"`         // 总点数
+	Timestamp    int64   `json:"timestamp"`           // 事件时间戳（Unix 毫秒）
+}
+
 // EventPublisher 校准事件发布接口
 type EventPublisher interface {
 	OnProgress(event ProgressEvent)
 	OnComplete(event CompleteEvent)
 	OnRealtime(event RealtimeEvent)
+	// OnRegionChanged 七孔分区变更事件（必需方法，非可选）。
+	// 七孔校准首点及分区切换时调用；其他类型不触发，实现可空实现（no-op）。
+	OnRegionChanged(event RegionChangedEvent)
 }
 
 // ==================== 校准导出载荷 ====================

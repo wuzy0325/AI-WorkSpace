@@ -38,6 +38,7 @@ import type {
   TraversalCheckpoint,
   PreconditionCheckResult
 } from '@shared/types/traversal'
+import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import { joinCalibrationPath } from '@shared/calibrationCsvPath'
 import { useTraversalSimulation } from '@composables/useTraversalSimulation'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
@@ -87,6 +88,15 @@ const {
 } = useTraversalRealtimeData(currentConfig)
 
 const { t } = storeToRefs(useI18nStore())
+
+// 探针展示元数据（spec §6.5）：五孔 Alpha=攻角/Beta=侧滑角，
+// 七孔 Alpha=侧滑角/Beta=迎角；标题与角度标签统一查 TRAVERSAL_PROBE_PRESENTATION。
+const probePresentation = computed(
+  () => TRAVERSAL_PROBE_PRESENTATION[(traversalStore.config?.probeType ?? 'five-hole') as keyof typeof TRAVERSAL_PROBE_PRESENTATION]
+)
+const probeTitleText = computed(() => t.value[probePresentation.value.titleKey as unknown as keyof typeof t.value] ?? probePresentation.value.titleKey)
+const alphaLabelText = computed(() => t.value[probePresentation.value.alphaLabelKey as unknown as keyof typeof t.value] ?? probePresentation.value.alphaLabelKey)
+const betaLabelText = computed(() => t.value[probePresentation.value.betaLabelKey as unknown as keyof typeof t.value] ?? probePresentation.value.betaLabelKey)
 
 const activeWorkspaceTab = ref<WorkspaceTab>('preview')
 // 启动请求防重入标志（与 store.isStarting 配合，避免重复触发）
@@ -604,7 +614,7 @@ watch(
     <!-- 顶栏：Header（含控制按钮）+ 状态栏 -->
     <TraversalTopBar
       ref="topBarRef"
-      :title="t.fiveHoleTraversalTest"
+      :title="probeTitleText"
       :status-text="statusText"
       :status-color-token="statusColorToken"
       :automated-run-label="t.automatedRun"
@@ -710,8 +720,8 @@ watch(
           velocity: t.velocity,
           realtimeCalculation: t.realtimeCalculation,
           realtimePressureData: t.realtimePressureData,
-          alpha: t.alpha,
-          beta: t.beta,
+          alpha: alphaLabelText,
+          beta: betaLabelText,
           csvPath: t.travCsvPath,
           validationWarnings: t.travValidationWarnings,
           returnToOriginWarning: t.travReturnToOriginWarning,

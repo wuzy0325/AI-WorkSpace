@@ -74,10 +74,14 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	})
 
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
-	calMgr.SetCsvWriter(storageadapter.NewCalibrationCsvWriter(calibration.Config{}))
+	// csvWriter 实例同时实现 CalibrationCsvWriter（单 writer 场景）与
+	// CalibrationWriterFactory（七孔多 writer 场景）接口，故复用同一实例注入两端口。
+	csvWriterInstance := storageadapter.NewCalibrationCsvWriter(calibration.Config{})
+	calMgr.SetCsvWriter(csvWriterInstance)
 	calMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
 		return storageadapter.NewCalibrationCsvWriterOverwrite(config)
 	})
+	calMgr.SetSevenHoleWriterFactory(csvWriterInstance)
 	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())

@@ -49,8 +49,15 @@ func (c *AcquisitionCoordinator) CollectAcquisitionDeviceIds(config Config) []st
 	}
 
 	// 从球罐闸门配置收集
-	if config.SphereTankGate != nil && config.SphereTankGate.Enabled && config.SphereTankGate.StableTimeChannel.DeviceID != "" {
-		deviceIdSet[config.SphereTankGate.StableTimeChannel.DeviceID] = true
+	if config.SphereTankGate != nil && config.SphereTankGate.Enabled {
+		// 稳定时间通道：参与闸门判定，必须订阅
+		if config.SphereTankGate.StableTimeChannel.DeviceID != "" {
+			deviceIdSet[config.SphereTankGate.StableTimeChannel.DeviceID] = true
+		}
+		// 压力通道：仅用于前端实时显示压力值，不参与判定，但也需要订阅才能收到快照
+		if config.SphereTankGate.PressureChannel.DeviceID != "" {
+			deviceIdSet[config.SphereTankGate.PressureChannel.DeviceID] = true
+		}
 	}
 
 	result := make([]string, 0, len(deviceIdSet))

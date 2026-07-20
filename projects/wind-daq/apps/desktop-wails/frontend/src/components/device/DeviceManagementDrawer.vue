@@ -95,7 +95,7 @@ const DISCOVERED_TYPE_ICON: Record<string, string> = {
 
 const WTN_PXI_CHANNEL_NAMES = [
   '球罐压力', '球罐总压', '球罐静压',
-  '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4', '球罐温度5',
+  '球罐稳定时间', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4',
 ] as const
 
 const deviceTypeOptions = computed(() => [
@@ -278,8 +278,9 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
         index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 2, rangeMin: -5000, rangeMax: 5000,
       }))
     case 'WTN_PXI': {
-      const names = ['球罐压力', '球罐总压', '球罐静压', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4', '球罐温度5']
-      const units = ['Pa', 'Pa', 'Pa', 'degC', 'degC', 'degC', 'degC', 'degC']
+      // 通道 3 为球罐稳定时间（秒），其余 4 路为球罐温度，与后端 defaultWTNPXIChannels 对齐。
+      const names = ['球罐压力', '球罐总压', '球罐静压', '球罐稳定时间', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4']
+      const units = ['Pa', 'Pa', 'Pa', 's', 'degC', 'degC', 'degC', 'degC']
       return Array.from({ length: 8 }, (_, i) => ({
         index: i, name: names[i], enabled: true, unit: units[i], precision: 2,
       }))

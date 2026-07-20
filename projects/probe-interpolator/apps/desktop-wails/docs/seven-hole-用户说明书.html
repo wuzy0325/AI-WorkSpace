@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>七孔探针插值计算 - 用户说明书</title>
+    <style>
+        :root {
+            --primary-50: #eef2ff; --primary-100: #e0e7ff; --primary-200: #c7d2fe;
+            --primary-300: #a5b4fc; --primary-400: #818cf8; --primary-500: #6366f1;
+            --primary-600: #4f46e5; --primary-700: #4338ca; --primary-800: #3730a3;
+            --gray-50: #f8fafc; --gray-100: #f1f5f9; --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1; --gray-400: #94a3b8; --gray-500: #64748b;
+            --gray-600: #475569; --gray-700: #334155; --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --success-50: #f0fdf4; --success-500: #22c55e; --success-600: #16a34a;
+            --error-50: #fef2f2; --error-500: #ef4444; --error-600: #dc2626;
+            --warning-50: #fffbeb; --warning-500: #f59e0b; --warning-600: #d97706;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100); color: var(--gray-800); line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+        /* ===== Header ===== */
+        .doc-header {
+            background: white; border-radius: var(--radius-lg); padding: 32px;
+            text-align: center; box-shadow: var(--shadow-sm); margin-bottom: 24px;
+            border: 1px solid var(--primary-100);
+        }
+        .doc-header h1 { font-size: 28px; font-weight: 700; color: var(--gray-900); margin-bottom: 8px; }
+        .doc-header .subtitle { font-size: 14px; color: var(--gray-500); }
+        .doc-header .version { font-size: 12px; color: var(--gray-400); margin-top: 8px; }
+
+        /* ===== Sections ===== */
+        .section {
+            background: white; border-radius: var(--radius-lg); padding: 28px;
+            margin-bottom: 20px; box-shadow: var(--shadow-sm);
+        }
+        .section h2 {
+            font-size: 20px; font-weight: 600; color: var(--gray-900);
+            margin-bottom: 16px; padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary-100);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .section h2 .icon {
+            width: 32px; height: 32px; background: var(--primary-50);
+            border-radius: var(--radius-sm); display: flex; align-items: center;
+            justify-content: center; color: var(--primary-600); font-size: 16px;
+        }
+        .section h3 {
+            font-size: 16px; font-weight: 600; color: var(--gray-800);
+            margin: 20px 0 10px 0;
+        }
+        .section p { margin-bottom: 12px; color: var(--gray-700); }
+        .section ul, .section ol { margin-left: 20px; margin-bottom: 12px; color: var(--gray-700); }
+        .section li { margin-bottom: 6px; }
+
+        /* ===== Info Boxes ===== */
+        .info-box {
+            background: var(--primary-50); border-left: 4px solid var(--primary-500);
+            padding: 14px 18px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            margin: 16px 0;
+        }
+        .info-box.warning {
+            background: var(--warning-50); border-left-color: var(--warning-500);
+        }
+        .info-box.error {
+            background: var(--error-50); border-left-color: var(--error-500);
+        }
+        .info-box.success {
+            background: var(--success-50); border-left-color: var(--success-500);
+        }
+        .info-box-title {
+            font-weight: 600; color: var(--gray-800); margin-bottom: 6px;
+        }
+        .info-box p { margin-bottom: 4px; }
+
+        /* ===== Table ===== */
+        .data-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
+        .data-table th {
+            background: var(--gray-50); padding: 10px 12px; text-align: left;
+            font-weight: 600; color: var(--gray-700); border-bottom: 2px solid var(--gray-200);
+        }
+        .data-table td {
+            padding: 10px 12px; border-bottom: 1px solid var(--gray-100);
+            color: var(--gray-700);
+        }
+        .data-table tbody tr:hover { background: var(--gray-50); }
+
+        /* ===== Steps ===== */
+        .steps { counter-reset: step; }
+        .step {
+            display: flex; gap: 16px; margin-bottom: 20px;
+            padding: 16px; background: var(--gray-50); border-radius: var(--radius-md);
+        }
+        .step-number {
+            width: 32px; height: 32px; background: var(--primary-600);
+            color: white; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; font-weight: 600; font-size: 14px; flex-shrink: 0;
+        }
+        .step-content { flex: 1; }
+        .step-content h4 { font-size: 15px; font-weight: 600; color: var(--gray-800); margin-bottom: 6px; }
+        .step-content p { margin-bottom: 4px; color: var(--gray-600); font-size: 14px; }
+
+        /* ===== Footer ===== */
+        .doc-footer {
+            text-align: center; padding: 24px; color: var(--gray-400);
+            font-size: 13px; margin-top: 20px;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 768px) {
+            .container { padding: 12px; }
+            .doc-header h1 { font-size: 22px; }
+            .section { padding: 20px; }
+            .step { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 文档标题 -->
+        <div class="doc-header">
+            <h1>七孔探针插值计算</h1>
+            <p class="subtitle">用户说明书</p>
+            <p class="version">版本: v0.1.0 | 适用于风洞试验工程师</p>
+        </div>
+
+        <!-- 1. 系统概述 -->
+        <div class="section">
+            <h2><span class="icon">📖</span>1. 系统概述</h2>
+            <p>七孔探针插值计算是一款专业的风洞试验数据处理工具，用于根据七孔探针的测量数据计算气流参数，包括：</p>
+            <ul>
+                <li><strong>侧滑角 (α)</strong>：气流方向在探针横向平面内的偏角，单位：度 (°)</li>
+                <li><strong>迎角 (β)</strong>：气流方向在探针纵向平面内的偏角，单位：度 (°)</li>
+                <li><strong>马赫数 (Ma)</strong>：气流速度与声速的比值，无量纲</li>
+                <li><strong>流速 (V)</strong>：气流速度大小，单位：米/秒 (m/s)</li>
+                <li><strong>总压 (P0)</strong>：气流的总压（表压），单位：帕斯卡 (Pa)</li>
+                <li><strong>静压 (Ps)</strong>：气流的静压（表压），单位：帕斯卡 (Pa)</li>
+            </ul>
+            <p>系统采用分区插值算法，基于 7 个 PRB 校准文件（1 个内区 + 6 个外区扇区）对七孔探针测量数据进行精确计算，支持单点手动输入和批量 CSV 导入两种数据输入方式。</p>
+
+            <div class="info-box warning">
+                <div class="info-box-title">角度语义注意（与 5 孔探针不同）</div>
+                <p>七孔探针的 α 为<strong>侧滑角</strong>、β 为<strong>迎角</strong>，与 5 孔探针的 α/β 语义相反。CSV 导出文件表头明确标注 "α(°) 侧滑角" 和 "β(°) 迎角"，避免混淆。</p>
+            </div>
+
+            <div class="info-box">
+                <div class="info-box-title">适用场景</div>
+                <p>本系统适用于风洞试验中使用七孔探针进行大角度流场测量的场景，覆盖 ±30° 内区及 30°~45° 外区，全向角度测量。</p>
+            </div>
+        </div>
+
+        <!-- 2. 界面介绍 -->
+        <div class="section">
+            <h2><span class="icon">🖥️</span>2. 界面介绍</h2>
+            <p>系统主界面分为以下几个区域：</p>
+
+            <h3>2.1 顶部标题栏</h3>
+            <ul>
+                <li><strong>系统名称</strong>：左侧显示"七孔探针插值计算"及英文名称</li>
+                <li><strong>帮助按钮</strong>：点击可打开本用户说明书</li>
+                <li><strong>加载 PRB 文件按钮</strong>：用于一次性加载 7 个校准文件（必需步骤）</li>
+            </ul>
+
+            <h3>2.2 信息卡片</h3>
+            <p>加载 PRB 文件后，系统会显示信息卡片，包含：</p>
+            <ul>
+                <li>已加载的 PRB 文件数量（应为 7 个）</li>
+                <li>角度范围（α 和 β 的有效范围，内区通常为 ±30°）</li>
+                <li>各文件名及其扇区角色（内区 / 外区1~6）</li>
+                <li>系统状态（就绪）</li>
+            </ul>
+
+            <h3>2.3 标签页</h3>
+            <ul>
+                <li><strong>数据输入</strong>：输入探针测量数据和查看数据列表</li>
+                <li><strong>计算结果</strong>：查看插值计算结果（需先完成计算）</li>
+            </ul>
+
+            <h3>2.4 状态栏</h3>
+            <p>底部状态栏显示当前操作状态和系统版本信息。</p>
+        </div>
+
+        <!-- 3. 操作流程 -->
+        <div class="section">
+            <h2><span class="icon">📝</span>3. 操作流程</h2>
+
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h4>加载 PRB 校准文件（共 7 个）</h4>
+                        <p>点击顶部"加载 PRB 文件"按钮，在弹出的文件选择对话框中<strong>同时选择 7 个 .prb 文件</strong>。</p>
+                        <p>文件名必须为 <code>1.prb</code>、<code>2.prb</code>、<code>3.prb</code>、<code>4.prb</code>、<code>5.prb</code>、<code>6.prb</code>、<code>7.prb</code>，系统根据文件名 basename 识别扇区角色：</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>文件名</th><th>角色</th><th>说明</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>7.prb</td><td>内区</td><td>中心孔周围 ±30° 范围（13×13 网格，169 点）</td></tr>
+                                <tr><td>1.prb ~ 6.prb</td><td>外区扇区 1~6</td><td>每扇区覆盖 60° 方位角，θ 范围 30°~45°（步长 5°）</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="info-box warning">
+                            <div class="info-box-title">重要提示</div>
+                            <p>必须先加载全部 7 个 PRB 文件才能进行计算。<strong>内区 7.prb 必须加载</strong>，外区扇区若缺失，对应角度范围将无法计算。</p>
+                            <p>文件名 basename 必须为 1~7 的纯数字，否则后端返回错误。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h4>输入压力参数（表压）</h4>
+                        <p>在"压力参数输入（表压）"区域填写以下参数：</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>参数</th><th>说明</th><th>默认值</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>P1</td><td>1号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P2</td><td>2号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P3</td><td>3号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P4</td><td>4号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P5</td><td>5号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P6</td><td>6号外围孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>P7</td><td>中心孔压力（表压，Pa）</td><td>0</td></tr>
+                                <tr><td>Patm</td><td>大气绝对压力（Pa）</td><td>101325</td></tr>
+                                <tr><td>Tatm</td><td>大气温度（℃）</td><td>20</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="info-box warning">
+                            <div class="info-box-title">表压输入强制要求</div>
+                            <p>七孔探针 spec §1.1 强制要求所有 P1~P7 必须为<strong>表压</strong>（gauge，相对于大气压的差值）。本系统不提供表压/绝压切换开关。</p>
+                            <p>如使用绝压数据，需在导入前由用户自行转换：表压 = 绝压 - 大气压。</p>
+                        </div>
+
+                        <h4>孔位布局说明</h4>
+                        <p>P1~P6 为外围 6 孔，按 60° 等分布置；P7 为中心孔。从探针尾部看（-Z 方向），P1 在 0°（+Y 方向），其余按顺时针递增：P2 在 60°、P3 在 120°、P4 在 180°（-Y）、P5 在 240°、P6 在 300°。</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h4>添加数据到列表（可选）</h4>
+                        <p>点击"添加"按钮将当前输入的数据保存到数据列表中。您可以添加多行数据进行批量计算。</p>
+                        <p>如果不添加到列表，也可以直接点击"执行插值计算"进行单点计算。</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h4>执行插值计算</h4>
+                        <p>点击"执行插值计算"按钮，系统将自动进行分区判定和插值计算。</p>
+                        <p>计算过程中按钮会显示"计算中..."，请耐心等待。</p>
+                        <p>计算流程：</p>
+                        <ol>
+                            <li>根据 P1~P7 中最大压力孔编号判定流场分区（1~7 区）</li>
+                            <li>7 区为内区（P7 最大，θ≤30°），1~6 区为外区扇区（P1~P6 中某孔最大，θ≥30°）</li>
+                            <li>调用对应区域的 PRB 系数进行二维插值</li>
+                            <li>外区结果需通过坐标系转换换算为内区 (α, β)</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <h4>查看计算结果</h4>
+                        <p>计算完成后，系统会自动切换到"计算结果"标签页，显示以下结果：</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>结果项</th><th>说明</th><th>单位</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>α (°) 侧滑角</td><td>气流侧滑角</td><td>度</td></tr>
+                                <tr><td>β (°) 迎角</td><td>气流迎角</td><td>度</td></tr>
+                                <tr><td>Ma</td><td>马赫数</td><td>无量纲</td></tr>
+                                <tr><td>V (m/s)</td><td>流速</td><td>米/秒</td></tr>
+                                <tr><td>总压 P0 (Pa)</td><td>总压（表压）</td><td>帕斯卡</td></tr>
+                                <tr><td>静压 Ps (Pa)</td><td>静压（表压）</td><td>帕斯卡</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="info-box">
+                            <div class="info-box-title">结果字段说明</div>
+                            <p>七孔探针结果<strong>不提供</strong>速度分量 Vx/Vy/Vz（与 5 孔探针不同）。如需速度分量，需用户根据 α、β、V 自行分解。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. CSV 批量导入 -->
+        <div class="section">
+            <h2><span class="icon">📁</span>4. 数据文件批量导入</h2>
+            <p>系统支持通过 CSV 文件批量导入数据进行计算，提高数据处理效率。</p>
+
+            <h3>4.1 数据文件格式要求</h3>
+            <p>CSV 文件必须包含以下 9 列（列名区分大小写，<strong>全部必需</strong>）：</p>
+            <table class="data-table">
+                <thead>
+                    <tr><th>列名</th><th>说明</th><th>是否必需</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>P1</td><td>1号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P2</td><td>2号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P3</td><td>3号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P4</td><td>4号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P5</td><td>5号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P6</td><td>6号外围孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>P7</td><td>中心孔压力（表压，Pa）</td><td>是</td></tr>
+                    <tr><td>Patm</td><td>大气绝对压力（Pa）</td><td>是</td></tr>
+                    <tr><td>Tatm</td><td>大气温度（℃）</td><td>是</td></tr>
+                </tbody>
+            </table>
+
+            <div class="info-box warning">
+                <div class="info-box-title">CSV 格式注意</div>
+                <p>七孔 CSV <strong>不含 PressureMode 列</strong>（与 5 孔/3 孔不同），所有 P1~P7 必须为表压值。</p>
+            </div>
+
+            <h3>4.2 数据文件示例</h3>
+            <div class="info-box">
+                <pre style="background: var(--gray-100); padding: 12px; border-radius: var(--radius-sm); font-size: 13px; overflow-x: auto;">
+P1,P2,P3,P4,P5,P6,P7,Patm,Tatm
+1000,1200,1500,1100,1300,1600,5000,101325,20
+800,900,1100,850,950,1150,4500,101325,20
+1500,1800,2200,1600,1900,2300,7000,101325,22</pre>
+            </div>
+
+            <h3>4.3 导入步骤</h3>
+            <ol>
+                <li>确保已加载全部 7 个 PRB 校准文件</li>
+                <li>点击"导入 CSV"按钮</li>
+                <li>在文件选择对话框中选择 CSV 文件</li>
+                <li>系统自动解析并导入数据到列表</li>
+                <li>点击"执行插值计算"进行批量计算</li>
+            </ol>
+
+            <div class="info-box success">
+                <div class="info-box-title">提示</div>
+                <p>导入数据文件时，系统会自动跳过格式错误的行，并在状态栏显示导入结果。</p>
+                <p>文件支持逗号（,）或 Tab 制表符作为列分隔符，系统会自动检测。以 <code>#</code> 开头的行会被当作注释自动跳过。</p>
+            </div>
+        </div>
+
+        <!-- 5. 结果导出 -->
+        <div class="section">
+            <h2><span class="icon">💾</span>5. 结果导出</h2>
+            <p>计算完成后，您可以将结果导出为 CSV 文件：</p>
+            <ol>
+                <li>切换到"计算结果"标签页</li>
+                <li>点击右上角的"导出 CSV"按钮</li>
+                <li>选择保存位置，系统自动生成带时间戳的文件名</li>
+            </ol>
+
+            <div class="info-box">
+                <div class="info-box-title">导出文件格式</div>
+                <p>导出文件包含以下列：序号、α(°) 侧滑角、β(°) 迎角、Ma、V(m/s)、总压 P0(Pa)、静压 Ps(Pa)、状态</p>
+                <p>文件名格式：<code>七孔探针计算结果_YYYY-MM-DD_HH-MM-SS.csv</code></p>
+                <p>文件编码为 UTF-8 with BOM，可直接用 Excel 打开。</p>
+            </div>
+        </div>
+
+        <!-- 6. 数据管理 -->
+        <div class="section">
+            <h2><span class="icon">🗑️</span>6. 数据管理</h2>
+
+            <h3>6.1 删除单条数据</h3>
+            <p>在数据列表中，点击每行末尾的删除按钮即可删除该条数据。</p>
+
+            <h3>6.2 清空所有数据</h3>
+            <p>点击"清空"按钮可一次性删除所有输入数据和计算结果。</p>
+
+            <div class="info-box warning">
+                <div class="info-box-title">注意</div>
+                <p>清空操作不可撤销，请确认后再执行。</p>
+            </div>
+        </div>
+
+        <!-- 7. 常见问题 -->
+        <div class="section">
+            <h2><span class="icon">❓</span>7. 常见问题</h2>
+
+            <h3>Q1: 为什么必须加载 7 个 PRB 文件？</h3>
+            <p>七孔探针的校准数据按流场分区组织：内区（7.prb）覆盖中心 ±30° 范围，外区 1~6.prb 各覆盖一个 60° 方位角扇区（θ 范围 30°~45°）。缺任何一个文件都会导致对应角度范围无法计算。</p>
+
+            <h3>Q2: 为什么没有表压/绝压切换开关？</h3>
+            <p>七孔探针 spec §1.1 强制要求所有孔压力为表压输入。这是七孔探针算法的固有约束（分区判定基于孔间压力差，绝压/表压对差值无影响但影响绝对值计算）。如使用绝压数据，需在导入前自行转换。</p>
+
+            <h3>Q3: α 和 β 的物理含义是什么？</h3>
+            <p><strong>α = 侧滑角（sideslip）</strong>：气流方向在探针横向平面内的偏角。</p>
+            <p><strong>β = 迎角（angle of attack）</strong>：气流方向在探针纵向平面内的偏角。</p>
+            <p>注意：这与 5 孔探针的 α/β 语义相反（5 孔的 α 是迎角、β 是侧滑角）。CSV 导出表头明确标注物理含义，避免混淆。</p>
+
+            <h3>Q4: 计算结果显示"无效"是什么原因？</h3>
+            <p>可能的原因包括：</p>
+            <ul>
+                <li>所有孔压力相同（无法判定最大压力孔）</li>
+                <li>压力差值接近零，无法计算系数</li>
+                <li>角度超出校准文件覆盖范围（θ &gt; 45°）</li>
+                <li>分区判定结果与相邻扇区矛盾（tie-break 失败）</li>
+                <li>迭代计算未收敛</li>
+            </ul>
+            <p>鼠标悬停在"无效"状态徽章上可查看具体警告信息。</p>
+
+            <h3>Q5: 数据文件导入失败怎么办？</h3>
+            <p>请检查：</p>
+            <ul>
+                <li>文件编码是否为 UTF-8</li>
+                <li>是否包含全部 9 个必需列：P1~P7、Patm、Tatm</li>
+                <li>数值格式是否正确（不要使用逗号作为千位分隔符）</li>
+                <li>文件是否被其他程序占用</li>
+                <li>CSV 不应包含 PressureMode 列（与 5 孔/3 孔不同）</li>
+            </ul>
+        </div>
+
+        <!-- 8. 技术参数 -->
+        <div class="section">
+            <h2><span class="icon">⚙️</span>8. 技术参数</h2>
+            <table class="data-table">
+                <thead>
+                    <tr><th>参数</th><th>说明</th><th>数值</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>内区角度范围</td><td>7.prb 覆盖的角度范围</td><td>α: ±30°, β: ±30°</td></tr>
+                    <tr><td>外区角度范围</td><td>1~6.prb 覆盖的角度范围</td><td>θ: 30°~45°（步长 5°）</td></tr>
+                    <tr><td>外区扇区数</td><td>外区分区数量</td><td>6（每扇区 60° 方位角）</td></tr>
+                    <tr><td>PRB 文件数</td><td>校准文件总数</td><td>7（1 内 + 6 外）</td></tr>
+                    <tr><td>压力输入模式</td><td>P1~P7 压力类型</td><td>表压（gauge）</td></tr>
+                    <tr><td>比热比</td><td>空气比热比 k</td><td>1.4</td></tr>
+                    <tr><td>支持文件格式</td><td>校准文件格式</td><td>.prb</td></tr>
+                    <tr><td>导入格式</td><td>批量数据导入格式</td><td>.csv, .txt</td></tr>
+                    <tr><td>导出格式</td><td>结果导出格式</td><td>.csv（UTF-8 with BOM）</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 9. 注意事项 -->
+        <div class="section">
+            <h2><span class="icon">⚠️</span>9. 注意事项</h2>
+            <ul>
+                <li>请确保输入的压力数据单位统一为帕斯卡（Pa）</li>
+                <li>所有 P1~P7 必须为表压值（相对于大气压的差值）</li>
+                <li>温度输入单位为摄氏度（℃）</li>
+                <li>PRB 校准文件必须与探针型号匹配，文件名严格为 1.prb~7.prb</li>
+                <li>计算结果超出校准范围（θ &gt; 45°）时，精度可能会降低或标记为无效</li>
+                <li>建议定期保存计算结果，避免数据丢失</li>
+                <li>大气压默认值 101325 Pa 为标准大气压，实际使用时请根据试验环境调整</li>
+                <li>七孔探针的 α/β 语义与 5 孔探针相反，导出 CSV 时表头已明确标注</li>
+            </ul>
+
+            <div class="info-box error">
+                <div class="info-box-title">安全提示</div>
+                <p>本系统仅用于数据处理和分析，不直接控制试验设备。进行风洞试验时，请遵守相关安全操作规程。</p>
+            </div>
+        </div>
+
+        <!-- 10. 联系方式 -->
+        <div class="section">
+            <h2><span class="icon">📞</span>10. 技术支持</h2>
+            <p>如在使用过程中遇到问题，请联系技术支持团队。</p>
+            <p>建议提供以下信息以便快速定位问题：</p>
+            <ul>
+                <li>系统版本号（见底部状态栏）</li>
+                <li>PRB 校准文件信息（哪些扇区已加载）</li>
+                <li>输入数据示例</li>
+                <li>错误提示信息或无效结果的警告内容</li>
+            </ul>
+        </div>
+
+        <!-- 文档页脚 -->
+        <div class="doc-footer">
+            <p>七孔探针插值计算 v0.1.0 | 用户说明书</p>
+            <p>本文档最后更新日期：2026-07-20</p>
+        </div>
+    </div>
+</body>
+</html>

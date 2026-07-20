@@ -64,6 +64,8 @@ const sphereTankTimeoutSec = ref(300)
 // 默认 channelIndex=-1 表示"未分配"，强制操作员手动选择，
 // 避免静默使用 CH0（可能是风洞总压通道）作为球罐稳定时间通道。
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: -1 })
+// 球罐压力通道：仅用于前端实时显示压力值，不参与闸门判定；默认 channelIndex=-1 强制操作员手动选择
+const sphereTankPressureChannel = ref<ChannelRef>({ deviceId: '', channelIndex: -1 })
 
 // 通道角色必须与后端 total_pressure.go ValidateConfig / read_probe_channels.go roleMap 严格一致。
 // 旧版本曾错误使用 totalPressure.pTotal / totalPressure.pStatic，已被弃用，
@@ -206,6 +208,10 @@ async function saveConfig() {
         waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
         timeoutSec: Math.max(0, sphereTankTimeoutSec.value),
         stableTimeChannel: { ...sphereTankStableChannel.value },
+        // 仅当配置了压力通道 deviceId 时才落盘，避免写入空 ChannelRef 造成后端误订阅
+        ...(sphereTankPressureChannel.value.deviceId
+          ? { pressureChannel: { ...sphereTankPressureChannel.value } }
+          : {}),
       },
     }
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
@@ -263,6 +269,10 @@ async function loadSavedConfig() {
       sphereTankTimeoutSec.value = config.sphereTankGate.timeoutSec ?? 300
       // 旧配置可能 channelIndex=0 且未选 deviceId，保留原值以便用户后续修正
       sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
+      // 压力通道为可选字段，未配置时回退为 -1（与稳定通道保持一致的"未分配"语义）
+      sphereTankPressureChannel.value = config.sphereTankGate.pressureChannel
+        ? { ...config.sphereTankGate.pressureChannel }
+        : { deviceId: '', channelIndex: -1 }
     }
   } catch (err) {
     // 与 FiveHoleSettings 对齐：首次打开无配置（404）属正常，其他异常需提示。
@@ -375,15 +385,7 @@ onMounted(async () => {
             <tbody><tr v-for="ax in motionAxes" :key="ax.name"><td><UiStatusBadge status="connected">{{ ax.name }}</UiStatusBadge></td><td><UiSelect v-model="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" :placeholder="t.selectController" /></td><td><UiSelect v-model="ax.axis" :options="[{label: t.tp_axisX, value: 'X'},{label: t.tp_axisY, value: 'Y'},{label: t.tp_axisZ, value: 'Z'},{label: t.tp_axisU, value: 'U'}]" /></td></tr></tbody></table></div>
         </UiPanel>
 
-        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
-             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
-             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
-        <MotionSafetyPanel
-          v-model:motion-safety="motionSafety"
-          :motion-axes="motionAxes"
-          :t="(t as unknown as Record<string, string>)"
-        />
-
+        <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
         <UiPanel class="section-card">
           <template #header><span class="section-header">{{ t.tp_sphereTankStableCheck }}</span></template>
           <UiCheckbox v-model:checked="sphereTankGateEnabled" class="checkbox-mb">{{ t.tp_enableSphereTankCheck }}</UiCheckbox>
@@ -397,9 +399,27 @@ onMounted(async () => {
               :options="channelIndexOptions"
               :placeholder="t.tp_selectChannel"
             /></div>
+            <!-- 球罐压力通道：仅用于实时显示压力值，不参与闸门判定 -->
+            <div class="field"><span class="field-label">{{ t.wf_spherePressureDevice }}</span><UiSelect v-model="sphereTankPressureChannel.deviceId" :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))" :placeholder="t.selectDevice" :fallback="false" /></div>
+            <div class="field"><span class="field-label">{{ t.wf_spherePressureChannel }}</span><UiSelect
+              :model-value="sphereTankPressureChannel.channelIndex >= 0 ? String(sphereTankPressureChannel.channelIndex) : ''"
+              @update:model-value="sphereTankPressureChannel.channelIndex = $event !== '' ? Number($event) : -1"
+              :options="channelIndexOptions"
+              :placeholder="t.tp_selectChannel"
+            /></div>
             <p class="sphere-hint">{{ t.tp_sphereTimeoutHint }}</p>
+            <p class="sphere-hint muted">{{ t.wf_spherePressureHint }}</p>
           </div>
         </UiPanel>
+
+        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
+             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
+        <MotionSafetyPanel
+          v-model:motion-safety="motionSafety"
+          :motion-axes="motionAxes"
+          :t="(t as unknown as Record<string, string>)"
+        />
       </div>
 
       <div v-if="currentStep === 2" class="step-content">

@@ -50,6 +50,9 @@ export class FileResponse {
 
 /**
  * GenericResponse 通用响应结构
+ * 
+ * Data 字段用于需要返回数据的 binding（如 CalibrationPreviewSevenHole 返回点位预览结果）。
+ * 简单的成功/失败响应（如 CalibrationStart/Pause/Stop）不填 Data，序列化时 omitempty 省略。
  */
 export class GenericResponse {
     /**
@@ -70,6 +73,13 @@ export class GenericResponse {
              * @type {string | undefined}
              */
             this["error"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {any | undefined}
+             */
+            this["data"] = undefined;
         }
 
         Object.assign(this, $$source);

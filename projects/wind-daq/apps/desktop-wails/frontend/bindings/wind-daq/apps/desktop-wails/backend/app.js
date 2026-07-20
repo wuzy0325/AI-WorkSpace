@@ -73,6 +73,29 @@ export function CalibrationPause() {
 }
 
 /**
+ * CalibrationPreviewSevenHole 七孔点位预览（spec Task 13）
+ * 
+ * 接收前端"配置向导"提交的 SevenHoleConfigDTO（α/β/θ/φ 范围与步长），
+ * 调用 CalibrationManager.PreviewSevenHolePoints 生成完整点位列表 + 内/外区聚合统计，
+ * 返回 SevenHolePreviewResult 供前端实时显示总点数（如 673 点 = 169 内区 + 504 外区）。
+ * 
+ * 与 CalibrationStart 的区别：
+ *   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+ *   - 不需要路径归一（无 SavePath）
+ *   - 不需要 ToCore 转换（SevenHoleConfigDTO 直接是 calibration.SevenHoleConfig 别名）
+ * 
+ * 错误处理：配置非法（步长 ≤ 0、范围 min > max）返回 Success=false + Error 透传 GenerateSevenHolePoints 错误。
+ * 注意：无法复用 callMgr（它只返回成功/失败不带 Data），这里手写响应构造。
+ * @param {types$0.SevenHoleConfigDTO} dto
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function CalibrationPreviewSevenHole(dto) {
+    return $Call.ByID(2571500630, dto).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
 export function CalibrationResume() {
@@ -519,6 +542,26 @@ export function PickSaveFile(title, defaultFilename, filters) {
 }
 
 /**
+ * RegisterExitConfirmationHook 注册主窗口的 WindowClosing hook，
+ * 拦截 X 按钮关闭流程：未确认时取消默认关闭并向前端推送确认请求事件。
+ * 
+ * 设计要点（基于 Wails v3 alpha2.106 事件分发机制）：
+ *   - 点 X → WM_CLOSE → emit events.Common.WindowClosing → hook 同步先跑 → 默认 listener 后跑
+ *     （默认 listener 会置 unconditionallyClose=1 并调用 impl.close() 真正销毁窗口）
+ *   - hook 内必须调用 event.Cancel() 才能阻止默认 listener 执行，否则窗口立刻关闭
+ *   - hook 内禁止阻塞弹模态对话框（会卡住事件分发），故通过 EmitEvent 异步通知前端
+ *   - 前端 confirm 后调 RequestExit binding，置 userConfirmedExit=true 并触发 application.Quit()
+ *     → cleanup() → window.Close() → hook 再次触发，此时 userConfirmedExit=true 放行
+ * 
+ * 必须在 main.go 中 WailsApp.Run 之前调用，确保 hook 注册先于任何 WindowClosing 事件。
+ * @param {application$0.WebviewWindow | null} win
+ * @returns {$CancellablePromise<void>}
+ */
+export function RegisterExitConfirmationHook(win) {
+    return $Call.ByID(3781615556, win);
+}
+
+/**
  * RemoveFile 删除指定路径的文件。
  * 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件，
  * 让后续追加模式 writer 当作新文件写入（BOM + 表头）。
@@ -536,6 +579,18 @@ export function RemoveFile(path) {
 export function ReportGetStatus() {
     return $Call.ByID(2294408909).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType12($result);
+    }));
+}
+
+/**
+ * RequestExit 由前端在用户确认退出对话框后调用。
+ * 置 userConfirmedExit=true 让后续 hook 放行，然后调用 application.Quit() 触发完整退出流程
+ * （cleanup → ServiceShutdown → 关闭所有窗口 → 最后一个窗口关闭后 PostQuitMessage 退出）。
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function RequestExit() {
+    return $Call.ByID(155914504).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
     }));
 }
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,13 @@ type CalibrationManager struct {
 	csvWriter        ports.CalibrationCsvWriter
 	csvWriterFactory func(calibration.Config) ports.CalibrationCsvWriter
 	lastExport       *calibration.ExportPayload
+
+	// 七孔双 CSV writer 路由（spec Task 9 + §7.1）
+	// sevenHoleWriterFactory 工厂端口，按 region+sector 创建独立 writer 实例
+	// sevenHoleWriters 当前任务运行期懒加载缓存：key = region 或 "outer_<n>"，
+	// value = 已 Initialize 的 writer。任务结束（Stop/Completed）时统一 flush。
+	sevenHoleWriterFactory ports.CalibrationWriterFactory
+	sevenHoleWriters       map[string]ports.CalibrationCsvWriter
 }
 
 func NewCalibrationManager(
@@ -106,6 +114,18 @@ func (m *CalibrationManager) SetCsvWriter(w ports.CalibrationCsvWriter) {
 
 func (m *CalibrationManager) SetCsvWriterFactory(factory func(calibration.Config) ports.CalibrationCsvWriter) {
 	m.csvWriterFactory = factory
+}
+
+// SetSevenHoleWriterFactory 注入七孔 CSV writer 工厂端口
+//
+// 装配根（pkg/appcontext / pkg/apiserver）注入同一个 adapters/storage.CalibrationCsvWriter
+// 实例：该实例同时实现 CalibrationCsvWriter（单 writer 场景）与 CalibrationWriterFactory
+// （七孔多 writer 场景）接口。
+//
+// 七孔 Start 时通过此工厂为每个 region+sector 创建独立 writer，避免单 writer 实例的
+// schema 被 config.Type 重建覆盖（七孔 schema 含 region+sector 路由信息）。
+func (m *CalibrationManager) SetSevenHoleWriterFactory(factory ports.CalibrationWriterFactory) {
+	m.sevenHoleWriterFactory = factory
 }
 
 // Start 启动校准任务
@@ -173,9 +193,18 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		string(calibration.TypeFiveHole):      true,
 		string(calibration.TypeThreeHole):     true,
 		string(calibration.TypeTotalPressure): true,
+		// 七孔校准走自动引擎：与五孔/三孔/总压相同的逐点采集流程，
+		// 但 CSV 写入走"双 writer 路由"——按 region+sector 分文件落盘
+		// （1 内区 + 6 外区，共 7 个 CSV 文件，见 routeSevenHoleDataPoint）。
+		string(calibration.TypeSevenHole): true,
 	}
 	var csvPointSink calibration.DataPointSink
-	if autoTypes[config.Type] && config.SavePath != "" && m.csvWriter != nil {
+	isSevenHole := config.Type == string(calibration.TypeSevenHole)
+	if isSevenHole {
+		// 七孔走独立的多 writer 路由分支，不调用 m.csvWriter.Initialize
+		// （单 writer 的 schema 会被 config.Type 重建覆盖，无法承载 region+sector 路由）
+		csvPointSink = m.buildSevenHoleCsvSink(config)
+	} else if autoTypes[config.Type] && config.SavePath != "" && m.csvWriter != nil {
 		if err := m.csvWriter.Initialize(config); err != nil {
 			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
 		} else {
@@ -295,6 +324,14 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 			}
 		}
 
+		// 七孔多 writer 路由场景：flush 所有 region+sector writer（spec Task 9）
+		// flushAllSevenHoleWriters 设计为锁外调用（内部自摘 map + 锁外 Flush）；
+		// 本 goroutine 主体持有 m.mu，直接调用会自死锁（Go mutex 不可重入，
+		// 会连带 Status() 的 RLock 永久阻塞），故先释放、调用后再取回。
+		m.mu.Unlock()
+		m.flushAllSevenHoleWriters()
+		m.mu.Lock()
+
 		// 运动归零
 		m.returnToHomePosition(config)
 	}()
@@ -387,6 +424,9 @@ func (m *CalibrationManager) Stop() error {
 			log.Printf("[CalibrationManager] CSV刷新失败: %v", err)
 		}
 	}
+
+	// 七孔多 writer 路由场景：flush 所有 region+sector writer（spec Task 9）
+	m.flushAllSevenHoleWriters()
 
 	// 停止运动（用户主动停止路径，错误仅记录不影响流程）
 	if err := m.stopMotion(); err != nil {
@@ -557,6 +597,201 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 	return writer.Path(), nil
 }
 
+// PreviewSevenHolePoints 预览七孔校准的点位分布（spec Task 9）
+//
+// 调用 calibration.GenerateSevenHolePoints 生成完整点位列表，并按 region 聚合统计
+// 内/外区点数，返回 SevenHolePreviewResult 供前端"配置向导"实时显示。
+//
+// 此方法不启动采集、不创建 CSV writer、不创建 runtime——纯点位生成 + 统计。
+// 调用方：HTTP API server.go 的 /api/calibration/sevenhole/preview handler、
+// Wails backend 的 Binding 方法。两端共用此 usecase 方法，确保点位生成逻辑唯一。
+//
+// 错误返回：透传 GenerateSevenHolePoints 的错误（步长≤0、范围 min>max 等）。
+func (m *CalibrationManager) PreviewSevenHolePoints(config calibration.SevenHoleConfig) (calibration.SevenHolePreviewResult, error) {
+	points, err := calibration.GenerateSevenHolePoints(config)
+	if err != nil {
+		return calibration.SevenHolePreviewResult{}, fmt.Errorf("生成七孔点位失败: %w", err)
+	}
+
+	// 按 Region 聚合统计——遍历一次点位列表，内区点 Region="inner"，外区点 Region="outer"
+	innerCount := 0
+	outerCount := 0
+	for _, p := range points {
+		if p.Region == "inner" {
+			innerCount++
+		} else if p.Region == "outer" {
+			outerCount++
+		}
+	}
+
+	return calibration.SevenHolePreviewResult{
+		Points:      points,
+		TotalCount:  len(points),
+		InnerCount:  innerCount,
+		OuterCount:  outerCount,
+	}, nil
+}
+
+// buildSevenHoleCsvSink 构建七孔 CSV 写入 sink（按 region+sector 路由）
+//
+// 设计要点（spec Task 9 + §7.1）：
+//   - 七孔按 region+sector 分文件落盘（1 内区 + 6 外区，共 7 个 CSV 文件）
+//   - 每个文件有独立的列布局：外区表头 Kθ[n] 中 n 由 sector 替换为具体扇区编号
+//   - writer 懒加载：首次出现某 region+sector 时才通过工厂创建并 Initialize，
+//     避免无数据的外区文件被创建空文件
+//   - 文件命名：在 config.SavePath 基础上去掉 .csv 扩展名，追加区域后缀
+//     内区：<base>_小角度区.csv（spec §7.1 数据集命名约定）
+//     外区 n：<base>_大角度<n>区.csv
+//
+// 返回的 sink 在 onDataPoint 回调中调用，按 dp.(*SevenHoleDataPoint) 类型断言后
+// 取 Region+Sector 路由到对应 writer。类型断言失败时记录日志并跳过——避免七孔
+// 算法误返回非 SevenHoleDataPoint 时整批数据丢失。
+//
+// 不做错误返回：工厂未注入/Initialize 失败时返回 nil sink，由调用方判断。
+// Initialize 失败时记录日志，任务继续（CSV 落盘失败不阻塞采集，与五孔行为一致）。
+func (m *CalibrationManager) buildSevenHoleCsvSink(config calibration.Config) calibration.DataPointSink {
+	// 工厂未注入或保存路径为空：返回 nil sink，onDataPoint 中判断 nil 跳过
+	if m.sevenHoleWriterFactory == nil || config.SavePath == "" {
+		log.Printf("[CalibrationManager] 七孔 CSV 工厂未注入或 SavePath 为空，跳过 CSV 落盘")
+		return nil
+	}
+
+	// 初始化当前任务的 writer 缓存（每次 Start 重置，避免上次任务残留）
+	m.sevenHoleWriters = make(map[string]ports.CalibrationCsvWriter)
+	// 保存 base 路径（去 .csv 扩展名），供 routeSevenHoleWriter 拼接区域后缀
+	basePath := strings.TrimSuffix(config.SavePath, filepath.Ext(config.SavePath))
+
+	return func(dp calibration.DataPoint) {
+		shDp, ok := dp.(*calibration.SevenHoleDataPoint)
+		if !ok {
+			log.Printf("[CalibrationManager] 七孔 onDataPoint 收到非 *SevenHoleDataPoint 类型: %T，跳过 CSV 写入", dp)
+			return
+		}
+		writer, err := m.routeSevenHoleWriter(config, basePath, shDp.Region, shDp.Sector)
+		if err != nil {
+			log.Printf("[CalibrationManager] 七孔 CSV writer 路由失败 (region=%s sector=%d): %v", shDp.Region, shDp.Sector, err)
+			return
+		}
+		if err := writer.AppendPoint(shDp); err != nil {
+			log.Printf("[CalibrationManager] 七孔 CSV 实时写入失败 (region=%s sector=%d): %v", shDp.Region, shDp.Sector, err)
+		}
+	}
+}
+
+// routeSevenHoleWriter 按 region+sector 路由到对应 writer（懒加载创建）
+//
+// 缓存 key 设计：
+//   - 内区：key = "inner"（sector 固定为 7，无需区分）
+//   - 外区：key = "outer_<n>"（n = 1..6）
+//
+// writer 创建步骤：
+//  1. 按 region+sector 拼接文件路径（basePath + 区域后缀）
+//  2. 通过 calibration.NewSevenHoleCsvSchema 构建对应 schema
+//  3. 调用工厂 NewWriter 创建并 Initialize writer（文件 I/O 在锁外执行，避免持锁阻塞）
+//  4. 缓存到 m.sevenHoleWriters 供后续点复用（加写锁 + double-check 防止重复创建）
+//
+// 并发安全（code-review C1 修复）：
+//   - onDataPoint 在校准 goroutine 中调用本方法（读+写 map）
+//   - Stop/Flush 在用户停止 goroutine 中调用 flushAllSevenHoleWriters（读+置 nil map）
+//   - 两者并发时通过 m.mu 串行化访问 map，避免数据竞争
+//   - 文件 I/O（NewWriter）在锁外执行，避免持锁阻塞其他查询路径（如 Status）
+//   - Double-check 模式：若并发期间其他 goroutine 已抢先创建同 key writer，
+//     丢弃本次创建的 writer（Flush 关闭文件句柄避免泄漏）并返回已存在的实例
+func (m *CalibrationManager) routeSevenHoleWriter(config calibration.Config, basePath, region string, sector int) (ports.CalibrationCsvWriter, error) {
+	key := sevenHoleWriterKey(region, sector)
+
+	// 快速路径：RLock 查缓存命中则直接返回（避免加写锁的开销）
+	m.mu.RLock()
+	if m.sevenHoleWriters != nil {
+		if cached, ok := m.sevenHoleWriters[key]; ok {
+			m.mu.RUnlock()
+			return cached, nil
+		}
+	}
+	m.mu.RUnlock()
+
+	// 慢路径：未命中，创建新 writer（文件 I/O 在锁外执行）
+	path := basePath + sevenHoleFileSuffix(region, sector) + ".csv"
+	schema := calibration.NewSevenHoleCsvSchema(config, region, sector)
+	writer, err := m.sevenHoleWriterFactory.NewWriter(path, schema)
+	if err != nil {
+		return nil, fmt.Errorf("创建七孔 CSV writer 失败 (path=%s): %w", path, err)
+	}
+
+	// 加写锁写入 map，double-check 防止并发期间其他 goroutine 已抢先创建
+	m.mu.Lock()
+	if m.sevenHoleWriters == nil {
+		// flushAllSevenHoleWriters 已在并发中清空 map——任务即将停止
+		// 关闭刚创建的 writer 文件句柄避免泄漏，返回错误让调用方跳过本点 CSV 写入
+		m.mu.Unlock()
+		_ = writer.Flush()
+		return nil, fmt.Errorf("七孔 writer 缓存已清空，任务即将停止")
+	}
+	if cached, ok := m.sevenHoleWriters[key]; ok {
+		// 并发期间其他 goroutine 已创建——丢弃本次创建的 writer
+		m.mu.Unlock()
+		_ = writer.Flush()
+		return cached, nil
+	}
+	m.sevenHoleWriters[key] = writer
+	m.mu.Unlock()
+	return writer, nil
+}
+
+// sevenHoleWriterKey 生成 writer 缓存 key
+//
+// 内区统一 "inner"（sector 字段对内区无意义，固定 7）；
+// 外区按 sector 区分（1..6 各一个 writer）。
+func sevenHoleWriterKey(region string, sector int) string {
+	if region == "inner" {
+		return "inner"
+	}
+	return fmt.Sprintf("outer_%d", sector)
+}
+
+// sevenHoleFileSuffix 拼接七孔 CSV 文件命名后缀（spec §7.1 数据集命名约定）
+//
+// 命名规则：
+//   - 内区："_小角度区"（spec §7.1 示例 "(小角度区)"）
+//   - 外区 n："_大角度<n>区"（spec §7.1 示例 "(大角度1区)"）
+//
+// GBK 兼容性（project_memory §36）：所有字符均为 GBK 支持的中文，俄文系统 Excel 不乱码。
+func sevenHoleFileSuffix(region string, sector int) string {
+	if region == "inner" {
+		return "_小角度区"
+	}
+	return fmt.Sprintf("_大角度%d区", sector)
+}
+
+// flushAllSevenHoleWriters 刷新并关闭所有七孔 CSV writer
+//
+// 调用时机：
+//   - 异步 goroutine 中校准完成（Completed/Error）
+//   - Stop 方法中用户主动停止
+//
+// 并发安全（code-review C1 修复）：
+//   - 锁内仅"摘取 map + 置 nil"两步原子操作（O(1) 短临界区）
+//   - 锁外逐个 Flush writer（I/O 可能阻塞，避免持 m.mu 阻塞 Status 等查询路径）
+//   - 摘取后 routeSevenHoleWriter 看到 sevenHoleWriters==nil，新数据点 CSV 写入会被跳过
+//
+// 错误处理：单个 writer flush 失败仅记录日志，不阻塞其他 writer 关闭——
+// 避免一个文件损坏导致其他文件无法落盘。
+func (m *CalibrationManager) flushAllSevenHoleWriters() {
+	m.mu.Lock()
+	writers := m.sevenHoleWriters
+	m.sevenHoleWriters = nil
+	m.mu.Unlock()
+
+	if writers == nil {
+		return
+	}
+	for key, writer := range writers {
+		if err := writer.Flush(); err != nil {
+			log.Printf("[CalibrationManager] 七孔 CSV writer flush 失败 (key=%s): %v", key, err)
+		}
+	}
+}
+
 // GetResult 获取校准结果
 func (m *CalibrationManager) GetResult(taskID string) (calibration.Status, bool) {
 	if m.store == nil {
@@ -588,6 +823,10 @@ func (m *CalibrationManager) Status() calibration.Status {
 		status.CurrentSample = current
 		status.SamplesPerPoint = total
 		status.CurrentPoint = m.autoEngine.GetCurrentPointIndex()
+		// 七孔流场分区当前状态（spec Task 11）：供前端 5Hz 轮询 status 时展示
+		// "当前区域 inner / 扇区 3"。其他类型返回零值（omitempty 自动省略）。
+		status.CurrentRegion = m.autoEngine.GetCurrentRegion()
+		status.CurrentSector = m.autoEngine.GetCurrentSector()
 	}
 	return status
 }
@@ -655,6 +894,10 @@ func (m *CalibrationManager) createAlgorithm(config calibration.Config) (calibra
 		return calibration.NewTotalPressureAlgorithm(), nil
 	case calibration.TypeTotalTemperature:
 		return calibration.NewTotalTemperatureAlgorithm(), nil
+	case calibration.TypeSevenHole:
+		// 七孔算法是空结构体（无状态），所有跨点信息（滞回状态、实时回调）通过 Config 注入。
+		// 与五孔/三孔/总压一样，启动前由 Manager 在 processPoint 流程中注入 RealtimeCallback/PrevRegion/PrevSector（Task 10 落地）。
+		return calibration.NewSevenHoleAlgorithm(), nil
 	default:
 		return nil, fmt.Errorf("未知校准类型: %s", config.Type)
 	}
@@ -916,12 +1159,17 @@ func (a *eventPublisherAdapter) OnRealtime(event calibration.RealtimeEvent) {
 	a.publisher.PublishRealtime(event)
 }
 
+func (a *eventPublisherAdapter) OnRegionChanged(event calibration.RegionChangedEvent) {
+	a.publisher.PublishRegionChanged(event)
+}
+
 // noopEventPublisher 空事件发布器
 type noopEventPublisher struct{}
 
-func (n *noopEventPublisher) OnProgress(_ calibration.ProgressEvent) {}
-func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent) {}
-func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent) {}
+func (n *noopEventPublisher) OnProgress(_ calibration.ProgressEvent)       {}
+func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent)       {}
+func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent)       {}
+func (n *noopEventPublisher) OnRegionChanged(_ calibration.RegionChangedEvent) {}
 
 // runtimeAdapter 运行时适配器
 //

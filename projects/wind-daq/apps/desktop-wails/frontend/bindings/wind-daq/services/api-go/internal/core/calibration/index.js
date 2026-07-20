@@ -7,6 +7,8 @@ export {
     CalPoint,
     ChannelRef,
     MotionAxisConfig,
+    SevenHoleConfig,
+    SevenHoleMode,
     SphereTankGateConfig,
     State,
     Status,

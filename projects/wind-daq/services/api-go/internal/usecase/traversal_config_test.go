@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
+	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	"wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/motion"
 )
@@ -27,6 +28,22 @@ func (m *mockInterpolator) GetValidRange() coreinterp.PrbValidRange {
 }
 func (m *mockInterpolator) Calculate(_ coreinterp.InterpolationInput) (coreinterp.InterpolationResult, error) {
 	return coreinterp.InterpolationResult{}, nil
+}
+
+// mockSevenHoleInterpolator 是 seveninterp.Interpolator 的最小实现，
+// 仅用于满足 ports.InterpolatorLoader.LoadSevenHolePRB 的接口契约；
+// 当前 traversal_config_test 不覆盖七孔加载的实际数据流，所以 Calculate 永远返回零值。
+// 若后续新增七孔路径测试，应在此扩展为可控 mock（带输入快照、错误开关等）。
+type mockSevenHoleInterpolator struct {
+	tag string
+}
+
+func (m *mockSevenHoleInterpolator) IsLoaded() bool { return true }
+func (m *mockSevenHoleInterpolator) GetValidRange() seveninterp.PrbValidRange {
+	return seveninterp.PrbValidRange{}
+}
+func (m *mockSevenHoleInterpolator) Calculate(_ seveninterp.InterpolationInput) (seveninterp.InterpolationResult, error) {
+	return seveninterp.InterpolationResult{}, nil
 }
 
 // mockInterpolatorLoader 是 ports.InterpolatorLoader 的可控 mock，
@@ -100,6 +117,18 @@ func (l *mockInterpolatorLoader) LoadMultiPRB(filePaths []string, machNumbers []
 		return nil, multiPRBErr
 	}
 	return &mockInterpolator{tag: "multi"}, nil
+}
+
+// LoadSevenHolePRB 当前测试不覆盖七孔加载分支，仅满足接口契约。
+// 返回空 mock + nil 错误；若后续需要测试七孔路径，可在此扩展为
+// 带 lastSevenHoleInner/lastSevenHoleOuter/sevenHolePRBErr 字段的可控 mock。
+func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+	return &mockSevenHoleInterpolator{tag: "seven-hole:" + innerPath}, nil
+}
+
+// LoadSevenHoleCalibrationCSV 满足接口契约（校准 CSV 加载分支）。
+func (l *mockInterpolatorLoader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+	return &mockSevenHoleInterpolator{tag: "seven-hole-csv:" + innerPath}, nil
 }
 
 func (l *mockInterpolatorLoader) snapshot() (lastPRB, lastCSV string, lastMultiPRB []string, lastMachs []float64, lastMode coreinterp.MultiPrbInterpolationMode, prbCalls, csvCalls, multiPRBCalls int) {
