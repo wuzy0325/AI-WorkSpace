@@ -412,12 +412,9 @@ func TestPointsFromLayoutCustom(t *testing.T) {
 	points := PointsFromLayout(LayoutConfig{
 		Pattern: "custom",
 		Custom: &CustomLayout{
-			Points: []struct {
-				X float64 `json:"x"`
-				Y float64 `json:"y"`
-				Z float64 `json:"z"`
-				U float64 `json:"u"`
-			}{{X: 1, Y: 2, Z: 3, U: 4}, {X: 5, Y: 6, Z: 7, U: 8}},
+			// Point 类型扩展后，CustomLayout.Points 已改为 []Point，
+			// 直接用具名字面量构造，无需匿名 struct
+			Points: []Point{{X: 1, Y: 2, Z: 3, U: 4}, {X: 5, Y: 6, Z: 7, U: 8}},
 		},
 	})
 	if len(points) != 2 {

@@ -17,12 +17,24 @@ export interface StepSegment {
 }
 
 /** 遍历测试点坐标（4 轴：X/Y/Z/U，与后端 traversal.Point 对齐）。
- *  z/u 为必填：旧配置加载时由 applySavedLayout 显式补 0，避免 undefined 与后端 float64(0) 语义不一致。 */
+ *  z/u 为必填：旧配置加载时由 applySavedLayout 显式补 0，避免 undefined 与后端 float64(0) 语义不一致。
+ *
+ *  per-point 配置（仅 custom 布局点位会携带，line/rectangle/sector 生成的点位字段为 undefined 走全局默认）：
+ *  - dwellMs: 稳定等待时间（ms），undefined 时使用全局 dwellTimeMs
+ *  - samples: 采样点数，undefined 时使用全局 samplesPerPoint
+ *  - test: 是否进行测试，false 时走到位置后直接进入下一步（不采集不保存计算），undefined 视为 true
+ *    CSV 仍占一行，数据列空字符串；状态为 PointStatusNotTested（与 PointStatusSkipped 区分） */
 export interface TraversalPoint {
   x: number
   y: number
   z: number
   u: number
+  /** per-point 稳定时间（ms），覆盖全局 dwellTimeMs；undefined 回退全局 */
+  dwellMs?: number
+  /** per-point 采样点数，覆盖全局 samplesPerPoint；undefined 回退全局 */
+  samples?: number
+  /** per-point 是否测试，false 时跳过采集保存计算；undefined 视为 true */
+  test?: boolean
 }
 
 export interface TraversalProbeChannelPreset {
@@ -201,7 +213,9 @@ export interface TraversalLayout {
   }
 
   custom?: {
-    points: Array<{ x: number; y: number; z: number; u: number }>
+    // 与 TraversalPoint 同结构：x/y/z/u 必填，per-point 字段可选
+    // per-point 字段（dwellMs/samples/test）仅 custom 布局点位会携带
+    points: TraversalPoint[]
   }
 }
 

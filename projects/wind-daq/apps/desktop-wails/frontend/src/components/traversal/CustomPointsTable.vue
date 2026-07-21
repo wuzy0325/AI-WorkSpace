@@ -6,6 +6,9 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiInput from '@components/ui/UiInput.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
+import UiCheckbox from '@components/ui/UiCheckbox.vue'
+import type { TraversalPoint } from '@shared/types/traversal'
 
 /**
  * 自定义布点表格组件（P0 改造）
@@ -14,28 +17,32 @@ import UiInput from '@components/ui/UiInput.vue'
  * 画面拉长且滚动卡顿；删除只能一个个点。本组件用 n-data-table 虚拟滚动
  * （仅渲染可见 ~20 行）+ 多选批量删除/清空全部解决这两个痛点。
  *
- * 父组件的 customPoints 是 Array<{x,y,z,u}>，无稳定 id。本组件用原数组索引
- * __idx 作为 row-key：搜索过滤后仍能映射回原数组；批量删除按 __idx 从大到小
- * splice 避免索引漂移。
+ * 父组件的 customPoints 是 TraversalPoint[]（含可选 per-point 配置字段），
+ * 无稳定 id。本组件用原数组索引 __idx 作为 row-key：搜索过滤后仍能映射回原数组；
+ * 批量删除按 __idx 从大到小 splice 避免索引漂移。
+ *
+ * per-point 字段（dwellMs/samples/test）编辑：
+ * - dwellMs/samples 用 UiInputNumber，留空（null）回写为 undefined（用全局默认）
+ * - test 用 UiCheckbox，undefined 与 true 在 UI 上均显示为勾选（与"默认测试"语义对齐），
+ *   用户取消勾选后变 false；再次勾选变 true（无法回到 undefined，符合直觉）
  */
 
-interface CustomPoint {
-  x: number
-  y: number
-  z: number
-  u: number
-}
-
-/** 表格行数据：原索引 + 坐标。__idx 不写入父组件 customPoints。 */
+/** 表格行数据：原索引 + 坐标 + per-point 配置字段。__idx 不写入父组件 customPoints。 */
 interface TableRow {
   __idx: number
   x: number
   y: number
   z: number
   u: number
+  /** per-point 稳定时间（ms），undefined = 用全局 dwellTimeMs */
+  dwellMs?: number
+  /** per-point 采样点数，undefined = 用全局 samplesPerPoint */
+  samples?: number
+  /** per-point 是否测试，undefined = 用全局默认 true；false = 跳过采集 */
+  test?: boolean
 }
 
-const points = defineModel<CustomPoint[]>({ required: true })
+const points = defineModel<TraversalPoint[]>({ required: true })
 
 const i18n = useI18nStore()
 const t = computed(() => i18n.t)
@@ -46,7 +53,17 @@ const searchKeyword = ref('')
 
 /** 派生表格行数据：附加 __idx 作为稳定 row-key，便于过滤后映射回原数组 */
 const tableRows = computed<TableRow[]>(() =>
-  points.value.map((p, i) => ({ __idx: i, x: p.x, y: p.y, z: p.z, u: p.u })),
+  points.value.map((p, i) => ({
+    __idx: i,
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    u: p.u,
+    // per-point 字段透传：undefined 表示用全局默认，与 TraversalPoint 类型对齐
+    dwellMs: p.dwellMs,
+    samples: p.samples,
+    test: p.test,
+  })),
 )
 
 /** 搜索过滤：关键字 trim 后匹配任一轴坐标值（小写比较，数值与字符串都可匹配） */
@@ -175,7 +192,40 @@ const selectedCountText = computed(() =>
     .replace('{total}', String(points.value.length)),
 )
 
-/** n-data-table 列定义：选择列 + 序号 + X/Y/Z/U + 操作 */
+/**
+ * 更新某点位的 per-point dwellMs 字段
+ *
+ * UiInputNumber 在清空时 emit null，需转回 undefined 以保持"用全局默认"语义
+ * （TraversalPoint.dwellMs 类型为 number | undefined，不接受 null）。
+ * 通过 __idx 反向映射回原数组，避免过滤视图下索引错位。
+ */
+function updateDwellMs(row: TableRow, value: number | null): void {
+  const point = points.value[row.__idx]
+  if (!point) return
+  // null（清空）→ undefined（用全局默认）；非空 → 写入数值
+  point.dwellMs = value ?? undefined
+}
+
+/** 更新某点位的 per-point samples 字段，语义同 updateDwellMs */
+function updateSamples(row: TableRow, value: number | null): void {
+  const point = points.value[row.__idx]
+  if (!point) return
+  point.samples = value ?? undefined
+}
+
+/**
+ * 更新某点位的 per-point test 字段
+ *
+ * UiCheckbox emit boolean，直接写入；用户一旦交互即从 undefined 切换为
+ * 显式 true/false，无法回退到 undefined（符合"用户已显式选择"的直觉）。
+ */
+function updateTest(row: TableRow, checked: boolean): void {
+  const point = points.value[row.__idx]
+  if (!point) return
+  point.test = checked
+}
+
+/** n-data-table 列定义：选择列 + 序号 + X/Y/Z/U + per-point 配置 + 操作 */
 const columns = computed<DataTableColumns<TableRow>>(() => [
   {
     type: 'selection',
@@ -191,6 +241,51 @@ const columns = computed<DataTableColumns<TableRow>>(() => [
   { title: 'Y', key: 'y', width: 80 },
   { title: 'Z', key: 'z', width: 80 },
   { title: 'U', key: 'u', width: 80 },
+  // per-point 稳定时间列：留空显示"用默认"占位，min/max 与全局 dwellTimeMs 输入对齐
+  {
+    title: t.value.customPointsDwellMsColumn,
+    key: 'dwellMs',
+    width: 110,
+    render: (row) =>
+      h(UiInputNumber, {
+        modelValue: row.dwellMs ?? null,
+        min: 100,
+        max: 60000,
+        step: 100,
+        placeholder: t.value.customPointsUseDefaultHint,
+        'onUpdate:modelValue': (v: number | null) => updateDwellMs(row, v),
+      }),
+  },
+  // per-point 采样点数列：留空显示"用默认"占位，min=1 与 samplesPerPoint 语义对齐
+  {
+    title: t.value.customPointsSamplesColumn,
+    key: 'samples',
+    width: 110,
+    render: (row) =>
+      h(UiInputNumber, {
+        modelValue: row.samples ?? null,
+        min: 1,
+        max: 1000,
+        step: 1,
+        placeholder: t.value.customPointsUseDefaultHint,
+        'onUpdate:modelValue': (v: number | null) => updateSamples(row, v),
+      }),
+  },
+  // per-point 是否测试列：undefined/true 显示勾选，false 显示未勾选
+  {
+    title: t.value.customPointsTestColumn,
+    key: 'test',
+    width: 90,
+    align: 'center',
+    render: (row) =>
+      h(
+        UiCheckbox,
+        {
+          checked: row.test !== false,
+          'onUpdate:checked': (v: boolean) => updateTest(row, v),
+        },
+      ),
+  },
   {
     title: t.value.customPointsActionColumn,
     key: 'actions',

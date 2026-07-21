@@ -437,12 +437,8 @@ type traversalAPIConfig struct {
 			AngularStepSegments []traversal.StepSegment `json:"angularStepSegments"`
 		} `json:"sector"`
 		Custom *struct {
-			Points []struct {
-				X float64 `json:"x"`
-				Y float64 `json:"y"`
-				Z float64 `json:"z"`
-				U float64 `json:"u"`
-			} `json:"points"`
+			// Points 直接复用 traversal.Point，per-point 配置字段（DwellMs/Samples/Test）通过指针携带
+			Points []traversal.Point `json:"points"`
 		} `json:"custom"`
 	} `json:"layout"`
 	Channels struct {
@@ -651,16 +647,11 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 			if cfg.Layout.Custom == nil {
 				return nil
 			}
-			cl := &traversal.CustomLayout{}
-			for _, p := range cfg.Layout.Custom.Points {
-				cl.Points = append(cl.Points, struct {
-					X float64 `json:"x"`
-					Y float64 `json:"y"`
-					Z float64 `json:"z"`
-					U float64 `json:"u"`
-				}{X: p.X, Y: p.Y, Z: p.Z, U: p.U})
-			}
-			return cl
+			// cfg.Layout.Custom.Points 已是 []traversal.Point（含 per-point 配置指针），
+			// 直接 slice copy 保留全部字段，无需逐字段拷贝
+			points := make([]traversal.Point, len(cfg.Layout.Custom.Points))
+			copy(points, cfg.Layout.Custom.Points)
+			return &traversal.CustomLayout{Points: points}
 		}(),
 	}
 	points := traversal.PointsFromLayout(layout)

@@ -57,6 +57,13 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	acqController := m.acquisitionController
 	pointIndex := m.status.CurrentPoint
 	point := config.Path[pointIndex]
+	// per-point 优先：point.DwellMs 非 nil 时覆盖全局 config.DwellTimeMs
+	// 仅 custom 布局点位会携带 DwellMs；计算 effectiveDwellMs 供后续 Phase 2 等待时长
+	// 与 PointResult.DwellTimeElapsed 统一使用（waitForStabilization 内部也读 point.DwellMs）
+	effectiveDwellMs := config.DwellTimeMs
+	if point.DwellMs != nil {
+		effectiveDwellMs = *point.DwellMs
+	}
 	m.mu.Unlock()
 	// 多设备采集态校验：通道可能跨设备绑定（如五孔在 A、大气压/温度在 B），
 	// 逐台去重校验，任一设备未采集都在动设备前失败。
@@ -195,6 +202,42 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		}
 	}
 
+	// per-point Test=false 跳过分支：走到位置后直接进入下一步，不采集不保存
+	// 结果 CSV 仍占一行（数据列空字符串由 buildRow 天然支持 nil Values），
+	// 用 PointStatusNotTested 区别于 PointStatusSkipped（数据验证 OnInvalid=skip 跳过）
+	// 与 Skipped 同样算 Committed，崩溃恢复时不重走该点
+	if point.Test != nil && !*point.Test {
+		slog.Info("traversal point skipped by config (test=false)",
+			"component", "traversal",
+			"task_id", taskID,
+			"point_index", pointIndex+1,
+			"coordinates", fmt.Sprintf("(X=%s, Y=%s, Z=%s, U=%s)",
+				formatCoord(point.X), formatCoord(point.Y), formatCoord(point.Z), formatCoord(point.U)),
+		)
+
+		// 分配单调递增 commitSeq（与 normal/skip 分支一致）
+		m.mu.Lock()
+		commitSeq := m.session.snapshot.CommitSeq + 1
+		m.mu.Unlock()
+
+		now := time.Now().UnixMilli()
+		notTestedResult := traversal.PointResult{
+			TaskID:           taskID,
+			CommitSeq:        commitSeq,
+			PointStatus:      traversal.PointStatusNotTested,
+			PointIndex:       pointIndex,
+			Point:            point,
+			Timestamp:        now,
+			StartedAt:        now,
+			CompletedAt:      now,
+			Values:           nil, // 不采集，CSV 数据列由 buildRow 写空字符串
+			SampleCount:      0,
+			DwellTimeElapsed: 0, // 未进入稳定等待阶段
+		}
+		// notTested 分支无 ValidationWarnings，clearValidationWarnings=false 不必清空
+		return m.commitAndAdvance(taskID, &notTestedResult, false)
+	}
+
 	// 阶段2：等待稳定
 	m.updatePhase(taskID, traversal.StateStabilizing, traversal.PhaseStabilizing, pointIndex, len(config.Path))
 	stabFailure := m.waitForStabilization(taskID, point, pointIndex, channelGroups)
@@ -214,7 +257,12 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 	// 阶段3：采集中（含数据验证 + 可选重试）
 	m.updatePhase(taskID, traversal.StateAcquiring, traversal.PhaseAcquiring, pointIndex, len(config.Path))
+	// per-point 优先：point.Samples 非 nil 时覆盖全局 config.SamplesPerPoint
+	// 仅 custom 布局点位会携带 Samples；line/rectangle/sector 生成的 Point 字段为 nil 走全局
 	samplesPerPoint := config.SamplesPerPoint
+	if point.Samples != nil {
+		samplesPerPoint = *point.Samples
+	}
 	if samplesPerPoint <= 0 {
 		samplesPerPoint = 1
 	}
@@ -302,7 +350,6 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		// 与正常分支一致：分配单调递增 commitSeq，提交成功后才推进 snapshot.CommitSeq。
 		m.mu.Lock()
 		commitSeq := m.session.snapshot.CommitSeq + 1
-		session := m.session
 		m.mu.Unlock()
 
 		now := time.Now().UnixMilli()
@@ -316,69 +363,19 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			CompletedAt:        now,
 			Values:             resultValues,
 			SampleCount:        samplesPerPoint,
-			DwellTimeElapsed:   config.DwellTimeMs,
+			// 使用 effectiveDwellMs 反映实际等待时长（per-point 优先于全局）
+			DwellTimeElapsed:   effectiveDwellMs,
 			ValidationWarnings: lastWarnings,
 		}
-		if err := m.commitPointV2(taskID, &skipResult); err != nil {
-			return m.failWithCode("commit skip point %d failed: %v", traversal.ErrSaveFailed, pointIndex+1, err)
-		}
-		// 提交成功后才推进 snapshot.CommitSeq 和 CommittedPoints（线性化点 = Checkpoint 持久化成功）
-		// CommittedPoints 同步更新，与正常分支保持一致，避免 session.snapshot 字段陈旧
-		m.mu.Lock()
-		session.snapshot.CommitSeq = commitSeq
-		session.snapshot.CommittedPoints = int(commitSeq)
-		m.status.Results = append(m.status.Results, skipResult)
-		m.status.CurrentPoint++
-		m.status.CommittedPoints = int(commitSeq)
-		m.status.ValidationWarnings = nil
-		allDone := m.status.CurrentPoint >= len(m.config.Path)
-		completedCount := m.status.CurrentPoint
-		// store.Save 所需快照在置 Completed 之后的锁内捕获（见下），与正常分支一致；
-		// 在置 Completed 之前捕获会把过期状态快照持久化到 result store。
-		var pendingSave bool
-		var saveTaskID string
-		var saveStatus traversal.Status
-		m.mu.Unlock()
-		if allDone {
-			if err := m.completeAfterReturnToOrigin(taskID, m.returnToOrigin(taskID, len(config.Path))); err != nil {
-				return err
-			}
-			m.mu.Lock()
-			m.status.State = traversal.StateCompleted
-			m.status.CurrentPointPhase = ""
-			if m.store != nil {
-				pendingSave = true
-				saveTaskID = m.config.TaskID
-				saveStatus = m.status
-				saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
-			}
-			m.mu.Unlock()
-			// 与正常分支一致：完成后持久化最终态并清理断点文件，
-			// 否则 skip 末点会让 result store 缺最终态、checkpoint 残留导致 resume 误判。
-			if pendingSave {
-				if err := m.store.Save(saveTaskID, saveStatus); err != nil {
-					slog.Error("traversal final save failed",
-						"component", "traversal",
-						"task_id", saveTaskID,
-						"error", err,
-					)
-					return fmt.Errorf("save traversal result: %w", err)
-				}
-				slog.Info("traversal result saved on completion",
-					"component", "traversal",
-					"task_id", saveTaskID,
-					"completed_points", completedCount,
-				)
-			}
-			m.ClearCheckpoint()
-		}
-		return nil
+		// skip 分支采集了数据但被验证规则跳过，clearValidationWarnings=true 清空告警
+		return m.commitAndAdvance(taskID, &skipResult, true)
 	}
 
 	// 阶段4：保存中
 	m.updatePhase(taskID, traversal.StateSaving, traversal.PhaseSaving, pointIndex, len(config.Path))
 
-	dwellTime := config.DwellTimeMs
+	// 使用 effectiveDwellMs 反映实际等待时长（per-point 优先于全局）
+	dwellTime := effectiveDwellMs
 	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存。
 	// buildRawPressureForProbe 按当前探针类型的策略标签集装配并归一化到 Pa+表压，
 	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
@@ -403,7 +400,6 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// v2：生成单调递增提交序号（仅在 commitPointV2 成功后才推进 snapshot.CommitSeq）
 	m.mu.Lock()
 	commitSeq := m.session.snapshot.CommitSeq + 1
-	runSession := m.session
 	m.mu.Unlock()
 
 	now := time.Now().UnixMilli()
@@ -423,120 +419,10 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		ValidationWarnings: lastWarnings,
 	}
 
-	// 三阶段提交协议（v2 可靠存储）：
-	//   阶段1：CSV Append + Sync（可读视图，先拿 RowHash）
-	//   阶段2：结果日志 AppendPrepared + Sync（权威数据源，含 CSVRowHash）
-	//   阶段3：Checkpoint 原子替换（恢复锚点）
-	// 提交成功后才推进 snapshot.CommitSeq（线性化点 = Checkpoint 持久化成功）
-	if err := m.commitPointV2(taskID, &result); err != nil {
-		return m.failWithCode("commit point %d failed: %v", traversal.ErrSaveFailed, pointIndex+1, err)
-	}
-
-	// v2：提交成功后才推进 snapshot.CommitSeq 和 CommittedPoints
-	// CommittedPoints 必须同步更新：session.snapshot 作为"运行态权威快照"，
-	// CommittedPoints 恒为 0 会让任何读取该字段的代码（调试端点/未来扩展）拿到错误值。
-	m.mu.Lock()
-	runSession.snapshot.CommitSeq = commitSeq
-	runSession.snapshot.CommittedPoints = int(commitSeq)
-	m.mu.Unlock()
-
-	// 向后兼容：旧 sink 路径仍执行，但不参与事务回滚
-	// 若 sink 与 csvPort 为同一实例（v2 装配下常见），CSV 已通过 csvPort.Append 写入，
-	// 这里再调用 sink.WriteTraversalPoint 会重复落盘同一行，破坏 CSV 行号 ↔ commitSeq 一致性。
-	// sinkIsCsvPort 通过类型断言 + 指针比较检测同实例，跳过重复写入。
-	if m.sink != nil && !sinkIsCsvPort(m.sink, m.csvPort) {
-		if err := m.sink.WriteTraversalPoint(result); err != nil {
-			slog.Error("traversal old sink save failed",
-				"component", "traversal",
-				"task_id", taskID,
-				"point_index", pointIndex+1,
-				"error", err,
-			)
-			// 旧 sink 失败不触发 v2 回滚，避免双写冲突导致数据丢失
-		}
-	}
-	// 旧 saveCheckpoint 路径基址：必须用 ResolveOutputPath 解析出完整 CSV 文件路径，
-	// 不能直接用 config.SavePath（可能是目录）。
-	// 否则 saveCheckpoint 派生 .checkpoint.json 时会拼成 "目录.checkpoint.json"，
-	// 落在父目录而非数据目录内；旧格式 checkpoint 的 SavePath 为目录还会污染 Resume 回退路径
-	// （ResumeFromCheckpoint 已统一改用 ResolveOutputPath 重算，这里保持一致源头）。
-	// 若 sink 实现了 OutputPath()（如 TraversalCsvWriter 在 InitializeTraversal 后可提供），
-	// 优先用 sink 实际打开的文件路径——v2 装配下 sink/csvPort 同实例，
-	// sink.OutputPath() 即 csvPort.Open 实际创建的文件路径（含 -2/-3 撞名后缀）。
-	checkpointSavePath := traversal.ResolveOutputPath(config)
-	if pathSink, ok := m.sink.(interface{ OutputPath() string }); ok {
-		if outputPath := pathSink.OutputPath(); outputPath != "" {
-			checkpointSavePath = outputPath
-		}
-	}
-
-	m.mu.Lock()
-	m.status.Results = append(m.status.Results, result)
-	m.status.CurrentPoint++
-	m.status.CommittedPoints = int(commitSeq)
-	m.status.ValidationWarnings = nil
-	allDone := m.status.CurrentPoint >= len(m.config.Path)
-	completedCount := m.status.CurrentPoint
-	// 收集 store.Save 所需快照；store.Save 必须在锁外执行，
-	// 避免磁盘 I/O 卡住整个 m.mu，导致 Status()/前端轮询全部阻塞。
-	var pendingSave bool
-	var saveTaskID string
-	var saveStatus traversal.Status
-	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
-	checkpointPath := checkpointSavePath
-	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
-	m.mu.Unlock()
-
-	if allDone {
-		if err := m.completeAfterReturnToOrigin(taskID, m.returnToOrigin(taskID, len(config.Path))); err != nil {
-			return err
-		}
-		m.mu.Lock()
-		m.status.State = traversal.StateCompleted
-		m.status.CurrentPointPhase = ""
-		if m.store != nil {
-			pendingSave = true
-			saveTaskID = m.config.TaskID
-			saveStatus = m.status
-			saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
-		}
-		m.mu.Unlock()
-	}
-
-	if pendingSave {
-		if err := m.store.Save(saveTaskID, saveStatus); err != nil {
-			slog.Error("traversal final save failed",
-				"component", "traversal",
-				"task_id", saveTaskID,
-				"error", err,
-			)
-			return fmt.Errorf("save traversal result: %w", err)
-		}
-		slog.Info("traversal result saved on completion",
-			"component", "traversal",
-			"task_id", saveTaskID,
-			"completed_points", completedCount,
-		)
-	}
-
-	// v2 回退：未注入 v2 checkpoint 端口时，沿用旧 saveCheckpoint 逻辑（每10个点）
-	m.mu.RLock()
-	checkpointPortV2 := m.checkpointPort
-	m.mu.RUnlock()
-	if checkpointPortV2 == nil {
-		// 与 Cursor DAQ 一致：每完成 10 个点或最后一个点时保存断点
-		if checkpointPath != "" && len(checkpointPoints) > 0 {
-			if (pointIndex+1)%checkpointInterval == 0 || allDone {
-				m.saveCheckpoint(checkpointPoints, completedCount, checkpointPath)
-			}
-		}
-	}
-
-	// 测试成功完成后清理断点文件
-	if allDone {
-		m.ClearCheckpoint()
-	}
-	return nil
+	// normal 分支采集了数据，clearValidationWarnings=true 清空告警
+	// commitAndAdvance 内部完成：commitPointV2 + 旧 sink 写 + snapshot 推进 +
+	// allDone 处理 + v1 兼容 saveCheckpoint（每 10 个点）
+	return m.commitAndAdvance(taskID, &result, true)
 }
 
 // errReturnToOriginAborted 标记回零被用户停止/取消（区别于回零运动失败/超时）。
@@ -915,7 +801,12 @@ func (m *TraversalManager) updatePhase(taskID string, state traversal.State, pha
 func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int, channelGroups []deviceChannelGroup) *traversal.MotionSafetyFailure {
 	m.mu.RLock()
 	stab := m.stabilization
+	// per-point 优先：point.DwellMs 非 nil 时覆盖全局 config.DwellTimeMs
+	// 仅 custom 布局点位会携带 DwellMs；line/rectangle/sector 生成的 Point 字段为 nil 走全局
 	dwellMs := m.config.DwellTimeMs
+	if point.DwellMs != nil {
+		dwellMs = *point.DwellMs
+	}
 	motionAxes := m.config.MotionAxes
 	safetyCfg := m.config.MotionSafety
 	m.mu.RUnlock()
@@ -969,8 +860,20 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 	}
 
 	adaptive := stab.Adaptive
-	minWait := time.Duration(adaptive.MinWaitMs) * time.Millisecond
-	maxWait := time.Duration(adaptive.MaxWaitMs) * time.Millisecond
+	// per-point 优先：point.DwellMs 非 nil 时覆盖 adaptive.MaxWaitMs，保持 per-point 语义一致
+	// fixed 模式下 DwellMs 直接作为等待时长生效；adaptive 模式此前静默忽略 DwellMs，
+	// 用户设置后无效果无告警。此处统一行为：DwellMs 在 adaptive 模式下作为新的 MaxWaitMs 上限。
+	// 同时同步压缩 MinWaitMs，避免 minWait > maxWait 导致最小等待阶段反而长于最大允许等待。
+	maxWaitMs := adaptive.MaxWaitMs
+	if point.DwellMs != nil && *point.DwellMs > 0 {
+		maxWaitMs = *point.DwellMs
+	}
+	minWaitMs := adaptive.MinWaitMs
+	if minWaitMs > maxWaitMs {
+		minWaitMs = maxWaitMs
+	}
+	minWait := time.Duration(minWaitMs) * time.Millisecond
+	maxWait := time.Duration(maxWaitMs) * time.Millisecond
 	checkInterval := time.Duration(adaptive.CheckIntervalMs) * time.Millisecond
 	threshold := adaptive.StabilityThreshold
 
@@ -1132,6 +1035,141 @@ func (m *TraversalManager) isStable(prev, cur map[int]float64, threshold float64
 		}
 	}
 	return true
+}
+
+// commitAndAdvance 提交单点结果并推进遍历进度。
+//
+// 设计动机（code-review P2 修复）：normal/skip/notTested 三分支原本各自实现
+// commitPointV2 → 旧 sink 写 → snapshot/status 推进 → allDone 处理流程，
+// 约 93 行重复代码。抽取后未来新增"提交后副作用"（如事件推送、CSV header hash
+// 更新）只需改一处，避免遗漏某分支造成数据不一致。
+//
+// 流程（与原 normal 分支保持完全一致）：
+//  1. commitPointV2 三阶段提交（CSV Append + ResultLog AppendPrepared + Checkpoint 原子替换）
+//  2. 向后兼容旧 sink 写入（不参与 v2 回滚；失败提升为 status.Warning 让前端可见）
+//  3. 推进 snapshot.CommitSeq/CommittedPoints + status.Results/CurrentPoint
+//  4. allDone 时 completeAfterReturnToOrigin + store.Save + ClearCheckpoint
+//  5. v1 兼容：未注入 v2 checkpoint 端口时沿用旧 saveCheckpoint（每 10 个点）
+//
+// 参数：
+//   - taskID: 任务 ID
+//   - result: 待提交的 PointResult（调用方负责设置 PointStatus/Values/SampleCount 等；
+//     CommitSeq 由本函数内部从 session.snapshot 推进分配；commitPointV2 会写回 CSVRowHash）
+//   - clearValidationWarnings: 是否清空 status.ValidationWarnings
+//     （normal/skip 分支清空；notTested 未采集无 warnings 不需要）
+//
+// 返回：失败时返回 error（已通过 failWithCode 设置状态）
+func (m *TraversalManager) commitAndAdvance(taskID string, result *traversal.PointResult, clearValidationWarnings bool) error {
+	pointIndex := result.PointIndex
+
+	if err := m.commitPointV2(taskID, result); err != nil {
+		return m.failWithCode("commit point %d failed: %v", traversal.ErrSaveFailed, pointIndex+1, err)
+	}
+
+	// 推进 snapshot.CommitSeq（线性化点 = Checkpoint 持久化成功）
+	// CommittedPoints 同步更新，避免 session.snapshot 字段陈旧
+	m.mu.Lock()
+	session := m.session
+	session.snapshot.CommitSeq = result.CommitSeq
+	session.snapshot.CommittedPoints = int(result.CommitSeq)
+	m.status.Results = append(m.status.Results, *result)
+	m.status.CurrentPoint++
+	m.status.CommittedPoints = int(result.CommitSeq)
+	if clearValidationWarnings {
+		m.status.ValidationWarnings = nil
+	}
+	allDone := m.status.CurrentPoint >= len(m.config.Path)
+	completedCount := m.status.CurrentPoint
+	// store.Save 所需快照在置 Completed 之后的锁内捕获（见下），
+	// 在置 Completed 之前捕获会把过期状态快照持久化到 result store。
+	var pendingSave bool
+	var saveTaskID string
+	var saveStatus traversal.Status
+	// 用于断点保存的快照（在锁内复制，避免锁外访问竞态）
+	checkpointPath := traversal.ResolveOutputPath(m.config)
+	if pathSink, ok := m.sink.(interface{ OutputPath() string }); ok {
+		if outputPath := pathSink.OutputPath(); outputPath != "" {
+			checkpointPath = outputPath
+		}
+	}
+	checkpointPoints := append([]traversal.Point(nil), m.config.Path...)
+	m.mu.Unlock()
+
+	// 向后兼容：旧 sink 路径仍执行，但不参与事务回滚
+	// 若 sink 与 csvPort 为同一实例（v2 装配下常见），CSV 已通过 csvPort.Append 写入，
+	// 这里再调用 sink.WriteTraversalPoint 会重复落盘同一行，破坏 CSV 行号 ↔ commitSeq 一致性。
+	// sinkIsCsvPort 通过类型断言 + 指针比较检测同实例，跳过重复写入。
+	//
+	// P2 修复（code-review Important-3）：旧 sink 失败仅日志记录会让用户看不到失败信号，
+	// 改为同步写入 status.Warning，前端轮询可见提示。失败不触发 v2 回滚的语义保持不变
+	// （双写冲突会导致数据丢失，权衡是接受旧 sink 数据缺失但保 v2 一致性）。
+	if m.sink != nil && !sinkIsCsvPort(m.sink, m.csvPort) {
+		if err := m.sink.WriteTraversalPoint(*result); err != nil {
+			slog.Error("traversal old sink save failed",
+				"component", "traversal",
+				"task_id", taskID,
+				"point_index", pointIndex+1,
+				"error", err,
+			)
+			// 失败写入 status.Warning：与"回零失败"同处理路径，前端可见
+			m.mu.Lock()
+			warnMsg := fmt.Sprintf("point %d: sink write failed: %v", pointIndex+1, err)
+			if m.status.Warning != "" {
+				m.status.Warning = m.status.Warning + "; " + warnMsg
+			} else {
+				m.status.Warning = warnMsg
+			}
+			m.mu.Unlock()
+		}
+	}
+
+	if allDone {
+		if err := m.completeAfterReturnToOrigin(taskID, m.returnToOrigin(taskID, len(m.config.Path))); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		m.status.State = traversal.StateCompleted
+		m.status.CurrentPointPhase = ""
+		if m.store != nil {
+			pendingSave = true
+			saveTaskID = m.config.TaskID
+			saveStatus = m.status
+			saveStatus.Results = append([]traversal.PointResult(nil), m.status.Results...)
+		}
+		m.mu.Unlock()
+		if pendingSave {
+			if err := m.store.Save(saveTaskID, saveStatus); err != nil {
+				slog.Error("traversal final save failed",
+					"component", "traversal",
+					"task_id", saveTaskID,
+					"error", err,
+				)
+				return fmt.Errorf("save traversal result: %w", err)
+			}
+			slog.Info("traversal result saved on completion",
+				"component", "traversal",
+				"task_id", saveTaskID,
+				"completed_points", completedCount,
+			)
+		}
+		m.ClearCheckpoint()
+	}
+
+	// v2 回退：未注入 v2 checkpoint 端口时，沿用旧 saveCheckpoint 逻辑（每 10 个点）
+	// 与原 normal 分支保持一致：v1 装配下需要断点保护，v2 已通过 commitPointV2 持久化
+	m.mu.RLock()
+	checkpointPortV2 := m.checkpointPort
+	m.mu.RUnlock()
+	if checkpointPortV2 == nil {
+		// 与 Cursor DAQ 一致：每完成 10 个点或最后一个点时保存断点
+		if checkpointPath != "" && len(checkpointPoints) > 0 {
+			if (pointIndex+1)%checkpointInterval == 0 || allDone {
+				m.saveCheckpoint(checkpointPoints, completedCount, checkpointPath)
+			}
+		}
+	}
+
+	return nil
 }
 
 // deviceChannelGroup 单台设备上需要采样的通道集合。

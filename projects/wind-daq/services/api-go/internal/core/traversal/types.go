@@ -34,11 +34,27 @@ const (
 
 // Point 遍历测试点坐标（4 轴：X/Y/Z/U，对应位移机构全轴能力）
 // U 字段零值为 0，旧配置文件无 u 字段时 Go JSON 反序列化自动填 0，向后兼容
+//
+// DwellMs / Samples / Test 三个 per-point 配置字段（仅 custom 布局点位携带）：
+//   - 用指针（*int / *bool）而非值类型，nil 表示"未配置 → 用全局 Config 默认"
+//     不用 0 作为"未设置"信号——SamplesPerPoint 合法最小值是 1，0 无法区分"未设置"与"显式 1"
+//   - line/rectangle/sector 生成的 Point 三字段恒为 nil，运行时回退全局
+//   - 旧配置 JSON 无新字段时自动 nil，向后兼容
 type Point struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 	Z float64 `json:"z"`
 	U float64 `json:"u"`
+	// DwellMs per-point 稳定时间覆盖（ms）。nil = 用全局 Config.DwellTimeMs。
+	// 在 fixed 稳定模式下作为等待时长；adaptive 模式下覆盖 Adaptive.MaxWaitMs 作为新的等待上限。
+	DwellMs *int `json:"dwellMs,omitempty"`
+	// Samples per-point 采样点数覆盖。nil = 用全局 Config.SamplesPerPoint；<=0 在采集层兜底为 1
+	Samples *int `json:"samples,omitempty"`
+	// Test per-point 是否测试。nil = 用全局默认 true；显式 false 时走 PointStatusNotTested 分支跳过采集
+	// （见 traversal_acquisition.go RunCurrentPoint）。
+	// 即使跳过采集，仍通过 commitPointV2 持久化坐标行到 CSV/结果日志/checkpoint，
+	// IsCommitted()=true，崩溃恢复时不重走该点。
+	Test *bool `json:"test,omitempty"`
 }
 
 // SaveOptions CSV 落盘选项（与前端 TraversalSaveOptions 对齐）
@@ -329,14 +345,18 @@ const (
 	PointStatusCompleted PointStatus = "completed"
 	PointStatusSkipped   PointStatus = "skipped"
 	PointStatusFailed    PointStatus = "failed"
+	// PointStatusNotTested 配置主动跳过：点位 Test=false 时走此分支
+	// 区别于 Skipped（数据验证 OnInvalid=skip）：NotTested 完全不采集数据，CSV 数据列全空
+	// 仍通过 commitPointV2 持久化坐标行，崩溃恢复时算 Committed 不重走该点
+	PointStatusNotTested PointStatus = "not_tested"
 )
 
 // IsCommitted 判断该点是否算"已确认提交"——commitPointV2 成功后即认为提交，
-// 含正常完成（Completed）与跳过（Skipped）两类。
-// Skipped 之所以算 Committed：跳过的点已通过 commitPointV2 持久化到结果日志与 checkpoint，
+// 含正常完成（Completed）、跳过（Skipped）、配置主动跳过（NotTested）三类。
+// Skipped / NotTested 之所以算 Committed：跳过的点已通过 commitPointV2 持久化到结果日志与 checkpoint，
 // 崩溃恢复时不应重新采点，否则会出现"同一物理位置采两次"的语义错误。
 func (s PointStatus) IsCommitted() bool {
-	return s == PointStatusCompleted || s == PointStatusSkipped
+	return s == PointStatusCompleted || s == PointStatusSkipped || s == PointStatusNotTested
 }
 
 // PointResult 单点测试结果

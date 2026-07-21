@@ -414,10 +414,16 @@ const zh: Record<string, string> = {
   customPointsEmptyHint: '暂无点位，可在上方手动添加或导入文件',
   customPointsIndexColumn: '#',
   customPointsActionColumn: '操作',
+  // per-point 配置列标题：留空时使用全局 dwellTimeMs/samplesPerPoint，所以列名保持简洁
+  customPointsDwellMsColumn: '稳定时间',
+  customPointsSamplesColumn: '采样点数',
+  customPointsTestColumn: '是否测试',
+  // 留空占位提示：与"undefined 表示用全局默认"语义对齐，避免用户误以为 0 是有效值
+  customPointsUseDefaultHint: '用默认',
   // 导入文件格式说明：弹窗展示 TXT/CSV 格式范例，避免用户不知道如何准备文件
   customPointsFormatHelp: '格式说明',
   customPointsFormatHelpTitle: '导入点位文件格式说明',
-  customPointsFormatHelpBody: '支持 TXT / CSV 文件，编码 UTF-8。\n\n【CSV 格式（推荐）】\n首行可带表头，列名支持 X/Y/Z/U 或 pos_x/pos_y/pos_z/pos_u 等别名。\n缺列按 0 填充，格式错误的行自动跳过。\n\n示例：\nX,Y,Z,U\n12.5,-30,0,0\n12.5,-25,0,0\n\n【TXT 格式】\n空白分隔（Tab 或空格），无表头时按 X,Y,Z,U 顺序解析。\n\n示例：\n12.5  -30  0  0\n12.5  -25  0  0\n\n【说明】\n- 表头行只要含字母即视为表头\n- 空行和无法解析的行会自动跳过',
+  customPointsFormatHelpBody: '支持 TXT / CSV 文件，编码 UTF-8。\n\n【CSV 格式（推荐）】\n首行可带表头，列名支持 X/Y/Z/U 或 pos_x/pos_y/pos_z/pos_u 等别名。\n缺列按 0 填充，格式错误的行自动跳过。\n\n可选 per-point 配置列（仅 CSV 支持，TXT 不支持）：\n- dwellMs：稳定时间（ms），留空用全局 dwellTimeMs\n- samples：采样点数，留空用全局 samplesPerPoint\n- test：是否测试，1/true/yes → 测试，0/false/no → 跳过，留空 → 默认测试\n- skip：test 的别名，值取反（skip=1 → 不测试），便于"跳过此点"语义自然书写\n\n示例：\nX,Y,Z,U,dwellMs,samples,test\n12.5,-30,0,0,5000,50,1\n12.5,-25,0,0,,10,0\n\n【TXT 格式】\n空白分隔（Tab 或空格），无表头时按 X,Y,Z,U 顺序解析。仅支持 4 轴坐标，不支持 per-point 配置列。\n\n示例：\n12.5  -30  0  0\n12.5  -25  0  0\n\n【说明】\n- 表头行只要含字母即视为表头\n- 空行和无法解析的行会自动跳过',
   point: '点',
   line: '直线',
   rectangle: '矩形',
@@ -2076,10 +2082,16 @@ const en: Record<string, string> = {
   customPointsEmptyHint: 'No points yet. Add manually above or import a file.',
   customPointsIndexColumn: '#',
   customPointsActionColumn: 'Actions',
+  // per-point config column titles: empty values fall back to global dwellTimeMs/samplesPerPoint
+  customPointsDwellMsColumn: 'Dwell (ms)',
+  customPointsSamplesColumn: 'Samples',
+  customPointsTestColumn: 'Test',
+  // Empty placeholder: aligns with "undefined means use global default" semantics
+  customPointsUseDefaultHint: 'Use default',
   // Import file format help: dialog with TXT/CSV examples so users know how to prepare the file
   customPointsFormatHelp: 'Format Help',
   customPointsFormatHelpTitle: 'Import Points File Format',
-  customPointsFormatHelpBody: 'Supports TXT / CSV files, UTF-8 encoded.\n\n[CSV (recommended)]\nFirst row may contain headers. Column names accept X/Y/Z/U or aliases like pos_x/pos_y/pos_z/pos_u.\nMissing columns default to 0. Malformed rows are skipped automatically.\n\nExample:\nX,Y,Z,U\n12.5,-30,0,0\n12.5,-25,0,0\n\n[TXT format]\nWhitespace-separated (Tab or space). Without headers, columns are parsed in X,Y,Z,U order.\n\nExample:\n12.5  -30  0  0\n12.5  -25  0  0\n\n[Notes]\n- Any header row containing letters is treated as a header\n- Blank lines and unparseable rows are skipped automatically',
+  customPointsFormatHelpBody: 'Supports TXT / CSV files, UTF-8 encoded.\n\n[CSV (recommended)]\nFirst row may contain headers. Column names accept X/Y/Z/U or aliases like pos_x/pos_y/pos_z/pos_u.\nMissing columns default to 0. Malformed rows are skipped automatically.\n\nOptional per-point config columns (CSV only, not supported in TXT):\n- dwellMs: dwell time in ms; empty = global dwellTimeMs\n- samples: sample count; empty = global samplesPerPoint\n- test: 1/true/yes → test, 0/false/no → skip, empty → default test\n- skip: alias for test with inverted value (skip=1 → skip), for natural "skip this point" phrasing\n\nExample:\nX,Y,Z,U,dwellMs,samples,test\n12.5,-30,0,0,5000,50,1\n12.5,-25,0,0,,10,0\n\n[TXT format]\nWhitespace-separated (Tab or space). Without headers, columns are parsed in X,Y,Z,U order. Only 4 axes are supported; per-point config columns are not recognized.\n\nExample:\n12.5  -30  0  0\n12.5  -25  0  0\n\n[Notes]\n- Any header row containing letters is treated as a header\n- Blank lines and unparseable rows are skipped automatically',
   point: 'Point',
   line: 'Line',
   rectangle: 'Rectangle',

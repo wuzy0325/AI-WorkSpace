@@ -331,14 +331,12 @@ type SectorLayout struct {
 }
 
 // CustomLayout 自定义布局
-// Z 和 U 字段为零值填充语义：无此字段的旧配置自动填 0
+// Points 直接复用 Point 类型，per-point 配置字段（DwellMs/Samples/Test）通过指针携带：
+//   - nil = 用全局 Config 默认
+//   - 非 nil = per-point 覆盖
+// 旧配置无新字段时 Go JSON 反序列化自动 nil，向后兼容
 type CustomLayout struct {
-	Points []struct {
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
-		Z float64 `json:"z"`
-		U float64 `json:"u"`
-	} `json:"points"`
+	Points []Point `json:"points"`
 }
 
 // markAxesNaN 将指定轴的坐标标记为 NaN，表示"该轴不参与遍历运动"。
@@ -419,10 +417,10 @@ func PointsFromLayout(cfg LayoutConfig) []Point {
 		if cfg.Custom == nil {
 			return nil
 		}
-		points := make([]Point, 0, len(cfg.Custom.Points))
-		for _, point := range cfg.Custom.Points {
-			points = append(points, Point{X: point.X, Y: point.Y, Z: point.Z, U: point.U})
-		}
+		// CustomLayout.Points 已是 []Point，直接拷贝保留全部字段（含 per-point DwellMs/Samples/Test 指针）
+		// 不就地返回 cfg.Custom.Points 避免外部修改反向影响配置
+		points := make([]Point, len(cfg.Custom.Points))
+		copy(points, cfg.Custom.Points)
 		return points
 	default:
 		return nil

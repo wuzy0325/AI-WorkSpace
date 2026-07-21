@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { StepSegment, TraversalMotionAxisConfig, TraversalPattern, TraversalPrimaryAxis } from '@shared/types/traversal'
+import type { StepSegment, TraversalMotionAxisConfig, TraversalPattern, TraversalPrimaryAxis, TraversalPoint } from '@shared/types/traversal'
 import { filterTraversalAxisOptions, findDuplicateMotionAxisBindings, findOccupiedMotionAxisDirections, findTraversalAxisKindIssues, getTraversalDisplayedAxes, motionAxisBindingKey } from '@shared/types/traversal'
 import { useTraversalSegmentValidation, getSegmentError } from '@composables/useTraversalValidation'
 // 自定义点位文件导入：前端纯解析，不依赖后端文件 IO
-import { parsePointsFile, type ParsedPoint } from '@shared/pointsFileParser'
+import { parsePointsFileWithWarnings, type ParsedPoint } from '@shared/pointsFileParser'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useMotionStore } from '@stores/motionStore'
@@ -35,7 +35,7 @@ const sectorConfig = defineModel<{
   radialStepSegments: StepSegment[]; angleStart: number; angleEnd: number
   angularStepSegments: StepSegment[]
 }>('sectorConfig', { required: true })
-const customPoints = defineModel<Array<{ x: number; y: number; z: number; u: number }>>('customPoints', { required: true })
+const customPoints = defineModel<TraversalPoint[]>('customPoints', { required: true })
 const customPointInput = defineModel<{ x: number; y: number; z: number; u: number }>('customPointInput', { required: true })
 const snakeOrder = defineModel<boolean>('snakeOrder', { required: true })
 // 走线主轴：仅 rectangle 布局消费（line 单行无主轴概念，sector 固定先走半径）。
@@ -237,11 +237,19 @@ function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   if (!file) return
-
   const reader = new FileReader()
   reader.onload = () => {
     const text = String(reader.result ?? '')
-    const parsed = parsePointsFile(text)
+    // 使用带范围 clamp + warnings 的解析器：
+    // CSV 导入路径绕过 UI 输入框 min/max 约束（外部工具导出的值可能非法），
+    // 由 parser 出口统一 clamp 到 [100,60000]/[1,1000] 并收集 warnings，
+    // 通过 toast 反馈给用户，避免静默修正导致用户误以为原始值已生效。
+    const { points: parsed, warnings } = parsePointsFileWithWarnings(text)
+    if (warnings.length > 0) {
+      // 仅展示首条 warning，避免上百点全部超界时 toast 列表爆炸
+      // 完整列表可后续接入日志面板（当前无此渠道，先简化）
+      feedbackStore.pushToast(warnings[0], 'warning')
+    }
     if (parsed.length === 0) {
       // 无有效点位：用项目统一 toast 提示，避免原生 alert 阻塞主线程且风格割裂
       feedbackStore.pushToast(props.t.importParseEmptyHint, 'warning')
@@ -251,7 +259,7 @@ function handleFileChange(event: Event) {
       showImportConfirm.value = true
     } else {
       // 无既有数据 → 直接替换
-      customPoints.value = parsed.map((p) => ({ x: p.x, y: p.y, z: p.z, u: p.u }))
+      customPoints.value = parsed.map(toTraversalPoint)
     }
     // 重置 input value 让用户能重复选同一文件
     target.value = ''
@@ -265,9 +273,28 @@ function handleFileChange(event: Event) {
   reader.readAsText(file)
 }
 
+/**
+ * ParsedPoint → TraversalPoint 单一映射函数
+ *
+ * 抽出此函数消除 handleFileChange / confirmImportReplace 两处重复的字段透传逻辑，
+ * 后续若新增 per-point 字段（如压力阈值）只需改这一处，避免遗漏。
+ * per-point 字段 undefined 表示"用全局默认"，与 TraversalPoint 类型对齐。
+ */
+function toTraversalPoint(p: ParsedPoint): TraversalPoint {
+  return {
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    u: p.u,
+    dwellMs: p.dwellMs,
+    samples: p.samples,
+    test: p.test,
+  }
+}
+
 function confirmImportReplace() {
   if (pendingImport.value) {
-    customPoints.value = pendingImport.value.map((p) => ({ x: p.x, y: p.y, z: p.z, u: p.u }))
+    customPoints.value = pendingImport.value.map(toTraversalPoint)
   }
   pendingImport.value = null
   showImportConfirm.value = false
