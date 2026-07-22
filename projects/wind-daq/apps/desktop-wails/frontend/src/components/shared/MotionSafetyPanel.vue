@@ -30,6 +30,13 @@
  *   - noProgressTimeoutMs 应显著小于 waitForMotionComplete 的 120s 兜底超时
  *   - 按轴覆盖字段同样适用上述规则；且每个绑定轴 Resolve(axis) 后的合并值
  *     必须满足 criticalDeviationLimit > arrivalTolerance（防止"全局+轴覆盖"组合倒置）
+ *
+ * 产品决策（2026-07-22）：运动安全 UI 在遍历测试与所有探针校准配置中隐藏，
+ * 统一使用后端 DEFAULT_MOTION_SAFETY 默认值，避免操作员误调引发急停/卡死。
+ *   - 模板根 v-if="false" 使面板不渲染；调用处的 v-model:motion-safety 仍可正常双向绑定，
+ *     已保存配置中的 motionSafety 字段在加载时仍会回填并在保存时透传（向后兼容）。
+ *   - 父组件通过 ref 读取的 isValid 因面板未挂载而为 null，保存前校验自动跳过。
+ *   - 如需恢复 UI，移除下方 <UiPanel> 上的 v-if="false" 即可。
  */
 import { computed } from 'vue'
 import type { MotionSafetyConfig } from '@shared/types/traversal'
@@ -252,7 +259,9 @@ defineExpose({ isValid })
 </script>
 
 <template>
-  <UiPanel class="motion-safety-card">
+  <!-- v-if="false"：按产品决策隐藏运动安全 UI，统一使用后端默认值。
+       恢复方式：移除本 v-if 即可重新渲染面板与按轴覆盖表格。 -->
+  <UiPanel v-if="false" class="motion-safety-card">
     <template #header>
       <div class="panel-header">
         <span class="panel-title">{{ t.travMotionSafety }}</span>
