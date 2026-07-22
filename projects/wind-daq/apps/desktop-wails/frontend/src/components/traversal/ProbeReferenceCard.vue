@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /**
  * 五孔探针三维参考图。探针轴为 Z，端面前方为 -Z；Y 竖直向上，
- * X 位于偏转面。α、β 分别显示在 X-Z、Y-Z 平面中。
+ * X 位于偏转面。α 是 X-Z 平面投影角，β 是该投影与真实来流的夹角。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UiSlider from '@components/ui/UiSlider.vue'
 import { useI18nStore } from '@stores/i18nStore'
+import { createProbeReferenceGeometry } from './probeReferenceGeometry'
 
 type Point3 = { x: number; y: number; z: number }
 type ViewName = 'iso' | 'face' | 'top' | 'side'
@@ -35,10 +36,6 @@ let frameId = 0
 
 const point = (x: number, y: number, z: number): Point3 => ({ x, y, z })
 const multiply = (p: Point3, factor: number): Point3 => point(p.x * factor, p.y * factor, p.z * factor)
-const normalize = (p: Point3): Point3 => {
-  const length = Math.hypot(p.x, p.y, p.z) || 1
-  return multiply(p, 1 / length)
-}
 const radians = (degrees: number) => degrees * Math.PI / 180
 const signedAngle = (value: number) => `${value > 0 ? '+' : ''}${value}°`
 
@@ -208,6 +205,22 @@ function draw() {
     context.restore()
   }
 
+  function betaPlaneGrid(axis: Point3, color: string) {
+    context.save()
+    context.globalAlpha = 0.34
+    const start = -5.2
+    const end = 1.1
+    const span = 5.3
+    const at = (along: number, vertical: number) => point(
+      axis.x * along,
+      vertical,
+      axis.z * along,
+    )
+    polygon([at(start, -span), at(end, -span), at(end, span), at(start, span)], palette.canvas, color)
+    for (let y = -5; y <= 5; y++) line(at(start, y), at(end, y), color, 0.6)
+    context.restore()
+  }
+
   function drawProbe() {
     const segments = 24
     const radius = 0.62
@@ -258,20 +271,31 @@ function draw() {
     })
   }
 
-  function arc(plane: 'xz' | 'yz', angle: number, radius: number) {
+  function alphaArc(angle: number, radius: number) {
     if (angle === 0) return
     const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3))
     const points = Array.from({ length: steps + 1 }, (_, index) => {
       const value = radians(angle * index / steps)
-      return plane === 'xz'
-        ? point(-Math.cos(value) * radius, 0, -Math.sin(value) * radius)
-        : point(-Math.cos(value) * radius, Math.sin(value) * radius, 0)
+      return point(-Math.cos(value) * radius, 0, -Math.sin(value) * radius)
     })
-    polyline(points, plane === 'xz' ? palette.alpha : palette.beta, 3)
+    polyline(points, palette.alpha, 3)
+  }
+
+  function betaArc(axis: Point3, angle: number, radius: number) {
+    if (angle === 0) return
+    const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3))
+    const points = Array.from({ length: steps + 1 }, (_, index) => {
+      const value = radians(angle * index / steps)
+      return point(
+        -axis.x * Math.cos(value) * radius,
+        Math.sin(value) * radius,
+        -axis.z * Math.cos(value) * radius,
+      )
+    })
+    polyline(points, palette.beta, 3)
   }
 
   planeGrid('xz', palette.alpha)
-  planeGrid('yz', palette.beta)
 
   // 内部几何 x 对应探针 Z 轴，z 对应 X 轴。
   arrow(point(0, 0, 0), point(-5.25, 0, 0), palette.z, 2)
@@ -281,19 +305,14 @@ function draw() {
   label('Y', point(0, 2.67, 0), palette.y, '700 15px monospace')
   label('X', point(0, 0, 2.67), palette.x, '700 15px monospace')
 
-  const alphaTangent = Math.tan(radians(alpha.value))
-  const betaTangent = Math.tan(radians(beta.value))
-  const flow = normalize(point(1, -betaTangent, alphaTangent))
+  const { flow, alphaProjection } = createProbeReferenceGeometry(alpha.value, beta.value)
   const flowStart = multiply(flow, -6.2)
   const facePoint = point(-0.08, 0, 0)
-  const alphaProjection = normalize(point(1, 0, alphaTangent))
-  const betaProjection = normalize(point(1, -betaTangent, 0))
+  betaPlaneGrid(alphaProjection, palette.beta)
   line(multiply(alphaProjection, -5.55), facePoint, palette.alpha, 1.5, [7, 5])
-  line(multiply(betaProjection, -5.55), facePoint, palette.beta, 1.5, [7, 5])
-  line(flowStart, multiply(alphaProjection, -5.55), palette.alpha, 1, [3, 5])
-  line(flowStart, multiply(betaProjection, -5.55), palette.beta, 1, [3, 5])
-  arc('xz', alpha.value, 1.42)
-  arc('yz', beta.value, 1.05)
+  line(flowStart, multiply(alphaProjection, -5.55), palette.beta, 1, [3, 5])
+  alphaArc(alpha.value, 1.42)
+  betaArc(alphaProjection, beta.value, 1.05)
 
   drawProbe()
   arrow(flowStart, facePoint, palette.flow, 5)
@@ -376,7 +395,7 @@ onBeforeUnmount(() => {
       <div class="stage-legend" aria-hidden="true">
         <span class="legend-item legend-flow">{{ t.travProbeFlowDir }}</span>
         <span class="legend-item legend-alpha">α · X-Z</span>
-        <span class="legend-item legend-beta">β · Y-Z</span>
+        <span class="legend-item legend-beta">β</span>
       </div>
     </div>
 
