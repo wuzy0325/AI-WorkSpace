@@ -115,8 +115,10 @@ const fieldErrors = computed<FieldErrors>(() => {
 // 编码器补偿 error 级告警：与 wind-daq 行为对齐，保存时阻断。
 // 仅收集 severity==='error'（物理不可能，如容差小于编码器分辨率）；warning 级由
 // EncoderCompensationEditor 内联展示，不阻断保存。
+// 仅 B140 控制器启用编码器补偿校验：其他类型不显示配置项，遗留配置不应阻断保存。
 const compensationErrors = computed<string[]>(() => {
   const errors: string[] = []
+  if (editing.type !== 'B140-MC') return errors
   for (const axis of editing.axes) {
     if (axis.positionSource !== 'encoder') continue
     const comp = axis.encoderCompensation

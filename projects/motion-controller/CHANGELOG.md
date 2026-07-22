@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.2] - 2026-07-22
+
+### Changed
+
+- 编码器补偿配置项改为仅在 B140 控制器且该轴「位置来源」选了编码器时显示。WTNMC4A / 模拟控制器不显示配置项，避免误配置不支持的功能。
+- 编码器补偿配置区三类空态分别给出明确提示：非 B140 控制器、B140 但无编码器轴、B140 且未启用任何补偿。
+
+### Fixed
+
+- 修复用户从 B140 切换到其他控制器类型时，遗留的编码器补偿配置仍触发保存阻断的问题：`compensationErrors` 增加 B140 类型守卫，非 B140 时跳过校验。
+
+### Verification
+
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+
+- 暂无。
+
 ## [0.3.1] - 2026-07-06
 
 ### Changed
