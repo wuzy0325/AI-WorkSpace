@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.9.0] - 2026-07-22
+
+### Added
+
+- 新增七孔探针校准完整工作流，覆盖分区采样、实时图表、系数计算、不确定度分析及校准数据持久化。
+- 遍历配置新增七孔探针与五孔 PRB 能力，支持对应插值器加载、探针参数配置和实时结果展示。
+- 自定义布点支持逐点覆盖运动位置与采集参数，可按测点配置差异化测试工况。
+
+### Changed
+
+- 校准与遍历的运动安全设置统一使用产品默认值，减少现场配置负担。
+- 探针校准速度显示与保存精度统一为 3 位小数。
+
+### Fixed
+
+- 修复用户临时停止设备采集后，遍历和校准无法在恢复采集后继续完成当前测点的问题。
+- 修复校准等待新帧时把停采时间计入超时预算，导致临近截止时间恢复仍被误判超时的问题。
+- 修复桌面端与独立 API 装配路径遗漏校准采集状态控制器的问题。
+- 恢复 Wails 前后端官方配对版本，避免 runtime 协议不一致引发调用失败。
+- 完成 Wind-DAQ 全量代码审查整改，覆盖校准生命周期、并发访问、数据校验与错误传播等问题。
+
+### Compatibility
+
+- 配置文件格式：兼容；新增字段均为可选字段，旧配置继续使用默认值。
+- 数据文件格式：兼容；新增七孔校准数据不改变既有五孔、三孔、总压和总温文件格式。
+- 设备协议行为：无不兼容变化。
+
+### Verification
+
+- `go test ./internal/... ./api/... ./pkg/...`
+- `go test -race ./internal/core/calibration ./internal/usecase`
+- `go vet ./internal/... ./api/... ./pkg/...`
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis /INPUTCHARSET UTF8` 构建安装包
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+
 ## [0.8.0] - 2026-07-18
 
 ### Added
