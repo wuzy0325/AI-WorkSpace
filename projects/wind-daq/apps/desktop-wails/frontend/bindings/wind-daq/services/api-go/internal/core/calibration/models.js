@@ -184,6 +184,128 @@ export class ChannelRef {
  * @typedef {any} DataPoint
  */
 
+export class FiveHolePointLayout {
+    /**
+     * Creates a new FiveHolePointLayout instance.
+     * @param {Partial<FiveHolePointLayout>} [$$source = {}] - The source object to create the FiveHolePointLayout.
+     */
+    constructor($$source = {}) {
+        if (!("alphaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaMin"] = 0;
+        }
+        if (!("alphaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaMax"] = 0;
+        }
+        if (!("alphaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaStep"] = 0;
+        }
+        if (!("betaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaMin"] = 0;
+        }
+        if (!("betaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaMax"] = 0;
+        }
+        if (!("betaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaStep"] = 0;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["serpentine"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FiveHolePointLayout instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FiveHolePointLayout}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FiveHolePointLayout(/** @type {Partial<FiveHolePointLayout>} */($$parsedSource));
+    }
+}
+
+/**
+ * LivePhysics 实时物理量快照（Task 13）。
+ * 
+ * 设计动机：前端 5Hz 轮询 status 时需展示当前马赫数/速度，但既有 currentStatus 只持久化
+ * 校准业务字段（点号/进度/数据点），物理量需基于实时通道数据即时计算。直接写入 currentStatus
+ * 会导致：(1) 持久化污染（writer/CSV 误把快照写盘）；(2) stale 残留（设备离线后旧值不消失）。
+ * 
+ * 解决方案：LivePhysics 仅由 Status() 调用时即时计算，绝不写入 currentStatus。
+ * 通过 *float64 指针语义区分三种状态：
+ *   - nil：缺失（必需通道未配置/读取失败/物理非法如 Pt < Ps），UI 显示 "--"
+ *   - &0：有效零（Pt == Ps 即零流量，Task 12），UI 显示格式化的 0
+ *   - &ma/&v：正常计算值
+ * 
+ * 整体 *LivePhysics 为 nil 表示类型不支持实时物理量（总温）或未启动校准（currentConfig 为空）。
+ */
+export class LivePhysics {
+    /**
+     * Creates a new LivePhysics instance.
+     * @param {Partial<LivePhysics>} [$$source = {}] - The source object to create the LivePhysics.
+     */
+    constructor($$source = {}) {
+        if (/** @type {any} */(false)) {
+            /**
+             * 马赫数（缺失 nil / 有效零 &0 / 正常 &ma）
+             * @member
+             * @type {number | null | undefined}
+             */
+            this["machNumber"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 真空速 m/s（缺失 nil / 有效零 &0 / 正常 &v）
+             * @member
+             * @type {number | null | undefined}
+             */
+            this["velocity"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LivePhysics instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LivePhysics}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LivePhysics(/** @type {Partial<LivePhysics>} */($$parsedSource));
+    }
+}
+
 /**
  * MotionAxisConfig 校准运动轴配置，将逻辑轴名映射到物理运动控制器
  */
@@ -533,6 +655,16 @@ export class Status {
         }
         if (/** @type {any} */(false)) {
             /**
+             * LivePhysics 实时物理量快照（Task 13）：每次 Status() 调用在 m.mu 解锁后
+             * 从 m.reader 即时计算，不持久化到 currentStatus（避免 stale 残留与 writer 污染）。
+             * 类型不支持（总温）或未启动校准时为 nil；通道齐全但读取失败时为 &LivePhysics{nil, nil}。
+             * @member
+             * @type {LivePhysics | null | undefined}
+             */
+            this["livePhysics"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
              * LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
              * 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
              * 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。
@@ -639,14 +771,18 @@ export class Status {
      * @returns {Status}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType3;
-        const $$createField12_0 = $$createType4;
+        const $$createField5_0 = $$createType3;
+        const $$createField7_0 = $$createType5;
+        const $$createField13_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("livePhysics" in $$parsedSource) {
+            $$parsedSource["livePhysics"] = $$createField5_0($$parsedSource["livePhysics"]);
+        }
         if ("motionSafetyFailure" in $$parsedSource) {
-            $$parsedSource["motionSafetyFailure"] = $$createField6_0($$parsedSource["motionSafetyFailure"]);
+            $$parsedSource["motionSafetyFailure"] = $$createField7_0($$parsedSource["motionSafetyFailure"]);
         }
         if ("dataPoints" in $$parsedSource) {
-            $$parsedSource["dataPoints"] = $$createField12_0($$parsedSource["dataPoints"]);
+            $$parsedSource["dataPoints"] = $$createField13_0($$parsedSource["dataPoints"]);
         }
         return new Status(/** @type {Partial<Status>} */($$parsedSource));
     }
@@ -767,9 +903,9 @@ export class TotalTemperatureConfig {
      * @returns {TotalTemperatureConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType5;
-        const $$createField1_0 = $$createType6;
-        const $$createField3_0 = $$createType7;
+        const $$createField0_0 = $$createType7;
+        const $$createField1_0 = $$createType8;
+        const $$createField3_0 = $$createType9;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("probeChannels" in $$parsedSource) {
             $$parsedSource["probeChannels"] = $$createField0_0($$parsedSource["probeChannels"]);
@@ -787,9 +923,11 @@ export class TotalTemperatureConfig {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = ChannelRef.createFrom;
-const $$createType2 = traversal$0.MotionSafetyFailure.createFrom;
+const $$createType2 = LivePhysics.createFrom;
 const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = $Create.Map($Create.Any, $$createType1);
+const $$createType4 = traversal$0.MotionSafetyFailure.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);
 const $$createType6 = $Create.Array($Create.Any);
-const $$createType7 = TemperatureStabilityConfig.createFrom;
+const $$createType7 = $Create.Map($Create.Any, $$createType1);
+const $$createType8 = $Create.Array($Create.Any);
+const $$createType9 = TemperatureStabilityConfig.createFrom;

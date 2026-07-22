@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 // Mock wails-adapter：让 isWailsAvailable 返回 false，store.startCalibration 会走 calibrationApi 分支
@@ -44,48 +44,191 @@ describe('calibrationStore', () => {
     vi.clearAllMocks()
   })
 
-  // 测试前置：构造实时压力，Patm>0 且 P0=Ps（绝对压相等），Ttunnel 有效
-  // 测试步骤：调用 store.updateRealtimePressures
-  // 期待结果：calculatedPhysics 为 { machNumber: 0, velocity: 0 }（ratio=1 时 Ma=0）
-  it('shows zero aerodynamic values when tunnel total and static pressure are equal', () => {
-    const store = useCalibrationStore()
+  // ============ spec Task 15: store 只映射后端 physics，页面保持纯展示 ============
+  //
+  // 验收标准：
+  //   1. 无 atmospheric 常量/公式（calibrationStore 中无 ATM_GAMMA/ATM_C_COEFF/calculateAtmosphericPhysics）
+  //   2. missing 显示 "--"：backend livePhysics 缺失 → calculatedPhysics=null
+  //   3. zero 显示格式化 0：backend livePhysics={machNumber:0, velocity:0} → 透传（零不被 truthiness 丢失）
+  //   4. raw pressure 更新不触发公式：updateRealtimePressures 后 calculatedPhysics 仍为初始值
+  //   5. 正常值映射：backend livePhysics={machNumber:0.3, velocity:102.5} → 透传
+  //   6. 字段三态：仅 machNumber 提供时 velocity=undefined（UI 显示 "--"）
+  //   7. 七孔使用同一 store contract：livePhysics 映射与校准类型无关，无需算法改动
+  describe('Task 15: backend-driven live physics mapping', () => {
+    // 测试前置：构造实时压力（Patm>0、P0/Ps/Ttunnel 齐全）—— 旧版本会触发本地公式计算
+    // 测试步骤：调用 store.updateRealtimePressures
+    // 期待结果：calculatedPhysics 仍为 null（raw pressure 更新不再触发任何公式）
+    //           spec Task 15 验收：raw pressure 更新不触发公式
+    it('does not calculate physics on raw pressure update (formula deleted)', () => {
+      const store = useCalibrationStore()
 
-    store.updateRealtimePressures({
-      P1: 0,
-      P2: 0,
-      P3: 0,
-      P4: 0,
-      P5: 0,
-      Patm: 101325,
-      Tatm: 25,
-      P0: 0,
-      Ps: 0,
-      Ttunnel: 25,
+      store.updateRealtimePressures({
+        P1: 0,
+        P2: 0,
+        P3: 0,
+        P4: 0,
+        P5: 0,
+        Patm: 101325,
+        Tatm: 25,
+        P0: 1000,
+        Ps: 0,
+        Ttunnel: 25,
+      })
+
+      // 旧版本会返回 { machNumber: ..., velocity: ... }，Task 15 后必须为 null
+      expect(store.calculatedPhysics).toBeNull()
     })
 
-    expect(store.calculatedPhysics).toEqual({ machNumber: 0, velocity: 0 })
-  })
+    // 测试前置：mock status 返回无 livePhysics 字段的 running 状态
+    // 测试步骤：调 store.recoveryFromBackend()（内部调 updateStatusFromBackend）
+    // 期待结果：calculatedPhysics=null（missing 显示 "--"）
+    it('maps missing livePhysics to null (UI shows "--")', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-missing',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 0,
+        totalPoints: 10,
+        completedPoints: 0,
+        progress: 0,
+        // livePhysics 字段缺失
+      } as any)
 
-  // 测试前置：构造实时压力，Patm=0（必需通道缺失），P0>0
-  // 测试步骤：调用 store.updateRealtimePressures
-  // 期待结果：calculatedPhysics 为 null（与后端 §22 对齐：pAtm 为必需通道，缺失时不兜底）
-  it('returns null when Patm channel is zero (required channel, no fallback)', () => {
-    const store = useCalibrationStore()
+      await store.recoveryFromBackend()
 
-    store.updateRealtimePressures({
-      P1: 0,
-      P2: 0,
-      P3: 0,
-      P4: 0,
-      P5: 0,
-      Patm: 0,
-      Tatm: 25,
-      P0: 1000,
-      Ps: 0,
-      Ttunnel: 25,
+      expect(store.calculatedPhysics).toBeNull()
     })
 
-    expect(store.calculatedPhysics).toBeNull()
+    // 测试前置：mock status 返回 livePhysics={machNumber:0, velocity:0}（Pt==Ps 等压有效零）
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：calculatedPhysics={machNumber:0, velocity:0}（零是有效零，不被 truthiness 丢失）
+    //           spec Task 15 验收：zero 显示格式化 0
+    it('maps zero livePhysics (Pt==Ps valid zero) without truthiness loss', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-zero',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 1,
+        totalPoints: 10,
+        completedPoints: 0,
+        progress: 0,
+        livePhysics: { machNumber: 0, velocity: 0 },
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      // 关键：全零对象是 truthy，映射逻辑必须基于"对象存在性"而非 truthiness
+      expect(store.calculatedPhysics).toEqual({ machNumber: 0, velocity: 0 })
+      // 字段三态：0 是有效零，区别于 undefined（missing）
+      expect(store.calculatedPhysics?.machNumber).toBe(0)
+      expect(store.calculatedPhysics?.velocity).toBe(0)
+    })
+
+    // 测试前置：mock status 返回 livePhysics={machNumber:0.3, velocity:102.5}
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：calculatedPhysics={machNumber:0.3, velocity:102.5}（正常值透传）
+    it('maps normal livePhysics values from backend', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-normal',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 2,
+        totalPoints: 10,
+        completedPoints: 1,
+        progress: 10,
+        livePhysics: { machNumber: 0.3, velocity: 102.5 },
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      expect(store.calculatedPhysics).toEqual({ machNumber: 0.3, velocity: 102.5 })
+    })
+
+    // 测试前置：mock status 返回 livePhysics={machNumber:0.3}（velocity 缺失）
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：calculatedPhysics={machNumber:0.3, velocity:undefined}
+    //           字段三态：machNumber 显示 "0.300"，velocity 显示 "--"（UI 用 !== undefined 判断）
+    it('preserves field-level three-state semantics (machNumber only, velocity missing)', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-partial',
+        type: 'three-hole',
+        state: 'running',
+        currentPoint: 1,
+        totalPoints: 10,
+        completedPoints: 0,
+        progress: 0,
+        livePhysics: { machNumber: 0.3 },
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      // machNumber 透传，velocity 保持 undefined（不存在的字段）
+      expect(store.calculatedPhysics?.machNumber).toBe(0.3)
+      expect(store.calculatedPhysics?.velocity).toBeUndefined()
+    })
+
+    // 测试前置：mock status 返回 seven-hole 类型 + livePhysics（验证七孔走同一映射路径）
+    // 测试步骤：调 store.recoveryFromBackend()
+    // 期待结果：calculatedPhysics 透传——spec Task 15 验收：七孔使用同一 store contract，无需算法改动
+    it('uses same store contract for seven-hole (no algorithm-specific handling)', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-seven',
+        type: 'seven-hole',
+        state: 'running',
+        currentPoint: 5,
+        totalPoints: 169,
+        completedPoints: 4,
+        progress: 2,
+        livePhysics: { machNumber: 0.45, velocity: 153.2 },
+      } as any)
+
+      await store.recoveryFromBackend()
+
+      // 七孔与五孔/三孔/总压走同一 updateStatusFromBackend 映射路径，无类型分支
+      expect(store.calculatedPhysics).toEqual({ machNumber: 0.45, velocity: 153.2 })
+    })
+
+    // 测试前置：先 mock status 返回 livePhysics={machNumber:0.3}，再 mock 返回无 livePhysics
+    // 测试步骤：两次 recoveryFromBackend
+    // 期待结果：第二次后 calculatedPhysics=null（终态/任务切换时 stale physics 被清空）
+    it('clears calculatedPhysics when backend stops sending livePhysics (stale clearing)', async () => {
+      const store = useCalibrationStore()
+
+      // 第一次：running 态，有 livePhysics
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-stale',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 1,
+        totalPoints: 10,
+        completedPoints: 0,
+        progress: 0,
+        livePhysics: { machNumber: 0.3, velocity: 102.5 },
+      } as any)
+      await store.recoveryFromBackend()
+      expect(store.calculatedPhysics?.machNumber).toBe(0.3)
+
+      // 第二次：stopped 终态，后端已 StaleClearing（livePhysics=nil）
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-stale',
+        type: 'five-hole',
+        state: 'stopped',
+        currentPoint: 5,
+        totalPoints: 10,
+        completedPoints: 5,
+        progress: 50,
+        // livePhysics 字段缺失——后端 spec Task 13 StaleClearing
+      } as any)
+      await store.recoveryFromBackend()
+
+      // 终态后 stale physics 被清空，UI 显示 "--"
+      expect(store.calculatedPhysics).toBeNull()
+    })
   })
 
   it('initializes timeInfo with non-null elapsedTime immediately after startCalibration', async () => {
@@ -387,6 +530,354 @@ describe('calibrationStore', () => {
       expect(store.completeEvent).toBeNull()
       expect(store.status?.status).toBe('running')
       expect(store.isRunning).toBe(true)
+    })
+  })
+
+  // ============ spec Task 14: 统一 HTTP/Wails status polling ============
+  //
+  // 验收标准：
+  //   1. HTTP/Wails 均轮询既有 status
+  //   2. 请求不重叠（inFlight 保护）
+  //   3. 终态停止 polling
+  //   4. 错误不产生 synthetic success（pause/resume/stop 失败时抛错）
+  //   5. zero 不被 truthiness 丢失（全零 status 仍被处理）
+  //
+  // 测试环境：mock isWailsAvailable=false，所有测试走 HTTP 路径。
+  describe('Task 14: unified HTTP/Wails status polling', () => {
+    // polling 测试可能用 mockResolvedValue 持久覆盖 status，afterEach 恢复默认 idle
+    afterEach(() => {
+      vi.mocked(calibrationApi.status).mockResolvedValue({
+        taskId: 'test',
+        state: 'idle',
+        currentPoint: 0,
+        totalPoints: 0,
+      } as any)
+    })
+
+    // 测试前置：HTTP 模式（isWailsAvailable=false），startCalibration 后启动 1Hz polling
+    // 测试步骤：advanceTimersByTime(1000) 触发 polling 周期
+    // 期待结果：calibrationApi.status 被调用（HTTP 模式也轮询，spec Task 14 核心验收）
+    it('polls calibrationApi.status in HTTP mode after startCalibration', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        // 持久返回 running，避免 idle 转态干扰 call count 验证
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-test',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 0,
+          totalPoints: 10,
+          completedPoints: 0,
+          progress: 0,
+        } as any)
+
+        await store.startCalibration(baseConfig)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // activeViewCount=0 时默认 1Hz polling
+        vi.advanceTimersByTime(1000)
+
+        // 核心：HTTP 模式 polling 已触发 calibrationApi.status
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：mock status 返回不立即 resolve 的 promise（模拟慢响应）
+    // 测试步骤：连续 advanceTimersByTime 两次，然后 resolve，再 advance 一次
+    // 期待结果：第二次 polling 被 inFlight 跳过；resolve 后第三次正常调用
+    it('skips overlapping status requests when previous is still in flight', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        // controllable promise 模拟慢响应
+        // 用对象包装避免 TypeScript CFA 将 resolveStatus 窄化为 null（闭包内赋值不被 CFA 追踪）
+        const statusController: { resolve: ((v: any) => void) | null } = { resolve: null }
+        vi.mocked(calibrationApi.status).mockImplementation(
+          () => new Promise(r => { statusController.resolve = r }),
+        )
+
+        await store.startCalibration(baseConfig)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // 第一次 polling：调用 status，inFlight=true，promise pending
+        vi.advanceTimersByTime(1000)
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+
+        // 第二次 polling：inFlight=true，跳过——spec Task 14 "请求不重叠" 验收
+        vi.advanceTimersByTime(1000)
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+
+        // resolve 后 inFlight=false
+        statusController.resolve?.({ state: 'running' } as any)
+        await Promise.resolve()
+        await Promise.resolve()
+
+        // 第三次 polling：inFlight=false，调用 status
+        vi.advanceTimersByTime(1000)
+        expect(calibrationApi.status).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：startCalibration 后 mock status 返回 stopped（终态）
+    // 测试步骤：advanceTimersByTime 触发 polling，flush microtask 让 updateStatusFromBackend 执行，
+    //           再 advance 一次验证 polling 已停
+    // 期待结果：终态后 stopStatusPolling 生效，status 不再被调用
+    it('stops polling when backend returns terminal state', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-test',
+          type: 'five-hole',
+          state: 'stopped',
+          currentPoint: 5,
+          totalPoints: 10,
+          completedPoints: 5,
+          progress: 50,
+        } as any)
+
+        await store.startCalibration(baseConfig)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // 第一次 polling：返回 stopped，触发 stopStatusPolling
+        vi.advanceTimersByTime(1000)
+        // flush microtask 让 promise resolve + updateStatusFromBackend 执行
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        // 终态已生效
+        expect(store.status?.status).toBe('stopped')
+
+        // 再推进 3s，polling 应已停止
+        vi.mocked(calibrationApi.status).mockClear()
+        vi.advanceTimersByTime(3000)
+        expect(calibrationApi.status).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：mock pauseCalibration 返回 { success: false, error: 'backend error' }
+    // 测试步骤：调 store.pause()
+    // 期待结果：store.pause() 抛错——不产生 synthetic success（spec Task 14 验收）
+    it('pause throws on backend failure (no synthetic success)', async () => {
+      const store = useCalibrationStore()
+      await store.startCalibration(baseConfig)
+      vi.mocked(calibrationApi.pauseCalibration).mockResolvedValueOnce({
+        success: false,
+        error: 'backend pause error',
+      })
+
+      await expect(store.pause()).rejects.toThrow('backend pause error')
+    })
+
+    // 测试前置：mock resumeCalibration 返回 { success: false, error: 'backend error' }
+    // 测试步骤：调 store.resume()
+    // 期待结果：store.resume() 抛错——不产生 synthetic success
+    it('resume throws on backend failure (no synthetic success)', async () => {
+      const store = useCalibrationStore()
+      await store.startCalibration(baseConfig)
+      await store.pause()
+      vi.mocked(calibrationApi.resumeCalibration).mockResolvedValueOnce({
+        success: false,
+        error: 'backend resume error',
+      })
+
+      await expect(store.resume()).rejects.toThrow('backend resume error')
+    })
+
+    // 测试前置：mock stopCalibration 返回 { success: false, error: 'backend error' }
+    // 测试步骤：调 store.stop()
+    // 期待结果：store.stop() 抛错——不产生 synthetic success
+    it('stop throws on backend failure (no synthetic success)', async () => {
+      const store = useCalibrationStore()
+      await store.startCalibration(baseConfig)
+      vi.mocked(calibrationApi.stopCalibration).mockResolvedValueOnce({
+        success: false,
+        error: 'backend stop error',
+      })
+
+      await expect(store.stop()).rejects.toThrow('backend stop error')
+    })
+
+    // 测试前置：mock status 返回全零值的 idle 状态（taskId='', currentPoint=0, totalPoints=0）
+    // 测试步骤：advanceTimersByTime 触发 polling，flush microtask
+    // 期待结果：updateStatusFromBackend 被调用（if (calStatus) 检查对象存在性，非 truthiness）
+    //           store.status 更新为 idle——spec Task 14 "zero 不被 truthiness 丢失" 验收
+    it('processes status with all-zero values (not lost to truthiness)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        // 全零 idle 状态——if (calStatus) 必须基于对象存在性，不能因零值跳过
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: '',
+          type: 'five-hole',
+          state: 'idle',
+          currentPoint: 0,
+          totalPoints: 0,
+          completedPoints: 0,
+          progress: 0,
+        } as any)
+
+        await store.startCalibration(baseConfig)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // polling 触发——status 被调用说明没有因全零跳过
+        vi.advanceTimersByTime(1000)
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+
+        // flush microtask 让 updateStatusFromBackend 执行
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        // store 被更新为 idle——证明全零 status 被正常处理
+        expect(store.status?.status).toBe('idle')
+        expect(store.isRunning).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：recoveryFromBackend 同步 running 状态（不启动 polling），然后调 acquireView
+    // 测试步骤：acquireView 后 advanceTimersByTime(200)（5Hz = 200ms）
+    // 期待结果：calibrationApi.status 被调用——HTTP 模式 acquireView 也启动 polling
+    //           （旧代码 if (isWailsAvailable()) 守卫导致 HTTP 模式不启动）
+    it('acquireView starts high-frequency polling in HTTP mode when running', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-running',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 10,
+          completedPoints: 0,
+          progress: 0,
+          startTime: Date.now(),
+        } as any)
+
+        // recoveryFromBackend 同步 running 状态但不启动 polling
+        await store.recoveryFromBackend()
+        expect(store.isRunning).toBe(true)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // acquireView：0→1，应启动高频 polling（5Hz = 200ms）
+        store.acquireView()
+        vi.advanceTimersByTime(200)
+
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：recoveryFromBackend 同步 running + acquireView 后 releaseView
+    // 测试步骤：releaseView 后 advanceTimersByTime(1000)
+    // 期待结果：1Hz 心跳 polling 仍在运行——HTTP 模式不因 releaseView 停止 polling
+    //           （旧代码 && isWailsAvailable() 守卫导致 HTTP 模式 releaseView 后无心跳）
+    it('releaseView keeps 1Hz heartbeat polling in HTTP mode when running', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-running',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 10,
+          completedPoints: 0,
+          progress: 0,
+          startTime: Date.now(),
+        } as any)
+
+        await store.recoveryFromBackend()
+        store.acquireView() // 0→1，高频 polling
+        store.releaseView() // 1→0，应降到 1Hz 心跳
+
+        vi.mocked(calibrationApi.status).mockClear()
+        vi.advanceTimersByTime(1000) // 1Hz 心跳
+
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：recoveryFromBackend 同步 running 状态（不启动 polling）
+    // 测试步骤：调 restartPollingForCurrentState，advanceTimersByTime(1000)
+    // 期待结果：calibrationApi.status 被调用——HTTP 模式也重启 polling
+    //           （旧代码 if (!isWailsAvailable()) return 导致 HTTP 模式永不重启）
+    it('restartPollingForCurrentState restarts polling in HTTP mode', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-running',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 10,
+          completedPoints: 0,
+          progress: 0,
+          startTime: Date.now(),
+        } as any)
+
+        // recoveryFromBackend 同步 running 状态但不启动 polling
+        await store.recoveryFromBackend()
+        expect(store.isRunning).toBe(true)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        // restartPollingForCurrentState：HTTP 模式也应启动 polling
+        store.restartPollingForCurrentState()
+        vi.advanceTimersByTime(1000)
+
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // 测试前置：startCalibration 后调 stop()，mock status 返回 stopped（终态快照）
+    // 测试步骤：stop 后 advanceTimersByTime 触发 1Hz polling 捕获终态回包
+    // 期待结果：HTTP 模式 stop 后 polling 继续运行——捕获后端最终 stopped 快照
+    //           （旧代码 if (isWailsAvailable()) 守卫导致 HTTP 模式 stop 后不轮询，
+    //            UI 卡在本地 stopped 状态无法刷新后端最终 dataPoints/lastError）
+    it('stop starts 1Hz polling in HTTP mode to capture backend terminal snapshot', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+      try {
+        const store = useCalibrationStore()
+        vi.mocked(calibrationApi.status).mockResolvedValue({
+          taskId: 'cal-test',
+          type: 'five-hole',
+          state: 'stopped',
+          currentPoint: 5,
+          totalPoints: 10,
+          completedPoints: 5,
+          progress: 50,
+        } as any)
+
+        await store.startCalibration(baseConfig)
+        vi.mocked(calibrationApi.status).mockClear()
+
+        await store.stop()
+
+        // stop 应启动 1Hz polling 等终态回包
+        vi.mocked(calibrationApi.status).mockClear()
+        vi.advanceTimersByTime(1000)
+
+        // HTTP 模式 stop 后 polling 仍在运行
+        expect(calibrationApi.status).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })

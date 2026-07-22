@@ -135,6 +135,96 @@ if (Test-Path $storesDir) {
 }
 
 # ============================================================
+# Demo import guard (R-1)
+# Production source files must not import demo-only modules. A module
+# counts as demo-only when its file head (first 5 lines) contains the
+# 'DEMO ONLY' marker, or its basename matches simulate*. Test files,
+# mock directories, and files that are themselves demo-only are exempt.
+# Note: comments in English to avoid PS 5.1 encoding issues on zh-CN systems
+# ============================================================
+function ResolveImportTarget($importerDir, $spec) {
+  # Resolve relative paths and common '@' aliases to a file on disk.
+  # Returns $null for bare package imports and unresolvable specifiers.
+  $base = $null
+  if ($spec.StartsWith('.')) {
+    $base = Join-Path $importerDir $spec
+  } elseif ($spec -match '^@/(.+)$') {
+    $base = Join-Path $src $matches[1]
+  } elseif ($spec -match '^@([\w-]+)/(.+)$') {
+    # Heuristic: '@components/x' style aliases map to src/<alias>/x
+    $base = Join-Path $src (Join-Path $matches[1] $matches[2])
+  } else {
+    return $null
+  }
+  $candidates = @($base, "$base.ts", "$base.vue", "$base.js", "$base.d.ts", "$base/index.ts", "$base/index.vue", "$base/index.js")
+  foreach ($c in $candidates) {
+    if (Test-Path $c) { return [System.IO.Path]::GetFullPath($c) }
+  }
+  return $null
+}
+
+function GetDemoOnlyReason($targetPath) {
+  # Returns a reason string when the target file is demo-only, otherwise $null
+  $targetName = [System.IO.Path]::GetFileName($targetPath)
+  if ($targetName -like 'simulate*') { return "target file name matches simulate*" }
+  $head = @(Get-Content $targetPath -TotalCount 5 -ErrorAction SilentlyContinue)
+  foreach ($line in $head) {
+    if ($line -match 'DEMO ONLY') { return "target file head contains DEMO ONLY marker" }
+  }
+  return $null
+}
+
+$allSourceFiles = @(Get-ChildItem $src -Recurse -Include "*.ts", "*.vue" -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -notlike '*\node_modules\*' -and $_.FullName -notlike '*\bindings\*' })
+
+$demoImportHits = @()
+foreach ($f in $allSourceFiles) {
+  $rel = $f.FullName.Substring($src.Length + 1)
+
+  # Exempt importers: tests, mock directories, and self-marked demo files
+  if ($rel -match '__tests__') { continue }
+  if ($f.Name -match '\.(test|spec)\.') { continue }
+  if ($f.FullName -match '\\__mocks__\\|\\mocks?\\') { continue }
+  $ownHead = @(Get-Content $f.FullName -TotalCount 5 -ErrorAction SilentlyContinue)
+  $isDemoFile = $false
+  foreach ($line in $ownHead) { if ($line -match 'DEMO ONLY') { $isDemoFile = $true; break } }
+  if ($isDemoFile) { continue }
+
+  $content = Get-Content $f.FullName -Raw -ErrorAction SilentlyContinue
+  if (-not $content) { continue }
+
+  # Collect import specifiers: static import/export-from, side-effect import, literal dynamic import()
+  $specs = @{}
+  foreach ($m in [regex]::Matches($content, "(?:import|export)\s[^'""]*?\bfrom\s*['""]([^'""]+)['""]")) {
+    $specs[$m.Groups[1].Value] = $true
+  }
+  foreach ($m in [regex]::Matches($content, "(?:^|\n)\s*import\s*['""]([^'""]+)['""]")) {
+    $specs[$m.Groups[1].Value] = $true
+  }
+  foreach ($m in [regex]::Matches($content, "\bimport\s*\(\s*['""]([^'""]+)['""]\s*\)")) {
+    $specs[$m.Groups[1].Value] = $true
+  }
+
+  foreach ($spec in $specs.Keys) {
+    $target = ResolveImportTarget $f.Directory.FullName $spec
+    if (-not $target) { continue }
+    $reason = GetDemoOnlyReason $target
+    if ($reason) {
+      if ($target.StartsWith($src, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $targetRel = $target.Substring($src.Length + 1)
+      } else {
+        $targetRel = $target
+      }
+      $demoImportHits += "$rel imports '$spec' -> $targetRel ($reason)"
+    }
+  }
+}
+if ($demoImportHits.Count -gt 0) {
+  $issues += "Production files must not import demo-only modules (DEMO ONLY marker or simulate* file):"
+  foreach ($h in $demoImportHits) { $issues += "  - $h" }
+}
+
+# ============================================================
 # -CheckFileSize: quantitative checks for file size and hardcoded colors
 # Implements docs/runbooks/frontend-ai-rules.zh-CN.md section 28.1 and 28.2
 # Thresholds must stay in sync with the rule doc (single source of truth)

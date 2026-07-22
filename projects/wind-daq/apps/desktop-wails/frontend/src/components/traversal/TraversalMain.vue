@@ -40,7 +40,6 @@ import type {
 } from '@shared/types/traversal'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import { joinCalibrationPath } from '@shared/calibrationCsvPath'
-import { useTraversalSimulation } from '@composables/useTraversalSimulation'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
 import { useTraversalStatusDisplay } from '@composables/useTraversalStatusDisplay'
@@ -72,13 +71,6 @@ const feedbackStore = useFeedbackStore()
 const hasConfig = computed(() => traversalStore.config !== null)
 const currentConfig = computed(() => traversalStore.config)
 
-// 模拟模式 composable
-const {
-  runSimulation,
-  cancelSimulation,
-  isSimulating
-} = useTraversalSimulation()
-
 // 实时数据 composable：统一订阅 DAQ 快照并计算压力/插值输入/展示项
 const {
   liveInterpolationInput,
@@ -102,6 +94,11 @@ const activeWorkspaceTab = ref<WorkspaceTab>('preview')
 // 启动请求防重入标志（与 store.isStarting 配合，避免重复触发）
 const isStartRequestPending = ref(false)
 
+// 当前探针类型：config 未加载时按五孔默认（与 probePresentation fallback 一致）。
+// 用于判断「探针参考」tab 是否适用——ProbeReferenceCard 仅绘制五孔端面 P1-P5 几何，
+// 七孔端面几何不同，参考图会误导操作员，故七孔时隐藏该 tab。
+const probeType = computed(() => traversalStore.config?.probeType ?? 'five-hole')
+
 // 前置条件检查与启动确认对话框状态
 const showStartConfirm = ref(false)
 const isCheckingPreconditions = ref(false)
@@ -116,16 +113,30 @@ let unsubscribeDeviceStatus: (() => void) | null = null
 let unsubscribeMotionStatus: (() => void) | null = null
 
 const hasCheckpoint = computed(() => checkpoint.value !== null)
-// 模拟模式：store 标记为模拟 + composable 正在运行
-const isSimulationMode = computed(() => traversalStore.isSimulation && isSimulating.value)
-// 是否显示真实控制按钮（模拟中和恢复中均不显示）
-const showRealControls = computed(() => !isSimulationMode.value && !isSimulating.value && !props.recovering)
+// 是否显示真实控制按钮（恢复中不显示）
+const showRealControls = computed(() => !props.recovering)
 
-const workspaceTabs = computed(() => [
-  { value: 'preview' as WorkspaceTab, label: t.value.pointsPreview },
-  { value: 'visualization' as WorkspaceTab, label: t.value.flowVisualization },
-  { value: 'reference' as WorkspaceTab, label: t.value.probeReference }
-])
+const workspaceTabs = computed(() => {
+  const tabs: Array<{ value: WorkspaceTab; label: string }> = [
+    { value: 'preview', label: t.value.pointsPreview },
+    { value: 'visualization', label: t.value.flowVisualization }
+  ]
+  // 「探针参考」tab 仅五孔探针适用：ProbeReferenceCard 硬编码 P1-P5 五孔端面几何，
+  // 七孔探针端面布局不同，参考图会误导操作员，故七孔时隐藏该 tab。
+  if (probeType.value === 'five-hole') {
+    tabs.push({ value: 'reference', label: t.value.probeReference })
+  }
+  return tabs
+})
+
+// 当探针类型变化导致当前选中的 tab 不再可用时，切回 preview。
+// 典型场景：用户在五孔配置下切到「探针参考」tab，随后修改配置为七孔；
+// 不处理会导致 activeWorkspaceTab 指向已隐藏的 tab，工作区显示空白。
+watch(probeType, (newType) => {
+  if (newType === 'seven-hole' && activeWorkspaceTab.value === 'reference') {
+    activeWorkspaceTab.value = 'preview'
+  }
+})
 
 onMounted(async () => {
   void deviceStore.refreshInstances()
@@ -200,11 +211,6 @@ async function discardCheckpoint(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
-  // 清理模拟模式
-  cancelSimulation()
-  if (traversalStore.isSimulation) {
-    traversalStore.isSimulation = false
-  }
   if (unsubscribeDaqSnapshot) {
     unsubscribeDaqSnapshot()
     unsubscribeDaqSnapshot = null
@@ -582,27 +588,6 @@ watch(
     }
   },
   { deep: true }
-)
-
-// 模拟完成自动切换到 Visualization tab，并提示模拟结果
-watch(
-  () => traversalStore.status?.status,
-  (newStatus, oldStatus) => {
-    if (
-      traversalStore.isSimulation &&
-      oldStatus === 'running' &&
-      (newStatus === 'completed' || newStatus === 'stopped')
-    ) {
-      activeWorkspaceTab.value = 'visualization'
-      if (newStatus === 'completed') {
-        feedbackStore.pushToast(
-          t.value.travSimComplete.replace('{count}', String(traversalStore.status?.completedPoints)),
-          'success',
-          5000
-        )
-      }
-    }
-  }
 )
 </script>
 

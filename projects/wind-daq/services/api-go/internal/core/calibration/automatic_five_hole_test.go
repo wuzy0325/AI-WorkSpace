@@ -1,11 +1,13 @@
 package calibration
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"wind-daq/services/api-go/internal/core/traversal"
 )
@@ -223,5 +225,66 @@ func TestAutomaticCalibrationInvokesOnDataPointForEachPoint(t *testing.T) {
 	}
 	if len(received) != 2 {
 		t.Fatalf("expected onDataPoint called 2 times, got %d", len(received))
+	}
+}
+
+// TestWaitForFreshDataContextCancelsPromptly 单元测试：时间戳恒不前进（永远等不到新帧）时，
+// 取消 ctx 应使 waitForFreshDataContext 立即以 context.Canceled 退出，而不是空等到 timeout。
+func TestWaitForFreshDataContextCancelsPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tsReader := func(string) (int64, bool) { return 1000, true }
+	last := map[string]int64{"dev-1": 1000}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := waitForFreshDataContext(ctx, []string{"dev-1"}, tsReader, last, 30*time.Second, nil)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("取消时应返回 context.Canceled，实际: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("取消后应及时退出，实际耗时 %v", elapsed)
+	}
+}
+
+// TestStartWithContextCancelsDuringFreshDataWait 引擎级验证：算法在样本间等待新数据帧
+// （fresh-data）期间取消 ctx 能及时退出。fake runtime 的 GetLatestTimestamp 恒返回 ok=false，
+// waitForFreshData 永远等不到新帧；若取消不生效，将在 freshnessDefaultTimeout(5s) 后
+// 以"等待新数据帧超时"结束而非 context.Canceled。
+func TestStartWithContextCancelsDuringFreshDataWait(t *testing.T) {
+	config := completeFiveHoleConfig()
+	config.SamplesPerPoint = 5 // >1 才会在样本间进入 waitForFreshData
+	runtime := &fakeCalibrationRuntime{values: completeFiveHoleValues()}
+
+	engine := NewAutomaticCalibration(config, nil, runtime, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- engine.StartWithContext(ctx, NewFiveHoleAlgorithm()) }()
+
+	// 等第一个样本采完（随后进入第二样本前的 fresh-data 等待），轮询而非长 sleep
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		cur, _ := engine.GetSampleProgress()
+		if cur >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fresh-data 等待中取消应返回 context.Canceled，实际: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		engine.Stop()
+		t.Fatal("fresh-data 等待未在取消后及时退出")
 	}
 }

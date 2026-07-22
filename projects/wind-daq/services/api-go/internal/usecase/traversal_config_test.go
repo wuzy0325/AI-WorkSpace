@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	"wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/motion"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 // ===== InterpolatorLoader mock 实现 =====
@@ -47,7 +49,8 @@ func (m *mockSevenHoleInterpolator) Calculate(_ seveninterp.InterpolationInput) 
 }
 
 // mockInterpolatorLoader 是 ports.InterpolatorLoader 的可控 mock，
-// 用于覆盖 CSV / 单 PRB / 多 PRB 三条加载分支以及成功 / 失败 / 阻塞三种场景。
+// 用于覆盖 CSV / 单 PRB / 多 PRB / 七孔 PRB / 七孔 CSV 五条加载分支以及
+// 成功 / 失败 / 阻塞三种场景。
 type mockInterpolatorLoader struct {
 	mu sync.Mutex
 
@@ -61,12 +64,26 @@ type mockInterpolatorLoader struct {
 	csvCalls      int
 	multiPRBCalls int
 
+	// 七孔调用入参回填（Task 08 新增，用于 Import 七孔路径测试）
+	lastSevenHoleInner  string
+	lastSevenHoleOuter  [6]string
+	sevenHolePRBCalls   int
+	sevenHoleCSVCalls   int
+
 	// 行为开关
 	prbErr      error
 	csvErr      error
 	multiPRBErr error
 	// blockFor 模拟磁盘阻塞，常用于测试 ctx 超时分支
 	blockFor time.Duration
+
+	// 七孔行为开关（Task 08）
+	sevenHolePRBErr error
+	sevenHoleCSVErr error
+	// sevenHoleValidRange 七孔成功路径返回的有效范围；零值表示 ±30（与夹具默认一致）
+	sevenHoleValidRange seveninterp.PrbValidRange
+	// sevenHoleLoadedAtMs 七孔成功路径返回的加载时间戳；0 表示由 mock 用 time.Now 填充
+	sevenHoleLoadedAtMs int64
 }
 
 func (l *mockInterpolatorLoader) LoadPRB(filePath string) (coreinterp.Interpolator, error) {
@@ -101,7 +118,10 @@ func (l *mockInterpolatorLoader) LoadFiveHoleCSV(filePath string) (coreinterp.In
 	return &mockInterpolator{tag: "csv:" + filePath}, nil
 }
 
-func (l *mockInterpolatorLoader) LoadMultiPRB(filePaths []string, machNumbers []float64, mode coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, error) {
+// LoadMultiPRB 返回中立 metadata 以满足 Task 07 新签名；
+// 成功时 metadata 含 Files/MachNumbers/Warnings 三字段，调用方在 usecase
+// 启动恢复路径下不消费 metadata，但接口签名必须匹配。
+func (l *mockInterpolatorLoader) LoadMultiPRB(filePaths []string, machNumbers []float64, mode coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, *ports.MultiPrbLoadMetadata, error) {
 	l.mu.Lock()
 	l.multiPRBCalls++
 	l.lastMultiPRB = append([]string(nil), filePaths...)
@@ -114,21 +134,78 @@ func (l *mockInterpolatorLoader) LoadMultiPRB(filePaths []string, machNumbers []
 		time.Sleep(blockFor)
 	}
 	if multiPRBErr != nil {
-		return nil, multiPRBErr
+		return nil, nil, multiPRBErr
 	}
-	return &mockInterpolator{tag: "multi"}, nil
+	// Task 08：Files 与 filePaths 一一对应（与真实 loader 行为一致），
+	// 每个 PrbFileMetadata 填充 FilePath/FileName/LoadedAtMs/MachNumber/ValidRange。
+	loadedAtMs := time.Now().UnixMilli()
+	files := make([]ports.PrbFileMetadata, 0, len(filePaths))
+	for i, fp := range filePaths {
+		var mach float64
+		if i < len(machNumbers) {
+			mach = machNumbers[i]
+		}
+		files = append(files, ports.PrbFileMetadata{
+			FilePath:   fp,
+			FileName:   filepath.Base(fp),
+			LoadedAtMs: loadedAtMs,
+			MachNumber: mach,
+		})
+	}
+	metadata := &ports.MultiPrbLoadMetadata{
+		Files:       files,
+		MachNumbers: append([]float64(nil), machNumbers...),
+	}
+	return &mockInterpolator{tag: "multi"}, metadata, nil
 }
 
-// LoadSevenHolePRB 当前测试不覆盖七孔加载分支，仅满足接口契约。
-// 返回空 mock + nil 错误；若后续需要测试七孔路径，可在此扩展为
-// 带 lastSevenHoleInner/lastSevenHoleOuter/sevenHolePRBErr 字段的可控 mock。
-func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
-	return &mockSevenHoleInterpolator{tag: "seven-hole:" + innerPath}, nil
+// LoadSevenHolePRB 七孔 PRB 加载 mock（Task 08 扩展为可控）。
+// 成功时回填入参并返回 SevenHoleLoadMetadata（LoadedAtMs/ValidRange）；
+// 失败时返回 sevenHolePRBErr 且 interpolator=nil。
+//
+// Task 07：metadata 仅含 LoadedAtMs/ValidRange——pointCount 不暴露（兼容约定值
+// 169/52 不应伪装为 loader 真值），由调用方使用约定常量。
+func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
+	l.mu.Lock()
+	l.sevenHolePRBCalls++
+	l.lastSevenHoleInner = innerPath
+	l.lastSevenHoleOuter = outerPaths
+	err := l.sevenHolePRBErr
+	validRange := l.sevenHoleValidRange
+	loadedAtMs := l.sevenHoleLoadedAtMs
+	l.mu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	if loadedAtMs == 0 {
+		loadedAtMs = time.Now().UnixMilli()
+	}
+	return &mockSevenHoleInterpolator{tag: "seven-hole:" + innerPath}, &ports.SevenHoleLoadMetadata{
+		LoadedAtMs: loadedAtMs,
+		ValidRange: validRange,
+	}, nil
 }
 
-// LoadSevenHoleCalibrationCSV 满足接口契约（校准 CSV 加载分支）。
-func (l *mockInterpolatorLoader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
-	return &mockSevenHoleInterpolator{tag: "seven-hole-csv:" + innerPath}, nil
+// LoadSevenHoleCalibrationCSV 七孔校准 CSV 加载 mock（Task 08 扩展为可控）。
+func (l *mockInterpolatorLoader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
+	l.mu.Lock()
+	l.sevenHoleCSVCalls++
+	l.lastSevenHoleInner = innerPath
+	l.lastSevenHoleOuter = outerPaths
+	err := l.sevenHoleCSVErr
+	validRange := l.sevenHoleValidRange
+	loadedAtMs := l.sevenHoleLoadedAtMs
+	l.mu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	if loadedAtMs == 0 {
+		loadedAtMs = time.Now().UnixMilli()
+	}
+	return &mockSevenHoleInterpolator{tag: "seven-hole-csv:" + innerPath}, &ports.SevenHoleLoadMetadata{
+		LoadedAtMs: loadedAtMs,
+		ValidRange: validRange,
+	}, nil
 }
 
 func (l *mockInterpolatorLoader) snapshot() (lastPRB, lastCSV string, lastMultiPRB []string, lastMachs []float64, lastMode coreinterp.MultiPrbInterpolationMode, prbCalls, csvCalls, multiPRBCalls int) {

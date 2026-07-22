@@ -289,25 +289,42 @@ func TestLoadSevenHolePrbFiles_BadRowCount(t *testing.T) {
 	}
 }
 
-// TestLoaderLoadSevenHolePRB ports 层加载：成功返回已加载插值器；
+// TestLoaderLoadSevenHolePRB ports 层加载：成功返回已加载插值器与中立 metadata；
 // 失败路径返回 nil 接口（typed-nil 防护注释同既有 Load 方法）。
+//
+// Task 07：metadata 仅含 LoadedAtMs/ValidRange——pointCount 不暴露（兼容约定值
+// 169/52 不应伪装为 loader 真值）。
 func TestLoaderLoadSevenHolePRB(t *testing.T) {
 	dir := sevenHoleFixtureDir(t)
 	inner, outer := sevenHolePaths(dir)
-	interp, err := NewLoader().LoadSevenHolePRB(inner, outer)
+	interp, metadata, err := NewLoader().LoadSevenHolePRB(inner, outer)
 	if err != nil {
 		t.Fatalf("Loader.LoadSevenHolePRB: %v", err)
 	}
 	if interp == nil || !interp.IsLoaded() {
 		t.Fatal("expected loaded interpolator from Loader")
 	}
+	if metadata == nil {
+		t.Fatal("expected non-nil SevenHoleLoadMetadata")
+	}
+	if metadata.LoadedAtMs <= 0 {
+		t.Errorf("LoadedAtMs = %d, want positive timestamp", metadata.LoadedAtMs)
+	}
+	// ValidRange 应与 interpolator 自报一致（loader 真实可知字段）
+	if got := metadata.ValidRange; got.AlphaMin > got.AlphaMax {
+		t.Errorf("ValidRange invalid: alphaMin=%v > alphaMax=%v", got.AlphaMin, got.AlphaMax)
+	}
+
 	badOuter := outer
 	badOuter[5] = filepath.Join(dir, "missing-6.prb")
-	bad, err := NewLoader().LoadSevenHolePRB(inner, badOuter)
+	bad, badMeta, err := NewLoader().LoadSevenHolePRB(inner, badOuter)
 	if err == nil {
 		t.Fatal("expected error for missing sector file")
 	}
 	if bad != nil {
 		t.Error("failure must return nil interface (typed-nil guard)")
+	}
+	if badMeta != nil {
+		t.Error("failure must return nil metadata")
 	}
 }

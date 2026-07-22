@@ -460,6 +460,31 @@ export interface CalibrationConfig {
   motionSafety?: MotionSafetyConfig
 }
 
+/**
+ * 实时物理量快照（与后端 core/calibration.LivePhysics 对齐，spec Task 13）。
+ *
+ * 设计动机：前端 5Hz 轮询 status 时需展示当前马赫数/速度，但既有 currentStatus 只持久化
+ * 校准业务字段（点号/进度/数据点），物理量需基于实时通道数据即时计算。后端在 Status() 调用
+ * 时即时计算并返回此字段，绝不写入 currentStatus（避免 stale 残留与 writer/CSV 污染）。
+ *
+ * 三态语义（与后端 *float64 指针语义一致）：
+ *   - 字段省略（undefined）：缺失——必需通道未配置/读取失败/物理非法如 Pt < Ps，UI 显示 "--"
+ *   - 字段值为 0：有效零——Pt == Ps 即零流量（Task 12），UI 显示格式化的 0
+ *   - 字段值为正数：正常计算值
+ *
+ * 整体 livePhysics 省略（undefined）表示类型不支持实时物理量（总温）或未启动校准。
+ * 整体存在但字段省略表示类型支持但运行期读取失败（与"整体省略"区分）。
+ *
+ * 关键不变量：前端不得用 truthiness 判断 `livePhysics.machNumber`——0 是有效零，
+ * 必须用 `!== undefined` 区分缺失与零值，否则零流量场景 UI 误显示 "--"。
+ */
+export interface LivePhysics {
+  /** 马赫数（缺失 undefined / 有效零 0 / 正常 正数） */
+  machNumber?: number
+  /** 真空速 m/s（缺失 undefined / 有效零 0 / 正常 正数） */
+  velocity?: number
+}
+
 /** 校准任务状态 */
 export interface CalibrationTaskStatus {
   taskId: string
@@ -472,6 +497,17 @@ export interface CalibrationTaskStatus {
   pausedDurationMs?: number
   estimatedTimeRemaining?: number
   lastError?: string
+  /**
+   * 实时物理量快照（spec Task 13/14）。
+   *
+   * 后端在 Status() 调用时即时计算并返回，绝不持久化到 currentStatus。
+   * 前端 store 应直接映射此字段到 calculatedPhysics，不再本地用 ATM_GAMMA 等公式计算（Task 15 删除前端公式）。
+   *
+   * 整体 undefined：类型不支持（总温）或未启动校准。
+   * 整体存在但 machNumber/velocity 字段 undefined：类型支持但通道读取失败。
+   * 字段值为 0：有效零流量（Pt == Ps），UI 必须显示格式化的 0 而非 "--"。
+   */
+  livePhysics?: LivePhysics
   /**
    * 结构化错误码（与后端 core/calibration.Status.LastErrorCode 对齐）。
    *

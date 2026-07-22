@@ -241,10 +241,15 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 		// 按 kind 选择数据源：校准 CSV（七孔校准导出）或 .prb 文件集（默认）。
 		isCalibrationCsv := seven.Kind == "seven-hole-calibration-csv"
 		interpolator, err, timedOut := runSevenHoleLoaderWithTimeout(ctx, func() (seveninterp.Interpolator, error) {
+			// Task 07：loader 新签名返回 *SevenHoleLoadMetadata，启动恢复路径
+			// 不消费 metadata（仅显式 Import 路径需要 LoadedAtMs/ValidRange），
+			// 这里丢弃 metadata 仅取 interpolator + err。
 			if isCalibrationCsv {
-				return loader.LoadSevenHoleCalibrationCSV(innerPath, outerPaths)
+				interp, _, err := loader.LoadSevenHoleCalibrationCSV(innerPath, outerPaths)
+				return interp, err
 			}
-			return loader.LoadSevenHolePRB(innerPath, outerPaths)
+			interp, _, err := loader.LoadSevenHolePRB(innerPath, outerPaths)
+			return interp, err
 		})
 		if timedOut {
 			msg := fmt.Sprintf("启动恢复超时：加载七孔%s文件集超过 %s", map[bool]string{true: "校准CSV", false: "PRB"}[isCalibrationCsv], restoreInterpolatorTimeout)
@@ -322,7 +327,11 @@ func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, da
 		mode := coreinterp.MultiPrbInterpolationMode(rawCfg.MultiPrb.InterpolationMode)
 		machNumbers := append([]float64(nil), rawCfg.MultiPrb.MachNumbers...)
 		interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (coreinterp.Interpolator, error) {
-			return loader.LoadMultiPRB(filePaths, machNumbers, mode)
+			// Task 07：loader 新签名返回 *MultiPrbLoadMetadata，启动恢复路径
+			// 不消费 metadata（仅显式 ImportMultiPRB 路径需要 Files/Warnings），
+			// 这里丢弃 metadata 仅取 interpolator + err。
+			interp, _, err := loader.LoadMultiPRB(filePaths, machNumbers, mode)
+			return interp, err
 		})
 		if timedOut {
 			msg := fmt.Sprintf("启动恢复超时：加载 %d 个多 PRB 文件超过 %s", len(filePaths), restoreInterpolatorTimeout)

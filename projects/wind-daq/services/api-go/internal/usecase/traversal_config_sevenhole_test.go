@@ -10,6 +10,7 @@ import (
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 // stubAppConfigStore 是最小 AppConfigStore 实现（供 loadPersistedConfig 测试）。
@@ -81,26 +82,28 @@ func (l *recordingSevenHoleLoader) LoadPRB(string) (coreinterp.Interpolator, err
 func (l *recordingSevenHoleLoader) LoadFiveHoleCSV(string) (coreinterp.Interpolator, error) {
 	return nil, fmt.Errorf("LoadFiveHoleCSV must not be called in seven-hole restore tests")
 }
-func (l *recordingSevenHoleLoader) LoadMultiPRB([]string, []float64, coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, error) {
-	return nil, fmt.Errorf("LoadMultiPRB must not be called in seven-hole restore tests")
+func (l *recordingSevenHoleLoader) LoadMultiPRB([]string, []float64, coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, *ports.MultiPrbLoadMetadata, error) {
+	return nil, nil, fmt.Errorf("LoadMultiPRB must not be called in seven-hole restore tests")
 }
-func (l *recordingSevenHoleLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+// LoadSevenHolePRB Task 07 新签名：返回中立 metadata；pointCount 不暴露
+// （兼容约定值 169/52 不应伪装为 loader 真值）。
+func (l *recordingSevenHoleLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
 	l.calls++
 	l.innerPath = innerPath
 	l.outerPaths = outerPaths
 	if l.err != nil {
-		return nil, l.err
+		return nil, nil, l.err
 	}
-	return l.interp, nil
+	return l.interp, &ports.SevenHoleLoadMetadata{}, nil
 }
-func (l *recordingSevenHoleLoader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, error) {
+func (l *recordingSevenHoleLoader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
 	l.csvCalls++
 	l.innerPath = innerPath
 	l.outerPaths = outerPaths
 	if l.err != nil {
-		return nil, l.err
+		return nil, nil, l.err
 	}
-	return l.interp, nil
+	return l.interp, &ports.SevenHoleLoadMetadata{}, nil
 }
 
 // sevenHoleConfigJSON 构造一份合法的七孔持久化配置 JSON。

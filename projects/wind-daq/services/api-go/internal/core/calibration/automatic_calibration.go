@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -97,8 +98,26 @@ func (a *AutomaticCalibration) SetTaskID(id string) {
 	a.taskID = id
 }
 
-// Start 启动自动校准循环
+// Start 启动自动校准循环（兼容入口）。
+// 语义等同于 StartWithContext(context.Background(), algorithm)：不会被 ctx 取消，
+// 仅响应 Pause/Resume/Stop 控制。
 func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
+	return a.StartWithContext(context.Background(), algorithm)
+}
+
+// StartWithContext 启动自动校准循环，ctx 取消时中断引擎自有的等待路径
+// （驻留 dwell、暂停恢复等待、球罐闸门等待、算法样本间的新数据等待）。
+//
+// 返回语义：
+//   - ctx 取消（含启动前已取消）：返回 ctx.Err()（errors.Is(err, context.Canceled) 为 true），
+//     不发送完成事件，已采集的数据点保留可查询；
+//   - 其余路径（正常完成、测点失败、运动失败、Stop 停止）语义与既有 Start 一致，
+//     算法结果语义不变。
+func (a *AutomaticCalibration) StartWithContext(ctx context.Context, algorithm Algorithm) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	a.mu.Lock()
 	if a.isRunning {
 		a.mu.Unlock()
@@ -115,7 +134,7 @@ func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
 
 	log.Printf("[AutomaticCalibration] 启动校准，共 %d 个测点", len(a.config.Points))
 
-	err := a.runCalibrationLoop(algorithm)
+	err := a.runCalibrationLoop(ctx, algorithm)
 
 	a.mu.Lock()
 	a.isRunning = false
@@ -124,18 +143,24 @@ func (a *AutomaticCalibration) Start(algorithm Algorithm) error {
 }
 
 // runCalibrationLoop 校准主循环（模板方法）
-func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
+func (a *AutomaticCalibration) runCalibrationLoop(ctx context.Context, algorithm Algorithm) error {
 	var pointErrorCount int
 	var lastPointError string
 
 	for i := a.GetCurrentPointIndex(); i < len(a.config.Points); i++ {
+		// ctx 取消优先于其他状态判定：取消语义必须与正常停止/完成区分
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !a.IsRunning() {
 			log.Printf("[AutomaticCalibration] 校准被用户停止")
 			return nil
 		}
 
-		// 等待暂停恢复
-		a.waitWhilePaused()
+		// 等待暂停恢复（ctx 取消时立即返回）
+		if err := a.waitWhilePaused(ctx); err != nil {
+			return err
+		}
 
 		if !a.IsRunning() {
 			return nil
@@ -148,7 +173,11 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 
 		log.Printf("[AutomaticCalibration] 处理测点 %d/%d, 坐标: %v", i+1, len(a.config.Points), point.Coordinates)
 
-		if err := a.processPoint(algorithm, point, i); err != nil {
+		if err := a.processPoint(ctx, algorithm, point, i); err != nil {
+			// ctx 取消优先：取消可能以 ErrPointAborted 或包装错误的形式从等待路径返回
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			// 暂停打断：回退索引以重跑同一点，不计入错误计数。
 			// 循环顶部会再次调用 waitWhilePaused 阻塞到恢复，无需在此重复等待。
 			if errors.Is(err, ErrPointAborted) {
@@ -187,7 +216,7 @@ func (a *AutomaticCalibration) runCalibrationLoop(algorithm Algorithm) error {
 }
 
 // processPoint 处理单个测点的完整流程
-func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint, index int) error {
+func (a *AutomaticCalibration) processPoint(ctx context.Context, algorithm Algorithm, point CalPoint, index int) error {
 	// 2. 移动到点位
 	if err := a.moveToPoint(point, algorithm); err != nil {
 		return fmt.Errorf("%w: 移动到测点失败: %w", ErrMotionControl, err)
@@ -199,9 +228,11 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 		return err
 	}
 
-	// 2. 等待驻留时间（让压力稳定）
+	// 2. 等待驻留时间（让压力稳定）；ctx 取消时立即退出
 	if a.config.DwellTimeMs > 0 {
-		time.Sleep(time.Duration(a.config.DwellTimeMs) * time.Millisecond)
+		if err := sleepContext(ctx, time.Duration(a.config.DwellTimeMs)*time.Millisecond); err != nil {
+			return err
+		}
 	}
 
 	// 驻留后检查暂停
@@ -210,7 +241,7 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	}
 
 	// 3. 等待球罐闸门条件（如果启用）
-	if err := a.waitForSphereTankGateIfNeeded(); err != nil {
+	if err := a.waitForSphereTankGateIfNeeded(ctx); err != nil {
 		return fmt.Errorf("球罐闸门等待失败: %w", err)
 	}
 
@@ -222,7 +253,7 @@ func (a *AutomaticCalibration) processPoint(algorithm Algorithm, point CalPoint,
 	// 4. 采集数据
 	channelReader := a.makeChannelReader()
 	checkAbort := func() bool {
-		return !a.IsRunning() || a.IsPaused()
+		return ctx.Err() != nil || !a.IsRunning() || a.IsPaused()
 	}
 	// 采样进度回调：算法每次采完一个样本调用，更新 AutomaticCalibration 的共享状态，
 	// 供 Status() 查询路径读取，驱动前端"当前点采样 i+1/N"显示。
@@ -483,7 +514,8 @@ func lookupAxisPosition(point CalPoint, axisName string) (float64, bool) {
 //
 // 总超时取 gate.TimeoutSec，<=0 时使用默认 300 秒（5 分钟）。
 // 超时后停止校准并返回错误，避免无限等待卡死整个流程。
-func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
+// ctx 取消时立即返回 ctx.Err()。
+func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded(ctx context.Context) error {
 	gate := NormalizeSphereTankGateConfig(a.config)
 	if gate == nil || !gate.Enabled {
 		return nil
@@ -502,8 +534,13 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 	gateWaitStartAt := time.Now().UnixMilli()
 
 	for a.IsRunning() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// 暂停时等待
-		a.waitWhilePaused()
+		if err := a.waitWhilePaused(ctx); err != nil {
+			return err
+		}
 		if !a.IsRunning() {
 			return nil
 		}
@@ -513,7 +550,9 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 		stableTimeSec, err := ParseSphereTankStableTimeSec(stableRaw, ok)
 		if err != nil {
 			// 读取失败，继续等待
-			time.Sleep(100 * time.Millisecond)
+			if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -526,23 +565,40 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded() error {
 			return fmt.Errorf("球罐判定等待超时（%d 秒）", maxWaitSec)
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// waitWhilePaused 等待暂停恢复
-func (a *AutomaticCalibration) waitWhilePaused() {
+// waitWhilePaused 等待暂停恢复；ctx 取消时立即返回 ctx.Err()。
+func (a *AutomaticCalibration) waitWhilePaused(ctx context.Context) error {
 	for {
 		a.mu.RLock()
 		paused := a.isPaused
 		running := a.isRunning
 		a.mu.RUnlock()
 		if !paused || !running {
-			return
+			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+			return err
+		}
+	}
+}
+
+// sleepContext 等待 d 到期或 ctx 取消；取消时返回 ctx.Err()。
+// 替代引擎自有等待路径中的无条件 time.Sleep，使取消不被 sleep 阻断。
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

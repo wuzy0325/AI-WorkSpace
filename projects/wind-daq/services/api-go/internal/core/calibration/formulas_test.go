@@ -544,9 +544,106 @@ func TestAtmosphericDataCalculator_Mach_InvalidInput(t *testing.T) {
 		t.Error("静压为0时应返回错误")
 	}
 
+	// Task 12：等压 (Pt == Ps) 现为有效零流量，仅 Pt < Ps 视为非法。
+	// 零流量场景由 TestAtmosphericDataCalculator_Mach_TableDriven 单独覆盖。
 	_, err = calc.CalculateMach(50000, 101325)
 	if err == nil {
 		t.Error("总压小于静压时应返回错误")
+	}
+}
+
+// TestAtmosphericDataCalculator_Mach_TableDriven 表驱动覆盖零/非零/非法压力关系
+//
+// Task 12 验收：等压是有效零；Pt < Ps、Ps ≤ 0 仍失败；非零正常返回正马赫数。
+// 旧实现 `Pt <= Ps` 一律报错，导致风洞未启动（Pt == Ps）场景下 UI 显示 "--"、CSV 写空。
+// 修复后 `Pt == Ps` 返回 Ma=0, nil；`Pt < Ps` 与 `Ps ≤ 0` 维持错误语义。
+func TestAtmosphericDataCalculator_Mach_TableDriven(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+	// 容差选取：零流量精确为 0；非零用例取自既有验证点（0.084 / 0.197），
+	// 0.05 容差覆盖浮点误差与公式近似误差。
+	const tableTolerance = 5e-2
+	tests := []struct {
+		name    string
+		pt, ps  float64
+		wantErr bool
+		wantMa  float64 // 仅 wantErr=false 时校验
+	}{
+		{"零流量 Pt == Ps (标准大气)", 101325, 101325, false, 0},
+		{"零流量 Pt == Ps (非标准大气)", 98880, 98880, false, 0},
+		{"非零 文档验证点 Ma≈0.084", 95934, 95495.4, false, 0.084},
+		// 期望值 0.278 由公式 Ma=sqrt(5*((Pt/Ps)^(2/7)-1)) 直接计算；
+		// 既有 TestCalculateMachNumber 注释"约0.197"为历史笔误，实际值 0.277 在 [0.15,0.3] 区间内通过。
+		{"非零 标准大气+表压 Ma≈0.278", 106891, 101325, false, 0.278},
+		{"非法 Pt < Ps", 50000, 101325, true, 0},
+		{"非法 Ps = 0", 101325, 0, true, 0},
+		{"非法 Ps < 0", 101325, -100, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ma, err := calc.CalculateMach(tt.pt, tt.ps)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("期望错误, 实际 nil (Ma=%v)", ma)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("未期望错误: %v", err)
+			}
+			if math.IsNaN(ma) || math.IsInf(ma, 0) {
+				t.Fatalf("Ma 不应为 NaN/Inf: %v", ma)
+			}
+			if math.Abs(ma-tt.wantMa) > tableTolerance {
+				t.Errorf("Ma 期望 %v (容差 %v), 实际 %v", tt.wantMa, tableTolerance, ma)
+			}
+		})
+	}
+}
+
+// TestAtmosphericDataCalculator_CalculateAll_ZeroFlow 等压时全链路输出零
+//
+// Task 12 验收：Pt == Ps → Ma=0, Qc=0, CAS=0, TAS=0, SAT=TAT。
+// 确保下游方法 (CalculateSAT/CalculateCAS/CalculateTASByDensity/CalculateTASByMach)
+// 在 Ma=0/Qc=0 时不产生 NaN/Inf，UI 与 CSV 能写出有效零值而非空。
+func TestAtmosphericDataCalculator_CalculateAll_ZeroFlow(t *testing.T) {
+	calc := NewAtmosphericDataCalculator()
+	tat := 295.35 // K
+	result, err := calc.CalculateAll(101325, 101325, tat)
+	if err != nil {
+		t.Fatalf("等压 CalculateAll 不应失败: %v", err)
+	}
+	if result.MachNumber != 0 {
+		t.Errorf("Ma 期望 0, 实际 %v", result.MachNumber)
+	}
+	if result.Qc != 0 {
+		t.Errorf("Qc 期望 0, 实际 %v", result.Qc)
+	}
+	if result.CAS != 0 {
+		t.Errorf("CAS 期望 0, 实际 %v", result.CAS)
+	}
+	if result.TASDensity != 0 {
+		t.Errorf("TASDensity 期望 0, 实际 %v", result.TASDensity)
+	}
+	if result.TASMach != 0 {
+		t.Errorf("TASMach 期望 0, 实际 %v", result.TASMach)
+	}
+	// SAT = TAT / (1 + 0) = TAT (Ma=0 时恢复系数项为 0)
+	if math.Abs(result.SAT-tat) > epsilon {
+		t.Errorf("SAT 期望等于 TAT (%v), 实际 %v", tat, result.SAT)
+	}
+}
+
+// TestCalculateMachNumber_ZeroFlow 独立包装函数同样支持零流量
+//
+// Task 12：CalculateMachNumber 委托给 AtmosphericDataCalculator.CalculateMach，
+// 修复后等压应返回 Ma=0, nil。校验包装层与底层口径一致。
+func TestCalculateMachNumber_ZeroFlow(t *testing.T) {
+	ma, err := CalculateMachNumber(101325, 101325)
+	if err != nil {
+		t.Fatalf("等压应返回 Ma=0 而非错误: %v", err)
+	}
+	if ma != 0 {
+		t.Errorf("Ma 期望 0, 实际 %v", ma)
 	}
 }
 

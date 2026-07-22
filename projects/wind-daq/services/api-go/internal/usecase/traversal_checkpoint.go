@@ -13,7 +13,6 @@ import (
 	"math"
 	"time"
 
-	"wind-daq/services/api-go/internal/core/resourcelock"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
@@ -289,7 +288,7 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	}
 	m.resetFinalizeOnce()
 
-	if err := resourcelock.Default().Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
+	if err := m.lockService.Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
 		// 锁获取失败：回滚 session 状态，不调 abortStartLocked（端口尚未打开）
 		session.Cancel()
 		session.MarkDone()

@@ -120,11 +120,30 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
   }
 
   async function pauseCalibration() {
-    try { await calibrationStore.pause() } catch (err) { console.error('Failed to pause:', err) }
+    try {
+      await calibrationStore.pause()
+    } catch (err) {
+      console.error('Failed to pause:', err)
+      // 操作员可见反馈：store 抛出的后端错误（如 4xx/5xx）若只 console.error，
+      // 按钮无响应会让操作员误以为已暂停；与 stopCalibration 失败路径一致暴露 toast。
+      feedbackStore.pushToast(
+        i18n.t.wf_pauseCalibrationFailed + ': ' + (err instanceof Error ? err.message : String(err)),
+        'error',
+      )
+    }
   }
 
   async function resumeCalibration() {
-    try { await calibrationStore.resume() } catch (err) { console.error('Failed to resume:', err) }
+    try {
+      await calibrationStore.resume()
+    } catch (err) {
+      console.error('Failed to resume:', err)
+      // 操作员可见反馈：与 pauseCalibration 失败路径保持一致，避免按钮无响应误导操作员。
+      feedbackStore.pushToast(
+        i18n.t.wf_resumeCalibrationFailed + ': ' + (err instanceof Error ? err.message : String(err)),
+        'error',
+      )
+    }
   }
 
   async function stopCalibration() {

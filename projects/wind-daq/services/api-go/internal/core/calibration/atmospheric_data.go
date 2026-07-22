@@ -28,12 +28,21 @@ func NewAtmosphericDataCalculator() *AtmosphericDataCalculator {
 // CalculateMach 计算马赫数
 // 依据：文档验证数据表中的马赫数计算逻辑 (亚音速公式)
 // 公式: Ma = sqrt( (2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1) )
+//
+// Task 12 零流量语义：Pt == Ps 视为风洞未建立压差的有效零流量，返回 Ma=0, nil；
+// Pt < Ps 仍为非法（亚音速风洞中总压不可能小于静压），返回错误。
+// 旧实现 `Pt <= Ps` 一律报错，导致 UI/CSV 在零流量场景下显示空值而非 0。
 func (c *AtmosphericDataCalculator) CalculateMach(Pt, Ps float64) (float64, error) {
 	if Ps <= 0 {
 		return 0, fmt.Errorf("静压Ps必须大于0")
 	}
-	if Pt <= Ps {
-		return 0, fmt.Errorf("总压Pt必须大于静压Ps")
+	if Pt < Ps {
+		return 0, fmt.Errorf("总压Pt必须大于或等于静压Ps")
+	}
+	// Pt == Ps：等压即零流量，公式分母为 1，分子为 0，Ma 精确为 0；
+	// 显式早返回避免浮点误差引入的微小正数（如 1e-16）误导下游判定。
+	if Pt == Ps {
+		return 0, nil
 	}
 	ratio := Pt / Ps
 	ma := math.Sqrt(

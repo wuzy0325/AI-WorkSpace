@@ -45,9 +45,18 @@ export interface ParsedPoint {
 }
 
 /**
+ * 剥离中英文括号注释（非贪婪 + 全局，支持多段与半角/全角混排）
+ *
+ * 如 "x(mm)" → "x"、"x(mm)(deg)" → "x"、"x(mm)（deg）" → "x"
+ */
+function stripBracketComments(text: string): string {
+  return text.replace(/\(.*?\)|（.*?）/g, '').trim()
+}
+
+/**
  * 列名 → 标准轴名归一化映射
  *
- * 算法：trim → lowercase → 移除括号注释（含全角）→ 逐轴正则匹配
+ * 算法：trim → lowercase → 移除括号注释（含全角、多段混排）→ 逐轴正则匹配
  *
  * 匹配的别名（大小写不敏感）：
  * - X: "x", "posx", "pos_x"
@@ -60,8 +69,8 @@ export interface ParsedPoint {
  */
 export function normalizeAxisName(raw: string): AxisKey | null {
   const cleaned = raw.trim().toLowerCase()
-  // 移除括号注释（如 "X(mm)" → "x", "U(°)" → "u"），含全角括号
-  const base = cleaned.replace(/\(.*\)|（.*）/, '').trim()
+  // 移除括号注释（如 "X(mm)" → "x", "X(mm)（deg）" → "x"），含全角与多段注释
+  const base = stripBracketComments(cleaned)
   if (/^(x|pos[_]?x)$/.test(base)) return 'x'
   if (/^(y|pos[_]?y)$/.test(base)) return 'y'
   if (/^(z|pos[_]?z)$/.test(base)) return 'z'
@@ -73,7 +82,7 @@ export function normalizeAxisName(raw: string): AxisKey | null {
 /**
  * 列名 → per-point 配置键归一化映射
  *
- * 算法：trim → lowercase → 移除括号注释（含全角）→ 正则匹配
+ * 算法：trim → lowercase → 移除括号注释（含全角、多段混排）→ 正则匹配
  *
  * 匹配的别名（大小写不敏感）：
  * - dwellMs: "dwell", "dwellms", "dwell_time_ms", "dwelltimems", "stabilization", "stabilizationms"
@@ -86,8 +95,8 @@ export function normalizeAxisName(raw: string): AxisKey | null {
  */
 export function normalizeConfigKey(raw: string): PointConfigKey | null {
   const cleaned = raw.trim().toLowerCase()
-  // 移除括号注释（如 "Dwell(ms)" → "dwell"），与 normalizeAxisName 保持一致
-  const base = cleaned.replace(/\(.*\)|（.*）/, '').trim()
+  // 移除括号注释（如 "Dwell(ms)" → "dwell"，含多段混排），与 normalizeAxisName 保持一致
+  const base = stripBracketComments(cleaned)
   if (/^(dwell|dwellms|dwell_time_ms|dwelltimems|stabilization|stabilizationms)$/.test(base)) return 'dwellMs'
   if (/^(samples|samplesperpoint|samples_per_point)$/.test(base)) return 'samples'
   if (/^(test|enable|skip)$/.test(base)) return 'test'
@@ -177,8 +186,12 @@ export function parsePointsFile(text: string): ParsedPoint[] {
       const cfgKey = normalizeConfigKey(field)
       if (cfgKey) {
         // skip 列别名取反：skip=1 → test=false（更符合"跳过此点"的直觉书写）
-        // 其他 test 别名（test/enable）值不取反
-        configMap.set(idx, { key: cfgKey, invert: /^skip$/.test(field.trim().toLowerCase()) })
+        // 其他 test 别名（test/enable）值不取反。
+        // 判定必须基于剥离括号注释后的 normalized base（与 normalizeConfigKey 内部一致），
+        // 否则 "skip(1=skip)(flag)" 这类带注释的 skip 列会被识别为 test 配置键，
+        // 但 invert 误判为 false → skip=1 被解析为 test=true，违反 skip 语义。
+        const normalizedBase = stripBracketComments(field.trim().toLowerCase())
+        configMap.set(idx, { key: cfgKey, invert: /^skip$/.test(normalizedBase) })
       }
     })
     dataStartIndex = 1

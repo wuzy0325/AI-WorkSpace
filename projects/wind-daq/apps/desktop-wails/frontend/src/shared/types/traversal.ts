@@ -1266,13 +1266,43 @@ export interface StabilizationConfig {
  *   - progressEpsilon: 进展判定阈值。位置变化超过该值视为"有进展"
  *   - axisOverrides: 按轴覆盖（key 为轴名 "X"/"Y"/"Z"/"U"）。
  *       覆盖项中未指定的字段继承全局配置。
+ *       注意：覆盖项内不允许再嵌套 axisOverrides——后端 validateMotionSafetyConfig
+ *       明确拒绝嵌套（递归无意义且增加解析复杂度），故此处使用 MotionSafetyAxisOverride
+ *       子集类型而非 MotionSafetyConfig 自身，从类型层面阻止递归构造。
  */
+/**
+ * 运动安全配置可校验字段键的联合类型。
+ *
+ * 抽取目的：getAxisField/setAxisField 等工具函数需要同时索引 MotionSafetyConfig
+ * 与 MotionSafetyAxisOverride，使用此联合类型可避免 keyof MotionSafetyConfig
+ * 意外包含 'axisOverrides'（在轴覆盖项上不合法）。
+ */
+export type MotionSafetyFieldKey =
+  | 'arrivalTolerance'
+  | 'criticalDeviationLimit'
+  | 'noProgressTimeoutMs'
+  | 'progressEpsilon'
+
+/**
+ * 按轴覆盖项类型：MotionSafetyConfig 的非递归子集。
+ *
+ * 故意省略 axisOverrides 字段——后端 validateMotionSafetyConfig 拒绝嵌套覆盖
+ *（"axisOverrides[%q]: nested axisOverrides not allowed"），从类型层面阻止
+ * 用户构造 `axisOverrides.X.axisOverrides.Y` 这类递归结构，避免运行时才暴露错误。
+ */
+export interface MotionSafetyAxisOverride {
+  arrivalTolerance?: number
+  criticalDeviationLimit?: number
+  noProgressTimeoutMs?: number
+  progressEpsilon?: number
+}
+
 export interface MotionSafetyConfig {
   arrivalTolerance?: number
   criticalDeviationLimit?: number
   noProgressTimeoutMs?: number
   progressEpsilon?: number
-  axisOverrides?: Record<string, MotionSafetyConfig>
+  axisOverrides?: Record<string, MotionSafetyAxisOverride>
 }
 
 /**

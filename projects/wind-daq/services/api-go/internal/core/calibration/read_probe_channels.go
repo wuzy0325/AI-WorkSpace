@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -97,6 +98,10 @@ func ReadProbeChannelsToFiveHoleRaw(
 		"fiveHole.tAtm":          "tAtm",
 		"fiveHole.pTotal":        "pTotal",
 		"fiveHole.pTunnelStatic": "pStatic",
+		// review P1 缺陷修复：补 tTunnel 角色映射，使前端 FiveHoleSettings 必填的
+		// fiveHole.tTunnel 通道能进入 raw data，进而参与 TAT 优先级计算（TTunnel > TAtm）。
+		// 之前 roleMap 缺此条导致 TTunnel 永远为 nil，UI 显示的风洞温度不参与速度计算。
+		"fiveHole.tTunnel": "tTunnel",
 	}
 
 	required := []string{"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm", "pTotal", "pStatic"}
@@ -121,6 +126,11 @@ func ReadProbeChannelsToFiveHoleRaw(
 	}
 	if v, ok := data["pStatic"]; ok {
 		result.PStatic = &v
+	}
+	// TTunnel 可选指针，配置时填充，未配置保持 nil（computeLivePhysicsFromGauge 回退 TAtm）。
+	// 与七孔 TTunnel 语义一致——前端必填但后端兼容旧 config（无 tTunnel 通道时不报错）。
+	if v, ok := data["tTunnel"]; ok {
+		result.TTunnel = &v
 	}
 
 	return result, nil
@@ -226,6 +236,10 @@ func ReadProbeChannelsToSevenHoleRaw(
 		"sevenHole.tAtm":          "tAtm",
 		"sevenHole.pTotal":        "pTotal",
 		"sevenHole.pTunnelStatic": "pStatic",
+		// Task 13：补充 tTunnel 角色映射，使 TTunnel 优先级在 Status 实时物理量
+		// 与既有 calcMachAndVelocity 路径都能通过通道配置生效。
+		// 之前 roleMap 缺此条导致 TTunnel 永远为 nil（仅测试直接赋值才非 nil）。
+		"sevenHole.tTunnel": "tTunnel",
 	}
 
 	required := []string{"p1", "p2", "p3", "p4", "p5", "p6", "p7", "pAtm", "tAtm", "pTotal", "pStatic"}
@@ -254,6 +268,10 @@ func ReadProbeChannelsToSevenHoleRaw(
 	if v, ok := data["pStatic"]; ok {
 		result.PStatic = &v
 	}
+	// Task 13：TTunnel 可选指针，配置时填充，未配置保持 nil（calcMachAndVelocity 回退 TAtm）。
+	if v, ok := data["tTunnel"]; ok {
+		result.TTunnel = &v
+	}
 
 	return result, nil
 }
@@ -275,7 +293,22 @@ func collectUniqueDeviceIDs(probeChannels []ProbeChannel) []string {
 	return ids
 }
 
+// waitForFreshData 等待所有设备出现新数据帧（兼容入口，不可被 ctx 取消）。
+// 等价于 waitForFreshDataContext(context.Background(), ...)，取消语义仍由 checkAbort 提供。
 func waitForFreshData(
+	deviceIDs []string,
+	timestampReader TimestampReader,
+	lastTimestamps map[string]int64,
+	timeout time.Duration,
+	checkAbort func() bool,
+) error {
+	return waitForFreshDataContext(context.Background(), deviceIDs, timestampReader, lastTimestamps, timeout, checkAbort)
+}
+
+// waitForFreshDataContext 等待所有设备出现新数据帧，轮询间隔可被 ctx 取消。
+// ctx 取消时返回 ctx.Err()；checkAbort 触发时返回 ErrPointAborted（保持既有语义）。
+func waitForFreshDataContext(
+	ctx context.Context,
 	deviceIDs []string,
 	timestampReader TimestampReader,
 	lastTimestamps map[string]int64,
@@ -287,6 +320,9 @@ func waitForFreshData(
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if checkAbort != nil && checkAbort() {
 			return ErrPointAborted
 		}
@@ -305,7 +341,9 @@ func waitForFreshData(
 		if allFresh {
 			return nil
 		}
-		time.Sleep(freshnessPollInterval)
+		if err := sleepContext(ctx, freshnessPollInterval); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
 }

@@ -1,6 +1,8 @@
 package calibration
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -278,4 +280,169 @@ func (r *nonBlockingRuntime) WaitForMotionComplete() (bool, traversal.MotionInte
 func (r *nonBlockingRuntime) StopMotion() error {
 	r.stopCalls++
 	return nil
+}
+
+// waitForCondition 轮询 cond 直到为 true，超时则 fail。用于替代长时间 sleep 猜测状态。
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("等待条件超时")
+}
+
+// TestStartWithContextAlreadyCancelledReturnsImmediately 验证 ctx 在启动前已取消时
+// StartWithContext 立即返回 context.Canceled，不进入运行态、不处理任何测点。
+func TestStartWithContextAlreadyCancelledReturnsImmediately(t *testing.T) {
+	rt := &nonBlockingRuntime{}
+	config := Config{
+		TaskID: "task-ctx-precancel",
+		Type:   string(TypeTotalPressure),
+		MotionAxes: []MotionAxisConfig{
+			{Name: "α", ControllerID: "motion-1", Axis: "X"},
+		},
+		Points: []CalPoint{{ID: 1, Coordinates: map[string]float64{"α": 10}}},
+	}
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 启动前已取消
+
+	start := time.Now()
+	err := engine.StartWithContext(ctx, noopAlgorithm{})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("应返回 context.Canceled，实际: %v", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("已取消的 ctx 应立即返回，实际耗时 %v", elapsed)
+	}
+	if engine.IsRunning() {
+		t.Fatal("ctx 已取消时不应进入运行态")
+	}
+	if len(rt.moves) != 0 {
+		t.Fatalf("ctx 已取消时不应发生任何运动，实际 moves=%v", rt.moves)
+	}
+}
+
+// TestStartWithContextCancelsDuringDwell 验证长驻留（dwell）等待中取消 ctx 能及时退出。
+// DwellTimeMs 设为 60s：若驻留仍是不可取消的无条件 sleep，本测试必然超时失败。
+func TestStartWithContextCancelsDuringDwell(t *testing.T) {
+	rt := &nonBlockingRuntime{}
+	config := Config{
+		TaskID:      "task-ctx-dwell",
+		Type:        string(TypeTotalPressure),
+		DwellTimeMs: 60_000, // 长驻留：取消前不会自然结束
+		Points:      []CalPoint{{ID: 1, Coordinates: map[string]float64{"α": 10}}},
+	}
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- engine.StartWithContext(ctx, noopAlgorithm{}) }()
+
+	// 等引擎进入运行态：无运动轴、无闸门，processPoint 随即进入 60s 驻留
+	waitForCondition(t, 2*time.Second, engine.IsRunning)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("驻留中取消应返回 context.Canceled，实际: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		engine.Stop()
+		t.Fatal("驻留等待未在取消后及时退出")
+	}
+	if len(engine.GetDataPoints()) != 0 {
+		t.Fatalf("驻留中取消不应采集到数据点，实际 %d 个", len(engine.GetDataPoints()))
+	}
+}
+
+// TestStartWithContextCancelsWhilePaused 验证暂停等待（waitWhilePaused）中取消 ctx 能及时退出。
+// 用 pauseTestRuntime 阻塞首次 WaitForMotionComplete 构造确定性的暂停窗口：
+// 运动中暂停 → StopMotion 放行 → ErrPointAborted → 循环顶部进入 waitWhilePaused。
+func TestStartWithContextCancelsWhilePaused(t *testing.T) {
+	rt := newPauseTestRuntime()
+	config := Config{
+		TaskID: "task-ctx-pause",
+		Type:   string(TypeTotalPressure),
+		MotionAxes: []MotionAxisConfig{
+			{Name: "α", ControllerID: "motion-1", Axis: "X"},
+		},
+		Points: []CalPoint{{ID: 1, Coordinates: map[string]float64{"α": 10}}},
+	}
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- engine.StartWithContext(ctx, noopAlgorithm{}) }()
+
+	// 等运动开始（WaitForMotionComplete 阻塞中），随后暂停：
+	// StopMotion 放行 wait → processPoint 返回 ErrPointAborted → 循环顶部 waitWhilePaused 阻塞
+	select {
+	case <-rt.waitStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForMotionComplete 未被调用")
+	}
+	engine.Pause()
+	waitForCondition(t, 2*time.Second, engine.IsPaused)
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("暂停等待中取消应返回 context.Canceled，实际: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		engine.Stop()
+		t.Fatal("暂停等待未在取消后及时退出")
+	}
+}
+
+// TestStartWithContextCancelsDuringGateWait 验证球罐闸门等待中取消 ctx 能及时退出。
+// 稳定时间通道读取恒失败（nonBlockingRuntime 返回 ok=false），闸门条件永不满足；
+// 若 gate 轮询不可取消，只能在 TimeoutSec=300s 后以超时错误结束，本测试将失败。
+func TestStartWithContextCancelsDuringGateWait(t *testing.T) {
+	rt := &nonBlockingRuntime{}
+	config := Config{
+		TaskID: "task-ctx-gate",
+		Type:   string(TypeTotalPressure),
+		Points: []CalPoint{{ID: 1, Coordinates: map[string]float64{"α": 10}}},
+		SphereTankGate: &SphereTankGateConfig{
+			Enabled:           true,
+			WaitTimeSec:       100,
+			TimeoutSec:        300,
+			StableTimeChannel: ChannelRef{DeviceID: "dev-gate", ChannelIndex: 0},
+		},
+	}
+	engine := NewAutomaticCalibration(config, nil, rt, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- engine.StartWithContext(ctx, noopAlgorithm{}) }()
+
+	// 等进入运行态并给 gate 轮询（100ms 周期）一个生效窗口
+	waitForCondition(t, 2*time.Second, engine.IsRunning)
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("球罐闸门等待中取消应返回 context.Canceled，实际: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		engine.Stop()
+		t.Fatal("球罐闸门等待未在取消后及时退出")
+	}
 }

@@ -121,6 +121,13 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	srv := &http.Server{Addr: addr, Handler: handler}
 	go func() {
 		<-ctx.Done()
+		// context-owned 关停：先停止校准任务并有界等待其 session 退出
+		// （writer flush/结果保存/运动归零完成），再关闭 HTTP 监听。
+		// 超时仅记录不阻塞整体关停——旧 session 会在后台继续收尾，
+		// Start 的 session 门禁保证其退出前不会有新任务复用资源。
+		if err := calMgr.Shutdown(); err != nil {
+			fmt.Fprintf(os.Stderr, "calibration shutdown wait timed out: %v\n", err)
+		}
 		srv.Close()
 	}()
 	go func() {

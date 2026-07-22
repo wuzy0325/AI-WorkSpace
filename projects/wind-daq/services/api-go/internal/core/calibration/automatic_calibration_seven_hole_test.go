@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-
-	"wind-daq/services/api-go/internal/core/traversal"
 )
 
 // =====================================================================
@@ -523,15 +521,6 @@ func TestLookupAxisPosition_NotFound(t *testing.T) {
 		t.Error("β 不在 Coordinates 也不在 MotionCoordinates 时应返回 ok=false")
 	}
 }
-
-// =====================================================================
-// 编译期保证：未使用的 traversal 包导入被消费
-// =====================================================================
-//
-// traversal 包在本文件未直接使用，但 fakeCalibrationRuntime.WaitForMotionComplete
-// 依赖 traversal.MotionInterruptReason / MotionSafetyFailure；
-// 这里显式引用一次避免"imported and not used"编译错误。
-var _ = traversal.MotionInterruptNone
 
 // =====================================================================
 // spec Task 11 测试：OnRegionChanged 七孔分区变更事件

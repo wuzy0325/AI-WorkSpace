@@ -15,7 +15,6 @@ import (
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/pressure"
-	"wind-daq/services/api-go/internal/core/resourcelock"
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"
 )
@@ -167,12 +166,19 @@ func (m *TraversalManager) finalizeSinkInternal() {
 		}
 	}
 	// 释放工作流级互斥锁；幂等
+	// spec Task 21 Path 4（void 路径）：Release 失败仅记录 Warn，不影响 void 签名；
+	// 成功时才记录 Info "traversal lock released"，确保"失败后不记录成功 info"契约。
+	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验。
 	if taskID != "" {
-		_ = resourcelock.Default().Release(traversalLockResource, taskID)
-		slog.Info("traversal lock released",
-			"component", "traversal",
-			"task_id", taskID,
-		)
+		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
+			slog.Warn("traversal finalize release lock failed",
+				"component", "traversal", "task_id", taskID, "error", releaseErr)
+		} else {
+			slog.Info("traversal lock released",
+				"component", "traversal",
+				"task_id", taskID,
+			)
+		}
 	}
 }
 

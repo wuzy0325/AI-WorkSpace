@@ -309,6 +309,10 @@ const columns = computed<DataTableColumns<TableRow>>(() => [
 const ROW_HEIGHT = 36
 // 表格最大高度：超过则内部虚拟滚动，避免上百点撑爆面板
 const TABLE_MAX_HEIGHT = 320
+// 表格横向滚动总宽度：列总宽超过容器宽度时启用横向滚动条
+// 计算：selection(40) + __idx(56) + X/Y/Z/U(80*4=320) + dwellMs(110) + samples(110) + test(90) + actions(70) = 796
+// 设为 800 略余量，避免边界抖动；列宽调整时需同步更新
+const TABLE_SCROLL_X = 800
 </script>
 
 <template>
@@ -365,6 +369,7 @@ const TABLE_MAX_HEIGHT = 320
       :virtual-scroll="true"
       :max-height="TABLE_MAX_HEIGHT"
       :row-height="ROW_HEIGHT"
+      :scroll-x="TABLE_SCROLL_X"
       :bordered="false"
       :single-line="false"
       @update:checked-row-keys="onCheckedRowKeysChange"

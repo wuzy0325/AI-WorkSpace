@@ -124,6 +124,25 @@ export interface CalibrationStatus {
   pausedDurationMs?: number;
   results: any[];
   lastError?: string;
+  /**
+   * 实时物理量快照（spec Task 13/14，与后端 core/calibration.LivePhysics 对齐）。
+   *
+   * Wails binding 重新生成后会自动包含此字段；旧 binding 未同步时为 undefined。
+   *
+   * 三态语义（与 *float64 指针语义一致）：
+   *   - 字段省略（undefined）：缺失（必需通道未配置/读取失败/物理非法如 Pt < Ps）
+   *   - 字段值为 0：有效零（Pt == Ps 即零流量，Task 12）
+   *   - 字段值为正数：正常计算值
+   *
+   * 整体 livePhysics 省略（undefined）：类型不支持（总温）或未启动校准。
+   * 整体存在但字段省略：类型支持但运行期读取失败。
+   *
+   * 关键不变量：前端不得用 truthiness 判断 `livePhysics.machNumber`——0 是有效零。
+   */
+  livePhysics?: {
+    machNumber?: number;
+    velocity?: number;
+  };
 }
 
 // SevenHoleConfig 与 shared/types/calibration.SevenHoleConfig 对齐，
@@ -144,6 +163,21 @@ export interface SevenHoleConfig {
   outerPhiMax: number;
   outerPhiStep: number;
   serpentine: boolean;
+}
+
+// FiveHolePointLayout 与 shared/types/calibration.FiveHolePointLayout 对齐，
+// 用于 CalibrationPreviewFiveHole binding 调用（spec Task 11）——
+// 透传到后端 usecase.PreviewFiveHolePoints（再调 core.GenerateFiveHoleSnakePoints）。
+// 字段命名遵循后端 json tag（FiveHolePointLayoutDTO 直接是 calibration.FiveHolePointLayout 别名）。
+export interface FiveHolePointLayout {
+  alphaMin: number;
+  alphaMax: number;
+  alphaStep: number;
+  betaMin: number;
+  betaMax: number;
+  betaStep: number;
+  /** 蛇形走位：奇数行反向遍历 α；默认 false 为逐行 raster 扫描 */
+  serpentine?: boolean;
 }
 
 // StorageRecordingConfig 与后端 storage.RecordingConfig 对齐，
@@ -525,6 +559,24 @@ export const wailsApi = {
      */
     previewSevenHole: async (config: SevenHoleConfig): Promise<GenericResponse> => {
       return await callBindingGeneric('CalibrationPreviewSevenHole', config);
+    },
+    /**
+     * 五孔点位预览（spec Task 11）
+     *
+     * 调用后端 CalibrationPreviewFiveHole binding，纯计算不涉及 I/O：
+     *   - 接收前端配置向导提交的 FiveHolePointLayout（α/β 范围与步长 + serpentine 开关）
+     *   - 调用 usecase.PreviewFiveHolePoints（再调 core.GenerateFiveHoleSnakePoints）
+     *   - 返回 []FiveHoleSnakePoint（bare array，与 HTTP /api/calibration/fivehole 契约一致）
+     *
+     * 返回 GenericResponse：Success=false 时 Error 透传 GenerateFiveHoleSnakePoints 错误
+     * （如步长 ≤ 0）；Success=true 时 Data 字段为 []FiveHoleSnakePoint。
+     *
+     * 与 previewSevenHole 的区别：
+     *   - 五孔 Data 是 bare array（[]FiveHoleSnakePoint），前端直接迭代
+     *   - 七孔 Data 是包装对象（SevenHolePreviewResult，含 totalCount/innerCount/outerCount）
+     */
+    previewFiveHole: async (layout: FiveHolePointLayout): Promise<GenericResponse> => {
+      return await callBindingGeneric('CalibrationPreviewFiveHole', layout);
     }
   },
 

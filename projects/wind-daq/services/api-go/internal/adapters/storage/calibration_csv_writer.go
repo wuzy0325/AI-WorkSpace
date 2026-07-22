@@ -20,6 +20,7 @@ package storage
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -251,25 +252,41 @@ func (w *CalibrationCsvWriter) AppendPoint(dataPoint calibration.DataPoint) erro
 		return fmt.Errorf("写入CSV数据失败: %w", err)
 	}
 	w.writer.Flush()
+	// csv.Writer.Flush() 不返回错误，但底层 bufio.Writer 写入可能失败（如文件已关闭、磁盘满）。
+	// 必须通过 Error() 检查缓冲写入错误，否则会静默丢点（spec Task 20）。
+	// Error() 内部会主动探测 bufio.Writer 的存储错误（Write(nil) 返回 b.err）。
+	if err := w.writer.Error(); err != nil {
+		return fmt.Errorf("写入CSV数据失败: %w", err)
+	}
 
 	return nil
 }
 
 // Flush 刷新并关闭 CSV 文件
+//
+// 错误聚合（spec Task 20）：返回 csv.Writer 缓冲写入错误和 file.Close 错误的 join，
+// 调用方可通过 errors.Is/errors.As 识别两类失败。旧实现只返回 file.Close 错误，
+// csv.Writer.Error() 缓冲错误被丢弃，导致底层写入失败被静默吞掉。
 func (w *CalibrationCsvWriter) Flush() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// 收集两类错误：
+	// 1. csv.Writer 缓冲写入错误（Flush 不返回错误，必须通过 Error() 检查）
+	// 2. file.Close 错误（如双关闭、底层 fd 异常）
+	// 用 errors.Join 聚合，确保两者均可被调用方识别。
+	var bufferedErr error
 	if w.writer != nil {
 		w.writer.Flush()
+		bufferedErr = w.writer.Error()
 	}
+	var closeErr error
 	if w.file != nil {
-		err := w.file.Close()
+		closeErr = w.file.Close()
 		w.file = nil
 		w.writer = nil
-		return err
 	}
-	return nil
+	return errors.Join(bufferedErr, closeErr)
 }
 
 // Path 获取 CSV 文件路径

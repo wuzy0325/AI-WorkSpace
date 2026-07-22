@@ -37,57 +37,14 @@ export interface CalculatedPhysics {
   velocity?: number
 }
 
-// 大气数据计算常数（与后端 AtmosphericDataCalculator 保持一致）
-const ATM_GAMMA = 1.4       // 空气绝热指数
-const ATM_C_COEFF = 20.047  // 声速计算系数
-const ATM_RECOVERY = 0.9    // 温度传感器恢复系数
-
-/**
- * 根据实时压力计算气动参数（马赫数、流速）。
- * 公式与后端 AtmosphericDataCalculator / formulas.go 一致，用于 UI 实时显示，非校准算法。
- *
- * 关键：风洞总压/静压通道通常以大气压为参考点输出差压（表压），
- *   后端公式约定 Pt_abs = P0 + Patm, Ps_abs = Ps + Patm。
- *   若 Patm 缺失或为 0，实时 UI 使用标准大气压兜底，避免差压通道导致整块空白。
- *
- * 马赫数: Ma = sqrt((2/(γ-1)) * ((Pt_abs/Ps_abs)^((γ-1)/γ) - 1))
- * 静温:   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，需转开尔文）
- * 流速:   V = Ma * 20.047 * sqrt(SAT)
- *
- * 当 P0/Ps/Ttunnel 任一缺失或非法时返回 null（UI 显示 "--"）。
- */
-function calculateAtmosphericPhysics(p: RealtimePressures): CalculatedPhysics | null {
-  const ptGauge = p.P0
-  const psGauge = p.Ps
-  // 风洞温度通道单位为 ℃，需转换为开尔文
-  const tatK = p.Ttunnel === undefined ? undefined : p.Ttunnel + 273.15
-  // 大气压：与后端 formulas.go 口径一致——Patm 缺失或 <=0 时不计算 Ma/V，
-  // 返回 null 让 UI 显示 "--"、CSV 写空。避免前端兜底标准大气压而后端置 nil
-  // 导致"UI 显示数值、CSV 对应列为空"的不一致（§22: pAtm 为必需通道）。
-  const patm = p.Patm
-
-  if (ptGauge === undefined || psGauge === undefined || tatK === undefined || patm === undefined) return null
-  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK) || !Number.isFinite(patm)) return null
-  if (patm <= 0) return null
-
-  const ptAbs = ptGauge + patm
-  const psAbs = psGauge + patm
-
-  if (psAbs <= 0 || ptAbs < psAbs || tatK <= 0) return null
-  if (ptAbs === psAbs) return { machNumber: 0, velocity: 0 }
-
-  const ratio = ptAbs / psAbs
-  const ma = Math.sqrt((2 / (ATM_GAMMA - 1)) * (Math.pow(ratio, (ATM_GAMMA - 1) / ATM_GAMMA) - 1))
-  if (!Number.isFinite(ma) || ma < 0) return null
-
-  const sat = tatK / (1 + ((ATM_GAMMA - 1) / 2) * ATM_RECOVERY * ma * ma)
-  if (!Number.isFinite(sat) || sat <= 0) return null
-
-  const velocity = ma * ATM_C_COEFF * Math.sqrt(sat)
-  if (!Number.isFinite(velocity)) return null
-
-  return { machNumber: ma, velocity }
-}
+// spec Task 15：删除前端 atmospheric 公式（ATM_GAMMA/ATM_C_COEFF/ATM_RECOVERY + calculateAtmosphericPhysics）。
+//   实时马赫数/流速改由后端 CalibrationStatus.livePhysics 提供（spec Task 13 已组装），
+//   前端 store 只在 updateStatusFromBackend 中映射 livePhysics → calculatedPhysics，
+//   原始压力更新（updateRealtimePressures）不再触发任何公式，避免前后端算法漂移。
+//   三态语义（与后端 *float64 对齐）：
+//     livePhysics 缺失（undefined）→ calculatedPhysics=null（UI 显示 "--"）
+//     livePhysics.machNumber=0     → 透传 0（UI 显示 "0.000"，零是有效零，区别于 missing）
+//     livePhysics.machNumber=0.3   → 透传 0.3
 
 export interface TimeInfo {
   elapsedTime: number
@@ -119,6 +76,19 @@ export const useCalibrationStore = defineStore('calibration', () => {
   // 状态轮询定时器：必须放在 store 内部（而非模块级），
   // 否则多实例 / HMR 重载时旧 timer 不会随 store dispose 而清理，导致泄漏与重复轮询。
   let statusPollingTimer: ReturnType<typeof setInterval> | null = null
+
+  // 轮询 generation token：每次 start/stop 都自增，用于隔离旧 generation 的在途响应。
+  //
+  // 必要性（review P1 缺陷）：
+  //   - acquireView/releaseView/recovery/uiRefreshHz 变化都会 stopStatusPolling + startStatusPolling，
+  //     产生新的 polling generation。旧 generation 的 in-flight 请求返回后若仍写入 store，
+  //     会用旧任务/旧进度/旧 physics 覆盖新 generation 的状态。
+  //   - 终态响应若来自旧 generation，还会调用 stopStatusPolling 停掉新 generation 的 timer。
+  //   - inFlight 是 startStatusPolling 内的局部变量，无法跨 generation 隔离。
+  //
+  // 修复方案：每次 start 拍摄当前 generation 快照，响应返回时若 generation 已变（被 stop 或新 start 覆盖），
+  //   直接丢弃，不写 store、不调 stopStatusPolling。
+  let pollingGeneration = 0
 
   // 画面活跃性计数：驱动 polling 频率切换（spec I4）
   // - count > 0：至少一个校准 Main 可见，polling 用 uiRefreshHz（默认 5Hz）
@@ -168,13 +138,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const intervalMs = Math.round(uiRefreshIntervalMs.value)
 
     const applyPressureUpdate = (pressures: RealtimePressures) => {
+      // spec Task 15：raw pressure 更新只刷新 realtimePressures，不再触发任何公式。
+      //   马赫数/流速由后端 CalibrationStatus.livePhysics 提供，store 在
+      //   updateStatusFromBackend 中映射。避免前端公式与后端 AtmosphericDataCalculator
+      //   漂移导致"UI 显示数值、CSV 对应列为空"等不一致。
       realtimePressures.value = pressures
-      // 同步计算气动参数（马赫数、流速），公式与后端 AtmosphericDataCalculator 一致：
-      //   Ma = sqrt((2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1))
-      //   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，开尔文）
-      //   V   = Ma * 20.047 * sqrt(SAT)
-      // 这是实时显示用的标准大气数据计算，非校准算法。
-      calculatedPhysics.value = calculateAtmosphericPhysics(pressures)
     }
 
     if (now - lastPressureUpdateAt >= intervalMs) {
@@ -235,25 +203,62 @@ export const useCalibrationStore = defineStore('calibration', () => {
   // 参数 intervalMs：显式指定轮询间隔（用于 acquire/release 切换频率）。
   //   默认 undefined 时按 activeViewCount 自动选择：count>0 用 uiRefreshHz，count==0 用 1Hz 心跳。
   //   spec I4：禁止并发写竞态，调用方需先 stopStatusPolling() 再 start。
+  //
+  // spec Task 14：HTTP/Wails 两种 transport 都轮询既有 status route/binding。
+  //   - Wails 模式：wailsApi.calibration.status()（binding）
+  //   - HTTP 模式：calibrationApi.status()（GET /api/calibration/status）
+  // 旧代码 `if (!isWailsAvailable()) return` 导致 HTTP 模式完全不轮询，进度条/已完成点数不刷新。
+  //
+  // 请求不重叠保护（spec Task 14 acceptance）：
+  //   上一帧 status 请求未完成时跳过本次 setInterval 触发，避免后端慢响应时请求堆积
+  //   导致 store 状态被旧响应覆盖（后到的旧响应覆盖新响应）。
+  //   setInterval 不会因 await 自动延后下一次触发，必须显式 inFlight 标志。
+  //
+  // generation 隔离（review P1 缺陷修复）：
+  //   start 时拍摄 generation 快照；响应返回时若 generation 已变（被 stop 或新 start 覆盖），
+  //   直接丢弃，不写 store、不调 stopStatusPolling。这避免旧 generation 的乱序响应
+  //   覆盖新 generation 的状态，或终态响应停掉新 generation 的 timer。
+  //
+  // zero 不被 truthiness 丢失（spec Task 14 acceptance）：
+  //   calStatus 是对象（即使 currentPoint=0/state=idle），if (calStatus) 检查对象存在性而非 truthiness。
+  //   后端返回的 machNumber=0 / velocity=0 是有效零，由 updateStatusFromBackend 保留。
   function startStatusPolling(intervalMs?: number) {
     stopStatusPolling()
+    const generation = ++pollingGeneration
     const interval = intervalMs ?? (activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000)
+    let inFlight = false
     statusPollingTimer = setInterval(async () => {
-      if (!isWailsAvailable()) return
+      if (inFlight) return
+      inFlight = true
       try {
-        const calStatus = await wailsApi.calibration.status()
+        const calStatus = isWailsAvailable()
+          ? await wailsApi.calibration.status()
+          : await calibrationApi.status()
+        // generation 已变：本响应来自上一轮 polling（已被 stop 或新 start 取代），
+        // 直接丢弃，避免旧任务/旧进度/旧 physics 覆盖新 generation 的状态，
+        // 也避免终态响应停掉新 generation 的 timer。
+        if (generation !== pollingGeneration) return
         if (calStatus) {
           // 更新本地状态
           updateStatusFromBackend(calStatus)
         }
       } catch (err) {
-        console.error('轮询校准状态失败:', err)
+        if (generation === pollingGeneration) {
+          console.error('轮询校准状态失败:', err)
+        }
+      } finally {
+        // inFlight 只控制本 generation 内的 tick 不重叠；generation 已变时也要清零
+        // 防止局部闭包被新 generation 复用（实际新 start 会创建新闭包，但保险起见）。
+        inFlight = false
       }
     }, Math.round(interval))
   }
 
   // 停止轮询
+  // 同时自增 generation，让上一轮 startStatusPolling 在途的请求返回时识别为过期并丢弃，
+  // 避免旧响应在 stop 之后写入 store 或触发 stopStatusPolling 停掉新 timer（review P1 缺陷修复）。
   function stopStatusPolling() {
+    pollingGeneration++
     if (statusPollingTimer) {
       clearInterval(statusPollingTimer)
       statusPollingTimer = null
@@ -280,13 +285,13 @@ export const useCalibrationStore = defineStore('calibration', () => {
   // 画面活跃性 acquire：引用计数+1。从 0→1 时升频（spec I4 / Recovery UX）：
   //   - 仅 running/paused 态需要高频 polling + elapsedTick（终态/idle 无需轮询）
   //   - acquire 不动 status/dataPoints/completeEvent，仅控制 polling 频率
+  //   - spec Task 14：HTTP/Wails 两种 transport 都需启动 polling——
+  //     旧代码仅在 isWailsAvailable() 时启动，HTTP 模式切回画面后进度条不刷新。
   function acquireView() {
     const wasZero = activeViewCount.value === 0
     activeViewCount.value++
     if (wasZero && (isRunning.value || isPaused.value)) {
-      if (isWailsAvailable()) {
-        startStatusPolling(Math.round(uiRefreshIntervalMs.value))
-      }
+      startStatusPolling(Math.round(uiRefreshIntervalMs.value))
       startElapsedTick()
     }
   }
@@ -295,12 +300,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
   //   - polling 降到 1Hz 心跳（仅 running/paused 态保留，捕获切走期间终态写入 store）
   //   - elapsedTick 停止（无画面无需刷新时间显示）
   //   - 不清空会话状态（spec I1/I3/I7）
+  //   - spec Task 14：HTTP/Wails 两种 transport 都需保留 1Hz 心跳——
+  //     旧代码仅在 isWailsAvailable() 时启动，HTTP 模式切走画面后无法捕获终态写入。
   function releaseView() {
     if (activeViewCount.value > 0) {
       activeViewCount.value--
     }
     if (activeViewCount.value === 0) {
-      if ((isRunning.value || isPaused.value) && isWailsAvailable()) {
+      if (isRunning.value || isPaused.value) {
         startStatusPolling(1000)
       }
       stopElapsedTick()
@@ -313,9 +320,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
   //   - 其他（终态/idle）：不动——updateStatusFromBackend 终态分支已 stop polling
   // 为什么需要这个：recoveryFromBackend 内部 stopStatusPolling 防竞态但不重启，
   //   调用方必须显式依后端返回状态设频，避免 polling 一直停着。
+  // spec Task 14：HTTP/Wails 两种 transport 都需重启 polling——
+  //   旧代码 `if (!isWailsAvailable()) return` 导致 HTTP 模式 recovery 后永不轮询，
+  //   进度条/已完成点数全靠单次 recovery 快照，后续无更新。
   function restartPollingForCurrentState() {
     if (!isRunning.value && !isPaused.value) return
-    if (!isWailsAvailable()) return
     const interval = activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000
     startStatusPolling(Math.round(interval))
   }
@@ -439,6 +448,28 @@ export const useCalibrationStore = defineStore('calibration', () => {
       updateRegion(backendRegion, backendSector, backendBoundaryFlag)
     }
 
+    // spec Task 15：映射后端 livePhysics → calculatedPhysics
+    //   - 后端在 CalibrationStatus.LivePhysics 中提供实时马赫数/流速（spec Task 13 已组装），
+    //     由 AtmosphericDataCalculator 锁外计算，5Hz polling 时随 status 一并返回。
+    //   - 三态语义（与后端 *float64 nil 对齐）：
+    //       livePhysics 缺失（undefined） → calculatedPhysics=null（UI 显示 "--"）
+    //       livePhysics.machNumber=0      → 透传 0（UI 显示 "0.000"，零是有效零）
+    //       livePhysics.machNumber=0.3    → 透传 0.3
+    //   - "对象存在性"而非 truthiness：`if (backendLivePhysics && typeof === 'object')`
+    //     确保全零 LivePhysics（{machNumber:0, velocity:0}）不被跳过——后端 §22 中
+    //     Pt==Ps 是有效零气动状态，UI 必须显示 "0.000" 而非 "--"。
+    //   - 终态后端已 StaleClearing（livePhysics=nil），自然映射为 null。
+    //   - Wails binding 字段为 PascalCase，做 fallback 与其他字段一致。
+    const backendLivePhysics = calStatus.livePhysics ?? calStatus.LivePhysics
+    if (backendLivePhysics && typeof backendLivePhysics === 'object') {
+      calculatedPhysics.value = {
+        machNumber: backendLivePhysics.machNumber,
+        velocity: backendLivePhysics.velocity,
+      }
+    } else {
+      calculatedPhysics.value = null
+    }
+
     // 更新运行状态
     isRunning.value = state === 'running'
     isPaused.value = state === 'paused'
@@ -555,9 +586,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
     }
   }
 
+  // spec Task 14：uiRefreshHz 变化时，HTTP/Wails 两种 transport 都需重启 polling——
+  // 旧代码仅在 isWailsAvailable() 时重启，HTTP 模式下用户在设置对话框调整刷新频率后
+  // polling 间隔不更新，UI 仍按旧频率刷新。
   watch(uiRefreshHz, () => {
     flushPendingPressureIfReady()
-    if (isRunning.value && isWailsAvailable()) {
+    if (isRunning.value) {
       startStatusPolling()
     }
   })
@@ -619,11 +653,10 @@ export const useCalibrationStore = defineStore('calibration', () => {
       dataPoints: [],
     }
     updateTimeInfo()
-    if (wails) {
-      startStatusPolling()
-    }
-    // 已用时 tick 在 wails / http 两种模式下都需要启动：
-    // http 模式没有 statusPolling，但 UI "已用时"控件同样需要每秒刷新。
+    // spec Task 14：HTTP/Wails 两种 transport 都需启动 polling——
+    // 旧代码仅在 wails 时启动，HTTP 模式启动校准后进度条/已完成点数不刷新。
+    // 已用时 tick 同样在两种模式下都需启动（HTTP 模式没有 statusPolling 时仍需 tick）。
+    startStatusPolling()
     startElapsedTick()
   }
 
@@ -635,7 +668,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '暂停校准失败')
       }
     } else {
-      await calibrationApi.pauseCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/pause route。
+      // 失败时必须抛错——不得返回 synthetic success 让 UI 误以为已暂停。
+      // calibrationApi.pauseCalibration 内部 catch 已转为 { success: false, error }，
+      // 这里再次检查并抛错，与 Wails 模式行为一致。
+      const res = await calibrationApi.pauseCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '暂停校准失败')
+      }
     }
     isPaused.value = true
     // 记录暂停开始时刻，tick 据此冻结 elapsed；resume 时累加到 pausedAccumulatedMs
@@ -653,7 +693,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '恢复校准失败')
       }
     } else {
-      await calibrationApi.resumeCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/resume route。
+      const res = await calibrationApi.resumeCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '恢复校准失败')
+      }
     }
     isPaused.value = false
     // 把暂停段累加到 pausedAccumulatedMs，让 elapsed 从恢复时刻继续递增
@@ -674,7 +718,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '停止校准失败')
       }
     } else {
-      await calibrationApi.stopCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/stop route。
+      const res = await calibrationApi.stopCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '停止校准失败')
+      }
     }
     isRunning.value = false
     isPaused.value = false
@@ -689,9 +737,10 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 定格已用时；继续 poll 一次等后端 stopped 回包（updateStatusFromBackend 终态分支会 stopStatusPolling），
     // 避免高频空转等待。
     stopElapsedTick()
-    if (isWailsAvailable()) {
-      startStatusPolling(1000)
-    }
+    // spec Task 14：HTTP 模式也需要继续 poll 等终态回包——之前只在 isWailsAvailable() 时
+    // 启动 1Hz 轮询，HTTP 模式下 stop 后无法捕获后端 stopped 回包，UI 卡在本地 stopped 状态
+    // 无法刷新后端最终快照（含完整 dataPoints / lastError）。
+    startStatusPolling(1000)
   }
 
   async function saveData(savePath: string): Promise<{ success: boolean; filepath?: string; error?: string }> {

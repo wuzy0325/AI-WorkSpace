@@ -135,6 +135,9 @@ func TestCalculateSevenHoleInnerCoefficients_MissingPTunnel(t *testing.T) {
 //
 // 当 P7-P̄ 接近零（来流正对探针但 P7 与外围孔压力几乎相等），
 // 或 p_t-p_s 接近零（风洞未建立压差）时，公式分母为零，必须返回错误而非 NaN/Inf。
+//
+// 注：p_t-p_s=0 的等压场景由 TestCalculateSevenHoleInnerCoefficients_EqualPressure
+// 单独覆盖——等压是有效零流量，K0/Ks 跳过但 Ma/V 返回 0，不返回错误。
 func TestCalculateSevenHoleInnerCoefficients_DivideByZero(t *testing.T) {
 	pTunnel := 100.0
 	pStatic := 100.0 // p_t - p_s = 0
@@ -154,6 +157,64 @@ func TestCalculateSevenHoleInnerCoefficients_DivideByZero(t *testing.T) {
 	_, err := CalculateSevenHoleInnerCoefficients(raw)
 	if err == nil {
 		t.Error("P7-P̄=0 时应返回除零错误, 实际返回 nil")
+	}
+}
+
+// TestCalculateSevenHoleInnerCoefficients_EqualPressure 内区等压（p_t == p_s）零流量语义
+//
+// 验证 review P1 修复：等压是有效零流量场景，K0/Ks 分母为零无物理意义跳过（保持零值），
+// 但 Ma/V 必须返回 0（与 live physics 五孔/三孔/总压同走 CalculateAll 的零流量口径一致），
+// 不再像旧实现那样直接返回错误导致 CSV/样本 Ma/V 为空。
+//
+// 测试前置：
+//   - P1..P6 取不同值保证 P7-P̄≠0（避免 denomAlphaBeta 除零保护触发）
+//   - PTotal == PStatic（等压，pt-ps=0）
+//   - PAtm/TAtm 齐全
+//
+// 期待结果：
+//   - err == nil（等压不再是错误）
+//   - MachNumber != nil 且 *MachNumber == 0
+//   - Velocity != nil 且 *Velocity == 0
+//   - K0 == 0, Ks == 0（等压跳过，保持零值）
+func TestCalculateSevenHoleInnerCoefficients_EqualPressure(t *testing.T) {
+	pTunnel := 500.0
+	pStatic := 500.0 // p_t == p_s，等压零流量
+	raw := SevenHoleRawData{
+		P1:      100.0,
+		P2:      200.0,
+		P3:      300.0,
+		P4:      400.0,
+		P5:      500.0,
+		P6:      600.0,
+		P7:      700.0, // P7-P̄ = 700-350 = 350 ≠ 0
+		PAtm:    98880.0,
+		TAtm:    28.0,
+		PTotal:  &pTunnel,
+		PStatic: &pStatic,
+	}
+
+	coeffs, err := CalculateSevenHoleInnerCoefficients(raw)
+	if err != nil {
+		t.Fatalf("等压（p_t==p_s）不应返回错误, 实际: %v", err)
+	}
+
+	// K0/Ks 等压跳过，保持零值
+	if coeffs.K0 != 0 || coeffs.Ks != 0 {
+		t.Errorf("等压时 K0/Ks 应跳过保持零值, 实际 K0=%.6f Ks=%.6f", coeffs.K0, coeffs.Ks)
+	}
+
+	// Ma/V 必须返回 0（与 live physics 零流量口径一致）
+	if coeffs.MachNumber == nil {
+		t.Fatal("等压时 MachNumber 不应为 nil, 期望 0（零流量语义与 live physics 一致）")
+	}
+	if *coeffs.MachNumber != 0 {
+		t.Errorf("等压时 Ma 期望 0, 实际 %.6f", *coeffs.MachNumber)
+	}
+	if coeffs.Velocity == nil {
+		t.Fatal("等压时 Velocity 不应为 nil, 期望 0（零流量语义与 live physics 一致）")
+	}
+	if *coeffs.Velocity != 0 {
+		t.Errorf("等压时 V 期望 0, 实际 %.6f", *coeffs.Velocity)
 	}
 }
 
@@ -330,6 +391,64 @@ func TestCalculateSevenHoleOuterCoefficients_DivideByZero(t *testing.T) {
 	}
 }
 
+// TestCalculateSevenHoleOuterCoefficients_EqualPressure 外区等压（p_t == p_s）零流量语义
+//
+// 验证 review P1 修复：与内区等压测试同口径，外区等压时 K0[n]/Ks[n] 跳过（保持零值），
+// Ma/V 返回 0，不再返回错误。保证七孔外区 CSV/样本在零流量场景下与 live physics 一致。
+//
+// 测试前置：
+//   - P1=700 为最大孔（n=1），P2/P6 取不同值保证 P1-(P2+P6)/2≠0（避免 denomThetaPhi 除零）
+//   - PTotal == PStatic（等压，pt-ps=0）
+//   - PAtm/TAtm 齐全
+//
+// 期待结果：
+//   - err == nil
+//   - MachNumber != nil 且 *MachNumber == 0
+//   - Velocity != nil 且 *Velocity == 0
+//   - K0Outer == 0, KsOuter == 0（等压跳过）
+func TestCalculateSevenHoleOuterCoefficients_EqualPressure(t *testing.T) {
+	pTunnel := 500.0
+	pStatic := 500.0 // p_t == p_s，等压零流量
+	raw := SevenHoleRawData{
+		P1:      700.0, // P1 最大 → n=1
+		P2:      200.0,
+		P3:      300.0,
+		P4:      400.0,
+		P5:      500.0,
+		P6:      600.0, // P1-(P2+P6)/2 = 700-(200+600)/2 = 700-400 = 300 ≠ 0
+		P7:      100.0,
+		PAtm:    98880.0,
+		TAtm:    28.0,
+		PTotal:  &pTunnel,
+		PStatic: &pStatic,
+	}
+
+	coeffs, err := CalculateSevenHoleOuterCoefficients(raw, 1)
+	if err != nil {
+		t.Fatalf("外区等压（p_t==p_s）不应返回错误, 实际: %v", err)
+	}
+
+	// K0Outer/KsOuter 等压跳过，保持零值
+	if coeffs.K0Outer != 0 || coeffs.KsOuter != 0 {
+		t.Errorf("等压时 K0Outer/KsOuter 应跳过保持零值, 实际 K0Outer=%.6f KsOuter=%.6f",
+			coeffs.K0Outer, coeffs.KsOuter)
+	}
+
+	// Ma/V 必须返回 0（与内区及 live physics 零流量口径一致）
+	if coeffs.MachNumber == nil {
+		t.Fatal("外区等压时 MachNumber 不应为 nil, 期望 0")
+	}
+	if *coeffs.MachNumber != 0 {
+		t.Errorf("外区等压时 Ma 期望 0, 实际 %.6f", *coeffs.MachNumber)
+	}
+	if coeffs.Velocity == nil {
+		t.Fatal("外区等压时 Velocity 不应为 nil, 期望 0")
+	}
+	if *coeffs.Velocity != 0 {
+		t.Errorf("外区等压时 V 期望 0, 实际 %.6f", *coeffs.Velocity)
+	}
+}
+
 // ==================== 马赫数公式测试（spec §4.4） ====================
 
 // TestCalculateSevenHoleMachNumber_CenterPoint 中心点马赫数验证
@@ -357,9 +476,11 @@ func TestCalculateSevenHoleMachNumber_CenterPoint(t *testing.T) {
 
 // TestCalculateSevenHoleMachNumber_InvalidInput 马赫数异常输入
 //
-// 依据 spec §4.4 与 AtmosphericDataCalculator.CalculateMach 约定：
-// - 静压 ≤ 0：物理无意义（绝压必须 > 0）
-// - 总压 ≤ 静压：亚音速风洞中总压必须 > 静压
+// 依据 spec §4.4 与 AtmosphericDataCalculator.CalculateMach 约定（Task 12 后）：
+//   - 静压 ≤ 0：物理无意义（绝压必须 > 0）
+//   - 总压 < 静压：亚音速风洞中总压必须 ≥ 静压；等压 (Pt == Ps) 已为有效零流量
+//     （由 TestCalculateSevenHoleMachNumber_TableDriven 覆盖）
+//
 // 两种场景必须返回错误，禁止返回 NaN/Inf 误导下游。
 func TestCalculateSevenHoleMachNumber_InvalidInput(t *testing.T) {
 	atmPressure := 98880.0
@@ -370,16 +491,60 @@ func TestCalculateSevenHoleMachNumber_InvalidInput(t *testing.T) {
 		t.Error("p_s_abs ≤ 0 时应返回错误, 实际返回 nil")
 	}
 
-	// 场景 2：p_t_abs ≤ p_s_abs（总压不大于静压）
+	// 场景 2：p_t_abs < p_s_abs（总压严格小于静压）
 	_, err = CalculateSevenHoleMachNumber(-100.0, 0.0, atmPressure)
 	if err == nil {
-		t.Error("p_t_abs ≤ p_s_abs 时应返回错误, 实际返回 nil")
+		t.Error("p_t_abs < p_s_abs 时应返回错误, 实际返回 nil")
 	}
 
 	// 场景 3：大气压力为 0（无法转绝压）
 	_, err = CalculateSevenHoleMachNumber(1000.0, 0.0, 0.0)
 	if err == nil {
 		t.Error("大气压力=0 时应返回错误, 实际返回 nil")
+	}
+}
+
+// TestCalculateSevenHoleMachNumber_TableDriven 表驱动覆盖零/非零/非法/绝压转换
+//
+// Task 12 验收：等压是有效零；Pt < Ps、Ps ≤ 0 仍失败；A→C 边界正确转绝压。
+// 覆盖场景：
+//   - 零流量：表压均为 0 或相等非 0 → pt_abs == ps_abs → Ma=0
+//   - 非零：文档中心点（表压 4073.07/-32.7, atm=98880）→ Ma≈0.242
+//   - 非法：pt_abs < ps_abs；ps_abs ≤ 0
+//   - A→C 边界：表压输入经绝压转换后正确计算（非零用例同步验证此边界）
+func TestCalculateSevenHoleMachNumber_TableDriven(t *testing.T) {
+	atm := 98880.0
+	tests := []struct {
+		name    string
+		pt, ps  float64 // 表压 (A 基准)
+		wantErr bool
+		wantMa  float64
+	}{
+		{"零流量 表压均为 0", 0, 0, false, 0},
+		{"零流量 表压相等非 0", 100, 100, false, 0},
+		{"非零 文档中心点 Ma≈0.242", 4073.07, -32.7, false, 0.242},
+		{"非法 pt_abs < ps_abs", -100, 0, true, 0},
+		{"非法 ps_abs ≤ 0", 1000, -100000, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ma, err := CalculateSevenHoleMachNumber(tt.pt, tt.ps, atm)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("期望错误, 实际 nil (Ma=%v)", ma)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("未期望错误: %v", err)
+			}
+			if math.IsNaN(ma) || math.IsInf(ma, 0) {
+				t.Fatalf("Ma 不应为 NaN/Inf: %v", ma)
+			}
+			if math.Abs(ma-tt.wantMa) > sevenHoleMachEpsilon {
+				t.Errorf("Ma 期望 %v (容差 %v), 实际 %v", tt.wantMa, sevenHoleMachEpsilon, ma)
+			}
+		})
 	}
 }
 

@@ -84,10 +84,15 @@ func CalculateSevenHoleInnerCoefficients(raw SevenHoleRawData) (SevenHoleCoeffic
 	if raw.PTotal != nil && raw.PStatic != nil {
 		denomK0Ks := *raw.PTotal - *raw.PStatic
 		if math.Abs(denomK0Ks) < sevenHoleDivTolerance {
-			return SevenHoleCoefficients{}, fmt.Errorf("内区公式分母 p_t-p_s 接近零 (%.6f), 无法计算 K0/Ks", denomK0Ks)
+			// 等压（p_t == p_s）是有效零流量场景：K0/Ks 分母为零无物理意义，
+			// 保持零值跳过（与缺失通道同语义，CSV 写空/0，下游插值器不消费）；
+			// 但 Ma/V 必须继续计算返回 0，与 live physics（五孔/三孔/总压同走
+			// CalculateAll）零流量口径一致，避免七孔 CSV 在零流量场景下显示空值。
+			// 旧实现此处直接返回错误，导致等压时 Ma/V 也无法计算。
+		} else {
+			coeffs.K0 = (raw.P7 - *raw.PTotal) / denomK0Ks
+			coeffs.Ks = (*raw.PStatic - pBar) / denomK0Ks
 		}
-		coeffs.K0 = (raw.P7 - *raw.PTotal) / denomK0Ks
-		coeffs.Ks = (*raw.PStatic - pBar) / denomK0Ks
 	}
 
 	// 马赫数/速度计算（A→C 边界，仅在此处转绝压）
@@ -158,10 +163,13 @@ func CalculateSevenHoleOuterCoefficients(raw SevenHoleRawData, n int) (SevenHole
 	if raw.PTotal != nil && raw.PStatic != nil {
 		denomK0Ks := *raw.PTotal - *raw.PStatic
 		if math.Abs(denomK0Ks) < sevenHoleDivTolerance {
-			return SevenHoleCoefficients{}, fmt.Errorf("外区公式分母 p_t-p_s 接近零 (%.6f), 无法计算 K0[n]/Ks[n]", denomK0Ks)
+			// 等压（p_t == p_s）是有效零流量场景：K0[n]/Ks[n] 分母为零无物理意义，
+			// 保持零值跳过；Ma/V 继续计算返回 0，与内区及 live physics 零流量口径一致。
+			// 旧实现此处直接返回错误，导致外区等压时 Ma/V 也无法计算。
+		} else {
+			coeffs.K0Outer = (pn - *raw.PTotal) / denomK0Ks
+			coeffs.KsOuter = (*raw.PStatic - (pnNext+pnPrev)/2.0) / denomK0Ks
 		}
-		coeffs.K0Outer = (pn - *raw.PTotal) / denomK0Ks
-		coeffs.KsOuter = (*raw.PStatic - (pnNext+pnPrev)/2.0) / denomK0Ks
 	}
 
 	// 马赫数/速度计算（与内区共用，A→C 边界转换）
@@ -188,7 +196,10 @@ func CalculateSevenHoleOuterCoefficients(raw SevenHoleRawData, n int) (SevenHole
 // 错误返回：
 //   - atmPressure ≤ 0：无法转绝压
 //   - p_s_abs ≤ 0：物理无意义
-//   - p_t_abs ≤ p_s_abs：亚音速风洞中总压必须 > 静压
+//   - p_t_abs < p_s_abs：亚音速风洞中总压不可能小于静压
+//
+// Task 12 零流量语义：p_t_abs == p_s_abs 视为有效零流量，返回 Ma=0, nil；
+// 详见 AtmosphericDataCalculator.CalculateMach。
 //
 // 内部委托给 AtmosphericDataCalculator.CalculateMach 复用既有马赫数实现（与五孔/三孔/总压一致）。
 func CalculateSevenHoleMachNumber(pTunnel, pStatic, atmPressure float64) (float64, error) {
@@ -208,7 +219,8 @@ func CalculateSevenHoleMachNumber(pTunnel, pStatic, atmPressure float64) (float6
 //
 // 内区与外区公式都需要计算 Ma/V，且规则相同：
 //   - PTotal/PStatic/PAtm 任一缺失（PTotal/PStatic 为 nil 或 PAtm ≤ 0）→ Ma/V 保持 nil
-//   - 物理非法（pt ≤ ps）→ Ma/V 保持 nil（CalculateMach 返回错误时不赋值）
+//   - 物理非法（pt < ps）→ Ma/V 保持 nil（CalculateMach 返回错误时不赋值）
+//   - 等压（pt == ps）→ 有效零流量，CalculateMach 返回 Ma=0, V=0（Task 12 零流量语义）
 //   - TAT 优先级：TTunnel > TAtm（spec §4.4）
 //   - 速度公式：V = Ma × 20.047 × √SAT（由 AtmosphericDataCalculator.CalculateTASByMach 实现）
 //
@@ -222,7 +234,11 @@ func calcMachAndVelocity(coeffs *SevenHoleCoefficients, raw SevenHoleRawData) {
 	// A→C 边界：表压转绝压
 	ptAbs := *raw.PTotal + raw.PAtm
 	psAbs := *raw.PStatic + raw.PAtm
-	if psAbs <= 0 || ptAbs <= psAbs {
+	// 等压（ptAbs == psAbs）是有效零流量，必须放行到 CalculateAll 返回 Ma=0, V=0；
+	// 仅 ptAbs < psAbs 为物理非法（亚音速风洞总压不可能小于静压）。
+	// 旧实现 `ptAbs <= psAbs` 一律拦截，导致七孔 CSV/样本在零流量场景下 Ma/V 为空，
+	// 而 live physics（五孔/三孔/总压同走 CalculateAll）却返回 0，造成前后端口径不一致。
+	if psAbs <= 0 || ptAbs < psAbs {
 		return
 	}
 

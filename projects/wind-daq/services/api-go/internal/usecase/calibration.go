@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -41,6 +41,37 @@ func resolveSavePath(p string) (string, error) {
 
 const defaultSampleInterval = 50 * time.Millisecond
 
+// calibrationStopJoinTimeout Stop/Shutdown 等待校准 worker 完全退出
+// （writer flush、结果保存、运动归零均完成）的上限。超时后 Stop 返回明确错误，
+// 且在旧 session 退出前新 Start 持续被拒绝，禁止 replacement 复用旧任务资源。
+// 设为包级变量（非常量）以便测试注入短超时；生产路径不得修改。
+var calibrationStopJoinTimeout = 5 * time.Second
+
+// calibrationRunSession 一次校准运行的会话。
+//
+// 每个 session 捕获自己独占的资源：引擎实例、归一化后的配置、任务 ID、
+// 取消函数与退出信号。worker goroutine 只 finalize 自己 session 的资源，
+// 不读写后续 session 的引擎/writer/状态；session 的 done 在 finalize 全部
+// 完成后才关闭，Start 据此拒绝与旧任务资源重叠的新任务。
+type calibrationRunSession struct {
+	taskID string
+	config calibration.Config
+	engine *calibration.AutomaticCalibration
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{} // worker 完全退出（含 finalize）后关闭
+}
+
+// sessionDone 报告 session 的 worker 是否已完全退出（含 finalize）。
+func sessionDone(s *calibrationRunSession) bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // CalibrationManager 校准管理器
 // 管理校准任务的生命周期，协调自动校准引擎、采集协调器、CSV写入器等组件
 type CalibrationManager struct {
@@ -55,8 +86,12 @@ type CalibrationManager struct {
 	runtime        ports.CalibrationRuntime
 	statusProvider ports.DeviceStatusProvider
 
-	// 校准引擎
+	// 校准引擎与当前会话。
+	// autoEngine 保留给既有读取路径（Pause/Resume/Status 等），
+	// 写入只发生在 Start 发布新 session 时（持 m.mu）；
+	// session 指向当前/最近一次任务会话，任务结束后保留终态供 Status 查询。
 	autoEngine       *calibration.AutomaticCalibration
+	session          *calibrationRunSession
 	currentConfig    calibration.Config
 	currentStatus    calibration.Status
 	currentTaskID    string
@@ -129,6 +164,15 @@ func (m *CalibrationManager) SetSevenHoleWriterFactory(factory ports.Calibration
 }
 
 // Start 启动校准任务
+//
+// 生命周期模型（run session）：
+//   - 所有预启动校验全部通过后才发布 Running 状态/引擎/session，
+//     校验失败不留下任何运行态痕迹；
+//   - 每次 Start 建立一个 calibrationRunSession，worker goroutine 独占该
+//     session 的引擎/配置，finalize（writer flush、结果保存、运动归零）
+//     只由该 worker 执行一次，done 在 finalize 完成后才关闭；
+//   - 旧 session 未 done 时拒绝新任务（含 Stop 超时后旧 worker 收尾期间），
+//     禁止 replacement 复用旧任务资源。
 func (m *CalibrationManager) Start(config calibration.Config) error {
 	if config.TaskID == "" {
 		return fmt.Errorf("taskID is required")
@@ -139,6 +183,11 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 
 	if m.currentStatus.State == calibration.StateRunning || m.currentStatus.State == calibration.StatePaused {
 		return fmt.Errorf("校准任务已在运行中，请先停止")
+	}
+	// session 门禁：上一任务 worker 未完全退出（finalize 未完成）时拒绝新任务。
+	// Stop 仅设置 Stopped 状态并请求取消，worker 的 flush/保存/归零可能仍在进行。
+	if m.session != nil && !sessionDone(m.session) {
+		return fmt.Errorf("上一次校准任务尚未完全退出（taskID=%s），请稍后重试", m.session.taskID)
 	}
 
 	// 兼容旧接口：当调用方仅提供 PressurePoints 而未提供 Points 时，
@@ -171,17 +220,26 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		config.SavePath = resolved
 	}
 
-	m.currentConfig = config
-	m.currentTaskID = config.TaskID
-	m.lastExport = nil
-
-	// 创建事件发布适配器
-	publisher := m.createEventPublisher()
+	// ============ 预启动校验（全部通过前不发布任何运行态） ============
 
 	// 运动安全配置校验：非法阈值/未绑定轴在启动前拒绝，避免运动中才发现配置错误
 	if err := validateCalibrationMotionSafetyConfig(config.MotionSafety, config.MotionAxes); err != nil {
 		return fmt.Errorf("运动安全配置校验失败: %w", err)
 	}
+
+	// 根据校准类型选择算法（未知类型在此拒绝，不得留下 Running 状态）
+	algorithm, err := m.createAlgorithm(config)
+	if err != nil {
+		return err
+	}
+	if len(config.ProbeChannels) > 0 {
+		if err := algorithm.ValidateConfig(config); err != nil {
+			return err
+		}
+	}
+
+	// 创建事件发布适配器
+	publisher := m.createEventPublisher()
 
 	// 创建运行时适配器（注入运动安全配置 + isPaused 回调）
 	runtime := m.createRuntime(config.MotionSafety)
@@ -206,12 +264,14 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		csvPointSink = m.buildSevenHoleCsvSink(config)
 	} else if autoTypes[config.Type] && config.SavePath != "" && m.csvWriter != nil {
 		if err := m.csvWriter.Initialize(config); err != nil {
-			log.Printf("[CalibrationManager] CSV写入器初始化失败: %v", err)
+			slog.Error("calibration csv writer init failed",
+				"component", "calibration", "task_id", config.TaskID, "error", err)
 		} else {
 			writer := m.csvWriter
 			csvPointSink = func(dp calibration.DataPoint) {
 				if err := writer.AppendPoint(dp); err != nil {
-					log.Printf("[CalibrationManager] 实时CSV写入失败: %v", err)
+					slog.Error("calibration csv write failed",
+						"component", "calibration", "task_id", config.TaskID, "error", err)
 				}
 			}
 		}
@@ -257,10 +317,26 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	onMotionSafetyFailure := func(failure *traversal.MotionSafetyFailure) error {
 		return m.handleCalibrationMotionSafetyFailure(runtime, failure)
 	}
-	m.autoEngine = calibration.NewAutomaticCalibration(config, publisher, runtime, onDataPoint, onMotionSafetyFailure)
-	m.autoEngine.SetTaskID(config.TaskID)
+	engine := calibration.NewAutomaticCalibration(config, publisher, runtime, onDataPoint, onMotionSafetyFailure)
+	engine.SetTaskID(config.TaskID)
 
-	// 更新状态
+	// 建立本次运行的 session：worker 独占引擎/配置，ctx 取消驱动有界退出
+	ctx, cancel := context.WithCancel(context.Background())
+	session := &calibrationRunSession{
+		taskID: config.TaskID,
+		config: config,
+		engine: engine,
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+
+	// ============ 全部校验通过，发布运行态 ============
+	m.currentConfig = config
+	m.currentTaskID = config.TaskID
+	m.lastExport = nil
+	m.autoEngine = engine
+	m.session = session
 	m.currentStatus = calibration.Status{
 		TaskID:      config.TaskID,
 		Type:        config.Type,
@@ -270,37 +346,45 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	}
 	m.pauseStartedAt = time.Time{}
 
-	// 根据校准类型选择算法并启动
-	algorithm, err := m.createAlgorithm(config)
-	if err != nil {
-		return err
-	}
-	if len(config.ProbeChannels) > 0 {
-		if err := algorithm.ValidateConfig(config); err != nil {
-			return err
-		}
-	}
+	// 异步启动校准循环（worker 在锁内启动无害：其 finalize 需等 Start
+	// 返回释放 m.mu 后才能写入状态，与既有行为一致）
+	go m.runCalibrationSession(session, algorithm)
 
-	// 异步启动校准循环
-	go func() {
-		err := m.autoEngine.Start(algorithm)
-		m.mu.Lock()
-		defer m.mu.Unlock()
+	return nil
+}
 
+// runCalibrationSession 校准 worker：执行本 session 的引擎循环并独占 finalize。
+//
+// finalize 顺序与单次语义：
+//  1. 引擎退出（正常完成/错误/取消）后按 session 归属写入终态与导出载荷；
+//  2. 保存结果（store.Save）、flush 单 writer、flush 七孔多 writer、运动归零——
+//     每项只由本 worker 执行一次，Stop 不再重复执行；
+//  3. 全部完成后才关闭 session.done（defer 保证 panic 也关闭），
+//     Start 的 session 门禁据此确认旧任务资源已完全释放。
+func (m *CalibrationManager) runCalibrationSession(session *calibrationRunSession, algorithm calibration.Algorithm) {
+	defer close(session.done)
+
+	engineErr := session.engine.StartWithContext(session.ctx, algorithm)
+	dataPoints := session.engine.GetDataPoints()
+
+	m.mu.Lock()
+	// 归属守卫：只写本 session 的状态。session 门禁已保证新旧 worker 不重叠，
+	// 此守卫是最后一道防线（防御性，正常情况下恒为 true）。
+	owned := m.currentStatus.TaskID == session.taskID
+	if owned {
 		if m.currentStatus.State != calibration.StateStopped {
-			if err != nil {
+			if engineErr != nil {
 				m.currentStatus.State = calibration.StateError
-				m.currentStatus.LastError = err.Error()
+				m.currentStatus.LastError = engineErr.Error()
 			} else {
 				m.currentStatus.State = calibration.StateCompleted
 			}
 		}
 
 		// 保存导出载荷，供 SaveCsv 按需写入
-		dataPoints := m.autoEngine.GetDataPoints()
 		m.lastExport = &calibration.ExportPayload{
-			Type:       calibration.CalibrationType(config.Type),
-			Config:     config,
+			Type:       calibration.CalibrationType(session.config.Type),
+			Config:     session.config,
 			DataPoints: dataPoints,
 		}
 		m.currentStatus.DataPoints = dataPoints
@@ -308,35 +392,35 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		if m.currentStatus.TotalPoints > 0 {
 			m.currentStatus.Progress = float64(len(dataPoints)) / float64(m.currentStatus.TotalPoints) * 100
 		}
+	}
+	statusSnapshot := m.currentStatus
+	store := m.store
+	writer := m.csvWriter
+	m.mu.Unlock()
 
-		// 保存结果
-		if m.store != nil {
-			if saveErr := m.store.Save(config.TaskID, m.currentStatus); saveErr != nil {
-				log.Printf("[CalibrationManager] 保存校准结果失败: %v", saveErr)
-			}
+	// 保存结果（锁外执行：store.Save 可能涉及文件 I/O）
+	if store != nil && owned {
+		if saveErr := store.Save(session.taskID, statusSnapshot); saveErr != nil {
+			slog.Error("calibration save result failed",
+				"component", "calibration", "task_id", session.taskID, "error", saveErr)
 		}
+	}
 
-		// 实时 CSV 写入完成：flush 并关闭文件句柄，下次 Start 可重新 Initialize。
-		// 不置 nil：writer 由装配根注入一次，Flush 后 file 已关闭，可复用。
-		if m.csvWriter != nil {
-			if flushErr := m.csvWriter.Flush(); flushErr != nil {
-				log.Printf("[CalibrationManager] CSV刷新失败: %v", flushErr)
-			}
+	// 实时 CSV 写入完成：flush 并关闭文件句柄，下次 Start 可重新 Initialize。
+	// 不置 nil：writer 由装配根注入一次，Flush 后 file 已关闭，可复用。
+	if writer != nil {
+		if flushErr := writer.Flush(); flushErr != nil {
+			slog.Error("calibration csv flush failed",
+				"component", "calibration", "task_id", session.taskID, "error", flushErr)
 		}
+	}
 
-		// 七孔多 writer 路由场景：flush 所有 region+sector writer（spec Task 9）
-		// flushAllSevenHoleWriters 设计为锁外调用（内部自摘 map + 锁外 Flush）；
-		// 本 goroutine 主体持有 m.mu，直接调用会自死锁（Go mutex 不可重入，
-		// 会连带 Status() 的 RLock 永久阻塞），故先释放、调用后再取回。
-		m.mu.Unlock()
-		m.flushAllSevenHoleWriters()
-		m.mu.Lock()
+	// 七孔多 writer 路由场景：flush 所有 region+sector writer（spec Task 9）。
+	// flushAllSevenHoleWriters 设计为锁外调用（内部自摘 map + 锁外 Flush）。
+	m.flushAllSevenHoleWriters()
 
-		// 运动归零
-		m.returnToHomePosition(config)
-	}()
-
-	return nil
+	// 运动归零
+	m.returnToHomePosition(session.config)
 }
 
 // Pause 暂停校准
@@ -381,59 +465,66 @@ func (m *CalibrationManager) Resume() error {
 }
 
 // Stop 停止校准
+//
+// 停止模型（run session）：
+//  1. 锁内：请求引擎停止标志 + 取消 session ctx（dwell/pause/gate/新数据等待
+//     立即中断）+ 切换 Stopped 状态；
+//  2. 锁外：停止所有运动轴（硬件下发，不持 m.mu）；
+//  3. 锁外有界等待 session done（writer flush/结果保存/归零由 worker 独占执行，
+//     Stop 不重复执行），最多 calibrationStopJoinTimeout（5s）。
+//
+// 超时返回明确错误：此后旧 session 未 done 之前 Start 持续被拒绝（session 门禁），
+// 旧 worker 退出时会照常完成自己的 finalize，状态归属守卫保证不污染新任务。
+//
+// 注意：store.Save 失败不再作为 Stop 错误返回——结果保存已收敛到 worker finalize
+// 单次执行（错误仅记日志），Stop 的错误仅表达"等待 worker 退出超时"。
 func (m *CalibrationManager) Stop() error {
 	m.mu.Lock()
-
-	if m.autoEngine != nil {
-		m.autoEngine.Stop()
+	session := m.session
+	if session == nil {
+		// 从未启动过任务：保持旧行为的幂等停止（置 Stopped + 停运动）
+		m.settlePauseDurationLocked(time.Now())
+		m.currentStatus.State = calibration.StateStopped
+		m.mu.Unlock()
+		if err := m.stopMotion(); err != nil {
+			slog.Warn("calibration stop motion failed",
+				"component", "calibration", "error", err)
+		}
+		return nil
 	}
+
+	// 请求停止：引擎标志位（算法检查路径）+ ctx 取消（可中断等待路径）
+	session.engine.Stop()
+	session.cancel()
 
 	m.settlePauseDurationLocked(time.Now())
 	m.currentStatus.State = calibration.StateStopped
-
-	// 保存导出载荷
-	if m.autoEngine != nil {
-		dataPoints := m.autoEngine.GetDataPoints()
-		m.lastExport = &calibration.ExportPayload{
-			Type:       calibration.CalibrationType(m.currentConfig.Type),
-			Config:     m.currentConfig,
-			DataPoints: dataPoints,
-		}
-		m.currentStatus.DataPoints = dataPoints
-		m.currentStatus.CompletedPoints = len(dataPoints)
-		if m.currentStatus.TotalPoints > 0 {
-			m.currentStatus.Progress = float64(len(dataPoints)) / float64(m.currentStatus.TotalPoints) * 100
-		}
-	}
-
-	// 保存结果
-	if m.store != nil {
-		status := m.currentStatus
-		m.mu.Unlock()
-		if err := m.store.Save(m.currentConfig.TaskID, status); err != nil {
-			return fmt.Errorf("保存校准结果失败: %v", err)
-		}
-	} else {
-		m.mu.Unlock()
-	}
-
-	// 刷新CSV（总温手动采集模式）。不置 nil：writer 由装配根注入一次，
-	// Flush 已关闭内部文件句柄，下次 Start 可再次 Initialize 打开新文件。
-	if m.csvWriter != nil {
-		if err := m.csvWriter.Flush(); err != nil {
-			log.Printf("[CalibrationManager] CSV刷新失败: %v", err)
-		}
-	}
-
-	// 七孔多 writer 路由场景：flush 所有 region+sector writer（spec Task 9）
-	m.flushAllSevenHoleWriters()
+	m.mu.Unlock()
 
 	// 停止运动（用户主动停止路径，错误仅记录不影响流程）
 	if err := m.stopMotion(); err != nil {
-		log.Printf("[CalibrationManager] Stop 停止运动失败: %v", err)
+		slog.Warn("calibration stop motion failed",
+			"component", "calibration", "task_id", session.taskID, "error", err)
 	}
 
-	return nil
+	// 有界等待 worker 完全退出（finalize 完成）。超时后旧 session 仍在收尾，
+	// Start 的 session 门禁会继续拒绝新任务，直到 worker 真正退出。
+	select {
+	case <-session.done:
+		return nil
+	case <-time.After(calibrationStopJoinTimeout):
+		return fmt.Errorf("calibration stop timed out after %s waiting for task %s to finish (task finalizes in background; new start is rejected until it exits)", calibrationStopJoinTimeout, session.taskID)
+	}
+}
+
+// Shutdown 停止当前校准任务并有界等待 worker 退出（进程/服务关闭路径专用）。
+//
+// 语义与 Stop 一致：请求取消 + 停止运动 + 最多等待 calibrationStopJoinTimeout。
+// 与 Stop 的区别仅在使用场景：Shutdown 由装配根（Wails ServiceShutdown /
+// context-owned apiserver）在服务关闭时调用，调用方应记录超时错误但不必
+// 因此中断整体关闭流程。无活动任务时幂等返回 nil。
+func (m *CalibrationManager) Shutdown() error {
+	return m.Stop()
 }
 
 // CollectCurrentPoint 手动采集当前工况点（总温校准专用）
@@ -479,7 +570,8 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 	// 写入CSV
 	if m.csvWriter != nil {
 		if writeErr := m.csvWriter.AppendPoint(dataPoint); writeErr != nil {
-			log.Printf("[CalibrationManager] CSV写入失败: %v", writeErr)
+			slog.Error("calibration csv write failed",
+				"component", "calibration", "task_id", m.currentTaskID, "error", writeErr)
 		}
 	}
 
@@ -587,8 +679,11 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 	}
 	for _, point := range payload.DataPoints {
 		if err := writer.AppendPoint(point); err != nil {
-			_ = writer.Flush()
-			return "", err
+			// AppendPoint 失败时仍要尝试 cleanup Flush（关闭文件句柄）。
+			// 若 cleanup Flush 也失败，用 errors.Join 聚合两个错误，确保均可识别（spec Task 20）。
+			// 旧实现 `_ = writer.Flush()` 静默丢弃 cleanup 错误，调试困难。
+			cleanupErr := writer.Flush()
+			return "", errors.Join(err, cleanupErr)
 		}
 	}
 	if err := writer.Flush(); err != nil {
@@ -625,11 +720,33 @@ func (m *CalibrationManager) PreviewSevenHolePoints(config calibration.SevenHole
 	}
 
 	return calibration.SevenHolePreviewResult{
-		Points:      points,
-		TotalCount:  len(points),
-		InnerCount:  innerCount,
-		OuterCount:  outerCount,
+		Points:     points,
+		TotalCount: len(points),
+		InnerCount: innerCount,
+		OuterCount: outerCount,
 	}, nil
+}
+
+// PreviewFiveHolePoints 预览五孔蛇形校准的点位分布（spec Task 10）
+//
+// 设计要点（plan Slice B4 / spec R-4、R-6）：
+//   - 五孔点位生成原本在 API 层直接调 core.GenerateFiveHoleSnakePoints，违反
+//     "API 不直接调用点位生成算法"边界。本方法将生成收口到 usecase 层，
+//     HTTP/Wails 共用同一入口，确保点位生成逻辑唯一、可观测。
+//   - 与 PreviewSevenHolePoints 对称：纯计算、不启动采集、不创建 runtime、不写 CSV；
+//     仅依赖 core 公式，不访问 reader/motion/sink/store，nil receiver 也可安全调用。
+//   - 返回 []calibration.FiveHoleSnakePoint（与 core.GenerateFiveHoleSnakePoints
+//     相同的元素类型），保留 bare-array 语义，避免破坏前端 JSON 契约
+//     （HTTP handler 直接 writeJSON(points)，前端收到 [...] 而非 {points:[...]}）。
+//
+// 错误返回：透传 core.GenerateFiveHoleSnakePoints 的错误（步长≤0 等），
+// 包一层中文上下文便于前端直接展示。
+func (m *CalibrationManager) PreviewFiveHolePoints(layout calibration.FiveHolePointLayout) ([]calibration.FiveHoleSnakePoint, error) {
+	points, err := calibration.GenerateFiveHoleSnakePoints(layout)
+	if err != nil {
+		return nil, fmt.Errorf("生成五孔点位失败: %w", err)
+	}
+	return points, nil
 }
 
 // buildSevenHoleCsvSink 构建七孔 CSV 写入 sink（按 region+sector 路由）
@@ -650,9 +767,17 @@ func (m *CalibrationManager) PreviewSevenHolePoints(config calibration.SevenHole
 // 不做错误返回：工厂未注入/Initialize 失败时返回 nil sink，由调用方判断。
 // Initialize 失败时记录日志，任务继续（CSV 落盘失败不阻塞采集，与五孔行为一致）。
 func (m *CalibrationManager) buildSevenHoleCsvSink(config calibration.Config) calibration.DataPointSink {
-	// 工厂未注入或保存路径为空：返回 nil sink，onDataPoint 中判断 nil 跳过
-	if m.sevenHoleWriterFactory == nil || config.SavePath == "" {
-		log.Printf("[CalibrationManager] 七孔 CSV 工厂未注入或 SavePath 为空，跳过 CSV 落盘")
+	// spec Task 22：拆分 factory 缺失与 SavePath 空两种情况。
+	//   - factory 缺失：装配错误（七孔类型应注入 sevenHoleWriterFactory），记 slog.Error。
+	//   - SavePath 空：合法可选项（用户不要求落盘 CSV），仅记 slog.Info，不报假错误。
+	if m.sevenHoleWriterFactory == nil {
+		slog.Error("calibration seven hole writer factory missing",
+			"component", "calibration", "task_id", config.TaskID)
+		return nil
+	}
+	if config.SavePath == "" {
+		slog.Info("calibration seven hole csv skipped, save path empty",
+			"component", "calibration", "task_id", config.TaskID)
 		return nil
 	}
 
@@ -664,16 +789,22 @@ func (m *CalibrationManager) buildSevenHoleCsvSink(config calibration.Config) ca
 	return func(dp calibration.DataPoint) {
 		shDp, ok := dp.(*calibration.SevenHoleDataPoint)
 		if !ok {
-			log.Printf("[CalibrationManager] 七孔 onDataPoint 收到非 *SevenHoleDataPoint 类型: %T，跳过 CSV 写入", dp)
+			slog.Warn("calibration seven hole onDataPoint wrong type",
+				"component", "calibration", "task_id", config.TaskID,
+				"type", fmt.Sprintf("%T", dp))
 			return
 		}
 		writer, err := m.routeSevenHoleWriter(config, basePath, shDp.Region, shDp.Sector)
 		if err != nil {
-			log.Printf("[CalibrationManager] 七孔 CSV writer 路由失败 (region=%s sector=%d): %v", shDp.Region, shDp.Sector, err)
+			slog.Error("calibration seven hole csv route failed",
+				"component", "calibration", "task_id", config.TaskID,
+				"region", shDp.Region, "sector", shDp.Sector, "error", err)
 			return
 		}
 		if err := writer.AppendPoint(shDp); err != nil {
-			log.Printf("[CalibrationManager] 七孔 CSV 实时写入失败 (region=%s sector=%d): %v", shDp.Region, shDp.Sector, err)
+			slog.Error("calibration seven hole csv write failed",
+				"component", "calibration", "task_id", config.TaskID,
+				"region", shDp.Region, "sector", shDp.Sector, "error", err)
 		}
 	}
 }
@@ -724,13 +855,23 @@ func (m *CalibrationManager) routeSevenHoleWriter(config calibration.Config, bas
 		// flushAllSevenHoleWriters 已在并发中清空 map——任务即将停止
 		// 关闭刚创建的 writer 文件句柄避免泄漏，返回错误让调用方跳过本点 CSV 写入
 		m.mu.Unlock()
-		_ = writer.Flush()
+		// 临时 writer 的 Flush 失败仅记录警告：任务即将停止，不阻塞错误返回（spec Task 20）。
+		// 旧实现 `_ = writer.Flush()` 静默丢弃错误，调试困难。
+		if flushErr := writer.Flush(); flushErr != nil {
+			slog.Warn("calibration seven hole temp writer flush failed (cache cleared, discard)",
+				"component", "calibration", "error", flushErr)
+		}
 		return nil, fmt.Errorf("七孔 writer 缓存已清空，任务即将停止")
 	}
 	if cached, ok := m.sevenHoleWriters[key]; ok {
 		// 并发期间其他 goroutine 已创建——丢弃本次创建的 writer
 		m.mu.Unlock()
-		_ = writer.Flush()
+		// 临时 writer 的 Flush 失败仅记录警告：cached writer 仍可用，不影响主流程（spec Task 20）。
+		// 旧实现 `_ = writer.Flush()` 静默丢弃错误，调试困难。
+		if flushErr := writer.Flush(); flushErr != nil {
+			slog.Warn("calibration seven hole temp writer flush failed (double-check discard)",
+				"component", "calibration", "key", key, "error", flushErr)
+		}
 		return cached, nil
 	}
 	m.sevenHoleWriters[key] = writer
@@ -787,7 +928,8 @@ func (m *CalibrationManager) flushAllSevenHoleWriters() {
 	}
 	for key, writer := range writers {
 		if err := writer.Flush(); err != nil {
-			log.Printf("[CalibrationManager] 七孔 CSV writer flush 失败 (key=%s): %v", key, err)
+			slog.Error("calibration seven hole csv writer flush failed",
+				"component", "calibration", "key", key, "error", err)
 		}
 	}
 }
@@ -810,6 +952,13 @@ func (m *CalibrationManager) Status() calibration.Status {
 	if status.DataPoints != nil {
 		status.DataPoints = append([]calibration.DataPoint(nil), status.DataPoints...)
 	}
+	// 引擎引用必须在锁内获取（Start 在写锁下发布 m.autoEngine），
+	// 解锁后再调用引擎自有锁保护的方法，消除对 m.autoEngine 的无同步读。
+	engine := m.autoEngine
+	// currentConfig 必须在锁内拷贝：Start 在写锁下发布 m.currentConfig，
+	// 解锁后 resolveLivePhysics 通过通道读取外部 I/O（m.reader / m.runtime），
+	// 避免持锁调用外部接口导致死锁或长锁。
+	config := m.currentConfig
 	m.mu.RUnlock()
 	// 附加当前点采样进度与当前目标点索引：从 autoEngine 读取算法采集循环实时更新的状态。
 	// autoEngine 为 nil（未启动/总温手动模式）时跳过。
@@ -818,17 +967,162 @@ func (m *CalibrationManager) Status() calibration.Status {
 	// currentPointIdx 在 processPoint 循环顶部就推进，早于 moveToPoint，
 	// 前端据此显示"目标角度"，能在运动控制器移动前就更新到下一个目标点，
 	// 符合校准员"目标先行于实际"的直觉。CompletedPoints 仍代表"已完成采集的点数"。
-	if m.autoEngine != nil {
-		current, total := m.autoEngine.GetSampleProgress()
+	if engine != nil {
+		current, total := engine.GetSampleProgress()
 		status.CurrentSample = current
 		status.SamplesPerPoint = total
-		status.CurrentPoint = m.autoEngine.GetCurrentPointIndex()
+		status.CurrentPoint = engine.GetCurrentPointIndex()
 		// 七孔流场分区当前状态（spec Task 11）：供前端 5Hz 轮询 status 时展示
 		// "当前区域 inner / 扇区 3"。其他类型返回零值（omitempty 自动省略）。
-		status.CurrentRegion = m.autoEngine.GetCurrentRegion()
-		status.CurrentSector = m.autoEngine.GetCurrentSector()
+		status.CurrentRegion = engine.GetCurrentRegion()
+		status.CurrentSector = engine.GetCurrentSector()
+	}
+	// Task 13：实时物理量快照在锁外计算，绝不写入 m.currentStatus（避免 stale 残留 +
+	// writer 污染）。每次调用都即时读取 m.reader，设备离线时自动返回 nil 字段。
+	//
+	// 终态不再计算 LivePhysics（review P1 缺陷修复）：
+	//   - completed/error/stopped 三态下 currentConfig 仍指向旧任务（Stop 只切状态不清 config），
+	//     若继续计算，reader 仍在线时会返回最后一帧的实时 Ma/V，前端 store 会保留这个数值
+	//     直到下一次轮询，与"终态后端已 StaleClearing"的注释相矛盾。
+	//   - 前端 updateStatusFromBackend 终态分支会 stopStatusPolling，导致这一帧 stale physics
+	//     永久停留在 UI 上，给操作员"任务还在跑"的错觉。
+	//   - 修复：只在 running/paused 时组装 LivePhysics；终态下 status.LivePhysics 保持 nil，
+	//     前端 calculatedPhysics 自然映射为 null（UI 显示 "--"）。
+	if status.State == calibration.StateRunning || status.State == calibration.StatePaused {
+		if lp := m.resolveLivePhysics(config); lp != nil {
+			status.LivePhysics = lp
+		}
 	}
 	return status
+}
+
+// resolveLivePhysics 基于当前 config 的探针通道配置和 reader 实时数据，
+// 计算马赫数/速度快照。必须在 m.mu 解锁后调用（持锁访问 m.reader 是外部 I/O，违反锁外读取约束）。
+//
+// 返回值语义（Task 13 spec）：
+//   - nil：类型不支持实时物理量（总温）或 currentConfig 未配置探针通道
+//   - &LivePhysics{nil, nil}：类型支持且通道已配置，但运行期读取失败/必需指针通道缺失
+//   - &LivePhysics{&0, &0}：零流量（Pt == Ps，Task 12）—— 有效零，非缺失
+//   - &LivePhysics{&ma, &v}：正常计算值
+//
+// 物理量计算口径：
+//   - 五孔/三孔/七孔：PTotal/PStatic 是表压（A 基准），需 A→C 边界转换（+PAtm → 绝压）后
+//     委托 AtmosphericDataCalculator.CalculateAll，与既有 calcMachAndVelocity 同口径。
+//   - 总压：PTunnelTotal/PTunnelStatic 是表压，同样 A→C 转换。
+//   - TAT 优先级：TTunnel > TAtm（spec §4.4），与既有 calcMachAndVelocity/CalculateTotalPressureCoefficients 一致。
+//   - 七孔 TTunnel 通道映射由 Task 13 在 ReadProbeChannelsToSevenHoleRaw 补齐。
+func (m *CalibrationManager) resolveLivePhysics(config calibration.Config) *calibration.LivePhysics {
+	// 类型筛选：总温无 Pt/Ps 物理量概念，不支持实时物理量
+	switch calibration.CalibrationType(config.Type) {
+	case calibration.TypeFiveHole, calibration.TypeThreeHole,
+		calibration.TypeTotalPressure, calibration.TypeSevenHole:
+		// 继续
+	default:
+		return nil
+	}
+
+	if len(config.ProbeChannels) == 0 {
+		return nil
+	}
+
+	channelReader := m.makeChannelReader()
+
+	switch calibration.CalibrationType(config.Type) {
+	case calibration.TypeFiveHole:
+		raw, err := calibration.ReadProbeChannelsToFiveHoleRaw(config.ProbeChannels, channelReader)
+		if err != nil {
+			// 通道读取失败（设备离线/必需通道缺失）→ 返回空快照而非整体 nil，
+			// 让前端区分"类型支持但当前无数据"与"类型不支持"。
+			return &calibration.LivePhysics{}
+		}
+		// review P1 缺陷修复：传入 raw.TTunnel，使 TAT 优先级 TTunnel > TAtm 在五孔实时物理量
+		// 路径生效（与七孔/总压一致）。未配置 tTunnel 通道时 raw.TTunnel 为 nil，
+		// computeLivePhysicsFromGauge 自动回退 TAtm。
+		return computeLivePhysicsFromGauge(raw.PAtm, raw.TAtm, raw.PTotal, raw.PStatic, raw.TTunnel)
+	case calibration.TypeThreeHole:
+		raw, err := calibration.ReadProbeChannelsToThreeHoleRaw(config.ProbeChannels, channelReader)
+		if err != nil {
+			return &calibration.LivePhysics{}
+		}
+		return computeLivePhysicsFromGauge(raw.PAtm, raw.TAtm, raw.PTotal, raw.PStatic)
+	case calibration.TypeTotalPressure:
+		raw, err := calibration.ReadProbeChannelsToTotalPressureRaw(config.ProbeChannels, channelReader)
+		if err != nil {
+			return &calibration.LivePhysics{}
+		}
+		// 总压 PTunnelTotal/PTunnelStatic 是非指针 float64（必需），取地址复用助手。
+		// TTunnel 为 0 视为未配置（TotalPressureRawData.TTunnel 是非指针 float64，
+		// 0°C 是合法温度但生产环境极端罕见，与既有 CalculateTotalPressureCoefficients 同口径）。
+		var ttunnelPtr *float64
+		if raw.TTunnel != 0 {
+			tt := raw.TTunnel
+			ttunnelPtr = &tt
+		}
+		return computeLivePhysicsFromGauge(raw.PAtm, raw.TAtm, &raw.PTunnelTotal, &raw.PTunnelStatic, ttunnelPtr)
+	case calibration.TypeSevenHole:
+		raw, err := calibration.ReadProbeChannelsToSevenHoleRaw(config.ProbeChannels, channelReader)
+		if err != nil {
+			return &calibration.LivePhysics{}
+		}
+		return computeLivePhysicsFromGauge(raw.PAtm, raw.TAtm, raw.PTotal, raw.PStatic, raw.TTunnel)
+	}
+	return nil
+}
+
+// computeLivePhysicsFromGauge 通用马赫数/速度计算助手（表压 → 绝压 → AtmosphericDataCalculator）。
+//
+// 参数：
+//   - pAtm：大气压力（绝压，必须 > 0，否则返回 nil 字段）
+//   - tAtmC：大气温度（°C，作为 TAT 兜底）
+//   - pTotalPtr：风洞总压表压指针，nil → 字段缺失
+//   - pStaticPtr：风洞静压表压指针，nil → 字段缺失
+//   - ttunnelPtrs：风洞温度指针（可选 variadic），nil/省略 → 回退 tAtmC；非 nil 优先使用
+//
+// 返回 *LivePhysics（绝不返回 nil 整体——调用方负责决定是否支持类型）：
+//   - 字段 nil：pAtm ≤ 0 或 pTotal/pStatic 任一缺失或物理非法（ptAbs < psAbs）
+//   - 字段 &0：ptAbs == psAbs（零流量，Task 12）
+//   - 字段 &ma/&v：正常计算
+//
+// 实现委托给 AtmosphericDataCalculator（Task 12 已对零流量返回 Ma=0, nil），
+// 与五孔/三孔/总压/七孔既有路径保持同口径。
+func computeLivePhysicsFromGauge(
+	pAtm, tAtmC float64,
+	pTotalPtr, pStaticPtr *float64,
+	ttunnelPtrs ...*float64,
+) *calibration.LivePhysics {
+	lp := &calibration.LivePhysics{}
+
+	// 大气压非法或 Pt/Ps 任一缺失 → 字段保持 nil（缺失语义）
+	if pAtm <= 0 || pTotalPtr == nil || pStaticPtr == nil {
+		return lp
+	}
+
+	// A→C 边界转换：表压 → 绝压
+	ptAbs := *pTotalPtr + pAtm
+	psAbs := *pStaticPtr + pAtm
+
+	// TAT 优先级：TTunnel > TAtm（spec §4.4）
+	tatC := tAtmC
+	if len(ttunnelPtrs) > 0 && ttunnelPtrs[0] != nil {
+		tatC = *ttunnelPtrs[0]
+	}
+	tatK := tatC + 273.15
+	if tatK <= 0 {
+		return lp
+	}
+
+	calc := calibration.NewAtmosphericDataCalculator()
+	result, err := calc.CalculateAll(ptAbs, psAbs, tatK)
+	if err != nil {
+		// Pt < Ps 等物理非法 → 字段保持 nil（不报错，Status 路径不传播计算错误）
+		return lp
+	}
+
+	ma := result.MachNumber
+	v := result.TASMach
+	lp.MachNumber = &ma
+	lp.Velocity = &v
+	return lp
 }
 
 func (m *CalibrationManager) settlePauseDurationLocked(now time.Time) {
@@ -1004,7 +1298,9 @@ func (m *CalibrationManager) returnToHomePosition(config calibration.Config) {
 	ctx := context.Background()
 	for _, axis := range config.MotionAxes {
 		if err := m.motion.MoveTo(ctx, axis.ControllerID, motion.AxisName(axis.Axis), 0); err != nil {
-			log.Printf("[CalibrationManager] 归零失败 %s/%s: %v", axis.ControllerID, axis.Axis, err)
+			slog.Warn("calibration return to home failed",
+				"component", "calibration",
+				"controller_id", axis.ControllerID, "axis", axis.Axis, "error", err)
 		}
 	}
 }
@@ -1048,7 +1344,8 @@ func (m *CalibrationManager) failWithCode(format string, code string, args ...an
 	taskID := m.currentStatus.TaskID
 	m.mu.Unlock()
 
-	log.Printf("[CalibrationManager] 校准失败 taskID=%s code=%s err=%s", taskID, code, message)
+	slog.Error("calibration failed",
+		"component", "calibration", "task_id", taskID, "code", code, "message", message)
 	return fmt.Errorf("%s", message)
 }
 
@@ -1085,10 +1382,18 @@ func (m *CalibrationManager) handleCalibrationMotionSafetyFailure(runtime calibr
 	}
 
 	deviation := failure.Actual - failure.Target
-	log.Printf("[CalibrationManager] 运动安全故障 controller=%s axis=%s verdict=%s target=%.3f actual=%.3f deviation=%.3f pointIndex=%d requiresEmergencyStop=%v",
-		failure.ControllerID, failure.Axis, failure.Verdict,
-		failure.Target, failure.Actual, deviation, failure.PointIndex,
-		failure.Verdict.RequiresEmergencyStop())
+	// spec Task 22：运动安全故障关键字段独立可检索——controller/axis/verdict/target/
+	// actual/deviation/point_index/requires_emergency_stop 均为独立 slog 字段。
+	slog.Error("calibration motion safety failure",
+		"component", "calibration",
+		"controller_id", failure.ControllerID,
+		"axis", failure.Axis,
+		"verdict", failure.Verdict,
+		"target", failure.Target,
+		"actual", failure.Actual,
+		"deviation", deviation,
+		"point_index", failure.PointIndex,
+		"requires_emergency_stop", failure.Verdict.RequiresEmergencyStop())
 
 	// 1. 急停类裁决 → EmergencyStopProvider 类型断言
 	var stopErr error
@@ -1097,8 +1402,24 @@ func (m *CalibrationManager) handleCalibrationMotionSafetyFailure(runtime calibr
 			stopErr = es.EmergencyStopMotion()
 			if stopErr != nil {
 				// 急停失败：错误码升级为 ErrEmergencyStopFailed，fallback 到 StopMotion
-				log.Printf("[CalibrationManager] 急停失败，回退到普通停止: %v", stopErr)
-				_ = runtime.StopMotion()
+				slog.Warn("calibration emergency stop failed, fallback to normal stop",
+					"component", "calibration",
+					"controller_id", failure.ControllerID, "axis", failure.Axis,
+					"error", stopErr)
+				if fallbackErr := runtime.StopMotion(); fallbackErr != nil {
+					// 急停与回退停止双失败：两个根因都必须保留——
+					// 错误链用 errors.Join 聚合（双 errors.Is 均可识别），
+					// 用户消息同时写入两个根因，避免 fallback 失败被静默吞掉。
+					slog.Error("calibration fallback stop also failed",
+						"component", "calibration",
+						"controller_id", failure.ControllerID, "axis", failure.Axis,
+						"error", fallbackErr)
+					m.failWithCode("motion safety failure (verdict=%s axis=%s target=%.3f actual=%.3f) and emergency stop failed: %v; fallback stop also failed: %v",
+						string(traversal.ErrEmergencyStopFailed),
+						failure.Verdict, failure.Axis, failure.Target, failure.Actual, stopErr, fallbackErr)
+					m.recordMotionSafetyFailure(failure)
+					return fmt.Errorf("emergency stop failed after %s: %w", failure.Verdict, errors.Join(stopErr, fallbackErr))
+				}
 				m.failWithCode("motion safety failure (verdict=%s axis=%s target=%.3f actual=%.3f) and emergency stop also failed: %v",
 					string(traversal.ErrEmergencyStopFailed),
 					failure.Verdict, failure.Axis, failure.Target, failure.Actual, stopErr)
@@ -1108,7 +1429,9 @@ func (m *CalibrationManager) handleCalibrationMotionSafetyFailure(runtime calibr
 			}
 		} else {
 			// runtime 不支持急停，fallback 到 StopMotion
-			log.Printf("[CalibrationManager] runtime 不支持急停，回退到普通停止")
+			slog.Warn("calibration runtime does not support emergency stop, fallback to normal stop",
+				"component", "calibration",
+				"controller_id", failure.ControllerID, "axis", failure.Axis)
 			stopErr = runtime.StopMotion()
 		}
 	} else {
@@ -1166,9 +1489,9 @@ func (a *eventPublisherAdapter) OnRegionChanged(event calibration.RegionChangedE
 // noopEventPublisher 空事件发布器
 type noopEventPublisher struct{}
 
-func (n *noopEventPublisher) OnProgress(_ calibration.ProgressEvent)       {}
-func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent)       {}
-func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent)       {}
+func (n *noopEventPublisher) OnProgress(_ calibration.ProgressEvent)           {}
+func (n *noopEventPublisher) OnComplete(_ calibration.CompleteEvent)           {}
+func (n *noopEventPublisher) OnRealtime(_ calibration.RealtimeEvent)           {}
 func (n *noopEventPublisher) OnRegionChanged(_ calibration.RegionChangedEvent) {}
 
 // runtimeAdapter 运行时适配器
@@ -1527,7 +1850,8 @@ func (f *fallbackRuntime) EmergencyStopMotion() error {
 	var errs []error
 	for controllerID := range controllerIDs {
 		if err := f.motion.EmergencyStop(ctx, controllerID); err != nil {
-			log.Printf("[CalibrationManager] 急停失败 %s: %v", controllerID, err)
+			slog.Error("calibration emergency stop failed",
+				"component", "calibration", "controller_id", controllerID, "error", err)
 			errs = append(errs, fmt.Errorf("controller %s: %w", controllerID, err))
 		}
 	}
@@ -1569,7 +1893,9 @@ func stopAllMotion(mgr ports.MotionManager) error {
 		for _, axis := range status.Axes {
 			if axis.Moving {
 				if err := mgr.Stop(ctx, status.ID, axis.Name); err != nil {
-					log.Printf("[CalibrationManager] 停止运动失败 %s/%s: %v", status.ID, axis.Name, err)
+					slog.Warn("calibration stop motion failed",
+						"component", "calibration",
+						"controller_id", status.ID, "axis", axis.Name, "error", err)
 					if firstErr == nil {
 						firstErr = err
 					}

@@ -35,6 +35,16 @@ import (
 // traversalLockResource 工作流级互斥锁的资源名，与 Cursor DAQ 保持一致
 const traversalLockResource = "workflow:traversal"
 
+// traversalLockService 资源锁服务端口，*resourcelock.Service 是默认实现。
+//
+// 提取为接口是为了在测试中注入失败桩（fakeTraversalLockService），
+// 覆盖四条 Release 错误路径（spec Task 21）：Start rollback / abort / Stop / finalize。
+// 生产路径通过 NewTraversalManager 注入 resourcelock.Default() 单例，行为不变。
+type traversalLockService interface {
+	Acquire(resource, holder string, ttl time.Duration) error
+	Release(resource, holder string) error
+}
+
 // 运动完成等待超时和轮询间隔
 // 使用 time.Duration 类型以避免 time.NewTicker / time.Now().Add 误把裸数当 ns 使用
 const (
@@ -154,6 +164,11 @@ type TraversalManager struct {
 	checkpointPort        ports.TraversalCheckpointPort // 当前活动任务的断点端口（Start 时动态创建）
 	checkpointPortFactory ports.TraversalCheckpointPortFactory
 	activeIndex           ports.TraversalActiveIndex
+
+	// lockService 工作流级互斥锁服务，默认 resourcelock.Default()。
+	// 提取为字段（接口类型）是为了测试注入 fakeTraversalLockService 覆盖 Release
+	// 错误路径（spec Task 21）。生产路径行为与原 resourcelock.Default() 调用一致。
+	lockService traversalLockService
 }
 
 // 遍历配置持久化存储的 key
@@ -169,6 +184,8 @@ func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAcces
 		status:          traversal.Status{State: traversal.StateIdle},
 		// 默认缓存：256 条，容差 1 Pa（与 Cursor DAQ 默认一致）
 		interpCache: realtime.NewInterpolationCache(256, 1.0),
+		// 默认使用进程级单例锁服务；测试可通过直接字段赋值注入 fakeTraversalLockService
+		lockService: resourcelock.Default(),
 	}
 	// 可选：注入持久化存储，启动时自动加载已保存的配置
 	if len(configStore) > 0 && configStore[0] != nil {
@@ -660,7 +677,7 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 	}
 	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）
 	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
-	if err := resourcelock.Default().Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
+	if err := m.lockService.Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
 		m.mu.Unlock()
 		session.Cancel()
 		session.MarkDone()
@@ -704,10 +721,16 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 			m.mu.Unlock()
 			session.Cancel()
 			session.MarkDone()
-			_ = resourcelock.Default().Release(traversalLockResource, config.TaskID)
+			// spec Task 21 Path 1（可返回路径）：Release 错误通过 errors.Join 聚合进返回值，
+			// 调用方可通过 errors.Is 同时识别 cpErr 和 releaseErr。失败时记录 Warn 便于运维定位。
+			releaseErr := m.lockService.Release(traversalLockResource, config.TaskID)
+			if releaseErr != nil {
+				slog.Warn("traversal start release lock failed",
+					"component", "traversal", "task_id", config.TaskID, "error", releaseErr)
+			}
 			slog.Error("traversal start failed: create checkpoint port",
 				"component", "traversal", "task_id", config.TaskID, "error", cpErr)
-			return fmt.Errorf("create checkpoint port: %w", cpErr)
+			return errors.Join(fmt.Errorf("create checkpoint port: %w", cpErr), releaseErr)
 		}
 		m.mu.Lock()
 		m.checkpointPort = checkpointPort
@@ -924,7 +947,13 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
-	_ = resourcelock.Default().Release(traversalLockResource, taskID)
+	// spec Task 21 Path 2（void 路径）：Release 失败仅记录 Warn，不影响 void 签名。
+	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验，
+	// holder 不匹配时返回 "release denied" 错误，此处仅记录不重试。
+	if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
+		slog.Warn("traversal abort release lock failed",
+			"component", "traversal", "task_id", taskID, "error", releaseErr)
+	}
 	slog.Error("traversal start failed",
 		"component", "traversal", "task_id", taskID,
 		"error", message,
@@ -1115,8 +1144,12 @@ func (m *TraversalManager) Stop() error {
 	}
 
 	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）
+	// spec Task 21 Path 3（可返回路径）：Release 错误 join 进 stopErr，调用方可通过 errors.Is 识别。
+	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验。
 	if taskID != "" {
-		_ = resourcelock.Default().Release(traversalLockResource, taskID)
+		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
+			stopErr = errors.Join(stopErr, fmt.Errorf("release traversal lock: %w", releaseErr))
+		}
 	}
 
 	if stopErr != nil {

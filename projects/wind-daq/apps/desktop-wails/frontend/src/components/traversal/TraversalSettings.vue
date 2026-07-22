@@ -649,11 +649,14 @@ async function saveConfig() {
     // 剥离 .csv 后缀后交给共享工具，fallback 用 testName 保证空文件名也能落到有意义的默认值。
     const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), testName.value)
     saveFileName.value = normName
-    // 运动安全配置校验：面板内部已实时显示错误，保存前再次调用 isValid 阻断非法值。
-    // 阻断保存避免用户误把"严重偏离阈值 < 到位容差"这类语义错误配置持久化到后端。
+    // 运动安全配置校验：面板内部已实时显示 blocking + advisory，保存前再次调用 isValid 阻断非法值。
+    // Task 18 契约：仅 blockingErrors 阻止保存；advisoryWarnings 不阻止（后端不拒绝）。
+    // toast 显示首个阻断错误，让用户在配置面板外也能看到具体原因（面板因产品决策已隐藏）。
     // finally 块会重置 isSaving，无需在此显式设置。
-    if (motionSafetyPanelRef.value && !motionSafetyPanelRef.value.isValid) {
-      feedbackStore.pushToast(t.value.travMotionSafetyErrCriticalGreaterThanArrival, 'error')
+    const safetyPanel = motionSafetyPanelRef.value
+    if (safetyPanel && !safetyPanel.isValid) {
+      const firstErr = safetyPanel.blockingErrors[0] ?? t.value.travMotionSafetyErrCriticalGreaterThanArrival
+      feedbackStore.pushToast(firstErr, 'error')
       return
     }
     // 稳定化使用驻留时间（dwellTimeMs）：后端 waitForStabilization 在 stab==nil 或 mode=="fixed"

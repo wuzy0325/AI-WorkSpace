@@ -57,13 +57,10 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	acqController := m.acquisitionController
 	pointIndex := m.status.CurrentPoint
 	point := config.Path[pointIndex]
-	// per-point 优先：point.DwellMs 非 nil 时覆盖全局 config.DwellTimeMs
-	// 仅 custom 布局点位会携带 DwellMs；计算 effectiveDwellMs 供后续 Phase 2 等待时长
-	// 与 PointResult.DwellTimeElapsed 统一使用（waitForStabilization 内部也读 point.DwellMs）
-	effectiveDwellMs := config.DwellTimeMs
-	if point.DwellMs != nil {
-		effectiveDwellMs = *point.DwellMs
-	}
+	// per-point DwellMs 优先于全局 DwellTimeMs：仅 custom 布局点位会携带 DwellMs。
+	// effectiveDwellMs 供 Phase 2 等待时长与 PointResult.DwellTimeElapsed 统一使用；
+	// waitForStabilization 内部也通过 resolveEffectiveDwellMs 读取同一语义
+	effectiveDwellMs := resolveEffectiveDwellMs(point, config.DwellTimeMs)
 	m.mu.Unlock()
 	// 多设备采集态校验：通道可能跨设备绑定（如五孔在 A、大气压/温度在 B），
 	// 逐台去重校验，任一设备未采集都在动设备前失败。
@@ -798,15 +795,24 @@ func (m *TraversalManager) updatePhase(taskID string, state traversal.State, pha
 //
 // 复检间隔：fixed 与 adaptive 模式均使用 motionCompletePoll（100ms），
 // 与 Moving 阶段对齐，保证故障检测延迟一致。
+
+// resolveEffectiveDwellMs 解析单点有效稳定等待时长：per-point DwellMs 非 nil 时覆盖全局，
+// 否则回退 globalMs。仅 custom 布局点位会携带 DwellMs；line/rectangle/sector 生成的
+// Point 字段恒为 nil 走全局。语义在 RunCurrentPoint 入口与 waitForStabilization 内
+// 保持一致，避免两处独立维护 fallback 逻辑漂移。
+func resolveEffectiveDwellMs(point traversal.Point, globalMs int) int {
+	if point.DwellMs != nil {
+		return *point.DwellMs
+	}
+	return globalMs
+}
+
 func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int, channelGroups []deviceChannelGroup) *traversal.MotionSafetyFailure {
 	m.mu.RLock()
 	stab := m.stabilization
-	// per-point 优先：point.DwellMs 非 nil 时覆盖全局 config.DwellTimeMs
-	// 仅 custom 布局点位会携带 DwellMs；line/rectangle/sector 生成的 Point 字段为 nil 走全局
-	dwellMs := m.config.DwellTimeMs
-	if point.DwellMs != nil {
-		dwellMs = *point.DwellMs
-	}
+	// per-point DwellMs fallback 与 RunCurrentPoint 入口共用 resolveEffectiveDwellMs，
+	// 保证 fixed 模式下等待时长语义在两处调用点一致
+	dwellMs := resolveEffectiveDwellMs(point, m.config.DwellTimeMs)
 	motionAxes := m.config.MotionAxes
 	safetyCfg := m.config.MotionSafety
 	m.mu.RUnlock()

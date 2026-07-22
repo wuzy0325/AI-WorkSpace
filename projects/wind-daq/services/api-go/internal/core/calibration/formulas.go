@@ -109,8 +109,8 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 	}
 
 	var sumP1, sumP2, sumP3, sumP4, sumP5, sumPAtm, sumTAtm float64
-	var sumPTotal, sumPStatic float64
-	var pTotalCount, pStaticCount int
+	var sumPTotal, sumPStatic, sumTTunnel float64
+	var pTotalCount, pStaticCount, tTunnelCount int
 
 	for _, d := range dataList {
 		sumP1 += d.P1
@@ -127,6 +127,12 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 		if d.PStatic != nil {
 			sumPStatic += *d.PStatic
 			pStaticCount++
+		}
+		// review P1 缺陷修复：TTunnel 也需参与平均，保证后续系数计算路径
+		// （如 onRealtime 回调或未来扩展使用 TTunnel 的公式）拿到的是平均值而非首帧。
+		if d.TTunnel != nil {
+			sumTTunnel += *d.TTunnel
+			tTunnelCount++
 		}
 	}
 
@@ -148,6 +154,10 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 	if pStaticCount > 0 {
 		avg := sumPStatic / float64(pStaticCount)
 		result.PStatic = &avg
+	}
+	if tTunnelCount > 0 {
+		avg := sumTTunnel / float64(tTunnelCount)
+		result.TTunnel = &avg
 	}
 
 	return result

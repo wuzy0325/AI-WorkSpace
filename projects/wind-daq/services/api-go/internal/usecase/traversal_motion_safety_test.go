@@ -813,6 +813,139 @@ func TestValidateMotionSafetyConfig_AxisOverrideConsistentPairAccepted(t *testin
 	}
 }
 
+// Task 18 契约补全：B3 criticalDeviationLimit <= 0 拒绝
+// 既有用例仅覆盖 arrivalTolerance 负数（B2），此处补 criticalDeviationLimit 零值/负数。
+func TestValidateMotionSafetyConfig_NonPositiveCriticalRejected(t *testing.T) {
+	// 测试前置：CriticalDeviationLimit = 0
+	zero := 0.0
+	cfg := &traversal.MotionSafetyConfig{CriticalDeviationLimit: &zero}
+
+	// 测试步骤：校验
+	err := validateMotionSafetyConfig(cfg, nil)
+
+	// 期待结果：拒绝
+	if err == nil {
+		t.Errorf("zero criticalDeviationLimit should be rejected")
+	}
+
+	// 测试前置：CriticalDeviationLimit = -1
+	neg := -1.0
+	cfg2 := &traversal.MotionSafetyConfig{CriticalDeviationLimit: &neg}
+
+	// 测试步骤：校验
+	err2 := validateMotionSafetyConfig(cfg2, nil)
+
+	// 期待结果：拒绝
+	if err2 == nil {
+		t.Errorf("negative criticalDeviationLimit should be rejected")
+	}
+}
+
+// Task 18 契约补全：B6 progressEpsilon <= 0 拒绝
+func TestValidateMotionSafetyConfig_NonPositiveEpsilonRejected(t *testing.T) {
+	// 测试前置：ProgressEpsilon = 0
+	zero := 0.0
+	cfg := &traversal.MotionSafetyConfig{ProgressEpsilon: &zero}
+
+	// 测试步骤：校验
+	err := validateMotionSafetyConfig(cfg, nil)
+
+	// 期待结果：拒绝
+	if err == nil {
+		t.Errorf("zero progressEpsilon should be rejected")
+	}
+
+	// 测试前置：ProgressEpsilon = -0.001
+	neg := -0.001
+	cfg2 := &traversal.MotionSafetyConfig{ProgressEpsilon: &neg}
+
+	// 测试步骤：校验
+	err2 := validateMotionSafetyConfig(cfg2, nil)
+
+	// 期待结果：拒绝
+	if err2 == nil {
+		t.Errorf("negative progressEpsilon should be rejected")
+	}
+}
+
+// Task 18 契约补全：B5 边界 noProgressTimeoutMs = 200 应通过
+// 既有用例仅覆盖 timeout < 200 拒绝，此处补边界值 200 通过。
+func TestValidateMotionSafetyConfig_TimeoutBoundary200Accepted(t *testing.T) {
+	// 测试前置：NoProgressTimeoutMs = 200（2 倍轮询间隔边界）
+	timeout := 200
+	cfg := &traversal.MotionSafetyConfig{NoProgressTimeoutMs: &timeout}
+
+	// 测试步骤：校验
+	err := validateMotionSafetyConfig(cfg, nil)
+
+	// 期待结果：通过（>= 200 合法）
+	if err != nil {
+		t.Errorf("noProgressTimeoutMs=200 (boundary) should be accepted, got %v", err)
+	}
+}
+
+// Task 18 契约补全：B1 Inf 字段拒绝
+// 既有用例仅覆盖 arrivalTolerance NaN，此处补 criticalDeviationLimit / progressEpsilon Inf。
+func TestValidateMotionSafetyConfig_InfFieldsRejected(t *testing.T) {
+	// 测试前置：CriticalDeviationLimit = +Inf
+	inf := math.Inf(1)
+	cfg := &traversal.MotionSafetyConfig{CriticalDeviationLimit: &inf}
+
+	// 测试步骤：校验
+	err := validateMotionSafetyConfig(cfg, nil)
+
+	// 期待结果：拒绝
+	if err == nil {
+		t.Errorf("+Inf criticalDeviationLimit should be rejected")
+	}
+
+	// 测试前置：ProgressEpsilon = -Inf
+	negInf := math.Inf(-1)
+	cfg2 := &traversal.MotionSafetyConfig{ProgressEpsilon: &negInf}
+
+	// 测试步骤：校验
+	err2 := validateMotionSafetyConfig(cfg2, nil)
+
+	// 期待结果：拒绝
+	if err2 == nil {
+		t.Errorf("-Inf progressEpsilon should be rejected")
+	}
+}
+
+// Task 18 契约补全：advisory 边界值不应被后端拒绝
+// 前端 advisory 规则 A1（epsilon >= arrival）与 A2（timeout >= 120000）在后端不拒绝，
+// 后端仅要求 critical > arrival 与 timeout >= 200。此测试确认后端契约边界。
+func TestValidateMotionSafetyConfig_AdvisoryBoundariesAcceptedByBackend(t *testing.T) {
+	// 测试前置：progressEpsilon == arrivalTolerance（前端 A1 advisory，后端不拒绝）
+	// 合并后 critical(默认 5) > arrival(0.1)，合法
+	arrival := 0.1
+	epsilon := 0.1 // == arrival，前端 advisory
+	cfg := &traversal.MotionSafetyConfig{
+		ArrivalTolerance: &arrival,
+		ProgressEpsilon:  &epsilon,
+	}
+
+	// 测试步骤：校验
+	err := validateMotionSafetyConfig(cfg, nil)
+
+	// 期待结果：通过（后端不校验 epsilon < arrival）
+	if err != nil {
+		t.Errorf("progressEpsilon == arrivalTolerance (advisory-only) should be accepted by backend, got %v", err)
+	}
+
+	// 测试前置：noProgressTimeoutMs = 120000（前端 A2 advisory，后端不拒绝）
+	timeout := 120000
+	cfg2 := &traversal.MotionSafetyConfig{NoProgressTimeoutMs: &timeout}
+
+	// 测试步骤：校验
+	err2 := validateMotionSafetyConfig(cfg2, nil)
+
+	// 期待结果：通过（后端仅要求 >= 200，不限制上限）
+	if err2 != nil {
+		t.Errorf("noProgressTimeoutMs=120000 (advisory-only) should be accepted by backend, got %v", err2)
+	}
+}
+
 // --- waitForMotionComplete 集成测试 ---
 
 // motionSafetyTestManager 构造一个用于 waitForMotionComplete / waitForStabilization 测试的 TraversalManager。

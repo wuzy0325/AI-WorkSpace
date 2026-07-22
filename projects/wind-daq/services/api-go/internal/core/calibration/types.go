@@ -139,6 +139,24 @@ type PointResult struct {
 	Values         map[int]float64 `json:"values"`
 }
 
+// LivePhysics 实时物理量快照（Task 13）。
+//
+// 设计动机：前端 5Hz 轮询 status 时需展示当前马赫数/速度，但既有 currentStatus 只持久化
+// 校准业务字段（点号/进度/数据点），物理量需基于实时通道数据即时计算。直接写入 currentStatus
+// 会导致：(1) 持久化污染（writer/CSV 误把快照写盘）；(2) stale 残留（设备离线后旧值不消失）。
+//
+// 解决方案：LivePhysics 仅由 Status() 调用时即时计算，绝不写入 currentStatus。
+// 通过 *float64 指针语义区分三种状态：
+//   - nil：缺失（必需通道未配置/读取失败/物理非法如 Pt < Ps），UI 显示 "--"
+//   - &0：有效零（Pt == Ps 即零流量，Task 12），UI 显示格式化的 0
+//   - &ma/&v：正常计算值
+//
+// 整体 *LivePhysics 为 nil 表示类型不支持实时物理量（总温）或未启动校准（currentConfig 为空）。
+type LivePhysics struct {
+	MachNumber *float64 `json:"machNumber,omitempty"` // 马赫数（缺失 nil / 有效零 &0 / 正常 &ma）
+	Velocity   *float64 `json:"velocity,omitempty"`   // 真空速 m/s（缺失 nil / 有效零 &0 / 正常 &v）
+}
+
 // Status 校准任务状态
 type Status struct {
 	TaskID string `json:"taskId"`
@@ -149,6 +167,10 @@ type Status struct {
 	CurrentPoint int    `json:"currentPoint"`
 	TotalPoints  int    `json:"totalPoints"`
 	LastError    string `json:"lastError,omitempty"`
+	// LivePhysics 实时物理量快照（Task 13）：每次 Status() 调用在 m.mu 解锁后
+	// 从 m.reader 即时计算，不持久化到 currentStatus（避免 stale 残留与 writer 污染）。
+	// 类型不支持（总温）或未启动校准时为 nil；通道齐全但读取失败时为 &LivePhysics{nil, nil}。
+	LivePhysics *LivePhysics `json:"livePhysics,omitempty"`
 	// LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
 	// 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
 	// 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。
@@ -189,6 +211,10 @@ type FiveHoleRawData struct {
 	TAtm    float64  `json:"tAtm"`              // 大气温度
 	PTotal  *float64 `json:"pTotal,omitempty"`  // 风洞总压（可选）
 	PStatic *float64 `json:"pStatic,omitempty"` // 风洞静压（可选）
+	// TTunnel 风洞温度（可选）。TAT 选取优先级：TTunnel > TAtm（spec §4.4，与七孔/总压一致）。
+	// 前端 FiveHoleSettings 把 fiveHole.tTunnel 列为必填通道，但后端 raw data 历史上无此字段，
+	// 导致 UI 显示的 TTunnel 永远不参与速度计算（review P1 缺陷修复）。
+	TTunnel *float64 `json:"tTunnel,omitempty"`
 }
 
 // FiveHoleCoefficients 五孔探针系数

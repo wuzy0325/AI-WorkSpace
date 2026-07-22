@@ -6,6 +6,8 @@ export {
     AcquisitionSamplingConfig,
     CalPoint,
     ChannelRef,
+    FiveHolePointLayout,
+    LivePhysics,
     MotionAxisConfig,
     SevenHoleConfig,
     SevenHoleMode,

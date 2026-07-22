@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
-	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -41,6 +41,10 @@ func (fakeFiveHoleInterpolator) Calculate(coreinterp.InterpolationInput) (corein
 }
 
 func newTraversalRouter(mgr *usecase.TraversalManager) http.Handler {
+	// Task 08：API 已委托 usecase.ImportXxx，测试侧必须注入真实 loader
+	// 让 usecase 能真正加载夹具文件（生产装配在 apiserver/bootstrap 完成）。
+	// 测试代码 import adapters 不违反六边形约束——约束针对生产 API。
+	mgr.SetInterpolatorLoader(interpolation.NewLoader())
 	return NewRouter(Deps{TraversalManager: mgr})
 }
 
@@ -400,9 +404,3 @@ func TestClearInterpolator(t *testing.T) {
 		}
 	})
 }
-
-// 编译期引用检查：traversal 包常量与 usecase 方法的契约保持可用。
-var (
-	_ = traversal.ProbeTypeSevenHole
-	_ = (*usecase.TraversalManager).CalculateSevenHoleRealtime
-)

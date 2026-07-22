@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"testing"
 	"time"
@@ -871,3 +873,93 @@ func TestCheckPreconditions_MotionNotConnected(t *testing.T) {
 }
 
 var _ ports.AcquisitionController = (*mockAcquisitionController)(nil)
+
+// ==================== Traversal Lock Release 错误路径测试 — Path 4（spec Task 21） ====================
+//
+// Path 4 (finalize, void) 关键修复点：
+//   - 旧实现 `_ = Release(...); slog.Info("traversal lock released")` 无论 Release
+//     成功或失败都记录 Info 成功日志，违反"失败后不记录成功 info"契约。
+//   - 修复后 Release 失败时记录 slog.Warn，成功时才记录 slog.Info。
+//
+// fakeTraversalLockService / recordingSlogHandler / withRecordingLogger 定义在
+// traversal_lifecycle_test.go（同包共享）。
+
+// TestFinalizeSink_ReleaseFailure_LogsWarningNotInfo 验证 Path 4 失败路径：
+// Release 返回错误时，finalizeSink 应记录 slog.Warn，且不记录 Info "traversal lock released"。
+//
+// 测试前置：manager 注入 fakeLock（Release 返回 releaseErr），config.TaskID 非空
+// 测试步骤：调用 finalizeSink
+// 期待结果：
+//   - Release 被调用一次
+//   - slog.Warn 记录 release 失败（含 'release' 关键字）
+//   - slog.Info "traversal lock released" 未记录（spec Task 21 关键修复点）
+func TestFinalizeSink_ReleaseFailure_LogsWarningNotInfo(t *testing.T) {
+	handler, restore := withRecordingLogger(t)
+	defer restore()
+
+	manager := NewTraversalManager(nil, nil, nil, nil, nil)
+	releaseErr := errors.New("release denied: held by other")
+	manager.lockService = &fakeTraversalLockService{releaseErr: releaseErr}
+	manager.mu.Lock()
+	manager.config = traversal.Config{TaskID: "task-finalize"}
+	manager.mu.Unlock()
+
+	manager.finalizeSink()
+
+	// 验证 Release 被调用
+	fakeLock, ok := manager.lockService.(*fakeTraversalLockService)
+	if !ok {
+		t.Fatalf("manager.lockService 类型断言失败: %T", manager.lockService)
+	}
+	if got := fakeLock.releaseCount(); got != 1 {
+		t.Errorf("Release 调用次数 = %d，期望 1", got)
+	}
+	// 验证 Warn 日志记录了 release 失败（spec Task 21 修复点）
+	if !handler.hasLevelMessage(slog.LevelWarn, "release") {
+		t.Error("finalizeSink Release 失败时应记录 slog.Warn（含 'release' 关键字），实际未记录")
+	}
+	// 验证 Info "traversal lock released" 未记录（spec Task 21 关键修复点：
+	// 旧实现无论 Release 成功失败都记录 Info，违反"失败后不记录成功 info"契约）
+	if handler.hasLevelMessage(slog.LevelInfo, "traversal lock released") {
+		t.Error("finalizeSink Release 失败时不应记录 Info 'traversal lock released'（违反失败后不记录成功 info 契约）")
+	}
+}
+
+// TestFinalizeSink_ReleaseSuccess_LogsInfo 验证 Path 4 正常路径：
+// Release 成功时，finalizeSink 应记录 slog.Info "traversal lock released"，不记录 Warn。
+//
+// 测试前置：manager 注入 fakeLock（Release 返回 nil），config.TaskID 非空
+// 测试步骤：调用 finalizeSink
+// 期待结果：
+//   - Release 被调用一次
+//   - slog.Info "traversal lock released" 记录
+//   - slog.Warn 未记录（含 'release' 关键字的 Warn 不应出现）
+func TestFinalizeSink_ReleaseSuccess_LogsInfo(t *testing.T) {
+	handler, restore := withRecordingLogger(t)
+	defer restore()
+
+	manager := NewTraversalManager(nil, nil, nil, nil, nil)
+	manager.lockService = &fakeTraversalLockService{} // releaseErr = nil
+	manager.mu.Lock()
+	manager.config = traversal.Config{TaskID: "task-finalize-ok"}
+	manager.mu.Unlock()
+
+	manager.finalizeSink()
+
+	// 验证 Release 被调用
+	fakeLock, ok := manager.lockService.(*fakeTraversalLockService)
+	if !ok {
+		t.Fatalf("manager.lockService 类型断言失败: %T", manager.lockService)
+	}
+	if got := fakeLock.releaseCount(); got != 1 {
+		t.Errorf("Release 调用次数 = %d，期望 1", got)
+	}
+	// 验证 Info "traversal lock released" 记录（正常路径回归）
+	if !handler.hasLevelMessage(slog.LevelInfo, "traversal lock released") {
+		t.Error("finalizeSink Release 成功时应记录 Info 'traversal lock released'，实际未记录")
+	}
+	// 验证 Warn 未记录（不应误报失败）
+	if handler.hasLevelMessage(slog.LevelWarn, "release") {
+		t.Error("finalizeSink Release 成功时不应记录 Warn（含 'release' 关键字），实际记录了")
+	}
+}

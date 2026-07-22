@@ -791,7 +791,8 @@ const canResume = computed(() => calibrationStore.isPaused)
 const canStop = computed(() => calibrationStore.isRunning || calibrationStore.isPaused)
 const canSave = computed(() => calibrationStore.completeEvent !== null || calibrationStore.dataPoints.length > 0)
 
-// 实时气动参数（马赫数/速度）：calibrationStore.calculatedPhysics 基于实时压力计算
+// 实时气动参数（马赫数/速度）：spec Task 15 后由后端 CalibrationStatus.livePhysics 提供，
+// store 在 updateStatusFromBackend 中映射，组件保持纯展示。
 const physics = computed(() => calibrationStore.calculatedPhysics)
 
 // 当前点采样子进度：calibrationStore.status 透传后端 autoEngine.GetSampleProgress()

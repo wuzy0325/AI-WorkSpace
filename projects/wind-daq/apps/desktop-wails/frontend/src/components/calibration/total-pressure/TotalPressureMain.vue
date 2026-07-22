@@ -116,7 +116,8 @@ function buildRealtimePressuresFromSnapshots(
       case 'totalPressure.tAtm':
         result.Tatm = rawValue
         // 总压校准若无独立风洞温度传感器，用大气温度近似风洞总温（TAT），
-        // 供 calculateAtmosphericPhysics 计算马赫数/速度。低速风洞下误差可接受。
+        // 后端 AtmosphericDataCalculator 据此计算马赫数/速度（spec Task 15：前端公式已删除）。
+        // 低速风洞下误差可接受。
         if (!hasTunnelTemp) result.Ttunnel = rawValue
         matchedChannelCount += 1
         break
@@ -216,8 +217,9 @@ const latestRawData = computed(() => {
   return null
 })
 
-// 实时气动参数（马赫数/速度）：由 calibrationStore.calculateAtmosphericPhysics 基于实时压力计算，
-// 总压校准用风洞温度（缺失时用大气温度兜底），与后端 formulas.go TAT 选取逻辑一致。
+// 实时气动参数（马赫数/速度）：spec Task 15 后由后端 CalibrationStatus.livePhysics 提供，
+// store 在 updateStatusFromBackend 中映射，组件保持纯展示。总压校准用风洞温度（缺失时用大气温度兜底），
+// 与后端 formulas.go TAT 选取逻辑一致。
 const physics = computed(() => calibrationStore.calculatedPhysics)
 
 const completedPoints = computed(() => calibrationStore.dataPoints.length)

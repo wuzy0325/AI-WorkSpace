@@ -16,9 +16,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as application$0 from "../../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as config$0 from "../../../services/api-go/internal/adapters/config/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as calibration$0 from "../../../services/api-go/internal/core/calibration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -68,6 +65,34 @@ export function CalibrationGetResult(taskID) {
  */
 export function CalibrationPause() {
     return $Call.ByID(303414833).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
+ * CalibrationPreviewFiveHole 五孔点位预览（spec Task 11）
+ * 
+ * 接收前端"配置向导"提交的 FiveHolePointLayoutDTO（α/β 范围与步长 + serpentine 开关），
+ * 调用 CalibrationManager.PreviewFiveHolePoints 生成蛇形/raster 点位列表，
+ * 返回 []FiveHoleSnakePoint（bare array，与 HTTP /api/calibration/fivehole 契约一致）
+ * 经 GenericResponse.Data 包装供 Wails binding 透传。
+ * 
+ * 与 CalibrationPreviewSevenHole 的区别：
+ *   - 五孔返回 bare array（Data 字段是 []FiveHoleSnakePoint），前端直接迭代
+ *   - 七孔返回包装对象（Data 字段是 SevenHolePreviewResult，含 totalCount/innerCount/outerCount）
+ * 
+ * 与 CalibrationStart 的区别：
+ *   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+ *   - 不需要路径归一（无 SavePath）
+ *   - 不需要 ToCore 转换（FiveHolePointLayoutDTO 直接是 calibration.FiveHolePointLayout 别名）
+ * 
+ * 错误处理：配置非法（步长 ≤ 0）返回 Success=false + Error 透传 GenerateFiveHoleSnakePoints 错误。
+ * spec Task 11 acceptance：HTTP/Wails 都调用同一 usecase，后端错误传到 UI，不静默 fallback。
+ * @param {types$0.FiveHolePointLayoutDTO} dto
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function CalibrationPreviewFiveHole(dto) {
+    return $Call.ByID(722703141, dto).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }

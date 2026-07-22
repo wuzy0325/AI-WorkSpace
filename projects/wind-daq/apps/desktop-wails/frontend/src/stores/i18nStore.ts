@@ -315,7 +315,6 @@ const zh: Record<string, string> = {
   travCsvPath: 'CSV',
   travValidationWarnings: '{count} 条验证警告',
   travReturnToOriginWarning: '回零未完成（数据已保存，请检查位移机构）',
-  travSimComplete: '模拟运行完成，共 {count} 个数据点',
   travCheckDetected: '检测到未完成的测试',
   travCheckCompleted: '已完成',
   travCheckConfig: '配置:',
@@ -491,6 +490,14 @@ const zh: Record<string, string> = {
   travMotionSafetyErrCriticalGreaterThanArrival: '严重偏离阈值必须严格大于到位容差',
   travMotionSafetyErrEpsilonLessThanArrival: '进展阈值应小于到位容差',
   travMotionSafetyErrTimeoutLessThan120s: '无进展超时应小于 120000ms（兜底超时）',
+  // 阻断错误（backend-equivalent）：后端 validateMotionSafetyConfig 拒绝的配置
+  travMotionSafetyErrArrivalFinite: '到位容差必须是有限数（非 NaN/Inf）',
+  travMotionSafetyErrCriticalFinite: '严重偏离阈值必须是有限数（非 NaN/Inf）',
+  travMotionSafetyErrEpsilonFinite: '进展阈值必须是有限数（非 NaN/Inf）',
+  travMotionSafetyErrUnboundAxis: '按轴覆盖包含未绑定轴 {axis}（后端将拒绝此配置）',
+  // 阻断/告警分区标题
+  travMotionSafetyBlocking: '阻断错误（必须修正才能保存）',
+  travMotionSafetyAdvisory: '建议修正（不阻止保存，但运行时可能行为异常）',
 
   // 运动安全故障告警卡片（运行状态栏展示，与 MotionSafetyFailure 字段一一对应）
   travMotionSafetyAlert: '运动安全故障',
@@ -969,6 +976,11 @@ const zh: Record<string, string> = {
   wf_removeOldCsvFailed: '删除旧 CSV 文件失败，请手动删除或修改路径后再试',
   wf_checkCsvFailed: '检查 CSV 文件失败',
   wf_startCalibrationFailed: '启动校准失败',
+  // pause/resume 失败必须给操作员可见反馈：HTTP /pause /resume 返回 4xx/5xx 时
+  // store 已抛出后端错误，但 workflow 之前只 console.error，按钮无响应会让操作员误以为已暂停/已恢复。
+  // 与 stopCalibration 失败路径保持一致的 toast 暴露策略。
+  wf_pauseCalibrationFailed: '暂停校准失败',
+  wf_resumeCalibrationFailed: '恢复校准失败',
   wf_stopCalibrationConfirm: '确定要停止校准吗？当前进度将丢失。',
   wf_stopCalibrationTitle: '停止校准',
   wf_stopCalibrationFailed: '停止校准失败',
@@ -1983,7 +1995,6 @@ const en: Record<string, string> = {
   travCsvPath: 'CSV',
   travValidationWarnings: '{count} validation warnings',
   travReturnToOriginWarning: 'Return-to-origin incomplete (data saved; check the positioner)',
-  travSimComplete: 'Simulation completed with {count} data points',
   travCheckDetected: 'Unfinished test detected',
   travCheckCompleted: 'Completed',
   travCheckConfig: 'Config:',
@@ -2154,6 +2165,14 @@ const en: Record<string, string> = {
   travMotionSafetyErrCriticalGreaterThanArrival: 'Critical deviation limit must be strictly greater than arrival tolerance',
   travMotionSafetyErrEpsilonLessThanArrival: 'Progress epsilon should be less than arrival tolerance',
   travMotionSafetyErrTimeoutLessThan120s: 'No-progress timeout should be less than 120000ms (fallback timeout)',
+  // Blocking errors (backend-equivalent): backend validateMotionSafetyConfig rejects these
+  travMotionSafetyErrArrivalFinite: 'Arrival tolerance must be finite (non-NaN/Inf)',
+  travMotionSafetyErrCriticalFinite: 'Critical deviation limit must be finite (non-NaN/Inf)',
+  travMotionSafetyErrEpsilonFinite: 'Progress epsilon must be finite (non-NaN/Inf)',
+  travMotionSafetyErrUnboundAxis: 'Axis override contains unbound axis {axis} (backend will reject this config)',
+  // Blocking / advisory section headers
+  travMotionSafetyBlocking: 'Blocking errors (must fix before save)',
+  travMotionSafetyAdvisory: 'Advisory warnings (does not block save, but runtime behavior may be unexpected)',
 
   // Motion safety failure alert card (runtime status bar, mirrors MotionSafetyFailure fields)
   travMotionSafetyAlert: 'Motion Safety Failure',
@@ -2629,6 +2648,13 @@ const en: Record<string, string> = {
   wf_removeOldCsvFailed: 'Failed to delete the old CSV file. Please delete it manually or change the path.',
   wf_checkCsvFailed: 'Failed to check CSV file',
   wf_startCalibrationFailed: 'Failed to start calibration',
+  // Pause/resume failures must surface visible feedback to operators.
+  // When HTTP /pause or /resume returns 4xx/5xx, the store throws the backend error,
+  // but the workflow previously only logged to console.error — the button appeared
+  // unresponsive, misleading operators into thinking the action succeeded.
+  // Mirror the toast exposure strategy used by the stopCalibration failure path.
+  wf_pauseCalibrationFailed: 'Failed to pause calibration',
+  wf_resumeCalibrationFailed: 'Failed to resume calibration',
   wf_stopCalibrationConfirm: 'Are you sure to stop calibration? Current progress will be lost.',
   wf_stopCalibrationTitle: 'Stop Calibration',
   wf_stopCalibrationFailed: 'Failed to stop calibration',

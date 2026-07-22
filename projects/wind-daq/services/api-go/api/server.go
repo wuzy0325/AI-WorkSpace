@@ -6,16 +6,10 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
-	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
-	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 	motionhttp "shared.local/motion-control/go/httpapi"
-	configadapter "wind-daq/services/api-go/internal/adapters/config"
-	interpfiles "wind-daq/services/api-go/internal/adapters/interpolation"
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/device"
 	wind_report "wind-daq/services/api-go/internal/core/report"
@@ -24,6 +18,7 @@ import (
 	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 	"wind-daq/services/api-go/pkg/logging"
+	"wind-daq/services/api-go/pkg/types"
 )
 
 type Deps struct {
@@ -223,16 +218,16 @@ func NewRouter(deps Deps) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			// 读取整个请求体后用 adapters/config 的解码器转换为 core 层的 calibration.Config。
+			// 读取整个请求体后用 pkg/types 的解码器转换为 core 层的 calibration.Config。
 			// 这里不直接 json.Decode 进 calibration.Config，因为前端发送的探针通道是嵌套
 			// channel 格式，而 core 层禁止自带 UnmarshalJSON（零容忍约束），解码逻辑必须
-			// 在 adapters/config 层完成。
+			// 在 transport boundary（pkg/types）完成。Task 05 从 adapters/config 迁移过来。
 			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			body, err := configadapter.DecodeCalibrationConfig(data)
+			body, err := types.DecodeCalibrationConfig(data)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -305,7 +300,10 @@ func NewRouter(deps Deps) http.Handler {
 				"velocityPrecision": 3,
 			})
 		case "fivehole":
-			handleFiveholeSnakePoints(w, r)
+			// spec Task 10：五孔点位预览委托 usecase 层 PreviewFiveHolePoints，
+			// 不再在 API 层直接调 core.GenerateFiveHoleSnakePoints——
+			// 与 sevenhole-preview 路由对称，HTTP/Wails 共用同一 usecase 入口。
+			handleFiveHolePreview(w, r, deps.CalibrationManager)
 		case "sevenhole-preview":
 			// 七孔点位预览（spec Task 12）：前端"配置向导"调整 α/β/θ/φ 范围与步长时
 			// 实时显示总点数与内/外区分布，让操作员在启动校准前确认点位规模。
@@ -389,13 +387,13 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			interpolator, err := interpfiles.LoadPrbFile(body.FilePath)
+			// Task 08：委托 usecase.ImportPRB，API 不再 import interpolation adapter。
+			res, err := deps.TraversalManager.ImportPRB(body.FilePath)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			deps.TraversalManager.SetInterpolator(interpolator)
-			writeJSON(w, http.StatusOK, prbFileInfo(body.FilePath, interpolator.GetValidRange()))
+			writeJSON(w, http.StatusOK, res)
 		case "importCalibrationCsv":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -408,20 +406,13 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			interpolator, err := interpfiles.LoadFiveHoleNewFile(body.FilePath)
+			// Task 08：委托 usecase.ImportCalibrationCSV，pointCount 由 usecase 类型断言获取。
+			res, err := deps.TraversalManager.ImportCalibrationCSV(body.FilePath)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			deps.TraversalManager.SetInterpolator(interpolator)
-			rangeInfo := interpolator.GetValidRange()
-			writeJSON(w, http.StatusOK, map[string]any{
-				"filePath":   body.FilePath,
-				"fileName":   filepath.Base(body.FilePath),
-				"loadedAt":   time.Now().UnixMilli(),
-				"validRange": rangeInfo,
-				"pointCount": interpolator.GetPointCount(),
-			})
+			writeJSON(w, http.StatusOK, res)
 		case "importMultiPrb":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -436,30 +427,14 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			interpolator, result, err := interpfiles.LoadMultiPrbFiles(body.FilePaths, body.MachNumbers)
+			// Task 08：委托 usecase.ImportMultiPRB，mode 透传由 usecase 处理，
+			// API 不再 import coreinterp 来做类型转换、不再直接调用 SetInterpolationMode。
+			res, err := deps.TraversalManager.ImportMultiPRB(body.FilePaths, body.MachNumbers, body.InterpolationMode)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			if body.InterpolationMode != "" {
-				interpolator.SetInterpolationMode(coreinterp.MultiPrbInterpolationMode(body.InterpolationMode))
-			}
-			deps.TraversalManager.SetInterpolator(interpolator)
-			files := make([]map[string]any, 0, len(result.Files))
-			for i, file := range result.Files {
-				var machNumber any
-				if i < len(result.MachNumbers) {
-					machNumber = result.MachNumbers[i]
-				}
-				files = append(files, map[string]any{
-					"filePath":   file.FilePath,
-					"fileName":   file.FileName,
-					"loadedAt":   time.Now().UnixMilli(),
-					"validRange": file.ValidRange,
-					"machNumber": machNumber,
-				})
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"files": files, "machNumbers": result.MachNumbers, "warnings": result.Warnings})
+			writeJSON(w, http.StatusOK, res)
 		case "importSevenHolePrb":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -467,46 +442,21 @@ func NewRouter(deps Deps) http.Handler {
 			}
 			// 七孔 .prb 文件集导入（spec §5.6）：1 个内区文件 + 恰 6 个扇区文件，
 			// 成功后仅设置七孔插值器（不影响五孔字段），返回逐文件信息。
+			// Task 08：校验与响应组装下沉到 usecase.ImportSevenHolePRB。
 			var body struct {
-				InnerFilePath string   `json:"innerFilePath"`
+				InnerFilePath  string   `json:"innerFilePath"`
 				OuterFilePaths []string `json:"outerFilePaths"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			if body.InnerFilePath == "" {
-				writeError(w, http.StatusBadRequest, "innerFilePath 不能为空（七孔内区 7.prb）")
-				return
-			}
-			if len(body.OuterFilePaths) != 6 {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("outerFilePaths 必须恰为 6 份扇区文件（按孔号 1..6 顺序），实际 %d 份", len(body.OuterFilePaths)))
-				return
-			}
-			var outerPaths [6]string
-			copy(outerPaths[:], body.OuterFilePaths)
-			interpolator, err := interpfiles.LoadSevenHolePrbFiles(body.InnerFilePath, outerPaths)
+			res, err := deps.TraversalManager.ImportSevenHolePRB(body.InnerFilePath, body.OuterFilePaths)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("加载七孔PRB文件集失败：%v", err))
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			deps.TraversalManager.SetSevenHoleInterpolator(interpolator)
-			loadedAt := time.Now().UnixMilli()
-			sevenFiles := make([]map[string]any, 0, 7)
-			sevenFiles = append(sevenFiles, map[string]any{
-				"filePath": body.InnerFilePath, "fileName": filepath.Base(body.InnerFilePath),
-				"sector": 7, "pointCount": 169, "loadedAt": loadedAt,
-			})
-			for i, p := range body.OuterFilePaths {
-				sevenFiles = append(sevenFiles, map[string]any{
-					"filePath": p, "fileName": filepath.Base(p),
-					"sector": i + 1, "pointCount": 52, "loadedAt": loadedAt,
-				})
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"files":      sevenFiles,
-				"validRange": interpolator.GetValidRange(),
-			})
+			writeJSON(w, http.StatusOK, res)
 		case "importSevenHoleCalibrationCsv":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -514,47 +464,21 @@ func NewRouter(deps Deps) http.Handler {
 			}
 			// 七孔校准 CSV 文件集导入（校准 CSV → 插值网格，spec §10 Q2 落地）：
 			// 与 importSevenHolePrb 同 DTO（1 内区 + 6 扇区路径），
-			// adapters 层完成 GBK/列位置解析与网格转换，成功后仅设置七孔插值器。
+			// Task 08：校验与响应组装下沉到 usecase.ImportSevenHoleCalibrationCSV。
 			var body struct {
-				InnerFilePath string   `json:"innerFilePath"`
+				InnerFilePath  string   `json:"innerFilePath"`
 				OuterFilePaths []string `json:"outerFilePaths"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			if body.InnerFilePath == "" {
-				writeError(w, http.StatusBadRequest, "innerFilePath 不能为空（七孔内区校准 CSV）")
-				return
-			}
-			if len(body.OuterFilePaths) != 6 {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("outerFilePaths 必须恰为 6 份扇区校准 CSV（按孔号 1..6 顺序），实际 %d 份", len(body.OuterFilePaths)))
-				return
-			}
-			var outerCsvPaths [6]string
-			copy(outerCsvPaths[:], body.OuterFilePaths)
-			interpolator, err := interpfiles.LoadSevenHoleCalibrationCsvFiles(body.InnerFilePath, outerCsvPaths)
+			res, err := deps.TraversalManager.ImportSevenHoleCalibrationCSV(body.InnerFilePath, body.OuterFilePaths)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("加载七孔校准CSV文件集失败：%v", err))
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			deps.TraversalManager.SetSevenHoleInterpolator(interpolator)
-			loadedAt := time.Now().UnixMilli()
-			csvFiles := make([]map[string]any, 0, 7)
-			csvFiles = append(csvFiles, map[string]any{
-				"filePath": body.InnerFilePath, "fileName": filepath.Base(body.InnerFilePath),
-				"sector": 7, "pointCount": 169, "loadedAt": loadedAt,
-			})
-			for i, p := range body.OuterFilePaths {
-				csvFiles = append(csvFiles, map[string]any{
-					"filePath": p, "fileName": filepath.Base(p),
-					"sector": i + 1, "pointCount": 52, "loadedAt": loadedAt,
-				})
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"files":      csvFiles,
-				"validRange": interpolator.GetValidRange(),
-			})
+			writeJSON(w, http.StatusOK, res)
 		case "clearInterpolator":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -586,6 +510,8 @@ func NewRouter(deps Deps) http.Handler {
 			// 请求体为五孔超集（spec §5.6）：旧五孔 body 可省略 probeType；
 			// 七孔必须显式传 "seven-hole" 且携带 P6/P7（*float64：nil=缺失，
 			// 非 nil 含 0=已提供，禁止以零值猜测类型）。
+			// Task 09：API 只解码 transport DTO，所有探针分发/P6P7 presence/
+			// 类型一致性校验下沉到 usecase.CalculateRealtimeForAPI。
 			var body struct {
 				ProbeType string `json:"probeType"`
 				Pressures struct {
@@ -604,35 +530,14 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			if body.ProbeType == string(traversal.ProbeTypeSevenHole) {
-				if body.Pressures.P6 == nil || body.Pressures.P7 == nil {
-					writeError(w, http.StatusBadRequest, "七孔实时计算必须显式提供 P6/P7 压力字段")
-					return
-				}
-				result, err := deps.TraversalManager.CalculateSevenHoleRealtime(seveninterp.InterpolationInput{
-					P1:   body.Pressures.P1,
-					P2:   body.Pressures.P2,
-					P3:   body.Pressures.P3,
-					P4:   body.Pressures.P4,
-					P5:   body.Pressures.P5,
-					P6:   *body.Pressures.P6,
-					P7:   *body.Pressures.P7,
-					PAtm: body.Pressures.PAtm,
-					TAtm: body.Pressures.TAtm,
-				})
-				if err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				writeJSON(w, http.StatusOK, result)
-				return
-			}
-			result, err := deps.TraversalManager.CalculateRealtime(coreinterp.InterpolationInput{
+			result, err := deps.TraversalManager.CalculateRealtimeForAPI(body.ProbeType, usecase.ProbePressureInput{
 				P1:   body.Pressures.P1,
 				P2:   body.Pressures.P2,
 				P3:   body.Pressures.P3,
 				P4:   body.Pressures.P4,
 				P5:   body.Pressures.P5,
+				P6:   body.Pressures.P6,
+				P7:   body.Pressures.P7,
 				PAtm: body.Pressures.PAtm,
 				TAtm: body.Pressures.TAtm,
 			})
@@ -1267,7 +1172,23 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"success": false, "error": message})
 }
 
-func handleFiveholeSnakePoints(w http.ResponseWriter, r *http.Request) {
+// handleFiveHolePreview 五孔点位预览 handler（spec Task 10）
+//
+// 接收前端"配置向导"提交的 FiveHolePointLayout，调用 CalibrationManager.PreviewFiveHolePoints
+// 生成蛇形/raster 点位列表，返回 bare array（与既有契约一致）。
+//
+// spec Task 10 修复：原 handleFiveholeSnakePoints 直接调 core.GenerateFiveHoleSnakePoints，
+// 违反"API 不直接调用点位生成算法"边界。现统一委托 usecase 层，HTTP/Wails 共用入口。
+//
+// 与 handleSevenHolePreview 的区别：
+//   - 五孔返回 bare array（[]FiveHoleSnakePoint）——历史契约，前端直接迭代
+//   - 七孔返回包装对象（{points,totalCount,innerCount,outerCount}）——含聚合统计
+//
+// 错误处理：
+//   - JSON 解码失败 → 400
+//   - 配置非法（步长 ≤ 0）→ 400，透传 PreviewFiveHolePoints 错误
+//   - 非 POST 方法 → 405
+func handleFiveHolePreview(w http.ResponseWriter, r *http.Request, mgr *usecase.CalibrationManager) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -1277,7 +1198,7 @@ func handleFiveholeSnakePoints(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	points, err := calibration.GenerateFiveHoleSnakePoints(body)
+	points, err := mgr.PreviewFiveHolePoints(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1290,8 +1211,8 @@ func handleFiveholeSnakePoints(w http.ResponseWriter, r *http.Request) {
 // 接收前端"配置向导"提交的 SevenHoleConfig，调用 CalibrationManager.PreviewSevenHolePoints
 // 生成完整点位列表，并按 region 聚合统计内/外区点数，返回 SevenHolePreviewResult 包装。
 //
-// 与 fivehole 路由的区别：
-//   - fivehole 直接调 core.GenerateFiveHoleSnakePoints，返回 []CalPoint
+// 与 fivehole 路由的区别（spec Task 10 后两者均委托 usecase）：
+//   - fivehole 走 usecase 层 PreviewFiveHolePoints，返回 bare array []FiveHoleSnakePoint
 //   - sevenhole-preview 走 usecase 层 PreviewSevenHolePoints，返回带聚合统计的
 //     SevenHolePreviewResult（TotalCount/InnerCount/OuterCount）供前端状态栏直接显示
 //
@@ -1374,15 +1295,6 @@ func sanitizeFloatMap(m map[string]float64) map[string]any {
 		}
 	}
 	return out
-}
-
-func prbFileInfo(filePath string, validRange coreinterp.PrbValidRange) map[string]any {
-	return map[string]any{
-		"filePath":   filePath,
-		"fileName":   filepath.Base(filePath),
-		"loadedAt":   time.Now().UnixMilli(),
-		"validRange": validRange,
-	}
 }
 
 // handleLogStream 通过 SSE 实时推送后端日志到前端。

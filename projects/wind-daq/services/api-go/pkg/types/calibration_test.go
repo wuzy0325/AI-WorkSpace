@@ -1,10 +1,18 @@
-package config
+// Package types 的校准 DTO 单元测试（Task 05：从 internal/adapters/config 迁移）。
+//
+// 这些测试覆盖：
+//  1. 嵌套/扁平 channel 两种 JSON shape 的解码（与原 adapters/config 测试对齐）
+//  2. ToCore 完整字段保留（防止后续给 calibration.Config 加字段时遗漏 DTO 同步）
+//  3. 七孔 11 角色齐全/缺失/双坐标等场景
+//  4. MotionSafety 字段保留（Task 05 新增——原 DTO 遗漏此字段导致前端配置被静默丢弃）
+package types
 
 import (
 	"strings"
 	"testing"
 
 	"wind-daq/services/api-go/internal/core/calibration"
+	"wind-daq/services/api-go/internal/core/traversal"
 )
 
 // TestDecodeCalibrationConfig_NestedFrontendShape 验证前端发送的嵌套 channel 格式
@@ -12,7 +20,6 @@ import (
 //
 // 前端 ProbeChannelConfig 结构为 { name, role, channel:{deviceId,channelIndex}, enabled }，
 // 顶层不带 deviceId/channelIndex，必须通过 DTO 的 Channel 字段接收后再映射到扁平字段。
-// 此测试对应从 core 迁移过来的 TestProbeChannelUnmarshalNestedFrontendShape。
 func TestDecodeCalibrationConfig_NestedFrontendShape(t *testing.T) {
 	jsonData := []byte(`{
 		"taskId": "cal-1",
@@ -41,8 +48,7 @@ func TestDecodeCalibrationConfig_NestedFrontendShape(t *testing.T) {
 }
 
 // TestDecodeCalibrationConfig_FlatBackendShape 验证旧后端/直接构造的扁平格式
-// （顶层带 deviceId/channelIndex，无 channel 嵌套对象）仍能被正确解码。
-// 这保证 HTTP API 与旧调用方不因 DTO 引入而破坏。
+// 仍能被正确解码，保证 HTTP API 与旧调用方不因 DTO 迁移而破坏。
 func TestDecodeCalibrationConfig_FlatBackendShape(t *testing.T) {
 	jsonData := []byte(`{
 		"taskId": "cal-2",
@@ -105,6 +111,12 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 		"name": "全字段校准",
 		"savePath": "data/out",
 		"motionAxes": [{"controllerId":"mc-1","axis":"x","name":"X"}],
+		"motionSafety": {
+			"arrivalTolerance": 0.05,
+			"criticalDeviationLimit": 1.0,
+			"noProgressTimeoutMs": 1500,
+			"progressEpsilon": 0.002
+		},
 		"sphereTankGate": {"enabled": true, "waitTimeSec": 2.5, "stableTimeChannel": {"deviceId":"dev-1","channelIndex":2}},
 		"acquisitionSampling": {"batchTimeoutMs": 100, "batchPollIntervalMs": 10, "batchMaxAgeMs": 1000},
 		"totalTemperatureConfig": {
@@ -147,8 +159,6 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 	if cfg.Points[0].Coordinates["x"] != 1.5 {
 		t.Fatalf("unexpected point coordinates: %v", cfg.Points[0].Coordinates)
 	}
-	// I-1: 补 ProbeChannels 全字段断言——JSON 输入用了嵌套 channel shape，
-	// 必须确认 Role/Name/DeviceID/ChannelIndex/Enabled 都正确解码，防止 DTO 嵌套映射回归。
 	if len(cfg.ProbeChannels) != 1 {
 		t.Fatalf("expected 1 probe channel, got %d", len(cfg.ProbeChannels))
 	}
@@ -156,13 +166,28 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 	if pc.Role != "fiveHole.p1" || pc.Name != "P1" || pc.DeviceID != "dev-1" || pc.ChannelIndex != 1 || !pc.Enabled {
 		t.Fatalf("unexpected probeChannel fields: %+v", pc)
 	}
-	// I-2: MotionAxes 不仅断言 ControllerID，还要覆盖 Axis/Name，避免后续给 MotionAxisConfig
-	// 加字段时 DTO 同步遗漏。
 	if len(cfg.MotionAxes) != 1 ||
 		cfg.MotionAxes[0].ControllerID != "mc-1" ||
 		cfg.MotionAxes[0].Axis != "x" ||
 		cfg.MotionAxes[0].Name != "X" {
 		t.Fatalf("unexpected motionAxes: %+v", cfg.MotionAxes)
+	}
+	// MotionSafety 必须完整保留——这是 Task 05 修复的核心字段。
+	// 原 adapters/config DTO 遗漏此字段导致前端配置被静默丢弃。
+	if cfg.MotionSafety == nil {
+		t.Fatalf("expected motionSafety to be set, got nil (Task 05 regression)")
+	}
+	if cfg.MotionSafety.ArrivalTolerance == nil || *cfg.MotionSafety.ArrivalTolerance != 0.05 {
+		t.Fatalf("unexpected motionSafety.arrivalTolerance: %+v", cfg.MotionSafety.ArrivalTolerance)
+	}
+	if cfg.MotionSafety.CriticalDeviationLimit == nil || *cfg.MotionSafety.CriticalDeviationLimit != 1.0 {
+		t.Fatalf("unexpected motionSafety.criticalDeviationLimit: %+v", cfg.MotionSafety.CriticalDeviationLimit)
+	}
+	if cfg.MotionSafety.NoProgressTimeoutMs == nil || *cfg.MotionSafety.NoProgressTimeoutMs != 1500 {
+		t.Fatalf("unexpected motionSafety.noProgressTimeoutMs: %+v", cfg.MotionSafety.NoProgressTimeoutMs)
+	}
+	if cfg.MotionSafety.ProgressEpsilon == nil || *cfg.MotionSafety.ProgressEpsilon != 0.002 {
+		t.Fatalf("unexpected motionSafety.progressEpsilon: %+v", cfg.MotionSafety.ProgressEpsilon)
 	}
 	if cfg.SphereTankGate == nil || !cfg.SphereTankGate.Enabled || cfg.SphereTankGate.WaitTimeSec != 2.5 {
 		t.Fatalf("unexpected sphereTankGate: %+v", cfg.SphereTankGate)
@@ -170,8 +195,6 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 	if cfg.SphereTankGate.StableTimeChannel.DeviceID != "dev-1" || cfg.SphereTankGate.StableTimeChannel.ChannelIndex != 2 {
 		t.Fatalf("unexpected stableTimeChannel: %+v", cfg.SphereTankGate.StableTimeChannel)
 	}
-	// I-2: AcquisitionSampling 必须覆盖全部三个字段（BatchTimeoutMs/BatchPollIntervalMs/BatchMaxAgeMs），
-	// 防止后续给 AcquisitionSamplingConfig 加字段时 DTO 同步遗漏。
 	if cfg.AcquisitionSampling == nil ||
 		cfg.AcquisitionSampling.BatchTimeoutMs != 100 ||
 		cfg.AcquisitionSampling.BatchPollIntervalMs != 10 ||
@@ -223,11 +246,6 @@ func TestCalibrationConfigDTO_ToCore_EmptyProbeChannels(t *testing.T) {
 
 // TestDecodeCalibrationConfig_EmptyProbeChannelsArray 验证 probeChannels 为空数组 [] 时，
 // DecodeCalibrationConfig 返回的 cfg.ProbeChannels 为 nil。
-//
-// 这与 ToCore() 中 len(d.ProbeChannels) > 0 的判断语义一致：
-// json.Unmarshal 把 "probeChannels": [] 解码为非 nil 的空切片（len==0），
-// 但 ToCore 用 len > 0 判断，空切片不会进入赋值分支，cfg.ProbeChannels 保持 nil。
-// 此测试防止后续重构（例如改用 != nil 判断或直接赋值）打破 nil 归一化语义。
 func TestDecodeCalibrationConfig_EmptyProbeChannelsArray(t *testing.T) {
 	jsonData := []byte(`{
 		"taskId": "cal-empty-array",
@@ -244,14 +262,91 @@ func TestDecodeCalibrationConfig_EmptyProbeChannelsArray(t *testing.T) {
 	}
 }
 
-// ==================== 七孔探针校准 DTO 集成测试（Task 8） ====================
+// TestDecodeCalibrationConfig_MotionSafetyNil 验证 JSON 不含 motionSafety 字段时
+// cfg.MotionSafety 为 nil（下游使用 DefaultMotionSafety）。
 //
-// 七孔 DTO 无需扩展结构——CalibrationConfigDTO 的 ProbeChannels []ProbeChannelDTO
-// 字段是类型无关的通用容器，11 个 sevenHole.* 角色字符串原样保留即可。
-// 这些测试验证「DTO 通用解码 + SevenHoleAlgorithm.ValidateConfig 校验」的端到端链路。
+// 这是向后兼容场景：旧前端/旧配置不发送 motionSafety，DTO 不应构造默认值，
+// 而是原样保留 nil，由后端 Start 走 validateCalibrationMotionSafetyConfig 的 nil 路径。
+func TestDecodeCalibrationConfig_MotionSafetyNil(t *testing.T) {
+	jsonData := []byte(`{
+		"taskId": "cal-no-safety",
+		"type": "five-hole"
+	}`)
 
-// sevenHoleAllRolesJSON 构造 11 角色齐全的七孔 DTO JSON（前端嵌套 channel shape）。
-// 复用此常量避免在多个测试中重复 11 行 probeChannels 定义。
+	cfg, err := DecodeCalibrationConfig(jsonData)
+	if err != nil {
+		t.Fatalf("decode calibration config: %v", err)
+	}
+	if cfg.MotionSafety != nil {
+		t.Fatalf("expected nil MotionSafety when JSON omits field, got %+v", cfg.MotionSafety)
+	}
+}
+
+// TestDecodeCalibrationConfig_MotionSafetyWithAxisOverrides 验证 motionSafety.axisOverrides
+// 子字段能通过 DTO 完整保留——这是 R-5 后端权威校验的关键场景。
+//
+// 测试前置：构造含 axisOverrides 的 motionSafety JSON
+// 测试步骤：DecodeCalibrationConfig 解码
+// 期待结果：cfg.MotionSafety.AxisOverrides 非空，"x" 轴覆盖项的 ArrivalTolerance 为 0.01
+func TestDecodeCalibrationConfig_MotionSafetyWithAxisOverrides(t *testing.T) {
+	jsonData := []byte(`{
+		"taskId": "cal-override",
+		"type": "five-hole",
+		"motionSafety": {
+			"arrivalTolerance": 0.1,
+			"axisOverrides": {
+				"x": {"arrivalTolerance": 0.01}
+			}
+		}
+	}`)
+
+	cfg, err := DecodeCalibrationConfig(jsonData)
+	if err != nil {
+		t.Fatalf("decode calibration config: %v", err)
+	}
+	if cfg.MotionSafety == nil {
+		t.Fatalf("expected motionSafety to be set")
+	}
+	if cfg.MotionSafety.AxisOverrides == nil {
+		t.Fatalf("expected axisOverrides to be set")
+	}
+	xOverride, ok := cfg.MotionSafety.AxisOverrides["x"]
+	if !ok {
+		t.Fatalf("expected axisOverrides to contain 'x'")
+	}
+	if xOverride == nil || xOverride.ArrivalTolerance == nil || *xOverride.ArrivalTolerance != 0.01 {
+		t.Fatalf("unexpected x axis override: %+v", xOverride)
+	}
+	// 顶层 ArrivalTolerance 也必须保留——axisOverrides 不影响顶层默认值
+	if cfg.MotionSafety.ArrivalTolerance == nil || *cfg.MotionSafety.ArrivalTolerance != 0.1 {
+		t.Fatalf("unexpected top-level arrivalTolerance: %+v", cfg.MotionSafety.ArrivalTolerance)
+	}
+}
+
+// TestCalibrationConfigDTO_ToCore_MotionSafetyPointer 验证 ToCore 保留 MotionSafety 指针语义——
+// 指针字段必须原样传递（共享底层值），让后端 Start 能拿到非 nil 配置并通过校验。
+//
+// 这防止后续重构时把 MotionSafety 改成值类型导致 nil 语义丢失。
+func TestCalibrationConfigDTO_ToCore_MotionSafetyPointer(t *testing.T) {
+	tol := 0.05
+	dto := CalibrationConfigDTO{
+		TaskID: "cal-ptr",
+		Type:   "five-hole",
+		MotionSafety: &traversal.MotionSafetyConfig{
+			ArrivalTolerance: &tol,
+		},
+	}
+	cfg := dto.ToCore()
+	if cfg.MotionSafety == nil {
+		t.Fatalf("expected MotionSafety pointer to be preserved")
+	}
+	if cfg.MotionSafety.ArrivalTolerance == nil || *cfg.MotionSafety.ArrivalTolerance != 0.05 {
+		t.Fatalf("expected ArrivalTolerance 0.05, got %+v", cfg.MotionSafety.ArrivalTolerance)
+	}
+}
+
+// ==================== 七孔探针校准 DTO 集成测试 ====================
+
 const sevenHoleAllRolesJSON = `{
 	"taskId": "cal-7h",
 	"deviceId": "dev-7h",
@@ -274,17 +369,12 @@ const sevenHoleAllRolesJSON = `{
 }`
 
 // TestDecodeCalibrationConfig_SevenHoleAllRoles 验证 11 角色齐全的七孔 DTO 解码后通过 ValidateConfig
-//
-// 测试前置：构造含 11 个 sevenHole.* 角色的 DTO JSON（前端嵌套 channel shape）
-// 测试步骤：DecodeCalibrationConfig 解码 → SevenHoleAlgorithm.ValidateConfig 校验
-// 期待结果：解码无错，11 个 ProbeChannels 角色字符串原样保留，ValidateConfig 返回 nil
 func TestDecodeCalibrationConfig_SevenHoleAllRoles(t *testing.T) {
 	cfg, err := DecodeCalibrationConfig([]byte(sevenHoleAllRolesJSON))
 	if err != nil {
 		t.Fatalf("decode seven-hole config: %v", err)
 	}
 
-	// DTO 通用字段断言
 	if cfg.Type != string(calibration.TypeSevenHole) {
 		t.Fatalf("Type: expected %q, got %q", calibration.TypeSevenHole, cfg.Type)
 	}
@@ -294,12 +384,9 @@ func TestDecodeCalibrationConfig_SevenHoleAllRoles(t *testing.T) {
 	if cfg.SamplesPerPoint != 10 {
 		t.Fatalf("SamplesPerPoint: expected 10, got %d", cfg.SamplesPerPoint)
 	}
-
-	// 11 角色齐全断言
 	if len(cfg.ProbeChannels) != 11 {
 		t.Fatalf("expected 11 probe channels, got %d", len(cfg.ProbeChannels))
 	}
-	// 抽查 P7（中心孔）和 tAtm（温度）两个关键角色，确保嵌套 channel 解码后角色字符串原样保留
 	roleSet := make(map[string]calibration.ProbeChannel, len(cfg.ProbeChannels))
 	for _, ch := range cfg.ProbeChannels {
 		roleSet[ch.Role] = ch
@@ -315,7 +402,6 @@ func TestDecodeCalibrationConfig_SevenHoleAllRoles(t *testing.T) {
 		t.Fatalf("sevenHole.tAtm channelIndex: expected 11, got %d", pc.ChannelIndex)
 	}
 
-	// 端到端：解码后的 Config 必须通过 SevenHoleAlgorithm.ValidateConfig
 	algo := calibration.NewSevenHoleAlgorithm()
 	if err := algo.ValidateConfig(cfg); err != nil {
 		t.Fatalf("ValidateConfig should pass with all 11 roles: %v", err)
@@ -323,16 +409,7 @@ func TestDecodeCalibrationConfig_SevenHoleAllRoles(t *testing.T) {
 }
 
 // TestDecodeCalibrationConfig_SevenHoleMissingP7 验证缺少 sevenHole.p7 时 ValidateConfig 返回错误
-//
-// 测试前置：从 sevenHoleAllRolesJSON 中删除 sevenHole.p7 角色行
-// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
-// 期待结果：解码无错（DTO 不校验角色），但 ValidateConfig 返回 "缺少必需通道角色" 错误
-//
-// 此测试对应 spec Task 8 验收标准 "构造缺 sevenHole.p7 的 DTO JSON，解码后 ValidateConfig 返回错误"。
-// 选 p7 是因为中心孔是七孔探针的核心角色（内区公式分母 P7-P̄ 依赖 P7），
-// 缺失会导致内区所有系数无法计算。
 func TestDecodeCalibrationConfig_SevenHoleMissingP7(t *testing.T) {
-	// 通过字符串替换删除 sevenHole.p7 行——保留其他 10 个角色
 	missingP7JSON := strings.Replace(sevenHoleAllRolesJSON,
 		`		{"role":"sevenHole.p7","name":"P7","channel":{"deviceId":"dev-7h","channelIndex":7},"enabled":true},
 `, "", 1)
@@ -341,12 +418,10 @@ func TestDecodeCalibrationConfig_SevenHoleMissingP7(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode seven-hole config without p7: %v", err)
 	}
-	// DTO 解码不校验角色——只保留 10 个 ProbeChannels
 	if len(cfg.ProbeChannels) != 10 {
 		t.Fatalf("expected 10 probe channels (missing p7), got %d", len(cfg.ProbeChannels))
 	}
 
-	// ValidateConfig 必须捕获缺失角色
 	algo := calibration.NewSevenHoleAlgorithm()
 	err = algo.ValidateConfig(cfg)
 	if err == nil {
@@ -358,13 +433,6 @@ func TestDecodeCalibrationConfig_SevenHoleMissingP7(t *testing.T) {
 }
 
 // TestDecodeCalibrationConfig_SevenHoleMissingMultipleRoles 验证缺多个角色时错误信息列出全部缺失角色
-//
-// 测试前置：从 sevenHoleAllRolesJSON 中删除 pTotal 和 pAtm 两个角色
-// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
-// 期待结果：ValidateConfig 返回错误，错误信息同时包含 "sevenHole.pTotal" 和 "sevenHole.pAtm"
-//
-// 此测试覆盖 spec §3.2 规则之外的另一种缺失场景——多角色缺失时错误信息完整。
-// 操作员根据错误信息一次性补齐所有缺失角色，避免逐个补齐多次试错。
 func TestDecodeCalibrationConfig_SevenHoleMissingMultipleRoles(t *testing.T) {
 	missingMultipleJSON := strings.Replace(sevenHoleAllRolesJSON,
 		`		{"role":"sevenHole.pTotal","name":"Pt","channel":{"deviceId":"dev-7h","channelIndex":8},"enabled":true},
@@ -394,16 +462,7 @@ func TestDecodeCalibrationConfig_SevenHoleMissingMultipleRoles(t *testing.T) {
 	}
 }
 
-// TestDecodeCalibrationConfig_SevenHoleDualCoordinates 验证七孔点位的 MotionCoordinates/Region/Sector 字段
-// 通过 DTO 原样保留（CalPoint 在 Task 1 已扩展这三个字段，DTO 的 Points []calibration.CalPoint 直接复用）
-//
-// 测试前置：在 sevenHoleAllRolesJSON 基础上追加两个点位（内区 + 外区各一个），含双坐标
-// 测试步骤：DecodeCalibrationConfig 解码 → 检查 Points 字段
-// 期待结果：内区点 Coordinates={"α":5,"β":-3}，MotionCoordinates={"α":5,"β":-3}，Region="inner"，Sector=7
-//          外区点 Coordinates={"θ":35,"φ":60}，MotionCoordinates={"α":..,"β":..}（按正向公式换算），Region="outer"，Sector=2
-//
-// 此测试覆盖 spec §3.4 双坐标模型——点位生成阶段一次性填 Coordinates + MotionCoordinates，
-// 运行时 moveToPoint 只读 MotionCoordinates，避免运行时换算。
+// TestDecodeCalibrationConfig_SevenHoleDualCoordinates 验证七孔点位的双坐标字段通过 DTO 原样保留
 func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
 	jsonData := sevenHoleAllRolesJSON[:len(sevenHoleAllRolesJSON)-2] + `,
 	"points": [
@@ -428,12 +487,9 @@ func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode seven-hole config with dual coordinates: %v", err)
 	}
-
 	if len(cfg.Points) != 2 {
 		t.Fatalf("expected 2 points, got %d", len(cfg.Points))
 	}
-
-	// 内区点
 	inner := cfg.Points[0]
 	if inner.ID != 1 {
 		t.Fatalf("inner point ID: expected 1, got %d", inner.ID)
@@ -447,8 +503,6 @@ func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
 	if inner.Region != "inner" || inner.Sector != 7 {
 		t.Fatalf("inner Region/Sector: expected inner/7, got %q/%d", inner.Region, inner.Sector)
 	}
-
-	// 外区点
 	outer := cfg.Points[1]
 	if outer.ID != 170 {
 		t.Fatalf("outer point ID: expected 170, got %d", outer.ID)
@@ -463,7 +517,6 @@ func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
 		t.Fatalf("outer Region/Sector: expected outer/2, got %q/%d", outer.Region, outer.Sector)
 	}
 
-	// 端到端：含双坐标点位的 Config 也必须通过 ValidateConfig
 	algo := calibration.NewSevenHoleAlgorithm()
 	if err := algo.ValidateConfig(cfg); err != nil {
 		t.Fatalf("ValidateConfig should pass with dual coordinates: %v", err)
@@ -471,13 +524,6 @@ func TestDecodeCalibrationConfig_SevenHoleDualCoordinates(t *testing.T) {
 }
 
 // TestDecodeCalibrationConfig_SevenHoleSamplesPerPointZero 验证 SamplesPerPoint=0 时 ValidateConfig 返回错误
-//
-// 测试前置：在 sevenHoleAllRolesJSON 基础上把 samplesPerPoint 改为 0
-// 测试步骤：DecodeCalibrationConfig 解码 → ValidateConfig 校验
-// 期待结果：ValidateConfig 返回 "samplesPerPoint 必须大于0" 错误
-//
-// 此测试覆盖 spec Task 5 中 ValidateConfig 的另一条校验路径——
-// 即使 11 角色齐全，SamplesPerPoint=0 也无法采集（会导致除零或无限循环）。
 func TestDecodeCalibrationConfig_SevenHoleSamplesPerPointZero(t *testing.T) {
 	zeroSamplesJSON := strings.Replace(sevenHoleAllRolesJSON,
 		`"samplesPerPoint": 10`, `"samplesPerPoint": 0`, 1)

@@ -61,6 +61,13 @@ func main() {
 	}
 
 	slog.Info("wind-daq api server starting", "addr", server.Address)
+	// BLOCKER（code-review T03，待人工复核）：standalone server 无 context 所有权
+	// （http.ListenAndServe 阻塞至进程被杀），且 bootstrap.APIServer 不暴露
+	// CalibrationManager，无法在此最小收口校准任务的 shutdown。
+	// 校准 session 的有界停止目前仅覆盖 Wails ServiceShutdown（app.go）与
+	// context-owned apiserver（pkg/apiserver）。进程被强杀时校准 worker 的
+	// writer flush/结果保存/归零可能中断。修复需要 bootstrap.APIServer 暴露
+	// manager 并引入 signal.NotifyContext 关停路径，超出 T03 最小改动范围。
 	if err := http.ListenAndServe(server.Address, server.Handler); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)

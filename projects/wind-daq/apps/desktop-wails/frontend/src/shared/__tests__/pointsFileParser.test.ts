@@ -45,6 +45,17 @@ describe('normalizeAxisName', () => {
     expect(normalizeAxisName('α')).toBeNull()
     expect(normalizeAxisName('alpha')).toBeNull()
   })
+
+  it('剥离多段中英文混合括号注释（X(mm)(deg) / X（mm）（deg） / X(mm)（deg） 等 → x）', () => {
+    // 测试前置：表头含两段及以上括号注释，半角/全角混排
+    // 期待结果：所有括号注释段全部剥离，归一化为 'x'
+    expect(normalizeAxisName('X(mm)(deg)')).toBe('x')
+    expect(normalizeAxisName('X（mm）（deg）')).toBe('x')
+    expect(normalizeAxisName('X(mm)（deg）')).toBe('x')
+    expect(normalizeAxisName('X（mm）(deg)')).toBe('x')
+    expect(normalizeAxisName('Y(mm)（deg）(raw)')).toBe('y')
+    expect(normalizeAxisName('pos_x（mm）(deg)')).toBe('x')
+  })
 })
 
 describe('normalizeConfigKey', () => {
@@ -89,6 +100,16 @@ describe('normalizeConfigKey', () => {
     expect(normalizeConfigKey('enabled')).toBeNull()
     expect(normalizeConfigKey('testing')).toBeNull()
   })
+
+  it('剥离多段中英文混合括号注释（Dwell(ms)（稳定） 等 → dwellMs）', () => {
+    // 测试前置：配置列表头含两段及以上括号注释，半角/全角混排
+    // 期待结果：所有括号注释段全部剥离，归一化为对应 PointConfigKey
+    expect(normalizeConfigKey('Dwell(ms)(稳定)')).toBe('dwellMs')
+    expect(normalizeConfigKey('Dwell（ms）（稳定）')).toBe('dwellMs')
+    expect(normalizeConfigKey('Dwell(ms)（稳定）')).toBe('dwellMs')
+    expect(normalizeConfigKey('Samples(个)（每点）')).toBe('samples')
+    expect(normalizeConfigKey('Test(1=on)（开关）')).toBe('test')
+  })
 })
 
 describe('parsePointsFile', () => {
@@ -110,6 +131,14 @@ describe('parsePointsFile', () => {
     const text = 'X(mm),Y(mm),Z(mm),U(°)\n1,2,3,4'
     const result = parsePointsFile(text)
     expect(result).toEqual([{ x: 1, y: 2, z: 3, u: 4 }])
+  })
+
+  it('CSV 表头含多段中英文混合括号注释（X(mm)（deg） 等）', () => {
+    // 测试前置：表头各列带两段括号注释，半角/全角混排
+    // 期待结果：注释全部剥离，4 列坐标与 dwellMs 列正确解析
+    const text = 'X(mm)（deg）,Y（mm）(deg),Z(mm)(deg),U（°）（deg）,Dwell(ms)（稳定）\n1,2,3,4,5000'
+    const result = parsePointsFile(text)
+    expect(result).toEqual([{ x: 1, y: 2, z: 3, u: 4, dwellMs: 5000 }])
   })
 
   it('用例 3：TSV 缺 U 列（验证 0 填充）', () => {
@@ -253,6 +282,45 @@ describe('parsePointsFile', () => {
     const text = 'X,Y,Z,U,skip\n1,0,0,0,'
     const result = parsePointsFile(text)
     expect(result[0].test).toBeUndefined()
+  })
+
+  it('用例 17a：skip 列名带半角单段括号注释（skip(1=skip)）→ 仍正确取反', () => {
+    // 测试前置：表头 skip(1=skip)，注释说明 "1=skip"
+    // 期待结果：normalizeConfigKey 剥离注释识别为 test 配置键；invert 判定也基于剥离后的 base，
+    // 因此 skip=1 → test=false（跳过此点）；skip=0 → test=true
+    // 回归保护：此前 invert 用未剥离的 field 判定 /^skip$/，对 "skip(1=skip)" 不匹配 → invert=false，
+    // skip=1 被解析为 test=true，违反 skip 语义
+    const text = 'X,Y,Z,U,skip(1=skip)\n1,0,0,0,1\n2,0,0,0,0'
+    const result = parsePointsFile(text)
+    expect(result[0].test).toBe(false)
+    expect(result[1].test).toBe(true)
+  })
+
+  it('用例 17b：skip 列名带半角多段括号注释（skip(1=skip)(flag)）→ 仍正确取反', () => {
+    // 测试前置：表头 skip(1=skip)(flag)，两段半角括号注释
+    // 期待结果：两段注释全部剥离后 base="skip"，invert=true，skip=1 → test=false
+    const text = 'X,Y,Z,U,skip(1=skip)(flag)\n1,0,0,0,1\n2,0,0,0,0'
+    const result = parsePointsFile(text)
+    expect(result[0].test).toBe(false)
+    expect(result[1].test).toBe(true)
+  })
+
+  it('用例 17c：skip 列名带全角多段括号注释（skip（1=跳过）（标志））→ 仍正确取反', () => {
+    // 测试前置：表头 skip（1=跳过）（标志），全角括号 + 中文注释
+    // 期待结果：全角括号注释剥离后 base="skip"，invert=true，skip=1 → test=false
+    const text = 'X,Y,Z,U,skip（1=跳过）（标志）\n1,0,0,0,1\n2,0,0,0,0'
+    const result = parsePointsFile(text)
+    expect(result[0].test).toBe(false)
+    expect(result[1].test).toBe(true)
+  })
+
+  it('用例 17d：skip 列名带半角/全角混排括号注释（skip(1=skip)（标志））→ 仍正确取反', () => {
+    // 测试前置：表头 skip(1=skip)（标志），半角 + 全角混排
+    // 期待结果：所有括号注释段剥离后 base="skip"，invert=true，skip=0 → test=true
+    const text = 'X,Y,Z,U,skip(1=skip)（标志）\n1,0,0,0,0\n2,0,0,0,1'
+    const result = parsePointsFile(text)
+    expect(result[0].test).toBe(true)
+    expect(result[1].test).toBe(false)
   })
 
   it('用例 18：dwellMs/samples 小数自动截断为整数', () => {

@@ -13,6 +13,8 @@ package usecase
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -941,5 +943,222 @@ func TestHandleCalibrationMotionSafetyFailure_NilFailureReturnsNil(t *testing.T)
 	// 期待结果：无错误返回（nil 故障视为无操作）
 	if err != nil {
 		t.Fatalf("nil failure should return nil, got %v", err)
+	}
+}
+
+// ==================== C-3：急停 + fallback 双错误保留测试 ====================
+
+// 测试级 sentinel 错误：用于 errors.Is 断言返回错误 cause 链中的急停/回退停止根因。
+var (
+	errSentinelEmergencyStop = errors.New("sentinel: emergency stop bus offline")
+	errSentinelFallbackStop  = errors.New("sentinel: fallback stop valve stuck")
+)
+
+// scriptedSafetyRuntime 可编程 runtime：直接注入急停/普通停止的返回错误并计数，
+// 便于用 sentinel error 精确断言 handleCalibrationMotionSafetyFailure 返回错误的 cause 链。
+//
+// 与 emergencyStopCapableRuntime 的差异：不经过 controllableMotionManager 转发，
+// EmergencyStopMotion / StopMotion 原样返回注入的 sentinel，保证 errors.Is 直接命中。
+type scriptedSafetyRuntime struct {
+	esErr     error
+	stopErr   error
+	esCalls   int
+	stopCalls int
+}
+
+func (s *scriptedSafetyRuntime) GetChannelValue(string, int) (float64, bool) { return 0, false }
+func (s *scriptedSafetyRuntime) GetLatestTimestamp(string) (int64, bool)     { return 0, false }
+func (s *scriptedSafetyRuntime) MoveToPosition(calibration.MotionAxisConfig, float64) error {
+	return nil
+}
+func (s *scriptedSafetyRuntime) WaitForMotionComplete() error { return nil }
+func (s *scriptedSafetyRuntime) StopMotion() error {
+	s.stopCalls++
+	return s.stopErr
+}
+func (s *scriptedSafetyRuntime) EmergencyStopMotion() error {
+	s.esCalls++
+	return s.esErr
+}
+
+// 顺序断言说明：测试无法 hook CalibrationManager 内部方法调用顺序，
+// 但 failWithCode 内部会清空 MotionSafetyFailure（calibration.go），
+// 因此调用结束后快照非 nil 即证明 recordMotionSafetyFailure 在 failWithCode 之后执行；
+// LastErrorCode/LastError 非空则证明 failWithCode 已执行。二者合并等价于顺序断言。
+// 既有测试 TestHandleCalibrationMotionSafetyFailure_WritesFailureSnapshotAfterFailWithCode 采用同一推断方式。
+
+func TestHandleCalibrationMotionSafetyFailure_EmergencyStopFailureKeepsCauseInChain(t *testing.T) {
+	// 测试前置：CriticalDeviation 故障；急停返回 sentinel 错误，fallback StopMotion 成功
+	rt := &scriptedSafetyRuntime{esErr: errSentinelEmergencyStop}
+	m := NewCalibrationManager(nil, nil, nil, nil)
+	m.runtime = rt
+	m.currentStatus = calibration.Status{TaskID: "test"}
+
+	failure := &traversal.MotionSafetyFailure{
+		ControllerID: "motion-1",
+		Axis:         "X",
+		Verdict:      traversal.MotionSafetyCriticalDeviation,
+		Target:       30,
+		Actual:       36,
+		PointIndex:   1,
+	}
+
+	// 测试步骤：处理故障
+	err := m.handleCalibrationMotionSafetyFailure(m.createRuntime(nil), failure)
+
+	// 期待结果：返回 error 且 cause 链可识别急停根因
+	if err == nil {
+		t.Fatal("急停失败应返回 error")
+	}
+	if !errors.Is(err, errSentinelEmergencyStop) {
+		t.Fatalf("返回错误应可通过 errors.Is 识别急停根因，实际: %v", err)
+	}
+	// 急停尝试 1 次 + fallback 普通停止 1 次
+	if rt.esCalls != 1 || rt.stopCalls != 1 {
+		t.Fatalf("esCalls=%d stopCalls=%d, want 1/1", rt.esCalls, rt.stopCalls)
+	}
+	// 错误码升级 + 快照已记录（顺序断言见上方说明）
+	if m.currentStatus.State != calibration.StateError {
+		t.Fatalf("State = %v, want Error", m.currentStatus.State)
+	}
+	if m.currentStatus.LastErrorCode != string(traversal.ErrEmergencyStopFailed) {
+		t.Fatalf("LastErrorCode = %v, want %v", m.currentStatus.LastErrorCode, traversal.ErrEmergencyStopFailed)
+	}
+	snapshot := m.currentStatus.MotionSafetyFailure
+	if snapshot == nil {
+		t.Fatal("MotionSafetyFailure 快照应已记录（failWithCode 之后）")
+	}
+	if snapshot.Verdict != traversal.MotionSafetyCriticalDeviation || snapshot.Axis != "X" || snapshot.PointIndex != 1 {
+		t.Fatalf("快照内容不符: %+v", snapshot)
+	}
+}
+
+func TestHandleCalibrationMotionSafetyFailure_FallbackAlsoFailsPreservesBothCauses(t *testing.T) {
+	// 测试前置：CriticalDeviation 故障；急停与 fallback StopMotion 都返回 sentinel 错误
+	rt := &scriptedSafetyRuntime{esErr: errSentinelEmergencyStop, stopErr: errSentinelFallbackStop}
+	m := NewCalibrationManager(nil, nil, nil, nil)
+	m.runtime = rt
+	m.currentStatus = calibration.Status{TaskID: "test"}
+
+	failure := &traversal.MotionSafetyFailure{
+		ControllerID: "motion-1",
+		Axis:         "X",
+		Verdict:      traversal.MotionSafetyCriticalDeviation,
+		Target:       30,
+		Actual:       36,
+		PointIndex:   1,
+	}
+
+	// 测试步骤：处理故障
+	err := m.handleCalibrationMotionSafetyFailure(m.createRuntime(nil), failure)
+
+	// 期待结果：返回 error 的 cause 链中急停与 fallback 两个根因都可识别
+	if err == nil {
+		t.Fatal("急停与 fallback 双失败应返回 error")
+	}
+	if !errors.Is(err, errSentinelEmergencyStop) {
+		t.Fatalf("返回错误应可通过 errors.Is 识别急停根因，实际: %v", err)
+	}
+	if !errors.Is(err, errSentinelFallbackStop) {
+		t.Fatalf("返回错误应可通过 errors.Is 识别 fallback 停止根因（当前被吞），实际: %v", err)
+	}
+	// 用户可见消息同时包含两个根因，避免 fallback 失败被静默吞掉
+	if !strings.Contains(m.currentStatus.LastError, errSentinelEmergencyStop.Error()) ||
+		!strings.Contains(m.currentStatus.LastError, errSentinelFallbackStop.Error()) {
+		t.Fatalf("LastError 应同时包含急停与 fallback 根因，实际: %q", m.currentStatus.LastError)
+	}
+	// 错误码升级 + 快照已记录（顺序断言见上方说明）
+	if m.currentStatus.State != calibration.StateError {
+		t.Fatalf("State = %v, want Error", m.currentStatus.State)
+	}
+	if m.currentStatus.LastErrorCode != string(traversal.ErrEmergencyStopFailed) {
+		t.Fatalf("LastErrorCode = %v, want %v", m.currentStatus.LastErrorCode, traversal.ErrEmergencyStopFailed)
+	}
+	snapshot := m.currentStatus.MotionSafetyFailure
+	if snapshot == nil {
+		t.Fatal("MotionSafetyFailure 快照应已记录（failWithCode 之后）")
+	}
+	if snapshot.Verdict != traversal.MotionSafetyCriticalDeviation || snapshot.Axis != "X" {
+		t.Fatalf("快照内容不符: %+v", snapshot)
+	}
+	if rt.esCalls != 1 || rt.stopCalls != 1 {
+		t.Fatalf("esCalls=%d stopCalls=%d, want 1/1", rt.esCalls, rt.stopCalls)
+	}
+}
+
+func TestHandleCalibrationMotionSafetyFailure_EmergencyStopSuccessKeepsStandardSemantics(t *testing.T) {
+	// 测试前置：CriticalDeviation 故障；急停成功（无注入错误）
+	rt := &scriptedSafetyRuntime{}
+	m := NewCalibrationManager(nil, nil, nil, nil)
+	m.runtime = rt
+	m.currentStatus = calibration.Status{TaskID: "test"}
+
+	failure := &traversal.MotionSafetyFailure{
+		ControllerID: "motion-1",
+		Axis:         "X",
+		Verdict:      traversal.MotionSafetyCriticalDeviation,
+		Target:       30,
+		Actual:       36,
+		PointIndex:   1,
+	}
+
+	// 测试步骤：处理故障
+	err := m.handleCalibrationMotionSafetyFailure(m.createRuntime(nil), failure)
+
+	// 期待结果：急停成功路径语义不回归——返回 error 标识运动安全故障，
+	// 错误码保持 ErrCriticalPositionDeviation（不升级为 ErrEmergencyStopFailed），不调用普通停止
+	if err == nil {
+		t.Fatal("运动安全故障应返回 error")
+	}
+	if errors.Is(err, errSentinelEmergencyStop) || errors.Is(err, errSentinelFallbackStop) {
+		t.Fatalf("急停成功路径不应携带急停/停止根因，实际: %v", err)
+	}
+	if rt.esCalls != 1 || rt.stopCalls != 0 {
+		t.Fatalf("esCalls=%d stopCalls=%d, want 1/0（急停成功无需 fallback）", rt.esCalls, rt.stopCalls)
+	}
+	if m.currentStatus.LastErrorCode != string(traversal.ErrCriticalPositionDeviation) {
+		t.Fatalf("LastErrorCode = %v, want %v", m.currentStatus.LastErrorCode, traversal.ErrCriticalPositionDeviation)
+	}
+	if m.currentStatus.State != calibration.StateError {
+		t.Fatalf("State = %v, want Error", m.currentStatus.State)
+	}
+	if m.currentStatus.MotionSafetyFailure == nil {
+		t.Fatal("MotionSafetyFailure 快照应已记录（failWithCode 之后）")
+	}
+}
+
+// ==================== spec Task 22：结构化日志可检索性测试 ====================
+
+// TestHandleCalibrationMotionSafetyFailure_EmitsStructuredSlogError 验证 motion safety failure
+// 触发 slog.Error 含可检索的 'motion safety failure' 消息（spec Task 22：关键 safety 字段可检索）。
+//
+// 测试前置：withRecordingLogger 临时替换全局 logger（defer restore 保证恢复，不污染后续测试）
+// 测试步骤：调用 handleCalibrationMotionSafetyFailure（CriticalDeviation 故障）
+// 期待结果：slog.Error 记录被捕获，消息含 'motion safety failure' 子串
+func TestHandleCalibrationMotionSafetyFailure_EmitsStructuredSlogError(t *testing.T) {
+	// 测试前置：recordingSlogHandler 替换 slog.Default()，defer restore 恢复
+	handler, restore := withRecordingLogger(t)
+	defer restore()
+
+	rt := &scriptedSafetyRuntime{}
+	m := NewCalibrationManager(nil, nil, nil, nil)
+	m.runtime = rt
+	m.currentStatus = calibration.Status{TaskID: "test"}
+
+	failure := &traversal.MotionSafetyFailure{
+		ControllerID: "motion-1",
+		Axis:         "X",
+		Verdict:      traversal.MotionSafetyCriticalDeviation,
+		Target:       30,
+		Actual:       36,
+		PointIndex:   1,
+	}
+
+	// 测试步骤：处理故障（返回值已由前序测试覆盖，此处只验证 slog 副作用）
+	_ = m.handleCalibrationMotionSafetyFailure(m.createRuntime(nil), failure)
+
+	// 期待结果：slog.Error 含 'motion safety failure' 消息被记录
+	if !handler.hasLevelMessage(slog.LevelError, "motion safety failure") {
+		t.Fatal("应记录 slog.Error 含 'motion safety failure' 消息，实际未记录")
 	}
 }

@@ -438,9 +438,26 @@ func (a *App) ServiceShutdown() error {
 		a.relayStop()
 	}
 
+	// 同步停止 DataStreamRelay 并等待所有转发 worker 完成 hub 退订（O-3），
+	// 避免进程退出时 relay goroutine 仍持有 hub 订阅。
+	// Stop 幂等且并发安全：startDataRelay 的 drain goroutine 退出时
+	// defer relay.Stop() 会共享同一次终止，不会重复 cancel。
+	if a.appContext != nil && a.appContext.DataStreamRelay != nil {
+		a.appContext.DataStreamRelay.Stop()
+	}
+
 	// 先关闭子窗口进程：保证父进程退出时不会留下孤儿运动控制器窗口。
 	// 顺序放在最前是因为子进程仍可能向父进程的日志/HTTP 写数据，先停子再停父更稳。
 	a.terminateMotionWindow()
+
+	// 停止校准任务并有界等待其 session 退出（writer flush/结果保存/运动归零完成），
+	// 避免进程退出时校准 worker 仍在写文件或驱动运动轴。
+	// 必须在 logMgr.Close 之前完成：校准 finalize 期间的日志需要能落盘。
+	if a.appContext != nil && a.appContext.CalibrationMgr != nil {
+		if err := a.appContext.CalibrationMgr.Shutdown(); err != nil {
+			slog.Warn("[app] 校准任务停止等待超时，后台仍将继续收尾", "component", "app", "error", err)
+		}
+	}
 
 	if a.cancel != nil {
 		a.cancel()
@@ -1075,6 +1092,35 @@ func (a *App) CalibrationPreviewSevenHole(dto types.SevenHoleConfigDTO) GenericR
 		return GenericResponse{Success: false, Error: err.Error()}
 	}
 	return GenericResponse{Success: true, Data: result}
+}
+
+// CalibrationPreviewFiveHole 五孔点位预览（spec Task 11）
+//
+// 接收前端"配置向导"提交的 FiveHolePointLayoutDTO（α/β 范围与步长 + serpentine 开关），
+// 调用 CalibrationManager.PreviewFiveHolePoints 生成蛇形/raster 点位列表，
+// 返回 []FiveHoleSnakePoint（bare array，与 HTTP /api/calibration/fivehole 契约一致）
+// 经 GenericResponse.Data 包装供 Wails binding 透传。
+//
+// 与 CalibrationPreviewSevenHole 的区别：
+//   - 五孔返回 bare array（Data 字段是 []FiveHoleSnakePoint），前端直接迭代
+//   - 七孔返回包装对象（Data 字段是 SevenHolePreviewResult，含 totalCount/innerCount/outerCount）
+//
+// 与 CalibrationStart 的区别：
+//   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+//   - 不需要路径归一（无 SavePath）
+//   - 不需要 ToCore 转换（FiveHolePointLayoutDTO 直接是 calibration.FiveHolePointLayout 别名）
+//
+// 错误处理：配置非法（步长 ≤ 0）返回 Success=false + Error 透传 GenerateFiveHoleSnakePoints 错误。
+// spec Task 11 acceptance：HTTP/Wails 都调用同一 usecase，后端错误传到 UI，不静默 fallback。
+func (a *App) CalibrationPreviewFiveHole(dto types.FiveHolePointLayoutDTO) GenericResponse {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
+		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
+	}
+	points, err := a.appContext.CalibrationMgr.PreviewFiveHolePoints(dto)
+	if err != nil {
+		return GenericResponse{Success: false, Error: err.Error()}
+	}
+	return GenericResponse{Success: true, Data: points}
 }
 
 func (a *App) CalibrationStatus() types.CalibrationStatus {

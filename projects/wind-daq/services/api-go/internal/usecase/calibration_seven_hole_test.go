@@ -10,6 +10,8 @@
 package usecase
 
 import (
+	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -255,6 +257,7 @@ type fakeSevenHoleWriter struct {
 	flushed   bool
 	flushMu   sync.Mutex
 	appendCnt int
+	flushErr  error // Flush 返回的错误（spec Task 20 测试 double-check 丢弃路径用）
 }
 
 func (w *fakeSevenHoleWriter) Initialize(config calibration.Config) error {
@@ -272,7 +275,7 @@ func (w *fakeSevenHoleWriter) Flush() error {
 	w.flushMu.Lock()
 	defer w.flushMu.Unlock()
 	w.flushed = true
-	return nil
+	return w.flushErr
 }
 
 func (w *fakeSevenHoleWriter) Path() string { return w.path }
@@ -311,16 +314,26 @@ func (f *fakeSevenHoleWriterFactory) getByPath(path string) *fakeSevenHoleWriter
 //
 // 测试前置：manager 未注入 sevenHoleWriterFactory，但 SavePath 非空
 // 测试步骤：调用 buildSevenHoleCsvSink
-// 期待结果：返回 nil，不 panic
+// 期待结果：返回 nil，不 panic；记录 slog.Error（factory 缺失是真实配置错误）
+//
+// spec Task 22：factory 缺失明确 Error。旧实现 log.Printf 不经 slog，slog 断言红灯。
 func TestBuildSevenHoleCsvSink_FactoryNotInjected(t *testing.T) {
+	handler, restore := withRecordingLogger(t)
+	defer restore()
+
 	manager := NewCalibrationManager(nil, nil, nil, nil)
 	config := calibration.Config{
 		Type:     string(calibration.TypeSevenHole),
+		TaskID:   "task-factory-missing",
 		SavePath: "D:/data/sevenhole.csv",
 	}
 	sink := manager.buildSevenHoleCsvSink(config)
 	if sink != nil {
 		t.Fatalf("工厂未注入时应返回 nil sink，实际返回 %T", sink)
+	}
+	// spec Task 22：factory 缺失应记录 slog.Error（含 'factory' 关键字）
+	if !handler.hasLevelMessage(slog.LevelError, "factory") {
+		t.Error("factory 未注入时应记录 slog.Error（含 'factory' 关键字），实际未记录")
 	}
 }
 
@@ -328,14 +341,23 @@ func TestBuildSevenHoleCsvSink_FactoryNotInjected(t *testing.T) {
 //
 // 测试前置：manager 已注入 factory，但 SavePath 为空
 // 测试步骤：调用 buildSevenHoleCsvSink
-// 期待结果：返回 nil
+// 期待结果：返回 nil；不记录 slog.Error（SavePath 空是合法的可选项，不是错误）
+//
+// spec Task 22：SavePath 空不报假错误。旧实现 log.Printf 统一打印，无法区分级别。
 func TestBuildSevenHoleCsvSink_EmptySavePath(t *testing.T) {
+	handler, restore := withRecordingLogger(t)
+	defer restore()
+
 	manager := NewCalibrationManager(nil, nil, nil, nil)
 	manager.SetSevenHoleWriterFactory(newFakeSevenHoleWriterFactory())
-	config := calibration.Config{Type: string(calibration.TypeSevenHole)}
+	config := calibration.Config{Type: string(calibration.TypeSevenHole), TaskID: "task-empty-path"}
 	sink := manager.buildSevenHoleCsvSink(config)
 	if sink != nil {
 		t.Fatalf("空 SavePath 时应返回 nil sink，实际返回 %T", sink)
+	}
+	// spec Task 22：SavePath 空不应记录 slog.Error（不是错误，只是跳过 CSV 落盘）
+	if handler.hasLevelMessage(slog.LevelError, "factory") {
+		t.Error("空 SavePath 时不应记录 slog.Error（SavePath 空是合法可选项，不是错误）")
 	}
 }
 
@@ -497,4 +519,126 @@ func TestFlushAllSevenHoleWriters_NilWriters(t *testing.T) {
 	manager := NewCalibrationManager(nil, nil, nil, nil)
 	// 不应 panic
 	manager.flushAllSevenHoleWriters()
+}
+
+// ==================== 七孔 double-check 丢弃路径错误契约测试（spec Task 20） ====================
+
+// racingSevenHoleWriterFactory 模拟"并发期间其他 goroutine 已创建同 key writer"场景：
+// NewWriter 期间预填 cache，触发 routeSevenHoleWriter 的 double-check 丢弃路径。
+//
+// 测试策略：
+//   - routeSevenHoleWriter 快速路径 RLock 检查 cache miss（map 为空）
+//   - 进入慢路径调用 factory.NewWriter
+//   - NewWriter 内部锁住 manager.mu 把 cachedWriter 写入 sevenHoleWriters[key]
+//     （模拟并发期间其他 goroutine 已抢先创建）
+//   - 返回 tempWriter（将被 double-check 丢弃）
+//   - routeSevenHoleWriter 加写锁 double-check，发现 cached，解锁后调 tempWriter.Flush()
+//   - tempWriter.Flush 失败应仅记录警告，函数仍返回 cachedWriter（spec Task 20）
+type racingSevenHoleWriterFactory struct {
+	mgr          *CalibrationManager
+	key          string
+	cachedWriter *fakeSevenHoleWriter
+	tempWriter   *fakeSevenHoleWriter
+}
+
+func (f *racingSevenHoleWriterFactory) NewWriter(path string, schema calibration.CsvSchema) (ports.CalibrationCsvWriter, error) {
+	// 模拟并发期间其他 goroutine 已抢先创建同 key writer
+	f.mgr.mu.Lock()
+	if f.mgr.sevenHoleWriters == nil {
+		f.mgr.sevenHoleWriters = make(map[string]ports.CalibrationCsvWriter)
+	}
+	f.mgr.sevenHoleWriters[f.key] = f.cachedWriter
+	f.mgr.mu.Unlock()
+	// 返回 temp writer（将被 double-check 丢弃）
+	return f.tempWriter, nil
+}
+
+// TestRouteSevenHoleWriter_DuplicateTempWriterFlushFailure_OnlyWarning 验证 double-check
+// 路径丢弃 temp writer 时，Flush 失败仅记录警告，不影响 cached writer 返回。
+//
+// 测试前置：manager 注入 racingSevenHoleWriterFactory（NewWriter 期间预填 cache），
+// tempWriter.Flush 返回错误
+// 测试步骤：调用 routeSevenHoleWriter
+// 期待结果：
+//   - 返回 cached writer（非 nil，非错误）
+//   - temp writer 的 Flush 被调用（flushed=true，即丢弃路径被执行）
+//   - temp writer 的 Flush 错误未传播（函数返回 nil 错误）
+//
+// 修复场景（spec Task 20）：旧实现 `_ = writer.Flush()` 静默丢弃错误，调试困难。
+// 修复后 Flush 失败记录 slog.Warn 警告，但函数仍返回 cached writer。
+func TestRouteSevenHoleWriter_DuplicateTempWriterFlushFailure_OnlyWarning(t *testing.T) {
+	manager := NewCalibrationManager(nil, nil, nil, nil)
+	cachedWriter := &fakeSevenHoleWriter{path: "D:/data/sevenhole_小角度区.csv"}
+	tempWriter := &fakeSevenHoleWriter{
+		path:     "D:/data/sevenhole_小角度区.csv",
+		flushErr: errors.New("temp writer flush failed"),
+	}
+
+	// 初始化 sevenHoleWriters map（routeSevenHoleWriter 快速路径需要非 nil map 才能查缓存）
+	manager.sevenHoleWriters = make(map[string]ports.CalibrationCsvWriter)
+
+	manager.SetSevenHoleWriterFactory(&racingSevenHoleWriterFactory{
+		mgr:          manager,
+		key:          "inner",
+		cachedWriter: cachedWriter,
+		tempWriter:   tempWriter,
+	})
+
+	config := calibration.Config{
+		Type:     string(calibration.TypeSevenHole),
+		SavePath: "D:/data/sevenhole.csv",
+	}
+
+	// 调用 routeSevenHoleWriter：
+	// - 快速路径 cache miss（map 为空）
+	// - 慢路径 factory.NewWriter 期间预填 cache + 返回 tempWriter
+	// - double-check 发现 cached，丢弃 tempWriter（调用其 Flush）
+	// - tempWriter.Flush 返回错误，应仅警告，不传播
+	writer, err := manager.routeSevenHoleWriter(config, "D:/data/sevenhole", "inner", 7)
+	if err != nil {
+		t.Fatalf("routeSevenHoleWriter 应返回 cached writer（temp Flush 错误仅警告），实际返回错误: %v", err)
+	}
+	if writer != cachedWriter {
+		t.Fatalf("routeSevenHoleWriter 应返回 cached writer，实际返回 %T", writer)
+	}
+	// 验证 temp writer 的 Flush 被调用（即丢弃路径被执行，警告被记录）
+	if !tempWriter.flushed {
+		t.Error("temp writer 的 Flush 应被调用（double-check 丢弃路径）")
+	}
+}
+
+// TestRouteSevenHoleWriter_DuplicateTempWriterFlushSuccess_NoWarning 验证 double-check
+// 路径丢弃 temp writer 时，Flush 成功不记录警告（正常路径）。
+//
+// 测试前置：manager 注入 racingSevenHoleWriterFactory，tempWriter.Flush 返回 nil
+// 测试步骤：调用 routeSevenHoleWriter
+// 期待结果：返回 cached writer，temp writer Flush 被调用，函数返回 nil 错误
+func TestRouteSevenHoleWriter_DuplicateTempWriterFlushSuccess_NoWarning(t *testing.T) {
+	manager := NewCalibrationManager(nil, nil, nil, nil)
+	cachedWriter := &fakeSevenHoleWriter{path: "D:/data/sevenhole_小角度区.csv"}
+	tempWriter := &fakeSevenHoleWriter{path: "D:/data/sevenhole_小角度区.csv"} // flushErr 为 nil
+
+	manager.sevenHoleWriters = make(map[string]ports.CalibrationCsvWriter)
+	manager.SetSevenHoleWriterFactory(&racingSevenHoleWriterFactory{
+		mgr:          manager,
+		key:          "inner",
+		cachedWriter: cachedWriter,
+		tempWriter:   tempWriter,
+	})
+
+	config := calibration.Config{
+		Type:     string(calibration.TypeSevenHole),
+		SavePath: "D:/data/sevenhole.csv",
+	}
+
+	writer, err := manager.routeSevenHoleWriter(config, "D:/data/sevenhole", "inner", 7)
+	if err != nil {
+		t.Fatalf("routeSevenHoleWriter 不应返回错误: %v", err)
+	}
+	if writer != cachedWriter {
+		t.Fatalf("routeSevenHoleWriter 应返回 cached writer，实际返回 %T", writer)
+	}
+	if !tempWriter.flushed {
+		t.Error("temp writer 的 Flush 应被调用（double-check 丢弃路径）")
+	}
 }
