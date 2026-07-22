@@ -490,11 +490,13 @@ function onUpdateEncoderScale(index: number, value: number): void {
                       <label class="form-field__label">类型</label>
                       <UiSelect v-model="editing.type" :options="controllerTypeOptions" compact />
                     </div>
-                    <div class="form-field">
+                    <div class="form-field" :class="{ 'form-field--span-2': editing.type === 'WTNMC4A-MC' }">
                       <label class="form-field__label">地址</label>
                       <UiInput v-model="editing.address" placeholder="127.0.0.1" :error="fieldErrors.address" compact />
                     </div>
-                    <div class="form-field">
+                    <!-- WTNMC4A 不需要端口配置（非 TCP 协议），隐藏端口字段；
+                         port 值仍由 defaultPortForType 维护默认 5000，切回 B140 时 watch 自动恢复 23 -->
+                    <div v-if="editing.type !== 'WTNMC4A-MC'" class="form-field">
                       <label class="form-field__label">端口</label>
                       <UiInput v-model="editing.port" type="number" :min="1" :max="65535" :step="1" :error="fieldErrors.port" compact />
                     </div>
@@ -923,6 +925,11 @@ function onUpdateEncoderScale(index: number, value: number): void {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+}
+
+/* WTNMC4A 隐藏端口后，地址字段占 2 列填满 5 列网格，避免留空位 */
+.form-field--span-2 {
+  grid-column: span 2;
 }
 
 .form-field--toggle .form-field__label {

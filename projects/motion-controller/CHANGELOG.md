@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.3] - 2026-07-22
+
+### Changed
+
+- WTNMC4A 控制器配置界面隐藏端口字段：WTNMC4A 不基于 TCP 端口通信，端口字段无意义。
+- WTNMC4A 配置态下地址字段占 2 列填满 5 列网格，避免留空位。
+
+### Verification
+
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+
+- 暂无。
+
 ## [0.3.2] - 2026-07-22
 
 ### Changed
