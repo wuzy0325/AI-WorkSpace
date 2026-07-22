@@ -2,6 +2,9 @@
 // AxisCard — 单轴控制卡片
 // 从 MotionControlPanel 抽出。集中轴卡片的视图派生（computed）与事件转发，
 // 避免父组件模板内调用方法（违反 state#§12）。
+//
+// 设计风格：工业面板风。功能分区独立成框，读数居中放大，限位状态醒目可见。
+// 文案：步进（非"点动"）、目标（非"移动/定位"）。
 
 import { computed } from 'vue'
 import type { AxisName, MotionControllerProfile, AxisStatus } from '@shared/types/motion'
@@ -18,8 +21,6 @@ import {
 import { useI18nStore } from '@stores/i18nStore'
 
 const props = defineProps<{
-  /** 控制器 ID */
-  controllerId: string
   /** 轴状态 */
   axis: AxisStatus
   /** 控制器配置（用于查限位/类型） */
@@ -86,114 +87,118 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
     class="axis-card"
     :class="[themeClass, { 'axis-card--disabled': disabled }]"
   >
-    <!-- 卡片头部 -->
-    <div class="axis-card__head">
+    <!-- ============ 顶部：轴标识 + 状态 ============ -->
+    <div class="axis-card__top">
       <div class="axis-card__badge">{{ axis.name }}</div>
-      <div class="axis-card__head-info">
-        <span class="axis-card__head-label">{{ i18n.t.axisNode }}</span>
-        <span class="axis-card__head-value">{{ i18n.t.axisMotionControl }}</span>
+      <div class="axis-card__top-meta">
+        <span class="axis-card__top-label">{{ i18n.t.axisNode }}</span>
+        <span class="axis-card__top-value">{{ i18n.t.axisMotionControl }}</span>
       </div>
-      <div class="axis-card__head-status">
-        <span
-          class="axis-card__status-dot"
-          :class="moving ? 'moving' : 'idle'"
-          aria-hidden="true"
-        ></span>
+      <div class="axis-card__status" :class="moving ? 'is-moving' : 'is-idle'">
+        <span class="axis-card__status-dot" aria-hidden="true"></span>
         <span class="axis-card__status-text">{{ moving ? i18n.t.moving : i18n.t.idle }}</span>
       </div>
-      <div class="axis-card__unit">{{ unit }}</div>
     </div>
 
-    <!-- 位置读数（核心数据） -->
-    <div class="axis-card__readout">
-      <span class="axis-card__readout-val">{{ readout }}</span>
-      <span class="axis-card__readout-u">{{ unit }}</span>
-    </div>
-
-    <!-- 限位条 -->
-    <div class="axis-card__limits">
-      <div class="axis-card__lim axis-card__lim--left">
-        <span
-          class="axis-card__lim-end"
-          :class="{ 'axis-card__lim-end--active': axis.negLimit }"
-          aria-hidden="true"
-        ></span>
-        <span class="axis-card__lim-lab">{{ i18n.t.negLimit }}</span>
-        <span class="axis-card__lim-val">{{ minLabel }}</span>
-      </div>
-      <div class="axis-card__lim axis-card__lim--right">
-        <span class="axis-card__lim-val">{{ maxLabel }}</span>
-        <span class="axis-card__lim-lab">{{ i18n.t.posLimit }}</span>
-        <span
-          class="axis-card__lim-end"
-          :class="{ 'axis-card__lim-end--active': axis.posLimit }"
-          aria-hidden="true"
-        ></span>
+    <!-- ============ 读数区：当前位置 + 大数值 ============ -->
+    <div class="axis-card__readout-zone">
+      <div class="axis-card__readout-label">{{ i18n.t.currentPosition }}</div>
+      <div class="axis-card__readout">
+        <span class="axis-card__readout-val">{{ readout }}</span>
+        <span class="axis-card__readout-u">{{ unit }}</span>
       </div>
     </div>
 
-    <!-- 历史条带 -->
-    <div class="axis-card__history" :style="historyStyle"></div>
-
-    <!-- 步进 -->
-    <div class="axis-card__section-label">{{ i18n.t.jog }}</div>
-    <div class="axis-card__jog">
-      <button
-        class="axis-card__jog-btn"
-        @click="emit('jog', axisName, 'reverse')"
-        :disabled="jogDisabled"
-        :aria-label="i18n.t.jogReverse"
-        title="−"
-      >−</button>
-      <input
-        v-model.number="stepModel"
-        type="number"
-        class="axis-card__jog-in"
-        :disabled="jogDisabled"
-        min="0"
-        step="0.1"
-        :aria-label="i18n.t.jogStep"
-      />
-      <button
-        class="axis-card__jog-btn"
-        @click="emit('jog', axisName, 'forward')"
-        :disabled="jogDisabled"
-        :aria-label="i18n.t.jogForward"
-        title="+"
-      >+</button>
+    <!-- ============ 限位监视区：独立成框 ============ -->
+    <div class="axis-card__limit-section">
+      <div class="axis-card__section-head">
+        <span class="axis-card__section-title">{{ i18n.t.monitor }}</span>
+      </div>
+      <div class="axis-card__limit-box">
+        <div class="axis-card__limit-side" :class="{ 'is-active': axis.negLimit }">
+        <span class="axis-card__limit-tag">{{ i18n.t.negLimit }}</span>
+        <span class="axis-card__limit-val">{{ minLabel }}</span>
+      </div>
+      <div class="axis-card__limit-bar">
+        <div class="axis-card__limit-track"></div>
+        <div class="axis-card__limit-history" :style="historyStyle"></div>
+      </div>
+      <div class="axis-card__limit-side axis-card__limit-side--right" :class="{ 'is-active': axis.posLimit }">
+        <span class="axis-card__limit-val">{{ maxLabel }}</span>
+        <span class="axis-card__limit-tag">{{ i18n.t.posLimit }}</span>
+      </div>
+      </div>
     </div>
 
-    <!-- 定位 -->
-    <div class="axis-card__section-label">{{ i18n.t.move }}</div>
-    <div class="axis-card__move">
-      <input
-        v-model.number="targetModel"
-        type="number"
-        class="axis-card__move-in"
-        :class="limitClass"
-        :disabled="moveDisabled"
-        placeholder="0.00"
-        :aria-label="i18n.t.currentPosition"
-      />
-      <button
-        class="axis-card__go"
-        @click="emit('move', axisName)"
-        :disabled="moveDisabled"
-      >GO</button>
+    <!-- ============ 步进区：独立分区 ============ -->
+    <div class="axis-card__section">
+      <div class="axis-card__section-head">
+        <span class="axis-card__section-title">{{ i18n.t.jog }}</span>
+        <span class="axis-card__section-unit">{{ i18n.t.jogStep }}: {{ unit }}</span>
+      </div>
+      <div class="axis-card__jog">
+        <button
+          class="axis-card__jog-btn"
+          @click="emit('jog', axisName, 'reverse')"
+          :disabled="jogDisabled"
+          :aria-label="i18n.t.jogReverse"
+          title="−"
+        >−</button>
+        <input
+          v-model.number="stepModel"
+          type="number"
+          class="axis-card__jog-in"
+          :disabled="jogDisabled"
+          min="0"
+          step="0.1"
+          :aria-label="i18n.t.jogStep"
+        />
+        <button
+          class="axis-card__jog-btn"
+          @click="emit('jog', axisName, 'forward')"
+          :disabled="jogDisabled"
+          :aria-label="i18n.t.jogForward"
+          title="+"
+        >+</button>
+      </div>
     </div>
 
-    <!-- 限位提示 -->
-    <div
-      v-if="limitHint.text"
-      class="axis-card__hint"
-      :class="'axis-card__hint--' + limitHint.cls"
-      role="status"
-    >
-      {{ limitHint.text }}
+    <!-- ============ 目标区：独立分区 ============ -->
+    <div class="axis-card__section">
+      <div class="axis-card__section-head">
+        <span class="axis-card__section-title">{{ i18n.t.move }}</span>
+        <span class="axis-card__section-unit">{{ i18n.t.targetPosition }}: {{ unit }}</span>
+      </div>
+      <div class="axis-card__move">
+        <input
+          v-model.number="targetModel"
+          type="number"
+          class="axis-card__move-in"
+          :class="limitClass"
+          :disabled="moveDisabled"
+          placeholder="0.00"
+          :aria-label="i18n.t.targetPosition"
+        />
+        <button
+          class="axis-card__go"
+          @click="emit('move', axisName)"
+          :disabled="moveDisabled"
+        >GO</button>
+      </div>
+      <!-- 限位提示行（恒定高度容器，防止提示出现/消失时布局跳变） -->
+      <div class="axis-card__hint-wrap">
+        <div
+          v-if="limitHint.text"
+          class="axis-card__hint"
+          :class="'axis-card__hint--' + limitHint.cls"
+          role="status"
+        >
+          {{ limitHint.text }}
+        </div>
+      </div>
     </div>
-    <div v-else class="axis-card__hint axis-card__hint--placeholder" aria-hidden="true"></div>
 
-    <!-- 卡片底部：置零 / 停止 -->
+    <!-- ============ 底部：置零 / 停止 ============ -->
     <div class="axis-card__foot">
       <button
         class="axis-card__foot-btn"
@@ -220,19 +225,19 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 .axis-card.axis-u-theme { --ax: var(--axis-u); --ax-soft: var(--axis-u-soft); }
 
 /* ============================================================
-   轴卡片容器
+   轴卡片容器 — 工业面板风格
    ============================================================ */
 .axis-card {
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
-  border-radius: 6px;
-  /* 增大内边距，让大屏下卡片内部更舒展 */
-  padding: 18px;
+  border-radius: 8px;
+  padding: 16px;
   position: relative;
   transition: border-color 0.15s ease, box-shadow 0.2s ease;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 
 /* 左侧轴色竖条 */
@@ -240,10 +245,10 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   content: '';
   position: absolute;
   left: 0;
-  top: 18px;
-  bottom: 18px;
+  top: 16px;
+  bottom: 16px;
   width: 3px;
-  border-radius: 2px;
+  border-radius: 0 2px 2px 0;
   background: var(--ax, var(--accent-primary));
   opacity: 0.9;
 }
@@ -260,30 +265,29 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 }
 
 /* ============================================================
-   卡片头部
+   顶部：轴标识 + 状态
    ============================================================ */
-.axis-card__head {
+.axis-card__top {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 14px;
-  padding-left: 8px;
+  gap: 10px;
+  padding-left: 6px;
 }
 
 .axis-card__badge {
-  width: 30px;
-  height: 30px;
-  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 5px;
   display: grid;
   place-items: center;
   font-weight: 800;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--color-on-axis-badge);
   background: var(--ax, var(--accent-primary));
   flex-shrink: 0;
 }
 
-.axis-card__head-info {
+.axis-card__top-meta {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -291,7 +295,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   flex: 1;
 }
 
-.axis-card__head-label {
+.axis-card__top-label {
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
@@ -299,7 +303,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   color: var(--text-muted);
 }
 
-.axis-card__head-value {
+.axis-card__top-value {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -308,25 +312,41 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   text-overflow: ellipsis;
 }
 
-.axis-card__head-status {
+.axis-card__status {
   display: flex;
   align-items: center;
   gap: 5px;
   flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.axis-card__status.is-idle {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
+.axis-card__status.is-moving {
+  background: color-mix(in srgb, var(--accent-success) 15%, transparent);
+  color: var(--accent-success);
 }
 
 .axis-card__status-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
 }
 
-.axis-card__status-dot.idle {
+.axis-card__status.is-idle .axis-card__status-dot {
   background: var(--text-muted);
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
-.axis-card__status-dot.moving {
+.axis-card__status.is-moving .axis-card__status-dot {
   background: var(--accent-success);
   box-shadow: 0 0 6px var(--accent-success);
   animation: axis-card-pulse 1.5s ease-in-out infinite;
@@ -337,38 +357,31 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   50% { opacity: 0.4; }
 }
 
-.axis-card__status-text {
+/* ============================================================
+   读数区 — 核心数据，居中放大
+   ============================================================ */
+.axis-card__readout-zone {
+  text-align: center;
+  padding: 4px 0 2px;
+}
+
+.axis-card__readout-label {
   font-size: 10px;
   font-weight: 700;
-  color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.axis-card__unit {
-  margin-left: auto;
-  font-size: 11px;
+  letter-spacing: 0.08em;
   color: var(--text-muted);
-  border: 1px solid var(--border-default);
-  border-radius: 3px;
-  padding: 2px 7px;
-  flex-shrink: 0;
+  margin-bottom: 6px;
 }
 
-/* ============================================================
-   位置读数
-   ============================================================ */
 .axis-card__readout {
   font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Courier New', monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 600;
   line-height: 1;
-  text-align: center;
-  /* 增大读数区上下呼吸空间 */
-  padding: 14px 0 16px;
   color: var(--text-primary);
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
 }
 
 .axis-card__readout-u {
@@ -381,77 +394,115 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 
 @media (max-width: 1280px) {
   .axis-card__readout {
-    font-size: 30px;
+    font-size: 32px;
   }
 }
 
 /* ============================================================
-   限位条
+   限位监视区 — 独立成框
    ============================================================ */
-.axis-card__limits {
+.axis-card__limit-section {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin: 0 4px 10px;
-  font-size: 11px;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.axis-card__lim {
+.axis-card__limit-box {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
 }
 
-.axis-card__lim-lab {
-  font-size: 9px;
+.axis-card__limit-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.axis-card__limit-side--right {
+  align-items: flex-end;
+}
+
+.axis-card__limit-tag {
+  font-size: 8.5px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--text-muted);
   font-weight: 700;
 }
 
-.axis-card__lim-val {
+.axis-card__limit-val {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   color: var(--text-secondary);
   font-weight: 600;
   font-size: 10.5px;
 }
 
-.axis-card__lim-end {
-  width: 6px;
-  height: 6px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--accent-danger) 35%, transparent);
-  transition: all 0.15s ease;
+/* 限位触发高亮 */
+.axis-card__limit-side.is-active .axis-card__limit-tag {
+  color: var(--accent-danger);
 }
 
-.axis-card__lim-end--active {
-  background: var(--accent-danger);
-  box-shadow: 0 0 6px var(--accent-danger);
+.axis-card__limit-side.is-active .axis-card__limit-val {
+  color: var(--accent-danger);
 }
 
-/* ============================================================
-   历史条带
-   ============================================================ */
-.axis-card__history {
-  height: 3px;
+/* 限位条轨道 + 历史渐变叠加 */
+.axis-card__limit-bar {
+  flex: 1;
+  position: relative;
+  height: 4px;
+  min-width: 0;
+}
+
+.axis-card__limit-track {
+  position: absolute;
+  inset: 0;
   border-radius: 2px;
-  margin: 0 4px 16px;
-  opacity: 0.7;
-  background: var(--bg-panel-strong);
+  background: var(--border-default);
+}
+
+.axis-card__limit-history {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  opacity: 0.8;
 }
 
 /* ============================================================
-   小节标签
+   功能分区容器
    ============================================================ */
-.axis-card__section-label {
+.axis-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.axis-card__section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.axis-card__section-title {
   font-size: 10px;
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--text-muted);
   font-weight: 700;
-  margin-bottom: 6px;
-  padding-left: 4px;
+}
+
+.axis-card__section-unit {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 /* ============================================================
@@ -460,14 +511,13 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 .axis-card__jog {
   display: flex;
   gap: 6px;
-  margin-bottom: 16px;
 }
 
 .axis-card__jog-btn {
   flex: 1 1 44px;
   min-width: 40px;
   height: 38px;
-  border-radius: 4px;
+  border-radius: 5px;
   border: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   color: var(--text-primary);
@@ -483,6 +533,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 .axis-card__jog-btn:hover:not(:disabled) {
   border-color: var(--ax, var(--accent-primary));
   color: var(--ax, var(--accent-primary));
+  background: color-mix(in srgb, var(--ax, var(--accent-primary)) 8%, var(--bg-panel-strong));
 }
 
 .axis-card__jog-btn:active:not(:disabled) {
@@ -498,7 +549,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
   flex: 2 1 56px;
   min-width: 0;
   height: 38px;
-  border-radius: 4px;
+  border-radius: 5px;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
   color: var(--text-primary);
@@ -527,7 +578,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 }
 
 /* ============================================================
-   定位控制
+   目标控制
    ============================================================ */
 .axis-card__move {
   display: flex;
@@ -537,7 +588,7 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 .axis-card__move-in {
   flex: 1;
   height: 38px;
-  border-radius: 4px;
+  border-radius: 5px;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
   color: var(--text-primary);
@@ -570,9 +621,9 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 }
 
 .axis-card__go {
-  width: 54px;
+  width: 56px;
   height: 38px;
-  border-radius: 4px;
+  border-radius: 5px;
   border: 1px solid var(--ax, var(--accent-primary));
   background: var(--ax, var(--accent-primary));
   color: var(--color-on-axis-badge);
@@ -597,19 +648,18 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 }
 
 /* ============================================================
-   提示
+   提示行（嵌入目标分区内，外层恒定高度防跳变）
    ============================================================ */
-.axis-card__hint {
-  font-size: 10.5px;
-  margin-top: 7px;
-  padding-left: 4px;
-  min-height: 14px;
-  font-weight: 600;
-  line-height: 1.4;
+.axis-card__hint-wrap {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
 }
 
-.axis-card__hint--placeholder {
-  visibility: hidden;
+.axis-card__hint {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .axis-card__hint--warn {
@@ -621,18 +671,19 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 }
 
 /* ============================================================
-   卡片底部按钮
+   底部按钮
    ============================================================ */
 .axis-card__foot {
   display: flex;
   gap: 6px;
-  margin-top: 14px;
+  margin-top: auto;
+  padding-top: 4px;
 }
 
 .axis-card__foot-btn {
   flex: 1;
-  height: 32px;
-  border-radius: 3px;
+  height: 34px;
+  border-radius: 5px;
   border: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   color: var(--text-muted);
@@ -659,13 +710,14 @@ const themeClass = computed(() => getAxisThemeClass(axisName.value))
 .axis-card__foot-btn--stop:hover:not(:disabled) {
   color: var(--accent-danger);
   border-color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 8%, var(--bg-panel-strong));
 }
 
 /* ============================================================
-   prefers-reduced-motion：禁用轴状态脉冲与所有按压位移
+   prefers-reduced-motion：禁用脉冲与按压位移
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
-  .axis-card__status-dot.moving {
+  .axis-card__status.is-moving .axis-card__status-dot {
     animation: none;
   }
   .axis-card__jog-btn:active:not(:disabled),

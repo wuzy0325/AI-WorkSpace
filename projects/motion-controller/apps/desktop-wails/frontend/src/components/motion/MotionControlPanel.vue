@@ -379,7 +379,6 @@ watch(
           <AxisCard
             v-for="axis in axes"
             :key="axis.name"
-            :controller-id="selectedId"
             :axis="axis"
             :profile="currentProfile"
             :connected="controllerConnected"
