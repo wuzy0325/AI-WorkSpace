@@ -295,18 +295,25 @@ func collectUniqueDeviceIDs(probeChannels []ProbeChannel) []string {
 
 // waitForFreshData 等待所有设备出现新数据帧（兼容入口，不可被 ctx 取消）。
 // 等价于 waitForFreshDataContext(context.Background(), ...)，取消语义仍由 checkAbort 提供。
+// acquiringCheck 非 nil 时：任一设备未在采集期间暂停计算超时（用户停采集可恢复）。
 func waitForFreshData(
 	deviceIDs []string,
 	timestampReader TimestampReader,
 	lastTimestamps map[string]int64,
 	timeout time.Duration,
 	checkAbort func() bool,
+	acquiringCheck AcquisitionStateProvider,
 ) error {
-	return waitForFreshDataContext(context.Background(), deviceIDs, timestampReader, lastTimestamps, timeout, checkAbort)
+	return waitForFreshDataContext(context.Background(), deviceIDs, timestampReader, lastTimestamps, timeout, checkAbort, acquiringCheck)
 }
 
 // waitForFreshDataContext 等待所有设备出现新数据帧，轮询间隔可被 ctx 取消。
 // ctx 取消时返回 ctx.Err()；checkAbort 触发时返回 ErrPointAborted（保持既有语义）。
+//
+// acquiringCheck（可选）设备采集态查询：若任一设备未在采集（用户主动停采集），
+// 暂停计算超时，响应用户恢复采集后继续完成本点采样——与 traversal 的
+// "等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"的不可恢复局面。
+// 为 nil 时维持原超时失败行为（向后兼容）。
 func waitForFreshDataContext(
 	ctx context.Context,
 	deviceIDs []string,
@@ -314,18 +321,20 @@ func waitForFreshDataContext(
 	lastTimestamps map[string]int64,
 	timeout time.Duration,
 	checkAbort func() bool,
+	acquiringCheck AcquisitionStateProvider,
 ) error {
 	if len(deviceIDs) == 0 {
 		return nil
 	}
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if checkAbort != nil && checkAbort() {
 			return ErrPointAborted
 		}
+		// 检查是否所有设备都已产出新帧
 		allFresh := true
 		for _, deviceID := range deviceIDs {
 			ts, ok := timestampReader(deviceID)
@@ -341,11 +350,32 @@ func waitForFreshDataContext(
 		if allFresh {
 			return nil
 		}
-		if err := sleepContext(ctx, freshnessPollInterval); err != nil {
-			return err
+		// 用户停采集期间只轮询恢复状态，不消耗设备产出新帧的超时预算。
+		if acquiringCheck != nil {
+			anyNotAcquiring := false
+			for _, deviceID := range deviceIDs {
+				if !acquiringCheck(deviceID) {
+					anyNotAcquiring = true
+					break
+				}
+			}
+			if anyNotAcquiring {
+				waitStart := time.Now()
+				if err := sleepContext(ctx, freshnessPollInterval); err != nil {
+					return err
+				}
+				deadline = deadline.Add(time.Since(waitStart))
+				continue
+			}
 		}
+		if time.Now().Before(deadline) {
+			if err := sleepContext(ctx, freshnessPollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
 	}
-	return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
 }
 
 func recordLastTimestamps(deviceIDs []string, timestampReader TimestampReader, dst map[string]int64) {

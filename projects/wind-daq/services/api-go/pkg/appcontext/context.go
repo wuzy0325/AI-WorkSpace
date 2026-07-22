@@ -131,6 +131,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
 	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
 	traversalMgr.SetAcquisitionController(deviceMgr)
+	calibrationMgr.SetAcquisitionController(deviceMgr)
 
 	return &AppContext{
 		DeviceManager:    deviceMgr,

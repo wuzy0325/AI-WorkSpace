@@ -1274,11 +1274,38 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 			)
 			return nil, fmt.Errorf("acquisition cancelled")
 		}
+		// 设备采集态检查：未在采集时进入"等待恢复"循环，不立即判失败。
+		//
+		// 设计动机：用户在采样过程中临时停止设备采集（查看设备 / 换探头 / 误操作）
+		// 是合理的运行时操作——只要后续重启采集，traversal 应当继续完成本点采样，
+		// 而不是直接判测试失败。这与运动阶段"用户停止返回 nil 等待恢复"的语义对齐，
+		// 避免出现"误停一次采集，整个遍历就报废"的不可恢复局面。
+		//
+		// 等待期间持续响应 isTaskCancelled（用户停止遍历），并重置 stallDeadline：
+		// 用户主动停采集不应被计入"采集停滞"超时，否则等待恢复的间隙会触发 10s 超时
+		// 仍然判失败，违背"可恢复"语义。
+		//
+		// 注意：设备真异常（断链 / 帧不再更新但状态未更新）仍由下方 stallTimeout 兜底，
+		// 因为 IsAcquiring=true 但 GetLatestData 持续返回旧帧时 notAcquiring=false，
+		// stallDeadline 不会被重置，10s 后仍触发超时失败。
 		if acqController != nil {
+			notAcquiring := false
 			for _, g := range groups {
 				if !acqController.IsAcquiring(g.deviceID) {
-					return nil, fmt.Errorf("device %s stopped acquiring after %d/%d samples", g.deviceID, validSamples, samplesPerPoint)
+					notAcquiring = true
+					break
 				}
+			}
+			if notAcquiring {
+				stallDeadline = time.Now().Add(acquisitionStallTimeout)
+				slog.Debug("traversal waiting for acquisition to resume",
+					"component", "traversal",
+					"task_id", taskID,
+					"valid_samples", validSamples,
+					"target_samples", samplesPerPoint,
+				)
+				time.Sleep(acquisitionBatchPoll)
+				continue
 			}
 		}
 		if time.Now().After(stallDeadline) {

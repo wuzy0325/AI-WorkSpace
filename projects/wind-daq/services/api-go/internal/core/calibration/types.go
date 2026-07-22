@@ -58,6 +58,12 @@ type Config struct {
 	// 非 nil 时各算法在多次采样间等待设备推送新数据帧后才计入有效采样，避免重复读缓存旧数据。
 	TimestampReader TimestampReader `json:"-"`
 
+	// AcquisitionStateProvider 设备采集态查询函数（仅运行时注入，不序列化）。
+	// 非 nil 时各算法在 waitForFreshData 超时后调用，区分"用户停采集"（可恢复，继续等待）
+	// 与"设备在采集但帧不更新"（真异常，返回超时错误）两类场景。
+	// 为 nil 时维持原超时行为（向后兼容旧装配路径与未注入场景）。
+	AcquisitionStateProvider AcquisitionStateProvider `json:"-"`
+
 	// ==================== 七孔探针专用注入字段（spec Task 5） ====================
 	//
 	// 七孔算法的实时回调与滞回状态通过 Config 注入而非算法参数传递——

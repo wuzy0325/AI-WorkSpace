@@ -324,7 +324,7 @@ func (a *SevenHoleAlgorithm) AcquireDataWithConfig(
 ) (DataPoint, error) {
 	return a.AcquireDataWithChannels(
 		point, channelReader, config.ProbeChannels, config.SamplesPerPoint,
-		checkAbort, config.TimestampReader, onSampleProgress,
+		checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress,
 		config.RealtimeCallback, config.PrevRegion, config.PrevSector,
 	)
 }
@@ -353,6 +353,7 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 	samplesPerPoint int,
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	acquiringCheck AcquisitionStateProvider,
 	onSampleProgress func(current, total int),
 	realtimeCallback SevenHoleRealtimeCallback,
 	prevRegion string,
@@ -376,7 +377,7 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 
 		if i > 0 {
 			if timestampReader != nil {
-				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort, acquiringCheck); err != nil {
 					if errors.Is(err, ErrPointAborted) {
 						return nil, err
 					}

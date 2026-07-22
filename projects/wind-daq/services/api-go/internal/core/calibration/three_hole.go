@@ -61,7 +61,7 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithConfig(
 	checkAbort func() bool,
 	onSampleProgress func(current, total int),
 ) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, onSampleProgress)
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
@@ -69,6 +69,8 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithConfig(
 // onRealtime：可选实时回调，采样循环内节流 100ms 发布当前样本与瞬时系数，供前端实时监控。
 // checkAbort：可选中止检查闭包，由上层注入；返回 true 时立即中止采集并返回 ErrPointAborted，
 // 使 AutomaticCalibration.runCalibrationLoop 回退索引重跑该点（暂停/停止响应）。
+// acquiringCheck：可选设备采集态查询，超时后若任一设备未在采集则继续等待恢复（用户停采集可恢复）；
+// 为 nil 时维持原超时失败行为（手动模式或未注入场景）。
 func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 	point CalPoint,
 	channelReader ChannelValueReader,
@@ -77,6 +79,7 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 	onRealtime func(ThreeHoleRawData, ThreeHoleCoefficients),
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	acquiringCheck AcquisitionStateProvider,
 	onSampleProgress func(current, total int),
 ) (*ThreeHoleDataPoint, error) {
 	startTime := time.Now().UnixMilli()
@@ -95,7 +98,7 @@ func (a *ThreeHoleAlgorithm) AcquireDataWithChannels(
 
 		if i > 0 {
 			if timestampReader != nil {
-				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort, acquiringCheck); err != nil {
 					if errors.Is(err, ErrPointAborted) {
 						return nil, err
 					}

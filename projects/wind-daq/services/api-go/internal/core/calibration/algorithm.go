@@ -35,6 +35,18 @@ type ChannelValueReader func(deviceID string, channelIndex int) (float64, bool)
 // 校准算法通过此函数判断设备是否产出新帧，避免重复读取缓存旧数据。
 type TimestampReader func(deviceID string) (int64, bool)
 
+// AcquisitionStateProvider 设备采集态查询函数类型。
+// 输入设备ID，返回该设备是否正在持续产帧（true=正在采集）。
+//
+// 注入路径：CalibrationManager → RuntimeAccess.IsAcquiring → Config.AcquisitionStateProvider。
+// 校准算法在 waitForFreshData 超时后调用本函数区分两类场景：
+//   - 返回 false（用户主动停采集）：重置 deadline 继续等待，响应用户恢复采集后继续完成本点采样
+//   - 返回 true（设备在采集但帧不更新）：判定为真异常，返回超时错误
+//
+// 与 traversal 的 IsAcquiring 硬失败路径对齐：用户停采集是可恢复操作，不应判测试失败。
+// 为 nil 时维持原超时行为（向后兼容旧装配路径与单测 mock）。
+type AcquisitionStateProvider func(deviceID string) bool
+
 // DataPointSink 单个数据点采集完成后的回调类型，用于实时持久化（如逐点写 CSV）。
 type DataPointSink func(DataPoint)
 

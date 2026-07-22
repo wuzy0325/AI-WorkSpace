@@ -42,6 +42,10 @@ func (r *pauseTestRuntime) GetChannelValue(deviceID string, channelIndex int) (f
 
 func (r *pauseTestRuntime) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
 
+// IsAcquiring 测试 mock：默认返回 true（在采集），保持既有超时失败行为。
+// 需要模拟"用户停采集"场景的测试可覆盖本方法或使用专用 mock。
+func (r *pauseTestRuntime) IsAcquiring(_ string) bool { return true }
+
 func (r *pauseTestRuntime) MoveToPosition(axis MotionAxisConfig, position float64) error {
 	r.mu.Lock()
 	r.moves = append(r.moves, axis.Name)
@@ -270,6 +274,7 @@ type nonBlockingRuntime struct {
 
 func (r *nonBlockingRuntime) GetChannelValue(string, int) (float64, bool) { return 0, false }
 func (r *nonBlockingRuntime) GetLatestTimestamp(string) (int64, bool)   { return 0, false }
+func (r *nonBlockingRuntime) IsAcquiring(_ string) bool                 { return true }
 func (r *nonBlockingRuntime) MoveToPosition(axis MotionAxisConfig, _ float64) error {
 	r.moves = append(r.moves, axis.Name)
 	return nil

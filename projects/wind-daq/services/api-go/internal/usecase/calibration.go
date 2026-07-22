@@ -82,9 +82,10 @@ type CalibrationManager struct {
 	store  ports.CalibrationResultStore
 
 	// 新增组件
-	eventPublisher ports.CalibrationEventPublisher
-	runtime        ports.CalibrationRuntime
-	statusProvider ports.DeviceStatusProvider
+	eventPublisher       ports.CalibrationEventPublisher
+	runtime              ports.CalibrationRuntime
+	statusProvider       ports.DeviceStatusProvider
+	acquisitionController ports.AcquisitionController
 
 	// 校准引擎与当前会话。
 	// autoEngine 保留给既有读取路径（Pause/Resume/Status 等），
@@ -138,6 +139,20 @@ func (m *CalibrationManager) SetRuntime(r ports.CalibrationRuntime) {
 // SetDeviceStatusProvider 设置设备状态查询
 func (m *CalibrationManager) SetDeviceStatusProvider(p ports.DeviceStatusProvider) {
 	m.statusProvider = p
+}
+
+// SetAcquisitionController 注入设备采集控制端口。
+//
+// 装配根在创建 DeviceManager 之后回填：DeviceManager 创建顺序在 CalibrationManager 之后，
+// 构造期无法表达"先创建 mgr 再回填"的依赖（与 TraversalManager.SetAcquisitionController 同模式）。
+//
+// 注入后通过 runtimeAdapter/fallbackRuntime 桥接到 RuntimeAccess.IsAcquiring，
+// 供校准算法在 waitForFreshData 超时后区分"用户停采集"（可恢复）与"设备在采集但帧不更新"（真异常）。
+// 未注入时 IsAcquiring 恒返回 true，算法回退到原超时失败行为（向后兼容）。
+func (m *CalibrationManager) SetAcquisitionController(controller ports.AcquisitionController) {
+	m.mu.Lock()
+	m.acquisitionController = controller
+	m.mu.Unlock()
 }
 
 // SetCsvWriter 设置校准 CSV 写入器
@@ -562,7 +577,7 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
 
-	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader(), nil)
+	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader(), m.makeAcquisitionStateProvider(), nil)
 	if err != nil {
 		return m.fail("采集当前工况点失败: %v", err)
 	}
@@ -1212,13 +1227,18 @@ func (m *CalibrationManager) createEventPublisher() calibration.EventPublisher {
 // isPaused 回调延迟绑定到 m.autoEngine（autoEngine 在本函数返回后创建，
 // 闭包捕获 m 引用，运行时读取 m.autoEngine.IsPaused()）。
 func (m *CalibrationManager) createRuntime(motionSafety *traversal.MotionSafetyConfig) calibration.RuntimeAccess {
+	// 调用方（Start）已持 m.mu 写锁，此处不再加锁——避免写锁内嵌套读锁导致死锁。
+	// acquisitionController 在 Start 持锁期间不会被并发替换（SetAcquisitionController
+	// 仅在装配阶段调用，运行期不切换），直接读字段安全。
+	acqCtrl := m.acquisitionController
 	if m.runtime != nil {
-		return &runtimeAdapter{runtime: m.runtime}
+		return &runtimeAdapter{runtime: m.runtime, acquisitionController: acqCtrl}
 	}
 	return &fallbackRuntime{
-		reader:       m.reader,
-		motion:       m.motion,
-		motionSafety: motionSafety,
+		reader:                m.reader,
+		motion:                m.motion,
+		motionSafety:          motionSafety,
+		acquisitionController: acqCtrl,
 		isPaused: func() bool {
 			m.mu.RLock()
 			engine := m.autoEngine
@@ -1255,6 +1275,24 @@ func (m *CalibrationManager) makeTimestampReader() calibration.TimestampReader {
 			return 0, false
 		}
 		return m.reader.GetLatestTimestamp(deviceID)
+	}
+}
+
+// makeAcquisitionStateProvider 创建设备采集态查询函数（手动模式 AcquireCurrentPoint 用）。
+//
+// 自动模式（AutomaticCalibration）通过 RuntimeAccess.IsAcquiring 走 runtimeAdapter/fallbackRuntime
+// 路径，无需本函数；手动模式直接调 AcquireDataWithChannels，需要单独构造 acquiringCheck。
+//
+// acquisitionController 未注入时返回 nil，算法侧回退到原超时失败行为（向后兼容）。
+func (m *CalibrationManager) makeAcquisitionStateProvider() calibration.AcquisitionStateProvider {
+	m.mu.RLock()
+	ctrl := m.acquisitionController
+	m.mu.RUnlock()
+	if ctrl == nil {
+		return nil
+	}
+	return func(deviceID string) bool {
+		return ctrl.IsAcquiring(deviceID)
 	}
 }
 
@@ -1506,7 +1544,8 @@ func (n *noopEventPublisher) OnRegionChanged(_ calibration.RegionChangedEvent) {
 //   - EmergencyStopMotion：始终实现，内部类型断言被包装对象是否支持
 //     ports.EmergencyStopProvider。支持时透传；不支持时 fallback 到 StopMotion。
 type runtimeAdapter struct {
-	runtime ports.CalibrationRuntime
+	runtime               ports.CalibrationRuntime
+	acquisitionController ports.AcquisitionController
 }
 
 func (r *runtimeAdapter) GetChannelValue(deviceID string, channelIndex int) (float64, bool) {
@@ -1515,6 +1554,16 @@ func (r *runtimeAdapter) GetChannelValue(deviceID string, channelIndex int) (flo
 
 func (r *runtimeAdapter) GetLatestTimestamp(deviceID string) (int64, bool) {
 	return r.runtime.GetLatestTimestamp(deviceID)
+}
+
+// IsAcquiring 返回设备采集态。runtimeAdapter 包装的 ports.CalibrationRuntime 不强制暴露采集态，
+// 由 CalibrationManager.createRuntime 在构造时按需注入 acquisitionController。
+// acquisitionController 为 nil 时按"在采集"处理，算法走原超时失败路径（向后兼容）。
+func (r *runtimeAdapter) IsAcquiring(deviceID string) bool {
+	if r.acquisitionController == nil {
+		return true
+	}
+	return r.acquisitionController.IsAcquiring(deviceID)
 }
 
 func (r *runtimeAdapter) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {
@@ -1572,12 +1621,13 @@ func (r *runtimeAdapter) EmergencyStopMotion() error {
 //   - isPaused：暂停态回调（延迟绑定到 CalibrationManager.autoEngine.IsPaused），
 //     运动循环每轮询周期检查；返回 true 时立即返回 (false, MotionInterruptPaused, nil)
 type fallbackRuntime struct {
-	reader       ports.LatestDataReader
-	motion       ports.MotionManager
-	mu           sync.Mutex
-	targets      map[calibrationMotionAxis]float64
-	motionSafety *traversal.MotionSafetyConfig
-	isPaused     func() bool
+	reader                ports.LatestDataReader
+	motion                ports.MotionManager
+	mu                    sync.Mutex
+	targets               map[calibrationMotionAxis]float64
+	motionSafety          *traversal.MotionSafetyConfig
+	isPaused              func() bool
+	acquisitionController ports.AcquisitionController
 }
 
 type calibrationMotionAxis struct {
@@ -1601,6 +1651,15 @@ func (f *fallbackRuntime) GetLatestTimestamp(deviceID string) (int64, bool) {
 		return 0, false
 	}
 	return f.reader.GetLatestTimestamp(deviceID)
+}
+
+// IsAcquiring 返回设备采集态。acquisitionController 为 nil 时按"在采集"处理，
+// 算法走原超时失败路径（向后兼容未注入场景）。
+func (f *fallbackRuntime) IsAcquiring(deviceID string) bool {
+	if f.acquisitionController == nil {
+		return true
+	}
+	return f.acquisitionController.IsAcquiring(deviceID)
 }
 
 func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {

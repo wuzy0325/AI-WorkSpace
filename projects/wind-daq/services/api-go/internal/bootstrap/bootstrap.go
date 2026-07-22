@@ -126,6 +126,10 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
 	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
 	travMgr.SetAcquisitionController(manager)
+	// 同源注入给校准管理器：校准采样过程中用户停采集后，算法在 waitForFreshData 超时后
+	// 查询 IsAcquiring 区分"用户停采集"（可恢复，继续等待）与"设备在采集但帧不更新"（真异常），
+	// 与 traversal 的"等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"。
+	calMgr.SetAcquisitionController(manager)
 
 	router := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

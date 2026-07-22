@@ -52,15 +52,27 @@ func (r *stoppingLatestDataReader) GetLatestData(deviceID string) (device.DataPa
 
 func (*stoppingLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
 
-type stopAfterFirstSampleController struct {
-	reader *stoppingLatestDataReader
+// resumableAcquisitionController 测试用 ports.AcquisitionController 实现，
+// 支持运行时切换 acquiring 状态，模拟"用户停采集后又恢复"的场景。
+// 用 mutex 保护 acquiring 字段，避免 IsAcquiring 与测试主 goroutine 修改并发时的数据竞争。
+type resumableAcquisitionController struct {
+	mu        sync.Mutex
+	acquiring bool
 }
 
-func (*stopAfterFirstSampleController) IsConnected(string) bool { return true }
-func (c *stopAfterFirstSampleController) IsAcquiring(string) bool {
-	return c.reader.calls < 1
+func (*resumableAcquisitionController) IsConnected(string) bool { return true }
+func (c *resumableAcquisitionController) IsAcquiring(string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.acquiring
 }
-func (*stopAfterFirstSampleController) StartAcquisition(string) error { return nil }
+func (*resumableAcquisitionController) StartAcquisition(string) error { return nil }
+
+func (c *resumableAcquisitionController) SetAcquiring(v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.acquiring = v
+}
 
 func TestCollectAveragedSamplesWaitsForDelayedFirstData(t *testing.T) {
 	reader := &delayedLatestDataReader{}
@@ -79,18 +91,95 @@ func TestCollectAveragedSamplesWaitsForDelayedFirstData(t *testing.T) {
 	}
 }
 
-func TestCollectAveragedSamplesFailsWhenAcquisitionStopsBeforeTargetCount(t *testing.T) {
+// TestCollectAveragedSamplesWaitsWhenAcquisitionStopsAndResumes 回归测试：
+// 采样过程中设备停止采集后重启采集，traversal 应当继续完成本点采样，而不是判失败。
+//
+// 测试前置：
+//   - stoppingLatestDataReader：每次调用返回递增 Timestamp 的新帧
+//   - resumableAcquisitionController：初始 acquiring=false，模拟用户已停采集
+//
+// 测试步骤：
+//   - 异步启动 collectAveragedSamples（目标 2 个样本）
+//   - 等待 200ms 模拟用户停采集的间隙
+//   - 将 acquiring 切回 true 模拟用户重启采集
+//
+// 期待结果：
+//   - 不返回错误，values 与 reader 提供的均值一致
+//   - elapsed >= 200ms（证明确实在等待恢复，而非立即完成）
+func TestCollectAveragedSamplesWaitsWhenAcquisitionStopsAndResumes(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
+	controller := &resumableAcquisitionController{acquiring: false}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
-	manager.status = traversal.Status{TaskID: "trav-stop-acquisition", State: traversal.StateRunning}
-	manager.SetAcquisitionController(&stopAfterFirstSampleController{reader: reader})
+	manager.status = traversal.Status{TaskID: "trav-resume", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
 
-	values, err := manager.collectAveragedSamples("trav-stop-acquisition", []deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 2)
-	if err == nil {
-		t.Fatalf("expected sampling error, got values %v", values)
+	type result struct {
+		values map[int]float64
+		err    error
 	}
-	if reader.calls != 1 {
-		t.Fatalf("GetLatestData calls = %d, want 1 before acquisition stop", reader.calls)
+	resultCh := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		values, err := manager.collectAveragedSamples("trav-resume",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 2)
+		resultCh <- result{values, err}
+	}()
+
+	// 200ms 后恢复采集，验证 traversal 等待期间不会判失败
+	time.Sleep(200 * time.Millisecond)
+	controller.SetAcquiring(true)
+
+	select {
+	case r := <-resultCh:
+		elapsed := time.Since(start)
+		if r.err != nil {
+			t.Fatalf("expected sampling to resume and complete, got error: %v", r.err)
+		}
+		if elapsed < 200*time.Millisecond {
+			t.Fatalf("elapsed = %v, want >= 200ms (should have waited for acquisition resume)", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete within 5s after acquisition resumed")
+	}
+}
+
+// TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTaskCancelled 回归测试：
+// 设备持续未采集且用户停止 traversal 时，等待恢复循环应即时响应 isTaskCancelled，
+// 立即返回 "acquisition cancelled" 错误，而不是无限挂起。
+//
+// 测试前置：
+//   - stoppingLatestDataReader：持续返回新帧
+//   - resumableAcquisitionController：acquiring=false 且不再恢复
+//   - manager.isStopped=true：模拟用户停止 traversal
+//
+// 测试步骤：
+//   - 直接调用 collectAveragedSamples（同步）
+//
+// 期待结果：
+//   - 返回非 nil 错误
+//   - elapsed < 1s（cancellation 应即时生效，不应等待 stallDeadline）
+func TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTaskCancelled(t *testing.T) {
+	reader := &stoppingLatestDataReader{}
+	controller := &resumableAcquisitionController{acquiring: false}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-cancel", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	// 模拟用户停止 traversal——isTaskCancelled 据此返回 true
+	manager.mu.Lock()
+	manager.isStopped = true
+	manager.mu.Unlock()
+
+	start := time.Now()
+	_, err := manager.collectAveragedSamples("trav-cancel",
+		[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 2)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+	if elapsed >= 1*time.Second {
+		t.Fatalf("elapsed = %v, want < 1s (cancellation should be prompt, not wait for stallDeadline)", elapsed)
 	}
 }
 

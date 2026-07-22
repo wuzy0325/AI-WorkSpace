@@ -36,7 +36,7 @@ func TestTotalPressureAcquireDataWithChannels_PAtmGuard(t *testing.T) {
 
 	point := CalPoint{ID: 1, Coordinates: map[string]float64{"α": 10}}
 	dp, err := (&TotalPressureAlgorithm{}).AcquireDataWithChannels(
-		point, reader, probeChannels, 2, nil, nil, nil, nil,
+		point, reader, probeChannels, 2, nil, nil, nil, nil, nil,
 	)
 	if err == nil {
 		t.Fatalf("PAtm=0 时应返回错误，但得到数据点: %+v", dp)
@@ -64,7 +64,7 @@ func TestTotalPressureAcquireDataWithChannels_PAtmNegative(t *testing.T) {
 	}
 	point := CalPoint{ID: 1, Coordinates: map[string]float64{"α": 0}}
 	if _, err := (&TotalPressureAlgorithm{}).AcquireDataWithChannels(
-		point, reader, probeChannels, 1, nil, nil, nil, nil,
+		point, reader, probeChannels, 1, nil, nil, nil, nil, nil,
 	); err == nil {
 		t.Fatal("PAtm 为负值时应返回错误")
 	}
@@ -93,7 +93,7 @@ func TestTotalPressureAcquireDataWithChannels_NormalPAtm(t *testing.T) {
 	}
 	point := CalPoint{ID: 1, Coordinates: map[string]float64{"α": 10}}
 	dp, err := (&TotalPressureAlgorithm{}).AcquireDataWithChannels(
-		point, reader, probeChannels, 2, nil, nil, nil, nil,
+		point, reader, probeChannels, 2, nil, nil, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("正常 PAtm 不应报错: %v", err)

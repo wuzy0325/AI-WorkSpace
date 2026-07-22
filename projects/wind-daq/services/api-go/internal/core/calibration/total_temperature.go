@@ -60,12 +60,14 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithConfig(point CalPoint, channe
 	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, checkAbort, config.TimestampReader, onSampleProgress)
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据
 // 总温校准不使用运动控制，而是用户手动调整工况后触发采集
 // checkAbort：可选中止检查闭包，传 nil 时不检查（手动模式通常无需中断）
+// acquiringCheck：可选设备采集态查询，超时后若任一设备未在采集则继续等待恢复（用户停采集可恢复）；
+// 为 nil 时维持原超时失败行为。
 func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 	point CalPoint,
 	channelReader ChannelValueReader,
@@ -74,6 +76,7 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 	sampleInterval time.Duration,
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	acquiringCheck AcquisitionStateProvider,
 	onSampleProgress func(current, total int),
 ) (*TotalTemperatureDataPoint, error) {
 	targetMa, ok := point.Coordinates["Ma"]
@@ -104,7 +107,7 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithChannels(
 
 		if i > 0 {
 			if timestampReader != nil {
-				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort, acquiringCheck); err != nil {
 					if errors.Is(err, ErrPointAborted) {
 						return nil, err
 					}
@@ -187,7 +190,7 @@ func (a *TotalTemperatureAlgorithm) ReacquirePoint(
 	samplesPerPoint int,
 	sampleInterval time.Duration,
 ) (*TotalTemperatureDataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, probeChannels, samplesPerPoint, sampleInterval, nil, nil, nil)
+	return a.AcquireDataWithChannels(point, channelReader, probeChannels, samplesPerPoint, sampleInterval, nil, nil, nil, nil)
 }
 
 // CheckStability 检测温度稳定性

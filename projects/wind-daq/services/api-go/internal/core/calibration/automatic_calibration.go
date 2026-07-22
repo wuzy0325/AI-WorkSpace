@@ -21,6 +21,11 @@ import (
 type RuntimeAccess interface {
 	GetChannelValue(deviceID string, channelIndex int) (float64, bool)
 	GetLatestTimestamp(deviceID string) (int64, bool)
+	// IsAcquiring 返回指定设备是否正在持续产帧。
+	// 校准算法在 waitForFreshData 超时后调用，区分"用户停采集"（可恢复）与
+	// "设备在采集但帧不更新"（真异常）两类场景。实现应直接委托给设备管理器，
+	// 不读硬件、不阻塞。
+	IsAcquiring(deviceID string) bool
 	MoveToPosition(axis MotionAxisConfig, position float64) error
 	WaitForMotionComplete() (bool, traversal.MotionInterruptReason, *traversal.MotionSafetyFailure)
 	StopMotion() error
@@ -130,6 +135,10 @@ func (a *AutomaticCalibration) StartWithContext(ctx context.Context, algorithm A
 	a.dataPoints = make([]DataPoint, 0)
 	a.startTime = time.Now().UnixMilli()
 	a.config.TimestampReader = a.makeTimestampReader()
+	// 注入设备采集态查询：算法在 waitForFreshData 超时后调用，
+	// 区分"用户停采集"（可恢复，继续等待）与"设备在采集但帧不更新"（真异常，返回超时错误）。
+	// runtime 为 nil 时返回 nil，算法侧回退到原超时失败行为（向后兼容）。
+	a.config.AcquisitionStateProvider = a.makeAcquisitionStateProvider()
 	a.mu.Unlock()
 
 	log.Printf("[AutomaticCalibration] 启动校准，共 %d 个测点", len(a.config.Points))
@@ -619,6 +628,18 @@ func (a *AutomaticCalibration) makeTimestampReader() TimestampReader {
 			return 0, false
 		}
 		return a.runtime.GetLatestTimestamp(deviceID)
+	}
+}
+
+// makeAcquisitionStateProvider 创建设备采集态查询函数。
+// 委托给 RuntimeAccess.IsAcquiring——core 层不依赖 ports，由 usecase 层的 runtimeAdapter
+// 桥接到 ports.AcquisitionController.IsAcquiring。runtime 为 nil 时返回 nil（向后兼容）。
+func (a *AutomaticCalibration) makeAcquisitionStateProvider() AcquisitionStateProvider {
+	if a.runtime == nil {
+		return nil
+	}
+	return func(deviceID string) bool {
+		return a.runtime.IsAcquiring(deviceID)
 	}
 }
 

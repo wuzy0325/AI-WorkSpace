@@ -137,6 +137,9 @@ func (f *fakeCalibrationRuntime) GetChannelValue(deviceID string, channelIndex i
 
 func (f *fakeCalibrationRuntime) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
 
+// IsAcquiring 测试 mock：默认返回 true（在采集），保持既有超时失败行为。
+func (f *fakeCalibrationRuntime) IsAcquiring(_ string) bool { return true }
+
 func (f *fakeCalibrationRuntime) MoveToPosition(axis MotionAxisConfig, position float64) error {
 	f.moves = append(f.moves, fmt.Sprintf("%s=%g", axis.Name, position))
 	return f.moveErr
@@ -241,7 +244,7 @@ func TestWaitForFreshDataContextCancelsPromptly(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := waitForFreshDataContext(ctx, []string{"dev-1"}, tsReader, last, 30*time.Second, nil)
+	err := waitForFreshDataContext(ctx, []string{"dev-1"}, tsReader, last, 30*time.Second, nil, nil)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.Canceled) {

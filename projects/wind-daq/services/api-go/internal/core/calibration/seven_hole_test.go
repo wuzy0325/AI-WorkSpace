@@ -695,7 +695,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_Inner(t *testing.T) {
 	}
 	dp, err := algo.AcquireDataWithChannels(
 		point, reader, sevenHoleBuildProbeChannels(), 3,
-		nil, nil, nil, nil, "", 0,
+		nil, nil, nil, nil, nil, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("内区采样应成功, 实际错误: %v", err)
@@ -752,7 +752,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_Outer(t *testing.T) {
 	}
 	dp, err := algo.AcquireDataWithChannels(
 		point, reader, sevenHoleBuildProbeChannels(), 3,
-		nil, nil, nil, nil, "", 0,
+		nil, nil, nil, nil, nil, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("外区采样应成功, 实际错误: %v", err)
@@ -803,7 +803,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_Abort(t *testing.T) {
 
 	dp, err := algo.AcquireDataWithChannels(
 		CalPoint{ID: 1}, reader, sevenHoleBuildProbeChannels(), 5,
-		checkAbort, nil, nil, nil, "", 0,
+		checkAbort, nil, nil, nil, nil, "", 0,
 	)
 	if err == nil {
 		t.Fatal("checkAbort 触发时应返回错误, 实际 nil")
@@ -845,7 +845,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_RealtimeCallback(t *testing.
 
 	dp, err := algo.AcquireDataWithChannels(
 		CalPoint{ID: 1}, reader, sevenHoleBuildProbeChannels(), 3,
-		nil, nil, nil, rtCb, "", 0,
+		nil, nil, nil, nil, rtCb, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("采样应成功, 实际错误: %v", err)
@@ -892,6 +892,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_SampleProgress(t *testing.T)
 		CalPoint{ID: 1}, reader, sevenHoleBuildProbeChannels(), 4,
 		nil,            // checkAbort
 		nil,            // timestampReader
+		nil,            // acquiringCheck
 		onProgress,     // onSampleProgress
 		nil,            // realtimeCallback
 		"", 0,          // prevRegion, prevSector
@@ -932,7 +933,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_BoundaryFlag(t *testing.T) {
 
 	dp, err := algo.AcquireDataWithChannels(
 		CalPoint{ID: 1}, reader, sevenHoleBuildProbeChannels(), 3,
-		nil, nil, nil, nil, "", 0,
+		nil, nil, nil, nil, nil, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("边界点采样应成功, 实际错误: %v", err)
@@ -968,7 +969,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_DualCoordinates(t *testing.T
 	}
 	dp, err := algo.AcquireDataWithChannels(
 		point, reader, sevenHoleBuildProbeChannels(), 2,
-		nil, nil, nil, nil, "", 0,
+		nil, nil, nil, nil, nil, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("采样应成功, 实际错误: %v", err)
@@ -1001,7 +1002,7 @@ func TestSevenHoleAlgorithm_AcquireDataWithChannels_StdDev(t *testing.T) {
 
 	dp, err := algo.AcquireDataWithChannels(
 		CalPoint{ID: 1}, reader, sevenHoleBuildProbeChannels(), 3,
-		nil, nil, nil, nil, "", 0,
+		nil, nil, nil, nil, nil, "", 0,
 	)
 	if err != nil {
 		t.Fatalf("采样应成功, 实际错误: %v", err)
