@@ -309,9 +309,12 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		conn.Close()
 		return fmt.Errorf("device %s already connected", profile.ID)
 	}
-	// 若硬件单位与 profile 不一致，以硬件为准更新 driver.profile
+	// 若硬件单位与 profile 不一致，以硬件为准更新 driver.profile。
+	// 同步级联更新 channels[i].Unit，否则前端通道卡片会显示陈旧单位
+	// （顶部状态条读 p1604Config.unit，卡片读 channels[i].unit，两者需同源）。
 	if hwUnit != "" && hwUnit != profile.P1604Cfg.Unit {
 		profile.P1604Cfg.Unit = hwUnit
+		syncChannelsUnit(profile.Channels, hwUnit)
 		driver.profile = profile
 	}
 	shard.drivers[profile.ID] = driver
@@ -403,6 +406,30 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 		return hwUnit, fmt.Sprintf("unit=%s (synced from hardware, coeff=%f)", hwUnit, coeff), nil
 	}
 	return hwUnit, fmt.Sprintf("unit=%s (coeff=%f)", hwUnit, coeff), nil
+}
+
+// syncChannelsUnit 硬件单位同步后级联更新通道单位。
+//
+// 物理量约束（与前端 DaqP1604Config.vue getChannelUnit 规则保持一致）：
+//   - CH1-CH16（index 0-15）压力通道：跟随全局压力单位
+//   - CH17（index 16）大气压力：锁定 Pa（独立物理量，不归压力 EU 系数管理）
+//   - CH18（index 17）大气温度：锁定 °C
+//
+// 必须在硬件单位同步时同步调用，否则前端通道卡片会显示陈旧单位
+// （顶部状态条读 p1604Config.unit 已是 Pa，卡片读 channels[i].unit 仍是 psi）。
+func syncChannelsUnit(channels []core.ChannelConfig, globalUnit string) {
+	for i := range channels {
+		switch i {
+		case 16:
+			channels[i].Unit = "Pa"
+		case 17:
+			channels[i].Unit = "°C"
+		default:
+			if globalUnit != "" {
+				channels[i].Unit = globalUnit
+			}
+		}
+	}
 }
 
 // 注：drainW1601Response 已下沉到 shared.local/device-sdk/go/protocol（conn_helpers.go），

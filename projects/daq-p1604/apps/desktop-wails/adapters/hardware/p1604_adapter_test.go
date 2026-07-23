@@ -480,3 +480,91 @@ func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
 	_ = server.Close()
 	_ = client.Close()
 }
+
+// TestSyncChannelsUnit_PressureChannelsFollowGlobalUnit
+//
+// 测试前置：构造 18 通道 profile，CH1-CH16 初始单位为 psi（profile 默认值）
+// 测试步骤：调用 syncChannelsUnit(channels, "Pa")
+// 期待结果：CH1-CH16 全部变为 Pa，CH17/CH18 不受影响（由下一个用例覆盖）
+//
+// 优先级 P0：硬件单位同步后通道卡片必须跟随全局单位，否则用户看到陈旧 psi
+func TestSyncChannelsUnit_PressureChannelsFollowGlobalUnit(t *testing.T) {
+	channels := make([]core.ChannelConfig, 18)
+	for i := range channels {
+		channels[i] = core.ChannelConfig{Index: i, Unit: "psi"}
+	}
+
+	syncChannelsUnit(channels, "Pa")
+
+	for i := 0; i < 16; i++ {
+		if channels[i].Unit != "Pa" {
+			t.Errorf("CH%d (index %d) unit should be Pa, got %s", i+1, i, channels[i].Unit)
+		}
+	}
+}
+
+// TestSyncChannelsUnit_SpecialChannelsLocked
+//
+// 测试前置：构造 18 通道 profile，CH17/CH18 初始单位被污染为 psi
+// 测试步骤：调用 syncChannelsUnit(channels, "kPa")
+// 期待结果：CH17 锁 Pa，CH18 锁 °C，不受全局 kPa 影响
+//
+// 优先级 P0：大气压力/温度是独立物理量，绝不能跟随压力单位
+func TestSyncChannelsUnit_SpecialChannelsLocked(t *testing.T) {
+	channels := make([]core.ChannelConfig, 18)
+	for i := range channels {
+		channels[i] = core.ChannelConfig{Index: i, Unit: "psi"}
+	}
+
+	syncChannelsUnit(channels, "kPa")
+
+	if channels[16].Unit != "Pa" {
+		t.Errorf("CH17 (大气压力) unit should be locked to Pa, got %s", channels[16].Unit)
+	}
+	if channels[17].Unit != "°C" {
+		t.Errorf("CH18 (大气温度) unit should be locked to °C, got %s", channels[17].Unit)
+	}
+}
+
+// TestSyncChannelsUnit_EmptyGlobalUnitKeepsPressureUnits
+//
+// 测试前置：构造 18 通道 profile，CH1-CH16 单位为 psi
+// 测试步骤：调用 syncChannelsUnit(channels, "")（模拟硬件单位读取失败的兜底）
+// 期待结果：CH1-CH16 保持原值 psi（不覆盖），CH17/CH18 仍锁定 Pa/°C
+//
+// 优先级 P1：hwUnit 为空时 adapter 不会进入同步分支，但函数本身应防御性保留原值
+func TestSyncChannelsUnit_EmptyGlobalUnitKeepsPressureUnits(t *testing.T) {
+	channels := make([]core.ChannelConfig, 18)
+	for i := range channels {
+		channels[i] = core.ChannelConfig{Index: i, Unit: "psi"}
+	}
+
+	syncChannelsUnit(channels, "")
+
+	if channels[0].Unit != "psi" {
+		t.Errorf("CH1 unit should remain psi when globalUnit empty, got %s", channels[0].Unit)
+	}
+	if channels[16].Unit != "Pa" {
+		t.Errorf("CH17 unit should still be locked to Pa even with empty globalUnit, got %s", channels[16].Unit)
+	}
+	if channels[17].Unit != "°C" {
+		t.Errorf("CH18 unit should still be locked to °C even with empty globalUnit, got %s", channels[17].Unit)
+	}
+}
+
+// TestSyncChannelsUnit_EmptySliceNoPanic
+//
+// 测试前置：channels 为空切片
+// 测试步骤：调用 syncChannelsUnit(nil, "Pa")
+// 期待结果：不 panic
+//
+// 优先级 P2：防御性测试，避免边界 panic 阻塞连接流程
+func TestSyncChannelsUnit_EmptySliceNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("syncChannelsUnit panicked on empty slice: %v", r)
+		}
+	}()
+	syncChannelsUnit(nil, "Pa")
+	syncChannelsUnit([]core.ChannelConfig{}, "Pa")
+}
