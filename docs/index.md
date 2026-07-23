@@ -56,6 +56,7 @@
 | `architecture/module-design.md` | Go 包和 Vue 3 模块设计细节 |
 | `architecture/project-variants.md` | 当前工作空间允许的项目结构变体 |
 | `decisions/` | 架构决策记录（ADR） |
+| `plans/2026-07-23-workspace-win7-lts-worktree.md` | 独立 Win7 LTS worktree 的 6 产品改造、同步、验收与发布计划 |
 
 **快速定位：**
 - 想按任务类型判断 AI 该加载什么 → `architecture/ai-task-context-map.zh-CN.md`
@@ -90,6 +91,8 @@
 - `projects/daq-t1603/AGENTS.md` — DAQ-T-1603 项目级 AI 入口与渐进加载导航
 - `projects/daq-t1603/README.md` — DAQ-T-1603 独立桌面应用入口
 - `projects/daq-t1603/CLAUDE.md` — DAQ-T-1603 单 Go module 架构约束
+- `decisions/ADR-007-daq-t1603-win7-lts.md` — DAQ-T1603 Win7 已验证技术基线和真机证据
+- `decisions/ADR-008-workspace-win7-lts-worktree.md` — 独立 Win7 LTS worktree、产品范围和 AI 选择性同步策略
 - `projects/daq-p1604/AGENTS.md` — DAQ-P-1604 项目级 AI 入口
 - `projects/daq-p1604/README.md` — DAQ-P-1604 独立桌面应用入口
 - `projects/motion-controller/AGENTS.md` — Motion Controller 项目级 AI 入口与渐进加载导航
