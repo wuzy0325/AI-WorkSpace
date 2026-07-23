@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
+	"math/rand"
 	"sync"
 	"time"
 
 	"shared.local/device-sdk/go/motion/core"
 )
+
+// init 初始化随机数种子。Go 1.20 的 math/rand 默认使用固定种子，
+// 不调用 Seed 会导致每次启动生成相同的随机序列，模拟运动的跟随误差将失去随机性。
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 // SimulatedMotionController 模拟运动控制器
 // 模拟真实位移机构的行为，包括连续位置更新、速度限制、限位保护等

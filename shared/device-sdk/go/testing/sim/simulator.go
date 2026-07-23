@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"net"
 	"strconv"
 	"sync"

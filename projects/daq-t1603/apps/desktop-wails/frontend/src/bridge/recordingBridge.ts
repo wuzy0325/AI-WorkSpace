@@ -1,14 +1,14 @@
-// Recording Bridge —— Wails v3 版
+// Recording Bridge —— Win7 分支（HTTP + WebSocket）
 //
-// 通过生成的 RecordingService 绑定调用 Go 侧方法；事件改用 @wailsio/runtime。
-import { Events } from '@wailsio/runtime'
-import {
-  StartRecording,
-  StopRecording,
-  GetRecordingStatus,
-  PickDirectory,
-} from '../../bindings/daq-t1603/backend/recordingservice'
+// 与 Wails v3 版差异：
+//   - RPC 调用：fetch http://127.0.0.1:18181/api/recording/* 替代 Wails 生成绑定
+//   - 事件订阅：WebSocket 单例（wsClient.ts）替代 @wailsio/runtime Events.On
+//   - PickDirectory 改由 Electron IPC 处理，bridge 仅保留入口以兼容调用方签名
 
+import { get, post } from './httpClient'
+import { on } from './wsClient'
+
+/** 录制会话状态（与 core/recording.go RecordingSession 对应） */
 export interface RecordingSession {
   id: string
   outputDir: string
@@ -16,33 +16,63 @@ export interface RecordingSession {
   startTimeMs: number
   snapshotCount: number
   status: number
+  /** 累计丢帧数（跨设备聚合） */
+  droppedCount?: number
 }
 
+/**
+ * 开始录制。
+ *
+ * @param outputDir 输出目录（绝对路径，由前端通过 Electron IPC 选择）
+ * @param filePrefix 文件名前缀（如 "DAQ-T1603"）
+ */
 export function startRecording(outputDir: string, filePrefix: string): Promise<void> {
-  return StartRecording(outputDir, filePrefix) as Promise<void>
+  return post('/api/recording/start', { outputDir, filePrefix })
 }
 
+/** 停止录制，flush 文件后关闭 */
 export function stopRecording(): Promise<void> {
-  return StopRecording() as Promise<void>
+  return post('/api/recording/stop')
 }
 
+/** 查询当前录制状态 */
 export function getRecordingStatus(): Promise<RecordingSession> {
-  return GetRecordingStatus() as any
+  return get<RecordingSession>('/api/recording/status')
 }
 
-export function pickDirectory(): Promise<string> {
-  return PickDirectory() as Promise<string>
+/**
+ * 选择目录对话框。
+ *
+ * Win7 分支实现：通过 Electron preload 注入的 window.electronAPI.showOpenDialog()
+ * 调用原生对话框。在浏览器开发环境（无 Electron）下回退返回空字符串。
+ *
+ * 兼容性：保留原 bridge 签名，调用方（MainTopBar.vue / logStore.ts）无需改动。
+ */
+export async function pickDirectory(): Promise<string> {
+  // Electron preload 注入的全局 API（详见 env.d.ts 与 desktop-electron/preload.cjs）
+  if (window.electronAPI?.showOpenDialog) {
+    return await window.electronAPI.showOpenDialog()
+  }
+  // 浏览器开发环境（vite dev server）下无 Electron，返回空串让调用方取消
+  console.warn('[recordingBridge] electronAPI.showOpenDialog not available, returning empty string')
+  return ''
 }
 
+/** recording-status 事件订阅句柄 */
 let recordingStatusUnsubscribe: (() => void) | null = null
 
+/**
+ * 订阅录制状态变更事件（daq:recording-status）。
+ * RecordingService.EmitStatus 在录制启停、每秒周期、relay 收尾时推送。
+ */
 export function onRecordingStatus(handler: (session: RecordingSession) => void): void {
   offRecordingStatus()
-  recordingStatusUnsubscribe = Events.On('daq:recording-status', (event: { data: RecordingSession }) => {
-    handler(event.data)
+  recordingStatusUnsubscribe = on<RecordingSession>('daq:recording-status', (data) => {
+    handler(data)
   })
 }
 
+/** 解除录制状态订阅 */
 export function offRecordingStatus(): void {
   if (recordingStatusUnsubscribe) {
     recordingStatusUnsubscribe()

@@ -2,17 +2,16 @@ package backend
 
 import (
 	"context"
-	"log/slog"
 	"sync"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // LogFileState 日志文件写入状态，用于前端展示。
-// 由 LogService.GetLogFileState 返回，前端通过 v3 binding 读取。
+// 由 LogService.GetLogFileState 返回，前端通过 HTTP API 读取。
 type LogFileState struct {
 	Active    bool   `json:"active"`
 	OutputDir string `json:"outputDir,omitempty"`
@@ -21,15 +20,16 @@ type LogFileState struct {
 // LogService 暴露日志相关能力给前端，同时实现 core.LogEmitter 接口，
 // 由 Hub 统一调度日志事件分发。
 //
-// 注意：在 Wails v3 下，所有 frontend 可调用的方法都必须挂在以指针接收器导出的方法上，
-// 且通过 application.NewService(&LogService{...}) 注册。
+// Win7 分支：移除 *application.App 依赖，事件推送改为 hub.EmitEvent，
+// 由 httpserver.WSHub 实现具体传输。
 type LogService struct {
-	hub     *core.Hub
-	logUC   *usecase.LogUsecase
-	logDir  string
+	hub    *core.Hub
+	logUC  *usecase.LogUsecase
+	logDir string
 
+	// mu 保护下方 ctx 字段，ServiceStartup/Shutdown 期间被读写。
 	mu  sync.Mutex
-	app *application.App
+	ctx context.Context
 }
 
 // NewLogService 创建日志 Service。
@@ -44,22 +44,12 @@ func NewLogService(hub *core.Hub, logUC *usecase.LogUsecase, logDir string) *Log
 	}
 }
 
-// ServiceName 返回 Wails 绑定时使用的服务名。
-// 显式声明以避免不同包导致的反射结果不一致（v3 默认会用类型路径）。
-func (s *LogService) ServiceName() string {
-	return "LogService"
-}
-
-// ServiceStartup 在应用启动阶段被 Wails 调用一次。
+// ServiceStartup 在应用启动阶段被 main.go 调用一次。
 // 该方法负责：
 //   1. 抢占 Hub 的 ctx 并设置自身为日志发布器；
 //   2. 自动开启日志文件保存（如果配置了 logDir）；
 //   3. 通过 Hub 发布一条 "应用已启动" 日志。
-func (s *LogService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	s.mu.Lock()
-	s.app = application.Get()
-	s.mu.Unlock()
-
+func (s *LogService) ServiceStartup(ctx context.Context) error {
 	// Hub 在 LogService 启动时初始化 ctx，并将自身注册为日志发布器
 	s.hub.SetContext(ctx)
 	s.hub.SetEmitter(s)
@@ -82,7 +72,7 @@ func (s *LogService) ServiceStartup(ctx context.Context, options application.Ser
 	return nil
 }
 
-// ServiceShutdown 在应用关闭阶段被 Wails 调用一次，
+// ServiceShutdown 在应用关闭阶段被 main.go 调用一次，
 // 负责停止日志文件写入、广播一条关闭日志，并释放 Hub 中的 ctx。
 func (s *LogService) ServiceShutdown() error {
 	_ = s.logUC.Stop()
@@ -100,7 +90,7 @@ func (s *LogService) ServiceShutdown() error {
 // EmitLog 是 core.LogEmitter 的实现：
 //   1. 补全时间戳与来源；
 //   2. 同步写入日志文件（若已开启）；
-//   3. 通过 Wails v3 Event 总线推送给前端。
+//   3. 通过 hub.EmitEvent 推送给前端（事件名 core.EventLog）。
 func (s *LogService) EmitLog(entry core.LogEvent) {
 	if entry.Timestamp == 0 {
 		entry.Timestamp = core.TimestampMs()
@@ -116,13 +106,7 @@ func (s *LogService) EmitLog(entry core.LogEvent) {
 		}
 	}
 
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("daq:log", entry)
+	s.hub.EmitEvent(core.EventLog, entry)
 }
 
 // StartLogFile 开始将日志写入文件。
@@ -151,10 +135,8 @@ func (s *LogService) GetLogFileState() LogFileState {
 	}
 }
 
-// PickDirectory 打开系统目录选择对话框。
+// PickDirectory 在 Win7 分支中返回 ErrDialogNotSupported。
+// 前端通过 Electron IPC 调用原生对话框，后端不再处理 UI 交互。
 func (s *LogService) PickDirectory() (string, error) {
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	return pickDirectory(app)
+	return "", ErrDialogNotSupported
 }

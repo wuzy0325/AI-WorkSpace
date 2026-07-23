@@ -38,7 +38,9 @@ type LogEmitter interface {
 //   2. 维护 deviceID -> *RelayControl 的中继协程映射，
 //      DeviceService 启停采集时通过 Hub 管理；
 //   3. 通过 LogEmitter 抽象提供给所有 Service 一个统一的日志发布入口，
-//      避免循环依赖（DeviceService/RecordingService 不必直接依赖 LogService）。
+//      避免循环依赖（DeviceService/RecordingService 不必直接依赖 LogService）；
+//   4. 通过 EventBus 抽象"推送给前端"的能力，使 Service 不再耦合具体传输
+//      （Wails v3 的 application.App.Event.Emit 或 httpserver 的 WebSocket 推送）。
 //
 // 并发性：所有方法都加锁；中继 goroutine 在被取消后会调用 ClearRelay 自清理。
 type Hub struct {
@@ -47,6 +49,7 @@ type Hub struct {
 	cancel   context.CancelFunc
 	relays   map[string]*RelayControl
 	emitter  LogEmitter
+	bus      EventBus
 }
 
 // NewHub 创建一个空的 Hub。ctx 在应用启动时由 SetContext 注入。
@@ -139,4 +142,28 @@ func (h *Hub) StopAllRelays() {
 	for _, control := range relays {
 		control.Cancel()
 	}
+}
+
+// SetEventBus 注入实际的事件总线（通常是 httpserver.WSHub）。
+// 必须在所有 ServiceStartup 之前调用一次。传入 nil 会回退到 noop。
+func (h *Hub) SetEventBus(bus EventBus) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if bus == nil {
+		h.bus = nil
+		return
+	}
+	h.bus = bus
+}
+
+// EmitEvent 转发事件到注入的 EventBus。
+// 如果尚未 SetEventBus，调用会被静默丢弃（启动早期或测试场景）。
+func (h *Hub) EmitEvent(name string, data ...any) {
+	h.mu.Lock()
+	bus := h.bus
+	h.mu.Unlock()
+	if bus == nil {
+		return
+	}
+	bus.Emit(name, data...)
 }

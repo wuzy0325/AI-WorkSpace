@@ -3,25 +3,22 @@ package backend
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // RecordingService 暴露录制相关能力给前端，并对外提供事件发布。
 //
 // 与 DeviceService 解耦：DeviceService 中的 relay 协程通过 Hub 获取本 Service，
 // 借助 IsActive/Write/EmitStatus 完成录制热路径调用，无需直接依赖 RecordingService 类型。
+//
+// Win7 分支：移除 *application.App 依赖，事件推送改为 hub.EmitEvent，
+// 由 httpserver.WSHub 实现具体传输。
 type RecordingService struct {
 	hub      *core.Hub
 	recordUC *usecase.RecordingUsecase
-
-	mu  sync.Mutex
-	app *application.App
 
 	// bpLastEmitMs 限频背压事件到前端的发射时间戳，避免 10 台同时背压时
 	// Event.Emit 刷屏（默认每设备每秒最多 1 条）。
@@ -40,21 +37,12 @@ func NewRecordingService(hub *core.Hub, recordUC *usecase.RecordingUsecase) *Rec
 	}
 }
 
-// ServiceName Wails 绑定时使用的服务名。
-func (s *RecordingService) ServiceName() string {
-	return "RecordingService"
-}
-
-// ServiceStartup 缓存 application 引用，并注入背压/错误回调。
+// ServiceStartup 注入背压/错误回调。
 //
 // 回调由 recorder 在丢帧/不可恢复错误时同步调用，因此必须非阻塞：
 //   - 日志走 hub.EmitLog（已是异步广播）；
 //   - Event.Emit 每类事件 1s 最多 1 次，由对应 atomic 限频。
-func (s *RecordingService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	s.mu.Lock()
-	s.app = application.Get()
-	s.mu.Unlock()
-
+func (s *RecordingService) ServiceStartup(ctx context.Context) error {
 	s.recordUC.SetBackpressureHandler(s.handleBackpressure)
 	s.recordUC.SetFatalErrorHandler(s.handleFatal)
 	return nil
@@ -76,16 +64,10 @@ func (s *RecordingService) Write(snapshot core.TemperatureSnapshot) error {
 	return s.recordUC.Write(snapshot)
 }
 
-// EmitStatus 通过 Wails Event 总线广播当前录制状态。
+// EmitStatus 通过 hub.EmitEvent 广播当前录制状态。
 // 在 DeviceService 中继协程内被高频调用，因此实现需轻量。
 func (s *RecordingService) EmitStatus() {
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("daq:recording-status", s.recordUC.Status())
+	s.hub.EmitEvent(core.EventRecordingStatus, s.recordUC.Status())
 }
 
 // StartRecording 开始录制；启动后立刻广播一次状态。
@@ -111,12 +93,10 @@ func (s *RecordingService) GetRecordingStatus() core.RecordingSession {
 	return s.recordUC.Status()
 }
 
-// PickDirectory 打开系统目录选择对话框。
+// PickDirectory 在 Win7 分支中返回 ErrDialogNotSupported。
+// 前端通过 Electron IPC 调用原生对话框，后端不再处理 UI 交互。
 func (s *RecordingService) PickDirectory() (string, error) {
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	return pickDirectory(app)
+	return "", ErrDialogNotSupported
 }
 
 // handleBackpressure 是 recorder 丢帧时同步调用的回调。
@@ -125,7 +105,7 @@ func (s *RecordingService) PickDirectory() (string, error) {
 //   - 必须非阻塞（recorder 持锁内调用）；
 //   - 禁止回调 recordUC 任何方法（死锁）；
 //   - 日志每条都发（前端 LogPanel 可见），Event.Emit 限频到全局 1Hz
-//     避免 10 台并发背压时 WebView2 ExecuteScript 刷屏。
+//     避免 10 台并发背压时刷屏。
 func (s *RecordingService) handleBackpressure(e core.BackpressureEvent) {
 	if s.hub != nil {
 		s.hub.EmitLog(core.LogEvent{
@@ -134,7 +114,7 @@ func (s *RecordingService) handleBackpressure(e core.BackpressureEvent) {
 			DeviceID: e.DeviceID,
 			Source:   "recorder",
 			Message:  "录制队列背压，丢帧",
-			Detail: detailJSON(e),
+			Detail:   detailJSON(e),
 		})
 	}
 
@@ -148,13 +128,7 @@ func (s *RecordingService) handleBackpressure(e core.BackpressureEvent) {
 		return
 	}
 
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("daq:recording-backpressure", e)
+	s.hub.EmitEvent(core.EventRecordingBackpressure, e)
 }
 
 // detailJSON 构造背压详情的简易 JSON 字符串。
@@ -196,13 +170,7 @@ func (s *RecordingService) handleFatal(deviceID string, err error) {
 		return
 	}
 
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("daq:recording-fatal", map[string]string{
+	s.hub.EmitEvent(core.EventRecordingFatal, map[string]string{
 		"deviceId": deviceID,
 		"error":    err.Error(),
 	})

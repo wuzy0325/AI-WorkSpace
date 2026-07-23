@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.16.0",
-    "@wailsio/runtime": "3.0.0-alpha.95",
     "echarts": "^6.1.0",
     "naive-ui": "^2.44.1",
     "pinia": "^3.0.0",

@@ -5,7 +5,7 @@ package hardware
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"math"
 	"os"
 	"path/filepath"

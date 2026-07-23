@@ -7,8 +7,6 @@ import (
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // 前端推送节奏：UI 快照 100ms 一次，录制状态 1s 一次。
@@ -25,8 +23,10 @@ const (
 //
 // 设计要点：
 //   - 录制相关的热路径调用通过 hub.RecordingService 引用直接走，
-//     避免在 RecordingService 中再绕一层 Wails Bind 调用；
-//   - 中继协程的生命周期由 hub 集中管理（RegisterRelay/ClearRelay/WaitRelay/StopAllRelays）。
+//     避免在 RecordingService 中再绕一层 HTTP 调用；
+//   - 中继协程的生命周期由 hub 集中管理（RegisterRelay/ClearRelay/WaitRelay/StopAllRelays）；
+//   - Win7 分支：移除 *application.App 依赖，事件推送改为 hub.EmitEvent，
+//     由 httpserver.WSHub 实现具体传输。
 type DeviceService struct {
 	hub      *core.Hub
 	deviceUC *usecase.DeviceUsecase
@@ -35,8 +35,9 @@ type DeviceService struct {
 	// 之所以注入而不是从 hub 拿，是因为只有 DeviceService 需要这种紧耦合。
 	recording *RecordingService
 
+	// mu 保护下方 ctx 字段，ServiceStartup/Shutdown 期间被读写。
 	mu  sync.Mutex
-	app *application.App
+	ctx context.Context
 }
 
 // NewDeviceService 创建设备 Service。
@@ -48,15 +49,12 @@ func NewDeviceService(hub *core.Hub, deviceUC *usecase.DeviceUsecase, recording 
 	}
 }
 
-// ServiceName Wails 绑定时使用的服务名。
-func (s *DeviceService) ServiceName() string {
-	return "DeviceService"
-}
-
-// ServiceStartup 缓存 application 引用，供事件发布使用。
-func (s *DeviceService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+// ServiceStartup 在应用启动阶段被 main.go 调用一次。
+// Win7 分支：原 Wails 版本通过 application.Get() 获取 app 引用，
+// 现在改为缓存 ctx（供 relay 协程派生子 context），事件推送走 hub.EmitEvent。
+func (s *DeviceService) ServiceStartup(ctx context.Context) error {
 	s.mu.Lock()
-	s.app = application.Get()
+	s.ctx = ctx
 	s.mu.Unlock()
 	return nil
 }
@@ -68,7 +66,7 @@ func (s *DeviceService) ServiceShutdown() error {
 }
 
 // ----------------------------------------------------------------------------
-// 前端可调用方法（被 wails3 generate bindings 扫描后生成对应 TS 函数）
+// 前端可调用方法（被 HTTP handler 通过反射或显式封装调用）
 // ----------------------------------------------------------------------------
 
 // ScanDevices 触发设备扫描。
@@ -182,13 +180,18 @@ func (s *DeviceService) ApplyConfig(id string, cfg core.T1603Config) error {
 // ----------------------------------------------------------------------------
 
 // startRelay 启动一个后台 goroutine，把硬件 channel 的快照按节流策略转发给：
-//   1. 前端（通过 Wails Event，"daq:payload"）
+//   1. 前端（通过 hub.EmitEvent，事件名 "daq:payload"）
 //   2. 录制写入器（条件：RecordingService.IsActive()）
 //   3. 周期性广播录制状态（"daq:recording-status"）
 func (s *DeviceService) startRelay(deviceID string, ch <-chan core.TemperatureSnapshot) {
 	baseCtx := s.hub.Context()
 	if baseCtx == nil {
-		baseCtx = context.Background()
+		s.mu.Lock()
+		baseCtx = s.ctx
+		s.mu.Unlock()
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
 	}
 	ctx, cancel := context.WithCancel(baseCtx)
 	control := &core.RelayControl{Cancel: cancel, Done: make(chan struct{})}
@@ -250,15 +253,9 @@ func (s *DeviceService) relayStream(ctx context.Context, deviceID string, ch <-c
 	}
 }
 
-// emitPayload 通过 Wails Event 总线推送温度快照。
+// emitPayload 通过 hub.EmitEvent 推送温度快照到前端。
 func (s *DeviceService) emitPayload(snapshot core.TemperatureSnapshot) {
-	s.mu.Lock()
-	app := s.app
-	s.mu.Unlock()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("daq:payload", snapshot)
+	s.hub.EmitEvent(core.EventPayload, snapshot)
 }
 
 // emitLog 是 hub.EmitLog 的便捷包装，免去到处构造 LogEvent 字面量的样板。
