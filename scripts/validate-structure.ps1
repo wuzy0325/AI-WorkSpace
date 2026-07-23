@@ -145,6 +145,43 @@ foreach ($progDir in $programsDirs) {
     }
 }
 
+# ---- 2e. Go file line count check (code-standards.zh-CN.md §一) ----
+# 单个非测试 .go 文件不得超过 500 行；超出且不在豁免清单的，视为结构违规。
+# 豁免清单用于过渡期管理预存超长文件，新增超长文件不得加入清单。
+
+$maxGoFileLines = 500
+$waiverPath = Join-Path $PSScriptRoot "go-file-waivers.txt"
+# 用 .NET API 显式 UTF-8 读取，避免 PowerShell 5.x 默认 GBK 解码导致中文注释乱码与路径错位
+$goFileWaivers = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+if (Test-Path -Path $waiverPath -PathType Leaf) {
+    $waiverLines = [System.IO.File]::ReadAllLines($waiverPath, [System.Text.Encoding]::UTF8)
+    foreach ($wl in $waiverLines) {
+        $trimmed = $wl.Trim()
+        if ($trimmed -and -not $trimmed.StartsWith('#')) {
+            # 统一用正斜杠比较，避免 Windows 反斜杠差异
+            $null = $goFileWaivers.Add(($trimmed -replace '\\', '/'))
+        }
+    }
+}
+
+# 扫描 projects/ 下所有 .go 文件，排除测试文件与生成产物目录
+$goFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.FullName -notmatch '\\(node_modules|vendor|\.git|build|dist)\\' -and
+        $_.Name -notmatch '_test\.go$'
+    }
+
+foreach ($f in $goFiles) {
+    $lineCount = (Get-Content -Path $f.FullName -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+    if ($lineCount -le $maxGoFileLines) { continue }
+
+    # 相对路径并统一为正斜杠，便于与豁免清单比对
+    $relPath = $f.FullName.Substring($workspaceRoot.Length + 1) -replace '\\', '/'
+    if ($goFileWaivers.Contains($relPath)) { continue }
+
+    $errors.Add("SIZE: Go file exceeds $maxGoFileLines lines: $relPath ($lineCount lines, see docs/runbooks/code-standards.zh-CN.md section 1)")
+}
+
 # ---- 3. Results ----
 if ($errors.Count -gt 0) {
     if (-not $Quiet) {

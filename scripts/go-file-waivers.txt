@@ -1,0 +1,36 @@
+# Go 文件行数豁免清单
+# ----------------------------------------------------------------------
+# 规则（docs/runbooks/code-standards.zh-CN.md §一）：单个 .go 文件 ≤ 500 行。
+# 此清单列出**已知**超 500 行的生产代码文件（不含 _test.go），暂予豁免，
+# 由 validate-structure.ps1 跳过检查，避免阻塞 CI。
+#
+# 用法：每行一个相对工作区根的路径，# 开头为注释，空行忽略。
+#
+# 维护原则：
+#   - 新增超长文件不得加入此清单，必须先拆分。
+#   - 清单内文件拆分完成后，应立即从清单移除。
+#   - 每条路径后建议附行数与拆分 TODO。
+#
+# 当前预填清单（截至 2026-07-22，共 17 个生产代码文件）：
+#   P0 优先拆分（>1000 行）：calibration.go / traversal_acquisition.go / server.go / traversal.go / app.go
+#   P1 待拆分（700~1000 行）：device_manager.go / traversal_config.go / p1604_adapter.go / csv_sink.go
+#   P2 待拆分（500~700 行）：automatic_calibration.go / service.go / traversal_csv_writer.go /
+#                            main.go / seven_hole.go / csv_recorder.go / report_service.go / daq_p1604.go
+
+projects/wind-daq/services/api-go/internal/usecase/calibration.go
+projects/wind-daq/services/api-go/internal/usecase/traversal_acquisition.go
+projects/wind-daq/services/api-go/api/server.go
+projects/wind-daq/services/api-go/internal/usecase/traversal.go
+projects/wind-daq/apps/desktop-wails/backend/app.go
+projects/wind-daq/services/api-go/internal/usecase/device_manager.go
+projects/wind-daq/services/api-go/internal/usecase/traversal_config.go
+projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go
+projects/wind-daq/services/api-go/internal/adapters/storage/csv_sink.go
+projects/wind-daq/services/api-go/internal/core/calibration/automatic_calibration.go
+projects/1604Cal/internal/application/calibration/service.go
+projects/wind-daq/services/api-go/internal/adapters/storage/traversal_csv_writer.go
+projects/three-hole-interpolator/apps/desktop-win7-walk/main.go
+projects/wind-daq/services/api-go/internal/core/calibration/seven_hole.go
+projects/daq-p1604/apps/desktop-wails/adapters/recording/csv_recorder.go
+projects/1604Cal/internal/report/report_service.go
+projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go

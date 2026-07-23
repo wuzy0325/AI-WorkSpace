@@ -21,6 +21,7 @@ Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/deskt
 | `apps/desktop-wails/backend/` | zero business logic — param conversion + usecase calls |
 | `apps/desktop-wails/frontend/` | zero hardware access, zero calibration algorithms |
 | `programs/` | zero project `internal/*` imports — `shared/*` only |
+| `*.go` (non-test) | ≤ 500 lines per file, ≤ 50 lines per function — enforced by `validate-structure.ps1` against `scripts/go-file-waivers.txt`; see [code-standards §一](docs/runbooks/code-standards.zh-CN.md) |
 
 ### Environment & Commands
 
@@ -35,7 +36,7 @@ Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (55531 symbols, 107663 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (47659 symbols, 95294 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
