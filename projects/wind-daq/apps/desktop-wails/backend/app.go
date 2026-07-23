@@ -20,7 +20,6 @@ import (
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/logging"
 	"wind-daq/services/api-go/pkg/types"
-	wind_usecase "wind-daq/services/api-go/pkg/usecase"
 )
 
 // 启动模式常量
@@ -890,7 +889,7 @@ func (a *App) tryAutoStartRecording() {
 		return
 	}
 	// 构造 RecordingConfig：字段类型通过别名间接访问 storage.StopConditions/FileRotation
-	config := wind_usecase.StorageRecordingConfig{
+	config := types.StorageRecordingConfig{
 		OutputDir:              resolved,
 		FilePrefix:             settings.FilePrefix,
 		AutoStartOnAcquisition: true,
@@ -1183,9 +1182,9 @@ func (a *App) CalibrationSaveCsv(taskID string, savePath string) FileResponse {
 
 // ==================== 存储 API ====================
 
-func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
+func (a *App) StorageGetStatus() types.StorageRecordingStatus {
 	if a == nil || a.appContext == nil || a.appContext.StorageRecorder == nil {
-		return wind_usecase.StorageRecordingStatus{}
+		return types.StorageRecordingStatus{}
 	}
 	return a.appContext.StorageRecorder.Status()
 }
@@ -1193,7 +1192,7 @@ func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 // StorageStartRecording 启动数据录制。
 // 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
 // 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
-func (a *App) StorageStartRecording(config wind_usecase.StorageRecordingConfig) GenericResponse {
+func (a *App) StorageStartRecording(config types.StorageRecordingConfig) GenericResponse {
 	return a.callMgr(a.storageRecorder(), "存储记录器", func() error {
 		resolvedOutputDir, err := a.ResolvePath(config.OutputDir)
 		if err != nil {
@@ -1212,9 +1211,9 @@ func (a *App) StorageStopRecording() GenericResponse {
 
 // ==================== 报告 API ====================
 
-func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
+func (a *App) ReportGetStatus() types.ReportStatus {
 	if a == nil || a.appContext == nil || a.appContext.ReportManager == nil {
-		return wind_usecase.ReportStatus{}
+		return types.ReportStatus{}
 	}
 	return a.appContext.ReportManager.Status()
 }

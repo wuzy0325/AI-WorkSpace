@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"wind-daq/services/api-go/pkg/appcontext"
-	wind_usecase "wind-daq/services/api-go/pkg/usecase"
+	"wind-daq/services/api-go/pkg/types"
 )
 
 func TestConfigLoadNilAppReturnsError(t *testing.T) {
@@ -99,7 +99,7 @@ func TestStorageStartRecordingResolvesRelativeOutputDir(t *testing.T) {
 	}
 	app := &App{appContext: ctx}
 
-	res := app.StorageStartRecording(wind_usecase.StorageRecordingConfig{
+	res := app.StorageStartRecording(types.StorageRecordingConfig{
 		OutputDir:   filepath.Join("data", "recordings"),
 		FilePrefix:  "run",
 	})

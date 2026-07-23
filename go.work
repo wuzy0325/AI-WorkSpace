@@ -1,10 +1,7 @@
 go 1.26.1
 
 use (
-	./projects/1604Cal
 	./projects/probe-interpolator/apps/desktop-wails
-	./projects/three-hole-interpolator/apps/desktop-win7
-	./projects/three-hole-interpolator/apps/desktop-win7-walk
 	programs/p1604-unit-diag
 	projects/daq-p1604/apps/desktop-wails
 	// 试点期间临时摘除 daq-t1603, 避免 v3 alpha 与其他 v2 项目的间接依赖冲突;
@@ -22,4 +19,6 @@ use (
 	shared/motion-control/go
 )
 
+// threehole 模块未加入 use 列表——three-hole-interpolator 项目 go.mod 内有
+// 各自的 replace 指向本工作区路径，go.work 在此统一声明避免冲突。
 replace ai-workspace/shared/algorithms/go/threehole => ./shared/algorithms/go/threehole
