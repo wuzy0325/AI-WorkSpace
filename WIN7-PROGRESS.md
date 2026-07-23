@@ -1,9 +1,9 @@
 # AI-Workspace Win7 LTS 开发进度
 
-> **当前分支**：`feature/daq-t1603-win7`（DAQ-T1603 基线提交后计划重命名为 `lts/win7`）
+> **当前分支**：`lts/win7`
 > **工作目录**：`c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7`
 > **最后更新**：2026-07-23
-> **状态**：未提交 working tree 已完成 Go 1.20.14 + Electron 22.3.27 + NSIS x64 安装包，并通过 Windows 7 SP1 x64 真机安装与启动验证；HEAD `b041033` 尚不包含该实现
+> **状态**：DAQ-T1603 Win7 源码基线已提交为 `a8de1c2`；原始安装包通过 Windows 7 SP1 x64 真机验证，重建安装包已通过本机 smoke test
 
 ---
 
@@ -81,7 +81,7 @@ DAQ-T1603 是首个技术基线。全部产品统一在本 worktree 的长期 `l
 | 项目 | 文件 | 状态 |
 |---|---|---|
 | Go 1.20.14 安装脚本 | [scripts/install-go1.20.14.ps1](scripts/install-go1.20.14.ps1) | 已执行成功，安装到 `C:\go-versions\go1.20.14` |
-| git worktree 创建 | `feature/daq-t1603-win7` 分支 | done |
+| git worktree 创建 | `lts/win7` 分支 | done |
 
 ### 4.2 Go 1.20 兼容性改造
 
@@ -545,8 +545,8 @@ ws.onmessage = (e) => {
 
 按优先级：
 
-1. 固化 DAQ-T1603 已验证源码：检查改动、完整验证、提交并创建基线 tag。
-2. 将当前分支从 `feature/daq-t1603-win7` 统一为 `lts/win7`。
+1. ~~固化 DAQ-T1603 已验证源码~~：已提交为 `a8de1c2`。
+2. ~~将分支统一为 `lts/win7`~~：已完成。
 3. 以 `WIN7-SYNC-STATE.md` 为事实来源，建立 AI 选择性同步流程。
 4. 从 DAQ-T1603 提取仅存在于 Win7 分支的 Electron/HTTP/NSIS 平台模板。
 5. 按 `probe-interpolator` → `daq-p1604` → `1604Cal` → `motion-controller` → `wind-daq` 顺序迁移。

@@ -5,10 +5,10 @@
 ## Baseline
 
 - Last reviewed master: `49f06a8`（包含 Win7 LTS 治理文档）
-- Current Win7 base: `b04103361e2c28360033886d7b6d4a60e24f1e27`
-- Current branch: `feature/daq-t1603-win7`（基线提交后计划重命名为 `lts/win7`）
+- Current Win7 base: `a8de1c2`
+- Current branch: `lts/win7`
 - Last reviewed: 2026-07-23
-- Review note: 台账初始化；当前 HEAD 不包含 Win7 实现。已验证内容位于未提交 working tree，主要涉及 DAQ-T1603、`shared/device-sdk` 兼容层和 `projects/daq-t1603/apps/desktop-electron/`。首次同步前必须按计划 Task 0 逐项鉴别并固化基线。
+- Review note: DAQ-T1603、`shared/device-sdk` Go 1.20 兼容层和 Electron 壳已固化为基线提交 `a8de1c2`。
 
 ## Ported Commits
 
@@ -38,7 +38,7 @@
 
 | Date | Project | Win7 SHA | Automated verification | Win7 hardware/manual result | Artifact SHA256 |
 |---|---|---|---|---|---|
-| 2026-07-23 | daq-t1603 | uncommitted baseline | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
+| 2026-07-23 | daq-t1603 | `a8de1c2` | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
 
 ## Sync Rules
 
