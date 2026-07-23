@@ -24,6 +24,7 @@ const COLORS = [
         :unit="ch.unit"
         :color="ch.color || COLORS[ch.index % COLORS.length]"
         :name="ch.name"
+        :thermocouple-type="ch.thermocoupleType"
         :precision="ch.precision"
         :active="deviceStore.isChartSelected(deviceId, ch.index)"
         @change-color="(color: string) => deviceStore.updateChannel(deviceId, ch.index, { color })"

@@ -76,6 +76,14 @@ func (s *RecordingService) Write(snapshot core.TemperatureSnapshot) error {
 	return s.recordUC.Write(snapshot)
 }
 
+// SetDeviceProfile 注入设备通道配置到 recorder（REC-006）。
+// 由 DeviceService 在设备 Connect / StartAcquisition / ApplyConfig 时调用，
+// 让 recorder 在 CSV 写入时将禁用通道的列写空值，便于操作员区分
+// "通道禁用"与"通道无数据"。
+func (s *RecordingService) SetDeviceProfile(deviceID string, channels []core.ChannelConfig) {
+	s.recordUC.SetDeviceProfile(deviceID, channels)
+}
+
 // EmitStatus 通过 Wails Event 总线广播当前录制状态。
 // 在 DeviceService 中继协程内被高频调用，因此实现需轻量。
 func (s *RecordingService) EmitStatus() {

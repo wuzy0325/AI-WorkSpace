@@ -127,7 +127,8 @@ func TestWriteAndVerifyFile(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "DeviceID,Timestamp,Unit") {
+	// REC-005：表头为 20 列 DeviceID,Timestamp,Millisecond,Unit,CH01..CH16
+	if !strings.Contains(text, "DeviceID,Timestamp,Millisecond,Unit") {
 		t.Fatalf("missing header in file: %s", text)
 	}
 	if !strings.Contains(text, "dev1") {

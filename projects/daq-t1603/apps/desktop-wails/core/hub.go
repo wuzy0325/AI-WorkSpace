@@ -30,6 +30,14 @@ type LogEmitter interface {
 	EmitLog(entry LogEvent)
 }
 
+// StateEmitter 抽象出设备状态变更事件的发送目标（ACQ-010/STB-003）。
+// 由 backend.DeviceService 实现，借助 application.App.Event.Emit 推送给前端。
+// adapter 在 OnReadLoopExit 等异步状态变化时通过 hub.EmitDeviceState 触发，
+// 让前端 statusMap 实时同步，避免依赖轮询。
+type StateEmitter interface {
+	EmitDeviceState(deviceID string, state DeviceState)
+}
+
 // Hub 是 backend 各 Service 共享的运行期状态容器。
 //
 // 设计目标：
@@ -42,11 +50,12 @@ type LogEmitter interface {
 //
 // 并发性：所有方法都加锁；中继 goroutine 在被取消后会调用 ClearRelay 自清理。
 type Hub struct {
-	mu       sync.Mutex
-	ctx      context.Context
-	cancel   context.CancelFunc
-	relays   map[string]*RelayControl
-	emitter  LogEmitter
+	mu        sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	relays    map[string]*RelayControl
+	emitter   LogEmitter
+	stateEmit StateEmitter
 }
 
 // NewHub 创建一个空的 Hub。ctx 在应用启动时由 SetContext 注入。
@@ -96,6 +105,26 @@ func (h *Hub) EmitLog(entry LogEvent) {
 	h.mu.Unlock()
 	if emitter != nil {
 		emitter.EmitLog(entry)
+	}
+}
+
+// SetStateEmitter 注入设备状态变更事件发布器（通常是 DeviceService）。
+// 在 DeviceService.ServiceStartup 时调用一次即可。
+func (h *Hub) SetStateEmitter(emitter StateEmitter) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stateEmit = emitter
+}
+
+// EmitDeviceState 设备状态变更事件入口；如果尚未注入 emitter 则静默丢弃。
+// adapter 在 OnReadLoopExit 等异步状态变化时调用此方法，
+// 让前端通过 daq:device-state 事件实时同步 statusMap（ACQ-010/STB-003）。
+func (h *Hub) EmitDeviceState(deviceID string, state DeviceState) {
+	h.mu.Lock()
+	emitter := h.stateEmit
+	h.mu.Unlock()
+	if emitter != nil {
+		emitter.EmitDeviceState(deviceID, state)
 	}
 }
 

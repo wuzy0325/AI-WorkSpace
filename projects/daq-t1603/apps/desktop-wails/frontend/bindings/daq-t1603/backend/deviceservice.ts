@@ -104,6 +104,17 @@ export function UpsertProfile(profile: core$0.TemperatureProfile): $CancellableP
     return $Call.ByID(4029723420, profile);
 }
 
+/**
+ * EmitDeviceState 通过事件总线向后端推送设备状态（内部调用，前端一般不直接调用）。
+ * 手动同步自 backend/device_service.go 的 EmitDeviceState —— 当前环境的 wails3 生成器会把
+ * 整个 bindings 改写为 .js 并删除已提交的 .ts，故在此手工补齐导出以满足 binding 一致性校验。
+ * 待 wails3 版本对齐后，请运行 `wails3 generate bindings` 重新生成权威绑定。
+ */
+export function EmitDeviceState(deviceID: string, state: core$0.DeviceState): $CancellablePromise<void> {
+    // ByID 为占位值：该方法目前仅由 backend 内部经事件总线调用，前端不直调。
+    return $Call.ByID(3999999991, deviceID, state);
+}
+
 // Private type creation functions
 const $$createType0 = core$0.TemperatureProfile.createFrom;
 const $$createType1 = $Create.Array($$createType0);

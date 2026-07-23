@@ -87,7 +87,13 @@ func main() {
 		})
 	}
 
-	wailsApp := application.New(application.Options{
+	// E2E 测试专用：通过环境变量 DAQ_P1604_CDP_PORT 注入 WebView2 CDP 调试端口。
+	// 设为空时（生产路径）不影响任何行为；设为端口号时（如 9222），
+	// Playwright 可通过 connect_over_cdp("http://localhost:9222") 连接 WebView2
+	// 进行真实 E2E 测试。参考：
+	//   - Wails v3 application.Options.AdditionalBrowserArgs
+	//   - https://playwright.dev/docs/webview2
+	appOpts := application.Options{
 		Name:        "DAQ-P-1604",
 		Description: "DAQ-P-1604 pressure acquisition desktop app",
 		LogLevel:    slog.LevelInfo,
@@ -101,7 +107,14 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-	})
+	}
+	if cdpPort := os.Getenv("DAQ_P1604_CDP_PORT"); cdpPort != "" {
+		slog.Info("CDP debugging enabled (E2E test mode)", "port", cdpPort)
+		// 字段挂在 WindowsOptions 下（非 Options 顶层）：
+		// 参见 wails/v3/pkg/application/application_options.go 中 WindowsOptions.AdditionalBrowserArgs
+		appOpts.Windows.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + cdpPort}
+	}
+	wailsApp := application.New(appOpts)
 
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "DAQ-P-1604 压力采集",

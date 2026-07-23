@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, computed, onUnmounted } from 'vue'
-import { Trash2, PanelRightOpen, PanelRightClose, Copy, Check, FileText, FileX, FolderOpen } from '@lucide/vue'
+import { Trash2, PanelRightOpen, PanelRightClose, Copy, Check, FileText, FileX, Search, X } from '@lucide/vue'
 import { useLogStore } from '@stores/logStore'
 import type { LogLevel, LogGroup, LogEntry } from '@stores/logStore'
 import { LOG_GROUP_LABELS, CATEGORY_LABELS } from '@stores/logStore'
@@ -12,6 +12,22 @@ const logStore = useLogStore()
 const expanded = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
+
+/** 搜索输入框双向绑定值（LOG-010），同步到 store */
+const searchInput = ref('')
+
+/** 同步搜索框值到 store（输入时即时过滤） */
+function onSearchInput(e: Event): void {
+  const target = e.target as HTMLInputElement
+  searchInput.value = target.value
+  logStore.setSearchText(target.value)
+}
+
+/** 清空搜索 */
+function clearSearch(): void {
+  searchInput.value = ''
+  logStore.setSearchText('')
+}
 
 /** 拷贝成功反馈：记录 id -> 是否显示勾 */
 const copiedId = ref<number | null>(null)
@@ -98,14 +114,14 @@ async function copyAll(): Promise<void> {
   }
 }
 
-/** 自动滚动到底部 */
+/** 自动滚动到顶部（LOG-001：日志倒序展示，最新在顶部） */
 watch(
   () => logStore.filteredEntries.length,
   async () => {
     if (!autoScroll.value || !expanded.value) return
     await nextTick()
     if (scrollContainer.value) {
-      scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
+      scrollContainer.value.scrollTop = 0
     }
   }
 )
@@ -206,9 +222,31 @@ onUnmounted(() => {
 
       <!-- 工具栏 -->
       <div class="log-panel__toolbar">
+        <!-- 搜索框（LOG-010）：在级别/分类之前，输入即时过滤 -->
+        <div class="log-panel__search">
+          <Search class="log-panel__search-icon" />
+          <input
+            :value="searchInput"
+            class="log-panel__search-input"
+            type="text"
+            placeholder="检索日志（消息/标签/详情/设备）"
+            @input="onSearchInput"
+          />
+          <button
+            v-if="searchInput"
+            class="log-panel__search-clear"
+            title="清除检索"
+            @click.stop="clearSearch"
+          >
+            <X class="log-panel__search-clear-icon" />
+          </button>
+        </div>
+
         <div class="log-panel__filters">
           <div class="log-panel__filter-group">
-            <span class="log-panel__filter-label">级别</span>
+            <span class="log-panel__filter-label">级别
+              <span class="log-panel__filter-hint">（及以上）</span>
+            </span>
             <button
               v-for="option in levelOptions"
               :key="option.value"
@@ -452,6 +490,74 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* 搜索框（LOG-010） */
+.log-panel__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.log-panel__search:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.log-panel__search-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+}
+
+.log-panel__search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.66rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-family-mono);
+}
+
+.log-panel__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.log-panel__search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.3rem;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.log-panel__search-clear:hover {
+  color: var(--text-primary);
+  background: var(--btn-bg-hover);
+}
+
+.log-panel__search-clear-icon {
+  width: 10px;
+  height: 10px;
+}
+
 .log-panel__filters {
   display: flex;
   flex-direction: column;
@@ -473,6 +579,16 @@ onUnmounted(() => {
   letter-spacing: 0.04em;
   flex-shrink: 0;
   margin-right: 0.2rem;
+}
+
+/* LOG-002：级别筛选是"最低级别"阈值过滤（选 Debug = 显示 Debug 及以上），
+   用浅色小字标注"（及以上）"消除"选 Debug 只看 Debug"的歧义。 */
+.log-panel__filter-hint {
+  font-size: 0.5rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0;
+  opacity: 0.7;
 }
 
 .log-panel__chip {
@@ -580,6 +696,11 @@ onUnmounted(() => {
   font-weight: 700;
   font-size: 0.6rem;
   width: 3.2rem;
+  /* LOG-009：给级别标签加背景色 + 圆角，让操作员一眼区分级别，
+     避免所有日志看起来"同一个颜色"。 */
+  padding: 0.05rem 0.25rem;
+  border-radius: var(--radius-sm);
+  text-align: center;
 }
 
 /* 分类标签：按分组着色 */
@@ -636,11 +757,11 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-/* 级别颜色 */
-.log-entry--debug .log-entry__level { color: var(--text-muted); }
-.log-entry--info .log-entry__level  { color: var(--accent); }
-.log-entry--warn .log-entry__level  { color: var(--warning); }
-.log-entry--error .log-entry__level { color: var(--danger); }
+/* 级别颜色（LOG-009：同时给 level 标签加背景色，增强视觉区分度） */
+.log-entry--debug .log-entry__level { color: var(--text-muted); background: var(--btn-bg); }
+.log-entry--info .log-entry__level  { color: var(--accent); background: var(--accent-muted); }
+.log-entry--warn .log-entry__level  { color: var(--warning); background: var(--warning-muted); }
+.log-entry--error .log-entry__level { color: var(--danger); background: var(--danger-muted); }
 
 .log-entry--warn .log-entry__msg   { color: var(--warning); }
 .log-entry--error .log-entry__msg  { color: var(--danger); }

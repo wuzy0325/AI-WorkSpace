@@ -177,6 +177,12 @@ func (f *fakeRecordingPort) SetFatalErrorHandler(handler func(deviceID string, e
 	// 测试环境无需真正注入
 }
 
+// SetDeviceProfile 测试 stub（REC-006），保留空实现以满足接口契约。
+// 测试环境不验证通道掩码透传逻辑，由 adapters/recording 包的独立测试覆盖。
+func (f *fakeRecordingPort) SetDeviceProfile(deviceID string, channels []core.ChannelConfig) {
+	// 测试环境无需真正注入
+}
+
 type fakeScanPort struct {
 	results []core.ScanResult
 }

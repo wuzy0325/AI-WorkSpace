@@ -8,6 +8,7 @@ const props = defineProps<{
   unit: string
   color: string
   name: string
+  thermocoupleType?: string
   precision?: number
   active: boolean
 }>()
@@ -66,12 +67,14 @@ function onColorChange(target: HTMLInputElement) {
     }"
     :style="{ '--ch-color': color }"
   >
-    <!-- 头部：彩色标识点 + 通道标识 + 颜色选择按钮 -->
+    <!-- 头部：彩色标识点 + 通道标识 + 热电偶类型 + 颜色选择按钮 -->
     <div class="card__head">
       <div class="card__head-left">
         <!-- 彩色小圆点：标识通道对应波形颜色，替代粗边框降低视觉噪音 -->
         <span class="card__dot" :style="{ backgroundColor: color }" />
         <span class="card__tag mono">CH{{ String(index + 1).padStart(2, '0') }}</span>
+        <!-- 热电偶类型徽标（MON-001）：让操作员在通道监控区直接看到该通道的热电偶类型 -->
+        <span v-if="thermocoupleType" class="card__tc mono">{{ thermocoupleType }}</span>
       </div>
       <div class="card__actions">
         <!-- 颜色选择按钮：使用图标替代彩色圆点，降低视觉噪音 -->
@@ -91,6 +94,9 @@ function onColorChange(target: HTMLInputElement) {
         </button>
       </div>
     </div>
+
+    <!-- 通道名称（#19）：未配置名称时显示占位，避免卡片信息缺失 -->
+    <div v-if="name" class="card__name" :title="name">{{ name }}</div>
 
     <!-- 数值显示区 -->
     <div class="card__value-row">
@@ -168,6 +174,30 @@ function onColorChange(target: HTMLInputElement) {
   padding: 0.1rem 0.3rem;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
+}
+
+/* 热电偶类型徽标（MON-001）：与 CH 编号同色系，但更弱化 */
+.card__tc {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  background: var(--accent-muted);
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+/* 通道名称（#19）：单行省略，避免名称过长破坏卡片布局 */
+.card__name {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  margin-top: -0.05rem;
 }
 
 /* 操作按钮组 */

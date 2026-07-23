@@ -54,3 +54,10 @@ func (uc *RecordingUsecase) SetBackpressureHandler(handler func(core.Backpressur
 func (uc *RecordingUsecase) SetFatalErrorHandler(handler func(deviceID string, err error)) {
 	uc.recording.SetFatalErrorHandler(handler)
 }
+
+// SetDeviceProfile 透传设备通道配置到 recorder 实现（REC-006）。
+// 由 backend 在设备 Connect / StartAcquisition 时调用，
+// 让 recorder 在 CSV 写入时将禁用通道的列写空值。
+func (uc *RecordingUsecase) SetDeviceProfile(deviceID string, channels []core.ChannelConfig) {
+	uc.recording.SetDeviceProfile(deviceID, channels)
+}

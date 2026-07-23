@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +16,9 @@ const (
 	logFlushInterval = 3 * time.Second
 	// logFlushRows 累积条数达到此值时刷新
 	logFlushRows = 50
+	// maxLogFileCount 日志文件数量上限（LOG-015）：超过此值时删除最旧的同前缀日志文件
+	// 7 是测试用例中报告的"超过 7 个"问题的对应上限
+	maxLogFileCount = 7
 )
 
 // LogFileWriter 将日志条目追加写入到本地文件
@@ -76,6 +81,10 @@ func (w *LogFileWriter) Start(outputDir string, prefix string) error {
 		return fmt.Errorf("写入日志文件头失败: %w", err)
 	}
 	_ = w.writer.Flush()
+
+	// LOG-015 轮转：新建文件后立即清理目录下同前缀的旧日志，
+	// 保证日志文件总数不超过 maxLogFileCount 个。删除失败不阻塞当前会话。
+	pruneOldLogFiles(outputDir, prefix, maxLogFileCount)
 
 	// 启动定时刷新协程
 	go w.flushLoop()
@@ -209,4 +218,47 @@ func (w *LogFileWriter) flushLocked() error {
 	w.pendingRows = 0
 	w.lastFlush = time.Now()
 	return nil
+}
+
+// pruneOldLogFiles 删除目录下同前缀的旧日志文件，保留最新的 maxCount 个。
+// 文件名格式 `prefix_YYYYMMDD-HHMMSS.log` 包含时间戳，按文件名升序排序即等同按创建时间排序。
+// 删除失败时静默忽略，避免影响当前会话；只匹配 .log 后缀避免误删其他文件。
+//
+// LOG-015：用户反馈长时间运行后日志文件总数超过 7 个，
+// 这里在每次 Start 新文件后立即清理，确保总数 <= maxCount。
+func pruneOldLogFiles(outputDir string, prefix string, maxCount int) {
+	if maxCount <= 0 || outputDir == "" || prefix == "" {
+		return
+	}
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return
+	}
+	// 收集同前缀的 .log 文件名
+	prefixWithUnderscore := prefix + "_"
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefixWithUnderscore) {
+			continue
+		}
+		if !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		names = append(names, name)
+	}
+	// 数量未超限，无需清理
+	if len(names) <= maxCount {
+		return
+	}
+	// 升序排序：文件名时间戳早的排前面，即最旧的
+	sort.Strings(names)
+	// 删除最旧的 (len - maxCount) 个
+	toDelete := len(names) - maxCount
+	for i := 0; i < toDelete; i++ {
+		_ = os.Remove(filepath.Join(outputDir, names[i]))
+	}
 }

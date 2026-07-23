@@ -83,6 +83,14 @@ func main() {
 		})
 	})
 
+	// 硬件适配器的状态变更回流到 hub.EmitDeviceState（ACQ-010/STB-003）：
+	// adapter 在 OnReadLoopExit 等异步状态变化时调用此 sink，
+	// hub 转发给 DeviceService.EmitDeviceState，最终通过 daq:device-state 事件
+	// 让前端 statusMap 实时同步（如物理断网后从「采集中」直接变为「未连接」）。
+	t1603Adapter.SetStateSink(func(deviceID string, state core.DeviceState) {
+		hub.EmitDeviceState(deviceID, state)
+	})
+
 	// ---- 4. 构造 Wails v3 Application ----
 	//
 	// Services 注册顺序：LogService 必须最先注册，因为 ServiceStartup 是按顺序触发，

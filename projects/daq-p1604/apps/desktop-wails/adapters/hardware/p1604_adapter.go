@@ -64,6 +64,18 @@ const (
 	//   - Windows：3s idle + 3s interval × 10 retries ≈ 33s
 	// 比原来 110s 快 3 倍以上。
 	p1604KeepAlivePeriod = 3 * time.Second
+
+	// p1604IdleCheckInterval 非采集期间空闲检测间隔。
+	//
+	// 设计目的：CONN-008 用例要求"仅连接不采集时拔网线，30~40 秒后状态自动变为错误"。
+	// TCP keepalive 探测失败会让内核把 socket 标记为 abort，但应用层若不主动
+	// Read/Write，永远感知不到这个 abort——状态仍停在"已连接"。
+	// idleReadLoop 通过周期性短超时 Read 触发应用层感知：keepalive 失败后
+	// 下次 Read 立即返回 connection reset/abort 错误，触发 handleConnectionLost。
+	//
+	// 间隔取 1s：小于 keepalive 检出时间（~33s），确保 keepalive 标记 abort 后
+	// 应用层在 1s 内感知；大于 readLoop 读超时（200ms），避免与 readLoop 频繁切换。
+	p1604IdleCheckInterval = 1 * time.Second
 )
 
 // DeviceLogEntry 设备日志条目
@@ -77,12 +89,12 @@ type DeviceLogEntry struct {
 
 // p1604Shard 单个分片：持有该分片下所有设备的状态、驱动、采集槽位
 type p1604Shard struct {
-	mu        sync.RWMutex
-	drivers   map[string]*p1604Driver
-	status    map[string]*core.DeviceState
-	sinks     map[string]func(core.PressureSnapshot)
-	channels  map[string]chan core.PressureSnapshot
-	stopChs   map[string]chan struct{}
+	mu       sync.RWMutex
+	drivers  map[string]*p1604Driver
+	status   map[string]*core.DeviceState
+	sinks    map[string]func(core.PressureSnapshot)
+	channels map[string]chan core.PressureSnapshot
+	stopChs  map[string]chan struct{}
 }
 
 // P1604Adapter DAQ-P-1604 硬件适配器（16 分片锁）
@@ -113,6 +125,15 @@ type p1604Driver struct {
 	// readLoop 不再持有 conn 引用，再安全 conn.Close；同时也避免 Disconnect 返回
 	// 后老 readLoop 仍在运行、错误清理后续新建立的同 ID 设备状态。
 	readLoopDone chan struct{}
+	// idleStopCh 由 Connect 创建，close(idleStopCh) 通知 idleReadLoop 退出。
+	// idleReadLoop 仅在非采集期间活跃，负责感知 TCP keepalive 失败（CONN-008）。
+	// StartAcquisition 启动 readLoop 前必须先 close 它并 join idleLoopDone，
+	// 避免 readLoop 和 idleReadLoop 同时操作 frameReader 造成数据竞争。
+	idleStopCh chan struct{}
+	// idleLoopDone 由 idleReadLoop 在退出时关闭。
+	// Disconnect / StopAcquisition 在 close(idleStopCh) 后等待此 channel，
+	// 确保 idleReadLoop 不再持有 conn 引用再操作连接。
+	idleLoopDone chan struct{}
 	// 主动停止原因追踪：嵌入 sharedproto.StopReasonTracker
 	// 提供 SetStopReason / GetStopReason / ClearStopReason 方法，跨项目复用
 	sharedproto.StopReasonTracker
@@ -270,11 +291,17 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		})
 	}
 
+	// idleStopCh/idleLoopDone 在 driver 创建时即初始化，避免与 Disconnect 并发执行时
+	// 出现 nil channel close panic：Connect 在锁外启动 idleReadLoop 之前，driver
+	// 已存入 shard.drivers，并发的 Disconnect 可在锁内读到 driver 并尝试 close(idleStopCh)。
+	// 提前初始化保证 Disconnect 看到的 idleStopCh 永远非 nil。
 	driver := &p1604Driver{
-		profile:     profile,
-		conn:        conn,
-		frameReader: sharedproto.NewFrameReader(conn),
-		emit:        a.emitLog,
+		profile:      profile,
+		conn:         conn,
+		frameReader:  sharedproto.NewFrameReader(conn),
+		emit:         a.emitLog,
+		idleStopCh:   make(chan struct{}),
+		idleLoopDone: make(chan struct{}),
 	}
 
 	// 连接后必须先发 w1601 启用长度前缀模式
@@ -324,6 +351,16 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		StatusText:  core.StatusConnected.String(),
 		ConnectedAt: core.TimestampMs(),
 	}
+	// 启动 idleReadLoop：非采集期间感知 TCP keepalive 失败（CONN-008）。
+	// 仅连接不采集时拔网线，内核 keepalive 探测失败会让 socket 进入 abort 状态，
+	// idleReadLoop 周期性短超时 Read 即可立刻感知该错误并触发 handleConnectionLost。
+	// StartAcquisition 启动 readLoop 前会先停止它，避免与 readLoop 竞争 frameReader。
+	//
+	// 在锁内启动 goroutine 是安全的：go 语句本身立即返回，不阻塞锁持有者；
+	// 且锁内启动可保证 Disconnect 在锁内看到 driver 时，idleReadLoop 已确定启动
+	// （否则锁外启动期间 Disconnect 并发执行会 close 一个还没被启动的 channel，
+	// 导致 idleReadLoop goroutine 永远不运行、idleLoopDone 永不 close）。
+	go a.idleReadLoop(profile.ID, driver, driver.idleStopCh)
 	shard.mu.Unlock()
 
 	a.emitLog(DeviceLogEntry{
@@ -438,8 +475,9 @@ func syncChannelsUnit(channels []core.ChannelConfig, globalUnit string) {
 // Disconnect 断开设备连接
 //
 // 关闭顺序对竞态修复至关重要：
-//  1. 锁内：标记主动停止原因 + close(stop) 通知 readLoop 退出 + 清理共享状态。
-//  2. 锁外：等待 readLoop 退出（join），确保它不再持有 driver.conn 引用。
+//  1. 锁内：标记主动停止原因 + close(stop) 通知 readLoop 退出 + close(idleStopCh)
+//     通知 idleReadLoop 退出 + 清理共享状态。
+//  2. 锁外：等待 readLoop 和 idleReadLoop 退出（join），确保它们不再持有 driver.conn 引用。
 //  3. 锁外：发送停止命令、conn.Close。
 func (a *P1604Adapter) Disconnect(id string) error {
 	shard := a.shard(id)
@@ -459,6 +497,20 @@ func (a *P1604Adapter) Disconnect(id string) error {
 		delete(shard.channels, id)
 	}
 	delete(shard.sinks, id)
+	// 通知 idleReadLoop 退出：close 前保存引用避免 race，nil 时跳过（StartAcquisition 已停）
+	idleStop := func() chan struct{} {
+		if driver == nil || driver.idleStopCh == nil {
+			return nil
+		}
+		ch := driver.idleStopCh
+		select {
+		case <-ch: // 已关闭，避免重复 close panic
+		default:
+			close(ch)
+		}
+		driver.idleStopCh = nil // 标记已停止，避免后续误重启
+		return ch
+	}()
 	if !ok {
 		// driver 不存在（可能已被 handleConnectionLost 清理）：
 		// 仍需把 status 改为 Disconnected，让前端感知用户主动断开意图，
@@ -488,6 +540,12 @@ func (a *P1604Adapter) Disconnect(id string) error {
 	// join 超时仅是兜底，正常情况下 readLoop 在 200ms 读超时内就会观察到 stop。
 	if driver != nil && wasAcquiring {
 		driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
+	}
+	// 等待 idleReadLoop 退出，避免它与 conn.Close 竞争（CONN-008）。
+	// idleStop 非 nil 表示本次 Disconnect 触发了 close，必须 join；
+	// idleStop 为 nil 表示 idleReadLoop 已被 StartAcquisition 停止或本次未启动，跳过。
+	if driver != nil && idleStop != nil {
+		driver.joinIdleLoop(id, sharedproto.ReadLoopJoinTimeout)
 	}
 
 	// 在锁外执行 I/O：发送停止命令和关闭连接
@@ -585,11 +643,35 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	// 重置 stop 状态，准备启动新的 readLoop
 	driver.readLoopDone = make(chan struct{})
 	driver.ClearStopReason()
+	// 关闭 idleReadLoop：采集期间由 readLoop 接管 frameReader，idleReadLoop 必须停止
+	// 避免 readLoop 和 idleReadLoop 同时操作 driver.conn 造成数据竞争。
+	// 锁内仅 close channel（无阻塞），锁外再 join，避免持锁等待 goroutine。
+	// close 前保存引用避免 race，nil 时跳过（Connect 必然已初始化，此处 nil 是冗余防御）。
+	idleStop := func() chan struct{} {
+		if driver.idleStopCh == nil {
+			return nil
+		}
+		ch := driver.idleStopCh
+		select {
+		case <-ch: // 已关闭，避免重复 close panic
+		default:
+			close(ch)
+		}
+		driver.idleStopCh = nil // 标记已停止，避免 Disconnect/StopAcquisition 重复 close
+		return ch
+	}()
 	if st, exists := shard.status[id]; exists {
 		st.SetStatus(core.StatusAcquiring)
 		st.AcquiringAt = core.TimestampMs()
 	}
 	shard.mu.Unlock()
+
+	// 锁外等待 idleReadLoop 退出：必须先 join 再启动 readLoop，
+	// 否则 readLoop 与残留的 idleReadLoop 会同时 Read driver.conn 造成数据竞争。
+	// join 超时仅是兜底（正常 idleReadLoop 在 p1604IdleCheckInterval=1s 内观察到 stop）。
+	if idleStop != nil {
+		driver.joinIdleLoop(id, sharedproto.ReadLoopJoinTimeout)
+	}
 
 	// 启动读取循环
 	go a.readLoop(id, driver, done)
@@ -684,6 +766,21 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 			}
 		}
 	}
+
+	// 采集停止后连接仍保留：重启 idleReadLoop 继续感知 keepalive 失败（CONN-008）。
+	// 必须在 readLoop 完全退出后启动，避免两者同时操作 driver.conn。
+	// 加锁是为了与 Disconnect 同步：避免 Disconnect 在我们启动 idleReadLoop 时
+	// 同时操作 driver.idleStopCh/idleLoopDone 字段。
+	// 二次检查 driver 仍存在：sendCommand 失败可能触发 handleConnectionLost 删除 driver。
+	if connected && driver != nil && driver.conn != nil {
+		shard.mu.Lock()
+		if _, stillExists := shard.drivers[id]; stillExists && driver.conn != nil && driver.idleStopCh == nil {
+			driver.idleStopCh = make(chan struct{})
+			driver.idleLoopDone = make(chan struct{})
+			go a.idleReadLoop(id, driver, driver.idleStopCh)
+		}
+		shard.mu.Unlock()
+	}
 	return nil
 }
 
@@ -698,6 +795,99 @@ func (d *p1604Driver) joinReadLoop(id string, timeout time.Duration) {
 	case <-d.readLoopDone:
 	case <-time.After(timeout):
 		slog.Warn("DAQ-P-1604 readLoop join timeout", "device", id, "timeout", timeout)
+	}
+}
+
+// joinIdleLoop 等待 idleReadLoop 关闭其 done channel；超时仅日志，不阻塞调用方。
+// 调用方通常先 close(idleStopCh)，然后调用本方法等待 idleReadLoop 退出，
+// 再启动 readLoop 或 conn.Close。driver 为 nil 或 idleReadLoop 未启动时直接返回。
+func (d *p1604Driver) joinIdleLoop(id string, timeout time.Duration) {
+	if d == nil || d.idleLoopDone == nil {
+		return
+	}
+	select {
+	case <-d.idleLoopDone:
+	case <-time.After(timeout):
+		slog.Warn("DAQ-P-1604 idleLoop join timeout", "device", id, "timeout", timeout)
+	}
+}
+
+// stopIdleLoop 通知 idleReadLoop 退出并等待其结束。
+// 必须在 shard.mu 锁外调用（避免持锁等待 goroutine），
+// 方法内部在锁内取得 idleStopCh，close 和 join 均在锁外执行。
+//
+// timeout 取 sharedproto.ReadLoopJoinTimeout 与 readLoop join 一致。
+func (a *P1604Adapter) stopIdleLoop(id string, driver *p1604Driver) chan struct{} {
+	if driver == nil {
+		return nil
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	if shard.drivers[id] != driver || driver.idleStopCh == nil {
+		shard.mu.Unlock()
+		return nil
+	}
+	stopCh := driver.idleStopCh
+	shard.mu.Unlock()
+
+	select {
+	case <-stopCh: // 已关闭，避免重复 close panic
+	default:
+		close(stopCh)
+	}
+	driver.joinIdleLoop(id, sharedproto.ReadLoopJoinTimeout)
+	return stopCh
+}
+
+// idleReadLoop 非采集期间周期性短超时 Read，感知 TCP keepalive 失败（CONN-008）。
+//
+// 必要性：
+//   - TCP keepalive 探测失败会让内核把 socket 标记为 abort，但应用层若不主动
+//     Read/Write，永远感知不到。idleReadLoop 通过周期性 Read 触发感知：
+//     keepalive 标记 abort 后下次 Read 立即返回 connection reset/abort 错误。
+//   - 采集期间 readLoop 活跃，本 goroutine 已在 StartAcquisition 阶段被停止，
+//     不会与 readLoop 竞争 frameReader.buf。
+//
+// 退出路径：
+//  1. idleStopCh 关闭（StartAcquisition / Disconnect 主动停止）→ 静默退出
+//  2. Read 返回非 timeout 错误（keepalive 失败 / 对端 FIN）→ 调用 handleConnectionLost
+//  3. 调用方主动停止场景（Disconnect 期间 SetStopReason）→ 静默退出
+//
+// 读到的数据视为延迟到达的命令应答，丢弃即可——非采集期间不期望有数据流。
+// 退出前必须 close(idleLoopDone)，让 StartAcquisition / Disconnect 能 join 到本协程。
+func (a *P1604Adapter) idleReadLoop(id string, driver *p1604Driver, stop <-chan struct{}) {
+	defer close(driver.idleLoopDone)
+
+	buf := make([]byte, 1024) // 裸读字节，不解析帧（非采集期间无数据流）
+	for {
+		select {
+		case <-stop:
+			return
+		case <-time.After(p1604IdleCheckInterval):
+		}
+		// 短超时 Read：仅 200ms，正常连接下会 timeout（无数据）；
+		// keepalive 失败后 socket 已 abort，Read 立即返回非 timeout 错误。
+		driver.conn.SetReadDeadline(time.Now().Add(p1604ReadTimeout))
+		n, err := driver.conn.Read(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// 连接正常，只是没数据，继续下一轮
+				continue
+			}
+			// 主动停止场景（Disconnect 期间 SetStopReason）→ 静默退出
+			if driver.GetStopReason() != "" {
+				return
+			}
+			a.handleConnectionLost(id, driver, fmt.Errorf("idle keepalive check: %w", err))
+			return
+		}
+		// 读到数据（延迟到达的命令应答），丢弃并记录 debug 日志
+		if n > 0 {
+			a.emitLog(DeviceLogEntry{
+				Level: "debug", Category: "hardware-recv", DeviceID: id,
+				Message: "Idle read drained", Detail: fmt.Sprintf("%d bytes (late ack)", n),
+			})
+		}
 	}
 }
 
@@ -756,6 +946,17 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 	// 已连接且未采集：若单位变化，写硬件 EU 系数
 	// 未连接：跳过硬件写入，仅更新 profile（下次连接时由 Connect 阶段同步）
 	if hasDriver && driver != nil && driver.conn != nil && cfg.Unit != prevUnit {
+		stoppedIdle := a.stopIdleLoop(id, driver)
+		defer func() {
+			shard.mu.Lock()
+			if shard.drivers[id] == driver && driver.conn != nil && !driver.acquiring && driver.idleStopCh == stoppedIdle {
+				driver.idleStopCh = make(chan struct{})
+				driver.idleLoopDone = make(chan struct{})
+				go a.idleReadLoop(id, driver, driver.idleStopCh)
+			}
+			shard.mu.Unlock()
+		}()
+
 		coeff, ok := sharedproto.P1604PressureUnitCoefficient[cfg.Unit]
 		if !ok {
 			return fmt.Errorf("unsupported unit: %s", cfg.Unit)
@@ -840,7 +1041,7 @@ func (a *P1604Adapter) SetDataSink(id string, sink func(core.PressureSnapshot)) 
 //     - 正常 1kHz 采集时，200ms 内至少可读 ~200 帧，连续 25 次超时不可能。
 //  3. ReadFrame 返回非 timeout 错误：
 //     - 若 driver.stopReason 已置位（调用方刚刚 close(stop) 但 select 尚未轮到）→
-//       静默退出，不修改任何共享状态（避免与 StopAcquisition/Disconnect 的清理冲突）。
+//     静默退出，不修改任何共享状态（避免与 StopAcquisition/Disconnect 的清理冲突）。
 //     - 否则视为连接意外断开，标记设备为 Error 状态并通知前端。
 //
 // 退出前必须 close(readLoopDone)，让 Disconnect/StopAcquisition 能 join 到本协程。

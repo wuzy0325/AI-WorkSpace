@@ -79,19 +79,19 @@ type CSVRecorder struct {
 	cfg core.RecordingConfig
 
 	// 异步队列
-	queue       chan core.PressureSnapshot
-	stopCh      chan struct{}
-	doneCh      chan struct{}
-	started     atomic.Bool
+	queue   chan core.PressureSnapshot
+	stopCh  chan struct{}
+	doneCh  chan struct{}
+	started atomic.Bool
 
 	// 运行时状态（writer goroutine 单线程更新，Status 读时加锁）
-	statsMu         sync.RWMutex
-	session         core.RecordingSession
-	writers         map[string]*perDeviceWriter // deviceId -> writer（每设备一个文件）
-	totalSize       int64 // 所有设备所有文件累计大小
-	recordCount     int64 // 所有设备累计记录数
-	fileCount       int  // 所有设备累计文件数
-	startedAt       time.Time
+	statsMu     sync.RWMutex
+	session     core.RecordingSession
+	writers     map[string]*perDeviceWriter // deviceId -> writer（每设备一个文件）
+	totalSize   int64                       // 所有设备所有文件累计大小
+	recordCount int64                       // 所有设备累计记录数
+	fileCount   int                         // 所有设备累计文件数
+	startedAt   time.Time
 
 	// 丢弃计数（atomic 无锁）
 	dropped         atomic.Int64
@@ -392,9 +392,25 @@ func (r *CSVRecorder) writePayload(buf *[]byte, snapshot core.PressureSnapshot) 
 	b = append(b, ',')
 
 	for i, v := range snapshot.Values {
+		// REC-006 禁用通道占位：用户在配置面板关闭某通道后，CSV 该列应留空（仅保留逗号），
+		// 保持 18 列对齐。这样 Excel/脚本读 CSV 时可按列号定位通道，
+		// 不会把禁用通道的硬件残留值（0 或最后采样值）误当成有效数据。
+		//
+		// 多设备隔离：优先用 DeviceChannels[deviceID] 按设备独立判断 Enabled，
+		// 避免"设备 A 关闭 CH1 → 设备 B 的 CH1 数据也被置空"的回归。
+		// 缺省回退到共享 Channels（向后兼容老调用方）。
+		// 边界：配置长度小于 18（旧 profile 或配置切换瞬间）时按"启用"处理，避免误丢有效数据。
+		channels := r.cfg.DeviceChannels[snapshot.DeviceID]
+		if channels == nil {
+			channels = r.cfg.Channels
+		}
+		if i < len(channels) && !channels[i].Enabled {
+			b = append(b, ',')
+			continue
+		}
 		p := defaultPrecision
-		if i < len(r.cfg.Channels) {
-			cp := r.cfg.Channels[i].Precision
+		if i < len(channels) {
+			cp := channels[i].Precision
 			if cp >= 0 && cp <= maxPrecision {
 				p = cp
 			}

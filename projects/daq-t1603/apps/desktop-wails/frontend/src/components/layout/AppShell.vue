@@ -131,7 +131,6 @@ async function confirmAddDevice() {
       version="0.1.0"
       :is-toggling="isToggling"
       @add-device="openAddDevice"
-      @open-config="openConfig"
       @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
@@ -204,7 +203,13 @@ async function confirmAddDevice() {
               <div class="dialog__body">
                 <div class="dialog__field">
                   <label>设备名称</label>
-                  <input v-model="newName" placeholder="例如: 温度采集器 1" autofocus @keyup.enter="confirmAddDevice" />
+                  <input
+                    v-model="newName"
+                    maxlength="32"
+                    placeholder="例如: 温度采集器 1"
+                    autofocus
+                    @keyup.enter="confirmAddDevice"
+                  />
                 </div>
                 <div class="dialog__row">
                   <div class="dialog__field">

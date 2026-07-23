@@ -71,6 +71,11 @@ type CSVRecorder struct {
 	outputDir string
 	prefix    string
 
+	// deviceProfiles 缓存每个设备的 16 通道启用掩码（REC-006）。
+	// backend 在 Connect / StartAcquisition 时通过 SetDeviceProfile 注入，
+	// 用于在 writeOne 中将禁用通道的列写空值。
+	deviceProfiles map[string][16]bool
+
 	// creatorFailedUntil 记录每设备 writer 创建失败的限频截止时间。
 	// 截止前 Write 直接返回，不重试创建，避免错误日志刷屏。
 	creatorFailedUntil map[string]int64
@@ -116,6 +121,44 @@ func (r *CSVRecorder) SetFatalErrorHandler(handler FatalErrorHandler) {
 		return
 	}
 	r.onFatal.Store(&handler)
+}
+
+// SetDeviceProfile 注入设备通道配置（含 enabled 标志），用于 REC-006：
+// 在 writeOne 中将禁用通道的列写空值，让操作员在 CSV 中
+// 直观区分"通道禁用"与"通道无数据"。
+//
+// 调用时机：
+//   - 设备 Connect / StartAcquisition 时由 backend 注入；
+//   - 配置变更后再次调用以更新掩码；
+//   - 未调用时 deviceWriter.channelEnabled 为空，回退为"全通道启用"。
+//
+// 设备 writer 已创建时同步更新其 channelEnabled；
+// 未创建时缓存到 deviceProfiles，待 newDeviceWriter 时使用。
+func (r *CSVRecorder) SetDeviceProfile(deviceID string, channels []core.ChannelConfig) {
+	if deviceID == "" {
+		return
+	}
+	// 提取 16 通道的 enabled 数组；不足 16 位时补 true（保守不丢数据）
+	mask := make([]bool, 16)
+	for i := 0; i < 16; i++ {
+		if i < len(channels) {
+			mask[i] = channels[i].Enabled
+		} else {
+			mask[i] = true
+		}
+	}
+
+	r.mu.Lock()
+	if w, ok := r.writers[deviceID]; ok {
+		w.setEnabled(mask)
+	}
+	if r.deviceProfiles == nil {
+		r.deviceProfiles = make(map[string][16]bool)
+	}
+	var arr [16]bool
+	copy(arr[:], mask)
+	r.deviceProfiles[deviceID] = arr
+	r.mu.Unlock()
 }
 
 // Start 启动全局录制会话。
@@ -277,6 +320,11 @@ func (r *CSVRecorder) getOrCreateWriter(deviceID string) (*deviceWriter, bool) {
 		return existing, true
 	}
 	r.writers[deviceID] = w
+	// 若设备此前已通过 SetDeviceProfile 注入通道掩码（REC-006），
+	// 同步应用到新建的 writer，避免首帧丢失掩码导致禁用通道写出旧值。
+	if mask, ok := r.deviceProfiles[deviceID]; ok {
+		w.setEnabled(mask[:])
+	}
 	r.mu.Unlock()
 	w.start()
 	return w, true
@@ -341,15 +389,25 @@ type deviceWriter struct {
 	writeErr atomic.Pointer[error]
 	bufPool  sync.Pool
 	stopOnce sync.Once
+
+	// channelEnabled 16 通道启用掩码（REC-006）：
+	//   - true  → 该通道列写实际数值；
+	//   - false → 该通道列写空字符串（仅逗号占位）。
+	// 未通过 SetDeviceProfile 注入时为空数组，writeOne 退化为"全通道启用"。
+	// 用 [16]bool 数组而非 []bool，避免热路径读切片 header；
+	// 通过 setEnabled 原子替换避免与 writeOne 数据竞争。
+	channelEnabled atomic.Pointer[[16]bool]
 }
 
 // newDeviceWriter 创建设备 writer 并写入 CSV 表头。
 // 不启动 goroutine，由调用方在注册到 map 后调用 start()。
 //
-// 表头列：DeviceID, Timestamp, Millisecond, Unit, CH01..CH16
+// 表头列（共 20 列，REC-005）：DeviceID, Timestamp, Millisecond, Unit, CH01..CH16
+//   - DeviceID：设备标识，多设备录制时区分来源
 //   - Timestamp：人类可读秒精度（2006-01-02 15:04:05），Excel 友好，默认识别为时间类型
 //   - Millisecond：毫秒部分（0-999 整数），1000Hz 采样下相邻样本靠此列区分
 //   - Unit：快照单位（°C/°F/mV 等），10 台设备可能不同，必须落盘
+//   - CH01..CH16：16 通道数值，禁用通道写空列（REC-006）
 //
 // 时间来源：硬件时间戳优先（snap.HardwareTimestamp > 0 时使用），否则用系统毫秒时间戳。
 func newDeviceWriter(deviceID, outputDir, prefix string) (*deviceWriter, error) {
@@ -378,9 +436,9 @@ func newDeviceWriter(deviceID, outputDir, prefix string) (*deviceWriter, error) 
 		},
 	}
 
-	// 写表头：DeviceID + 单列 Timestamp（带毫秒，前缀单引号强制 Excel 文本模式）+ Unit + CH01..CH16
+	// 写表头（REC-005）：DeviceID + Timestamp + Millisecond + Unit + CH01..CH16 = 20 列
 	buf := w.bufPool.Get().([]byte)[:0]
-	buf = append(buf, "DeviceID,Timestamp,Unit"...)
+	buf = append(buf, "DeviceID,Timestamp,Millisecond,Unit"...)
 	for i := 0; i < 16; i++ {
 		buf = append(buf, ',')
 		buf = append(buf, fmt.Sprintf("CH%02d", i+1)...)
@@ -467,13 +525,26 @@ func (w *deviceWriter) writeOne(snap core.TemperatureSnapshot) {
 	buf = t.AppendFormat(buf, "2006-01-02 15:04:05")
 	buf = append(buf, ',')
 
+	// Millisecond 列（REC-005）：0-999 整数，与秒级 Timestamp 配合
+	// 还原 1000Hz 采样下的相邻样本时刻，避免同秒样本无法区分。
+	buf = strconv.AppendInt(buf, int64(t.Nanosecond()/1e6), 10)
+	buf = append(buf, ',')
+
 	// Unit（单位）：10 台设备可能不同，必须落盘
 	buf = append(buf, snap.Unit...)
 
 	// 16 通道值
 	values := snap.Values
+	// REC-006：根据 channelEnabled 掩码决定每通道是否写值。
+	//   - mask == nil：未通过 SetDeviceProfile 注入，回退为"全通道启用"（兼容旧路径）；
+	//   - mask[i] == true：写实际数值（若 snap.Values 不足则空列）；
+	//   - mask[i] == false：禁用通道仅写逗号占位，让 CSV 中"通道禁用"与"通道无数据"可区分。
+	mask := w.channelEnabled.Load()
 	for i := 0; i < 16; i++ {
 		buf = append(buf, ',')
+		if mask != nil && !mask[i] {
+			continue
+		}
 		if i < len(values) {
 			buf = strconv.AppendFloat(buf, values[i], 'f', 3, 64)
 		}
@@ -496,6 +567,30 @@ func (w *deviceWriter) markDead(err error) {
 		return
 	}
 	w.writeErr.Store(&err)
+}
+
+// setEnabled 原子更新 16 通道启用掩码（REC-006）。
+//
+// 语义：
+//   - len(mask) == 0：清除掩码，回退为"全通道启用"（兼容未注入路径）；
+//   - len(mask) < 16：不足部分补 true（保守不丢数据）；
+//   - len(mask) >= 16：取前 16 位。
+//
+// 通过 atomic.Pointer.Store 原子替换，保证与 writeOne 热路径无锁同步。
+func (w *deviceWriter) setEnabled(mask []bool) {
+	if len(mask) == 0 {
+		w.channelEnabled.Store(nil)
+		return
+	}
+	var arr [16]bool
+	for i := 0; i < 16; i++ {
+		if i < len(mask) {
+			arr[i] = mask[i]
+		} else {
+			arr[i] = true
+		}
+	}
+	w.channelEnabled.Store(&arr)
 }
 
 // isDead 返回 writer 是否已不可恢复。

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
+import { Sun, Moon, Activity, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
@@ -9,7 +9,6 @@ import { pickDirectory } from '@bridge/recordingBridge'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
-  (e: 'open-config'): void
   (e: 'toggle-acquisition'): void
 }>()
 
@@ -25,7 +24,12 @@ const recordingStore = useRecordingStore()
 const { theme, toggle: toggleTheme } = useTheme()
 
 const acquiringDevices = computed(
-  () => deviceStore.profiles.filter((p) => deviceStore.acquiringFor(p.id)).length
+  () => deviceStore.profiles.filter((p) => {
+    const status = deviceStore.statusFor(p.id)
+    // ACQ-011：将 Starting / Stopping 也视为"采集中"，
+    // 让按钮在状态转换期间保持红色"停止采集"，避免短暂闪回绿色"开始采集"误导用户。
+    return status === 'Acquiring' || status === 'Starting' || status === 'Stopping'
+  }).length
 )
 
 const isAcquiring = computed(() => acquiringDevices.value > 0)
@@ -47,7 +51,14 @@ function themeToggleLabel(): string {
 async function startSave() {
   const dir = await pickDirectory()
   if (!dir) return
-  await recordingStore.startRecording(dir, 'DAQ-T1603')
+  // REC-018：录制启动失败由 recordingStore.startRecording 统一写入 lastError，
+  // 状态栏会以红色显示给操作员。此处吞掉异常即可，避免错误重复暴露
+  // （状态栏 + 日志面板会出现两条相同消息，降低信噪比）。
+  try {
+    await recordingStore.startRecording(dir, 'DAQ-T1603')
+  } catch {
+    // lastError 已在 store 内设置，无需再次记录到日志面板
+  }
 }
 
 function stopSave() {
@@ -165,15 +176,6 @@ onBeforeUnmount(() => {
           @click="emit('add-device')"
         >
           <Plus class="topbar__icon" />
-        </button>
-
-        <button
-          class="topbar__icon-btn"
-          :title="'打开配置'"
-          data-testid="btn-config"
-          @click="emit('open-config')"
-        >
-          <Settings2 class="topbar__icon" />
         </button>
 
         <button
@@ -390,6 +392,23 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   background: var(--btn-bg);
   border: 1px solid var(--border-default);
+}
+
+/* UI-003：录制按钮的 Circle 图标始终红色（"录制圆点"视觉约定），
+   文字保持次级色避免与"停止采集"按钮整体红色冲突。
+   录制中时图标加闪烁动画增强"正在录制"反馈。 */
+.topbar__action-btn--record .topbar__action-icon {
+  color: var(--danger);
+  fill: var(--danger);
+}
+
+.topbar__action-btn--recording .topbar__action-icon {
+  animation: record-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .topbar__action-btn--recording {

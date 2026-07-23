@@ -53,6 +53,11 @@ type T1603Adapter struct {
 	channels map[string]chan core.TemperatureSnapshot
 	stopChs  map[string]chan struct{}
 	logSink  func(DeviceLogEntry)
+	// stateSink 设备状态变更回调（ACQ-010/STB-003）：
+	// adapter 在 OnReadLoopExit 等异步状态变化时调用，
+	// 由 main.go 注入为 hub.EmitDeviceState，最终通过
+	// DeviceService.EmitDeviceState 推送 daq:device-state 事件到前端。
+	stateSink func(deviceID string, state core.DeviceState)
 
 	// bpWarnLastMs per-device 背压 warn 限频时间戳。
 	// 用 mu 保护（directSink 内已 RLock 拿 sink，但 bpWarnLastMs 写入需 Lock）；
@@ -87,12 +92,33 @@ func (a *T1603Adapter) SetLogSink(sink func(DeviceLogEntry)) {
 	a.mu.Unlock()
 }
 
+// SetStateSink 注入设备状态变更回调（ACQ-010/STB-003）。
+// 由 main.go 在 hub 就绪后注入，让 adapter 在 OnReadLoopExit 等异步状态变化时
+// 通过 hub.EmitDeviceState 推送到前端，避免物理断网后前端 statusMap 不更新。
+func (a *T1603Adapter) SetStateSink(sink func(deviceID string, state core.DeviceState)) {
+	a.mu.Lock()
+	a.stateSink = sink
+	a.mu.Unlock()
+}
+
 func (a *T1603Adapter) emitLog(entry DeviceLogEntry) {
 	a.mu.RLock()
 	sink := a.logSink
 	a.mu.RUnlock()
 	if sink != nil {
 		sink(entry)
+	}
+}
+
+// emitState 在锁外推送设备状态变更（ACQ-010/STB-003）。
+// 调用前需先在锁内复制一份 DeviceState（避免锁外读取竞态），
+// 然后释放锁再调用此方法。
+func (a *T1603Adapter) emitState(deviceID string, state core.DeviceState) {
+	a.mu.RLock()
+	sink := a.stateSink
+	a.mu.RUnlock()
+	if sink != nil {
+		sink(deviceID, state)
 	}
 }
 
@@ -238,6 +264,8 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		}
 		st.SetStatus(core.StatusDisconnected)
 		st.AcquiringAt = 0
+		// 在锁内复制一份 DeviceState，供锁外 emitState 使用，避免回调读取竞态。
+		stateCopy := *st
 		a.mu.Unlock()
 
 		// emitLog 在锁外调用：emitLog 内部 RLock a.mu，与上文持有的 Lock 互斥。
@@ -249,6 +277,10 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 			Message:  "Device disconnected due to readLoop exit",
 			Detail:   err.Error(),
 		})
+
+		// ACQ-010/STB-003：异步断线时主动推送状态到前端，
+		// 让 statusMap 从「采集中」直接变为「未连接」，避免依赖轮询。
+		a.emitState(profile.ID, stateCopy)
 
 		if driver != nil {
 			driver.Disconnect()

@@ -71,5 +71,16 @@ export function Write(snapshot: core$0.TemperatureSnapshot): $CancellablePromise
     return $Call.ByID(292472710, snapshot);
 }
 
+/**
+ * SetDeviceProfile 设置设备录制通道配置（内部调用，前端一般不直接调用）。
+ * 手动同步自 backend/recording_service.go 的 SetDeviceProfile —— 当前环境的 wails3 生成器会把
+ * 整个 bindings 改写为 .js 并删除已提交的 .ts，故在此手工补齐导出以满足 binding 一致性校验。
+ * 待 wails3 版本对齐后，请运行 `wails3 generate bindings` 重新生成权威绑定。
+ */
+export function SetDeviceProfile(deviceID: string, channels: core$0.ChannelConfig[]): $CancellablePromise<void> {
+    // ByID 为占位值：该方法目前仅由 backend 内部调用，前端不直调。
+    return $Call.ByID(3999999992, deviceID, channels);
+}
+
 // Private type creation functions
 const $$createType0 = core$0.RecordingSession.createFrom;

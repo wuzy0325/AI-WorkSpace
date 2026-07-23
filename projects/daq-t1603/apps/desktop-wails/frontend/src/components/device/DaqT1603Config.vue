@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import CustomSelect from './CustomSelect.vue'
 import type { SelectOption } from './CustomSelect.vue'
@@ -38,10 +38,11 @@ const saveMessage = ref('')
 /** 保存同步标志：为 true 时禁止 watcher 更新表单状态，防止覆盖保存结果 */
 const syncing = ref(false)
 
-function syncFormFromProfile(profileData: typeof profile.value) {
+function syncFormFromProfile(profileData: typeof profile.value, force = false) {
   if (!profileData) return
   // 保存同步中跳过表单同步，避免触发 watcher 覆盖 saveStatus
-  if (syncing.value) return
+  // force=true 时绕过早退（用于 resetConfig 强制刷新表单到已保存状态）
+  if (!force && syncing.value) return
   const tcTypes = profileData.t1603Config?.thermocoupleTypes || 'KKKKKKKKKKKKKKKK'
   samplingRate.value = profileData.t1603Config?.samplingRate || 10
   showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
@@ -61,7 +62,7 @@ function syncFormFromProfile(profileData: typeof profile.value) {
 
 watch(
   () => profile.value,
-  syncFormFromProfile,
+  (newProfile) => { syncFormFromProfile(newProfile) },
   { immediate: true }
 )
 
@@ -145,7 +146,14 @@ async function saveConfig() {
         await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
         saveMessage.value = '配置已保存并应用到设备'
       } catch (hwErr) {
-        saveMessage.value = hwErr instanceof Error ? hwErr.message : '硬件配置应用失败'
+        // STB-012：硬件应用失败（通常是设备离线/断网）时给出友好提示，
+        // 明确"配置已保存到本地，但未应用到设备"，避免技术性错误消息困扰操作员。
+        // 配置本身已落盘，设备重连后再次保存即可下发，不应让用户误以为保存失败。
+        const reason = hwErr instanceof Error ? hwErr.message : String(hwErr)
+        const isOffline = /timeout|connection|disconnected|unreachable|refused|offline|关闭|断开|超时/i.test(reason)
+        saveMessage.value = isOffline
+          ? '配置已保存到本地，但设备离线未应用到硬件，请重新连接后再次保存'
+          : `配置已保存，但硬件应用失败：${reason}`
       }
     } else {
       saveMessage.value = '配置已保存'
@@ -164,7 +172,12 @@ async function saveConfig() {
 
 function resetConfig() {
   if (isAcquiring.value) return
-  syncFormFromProfile(profile.value)
+  // 强制同步表单到已保存的 profile，同时通过 syncing 标志抑制
+  // 表单值变化触发的 watcher，避免 hasChanges 被错误地翻回 true
+  // （否则重置后「未保存」徽章不会消失，CFG-019）
+  syncing.value = true
+  syncFormFromProfile(profile.value, true)
+  void nextTick(() => { syncing.value = false })
 }
 
 function toggleChannel(index: number) {
@@ -302,6 +315,7 @@ function onRateInput(e: Event) {
                 <input
                   v-model="channelNames[i - 1]"
                   class="config__channel-name"
+                  maxlength="32"
                   :placeholder="`通道 ${i}`"
                   :disabled="isAcquiring || !channelEnabled[i - 1]"
                 />
