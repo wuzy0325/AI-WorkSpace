@@ -1407,7 +1407,7 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 //  4. validateMotionStatuses——已绑定控制器掉线/已急停/目标轴连续 3 快照缺失
 //  5. 每轴 EvaluateMotionSafety 单次快照判定（撞限位/到位/超差/严重偏离）
 //  6. 跨样本看门狗 Observe（无进展/越过目标）
-//  7. 120s 兜底超时——返回 (false, timeout, nil)，调用方按 ErrMotionTimeout 处理
+//  7. 120s 停止未到位兜底超时——仍在正常运动时继续等待，由无进展看门狗识别卡死
 //
 // 故障现场快照原则：检测到故障时立即构造 MotionSafetyFailure，错误处理阶段不再读硬件。
 func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point traversal.Point, taskID string, pointIndex int) (completed bool, reason traversal.MotionInterruptReason, failure *traversal.MotionSafetyFailure) {
@@ -1503,12 +1503,30 @@ func (m *TraversalManager) waitForMotionComplete(ctx context.Context, point trav
 				}
 			}
 
-			// 5. 120s 兜底超时——返回 (false, timeout, nil)，调用方按 ErrMotionTimeout 处理
-			if time.Now().After(deadline) {
+			// 5. 固定时限只兜底处理已停止但未到位；长距离低速运动不得误报超时。
+			if motionWaitDeadlineExceeded(deadline, statuses, point, motionAxes) {
 				return false, traversal.MotionInterruptTimeout, nil
 			}
 		}
 	}
+}
+
+func motionWaitDeadlineExceeded(deadline time.Time, statuses []motion.ControllerStatus, point traversal.Point, motionAxes []traversal.MotionAxisBinding) bool {
+	if !time.Now().After(deadline) {
+		return false
+	}
+	for _, status := range statuses {
+		if !status.Connected {
+			continue
+		}
+		targets := availableAxisTargets(status, point, motionAxes)
+		for _, axis := range status.Axes {
+			if _, targeted := targets[axis.Name]; targeted && axis.Moving {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validateMotionStatuses 校验运动状态可用性，检测三类异常：

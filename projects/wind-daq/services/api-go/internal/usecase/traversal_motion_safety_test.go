@@ -1039,6 +1039,26 @@ func TestWaitForMotionComplete_Arrived(t *testing.T) {
 	}
 }
 
+func TestMotionWaitDeadlineExceeded_MovingTargetAxisContinuesWaiting(t *testing.T) {
+	point := traversal.Point{X: 30.0}
+	statuses := makeConnectedMovingStatus("mc-1", "X", 15.0)
+	motionAxes := []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}}
+
+	if motionWaitDeadlineExceeded(time.Now().Add(-time.Second), statuses, point, motionAxes) {
+		t.Fatal("expired fallback deadline must not fail while a target axis is still moving")
+	}
+}
+
+func TestMotionWaitDeadlineExceeded_StoppedTargetAxisTimesOut(t *testing.T) {
+	point := traversal.Point{X: 30.0}
+	statuses := makeConnectedStoppedStatus("mc-1", "X", 15.0)
+	motionAxes := []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}}
+
+	if !motionWaitDeadlineExceeded(time.Now().Add(-time.Second), statuses, point, motionAxes) {
+		t.Fatal("expired fallback deadline must fail when target axes stopped before arrival")
+	}
+}
+
 func TestWaitForMotionComplete_DeviationFastFail(t *testing.T) {
 	// 测试前置：X 轴绑定到 mc-1，目标 30；mock 返回已停但偏差 1mm（超容差但未达严重偏离）
 	mgr, ma := motionSafetyTestManager()
