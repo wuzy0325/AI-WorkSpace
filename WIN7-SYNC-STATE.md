@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- Last reviewed master: `49f06a8`（包含 Win7 LTS 治理文档）
+- Last reviewed master: `481c053`（包含 Win7 LTS 日常开发 Runbook）
 - Current Win7 base: `a8de1c2`
 - Current branch: `lts/win7`
 - Last reviewed: 2026-07-23
@@ -14,7 +14,7 @@
 
 | Master SHA | Win7 SHA | Project | Method | Verification |
 |---|---|---|---|---|
-| - | - | - | - | - |
+| `481c053` | `48a3ac5` | workspace docs | `cherry-pick -x` | `git diff --check` |
 
 ## Manually Ported Commits
 
@@ -32,7 +32,7 @@
 
 | Master SHA | Project | Priority | Note |
 |---|---|---|---|
-| - | - | - | 首次正式审查从本文件的 Last reviewed master 之后开始 |
+| - | - | - | 下次审查从 `481c053` 之后开始 |
 
 ## Verification Records
 
