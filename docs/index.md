@@ -14,6 +14,7 @@
 | `runbooks/frontend-ai-rules.zh-CN.md` | AI / 前端开发者 | 前端规则薄索引（已拆分为 foundation/state/quality/deploy 4 个主题文件，每个 ≤ 8k token） |
 | `runbooks/frontend-directory-rules.zh-CN.md` | AI / 前端开发者 | Vue 前端目录结构标准与文件放置规则 |
 | `runbooks/development-rules.md` | 开发者 / AI | 开发流程规则：依赖边界、测试、结构变更、复用优先、验证 |
+| `runbooks/win7-lts-development-workflow.md` | 开发者 / AI | master 与 lts/win7 日常开发、选择性同步、验证、回滚和发布流程 |
 
 **快速定位：**
 - 文件/函数该多长 → `code-standards.zh-CN.md` §一
