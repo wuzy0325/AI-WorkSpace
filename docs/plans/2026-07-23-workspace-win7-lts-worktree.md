@@ -47,6 +47,7 @@
 
 **Baseline facts recorded when this plan was written:**
 
+- 主工作空间治理文档已由提交 `81cfc08` 固化。
 - Win7 worktree HEAD 为 `b041033`，它只是历史起点，不包含已验证的 Win7 实现。
 - Win7 working tree 当前约有 36 个 Git 状态项，主要位于 DAQ-T1603 和 `shared/device-sdk`；其中包括源码、lockfile、文档和未跟踪的 Electron 壳。
 - 已验证 Electron 源位于 `projects/daq-t1603/apps/desktop-electron/`，生成的 `node_modules/`、`backend/` 和 `dist/` 已由该目录 `.gitignore` 排除。
@@ -104,8 +105,10 @@
 ### Task 3: Create and validate the synchronization ledger
 
 **Files in Win7 worktree:**
-- Maintain: `WIN7-SYNC-STATE.md`
+- Create if absent, otherwise validate and maintain: `WIN7-SYNC-STATE.md`
 - Create: `docs/runbooks/win7-sync-runbook.md`
+
+当前台账模板已存在于 Win7 未提交 working tree，初始审查点必须使用实际主线 SHA；不得把 Win7 HEAD `b041033` 错写为 `Last reviewed master`。
 
 **Ledger fields:**
 - `Last reviewed master`
