@@ -32,9 +32,6 @@ import * as storage$0 from "../../../services/api-go/internal/core/storage/model
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as types$0 from "../../../services/api-go/pkg/types/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as usecase$0 from "../../../services/api-go/pkg/usecase/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -599,7 +596,7 @@ export function RemoveFile(path) {
 }
 
 /**
- * @returns {$CancellablePromise<usecase$0.ReportStatus>}
+ * @returns {$CancellablePromise<types$0.ReportStatus>}
  */
 export function ReportGetStatus() {
     return $Call.ByID(2294408909).then(/** @type {($result: any) => any} */(($result) => {
@@ -640,7 +637,7 @@ export function SetParentPID(pid) {
 }
 
 /**
- * @returns {$CancellablePromise<usecase$0.StorageRecordingStatus>}
+ * @returns {$CancellablePromise<types$0.StorageRecordingStatus>}
  */
 export function StorageGetStatus() {
     return $Call.ByID(2686181578).then(/** @type {($result: any) => any} */(($result) => {
@@ -652,7 +649,7 @@ export function StorageGetStatus() {
  * StorageStartRecording 启动数据录制。
  * 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
  * 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
- * @param {usecase$0.StorageRecordingConfig} config
+ * @param {types$0.StorageRecordingConfig} config
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
 export function StorageStartRecording(config) {

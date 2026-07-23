@@ -3,22 +3,26 @@ node_modules/
 
 # Build output
 dist/
-!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/
-projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/*
-!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/.gitkeep
 build/
+# Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 应用元数据），其他 build/ 产物不入库
 !projects/wind-daq/apps/desktop-wails/build/
 projects/wind-daq/apps/desktop-wails/build/*
 !projects/wind-daq/apps/desktop-wails/build/config.yml
+!projects/wind-daq/apps/desktop-wails/build/windows/
+projects/wind-daq/apps/desktop-wails/build/windows/*
+!projects/wind-daq/apps/desktop-wails/build/windows/installer/
+projects/wind-daq/apps/desktop-wails/build/windows/installer/*
 !projects/wind-daq/apps/desktop-wails/build/windows/installer/project.nsi
 target/
 *.exe
 *.syso
 *.dll
 *.so
+*.log
 
-# Wails 生成的前端运行时绑定（由 `wails generate bindings` 自动产出，不入库）
+# Wails 生成的前端运行时绑定与 TS 绑定（由 `wails3 generate bindings` 自动产出，不入库）
 **/apps/desktop-wails/frontend/wailsjs/
+**/apps/desktop-wails/frontend/bindings/
 
 # IDE
 .idea/
@@ -54,6 +58,11 @@ wind-daq-*.json
 # wind-daq 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
 # OutputDir 运行时通过 MkdirAll 创建，无需入库）
 projects/wind-daq/apps/desktop-wails/data/recordings/
+projects/wind-daq/apps/desktop-wails/data/logs/
+# services/api-go 运行时录制与日志（同上，运行时产物不入库）
+projects/*/services/api-go/data/recordings/
+projects/*/services/api-go/data/logs/
+projects/*/services/api-go/pkg/apiserver/data/logs/
 
 # Playwright 测试产物（npm run test 自动生成，无需入库）
 **/playwright-report/
@@ -67,9 +76,15 @@ projects/wind-daq/apps/desktop-wails/data/recordings/
 # 前端包锁哈希（npm install 自动生成，无需入库）
 **/apps/desktop-wails/frontend/package.json.md5
 
-# Release 归档产物（NSIS installer 拷贝自 build/bin/，按版本号命名，仅本地保留）
+# Release 归档与本地交付包（NSIS installer 拷贝自 build/bin/，按版本号命名；zip 交付包仅本地保留）
 # SVN 项目需另行执行：svn propset svn:ignore bin projects/<project>/releases
 projects/*/releases/bin/
+projects/*/apps/desktop-wails/release/
+projects/*/apps/desktop-wails/release/*.zip
+projects/*/*.zip
+
+# 备份文件（git 已有版本历史，.bak 是反模式）
+*.bak
 
 # 临时脚本与数据（一次性生成 i18n / 调试用的 tmp_ 前缀文件，不入库）
 tmp_*.py

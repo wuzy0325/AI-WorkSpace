@@ -17,6 +17,12 @@ import * as device$0 from "../../internal/core/device/models.js";
 import * as motion$0 from "../../internal/core/motion/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as report$0 from "../../internal/core/report/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as storage$0 from "../../internal/core/storage/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as traversal$0 from "../../internal/core/traversal/models.js";
 
 /**
@@ -376,6 +382,16 @@ export class ProbeChannelDTO {
 }
 
 /**
+ * ==================== Report Types ====================
+ */
+export const ReportStatus = report$0.ReportStatus;
+
+/**
+ * ==================== Report Types ====================
+ * @typedef {report$0.ReportStatus} ReportStatus
+ */
+
+/**
  * ==================== Calibration Types ====================
  *
  * 七孔探针校准相关类型（spec Task 13）
@@ -399,6 +415,26 @@ export const SevenHoleConfigDTO = calibration$0.SevenHoleConfig;
  * SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点类型，
  *   Wails binding 通过 GenericResponse.Data 暴露给前端。
  * @typedef {calibration$0.SevenHoleConfig} SevenHoleConfigDTO
+ */
+
+/**
+ * ==================== Storage Types ====================
+ */
+export const StorageRecordingConfig = storage$0.RecordingConfig;
+
+/**
+ * ==================== Storage Types ====================
+ * @typedef {storage$0.RecordingConfig} StorageRecordingConfig
+ */
+
+/**
+ * ==================== Storage Types ====================
+ */
+export const StorageRecordingStatus = storage$0.RecordingStatus;
+
+/**
+ * ==================== Storage Types ====================
+ * @typedef {storage$0.RecordingStatus} StorageRecordingStatus
  */
 
 // Private type creation functions

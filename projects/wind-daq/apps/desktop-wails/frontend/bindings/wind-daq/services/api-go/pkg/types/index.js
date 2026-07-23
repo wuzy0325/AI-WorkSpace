@@ -12,5 +12,8 @@ export {
     FiveHolePointLayoutDTO,
     MotionControllerProfile,
     ProbeChannelDTO,
-    SevenHoleConfigDTO
+    ReportStatus,
+    SevenHoleConfigDTO,
+    StorageRecordingConfig,
+    StorageRecordingStatus
 } from "./models.js";
