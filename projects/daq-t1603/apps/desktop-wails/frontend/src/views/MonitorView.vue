@@ -17,7 +17,6 @@ import {
   Eraser,
   Layers,
   LineChart,
-  Loader2,
   Network,
   Settings2,
   Wifi,
@@ -184,12 +183,11 @@ function statusLabel(): string {
               <NButton
                 size="small"
                 :type="status === 'Connected' || status === 'Acquiring' || status === 'Starting' || status === 'Stopping' ? 'error' : 'primary'"
-                :loading="status === 'Connecting' || status === 'Starting' || status === 'Stopping'"
+                :loading="status === 'Connecting'"
                 @click="connectDisconnect"
               >
                 <template #icon>
-                  <Loader2 v-if="status === 'Connecting' || status === 'Starting' || status === 'Stopping'" :size="14" class="spin" />
-                  <Network v-else :size="14" />
+                  <Network :size="14" />
                 </template>
                 {{ status === 'Connected' || status === 'Acquiring' || status === 'Starting' || status === 'Stopping' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}
               </NButton>
@@ -596,14 +594,6 @@ function statusLabel(): string {
 }
 
 /* ---- animations ---- */
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 @media (max-width: 767px) {
   .detail__channel-selector-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -611,7 +601,6 @@ function statusLabel(): string {
 @media (prefers-reduced-motion: reduce) {
   .detail__empty-ring { animation: none; opacity: 0.3; }
   .status-dot--success, .status-dot--warning { animation: none; }
-  .spin { animation: none; }
   .detail__empty-tip:hover { transform: none; }
 }
 </style>
