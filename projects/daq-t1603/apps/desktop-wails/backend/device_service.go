@@ -2,9 +2,10 @@ package backend
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"daq-t1603/core"
 	"daq-t1603/usecase"
@@ -65,6 +66,10 @@ func (s *DeviceService) ServiceStartup(ctx context.Context) error {
 }
 
 // ServiceShutdown 在应用关闭时停止所有 relay 协程，避免泄漏。
+//
+// Win7 分支：原 Wails 版本会在此清空 s.app 让 EmitDeviceState 早退，
+// 现版本 EmitDeviceState 直接走 hub.EmitEvent，hub 内部对 nil bus 已做静默处理，
+// 且 EmitDeviceState 自带 recover 保护，无需在此额外清空字段。
 func (s *DeviceService) ServiceShutdown() error {
 	s.hub.StopAllRelays()
 	return nil
@@ -319,7 +324,17 @@ func (s *DeviceService) emitLog(level, category, deviceID, source, message, deta
 // Win7 分支：原 Wails 版本通过 app.Event.Emit 推送，现改为 hub.EmitEvent，
 // 由 httpserver.WSHub 实现具体 WebSocket 传输。
 //
-// 实现轻量：仅做一次 EmitEvent，无锁、无 I/O，可在 adapter 持锁回调中安全调用。
+// 实现轻量：仅做一次 EmitEvent，无 I/O 阻塞，可在 adapter 持锁回调中安全调用。
+//
+// 加 recover 保护：应用退出阶段 wsHub 可能已关闭，Emit 在已关闭的 bus 上可能 panic，
+// recover 避免 panic 终止 adapter readLoop 的清理流程；
+// recover 内记录 slog.Debug 保留可观测性，避免静默吞掉真实 bug。
 func (s *DeviceService) EmitDeviceState(deviceID string, state core.DeviceState) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("EmitDeviceState recovered from panic",
+				"deviceId", deviceID, "panic", r)
+		}
+	}()
 	s.hub.EmitEvent("daq:device-state", deviceID, state)
 }

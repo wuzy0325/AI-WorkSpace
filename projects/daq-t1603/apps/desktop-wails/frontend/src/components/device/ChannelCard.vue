@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { Palette } from '@lucide/vue'
 
 const props = defineProps<{
@@ -17,25 +17,14 @@ const emit = defineEmits<{
   (e: 'changeColor', color: string): void
 }>()
 
-const displayValue = ref('---')
-const isFlashing = ref(false)
-
 function formatValue(v: number): string {
   if (v === undefined || v === null || isNaN(v)) return '---'
   const p = typeof props.precision === 'number' ? Math.max(0, Math.min(props.precision, 6)) : 2
   return v.toFixed(p)
 }
 
-// 监听数值变化，触发闪烁效果
-watch(() => props.value, (newVal, oldVal) => {
-  displayValue.value = formatValue(newVal)
-  if (typeof newVal === 'number' && !isNaN(newVal) &&
-      typeof oldVal === 'number' && !isNaN(oldVal) &&
-      newVal !== oldVal) {
-    isFlashing.value = true
-    setTimeout(() => { isFlashing.value = false }, 400)
-  }
-}, { immediate: true })
+// 数值直接派生显示文本：采集期间值持续变化，不再触发闪烁动画，避免视觉噪音
+const displayValue = computed(() => formatValue(props.value))
 
 const statusText = computed(() => {
   if (props.active) return '已选择'
@@ -100,10 +89,7 @@ function onColorChange(target: HTMLInputElement) {
 
     <!-- 数值显示区 -->
     <div class="card__value-row">
-      <span
-        class="card__value mono"
-        :class="{ 'card__value--flash': isFlashing }"
-      >{{ displayValue }}</span>
+      <span class="card__value mono">{{ displayValue }}</span>
       <span class="card__unit">{{ unit }}</span>
     </div>
   </article>
@@ -260,21 +246,11 @@ function onColorChange(target: HTMLInputElement) {
 .card__value {
   font-size: 1.15rem;
   font-weight: 800;
-  color: var(--text-primary);
+  /* 数值始终跟随通道色：与圆点/标签/波形保持一致的识别线索，避免闪烁干扰 */
+  color: var(--ch-color);
   letter-spacing: -0.02em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  transition: color var(--motion-fast) var(--easing-standard);
-}
-
-/* 数值变化闪烁效果 */
-.card__value--flash {
-  animation: value-flash 0.4s var(--easing-standard);
-}
-
-/* 选中状态数值颜色保持主题强调色，不再随通道颜色变化 */
-.card--active .card__value {
-  color: var(--accent);
 }
 
 .card__unit {
@@ -288,16 +264,8 @@ function onColorChange(target: HTMLInputElement) {
 @media (prefers-reduced-motion: reduce) {
   .card,
   .card::before,
-  .card__topbar,
-  .card__toggle,
-  .card__value,
-  .card__footer-icon,
-  .card__footer-text {
+  .card__value {
     transition: none;
-  }
-
-  .card__value--flash {
-    animation: none;
   }
 
   .card:hover {
