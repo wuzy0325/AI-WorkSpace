@@ -946,6 +946,15 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 	// 已连接且未采集：若单位变化，写硬件 EU 系数
 	// 未连接：跳过硬件写入，仅更新 profile（下次连接时由 Connect 阶段同步）
 	if hasDriver && driver != nil && driver.conn != nil && cfg.Unit != prevUnit {
+		// 未采集（acquiring==false）但已连接时，conn 的实际并发读取者是 idleReadLoop，
+		// 而非采集 readLoop——readLoop 仅在 acquiring==true 时运行，且本函数在 L927 已
+		// 拒绝 acquiring 状态，故此处 joinReadLoop 实为防御性 no-op（readLoopDone 已 close）。
+		// 因此必须显式停止 idleReadLoop（stopIdleLoop 内部 close(idleStopCh)+joinIdleLoop），
+		// 确保 idleReadLoop 完全退出后再操作 conn（Reset/DrainConnection/
+		// P1604WriteUnitCoefficient），避免与残留 idleReadLoop 竞争同一 conn 的 Read，
+		// 消除帧字节流错位导致后续 v01101 响应被污染为乱码的窗口。
+		// idleLoopDone 已 close 时立即返回，正常路径无额外开销；末尾 defer 会重启 idleReadLoop。
+		driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
 		stoppedIdle := a.stopIdleLoop(id, driver)
 		defer func() {
 			shard.mu.Lock()
