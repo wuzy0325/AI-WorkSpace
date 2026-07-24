@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.4.0] - 2026-07-24
+
+### Added
+- 新增空闲连接 TCP keepalive 失效检测（CONN-008）：connected & idle 状态下 idleReadLoop 探测到对端 keepalive 失败即主动判定断连，作为命令调用之外的补充快速通道。
+- 新增禁用通道空 CSV 列输出（REC-006）：禁用通道在 CSV 中输出空列，保持列顺序与表头一致，便于后续按列解析。
+- 新增日志面板搜索与日志文件轮转（LOG-010/015）：前端日志可关键字搜索，后端日志按大小轮转，便于现场排查。
+- 新增异步设备状态事件推送（ACQ-010/STB-003）：OnReadLoopExit → hub → service 异步推送状态，UI 状态更新更及时，避免阻塞采集热路径。
+
+### Changed
+- 配置脏状态校正（CFG-017）：硬件配置与 profile 不一致时脏标记更准确。
+- 前端 ChannelCard 改用 computed 派生数值、颜色始终跟随通道色，移除采集期数值变化闪烁动画（视觉噪音）；MonitorView 文案「18 通道并行」→「多通道并行」。
+
+### Fixed
+- 修复 ApplyConfig 与 idleReadLoop 竞争同一 conn 读取导致 v01101 响应被污染为乱码：操作 conn 前显式 stopIdleLoop 并 join；空闲读取循环在末尾 defer 以新 stop 通道重启，四重守卫防止双启或失联后重启；StopAcquisition 不再派生重复 idle 循环（guard on driver.idleStopCh == nil）。
+- 修复拔网线重连时 u01101/v01101 阶段对端 FIN 被当作软错误吞掉、导致半死连接后续 StartAcquisition 触发 Windows WSAECONNABORTED：新增 sharedproto.IsConnResetByPeer 判定对端 FIN/RST 硬证据（io.EOF / connection reset / broken pipe / WSAECONNABORTED），与 IsConnectionFault（日志降噪用）语义分离；Connect 检测到 unitErr 时关闭 conn 并返回 error 强制重连；ApplyConfig v01101 失败且命中时复用 handleConnectionLost 清理 driver + conn + status。
+- 修复连接设备时硬件单位与 profile 不一致导致前端通道卡片显示陈旧单位（psi）而顶部/配置显示新单位（Pa）：新增 syncChannelsUnit helper，规则与前端 getChannelUnit 一致（CH1-CH16 跟随全局压力单位，CH17 大气压力锁定 Pa，CH18 大气温度锁定 ℃）。
+
+### Internal
+- 新增 e2e 测试套件（e2e_*.py / cases.json / gen_e2e_report.py）与文档 e2e-testing-guide.md。
+- 新增 idle-stop 回归测试（ApplyConfig & StopAcquisition）、IsConnResetByPeer 单元测试（13 条）、syncUnitFromHardware EOF/超时测试、ApplyConfig v01101 EOF/软错误测试、syncChannelsUnit 4 条单元测试。
+- 同步 6 个版本号文件到 0.4.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `task release`（clean + 前端 build + 生产 Go 构建）：通过。前端 `npm run build`（vue-tsc + vite）成功，`go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"` 产出 `build/bin/daq-p1604.exe`。
+- `go vet ./...`（GOWORK=off）：passed。
+- `go test ./...`（GOWORK=off）：passed（adapters/hardware、adapters/recording、backend 均 ok）。
+- `makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\daq-p1604.exe project.nsi`：产出 `daq-p1604-0.4.0-amd64-installer.exe`，归档至 `releases/bin/`。
+- SHA-256：`24669f125a2e28dd4c55e7e74639c5f3d0f331958dc9a02cb06bcd476d169bda`。
+- 已知限制：exe 自身 Windows 版本资源固定为 `0.0.0.0`（wails v3 alpha `generate syso` 限制，与历史 0.3.x 一致）；安装包 VIProductVersion 已正确标注 0.4.0。GUI 冒烟测试建议在目标机手动验证。
+
+### Known Issues
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.0] - 2026-07-03
 
 ### Changed

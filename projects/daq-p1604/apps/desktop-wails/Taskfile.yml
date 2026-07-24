@@ -13,7 +13,7 @@ tasks:
   dev-frontend:
     summary: 启动前端开发服务器（热更新，独立调试前端时使用）
     cmds:
-      - npm --prefix frontend run dev -- --host 127.0.0.1
+      - cd frontend && npm run dev -- --host 127.0.0.1
     env:
       BROWSER: none
 
@@ -31,8 +31,8 @@ tasks:
   build-frontend:
     summary: 仅构建前端（npm install + npm run build，输出到 frontend/dist）
     cmds:
-      - npm --prefix frontend install --no-audit --no-fund
-      - npm --prefix frontend run build
+      - cd frontend && npm install --no-audit --no-fund
+      - cd frontend && npm run build
 
   generate-icon:
     summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
