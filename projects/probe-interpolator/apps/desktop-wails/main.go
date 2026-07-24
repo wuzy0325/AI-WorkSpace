@@ -13,7 +13,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed appicon.png
+//go:embed app_icon.png
 var appIcon []byte
 
 func main() {
