@@ -75,6 +75,7 @@ func RegisterHandlers(
 	mux.HandleFunc("/api/device/stop", s.handleDeviceStop)
 	mux.HandleFunc("/api/device/status/", s.handleDeviceStatus)
 	mux.HandleFunc("/api/device/apply-config", s.handleDeviceApplyConfig)
+	mux.HandleFunc("/api/device/set-ui-refresh-rate", s.handleDeviceSetUIRefreshRate)
 
 	// Recording endpoints（详见 recording_handler.go）
 	mux.HandleFunc("/api/recording/start", s.handleRecordingStart)

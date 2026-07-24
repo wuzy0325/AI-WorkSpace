@@ -5,7 +5,7 @@ import { useDisplayStore } from '@stores/displayStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { onPayload, offPayload, onLog, offLog, onDeviceState, offDeviceState, onRecordingFatal, offRecordingFatal, onRecordingBackpressure, offRecordingBackpressure } from '@bridge/deviceBridge'
+import { onPayload, offPayload, onLog, offLog, onDeviceState, offDeviceState, onRecordingFatal, offRecordingFatal, onRecordingBackpressure, offRecordingBackpressure, setUIRefreshRateHz } from '@bridge/deviceBridge'
 import type { TemperatureSnapshot, DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
 import MonitorView from '@views/MonitorView.vue'
@@ -86,6 +86,12 @@ onMounted(async () => {
   deviceStore.setDisplayRefreshRateHz(displayStore.refreshRateHz)
   onPayload((snapshot: TemperatureSnapshot) => {
     deviceStore.pushSnapshot(snapshot)
+  })
+  // 同步到后端：让 relayStream 按用户保存的刷新率推送 daq:payload，
+  // 而非后端默认 10Hz。放在 onPayload 订阅之后，避免 await 阻塞事件订阅。
+  // 失败不阻塞启动，后端会沿用默认值。
+  void setUIRefreshRateHz(displayStore.refreshRateHz).catch((err) => {
+    logStore.error('system', `同步后端刷新率失败: ${err instanceof Error ? err.message : String(err)}`)
   })
   onLog((entry: DeviceLogEvent) => {
     logStore.pushEvent(entry)

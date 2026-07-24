@@ -10,7 +10,8 @@
 //   - POST   /api/device/start            启动采集，body: {"id":"..."}
 //   - POST   /api/device/stop             停止采集，body: {"id":"..."}
 //   - GET    /api/device/status/{id}      查询设备状态
-//   - POST   /api/device/apply-config     下发配置，body: {"id":"...","config":{...}}
+//   - POST   /api/device/apply-config    下发配置，body: {"id":"...","config":{...}}
+//   - POST   /api/device/set-ui-refresh-rate  设置 UI 推送频率，body: {"hz":10}
 //
 // 错误码约定：
 //   - 400：参数缺失或格式错误；
@@ -215,6 +216,28 @@ func (s *Server) handleDeviceApplyConfig(w http.ResponseWriter, r *http.Request)
 	}
 	if err := s.device.ApplyConfig(body.ID, body.Config); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeOK(w, nil)
+}
+
+// handleDeviceSetUIRefreshRate POST /api/device/set-ui-refresh-rate
+// 请求体：{"hz":10}
+// 动态调整后端 relayStream 推送 daq:payload 的频率，范围 [1, 60] Hz。
+// 超范围或非数字返回 400；Service 内部异常返回 500。
+func (s *Server) handleDeviceSetUIRefreshRate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var body struct {
+		Hz int `json:"hz"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := s.device.SetUIRefreshRateHz(body.Hz); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeOK(w, nil)

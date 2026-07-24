@@ -2,7 +2,9 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shared.local/device-sdk/go/pkg/slog"
@@ -11,17 +13,25 @@ import (
 	"daq-t1603/usecase"
 )
 
-// 前端推送节奏：UI 快照 100ms 一次，录制状态 1s 一次。
-// 由 DeviceService.relayStream 使用，平衡刷新频率与 Event.Emit 开销。
+// 前端推送节奏默认值：UI 快照 100ms（10Hz）一次，录制状态 1s 一次。
+// UI 推送间隔可由前端通过 SetUIRefreshRateHz 动态调整；
+// 录制状态间隔固定，与采集帧率解耦。
 const (
-	uiPayloadRefreshInterval    = 100 * time.Millisecond
+	uiPayloadRefreshDefault    = 100 * time.Millisecond
 	recordingStatusEmitInterval = time.Second
+
+	// UI 刷新率合法范围（Hz）。
+	// 下限 1Hz 避免图表长时间不更新误导用户；
+	// 上限 60Hz 保护 WebView2 GUI 线程，与 displayStore 限制一致。
+	uiRefreshRateMinHz = 1
+	uiRefreshRateMaxHz = 60
 )
 
 // DeviceService 暴露设备相关能力给前端：
 //   - 扫描 / 配置 CRUD
 //   - 连接 / 断开 / 应用配置
-//   - 启动 / 停止采集（带后台中继协程，按 100ms 频率推送温度快照、按 1s 频率推送录制状态）
+//   - 启动 / 停止采集（带后台中继协程，按用户设置的刷新率推送温度快照、按 1s 频率推送录制状态）
+//   - 设置 UI 刷新率（SetUIRefreshRateHz，动态调整推送节奏，无需重启采集）
 //
 // 设计要点：
 //   - 录制相关的热路径调用通过 hub.RecordingService 引用直接走，
@@ -37,6 +47,13 @@ type DeviceService struct {
 	// 之所以注入而不是从 hub 拿，是因为只有 DeviceService 需要这种紧耦合。
 	recording *RecordingService
 
+	// uiRefreshInterval UI 快照推送间隔（纳秒）。
+	// 由 SetUIRefreshRateHz 更新；relayStream 在 uiTicker.C 分支触发时
+	// 通过 lastInterval 缓存对比检测变化并 Reset ticker。
+	// 用 atomic 而非 mutex：relayStream 是热路径，避免持锁阻塞；
+	// 用户调刷新率是低频操作，竞态可接受（读到旧值最多多等一个旧间隔）。
+	uiRefreshInterval atomic.Int64
+
 	// mu 保护下方 ctx 字段，ServiceStartup/Shutdown 期间被读写。
 	mu  sync.Mutex
 	ctx context.Context
@@ -44,11 +61,15 @@ type DeviceService struct {
 
 // NewDeviceService 创建设备 Service。
 func NewDeviceService(hub *core.Hub, deviceUC *usecase.DeviceUsecase, recording *RecordingService) *DeviceService {
-	return &DeviceService{
+	s := &DeviceService{
 		hub:       hub,
 		deviceUC:  deviceUC,
 		recording: recording,
 	}
+	// 默认 100ms（10Hz），与前端 displayStore 默认值对齐。
+	// 启动后前端 App.onMounted 会再次调用 SetUIRefreshRateHz 同步 localStorage 保存的偏好。
+	s.uiRefreshInterval.Store(int64(uiPayloadRefreshDefault))
+	return s
 }
 
 // ServiceStartup 在应用启动阶段被 main.go 调用一次。
@@ -78,6 +99,29 @@ func (s *DeviceService) ServiceShutdown() error {
 // ----------------------------------------------------------------------------
 // 前端可调用方法（被 HTTP handler 通过反射或显式封装调用）
 // ----------------------------------------------------------------------------
+
+// SetUIRefreshRateHz 设置 UI 快照推送频率（Hz）。
+//
+// 设计意图：
+//   - 前端 MainTopBar 提供 2/5/10/15/20/30 Hz 档位，让用户平衡"画面流畅度"与"CPU 占用"；
+//   - 后端 relayStream 按此频率通过 daq:payload 事件推送最新快照；
+//   - relayStream 在下次 uiTicker.C 触发时检测 atomic 变化并 Reset ticker，
+//     最长等一个旧间隔生效（如 10Hz→2Hz 最长 100ms+500ms=600ms），无需重启采集。
+//
+// 范围校验：[1, 60] Hz。
+//   - 下限 1Hz：低于 1Hz 会让图表长时间不更新，误导用户以为采集卡死；
+//   - 上限 60Hz：超过 60Hz 会拖慢 WebView2 GUI 线程，与前端 displayStore 限制一致。
+//
+// 该方法只更新 atomic 值，不持任何锁，可安全在 Wails Bind 调用栈中使用。
+func (s *DeviceService) SetUIRefreshRateHz(hz int) error {
+	if hz < uiRefreshRateMinHz || hz > uiRefreshRateMaxHz {
+		return fmt.Errorf("UI refresh rate %d Hz out of range [%d, %d]", hz, uiRefreshRateMinHz, uiRefreshRateMaxHz)
+	}
+	intervalNs := int64(time.Second) / int64(hz)
+	s.uiRefreshInterval.Store(intervalNs)
+	slog.Debug("UI refresh rate updated", "hz", hz, "intervalMs", intervalNs/int64(time.Millisecond))
+	return nil
+}
 
 // ScanDevices 触发设备扫描。
 func (s *DeviceService) ScanDevices() ([]core.ScanResult, error) {
@@ -251,11 +295,20 @@ func (s *DeviceService) startRelay(deviceID string, ch <-chan core.TemperatureSn
 // relayStream 中继协程主循环。
 //
 // 节流策略：
-//   - UI payload: 每 100ms 推送一次最新值（uiTicker），避免高频更新拖慢前端；
+//   - UI payload: 按 s.uiRefreshInterval 间隔推送最新值，间隔由前端 SetUIRefreshRateHz 动态调整；
 //   - 录制写入: 直接逐帧写入（hot path），通过 atomic.Bool 判活无锁；
 //   - 录制状态: 每 1s 广播一次（statusTicker），且仅在 IsActive 时广播。
+//
+// 动态刷新率实现：
+//   - 用 Ticker 而非 time.After：Ticker 在独立 goroutine 计时，不受 ch 数据流影响；
+//     time.After 是 case 表达式，每轮 select 重新求值，高频 ch 场景下永远到不了指定时长。
+//   - 在 uiTicker.C 分支检测 atomic 变化并 Reset：用户切换刷新率后，最长等一个旧间隔
+//     即生效（如 10Hz→2Hz 最长 100ms+500ms=600ms）。
 func (s *DeviceService) relayStream(ctx context.Context, deviceID string, ch <-chan core.TemperatureSnapshot) {
-	uiTicker := time.NewTicker(uiPayloadRefreshInterval)
+	// lastInterval 缓存上次使用的间隔，用于检测 SetUIRefreshRateHz 引起的变化。
+	// 读取一次 atomic 即可，后续在 select 循环内对比，避免每帧 Load。
+	lastInterval := s.uiRefreshInterval.Load()
+	uiTicker := time.NewTicker(time.Duration(lastInterval))
 	statusTicker := time.NewTicker(recordingStatusEmitInterval)
 	defer uiTicker.Stop()
 	defer statusTicker.Stop()
@@ -288,6 +341,12 @@ func (s *DeviceService) relayStream(ctx context.Context, deviceID string, ch <-c
 		case <-uiTicker.C:
 			if hasLatest {
 				s.emitPayload(latest)
+			}
+			// 动态调整：检测 atomic 变化并 Reset ticker。
+			// Reset 后下一 tick 按新间隔计算，从现在起重新计时。
+			if cur := s.uiRefreshInterval.Load(); cur != lastInterval {
+				lastInterval = cur
+				uiTicker.Reset(time.Duration(cur))
 			}
 		case <-statusTicker.C:
 			if s.recording.IsActive() {

@@ -6,6 +6,7 @@ import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
+import { setUIRefreshRateHz } from '@bridge/deviceBridge'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
@@ -99,7 +100,14 @@ function toggleRefreshMenu() {
 function selectRefreshRate(hz: number) {
   displayStore.setRefreshRateHz(hz)
   deviceStore.setDisplayRefreshRateHz(hz)
+  // 立即关闭菜单，避免 await 阻塞导致视觉延迟
   showRefreshMenu.value = false
+  // 同步到后端：让 relayStream 按新频率推送 daq:payload 事件，
+  // 真正改变数值卡和图表的更新节奏（而非仅前端 flush 节拍）。
+  // 失败不阻塞 UI：displayStore 已本地持久化，下次启动会重新同步。
+  void setUIRefreshRateHz(hz).catch((err) => {
+    console.warn('[MainTopBar] setUIRefreshRateHz failed:', err)
+  })
 }
 
 function onRefreshClickOutside(e: MouseEvent) {

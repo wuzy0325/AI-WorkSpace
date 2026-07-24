@@ -161,6 +161,20 @@ export function scanDevices(): Promise<ScanResult[]> {
   return post<ScanResult[]>('/api/device/scan')
 }
 
+/**
+ * 设置 UI 快照推送频率（Hz）。
+ *
+ * 调用后后端 relayStream 下一轮 select 自动跟随新间隔，无需重启采集。
+ * 范围 [1, 60]，超范围会被后端拒绝。
+ *
+ * 使用场景：
+ *   - App.onMounted 启动时同步 localStorage 保存的偏好；
+ *   - MainTopBar.selectRefreshRate 用户切换档位时即时生效。
+ */
+export function setUIRefreshRateHz(hz: number): Promise<void> {
+  return post('/api/device/set-ui-refresh-rate', { hz })
+}
+
 // ---- 事件订阅（WebSocket） ----
 //
 // 后端事件名与原 Wails 版完全一致，前端 wsClient 收到消息后按 event 字段路由。
