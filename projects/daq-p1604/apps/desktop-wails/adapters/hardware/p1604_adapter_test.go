@@ -59,14 +59,14 @@ func TestEnableTCPKeepalive_NonTCPConn(t *testing.T) {
 // 用于验证 enableTCPKeepalive 对非 TCP 连接的兼容性。
 type mockNonTCPConn struct{}
 
-func (m *mockNonTCPConn) Read(b []byte) (n int, err error)    { return 0, nil }
-func (m *mockNonTCPConn) Write(b []byte) (n int, err error)   { return len(b), nil }
-func (m *mockNonTCPConn) Close() error                         { return nil }
-func (m *mockNonTCPConn) LocalAddr() net.Addr                  { return nil }
-func (m *mockNonTCPConn) RemoteAddr() net.Addr                 { return nil }
-func (m *mockNonTCPConn) SetDeadline(t time.Time) error        { return nil }
-func (m *mockNonTCPConn) SetReadDeadline(t time.Time) error    { return nil }
-func (m *mockNonTCPConn) SetWriteDeadline(t time.Time) error   { return nil }
+func (m *mockNonTCPConn) Read(b []byte) (n int, err error)   { return 0, nil }
+func (m *mockNonTCPConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockNonTCPConn) Close() error                       { return nil }
+func (m *mockNonTCPConn) LocalAddr() net.Addr                { return nil }
+func (m *mockNonTCPConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockNonTCPConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockNonTCPConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockNonTCPConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // mockConnWithCloseTracking 记录 Close 调用次数，用于验证 handleConnectionLost 是否关闭 conn。
 type mockConnWithCloseTracking struct {
@@ -124,8 +124,8 @@ func setupAdapterWithDriver(id string, status core.DeviceStatus) (*P1604Adapter,
 }
 
 type stateCollector struct {
-	mu      sync.Mutex
-	states  []struct {
+	mu     sync.Mutex
+	states []struct {
 		id    string
 		state core.DeviceState
 	}
@@ -280,7 +280,7 @@ func TestSyncUnitFromHardware_EOFReturnsError(t *testing.T) {
 	// 服务端：读掉 u01101 命令 → 让客户端进入 Read 阻塞 → Close 触发 EOF
 	go func() {
 		buf := make([]byte, 64)
-		_, _ = server.Read(buf) // 读掉 u01101
+		_, _ = server.Read(buf)           // 读掉 u01101
 		time.Sleep(50 * time.Millisecond) // 等客户端进入 Read 阻塞
 		server.Close()                    // 触发客户端 Read 返回 io.EOF
 	}()
@@ -478,6 +478,114 @@ func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
 
 	_ = server.Close()
 	_ = client.Close()
+}
+
+func TestApplyConfig_StopsIdleLoopBeforeUnitWrite(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	a := NewP1604Adapter()
+	id := "test-apply-idle"
+	profile := core.PressureProfile{
+		ID:       id,
+		P1604Cfg: core.P1604Config{Unit: "Pa"},
+	}
+	idleStop := make(chan struct{})
+	idleDone := make(chan struct{})
+	driver := &p1604Driver{
+		profile:      profile,
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		idleStopCh:   idleStop,
+		idleLoopDone: idleDone,
+	}
+	go func() {
+		<-idleStop
+		close(idleDone)
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	idleStoppedBeforeWrite := make(chan bool, 1)
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		select {
+		case <-idleStop:
+			idleStoppedBeforeWrite <- true
+		default:
+			idleStoppedBeforeWrite <- false
+		}
+		_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+	}()
+
+	if err := a.ApplyConfig(id, core.P1604Config{Unit: "psi"}); err != nil {
+		t.Fatalf("ApplyConfig failed: %v", err)
+	}
+	if !<-idleStoppedBeforeWrite {
+		t.Fatal("ApplyConfig must stop idleReadLoop before writing the unit coefficient")
+	}
+
+	shard.mu.RLock()
+	restartedStop := driver.idleStopCh
+	shard.mu.RUnlock()
+	if restartedStop == nil || restartedStop == idleStop {
+		t.Fatal("ApplyConfig must restart idleReadLoop with a new stop channel")
+	}
+	close(restartedStop)
+}
+
+func TestStopAcquisition_WhileIdleDoesNotStartSecondIdleLoop(t *testing.T) {
+	a := NewP1604Adapter()
+	id := "test-stop-idle"
+	idleStop := make(chan struct{})
+	idleDone := make(chan struct{})
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         &mockNonTCPConn{},
+		idleStopCh:   idleStop,
+		idleLoopDone: idleDone,
+	}
+	go func() {
+		<-idleStop
+		close(idleDone)
+	}()
+	defer func() {
+		select {
+		case <-idleStop:
+		default:
+			close(idleStop)
+		}
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Status: core.StatusConnected}
+	shard.mu.Unlock()
+
+	if err := a.StopAcquisition(id); err != nil {
+		t.Fatalf("StopAcquisition failed: %v", err)
+	}
+
+	shard.mu.RLock()
+	currentStop := driver.idleStopCh
+	shard.mu.RUnlock()
+	if currentStop != idleStop {
+		if currentStop != nil {
+			close(currentStop)
+		}
+		t.Fatal("StopAcquisition replaced an already running idleReadLoop")
+	}
 }
 
 // TestSyncChannelsUnit_PressureChannelsFollowGlobalUnit

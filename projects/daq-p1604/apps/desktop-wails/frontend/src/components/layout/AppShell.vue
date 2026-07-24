@@ -218,9 +218,19 @@ async function confirmAddScanned() {
     <MainBottomBar />
 
     <!-- 配置模态框 -->
+    <!--
+      v-if + v-show 组合（CFG-017/CFG-020 草稿保留修复）：
+        - v-if="canConfigure"：仅当存在选中设备时挂载组件，避免 selectedId 为空时
+          传入 undefined 触发 DaqP1604Config 内部 watch 异常。
+        - v-show="showConfig"：关闭面板时仅设置 display:none，组件不销毁，
+          DaqP1604Config 内部的 channelNames/channelEnabled/channelPrecisions 等
+          本地 ref 草稿得以保留，重新打开面板时草稿仍在原处。
+      草稿生命周期：切换设备时 :device-id 变化 → profile 变化 → watch 触发
+      syncFormFromProfile 覆盖草稿（符合"切换设备时草稿重置为该设备当前配置"的语义）。
+    -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="showConfig && canConfigure" class="modal-overlay" @click.self="showConfig = false">
+        <div v-if="canConfigure" v-show="showConfig" class="modal-overlay" @click.self="showConfig = false">
           <div class="modal-panel">
             <DaqP1604Config
               :device-id="deviceStore.selectedId!"

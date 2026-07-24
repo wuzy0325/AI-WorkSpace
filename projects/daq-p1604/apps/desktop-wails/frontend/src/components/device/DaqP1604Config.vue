@@ -124,10 +124,52 @@ watch(
   { immediate: true }
 )
 
+/**
+ * CFG-017 智能脏值比较：判断当前表单值是否与 profile 原值一致。
+ *
+ * 修复背景：原 watcher 仅在表单变化时单向置 hasChanges=true，
+ * 用户把参数改回原值后徽章仍残留，违反"未保存更改"语义。
+ *
+ * 比较范围覆盖表单全部字段：
+ *  - 硬件参数（采样频率/单位/全局精度/自动连接/硬件时间戳）
+ *  - 通道级参数（名称/启用/颜色/精度）
+ *
+ * 注意：channelPrecisions 的默认值兜底为 globalPrecision，
+ * 与 syncFormFromProfile 的回填逻辑保持一致，避免虚假脏值。
+ */
+function formEqualsProfile(p: typeof profile.value): boolean {
+  if (!p) return false
+  const cfg = p.p1604Config
+  if (samplingFreq.value !== periodMsToHz(cfg?.samplingRate || 100)) return false
+  if (autoConnect.value !== (cfg?.autoConnect ?? false)) return false
+  if (pressureUnit.value !== (cfg?.unit || 'psi')) return false
+  if (globalPrecision.value !== (cfg?.precision ?? 3)) return false
+  if (useDeviceTimestamp.value !== (cfg?.useDeviceTimestamp ?? true)) return false
+  const chs = p.channels
+  if (channelNames.value.length !== chs.length) return false
+  if (channelEnabled.value.length !== chs.length) return false
+  if (channelColors.value.length !== chs.length) return false
+  if (channelPrecisions.value.length !== chs.length) return false
+  for (let i = 0; i < chs.length; i++) {
+    const c = chs[i]
+    if (!c) return false
+    if ((channelNames.value[i] ?? '') !== (c.name || '')) return false
+    if (channelEnabled.value[i] !== c.enabled) return false
+    if ((channelColors.value[i] ?? '') !== (c.color || '')) return false
+    // 精度回填规则：profile 缺省时兜底为 globalPrecision，需同等比较
+    const expectedPrecision = c.precision ?? globalPrecision.value
+    if ((channelPrecisions.value[i] ?? globalPrecision.value) !== expectedPrecision) return false
+  }
+  return true
+}
+
 watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
-  hasChanges.value = true
+  // CFG-017：改回原值时自动清除徽章；只有真正存在差异时才标记未保存
+  hasChanges.value = !formEqualsProfile(profile.value)
+  // 任何编辑都重置 saveStatus：上次保存的 success/error 提示对新改动已失效，
+  // 残留会让用户误以为当前编辑已保存。与原行为保持一致。
   saveStatus.value = 'idle'
 }, { deep: true })
 

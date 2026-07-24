@@ -18,4 +18,8 @@ type RecordingPort interface {
 	// 当 deviceWriter 发生 bufio.Write 失败或文件创建失败时被调用。
 	// handler 内部禁止回调本接口任何方法。
 	SetFatalErrorHandler(handler func(deviceID string, err error))
+	// SetDeviceProfile 注入某设备的通道配置（含 enabled 标志），
+	// 用于在 CSV 中将禁用通道的列写空值（REC-006）。
+	// 在设备 Connect / StartAcquisition 时调用；未调用时默认全通道启用。
+	SetDeviceProfile(deviceID string, channels []core.ChannelConfig)
 }

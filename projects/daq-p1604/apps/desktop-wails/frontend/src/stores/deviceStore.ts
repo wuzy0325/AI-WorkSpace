@@ -5,6 +5,7 @@ import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, Sca
 import { useLogStore } from '@stores/logStore'
 import {
   computeExistingKeys,
+  hostKey,
   planScannedAdditions,
   type ScannedDeviceInput,
   type PlannedProfile,
@@ -505,6 +506,14 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function addProfile(name: string, address: string, port: number): Promise<void> {
+    // CONN-002 重复添加防御：仅 IP+端口完全相同视为重复（同 IP 不同端口允许添加）。
+    // 与扫描弹窗 planScannedAdditions 共用 hostKey 规则，保证手动添加与扫描批量添加
+    // 的去重语义一致。
+    const dupKey = hostKey(address, port)
+    if (computeExistingKeys(profiles.value).has(dupKey)) {
+      throw new Error('该设备已添加，请勿重复添加')
+    }
+
     const id = `p1604_${Date.now()}`
     const profile: PressureProfile = {
       id,

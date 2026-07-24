@@ -139,6 +139,14 @@ export const useDeviceStore = defineStore('device', () => {
     return historyMap.value[id] ?? []
   }
 
+  /** 清空指定设备的实时波形历史（#31：去掉当前波形）
+   *  仅清前端缓冲，不影响后端采集与录制 */
+  function clearHistory(id: string): void {
+    historyMap.value[id] = []
+    delete snapshotMap.value[id]
+    delete pendingSnapshotMap.value[id]
+  }
+
   function isChartSelected(id: string, channelIndex: number): boolean {
     return chartSelections.value[id]?.has(channelIndex) ?? false
   }
@@ -438,7 +446,7 @@ export const useDeviceStore = defineStore('device', () => {
     profiles, selectedId, statusMap, errorMap, historyMap, snapshotMap, chartSelections,
     scanResults, isScanning,
     selectedProfile, selectedSnapshot,
-    selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
+    selectDevice, statusFor, errorFor, acquiringFor, historyFor, clearHistory, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
     startAcquisition, stopAcquisition, applyConfig, updateChannel, saveProfile,
     clearScanResults, scanDevices, addProfile, removeProfile, isScanResultAdded,

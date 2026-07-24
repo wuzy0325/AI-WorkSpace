@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -56,6 +57,10 @@ func (s *DeviceService) ServiceStartup(ctx context.Context) error {
 	s.mu.Lock()
 	s.ctx = ctx
 	s.mu.Unlock()
+	// ACQ-010/STB-003：将本 service 注册为 hub 的 StateEmitter，
+	// 让 adapter 在 OnReadLoopExit 等异步状态变化时通过 hub.EmitDeviceState
+	// 触发本 service 的 EmitDeviceState，最终推送 daq:device-state 事件到前端。
+	s.hub.SetStateEmitter(s)
 	return nil
 }
 
@@ -108,6 +113,9 @@ func (s *DeviceService) Connect(id string) error {
 		s.emitLog("error", "system", id, "device", "Connect failed", err.Error())
 		return err
 	}
+	// REC-006：连接成功后注入通道掩码到 recorder，
+	// 保证后续 StartAcquisition 时 CSV 立即按禁用通道写空值。
+	s.injectDeviceProfile(id)
 	s.emitLog("info", "system", id, "device", "Device connected", "")
 	return nil
 }
@@ -127,6 +135,10 @@ func (s *DeviceService) Disconnect(id string) error {
 // StartAcquisition 启动采集。
 func (s *DeviceService) StartAcquisition(id string) error {
 	s.emitLog("info", "acquisition", id, "device", "Start acquisition requested", "")
+	// REC-006：采集启动前再次注入通道掩码，覆盖用户在 Connect 后修改配置的情况。
+	// 即便 recorder 尚未 Start，SetDeviceProfile 也会缓存掩码到 deviceProfiles，
+	// 待 recorder Start 后 newDeviceWriter 创建时自动应用。
+	s.injectDeviceProfile(id)
 	ch, err := s.deviceUC.StartAcquisition(id)
 	if err != nil {
 		s.emitLog("error", "acquisition", id, "device", "Start acquisition failed", err.Error())
@@ -171,8 +183,35 @@ func (s *DeviceService) ApplyConfig(id string, cfg core.T1603Config) error {
 		s.emitLog("error", "system", id, "device", "Apply config failed", err.Error())
 		return err
 	}
+	// REC-006：配置变更后通道掩码可能变化（如 channelMask 调整），
+	// 同步到 recorder 以保证后续 CSV 写入按最新掩码过滤。
+	s.injectDeviceProfile(id)
 	s.emitLog("info", "system", id, "device", "Config applied", "")
 	return nil
+}
+
+// injectDeviceProfile 从 usecase 加载设备 profile 并注入通道掩码到 recorder（REC-006）。
+//
+// 静默失败策略：
+//   - profile 不存在： recorder 未启动时 SetDeviceProfile 内部会缓存，
+//     若 deviceUC 返回空列表则跳过（不应影响主流程）；
+//   - recorder 未启动： SetDeviceProfile 仅缓存到 deviceProfiles，
+//     待 recorder Start 后 newDeviceWriter 自动应用。
+//
+// 该方法不返回 error：通道掩码注入是录制功能的"增强"，
+// 不应让 CSV 空值列问题反过来阻塞设备连接/采集主流程。
+func (s *DeviceService) injectDeviceProfile(deviceID string) {
+	profiles := s.deviceUC.GetProfiles()
+	for i := range profiles {
+		if profiles[i].ID == deviceID {
+			s.recording.SetDeviceProfile(deviceID, profiles[i].Channels)
+			return
+		}
+	}
+	// 极少数 race condition 场景下可能发生（如 profile 刚被删除但连接尚未清理），
+	// 记录 debug 日志便于排查"为何 CSV 禁用通道仍写值"等问题，不阻塞主流程。
+	slog.Debug("injectDeviceProfile: profile not found, skip mask injection",
+		"deviceId", deviceID)
 }
 
 // ----------------------------------------------------------------------------
@@ -268,4 +307,19 @@ func (s *DeviceService) emitLog(level, category, deviceID, source, message, deta
 		Message:  message,
 		Detail:   detail,
 	})
+}
+
+// EmitDeviceState 实现 core.StateEmitter 接口（ACQ-010/STB-003）。
+//
+// 由 adapter 在 OnReadLoopExit 等异步状态变化时通过 hub.EmitDeviceState 触发，
+// 本方法将状态通过 hub.EmitEvent 广播为 daq:device-state 事件，
+// 前端 App.vue 中 onDeviceState 订阅器接收后调用 syncStatusFromBackend，
+// 让 statusMap 实时同步（如物理断网后从「采集中」直接变为「未连接」）。
+//
+// Win7 分支：原 Wails 版本通过 app.Event.Emit 推送，现改为 hub.EmitEvent，
+// 由 httpserver.WSHub 实现具体 WebSocket 传输。
+//
+// 实现轻量：仅做一次 EmitEvent，无锁、无 I/O，可在 adapter 持锁回调中安全调用。
+func (s *DeviceService) EmitDeviceState(deviceID string, state core.DeviceState) {
+	s.hub.EmitEvent("daq:device-state", deviceID, state)
 }

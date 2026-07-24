@@ -29,16 +29,21 @@ type StopConditions struct {
 type RecordingConfig struct {
 	OutputDir       string          `json:"outputDir"`
 	FilePrefix      string          `json:"filePrefix"`
-	Channels        []ChannelConfig `json:"channels"`         // 多设备合并的通道精度配置
-	Rotation        FileRotation    `json:"rotation"`         // 文件滚动条件
-	StopConditions  StopConditions  `json:"stopConditions"`   // 自动停止条件
-	FlushIntervalMs int             `json:"flushIntervalMs"`  // bufio flush 间隔（默认 100ms）
-	SyncIntervalSec int             `json:"syncIntervalSec"`  // fsync 间隔（默认 2s）
-	QueueCapacity   int             `json:"queueCapacity"`    // 异步队列容量（默认 32768）
+	Channels        []ChannelConfig `json:"channels"`        // 多设备合并的通道精度配置
+	Rotation        FileRotation    `json:"rotation"`        // 文件滚动条件
+	StopConditions  StopConditions  `json:"stopConditions"`  // 自动停止条件
+	FlushIntervalMs int             `json:"flushIntervalMs"` // bufio flush 间隔（默认 100ms）
+	SyncIntervalSec int             `json:"syncIntervalSec"` // fsync 间隔（默认 2s）
+	QueueCapacity   int             `json:"queueCapacity"`   // 异步队列容量（默认 32768）
 	// DeviceNames 设备 ID → 设备名映射，由 backend 在 StartRecording 时从 profiles 一次性填充。
 	// recorder 用设备名生成人类可读的文件名 slug（sanitize 后），同名冲突时追加 deviceId 前 6 位兜底。
 	// 录制期间新增 deviceId 未在此 map 中时，回退到 deviceId 作为 slug。
-	DeviceNames     map[string]string `json:"deviceNames,omitempty"`
+	DeviceNames map[string]string `json:"deviceNames,omitempty"`
+	// DeviceChannels 设备 ID → 该设备的通道配置切片。
+	// 由 backend 在 StartRecording 时从 profiles 一次性填充，用于 REC-006 按设备独立判断
+	// 通道启用状态：设备 A 关闭 CH1 不应影响设备 B 的 CH1 数据写入。
+	// 录制期间未命中 deviceId 时，回退到共享 Channels 字段（保持向后兼容）。
+	DeviceChannels map[string][]ChannelConfig `json:"deviceChannels,omitempty"`
 }
 
 // RecordingSession 录制会话运行时状态
@@ -47,9 +52,9 @@ type RecordingSession struct {
 	OutputDir     string          `json:"outputDir"`
 	FilePrefix    string          `json:"filePrefix"`
 	StartTimeMs   int64           `json:"startTimeMs"`
-	SnapshotCount int64           `json:"snapshotCount"` // 已写入的快照数
-	DroppedCount  int64           `json:"droppedCount"`  // 队列满时丢弃的快照数
-	FileCount     int64           `json:"fileCount"`     // 已创建的文件数（含滚动）
+	SnapshotCount int64           `json:"snapshotCount"`         // 已写入的快照数
+	DroppedCount  int64           `json:"droppedCount"`          // 队列满时丢弃的快照数
+	FileCount     int64           `json:"fileCount"`             // 已创建的文件数（含滚动）
 	CurrentFile   string          `json:"currentFile,omitempty"` // 当前正在写入的文件完整路径（文件滚动时更新）
 	LastError     string          `json:"lastError,omitempty"`
 	Status        RecordingStatus `json:"status"`

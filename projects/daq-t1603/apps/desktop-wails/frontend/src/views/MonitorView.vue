@@ -14,6 +14,7 @@ import {
 } from 'naive-ui'
 import {
   Activity,
+  Eraser,
   Layers,
   LineChart,
   Loader2,
@@ -85,6 +86,12 @@ function clearAllChannels() {
       deviceStore.toggleChartSelection(selected.value.id, channel.index)
     }
   }
+}
+
+/** 清除当前波形（#31）：仅清前端缓冲，不影响后端采集与录制 */
+function clearWaveform() {
+  if (!selected.value) return
+  deviceStore.clearHistory(selected.value.id)
 }
 
 async function connectDisconnect() {
@@ -213,6 +220,16 @@ function statusLabel(): string {
                 @click="openChannelSelection"
               >
                 <template #icon><Layers :size="13" /></template>通道选择
+              </NButton>
+              <!-- 清除当前波形（#31）：清空前端缓冲让波形从头开始绘制 -->
+              <NButton
+                size="tiny"
+                secondary
+                :disabled="sampleCount === 0"
+                title="清除当前波形"
+                @click="clearWaveform"
+              >
+                <template #icon><Eraser :size="13" /></template>清除波形
               </NButton>
               <div v-if="showChannelSelector" class="detail__channel-popover">
                 <div class="detail__channel-popover-head">

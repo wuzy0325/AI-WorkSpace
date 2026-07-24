@@ -470,8 +470,14 @@ func (a *App) StartRecordingWithConfig(outputDir string, filePrefix string, rota
 	// 构建 deviceId → deviceName 映射，供 recorder 生成人类可读的文件名 slug
 	// 录制期间新增 deviceId 未在此 map 中时，recorder 回退到 deviceId 作为 slug
 	deviceNames := make(map[string]string, len(profiles))
+	// 构建 deviceId → 该设备通道配置映射，供 recorder 按设备独立判断通道启用状态（REC-006）。
+	// 多设备场景下设备 A 关闭某通道不应影响设备 B 的数据写入，因此不能依赖共享的 mergedChannels。
+	deviceChannels := make(map[string][]core.ChannelConfig, len(profiles))
 	for _, p := range profiles {
 		deviceNames[p.ID] = p.Name
+		if len(p.Channels) > 0 {
+			deviceChannels[p.ID] = p.Channels
+		}
 	}
 
 	cfg := core.RecordingConfig{
@@ -481,6 +487,7 @@ func (a *App) StartRecordingWithConfig(outputDir string, filePrefix string, rota
 		Rotation:       rotation,
 		StopConditions: stopCond,
 		DeviceNames:    deviceNames,
+		DeviceChannels: deviceChannels,
 	}
 	if err := a.recordUC.Start(cfg); err != nil {
 		return err

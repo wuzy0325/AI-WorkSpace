@@ -80,6 +80,8 @@ export const useLogStore = defineStore('log', () => {
   const entries = ref<LogEntry[]>([])
   const minLevel = ref<LogLevel>('info')
   const group = ref<LogGroup | 'all'>('all')
+  /** 搜索关键字（LOG-010）：为空时不参与过滤；非空时在 tag/message/detail/source/deviceId 内匹配 */
+  const searchText = ref('')
 
   /** 日志文件保存状态 */
   const fileSaving = ref(false)
@@ -88,18 +90,29 @@ export const useLogStore = defineStore('log', () => {
   /** 节流状态：key = "deviceId:category:level"，value = { lastId, suppressed } */
   const throttleMap = new Map<string, { lastId: number; suppressed: number; timer: ReturnType<typeof setTimeout> | null }>()
 
-  /** 根据最低级别和分组过滤后的日志 */
-  const filteredEntries = computed(() =>
-    entries.value.filter((e) => {
+  /** 根据最低级别、分组和搜索关键字过滤后的日志（按时间倒序，最新在最前） */
+  const filteredEntries = computed(() => {
+    const kw = searchText.value.trim().toLowerCase()
+    // LOG-001：倒序展示，最新日志在顶部，操作员无需滚动即可看到新事件。
+    // 从数组末尾向前遍历并 push 到新数组，避免修改原 entries 数组（push 顺序仍是正序）。
+    const result: LogEntry[] = []
+    for (let i = entries.value.length - 1; i >= 0; i--) {
+      const e = entries.value[i]!
       if (LEVEL_WEIGHT[e.level] < LEVEL_WEIGHT[minLevel.value]) {
-        return false
+        continue
       }
       if (group.value !== 'all' && e.group !== group.value) {
-        return false
+        continue
       }
-      return true
-    })
-  )
+      // LOG-010 关键字检索：在常用字段内做大小写不敏感子串匹配
+      if (kw) {
+        const hay = `${e.tag}\n${e.message}\n${e.detail ?? ''}\n${e.source}\n${e.deviceId ?? ''}`.toLowerCase()
+        if (!hay.includes(kw)) continue
+      }
+      result.push(e)
+    }
+    return result
+  })
 
   /** 添加一条日志（含节流逻辑） */
   function log(
@@ -222,6 +235,11 @@ export const useLogStore = defineStore('log', () => {
     group.value = nextGroup
   }
 
+  /** 设置搜索关键字（LOG-010），空字符串表示取消搜索 */
+  function setSearchText(text: string): void {
+    searchText.value = text
+  }
+
   /** 开启日志文件保存 */
   async function startFileSaving(outputDir: string): Promise<void> {
     await logBridge.startLogFile(outputDir, 'daq-log')
@@ -257,10 +275,10 @@ export const useLogStore = defineStore('log', () => {
   }
 
   return {
-    entries, minLevel, group, filteredEntries,
+    entries, minLevel, group, searchText, filteredEntries,
     fileSaving, fileOutputDir,
     log, pushEvent, debug, info, warn, error,
-    clear, dispose, setMinLevel, setGroup,
+    clear, dispose, setMinLevel, setGroup, setSearchText,
     startFileSaving, stopFileSaving, pickLogDir, refreshFileState,
   }
 })

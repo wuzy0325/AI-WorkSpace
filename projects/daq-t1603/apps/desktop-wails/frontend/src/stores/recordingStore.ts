@@ -35,7 +35,21 @@ export const useRecordingStore = defineStore('recording', () => {
   }
 
   async function startRecording(dir: string, prefix: string): Promise<void> {
-    await bridge.startRecording(dir, prefix)
+    try {
+      await bridge.startRecording(dir, prefix)
+    } catch (err) {
+      // REC-018：录制启动失败（路径不存在/权限不足/磁盘满等）时，
+      // 把友好错误消息写入 lastError，让状态栏红色显示给操作员，
+      // 而不是让错误冒泡到全局未处理 rejection。
+      const reason = err instanceof Error ? err.message : String(err)
+      const friendly = /no such file|not exist|cannot find|无法找到|不存在/i.test(reason)
+        ? `保存目录不存在：${dir}，请重新选择有效目录`
+        : /permission|denied|权限/i.test(reason)
+          ? `无权限写入目录：${dir}，请检查目录权限`
+          : `启动录制失败：${reason}`
+      lastError.value = friendly
+      throw new Error(friendly)
+    }
     isRecording.value = true
     outputDir.value = dir
     filePrefix.value = prefix

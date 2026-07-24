@@ -3,9 +3,19 @@ package usecase
 import (
 	"fmt"
 	"shared.local/device-sdk/go/pkg/slog"
+	"unicode/utf8"
 
 	"daq-t1603/core"
 	"daq-t1603/ports"
+)
+
+// 名称长度上限（CONN-001/CFG-014 后端兜底校验）。
+// 前端通过 maxlength=32 限制输入，但若通过直接调 backend API 或导入旧配置文件
+// 传入超长名称，前端约束可被绕过，因此 usecase 层兜底校验。
+// UTF-8 字符计数（不是字节数），中文一个字算 1。
+const (
+	maxProfileNameLen = 32
+	maxChannelNameLen = 32
 )
 
 type DeviceUsecase struct {
@@ -34,7 +44,33 @@ func (uc *DeviceUsecase) GetProfiles() []core.TemperatureProfile {
 	return profiles
 }
 
+// validateProfileName 长度校验（CONN-001/CFG-014 后端兜底）。
+// 返回 error 让调用方决定如何反馈给用户。
+func validateProfileName(name string) error {
+	if n := utf8.RuneCountInString(name); n > maxProfileNameLen {
+		return fmt.Errorf("设备名称长度 %d 超过上限 %d", n, maxProfileNameLen)
+	}
+	return nil
+}
+
+// validateChannelNames 校验所有通道名称长度（CFG-014 后端兜底）。
+func validateChannelNames(channels []core.ChannelConfig) error {
+	for i, ch := range channels {
+		if n := utf8.RuneCountInString(ch.Name); n > maxChannelNameLen {
+			return fmt.Errorf("通道 %d 名称长度 %d 超过上限 %d", i+1, n, maxChannelNameLen)
+		}
+	}
+	return nil
+}
+
 func (uc *DeviceUsecase) UpsertProfile(profile core.TemperatureProfile) error {
+	// 后端兜底校验：前端 maxlength 已限制输入，此处防止绕过 UI 的非法数据落盘
+	if err := validateProfileName(profile.Name); err != nil {
+		return err
+	}
+	if err := validateChannelNames(profile.Channels); err != nil {
+		return err
+	}
 	return uc.config.SaveProfile(profile)
 }
 
