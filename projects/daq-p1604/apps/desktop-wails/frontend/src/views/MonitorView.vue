@@ -139,7 +139,7 @@ function statusLabel(): string {
         </div>
         <div class="detail__empty-tip">
           <Layers :size="14" class="detail__empty-tip-icon" />
-          <span>18 通道并行</span>
+          <span>多通道并行</span>
         </div>
         <div class="detail__empty-tip">
           <LineChart :size="14" class="detail__empty-tip-icon" />
