@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { deviceApi } from '@api/deviceApi'
 import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig, ChannelSensorType } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
@@ -12,7 +13,11 @@ import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
-import { AlertCircle } from '@lucide/vue'
+// 图标统一使用 lucide-vue，与 GlobalSettingsModal 风格基线对齐：
+// - 闭_close 按钮统一 X，新 device/编辑器头部用 Plus/Pencil/Lock 表达模式
+// - 扫描按钮用 RotateCcw，可借助 UiButton :loading 实现原生 spinner
+// - 折叠箭头用 ChevronDown 配合 CSS 旋转
+import { AlertCircle, ChevronDown, Lock, Pencil, Plus, RotateCcw, X } from '@lucide/vue'
 import DeviceCard from '@components/device/DeviceCard.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -20,6 +25,7 @@ const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
 
 const deviceStore = useDeviceStore()
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 
 const scanning = ref(false)
 const discovered = ref<ScanResult[]>([])
@@ -89,7 +95,7 @@ const DISCOVERED_TYPE_ICON: Record<string, string> = {
 
 const WTN_PXI_CHANNEL_NAMES = [
   '球罐压力', '球罐总压', '球罐静压',
-  '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4', '球罐温度5',
+  '球罐稳定时间', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4',
 ] as const
 
 const deviceTypeOptions = computed(() => [
@@ -104,7 +110,7 @@ const deviceTypeOptions = computed(() => [
 
 const transportOptions = computed(() => [
   { value: 'tcp', label: 'TCP/IP' },
-  { value: 'serial', label: '串口 RS232' },
+  { value: 'serial', label: i18n.t.dev_serialRs232 },
 ])
 
 const pressureUnitOptions = computed(() =>
@@ -260,8 +266,11 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       // DAQ-P-1603：16 通道通用 AI，每通道可接入压力或温度传感器。
       // 默认全部为压力通道（sensorType='pressure'），用户可在通道配置中切为温度。
       // 不含大气通道（用户决策无大气数据）。
+      // 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（calibrationEnabled=false），
+      // 前两路通常接入不参与校零的传感器（如总压/静压参考通道），与 DAQ-P-1604 区分。
+      // 与后端 default_profiles.go NewDefaultProfile 的默认规则保持一致。
       return Array.from({ length: 16 }, (_, i) => ({
-        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType,
+        index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 3, rangeMin: -5000, rangeMax: 5000, sensorType: 'pressure' as ChannelSensorType, calibrationEnabled: i >= 2,
       }))
     case 'DAQ-P-1604Pre':
     case 'DSA3217':
@@ -269,8 +278,9 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
         index: i, name: `CH${i + 1}`, enabled: true, unit: 'Pa', precision: 2, rangeMin: -5000, rangeMax: 5000,
       }))
     case 'WTN_PXI': {
-      const names = ['球罐压力', '球罐总压', '球罐静压', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4', '球罐温度5']
-      const units = ['Pa', 'Pa', 'Pa', 'degC', 'degC', 'degC', 'degC', 'degC']
+      // 通道 3 为球罐稳定时间（秒），其余 4 路为球罐温度，与后端 defaultWTNPXIChannels 对齐。
+      const names = ['球罐压力', '球罐总压', '球罐静压', '球罐稳定时间', '球罐温度1', '球罐温度2', '球罐温度3', '球罐温度4']
+      const units = ['Pa', 'Pa', 'Pa', 's', 'degC', 'degC', 'degC', 'degC']
       return Array.from({ length: 8 }, (_, i) => ({
         index: i, name: names[i], enabled: true, unit: units[i], precision: 2,
       }))
@@ -303,9 +313,11 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
   if (type === 'DAQ-P-1603') {
     // DAQ-P-1603：DLL 自管 TCP 端口，profile.Port 不使用；
     // IP 留空让用户在"基本信息"面板手动输入（参考代码无扫描 API）。
+    // 默认采样率 100Hz（用户采样率=每秒数据条目数）。
+    // 底层硬件采样率固定 1000Hz，100Hz 意味着每 10 个原始点取平均输出 1 条。
     address = ''
     port = 0
-    samplingRate = 500
+    samplingRate = 100
   }
   return {
     id, name: '', type, transport: 'tcp', address, port,
@@ -333,6 +345,19 @@ const isDirty = computed(() => snapshotDraft(draft.value) !== initialDraftSnapsh
 const isReadOnly = computed(() => editorMode.value === 'edit' && deviceStore.acquiringFor(draft.value.id))
 const statusForDraft = computed(() => deviceStore.statusFor(draft.value.id))
 
+// IP 地址字段的网格列宽：根据是否显示"传输方式"与"端口"字段动态计算，
+// 让 IP 输入框填满剩余空间。
+// 修复点：原先 DAQ-P-1603（无传输方式、无端口）使用未定义的 col-8 类，
+// grid item 默认只占 1 列导致 IP 输入框极小。
+// 12 列网格分配：传输方式 4 列 + 端口 3 列 + IP 占剩余列数。
+const ipFieldColClass = computed(() => {
+  const type = draft.value.type
+  const showTransport = isTcpType(type) && supportsTransportSwitch(type)
+  const showPort = isPortRequired(type)
+  const ipCols = 12 - (showTransport ? 4 : 0) - (showPort ? 3 : 0)
+  return `col-${ipCols}`
+})
+
 interface DraftFieldErrors {
   name?: string
   address?: string
@@ -345,22 +370,30 @@ interface DraftFieldErrors {
 const fieldErrors = computed<DraftFieldErrors>(() => {
   const errors: DraftFieldErrors = {}
   const p = draft.value
-  if (!p.name.trim()) errors.name = '设备名称不能为空'
+  if (!p.name.trim()) errors.name = i18n.t.dev_deviceNameEmpty
   else {
     const hasDup = deviceStore.profiles.some((e) => e.id !== p.id && e.name.trim() === p.name.trim())
-    if (hasDup) errors.name = '设备名称已存在'
+    if (hasDup) errors.name = i18n.t.dev_deviceNameExists
   }
   if (isTcpType(p.type)) {
     if (p.transport === 'serial') {
-      if (!p.serialPort?.trim()) errors.serialPort = '串口号不能为空'
-      if (!Number.isFinite(p.baudRate ?? 0) || (p.baudRate ?? 0) <= 0) errors.baudRate = '波特率无效'
+      if (!p.serialPort?.trim()) errors.serialPort = i18n.t.dev_serialPortEmpty
+      if (!Number.isFinite(p.baudRate ?? 0) || (p.baudRate ?? 0) <= 0) errors.baudRate = i18n.t.dev_baudRateInvalid
     } else {
-      if (!p.address?.trim()) errors.address = 'IP 地址不能为空'
+      if (!p.address?.trim()) errors.address = i18n.t.dev_ipAddressEmpty
       // DAQ-P-1603 由 DLL 自管端口，profile.Port 不使用，跳过端口校验
-      if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = '端口号无效'
+      if (isPortRequired(p.type) && (!Number.isFinite(p.port ?? 0) || (p.port ?? 0) <= 0)) errors.port = i18n.t.dev_portInvalid
     }
   }
-  if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) errors.samplingRate = '采样率无效'
+  // DAQ-P-1603 采样率范围 [1, 500] Hz（用户采样率=每秒数据条目数）。
+  // 底层硬件采样率固定 1000Hz，低频时通过多点平均实现。
+  if (p.type === 'DAQ-P-1603') {
+    if (!Number.isFinite(p.samplingRate) || p.samplingRate < 1 || p.samplingRate > 500) {
+      errors.samplingRate = i18n.t.dev_samplingRateInvalid
+    }
+  } else if (!Number.isFinite(p.samplingRate) || p.samplingRate <= 0) {
+    errors.samplingRate = i18n.t.dev_samplingRateInvalid
+  }
   return errors
 })
 
@@ -560,7 +593,7 @@ async function saveDraft() {
       // 走 store.connect 以触发乐观更新，UI 可立即显示"连接中"
       try { await deviceStore.connect(normalized.id) } catch { /* 连接失败不阻塞保存 */ }
     }
-    feedback.pushToast(`设备 "${normalized.name}" 已保存`, 'success')
+    feedback.pushToast(i18n.t.dev_deviceSaved.replace('{name}', normalized.name), 'success')
     initialDraftSnapshot.value = snapshotDraft(normalized)
     editorOpen.value = false
   } catch (err) {
@@ -572,7 +605,7 @@ async function saveDraft() {
 
 async function tryCloseEditor() {
   if (!isDirty.value) { editorOpen.value = false; return }
-  const ok = await feedback.confirm('当前有未保存变更，确认关闭吗？')
+  const ok = await feedback.confirm(i18n.t.dev_unsavedChangesCloseConfirm)
   if (!ok) return
   editorOpen.value = false
 }
@@ -675,12 +708,12 @@ async function runScan() {
   try {
     const results = await deviceApi.scanDevices()
     discovered.value = results
-    if (results.length) feedback.pushToast(`发现 ${results.length} 个设备`, 'info')
-    else feedback.pushToast('未发现新设备', 'info')
+    if (results.length) feedback.pushToast(i18n.t.dev_devicesDiscovered.replace('{count}', String(results.length)), 'info')
+    else feedback.pushToast(i18n.t.dev_noNewDevices, 'info')
   } catch (err) {
     discovered.value = []
     scanError.value = err instanceof Error ? err.message : String(err)
-    feedback.pushToast(`扫描失败: ${scanError.value}`, 'error')
+    feedback.pushToast(i18n.t.dev_scanFailedMsg.replace('{msg}', scanError.value), 'error')
   } finally {
     scanning.value = false
   }
@@ -715,7 +748,7 @@ function matchedProfileForDiscovered(d: ScanResult): DeviceProfile | null {
 }
 
 function discoveryActionLabel(d: ScanResult): string {
-  return matchedProfileForDiscovered(d) ? '编辑' : '添加'
+  return matchedProfileForDiscovered(d) ? i18n.t.dev_edit : i18n.t.dev_add
 }
 
 function handleDiscoveredDeviceAction(d: ScanResult) {
@@ -734,7 +767,7 @@ async function addAllDiscoveredDevices() {
   if (addingAllDiscovered.value) return
   bulkError.value = null
   const addable = discovered.value.filter((d) => !matchedProfileForDiscovered(d))
-  if (!addable.length) { feedback.pushToast('没有可添加的设备', 'info'); return }
+  if (!addable.length) { feedback.pushToast(i18n.t.dev_noDevicesToAdd, 'info'); return }
   const existingNames = new Set(deviceStore.profiles.map((p) => p.name.trim()).filter((n) => n))
   addingAllDiscovered.value = true
   try {
@@ -762,7 +795,8 @@ async function addAllDiscoveredDevices() {
       }
     }
     await deviceStore.refreshProfiles()
-    feedback.pushToast(`已添加 ${addedProfiles.length} 个设备${autoConnectAfterBulkAdd.value ? '并连接' : ''}`, 'success')
+    const toastKey = autoConnectAfterBulkAdd.value ? 'dev_devicesAddedAndConnected' : 'dev_devicesAdded'
+    feedback.pushToast(i18n.t[toastKey].replace('{count}', String(addedProfiles.length)), 'success')
     clearDiscovered()
   } catch (e) {
     bulkError.value = e instanceof Error ? e.message : String(e)
@@ -792,14 +826,14 @@ async function toggleAcquisition(p: DeviceProfile) {
 }
 
 async function removeProfile(p: DeviceProfile) {
-  const ok = await feedback.confirm('确认删除此设备配置？')
+  const ok = await feedback.confirm(i18n.t.dev_confirmDeleteDevice)
   if (!ok) return
   try {
     await deviceApi.disconnect(p.id).catch(() => {})
     await deviceApi.stopAcquisition(p.id).catch(() => {})
     await deviceApi.deleteProfile(p.id)
     await deviceStore.refreshProfiles()
-    feedback.pushToast('设备配置已删除', 'info')
+    feedback.pushToast(i18n.t.dev_deviceDeleted, 'info')
   } catch (e) { feedback.pushToast(String(e), 'error') }
 }
 
@@ -809,7 +843,7 @@ async function bulkConnect() {
     try { await deviceStore.connect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
-  feedback.pushToast('批量连接完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkConnectDone, 'info')
 }
 
 async function bulkDisconnect() {
@@ -821,11 +855,11 @@ async function bulkDisconnect() {
     try { await deviceStore.disconnect(id) } catch { /* 跳过 */ }
   }
   clearSelection()
-  feedback.pushToast('批量断开完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkDisconnectDone, 'info')
 }
 
 async function bulkDelete() {
-  const ok = await feedback.confirm(`确认删除选中的 ${selectedIds.value.length} 个设备？`)
+  const ok = await feedback.confirm(i18n.t.dev_confirmBulkDelete.replace('{count}', String(selectedIds.value.length)))
   if (!ok) return
   for (const id of selectedIds.value) {
     try {
@@ -842,7 +876,7 @@ async function bulkDelete() {
     console.warn('[DeviceManagementDrawer] refreshProfiles after bulk delete failed:', e)
   }
   clearSelection()
-  feedback.pushToast('批量删除完成', 'info')
+  feedback.pushToast(i18n.t.dev_bulkDeleteDone, 'info')
 }
 
 function close() {
@@ -858,21 +892,21 @@ function statusClass(p: DeviceProfile) {
 }
 
 function statusLabel(p: DeviceProfile) {
-  if (deviceStore.acquiringFor(p.id)) return '采集中'
+  if (deviceStore.acquiringFor(p.id)) return i18n.t.acquiring
   const s = deviceStore.statusFor(p.id)
-  if (s === 'Connected') return '已连接'
-  if (s === 'Connecting') return '连接中'
-  if (s === 'Error') return '错误'
-  return '已断开'
+  if (s === 'Connected') return i18n.t.connectedState
+  if (s === 'Connecting') return i18n.t.connectingState
+  if (s === 'Error') return i18n.t.error
+  return i18n.t.disconnectedState
 }
 
 function connectLabel(p: DeviceProfile) {
   const acquiring = deviceStore.acquiringFor(p.id)
   const st = deviceStore.statusFor(p.id)
   // 连接中：明确显示"连接中..."并配合按钮 disabled 防止重复点击
-  if (st === 'Connecting') return '连接中...'
-  if (acquiring || st === 'Connected') return '断开'
-  return '连接'
+  if (st === 'Connecting') return i18n.t.dev_connectingDots
+  if (acquiring || st === 'Connected') return i18n.t.disconnectBtn
+  return i18n.t.connectBtn
 }
 
 function channelLabel(c: ChannelConfig): string {
@@ -931,51 +965,56 @@ const scanError = ref<string | null>(null)
       <div class="drawer-shell">
         <header class="drawer-header">
           <div>
-            <h2 class="drawer-title">设备管理</h2>
-            <p class="drawer-subtitle">管理设备配置、扫描和连接</p>
+            <h2 class="drawer-title">{{ i18n.t.dev_deviceManagement }}</h2>
+            <p class="drawer-subtitle">{{ i18n.t.dev_deviceManagementSubtitle }}</p>
           </div>
-          <UiButton quaternary size="md" @click="close">✕</UiButton>
+          <UiButton quaternary size="md" @click="close">
+            <template #icon><X :size="14" /></template>
+          </UiButton>
         </header>
 
         <div class="drawer-toolbar">
           <UiButton variant="primary" size="md" @click="openCreate()">
-            <span class="btn-icon">+</span> 新建设备
+            <template #icon><Plus :size="14" /></template>
+            {{ i18n.t.dev_newDevice }}
           </UiButton>
-          <UiButton secondary size="md" :disabled="scanning" @click="runScan">
-            <span class="btn-icon" :class="{ spin: scanning }">⟳</span>
-            {{ scanning ? '扫描中...' : '扫描' }}
+          <UiButton secondary size="md" :loading="scanning" :disabled="scanning" @click="runScan">
+            <template #icon><RotateCcw :size="14" /></template>
+            {{ scanning ? i18n.t.dev_scanning : i18n.t.dev_scan }}
           </UiButton>
           <div class="drawer-total">
-            设备: {{ deviceStore.profiles.length }}
+            {{ i18n.t.totalDevices }}: {{ deviceStore.profiles.length }}
           </div>
         </div>
 
         <!-- 扫描错误提示 -->
         <div v-if="scanError" class="drawer-banner drawer-banner--error">
           <AlertCircle :size="14" />
-          扫描失败: {{ scanError }}
+          {{ i18n.t.dev_scanFailed }}: {{ scanError }}
         </div>
 
         <!-- 发现的设备区域：可折叠，减少认知负荷 -->
         <div v-if="discovered.length" class="drawer-discovered">
           <div class="drawer-discovered-head" @click="showDiscovered = !showDiscovered" style="cursor: pointer;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: var(--space-2);">
               <span class="drawer-discovered-dot" aria-hidden="true"></span>
-              <span class="drawer-discovered-label">发现的设备</span>
+              <span class="drawer-discovered-label">{{ i18n.t.dev_discoveredDevices }}</span>
               <span class="discovered-count">{{ discovered.length }}</span>
             </div>
             <div class="drawer-discovered-actions">
               <UiButton variant="primary" size="sm" :disabled="addingAllDiscovered" @click.stop="addAllDiscoveredDevices">
                 <span v-if="addingAllDiscovered" class="inline-spinner" aria-hidden="true"></span>
-                {{ addingAllDiscovered ? '添加中...' : '全部添加' }}
+                {{ addingAllDiscovered ? i18n.t.dev_adding : i18n.t.dev_addAll }}
               </UiButton>
-              <UiButton quaternary size="sm" @click.stop="clearDiscovered">✕</UiButton>
-              <span class="discovered-toggle" :class="{ 'discovered-toggle--open': showDiscovered }">▼</span>
+              <UiButton quaternary size="sm" @click.stop="clearDiscovered">
+                <template #icon><X :size="14" /></template>
+              </UiButton>
+              <ChevronDown :size="14" class="discovered-toggle" :class="{ 'discovered-toggle--open': showDiscovered }" />
             </div>
           </div>
           <!-- 批量添加自动连接复选框 -->
           <div class="drawer-discovered-extra">
-            <UiCheckbox v-model:checked="autoConnectAfterBulkAdd">添加后自动连接</UiCheckbox>
+            <UiCheckbox v-model:checked="autoConnectAfterBulkAdd">{{ i18n.t.dev_autoConnectAfterAdd }}</UiCheckbox>
           </div>
           <!-- 批量添加错误提示 -->
           <div v-if="bulkError" class="drawer-discovered-error">
@@ -997,7 +1036,7 @@ const scanError = ref<string | null>(null)
                     <span v-for="entry in discoveryMetadataEntries(d)" :key="entry.label" class="discovered-meta-badge">{{ entry.label }}: {{ entry.value }}</span>
                   </div>
                   <div v-if="discoveredProfileMap.get(d)" class="discovered-matched">
-                    已匹配: {{ discoveredProfileMap.get(d)?.name }}
+                    {{ i18n.t.dev_matched }}: {{ discoveredProfileMap.get(d)?.name }}
                   </div>
                 </div>
                 <UiButton size="sm" @click="handleDiscoveredDeviceAction(d)">
@@ -1011,12 +1050,12 @@ const scanError = ref<string | null>(null)
         <!-- 设备列表：按连接状态分组（已连接 / 连接中 / 等待连接 + 错误） -->
         <main class="drawer-list">
           <div v-if="!deviceStore.profiles.length" class="drawer-empty">
-            暂无设备配置。点击"新建设备"创建。
+            {{ i18n.t.dev_noDeviceConfigHint }}
           </div>
 
           <!-- 已连接组 -->
           <template v-if="connectedProfiles.length">
-            <div class="device-group-label">已连接 · {{ connectedProfiles.length }}</div>
+            <div class="device-group-label">{{ i18n.t.connectedState }} · {{ connectedProfiles.length }}</div>
             <DeviceCard
               v-for="p in connectedProfiles"
               :key="p.id"
@@ -1038,7 +1077,7 @@ const scanError = ref<string | null>(null)
           <!-- 连接中组 -->
           <template v-if="connectingProfiles.length">
             <div class="device-group-label" :class="connectedProfiles.length ? 'device-group-label--spaced' : ''">
-              连接中 · {{ connectingProfiles.length }}
+              {{ i18n.t.connectingState }} · {{ connectingProfiles.length }}
             </div>
             <DeviceCard
               v-for="p in connectingProfiles"
@@ -1062,7 +1101,7 @@ const scanError = ref<string | null>(null)
           <template v-if="pendingProfiles.length">
             <div class="device-group-label"
               :class="(connectedProfiles.length || connectingProfiles.length) ? 'device-group-label--spaced' : ''">
-              等待连接 · {{ pendingProfiles.length }}
+              {{ i18n.t.dev_pendingConnection }} · {{ pendingProfiles.length }}
             </div>
             <DeviceCard
               v-for="p in pendingProfiles"
@@ -1085,12 +1124,12 @@ const scanError = ref<string | null>(null)
 
         <!-- 批量操作栏 -->
         <div v-if="selectedIds.length" class="drawer-bulk">
-          <span>已选 <strong>{{ selectedCount }}</strong></span>
+          <span>{{ i18n.t.selectedCount }} <strong>{{ selectedCount }}</strong></span>
           <div class="drawer-bulk-actions">
-            <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">批量连接</UiButton>
-            <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">批量断开</UiButton>
-            <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">批量删除</UiButton>
-            <UiButton quaternary size="sm" @click="clearSelection">清除</UiButton>
+            <UiButton variant="primary" size="sm" :disabled="!selectedCount" @click="bulkConnect">{{ i18n.t.dev_bulkConnect }}</UiButton>
+            <UiButton secondary size="sm" :disabled="!selectedCount" @click="bulkDisconnect">{{ i18n.t.dev_bulkDisconnect }}</UiButton>
+            <UiButton variant="danger" size="sm" :disabled="!selectedCount" @click="bulkDelete">{{ i18n.t.dev_bulkDelete }}</UiButton>
+            <UiButton quaternary size="sm" @click="clearSelection">{{ i18n.t.dev_clear }}</UiButton>
           </div>
         </div>
       </div>
@@ -1101,40 +1140,43 @@ const scanError = ref<string | null>(null)
           <header class="editor-header">
             <div class="editor-header-left">
               <div class="editor-header-icon">
-                <span>{{ isReadOnly ? '🔒' : editorMode === 'create' ? '+' : '✎' }}</span>
+                <!-- 编辑器头部图标随模式切换：只读(锁) / 新建(+) / 编辑(笔)，统一用 lucide 图标避免 emoji 渲染差异 -->
+                <Lock v-if="isReadOnly" :size="16" />
+                <Plus v-else-if="editorMode === 'create'" :size="16" />
+                <Pencil v-else :size="16" />
               </div>
               <div>
-                <h3 class="editor-title">{{ editorMode === 'create' ? '新建设备' : isReadOnly ? '查看设备（只读）' : '编辑设备' }}</h3>
+                <h3 class="editor-title">{{ editorMode === 'create' ? i18n.t.dev_newDevice : isReadOnly ? i18n.t.dev_viewDeviceReadOnly : i18n.t.dev_editDevice }}</h3>
                 <div class="editor-status-row">
-                  <span class="editor-status-dot" :class="statusClass({ id: draft.id, name: '', type: 'SIMULATED', samplingRate: 20, channels: [] })" />
-                  <span class="editor-status-text">{{ statusLabel({ id: draft.id, name: '', type: 'SIMULATED', samplingRate: 20, channels: [] }) }}</span>
+                  <!-- statusClass/statusLabel 只用到 id 字段，直接传 draft（DeviceProfile）即可，
+                       无需构造假 profile；draft 是真实编辑对象，语义更清晰 -->
+                  <span class="editor-status-dot" :class="statusClass(draft)" />
+                  <span class="editor-status-text">{{ statusLabel(draft) }}</span>
                 </div>
               </div>
             </div>
-            <UiButton quaternary size="md" @click="tryCloseEditor">✕</UiButton>
+            <UiButton quaternary size="md" @click="tryCloseEditor">
+              <template #icon><X :size="14" /></template>
+            </UiButton>
           </header>
 
-          <!-- 标签页切换 -->
+          <!-- 标签页切换：复用全局 .settings-tab 类（与 GlobalSettingsModal 同款分段控制器） -->
           <div class="editor-tabs">
-            <div class="editor-tabs-inner">
-              <UiButton
-                quaternary
-                size="md"
-                class="editor-tab"
-                :class="{ active: editorTab === 'basic' }"
+            <div class="settings-tabs">
+              <button
+                class="settings-tab"
+                :class="{ 'settings-tab--active': editorTab === 'basic' }"
                 @click="editorTab = 'basic'"
               >
-                基本信息
-              </UiButton>
-              <UiButton
-                quaternary
-                size="md"
-                class="editor-tab"
-                :class="{ active: editorTab === 'channels' }"
+                {{ i18n.t.dev_basicInfo }}
+              </button>
+              <button
+                class="settings-tab"
+                :class="{ 'settings-tab--active': editorTab === 'channels' }"
                 @click="editorTab = 'channels'"
               >
-                通道配置
-              </UiButton>
+                {{ i18n.t.dev_channelConfig }}
+              </button>
             </div>
           </div>
 
@@ -1147,7 +1189,7 @@ const scanError = ref<string | null>(null)
                   <line x1="12" y1="8" x2="12" y2="12"/>
                   <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                <span>保存失败: {{ saveError }}</span>
+                <span>{{ i18n.t.dev_saveFailed }}: {{ saveError }}</span>
               </div>
             </Transition>
 
@@ -1158,7 +1200,7 @@ const scanError = ref<string | null>(null)
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                <span>设备正在采集中，无法修改配置</span>
+                <span>{{ i18n.t.dev_deviceAcquiringReadOnly }}</span>
               </div>
             </Transition>
 
@@ -1166,17 +1208,17 @@ const scanError = ref<string | null>(null)
             <div v-if="editorTab === 'basic'" class="editor-sections">
               <section class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">设备识别 · Identity</h4>
-                  <p class="editor-section-desc">基础型号与命名空间</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_deviceIdentity }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_deviceIdentityDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div class="editor-field col-6">
-                    <label class="editor-label">设备名称 *</label>
-                    <UiInput v-model="draft.name" :disabled="isReadOnly" placeholder="输入设备名称" />
+                    <label class="editor-label">{{ i18n.t.dev_deviceName }} *</label>
+                    <UiInput v-model="draft.name" :disabled="isReadOnly" :placeholder="i18n.t.dev_enterDeviceName" />
                     <div v-if="fieldErrors.name" class="editor-field-error">● {{ fieldErrors.name }}</div>
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">设备型号</label>
+                    <label class="editor-label">{{ i18n.t.dev_deviceModel }}</label>
                     <UiSelect
                       :model-value="draft.type"
                       :options="deviceTypeOptions"
@@ -1185,12 +1227,12 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div v-if="draft.type !== 'DSA3217'" class="editor-field col-2">
-                    <label class="editor-label">采样率 (Hz)</label>
+                    <label class="editor-label">{{ i18n.t.dev_samplingRateHz }}</label>
                     <UiInputNumber v-model="draft.samplingRate" class="w-full" :disabled="isReadOnly" />
                     <div v-if="fieldErrors.samplingRate" class="editor-field-error">● {{ fieldErrors.samplingRate }}</div>
                   </div>
                   <div class="editor-field col-12">
-                    <label class="editor-label">设备单位 (全局)</label>
+                    <label class="editor-label">{{ i18n.t.dev_deviceUnitGlobal }}</label>
                     <div class="editor-unit-row">
                       <div class="editor-unit-select">
                         <UiSelect
@@ -1201,10 +1243,10 @@ const scanError = ref<string | null>(null)
                           @update:model-value="deviceUnit = String($event)"
                         />
                         <div v-else class="editor-input editor-input-readonly">
-                          {{ isWtnPxiType(draft.type) ? 'WTN_PXI 固定配置' : 'DAQ-T-1603 固定单位: ℃' }}
+                          {{ isWtnPxiType(draft.type) ? i18n.t.dev_wtnPxiFixedConfig : i18n.t.dev_daqT1603FixedUnit }}
                         </div>
                       </div>
-                      <p class="editor-unit-hint">设置 CH1~CH16 的全局工程单位</p>
+                      <p class="editor-unit-hint">{{ i18n.t.dev_deviceUnitHint }}</p>
                     </div>
                   </div>
                 </div>
@@ -1213,15 +1255,19 @@ const scanError = ref<string | null>(null)
               <!-- 大气数据开关（SIMULATED / DAQ-P-1604） -->
               <section v-if="draft.type === 'DAQ-P-1604' || draft.type === 'SIMULATED'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">大气数据</h4>
-                  <p class="editor-section-desc">控制是否采集大气压 (CH17) 与大气温度 (CH18)</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_atmosphericData }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_atmosphericDataDesc }}</p>
                 </div>
                 <div class="editor-atmo-row">
-                  <div class="editor-atmo-toggle" @click="!isReadOnly && toggleAtmosphericData(!enableAtmospheric)">
-                    <div class="editor-toggle-track" :class="{ on: enableAtmospheric }">
-                      <span class="editor-toggle-thumb" :class="{ on: enableAtmospheric }" />
-                    </div>
-                    <span class="editor-atmo-label">{{ enableAtmospheric ? '包含大气压与大气温度数据' : '仅采集 16 路压力数据' }}</span>
+                  <!-- 大气数据开关：用 UiToggle 替代自实现 track/thumb，
+                       toggleAtmosphericData 在 update:modelValue 时同步通道 16/17 的 enabled 与 unit -->
+                  <div class="editor-atmo-toggle">
+                    <UiToggle
+                      :model-value="enableAtmospheric"
+                      :disabled="isReadOnly"
+                      @update:model-value="toggleAtmosphericData"
+                    />
+                    <span class="editor-atmo-label">{{ enableAtmospheric ? i18n.t.dev_atmosphericEnabled : i18n.t.dev_atmosphericDisabled }}</span>
                   </div>
                 </div>
               </section>
@@ -1229,8 +1275,8 @@ const scanError = ref<string | null>(null)
               <!-- DAQ-P-1604 硬件时间戳开关 -->
               <section v-if="draft.type === 'DAQ-P-1604'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">硬件时间戳</h4>
-                  <p class="editor-section-desc">开启后保存的数据时间戳取自设备帧内时间，关闭时使用主机接收时间</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_hardwareTimestamp }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_hardwareTimestampDesc }}</p>
                 </div>
                 <div class="editor-atmo-row">
                   <div class="editor-atmo-toggle">
@@ -1240,7 +1286,7 @@ const scanError = ref<string | null>(null)
                       @update:model-value="draft.daqP1604UseDeviceTimestamp = $event"
                     />
                     <span class="editor-atmo-label">
-                      {{ draft.daqP1604UseDeviceTimestamp ? '使用设备帧内硬件时间戳' : '使用主机接收时间戳' }}
+                      {{ draft.daqP1604UseDeviceTimestamp ? i18n.t.dev_useDeviceTimestamp : i18n.t.dev_useHostTimestamp }}
                     </span>
                   </div>
                 </div>
@@ -1249,12 +1295,12 @@ const scanError = ref<string | null>(null)
               <!-- DSA3217 扫描参数（在已连接设备的基本信息中显示） -->
               <section v-if="draft.type === 'DSA3217' && statusForDraft === 'Connected'" class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">DSA3217 扫描参数</h4>
-                  <p class="editor-section-desc">平均值、周期与数据帧率（保存设备配置时自动写入）</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_dsa3217ScanParams }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_dsa3217ScanParamsDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div class="editor-field col-4">
-                    <label class="editor-label">AVG（平均值 1~240）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Avg }}</label>
                     <UiInputNumber
                       v-model="dsa3217Avg"
                       :min="1" :max="240"
@@ -1263,7 +1309,7 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">PERIOD（周期 73~65535 μs）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Period }}</label>
                     <UiInputNumber
                       v-model="dsa3217Period"
                       :min="73" :max="65535"
@@ -1272,7 +1318,7 @@ const scanError = ref<string | null>(null)
                     />
                   </div>
                   <div class="editor-field col-4">
-                    <label class="editor-label">FPS（数据帧率 Hz）</label>
+                    <label class="editor-label">{{ i18n.t.dev_dsa3217Fps }}</label>
                     <div class="editor-input editor-input-readonly">
                       {{ dsa3217Fps }}
                     </div>
@@ -1283,12 +1329,12 @@ const scanError = ref<string | null>(null)
               <!-- 通信协议 -->
               <section class="editor-section">
                 <div class="editor-section-head">
-                  <h4 class="editor-section-title">通信协议 · Transport</h4>
-                  <p class="editor-section-desc">TCP/IP 网络或 RS232 串口链路</p>
+                  <h4 class="editor-section-title">{{ i18n.t.dev_transportProtocol }}</h4>
+                  <p class="editor-section-desc">{{ i18n.t.dev_transportProtocolDesc }}</p>
                 </div>
                 <div class="editor-grid">
                   <div v-if="isTcpType(draft.type) && supportsTransportSwitch(draft.type)" class="editor-field col-4">
-                    <label class="editor-label">传输方式</label>
+                    <label class="editor-label">{{ i18n.t.dev_transportMode }}</label>
                     <UiSelect
                       :model-value="draft.transport ?? 'tcp'"
                       :options="transportOptions"
@@ -1298,13 +1344,13 @@ const scanError = ref<string | null>(null)
                   </div>
 
                   <template v-if="isTcpType(draft.type) && draft.transport === 'tcp'">
-                    <div :class="['editor-field', isPortRequired(draft.type) ? 'col-5' : 'col-8']">
-                      <label class="editor-label">IP 地址 *</label>
+                    <div :class="['editor-field', ipFieldColClass]">
+                      <label class="editor-label">{{ i18n.t.dev_ipAddress }} *</label>
                       <UiInput v-model="draft.address" :disabled="isReadOnly" placeholder="192.168.1.100" />
                       <div v-if="fieldErrors.address" class="editor-field-error">● {{ fieldErrors.address }}</div>
                     </div>
                     <div v-if="isPortRequired(draft.type)" class="editor-field col-3">
-                      <label class="editor-label">端口 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_port }} *</label>
                       <UiInputNumber v-model="draft.port" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
                     </div>
@@ -1312,12 +1358,12 @@ const scanError = ref<string | null>(null)
 
                   <template v-if="isTcpType(draft.type) && draft.transport === 'serial'">
                     <div class="editor-field col-7">
-                      <label class="editor-label">串口号 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_serialPort }} *</label>
                       <UiInput v-model="draft.serialPort" :disabled="isReadOnly" placeholder="COM1" />
                       <div v-if="fieldErrors.serialPort" class="editor-field-error">● {{ fieldErrors.serialPort }}</div>
                     </div>
                     <div class="editor-field col-5">
-                      <label class="editor-label">波特率 *</label>
+                      <label class="editor-label">{{ i18n.t.dev_baudRate }} *</label>
                       <UiInputNumber v-model="draft.baudRate" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.baudRate" class="editor-field-error">● {{ fieldErrors.baudRate }}</div>
                     </div>
@@ -1326,7 +1372,7 @@ const scanError = ref<string | null>(null)
                   <div class="editor-field col-12">
                     <div class="editor-autoconnect-row">
                       <UiCheckbox v-model:checked="draft.autoConnect" :disabled="isReadOnly">
-                        自动连接（应用启动时及保存后自动连接）
+                        {{ i18n.t.dev_autoConnectHint }}
                       </UiCheckbox>
                     </div>
                   </div>
@@ -1352,10 +1398,10 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th>热电偶类型</th>
-                        <th class="w-20 text-right">单位</th>
+                        <th class="w-12">#</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th class="w-24">{{ i18n.t.dev_thermocoupleType }}</th>
+                        <th class="w-16 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1388,14 +1434,14 @@ const scanError = ref<string | null>(null)
 
               <!-- WTN_PXI 固定通道 -->
               <div v-else-if="draft.type === 'WTN_PXI'" class="editor-channels-special">
-                <p class="editor-channels-hint">WTN_PXI 通道定义固定，不支持编辑。</p>
+                <p class="editor-channels-hint">{{ i18n.t.dev_wtnPxiChannelsFixed }}</p>
                 <div class="editor-channels-table-wrap">
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th class="w-20 text-right">单位</th>
+                        <th class="w-12">#</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th class="w-16 text-right">{{ i18n.t.unit }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1413,33 +1459,33 @@ const scanError = ref<string | null>(null)
               <div v-else class="editor-channels-full">
                 <div class="editor-channels-toolbar">
                   <div class="editor-channels-toolbar-left">
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">全部启用</UiButton>
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">全部禁用</UiButton>
-                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">重置</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(true)">{{ i18n.t.dev_enableAll }}</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="setAllChannels(false)">{{ i18n.t.dev_disableAll }}</UiButton>
+                    <UiButton secondary size="sm" :disabled="isReadOnly" @click="resetChannelsToDefault">{{ i18n.t.dev_reset }}</UiButton>
                   </div>
                 </div>
 
                 <!-- 批量同步：紧凑单行 -->
                 <div class="editor-ch-batch">
-                  <span class="editor-ch-batch-label">批量应用到 1~16CH:</span>
+                  <span class="editor-ch-batch-label">{{ i18n.t.dev_batchApplyTo }}</span>
                   <div class="editor-ch-batch-field">
-                    <span class="editor-ch-batch-field-label">量程</span>
+                    <span class="editor-ch-batch-field-label">{{ i18n.t.dev_range }}</span>
                     <UiInputNumber
                       v-model="deviceRangeMin"
                       class="editor-ch-batch-num"
                       :disabled="isReadOnly"
-                      placeholder="最小"
+                      :placeholder="i18n.t.dev_minPlaceholder"
                     />
                     <span class="editor-ch-batch-sep">~</span>
                     <UiInputNumber
                       v-model="deviceRangeMax"
                       class="editor-ch-batch-num"
                       :disabled="isReadOnly"
-                      placeholder="最大"
+                      :placeholder="i18n.t.dev_maxPlaceholder"
                     />
                   </div>
                   <div class="editor-ch-batch-field">
-                    <span class="editor-ch-batch-field-label">精度</span>
+                    <span class="editor-ch-batch-field-label">{{ i18n.t.channelPrecision }}</span>
                     <UiInputNumber
                       v-model="devicePrecision"
                       class="editor-ch-batch-num editor-ch-batch-num--narrow"
@@ -1447,7 +1493,7 @@ const scanError = ref<string | null>(null)
                       :disabled="isReadOnly"
                       placeholder="0"
                     />
-                    <span class="editor-ch-batch-field-suffix">位小数</span>
+                    <span class="editor-ch-batch-field-suffix">{{ i18n.t.dev_decimalPlaces }}</span>
                   </div>
                 </div>
 
@@ -1456,11 +1502,11 @@ const scanError = ref<string | null>(null)
                   <table class="editor-channels-table">
                     <thead>
                       <tr>
-                        <th class="w-14">启用</th>
-                        <th class="w-14">#</th>
-                        <th>通道名称</th>
-                        <th class="w-36 text-center">工程量程</th>
-                        <th class="w-20 text-right">精度</th>
+                        <th class="w-12">{{ i18n.t.channelEnabled }}</th>
+                        <th class="w-12">#</th>
+                        <th>{{ i18n.t.dev_channelName }}</th>
+                        <th class="w-56 text-center">{{ i18n.t.dev_engineeringRange }}</th>
+                        <th class="w-18 text-right">{{ i18n.t.channelPrecision }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1498,7 +1544,7 @@ const scanError = ref<string | null>(null)
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                只读模式
+                {{ i18n.t.dev_readOnlyMode }}
               </div>
               <!-- 校验错误状态指示 -->
               <div v-else-if="validationErrorCount > 0" class="editor-footer-errors">
@@ -1507,7 +1553,7 @@ const scanError = ref<string | null>(null)
                   <line x1="12" y1="8" x2="12" y2="12"/>
                   <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                校验失败: {{ validationErrorCount }} 项错误
+                {{ i18n.t.dev_validationFailed }}: {{ validationErrorCount }} {{ i18n.t.dev_errorsCount }}
               </div>
               <!-- 正常状态指示 -->
               <div v-else class="editor-footer-status" :class="{ dirty: isDirty }">
@@ -1519,11 +1565,11 @@ const scanError = ref<string | null>(null)
                 <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
-                {{ isDirty ? '检测到未保存的变更' : '配置已同步' }}
+                {{ isDirty ? i18n.t.dev_unsavedChanges : i18n.t.dev_configSynced }}
               </div>
             </div>
             <div class="editor-footer-right">
-              <UiButton secondary @click="tryCloseEditor">{{ isReadOnly ? '关闭' : '取消' }}</UiButton>
+              <UiButton secondary @click="tryCloseEditor">{{ isReadOnly ? i18n.t.close : i18n.t.cancel }}</UiButton>
               <UiButton
                 v-if="!isReadOnly"
                 variant="primary"
@@ -1532,7 +1578,7 @@ const scanError = ref<string | null>(null)
                 @click="saveDraft"
               >
                 <span v-if="saving" class="btn-spinner" />
-                {{ saving ? '保存中...' : '保存' }}
+                {{ saving ? i18n.t.saving : i18n.t.save }}
               </UiButton>
             </div>
           </footer>
@@ -1545,7 +1591,8 @@ const scanError = ref<string | null>(null)
 <style scoped>
 .drawer-mask {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(0, 0, 0, 0.6);
+  /* 遮罩用 bg-app + 透明度，避免硬编码 rgba 让深/浅主题自适应 */
+  background: color-mix(in srgb, var(--bg-app) 60%, transparent);
   backdrop-filter: blur(4px);
   display: flex; justify-content: flex-end;
 }
@@ -1555,118 +1602,95 @@ const scanError = ref<string | null>(null)
   display: flex; flex-direction: column;
   background: var(--bg-panel);
   border-left: 1px solid var(--border-default);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-overlay-md);
 }
 
 .drawer-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 1.25rem 1.5rem;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   flex-shrink: 0;
 }
 
-.drawer-title { margin: 0; font-size: var(--font-size-lg); font-weight: 800; color: var(--text-primary); letter-spacing: -0.02em; }
-.drawer-subtitle { margin: 0.25rem 0 0; font-size: var(--font-size-xs); color: var(--text-muted); font-weight: 600; }
-
-.drawer-close {
-  width: var(--space-8); height: var(--space-8); display: flex; align-items: center; justify-content: center;
-  border-radius: 0.5rem; color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: var(--font-size-sm); transition: all 0.2s;
-}
-.drawer-close:hover { color: var(--accent-danger); border-color: var(--accent-danger); }
+.drawer-title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-black); color: var(--text-primary); letter-spacing: -0.02em; }
+.drawer-subtitle { margin: var(--space-1) 0 0; font-size: var(--font-size-xs); color: var(--text-muted); font-weight: var(--font-weight-semibold); }
 
 .drawer-toolbar {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 1rem 1.5rem;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
 
+/* 总数徽章：与 GlobalSettingsModal 的容量预览徽章同款 pill 样式 */
 .drawer-total {
   margin-left: auto;
-  padding: 0.375rem 0.75rem; border-radius: 999px;
-  background: rgba(100, 116, 139, 0.1);
-  font-size: var(--font-size-micro); font-weight: 800; letter-spacing: 0.1em;
-  color: var(--text-muted); text-transform: uppercase;
+  padding: var(--space-1-5) var(--space-3); border-radius: var(--radius-pill);
+  /* slate-500 ≈ text-muted，用 token + 透明度避免硬编码 rgba */
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font-size: var(--font-size-micro); font-weight: var(--font-weight-black); letter-spacing: 0.1em;
+  color: var(--text-muted);
 }
-
-.btn {
-  display: inline-flex; align-items: center; gap: 0.375rem;
-  padding: 0.5rem 1rem; border-radius: 0.5rem;
-  font-size: var(--font-size-xs); font-weight: 700;
-  transition: all 0.2s; cursor: pointer; border: 1px solid transparent;
-}
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--color-success); color: white; box-shadow: 0 var(--space-1) var(--space-3) rgba(16,185,129,0.3); }
-.btn-primary:hover { background: var(--color-success); }
-.btn-second { background: rgba(59,130,246,0.1); color: var(--color-accent); border-color: rgba(59,130,246,0.2); }
-.btn-second:hover { background: rgba(59,130,246,0.2); color: var(--color-accent); border-color: rgba(59,130,246,0.4); }
-.btn-green { background: var(--color-success); color: white; }
-.btn-green:hover { background: var(--color-success); }
-.btn-danger { background: rgba(244,63,94,0.1); color: var(--color-danger); border-color: rgba(244,63,94,0.2); }
-.btn-danger:hover { background: rgba(244,63,94,0.2); }
-.btn-warn { background: rgba(245,158,11,0.1); color: var(--color-warning); border-color: rgba(245,158,11,0.2); }
-.btn-sm { padding: 0.375rem 0.75rem; font-size: var(--font-size-xs); white-space: nowrap; }
-.btn-xs { padding: 0.25rem 0.5rem; font-size: var(--font-size-micro); }
-.btn-icon { font-size: 1rem; line-height: 1; }
-.btn-ghost { background: transparent; color: var(--text-muted); border: none; }
-.spin { display: inline-block; animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .drawer-discovered {
   border-bottom: 1px solid var(--border-default);
-  padding: 1rem 1.5rem;
+  padding: var(--space-4) var(--space-6);
   background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
   flex-shrink: 0;
 }
-.drawer-discovered-head { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0; transition: opacity 0.2s; }
+.drawer-discovered-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) 0; transition: opacity 0.2s; }
 .drawer-discovered-head:hover { opacity: 0.8; }
-.drawer-discovered-label { font-size: var(--font-size-micro); font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-muted); }
-.drawer-discovered-actions { display: flex; align-items: center; gap: 0.5rem; }
-.discovered-count { padding: 0.125rem 0.5rem; border-radius: 999px; background: color-mix(in srgb, var(--accent-primary) 15%, transparent); color: var(--accent-primary); font-size: var(--font-size-micro); font-weight: 800; }
-.discovered-toggle { font-size: var(--font-size-xs); color: var(--text-muted); transition: transform 0.2s; display: inline-block; }
+/* 中文标签不 uppercase，与全局设置风格对齐 */
+.drawer-discovered-label { font-size: var(--font-size-micro); font-weight: var(--font-weight-black); letter-spacing: 0.15em; color: var(--text-muted); }
+.drawer-discovered-actions { display: flex; align-items: center; gap: var(--space-2); }
+.discovered-count { padding: var(--space-0-5) var(--space-2); border-radius: var(--radius-pill); background: color-mix(in srgb, var(--accent-primary) 15%, transparent); color: var(--accent-primary); font-size: var(--font-size-micro); font-weight: var(--font-weight-black); }
+/* ChevronDown 图标组件继承 currentColor，旋转由 --open 修饰类控制 */
+.discovered-toggle { color: var(--text-muted); transition: transform 0.2s; display: inline-block; }
 .discovered-toggle--open { transform: rotate(180deg); }
 .discovered-expand-enter-active, .discovered-expand-leave-active { transition: all 0.25s ease; }
 .discovered-expand-enter-from, .discovered-expand-leave-to { opacity: 0; max-height: 0; overflow: hidden; }
 .discovered-expand-enter-to, .discovered-expand-leave-from { opacity: 1; max-height: 500px; }
-.drawer-discovered-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 30vh; overflow-y: auto; }
+.drawer-discovered-list { display: flex; flex-direction: column; gap: var(--space-2); max-height: 30vh; overflow-y: auto; }
 .discovered-card {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.75rem; border-radius: 0.75rem;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3); border-radius: var(--radius-xl);
   background: var(--bg-panel); border: 1px solid var(--border-default);
 }
 .discovered-card-icon {
   width: var(--space-8); height: var(--space-8); display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; background: rgba(59,130,246,0.1); color: var(--color-accent);
-  font-size: var(--font-size-xs); font-weight: 800; flex-shrink: 0;
+  border-radius: 50%;
+  /* 蓝色背景统一用 accent-primary + color-mix，深/浅主题一致 */
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent); color: var(--accent-primary);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-black); flex-shrink: 0;
 }
-.discovered-card-name { font-size: var(--font-size-sm); font-weight: 700; color: var(--text-primary); }
-.discovered-card-type { font-size: var(--font-size-2xs); font-weight: 600; color: var(--text-muted); margin-top: 0.125rem; }
+.discovered-card-name { font-size: var(--font-size-sm); font-weight: var(--font-weight-bold); color: var(--text-primary); }
+.discovered-card-type { font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); color: var(--text-muted); margin-top: var(--space-0-5); }
 .discovered-card-addr { color: var(--text-muted); opacity: 0.7; }
-.discovered-card-meta { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+.discovered-card-meta { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
 .discovered-meta-badge {
   display: inline-flex; align-items: center;
-  padding: 0.0625rem 0.375rem; border-radius: 4px;
-  font-size: var(--font-size-micro); font-weight: 600;
-  background: var(--bg-secondary); color: var(--text-tertiary);
+  padding: var(--space-0-5) var(--space-1-5); border-radius: var(--radius-md);
+  font-size: var(--font-size-micro); font-weight: var(--font-weight-semibold);
+  /* --bg-secondary 是未定义 token，回落到 --bg-panel-strong 保证可读 */
+  background: var(--bg-panel-strong); color: var(--text-tertiary);
   border: 1px solid var(--border-default);
 }
 .discovered-matched {
-  margin-top: 0.25rem; display: inline-flex; align-items: center;
-  padding: 0.125rem 0.5rem; border-radius: 999px;
-  background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3);
-  font-size: var(--font-size-micro); font-weight: 700; color: var(--color-success);
+  margin-top: var(--space-1); display: inline-flex; align-items: center;
+  padding: var(--space-0-5) var(--space-2); border-radius: var(--radius-pill);
+  /* 绿色徽章用 accent-success + color-mix，与 status-online 同源 */
+  background: color-mix(in srgb, var(--accent-success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 30%, transparent);
+  font-size: var(--font-size-micro); font-weight: var(--font-weight-bold); color: var(--accent-success);
 }
-.discovered-card .btn-green, .discovered-card .btn-second { margin-left: auto; flex-shrink: 0; }
 
-.drawer-list { flex: 1; overflow-y: auto; padding: 1rem 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
-.drawer-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
+.drawer-list { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); }
+.drawer-empty { padding: var(--space-8) var(--space-4); text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
 .drawer-bulk {
-  flex-shrink: 0; display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.75rem 1.5rem; border-top: 1px solid var(--border-default);
+  flex-shrink: 0; display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-6); border-top: 1px solid var(--border-default);
   background: var(--bg-panel-strong); font-size: var(--font-size-xs); color: var(--text-secondary);
 }
 .drawer-bulk-actions {
@@ -1676,21 +1700,20 @@ const scanError = ref<string | null>(null)
 /* 通用横幅：作为扫描错误、加载错误等顶部提示条 */
 .drawer-banner {
   display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) 1.5rem;
+  padding: var(--space-2) var(--space-6);
   border-bottom: 1px solid var(--border-default);
-  font-size: var(--font-size-xs); font-weight: 700;
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-bold);
 }
 .drawer-banner--error {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  color: var(--color-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+  color: var(--accent-danger);
 }
 
-/* 设备分组标签：UPPERCASE 小字号、字母间距加大，与已连接/连接中/等待连接 group 标题统一 */
+/* 设备分组标签：中文不需要 uppercase，letter-spacing 收紧避免中文断字 */
 .device-group-label {
   font-size: var(--font-size-micro);
-  font-weight: 900;
+  font-weight: var(--font-weight-black);
   letter-spacing: 0.2em;
-  text-transform: uppercase;
   color: var(--text-muted);
   padding: 0 var(--space-1);
   margin-bottom: var(--space-2);
@@ -1716,8 +1739,8 @@ const scanError = ref<string | null>(null)
 .drawer-discovered-error {
   display: flex; align-items: center; gap: var(--space-1-5);
   padding: var(--space-1-5) var(--space-1);
-  font-size: var(--font-size-xs); font-weight: 700;
-  color: var(--color-danger);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-bold);
+  color: var(--accent-danger);
 }
 
 /* 通用 inline spinner：用 currentColor 描边，自动跟随按钮文字色 */
@@ -1735,60 +1758,70 @@ const scanError = ref<string | null>(null)
 /* Editor Modal */
 .editor-mask {
   position: fixed; inset: 0; z-index: 110;
-  background: rgba(0, 0, 0, 0.7);
+  /* 编辑器遮罩透明度比 drawer 更高（70%），同样用 bg-app 自适应主题 */
+  background: color-mix(in srgb, var(--bg-app) 70%, transparent);
   display: flex; align-items: center; justify-content: center;
-  padding: 1rem;
+  padding: var(--space-4);
 }
 
 .editor-modal {
   width: 860px; max-width: 98vw; max-height: 92vh;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
-  border-radius: 1rem;
-  box-shadow: 0 var(--space-8) 64px -12px rgba(0, 0, 0, 0.5);
+  /* token 化：raw 1rem → var(--radius-xl)（0.5rem），
+     与 discovered-card / drawer-card 等卡片层级半径统一 */
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-overlay-lg);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 
 .editor-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 1.25rem 1.5rem;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   flex-shrink: 0;
 }
-.editor-header-left { display: flex; align-items: center; gap: 0.75rem; }
+.editor-header-left { display: flex; align-items: center; gap: var(--space-3); }
 .editor-header-icon {
   width: var(--space-10); height: var(--space-10); display: flex; align-items: center; justify-content: center;
-  border-radius: 0.75rem; background: rgba(59,130,246,0.1); color: var(--color-accent);
-  font-size: 1.25rem; font-weight: 800;
+  /* token 化：raw 0.75rem → var(--radius-lg)（0.375rem），
+     图标容器半径收紧，与 discovered-card-icon 同源（accent-primary 10%） */
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent); color: var(--accent-primary);
+  font-size: var(--font-size-xl); font-weight: var(--font-weight-black);
 }
-.editor-title { margin: 0; font-size: 1rem; font-weight: 800; color: var(--text-primary); }
-.editor-status-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
+.editor-title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-black); color: var(--text-primary); }
+.editor-status-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
 .editor-status-dot {
   width: var(--space-1); height: var(--space-1); border-radius: 50%; background: var(--text-muted);
 }
-.editor-status-dot.status-online { background: var(--color-success); box-shadow: 0 0 var(--space-1) rgba(16,185,129,0.5); }
-.editor-status-dot.status-acq { background: var(--color-success); box-shadow: 0 0 var(--space-1) rgba(16,185,129,0.6); animation: pulse 1.5s infinite; }
-.editor-status-dot.status-connecting { background: var(--color-warning); animation: pulse 0.8s infinite; }
-.editor-status-text { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-muted); }
+/* 状态点光晕用 accent-success + color-mix 替代硬编码 rgba；
+   pulse 改为全局已定义的 pulse-opacity（原 pulse 未定义会导致动画失效） */
+.editor-status-dot.status-online { background: var(--accent-success); box-shadow: 0 0 var(--space-1) color-mix(in srgb, var(--accent-success) 50%, transparent); }
+.editor-status-dot.status-acq { background: var(--accent-success); box-shadow: 0 0 var(--space-1) color-mix(in srgb, var(--accent-success) 60%, transparent); animation: pulse-opacity 1.5s infinite; }
+.editor-status-dot.status-connecting { background: var(--accent-warning); animation: pulse-opacity 0.8s infinite; }
+.editor-status-text { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--text-muted); }
 
 .editor-tabs {
-  flex-shrink: 0; padding: 1rem 1.5rem;
+  flex-shrink: 0; padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
 }
-.editor-tabs-inner {
-  display: inline-flex; border-radius: 0.75rem;
-  background: var(--bg-app, rgba(0,0,0,0.2)); padding: 0.25rem;
+/* 标签容器：横向分段控制器，与 GlobalSettingsModal 的 .settings-tabs 同款语义。
+   注：GlobalSettingsModal 的 .settings-tabs 是垂直布局（侧栏导航），
+   此处覆盖为横向 inline-flex 适配编辑器顶部 tab 切换场景。 */
+.settings-tabs {
+  /* 顶部编辑 tab 为横向分段控制器，视觉规范来自 settings-form.css */
+  display: inline-flex;
+  flex-direction: row;
+  gap: var(--space-0-5);
+  padding: var(--space-0-5);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
 }
-:deep(.editor-tab) {
-  padding: 0.5rem 1.5rem;
-  font-size: var(--font-size-xs); font-weight: 800;
-  cursor: pointer;
-}
-:deep(.editor-tab):hover { color: var(--text-primary); }
-:deep(.editor-tab.active) { background: var(--bg-panel); color: var(--color-accent); }
 
 .editor-body {
   /* 紧凑密度：编辑器正文内边距收紧到 12px 16px */
@@ -1814,18 +1847,22 @@ const scanError = ref<string | null>(null)
 }
 
 .editor-error-banner {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; gap: var(--space-2);
   /* 紧凑密度：错误横幅 padding 收紧 */
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
-  background: rgba(244,63,94,0.08); border: 1px solid rgba(244,63,94,0.2);
-  font-size: var(--font-size-xs); font-weight: 700; color: var(--color-danger);
+  /* token 化：raw rgba 改用 color-mix + accent-danger，深浅两套主题自动适配 */
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); color: var(--accent-danger);
   margin-bottom: var(--density-section-gap);
 }
 .editor-readonly-banner {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
-  background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
-  font-size: var(--font-size-xs); font-weight: 700; color: var(--color-warning);
+  /* token 化：raw rgba 改用 color-mix + accent-warning，深浅两套主题自动适配 */
+  background: color-mix(in srgb, var(--accent-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); color: var(--accent-warning);
   margin-bottom: var(--density-section-gap);
 }
 .banner-icon {
@@ -1847,7 +1884,7 @@ const scanError = ref<string | null>(null)
   text-transform: none;
   margin: 0;
 }
-.editor-section-desc { font-size: var(--font-size-2xs); font-weight: 600; color: var(--text-muted); margin-top: 0.125rem; }
+.editor-section-desc { font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); color: var(--text-muted); margin-top: var(--space-0-5); }
 
 /* 紧凑密度：字段间 8px（原 16px） */
 .editor-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--density-field-gap); }
@@ -1858,6 +1895,7 @@ const scanError = ref<string | null>(null)
 .col-5 { grid-column: span 5; }
 .col-6 { grid-column: span 6; }
 .col-7 { grid-column: span 7; }
+.col-9 { grid-column: span 9; }
 .col-12 { grid-column: span 12; }
 
 /* 紧凑密度：label 与控件 2px，中文标签不 uppercase */
@@ -1875,23 +1913,25 @@ const scanError = ref<string | null>(null)
   height: var(--density-control-height);
   padding: 0 var(--density-control-pad-x);
   border-radius: var(--radius-sm); border: 1px solid var(--border-default);
-  background: rgba(0, 0, 0, 0.2); color: var(--text-primary);
-  font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: 700;
+  /* token 化：raw rgba(0,0,0,0.2) 改用 --bg-panel-strong，深浅主题由 token 自动适配 */
+  background: var(--bg-panel-strong); color: var(--text-primary);
+  font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: var(--font-weight-bold);
   outline: none; transition: all 0.2s;
 }
-.editor-input:focus { border-color: var(--color-accent); background: var(--bg-panel-strong); }
+.editor-input:focus { border-color: var(--accent-primary); background: var(--bg-panel-strong); }
 .editor-input:disabled { opacity: 0.6; cursor: not-allowed; }
 .editor-input-readonly {
   display: flex; align-items: center;
-  height: var(--density-control-height); font-weight: 700; color: var(--text-muted);
+  height: var(--density-control-height); font-weight: var(--font-weight-bold); color: var(--text-muted);
 }
-:root[data-theme='light'] .editor-input { background: rgba(255, 255, 255, 0.9); border-color: var(--border-strong); color: var(--text-primary); }
-:root[data-theme='light'] .editor-input:focus { background: #ffffff; border-color: var(--accent-primary); }
-.editor-field-error { margin-top: var(--density-field-inline); font-size: var(--font-size-2xs); font-weight: 700; color: var(--color-danger); }
+/* 浅色主题：输入框背景反白，token 化 raw rgba(255,255,255,0.9) → --surface-1 */
+:root[data-theme='light'] .editor-input { background: var(--bg-panel); border-color: var(--border-strong); color: var(--text-primary); }
+:root[data-theme='light'] .editor-input:focus { background: var(--bg-panel-strong); border-color: var(--accent-primary); }
+.editor-field-error { margin-top: var(--density-field-inline); font-size: var(--font-size-2xs); font-weight: var(--font-weight-bold); color: var(--accent-danger); }
 
-.editor-unit-row { display: flex; align-items: center; gap: 0.75rem; }
+.editor-unit-row { display: flex; align-items: center; gap: var(--space-3); }
 .editor-unit-select { flex: 1; }
-.editor-unit-hint { font-size: var(--font-size-2xs); font-weight: 700; color: var(--text-muted); max-width: 200px; line-height: 1.4; }
+.editor-unit-hint { font-size: var(--font-size-2xs); font-weight: var(--font-weight-bold); color: var(--text-muted); max-width: 200px; line-height: var(--line-height-base); }
 
 /* 紧凑密度：大气数据行 padding 收紧 */
 .editor-atmo-row {
@@ -1899,31 +1939,17 @@ const scanError = ref<string | null>(null)
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
   border: 1px solid var(--border-default); background: var(--bg-panel);
 }
+/* atmo-toggle 仅作容器：UiToggle 已封装 NSwitch，无需自实现 track/thumb */
 .editor-atmo-toggle { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
-.editor-toggle-track {
-  width: 44px; height: var(--space-6); border-radius: 999px;
-  background: var(--border-default); position: relative; transition: all 0.2s;
-}
-.editor-toggle-track.on { background: var(--color-accent); }
-.editor-toggle-thumb {
-  position: absolute; top: 2px; left: 3px;
-  width: var(--space-5); height: var(--space-5); border-radius: 50%;
-  background: white; transition: all 0.2s;
-}
-.editor-toggle-thumb.on { transform: translateX(var(--space-5)); }
-.editor-atmo-label { font-size: var(--font-size-xs); font-weight: 700; color: var(--text-primary); }
+.editor-atmo-label { font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); color: var(--text-primary); }
 
 /* 紧凑密度：自动连接行 padding 收紧 */
 .editor-autoconnect-row {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
-  background: rgba(59,130,246,0.05);
+  /* token 化：raw rgba(59,130,246,0.05) 改用 color-mix + accent-primary，深浅主题自动适配 */
+  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
 }
-.editor-autoconnect-label {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-size: var(--font-size-xs); font-weight: 800; color: var(--color-accent); cursor: pointer;
-}
-.editor-autoconnect-check { width: var(--space-4); height: var(--space-4); accent-color: var(--color-accent); }
 
 /* Channels — 紧凑密度：分组间 10px */
 .editor-channels-special { display: flex; flex-direction: column; gap: var(--density-group-gap); }
@@ -1944,16 +1970,16 @@ const scanError = ref<string | null>(null)
 }
 .editor-ch-batch-label {
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-muted);
   white-space: nowrap;
 }
 .editor-ch-batch-field {
-  display: flex; align-items: center; gap: 0.375rem;
+  display: flex; align-items: center; gap: var(--space-1-5);
 }
 .editor-ch-batch-field-label {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -1962,18 +1988,18 @@ const scanError = ref<string | null>(null)
   color: var(--text-muted);
   white-space: nowrap;
 }
-.editor-ch-batch-num { width: 88px; }
-.editor-ch-batch-num--narrow { width: 56px; }
+.editor-ch-batch-num { width: 96px; }
+.editor-ch-batch-num--narrow { width: 64px; }
 .editor-ch-batch-sep {
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
 /* Channel table */
 .editor-channels-table-wrap {
-  border-radius: 0.5rem;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--border-default);
   overflow: hidden;
   background: var(--bg-panel);
@@ -1991,7 +2017,7 @@ const scanError = ref<string | null>(null)
   /* 紧凑密度：表头 padding 收紧 */
   padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   letter-spacing: 0;
   text-transform: none;
   color: var(--text-secondary);
@@ -2028,124 +2054,20 @@ const scanError = ref<string | null>(null)
   font-size: var(--font-size-xs);
 }
 .editor-channels-table :deep(.n-input .n-input-wrapper) {
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
 }
-.editor-ch-check {
-  width: var(--space-4);
-  height: var(--space-4);
-  accent-color: var(--color-accent);
-  cursor: pointer;
-}
-.editor-ch-check:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-.editor-ch-input {
-  width: 100%;
-  padding: 0.375rem 0.625rem;
-  border-radius: 0.375rem;
-  border: 1px solid transparent;
-  background: transparent;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  color: var(--text-primary);
-  outline: none;
-  transition: all 0.2s ease;
-}
-.editor-ch-input:hover {
-  background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
-}
-.editor-ch-input:focus {
-  background: var(--bg-panel);
-  border-color: var(--color-accent);
-}
-.editor-ch-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-:root[data-theme='light'] .editor-ch-input { color: var(--text-primary); }
-:root[data-theme='light'] .editor-ch-input:focus { background: #ffffff; }
+
+/* 量程单元格容器：两个 UiInputNumber + "~" 分隔符水平排列
+   — 旧的 .editor-ch-input / .editor-ch-range-input / .editor-ch-tc /
+   .editor-ch-precision-input / .editor-ch-check 已删除（通道表格全部改用
+   UiInput / UiInputNumber / UiSelect / UiCheckbox 封装，原生 raw CSS 样式作废） */
 .editor-ch-range {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.375rem;
+  gap: var(--space-1-5);
 }
-.editor-ch-range-input {
-  width: 80px;
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  color: var(--text-primary);
-  text-align: right;
-  outline: none;
-  transition: all 0.2s ease;
-}
-.editor-ch-range-input:focus {
-  border-color: var(--color-accent);
-  background: var(--bg-panel);
-}
-.editor-ch-range-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-:root[data-theme='light'] .editor-ch-range-input { color: var(--text-primary); }
-:root[data-theme='light'] .editor-ch-range-input:focus { background: #ffffff; }
-.editor-ch-tc {
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid transparent;
-  background: transparent;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  color: var(--text-primary);
-  outline: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.editor-ch-tc:hover {
-  background: color-mix(in srgb, var(--bg-panel-strong) 50%, transparent);
-  border-color: var(--border-default);
-}
-.editor-ch-tc:focus {
-  background: var(--bg-panel);
-  border-color: var(--color-accent);
-}
-.editor-ch-tc:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.editor-ch-precision-input {
-  width: 100%;
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  color: var(--text-primary);
-  text-align: right;
-  outline: none;
-  transition: all 0.2s ease;
-}
-.editor-ch-precision-input:focus {
-  border-color: var(--color-accent);
-  background: var(--bg-panel);
-}
-.editor-ch-precision-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-:root[data-theme='light'] .editor-ch-precision-input { color: var(--text-primary); }
-:root[data-theme='light'] .editor-ch-precision-input:focus { background: #ffffff; }
 
 .font-mono { font-family: ui-monospace, monospace; }
 .text-center { text-align: center; }
@@ -2154,7 +2076,8 @@ const scanError = ref<string | null>(null)
 
 .editor-footer {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 1rem 1.5rem;
+  /* token 化：raw 1rem 1.5rem → space-4 space-6 */
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   flex-shrink: 0;
@@ -2162,45 +2085,56 @@ const scanError = ref<string | null>(null)
 .editor-footer-left {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: var(--space-1-5);
 }
-.editor-footer-right { display: flex; gap: 0.75rem; }
+.editor-footer-right { display: flex; gap: var(--space-3); }
+/* footer 文案统一不 uppercase：原 uppercase 是英文 small-caps 风格遗留，
+   中文标签不需要字距收紧 + 大写转换，删除以保持与全局风格基线一致 */
 .editor-footer-readonly {
-  display: flex; align-items: center; gap: 0.375rem;
-  font-size: var(--font-size-2xs); font-weight: 800; color: var(--color-warning);
-  text-transform: uppercase; letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: var(--space-1-5);
+  font-size: var(--font-size-2xs); font-weight: var(--font-weight-black); color: var(--accent-warning);
+  letter-spacing: 0.05em;
 }
 .editor-footer-errors {
-  display: flex; align-items: center; gap: 0.375rem;
-  font-size: var(--font-size-2xs); font-weight: 800; color: var(--color-danger);
-  text-transform: uppercase; letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: var(--space-1-5);
+  font-size: var(--font-size-2xs); font-weight: var(--font-weight-black); color: var(--accent-danger);
+  letter-spacing: 0.05em;
 }
 .editor-footer-status {
-  display: flex; align-items: center; gap: 0.375rem;
-  font-size: var(--font-size-2xs); font-weight: 800; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: 0.1em;
+  display: flex; align-items: center; gap: var(--space-1-5);
+  font-size: var(--font-size-2xs); font-weight: var(--font-weight-black); color: var(--text-muted);
+  letter-spacing: 0.1em;
   transition: color 0.2s ease;
 }
-.editor-footer-status.dirty { color: var(--color-warning); }
+.editor-footer-status.dirty { color: var(--accent-warning); }
 
-/* 保存按钮加载动画 */
-.btn-saving {
-  position: relative;
-  padding-left: 2rem;
-}
+/* 保存按钮加载动画：btn-saving 类已废弃（UiButton :loading 内部已渲染 spinner），
+   保留 .btn-spinner 给模板 line 1576 <span class="btn-spinner" /> 使用 */
 .btn-spinner {
   position: absolute;
-  left: 0.625rem;
+  left: var(--space-2-5);
   top: 50%;
   transform: translateY(-50%);
   width: var(--space-3);
   height: var(--space-3);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
+  /* token 化：raw rgba(255,255,255,0.3) 改用 color-mix 让浅色主题也可读 */
+  border: 2px solid color-mix(in srgb, var(--text-primary) 30%, transparent);
+  border-top-color: var(--text-primary);
   border-radius: 50%;
   animation: btn-spin 0.8s linear infinite;
 }
 .w-full { width: 100%; }
+/* 通道表格列宽定义
+   - w-12/w-16/w-24/w-28 是 Tailwind 标准类，JIT 会自动生成，
+     这里显式定义是为了在 scoped 作用域内提供确定性，避免依赖 Tailwind 配置。
+   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义才能生效。
+   设计依据：见 §29 设备管理编辑画面列宽规范 */
+.w-12 { width: 48px; }   /* 启用复选框、# 序号列 */
+.w-16 { width: 64px; }   /* 单位列（℃ 等单字符单位） */
+.w-18 { width: 72px; }   /* 精度列（3 位数字） */
+.w-24 { width: 96px; }   /* 热电偶类型下拉列 */
+.w-28 { width: 112px; }  /* 设备型号/扩展列（容纳 "DAQ-P-1604Pre" 等长型号） */
+.w-56 { width: 224px; }  /* 工程量程列（两个 w-full 输入框 + "~" 分隔符 + 单元格 padding） */
 .editor-ch-select-min-width { min-width: 80px; }
 @keyframes btn-spin {
   to { transform: translateY(-50%) rotate(360deg); }

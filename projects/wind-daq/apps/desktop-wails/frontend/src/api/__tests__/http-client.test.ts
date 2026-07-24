@@ -66,11 +66,13 @@ describe('http-client', () => {
     expect(capturedHeaders['Content-Type']).toBe('application/json')
   })
 
-  it('uses the local API server when Wails is available over an HTTP origin', async () => {
+  it('uses the local API server when Electron preload is available over an HTTP origin', async () => {
+    // Electron preload 注入 window.electronAPI；isWailsAvailable() 据此判定为桌面端，
+    // http-client 会用 http://127.0.0.1:8900 作为 apiBase（与后端 listenAddr 一致）。
     vi.stubEnv('VITE_API_BASE', '')
-    Object.defineProperty(window, 'chrome', {
+    Object.defineProperty(window, 'electronAPI', {
       configurable: true,
-      value: { webview: { postMessage: vi.fn() } },
+      value: { showOpenDialog: vi.fn(), openMotionWindow: vi.fn() },
     })
     vi.resetModules()
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ success: true }))
@@ -83,7 +85,7 @@ describe('http-client', () => {
       expect.any(Object),
     )
 
-    Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: undefined })
     vi.resetModules()
   })
 })
@@ -99,9 +101,11 @@ describe('deviceApi', () => {
     vi.restoreAllMocks()
     vi.useRealTimers()
     vi.stubEnv('VITE_API_BASE', 'http://localhost:8080')
-    Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: undefined })
     const { deviceApi } = await import('@api/deviceApi')
     deviceApi._subscriptions.clear()
+    // 与主分支同步：清空设备丢失监听器集合，避免上一个测试残留的回调影响下一个测试
+    deviceApi._deviceLostListeners.clear()
     deviceApi._publishRateHz = 20
   })
 
@@ -116,10 +120,13 @@ describe('deviceApi', () => {
     )
   })
 
-  it('restarts Wails polling subscriptions when publish rate changes', async () => {
-    Object.defineProperty(window, 'chrome', {
+  it('restarts polling subscriptions when publish rate changes', async () => {
+    // 桌面端环境：通过 window.electronAPI 注入触发 isWailsAvailable() = true，
+    // deviceApi.subscribeToDevice 走 HTTP 轮询 getLatest 分支（与 Wails 时代一致），
+    // 在 publishRate 变更时通过 restart() 重建轮询 goroutine。
+    Object.defineProperty(window, 'electronAPI', {
       configurable: true,
-      value: { webview: { postMessage: vi.fn() } },
+      value: { showOpenDialog: vi.fn(), openMotionWindow: vi.fn() },
     })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
@@ -127,6 +134,10 @@ describe('deviceApi', () => {
     } as Response)
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation(() => undefined)
+    // 冻结 Date.now：deviceApi.pollLatest 用 Date.now() - startedAt 计算已耗时，
+    // 用于从 intervalMs 中扣除本次 fetch 耗时。不冻结时 mock fetch resolve 会让
+    // 时钟前进 1ms，导致 setTimeout 第 1 次参数从 50 变成 49（flaky）。
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
 
     const { deviceApi } = await import('@api/deviceApi')
     const { wailsApi } = await import('@api/wails-adapter')
@@ -143,6 +154,66 @@ describe('deviceApi', () => {
     expect(wailsApi.device.subscribeStream).toHaveBeenCalledTimes(1)
     expect(setTimeoutSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 50)
     expect(setTimeoutSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 200)
+  })
+
+  // 验证：轮询 getLatest 拿到 404 时，deviceApi 触发 onDeviceLost 回调，
+  // 让 deviceStore 能感知设备异常退出并更新 UI 状态为 Error。
+  // 此前 getLatest catch 块静默吞掉所有错误，UI 永远显示"采集中"。
+  it('triggers onDeviceLost when polling returns 404', async () => {
+    // 桌面端环境：注入 electronAPI 触发 isWailsAvailable() = true，
+    // deviceApi.subscribeToDevice 走 HTTP 轮询 getLatest 分支
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { showOpenDialog: vi.fn(), openMotionWindow: vi.fn() },
+    })
+    // fetch 返回 404（设备已断开/异常退出）
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(JSON.stringify({ error: 'device not connected' })),
+    } as Response)
+    vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
+
+    const { deviceApi } = await import('@api/deviceApi')
+    const { wailsApi } = await import('@api/wails-adapter')
+    vi.spyOn(wailsApi.device, 'subscribeStream').mockResolvedValue({ success: true, Success: true })
+
+    const lostDevices: string[] = []
+    deviceApi.onDeviceLost((id) => lostDevices.push(id))
+
+    deviceApi.subscribeToDevice('dev-lost')
+    await flushPromises()
+
+    expect(lostDevices).toContain('dev-lost')
+    // 轮询应已停止（subscription 仍存在但 active=false，不再调度下次 setTimeout）
+    // setTimeout 在 catch 块 return 前不会被调用调度下一轮
+  })
+
+  // 验证 SSE 模式（非桌面端）下，sse-client fetch 拿到 404 时同样触发 onDeviceLost。
+  // sse-client.ts:28 触发 `SSE HTTP ${status}` 错误字符串，deviceApi 严格相等匹配
+  // 'SSE HTTP 404' 后通知订阅者。
+  it('triggers onDeviceLost when SSE returns 404', async () => {
+    // 非桌面端模式（无 window.electronAPI）→ deviceApi.subscribeToDevice 走 SSE 分支
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: undefined })
+    // fetch 返回 404 → sse-client 触发 onError('SSE HTTP 404')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(JSON.stringify({ error: 'device offline' })),
+    } as Response)
+
+    const { deviceApi } = await import('@api/deviceApi')
+    const lostDevices: string[] = []
+    deviceApi.onDeviceLost((id) => {
+      lostDevices.push(id)
+      // 模拟 deviceStore 行为：触发后立即 unsubscribe 避免 SSE 重连卡测试
+      deviceApi.unsubscribeFromDevice(id)
+    })
+
+    deviceApi.subscribeToDevice('dev-lost-sse')
+    await flushPromises()
+
+    expect(lostDevices).toContain('dev-lost-sse')
   })
 
   it('motionApi returns status', async () => {

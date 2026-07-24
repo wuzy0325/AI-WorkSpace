@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { useThemeStore } from './stores/themeStore'
+import { useI18nStore } from './stores/i18nStore'
 import { container } from './core/container'
 import { wailsApi, isWailsAvailable } from './api/wails-adapter'
 import { setMotionStandaloneMode } from './api/motionApi'
@@ -39,6 +40,9 @@ async function bootstrap(): Promise<void> {
 
   // 初始化主题
   useThemeStore().initializeTheme()
+
+  // 初始化语言（localStorage → 安装程序注册表 → 默认中文）
+  await useI18nStore().initLocale()
 
   if (import.meta.env.VITE_UI_SPIKE !== '1') {
     initializeServices()

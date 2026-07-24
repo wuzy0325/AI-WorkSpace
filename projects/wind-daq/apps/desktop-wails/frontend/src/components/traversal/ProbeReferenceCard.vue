@@ -1,221 +1,630 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+/**
+ * 五孔探针三维参考图。探针轴为 Z，端面前方为 -Z；Y 竖直向上，
+ * X 位于偏转面。α 是 X-Z 平面投影角，β 是该投影与真实来流的夹角。
+ */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UiSlider from '@components/ui/UiSlider.vue'
+import { useI18nStore } from '@stores/i18nStore'
+import { createProbeReferenceGeometry } from './probeReferenceGeometry'
 
-// 五孔探针角度示意：
-// - alpha：偏航角（绕 Y 轴旋转），正值表示流向右偏
-// - beta ：俯仰角（绕 X 轴旋转），正值表示流向上偏
+type Point3 = { x: number; y: number; z: number }
+type ViewName = 'iso' | 'face' | 'top' | 'side'
+
+const i18n = useI18nStore()
+const t = computed(() => i18n.t)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const stageRef = ref<HTMLElement | null>(null)
 const alpha = ref(25)
 const beta = ref(20)
+const activeView = ref<ViewName>('iso')
 
-// SVG viewBox 内探针本体中心坐标，所有元素围绕此点组织
-const PROBE_CX = 360
-const PROBE_CY = 260
+const camera = { yaw: -0.62, pitch: 0.34, zoom: 1 }
+const views: Record<ViewName, typeof camera> = {
+  iso: { yaw: -0.62, pitch: 0.34, zoom: 1 },
+  face: { yaw: -Math.PI / 2, pitch: 0, zoom: 1.1 },
+  top: { yaw: 0, pitch: Math.PI / 2, zoom: 1.04 },
+  side: { yaw: 0, pitch: 0, zoom: 1.04 },
+}
 
-// alpha 弧参数：从探针底部向左下/右下弧出，弧展开角度随 alpha 绝对值缩放
-const ALPHA_ARC_R = 90
-const ALPHA_ARC_MAX_DEG = 45
-const alphaArcAngle = computed(() =>
-  Math.min(Math.abs(alpha.value) / 60, 1) * ALPHA_ARC_MAX_DEG
-)
+let resizeObserver: ResizeObserver | null = null
+let themeObserver: MutationObserver | null = null
+let dragging = false
+let lastPointerX = 0
+let lastPointerY = 0
+let frameId = 0
 
-// alpha+ 弧（实线，向右下方向）
-const alphaPlusPath = computed(() => {
-  const start = { x: PROBE_CX, y: PROBE_CY + 70 }
-  const rad = alphaArcAngle.value * Math.PI / 180
-  const end = {
-    x: PROBE_CX + Math.sin(rad) * ALPHA_ARC_R,
-    y: start.y + Math.cos(rad) * ALPHA_ARC_R
+const point = (x: number, y: number, z: number): Point3 => ({ x, y, z })
+const multiply = (p: Point3, factor: number): Point3 => point(p.x * factor, p.y * factor, p.z * factor)
+const radians = (degrees: number) => degrees * Math.PI / 180
+const signedAngle = (value: number) => `${value > 0 ? '+' : ''}${value}°`
+
+function cssColor(name: string, fallback: string) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function colors() {
+  return {
+    flow: cssColor('--accent-info', '#38bdf8'),
+    alpha: cssColor('--accent-warning', '#f59e0b'),
+    beta: cssColor('--accent-danger', '#ef5b47'),
+    x: cssColor('--accent-danger', '#ef5b47'),
+    y: cssColor('--accent-info', '#38bdf8'),
+    z: cssColor('--accent-success', '#22c55e'),
+    text: cssColor('--text-primary', '#e2e8f0'),
+    muted: cssColor('--text-muted', '#94a3b8'),
+    border: cssColor('--border-strong', '#475569'),
+    panel: cssColor('--bg-panel', '#172338'),
+    canvas: cssColor('--bg-canvas', '#111c31'),
   }
-  return `M ${start.x} ${start.y} A ${ALPHA_ARC_R} ${ALPHA_ARC_R} 0 0 1 ${end.x.toFixed(1)} ${end.y.toFixed(1)}`
+}
+
+function scheduleDraw() {
+  cancelAnimationFrame(frameId)
+  frameId = requestAnimationFrame(draw)
+}
+
+function resizeCanvas() {
+  const canvas = canvasRef.value
+  const stage = stageRef.value
+  if (!canvas || !stage) return
+  const rect = stage.getBoundingClientRect()
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  canvas.width = Math.round(rect.width * dpr)
+  canvas.height = Math.round(rect.height * dpr)
+  canvas.style.width = `${rect.width}px`
+  canvas.style.height = `${rect.height}px`
+  scheduleDraw()
+}
+
+function rotate(p: Point3): Point3 {
+  const cosYaw = Math.cos(camera.yaw)
+  const sinYaw = Math.sin(camera.yaw)
+  const cosPitch = Math.cos(camera.pitch)
+  const sinPitch = Math.sin(camera.pitch)
+  const x = p.x * cosYaw + p.z * sinYaw
+  const z = -p.x * sinYaw + p.z * cosYaw
+  return point(x, p.y * cosPitch - z * sinPitch, p.y * sinPitch + z * cosPitch)
+}
+
+function draw() {
+  const canvas = canvasRef.value
+  const stage = stageRef.value
+  if (!canvas || !stage) return
+  const canvasContext = canvas.getContext('2d')
+  if (!canvasContext) return
+  const context: CanvasRenderingContext2D = canvasContext
+
+  const rect = stage.getBoundingClientRect()
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+  const palette = colors()
+
+  function project(p: Point3) {
+    const rotated = rotate(p)
+    const scale = Math.min(rect.width, rect.height) * 0.105 * camera.zoom
+    const perspective = 1 / Math.max(0.64, 1 - rotated.z / 18)
+    return {
+      x: rect.width * 0.48 + rotated.x * scale * perspective,
+      y: rect.height * 0.53 - rotated.y * scale * perspective,
+      depth: rotated.z,
+    }
+  }
+
+  function line(start: Point3, end: Point3, color: string, width = 1, dash: number[] = []) {
+    const a = project(start)
+    const b = project(end)
+    context.save()
+    context.beginPath()
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.setLineDash(dash)
+    context.stroke()
+    context.restore()
+  }
+
+  function polygon(points: Point3[], fill: string, stroke: string, width = 1) {
+    const projected = points.map(project)
+    context.beginPath()
+    context.moveTo(projected[0].x, projected[0].y)
+    for (let index = 1; index < projected.length; index++) {
+      context.lineTo(projected[index].x, projected[index].y)
+    }
+    context.closePath()
+    context.fillStyle = fill
+    context.fill()
+    context.strokeStyle = stroke
+    context.lineWidth = width
+    context.stroke()
+  }
+
+  function label(text: string, position: Point3, color = palette.text, font = '700 12px monospace') {
+    const p = project(position)
+    context.save()
+    context.font = font
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineWidth = 4
+    context.strokeStyle = palette.canvas
+    context.strokeText(text, p.x, p.y)
+    context.fillStyle = color
+    context.fillText(text, p.x, p.y)
+    context.restore()
+  }
+
+  function arrow(start: Point3, end: Point3, color: string, width: number) {
+    const a = project(start)
+    const b = project(end)
+    const angle = Math.atan2(b.y - a.y, b.x - a.x)
+    const head = 10 + width
+    context.save()
+    context.beginPath()
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.lineCap = 'round'
+    context.stroke()
+    context.beginPath()
+    context.moveTo(b.x, b.y)
+    context.lineTo(b.x - head * Math.cos(angle - 0.42), b.y - head * Math.sin(angle - 0.42))
+    context.lineTo(b.x - head * Math.cos(angle + 0.42), b.y - head * Math.sin(angle + 0.42))
+    context.closePath()
+    context.fillStyle = color
+    context.fill()
+    context.restore()
+  }
+
+  function polyline(points: Point3[], color: string, width: number) {
+    const projected = points.map(project)
+    context.beginPath()
+    context.moveTo(projected[0].x, projected[0].y)
+    for (let index = 1; index < projected.length; index++) {
+      context.lineTo(projected[index].x, projected[index].y)
+    }
+    context.strokeStyle = color
+    context.lineWidth = width
+    context.lineCap = 'round'
+    context.stroke()
+  }
+
+  function planeGrid(kind: 'xz' | 'yz', color: string) {
+    context.save()
+    context.globalAlpha = 0.34
+    const span = 5.3
+    if (kind === 'xz') {
+      polygon([point(-5.2, 0, -span), point(1.1, 0, -span), point(1.1, 0, span), point(-5.2, 0, span)], palette.canvas, color)
+      for (let z = -5; z <= 5; z++) line(point(-5.2, 0, z), point(1.1, 0, z), color, 0.6)
+    } else {
+      polygon([point(-5.2, -span, 0), point(1.1, -span, 0), point(1.1, span, 0), point(-5.2, span, 0)], palette.canvas, color)
+      for (let y = -5; y <= 5; y++) line(point(-5.2, y, 0), point(1.1, y, 0), color, 0.6)
+    }
+    context.restore()
+  }
+
+  function betaPlaneGrid(axis: Point3, color: string) {
+    context.save()
+    context.globalAlpha = 0.34
+    const start = -5.2
+    const end = 1.1
+    const span = 5.3
+    const at = (along: number, vertical: number) => point(
+      axis.x * along,
+      vertical,
+      axis.z * along,
+    )
+    polygon([at(start, -span), at(end, -span), at(end, span), at(start, span)], palette.canvas, color)
+    for (let y = -5; y <= 5; y++) line(at(start, y), at(end, y), color, 0.6)
+    context.restore()
+  }
+
+  function drawProbe() {
+    const segments = 24
+    const radius = 0.62
+    const faces: Array<{ points: Point3[]; depth: number; shade: number }> = []
+    for (let index = 0; index < segments; index++) {
+      const a = index / segments * Math.PI * 2
+      const b = (index + 1) / segments * Math.PI * 2
+      const points = [
+        point(0.08, Math.cos(a) * radius, Math.sin(a) * radius),
+        point(4.7, Math.cos(a) * radius, Math.sin(a) * radius),
+        point(4.7, Math.cos(b) * radius, Math.sin(b) * radius),
+        point(0.08, Math.cos(b) * radius, Math.sin(b) * radius),
+      ]
+      faces.push({
+        points,
+        depth: points.reduce((sum, p) => sum + rotate(p).z, 0) / points.length,
+        shade: 38 + Math.round(Math.max(0, Math.cos(a - 0.7)) * 24),
+      })
+    }
+    faces.sort((a, b) => a.depth - b.depth)
+    faces.forEach(face => {
+      context.save()
+      context.globalAlpha = face.shade / 100
+      polygon(face.points, palette.text, palette.border, 0.6)
+      context.restore()
+    })
+
+    const face = Array.from({ length: segments }, (_, index) => {
+      const angle = index / segments * Math.PI * 2
+      return point(0, Math.cos(angle) * radius, Math.sin(angle) * radius)
+    })
+    polygon(face, palette.muted, palette.text, 1.2)
+
+    const ports = [
+      { id: 'P2', y: 0, z: 0, labelY: 0, labelZ: 0 },
+      { id: 'P3', y: 0.34, z: 0, labelY: 0.53, labelZ: 0 },
+      { id: 'P1', y: -0.34, z: 0, labelY: -0.53, labelZ: 0 },
+      { id: 'P4', y: 0, z: -0.34, labelY: 0, labelZ: -0.53 },
+      { id: 'P5', y: 0, z: 0.34, labelY: 0, labelZ: 0.53 },
+    ]
+    ports.forEach(port => {
+      const hole = Array.from({ length: 16 }, (_, index) => {
+        const angle = index / 16 * Math.PI * 2
+        return point(-0.03, port.y + Math.cos(angle) * 0.09, port.z + Math.sin(angle) * 0.09)
+      })
+      polygon(hole, palette.canvas, palette.text, 0.7)
+      label(port.id, point(-0.08, port.labelY, port.labelZ), palette.text, '700 10px monospace')
+    })
+  }
+
+  function alphaArc(angle: number, radius: number) {
+    if (angle === 0) return
+    const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3))
+    const points = Array.from({ length: steps + 1 }, (_, index) => {
+      const value = radians(angle * index / steps)
+      return point(-Math.cos(value) * radius, 0, -Math.sin(value) * radius)
+    })
+    polyline(points, palette.alpha, 3)
+  }
+
+  function betaArc(axis: Point3, angle: number, radius: number) {
+    if (angle === 0) return
+    const steps = Math.max(2, Math.ceil(Math.abs(angle) / 3))
+    const points = Array.from({ length: steps + 1 }, (_, index) => {
+      const value = radians(angle * index / steps)
+      return point(
+        -axis.x * Math.cos(value) * radius,
+        Math.sin(value) * radius,
+        -axis.z * Math.cos(value) * radius,
+      )
+    })
+    polyline(points, palette.beta, 3)
+  }
+
+  planeGrid('xz', palette.alpha)
+
+  // 内部几何 x 对应探针 Z 轴，z 对应 X 轴。
+  arrow(point(0, 0, 0), point(-5.25, 0, 0), palette.z, 2)
+  arrow(point(0, 0, 0), point(0, 2.35, 0), palette.y, 2)
+  arrow(point(0, 0, 0), point(0, 0, 2.35), palette.x, 2)
+  label('-Z', point(-5.58, 0, 0), palette.z, '700 15px monospace')
+  label('Y', point(0, 2.67, 0), palette.y, '700 15px monospace')
+  label('X', point(0, 0, 2.67), palette.x, '700 15px monospace')
+
+  const { flow, alphaProjection } = createProbeReferenceGeometry(alpha.value, beta.value)
+  const flowStart = multiply(flow, -6.2)
+  const facePoint = point(-0.08, 0, 0)
+  betaPlaneGrid(alphaProjection, palette.beta)
+  line(multiply(alphaProjection, -5.55), facePoint, palette.alpha, 1.5, [7, 5])
+  line(flowStart, multiply(alphaProjection, -5.55), palette.beta, 1, [3, 5])
+  alphaArc(alpha.value, 1.42)
+  betaArc(alphaProjection, beta.value, 1.05)
+
+  drawProbe()
+  arrow(flowStart, facePoint, palette.flow, 5)
+  label(t.value.travProbeFlowDir, multiply(flow, -5.85), palette.flow, '700 11px sans-serif')
+  label(`α ${signedAngle(alpha.value)}`, point(-1.7, 0.08, -0.45), palette.alpha)
+  label(`β ${signedAngle(beta.value)}`, point(-1.35, beta.value >= 0 ? 0.52 : -0.52, 0.08), palette.beta)
+}
+
+function setView(view: ViewName) {
+  Object.assign(camera, views[view])
+  activeView.value = view
+  scheduleDraw()
+}
+
+function onPointerDown(event: PointerEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  dragging = true
+  lastPointerX = event.clientX
+  lastPointerY = event.clientY
+  canvas.setPointerCapture(event.pointerId)
+}
+
+function onPointerMove(event: PointerEvent) {
+  if (!dragging) return
+  camera.yaw += (event.clientX - lastPointerX) * 0.008
+  camera.pitch = Math.max(-1.45, Math.min(1.45, camera.pitch + (event.clientY - lastPointerY) * 0.008))
+  lastPointerX = event.clientX
+  lastPointerY = event.clientY
+  activeView.value = 'iso'
+  scheduleDraw()
+}
+
+function onPointerUp(event: PointerEvent) {
+  dragging = false
+  const canvas = canvasRef.value
+  if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+}
+
+function onWheel(event: WheelEvent) {
+  event.preventDefault()
+  camera.zoom = Math.max(0.7, Math.min(1.5, camera.zoom * Math.exp(-event.deltaY * 0.001)))
+  scheduleDraw()
+}
+
+watch([alpha, beta], scheduleDraw)
+
+onMounted(async () => {
+  await nextTick()
+  if (stageRef.value) {
+    resizeObserver = new ResizeObserver(resizeCanvas)
+    resizeObserver.observe(stageRef.value)
+  }
+  themeObserver = new MutationObserver(scheduleDraw)
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  resizeCanvas()
 })
 
-// alpha- 弧（虚线，向左下方向）
-const alphaMinusPath = computed(() => {
-  const start = { x: PROBE_CX, y: PROBE_CY + 70 }
-  const rad = alphaArcAngle.value * Math.PI / 180
-  const end = {
-    x: PROBE_CX - Math.sin(rad) * ALPHA_ARC_R,
-    y: start.y + Math.cos(rad) * ALPHA_ARC_R
-  }
-  return `M ${start.x} ${start.y} A ${ALPHA_ARC_R} ${ALPHA_ARC_R} 0 0 0 ${end.x.toFixed(1)} ${end.y.toFixed(1)}`
-})
-
-// beta 弧参数：从探针右侧向右上/右下弧出
-const BETA_ARC_R = 80
-const BETA_ARC_MAX_DEG = 45
-const betaArcAngle = computed(() =>
-  Math.min(Math.abs(beta.value) / 60, 1) * BETA_ARC_MAX_DEG
-)
-
-// beta+ 弧（实线，向右上方向）
-const betaPlusPath = computed(() => {
-  const start = { x: PROBE_CX + 100, y: PROBE_CY }
-  const rad = betaArcAngle.value * Math.PI / 180
-  const end = {
-    x: start.x + Math.cos(rad) * BETA_ARC_R,
-    y: PROBE_CY - Math.sin(rad) * BETA_ARC_R
-  }
-  return `M ${start.x} ${start.y} A ${BETA_ARC_R} ${BETA_ARC_R} 0 0 0 ${end.x.toFixed(1)} ${end.y.toFixed(1)}`
-})
-
-// beta- 弧（虚线，向右下方向）
-const betaMinusPath = computed(() => {
-  const start = { x: PROBE_CX + 100, y: PROBE_CY }
-  const rad = betaArcAngle.value * Math.PI / 180
-  const end = {
-    x: start.x + Math.cos(rad) * BETA_ARC_R,
-    y: PROBE_CY + Math.sin(rad) * BETA_ARC_R
-  }
-  return `M ${start.x} ${start.y} A ${BETA_ARC_R} ${BETA_ARC_R} 0 0 1 ${end.x.toFixed(1)} ${end.y.toFixed(1)}`
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  themeObserver?.disconnect()
+  cancelAnimationFrame(frameId)
 })
 </script>
 
 <template>
-  <section class="probe-card flex h-full min-h-[480px] overflow-hidden rounded-xl">
-    <!-- 左侧：SVG 示意图，占满剩余宽度 -->
-    <div class="relative flex-1 min-w-0">
-      <div class="probe-glow absolute inset-0"></div>
-
-      <svg viewBox="0 0 720 540" role="img" aria-label="五孔探针角度示意" class="relative z-10 h-full w-full">
-        <defs>
-          <marker id="flow-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#d48b52" />
-          </marker>
-          <marker id="axis-arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#3355ff" />
-          </marker>
-          <marker id="axis-arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#10b981" />
-          </marker>
-          <marker id="axis-arrow-red" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#ef4444" />
-          </marker>
-          <marker id="alpha-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#ffaa00" />
-          </marker>
-          <marker id="beta-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-            <path d="M0,0 L12,6 L0,12 Z" fill="#ff00aa" />
-          </marker>
-          <linearGradient id="probe-body" x1="0" x2="1">
-            <stop offset="0%" stop-color="#f8fafc" />
-            <stop offset="45%" stop-color="#94a3b8" />
-            <stop offset="100%" stop-color="#e2e8f0" />
-          </linearGradient>
-        </defs>
-
-        <!-- 顶部标题文字 -->
-        <text x="40" y="40" fill="#ffaa00" font-size="16" font-weight="bold">alpha: 偏航角（Yaw）</text>
-        <text x="40" y="62" fill="#ff00aa" font-size="16" font-weight="bold">beta: 俯仰角（Pitch）</text>
-
-        <!-- 流向箭头：横穿探针中心 -->
-        <line x1="40" y1="260" x2="680" y2="260" stroke="#d48b52" stroke-width="3" stroke-dasharray="12 10" marker-end="url(#flow-arrow)" />
-        <text x="60" y="248" fill="#d48b52" font-size="18" font-weight="bold">流向 Flow</text>
-
-        <!-- 坐标轴系：原点统一在探针中心 (360, 260) -->
-        <!-- Y 轴（蓝色，向上） -->
-        <line x1="360" y1="260" x2="360" y2="80" stroke="#3355ff" stroke-width="4" marker-end="url(#axis-arrow-blue)" />
-        <text x="372" y="92" fill="#3355ff" font-size="22" font-weight="bold">Y</text>
-
-        <!-- -Z 轴（绿色，右下） -->
-        <line x1="360" y1="260" x2="500" y2="400" stroke="#10b981" stroke-width="3" marker-end="url(#axis-arrow-green)" />
-        <text x="510" y="418" fill="#10b981" font-size="18" font-weight="bold">-Z</text>
-
-        <!-- X 轴（红色，左下，探针轴向） -->
-        <line x1="360" y1="260" x2="220" y2="400" stroke="#ef4444" stroke-width="3" marker-end="url(#axis-arrow-red)" />
-        <text x="120" y="418" fill="#ef4444" font-size="18" font-weight="bold">X probe axis</text>
-
-        <!-- alpha 弧（偏航方向，水平面内，探针底部） -->
-        <path :d="alphaPlusPath" fill="none" stroke="#ffaa00" stroke-width="5" marker-end="url(#alpha-arrow)" />
-        <path :d="alphaMinusPath" fill="none" stroke="#ffaa00" stroke-width="5" stroke-dasharray="10 8" marker-end="url(#alpha-arrow)" />
-        <text x="395" y="385" fill="#ffaa00" font-size="16" font-weight="bold">alpha+</text>
-        <text x="245" y="385" fill="#ffaa00" font-size="16" font-weight="bold">alpha-</text>
-
-        <!-- beta 弧（俯仰方向，垂直面内，探针右侧） -->
-        <path :d="betaPlusPath" fill="none" stroke="#ff00aa" stroke-width="5" marker-end="url(#beta-arrow)" />
-        <path :d="betaMinusPath" fill="none" stroke="#ff00aa" stroke-width="5" stroke-dasharray="10 8" marker-end="url(#beta-arrow)" />
-        <text x="500" y="225" fill="#ff00aa" font-size="16" font-weight="bold">beta+</text>
-        <text x="500" y="320" fill="#ff00aa" font-size="16" font-weight="bold">beta-</text>
-
-        <!-- 探针本体（5 孔布局）：P1 中心，P2-P5 环形 -->
-        <g transform="translate(360 260)">
-          <ellipse cx="0" cy="0" rx="100" ry="65" fill="url(#probe-body)" opacity="0.98" />
-          <ellipse cx="0" cy="0" rx="68" ry="42" fill="#dbe4ee" opacity="0.96" />
-          <!-- P1 中心孔 -->
-          <circle cx="0" cy="0" r="20" fill="#020617" />
-          <!-- P2 上孔 -->
-          <circle cx="0" cy="-48" r="20" fill="#020617" />
-          <!-- P3 右孔 -->
-          <circle cx="62" cy="0" r="20" fill="#020617" />
-          <!-- P5 下孔 -->
-          <circle cx="0" cy="48" r="20" fill="#020617" />
-          <!-- P4 左孔 -->
-          <circle cx="-62" cy="0" r="20" fill="#020617" />
-          <!-- 孔编号标签 -->
-          <text x="24" y="6" fill="#2563eb" font-size="16" font-weight="bold">P1</text>
-          <text x="24" y="-42" fill="#2563eb" font-size="16" font-weight="bold">P2</text>
-          <text x="70" y="6" fill="#2563eb" font-size="16" font-weight="bold">P3</text>
-          <text x="-58" y="6" fill="#2563eb" font-size="16" font-weight="bold">P4</text>
-          <text x="24" y="54" fill="#2563eb" font-size="16" font-weight="bold">P5</text>
-          <!-- 辅助说明 -->
-          <text x="-86" y="-78" fill="#94a3b8" font-size="12" font-weight="600">P1 center</text>
-          <text x="-86" y="100" fill="#94a3b8" font-size="12" font-weight="600">P2-P5 ring</text>
-        </g>
-      </svg>
+  <section class="probe-reference">
+    <div ref="stageRef" class="probe-stage">
+      <canvas
+        ref="canvasRef"
+        :aria-label="t.travProbeDiagramTitle"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @dblclick="setView('iso')"
+        @wheel="onWheel"
+      />
+      <div class="stage-help">{{ t.travProbe3dHelp }}</div>
+      <div class="stage-legend" aria-hidden="true">
+        <span class="legend-item legend-flow">{{ t.travProbeFlowDir }}</span>
+        <span class="legend-item legend-alpha">α · X-Z</span>
+        <span class="legend-item legend-beta">β</span>
+      </div>
     </div>
 
-    <!-- 右侧：角度控制面板，固定宽度，不再覆盖 SVG -->
-    <aside class="probe-sidebar w-[300px] shrink-0 p-5">
-      <h3 class="probe-sidebar-title mb-4 border-b pb-3 text-base font-semibold">五孔探针角度示意</h3>
+    <aside class="probe-controls">
+      <div>
+        <h3 class="control-title">{{ t.travProbeDiagramTitle }}</h3>
+        <p class="control-hint">{{ t.travProbe3dHint }}</p>
+      </div>
 
-      <label class="mb-2 flex justify-between text-xs">
-        <span>alpha: 偏航角（偏航面）</span>
-        <span class="font-bold" style="color: #ffaa00">{{ alpha }} deg</span>
-      </label>
-      <UiSlider v-model="alpha" :min="-60" :max="60" class="mb-4 w-full" />
+      <div class="control-group alpha-control">
+        <label class="control-label">
+          <span>{{ t.travProbeAlphaYaw }}</span>
+          <strong>{{ signedAngle(alpha) }}</strong>
+        </label>
+        <UiSlider v-model="alpha" :min="-60" :max="60" :aria-label="t.travProbeAlphaYaw" />
+        <div class="scale-labels"><span>-60°</span><span>0°</span><span>+60°</span></div>
+      </div>
 
-      <label class="mb-2 flex justify-between text-xs">
-        <span>beta: 俯仰角（俯仰面）</span>
-        <span class="font-bold" style="color: #ff00aa">{{ beta }} deg</span>
-      </label>
-      <UiSlider v-model="beta" :min="-60" :max="60" class="mb-4 w-full" />
+      <div class="control-group beta-control">
+        <label class="control-label">
+          <span>{{ t.travProbeBetaPitch }}</span>
+          <strong>{{ signedAngle(beta) }}</strong>
+        </label>
+        <UiSlider v-model="beta" :min="-60" :max="60" :aria-label="t.travProbeBetaPitch" />
+        <div class="scale-labels"><span>-60°</span><span>0°</span><span>+60°</span></div>
+      </div>
 
-      <div class="info-box space-y-1 rounded-xl p-3 text-xs leading-5">
-        <div><span class="font-bold" style="color: #ffaa00">alpha+</span>: flow offset in the yaw plane; alpha- is the opposite direction.</div>
-        <div><span class="font-bold" style="color: #ff00aa">beta+</span>: flow offset in the pitch plane; beta- is the opposite direction.</div>
-        <div>The dashed line indicates incoming flow direction. Probe axis and -Z orientation are labeled in the diagram.</div>
+      <div class="control-group">
+        <div class="view-grid">
+          <button
+            v-for="view in (['iso', 'face', 'top', 'side'] as ViewName[])"
+            :key="view"
+            type="button"
+            class="view-button"
+            :class="{ 'view-button--active': activeView === view }"
+            @click="setView(view)"
+          >
+            {{ t[`travProbeView_${view}`] }}
+          </button>
+        </div>
+      </div>
+
+      <div class="reference-notes">
+        <p><strong class="alpha-text">α</strong>{{ t.travProbeAlpha3dHint }}</p>
+        <p><strong class="beta-text">β</strong>{{ t.travProbeBeta3dHint }}</p>
+        <p>{{ t.travProbeAxis3dHint }}</p>
+        <p>{{ t.travProbePortsHint }}</p>
       </div>
     </aside>
   </section>
 </template>
 
 <style scoped>
-.probe-card {
-  border: 1px solid var(--border-default);
-  background: var(--bg-canvas);
+.probe-reference {
+  --probe-alpha: var(--accent-warning);
+  --probe-beta: var(--accent-danger);
+  --probe-flow: var(--accent-info);
+  display: flex;
+  min-width: 0;
   min-height: 480px;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-canvas);
 }
 
-/* 右侧控制面板：使用项目 token，避免硬编码 slate 色与主题不协调 */
-.probe-sidebar {
+.probe-stage {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+.probe-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.probe-stage canvas:active { cursor: grabbing; }
+
+.stage-help,
+.stage-legend {
+  position: absolute;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+
+.stage-help {
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.stage-legend {
+  bottom: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+}
+
+.legend-item::before {
+  content: '';
+  display: inline-block;
+  width: 1rem;
+  height: 2px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  background: currentColor;
+}
+
+.legend-flow { color: var(--probe-flow); }
+.legend-alpha { color: var(--probe-alpha); }
+.legend-beta { color: var(--probe-beta); }
+
+.probe-controls {
+  width: 280px;
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow-y: auto;
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel);
   color: var(--text-primary);
 }
 
-.probe-sidebar-title {
+.control-title {
+  margin: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: 650;
 }
 
-.probe-glow {
-  background:
-    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--color-accent) 20%, transparent) 0%, transparent 38%),
-    radial-gradient(circle at 75% 75%, color-mix(in srgb, var(--color-info) 12%, transparent) 0%, transparent 32%);
-}
-
-.info-box {
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-panel) 75%, transparent);
+.control-hint {
+  margin: var(--space-1) 0 0;
   color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+}
+
+.control-group {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+
+.control-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.control-label strong {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.alpha-control .control-label strong,
+.alpha-text { color: var(--probe-alpha); }
+.beta-control .control-label strong,
+.beta-text { color: var(--probe-beta); }
+
+.scale-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+}
+
+.view-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.view-button {
+  min-height: 30px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.view-button:hover,
+.view-button:focus-visible,
+.view-button--active {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  outline: none;
+}
+
+.reference-notes {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-strong);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.reference-notes p { margin: 0; }
+.reference-notes strong {
+  display: inline-block;
+  width: 1.25rem;
+}
+
+@media (max-width: 1100px) {
+  .probe-reference { min-width: 900px; }
 }
 </style>

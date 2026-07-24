@@ -36,7 +36,7 @@ export default defineConfig({
     globals: true,
     include: ['src/**/*.test.ts'],
     env: {
-      VITE_API_BASE: 'http://localhost:8080',
+      VITE_API_BASE: 'http://127.0.0.1:16888',
     },
   },
   server: {
@@ -44,7 +44,9 @@ export default defineConfig({
     port: 9245,
     strictPort: true,
     proxy: {
-      '/api': 'http://localhost:8080',
+      // 开发态：Vite dev server (9245) 把 /api/* 代理到 Go 后端 (16888)
+      // 生产态：Electron 直接加载 http://127.0.0.1:16888，与后端同源，不触发代理
+      '/api': 'http://127.0.0.1:16888',
     },
     // 允许 dev server 访问 workspace 根目录下的共享前端模块（@shared-frontend）
     fs: {

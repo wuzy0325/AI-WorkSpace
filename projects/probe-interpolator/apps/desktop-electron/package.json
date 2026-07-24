@@ -1,0 +1,51 @@
+{
+  "name": "probe-interpolator-win7",
+  "version": "0.1.0-win7.1",
+  "private": true,
+  "description": "Probe Interpolator (3/5/7-hole) Windows 7 compatible desktop application",
+  "main": "main.cjs",
+  "scripts": {
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist:win7": "npm run build:backend && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.wtn.probe-interpolator.win7",
+    "productName": "Probe Interpolator",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/probe-interpolator-backend.exe",
+        "to": "backend/probe-interpolator-backend.exe"
+      }
+    ],
+    "win": {
+      "icon": "../desktop-wails/app_icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "Probe-Interpolator-Win7-Setup-${version}-${arch}.${ext}"
+    }
+  }
+}

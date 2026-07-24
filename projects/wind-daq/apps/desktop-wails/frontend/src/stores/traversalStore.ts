@@ -2,12 +2,19 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { traversalApi } from '@api/traversalApi'
 
-import { useUiRefreshThrottle } from '@composables/useUiRefreshThrottle'
+import { useI18nStore } from '@stores/i18nStore'
+import { useDeviceStore } from '@stores/deviceStore'
+import { useStorageStore } from '@stores/storageStore'
+import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
+import {
+  createDefaultTraversalProbeChannels,
+  createSevenHoleTraversalProbeChannels
+} from '@shared/types/traversal'
 
 function formatApiError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-    return '网络连接失败，请检查后端服务是否已启动'
+    return useI18nStore().t.travErrNetwork
   }
   return msg
 }
@@ -29,12 +36,21 @@ import type {
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
   TraversalCheckpoint,
-  TraversalErrorCode
+  TraversalErrorCode,
+  TraversalProbeType,
+  TraversalRealtimeInput,
+  SevenHolePrbFileInfo,
+  SevenHoleTraversalInterpolationConfig
 } from '@shared/types/traversal'
 
 export type RealtimePressures = TraversalRawPressure
 
 export const useTraversalStore = defineStore('traversal', () => {
+  // 国际化：store 内部错误消息需随语言切换，故引入 i18n store
+  const i18n = useI18nStore()
+  // 设备 store：用于同步采集状态指示。遍历测试不控制设备采集生命周期，
+  // 开始前要求操作员已在设备管理中启动采集。
+  const deviceStore = useDeviceStore()
   const statusRecoveryFailed = ref(false)
   // 启动防重入标志：避免用户连续点击"开始"导致并发启动
   const isStarting = ref(false)
@@ -80,7 +96,10 @@ export const useTraversalStore = defineStore('traversal', () => {
   // 模拟模式标志：纯前端模拟时为 true，不调用后端硬件接口
   const isSimulation = ref(false)
 
-  const { uiRefreshHz, uiRefreshIntervalMs, setUiRefreshHz } = useUiRefreshThrottle('traversal.uiRefreshHz')
+  // 实时插值节流间隔：复用全局 storageStore.settings.refreshRateHz（默认 5Hz），
+  // 与实时压力数据同频，避免出现"压力卡片与插值卡片刷新节奏不一致"的视觉错位。
+  // refreshRateHz 已在 storageStore 内 clamp 到 1–10Hz（系统边界），此处直接消费不再二次保护。
+  const uiRefreshIntervalMs = computed(() => Math.round(1000 / useStorageStore().settings.refreshRateHz))
 
   // 断点恢复信息（应用启动时加载，用于判断是否展示"恢复"横幅）
   const checkpoint = ref<TraversalCheckpoint | null>(null)
@@ -96,9 +115,9 @@ export const useTraversalStore = defineStore('traversal', () => {
   let recoveryRequestId = 0
   let startupBlockedTaskId: string | null = null
   let startupPendingTaskId: string | null = null
-  // 实时插值节流相关状态（与 Cursor DAQ 一致：基于定时器的节流，避免高频刷新压垮 UI）
+  // 实时插值节流相关状态：基于定时器的节流，间隔由 storageStore.settings.refreshRateHz 派生
   let realtimeInterpolationTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingRealtimeInterpolationInput: TraversalInterpolationInput | null = null
+  let pendingRealtimeInterpolationInput: TraversalRealtimeInput | null = null
   let pendingRealtimeInterpolationConfig: TraversalTestConfig | null = null
   let lastRealtimeInterpolationAt = 0
   let realtimeInterpolationRequestId = 0
@@ -167,7 +186,9 @@ export const useTraversalStore = defineStore('traversal', () => {
 
     const res = await traversalApi.calculateRealtime(
       input,
-      configOverride ? toSerializableConfig(configOverride) : undefined
+      configOverride ? toSerializableConfig(configOverride) : undefined,
+      // 七孔必须显式携带 probeType（spec §5.6）；五孔省略保持旧请求体
+      (configOverride?.probeType ?? 'five-hole') === 'seven-hole' ? 'seven-hole' : undefined
     )
     if (requestId !== realtimeInterpolationRequestId) {
       return
@@ -178,11 +199,12 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   /**
    * 同步实时插值输入（节流入口）
-   * 与 Cursor DAQ 一致：基于 uiRefreshIntervalMs 节流，避免高频输入压垮后端
+   * 基于 uiRefreshIntervalMs 节流（派生自全局 storageStore.settings.refreshRateHz），
+   * 避免高频输入压垮后端；同时与实时压力数据同频，避免视觉错位
    * 若距离上次计算未达到节流间隔，则暂存输入并设置定时器；否则立即计算
    */
   function syncRealtimeInterpolation(
-    input: TraversalInterpolationInput | null,
+    input: TraversalRealtimeInput | null,
     configOverride: TraversalTestConfig | null = null
   ): void {
     // 后端插值器已加载即可进行实时插值，无需等待配置保存
@@ -220,7 +242,7 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   // 兼容旧接口：直接请求实时插值（内部走节流）
   async function requestRealtimeResult(
-    input: TraversalInterpolationInput,
+    input: TraversalRealtimeInput,
     configOverride?: TraversalTestConfig
   ): Promise<void> {
     syncRealtimeInterpolation(input, configOverride ?? null)
@@ -311,7 +333,8 @@ export const useTraversalStore = defineStore('traversal', () => {
           ...nextStatus,
           currentPoint: nextStatus.currentPoint ?? previousStatus.currentPoint,
           currentPointPhase: nextStatus.currentPointPhase ?? previousStatus.currentPointPhase,
-          validationWarnings: nextStatus.validationWarnings ?? previousStatus.validationWarnings
+          validationWarnings: nextStatus.validationWarnings ?? previousStatus.validationWarnings,
+          warning: nextStatus.warning ?? previousStatus.warning
         }
       : nextStatus
 
@@ -398,7 +421,11 @@ export const useTraversalStore = defineStore('traversal', () => {
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: previousStatus?.lastError,
       lastErrorCode: previousStatus?.lastErrorCode,
-      validationWarnings: previousStatus?.validationWarnings
+      validationWarnings: previousStatus?.validationWarnings,
+      warning: previousStatus?.warning,
+      // 保留后端写入的实际 CSV 路径：progress 事件不携带此字段，
+      // 必须从 previousStatus 透传，避免轮询刷新后丢失真实文件名（撞名 -2/-3 后缀）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {
@@ -431,7 +458,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: event.error,
-      lastErrorCode: event.code as TraversalErrorCode
+      lastErrorCode: event.code as TraversalErrorCode,
+      // 保留实际 CSV 路径：错误事件不携带此字段，必须从 previousStatus 透传，
+      // 否则侧边栏会回退到 config 静态拼接的预期路径（撞名 -2/-3 时为错误路径）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {
@@ -462,7 +492,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       startTime: previousStatus?.startTime,
       estimatedRemaining: previousStatus?.estimatedRemaining,
       lastError: completionStatus === 'completed' ? undefined : (event.error ?? previousStatus?.lastError),
-      lastErrorCode: completionStatus === 'completed' ? undefined : previousStatus?.lastErrorCode
+      lastErrorCode: completionStatus === 'completed' ? undefined : previousStatus?.lastErrorCode,
+      // 保留实际 CSV 路径：完成事件 filePath 在轮询路径下未填充，必须从 previousStatus 透传，
+      // 否则侧边栏会回退到 config 静态拼接的预期路径（撞名 -2/-3 时为错误路径）
+      csvPath: previousStatus?.csvPath
     }
 
     if (!previousStatus) {
@@ -479,7 +512,10 @@ export const useTraversalStore = defineStore('traversal', () => {
   async function loadConfig(): Promise<void> {
     const res = await traversalApi.getConfig()
     if (res.success) {
-      config.value = res.data ?? null
+      const loadedConfig = res.data ?? null
+      config.value = loadedConfig
+        ? { ...loadedConfig, layout: normalizeTraversalLayoutRanges(loadedConfig.layout) }
+        : null
       inferInterpolatorState()
       // 启动恢复时通过后端 API 校验插值器实际加载状态，
       // 避免 PRB 文件被删除/移动后前端误判为已加载（导致实时插值静默失败）
@@ -515,11 +551,11 @@ export const useTraversalStore = defineStore('traversal', () => {
         await verifyInterpolatorWithBackend()
       } else {
         config.value = null
-        recoveryErrors.push(configResult.value.error || '加载移位测试配置失败')
+        recoveryErrors.push(configResult.value.error || i18n.t.travErrLoadConfig)
       }
     } else {
       config.value = null
-      recoveryErrors.push(toErrorMessage(configResult.reason, '加载移位测试配置失败'))
+      recoveryErrors.push(toErrorMessage(configResult.reason, i18n.t.travErrLoadConfig))
     }
 
     if (statusResult.status === 'fulfilled') {
@@ -529,12 +565,12 @@ export const useTraversalStore = defineStore('traversal', () => {
       } else {
         statusRecoveryFailed.value = true
         syncRecoveredStatus(null)
-        recoveryErrors.push(statusResult.value.error || '获取移位测试状态失败')
+        recoveryErrors.push(statusResult.value.error || i18n.t.travErrGetStatus)
       }
     } else {
       statusRecoveryFailed.value = true
       syncRecoveredStatus(null)
-      recoveryErrors.push(toErrorMessage(statusResult.reason, '获取移位测试状态失败'))
+      recoveryErrors.push(toErrorMessage(statusResult.reason, i18n.t.travErrGetStatus))
     }
 
     if (recoveryErrors.length > 0) {
@@ -546,9 +582,25 @@ export const useTraversalStore = defineStore('traversal', () => {
     const res = await traversalApi.saveConfig(cfg)
     if (res.success) {
       config.value = cfg
+      // 修复 Bug 1: 保存配置（通常意味着用户重新布局/调整了点位）后，
+      // 若当前非运行/暂停态，清空上一轮测试残留的已完成点状态、完成事件与数据点，
+      // 让布点预览画面回到"未测试"状态（紫色完成点恢复为灰色未完成点）。
+      // 运行/暂停态下不清空，避免抹掉正在进行的测试进度。
+      // 同步清空 statusRecoveryFailed：status=null + 残留 statusRecoveryFailed=true
+      // 会让 statusType 退化为 'unknown'，canStart 误判为 false 阻塞下一次启动。
+      // 同步清空 realtimePressures/realtimeResult：与 start/reset 路径一致，
+      // 避免新一轮测试实时监控画面短暂闪现上一轮最后一帧的值，直到新帧到达才覆盖。
+      if (!isRunning.value && !isPaused.value) {
+        status.value = null
+        completeEvent.value = null
+        dataPoints.value = []
+        statusRecoveryFailed.value = false
+        realtimePressures.value = null
+        realtimeResult.value = null
+      }
       return true
     }
-    error.value = res.error || '保存配置失败'
+    error.value = res.error || i18n.t.travErrSaveConfig
     return false
   }
 
@@ -561,7 +613,7 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
       return res.data
     }
-    error.value = res.error || '导入 PRB 文件失败'
+    error.value = res.error || i18n.t.travErrImportPrb
     return null
   }
 
@@ -574,7 +626,7 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
       return res.data
     }
-    error.value = res.error || '导入 CSV 标定数据失败'
+    error.value = res.error || i18n.t.travErrImportCsv
     return null
   }
 
@@ -604,8 +656,96 @@ export const useTraversalStore = defineStore('traversal', () => {
       return res.data
     }
 
-    error.value = res.error || '导入多 PRB 文件失败'
+    error.value = res.error || i18n.t.travErrImportMultiPrb
     return null
+  }
+
+  /**
+   * 七孔文件集导入的公共处理：成功后置已加载、按响应逐文件信息回填 sevenHolePrb 配置。
+   */
+  function applySevenHoleImport(
+    kind: SevenHoleTraversalInterpolationConfig['kind'],
+    data: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }
+  ): void {
+    hasLoadedInterpolator.value = true
+    if (config.value) {
+      const files = data.files
+      const inner = files.find((f) => f.sector === 7)
+      const outer = [1, 2, 3, 4, 5, 6].map((n) => files.find((f) => f.sector === n))
+      if (inner && outer.every((f): f is SevenHolePrbFileInfo => f != null)) {
+        config.value.sevenHolePrb = {
+          kind,
+          innerFile: inner,
+          outerFiles: outer as SevenHoleTraversalInterpolationConfig['outerFiles']
+        }
+      }
+    }
+  }
+
+  /**
+   * 导入七孔 PRB 文件集（1 内区 + 6 扇区，spec §5.6）。
+   * 成功后：插值器已加载、sevenHolePrb 配置按响应逐文件信息回填；
+   * 返回完整响应（files + validRange）供向导展示。
+   */
+  async function importSevenHolePrbFiles(
+    innerFilePath: string,
+    outerFilePaths: string[]
+  ): Promise<{ files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] } | null> {
+    const res = await traversalApi.importSevenHolePrb(innerFilePath, outerFilePaths)
+    if (res.success && res.data) {
+      applySevenHoleImport('seven-hole-prb-set', res.data)
+      return res.data
+    }
+    error.value = res.error || i18n.t.travErrImportSevenHolePrb
+    return null
+  }
+
+  /**
+   * 导入七孔校准 CSV 文件集（校准导出直接导入，免导出 .prb；spec §10 Q2 落地）。
+   * 与 PRB 文件集同槽位语义（1 内区 + 6 扇区），kind 记录为 calibration-csv 供恢复。
+   */
+  async function importSevenHoleCalibrationCsvFiles(
+    innerFilePath: string,
+    outerFilePaths: string[]
+  ): Promise<{ files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] } | null> {
+    const res = await traversalApi.importSevenHoleCalibrationCsv(innerFilePath, outerFilePaths)
+    if (res.success && res.data) {
+      applySevenHoleImport('seven-hole-calibration-csv', res.data)
+      return res.data
+    }
+    error.value = res.error || i18n.t.travErrImportSevenHoleCsv
+    return null
+  }
+
+  /**
+   * 异步清理指定探针类型的插值器（先清后端再改本地；后端失败不动本地状态）。
+   * 返回是否成功；失败时 error 已填充。探针切换不清插值器（双变体语义），
+   * 本动作保留给"显式移除校准文件"类场景使用。
+   */
+  async function clearProbeInterpolator(probeType: TraversalProbeType): Promise<boolean> {
+    const res = await traversalApi.clearInterpolator(probeType)
+    if (!res.success) {
+      error.value = res.error || i18n.t.travErrClearInterpolator
+      return false
+    }
+    return true
+  }
+
+  /**
+   * 切换激活探针类型（双变体语义）：
+   * 仅更新 config.probeType 并按激活变体重新推导 hasLoadedInterpolator，
+   * 不清理后端任何插值器、不重置任何变体字段——五孔字段与 sevenHolePrb
+   * 在配置中并存，后端按激活 probeType 经策略表取用对应插值器，
+   * 未激活插值器保持挂载但对计算/前置检查不可达（traversal_probe.go）。
+   * 切换后立即经 checkPreconditions 复核后端真实加载状态（应用重启只恢复
+   * 激活变体，切到未恢复侧时由 verify 纠正推断并展示根因）。
+   */
+  function activateProbeType(next: TraversalProbeType): void {
+    if (config.value) {
+      config.value.probeType = next
+    }
+    inferInterpolatorState()
+    void verifyInterpolatorWithBackend()
   }
 
   async function checkPreconditions(cfg?: TraversalTestConfig): Promise<PreconditionCheckResult> {
@@ -619,7 +759,7 @@ export const useTraversalStore = defineStore('traversal', () => {
    */
   async function startTest(cfg: TraversalTestConfig): Promise<string> {
     if (isStarting.value) {
-      throw new Error('测试正在启动')
+      throw new Error(i18n.t.travErrTestStarting)
     }
 
     isStarting.value = true
@@ -637,7 +777,7 @@ export const useTraversalStore = defineStore('traversal', () => {
 
       const startRes = await traversalApi.start(toSerializableConfig(cfg))
       if (!startRes.success || !startRes.data?.taskId) {
-        throw new Error(startRes.error || '启动测试失败')
+        throw new Error(startRes.error || i18n.t.travErrStartTest)
       }
 
       if (!status.value) {
@@ -647,6 +787,13 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
 
       await refreshStatus()
+      // 后端 ParseAndStartTraversal 已隐式启动设备采集，前端 deviceStatuses 需同步刷新，
+      // 否则侧边栏 acquiringFor 返回 false，采集状态指示灯停在"已连接"。
+      // 不阻塞启动主流程：refreshAllStatuses 内部 catch 所有错误，最坏情况是指示灯延迟更新，
+      // 不影响测试启动成功语义。
+      deviceStore.refreshAllStatuses().catch((err) => {
+        console.warn('[traversalStore] startTest: refreshAllStatuses failed:', err)
+      })
       return startRes.data.taskId
     } catch (err) {
       clearStartupWindow()
@@ -660,13 +807,13 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   async function pause(): Promise<void> {
     const res = await traversalApi.pause()
-    if (!res.success) throw new Error(res.error || '暂停失败')
+    if (!res.success) throw new Error(res.error || i18n.t.travErrPause)
     await refreshStatus()
   }
 
   async function resume(): Promise<void> {
     const res = await traversalApi.resume()
-    if (!res.success) throw new Error(res.error || '继续失败')
+    if (!res.success) throw new Error(res.error || i18n.t.travErrResume)
     // 乐观更新：立即将状态切换为 running，避免轮询间隙的 UI 闪烁
     if (status.value && status.value.status === 'paused') {
       status.value = { ...status.value, status: 'running' }
@@ -677,8 +824,13 @@ export const useTraversalStore = defineStore('traversal', () => {
 
   async function stop(): Promise<void> {
     const res = await traversalApi.stop()
-    if (!res.success) throw new Error(res.error || '停止失败')
+    if (!res.success) throw new Error(res.error || i18n.t.travErrStop)
     await refreshStatus()
+    // 后端 stop 会隐式停止设备采集（若由遍历启动），前端需同步刷新，
+    // 否则侧边栏 acquiringFor 仍返回 true，指示灯停在"采集中"
+    deviceStore.refreshAllStatuses().catch((err) => {
+      console.warn('[traversalStore] stop: refreshAllStatuses failed:', err)
+    })
   }
 
   async function refreshStatus(): Promise<void> {
@@ -703,7 +855,7 @@ export const useTraversalStore = defineStore('traversal', () => {
   /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
   async function resumeFromCheckpoint(cp: TraversalCheckpoint): Promise<string> {
     if (isStarting.value) {
-      throw new Error('测试正在启动')
+      throw new Error(i18n.t.travErrTestStarting)
     }
 
     isStarting.value = true
@@ -721,7 +873,7 @@ export const useTraversalStore = defineStore('traversal', () => {
       const res = await traversalApi.resumeFromCheckpoint(cp)
       if (!res.success || !res.data?.taskId) {
         teardownEventSubscriptions()
-        throw new Error(res.error || '从断点恢复测试失败')
+        throw new Error(res.error || i18n.t.travErrResumeCheckpoint)
       }
 
       // 恢复后清空 checkpoint 缓存（后端会在测试完成时自动清理断点文件）
@@ -753,11 +905,22 @@ export const useTraversalStore = defineStore('traversal', () => {
     realtimeResult.value = null
   }
 
-  // 根据已加载的配置推断后端插值器是否已就绪
+  // 根据已加载的配置推断后端插值器是否已就绪（按探针类型判别）
   function inferInterpolatorState(): void {
     const cfg = config.value
     if (!cfg) {
       hasLoadedInterpolator.value = false
+      return
+    }
+    if ((cfg.probeType ?? 'five-hole') === 'seven-hole') {
+      const prb = cfg.sevenHolePrb
+      const knownKind = prb?.kind === 'seven-hole-prb-set' || prb?.kind === 'seven-hole-calibration-csv'
+      hasLoadedInterpolator.value = !!(
+        knownKind &&
+        prb?.innerFile?.filePath &&
+        prb.outerFiles?.length === 6 &&
+        prb.outerFiles.every((f) => !!f?.filePath)
+      )
       return
     }
     hasLoadedInterpolator.value = !!(
@@ -789,7 +952,7 @@ export const useTraversalStore = defineStore('traversal', () => {
       // API 调用未成功（如网络异常）：保留推断状态，但提示用户校验未完成
       if (!res.success || !res.data) {
         interpolatorRestoreMessage.value =
-          '无法校验后端插值器状态（' + (res.error || '响应为空') + '）。如导入后未真实加载，请重新导入 PRB / CSV 文件。'
+          i18n.t.travErrVerifyInterpolator.replace('{error}', res.error || i18n.t.travErrResponseEmpty)
         return
       }
       const result: PreconditionCheckResult = res.data
@@ -797,14 +960,14 @@ export const useTraversalStore = defineStore('traversal', () => {
       if (prbCheck && !prbCheck.passed) {
         hasLoadedInterpolator.value = false
         // 把后端 message 透传给 UI，便于用户看到根本原因（如"PRB 文件不存在"）
-        interpolatorRestoreMessage.value = prbCheck.message || '后端未加载插值器，请重新导入 PRB / CSV 文件'
+        interpolatorRestoreMessage.value = prbCheck.message || i18n.t.travErrInterpolatorNotLoaded
       } else {
         interpolatorRestoreMessage.value = null
       }
     } catch (err) {
       // 抛错时不改变推断状态（避免网络抖动误判），但通过 message 通知 UI
       interpolatorRestoreMessage.value =
-        '校验后端插值器状态时出错：' + (err instanceof Error ? err.message : String(err))
+        i18n.t.travErrVerifyInterpolatorException.replace('{error}', err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -855,7 +1018,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     isSimulation,
     checkpoint,
     hasCheckpoint,
-    uiRefreshHz,
     uiRefreshIntervalMs,
     loadConfig,
     recoverRendererState,
@@ -865,6 +1027,10 @@ export const useTraversalStore = defineStore('traversal', () => {
     importCalibrationCsvFile,
     setInterpolationAlgorithm,
     importMultiPrbFiles,
+    importSevenHolePrbFiles,
+    importSevenHoleCalibrationCsvFiles,
+    clearProbeInterpolator,
+    activateProbeType,
     checkPreconditions,
     startTest,
     pause,
@@ -876,7 +1042,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     clearCheckpoint,
     clearError,
     reset,
-    setUiRefreshHz,
     syncRealtimeInterpolation,
     requestRealtimeResult
   }

@@ -32,7 +32,7 @@ func TestCalibrationCsvWriterInitializeRefreshesSchemaFromConfig(t *testing.T) {
 	}
 	// 首行应以 UTF-8 BOM 开头，避免 Excel / 中文 Windows 端打开中文表头乱码
 	if !bytes.HasPrefix(raw, utf8BOM) {
-		t.Fatalf("expected CSV to start with UTF-8 BOM, got first bytes: % x", raw[:min(len(raw), 3)])
+		t.Fatalf("expected CSV to start with UTF-8 BOM, got first bytes: % x", raw[:cmpMin(len(raw), 3)])
 	}
 	// 去掉 BOM 后再交给 csv.Reader，否则 BOM 会被并入第一列
 	records, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(raw, utf8BOM))).ReadAll()
@@ -49,4 +49,12 @@ func TestCalibrationCsvWriterInitializeRefreshesSchemaFromConfig(t *testing.T) {
 	if header[0] != "点位编号" || header[1] != "α(°)" || header[len(header)-1] != "CH16(Pa)" {
 		t.Fatalf("unexpected five-hole header: %v", header)
 	}
+}
+
+// cmpMin 返回两个 int 中较小的一个，替代 Go 1.21+ 内置 min。
+func cmpMin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

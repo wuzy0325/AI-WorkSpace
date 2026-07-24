@@ -3,7 +3,7 @@ package hardware
 import (
 	"encoding/binary"
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"math"
 	"net"
 	"sync"

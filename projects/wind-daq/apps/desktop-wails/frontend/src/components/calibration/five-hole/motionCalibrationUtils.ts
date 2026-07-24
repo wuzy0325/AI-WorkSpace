@@ -3,45 +3,26 @@ import type { MotionControllerStatus } from '@shared/types/motion'
 import type { CalibrationConfig } from '@shared/types/calibration'
 import { calibrationApi } from '@api/calibrationApi'
 
-function generateFiveHoleSnakePointsLocal(layout: FiveHolePointLayout): CalibrationPoint[] {
-  const points: CalibrationPoint[] = []
-  let id = 1
+// spec Task 11：删除前端本地蛇形算法 + catch fallback。
+//   旧实现 `try { api } catch { local }` 让后端错误静默降级到本地公式，
+//   违反 spec R-4 "删除前端五孔蛇形布点本地 fallback，后端失败显式反馈"。
+//   现统一透传 calibrationApi.generateFiveHoleSnakePoints：
+//     - Wails 模式：calibrationApi 内部调 wailsApi.calibration.previewFiveHole binding
+//     - HTTP 模式：calibrationApi 内部 POST /api/calibration/fivehole
+//   两端共用后端 usecase.PreviewFiveHolePoints，错误透传到 UI 由调用方显示。
+//   此函数现在只做"接口形状适配"——把 bare array 元素类型从
+//   { id; coordinates: Record<string, number> } 透传为 CalibrationPoint[]，
+//   不再做任何点位生成计算。
 
-  const alphaValues: number[] = []
-  for (let a = layout.alphaMin; a <= layout.alphaMax; a += layout.alphaStep) {
-    alphaValues.push(Math.round(a * 10) / 10)
-  }
-  const betaValues: number[] = []
-  for (let b = layout.betaMin; b <= layout.betaMax; b += layout.betaStep) {
-    betaValues.push(Math.round(b * 10) / 10)
-  }
-
-  for (let bi = 0; bi < betaValues.length; bi++) {
-    const beta = betaValues[bi]
-    // 蛇形走位：奇数行反向遍历 α；默认（raster）每行都从 αMin 升序遍历
-    const reverse = layout.serpentine === true && bi % 2 === 1
-    const alphas = reverse ? [...alphaValues].reverse() : alphaValues
-    for (const alpha of alphas) {
-      points.push({
-        id: id++,
-        coordinates: { α: alpha, β: beta },
-      })
-    }
-  }
-
-  return points
-}
-
+/**
+ * 生成五孔蛇形/raster 校准点位（spec Task 11 后纯后端驱动）。
+ *
+ * @param layout α/β 范围与步长 + serpentine 开关
+ * @returns 后端返回的点位列表（bare array）
+ * @throws 后端错误（如步长 ≤ 0、binding 未初始化、HTTP 离线）透传给调用方
+ */
 export async function generateFiveHoleSnakePoints(layout: FiveHolePointLayout): Promise<CalibrationPoint[]> {
-  try {
-    const result = await calibrationApi.generateFiveHoleSnakePoints(layout)
-    if (result && result.length > 0) {
-      return result as CalibrationPoint[]
-    }
-  } catch {
-    // fallback to local
-  }
-  return generateFiveHoleSnakePointsLocal(layout)
+  return await calibrationApi.generateFiveHoleSnakePoints(layout)
 }
 
 export function formatFiveHoleActualPosition(

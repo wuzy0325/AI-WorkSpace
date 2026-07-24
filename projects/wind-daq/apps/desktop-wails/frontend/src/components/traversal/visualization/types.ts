@@ -41,7 +41,7 @@ export function getParamValue(result: InterpolationResult, param: VisualizationP
     case 'dynamicPressure':
       return result.dynamicPressure
     case 'density':
-      return result.density
+      return result.density ?? null
     case 'alpha':
       return result.alpha
     case 'beta':
@@ -63,5 +63,13 @@ export interface ChartTheme {
   tooltipBackground: string
   tooltipBorder: string
   heatmapColors: string[]
+  // 主系列颜色：折线/雷达/箭头等使用，需随主题切换
+  seriesPrimary: string
+  // 强调色：热力图高亮边框、激活态背景等
+  emphasisBorder: string
+  // 雷达图填充色（带透明度的主色）
+  radarAreaFill: string
+  // 雷达图背景分区色（奇偶交替，营造分层感）
+  radarSplitArea: [string, string]
 }
 

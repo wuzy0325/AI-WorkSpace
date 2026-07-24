@@ -18,11 +18,18 @@ export interface RealtimePressures {
   P3: number
   P4: number
   P5: number
+  // 七孔探针扩展（spec Task 19）：P6/P7 为可选字段，五孔/三孔/总压/总温数据不填时为 undefined。
+  // 与后端 SevenHoleRawData.P6/P7 对齐——P6 是外区第 6 孔，P7 是中心孔。
+  P6?: number
+  P7?: number
   Patm: number
   Tatm: number
   P0?: number
   Ps?: number
   Ttunnel?: number
+  // 总压探针核心通道：探针总压不参与 Ma/V 计算（仅风洞总压/静压参与），
+  // 但需在侧边栏显示，单独字段供 TotalPressureMain 读取，与三孔从 store 读通道值的模式一致。
+  PprobeTotal?: number
 }
 
 export interface CalculatedPhysics {
@@ -30,55 +37,14 @@ export interface CalculatedPhysics {
   velocity?: number
 }
 
-// 大气数据计算常数（与后端 AtmosphericDataCalculator 保持一致）
-const ATM_GAMMA = 1.4       // 空气绝热指数
-const ATM_C_COEFF = 20.047  // 声速计算系数
-const ATM_RECOVERY = 0.9    // 温度传感器恢复系数
-const ATM_STANDARD_PRESSURE_PA = 101325
-
-/**
- * 根据实时压力计算气动参数（马赫数、流速）。
- * 公式与后端 AtmosphericDataCalculator / formulas.go 一致，用于 UI 实时显示，非校准算法。
- *
- * 关键：风洞总压/静压通道通常以大气压为参考点输出差压（表压），
- *   后端公式约定 Pt_abs = P0 + Patm, Ps_abs = Ps + Patm。
- *   若 Patm 缺失或为 0，实时 UI 使用标准大气压兜底，避免差压通道导致整块空白。
- *
- * 马赫数: Ma = sqrt((2/(γ-1)) * ((Pt_abs/Ps_abs)^((γ-1)/γ) - 1))
- * 静温:   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，需转开尔文）
- * 流速:   V = Ma * 20.047 * sqrt(SAT)
- *
- * 当 P0/Ps/Ttunnel 任一缺失或非法时返回 null（UI 显示 "--"）。
- */
-function calculateAtmosphericPhysics(p: RealtimePressures): CalculatedPhysics | null {
-  const ptGauge = p.P0
-  const psGauge = p.Ps
-  // 风洞温度通道单位为 ℃，需转换为开尔文
-  const tatK = p.Ttunnel === undefined ? undefined : p.Ttunnel + 273.15
-  // 大气压，用于差压转绝对压；实时 UI 中通道未映射时用标准大气压兜底。
-  const patm = Number.isFinite(p.Patm) && p.Patm > 0 ? p.Patm : ATM_STANDARD_PRESSURE_PA
-
-  if (ptGauge === undefined || psGauge === undefined || tatK === undefined) return null
-  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK)) return null
-
-  const ptAbs = ptGauge + patm
-  const psAbs = psGauge + patm
-
-  if (psAbs <= 0 || ptAbs < psAbs || tatK <= 0) return null
-  if (ptAbs === psAbs) return { machNumber: 0, velocity: 0 }
-
-  const ratio = ptAbs / psAbs
-  const ma = Math.sqrt((2 / (ATM_GAMMA - 1)) * (Math.pow(ratio, (ATM_GAMMA - 1) / ATM_GAMMA) - 1))
-  if (!Number.isFinite(ma) || ma < 0) return null
-
-  const sat = tatK / (1 + ((ATM_GAMMA - 1) / 2) * ATM_RECOVERY * ma * ma)
-  if (!Number.isFinite(sat) || sat <= 0) return null
-
-  const velocity = ma * ATM_C_COEFF * Math.sqrt(sat)
-  if (!Number.isFinite(velocity)) return null
-
-  return { machNumber: ma, velocity }
-}
+// spec Task 15：删除前端 atmospheric 公式（ATM_GAMMA/ATM_C_COEFF/ATM_RECOVERY + calculateAtmosphericPhysics）。
+//   实时马赫数/流速改由后端 CalibrationStatus.livePhysics 提供（spec Task 13 已组装），
+//   前端 store 只在 updateStatusFromBackend 中映射 livePhysics → calculatedPhysics，
+//   原始压力更新（updateRealtimePressures）不再触发任何公式，避免前后端算法漂移。
+//   三态语义（与后端 *float64 对齐）：
+//     livePhysics 缺失（undefined）→ calculatedPhysics=null（UI 显示 "--"）
+//     livePhysics.machNumber=0     → 透传 0（UI 显示 "0.000"，零是有效零，区别于 missing）
+//     livePhysics.machNumber=0.3   → 透传 0.3
 
 export interface TimeInfo {
   elapsedTime: number
@@ -94,6 +60,15 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
   const timeInfo = ref<TimeInfo | null>(null)
+  // 七孔探针实时分区状态（spec Task 19）：
+  //   - currentRegion: "inner"（内区，7 区）或 "outer"（外区，1~6 区）
+  //   - currentSector: 内区固定 7，外区 1..6；首点之前为 0
+  //   - boundaryFlag: 边界点标记，空串=非边界，"P7-Pn"或"Pn-Pm"=并列边界
+  // 由 OnRegionChanged 事件（Wails）或 5Hz status 轮询（HTTP）更新；
+  // 五孔/三孔/总压/总温类型不使用这些字段，保持默认空值。
+  const currentRegion = ref<string>('')
+  const currentSector = ref<number>(0)
+  const boundaryFlag = ref<string>('')
   // 默认 5Hz：兼顾实时性与性能。CalibrationConfig.uiRefreshHz 在 startCalibration 中同步覆盖。
   const uiRefreshHz = ref(5)
   const uiRefreshIntervalMs = computed(() => 1000 / uiRefreshHz.value)
@@ -101,6 +76,32 @@ export const useCalibrationStore = defineStore('calibration', () => {
   // 状态轮询定时器：必须放在 store 内部（而非模块级），
   // 否则多实例 / HMR 重载时旧 timer 不会随 store dispose 而清理，导致泄漏与重复轮询。
   let statusPollingTimer: ReturnType<typeof setInterval> | null = null
+
+  // 轮询 generation token：每次 start/stop 都自增，用于隔离旧 generation 的在途响应。
+  //
+  // 必要性（review P1 缺陷）：
+  //   - acquireView/releaseView/recovery/uiRefreshHz 变化都会 stopStatusPolling + startStatusPolling，
+  //     产生新的 polling generation。旧 generation 的 in-flight 请求返回后若仍写入 store，
+  //     会用旧任务/旧进度/旧 physics 覆盖新 generation 的状态。
+  //   - 终态响应若来自旧 generation，还会调用 stopStatusPolling 停掉新 generation 的 timer。
+  //   - inFlight 是 startStatusPolling 内的局部变量，无法跨 generation 隔离。
+  //
+  // 修复方案：每次 start 拍摄当前 generation 快照，响应返回时若 generation 已变（被 stop 或新 start 覆盖），
+  //   直接丢弃，不写 store、不调 stopStatusPolling。
+  let pollingGeneration = 0
+
+  // 画面活跃性计数：驱动 polling 频率切换（spec I4）
+  // - count > 0：至少一个校准 Main 可见，polling 用 uiRefreshHz（默认 5Hz）
+  // - count == 0：全部切走，polling 降到 1Hz 心跳，让"切走期间完成/失败/停止"仍能被前端捕获
+  // acquire/release 仅控制频率，不清理会话状态（status/dataPoints/completeEvent），参见 I1/I3
+  const activeViewCount = ref(0)
+
+  // 恢复中状态：recoveryFromBackend 期间为 true，UI 显示 loading 占位（spec I8 / Recovery UX）
+  const isRecovering = ref(false)
+  // 恢复失败原因：null 表示无错误。失败时保留旧 store 状态，UI 显示错误条 + 可重试
+  const recoveryError = ref<string | null>(null)
+  // 上次 recovery 完成时刻（ms 时间戳）：调用方用于"2s 内跳过二次 recovery"判定（spec Decision #14）
+  const lastRecoveryAt = ref(0)
 
   // 已用时 tick 定时器：固定 1Hz，独立于 statusPolling 频率。
   // 已用时显示精度到秒，1Hz 足够；不必跟随 uiRefreshHz（5Hz~60Hz）浪费主线程。
@@ -137,13 +138,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const intervalMs = Math.round(uiRefreshIntervalMs.value)
 
     const applyPressureUpdate = (pressures: RealtimePressures) => {
+      // spec Task 15：raw pressure 更新只刷新 realtimePressures，不再触发任何公式。
+      //   马赫数/流速由后端 CalibrationStatus.livePhysics 提供，store 在
+      //   updateStatusFromBackend 中映射。避免前端公式与后端 AtmosphericDataCalculator
+      //   漂移导致"UI 显示数值、CSV 对应列为空"等不一致。
       realtimePressures.value = pressures
-      // 同步计算气动参数（马赫数、流速），公式与后端 AtmosphericDataCalculator 一致：
-      //   Ma = sqrt((2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1))
-      //   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，开尔文）
-      //   V   = Ma * 20.047 * sqrt(SAT)
-      // 这是实时显示用的标准大气数据计算，非校准算法。
-      calculatedPhysics.value = calculateAtmosphericPhysics(pressures)
     }
 
     if (now - lastPressureUpdateAt >= intervalMs) {
@@ -172,25 +171,94 @@ export const useCalibrationStore = defineStore('calibration', () => {
     flushPendingPressureIfReady()
   }
 
+  // updateRegion 更新七孔探针实时分区状态（spec Task 19 / Task 23）
+  //
+  // 调用源：
+  //   1. Wails 模式 OnRegionChanged 事件订阅（SevenHoleMain.vue onMounted 注册）
+  //   2. HTTP 模式 5Hz status 轮询时从 status.CurrentRegion/CurrentSector/BoundaryFlag 同步
+  //   3. recoveryFromBackend 时从后端 status 同步当前分区
+  //
+  // 设计：直接赋值，不做节流——分区切换是低频事件（每点最多 1 次），
+  // 节流反而可能丢失关键切换瞬间。UI 通过响应式 ref 自动刷新。
+  //
+  // 入参字段宽松处理：
+  //   - region 空串视为未初始化（首点之前），保持 store 当前值不变
+  //   - sector 内区固定 7，外区 1..6；非法值（0/-1/8）不更新
+  //   - boundaryFlag 空串表示非边界点（覆盖之前的边界标记）
+  function updateRegion(region: string, sector: number, flag: string) {
+    if (region !== '' && region !== 'inner' && region !== 'outer') {
+      // 非法 region 值，保持当前状态不变（防御性）
+      return
+    }
+    if (region !== '') {
+      currentRegion.value = region
+    }
+    if (sector >= 0 && sector <= 7) {
+      currentSector.value = sector
+    }
+    boundaryFlag.value = flag
+  }
+
   // 开始轮询校准状态
-  function startStatusPolling() {
+  // 参数 intervalMs：显式指定轮询间隔（用于 acquire/release 切换频率）。
+  //   默认 undefined 时按 activeViewCount 自动选择：count>0 用 uiRefreshHz，count==0 用 1Hz 心跳。
+  //   spec I4：禁止并发写竞态，调用方需先 stopStatusPolling() 再 start。
+  //
+  // spec Task 14：HTTP/Wails 两种 transport 都轮询既有 status route/binding。
+  //   - Wails 模式：wailsApi.calibration.status()（binding）
+  //   - HTTP 模式：calibrationApi.status()（GET /api/calibration/status）
+  // 旧代码 `if (!isWailsAvailable()) return` 导致 HTTP 模式完全不轮询，进度条/已完成点数不刷新。
+  //
+  // 请求不重叠保护（spec Task 14 acceptance）：
+  //   上一帧 status 请求未完成时跳过本次 setInterval 触发，避免后端慢响应时请求堆积
+  //   导致 store 状态被旧响应覆盖（后到的旧响应覆盖新响应）。
+  //   setInterval 不会因 await 自动延后下一次触发，必须显式 inFlight 标志。
+  //
+  // generation 隔离（review P1 缺陷修复）：
+  //   start 时拍摄 generation 快照；响应返回时若 generation 已变（被 stop 或新 start 覆盖），
+  //   直接丢弃，不写 store、不调 stopStatusPolling。这避免旧 generation 的乱序响应
+  //   覆盖新 generation 的状态，或终态响应停掉新 generation 的 timer。
+  //
+  // zero 不被 truthiness 丢失（spec Task 14 acceptance）：
+  //   calStatus 是对象（即使 currentPoint=0/state=idle），if (calStatus) 检查对象存在性而非 truthiness。
+  //   后端返回的 machNumber=0 / velocity=0 是有效零，由 updateStatusFromBackend 保留。
+  function startStatusPolling(intervalMs?: number) {
     stopStatusPolling()
+    const generation = ++pollingGeneration
+    const interval = intervalMs ?? (activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000)
+    let inFlight = false
     statusPollingTimer = setInterval(async () => {
-      if (!isWailsAvailable()) return
+      if (inFlight) return
+      inFlight = true
       try {
-        const calStatus = await wailsApi.calibration.status()
+        const calStatus = isWailsAvailable()
+          ? await wailsApi.calibration.status()
+          : await calibrationApi.status()
+        // generation 已变：本响应来自上一轮 polling（已被 stop 或新 start 取代），
+        // 直接丢弃，避免旧任务/旧进度/旧 physics 覆盖新 generation 的状态，
+        // 也避免终态响应停掉新 generation 的 timer。
+        if (generation !== pollingGeneration) return
         if (calStatus) {
           // 更新本地状态
           updateStatusFromBackend(calStatus)
         }
       } catch (err) {
-        console.error('轮询校准状态失败:', err)
+        if (generation === pollingGeneration) {
+          console.error('轮询校准状态失败:', err)
+        }
+      } finally {
+        // inFlight 只控制本 generation 内的 tick 不重叠；generation 已变时也要清零
+        // 防止局部闭包被新 generation 复用（实际新 start 会创建新闭包，但保险起见）。
+        inFlight = false
       }
-    }, Math.round(uiRefreshIntervalMs.value))
+    }, Math.round(interval))
   }
 
   // 停止轮询
+  // 同时自增 generation，让上一轮 startStatusPolling 在途的请求返回时识别为过期并丢弃，
+  // 避免旧响应在 stop 之后写入 store 或触发 stopStatusPolling 停掉新 timer（review P1 缺陷修复）。
   function stopStatusPolling() {
+    pollingGeneration++
     if (statusPollingTimer) {
       clearInterval(statusPollingTimer)
       statusPollingTimer = null
@@ -212,6 +280,53 @@ export const useCalibrationStore = defineStore('calibration', () => {
       clearInterval(elapsedTickTimer)
       elapsedTickTimer = null
     }
+  }
+
+  // 画面活跃性 acquire：引用计数+1。从 0→1 时升频（spec I4 / Recovery UX）：
+  //   - 仅 running/paused 态需要高频 polling + elapsedTick（终态/idle 无需轮询）
+  //   - acquire 不动 status/dataPoints/completeEvent，仅控制 polling 频率
+  //   - spec Task 14：HTTP/Wails 两种 transport 都需启动 polling——
+  //     旧代码仅在 isWailsAvailable() 时启动，HTTP 模式切回画面后进度条不刷新。
+  function acquireView() {
+    const wasZero = activeViewCount.value === 0
+    activeViewCount.value++
+    if (wasZero && (isRunning.value || isPaused.value)) {
+      startStatusPolling(Math.round(uiRefreshIntervalMs.value))
+      startElapsedTick()
+    }
+  }
+
+  // 画面活跃性 release：引用计数-1（下限 0）。1→0 时降频（spec I4 / I6）：
+  //   - polling 降到 1Hz 心跳（仅 running/paused 态保留，捕获切走期间终态写入 store）
+  //   - elapsedTick 停止（无画面无需刷新时间显示）
+  //   - 不清空会话状态（spec I1/I3/I7）
+  //   - spec Task 14：HTTP/Wails 两种 transport 都需保留 1Hz 心跳——
+  //     旧代码仅在 isWailsAvailable() 时启动，HTTP 模式切走画面后无法捕获终态写入。
+  function releaseView() {
+    if (activeViewCount.value > 0) {
+      activeViewCount.value--
+    }
+    if (activeViewCount.value === 0) {
+      if (isRunning.value || isPaused.value) {
+        startStatusPolling(1000)
+      }
+      stopElapsedTick()
+    }
+  }
+
+  // recovery 完成后由调用方调用，依当前 store 状态重启 polling（spec Recovery UX 第 5 步）：
+  //   - running/paused && activeViewCount > 0：高频 uiRefreshHz（至少一个 Main 可见）
+  //   - running/paused && activeViewCount == 0：1Hz 心跳（全部切走，捕获终态写入）
+  //   - 其他（终态/idle）：不动——updateStatusFromBackend 终态分支已 stop polling
+  // 为什么需要这个：recoveryFromBackend 内部 stopStatusPolling 防竞态但不重启，
+  //   调用方必须显式依后端返回状态设频，避免 polling 一直停着。
+  // spec Task 14：HTTP/Wails 两种 transport 都需重启 polling——
+  //   旧代码 `if (!isWailsAvailable()) return` 导致 HTTP 模式 recovery 后永不轮询，
+  //   进度条/已完成点数全靠单次 recovery 快照，后续无更新。
+  function restartPollingForCurrentState() {
+    if (!isRunning.value && !isPaused.value) return
+    const interval = activeViewCount.value > 0 ? uiRefreshIntervalMs.value : 1000
+    startStatusPolling(Math.round(interval))
   }
 
   // 基于 status.startTime + pausedAccumulatedMs 计算 elapsedTime 与 estimatedRemaining。
@@ -244,12 +359,26 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const taskId = calStatus.taskId ?? calStatus.TaskID ?? calStatus.TaskId ?? ''
     const type = calStatus.type ?? calStatus.Type ?? 'five-hole'
     const totalPoints = calStatus.totalPoints ?? calStatus.TotalPoints ?? 0
-    const completedPoints = calStatus.completedPoints ?? calStatus.CompletedPoints ?? calStatus.currentPoint ?? calStatus.CurrentPoint ?? 0
+    // completedPoints 只读后端 completedPoints 字段，不再回退到 currentPoint：
+    // 后端 CurrentPoint 语义已改为"当前正在处理的点索引"（currentPointIdx，循环顶部推进），
+    // 不再等于 CompletedPoints。回退会导致 completedPoints 多 1，进度条/百分比计算错误。
+    const completedPoints = calStatus.completedPoints ?? calStatus.CompletedPoints ?? 0
+    // currentPointIndex：后端 autoEngine.GetCurrentPointIndex()，循环顶部推进（早于 moveToPoint）。
+    // 前端 progressInfo 优先用此索引查 config.points 得到"目标点"，让目标角度先于实际角度变化。
+    // 后端 autoEngine 为 nil（未启动/总温手动模式）时缺失，progressInfo 回退到 completedPoints。
+    const currentPointIndex = calStatus.currentPoint
     const backendDataPoints = calStatus.dataPoints ?? calStatus.DataPoints
     const progress = calStatus.progress ?? calStatus.Progress ?? (totalPoints > 0 ? (completedPoints / totalPoints) * 100 : 0)
     // 读取后端返回的启动时间戳（calibration.Status.StartTime，JSON 字段 startTime）。
     // 这是 elapsed 计时的基准——比前端本地记 Date.now() 更准：用户切换页面/刷新后仍能基于后端真实启动时刻恢复已用时。
     const startTime = calStatus.startTime ?? calStatus.StartTime
+    const backendPausedDurationMs = calStatus.pausedDurationMs ?? calStatus.PausedDurationMs
+    // 运动安全错误码 + 故障现场快照（与 core/calibration.Status.LastErrorCode /
+    // MotionSafetyFailure 对齐）。Wails binding 重新生成前 PascalCase 字段缺失，需做 fallback。
+    // 这两个字段决定前端告警卡片是否渲染、Start 是否阻塞——必须在每次轮询时刷新，
+    // 否则故障恢复后卡片不会自动消失（后端在故障恢复时会清空 MotionSafetyFailure）。
+    const lastErrorCode = calStatus.lastErrorCode ?? calStatus.LastErrorCode ?? undefined
+    const motionSafetyFailure = calStatus.motionSafetyFailure ?? calStatus.MotionSafetyFailure ?? null
     const mappedState = mapCalibrationState(state)
 
     if (!status.value) {
@@ -265,12 +394,22 @@ export const useCalibrationStore = defineStore('calibration', () => {
         dataPoints: Array.isArray(backendDataPoints) ? backendDataPoints : [],
         currentSample: calStatus.currentSample ?? calStatus.CurrentSample ?? 0,
         samplesPerPoint: calStatus.samplesPerPoint ?? calStatus.SamplesPerPoint ?? 0,
+        currentPointIndex: typeof currentPointIndex === 'number' ? currentPointIndex : undefined,
+        lastErrorCode,
+        motionSafetyFailure,
       }
     } else {
       status.value.status = mappedState
       status.value.completedPoints = completedPoints
       status.value.totalPoints = totalPoints
       status.value.progress = progress
+      status.value.currentPointIndex = typeof currentPointIndex === 'number' ? currentPointIndex : undefined
+      // 任务身份同步：每次后端快照都更新 taskId 和 type。
+      //   场景：任务由另一个窗口、HTTP 客户端或后端生命周期替换（stop+start 新任务）时，
+      //   前端 store 仍持有旧 taskId/type，会继续用旧任务 ID 停止/导出，并可能打开错误类型的 Main。
+      //   后端快照是身份真值来源，必须每次覆盖本地。
+      status.value.taskId = taskId
+      status.value.type = type
       // 后端在 Start 时才写入 StartTime；首次轮询可能还没拿到，需要每次都尝试补齐
       if (typeof startTime === 'number' && startTime > 0) {
         status.value.startTime = startTime
@@ -286,15 +425,58 @@ export const useCalibrationStore = defineStore('calibration', () => {
         status.value.currentSample = 0
         status.value.samplesPerPoint = 0
       }
+      // 运动安全错误码 + 故障现场快照每次轮询刷新：
+      //   - 故障发生时后端写入，前端展示告警卡片
+      //   - 故障恢复后后端清空（MotionSafetyFailure = nil），前端卡片自动消失
+      // 不做"只在 error 态保留"的特殊处理，因为后端在 paused/stopped 态也可能保留快照供操作员复盘
+      status.value.lastErrorCode = lastErrorCode
+      status.value.motionSafetyFailure = motionSafetyFailure
     }
 
     if (Array.isArray(backendDataPoints)) {
       dataPoints.value = backendDataPoints
     }
 
+    // 七孔探针实时分区状态同步（spec Task 19 / Task 23）
+    // 后端 Status.CurrentRegion/CurrentSector/BoundaryFlag 字段在每点采集完成后刷新，
+    // 5Hz 轮询时同步到 store；五孔/三孔/总压/总温类型后端不填这些字段，保持空值。
+    // region 空串表示任务未启动或类型非七孔，跳过更新避免覆盖 OnRegionChanged 事件已设置的值。
+    const backendRegion = calStatus.currentRegion ?? calStatus.CurrentRegion ?? ''
+    const backendSector = calStatus.currentSector ?? calStatus.CurrentSector ?? 0
+    const backendBoundaryFlag = calStatus.boundaryFlag ?? calStatus.BoundaryFlag ?? ''
+    if (backendRegion !== '') {
+      updateRegion(backendRegion, backendSector, backendBoundaryFlag)
+    }
+
+    // spec Task 15：映射后端 livePhysics → calculatedPhysics
+    //   - 后端在 CalibrationStatus.LivePhysics 中提供实时马赫数/流速（spec Task 13 已组装），
+    //     由 AtmosphericDataCalculator 锁外计算，5Hz polling 时随 status 一并返回。
+    //   - 三态语义（与后端 *float64 nil 对齐）：
+    //       livePhysics 缺失（undefined） → calculatedPhysics=null（UI 显示 "--"）
+    //       livePhysics.machNumber=0      → 透传 0（UI 显示 "0.000"，零是有效零）
+    //       livePhysics.machNumber=0.3    → 透传 0.3
+    //   - "对象存在性"而非 truthiness：`if (backendLivePhysics && typeof === 'object')`
+    //     确保全零 LivePhysics（{machNumber:0, velocity:0}）不被跳过——后端 §22 中
+    //     Pt==Ps 是有效零气动状态，UI 必须显示 "0.000" 而非 "--"。
+    //   - 终态后端已 StaleClearing（livePhysics=nil），自然映射为 null。
+    //   - Wails binding 字段为 PascalCase，做 fallback 与其他字段一致。
+    const backendLivePhysics = calStatus.livePhysics ?? calStatus.LivePhysics
+    if (backendLivePhysics && typeof backendLivePhysics === 'object') {
+      calculatedPhysics.value = {
+        machNumber: backendLivePhysics.machNumber,
+        velocity: backendLivePhysics.velocity,
+      }
+    } else {
+      calculatedPhysics.value = null
+    }
+
     // 更新运行状态
     isRunning.value = state === 'running'
     isPaused.value = state === 'paused'
+
+    if (typeof backendPausedDurationMs === 'number' && backendPausedDurationMs >= 0) {
+      pausedAccumulatedMs = backendPausedDurationMs
+    }
 
     // 运行/暂停态都需要 tick：暂停时 tick 内部会跳过 elapsed 累加，但保留 timer
     // 以便 resume 后立即恢复递增，无需重启 timer。
@@ -303,12 +485,18 @@ export const useCalibrationStore = defineStore('calibration', () => {
         if (state === 'running' && lastPauseAt !== null) {
           // 后端从 paused 切回 running，但本地 lastPauseAt 未清——说明 resume 路径未走 store
           // （例如页面刷新后后端已是 running）：补一次累计避免 elapsed 偏大
-          pausedAccumulatedMs += Date.now() - lastPauseAt
+          if (typeof backendPausedDurationMs !== 'number') {
+            pausedAccumulatedMs += Date.now() - lastPauseAt
+          }
           lastPauseAt = null
         }
-        if (state === 'paused' && lastPauseAt === null) {
-          // 反向边缘情况：页面刷新后从后端读到 paused 态，本地没有 lastPauseAt——
-          // 用当前时刻兜底，避免 tick 把暂停期间的时长计入 elapsed
+        if (state === 'paused' && (lastPauseAt === null || typeof backendPausedDurationMs === 'number')) {
+          // 后端 pausedDurationMs 包含当前暂停段，因此每个状态快照都能重建准确 elapsed；
+          // lastPauseAt 只负责在两次快照之间冻结本地 tick。
+          timeInfo.value = {
+            elapsedTime: Math.max(0, Date.now() - status.value.startTime - pausedAccumulatedMs),
+            estimatedRemaining: 0,
+          }
           lastPauseAt = Date.now()
         }
         updateTimeInfo()
@@ -319,9 +507,21 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 检查是否完成
     if (state === 'completed' || state === 'error' || state === 'stopped') {
       if (status.value) {
-        // 完成时刷新一次最终 elapsed，让 UI 显示真实总耗时
-        if (lastPauseAt !== null) {
-          pausedAccumulatedMs += Date.now() - lastPauseAt
+        // 完成时刷新一次最终 elapsed，让 UI 显示真实总耗时。
+        // 关键约束：终态快照若提供后端完整 pausedDurationMs，已在 L388 赋值给
+        // pausedAccumulatedMs，此处不得再累加 Date.now() - lastPauseAt——
+        // 否则最后一个暂停段会被重复结算，导致 elapsed 偏小（paused 时间被多算）。
+        // 场景：paused 快照设置 lastPauseAt 后，下一帧直接变为 completed，
+        //   旧代码在 422 累加 Date.now() - lastPauseAt，但后端 pausedDurationMs
+        //   已包含该段，造成重复累计。
+        if (typeof backendPausedDurationMs !== 'number') {
+          // 后端未提供暂停时长：结算本地暂停段（兼容旧后端）
+          if (lastPauseAt !== null) {
+            pausedAccumulatedMs += Date.now() - lastPauseAt
+            lastPauseAt = null
+          }
+        } else {
+          // 后端已提供完整暂停时长：仅清 lastPauseAt，不再累加本地段
           lastPauseAt = null
         }
         updateTimeInfo()
@@ -340,6 +540,39 @@ export const useCalibrationStore = defineStore('calibration', () => {
     }
   }
 
+  // 从后端拉取一次完整 status 兜底，用于画面切回 / 再次进入时恢复状态（spec I2 / Decision #2）。
+  //
+  // 为什么：组件 remount 后本地 store 可能为空或过期，不能信任本地时效性；
+  //   必须以后端为准。recovery 仅同步状态字段，不重启 polling——
+  //   polling 频率由调用方依返回的 status 状态决定（running/paused 升 5Hz，否则 1Hz 心跳）。
+  //
+  // 失败时保留旧 store 状态（不 reset），让 UI 显示错误条 + 可重试（spec Recovery UX / I8）。
+  //
+  // @returns 映射后的前端任务状态；后端无任务（idle）时返回当时 store 中的 status（可能为 null）
+  async function recoveryFromBackend(): Promise<void> {
+    isRecovering.value = true
+    recoveryError.value = null
+    // 停掉 polling 避免与本次 recovery 并发写 status.value（spec I4 / Risks：竞态保护）
+    stopStatusPolling()
+    try {
+      // wails 模式直接走 binding；http 模式调 calibrationApi.status() 兜底（API 名为 status，非 getStatus）
+      const calStatus = isWailsAvailable()
+        ? await wailsApi.calibration.status()
+        : await calibrationApi.status()
+      if (calStatus) {
+        // 复用 updateStatusFromBackend 同步 status/dataPoints/completeEvent/timeInfo 等
+        updateStatusFromBackend(calStatus)
+      }
+      lastRecoveryAt.value = Date.now()
+    } catch (err: unknown) {
+      // 失败：保留旧 store 状态（不 reset），让 UI 显示错误条 + 可重试
+      const msg = err instanceof Error ? err.message : '恢复校准状态失败'
+      recoveryError.value = msg
+    } finally {
+      isRecovering.value = false
+    }
+  }
+
   // 映射后端状态字符串到前端状态
   function mapCalibrationState(state: string): any {
     switch (state) {
@@ -347,16 +580,44 @@ export const useCalibrationStore = defineStore('calibration', () => {
       case 'paused': return 'paused'
       case 'completed': return 'completed'
       case 'error': return 'error'
+      // spec Decision #4 / I7：stop 后 status='stopped'，与 idle 区分（保留数据可导出）
+      case 'stopped': return 'stopped'
       default: return 'idle'
     }
   }
 
+  // spec Task 14：uiRefreshHz 变化时，HTTP/Wails 两种 transport 都需重启 polling——
+  // 旧代码仅在 isWailsAvailable() 时重启，HTTP 模式下用户在设置对话框调整刷新频率后
+  // polling 间隔不更新，UI 仍按旧频率刷新。
   watch(uiRefreshHz, () => {
     flushPendingPressureIfReady()
-    if (isRunning.value && isWailsAvailable()) {
+    if (isRunning.value) {
       startStatusPolling()
     }
   })
+
+  // 内部会话清空：仅用于"开始新任务"场景（spec Decision #3 / I1）。
+  // 不暴露给外部——unmount / stop 不应调，避免抹掉上一趟结果。
+  // 注意：不调 stopStatusPolling，由 startCalibration 后续 startStatusPolling 重启。
+  function resetSession() {
+    cancelPressureThrottle()
+    stopElapsedTick()
+    pausedAccumulatedMs = 0
+    lastPauseAt = null
+    status.value = null
+    isRunning.value = false
+    isPaused.value = false
+    completeEvent.value = null
+    dataPoints.value = []
+    realtimePressures.value = null
+    calculatedPhysics.value = null
+    timeInfo.value = null
+    // 七孔探针实时分区状态清空（spec Task 19）
+    // 启动新任务前必须清空，避免上一趟的分区状态残留导致 UI 显示错误的"外区 n 区"
+    currentRegion.value = ''
+    currentSector.value = 0
+    boundaryFlag.value = ''
+  }
 
   async function startCalibration(config: CalibrationConfig) {
     const taskId = config.taskId || `cal-${Date.now()}`
@@ -373,15 +634,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
       const res = await calibrationApi.startCalibration(configToStart)
       if (!res.success) throw new Error(res.error || '启动校准失败')
     }
+    // spec Decision #3 / I1：后端 start 成功后才清旧会话；失败保留上一趟 stopped 结果，
+    // 避免"start 失败把上趟数据抹了"。resetSession 不停 polling，下面 startStatusPolling 会重启。
+    resetSession()
     isRunning.value = true
     isPaused.value = false
-    completeEvent.value = null
-    dataPoints.value = []
     // 启动时刻前端先记录一份本地 startTime 作为兜底：后端 status 首次轮询返回前，UI 已能用上 elapsed。
     // 后端返回真实 StartTime 后会在 updateStatusFromBackend 中覆盖，误差通常 < 一次轮询间隔（200ms）。
     const localStartTime = Date.now()
-    pausedAccumulatedMs = 0
-    lastPauseAt = null
     status.value = {
       taskId,
       type: configToStart.type,
@@ -393,11 +653,10 @@ export const useCalibrationStore = defineStore('calibration', () => {
       dataPoints: [],
     }
     updateTimeInfo()
-    if (wails) {
-      startStatusPolling()
-    }
-    // 已用时 tick 在 wails / http 两种模式下都需要启动：
-    // http 模式没有 statusPolling，但 UI "已用时"控件同样需要每秒刷新。
+    // spec Task 14：HTTP/Wails 两种 transport 都需启动 polling——
+    // 旧代码仅在 wails 时启动，HTTP 模式启动校准后进度条/已完成点数不刷新。
+    // 已用时 tick 同样在两种模式下都需启动（HTTP 模式没有 statusPolling 时仍需 tick）。
+    startStatusPolling()
     startElapsedTick()
   }
 
@@ -409,7 +668,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '暂停校准失败')
       }
     } else {
-      await calibrationApi.pauseCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/pause route。
+      // 失败时必须抛错——不得返回 synthetic success 让 UI 误以为已暂停。
+      // calibrationApi.pauseCalibration 内部 catch 已转为 { success: false, error }，
+      // 这里再次检查并抛错，与 Wails 模式行为一致。
+      const res = await calibrationApi.pauseCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '暂停校准失败')
+      }
     }
     isPaused.value = true
     // 记录暂停开始时刻，tick 据此冻结 elapsed；resume 时累加到 pausedAccumulatedMs
@@ -427,7 +693,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '恢复校准失败')
       }
     } else {
-      await calibrationApi.resumeCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/resume route。
+      const res = await calibrationApi.resumeCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '恢复校准失败')
+      }
     }
     isPaused.value = false
     // 把暂停段累加到 pausedAccumulatedMs，让 elapsed 从恢复时刻继续递增
@@ -448,7 +718,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
         throw new Error(res.Error || '停止校准失败')
       }
     } else {
-      await calibrationApi.stopCalibration(status.value.taskId)
+      // spec Task 14：HTTP 模式调用既有 POST /api/calibration/stop route。
+      const res = await calibrationApi.stopCalibration(status.value.taskId)
+      if (!res.success) {
+        throw new Error(res.error || '停止校准失败')
+      }
     }
     isRunning.value = false
     isPaused.value = false
@@ -458,9 +732,15 @@ export const useCalibrationStore = defineStore('calibration', () => {
       lastPauseAt = null
     }
     updateTimeInfo()
-    stopStatusPolling()
+    // spec Decision #4 / I7：stop 保留 dataPoints，status='stopped' 与 idle 区分（可导出 / 复盘）
+    if (status.value) status.value.status = 'stopped'
+    // 定格已用时；继续 poll 一次等后端 stopped 回包（updateStatusFromBackend 终态分支会 stopStatusPolling），
+    // 避免高频空转等待。
     stopElapsedTick()
-    if (status.value) status.value.status = 'idle'
+    // spec Task 14：HTTP 模式也需要继续 poll 等终态回包——之前只在 isWailsAvailable() 时
+    // 启动 1Hz 轮询，HTTP 模式下 stop 后无法捕获后端 stopped 回包，UI 卡在本地 stopped 状态
+    // 无法刷新后端最终快照（含完整 dataPoints / lastError）。
+    startStatusPolling(1000)
   }
 
   async function saveData(savePath: string): Promise<{ success: boolean; filepath?: string; error?: string }> {
@@ -498,10 +778,23 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures,
     calculatedPhysics,
     timeInfo,
+    // 七孔探针实时分区状态（spec Task 19）
+    currentRegion,
+    currentSector,
+    boundaryFlag,
+    updateRegion,
     uiRefreshHz,
     uiRefreshIntervalMs,
+    activeViewCount,
+    isRecovering,
+    recoveryError,
+    lastRecoveryAt,
     setUiRefreshHz,
     updateRealtimePressures,
+    acquireView,
+    releaseView,
+    recoveryFromBackend,
+    restartPollingForCurrentState,
     startCalibration,
     pause,
     resume,

@@ -25,10 +25,14 @@ const LogViewer = defineAsyncComponent(() => import('@views/LogViewer.vue'))
 //      该错误若发生在首屏同步 import 链上会阻断主画面渲染（白屏）。
 //      改为异步后，加载失败只影响 drawer 本身，主画面照常可用。
 const DeviceManagementDrawer = defineAsyncComponent(() => import('@components/device/DeviceManagementDrawer.vue'))
+// 探针校准许可证对话框：仅在用户点击「探针校准」且未解锁时才需要，
+// 异步加载避免将解锁逻辑打进首屏 chunk。
+const CalibrationLicenseDialog = defineAsyncComponent(() => import('@components/calibration/CalibrationLicenseDialog.vue'))
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
+import { useCalibrationLicenseStore } from '@stores/calibrationLicenseStore'
 import { storageApi, deviceApi } from '@api/deviceApi'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiEmptyState from '@components/ui/UiEmptyState.vue'
@@ -41,12 +45,16 @@ const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
+const licenseStore = useCalibrationLicenseStore()
 const { t } = storeToRefs(i18n)
 
 const activePage = ref<MainShellPage>('dashboard')
 const appVersion = ref('0.1.0')
 const showDeviceDrawer = ref(false)
 const showSettings = ref(false)
+// 探针校准许可证对话框：点击「探针校准」入口且未解锁时弹出。
+// 已解锁（licenseStore.isUnlocked=true）时不会显示，直接放行。
+const showLicenseDialog = ref(false)
 const viewMode = ref<'overview' | 'chart' | 'table' | 'both'>('both')
 const isRecording = ref(false)
 // 录制状态扩展字段（来自后端 Status()，便于 UI 展示与错误反馈）
@@ -76,7 +84,8 @@ const acquiring = computed(() => deviceStore.isAnyAcquiring)
 
 const railItems = computed<AppRailNavItem[]>(() => [
   { id: 'dashboard', label: t.value.dashboardHome, icon: 'IO', active: activePage.value === 'dashboard' },
-  { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration' },
+  // locked 跟随解锁状态响应式变化：解锁后角标自动消失，无需刷新页面
+  { id: 'calibration', label: t.value.probeCalibration, icon: 'CP', active: activePage.value === 'calibration', locked: !licenseStore.isUnlocked },
   { id: 'traversal', label: t.value.traversalTest, icon: 'TR', active: activePage.value === 'traversal' },
   { id: 'log', label: t.value.logViewer || 'Logs', icon: 'LG', active: activePage.value === 'log' }
 ])
@@ -89,9 +98,25 @@ const railFooterItems = computed<AppRailNavItem[]>(() => [
 const VALID_MAIN_PAGES = new Set(['dashboard', 'calibration', 'traversal', 'log'])
 
 function handleRailSelect(id: string): void {
-  if (VALID_MAIN_PAGES.has(id)) {
-    activePage.value = id as MainShellPage
+  if (!VALID_MAIN_PAGES.has(id)) return
+  // 探针校准是付费模块：未解锁时不直接进入，先弹出验证码对话框。
+  // 已解锁（localStorage 持久化）则直接放行，无感进入。
+  if (id === 'calibration' && !licenseStore.isUnlocked) {
+    showLicenseDialog.value = true
+    return
   }
+  activePage.value = id as MainShellPage
+}
+
+// 许可证对话框：验证码正确，已解锁——放行进入探针校准画面
+function handleLicenseUnlocked(): void {
+  activePage.value = 'calibration'
+  feedbackStore.pushToast(t.value.calLicenseUnlockedSuccess || '探针校准模块已解锁', 'success')
+}
+
+// 许可证对话框：用户取消或关闭——保持原页面，不跳转
+function handleLicenseCancel(): void {
+  // 不切换 activePage，用户停留在当前页面
 }
 
 // 独立窗口启动中状态，避免重复点击
@@ -101,7 +126,7 @@ const motionLaunching = ref(false)
 async function handleOpenExternal(id: string): Promise<void> {
   if (id !== 'motion') return
   if (!isWailsAvailable()) {
-    feedbackStore.pushToast('当前环境不支持独立窗口', 'error')
+    feedbackStore.pushToast(t.value.app_independentWindowNotSupported, 'error')
     return
   }
   if (motionLaunching.value) return
@@ -109,10 +134,10 @@ async function handleOpenExternal(id: string): Promise<void> {
   try {
     const res = await wailsApi.app.openMotionWindow()
     if (!res.Success) {
-      feedbackStore.pushToast('启动独立窗口失败: ' + (res.Error || '未知错误'), 'error')
+      feedbackStore.pushToast(t.value.app_openIndependentWindowFailed + ': ' + (res.Error || t.value.unknownError), 'error')
     }
   } catch (e) {
-    feedbackStore.pushToast('启动独立窗口异常: ' + String(e), 'error')
+    feedbackStore.pushToast(t.value.app_openIndependentWindowException + ': ' + String(e), 'error')
   } finally {
     setTimeout(() => { motionLaunching.value = false }, 1000)
   }
@@ -208,14 +233,14 @@ async function refreshStorageStatus(): Promise<void> {
     // 检测 sink 自停止：上次还在录制，这次状态显示已停止
     if (wasRecording && !status.recording) {
       const reason = status.lastError
-        ? `录制已停止：${status.lastError}`
-        : '录制已停止（达到自动停止条件）'
+        ? `${t.value.app_recordingStoppedWithError}${status.lastError}`
+        : t.value.app_recordingStoppedAuto
       feedbackStore.pushToast(reason, status.lastError ? 'error' : 'info')
     }
     // 检测新增错误（仍在录制但出现 I/O 错误，例如队列丢弃告警）
     if (status.lastError && status.lastError !== lastReportedError) {
       lastReportedError = status.lastError
-      feedbackStore.pushToast(`录制错误：${status.lastError}`, 'error')
+      feedbackStore.pushToast(`${t.value.app_recordingError}${status.lastError}`, 'error')
     } else if (!status.lastError) {
       // 错误已恢复，重置去重标记
       lastReportedError = ''
@@ -245,7 +270,7 @@ async function toggleRecording(): Promise<void> {
       // 进行中触发"wasRecording=true && status.recording=false"，误报"录制已停止（达到自动停止条件）"。
       isRecording.value = false
       await storageApi.stop()
-      feedbackStore.pushToast(t.value.stoppedRecording || '已停止记录', 'success')
+      feedbackStore.pushToast(t.value.stoppedRecording, 'success')
       return
     }
 
@@ -253,7 +278,7 @@ async function toggleRecording(): Promise<void> {
     await storageApi.start(buildRecordingConfig())
     isRecording.value = true
     lastReportedError = ''
-    feedbackStore.pushToast(t.value.startedRecording || '已开始记录数据', 'success')
+    feedbackStore.pushToast(t.value.startedRecording, 'success')
     // 立即拉取一次状态，确保 UI 反映后端真实状态
     await refreshStorageStatus()
   } catch (err) {
@@ -268,8 +293,8 @@ async function toggleRecording(): Promise<void> {
     }
     feedbackStore.pushToast(
       wasStopping
-        ? (t.value.failedToStopRecording || '停止记录失败') + ': ' + message
-        : (t.value.failedToStartRecording || '启动记录失败') + ': ' + message,
+        ? t.value.failedToStopRecording + ': ' + message
+        : t.value.failedToStartRecording + ': ' + message,
       'error',
     )
   }
@@ -352,6 +377,7 @@ function handleKeydown(e: KeyboardEvent) {
       <AppRailNav
         :items="railItems"
         :footer-items="railFooterItems"
+        :t="t"
         @select="handleRailSelect"
         @open-external="handleOpenExternal"
         @open-settings="showSettings = true"
@@ -363,7 +389,7 @@ function handleKeydown(e: KeyboardEvent) {
     </template>
 
     <div v-if="activePage === 'dashboard'" class="main-dashboard-stage">
-      <UiLoadingState v-if="initialLoading" :loading="true" text="正在加载设备..." />
+      <UiLoadingState v-if="initialLoading" :loading="true" :text="t.app_loadingDevices" />
 
       <template v-else>
         <UiAlert v-if="error" type="error" :closable="true" class="mb-3" @close="error = ''">
@@ -379,12 +405,12 @@ function handleKeydown(e: KeyboardEvent) {
 
       <UiEmptyState
         v-else
-        title="选择一个设备"
-        :description="t.selectDevicePrompt || '请从左侧设备列表中选择一台设备开始监控'"
+        :title="t.app_selectDeviceTitle"
+        :description="t.selectDevicePrompt"
       >
         <template #action>
           <UiButton size="sm" variant="primary" @click="showDeviceDrawer = true">
-            {{ t.openDeviceManager || '打开设备管理器' }}
+            {{ t.openDeviceManager }}
           </UiButton>
         </template>
       </UiEmptyState>
@@ -410,6 +436,13 @@ function handleKeydown(e: KeyboardEvent) {
 
     <DeviceManagementDrawer v-model:open="showDeviceDrawer" />
     <GlobalSettingsModal v-model:open="showSettings" @close="showSettings = false" />
+    <!-- 探针校准付费模块解锁对话框：仅在未解锁时由 handleRailSelect 触发 -->
+    <CalibrationLicenseDialog
+      v-model:show="showLicenseDialog"
+      :t="t"
+      @unlocked="handleLicenseUnlocked"
+      @cancel="handleLicenseCancel"
+    />
   </MainView>
 </template>
 

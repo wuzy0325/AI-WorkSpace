@@ -1,41 +1,50 @@
 <script setup lang="ts">
+import { watch, onMounted } from 'vue'
 import MotionControlPanel from '@components/motion/MotionControlPanel.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiTooltip from '@components/ui/UiTooltip.vue'
-import { isWailsAvailable } from '@api/wails-adapter'
+import { useI18nStore } from '@stores/i18nStore'
 
-// 关闭当前独立窗口（退出独立进程）
+const i18n = useI18nStore()
+
+// 关闭当前独立窗口。
+// 在 Electron 桌面端：window.close() 会触发 main.cjs 中 motionWindow 的 'closed' 事件，
+// 主进程随之 kill motion-only 子进程并清理 motionBackendProcess 引用。
+// 在浏览器开发态：window.close() 关闭当前标签页（或被浏览器拦截，无害）。
 async function closeWindow(): Promise<void> {
-  if (isWailsAvailable()) {
-    // 独立进程调用 Quit 会退出该进程，等效于关闭窗口
-    const { Application } = await import('@wailsio/runtime')
-    await Application.Quit()
-  } else {
-    window.close()
-  }
+  window.close()
 }
+
+// 根据当前语言同步独立窗口标题
+// Electron 下不支持 Window.SetTitle，通过 document.title 设置窗口标题
+function syncWindowTitle(): void {
+  document.title = i18n.t.motion_windowTitle
+}
+
+onMounted(syncWindowTitle)
+watch(() => i18n.locale, syncWindowTitle)
 </script>
 
 <template>
   <div data-test="motion-shell" class="flex h-full min-h-0 flex-col overflow-hidden font-sans" style="background:var(--bg-canvas);color:var(--text-primary)">
     <header class="motion-shell-header flex shrink-0 items-center justify-between px-5 py-3">
       <div class="flex items-center gap-3 min-w-0">
-        <h1 class="motion-shell-title">运动控制器</h1>
-        <span class="motion-shell-subtitle">轴控制与监视</span>
-        <UiTooltip content="控制风洞测试中的运动轴（如迎角、侧滑角等）的位置和速度" position="right">
-          <span class="help-icon" aria-label="帮助">?</span>
+        <h1 class="motion-shell-title">{{ i18n.t.motion_shellTitle }}</h1>
+        <span class="motion-shell-subtitle">{{ i18n.t.motion_shellSubtitle }}</span>
+        <UiTooltip :content="i18n.t.motion_shellHelpTooltip" position="right">
+          <span class="help-icon" :aria-label="i18n.t.motion_helpAriaLabel">?</span>
         </UiTooltip>
       </div>
       <div class="flex items-center gap-2">
         <!-- 关闭窗口按钮：退出独立进程 -->
-        <UiButton variant="ghost" size="sm" @click="closeWindow" title="关闭窗口">
+        <UiButton variant="ghost" size="sm" @click="closeWindow" :title="i18n.t.motion_closeWindow">
           <template #icon>
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </template>
-          关闭窗口
+          {{ i18n.t.motion_closeWindow }}
         </UiButton>
       </div>
     </header>

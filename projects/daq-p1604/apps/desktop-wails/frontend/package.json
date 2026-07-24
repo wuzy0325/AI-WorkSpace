@@ -1,6 +1,6 @@
 {
   "name": "daq-p1604-frontend",
-  "version": "0.3.0",
+  "version": "0.3.0-win7.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-	"@wailsio/runtime": "3.0.0-alpha.95",
-	"@lucide/vue": "^1.16.0",
+    "@lucide/vue": "^1.16.0",
     "echarts": "^6.1.0",
     "naive-ui": "^2.44.1",
     "pinia": "^3.0.0",

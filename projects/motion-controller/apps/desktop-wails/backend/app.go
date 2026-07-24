@@ -2,175 +2,120 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"motion-controller/services/api-go/pkg/appcontext"
-	"shared.local/device-sdk/go/motion/core"
 	motionhttp "shared.local/motion-control/go/httpapi"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
-// motionHTTPPort 是运动状态 HTTP API 的监听端口。
-// 前端通过此端口轮询获取状态数据，避免大结构体状态快照走 Wails 绑定热路径。
-const motionHTTPPort = "127.0.0.1:16888"
-
+// App 是运动控制器后端的核心装配类。
+//
+// Win7 版与 trunk 主分支的差异：
+//   - 移除 Wails v3 application.Service 接口依赖
+//   - 不再启动独立 HTTP server goroutine，改为 RegisterRoutes 注册到 main.go 持有的 mux
+//   - HTTP server 的生命周期由 main.go 控制（main.go 负责 ListenAndServe + Shutdown）
+//   - 移除 Wails 绑定方法（MotionUpsertProfile / MotionConnect / ...），motion 全部走 HTTP
+//
+// 业务逻辑（运动控制器连接、回零、移动、急停等）由 appCtx.MotionManager 提供，
+// HTTP 路由由 shared.local/motion-control/go/httpapi.RegisterMotionRoutes 挂载。
 type App struct {
-	ctx        context.Context
-	appCtx     *appcontext.AppContext
-	httpServer *http.Server
+	ctx    context.Context
+	appCtx *appcontext.AppContext
 }
 
+// NewApp 创建后端 App 实例。
+// appCtx 由调用方负责初始化（在 main.go 中通过 appcontext.NewAppContext 创建）。
 func NewApp(appCtx *appcontext.AppContext) *App {
 	return &App{appCtx: appCtx}
 }
 
-func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+// ServiceStartup 完成应用启动时的初始化工作：
+//   - 加载已保存的运动控制器配置（motion-profiles.json）
+//
+// 与 trunk 主分支的差异：不再启动 HTTP server goroutine，路由注册由 RegisterRoutes 完成，
+// HTTP server 启动由 main.go 控制。
+func (a *App) ServiceStartup(ctx context.Context) error {
 	a.ctx = ctx
 	a.appCtx.MotionManager.LoadProfiles()
-	a.startStatusHTTPServer()
 	return nil
 }
 
-func (a *App) startStatusHTTPServer() {
-	mux := http.NewServeMux()
-	motionhttp.RegisterMotionRoutes(mux, a.appCtx.MotionManager)
+// RegisterRoutes 把所有 motion HTTP 路由挂载到传入的 mux 上，并套上 CORS 中间件。
+//
+// 路由清单（由 shared.local/motion-control/go/httpapi.RegisterMotionRoutes 注册）：
+//   - GET    /api/motion/profiles      列出所有控制器配置
+//   - PUT    /api/motion/profiles      新增/更新控制器配置
+//   - DELETE /api/motion/profiles/{id} 删除控制器配置
+//   - GET    /api/motion/status        获取所有控制器实时状态
+//   - POST   /api/motion/connect       连接控制器
+//   - POST   /api/motion/disconnect    断开控制器
+//   - POST   /api/motion/home          回零
+//   - POST   /api/motion/moveTo        绝对移动
+//   - POST   /api/motion/moveBy        相对移动
+//   - POST   /api/motion/jog           点动
+//   - POST   /api/motion/stop          停止
+//   - POST   /api/motion/emergencyStop 紧急停止
+//   - POST   /api/motion/resetEmergencyStop 解除紧急停止
+//   - POST   /api/motion/definePosition 定义当前位置
+//
+// CORS 中间件作用：
+//   - 开发态：Vite dev server (http://127.0.0.1:9245) 跨域请求后端时需要 CORS 头
+//   - 生产态：Electron 加载 http://127.0.0.1:16888 与后端同源，CORS 不触发
+//   - origin 为空（如 curl）：返回 Access-Control-Allow-Origin: null，允许同源 request
+func (a *App) RegisterRoutes(mux *http.ServeMux) error {
+	corsMux := http.NewServeMux()
+	motionhttp.RegisterMotionRoutes(corsMux, a.appCtx.MotionManager)
 
-	// CORS 中间件：允许 WebView2 跨域请求
-	cors := func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			if origin == "" || isAllowedMotionOrigin(origin) {
-				if origin == "" {
-					w.Header().Set("Access-Control-Allow-Origin", "null")
-				} else {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-				}
-				w.Header().Set("Vary", "Origin")
-			} else {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			h.ServeHTTP(w, r)
-		})
-	}
-
-	go func() {
-		a.httpServer = &http.Server{
-			Addr:              motionHTTPPort,
-			Handler:           cors(mux),
-			ReadHeaderTimeout: 2 * time.Second,
-			ReadTimeout:       10 * time.Second,
-			WriteTimeout:      10 * time.Second,
-		}
-		slog.Info("[App] starting status HTTP server", "addr", motionHTTPPort)
-		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("[App] status HTTP server failed", "err", err)
-		}
-	}()
+	mux.Handle("/api/motion/", corsMiddleware(corsMux))
+	return nil
 }
 
+// corsMiddleware 为内层 handler 添加 CORS 响应头，处理跨域预检请求。
+//
+// 安全设计：
+//   - 仅允许本机 origin（http://localhost:* / http://127.0.0.1:* / 空 origin）
+//   - 其他 origin 返回 403 Forbidden，防止 DNS 重绑定攻击
+//   - OPTIONS 预检请求直接返回 204 No Content
+func corsMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// 同源请求（Electron 生产态、curl）：返回 null 允许同源 fetch
+			w.Header().Set("Access-Control-Allow-Origin", "null")
+		} else if isAllowedMotionOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		} else {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// isAllowedMotionOrigin 判断 origin 是否在白名单中。
+//
+// Win7 版与 trunk 主分支的差异：移除 wails://wails.localhost / http://wails.localhost 等
+// Wails 专属协议白名单（Electron 用 http://127.0.0.1:16888 加载前端，与后端同源）。
 func isAllowedMotionOrigin(origin string) bool {
-	return origin == "wails://wails.localhost" ||
-		origin == "http://wails.localhost" ||
-		strings.HasPrefix(origin, "http://wails.localhost:") ||
-		strings.HasPrefix(origin, "http://localhost:") ||
+	return strings.HasPrefix(origin, "http://localhost:") ||
 		strings.HasPrefix(origin, "http://127.0.0.1:")
 }
 
+// ServiceShutdown 在应用退出时清理资源。
+//
+// Win7 版与 trunk 主分支的差异：不再 Shutdown HTTP server（由 main.go 统一管理），
+// 这里仅作为生命周期钩子保留，便于未来扩展（如关闭硬件连接、flush 日志等）。
 func (a *App) ServiceShutdown() error {
-	if a.httpServer != nil {
-		slog.Info("[App] shutting down HTTP server")
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = a.httpServer.Shutdown(ctx)
-	}
+	slog.Info("[App] shutting down")
 	return nil
-}
-
-func (a *App) MotionUpsertProfile(profile core.MotionControllerProfile) error {
-	return a.appCtx.MotionManager.UpsertProfile(profile)
-}
-
-func (a *App) MotionDeleteProfile(id string) error {
-	return a.appCtx.MotionManager.DeleteProfile(id)
-}
-
-func (a *App) MotionConnect(id string) error {
-	slog.Info("[App] MotionConnect", "id", id)
-	err := a.appCtx.MotionManager.Connect(a.ctx, id)
-	if err != nil {
-		slog.Error("[App] MotionConnect failed", "id", id, "err", err)
-	} else {
-		slog.Info("[App] MotionConnect success", "id", id)
-	}
-	return err
-}
-
-func (a *App) MotionDisconnect(id string) error {
-	return a.appCtx.MotionManager.Disconnect(a.ctx, id)
-}
-
-func (a *App) MotionMoveTo(id string, axis string, position float64) error {
-	slog.Info("[App] MotionMoveTo", "id", id, "axis", axis, "position", position)
-	return a.appCtx.MotionManager.MoveTo(a.ctx, id, core.AxisName(axis), position)
-}
-
-func (a *App) MotionMoveBy(id string, axis string, delta float64) error {
-	slog.Info("[App] MotionMoveBy", "id", id, "axis", axis, "delta", delta)
-	return a.appCtx.MotionManager.MoveBy(a.ctx, id, core.AxisName(axis), delta)
-}
-
-func (a *App) MotionJog(id string, axis string, velocity float64) error {
-	slog.Info("[App] MotionJog", "id", id, "axis", axis, "velocity", velocity)
-	return a.appCtx.MotionManager.Jog(a.ctx, id, core.AxisName(axis), velocity)
-}
-
-func (a *App) MotionHome(id string, axis string) error {
-	slog.Info("[App] MotionHome", "id", id, "axis", axis)
-	return a.appCtx.MotionManager.Home(a.ctx, id, core.AxisName(axis))
-}
-
-func (a *App) MotionStop(id string, axis string) error {
-	slog.Info("[App] MotionStop", "id", id, "axis", axis)
-	return a.appCtx.MotionManager.Stop(a.ctx, id, core.AxisName(axis))
-}
-
-func (a *App) MotionEmergencyStop(id string) error {
-	slog.Info("[App] MotionEmergencyStop", "id", id)
-	return a.appCtx.MotionManager.EmergencyStop(a.ctx, id)
-}
-
-func (a *App) MotionResetEmergencyStop(id string) error {
-	return a.appCtx.MotionManager.ResetEmergencyStop(a.ctx, id)
-}
-
-func (a *App) MotionDefinePosition(id string, axis string, position float64) error {
-	return a.appCtx.MotionManager.DefinePosition(a.ctx, id, core.AxisName(axis), position)
-}
-
-// MotionGetProfiles 保留为 Wails 绑定兼容。
-// 实际数据也可通过 HTTP API (http://localhost:16888/api/motion/profiles) 获取。
-func (a *App) MotionGetProfiles() string {
-	profiles := a.appCtx.MotionManager.GetProfiles()
-	data, _ := json.Marshal(profiles)
-	return string(data)
-}
-
-// MotionGetStatus 保留为 Wails 绑定兼容。
-// 实际数据也可通过 HTTP API (http://localhost:16888/api/motion/status) 获取。
-func (a *App) MotionGetStatus() string {
-	statuses := a.appCtx.MotionManager.StatusAll(a.ctx)
-	data, _ := json.Marshal(statuses)
-	return string(data)
 }

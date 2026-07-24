@@ -15,12 +15,12 @@ type mockDevicePort struct {
 	states map[string]core.DeviceState
 }
 
-func (m *mockDevicePort) Connect(profile core.PressureProfile) error                  { return nil }
-func (m *mockDevicePort) Disconnect(id string) error                                   { return nil }
+func (m *mockDevicePort) Connect(profile core.PressureProfile) error { return nil }
+func (m *mockDevicePort) Disconnect(id string) error                  { return nil }
 func (m *mockDevicePort) StartAcquisition(id string) (<-chan core.PressureSnapshot, error) {
 	return nil, nil
 }
-func (m *mockDevicePort) StopAcquisition(id string) error             { return nil }
+func (m *mockDevicePort) StopAcquisition(id string) error              { return nil }
 func (m *mockDevicePort) ApplyConfig(id string, cfg core.P1604Config) error { return nil }
 func (m *mockDevicePort) SetDataSink(id string, sink func(core.PressureSnapshot)) {}
 
@@ -30,12 +30,14 @@ func (m *mockDevicePort) Status(id string) (core.DeviceState, bool) {
 }
 
 // newTestApp 构造用于 handleRelayExit 测试的 App 实例。
-// logUC 传 nil（EmitLog 内部 nil 检查保护），app 字段保持 nil（emit 方法跳过 Event.Emit）。
+// logUC 传 nil（EmitLog 内部 nil 检查保护）；hub 内未注入 EventBus，
+// EmitEvent 会被 hub 静默丢弃（noopEventBus 默认行为），测试无需关心事件推送。
 func newTestApp(mockDev ports.DevicePort) *App {
 	recorder := recording.NewCSVRecorder()
 	recordUC := usecase.NewRecordingUsecase(recorder)
 	deviceUC := usecase.NewDeviceUsecase(mockDev, nil)
-	return NewApp(deviceUC, recordUC, nil, "")
+	hub := core.NewHub()
+	return NewApp(hub, deviceUC, recordUC, nil, "")
 }
 
 // startTestRecording 启动录制到临时目录，辅助测试。
@@ -50,14 +52,15 @@ func startTestRecording(t *testing.T, app *App) {
 	}
 }
 
-// addFakeRelay 向 app.relays 注入一个假的 relay control，模拟其他设备仍在录制。
-func addFakeRelay(app *App, deviceID string) {
-	app.mu.Lock()
-	app.relays[deviceID] = &relayControl{
-		cancel: func() {},
-		done:   make(chan struct{}),
+// addFakeRelay 向 hub 注入一个假的 relay control，模拟其他设备仍在录制。
+// 返回 control 引用，便于测试结束前调用 hub.ClearRelay 模拟 relay 退出。
+func addFakeRelay(app *App, deviceID string) *core.RelayControl {
+	control := &core.RelayControl{
+		Cancel: func() {},
+		Done:   make(chan struct{}),
 	}
-	app.mu.Unlock()
+	app.hub.RegisterRelay(deviceID, control)
+	return control
 }
 
 // TestHandleRelayExit_SingleDeviceAutoStopsRecording 验证单设备断连自动停止录制。
@@ -174,7 +177,7 @@ func TestHandleRelayExit_AllDevicesDisconnectAutoStopsRecording(t *testing.T) {
 	startTestRecording(t, app)
 
 	// dev2 仍在录制时，dev1 断连 → emit 警告，录制继续
-	addFakeRelay(app, "dev2")
+	dev2Control := addFakeRelay(app, "dev2")
 	app.handleRelayExit("dev1")
 	if !app.recordUC.IsActive() {
 		t.Error("recording should continue when dev2 still active after dev1 disconnect")
@@ -184,12 +187,10 @@ func TestHandleRelayExit_AllDevicesDisconnectAutoStopsRecording(t *testing.T) {
 		t.Errorf("LastError should NOT be set after first device disconnect, got: %s", session.LastError)
 	}
 
-	// 模拟 dev2 relay 也退出（clearRelay 已删除 dev2 的 relay）
-	app.mu.Lock()
-	delete(app.relays, "dev2")
-	app.mu.Unlock()
+	// 模拟 dev2 relay 也退出（ClearRelay 已从 hub 中删除 dev2 的 relay）
+	app.hub.ClearRelay("dev2", dev2Control)
 
-	// dev2 断连，此时 len(relays)==0 → 自动停止录制
+	// dev2 断连，此时 RelayCount()==0 → 自动停止录制
 	app.handleRelayExit("dev2")
 	if app.recordUC.IsActive() {
 		t.Error("recording should be auto-stopped after all devices disconnected")

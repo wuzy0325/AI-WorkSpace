@@ -2,8 +2,8 @@
 
 > **当前分支**：`lts/win7`
 > **工作目录**：`c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7`
-> **最后更新**：2026-07-23
-> **状态**：DAQ-T1603 Win7 源码基线已提交为 `a8de1c2`；原始安装包通过 Windows 7 SP1 x64 真机验证，重建安装包已通过本机 smoke test
+> **最后更新**：2026-07-23（wind-daq 迁移完成）
+> **状态**：DAQ-T1603 Win7 源码基线已提交为 `a8de1c2`；原始安装包通过 Windows 7 SP1 x64 真机验证，重建安装包已通过本机 smoke test；wind-daq Win7 迁移完成，本机 smoke test 通过，真机验证待执行
 
 ---
 
@@ -555,3 +555,59 @@ ws.onmessage = (e) => {
 详细实施计划保存在主工作空间：`docs/plans/2026-07-23-workspace-win7-lts-worktree.md`。
 
 技术基线保持不变：Go 1.20.14、Electron 22.3.27、Chromium 108。主工作空间继续使用当前 Go/Wails 技术栈，不承受 Win7 兼容约束。
+
+
+## 11. wind-daq 迁移完成（2026-07-23）
+
+### 11.1 迁移类型
+
+**B 类迁移**：已有 HTTP API → 复用 `api.NewRouter(api.Deps{...})` + Electron 壳替换 Wails。
+
+### 11.2 改造范围
+
+| 层 | 改动 |
+|---|---|
+| Go 1.20 兼容 | `services/api-go` 29 个文件 `"log/slog"` → `shared.local/device-sdk/go/pkg/slog`；`fivehole` 内置 `max()` → `cmpMax()` helper；`calibration_csv_writer_test.go` 内置 `min()` → `cmpMin()` helper；`motion-control/go` 和 `fivehole` go.mod 从 1.25.0 降到 1.20 |
+| HTTP server | `apps/desktop-wails/main.go` 重写为 net/http 入口（embed.FS + api.NewRouter + signal.Notify 优雅关闭），主进程 8900，motion-only 子进程 8901 |
+| Backend | `apps/desktop-wails/backend/app.go` 移除 Wails 依赖，实现 `api.AppHandler` 接口；`tryAutoStartRecording` 业务策略通过 `OnAcquisitionStarted` 回调注入到 `api.Deps` |
+| API 扩展 | `services/api-go/api/server.go` 新增 `AppHandler` 接口、`AppVersionInfo` 类型、`OnAcquisitionStarted` 回调字段；新增 4 个 `/api/app/*` 路由（version/startup-mode/open-motion-window/resolve-path）；`handleDeviceByID` 新增 `subscribe` 动作 |
+| Electron 壳 | 新建 `apps/desktop-electron/`：main.cjs（管理 Go 后端进程 + motion-only 子进程 + BrowserWindow 生命周期）、preload.cjs（contextBridge 暴露 showOpenDialog 和 openMotionWindow）、package.json（Electron 22.3.27 + electron-builder 24.13.3）、scripts/build-backend.ps1（前端 npm run build + Go 1.20.14 编译后端） |
+| 前端 | `wails-adapter.ts` 重写为纯 HTTP client + Electron IPC，`isWailsAvailable` 语义改为检测 `window.electronAPI`；`MotionView.vue` 移除 `@wailsio/runtime` import，`closeWindow` 简化为 `window.close()`；`package.json` 移除 `@wailsio/runtime` 依赖；`http-client.test.ts` `window.chrome.webview` → `window.electronAPI`；`calibrationApi.ts` 和 `deviceApi.ts` 移除 bool 复合返回检查 |
+
+### 11.3 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `go mod tidy` | 通过（自动添加 indirect 依赖，go 1.20 保持不变） |
+| `go build` | 通过（生成 8.68MB `wind-daq-backend.exe`） |
+| `go vet ./...` | 通过 |
+| `go test ./...` | 通过（6 tests passed） |
+| `npm install` | 通过（312 packages） |
+| `npm run typecheck` | 通过（vue-tsc --noEmit 0 错误） |
+| `npm run test` | 通过（vitest run，8 files / 45 tests passed） |
+| `npm run build` | 通过（5391 modules，built in 10.73s） |
+| `npm run dist:win7` | 通过（NSIS 安装包 68.18MB） |
+| Smoke test (主进程) | `/api/health` 200 `{"ok":true}` |
+| Smoke test (motion-only) | `/api/health` 200 + `/api/motion/status` 200 `[]` |
+
+### 11.4 关键设计决策
+
+1. **AppHandler 接口隔离**：api 包通过接口依赖 backend.App，避免反向依赖 desktop-wails/backend 包
+2. **OnAcquisitionStarted 回调注入**：将 Wails 时代的 `DeviceStartAcquisition` + `tryAutoStartRecording` 业务策略通过回调函数注入到 api.Deps，在 HTTP 路由层异步触发
+3. **HTTP server 生命周期分离**：app.go 只负责业务初始化（Start/Stop + NewDeps），HTTP server 由 main.go 创建和控制，参考 daq-t1603 模板
+4. **motion-only 子进程端口隔离**：主进程 8900，motion-only 子进程 8901，避免端口冲突
+5. **isWailsAvailable 语义变更**：从检测 Wails runtime 改为检测 `window.electronAPI`（Electron preload 注入），保持导出名不变以避免大量调用点改名
+6. **wailsApi 适配器重写策略**：保留 `wailsApi` 导出名和类型签名（GenericResponse 含大写 Success/Error 兼容字段），内部全部改为 HTTP fetch 调用，`normalizeGenericResponse` 统一大小写
+7. **Electron IPC 通道**：仅 `dialog:pick-directory` 和 `app:open-motion-window` 走 IPC，其他全部通过 HTTP API
+8. **motion-only 子进程 Electron 管理**：主进程 spawn `wind-daq-backend.exe --motion-only --parent-pid=<PID>`，等待 8901 健康检查，创建独立 BrowserWindow 加载 `http://127.0.0.1:8901`
+
+### 11.5 产物
+
+- 安装包：`projects/wind-daq/apps/desktop-electron/dist/Wind-DAQ-Win7-Setup-0.3.5-x64.exe`（68.18MB）
+- 安装包 SHA256：`64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7`
+- 后端可执行文件：`projects/wind-daq/apps/desktop-electron/backend/wind-daq-backend.exe`（8.68MB）
+- 后端 SHA256：`88D2D11D5B3211EAF744A5687EAE7E5786C61A89B15DE55E28B1AC9FFB7B3469`
+
+### 11.6 待办
+
+- Windows 7 SP1 x64 真机安装与启动验证（待用户在 Win7 机器上执行）

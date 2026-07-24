@@ -7,13 +7,15 @@
 import { CheckCircle, Play, XCircle } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
+import { storeToRefs } from 'pinia'
 import {
   getTraversalLayoutPointCount,
   type PreconditionCheckResult,
   type TraversalTestConfig
 } from '@shared/types/traversal'
+import { useI18nStore } from '@stores/i18nStore'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
   currentConfig: TraversalTestConfig | null
   isCheckingPreconditions: boolean
@@ -28,6 +30,34 @@ defineProps<{
     start: string
   }
 }>()
+
+const { t } = storeToRefs(useI18nStore())
+
+// 后端 checks[].message 为硬编码英文，此处按精确文案映射到 i18n key，
+// 使前置条件检查项在中文/英文界面下跟随语言；未命中（如动态 restore 错误）回退原 message。
+const MESSAGE_I18N: Record<string, string> = {
+  'Load PRB or calibration CSV before running interpolation': 'checkPRBMessage',
+  'Motion manager is available': 'checkMotionMessage',
+  'No motion controller is connected, please connect one first': 'checkMotionNotConnected',
+  'DAQ acquisition hub is available': 'checkDAQMessage',
+  'All required channel labels are mapped': 'checkChannelMapOk',
+  'Patm channel label is required for pressure normalization': 'checkChannelMapFailPatm',
+  'Tatm channel label is required for atmospheric calculation': 'checkChannelMapFailTatm',
+  'Target device is connected': 'checkDeviceConnected',
+  'Target device is not connected, please connect it first': 'checkDeviceNotConnected',
+  'Target device is acquiring': 'checkDeviceAcquiring',
+  'Target device is not acquiring, please start acquisition first': 'checkDeviceNotAcquiring',
+  'Radial and rotation axes are zeroed at the first measurement point': 'checkSectorOriginZeroed',
+}
+
+function checkMessage(check: { message?: string; name: string }): string {
+  if (check.message) {
+    const key = MESSAGE_I18N[check.message]
+    const translated = key ? (t.value as Record<string, string>)[key] : undefined
+    return translated ?? check.message
+  }
+  return check.name
+}
 
 defineEmits<{
   confirm: []
@@ -68,7 +98,7 @@ defineEmits<{
           <CheckCircle v-if="check.passed" class="h-3.5 w-3.5 shrink-0 text-[var(--state-success)]" />
           <XCircle v-else class="h-3.5 w-3.5 shrink-0 text-[var(--state-error)]" />
           <span :style="{ color: check.passed ? 'var(--text-secondary)' : 'var(--state-error)' }" :class="check.passed ? '' : 'font-medium'">
-            {{ check.message || check.name }}
+            {{ checkMessage(check) }}
           </span>
         </div>
       </div>
@@ -90,6 +120,7 @@ defineEmits<{
           </div>
         </div>
       </div>
+
     </div>
 
     <template #footer>

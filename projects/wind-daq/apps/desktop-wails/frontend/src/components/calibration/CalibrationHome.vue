@@ -1,22 +1,56 @@
 <script setup lang="ts">
 import type { CalibrationType } from '@shared/types/calibration'
+import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useI18nStore } from '@stores/i18nStore'
+import { useCalibrationStore } from '@stores/calibrationStore'
+import type { CalibrationStatus } from '@shared/types/calibration'
 import { ArrowRight, CheckCircle2, Info } from '@lucide/vue'
 import IconCalibrationFiveHole from '@components/icons/IconCalibrationFiveHole.vue'
 import IconCalibrationThreeHole from '@components/icons/IconCalibrationThreeHole.vue'
 import IconCalibrationTotalPressure from '@components/icons/IconCalibrationTotalPressure.vue'
 import IconCalibrationTotalTemperature from '@components/icons/IconCalibrationTotalTemperature.vue'
+import IconCalibrationSevenHole from '@components/icons/IconCalibrationSevenHole.vue'
 
 const emit = defineEmits<{
   selectCalibration: [type: CalibrationType]
 }>()
 
+const { t } = storeToRefs(useI18nStore())
+const calibrationStore = useCalibrationStore()
+
+type BadgeInfo = { text: string; kind: 'running' | 'paused' }
+
+// spec Task 8：后台任务进行中标识（按探针类型缓存，避免模板内重复调用多次）
+//   - 仅 running / paused 态显示徽章（idle/completed/error/stopped 不显示，stopped 后立即消失）
+//   - running 显示绿色脉动徽章 + 「校准进行中」，paused 显示黄色徽章 + 「已暂停」
+//   - 跨画面切换时 Main 释放视图（releaseView）但任务继续后台，store 状态不变，徽章仍显示
+const badgesByType = computed<Partial<Record<CalibrationType, BadgeInfo>>>(() => {
+  const runningType = calibrationStore.status?.type
+  const s: CalibrationStatus | undefined = calibrationStore.status?.status
+  if (!runningType || !s) return {}
+  if (s === 'running') return { [runningType]: { text: t.value.ch_calibrationRunning, kind: 'running' } }
+  if (s === 'paused') return { [runningType]: { text: t.value.ch_calibrationPaused, kind: 'paused' } }
+  return {}
+})
+
+// 校准类型卡片配置。
+//
+// 颜色规范说明（§28 例外）：
+//   - colors 中的十六进制颜色是各校准类型的「品牌色种子」，跨主题一致，
+//     用于让用户在视觉上区分五孔/三孔/总压/总温四类探针校准
+//   - 这些颜色通过 CSS 自定义属性（--card-primary 等）传递给 <style scoped>，
+//     并在样式表中与设计 token（如 var(--bg-elevated)、var(--text-primary)）
+//     协同使用——主题切换时背景/文字/边框等通用层仍走 token，仅品牌色不变
+//   - 这是 §28「禁止硬编码颜色值」的合理例外，类似品牌 Logo 色，不应改用 token
+//   - 如需调整某类型的品牌色，在此处统一修改即可，无需改动样式表
 const calibrationTypes = [
   {
     type: 'five-hole' as CalibrationType,
-    name: '五孔探针校准',
+    nameKey: 'ch_fiveHoleName',
     subtitle: 'Five-Hole Probe',
-    description: '三维空间流动测量，支持攻角(α)与侧滑角(β)双轴联动标定。',
-    features: ['Kα-Kβ系数空间计算', 'CPT/CPS气动系数', '81点自动矩阵扫描'],
+    descKey: 'ch_fiveHoleDesc',
+    featureKeys: ['ch_fiveHoleFeat1', 'ch_fiveHoleFeat2', 'ch_fiveHoleFeat3'],
     colors: {
       primary: '#3b82f6',
       primaryLight: '#60a5fa',
@@ -35,10 +69,10 @@ const calibrationTypes = [
   },
   {
     type: 'three-hole' as CalibrationType,
-    name: '三孔探针校准',
+    nameKey: 'ch_threeHoleName',
     subtitle: 'Three-Hole Probe',
-    description: '二维平面流动测量，专注于偏航角(θ)的精准方向标定。',
-    features: ['方向系数K线性拟合', '速度系数Cv修正', '13点标准角度标定'],
+    descKey: 'ch_threeHoleDesc',
+    featureKeys: ['ch_threeHoleFeat1', 'ch_threeHoleFeat2', 'ch_threeHoleFeat3'],
     colors: {
       primary: '#10b981',
       primaryLight: '#34d399',
@@ -57,10 +91,10 @@ const calibrationTypes = [
   },
   {
     type: 'total-pressure' as CalibrationType,
-    name: '总压探针校准',
+    nameKey: 'ch_totalPressureName',
     subtitle: 'Total Pressure',
-    description: '总压测量精度验证，自动分析不同攻角下的压力恢复系数。',
-    features: ['CPT恢复系数分析', '角度敏感度误差评估', '31点高精度步进'],
+    descKey: 'ch_totalPressureDesc',
+    featureKeys: ['ch_totalPressureFeat1', 'ch_totalPressureFeat2', 'ch_totalPressureFeat3'],
     colors: {
       primary: '#f59e0b',
       primaryLight: '#fbbf24',
@@ -79,10 +113,10 @@ const calibrationTypes = [
   },
   {
     type: 'total-temperature' as CalibrationType,
-    name: '总温探针校准',
+    nameKey: 'ch_totalTemperatureName',
     subtitle: 'Total Temperature',
-    description: '总温传感器特性研究，分析不同马赫数下的恢复系数r。',
-    features: ['恢复系数r-Ma曲线', '多工况点温度平衡测试', '滞止温度对比修正'],
+    descKey: 'ch_totalTemperatureDesc',
+    featureKeys: ['ch_totalTemperatureFeat1', 'ch_totalTemperatureFeat2', 'ch_totalTemperatureFeat3'],
     colors: {
       primary: '#f43f5e',
       primaryLight: '#fb7185',
@@ -98,6 +132,31 @@ const calibrationTypes = [
       gradient: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)',
       gradientSoft: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
     }
+  },
+  // 七孔探针校准卡片（spec Task 24）
+  // 品牌色 #7c3aed（紫色）—— spec Task 24 Acceptance criteria 明确指定
+  // 位置在五孔/三孔/总压/总温之后，与既有四类卡片范式一致
+  {
+    type: 'seven-hole' as CalibrationType,
+    nameKey: 'ch_sevenHoleName',
+    subtitle: 'Seven-Hole Probe',
+    descKey: 'ch_sevenHoleDesc',
+    featureKeys: ['ch_sevenHoleFeat1', 'ch_sevenHoleFeat2', 'ch_sevenHoleFeat3'],
+    colors: {
+      primary: '#7c3aed',
+      primaryLight: '#a78bfa',
+      primaryDark: '#5b21b6',
+      bg: '#f5f3ff',
+      bgHover: '#ede9fe',
+      border: '#ddd6fe',
+      borderHover: '#7c3aed',
+      text: '#4c1d95',
+      textLight: '#7c3aed',
+      accent: '#6d28d9',
+      shadow: 'rgba(124, 58, 237, 0.15)',
+      gradient: 'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
+      gradientSoft: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+    }
   }
 ]
 
@@ -111,6 +170,7 @@ function getIconComponent(type: CalibrationType) {
     case 'three-hole': return IconCalibrationThreeHole
     case 'total-pressure': return IconCalibrationTotalPressure
     case 'total-temperature': return IconCalibrationTotalTemperature
+    case 'seven-hole': return IconCalibrationSevenHole
     default: return IconCalibrationFiveHole
   }
 }
@@ -125,7 +185,7 @@ function getIconComponent(type: CalibrationType) {
           <IconCalibrationFiveHole :size="22" />
         </div>
         <div>
-          <h1 class="header-title">探针校准控制中心</h1>
+          <h1 class="header-title">{{ t.ch_homeTitle }}</h1>
           <p class="header-subtitle">Probe Calibration & Aerodynamic Analysis System</p>
         </div>
       </div>
@@ -161,6 +221,17 @@ function getIconComponent(type: CalibrationType) {
           <!-- 背景装饰圆 -->
           <div class="card-bg-decoration" />
 
+          <!-- spec Task 8：后台任务进行中徽章（绝对定位卡片右上角，不影响卡片原有布局） -->
+          <!-- running 绿色脉动 / paused 黄色静态；idle/completed/error/stopped 不渲染 -->
+          <div
+            v-if="badgesByType[item.type]"
+            class="card-badge"
+            :class="`card-badge--${badgesByType[item.type]!.kind}`"
+          >
+            <span class="card-badge-dot" />
+            <span class="card-badge-text">{{ badgesByType[item.type]!.text }}</span>
+          </div>
+
           <div class="card-header">
             <div class="card-title-row">
               <!-- 渐变图标背景 -->
@@ -168,7 +239,7 @@ function getIconComponent(type: CalibrationType) {
                 <component :is="getIconComponent(item.type)" :size="32" />
               </div>
               <div>
-                <h3 class="card-name">{{ item.name }}</h3>
+                <h3 class="card-name">{{ t[item.nameKey] }}</h3>
                 <p class="card-subtitle">{{ item.subtitle }}</p>
               </div>
             </div>
@@ -178,17 +249,17 @@ function getIconComponent(type: CalibrationType) {
             </div>
           </div>
 
-          <p class="card-description">{{ item.description }}</p>
+          <p class="card-description">{{ t[item.descKey] }}</p>
 
           <!-- 特性标签 -->
           <div class="card-features">
             <div
-              v-for="(feature, idx) in item.features"
+              v-for="(feature, idx) in item.featureKeys"
               :key="idx"
               class="feature-tag"
             >
               <CheckCircle2 class="feature-icon" />
-              <span class="feature-text">{{ feature }}</span>
+              <span class="feature-text">{{ t[feature] }}</span>
             </div>
           </div>
 
@@ -208,7 +279,7 @@ function getIconComponent(type: CalibrationType) {
           <span class="footer-label">System Ready:</span>
           <span class="footer-status">✓ HW Check Passed</span>
           <span class="footer-separator">|</span>
-          <span class="footer-hint">请在开始自动化校准前，手动验证各压力通道零位及运动控制器归零状态。</span>
+          <span class="footer-hint">{{ t.ch_footerHint }}</span>
         </p>
       </div>
     </div>
@@ -222,14 +293,15 @@ function getIconComponent(type: CalibrationType) {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  /* 主体背景跟随主题 token：浅色为浅灰渐变，暗色为深蓝渐变，无需媒体查询 */
+  background: linear-gradient(180deg, var(--bg-canvas) 0%, var(--bg-app) 100%);
 }
 
 /* 头部 */
 .header {
   flex-shrink: 0;
-  border-bottom: 1px solid #e2e8f0;
-  background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient(90deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 1rem 1.5rem;
 }
 
@@ -246,6 +318,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
+  /* 品牌 icon 渐变保留为品牌色，主题切换不应改变品牌视觉语言 */
   background: linear-gradient(135deg, #3b82f6, #4f46e5);
   color: white;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
@@ -284,7 +357,7 @@ function getIconComponent(type: CalibrationType) {
   min-height: 100%;
 }
 
-/* 卡片 */
+/* 卡片：基础背景使用 panel token，--card-bg 仅作为品牌色叠加层（半透明） */
 .card {
   position: relative;
   display: flex;
@@ -292,7 +365,7 @@ function getIconComponent(type: CalibrationType) {
   cursor: pointer;
   border-radius: 1rem;
   border: 2px solid var(--card-border);
-  background: linear-gradient(145deg, #ffffff 0%, var(--card-bg) 100%);
+  background: linear-gradient(145deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 1.25rem 1.5rem 1.5rem;
   overflow: hidden;
   transition: border-color 200ms ease, box-shadow 240ms ease, transform 240ms ease, background 240ms ease;
@@ -303,7 +376,7 @@ function getIconComponent(type: CalibrationType) {
   border-color: var(--card-border-hover);
   box-shadow: 0 20px 40px -12px var(--card-shadow), 0 8px 16px -8px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
-  background: linear-gradient(145deg, #ffffff 0%, var(--card-bg-hover) 100%);
+  background: linear-gradient(145deg, var(--bg-panel-strong) 0%, var(--bg-panel) 100%);
 }
 
 /* 顶部渐变装饰条 */
@@ -333,6 +406,59 @@ function getIconComponent(type: CalibrationType) {
 .card:hover .card-bg-decoration {
   opacity: 0.12;
   transform: scale(1.1);
+}
+
+/* spec Task 8：后台任务进行中徽章 —— 绝对定位在卡片右上角，不影响卡片原有布局 */
+.card-badge {
+  position: absolute;
+  top: 0.875rem;
+  right: 1rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* running：绿色脉动（圆点 pulse 动画提示"正在运动/采集"） */
+.card-badge--running {
+  background: color-mix(in srgb, var(--accent-success) 18%, transparent);
+  color: var(--accent-success);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 45%, transparent);
+}
+
+/* paused：黄色静态（无脉动，让用户一眼区分"暂停"vs"运行中"） */
+.card-badge--paused {
+  background: color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  color: var(--accent-warning);
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 45%, transparent);
+}
+
+.card-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.card-badge--running .card-badge-dot {
+  animation: card-badge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes card-badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
+.card-badge-text {
+  line-height: 1;
 }
 
 .card-header {
@@ -412,7 +538,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--card-bg);
+  background: var(--bg-panel-strong);
   color: var(--card-text-light);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   border: 2px solid var(--card-border);
@@ -461,7 +587,7 @@ function getIconComponent(type: CalibrationType) {
   gap: 0.375rem;
   border-radius: 0.5rem;
   padding: 0.375rem 0.625rem;
-  background: var(--card-bg);
+  background: var(--bg-panel-strong);
   border: 1.5px solid var(--card-border);
   transition: background 200ms ease, border-color 200ms ease;
 }
@@ -503,8 +629,8 @@ function getIconComponent(type: CalibrationType) {
 /* 底部 */
 .footer {
   flex-shrink: 0;
-  border-top: 1px solid #e2e8f0;
-  background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+  border-top: 1px solid var(--border-default);
+  background: linear-gradient(90deg, var(--bg-panel) 0%, var(--bg-canvas) 100%);
   padding: 0.75rem 1.25rem;
 }
 
@@ -521,6 +647,7 @@ function getIconComponent(type: CalibrationType) {
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
+  /* 警告色品牌渐变，保留跨主题一致 */
   background: linear-gradient(135deg, #fbbf24, #f97316);
   color: white;
   flex-shrink: 0;
@@ -540,13 +667,13 @@ function getIconComponent(type: CalibrationType) {
 
 .footer-label {
   font-weight: 600;
-  color: #334155;
+  color: var(--text-secondary);
 }
 
 .footer-status {
   margin-left: 0.25rem;
-  color: #059669;
   font-weight: 600;
+  /* 成功色渐变保留为品牌色，跨主题一致 */
   background: linear-gradient(90deg, #059669, #10b981);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -555,60 +682,10 @@ function getIconComponent(type: CalibrationType) {
 
 .footer-separator {
   margin: 0 0.5rem;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 
 .footer-hint {
   color: var(--text-tertiary);
-}
-
-/* 暗色模式 */
-@media (prefers-color-scheme: dark) {
-  .calibration-home {
-    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-  }
-
-  .header {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-    border-color: #334155;
-  }
-
-  .header-title {
-    color: #f1f5f9;
-  }
-
-  .card {
-    background: linear-gradient(145deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
-    border-color: var(--card-primary-dark);
-  }
-
-  .card:hover {
-    background: linear-gradient(145deg, rgba(30, 41, 59, 1) 0%, rgba(15, 23, 42, 1) 100%);
-  }
-
-  .card-name {
-    color: #f1f5f9;
-  }
-
-  .card-description {
-    color: var(--text-muted);
-  }
-
-  .feature-tag {
-    background: rgba(15, 23, 42, 0.6);
-  }
-
-  .card-arrow {
-    background: rgba(15, 23, 42, 0.6);
-  }
-
-  .footer {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-    border-color: #334155;
-  }
-
-  .footer-label {
-    color: #cbd5e1;
-  }
 }
 </style>

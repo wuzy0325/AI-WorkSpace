@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"context"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/device"

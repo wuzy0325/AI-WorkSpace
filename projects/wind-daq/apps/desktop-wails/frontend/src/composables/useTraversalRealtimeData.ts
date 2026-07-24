@@ -12,16 +12,17 @@
 import { computed, type ComputedRef, type Ref, ref } from 'vue'
 import type {
   TraversalTestConfig,
-  TraversalInterpolationInput
+  TraversalRealtimeInput
 } from '@shared/types/traversal'
 import type { DataPayload } from '@api/types'
+import { findChannelValue } from '@shared/calibrationSnapshotValue'
 import type { ProbeChannelRole } from '@shared/types/calibration'
 import { deviceApi } from '@api/deviceApi'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useTraversalStore } from '@stores/traversalStore'
 
-/** 实时压力通道键名 */
-type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'Patm' | 'Tatm'
+/** 实时压力通道键名（五孔 7 项 + 七孔扩展 P6/P7） */
+type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'Patm' | 'Tatm'
 
 /** 实时压力映射（部分通道可能缺失） */
 type LivePressureMap = Partial<Record<LivePressureKey, number>>
@@ -49,53 +50,56 @@ function buildRealtimePressuresFromSnapshots(
   config: TraversalTestConfig,
   snapshots: DataPayload[]
 ): LivePressureMap | null {
-  // 根据设备 ID 和通道索引从快照中提取数值
-  const toValue = (deviceId: string, channelIndex: number): number | undefined => {
-    const payload = snapshots.find((entry) => entry.deviceId === deviceId)
-    if (!payload) return undefined
-    const indices = Array.isArray(payload.channelIndices) ? payload.channelIndices : []
-    const channels = Array.isArray(payload.channels) ? payload.channels : []
-    const index = indices.indexOf(channelIndex)
-    if (index < 0) return undefined
-    const value = channels[index]
-    return typeof value === 'number' ? value : undefined
-  }
-
   const result: LivePressureMap = {}
   let matchedChannelCount = 0
 
   for (const channel of config.channels.probeChannels) {
     if (!channel.enabled || !channel.channel.deviceId) continue
 
-    const value = toValue(channel.channel.deviceId, channel.channel.channelIndex)
-    if (typeof value !== 'number') continue
+    const value = findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex)
+    if (value === null) continue
 
     switch (channel.role) {
       case 'fiveHole.p1':
+      case 'sevenHole.p1':
         result.P1 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p2':
+      case 'sevenHole.p2':
         result.P2 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p3':
+      case 'sevenHole.p3':
         result.P3 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p4':
+      case 'sevenHole.p4':
         result.P4 = value
         matchedChannelCount += 1
         break
       case 'fiveHole.p5':
+      case 'sevenHole.p5':
         result.P5 = value
         matchedChannelCount += 1
         break
+      case 'sevenHole.p6':
+        result.P6 = value
+        matchedChannelCount += 1
+        break
+      case 'sevenHole.p7':
+        result.P7 = value
+        matchedChannelCount += 1
+        break
       case 'fiveHole.pAtm':
+      case 'sevenHole.pAtm':
         result.Patm = value
         matchedChannelCount += 1
         break
       case 'fiveHole.tAtm':
+      case 'sevenHole.tAtm':
         result.Tatm = value
         matchedChannelCount += 1
         break
@@ -108,20 +112,43 @@ function buildRealtimePressuresFromSnapshots(
 }
 
 /**
+ * 从遍历配置中提取目标设备 ID。
+ *
+ * 后端 ParseConfig 以第一个启用的探针通道的 deviceId 作为遍历任务的
+ * DeviceID，前端这里保持相同语义，确保自动启动采集后订阅正确的设备。
+ *
+ * @param config 遍历测试配置
+ * @returns 设备 ID，或 null（配置无效/无启用通道）
+ */
+function getTraversalDeviceId(config: TraversalTestConfig | null): string | null {
+  if (!config) return null
+  const enabledChannels = config.channels.probeChannels.filter(
+    (c) => c.enabled && c.channel.deviceId
+  )
+  if (enabledChannels.length === 0) return null
+  return enabledChannels[0].channel.deviceId
+}
+
+/**
  * 将实时压力映射转换为插值输入
  *
- * 仅当所有 7 个通道（P1~P5、Patm、Tatm）均存在时才返回有效输入，
+ * 五孔仅当 7 个通道（P1~P5、Patm、Tatm）齐全时返回有效输入；
+ * 七孔额外要求 P6/P7（spec §5.6：七孔实时计算必须携带 9 个压力字段），
  * 否则返回 null（插值计算需要完整的压力数据）。
  *
  * @param pressures 实时压力映射
+ * @param probeType 探针类型（缺省按五孔）
  * @returns 完整的插值输入，或 null
  */
-function toRealtimeInterpolationInput(pressures: LivePressureMap | null): TraversalInterpolationInput | null {
+function toRealtimeInterpolationInput(
+  pressures: LivePressureMap | null,
+  probeType: 'five-hole' | 'seven-hole' = 'five-hole'
+): TraversalRealtimeInput | null {
   if (!pressures) {
     return null
   }
 
-  const { P1, P2, P3, P4, P5, Patm, Tatm } = pressures
+  const { P1, P2, P3, P4, P5, P6, P7, Patm, Tatm } = pressures
   if (
     typeof P1 !== 'number'
     || typeof P2 !== 'number'
@@ -134,6 +161,12 @@ function toRealtimeInterpolationInput(pressures: LivePressureMap | null): Traver
     return null
   }
 
+  if (probeType === 'seven-hole') {
+    if (typeof P6 !== 'number' || typeof P7 !== 'number') {
+      return null
+    }
+    return { P1, P2, P3, P4, P5, P6, P7, Patm, Tatm }
+  }
   return { P1, P2, P3, P4, P5, Patm, Tatm }
 }
 
@@ -171,9 +204,9 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     return buildRealtimePressuresFromSnapshots(config.value, latestSnapshots.value)
   })
 
-  // 实时插值输入：所有通道齐全时可用于插值计算
-  const liveInterpolationInput: ComputedRef<TraversalInterpolationInput | null> = computed(
-    () => toRealtimeInterpolationInput(livePressures.value)
+  // 实时插值输入：所有通道齐全时可用于插值计算（按探针类型判定齐全性）
+  const liveInterpolationInput: ComputedRef<TraversalRealtimeInput | null> = computed(
+    () => toRealtimeInterpolationInput(livePressures.value, config.value?.probeType ?? 'five-hole')
   )
 
   // 是否存在实时计算结果
@@ -185,7 +218,8 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
   // 精度取自配置中各通道的 precision 字段，用户可在硬件配置步骤中调整
   //
   // 性能：roleToPrecision 在 config 变化时一次性构建 Map<role, precision>，
-  // pressureItems 在每帧（20Hz）渲染时只做 7 次 O(1) Map 查询，避免原本的 7×N 数组遍历。
+  // pressureItems 每帧渲染时只做 7 次 O(1) Map 查询，避免原本的 7×N 数组遍历。
+  // 帧率由 storageStore.settings.refreshRateHz 决定（默认 5Hz），与全局刷新率一致。
   const roleToPrecision: ComputedRef<Map<string, number>> = computed(() => {
     const map = new Map<string, number>()
     const channels = config.value?.channels.probeChannels
@@ -208,6 +242,25 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     const getChannelPrecision = (role: string): number => precisionMap.get(role) ?? 3
     const formatValue = (value?: number, precision?: number): string =>
       (typeof value === 'number' ? value.toFixed(precision ?? 3) : '--')
+    if ((config.value?.probeType ?? 'five-hole') === 'seven-hole') {
+      // 七孔 9 通道：P1..P7 + Patm + Tatm（sevenHole.* 角色）
+      const items: PressureItem[] = ([1, 2, 3, 4, 5, 6, 7] as const).map((n) => {
+        const role = `sevenHole.p${n}` as ProbeChannelRole
+        const key = `P${n}` as const
+        return {
+          key,
+          label: key,
+          unit: getChannelUnit(role, 'Pa'),
+          value: formatValue(data?.[key], getChannelPrecision(role)),
+          disabled: !hasConfig
+        }
+      })
+      items.push(
+        { key: 'Patm', label: 'Patm', unit: getChannelUnit('sevenHole.pAtm', 'Pa'), value: formatValue(data?.Patm, getChannelPrecision('sevenHole.pAtm')), disabled: !hasConfig },
+        { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('sevenHole.tAtm', '°C'), value: formatValue(data?.Tatm, getChannelPrecision('sevenHole.tAtm')), disabled: !hasConfig }
+      )
+      return items
+    }
     return [
       { key: 'P1', label: 'P1', unit: getChannelUnit('fiveHole.p1', 'Pa'), value: formatValue(data?.P1, getChannelPrecision('fiveHole.p1')), disabled: !hasConfig },
       { key: 'P2', label: 'P2', unit: getChannelUnit('fiveHole.p2', 'Pa'), value: formatValue(data?.P2, getChannelPrecision('fiveHole.p2')), disabled: !hasConfig },
@@ -218,6 +271,28 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
       { key: 'Tatm', label: 'Tatm', unit: getChannelUnit('fiveHole.tAtm', '°C'), value: formatValue(data?.Tatm, getChannelPrecision('fiveHole.tAtm')), disabled: !hasConfig }
     ]
   })
+
+  /**
+   * 确保目标设备的数据订阅已建立。
+   *
+   * 背景：遍历测试可能由后端自动启动采集（用户未在设备管理页点击
+   * "开始采集"），此时 deviceStore.startAcquisition 未被调用，也就
+   * 不会触发 deviceApi.subscribeToDevice。本函数在页面加载和测试
+   * 启动后主动订阅，保证实时数据能持续推送到 onSnapshot 监听器。
+   *
+   * 走 deviceStore.ensureSubscribed 而非直接调 deviceApi.subscribeToDevice：
+   *   store 内部会同时 subscribedDeviceIds.add(id)，让
+   *   cleanupSnapshotSubscriptions 在最后一个 listener detach 时能
+   *   正确清理轮询定时器，避免离开页面后轮询泄漏（轮询频率由全局 refreshRateHz 控制，默认 5Hz）。
+   *
+   * 幂等：store 内部 subscribeToDevice 按 deviceId 去重，Set.add 重复安全。
+   */
+  function ensureSubscribed(): void {
+    const deviceId = getTraversalDeviceId(config.value)
+    if (deviceId) {
+      deviceStore.ensureSubscribed(deviceId)
+    }
+  }
 
   /**
    * 订阅 DAQ snapshot 事件
@@ -240,6 +315,7 @@ export function useTraversalRealtimeData(config: Ref<TraversalTestConfig | null>
     pressureItems,
     latestSnapshots,
     subscribeSnapshot,
+    ensureSubscribed,
     hasRealtimeResult
   }
 }

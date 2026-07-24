@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useFeedbackStore } from '@stores/feedbackStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiSectionHeader from '@components/ui/UiSectionHeader.vue'
+import { isCalibratableDeviceType, isTemperatureUnit } from '@utils/deviceCalibration'
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
+const feedbackStore = useFeedbackStore()
+const calibratingAll = ref(false)
+/** calibrateAllDevices 启动时记录的正在校零的目标设备 ID 列表，
+ *  供 cancelAllCalibrations 取消使用；清空表示当前没有"全部校零"在跑。 */
+const calibratingAllIds = ref<Set<string>>(new Set())
 
 const DEVICE_COLORS = [
   { text: 'text-emerald-400', borderLeft: 'border-l-emerald-500' },
@@ -40,6 +47,10 @@ interface OverviewDeviceGroup {
   warningCount: number
   theme: { text: string; borderLeft: string }
   channels: OverviewChannelItem[]
+  /** 该设备是否正在校零（用于在分组头部展示进度） */
+  calibrating: boolean
+  /** 校零进度文本，如 "3/5s · 120 样本"；非校零中为空字符串 */
+  calibrationProgressText: string
 }
 
 function channelDisplayName(deviceId: string, channelIndex: number): string {
@@ -54,12 +65,69 @@ function channelTone(deviceId: string, channelIndex: number, rawValue: number): 
   const status = deviceStore.statusFor(deviceId)
   if (status === 'Error' || status === 'Disconnected') return 'warning'
 
-  const value = deviceStore.applyDisplayTare(deviceId, channelIndex, rawValue)
   const range = deviceStore.getChannelRange(deviceId, channelIndex)
   const span = range.max - range.min
   const upper = range.max - span * 0.12
   const lower = range.min + span * 0.12
-  return value >= upper || value <= lower ? 'warning' : 'active'
+  return rawValue >= upper || rawValue <= lower ? 'warning' : 'active'
+}
+
+/**
+ * 判定设备 profile 是否为"支持校零"的设备：
+ *   1. 设备类型在白名单内（压力类设备）
+ *   2. 至少存在一个非温度通道（温度通道无法校零）
+ *
+ * 抽出到共享常量（@utils/deviceCalibration）避免多份白名单维护漂移。
+ */
+function isCalibratableProfile(profile: { type: string; channels: { sensorType?: string; unit?: string }[] }): boolean {
+  if (!isCalibratableDeviceType(profile.type)) return false
+  return profile.channels.some((channel) => channel.sensorType !== 'temperature' && !isTemperatureUnit(channel.unit ?? ''))
+}
+
+async function calibrateAllDevices(): Promise<void> {
+  // P1-9：区分"没有支持校零的设备"与"未开始采集"两种空结果场景，
+  //       给出不同的提示文案，避免用户误以为按钮坏了。
+  const allProfiles = deviceStore.profiles ?? []
+  const calibratableProfiles = allProfiles.filter((profile) =>
+    isCalibratableProfile({
+      type: profile.type,
+      channels: Array.isArray(profile.channels) ? profile.channels : [],
+    }),
+  )
+  if (calibratableProfiles.length === 0) {
+    feedbackStore.pushToast(i18n.t.noCalibratableDevice || '没有支持校零的设备', 'warning')
+    return
+  }
+  const targets = calibratableProfiles.filter((profile) => deviceStore.acquiringFor(profile.id))
+  if (targets.length === 0) {
+    feedbackStore.pushToast(i18n.t.pleaseStartAcquisitionFirst || '请先开始采集', 'warning')
+    return
+  }
+  calibratingAll.value = true
+  calibratingAllIds.value = new Set(targets.map((p) => p.id))
+  try {
+    const results = await Promise.allSettled(targets.map((profile) => deviceStore.calibrate(profile.id)))
+    const failed = results.filter((result) => result.status === 'rejected').length
+    if (failed === 0) {
+      feedbackStore.pushToast(i18n.t.tareAllDevicesComplete || '全部设备校零完成', 'success')
+    } else {
+      // 模板替换：t 是 Record<string, string>，没有内建插值，手动 replace。
+      const msg = (i18n.t.tareDeviceFailed || '{success} 台成功，{failed} 台失败')
+        .replace('{success}', String(targets.length - failed))
+        .replace('{failed}', String(failed))
+      feedbackStore.pushToast(msg, 'warning')
+    }
+  } finally {
+    calibratingAll.value = false
+    calibratingAllIds.value = new Set()
+  }
+}
+
+/** 取消"全部校零"：逐个调用 store 的取消接口，触发每台设备的 AbortController.abort()。
+ *  Promise.allSettled 不会因取消而立即 resolve，但每台设备的 calibrate 内部
+ *  会捕获 AbortError 并标记为 cancelled 状态，UI 通过 calibrationOperations 感知。 */
+function cancelAllCalibrations(): void {
+  calibratingAllIds.value.forEach((id) => deviceStore.cancelCalibration(id))
 }
 
 function deviceStatusTone(profileId: string): 'healthy' | 'warning' {
@@ -97,6 +165,13 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
       }
     })
 
+    // P1-8：单设备校零进度，从 store 的 calibrationOperations Map 读取
+    const op = deviceStore.calibrationOperationFor(profile.id)
+    const calibrating = op?.state === 'running'
+    const calibrationProgressText = calibrating
+      ? `${op!.elapsedSeconds}/${deviceStore.calibrationDurationSec}s · ${op!.sampleCount} ${i18n.t.samples || '样本'}`
+      : ''
+
     return [
       {
         id: profile.id,
@@ -108,6 +183,8 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
         warningCount: channels.filter((ch) => ch.tone === 'warning').length,
         theme: getDeviceTheme(index),
         channels,
+        calibrating,
+        calibrationProgressText,
       },
     ]
   }),
@@ -120,8 +197,23 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
       <div class="overview-panel__header-row flex min-w-full items-start justify-between gap-4">
         <UiSectionHeader :title="i18n.t.allDevicesOverview || '设备总览'" />
         <div class="flex items-center gap-2">
-          <UiButton variant="secondary" size="sm" class="overview-panel__action-btn" @click="() => { (deviceStore.profiles ?? []).filter(p => p.type === 'DAQ-P-1604' || p.type === 'DAQ-P-1604Pre').forEach((p) => deviceStore.tareAllEnabled(p.id)) }">
-            {{ i18n.t.allDevicesTare || '全部归零' }}
+          <UiButton
+            v-if="calibratingAll"
+            variant="danger"
+            size="sm"
+            class="overview-panel__action-btn"
+            @click="cancelAllCalibrations"
+          >
+            {{ i18n.t.cancelTare || '取消校零' }}
+          </UiButton>
+          <UiButton
+            variant="secondary"
+            size="sm"
+            class="overview-panel__action-btn"
+            :disabled="calibratingAll"
+            @click="calibrateAllDevices"
+          >
+            {{ calibratingAll ? (i18n.t.tareInProgress || '校零中...') : (i18n.t.allDevicesTare || '全部校零') }}
           </UiButton>
         </div>
       </div>
@@ -146,6 +238,14 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
                   :class="deviceStatusTone(group.id) === 'warning' ? 'overview-device-group__status--warning' : 'overview-device-group__status--healthy'"
                 >
                   {{ group.statusLabel }}
+                </span>
+                <!-- P1-8：单设备校零进度徽章，仅在该设备校零中显示 -->
+                <span
+                  v-if="group.calibrating"
+                  class="overview-device-group__calib"
+                  :title="i18n.t.calibrationInProgress || '校零正在进行中'"
+                >
+                  {{ group.calibrationProgressText }}
                 </span>
               </div>
             </div>
@@ -287,6 +387,22 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
 .overview-device-group__status--warning {
   background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
   color: var(--accent-warning);
+}
+
+/* P1-8：单设备校零进度徽章，使用主色弱化背景与等宽字体让进度数字对齐 */
+.overview-device-group__calib {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.1rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: var(--accent-primary);
+  white-space: nowrap;
 }
 
 .overview-device-group__summary {

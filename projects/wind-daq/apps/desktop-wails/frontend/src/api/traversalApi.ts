@@ -6,12 +6,15 @@ import type {
   MultiPrbInterpolationMode,
   PrbFileInfo,
   PreconditionCheckResult,
+  SevenHolePrbFileInfo,
   TraversalCheckpoint,
   TraversalCompleteEvent,
+  TraversalCoordPoint,
   TraversalErrorEvent,
   TraversalErrorCode,
-  TraversalInterpolationInput,
+  TraversalProbeType,
   TraversalProgressEvent,
+  TraversalRealtimeInput,
   TraversalTestConfig,
   TraversalTestStatus,
 } from '@shared/types/traversal'
@@ -118,8 +121,9 @@ function createPollingSubscription<T>(
 
 /** 后端返回的原始状态响应类型（包含后端额外字段） */
 type TraversalStatusRawResponse = Omit<TraversalTestStatus, 'state' | 'lastErrorCode' | 'validationWarnings'> & {
-  currentPointCoordinates?: { alpha: number; beta: number }
-  currentPoint?: number | { alpha: number; beta: number }
+  // 兼容后端既有 JSON 字段名；这里承载的是遍历逻辑目标 X/Y/Z/U（z/u 仅 custom 有值），不是插值结果 α/β。
+  currentPointCoordinates?: TraversalCoordPoint
+  currentPoint?: number | TraversalCoordPoint
   state?: string
   lastErrorCode?: TraversalErrorCode
   validationWarnings?: string[]
@@ -145,11 +149,31 @@ export const traversalApi = {
   ): Promise<{ success: boolean; data?: { files: PrbFileInfo[]; machNumbers: number[]; warnings: string[] }; error?: string }> =>
     invoke('/api/traversal/importMultiPrb', { filePaths, machNumbers, interpolationMode }),
 
+  /** 七孔 PRB 文件集导入（spec §5.6）：1 个内区文件 + 按孔号 1..6 顺序的 6 个扇区文件 */
+  importSevenHolePrb: async (
+    innerFilePath: string,
+    outerFilePaths: string[],
+  ): Promise<{ success: boolean; data?: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }; error?: string }> =>
+    invoke('/api/traversal/importSevenHolePrb', { innerFilePath, outerFilePaths }),
+
+  /** 七孔校准 CSV 文件集导入（校准导出直接导入，免导出 .prb） */
+  importSevenHoleCalibrationCsv: async (
+    innerFilePath: string,
+    outerFilePaths: string[],
+  ): Promise<{ success: boolean; data?: { files: SevenHolePrbFileInfo[]; validRange: PrbFileInfo['validRange'] }; error?: string }> =>
+    invoke('/api/traversal/importSevenHoleCalibrationCsv', { innerFilePath, outerFilePaths }),
+
+  /** 显式清理指定探针类型的插值器（spec §5.2.1；探针切换事务的第一步） */
+  clearInterpolator: async (probeType: TraversalProbeType): Promise<{ success: boolean; data?: { cleared: boolean }; error?: string }> =>
+    invoke('/api/traversal/clearInterpolator', { probeType }),
+
   calculateRealtime: async (
-    pressures: TraversalInterpolationInput,
+    pressures: TraversalRealtimeInput,
     config?: TraversalTestConfig,
+    probeType?: TraversalProbeType,
   ): Promise<{ success: boolean; data?: InterpolationResult; error?: string }> =>
-    invoke<InterpolationResult>('/api/traversal/calculateRealtime', { pressures, config }),
+    // 五孔请求体与旧版逐字节一致（省略 probeType）；七孔必须显式携带（spec §5.6）
+    invoke<InterpolationResult>('/api/traversal/calculateRealtime', { pressures, config, ...(probeType ? { probeType } : {}) }),
 
   checkPreconditions: async (config?: TraversalTestConfig): Promise<{ success: boolean; data?: PreconditionCheckResult; error?: string }> =>
     invoke<PreconditionCheckResult>('/api/traversal/checkPreconditions', { config }),
@@ -216,6 +240,7 @@ export const traversalApi = {
         success: status.status === 'completed',
         status: status.status as TraversalCompleteEvent['status'],
         totalPoints: status.totalPoints,
+        filePath: status.csvPath,
         error: status.lastError,
         duration: status.startTime ? Date.now() - status.startTime : 0,
       }

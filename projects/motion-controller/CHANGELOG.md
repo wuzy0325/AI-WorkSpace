@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.3.1-win7.1] - 2026-07-24
+
+### Added
+
+- Windows 7 兼容版改造：新增 `apps/desktop-electron/` Electron 22.3.27 壳，承载 Vue 3 前端 + Go HTTP 后端的 Win7 桌面应用。
+
+### Changed
+
+- Go 后端 (`apps/desktop-wails/`) 移除 Wails v3 依赖：
+  - `go.mod` 降级到 Go 1.20（Wails v3 内部用 log/slog + maps + slices，需 Go 1.21+，Win7 必须用 Go 1.20.14）。
+  - `main.go` 改为 `net/http` server，监听 `127.0.0.1:16888`，embed `frontend/dist` 静态资源。
+  - `backend/app.go` 移除 `application.Service` 接口依赖，新增 `RegisterRoutes(mux)` 方法注册 motion HTTP 路由 + CORS 中间件，HTTP server 生命周期由 `main.go` 统一管理。
+  - 移除 Wails 绑定方法（`MotionUpsertProfile` / `MotionConnect` / `MotionGetStatus` 等），motion 全部走 HTTP。
+  - `log/slog` 改为 `shared.local/device-sdk/go/pkg/slog` polyfill。
+- 前端 (`apps/desktop-wails/frontend/`) 移除 Wails runtime 依赖：
+  - `package.json` 移除 `@wailsio/runtime`。
+  - 删除 `src/api/wails-adapter.ts` 和 `src/api/http-client.ts`（不再被引用）。
+  - 重写 `src/api/motionApi.ts`：所有调用统一走 `MOTION_HTTP_BASE = http://127.0.0.1:16888`，移除 `isWailsAvailable()` 分支。
+  - `vite.config.ts` proxy 指向 `127.0.0.1:16888`（开发态用），生产态 Electron 与后端同源。
+
+### Internal
+
+- 复用 `shared.local/motion-control/go/httpapi.RegisterMotionRoutes` 注册完整 motion HTTP 路由（profiles / status / connect / disconnect / home / moveTo / moveBy / jog / stop / emergencyStop / resetEmergencyStop / definePosition）。
+- 端口 16888 与 wind-daq（8900/8901）/ daq-t1603（18181）/ daq-p1604（18182）/ probe-interpolator（18183）区分，避免同机多开冲突。
+- 从 wind-daq 复制 `appicon.ico` / `appicon.png` 作为占位图标（待替换为 motion-controller 专属图标）。
+
+### Verification
+
+- `go vet ./...` (GOWORK=off, Go 1.20.14): passed
+- `go test ./...` (GOWORK=off, Go 1.20.14): passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `npm run build:backend`: passed
+- `npm run dist:win7`: passed，生成 `apps/desktop-electron/dist/Motion-Controller-Win7-Setup-0.3.1-win7.1-x64.exe`
+
+### Known Issues
+
+- 应用图标暂用 wind-daq 图标占位，后续替换为 motion-controller 专属图标。
+
 ## [0.3.1] - 2026-07-06
 
 ### Changed

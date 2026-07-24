@@ -1,8 +1,21 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18nStore } from '@stores/i18nStore'
 import UiToggle from '@components/ui/UiToggle.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import UiPanel from '@components/ui/UiPanel.vue'
+import UiFormField from '@components/ui/UiFormField.vue'
+import { Cpu } from '@lucide/vue'
+
+// ============================================================
+// DAQ-T-1603 专属配置面板
+// ------------------------------------------------------------
+// 与全局设置画面共享 form-card / UiFormField / form-fields 样式，
+// 但采用 3 列网格布局以容纳 8 个字段（标签在上、控件在下，垂直堆叠）。
+// 所有字段标签、placeholder、options 文案均走 i18nStore，随全局语言切换。
+// ============================================================
 
 const props = withDefaults(
   defineProps<{
@@ -38,136 +51,137 @@ const emit = defineEmits<{
   (e: 'update:openCircuitCheck', v: string): void
 }>()
 
-const triggerModeOptions = [
-  { value: '0', label: '软件触发' },
-  { value: '2', label: '硬件触发' },
-]
+const i18n = useI18nStore()
 
-const triggerEdgeOptions = [
-  { value: '0', label: '上升沿' },
-  { value: '1', label: '下降沿' },
-  { value: '2', label: '跳变' },
-]
+// 触发模式选项：value 与设备协议字节一致，label 走 i18n（响应式，随全局语言切换）
+const triggerModeOptions = computed(() => [
+  { value: '0', label: i18n.t.dev_t1603_triggerModeSoftware },
+  { value: '2', label: i18n.t.dev_t1603_triggerModeHardware },
+])
 
-function onTriggerModeChange(e: Event): void {
-  emit('update:triggerMode', Number((e.target as HTMLSelectElement).value))
-}
-
-function onTriggerEdgeChange(e: Event): void {
-  emit('update:triggerEdge', Number((e.target as HTMLSelectElement).value))
-}
-
-function onNumberEmit(fn: (v: number) => void, e: Event): void {
-  const v = Number((e.target as HTMLInputElement).value)
-  if (Number.isFinite(v)) fn(v)
-}
+// 触发边沿选项
+const triggerEdgeOptions = computed(() => [
+  { value: '0', label: i18n.t.dev_t1603_triggerEdgeRising },
+  { value: '1', label: i18n.t.dev_t1603_triggerEdgeFalling },
+  { value: '2', label: i18n.t.dev_t1603_triggerEdgeToggle },
+])
 </script>
 
 <template>
-  <div class="t1603-config">
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">通道掩码</label>
-      <UiInput :model-value="channelMask" @update:model-value="emit('update:channelMask', $event as string)" placeholder="0000-FFFF" />
-    </div>
+  <UiPanel :segmented="false" class="form-card t1603-card">
+    <template #header>
+      <div class="card-head">
+        <Cpu :size="15" />
+        <span class="card-head__title">{{ i18n.t.dev_t1603_sectionTitle }}</span>
+      </div>
+    </template>
+    <div class="form-fields t1603-grid">
+      <UiFormField :label="i18n.t.dev_t1603_channelMask">
+        <UiInput
+          :model-value="props.channelMask"
+          :placeholder="i18n.t.dev_t1603_channelMaskPlaceholder"
+          @update:model-value="emit('update:channelMask', $event as string)"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">采样率</label>
-      <UiInputNumber :model-value="samplingRate" @update:model-value="(v) => v !== null && emit('update:samplingRate', Math.max(1, Math.min(1000, v)))" :min="1" :max="1000" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_samplingRate">
+        <UiInputNumber
+          :model-value="props.samplingRate"
+          :min="1"
+          :max="1000"
+          @update:model-value="(v) => v !== null && emit('update:samplingRate', Math.max(1, Math.min(1000, v)))"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">二进制格式</label>
-      <UiToggle :model-value="binaryFormat" @update:model-value="emit('update:binaryFormat', $event)" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_binaryFormat">
+        <UiToggle
+          :model-value="props.binaryFormat"
+          @update:model-value="emit('update:binaryFormat', $event)"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">触发模式</label>
-      <UiSelect :model-value="String(triggerMode)" @update:model-value="emit('update:triggerMode', Number($event))" :options="triggerModeOptions" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_triggerMode">
+        <UiSelect
+          :model-value="String(props.triggerMode)"
+          :options="triggerModeOptions"
+          @update:model-value="emit('update:triggerMode', Number($event))"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">触发边沿</label>
-      <UiSelect :model-value="String(triggerEdge)" @update:model-value="emit('update:triggerEdge', Number($event))" :options="triggerEdgeOptions" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_triggerEdge">
+        <UiSelect
+          :model-value="String(props.triggerEdge)"
+          :options="triggerEdgeOptions"
+          @update:model-value="emit('update:triggerEdge', Number($event))"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">触发计数</label>
-      <UiInputNumber :model-value="triggerCount" @update:model-value="(v) => v !== null && emit('update:triggerCount', v)" class="t1603-config__input--trigger-count" :min="0" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_triggerCount">
+        <UiInputNumber
+          :model-value="props.triggerCount"
+          :min="0"
+          @update:model-value="(v) => v !== null && emit('update:triggerCount', v)"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">显示时间戳</label>
-      <UiToggle :model-value="showTimestamp" @update:model-value="emit('update:showTimestamp', $event)" />
-    </div>
+      <UiFormField :label="i18n.t.dev_t1603_showTimestamp">
+        <UiToggle
+          :model-value="props.showTimestamp"
+          @update:model-value="emit('update:showTimestamp', $event)"
+        />
+      </UiFormField>
 
-    <div class="t1603-config__field">
-      <label class="t1603-config__label">开路检测</label>
-      <UiInput :model-value="openCircuitCheck" @update:model-value="emit('update:openCircuitCheck', $event as string)" placeholder="hex mask" />
+      <UiFormField :label="i18n.t.dev_t1603_openCircuitCheck">
+        <UiInput
+          :model-value="props.openCircuitCheck"
+          :placeholder="i18n.t.dev_t1603_openCircuitPlaceholder"
+          @update:model-value="emit('update:openCircuitCheck', $event as string)"
+        />
+      </UiFormField>
     </div>
-  </div>
+  </UiPanel>
 </template>
 
 <style scoped>
-.t1603-config {
-  /* VSCode 紧凑密度：字段间 8px，分组内边距 8px 12px */
+/* 3 列网格：覆盖 .form-fields 默认的 flex column 布局
+ * 字段内：标签在上、控件在下（垂直堆叠），与全局设置卡片的标签列布局不同，
+ * 因为 DAQ-T-1603 字段较多且短，3 列网格更紧凑 */
+.t1603-card :deep(.form-fields.t1603-grid) {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--density-field-gap);
-  padding: var(--density-group-padding);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
-  border: 1px solid var(--border-default);
 }
 
-.t1603-config__field {
-  /* 字段内：label ↔ control 纵向 2px */
+/* 字段内：label ↔ control 纵向 2px，标签左对齐 */
+.t1603-card :deep(.ui-form-field.ui-form-field) {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--density-field-inline);
+  margin-bottom: 0;
 }
 
-.t1603-config__label {
-  display: block;
+.t1603-card :deep(.ui-form-field__label) {
+  padding-top: 0;
+  text-align: left;
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
-  /* 中文标签不使用 uppercase，保持原形 */
   letter-spacing: 0.02em;
 }
 
-.t1603-config__input {
-  width: 100%;
-  /* 紧凑控件：高度 28px，横向内边距 8px */
-  height: var(--density-control-height);
-  padding: 0 var(--density-control-pad-x);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  outline: none;
-  transition: all 0.2s ease;
-}
-
-.t1603-config__input:focus {
-  border-color: var(--color-accent);
-  background: var(--bg-panel-strong);
-}
-
-:root[data-theme='light'] .t1603-config__input {
-  background: rgba(255, 255, 255, 0.8);
-}
-
-.t1603-config__input--trigger-count {
-  width: 80px;
-}
-
-.t1603-config__hint {
+.t1603-card :deep(.ui-form-field__error),
+.t1603-card :deep(.ui-form-field__hint) {
+  grid-column: auto;
+  margin-top: var(--density-field-inline);
   font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--text-muted);
-  margin-top: 0.125rem;
+  line-height: var(--line-height-base);
+}
+
+/* 响应式：窄屏退化为 2 列，避免控件被压缩 */
+@media (max-width: 640px) {
+  .t1603-card :deep(.form-fields.t1603-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

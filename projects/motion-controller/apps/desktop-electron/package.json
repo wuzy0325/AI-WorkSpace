@@ -1,0 +1,51 @@
+{
+  "name": "motion-controller-win7",
+  "version": "0.3.1-win7.1",
+  "private": true,
+  "description": "Motion Controller Windows 7 compatible desktop application",
+  "main": "main.cjs",
+  "scripts": {
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist:win7": "npm run build:backend && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.wtn.motion-controller.win7",
+    "productName": "Motion Controller",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/motion-controller-backend.exe",
+        "to": "backend/motion-controller-backend.exe"
+      }
+    ],
+    "win": {
+      "icon": "../desktop-wails/appicon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "Motion-Controller-Win7-Setup-${version}-${arch}.${ext}"
+    }
+  }
+}

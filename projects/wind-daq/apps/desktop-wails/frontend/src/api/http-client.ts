@@ -14,12 +14,24 @@ export class ApiError extends Error {
 // Wails/Vite 的前端资源服务而不是 Go API，表现为“开始采集后 UI 没数据”。
 // Wails dev/build 的页面 origin 不稳定：可能是 wails:，也可能是 http://127.0.0.1:9245。
 // 因此用 Wails runtime 能力判断桌面环境，而不是用 location.protocol 判断。
-const apiBase = import.meta.env.VITE_API_BASE || (isWailsAvailable() ? 'http://127.0.0.1:8900' : '')
+//
+// 注意：apiBase 必须延迟求值（在 request 调用时再算），不能在模块顶层立即调用
+// isWailsAvailable()。原因：wails-adapter.ts 顶层 import 了本文件的 request，
+// 形成循环依赖；如果在模块加载阶段调用 isWailsAvailable()，此时 wails-adapter
+// 模块尚未执行完，isWailsAvailable 处于 TDZ，会抛
+// "Cannot access 'isWailsAvailable' before initialization"，导致整个前端白屏。
+let cachedApiBase: string | null = null
+function resolveApiBase(): string {
+  if (cachedApiBase !== null) return cachedApiBase
+  const base = import.meta.env.VITE_API_BASE || (isWailsAvailable() ? 'http://127.0.0.1:8900' : '')
+  cachedApiBase = base
+  return base
+}
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // path 可能已被上游（如 traversalApi.ts / otherApis.ts）拼成绝对 URL，
   // 此时直接用它，避免 apiBase 重复拼接导致 "http://host:porthttp://host:port/..." 错误。
-  const url = path.startsWith('http') ? path : `${apiBase}${path}`
+  const url = path.startsWith('http') ? path : `${resolveApiBase()}${path}`
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
@@ -28,7 +40,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text().catch(() => '')
 
   if (!response.ok) {
-    throw new ApiError(text || `HTTP ${response.status}`, response.status)
+    let message = text || `HTTP ${response.status}`
+    try {
+      const body = JSON.parse(text) as { error?: unknown }
+      if (typeof body.error === 'string' && body.error) message = body.error
+    } catch {
+      // Keep the raw response when the backend did not return JSON.
+    }
+    throw new ApiError(message, response.status)
   }
 
   try {

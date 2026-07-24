@@ -13,7 +13,7 @@ package appcontext
 
 import (
 	"encoding/json"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/ports"

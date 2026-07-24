@@ -2,6 +2,7 @@
 import { computed, reactive, onMounted, watch, ref } from 'vue';
 import { useMotionStore } from '@stores/motionStore';
 import { useFeedbackStore } from '@stores/feedbackStore';
+import { useI18nStore } from '@stores/i18nStore';
 import UiButton from '@components/ui/UiButton.vue';
 import type { MotionControllerProfile, AxisConfig, AxisName, PositionSource } from '@shared/types/motion';
 import {
@@ -19,6 +20,7 @@ import {
   DEFAULT_ENCODER_COMPENSATION_TIMEOUT_MS,
   createDefaultAxis,
   createDefaultEncoderCompensation,
+  defaultMaxSpeedForType,
   normalizeAxisForEditing,
   normalizePositive,
 } from './motionConfigEditor';
@@ -30,18 +32,21 @@ const emit = defineEmits<{ (e: 'close'): void }>();
 
 const motion = useMotionStore();
 const feedback = useFeedbackStore();
+const i18n = useI18nStore();
 
 /** 补偿超时验证的缓冲时间(ms)，用于计算最小超时 = maxCycles × settleMs + 缓冲 */
 const COMPENSATION_TIMEOUT_BUFFER_MS = 500;
 
+// 默认控制器类型为 B140-MC（出厂硬件默认），IP 192.168.3.121 / 端口 23。
+// 与后端 defaultMotionProfiles() 对齐，安装后立即可用。
 const editing = reactive<MotionControllerProfile>({
   id: '',
   name: '',
-  type: 'SIMULATED-MC',
-  address: '127.0.0.1',
-  port: 9000,
+  type: 'B140-MC',
+  address: '192.168.3.121',
+  port: 23,
   autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name))),
+  axes: DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, 'B140-MC'))),
 });
 
 const isEdit = computed(() => !!editing.id);
@@ -51,6 +56,9 @@ const isCreatingNew = ref(false);
 function defaultPortForType(type: string): number {
   if (type === 'B140-MC') return 23;
   if (type === 'WTNMC4A-MC') return 5000;
+  // 模拟控制器显式固定 9000：不依赖 fallback 返回值，
+  // 防止未来调整 fallback 时模拟控制器默认端口被静默改写（与 motion-controller 孪生实现同构）。
+  if (type === 'SIMULATED-MC') return 9000;
   return 9000;
 }
 
@@ -58,12 +66,13 @@ function newProfile(): void {
   isCreatingNew.value = true;
   validationErrors.value = [];
   editing.id = '';
-  editing.name = '模拟控制器';
-  editing.type = 'SIMULATED-MC';
-  editing.address = '127.0.0.1';
-  editing.port = 9000;
+  // 默认新建 B140 控制器，与后端 defaultMotionProfiles 出厂默认一致
+  editing.name = i18n.t.motion_b140Controller;
+  editing.type = 'B140-MC';
+  editing.address = '192.168.3.121';
+  editing.port = 23;
   editing.autoConnect = false;
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name)));
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, editing.type)));
 }
 
 function editProfile(src: MotionControllerProfile): void {
@@ -96,7 +105,10 @@ function validateEncoderCompensation(): string[] {
     // 关键约束：最小步长必须小于容差
     if (minStep >= tolerance) {
       errors.push(
-        `轴 ${axis.name}：最小白 (${minStep}) 必须小于容差 (${tolerance})`
+        i18n.t.motion_axisMinStepExceedsTolerance
+          .replace('{axis}', axis.name)
+          .replace('{minStep}', String(minStep))
+          .replace('{tolerance}', String(tolerance))
       );
     }
 
@@ -116,7 +128,10 @@ function validateEncoderCompensation(): string[] {
 
     if (minStep > microstepSize) {
       errors.push(
-        `轴 ${axis.name}：最小白 (${minStep}) 大于单个微步位移 (${microstepSize.toFixed(4)})，建议调小`
+        i18n.t.motion_axisMinStepExceedsMicrostep
+          .replace('{axis}', axis.name)
+          .replace('{minStep}', String(minStep))
+          .replace('{microstep}', microstepSize.toFixed(4))
       );
     }
 
@@ -124,7 +139,10 @@ function validateEncoderCompensation(): string[] {
     const minTimeout = maxCycles * settleMs + COMPENSATION_TIMEOUT_BUFFER_MS;
     if (timeoutMs < minTimeout) {
       errors.push(
-        `轴 ${axis.name}：超时时间 (${timeoutMs}ms) 应不小于 ${minTimeout}ms`
+        i18n.t.motion_axisTimeoutTooSmall
+          .replace('{axis}', axis.name)
+          .replace('{timeoutMs}', String(timeoutMs))
+          .replace('{minTimeout}', String(minTimeout))
       );
     }
   }
@@ -142,7 +160,7 @@ async function save(): Promise<void> {
 
   const profile: MotionControllerProfile = {
     id: editing.id || (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-    name: editing.name.trim() || '新控制器',
+    name: editing.name.trim() || i18n.t.motion_newController,
     type: editing.type,
     address: editing.address.trim() || '127.0.0.1',
     port: Number.isFinite(editing.port) ? editing.port : 9000,
@@ -176,20 +194,20 @@ async function save(): Promise<void> {
   try {
     await motion.upsertProfile(profile);
   } catch (e) {
-    feedback.pushToast(`保存配置失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+    feedback.pushToast(`${i18n.t.motion_saveConfigFailed}: ${e instanceof Error ? e.message : i18n.t.unknownError}`, 'error');
     return;
   }
-  feedback.pushToast('控制器配置已保存', 'success');
+  feedback.pushToast(i18n.t.motion_controllerConfigSaved, 'success');
   emit('close');
 }
 
 async function remove(id: string): Promise<void> {
   try {
     await motion.deleteProfile(id);
-    feedback.pushToast('控制器已删除', 'info');
+    feedback.pushToast(i18n.t.motion_controllerDeleted, 'info');
     emit('close');
   } catch (e) {
-    feedback.pushToast(`删除失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error');
+    feedback.pushToast(`${i18n.t.motion_deleteFailed}: ${e instanceof Error ? e.message : i18n.t.unknownError}`, 'error');
   }
 }
 
@@ -224,6 +242,24 @@ watch(() => editing.type, (type, oldType) => {
   if (editing.port === defaultPortForType(oldType)) {
     editing.port = defaultPortForType(type);
   }
+  // 新建态下切换控制器类型时，按新类型的默认速度重新生成轴配置
+  // （MC4A / B140 默认 4，模拟控制器沿用共享默认值）
+  if (isCreatingNew.value) {
+    editing.axes = DEFAULT_AXIS_NAMES.map((name) => normalizeAxisForEditing(createDefaultAxis(name, type)));
+    return;
+  }
+  // 编辑态切换到硬件控制器时，若现有 maxSpeed 超过硬件安全上限则 clamp，
+  // 避免遗留的模拟控制器速度（100）被带到 B140/WTNMC4A 引发碰撞风险
+  const hardwareCap = defaultMaxSpeedForType(type, Number.POSITIVE_INFINITY);
+  if (Number.isFinite(hardwareCap)) {
+    editing.axes = editing.axes.map((axis) => {
+      const current = axis.maxSpeed ?? 0;
+      if (current > hardwareCap) {
+        return { ...axis, maxSpeed: hardwareCap };
+      }
+      return axis;
+    });
+  }
 });
 
 function onAxisUpdate(index: number, axis: AxisConfig): void {
@@ -233,11 +269,12 @@ function onAxisUpdate(index: number, axis: AxisConfig): void {
 
 const axisIndices = computed(() => editing.axes.map((_, i) => i));
 
-const controllerTypeOptions = [
-  { value: 'SIMULATED-MC', label: '模拟控制器' },
-  { value: 'B140-MC', label: 'B140 控制器' },
-  { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
-];
+// 控制器类型选项：用 computed 依赖 i18n，跟随语言切换刷新
+const controllerTypeOptions = computed(() => [
+  { value: 'SIMULATED-MC', label: i18n.t.motion_simulatedController },
+  { value: 'B140-MC', label: i18n.t.motion_b140Controller },
+  { value: 'WTNMC4A-MC', label: i18n.t.motion_wtnmc4aController },
+]);
 </script>
 
 <template>
@@ -277,15 +314,15 @@ const controllerTypeOptions = [
                 </div>
                 <div class="config-panel__title-block">
                   <div class="config-panel__title-row">
-                    <h2 class="config-panel__title">{{ isEdit ? editing.name : '新建运动控制器' }}</h2>
+                    <h2 class="config-panel__title">{{ isEdit ? editing.name : i18n.t.motion_newMotionController }}</h2>
                     <span v-if="isCreatingNew" class="creation-badge">
                       <span class="creation-badge__dot"></span>
-                      新建中 · 尚未保存
+                      {{ i18n.t.motion_creatingPendingSave }}
                     </span>
                   </div>
                   <p class="config-panel__subtitle">
-                    <template v-if="isCreatingNew">填写下方表单并点击「创建控制器」以新增一条配置</template>
-                    <template v-else>编辑现有控制器配置</template>
+                    <template v-if="isCreatingNew">{{ i18n.t.motion_createFormHint }}</template>
+                    <template v-else>{{ i18n.t.motion_editExistingHint }}</template>
                   </p>
                 </div>
               </div>
@@ -317,39 +354,39 @@ const controllerTypeOptions = [
                 <section class="config-section config-section--boxed">
                   <h3 class="config-section__title">
                     <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-                    通信设置
+                    {{ i18n.t.motion_communicationSettings }}
                   </h3>
                   <div class="basic-info-grid">
                     <div class="basic-info-field">
-                      <label class="basic-info-field__label">名称</label>
-                      <input v-model="editing.name" type="text" placeholder="控制器名称" class="input-compact" />
+                      <label class="basic-info-field__label">{{ i18n.t.name }}</label>
+                      <input v-model="editing.name" type="text" :placeholder="i18n.t.motion_controllerNamePlaceholder" class="input-compact" />
                     </div>
                     <div class="basic-info-field">
-                      <label class="basic-info-field__label">类型</label>
+                      <label class="basic-info-field__label">{{ i18n.t.type }}</label>
                       <select
                         v-model="editing.type"
                         class="input-compact input-compact--select"
-                        aria-label="控制器类型"
+                        :aria-label="i18n.t.motion_controllerTypeAria"
                         data-test="motion-controller-type"
                       >
                         <option v-for="opt in controllerTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                       </select>
                     </div>
                     <div class="basic-info-field basic-info-field--wide">
-                      <label class="basic-info-field__label">地址</label>
+                      <label class="basic-info-field__label">{{ i18n.t.motion_address }}</label>
                       <div class="flex gap-2">
                         <input v-model="editing.address" type="text" placeholder="127.0.0.1" class="input-compact flex-1" />
                         <input v-model.number="editing.port" type="number" placeholder="9000" min="1" max="65535" class="input-compact w-20 text-center" />
                       </div>
                     </div>
                     <div class="basic-info-field">
-                      <label class="basic-info-field__label">自动连接</label>
+                      <label class="basic-info-field__label">{{ i18n.t.motion_autoConnect }}</label>
                       <label class="auto-connect-toggle">
                         <input v-model="editing.autoConnect" type="checkbox" />
                         <span class="auto-connect-toggle__track">
                           <span class="auto-connect-toggle__thumb"></span>
                         </span>
-                        <span class="auto-connect-toggle__label">{{ editing.autoConnect ? '启用' : '禁用' }}</span>
+                        <span class="auto-connect-toggle__label">{{ editing.autoConnect ? i18n.t.motion_stateEnabled : i18n.t.motion_stateDisabled }}</span>
                       </label>
                     </div>
                   </div>
@@ -359,8 +396,8 @@ const controllerTypeOptions = [
                 <div class="config-section flex flex-col">
                   <h3 class="config-section__title">
                     <svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
-                    轴配置
-                    <span class="section-subtitle">配置每个轴的机械和电气参数</span>
+                    {{ i18n.t.motion_axisConfig }}
+                    <span class="section-subtitle">{{ i18n.t.motion_axisConfigSubtitle }}</span>
                   </h3>
                   <div class="axis-matrix">
                     <AxisConfigCard
@@ -381,22 +418,22 @@ const controllerTypeOptions = [
               <div class="config-panel__footer-left">
                 <span class="config-status" :class="isCreatingNew ? 'config-status--new' : 'config-status--edit'">
                   <span v-if="isCreatingNew" class="config-status__dot"></span>
-                  {{ isCreatingNew ? '新建配置 · 保存后生效' : '编辑现有配置' }}
+                  {{ isCreatingNew ? i18n.t.motion_newConfigPending : i18n.t.motion_editingExisting }}
                 </span>
               </div>
               <div class="config-panel__footer-right">
-                <UiButton v-if="isEdit" variant="danger" size="sm" class="config-panel__delete-btn" @click="remove(editing.id)">删除</UiButton>
-                <UiButton v-if="isEdit" variant="primary" size="sm" class="config-panel__new-btn" @click="newProfile">新建</UiButton>
-                <UiButton variant="ghost" size="sm" class="config-panel__cancel-btn" @click="emit('close')">取消</UiButton>
+                <UiButton v-if="isEdit" variant="danger" size="sm" class="config-panel__delete-btn" @click="remove(editing.id)">{{ i18n.t.del }}</UiButton>
+                <UiButton v-if="isEdit" variant="primary" size="sm" class="config-panel__new-btn" @click="newProfile">{{ i18n.t.motion_new }}</UiButton>
+                <UiButton variant="ghost" size="sm" class="config-panel__cancel-btn" @click="emit('close')">{{ i18n.t.cancel }}</UiButton>
                 <UiButton variant="primary" size="sm" class="config-panel__save-btn" @click="save">
-                  {{ isCreatingNew ? '创建控制器' : '保存' }}
+                  {{ isCreatingNew ? i18n.t.motion_createController : i18n.t.save }}
                 </UiButton>
               </div>
             </footer>
 
             <!-- 验证错误提示 -->
             <div v-if="validationErrors.length > 0" class="validation-errors">
-              <div class="validation-errors__title">参数验证失败</div>
+              <div class="validation-errors__title">{{ i18n.t.motion_validationFailed }}</div>
               <ul class="validation-errors__list">
                 <li v-for="(err, idx) in validationErrors" :key="idx" class="validation-errors__item">
                   <span class="validation-errors__dot">•</span>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component, nextTick, ref, watch } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiSpin from '@components/ui/UiSpin.vue'
@@ -20,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 const storageStore = useStorageStore()
 
 const loading = ref(false)
@@ -35,11 +37,11 @@ const isVisible = computed({
   set: (value) => emit('update:open', value),
 })
 
-/** Tab 配置列表（按需扩展新的分组） */
-const TABS: { key: SettingsTab; label: string; icon: Component }[] = [
-  { key: 'display', label: '界面', icon: Monitor },
-  { key: 'recording', label: '记录', icon: FileText },
-]
+/** Tab 配置列表（按需扩展新的分组；label 跟随全局语言切换） */
+const TABS = computed<{ key: SettingsTab; label: string; icon: Component }[]>(() => [
+  { key: 'display', label: i18n.t.set_tabDisplay, icon: Monitor },
+  { key: 'recording', label: i18n.t.set_tabRecording, icon: FileText },
+])
 
 watch(() => props.open, (open) => { if (open) void loadSettings() })
 
@@ -89,13 +91,13 @@ function onReset(): void {
   const recording = recordingRef.value
   if (!display || !recording) {
     // ref 缺失属程序错误，必须显式反馈而非 ?. 静默跳过
-    feedback.pushToast('设置面板未就绪，请重试', 'error')
+    feedback.pushToast(i18n.t.set_panelNotReady, 'error')
     console.error('[GlobalSettings] onReset: 子组件未挂载')
     return
   }
   display.reset()
   recording.reset()
-  feedback.pushToast('已恢复默认设置', 'info')
+  feedback.pushToast(i18n.t.set_defaultsRestored, 'info')
 }
 
 async function onSave(): Promise<void> {
@@ -114,24 +116,21 @@ async function onSave(): Promise<void> {
       ...recording.validate(),
     }
     if (Object.keys(errs).length) {
-      const firstError = Object.values(errs).find(Boolean) || '设置无效'
+      const firstError = Object.values(errs).find(Boolean) || i18n.t.set_invalidSettings
       feedback.pushToast(firstError, 'warning')
       return
     }
-    // 先持久化（recording.save 合入 waveformBufferSize + refreshRateHz 落盘 + sink 调优），
+    // 先持久化（recording.save 合入 historyWindowSec + refreshRateHz 落盘），
     // 成功后再 display.save() 下发后端即时生效。顺序不可颠倒：若先下发后持久化，
     // 持久化失败时后端已是新值而配置仍是旧值，重启后被旧配置回滚，产生不一致。
-    const waveformBufferSize = display.waveformBufferSize
+    const historyWindowSec = display.historyWindowSec
     const refreshRateHz = display.refreshRate
-    const sinkTuningChanged = await recording.save(waveformBufferSize, refreshRateHz)
+    await recording.save(historyWindowSec, refreshRateHz)
     await display.save()
-    const message = sinkTuningChanged
-      ? '设置已保存（sink 调优参数需重启应用生效）'
-      : '设置已保存'
-    feedback.pushToast(message, 'success')
+    feedback.pushToast(i18n.t.set_saved, 'success')
     saved = true
   } catch {
-    feedback.pushToast('保存失败，请重试', 'error')
+    feedback.pushToast(i18n.t.set_saveFailed, 'error')
   } finally {
     saving.value = false
   }
@@ -143,8 +142,8 @@ async function onSave(): Promise<void> {
   <UiDialog
     v-model:show="isVisible"
     preset="card"
-    :style="{ maxWidth: '42rem', width: '92vw' }"
-    title="全局设置"
+    :style="{ width: '46rem', maxWidth: '46rem', minWidth: '40rem' }"
+    :title="i18n.t.set_globalSettings"
     :bordered="false"
     :mask-closable="false"
     @close="onClose"
@@ -152,8 +151,8 @@ async function onSave(): Promise<void> {
     <template #header>
       <div class="modal-head">
         <div class="modal-head__info">
-          <div class="modal-head__title">全局设置</div>
-          <span class="modal-head__subtitle">界面偏好与数据记录配置</span>
+          <div class="modal-head__title">{{ i18n.t.set_globalSettings }}</div>
+          <span class="modal-head__subtitle">{{ i18n.t.set_globalSettingsSubtitle }}</span>
         </div>
         <UiButton quaternary circle size="md" @click="onClose">
           <template #icon><X :size="14" /></template>
@@ -162,13 +161,13 @@ async function onSave(): Promise<void> {
     </template>
 
     <UiSpin v-if="loading" class="loading-wrap" />
-    <UiErrorState v-else-if="loadError" title="设置加载失败" message="请检查后端连接">
-      <template #action><UiButton size="md" @click="loadSettings">重试</UiButton></template>
+    <UiErrorState v-else-if="loadError" :title="i18n.t.set_loadFailed" :message="i18n.t.set_checkBackend">
+      <template #action><UiButton size="md" @click="loadSettings">{{ i18n.t.set_retry }}</UiButton></template>
     </UiErrorState>
 
     <div v-else class="settings-layout">
       <!-- 左侧标签导航 -->
-      <nav class="settings-tabs" role="tablist" aria-label="设置分组">
+      <nav class="settings-tabs" role="tablist" :aria-label="i18n.t.set_settingsGroup">
         <button
           v-for="tab in TABS"
           :id="`settings-tab-${tab.key}`"
@@ -184,11 +183,21 @@ async function onSave(): Promise<void> {
           <span>{{ tab.label }}</span>
         </button>
       </nav>
-
-      <!-- 右侧内容区 -->
+      <!-- 右侧内容区
+           用 CSS grid 让两个 section 重叠到同一格子（grid-area: stack），
+           高度由较高的那个决定。配合 visibility 控制可见性（而非 v-show 的 display:none），
+           切换 tab 时 dialog 高度始终 = max(display, recording) + header + footer，稳定不变。
+           若用 v-show，display:none 会让 section 不参与布局，content 高度由当前可见 tab 决定，
+           切换时 dialog 跟着撑大/缩小，视觉跳动。 -->
       <div class="settings-content">
-        <DisplaySettingsSection ref="displayRef" v-show="activeTab === 'display'" />
-        <RecordingSettingsSection ref="recordingRef" v-show="activeTab === 'recording'" />
+        <DisplaySettingsSection
+          ref="displayRef"
+          :class="{ 'section-hidden': activeTab !== 'display' }"
+        />
+        <RecordingSettingsSection
+          ref="recordingRef"
+          :class="{ 'section-hidden': activeTab !== 'recording' }"
+        />
       </div>
     </div>
 
@@ -196,14 +205,14 @@ async function onSave(): Promise<void> {
       <div class="modal-foot">
         <div class="modal-foot__left">
           <UiButton size="md" variant="ghost" :disabled="saving" @click="onReset">
-            <template #icon><RotateCcw :size="14" /></template>恢复默认
+            <template #icon><RotateCcw :size="14" /></template>{{ i18n.t.set_restoreDefaults }}
           </UiButton>
-          <span class="foot-hint">保存后对当前桌面会话生效</span>
+          <span class="foot-hint">{{ i18n.t.set_saveHint }}</span>
         </div>
         <div class="flex gap-2">
-          <UiButton size="md" :disabled="saving" @click="onClose">取消</UiButton>
+          <UiButton size="md" :disabled="saving" @click="onClose">{{ i18n.t.cancel }}</UiButton>
           <UiButton size="md" variant="primary" :loading="saving" :disabled="loading" @click="onSave">
-            <template #icon><Save :size="14" /></template>保存设置
+            <template #icon><Save :size="14" /></template>{{ i18n.t.set_saveSettings }}
           </UiButton>
         </div>
       </div>
@@ -247,63 +256,49 @@ async function onSave(): Promise<void> {
   padding: var(--space-10) 0;
 }
 
-/* ===== 左右分栏布局 ===== — 紧凑密度：分栏间距 8px */
+/* ===== 左右分栏布局 ===== — 紧凑密度：分栏间距 12px，给标签列留足空间 */
 .settings-layout {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-/* 左侧标签导航 — 紧凑密度：宽度收窄到 112px */
+/* 左侧标签导航 — 整改：112px→140px，英文 "Recording" 不再换行。
+ * .settings-tab 视觉规范已抽到 settings-form.css 全局，此处只保留容器布局差异。 */
 .settings-tabs {
-  display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  width: 112px;
+  width: 140px;
   flex-shrink: 0;
   padding-right: var(--space-2);
   border-right: 1px solid var(--border-default);
 }
 
-.settings-tab {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-secondary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: all var(--motion-fast) var(--easing-standard);
-  text-align: left;
-}
-
-.settings-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-panel);
-}
-
-.settings-tab:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring-soft), 0 0 0 4px var(--focus-ring);
-}
-
-.settings-tab--active {
-  color: var(--accent-primary);
-  background: var(--accent-primary-muted);
-  font-weight: var(--font-weight-semibold);
-}
-
-.settings-tab--active:hover {
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-}
-
-/* 右侧内容区 — 不限制高度，由 UiDialog content-style 控制滚动条 */
+/* 右侧内容区 — 用 CSS grid 让两个 section 重叠到同一格子
+ * 两个 section 都参与布局，content 高度 = max(display, recording)，
+ * dialog 高度由较高的 tab 决定，切换时不跳动。
+ * section-hidden 用 visibility:hidden（保留布局）而非 display:none（不参与布局）。 */
 .settings-content {
   flex: 1;
   min-width: 0;
+  display: grid;
+  grid-template-areas: "stack";
+  /* content 自身不设固定高度，由内部 section 撑开 */
+  align-items: start;
+}
+
+/* 两个 section 都占同一格子，重叠起来
+ * 注意：:deep() 在 scoped style 中有效，穿透到子组件根元素 */
+.settings-content :deep(.settings-section) {
+  grid-area: stack;
+  min-width: 0;
+}
+
+/* 非活动 tab 用 visibility 隐藏（仍占布局），保证 content 高度恒等于较高的那个 tab */
+.settings-content :deep(.section-hidden) {
+  visibility: hidden;
+  pointer-events: none;
+  /* 防止隐藏的 section 内部元素抢焦点 */
+  user-select: none;
 }
 
 :deep(.settings-section) {
@@ -354,7 +349,9 @@ async function onSave(): Promise<void> {
   }
 
   .settings-content {
-    max-height: none;
+    /* 小屏幕下两个 section 仍重叠，但限制最大高度避免超出视口 */
+    max-height: 70vh;
+    overflow-y: auto;
   }
 }
 </style>

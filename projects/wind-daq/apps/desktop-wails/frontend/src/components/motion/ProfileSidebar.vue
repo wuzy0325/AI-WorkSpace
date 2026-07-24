@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { MotionControllerProfile } from '@shared/types/motion'
 import { useMotionStore } from '@stores/motionStore'
+import { useI18nStore } from '@stores/i18nStore'
 
 withDefaults(
   defineProps<{
@@ -33,13 +34,14 @@ const emit = defineEmits<{
 }>()
 
 const motion = useMotionStore()
+const i18n = useI18nStore()
 </script>
 
 <template>
   <aside class="config-sidebar">
     <div class="config-sidebar__header">
-      <h3 class="config-sidebar__title">控制器配置</h3>
-      <button class="config-sidebar__add-btn" @click="emit('add')" title="新建控制器">
+      <h3 class="config-sidebar__title">{{ i18n.t.motion_controllerConfig }}</h3>
+      <button class="config-sidebar__add-btn" @click="emit('add')" :title="i18n.t.motion_creatingController">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14"/>
         </svg>
@@ -52,7 +54,7 @@ const motion = useMotionStore()
         v-if="creating"
         class="config-sidebar__item config-sidebar__item--draft config-sidebar__item--active"
         role="status"
-        aria-label="正在新建控制器"
+        :aria-label="i18n.t.motion_creatingController"
       >
         <div class="config-sidebar__item-main">
           <span class="config-sidebar__draft-icon" aria-hidden="true">
@@ -63,11 +65,11 @@ const motion = useMotionStore()
           </span>
           <div class="config-sidebar__item-content">
             <span class="config-sidebar__item-name config-sidebar__item-name--draft">
-              {{ draftName?.trim() || '未命名控制器' }}
+              {{ draftName?.trim() || i18n.t.motion_unnamedController }}
             </span>
             <span class="config-sidebar__item-meta config-sidebar__item-meta--draft">
               <span class="config-sidebar__draft-dot"></span>
-              新建中 · {{ draftType || '待选类型' }}<template v-if="draftAddress"> · {{ draftAddress }}<template v-if="draftPort">:{{ draftPort }}</template></template>
+              {{ i18n.t.motion_creating }} · {{ draftType || i18n.t.motion_pendingType }}<template v-if="draftAddress"> · {{ draftAddress }}<template v-if="draftPort">:{{ draftPort }}</template></template>
             </span>
           </div>
         </div>
@@ -88,7 +90,7 @@ const motion = useMotionStore()
           <span
             class="config-sidebar__status"
             :class="motion.statusById(p.id)?.connected ? 'config-sidebar__status--connected' : 'config-sidebar__status--disconnected'"
-            :title="motion.statusById(p.id)?.connected ? '已连接' : '未连接'"
+            :title="motion.statusById(p.id)?.connected ? i18n.t.connected : i18n.t.disconnected"
           />
           <div class="config-sidebar__item-content">
             <span class="config-sidebar__item-name">{{ p.name }}</span>
@@ -101,7 +103,7 @@ const motion = useMotionStore()
         <svg class="config-sidebar__empty-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>
         </svg>
-        <p>暂无控制器配置</p>
+        <p>{{ i18n.t.noControllerConfig }}</p>
       </div>
     </div>
   </aside>

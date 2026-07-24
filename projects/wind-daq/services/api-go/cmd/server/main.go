@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"net/http"
 	"os"
 	"path/filepath"

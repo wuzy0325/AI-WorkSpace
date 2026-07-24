@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.3.0-win7.1] - 2026-07-23
+
+### Changed
+
+- **Win7 LTS 改造**：将桌面壳从 Wails v3 + WebView2 替换为 **Go 1.20.14 + Electron 22.3.27 + net/http**，业务层（core/ports/usecase/adapters）零改动。详见 `docs/runbooks/win7-migration-guide.md`。
+- 监听端口改为 `127.0.0.1:18182`（与 daq-t1603 的 18181 区分，避免同机双开冲突）。
+- `apps/desktop-wails/main.go` 改为 net/http server + `//go:embed all:frontend/dist` + 优雅关闭，移除 Wails 依赖。
+- `apps/desktop-wails/backend/app.go` 改为 hub 模式，移除 `application.App` 依赖，依赖 `core.EventBus` 接口而非具体传输。
+- Go 1.20 无 `log/slog` 包，统一替换为 `shared.local/device-sdk/go/pkg/slog` polyfill（7 个文件）。
+- 前端 `bridge/` 改为 fetch + WebSocket（移除 `@wailsio/runtime` 依赖）：`httpClient.ts`（统一响应信封解包）、`wsClient.ts`（WebSocket 单例 + 指数退避重连）、`deviceBridge.ts` / `logBridge.ts` / `recordingBridge.ts`（HTTP RPC + WebSocket 事件订阅）。
+- 前端 `package.json` 移除 `@wailsio/runtime` 依赖；`tsconfig.json` 移除 `bindings/**` 避免引用 Wails 绑定导致 vue-tsc 报错。
+- `go.mod` 改为 `go 1.20` + `nhooyr.io/websocket v1.8.17` + `shared.local/device-sdk/go`，移除 Wails v3 依赖。
+- 工作空间 `go.work` 注释掉 `projects/daq-p1604/apps/desktop-wails` 行（Go 1.20 + Wails v3 alpha 与工作空间 Go 1.26 不兼容）。
+
+### Added
+
+- **新增 `apps/desktop-wails/httpserver/` 包**：HTTP handler + WebSocket hub（`register.go` / `device_handler.go` / `recording_handler.go` / `log_handler.go` / `ws_hub.go` / `helpers.go`），实现 `core.EventBus` 接口，单 goroutine 串行处理 register/unregister/broadcast，每客户端独立 send channel（buffered 32）+ writePump goroutine。
+- **新增 `apps/desktop-wails/core/eventbus.go`**：`EventBus` 接口 + 4 个事件常量（`daq:log` / `daq:recording-status` / `daq:recording-warning` / `daq:device-state`），解耦事件推送与传输层。
+- **新增 `apps/desktop-wails/core/hub.go`**：Hub 状态容器，集中管理 ctx、relay 协程映射、LogEmitter、EventBus，避免 Service 间循环依赖。
+- **新增 `apps/desktop-electron/` 目录**：Electron 22.3.27 桌面壳，包含 `main.cjs`（主进程：spawn Go 后端 + 创建 BrowserWindow + IPC 桥）、`preload.cjs`（contextBridge 暴露 `showOpenDialog`）、`package.json`（electron-builder NSIS 打包配置）、`scripts/build-backend.ps1`（Go 1.20.14 路径硬编码 + GOWORK=off + CGO_ENABLED=0）、`scripts/generate-ico.ps1`（从 appicon.png 生成多尺寸 ICO）、`.gitignore`。
+- **新增 `frontend/src/bridge/httpClient.ts`**：统一响应信封解包（`{ok:true, data}` / `{ok:false, error}`），导出 `post<T>` / `get<T>` / `del<T>` 便捷封装。
+- **新增 `frontend/src/bridge/wsClient.ts`**：WebSocket 单例 + 指数退避重连（1s → 2s → 4s → ... 上限 10s），自动重连后重新订阅事件。
+- **重新生成 `appicon.ico`**：采用 `tools/ico/wave_green_512.png`（512x512 32bpp ARGB，波浪绿主题）作为图标源，通过 `scripts/generate-ico.ps1` 生成 6 尺寸（256/128/64/48/32/16）多分辨率 ICO（23074 bytes），满足 electron-builder 至少 256x256 要求。原 ico 仅 192 bytes 单尺寸不达标。`appicon.png` 同步替换为 wave_green_512.png。
+
+### Internal
+
+- **多参数事件 wire 格式**：`daq:device-state` 是双参数事件 `[id, state]`，WSHub.Emit 当 data 长度 > 1 时打包为数组推送，前端 onmessage 解构数组。
+- **统一响应信封**：`{ok:true, data}` / `{ok:false, error}` 便于前端 fetch 统一处理，`apiOK` / `apiErr` 辅助函数集中在 `httpserver/helpers.go`。
+- 临时复用 daq-t1603 的多尺寸 `appicon.ico` 覆盖 daq-p1604 原 ico（原 ico 仅 192 bytes 单尺寸，不满足 electron-builder 至少 256x256 要求）——**已在本次重新生成专属 ICO 后移除该临时措施**。
+- `frontend/dist/` 目录由 `.gitignore` 第 5 行 `dist/` 规则忽略，clone 后不存在；`build-backend.ps1` 通过"先 `npm run build` 再 `go build`"保证 `//go:embed all:frontend/dist` 在编译时目录必然存在（与 daq-t1603 一致，不保留 `.gitkeep` 占位文件）。
+- 同步 3 个版本号文件到 `0.3.0-win7.1`：`VERSION`、`apps/desktop-wails/frontend/package.json`、`apps/desktop-electron/package.json`。
+- 更新 `AGENTS.md`（新增"Win7 LTS 分支构建"节）、`CLAUDE.md`（新增"Win7 LTS Branch"节，含架构变化图、关键设计、端口与事件清单、与 daq-t1603 Win7 版差异）。
+
+### Verification
+
+- `$env:GOWORK="off"; go build -buildvcs=false ./...`（Go 1.20.14）
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go test ./...`（adapters/hardware、backend、httpserver 三包测试全绿）
+- `npm run typecheck`（vue-tsc）
+- `npm run build`（Vite，5153 modules）
+- `npm run build:backend`（生成 `backend/daq-p1604-backend.exe` 6.6MB）
+- `npm run dist:win7`（生成 `dist/DAQ-P-1604-Win7-Setup-0.3.0-win7.1-x64.exe` 67.6MB）
+
+### Known Issues
+
+- 无重大已知问题。
+- `frontend/dist/` 被 `.gitignore` 忽略，clone 后单独 `go build` 会因 embed 目录缺失失败；开发者须先执行 `npm run build` 或直接使用 `npm run build:backend`（脚本内已串行执行两步）。此行为与 daq-t1603 Win7 版一致。
+
 ## [0.3.0] - 2026-07-03
 
 ### Changed

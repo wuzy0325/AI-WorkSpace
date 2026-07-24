@@ -1,0 +1,8 @@
+# Electron 构建产物
+dist/
+dist-v2/
+backend/
+node_modules/
+
+# npm 调试日志
+npm-debug.log*

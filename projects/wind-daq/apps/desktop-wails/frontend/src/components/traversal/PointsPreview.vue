@@ -1,46 +1,70 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getTraversalLayoutPoints } from '@shared/types/traversal'
-import type { TraversalLayout, TraversalPoint, TraversalPointPhase } from '@shared/types/traversal'
+import type { TraversalLayout, TraversalPoint, TraversalPointPhase, TraversalCoordPoint } from '@shared/types/traversal'
 import { useThemeStore } from '@stores/themeStore'
+import { useI18nStore } from '@stores/i18nStore'
+import UiSelect from '@components/ui/UiSelect.vue'
+
+/** 画布支持的 4 轴。AXIS_KEYS 用于下拉选项构造和 string → key 类型守卫。 */
+type AxisKey = 'x' | 'y' | 'z' | 'u'
+const AXIS_KEYS: readonly AxisKey[] = ['x', 'y', 'z', 'u'] as const
 
 const props = defineProps<{
   layout?: TraversalLayout
-  currentPoint?: { alpha: number; beta: number }
+  // alpha/beta 允许 null：line 模式 Y 轴 NaN 序列化为 null
+  currentPoint?: TraversalCoordPoint
   completedPoints?: number
   currentPointPhase?: TraversalPointPhase
   /** 父组件传入的可见性：当前 Tab 非 preview 时应暂停动画以节省资源 */
   visible?: boolean
 }>()
 
+// 横/纵轴选择：父组件持有状态，子组件通过 v-model 双向同步。
+// 默认 X-Y 与历史行为一致；切换其他轴对时画布按新轴对数据重绘。
+const hAxis = defineModel<AxisKey>('hAxis', { default: 'x' })
+const vAxis = defineModel<AxisKey>('vAxis', { default: 'y' })
+
 const themeStore = useThemeStore()
+const i18n = useI18nStore()
+const t = computed(() => i18n.t)
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
 
 const points = computed<TraversalPoint[]>(() => getTraversalLayoutPoints(props.layout))
 
+// 统一通过 key 索引读取轴坐标值，避免硬编码 x/y/z/u。
+// 与 plan §Task 7 改造点 #6 (点绘制) 配合：transformX(point[hAxis]) / transformY(point[vAxis])。
+function coord(p: TraversalPoint, axis: AxisKey): number {
+  return p[axis]
+}
+
+// bounds 切换为 h/v 语义字段：原 minX/maxX/minY/maxY 改为 minH/maxH/minV/maxV，
+// 这样 transformX/transformY 与 draw 网格/十字线/底部标签全链路同语义。
 const bounds = computed(() => {
   if (points.value.length === 0) {
-    return { minX: -100, maxX: 100, minY: -100, maxY: 100 }
+    return { minH: -100, maxH: 100, minV: -100, maxV: 100 }
   }
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  let minH = Infinity, maxH = -Infinity, minV = Infinity, maxV = -Infinity
   for (const p of points.value) {
-    minX = Math.min(minX, p.x)
-    maxX = Math.max(maxX, p.x)
-    minY = Math.min(minY, p.y)
-    maxY = Math.max(maxY, p.y)
+    const h = coord(p, hAxis.value)
+    const v = coord(p, vAxis.value)
+    minH = Math.min(minH, h)
+    maxH = Math.max(maxH, h)
+    minV = Math.min(minV, v)
+    maxV = Math.max(maxV, v)
   }
 
-  const paddingX = (maxX - minX) * 0.1 || 10
-  const paddingY = (maxY - minY) * 0.1 || 10
+  const paddingH = (maxH - minH) * 0.1 || 10
+  const paddingV = (maxV - minV) * 0.1 || 10
 
   return {
-    minX: minX - paddingX,
-    maxX: maxX + paddingX,
-    minY: minY - paddingY,
-    maxY: maxY + paddingY
+    minH: minH - paddingH,
+    maxH: maxH + paddingH,
+    minV: minV - paddingV,
+    maxV: maxV + paddingV
   }
 })
 
@@ -53,9 +77,9 @@ interface ViewTransform {
 }
 
 function createViewTransform(width: number, height: number): ViewTransform {
-  const spanX = bounds.value.maxX - bounds.value.minX || 1
-  const spanY = bounds.value.maxY - bounds.value.minY || 1
-  const dataAspect = spanX / spanY
+  const spanH = bounds.value.maxH - bounds.value.minH || 1
+  const spanV = bounds.value.maxV - bounds.value.minV || 1
+  const dataAspect = spanH / spanV
   const containerAspect = width / height
   const maxAspectAdjustment = 1.35
   const displayAspect = Math.min(
@@ -64,11 +88,13 @@ function createViewTransform(width: number, height: number): ViewTransform {
   )
   const uniformPlotWidth = displayAspect > containerAspect ? width : height * displayAspect
   const uniformPlotHeight = displayAspect > containerAspect ? width / displayAspect : height
-  const hasSingleRow = points.value.length > 1 && points.value.every((point) => Math.abs(point.y - points.value[0].y) < 0.01)
+  // 单行检测：横纵轴选定后，所有点的纵轴坐标是否几乎相同。
+  // 切换到其他轴对时本判定仍基于 vAxis.value，自动适配（如 X-Z 轴对在 line 模式下 Z 全 0，会被识别为单行）。
+  const hasSingleRow = points.value.length > 1 && points.value.every((point) => Math.abs(coord(point, vAxis.value) - coord(points.value[0], vAxis.value)) < 0.01)
   const shouldImproveLineReadability = hasSingleRow && uniformPlotHeight < height * 0.45
   const plotWidth = shouldImproveLineReadability ? width : uniformPlotWidth
   const plotHeight = shouldImproveLineReadability ? height * 0.56 : uniformPlotHeight
-  const scale = plotWidth / spanX
+  const scale = plotWidth / spanH
 
   return {
     scale,
@@ -79,14 +105,16 @@ function createViewTransform(width: number, height: number): ViewTransform {
   }
 }
 
-function transformX(x: number, transform: ViewTransform): number {
-  const { minX, maxX } = bounds.value
-  return transform.offsetX + ((x - minX) / (maxX - minX || 1)) * transform.plotWidth
+// transformX/transformY 改名为 transformH/transformV，内部读取 bounds.value.minH/maxH/minV/maxV，
+// 与 bounds 字段语义保持一致；外部调用点同步更新。
+function transformH(h: number, transform: ViewTransform): number {
+  const { minH, maxH } = bounds.value
+  return transform.offsetX + ((h - minH) / (maxH - minH || 1)) * transform.plotWidth
 }
 
-function transformY(y: number, transform: ViewTransform): number {
-  const { minY, maxY } = bounds.value
-  return transform.offsetY + transform.plotHeight - ((y - minY) / (maxY - minY || 1)) * transform.plotHeight
+function transformV(v: number, transform: ViewTransform): number {
+  const { minV, maxV } = bounds.value
+  return transform.offsetY + transform.plotHeight - ((v - minV) / (maxV - minV || 1)) * transform.plotHeight
 }
 
 // 主题颜色配置
@@ -109,6 +137,30 @@ const themeColors = computed(() => {
     text: isDark ? '#94a3b8' : '#64748b'
   }
 })
+
+// 横轴选项排除当前纵轴值，纵轴选项排除当前横轴值（互斥校验，避免塌缩成一条线）。
+// 选项 label 直接显示大写轴名（X/Y/Z/U），简洁直观。
+const hAxisOptions = computed(() =>
+  AXIS_KEYS
+    .filter(k => k !== vAxis.value)
+    .map(k => ({ value: k, label: k.toUpperCase() }))
+)
+const vAxisOptions = computed(() =>
+  AXIS_KEYS
+    .filter(k => k !== hAxis.value)
+    .map(k => ({ value: k, label: k.toUpperCase() }))
+)
+
+// UiSelect 的 modelValue 是 string，需要类型守卫转换回 AxisKey 联合类型。
+function isAxisKey(v: string): v is AxisKey {
+  return v === 'x' || v === 'y' || v === 'z' || v === 'u'
+}
+function onHAxisChange(v: string) {
+  if (isAxisKey(v)) hAxis.value = v
+}
+function onVAxisChange(v: string) {
+  if (isAxisKey(v)) vAxis.value = v
+}
 
 function draw() {
   const canvas = canvasRef.value
@@ -140,48 +192,47 @@ function draw() {
   ctx.fillStyle = colors.background
   ctx.fillRect(0, 0, width, height)
 
-  // 网格线
+  // 网格线：横纵方向均基于 h/v 边界计算，与原 X/Y 网格行为对齐
   ctx.strokeStyle = colors.grid
   ctx.lineWidth = 1
 
   const gridSpacing = Math.max(
-    (bounds.value.maxX - bounds.value.minX) / 10,
-    (bounds.value.maxY - bounds.value.minY) / 10
+    (bounds.value.maxH - bounds.value.minH) / 10,
+    (bounds.value.maxV - bounds.value.minV) / 10
   )
 
   ctx.beginPath()
-  for (let x = Math.ceil(bounds.value.minX / gridSpacing) * gridSpacing; x <= bounds.value.maxX; x += gridSpacing) {
-    const screenX = transformX(x, viewTransform)
+  for (let h = Math.ceil(bounds.value.minH / gridSpacing) * gridSpacing; h <= bounds.value.maxH; h += gridSpacing) {
+    const screenX = transformH(h, viewTransform)
     ctx.moveTo(screenX, viewTransform.offsetY)
     ctx.lineTo(screenX, viewTransform.offsetY + viewTransform.plotHeight)
   }
-  for (let y = Math.ceil(bounds.value.minY / gridSpacing) * gridSpacing; y <= bounds.value.maxY; y += gridSpacing) {
-    const screenY = transformY(y, viewTransform)
+  for (let v = Math.ceil(bounds.value.minV / gridSpacing) * gridSpacing; v <= bounds.value.maxV; v += gridSpacing) {
+    const screenY = transformV(v, viewTransform)
     ctx.moveTo(viewTransform.offsetX, screenY)
     ctx.lineTo(viewTransform.offsetX + viewTransform.plotWidth, screenY)
   }
   ctx.stroke()
 
-  // 坐标轴
+  // 坐标轴十字线（0 点对齐）：底层 transform 已切换，逻辑保持不变
   ctx.strokeStyle = colors.axis
   ctx.lineWidth = 1.5
   ctx.beginPath()
-  const centerX = transformX(0, viewTransform)
+  const centerX = transformH(0, viewTransform)
   ctx.moveTo(centerX, viewTransform.offsetY)
   ctx.lineTo(centerX, viewTransform.offsetY + viewTransform.plotHeight)
-  const centerY = transformY(0, viewTransform)
+  const centerY = transformV(0, viewTransform)
   ctx.moveTo(viewTransform.offsetX, centerY)
   ctx.lineTo(viewTransform.offsetX + viewTransform.plotWidth, centerY)
   ctx.stroke()
 
-  // 点位
-  const totalPoints = points.value.length
+  // 点位：横纵坐标读取从硬编码 point.x/point.y 切换为 point[hAxis]/point[vAxis]
   const completedCount = props.completedPoints ?? 0
 
   for (let i = 0; i < points.value.length; i++) {
     const point = points.value[i]
-    const screenX = transformX(point.x, viewTransform)
-    const screenY = transformY(point.y, viewTransform)
+    const screenX = transformH(coord(point, hAxis.value), viewTransform)
+    const screenY = transformV(coord(point, vAxis.value), viewTransform)
 
     // 使用索引匹配当前点，避免坐标容差匹配导致的错位问题
     // 后端 CurrentPoint 既是已完成点数，也是当前正在处理的点的索引
@@ -264,11 +315,13 @@ function draw() {
     }
   }
 
-  // 文字
+  // 底部标签：显示选中轴名 + 范围，替代原硬编码 X:/Y:
   ctx.fillStyle = colors.text
   ctx.font = '10px sans-serif'
-  ctx.fillText(`X: ${bounds.value.minX.toFixed(0)} ~ ${bounds.value.maxX.toFixed(0)}`, 5, height - 5)
-  ctx.fillText(`Y: ${bounds.value.minY.toFixed(0)} ~ ${bounds.value.maxY.toFixed(0)}`, width - 100, height - 5)
+  const hLabel = `${hAxis.value.toUpperCase()}: ${bounds.value.minH.toFixed(0)} ~ ${bounds.value.maxH.toFixed(0)}`
+  const vLabel = `${vAxis.value.toUpperCase()}: ${bounds.value.minV.toFixed(0)} ~ ${bounds.value.maxV.toFixed(0)}`
+  ctx.fillText(hLabel, 5, height - 5)
+  ctx.fillText(vLabel, width - 100, height - 5)
 }
 
 // 闪烁动画状态
@@ -333,9 +386,12 @@ watch(() => props.visible !== false && props.currentPointPhase !== undefined, (s
   }
 }, { immediate: true })
 
-watch([() => props.layout, () => props.currentPoint, () => props.completedPoints, () => props.currentPointPhase, () => themeStore.theme], () => {
-  nextTick(draw)
-}, { deep: true })
+// 监听轴对变化、layout 变化、当前点变化、主题变化 → 重绘
+watch(
+  [() => props.layout, () => props.currentPoint, () => props.completedPoints, () => props.currentPointPhase, () => themeStore.theme, hAxis, vAxis],
+  () => { nextTick(draw) },
+  { deep: true }
+)
 
 let resizeObserver: ResizeObserver | null = null
 
@@ -373,6 +429,39 @@ onBeforeUnmount(() => {
 <template>
   <div ref="containerRef" class="w-full h-full relative">
     <canvas ref="canvasRef" class="w-full h-full"></canvas>
+    <!-- 横/纵轴选择器：仅自定义布点（custom）涉及 Z/U 轴，其余模式（line/rectangle/sector）只生成 X/Y，切换轴对无意义故隐藏 -->
+    <div v-if="layout?.pattern === 'custom'" class="axis-selector">
+      <UiSelect
+        :model-value="hAxis"
+        :options="hAxisOptions"
+        size="sm"
+        :aria-label="t.travHAxis || 'Horizontal axis'"
+        @update:model-value="onHAxisChange"
+      />
+      <UiSelect
+        :model-value="vAxis"
+        :options="vAxisOptions"
+        size="sm"
+        :aria-label="t.travVAxis || 'Vertical axis'"
+        @update:model-value="onVAxisChange"
+      />
+    </div>
   </div>
 </template>
 
+<style scoped>
+/* 轴选择器：绝对定位左上角，覆盖在 canvas 上，避免占用画布空间 */
+.axis-selector {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+  width: 140px;
+}
+.axis-selector :deep(.n-base-selection) {
+  min-width: 60px;
+  flex: 1;
+}
+</style>

@@ -2,6 +2,7 @@
 import { CheckCircle2 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 
 const props = defineProps<{
   t?: Record<string, string>
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 
 function statusGlowClass(profileId: string): string {
   const status = deviceStore.statusFor(profileId)
@@ -34,12 +36,12 @@ function statusTextClass(profileId: string): string {
 }
 
 function displayStatusLabel(profileId: string): string {
-  if (deviceStore.acquiringFor(profileId)) return props.t?.acquiring || '采集中'
+  if (deviceStore.acquiringFor(profileId)) return i18n.t.acquiring
   const status = deviceStore.statusFor(profileId)
-  if (status === 'Connected') return props.t?.connectedState || 'Connected'
-  if (status === 'Connecting') return props.t?.connectingState || 'Connecting'
-  if (status === 'Error') return props.t?.warningState || 'Warning'
-  return props.t?.disconnectedState || 'Disconnected'
+  if (status === 'Connected') return i18n.t.connectedState
+  if (status === 'Connecting') return i18n.t.connectingState
+  if (status === 'Error') return i18n.t.warningState
+  return i18n.t.disconnectedState
 }
 </script>
 
@@ -50,20 +52,20 @@ function displayStatusLabel(profileId: string): string {
   >
     <!-- Header -->
     <div class="device-sidebar__header">
-      <span class="device-sidebar__title">{{ t?.deviceList || '设备列表' }}</span>
+      <span class="device-sidebar__title">{{ i18n.t.deviceList }}</span>
       <button
         class="device-sidebar__manage-btn"
         @click="emit('open-manage')"
-        :title="t?.manage || '管理设备'"
+        :title="i18n.t.dev_manageDevices"
       >
-        {{ t?.manage || '管理' }}
+        {{ i18n.t.manage }}
       </button>
     </div>
 
     <!-- Device List -->
     <div data-test="device-sidebar-list" class="device-sidebar__list no-scrollbar">
       <div v-if="!deviceStore.profiles || deviceStore.profiles.length === 0" class="device-sidebar__empty">
-        {{ t?.noDevices || '暂无设备' }}
+        {{ i18n.t.noDevices }}
       </div>
 
       <template v-else>
@@ -80,7 +82,7 @@ function displayStatusLabel(profileId: string): string {
           @click="deviceStore.selectDevice(p.id)"
         >
           <div class="device-sidebar__item-header">
-            <span class="device-sidebar__item-name">{{ p.name || t?.unnamed || '未命名' }}</span>
+            <span class="device-sidebar__item-name">{{ p.name || i18n.t.unnamed }}</span>
             <div
               class="device-sidebar__status-dot"
               :class="statusGlowClass(p.id)"
@@ -109,6 +111,9 @@ function displayStatusLabel(profileId: string): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* fallback for Chromium <111 (Electron 22 Win7)：color-mix 不支持时使用 rgba */
+  border-right: 1px solid rgba(51, 65, 85, 0.5);
+  background: rgba(23, 35, 56, 0.96);
   border-right: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
 }
@@ -122,6 +127,7 @@ function displayStatusLabel(profileId: string): string {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
@@ -149,6 +155,8 @@ function displayStatusLabel(profileId: string): string {
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(51, 65, 85, 0.6);
   background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
   border-radius: var(--radius-md);
@@ -164,6 +172,8 @@ function displayStatusLabel(profileId: string): string {
 
 .device-sidebar__manage-btn:hover {
   color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.3);
   background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
@@ -188,8 +198,10 @@ function displayStatusLabel(profileId: string): string {
   width: 100%;
   text-align: left;
   padding: var(--space-2);
-  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+  /* fallback for Chromium <111 (Electron 22 Win7)：设备项必须有不透明背景才有隔离感 */
+  background: rgba(30, 41, 59, 0.6);
   border: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -212,6 +224,8 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item:hover {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(51, 65, 85, 0.8);
   background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
   border-color: color-mix(in srgb, var(--border-default) 80%, transparent);
 }
@@ -222,15 +236,19 @@ function displayStatusLabel(profileId: string): string {
 }
 
 .device-sidebar__item--active {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.25);
   background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
 .device-sidebar__item--error {
+  border-color: rgba(239, 91, 71, 0.2);
   border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
 
 .device-sidebar__item--error:hover {
+  border-color: rgba(239, 91, 71, 0.4);
   border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
 }
 
@@ -277,12 +295,14 @@ function displayStatusLabel(profileId: string): string {
 
 .device-sidebar__status--connecting {
   background: var(--accent-warning);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent-warning) 50%, transparent);
   animation: breathe 0.8s ease-in-out infinite;
 }
 
 .device-sidebar__status--error {
   background: var(--accent-danger);
+  box-shadow: 0 0 8px rgba(239, 91, 71, 0.6);
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent-danger) 60%, transparent);
 }
 

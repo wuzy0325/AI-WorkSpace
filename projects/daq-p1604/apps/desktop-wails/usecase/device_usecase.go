@@ -2,10 +2,11 @@ package usecase
 
 import (
 	"fmt"
-	"log/slog"
 
 	"daq-p1604/core"
 	"daq-p1604/ports"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // DeviceUsecase 设备业务逻辑

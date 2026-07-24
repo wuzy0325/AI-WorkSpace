@@ -27,7 +27,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"math"
 	"os"
 	"path/filepath"

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useFeedbackStore } from '@stores/feedbackStore'
+import { useI18nStore } from '@stores/i18nStore'
 import {
   useStorageStore,
   type StorageSettings,
 } from '@stores/storageStore'
 import { storageApi } from '@api/deviceApi'
-import { isWailsAvailable, wailsApi } from '@api/wails-adapter'
-import { request } from '@api/http-client'
+import { wailsApi } from '@api/wails-adapter'
 import UiButton from '@components/ui/UiButton.vue'
 import UiStatusBadge from '@components/ui/UiStatusBadge.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
@@ -21,48 +21,10 @@ import {
   FileText,
   Folder,
   HardDrive,
-  ChevronDown,
-  ChevronRight,
-  Database,
 } from '@lucide/vue'
 
-/**
- * sink 调优参数（持久化在 storage.json，由装配层 NewSinkFromConfig 读取）。
- * 与业务级 StorageSettings（storage-settings.json）分离，避免双轨配置冲突。
- * 修改后需重启应用生效（sink 在装配时一次性创建，运行时不重建）。
- */
-interface SinkTuningParams {
-  format: 'csv' | 'binary'
-  queueCapacity: number
-  bufferSize: number
-  flushIntervalMs: number
-  syncIntervalSec: number
-}
-
-/** sink 调优参数的默认值（与后端 csv_sink.go 默认常量对齐） */
-const DEFAULT_SINK_TUNING: SinkTuningParams = {
-  format: 'csv',
-  queueCapacity: 32768,
-  bufferSize: 1048576, // 1 MB
-  flushIntervalMs: 100,
-  syncIntervalSec: 2,
-}
-
-const SINK_TUNING_CONFIG_KEY = 'storage'
-const SINK_TUNING_MIN = {
-  queueCapacity: 1024,
-  bufferSize: 4096,
-  flushIntervalMs: 10,
-  syncIntervalSec: 1,
-}
-const SINK_TUNING_MAX = {
-  queueCapacity: 1048576,
-  bufferSize: 16777216, // 16 MB
-  flushIntervalMs: 5000,
-  syncIntervalSec: 60,
-}
-
 const feedback = useFeedbackStore()
+const i18n = useI18nStore()
 const storageStore = useStorageStore()
 
 // 表单数据状态
@@ -79,21 +41,13 @@ const rotationEnabled = ref(false)
 const rotationDurationMinutes = ref(30)
 const rotationSizeMb = ref(100)
 
-// sink 调优参数（持久化在 storage.json，与业务级 StorageSettings 分离）。
-// 注意：这些参数在 sink 装配时读取，运行时不重建 sink，故修改后需重启应用生效。
-const sinkTuning = ref<SinkTuningParams>({ ...DEFAULT_SINK_TUNING })
-// 加载时保存的 sink 调优参数快照，作为 save 时 dirty 比较基线，
-// 用于让父组件精确判断本次保存是否需要提示"重启生效"。
-const originalSinkTuning = ref<SinkTuningParams>({ ...DEFAULT_SINK_TUNING })
-const advancedExpanded = ref(false)
-
 /** 字段级校验错误记录 */
 const validationErrors = ref<Record<string, string>>({})
 
 const enabledConditionsCount = () =>
   [durationEnabled.value, sizeEnabled.value, countEnabled.value].filter(Boolean).length
 
-/** 加载业务级 StorageSettings（由父组件 storageStore.loadSettings 后传入）+ sink 调优参数 */
+/** 加载业务级 StorageSettings（由父组件 storageStore.loadSettings 后传入） */
 async function load(settings: StorageSettings): Promise<void> {
   validationErrors.value = {}
   applySettings(settings)
@@ -101,55 +55,6 @@ async function load(settings: StorageSettings): Promise<void> {
     const status = await storageApi.status()
     if (status.outputDir) baseDirectory.value = status.outputDir
   } catch { /* ok */ }
-  await loadSinkTuning()
-}
-
-/** 从 storage 配置键加载 sink 调优参数，缺失字段回退到默认值 */
-async function loadSinkTuning(): Promise<void> {
-  try {
-    let data: Partial<SinkTuningParams> | null = null
-    if (isWailsAvailable()) {
-      const res = await wailsApi.config.load<Partial<SinkTuningParams>>(SINK_TUNING_CONFIG_KEY)
-      if (res.success && res.data) data = res.data
-    } else {
-      const res = await request<{ success: boolean; data?: Partial<SinkTuningParams> }>(`/api/config/${SINK_TUNING_CONFIG_KEY}`)
-      if (res.success && res.data) data = res.data
-    }
-    if (data) {
-      sinkTuning.value = {
-        format: data.format === 'binary' ? 'binary' : 'csv',
-        queueCapacity: clampSinkTuning(data.queueCapacity, 'queueCapacity'),
-        bufferSize: clampSinkTuning(data.bufferSize, 'bufferSize'),
-        flushIntervalMs: clampSinkTuning(data.flushIntervalMs, 'flushIntervalMs'),
-        syncIntervalSec: clampSinkTuning(data.syncIntervalSec, 'syncIntervalSec'),
-      }
-    } else {
-      sinkTuning.value = { ...DEFAULT_SINK_TUNING }
-    }
-  } catch {
-    // 读取失败不阻塞设置面板：保留默认值即可
-    sinkTuning.value = { ...DEFAULT_SINK_TUNING }
-  }
-  // 同步 dirty 基线快照，确保 save 时的"是否修改"判断以本次加载值为准
-  originalSinkTuning.value = { ...sinkTuning.value }
-}
-
-/** 浅比较两个 sink 调优参数对象是否相等（所有字段均为基础类型，浅比较足够） */
-function isSinkTuningEqual(a: SinkTuningParams, b: SinkTuningParams): boolean {
-  return a.format === b.format
-    && a.queueCapacity === b.queueCapacity
-    && a.bufferSize === b.bufferSize
-    && a.flushIntervalMs === b.flushIntervalMs
-    && a.syncIntervalSec === b.syncIntervalSec
-}
-
-/** 限制 sink 调优参数到合法范围；非法或缺失时回退到默认值 */
-function clampSinkTuning(value: number | undefined, field: keyof typeof SINK_TUNING_MIN): number {
-  const min = SINK_TUNING_MIN[field]
-  const max = SINK_TUNING_MAX[field]
-  const def = DEFAULT_SINK_TUNING[field]
-  if (typeof value !== 'number' || !Number.isFinite(value)) return def as number
-  return Math.max(min, Math.min(max, Math.round(value)))
 }
 
 function applySettings(s: StorageSettings): void {
@@ -171,8 +76,8 @@ function applySettings(s: StorageSettings): void {
 }
 
 /** 构建业务级 StorageSettings 的录制相关字段。
- *  waveformBufferSize / refreshRateHz 属于"界面"区段，由父组件从 DisplaySettingsSection 取值后合入。 */
-function buildRecordingSettings(waveformBufferSize: number, refreshRateHz: number): StorageSettings {
+ *  historyWindowSec / refreshRateHz 属于"界面"区段，由父组件从 DisplaySettingsSection 取值后合入。 */
+function buildRecordingSettings(historyWindowSec: number, refreshRateHz: number): StorageSettings {
   const stopConditions: StorageSettings['stopConditions'] = {}
   if (durationEnabled.value) stopConditions.maxDurationMs = durationMinutes.value * 60000
   if (sizeEnabled.value) stopConditions.maxFileSizeBytes = sizeMb.value * 1048576
@@ -187,7 +92,7 @@ function buildRecordingSettings(waveformBufferSize: number, refreshRateHz: numbe
       maxFileSizeBytes: rotationSizeMb.value * 1024 * 1024,
       maxDurationMs: rotationDurationMinutes.value * 60 * 1000,
     },
-    waveformBufferSize,
+    historyWindowSec,
     refreshRateHz,
   }
 }
@@ -196,24 +101,24 @@ function buildRecordingSettings(waveformBufferSize: number, refreshRateHz: numbe
 function validateField(field: string): string {
   switch (field) {
     case 'baseDirectory':
-      return baseDirectory.value.trim() ? '' : '保存目录不能为空'
+      return baseDirectory.value.trim() ? '' : i18n.t.set_baseDirRequired
     case 'filePrefix':
-      return filePrefix.value.trim() ? '' : '文件前缀不能为空'
+      return filePrefix.value.trim() ? '' : i18n.t.set_filePrefixRequired
     case 'durationMinutes':
       return durationEnabled.value && (durationMinutes.value < 1 || durationMinutes.value > 1440)
-        ? '定时停止范围为 1 到 1440 分钟' : ''
+        ? i18n.t.set_durationRangeError : ''
     case 'sizeMb':
       return sizeEnabled.value && (sizeMb.value < 1 || sizeMb.value > 10000)
-        ? '文件大小范围为 1 到 10000 MB' : ''
+        ? i18n.t.set_sizeRangeError : ''
     case 'recordCount':
       return countEnabled.value && (recordCount.value < 1 || recordCount.value > 100000000)
-        ? '记录数范围为 1 到 100000000' : ''
+        ? i18n.t.set_recordCountRangeError : ''
     case 'rotationDurationMinutes':
       return rotationEnabled.value && (rotationDurationMinutes.value < 1 || rotationDurationMinutes.value > 1440)
-        ? '滚动时长范围为 1 到 1440 分钟' : ''
+        ? i18n.t.set_rotationDurationRangeError : ''
     case 'rotationSizeMb':
       return rotationEnabled.value && (rotationSizeMb.value < 1 || rotationSizeMb.value > 10000)
-        ? '滚动大小范围为 1 到 10000 MB' : ''
+        ? i18n.t.set_rotationSizeRangeError : ''
     default:
       return ''
   }
@@ -245,7 +150,7 @@ function validate(): Record<string, string> {
   return errs
 }
 
-/** 恢复默认设置（仅录制相关字段；waveformBufferSize 由 Display 区段自行重置） */
+/** 恢复默认设置（仅录制相关字段；historyWindowSec 由 Display 区段自行重置） */
 function reset(): void {
   baseDirectory.value = 'data/recordings'
   filePrefix.value = 'run'
@@ -259,9 +164,6 @@ function reset(): void {
   rotationEnabled.value = false
   rotationDurationMinutes.value = 30
   rotationSizeMb.value = 100
-  sinkTuning.value = { ...DEFAULT_SINK_TUNING }
-  // 同步重置 dirty 基线，避免用户先 reset 再保存时被误判为"已修改 sink 调优"
-  originalSinkTuning.value = { ...DEFAULT_SINK_TUNING }
   validationErrors.value = {}
 }
 
@@ -273,43 +175,21 @@ async function handlePickDirectory(): Promise<void> {
       updateFieldError('baseDirectory')
     }
   } catch {
-    feedback.pushToast('选择目录失败', 'error')
+    feedback.pushToast(i18n.t.failedChooseDirectory, 'error')
   }
 }
 
 /**
- * 保存业务级 StorageSettings（合入父组件传入的 waveformBufferSize / refreshRateHz）+ sink 调优参数。
- * 返回值：本次保存是否实际修改了 sink 调优参数（用于父组件决定是否提示"重启生效"）。
- * 业务级 StorageSettings 与 refreshRate/waveformBufferSize 都是即时生效，无需重启。
+ * 保存业务级 StorageSettings（合入父组件传入的 historyWindowSec / refreshRateHz）。
+ * 所有设置即时生效，无需重启。
+ *
+ * 返回值语义：await saveSettings 成功即视为保存成功返回 true；
+ * saveSettings 抛异常时由父组件 try/catch 捕获并提示，本函数无需返回 false。
+ * 之前恒返回 false 与签名 Promise<boolean> 语义矛盾，已修正。
  */
-async function save(waveformBufferSize: number, refreshRateHz: number): Promise<boolean> {
-  await storageStore.saveSettings(buildRecordingSettings(waveformBufferSize, refreshRateHz))
-  const sinkTuningChanged = !isSinkTuningEqual(sinkTuning.value, originalSinkTuning.value)
-  await saveSinkTuning()
-  // 保存成功后同步 dirty 基线，避免下次保存被重复判为"已修改"
-  originalSinkTuning.value = { ...sinkTuning.value }
-  return sinkTuningChanged
-}
-
-/** 保存 sink 调优参数到 storage 配置键 */
-async function saveSinkTuning(): Promise<void> {
-  // 保存前再次范围限制，避免 UI 通过隐藏输入绕过校验
-  const payload: SinkTuningParams = {
-    format: sinkTuning.value.format === 'binary' ? 'binary' : 'csv',
-    queueCapacity: clampSinkTuning(sinkTuning.value.queueCapacity, 'queueCapacity'),
-    bufferSize: clampSinkTuning(sinkTuning.value.bufferSize, 'bufferSize'),
-    flushIntervalMs: clampSinkTuning(sinkTuning.value.flushIntervalMs, 'flushIntervalMs'),
-    syncIntervalSec: clampSinkTuning(sinkTuning.value.syncIntervalSec, 'syncIntervalSec'),
-  }
-  if (isWailsAvailable()) {
-    await wailsApi.config.save(SINK_TUNING_CONFIG_KEY, payload)
-  } else {
-    await request(`/api/config/${SINK_TUNING_CONFIG_KEY}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
-  }
-  sinkTuning.value = payload
+async function save(historyWindowSec: number, refreshRateHz: number): Promise<boolean> {
+  await storageStore.saveSettings(buildRecordingSettings(historyWindowSec, refreshRateHz))
+  return true
 }
 
 defineExpose({ load, save, reset, validate, enabledConditionsCount })
@@ -326,14 +206,16 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <FileText :size="15" />
-          <span class="card-head__title">数据保存</span>
+          <span class="card-head__title">{{ i18n.t.set_dataSave }}</span>
         </div>
       </template>
-      <div class="form-fields">
+      <!-- 整改：数据保存字段改为垂直堆叠（标签在上、控件在下），
+           与文件滚动保存、自动停止条件卡片的左侧对齐线统一 -->
+      <div class="form-fields form-fields--stacked">
         <UiFormField
-          label="保存目录"
+          :label="i18n.t.set_saveDir"
           :error="validationErrors.baseDirectory"
-          hint="数据文件将保存到此目录"
+          :hint="i18n.t.set_saveDirHint"
         >
           <div class="input-with-action">
             <UiInput
@@ -341,13 +223,13 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               placeholder="data/recordings"
               @blur="updateFieldError('baseDirectory')"
             />
-            <UiButton size="md" aria-label="选择保存目录" data-test="settings-pick-directory" @click="handlePickDirectory">
-              <template #icon><Folder :size="14" /></template>选择
+            <UiButton size="md" :aria-label="i18n.t.set_pickSaveDir" data-test="settings-pick-directory" @click="handlePickDirectory">
+              <template #icon><Folder :size="14" /></template>{{ i18n.t.set_choose }}
             </UiButton>
           </div>
         </UiFormField>
         <UiFormField
-          label="文件前缀"
+          :label="i18n.t.set_filePrefix"
           :error="validationErrors.filePrefix"
         >
           <UiInput
@@ -356,118 +238,10 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             @blur="updateFieldError('filePrefix')"
           />
         </UiFormField>
+        <!-- 开关行不再套 UiFormField，直接作为一行使用 toggle-row，保持左对齐 -->
         <div class="toggle-row">
+          <span class="toggle-row__label">{{ i18n.t.set_autoStartOnAcquisition }}</span>
           <UiToggle v-model="autoStart" />
-          <span class="toggle-row__label">开始采集时自动开始记录</span>
-        </div>
-        <!-- 存储格式选择：csv（文本，可读性强）或 binary（紧凑，性能高） -->
-        <UiFormField
-          label="存储格式"
-          hint="CSV 易于排查与外部工具读取；Binary 紧凑且 I/O 负担更低（修改后需重启应用生效）"
-        >
-          <div class="format-switch">
-            <button
-              type="button"
-              class="format-btn"
-              :class="{ 'format-btn--active': sinkTuning.format === 'csv' }"
-              data-test="settings-format-csv"
-              @click="sinkTuning.format = 'csv'"
-            >
-              <FileText :size="12" />CSV
-            </button>
-            <button
-              type="button"
-              class="format-btn"
-              :class="{ 'format-btn--active': sinkTuning.format === 'binary' }"
-              data-test="settings-format-binary"
-              @click="sinkTuning.format = 'binary'"
-            >
-              <Database :size="12" />Binary
-            </button>
-          </div>
-        </UiFormField>
-        <!-- 高级设置：sink 调优参数（队列容量/缓冲大小/flush/sync）。
-             这些参数在 sink 装配时读取，运行时不变，故需重启应用生效。 -->
-        <div class="advanced-section">
-          <button
-            type="button"
-            class="advanced-toggle"
-            :aria-expanded="advancedExpanded"
-            data-test="settings-advanced-toggle"
-            @click="advancedExpanded = !advancedExpanded"
-          >
-            <component :is="advancedExpanded ? ChevronDown : ChevronRight" :size="14" />
-            <span>高级设置（写入器调优）</span>
-          </button>
-          <div v-if="advancedExpanded" class="advanced-body">
-            <UiFormField
-              label="队列容量（条数）"
-              :hint="`范围 ${SINK_TUNING_MIN.queueCapacity} – ${SINK_TUNING_MAX.queueCapacity}；满载时新数据被丢弃`"
-            >
-              <div class="input-with-unit">
-                <UiInputNumber
-                  v-model="sinkTuning.queueCapacity"
-                  :min="SINK_TUNING_MIN.queueCapacity"
-                  :max="SINK_TUNING_MAX.queueCapacity"
-                  :step="1024"
-                  size="small"
-                  data-test="settings-sink-queue"
-                />
-                <span class="input-unit">条</span>
-              </div>
-            </UiFormField>
-            <UiFormField
-              label="缓冲区大小"
-              :hint="`范围 ${SINK_TUNING_MIN.bufferSize} – ${SINK_TUNING_MAX.bufferSize} 字节；写入 bufio 缓冲`"
-            >
-              <div class="input-with-unit">
-                <UiInputNumber
-                  v-model="sinkTuning.bufferSize"
-                  :min="SINK_TUNING_MIN.bufferSize"
-                  :max="SINK_TUNING_MAX.bufferSize"
-                  :step="4096"
-                  size="small"
-                  data-test="settings-sink-buffer"
-                />
-                <span class="input-unit">B</span>
-              </div>
-            </UiFormField>
-            <UiFormField
-              label="Flush 间隔"
-              :hint="`范围 ${SINK_TUNING_MIN.flushIntervalMs} – ${SINK_TUNING_MAX.flushIntervalMs} ms；越小实时性越强、CPU 越高`"
-            >
-              <div class="input-with-unit">
-                <UiInputNumber
-                  v-model="sinkTuning.flushIntervalMs"
-                  :min="SINK_TUNING_MIN.flushIntervalMs"
-                  :max="SINK_TUNING_MAX.flushIntervalMs"
-                  :step="10"
-                  size="small"
-                  data-test="settings-sink-flush"
-                />
-                <span class="input-unit">ms</span>
-              </div>
-            </UiFormField>
-            <UiFormField
-              label="Sync 间隔"
-              :hint="`范围 ${SINK_TUNING_MIN.syncIntervalSec} – ${SINK_TUNING_MAX.syncIntervalSec} s；fsync 落盘周期，过短会拖慢写入`"
-            >
-              <div class="input-with-unit">
-                <UiInputNumber
-                  v-model="sinkTuning.syncIntervalSec"
-                  :min="SINK_TUNING_MIN.syncIntervalSec"
-                  :max="SINK_TUNING_MAX.syncIntervalSec"
-                  :step="1"
-                  size="small"
-                  data-test="settings-sink-sync"
-                />
-                <span class="input-unit">s</span>
-              </div>
-            </UiFormField>
-            <p class="advanced-warn">
-              注意：以上参数在 sink 装配时读取，运行时不重建 sink，修改后需重启应用生效。
-            </p>
-          </div>
         </div>
       </div>
     </UiPanel>
@@ -476,13 +250,14 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <HardDrive :size="15" />
-          <span class="card-head__title">文件滚动保存</span>
+          <span class="card-head__title">{{ i18n.t.rotationLabel }}</span>
           <UiToggle v-model="rotationEnabled" />
         </div>
       </template>
-      <div v-if="rotationEnabled" class="form-fields">
+      <!-- 整改：两个短字段并排，标签在上，与数据保存卡片左侧对齐线统一 -->
+      <div v-if="rotationEnabled" class="form-fields form-fields--stacked form-row--inline">
         <UiFormField
-          label="滚动时长"
+          :label="i18n.t.set_rotationDuration"
           :error="validationErrors.rotationDurationMinutes"
         >
           <div class="input-with-unit">
@@ -492,11 +267,11 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="1440"
               @blur="updateFieldError('rotationDurationMinutes')"
             />
-            <span class="input-unit">分钟</span>
+            <span class="input-unit">{{ i18n.t.set_minutes }}</span>
           </div>
         </UiFormField>
         <UiFormField
-          label="滚动大小"
+          :label="i18n.t.set_rotationSize"
           :error="validationErrors.rotationSizeMb"
         >
           <div class="input-with-unit">
@@ -511,7 +286,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
         </UiFormField>
       </div>
       <div v-else class="empty-hint">
-        <span>启用后，当采集时长或文件大小达到阈值时，自动滚动到新文件继续记录</span>
+        <span>{{ i18n.t.set_rotationEmptyHint }}</span>
       </div>
     </UiPanel>
 
@@ -520,9 +295,9 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
       <template #header>
         <div class="card-head">
           <Clock :size="15" />
-          <span class="card-head__title">自动停止条件</span>
+          <span class="card-head__title">{{ i18n.t.set_autoStopConditions }}</span>
           <UiStatusBadge v-if="enabledConditionsCount() > 0" status="connected">
-            {{ enabledConditionsCount() }} 项
+            {{ enabledConditionsCount() }} {{ i18n.t.set_items }}
           </UiStatusBadge>
         </div>
       </template>
@@ -540,7 +315,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="durationEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': durationEnabled }">
-              定时停止
+              {{ i18n.t.set_durationStop }}
             </span>
           </div>
           <div v-if="durationEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -550,7 +325,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="1440"
               @blur="updateFieldError('durationMinutes')"
             />
-            <span class="input-unit">分钟</span>
+            <span class="input-unit">{{ i18n.t.set_minutes }}</span>
           </div>
         </div>
         <p v-if="validationErrors.durationMinutes" class="field-error">{{ validationErrors.durationMinutes }}</p>
@@ -568,7 +343,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="sizeEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': sizeEnabled }">
-              按文件大小停止
+              {{ i18n.t.set_sizeStop }}
             </span>
           </div>
           <div v-if="sizeEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -596,7 +371,7 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
             <CheckCircle v-if="countEnabled" :size="14" class="icon-check" />
             <div v-else class="icon-circle" />
             <span class="condition-row__label" :class="{ 'condition-row__label--on': countEnabled }">
-              按记录数停止
+              {{ i18n.t.set_countStop }}
             </span>
           </div>
           <div v-if="countEnabled" class="condition-row__input" @click.stop @keydown.enter.stop @keydown.space.stop>
@@ -606,13 +381,13 @@ defineExpose({ load, save, reset, validate, enabledConditionsCount })
               :max="100000000"
               @blur="updateFieldError('recordCount')"
             />
-            <span class="input-unit">条</span>
+            <span class="input-unit">{{ i18n.t.countUnitLabel }}</span>
           </div>
         </div>
         <p v-if="validationErrors.recordCount" class="field-error">{{ validationErrors.recordCount }}</p>
       </div>
       <div class="hint-row">
-        <span class="hint-text">满足任一条件即自动停止采集，未启用则不限制</span>
+        <span class="hint-text">{{ i18n.t.set_stopConditionsHint }}</span>
       </div>
     </UiPanel>
   </section>

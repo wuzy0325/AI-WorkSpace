@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"shared.local/device-sdk/go/pkg/slog"
+
 	"wind-daq/services/api-go/api"
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/logging"
@@ -29,46 +28,50 @@ const (
 	ModeMotion = "motion"
 )
 
-// VersionInfo 版本信息
-type VersionInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-// GenericResponse 通用响应结构
+// GenericResponse 通用响应结构。
+// Win7 LTS 版本移除了 Wails 绑定方法，绝大多数 API 通过 HTTP 暴露；
+// 保留此类型仅用于 StorageStartRecording/ConfigSave 这两个仍由单元测试直接调用的方法。
 type GenericResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 }
 
-type FileResponse struct {
-	Success  bool   `json:"success"`
-	Filepath string `json:"filepath,omitempty"`
-	Error    string `json:"error,omitempty"`
-}
-
-// App 是 Wails 应用的主结构体
+// App 是 wind-daq 桌面应用的主结构体（Win7 LTS 版本）。
+//
+// 与 trunk 主分支的差异：
+//   - 移除 Wails v3 依赖（Wails v3 内部用 log/slog + maps + slices，需 Go 1.21+）
+//   - Start/Stop 替代原 Wails ServiceStartup/ServiceShutdown
+//   - 实现 api.AppHandler 接口，把 version/startup-mode/open-motion-window/resolve-path
+//     通过 HTTP 路由暴露给前端
+//   - 删除所有 Wails 绑定方法（Device*/Motion*/Calibration*/Report* 等），这些 API 已通过
+//     api.NewRouter 的 HTTP 路由层完整覆盖
+//   - tryAutoStartRecording 改为 OnAcquisitionStarted 回调，在 HTTP startAcquisition 路由中
+//     异步触发，保留"采集启动后自动开始录制"业务策略
+//   - HTTP server 生命周期由 main.go 控制；app.go 通过 NewDeps() 暴露 api.Deps
 type App struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	appContext *appcontext.AppContext
-	apiServer  *http.Server
 	relayStop  func()
 	logMgr     *logging.Manager
-	// mode 启动模式：normal 或 motion，决定 Startup 时加载哪些后台服务
+	// mode 启动模式：normal 或 motion，决定 Start 时加载哪些后台服务
 	mode string
 	// motionWindowMu 保护 motionWindowCmd，避免重复启动独立窗口进程
 	motionWindowMu sync.Mutex
 	// motionWindowCmd 已启动的运动控制器独立窗口进程句柄（可能已 Release）
 	motionWindowCmd *exec.Cmd
-	// shuttingDown 防止窗口销毁后后台协程继续通过 Wails ExecJS 推送事件。
+	// shuttingDown 防止应用关闭后后台协程继续往已关闭的 HTTP 客户端推送数据。
 	shuttingDown atomic.Bool
 	// parentPID 仅 ModeMotion 子进程使用：父进程消失时本进程自杀，避免成为孤儿
 	parentPID int
 }
 
-// NewApp 创建新的 App 实例
-// mode 为启动模式："normal"（主窗口）或 "motion"（运动控制器独立窗口）
+// 编译期接口检查：App 必须实现 api.AppHandler。
+// 若接口签名变更导致 App 不再满足，编译期即可发现，避免运行时 nil 调用。
+var _ api.AppHandler = (*App)(nil)
+
+// NewApp 创建新的 App 实例。
+// mode 为启动模式："normal"（主窗口）或 "motion"（运动控制器独立窗口）。
 func NewApp(mode string) *App {
 	if mode != ModeMotion {
 		mode = ModeNormal
@@ -76,15 +79,20 @@ func NewApp(mode string) *App {
 	return &App{mode: mode}
 }
 
-// SetParentPID 仅 ModeMotion 子进程使用：在 Wails Run 之前把父进程 PID 注入。
-// Startup 时启动 watchdog 协程，发现父进程不存在则触发自杀，
+// SetParentPID 仅 ModeMotion 子进程使用：在 Start 之前把父进程 PID 注入。
+// Start 时启动 watchdog 协程，发现父进程不存在则触发自杀，
 // 解决任务管理器强杀父进程导致子进程成为孤儿的问题。
 func (a *App) SetParentPID(pid int) {
 	a.parentPID = pid
 }
 
-// ServiceStartup is called by Wails v3 when the bound service starts.
-func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+// Start 启动应用后台服务（替代原 Wails ServiceStartup）。
+// 由 main.go 在 HTTP server 启动前调用，传入应用级 ctx。
+// 返回 error 而非吞掉错误，让 main.go 能在初始化失败时打印错误并退出。
+//
+// 注意：HTTP server 不在此处启动；main.go 通过 NewDeps() 拿到 api.Deps 后
+// 自行创建 mux、挂载 API 路由和静态资源、启动 http.Server。
+func (a *App) Start(ctx context.Context) error {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.shuttingDown.Store(false)
 
@@ -114,13 +122,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	a.appContext, initErr = appcontext.NewAppContext("")
 	if initErr != nil {
 		slog.Error("[app] 服务初始化错误", "component", "app", "error", initErr)
-		if app := application.Get(); app != nil {
-			app.Dialog.Error().
-				SetTitle("初始化错误").
-				SetMessage(fmt.Sprintf("服务初始化失败: %v", initErr)).
-				Show()
-		}
-		return nil
+		return initErr
 	}
 
 	// 运动控制器独立窗口进程：仅启动运动状态轮询，避免与主窗口进程冲突
@@ -143,7 +145,6 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// 直接调 StatusAll，不依赖该 poller。与 motion-controller 项目保持一致：
 	// 前端 HTTP 轮询是唯一的状态消费者，避免与前端争抢同一把硬件连接锁。
 	a.startDataRelay()
-	a.startLocalAPIServer()
 	// 主进程启动后，后台异步连接所有标记为 AutoConnect 的位移机构，
 	// 避免用户必须先打开运动控制面板才能触发连接。
 	a.startMotionAutoConnect()
@@ -155,60 +156,53 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	return nil
 }
 
-func (a *App) startLocalAPIServer() {
-	if a.appContext == nil {
-		return
-	}
+// NewDeps 构造并返回 api.Deps，供 main.go 调用 api.NewRouter(deps) 创建 HTTP 路由。
+//
+// 此处统一注入：
+//   - 所有业务 manager（device/acquisition/motion/calibration/traversal/storage/config/report）
+//   - 日志 ring buffer 和 manager
+//   - AppHandler=a，让 HTTP 路由层暴露 /api/app/* 端点
+//   - OnAcquisitionStarted=a.tryAutoStartRecording，让 startAcquisition 路由异步触发"自动录制检查"
+//
+// 在 motion-only 模式下也会返回有效 Deps（appContext 已在 Start 中初始化），
+// 让 motion-only 子进程也能通过 HTTP 暴露运动 API（监听不同端口避免与主进程冲突）。
+func (a *App) NewDeps() api.Deps {
 	ring := func() *logging.RingBuffer {
 		if a.logMgr != nil {
 			return a.logMgr.Ring()
 		}
 		return nil
 	}()
-	a.apiServer = &http.Server{
-		Addr: "127.0.0.1:8900",
-		Handler: api.NewRouter(api.Deps{
-			DeviceManager:      a.appContext.DeviceManager,
-			AcquisitionHub:     a.appContext.AcquisitionHub,
-			ReportManager:      a.appContext.ReportManager,
-			MotionManager:      a.appContext.MotionManager,
-			MotionService:      a.appContext.MotionManagerRaw,
-			CalibrationManager: a.appContext.CalibrationMgr,
-			TraversalManager:   a.appContext.TraversalMgr,
-			StorageRecorder:    a.appContext.StorageRecorder,
-			ConfigManager:      a.appContext.ConfigManager,
-			LogRing:            ring,
-			LogManager:         a.logMgr,
-		}),
-		ReadHeaderTimeout: 2 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+	return api.Deps{
+		DeviceManager:        a.appContext.DeviceManager,
+		AcquisitionHub:       a.appContext.AcquisitionHub,
+		ReportManager:        a.appContext.ReportManager,
+		MotionManager:        a.appContext.MotionManager,
+		MotionService:        a.appContext.MotionManagerRaw,
+		CalibrationManager:  a.appContext.CalibrationMgr,
+		TraversalManager:    a.appContext.TraversalMgr,
+		StorageRecorder:     a.appContext.StorageRecorder,
+		ConfigManager:       a.appContext.ConfigManager,
+		LogRing:             ring,
+		LogManager:          a.logMgr,
+		// AppHandler 由 App 实现，提供应用层 HTTP 端点
+		AppHandler: a,
+		// OnAcquisitionStarted 在采集启动成功后异步调用，
+		// 实现"采集启动后自动开始录制"业务策略（读 storage-settings.autoStartOnAcquisition）
+		OnAcquisitionStarted: a.tryAutoStartRecording,
 	}
-	go func() {
-		slog.Info("[app] local API 服务器启动", "component", "app", "addr", "http://127.0.0.1:8900")
-		if err := a.apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("[app] local API 服务器异常退出", "component", "app", "error", err)
-		}
-	}()
 }
 
 // startDataRelay 启动采集数据中继。
 //
-// 设计说明（2026-06-29 修复）：
-//   - 历史实现通过 app.Event.Emit("daq:payload", payload) 把采集数据推送到前端，
-//     但 Wails v3 的 Emit 内部会通过 InvokeSync 在 GUI 主线程同步执行 WebView2
-//     ExecuteScript。AcquisitionHub 默认 20Hz 节流，每秒 20 次同步主线程 JS 调用
-//     会让 WebView2 返回 EINVAL ("[WebView2] Eval failed: invalid argument")，
-//     同时阻塞 GUI 主线程，导致 startAcquisition / DeviceSubscribeStream 等
-//     Wails binding 调用延迟甚至失败，前端表现为"开始采集后 UI 无数据更新"。
-//   - 修复策略：前端改为按全局刷新频率 HTTP 轮询 /api/daq/latest/{id} 拿最新数据。
+// 设计说明（与 trunk 主分支保持一致）：
+//   - 前端按全局刷新频率 HTTP 轮询 /api/daq/latest/{id} 拿最新数据；
 //     轮询间隔由前端 deviceApi.setPublishRate/getPublishRate 同步的 Hz 决定；
 //     AcquisitionHub.OnData 始终更新 latestByDevice，不受 publishHz 节流影响。
-//     后端这里仅 drain relay.Payloads() 通道，避免 relay goroutine 因通道满而
-//     反压 AcquisitionHub；不再调用 app.Event.Emit，彻底消除主线程同步 JS 调用。
-//   - 保留 DataStreamRelay 与 DeviceSubscribeStream binding 是为了不破坏前端
-//     subscribeStream 调用契约（前端仍会调一次 subscribe 来标记订阅意图，
-//     后端可据此做未来扩展，例如 SSE 推送到 Web 客户端）。
+//   - 后端这里仅 drain relay.Payloads() 通道，避免 relay goroutine 因通道满而
+//     反压 AcquisitionHub。Win7 LTS 版本不再有 Wails Emit 调用，纯通道 drain。
+//   - 保留 DataStreamRelay 与 HTTP /api/daq/subscribe 动作是为了不破坏前端
+//     subscribeStream 调用契约（前端仍会调一次 subscribe 来标记订阅意图）。
 func (a *App) startDataRelay() {
 	relay := a.appContext.DataStreamRelay
 	if relay == nil {
@@ -229,7 +223,7 @@ func (a *App) startDataRelay() {
 				if a.shuttingDown.Load() {
 					return
 				}
-				// 仅 drain payload，不再 Emit；前端通过 HTTP 轮询拿数据。
+				// 仅 drain payload；前端通过 HTTP 轮询拿数据。
 			}
 		}
 	}()
@@ -239,7 +233,7 @@ func (a *App) startDataRelay() {
 //
 // 设计要点：
 //   - 必须异步执行：底层 TCP 连接（B140 等真实硬件）可能耗时数百毫秒至几秒，
-//     若同步阻塞 Startup，Wails GUI 主线程会卡住导致窗口长时间不出现。
+//     若同步阻塞 Start，HTTP server 启动会被卡住导致前端长时间连不上。
 //   - 单次失败不影响其他控制器：用 Promise.allSettled 风格的容错策略，
 //     某个控制器拨号失败时仅记录日志，不阻塞其它控制器的连接尝试。
 //   - 即使连接失败，控制器仍会出现在 StatusAll 列表中（Connected=false + LastError），
@@ -253,7 +247,7 @@ func (a *App) startMotionAutoConnect() {
 
 	go func() {
 		// 让出当前调度并稍等 profileStore 完成首次加载（保险，
-		// LoadProfiles 内部已自带同步，但延后 100ms 也能避免与 Startup 其它 goroutine 抢锁）
+		// LoadProfiles 内部已自带同步，但延后 100ms 也能避免与 Start 其它 goroutine 抢锁）
 		select {
 		case <-a.ctx.Done():
 			return
@@ -348,25 +342,10 @@ func (a *App) startDeviceAutoConnect() {
 	}()
 }
 
-// DeviceSubscribeStream 前端调用此方法来订阅/取消订阅某个设备的采集数据流
-func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResponse {
-	if a.appContext == nil {
-		return GenericResponse{Success: false, Error: "数据流中继未初始化"}
-	}
-	relay := a.appContext.DataStreamRelay
-	if relay == nil {
-		return GenericResponse{Success: false, Error: "数据流中继未初始化"}
-	}
-	if subscribe {
-		relay.Subscribe(deviceID)
-	} else {
-		relay.Unsubscribe(deviceID)
-	}
-	return GenericResponse{Success: true}
-}
-
-// ServiceShutdown is called by Wails v3 when the bound service shuts down.
-func (a *App) ServiceShutdown() error {
+// Stop 停止应用后台服务（替代原 Wails ServiceShutdown）。
+// 由 main.go 在收到 SIGINT/SIGTERM 或 ctx.Done 时调用，应在 HTTP server Shutdown 之后调用。
+// 返回 error 用于未来扩展（当前关停流程不可逆，永远返回 nil）。
+func (a *App) Stop() error {
 	a.shuttingDown.Store(true)
 
 	if a.relayStop != nil {
@@ -380,11 +359,6 @@ func (a *App) ServiceShutdown() error {
 	if a.cancel != nil {
 		a.cancel()
 	}
-	if a.apiServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = a.apiServer.Shutdown(shutdownCtx)
-	}
 	// 在 logMgr.Close 之前打这条收尾日志，确保它能写入文件/ring sink。
 	slog.Info("Wind-DAQ 应用已关闭", "component", "app")
 	if a.logMgr != nil {
@@ -394,11 +368,10 @@ func (a *App) ServiceShutdown() error {
 }
 
 // terminateMotionWindow 关闭运动控制器独立窗口子进程（如已启动）。
-// 子进程是 Wails GUI 进程，Windows 下没有可用的 SIGTERM 软关停信号，
-// 因此直接 Kill；子进程内部的 wails Shutdown 会被中断，但运动控制器
-// 没有需要持久化的中途状态，可以接受。
+// 子进程是 GUI 进程，Windows 下没有可用的 SIGTERM 软关停信号，
+// 因此直接 Kill；子进程内部没有需要持久化的中途状态，可以接受。
 //
-// 调用方：仅父进程的 Shutdown。子进程自身退出时，由 OpenMotionWindow
+// 调用方：仅父进程的 Stop。子进程自身退出时，由 OpenMotionWindow
 // 内部的 Wait goroutine 清理 motionWindowCmd 引用，无需在此处理。
 func (a *App) terminateMotionWindow() {
 	a.motionWindowMu.Lock()
@@ -422,24 +395,30 @@ func (a *App) terminateMotionWindow() {
 	slog.Info("已关闭运动控制器独立窗口子进程", "component", "motion-window", "pid", pid)
 }
 
-// GetVersion 获取版本信息
-func (a *App) GetVersion() VersionInfo {
-	return VersionInfo{
+// ==================== api.AppHandler 接口实现 ====================
+// 这四个方法通过 HTTP /api/app/* 路由暴露给前端，替代原 Wails 绑定。
+
+// Version 实现 api.AppHandler.Version。
+// 返回应用版本信息（名称 + 版本号），供前端在关于对话框/标题栏显示。
+func (a *App) Version() api.AppVersionInfo {
+	return api.AppVersionInfo{
 		Name:    "Wind-DAQ",
 		Version: "1.0.0",
 	}
 }
 
-// GetStartupMode 获取当前应用启动模式
-// 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）
-func (a *App) GetStartupMode() string {
+// StartupMode 实现 api.AppHandler.StartupMode。
+// 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口）。
+// 前端据此决定加载完整仪表盘还是仅运动控制面板。
+func (a *App) StartupMode() string {
 	return a.mode
 }
 
-// OpenMotionWindow 启动运动控制器独立窗口（独立进程）
-// 通过重新启动当前可执行文件并传入 --motion-only 参数实现真正的独立窗口
-// 使用互斥锁防止重复启动
-func (a *App) OpenMotionWindow() GenericResponse {
+// OpenMotionWindow 实现 api.AppHandler.OpenMotionWindow。
+// 启动运动控制器独立窗口子进程（独立进程），失败返回 error。
+// 通过重新启动当前可执行文件并传入 --motion-only 参数实现真正的独立窗口。
+// 使用互斥锁防止重复启动。
+func (a *App) OpenMotionWindow() error {
 	a.motionWindowMu.Lock()
 	defer a.motionWindowMu.Unlock()
 
@@ -449,27 +428,18 @@ func (a *App) OpenMotionWindow() GenericResponse {
 		if a.motionWindowCmd.ProcessState != nil && a.motionWindowCmd.ProcessState.Exited() {
 			a.motionWindowCmd = nil
 		} else {
-			return GenericResponse{
-				Success: false,
-				Error:   "运动控制器独立窗口已打开，请勿重复启动",
-			}
+			return fmt.Errorf("运动控制器独立窗口已打开，请勿重复启动")
 		}
 	}
 
 	exePath, err := os.Executable()
 	if err != nil {
 		slog.Error("获取可执行文件路径失败", "component", "motion-window", "error", err)
-		return GenericResponse{Success: false, Error: fmt.Sprintf("获取可执行文件路径失败: %v", err)}
+		return fmt.Errorf("获取可执行文件路径失败: %w", err)
 	}
 
 	// 启动独立进程，通过环境变量传递 motion-only 模式；同时把父进程 PID 传过去，
 	// 子进程的 watchdog 在父进程消失时触发自杀，避免任务管理器强杀父进程留下孤儿。
-	//
-	// 注意：这里禁止注入 Wails 开发服务器相关环境变量 (devserver / frontenddevserverurl)。
-	// 历史实现曾尝试为子进程注入这些变量，但生产构建的可执行文件并未启动 15173 dev server，
-	// 子进程被误导成"开发模式"后会去连不存在的 dev server，结果直接白屏或启动失败。
-	// 子进程应当沿用与父进程一致的资源加载方式（生产嵌入式资源 / 父进程 dev server），
-	// 由 Wails 内部根据自身构建模式自动决定。
 	childEnv := append(os.Environ(), "WIND_DAQ_MOTION_ONLY=1", fmt.Sprintf("WIND_DAQ_PARENT_PID=%d", os.Getpid()))
 	cmd := exec.Command(exePath)
 	cmd.Env = childEnv
@@ -481,7 +451,7 @@ func (a *App) OpenMotionWindow() GenericResponse {
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("启动运动控制器独立窗口失败", "component", "motion-window", "error", err)
-		return GenericResponse{Success: false, Error: fmt.Sprintf("启动独立窗口失败: %v", err)}
+		return fmt.Errorf("启动独立窗口失败: %w", err)
 	}
 
 	slog.Info("运动控制器独立窗口已启动", "component", "motion-window", "pid", cmd.Process.Pid)
@@ -498,10 +468,12 @@ func (a *App) OpenMotionWindow() GenericResponse {
 		slog.Info("运动控制器独立窗口进程已退出", "component", "motion-window")
 	}(cmd)
 
-	return GenericResponse{Success: true}
+	return nil
 }
 
-// ResolvePath 将相对路径解析到用户可写的应用目录，避免安装目录不可写。
+// ResolvePath 实现 api.AppHandler.ResolvePath。
+// 将相对路径解析到用户可写的应用目录（%APPDATA%\wind-daq），避免安装目录不可写。
+// 绝对路径原样返回（仅做 Clean）；空字符串返回空字符串。
 func (a *App) ResolvePath(p string) (string, error) {
 	if p == "" {
 		return "", nil
@@ -530,65 +502,9 @@ func writableUserConfigDir() (string, error) {
 	return filepath.Join(configDir, "wind-daq"), nil
 }
 
-// PickDirectory 选择目录对话框
-func (a *App) PickDirectory() (string, error) {
-	if a.ctx == nil {
-		return "", fmt.Errorf("应用上下文未初始化")
-	}
-	app := application.Get()
-	if app == nil {
-		return "", fmt.Errorf("Wails 应用未初始化")
-	}
-	opts := application.OpenFileDialogOptions{
-		Title:                "选择保存目录",
-		CanCreateDirectories: true,
-		CanChooseDirectories: true,
-		CanChooseFiles:       false,
-	}
-	return app.Dialog.OpenFileWithOptions(&opts).PromptForSingleSelection()
-}
-
-// PickSaveFile 保存文件对话框，返回用户选择的完整文件路径。
-// title 为对话框标题，defaultFilename 为默认文件名，filters 为文件扩展名过滤。
-func (a *App) PickSaveFile(title string, defaultFilename string, filters []application.FileFilter) (string, error) {
-	if a.ctx == nil {
-		return "", fmt.Errorf("应用上下文未初始化")
-	}
-	app := application.Get()
-	if app == nil {
-		return "", fmt.Errorf("Wails 应用未初始化")
-	}
-	opts := application.SaveFileDialogOptions{
-		Title:    title,
-		Filename: defaultFilename,
-		Filters:  filters,
-	}
-	return app.Dialog.SaveFileWithOptions(&opts).PromptForSingleSelection()
-}
-
-func (a *App) PickFile(title string, filters []application.FileFilter) (string, error) {
-	if a.ctx == nil {
-		return "", fmt.Errorf("应用上下文未初始化")
-	}
-	app := application.Get()
-	if app == nil {
-		return "", fmt.Errorf("Wails 应用未初始化")
-	}
-	return app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{Title: title, Filters: filters}).PromptForSingleSelection()
-}
-
-func (a *App) PickFiles(title string, filters []application.FileFilter) ([]string, error) {
-	if a.ctx == nil {
-		return nil, fmt.Errorf("应用上下文未初始化")
-	}
-	app := application.Get()
-	if app == nil {
-		return nil, fmt.Errorf("Wails 应用未初始化")
-	}
-	return app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{Title: title, Filters: filters}).PromptForMultipleSelection()
-}
-
-// callMgr 通用 manager 方法调用辅助
+// callMgr 通用 manager 方法调用辅助。
+// 统一处理 nil App / nil appContext / nil manager 三种初始化失败场景，
+// 避免每个包装方法重复写 if a == nil || ... 检查。
 func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 	if a == nil || a.appContext == nil || mgr == nil {
 		return GenericResponse{Success: false, Error: name + "未初始化"}
@@ -599,34 +515,7 @@ func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 	return GenericResponse{Success: true}
 }
 
-func (a *App) deviceManager() any {
-	if a == nil || a.appContext == nil {
-		return nil
-	}
-	return a.appContext.DeviceManager
-}
-
-func (a *App) acquisitionHub() any {
-	if a == nil || a.appContext == nil {
-		return nil
-	}
-	return a.appContext.AcquisitionHub
-}
-
-func (a *App) motionManager() any {
-	if a == nil || a.appContext == nil {
-		return nil
-	}
-	return a.appContext.MotionManager
-}
-
-func (a *App) calibrationManager() any {
-	if a == nil || a.appContext == nil {
-		return nil
-	}
-	return a.appContext.CalibrationMgr
-}
-
+// storageRecorder 返回存储记录器实例（仅用于 nil 检查包装）。
 func (a *App) storageRecorder() any {
 	if a == nil || a.appContext == nil {
 		return nil
@@ -634,64 +523,12 @@ func (a *App) storageRecorder() any {
 	return a.appContext.StorageRecorder
 }
 
+// configManager 返回配置管理器实例（仅用于 nil 检查包装）。
 func (a *App) configManager() any {
 	if a == nil || a.appContext == nil {
 		return nil
 	}
 	return a.appContext.ConfigManager
-}
-
-// ==================== 设备管理 API ====================
-
-func (a *App) DeviceGetProfiles() []types.DeviceProfile {
-	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
-		return nil
-	}
-	return a.appContext.DeviceManager.GetProfiles()
-}
-
-func (a *App) DeviceUpsertProfile(profile types.DeviceProfile) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.UpsertProfile(profile)
-	})
-}
-
-func (a *App) DeviceDeleteProfile(id string) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.DeleteProfile(id)
-	})
-}
-
-func (a *App) DeviceScanDevices() ([]types.DeviceScanResult, error) {
-	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
-		return nil, fmt.Errorf("设备管理器未初始化")
-	}
-	return a.appContext.DeviceManager.ScanDevices()
-}
-
-func (a *App) DeviceConnect(id string) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.Connect(id)
-	})
-}
-
-func (a *App) DeviceDisconnect(id string) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.Disconnect(id)
-	})
-}
-
-// DeviceStartAcquisition 启动指定设备的采集。
-// 采集启动成功后异步触发 autoStart 检查：若 storage-settings 中 autoStartOnAcquisition=true
-// 且当前未在录制，则自动开始录制。失败仅记录日志，不阻塞采集响应。
-func (a *App) DeviceStartAcquisition(id string) GenericResponse {
-	resp := a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.StartAcquisition(id)
-	})
-	if resp.Success {
-		go a.tryAutoStartRecording()
-	}
-	return resp
 }
 
 // storageSettingsSchema 镜像前端 StorageSettings 的 JSON schema，
@@ -716,8 +553,14 @@ type storageSettingsSchema struct {
 
 // tryAutoStartRecording 读取 storage-settings 配置，
 // 若 autoStartOnAcquisition=true 且当前未在录制，则自动开始录制。
-// 失败仅记录日志，不阻塞采集流程；异步调用，不阻塞 DeviceStartAcquisition 响应。
-func (a *App) tryAutoStartRecording() {
+// 失败仅记录日志，不阻塞采集流程；异步调用，不阻塞 startAcquisition 响应。
+//
+// 此方法作为 OnAcquisitionStarted 回调注入到 api.Deps，
+// 在 HTTP /api/daq/{id}/startAcquisition 路由中异步触发，与原 Wails DeviceStartAcquisition 行为对齐。
+// 参数 deviceID 由路由层传入，当前实现未使用（业务策略基于全局 storage-settings），
+// 保留参数以匹配 OnAcquisitionStarted func(deviceID string) 签名。
+func (a *App) tryAutoStartRecording(deviceID string) {
+	_ = deviceID // 当前未使用，保留以匹配回调签名
 	if a == nil || a.appContext == nil ||
 		a.appContext.ConfigManager == nil || a.appContext.StorageRecorder == nil {
 		return
@@ -778,225 +621,13 @@ func (a *App) tryAutoStartRecording() {
 	}
 }
 
-func (a *App) DeviceStopAcquisition(id string) GenericResponse {
-	return a.callMgr(a.deviceManager(), "设备管理器", func() error {
-		return a.appContext.DeviceManager.StopAcquisition(id)
-	})
-}
+// ==================== 存储 API（保留测试依赖方法） ====================
+// 这两个方法仅因 app_test.go 直接调用而保留；前端通过 HTTP /api/storage/* 路由调用，
+// 不再走这两个 Go 方法。
 
-func (a *App) DeviceGetStatus(id string) (types.DeviceStatus, bool) {
-	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
-		return types.DeviceStatus{}, false
-	}
-	return a.appContext.DeviceManager.GetStatus(id)
-}
-
-func (a *App) DeviceGetLatestData(deviceID string) (types.DeviceDataPayload, bool) {
-	if a == nil || a.appContext == nil || a.appContext.AcquisitionHub == nil {
-		return types.DeviceDataPayload{}, false
-	}
-	return a.appContext.AcquisitionHub.GetLatestData(deviceID)
-}
-
-func (a *App) DeviceSetPublishRate(hz float64) GenericResponse {
-	return a.callMgr(a.acquisitionHub(), "采集中心", func() error {
-		return a.appContext.AcquisitionHub.SetPublishRate(hz)
-	})
-}
-
-func (a *App) DeviceGetPublishRate() float64 {
-	if a == nil || a.appContext == nil || a.appContext.AcquisitionHub == nil {
-		return 0
-	}
-	return a.appContext.AcquisitionHub.PublishRate()
-}
-
-// ==================== 运动控制 API ====================
-
-func (a *App) MotionGetProfiles() string {
-	if a == nil || a.appContext == nil || a.appContext.MotionManager == nil {
-		return "[]"
-	}
-	profiles, err := a.appContext.MotionManager.LoadProfiles()
-	if err != nil {
-		return "[]"
-	}
-	data, _ := json.Marshal(profiles)
-	return string(data)
-}
-
-func (a *App) MotionUpsertProfile(profile types.MotionControllerProfile) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.UpsertProfile(profile)
-	})
-}
-
-func (a *App) MotionDeleteProfile(id string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.DeleteProfile(id)
-	})
-}
-
-func (a *App) MotionGetStatus() string {
-	if a == nil || a.appContext == nil || a.appContext.MotionManager == nil {
-		return "[]"
-	}
-	statuses := a.appContext.MotionManager.StatusAll(a.ctx)
-	data, _ := json.Marshal(statuses)
-	return string(data)
-}
-
-func (a *App) MotionConnect(id string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.Connect(a.ctx, id)
-	})
-}
-
-func (a *App) MotionDisconnect(id string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.Disconnect(a.ctx, id)
-	})
-}
-
-func (a *App) MotionHome(id string, axis string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.Home(a.ctx, id, types.MotionAxisName(axis))
-	})
-}
-
-func (a *App) MotionStop(id string, axis string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		var axisName types.MotionAxisName
-		if axis != "" {
-			axisName = types.MotionAxisName(axis)
-		}
-		return a.appContext.MotionManager.Stop(a.ctx, id, axisName)
-	})
-}
-
-func (a *App) MotionEmergencyStop(id string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.EmergencyStop(a.ctx, id)
-	})
-}
-
-func (a *App) MotionMoveTo(id string, axis string, position float64) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.MoveTo(a.ctx, id, types.MotionAxisName(axis), position)
-	})
-}
-
-func (a *App) MotionMoveBy(id string, axis string, delta float64) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.MoveBy(a.ctx, id, types.MotionAxisName(axis), delta)
-	})
-}
-
-func (a *App) MotionJog(id string, axis string, velocity float64) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.Jog(a.ctx, id, types.MotionAxisName(axis), velocity)
-	})
-}
-
-func (a *App) MotionDefinePosition(id string, axis string, position float64) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.DefinePosition(a.ctx, id, types.MotionAxisName(axis), position)
-	})
-}
-
-func (a *App) MotionResetEmergencyStop(id string) GenericResponse {
-	return a.callMgr(a.motionManager(), "运动管理器", func() error {
-		return a.appContext.MotionManager.ResetEmergencyStop(a.ctx, id)
-	})
-}
-
-// ==================== 校准 API ====================
-
-// CalibrationStart 启动校准任务。
-//
-// 参数使用 pkg/types 暴露的 CalibrationConfigDTO（adapters/config 层 DTO 的公共别名），
-// 而非直接用 core 的 calibration.Config。原因：Wails v3 运行时用 encoding/json 把前端
-// JS 对象反序列化进方法参数，而前端发送的探针通道是嵌套 channel 格式，core 层禁止自带
-// UnmarshalJSON（零容忍约束）。DTO 用普通 struct tag 同时接收扁平与嵌套两种 shape，
-// ToCore 再转换为 core 层的 calibration.Config。
-// backend 是独立 Go module，不能直接 import internal/adapters/config（Go internal 规则），
-// 故通过 pkg/types 的类型别名 facade 访问 DTO。
-func (a *App) CalibrationStart(dto types.CalibrationConfigDTO) GenericResponse {
-	config := dto.ToCore()
-	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
-		// 路径归一：相对 savePath 解析到 %APPDATA%\wind-daq\<相对>，
-		// 与 StorageStartRecording 范式一致，避免依赖工作目录。
-		if config.SavePath != "" {
-			resolved, err := a.ResolvePath(config.SavePath)
-			if err != nil {
-				return err
-			}
-			config.SavePath = resolved
-		}
-		return a.appContext.CalibrationMgr.Start(config)
-	})
-}
-
-func (a *App) CalibrationStatus() types.CalibrationStatus {
-	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return types.CalibrationStatus{}
-	}
-	return a.appContext.CalibrationMgr.Status()
-}
-
-func (a *App) CalibrationCollect() GenericResponse {
-	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
-		return a.appContext.CalibrationMgr.CollectCurrentPoint()
-	})
-}
-
-func (a *App) CalibrationPause() GenericResponse {
-	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
-		return a.appContext.CalibrationMgr.Pause()
-	})
-}
-
-func (a *App) CalibrationResume() GenericResponse {
-	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
-		return a.appContext.CalibrationMgr.Resume()
-	})
-}
-
-func (a *App) CalibrationStop() GenericResponse {
-	return a.callMgr(a.calibrationManager(), "校准管理器", func() error {
-		return a.appContext.CalibrationMgr.Stop()
-	})
-}
-
-func (a *App) CalibrationGetResult(taskID string) (types.CalibrationStatus, bool) {
-	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return types.CalibrationStatus{}, false
-	}
-	return a.appContext.CalibrationMgr.GetResult(taskID)
-}
-
-func (a *App) CalibrationSaveCsv(taskID string, savePath string) FileResponse {
-	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
-		return FileResponse{Success: false, Error: "校准管理器未初始化"}
-	}
-	// 路径归一：相对 savePath 解析到 %APPDATA%\wind-daq\<相对>，
-	// 与 StorageStartRecording / CalibrationStart 范式一致。
-	if savePath != "" {
-		resolved, err := a.ResolvePath(savePath)
-		if err != nil {
-			return FileResponse{Success: false, Error: err.Error()}
-		}
-		savePath = resolved
-	}
-	path, err := a.appContext.CalibrationMgr.SaveCsv(taskID, savePath)
-	if err != nil {
-		return FileResponse{Success: false, Error: err.Error()}
-	}
-	return FileResponse{Success: true, Filepath: path}
-}
-
-// ==================== 存储 API ====================
-
+// StorageGetStatus 返回存储录制状态。
+// 保留此方法是因为 app_test.go 的 TestStorageStartRecordingResolvesRelativeOutputDir 测试
+// 通过 StorageGetStatus 验证 StorageStartRecording 是否成功设置 OutputDir。
 func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 	if a == nil || a.appContext == nil || a.appContext.StorageRecorder == nil {
 		return wind_usecase.StorageRecordingStatus{}
@@ -1007,6 +638,8 @@ func (a *App) StorageGetStatus() wind_usecase.StorageRecordingStatus {
 // StorageStartRecording 启动数据录制。
 // 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
 // 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
+// 保留此方法是因为 app_test.go 的 TestStorageStartRecordingResolvesRelativeOutputDir 测试
+// 直接调用此方法验证相对路径会被解析到 %APPDATA%\wind-daq 下。
 func (a *App) StorageStartRecording(config wind_usecase.StorageRecordingConfig) GenericResponse {
 	return a.callMgr(a.storageRecorder(), "存储记录器", func() error {
 		resolvedOutputDir, err := a.ResolvePath(config.OutputDir)
@@ -1018,23 +651,12 @@ func (a *App) StorageStartRecording(config wind_usecase.StorageRecordingConfig) 
 	})
 }
 
-func (a *App) StorageStopRecording() GenericResponse {
-	return a.callMgr(a.storageRecorder(), "存储记录器", func() error {
-		return a.appContext.StorageRecorder.Stop()
-	})
-}
+// ==================== 配置 API（保留测试依赖方法） ====================
+// 这两个方法仅因 app_test.go 直接调用而保留；前端通过 HTTP /api/config/* 路由调用，
+// 不再走这两个 Go 方法。
 
-// ==================== 报告 API ====================
-
-func (a *App) ReportGetStatus() wind_usecase.ReportStatus {
-	if a == nil || a.appContext == nil || a.appContext.ReportManager == nil {
-		return wind_usecase.ReportStatus{}
-	}
-	return a.appContext.ReportManager.Status()
-}
-
-// ==================== 配置 API ====================
-
+// ConfigLoad 从配置管理器加载指定 key 的配置。
+// 保留此方法是因为 app_test.go 中有 3 个测试直接调用此方法验证配置读写往返。
 func (a *App) ConfigLoad(key string) (map[string]any, error) {
 	if a == nil {
 		return nil, fmt.Errorf("应用服务未初始化")
@@ -1056,6 +678,8 @@ func (a *App) ConfigLoad(key string) (map[string]any, error) {
 	return map[string]any{"success": true, "data": decoded}, nil
 }
 
+// ConfigSave 将配置 JSON 保存到指定 key。
+// 保留此方法是因为 app_test.go 中有 3 个测试直接调用此方法验证配置读写。
 func (a *App) ConfigSave(key string, configJSON string) GenericResponse {
 	if a == nil {
 		return GenericResponse{Success: false, Error: "应用服务未初始化"}

@@ -3,12 +3,13 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"daq-p1604/core"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // JSONConfigStore 基于 JSON 文件的配置存储

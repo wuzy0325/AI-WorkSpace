@@ -1,6 +1,6 @@
 module motion-controller/services/api-go
 
-go 1.25.0
+go 1.20
 
 require (
 	shared.local/device-sdk/go v0.0.0

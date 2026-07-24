@@ -18,6 +18,11 @@ export interface ChannelConfig {
   thermocoupleType?: string
   /** 通道传感器类型，仅 DAQ-P-1603 使用 */
   sensorType?: ChannelSensorType
+  tareOffset?: number
+  calibrationOffset?: number
+  calibrationUnit?: string
+  calibrationAt?: number
+  calibrationEnabled?: boolean
 }
 
 export interface DaqT1603HardwareConfig {
@@ -47,6 +52,7 @@ export interface DSA3217ScanConfig {
 }
 
 export interface DeviceProfile {
+  version?: number
   id: string
   name: string
   type: DeviceType
@@ -62,6 +68,29 @@ export interface DeviceProfile {
   daqT1603Config?: DaqT1603HardwareConfig
   /** DAQ-P-1604 专属：是否使用设备帧内硬件时间戳（关闭时使用主机接收时间） */
   daqP1604UseDeviceTimestamp?: boolean
+}
+
+export interface CalibrationResult {
+  channelIndex: number
+  offset: number
+  unit: string
+  at: number
+  sampleCount: number
+}
+
+export interface CalibrationRecord {
+  channelIndex: number
+  offset: number
+  unit: string
+  at: number
+  enabled: boolean
+}
+
+export interface CalibrationProgress {
+  running: boolean
+  channelIndex?: number
+  elapsedMs: number
+  sampleCount: number
 }
 
 export interface DeviceStatus {

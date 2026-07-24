@@ -5,7 +5,9 @@ use (
 	./projects/three-hole-interpolator/apps/desktop-win7
 	./projects/three-hole-interpolator/apps/desktop-win7-walk
 	programs/p1604-unit-diag
-	projects/daq-p1604/apps/desktop-wails
+	// Win7 LTS 改造已完成，daq-p1604 改为 Go 1.20 + net/http + Electron 22.3.27，
+	// 与工作空间 Go 1.26 + Wails v3 alpha 不兼容，临时摘除避免间接依赖冲突。
+	// projects/daq-p1604/apps/desktop-wails
 	// 试点期间临时摘除 daq-t1603, 避免 v3 alpha 与其他 v2 项目的间接依赖冲突;
 	// 验证通过后再合并回 use 列表。
 	// projects/daq-t1603/apps/desktop-wails

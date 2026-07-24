@@ -2,7 +2,7 @@ package bootstrap
 
 import (
 	"encoding/json"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"net/http"
 	"path/filepath"
 

@@ -5,7 +5,7 @@ package usecase
 
 import (
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"

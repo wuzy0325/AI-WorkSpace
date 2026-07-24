@@ -11,33 +11,42 @@ function uniqueSorted(values: number[]): number[] {
   return Array.from(new Set(values)).sort((a, b) => a - b)
 }
 
+/** 过滤有效数值坐标：line 模式 beta=null 时不参与热力图 */
+function isFiniteCoord(v: number | null | undefined): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
 export function useHeatmapData(
   dataPoints: Ref<TraversalDataPoint[]> | ComputedRef<TraversalDataPoint[]>,
   param: Ref<VisualizationParam> | ComputedRef<VisualizationParam>
 ) {
-  const validPoints = computed(() => unref(dataPoints).filter((point) => point.interpolationResult.isValid))
+  // 插值有效 + alpha/beta 均为有限数，才参与二维热力图
+  const validPoints = computed(() => unref(dataPoints).filter((point) =>
+    point.interpolationResult.isValid
+    && isFiniteCoord(point.coordinates.alpha)
+    && isFiniteCoord(point.coordinates.beta)
+  ))
 
-  const alphaValues = computed(() => uniqueSorted(validPoints.value.map((point) => point.coordinates.alpha)))
-  const betaValues = computed(() => uniqueSorted(validPoints.value.map((point) => point.coordinates.beta)))
+  const alphaValues = computed(() => uniqueSorted(validPoints.value.map((point) => point.coordinates.alpha as number)))
+  const betaValues = computed(() => uniqueSorted(validPoints.value.map((point) => point.coordinates.beta as number)))
 
   const heatmapData = computed<HeatmapCell[]>(() => {
     const currentParam = unref(param)
-    const alphaIndexByValue = new Map(alphaValues.value.map((value, index) => [value, index]))
-    const betaIndexByValue = new Map(betaValues.value.map((value, index) => [value, index]))
 
+    // xAxis/yAxis 改为 value 类型后，热力图 data 用真实坐标 [alpha, beta, value]，
+    // 不再用索引 [alphaIndex, betaIndex, value]——后者会让单元格按索引等距排列，
+    // 非均匀布点时视觉失真。
     return validPoints.value.flatMap((point) => {
       const value = getParamValue(point.interpolationResult, currentParam)
-      const alphaIndex = alphaIndexByValue.get(point.coordinates.alpha)
-      const betaIndex = betaIndexByValue.get(point.coordinates.beta)
+      const alpha = point.coordinates.alpha as number
+      const beta = point.coordinates.beta as number
 
-      if (value === null || alphaIndex === undefined || betaIndex === undefined) {
-        return []
-      }
+      if (value === null) return []
 
       return [{
-        value: [alphaIndex, betaIndex, value],
-        alpha: point.coordinates.alpha,
-        beta: point.coordinates.beta
+        value: [alpha, beta, value],
+        alpha,
+        beta
       }]
     })
   })

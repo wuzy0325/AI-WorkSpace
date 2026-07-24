@@ -1,0 +1,12 @@
+# 构建产物
+backend/
+dist/
+dist-v2/
+
+# 依赖
+node_modules/
+
+# electron-builder 缓存
+*.appx
+*.msix
+*.snap

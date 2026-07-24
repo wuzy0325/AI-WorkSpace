@@ -7,7 +7,7 @@ package usecase
 
 import (
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"sort"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"

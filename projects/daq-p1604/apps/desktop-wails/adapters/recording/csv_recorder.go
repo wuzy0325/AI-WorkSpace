@@ -3,7 +3,6 @@ package recording
 import (
 	"bufio"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"daq-p1604/core"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 const (

@@ -14,7 +14,14 @@
 import { Plug, Zap, LayoutGrid, AlertCircle } from '@lucide/vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiButton from '@components/ui/UiButton.vue'
+import { storeToRefs } from 'pinia'
+import { useI18nStore } from '@stores/i18nStore'
 import type { DeviceProfile } from '@api/types'
+
+// 用 storeToRefs 保持 i18n 响应性：直接解构 useI18nStore() 会丢失 computed 响应性，
+// 导致运行时切换语言（setLocale）后模板文案不更新。与 CalibrationHome/ThreeHoleMain
+// 等组件保持一致写法。
+const { t } = storeToRefs(useI18nStore())
 
 type ConnectionGroup = 'connected' | 'connecting' | 'pending'
 
@@ -71,7 +78,7 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
       <div class="device-card-right">
         <!-- 操作按钮统一使用小尺寸，降低卡片视觉重量 -->
         <div class="device-card-actions">
-          <UiButton variant="secondary" size="sm" @click="emit('edit')">编辑</UiButton>
+          <UiButton variant="secondary" size="sm" @click="emit('edit')">{{ t.dev_edit }}</UiButton>
           <!-- 连接按钮：connecting 分组禁用并显示 spinner -->
           <UiButton
             size="sm"
@@ -82,15 +89,15 @@ const showErrorBadge = (): boolean => props.group === 'pending' && props.status 
             {{ connectLabel }}
           </UiButton>
           <UiButton v-if="showAcquireBtn()" size="sm" @click="emit('toggle-acquisition')">
-            {{ acquiring ? '停止' : '采集' }}
+            {{ acquiring ? t.dev_stop : t.dev_acquire }}
           </UiButton>
-          <UiButton variant="danger" size="sm" @click="emit('remove')">删除</UiButton>
+          <UiButton variant="danger" size="sm" @click="emit('remove')">{{ t.dev_delete }}</UiButton>
         </div>
       </div>
     </div>
     <div v-if="showErrorBadge()" class="device-card-error">
       <AlertCircle class="error-icon" :size="14" />
-      设备通信错误
+      {{ t.dev_deviceCommError }}
     </div>
   </div>
 </template>

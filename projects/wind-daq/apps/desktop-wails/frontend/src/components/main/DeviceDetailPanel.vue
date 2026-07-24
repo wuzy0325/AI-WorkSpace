@@ -5,8 +5,14 @@ import { Activity, Settings2 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
-import { useStorageStore } from '@stores/storageStore'
+import { useStorageStore, computeHistoryCapacity } from '@stores/storageStore'
+import { useDeviceZeroCalibration } from '@composables/useDeviceZeroCalibration'
 import { buildChannelColorMap, CHANNEL_COLORS } from '@utils/channelColors'
+import {
+  isCalibratableDeviceType,
+  isChannelCalibrationEnabled,
+  isTemperatureUnit,
+} from '@utils/deviceCalibration'
 import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
 import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -25,6 +31,9 @@ const i18n = useI18nStore()
 const storageStore = useStorageStore()
 
 const profile = computed(() => deviceStore.selectedProfile)
+const zeroCalibration = useDeviceZeroCalibration(profile)
+const calibrationOperation = zeroCalibration.operation
+const isCalibrating = zeroCalibration.isCalibrating
 const snapshot = computed(() => deviceStore.selectedSnapshot)
 const showChart = computed(() => props.mode === 'chart' || props.mode === 'both')
 const showTable = computed(() => props.mode === 'table' || props.mode === 'both')
@@ -46,8 +55,13 @@ const chartChannelIndices = computed(() => {
   return selected.length > 0 ? selected : fallback
 })
 
-/** 从全局配置读取波形图缓冲区点数，供实时趋势图使用 */
-const waveformBufferSize = computed(() => storageStore.settings.waveformBufferSize)
+/** 从全局配置读取波形图时间窗口与刷新率，计算实际存储点数供实时趋势图使用 */
+const historyWindowSec = computed(() => storageStore.settings.historyWindowSec)
+const refreshRateHz = computed(() => storageStore.settings.refreshRateHz)
+/** 容量预览 = 时间窗口 × 刷新率（clamp 到硬上限）。展示给用户实际点数 */
+const estimatedPoints = computed(() =>
+  computeHistoryCapacity(historyWindowSec.value, refreshRateHz.value),
+)
 
 // 通道颜色映射：与 RealtimeChart 共享同一份 buildChannelColorMap 逻辑，
 // 保证 ChartSelector 通道卡片颜色与实时曲线颜色完全一致。
@@ -89,11 +103,11 @@ function formatChannel(ch: number, raw: number): string {
 }
 
 function channelUnit(channelIndex: number): string {
-  return profile.value?.channels[channelIndex]?.unit || 'PA'
+  return profile.value?.channels.find((channel) => channel.index === channelIndex)?.unit || 'PA'
 }
 
 function channelRange(channelIndex: number): { min: number; max: number } {
-  const channel = profile.value?.channels[channelIndex]
+  const channel = profile.value?.channels.find((item) => item.index === channelIndex)
   return {
     min: channel?.rangeMin ?? -10,
     max: channel?.rangeMax ?? 10,
@@ -105,12 +119,11 @@ function detailChannelTone(channelIndex: number, rawValue: number): 'active' | '
   const status = currentStatus()
   if (status === 'Error' || status === 'Disconnected') return 'warning'
 
-  const value = deviceStore.applyDisplayTare(id, channelIndex, rawValue)
   const range = channelRange(channelIndex)
   const span = range.max - range.min
   const upperThreshold = range.max - span * 0.12
   const lowerThreshold = range.min + span * 0.12
-  return value >= upperThreshold || value <= lowerThreshold ? 'warning' : 'active'
+  return rawValue >= upperThreshold || rawValue <= lowerThreshold ? 'warning' : 'active'
 }
 
 function isChartVisible(channelIndex: number): boolean {
@@ -127,14 +140,25 @@ function toggleChartVisibility(channelIndex: number): void {
 
 function shouldDisableTare(channelIndex: number): boolean {
   const type = String(profile.value?.type ?? '')
-  if (type !== 'DAQ-P-1604' && type !== 'DAQ-P-1604Pre') return true
-  return channelIndex === 16 || channelIndex === 17
+  if (!isCalibratableDeviceType(type)) return true
+  const channel = profile.value?.channels.find((item) => item.index === channelIndex)
+  if (!channel || channel.sensorType === 'temperature') return true
+  if (isTemperatureUnit(channel.unit)) return true
+  if (!isChannelCalibrationEnabled(type, channel.calibrationEnabled)) return true
+  // DAQ-P-1604 的通道 16/17 为大气压/大气温度辅助通道，不参与归零；
+  // DAQ-P-1603 仅 16 个采集通道（索引 0-15），无辅助通道。
+  if (type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre') {
+    return channelIndex === 16 || channelIndex === 17
+  }
+  return false
 }
 
-function setTare(channelIndex: number, rawValue: number): void {
-  const id = deviceStore.selectedDeviceId
-  if (!id || shouldDisableTare(channelIndex)) return
-  deviceStore.setTare(id, channelIndex, rawValue)
+async function calibrateChannel(channelIndex: number): Promise<void> {
+  if (!shouldDisableTare(channelIndex)) await zeroCalibration.run(channelIndex)
+}
+
+async function calibrateDevice(): Promise<void> {
+  await zeroCalibration.run()
 }
 
 const chartSelectorOpen = ref(false)
@@ -202,9 +226,8 @@ const sparkBarsMap = computed(() => {
   return map
 })
 
-const isPressureScannerDevice = computed(() => {
-  const type = profile.value?.type
-  return type === 'DAQ-P-1604' || type === 'DAQ-P-1604Pre'
+const isCalibrationCapableDevice = computed(() => {
+  return profile.value?.channels.some((channel) => !shouldDisableTare(channel.index)) ?? false
 })
 
 // 预计算表格/卡片视图所需的全部通道数据，避免模板渲染时反复调用函数。
@@ -217,11 +240,21 @@ const channelCards = computed<ChannelCardData[]>(() => {
   const indices = snap.channelIndices
   const channels = snap.channels
   const sparks = sparkBarsMap.value
+  // P1-7：读取当前校零 operation，判断是否为单通道校零并构造进度文本
+  const op = calibrationOperation.value
+  const opChannelIndex = op?.channelIndex
+  const isSingleChannelCalib = isCalibrating.value && typeof opChannelIndex === 'number'
+  const durationSec = deviceStore.calibrationDurationSec
+  const samplesLabel = i18n.t.samples || '样本'
+  const progressText = op
+    ? `${op.elapsedSeconds}/${durationSec}s · ${op.sampleCount} ${samplesLabel}`
+    : ''
   const cards: ChannelCardData[] = []
   for (let i = 0; i < channels.length; i++) {
     const index = indices[i]
     const rawValue = channels[i]
     const tone = detailChannelTone(index, rawValue)
+    const isThisChannelCalibrating = isSingleChannelCalib && opChannelIndex === index
     cards.push({
       index,
       rawValue,
@@ -231,8 +264,11 @@ const channelCards = computed<ChannelCardData[]>(() => {
       isChartVisible: isChartVisible(index),
       style: channelStyle(index),
       color: channelColor(index),
-      showTareBadge: deviceStore.getOffset(id, index) !== 0,
-      disableTare: shouldDisableTare(index),
+      showCalibrationBadge: (profile.value?.channels.find((channel) => channel.index === index)?.calibrationOffset ?? 0) !== 0,
+      disableCalibration: shouldDisableTare(index) || !currentAcquiring(),
+      calibrating: isCalibrating.value,
+      isThisChannelCalibrating,
+      calibrationProgressText: isThisChannelCalibrating ? progressText : '',
       sparkBars: sparks.get(index) ?? [],
       range: channelRange(index),
     })
@@ -305,11 +341,17 @@ const connectionButtonLabel = computed(() => {
         <UiButton
           variant="secondary"
           size="sm"
-          :disabled="!isPressureScannerDevice"
-          @click="isPressureScannerDevice && profile && deviceStore.tareAllEnabled(profile.id)"
+          :disabled="!isCalibrationCapableDevice || (!currentAcquiring() && !isCalibrating)"
+          @click="isCalibrating ? zeroCalibration.cancel() : calibrateDevice()"
         >
-          {{ i18n.t.tare || '归零' }}
+          {{ isCalibrating
+            ? (i18n.t.tareProgress || '取消校零 ({elapsed}/{duration}s · {samples} 样本)')
+                .replace('{elapsed}', String(calibrationOperation?.elapsedSeconds ?? 0))
+                .replace('{duration}', String(deviceStore.calibrationDurationSec))
+                .replace('{samples}', String(calibrationOperation?.sampleCount ?? 0))
+            : (i18n.t.tare || '校零') }}
         </UiButton>
+        <span v-if="isCalibrationCapableDevice" class="text-xs text-[var(--text-muted)]">{{ i18n.t.tareConfirmStable || '请确认零位稳定' }}</span>
         <UiButton
           v-if="currentStatus() === 'Connected'"
           :variant="currentAcquiring() ? 'danger' : 'primary'"
@@ -352,18 +394,18 @@ const connectionButtonLabel = computed(() => {
         <div class="detail-panel__chart-header">
           <div class="detail-panel__chart-title">
             <Activity class="w-4 h-4 text-emerald-500" />
-            <span>实时趋势</span>
+            <span>{{ i18n.t.realtimeTrend }}</span>
           </div>
           <div class="detail-panel__chart-controls">
             <UiButton variant="secondary" size="sm" @click="openChartSelector">
               <template #icon>
                 <Settings2 class="w-4 h-4" />
               </template>
-              通道选择
+              {{ i18n.t.channelSelect }}
             </UiButton>
             <div class="detail-panel__chart-info">
               <span class="detail-panel__chart-label">{{ i18n.t.bufferWindowLabel }}</span>
-              <span class="detail-panel__chart-value mono-font">{{ waveformBufferSize }} {{ i18n.t.pts }}</span>
+              <span class="detail-panel__chart-value mono-font">{{ historyWindowSec }}{{ i18n.t.tp_secondsUnit }} · {{ estimatedPoints }} {{ i18n.t.pts }}</span>
             </div>
           </div>
         </div>
@@ -371,7 +413,6 @@ const connectionButtonLabel = computed(() => {
           <RealtimeChart
             :device-id="deviceStore.selectedDeviceId ?? ''"
             :channel-indices="chartChannelIndices"
-            :max-points="waveformBufferSize"
           />
         </div>
       </div>
@@ -389,8 +430,7 @@ const connectionButtonLabel = computed(() => {
           :key="card.index"
           :card="card"
           :compact="isMixedMode"
-          @toggle-chart="toggleChartVisibility"
-          @tare="setTare"
+          @calibrate="calibrateChannel"
         />
       </div>
 

@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useI18nStore } from '@stores/i18nStore'
 import type { ThreeHoleDataPoint, ThreeHoleCoefficients } from '@shared/types/calibration'
+
+const { t } = storeToRefs(useI18nStore())
 
 // 图表 X 轴数据源：
 // - 'theta'：从 point.coordinates['θ'] 取角度（三孔探针的旋转角）
-// - Kb/Kt/Sb：从 point.coefficients 取对应系数（用于系数-系数散点图）
+// - Kβ/K0/Kv：从 point.coefficients 取对应系数（用于系数-系数散点图，字段名为 Kb）
 type ChartXKey = 'theta' | keyof ThreeHoleCoefficients
 
 const props = defineProps<{
@@ -20,19 +24,46 @@ const props = defineProps<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
+// 主题切换观察者：themeStore.setTheme 会修改 <html> 的 data-theme 属性和 dark class，
+// 监听到变化时触发 Canvas 重绘，确保暗色/亮色主题下图表颜色同步切换。
+let themeObserver: MutationObserver | null = null
 
-// Canvas 绘图直接用硬编码颜色，不读 CSS 变量。
-// 之前 readColor('--text-muted') 拿到的是 "var(--gray-11)" 这种未解析引用，
-// Canvas 不认 var() 语法 → fillStyle 静默无效 → 刻度文字不渲染。
-// 改用临时元素读 computed color 可行，但主题切换时 canvas 不会自动重绘，
-// 且实现复杂。硬编码颜色 + 主题感知 class 更简单可靠。
-const COLOR_ACCENT = '#3b82f6'
-const COLOR_LAST = '#10b981'
-const COLOR_TEXT_MUTED = '#64748b'
-const COLOR_TEXT_PRIMARY = '#1e293b'
-const COLOR_BORDER = '#cbd5e1'
-const COLOR_GRID = '#e2e8f0'
-const COLOR_POINT_STROKE = '#ffffff'
+// 图表颜色集合：所有颜色从 CSS 设计 token 实时解析，确保主题切换时 Canvas 同步重绘。
+// 满足 §23 约束："所有 UI 元素颜色必须使用设计 token，Canvas 图表通过 getComputedStyle 读取 token"。
+interface ChartColors {
+  accent: string       // 主曲线 + 普通散点
+  last: string         // 最新散点高亮色
+  textMuted: string    // 刻度文字
+  textPrimary: string  // 轴标题
+  border: string       // 坐标轴线（用 border-strong 保证清晰）
+  grid: string         // 网格线（用 border-default 弱于轴线）
+  pointStroke: string  // 散点描边（用卡片背景色形成"内描边"效果，让散点突出于背景）
+}
+
+// readToken 从 <html> 读取 CSS 变量并 trim。
+// getComputedStyle 对 var() 引用会递归解析为最终值，对直接 hex/rgb token 会返回字符串；
+// 但对 color-mix() 表达式会原样返回（Canvas 不识别），因此遇到此类表达式时回退到 fallback。
+// 这样设计可兼容 wind-daq 的 color.css 中 --accent-primary: var(--accent-primary-core) 这类间接定义。
+function readToken(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (!value || value.startsWith('var(') || value.startsWith('color-mix(')) return fallback
+  return value
+}
+
+// resolveChartColors 在每次 draw() 调用时读取当前主题颜色，避免缓存导致主题切换后颜色不更新。
+// fallback 取 dark.css 中的值，确保即使 token 未定义（如 SSR 或样式未加载）也能在暗色背景上可见。
+function resolveChartColors(): ChartColors {
+  return {
+    accent: readToken('--accent-primary', '#10b981'),
+    last: readToken('--accent-success', '#22c55e'),
+    textMuted: readToken('--text-muted', '#94a3b8'),
+    textPrimary: readToken('--text-primary', '#e2e8f0'),
+    border: readToken('--border-strong', '#475569'),
+    grid: readToken('--border-default', '#334155'),
+    pointStroke: readToken('--bg-panel', '#172338'),
+  }
+}
 
 // Canvas font 最保险用系统通用字体名 sans-serif。
 // 之前读 CSS 变量 / computed style 拿到多字体栈或带引号名字，导致 fillText 静默失败。
@@ -40,14 +71,15 @@ const COLOR_POINT_STROKE = '#ffffff'
 const CANVAS_FONT = 'sans-serif'
 
 // 从 dataPoints 提取 (x, y) 散点：xKey='theta' 时取 coordinates['θ']，否则取 coefficients
+// 类型谓词 filter 确保 x/y 收窄为 number（ThreeHoleCoefficients 含可选字段，索引访问返回 number | undefined）
 function extractPoints(): { x: number; y: number }[] {
   return props.dataPoints
     .map((p) => {
       const x = props.xKey === 'theta' ? p.coordinates['θ'] : p.coefficients[props.xKey as keyof ThreeHoleCoefficients]
-      const y = p.coefficients[props.yKey]
+      const y = p.coefficients[props.yKey as keyof ThreeHoleCoefficients]
       return { x, y }
     })
-    .filter((p) => typeof p.x === 'number' && isFinite(p.x) && typeof p.y === 'number' && isFinite(p.y))
+    .filter((p): p is { x: number; y: number } => typeof p.x === 'number' && isFinite(p.x) && typeof p.y === 'number' && isFinite(p.y))
 }
 
 function draw(): void {
@@ -55,6 +87,10 @@ function draw(): void {
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+
+  // 每次重绘时实时解析主题颜色：主题切换 MutationObserver 会触发 draw()，
+  // 此处取到的就是新主题下的颜色，无需缓存失效逻辑。
+  const colors = resolveChartColors()
 
   // 高 DPI 屏适配：canvas 实际像素 = CSS 像素 × dpr，再 scale 回 1:1 绘图
   const dpr = window.devicePixelRatio || 1
@@ -79,11 +115,11 @@ function draw(): void {
   const points = extractPoints()
 
   if (points.length === 0) {
-    ctx.fillStyle = COLOR_TEXT_MUTED
+    ctx.fillStyle = colors.textMuted
     ctx.font = `13px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('暂无数据', width / 2, height / 2)
+    ctx.fillText(t.value.th_noData, width / 2, height / 2)
     return
   }
 
@@ -111,7 +147,7 @@ function draw(): void {
   const yScale = (y: number) => padTop + plotH - ((y - yMin) / (yMax - yMin)) * plotH
 
   // Y 轴网格线（水平）
-  ctx.strokeStyle = COLOR_GRID
+  ctx.strokeStyle = colors.grid
   ctx.lineWidth = 1
   const yTicks = 4
   for (let i = 0; i <= yTicks; i++) {
@@ -123,7 +159,7 @@ function draw(): void {
   }
 
   // 画坐标轴（左竖线 + 底横线）
-  ctx.strokeStyle = COLOR_BORDER
+  ctx.strokeStyle = colors.border
   ctx.lineWidth = 1.5
   ctx.beginPath()
   ctx.moveTo(padLeft, padTop)
@@ -134,7 +170,7 @@ function draw(): void {
   // X 轴刻度：每个数据点位置显示其 θ 值，去重按升序排列
   {
     const tickValues = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b)
-    ctx.fillStyle = COLOR_TEXT_MUTED
+    ctx.fillStyle = colors.textMuted
     ctx.font = `11px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'bottom'
@@ -145,7 +181,7 @@ function draw(): void {
   }
 
   // Y 轴刻度标签
-  ctx.fillStyle = COLOR_TEXT_MUTED
+  ctx.fillStyle = colors.textMuted
   ctx.font = `11px ${CANVAS_FONT}`
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
@@ -155,10 +191,10 @@ function draw(): void {
     ctx.fillText(val.toFixed(3), padLeft - 6, y)
   }
 
-  // 轴标题：X 轴标题省略（卡片 h3 已标明"Kb - θ 曲线"，且 canvas 底部空间不足以再画标题）
+  // 轴标题：X 轴标题省略（卡片 h3 已标明"Kβ - θ 曲线"，且 canvas 底部空间不足以再画标题）
   // Y 轴标题仅在传入非空字符串时绘制（图表 Tab 可选）
   if (props.yLabel) {
-    ctx.fillStyle = COLOR_TEXT_PRIMARY
+    ctx.fillStyle = colors.textPrimary
     ctx.font = `12px ${CANVAS_FONT}`
     ctx.save()
     ctx.translate(10, padTop + plotH / 2)
@@ -175,7 +211,7 @@ function draw(): void {
 
   // 画折线：主题色细线，连接所有采样点，让趋势一目了然
   if (sortedPoints.length >= 2) {
-    ctx.strokeStyle = COLOR_ACCENT
+    ctx.strokeStyle = colors.accent
     ctx.lineWidth = 1.5
     ctx.beginPath()
     sortedPoints.forEach((p, i) => {
@@ -193,9 +229,9 @@ function draw(): void {
     const y = yScale(point.y)
     ctx.beginPath()
     ctx.arc(x, y, 4, 0, Math.PI * 2)
-    ctx.fillStyle = index === sortedPoints.length - 1 ? COLOR_LAST : COLOR_ACCENT
+    ctx.fillStyle = index === sortedPoints.length - 1 ? colors.last : colors.accent
     ctx.fill()
-    ctx.strokeStyle = COLOR_POINT_STROKE
+    ctx.strokeStyle = colors.pointStroke
     ctx.lineWidth = 1.5
     ctx.stroke()
   })
@@ -216,12 +252,27 @@ onMounted(() => {
     })
     resizeObserver.observe(canvas.parentElement)
   }
+  // 监听 <html> 主题属性变化：themeStore.setTheme 会同时修改 data-theme 和 dark class，
+  // 任一变化都说明主题已切换，触发重绘让 Canvas 颜色同步更新。
+  // 用 MutationObserver 而非直接 watch themeStore，是为了让组件不依赖具体 store 实例，
+  // 将来复用到其他项目时只要该项目也通过 <html> 属性切换主题即可正常工作。
+  themeObserver = new MutationObserver(() => {
+    void nextTick(draw)
+  })
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme', 'class'],
+  })
 })
 
 onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
+  }
+  if (themeObserver) {
+    themeObserver.disconnect()
+    themeObserver = null
   }
 })
 

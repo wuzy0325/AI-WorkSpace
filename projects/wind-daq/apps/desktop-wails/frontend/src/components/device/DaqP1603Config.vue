@@ -6,14 +6,17 @@ import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import { useI18nStore } from '@stores/i18nStore'
 
 // ============================================================
 // DAQ-P-1603 专属配置面板
 // ------------------------------------------------------------
 // 与 DAQ-T-1603 不同：DAQ-P-1603 每通道可独立配置为压力或温度传感器，
-// 单位下拉选项随传感器类型切换（压力→Pa/kPa/MPa/mmH2O，温度→℃/℉）。
-// 采样率上限 500Hz（spec D-2），越界时红色提示并禁用提交（由父组件
-// 通过 samplingRateExceedsMax slot prop 或本组件的 invalid 状态判断）。
+// 单位下拉选项随传感器类型切换（压力→Pa/kPa/MPa/kgf/cm2/psi，温度→℃/℉）。
+// 压力单位切换时按换算系数同步转换该通道工程量程（rangeMin/rangeMax），
+// 保证物理量一致（例：Pa 下 -5000~5000 切到 kPa → -5~5）。
+// 采样率范围 1~500Hz（用户采样率=每秒数据条目数，底层硬件固定 1000Hz 通过多点平均实现），
+// 越界时红色提示并禁用提交（由父组件通过 samplingRateInvalid slot prop 或本组件的 invalid 状态判断）。
 //
 // 组件为 controlled 模式：所有状态由父组件通过 v-model 传入，
 // 组件内部不持有任何状态，保证父组件 draft 的唯一真相源。
@@ -50,16 +53,32 @@ const emit = defineEmits<{
   (e: 'update:precision', v: number | null): void
 }>()
 
-// 采样率上限常量（与后端 sharedhw.DAQP1603MaxSampleRate 对齐）
+const i18n = useI18nStore()
+
+// 采样率有效范围常量（与后端 hardware.DAQP1603MinSampleRate/DAQP1603MaxSampleRate 保持同步）
+// 用户采样率 = 每秒输出数据条目数，底层硬件采样率固定 1000Hz，
+// 低频时通过多点平均实现（如 20Hz → 每 50 个原始点取平均输出 1 条）。
+const MIN_SAMPLE_RATE = 1
 const MAX_SAMPLE_RATE = 500
 
-// 压力单位选项
+// 压力单位选项（与 DeviceManagementDrawer 全局压力单位保持一致）
 const PRESSURE_UNIT_OPTIONS = [
   { value: 'Pa', label: 'Pa' },
   { value: 'kPa', label: 'kPa' },
   { value: 'MPa', label: 'MPa' },
-  { value: 'mmH2O', label: 'mmH2O' },
+  { value: 'kgf/cm2', label: 'kgf/cm2' },
+  { value: 'psi', label: 'psi' },
 ]
+
+// 压力单位到 Pa 的换算系数（1 单位 = factor Pa）
+// 用于单位切换时按比例换算工程量程，保证物理量一致
+const PRESSURE_UNIT_TO_PA_FACTOR: Record<string, number> = {
+  Pa: 1,
+  kPa: 1000,
+  MPa: 1_000_000,
+  'kgf/cm2': 98066.5,
+  psi: 6894.757293168,
+}
 
 // 温度单位选项
 const TEMPERATURE_UNIT_OPTIONS = [
@@ -67,11 +86,11 @@ const TEMPERATURE_UNIT_OPTIONS = [
   { value: '℉', label: '℉' },
 ]
 
-// 传感器类型选项
-const SENSOR_TYPE_OPTIONS = [
-  { value: 'pressure', label: '压力' },
-  { value: 'temperature', label: '温度' },
-]
+// 传感器类型选项（响应式，随全局语言切换）
+const SENSOR_TYPE_OPTIONS = computed(() => [
+  { value: 'pressure', label: i18n.t.dev_p1603_sensorTypePressure },
+  { value: 'temperature', label: i18n.t.dev_p1603_sensorTypeTemperature },
+])
 
 // 各传感器类型的默认单位与量程（类型切换时重置）
 const DEFAULTS_BY_SENSOR_TYPE: Record<
@@ -82,9 +101,16 @@ const DEFAULTS_BY_SENSOR_TYPE: Record<
   temperature: { unit: '℃', rangeMin: -50, rangeMax: 150 },
 }
 
-// 采样率是否超过上限（用于红色提示与禁用提交）
-const samplingRateExceedsMax = computed(
-  () => props.samplingRate > MAX_SAMPLE_RATE || props.samplingRate <= 0,
+// 采样率是否越界（用于红色提示与禁用提交）
+const samplingRateInvalid = computed(
+  () => props.samplingRate < MIN_SAMPLE_RATE || props.samplingRate > MAX_SAMPLE_RATE,
+)
+
+// 采样率范围提示文案（响应式，注入 {min}/{max} 占位符）
+const samplingRateRangeHint = computed(() =>
+  i18n.t.dev_p1603_samplingRateRangeHint
+    .replace('{min}', String(MIN_SAMPLE_RATE))
+    .replace('{max}', String(MAX_SAMPLE_RATE)),
 )
 
 // 根据通道传感器类型返回对应的单位选项
@@ -111,17 +137,46 @@ function patchChannel(index: number, patch: Partial<ChannelConfig>): void {
 function onSensorTypeChange(index: number, nextType: string): void {
   const typed = nextType as ChannelSensorType
   const defaults = DEFAULTS_BY_SENSOR_TYPE[typed]
+  const channel = props.channels[index]
   patchChannel(index, {
     sensorType: typed,
     unit: defaults.unit,
     rangeMin: defaults.rangeMin,
     rangeMax: defaults.rangeMax,
+    calibrationEnabled: typed === 'pressure',
+    calibrationOffset: typed === 'pressure' ? channel?.calibrationOffset : 0,
+    calibrationUnit: typed === 'pressure' ? channel?.calibrationUnit : '',
+    calibrationAt: typed === 'pressure' ? channel?.calibrationAt : 0,
   })
 }
 
-// 单位切换：仅更新单位字段
+// 单位切换：按换算系数同步转换该通道的工程量程上下限
+// 例：Pa 下 -5000~5000 切到 kPa → -5~5；切到 MPa → -0.005~0.005
+// 仅在旧/新单位均在系数表中时换算；否则只更新单位，保留原量程数值
 function onUnitChange(index: number, unit: string): void {
-  patchChannel(index, { unit })
+  const channel = props.channels[index]
+  if (!channel) {
+    patchChannel(index, { unit })
+    return
+  }
+  const oldUnit = channel.unit
+  const factorOld = oldUnit ? PRESSURE_UNIT_TO_PA_FACTOR[oldUnit] : undefined
+  const factorNew = PRESSURE_UNIT_TO_PA_FACTOR[unit]
+  // 单位不在换算表（如温度单位误入）或系数为 0 时，只更新单位字段
+  if (factorOld == null || factorNew == null || factorNew === 0) {
+    patchChannel(index, { unit })
+    return
+  }
+  const ratio = factorOld / factorNew
+  const convert = (v: number | undefined): number | undefined => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return v
+    return v * ratio
+  }
+  patchChannel(index, {
+    unit,
+    rangeMin: convert(channel.rangeMin),
+    rangeMax: convert(channel.rangeMax),
+  })
 }
 
 // 启用切换
@@ -202,6 +257,8 @@ function setAllChannelsEnabled(enabled: boolean): void {
 }
 
 function resetChannelsToDefault(): void {
+  // 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（calibrationEnabled=false），
+  // 与 DeviceManagementDrawer.createDefaultChannels 及后端 NewDefaultProfile 保持一致。
   const next: ChannelConfig[] = Array.from({ length: 16 }, (_, i) => ({
     index: i,
     name: `CH${i + 1}`,
@@ -211,6 +268,7 @@ function resetChannelsToDefault(): void {
     rangeMin: -5000,
     rangeMax: 5000,
     sensorType: 'pressure' as ChannelSensorType,
+    calibrationEnabled: i >= 2,
   }))
   emit('update:channels', next)
 }
@@ -220,10 +278,10 @@ function resetChannelsToDefault(): void {
   <div class="p1603-config">
     <!-- 采样率输入区 -->
     <div class="p1603-config__sampling-rate">
-      <label class="p1603-config__label">采样率 (Hz)</label>
+      <label class="p1603-config__label">{{ i18n.t.dev_p1603_samplingRate }}</label>
       <UiInputNumber
         :model-value="samplingRate"
-        :min="1"
+        :min="MIN_SAMPLE_RATE"
         :max="MAX_SAMPLE_RATE"
         :disabled="disabled"
         class="p1603-config__sampling-rate-input"
@@ -231,35 +289,35 @@ function resetChannelsToDefault(): void {
       />
       <span
         class="p1603-config__hint"
-        :class="{ 'p1603-config__hint--error': samplingRateExceedsMax }"
+        :class="{ 'p1603-config__hint--error': samplingRateInvalid }"
       >
-        上限 {{ MAX_SAMPLE_RATE }} Hz
+        {{ samplingRateRangeHint }}
       </span>
     </div>
 
     <!-- 工具栏 -->
     <div class="p1603-config__toolbar">
       <UiButton secondary size="sm" :disabled="disabled" @click="setAllChannelsEnabled(true)">
-        全部启用
+        {{ i18n.t.dev_enableAll }}
       </UiButton>
       <UiButton secondary size="sm" :disabled="disabled" @click="setAllChannelsEnabled(false)">
-        全部禁用
+        {{ i18n.t.dev_disableAll }}
       </UiButton>
       <UiButton secondary size="sm" :disabled="disabled" @click="resetChannelsToDefault">
-        重置
+        {{ i18n.t.dev_reset }}
       </UiButton>
     </div>
 
     <!-- 批量同步 -->
     <div class="p1603-config__batch">
-      <span class="p1603-config__batch-label">批量应用到 1~16CH:</span>
+      <span class="p1603-config__batch-label">{{ i18n.t.dev_batchApplyTo }}</span>
       <div class="p1603-config__batch-field">
-        <span class="p1603-config__batch-field-label">量程</span>
+        <span class="p1603-config__batch-field-label">{{ i18n.t.dev_range }}</span>
         <UiInputNumber
           :model-value="rangeMin ?? undefined"
           class="p1603-config__batch-num"
           :disabled="disabled"
-          placeholder="最小"
+          :placeholder="i18n.t.dev_minPlaceholder"
           @update:model-value="onBatchRangeMinChange"
         />
         <span class="p1603-config__batch-sep">~</span>
@@ -267,12 +325,12 @@ function resetChannelsToDefault(): void {
           :model-value="rangeMax ?? undefined"
           class="p1603-config__batch-num"
           :disabled="disabled"
-          placeholder="最大"
+          :placeholder="i18n.t.dev_maxPlaceholder"
           @update:model-value="onBatchRangeMaxChange"
         />
       </div>
       <div class="p1603-config__batch-field">
-        <span class="p1603-config__batch-field-label">精度</span>
+        <span class="p1603-config__batch-field-label">{{ i18n.t.channelPrecision }}</span>
         <UiInputNumber
           :model-value="precision ?? undefined"
           class="p1603-config__batch-num p1603-config__batch-num--narrow"
@@ -281,7 +339,7 @@ function resetChannelsToDefault(): void {
           placeholder="0"
           @update:model-value="onBatchPrecisionChange"
         />
-        <span class="p1603-config__batch-field-suffix">位小数</span>
+        <span class="p1603-config__batch-field-suffix">{{ i18n.t.dev_decimalPlaces }}</span>
       </div>
     </div>
 
@@ -290,13 +348,14 @@ function resetChannelsToDefault(): void {
       <table class="p1603-config__table">
         <thead>
           <tr>
-            <th class="w-14">启用</th>
-            <th class="w-14">#</th>
-            <th>通道名称</th>
-            <th class="w-28">传感器类型</th>
-            <th class="w-24">单位</th>
-            <th class="w-36 text-center">工程量程</th>
-            <th class="w-20 text-right">精度</th>
+            <th class="w-12">{{ i18n.t.channelEnabled }}</th>
+            <th class="w-16">{{ i18n.t.tareApplyColumn }}</th>
+            <th class="w-12">#</th>
+            <th>{{ i18n.t.dev_channelName }}</th>
+            <th class="w-28">{{ i18n.t.dev_p1603_sensorType }}</th>
+            <th class="w-24">{{ i18n.t.unit }}</th>
+            <th class="w-56 text-center">{{ i18n.t.dev_engineeringRange }}</th>
+            <th class="w-18 text-right">{{ i18n.t.channelPrecision }}</th>
           </tr>
         </thead>
         <tbody>
@@ -306,6 +365,14 @@ function resetChannelsToDefault(): void {
                 :checked="c.enabled"
                 :disabled="disabled"
                 @update:checked="(v) => onEnabledChange(i, v)"
+              />
+            </td>
+            <td class="text-center">
+              <UiCheckbox
+                :checked="c.calibrationEnabled ?? true"
+                :disabled="disabled || c.sensorType === 'temperature'"
+                :title="c.sensorType === 'temperature' ? i18n.t.temperatureChannelNotSupported : undefined"
+                @update:checked="(v) => patchChannel(i, { calibrationEnabled: v })"
               />
             </td>
             <td class="font-mono">{{ channelLabel(c.index) }}</td>
@@ -366,87 +433,90 @@ function resetChannelsToDefault(): void {
 </template>
 
 <style scoped>
+/* 卡片容器：与全局 form-card 风格一致，但保留 p1603 自有的纵向堆叠布局 */
 .p1603-config {
   display: flex;
   flex-direction: column;
-  gap: var(--density-field-gap, 8px);
-  padding: var(--density-group-padding, 8px 12px);
-  border-radius: var(--radius-md, 6px);
-  background: color-mix(in srgb, var(--bg-panel-strong, #1e1e1e) 40%, transparent);
-  border: 1px solid var(--border-default, #333);
+  gap: var(--density-field-gap);
+  padding: var(--density-group-padding);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel-strong) 40%, transparent);
+  border: 1px solid var(--border-default);
 }
 
+/* 采样率行：标签 + 输入 + 范围提示水平排列 */
 .p1603-config__sampling-rate {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .p1603-config__sampling-rate-input {
-  width: 120px;
+  width: 7.5rem;
 }
 
 .p1603-config__label {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: var(--font-weight-semibold, 600);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
   letter-spacing: 0.02em;
 }
 
 .p1603-config__hint {
-  font-size: var(--font-size-micro, 11px);
-  font-weight: 700;
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-muted);
 }
 
 .p1603-config__hint--error {
-  color: var(--color-danger, #e5484d);
+  color: var(--accent-danger);
 }
 
 .p1603-config__toolbar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .p1603-config__batch {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .p1603-config__batch-label {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: 700;
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-muted);
 }
 
 .p1603-config__batch-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .p1603-config__batch-field-label {
-  font-size: var(--font-size-2xs, 12px);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
+/* 批量输入框尺寸：§29 规范——量程 96px、精度 64px */
 .p1603-config__batch-num {
-  width: 100px;
+  width: 6rem;
 }
 
 .p1603-config__batch-num--narrow {
-  width: 60px;
+  width: 4rem;
 }
 
 .p1603-config__batch-sep {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .p1603-config__batch-field-suffix {
-  font-size: var(--font-size-2xs, 12px);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
 .p1603-config__table-wrap {
@@ -456,35 +526,42 @@ function resetChannelsToDefault(): void {
 .p1603-config__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--font-size-sm, 13px);
+  font-size: var(--font-size-sm);
 }
 
 .p1603-config__table th,
 .p1603-config__table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-default, #333);
+  padding: var(--space-1-5) var(--space-2);
+  border-bottom: 1px solid var(--border-default);
   text-align: left;
   vertical-align: middle;
 }
 
 .p1603-config__table th {
-  font-size: var(--font-size-2xs, 12px);
-  font-weight: var(--font-weight-semibold, 600);
-  color: var(--text-muted, #888);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
 }
 
 .p1603-config__range {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
-.w-14 { width: 56px; }
-.w-20 { width: 80px; }
-.w-24 { width: 96px; }
-.w-28 { width: 112px; }
-.w-36 { width: 144px; }
+/* ===== §29 通道表格列宽规范 =====
+ *   - w-12/w-16/w-24/w-28 是 Tailwind 标准类，JIT 会自动生成，显式定义仅为确定性
+ *   - w-18/w-56 不是 Tailwind 标准刻度，必须显式定义
+ *   - w-28 用于 DAQ-P-1603 传感器类型列（含中文"温度/压力"）
+ *   - w-16 用于校零应用列（与 DAQ-T-1603/WTN_PXI 单位列保持一致） */
+.w-12 { width: 48px; }   /* 启用复选框、# 序号列 */
+.w-16 { width: 64px; }   /* 校零应用列、单位列 */
+.w-18 { width: 72px; }   /* 精度列 */
+.w-24 { width: 96px; }   /* 单位列 */
+.w-28 { width: 112px; }  /* 传感器类型列 */
+.w-56 { width: 224px; }  /* 工程量程列（两个 w-full 输入框 + "~" 分隔符 + 单元格 padding） */
+.w-full { width: 100%; }
 .text-center { text-align: center; }
 .text-right { text-align: right; }
-.font-mono { font-family: var(--font-mono, monospace); }
+.font-mono { font-family: var(--font-family-mono); }
 </style>

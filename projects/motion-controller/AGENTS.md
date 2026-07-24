@@ -18,35 +18,45 @@ Do not load the entire `docs/` tree by default.
 
 ## Project Scope
 
-Motion Controller is a standalone Wails desktop application for configuring, testing, and operating motion controllers independently from Wind-DAQ.
+Motion Controller is a standalone desktop application for configuring, testing, and operating motion controllers independently from Wind-DAQ.
 
 It owns:
 
-- Wails desktop shell and Vue 3 motion operator UI
+- Desktop shell (Electron 22.3.27 for Win7 / Wails v3 for trunk) and Vue 3 motion operator UI
 - project-specific wiring and app context
-- thin Wails bindings and optional HTTP API entrypoint
+- thin HTTP API entrypoint (`apps/desktop-wails/main.go` listens on `127.0.0.1:16888`)
 - product-level motion workflows built on shared modules
+
+### Win7 兼容版架构（当前主路径）
+
+- **Go 后端** (`apps/desktop-wails/`): `net/http` server + `embed` 前端静态资源，监听 `127.0.0.1:16888`，motion 路由由 `shared.local/motion-control/go/httpapi.RegisterMotionRoutes` 注册。Go 1.20.14，移除 Wails v3 依赖。
+- **前端** (`apps/desktop-wails/frontend/`): Vue 3 + Vite，通过 `fetch(MOTION_HTTP_BASE)` 调用后端，200ms 轮询 `/api/motion/status` 获取实时状态。
+- **Electron 壳** (`apps/desktop-electron/`): Electron 22.3.27（最后兼容 Win7 的 Electron 主版本），spawn Go 后端 exe + 加载 `http://127.0.0.1:16888`。
+- **端口分配**: 16888（与 wind-daq 8900/8901、daq-t1603 18181、daq-p1604 18182、probe-interpolator 18183 区分）。
 
 ## Project Commands
 
 ```powershell
-# Desktop app shell
+# Win7 版桌面应用（主路径）
+cd projects\motion-controller\apps\desktop-electron
+npm install --no-audit --no-fund
+npm run build:backend   # 编译 Go 后端 + 前端 dist，输出到 desktop-electron/backend/
+npm run dist:win7       # electron-builder 打包 NSIS 安装包
+```
+
+```powershell
+# Go 后端单独验证（GOWORK=off + Go 1.20.14）
+$env:GOWORK = 'off'
+$env:GOROOT = 'C:\go-versions\go1.20.14'
+$env:PATH = "$env:GOROOT\bin;$env:PATH"
 cd projects\motion-controller\apps\desktop-wails
+go vet ./...
 go test ./...
-go build -buildvcs=false ./...
-go run github.com/wailsapp/wails/v3/cmd/wails3 dev
+go build -buildvcs=false -trimpath -ldflags '-s -w -H=windowsgui' .
 ```
 
 ```powershell
-# Backend service
-cd projects\motion-controller\services\api-go
-go test ./...
-go build -buildvcs=false ./...
-go run ./cmd/server
-```
-
-```powershell
-# Frontend
+# 前端单独验证
 cd projects\motion-controller\apps\desktop-wails\frontend
 npm install --no-audit --no-fund
 npm run typecheck
@@ -55,13 +65,12 @@ npm run test
 ```
 
 ```powershell
-# Release build (production mode, -tags production)
-cd projects\motion-controller\apps\desktop-wails
-task release
-# then: makensis build\windows\installer\project.nsi
+# Backend service（独立 CLI server，非 Win7 版必需）
+cd projects\motion-controller\services\api-go
+go test ./...
+go build -buildvcs=false ./...
+go run ./cmd/server
 ```
-
-See `docs/decisions/ADR-004-wails-v3-production-build.md` for production build tag rules.
 
 ## Task Routing
 

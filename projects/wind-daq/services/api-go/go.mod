@@ -1,6 +1,6 @@
 module wind-daq/services/api-go
 
-go 1.25.0
+go 1.20
 
 require (
 	ai-workspace/shared/algorithms/go/fivehole v0.0.0

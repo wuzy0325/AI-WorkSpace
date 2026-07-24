@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"os"
 	"path/filepath"
 	"strings"

@@ -33,7 +33,7 @@ const i18n = useI18nStore()
     <div class="chart-selector__panel" @click.stop>
       <div class="chart-selector__header">
         <div class="chart-selector__title-row">
-          <h3 class="chart-selector__title">{{ i18n.t.channelSelection || '通道选择' }}</h3>
+          <h3 class="chart-selector__title">{{ i18n.t.channelSelect }}</h3>
           <p class="chart-selector__subtitle">{{ profileName }}</p>
         </div>
         <UiButton variant="ghost" size="sm" aria-label="关闭" @click="emit('close')">

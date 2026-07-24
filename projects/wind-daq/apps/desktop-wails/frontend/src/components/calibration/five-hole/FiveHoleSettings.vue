@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, type Component } from 'vue'
+import { ref, computed, onMounted, watch, type Component } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useDeviceStore } from '@stores/deviceStore'
@@ -7,6 +7,7 @@ import { useMotionStore } from '@stores/motionStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
+import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath } from '@shared/calibrationCsvPath'
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
@@ -14,6 +15,7 @@ import type {
   MotionAxisConfig,
   ChannelRef,
 } from '@shared/types/calibration'
+import type { MotionSafetyConfig } from '@shared/types/traversal'
 import {
   applyCalibrationPrecisionDefaults,
   DEFAULT_CALIBRATION_MACH_PRECISION,
@@ -22,6 +24,7 @@ import {
 } from '@shared/calibrationPrecision'
 import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import { generateFiveHoleSnakePoints } from './motionCalibrationUtils'
+import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
@@ -132,10 +135,25 @@ const pointCount = computed(() => pointLayoutValidation.value.count)
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
 const calibrationName = ref('')
+// CSV 保存路径：自动校准启动时后端按此路径覆盖初始化 csvWriter，逐点实时写入，
+// 崩溃/断电不丢已采集点。空字符串将导致后端跳过实时写入（仅靠校准结束全量导出）。
+//
+// 拆分为目录 (savePath) + 文件名 (saveFileName) 两个独立字段（与遍历测试一致）：
+//   - savePath 仅保存目录，pickSavePath 只选目录不拼接文件名，避免用户改文件名时
+//     必须重新点选目录的繁琐交互；
+//   - saveFileName 用户可见可手动编辑，watch calibrationName 自动同步默认值，
+//     保存前再次清洗（剥离 .csv 后缀 + 非法字符过滤），加载时同样剥离后缀再清洗，
+//     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
+//
+// 注意：初始值为空字符串而非 buildCalibrationCsvName(...)，因为 calibrationName 初始也是空，
+// onMounted 加载配置完成后若仍为空会兜底为"五孔探针-<日期>"，watch 会同步刷新默认文件名。
 const savePath = ref('')
+const saveFileName = ref('')
 const sphereTankGateEnabled = ref(false)
 const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
+// 球罐压力通道：仅用于前端实时显示压力值，不参与闸门判定；未配置 deviceId 时 UI 显示"暂无数据"
+const sphereTankPressureChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
 const machNumberPrecision = ref<number>(DEFAULT_CALIBRATION_MACH_PRECISION)
 const velocityPrecision = ref<number>(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
 
@@ -156,6 +174,11 @@ const motionAxes = ref<MotionAxisConfig[]>([
   { name: 'Alpha', controllerId: '', axis: 'X' },
   { name: 'Beta', controllerId: '', axis: 'Y' },
 ])
+
+// 运动安全配置：4 个全局阈值 + 按轴覆盖，留空字段等价于"使用后端默认值"。
+// 与遍历测试模块共享同一份 MotionSafetyConfig 类型与 MotionSafetyPanel 组件，
+// 保证校准与遍历的运动安全语义完全一致。
+const motionSafety = ref<MotionSafetyConfig | undefined>(undefined)
 
 const deviceList = computed(() => deviceStore.profiles)
 const motionControllerList = computed(() => motionStore.profiles)
@@ -227,7 +250,8 @@ const currentStepErrors = computed<string[]>(() => {
   if (currentStep.value === 0) {
     const errors: string[] = []
     if (calibrationName.value.trim() === '') errors.push(t.value.enterConfigName || '请输入配置名称')
-    if (savePath.value.trim() === '') errors.push('请输入 CSV 保存路径')
+    if (savePath.value.trim() === '') errors.push(t.value.fh_pleaseSelectCsvPath)
+    if (saveFileName.value.trim() === '') errors.push(t.value.fh_pleaseInputCsvFileName)
     // 点位布局相关错误统一由 validatePointLayout 提供
     errors.push(...pointLayoutValidation.value.errors)
     if (dwellTimeMs.value < 100) errors.push(t.value.dwellTimeMin || '驻留时间至少100ms')
@@ -261,23 +285,27 @@ function prevStep() { if (currentStep.value > 0) currentStep.value-- }
 // generateFiveHoleSnakePoints 由 saveConfig 在归一化 layout 后直接调用，
 // 不再在这里包一层同步包装函数，避免误用未归一化的 pointLayout.value。
 
+// 选择 CSV 保存目录：与遍历测试一致，只选目录赋给 savePath，
+// 文件名由独立的 saveFileName 字段管理（用户可见可编辑），避免每次改文件名都要重选目录。
 async function pickSavePath() {
   try {
-    const defaultName = `${calibrationName.value.trim() || 'five-hole'}-${new Date().toISOString().slice(0, 10)}.csv`
     const picked = await storageStore.pickDirectory()
-    if (picked) savePath.value = joinPath(picked, defaultName)
+    if (picked) savePath.value = picked
   } catch (e) {
     feedbackStore.pushToast('选择保存路径失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
 }
 
-// joinPath 把用户选择的目录与文件名拼接为完整路径。
-// 统一归一化为 POSIX 风格（正斜杠），Windows 文件 API 同样接受，
-// 避免根据 dir.includes('\\') 猜测分隔符导致混合路径（如 "C:/Users\\wind-daq/file"）的拼接错误。
-function joinPath(dir: string, fileName: string): string {
-  const normalizedDir = dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
-  return `${normalizedDir}/${fileName}`
-}
+// calibrationName 变化时同步刷新默认 saveFileName：仅当用户未手动修改（仍为空或等于上一默认值）时覆盖，
+// 避免覆盖用户手动输入的文件名。复用共享工具保证清洗规则与遍历测试画面一致。
+// 注意：Vue 3 watch 默认 pre 模式异步触发，onMounted 中 calibrationName 兜底设值后
+// 并不依赖本 watch 同步刷新 saveFileName——onMounted 显式兜底语句会先把它填好，
+// 本 watch 仅在用户后续手动改 calibrationName 时接力同步默认文件名。
+watch(calibrationName, (next, prev) => {
+  const prevDefault = prev.trim() ? buildCalibrationCsvName(prev.trim(), 'five-hole') : ''
+  if (saveFileName.value === '' || saveFileName.value === prevDefault)
+    saveFileName.value = buildCalibrationCsvName(next.trim(), 'five-hole')
+})
 
 // 把 UiInputNumber 在输入中间态 emit 的 null 归一化为 number，
 // 避免 pointLayout 字段残留 null/NaN 导致生成点位错乱、保存到磁盘的 fiveHoleLayout 与 points 不一致。
@@ -308,6 +336,14 @@ async function saveConfig() {
       feedbackStore.pushToast('点位布局参数无效: ' + pointLayoutValidation.value.errors.join('；'), 'warning')
       return
     }
+    // 保存前再次清洗 saveFileName：用户可能手动输入了非法字符或未带 .csv 后缀。
+    // 剥离 .csv 后缀后交给共享工具，fallback 用 calibrationName 保证空文件名也能落到有意义的默认值。
+    const normName = buildCalibrationCsvName(saveFileName.value.replace(/\.csv$/i, ''), calibrationName.value.trim())
+    saveFileName.value = normName
+    // 后端 csv_writer 约定 SavePath 必须是含 .csv 扩展名的完整文件路径，
+    // 故前端在保存时把目录与文件名拼接为完整路径再传给后端，同时持久化 saveFileName
+    // 便于下次加载时分离展示。
+    const fullSavePath = savePath.value.trim() ? joinCalibrationPath(savePath.value.trim(), normName) : ''
     // 归一化后的 layout 作为本次保存的真值，同时用于生成 points 与 fiveHoleLayout 字段，
     // 保证磁盘上两个字段永远一致，消除双真值源。
     const sanitizedLayout = sanitizePointLayout(pointLayout.value)
@@ -316,10 +352,13 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
+      // 运动安全配置透传：未配置字段为 undefined，后端 Resolve() 时合并默认值
+      motionSafety: motionSafety.value,
       points: await generateFiveHoleSnakePoints(sanitizedLayout),
       dwellTimeMs: dwellTimeMs.value,
       samplesPerPoint: samplesPerPoint.value,
-      savePath: savePath.value.trim(),
+      savePath: fullSavePath,
+      saveFileName: normName,
       fiveHoleLayout: sanitizedLayout,
       derivedValuePrecision: { machNumber: machNumberPrecision.value, velocity: velocityPrecision.value },
       uiRefreshHz: calibrationStore.uiRefreshHz,
@@ -327,15 +366,19 @@ async function saveConfig() {
         enabled: sphereTankGateEnabled.value,
         waitTimeSec: Math.max(0, sphereTankWaitTimeSec.value),
         stableTimeChannel: { ...sphereTankStableChannel.value },
+        // 仅当配置了压力通道 deviceId 时才落盘，避免写入空 ChannelRef 造成后端误订阅
+        ...(sphereTankPressureChannel.value.deviceId
+          ? { pressureChannel: { ...sphereTankPressureChannel.value } }
+          : {}),
       },
     }
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
     const res = await calibrationApi.saveConfig('five-hole', normalizedConfig)
-    if (!res.success) throw new Error(res.error || '保存失败')
+    if (!res.success) throw new Error(res.error || t.value.fh_saveFailed)
     emit('saved', normalizedConfig)
     emit('close')
   } catch (err) {
-    feedbackStore.pushToast('保存失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+    feedbackStore.pushToast(t.value.fh_saveFailedColon + (err instanceof Error ? err.message : String(err)), 'error')
   } finally { isSaving.value = false }
 }
 
@@ -362,21 +405,43 @@ async function loadSavedConfig() {
         if (motionAxes.value[index]) motionAxes.value[index] = { ...savedAxis }
       })
     }
+    // 还原运动安全配置：浅拷贝避免修改持久化对象，未配置字段保持 undefined
+    if (config.motionSafety) {
+      motionSafety.value = { ...config.motionSafety }
+    } else {
+      motionSafety.value = undefined
+    }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
-    savePath.value = config.savePath || ''
+    // 还原 savePath 与 saveFileName：
+    //   - 优先使用持久化的 saveFileName（新配置），剥离 .csv 后缀再交给共享工具重新清洗，
+    //     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
+    //   - 旧配置无 saveFileName 字段时，用 splitCalibrationSavePath 从完整 savePath
+    //     反拆 basename 作为兜底，兼容升级前已落盘的配置；dir 还原为纯目录。
+    if (config.saveFileName) {
+      saveFileName.value = buildCalibrationCsvName(config.saveFileName.replace(/\.csv$/i, ''), config.name)
+    } else if (config.savePath) {
+      const { baseName } = splitCalibrationSavePath(config.savePath)
+      saveFileName.value = buildCalibrationCsvName(baseName.replace(/\.csv$/i, ''), config.name)
+    }
+    const { dir: restoredDir } = splitCalibrationSavePath(config.savePath || '')
+    savePath.value = restoredDir
     machNumberPrecision.value = config.derivedValuePrecision?.machNumber ?? DEFAULT_CALIBRATION_MACH_PRECISION
     velocityPrecision.value = config.derivedValuePrecision?.velocity ?? DEFAULT_CALIBRATION_VELOCITY_PRECISION
     if (config.sphereTankGate) {
       sphereTankGateEnabled.value = config.sphereTankGate.enabled
       sphereTankWaitTimeSec.value = config.sphereTankGate.waitTimeSec
       sphereTankStableChannel.value = { ...config.sphereTankGate.stableTimeChannel }
+      // 压力通道为可选字段，未配置时回退为空 deviceId（UI 显示"暂无数据"）
+      sphereTankPressureChannel.value = config.sphereTankGate.pressureChannel
+        ? { ...config.sphereTankGate.pressureChannel }
+        : { deviceId: '', channelIndex: 0 }
     }
   } catch (err) {
     // 首次打开无配置（404）属正常，其他异常需提示
     const msg = err instanceof Error ? err.message : String(err)
     if (!msg.includes('404') && !msg.includes('not found')) {
-      feedbackStore.pushToast('加载配置失败: ' + msg, 'warning')
+      feedbackStore.pushToast(t.value.wf_loadConfigFailed + msg, 'warning')
     }
   }
 }
@@ -389,7 +454,14 @@ onMounted(async () => {
       ['设备列表', '运动控制器列表', '五孔校准配置'],
       feedbackStore.pushToast,
     )
-    if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toLocaleDateString()}`
+    // calibrationName 兜底：用 ISO 日期（YYYY-MM-DD），避免 toLocaleDateString 在中文环境返回含斜杠的日期
+    // 被下游 buildCalibrationCsvName 当作路径分隔符清洗掉。
+    if (!calibrationName.value) calibrationName.value = `五孔探针-${new Date().toISOString().slice(0, 10)}`
+    // watch calibrationName 兜底设值时会同步刷新 saveFileName，避免首次进入对话框文件名输入框空白。
+    if (!saveFileName.value.trim()) saveFileName.value = buildCalibrationCsvName(calibrationName.value.trim(), 'five-hole')
+    // 加载后若 savePath 仍为空，回退到全局基础目录，与遍历测试体验一致：
+    // 用户首次打开对话框不必先点选目录就能完成保存。
+    if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
   } finally { isLoading.value = false }
 })
 
@@ -406,12 +478,12 @@ const channelIndexOptions = Array.from({ length: 18 }, (_, i) => ({ label: `CH${
 
 // 通道表格列定义（所有通道直接罗列，通过分组列标识归属）
 const channelColumns = [
-  { key: 'enabled', label: '启用', width: '48px' },
-  { key: 'group', label: '分组', width: '72px' },
-  { key: 'name', label: '名称', width: '' },
-  { key: 'device', label: '数据源', width: '' },
-  { key: 'channel', label: '通道', width: '100px' },
-  { key: 'precision', label: '精度', width: '80px' },
+  { key: 'enabled', label: '启用' },
+  { key: 'group', label: '分组' },
+  { key: 'name', label: '名称' },
+  { key: 'device', label: '数据源' },
+  { key: 'channel', label: '通道' },
+  { key: 'precision', label: '精度' },
 ] as const
 
 // 根据通道角色反查分组 key，用于在统一表格中显示分组 tag
@@ -474,7 +546,7 @@ function getChannelGroupLabel(groupKey: string): string {
               <span class="field-label">配置名称</span>
               <UiInput v-model="calibrationName" placeholder="例如：五孔探针-2026-001" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <span class="field-label">界面刷新频率</span>
               <UiSelect
                 :model-value="String(calibrationStore.uiRefreshHz)"
@@ -502,15 +574,15 @@ function getChannelGroupLabel(groupKey: string): string {
               <div class="angle-fields">
                 <div class="field">
                   <span class="field-label">最小 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaMin" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaMin" />
                 </div>
                 <div class="field">
                   <span class="field-label">最大 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaMax" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaMax" />
                 </div>
                 <div class="field">
                   <span class="field-label">步长 (°)</span>
-                  <UiInputNumber v-model="pointLayout.alphaStep" :min="1" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.alphaStep" :min="1" />
                 </div>
               </div>
             </div>
@@ -522,15 +594,15 @@ function getChannelGroupLabel(groupKey: string): string {
               <div class="angle-fields">
                 <div class="field">
                   <span class="field-label">最小 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaMin" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaMin" />
                 </div>
                 <div class="field">
                   <span class="field-label">最大 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaMax" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaMax" />
                 </div>
                 <div class="field">
                   <span class="field-label">步长 (°)</span>
-                  <UiInputNumber v-model="pointLayout.betaStep" :min="1" style="width:100%" />
+                  <UiInputNumber v-model="pointLayout.betaStep" :min="1" />
                 </div>
               </div>
             </div>
@@ -553,19 +625,19 @@ function getChannelGroupLabel(groupKey: string): string {
           <div class="param-grid-4">
             <div class="field">
               <span class="field-label">驻留时间 (ms)</span>
-              <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" style="width:100%" />
+              <UiInputNumber v-model="dwellTimeMs" :min="100" :step="100" />
             </div>
             <div class="field">
               <span class="field-label">每点采样数</span>
-              <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" style="width:100%" />
+              <UiInputNumber v-model="samplesPerPoint" :min="1" :max="1000" />
             </div>
             <div class="field">
               <span class="field-label">马赫数精度</span>
-              <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" style="width:100%" />
+              <UiInputNumber v-model="machNumberPrecision" :min="0" :max="8" />
             </div>
             <div class="field">
               <span class="field-label">流速精度 (m/s)</span>
-              <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" style="width:100%" />
+              <UiInputNumber v-model="velocityPrecision" :min="0" :max="8" />
             </div>
           </div>
         </UiPanel>
@@ -577,12 +649,17 @@ function getChannelGroupLabel(groupKey: string): string {
               <span>CSV 保存</span>
             </div>
           </template>
+          <!-- 目录与文件名分离展示（与遍历测试一致）：目录用浏览按钮选，文件名用户可见可手动编辑 -->
           <div class="field">
-            <span class="field-label">保存路径</span>
+            <span class="field-label">保存目录</span>
             <div class="flex items-center gap-2">
-              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存目录" class="flex-1" />
+              <UiInput v-model="savePath" placeholder="点击右侧按钮选择保存目录" class="flex-1" :title="savePath" />
               <UiButton size="sm" variant="secondary" @click="pickSavePath">选择目录…</UiButton>
             </div>
+          </div>
+          <div class="field">
+            <span class="field-label">CSV 文件名</span>
+            <UiInput v-model="saveFileName" :placeholder="t.fh_pleaseInputCsvFileName" class="flex-1" />
           </div>
         </UiPanel>
       </div>
@@ -647,7 +724,7 @@ function getChannelGroupLabel(groupKey: string): string {
             <table class="ntable">
               <thead>
                 <tr>
-                  <th v-for="col in channelColumns" :key="col.key" :style="col.width ? { width: col.width } : {}">{{ col.label }}</th>
+                  <th v-for="col in channelColumns" :key="col.key">{{ col.label }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -655,7 +732,7 @@ function getChannelGroupLabel(groupKey: string): string {
                   <td class="cell-center"><UiCheckbox v-model:checked="ch.enabled" /></td>
                   <td><span class="group-tag" :data-group="groupKeyOfRole(ch.role)">{{ getChannelGroupLabel(groupKeyOfRole(ch.role)) }}</span></td>
                   <td><span class="cell-name">{{ getProbeChannelDisplayName(ch.role, ch.name, t) }}</span></td>
-                  <td>
+                  <td class="cell-device">
                     <UiSelect
                       v-model="ch.channel.deviceId"
                       :options="deviceList.map(d => ({ label: `${d.name} (${d.type})`, value: d.id }))"
@@ -664,14 +741,14 @@ function getChannelGroupLabel(groupKey: string): string {
                       :fallback="false"
                     />
                   </td>
-                  <td><UiSelect
+                  <td class="cell-channel"><UiSelect
                     :model-value="ch.channel.channelIndex >= 0 ? String(ch.channel.channelIndex) : ''"
                     @update:model-value="ch.channel.channelIndex = $event !== '' ? Number($event) : -1"
                     :options="channelIndexOptions"
                     placeholder="未分配"
                     :disabled="!ch.enabled"
                   /></td>
-                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" style="width:100%" :disabled="!ch.enabled" /></td>
+                  <td><UiInputNumber v-model="ch.precision" :min="0" :max="8" :disabled="!ch.enabled" /></td>
                 </tr>
               </tbody>
             </table>
@@ -688,7 +765,7 @@ function getChannelGroupLabel(groupKey: string): string {
           </template>
           <div class="table-wrap">
             <table class="ntable">
-              <thead><tr><th>坐标轴</th><th>运动控制器</th><th>物理轴</th></tr></thead>
+              <thead><tr><th>坐标轴</th><th class="col-controller">运动控制器</th><th class="col-axis">物理轴</th></tr></thead>
               <tbody>
                 <tr v-for="axis in motionAxes" :key="axis.name">
                   <td><UiStatusBadge status="connected">{{ axis.name }}</UiStatusBadge></td>
@@ -706,7 +783,7 @@ function getChannelGroupLabel(groupKey: string): string {
           </div>
         </UiPanel>
 
-        <!-- 球罐判定门控 -->
+        <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
         <UiPanel class="section-card">
           <template #header>
             <div class="section-header">
@@ -718,7 +795,7 @@ function getChannelGroupLabel(groupKey: string): string {
           <div v-if="sphereTankGateEnabled" class="sphere-grid">
             <div class="field">
               <span class="field-label">等待时间 (秒)</span>
-              <UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" style="width:100%" />
+              <UiInputNumber v-model="sphereTankWaitTimeSec" :min="0" :step="0.1" />
             </div>
             <div class="field">
               <span class="field-label">稳定通道设备</span>
@@ -733,10 +810,34 @@ function getChannelGroupLabel(groupKey: string): string {
                 placeholder="选择通道"
               />
             </div>
+            <!-- 球罐压力通道：仅用于实时显示压力值，不参与闸门判定 -->
+            <div class="field">
+              <span class="field-label">{{ t.wf_spherePressureDevice }}</span>
+              <UiSelect v-model="sphereTankPressureChannel.deviceId" :options="deviceList.map(d => ({ label: d.name, value: d.id }))" placeholder="选择设备" :fallback="false" />
+            </div>
+            <div class="field">
+              <span class="field-label">{{ t.wf_spherePressureChannel }}</span>
+              <UiSelect
+                :model-value="sphereTankPressureChannel.channelIndex >= 0 ? String(sphereTankPressureChannel.channelIndex) : ''"
+                @update:model-value="sphereTankPressureChannel.channelIndex = $event !== '' ? Number($event) : 0"
+                :options="channelIndexOptions"
+                placeholder="选择通道"
+              />
+            </div>
             <p class="sphere-hint">球罐压力稳定后才开始采集，避免启动瞬态影响数据质量</p>
+            <p class="sphere-hint muted">{{ t.wf_spherePressureHint }}</p>
           </div>
           <p v-else class="empty-hint">未启用球罐判定，校准将按驻留时间直接采集</p>
         </UiPanel>
+
+        <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
+             留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
+             与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
+        <MotionSafetyPanel
+          v-model:motion-safety="motionSafety"
+          :motion-axes="motionAxes"
+          :t="(t as unknown as Record<string, string>)"
+        />
       </div>
 
       <!-- 步骤 3：确认保存 -->
@@ -799,7 +900,7 @@ function getChannelGroupLabel(groupKey: string): string {
             </div>
             <div class="summary-row">
               <span class="summary-label">CSV 保存</span>
-              <span class="summary-value">{{ savePath }}</span>
+              <span class="summary-value">{{ savePath && saveFileName ? joinCalibrationPath(savePath, saveFileName) : savePath }}</span>
             </div>
           </div>
         </UiPanel>
@@ -873,26 +974,49 @@ function getChannelGroupLabel(groupKey: string): string {
 </template>
 
 <style scoped>
-/* 紧凑布局主体：左右分栏，限制最大高度防止内容被拉长（参考遍历测试布局） */
+/* ============================================================
+   枚举控件（NSelect）宽度稳定化
+   所有 UiSelect 统一撑满父容器，防止选项文字长短导致宽度跳动
+   ============================================================ */
+.field :deep(.n-select),
+.batch-cell :deep(.n-select),
+.ntable td :deep(.n-select),
+.sphere-grid :deep(.n-select) {
+  width: 100% !important;
+  min-width: 0;
+}
+
+/* UiInputNumber 同样撑满字段容器，避免移除内联 style 后宽度回退 */
+.field :deep(.n-input-number),
+.ntable td :deep(.n-input-number) {
+  width: 100% !important;
+  min-width: 0;
+}
+
+/* 紧凑布局主体：左右分栏，使用固定 height（而非 max-height）确保步骤切换时画面尺寸稳定。
+   关键：用 height: 60vh 让内容少时主体保持固定高度、内容多时内部滚动，
+   避免步骤切换时对话框整体高度跳动破坏视觉锚点（与遍历测试一致）。 */
 .calib-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 0;
   min-height: 0;
-  max-height: 65vh;
+  height: 60vh;
   flex: 1;
   overflow: hidden;
 }
 
 .calib-main {
   min-height: 0;
-  max-height: 65vh;
+  height: 60vh;
   overflow-y: auto;
   padding-right: var(--space-3);
   scrollbar-width: thin;
 }
 
-/* 右侧 sidebar：固定宽度，限制高度，内部可滚动 */
+/* 右侧 sidebar：固定宽度，与主体等高（60vh），内部可滚动；
+   使用 height 而非 max-height 确保不同步骤下边栏与主体等高、
+   点阵预览图尺寸稳定（与遍历测试一致）。 */
 .calib-sidebar {
   border-left: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
@@ -900,9 +1024,19 @@ function getChannelGroupLabel(groupKey: string): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 65vh;
+  height: 60vh;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+/* 紧凑化 UiPanel 内边距：默认 var(--space-3) var(--space-4) 偏大，
+   覆盖为 4px 8px 让所有步骤的卡片视觉对齐、与遍历测试一致。
+   仅对非 hardware-step 生效，hardware-step 已有专属覆盖保持原行为。 */
+.step-content:not(.hardware-step) .section-card :deep(.n-card__content) {
+  padding: 4px 8px;
+}
+.step-content:not(.hardware-step) .section-card :deep(.n-card-header) {
+  padding: 4px 8px;
 }
 
 .sidebar-stats {
@@ -912,7 +1046,7 @@ function getChannelGroupLabel(groupKey: string): string {
 }
 
 .sidebar-stat {
-  padding: 10px 6px;
+  padding: 8px 6px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
@@ -934,8 +1068,8 @@ function getChannelGroupLabel(groupKey: string): string {
 
 .sidebar-preview {
   flex: 1 1 auto;
-  min-height: 160px;
-  max-height: 360px;
+  min-height: 140px;
+  max-height: 320px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
@@ -947,7 +1081,7 @@ function getChannelGroupLabel(groupKey: string): string {
 }
 
 .stat-label { font-size: var(--text-xs); color: var(--text-tertiary); }
-.stat-number { font-size: 18px; font-weight: 700; color: var(--accent-primary); font-variant-numeric: tabular-nums; }
+.stat-number { font-size: 16px; font-weight: 700; color: var(--accent-primary); font-variant-numeric: tabular-nums; }
 .stat-value { font-size: 12px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .stat-unit { font-size: var(--text-xs); color: var(--text-muted); margin-left: 2px; }
 
@@ -983,20 +1117,20 @@ function getChannelGroupLabel(groupKey: string): string {
   padding: var(--space-0-5) var(--space-2);
 }
 
-/* 批量操作工具栏：扁平化工具条，与右侧统计卡片风格协调 */
+/* 批量操作工具栏：扁平化工具条 */
 .batch-toolbar {
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
   background: var(--bg-panel);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .batch-toolbar-row {
   display: grid;
-  grid-template-columns: 160px 1fr;
+  grid-template-columns: 180px 1fr;
   align-items: end;
   gap: 10px;
 }
@@ -1047,6 +1181,13 @@ function getChannelGroupLabel(groupKey: string): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-0-5);
+  /* 确保内部 NSelect / NInputNumber 撑满字段宽度 */
+  min-width: 0;
+}
+
+/* 固定宽度字段修饰：用于不需要弹性伸缩的短控件（如刷新频率下拉） */
+.field--fixed {
+  flex-shrink: 0;
 }
 
 .field-label {
@@ -1102,7 +1243,7 @@ function getChannelGroupLabel(groupKey: string): string {
 .angle-fields {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-1-5);
+  gap: var(--space-1);
 }
 
 .layout-options {
@@ -1111,17 +1252,6 @@ function getChannelGroupLabel(groupKey: string): string {
   border-top: 1px solid var(--border-default);
   font-size: var(--text-xs);
   color: var(--text-secondary);
-}
-
-/* 点阵预览 */
-.layout-preview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1-5);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
-  background: var(--bg-panel-strong);
 }
 
 .preview-header {
@@ -1186,23 +1316,10 @@ function getChannelGroupLabel(groupKey: string): string {
   font-variant-numeric: tabular-nums;
 }
 
-/* 双列面板：采集参数 + 输出精度（历史样式，保留以兼容） */
-.two-col-panels {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.param-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-1-5);
-}
-
-/* 基础信息：配置名称 + 刷新频率 横向双列 */
+/* 基础信息：配置名称弹性 + 刷新频率固定宽度 */
 .basic-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-columns: minmax(0, 1fr) 160px;
   gap: var(--space-2);
   align-items: end;
 }
@@ -1263,6 +1380,7 @@ function getChannelGroupLabel(groupKey: string): string {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--text-sm);
+  table-layout: fixed;
 }
 
 .ntable th {
@@ -1275,9 +1393,23 @@ function getChannelGroupLabel(groupKey: string): string {
   border-bottom: 1px solid var(--border-default);
 }
 
+/* 通道映射表格固定列宽：启用 | 分组 | 名称(弹性) | 数据源(弹性) | 通道 | 精度 */
+.ntable th:nth-child(1),
+.ntable td:nth-child(1) { width: 48px; }
+
+.ntable th:nth-child(2),
+.ntable td:nth-child(2) { width: 56px; }
+
+.ntable th:nth-child(5),
+.ntable td:nth-child(5) { width: 96px; }
+
+.ntable th:nth-child(6),
+.ntable td:nth-child(6) { width: 80px; }
+
 .ntable td {
   padding: var(--space-1) 8px;
   border-bottom: 1px solid var(--border-default);
+  overflow: hidden;
 }
 
 .ntable tbody tr:hover {
@@ -1291,7 +1423,20 @@ function getChannelGroupLabel(groupKey: string): string {
 .cell-name {
   font-size: var(--text-sm);
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+/* 设备下拉所在单元格：允许下拉弹出层溢出 */
+.cell-device,
+.cell-channel {
+  overflow: visible;
+}
+
+/* 运动轴表格列宽比例 */
+.col-controller { width: 40%; }
+.col-axis { width: 25%; }
 
 /* 分组 tag：用颜色区分五孔/大气/风洞三类通道，紧凑不占横向空间 */
 .group-tag {
@@ -1331,9 +1476,10 @@ function getChannelGroupLabel(groupKey: string): string {
   font-size: var(--text-xs);
 }
 
+/* 3列：等待时间(窄) | 设备(宽弹性) | 通道(窄) */
 .sphere-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 120px 1fr 120px;
   gap: var(--space-2);
   align-items: start;
 }

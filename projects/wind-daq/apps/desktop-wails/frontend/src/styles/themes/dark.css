@@ -37,4 +37,19 @@
   --axis-z-soft: rgba(6, 182, 212, 0.2);
   --axis-u: #fbbf24;
   --axis-u-soft: rgba(245, 158, 11, 0.2);
+
+  /* 图表 token — 深色（与 :root 基线一致，显式写出便于主题 diff） */
+  --chart-bg: var(--bg-panel);
+  --chart-grid-line: color-mix(in srgb, #ffffff 8%, transparent);
+  --chart-grid-line-faint: color-mix(in srgb, #ffffff 4%, transparent);
+  --chart-axis-text: #94a3b8;
+  --chart-axis-line: #475569;
+  --chart-crosshair: color-mix(in srgb, #e2e8f0 35%, transparent);
+  --chart-cursor: var(--accent-info);
+  --chart-selection-fill: color-mix(in srgb, var(--accent-info) 12%, transparent);
+  --chart-selection-stroke: color-mix(in srgb, var(--accent-info) 40%, transparent);
+  --chart-band-warning: color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  --chart-band-danger: color-mix(in srgb, var(--accent-danger) 18%, transparent);
+  --chart-out-of-range: var(--accent-danger);
+  --chart-readout-bg: var(--bg-panel-strong);
 }

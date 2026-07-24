@@ -54,6 +54,36 @@ go run github.com/wailsapp/wails/v3/cmd/wails3 build   # wails3 build 内部自�
 否则构建的 exe 可能运行时报"correct build tags"错误。
 生产构建规则详见 `../../docs/decisions/ADR-004-wails-v3-production-build.md`。
 
+## Win7 LTS 分支构建（lts/win7）
+
+Win7 兼容版本采用 **Go 1.20.14 + Electron 22.3.27 + net/http** 替代 Wails v3 + WebView2，
+业务层（core/ports/usecase/adapters）零改动，仅替换最外层传输壳。详见 `../../docs/runbooks/win7-migration-guide.md`。
+
+```powershell
+# 一次性构建 Go 后端 + 前端 dist + 复制 exe 到 desktop-electron/backend/
+cd projects/daq-p1604/apps/desktop-electron
+npm install
+npm run build:backend
+
+# 打包 NSIS 安装包（产物 dist/DAQ-P-1604-Win7-Setup-0.3.0-win7.1-x64.exe）
+npm run dist:win7
+```
+
+**关键约束**：
+- Go 工具链必须是 `C:\go-versions\go1.20.14`（最后支持 Win7 的 Go 版本），build-backend.ps1 已硬编码路径
+- `GOWORK=off` 必须设置（由 build-backend.ps1 自动注入）
+- `CGO_ENABLED=0` 纯 Go 静态链接，避免依赖 mingw
+- 监听端口 **18182**（与 daq-t1603 的 18181 区分，避免同机双开冲突）
+- `frontend/dist/` 是 Vite 构建产物，被 Go `//go:embed all:frontend/dist` 嵌入到 exe
+
+**与主线分支的差异**：
+- `apps/desktop-wails/main.go` 改为 net/http server（移除 Wails 依赖）
+- `apps/desktop-wails/backend/app.go` 改为 hub 模式（移除 `application.App` 依赖）
+- 新增 `apps/desktop-wails/httpserver/` 包（HTTP handler + WebSocket hub）
+- 新增 `apps/desktop-wails/core/eventbus.go` + `core/hub.go`（EventBus 抽象 + 状态容器）
+- 前端 `bridge/` 改为 fetch + WebSocket（移除 `@wailsio/runtime` 依赖）
+- 新增 `apps/desktop-electron/` 目录（Electron 主进程 + preload + 打包配置）
+
 ## 硬件约束
 
 | 位置 | 约束 |

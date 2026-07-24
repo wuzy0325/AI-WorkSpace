@@ -21,7 +21,7 @@ package debugserver
 
 import (
 	"context"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"net/http"
 	_ "net/http/pprof" // 注册 /debug/pprof/* handler 到 http.DefaultServeMux
 	"os"

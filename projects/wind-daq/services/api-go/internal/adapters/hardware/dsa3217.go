@@ -3,7 +3,7 @@ package hardware
 import (
 	"bufio"
 	"fmt"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"net"
 	"strconv"
 	"strings"

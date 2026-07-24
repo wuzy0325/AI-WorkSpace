@@ -1,6 +1,7 @@
 import type { AxisName } from '@shared/types/motion';
 import { container } from '@/core/container';
 import type { IMotionService, IFeedbackService } from '@/core/types';
+import { useI18nStore } from '@stores/i18nStore';
 
 /**
  * 运动控制服务 Hook
@@ -88,7 +89,8 @@ export function useMotionWithFeedback(options: {
   safeHome: (id: string, axis: AxisName) => Promise<boolean>;
   safeConnect: (id: string) => Promise<boolean>;
 } {
-  const { showError = true, errorPrefix = '运动控制失败' } = options;
+  const i18n = useI18nStore();
+  const { showError = true, errorPrefix = i18n.t.wf_motionOperationFailed } = options;
   const motion = container.motion;
   const feedback = container.feedback;
 

@@ -3,7 +3,7 @@ package logging
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"shared.local/device-sdk/go/pkg/slog"
 	"strings"
 	"sync"
 	"sync/atomic"

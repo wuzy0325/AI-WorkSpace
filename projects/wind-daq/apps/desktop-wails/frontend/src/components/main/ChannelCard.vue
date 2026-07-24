@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Minus } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useI18nStore } from '@stores/i18nStore'
 
@@ -13,8 +12,15 @@ export interface ChannelCardData {
   isChartVisible: boolean
   style: Record<string, string>
   color: string
-  showTareBadge: boolean
-  disableTare: boolean
+  showCalibrationBadge: boolean
+  disableCalibration: boolean
+  /** 设备级校零中（用于禁用所有通道的校零按钮，避免并发触发） */
+  calibrating: boolean
+  /** P1-7：当前通道正在单独校零（operation.channelIndex === index），
+   *  仅此通道卡片显示进度徽章；其他通道卡片仅禁用按钮。 */
+  isThisChannelCalibrating: boolean
+  /** P1-7：校零进度文本，如 "3/5s · 120 样本"；非本通道校零中为空字符串 */
+  calibrationProgressText: string
   sparkBars: number[]
   range: { min: number; max: number }
 }
@@ -25,17 +31,13 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggleChart', index: number): void
-  (e: 'tare', index: number, rawValue: number): void
+  (e: 'calibrate', index: number): void
 }>()
 
 const i18n = useI18nStore()
 
-function onToggleChart(): void {
-  emit('toggleChart', props.card.index)
-}
-function onTare(): void {
-  emit('tare', props.card.index, props.card.rawValue)
+function onCalibrate(): void {
+  emit('calibrate', props.card.index)
 }
 </script>
 
@@ -66,9 +68,9 @@ function onTare(): void {
       <div class="channel-card__top">
         <div class="channel-card__top-left">
           <div
-            v-if="card.showTareBadge"
+            v-if="card.showCalibrationBadge"
             class="channel-card__tare-badge"
-            :title="i18n.t.tareOffsetApplied || '已应用归零偏移'"
+            :title="i18n.t.tareOffsetApplied || '已应用校零偏移'"
           />
           <span class="channel-card__tag mono-font">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
         </div>
@@ -77,31 +79,25 @@ function onTare(): void {
           <span class="channel-card__id-text mono-font">CH{{ card.index + 1 }}</span>
         </div>
         <div class="channel-card__actions">
+          <!-- 校零按钮：直接使用文字标签，比抽象图标更直白，
+               与顶部全设备校零按钮（DeviceDetailPanel 中的 tare）样式一致 -->
           <UiButton
             variant="ghost"
             size="sm"
-            :class="{ 'channel-card__action-btn--active': card.isChartVisible }"
-            :aria-label="card.isChartVisible ? '隐藏波形' : '显示波形'"
-            @click.stop="onToggleChart"
+            :class="{ 'channel-card__action-btn--disabled': card.disableCalibration }"
+            :aria-label="card.disableCalibration ? (i18n.t.tareDisabled || '此通道不支持校零') : (i18n.t.tare || '校零')"
+            :disabled="card.disableCalibration || card.calibrating"
+            @click.stop="onCalibrate"
           >
-            <template #icon>
-              <Eye v-if="card.isChartVisible" class="channel-card__icon" />
-              <EyeOff v-else class="channel-card__icon" />
-            </template>
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            size="sm"
-            :class="{ 'channel-card__action-btn--disabled': card.disableTare }"
-            :aria-label="card.disableTare ? '此通道不支持校零' : '归零'"
-            :disabled="card.disableTare"
-            @click.stop="onTare"
-          >
-            <template #icon>
-              <Minus class="channel-card__icon" />
-            </template>
+            {{ i18n.t.tare || '校零' }}
           </UiButton>
         </div>
+      </div>
+      <!-- P1-7：本通道单独校零时显示进度徽章，让用户知道哪个通道正在采样。
+           全通道校零时 channelIndex 为 undefined，所有卡片都不显示此徽章
+           （顶部按钮已有 "取消校零 (3/5s · 120 样本)" 文案）。 -->
+      <div v-if="card.isThisChannelCalibrating && card.calibrationProgressText" class="channel-card__calib-progress">
+        {{ card.calibrationProgressText }}
       </div>
       <div class="channel-card__value-area">
         <div class="channel-card__value-row">
@@ -229,42 +225,10 @@ function onTare(): void {
   flex: 0 0 auto;
 }
 
-.channel-card__action-btn {
-  width: 1.5em;
-  height: 1.5em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.25em;
-  color: var(--text-muted);
-  background: rgba(0, 0, 0, 0.2);
-  transition: all 0.2s ease;
-}
-
-:root[data-theme='light'] .channel-card__action-btn {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.channel-card__action-btn:hover {
-  color: var(--theme-color, var(--accent-primary));
-  background: rgba(16, 185, 129, 0.15);
-}
-
-.channel-card__action-btn--active {
-  color: var(--theme-color, var(--accent-primary));
-  background: var(--theme-color-soft, rgba(16, 185, 129, 0.15));
-}
-
 .channel-card__action-btn--disabled {
   opacity: 0.3;
   cursor: not-allowed;
   pointer-events: none;
-}
-
-.channel-card__icon {
-  width: 0.875em;
-  height: 0.875em;
-  flex-shrink: 0;
 }
 
 .channel-card__tare-badge {
@@ -273,6 +237,22 @@ function onTare(): void {
   border-radius: 50%;
   background: var(--accent-warning);
   flex-shrink: 0;
+}
+
+/* P1-7：单通道校零进度徽章，紧贴顶部按钮区下方，
+   使用主色弱化背景 + 等宽字体让 "3/5s · 120 样本" 数字纵向对齐。 */
+.channel-card__calib-progress {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-2xs, 11px);
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  border-radius: var(--radius-xs, 4px);
+  padding: 0.125em 0.5em;
+  margin-top: 0.25em;
+  align-self: flex-start;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
 .channel-card__value-area {

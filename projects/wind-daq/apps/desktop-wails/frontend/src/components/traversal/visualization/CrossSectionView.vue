@@ -7,6 +7,7 @@ import { getParamValue, VISUALIZATION_PARAM_CONFIG, type VisualizationParam } fr
 import { useECharts } from './composables/useECharts'
 import { useScreenshotExport } from './composables/useScreenshotExport'
 import { useTraversalChartTheme } from './composables/useTraversalChartTheme'
+import { useThrottledChartUpdate } from './composables/useThrottledChartUpdate'
 import UiSelect from '@components/ui/UiSelect.vue'
 
 const props = defineProps<{
@@ -24,17 +25,37 @@ const { exportScreenshot } = useScreenshotExport(chart)
 const sectionType = ref<'beta' | 'alpha'>('beta')
 const sectionValue = ref<number | null>(null)
 
-const validPoints = computed(() => props.dataPoints.filter((point) => point.interpolationResult.isValid))
+// 浮点比较 epsilon：后端按 0.1 步长生成时累积误差会让 0.3 !== 0.30000000000000004，
+// 严格相等会导致剖面图"明明有点位却显示空数据"。1e-6 容差覆盖典型浮点误差。
+const FLOAT_EPSILON = 1e-6
+
+// 插值有效 + alpha/beta 均为有限数才参与截面图（line 模式 beta=null 时跳过）
+const validPoints = computed(() => props.dataPoints.filter((point) =>
+  point.interpolationResult.isValid
+  && typeof point.coordinates.alpha === 'number'
+  && Number.isFinite(point.coordinates.alpha)
+  && typeof point.coordinates.beta === 'number'
+  && Number.isFinite(point.coordinates.beta)
+))
 const paramConfig = computed(() => VISUALIZATION_PARAM_CONFIG[props.param])
 const paramLabel = computed(() => t.value[paramConfig.value.labelKey] ?? paramConfig.value.fallbackLabel)
 
-function uniqueSorted(values: number[]): number[] {
-  return Array.from(new Set(values)).sort((a, b) => a - b)
+function uniqueSortedEpsilon(values: number[]): number[] {
+  // 按 epsilon 聚类去重：先排序，相邻差值 < epsilon 视为同一个值
+  if (values.length === 0) return []
+  const sorted = [...values].sort((a, b) => a - b)
+  const result: number[] = [sorted[0]]
+  for (let i = 1; i < sorted.length; i++) {
+    if (Math.abs(sorted[i] - result[result.length - 1]) >= FLOAT_EPSILON) {
+      result.push(sorted[i])
+    }
+  }
+  return result
 }
 
 const sectionOptions = computed(() => {
   const key = sectionType.value
-  return uniqueSorted(validPoints.value.map((point) => point.coordinates[key]))
+  return uniqueSortedEpsilon(validPoints.value.map((point) => point.coordinates[key] as number))
 })
 
 const chartData = computed<[number, number][]>(() => {
@@ -44,10 +65,13 @@ const chartData = computed<[number, number][]>(() => {
   const xKey = fixedKey === 'beta' ? 'alpha' : 'beta'
 
   return validPoints.value
-    .filter((point) => point.coordinates[fixedKey] === sectionValue.value)
+    // 浮点严格相等改为 epsilon 比较，避免累积误差漏点
+    .filter((point) => Math.abs((point.coordinates[fixedKey] as number) - sectionValue.value!) < FLOAT_EPSILON)
     .map((point): [number, number] | null => {
       const value = getParamValue(point.interpolationResult, props.param)
-      return value === null ? null : [point.coordinates[xKey], value]
+      const x = point.coordinates[xKey]
+      if (value === null || typeof x !== 'number' || !Number.isFinite(x)) return null
+      return [x, value]
     })
     .filter((point): point is [number, number] => point !== null)
     .sort((a, b) => a[0] - b[0])
@@ -61,7 +85,11 @@ watch(sectionOptions, (values) => {
     return
   }
 
-  if (sectionValue.value === null || !values.includes(sectionValue.value)) {
+  // 选中值失效判定也走 epsilon，避免严格不等导致重置到 values[0]
+  const matched = sectionValue.value === null
+    ? false
+    : values.some((v) => Math.abs(v - sectionValue.value!) < FLOAT_EPSILON)
+  if (!matched) {
     sectionValue.value = values[0]
   }
 }, { immediate: true })
@@ -70,8 +98,8 @@ function updateChart(): void {
   if (!chart.value) return
 
   const theme = chartTheme.value
-  const fixedLabel = sectionType.value === 'beta' ? 'beta' : 'alpha'
-  const xLabel = sectionType.value === 'beta' ? 'alpha' : 'beta'
+  const fixedLabel = sectionType.value === 'beta' ? t.value.fixedBeta : t.value.fixedAlpha
+  const xLabel = sectionType.value === 'beta' ? t.value.alphaAxis : t.value.betaAxis
   const option: EChartsOption = {
     backgroundColor: theme.panelColor,
     title: {
@@ -90,7 +118,7 @@ function updateChart(): void {
     grid: { left: 64, right: 28, top: 64, bottom: 52 },
     xAxis: {
       type: 'value',
-      name: `${xLabel} (deg)`,
+      name: xLabel,
       nameLocation: 'middle',
       nameGap: 30,
       axisLine: { lineStyle: { color: theme.axisColor } },
@@ -111,17 +139,20 @@ function updateChart(): void {
     series: [{
       type: 'line',
       data: chartData.value,
-      smooth: true,
+      // §27 第 10 条：禁用 smooth（贝塞尔曲线）以降低约 30% 渲染开销，
+      // 与 RealtimeChart.vue 的性能取舍保持一致。剖面图点数稀疏时折线足够清晰。
+      smooth: false,
       symbolSize: 6,
-      lineStyle: { color: '#3b82f6', width: 2 },
-      itemStyle: { color: '#3b82f6' }
+      lineStyle: { color: theme.seriesPrimary, width: 2 },
+      itemStyle: { color: theme.seriesPrimary }
     }]
   }
 
   chart.value.setOption(option, true)
 }
 
-watch([chart, chartData, chartTheme, paramLabel], updateChart, { immediate: true })
+// rAF 节流：高频推送下避免每帧多次 setOption 全量重绘
+useThrottledChartUpdate([chart, chartData, chartTheme, paramLabel], updateChart, { immediate: true })
 </script>
 
 <template>

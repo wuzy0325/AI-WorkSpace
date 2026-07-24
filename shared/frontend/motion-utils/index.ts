@@ -47,11 +47,64 @@ export const DEFAULT_AXIS_NAMES: AxisName[] = ['X', 'Y', 'Z', 'U']
 
 // 轴机械/电气参数默认值
 export const DEFAULT_STEPS_PER_REV = 1.8
-export const DEFAULT_MICRO_STEPS = 4
+// 细分数默认 40（B140 等硬件控制器的常用微步细分，平衡精度与扭矩）
+export const DEFAULT_MICRO_STEPS = 40
 export const DEFAULT_LEAD = 4
+/** 直线轴默认传动比（无减速）。 */
 export const DEFAULT_GEAR_RATIO = 1
+/** 旋转轴默认传动比 180（产品出厂常用减速比，与硬件机械结构对齐）。 */
+export const DEFAULT_ROTARY_GEAR_RATIO = 180
 /** 默认最大速度，wind-daq 主项目值；motion-controller 可在本地包装中覆盖为 10（测试工具低速）。 */
 export const DEFAULT_MAX_SPEED = 100
+
+/**
+ * 根据轴类型返回默认传动比。
+ * 旋转轴返回 180（产品出厂常用减速比），直线轴返回 1（无减速）。
+ * 用于 createDefaultAxis / normalizeAxisForEditing / UI 切换轴类型时填充默认值。
+ */
+export function defaultGearRatioForKind(kind: AxisKind | undefined): number {
+  return kind === 'ROTARY' ? DEFAULT_ROTARY_GEAR_RATIO : DEFAULT_GEAR_RATIO
+}
+
+/**
+ * 切换轴类型时的默认值联动（纯函数），供两个项目的 AxisConfigCard.vue 共用。
+ *
+ * 规则：
+ *   - 切到 ROTARY：仅当 gearRatio 为空或仍是直线轴默认值（1）时，自动填旋转轴默认 180；
+ *     用户已自定义非 1 的值则保留不动。
+ *   - 切到 LINEAR：仅当 lead 为空（null/undefined）时，补直线轴默认导程 4；
+ *     已有值（包括用户自定义值）保留不动。
+ *
+ * 设计目标：让"选择旋转轴时传动比默认显示 180"在 UI 切换中即时生效，
+ * 同时不覆盖用户对 gearRatio 的显式调整。
+ */
+export function applyAxisKindDefaults<T extends AxisConfig>(axis: T, kind: AxisKind): T {
+  const next: T = { ...axis, kind }
+  if (kind === 'ROTARY') {
+    const currentGear = next.gearRatio ?? DEFAULT_GEAR_RATIO
+    if (currentGear === DEFAULT_GEAR_RATIO) {
+      next.gearRatio = DEFAULT_ROTARY_GEAR_RATIO
+    }
+  } else if (kind === 'LINEAR') {
+    if (next.lead == null) {
+      next.lead = DEFAULT_LEAD
+    }
+  }
+  return next
+}
+
+/** 硬件运动控制器（MC4A、B140）新建设备时的默认最大速度，低速更安全。 */
+export const HARDWARE_CONTROLLER_DEFAULT_MAX_SPEED = 4
+
+/**
+ * 根据控制器类型返回默认最大速度。
+ * B140-MC / WTNMC4A-MC 返回硬件低速默认值（4），其余（模拟控制器）返回项目既定默认值。
+ * 使 MC4A / B140 新建设备默认速度为 4，同时不影响模拟控制器既有的默认值。
+ */
+export function defaultMaxSpeedForType(type: string | undefined, simulatedDefault: number = DEFAULT_MAX_SPEED): number {
+  if (type === 'B140-MC' || type === 'WTNMC4A-MC') return HARDWARE_CONTROLLER_DEFAULT_MAX_SPEED
+  return simulatedDefault
+}
 
 /** 默认编码器分辨率（工程单位/计数），与 Go core DefaultScale 对齐。 */
 export const DEFAULT_ENCODER_SCALE = 0.005
@@ -110,12 +163,14 @@ export const defaultEncComp = createDefaultEncoderCompensation
  *
  * U 轴默认为旋转轴，其余为直线轴。
  * maxSpeed 默认 100（wind-daq 主项目值），motion-controller 可传入 10 保持低速。
+ * 旋转轴 gearRatio 默认 180（产品出厂常用减速比），直线轴默认 1（无减速）。
  */
 export function createDefaultAxis(name: AxisName, maxSpeed: number = DEFAULT_MAX_SPEED): AxisConfigWithCompensation {
+  const kind: AxisKind = name === 'U' ? 'ROTARY' : 'LINEAR'
   return {
     name,
     enabled: true,
-    kind: name === 'U' ? 'ROTARY' : 'LINEAR',
+    kind,
     maxSpeed,
     minLimit: undefined,
     maxLimit: undefined,
@@ -124,7 +179,7 @@ export function createDefaultAxis(name: AxisName, maxSpeed: number = DEFAULT_MAX
     stepsPerRev: DEFAULT_STEPS_PER_REV,
     microSteps: DEFAULT_MICRO_STEPS,
     lead: DEFAULT_LEAD,
-    gearRatio: DEFAULT_GEAR_RATIO,
+    gearRatio: defaultGearRatioForKind(kind),
     positionSource: 'register',
     encoderScale: DEFAULT_ENCODER_SCALE,
     encoderCompensation: createDefaultEncoderCompensation(),
@@ -133,19 +188,23 @@ export function createDefaultAxis(name: AxisName, maxSpeed: number = DEFAULT_MAX
 
 /**
  * 将已有轴配置补齐为完整配置，兼容旧数据
+ *
+ * gearRatio 兜底按 kind 区分：旋转轴 180，直线轴 1。
+ * 注意：仅当 gearRatio 字段缺失时才补默认值，已存在的值（包括旧配置的 1）不会被覆盖。
  */
 export function normalizeAxisForEditing(axis: AxisConfig): AxisConfigWithCompensation {
+  const kind: AxisKind = axis.kind ?? (axis.name === 'U' ? 'ROTARY' : 'LINEAR')
   return {
     ...axis,
     enabled: true,
-    kind: axis.kind ?? (axis.name === 'U' ? 'ROTARY' : 'LINEAR'),
+    kind,
     maxSpeed: axis.maxSpeed ?? DEFAULT_MAX_SPEED,
     inverted: axis.inverted ?? false,
     encoderInverted: axis.encoderInverted ?? axis.inverted ?? false,
     stepsPerRev: axis.stepsPerRev ?? DEFAULT_STEPS_PER_REV,
     microSteps: axis.microSteps ?? DEFAULT_MICRO_STEPS,
     lead: axis.lead ?? DEFAULT_LEAD,
-    gearRatio: axis.gearRatio ?? DEFAULT_GEAR_RATIO,
+    gearRatio: axis.gearRatio ?? defaultGearRatioForKind(kind),
     positionSource: axis.positionSource ?? 'register',
     encoderScale: axis.encoderScale ?? DEFAULT_ENCODER_SCALE,
     encoderCompensation: {

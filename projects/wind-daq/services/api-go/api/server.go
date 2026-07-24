@@ -36,6 +36,34 @@ type Deps struct {
 	ConfigManager      *usecase.ConfigManager
 	LogRing            *logging.RingBuffer
 	LogManager         *logging.Manager // 用于日志分类开关 API
+
+	// AppHandler 由 backend.App 实现，提供应用层 HTTP 端点（version/startup-mode/open-motion-window/resolve-path）。
+	// 为 nil 时 /api/app/* 路由不注册，避免 nil 调用 panic。
+	AppHandler AppHandler
+
+	// OnAcquisitionStarted 在设备采集成功启动后异步调用。
+	// backend.App 用它实现“采集启动后自动开始录制”的业务策略（读 storage-settings.autoStartOnAcquisition）。
+	// 为 nil 时采集启动后无副作用，与原 Wails DeviceStartAcquisition 行为对齐。
+	OnAcquisitionStarted func(deviceID string)
+}
+
+// AppHandler 由桌面壳层（backend.App）实现，注入到 api.Deps 暴露应用层 HTTP 端点。
+// 接口隔离避免 api 包反向依赖 desktop-wails/backend。
+type AppHandler interface {
+	// Version 返回应用版本信息（名称 + 版本号）
+	Version() AppVersionInfo
+	// StartupMode 返回启动模式：“normal”（主窗口）或 “motion”（运动控制器独立窗口）
+	StartupMode() string
+	// OpenMotionWindow 启动运动控制器独立窗口子进程
+	OpenMotionWindow() error
+	// ResolvePath 将相对路径解析到用户可写目录
+	ResolvePath(p string) (string, error)
+}
+
+// AppVersionInfo 是 GET /api/app/version 的响应体
+type AppVersionInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -710,6 +738,55 @@ func NewRouter(deps Deps) http.Handler {
 	// 中间件链：metrics（最外层，记录所有请求耗时）→ recover（拦截 panic）→ cors → mux
 	// 顺序原因：metrics 需要能看到 recover 后的最终状态码；
 	// cors 需要在 OPTIONS 短路前生效，所以放在 mux 之前最贴近。
+	// ---- 应用层端点（version / startup-mode / open-motion-window / resolve-path） ----
+	// 仅在注入 AppHandler 时注册，避免 nil 调用 panic。
+	if deps.AppHandler != nil {
+		mux.HandleFunc("/api/app/version", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			writeJSON(w, http.StatusOK, deps.AppHandler.Version())
+		})
+		mux.HandleFunc("/api/app/startup-mode", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"mode": deps.AppHandler.StartupMode()})
+		})
+		mux.HandleFunc("/api/app/open-motion-window", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if err := deps.AppHandler.OpenMotionWindow(); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+		})
+		mux.HandleFunc("/api/app/resolve-path", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			var body struct {
+				Path string `json:"path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			resolved, err := deps.AppHandler.ResolvePath(body.Path)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"path": resolved})
+		})
+	}
+
 	return metricsMiddleware(recoverMiddleware(corsMiddleware(mux)))
 }
 
@@ -768,6 +845,14 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// 采集启动成功后异步触发自动录制检查（保留原 Wails DeviceStartAcquisition 行为）。
+		if deps.OnAcquisitionStarted != nil {
+			go deps.OnAcquisitionStarted(id)
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	case r.Method == http.MethodPost && action == "subscribe":
+		// 标记订阅意图，前端通过 /api/daq/latest/{id} 轮询拉取数据。
+		// 当前实现为空操作，保留以维持前端 subscribeStream 契约（参考原 Wails DeviceSubscribeStream）。
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	case r.Method == http.MethodPost && action == "stopAcquisition":
 		if err := deps.DeviceManager.StopAcquisition(id); err != nil {
