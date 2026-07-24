@@ -26,7 +26,7 @@ func makeChannels16(enabledMask [16]bool) []core.ChannelConfig {
 
 // readFirstDataRowT1603 读取 CSV 文件第一条数据行（跳过表头）。
 // 返回按逗号分隔的字段切片（已去除行尾换行）。
-// REC-005 表头共 20 列：DeviceID, Timestamp, Millisecond, Unit, CH01..CH16
+// 表头共 18 列：Timestamp, Unit, CH01..CH16
 func readFirstDataRowT1603(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -50,10 +50,10 @@ func readFirstDataRowT1603(t *testing.T, path string) []string {
 //
 // 测试步骤：
 //   - Stop 后读取 CSV 第一条数据行
-//   - 检查 CH1 列（字段索引 4，前 4 列为 DeviceID/Timestamp/Millisecond/Unit）应为空字符串
-//   - 检查 CH2 列（字段索引 5）应为 "1.000"
+//   - 检查 CH1 列（字段索引 2，前 2 列为 Timestamp/Unit）应为空字符串
+//   - 检查 CH2 列（字段索引 3）应为 "1.000"
 //
-// 期待结果：禁用通道列留空，启用通道列正常输出，列数仍为 20。
+// 期待结果：禁用通道列留空，启用通道列正常输出，列数仍为 18。
 func TestREC006_DisabledChannelEmpty(t *testing.T) {
 	var mask [16]bool
 	for i := range mask {
@@ -104,18 +104,18 @@ func TestREC006_DisabledChannelEmpty(t *testing.T) {
 	}
 
 	fields := readFirstDataRowT1603(t, csvPath)
-	// REC-005：20 列 = DeviceID + Timestamp + Millisecond + Unit + CH01..CH16
-	if got := len(fields); got != 20 {
-		t.Errorf("column count = %d, want 20 (DeviceID/Timestamp/Millisecond/Unit + 16 channels)", got)
+	// 18 列 = Timestamp + Unit + CH01..CH16
+	if got := len(fields); got != 18 {
+		t.Errorf("column count = %d, want 18 (Timestamp/Unit + 16 channels)", got)
 	}
 
-	// 索引 0: DeviceID, 1: Timestamp, 2: Millisecond, 3: Unit, 4: CH01（禁用，应留空）
-	if fields[4] != "" {
-		t.Errorf("CH01 (disabled) = %q, want empty string", fields[4])
+	// 索引 0: Timestamp, 1: Unit, 2: CH01（禁用，应留空）
+	if fields[2] != "" {
+		t.Errorf("CH01 (disabled) = %q, want empty string", fields[2])
 	}
-	// 索引 5: CH02（启用，应输出 "1.000"）
-	if fields[5] != "1.000" {
-		t.Errorf("CH02 (enabled) = %q, want %q", fields[5], "1.000")
+	// 索引 3: CH02（启用，应输出 "1.000"）
+	if fields[3] != "1.000" {
+		t.Errorf("CH02 (enabled) = %q, want %q", fields[3], "1.000")
 	}
 }
 
@@ -221,24 +221,24 @@ func TestREC006_MultiDeviceChannelIsolation(t *testing.T) {
 		t.Fatalf("missing devA or devB csv file, got: %v", csvByDevice)
 	}
 
-	// 解析 devA 第一条数据行：CH1（索引 4）应留空
+	// 解析 devA 第一条数据行：CH1（索引 2，前 2 列为 Timestamp/Unit）应留空
 	devALines := strings.Split(strings.TrimRight(devAContent, "\n"), "\n")
 	if len(devALines) < 2 {
 		t.Fatalf("devA csv should have header + data row")
 	}
 	devAFields := strings.Split(devALines[1], ",")
-	if devAFields[4] != "" {
-		t.Errorf("devA CH01 (disabled) = %q, want empty", devAFields[4])
+	if devAFields[2] != "" {
+		t.Errorf("devA CH01 (disabled) = %q, want empty", devAFields[2])
 	}
 
-	// 解析 devB 第一条数据行：CH1（索引 4）应有值 "2.000"
+	// 解析 devB 第一条数据行：CH1（索引 2）应有值 "2.000"
 	devBLines := strings.Split(strings.TrimRight(devBContent, "\n"), "\n")
 	if len(devBLines) < 2 {
 		t.Fatalf("devB csv should have header + data row")
 	}
 	devBFields := strings.Split(devBLines[1], ",")
-	if devBFields[4] != "2.000" {
-		t.Errorf("devB CH01 (enabled, isolated from devA) = %q, want %q", devBFields[4], "2.000")
+	if devBFields[2] != "2.000" {
+		t.Errorf("devB CH01 (enabled, isolated from devA) = %q, want %q", devBFields[2], "2.000")
 	}
 }
 
@@ -301,13 +301,13 @@ func TestREC006_ProfileAppliedBeforeStart(t *testing.T) {
 	}
 
 	fields := readFirstDataRowT1603(t, csvPath)
-	// CH1（索引 4）禁用应留空
-	if fields[4] != "" {
-		t.Errorf("CH01 (disabled, profile injected before Start) = %q, want empty", fields[4])
+	// CH1（索引 2）禁用应留空
+	if fields[2] != "" {
+		t.Errorf("CH01 (disabled, profile injected before Start) = %q, want empty", fields[2])
 	}
-	// CH2（索引 5）启用应有值 "3.000"
-	if fields[5] != "3.000" {
-		t.Errorf("CH02 (enabled) = %q, want %q", fields[5], "3.000")
+	// CH2（索引 3）启用应有值 "3.000"
+	if fields[3] != "3.000" {
+		t.Errorf("CH02 (enabled) = %q, want %q", fields[3], "3.000")
 	}
 }
 
@@ -384,9 +384,9 @@ func TestREC006_StopClearsProfiles(t *testing.T) {
 	}
 
 	fields := readFirstDataRowT1603(t, csvPath)
-	// CH1（索引 4）应正常输出 "5.000"（Stop 清理了上次掩码，无注入 = 全启用）
-	if fields[4] != "5.000" {
-		t.Errorf("session2 CH01 = %q, want %q (Stop should clear profiles)", fields[4], "5.000")
+	// CH1（索引 2）应正常输出 "5.000"（Stop 清理了上次掩码，无注入 = 全启用）
+	if fields[2] != "5.000" {
+		t.Errorf("session2 CH01 = %q, want %q (Stop should clear profiles)", fields[2], "5.000")
 	}
 }
 
@@ -437,10 +437,10 @@ func TestREC006_EmptyChannelsFallback(t *testing.T) {
 	}
 
 	fields := readFirstDataRowT1603(t, csvPath)
-	// 所有 16 通道（索引 4-19）都应有值 "7.000"
-	for i := 4; i < 20; i++ {
+	// 所有 16 通道（索引 2-17，前 2 列为 Timestamp/Unit）都应有值 "7.000"
+	for i := 2; i < 18; i++ {
 		if fields[i] != "7.000" {
-			t.Errorf("CH%02d (empty channels fallback) = %q, want %q", i-3, fields[i], "7.000")
+			t.Errorf("CH%02d (empty channels fallback) = %q, want %q", i-1, fields[i], "7.000")
 		}
 	}
 }

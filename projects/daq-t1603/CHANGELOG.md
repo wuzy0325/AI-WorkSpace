@@ -11,6 +11,9 @@
 ### Changed
 - 配置脏状态校正（CFG-017）：硬件配置与 profile 不一致时脏标记更准确。
 - 前端 ChannelCard 同步移除数值变化闪烁动画（视觉噪音）。
+- CSV 表头列由 20 列（DeviceID,Timestamp,Millisecond,Unit,CH01..CH16）改为 18 列（Timestamp,Unit,CH01..CH16）。
+  DeviceID 列移除（文件名已含设备 ID）；Timestamp 列仅保留秒级精度（'YYYY-MM-DD HH:MM:SS），
+  与 0.3.2 决策一致——1000Hz 采集时同一秒内的样本共享同一时间戳，不再区分毫秒。
 
 ### Fixed
 - 修复应用退出阶段 readLoop 收尾时 EmitDeviceState 在已关闭 app 上 panic：device_service.ServiceShutdown 清空 s.app，EmitDeviceState 加 recover 保护。

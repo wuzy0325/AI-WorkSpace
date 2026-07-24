@@ -127,12 +127,9 @@ func TestWriteAndVerifyFile(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 	text := string(content)
-	// REC-005：表头为 20 列 DeviceID,Timestamp,Millisecond,Unit,CH01..CH16
-	if !strings.Contains(text, "DeviceID,Timestamp,Millisecond,Unit") {
+	// 表头为 18 列 Timestamp,Unit,CH01..CH16（不含 DeviceID/Millisecond 列）
+	if !strings.Contains(text, "Timestamp,Unit") {
 		t.Fatalf("missing header in file: %s", text)
-	}
-	if !strings.Contains(text, "dev1") {
-		t.Fatalf("missing deviceID in file: %s", text)
 	}
 	if !strings.Contains(text, "°C") {
 		t.Fatalf("missing Unit in file: %s", text)
@@ -176,9 +173,15 @@ func TestMultiDeviceIndependentFiles(t *testing.T) {
 		if got := strings.Count(text, "\n"); got != 6 {
 			t.Fatalf("%s: expected 6 lines (1 header + 5 data), got %d", id, got)
 		}
-		// 数据行行首为 deviceID，表头不含具体 deviceID 值，故 5 次出现
-		if got := strings.Count(text, id); got != 5 {
-			t.Fatalf("%s: expected 5 occurrences of deviceID in data rows, got %d", id, got)
+		// DeviceID 列已移除，数据行不再含 deviceID 字符串；
+		// 改为验证本文件不混入其他设备的数据（防混写回归）
+		for _, other := range devices {
+			if other == id {
+				continue
+			}
+			if strings.Contains(text, other) {
+				t.Fatalf("%s: file should not contain other device %s data", id, other)
+			}
 		}
 	}
 
