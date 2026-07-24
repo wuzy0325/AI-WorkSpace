@@ -6,6 +6,7 @@ package protocol
 
 import (
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -103,6 +104,38 @@ func IsConnectionFault(err error) bool {
 		strings.Contains(msg, "use of closed network connection") ||
 		strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "device disconnected")
+}
+
+// IsConnResetByPeer 判定错误是否表明对端已主动关闭/重置 TCP 连接（FIN/RST）。
+//
+// 与 IsConnectionFault 的语义差异：
+//   - IsConnectionFault：用于日志降噪，范围宽泛（含 timeout）
+//   - IsConnResetByPeer：用于状态机决策，只匹配"对端已不可达"的硬证据
+//
+// 匹配范围：
+//   - io.EOF：对端正常 FIN（如设备固件异常主动关闭）
+//   - connection reset by peer：对端 RST
+//   - broken pipe：本地向已 RST 的连接写入
+//   - wsasend/wsarecv ... aborted：Windows 内核层 WSAECONNABORTED
+//     （通常由本地 TCP 栈在检测到对端长时间无响应后主动 RST 半死连接）
+//   - connection abort*：跨平台连接中止表述
+//
+// 用途：Connect 阶段命令（如 u01101）失败时区分"软错误"（解析失败、超时）
+// 与"硬错误"（连接已死）。硬错误必须让 Connect 失败，避免把已死的连接
+// 塞进 shard.drivers 造成后续 StartAcquisition 爆 WSAECONNABORTED 假象。
+func IsConnResetByPeer(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection abort") ||
+		strings.Contains(msg, "wsasend") ||
+		strings.Contains(msg, "wsarecv")
 }
 
 // IsClosedConnError 判断错误是否由连接被主动关闭引起。

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	sharedproto "shared.local/device-sdk/go/protocol"
+
 	"daq-p1604/core"
 )
 

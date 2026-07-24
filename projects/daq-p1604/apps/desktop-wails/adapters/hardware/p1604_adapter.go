@@ -320,8 +320,13 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 	})
 
 	// 读取硬件当前 EU 压力转换系数，识别硬件单位
-	// 读硬件失败不阻断连接（兼容旧固件或模拟器），仅记录 warn
-	hwUnit, unitNote := a.syncUnitFromHardware(driver, profile)
+	// 读硬件失败不阻断连接（兼容旧固件或模拟器），仅记录 warn；
+	// 但对端 FIN/RST 等连接已死错误必须返回 error，让 Connect 失败并关闭 conn。
+	hwUnit, unitNote, unitErr := a.syncUnitFromHardware(driver, profile)
+	if unitErr != nil {
+		conn.Close()
+		return fmt.Errorf("sync unit from hardware: %w", unitErr)
+	}
 
 	shard.mu.Lock()
 	// 二次检查：拨号期间可能已被其他 goroutine 连接
@@ -371,11 +376,18 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 // 返回值：
 //   - unit: 识别到的硬件单位（如 "psi"、"kPa"）；读取失败返回 ""
 //   - note: 给日志使用的简短描述（如 "unit=psi (coeff=1.000000)"）
+//   - err: 仅在"连接已死"（对端 FIN/RST）时非空。其他软错误（超时、解析失败、
+//     系数未知）不返回 err，保留 profile 单位并继续连接流程——兼容旧固件/模拟器
+//
+// 连接已死的判定依据 sharedproto.IsConnResetByPeer：包含 io.EOF、connection reset、
+// broken pipe、WSAECONNABORTED 等。此时若继续把 driver 塞进 shard，后续任何命令
+// （StartAcquisition 的 c 00）都会爆 WSAECONNABORTED，且本地 TCP 已不可用，
+// 必须让 Connect 失败并关闭 conn，强制用户重连。
 //
 // 通信日志：u01101 命令通过 sharedproto.P1604ReadUnitCoefficient 发送，
 // 不走 driver.sendCommand，故在此补充 hardware-send/hardware-recv 日志，
 // 让前端 "通信" 分组能看到完整的连接阶段命令交互。
-func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.PressureProfile) (string, string) {
+func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.PressureProfile) (string, string, error) {
 	// 打印 u01101 命令发送日志
 	a.emitLog(DeviceLogEntry{
 		Level: "info", Category: "hardware-send", DeviceID: profile.ID,
@@ -388,13 +400,22 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 			Level: "warn", Category: "hardware-recv", DeviceID: profile.ID,
 			Message: "Command response error", Detail: fmt.Sprintf("u01101: %v", err),
 		})
-		// 读硬件失败：保留 profile 单位，记录 warn（不阻断连接）
+		// 关键分支：对端已 FIN/RST → 连接已死，返回 error 让 Connect 失败
+		if sharedproto.IsConnResetByPeer(err) {
+			a.emitLog(DeviceLogEntry{
+				Level: "error", Category: "hardware", DeviceID: profile.ID,
+				Message: "Connection reset by peer during unit sync",
+				Detail:  fmt.Sprintf("u01101: %v | aborting connect", err),
+			})
+			return "", "", fmt.Errorf("read u01101: %w", err)
+		}
+		// 软错误（超时/解析失败等）：保留 profile 单位，记录 warn（不阻断连接）
 		a.emitLog(DeviceLogEntry{
 			Level: "warn", Category: "hardware", DeviceID: profile.ID,
 			Message: "Read hardware unit failed, keep profile unit",
 			Detail:  fmt.Sprintf("%v | profile=%s", err, profile.P1604Cfg.Unit),
 		})
-		return "", fmt.Sprintf("unit=%s (hardware read failed)", profile.P1604Cfg.Unit)
+		return "", fmt.Sprintf("unit=%s (hardware read failed)", profile.P1604Cfg.Unit), nil
 	}
 	// 打印 u01101 响应日志（通信层，记录解析出的系数）
 	a.emitLog(DeviceLogEntry{
@@ -409,7 +430,7 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 			Message: "Hardware unit coefficient unknown",
 			Detail:  fmt.Sprintf("coeff=%f | profile=%s", coeff, profile.P1604Cfg.Unit),
 		})
-		return "", fmt.Sprintf("unit=%s (hardware coeff=%f unknown)", profile.P1604Cfg.Unit, coeff)
+		return "", fmt.Sprintf("unit=%s (hardware coeff=%f unknown)", profile.P1604Cfg.Unit, coeff), nil
 	}
 	if hwUnit != profile.P1604Cfg.Unit {
 		// 硬件与 profile 不一致：以硬件为准
@@ -418,9 +439,9 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 			Message: "Unit synced from hardware",
 			Detail:  fmt.Sprintf("profile=%s -> hardware=%s (coeff=%f)", profile.P1604Cfg.Unit, hwUnit, coeff),
 		})
-		return hwUnit, fmt.Sprintf("unit=%s (synced from hardware, coeff=%f)", hwUnit, coeff)
+		return hwUnit, fmt.Sprintf("unit=%s (synced from hardware, coeff=%f)", hwUnit, coeff), nil
 	}
-	return hwUnit, fmt.Sprintf("unit=%s (coeff=%f)", hwUnit, coeff)
+	return hwUnit, fmt.Sprintf("unit=%s (coeff=%f)", hwUnit, coeff), nil
 }
 
 // syncChannelsUnit 硬件单位同步后级联更新通道单位。
@@ -977,6 +998,14 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 				Message: "Write hardware unit failed",
 				Detail:  fmt.Sprintf("unit=%s coeff=%f | %v", cfg.Unit, coeff, err),
 			})
+			// 对端已 FIN/RST → 连接已死，必须清理 driver 并把 status 置为 Error。
+			// 否则后续 StartAcquisition 的 c 00 命令会爆 WSAECONNABORTED 假象，
+			// 且本地 TCP 已不可用，用户重连前任何操作都会失败。
+			// 软错误（如设备 N05 拒绝、解析失败）不触发清理，driver 保留在 shard，
+			// 前端可继续 Disconnect 或重试。
+			if sharedproto.IsConnResetByPeer(err) {
+				a.handleConnectionLost(id, driver, fmt.Errorf("v01101 write: %w", err))
+			}
 			return fmt.Errorf("write hardware unit: %w", err)
 		}
 		// 打印 v01101 响应日志（通信层，写入成功）
