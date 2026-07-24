@@ -42,10 +42,7 @@ export function GetLogFileState(): $CancellablePromise<$models.LogFileState> {
 }
 
 /**
- * PickDirectory 让用户在系统对话框中选择目录，返回选定的绝对路径。
- * 
- * 在 Wails v3 中，目录选择通过 app.Dialog.OpenFile().CanChooseDirectories(true) 完成；
- * 该方法被 LogService 和 RecordingService 共用（前端 bridge 各自调用同名 PickDirectory）。
+ * PickDirectory 打开系统目录选择对话框。
  */
 export function PickDirectory(): $CancellablePromise<string> {
     return $Call.ByID(4211100394);

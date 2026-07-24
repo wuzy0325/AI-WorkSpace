@@ -161,6 +161,12 @@ export class RecordingSession {
     "snapshotCount": number;
     "status": RecordingStatus;
 
+    /**
+     * DroppedCount 是录制队列背压丢弃的总帧数（跨设备聚合）。
+     * 前端可据此显示数据完整性指标。
+     */
+    "droppedCount": number;
+
     /** Creates a new RecordingSession instance. */
     constructor($$source: Partial<RecordingSession> = {}) {
         if (!("id" in $$source)) {
@@ -180,6 +186,9 @@ export class RecordingSession {
         }
         if (!("status" in $$source)) {
             this["status"] = RecordingStatus.$zero;
+        }
+        if (!("droppedCount" in $$source)) {
+            this["droppedCount"] = 0;
         }
 
         Object.assign(this, $$source);

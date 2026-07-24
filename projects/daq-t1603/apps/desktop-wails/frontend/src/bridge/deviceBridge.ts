@@ -22,6 +22,7 @@ import {
   ApplyConfig,
   GetStatus,
   ScanDevices,
+  SetUIRefreshRateHz,
 } from '../../bindings/daq-t1603/backend/deviceservice'
 
 export interface ChannelConfig {
@@ -145,6 +146,20 @@ export function applyConfig(id: string, cfg: T1603Config): Promise<void> {
 
 export function scanDevices(): Promise<ScanResult[]> {
   return ScanDevices() as any
+}
+
+/**
+ * 设置 UI 快照推送频率（Hz）。
+ *
+ * 调用后后端 relayStream 下一轮 select 自动跟随新间隔，
+ * 无需重启采集。范围 [1, 60]，超范围会被后端拒绝。
+ *
+ * 使用场景：
+ *   - App.onMounted 启动时同步 localStorage 保存的偏好；
+ *   - MainTopBar.selectRefreshRate 用户切换档位时即时生效。
+ */
+export function setUIRefreshRateHz(hz: number): Promise<void> {
+  return SetUIRefreshRateHz(hz) as Promise<void>
 }
 
 // ---- 事件订阅 ----------------------------------------------------------------

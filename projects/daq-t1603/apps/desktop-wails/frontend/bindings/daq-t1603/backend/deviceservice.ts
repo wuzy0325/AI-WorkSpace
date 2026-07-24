@@ -5,7 +5,8 @@
  * DeviceService 暴露设备相关能力给前端：
  *   - 扫描 / 配置 CRUD
  *   - 连接 / 断开 / 应用配置
- *   - 启动 / 停止采集（带后台中继协程，按 100ms 频率推送温度快照、按 1s 频率推送录制状态）
+ *   - 启动 / 停止采集（带后台中继协程，按用户设置的刷新率推送温度快照、按 1s 频率推送录制状态）
+ *   - 设置 UI 刷新率（SetUIRefreshRateHz，动态调整推送节奏，无需重启采集）
  * 
  * 设计要点：
  *   - 录制相关的热路径调用通过 hub.RecordingService 引用直接走，
@@ -51,6 +52,24 @@ export function Disconnect(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * EmitDeviceState 实现 core.StateEmitter 接口（ACQ-010/STB-003）。
+ * 
+ * 由 adapter 在 OnReadLoopExit 等异步状态变化时通过 hub.EmitDeviceState 触发，
+ * 本方法将状态通过 Wails Event 总线广播为 daq:device-state 事件，
+ * 前端 App.vue 中 onDeviceState 订阅器接收后调用 syncStatusFromBackend，
+ * 让 statusMap 实时同步（如物理断网后从「采集中」直接变为「未连接」）。
+ * 
+ * 实现轻量：仅持 s.mu 读取 app 字段后立即释放，无 I/O 阻塞，
+ * 可在 adapter 持锁回调中安全调用（s.mu 与 adapter 的 a.mu 是不同锁，无嵌套死锁风险）。
+ * 加 recover 保护：应用退出阶段 app 可能已关闭，Event.Emit 在已关闭的 app 上可能 panic，
+ * recover 避免 panic 终止 adapter readLoop 的清理流程；
+ * recover 内记录 slog.Debug 保留可观测性，避免静默吞掉真实 bug（如 state 字段 nil）。
+ */
+export function EmitDeviceState(deviceID: string, state: core$0.DeviceState): $CancellablePromise<void> {
+    return $Call.ByID(2016103354, deviceID, state);
+}
+
+/**
  * GetProfiles 获取所有设备配置。
  */
 export function GetProfiles(): $CancellablePromise<core$0.TemperatureProfile[]> {
@@ -84,6 +103,24 @@ export function ScanDevices(): $CancellablePromise<core$0.ScanResult[]> {
 }
 
 /**
+ * SetUIRefreshRateHz 设置 UI 快照推送频率（Hz）。
+ * 
+ * 设计意图：
+ *   - 前端 MainTopBar 提供 2/5/10/15/20/30 Hz 档位，让用户平衡"画面流畅度"与"CPU 占用"；
+ *   - 后端 relayStream 按此频率通过 daq:payload 事件推送最新快照；
+ *   - relayStream 下一轮 select 自动跟随新值，无需重启协程、无需持锁。
+ * 
+ * 范围校验：[1, 60] Hz。
+ *   - 下限 1Hz：低于 1Hz 会让图表长时间不更新，误导用户以为采集卡死；
+ *   - 上限 60Hz：超过 60Hz 会拖慢 WebView2 GUI 线程，与前端 displayStore 限制一致。
+ * 
+ * 该方法只更新 atomic 值，不持任何锁，可安全在 Wails Bind 调用栈中使用。
+ */
+export function SetUIRefreshRateHz(hz: number): $CancellablePromise<void> {
+    return $Call.ByID(1825276241, hz);
+}
+
+/**
  * StartAcquisition 启动采集。
  */
 export function StartAcquisition(id: string): $CancellablePromise<void> {
@@ -102,17 +139,6 @@ export function StopAcquisition(id: string): $CancellablePromise<void> {
  */
 export function UpsertProfile(profile: core$0.TemperatureProfile): $CancellablePromise<void> {
     return $Call.ByID(4029723420, profile);
-}
-
-/**
- * EmitDeviceState 通过事件总线向后端推送设备状态（内部调用，前端一般不直接调用）。
- * 手动同步自 backend/device_service.go 的 EmitDeviceState —— 当前环境的 wails3 生成器会把
- * 整个 bindings 改写为 .js 并删除已提交的 .ts，故在此手工补齐导出以满足 binding 一致性校验。
- * 待 wails3 版本对齐后，请运行 `wails3 generate bindings` 重新生成权威绑定。
- */
-export function EmitDeviceState(deviceID: string, state: core$0.DeviceState): $CancellablePromise<void> {
-    // ByID 为占位值：该方法目前仅由 backend 内部经事件总线调用，前端不直调。
-    return $Call.ByID(3999999991, deviceID, state);
 }
 
 // Private type creation functions

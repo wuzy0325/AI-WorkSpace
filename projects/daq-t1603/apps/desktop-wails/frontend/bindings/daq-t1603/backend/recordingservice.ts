@@ -42,12 +42,20 @@ export function IsActive(): $CancellablePromise<boolean> {
 }
 
 /**
- * PickDirectory 选择目录对话框，逻辑与 LogService.PickDirectory 等价。
- * 之所以在两个 Service 都暴露同名方法，是为了保持前端 bridge 的接口形态稳定，
- * 实现层都直接调用 Wails v3 Dialog API。
+ * PickDirectory 打开系统目录选择对话框。
  */
 export function PickDirectory(): $CancellablePromise<string> {
     return $Call.ByID(1324924685);
+}
+
+/**
+ * SetDeviceProfile 注入设备通道配置到 recorder（REC-006）。
+ * 由 DeviceService 在设备 Connect / StartAcquisition / ApplyConfig 时调用，
+ * 让 recorder 在 CSV 写入时将禁用通道的列写空值，便于操作员区分
+ * "通道禁用"与"通道无数据"。
+ */
+export function SetDeviceProfile(deviceID: string, channels: core$0.ChannelConfig[]): $CancellablePromise<void> {
+    return $Call.ByID(871651248, deviceID, channels);
 }
 
 /**
@@ -69,17 +77,6 @@ export function StopRecording(): $CancellablePromise<void> {
  */
 export function Write(snapshot: core$0.TemperatureSnapshot): $CancellablePromise<void> {
     return $Call.ByID(292472710, snapshot);
-}
-
-/**
- * SetDeviceProfile 设置设备录制通道配置（内部调用，前端一般不直接调用）。
- * 手动同步自 backend/recording_service.go 的 SetDeviceProfile —— 当前环境的 wails3 生成器会把
- * 整个 bindings 改写为 .js 并删除已提交的 .ts，故在此手工补齐导出以满足 binding 一致性校验。
- * 待 wails3 版本对齐后，请运行 `wails3 generate bindings` 重新生成权威绑定。
- */
-export function SetDeviceProfile(deviceID: string, channels: core$0.ChannelConfig[]): $CancellablePromise<void> {
-    // ByID 为占位值：该方法目前仅由 backend 内部调用，前端不直调。
-    return $Call.ByID(3999999992, deviceID, channels);
 }
 
 // Private type creation functions

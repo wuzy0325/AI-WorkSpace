@@ -6,7 +6,8 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
- * LogFileState 日志文件写入状态，用于前端展示
+ * LogFileState 日志文件写入状态，用于前端展示。
+ * 由 LogService.GetLogFileState 返回，前端通过 v3 binding 读取。
  */
 export class LogFileState {
     "active": boolean;
