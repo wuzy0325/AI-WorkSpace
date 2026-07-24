@@ -407,14 +407,17 @@ type deviceWriter struct {
 // newDeviceWriter 创建设备 writer 并写入 CSV 表头。
 // 不启动 goroutine，由调用方在注册到 map 后调用 start()。
 //
-// 表头列（共 20 列，REC-005）：DeviceID, Timestamp, Millisecond, Unit, CH01..CH16
-//   - DeviceID：设备标识，多设备录制时区分来源
-//   - Timestamp：人类可读秒精度（2006-01-02 15:04:05），Excel 友好，默认识别为时间类型
-//   - Millisecond：毫秒部分（0-999 整数），1000Hz 采样下相邻样本靠此列区分
+// 表头列（共 18 列）：Timestamp, Unit, CH01..CH16
+//   - Timestamp：人类可读精度到秒（2006-01-02 15:04:05），前缀单引号强制 Excel
+//     按文本显示，避免被默认 "yyyy/m/d h:mm" 格式自动转换；1000Hz 采样下同一秒
+//     内样本共享同一时间戳（与 0.3.2 决策一致，不区分毫秒）
 //   - Unit：快照单位（°C/°F/mV 等），10 台设备可能不同，必须落盘
 //   - CH01..CH16：16 通道数值，禁用通道写空列（REC-006）
 //
-// 时间来源：硬件时间戳优先（snap.HardwareTimestamp > 0 时使用），否则用系统毫秒时间戳。
+// 时间来源：硬件时间戳优先（snap.HardwareTimestamp > 0 时使用），否则用系统毫秒时间戳取整到秒。
+//
+// 说明：DeviceID 不作为列输出（每设备独立文件，文件名已含 deviceID，列内重复冗余）；
+// Millisecond 不再单独成列，Timestamp 仅保留秒级精度。
 func newDeviceWriter(deviceID, outputDir, prefix string) (*deviceWriter, error) {
 	// 文件名加毫秒后缀，避免同设备同秒重建覆盖
 	filename := fmt.Sprintf("%s_%s_%s.csv",
@@ -441,9 +444,10 @@ func newDeviceWriter(deviceID, outputDir, prefix string) (*deviceWriter, error) 
 		},
 	}
 
-	// 写表头（REC-005）：DeviceID + Timestamp + Millisecond + Unit + CH01..CH16 = 20 列
+	// 写表头：Timestamp + Unit + CH01..CH16 = 18 列
+	// 不含 DeviceID 列（文件名已含 deviceID）；不含独立 Millisecond 列（Timestamp 仅秒级精度）
 	buf := w.bufPool.Get().([]byte)[:0]
-	buf = append(buf, "DeviceID,Timestamp,Millisecond,Unit"...)
+	buf = append(buf, "Timestamp,Unit"...)
 	for i := 0; i < 16; i++ {
 		buf = append(buf, ',')
 		buf = append(buf, fmt.Sprintf("CH%02d", i+1)...)
@@ -509,30 +513,20 @@ func (w *deviceWriter) writeOne(snap core.TemperatureSnapshot) {
 
 	buf := w.bufPool.Get().([]byte)[:0]
 
-	// DeviceID
-	buf = append(buf, snap.DeviceID...)
-	buf = append(buf, ',')
-
 	// 时间来源：硬件时间戳优先（更精确），否则用系统毫秒时间戳
 	var t time.Time
 	if snap.HardwareTimestamp > 0 {
 		sec := int64(snap.HardwareTimestamp)
-		nsec := int64((snap.HardwareTimestamp - float64(sec)) * 1e9)
-		t = time.Unix(sec, nsec)
+		t = time.Unix(sec, 0)
 	} else {
-		t = time.UnixMilli(snap.Timestamp)
+		// 系统毫秒时间戳截断到秒
+		t = time.Unix(snap.Timestamp/1000, 0)
 	}
-	// 单列 Timestamp：截断到秒级。
-	// 原因：DAQ-P-1604 等设备时间戳存在固件 bug（fractional 字段递增不正确），
-	// 且系统毫秒时间戳在 1000Hz 下精度不足。统一秒级避免展示错误的时间细分。
-	// 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式隐藏秒。
+	// Timestamp 列：精度到秒（2006-01-02 15:04:05），
+	// 1000Hz 采样下同一秒内样本共享同一时间戳，不区分毫秒（与 0.3.2 决策一致）。
+	// 前缀单引号强制 Excel 按文本显示，避免被默认 "yyyy/m/d h:mm" 格式自动转换。
 	buf = append(buf, '\'')
 	buf = t.AppendFormat(buf, "2006-01-02 15:04:05")
-	buf = append(buf, ',')
-
-	// Millisecond 列（REC-005）：0-999 整数，与秒级 Timestamp 配合
-	// 还原 1000Hz 采样下的相邻样本时刻，避免同秒样本无法区分。
-	buf = strconv.AppendInt(buf, int64(t.Nanosecond()/1e6), 10)
 	buf = append(buf, ',')
 
 	// Unit（单位）：10 台设备可能不同，必须落盘

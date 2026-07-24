@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.4.0] - 2026-07-24
+
+### Added
+- 新增异步设备状态事件推送（ACQ-010/STB-003）：OnReadLoopExit → hub → service 异步推送，UI 状态更新更及时，避免阻塞采集热路径。
+- 新增禁用通道空 CSV 列输出（REC-006）：禁用通道在 CSV 中输出空列，保持列顺序与表头一致。
+- 新增日志面板搜索与日志文件轮转（LOG-010/015）：前端日志可关键字搜索，后端日志按大小轮转。
+- 适配器扩展支持新 SDK 接口（配合 shared/device-sdk/go/daq/hardware/daq_t1603.go 的接口扩展），为后续能力扩展铺路。
+
+### Changed
+- 配置脏状态校正（CFG-017）：硬件配置与 profile 不一致时脏标记更准确。
+- 前端 ChannelCard 同步移除数值变化闪烁动画（视觉噪音）。
+- CSV 表头列由 20 列（DeviceID,Timestamp,Millisecond,Unit,CH01..CH16）改为 18 列（Timestamp,Unit,CH01..CH16）。
+  DeviceID 列移除（文件名已含设备 ID）；Timestamp 列仅保留秒级精度（'YYYY-MM-DD HH:MM:SS），
+  与 0.3.2 决策一致——1000Hz 采集时同一秒内的样本共享同一时间戳，不再区分毫秒。
+
+### Fixed
+- 修复应用退出阶段 readLoop 收尾时 EmitDeviceState 在已关闭 app 上 panic：device_service.ServiceShutdown 清空 s.app，EmitDeviceState 加 recover 保护。
+- 修复 CSV 录制 Stop→Start 会话间禁用通道掩码泄漏：csv_recorder.Stop 清理 deviceProfiles，避免上次会话的禁用通道掩码污染新会话。
+- 修复错误信息匹配误判（connection pool exhausted / permission_token 等非目标场景被误判为连接错误）：recordingStore / DaqT1603Config 改用 `\b` 单词边界正则。
+
+### Internal
+- 新增 csv_recorder_rec006_test.go、device_usecase_validation_test.go。
+- 同步 bindings（EmitDeviceState / SetDeviceProfile 导出）到 daq-t1603 .ts bindings（wails3 运行时会重新生成为 .js 并丢弃提交的 .ts）。
+- 同步 6 个版本号文件到 0.4.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- 生产 Go 构建 `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`：通过，产出 `build/bin/daq-t1603.exe`。
+- `go vet ./...`（GOWORK=off）：passed。
+- `go test ./...`（GOWORK=off）：passed（adapters/config、adapters/hardware、adapters/recording、usecase 均 ok）。
+- `makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe project.nsi`：产出 `daq-t1603-0.4.0-amd64-installer.exe`，归档至 `releases/bin/`。
+- SHA-256：`22e82689af05ca0ca06fb577a6cd0cb709481a98c9320db4ade86f86ea8a0803`。
+- 已知限制：exe 自身 Windows 版本资源固定为 `0.0.0.0`（wails v3 alpha `generate syso` 限制，与历史 0.3.x 一致）；安装包 VIProductVersion 已正确标注 0.4.0。GUI 冒烟测试建议在目标机手动验证。
+
+### Known Issues
+- 暂无。
+
 ## [0.3.3] - 2026-07-03
 
 ### Fixed
