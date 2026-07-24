@@ -458,12 +458,6 @@ input::placeholder {
   }
 }
 
-/* 数值变化闪烁 */
-@keyframes value-flash {
-  0% { color: var(--accent); }
-  100% { color: inherit; }
-}
-
 /* 工具类 */
 .pulse-dot {
   animation: status-pulse 1.6s ease-in-out infinite;

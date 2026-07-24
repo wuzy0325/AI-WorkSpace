@@ -340,6 +340,11 @@ func (r *CSVRecorder) Stop() error {
 	writers := r.writers
 	r.writers = make(map[string]*deviceWriter)
 	r.creatorFailedUntil = make(map[string]int64)
+	// 清理 deviceProfiles：避免同进程内 Stop → Start 会话间掩码泄漏。
+	// backend 通常会在 Connect/StartAcquisition 时重新注入，但若用户
+	// Stop 后直接 Start 而未触发注入路径，旧掩码会让新会话的禁用通道
+	// 沿用上次配置，与"每次会话独立"的语义不符。
+	r.deviceProfiles = make(map[string][16]bool)
 	r.session.Status = core.RecordingIdle
 	r.session.SnapshotCount = int(r.totalCount.Load())
 	r.session.DroppedCount = int(r.droppedTotal.Load())

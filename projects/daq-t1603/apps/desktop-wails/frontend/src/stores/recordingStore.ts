@@ -41,10 +41,18 @@ export const useRecordingStore = defineStore('recording', () => {
       // REC-018：录制启动失败（路径不存在/权限不足/磁盘满等）时，
       // 把友好错误消息写入 lastError，让状态栏红色显示给操作员，
       // 而不是让错误冒泡到全局未处理 rejection。
+      // 关键词覆盖三类常见 OS 错误消息形态：
+      //   - Windows: "The system cannot find the path specified"
+      //   - Linux:   "no such file or directory"
+      //   - Go:      "open <path>: The system cannot find the path specified."
+      // 录制是文件 I/O，不会出现 "device does not exist" 等设备通信错误，无需上下文限定。
       const reason = err instanceof Error ? err.message : String(err)
-      const friendly = /no such file|not exist|cannot find|无法找到|不存在/i.test(reason)
+      // 英文关键词用 \b 单词边界限定，避免 "permission_token" 等非错误场景误判；
+      // 中文关键词不用 \b（JS \b 对中文 \w 行为依赖引擎，可能漏判），改为独立分支。
+      const friendly = /\b(not found|no such file|cannot find)\b/i.test(reason)
+        || /不存在|无法找到/.test(reason)
         ? `保存目录不存在：${dir}，请重新选择有效目录`
-        : /permission|denied|权限/i.test(reason)
+        : /\b(permission|denied)\b/i.test(reason) || /权限/.test(reason)
           ? `无权限写入目录：${dir}，请检查目录权限`
           : `启动录制失败：${reason}`
       lastError.value = friendly

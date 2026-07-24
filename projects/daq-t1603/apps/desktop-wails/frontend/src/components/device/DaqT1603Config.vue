@@ -149,8 +149,11 @@ async function saveConfig() {
         // STB-012：硬件应用失败（通常是设备离线/断网）时给出友好提示，
         // 明确"配置已保存到本地，但未应用到设备"，避免技术性错误消息困扰操作员。
         // 配置本身已落盘，设备重连后再次保存即可下发，不应让用户误以为保存失败。
+        // 英文关键词用 \b 单词边界限定，避免 "connection pool exhausted" 等非离线场景误判；
+        // 中文关键词不用 \b（JS \b 对中文 \w 行为依赖引擎，可能漏判），改为独立分支。
         const reason = hwErr instanceof Error ? hwErr.message : String(hwErr)
-        const isOffline = /timeout|connection|disconnected|unreachable|refused|offline|关闭|断开|超时/i.test(reason)
+        const isOffline = /\b(disconnected|refused|unreachable|offline|timeout)\b/i.test(reason)
+          || /超时|断开|关闭/.test(reason)
         saveMessage.value = isOffline
           ? '配置已保存到本地，但设备离线未应用到硬件，请重新连接后再次保存'
           : `配置已保存，但硬件应用失败：${reason}`

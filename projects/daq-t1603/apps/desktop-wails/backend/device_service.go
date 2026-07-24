@@ -67,8 +67,13 @@ func (s *DeviceService) ServiceStartup(ctx context.Context, options application.
 }
 
 // ServiceShutdown 在应用关闭时停止所有 relay 协程，避免泄漏。
+// 同时清空 s.app，让后续可能到达的 EmitDeviceState（adapter readLoop 收尾时）
+// 走 app == nil 早退分支，避免 Event.Emit 在已关闭 app 上 panic。
 func (s *DeviceService) ServiceShutdown() error {
 	s.hub.StopAllRelays()
+	s.mu.Lock()
+	s.app = nil
+	s.mu.Unlock()
 	return nil
 }
 
@@ -319,7 +324,11 @@ func (s *DeviceService) emitLog(level, category, deviceID, source, message, deta
 // 前端 App.vue 中 onDeviceState 订阅器接收后调用 syncStatusFromBackend，
 // 让 statusMap 实时同步（如物理断网后从「采集中」直接变为「未连接」）。
 //
-// 实现轻量：仅做一次 Event.Emit，无锁、无 I/O，可在 adapter 持锁回调中安全调用。
+// 实现轻量：仅持 s.mu 读取 app 字段后立即释放，无 I/O 阻塞，
+// 可在 adapter 持锁回调中安全调用（s.mu 与 adapter 的 a.mu 是不同锁，无嵌套死锁风险）。
+// 加 recover 保护：应用退出阶段 app 可能已关闭，Event.Emit 在已关闭的 app 上可能 panic，
+// recover 避免 panic 终止 adapter readLoop 的清理流程；
+// recover 内记录 slog.Debug 保留可观测性，避免静默吞掉真实 bug（如 state 字段 nil）。
 func (s *DeviceService) EmitDeviceState(deviceID string, state core.DeviceState) {
 	s.mu.Lock()
 	app := s.app
@@ -327,5 +336,11 @@ func (s *DeviceService) EmitDeviceState(deviceID string, state core.DeviceState)
 	if app == nil {
 		return
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("EmitDeviceState recovered from panic",
+				"deviceId", deviceID, "panic", r)
+		}
+	}()
 	app.Event.Emit("daq:device-state", deviceID, state)
 }
