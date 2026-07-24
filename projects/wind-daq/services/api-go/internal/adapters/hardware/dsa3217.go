@@ -366,8 +366,10 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 	}()
 
 	conn.SetWriteDeadline(time.Now().Add(DSA3217_TIMEOUT))
-	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
-	slog.Debug("DSA3217 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
+	// 命令收发用 Info 级别：ring buffer 默认 Info 阈值即可透传，前端 showHardware
+	// 开关通过 catFilter 控制可见性；stderr / file sink 由 CategorySkipHandler 跳过，
+	// 避免状态查询期间高频命令帧刷屏文件与终端。
+	slog.Info("DSA3217 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
 	if _, err := conn.Write([]byte(cmd + "\r\n")); err != nil {
 		return "", err
 	}
@@ -387,7 +389,7 @@ func (d *DSA3217) sendCommand(cmd string) (string, error) {
 	}
 
 	trimmed := strings.TrimRight(resp, "\r\n")
-	slog.Debug("DSA3217 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", trimmed)
+	slog.Info("DSA3217 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", trimmed)
 	return trimmed, nil
 }
 

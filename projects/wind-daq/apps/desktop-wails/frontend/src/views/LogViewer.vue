@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { CATEGORY_LABELS, LOG_GROUP_LABELS, mapCategoryToGroup, useLogStore } from '@stores/logStore'
+import { CATEGORY_LABELS, LOG_GROUP_LABELS, useLogStore } from '@stores/logStore'
 import type { LogGroup } from '@stores/logStore'
-import type { LogCategory, LogEntry, LogLevel } from '@api/types'
+import type { LogCategory, LogEntry } from '@api/types'
 import { useI18nStore } from '@stores/i18nStore'
 import UiButton from '@components/ui/UiButton.vue'
 import UiInput from '@components/ui/UiInput.vue'
+import LogEntryRow from '@components/log/LogEntryRow.vue'
+import { formatTime, categoryLabel } from '@utils/logEntryFormat'
 import { fetchRecentLogs, startLogSubscription, stopLogSubscription, fetchCategoryStates, setCategoryEnabled } from '@api/logSseClient'
 
 defineProps<{
@@ -136,32 +138,6 @@ watch(
   },
 )
 
-function formatTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '--:--:--.---'
-  return (
-    d.toLocaleTimeString('zh-CN', { hour12: false }) +
-    '.' +
-    String(d.getMilliseconds()).padStart(3, '0')
-  )
-}
-
-// 级别单字母徽章：D/I/W/E，节省横向空间
-function levelBadge(level: LogLevel): string {
-  switch (level) {
-    case 'debug':
-      return 'D'
-    case 'info':
-      return 'I'
-    case 'warn':
-      return 'W'
-    case 'error':
-      return 'E'
-    default:
-      return '?'
-  }
-}
-
 function setGroup(group: LogGroup | 'all'): void {
   logStore.setFilterGroup(group)
 }
@@ -184,11 +160,6 @@ async function copyLogs(): Promise<void> {
   } catch {
     /* clipboard API may fail in restricted contexts */
   }
-}
-
-function categoryLabel(entry: LogEntry): string {
-  if (entry.category) return CATEGORY_LABELS[entry.category] ?? entry.category
-  return LOG_GROUP_LABELS[mapCategoryToGroup(entry.category)]
 }
 
 onMounted(() => {
@@ -221,6 +192,23 @@ onBeforeUnmount(() => {
         <span class="log-header__count">{{ filteredEntries.length }} / {{ logStore.entries.length }} {{ i18n.t.entries }}</span>
       </div>
       <div class="log-header__actions">
+        <!-- 中英文切换：复用全局 .locale-btn 样式（settings-form.css），与设置面板保持视觉一致 -->
+        <div class="locale-switch" role="group" :aria-label="i18n.t.set_interfaceLanguage">
+          <button
+            class="locale-btn"
+            :class="{ 'locale-btn--active': i18n.locale === 'zh' }"
+            :aria-label="i18n.t.set_switchToChinese"
+            :aria-pressed="i18n.locale === 'zh'"
+            @click="i18n.setLocale('zh')"
+          >中</button>
+          <button
+            class="locale-btn"
+            :class="{ 'locale-btn--active': i18n.locale === 'en' }"
+            :aria-label="i18n.t.set_switchToEnglish"
+            :aria-pressed="i18n.locale === 'en'"
+            @click="i18n.setLocale('en')"
+          >EN</button>
+        </div>
         <UiButton
           size="sm"
           variant="secondary"
@@ -344,22 +332,11 @@ onBeforeUnmount(() => {
         <span>{{ i18n.t.log_message }}</span>
       </div>
       <div ref="containerRef" class="log-entries" @scroll="onScroll">
-        <article
+        <LogEntryRow
           v-for="entry in filteredEntries"
           :key="entry.id"
-          class="log-entry"
-          :class="`log-entry--${entry.level}`"
-        >
-          <time class="log-time" :datetime="entry.timestamp">{{ formatTime(entry.timestamp) }}</time>
-          <span class="log-badge" :class="`log-badge--${entry.level}`" :title="entry.level">{{ levelBadge(entry.level) }}</span>
-          <span class="log-category" :class="`log-category--${mapCategoryToGroup(entry.category)}`">{{ categoryLabel(entry) }}</span>
-          <span class="log-message">
-            <span class="log-message__text">{{ entry.message }}</span>
-            <span v-if="entry.source" class="log-source" :title="entry.source">· {{ entry.source }}</span>
-            <span v-if="entry.deviceId" class="log-device">· dev={{ entry.deviceId }}</span>
-            <code v-if="entry.details" class="log-details">{{ entry.details }}</code>
-          </span>
-        </article>
+          :entry="entry"
+        />
 
         <div v-if="filteredEntries.length === 0" class="log-empty">
           <strong>{{ logStore.entries.length === 0 ? i18n.t.log_noLogsYet : i18n.t.log_noMatchingLogs }}</strong>
@@ -523,7 +500,9 @@ onBeforeUnmount(() => {
   min-height: 1.5rem;
   padding: 0 var(--space-1-5);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill);
+  /* 圆角矩形（radius-md），与全局 .locale-btn / UiButton 风格对齐；
+   * 原用 radius-pill 胶囊形与其他画面按钮不一致。*/
+  border-radius: var(--radius-md);
   background: var(--bg-panel);
   color: var(--text-muted);
   font: inherit;
@@ -575,7 +554,8 @@ onBeforeUnmount(() => {
   min-height: 1.5rem;
   padding: 0 var(--space-1);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill);
+  /* 圆角矩形（radius-md），与 .log-toggle / .locale-btn / UiButton 风格对齐 */
+  border-radius: var(--radius-md);
   background: var(--bg-panel);
   color: var(--text-secondary);
   font: inherit;
@@ -719,16 +699,12 @@ onBeforeUnmount(() => {
    - 级别 1.5rem：单字母徽章
    - 分类 3rem：2-3 字中文标签
    - 消息 1fr：消息主体 + source 小字内联
-*/
-.log-table__head,
-.log-entry {
+   .log-entry 的 grid 布局在 LogEntryRow.vue 子组件中定义，保持一致。*/
+.log-table__head {
   display: grid;
   grid-template-columns: 7.5rem 1.5rem 3rem minmax(0, 1fr);
   gap: var(--space-1-5);
   align-items: baseline;
-}
-
-.log-table__head {
   padding: var(--space-0-5) var(--space-2);
   border-bottom: 1px solid var(--border-default);
   color: var(--text-muted);
@@ -749,129 +725,8 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 
-.log-entry {
-  padding: 0.1rem var(--space-2);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 40%, transparent);
-}
-
-.log-entry:hover {
-  background: color-mix(in srgb, var(--bg-panel-strong) 65%, transparent);
-}
-
-.log-entry--error {
-  background: color-mix(in srgb, var(--accent-danger) 7%, transparent);
-}
-
-.log-entry--warn {
-  background: color-mix(in srgb, var(--accent-warning) 5%, transparent);
-}
-
-.log-time {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.log-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.1rem;
-  height: 1.1rem;
-  border-radius: var(--radius-sm);
-  text-align: center;
-  font-size: 0.625rem;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
-.log-badge--debug {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: var(--text-secondary);
-}
-
-.log-badge--info {
-  background: color-mix(in srgb, var(--accent-info) 14%, transparent);
-  color: var(--accent-info);
-}
-
-.log-badge--warn {
-  background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
-  color: var(--accent-warning);
-}
-
-.log-badge--error {
-  background: color-mix(in srgb, var(--accent-danger) 15%, transparent);
-  color: var(--accent-danger);
-}
-
-.log-category {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: 0.625rem;
-}
-
-.log-category--communication {
-  color: var(--accent-info);
-}
-
-.log-category--acquisition {
-  color: var(--accent-success);
-}
-
-.log-category--business {
-  color: var(--accent-warning);
-}
-
-.log-message {
-  min-width: 0;
-  color: var(--text-primary);
-  word-break: break-word;
-  user-select: text;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-}
-
-.log-message__text {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.log-source {
-  color: var(--text-muted);
-  font-size: 0.625rem;
-  font-weight: 500;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.log-device {
-  color: var(--text-muted);
-  font-size: 0.625rem;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.log-details {
-  display: block;
-  flex-basis: 100%;
-  margin-top: 0.1rem;
-  padding: 0.1rem var(--space-1);
-  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-app) 62%, transparent);
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  font-size: 0.625rem;
-}
+/* 日志条目样式（.log-entry / .log-time / .log-badge / .log-category / .log-message 等）
+ * 已迁移到 LogEntryRow.vue 子组件，避免重复定义。*/
 
 .log-empty {
   display: flex;

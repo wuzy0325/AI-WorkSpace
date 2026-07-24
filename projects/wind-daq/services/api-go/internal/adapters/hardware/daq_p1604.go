@@ -500,8 +500,8 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
-	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
-	slog.Debug("DAQ-P-1604 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
+	// 命令收发用 Info 级别：ring buffer 透传，stderr / file 由 CategorySkipHandler 跳过。
+	slog.Info("DAQ-P-1604 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
 	// 命令发送委托给 sharedproto.SendCommandNoNewline：
 	//   - 纯 ASCII，不带换行符（实测设备 w1601 模式下 \r\n 会导致 N05）
 	//   - 内部处理 write deadline 设置与清除
@@ -596,7 +596,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 func (d *DAQP1604) processPayload(data []byte) {
 	// ASCII 帧属于命令响应，不应作为采集数据下发。
 	if sharedproto.IsASCIIFrame(data) {
-		slog.Debug("DAQ-P-1604 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", strings.TrimSpace(string(data)))
+		slog.Info("DAQ-P-1604 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", strings.TrimSpace(string(data)))
 		return
 	}
 
