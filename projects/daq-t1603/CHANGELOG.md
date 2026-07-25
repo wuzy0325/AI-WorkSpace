@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.0] - 2026-07-25
+
+### Added
+- 新增后端 UI 刷新率动态可调（SetUIRefreshRateHz）：前端 MainTopBar 的刷新率下拉项实时同步到后端 `uiPayloadRefreshInterval`，App.onMounted 启动时也同步 localStorage 偏好；后端 relayStream 用 `Ticker.Reset` 动态跟随，不再硬编码 100ms。
+
+### Changed
+- drainConnection 改为「连续 2 个静默窗口才退出」语义：原单次静默即返回会在快速启停后残留帧尾被下一次命令读取当作响应乱码；现要求连续两次 SetReadDeadline 超时才结束 drain，避免误判残留帧尾。
+- 移除 MonitorView 连接按钮未使用的 Loader2 图标与 .spin 动画，仅保留 Connecting 态 loading，减少视觉噪音。
+
+### Fixed
+- 修复 UI 刷新率设置不生效：后端 `uiPayloadRefreshInterval` 硬编码 100ms 导致 10Hz→30Hz 无变化、10Hz→2Hz 仅图表变慢而数值卡仍 10Hz 更新。改为原子变量 + Ticker.Reset 动态跟随。
+
+### Internal
+- 新增 `drainConnection` 连续静默窗口回归测试 `TestDAQT1603DrainConnectionWaitsForDelayedFrameTail`，验证 150ms 延迟到达的帧尾不会被误读为命令响应。
+- 新增 Taskfile.yml，与 daq-p1604 对齐：定义 `clean / build-frontend / build-go / release / archive-release / check-bindings / generate-icon` 任务，便于后续 release 流程统一。
+- 同步 6 个版本号文件到 0.5.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- 生产 Go 构建 `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`：通过，产出 `build/bin/daq-t1603.exe`。
+- `go vet ./...`（GOWORK=off）：passed。
+- `go test ./...`（GOWORK=off）：passed（adapters/config、adapters/hardware、adapters/recording、usecase 均 ok）。
+- `makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe project.nsi`：产出 `daq-t1603-0.5.0-amd64-installer.exe`，归档至 `releases/bin/`。
+- 已知限制：exe 自身 Windows 版本资源固定为 `0.0.0.0`（wails v3 alpha `generate syso` 限制，与历史 0.3.x/0.4.x 一致）；安装包 VIProductVersion 已正确标注 0.5.0。GUI 冒烟测试建议在目标机手动验证。
+
+### Known Issues
+- 暂无。
+
 ## [0.4.0] - 2026-07-24
 
 ### Added
