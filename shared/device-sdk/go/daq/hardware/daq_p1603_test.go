@@ -38,7 +38,7 @@ func makeP1603Profile(id, ip string, channels int) core.Profile {
 		Name:         "DAQ-P-1603-" + id,
 		Type:         core.DeviceDAQP1603,
 		Address:      ip,
-		SamplingRate: 500,
+		SamplingRate: 100,
 		Channels:     chs,
 	}
 }
@@ -147,7 +147,7 @@ func TestDAQP1603_SetDataSink_SafeBeforeConnect(t *testing.T) {
 //   - StartAcquisition 在未连接 / 已采集 时的状态机迁移
 //   - StopAcquisition 在未采集时的幂等性
 //   - buildChannelScales：通道过滤、量程兜底、上限截断
-//   - scaleVoltToEngineering：端点、中点、越界、压力/温度通道同一公式
+//   - scaleCurrentToEngineering：端点、中点、越界、压力/温度通道同一公式
 //   - 并发 Start/Stop 不 panic（白盒设置 acquiring，避免依赖真实 DLL）
 //
 // 不依赖真实硬件：readLoop 完整路径需 DLL 返回数据，留待 Phase 7 HIL 验证。
@@ -274,8 +274,8 @@ func TestDAQP1603_BuildChannelScales_AllEnabled(t *testing.T) {
 		if s.origIndex != i {
 			t.Fatalf("scales[%d].origIndex = %d, want %d", i, s.origIndex, i)
 		}
-		if s.rangeMin != -100 || s.rangeMax != 100 {
-			t.Fatalf("scales[%d] range = (%v, %v), want (-100, 100)", i, s.rangeMin, s.rangeMax)
+		if s.engMin != -100 || s.engMax != 100 {
+			t.Fatalf("scales[%d] range = (%v, %v), want (-100, 100)", i, s.engMin, s.engMax)
 		}
 	}
 }
@@ -302,8 +302,8 @@ func TestDAQP1603_BuildChannelScales_PartialEnabled(t *testing.T) {
 	}
 }
 
-// 测试前置：buildChannelScales 在通道 RangeMin==0 && RangeMax==0 时用 ±10V 兜底。
-// 期待结果：scales[i].rangeMin == -10, scales[i].rangeMax == 10。
+// 测试前置：buildChannelScales 在通道 RangeMin==0 && RangeMax==0 时用 4-20mA 兜底。
+// 期待结果：scales[i].engMin == 4, scales[i].engMax == 20。
 func TestDAQP1603_BuildChannelScales_FallbackRange(t *testing.T) {
 	chs := []core.ChannelConfig{
 		{Index: 0, Enabled: true, RangeMin: 0, RangeMax: 0},
@@ -313,11 +313,11 @@ func TestDAQP1603_BuildChannelScales_FallbackRange(t *testing.T) {
 	if len(scales) != 1 {
 		t.Fatalf("len(scales) = %d, want 1", len(scales))
 	}
-	if scales[0].rangeMin != daqP1603VoltMin {
-		t.Fatalf("rangeMin = %v, want %v (fallback)", scales[0].rangeMin, daqP1603VoltMin)
+	if scales[0].engMin != daqP1603CurrentMin {
+		t.Fatalf("engMin = %v, want %v (fallback)", scales[0].engMin, daqP1603CurrentMin)
 	}
-	if scales[0].rangeMax != daqP1603VoltMax {
-		t.Fatalf("rangeMax = %v, want %v (fallback)", scales[0].rangeMax, daqP1603VoltMax)
+	if scales[0].engMax != daqP1603CurrentMax {
+		t.Fatalf("engMax = %v, want %v (fallback)", scales[0].engMax, daqP1603CurrentMax)
 	}
 }
 
@@ -335,84 +335,86 @@ func TestDAQP1603_BuildChannelScales_TruncateAt16(t *testing.T) {
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 在 V == vMin（-10V）时返回 rangeMin（端点）。
-// 期待结果：返回值 == rangeMin（如 -100 Pa）。
-func TestDAQP1603_ScaleVoltToEngineering_AtVoltMin(t *testing.T) {
-	got := scaleVoltToEngineering(daqP1603VoltMin, -100, 100)
+// 测试前置：scaleCurrentToEngineering 在 4mA（活零点）时返回 engMin（端点）。
+func TestDAQP1603_ScaleCurrentToEngineering_AtCurrentMin(t *testing.T) {
+	got := scaleCurrentToEngineering(daqP1603CurrentMin, -100, 100)
 	if got != -100 {
-		t.Fatalf("scale at vMin = %v, want -100", got)
+		t.Fatalf("scale at 4mA = %v, want -100", got)
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 在 V == vMax（+10V）时返回 rangeMax（端点）。
-// 期待结果：返回值 == rangeMax（如 100 Pa）。
-func TestDAQP1603_ScaleVoltToEngineering_AtVoltMax(t *testing.T) {
-	got := scaleVoltToEngineering(daqP1603VoltMax, -100, 100)
+// 测试前置：scaleCurrentToEngineering 在 20mA（满量程）时返回 engMax（端点）。
+func TestDAQP1603_ScaleCurrentToEngineering_AtCurrentMax(t *testing.T) {
+	got := scaleCurrentToEngineering(daqP1603CurrentMax, -100, 100)
 	if got != 100 {
-		t.Fatalf("scale at vMax = %v, want 100", got)
+		t.Fatalf("scale at 20mA = %v, want 100", got)
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 在 V == 0（中点）时返回 (rangeMin+rangeMax)/2。
-// 期待结果：返回值 == 0（对称量程 -100..100 的中点）。
-func TestDAQP1603_ScaleVoltToEngineering_AtMidpoint(t *testing.T) {
-	got := scaleVoltToEngineering(0, -100, 100)
+// 测试前置：scaleCurrentToEngineering 在 12mA（中点）时返回 (engMin+engMax)/2。
+func TestDAQP1603_ScaleCurrentToEngineering_AtMidpoint(t *testing.T) {
+	got := scaleCurrentToEngineering(12, -100, 100)
+	// 12mA: (12-4)/16 = 0.5 → -100 + 0.5*200 = 0
 	if got != 0 {
-		t.Fatalf("scale at midpoint = %v, want 0", got)
+		t.Fatalf("scale at 12mA = %v, want 0", got)
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 对压力通道（0..1000 Pa，对应 -10V..+10V）。
-// 期待结果：V=-10V → 0 Pa；V=0V → 500 Pa；V=+10V → 1000 Pa。
-func TestDAQP1603_ScaleVoltToEngineering_PressureChannel(t *testing.T) {
-	// 压力通道：rangeMin=0 Pa, rangeMax=1000 Pa
+// 测试前置：scaleCurrentToEngineering 对压力通道（0..1000 Pa，对应 4..20mA）。
+// 期待结果：4mA → 0 Pa；12mA → 500 Pa；20mA → 1000 Pa。
+func TestDAQP1603_ScaleCurrentToEngineering_PressureChannel(t *testing.T) {
 	cases := []struct {
-		volt float64
-		want float64
+		current float64
+		want    float64
 	}{
-		{volt: -10, want: 0},
-		{volt: 0, want: 500},
-		{volt: 10, want: 1000},
+		{current: 4, want: 0},
+		{current: 12, want: 500},
+		{current: 20, want: 1000},
 	}
 	for _, c := range cases {
-		got := scaleVoltToEngineering(c.volt, 0, 1000)
+		got := scaleCurrentToEngineering(c.current, 0, 1000)
 		if got != c.want {
-			t.Fatalf("pressure scale at V=%v = %v, want %v", c.volt, got, c.want)
+			t.Fatalf("pressure scale at %vmA = %v, want %v", c.current, got, c.want)
 		}
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 对温度通道（-50..200 ℃，对应 -10V..+10V）。
-// 验证压力与温度通道走同一公式，区别仅在 rangeMin/rangeMax 的语义。
-// 期待结果：V=-10V → -50 ℃；V=0V → 75 ℃；V=+10V → 200 ℃。
-func TestDAQP1603_ScaleVoltToEngineering_TemperatureChannel(t *testing.T) {
+// 测试前置：scaleCurrentToEngineering 对温度通道（-50..200 ℃，对应 4..20mA）。
+// 期待结果：4mA → -50 ℃；12mA → 75 ℃；20mA → 200 ℃。
+func TestDAQP1603_ScaleCurrentToEngineering_TemperatureChannel(t *testing.T) {
 	cases := []struct {
-		volt float64
-		want float64
+		current float64
+		want    float64
 	}{
-		{volt: -10, want: -50},
-		{volt: 0, want: 75},
-		{volt: 10, want: 200},
+		{current: 4, want: -50},
+		{current: 12, want: 75},
+		{current: 20, want: 200},
 	}
 	for _, c := range cases {
-		got := scaleVoltToEngineering(c.volt, -50, 200)
+		got := scaleCurrentToEngineering(c.current, -50, 200)
 		if got != c.want {
-			t.Fatalf("temperature scale at V=%v = %v, want %v", c.volt, got, c.want)
+			t.Fatalf("temperature scale at %vmA = %v, want %v", c.current, got, c.want)
 		}
 	}
 }
 
-// 测试前置：scaleVoltToEngineering 在 V 越界（V > vMax）时仍按线性外推。
-// 验证公式不 panic，返回值连续（不截断）。理论上 DLL 不会返回越界电压，但需可处理。
-// 期待结果：V=12V 时返回 ≈120（量程 -100..100 的外推值；浮点误差容忍 1e-9）。
-func TestDAQP1603_ScaleVoltToEngineering_Extrapolation(t *testing.T) {
-	got := scaleVoltToEngineering(12, -100, 100)
-	// V=12, vMin=-10, vMax=10, span=20 → (12-(-10))/20 = 1.1 → -100 + 1.1*200 = 120
-	// 浮点误差：1.1 * 200 在 IEEE 754 中略大于 220，结果 120.00000000000003
-	const want = 120.0
+// 测试前置：scaleCurrentToEngineering 在电流越界（>20mA）时仍按线性外推。
+// 期待结果：22mA 时返回 ≈125（量程 -100..100 的外推值）。
+func TestDAQP1603_ScaleCurrentToEngineering_Extrapolation(t *testing.T) {
+	got := scaleCurrentToEngineering(22, -100, 100)
+	// 22mA: (22-4)/16 = 1.125 → -100 + 1.125*200 = 125
+	const want = 125.0
 	const tol = 1e-9
 	if got < want-tol || got > want+tol {
-		t.Fatalf("extrapolation at V=12 = %v, want %v (tol %v)", got, want, tol)
+		t.Fatalf("extrapolation at 22mA = %v, want %v (tol %v)", got, want, tol)
+	}
+}
+
+// 测试前置：scaleCurrentToEngineering 在 current < 0（DLL 不可能返回负值，但防御性代码存在）时返回 engMin。
+func TestDAQP1603_ScaleCurrentToEngineering_NegativeCurrent(t *testing.T) {
+	got := scaleCurrentToEngineering(-1, -100, 100)
+	if got != -100 {
+		t.Fatalf("negative current guard = %v, want -100 (engMin)", got)
 	}
 }
 
@@ -576,7 +578,7 @@ func TestDAQP1603_BuildAIParam_DefaultAllChannels(t *testing.T) {
 		ID:           "t7",
 		Type:         core.DeviceDAQP1603,
 		Address:      "192.168.1.1",
-		SamplingRate: 500,
+		SamplingRate: 100,
 		Channels:     nil, // 无通道配置
 	}
 	d := NewDAQP1603(profile)
@@ -593,16 +595,18 @@ func TestDAQP1603_BuildAIParam_DefaultAllChannels(t *testing.T) {
 			t.Fatalf("CHParam[%d].Channel = %d, want %d", i, p.CHParam[i].Channel, i)
 		}
 	}
-	if p.SampleRate != 500 {
-		t.Fatalf("SampleRate = %v, want 500", p.SampleRate)
+	if p.SampleRate != 1000 {
+		t.Fatalf("SampleRate = %v, want 1000 (hardware rate fixed)", p.SampleRate)
 	}
 	if p.SampleMode != ffi.WTNDAQ16H_AI_SAMPMODE_CONTINUOUS {
 		t.Fatalf("SampleMode = %d, want CONTINUOUS", p.SampleMode)
 	}
 }
 
-// 测试前置：buildAIParamLocked 在部分通道启用时应仅填充启用通道。
-// 期待结果：SampChanCount == 启用通道数，CHParam 前 N 项为启用通道索引。
+// 测试前置：buildAIParamLocked 必须始终初始化全部 16 通道。
+// 设备强制要求 SampChanCount=16，否则 ReadBinary 永远不产数据。
+// Enabled 标志由 readLoop 侧按 scales[].origIndex 过滤。
+// 期待结果：SampChanCount == 16，所有 CHParam[i].Channel == i。
 func TestDAQP1603_BuildAIParam_PartialChannels(t *testing.T) {
 	chs := []core.ChannelConfig{
 		{Index: 0, Enabled: false},
@@ -623,24 +627,23 @@ func TestDAQP1603_BuildAIParam_PartialChannels(t *testing.T) {
 	p := d.buildAIParamLocked()
 	d.mu.Unlock()
 
-	if p.SampChanCount != 2 {
-		t.Fatalf("SampChanCount = %d, want 2", p.SampChanCount)
+	if p.SampChanCount != ffi.WTNDAQ16H_AI_MAX_CHANNELS {
+		t.Fatalf("SampChanCount = %d, want %d (must always be 16)", p.SampChanCount, ffi.WTNDAQ16H_AI_MAX_CHANNELS)
 	}
-	// 第一个启用通道索引为 1
-	if p.CHParam[0].Channel != 1 {
-		t.Fatalf("CHParam[0].Channel = %d, want 1", p.CHParam[0].Channel)
+	for i := uint32(0); i < ffi.WTNDAQ16H_AI_MAX_CHANNELS; i++ {
+		if p.CHParam[i].Channel != i {
+			t.Fatalf("CHParam[%d].Channel = %d, want %d (all 16 must be filled)", i, p.CHParam[i].Channel, i)
+		}
 	}
-	// 第二个启用通道索引为 3
-	if p.CHParam[1].Channel != 3 {
-		t.Fatalf("CHParam[1].Channel = %d, want 3", p.CHParam[1].Channel)
-	}
-	if p.SampleRate != 200 {
-		t.Fatalf("SampleRate = %v, want 200", p.SampleRate)
+	// 硬件采样率固定 1000Hz，与用户采样率 200Hz 解耦
+	if p.SampleRate != 1000 {
+		t.Fatalf("SampleRate = %v, want 1000 (hardware rate fixed)", p.SampleRate)
 	}
 }
 
-// 测试前置：buildAIParamLocked 在 SamplingRate <= 0 时应回退到默认 500Hz。
-// 期待结果：SampleRate == 500。
+// 测试前置：buildAIParamLocked 在 SamplingRate=0（异常值）时应回退到用户下限 1Hz，
+// 但硬件采样率始终固定 1000Hz。
+// 期待结果：SampleRate == 1000（硬件采样率固定），calcSampsPerChanLocked == 1000。
 func TestDAQP1603_BuildAIParam_DefaultSampleRate(t *testing.T) {
 	profile := core.Profile{
 		ID:           "t9",
@@ -652,10 +655,47 @@ func TestDAQP1603_BuildAIParam_DefaultSampleRate(t *testing.T) {
 
 	d.mu.Lock()
 	p := d.buildAIParamLocked()
+	sampsPerChan := d.calcSampsPerChanLocked()
 	d.mu.Unlock()
 
-	if p.SampleRate != 500 {
-		t.Fatalf("SampleRate = %v, want 500 (default)", p.SampleRate)
+	if p.SampleRate != 1000 {
+		t.Fatalf("SampleRate = %v, want 1000 (hardware rate fixed)", p.SampleRate)
+	}
+	// SamplingRate=0 回退到下限 1Hz → sampsPerChan = 1000/1 = 1000
+	if sampsPerChan != 1000 {
+		t.Fatalf("sampsPerChan = %d, want 1000 (1000/1Hz)", sampsPerChan)
+	}
+}
+
+// 测试前置：calcSampsPerChanLocked 在不同用户采样率下返回正确的平均窗口大小。
+// 期待结果：sampsPerChan = 1000 / userRate，向下取整。
+func TestDAQP1603_CalcSampsPerChan(t *testing.T) {
+	cases := []struct {
+		userRate int
+		want     uint32
+	}{
+		{1, 1000},   // 1Hz → 1000 点取平均
+		{10, 100},   // 10Hz → 100 点
+		{20, 50},    // 20Hz → 50 点
+		{50, 20},    // 50Hz → 20 点
+		{100, 10},   // 100Hz → 10 点
+		{200, 5},    // 200Hz → 5 点
+		{500, 2},    // 500Hz → 2 点
+	}
+	for _, c := range cases {
+		profile := core.Profile{
+			ID:           "spc",
+			Type:         core.DeviceDAQP1603,
+			Address:      "192.168.1.1",
+			SamplingRate: c.userRate,
+		}
+		d := NewDAQP1603(profile)
+		d.mu.Lock()
+		got := d.calcSampsPerChanLocked()
+		d.mu.Unlock()
+		if got != c.want {
+			t.Fatalf("userRate=%d: sampsPerChan = %d, want %d", c.userRate, got, c.want)
+		}
 	}
 }
 
@@ -682,7 +722,7 @@ func TestDAQP1603_ImplementsDeviceInterface(t *testing.T) {
 // 需真实 DLL，留待 Phase 7 HIL 验证。
 // ============================================================
 
-// 测试前置：未连接设备调用 ApplyConfig，传入合法 profile（500Hz、16 通道）。
+// 测试前置：未连接设备调用 ApplyConfig，传入合法 profile（200Hz、16 通道）。
 // 期待结果：返回 nil，GetProfile 返回的 profile 与传入一致。
 func TestDAQP1603_ApplyConfig_WhileDisconnected_UpdatesProfile(t *testing.T) {
 	d := NewDAQP1603(makeP1603Profile("ac1", "192.168.1.1", 16))
@@ -704,8 +744,8 @@ func TestDAQP1603_ApplyConfig_WhileDisconnected_UpdatesProfile(t *testing.T) {
 	}
 }
 
-// 测试前置：未连接设备调用 ApplyConfig，传入 SamplingRate=501（超过上限）。
-// 期待结果：返回错误包含 "exceeds max"，内部 profile 不变。
+// 测试前置：未连接设备调用 ApplyConfig，传入 SamplingRate 超过上限。
+// 期待结果：返回错误包含 "out of range"，内部 profile 不变。
 func TestDAQP1603_ApplyConfig_SampleRateExceedsMax_Rejected(t *testing.T) {
 	original := makeP1603Profile("ac2", "192.168.1.1", 16)
 	d := NewDAQP1603(original)
@@ -717,8 +757,8 @@ func TestDAQP1603_ApplyConfig_SampleRateExceedsMax_Rejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("ApplyConfig should reject sampling rate > max")
 	}
-	if !strings.Contains(err.Error(), "exceeds max") {
-		t.Fatalf("error = %q, want contains 'exceeds max'", err.Error())
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("error = %q, want contains 'out of range'", err.Error())
 	}
 
 	// 内部 profile 不变
@@ -729,7 +769,7 @@ func TestDAQP1603_ApplyConfig_SampleRateExceedsMax_Rejected(t *testing.T) {
 	}
 }
 
-// 测试前置：未连接设备调用 ApplyConfig，传入 SamplingRate=DAQP1603MaxSampleRate（500Hz，边界值）。
+// 测试前置：未连接设备调用 ApplyConfig，传入 SamplingRate=DAQP1603MaxSampleRate（边界值）。
 // 期待结果：返回 nil，profile 更新成功。
 func TestDAQP1603_ApplyConfig_SampleRateAtMax_Ok(t *testing.T) {
 	d := NewDAQP1603(makeP1603Profile("ac3", "192.168.1.1", 16))
@@ -762,20 +802,36 @@ func TestDAQP1603_ApplyConfig_TypeMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// 测试前置：调用 ApplyConfig 传入 SamplingRate=0。
-// 期待结果：返回错误包含 "must be > 0"。
-func TestDAQP1603_ApplyConfig_ZeroSampleRate_Rejected(t *testing.T) {
+// 测试前置：调用 ApplyConfig 传入 SamplingRate 低于下限。
+// 期待结果：返回错误包含 "out of range"。
+func TestDAQP1603_ApplyConfig_SampleRateBelowMin_Rejected(t *testing.T) {
 	d := NewDAQP1603(makeP1603Profile("ac5", "192.168.1.1", 16))
 
 	bad := makeP1603Profile("ac5", "192.168.1.1", 16)
-	bad.SamplingRate = 0
+	bad.SamplingRate = DAQP1603MinSampleRate - 1
 
 	err := d.ApplyConfig(bad)
 	if err == nil {
-		t.Fatal("ApplyConfig should reject zero sampling rate")
+		t.Fatal("ApplyConfig should reject sampling rate < min")
 	}
-	if !strings.Contains(err.Error(), "must be > 0") {
-		t.Fatalf("error = %q, want contains 'must be > 0'", err.Error())
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("error = %q, want contains 'out of range'", err.Error())
+	}
+}
+
+// 测试前置：未连接设备调用 ApplyConfig，传入 SamplingRate=DAQP1603MinSampleRate（边界值）。
+// 期待结果：返回 nil，profile 更新成功。
+func TestDAQP1603_ApplyConfig_SampleRateAtMin_Ok(t *testing.T) {
+	d := NewDAQP1603(makeP1603Profile("ac3-min", "192.168.1.1", 16))
+
+	boundary := makeP1603Profile("ac3-min", "192.168.1.1", 16)
+	boundary.SamplingRate = DAQP1603MinSampleRate
+
+	if err := d.ApplyConfig(boundary); err != nil {
+		t.Fatalf("ApplyConfig at min sample rate should succeed: %v", err)
+	}
+	if got := d.GetProfile().SamplingRate; got != DAQP1603MinSampleRate {
+		t.Fatalf("SamplingRate = %d, want %d", got, DAQP1603MinSampleRate)
 	}
 }
 
@@ -791,7 +847,8 @@ func TestDAQP1603_ApplyConfig_WhileAcquiring_Rejected(t *testing.T) {
 	d.mu.Unlock()
 
 	newProfile := makeP1603Profile("ac6", "192.168.1.1", 16)
-	newProfile.SamplingRate = 100
+	// 使用合法采样率 200Hz，确保校验先经过"采集中"检查而非采样率范围检查
+	newProfile.SamplingRate = 200
 	err := d.ApplyConfig(newProfile)
 	if err == nil {
 		t.Fatal("ApplyConfig should reject while acquiring")

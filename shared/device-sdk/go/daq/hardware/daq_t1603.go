@@ -3,7 +3,7 @@ package hardware
 import (
 	"errors"
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -173,32 +173,19 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
-	consecutiveTimeouts := 0
 	// maxIters=10：单次 drainConnection 总耗时上限约 1s（10 × 100ms），
 	// 足以吸收快速启停后的残留帧；过大的值（如 50 次 5s）会显著拖长 StartAcquisition。
 	const maxIters = 10
-	// quietWindowsRequired=2：要求连续 2 个静默窗口才退出，
-	// 避免快速启停后残留帧尾（可能延迟到达）被下一次命令读取当作响应乱码。
-	// 仅在连续两次 SetReadDeadline 超时后才结束 drain，确保延迟帧尾被吸收。
-	const quietWindowsRequired = 2
 
 	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(buf)
 		if n > 0 {
 			totalDrained += n
-			// 收到数据则重置静默计数：仅在连续静默时才退出
-			consecutiveTimeouts = 0
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// 单次静默不退出，要求连续 quietWindowsRequired 次静默才结束 drain，
-				// 给延迟到达的帧尾留出额外窗口
-				consecutiveTimeouts++
-				if consecutiveTimeouts >= quietWindowsRequired {
-					break
-				}
-				continue
+				break
 			}
 			// 连接已关闭等错误，无需继续
 			break

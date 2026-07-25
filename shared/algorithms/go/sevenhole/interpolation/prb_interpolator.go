@@ -57,6 +57,29 @@ func (p *SevenHolePrbInterpolator) Identity() string {
 	return "seven-hole-prb(" + strings.Join(parts, ";") + ")"
 }
 
+// GetInnerPointCount 返回内区实际加载的网格点数（13×13=169，固定）。
+// 未加载时返回 0。供上层 metadata 报告真实点数，避免 usecase/api 层硬编码。
+func (p *SevenHolePrbInterpolator) GetInnerPointCount() int {
+	if p.inner == nil {
+		return 0
+	}
+	return innerPointCount // 物理设计固定 169 点
+}
+
+// GetOuterPointCount 返回指定扇区（1..6）外区实际加载的网格点数
+// （= thetaCount × outerPhiCount，动态）。未加载该扇区时返回 0。
+// 供上层 metadata 报告真实点数，支持 4×13=52、7×13=91 等不同校准集。
+func (p *SevenHolePrbInterpolator) GetOuterPointCount(sector int) int {
+	if sector < 1 || sector > outerSectorCount {
+		return 0
+	}
+	sec := p.outer[sector-1]
+	if sec == nil {
+		return 0
+	}
+	return sec.thetaCount * outerPhiCount
+}
+
 // validateFiniteInput rejects NaN/Inf in any input field. Negative gauge
 // pressures and zero values are legal inputs (spec section 7.2); atmosphere
 // plausibility is guarded inside calVelocityMach.

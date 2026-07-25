@@ -3,7 +3,7 @@ package serialport
 import (
 	"fmt"
 	"io"
-	"shared.local/device-sdk/go/pkg/slog"
+	"log/slog"
 	"sync"
 	"time"
 

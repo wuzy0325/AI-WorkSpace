@@ -4,7 +4,7 @@ package ffi
 
 import (
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
+	"log/slog"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -202,17 +202,27 @@ type RR1Status struct {
 	LMTP, LMTM, ALARM, EMG       bool
 }
 
-func WTNMC4AGetRR1Status(h uintptr, axis int) RR1Status {
-	var buf [4]byte
-	getRR1.Call(h, uintptr(axis), uintptr(unsafe.Pointer(&buf[0])))
-	status := uint16(buf[0]) | uint16(buf[1])<<8
-	return RR1Status{
-		CMPP: (status&(1<<0)) != 0, CMPM: (status&(1<<1)) != 0,
-		ASND: (status&(1<<2)) != 0, CNST: (status&(1<<3)) != 0,
-		DSND: (status&(1<<4)) != 0, IN0: (status&(1<<5)) != 0,
-		IN1: (status&(1<<6)) != 0, IN2: (status&(1<<7)) != 0,
-		IN3: (status&(1<<8)) != 0, LMTP: (status&(1<<9)) != 0,
-		LMTM: (status&(1<<10)) != 0, ALARM: (status&(1<<11)) != 0,
-		EMG: (status&(1<<12)) != 0,
+// wtnmc4aRR1Raw matches WTNMC4A_PARA_RR1: 16 UINT fields, 64 bytes total.
+type wtnmc4aRR1Raw struct {
+	CMPP, CMPM, ASND, CNST, DSND uint32
+	AASND, ACNST, ADSND          uint32
+	IN0, IN1, IN2, IN3           uint32
+	LMTP, LMTM, ALARM, EMG       uint32
+}
+
+func WTNMC4AGetRR1Status(h uintptr, axis int) (RR1Status, error) {
+	var raw wtnmc4aRR1Raw
+	ret, _, _ := getRR1.Call(h, uintptr(axis), uintptr(unsafe.Pointer(&raw)))
+	if ret == 0 {
+		return RR1Status{}, fmt.Errorf("WTNMC4A_GetRR1Status failed")
 	}
+	return RR1Status{
+		CMPP: raw.CMPP != 0, CMPM: raw.CMPM != 0,
+		ASND: raw.ASND != 0, CNST: raw.CNST != 0,
+		DSND: raw.DSND != 0, IN0: raw.IN0 != 0,
+		IN1: raw.IN1 != 0, IN2: raw.IN2 != 0,
+		IN3: raw.IN3 != 0, LMTP: raw.LMTP != 0,
+		LMTM: raw.LMTM != 0, ALARM: raw.ALARM != 0,
+		EMG: raw.EMG != 0,
+	}, nil
 }

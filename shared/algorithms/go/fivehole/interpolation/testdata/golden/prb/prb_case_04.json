@@ -1,7 +1,7 @@
 {
   "name": "prb_corner_alphaneg40_beganeg40",
-  "region": "corner",
-  "desc": "PRB 角区(region 1): α=-40,β=-40, Ka=Kb=-0.4 超出角点(-0.3,-0.3), 解析为(-30,-30)",
+  "region": "out-of-range",
+  "desc": "PRB 网格外: α=-40,β=-40, Ka=Kb=-0.4 超出校准凸包, 返回无效零值且不外推",
   "input": {
     "P1": 120,
     "P2": 200,
@@ -12,17 +12,14 @@
     "Tatm": 20
   },
   "expected": {
-    "alpha": -30,
-    "beta": -30,
-    "machNumber": 0.0367657010376142,
-    "isValid": true
+    "alpha": 0,
+    "beta": 0,
+    "machNumber": 0,
+    "isValid": false
   },
   "tolerance": {
     "alpha": 0.5,
     "beta": 0.5,
     "machNumber": 0.05
-  },
-  "skipFields": [
-    "isValid"
-  ]
+  }
 }

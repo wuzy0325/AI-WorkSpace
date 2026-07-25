@@ -143,6 +143,7 @@ type WTNDAQ16HAIVoltGainInfo struct {
 // ---- stub 函数 ----
 
 func InitWTNDAQ16H(dllPath string) error { return ErrWTNDAQ16HPlatformNotSupported }
+func InitWTNDAQ16HFromEnv()                              {}
 func IsWTNDAQ16HInitialized() bool       { return false }
 
 func WTNDAQ16HDevCreate(ip string, sendTimeout, recvTimeout int) (uintptr, error) {
@@ -170,4 +171,7 @@ func WTNDAQ16HStopTask(h uintptr) error    { return ErrWTNDAQ16HPlatformNotSuppo
 func WTNDAQ16HReleaseTask(h uintptr) error { return ErrWTNDAQ16HPlatformNotSupported }
 func WTNDAQ16HScaleBinToVolt(rangeInfo *WTNDAQ16HAIVoltRangeInfo, gainInfo *WTNDAQ16HAIVoltGainInfo, voltArray []float64, binArray []uint16, scaleSamps uint32) (uint32, error) {
 	return 0, ErrWTNDAQ16HPlatformNotSupported
+}
+func WTNDAQ16HGetVoltRangeInfo(handle uintptr, channel, sampleRange uint32) (WTNDAQ16HAIVoltRangeInfo, error) {
+	return WTNDAQ16HAIVoltRangeInfo{}, ErrWTNDAQ16HPlatformNotSupported
 }

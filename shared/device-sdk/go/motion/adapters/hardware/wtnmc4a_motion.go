@@ -4,13 +4,13 @@ package hardware
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -30,10 +30,11 @@ const (
 	defaultAcceleration = 500
 	defaultAccIncRate   = 1000
 	defaultDecIncRate   = 1000
+	wtnmc4aMaxMovePulse = 268435455
 
-	lvdvPulse        = 0
-	lvdvCont         = 1
-	autoDec          = 0
+	lvdvPulse = 0
+	lvdvCont  = 1
+	autoDec   = 0
 	// 脉冲输出方式：1 = CP/DIR 方式（WTNMC4A_CPDIR），一根脉冲线 + 一根方向线。
 	// 注意 SDK 头文件定义：WTNMC4A_CWCCW=0x0（CW/CCW 方式，两根脉冲线），
 	//                       WTNMC4A_CPDIR=0x1（CP/DIR 方式，脉冲+方向）。
@@ -42,14 +43,15 @@ const (
 	// 反而会让正向脉冲极性反转，正向变反向。
 	// 实测对齐 Cursor DAQ（WTNMC4A_CP_DIR=1）+ PLSLogLever=direction + DIRLogLever=0
 	// 后正反方向均正常。
-	pulseModeCPDir   = 1
-	line             = 0
-	pDirection int32 = 1
-	mDirection int32 = 0
+	pulseModeCPDir       = 1
+	line                 = 0
+	pDirection     int32 = 1
+	mDirection     int32 = 0
 
 	// fullStatusInterval 完整状态查询间隔：快速轮询时每隔 500ms 做一次含 getRR1Status 的完整状态，
 	// 刷新限位/报警/归零等慢变信号，中间轮次仅 readLP 读位置。
-	fullStatusInterval = 500 * time.Millisecond
+	fullStatusInterval   = 500 * time.Millisecond
+	positionReadAttempts = 3
 )
 
 type rr1Status struct {
@@ -58,13 +60,32 @@ type rr1Status struct {
 	LMTP, LMTM, ALARM, EMG       bool
 }
 
+// rr0Status 对应 SDK WTNMC4A 状态寄存器 RR0 的驱动状态位。
+// XDRV=1 表示 X 轴正在驱动（控制器正在输出运动脉冲），
+// 0 表示 X 轴已停止。Y/Z/U 同理。
+// RR0 是 SDK 明确定义的轴驱动/停止状态来源，不带阶段位残留问题。
+type rr0Status struct {
+	XDRV, YDRV, ZDRV, UDRV bool
+}
+
+// wtnmc4aRR0Struct 对应 C 结构体 WTNMC4A_PARA_RR0。
+// XDRV/YDRV/ZDRV/UDRV 是 SDK 明确定义的各轴驱动状态，不能用 RR1 的
+// 加速/定速/减速阶段位替代，否则阶段位残留会让停止轴持续显示 Moving=true。
+type wtnmc4aRR0Struct struct {
+	XDRV, YDRV, ZDRV, UDRV         uint32
+	XERROR, YERROR, ZERROR, UERROR uint32
+	IDRV, CNEXT                    uint32
+	ZONE0, ZONE1, ZONE2            uint32
+	BPSC0, BPSC1                   uint32
+}
+
 // wtnmc4aRR1Struct 对应 C 结构体 WTNMC4A_PARA_RR1（WTNMC4A.H 第 358-379 行）。
 // SDK 定义为 16 个 UINT 字段（每个 4 字节，总 64 字节），每个字段值为 0 或 1。
 // 必须用此结构体缓冲区传指针给 DLL，不能再用 [4]byte 当位掩码解析——
 // 早期实现这样做导致：
-//   1. DLL 写 64 字节到 4 字节缓冲区，越界破坏栈内存
-//   2. 位掩码解析使 ASND/CNST/DSND 永远读到 0，axis.moving 永远为 false，
-//      运动中停止按钮始终 disabled（B140 走另一条路径不受影响）
+//  1. DLL 写 64 字节到 4 字节缓冲区，越界破坏栈内存
+//  2. 位掩码解析使 ASND/CNST/DSND 永远读到 0，axis.moving 永远为 false，
+//     运动中停止按钮始终 disabled（B140 走另一条路径不受影响）
 type wtnmc4aRR1Struct struct {
 	CMPP  uint32
 	CMPM  uint32
@@ -103,6 +124,7 @@ type dllProcs struct {
 	readEP     *syscall.Proc
 	readCV     *syscall.Proc
 	readCA     *syscall.Proc
+	getRR0     *syscall.Proc
 	getRR1     *syscall.Proc
 	startHome  *syscall.Proc
 	clearLimit *syscall.Proc
@@ -147,23 +169,41 @@ type axisSpeedParams struct {
 	Multiple     int32
 }
 
+type trustedPositionSample struct {
+	pulse int32
+	at    time.Time
+}
+
+type statusQueryFlight struct {
+	done   chan struct{}
+	status core.ControllerStatus
+	err    error
+}
+
 type WTNMC4AMotionController struct {
-	mu          sync.RWMutex
-	profile     core.MotionControllerProfile
-	status      core.ControllerStatus
-	handle      uintptr
-	dll         *syscall.DLL
-	procs       dllProcs
-	speedParams map[int]*axisSpeedParams
+	mu               sync.RWMutex
+	ioMu             sync.Mutex
+	statusQueryMu    sync.Mutex
+	statusQuery      *statusQueryFlight
+	profile          core.MotionControllerProfile
+	status           core.ControllerStatus
+	handle           uintptr
+	dll              *syscall.DLL
+	procs            dllProcs
+	speedParams      map[int]*axisSpeedParams
+	trustedPositions map[int]trustedPositionSample
+	stateVersion     uint64
+
+	// Test seams for deterministic DLL failure and concurrency tests.
+	readLP    func(handle uintptr, axis int) int32
+	readRR0   func(handle uintptr) (rr0Status, error)
+	readRR1   func(handle uintptr, axis int) (rr1Status, error)
+	startMove func(axis int, pulse int32) error
+	stopAxis  func(handle uintptr, axis int) error
 
 	// 每 500ms 做一次完整状态（含 getRR1Status），刷新限位/报警/归零等慢变信号。
 	lastFullStatusAt time.Time // 上次完整状态时间
 
-	// atomic 副本：Stop/EmergencyStop 通过 atomic 读取，完全避免锁竞争。
-	// 背景：Status 持 RLock 期间，MoveBy 等待 Lock 时，Go RWMutex 会阻塞所有新 RLock，
-	// 导致 Stop 也被阻塞。用 atomic 彻底消除这个问题。
-	atomicHandle    atomic.Uintptr
-	atomicConnected atomic.Bool
 }
 
 func (c *WTNMC4AMotionController) GetProfile() core.MotionControllerProfile {
@@ -187,29 +227,35 @@ func NewWTNMC4AMotionController(profile core.MotionControllerProfile) *WTNMC4AMo
 		}
 	}
 	return &WTNMC4AMotionController{
-		profile:     profile,
-		status:      status,
-		speedParams: make(map[int]*axisSpeedParams),
+		profile:          profile,
+		status:           status,
+		speedParams:      make(map[int]*axisSpeedParams),
+		trustedPositions: make(map[int]trustedPositionSample),
 	}
 }
 
 func (c *WTNMC4AMotionController) ApplyConfig(ctx context.Context, profile core.MotionControllerProfile) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	c.profile = profile
+	c.trustedPositions = make(map[int]trustedPositionSample)
+	c.stateVersion++
 	needReconfig := c.handle != 0 && c.status.Connected
-	c.mu.Unlock()
 	if needReconfig {
-		c.mu.Lock()
 		err := c.cacheAxisSpeedsLocked()
-		c.mu.Unlock()
 		if err != nil {
+			c.mu.Unlock()
 			return err
 		}
 	}
+	c.mu.Unlock()
 	return nil
 }
 
 func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -248,6 +294,7 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 		readEP:     dll.MustFindProc("WTNMC4A_ReadEP"),
 		readCV:     dll.MustFindProc("WTNMC4A_ReadCV"),
 		readCA:     dll.MustFindProc("WTNMC4A_ReadCA"),
+		getRR0:     dll.MustFindProc("WTNMC4A_GetRR0Status"),
 		getRR1:     dll.MustFindProc("WTNMC4A_GetRR1Status"),
 		startHome:  dll.MustFindProc("WTNMC4A_StartAutoHomeSearch"),
 		clearLimit: dll.MustFindProc("WTNMC4A_ClearSoftwareLimit"),
@@ -282,23 +329,23 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	}
 
 	c.speedParams = make(map[int]*axisSpeedParams)
+	c.trustedPositions = make(map[int]trustedPositionSample)
 	if err := c.cacheAxisSpeedsLocked(); err != nil {
 		c.cleanupConnectionLocked()
 		c.status.LastError = err.Error()
 		return err
 	}
 
-	// 同步 atomic 副本，供 Stop/EmergencyStop 无锁读取
-	c.atomicHandle.Store(ret)
-	c.atomicConnected.Store(true)
-
 	c.status.Connected = true
 	c.status.EmergencyStopped = false
 	c.status.LastError = ""
+	c.stateVersion++
 	return nil
 }
 
 func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -311,13 +358,12 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 		c.dll = nil
 	}
 
-	// 清除 atomic 副本
-	c.atomicHandle.Store(0)
-	c.atomicConnected.Store(false)
 	c.lastFullStatusAt = time.Time{}
+	c.trustedPositions = make(map[int]trustedPositionSample)
 
 	c.status.Connected = false
 	c.status.EmergencyStopped = false
+	c.stateVersion++
 	for i := range c.status.Axes {
 		c.status.Axes[i].Moving = false
 		c.status.Axes[i].Velocity = 0
@@ -328,10 +374,58 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 
 // Status 返回控制器和所有轴的状态。
 //
-// 快速路径优化：仅当距离上次完整状态 >= 500ms 时才调用 getRR1Status（每轴 1 次 DLL 调用），
-// 中间轮次仅调用 readLP（每轴 1 次 DLL 调用），DLL 调用量减半（4 轴 8→4 次），
-// 运动状态沿用缓存值，避免低速运动时位置未变导致误判停止。限位/报警/归零等慢变信号在完整状态时刷新。
+// 快速路径优化：仅当距离上次完整状态 >= 500ms 时才调用 getRR0Status + getRR1Status（1+4 次 DLL 调用），
+// 中间轮次仅调用 readLP（每轴 1 次 DLL 调用），DLL 调用量减少，限位/报警/归零等慢变信号在完整状态时刷新。
+//
+// 运动判定来源为 SDK RR0 寄存器的 XDRV/YDRV/ZDRV/UDRV 驱动状态位（每控制器 1 次 DLL 调用），
+// 而非 RR1 的 ASND/CNST/DSND 加速/定速/减速阶段位（每轴 1 次）。RR0 是 SDK 明确指定用于判断
+// 轴是否正在驱动的寄存器，不因阶段位残留而误判为运动中。
+// RR1 继续只用于限位（LMTP/LMTM）、报警（ALARM/EMG）等轴级状态。
+//
+// Single-flight 合并：同一时刻每台控制器最多运行一轮 RR0/RR1/LP 查询，后续调用者共享
+// 第一轮的结果（成功或失败）。这是 spec Decision 2 "一个控制器一个采集 flight" 在 WTNMC4A
+// adapter 层的最小落地，避免多消费者在 ioMu 上排队后重复访问 DLL。
+//
+// 注意：等待者 ctx 取消时返回的 status 是当前缓存快照（c.copyStatusLocked），
+// 不是发起者最终结果——两者可能不一致（发起者可能稍后成功更新缓存）。
+// 调用方拿到 (status, ctx.Err()) 时只能把 status 当作"最近一次已知状态"
+// 用于诊断/兜底，不能当作本轮采集结果。如需本轮结果必须用非取消的 ctx
+// 重新调用 Status。
 func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
+	c.statusQueryMu.Lock()
+	if active := c.statusQuery; active != nil {
+		c.statusQueryMu.Unlock()
+		select {
+		case <-active.done:
+			return active.status, active.err
+		case <-ctx.Done():
+			c.mu.RLock()
+			status := c.copyStatusLocked()
+			c.mu.RUnlock()
+			return status, ctx.Err()
+		}
+	}
+
+	flight := &statusQueryFlight{done: make(chan struct{})}
+	c.statusQuery = flight
+	c.statusQueryMu.Unlock()
+
+	status, err := c.queryStatus(ctx)
+
+	c.statusQueryMu.Lock()
+	flight.status = status
+	flight.err = err
+	if c.statusQuery == flight {
+		c.statusQuery = nil
+	}
+	close(flight.done)
+	c.statusQueryMu.Unlock()
+	return status, err
+}
+
+// queryStatus 执行一轮真实硬件查询。Status 保证同一控制器同一时刻仅运行一轮，
+// 其他并发调用等待并复用结果，避免多个轮询源在 ioMu 上排队后重复访问 DLL。
+func (c *WTNMC4AMotionController) queryStatus(ctx context.Context) (core.ControllerStatus, error) {
 	startTime := time.Now()
 
 	c.mu.RLock()
@@ -342,6 +436,7 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 	}
 
 	handle := c.handle
+	queryVersion := c.stateVersion
 	needFullStatus := time.Since(c.lastFullStatusAt) >= fullStatusInterval
 
 	type axisQuery struct {
@@ -373,32 +468,102 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 	}
 	c.mu.RUnlock()
 
-	// 锁外调用 DLL（耗时操作）
 	type axisResult struct {
-		axisIdx  int
-		position float64
-		moving   bool
-		homed    bool
-		posLimit bool
-		negLimit bool
+		axisIdx       int
+		position      float64
+		positionValid bool
+		moving        bool
+		homed         bool
+		posLimit      bool
+		negLimit      bool
+		statusValid   bool
 	}
 	results := make([]axisResult, 0, len(queries))
+	var statusErrors []error
 
 	dllStart := time.Now()
+	// 一次性读取 RR0 寄存器（所有轴驱动状态），用于后续逐轴的 moving 判定。
+	// 在完整状态窗口中提前查询，避免在每个轴的 ioMu 锁内重复读 RR0。
+	var rr0 rr0Status
+	var rr0Err error
+	if needFullStatus {
+		c.ioMu.Lock()
+		if !c.connectionMatches(handle) {
+			rr0Err = fmt.Errorf("控制器连接已变更")
+		} else {
+			rr0, rr0Err = c.getRR0Status(handle)
+		}
+		c.ioMu.Unlock()
+		if rr0Err != nil {
+			statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 驱动状态读取失败: %w", rr0Err))
+		}
+	}
 	for _, q := range queries {
-		// === 快速路径：仅 readLP 读位置，跳过高开销的 getRR1Status ===
-		lpRet, _, _ := c.procs.readLP.Call(handle, uintptr(q.axisNum))
-		logicalPos := int64(int32(lpRet))
-		position := wtnmc4aPulseToEngineering(q.axisCfg, float64(logicalPos))
+		// Serialize one axis query at a time so Stop/EmergencyStop can run between
+		// axes instead of waiting for an entire four-axis status batch.
+		c.ioMu.Lock()
+		if !c.connectionMatches(handle) {
+			c.ioMu.Unlock()
+			c.mu.RLock()
+			status := c.copyStatusLocked()
+			c.mu.RUnlock()
+			return status, fmt.Errorf("控制器连接已变更")
+		}
+		retryYield := func() error {
+			c.ioMu.Unlock()
+			c.ioMu.Lock()
+			if !c.connectionMatches(handle) {
+				return fmt.Errorf("控制器连接已变更")
+			}
+			return nil
+		}
+		position, positionErr := c.readTrustedPosition(handle, q.axisNum, q.axisCfg, retryYield)
+		c.ioMu.Unlock()
+		if positionErr != nil {
+			statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 轴 %s 位置读取失败: %w", q.axisCfg.Name, positionErr))
+		}
 
 		var moving, homed, posLimit, negLimit bool
+		statusValid := false
 		if needFullStatus {
-			// 完整状态：readLP + getRR1Status，刷新所有慢变信号
-			rr1 := c.getRR1Status(handle, q.axisNum)
-			moving = rr1.ASND || rr1.CNST || rr1.DSND
-			homed = core.IsHomed(position, q.axisCfg)
-			posLimit = rr1.LMTP
-			negLimit = rr1.LMTM
+			c.ioMu.Lock()
+			var rr1 rr1Status
+			var rrErr error
+			if !c.connectionMatches(handle) {
+				rrErr = fmt.Errorf("控制器连接已变更")
+			} else {
+				rr1, rrErr = c.getRR1Status(handle, q.axisNum)
+			}
+			c.ioMu.Unlock()
+			if rrErr != nil {
+				statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 轴 %s 状态读取失败: %w", q.axisCfg.Name, rrErr))
+			} else if rr0Err == nil {
+				// 使用 RR0 驱动状态位判定运动/停止，RR1 只取限位信号。
+				// 不能用 RR1 的 ASND/CNST/DSND 替代：控制器停止后阶段位可能残留，
+				// 而上层看门狗依赖准确的 Moving=false 来做到位判定。
+				moving = rr0.axisDriving(q.axisNum)
+				posLimit = rr1.LMTP
+				negLimit = rr1.LMTM
+				statusValid = true
+				// ReadLP precedes GetRR1Status, so an axis can stop between the two
+				// calls. Pair the stopped state with a fresh final position instead
+				// of exposing the earlier in-motion sample as a stopped position.
+				if cachedMoving[q.axisIdx] && !moving {
+					c.ioMu.Lock()
+					if !c.connectionMatches(handle) {
+						positionErr = fmt.Errorf("控制器连接已变更")
+					} else {
+						position, positionErr = c.readTrustedPosition(handle, q.axisNum, q.axisCfg)
+					}
+					c.ioMu.Unlock()
+					if positionErr != nil {
+						statusErrors = append(statusErrors, fmt.Errorf("WTNMC4A 轴 %s 停止后位置读取失败: %w", q.axisCfg.Name, positionErr))
+					}
+				}
+			}
+			if positionErr == nil {
+				homed = core.IsHomed(position, q.axisCfg)
+			}
 		} else {
 			// 快速路径：运动状态从缓存读取，避免低速/刚启动时位置未变误判停止
 			moving = cachedMoving[q.axisIdx]
@@ -409,32 +574,59 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		}
 
 		results = append(results, axisResult{
-			axisIdx:  q.axisIdx,
-			position: position,
-			moving:   moving,
-			homed:    homed,
-			posLimit: posLimit,
-			negLimit: negLimit,
+			axisIdx:       q.axisIdx,
+			position:      position,
+			positionValid: positionErr == nil,
+			moving:        moving,
+			homed:         homed,
+			posLimit:      posLimit,
+			negLimit:      negLimit,
+			statusValid:   statusValid,
 		})
 	}
 	dllDuration := time.Since(dllStart)
 
 	// 写锁更新状态（极短时间）
 	c.mu.Lock()
+	if c.stateVersion != queryVersion {
+		statusCopy := c.copyStatusLocked()
+		c.mu.Unlock()
+		return statusCopy, nil
+	}
 	for _, r := range results {
 		axisStatus := &c.status.Axes[r.axisIdx]
-		axisStatus.Position = r.position
-		axisStatus.Moving = r.moving
-		axisStatus.Homed = r.homed
-		axisStatus.PosLimit = r.posLimit
-		axisStatus.NegLimit = r.negLimit
+		if r.positionValid {
+			axisStatus.Position = r.position
+			if needFullStatus {
+				axisStatus.Homed = r.homed
+			}
+		}
+		if !needFullStatus || r.statusValid {
+			axisStatus.Moving = r.moving
+			axisStatus.PosLimit = r.posLimit
+			axisStatus.NegLimit = r.negLimit
+		}
 		axisStatus.Compensating = false
 		axisStatus.CompensationError = ""
 		axisStatus.PositionError = 0
 	}
-	c.status.LastError = ""
+	statusErr := errors.Join(statusErrors...)
+	if statusErr != nil {
+		c.status.LastError = statusErr.Error()
+	} else {
+		c.status.LastError = ""
+	}
 	if needFullStatus {
-		c.lastFullStatusAt = time.Now()
+		fullStatusSucceeded := true
+		for _, r := range results {
+			if !r.statusValid {
+				fullStatusSucceeded = false
+				break
+			}
+		}
+		if fullStatusSucceeded {
+			c.lastFullStatusAt = time.Now()
+		}
 	}
 	statusCopy := c.copyStatusLocked()
 	c.mu.Unlock()
@@ -446,13 +638,34 @@ func (c *WTNMC4AMotionController) Status(ctx context.Context) (core.ControllerSt
 		"full", needFullStatus,
 		"axes", len(queries),
 	)
-	return statusCopy, nil
+	return statusCopy, statusErr
+}
+
+// axisDriving 根据轴序号返回 RR0 中对应轴的驱动状态。
+// axisNum 映射：0→XDRV, 1→YDRV, 2→ZDRV, 3→UDRV。
+// 未知轴号返回 false（保守处理，不误判为运动中）。
+func (s rr0Status) axisDriving(axisNum int) bool {
+	switch axisNum {
+	case 0:
+		return s.XDRV
+	case 1:
+		return s.YDRV
+	case 2:
+		return s.ZDRV
+	case 3:
+		return s.UDRV
+	default:
+		return false
+	}
 }
 
 // InitLVDV + StartLVDV 启动轴的运动（参照标准SDK示例用法）。
 // InitLVDV 一次性设置所有运动参数（速度、加速度、方向、脉冲数等），
 // 避免因硬件清除寄存器导致的运动失败。
 func (c *WTNMC4AMotionController) moveAxisInit(an int, targetPulse int32) error {
+	if targetPulse > wtnmc4aMaxMovePulse || targetPulse < -wtnmc4aMaxMovePulse {
+		return fmt.Errorf("WTNMC4A 轴 %d 目标脉冲 %d 超出硬件上限 %d", an, targetPulse, wtnmc4aMaxMovePulse)
+	}
 	params, ok := c.speedParams[an]
 	if !ok || params.DriveSpeed == 0 {
 		return fmt.Errorf("轴%d未配置速度参数", an)
@@ -464,12 +677,6 @@ func (c *WTNMC4AMotionController) moveAxisInit(an int, targetPulse int32) error 
 	if targetPulse < 0 {
 		direction = mDirection
 		absPulse = -targetPulse
-	}
-
-	if absPulse > 268435455 {
-		slog.Warn("WTNMC4A moveAxisInit pulse clipped to hardware max",
-			"axis", an, "original", targetPulse, "clipped", int32(268435455))
-		absPulse = 268435455
 	}
 
 	slog.Debug("WTNMC4A moveAxisInit",
@@ -527,6 +734,8 @@ func (c *WTNMC4AMotionController) moveAxisInit(an int, targetPulse int32) error 
 // MoveTo 绝对定位：参照标准SDK 单轴直线S曲线驱动 示例，
 // 使用 InitLVDV + StartLVDV 实现。
 func (c *WTNMC4AMotionController) MoveTo(ctx context.Context, axis core.AxisName, position float64) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -537,29 +746,39 @@ func (c *WTNMC4AMotionController) MoveTo(ctx context.Context, axis core.AxisName
 	if !ok {
 		return fmt.Errorf("未知运动轴: %s", axis)
 	}
+	if err := validateWTNMC4ATarget(axisCfg, position); err != nil {
+		return fmt.Errorf("WTNMC4A 轴 %s 目标位置无效: %w", axis, err)
+	}
 	an := wtnmc4aAxisNum(axis)
 
-	currentLp, _, _ := c.procs.readLP.Call(c.handle, uintptr(an))
-	currentPos := wtnmc4aPulseToEngineering(axisCfg, float64(int64(int32(currentLp))))
+	currentPos, err := c.readTrustedPosition(c.handle, an, axisCfg)
+	if err != nil {
+		c.status.LastError = fmt.Sprintf("轴 %s 当前位置不可信: %v", axis, err)
+		return fmt.Errorf("WTNMC4A 轴 %s 当前位置不可信，拒绝运动: %w", axis, err)
+	}
 	deltaPulse := wtnmc4aEngineeringToPulse(axisCfg, position) - wtnmc4aEngineeringToPulse(axisCfg, currentPos)
 	if deltaPulse == 0 {
 		return nil
 	}
-	if deltaPulse > 268435455 || deltaPulse < -268435455 {
+	if deltaPulse > wtnmc4aMaxMovePulse || deltaPulse < -wtnmc4aMaxMovePulse {
 		return fmt.Errorf("WTNMC4A 轴 %s 运动距离超出硬件范围: %d", axis, deltaPulse)
 	}
 
-	if err := c.moveAxisInit(an, int32(deltaPulse)); err != nil {
+	startMove := c.resolveStartMove()
+	if err := startMove(an, int32(deltaPulse)); err != nil {
 		c.status.LastError = fmt.Sprintf("轴 %s 运动失败: %v", axis, err)
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
 	}
 	c.status.LastError = ""
 	c.setAxisMovingLocked(axis, true)
+	c.stateVersion++
 	return nil
 }
 
 // MoveBy 相对定位：使用 InitLVDV + StartLVDV 实现。delta 为正则正方向，为负则反方向。
 func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName, delta float64) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -571,26 +790,58 @@ func (c *WTNMC4AMotionController) MoveBy(ctx context.Context, axis core.AxisName
 		return fmt.Errorf("未知运动轴: %s", axis)
 	}
 	an := wtnmc4aAxisNum(axis)
+	currentPos, err := c.readTrustedPosition(c.handle, an, axisCfg)
+	if err != nil {
+		return fmt.Errorf("WTNMC4A 轴 %s 当前位置不可信，拒绝运动: %w", axis, err)
+	}
+	if err := validateWTNMC4ATarget(axisCfg, currentPos+delta); err != nil {
+		return fmt.Errorf("WTNMC4A 轴 %s 相对运动目标无效: %w", axis, err)
+	}
 
 	deltaPulse := wtnmc4aEngineeringToPulse(axisCfg, delta)
 	if deltaPulse == 0 {
 		return nil
 	}
-	if deltaPulse > 268435455 || deltaPulse < -268435455 {
+	if deltaPulse > wtnmc4aMaxMovePulse || deltaPulse < -wtnmc4aMaxMovePulse {
 		return fmt.Errorf("WTNMC4A 轴 %s 运动距离超出硬件范围: %d", axis, deltaPulse)
 	}
 
-	if err := c.moveAxisInit(an, int32(deltaPulse)); err != nil {
+	startMove := c.resolveStartMove()
+	if err := startMove(an, int32(deltaPulse)); err != nil {
 		c.status.LastError = fmt.Sprintf("轴 %s 运动失败: %v", axis, err)
 		return fmt.Errorf("WTNMC4A 轴 %s 运动失败: %w", axis, err)
 	}
 	c.status.LastError = ""
 	c.setAxisMovingLocked(axis, true)
+	c.stateVersion++
 	return nil
+}
+
+// resolveStartMove 解析运动启动函数的测试 seam：c.startMove 为 nil 时回退到生产实现 moveAxisInit。
+//
+// 抽取自 MoveTo/MoveBy 两处相同的兜底模板，避免新增字段时漏改某一处。
+// Jog 走 InitLVDV+StartLVDV 连续模式路径，不经过此 seam。
+func (c *WTNMC4AMotionController) resolveStartMove() func(axis int, pulse int32) error {
+	if c.startMove != nil {
+		return c.startMove
+	}
+	return c.moveAxisInit
+}
+
+// resolveStopAxis 解析轴停止函数的测试 seam：c.stopAxis 为 nil 时回退到生产实现 callInstStop。
+//
+// 抽取自 Stop 单轴分支与 stopAllAxesLocked 内相同的兜底模板，与 resolveStartMove 对称。
+func (c *WTNMC4AMotionController) resolveStopAxis() func(handle uintptr, axis int) error {
+	if c.stopAxis != nil {
+		return c.stopAxis
+	}
+	return c.callInstStop
 }
 
 // Jog 连续运动：参照标准SDK用法，使用 InitLVDV（连续模式 LVDV=1）+ StartLVDV
 func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, velocity float64) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -667,10 +918,13 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 	}
 	c.status.LastError = ""
 	c.setAxisMovingLocked(axis, true)
+	c.stateVersion++
 	return nil
 }
 
 func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -688,63 +942,113 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 	}
 	c.status.LastError = ""
 	c.setAxisMovingLocked(axis, true)
+	c.stateVersion++
 	return nil
 }
 
-// Stop 停止指定轴或全部轴的运动。
-// 使用 instStop（立即停止）替代 decStop（减速停止），确保停止响应最快。
-// 通过 atomic 读取 handle 和连接状态，完全避免锁竞争：
-//
-//	Status 持 RLock 期间，MoveBy 等待 Lock 时 Go RWMutex 会阻塞所有新 RLock，
-//	atomic 读彻底消除了 Stop 被阻塞的可能。
+// Stop serializes the immediate-stop command with other calls on the same DLL
+// handle. Status releases the I/O lock between axes to bound normal contention.
 func (c *WTNMC4AMotionController) Stop(ctx context.Context, axis core.AxisName) error {
-	handle := c.atomicHandle.Load()
-	if handle == 0 || !c.atomicConnected.Load() {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
+	c.mu.RLock()
+	handle := c.handle
+	connected := c.status.Connected
+	c.mu.RUnlock()
+	if handle == 0 || !connected {
 		return fmt.Errorf("控制器未连接")
 	}
 
-	// instStop = 立即停止，不经过减速阶段，响应最快
 	if axis == "" {
-		for _, an := range []int{0, 1, 2, 3} {
-			c.procs.instStop.Call(handle, uintptr(an))
-		}
-		c.mu.Lock()
-		for i := range c.status.Axes {
-			c.status.Axes[i].Moving = false
-		}
-		c.mu.Unlock()
-		return nil
+		return c.stopAllAxesLocked(handle, "停止")
+	}
+	c.mu.RLock()
+	_, axisExists := c.axisConfigLocked(axis)
+	c.mu.RUnlock()
+	if !axisExists {
+		return fmt.Errorf("未知或未启用的运动轴: %s", axis)
 	}
 	an := wtnmc4aAxisNum(axis)
-	c.procs.instStop.Call(handle, uintptr(an))
+	stopAxis := c.resolveStopAxis()
+	if err := stopAxis(handle, an); err != nil {
+		return fmt.Errorf("WTNMC4A 轴 %s 停止失败: %w", axis, err)
+	}
 	c.mu.Lock()
 	c.setAxisMovingLocked(axis, false)
+	c.stateVersion++
 	c.mu.Unlock()
 	return nil
 }
 
-// EmergencyStop 紧急停止所有轴。
-// 通过 atomic 读取 handle，完全避免锁竞争，确保急停命令不受 Status/MoveBy 阻塞。
+// EmergencyStop serializes immediate-stop commands with the vendor DLL handle.
+//
+// 标志位置位时序（安全优先）：
+//   - 先置位 EmergencyStopped，再调用 stopAllAxesLocked。即使后续停止调用失败，
+//     标志已锁存，可阻止并发的 MoveTo/MoveBy/Jog 等运动命令发起 DLL 调用。
+//   - 若先停止再置位，存在时间窗：停止执行期间其他 goroutine 可能发起新运动。
+//   - 急停失败也保留标志位（不回滚），由调用方通过返回的 error 诊断现场，
+//     需显式调用 ResetEmergencyStop 才能清除。
 func (c *WTNMC4AMotionController) EmergencyStop(ctx context.Context) error {
-	handle := c.atomicHandle.Load()
-	if handle == 0 || !c.atomicConnected.Load() {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
+	c.mu.RLock()
+	handle := c.handle
+	connected := c.status.Connected
+	c.mu.RUnlock()
+	if handle == 0 || !connected {
 		return fmt.Errorf("控制器未连接")
 	}
 
-	for _, an := range []int{0, 1, 2, 3} {
-		c.procs.instStop.Call(handle, uintptr(an))
-	}
 	c.mu.Lock()
 	c.status.EmergencyStopped = true
-	c.status.LastError = ""
-	for i := range c.status.Axes {
-		c.status.Axes[i].Moving = false
-	}
 	c.mu.Unlock()
-	return nil
+	return c.stopAllAxesLocked(handle, "急停")
+}
+
+// stopAllAxesLocked 在已校验 handle/connected 后，依次停止 0~3 号轴并更新 status。
+//
+// 抽取自 Stop(axis="") 与 EmergencyStop 的共用逻辑：
+//   - 解析 stopAxis 注入点（测试 seam，nil 时回退到 callInstStop）
+//   - 依次对 4 个轴调用 stopAxis，记录成功轴索引到 stoppedAxes
+//   - 拿 mu 锁，仅将成功停止的轴的 Moving 置 false（失败轴保留原状态，
+//     由调用方通过 LastError 诊断）；同步刷新 LastError 与 stateVersion
+//
+// 不设置 EmergencyStopped 标志：该标志仅 EmergencyStop 应置位，调用方按语义处理。
+// errLabel 用于错误消息文案区分（"停止" / "急停"），保留与原实现一致的中文消息。
+//
+// 调用方约束：必须已持有 ioMu（保证与同控制器的其他命令串行）；
+// 调用本方法期间不得持有 mu（方法内部加锁更新 status 后释放）。
+func (c *WTNMC4AMotionController) stopAllAxesLocked(handle uintptr, errLabel string) error {
+	stopAxis := c.resolveStopAxis()
+	var stopErrors []error
+	stoppedAxes := make(map[int]bool, 4)
+	for _, an := range []int{0, 1, 2, 3} {
+		if err := stopAxis(handle, an); err != nil {
+			stopErrors = append(stopErrors, fmt.Errorf("轴%d%s失败: %w", an, errLabel, err))
+			continue
+		}
+		stoppedAxes[an] = true
+	}
+	stopErr := errors.Join(stopErrors...)
+	c.mu.Lock()
+	for i := range c.status.Axes {
+		if stoppedAxes[wtnmc4aAxisNum(c.status.Axes[i].Name)] {
+			c.status.Axes[i].Moving = false
+		}
+	}
+	if stopErr != nil {
+		c.status.LastError = stopErr.Error()
+	} else {
+		c.status.LastError = ""
+	}
+	c.stateVersion++
+	c.mu.Unlock()
+	return stopErr
 }
 
 func (c *WTNMC4AMotionController) ResetEmergencyStop(ctx context.Context) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -757,10 +1061,14 @@ func (c *WTNMC4AMotionController) ResetEmergencyStop(ctx context.Context) error 
 	}
 	c.status.EmergencyStopped = false
 	c.status.LastError = ""
+	c.trustedPositions = make(map[int]trustedPositionSample)
+	c.stateVersion++
 	return nil
 }
 
 func (c *WTNMC4AMotionController) DefinePosition(ctx context.Context, axis core.AxisName, position float64) error {
+	c.ioMu.Lock()
+	defer c.ioMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -770,6 +1078,9 @@ func (c *WTNMC4AMotionController) DefinePosition(ctx context.Context, axis core.
 	axisCfg, ok := c.axisConfigLocked(axis)
 	if !ok {
 		return fmt.Errorf("未知运动轴: %s", axis)
+	}
+	if err := validateWTNMC4ATarget(axisCfg, position); err != nil {
+		return fmt.Errorf("WTNMC4A 轴 %s 定义位置无效: %w", axis, err)
 	}
 	an := wtnmc4aAxisNum(axis)
 
@@ -784,7 +1095,9 @@ func (c *WTNMC4AMotionController) DefinePosition(ctx context.Context, axis core.
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 设置轴 %s 实位失败", axis)
 	}
+	c.trustedPositions[an] = trustedPositionSample{pulse: int32(pulse), at: time.Now()}
 	c.status.LastError = ""
+	c.stateVersion++
 	return nil
 }
 
@@ -793,6 +1106,12 @@ func (c *WTNMC4AMotionController) checkConnectedLocked() error {
 		return fmt.Errorf("控制器未连接")
 	}
 	return nil
+}
+
+func (c *WTNMC4AMotionController) connectionMatches(handle uintptr) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.handle == handle && c.status.Connected
 }
 
 func (c *WTNMC4AMotionController) checkReadyLocked() error {
@@ -828,8 +1147,6 @@ func (c *WTNMC4AMotionController) cleanupConnectionLocked() {
 		c.dll.Release()
 		c.dll = nil
 	}
-	c.atomicHandle.Store(0)
-	c.atomicConnected.Store(false)
 	c.status.Connected = false
 }
 
@@ -904,9 +1221,15 @@ func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() error {
 //
 // SDK 的 WTNMC4A_GetRR1Status 把 64 字节的 WTNMC4A_PARA_RR1 结构体写入调用方提供的缓冲区，
 // 每个字段是 0/1 的 UINT。这里用 wtnmc4aRR1Struct 结构体匹配内存布局，逐字段读取。
-func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) rr1Status {
+func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) (rr1Status, error) {
+	if c.readRR1 != nil {
+		return c.readRR1(handle, axisNum)
+	}
 	var raw wtnmc4aRR1Struct
-	c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	ret, _, _ := c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	if ret == 0 {
+		return rr1Status{}, fmt.Errorf("GetRR1Status 返回失败")
+	}
 	return rr1Status{
 		CMPP:  raw.CMPP != 0,
 		CMPM:  raw.CMPM != 0,
@@ -921,13 +1244,169 @@ func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) rr1S
 		LMTM:  raw.LMTM != 0,
 		ALARM: raw.ALARM != 0,
 		EMG:   raw.EMG != 0,
+	}, nil
+}
+
+// getRR0Status 查询 RR0 状态寄存器（所有轴统一查询，不依赖锁）。
+//
+// SDK 的 WTNMC4A_GetRR0Status 把 12 个 UINT 字段结构体写入调用方提供的缓冲区，
+// 每个字段是 0/1 的值。这里用 wtnmc4aRR0Struct 匹配内存布局，仅提取 4 个轴驱动位。
+// RR0 不分轴号：一次调用返回 X/Y/Z/U 全部轴的驱动状态。
+//
+// 与 getRR1Status 的区别：RR1 查询的是单轴状态且需逐个调用，RR0 一次查询所有轴。
+func (c *WTNMC4AMotionController) getRR0Status(handle uintptr) (rr0Status, error) {
+	if c.readRR0 != nil {
+		return c.readRR0(handle)
 	}
+	var raw wtnmc4aRR0Struct
+	ret, _, _ := c.procs.getRR0.Call(handle, uintptr(unsafe.Pointer(&raw)))
+	if ret == 0 {
+		return rr0Status{}, fmt.Errorf("GetRR0Status 返回失败")
+	}
+	return rr0Status{
+		XDRV: raw.XDRV != 0,
+		YDRV: raw.YDRV != 0,
+		ZDRV: raw.ZDRV != 0,
+		UDRV: raw.UDRV != 0,
+	}, nil
 }
 
 // getRR1StatusLocked 保留原有方法名（内部调用 handle 版本），
 // 确保其他可能在锁内调用的代码兼容。
 func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
-	return c.getRR1Status(c.handle, axisNum)
+	status, _ := c.getRR1Status(c.handle, axisNum)
+	return status
+}
+
+func (c *WTNMC4AMotionController) readLogicalPosition(handle uintptr, axisNum int) int32 {
+	if c.readLP != nil {
+		return c.readLP(handle, axisNum)
+	}
+	ret, _, _ := c.procs.readLP.Call(handle, uintptr(axisNum))
+	return int32(ret)
+}
+
+func (c *WTNMC4AMotionController) callInstStop(handle uintptr, axisNum int) error {
+	ret, _, _ := c.procs.instStop.Call(handle, uintptr(axisNum))
+	if ret == 0 {
+		return fmt.Errorf("InstStop 返回失败")
+	}
+	return nil
+}
+
+func (c *WTNMC4AMotionController) readTrustedPosition(handle uintptr, axisNum int, axisCfg core.AxisConfig, retryYield ...func() error) (float64, error) {
+	var lastErr error
+	var initialCandidate *trustedPositionSample
+	yield := func() error { return nil }
+	if len(retryYield) > 0 && retryYield[0] != nil {
+		yield = retryYield[0]
+	}
+	for attempt := 1; attempt <= positionReadAttempts; attempt++ {
+		now := time.Now()
+		pulse := c.readLogicalPosition(handle, axisNum)
+		previous, hasPrevious := c.trustedPositions[axisNum]
+		if !hasPrevious {
+			if initialCandidate == nil {
+				if err := validateWTNMC4APositionSample(axisCfg, pulse, trustedPositionSample{}, now); err != nil {
+					lastErr = err
+					slog.Warn("WTNMC4A rejected initial position sample",
+						"axis", axisCfg.Name, "raw_pulse", pulse, "attempt", attempt, "error", err)
+					if err := yield(); err != nil {
+						return 0, err
+					}
+					continue
+				}
+				candidate := trustedPositionSample{pulse: pulse, at: now}
+				initialCandidate = &candidate
+				if err := yield(); err != nil {
+					return 0, err
+				}
+				continue
+			}
+			if err := validateWTNMC4APositionSample(axisCfg, pulse, *initialCandidate, now); err != nil {
+				lastErr = err
+				slog.Warn("WTNMC4A initial position samples disagree",
+					"axis", axisCfg.Name, "candidate_pulse", initialCandidate.pulse,
+					"raw_pulse", pulse, "attempt", attempt, "error", err)
+				if standaloneErr := validateWTNMC4APositionSample(axisCfg, pulse, trustedPositionSample{}, now); standaloneErr == nil {
+					candidate := trustedPositionSample{pulse: pulse, at: now}
+					initialCandidate = &candidate
+				}
+				if err := yield(); err != nil {
+					return 0, err
+				}
+				continue
+			}
+			previous = *initialCandidate
+		}
+		if err := validateWTNMC4APositionSample(axisCfg, pulse, previous, now); err != nil {
+			lastErr = err
+			slog.Warn("WTNMC4A rejected position sample",
+				"axis", axisCfg.Name, "raw_pulse", pulse, "attempt", attempt,
+				"has_previous", hasPrevious, "error", err)
+			if err := yield(); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		c.trustedPositions[axisNum] = trustedPositionSample{pulse: pulse, at: now}
+		return wtnmc4aPulseToEngineering(axisCfg, float64(pulse)), nil
+	}
+	return 0, fmt.Errorf("连续 %d 次位置样本无效: %w", positionReadAttempts, lastErr)
+}
+
+func validateWTNMC4APositionSample(axisCfg core.AxisConfig, pulse int32, previous trustedPositionSample, now time.Time) error {
+	// The LP register is a signed 32-bit counter. Exact extrema commonly indicate
+	// a failed native call and are not useful physical positions.
+	if pulse == math.MinInt32 || pulse == math.MaxInt32 {
+		return fmt.Errorf("脉冲值 %d 为无效边界值", pulse)
+	}
+	position := wtnmc4aPulseToEngineering(axisCfg, float64(pulse))
+	if axisCfg.MinLimit != nil && position < *axisCfg.MinLimit {
+		return fmt.Errorf("位置 %.6f 小于软件下限 %.6f", position, *axisCfg.MinLimit)
+	}
+	if axisCfg.MaxLimit != nil && position > *axisCfg.MaxLimit {
+		return fmt.Errorf("位置 %.6f 大于软件上限 %.6f", position, *axisCfg.MaxLimit)
+	}
+	if previous.at.IsZero() {
+		return nil
+	}
+	elapsed := now.Sub(previous.at)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	ppu := math.Abs(core.PulsesPerUnit(axisCfg))
+	maxSpeed := math.Abs(core.ValueOrFloat(axisCfg.MaxSpeed, core.DefaultMaxSpeed))
+	// Allow 500ms of acceleration/polling jitter while still rejecting register-sized spikes.
+	maxJump := int64(math.Ceil(maxSpeed*ppu*(elapsed.Seconds()+0.5))) + 10
+	jump := int64(pulse) - int64(previous.pulse)
+	if jump < 0 {
+		jump = -jump
+	}
+	if jump > maxJump {
+		return fmt.Errorf("脉冲跳变 %d 超过物理允许值 %d（间隔 %s）", jump, maxJump, elapsed)
+	}
+	return nil
+}
+
+func validateWTNMC4ATarget(axisCfg core.AxisConfig, position float64) error {
+	if math.IsNaN(position) || math.IsInf(position, 0) {
+		return fmt.Errorf("位置必须是有限数值")
+	}
+	if axisCfg.MinLimit != nil && axisCfg.MaxLimit != nil && *axisCfg.MinLimit > *axisCfg.MaxLimit {
+		return fmt.Errorf("软件下限 %.6f 大于上限 %.6f", *axisCfg.MinLimit, *axisCfg.MaxLimit)
+	}
+	if axisCfg.MinLimit != nil && position < *axisCfg.MinLimit {
+		return fmt.Errorf("位置 %.6f 小于软件下限 %.6f", position, *axisCfg.MinLimit)
+	}
+	if axisCfg.MaxLimit != nil && position > *axisCfg.MaxLimit {
+		return fmt.Errorf("位置 %.6f 大于软件上限 %.6f", position, *axisCfg.MaxLimit)
+	}
+	pulse := wtnmc4aEngineeringToPulse(axisCfg, position)
+	if pulse < math.MinInt32 || pulse > math.MaxInt32 {
+		return fmt.Errorf("目标脉冲 %d 超出逻辑位置寄存器范围", pulse)
+	}
+	return nil
 }
 
 func wtnmc4aAxisNum(axis core.AxisName) int {

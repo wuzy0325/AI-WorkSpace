@@ -4,7 +4,10 @@ package ffi
 
 import (
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
+	"log/slog"
+	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -35,6 +38,7 @@ var (
 	daq16hReleaseTask    *syscall.Proc
 	daq16hVerifyParam    *syscall.Proc
 	daq16hScaleBinToVolt *syscall.Proc
+	daq16hGetVoltRangeInfo *syscall.Proc
 )
 
 // ErrWTNDAQ16HPlatformNotSupported 非 Windows 平台调用 FFI 时返回。
@@ -223,6 +227,7 @@ func InitWTNDAQ16H(dllPath string) error {
 		daq16hReleaseTask = wtnDaq16h.MustFindProc("WTNDAQ16H_AI_ReleaseTask")
 		daq16hVerifyParam = wtnDaq16h.MustFindProc("WTNDAQ16H_AI_VerifyParam")
 		daq16hScaleBinToVolt = wtnDaq16h.MustFindProc("WTNDAQ16H_AI_ScaleBinToVolt")
+		daq16hGetVoltRangeInfo = wtnDaq16h.MustFindProc("WTNDAQ16H_AI_GetVoltRangeInfo")
 
 		slog.Info("WTNDAQ16H DLL loaded", "path", dllPath)
 	})
@@ -232,6 +237,24 @@ func InitWTNDAQ16H(dllPath string) error {
 // IsWTNDAQ16HInitialized 返回 DLL 是否已成功加载。
 // 适配器层在调用 API 前应检查此状态，避免空指针 panic。
 func IsWTNDAQ16HInitialized() bool { return wtnDaq16h != nil }
+
+// InitWTNDAQ16HFromEnv 从环境变量或可执行文件同目录加载 DLL。
+// 路径优先级：环境变量 WTNDAQ16H_DLL_PATH → 可执行文件同目录/WTNDAQ16H_64.dll。
+// 由 sync.Once 保证幂等，加载失败仅记录 warn 不阻止启动。
+// 调用方在 main() 早期调用一次即可，DAQ-P-1603 设备不可用时不影响其他设备类型。
+func InitWTNDAQ16HFromEnv() {
+	dllPath := os.Getenv("WTNDAQ16H_DLL_PATH")
+	if dllPath == "" {
+		if exePath, err := os.Executable(); err == nil {
+			dllPath = filepath.Join(filepath.Dir(exePath), "WTNDAQ16H_64.dll")
+		} else {
+			dllPath = "WTNDAQ16H_64.dll"
+		}
+	}
+	if err := InitWTNDAQ16H(dllPath); err != nil {
+		slog.Warn("WTNDAQ16H DLL 加载失败，DAQ-P-1603 设备不可用", "dll", dllPath, "error", err)
+	}
+}
 
 // ---- 高层封装（适配器层调用）----
 
@@ -250,9 +273,12 @@ func WTNDAQ16HDevCreate(ip string, sendTimeout, recvTimeout int) (uintptr, error
 		uintptr(sendTimeout),
 		uintptr(recvTimeout),
 	)
-	// DEV_CreateA 失败返回 0（INVALID_HANDLE_VALUE 在实践中表现为 0）
-	if ret == 0 {
-		return 0, fmt.Errorf("WTNDAQ16H_DEV_CreateA failed for %s", ip)
+	// DEV_CreateA 失败返回 0 或 INVALID_HANDLE_VALUE（64 位下 0xFFFFFFFFFFFFFFFF=-1）。
+	// 旧代码仅检查 ret==0，导致 -1 句柄泄漏到后续 InitTask 才报错，
+	// 错误信息不明确且无法定位到连接阶段。
+	invalidHandle := ^uintptr(0) // 0xFFFFFFFFFFFFFFFF on 64-bit
+	if ret == 0 || ret == invalidHandle {
+		return 0, fmt.Errorf("WTNDAQ16H_DEV_CreateA failed for %s (handle=0x%x)", ip, ret)
 	}
 	return ret, nil
 }
@@ -323,44 +349,50 @@ func WTNDAQ16HGetStatus(h uintptr, p *WTNDAQ16HAIStatus) error {
 //   - timeout：超时秒数（建议 10.0）
 //
 // 返回实际每通道读取数与缓冲区可用数。
-// 注意：ret==FALSE 时仍可能返回部分数据（timeout 场景），调用方应判断 sampsRead 决定是否使用。
+//
+// 错误语义：SDK 返回 FALSE(ret==0) 表示"超时或部分读取"，并非致命错误：
+//   - sampsRead==0：超时未读到数据，调用方应继续轮询等待
+//   - sampsRead>0：超时但已读取部分数据，调用方应使用已读数据
+//
+// 历史问题：原先 ret==0 即返回 error，导致 readLoop 在设备启动稳定期首次超时即退出，
+// 误判为故障。现改为始终返回 nil，由调用方按 sampsRead 决策。
+// 仅缓冲区为空（参数非法）时返回 error。
 func WTNDAQ16HReadBinary(h uintptr, binArray []uint16, readSampsPerChan uint32, timeout float64) (sampsRead, availSamps uint32, err error) {
 	if len(binArray) == 0 {
 		return 0, 0, fmt.Errorf("WTNDAQ16H_AI_ReadBinary: empty buffer")
 	}
 	var sampsRead_, availSamps_ uint32
-	ret, _, _ := daq16hReadBinary.Call(
+	// timeout 是 F64 值传递（非指针），必须用 math.Float64bits 把 float64 位模式转成 uint64，
+	// 再转 uintptr。旧代码传 &timeout 指针，DLL 把指针值当 float64 解释得到接近 0 的
+	// denormalized 值，导致 ReadBinary 立即返回不等待（wind-daq 进程表现为 62ms 超时）。
+	_, _, _ = daq16hReadBinary.Call(
 		h,
 		uintptr(unsafe.Pointer(&binArray[0])),
 		uintptr(readSampsPerChan),
 		uintptr(unsafe.Pointer(&sampsRead_)),
 		uintptr(unsafe.Pointer(&availSamps_)),
-		uintptr(unsafe.Pointer(&timeout)),
+		uintptr(math.Float64bits(timeout)),
 	)
-	if ret == 0 {
-		return sampsRead_, availSamps_, fmt.Errorf("WTNDAQ16H_AI_ReadBinary failed or timeout (read=%d, avail=%d)", sampsRead_, availSamps_)
-	}
 	return sampsRead_, availSamps_, nil
 }
 
 // WTNDAQ16HReadAnalog 读取已换算的电压数据（F64）。
 // 与 ReadBinary 参数语义一致，区别仅在于返回数据已换算为电压（单位 V）。
+// 错误语义与 ReadBinary 对齐：始终返回 nil，由调用方按 sampsRead 决策。
 func WTNDAQ16HReadAnalog(h uintptr, anlgArray []float64, readSampsPerChan uint32, timeout float64) (sampsRead, availSamps uint32, err error) {
 	if len(anlgArray) == 0 {
 		return 0, 0, fmt.Errorf("WTNDAQ16H_AI_ReadAnalog: empty buffer")
 	}
 	var sampsRead_, availSamps_ uint32
-	ret, _, _ := daq16hReadAnalog.Call(
+	// timeout 是 F64 值传递（非指针），见 WTNDAQ16HReadBinary 的注释。
+	_, _, _ = daq16hReadAnalog.Call(
 		h,
 		uintptr(unsafe.Pointer(&anlgArray[0])),
 		uintptr(readSampsPerChan),
 		uintptr(unsafe.Pointer(&sampsRead_)),
 		uintptr(unsafe.Pointer(&availSamps_)),
-		uintptr(unsafe.Pointer(&timeout)),
+		uintptr(math.Float64bits(timeout)),
 	)
-	if ret == 0 {
-		return sampsRead_, availSamps_, fmt.Errorf("WTNDAQ16H_AI_ReadAnalog failed or timeout")
-	}
 	return sampsRead_, availSamps_, nil
 }
 
@@ -381,6 +413,25 @@ func WTNDAQ16HReleaseTask(h uintptr) error {
 		return fmt.Errorf("WTNDAQ16H_AI_ReleaseTask failed")
 	}
 	return nil
+}
+
+// WTNDAQ16HGetVoltRangeInfo 获取指定量程的电压范围信息。
+// ScaleBinToVolt 必须传入有效的 rangeInfo（不能为 nil），否则 DLL 会崩溃。
+//   - handle：设备句柄
+//   - channel：AI 通道号 [0, 15]
+//   - sampleRange：量程编号（与 InitTask 时配置的 nSampleRange 一致）
+func WTNDAQ16HGetVoltRangeInfo(handle uintptr, channel, sampleRange uint32) (WTNDAQ16HAIVoltRangeInfo, error) {
+	var info WTNDAQ16HAIVoltRangeInfo
+	ret, _, _ := daq16hGetVoltRangeInfo.Call(
+		handle,
+		uintptr(channel),
+		uintptr(sampleRange),
+		uintptr(unsafe.Pointer(&info)),
+	)
+	if ret == 0 {
+		return info, fmt.Errorf("WTNDAQ16H_AI_GetVoltRangeInfo failed")
+	}
+	return info, nil
 }
 
 // WTNDAQ16HScaleBinToVolt 将原始 ADC 码值换算为电压值。

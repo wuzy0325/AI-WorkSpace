@@ -535,7 +535,7 @@ func (f *FiveHoleNewInterpolator) parseOriginalCsv(lines []string, headerColumns
 		}
 
 		// 提取 Cpt/Cps（若列存在且有效）
-		if hasCptCps && len(values) > cmpMax(cptIdx, cpsIdx) {
+		if hasCptCps && len(values) > max(cptIdx, cpsIdx) {
 			cptVal, errCpt := parseFloat(strings.TrimSpace(values[cptIdx]))
 			cpsVal, errCps := parseFloat(strings.TrimSpace(values[cpsIdx]))
 			if errCpt == nil && errCps == nil && isFinite(cptVal) && isFinite(cpsVal) {
@@ -1457,12 +1457,4 @@ func (f *FiveHoleNewInterpolator) solveBilinearInverse(px, py float64, corners [
 		}
 	}
 	return bestT1, bestT2, found
-}
-// cmpMax 返回两个 int 中较大的一个。
-// 替代 Go 1.21+ 内置 max 函数，保证 fivehole 包可在 Go 1.20 编译。
-func cmpMax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

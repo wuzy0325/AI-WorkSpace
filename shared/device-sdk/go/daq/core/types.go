@@ -50,6 +50,16 @@ type ChannelConfig struct {
 	// 旧 profile（DAQ-P-1604 / DAQ-T-1603）无此字段，反序列化时由 UnmarshalJSON 默认填充 "pressure"，
 	// 保证向后兼容——历史设备本就以压力通道为主，零值空字符串不应进入业务逻辑。
 	SensorType ChannelSensorType `json:"sensorType,omitempty"`
+
+	// ---- v2 校零字段（与 wind-daq device.ChannelConfig 同步）----
+	CalibrationOffset  float64 `json:"calibrationOffset,omitempty"`
+	CalibrationUnit    string  `json:"calibrationUnit,omitempty"`
+	CalibrationAt      int64   `json:"calibrationAt,omitempty"`
+	// CalibrationEnabled 不使用 omitempty：false 是用户主动设置的合法值
+	// （DAQ-P-1603 逐通道可关闭校零应用），加 omitempty 会在序列化时丢字段，
+	// 导致 HTTP 回读 / 持久化 JSON 后前端拿到 undefined，UI 复选框跳回默认勾选状态，
+	// 造成"配置无法保存"的观感。必须与 wind-daq device.ChannelConfig 保持一致。
+	CalibrationEnabled bool `json:"calibrationEnabled"`
 }
 
 

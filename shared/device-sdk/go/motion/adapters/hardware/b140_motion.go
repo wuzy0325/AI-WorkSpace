@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -31,40 +32,58 @@ const (
 type b140CompensationJobState int
 
 const (
-	compensationStateWaitingStop   b140CompensationJobState = iota // 等待硬件运动停止
-	compensationStateSettling                                      // 等待机械震荡衰减
-	compensationStateChecking                                      // 检查编码器误差
-	compensationStateCompensating                                  // 下发 PR 微调
-	compensationStateSucceeded                                     // 补偿成功
-	compensationStateFailed                                        // 补偿失败
-	compensationStateCancelled                                     // 被新命令取消
+	compensationStateWaitingStop  b140CompensationJobState = iota // 等待硬件运动停止
+	compensationStateSettling                                     // 等待机械震荡衰减
+	compensationStateChecking                                     // 检查编码器误差
+	compensationStateCompensating                                 // 下发 PR 微调
+	compensationStateSucceeded                                    // 补偿成功
+	compensationStateFailed                                       // 补偿失败
+	compensationStateCancelled                                    // 被新命令取消
 )
 
 // b140PendingCompensationRequest moveTo 下发后入队的待激活补偿请求。
 // 等状态轮询发现运动已发生且停止后，升级为 b140CompensationJob。
 type b140PendingCompensationRequest struct {
-	targetPulse       int64                       // 目标寄存器脉冲
-	targetEngineering float64                    // 目标工程位置
-	cfg              core.AxisEncoderCompensationConfig // 解析后的补偿参数
-	issuedAt         time.Time                    // moveTo 下发时间，用于启动宽限
-	observedMotion   bool                         // 是否已观察到运动（用于静止轴误触发保护）
+	targetPulse       int64                              // 目标寄存器脉冲
+	targetEngineering float64                            // 目标工程位置
+	cfg               core.AxisEncoderCompensationConfig // 解析后的补偿参数
+	issuedAt          time.Time                          // moveTo 下发时间，用于启动宽限
+	observedMotion    bool                               // 是否已观察到运动（用于静止轴误触发保护）
 }
 
 // b140CompensationJob 已激活的补偿任务。
 // 一旦激活就在独立 goroutine 中运行 runAxisCompensation 状态机。
 type b140CompensationJob struct {
-	generation        int64                       // 代际号：新命令来时让旧任务自废
-	axis              core.AxisName               // 轴名
-	physical          string                      // 物理轴（A/B/C/D）
-	axisCfg           core.AxisConfig             // 配置快照（避免运行中 profile 被改）
+	mu                sync.Mutex                         // 保护 state/lastError 等跨 goroutine 状态
+	generation        int64                              // 代际号：新命令来时让旧任务自废
+	axis              core.AxisName                      // 轴名
+	physical          string                             // 物理轴（A/B/C/D）
+	axisCfg           core.AxisConfig                    // 配置快照（避免运行中 profile 被改）
 	cfg               core.AxisEncoderCompensationConfig // 补偿参数
-	targetPulse       int64                       // 目标脉冲
-	targetEngineering float64                      // 目标工程位置
-	state             b140CompensationJobState     // 当前状态
-	attempts          int                          // 已尝试的补偿循环次数
-	startedAt         time.Time                    // 任务激活时间，用于超时判定
-	lastError         string                       // 失败原因（空表示未失败）
-	err               error                        // 失败错误对象
+	targetPulse       int64                              // 目标脉冲
+	targetEngineering float64                            // 目标工程位置
+	state             b140CompensationJobState           // 当前状态
+	attempts          int                                // 已尝试的补偿循环次数
+	startedAt         time.Time                          // 任务激活时间，用于超时判定
+	lastError         string                             // 失败原因（空表示未失败）
+}
+
+func (j *b140CompensationJob) currentState() b140CompensationJobState {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.state
+}
+
+func (j *b140CompensationJob) setState(state b140CompensationJobState) {
+	j.mu.Lock()
+	j.state = state
+	j.mu.Unlock()
+}
+
+func (j *b140CompensationJob) statusSnapshot() (b140CompensationJobState, string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.state, j.lastError
 }
 
 // B140MotionController implements Galil DMC-B140-M TCP ASCII motion control.
@@ -78,12 +97,32 @@ type B140MotionController struct {
 	directionSignature string
 	connecting         bool
 
+	// statusQueryMu + statusQuery 实现 Status() 入口的 single-flight 合并：
+	// 同一时刻最多一轮 queryStatus 在运行，后续调用者共享第一轮结果。
+	// 不与 c.mu 或 connMu 嵌套，等待者仅阻塞在 flight.done 上。
+	statusQueryMu sync.Mutex
+	statusQuery   *b140StatusFlight
+
 	// compMu 保护以下三个补偿任务 map。与 c.mu 解耦：补偿 goroutine 持有
 	// compMu 跑状态机，运动命令持有 c.mu 修改配置/状态，两者通过代际号通信。
 	compMu                        sync.Mutex
 	pendingRequests               map[core.AxisName]*b140PendingCompensationRequest
 	jobs                          map[core.AxisName]*b140CompensationJob
 	compensationGenerationCounter int64
+}
+
+// b140StatusFlight 表示一轮进行中的 Status 查询。
+// 第一个调用者创建并执行查询，后续调用者通过 done channel 复用结果。
+//
+// 字段访问契约（happens-before）：
+//   - 发起者在 close(done) 之前写入 status/err
+//   - 等待者通过 <-done 接收后再读取 status/err
+//   - close/receive 建立 happens-before，无需额外锁保护字段读写
+//   - 等待者 ctx 取消时直接返回 c.copyStatusLocked()，不读 flight.status/err
+type b140StatusFlight struct {
+	done   chan struct{}
+	status core.ControllerStatus
+	err    error
 }
 
 // NewB140MotionController creates a B140 motion controller adapter.
@@ -106,10 +145,10 @@ func NewB140MotionController(profile core.MotionControllerProfile) *B140MotionCo
 	}
 
 	return &B140MotionController{
-		profile:          profile,
-		status:           status,
-		pendingRequests:  make(map[core.AxisName]*b140PendingCompensationRequest),
-		jobs:             make(map[core.AxisName]*b140CompensationJob),
+		profile:         profile,
+		status:          status,
+		pendingRequests: make(map[core.AxisName]*b140PendingCompensationRequest),
+		jobs:            make(map[core.AxisName]*b140CompensationJob),
 	}
 }
 
@@ -296,9 +335,58 @@ func (c *B140MotionController) statusError(err error) (core.ControllerStatus, er
 	return status, err
 }
 
-// Status reads register position, motion state, and limit switches.
-// 同时承担补偿任务激活入口：发现运动停止时把 pending 升级为 job。
+// Status 是单轮状态查询入口，使用 single-flight 合并多个并发调用者：
+// 同一时刻每台控制器最多运行一轮 TD/TS/MG/TP 命令序列，后续调用者共享
+// 第一轮的结果（成功或失败）。这是 spec Decision 2 "一个控制器一个采集 flight"
+// 在 B140 adapter 层的最小落地。
+//
+// 等待者通过 <-flight.done 复用发起者结果，不重新进入 sendCommand，避免多
+// 消费者放大 B140 TCP 命令数（B140 单轮 Status 包含 10 至 14 条串行命令）。
+// 等待者不持 connMu 或 c.mu，因此不影响 MoveTo/Jog/Home/Stop 等命令的并发性。
+//
+// 两种 ctx 取消语义：
+//   - 发起者 ctx 取消：queryStatus 通过 sendCommand 收到 ctx.Err()，
+//     返回 (失败前缓存状态, ctx.Err())；所有等待者通过 flight.done 收到同一结果。
+//   - 等待者 ctx 取消：立即返回 (c.copyStatusLocked(), ctx.Err())，
+//     不影响发起者和其他等待者。返回的 status 是当前缓存快照，不是本轮采集结果，
+//     调用方拿到 ctx.Err() 时只能把 status 当作"最近一次已知状态"用于诊断/兜底，
+//     不能当作本轮采集结果。如需本轮结果必须用非取消的 ctx 重新调用 Status。
 func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatus, error) {
+	c.statusQueryMu.Lock()
+	if active := c.statusQuery; active != nil {
+		c.statusQueryMu.Unlock()
+		select {
+		case <-active.done:
+			return active.status, active.err
+		case <-ctx.Done():
+			c.mu.Lock()
+			status := c.copyStatusLocked()
+			c.mu.Unlock()
+			return status, ctx.Err()
+		}
+	}
+
+	flight := &b140StatusFlight{done: make(chan struct{})}
+	c.statusQuery = flight
+	c.statusQueryMu.Unlock()
+
+	status, err := c.queryStatus(ctx)
+
+	c.statusQueryMu.Lock()
+	flight.status = status
+	flight.err = err
+	if c.statusQuery == flight {
+		c.statusQuery = nil
+	}
+	close(flight.done)
+	c.statusQueryMu.Unlock()
+	return status, err
+}
+
+// queryStatus 执行一轮真实硬件查询：发送 TD/TS/MG/TP 命令并解析结果。
+// 由 Status 通过 single-flight 串行调用，禁止直接调用。
+// 同时承担补偿任务激活入口：发现运动停止时把 pending 升级为 job。
+func (c *B140MotionController) queryStatus(ctx context.Context) (core.ControllerStatus, error) {
 	c.mu.Lock()
 	if err := c.checkConnectedLocked(); err != nil {
 		status := c.copyStatusLocked()
@@ -369,10 +457,12 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 
 		registerPulse := numberAt(registerPositions, axisIndex)
 		position := core.PulseToEngineering(axisCfg, registerPulse)
+		positionSourceReadValid := true
 
 		if axisCfg.PositionSource == core.PositionSourceEncoder {
 			payload, encErr := c.sendCommand(ctx, "TP"+physical)
 			if encErr != nil {
+				positionSourceReadValid = false
 				// 编码器读取失败不静默回退到寄存器位置：寄存器与编码器在补偿
 				// 启用时本就允许有偏差，静默替换会向操作员呈现一个看似合理
 				// 但失真的位置。收集错误使故障可见，位置降级为寄存器换算值。
@@ -380,6 +470,7 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 			} else if encoderCount, parseErr2 := strconv.ParseFloat(strings.TrimSpace(payload), 64); parseErr2 == nil {
 				position = core.EncoderCountToEngineering(axisCfg, encoderCount)
 			} else {
+				positionSourceReadValid = false
 				encoderFault = fmt.Sprintf("axis %s encoder parse (TP%s payload %q): %v", axisSnapshot.Name, physical, payload, parseErr2)
 			}
 		}
@@ -395,6 +486,32 @@ func (c *B140MotionController) Status(ctx context.Context) (core.ControllerStatu
 		}
 
 		moving := int(numberAt(statusBytes, axisIndex))&0x80 != 0
+		if axisSnapshot.Moving && !moving && positionSourceReadValid {
+			// TD/TP is read before TS, so the axis can stop between the position
+			// and motion-state queries. Refresh the configured position source to
+			// keep a stopped snapshot from carrying an earlier in-motion position.
+			if axisCfg.PositionSource == core.PositionSourceEncoder {
+				payload, refreshErr := c.sendCommand(ctx, "TP"+physical)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final encoder read (TP%s): %w", axisSnapshot.Name, physical, refreshErr))
+				}
+				encoderCount, refreshErr := strconv.ParseFloat(strings.TrimSpace(payload), 64)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final encoder parse (TP%s payload %q): %w", axisSnapshot.Name, physical, payload, refreshErr))
+				}
+				position = core.EncoderCountToEngineering(axisCfg, encoderCount)
+			} else {
+				payload, refreshErr := c.sendCommand(ctx, "TD")
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final register read: %w", axisSnapshot.Name, refreshErr))
+				}
+				positions, refreshErr := parseB140Numbers(payload)
+				if refreshErr != nil {
+					return c.statusError(fmt.Errorf("axis %s final register parse: %w", axisSnapshot.Name, refreshErr))
+				}
+				position = core.PulseToEngineering(axisCfg, numberAt(positions, axisIndex))
+			}
+		}
 
 		results[axisSnapshot.Name] = axisResult{
 			position: position,
@@ -759,11 +876,11 @@ func (c *B140MotionController) enqueuePendingCompensation(axis core.AxisName, ph
 	c.compMu.Lock()
 	defer c.compMu.Unlock()
 	c.pendingRequests[axis] = &b140PendingCompensationRequest{
-		targetPulse:        targetPulse,
-		targetEngineering:  targetEngineering,
-		cfg:                resolved,
-		issuedAt:           time.Now(),
-		observedMotion:     false,
+		targetPulse:       targetPulse,
+		targetEngineering: targetEngineering,
+		cfg:               resolved,
+		issuedAt:          time.Now(),
+		observedMotion:    false,
 	}
 }
 
@@ -840,7 +957,7 @@ func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
 	ctx := context.Background()
 
 	for c.isCompensationJobCurrent(job.axis, job.generation) {
-		switch job.state {
+		switch job.currentState() {
 		case compensationStateWaitingStop:
 			snap, err := c.waitForAxisStop(ctx, job)
 			if err != nil {
@@ -854,7 +971,7 @@ func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
 			if !c.isCompensationJobCurrent(job.axis, job.generation) {
 				return
 			}
-			job.state = compensationStateSettling
+			job.setState(compensationStateSettling)
 
 		case compensationStateSettling:
 			if job.cfg.SettleMs > 0 {
@@ -869,7 +986,7 @@ func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
 				c.failCompensationJob(job, fmt.Errorf("compensation timed out after %dms", job.cfg.TimeoutMs))
 				return
 			}
-			job.state = compensationStateChecking
+			job.setState(compensationStateChecking)
 
 		case compensationStateChecking:
 			encoderCount, err := c.readAxisEncoderPosition(ctx, job.physical)
@@ -901,7 +1018,7 @@ func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
 				return
 			}
 
-			job.state = compensationStateCompensating
+			job.setState(compensationStateCompensating)
 
 		case compensationStateCompensating:
 			job.attempts++
@@ -938,7 +1055,7 @@ func (c *B140MotionController) runAxisCompensation(job *b140CompensationJob) {
 				c.failCompensationJob(job, fmt.Errorf("begin correction: %w", err))
 				return
 			}
-			job.state = compensationStateWaitingStop
+			job.setState(compensationStateWaitingStop)
 
 		default:
 			// succeeded / failed / cancelled：直接退出
@@ -1032,40 +1149,67 @@ func (c *B140MotionController) isCompensationJobCurrent(axis core.AxisName, gene
 }
 
 // cancelAxisCompensation 取消指定轴的补偿任务。
-// 通过覆盖 generation 让运行中的 goroutine 自行退出，并清理 pending。
-func (c *B140MotionController) cancelAxisCompensation(axis core.AxisName, _ string) {
+//
+// 实现说明：
+//   - pending 直接从 map 删除
+//   - job 设置 cancelled 状态后从 map 删除；运行中的 goroutine 通过
+//     isCompensationJobCurrent 检测到 jobs[axis] 不存在自动退出
+//   - compensationGenerationCounter++ 并非 invalidation 必需——delete 已让旧
+//     job 失效——但保留递增作为：(1) 单调失效令牌，保证任何持有旧 generation
+//     的 goroutine 即便遇到 map entry 被新 job 重写也能识别；(2) 测试可观测
+//     信号（TestB140CompensationNewMoveToCancelsOld 依赖此计数器验证 cancel 被触发）
+//
+// reason 仅用于日志可观测性，不参与控制流——便于排查"为何补偿被取消"。
+func (c *B140MotionController) cancelAxisCompensation(axis core.AxisName, reason string) {
 	c.compMu.Lock()
 	defer c.compMu.Unlock()
 	delete(c.pendingRequests, axis)
 	if job, ok := c.jobs[axis]; ok {
-		job.state = compensationStateCancelled
+		job.setState(compensationStateCancelled)
 		c.compensationGenerationCounter++
-		// 注意：不直接 delete job，让 goroutine 自己读到 cancelled 状态后退出。
-		// 但下一次 enqueue 会覆盖，所以这里也可直接 delete。
 		delete(c.jobs, axis)
+		slog.Debug("b140: cancel axis compensation",
+			"axis", axis,
+			"reason", reason,
+			"generation", job.generation)
 	}
 }
 
 // cancelAllCompensation 取消所有轴的补偿任务。
-func (c *B140MotionController) cancelAllCompensation(_ string) {
+//
+// 实现说明：
+//   - 直接清空 pending/jobs 两个 map
+//   - 运行中的 goroutine 通过 isCompensationJobCurrent 检测到 jobs[axis] 不存在自动退出
+//   - 不再遍历设置 cancelled 状态：旧实现中 setState 后立刻整体清空 map，
+//     goroutine 永远读不到 cancelled 状态，for 循环是死代码
+//   - compensationGenerationCounter 不递增：cancelAllCompensation 通常发生在
+//     Disconnect/EStop/Stop all 等全局场景，不会有"新 job 立刻重写 map entry"
+//     的竞态，无需失效令牌
+//
+// reason 仅用于日志可观测性，不参与控制流。
+func (c *B140MotionController) cancelAllCompensation(reason string) {
 	c.compMu.Lock()
 	defer c.compMu.Unlock()
-	for axis, job := range c.jobs {
-		job.state = compensationStateCancelled
-		_ = axis
+	cancellingAxes := make([]core.AxisName, 0, len(c.jobs))
+	for axis := range c.jobs {
+		cancellingAxes = append(cancellingAxes, axis)
 	}
 	c.jobs = make(map[core.AxisName]*b140CompensationJob)
 	c.pendingRequests = make(map[core.AxisName]*b140PendingCompensationRequest)
+	slog.Debug("b140: cancel all compensation",
+		"axes", cancellingAxes,
+		"reason", reason)
 }
 
 // succeedCompensationJob 标记补偿成功并清理 job。
 func (c *B140MotionController) succeedCompensationJob(job *b140CompensationJob) {
 	c.compMu.Lock()
-	defer c.compMu.Unlock()
 	if current, ok := c.jobs[job.axis]; ok && current.generation == job.generation {
-		job.state = compensationStateSucceeded
+		job.setState(compensationStateSucceeded)
 		delete(c.jobs, job.axis)
 	}
+	c.compMu.Unlock()
+
 	// 同步 status
 	c.mu.Lock()
 	for i := range c.status.Axes {
@@ -1082,9 +1226,10 @@ func (c *B140MotionController) succeedCompensationJob(job *b140CompensationJob) 
 func (c *B140MotionController) failCompensationJob(job *b140CompensationJob, err error) {
 	c.compMu.Lock()
 	if current, ok := c.jobs[job.axis]; ok && current.generation == job.generation {
+		job.mu.Lock()
 		job.state = compensationStateFailed
-		job.err = err
 		job.lastError = err.Error()
+		job.mu.Unlock()
 		delete(c.jobs, job.axis)
 	}
 	c.compMu.Unlock()
@@ -1118,15 +1263,16 @@ func (c *B140MotionController) syncCompensationStatusLocked() {
 	c.compMu.Lock()
 	defer c.compMu.Unlock()
 	for axis, job := range c.jobs {
+		state, lastError := job.statusSnapshot()
 		for i := range c.status.Axes {
 			if c.status.Axes[i].Name != axis {
 				continue
 			}
-			c.status.Axes[i].Compensating = job.state == compensationStateWaitingStop ||
-				job.state == compensationStateSettling ||
-				job.state == compensationStateChecking ||
-				job.state == compensationStateCompensating
-			c.status.Axes[i].CompensationError = job.lastError
+			c.status.Axes[i].Compensating = state == compensationStateWaitingStop ||
+				state == compensationStateSettling ||
+				state == compensationStateChecking ||
+				state == compensationStateCompensating
+			c.status.Axes[i].CompensationError = lastError
 			if c.status.Axes[i].Compensating {
 				// 补偿中：Moving 强制 true，防止上层 waitForMotionComplete 误判
 				c.status.Axes[i].Moving = true

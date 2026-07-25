@@ -22,14 +22,25 @@ func makeInnerLines() []string {
 	return lines
 }
 
+// defaultTestThetaCount 是历史夹具的 theta 维度点数（4×13=52）。
+// 动态化后 thetaCount 不再硬编码于源代码，但既有夹具与黄金样本仍按
+// 4 点构造，故测试侧保留该常量作为默认值。
+const defaultTestThetaCount = 4
+
 // makeOuterLines builds a valid 4x13 outer-sector line set (52 data rows)
 // with a dimension header, in b-outer / a-inner row order.
 func makeOuterLines(sector int) []string {
+	return makeOuterLinesTheta(sector, defaultTestThetaCount)
+}
+
+// makeOuterLinesTheta 构造指定 thetaCount 的外区扇区行集
+// （thetaCount×13 行，b-outer / a-inner 序）。thetaCount≥2 即可被 loader 接受。
+func makeOuterLinesTheta(sector, thetaCount int) []string {
 	center := float64(sector-1) * 60
-	lines := []string{"4 13"} // dimension header must be skipped
-	for k := 0; k < outerPhiCount; k++ { // b outer loop
+	lines := []string{fmt.Sprintf("%d 13", thetaCount)} // dimension header must be skipped
+	for k := 0; k < outerPhiCount; k++ {                // b outer loop
 		b := normalize360(center + 30 - gridStep*float64(k))
-		for it := 0; it < outerThetaCount; it++ { // a inner loop
+		for it := 0; it < thetaCount; it++ { // a inner loop
 			theta := outerThetaMin + gridStep*float64(it)
 			lines = append(lines, fmt.Sprintf("%.6f %.6f %.6f %.6f %.6f %.6f",
 				0.1, 0.2, 1.1, -0.3, theta, b))
@@ -114,18 +125,18 @@ func TestLoadInnerPrbLines_Errors(t *testing.T) {
 			wantSub: []string{"col-src", "第2行", "6 列"},
 		},
 		{
-			name:  "non-numeric field",
-			lines: corrupt(func(l []string) { l[3] = "0.1 abc 1.5 -0.25 -30 -25" }),
+			name:    "non-numeric field",
+			lines:   corrupt(func(l []string) { l[3] = "0.1 abc 1.5 -0.25 -30 -25" }),
 			wantSub: []string{"col-src", "第4行", "第2列"},
 		},
 		{
-			name:  "NaN field",
-			lines: corrupt(func(l []string) { l[1] = "NaN 0 1.5 -0.25 -30 -30" }),
+			name:    "NaN field",
+			lines:   corrupt(func(l []string) { l[1] = "NaN 0 1.5 -0.25 -30 -30" }),
 			wantSub: []string{"col-src", "第2行", "非有限"},
 		},
 		{
-			name:  "Inf field",
-			lines: corrupt(func(l []string) { l[1] = "0.1 +Inf 1.5 -0.25 -30 -30" }),
+			name:    "Inf field",
+			lines:   corrupt(func(l []string) { l[1] = "0.1 +Inf 1.5 -0.25 -30 -30" }),
 			wantSub: []string{"col-src", "第2行", "非有限"},
 		},
 		{
@@ -136,18 +147,18 @@ func TestLoadInnerPrbLines_Errors(t *testing.T) {
 			wantSub: []string{"col-src", "重复网格点", "第170行"},
 		},
 		{
-			name:  "a out of range",
-			lines: corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 32 -30" }),
+			name:    "a out of range",
+			lines:   corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 32 -30" }),
 			wantSub: []string{"col-src", "第2行", "越界"},
 		},
 		{
-			name:  "a off grid",
-			lines: corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 27.5 -30" }),
+			name:    "a off grid",
+			lines:   corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 27.5 -30" }),
 			wantSub: []string{"col-src", "第2行", "非网格点"},
 		},
 		{
-			name:  "b out of range",
-			lines: corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 -30 -31" }),
+			name:    "b out of range",
+			lines:   corrupt(func(l []string) { l[1] = "0.1 0.2 1.5 -0.25 -30 -31" }),
 			wantSub: []string{"col-src", "第2行", "越界"},
 		},
 	}
@@ -190,7 +201,7 @@ func TestLoadOuterPrbLines_ValidAllSectors(t *testing.T) {
 			}
 			// Verify theta/phi indexing and stored coefficients.
 			for k := 0; k < outerPhiCount; k++ {
-				for it := 0; it < outerThetaCount; it++ {
+				for it := 0; it < defaultTestThetaCount; it++ {
 					gp := sec.points[it][k]
 					wantTheta := outerThetaMin + gridStep*float64(it)
 					wantPhi := normalize360(wantCenter + 30 - gridStep*float64(k))
@@ -251,7 +262,7 @@ func TestLoadOuterPrbLines_Errors(t *testing.T) {
 			name:    "duplicate grid point",
 			sector:  3,
 			mutate:  func(l []string) { l[len(l)-1] = l[1] },
-			wantSub: []string{"out-src", "重复网格点", "第53行"},
+			wantSub: []string{"out-src", "重复网格点", "第53行"}, // 52 data rows + header → last is line 53
 		},
 		{
 			name:    "wrong column count",
@@ -277,21 +288,77 @@ func TestLoadOuterPrbLines_Errors(t *testing.T) {
 	}
 }
 
+// TestLoadOuterPrbLines_RowCount 验证动态行数约束：
+// 数据行数必须为 outerPhiCount（13）的整数倍且 ≥26（thetaCount≥2）。
+// 不再硬编码"必须是 52 行"——52 只是 4×13 的特例。
 func TestLoadOuterPrbLines_RowCount(t *testing.T) {
-	for _, n := range []int{51, 53} {
+	// 51 行：非 13 整数倍 → 拒绝
+	// 53 行：非 13 整数倍 → 拒绝
+	// 13 行：thetaCount=1 < 2 → 拒绝
+	for _, n := range []int{13, 51, 53} {
 		lines := makeOuterLines(2)
-		if n < len(lines)-1 {
-			lines = lines[:n+1]
+		// 调整行数到目标 n（数据行数 = len(lines)-1，去掉 header）
+		dataLines := lines[1:]
+		if n < len(dataLines) {
+			dataLines = dataLines[:n]
 		} else {
-			lines = append(lines, lines[len(lines)-1])
+			for len(dataLines) < n {
+				dataLines = append(dataLines, dataLines[len(dataLines)-1])
+			}
 		}
+		lines = append([]string{lines[0]}, dataLines...)
 		err := NewSevenHolePrbInterpolator().LoadOuterPrbLines(2, lines, "row-src")
 		if err == nil {
 			t.Fatalf("n=%d: expected row-count error", n)
 		}
-		if !strings.Contains(err.Error(), "row-src") || !strings.Contains(err.Error(), "52") {
-			t.Errorf("n=%d: error must name source and expected count, got: %v", n, err)
+		if !strings.Contains(err.Error(), "row-src") {
+			t.Errorf("n=%d: error must name source, got: %v", n, err)
 		}
+		// 错误消息应说明"必须是 13 的整数倍且 ≥26"
+		if !strings.Contains(err.Error(), "13") || !strings.Contains(err.Error(), "26") {
+			t.Errorf("n=%d: error must mention multiple-of-13 and min 26, got: %v", n, err)
+		}
+	}
+}
+
+// TestLoadOuterPrbLines_DynamicThetaCount 验证动态 theta 维度支持：
+// thetaCount=4（52 行）、thetaCount=7（91 行）、thetaCount=2（26 行，最小值）
+// 都应成功加载，thetaCount 字段被正确推断。
+func TestLoadOuterPrbLines_DynamicThetaCount(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		thetaCount int
+		wantRows   int
+	}{
+		{"thetaCount=2 (minimum)", 2, 26},
+		{"thetaCount=4 (legacy)", 4, 52},
+		{"thetaCount=7 (extended)", 7, 91},
+		{"thetaCount=10 (wide range)", 10, 130},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewSevenHolePrbInterpolator()
+			lines := makeOuterLinesTheta(2, tc.thetaCount)
+			if len(lines)-1 != tc.wantRows {
+				t.Fatalf("fixture row count = %d, want %d", len(lines)-1, tc.wantRows)
+			}
+			if err := p.LoadOuterPrbLines(2, lines, "dynamic-src"); err != nil {
+				t.Fatalf("LoadOuterPrbLines: %v", err)
+			}
+			sec := p.outer[1]
+			if sec.thetaCount != tc.thetaCount {
+				t.Errorf("thetaCount = %d, want %d", sec.thetaCount, tc.thetaCount)
+			}
+			// GetOuterPointCount 应返回 thetaCount×13
+			if got := p.GetOuterPointCount(2); got != tc.thetaCount*outerPhiCount {
+				t.Errorf("GetOuterPointCount = %d, want %d", got, tc.thetaCount*outerPhiCount)
+			}
+			// 最外层 theta 网格点应正确存储
+			maxTheta := outerThetaMin + gridStep*float64(tc.thetaCount-1)
+			gp := sec.points[tc.thetaCount-1][0]
+			if gp.a != maxTheta {
+				t.Errorf("points[%d][0].a = %v, want %v (thetaMax)", tc.thetaCount-1, gp.a, maxTheta)
+			}
+		})
 	}
 }
 
