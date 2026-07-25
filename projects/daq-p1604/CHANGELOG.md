@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.4.0-win7.1] - 2026-07-25
+
+### Added
+
+- **IsConnResetByPeer 单元测试**（cherry-pick acd21c0）：补齐 `shared/device-sdk/go/protocol/conn_helpers_test.go` 的 `TestIsConnResetByPeer` 13 条用例。函数本体与 `p1604_adapter.go` 的硬/软错误处理已在 0.3.0-win7.1（d586dec）引入，本次仅同步 master 上的测试覆盖。
+  - 覆盖硬证据：io.EOF / 包装 EOF / connection reset by peer / broken pipe / wsasend aborted / wsarecv aborted / connection abort。
+  - 软错误不匹配：i/o timeout / timeout net error / device error N05 / parse error。
+
+### Changed
+
+- 版本号同步至 `0.4.0-win7.1`：与 master 0.4.0 主版本号对齐，保留 `-win7.1` 后缀以标识 Win7 LTS 兼容版本。
+- `apps/desktop-electron/package.json` 版本号字段同步更新；NSIS 安装包文件名格式 `DAQ-P-1604-Win7-Setup-0.4.0-win7.1-x64.exe`。
+
+### Internal
+
+- 本次未引入新的业务功能改动，仅为版本号同步与 master 0.4.0 对齐 + 测试用例补充。
+- master 0.4.0 涉及的 wails.json / wails_windows_amd64.syso / frontend/package.json 等版本号文件在 lts/win7 上不存在（已由 `apps/desktop-electron/package.json` 替代），无需同步。
+
+### Verification
+
+- `go build ./...`（GOWORK=off，Go 1.20.14）：passed
+- `go vet ./...`：passed
+- `go test ./...`：passed（含 `TestIsConnResetByPeer` 13 用例）
+- `npm run typecheck`：passed
+- `npm run build`：passed
+- `npm run build:backend`：passed
+- `npm run dist:win7`：passed（产物 NSIS x64 安装包）
+- 安装包 SHA-256 见 `releases/0.4.0-win7.1.md`
+
+### Known Issues
+
+- 与 0.3.0-win7.1 一致：Electron 22.3.27 不支持 `color-mix()` CSS 函数（已用 rgba fallback 规避）；360 主动防御可能锁定 `app.asar`（建议添加信任区或改用 `--config.directories.output=dist2` 绕过）。
+
 ## [0.3.0-win7.1] - 2026-07-23
 
 ### Changed

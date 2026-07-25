@@ -1,40 +1,43 @@
 # Changelog
 
-## [0.4.0] - 2026-07-24
+## [0.4.0-win7.1] - 2026-07-25
 
 ### Added
-- 新增异步设备状态事件推送（ACQ-010/STB-003）：OnReadLoopExit → hub → service 异步推送，UI 状态更新更及时，避免阻塞采集热路径。
-- 新增禁用通道空 CSV 列输出（REC-006）：禁用通道在 CSV 中输出空列，保持列顺序与表头一致。
-- 新增日志面板搜索与日志文件轮转（LOG-010/015）：前端日志可关键字搜索，后端日志按大小轮转。
-- 适配器扩展支持新 SDK 接口（配合 shared/device-sdk/go/daq/hardware/daq_t1603.go 的接口扩展），为后续能力扩展铺路。
+
+- **UI 刷新率动态生效**（cherry-pick cc78450）：新增 `SetUIRefreshRateHz` 后端方法 + `/api/device/set-ui-refresh-rate` HTTP 路由，前端 MainTopBar 切换刷新率档位时即时同步后端 `relayStream` 的 `uiTicker`，真正改变数值卡与图表的更新节奏。原 0.3.3-win7 后端硬编码 10Hz，前端切换 2/5/15/20/30Hz 无效果。
+- **IsConnResetByPeer 单元测试**（cherry-pick acd21c0）：补齐 `shared/device-sdk/go/protocol/conn_helpers_test.go` 的 `TestIsConnResetByPeer` 13 条用例，覆盖 io.EOF / connection reset / broken pipe / WSAECONNABORTED 硬证据与 i/o timeout 软错误的边界。
 
 ### Changed
-- 配置脏状态校正（CFG-017）：硬件配置与 profile 不一致时脏标记更准确。
-- 前端 ChannelCard 同步移除数值变化闪烁动画（视觉噪音）。
-- CSV 表头列由 20 列（DeviceID,Timestamp,Millisecond,Unit,CH01..CH16）改为 18 列（Timestamp,Unit,CH01..CH16）。
-  DeviceID 列移除（文件名已含设备 ID）；Timestamp 列仅保留秒级精度（'YYYY-MM-DD HH:MM:SS），
-  与 0.3.2 决策一致——1000Hz 采集时同一秒内的样本共享同一时间戳，不再区分毫秒。
 
-### Fixed
-- 修复应用退出阶段 readLoop 收尾时 EmitDeviceState 在已关闭 app 上 panic：device_service.ServiceShutdown 清空 s.app，EmitDeviceState 加 recover 保护。
-- 修复 CSV 录制 Stop→Start 会话间禁用通道掩码泄漏：csv_recorder.Stop 清理 deviceProfiles，避免上次会话的禁用通道掩码污染新会话。
-- 修复错误信息匹配误判（connection pool exhausted / permission_token 等非目标场景被误判为连接错误）：recordingStore / DaqT1603Config 改用 `\b` 单词边界正则。
+- **CSV 表头简化为 18 列**（cherry-pick 4879ba6）：原 20 列 `DeviceID,Timestamp,Millisecond,Unit,CH01..CH16` 改为 18 列 `Timestamp,Unit,CH01..CH16`。
+  - 移除 `DeviceID` 列：每设备独立文件，文件名已含 deviceSlug，列内重复冗余。
+  - 移除 `Millisecond` 列：时间戳回到秒级 `'YYYY-MM-DD HH:MM:SS'`，与 0.3.2 决策一致；1000Hz 同秒样本共享同一时间戳，靠文件名毫秒后缀区分文件。
+  - 同步更新 `csv_recorder_test.go` / `csv_recorder_rec006_test.go` 列索引与 `docs/test-cases.html` 用例文档。
+- **MonitorView 连接按钮移除 Loading spinner**（cherry-pick bdbbd1a）：仅保留 Connecting 态 loading，简化视觉噪音。
+- 版本号同步至 `0.4.0-win7.1`：与 master 0.4.0 主版本号对齐，保留 `-win7.1` 后缀以标识 Win7 LTS 兼容版本。
 
 ### Internal
-- 新增 csv_recorder_rec006_test.go、device_usecase_validation_test.go。
-- 同步 bindings（EmitDeviceState / SetDeviceProfile 导出）到 daq-t1603 .ts bindings（wails3 运行时会重新生成为 .js 并丢弃提交的 .ts）。
-- 同步 6 个版本号文件到 0.4.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+- HTTP 路由表更新：`device_handler.go` 头部注释新增 `POST /api/device/set-ui-refresh-rate`，`register.go` 注册路由。
+- `deviceBridge.ts` 新增 `setUIRefreshRateHz(hz)` 包装，调用 `POST /api/device/set-ui-refresh-rate`。
+- `App.vue` `onMounted` 启动后同步 localStorage 保存的刷新率偏好到后端（不阻塞 onPayload 订阅）。
+- `MainTopBar.vue` `selectRefreshRate` 切换档位时立即同步后端，失败不阻塞 UI（displayStore 已本地持久化）。
 
 ### Verification
-- 生产 Go 构建 `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`：通过，产出 `build/bin/daq-t1603.exe`。
-- `go vet ./...`（GOWORK=off）：passed。
-- `go test ./...`（GOWORK=off）：passed（adapters/config、adapters/hardware、adapters/recording、usecase 均 ok）。
-- `makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe project.nsi`：产出 `daq-t1603-0.4.0-amd64-installer.exe`，归档至 `releases/bin/`。
-- SHA-256：`22e82689af05ca0ca06fb577a6cd0cb709481a98c9320db4ade86f86ea8a0803`。
-- 已知限制：exe 自身 Windows 版本资源固定为 `0.0.0.0`（wails v3 alpha `generate syso` 限制，与历史 0.3.x 一致）；安装包 VIProductVersion 已正确标注 0.4.0。GUI 冒烟测试建议在目标机手动验证。
+
+- `go build ./...`（GOWORK=off，Go 1.20.14）：passed
+- `go vet ./...`：passed
+- `go test ./...`：passed（含 `TestIsConnResetByPeer` 13 用例、`csv_recorder_test` / `csv_recorder_rec006_test` 18 列回归）
+- `npm run typecheck`：passed
+- `npm run build`：passed
+- `npm run build:backend`：passed
+- `npm run dist:win7`：passed（产物 NSIS x64 安装包）
+- 安装包 SHA-256 见 `releases/0.4.0-win7.1.md`
 
 ### Known Issues
-- 暂无。
+
+- 与 0.3.3-win7 一致：Electron 22.3.27 不支持 `color-mix()` CSS 函数（已用 rgba fallback 规避）；360 主动防御可能锁定 `app.asar`（建议添加信任区或改用 `--config.directories.output=dist2` 绕过）。
+- `frontend/bindings/` 目录仍保留 master 上的 Wails v3 .ts binding 文件，但 `frontend/src/` 已无任何引用（lts/win7 用 fetch + WebSocket 替代）。这些文件作为历史遗留保留，不影响构建。
 
 ## [0.3.3] - 2026-07-03
 
