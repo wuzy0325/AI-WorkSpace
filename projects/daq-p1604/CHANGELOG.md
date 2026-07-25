@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0] - 2026-07-25
+
+### Internal
+- 与 daq-t1603 版本号同步发布。本版本 daq-p1604 无独立功能改动：最近共享 SDK 改动（`shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 drainConnection 连续静默窗口语义）仅影响 T1603 设备，P1604 使用 w1601 长度前缀协议且 ReadLoop 路径不同，不受影响。
+- 同步 6 个版本号文件到 0.5.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `task release`（clean + 前端 build + 生产 Go 构建）：通过。前端 `npm run build`（vue-tsc + vite）成功，`go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"` 产出 `build/bin/daq-p1604.exe`。
+- `go vet ./...`（GOWORK=off）：passed。
+- `go test ./...`（GOWORK=off）：passed。
+- `makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\daq-p1604.exe project.nsi`：产出 `daq-p1604-0.5.0-amd64-installer.exe`，归档至 `releases/bin/`。
+- 已知限制：exe 自身 Windows 版本资源固定为 `0.0.0.0`（wails v3 alpha `generate syso` 限制，与历史 0.3.x/0.4.x 一致）；安装包 VIProductVersion 已正确标注 0.5.0。GUI 冒烟测试建议在目标机手动验证。
+
+### Known Issues
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.4.0] - 2026-07-24
 
 ### Added
