@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.0-win7.1] - 2026-07-25
+
+### Added
+
+- **drainConnection 连续静默窗口回归测试**（同步 master 0.5.0）：新增 `TestDAQT1603DrainConnectionWaitsForDelayedFrameTail`，验证 150ms 延迟到达的残留帧尾不会被误读为命令响应。同步将既有 3 处 `readWithTimeout(server, 200*time.Millisecond)` 替换为 `testReadTimeout = time.Second`，与 drainConnection 总耗时上限（maxIters=10 × 100ms = 1s）对齐，避免测试侧超时短于被测代码导致误判。
+
+### Changed
+
+- **drainConnection 改为连续 2 个静默窗口才退出**（同步 master 0.5.0）：原单次静默即返回会在快速启停后残留帧尾被下一次命令读取当作响应乱码；现要求连续两次 `SetReadDeadline` 超时才结束 drain，确保延迟到达的帧尾被吸收。改动位于 `shared/device-sdk/go/daq/hardware/daq_t1603.go`，wind-daq 的 T1603 设备同样受益。
+- 版本号同步至 `0.5.0-win7.1`：与 master 0.5.0 主版本号对齐，保留 `-win7.1` 后缀以标识 Win7 LTS 兼容版本。同步 `apps/desktop-electron/package.json` 与 `frontend/package.json`。
+
+### Internal
+
+- 与 0.4.0-win7.1 的功能差异：仅多出 drainConnection 连续静默窗口改动（shared SDK 一处 + 一处新增回归测试）。
+- master 0.5.0 涉及的 `Taskfile.yml` 不引入 lts/win7（Win7 用 npm scripts，无 Taskfile 依赖）；`wails.json` / `wails_windows_amd64.syso` / `build/config.yml` / `build/windows/installer/project.nsi` 等 master 版本号文件在 lts/win7 上不存在（已由 `apps/desktop-electron/package.json` 替代）。
+
+### Verification
+
+- `go build ./...`（GOWORK=off，Go 1.20.14）：passed
+- `go vet ./...`：passed
+- `go test ./...`：passed（含 `TestDAQT1603DrainConnectionWaitsForDelayedFrameTail` 新用例、`TestIsConnResetByPeer` 13 用例、`csv_recorder_test` / `csv_recorder_rec006_test` 18 列回归）
+- `npm run typecheck`：passed
+- `npm run build`：passed
+- `npm run build:backend`：passed
+- `npm run dist:win7`：passed（产物 NSIS x64 安装包）
+- 安装包 SHA-256 见 `releases/0.5.0-win7.1.md`
+
+### Known Issues
+
+- 与 0.4.0-win7.1 一致：Electron 22.3.27 不支持 `color-mix()` CSS 函数（已用 rgba fallback 规避）；360 主动防御可能锁定 `app.asar`（建议添加信任区或改用 `--config.directories.output=dist2` 绕过）。
+
 ## [0.4.0-win7.1] - 2026-07-25
 
 ### Added

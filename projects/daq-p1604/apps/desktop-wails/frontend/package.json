@@ -1,6 +1,6 @@
 {
   "name": "daq-p1604-frontend",
-  "version": "0.3.0-win7.1",
+  "version": "0.5.0-win7.1",
   "private": true,
   "type": "module",
   "scripts": {

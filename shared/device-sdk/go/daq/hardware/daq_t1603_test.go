@@ -11,6 +11,11 @@ import (
 	"shared.local/device-sdk/go/protocol"
 )
 
+// testReadTimeout 是测试侧读取超时上限，与 drainConnection 的总耗时上限对齐
+// （maxIters=10 × timeout=100ms = 1s）。低于该值会在 drainConnection 尚未
+// 结束前误判超时；高于该值则拖长测试。三处 readWithTimeout 调用复用此常量。
+const testReadTimeout = time.Second
+
 func readWithTimeout(conn net.Conn, timeout time.Duration) (string, error) {
 	type result struct {
 		data string
@@ -39,7 +44,7 @@ func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
 	go func() {
 		commands := make([]string, 0)
 		for {
-			cmd, err := readWithTimeout(server, 200*time.Millisecond)
+			cmd, err := readWithTimeout(server, testReadTimeout)
 			if err != nil {
 				commandsCh <- commands
 				return
@@ -102,7 +107,7 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 	go func() {
 		commands := make([]string, 0)
 		for {
-			cmd, err := readWithTimeout(server, 200*time.Millisecond)
+			cmd, err := readWithTimeout(server, testReadTimeout)
 			if err != nil {
 				commandsCh <- commands
 				return
@@ -161,7 +166,7 @@ func TestDAQT1603StopCommandCompletesBeforeReturn(t *testing.T) {
 	commandsCh := make(chan string, 4)
 	go func() {
 		for {
-			cmd, err := readWithTimeout(server, 200*time.Millisecond)
+			cmd, err := readWithTimeout(server, testReadTimeout)
 			if err != nil {
 				return
 			}
@@ -240,5 +245,32 @@ func TestDAQT1603StopAcquisitionWaitsForReadLoopExit(t *testing.T) {
 	}
 	if device.readLoopDone != nil {
 		t.Fatal("readLoopDone was not cleared after stop")
+	}
+}
+
+// TestDAQT1603DrainConnectionWaitsForDelayedFrameTail 验证 drainConnection 在连续 2 个静默窗口后才退出：
+// 模拟一个延迟 150ms 到达的残留帧尾，drainConnection 必须等待它到达并被吸收后才能返回，
+// 避免残留帧尾被下一次命令读取当作响应乱码。
+func TestDAQT1603DrainConnectionWaitsForDelayedFrameTail(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
+	written := make(chan struct{})
+	go func() {
+		// 150ms 后才写入残留帧尾，模拟快速启停后延迟到达的数据
+		time.Sleep(150 * time.Millisecond)
+		_, _ = server.Write([]byte{1, 2, 3, 4})
+		close(written)
+	}()
+
+	device.drainConnection(client, 100*time.Millisecond)
+
+	// 若 drainConnection 在残留帧尾写入前就返回，说明 drain 退出过早
+	select {
+	case <-written:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("drainConnection returned before the delayed frame tail arrived")
 	}
 }
