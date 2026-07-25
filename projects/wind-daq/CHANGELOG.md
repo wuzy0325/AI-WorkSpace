@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.10.0] - 2026-07-24
+
+### Added
+
+- LogViewer 新增硬件收发命令日志（hardware-send / hardware-recv）可见化能力，新增 `showHardware` 开关。
+
+### Changed
+
+- 模拟控制器直线轴默认速度调整为 4；WTNMC4A 轴创建时默认微步设为 4。
+- 抽取 `LogEntryRow.vue` 重构日志视图，日志单行显示、按钮风格统一、标题栏新增中英文切换。
+
+### Fixed
+
+- 修复 NSIS 安装包中文文案乱码（mojibake → UTF-8）。
+- 修复探针参考 β 角计算错误。
+- 修复 1000Hz 采集下高频硬件日志刷屏问题（新增 `CategorySkipHandler`）。
+
+### Compatibility
+
+- 配置文件格式：兼容；新增字段均为可选字段，旧配置继续使用默认值。
+- 数据文件格式：兼容；本次变更不涉及数据文件格式变化。
+- 设备协议行为：无不兼容变化。
+
+### Verification
+
+- `go build -buildvcs=false ./...` / `go vet ./...` / `go test ./internal/... ./api/...`: passed
+- `npm run test`: passed（19 文件，250 测试）
+- `task check-bindings`: passed（57/57）
+- `task release` + `makensis` + `task archive-release`: passed
+- 生产 EXE 冒烟测试: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名；无头环境无法完整渲染 GUI（WebView2 focus/eval 报错）。
+
 ## [0.9.0] - 2026-07-22
 
 ### Added

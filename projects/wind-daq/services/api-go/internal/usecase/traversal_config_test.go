@@ -84,6 +84,11 @@ type mockInterpolatorLoader struct {
 	sevenHoleValidRange seveninterp.PrbValidRange
 	// sevenHoleLoadedAtMs 七孔成功路径返回的加载时间戳；0 表示由 mock 用 time.Now 填充
 	sevenHoleLoadedAtMs int64
+	// sevenHoleInnerPointCount 七孔内区点数（默认 169，与物理设计一致）
+	sevenHoleInnerPointCount int
+	// sevenHoleOuterPointCounts 七孔各扇区外区点数（默认 [6]52，即 thetaCount=4×13）
+	// 动态场景可设为 [6]91（7×13）等；零值表示用默认 52 填充
+	sevenHoleOuterPointCounts [6]int
 }
 
 func (l *mockInterpolatorLoader) LoadPRB(filePath string) (coreinterp.Interpolator, error) {
@@ -160,11 +165,11 @@ func (l *mockInterpolatorLoader) LoadMultiPRB(filePaths []string, machNumbers []
 }
 
 // LoadSevenHolePRB 七孔 PRB 加载 mock（Task 08 扩展为可控）。
-// 成功时回填入参并返回 SevenHoleLoadMetadata（LoadedAtMs/ValidRange）；
+// 成功时回填入参并返回 SevenHoleLoadMetadata（LoadedAtMs/ValidRange/点数）；
 // 失败时返回 sevenHolePRBErr 且 interpolator=nil。
 //
-// Task 07：metadata 仅含 LoadedAtMs/ValidRange——pointCount 不暴露（兼容约定值
-// 169/52 不应伪装为 loader 真值），由调用方使用约定常量。
+// 点数从 mock 字段填充（sevenHoleInnerPointCount/sevenHoleOuterPointCounts），
+// 零值时使用默认 169/52，便于既有测试无需显式设置即可保持原行为。
 func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
 	l.mu.Lock()
 	l.sevenHolePRBCalls++
@@ -173,6 +178,8 @@ func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [
 	err := l.sevenHolePRBErr
 	validRange := l.sevenHoleValidRange
 	loadedAtMs := l.sevenHoleLoadedAtMs
+	innerPts := l.sevenHoleInnerPointCount
+	outerPts := l.sevenHoleOuterPointCounts
 	l.mu.Unlock()
 	if err != nil {
 		return nil, nil, err
@@ -180,9 +187,23 @@ func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [
 	if loadedAtMs == 0 {
 		loadedAtMs = time.Now().UnixMilli()
 	}
+	if innerPts == 0 {
+		innerPts = 169 // 默认内区点数
+	}
+	// 默认外区点数 52（thetaCount=4×13），若 mock 显式设置了非零值则用真值
+	var defaulted [6]int
+	for i, v := range outerPts {
+		if v == 0 {
+			defaulted[i] = 52
+		} else {
+			defaulted[i] = v
+		}
+	}
 	return &mockSevenHoleInterpolator{tag: "seven-hole:" + innerPath}, &ports.SevenHoleLoadMetadata{
-		LoadedAtMs: loadedAtMs,
-		ValidRange: validRange,
+		LoadedAtMs:       loadedAtMs,
+		ValidRange:       validRange,
+		InnerPointCount:  innerPts,
+		OuterPointCounts: defaulted,
 	}, nil
 }
 
@@ -195,6 +216,8 @@ func (l *mockInterpolatorLoader) LoadSevenHoleCalibrationCSV(innerPath string, o
 	err := l.sevenHoleCSVErr
 	validRange := l.sevenHoleValidRange
 	loadedAtMs := l.sevenHoleLoadedAtMs
+	innerPts := l.sevenHoleInnerPointCount
+	outerPts := l.sevenHoleOuterPointCounts
 	l.mu.Unlock()
 	if err != nil {
 		return nil, nil, err
@@ -202,9 +225,22 @@ func (l *mockInterpolatorLoader) LoadSevenHoleCalibrationCSV(innerPath string, o
 	if loadedAtMs == 0 {
 		loadedAtMs = time.Now().UnixMilli()
 	}
+	if innerPts == 0 {
+		innerPts = 169
+	}
+	var defaulted [6]int
+	for i, v := range outerPts {
+		if v == 0 {
+			defaulted[i] = 52
+		} else {
+			defaulted[i] = v
+		}
+	}
 	return &mockSevenHoleInterpolator{tag: "seven-hole-csv:" + innerPath}, &ports.SevenHoleLoadMetadata{
-		LoadedAtMs: loadedAtMs,
-		ValidRange: validRange,
+		LoadedAtMs:       loadedAtMs,
+		ValidRange:       validRange,
+		InnerPointCount:  innerPts,
+		OuterPointCounts: defaulted,
 	}, nil
 }
 
@@ -554,6 +590,35 @@ func TestParseAndStartTraversal_RectangleLayout(t *testing.T) {
 	// 额外验证：停止遍历以清理资源
 	if err := mgr.Stop(); err != nil {
 		t.Logf("Stop 返回错误 (可忽略): %v", err)
+	}
+}
+
+func TestParseConfig_RectangleRemovesUnusedMotionAxes(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	raw := json.RawMessage(`{
+		"name":"rect-axis-test",
+		"layout":{"pattern":"rectangle","rectangle":{
+			"xMin":0,"xMax":1,"xStepSegments":[{"start":0,"end":1,"step":1}],
+			"yMin":0,"yMax":1,"yStepSegments":[{"start":0,"end":1,"step":1}]
+		}},
+		"channels":{
+			"probeChannels":[{"name":"P1","role":"fiveHole.p1","channel":{"deviceId":"sim-1","channelIndex":0},"enabled":true}],
+			"motionAxes":[
+				{"name":"X","controllerId":"xy-controller","axis":"X"},
+				{"name":"Y","controllerId":"xy-controller","axis":"Y"},
+				{"name":"Z","controllerId":"z-controller","axis":"Z"},
+				{"name":"U","controllerId":"u-controller","axis":"U"}
+			]
+		},
+		"samplesPerPoint":1
+	}`)
+
+	config, err := mgr.ParseConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	if len(config.MotionAxes) != 2 || config.MotionAxes[0].Name != "X" || config.MotionAxes[1].Name != "Y" {
+		t.Fatalf("rectangle config should retain only X/Y motion axes, got %#v", config.MotionAxes)
 	}
 }
 

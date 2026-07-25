@@ -381,6 +381,35 @@ func TestImportSevenHolePRB_NilLoader(t *testing.T) {
 	}
 }
 
+// TestImportSevenHolePRB_DynamicPointCount 验证动态点数透传：
+// mock 返回内区 169、外区各 91（7×13）时，响应 Files 应携带真实点数，
+// 不再使用硬编码 52——支持 thetaCount=7 的扩展校准集。
+func TestImportSevenHolePRB_DynamicPointCount(t *testing.T) {
+	mgr := newImportTestManager(t)
+	loader := &mockInterpolatorLoader{
+		sevenHoleInnerPointCount:  169,
+		sevenHoleOuterPointCounts: [6]int{91, 91, 91, 91, 91, 91}, // 7×13=91
+	}
+	mgr.SetInterpolatorLoader(loader)
+
+	inner := "/data/7.prb"
+	outer := []string{"/data/1.prb", "/data/2.prb", "/data/3.prb", "/data/4.prb", "/data/5.prb", "/data/6.prb"}
+	res, err := mgr.ImportSevenHolePRB(inner, outer)
+	if err != nil {
+		t.Fatalf("ImportSevenHolePRB: %v", err)
+	}
+	// 内区点数 = 169
+	if res.Files[0].PointCount != 169 {
+		t.Errorf("inner PointCount = %d, want 169", res.Files[0].PointCount)
+	}
+	// 外区各扇区点数 = 91（动态）
+	for i := 1; i <= 6; i++ {
+		if res.Files[i].PointCount != 91 {
+			t.Errorf("outer file[%d] PointCount = %d, want 91 (7×13)", i, res.Files[i].PointCount)
+		}
+	}
+}
+
 // TestImportMethods_ClearRestoreErr 成功导入后陈旧恢复错误被清空
 // （SetInterpolator / SetSevenHoleInterpolator 内部已处理，Import 路径复用）。
 func TestImportMethods_ClearRestoreErr(t *testing.T) {

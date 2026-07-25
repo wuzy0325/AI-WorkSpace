@@ -8,8 +8,9 @@
 // 关键不变量（spec §Slice B2）：
 //  1. load 成功后才替换 manager 状态（SetInterpolator / SetSevenHoleInterpolator），
 //     失败保留旧 interpolator——避免短暂窗口内"无插值器"导致实时计算崩。
-//  2. 七孔响应 pointCount 保持兼容约定值 169（内区）/ 52（扇区），不从 metadata
-//     读取——loader 真实加载点数与约定值未必相等，伪装为 loader 真值会误导前端。
+//  2. 七孔响应 pointCount 从 metadata 读取真实值（InnerPointCount/OuterPointCounts），
+//     不再使用 169/52 兼容约定值——外区 theta 维度已动态化，不同校准集点数不同
+//     （4×13=52、7×13=91 等），约定值会误导前端。
 //  3. 五孔 CSV 的 pointCount 通过类型断言 *coreinterp.FiveHoleNewInterpolator 获取——
 //     coreinterp.Interpolator 接口刻意不暴露 GetPointCount（仅具体类型支持），
 //     断言失败时降级为 0（与旧 API 行为一致：旧 API 也通过具体类型方法读取）。
@@ -73,11 +74,11 @@ type SevenHoleImportResult struct {
 	ValidRange seveninterp.PrbValidRange `json:"validRange"`
 }
 
-// SevenHoleFileInfo 七孔单文件信息（内区 sector=7/169，扇区 sector=1..6/52）。
+// SevenHoleFileInfo 七孔单文件信息（内区 sector=7，扇区 sector=1..6）。
 //
-// PointCount 是兼容约定值（169/52），**不是 loader 真值**——loader 真实加载点数
-// 与约定值未必相等，伪装为 loader 真值会误导前端。Sector 7 表示内区（7.prb），
-// Sector 1..6 表示 6 个外区扇区（按孔号顺序）。
+// PointCount 来自 metadata 真值——内区固定 169，扇区为 thetaCount×13 动态值
+// （4×13=52、7×13=91 等）。Sector 7 表示内区（7.prb），Sector 1..6 表示 6 个
+// 外区扇区（按孔号顺序）。
 type SevenHoleFileInfo struct {
 	FilePath   string `json:"filePath"`
 	FileName   string `json:"fileName"`
@@ -85,12 +86,6 @@ type SevenHoleFileInfo struct {
 	PointCount int    `json:"pointCount"`
 	LoadedAtMs int64  `json:"loadedAt"`
 }
-
-// 七孔 pointCount 兼容约定值（spec §5.6 契约）。
-const (
-	sevenHoleInnerPointCount = 169 // 内区 7.prb 约定点数
-	sevenHoleOuterPointCount = 52  // 扇区 1..6 约定点数
-)
 
 // ==================== Import 方法 ====================
 
@@ -263,8 +258,9 @@ func validateSevenHolePaths(innerPath string, outerPaths []string, kind string) 
 
 // buildSevenHoleImportResult 构造七孔导入响应（PRB / CSV 共用）。
 //
-// 内区 sector=7 / pointCount=169（约定值），扇区 sector=1..6 / pointCount=52（约定值）。
-// LoadedAtMs 与 ValidRange 来自 loader 返回的 metadata（loader 真值）。
+// 内区 sector=7 / pointCount=metadata.InnerPointCount（loader 真值，固定 169），
+// 扇区 sector=1..6 / pointCount=metadata.OuterPointCounts[i]（loader 真值，动态
+// thetaCount×13，如 4×13=52、7×13=91）。LoadedAtMs 与 ValidRange 同样来自 metadata。
 func (m *TraversalManager) buildSevenHoleImportResult(
 	innerPath string,
 	outerPaths []string,
@@ -275,7 +271,7 @@ func (m *TraversalManager) buildSevenHoleImportResult(
 		FilePath:   innerPath,
 		FileName:   filepath.Base(innerPath),
 		Sector:     7,
-		PointCount: sevenHoleInnerPointCount,
+		PointCount: metadata.InnerPointCount,
 		LoadedAtMs: metadata.LoadedAtMs,
 	})
 	for i, p := range outerPaths {
@@ -283,7 +279,7 @@ func (m *TraversalManager) buildSevenHoleImportResult(
 			FilePath:   p,
 			FileName:   filepath.Base(p),
 			Sector:     i + 1,
-			PointCount: sevenHoleOuterPointCount,
+			PointCount: metadata.OuterPointCounts[i],
 			LoadedAtMs: metadata.LoadedAtMs,
 		})
 	}

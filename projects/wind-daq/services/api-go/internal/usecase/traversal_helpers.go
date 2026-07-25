@@ -97,9 +97,14 @@ func valuesForChannels(payload device.DataPayload, channels []int) map[int]float
 
 // resolveMotionAxes 在调用 availableAxisTargets 前对 motionAxes 做容错预处理。
 //
-// 回退规则：若所有非空 controllerId 都不匹配任何**已连接**控制器的 ID，
+// 回退规则：若所有非空 controllerId 都不匹配任何 status 的 ID（**不区分 Connected**），
 // 视为旧配置 / 错误配置（典型表现：前端用别名 "sim-motion-1" 而后端 profile.ID
 // 是 UUID），统一把 controllerId 清空，回退到「按轴名匹配」的旧行为。
+//
+// 不用「已连接控制器」集合判断回退：用户显式绑定了一个已知但 disconnected 的控制器时，
+// 应交由 validateMotionAxisConnections 报告该控制器断开，而不是被回退到任意其他已连接
+// 控制器的同名轴——避免"选错控制器被静默切换"的隐蔽 bug。只有 controllerId 真正陌生
+// （不在任何 status 中）才视为别名 / 旧 UUID 触发回退。
 //
 // 这样既保留了「多控制器同时连接时严格按 controllerId 过滤」的能力，
 // 又避免了 controllerId 不匹配时 availableAxisTargets 对所有控制器返回 nil、
@@ -111,11 +116,14 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 	if len(motionAxes) == 0 {
 		return motionAxes
 	}
-	// 收集已连接控制器的 ID 集合
-	connectedIDs := make(map[string]bool, len(statuses))
+	// 收集所有 status 的 ID 集合（不区分 Connected 与否）：
+	// 仅用于判断 controllerId 是否"陌生"——已知但 disconnected 的控制器不算陌生。
+	knownIDs := make(map[string]bool, len(statuses))
+	connectedCount := 0
 	for _, s := range statuses {
+		knownIDs[s.ID] = true
 		if s.Connected {
-			connectedIDs[s.ID] = true
+			connectedCount++
 		}
 	}
 	// 任意一个绑定匹配（含空 controllerId 视为通配）→ 不需要回退
@@ -123,14 +131,14 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 		if b.ControllerID == "" {
 			return motionAxes
 		}
-		if connectedIDs[b.ControllerID] {
+		if knownIDs[b.ControllerID] {
 			return motionAxes
 		}
 	}
 	// 全部不匹配：清空 controllerId，回退到按轴名匹配
 	slog.Warn("traversal motionAxes controllerId mismatched, falling back to axis-name matching",
 		"component", "traversal",
-		"connected_controller_count", len(connectedIDs),
+		"connected_controller_count", connectedCount,
 	)
 	fallback := make([]traversal.MotionAxisBinding, len(motionAxes))
 	for i, b := range motionAxes {
@@ -141,6 +149,66 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 		}
 	}
 	return fallback
+}
+
+// motionAxesForPath removes bindings whose logical coordinate is unused by the whole path.
+// Generated layouts mark unused coordinates as NaN; keeping those bindings would make status
+// validation and stop handling treat hidden axes as active even though no MoveTo is sent.
+//
+// 幂等性：本函数仅按 path 中的有限坐标过滤绑定，对已规范化的输入再次调用返回
+// 相同结果，可安全在 ParseConfig / Start / ResumeFromCheckpoint 多处重复调用——
+// 防御性兜底，避免内部调用方绕过 ParseConfig 直传 Config 时遗漏过滤。
+func motionAxesForPath(motionAxes []traversal.MotionAxisBinding, path []traversal.Point) []traversal.MotionAxisBinding {
+	if len(motionAxes) == 0 {
+		return motionAxes
+	}
+	active := make(map[string]bool, 4)
+	for _, point := range path {
+		if !math.IsNaN(point.X) {
+			active[string(motion.AxisX)] = true
+		}
+		if !math.IsNaN(point.Y) {
+			active[string(motion.AxisY)] = true
+		}
+		if !math.IsNaN(point.Z) {
+			active[string(motion.AxisZ)] = true
+		}
+		if !math.IsNaN(point.U) {
+			active[string(motion.AxisU)] = true
+		}
+	}
+	filtered := make([]traversal.MotionAxisBinding, 0, len(motionAxes))
+	for _, binding := range motionAxes {
+		logicalAxis := binding.Name
+		if logicalAxis == "" {
+			logicalAxis = binding.Axis
+		}
+		if active[logicalAxis] {
+			filtered = append(filtered, binding)
+		}
+	}
+	return filtered
+}
+
+func validateMotionAxisConnections(statuses []motion.ControllerStatus, bindings []traversal.MotionAxisBinding) (bool, string) {
+	for _, binding := range bindings {
+		for _, status := range statuses {
+			if binding.ControllerID != "" && status.ID != binding.ControllerID {
+				continue
+			}
+			if !status.Connected || status.EmergencyStopped {
+				continue
+			}
+			for _, axis := range status.Axes {
+				if string(axis.Name) == binding.Axis {
+					goto nextBinding
+				}
+			}
+		}
+		return false, fmt.Sprintf("Selected motion controller %s axis %s is not connected or unavailable", binding.ControllerID, binding.Axis)
+	nextBinding:
+	}
+	return true, "Motion manager is available"
 }
 
 // validateSectorOrigin 确认扇形机构的径向轴和旋转轴已由操作员在首测点手动置零。

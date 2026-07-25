@@ -7,7 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
 )
+
+type unsupportedSevenHoleInterpolator struct{}
+
+func (unsupportedSevenHoleInterpolator) IsLoaded() bool { return true }
+func (unsupportedSevenHoleInterpolator) GetValidRange() seveninterp.PrbValidRange {
+	return seveninterp.PrbValidRange{}
+}
+func (unsupportedSevenHoleInterpolator) Calculate(seveninterp.InterpolationInput) (seveninterp.InterpolationResult, error) {
+	return seveninterp.InterpolationResult{}, nil
+}
 
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
@@ -279,14 +291,37 @@ func TestLoadSevenHolePrbFiles_MissingOuter(t *testing.T) {
 func TestLoadSevenHolePrbFiles_BadRowCount(t *testing.T) {
 	dir := sevenHoleFixtureDir(t)
 	inner, outer := sevenHolePaths(dir)
-	outer[0] = inner // 169 行冒充外区文件（应为 52 行）
+	// 用截断的外区文件（51 行 = 非 13 整数倍）触发动态行数校验
+	// 动态化后错误消息含"必须是 13 的整数倍且 ≥26"，不再硬编码 52。
+	badOuter := writeTruncatedPrb(t, dir, outer[0], 51)
+	outer[0] = badOuter
 	_, err := LoadSevenHolePrbFiles(inner, outer)
 	if err == nil {
 		t.Fatal("expected row-count error")
 	}
-	if !strings.Contains(err.Error(), "52") {
-		t.Errorf("error must mention expected row count 52, got: %v", err)
+	if !strings.Contains(err.Error(), "13") || !strings.Contains(err.Error(), "26") {
+		t.Errorf("error must mention multiple-of-13 and min 26, got: %v", err)
 	}
+}
+
+// writeTruncatedPrb 复制 srcPath 的前 n 行数据（保留表头）写入新文件，
+// 用于测试动态行数校验。
+func writeTruncatedPrb(t *testing.T, dir, srcPath string, n int) string {
+	t.Helper()
+	raw, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("read src prb: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if n+1 > len(lines) {
+		n = len(lines) - 1
+	}
+	out := strings.Join(lines[:n+1], "\n") + "\n"
+	path := filepath.Join(dir, "truncated.prb")
+	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+		t.Fatalf("write truncated prb: %v", err)
+	}
+	return path
 }
 
 // TestLoaderLoadSevenHolePRB ports 层加载：成功返回已加载插值器与中立 metadata；
@@ -326,5 +361,15 @@ func TestLoaderLoadSevenHolePRB(t *testing.T) {
 	}
 	if badMeta != nil {
 		t.Error("failure must return nil metadata")
+	}
+}
+
+func TestBuildSevenHoleMetadataRejectsUnsupportedInterpolator(t *testing.T) {
+	metadata, err := buildSevenHoleMetadata(unsupportedSevenHoleInterpolator{})
+	if err == nil {
+		t.Fatal("expected unsupported interpolator error")
+	}
+	if metadata != nil {
+		t.Fatal("failure must return nil metadata")
 	}
 }

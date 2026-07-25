@@ -34,10 +34,26 @@ func dedupPolygon(pts []point2D) []point2D {
 // caller), 1 when inside, -1 when outside. The iteration sequence
 // (including the degenerate first segment and the closing segment) replicates
 // the Python loop exactly so signs match bit for bit.
+//
+// 顶点匹配前置检查（修复射线法对"测试点=非极值顶点"的边界条件 bug）：
+// 当测试点正好是多边形某个顶点时，射线法的前后两段都会触发条件2（因为 y
+// 等于其中一个端点的 y），导致 inside 双重翻转，顶点被误判为外部。典型场景
+// 是七孔自提取 PRB 反推：callog 网格点 (ka,kb) 与多边形顶点 bit-for-bit
+// 相等（同一份压力数据反算），但 θ=30 内边顶点（非极值顶点）被误判为多边形
+// 外，导致整条内边无法插值。入口处用 1e-9 容差（与 gridEps 一致）检查顶点
+// 匹配，命中则直接返回 0（on boundary），避免双重翻转。
 func pointInPolygon(x, y float64, polygon []point2D) int {
 	n := len(polygon)
 	if n == 0 {
 		return -1
+	}
+	// 顶点匹配：测试点近似等于某个顶点时返回 0（on boundary）。
+	// 容差 gridEps（=1e-9）能处理浮点 round-trip 精度（strconv
+	// FormatFloat/ParseFloat）和自提取 PRB 的 bit-for-bit 相等两种情况。
+	for _, v := range polygon {
+		if math.Abs(v.x-x) < gridEps && math.Abs(v.y-y) < gridEps {
+			return 0
+		}
 	}
 	inside := false
 	p1 := polygon[0]

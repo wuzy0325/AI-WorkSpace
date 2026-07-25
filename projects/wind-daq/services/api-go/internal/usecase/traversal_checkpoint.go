@@ -263,6 +263,8 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
 		return "", err
 	}
+	// 旧 checkpoint 可能保存了矩形/线型布局的隐藏 Z/U 绑定；恢复前按路径语义清理。
+	config.MotionAxes = motionAxesForPath(config.MotionAxes, config.Path)
 
 	// v2：基于 cp.Snapshot 构建恢复期 snapshot。
 	// CommittedPoints / CommitSeq 沿用 checkpoint 中的值，确保 commitPointV2 后续 +1 严格递增。

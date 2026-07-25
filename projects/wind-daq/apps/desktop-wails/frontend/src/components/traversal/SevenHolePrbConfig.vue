@@ -27,7 +27,8 @@ const feedbackStore = useFeedbackStore()
 const fileImport = useFileImport({
   onError: (message) => feedbackStore.pushToast(props.t.travErrImportSevenHolePrb + ': ' + message, 'error')
 })
-const isImporting = fileImport.isImporting
+const isBackendImporting = ref(false)
+const isImporting = computed(() => fileImport.isImporting.value || isBackendImporting.value)
 
 const isComplete = computed(
   () => draft.value.innerFile !== null && draft.value.outerFiles.every((f) => f !== null)
@@ -37,10 +38,15 @@ const isCsvSource = computed(() => draft.value.source === 'calibration-csv')
 
 const validRangeText = ref<string | null>(null)
 
-/** 数据源切换（PRB 文件集 / 校准 CSV）：仅改文件过滤器与导入动作，不动已选槽位 */
+/** 数据源切换（PRB 文件集 / 校准 CSV）：清空旧格式槽位，避免混用两种解析入口。 */
 function setSource(source: 'prb' | 'calibration-csv'): void {
-  if (source === draft.value.source) return
-  draft.value = { ...draft.value, source }
+  if (isImporting.value || source === draft.value.source) return
+  draft.value = {
+    source,
+    innerFile: null,
+    outerFiles: [null, null, null, null, null, null]
+  }
+  validRangeText.value = null
 }
 
 function fileNameOf(path: string): string {
@@ -66,28 +72,30 @@ async function batchImport(): Promise<void> {
     return
   }
   // 此处 format 必为 'prb' | 'calibration-csv'
-  if (format !== draft.value.source) {
-    draft.value = { ...draft.value, source: format }
-  }
+  const sourceChanged = format !== draft.value.source
   const assignment = format === 'calibration-csv'
     ? assignSevenHoleCsvFilesByName(paths)
     : assignSevenHoleFilesByName(paths)
-  const outer = [...draft.value.outerFiles]
+  const outer = sourceChanged
+    ? [null, null, null, null, null, null] as SevenHolePrbDraft['outerFiles']
+    : [...draft.value.outerFiles]
   for (const [sector, info] of assignment.outerFiles) {
     outer[sector - 1] = info
   }
-  draft.value = {
-    ...draft.value,
-    innerFile: assignment.innerFile ?? draft.value.innerFile,
+  const nextDraft: SevenHolePrbDraft = {
+    source: format,
+    innerFile: assignment.innerFile ?? (sourceChanged ? null : draft.value.innerFile),
     outerFiles: outer
   }
+  draft.value = nextDraft
+  if (sourceChanged) validRangeText.value = null
   if (assignment.unmatched.length > 0) {
     feedbackStore.pushToast(
       props.t.sevenHolePrbUnmatched.replace('{files}', assignment.unmatched.map((p) => fileNameOf(p)).join(', ')),
       'warning'
     )
   }
-  await importIfComplete()
+  await importIfComplete(nextDraft)
 }
 
 /** 按数据源选择文件过滤器与错误文案 */
@@ -108,8 +116,12 @@ async function pickInner(): Promise<void> {
     filters: fileFilters()
   })
   if (!path) return
-  draft.value = { ...draft.value, innerFile: { filePath: path, fileName: fileNameOf(path), sector: 7 } }
-  await importIfComplete()
+  const nextDraft: SevenHolePrbDraft = {
+    ...draft.value,
+    innerFile: { filePath: path, fileName: fileNameOf(path), sector: 7 }
+  }
+  draft.value = nextDraft
+  await importIfComplete(nextDraft)
 }
 
 async function pickOuter(sector: number): Promise<void> {
@@ -120,8 +132,9 @@ async function pickOuter(sector: number): Promise<void> {
   if (!path) return
   const outer = [...draft.value.outerFiles]
   outer[sector - 1] = { filePath: path, fileName: fileNameOf(path), sector }
-  draft.value = { ...draft.value, outerFiles: outer }
-  await importIfComplete()
+  const nextDraft: SevenHolePrbDraft = { ...draft.value, outerFiles: outer }
+  draft.value = nextDraft
+  await importIfComplete(nextDraft)
 }
 
 function removeInner(): void {
@@ -136,13 +149,19 @@ function removeOuter(sector: number): void {
 }
 
 /** 7 份齐备后按数据源自动导入；失败保留槽位由用户修正 */
-async function importIfComplete(): Promise<void> {
-  if (!isComplete.value) return
-  const inner = draft.value.innerFile!
-  const outer = draft.value.outerFiles as SevenHolePrbFileInfo[]
-  const imported = isCsvSource.value
-    ? await traversalStore.importSevenHoleCalibrationCsvFiles(inner.filePath, outer.map((f) => f.filePath))
-    : await traversalStore.importSevenHolePrbFiles(inner.filePath, outer.map((f) => f.filePath))
+async function importIfComplete(candidate: SevenHolePrbDraft = draft.value): Promise<void> {
+  if (candidate.innerFile === null || candidate.outerFiles.some((f) => f === null)) return
+  const inner = candidate.innerFile
+  const outer = candidate.outerFiles as SevenHolePrbFileInfo[]
+  isBackendImporting.value = true
+  let imported: Awaited<ReturnType<typeof traversalStore.importSevenHolePrbFiles>>
+  try {
+    imported = candidate.source === 'calibration-csv'
+      ? await traversalStore.importSevenHoleCalibrationCsvFiles(inner.filePath, outer.map((f) => f.filePath))
+      : await traversalStore.importSevenHolePrbFiles(inner.filePath, outer.map((f) => f.filePath))
+  } finally {
+    isBackendImporting.value = false
+  }
   if (!imported) {
     feedbackStore.pushToast(
       importErrorKey() + ': ' + (traversalStore.error || props.t.unknownError),
@@ -157,7 +176,7 @@ async function importIfComplete(): Promise<void> {
     const ret = imported.files.find((f) => f.sector === i + 1)
     return ret ? { ...slot, ...ret } : slot
   })
-  draft.value = { ...draft.value, innerFile: nextInner, outerFiles: nextOuter }
+  draft.value = { ...candidate, innerFile: nextInner, outerFiles: nextOuter }
   const vr = imported.validRange
   validRangeText.value = `Alpha ${vr.alphaMin}..${vr.alphaMax} deg / Beta ${vr.betaMin}..${vr.betaMax} deg`
 }
@@ -169,8 +188,8 @@ async function importIfComplete(): Promise<void> {
       <div class="mode-row">
         <div><span class="label-section">{{ t.sevenHolePrbSource }}</span><span class="hint-text">{{ isCsvSource ? t.sevenHolePrbSourceCsvHint : t.sevenHolePrbSourcePrbHint }}</span></div>
         <div style="display:flex;align-items:center;gap:8px">
-          <UiButton size="sm" :type="!isCsvSource ? 'primary' : 'default'" secondary @click="setSource('prb')">{{ t.sevenHolePrbSourcePrb }}</UiButton>
-          <UiButton size="sm" :type="isCsvSource ? 'primary' : 'default'" secondary @click="setSource('calibration-csv')">{{ t.sevenHolePrbSourceCsv }}</UiButton>
+          <UiButton size="sm" :type="!isCsvSource ? 'primary' : 'default'" secondary :disabled="isImporting" @click="setSource('prb')">{{ t.sevenHolePrbSourcePrb }}</UiButton>
+          <UiButton size="sm" :type="isCsvSource ? 'primary' : 'default'" secondary :disabled="isImporting" @click="setSource('calibration-csv')">{{ t.sevenHolePrbSourceCsv }}</UiButton>
         </div>
       </div>
     </UiPanel>
@@ -182,7 +201,7 @@ async function importIfComplete(): Promise<void> {
           <span class="section-hint">{{ t.sevenHolePrbBatchHint }}</span>
         </div>
         <div class="head-actions">
-          <UiButton size="sm" variant="primary" :loading="isImporting" @click="batchImport">
+          <UiButton size="sm" variant="primary" :loading="isImporting" :disabled="isImporting" @click="batchImport">
             {{ isImporting ? t.importing : t.sevenHolePrbBatchImport }}
           </UiButton>
         </div>
@@ -197,12 +216,12 @@ async function importIfComplete(): Promise<void> {
             <span class="file-path">{{ draft.innerFile.filePath }}</span>
             <span v-if="draft.innerFile.pointCount" class="file-meta">{{ draft.innerFile.pointCount }} pts</span>
           </div>
-          <UiButton size="sm" secondary @click="removeInner">{{ t.remove }}</UiButton>
+          <UiButton size="sm" secondary :disabled="isImporting" @click="removeInner">{{ t.remove }}</UiButton>
         </template>
-        <UiButton v-else size="sm" variant="primary" @click="pickInner">{{ t.importPrb }}</UiButton>
+        <UiButton v-else size="sm" variant="primary" :disabled="isImporting" @click="pickInner">{{ t.importPrb }}</UiButton>
       </div>
 
-      <!-- 扇区槽位（1.prb~6.prb，固定孔号顺序，各 52 点） -->
+      <!-- 扇区槽位（1.prb~6.prb，固定孔号顺序，点数动态 = thetaCount×13） -->
       <div v-for="sector in [1, 2, 3, 4, 5, 6]" :key="sector" class="file-row">
         <div class="slot-label">{{ t.sevenHolePrbOuterFile.replace('{n}', String(sector)) }}</div>
         <template v-if="draft.outerFiles[sector - 1]">
@@ -211,9 +230,9 @@ async function importIfComplete(): Promise<void> {
             <span class="file-path">{{ draft.outerFiles[sector - 1]!.filePath }}</span>
             <span v-if="draft.outerFiles[sector - 1]!.pointCount" class="file-meta">{{ draft.outerFiles[sector - 1]!.pointCount }} pts</span>
           </div>
-          <UiButton size="sm" secondary @click="removeOuter(sector)">{{ t.remove }}</UiButton>
+          <UiButton size="sm" secondary :disabled="isImporting" @click="removeOuter(sector)">{{ t.remove }}</UiButton>
         </template>
-        <UiButton v-else size="sm" variant="primary" @click="pickOuter(sector)">{{ t.importPrb }}</UiButton>
+        <UiButton v-else size="sm" variant="primary" :disabled="isImporting" @click="pickOuter(sector)">{{ t.importPrb }}</UiButton>
       </div>
 
       <div v-if="validRangeText" class="range-bar">

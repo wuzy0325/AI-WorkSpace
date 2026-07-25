@@ -785,6 +785,10 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 			return traversal.Config{}, fmt.Errorf("invalid motionSafety: %w", err)
 		}
 	}
+	// 布点路径是运动轴参与性的最终真相源：line/rectangle/sector 会把未使用坐标
+	// 标为 NaN。校验原始配置后统一剔除对应绑定，使旧配置中的轴覆盖仍可读取，
+	// 同时保证移动、状态校验、停机和断点恢复消费同一轴集。
+	motionAxes = motionAxesForPath(motionAxes, points)
 	// 探针类型规范化与互斥校验（spec §2.3）：未知非空类型、五孔携带
 	// sevenHolePrb、七孔文件集不齐均在边界报错，不进入后续流程。
 	probeType, err := normalizeAndValidateProbeType(cfg.ProbeType, cfg.SevenHolePrb)

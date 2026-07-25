@@ -44,6 +44,38 @@ func TestPointInPolygonEmpty(t *testing.T) {
 	}
 }
 
+// TestPointInPolygon_VertexMatch 覆盖"测试点=多边形非极值顶点"边界条件：
+// 射线法对非极值顶点会因前后两段都触发条件 2（y 等于端点 y）导致 inside
+// 双重翻转，把顶点误判为外部。入口的顶点匹配前置检查命中后返回 0
+// （on boundary），是自提取 PRB 反推场景的关键修复（θ=30 内边顶点）。
+//
+// 用菱形多边形构造 4 个"一坐标极值、另一坐标非极值"的顶点
+// （左/右/上/下尖角），每个都应返回 0。
+func TestPointInPolygon_VertexMatch(t *testing.T) {
+	// 菱形：(2,0)下 (4,2)右 (2,4)上 (0,2)左
+	diamond := []point2D{{2, 0}, {4, 2}, {2, 4}, {0, 2}}
+	// 4 个顶点都是非极值顶点（一坐标极值 + 另一坐标中间值）
+	for i, v := range diamond {
+		if got := pointInPolygon(v.x, v.y, diamond); got != 0 {
+			t.Errorf("顶点[%d]=(%v,%v) 返回 %d，期望 0（on boundary）", i, v.x, v.y, got)
+		}
+	}
+	// 容差测试：1e-12 偏移仍应命中顶点匹配（gridEps=1e-9）
+	for i, v := range diamond {
+		if got := pointInPolygon(v.x+1e-12, v.y-1e-12, diamond); got != 0 {
+			t.Errorf("顶点[%d]容差偏移=(%v,%v) 返回 %d，期望 0", i, v.x+1e-12, v.y-1e-12, got)
+		}
+	}
+	// 内部点（菱形中心）仍应返回 1
+	if got := pointInPolygon(2, 2, diamond); got != 1 {
+		t.Errorf("菱形中心 (2,2) 返回 %d，期望 1（inside）", got)
+	}
+	// 外部点（菱形右上方）应返回 -1
+	if got := pointInPolygon(5, 5, diamond); got != -1 {
+		t.Errorf("外部点 (5,5) 返回 %d，期望 -1（outside）", got)
+	}
+}
+
 func TestDedupPolygon(t *testing.T) {
 	in := []point2D{{0, 0}, {1, 0}, {1, 0}, {2, 0}, {0, 0}, {3, 3}}
 	want := []point2D{{0, 0}, {1, 0}, {2, 0}, {3, 3}}

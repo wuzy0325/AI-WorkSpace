@@ -9,14 +9,21 @@ import (
 )
 
 // loadOuterSector loads one synthetic outer sector grid into p via the real
-// loader (geometry precompute included).
+// loader (geometry precompute included). thetaCount=4（默认，匹配历史夹具）；
+// 如需其他维度请用 loadOuterSectorTheta。
 func loadOuterSector(t *testing.T, p *SevenHolePrbInterpolator, sector int, f func(theta, phi float64) (ka, kb, cpt, cps float64)) {
+	t.Helper()
+	loadOuterSectorTheta(t, p, sector, defaultTestThetaCount, f)
+}
+
+// loadOuterSectorTheta 用指定 thetaCount 加载合成外区扇区网格。
+func loadOuterSectorTheta(t *testing.T, p *SevenHolePrbInterpolator, sector, thetaCount int, f func(theta, phi float64) (ka, kb, cpt, cps float64)) {
 	t.Helper()
 	center := float64(sector-1) * 60
 	lines := []string{"ka kb cpt cps a b"}
 	for k := 0; k < outerPhiCount; k++ {
 		b := normalize360(center + 30 - gridStep*float64(k))
-		for it := 0; it < outerThetaCount; it++ {
+		for it := 0; it < thetaCount; it++ {
 			theta := outerThetaMin + gridStep*float64(it)
 			ka, kb, cpt, cps := f(theta, b)
 			lines = append(lines, fmt.Sprintf("%s %s %s %s %.6f %.6f",
@@ -284,5 +291,55 @@ func TestCalculateSecondCandidateFallback(t *testing.T) {
 	}
 	if math.Abs(res.TotalPressure-950.0/2.12) > 1e-6 {
 		t.Errorf("Pt = %v, want %v (sector-2 solve)", res.TotalPressure, 950.0/2.12)
+	}
+}
+
+// TestGetPointCount 验证 GetInnerPointCount/GetOuterPointCount 在动态
+// thetaCount 下返回真实点数：内区固定 169，外区随 thetaCount 变化。
+func TestGetPointCount(t *testing.T) {
+	// 未加载 → 全部返回 0
+	empty := NewSevenHolePrbInterpolator()
+	if got := empty.GetInnerPointCount(); got != 0 {
+		t.Errorf("unloaded inner count = %d, want 0", got)
+	}
+	if got := empty.GetOuterPointCount(1); got != 0 {
+		t.Errorf("unloaded outer count = %d, want 0", got)
+	}
+	// 越界 sector → 返回 0
+	if got := empty.GetOuterPointCount(0); got != 0 {
+		t.Errorf("sector 0 count = %d, want 0", got)
+	}
+	if got := empty.GetOuterPointCount(7); got != 0 {
+		t.Errorf("sector 7 count = %d, want 0", got)
+	}
+
+	// 默认 thetaCount=4：内区 169，外区 52
+	p := buildFullTestInterpolator(t)
+	if got := p.GetInnerPointCount(); got != 169 {
+		t.Errorf("inner count = %d, want 169", got)
+	}
+	for sector := 1; sector <= outerSectorCount; sector++ {
+		if got := p.GetOuterPointCount(sector); got != defaultTestThetaCount*outerPhiCount {
+			t.Errorf("sector %d outer count = %d, want %d", sector, got, defaultTestThetaCount*outerPhiCount)
+		}
+	}
+}
+
+// TestGetPointCount_DynamicThetaCount 验证动态 thetaCount 下点数查询正确：
+// thetaCount=7 时外区点数应为 7×13=91。
+func TestGetPointCount_DynamicThetaCount(t *testing.T) {
+	const thetaCount = 7
+	p := buildInnerTestInterpolator(t, linearInnerMap)
+	for sector := 1; sector <= outerSectorCount; sector++ {
+		loadOuterSectorTheta(t, p, sector, thetaCount, linearOuterMap(float64(sector-1)*60))
+	}
+	if got := p.GetInnerPointCount(); got != 169 {
+		t.Errorf("inner count = %d, want 169", got)
+	}
+	for sector := 1; sector <= outerSectorCount; sector++ {
+		want := thetaCount * outerPhiCount // 7×13=91
+		if got := p.GetOuterPointCount(sector); got != want {
+			t.Errorf("sector %d outer count = %d, want %d", sector, got, want)
+		}
 	}
 }

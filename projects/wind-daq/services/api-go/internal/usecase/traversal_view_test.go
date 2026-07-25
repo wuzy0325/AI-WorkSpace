@@ -872,6 +872,30 @@ func TestCheckPreconditions_MotionNotConnected(t *testing.T) {
 	}
 }
 
+func TestCheckPreconditions_SelectedMotionControllerMustBeConnected(t *testing.T) {
+	motionAccess := &mockMotionAccess{statuses: []motion.ControllerStatus{
+		{ID: "other-controller", Connected: true, Axes: []motion.AxisStatus{{Name: motion.AxisX}}},
+		{ID: "selected-controller", Connected: false, Axes: []motion.AxisStatus{{Name: motion.AxisZ}}},
+	}}
+	mgr := NewTraversalManager(nil, motionAccess, nil, nil, nil)
+	cfg := &traversal.Config{
+		MotionAxes: []traversal.MotionAxisBinding{
+			{Name: "X", ControllerID: "selected-controller", Axis: "Z"},
+		},
+	}
+
+	result := mgr.CheckPreconditions(cfg)
+	checks, _ := result["checks"].([]map[string]any)
+	motionCheck := findCheck(checks, "Motion")
+	if motionCheck == nil || motionCheck["passed"] != false {
+		t.Fatalf("selected disconnected controller must fail Motion precondition, got %#v", motionCheck)
+	}
+	msg, _ := motionCheck["message"].(string)
+	if !contains(msg, "selected-controller") || !contains(msg, "Z") {
+		t.Fatalf("Motion failure should identify selected controller and physical axis, got %q", msg)
+	}
+}
+
 var _ ports.AcquisitionController = (*mockAcquisitionController)(nil)
 
 // ==================== Traversal Lock Release 错误路径测试 — Path 4（spec Task 21） ====================
@@ -961,5 +985,121 @@ func TestFinalizeSink_ReleaseSuccess_LogsInfo(t *testing.T) {
 	// 验证 Warn 未记录（不应误报失败）
 	if handler.hasLevelMessage(slog.LevelWarn, "release") {
 		t.Error("finalizeSink Release 成功时不应记录 Warn（含 'release' 关键字），实际记录了")
+	}
+}
+
+// TestCheckPreconditions_MotionAliasFallbackPasses 旧别名 controllerId 通过回退通过前置检查。
+//
+// 测试前置：
+//   - TraversalManager 实例（newConfigTestManager 注入 mockMotionAccess）
+//   - mockMotionAccess.statuses = 单个 UUID 控制器（mc-uuid-1），仅 X 轴可用
+//   - config.MotionAxes[0].ControllerID = "sim-motion-1"（前端别名，与 mc-uuid-1 不匹配）
+//   - config.ChannelLabels 齐全，Path 含 X 坐标
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(cfg)
+//
+// 期待结果：
+//   - Motion 项 passed=true（resolveMotionAxes 全部不匹配时回退到按轴名匹配）
+//   - Motion 项 message = "Motion manager is available"
+//   - 修复前此处会判定为 disconnected（旧配置无法启动）
+func TestCheckPreconditions_MotionAliasFallbackPasses(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	motionAccess := &mockMotionAccess{
+		statuses: []motion.ControllerStatus{
+			{
+				ID:        "mc-uuid-1",
+				Name:      "模拟运动控制器",
+				Connected: true,
+				Axes: []motion.AxisStatus{
+					{Name: motion.AxisX, Position: 0, Homed: true, Moving: false},
+				},
+			},
+		},
+	}
+	mgr.motion = motionAccess
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+
+	cfg := &traversal.Config{
+		ChannelLabels: map[int]string{0: "P1", 5: "Patm", 6: "Tatm"},
+		MotionAxes: []traversal.MotionAxisBinding{
+			{Name: "X", ControllerID: "sim-motion-1", Axis: "X"},
+		},
+		Path: []traversal.Point{{X: 0, Y: 0, Z: 0, U: 0}},
+	}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	motionCheck := findCheck(checks, "Motion")
+	if motionCheck == nil {
+		t.Fatalf("expected Motion check item, got nil")
+	}
+	if motionCheck["passed"] != true {
+		t.Errorf("Motion passed: expect true (alias should fall back to axis-name matching), got %v (msg=%v)",
+			motionCheck["passed"], motionCheck["message"])
+	}
+	msg, _ := motionCheck["message"].(string)
+	if msg != "Motion manager is available" {
+		t.Errorf("Motion message: expect 'Motion manager is available', got %q", msg)
+	}
+}
+
+// TestCheckPreconditions_MotionPartialMatchKeepsStrictBinding 部分匹配时保持严格绑定。
+//
+// 测试前置：
+//   - TraversalManager 实例，mockMotionAccess.statuses = 单个 mc-uuid-1 仅 X 轴可用
+//   - config.MotionAxes[0].ControllerID = "mc-uuid-1"（匹配，X 轴）
+//   - config.MotionAxes[1].ControllerID = "sim-motion-1"（别名，不匹配，Y 轴）
+//   - config.ChannelLabels 齐全，Path 含 X、Y 坐标
+//
+// 测试步骤：
+//   - 调用 mgr.CheckPreconditions(cfg)
+//
+// 期待结果：
+//   - Motion 项 passed=false（部分匹配不回退，sim-motion-1 找不到匹配 → 严格绑定失败）
+//   - 保留"部分有效 ID 时严格绑定"规则，避免别名误绑到任意控制器
+func TestCheckPreconditions_MotionPartialMatchKeepsStrictBinding(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	motionAccess := &mockMotionAccess{
+		statuses: []motion.ControllerStatus{
+			{
+				ID:        "mc-uuid-1",
+				Name:      "模拟运动控制器",
+				Connected: true,
+				Axes: []motion.AxisStatus{
+					{Name: motion.AxisX, Position: 0, Homed: true, Moving: false},
+				},
+			},
+		},
+	}
+	mgr.motion = motionAccess
+	mgr.mu.Lock()
+	mgr.config.ChannelLabels = map[int]string{0: "P1", 5: "Patm", 6: "Tatm"}
+	mgr.mu.Unlock()
+
+	cfg := &traversal.Config{
+		ChannelLabels: map[int]string{0: "P1", 5: "Patm", 6: "Tatm"},
+		MotionAxes: []traversal.MotionAxisBinding{
+			{Name: "X", ControllerID: "mc-uuid-1", Axis: "X"},
+			{Name: "Y", ControllerID: "sim-motion-1", Axis: "Y"},
+		},
+		Path: []traversal.Point{{X: 0, Y: 0, Z: 0, U: 0}},
+	}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	motionCheck := findCheck(checks, "Motion")
+	if motionCheck == nil {
+		t.Fatalf("expected Motion check item, got nil")
+	}
+	if motionCheck["passed"] != false {
+		t.Errorf("Motion passed: expect false (partial match must NOT fall back), got %v (msg=%v)",
+			motionCheck["passed"], motionCheck["message"])
+	}
+	msg, _ := motionCheck["message"].(string)
+	if !contains(msg, "sim-motion-1") {
+		t.Errorf("Motion message: expect contains 'sim-motion-1' (the unmatched binding), got %q", msg)
 	}
 }

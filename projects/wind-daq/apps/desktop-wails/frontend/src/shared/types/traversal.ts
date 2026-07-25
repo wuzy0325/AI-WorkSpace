@@ -738,7 +738,7 @@ export interface SevenHolePrbFileInfo {
   fileName?: string
   /** 7=内区（7.prb），1..6=扇区（n.prb） */
   sector?: number
-  /** 169（内区）/ 52（扇区） */
+  /** 内区固定 169（13×13）；扇区动态 = thetaCount×13（如 4×13=52、7×13=91） */
   pointCount?: number
   loadedAt?: number
 }

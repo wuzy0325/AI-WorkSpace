@@ -39,13 +39,16 @@ type MultiPrbLoadMetadata struct {
 
 // SevenHoleLoadMetadata 是七孔 PRB / 校准 CSV 加载返回的中立元数据。
 //
-// spec-code-review-remediation-2026-07-21 §七孔兼容性：响应 pointCount 保持
-// 169/52 是兼容约定值，**不是 loader 真实计数**——因此本结构刻意不暴露
-// PointCount 字段，调用方应使用约定常量，避免把 loader 不真知的数据伪装为
-// loader 真值。LoadedAtMs 与 ValidRange 是 loader 真实可知的字段。
+// 动态 theta 维度（外区行数不固定 52）：loader 通过 GetInnerPointCount /
+// GetOuterPointCount 读取真实点数并填入 InnerPointCount / OuterPointCounts，
+// 调用方据此返回前端，不再使用 169/52 兼容约定值。InnerPointCount 固定 169
+// （内区物理设计），OuterPointCounts 长度恒为 6、索引 0..5 对应扇区 1..6，
+// 每个值为该扇区实际加载的 thetaCount×13 点数（如 4×13=52、7×13=91）。
 type SevenHoleLoadMetadata struct {
-	LoadedAtMs int64                    `json:"loadedAt"`
-	ValidRange seveninterp.PrbValidRange `json:"validRange"`
+	LoadedAtMs         int64                    `json:"loadedAt"`
+	ValidRange         seveninterp.PrbValidRange `json:"validRange"`
+	InnerPointCount    int                      `json:"innerPointCount"`    // 内区实际点数（固定 169）
+	OuterPointCounts   [6]int                   `json:"outerPointCounts"`   // 各扇区外区实际点数（动态）
 }
 
 // InterpolatorLoader 插值器加载端口。
@@ -83,12 +86,12 @@ type InterpolatorLoader interface {
 	// LoadSevenHolePRB 加载七孔 .prb 文件集（innerPath=7.prb，outerPaths 按孔号 1..6 顺序 6 份）。
 	// 文件缺失、行数/列数非法、网格点缺失或重复均通过 error 暴露
 	// （spec-seven-hole-traversal §5.3）。
-	// 返回的 *SevenHoleLoadMetadata 仅包含 LoadedAtMs/ValidRange；
-	// pointCount 由调用方使用兼容约定值（169/52），不通过 metadata 暴露。
+	// 返回的 *SevenHoleLoadMetadata 含 LoadedAtMs/ValidRange 与真实点数
+	// （InnerPointCount 固定 169，OuterPointCounts 为各扇区 thetaCount×13 动态值）。
 	LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *SevenHoleLoadMetadata, error)
 
 	// LoadSevenHoleCalibrationCSV 从七孔校准 CSV 文件集构建插值器
-	// （GBK 编码、列位置契约；内区 1 份 169 行 + 外区 6 份各 52 行，
+	// （GBK 编码、列位置契约；内区 1 份 169 行 + 外区 6 份各 thetaCount×13 行，
 	// 校准 CSV → 插值网格的转换在 adapters 层完成，spec §10 Q2 落地）。
 	// 返回的 *SevenHoleLoadMetadata 与 LoadSevenHolePRB 同语义。
 	LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *SevenHoleLoadMetadata, error)

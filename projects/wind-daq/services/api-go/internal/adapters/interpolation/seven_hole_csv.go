@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	"math"
 	"os"
+	"sort"
 	"strconv"
 
 	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
@@ -20,7 +22,8 @@ import (
 //     cpt=col14(K0[n]), cps=col15(Ks[n])
 //
 // 网格规模：内区恰 169 数据行（13×13，a/b ∈ [-30,30] 步长 5）；
-// 外区每份恰 52 数据行（4×13，θ ∈ {30,35,40,45} × 扇区 13 条 φ 网格线）。
+// 外区每份 thetaCount×13 数据行（thetaCount 动态，从 CSV 实际数据推断，
+// 必须 ≥2 且 theta ∈ {30,35,...,30+5*(thetaCount-1)}）。
 //
 // GBK 编码：校准导出 CSV 为 GBK（中文表头），本层解码为 UTF-8 后按逗号分隔解析。
 //
@@ -30,7 +33,6 @@ import (
 // 累加 1e-9 级增量，数值影响远低于对拍容差（角度 1e-4°）。
 const (
 	sevenHoleInnerCsvRows = 169
-	sevenHoleOuterCsvRows = 52
 	sevenHoleCsvMinCols   = 16 // 至少需要覆盖系数列 col12..col15
 )
 
@@ -50,7 +52,8 @@ type sevenHoleGridPoint struct {
 }
 
 // LoadSevenHoleCalibrationCsvFiles 从七孔校准 CSV 文件集构建七孔插值器：
-// 1 份内区 CSV（169 行）+ 6 份外区 CSV（按孔号 1..6 顺序，每份 52 行）。
+// 1 份内区 CSV（169 行）+ 6 份外区 CSV（按孔号 1..6 顺序，每份 thetaCount×13 行，
+// thetaCount 由 CSV 实际数据动态推断，不再硬编码 52）。
 // 文件缺失、GBK/CSV 解析失败、列数/数值非法、网格覆盖不符均通过 error 暴露并含路径。
 func LoadSevenHoleCalibrationCsvFiles(innerPath string, outerPaths [6]string) (*seveninterp.SevenHolePrbInterpolator, error) {
 	gridLines := make([]float64, 13)
@@ -74,15 +77,51 @@ func LoadSevenHoleCalibrationCsvFiles(innerPath string, outerPaths [6]string) (*
 		if err != nil {
 			return nil, err
 		}
-		aVals := []float64{30, 35, 40, 45}
+		// 动态推断 theta 网格点：从解析数据中收集所有 theta 值（去重、升序），
+		// 校验起点为 30、步长为 5（与 prb_loader 物理设计一致）。
+		aVals, err := deriveOuterThetaGrid(points, path)
+		if err != nil {
+			return nil, err
+		}
 		bVals := sevenHoleSectorPhiLines[i][:]
 		ditherSevenHoleGrid(points, aVals, bVals)
-		lines := buildSevenHolePrbLines(points, aVals, bVals, sevenHoleOuterCsvRows)
+		lines := buildSevenHolePrbLines(points, aVals, bVals, len(aVals)*len(bVals))
 		if err := interpolator.LoadOuterPrbLines(sector, lines, path); err != nil {
 			return nil, err
 		}
 	}
 	return interpolator, nil
+}
+
+// deriveOuterThetaGrid 从外区 CSV 解析结果中动态推断 theta 网格点序列。
+// 校验：theta 必须从 seveninterp.OuterThetaMin（30）起、步长 seveninterp.GridStep（5）、
+// 至少 2 个点（与 prb_loader 的动态约束一致）。错误含路径便于定位。
+// 物理常量直接引用 seveninterp 包，避免本地重复定义导致双源不一致。
+func deriveOuterThetaGrid(points map[[2]float64]*sevenHoleGridPoint, path string) ([]float64, error) {
+	thetaSet := make(map[float64]struct{})
+	for k := range points {
+		thetaSet[k[0]] = struct{}{} // key[0]=theta（外区列契约 col1）
+	}
+	if len(thetaSet) < 2 {
+		return nil, fmt.Errorf("csv %s: 外区 theta 网格点数 %d < 2（至少需要 2 点形成插值单元格）", path, len(thetaSet))
+	}
+	thetas := make([]float64, 0, len(thetaSet))
+	for t := range thetaSet {
+		thetas = append(thetas, t)
+	}
+	sort.Float64s(thetas)
+	// 校验起点与步长（与 prb_loader 物理设计一致）
+	if math.Abs(thetas[0]-seveninterp.OuterThetaMin) > seveninterp.GridEps {
+		return nil, fmt.Errorf("csv %s: 外区 theta 起点 %.6g 必须 = %.0f", path, thetas[0], seveninterp.OuterThetaMin)
+	}
+	for i := 1; i < len(thetas); i++ {
+		diff := thetas[i] - thetas[i-1]
+		if math.Abs(diff-seveninterp.GridStep) > seveninterp.GridEps {
+			return nil, fmt.Errorf("csv %s: 外区 theta 步长 %.6g 必须 = %.0f（theta=%.6g→%.6g）",
+				path, diff, seveninterp.GridStep, thetas[i-1], thetas[i])
+		}
+	}
+	return thetas, nil
 }
 
 // parseSevenHoleCsv 读取并解析一份 GBK 校准 CSV：返回 (a,b)→系数 的网格映射。

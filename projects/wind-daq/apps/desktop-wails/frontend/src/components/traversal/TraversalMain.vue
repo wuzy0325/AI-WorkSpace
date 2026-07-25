@@ -275,6 +275,11 @@ async function confirmStartTest(): Promise<void> {
     showStartConfirm.value = false
     return
   }
+  if (startDisabledReason.value) {
+    showStartConfirm.value = false
+    feedbackStore.pushToast(startDisabledReason.value, 'warning')
+    return
+  }
   showStartConfirm.value = false
   isStartRequestPending.value = true
   try {
@@ -538,6 +543,7 @@ const {
 
 const startDisabledReason = computed(() => {
   if (!hasConfig.value) return t.value.pleaseConfigureFirst
+  if (positionerConnection.value.state !== 'connected') return t.value.wf_motionControllerDisconnected
   // state 取自 useHardwareConnectionStatus，按严重度从高到低判定：
   //   'acquiring'    → 正常，不禁用
   //   'connected'    → 已连接但未采集（提示先开始采集）

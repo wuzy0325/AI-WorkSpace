@@ -1,6 +1,7 @@
 package interpolation
 
 import (
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -91,17 +92,18 @@ func (Loader) LoadMultiPRB(filePaths []string, machNumbers []float64, mode corei
 // LoadSevenHolePRB 加载七孔 .prb 文件集，错误透传。
 // 同 LoadPRB：失败路径必须显式返回 nil 接口值，防止外层接口判 nil 失效。
 //
-// 元数据（Task 07）：返回 *ports.SevenHoleLoadMetadata，仅包含 LoadedAtMs/ValidRange；
-// pointCount 由调用方使用兼容约定值（169/52），不通过 metadata 暴露——loader
-// 真实加载的点数与约定兼容值不必相等，伪装为 loader 真值会误导前端。
+// 元数据：返回 *ports.SevenHoleLoadMetadata，含 LoadedAtMs/ValidRange 与真实点数
+// （InnerPointCount/OuterPointCounts）。点数通过类型断言到 *SevenHolePrbInterpolator
+// 调用 GetInnerPointCount/GetOuterPointCount 获取——动态 theta 维度下不再硬编码
+// 169/52，使前端能展示各扇区实际加载的网格点数（如 4×13=52、7×13=91）。
 func (Loader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
 	interp, err := LoadSevenHolePrbFiles(innerPath, outerPaths)
 	if err != nil {
 		return nil, nil, err
 	}
-	metadata := &ports.SevenHoleLoadMetadata{
-		LoadedAtMs: time.Now().UnixMilli(),
-		ValidRange: interp.GetValidRange(),
+	metadata, err := buildSevenHoleMetadata(interp)
+	if err != nil {
+		return nil, nil, err
 	}
 	return interp, metadata, nil
 }
@@ -115,9 +117,29 @@ func (Loader) LoadSevenHoleCalibrationCSV(innerPath string, outerPaths [6]string
 	if err != nil {
 		return nil, nil, err
 	}
+	metadata, err := buildSevenHoleMetadata(interp)
+	if err != nil {
+		return nil, nil, err
+	}
+	return interp, metadata, nil
+}
+
+// buildSevenHoleMetadata 从七孔插值器读取真实点数并组装 metadata。
+// 类型断言到 *SevenHolePrbInterpolator 调用 GetInnerPointCount /
+// GetOuterPointCount；若未来加载入口返回其他具体类型，则显式报错，避免
+// pointCount=0 被前端当作无点数而隐藏。
+func buildSevenHoleMetadata(interp seveninterp.Interpolator) (*ports.SevenHoleLoadMetadata, error) {
 	metadata := &ports.SevenHoleLoadMetadata{
 		LoadedAtMs: time.Now().UnixMilli(),
 		ValidRange: interp.GetValidRange(),
 	}
-	return interp, metadata, nil
+	p, ok := interp.(*seveninterp.SevenHolePrbInterpolator)
+	if !ok {
+		return nil, fmt.Errorf("build seven-hole metadata: unsupported interpolator type %T", interp)
+	}
+	metadata.InnerPointCount = p.GetInnerPointCount()
+	for sector := 1; sector <= 6; sector++ {
+		metadata.OuterPointCounts[sector-1] = p.GetOuterPointCount(sector)
+	}
+	return metadata, nil
 }

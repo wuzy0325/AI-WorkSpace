@@ -147,6 +147,63 @@ func TestAvailableAxisTargets_MapsLogicalTargetsToSelectedPhysicalAxes(t *testin
 	}
 }
 
+func TestMotionAxesForPath_RectangleSkipsUnusedAxes(t *testing.T) {
+	path := []traversal.Point{
+		{X: -30, Y: -30, Z: math.NaN(), U: math.NaN()},
+		{X: -25, Y: -30, Z: math.NaN(), U: math.NaN()},
+	}
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "xy-controller", Axis: "X"},
+		{Name: "Y", ControllerID: "xy-controller", Axis: "Y"},
+		{Name: "Z", ControllerID: "z-controller", Axis: "Z"},
+		{Name: "U", ControllerID: "u-controller", Axis: "U"},
+	}
+
+	got := motionAxesForPath(bindings, path)
+	if len(got) != 2 || got[0].Name != "X" || got[1].Name != "Y" {
+		t.Fatalf("rectangle path should retain only X/Y bindings, got %#v", got)
+	}
+}
+
+func TestMotionAxesForPath_RectangleKeepsSelectedPhysicalAxes(t *testing.T) {
+	path := []traversal.Point{{X: 25, Y: 45, Z: math.NaN(), U: math.NaN()}}
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "mc-1", Axis: "Z"},
+		{Name: "Y", ControllerID: "mc-1", Axis: "U"},
+		{Name: "Z", ControllerID: "mc-2", Axis: "X"},
+		{Name: "U", ControllerID: "mc-2", Axis: "Y"},
+	}
+
+	activeBindings := motionAxesForPath(bindings, path)
+	if len(activeBindings) != 2 || activeBindings[0].Axis != "Z" || activeBindings[1].Axis != "U" {
+		t.Fatalf("rectangle logical X/Y should retain their selected physical Z/U axes, got %#v", activeBindings)
+	}
+
+	status := motion.ControllerStatus{
+		ID:   "mc-1",
+		Axes: []motion.AxisStatus{{Name: motion.AxisZ}, {Name: motion.AxisU}},
+	}
+	targets := availableAxisTargets(status, path[0], activeBindings)
+	if len(targets) != 2 || targets[motion.AxisZ] != 25 || targets[motion.AxisU] != 45 {
+		t.Fatalf("logical X/Y coordinates should target selected physical Z/U axes, got %#v", targets)
+	}
+}
+
+func TestMotionAxesForPath_CustomKeepsFiniteFourAxes(t *testing.T) {
+	path := []traversal.Point{{X: 1, Y: 2, Z: 3, U: 4}}
+	bindings := []traversal.MotionAxisBinding{
+		{Name: "X", ControllerID: "mc-1", Axis: "X"},
+		{Name: "Y", ControllerID: "mc-1", Axis: "Y"},
+		{Name: "Z", ControllerID: "mc-1", Axis: "Z"},
+		{Name: "U", ControllerID: "mc-1", Axis: "U"},
+	}
+
+	got := motionAxesForPath(bindings, path)
+	if len(got) != len(bindings) {
+		t.Fatalf("custom four-axis path should retain all bindings, got %#v", got)
+	}
+}
+
 func TestValidateSectorOrigin_RequiresBoundAxesAtZero(t *testing.T) {
 	bindings := []traversal.MotionAxisBinding{
 		{Name: "X", ControllerID: "mc-1", Axis: "Z"},

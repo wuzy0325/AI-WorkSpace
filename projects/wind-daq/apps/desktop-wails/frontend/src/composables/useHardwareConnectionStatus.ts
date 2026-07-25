@@ -158,19 +158,45 @@ export function useHardwareConnectionStatus(
   }
 
   const positionerConnection = computed(() => {
-    const controllerIds = Array.from(
-      new Set(
-        (currentConfig.value?.channels.motionAxes ?? [])
-          .map((axis) => axis.controllerId?.trim())
-          .filter((controllerId): controllerId is string => Boolean(controllerId))
-      )
-    )
+    const config = currentConfig.value
+    const motionAxes = config
+      ? getTraversalDisplayedAxes(config.layout?.pattern ?? 'rectangle', config.channels.motionAxes ?? [])
+      : []
+
+    // 与后端 CheckPreconditions / RunCurrentPoint 保持同一回退语义：
+    //   1. 收集所有 status 的 ID 集合（不区分 Connected）——"已知控制器"集合；
+    //   2. 若所有非空 controllerId 都不匹配任何已知控制器（典型场景：旧配置保存了
+    //      别名 sim-motion-1 / 控制器名 / 旧 UUID），统一回退到「按轴名匹配」；
+    //   3. 否则保持严格 ID 绑定——部分有效 ID 时不回退，未匹配的 binding 视为断开。
+    // 前端不能直接做本地严格 ID 检查作为硬门禁，否则旧配置即使后端可解析也会被禁用启动。
+    // 注意：用「已知控制器」而非「已连接控制器」判断回退——避免用户显式绑定了一个
+    // disconnected 控制器时被静默回退到其他已连接控制器（与后端 resolveMotionAxes 一致）。
+    const statuses = motionStore.statusList
+    const knownIds = new Set(statuses.map((s) => s.id))
+    const nonEmptyIds = motionAxes
+      .map((ax) => ax.controllerId?.trim())
+      .filter((id): id is string => Boolean(id))
+    const anyMatched = nonEmptyIds.some((id) => knownIds.has(id))
+    const allUnmatched = nonEmptyIds.length > 0 && !anyMatched
+    // resolveMotionAxes 的回退结果：回退时把 controllerId 清空，让后续按 axis 名匹配
+    const effectiveAxes = motionAxes.map((ax) => ({
+      ...ax,
+      controllerId: allUnmatched ? '' : ax.controllerId?.trim() ?? ''
+    }))
 
     let state: PositionerConnectionState = 'unconfigured'
-    if (controllerIds.length > 0) {
-      state = controllerIds.every((controllerId) => motionStore.statusById(controllerId)?.connected)
-        ? 'connected'
-        : 'disconnected'
+    if (motionAxes.length > 0) {
+      // 复刻 validateMotionAxisConnections：每个 binding 必须能在已连接控制器中
+      // 找到匹配（ID 匹配或回退后按 axis 名匹配），全部通过才视为已连接。
+      const allConnected = effectiveAxes.every((binding) => {
+        const axisName = binding.axis
+        return statuses.some((s) => {
+          if (!s.connected || s.emergencyStopped) return false
+          if (binding.controllerId && s.id !== binding.controllerId) return false
+          return s.axes.some((a) => a.name === axisName)
+        })
+      })
+      state = allConnected ? 'connected' : 'disconnected'
     }
 
     return buildDisplay(

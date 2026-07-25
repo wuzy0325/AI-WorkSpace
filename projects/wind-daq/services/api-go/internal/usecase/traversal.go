@@ -461,15 +461,29 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		motionStatuses = m.motion.StatusAll(ctx)
 		cancel()
-		motionConnected = false
-		for _, s := range motionStatuses {
-			if s.Connected {
-				motionConnected = true
-				break
-			}
+		bindings := cfg.MotionAxes
+		if len(cfg.Path) > 0 {
+			bindings = motionAxesForPath(bindings, cfg.Path)
 		}
-		if !motionConnected {
-			motionMessage = "No motion controller is connected, please connect one first"
+		// 与运行路径（RunCurrentPoint / Start / ResumeFromCheckpoint）保持同一回退语义：
+		// 先用 resolveMotionAxes 预处理，让保存了别名 / 控制器名 / 旧 UUID 的旧配置
+		// 在"所有非空 controllerId 都不匹配已连接控制器"时回退到按轴名匹配，
+		// 而不是被前置检查直接判定为断开。部分有效 ID 仍保持严格绑定（resolveMotionAxes
+		// 内部已实现该规则：任意一个绑定匹配即不回退）。
+		bindings = resolveMotionAxes(bindings, motionStatuses)
+		if len(bindings) > 0 {
+			motionConnected, motionMessage = validateMotionAxisConnections(motionStatuses, bindings)
+		} else {
+			motionConnected = false
+			for _, s := range motionStatuses {
+				if s.Connected {
+					motionConnected = true
+					break
+				}
+			}
+			if !motionConnected {
+				motionMessage = "No motion controller is connected, please connect one first"
+			}
 		}
 	}
 
@@ -642,6 +656,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
+	// Start 也可能被内部调用方直接传入 Config，不能只依赖 JSON 解析入口规范化。
+	config.MotionAxes = motionAxesForPath(config.MotionAxes, config.Path)
 
 	// v2：使用 beginSession 活动会话门禁，防止旧 taskId 污染新任务
 	snapshot := traversal.TraversalRunSnapshot{

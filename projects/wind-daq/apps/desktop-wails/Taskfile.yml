@@ -10,8 +10,9 @@ tasks:
 
   dev-frontend:
     summary: 启动前端开发服务器（热更新）
+    dir: frontend
     cmds:
-      - npm --prefix frontend run dev -- --host 127.0.0.1
+      - npm run dev -- --host 127.0.0.1
     env:
       BROWSER: none
 
@@ -28,9 +29,10 @@ tasks:
 
   build-frontend:
     summary: 仅构建前端
+    dir: frontend
     cmds:
-      - npm --prefix frontend install --no-audit --no-fund
-      - npm --prefix frontend run build
+      - npm install --no-audit --no-fund
+      - npm run build
 
   generate-icon:
     summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
@@ -90,7 +92,7 @@ tasks:
   clean:
     summary: 清理上次打包遗留的二进制和资源文件，避免与新构建混淆
     cmds:
-      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue; exit 0"
 
   check-bindings:
     summary: 检查 Wails backend 方法与 frontend bindings 是否一致（方法缺失/多余 + stale 时间戳警告）
