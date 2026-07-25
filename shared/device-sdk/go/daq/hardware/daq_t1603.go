@@ -496,8 +496,18 @@ func (d *DAQT1603) readLoop() {
 		if unexpectedErr != nil {
 			d.writeMu.Lock()
 			if conn != nil {
+				// 发 @f1 确保设备停止推送，连接已断开时属预期（与 stopAcquisitionLocked 一致）。
+				// emitLog "Send command @f1" + 成败分支让 readLoop 退出路径可观测：
+				// 否则操作员只看到 "Read loop exited unexpectedly" 无法判断设备侧是否真停了。
+				d.emitLog("debug", "hardware-send", "Send command", "@f1")
 				_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-				conn.Write([]byte("@f1"))
+				if _, err := conn.Write([]byte("@f1")); err != nil {
+					if isClosedConnError(err) {
+						d.emitLog("debug", "hardware-send", "Stop command skipped (conn closed)", err.Error())
+					} else {
+						d.emitLog("warn", "hardware-send", "Stop command write failed", err.Error())
+					}
+				}
 				_ = conn.SetWriteDeadline(time.Time{})
 			}
 			d.writeMu.Unlock()
