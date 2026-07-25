@@ -3,21 +3,26 @@ node_modules/
 
 # Build output
 dist/
-!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/
-projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/*
-!projects/five-hole-interpolator/apps/desktop-wails/frontend/dist/.gitkeep
 build/
+# Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 应用元数据），其他 build/ 产物不入库
 !projects/wind-daq/apps/desktop-wails/build/
 projects/wind-daq/apps/desktop-wails/build/*
 !projects/wind-daq/apps/desktop-wails/build/config.yml
+!projects/wind-daq/apps/desktop-wails/build/windows/
+projects/wind-daq/apps/desktop-wails/build/windows/*
+!projects/wind-daq/apps/desktop-wails/build/windows/installer/
+projects/wind-daq/apps/desktop-wails/build/windows/installer/*
+!projects/wind-daq/apps/desktop-wails/build/windows/installer/project.nsi
 target/
 *.exe
 *.syso
 *.dll
 *.so
+*.log
 
-# Wails 生成的前端运行时绑定（由 `wails generate bindings` 自动产出，不入库）
+# Wails 生成的前端运行时绑定与 TS 绑定（由 `wails3 generate bindings` 自动产出，不入库）
 **/apps/desktop-wails/frontend/wailsjs/
+**/apps/desktop-wails/frontend/bindings/
 
 # IDE
 .idea/
@@ -53,6 +58,11 @@ wind-daq-*.json
 # wind-daq 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
 # OutputDir 运行时通过 MkdirAll 创建，无需入库）
 projects/wind-daq/apps/desktop-wails/data/recordings/
+projects/wind-daq/apps/desktop-wails/data/logs/
+# services/api-go 运行时录制与日志（同上，运行时产物不入库）
+projects/*/services/api-go/data/recordings/
+projects/*/services/api-go/data/logs/
+projects/*/services/api-go/pkg/apiserver/data/logs/
 
 # Playwright 测试产物（npm run test 自动生成，无需入库）
 **/playwright-report/
@@ -66,6 +76,75 @@ projects/wind-daq/apps/desktop-wails/data/recordings/
 # 前端包锁哈希（npm install 自动生成，无需入库）
 **/apps/desktop-wails/frontend/package.json.md5
 
-# Release 归档产物（NSIS installer 拷贝自 build/bin/，按版本号命名，仅本地保留）
+# Release 归档与本地交付包（NSIS installer 拷贝自 build/bin/，按版本号命名；zip 交付包仅本地保留）
 # SVN 项目需另行执行：svn propset svn:ignore bin projects/<project>/releases
 projects/*/releases/bin/
+projects/*/apps/desktop-wails/release/
+projects/*/apps/desktop-wails/release/*.zip
+projects/*/*.zip
+
+# 备份文件（git 已有版本历史，.bak 是反模式）
+*.bak
+
+# 临时脚本与数据（一次性生成 i18n / 调试用的 tmp_ 前缀文件，不入库）
+tmp_*.py
+tmp_*.txt
+tmp_*.json
+
+# 临时脚本目录（一次性迁移/对比/重写脚本，目录名 tmp 已暗示临时性）
+scripts/tmp/
+
+# E2E 测试输出（截图、HTML 报告、coverage 清单，本地运行产物不入库）
+projects/*/docs/test-result/
+
+# Vite 构建中间产物（dev server 重启时生成 timestamp 后缀的临时 mjs，不应入库）
+*.timestamp-*.mjs
+
+# 七孔 PRB 加载器测试动态生成的截断夹具（writeTruncatedPrb 在 testdata/prb/ 下生成）
+# 真实夹具为 1.prb~7.prb，truncated.prb 仅在测试运行时存在，不应入库
+shared/algorithms/go/sevenhole/interpolation/testdata/prb/truncated.prb
+
+# 设备 DLL 本地配置（WTNDAQ16H_64.dll 运行时配置，由厂商 SDK 生成，不应入库）
+*.ini
+
+# AI 工具工作目录（.workbuddy/ 等，本地会话缓存）
+.workbuddy/
+
+# 想法草稿与待沉淀的笔记（docs/ideas/ 为草稿区，正式文档归 docs/ 或 docs/specs/）
+docs/ideas/
+projects/*/docs/ideas/
+
+# 未成型的实验性项目（1604Cal 等仅本地探索，正式立项后再入库）
+projects/1604Cal/
+
+# 本地分析产物与临时文件
+analysis/
+temp/
+
+# AI 工具私有目录（IDE/agent 本地配置与会话缓存，不应入库）
+.codebuddy/
+.trae/
+.opencode/
+
+# UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
+wind-daq-trae-work-prototype/
+projects/wind-daq/docs/ui-views-prototype-v4*.png
+projects/wind-daq/docs/ui-views-prototype-v4*.html
+
+# PDF QA 产物（PDF 转 PNG 截图，QA 工具本地输出）
+pdf-qa/
+
+# 七孔校准实验数据（CSV 原始数据，按项目编号归档，不入库）
+projects/wind-daq/docs/W532.*.P.*-*/
+
+# 软件介绍材料（HTML/PDF 产物 + 配图，本地生成不入库）
+wind-daq-software-introduction.html
+wind-daq-software-introduction.pdf
+wind-daq-intro-images/
+
+# 七孔夹具生成脚本的临时转码产物（可由 gen_traversal_fixtures.py 重新生成）
+device-lab/skills/seven-hole-probe/tools/_transcoded/
+
+# Python 缓存
+__pycache__/
+*.pyc
