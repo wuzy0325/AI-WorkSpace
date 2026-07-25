@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+# dist2/：360 主动防御锁定 dist/win-unpacked/resources/app.asar 时改用的备选输出目录
+dist2/
 build/
 # Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 应用元数据），其他 build/ 产物不入库
 !projects/wind-daq/apps/desktop-wails/build/
