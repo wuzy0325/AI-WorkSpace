@@ -173,19 +173,26 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 	}
 	buf := make([]byte, 4096)
 	totalDrained := 0
+	consecutiveTimeouts := 0
 	// maxIters=10：单次 drainConnection 总耗时上限约 1s（10 × 100ms），
 	// 足以吸收快速启停后的残留帧；过大的值（如 50 次 5s）会显著拖长 StartAcquisition。
 	const maxIters = 10
+	const quietWindowsRequired = 2
 
 	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(buf)
 		if n > 0 {
 			totalDrained += n
+			consecutiveTimeouts = 0
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				break
+				consecutiveTimeouts++
+				if consecutiveTimeouts >= quietWindowsRequired {
+					break
+				}
+				continue
 			}
 			// 连接已关闭等错误，无需继续
 			break
