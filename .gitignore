@@ -91,6 +91,19 @@ tmp_*.py
 tmp_*.txt
 tmp_*.json
 
+# 临时脚本目录（一次性迁移/对比/重写脚本，目录名 tmp 已暗示临时性）
+scripts/tmp/
+
+# E2E 测试输出（截图、HTML 报告、coverage 清单，本地运行产物不入库）
+projects/*/docs/test-result/
+
+# Vite 构建中间产物（dev server 重启时生成 timestamp 后缀的临时 mjs，不应入库）
+*.timestamp-*.mjs
+
+# 七孔 PRB 加载器测试动态生成的截断夹具（writeTruncatedPrb 在 testdata/prb/ 下生成）
+# 真实夹具为 1.prb~7.prb，truncated.prb 仅在测试运行时存在，不应入库
+shared/algorithms/go/sevenhole/interpolation/testdata/prb/truncated.prb
+
 # 设备 DLL 本地配置（WTNDAQ16H_64.dll 运行时配置，由厂商 SDK 生成，不应入库）
 *.ini
 
