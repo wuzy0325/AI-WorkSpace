@@ -3,11 +3,11 @@ package serialport
 import (
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
 	"go.bug.st/serial"
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // Port serial port wrapper

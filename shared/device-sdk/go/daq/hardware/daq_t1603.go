@@ -3,7 +3,6 @@ package hardware
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"shared.local/device-sdk/go/daq/core"
+	"shared.local/device-sdk/go/pkg/slog"
 	"shared.local/device-sdk/go/protocol"
 )
 

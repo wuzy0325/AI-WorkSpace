@@ -4,10 +4,11 @@ package ffi
 
 import (
 	"fmt"
-	"log/slog"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 var (

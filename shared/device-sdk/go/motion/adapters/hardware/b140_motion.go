@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 const (

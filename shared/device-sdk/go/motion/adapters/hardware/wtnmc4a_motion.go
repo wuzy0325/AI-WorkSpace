@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 
 	"shared.local/device-sdk/go/motion/core"
 	"shared.local/device-sdk/go/motion/ports"
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 const (

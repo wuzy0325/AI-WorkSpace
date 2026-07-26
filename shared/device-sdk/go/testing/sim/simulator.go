@@ -9,12 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // ProtocolHandler 定义设备特定协议行为：如何响应客户端命令、如何生成采集数据帧。

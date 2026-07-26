@@ -2,13 +2,13 @@ package hardware
 
 import (
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"shared.local/device-sdk/go/daq/core"
 	"shared.local/device-sdk/go/daq/ports"
 	"shared.local/device-sdk/go/ffi"
+	"shared.local/device-sdk/go/pkg/slog"
 	"shared.local/device-sdk/go/protocol"
 )
 

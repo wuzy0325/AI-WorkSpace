@@ -12,11 +12,11 @@
 package monitor
 
 import (
-	"log/slog"
 	"sync"
 	"time"
 
 	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // ControllerStatusSnapshot 表示一台控制器的一次完整观察结果。
