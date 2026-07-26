@@ -208,7 +208,10 @@ function createMotionWindow() {
   })
   motionWindow.removeMenu()
   motionWindow.once('ready-to-show', () => motionWindow.show())
-  motionWindow.loadURL(motionBackendURL)
+  // 前端 SPA 用 hash history（createWebHashHistory），路由 /#/motion 对应 MotionView。
+  // 若只加载根路径 http://127.0.0.1:8901，SPA 默认进 / 路由（MainDashboardView），
+  // 用户看到的 motion 窗口会显示主界面而非运动控制面板。
+  motionWindow.loadURL(`${motionBackendURL}/#/motion`)
   motionWindow.on('closed', () => {
     motionWindow = null
   })
