@@ -1,4 +1,4 @@
-// Package appcontext provides public access to core application components
+﻿// Package appcontext provides public access to core application components
 package appcontext
 
 import (
@@ -86,23 +86,52 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	motionMgr := wiring.WrapMotionManager(rawMotionMgr)
 	calStore := calstore.NewMemoryResultStore()
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
-	calibrationMgr.SetCsvWriter(storage.NewCalibrationCsvWriter(calibration.Config{}))
+	// csvWriter 实例同时实现 CalibrationCsvWriter（单 writer 场景）与
+	// CalibrationWriterFactory（七孔多 writer 场景）接口，故复用同一实例注入两端口。
+	csvWriterInstance := storage.NewCalibrationCsvWriter(calibration.Config{})
+	calibrationMgr.SetCsvWriter(csvWriterInstance)
 	calibrationMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
 		return storage.NewCalibrationCsvWriterOverwrite(config)
 	})
+	calibrationMgr.SetSevenHoleWriterFactory(csvWriterInstance)
 	travStore := calstore.NewTraversalResultStore()
-	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, nil, travStore, storage.NewFileCheckpointStore(), appConfigStore)
+	// §40 对齐：桌面生产路径必须与 bootstrap/apiserver 保持一致的 sink 注入，
+	// 避免旧 sink 路径在桌面端完全跳过（InitializeTraversal/FinalizeTraversal 副作用丢失）。
+	// 此前此处传 nil 导致桌面生产路径下遍历测试静默不输出 CSV（与 bootstrap.go 路径行为分裂），
+	// 属于与校零 NewDataSink(nil,nil) 同类的 Critical BUG，现与 bootstrap.go:93 对齐统一注入。
+	travSinkV2 := storage.NewTraversalCsvWriter()
+	checkpointStore := storage.NewFileCheckpointStore()
+	traversalMgr := usecase.NewTraversalManager(hub, motionMgr, travSinkV2, travStore, checkpointStore, appConfigStore)
+	// v2 可靠存储端口注入（Task 4-8）：三阶段提交与崩溃恢复
+	traversalMgr.SetCsvPort(travSinkV2)
+	traversalMgr.SetResultLogPort(storage.NewTraversalResultLog())
+	traversalMgr.SetCheckpointPortFactory(storage.NewFileCheckpointPortFactory(checkpointStore))
+	traversalMgr.SetActiveIndex(storage.NewTraversalActiveIndex(
+		filepath.Join(configDir, "traversal-active-index.json"),
+		configDir,
+	))
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	traversalMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	traversalMgr.RestoreInterpolatorFromPersistedConfig()
 
-	dataSink := usecase.NewDataSink(hub, recorder)
-
-	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
+	// 先创建 manager（dataSink 暂传 nil），再统一装配 v2 校零组件 + dataSink。
+	// 之前此处 NewDataSink(hub, recorder, nil, nil) 把 calApplier/channels 都置 nil，
+	// 导致桌面生产路径校零热路径整段跳过——用户点校零按钮也不生效（Critical BUG #1）。
+	// 现统一调用 AssembleDataSinkWithCalibration，与 bootstrap/apiserver 走同一条装配路径。
+	deviceMgr, err := usecase.NewDeviceManagerWithNormalizer(profileStore, deviceFactory{}, nil, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return nil, err
 	}
 	deviceMgr.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, deviceMgr, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。deviceMgr 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	traversalMgr.SetUnitProvider(deviceMgr)
+	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
+	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
+	traversalMgr.SetAcquisitionController(deviceMgr)
+	calibrationMgr.SetAcquisitionController(deviceMgr)
 
 	return &AppContext{
 		DeviceManager:    deviceMgr,
@@ -129,6 +158,13 @@ func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) 
 	switch profile.Type {
 	case device.DeviceDAQP1604:
 		return windaqhardware.NewDAQP1604(profile), nil
+	case device.DeviceDAQP1603:
+		// DAQ-P-1603：16 通道通用 AI 采集，走 shared SDK + DLL FFI 路径。
+		// 必须显式匹配此 case，否则会落入 default 创建 SimulatedDevice，
+		// 导致后续 ApplyDAQP1603Config 类型断言失败（SimulatedDevice 未实现
+		// ports.DAQP1603Configurable），保存配置时报 "device does not support
+		// DAQ-P-1603 configuration"。
+		return windaqhardware.NewDAQP1603Adapter(profile), nil
 	case device.DeviceDAQP1604Pre:
 		return windaqhardware.NewDAQP1064Pre(profile), nil
 	case device.DeviceDaqT1603:
@@ -210,20 +246,25 @@ func defaultDeviceProfiles() []device.Profile {
 	}
 }
 
+// defaultMotionProfiles 返回首次安装时写入的默认运动控制器 profile。
+// 默认配置为 B140 控制器（IP 192.168.3.121 / 端口 23 / 细分数 40 / MaxSpeed 4），
+// 旋转轴 U 默认传动比 180（产品出厂常用减速比），与产品出厂硬件默认对齐，安装后立即可用。
+// 注意：仅在 motion-profiles.json 不存在时写入一次，已存在配置不会被覆盖。
 func defaultMotionProfiles() []core.MotionControllerProfile {
 	return []core.MotionControllerProfile{
 		{
-			ID:          "sim-motion-1",
-			Name:        "Simulated Motion Controller",
-			Type:        core.ControllerTypeSimulated,
-			Address:     "127.0.0.1",
-			Port:        9000,
+			ID:          "b140-motion-1",
+			Name:        "B140 Motion Controller",
+			Type:        core.ControllerTypeB140,
+			Address:     "192.168.3.121",
+			Port:        23,
 			AutoConnect: false,
 			Axes: []core.AxisConfig{
-				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(10)},
-				{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(10)},
+				{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				{Name: core.AxisY, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				{Name: core.AxisZ, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40)},
+				// U 轴为旋转轴，传动比默认 180（产品出厂常用减速比）
+				{Name: core.AxisU, Enabled: true, Kind: core.AxisKindRotary, MaxSpeed: core.PtrFloat64(4), MicroSteps: core.PtrInt(40), GearRatio: core.PtrFloat64(180)},
 			},
 		},
 	}

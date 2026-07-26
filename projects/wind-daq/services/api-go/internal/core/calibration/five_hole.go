@@ -101,11 +101,14 @@ func (a *FiveHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelVal
 }
 
 func (a *FiveHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool, onSampleProgress func(current, total int)) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, onSampleProgress)
+	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）
 // 支持实时数据推送，供前端实时监控使用
+//
+// acquiringCheck：可选设备采集态查询，超时后若任一设备未在采集则继续等待恢复（用户停采集可恢复）；
+// 为 nil 时维持原超时失败行为（手动模式或未注入场景）。
 func (a *FiveHoleAlgorithm) AcquireDataWithChannels(
 	point CalPoint,
 	channelReader ChannelValueReader,
@@ -114,6 +117,7 @@ func (a *FiveHoleAlgorithm) AcquireDataWithChannels(
 	onRealtime func(FiveHoleRawData, FiveHoleCoefficients),
 	checkAbort func() bool,
 	timestampReader TimestampReader,
+	acquiringCheck AcquisitionStateProvider,
 	onSampleProgress func(current, total int),
 ) (*FiveHoleDataPoint, error) {
 	startTime := time.Now().UnixMilli()
@@ -132,7 +136,7 @@ func (a *FiveHoleAlgorithm) AcquireDataWithChannels(
 
 		if i > 0 {
 			if timestampReader != nil {
-				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort); err != nil {
+				if err := waitForFreshData(deviceIDs, timestampReader, lastTimestamps, freshnessDefaultTimeout, checkAbort, acquiringCheck); err != nil {
 					if errors.Is(err, ErrPointAborted) {
 						return nil, err
 					}

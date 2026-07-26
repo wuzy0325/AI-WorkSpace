@@ -1,4 +1,4 @@
-package hardware
+﻿package hardware
 
 import (
 	"encoding/binary"
@@ -528,8 +528,8 @@ func (d *DAQP1064Pre) sendCommand(cmd byte, data []byte, timeoutMs int) ([]byte,
 	}
 
 	frame := d.buildFrame(cmd, data)
-	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
-	slog.Debug("DAQ-P-1064Pre command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", fmt.Sprintf("0x%02X", cmd), "bytes", len(frame))
+	// 命令收发用 Info 级别：ring buffer 透传，stderr / file 由 CategorySkipHandler 跳过。
+	slog.Info("DAQ-P-1064Pre command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", fmt.Sprintf("0x%02X", cmd), "bytes", len(frame))
 	if _, err := conn.Write(frame); err != nil {
 		return nil, err
 	}
@@ -561,7 +561,7 @@ func (d *DAQP1064Pre) sendCommand(cmd byte, data []byte, timeoutMs int) ([]byte,
 		read += n
 	}
 
-	slog.Debug("DAQ-P-1064Pre command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "command", fmt.Sprintf("0x%02X", cmd), "bytes", dataLen)
+	slog.Info("DAQ-P-1064Pre command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "command", fmt.Sprintf("0x%02X", cmd), "bytes", dataLen)
 	return respData, nil
 }
 

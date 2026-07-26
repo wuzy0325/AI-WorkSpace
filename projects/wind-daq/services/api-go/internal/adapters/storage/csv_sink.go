@@ -1,4 +1,4 @@
-// Package storage 提供 wind-daq 的存储适配器实现。
+﻿// Package storage 提供 wind-daq 的存储适配器实现。
 //
 // CSVRecordingSink 采用异步批量写设计，支撑 1kHz × 10 设备的全量保存场景：
 //   - 每设备一个 CSV 文件，按 deviceId 路由（避免多设备数据混杂在同一文件）

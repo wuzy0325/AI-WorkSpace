@@ -1,4 +1,4 @@
-// Package debugserver 提供按需开启的 pprof / debug 端点。
+﻿// Package debugserver 提供按需开启的 pprof / debug 端点。
 //
 // 设计原则：
 //  1. 独立于主 API 端口，避免误暴露到生产；

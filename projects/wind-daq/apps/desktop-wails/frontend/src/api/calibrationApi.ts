@@ -259,17 +259,26 @@ export const calibrationApi = {
   },
 
   getResult: async (taskId: string): Promise<CalibrationStatus> => {
-    // Electron 模式下 wailsApi.calibration.getResult 走 HTTP API，
-    // 返回值始终是 CalibrationStatus 对象，不再有 Wails 时代的 bool 复合返回。
     if (isWailsAvailable()) {
-      return await wailsApi.calibration.getResult(taskId)
+      const result = await wailsApi.calibration.getResult(taskId);
+      // Wails binding 偶尔返回 boolean（旧版签名遗留），用 typeof 而非 === true/false
+      // 避免 TS 严格模式判定 CalibrationStatus 与 boolean 无交集报错
+      if (typeof result === 'boolean') {
+        return {
+          taskId: taskId,
+          state: 'idle',
+          currentPoint: 0,
+          totalPoints: 0,
+        };
+      }
+      return result as CalibrationStatus;
     }
     return {
       taskId: taskId,
       state: 'idle',
       currentPoint: 0,
       totalPoints: 0,
-    }
+    };
   },
 
   updateSphereTankGate: async (_gate: SphereTankGateConfig): Promise<{ success: boolean; error?: string }> => {

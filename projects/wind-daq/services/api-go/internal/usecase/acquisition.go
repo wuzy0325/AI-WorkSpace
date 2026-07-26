@@ -1,4 +1,4 @@
-// acquisition.go 数据采集 hub，负责多设备数据的内存索引与订阅分发。
+﻿// acquisition.go 数据采集 hub，负责多设备数据的内存索引与订阅分发。
 //
 // 设计要点（1kHz × 10 设备场景优化）：
 //   - 按 deviceId 哈希分片（16 shard），消除单 mutex 争用

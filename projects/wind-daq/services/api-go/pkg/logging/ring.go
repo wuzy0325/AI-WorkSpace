@@ -1,4 +1,4 @@
-package logging
+﻿package logging
 
 import (
 	"context"
@@ -121,7 +121,15 @@ func (rb *RingBuffer) Subscribe(ctx context.Context) <-chan RingEntry {
 // 等链式调用追加的属性会被保留下来，Handle 时与 Record.Attrs 一起合并写入 RingEntry。
 //
 // 写入前会检查 catFilter：若该 category 被关闭，则跳过不写入 ring buffer。
-// stderr 和文件日志不受 catFilter 影响（它们在 fanoutHandler 的其他 sink 中独立处理）。
+// stderr 和文件日志不受 catFilter 影响（它们在 fanoutHandler 的其他 sink 中独立处理，
+// 但被 CategorySkipHandler 包装以跳过高频 category 避免刷屏）。
+//
+// 级别过滤策略：
+//   - hardware-send / hardware-recv 在硬件适配器中用 Info 级别记录（不是 Debug），
+//     因此 Enabled 按全局 Info 阈值即可透传，无需特殊例外；
+//   - 其他无关 Debug（如数据帧解析）被 Enabled 按全局阈值拦截，零 Record 构造开销；
+//   - stderr / file sink 通过 CategorySkipHandler 跳过 hardware-send/recv，
+//     避免高频命令帧刷屏文件与终端，同时不影响 ring buffer 写入。
 type RingHandler struct {
 	ring      *RingBuffer
 	level     *slog.LevelVar
@@ -135,11 +143,73 @@ func NewRingHandler(ring *RingBuffer, level *slog.LevelVar, catFilter *categoryF
 	return &RingHandler{ring: ring, level: level, catFilter: catFilter}
 }
 
+// Enabled 按全局级别阈值过滤。
+//
+// hardware-send / hardware-recv 的命令收发日志在硬件适配器中用 Info 级别记录，
+// 因此默认 Info 阈值下即可透传到 ring buffer。其他无关 Debug 被此处拦截，
+// 避免 Record 构造开销（关键性能路径：1000Hz 采集下数据帧 Debug 每秒可达 1000+ 条）。
 func (h *RingHandler) Enabled(_ context.Context, level slog.Level) bool {
 	if h.level == nil {
 		return level >= slog.LevelInfo
 	}
 	return level >= h.level.Level()
+}
+
+// CategorySkipHandler 包装另一个 slog.Handler，跳过指定 category 的日志写入。
+//
+// 用途：包装 stderr / file sink，跳过 hardware-send / hardware-recv 等高频 category，
+// 避免命令收发帧刷屏文件与终端。ring buffer 不受影响（由 RingHandler 独立控制）。
+//
+// category 识别范围：仅 record inline attrs 中的 "category" 字段。
+// 通过 slog.With("category", ...) 在 WithAttrs 链路上设置的 category 不识别——
+// 因为 slog.Record.Attrs 只暴露 inline attrs，无法回溯 WithAttrs 累积值。
+// 当前所有 hardware 适配器均用 inline 传入（slog.Info("...", "category", "hardware-send")），
+// 因此该限制不影响实际使用；若未来改为 WithAttrs 链式调用，需扩展此 Handler。
+type CategorySkipHandler struct {
+	inner slog.Handler
+	skip  map[string]struct{} // 需要跳过的 category 集合，初始化后只读
+}
+
+// NewCategorySkipHandler 创建包装器。skip 为空时等价于直接透传。
+func NewCategorySkipHandler(inner slog.Handler, skip []string) *CategorySkipHandler {
+	m := make(map[string]struct{}, len(skip))
+	for _, c := range skip {
+		m[c] = struct{}{}
+	}
+	return &CategorySkipHandler{inner: inner, skip: m}
+}
+
+func (h *CategorySkipHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h *CategorySkipHandler) Handle(ctx context.Context, r slog.Record) error {
+	// 遍历 record attrs 提取 category；命中 skip 列表则跳过 inner sink。
+	// slog.Attrs 回调返回 false 可停止遍历，无需 panic sentinel。
+	if len(h.skip) > 0 {
+		var shouldSkip bool
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "category" {
+				if _, ok := h.skip[a.Value.String()]; ok {
+					shouldSkip = true
+					return false // 命中即停止遍历
+				}
+			}
+			return true
+		})
+		if shouldSkip {
+			return nil
+		}
+	}
+	return h.inner.Handle(ctx, r)
+}
+
+func (h *CategorySkipHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &CategorySkipHandler{inner: h.inner.WithAttrs(attrs), skip: h.skip}
+}
+
+func (h *CategorySkipHandler) WithGroup(name string) slog.Handler {
+	return &CategorySkipHandler{inner: h.inner.WithGroup(name), skip: h.skip}
 }
 
 func (h *RingHandler) Handle(_ context.Context, r slog.Record) error {

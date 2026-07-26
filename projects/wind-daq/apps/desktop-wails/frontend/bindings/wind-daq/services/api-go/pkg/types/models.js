@@ -8,9 +8,6 @@ import { Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as config$0 from "../../internal/adapters/config/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as calibration$0 from "../../internal/core/calibration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -18,24 +15,219 @@ import * as device$0 from "../../internal/core/device/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as motion$0 from "../../internal/core/motion/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as report$0 from "../../internal/core/report/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as storage$0 from "../../internal/core/storage/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as traversal$0 from "../../internal/core/traversal/models.js";
 
 /**
- * ==================== Calibration Types ====================
- *
- * 以下 DTO 别名把 adapters/config 层的传输对象对外暴露，供 desktop-wails backend
- * 等独立模块通过公共包访问。backend 是独立 Go module，无法直接 import
- * internal/adapters/config（Go internal 规则），因此沿用 pkg/types 的 facade 模式。
+ * CalibrationConfigDTO 是校准配置在框架边界（HTTP / Wails）的传输对象。
+ * 
+ * 为什么需要 DTO：
+ * core 层禁止做字节级 I/O（见 CLAUDE.md 零容忍约束），因此 calibration.Config
+ * 不再自带 UnmarshalJSON。但前端 ProbeChannelConfig 使用嵌套结构
+ * { channel: { deviceId, channelIndex } }，而后端/旧调用方使用扁平结构
+ * { deviceId, channelIndex }。DTO 用普通 struct tag 同时声明两种字段，
+ * 让 encoding/json 的默认解码器就能同时接收两种 shape，无需自定义 UnmarshalJSON。
+ * 
+ * ProbeChannelDTO 同时携带：
+ *   - 扁平字段 DeviceID/ChannelIndex（兼容旧后端 shape）
+ *   - 嵌套字段 Channel *calibration.ChannelRef（兼容前端 shape）
+ * 
+ * 在 ToCore 中，若 Channel 非空则用嵌套值覆盖扁平值，与原 ProbeChannel.UnmarshalJSON 语义一致。
  */
-export const CalibrationConfigDTO = config$0.CalibrationConfigDTO;
+export class CalibrationConfigDTO {
+    /**
+     * Creates a new CalibrationConfigDTO instance.
+     * @param {Partial<CalibrationConfigDTO>} [$$source = {}] - The source object to create the CalibrationConfigDTO.
+     */
+    constructor($$source = {}) {
+        if (!("taskId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["taskId"] = "";
+        }
+        if (!("deviceId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["deviceId"] = "";
+        }
+        if (!("type" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["type"] = "";
+        }
+        if (!("channels" in $$source)) {
+            /**
+             * @member
+             * @type {number[]}
+             */
+            this["channels"] = [];
+        }
+        if (!("pressurePoints" in $$source)) {
+            /**
+             * @member
+             * @type {number[]}
+             */
+            this["pressurePoints"] = [];
+        }
+        if (!("averageSamples" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["averageSamples"] = 0;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {ProbeChannelDTO[] | undefined}
+             */
+            this["probeChannels"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.CalPoint[] | undefined}
+             */
+            this["points"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["samplesPerPoint"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["dwellTimeMs"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["stopOnError"] = undefined;
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["savePath"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.MotionAxisConfig[] | undefined}
+             */
+            this["motionAxes"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
+             * 修复（Task 05）：原 adapters/config 层 DTO 遗漏此字段，导致前端发送的 motionSafety
+             * 在反序列化时被静默丢弃，后端只能拿到 nil 并使用 DefaultMotionSafety，绕过了用户配置。
+             * 此处补齐字段，与 calibration.Config.MotionSafety 完整对齐，由 backend Start 通过
+             * validateCalibrationMotionSafetyConfig 做权威校验（拒绝非法值而非静默忽略）。
+             * @member
+             * @type {traversal$0.MotionSafetyConfig | null | undefined}
+             */
+            this["motionSafety"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.SphereTankGateConfig | null | undefined}
+             */
+            this["sphereTankGate"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.AcquisitionSamplingConfig | null | undefined}
+             */
+            this["acquisitionSampling"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.TotalTemperatureConfig | null | undefined}
+             */
+            this["totalTemperatureConfig"] = undefined;
+        }
 
-/**
- * ==================== Calibration Types ====================
- *
- * 以下 DTO 别名把 adapters/config 层的传输对象对外暴露，供 desktop-wails backend
- * 等独立模块通过公共包访问。backend 是独立 Go module，无法直接 import
- * internal/adapters/config（Go internal 规则），因此沿用 pkg/types 的 facade 模式。
- * @typedef {config$0.CalibrationConfigDTO} CalibrationConfigDTO
- */
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CalibrationConfigDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CalibrationConfigDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType0;
+        const $$createField4_0 = $$createType1;
+        const $$createField6_0 = $$createType3;
+        const $$createField7_0 = $$createType5;
+        const $$createField13_0 = $$createType7;
+        const $$createField14_0 = $$createType9;
+        const $$createField15_0 = $$createType11;
+        const $$createField16_0 = $$createType13;
+        const $$createField17_0 = $$createType15;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("channels" in $$parsedSource) {
+            $$parsedSource["channels"] = $$createField3_0($$parsedSource["channels"]);
+        }
+        if ("pressurePoints" in $$parsedSource) {
+            $$parsedSource["pressurePoints"] = $$createField4_0($$parsedSource["pressurePoints"]);
+        }
+        if ("probeChannels" in $$parsedSource) {
+            $$parsedSource["probeChannels"] = $$createField6_0($$parsedSource["probeChannels"]);
+        }
+        if ("points" in $$parsedSource) {
+            $$parsedSource["points"] = $$createField7_0($$parsedSource["points"]);
+        }
+        if ("motionAxes" in $$parsedSource) {
+            $$parsedSource["motionAxes"] = $$createField13_0($$parsedSource["motionAxes"]);
+        }
+        if ("motionSafety" in $$parsedSource) {
+            $$parsedSource["motionSafety"] = $$createField14_0($$parsedSource["motionSafety"]);
+        }
+        if ("sphereTankGate" in $$parsedSource) {
+            $$parsedSource["sphereTankGate"] = $$createField15_0($$parsedSource["sphereTankGate"]);
+        }
+        if ("acquisitionSampling" in $$parsedSource) {
+            $$parsedSource["acquisitionSampling"] = $$createField16_0($$parsedSource["acquisitionSampling"]);
+        }
+        if ("totalTemperatureConfig" in $$parsedSource) {
+            $$parsedSource["totalTemperatureConfig"] = $$createField17_0($$parsedSource["totalTemperatureConfig"]);
+        }
+        return new CalibrationConfigDTO(/** @type {Partial<CalibrationConfigDTO>} */($$parsedSource));
+    }
+}
 
 /**
  * ==================== Calibration Types ====================
@@ -88,6 +280,28 @@ export const DeviceStatus = device$0.Status;
  */
 
 /**
+ * ==================== Calibration Types ====================
+ *
+ * 五孔探针校准相关类型（spec Task 11）
+ * FiveHolePointLayoutDTO：前端"配置向导"提交的五孔点位生成参数（α/β 范围与步长 + serpentine 开关），
+ *   经 backend binding 透传到 usecase.PreviewFiveHolePoints，纯计算不涉及 I/O。
+ *   与 SevenHoleConfigDTO 对称——直接是 calibration.FiveHolePointLayout 别名，
+ *   让 Wails binding 入参类型有显式名字，便于生成 TS 类型与文档。
+ */
+export const FiveHolePointLayoutDTO = calibration$0.FiveHolePointLayout;
+
+/**
+ * ==================== Calibration Types ====================
+ *
+ * 五孔探针校准相关类型（spec Task 11）
+ * FiveHolePointLayoutDTO：前端"配置向导"提交的五孔点位生成参数（α/β 范围与步长 + serpentine 开关），
+ *   经 backend binding 透传到 usecase.PreviewFiveHolePoints，纯计算不涉及 I/O。
+ *   与 SevenHoleConfigDTO 对称——直接是 calibration.FiveHolePointLayout 别名，
+ *   让 Wails binding 入参类型有显式名字，便于生成 TS 类型与文档。
+ * @typedef {calibration$0.FiveHolePointLayout} FiveHolePointLayoutDTO
+ */
+
+/**
  * ==================== Motion Types ====================
  */
 export const MotionControllerProfile = motion$0.MotionControllerProfile;
@@ -96,3 +310,149 @@ export const MotionControllerProfile = motion$0.MotionControllerProfile;
  * ==================== Motion Types ====================
  * @typedef {motion$0.MotionControllerProfile} MotionControllerProfile
  */
+
+/**
+ * ProbeChannelDTO 是探针通道在框架边界的传输对象，同时支持扁平与嵌套两种 JSON shape。
+ */
+export class ProbeChannelDTO {
+    /**
+     * Creates a new ProbeChannelDTO instance.
+     * @param {Partial<ProbeChannelDTO>} [$$source = {}] - The source object to create the ProbeChannelDTO.
+     */
+    constructor($$source = {}) {
+        if (!("role" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["role"] = "";
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("deviceId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["deviceId"] = "";
+        }
+        if (!("channelIndex" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["channelIndex"] = 0;
+        }
+        if (!("enabled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {calibration$0.ChannelRef | null | undefined}
+             */
+            this["channel"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProbeChannelDTO instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ProbeChannelDTO}
+     */
+    static createFrom($$source = {}) {
+        const $$createField5_0 = $$createType17;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("channel" in $$parsedSource) {
+            $$parsedSource["channel"] = $$createField5_0($$parsedSource["channel"]);
+        }
+        return new ProbeChannelDTO(/** @type {Partial<ProbeChannelDTO>} */($$parsedSource));
+    }
+}
+
+/**
+ * ==================== Report Types ====================
+ */
+export const ReportStatus = report$0.ReportStatus;
+
+/**
+ * ==================== Report Types ====================
+ * @typedef {report$0.ReportStatus} ReportStatus
+ */
+
+/**
+ * ==================== Calibration Types ====================
+ *
+ * 七孔探针校准相关类型（spec Task 13）
+ * SevenHoleConfigDTO：前端"配置向导"提交的七孔点位生成参数（α/β/θ/φ 范围与步长），
+ *   经 backend binding 透传到 usecase.PreviewSevenHolePoints，纯计算不涉及 I/O。
+ * SevenHolePreviewResult：点位预览结果，含完整点位列表 + 内/外区聚合统计，
+ *   供前端在启动校准前确认点位规模（如 673 点 = 169 内区 + 504 外区）。
+ * SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点类型，
+ *   Wails binding 通过 GenericResponse.Data 暴露给前端。
+ */
+export const SevenHoleConfigDTO = calibration$0.SevenHoleConfig;
+
+/**
+ * ==================== Calibration Types ====================
+ *
+ * 七孔探针校准相关类型（spec Task 13）
+ * SevenHoleConfigDTO：前端"配置向导"提交的七孔点位生成参数（α/β/θ/φ 范围与步长），
+ *   经 backend binding 透传到 usecase.PreviewSevenHolePoints，纯计算不涉及 I/O。
+ * SevenHolePreviewResult：点位预览结果，含完整点位列表 + 内/外区聚合统计，
+ *   供前端在启动校准前确认点位规模（如 673 点 = 169 内区 + 504 外区）。
+ * SevenHoleRawData / SevenHoleCoefficients / SevenHoleDataPoint：实时数据与结果数据点类型，
+ *   Wails binding 通过 GenericResponse.Data 暴露给前端。
+ * @typedef {calibration$0.SevenHoleConfig} SevenHoleConfigDTO
+ */
+
+/**
+ * ==================== Storage Types ====================
+ */
+export const StorageRecordingConfig = storage$0.RecordingConfig;
+
+/**
+ * ==================== Storage Types ====================
+ * @typedef {storage$0.RecordingConfig} StorageRecordingConfig
+ */
+
+/**
+ * ==================== Storage Types ====================
+ */
+export const StorageRecordingStatus = storage$0.RecordingStatus;
+
+/**
+ * ==================== Storage Types ====================
+ * @typedef {storage$0.RecordingStatus} StorageRecordingStatus
+ */
+
+// Private type creation functions
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = $Create.Array($Create.Any);
+const $$createType2 = ProbeChannelDTO.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = calibration$0.CalPoint.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = calibration$0.MotionAxisConfig.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = traversal$0.MotionSafetyConfig.createFrom;
+const $$createType9 = $Create.Nullable($$createType8);
+const $$createType10 = calibration$0.SphereTankGateConfig.createFrom;
+const $$createType11 = $Create.Nullable($$createType10);
+const $$createType12 = calibration$0.AcquisitionSamplingConfig.createFrom;
+const $$createType13 = $Create.Nullable($$createType12);
+const $$createType14 = calibration$0.TotalTemperatureConfig.createFrom;
+const $$createType15 = $Create.Nullable($$createType14);
+const $$createType16 = calibration$0.ChannelRef.createFrom;
+const $$createType17 = $Create.Nullable($$createType16);

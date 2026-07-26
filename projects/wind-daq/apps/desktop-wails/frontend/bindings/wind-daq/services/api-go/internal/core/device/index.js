@@ -4,6 +4,7 @@
 
 export {
     ChannelConfig,
+    ChannelSensorType,
     Connection,
     DaqT1603HardwareConfig,
     DataPayload,

@@ -10,8 +10,9 @@ tasks:
 
   dev-frontend:
     summary: 启动前端开发服务器（热更新）
+    dir: frontend
     cmds:
-      - npm --prefix frontend run dev -- --host 127.0.0.1
+      - npm run dev -- --host 127.0.0.1
     env:
       BROWSER: none
 
@@ -28,9 +29,10 @@ tasks:
 
   build-frontend:
     summary: 仅构建前端
+    dir: frontend
     cmds:
-      - npm --prefix frontend install --no-audit --no-fund
-      - npm --prefix frontend run build
+      - npm install --no-audit --no-fund
+      - npm run build
 
   generate-icon:
     summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
@@ -62,6 +64,11 @@ tasks:
       GOWORK: off
     cmds:
       - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/wind-daq.exe .
+      # 复制 DAQ-P-1603 DLL（优先 WindLabX，回退 ART），未找到不阻止构建。
+      # 路径通过环境变量 WTNDAQ16H_DLL_PATHS 覆盖（分号分隔，按顺序尝试），
+      # 默认值兼容现有开发环境。CI 可设 WTNDAQ16H_DLL_PATHS=D:\ci\libs\WTNDAQ16H_64.dll。
+      # 抽到独立脚本文件，规避 wails3 task 在 Windows 上把 `$$` 替换成 PID 的解析 bug。
+      - powershell -ExecutionPolicy Bypass -File scripts/copy-dll.ps1
 
   run:
     summary: 运行已构建的桌面应用
@@ -85,7 +92,7 @@ tasks:
   clean:
     summary: 清理上次打包遗留的二进制和资源文件，避免与新构建混淆
     cmds:
-      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue; exit 0"
 
   check-bindings:
     summary: 检查 Wails backend 方法与 frontend bindings 是否一致（方法缺失/多余 + stale 时间戳警告）

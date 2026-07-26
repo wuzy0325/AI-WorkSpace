@@ -90,11 +90,24 @@ Rules:
 
 These cover topics too detailed for this file:
 
+- `docs/design/monitor-workspace-spec.md` — **监控工作区规范（2026-07）**：壳层/工作区分隔、全局 vs 本设备操作作用域、默认 6 路曲线、图外读数条、通道命名与分组、token 映射与验收清单。改仪表盘 / 混合视图 / 设备详情时必读。参考原型：`docs/ui-redesign-prototype.html`。
 - `docs/design/chart-spec.md` — Chart & waveform visual spec, channel color extension, threshold visualization, anti-patterns.
-- `docs/design/light-theme-palette.md` — Light theme audit, target palette, contrast compliance, action plan for filling gaps.
+- `docs/design/light-theme-palette.md` — Light theme audit, target palette, contrast compliance, action plan for filling gaps.（部分填坑项已落地；执行以 remediation 为准）
 - `docs/design/iconography.md` — Icon library choice, semantic icon map, custom icon rules, sizing.
+- `docs/design/design-system-remediation.md` — **设计系统欠账整改计划（2026-07）**：浅色收尾、App.vue/token brand 对齐、图标清理、硬编码色迁移（保留 channelColors API）、主题基线翻转。执行顺序与 DoD 以该文档为准。
 
 Additional specs to be added: state vocabulary, copy guidelines, motion guidelines, keyboard & a11y.
+
+## Monitor Workspace (summary)
+
+设备监控混合视图的硬规则摘要（细则见 `monitor-workspace-spec.md`）：
+
+1. **分隔**：`rail / sidebar / canvas / panel` 四级 surface；面板内只用细线三级分隔，禁止多层重卡片。
+2. **作用域**：顶栏 = 全局运行控制；设备标题行右侧 = 本设备（校零 / 停止 / 断开）。停止按钮禁止使用成功绿。
+3. **曲线默认**：默认显示 6 路；图例单击显隐、双击独显；**不提供**「聚焦 / 全部 / 异常」三态切换。
+4. **读数**：多通道光标值放在图表外 readout bar，不遮挡波形。
+5. **命名**：统一 `CH01`…；压力与环境量分组；数值 mono + tabular-nums。
+6. **实现**：颜色/间距/圆角只走 `styles/tokens/*` 与 `--chart-*`；禁止 feature 内 hex 与平行 `CHANNEL_COLORS` 数组。
 
 ## Migration Notes
 

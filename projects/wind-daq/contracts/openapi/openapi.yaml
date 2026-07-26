@@ -200,6 +200,117 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/devices/{deviceId}/calibrate:
+    put:
+      summary: Calibrate pressure-channel zero from five seconds of raw acquisition data
+      description: Temperature and other non-pressure channels never participate in zero calibration.
+      operationId: calibrateDeviceZero
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Calibration offsets persisted in base units
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CalibrationResult" }
+        "400":
+          description: Device is not acquiring, target is not a pressure channel, calibration is already running, or sampling failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/devices/{deviceId}/calibration:
+    get:
+      summary: Get one channel calibration record
+      operationId: getDeviceCalibration
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Calibration record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalibrationRecord" }
+  /api/v1/devices/{deviceId}/clearCalibration:
+    post:
+      summary: Clear one channel calibration record
+      operationId: clearDeviceCalibration
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Calibration cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+  /api/v1/devices/{deviceId}/calibrationProgress:
+    get:
+      summary: Get live zero-calibration sample progress
+      operationId: getDeviceCalibrationProgress
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Current progress
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalibrationProgress" }
+  /api/v1/devices/{deviceId}/calibrationEnabled:
+    get:
+      summary: Get channel calibration application switch
+      operationId: getCalibrationEnabled
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Switch state
+    put:
+      summary: Set DAQ-P-1603 channel calibration application switch
+      operationId: setCalibrationEnabled
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelIndex, enabled]
+              properties:
+                channelIndex: { type: integer, minimum: 0 }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Switch persisted
   /api/device/{deviceId}/unit:
     put:
       summary: Update the display/engineering unit for all profile channels
@@ -364,6 +475,19 @@ components:
           type: number
           format: double
           example: 10
+        calibrationOffset:
+          type: number
+          format: double
+          description: Persisted base-unit zero offset
+        calibrationUnit:
+          type: string
+          description: Unit used when the offset was sampled
+        calibrationAt:
+          type: integer
+          format: int64
+        calibrationEnabled:
+          type: boolean
+          description: Applies only to DAQ-P-1603 pressure channels; temperature channels never support zero calibration.
     DeviceProfile:
       type: object
       required:
@@ -373,6 +497,9 @@ components:
         - samplingRate
         - channels
       properties:
+        version:
+          type: integer
+          example: 2
         id:
           type: string
           example: sim-1
@@ -494,6 +621,32 @@ components:
         success:
           type: boolean
           example: true
+    CalibrationResult:
+      type: object
+      required: [channelIndex, offset, unit, at, sampleCount]
+      properties:
+        channelIndex: { type: integer }
+        offset: { type: number, format: double }
+        unit: { type: string }
+        at: { type: integer, format: int64 }
+        sampleCount: { type: integer }
+    CalibrationRecord:
+      type: object
+      required: [channelIndex, offset, unit, at, enabled]
+      properties:
+        channelIndex: { type: integer }
+        offset: { type: number, format: double }
+        unit: { type: string }
+        at: { type: integer, format: int64 }
+        enabled: { type: boolean }
+    CalibrationProgress:
+      type: object
+      required: [running, elapsedMs, sampleCount]
+      properties:
+        running: { type: boolean }
+        channelIndex: { type: integer }
+        elapsedMs: { type: integer, format: int64 }
+        sampleCount: { type: integer }
     ErrorResponse:
       type: object
       required:

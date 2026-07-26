@@ -535,7 +535,8 @@ func (f *FiveHoleNewInterpolator) parseOriginalCsv(lines []string, headerColumns
 		}
 
 		// 提取 Cpt/Cps（若列存在且有效）
-		if hasCptCps && len(values) > max(cptIdx, cpsIdx) {
+	// Go 1.20 没有内置 max（Go 1.21+ 引入），用 math.Max 替代
+	if hasCptCps && len(values) > int(math.Max(float64(cptIdx), float64(cpsIdx))) {
 			cptVal, errCpt := parseFloat(strings.TrimSpace(values[cptIdx]))
 			cpsVal, errCps := parseFloat(strings.TrimSpace(values[cpsIdx]))
 			if errCpt == nil && errCps == nil && isFinite(cptVal) && isFinite(cpsVal) {

@@ -6,6 +6,10 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as traversal$0 from "../traversal/models.js";
+
 /**
  * AcquisitionSamplingConfig 采集采样参数配置
  */
@@ -56,6 +60,16 @@ export class AcquisitionSamplingConfig {
 
 /**
  * CalPoint 校准测点定义
+ * 
+ * 双坐标模型（七孔探针校准引入，spec §3.4）：
+ *   - Coordinates（逻辑坐标）：业务语义角度，用于配置生成、CSV 落盘、系数计算、图表绘制。
+ *     内区表示为 (α,β)，外区表示为 (θ,φ)。
+ *   - MotionCoordinates（运动坐标）：运动控制器实际下发的目标角度，统一为 (α,β) 双轴。
+ *     外区点由 (θ,φ) 按 spec §3.3 正向公式换算（α=-arctan(tanθ×sinφ)，负号必须保留）。
+ * 
+ * 向后兼容：五孔/三孔/总压/总温等已有模块不填 MotionCoordinates/Region/Sector 时，
+ * moveToPoint 默认走 Coordinates 路径（已有行为），新字段 omitempty 不影响序列化结果。
+ * 仅 TypeSevenHole 在点位生成阶段（GenerateSevenHolePoints）显式填充双坐标。
  */
 export class CalPoint {
     /**
@@ -77,6 +91,33 @@ export class CalPoint {
              */
             this["coordinates"] = {};
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * MotionCoordinates 运动坐标（运动控制器下发用，统一为 α-β 双轴）。
+             * 为 nil 时 moveToPoint 回退到 Coordinates（向后兼容）。
+             * 消费方（moveToPoint 七孔分支）在 Task 10 落地。
+             * @member
+             * @type {{ [_ in string]?: number } | undefined}
+             */
+            this["motionCoordinates"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * Region 流场分区："inner"（内区，7 区）或 "outer"（外区，1~6 区）。
+             * 仅七孔校准填充，其他类型留空。
+             * @member
+             * @type {string | undefined}
+             */
+            this["region"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * Sector 外区扇区编号 1~6；内区固定 7；其他类型留空（零值）。
+             * @member
+             * @type {number | undefined}
+             */
+            this["sector"] = undefined;
+        }
 
         Object.assign(this, $$source);
     }
@@ -88,9 +129,13 @@ export class CalPoint {
      */
     static createFrom($$source = {}) {
         const $$createField1_0 = $$createType0;
+        const $$createField2_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("coordinates" in $$parsedSource) {
             $$parsedSource["coordinates"] = $$createField1_0($$parsedSource["coordinates"]);
+        }
+        if ("motionCoordinates" in $$parsedSource) {
+            $$parsedSource["motionCoordinates"] = $$createField2_0($$parsedSource["motionCoordinates"]);
         }
         return new CalPoint(/** @type {Partial<CalPoint>} */($$parsedSource));
     }
@@ -138,6 +183,128 @@ export class ChannelRef {
  * DataPoint 通用校准数据点接口
  * @typedef {any} DataPoint
  */
+
+export class FiveHolePointLayout {
+    /**
+     * Creates a new FiveHolePointLayout instance.
+     * @param {Partial<FiveHolePointLayout>} [$$source = {}] - The source object to create the FiveHolePointLayout.
+     */
+    constructor($$source = {}) {
+        if (!("alphaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaMin"] = 0;
+        }
+        if (!("alphaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaMax"] = 0;
+        }
+        if (!("alphaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["alphaStep"] = 0;
+        }
+        if (!("betaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaMin"] = 0;
+        }
+        if (!("betaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaMax"] = 0;
+        }
+        if (!("betaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["betaStep"] = 0;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["serpentine"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FiveHolePointLayout instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FiveHolePointLayout}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FiveHolePointLayout(/** @type {Partial<FiveHolePointLayout>} */($$parsedSource));
+    }
+}
+
+/**
+ * LivePhysics 实时物理量快照（Task 13）。
+ * 
+ * 设计动机：前端 5Hz 轮询 status 时需展示当前马赫数/速度，但既有 currentStatus 只持久化
+ * 校准业务字段（点号/进度/数据点），物理量需基于实时通道数据即时计算。直接写入 currentStatus
+ * 会导致：(1) 持久化污染（writer/CSV 误把快照写盘）；(2) stale 残留（设备离线后旧值不消失）。
+ * 
+ * 解决方案：LivePhysics 仅由 Status() 调用时即时计算，绝不写入 currentStatus。
+ * 通过 *float64 指针语义区分三种状态：
+ *   - nil：缺失（必需通道未配置/读取失败/物理非法如 Pt < Ps），UI 显示 "--"
+ *   - &0：有效零（Pt == Ps 即零流量，Task 12），UI 显示格式化的 0
+ *   - &ma/&v：正常计算值
+ * 
+ * 整体 *LivePhysics 为 nil 表示类型不支持实时物理量（总温）或未启动校准（currentConfig 为空）。
+ */
+export class LivePhysics {
+    /**
+     * Creates a new LivePhysics instance.
+     * @param {Partial<LivePhysics>} [$$source = {}] - The source object to create the LivePhysics.
+     */
+    constructor($$source = {}) {
+        if (/** @type {any} */(false)) {
+            /**
+             * 马赫数（缺失 nil / 有效零 &0 / 正常 &ma）
+             * @member
+             * @type {number | null | undefined}
+             */
+            this["machNumber"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 真空速 m/s（缺失 nil / 有效零 &0 / 正常 &v）
+             * @member
+             * @type {number | null | undefined}
+             */
+            this["velocity"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LivePhysics instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LivePhysics}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LivePhysics(/** @type {Partial<LivePhysics>} */($$parsedSource));
+    }
+}
 
 /**
  * MotionAxisConfig 校准运动轴配置，将逻辑轴名映射到物理运动控制器
@@ -188,6 +355,165 @@ export class MotionAxisConfig {
 }
 
 /**
+ * SevenHoleConfig 七孔校准点位生成配置
+ * 
+ * 字段语义：
+ *   - Mode：校准模式（"full"/"dataset"），决定外区 θ 与 φ 的取值策略
+ *   - InnerAlphaMin/Max/Step：内区 α 范围与步长（度），完整/数据集模式都使用此配置
+ *   - InnerBetaMin/Max/Step：内区 β 范围与步长（度）
+ *   - OuterThetaMin/Max/Step：外区 θ 范围与步长（度），仅完整模式生效；数据集模式忽略并使用硬编码 {30°,35°,40°,45°}
+ *   - OuterPhiMin/Max/Step：外区 φ 范围与步长（度），仅完整模式生效；数据集模式按扇区独立配置
+ *   - Serpentine：是否启用蛇形走位（true 时奇数行 α/θ 反向）
+ * 
+ * 推荐默认值（spec §6.2）：内区 [-30°,30°] 步长 5°；外区 θ [30°,60°] 步长 5°、φ [0°,355°] 步长 5°
+ */
+export class SevenHoleConfig {
+    /**
+     * Creates a new SevenHoleConfig instance.
+     * @param {Partial<SevenHoleConfig>} [$$source = {}] - The source object to create the SevenHoleConfig.
+     */
+    constructor($$source = {}) {
+        if (!("mode" in $$source)) {
+            /**
+             * @member
+             * @type {SevenHoleMode}
+             */
+            this["mode"] = SevenHoleMode.$zero;
+        }
+        if (!("innerAlphaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaMin"] = 0;
+        }
+        if (!("innerAlphaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaMax"] = 0;
+        }
+        if (!("innerAlphaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerAlphaStep"] = 0;
+        }
+        if (!("innerBetaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaMin"] = 0;
+        }
+        if (!("innerBetaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaMax"] = 0;
+        }
+        if (!("innerBetaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["innerBetaStep"] = 0;
+        }
+        if (!("outerThetaMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaMin"] = 0;
+        }
+        if (!("outerThetaMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaMax"] = 0;
+        }
+        if (!("outerThetaStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerThetaStep"] = 0;
+        }
+        if (!("outerPhiMin" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiMin"] = 0;
+        }
+        if (!("outerPhiMax" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiMax"] = 0;
+        }
+        if (!("outerPhiStep" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["outerPhiStep"] = 0;
+        }
+        if (!("serpentine" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["serpentine"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SevenHoleConfig instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SevenHoleConfig}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SevenHoleConfig(/** @type {Partial<SevenHoleConfig>} */($$parsedSource));
+    }
+}
+
+/**
+ * SevenHoleMode 七孔校准模式枚举
+ * @readonly
+ * @enum {string}
+ */
+export const SevenHoleMode = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    /**
+     * SevenHoleModeFull 完整模式（产品默认，673 点）
+     * 内区 α∈[-30°,30°] 步长 5° × β∈[-30°,30°] 步长 5° = 169 点
+     * 外区 θ∈[30°,60°] 步长 5° × φ∈[0°,355°] 步长 5° = 504 点
+     */
+    SevenHoleModeFull: "full",
+
+    /**
+     * SevenHoleModeDataset 数据集模式（验证基准，481 点）
+     * 内区 169 点同完整模式
+     * 外区 θ∈{30°,35°,40°,45°}（4 个值，不可配置）× 每扇区 φ 跨 60° 步长 5° = 13 点/扇区 × 6 扇区 = 312 点
+     * 扇区边界不共享，无需去重（spec §6.2 / Task 6 验收标准）
+     */
+    SevenHoleModeDataset: "dataset",
+};
+
+/**
  * SphereTankGateConfig 球罐闸门判定配置
  */
 export class SphereTankGateConfig {
@@ -212,6 +538,14 @@ export class SphereTankGateConfig {
              */
             this["waitTimeSec"] = 0;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * 球罐判定总超时（秒），<=0 时使用默认 300 秒
+             * @member
+             * @type {number | undefined}
+             */
+            this["timeoutSec"] = undefined;
+        }
         if (!("stableTimeChannel" in $$source)) {
             /**
              * 稳定时间通道引用
@@ -219,6 +553,16 @@ export class SphereTankGateConfig {
              * @type {ChannelRef}
              */
             this["stableTimeChannel"] = (new ChannelRef());
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * PressureChannel 球罐压力通道引用，仅用于前端实时显示当前球罐压力值，不参与闸门判定逻辑
+             * 当配置了有效 DeviceID 时，采集协调器会自动订阅该设备，以便前端能收到实时快照
+             * 球罐压力通道引用（仅显示，不参与判定）
+             * @member
+             * @type {ChannelRef | undefined}
+             */
+            this["pressureChannel"] = undefined;
         }
 
         Object.assign(this, $$source);
@@ -230,10 +574,14 @@ export class SphereTankGateConfig {
      * @returns {SphereTankGateConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType1;
+        const $$createField3_0 = $$createType1;
+        const $$createField4_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stableTimeChannel" in $$parsedSource) {
-            $$parsedSource["stableTimeChannel"] = $$createField2_0($$parsedSource["stableTimeChannel"]);
+            $$parsedSource["stableTimeChannel"] = $$createField3_0($$parsedSource["stableTimeChannel"]);
+        }
+        if ("pressureChannel" in $$parsedSource) {
+            $$parsedSource["pressureChannel"] = $$createField4_0($$parsedSource["pressureChannel"]);
         }
         return new SphereTankGateConfig(/** @type {Partial<SphereTankGateConfig>} */($$parsedSource));
     }
@@ -283,6 +631,9 @@ export class Status {
         }
         if (!("currentPoint" in $$source)) {
             /**
+             * CurrentPoint 当前正在处理的点索引（autoEngine.currentPointIdx，processPoint 循环顶部推进，早于 moveToPoint）。
+             * 非"已完成点数"——后者见 CompletedPoints。前端 progressInfo 据此索引查 config.points 得到"目标点"，
+             * 让目标角度先于实际角度变化。autoEngine 为 nil（未启动/总温手动模式）时为 0。
              * @member
              * @type {number}
              */
@@ -301,6 +652,37 @@ export class Status {
              * @type {string | undefined}
              */
             this["lastError"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * LivePhysics 实时物理量快照（Task 13）：每次 Status() 调用在 m.mu 解锁后
+             * 从 m.reader 即时计算，不持久化到 currentStatus（避免 stale 残留与 writer 污染）。
+             * 类型不支持（总温）或未启动校准时为 nil；通道齐全但读取失败时为 &LivePhysics{nil, nil}。
+             * @member
+             * @type {LivePhysics | null | undefined}
+             */
+            this["livePhysics"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
+             * 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
+             * 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。
+             * @member
+             * @type {string | undefined}
+             */
+            this["lastErrorCode"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * MotionSafetyFailure 运动安全故障现场快照。
+             * 仅在运动安全故障路径写入，其他错误路径（采集失败/保存失败等）保持 nil。
+             * 前端轮询拿到后用于展示故障现场（控制器/轴/verdict/目标/实际/点号），
+             * 避免 lastError 字符串正则解析的不稳定。
+             * @member
+             * @type {traversal$0.MotionSafetyFailure | null | undefined}
+             */
+            this["motionSafetyFailure"] = undefined;
         }
         if (!("type" in $$source)) {
             /**
@@ -331,12 +713,53 @@ export class Status {
              */
             this["startTime"] = undefined;
         }
+        if (!("pausedDurationMs" in $$source)) {
+            /**
+             * PausedDurationMs 是截至本次状态快照时累计的暂停时长，包含当前尚未结束的暂停段。
+             * @member
+             * @type {number}
+             */
+            this["pausedDurationMs"] = 0;
+        }
         if (/** @type {any} */(false)) {
             /**
              * @member
              * @type {DataPoint[] | undefined}
              */
             this["dataPoints"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 当前点采样进度：CurrentSample=当前点已采样本数（1..SamplesPerPoint），0 表示未开始/已完成
+             * SamplesPerPoint=当前点总采样数。前端据此显示"当前点采样 3/10"子进度。
+             * @member
+             * @type {number | undefined}
+             */
+            this["currentSample"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["samplesPerPoint"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CurrentRegion/CurrentSector 七孔流场分区当前状态（spec Task 11）。
+             * 仅 TypeSevenHole 校准期间有值，供前端 5Hz 轮询 status 时展示"当前区域 inner / 扇区 3"。
+             * 其他类型保持零值（omitempty 在 Region="" 时省略字段，Sector=0 时省略字段）。
+             * @member
+             * @type {string | undefined}
+             */
+            this["currentRegion"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["currentSector"] = undefined;
         }
 
         Object.assign(this, $$source);
@@ -348,10 +771,18 @@ export class Status {
      * @returns {Status}
      */
     static createFrom($$source = {}) {
-        const $$createField9_0 = $$createType2;
+        const $$createField5_0 = $$createType3;
+        const $$createField7_0 = $$createType5;
+        const $$createField13_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("livePhysics" in $$parsedSource) {
+            $$parsedSource["livePhysics"] = $$createField5_0($$parsedSource["livePhysics"]);
+        }
+        if ("motionSafetyFailure" in $$parsedSource) {
+            $$parsedSource["motionSafetyFailure"] = $$createField7_0($$parsedSource["motionSafetyFailure"]);
+        }
         if ("dataPoints" in $$parsedSource) {
-            $$parsedSource["dataPoints"] = $$createField9_0($$parsedSource["dataPoints"]);
+            $$parsedSource["dataPoints"] = $$createField13_0($$parsedSource["dataPoints"]);
         }
         return new Status(/** @type {Partial<Status>} */($$parsedSource));
     }
@@ -472,9 +903,9 @@ export class TotalTemperatureConfig {
      * @returns {TotalTemperatureConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType3;
-        const $$createField1_0 = $$createType4;
-        const $$createField3_0 = $$createType5;
+        const $$createField0_0 = $$createType7;
+        const $$createField1_0 = $$createType8;
+        const $$createField3_0 = $$createType9;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("probeChannels" in $$parsedSource) {
             $$parsedSource["probeChannels"] = $$createField0_0($$parsedSource["probeChannels"]);
@@ -492,7 +923,11 @@ export class TotalTemperatureConfig {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = ChannelRef.createFrom;
-const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = $Create.Map($Create.Any, $$createType1);
-const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = TemperatureStabilityConfig.createFrom;
+const $$createType2 = LivePhysics.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = traversal$0.MotionSafetyFailure.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);
+const $$createType6 = $Create.Array($Create.Any);
+const $$createType7 = $Create.Map($Create.Any, $$createType1);
+const $$createType8 = $Create.Array($Create.Any);
+const $$createType9 = TemperatureStabilityConfig.createFrom;

@@ -1,6 +1,8 @@
 package usecase
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +84,10 @@ type fakeDevice struct {
 	dataSink device.DataSink
 	emitDone chan struct{}
 	unit     string
+	// customChannelIndices / customChannels 允许测试自定义发送的通道数据
+	// （如含 Index=16 大气压通道）。未设置时 StartAcquisition 用默认 4 通道。
+	customChannelIndices []int
+	customChannels       []float64
 }
 
 func (d *fakeDevice) ID() string { return d.id }
@@ -89,7 +95,8 @@ func (d *fakeDevice) ID() string { return d.id }
 func (d *fakeDevice) Status() device.Status {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return device.Status{ID: d.id, Connection: d.conn}
+	// Acquiring 语义等同于 conn==ConnectionAcquiring，Calibrate 依赖此字段判断设备是否在采集
+	return device.Status{ID: d.id, Connection: d.conn, Acquiring: d.conn == device.ConnectionAcquiring}
 }
 
 func (d *fakeDevice) Connect() error {
@@ -117,6 +124,15 @@ func (d *fakeDevice) StartAcquisition() error {
 	done := make(chan struct{})
 	d.emitDone = done
 	sink := d.dataSink
+	// 支持测试自定义通道数据（如含大气压通道 Index=16）；未设置则用默认 4 通道
+	indices := d.customChannelIndices
+	values := d.customChannels
+	if len(indices) == 0 {
+		indices = []int{0, 1, 2, 3}
+	}
+	if len(values) == 0 {
+		values = []float64{1, 2, 3, 4}
+	}
 	d.mu.Unlock()
 
 	go func() {
@@ -128,7 +144,12 @@ func (d *fakeDevice) StartAcquisition() error {
 				return
 			case <-ticker.C:
 				if sink != nil {
-					sink(device.DataPayload{DeviceID: d.id, Timestamp: time.Now().UnixMilli(), Channels: []float64{1, 2, 3, 4}, ChannelIndices: []int{0, 1, 2, 3}})
+					sink(device.DataPayload{
+						DeviceID:       d.id,
+						Timestamp:      time.Now().UnixMilli(),
+						Channels:       append([]float64(nil), values...),
+						ChannelIndices: append([]int(nil), indices...),
+					})
 				}
 			}
 		}
@@ -455,5 +476,293 @@ func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 			t.Fatal("timed out waiting for acquisition hub data")
 		case <-time.After(20 * time.Millisecond):
 		}
+	}
+}
+
+// TestCalibrationEnabledForProfileRejectsAtmosphericChannel 验证校零使能查询
+// 对大气压辅助通道返回 false，与前端 shouldDisableTare 及 Calibrate 过滤逻辑对齐。
+//
+// 测试前置：DAQ-P-1604Pre 的大气压通道（Index=16, Unit=Pa）在物理上是环境量。
+// 测试步骤：对大气压通道、常规压力通道、DAQ-P-1603 通道 16 分别查询。
+// 期待结果：仅大气压通道返回 false，其余压力通道返回 true。
+func TestCalibrationEnabledForProfileRejectsAtmosphericChannel(t *testing.T) {
+	atmCh := device.ChannelConfig{Index: device.P1604PreAtmChannelIndex, Unit: "Pa", CalibrationEnabled: true}
+	if calibrationEnabledForProfile(device.DeviceDAQP1604Pre, atmCh) {
+		t.Fatal("大气压通道 calibrationEnabledForProfile 应返回 false")
+	}
+	atmTempCh := device.ChannelConfig{Index: device.P1604PreAtmTempChannelIndex, Unit: "degC"}
+	if calibrationEnabledForProfile(device.DeviceDAQP1604Pre, atmTempCh) {
+		t.Fatal("大气温度通道 calibrationEnabledForProfile 应返回 false")
+	}
+	normalCh := device.ChannelConfig{Index: 0, Unit: "Pa", CalibrationEnabled: true}
+	if !calibrationEnabledForProfile(device.DeviceDAQP1604Pre, normalCh) {
+		t.Fatal("常规压力通道 calibrationEnabledForProfile 应返回 true")
+	}
+	// DAQ-P-1603 无大气辅助通道，Index 16 是常规采集通道
+	p1603Ch := device.ChannelConfig{Index: 16, Unit: "Pa", CalibrationEnabled: true}
+	if !calibrationEnabledForProfile(device.DeviceDAQP1603, p1603Ch) {
+		t.Fatal("DAQ-P-1603 通道 16 calibrationEnabledForProfile 应返回 true")
+	}
+}
+
+// TestCalibrateFiltersAtmosphericChannelOnFullCalibration 验证全部校零时
+// 大气压辅助通道被过滤，不写入校零偏移。
+//
+// 测试前置：DAQ-P-1604Pre 18 通道，fakeDevice 发送 CH0=100Pa + CH16=101325Pa（大气压）。
+// 测试步骤：调用 Calibrate(targetChannel=nil) 全部校零。
+// 期待结果：CH0 被校零（offset=100Pa），CH16 不被校零（offset=0）。
+func TestCalibrateFiltersAtmosphericChannelOnFullCalibration(t *testing.T) {
+	profile := newTestProfile("p1604pre-1", device.DeviceDAQP1604Pre)
+	channels := make([]device.ChannelConfig, 18)
+	for i := 0; i < 16; i++ {
+		channels[i] = device.ChannelConfig{Index: i, Name: fmt.Sprintf("CH%d", i+1), Enabled: true, Unit: "Pa", Precision: 2}
+	}
+	channels[16] = device.ChannelConfig{Index: 16, Name: "Atm", Enabled: true, Unit: "Pa", Precision: 1}
+	channels[17] = device.ChannelConfig{Index: 17, Name: "AtmTemp", Enabled: true, Unit: "degC", Precision: 2}
+	profile.Channels = channels
+
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	factory := &captureFactory{}
+	stream := NewCalibrationStream()
+	uc := device.NewUnitConverter()
+	applier := NewCalibrationApplier(uc)
+	// 150ms 采样窗口覆盖 3 个 ticker 周期（50ms×3），确保至少收到 2 帧
+	sampler := NewCalibrationSampler(stream, uc, 150*time.Millisecond)
+	dataSink := func(payload device.DataPayload) { stream.Publish(payload) }
+	manager, err := newTestDeviceManager(store, factory, dataSink)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetCalibrationComponents(applier, sampler)
+
+	if err := manager.Connect("p1604pre-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	// CH0=100Pa 常规压力，CH16=101325Pa 大气压（环境量）
+	factory.last.customChannelIndices = []int{0, 16}
+	factory.last.customChannels = []float64{100.0, 101325.0}
+	if err := manager.StartAcquisition("p1604pre-1"); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	defer manager.StopAcquisition("p1604pre-1")
+
+	results, err := manager.Calibrate("p1604pre-1", context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Calibrate returned error: %v", err)
+	}
+
+	// 大气压通道不应出现在 results 中
+	for _, r := range results {
+		if r.ChannelIndex == 16 {
+			t.Fatalf("大气压通道(16)不应被校零，但 results 包含: %+v", r)
+		}
+	}
+	// CH0 应被校零，offset=100Pa（基单位）
+	foundCH0 := false
+	for _, r := range results {
+		if r.ChannelIndex == 0 {
+			foundCH0 = true
+			if r.Offset != 100.0 {
+				t.Fatalf("CH0 offset = %v, want 100", r.Offset)
+			}
+		}
+	}
+	if !foundCH0 {
+		t.Fatalf("CH0 应被校零，但 results 中未找到: %+v", results)
+	}
+	// profile 中大气压通道的 CalibrationOffset 应为 0
+	saved := manager.GetProfiles()
+	for _, ch := range saved[0].Channels {
+		if ch.Index == 16 && ch.CalibrationOffset != 0 {
+			t.Fatalf("大气压通道 CalibrationOffset = %v, want 0", ch.CalibrationOffset)
+		}
+	}
+}
+
+// TestCalibrateRejectsAtmosphericChannelTarget 验证单通道校零大气压通道时
+// 返回明确错误，而非静默执行。
+//
+// 测试前置：DAQ-P-1604Pre 设备已连接且正在采集。
+// 测试步骤：对 Index=16（大气压通道）发起单通道校零。
+// 期待结果：返回错误，拒绝校零。
+func TestCalibrateRejectsAtmosphericChannelTarget(t *testing.T) {
+	profile := newTestProfile("p1604pre-2", device.DeviceDAQP1604Pre)
+	channels := make([]device.ChannelConfig, 18)
+	for i := 0; i < 16; i++ {
+		channels[i] = device.ChannelConfig{Index: i, Enabled: true, Unit: "Pa"}
+	}
+	channels[16] = device.ChannelConfig{Index: 16, Enabled: true, Unit: "Pa"}
+	channels[17] = device.ChannelConfig{Index: 17, Enabled: true, Unit: "degC"}
+	profile.Channels = channels
+
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	factory := &captureFactory{}
+	stream := NewCalibrationStream()
+	uc := device.NewUnitConverter()
+	applier := NewCalibrationApplier(uc)
+	sampler := NewCalibrationSampler(stream, uc, 100*time.Millisecond)
+	dataSink := func(payload device.DataPayload) { stream.Publish(payload) }
+	manager, err := newTestDeviceManager(store, factory, dataSink)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetCalibrationComponents(applier, sampler)
+
+	if err := manager.Connect("p1604pre-2"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := manager.StartAcquisition("p1604pre-2"); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	defer manager.StopAcquisition("p1604pre-2")
+
+	target := 16
+	_, err = manager.Calibrate("p1604pre-2", context.Background(), &target)
+	if err == nil {
+		t.Fatal("校零大气压通道应返回错误，但 err=nil")
+	}
+}
+
+// TestCalibrateFiltersDisabledChannelOnFullCalibration 验证 CalibrationEnabled=false
+// 的通道在"全部通道校零"模式下不参与采样、不写偏移、不被强制改回 true。
+//
+// 测试前置：DAQ-P-1603 16 通道，CH00/CH01 CalibrationEnabled=false（用户禁用校零应用），
+// fakeDevice 发送所有通道 = 100 Pa。
+// 测试步骤：调用 Calibrate(targetChannel=nil) 全部校零。
+// 期待结果：
+//   - CH00/CH01 不出现在 results 中
+//   - CH02 出现在 results 中且 offset=100
+//   - 落库后 CH00/CH01 的 CalibrationEnabled 仍为 false（未被强制覆盖）
+//   - 落库后 CH00/CH01 的 CalibrationOffset 仍为 0（未写偏移）
+//   - 落库后 CH02 的 CalibrationEnabled 仍为 true、CalibrationOffset=100
+//
+// 回归症状：若 Calibrate 全部模式未过滤 CalibrationEnabled=false 通道，
+// 或落库阶段仍强制 CalibrationEnabled=true，CH00/CH01 会被采样并写偏移，
+// 用户禁用状态被抹掉，下次实时数据被错误减去偏移——"禁用了还给我校零"。
+func TestCalibrateFiltersDisabledChannelOnFullCalibration(t *testing.T) {
+	profile := newTestProfile("p1603-cal-1", device.DeviceDAQP1603)
+	channels := make([]device.ChannelConfig, 16)
+	for i := 0; i < 16; i++ {
+		channels[i] = device.ChannelConfig{
+			Index: i, Name: fmt.Sprintf("CH%d", i+1), Enabled: true,
+			Unit: "Pa", Precision: 3,
+			CalibrationEnabled: i >= 2, // CH00/CH01 禁用校零应用
+		}
+	}
+	profile.Channels = channels
+
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	factory := &captureFactory{}
+	stream := NewCalibrationStream()
+	uc := device.NewUnitConverter()
+	applier := NewCalibrationApplier(uc)
+	sampler := NewCalibrationSampler(stream, uc, 150*time.Millisecond)
+	dataSink := func(payload device.DataPayload) { stream.Publish(payload) }
+	manager, err := newTestDeviceManager(store, factory, dataSink)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetCalibrationComponents(applier, sampler)
+
+	if err := manager.Connect("p1603-cal-1"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	// 所有通道都发 100 Pa
+	factory.last.customChannelIndices = []int{0, 1, 2}
+	factory.last.customChannels = []float64{100.0, 100.0, 100.0}
+	if err := manager.StartAcquisition("p1603-cal-1"); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	defer manager.StopAcquisition("p1603-cal-1")
+
+	results, err := manager.Calibrate("p1603-cal-1", context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Calibrate returned error: %v", err)
+	}
+
+	// CH00/CH01 不应出现在 results 中
+	for _, r := range results {
+		if r.ChannelIndex == 0 || r.ChannelIndex == 1 {
+			t.Errorf("禁用校零应用的通道 %d 不应被校零，但 results 包含: %+v", r.ChannelIndex, r)
+		}
+	}
+	// CH02 应被校零，offset=100 Pa
+	foundCH02 := false
+	for _, r := range results {
+		if r.ChannelIndex == 2 {
+			foundCH02 = true
+			if r.Offset != 100.0 {
+				t.Errorf("CH02 offset = %v, want 100", r.Offset)
+			}
+		}
+	}
+	if !foundCH02 {
+		t.Errorf("CH02 应被校零，但 results 中未找到: %+v", results)
+	}
+
+	// 落库后验证：CH00/CH01 禁用状态与偏移都保留，CH02 偏移已写、使能仍 true
+	saved := manager.GetProfiles()
+	for _, ch := range saved[0].Channels {
+		if ch.Index == 0 || ch.Index == 1 {
+			if ch.CalibrationEnabled {
+				t.Errorf("CH%02d CalibrationEnabled = true，应保持 false（用户禁用不被覆盖）", ch.Index+1)
+			}
+			if ch.CalibrationOffset != 0 {
+				t.Errorf("CH%02d CalibrationOffset = %v，应保持 0（禁用通道不写偏移）", ch.Index+1, ch.CalibrationOffset)
+			}
+		}
+		if ch.Index == 2 {
+			if !ch.CalibrationEnabled {
+				t.Errorf("CH02 CalibrationEnabled = false，应保持 true")
+			}
+			if ch.CalibrationOffset != 100.0 {
+				t.Errorf("CH02 CalibrationOffset = %v, want 100", ch.CalibrationOffset)
+			}
+		}
+	}
+}
+
+// TestCalibrateRejectsDisabledChannelTarget 验证单通道校准对 CalibrationEnabled=false
+// 的通道返回明确错误，而非静默执行并强制覆盖使能位。
+//
+// 测试前置：DAQ-P-1603 设备已连接且正在采集，CH00 CalibrationEnabled=false。
+// 测试步骤：对 Index=0 发起单通道校零。
+// 期待结果：返回错误，拒绝校零。
+func TestCalibrateRejectsDisabledChannelTarget(t *testing.T) {
+	profile := newTestProfile("p1603-cal-2", device.DeviceDAQP1603)
+	channels := make([]device.ChannelConfig, 16)
+	for i := 0; i < 16; i++ {
+		channels[i] = device.ChannelConfig{
+			Index: i, Enabled: true, Unit: "Pa",
+			CalibrationEnabled: i >= 2, // CH00/CH01 禁用
+		}
+	}
+	profile.Channels = channels
+
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	factory := &captureFactory{}
+	stream := NewCalibrationStream()
+	uc := device.NewUnitConverter()
+	applier := NewCalibrationApplier(uc)
+	sampler := NewCalibrationSampler(stream, uc, 100*time.Millisecond)
+	dataSink := func(payload device.DataPayload) { stream.Publish(payload) }
+	manager, err := newTestDeviceManager(store, factory, dataSink)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	manager.SetCalibrationComponents(applier, sampler)
+
+	if err := manager.Connect("p1603-cal-2"); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if err := manager.StartAcquisition("p1603-cal-2"); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	defer manager.StopAcquisition("p1603-cal-2")
+
+	target := 0
+	_, err = manager.Calibrate("p1603-cal-2", context.Background(), &target)
+	if err == nil {
+		t.Fatal("校零已禁用校零应用的通道应返回错误，但 err=nil")
 	}
 }

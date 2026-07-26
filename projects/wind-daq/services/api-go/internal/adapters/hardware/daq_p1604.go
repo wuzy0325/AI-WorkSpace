@@ -1,4 +1,4 @@
-package hardware
+﻿package hardware
 
 import (
 	"fmt"
@@ -124,8 +124,20 @@ func (d *DAQP1604) Connect() error {
 	// 排空 w1601 的 A 应答，避免污染后续 u01101 的 ReadFrame
 	sharedproto.DrainW1601Response(d.frameReader, conn, 100*time.Millisecond)
 
-	// 读取硬件实际单位并同步 profile（best-effort，失败不阻塞连接）
-	d.syncUnitFromHardware()
+	// 读取硬件实际单位并同步 profile
+	// 软错误（超时/解析失败）不阻断连接，仅记录 warn；
+	// 硬错误（对端 FIN/RST）返回 error → 关闭 conn 并让 Connect 失败，
+	// 避免把已死连接塞进 DeviceManager 造成后续 StartAcquisition 爆 WSAECONNABORTED。
+	if err := d.syncUnitFromHardware(); err != nil {
+		d.mu.Lock()
+		d.conn = nil
+		d.frameReader = nil
+		d.status.Connection = device.ConnectionError
+		d.status.LastError = err.Error()
+		d.mu.Unlock()
+		_ = conn.Close()
+		return fmt.Errorf("sync unit from hardware: %w", err)
+	}
 	return nil
 }
 
@@ -320,6 +332,24 @@ func (d *DAQP1604) SetUnit(unit string) error {
 			slog.Warn("DAQ-P-1604 write hardware unit coefficient failed",
 				"category", "hardware-send", "component", "hardware",
 				"device", d.profile.ID, "unit", unit, "coeff", coeff, "error", err)
+			// 对端已 FIN/RST → 连接已死，清理 driver + 通知 DeviceManager 删除。
+			// SetUnit 要求非采集状态（开头已校验 d.acquiring==false），readLoop
+			// 此时已退出，重置 conn/frameReader 无并发风险。
+			// 与 readLoop defer 块的清理逻辑一致，确保 DeviceManager 从 map 中
+			// 删除 driver，避免后续 StartAcquisition 爆 WSAECONNABORTED。
+			if sharedproto.IsConnResetByPeer(err) {
+				d.mu.Lock()
+				d.conn = nil
+				d.frameReader = nil
+				d.status.Connection = device.ConnectionError
+				d.status.LastError = err.Error()
+				fn := d.onError
+				d.mu.Unlock()
+				_ = conn.Close()
+				if fn != nil {
+					fn(fmt.Errorf("write hardware unit coefficient: %w", err))
+				}
+			}
 			return fmt.Errorf("write hardware unit coefficient: %w", err)
 		}
 		slog.Info("DAQ-P-1604 hardware unit updated",
@@ -341,8 +371,15 @@ func (d *DAQP1604) SetUnit(unit string) error {
 // 在 Connect 阶段调用：以硬件实际单位为准覆盖 profile，避免 profile 与硬件脱节
 // 导致"单位标签变了但数据值没变"的现象（硬件 EU 系数没改，数据仍是旧单位量级）。
 //
-// best-effort：读取失败只打 warn 日志，不阻塞连接流程。
-func (d *DAQP1604) syncUnitFromHardware() {
+// 返回值：
+//   - err: 仅在"连接已死"（对端 FIN/RST）时非空。其他软错误（超时、解析失败、
+//     系数未知）不返回 err，保留 profile 单位并继续连接流程——兼容旧固件/模拟器
+//
+// 连接已死的判定依据 sharedproto.IsConnResetByPeer：包含 io.EOF、connection reset、
+// broken pipe、WSAECONNABORTED 等。此时若继续保留 conn，后续 StartAcquisition
+// 的 c 00 命令会爆 WSAECONNABORTED，且本地 TCP 已不可用，
+// 必须让 Connect 失败并关闭 conn，强制用户重连。
+func (d *DAQP1604) syncUnitFromHardware() error {
 	d.mu.RLock()
 	conn := d.conn
 	fr := d.frameReader
@@ -354,7 +391,7 @@ func (d *DAQP1604) syncUnitFromHardware() {
 	d.mu.RUnlock()
 
 	if conn == nil || fr == nil {
-		return
+		return nil
 	}
 
 	// 读取硬件 EU 系数（内部发 u01101 并读响应）
@@ -362,10 +399,18 @@ func (d *DAQP1604) syncUnitFromHardware() {
 	coeff, err := sharedproto.P1604ReadUnitCoefficient(fr, conn, DAQ_P_1604_TIMEOUT)
 	d.writeMu.Unlock()
 	if err != nil {
+		// 关键分支：对端已 FIN/RST → 连接已死，返回 error 让 Connect 失败
+		if sharedproto.IsConnResetByPeer(err) {
+			slog.Error("DAQ-P-1604 connection reset by peer during unit sync",
+				"category", "hardware-recv", "component", "hardware",
+				"device", id, "error", err)
+			return fmt.Errorf("read unit coefficient: %w", err)
+		}
+		// 软错误（超时/解析失败等）：保留 profile 单位，记录 warn（不阻断连接）
 		slog.Warn("read hardware unit coefficient failed",
 			"category", "hardware-recv", "component", "hardware",
 			"device", id, "error", err)
-		return
+		return nil
 	}
 
 	hwUnit, ok := sharedproto.P1604MatchUnitByCoefficient(coeff)
@@ -373,11 +418,11 @@ func (d *DAQP1604) syncUnitFromHardware() {
 		slog.Warn("hardware unit coefficient unmatched to known units",
 			"category", "hardware-recv", "component", "hardware",
 			"device", id, "coeff", coeff)
-		return
+		return nil
 	}
 
 	if currentUnit == hwUnit {
-		return // profile 与硬件一致，无需同步
+		return nil // profile 与硬件一致，无需同步
 	}
 
 	d.mu.Lock()
@@ -388,6 +433,7 @@ func (d *DAQP1604) syncUnitFromHardware() {
 	slog.Info("DAQ-P-1604 unit synced from hardware",
 		"category", "hardware-recv", "component", "hardware",
 		"device", id, "profile_unit", currentUnit, "hardware_unit", hwUnit, "coeff", coeff)
+	return nil
 }
 
 func (d *DAQP1604) SetTare(channelIndex int, offset float64) error {
@@ -454,8 +500,8 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
-	// 收发细节降级到 Debug：状态查询期间命令频繁，INFO 会刷爆 ring buffer 与日志文件。
-	slog.Debug("DAQ-P-1604 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
+	// 命令收发用 Info 级别：ring buffer 透传，stderr / file 由 CategorySkipHandler 跳过。
+	slog.Info("DAQ-P-1604 command send", "category", "hardware-send", "component", "hardware", "device", d.profile.ID, "command", cmd)
 	// 命令发送委托给 sharedproto.SendCommandNoNewline：
 	//   - 纯 ASCII，不带换行符（实测设备 w1601 模式下 \r\n 会导致 N05）
 	//   - 内部处理 write deadline 设置与清除
@@ -550,7 +596,7 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 func (d *DAQP1604) processPayload(data []byte) {
 	// ASCII 帧属于命令响应，不应作为采集数据下发。
 	if sharedproto.IsASCIIFrame(data) {
-		slog.Debug("DAQ-P-1604 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", strings.TrimSpace(string(data)))
+		slog.Info("DAQ-P-1604 command response", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID, "response", strings.TrimSpace(string(data)))
 		return
 	}
 

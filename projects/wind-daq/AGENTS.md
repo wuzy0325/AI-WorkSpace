@@ -12,8 +12,9 @@ Load project context in this order unless the task is trivial:
 4. `README.md` — project overview, commands, folder notes, migration entry points
 5. `CLAUDE.md` — Wind-DAQ project addendum and migration constraints
 6. `DESIGN.md` — only for frontend UI / layout / visual parity work
-7. `docs/migration/*` — only for migration or parity work
-8. touched source files and tests — always read before editing
+7. `docs/design/monitor-workspace-spec.md` — when changing dashboard hybrid/monitor layout, action scope, channel cards, or live chart chrome
+8. `docs/migration/*` — only for migration or parity work
+9. touched source files and tests — always read before editing
 
 Do not load the entire `docs/` tree by default.
 
@@ -97,3 +98,12 @@ Use these docs by task type:
 - Reusable motion behavior belongs in `shared/motion-control/go`.
 - Low-level device and motion protocol code belongs in `shared/device-sdk/go` or project adapters, not in frontend or Wails glue.
 - Frontend parity work should preserve the recognizable operator workflow of the reference UI while keeping implementation architecture cleaner.
+
+## NSIS Installer (project.nsi) Hard Rules
+
+`build/windows/installer/project.nsi` 已纳入 git 跟踪（强制添加，覆盖 .gitignore）。
+
+- **永远不要**用 `[System.Text.Encoding]::Default` 或任何 PowerShell 命令转换 .nsi 文件编码。
+- **永远不要**删除 `project.nsi`——如需恢复，用 `git checkout` 而非依赖 `wails3 generate build-assets`（该命令生成的 .nsi 中文乱码，不可用）。
+- 修改中文文本只能通过 Edit 工具进行（它保留原文件编码）。
+- NSIS 构建失败时不假设文件损坏，先检查是否是其他原因（如 DLL 缺失）。

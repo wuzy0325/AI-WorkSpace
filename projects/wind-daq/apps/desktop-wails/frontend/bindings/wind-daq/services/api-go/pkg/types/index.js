@@ -9,5 +9,11 @@ export {
     DeviceProfile,
     DeviceScanResult,
     DeviceStatus,
-    MotionControllerProfile
+    FiveHolePointLayoutDTO,
+    MotionControllerProfile,
+    ProbeChannelDTO,
+    ReportStatus,
+    SevenHoleConfigDTO,
+    StorageRecordingConfig,
+    StorageRecordingStatus
 } from "./models.js";

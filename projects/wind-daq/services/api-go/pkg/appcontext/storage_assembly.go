@@ -1,4 +1,4 @@
-// storage_assembly.go 存储装配函数：从 AppConfigStore 读取 storage.json，
+﻿// storage_assembly.go 存储装配函数：从 AppConfigStore 读取 storage.json，
 // 根据配置创建对应格式的 RecordingSink 并装配为 StorageRecorder。
 //
 // 装配职责：

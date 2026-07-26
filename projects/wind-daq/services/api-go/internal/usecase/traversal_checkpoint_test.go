@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -13,6 +14,16 @@ import (
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/pkg/wiring"
 )
+
+// resolveTestCheckpointPath 返回测试用的 checkpoint 路径，与 FileCheckpointPort.path() 派生规则一致。
+// 路径格式：${dir}/.traversal/${stem}.checkpoint.json
+func resolveTestCheckpointPath(savePath string) string {
+	ext := filepath.Ext(savePath)
+	base := strings.TrimSuffix(savePath, ext)
+	dir := filepath.Dir(base)
+	stem := filepath.Base(base)
+	return filepath.Join(dir, ".traversal", stem+".checkpoint.json")
+}
 
 // ===== 测试用 mock 实现 =====
 
@@ -28,16 +39,46 @@ func (r *mockLatestDataReader) GetLatestData(deviceID string) (device.DataPayloa
 
 func (r *mockLatestDataReader) GetLatestTimestamp(_ string) (int64, bool) { return 0, false }
 
-// mockMotionAccess 模拟运动控制访问，记录 MoveTo 调用并返回静止状态
+// mockMotionAccess 模拟运动控制访问，记录 MoveTo 调用并返回静止状态。
+//
+// statuses 字段用于覆写 StatusAll 返回值：未设置时回退默认（单个 Connected=true
+// 控制器），设置后原样返回。新测试用例（如"运动控制器未连接"前置检查）通过
+// 显式注入 statuses 模拟断开场景，原有测试不设置该字段即可保持旧行为。
+//
+// statusSequence 字段用于按顺序返回不同的状态快照——运动安全测试需要模拟
+// "运动中→到位"、"运动中→越过目标"、"运动中→卡死"等多帧场景。设置后优先于 statuses。
+//
+// emergencyStopCalls / stopCalls 记录急停与普通停止调用，用于运动安全测试验证。
 type mockMotionAccess struct {
-	moveToCalls []struct {
+	statuses []motion.ControllerStatus
+	// statusSequence 按顺序返回的状态快照序列；每次 StatusAll 弹出队首。
+	// 用于模拟跨样本的运动状态变化（如位置随时间推移而变化）。
+	// 优先级高于 statuses；为空时回退到 statuses 或默认值。
+	statusSequence    [][]motion.ControllerStatus
+	moveToCalls       []struct {
 		id       string
 		axis     motion.AxisName
 		position float64
 	}
+	stopCalls          []struct {
+		id   string
+		axis motion.AxisName
+	}
+	emergencyStopCalls []string
+	// emergencyStopErr 注入 EmergencyStop 调用错误（用于测试急停失败 fallback）
+	emergencyStopErr error
 }
 
 func (m *mockMotionAccess) StatusAll(ctx context.Context) []motion.ControllerStatus {
+	// 优先消费序列——运动安全测试需要按帧推进状态
+	if len(m.statusSequence) > 0 {
+		next := m.statusSequence[0]
+		m.statusSequence = m.statusSequence[1:]
+		return next
+	}
+	if m.statuses != nil {
+		return m.statuses
+	}
 	return []motion.ControllerStatus{
 		{ID: "mc-1", Connected: true, Axes: []motion.AxisStatus{
 			{Name: motion.AxisX, Position: 0, Homed: true, Moving: false},
@@ -57,7 +98,17 @@ func (m *mockMotionAccess) MoveTo(ctx context.Context, id string, axis motion.Ax
 }
 
 func (m *mockMotionAccess) Stop(ctx context.Context, id string, axis motion.AxisName) error {
+	m.stopCalls = append(m.stopCalls, struct {
+		id   string
+		axis motion.AxisName
+	}{id, axis})
 	return nil
+}
+
+// EmergencyStop 记录急停调用并返回注入错误（若有）
+func (m *mockMotionAccess) EmergencyStop(ctx context.Context, id string) error {
+	m.emergencyStopCalls = append(m.emergencyStopCalls, id)
+	return m.emergencyStopErr
 }
 
 // mockTraversalPointSink 模拟数据点写入器，记录所有写入的点
@@ -164,7 +215,7 @@ func TestSaveAndLoadCheckpoint(t *testing.T) {
 	mgr.saveCheckpoint(points, 2, savePath)
 
 	// 验证文件存在
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 	if _, err := os.Stat(checkpointPath); err != nil {
 		t.Fatalf("checkpoint file not created: %v", err)
 	}
@@ -196,11 +247,8 @@ func TestSaveAndLoadCheckpoint(t *testing.T) {
 		t.Errorf("expected savePath %q, got %q", savePath, cp.SavePath)
 	}
 
-	// 验证 Config 字段可反序列化为原始配置
-	var restoredConfig traversal.Config
-	if err := json.Unmarshal(cp.Config, &restoredConfig); err != nil {
-		t.Fatalf("unmarshal checkpoint config failed: %v", err)
-	}
+	// 验证 Snapshot.Config 可还原为原始配置（P0-C4：Config 单源真相）
+	restoredConfig := cp.Snapshot.Config
 	if restoredConfig.TaskID != config.TaskID {
 		t.Errorf("restored config taskId mismatch: %q vs %q", restoredConfig.TaskID, config.TaskID)
 	}
@@ -235,7 +283,7 @@ func TestLoadCheckpointFileDeleted(t *testing.T) {
 	mgr.mu.Unlock()
 
 	mgr.saveCheckpoint(config.Path, 1, savePath)
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 
 	// 外部删除文件
 	if err := os.Remove(checkpointPath); err != nil {
@@ -273,7 +321,7 @@ func TestClearCheckpoint(t *testing.T) {
 	mgr.mu.Unlock()
 
 	mgr.saveCheckpoint(config.Path, 1, savePath)
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 
 	// 文件应存在
 	if _, err := os.Stat(checkpointPath); err != nil {
@@ -310,7 +358,6 @@ func TestResumeFromCheckpoint(t *testing.T) {
 	savePath := filepath.Join(tmpDir, "result.csv")
 
 	config := makeTestConfig(savePath)
-	configRaw, _ := json.Marshal(config)
 
 	// 预置 store 中已有 1 个已完成点的结果（模拟之前中断时的状态）
 	prevStatus := traversal.Status{
@@ -324,7 +371,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 
 	cp := traversal.Checkpoint{
 		TaskID:          config.TaskID,
-		Config:          configRaw,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 1, CommitSeq: 1, CSVPath: savePath},
 		CompletedPoints: 1,
 		TotalPoints:     3,
 		LastPoint:       &config.Path[0],
@@ -371,7 +418,7 @@ func TestResumeFromCheckpointInvalid(t *testing.T) {
 	}{
 		{
 			name: "empty taskId",
-			cp:   traversal.Checkpoint{CompletedPoints: 0, TotalPoints: 3, Config: json.RawMessage(`{}`)},
+			cp:   traversal.Checkpoint{CompletedPoints: 0, TotalPoints: 3},
 			err:  "checkpoint taskId is required",
 		},
 		{
@@ -381,7 +428,7 @@ func TestResumeFromCheckpointInvalid(t *testing.T) {
 		},
 		{
 			name: "completedPoints out of range (negative)",
-			cp:   traversal.Checkpoint{TaskID: "t1", CompletedPoints: -1, TotalPoints: 3, Config: json.RawMessage(`{}`)},
+			cp:   traversal.Checkpoint{TaskID: "t1", CompletedPoints: -1, TotalPoints: 3},
 			err:  "checkpoint completedPoints out of range",
 		},
 	}
@@ -406,11 +453,10 @@ func TestResumeFromCheckpointAlreadyCompleted(t *testing.T) {
 	savePath := filepath.Join(tmpDir, "result.csv")
 
 	config := makeTestConfig(savePath)
-	configRaw, _ := json.Marshal(config)
 
 	cp := traversal.Checkpoint{
 		TaskID:          config.TaskID,
-		Config:          configRaw,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 3, CommitSeq: 3, CSVPath: savePath},
 		CompletedPoints: 3, // 等于总点数
 		TotalPoints:     3,
 		SavePath:        savePath,
@@ -423,6 +469,100 @@ func TestResumeFromCheckpointAlreadyCompleted(t *testing.T) {
 	if err.Error() != "checkpoint already completed" {
 		t.Errorf("expected 'checkpoint already completed', got %q", err.Error())
 	}
+}
+
+// TestResume_UsesSnapshottedMotionSafety 验证 ResumeFromCheckpoint 使用
+// snapshot.Config 中的 MotionSafety 配置，而非前端当前配置。
+// 测试前置：构造 checkpoint，其 snapshot.Config.MotionSafety.ArrivalTolerance=0.5（与默认 0.2 不同）
+// 测试步骤：调用 ResumeFromCheckpoint，读取 mgr.config.MotionSafety
+// 期待结果：mgr.config.MotionSafety.ArrivalTolerance == 0.5（snapshot 值），而非默认 0.2
+func TestResume_UsesSnapshottedMotionSafety(t *testing.T) {
+	mgr, _, _, _ := newCheckpointTestManager()
+	tmpDir := t.TempDir()
+	savePath := filepath.Join(tmpDir, "result.csv")
+
+	config := makeTestConfig(savePath)
+	// snapshot 中携带自定义 MotionSafety——与默认值（0.2 / 5.0）明显不同
+	snapArrival := 0.5
+	snapCritical := 7.0
+	config.MotionSafety = &traversal.MotionSafetyConfig{
+		ArrivalTolerance:       &snapArrival,
+		CriticalDeviationLimit: &snapCritical,
+	}
+
+	cp := traversal.Checkpoint{
+		TaskID:          config.TaskID,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 1, CommitSeq: 1, CSVPath: savePath},
+		CompletedPoints: 1,
+		TotalPoints:     3,
+		LastPoint:       &config.Path[0],
+		SavePath:        savePath,
+		CreatedAt:       1700000000000,
+	}
+
+	if _, err := mgr.ResumeFromCheckpoint(cp); err != nil {
+		t.Fatalf("ResumeFromCheckpoint failed: %v", err)
+	}
+
+	// 读取恢复后的 m.config.MotionSafety——必须与 snapshot 中的值一致
+	mgr.mu.RLock()
+	resumed := mgr.config.MotionSafety
+	mgr.mu.RUnlock()
+	if resumed == nil {
+		t.Fatal("expected MotionSafety non-nil after resume")
+	}
+	if resumed.ArrivalTolerance == nil || *resumed.ArrivalTolerance != 0.5 {
+		t.Errorf("expected ArrivalTolerance=0.5 from snapshot, got %v", resumed.ArrivalTolerance)
+	}
+	if resumed.CriticalDeviationLimit == nil || *resumed.CriticalDeviationLimit != 7.0 {
+		t.Errorf("expected CriticalDeviationLimit=7.0 from snapshot, got %v", resumed.CriticalDeviationLimit)
+	}
+
+	_ = mgr.Stop()
+}
+
+// TestResume_FillsDefaultMotionSafetyWhenSnapshotNil 验证 snapshot 中 MotionSafety
+// 为 nil 时，ResumeFromCheckpoint 填充 DefaultMotionSafety，使下游可观察非 nil 配置。
+// 测试前置：snapshot.Config.MotionSafety = nil（旧 checkpoint 兼容场景）
+// 测试步骤：调用 ResumeFromCheckpoint，读取 mgr.config.MotionSafety
+// 期待结果：mgr.config.MotionSafety 非 nil，且字段等于 DefaultMotionSafety 的值
+func TestResume_FillsDefaultMotionSafetyWhenSnapshotNil(t *testing.T) {
+	mgr, _, _, _ := newCheckpointTestManager()
+	tmpDir := t.TempDir()
+	savePath := filepath.Join(tmpDir, "result.csv")
+
+	config := makeTestConfig(savePath)
+	config.MotionSafety = nil // 旧 checkpoint 未配置
+
+	cp := traversal.Checkpoint{
+		TaskID:          config.TaskID,
+		Snapshot:        traversal.TraversalRunSnapshot{Config: config, TotalPoints: 3, CommittedPoints: 1, CommitSeq: 1, CSVPath: savePath},
+		CompletedPoints: 1,
+		TotalPoints:     3,
+		LastPoint:       &config.Path[0],
+		SavePath:        savePath,
+		CreatedAt:       1700000000000,
+	}
+
+	if _, err := mgr.ResumeFromCheckpoint(cp); err != nil {
+		t.Fatalf("ResumeFromCheckpoint failed: %v", err)
+	}
+
+	mgr.mu.RLock()
+	resumed := mgr.config.MotionSafety
+	mgr.mu.RUnlock()
+	if resumed == nil {
+		t.Fatal("expected MotionSafety non-nil (default filled) after resume")
+	}
+	defaults := traversal.DefaultMotionSafety()
+	if resumed.ArrivalTolerance == nil || *resumed.ArrivalTolerance != *defaults.ArrivalTolerance {
+		t.Errorf("expected default ArrivalTolerance=%v, got %v", *defaults.ArrivalTolerance, resumed.ArrivalTolerance)
+	}
+	if resumed.CriticalDeviationLimit == nil || *resumed.CriticalDeviationLimit != *defaults.CriticalDeviationLimit {
+		t.Errorf("expected default CriticalDeviationLimit=%v, got %v", *defaults.CriticalDeviationLimit, resumed.CriticalDeviationLimit)
+	}
+
+	_ = mgr.Stop()
 }
 
 // TestSaveCheckpointAtomicWrite 验证断点文件使用原子写入（无残留 .tmp 文件）
@@ -447,7 +587,7 @@ func TestSaveCheckpointAtomicWrite(t *testing.T) {
 	}
 
 	// 验证最终文件存在且内容可解析
-	checkpointPath := savePath + ".checkpoint.json"
+	checkpointPath := resolveTestCheckpointPath(savePath)
 	data, err := os.ReadFile(checkpointPath)
 	if err != nil {
 		t.Fatalf("read checkpoint file failed: %v", err)

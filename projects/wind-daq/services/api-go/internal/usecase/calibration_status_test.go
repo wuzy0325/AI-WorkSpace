@@ -72,6 +72,44 @@ func TestCalibrationManagerStopStateIsNotOverwrittenByAutomaticCompletion(t *tes
 	}
 }
 
+func TestCalibrationManagerStatusTracksPausedDurationAcrossResume(t *testing.T) {
+	manager := NewCalibrationManager(nil, nil, nil, nil)
+	manager.currentStatus = calibration.Status{
+		TaskID:    "cal-paused-duration",
+		State:     calibration.StateRunning,
+		StartTime: time.Now().Add(-time.Second).UnixMilli(),
+	}
+
+	if err := manager.Pause(); err != nil {
+		t.Fatalf("pause calibration: %v", err)
+	}
+	manager.pauseStartedAt = time.Now().Add(-40 * time.Millisecond)
+
+	pausedStatus := manager.Status()
+	if pausedStatus.PausedDurationMs < 35 {
+		t.Fatalf("expected paused status to include current pause segment, got %dms", pausedStatus.PausedDurationMs)
+	}
+
+	if err := manager.Resume(); err != nil {
+		t.Fatalf("resume calibration: %v", err)
+	}
+	resumedStatus := manager.Status()
+	if resumedStatus.PausedDurationMs < pausedStatus.PausedDurationMs {
+		t.Fatalf("expected resumed status to preserve paused duration, paused=%dms resumed=%dms",
+			pausedStatus.PausedDurationMs,
+			resumedStatus.PausedDurationMs,
+		)
+	}
+
+	latestStatus := manager.Status()
+	if latestStatus.PausedDurationMs != resumedStatus.PausedDurationMs {
+		t.Fatalf("expected paused duration to stop growing after resume, resumed=%dms latest=%dms",
+			resumedStatus.PausedDurationMs,
+			latestStatus.PausedDurationMs,
+		)
+	}
+}
+
 func fiveHoleStatusTestConfig(taskID string) calibration.Config {
 	return calibration.Config{
 		TaskID:          taskID,

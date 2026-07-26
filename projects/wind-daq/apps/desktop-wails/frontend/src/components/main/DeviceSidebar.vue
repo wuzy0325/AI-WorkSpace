@@ -111,9 +111,6 @@ function displayStatusLabel(profileId: string): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* fallback for Chromium <111 (Electron 22 Win7)：color-mix 不支持时使用 rgba */
-  border-right: 1px solid rgba(51, 65, 85, 0.5);
-  background: rgba(23, 35, 56, 0.96);
   border-right: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
 }
@@ -127,7 +124,6 @@ function displayStatusLabel(profileId: string): string {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
@@ -155,8 +151,6 @@ function displayStatusLabel(profileId: string): string {
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
-  background: rgba(30, 41, 59, 0.8);
-  border: 1px solid rgba(51, 65, 85, 0.6);
   background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
   border-radius: var(--radius-md);
@@ -172,8 +166,6 @@ function displayStatusLabel(profileId: string): string {
 
 .device-sidebar__manage-btn:hover {
   color: var(--accent-primary);
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.3);
   background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
@@ -198,10 +190,12 @@ function displayStatusLabel(profileId: string): string {
   width: 100%;
   text-align: left;
   padding: var(--space-2);
-  /* fallback for Chromium <111 (Electron 22 Win7)：设备项必须有不透明背景才有隔离感 */
+  /* Win7 兼容：Chromium 108 不支持 color-mix()，先写 rgba fallback 再写 color-mix()。
+     rgba(30, 41, 59, 0.6) 与 var(--bg-panel-strong) 60% 混合透明度等价，
+     确保设备项之间有背景色隔离（project_memory 约定）。 */
   background: rgba(30, 41, 59, 0.6);
-  border: 1px solid transparent;
   background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -220,29 +214,35 @@ function displayStatusLabel(profileId: string): string {
 }
 
 :root[data-theme='light'] .device-sidebar__item {
+  background: rgba(30, 41, 59, 0.6);
   background: color-mix(in srgb, var(--bg-panel-strong) 60%, transparent);
 }
 
 .device-sidebar__item:hover {
+  /* Win7 rgba fallback：hover 态略深，保持设备间隔离可辨 */
   background: rgba(30, 41, 59, 0.8);
-  border-color: rgba(51, 65, 85, 0.8);
   background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border-color: rgba(51, 65, 85, 0.8);
   border-color: color-mix(in srgb, var(--border-default) 80%, transparent);
 }
 
 :root[data-theme='light'] .device-sidebar__item:hover {
+  background: rgba(30, 41, 59, 0.8);
   background: color-mix(in srgb, var(--bg-panel-strong) 80%, transparent);
+  border-color: rgba(51, 65, 85, 0.6);
   border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .device-sidebar__item--active {
+  /* Win7 rgba fallback：选中态用品牌色微透明背景 + 边框 */
   background: rgba(16, 185, 129, 0.08);
-  border-color: rgba(16, 185, 129, 0.25);
   background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: rgba(16, 185, 129, 0.25);
   border-color: color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
 .device-sidebar__item--error {
+  /* Win7 rgba fallback：错误态用危险色边框 */
   border-color: rgba(239, 91, 71, 0.2);
   border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
@@ -295,14 +295,12 @@ function displayStatusLabel(profileId: string): string {
 
 .device-sidebar__status--connecting {
   background: var(--accent-warning);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent-warning) 50%, transparent);
   animation: breathe 0.8s ease-in-out infinite;
 }
 
 .device-sidebar__status--error {
   background: var(--accent-danger);
-  box-shadow: 0 0 8px rgba(239, 91, 71, 0.6);
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent-danger) 60%, transparent);
 }
 

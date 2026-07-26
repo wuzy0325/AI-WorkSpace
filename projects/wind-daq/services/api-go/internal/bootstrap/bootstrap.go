@@ -1,10 +1,11 @@
-package bootstrap
+﻿package bootstrap
 
 import (
 	"encoding/json"
 	"shared.local/device-sdk/go/pkg/slog"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"shared.local/device-sdk/go/motion/adapters/hardware"
 	"shared.local/device-sdk/go/motion/core"
@@ -90,17 +91,45 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
 	// 注入遍历 CSV 写入 sink，承担测试结果落盘
 	travSink := storageadapter.NewTraversalCsvWriter()
-	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
+	checkpointStore := storageadapter.NewFileCheckpointStore()
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, travSink, calstore.NewTraversalResultStore(), checkpointStore, appConfigStore)
+	// v2 可靠存储端口注入（Task 4-8）：三阶段提交与崩溃恢复
+	// csvPort 复用 travSink（TraversalCsvWriter 同时实现旧 sink 与新 TraversalCSVPort）
+	travMgr.SetCsvPort(travSink)
+	travMgr.SetResultLogPort(storageadapter.NewTraversalResultLog())
+	// checkpointPort 按 SavePath 动态创建（工厂模式），支持多任务隔离
+	travMgr.SetCheckpointPortFactory(storageadapter.NewFileCheckpointPortFactory(checkpointStore))
+	dataDir := filepath.Dir(cfg.ProfileStorePath)
+	travMgr.SetActiveIndex(storageadapter.NewTraversalActiveIndex(
+		filepath.Join(dataDir, "traversal-active-index.json"),
+		dataDir,
+	))
 	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
 	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
 	travMgr.RestoreInterpolatorFromPersistedConfig()
 
-	dataSink := usecase.NewDataSink(hub, recorder)
-	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, dataSink, windaqconfig.NewProfileNormalizer())
+	// v2 校零组件 + dataSink 统一装配：
+	// 之前在本文件内联实现，appcontext/apiserver 各自复制一份时遗漏了 calApplier/channels
+	// 闭包，导致桌面生产路径与独立 API 服务器路径校零整段失效。
+	// 现统一调用 usecase.AssembleDataSinkWithCalibration，任何装配根都无法绕过正确顺序。
+	// 装配函数内部会调用 manager.SetCalibrationComponents 与 manager.UpdateDataSink。
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, nil, windaqconfig.NewProfileNormalizer())
 	if err != nil {
 		return APIServer{}, err
 	}
 	manager.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, manager, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。manager 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	travMgr.SetUnitProvider(manager)
+	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
+	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
+	travMgr.SetAcquisitionController(manager)
+	// 同源注入给校准管理器：校准采样过程中用户停采集后，算法在 waitForFreshData 超时后
+	// 查询 IsAcquiring 区分"用户停采集"（可恢复，继续等待）与"设备在采集但帧不更新"（真异常），
+	// 与 traversal 的"等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"。
+	calMgr.SetAcquisitionController(manager)
 
 	router := api.NewRouter(api.Deps{
 		DeviceManager:      manager,

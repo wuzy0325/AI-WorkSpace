@@ -156,6 +156,7 @@ Do not flash, blink, or animate the out-of-range visual.
 
 - **Hover crosshair**: horizontal + vertical 1px line at cursor, `--chart-crosshair` color.
 - **Tooltip**: panel with `--bg-panel-strong`, 1px `--border-default`, 8px radius, panel shadow. Mono font for numbers, regular for labels. Shows: timestamp + each visible channel's value + unit. Maximum 8 rows; scroll if more.
+- **Multi-channel live readout (preferred on dashboard hybrid view)**: do **not** cover the plot with a large multi-row tooltip. Put timestamp + up to 8 channel values in an external readout bar under the legend, background `--chart-readout-bg`. See `monitor-workspace-spec.md` §5.
 - **User cursor / marker**: a placed reference line uses `--chart-cursor` (info accent) and persists until removed. Show label "T = 1.234s" near the line.
 - **Selection rectangle** (zoom or brush): `--chart-selection-fill` (alpha 12%) with `--chart-selection-stroke` (alpha 40%) border.
 - **Pan/zoom hints**: appear bottom-right of chart, secondary text, only when the chart is hovered.

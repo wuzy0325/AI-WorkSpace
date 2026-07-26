@@ -109,8 +109,8 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 	}
 
 	var sumP1, sumP2, sumP3, sumP4, sumP5, sumPAtm, sumTAtm float64
-	var sumPTotal, sumPStatic float64
-	var pTotalCount, pStaticCount int
+	var sumPTotal, sumPStatic, sumTTunnel float64
+	var pTotalCount, pStaticCount, tTunnelCount int
 
 	for _, d := range dataList {
 		sumP1 += d.P1
@@ -127,6 +127,12 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 		if d.PStatic != nil {
 			sumPStatic += *d.PStatic
 			pStaticCount++
+		}
+		// review P1 缺陷修复：TTunnel 也需参与平均，保证后续系数计算路径
+		// （如 onRealtime 回调或未来扩展使用 TTunnel 的公式）拿到的是平均值而非首帧。
+		if d.TTunnel != nil {
+			sumTTunnel += *d.TTunnel
+			tTunnelCount++
 		}
 	}
 
@@ -148,6 +154,10 @@ func CalculateFiveHoleAverage(dataList []FiveHoleRawData) FiveHoleRawData {
 	if pStaticCount > 0 {
 		avg := sumPStatic / float64(pStaticCount)
 		result.PStatic = &avg
+	}
+	if tTunnelCount > 0 {
+		avg := sumTTunnel / float64(tTunnelCount)
+		result.TTunnel = &avg
 	}
 
 	return result
@@ -183,15 +193,16 @@ func CalculateFiveHoleCoefficientsStdDev(dataList []FiveHoleRawData) (KalphaStd,
 
 // CalculateThreeHoleCoefficients 计算三孔探针校准系数
 //
-// 口径与插值器 PRB 文件对齐（shared/algorithms/go/threehole/interpolation/three_hole.go），
+// 工程命名 Kb(Kβ) / K0 / Kv，口径与插值器 PRB 文件对齐
+// （shared/algorithms/go/threehole/interpolation/three_hole.go），
 // 使用孔间差压 ΔP 而非对大气压表压，确保校准产物可直接导出为 PRB 供插值器消费：
 //
 //	ΔP = 2·P2 - P1 - P3            中心孔(P2)与两侧孔(P1/P3)的差压
-//	Kb = (P3 - P1) / ΔP            方向系数（仅需孔压，始终可算）
-//	Kt = (Pt - P2) / ΔP            总压恢复系数（需 PTotal；缺失置 0，不发误导值）
-//	Sb = (Pt - Ps) / ΔP            静压恢复系数（需 PTotal + PStatic；缺失置 0）
+//	Kb = (P3 - P1) / ΔP            角度系数 Kβ（仅需孔压，始终可算）
+//	K0 = (Pt - P2) / ΔP            总压系数 K0（需 PTotal；缺失置 0，不发误导值）
+//	Kv = (Pt - Ps) / ΔP            速度系数 Kv（需 PTotal + PStatic；缺失置 0）
 //
-// 插值时由 Kt/Sb 反演：Pt = P2 + Kt·ΔP，Ps = Pt - Sb·ΔP。
+// 插值时由 K0/Kv 反演：Pt = P2 + K0·ΔP，Ps = Pt - Kv·ΔP。
 // 当 |ΔP| < 1e-6（流场未立）时三系数全部置 0，避免除零与误导性输出。
 func CalculateThreeHoleCoefficients(data ThreeHoleRawData) ThreeHoleCoefficients {
 	deltaP := 2*data.P2 - data.P1 - data.P3
@@ -201,17 +212,40 @@ func CalculateThreeHoleCoefficients(data ThreeHoleRawData) ThreeHoleCoefficients
 
 	kb := (data.P3 - data.P1) / deltaP
 
-	var kt float64
+	var k0 float64
 	if data.PTotal != nil {
-		kt = (*data.PTotal - data.P2) / deltaP
+		k0 = (*data.PTotal - data.P2) / deltaP
 	}
 
-	var sb float64
+	var kv float64
 	if data.PTotal != nil && data.PStatic != nil {
-		sb = (*data.PTotal - *data.PStatic) / deltaP
+		kv = (*data.PTotal - *data.PStatic) / deltaP
 	}
 
-	return ThreeHoleCoefficients{Kb: kb, Kt: kt, Sb: sb}
+	// 马赫数/速度计算：与五孔探针和五孔插值算法口径一致，
+	// 通过 AtmosphericDataCalculator.CalculateAll 统一计算。
+	// 输入需绝压：Pt_abs = PTotal + PAtm, Ps_abs = PStatic + PAtm；
+	// TAT 取大气温度（三孔无独立风洞温度传感器，低速风洞下用大气温度近似）。
+	// 任一通道缺失或物理上非法（Pt<=Ps）时不发误导值，置 nil。
+	var machNumber *float64
+	var velocity *float64
+	if data.PTotal != nil && data.PStatic != nil && data.PAtm > 0 {
+		ptAbs := *data.PTotal + data.PAtm
+		psAbs := *data.PStatic + data.PAtm
+		// TAT 转开尔文：CalculateSAT 内部用开氏温度
+		tatK := data.TAtm + 273.15
+		if tatK > 0 && ptAbs > psAbs && psAbs > 0 {
+			calc := NewAtmosphericDataCalculator()
+			if result, err := calc.CalculateAll(ptAbs, psAbs, tatK); err == nil {
+				ma := result.MachNumber
+				v := result.TASMach
+				machNumber = &ma
+				velocity = &v
+			}
+		}
+	}
+
+	return ThreeHoleCoefficients{Kb: kb, K0: k0, Kv: kv, MachNumber: machNumber, Velocity: velocity}
 }
 
 // CalculateThreeHoleAverage 计算三孔探针多次采样平均值
@@ -261,7 +295,7 @@ func CalculateThreeHoleAverage(dataList []ThreeHoleRawData) ThreeHoleRawData {
 }
 
 // CalculateThreeHoleCoefficientsStdDev 计算三孔探针系数的标准差
-func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KbStd, KtStd, SbStd float64) {
+func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KbStd, K0Std, KvStd float64) {
 	if len(dataList) < 2 {
 		return 0, 0, 0
 	}
@@ -272,16 +306,16 @@ func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KbStd, K
 	}
 
 	kbVals := make([]float64, len(coefficientsList))
-	ktVals := make([]float64, len(coefficientsList))
-	sbVals := make([]float64, len(coefficientsList))
+	k0Vals := make([]float64, len(coefficientsList))
+	kvVals := make([]float64, len(coefficientsList))
 
 	for i, c := range coefficientsList {
 		kbVals[i] = c.Kb
-		ktVals[i] = c.Kt
-		sbVals[i] = c.Sb
+		k0Vals[i] = c.K0
+		kvVals[i] = c.Kv
 	}
 
-	return StdDev(kbVals), StdDev(ktVals), StdDev(sbVals)
+	return StdDev(kbVals), StdDev(k0Vals), StdDev(kvVals)
 }
 
 // ==================== 总压探针公式 ====================
@@ -298,8 +332,14 @@ func CalculateThreeHoleCoefficientsStdDev(dataList []ThreeHoleRawData) (KbStd, K
 //	          （探针总压恢复系数，绝对总压相除）
 //	误差(%) = (Pt_probe_abs - Pt_tunnel_abs) / Pt_tunnel_abs × 100
 //	          （探针总压相对于风洞总压的相对偏差，量纲一致）
-//	Ma      = √[2×(Pt_tunnel_abs - Ps_tunnel_abs) / (γ × Ps_tunnel_abs)]
 //
+// 马赫数/速度通过 AtmosphericDataCalculator.CalculateAll 统一计算：
+//
+//	Ma = √[2/(γ-1) · ((Pt_abs/Ps_abs)^((γ-1)/γ) - 1)]
+//	SAT = TAT / (1 + 0.2 · r · Ma²)   （TAT 取风洞温度，需转开尔文）
+//	V  = Ma · 20.047 · √SAT
+//
+// TAT 选取优先级：风洞温度 TTunnel > 大气温度 TAtm（与三孔一致性兜底）。
 // 阈值 pressureValidThresholdPa 用于判断"风洞是否建立有效压差"：
 // 检查对象是表压 pTunnelTotal（即风洞总压相对于大气压的差值），
 // 而非绝对压力 pTunnelTotalAbs——因为后者包含 pAtm（~101325 Pa），
@@ -330,13 +370,28 @@ func CalculateTotalPressureCoefficients(rawData TotalPressureRawData) TotalPress
 		err = ((pProbeTotalAbs - pTunnelTotalAbs) / pTunnelTotalAbs) * 100
 	}
 
-	// 计算马赫数（使用 AtmosphericDataCalculator）
-	var machNumber float64
-	calc := NewAtmosphericDataCalculator()
-	if pTunnelStaticAbs > 0 && pTunnelTotalAbs > pTunnelStaticAbs {
-		ma, calcErr := calc.CalculateMach(pTunnelTotalAbs, pTunnelStaticAbs)
-		if calcErr == nil {
-			machNumber = ma
+	// 计算马赫数 + 速度（与三孔一致的指针语义，缺失通道或物理非法时返回 nil）
+	// TAT 选取：优先风洞温度 TTunnel，未配置该通道时（read_probe_channels.go 对未映射通道返回 0）
+	// 回退到大气温度 TAtm。低速风洞下两者温差小，误差可接受。
+	// 注：0°C 是物理合法温度，理论上应改 *float64 区分"未映射"与"0°C"，
+	// 但 TotalPressureRawData.TTunnel 为非指针 float64，改动涉及 Average/CSV schema/tests 多处，
+	// 且风洞运行温度通常 15-30°C，0°C 极端罕见，权衡后保留 0 哨兵 + TAtm 兜底。
+	var machNumber *float64
+	var velocity *float64
+	if pAtm > 0 && pTunnelStaticAbs > 0 && pTunnelTotalAbs > pTunnelStaticAbs {
+		tatC := rawData.TTunnel
+		if tatC == 0 {
+			tatC = rawData.TAtm
+		}
+		tatK := tatC + 273.15
+		if tatK > 0 {
+			calc := NewAtmosphericDataCalculator()
+			if result, calcErr := calc.CalculateAll(pTunnelTotalAbs, pTunnelStaticAbs, tatK); calcErr == nil {
+				ma := result.MachNumber
+				v := result.TASMach
+				machNumber = &ma
+				velocity = &v
+			}
 		}
 	}
 
@@ -344,6 +399,7 @@ func CalculateTotalPressureCoefficients(rawData TotalPressureRawData) TotalPress
 		CPT:        CPT,
 		Error:      err,
 		MachNumber: machNumber,
+		Velocity:   velocity,
 	}
 }
 

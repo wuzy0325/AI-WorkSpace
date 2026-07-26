@@ -16,9 +16,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as application$0 from "../../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as config$0 from "../../../services/api-go/internal/adapters/config/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as calibration$0 from "../../../services/api-go/internal/core/calibration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -35,9 +32,6 @@ import * as storage$0 from "../../../services/api-go/internal/core/storage/model
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as types$0 from "../../../services/api-go/pkg/types/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as usecase$0 from "../../../services/api-go/pkg/usecase/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -68,6 +62,57 @@ export function CalibrationGetResult(taskID) {
  */
 export function CalibrationPause() {
     return $Call.ByID(303414833).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
+ * CalibrationPreviewFiveHole 五孔点位预览（spec Task 11）
+ * 
+ * 接收前端"配置向导"提交的 FiveHolePointLayoutDTO（α/β 范围与步长 + serpentine 开关），
+ * 调用 CalibrationManager.PreviewFiveHolePoints 生成蛇形/raster 点位列表，
+ * 返回 []FiveHoleSnakePoint（bare array，与 HTTP /api/calibration/fivehole 契约一致）
+ * 经 GenericResponse.Data 包装供 Wails binding 透传。
+ * 
+ * 与 CalibrationPreviewSevenHole 的区别：
+ *   - 五孔返回 bare array（Data 字段是 []FiveHoleSnakePoint），前端直接迭代
+ *   - 七孔返回包装对象（Data 字段是 SevenHolePreviewResult，含 totalCount/innerCount/outerCount）
+ * 
+ * 与 CalibrationStart 的区别：
+ *   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+ *   - 不需要路径归一（无 SavePath）
+ *   - 不需要 ToCore 转换（FiveHolePointLayoutDTO 直接是 calibration.FiveHolePointLayout 别名）
+ * 
+ * 错误处理：配置非法（步长 ≤ 0）返回 Success=false + Error 透传 GenerateFiveHoleSnakePoints 错误。
+ * spec Task 11 acceptance：HTTP/Wails 都调用同一 usecase，后端错误传到 UI，不静默 fallback。
+ * @param {types$0.FiveHolePointLayoutDTO} dto
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function CalibrationPreviewFiveHole(dto) {
+    return $Call.ByID(722703141, dto).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
+ * CalibrationPreviewSevenHole 七孔点位预览（spec Task 13）
+ * 
+ * 接收前端"配置向导"提交的 SevenHoleConfigDTO（α/β/θ/φ 范围与步长），
+ * 调用 CalibrationManager.PreviewSevenHolePoints 生成完整点位列表 + 内/外区聚合统计，
+ * 返回 SevenHolePreviewResult 供前端实时显示总点数（如 673 点 = 169 内区 + 504 外区）。
+ * 
+ * 与 CalibrationStart 的区别：
+ *   - 纯计算，不启动采集、不创建 CSV writer、不创建 runtime
+ *   - 不需要路径归一（无 SavePath）
+ *   - 不需要 ToCore 转换（SevenHoleConfigDTO 直接是 calibration.SevenHoleConfig 别名）
+ * 
+ * 错误处理：配置非法（步长 ≤ 0、范围 min > max）返回 Success=false + Error 透传 GenerateSevenHolePoints 错误。
+ * 注意：无法复用 callMgr（它只返回成功/失败不带 Data），这里手写响应构造。
+ * @param {types$0.SevenHoleConfigDTO} dto
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function CalibrationPreviewSevenHole(dto) {
+    return $Call.ByID(2571500630, dto).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
 }
@@ -280,6 +325,27 @@ export function DeviceUpsertProfile(profile) {
     return $Call.ByID(143177095, profile).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
+}
+
+/**
+ * FileExists 检查指定路径的文件是否存在。
+ * 用于校准 Start 前检测 CSV 文件是否已存在，提示用户决定是否覆盖。
+ * 路径不存在或指向目录时返回 false，不报错。
+ * @param {string} path
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function FileExists(path) {
+    return $Call.ByID(2380099457, path);
+}
+
+/**
+ * GetInstallerLanguage 读取安装程序写入的语言偏好
+ * 安装时在 NSIS 中写入 HKCU\Software\<Company>\<Product>\InstallerLanguage
+ * 返回 "zh"、"en" 或空字符串（未由安装程序设置时）
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetInstallerLanguage() {
+    return $Call.ByID(3938139493);
 }
 
 /**
@@ -498,11 +564,55 @@ export function PickSaveFile(title, defaultFilename, filters) {
 }
 
 /**
- * @returns {$CancellablePromise<usecase$0.ReportStatus>}
+ * RegisterExitConfirmationHook 注册主窗口的 WindowClosing hook，
+ * 拦截 X 按钮关闭流程：未确认时取消默认关闭并向前端推送确认请求事件。
+ * 
+ * 设计要点（基于 Wails v3 alpha2.106 事件分发机制）：
+ *   - 点 X → WM_CLOSE → emit events.Common.WindowClosing → hook 同步先跑 → 默认 listener 后跑
+ *     （默认 listener 会置 unconditionallyClose=1 并调用 impl.close() 真正销毁窗口）
+ *   - hook 内必须调用 event.Cancel() 才能阻止默认 listener 执行，否则窗口立刻关闭
+ *   - hook 内禁止阻塞弹模态对话框（会卡住事件分发），故通过 EmitEvent 异步通知前端
+ *   - 前端 confirm 后调 RequestExit binding，置 userConfirmedExit=true 并触发 application.Quit()
+ *     → cleanup() → window.Close() → hook 再次触发，此时 userConfirmedExit=true 放行
+ * 
+ * 必须在 main.go 中 WailsApp.Run 之前调用，确保 hook 注册先于任何 WindowClosing 事件。
+ * @param {application$0.WebviewWindow | null} win
+ * @returns {$CancellablePromise<void>}
+ */
+export function RegisterExitConfirmationHook(win) {
+    return $Call.ByID(3781615556, win);
+}
+
+/**
+ * RemoveFile 删除指定路径的文件。
+ * 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件，
+ * 让后续追加模式 writer 当作新文件写入（BOM + 表头）。
+ * 路径不存在视为已删除，不报错。
+ * @param {string} path
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function RemoveFile(path) {
+    return $Call.ByID(2642457797, path);
+}
+
+/**
+ * @returns {$CancellablePromise<types$0.ReportStatus>}
  */
 export function ReportGetStatus() {
     return $Call.ByID(2294408909).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType12($result);
+    }));
+}
+
+/**
+ * RequestExit 由前端在用户确认退出对话框后调用。
+ * 置 userConfirmedExit=true 让后续 hook 放行，然后调用 application.Quit() 触发完整退出流程
+ * （cleanup → ServiceShutdown → 关闭所有窗口 → 最后一个窗口关闭后 PostQuitMessage 退出）。
+ * @returns {$CancellablePromise<$models.GenericResponse>}
+ */
+export function RequestExit() {
+    return $Call.ByID(155914504).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
     }));
 }
 
@@ -527,7 +637,7 @@ export function SetParentPID(pid) {
 }
 
 /**
- * @returns {$CancellablePromise<usecase$0.StorageRecordingStatus>}
+ * @returns {$CancellablePromise<types$0.StorageRecordingStatus>}
  */
 export function StorageGetStatus() {
     return $Call.ByID(2686181578).then(/** @type {($result: any) => any} */(($result) => {
@@ -539,7 +649,7 @@ export function StorageGetStatus() {
  * StorageStartRecording 启动数据录制。
  * 接收完整 RecordingConfig（含 StopConditions/FileRotation/Format 等业务级字段），
  * 路径解析统一在后端完成（前端不需要预 resolve），避免双轨配置与重复解析。
- * @param {usecase$0.StorageRecordingConfig} config
+ * @param {types$0.StorageRecordingConfig} config
  * @returns {$CancellablePromise<$models.GenericResponse>}
  */
 export function StorageStartRecording(config) {

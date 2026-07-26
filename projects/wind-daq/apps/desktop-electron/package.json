@@ -1,6 +1,6 @@
 {
   "name": "wind-daq-win7",
-  "version": "0.3.5",
+  "version": "0.10.0-win7.1",
   "private": true,
   "description": "Wind DAQ Windows 7 compatible desktop application",
   "main": "main.cjs",

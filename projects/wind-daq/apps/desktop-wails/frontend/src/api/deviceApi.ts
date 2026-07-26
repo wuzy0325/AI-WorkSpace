@@ -152,10 +152,14 @@ export const deviceApi = {
   },
 
   getStatus: async (id: string): Promise<DeviceStatus> => {
-    // Electron 模式下 wailsApi.device.getStatus 走 HTTP API，
-    // 返回值始终是 DeviceStatus 对象，不再有 Wails 时代的 bool/null 复合返回。
     if (isWailsAvailable()) {
-      return await wailsApi.device.getStatus(id)
+      const result = await wailsApi.device.getStatus(id)
+      // Wails binding 偶尔返回 boolean/null（旧版签名遗留），用 typeof 而非 === true/false
+      // 避免 TS 严格模式判定 DeviceStatus 与 boolean 无交集报错
+      if (result == null || typeof result === 'boolean') {
+        throw new Error('设备状态不可用')
+      }
+      return result as DeviceStatus
     }
     return request<DeviceStatus>(`/api/device/${id}/status`)
   },

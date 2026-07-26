@@ -102,7 +102,8 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		errs := make(chan error, callers)
 		var wg sync.WaitGroup
 		started := time.Now()
-		for range callers {
+		// Go 1.20 不支持 `for range N` 整数迭代（Go 1.22+ 语法），改写为经典三段式
+		for c := 0; c < callers; c++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

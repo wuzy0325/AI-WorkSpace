@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -97,6 +98,10 @@ func ReadProbeChannelsToFiveHoleRaw(
 		"fiveHole.tAtm":          "tAtm",
 		"fiveHole.pTotal":        "pTotal",
 		"fiveHole.pTunnelStatic": "pStatic",
+		// review P1 缺陷修复：补 tTunnel 角色映射，使前端 FiveHoleSettings 必填的
+		// fiveHole.tTunnel 通道能进入 raw data，进而参与 TAT 优先级计算（TTunnel > TAtm）。
+		// 之前 roleMap 缺此条导致 TTunnel 永远为 nil，UI 显示的风洞温度不参与速度计算。
+		"fiveHole.tTunnel": "tTunnel",
 	}
 
 	required := []string{"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm", "pTotal", "pStatic"}
@@ -121,6 +126,11 @@ func ReadProbeChannelsToFiveHoleRaw(
 	}
 	if v, ok := data["pStatic"]; ok {
 		result.PStatic = &v
+	}
+	// TTunnel 可选指针，配置时填充，未配置保持 nil（computeLivePhysicsFromGauge 回退 TAtm）。
+	// 与七孔 TTunnel 语义一致——前端必填但后端兼容旧 config（无 tTunnel 通道时不报错）。
+	if v, ok := data["tTunnel"]; ok {
+		result.TTunnel = &v
 	}
 
 	return result, nil
@@ -197,6 +207,75 @@ func ReadProbeChannelsToTotalPressureRaw(
 	}, nil
 }
 
+// ReadProbeChannelsToSevenHoleRaw 读取七孔探针原始数据（带校验，11 通道）
+//
+// 角色映射（spec §6.1，与 SevenHoleAlgorithm.ValidateConfig 严格对应）：
+//   - sevenHole.p1 ~ p7：7 个压力孔（外围 6 孔 + 中心孔 P7）
+//   - sevenHole.pAtm：大气压力（绝压，A→C 边界转换用）
+//   - sevenHole.tAtm：大气温度（静温/真空速计算用）
+//   - sevenHole.pTotal：风洞参考总压（K0/Ks/Ma 公式分母来源）
+//   - sevenHole.pTunnelStatic：风洞参考静压（Ks/Ma 公式分母来源）
+//
+// 角色命名说明：pTunnelStatic 与五孔保持一致（避免前端 ProbeChannelRole 枚举分裂），
+// 内部映射到 SevenHoleRawData.PStatic 字段（指针类型，缺失时为 nil）。
+//
+// 必需字段全部 11 项——任一缺失返回错误，避免静默用零值产出误导性系数。
+func ReadProbeChannelsToSevenHoleRaw(
+	probeChannels []ProbeChannel,
+	reader ChannelValueReader,
+) (SevenHoleRawData, error) {
+	roleMap := map[string]string{
+		"sevenHole.p1":            "p1",
+		"sevenHole.p2":            "p2",
+		"sevenHole.p3":            "p3",
+		"sevenHole.p4":            "p4",
+		"sevenHole.p5":            "p5",
+		"sevenHole.p6":            "p6",
+		"sevenHole.p7":            "p7",
+		"sevenHole.pAtm":          "pAtm",
+		"sevenHole.tAtm":          "tAtm",
+		"sevenHole.pTotal":        "pTotal",
+		"sevenHole.pTunnelStatic": "pStatic",
+		// Task 13：补充 tTunnel 角色映射，使 TTunnel 优先级在 Status 实时物理量
+		// 与既有 calcMachAndVelocity 路径都能通过通道配置生效。
+		// 之前 roleMap 缺此条导致 TTunnel 永远为 nil（仅测试直接赋值才非 nil）。
+		"sevenHole.tTunnel": "tTunnel",
+	}
+
+	required := []string{"p1", "p2", "p3", "p4", "p5", "p6", "p7", "pAtm", "tAtm", "pTotal", "pStatic"}
+
+	data, err := ReadProbeChannels(probeChannels, reader, roleMap, required, "七孔探针")
+	if err != nil {
+		return SevenHoleRawData{}, err
+	}
+
+	result := SevenHoleRawData{
+		P1:   data["p1"],
+		P2:   data["p2"],
+		P3:   data["p3"],
+		P4:   data["p4"],
+		P5:   data["p5"],
+		P6:   data["p6"],
+		P7:   data["p7"],
+		PAtm: data["pAtm"],
+		TAtm: data["tAtm"],
+	}
+
+	// 指针字段：风洞总压/静压/温度缺失时保持 nil（与五孔/三孔语义一致）
+	if v, ok := data["pTotal"]; ok {
+		result.PTotal = &v
+	}
+	if v, ok := data["pStatic"]; ok {
+		result.PStatic = &v
+	}
+	// Task 13：TTunnel 可选指针，配置时填充，未配置保持 nil（calcMachAndVelocity 回退 TAtm）。
+	if v, ok := data["tTunnel"]; ok {
+		result.TTunnel = &v
+	}
+
+	return result, nil
+}
+
 const (
 	freshnessPollInterval   = 10 * time.Millisecond
 	freshnessDefaultTimeout = 5 * time.Second
@@ -214,21 +293,48 @@ func collectUniqueDeviceIDs(probeChannels []ProbeChannel) []string {
 	return ids
 }
 
+// waitForFreshData 等待所有设备出现新数据帧（兼容入口，不可被 ctx 取消）。
+// 等价于 waitForFreshDataContext(context.Background(), ...)，取消语义仍由 checkAbort 提供。
+// acquiringCheck 非 nil 时：任一设备未在采集期间暂停计算超时（用户停采集可恢复）。
 func waitForFreshData(
 	deviceIDs []string,
 	timestampReader TimestampReader,
 	lastTimestamps map[string]int64,
 	timeout time.Duration,
 	checkAbort func() bool,
+	acquiringCheck AcquisitionStateProvider,
+) error {
+	return waitForFreshDataContext(context.Background(), deviceIDs, timestampReader, lastTimestamps, timeout, checkAbort, acquiringCheck)
+}
+
+// waitForFreshDataContext 等待所有设备出现新数据帧，轮询间隔可被 ctx 取消。
+// ctx 取消时返回 ctx.Err()；checkAbort 触发时返回 ErrPointAborted（保持既有语义）。
+//
+// acquiringCheck（可选）设备采集态查询：若任一设备未在采集（用户主动停采集），
+// 暂停计算超时，响应用户恢复采集后继续完成本点采样——与 traversal 的
+// "等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"的不可恢复局面。
+// 为 nil 时维持原超时失败行为（向后兼容）。
+func waitForFreshDataContext(
+	ctx context.Context,
+	deviceIDs []string,
+	timestampReader TimestampReader,
+	lastTimestamps map[string]int64,
+	timeout time.Duration,
+	checkAbort func() bool,
+	acquiringCheck AcquisitionStateProvider,
 ) error {
 	if len(deviceIDs) == 0 {
 		return nil
 	}
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if checkAbort != nil && checkAbort() {
 			return ErrPointAborted
 		}
+		// 检查是否所有设备都已产出新帧
 		allFresh := true
 		for _, deviceID := range deviceIDs {
 			ts, ok := timestampReader(deviceID)
@@ -244,9 +350,32 @@ func waitForFreshData(
 		if allFresh {
 			return nil
 		}
-		time.Sleep(freshnessPollInterval)
+		// 用户停采集期间只轮询恢复状态，不消耗设备产出新帧的超时预算。
+		if acquiringCheck != nil {
+			anyNotAcquiring := false
+			for _, deviceID := range deviceIDs {
+				if !acquiringCheck(deviceID) {
+					anyNotAcquiring = true
+					break
+				}
+			}
+			if anyNotAcquiring {
+				waitStart := time.Now()
+				if err := sleepContext(ctx, freshnessPollInterval); err != nil {
+					return err
+				}
+				deadline = deadline.Add(time.Since(waitStart))
+				continue
+			}
+		}
+		if time.Now().Before(deadline) {
+			if err := sleepContext(ctx, freshnessPollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
 	}
-	return fmt.Errorf("等待设备新数据超时 (%v)，设备: %v", timeout, deviceIDs)
 }
 
 func recordLastTimestamps(deviceIDs []string, timestampReader TimestampReader, dst map[string]int64) {

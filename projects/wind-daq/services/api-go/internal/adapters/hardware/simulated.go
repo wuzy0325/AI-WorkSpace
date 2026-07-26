@@ -3,7 +3,7 @@ package hardware
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 

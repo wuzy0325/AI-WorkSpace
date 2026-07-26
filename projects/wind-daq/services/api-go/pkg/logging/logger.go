@@ -1,4 +1,4 @@
-// Package logging 提供 wind-daq 项目统一的结构化日志基础设施。
+﻿// Package logging 提供 wind-daq 项目统一的结构化日志基础设施。
 //
 // 设计目标：
 //  1. 同时输出到 stderr（开发态）+ 按天轮转文件（生产态留痕）+ 内存 ring buffer（供前端 SSE 拉取）。
@@ -25,6 +25,15 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// StderrFileSkipCategories 列出在 stderr / file sink 中需要跳过的高频 category。
+//
+// 这些 category 通常每秒产生大量条目（如 hardware-send / hardware-recv 的命令收发帧），
+// 若全部写入文件与终端会刷屏并挤占业务日志；ring buffer 不受此列表影响，前端
+// showHardware 开关通过 catFilter 控制可见性。
+//
+// 新增需跳过的 category 时直接追加到此切片即可，无需改 Init 逻辑。
+var StderrFileSkipCategories = []string{"hardware-send", "hardware-recv"}
 
 // Options 描述 logger 初始化参数。
 type Options struct {
@@ -150,14 +159,17 @@ func Init(opts Options) (*Manager, error) {
 	// 创建 category 过滤器：默认全启用，共享给 RingHandler 和 Manager
 	catFilter := &categoryFilter{enabled: make(map[string]bool)}
 
-	// 构造 sinks：ring（带 category 过滤）/ stderr / file 三路并发
-	// RingHandler 在写入前检查 catFilter，stderr 和 file 不受影响
+	// 构造 sinks：ring（带 category 过滤）/ stderr / file 三路并发。
+	// stderr / file sink 用 CategorySkipHandler 包装，跳过 StderrFileSkipCategories
+	// 列出的高频 category，避免命令收发帧刷屏文件与终端；ring buffer 不受影响，前端
+	// showHardware 开关通过 catFilter 控制可见性。
 	sinks := []slog.Handler{NewRingHandler(ring, levelVar, catFilter)}
 	if opts.WriteStderr {
-		sinks = append(sinks, slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level:     levelVar,
 			AddSource: opts.AddSource,
-		}))
+		})
+		sinks = append(sinks, NewCategorySkipHandler(stderrHandler, StderrFileSkipCategories))
 	}
 
 	var fileSink *dailyRotatingWriter
@@ -167,10 +179,11 @@ func Init(opts Options) (*Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("logging: open log dir %q failed: %w", opts.LogDir, err)
 		}
-		sinks = append(sinks, slog.NewTextHandler(fileSink, &slog.HandlerOptions{
+		fileHandler := slog.NewTextHandler(fileSink, &slog.HandlerOptions{
 			Level:     levelVar,
 			AddSource: opts.AddSource,
-		}))
+		})
+		sinks = append(sinks, NewCategorySkipHandler(fileHandler, StderrFileSkipCategories))
 	}
 
 	fanout := newFanoutHandler(sinks...)

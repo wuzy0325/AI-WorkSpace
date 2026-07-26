@@ -7,17 +7,16 @@ import { useI18nStore } from '@stores/i18nStore'
 
 const i18n = useI18nStore()
 
-// 关闭当前独立窗口。
-// 在 Electron 桌面端：window.close() 会触发 main.cjs 中 motionWindow 的 'closed' 事件，
-// 主进程随之 kill motion-only 子进程并清理 motionBackendProcess 引用。
-// 在浏览器开发态：window.close() 关闭当前标签页（或被浏览器拦截，无害）。
+// 关闭当前独立窗口（退出独立进程）
+// Win7/Electron 分支：window.close() 关闭 BrowserWindow；
+// 主进程 main.cjs 的 motionWindow.on('closed') 不会自动 kill 后端进程，
+// 但 motion-only 子进程通过 --parent-pid 监听父进程退出，主进程退出时子进程自杀。
 async function closeWindow(): Promise<void> {
   window.close()
 }
 
 // 根据当前语言同步独立窗口标题
-// Electron 下不支持 Window.SetTitle，通过 document.title 设置窗口标题
-function syncWindowTitle(): void {
+async function syncWindowTitle(): Promise<void> {
   document.title = i18n.t.motion_windowTitle
 }
 

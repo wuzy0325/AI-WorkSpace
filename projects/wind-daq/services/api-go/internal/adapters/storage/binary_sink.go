@@ -1,4 +1,4 @@
-// binary_sink.go 二进制存储适配器实现。
+﻿// binary_sink.go 二进制存储适配器实现。
 //
 // BinaryRecordingSink 用于 1kHz × 10 设备以上场景下的高吞吐存储：
 //   - 文件头：固定 16 字节，包含 magic + version + 保留字段

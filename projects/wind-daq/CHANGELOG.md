@@ -1,6 +1,440 @@
 # Changelog
 
+## [0.10.0] - 2026-07-24
+
+### Added
+
+- LogViewer 新增硬件收发命令日志（hardware-send / hardware-recv）可见化能力，新增 `showHardware` 开关。
+
+### Changed
+
+- 模拟控制器直线轴默认速度调整为 4；WTNMC4A 轴创建时默认微步设为 4。
+- 抽取 `LogEntryRow.vue` 重构日志视图，日志单行显示、按钮风格统一、标题栏新增中英文切换。
+
+### Fixed
+
+- 修复 NSIS 安装包中文文案乱码（mojibake → UTF-8）。
+- 修复探针参考 β 角计算错误。
+- 修复 1000Hz 采集下高频硬件日志刷屏问题（新增 `CategorySkipHandler`）。
+
+### Compatibility
+
+- 配置文件格式：兼容；新增字段均为可选字段，旧配置继续使用默认值。
+- 数据文件格式：兼容；本次变更不涉及数据文件格式变化。
+- 设备协议行为：无不兼容变化。
+
+### Verification
+
+- `go build -buildvcs=false ./...` / `go vet ./...` / `go test ./internal/... ./api/...`: passed
+- `npm run test`: passed（19 文件，250 测试）
+- `task check-bindings`: passed（57/57）
+- `task release` + `makensis` + `task archive-release`: passed
+- 生产 EXE 冒烟测试: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名；无头环境无法完整渲染 GUI（WebView2 focus/eval 报错）。
+
+## [0.9.0] - 2026-07-22
+
+### Added
+
+- 新增七孔探针校准完整工作流，覆盖分区采样、实时图表、系数计算、不确定度分析及校准数据持久化。
+- 遍历配置新增七孔探针与五孔 PRB 能力，支持对应插值器加载、探针参数配置和实时结果展示。
+- 自定义布点支持逐点覆盖运动位置与采集参数，可按测点配置差异化测试工况。
+
+### Changed
+
+- 校准与遍历的运动安全设置统一使用产品默认值，减少现场配置负担。
+- 探针校准速度显示与保存精度统一为 3 位小数。
+
+### Fixed
+
+- 修复长距离或低速遍历运动超过 120 秒后，机构仍在正常运行却被误判为超时的问题。
+- 修复用户临时停止设备采集后，遍历和校准无法在恢复采集后继续完成当前测点的问题。
+- 修复校准等待新帧时把停采时间计入超时预算，导致临近截止时间恢复仍被误判超时的问题。
+- 修复桌面端与独立 API 装配路径遗漏校准采集状态控制器的问题。
+- 恢复 Wails 前后端官方配对版本，避免 runtime 协议不一致引发调用失败。
+- 完成 Wind-DAQ 全量代码审查整改，覆盖校准生命周期、并发访问、数据校验与错误传播等问题。
+
+### Compatibility
+
+- 配置文件格式：兼容；新增字段均为可选字段，旧配置继续使用默认值。
+- 数据文件格式：兼容；新增七孔校准数据不改变既有五孔、三孔、总压和总温文件格式。
+- 设备协议行为：无不兼容变化。
+
+### Verification
+
+- `go test ./internal/... ./api/... ./pkg/...`
+- `go test -race ./internal/core/calibration ./internal/usecase`
+- `go vet ./internal/... ./api/... ./pkg/...`
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis /INPUTCHARSET UTF8` 构建安装包
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+
+## [0.8.0] - 2026-07-18
+
+### Added
+
+- 遍历采集支持多设备并行采集，采集结果按设备/通道归并写入。
+- 遍历 CSV 计算结果新增 `StartedAt` / `CompletedAt` 两列：记录单点采集真实起止时间戳（秒级，与 `Timestamp` 列格式一致），用户可直接用 `CompletedAt - StartedAt` 算出单点总耗时，不再依赖"点数×10ms"回填公式。0 值写空字符串，兼容旧数据/异常路径。
+- 自定义布点步骤内新增运动轴绑定，布点与运动轴配置合并到同一步骤。
+
+### Changed
+
+- 自定义布点交互改造：布点 UX 重排，运动轴绑定迁入布点步骤。
+- 实时刷新率统一到全局 `storageStore.settings.refreshRateHz`（默认 5Hz）：遍历实时插值节流间隔改为派生自全局刷新率，压力卡片与插值卡片同频，消除"刷新节奏不一致"的视觉错位。移除独立的 `useUiRefreshThrottle` composable。
+
+### Fixed
+
+- 无有效样本失败时记录设备应答与通道索引，便于现场定位。
+
+### Internal
+
+- 校准 JSON 序列化测试从 core 迁移到 adapters/storage 层，符合分层边界。
+- 七孔校准 spec/plan/tasks 文档与 skill 脚本补充。
+- `http-client` 测试冻结 `Date.now`，修复 `deviceApi.pollLatest` 中 `setTimeout` 首次参数从 50 变 49 的 flaky。
+
+### Verification
+
+- `go test ./...`
+- `npm run typecheck`
+- `npm run build`
+- `npm run test`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+- 冒烟测试：启动新构建产物确认 GUI 正常
+
+### Known Issues
+
+- 暂无。
+
+### Compatibility
+
+- 数据文件格式：兼容。CSV 仅新增可选列 `StartedAt` / `CompletedAt`，旧文件与旧解析逻辑仍可用。
+- 配置文件格式：兼容。
+- 设备协议行为：无变化。
+
+## [0.7.0] - 2026-07-15
+
+### Added
+
+- 运动安全机制：遍历与校准运行过程中按轴实时监控目标-实际偏差、临界偏离、限位触发、卡死无进展等异常，触发即停止运动并快照现场。
+- 共享组件 `MotionSafetyAlertCard`（故障现场卡片，红色急停 / 橙色停止双色）与 `MotionSafetyPanel`（运动安全配置面板）。
+- 遍历设置面板新增运动安全配置区，支持全局与按轴覆盖（到达容差、临界偏离限、无进展超时、进展阈值）。
+- 五种校准类型（五孔 / 三孔 / 总压 / 总温 / 总压探针）设置面板与主界面接入运动安全配置与告警展示。
+- 运动安全 spec 文档：`spec-traversal-motion-safety.md` 与 `spec-calibration-motion-safety.md` 共同构成需求契约。
+
+### Changed
+
+- b140 / wtnmc4a 控制器停止 / 急停逻辑收敛：`stopAllAxesLocked` 共享、`resolveStartMove` / `resolveStopAxis` 测试 seam 统一。
+- `coalesceFloat64Ptr` / `coalesceIntPtr` 统一 `MotionSafetyConfig.Resolve` / `Merge` 的指针字段合并语义。
+- 前端 `getMotionSafetyVerdictLabel` 共享函数消除两处独立 switch 实现。
+
+### Fixed
+
+- 校准运动等待竞态：运动安全机制接入后等待逻辑收敛到统一时序。
+- WTNMC4A 急停标志位时序：先置位 `EmergencyStopped` 再调用停止，避免停止执行期间其他 goroutine 发起新运动命令的时间窗。
+
+### Internal
+
+- 后端新增 `traversal_motion_watchdog` 看门狗与 `MotionSafetyConfig` / `MotionSafetyFailure` / `MotionSafetyVerdict` 类型体系。
+- 新增 `traversal_motion_safety_test` / `calibration_motion_safety_test` 覆盖 verdict 判定、看门狗触发、急停锁存、按轴停止等关键路径（+2380 行测试）。
+- Wails binding 同步：重新生成 traversal / calibration / device 的 JS binding，新增 `internal/core/traversal/` 目录。
+- `.gitignore` 追加 `.codebuddy/` / `.trae/` / `.opencode/` 三条 AI 工具私有目录规则。
+
+### Verification
+
+- `go build ./...`
+- `go test ./internal/core/... ./internal/usecase/... ./internal/ports/...`
+- `go test ./...` (device-sdk/go/motion)
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+- 运动安全机制目前仅覆盖遍历与校准运行场景，手动 Jog / MoveTo 不接入监控。
+
+## [0.6.0] - 2026-07-14
+
+### Added
+
+- 设备类型扩展：`DeviceTypeDAQP1603`、`DeviceTypeDAQT1603` 等新设备类型支持。
+- 默认配置迁移：新增默认配置版本迁移逻辑，支持旧配置文件自动升级。
+- 默认配置测试：`default_profiles_test.go` 新增 94 行测试覆盖。
+
+### Changed
+
+- DAQ-P-1603 配置面板（DaqP1603Config）UI 改进。
+- 设备管理抽屉（DeviceManagementDrawer）UI 优化。
+- `shared/device-sdk` 核心类型扩展：新增设备类型常量。
+- i18n 补充：覆盖新增设备类型文本。
+- 安装程序语言选择后不再卡顿：WebView2 安装移至正式安装阶段，并保留离线包优先、在线下载回退能力。
+
+### Fixed
+
+- 修复 DAQ-P-1603 已关闭“校零应用”的通道仍可发起校零的问题；全部校零会跳过这些通道，并保持用户的使能设置。
+- 修复设备所有压力通道均关闭“校零应用”后，前端设备级校零按钮仍可点击的问题。
+
+### Internal
+
+- `shared/device-sdk/go/daq/core/types.go` 新增设备类型枚举值。
+- `internal/core/device/types.go` 同步扩展。
+- `internal/adapters/config/migration.go` 新增迁移入口。
+- `internal/adapters/config/default_profiles.go` 新增默认配置项。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.4] - 2026-07-13
+
+### Changed
+
+- 遍历采集采样循环日志增强：区分"设备无数据"与"通道不匹配"两类失败，便于排查采集异常。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.3] - 2026-07-13
+
+### Changed
+
+- 遍历活动索引（TraversalActiveIndex）重构：接口简化，逻辑清理。
+- 遍历采集（traversal_acquisition）微调。
+
+### Internal
+
+- 新增 `traversal_acquisition_test.go` 测试覆盖。
+- `traversal_active_index_test.go` 更新适配重构。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.2] - 2026-07-13
+
+### Added
+
+- 校准授权对话框（`CalibrationLicenseDialog`）：首次进入校准功能时展示授权信息，支持确认/关闭交互。
+- 前端 i18n 补充：`i18nStore` 新增 36 条翻译项，覆盖新增授权对话框及面板文本。
+
+### Changed
+
+- 遍历步骤面板（TraversalLayoutStep）UI 改进（对齐新配置步骤顺序 Hardware→Probe→Layout→Review）。
+- MotionView 控制器配置 UI 优化。
+- MainDashboardView 布局调整。
+
+### Fixed
+
+- 安装程序语言选择对话框中文乱码：`MUI_LANGDLL_INFO` 中文字符修复。
+- DAQ-P-1604 校零范围限制：大气压/温度辅助通道禁止校零操作。
+- 遍历前置检查纳入运动控制器连接态检测：避免"已装配但全部离线"时仍显示绿色就绪状态。
+- 五孔探针 PRB 插值算法重构：精简代码约 160 行，提高可维护性。
+
+### Behavior Changes
+
+- 五孔探针 PRB 插值器：超范围输入（压力系数落在 ±30° 校准网格凸包外）不再钳位到角点 (±30, ±30)；
+  改为返回 `IsValid=false` 并附 Warning `"压力系数超出PRB校准网格，旧算法不支持外推"`。
+  下游消费者需显式处理 `IsValid=false` 路径。
+
+### Changed
+
+- 遍历配置步骤顺序调整：Hardware → Probe → Layout → Review。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.1] - 2026-07-13
+
+### Fixed
+
+- DAQ-P-1604 校零范围限制：大气压/温度辅助通道禁止校零操作，防止误操作导致设备状态异常。
+- 遍历前置检查改进：纳入运动控制器连接态检测，避免"已装配但全部离线"时仍显示绿色就绪状态。
+
+### Changed
+
+- 遍历配置步骤顺序调整：由原顺序改为 Hardware → Probe → Layout → Review，优化用户体验。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.5.0] - 2026-07-13
+
+### Added
+
+- 遍历测点 Point JSON 序列化（`point_json.go`）：NaN↔null 往返契约，支持 line/rectangle/sector 模式未配置轴标记，运动恢复语义完整保留。
+- 遍历输出路径集中管理（`output_path.go`）：`ResolveOutputPath` 统一路径派生，消除 CSV/checkpoint/result log 路径碎片。
+- 跨平台原子文件操作：`atomic_replace.go` 拆分为 `atomic_replace_common.go` / `_unix.go` / `_windows.go`，支持 Windows 平台安全原子替换。
+- 遍历 v2 端口集成测试（`traversal_v2_integration_test.go`，593 行）：覆盖 Resume 截断、ValidateTail 抗损坏、列配置 Open 路径、旧格式兼容性、NaN 往返一致性。
+- 遍历 CSV writer 崩溃恢复可靠存储：表头 fsync 落盘、`openCreateUnique` 自动编号防覆盖、双重初始化防御、`applyConfigLocked` 共享列配置逻辑。
+- 前端 i18n 国际化补充：FiveHoleMain 模板文案、探针校准入口、设备详情面板。
+
+### Changed
+
+- 遍历采集 `commitPointV2` 三阶段提交增加 NaN 清洗（设备层异常防御），Point 字段 NaN 保持运动恢复语义，Calculated 字段 NaN 清洗为 0。
+- 遍历断点重构：`FileCheckpointPort` 增加 `Close` 和 `checkOpen`，`FileCheckpointPortFactory.Create` 接受 `ctx` 参数。
+- 遍历活动索引安全加固：`validatePath` 增加 `.` 禁止和 store-based read，防止路径遍历攻击。
+- 遍历结果日志：`TraversalResultLog.Open` 支持 `openCreateUnique` 自动编号，与 CSV 行为一致。
+- 编译期接口断言哨兵：`TraversalCsvWriter`（2 个：TraversalCSVPort + TraversalPointSink）、`FileCheckpointPort`、`FileCheckpointPortFactory`、`FileCheckpointStore`、`TraversalActiveIndex`、`TraversalResultLog` 共 7 个断言，覆盖 6 个 adapter 文件。
+- 前端设备面板优化：DeviceCard、ChartSelector、DeviceDetailPanel UI 调整。
+
+### Fixed
+
+- 修复遍历 Resume 时旧格式 checkpoint（SavePath=目录）被当文件传给 Open 的 bug，通过 `ResolveOutputPath` 重算修复。
+- 修复遍历 CSV 表头在 v2 Open 路径缺少通道列的问题（`applyConfigLocked` 共享逻辑）。
+- 修复遍历 Resume 时 CSV 文件因已存在直接报错拒绝启动，改为自动编号另存。
+- 修复遍历断点文件在 v2 装配下双重初始化导致句柄泄漏 + 文件残留。
+- 修复 Point JSON 序列化 NaN 导致 `json.Marshal` 返回 "unsupported value: NaN" 错误。
+
+### Internal
+
+- 遍历核心类型 `types.go` 增加 SaveOptions、CustomFields 等结构字段。
+- `ports/traversal.go` 接口扩展（TraversalCSVPort、TraversalCheckpointPort.Close 等）。
+- 遍历 usecase 大幅重构：checkpoint 加载/保存、acquisition 状态管理、session 生命周期。
+- `traversal_checkpoint_test.go` 适配新接口签名。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.4.1] - 2026-07-10
+
+### Changed
+
+- 遍历测试 UI 样式优化：PointsPreview 布点画布增强（渐变背景、轨迹线、立体点渲染），WorkspaceArea 顶栏极简化（去掉装饰条、分隔线分组），TopBar 状态指示改用圆点+文字替代徽章、进度条颜色对齐主题色。
+- 整体视觉更轻盈现代，降低视觉重量。
+
+### Internal
+
+- 3 个 Vue 组件纯前端样式调整，无逻辑或接口变更。
+
+### Verification
+
+- `npm run typecheck`
+- `npm run build`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
+## [0.4.0] - 2026-07-10
+
+### Added
+
+- 全面国际化 i18n 重构：新增 `i18nStore` 全局语言管理，覆盖设备、校准、遍历、存储、布局、设置等所有 UI 模块的中英文切换。
+- 遍历测试 UI 大改：左侧栏与布点画布 UI 全面优化，前端补算预估剩余时间。
+- 校准采样进度实时反馈：自动校准流程增加进度上报，用户可实时观察采样状态。
+- 三孔系数重命名与马赫数指针化：`Kt→K0`、`Sb→Kv`，马赫数改用指针避免零值歧义。
+- 总温 CSV 修复：表头与单位修正，适配中文表头。
+- DAQ-T1603 Win7 兼容版温度采集程序（`projects/daq-t1603-win7-python/`）：纯 Python 实现，支持 Win7 无 .NET 环境。
+
+### Changed
+
+- 五孔/三孔/总压/总温校准 UI 全面重构：组件拆分、配置面板重排、表单校验增强。
+- 日志查看器（LogViewer）布局重构：更清晰的过滤器与日志流展示。
+- DeviceManagementDrawer 重构：设备管理抽屉布局优化。
+- `shared/device-sdk` DAQ-P-1603 驱动重构：FFI 超时参数传指针修复 readLoop 立即退出，提升长时间采集稳定性。
+- 存储设置（StorageSettings）与全局设置（GlobalSettings）重构：对齐新 i18n 体系。
+
+### Fixed
+
+- 修复遍历测试中绝压假表压与混合单位输入的问题：`traversal_view.go` 单位转换逻辑修正 + 单元测试覆盖。
+- 修复 DAQ-P-1603 FFI timeout 参数传指针导致 readLoop 立即超时退出。
+
+### Internal
+
+- `i18nStore` 新增 1078 行中英文字典，覆盖全部 UI 模块。
+- 校准 CSV writer 新增中文表头支持（BOM 前缀）。
+- 前端 `useCalibrationWorkflow` composable 重构，优化校准状态管理。
+- 后端 `calibration_total_temperature_csv_test.go`、`total_pressure_test.go` 等新增测试。
+
+### Verification
+
+- `go test ./...`
+- `go build -buildvcs=false ./...`
+- `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
+- `npm run typecheck`
+- `npm run build`
+- `makensis` 构建安装包
+
+### Known Issues
+
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.3.5] - 2026-07-06
+
+### Added
+
+- 校准采集数据新鲜度检查：各算法在多次采样间通过设备时间戳判断是否新帧，避免重复读取缓存旧数据导致标准差为0。
 
 ### Changed
 
@@ -13,15 +447,15 @@
 - 校准核心类型定义重构（types.go），预定义通道转换为运行时初始化。
 - CSV 格式定义（csv_schema.go）重构，统一各算法表头生成。
 - 前端校准工作流 composable（useCalibrationWorkflow）重构，优化状态管理。
+- 新增 TimestampReader 类型与 AcquisitionHub.GetLatestTimestamp，校准引擎注入到 Config.TimestampReader。
+- total_pressure.go fallback sleep 恢复 BatchPollIntervalMs 配置感知。
 
 ### Verification
 
-- `go test ./internal/... ./api/...`
-- `npm run typecheck`
-- `npm run build`
+- `go test ./...`
+- `go build -buildvcs=false ./...`
 - `go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`
 - `makensis` 构建安装包
-- 冒烟测试
 
 ### Known Issues
 

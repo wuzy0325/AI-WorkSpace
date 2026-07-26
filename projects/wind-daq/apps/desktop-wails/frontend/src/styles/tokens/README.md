@@ -4,7 +4,7 @@
 
 ## Token Files
 
-- `color.css` owns semantic color, status color, surfaces, borders, focus, selection, channel colors, and axis colors.
+- `color.css` owns semantic color, status color, surfaces, borders, focus, selection, channel colors, axis colors, and chart chrome (`--chart-*`).
 - `spacing.css` owns spacing scale values such as `--space-1`, `--space-2`, `--space-3`, and `--space-4`, plus the `--density-*` semantic tokens for configuration surfaces (see DESIGN.md «Density Spec»).
 - `typography.css` owns font families, font sizes, weights, line heights, and dashboard-specific type aliases.
 - `radius.css` owns radius values.
@@ -12,6 +12,24 @@
 - `layout.css` owns app shell dimensions, panel gaps, and content padding.
 
 Theme overrides live in `styles/themes/`. The application-level Naive UI mapping lives in `App.vue`.
+
+### Chart tokens (`--chart-*`)
+
+Used by live waveforms, calibration plots, and history charts. **Do not** reuse `--axis-*` for chart axes — `--axis-*` is reserved for motion/traversal spatial axes.
+
+| Token | Use |
+|---|---|
+| `--chart-bg` | Plot background |
+| `--chart-grid-line` / `--chart-grid-line-faint` | Grid |
+| `--chart-axis-text` / `--chart-axis-line` | Tick labels and axis baseline |
+| `--chart-crosshair` | Hover crosshair |
+| `--chart-cursor` | User-placed marker |
+| `--chart-selection-fill` / `--chart-selection-stroke` | Brush/zoom rect |
+| `--chart-band-warning` / `--chart-band-danger` | Threshold bands |
+| `--chart-out-of-range` | Out-of-range segment color |
+| `--chart-readout-bg` | Readout bar under the plot (outside the series area) |
+
+Specs: `docs/design/chart-spec.md`, `docs/design/monitor-workspace-spec.md`.
 
 ## Naming Rules
 

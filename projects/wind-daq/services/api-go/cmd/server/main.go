@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"shared.local/device-sdk/go/ffi"
 
 	"wind-daq/services/api-go/internal/bootstrap"
 	"wind-daq/services/api-go/pkg/debugserver"
@@ -26,6 +28,11 @@ func main() {
 		}()
 		slog.Info("日志系统已初始化", "component", "main", "logDir", logDir, "level", "info")
 	}
+
+	// 初始化 WTNDAQ16H DLL（DAQ-P-1603 16 通道 AI 采集设备所需）。
+	// 路径：环境变量 WTNDAQ16H_DLL_PATH 或可执行文件同目录。
+	// 加载失败不阻止启动——无 DAQ-P-1603 设备时仍可正常使用其他设备类型。
+	ffi.InitWTNDAQ16HFromEnv()
 
 	// 获取 ring buffer 和 manager，传递给 API server（用于日志 SSE 端点和分类开关）
 	var ringBuf *logging.RingBuffer
@@ -54,6 +61,13 @@ func main() {
 	}
 
 	slog.Info("wind-daq api server starting", "addr", server.Address)
+	// BLOCKER（code-review T03，待人工复核）：standalone server 无 context 所有权
+	// （http.ListenAndServe 阻塞至进程被杀），且 bootstrap.APIServer 不暴露
+	// CalibrationManager，无法在此最小收口校准任务的 shutdown。
+	// 校准 session 的有界停止目前仅覆盖 Wails ServiceShutdown（app.go）与
+	// context-owned apiserver（pkg/apiserver）。进程被强杀时校准 worker 的
+	// writer flush/结果保存/归零可能中断。修复需要 bootstrap.APIServer 暴露
+	// manager 并引入 signal.NotifyContext 关停路径，超出 T03 最小改动范围。
 	if err := http.ListenAndServe(server.Address, server.Handler); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)

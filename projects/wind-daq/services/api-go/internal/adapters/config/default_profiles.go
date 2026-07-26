@@ -10,6 +10,7 @@ import (
 // 注意：此函数包含基础设施默认值（IP地址、端口等），属于 adapter 层职责
 func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 	profile := device.Profile{
+		Version:      device.CurrentProfileVersion,
 		ID:           id,
 		Name:         id,
 		Type:         deviceType,
@@ -28,8 +29,9 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 	case device.DeviceDAQP1603:
 		// DAQ-P-1603：DLL 内部封装 TCP，profile.Address 留空让用户在 UI 手动输入。
 		// Port 字段对 1603 无意义（DLL 自管端口），保留 0 占位。
-		// 默认采样率 500Hz，与项目 spec 中 DAQ-P-1603 采样率上限一致。
-		profile.SamplingRate = 500
+		// 默认采样率 100Hz（用户采样率=每秒数据条目数）。
+		// 底层硬件采样率固定 1000Hz，100Hz 意味着每 10 个原始点取平均输出 1 条。
+		profile.SamplingRate = 100
 		profile.Channels = defaultDAQP1603Channels()
 	case device.DeviceDaqT1603:
 		profile.Address = "192.168.3.101"
@@ -56,12 +58,37 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		profile.Port = 5000
 		profile.Channels = defaultDSA3217Channels()
 	}
+	converter := device.NewUnitConverter()
+	for i := range profile.Channels {
+		// 默认规则：支持校零的单位 → 启用校零。
+		// DAQ-P-1603 设备特殊默认：CH01/CH02（index 0/1）强制关闭校零应用，
+		// 覆盖按单位推断的结果。前两路通常接入参与校零的传感器
+		// （如总压/静压参考通道），与 DAQ-P-1604"全部启用"默认区分。
+		profile.Channels[i].CalibrationEnabled = converter.SupportsZeroCalibration(profile.Channels[i].Unit)
+		if profile.Type == device.DeviceDAQP1603 && i < 2 {
+			profile.Channels[i].CalibrationEnabled = false
+		}
+	}
 	return profile
 }
 
 // NormalizeProfile 补全配置中的缺失字段（使用硬件默认值填充）
-// 注意：此函数依赖硬件特定默认值，属于 adapter 层职责
+// 注意：此函数依赖硬件特定默认值，属于 adapter 层职责。
+//
+// 执行顺序：先 v1→v2 迁移（TareOffset→CalibrationOffset），再补全缺失字段。
+// 迁移幂等：Version >= 2 跳过。
 func NormalizeProfile(profile device.Profile) device.Profile {
+	// v1→v2 迁移：TareOffset → CalibrationOffset（在补全默认值之前执行，
+	// 因为旧 TareOffset 需在通道被重置前完成迁移）
+	profile = migrateProfile(profile)
+	converter := device.NewUnitConverter()
+	for i := range profile.Channels {
+		supports := converter.SupportsZeroCalibration(profile.Channels[i].Unit)
+		if profile.Type != device.DeviceDAQP1603 {
+			profile.Channels[i].CalibrationEnabled = supports
+		}
+	}
+
 	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603
 	var defaultProfile device.Profile
 	if needsDefaultProfile {
@@ -269,6 +296,12 @@ func defaultP1604PreAtmTempChannel() device.ChannelConfig {
 // 每通道默认单位 Pa，精度 3 位小数（适配 ±10V 量程下的小信号）。
 // 通道传感器类型（pressure/temperature）由前端 DaqP1603Config.vue 配置，
 // 不在默认 profile 中预设，避免与 ChannelConfig.SensorType 反序列化兜底逻辑冲突。
+//
+// 设备特殊默认：CH01/CH02（index 0/1）默认不应用校零（CalibrationEnabled=false）。
+// 业务原因：DAQ-P-1603 前两路通常接入不参与校零的传感器（如总压/静压参考通道），
+// 与其他 16 通道压力设备（DAQ-P-1604）的"全部启用校零"默认行为有意区分。
+// 注意：此处的值会被下方 NewDefaultProfile 末尾的"按单位 SupportsZeroCalibration 重置"
+// 覆盖，因此把 1603 的关闭逻辑挪到该重置循环中按 Type 判断，确保不被覆盖。
 func defaultDAQP1603Channels() []device.ChannelConfig {
 	channels := make([]device.ChannelConfig, 16)
 	for i := range channels {
@@ -286,8 +319,10 @@ func defaultDAQP1603Channels() []device.ChannelConfig {
 }
 
 func defaultWTNPXIChannels() []device.ChannelConfig {
-	names := []string{"球罐压力", "球罐总压", "球罐静压", "球罐温度1", "球罐温度2", "球罐温度3", "球罐温度4", "球罐温度5"}
-	units := []string{"Pa", "Pa", "Pa", "degC", "degC", "degC", "degC", "degC"}
+	// 通道 3 是球罐稳定时间（秒），由 sphere tank gate 逻辑读取并解析为稳定时间，
+	// 通道 4~7 是 4 路球罐温度。原"球罐温度1"位置被稳定时间通道占用，温度顺延。
+	names := []string{"球罐压力", "球罐总压", "球罐静压", "球罐稳定时间", "球罐温度1", "球罐温度2", "球罐温度3", "球罐温度4"}
+	units := []string{"Pa", "Pa", "Pa", "s", "degC", "degC", "degC", "degC"}
 	channels := make([]device.ChannelConfig, 8)
 	for i := range channels {
 		channels[i] = device.ChannelConfig{

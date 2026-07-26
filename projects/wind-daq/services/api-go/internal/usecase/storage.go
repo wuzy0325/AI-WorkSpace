@@ -1,4 +1,4 @@
-// Package usecase 提供数据保存领域的用例编排。
+﻿// Package usecase 提供数据保存领域的用例编排。
 //
 // StorageRecorder 是 usecase 层对 ports.RecordingSink 的封装：
 //   - 提供 Start/Stop/Status 简单 API 给 API/Wails 层调用

@@ -63,10 +63,63 @@ export class ChannelConfig {
         }
         if (/** @type {any} */(false)) {
             /**
+             * 【废弃】TareOffset 瞬时归零偏移，v2 迁移后由 CalibrationOffset 接管。
+             * 迁移逻辑见 adapters/config/migration.go。保留字段以确保向后兼容旧 JSON 反序列化。
              * @member
              * @type {number | undefined}
              */
             this["tareOffset"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * SensorType 通道传感器类型（pressure/temperature），仅 DAQ-P-1603 使用。
+             * 旧 profile（含 DAQ-P-1604 / DAQ-T-1603 / 历史 SIMULATED）无此字段，
+             * 反序列化时由 UnmarshalJSON 兜底为 "pressure"，
+             * 保证读路径拿到的 ChannelConfig 永远有合法 SensorType 值，避免业务层到处判空。
+             * @member
+             * @type {ChannelSensorType | undefined}
+             */
+            this["sensorType"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * ---- v2 校零字段 ----
+             * CalibrationOffset 校零偏移值（已转为基单位，如 Pa/℃）。
+             * 零值表示未校零。CalibrationApplier 将此值从 DataPayload.Channels 中减去。
+             * @member
+             * @type {number | undefined}
+             */
+            this["calibrationOffset"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CalibrationUnit 校零时的原始单位（如 "kPa"、"℉"），用于迁移校验与审计。
+             * 注意：存储值已转为基单位，此字段仅作元数据记录，不参与实时计算。
+             * @member
+             * @type {string | undefined}
+             */
+            this["calibrationUnit"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * CalibrationAt 校零时间戳（unix ms），用于 UI 展示"上次校零于 xxx"。
+             * @member
+             * @type {number | undefined}
+             */
+            this["calibrationAt"] = undefined;
+        }
+        if (!("calibrationEnabled" in $$source)) {
+            /**
+             * CalibrationEnabled 校零使能开关（仅 DAQ-P-1603 在 UI 暴露逐通道配置）。
+             * 关闭时 CalibrationApplier 跳过该通道偏移。其他设备默认 true。
+             * 注意：不使用 omitempty——false 是用户主动设置的合法值（"该通道不应用校零"），
+             * 若加 omitempty，序列化（持久化 / HTTP 回读 / Wails binding）会丢弃该字段，
+             * 导致前端 draft 被回读值覆盖后 UI 复选框跳回勾选状态，给用户造成"无法保存"的假象。
+             * 与 Enabled 字段保持一致：布尔关必须显式输出，区分"未设置"与"显式 false"。
+             * @member
+             * @type {boolean}
+             */
+            this["calibrationEnabled"] = false;
         }
 
         Object.assign(this, $$source);
@@ -82,6 +135,30 @@ export class ChannelConfig {
         return new ChannelConfig(/** @type {Partial<ChannelConfig>} */($$parsedSource));
     }
 }
+
+/**
+ * ChannelSensorType 通道传感器类型枚举（仅 DAQ-P-1603 使用）。
+ * 字面量与 shared/device-sdk/go/daq/core.ChannelSensorType 保持一致，
+ * 保证 adapter 层做类型翻译时无需额外转换。
+ * @readonly
+ * @enum {string}
+ */
+export const ChannelSensorType = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    /**
+     * SensorPressure 压力通道（Pa/kPa/MPa/mmH2O）
+     */
+    SensorPressure: "pressure",
+
+    /**
+     * SensorTemperature 温度通道（℃/℉）
+     */
+    SensorTemperature: "temperature",
+};
 
 /**
  * @readonly
@@ -218,6 +295,22 @@ export class DataPayload {
              */
             this["deviceId"] = "";
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * 设备类型，用于 sink 路由（如 CSV 按设备类型分派宽/长格式）
+             * @member
+             * @type {Type | undefined}
+             */
+            this["deviceType"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * 设备名（profile.Name），用于生成人类可读的文件名（比 UUID 友好）
+             * @member
+             * @type {string | undefined}
+             */
+            this["deviceName"] = undefined;
+        }
         if (!("timestamp" in $$source)) {
             /**
              * @member
@@ -257,14 +350,14 @@ export class DataPayload {
      * @returns {DataPayload}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType0;
-        const $$createField4_0 = $$createType1;
+        const $$createField5_0 = $$createType0;
+        const $$createField6_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField3_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField5_0($$parsedSource["channels"]);
         }
         if ("channelIndices" in $$parsedSource) {
-            $$parsedSource["channelIndices"] = $$createField4_0($$parsedSource["channelIndices"]);
+            $$parsedSource["channelIndices"] = $$createField6_0($$parsedSource["channelIndices"]);
         }
         return new DataPayload(/** @type {Partial<DataPayload>} */($$parsedSource));
     }
@@ -274,6 +367,11 @@ export class DataPayload {
  * Profile 设备配置档案
  * 注意：硬件特定的默认值生成已迁移到 adapters/config 包，
  * core 层只保留类型定义，不包含基础设施知识
+ * 
+ * Version 字段说明（v2）：
+ * 
+ * 	1 = 旧格式（TareOffset 瞬时归零）
+ * 	2 = 新格式（CalibrationOffset 校零）。LoadProfiles 时自动迁移 1→2。
  */
 export class Profile {
     /**
@@ -281,6 +379,14 @@ export class Profile {
      * @param {Partial<Profile>} [$$source = {}] - The source object to create the Profile.
      */
     constructor($$source = {}) {
+        if (!("version" in $$source)) {
+            /**
+             * Version profile 格式版本，默认 1（旧格式），迁移后为 2。
+             * @member
+             * @type {number}
+             */
+            this["version"] = 0;
+        }
         if (!("id" in $$source)) {
             /**
              * @member
@@ -368,7 +474,7 @@ export class Profile {
         if (/** @type {any} */(false)) {
             /**
              * @member
-             * @type {boolean | undefined}
+             * @type {boolean | null | undefined}
              */
             this["daqP1604UseDeviceTimestamp"] = undefined;
         }
@@ -389,14 +495,14 @@ export class Profile {
      * @returns {Profile}
      */
     static createFrom($$source = {}) {
-        const $$createField11_0 = $$createType3;
-        const $$createField13_0 = $$createType4;
+        const $$createField12_0 = $$createType3;
+        const $$createField14_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField11_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField12_0($$parsedSource["channels"]);
         }
         if ("daqT1603Config" in $$parsedSource) {
-            $$parsedSource["daqT1603Config"] = $$createField13_0($$parsedSource["daqT1603Config"]);
+            $$parsedSource["daqT1603Config"] = $$createField14_0($$parsedSource["daqT1603Config"]);
         }
         return new Profile(/** @type {Partial<Profile>} */($$parsedSource));
     }
@@ -604,9 +710,20 @@ export const Type = {
     DeviceSimulated: "SIMULATED",
     DeviceDAQP1604: "DAQ-P-1604",
     DeviceDaqT1603: "DAQ-T-1603",
+
+    /**
+     * 原 DAQ-P-1064Pre，统一为 1604Pre
+     */
     DeviceDAQP1604Pre: "DAQ-P-1604Pre",
     DeviceWTNPXI: "WTN_PXI",
     DeviceDSA3217: "DSA3217",
+
+    /**
+     * DeviceDAQP1603 DAQ-P-1603 16 通道通用 AI 采集设备。
+     * 与 shared SDK 的 core.DeviceDAQP1603 字面量保持一致，
+     * 驱动 bootstrap 工厂 switch 与 profile JSON 反序列化时的类型路由。
+     */
+    DeviceDAQP1603: "DAQ-P-1603",
 };
 
 // Private type creation functions

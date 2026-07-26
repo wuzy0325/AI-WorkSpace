@@ -43,6 +43,17 @@ type TareConfigurable interface {
 	ClearTare(channelIndex int) error
 }
 
+type Calibratable interface {
+	Calibrate(deviceID string) ([]device.CalibrationResult, error)
+	GetCalibration(channelIndex int) (device.CalibrationRecord, error)
+	ClearCalibration(channelIndex int) error
+}
+
+type CalibrationEnabledConfigurable interface {
+	SetCalibrationEnabled(channelIndex int, enabled bool) error
+	GetCalibrationEnabled(channelIndex int) (bool, error)
+}
+
 // ErrorNotifiable 设备异常通知接口
 // 适配器实现此接口后，DeviceManager 可在设备 readLoop 异常退出时收到回调，
 // 统一更新状态并通知前端，避免设备断开后状态仍显示为 Connected/Acquiring。
@@ -73,4 +84,20 @@ type DeviceScanner interface {
 // usecase 通过此端口调用，避免直接依赖 adapters/config。
 type ProfileNormalizer interface {
 	Normalize(profile device.Profile) device.Profile
+}
+
+// AcquisitionController 设备采集控制端口。
+//
+// 用于遍历测试校验"目标设备正在采集"这一前提：
+//   - IsConnected / IsAcquiring 供启动前检查与运行时采样校验真实反映设备状态；
+//   - StartAcquisition 是 DeviceManager 已有能力，但遍历测试不会调用它，采集生命周期
+//     由操作员在设备管理中控制。
+//
+// 实现由 DeviceManager 提供（持有 devices map + GetStatus + StartAcquisition），
+// 装配点通过 usecase.SetAcquisitionController 注入。
+// nil 时调用方走降级路径（保持旧装配向后兼容）。
+type AcquisitionController interface {
+	IsConnected(id string) bool
+	IsAcquiring(id string) bool
+	StartAcquisition(id string) error
 }

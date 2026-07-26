@@ -394,7 +394,8 @@ func TestWTNMC4AStatusSerializesDLLReads(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
-	for range 2 {
+	// Go 1.20 不支持 `for range N` 整数迭代（Go 1.22+ 语法），改写为经典三段式
+	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
