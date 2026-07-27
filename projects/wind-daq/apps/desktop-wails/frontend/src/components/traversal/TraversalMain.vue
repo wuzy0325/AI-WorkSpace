@@ -60,7 +60,12 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  openSettings: []
+  /**
+   * 打开 TraversalSettings 对话框。
+   * @param step 可选,定位到的步骤索引(0=通道, 1=PRB, 2=布点, 3=摘要);
+   *             默认 0。"PRB 未加载" 状态条点击时传 1 直达 PRB 步骤。
+   */
+  openSettings: [step?: number]
   back: []
 }>()
 
@@ -226,8 +231,12 @@ onBeforeUnmount(() => {
   traversalStore.reset()
 })
 
-function openSettings(): void {
-  emit('openSettings')
+/**
+ * 打开 TraversalSettings 对话框。
+ * @param step 可选,定位到的步骤索引(默认 0=通道);"PRB 未加载" 状态条点击时传 1。
+ */
+function openSettings(step?: number): void {
+  emit('openSettings', step)
 }
 
 /**
@@ -700,6 +709,8 @@ watch(
         :positioner-connection="positionerConnection"
         :pressure-items="pressureItems"
         :realtime-result="traversalStore.realtimeResult"
+        :has-loaded-interpolator="traversalStore.hasLoadedInterpolator"
+        @navigate-to-prb="openSettings(1)"
         :labels="{
           target: t.travTarget,
           targetXDirection: t.travTargetXDirection,
@@ -710,6 +721,9 @@ watch(
           mach: t.mach,
           velocity: t.velocity,
           realtimeCalculation: t.realtimeCalculation,
+          interpolationNotLoaded: t.interpolationNotLoaded,
+          interpolationInvalid: t.interpolationInvalid,
+          interpolationWaitingData: t.interpolationWaitingData,
           realtimePressureData: t.realtimePressureData,
           alpha: alphaLabelText,
           beta: betaLabelText,

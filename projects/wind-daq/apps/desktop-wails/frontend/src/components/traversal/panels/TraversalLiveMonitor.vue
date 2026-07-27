@@ -57,6 +57,14 @@ const props = defineProps<{
   positionerConnection: ConnectionDisplay
   pressureItems: PressureItem[]
   realtimeResult: InterpolationResult | null
+  /**
+   * PRB/CSV 插值数据集是否已加载到后端插值器。
+   * 用于区分"PRB 未加载"与"插值无效"两种 isValid=false 场景:
+   *   - isValid=false + 未加载 → 配置层问题,提示用户导入 PRB(橙色)
+   *   - isValid=false + 已加载 → 数据层问题,本点压力异常(红色)
+   * 真相源为 traversalStore.hasLoadedInterpolator,后端校验失败时同步置 false。
+   */
+  hasLoadedInterpolator: boolean
 
   labels: {
     target: string
@@ -68,6 +76,12 @@ const props = defineProps<{
     mach: string
     velocity: string
     realtimeCalculation: string
+    /** PRB 未加载时实时插值卡片的状态条文案 */
+    interpolationNotLoaded: string
+    /** 插值结果无效时实时插值卡片的状态条文案 */
+    interpolationInvalid: string
+    /** PRB 已加载但还未采到第一帧数据时的状态条文案 */
+    interpolationWaitingData: string
     realtimePressureData: string
     alpha: string
     beta: string
@@ -97,6 +111,15 @@ const props = defineProps<{
     motionSafetyVerdictOvershoot: string
     motionSafetyVerdictStatusUnavailable: string
   }
+}>()
+
+const emit = defineEmits<{
+  /**
+   * PRB 未加载状态下用户点击状态条时触发。
+   * 父组件打开 TraversalSettings 对话框,引导用户导入 PRB/CSV。
+   * 仅在 interpStatus === 'prb-missing' 时点击有效,避免插值无效时误跳配置。
+   */
+  'navigate-to-prb': []
 }>()
 
 /** 安全格式化坐标：null/undefined/NaN 显示为 '--'，避免 toFixed 崩溃 */
@@ -150,6 +173,81 @@ const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() 
   overshoot: props.labels.motionSafetyVerdictOvershoot,
   status_unavailable: props.labels.motionSafetyVerdictStatusUnavailable
 }))
+
+/**
+ * 实时插值四态判定:正常 / 未采集(no-data) / PRB 未加载 / 插值无效。
+ *
+ * 设计动机:旧三态在 realtimeResult=null 时强制 'ok',导致两种用户痛点:
+ *   1. PRB 已加载但还没采到第一帧 → 显示 "--" 无状态条,用户误以为"已加载=正常",
+ *      但其实插值还无法计算。需要 no-data 态告诉用户"等采集开始"。
+ *   2. HTTP 400(PRB 未加载)被旧 store 吞成 null → 状态条被吞,半天看不到提示。
+ *      现 store 已改为构造 IsValid=false 占位对象,可走 prb-missing/invalid 分支显示。
+ *
+ * 真相源 store.hasLoadedInterpolator:
+ *   - isValid=true                         → ok,显示真实数值(包括 0 度,零迎角合法)
+ *   - realtimeResult=null + 已加载          → no-data,蓝色提示"等待采集数据"
+ *   - realtimeResult=null + 未加载          → prb-missing,橙色,可点击跳配置
+ *   - isValid=false + !hasLoadedInterpolator → prb-missing,橙色,可点击跳配置
+ *   - isValid=false + hasLoadedInterpolator  → invalid,红色,tooltip 显示后端 warning
+ *
+ * 七孔/五孔探针在此逻辑下行为完全一致,无需按 probeType 分支。
+ */
+type InterpStatus = 'ok' | 'no-data' | 'prb-missing' | 'invalid'
+const interpStatus = computed<InterpStatus>(() => {
+  // 已有结果对象:按 isValid 区分 ok / prb-missing / invalid
+  if (props.realtimeResult) {
+    if (props.realtimeResult.isValid) return 'ok'
+    return props.hasLoadedInterpolator ? 'invalid' : 'prb-missing'
+  }
+  // 无结果对象:按是否已加载区分 no-data / prb-missing
+  // 已加载但无结果 → 等待采到第一帧数据(开始遍历前或第一个点运动中)
+  // 未加载且无结果 → 提示用户先导入 PRB/CSV,避免点击开始遍历后才在采集循环中报错
+  return props.hasLoadedInterpolator ? 'no-data' : 'prb-missing'
+})
+
+/**
+ * 状态条配色:
+ *   - 橙色(state-warning)= 配置层问题(用户可解决,如导入 PRB)
+ *   - 红色(accent-danger) = 数据层问题(需排查,如压力越界)
+ *   - 蓝色(accent-info)   = 等待状态(系统正常但暂无数据,如已加载未采集)
+ */
+const statusBarStyle = computed(() => {
+  if (interpStatus.value === 'prb-missing') {
+    return {
+      background: 'color-mix(in srgb, var(--state-warning) 12%, transparent)',
+      color: 'var(--state-warning)',
+      border: '1px solid var(--state-warning)',
+    }
+  }
+  if (interpStatus.value === 'no-data') {
+    return {
+      background: 'color-mix(in srgb, var(--accent-info) 12%, transparent)',
+      color: 'var(--accent-info)',
+      border: '1px solid var(--accent-info)',
+    }
+  }
+  return {
+    background: 'color-mix(in srgb, var(--accent-danger) 12%, transparent)',
+    color: 'var(--accent-danger)',
+    border: '1px solid var(--accent-danger)',
+  }
+})
+
+const statusBarText = computed(() => {
+  if (interpStatus.value === 'prb-missing') return props.labels.interpolationNotLoaded
+  if (interpStatus.value === 'no-data') return props.labels.interpolationWaitingData
+  return props.labels.interpolationInvalid
+})
+
+/** 插值无效时 tooltip 显示后端 warning 全文,便于操作员排查(如"压力差值越界"等) */
+const statusBarTooltip = computed(() =>
+  interpStatus.value === 'invalid' ? (props.realtimeResult?.warning ?? '') : ''
+)
+
+/** PRB 未加载时点击跳转配置;插值无效时不响应(用户需排查数据而非配置) */
+function onStatusBarClick() {
+  if (interpStatus.value === 'prb-missing') emit('navigate-to-prb')
+}
 </script>
 
 <template>
@@ -217,15 +315,34 @@ const verdictLabels = computed<Partial<Record<MotionSafetyVerdict, string>>>(() 
         <Activity class="h-3.5 w-3.5 text-[var(--accent-info)]" />
         {{ labels.realtimeCalculation }}
       </div>
+      <!-- 状态条:四态视觉区分
+           - PRB 未加载:橙色,光标 pointer,点击跳配置
+           - 已加载未采集(no-data):蓝色提示"等待采集数据",无点击
+           - 插值无效:红色,hover tooltip 显示后端 warning 全文
+           - 正常:不渲染 -->
+      <div
+        v-if="interpStatus !== 'ok'"
+        class="mb-1.5 flex items-center gap-1.5 rounded-md px-2.5 py-1.5"
+        :class="{ 'cursor-pointer': interpStatus === 'prb-missing' }"
+        :style="statusBarStyle"
+        :title="statusBarTooltip"
+        @click="onStatusBarClick"
+      >
+        <AlertTriangle class="h-3 w-3 flex-shrink-0" />
+        <span class="text-[11px] font-medium truncate">{{ statusBarText }}</span>
+      </div>
       <div class="grid grid-cols-2 gap-1.5">
+        <!-- 数值显示规则:isValid=false 时强制 value=undefined,模板兜底显示 '--',
+             避免 0 度(零迎角真实值)与无效结果(后端填 0)混淆。
+             真实 0 度走 isValid=true 路径,显示 "0.00" 正确。 -->
         <div
           v-for="metric in [
-            { label: labels.alpha, value: realtimeResult?.alpha?.toFixed(2), unit: '°', accent: true },
-            { label: labels.beta, value: realtimeResult?.beta?.toFixed(2), unit: '°', accent: true },
-            { label: labels.mach, value: realtimeResult?.machNumber?.toFixed(3), unit: '', accent: true },
-            { label: labels.velocity, value: realtimeResult?.velocity?.toFixed(1), unit: 'm/s', accent: true },
-            { label: 'P0', value: realtimeResult?.P0?.toFixed(2), unit: 'Pa', accent: false },
-            { label: 'Ps', value: realtimeResult?.Ps?.toFixed(2), unit: 'Pa', accent: false },
+            { label: labels.alpha, value: realtimeResult?.isValid ? realtimeResult.alpha?.toFixed(2) : undefined, unit: '°', accent: true },
+            { label: labels.beta, value: realtimeResult?.isValid ? realtimeResult.beta?.toFixed(2) : undefined, unit: '°', accent: true },
+            { label: labels.mach, value: realtimeResult?.isValid ? realtimeResult.machNumber?.toFixed(3) : undefined, unit: '', accent: true },
+            { label: labels.velocity, value: realtimeResult?.isValid ? realtimeResult.velocity?.toFixed(1) : undefined, unit: 'm/s', accent: true },
+            { label: 'P0', value: realtimeResult?.isValid ? realtimeResult.P0?.toFixed(2) : undefined, unit: 'Pa', accent: false },
+            { label: 'Ps', value: realtimeResult?.isValid ? realtimeResult.Ps?.toFixed(2) : undefined, unit: 'Pa', accent: false },
           ]"
           :key="metric.label"
           class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-1.5 min-w-0"

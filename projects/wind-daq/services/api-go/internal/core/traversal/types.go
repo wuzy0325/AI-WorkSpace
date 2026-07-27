@@ -337,7 +337,27 @@ type CalculatedResult struct {
 	Pt    float64 `json:"pt"`
 	Ps    float64 `json:"ps"`
 	Mach  float64 `json:"mach"`
+	// Status 标识本点插值结果的状态,用于 CSV 落盘时区分失败原因:
+	//   - CalcStatusValid:插值成功,Alpha/Beta/...为真实数值
+	//   - CalcStatusPrbMissing:PRB/CSV 校准数据未加载,插值器未初始化(配置层问题)
+	//   - CalcStatusInvalid:已加载 PRB 但本点压力数据异常导致插值越界/无效(数据层问题)
+	// 空字符串等价于 CalcStatusValid(向后兼容 Valid=true 的旧路径)
+	Status CalcStatus `json:"status,omitempty"`
 }
+
+// CalcStatus 计算结果状态枚举。
+//
+// 设计动机:旧版仅有 Valid bool,Valid=false 时 CSV 一律写空字符串,
+// 操作员无法从 CSV 区分"PRB 未加载"与"插值无效",排障需回看实时视图。
+// 新增 Status 字段后,CSV 可在 Alpha~Mach 列旁写入差异化标识,
+// 与 UI 实时插值卡片三态(绿色/橙色/红色)一一对应。
+type CalcStatus string
+
+const (
+	CalcStatusValid      CalcStatus = "valid"
+	CalcStatusPrbMissing CalcStatus = "prb_missing"
+	CalcStatusInvalid    CalcStatus = "invalid"
+)
 
 type PointStatus string
 

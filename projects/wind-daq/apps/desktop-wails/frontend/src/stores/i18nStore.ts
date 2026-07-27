@@ -188,6 +188,13 @@ const zh: Record<string, string> = {
   startRun: '开始',
   loadingWorkspace: '正在加载测试状态',
   realtimeCalculation: '实时插值计算',
+  // 实时插值卡片状态条:PRB 未加载时提示用户导入校准文件(可点击跳配置)
+  interpolationNotLoaded: 'PRB 未加载,点击导入校准文件',
+  // 实时插值卡片状态条:本点压力异常导致插值越界/无效(需排查数据而非配置)
+  interpolationInvalid: '插值无效',
+  // 实时插值卡片状态条:PRB 已加载但还没采到第一帧数据(开始遍历前或第一个点运动中)
+  // 用蓝色 info 提示,与橙色(配置问题)/红色(数据问题)区分——系统正常,仅需等待
+  interpolationWaitingData: 'PRB 已加载,等待采集数据',
   unconfigured: '未配置',
   currentPoint: '当前点位',
   currentPointX: 'X',
@@ -1868,6 +1875,13 @@ const en: Record<string, string> = {
   startRun: 'Start',
   loadingWorkspace: 'Loading traversal state',
   realtimeCalculation: 'Realtime interpolation',
+  // Status bar in realtime interpolation card: PRB not loaded, click to import
+  interpolationNotLoaded: 'PRB not loaded, click to import',
+  // Status bar in realtime interpolation card: interpolation invalid (data issue, not config)
+  interpolationInvalid: 'Interpolation invalid',
+  // Status bar in realtime interpolation card: PRB loaded but no data frame yet (before start or first point moving)
+  // Blue info style, distinguished from orange (config issue) / red (data issue) — system OK, just waiting
+  interpolationWaitingData: 'PRB loaded, waiting for data',
   unconfigured: 'Unconfigured',
   currentPoint: 'Current Point',
   currentPointX: 'X',

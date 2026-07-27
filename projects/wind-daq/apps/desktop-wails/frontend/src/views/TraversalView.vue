@@ -22,6 +22,12 @@ const traversalStore = useTraversalStore()
 const isRecovering = ref(true)
 const recoveryError = ref('')
 const showTraversalSettings = ref(false)
+/**
+ * TraversalSettings 打开时定位的步骤索引(0=通道, 1=PRB, 2=布点, 3=摘要)。
+ * 默认 0;由 "PRB 未加载" 状态条点击 navigate-to-prb 触发时设为 1,
+ * 让用户直接看到 PRB 配置面板而非通道配置,降低排障路径成本。
+ */
+const traversalInitialStep = ref(0)
 let isRecoveryActive = true
 
 onMounted(async () => {
@@ -60,7 +66,20 @@ async function retryRecovery(): Promise<void> {
 
 async function onConfigSaved(): Promise<void> {
   showTraversalSettings.value = false
+  // 关闭后重置 initialStep,避免下次普通打开仍跳到 PRB 步骤
+  traversalInitialStep.value = 0
   await traversalStore.loadConfig()
+}
+
+/**
+ * 打开 TraversalSettings 对话框。
+ * @param step 可选,定位到的步骤索引(0=通道, 1=PRB, 2=布点, 3=摘要);
+ *             缺省时为 0。"PRB 未加载" 状态条点击时传 1 直达 PRB 步骤。
+ *             类型与 TraversalMain 的 emit openSettings: [step?: number] 对齐。
+ */
+function openSettings(step?: number): void {
+  traversalInitialStep.value = step ?? 0
+  showTraversalSettings.value = true
 }
 </script>
 
@@ -73,8 +92,8 @@ async function onConfigSaved(): Promise<void> {
       </template>
     </UiErrorState>
     <template v-else>
-      <TraversalMain :recovering="false" @open-settings="showTraversalSettings = true" @back="backFromTraversal" />
-      <TraversalSettings :show="showTraversalSettings" @close="showTraversalSettings = false" @saved="onConfigSaved" />
+      <TraversalMain :recovering="false" @open-settings="openSettings" @back="backFromTraversal" />
+      <TraversalSettings :show="showTraversalSettings" :initial-step="traversalInitialStep" @close="showTraversalSettings = false" @saved="onConfigSaved" />
     </template>
   </div>
 </template>

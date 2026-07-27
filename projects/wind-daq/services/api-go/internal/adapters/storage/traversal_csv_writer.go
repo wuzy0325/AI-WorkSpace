@@ -592,10 +592,16 @@ func (w *TraversalCsvWriter) buildHeader() []string {
 		}
 	}
 	if w.options.SaveCalculatedResult {
-		// 计算结果列：插值器输出的关键空气动力量 + 采样元数据 + 单点起止时间
+		// 计算结果列：插值器输出的关键空气动力量 + 状态标识 + 采样元数据 + 单点起止时间
 		// StartedAt/CompletedAt：单点采集的真实起止时间戳（秒级字符串，与 Timestamp 列格式一致），
 		// 用户可直接用 CompletedAt - StartedAt 算出单点总耗时，不再依赖"点数×10ms"回填公式
-		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "SampleCount", "DwellMs", "StartedAt", "CompletedAt")
+		//
+		// CalcStatus 列:区分三种失败原因,与 UI 实时插值卡片三态一一对应
+		//   - "valid":插值成功,Alpha~Mach 为真实数值
+		//   - "prb_missing":PRB/CSV 校准数据未加载或通道未映射(配置层问题)
+		//   - "invalid":已加载 PRB 但本点压力数据异常(数据层问题)
+		// 失败时 Alpha~Mach 写空字符串(保持原行为),操作员可按 CalcStatus 列快速过滤失败点
+		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "CalcStatus", "SampleCount", "DwellMs", "StartedAt", "CompletedAt")
 	}
 	// 自定义字段列（按字典序）
 	cols = append(cols, w.customFieldNames...)
@@ -628,17 +634,27 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 	}
 	if w.options.SaveCalculatedResult {
 		// 从 PointResult.Calculated 读取插值结果；若上游未填充则写空
+		// CalcStatus 列按 Status 字段输出标识;Valid=true 但 Status 为空时回退 "valid"(向后兼容旧数据)
 		calc := p.Calculated
 		if calc != nil && calc.Valid {
+			status := calc.Status
+			if status == "" {
+				status = traversal.CalcStatusValid
+			}
 			row = append(row,
 				formatFloat(calc.Alpha),
 				formatFloat(calc.Beta),
 				formatFloat(calc.Pt),
 				formatFloat(calc.Ps),
 				formatFloat(calc.Mach),
+				string(status),
 			)
+		} else if calc != nil && calc.Status != "" {
+			// 失败路径:Alpha~Mach 写空,CalcStatus 写入失败原因标识
+			row = append(row, "", "", "", "", "", string(calc.Status))
 		} else {
-			row = append(row, "", "", "", "", "")
+			// calc==nil(上游未填充)或 Status 为空:全部写空,与旧行为一致
+			row = append(row, "", "", "", "", "", "")
 		}
 		row = append(row, strconv.Itoa(p.SampleCount), strconv.Itoa(p.DwellTimeElapsed))
 		// StartedAt/CompletedAt：与 Timestamp 同为秒级字符串。

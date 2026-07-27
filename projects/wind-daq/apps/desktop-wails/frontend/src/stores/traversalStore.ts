@@ -194,7 +194,28 @@ export const useTraversalStore = defineStore('traversal', () => {
       return
     }
 
-    realtimeResult.value = res.success ? (res.data ?? null) : null
+    if (res.success) {
+      // HTTP 200:后端已返回 InterpolationResult(IsValid 区分成功/数据层失败)
+      realtimeResult.value = res.data ?? null
+    } else {
+      // HTTP 400(如 PRB 未加载、探针类型不一致):后端返回 error 不带 body,
+      // 旧实现直接置 null,导致 interpStatus 把 null 当作"未采到数据"判 ok,
+      // 状态条被吞掉,用户看不到任何提示。
+      // 这里构造 IsValid=false + warning 的占位结果,让 UI 三态分类能正确识别:
+      //   - hasLoadedInterpolator=false → prb-missing(橙色,可点击跳配置)
+      //   - hasLoadedInterpolator=true  → invalid(红色,tooltip 显示后端 error)
+      // 数值字段全部为 0,与后端 PrbMissing/Invalid 路径零值契约一致,
+      // 前端模板在 isValid=false 时已强制显示 '--' 不会读这些零值。
+      realtimeResult.value = {
+        isValid: false,
+        warning: res.error ?? '',
+        alpha: 0,
+        beta: 0,
+        machNumber: 0,
+        velocity: 0,
+        dynamicPressure: 0,
+      } as InterpolationResult
+    }
   }
 
   /**

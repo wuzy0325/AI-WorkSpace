@@ -202,6 +202,90 @@ func (m *TraversalManager) ClearProbeInterpolator(probeType string) error {
 	return nil
 }
 
+// classifyCalculatedResult 根据插值流程的关键信号分类 CalculatedResult 的三态 Status 并构造实例。
+//
+// 抽取动机:RunCurrentPoint 内联的 switch 5 分支无法单元测试,且本逻辑是 CSV/UI
+// 失败原因区分的核心,必须高可信——抽成纯函数后可逐分支断言。
+//
+// 三态判定矩阵(与 UI 实时插值卡片三态一一对应):
+//   - strategyOK=false / hasAll=false → PrbMissing(配置层未就绪)
+//   - interpErr!=nil + !interpolatorLoaded → PrbMissing(插值器未加载)
+//   - interpErr!=nil + interpolatorLoaded  → Invalid(已加载但其他 err,如输入校验)
+//   - interpRes.IsValid=true  → Valid + 数值
+//   - interpRes.IsValid=false → Invalid(压力越界等数据层问题)
+//
+// 参数 interpolatorLoaded 由调用方通过 HasLoadedInterpolatorFor 获取,
+// 保持纯函数特性(不依赖 manager 状态)。
+//
+// 命名说明:动词 classify 表达"按信号判定属于哪一态",比 build 更准确——
+// 调用方读到 classifyCalculatedResult 即预期返回 Valid/PrbMissing/Invalid 三态之一。
+func classifyCalculatedResult(
+	strategyOK bool,
+	hasAll bool,
+	interpRes probeCalcResult,
+	interpErr error,
+	interpolatorLoaded bool,
+) *traversal.CalculatedResult {
+	if !strategyOK || !hasAll {
+		// 策略未注册或通道不全:配置层未就绪
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusPrbMissing,
+		}
+	}
+	switch {
+	case interpErr != nil && !interpolatorLoaded:
+		// 插值器未加载 → 配置层问题
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusPrbMissing,
+		}
+	case interpErr != nil:
+		// 已加载但 err != nil(如未来新增的输入校验 err) → 数据层问题
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusInvalid,
+		}
+	case interpRes.IsValid:
+		return &traversal.CalculatedResult{
+			Valid:  true,
+			Status: traversal.CalcStatusValid,
+			Alpha:  interpRes.Alpha,
+			Beta:   interpRes.Beta,
+			Pt:     interpRes.Pt,
+			Ps:     interpRes.Ps,
+			Mach:   interpRes.Mach,
+		}
+	default:
+		// 已加载但 IsValid=false → 数据层问题(压力越界等)
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusInvalid,
+		}
+	}
+}
+
+// HasLoadedInterpolatorFor 判定指定探针类型的插值器是否已加载 PRB/CSV 数据集。
+//
+// 设计动机:
+// 前端 store.hasLoadedInterpolator 是 UI 三态判定的真相源(不依赖后端 warning 文本),
+// 后端 CSV 落盘的 Status 也需要按相同真相源区分 PrbMissing / Invalid,
+// 避免依赖 interpErr != nil 这种脆弱判定(未来插值器新增其他 err 会被误判为配置层问题)。
+//
+// 与 CalculateRealtimeByProbe 不同,此方法不做"请求类型与当前配置一致"校验,
+// 仅回答"该探针类型的插值器是否已加载"——供采集循环在 err 路径下分类 Status 使用。
+// 未知探针类型返回 false(与 strategy.isLoaded 行为一致)。
+func (m *TraversalManager) HasLoadedInterpolatorFor(probeType string) bool {
+	requested := normalizeProbeType(probeType)
+	strategy, ok := probeStrategyFor(requested)
+	if !ok {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return strategy.isLoaded(m)
+}
+
 // CalculateRealtimeByProbe 按显式探针类型分发实时插值（spec §5.2 第 4 条）。
 // 请求类型必须与 Manager 当前 config.ProbeType 一致：不一致时拒绝计算，
 // 不读取另一类型插值器；未知类型返回 error。

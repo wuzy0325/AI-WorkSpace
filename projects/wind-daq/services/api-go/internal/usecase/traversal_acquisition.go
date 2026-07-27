@@ -376,24 +376,29 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// 实时插值（落盘和断点恢复都需要）：失败仅写 warning，不阻塞本点保存。
 	// buildRawPressureForProbe 按当前探针类型的策略标签集装配并归一化到 Pa+表压，
 	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
+	//
+	// 三态 Status 填充逻辑抽取到 buildCalculatedResult 中,便于单元测试覆盖;
+	// 与 UI 实时插值卡片三态(绿色/橙色/红色)一一对应,便于 CSV 排障。
 	strategy, strategyOK := probeStrategyFor(config.ProbeType)
-	var calculated *traversal.CalculatedResult
+	var (
+		probeIn   probeCalcInput
+		hasAll    bool
+		interpRes probeCalcResult
+		interpErr error
+	)
 	if strategyOK {
-		_, probeIn, hasAll := buildRawPressureForProbe(resultValues, config.ChannelLabels, config.ResolvedChannelRefs(), unitProvider, config.PProbePressureType, strategy)
+		_, probeIn, hasAll = buildRawPressureForProbe(resultValues, config.ChannelLabels, config.ResolvedChannelRefs(), unitProvider, config.PProbePressureType, strategy)
 		if hasAll {
-			interpRes, interpErr := m.CalculateRealtimeByProbe(config.ProbeType, probeIn)
-			if interpErr == nil && interpRes.IsValid {
-				calculated = &traversal.CalculatedResult{
-					Valid: true,
-					Alpha: interpRes.Alpha,
-					Beta:  interpRes.Beta,
-					Pt:    interpRes.Pt,
-					Ps:    interpRes.Ps,
-					Mach:  interpRes.Mach,
-				}
-			}
+			interpRes, interpErr = m.CalculateRealtimeByProbe(config.ProbeType, probeIn)
 		}
 	}
+	calculated := classifyCalculatedResult(
+		strategyOK,
+		hasAll,
+		interpRes,
+		interpErr,
+		m.HasLoadedInterpolatorFor(config.ProbeType),
+	)
 	// v2：生成单调递增提交序号（仅在 commitPointV2 成功后才推进 snapshot.CommitSeq）
 	m.mu.Lock()
 	commitSeq := m.session.snapshot.CommitSeq + 1

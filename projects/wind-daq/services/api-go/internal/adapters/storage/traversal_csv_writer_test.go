@@ -51,10 +51,11 @@ func TestTraversalCsvWriterWritesRowsAndReportsOutputPath(t *testing.T) {
 		t.Fatalf("read traversal csv: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "PointId,Timestamp,X,Y,Z,U,P1,P3,Alpha,Beta,Pt,Ps,Mach,SampleCount,DwellMs,StartedAt,CompletedAt") {
+	if !strings.Contains(text, "PointId,Timestamp,X,Y,Z,U,P1,P3,Alpha,Beta,Pt,Ps,Mach,CalcStatus,SampleCount,DwellMs,StartedAt,CompletedAt") {
 		t.Fatalf("expected traversal CSV header, got %q", text)
 	}
-	if !strings.Contains(text, "1,2026-06-24 10:30:00,1.000000,2.000000,0.000000,0.000000,11.500000,33.250000,,,,,,4,1000,2026-06-24 10:29:58,2026-06-24 10:30:00") {
+	// Calculated 未填(calc==nil):Alpha~Mach + CalcStatus 共 6 列写空,与旧行为一致
+	if !strings.Contains(text, "1,2026-06-24 10:30:00,1.000000,2.000000,0.000000,0.000000,11.500000,33.250000,,,,,,,4,1000,2026-06-24 10:29:58,2026-06-24 10:30:00") {
 		t.Fatalf("expected traversal CSV row, got %q", text)
 	}
 }
@@ -164,7 +165,7 @@ func TestTraversalCsvWriterSevenHoleColumns(t *testing.T) {
 		t.Fatalf("read csv: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "P1,P2,P3,P4,P5,P6,P7,Patm,Tatm,Alpha,Beta,Pt,Ps,Mach,SampleCount,DwellMs") {
+	if !strings.Contains(text, "P1,P2,P3,P4,P5,P6,P7,Patm,Tatm,Alpha,Beta,Pt,Ps,Mach,CalcStatus,SampleCount,DwellMs") {
 		t.Fatalf("expected seven-hole column order P1..P7,Patm,Tatm + computed columns, got %q", text)
 	}
 	if !strings.Contains(text, "100.000000,200.000000,300.000000,400.000000,500.000000,600.000000,700.000000,101325.000000,20.000000") {
