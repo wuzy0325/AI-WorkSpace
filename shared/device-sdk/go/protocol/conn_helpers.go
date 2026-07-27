@@ -1,17 +1,38 @@
 // Package protocol 提供设备底层协议原语（帧解析、命令收发、单位系数等），
 // 覆盖 DAQ-P-1604、T1603 等设备。本文件集中放置跨项目复用的"连接与命令发送"
 // 脚手架，避免 wind-daq 与 daq-p1604 两个适配器各自实现导致同一 bug 分叉
-//（典型案例：命令尾部 \r\n 曾在两份代码中各犯一次，详见 SendCommandNoNewline 的注释）。
+// （典型案例：命令尾部 \r\n 曾在两份代码中各犯一次，详见 SendCommandNoNewline 的注释）。
 package protocol
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
 	"time"
 )
+
+// DialTCP 建立可选绑定本地 IP 的 TCP 连接。localAddress 为空时沿用系统路由。
+func DialTCP(address, localAddress string, timeout time.Duration) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: timeout}
+	network := "tcp"
+	if localAddress = strings.TrimSpace(localAddress); localAddress != "" {
+		ip := net.ParseIP(localAddress)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid local address %q", localAddress)
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			ip = ip4
+			network = "tcp4"
+		} else {
+			network = "tcp6"
+		}
+		dialer.LocalAddr = &net.TCPAddr{IP: ip}
+	}
+	return dialer.Dial(network, address)
+}
 
 // StopReasonUserRequested 表示调用方主动停止（StopAcquisition / Disconnect）。
 // readLoop 识别到该原因后静默退出，避免误判为连接异常。
@@ -214,4 +235,3 @@ func DrainW1601Response(reader *FrameReader, conn net.Conn, timeout time.Duratio
 		}
 	}
 }
-

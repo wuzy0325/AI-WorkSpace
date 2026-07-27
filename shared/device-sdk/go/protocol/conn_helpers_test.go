@@ -11,6 +11,39 @@ import (
 	"time"
 )
 
+func TestDialTCPBindsLocalAddress(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+
+	conn, err := DialTCP(listener.Addr().String(), "127.0.0.1", time.Second)
+	if err != nil {
+		t.Fatalf("DialTCP: %v", err)
+	}
+	defer conn.Close()
+	if got := conn.LocalAddr().(*net.TCPAddr).IP.String(); got != "127.0.0.1" {
+		t.Fatalf("local address = %s, want 127.0.0.1", got)
+	}
+	peer := <-accepted
+	peer.Close()
+}
+
+func TestDialTCPRejectsInvalidLocalAddress(t *testing.T) {
+	if _, err := DialTCP("127.0.0.1:1", "not-an-ip", time.Millisecond); err == nil {
+		t.Fatal("DialTCP should reject an invalid local address")
+	}
+}
+
 func TestStopReasonTracker_SetGetClear(t *testing.T) {
 	var tr StopReasonTracker
 	if got := tr.GetStopReason(); got != "" {
