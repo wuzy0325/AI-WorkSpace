@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import CustomSelect from './CustomSelect.vue'
 import type { SelectOption } from './CustomSelect.vue'
 import {
@@ -13,6 +14,7 @@ const props = defineProps<{ deviceId: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
 const isAcquiring = computed(() => deviceStore.acquiringFor(props.deviceId))
 
@@ -25,14 +27,16 @@ const pressureUnitOptions: SelectOption[] = [
   { value: 'kgf/cm²', label: 'kgf/cm²' },
 ]
 
-// 精度选项（0-6 位小数）
-const precisionOptions: SelectOption[] = Array.from({ length: 7 }, (_, i) => ({
-  value: String(i),
-  label: `${i} 位小数`,
-}))
+// 精度选项（0-6 位小数）：label 跟随当前语言
+const precisionOptions = computed<SelectOption[]>(() =>
+  Array.from({ length: 7 }, (_, i) => ({
+    value: String(i),
+    label: i18n.t('common.precisionDecimals', { n: i }),
+  })),
+)
 
 // 采样频率（Hz），UI 层展示整数频率，保存时换算为周期毫秒
-// 频率范围：1 Hz 到 1000 Hz
+// 频率范围：1 Hz 到 500 Hz
 const samplingFreq = ref(10)
 const autoConnect = ref(false) // 启动时自动连接
 const pressureUnit = ref('psi') // 全局压力单位
@@ -59,28 +63,28 @@ function isSpecialChannel(index: number): boolean {
 
 /** 获取通道默认名称 */
 function getDefaultChannelName(index: number): string {
-  if (index === 16) return '大气压力'
-  if (index === 17) return '大气温度'
-  return `通道 ${index + 1}`
+  if (index === 16) return i18n.t('config.atmosphericPressure')
+  if (index === 17) return i18n.t('config.atmosphericTemperature')
+  return i18n.t('config.defaultChannelName', { n: index + 1 })
 }
 
-/** 采样周期（毫秒）转频率（Hz），限制为 1-1000 的整数 */
+/** 采样周期（毫秒）转频率（Hz），限制为 1-500 的整数 */
 function periodMsToHz(ms: number): number {
   if (!Number.isFinite(ms) || ms <= 0) return 10
   const hz = Math.round(1000 / ms)
-  return Math.max(1, Math.min(1000, hz))
+  return Math.max(1, Math.min(500, hz))
 }
 
-/** 频率（Hz）转采样周期（毫秒），频率限制为 1-1000 的整数 */
+/** 频率（Hz）转采样周期（毫秒），频率限制为 1-500 的整数 */
 function hzToPeriodMs(hz: number): number {
   const normalizedHz = normalizeSamplingFreq(hz)
   return Math.round(1000 / normalizedHz)
 }
 
-/** 标准化采样频率，禁止小数并限制在 1-1000 Hz */
+/** 标准化采样频率，禁止小数并限制在 1-500 Hz */
 function normalizeSamplingFreq(value: number): number {
   if (!Number.isFinite(value)) return 10
-  return Math.max(1, Math.min(1000, Math.trunc(value)))
+  return Math.max(1, Math.min(500, Math.trunc(value)))
 }
 
 /**
@@ -232,12 +236,12 @@ async function saveConfig() {
     if (hwChanged) {
       try {
         await deviceStore.applyConfig(props.deviceId, nextProfile.p1604Config)
-        saveMessage.value = '配置已保存并应用到设备'
+        saveMessage.value = i18n.t('config.savedAndApplied')
       } catch (hwErr) {
-        saveMessage.value = hwErr instanceof Error ? hwErr.message : '硬件配置应用失败'
+        saveMessage.value = hwErr instanceof Error ? hwErr.message : i18n.t('config.hardwareApplyFailed')
       }
     } else {
-      saveMessage.value = '配置已保存'
+      saveMessage.value = i18n.t('config.saved')
     }
 
     saveStatus.value = 'success'
@@ -245,7 +249,7 @@ async function saveConfig() {
     setTimeout(() => { saveStatus.value = 'idle' }, 2000)
   } catch (err) {
     saveStatus.value = 'error'
-    saveMessage.value = err instanceof Error ? err.message : '保存失败'
+    saveMessage.value = err instanceof Error ? err.message : i18n.t('config.saveFailed')
   } finally {
     syncing.value = false
   }
@@ -268,7 +272,7 @@ function applyGlobalPrecisionToAll() {
   }
 }
 
-/** 采样频率输入处理，限制 1-1000 Hz 且仅允许整数 */
+/** 采样频率输入处理，限制 1-500 Hz 且仅允许整数 */
 function onFreqInput(e: Event) {
   const target = e.target as HTMLInputElement
   samplingFreq.value = normalizeSamplingFreq(target.valueAsNumber)
@@ -288,14 +292,14 @@ function onChannelPrecisionChange(index: number, value: string) {
       <div class="config__header-left">
         <Settings2 class="config__header-icon" />
         <div class="config__header-text">
-          <h3 class="config__header-title">{{ profile.name || '设备配置' }}</h3>
+          <h3 class="config__header-title">{{ profile.name || i18n.t('config.deviceConfig') }}</h3>
           <p class="config__header-subtitle">
             {{ profile.address }}:{{ profile.port }}
-            <span v-if="hasChanges" class="config__header-unsaved">未保存</span>
+            <span v-if="hasChanges" class="config__header-unsaved">{{ i18n.t('common.unsaved') }}</span>
           </p>
         </div>
       </div>
-      <button type="button" class="config__close" title="关闭" @click.stop="emit('close')">
+      <button type="button" class="config__close" :title="i18n.t('common.close')" @click.stop="emit('close')">
         <span class="config__close-line"></span>
         <span class="config__close-line"></span>
       </button>
@@ -307,14 +311,14 @@ function onChannelPrecisionChange(index: number, value: string) {
       <section class="config__section">
         <div class="config__section-header">
           <SlidersHorizontal class="config__section-icon" />
-          <h4 class="config__section-title">硬件参数</h4>
+          <h4 class="config__section-title">{{ i18n.t('config.hardwareParams') }}</h4>
         </div>
         <div class="config__section-body">
           <!-- 采样频率（Hz） -->
           <div class="config__field">
             <label class="config__label">
               <Clock class="config__label-icon" />
-              <span>采样频率</span>
+              <span>{{ i18n.t('config.samplingRate') }}</span>
             </label>
             <div class="config__rate-wrapper">
               <input
@@ -323,7 +327,7 @@ function onChannelPrecisionChange(index: number, value: string) {
                 step="1"
                 class="config__rate-input"
                 :min="1"
-                :max="1000"
+                :max="500"
                 :disabled="isAcquiring"
                 @input="onFreqInput"
               />
@@ -335,7 +339,7 @@ function onChannelPrecisionChange(index: number, value: string) {
           <div class="config__field">
             <label class="config__label">
               <Gauge class="config__label-icon" />
-              <span>压力单位（全部通道）</span>
+              <span>{{ i18n.t('config.pressureUnit') }}</span>
             </label>
             <CustomSelect
               :model-value="pressureUnit"
@@ -349,7 +353,7 @@ function onChannelPrecisionChange(index: number, value: string) {
           <div class="config__field">
             <label class="config__label">
               <Crosshair class="config__label-icon" />
-              <span>全局精度（全部通道）</span>
+              <span>{{ i18n.t('config.globalPrecision') }}</span>
             </label>
             <div class="config__precision-wrapper">
               <CustomSelect
@@ -362,10 +366,10 @@ function onChannelPrecisionChange(index: number, value: string) {
                 type="button"
                 class="config__precision-apply"
                 :disabled="isAcquiring"
-                title="将全局精度应用到所有通道"
+                :title="i18n.t('config.applyGlobalPrecisionTitle')"
                 @click="applyGlobalPrecisionToAll"
               >
-                应用到全部
+                {{ i18n.t('common.applyToAll') }}
               </button>
             </div>
           </div>
@@ -374,7 +378,7 @@ function onChannelPrecisionChange(index: number, value: string) {
           <div class="config__field">
             <label class="config__label">
               <Wifi class="config__label-icon" />
-              <span>自动连接</span>
+              <span>{{ i18n.t('config.autoConnect') }}</span>
             </label>
             <button
               type="button"
@@ -386,7 +390,7 @@ function onChannelPrecisionChange(index: number, value: string) {
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ autoConnect ? '开启' : '关闭' }}</span>
+              <span class="config__toggle-text">{{ autoConnect ? i18n.t('common.enabled') : i18n.t('common.disabled') }}</span>
             </button>
           </div>
 
@@ -394,7 +398,7 @@ function onChannelPrecisionChange(index: number, value: string) {
           <div class="config__field">
             <label class="config__label">
               <Timer class="config__label-icon" />
-              <span>设备硬件时间戳</span>
+              <span>{{ i18n.t('config.deviceTimestamp') }}</span>
             </label>
             <button
               type="button"
@@ -406,19 +410,19 @@ function onChannelPrecisionChange(index: number, value: string) {
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ useDeviceTimestamp ? '开启' : '关闭' }}</span>
+              <span class="config__toggle-text">{{ useDeviceTimestamp ? i18n.t('common.enabled') : i18n.t('common.disabled') }}</span>
             </button>
           </div>
         </div>
-        <p v-if="isAcquiring" class="config__section-hint">采集中不允许变更配置，请先停止采集。</p>
+        <p v-if="isAcquiring" class="config__section-hint">{{ i18n.t('config.acquireLockHint') }}</p>
       </section>
 
       <!-- 通道列表 -->
       <section class="config__section">
         <div class="config__section-header">
           <Activity class="config__section-icon" />
-          <h4 class="config__section-title">通道配置</h4>
-          <span class="config__section-badge">{{ enabledCount }}/18 启用</span>
+          <h4 class="config__section-title">{{ i18n.t('config.channelConfig') }}</h4>
+          <span class="config__section-badge">{{ i18n.t('config.channelEnabledCount', { n: enabledCount }) }}</span>
         </div>
         <div class="config__channels">
           <div
@@ -434,8 +438,8 @@ function onChannelPrecisionChange(index: number, value: string) {
               <div class="config__channel-info">
                 <span class="config__channel-index mono">CH{{ String(i).padStart(2, '0') }}</span>
                 <!-- CH17/CH18 特殊标注 -->
-                <span v-if="i === 17" class="config__channel-badge">大气压力</span>
-                <span v-else-if="i === 18" class="config__channel-badge">大气温度</span>
+                <span v-if="i === 17" class="config__channel-badge">{{ i18n.t('config.atmosphericPressure') }}</span>
+                <span v-else-if="i === 18" class="config__channel-badge">{{ i18n.t('config.atmosphericTemperature') }}</span>
                 <input
                   v-model="channelNames[i - 1]"
                   class="config__channel-name"
@@ -446,7 +450,7 @@ function onChannelPrecisionChange(index: number, value: string) {
               <div class="config__channel-actions">
                 <!-- 单通道精度选择：覆盖全局精度 -->
                 <div class="config__channel-precision">
-                  <span class="config__channel-precision-label">精度</span>
+                  <span class="config__channel-precision-label">{{ i18n.t('common.precision') }}</span>
                   <select
                     class="config__channel-precision-select"
                     :value="channelPrecisions[i - 1]"
@@ -460,14 +464,14 @@ function onChannelPrecisionChange(index: number, value: string) {
                   type="button"
                   class="config__toggle"
                   :class="{ 'config__toggle--on': channelEnabled[i - 1] }"
-                  :title="channelEnabled[i - 1] ? '禁用通道' : '启用通道'"
+                  :title="channelEnabled[i - 1] ? i18n.t('config.disableChannel') : i18n.t('config.enableChannel')"
                   :disabled="isAcquiring"
                   @click="toggleChannel(i - 1)"
                 >
                   <span class="config__toggle-track">
                     <span class="config__toggle-thumb"></span>
                   </span>
-                  <span class="config__toggle-text">{{ channelEnabled[i - 1] ? '开' : '关' }}</span>
+                  <span class="config__toggle-text">{{ channelEnabled[i - 1] ? i18n.t('common.on') : i18n.t('common.off') }}</span>
                 </button>
               </div>
             </div>
@@ -482,17 +486,17 @@ function onChannelPrecisionChange(index: number, value: string) {
         <CheckCircle2 v-if="saveStatus === 'success'" class="config__status-icon" />
         <AlertCircle v-else-if="saveStatus === 'error'" class="config__status-icon" />
         <RotateCcw v-else class="config__status-icon config__status-icon--spin" />
-        <span>{{ saveMessage || (saveStatus === 'saving' ? '保存中...' : '') }}</span>
+        <span>{{ saveMessage || (saveStatus === 'saving' ? i18n.t('common.saving') : '') }}</span>
       </div>
       <div v-else class="config__status config__status--idle">
-        <span v-if="isAcquiring">采集中不允许变更配置</span>
-        <span v-else-if="hasChanges">有未保存的更改</span>
-        <span v-else>所有更改已保存</span>
+        <span v-if="isAcquiring">{{ i18n.t('config.acquireLock') }}</span>
+        <span v-else-if="hasChanges">{{ i18n.t('common.unsavedChanges') }}</span>
+        <span v-else>{{ i18n.t('common.saved') }}</span>
       </div>
       <div class="config__actions">
         <button type="button" class="config__btn config__btn--secondary" :disabled="isAcquiring || saveStatus === 'saving'" @click.stop="resetConfig">
           <RotateCcw class="config__btn-icon" />
-          <span>重置</span>
+          <span>{{ i18n.t('common.reset') }}</span>
         </button>
         <button
           type="button"
@@ -501,7 +505,7 @@ function onChannelPrecisionChange(index: number, value: string) {
           @click.stop="saveConfig"
         >
           <Save class="config__btn-icon" />
-          <span>保存</span>
+          <span>{{ i18n.t('common.save') }}</span>
         </button>
       </div>
     </div>

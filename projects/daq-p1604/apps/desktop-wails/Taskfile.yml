@@ -70,7 +70,11 @@ tasks:
   run-dev:
     summary: 使用已构建的内嵌前端运行桌面应用（清除 FRONTEND_DEVSERVER_URL 以使用内嵌资源）
     cmds:
-      - powershell -Command "$env:FRONTEND_DEVSERVER_URL=''; build\bin\daq-p1604.exe"
+      # 用 cmd /C 而非 powershell -Command "$env:..."：
+      # task 在 Windows 上默认 shell 是 cmd.exe，传给 powershell 时 $env 会被吞掉，
+      # 导致 PowerShell 收到 ":FRONTEND_DEVSERVER_URL=" 并报 CommandNotFoundException。
+      # `set VAR=` 是 cmd 原生清空环境变量的写法，&& 串联下一条命令。
+      - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\daq-p1604.exe"
 
   dev:
     summary: 开发模式（构建前端后运行内嵌资源，未启用 production 标签以保留 devtools）

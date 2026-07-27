@@ -3,10 +3,12 @@ import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Sun, Moon, Activity, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
 import { setUIRefreshRateHz } from '@bridge/deviceBridge'
+import LanguageToggle from './LanguageToggle.vue'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
@@ -21,6 +23,7 @@ const props = defineProps<{
 
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
+const i18n = useI18nStore()
 const recordingStore = useRecordingStore()
 const { theme, toggle: toggleTheme } = useTheme()
 
@@ -46,8 +49,23 @@ const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDev
 const isAcquisitionDisabled = computed(() => !canToggleAcquisition.value || props.isToggling)
 
 function themeToggleLabel(): string {
-  return theme.value === 'dark' ? '切换为浅色模式' : '切换为深色模式'
+  return theme.value === 'dark'
+    ? i18n.t('topbar.toggleLightTheme')
+    : i18n.t('topbar.toggleDarkTheme')
 }
+
+/** 采集按钮的 title 提示：根据禁用原因与当前状态返回不同文案 */
+const acquisitionTitle = computed(() => {
+  if (isAcquisitionDisabled.value) {
+    if (props.isToggling) return i18n.t('topbar.operating')
+    return isAcquiring.value
+      ? i18n.t('topbar.stopAcquisition')
+      : i18n.t('topbar.noDeviceAvailable')
+  }
+  return isAcquiring.value
+    ? i18n.t('topbar.stopAcquisition')
+    : i18n.t('topbar.startAcquisition')
+})
 
 async function startSave() {
   const dir = await pickDirectory()
@@ -142,14 +160,14 @@ onBeforeUnmount(() => {
           <h1 class="topbar__title" data-testid="topbar-title">
             DAQ-T<span class="topbar__title-accent">1603</span>
           </h1>
-          <p class="topbar__subtitle">Temperature Acquisition</p>
+          <p class="topbar__subtitle">{{ i18n.t('topbar.subtitle') }}</p>
         </div>
       </div>
 
       <div class="topbar__nav">
         <div class="topbar__nav-btn topbar__nav-btn--active">
           <CircleDot class="topbar__nav-icon" />
-          实时监控
+          {{ i18n.t('topbar.realtimeMonitor') }}
         </div>
       </div>
 
@@ -159,28 +177,28 @@ onBeforeUnmount(() => {
             class="topbar__action-btn"
             :class="isAcquiring ? 'topbar__action-btn--stop' : 'topbar__action-btn--start'"
             :disabled="isAcquisitionDisabled"
-            :title="isAcquisitionDisabled ? (isToggling ? '操作中...' : (isAcquiring ? '停止采集' : '没有可用的设备')) : (isAcquiring ? '停止采集' : '开始采集')"
+            :title="acquisitionTitle"
             @click="emit('toggle-acquisition')"
           >
             <Play v-if="!isAcquiring" class="topbar__action-icon" />
             <Square v-else class="topbar__action-icon" />
-            <span>{{ isAcquiring ? '停止采集' : '开始采集' }}</span>
+            <span>{{ isAcquiring ? i18n.t('topbar.stopAcquisition') : i18n.t('topbar.startAcquisition') }}</span>
           </button>
 
           <button
             class="topbar__action-btn topbar__action-btn--record"
             :class="{ 'topbar__action-btn--recording': recordingStore.isRecording }"
-            :title="recordingStore.isRecording ? '停止保存' : '开始保存'"
+            :title="recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave')"
             @click="recordingStore.isRecording ? stopSave() : startSave()"
           >
             <Circle class="topbar__action-icon" />
-            <span>{{ recordingStore.isRecording ? '停止保存' : '开始保存' }}</span>
+            <span>{{ recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave') }}</span>
           </button>
         </div>
 
         <button
           class="topbar__icon-btn"
-          :title="'添加设备'"
+          :title="i18n.t('topbar.addDevice')"
           @click="emit('add-device')"
         >
           <Plus class="topbar__icon" />
@@ -189,7 +207,7 @@ onBeforeUnmount(() => {
         <button
           class="topbar__icon-btn"
           ref="refreshTriggerRef"
-          title="界面刷新率"
+          :title="i18n.t('topbar.uiRefreshRate')"
           @click="toggleRefreshMenu"
         >
           <Gauge class="topbar__icon" />
@@ -202,7 +220,7 @@ onBeforeUnmount(() => {
             class="topbar__refresh-dropdown"
             :style="refreshDropdownStyle"
           >
-            <div class="topbar__refresh-header">界面刷新率</div>
+            <div class="topbar__refresh-header">{{ i18n.t('topbar.uiRefreshRate') }}</div>
             <div
               v-for="hz in refreshRateOptions"
               :key="hz"
@@ -225,6 +243,8 @@ onBeforeUnmount(() => {
           <Sun v-if="theme === 'dark'" class="topbar__icon" />
           <Moon v-else class="topbar__icon" />
         </button>
+
+        <LanguageToggle />
 
         <span class="topbar__version" data-testid="topbar-version">v{{ version }}</span>
       </div>

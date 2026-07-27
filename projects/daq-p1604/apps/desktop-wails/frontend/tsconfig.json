@@ -22,7 +22,9 @@
       "@composables/*": ["src/composables/*"],
       "@stores/*": ["src/stores/*"],
       "@views/*": ["src/views/*"],
-      "@shared-frontend/*": ["../../../../../shared/frontend/*"]
+      "@shared-frontend/*": ["../../../../../shared/frontend/*"],
+      "vue": ["./node_modules/vue"],
+      "pinia": ["./node_modules/pinia"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "bindings/**/*.ts", "bindings/**/*.d.ts"],

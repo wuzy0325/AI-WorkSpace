@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
 import {
   NButton,
@@ -25,6 +26,7 @@ import ChannelGrid from '@components/device/ChannelGrid.vue'
 import RealtimeChart from '@components/device/RealtimeChart.vue'
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 const { theme } = useTheme()
 
 const openConfig = inject<() => void>('shell:openConfig', () => {})
@@ -54,6 +56,15 @@ const selectableChannels = computed(() => {
 
 const isChartVisible = computed(() => selectedChannelCount.value > 0)
 const isAllChannelsSelected = computed(() => enabledCount.value > 0 && selectedChannelCount.value === enabledCount.value)
+
+/** 连接按钮文本：根据当前状态返回不同文案 */
+const connectButtonLabel = computed(() => {
+  if (status.value === 'Connected' || status.value === 'Acquiring' || status.value === 'Starting' || status.value === 'Stopping') {
+    return i18n.t('monitor.disconnect')
+  }
+  if (status.value === 'Connecting') return i18n.t('monitor.connecting')
+  return i18n.t('monitor.connect')
+})
 
 function openChannelSelection() {
   showChannelSelector.value = !showChannelSelector.value
@@ -111,13 +122,13 @@ function statusType(): 'success' | 'warning' | 'error' | 'default' {
 }
 
 function statusLabel(): string {
-  if (isAcquiring.value) return '采集中'
-  if (status.value === 'Starting') return '启动中'
-  if (status.value === 'Stopping') return '停止中'
-  if (status.value === 'Connected') return '已连接'
-  if (status.value === 'Connecting') return '连接中'
-  if (status.value === 'Error') return '错误'
-  return '未连接'
+  if (isAcquiring.value) return i18n.t('status.acquiring')
+  if (status.value === 'Starting') return i18n.t('status.starting')
+  if (status.value === 'Stopping') return i18n.t('status.stopping')
+  if (status.value === 'Connected') return i18n.t('status.connected')
+  if (status.value === 'Connecting') return i18n.t('status.connecting')
+  if (status.value === 'Error') return i18n.t('status.error')
+  return i18n.t('status.disconnected')
 }
 </script>
 
@@ -134,20 +145,20 @@ function statusLabel(): string {
           <div class="detail__empty-ring" />
         </div>
       </div>
-      <NText tag="h2" depth="1" style="font-size:1.25rem;font-weight:800;letter-spacing:-0.02em">选择一个设备开始监控</NText>
-      <NText depth="3" style="font-size:0.95rem;max-width:30rem;text-align:center;line-height:1.6">从左侧设备列表中选择一台 T1603，或者点击顶栏 + 添加新设备</NText>
+      <NText tag="h2" depth="1" style="font-size:1.25rem;font-weight:800;letter-spacing:-0.02em">{{ i18n.t('monitor.selectDevice') }}</NText>
+      <NText depth="3" style="font-size:0.95rem;max-width:30rem;text-align:center;line-height:1.6">{{ i18n.t('monitor.selectDeviceHint') }}</NText>
       <div class="detail__empty-tips">
         <div class="detail__empty-tip">
           <Wifi :size="14" class="detail__empty-tip-icon" />
-          <span>实时波形</span>
+          <span>{{ i18n.t('monitor.realtimeWaveform') }}</span>
         </div>
         <div class="detail__empty-tip">
           <Layers :size="14" class="detail__empty-tip-icon" />
-          <span>多通道并行</span>
+          <span>{{ i18n.t('monitor.multiChannel') }}</span>
         </div>
         <div class="detail__empty-tip">
           <LineChart :size="14" class="detail__empty-tip-icon" />
-          <span>数据导出</span>
+          <span>{{ i18n.t('monitor.dataExport') }}</span>
         </div>
       </div>
     </div>
@@ -162,12 +173,12 @@ function statusLabel(): string {
               </div>
               <div class="detail__device-info">
                 <NText tag="h2" depth="1" style="font-size:1rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  {{ selected.name || '未命名设备' }}
+                  {{ selected.name || i18n.t('monitor.unnamedDevice') }}
                 </NText>
                 <NSpace size="small" align="center" style="color:var(--text-muted);font-size:0.7rem;flex-wrap:wrap">
                   <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.address }}:{{ selected.port }}</NText>
                   <span class="detail__meta-dot" />
-                  <NText depth="3" style="font-size:0.7rem">{{ (selected.t1603Config?.thermocoupleTypes || 'K')[0] }} 型热电偶</NText>
+                  <NText depth="3" style="font-size:0.7rem">{{ i18n.t('monitor.thermocoupleType', { type: (selected.t1603Config?.thermocoupleTypes || 'K')[0] }) }}</NText>
                   <span class="detail__meta-dot" />
                   <NText depth="3" style="font-size:0.7rem;font-weight:600">{{ selected.t1603Config?.samplingRate ?? selected.samplingRate }} Hz</NText>
                 </NSpace>
@@ -189,10 +200,10 @@ function statusLabel(): string {
                 <template #icon>
                   <Network :size="14" />
                 </template>
-                {{ status === 'Connected' || status === 'Acquiring' || status === 'Starting' || status === 'Stopping' ? '断开' : status === 'Connecting' ? '连接中' : '连接' }}
+                {{ connectButtonLabel }}
               </NButton>
               <NButton size="small" secondary @click="openConfig()">
-                <template #icon><Settings2 :size="14" /></template>配置
+                <template #icon><Settings2 :size="14" /></template>{{ i18n.t('monitor.config') }}
               </NButton>
             </div>
           </div>
@@ -206,9 +217,9 @@ function statusLabel(): string {
           <div class="detail__chart-header">
             <div class="detail__chart-title">
               <LineChart :size="15" style="color:var(--accent)" />
-              <NText depth="1" style="font-size:0.9rem;font-weight:700">实时波形</NText>
-              <NText v-if="isChartVisible" depth="3" style="font-size:0.7rem;margin-left:0.25rem">· {{ selectedChannelCount }} 条曲线</NText>
-              <NText v-else-if="sampleCount > 0" depth="3" style="font-size:0.7rem;margin-left:0.25rem;opacity:0.7">· 点击右侧按钮选择通道</NText>
+              <NText depth="1" style="font-size:0.9rem;font-weight:700">{{ i18n.t('monitor.realtimeWaveform') }}</NText>
+              <NText v-if="isChartVisible" depth="3" style="font-size:0.7rem;margin-left:0.25rem">· {{ i18n.t('monitor.curveCount', { n: selectedChannelCount }) }}</NText>
+              <NText v-else-if="sampleCount > 0" depth="3" style="font-size:0.7rem;margin-left:0.25rem;opacity:0.7">{{ i18n.t('monitor.selectChannelHint') }}</NText>
             </div>
             <div class="detail__chart-tools">
               <NButton
@@ -217,27 +228,27 @@ function statusLabel(): string {
                 secondary
                 @click="openChannelSelection"
               >
-                <template #icon><Layers :size="13" /></template>通道选择
+                <template #icon><Layers :size="13" /></template>{{ i18n.t('monitor.channelSelection') }}
               </NButton>
               <!-- 清除当前波形（#31）：清空前端缓冲让波形从头开始绘制 -->
               <NButton
                 size="tiny"
                 secondary
                 :disabled="sampleCount === 0"
-                title="清除当前波形"
+                :title="i18n.t('monitor.clearWaveformTitle')"
                 @click="clearWaveform"
               >
-                <template #icon><Eraser :size="13" /></template>清除波形
+                <template #icon><Eraser :size="13" /></template>{{ i18n.t('monitor.clearWaveform') }}
               </NButton>
               <div v-if="showChannelSelector" class="detail__channel-popover">
                 <div class="detail__channel-popover-head">
                   <div>
-                    <NText depth="1" style="font-size:0.72rem;font-weight:700">通道选择</NText>
+                    <NText depth="1" style="font-size:0.72rem;font-weight:700">{{ i18n.t('monitor.channelSelection') }}</NText>
                     <NText depth="3" style="font-size:0.7rem">{{ selectedChannelCount }}/{{ enabledCount }}</NText>
                   </div>
                   <NSpace size="small">
-                    <NButton size="tiny" quaternary :disabled="isAllChannelsSelected" @click="selectAllChannels">全选</NButton>
-                    <NButton size="tiny" quaternary :disabled="selectedChannelCount === 0" @click="clearAllChannels">全取消</NButton>
+                    <NButton size="tiny" quaternary :disabled="isAllChannelsSelected" @click="selectAllChannels">{{ i18n.t('common.selectAll') }}</NButton>
+                    <NButton size="tiny" quaternary :disabled="selectedChannelCount === 0" @click="clearAllChannels">{{ i18n.t('common.unselectAll') }}</NButton>
                   </NSpace>
                 </div>
                 <div class="detail__channel-selector-grid">
@@ -266,8 +277,8 @@ function statusLabel(): string {
 
       <section class="detail__channels">
         <div class="detail__channels-header">
-          <NText depth="1" style="font-size:0.95rem;font-weight:800;letter-spacing:-0.01em">通道监控</NText>
-          <NText depth="3" style="font-size:0.7rem">通过上方"通道选择"按钮可以控制波形图中显示的通道</NText>
+          <NText depth="1" style="font-size:0.95rem;font-weight:800;letter-spacing:-0.01em">{{ i18n.t('monitor.channelMonitor') }}</NText>
+          <NText depth="3" style="font-size:0.7rem">{{ i18n.t('monitor.channelMonitorHint') }}</NText>
         </div>
         <ChannelGrid :device-id="selected.id" />
       </section>

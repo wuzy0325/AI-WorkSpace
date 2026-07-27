@@ -8,8 +8,12 @@ import DaqT1603Config from '@components/device/DaqT1603Config.vue'
 import ScanResultList from '@components/device/ScanResultList.vue'
 import type { ScanResult } from '@bridge/deviceBridge'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
+import pkg from '../../../package.json'
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
+const appVersion = pkg.version
 
 const showAddDialog = ref(false)
 const showConfig = ref(false)
@@ -108,11 +112,11 @@ provide('shell:openConfig', requestConfig)
 
 async function confirmAddDevice() {
   if (!newName.value.trim()) {
-    addError.value = '请输入设备名称'
+    addError.value = i18n.t('dialog.inputDeviceName')
     return
   }
   if (!newAddress.value.trim()) {
-    addError.value = '请输入 IP 地址'
+    addError.value = i18n.t('dialog.inputIpAddress')
     return
   }
   addError.value = null
@@ -120,7 +124,7 @@ async function confirmAddDevice() {
     await deviceStore.addProfile(newName.value.trim(), newAddress.value.trim(), newPort.value)
     showAddDialog.value = false
   } catch (err) {
-    addError.value = err instanceof Error ? err.message : '添加设备失败'
+    addError.value = err instanceof Error ? err.message : i18n.t('dialog.addDeviceFailed')
   }
 }
 </script>
@@ -128,7 +132,7 @@ async function confirmAddDevice() {
 <template>
   <div class="shell">
     <MainTopBar
-      version="0.1.0"
+      :version="appVersion"
       :is-toggling="isToggling"
       @add-device="openAddDevice"
       @toggle-acquisition="toggleAcquisition"
@@ -163,8 +167,8 @@ async function confirmAddDevice() {
           <div class="modal-panel modal-panel--narrow">
             <div class="dialog">
               <div class="dialog__header">
-                <h3 class="dialog__title">扫描设备</h3>
-                <p class="dialog__subtitle">局域网中发现 DAQ-T-1603 设备</p>
+                <h3 class="dialog__title">{{ i18n.t('dialog.scanTitle') }}</h3>
+                <p class="dialog__subtitle">{{ i18n.t('dialog.scanSubtitle') }}</p>
               </div>
               <div class="dialog__body">
                 <ScanResultList
@@ -175,13 +179,13 @@ async function confirmAddDevice() {
                 />
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">关闭</button>
+                <button class="dialog__btn dialog__btn--secondary" @click="showScanDialog = false">{{ i18n.t('common.close') }}</button>
                 <button
                   v-if="!deviceStore.isScanning"
                   class="dialog__btn dialog__btn--primary"
                   @click="void deviceStore.scanDevices()"
                 >
-                  重新扫描
+                  {{ i18n.t('common.rescan') }}
                 </button>
               </div>
             </div>
@@ -197,35 +201,35 @@ async function confirmAddDevice() {
           <div class="modal-panel modal-panel--narrow">
             <div class="dialog">
               <div class="dialog__header">
-                <h3 class="dialog__title">添加 T1603 设备</h3>
-                <p class="dialog__subtitle">通过 IP 端口接入温度采集器</p>
+                <h3 class="dialog__title">{{ i18n.t('dialog.addDeviceTitle') }}</h3>
+                <p class="dialog__subtitle">{{ i18n.t('dialog.addDeviceSubtitle') }}</p>
               </div>
               <div class="dialog__body">
                 <div class="dialog__field">
-                  <label>设备名称</label>
+                  <label>{{ i18n.t('dialog.deviceName') }}</label>
                   <input
                     v-model="newName"
                     maxlength="32"
-                    placeholder="例如: 温度采集器 1"
+                    :placeholder="i18n.t('dialog.deviceNamePlaceholder')"
                     autofocus
                     @keyup.enter="confirmAddDevice"
                   />
                 </div>
                 <div class="dialog__row">
                   <div class="dialog__field">
-                    <label>IP 地址</label>
+                    <label>{{ i18n.t('dialog.ipAddress') }}</label>
                     <input v-model="newAddress" placeholder="192.168.3.101" @keyup.enter="confirmAddDevice" />
                   </div>
                   <div class="dialog__field dialog__field--narrow">
-                    <label>端口</label>
+                    <label>{{ i18n.t('dialog.port') }}</label>
                     <input v-model.number="newPort" type="number" min="1" max="65535" @keyup.enter="confirmAddDevice" />
                   </div>
                 </div>
                 <p v-if="addError" class="dialog__error">{{ addError }}</p>
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="showAddDialog = false">取消</button>
-                <button class="dialog__btn dialog__btn--primary" @click="confirmAddDevice">添加</button>
+                <button class="dialog__btn dialog__btn--secondary" @click="showAddDialog = false">{{ i18n.t('common.cancel') }}</button>
+                <button class="dialog__btn dialog__btn--primary" @click="confirmAddDevice">{{ i18n.t('common.add') }}</button>
               </div>
             </div>
           </div>

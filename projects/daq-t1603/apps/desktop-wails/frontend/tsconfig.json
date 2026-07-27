@@ -18,7 +18,9 @@
       "@stores/*": ["./src/stores/*"],
       "@bridge/*": ["./src/bridge/*"],
       "@composables/*": ["./src/composables/*"],
-      "@shared-frontend/*": ["../../../../../shared/frontend/*"]
+      "@shared-frontend/*": ["../../../../../shared/frontend/*"],
+      "vue": ["./node_modules/vue"],
+      "pinia": ["./node_modules/pinia"]
     },
     "baseUrl": "."
   },

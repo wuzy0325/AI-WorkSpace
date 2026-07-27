@@ -117,7 +117,10 @@ func main() {
 	wailsApp := application.New(appOpts)
 
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:     "DAQ-P-1604 压力采集",
+		// 窗口默认标题用英文，避免首屏硬编码中文。
+		// 前端 App.vue 在 onMounted 和 watch(locale) 时会通过 @wailsio/runtime 的 Window.SetTitle
+		// 覆盖为当前语言对应的本地化标题（zh: "DAQ-P-1604 压力采集" / en: "DAQ-P-1604 Pressure Acquisition"）。
+		Title:     "DAQ-P-1604 Pressure Acquisition",
 		Width:     1600,
 		Height:    900,
 		MinWidth:  1280,

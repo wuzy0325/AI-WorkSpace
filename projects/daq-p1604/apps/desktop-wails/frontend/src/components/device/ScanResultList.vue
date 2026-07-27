@@ -12,6 +12,9 @@ import { computed, ref, watch } from 'vue'
 import type { ScanResult } from '@bridge/deviceBridge'
 import { Wifi, Monitor, Loader2, CheckCircle2 } from '@lucide/vue'
 import { hostKey, makeDefaultName } from '@stores/deviceStoreHelpers'
+import { useI18nStore } from '@stores/i18nStore'
+
+const i18n = useI18nStore()
 
 /** 单条选择项：id 与后端 ScanResult.id 对齐，name 为用户改名后或默认名 */
 export interface ScanSelectionItem {
@@ -224,13 +227,13 @@ defineExpose({ selectableCount, checkedCount, toggleAll })
   <div class="scan">
     <div v-if="scanning" class="scan__loading">
       <Loader2 class="scan__spinner" />
-      <span>正在扫描...</span>
+      <span>{{ i18n.t('scan.scanning') }}</span>
     </div>
 
     <div v-else-if="results.length === 0" class="scan__empty">
       <Monitor class="scan__empty-icon" />
-      <p>未发现设备</p>
-      <p class="scan__empty-hint">请确保设备已开机并连接在同一网络</p>
+      <p>{{ i18n.t('scan.noDevices') }}</p>
+      <p class="scan__empty-hint">{{ i18n.t('scan.noDevicesHint') }}</p>
     </div>
 
     <template v-else>
@@ -239,7 +242,7 @@ defineExpose({ selectableCount, checkedCount, toggleAll })
         <button
           class="scan__selectall"
           :disabled="selectableCount === 0"
-          :title="selectAllState === 'all' ? '全部取消' : '全部选中'"
+          :title="selectAllState === 'all' ? i18n.t('scan.unselectAllTitle') : i18n.t('scan.selectAllTitle')"
           @click="toggleAll"
         >
           <span
@@ -252,10 +255,10 @@ defineExpose({ selectableCount, checkedCount, toggleAll })
             <CheckCircle2 v-if="selectAllState === 'all'" class="scan__selectall-icon" />
             <span v-else-if="selectAllState === 'partial'" class="scan__selectall-dash" />
           </span>
-          {{ selectAllState === 'all' ? '取消全选' : '全选' }}
+          {{ selectAllState === 'all' ? i18n.t('scan.unselectAll') : i18n.t('scan.selectAll') }}
         </button>
         <span class="scan__toolbar-info">
-          已选 {{ checkedCount }} / 可添加 {{ selectableCount }} · 共 {{ results.length }} 台
+          {{ i18n.t('scan.selectionSummary', { checked: checkedCount, selectable: selectableCount, total: results.length }) }}
         </span>
       </div>
 
@@ -287,7 +290,7 @@ defineExpose({ selectableCount, checkedCount, toggleAll })
               :value="nameFor(r)"
               :placeholder="nameFor(r)"
               :disabled="!isChecked(r)"
-              :title="isChecked(r) ? '可修改设备名称' : '勾选后可修改设备名称'"
+              :title="isChecked(r) ? i18n.t('scan.editNameChecked') : i18n.t('scan.editNameUnchecked')"
               @input="(ev) => updateName(r, (ev.target as HTMLInputElement).value)"
             />
             <span v-else class="scan__item-name scan__item-name--muted">
@@ -300,7 +303,7 @@ defineExpose({ selectableCount, checkedCount, toggleAll })
           <div class="scan__item-meta">
             <span v-if="isAlreadyAdded(r)" class="scan__item-badge">
               <CheckCircle2 class="scan__item-badge-icon" />
-              已添加
+              {{ i18n.t('scan.added') }}
             </span>
             <span v-if="r.macAddress" class="scan__item-mac mono">{{ r.macAddress }}</span>
             <span v-if="r.firmwareVersion" class="scan__item-fw mono">FW {{ r.firmwareVersion }}</span>

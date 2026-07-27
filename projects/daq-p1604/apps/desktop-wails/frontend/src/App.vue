@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
@@ -10,11 +11,29 @@ import type { DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
 import MonitorView from '@views/MonitorView.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
+import { Window } from '@wailsio/runtime'
 import type { GlobalThemeOverrides } from 'naive-ui'
+
+/**
+ * 同步 Wails 原生窗口标题为当前语言对应的本地化文案。
+ *
+ * Wails 窗口标题由 main.go 在启动时设置（默认英文），无法在 Go 侧感知前端语言切换。
+ * 这里通过 @wailsio/runtime 的 Window.SetTitle 在 onMounted 和 locale 变化时覆盖。
+ *
+ * try/catch 保护非 Wails 运行环境（如 vitest 单元测试），避免 SetTitle 抛错。
+ */
+async function syncWindowTitle(): Promise<void> {
+  try {
+    await Window.SetTitle(i18n.t('app.windowTitle'))
+  } catch {
+    // 非 Wails 运行环境（如单元测试）下静默忽略
+  }
+}
 
 const { theme } = useTheme()
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
+const i18n = useI18nStore()
 const logStore = useLogStore()
 const recordingStore = useRecordingStore()
 
@@ -70,6 +89,9 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 })
 
 onMounted(async () => {
+  // 语言偏好已在 i18nStore 创建时同步从 localStorage 读取，无需在此显式初始化
+  // 同步原生窗口标题为当前语言（覆盖 main.go 的默认英文标题）
+  void syncWindowTitle()
   // 从后端加载已保存的设备配置
   await deviceStore.loadProfiles()
   // 同步日志文件保存状态（后端启动时已自动开启）
@@ -79,7 +101,7 @@ onMounted(async () => {
     await deviceStore.autoConnectAll()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    logStore.warn('auto-connect', `自动连接失败: ${message}`)
+    logStore.warn('auto-connect', i18n.t('logMessage.autoConnectFailed', { message }))
   }
   // 同步 UI 显示偏好到 deviceStore（渲染刷新率 + 历史时间窗口）
   deviceStore.applyDisplayPreferences(displayStore.refreshRateHz, displayStore.historyWindowSec)
@@ -90,6 +112,8 @@ onMounted(async () => {
       deviceStore.applyDisplayPreferences(rate, window)
     },
   )
+  // 监听语言切换，同步原生窗口标题
+  watch(() => i18n.locale, syncWindowTitle)
   // 启动快照轮询：以后端采样率为准的固定周期从内存缓存拉取最新快照
   // - Wails v3 采用轮询是为规避 Event.Emit 触发 WebView2 同步 ExecuteScript 阻塞
   // - 与用户选择的 UI 刷新率完全解耦：数据永远新鲜，UI 按用户节奏消费

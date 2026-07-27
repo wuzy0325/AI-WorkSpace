@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
 import type { TemperatureProfile, TemperatureSnapshot, T1603Config, ChannelConfig, ScanResult, DeviceState } from '@bridge/deviceBridge'
+import { useI18nStore } from '@stores/i18nStore'
 
 const MAX_HISTORY = 200
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
@@ -15,10 +16,16 @@ const CHANNEL_COLORS = [
   '#eab308', '#22c55e', '#ef4444', '#8b5cf6',
 ]
 
+/**
+ * 默认通道配置。
+ *
+ * name 留空：让 UI 通过 i18n 占位符显示本地化的默认名称（如"通道 1" / "Channel 1"），
+ * 避免在持久化数据中固化某一种语言。用户手动输入的名称仍按原样保存。
+ */
 function defaultChannels() {
   return Array.from({ length: 16 }, (_, i) => ({
     index: i,
-    name: `通道 ${i + 1}`,
+    name: '',
     enabled: true,
     unit: '°C',
     color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
@@ -54,6 +61,7 @@ function t1603Defaults(cfg: Partial<T1603Config>): T1603Config {
 }
 
 export const useDeviceStore = defineStore('device', () => {
+  const i18n = useI18nStore()
   const profiles = ref<TemperatureProfile[]>([])
   const selectedId = ref<string | null>(null)
   const statusMap = ref<Record<string, string>>({})
@@ -277,7 +285,7 @@ export const useDeviceStore = defineStore('device', () => {
    * 后端在失败时已通过 EmitLog（error 级别）写入日志，前端通过 onLog 订阅即可收到，
    * 此处不再重复写 logStore，避免同一错误产生中英两条日志。仅同步状态确保 UI 准确。
    */
-  async function syncAndLogFailure(id: string, _action: string, _err: unknown): Promise<void> {
+  async function syncAndLogFailure(id: string): Promise<void> {
     const state = await bridge.getStatus(id).catch(() => false)
     syncStatusFromBackend(id, state as DeviceState | false)
   }
@@ -286,7 +294,7 @@ export const useDeviceStore = defineStore('device', () => {
     try {
       await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
     } catch (err) {
-      await syncAndLogFailure(id, '连接设备', err)
+      await syncAndLogFailure(id)
       throw err
     }
   }
@@ -295,7 +303,7 @@ export const useDeviceStore = defineStore('device', () => {
     try {
       await transitionStatus(id, () => bridge.disconnect(id), 'Disconnected', 'Disconnected')
     } catch (err) {
-      await syncAndLogFailure(id, '断开设备', err)
+      await syncAndLogFailure(id)
       throw err
     }
   }
@@ -310,7 +318,7 @@ export const useDeviceStore = defineStore('device', () => {
         'Starting',
       )
     } catch (err) {
-      await syncAndLogFailure(id, '启动采集', err)
+      await syncAndLogFailure(id)
       throw err
     }
   }
@@ -325,7 +333,7 @@ export const useDeviceStore = defineStore('device', () => {
         'Stopping',
       )
     } catch (err) {
-      await syncAndLogFailure(id, '停止采集', err)
+      await syncAndLogFailure(id)
       throw err
     }
   }
@@ -334,7 +342,7 @@ export const useDeviceStore = defineStore('device', () => {
     await withTimeout(
       bridge.applyConfig(id, t1603Defaults(cfg)),
       APPLY_CONFIG_TIMEOUT_MS,
-      '应用配置超时，设备可能无响应',
+      i18n.t('error.applyConfigTimeout'),
     )
   }
 
@@ -349,7 +357,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -366,7 +374,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -408,7 +416,7 @@ export const useDeviceStore = defineStore('device', () => {
       (p) => p.address.trim().toLowerCase() === normalizedAddress && p.port === port,
     )
     if (duplicated) {
-      throw new Error('该设备已添加，请勿重复添加')
+      throw new Error(i18n.t('error.duplicateDevice'))
     }
 
     const id = `t1603_${Date.now()}`
@@ -432,7 +440,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 

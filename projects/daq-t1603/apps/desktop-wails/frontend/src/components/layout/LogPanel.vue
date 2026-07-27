@@ -2,11 +2,12 @@
 import { ref, nextTick, watch, computed, onUnmounted } from 'vue'
 import { Trash2, PanelRightOpen, PanelRightClose, Copy, Check, FileText, FileX, Search, X } from '@lucide/vue'
 import { useLogStore } from '@stores/logStore'
+import { useI18nStore } from '@stores/i18nStore'
 import type { LogLevel, LogGroup, LogEntry } from '@stores/logStore'
-import { LOG_GROUP_LABELS, CATEGORY_LABELS } from '@stores/logStore'
 import type { LogCategory } from '@bridge/deviceBridge'
 
 const logStore = useLogStore()
+const i18n = useI18nStore()
 
 /** 面板展开状态：默认收起 */
 const expanded = ref(false)
@@ -33,21 +34,21 @@ function clearSearch(): void {
 const copiedId = ref<number | null>(null)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 级别过滤选项 */
-const levelOptions: { value: LogLevel; label: string }[] = [
-  { value: 'debug', label: 'Debug' },
-  { value: 'info', label: 'Info' },
-  { value: 'warn', label: 'Warn' },
-  { value: 'error', label: 'Error' },
-]
+/** 级别过滤选项（标签随语言切换） */
+const levelOptions = computed<{ value: LogLevel; label: string }[]>(() => [
+  { value: 'debug', label: i18n.t('log.levelDebug') },
+  { value: 'info', label: i18n.t('log.levelInfo') },
+  { value: 'warn', label: i18n.t('log.levelWarn') },
+  { value: 'error', label: i18n.t('log.levelError') },
+])
 
-/** 分组过滤选项（合并后端细粒度分类为用户友好的分组） */
-const groupOptions: { value: LogGroup | 'all'; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'system', label: LOG_GROUP_LABELS.system },
-  { value: 'communication', label: LOG_GROUP_LABELS.communication },
-  { value: 'acquisition', label: LOG_GROUP_LABELS.acquisition },
-]
+/** 分组过滤选项（合并后端细粒度分类为用户友好的分组，标签随语言切换） */
+const groupOptions = computed<{ value: LogGroup | 'all'; label: string }[]>(() => [
+  { value: 'all', label: i18n.t('log.allGroups') },
+  { value: 'system', label: i18n.t('logGroup.system') },
+  { value: 'communication', label: i18n.t('logGroup.communication') },
+  { value: 'acquisition', label: i18n.t('logGroup.acquisition') },
+])
 
 /** 日志条数统计 */
 const errorCount = computed(() => logStore.entries.filter((e) => e.level === 'error').length)
@@ -58,10 +59,10 @@ function levelClass(level: LogLevel): string {
   return `log-entry--${level}`
 }
 
-/** 格式化时间戳 */
+/** 格式化时间戳：随语言切换显示习惯（zh→zh-CN，en→en-US） */
 function formatTime(ts: number): string {
   const d = new Date(ts)
-  return d.toLocaleTimeString('zh-CN', {
+  return d.toLocaleTimeString(i18n.timeLocale, {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
@@ -69,9 +70,15 @@ function formatTime(ts: number): string {
   }) + '.' + String(d.getMilliseconds()).padStart(3, '0')
 }
 
-/** 获取分类的中文标签 */
+/** 获取分类的本地化标签 */
 function categoryLabel(category: LogCategory): string {
-  return CATEGORY_LABELS[category] ?? category
+  switch (category) {
+    case 'system': return i18n.t('logCategory.system')
+    case 'hardware-send': return i18n.t('logCategory.hardwareSend')
+    case 'hardware-recv': return i18n.t('logCategory.hardwareRecv')
+    case 'acquisition': return i18n.t('logCategory.acquisition')
+    default: return category
+  }
 }
 
 /** 格式化单条日志为纯文本 */
@@ -176,7 +183,7 @@ onUnmounted(() => {
     <div v-if="!expanded" class="log-panel__collapsed" @click="togglePanel">
       <div class="log-panel__collapsed-inner">
         <PanelRightOpen class="log-panel__collapsed-icon" />
-        <span class="log-panel__collapsed-text">日志</span>
+        <span class="log-panel__collapsed-text">{{ i18n.t('log.title') }}</span>
         <span v-if="errorCount > 0" class="log-panel__badge log-panel__badge--error log-panel__badge--collapsed">{{ errorCount }}</span>
         <span v-else-if="warnCount > 0" class="log-panel__badge log-panel__badge--warn log-panel__badge--collapsed">{{ warnCount }}</span>
       </div>
@@ -187,16 +194,16 @@ onUnmounted(() => {
       <!-- 面板头部 -->
       <div class="log-panel__header">
         <div class="log-panel__header-left">
-          <span class="log-panel__title">日志</span>
+          <span class="log-panel__title">{{ i18n.t('log.title') }}</span>
           <span v-if="errorCount > 0" class="log-panel__badge log-panel__badge--error">{{ errorCount }}</span>
           <span v-else-if="warnCount > 0" class="log-panel__badge log-panel__badge--warn">{{ warnCount }}</span>
-          <span class="log-panel__count">{{ logStore.filteredEntries.length }} 条</span>
+          <span class="log-panel__count">{{ i18n.t('log.entries', { n: logStore.filteredEntries.length }) }}</span>
         </div>
         <div class="log-panel__header-right">
           <button
             class="log-panel__tool-btn"
             :class="{ 'log-panel__tool-btn--active': logStore.fileSaving }"
-            :title="logStore.fileSaving ? `日志正在保存至: ${logStore.fileOutputDir}\n点击停止` : '保存日志到文件'"
+            :title="logStore.fileSaving ? i18n.t('log.savingTo', { dir: logStore.fileOutputDir }) : i18n.t('log.saveToFile')"
             @click.stop="toggleFileSaving"
           >
             <FileText v-if="logStore.fileSaving" class="log-panel__tool-icon" />
@@ -205,16 +212,16 @@ onUnmounted(() => {
           <button
             class="log-panel__tool-btn"
             :class="{ 'log-panel__tool-btn--success': copiedId === -1 }"
-            title="拷贝全部日志"
+            :title="i18n.t('log.copyAll')"
             @click.stop="copyAll"
           >
             <Check v-if="copiedId === -1" class="log-panel__tool-icon" />
             <Copy v-else class="log-panel__tool-icon" />
           </button>
-          <button class="log-panel__tool-btn" title="清空日志" @click.stop="clearLogs">
+          <button class="log-panel__tool-btn" :title="i18n.t('log.clear')" @click.stop="clearLogs">
             <Trash2 class="log-panel__tool-icon" />
           </button>
-          <button class="log-panel__tool-btn" title="收起" @click.stop="expanded = false">
+          <button class="log-panel__tool-btn" :title="i18n.t('log.collapse')" @click.stop="expanded = false">
             <PanelRightClose class="log-panel__tool-icon" />
           </button>
         </div>
@@ -229,13 +236,13 @@ onUnmounted(() => {
             :value="searchInput"
             class="log-panel__search-input"
             type="text"
-            placeholder="检索日志（消息/标签/详情/设备）"
+            :placeholder="i18n.t('log.searchPlaceholder')"
             @input="onSearchInput"
           />
           <button
             v-if="searchInput"
             class="log-panel__search-clear"
-            title="清除检索"
+            :title="i18n.t('log.clearSearch')"
             @click.stop="clearSearch"
           >
             <X class="log-panel__search-clear-icon" />
@@ -244,8 +251,8 @@ onUnmounted(() => {
 
         <div class="log-panel__filters">
           <div class="log-panel__filter-group">
-            <span class="log-panel__filter-label">级别
-              <span class="log-panel__filter-hint">（及以上）</span>
+            <span class="log-panel__filter-label">{{ i18n.t('log.level') }}
+              <span class="log-panel__filter-hint">{{ i18n.t('log.levelAndAbove') }}</span>
             </span>
             <button
               v-for="option in levelOptions"
@@ -260,7 +267,7 @@ onUnmounted(() => {
           </div>
 
           <div class="log-panel__filter-group">
-            <span class="log-panel__filter-label">分类</span>
+            <span class="log-panel__filter-label">{{ i18n.t('log.category') }}</span>
             <button
               v-for="option in groupOptions"
               :key="option.value"
@@ -292,7 +299,7 @@ onUnmounted(() => {
           <button
             class="log-entry__copy"
             :class="{ 'log-entry__copy--done': copiedId === entry.id }"
-            title="拷贝此条日志"
+            :title="i18n.t('log.copyEntry')"
             @click.stop="copyEntry(entry)"
           >
             <Check v-if="copiedId === entry.id" class="log-entry__copy-icon" />
@@ -300,7 +307,7 @@ onUnmounted(() => {
           </button>
         </div>
         <div v-if="logStore.filteredEntries.length === 0" class="log-panel__empty">
-          暂无日志
+          {{ i18n.t('log.empty') }}
         </div>
       </div>
     </template>

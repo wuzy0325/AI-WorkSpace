@@ -7,6 +7,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
@@ -17,6 +18,7 @@ const props = withDefaults(defineProps<{
 
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
+const i18n = useI18nStore()
 const { theme } = useTheme()
 
 // 18 通道波形配色：剔除容易与「警告/异常」混淆的橙黄（amber/orange/yellow），
@@ -92,7 +94,7 @@ const option = computed(() => {
   const history = fullHistory.slice(startIdx)
   const times = history.map((d) => {
     const date = new Date(d.timestamp)
-    return date.toLocaleTimeString('zh-CN', { hour12: false })
+    return date.toLocaleTimeString(i18n.timeLocale, { hour12: false })
   })
 
   const channels = deviceStore.selectedProfile?.channels ?? []
@@ -218,10 +220,10 @@ const selectedChannelCount = computed(() => {
     <div v-else class="chart__empty">
       <div class="chart__empty-pulse"></div>
       <p class="chart__empty-text">
-        {{ !hasData ? '等待实时数据...' : '未选择通道' }}
+        {{ !hasData ? i18n.t('chart.waitingData') : i18n.t('chart.noChannelSelected') }}
       </p>
       <p class="chart__empty-hint">
-        {{ !hasData ? '设备开始采集后将自动显示波形' : '请在上方通道选择中勾选需要显示的通道' }}
+        {{ !hasData ? i18n.t('chart.willShowWhenAcquiring') : i18n.t('chart.pleaseSelectChannel') }}
       </p>
     </div>
   </div>

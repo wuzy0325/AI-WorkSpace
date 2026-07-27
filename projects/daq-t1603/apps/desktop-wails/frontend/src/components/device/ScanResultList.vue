@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { ScanResult } from '@bridge/deviceBridge'
 import { Wifi, Monitor, Loader2, Plus, Check } from '@lucide/vue'
+import { useI18nStore } from '@stores/i18nStore'
+
+const i18n = useI18nStore()
 
 const props = defineProps<{
   results: ScanResult[]
@@ -23,13 +26,13 @@ function added(result: ScanResult): boolean {
   <div class="scan">
     <div v-if="scanning" class="scan__loading">
       <Loader2 class="scan__spinner" />
-      <span>正在扫描...</span>
+      <span>{{ i18n.t('scan.scanning') }}</span>
     </div>
 
     <div v-else-if="results.length === 0" class="scan__empty">
       <Monitor class="scan__empty-icon" />
-      <p>未发现设备</p>
-      <p class="scan__empty-hint">请确保设备已开机并连接在同一网络</p>
+      <p>{{ i18n.t('scan.noDevices') }}</p>
+      <p class="scan__empty-hint">{{ i18n.t('scan.noDevicesHint') }}</p>
     </div>
 
     <ul v-else class="scan__list">
@@ -52,14 +55,14 @@ function added(result: ScanResult): boolean {
           <span v-if="r.firmwareVersion" class="scan__item-fw mono">FW {{ r.firmwareVersion }}</span>
         </div>
         <!-- 已添加：显示徽章；未添加：显示 + 按钮 -->
-        <span v-if="added(r)" class="scan__item-badge" title="该设备已添加">
+        <span v-if="added(r)" class="scan__item-badge" :title="i18n.t('scan.deviceAddedTitle')">
           <Check class="scan__item-badge-icon" />
-          已添加
+          {{ i18n.t('scan.added') }}
         </span>
         <button
           v-else
           class="scan__item-add"
-          title="添加此设备"
+          :title="i18n.t('scan.addThisDevice')"
           @click="emit('add', r)"
         >
           <Plus class="scan__item-add-icon" />
@@ -68,7 +71,7 @@ function added(result: ScanResult): boolean {
     </ul>
 
     <p v-if="!scanning && results.length > 0" class="scan__count">
-      发现 {{ results.length }} 台设备
+      {{ i18n.t('scan.discovered', { n: results.length }) }}
     </p>
   </div>
 </template>

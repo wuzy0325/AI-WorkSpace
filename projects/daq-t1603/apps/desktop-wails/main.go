@@ -119,7 +119,10 @@ func main() {
 
 	// ---- 5. 主窗口 ----
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:           "DAQ-T-1603 温度采集",
+		// 窗口默认标题用英文，避免首屏硬编码中文。
+		// 前端 App.vue 在 onMounted 和 watch(locale) 时会通过 @wailsio/runtime 的 Window.SetTitle
+		// 覆盖为当前语言对应的本地化标题（zh: "DAQ-T-1603 温度采集" / en: "DAQ-T-1603 Temperature Acquisition"）。
+		Title:           "DAQ-T-1603 Temperature Acquisition",
 		Width:           1600,
 		Height:          900,
 		MinWidth:        1280,

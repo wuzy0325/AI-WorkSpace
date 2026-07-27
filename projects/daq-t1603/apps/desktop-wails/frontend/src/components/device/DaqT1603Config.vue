@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import CustomSelect from './CustomSelect.vue'
 import type { SelectOption } from './CustomSelect.vue'
 import {
@@ -13,11 +14,15 @@ const props = defineProps<{ deviceId: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 const profile = computed(() => deviceStore.profiles.find((p) => p.id === props.deviceId))
 const isAcquiring = computed(() => deviceStore.acquiringFor(props.deviceId))
 
 const thermocoupleOptions = ['K', 'J', 'T', 'E', 'N', 'S', 'R', 'B']
-const thermocoupleSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: `${t} 型` }))
+// 全局热电偶类型下拉选项：标签随语言切换（中文 "K 型"、英文 "K"）
+const thermocoupleSelectOptions = computed<SelectOption[]>(() =>
+  thermocoupleOptions.map((t) => ({ value: t, label: `${t}${i18n.t('config.thermocoupleTypeSuffix')}` })),
+)
 const channelTcSelectOptions: SelectOption[] = thermocoupleOptions.map(t => ({ value: t, label: t }))
 
 const samplingRate = ref(10)
@@ -144,7 +149,7 @@ async function saveConfig() {
     if (hwChanged) {
       try {
         await deviceStore.applyConfig(props.deviceId, nextProfile.t1603Config)
-        saveMessage.value = '配置已保存并应用到设备'
+        saveMessage.value = i18n.t('config.savedAndApplied')
       } catch (hwErr) {
         // STB-012：硬件应用失败（通常是设备离线/断网）时给出友好提示，
         // 明确"配置已保存到本地，但未应用到设备"，避免技术性错误消息困扰操作员。
@@ -155,11 +160,11 @@ async function saveConfig() {
         const isOffline = /\b(disconnected|refused|unreachable|offline|timeout)\b/i.test(reason)
           || /超时|断开|关闭/.test(reason)
         saveMessage.value = isOffline
-          ? '配置已保存到本地，但设备离线未应用到硬件，请重新连接后再次保存'
-          : `配置已保存，但硬件应用失败：${reason}`
+          ? i18n.t('config.savedLocalOfflineHint')
+          : i18n.t('config.hardwareApplyFailed', { reason })
       }
     } else {
-      saveMessage.value = '配置已保存'
+      saveMessage.value = i18n.t('config.saved')
     }
 
     saveStatus.value = 'success'
@@ -167,7 +172,7 @@ async function saveConfig() {
     setTimeout(() => { saveStatus.value = 'idle' }, 2000)
   } catch (err) {
     saveStatus.value = 'error'
-    saveMessage.value = err instanceof Error ? err.message : '保存失败'
+    saveMessage.value = err instanceof Error ? err.message : i18n.t('config.saveFailed')
   } finally {
     syncing.value = false
   }
@@ -204,14 +209,14 @@ function onRateInput(e: Event) {
       <div class="config__header-left">
         <Settings2 class="config__header-icon" />
         <div class="config__header-text">
-          <h3 class="config__header-title">{{ profile.name || '设备配置' }}</h3>
+          <h3 class="config__header-title">{{ profile.name || i18n.t('config.deviceConfig') }}</h3>
           <p class="config__header-subtitle">
             {{ profile.address }}:{{ profile.port }}
-            <span v-if="hasChanges" class="config__header-unsaved">未保存</span>
+            <span v-if="hasChanges" class="config__header-unsaved">{{ i18n.t('common.unsaved') }}</span>
           </p>
         </div>
       </div>
-      <button type="button" class="config__close" title="关闭" @click.stop="emit('close')">
+      <button type="button" class="config__close" :title="i18n.t('common.close')" @click.stop="emit('close')">
         <span class="config__close-line"></span>
         <span class="config__close-line"></span>
       </button>
@@ -223,13 +228,13 @@ function onRateInput(e: Event) {
       <section class="config__section">
         <div class="config__section-header">
           <SlidersHorizontal class="config__section-icon" />
-          <h4 class="config__section-title">硬件参数</h4>
+          <h4 class="config__section-title">{{ i18n.t('config.hardwareParams') }}</h4>
         </div>
         <div class="config__section-body">
           <div class="config__field">
             <label class="config__label">
               <Hash class="config__label-icon" />
-              <span>采样频率</span>
+              <span>{{ i18n.t('config.samplingRate') }}</span>
             </label>
             <input
               v-model.number="samplingRate"
@@ -245,7 +250,7 @@ function onRateInput(e: Event) {
           <div class="config__field">
             <label class="config__label">
               <Clock class="config__label-icon" />
-              <span>硬件时间戳</span>
+              <span>{{ i18n.t('config.hardwareTimestamp') }}</span>
             </label>
             <button
               type="button"
@@ -257,7 +262,7 @@ function onRateInput(e: Event) {
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ showTimestamp ? '启用' : '禁用' }}</span>
+              <span class="config__toggle-text">{{ showTimestamp ? i18n.t('common.enabled') : i18n.t('common.disabled') }}</span>
             </button>
           </div>
 
@@ -265,7 +270,7 @@ function onRateInput(e: Event) {
           <div class="config__field">
             <label class="config__label">
               <Wifi class="config__label-icon" />
-              <span>自动连接</span>
+              <span>{{ i18n.t('config.autoConnect') }}</span>
             </label>
             <button
               type="button"
@@ -277,7 +282,7 @@ function onRateInput(e: Event) {
               <span class="config__toggle-track">
                 <span class="config__toggle-thumb"></span>
               </span>
-              <span class="config__toggle-text">{{ autoConnect ? '开启' : '关闭' }}</span>
+              <span class="config__toggle-text">{{ autoConnect ? i18n.t('common.enabled') : i18n.t('common.disabled') }}</span>
             </button>
           </div>
 
@@ -285,7 +290,7 @@ function onRateInput(e: Event) {
           <div class="config__field">
             <label class="config__label">
               <Zap class="config__label-icon" />
-              <span>热电偶类型（全部通道）</span>
+              <span>{{ i18n.t('config.thermocoupleType') }}</span>
             </label>
             <CustomSelect
               :model-value="globalTcType"
@@ -295,15 +300,15 @@ function onRateInput(e: Event) {
             />
           </div>
         </div>
-        <p v-if="isAcquiring" class="config__section-hint">采集中不允许变更配置，请先停止采集。</p>
+        <p v-if="isAcquiring" class="config__section-hint">{{ i18n.t('config.acquireLockHint') }}</p>
       </section>
 
       <!-- 通道列表 -->
       <section class="config__section">
         <div class="config__section-header">
           <Activity class="config__section-icon" />
-          <h4 class="config__section-title">通道配置</h4>
-          <span class="config__section-badge">{{ enabledCount }}/16 启用</span>
+          <h4 class="config__section-title">{{ i18n.t('config.channelConfig') }}</h4>
+          <span class="config__section-badge">{{ i18n.t('config.channelEnabledCount', { n: enabledCount }) }}</span>
         </div>
         <div class="config__channels">
           <div
@@ -319,7 +324,7 @@ function onRateInput(e: Event) {
                   v-model="channelNames[i - 1]"
                   class="config__channel-name"
                   maxlength="32"
-                  :placeholder="`通道 ${i}`"
+                  :placeholder="i18n.t('config.defaultChannelName', { n: i })"
                   :disabled="isAcquiring || !channelEnabled[i - 1]"
                 />
                 <CustomSelect
@@ -335,14 +340,14 @@ function onRateInput(e: Event) {
                   type="button"
                   class="config__toggle"
                   :class="{ 'config__toggle--on': channelEnabled[i - 1] }"
-                  :title="channelEnabled[i - 1] ? '禁用通道' : '启用通道'"
+                  :title="channelEnabled[i - 1] ? i18n.t('config.disableChannel') : i18n.t('config.enableChannel')"
                   :disabled="isAcquiring"
                   @click="toggleChannel(i - 1)"
                 >
                   <span class="config__toggle-track">
                     <span class="config__toggle-thumb"></span>
                   </span>
-                  <span class="config__toggle-text">{{ channelEnabled[i - 1] ? '开' : '关' }}</span>
+                  <span class="config__toggle-text">{{ channelEnabled[i - 1] ? i18n.t('common.on') : i18n.t('common.off') }}</span>
                 </button>
               </div>
             </div>
@@ -357,17 +362,17 @@ function onRateInput(e: Event) {
         <CheckCircle2 v-if="saveStatus === 'success'" class="config__status-icon" />
         <AlertCircle v-else-if="saveStatus === 'error'" class="config__status-icon" />
         <RotateCcw v-else class="config__status-icon config__status-icon--spin" />
-        <span>{{ saveMessage || (saveStatus === 'saving' ? '保存中...' : '') }}</span>
+        <span>{{ saveMessage || (saveStatus === 'saving' ? i18n.t('common.saving') : '') }}</span>
       </div>
       <div v-else class="config__status config__status--idle">
-        <span v-if="isAcquiring">采集中不允许变更配置</span>
-        <span v-else-if="hasChanges">有未保存的更改</span>
-        <span v-else>所有更改已保存</span>
+        <span v-if="isAcquiring">{{ i18n.t('config.acquireLock') }}</span>
+        <span v-else-if="hasChanges">{{ i18n.t('common.unsavedChanges') }}</span>
+        <span v-else>{{ i18n.t('common.saved') }}</span>
       </div>
       <div class="config__actions">
         <button type="button" class="config__btn config__btn--secondary" :disabled="isAcquiring || saveStatus === 'saving'" @click.stop="resetConfig">
           <RotateCcw class="config__btn-icon" />
-          <span>重置</span>
+          <span>{{ i18n.t('common.reset') }}</span>
         </button>
         <button
           type="button"
@@ -376,7 +381,7 @@ function onRateInput(e: Event) {
           @click.stop="saveConfig"
         >
           <Save class="config__btn-icon" />
-          <span>保存</span>
+          <span>{{ i18n.t('common.save') }}</span>
         </button>
       </div>
     </div>

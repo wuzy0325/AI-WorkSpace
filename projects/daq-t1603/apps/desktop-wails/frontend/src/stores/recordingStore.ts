@@ -2,8 +2,10 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as bridge from '@bridge/recordingBridge'
 import type { RecordingSession } from '@bridge/recordingBridge'
+import { useI18nStore } from '@stores/i18nStore'
 
 export const useRecordingStore = defineStore('recording', () => {
+  const i18n = useI18nStore()
   const isRecording = ref(false)
   const outputDir = ref('')
   const filePrefix = ref('')
@@ -51,10 +53,10 @@ export const useRecordingStore = defineStore('recording', () => {
       // 中文关键词不用 \b（JS \b 对中文 \w 行为依赖引擎，可能漏判），改为独立分支。
       const friendly = /\b(not found|no such file|cannot find)\b/i.test(reason)
         || /不存在|无法找到/.test(reason)
-        ? `保存目录不存在：${dir}，请重新选择有效目录`
+        ? i18n.t('error.recordingDirNotFound', { dir })
         : /\b(permission|denied)\b/i.test(reason) || /权限/.test(reason)
-          ? `无权限写入目录：${dir}，请检查目录权限`
-          : `启动录制失败：${reason}`
+          ? i18n.t('error.recordingPermissionDenied', { dir })
+          : i18n.t('error.recordingStartFailed', { reason })
       lastError.value = friendly
       throw new Error(friendly)
     }

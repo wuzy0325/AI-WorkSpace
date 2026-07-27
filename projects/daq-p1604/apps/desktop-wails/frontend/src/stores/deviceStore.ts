@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
 import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult, DeviceState } from '@bridge/deviceBridge'
 import { useLogStore } from '@stores/logStore'
+import { useI18nStore } from '@stores/i18nStore'
 import {
   computeExistingKeys,
   hostKey,
@@ -40,10 +41,17 @@ const CHANNEL_COLORS = [
   '#64748b', '#78716c',
 ]
 
+/**
+ * 默认通道配置。
+ *
+ * name 留空：让 UI 通过 i18n 占位符显示本地化的默认名称
+ * （如"通道 1" / "Channel 1"、"大气压力" / "Atmospheric Pressure"），
+ * 避免在持久化数据中固化某一种语言。用户手动输入的名称仍按原样保存。
+ */
 function defaultChannels() {
   return Array.from({ length: 18 }, (_, i) => ({
     index: i,
-    name: i < 16 ? `通道 ${i + 1}` : (i === 16 ? '大气压力' : '大气温度'),
+    name: '',
     enabled: true,
     unit: i < 16 ? 'psi' : (i === 16 ? 'Pa' : '°C'),
     color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
@@ -76,6 +84,10 @@ function p1604Defaults(cfg: Partial<P1604Config>): P1604Config {
 }
 
 export const useDeviceStore = defineStore('device', () => {
+  const i18n = useI18nStore()
+  // logStore 不反向依赖 deviceStore（无循环依赖），顶部捕获一次复用，
+  // 避免 updateStatusFromBackend 每次调用都重新执行 useLogStore()
+  const logStore = useLogStore()
   const profiles = ref<PressureProfile[]>([])
   const selectedId = ref<string | null>(null)
   const statusMap = ref<Record<string, string>>({})
@@ -440,7 +452,7 @@ export const useDeviceStore = defineStore('device', () => {
     await withTimeout(
       bridge.applyConfig(id, p1604Defaults(cfg)),
       APPLY_CONFIG_TIMEOUT_MS,
-      '应用配置超时，设备可能无响应',
+      i18n.t('error.applyConfigTimeout'),
     )
   }
 
@@ -455,7 +467,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -471,7 +483,7 @@ export const useDeviceStore = defineStore('device', () => {
       await bridge.upsertProfile(profile)
     } catch {
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -488,7 +500,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -511,7 +523,7 @@ export const useDeviceStore = defineStore('device', () => {
     // 的去重语义一致。
     const dupKey = hostKey(address, port)
     if (computeExistingKeys(profiles.value).has(dupKey)) {
-      throw new Error('该设备已添加，请勿重复添加')
+      throw new Error(i18n.t('error.duplicateDevice'))
     }
 
     const id = `p1604_${Date.now()}`
@@ -535,7 +547,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -663,8 +675,7 @@ export const useDeviceStore = defineStore('device', () => {
         const newUnit = state.profile.p1604Config.unit
         if (prevUnit !== newUnit) {
           profiles.value[idx] = state.profile
-          const logStore = useLogStore()
-          logStore.info('device', `设备 [${id}] 单位已从硬件同步: ${prevUnit} -> ${newUnit}`)
+          logStore.info('device', i18n.t('logMessage.deviceUnitSynced', { id, prev: prevUnit, next: newUnit }))
         }
       }
     }
@@ -673,10 +684,10 @@ export const useDeviceStore = defineStore('device', () => {
     if (statusChanged || errorChanged) {
       const logStore = useLogStore()
       if (state.statusText === 'Error' && state.error) {
-        logStore.error('device', `设备 [${id}] 状态异常: ${state.error}`)
+        logStore.error('device', i18n.t('logMessage.deviceStateError', { id, error: state.error }))
       } else if (statusChanged && state.statusText === 'Disconnected' && prevStatus && prevStatus !== 'Disconnected') {
         // 后端推送的断开（区别于前端主动断开）—— 记录 info 便于追溯
-        logStore.warn('device', `设备 [${id}] 已断开（后端推送，前一状态: ${prevStatus}）`)
+        logStore.warn('device', i18n.t('logMessage.deviceDisconnected', { id, prev: prevStatus }))
       }
     }
   }

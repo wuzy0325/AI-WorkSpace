@@ -2,9 +2,11 @@
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { Timer, Clock, FileText, FolderOpen } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useRecordingStore } from '@stores/recordingStore'
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 const recordingStore = useRecordingStore()
 
 const currentTime = ref('00:00:00')
@@ -15,7 +17,7 @@ let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 function updateTime() {
   const now = new Date()
-  currentTime.value = now.toLocaleTimeString('zh-CN', {
+  currentTime.value = now.toLocaleTimeString(i18n.timeLocale, {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
@@ -48,7 +50,11 @@ const recordingCount = computed(() => recordingStore.snapshotCount)
 // 状态栏显示的保存路径：优先显示当前正在写入的完整文件路径，
 // 缺省时退化为保存目录（例如尚未创建文件或仅设置了目录的场景）
 const savedPath = computed(() => recordingStore.currentFile || recordingStore.outputDir)
-const savedPathLabel = computed(() => (recordingStore.currentFile ? '保存文件' : '保存目录'))
+const savedPathLabel = computed(() =>
+  recordingStore.currentFile
+    ? i18n.t('bottombar.saveFile')
+    : i18n.t('bottombar.saveDir'),
+)
 const savedPathIcon = computed(() => (recordingStore.currentFile ? FileText : FolderOpen))
 
 onMounted(() => {
@@ -83,42 +89,42 @@ watch(isAcquiring, (newVal, oldVal) => {
   <footer class="bottombar">
     <div class="bottombar__status">
       <div class="bottombar__status-item" data-testid="status-acquisition">
-        <span class="bottombar__status-label">采集状态</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.acquisitionStatus') }}</span>
         <span class="bottombar__status-value" :class="{ 'bottombar__status-value--active': isAcquiring }">
-          {{ isAcquiring ? '运行中' : '已停止' }}
+          {{ isAcquiring ? i18n.t('status.running') : i18n.t('status.stopped') }}
         </span>
       </div>
       <div class="bottombar__status-item" data-testid="status-recording">
-        <span class="bottombar__status-label">记录状态</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.recordingStatus') }}</span>
         <span class="bottombar__status-value" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">
-          {{ recordingStore.isRecording ? '保存中' : '未保存' }}
+          {{ recordingStore.isRecording ? i18n.t('status.recording') : i18n.t('status.notRecording') }}
         </span>
       </div>
       <div class="bottombar__status-item" data-testid="status-devices">
-        <span class="bottombar__status-label">设备</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.devices') }}</span>
         <span class="bottombar__status-value mono">{{ totalDevices }}</span>
       </div>
       <div class="bottombar__status-item" data-testid="status-online">
-        <span class="bottombar__status-label">在线</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.online') }}</span>
         <span class="bottombar__status-value mono bottombar__status-value--active">{{ connectedDevices }}</span>
       </div>
       <div class="bottombar__status-item" data-testid="status-recorded">
-        <span class="bottombar__status-label">已记录</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.recorded') }}</span>
         <span class="bottombar__status-value mono" :class="{ 'bottombar__status-value--rec': recordingStore.isRecording }">{{ recordingCount }}</span>
       </div>
       <div v-if="recordingStore.isRecording" class="bottombar__status-item" data-testid="status-dropped">
-        <span class="bottombar__status-label">丢弃</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.dropped') }}</span>
         <span
           class="bottombar__status-value mono"
           :class="{ 'bottombar__status-value--warn': recordingStore.droppedCount > 0 }"
         >{{ recordingStore.droppedCount }}</span>
       </div>
       <div v-if="recordingStore.isRecording && recordingStore.fileCount > 0" class="bottombar__status-item" data-testid="status-filecount">
-        <span class="bottombar__status-label">文件数</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.fileCount') }}</span>
         <span class="bottombar__status-value mono">{{ recordingStore.fileCount }}</span>
       </div>
       <div v-if="recordingStore.lastError" class="bottombar__status-item" data-testid="status-recerror">
-        <span class="bottombar__status-label">录制错误</span>
+        <span class="bottombar__status-label">{{ i18n.t('bottombar.recordingError') }}</span>
         <span class="bottombar__status-value bottombar__status-value--danger" :title="recordingStore.lastError">
           {{ recordingStore.lastError }}
         </span>
@@ -132,14 +138,14 @@ watch(isAcquiring, (newVal, oldVal) => {
 
     <div class="bottombar__stats">
       <div class="bottombar__stat">
-        <span class="bottombar__stat-label">运行时间</span>
+        <span class="bottombar__stat-label">{{ i18n.t('bottombar.runtime') }}</span>
         <div class="bottombar__stat-value">
           <Timer class="bottombar__stat-icon bottombar__stat-icon--accent" />
           <span class="mono">{{ elapsedTime }}</span>
         </div>
       </div>
       <div class="bottombar__stat">
-        <span class="bottombar__stat-label">系统时间</span>
+        <span class="bottombar__stat-label">{{ i18n.t('bottombar.systemTime') }}</span>
         <div class="bottombar__stat-value">
           <Clock class="bottombar__stat-icon" />
           <span class="mono bottombar__stat-value--muted">{{ currentTime }}</span>
