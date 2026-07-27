@@ -476,18 +476,24 @@ func (m *DeviceManager) Connect(id string) error {
 	m.mu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("device profile not found: %s", id)
+		err := fmt.Errorf("device profile not found: %s", id)
+		slog.Error("DeviceManager.Connect: profile not found", "id", id, "error", err)
+		return err
 	}
 
 	// Phase 2: connMu 保护下执行耗时操作（创建适配器 + TCP 连接等 I/O）
 	dev, err := m.factory.Create(profile)
 	if err != nil {
+		slog.Error("DeviceManager.Connect: factory.Create failed",
+			"name", profile.Name, "type", profile.Type, "error", err)
 		return err
 	}
 	if m.dataSink != nil {
 		dev.SetDataSink(m.dataSink)
 	}
 	if err := dev.Connect(); err != nil {
+		slog.Error("DeviceManager.Connect: dev.Connect failed",
+			"name", profile.Name, "type", profile.Type, "address", fmt.Sprintf("%s:%d", profile.Address, profile.Port), "error", err)
 		return err
 	}
 

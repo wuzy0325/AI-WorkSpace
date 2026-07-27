@@ -723,9 +723,11 @@ func (a *App) RemoveFile(path string) (bool, error) {
 // callMgr 通用 manager 方法调用辅助
 func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 	if a == nil || a.appContext == nil || mgr == nil {
+		slog.Warn("callMgr: manager 未初始化", "component", "app", "manager", name)
 		return GenericResponse{Success: false, Error: name + "未初始化"}
 	}
 	if err := fn(); err != nil {
+		slog.Warn("callMgr: 操作失败", "component", "app", "manager", name, "error", err)
 		return GenericResponse{Success: false, Error: err.Error()}
 	}
 	return GenericResponse{Success: true}

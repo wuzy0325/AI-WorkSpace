@@ -288,6 +288,11 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 	})
 
 	if err := dev.Connect(); err != nil {
+		a.emitLog(DeviceLogEntry{
+			Level: "error", Category: "hardware-recv", DeviceID: profile.ID,
+			Message: fmt.Sprintf("设备 [%s] TCP 连接失败", profile.Name),
+			Detail:  fmt.Sprintf("%s:%d — %v", profile.Address, profile.Port, err),
+		})
 		return fmt.Errorf("connect device %s: %w", profile.ID, err)
 	}
 	// TCP 连接成功，打印硬件通信日志（前端"通信"分组可见）
