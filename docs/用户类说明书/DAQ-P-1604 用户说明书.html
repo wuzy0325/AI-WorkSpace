@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAQ-P-1604 压力采集软件 用户说明书</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --accent: #1a6dff;
+  --accent-light: #e8f0ff;
+  --accent-dark: #0d47a1;
+  --bg: #f8f9fb;
+  --card: #ffffff;
+  --text: #1a1a2e;
+  --text-muted: #5a5a7a;
+  --border: #dde1e8;
+  --code-bg: #f0f2f5;
+  --warn-bg: #fff8e1;
+  --warn-border: #ffc107;
+  --info-bg: #e3f2fd;
+  --info-border: #42a5f5;
+  --success-bg: #e8f5e9;
+  --success-border: #66bb6a;
+  --danger-bg: #ffebee;
+  --danger-border: #ef5350;
+  --sidebar-w: 260px;
+  --lang-toggle-w: 44px;
+  font-size: 15px;
+}
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  position: fixed;
+  top: 0; left: 0;
+  width: var(--sidebar-w);
+  height: 100vh;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 100;
+  padding: 0 0 2rem;
+}
+.sidebar-header {
+  padding: 1.25rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+}
+.sidebar-header h1 { font-size: 1rem; font-weight: 600; line-height: 1.3; }
+.sidebar-header .sub { font-size: .78rem; opacity: .8; margin-top: .25rem; }
+.sidebar nav a {
+  display: block;
+  padding: .45rem 1rem .45rem 1.25rem;
+  color: var(--text);
+  text-decoration: none;
+  font-size: .85rem;
+  border-left: 3px solid transparent;
+  transition: .15s;
+}
+.sidebar nav a:hover { background: var(--accent-light); color: var(--accent-dark); border-left-color: var(--accent); }
+.sidebar .nav-h2 { padding-left: 2rem; font-size: .8rem; }
+
+/* Main */
+.main {
+  margin-left: var(--sidebar-w);
+  flex: 1;
+  padding: 2rem 2.5rem 4rem;
+  max-width: 980px;
+}
+h2 {
+  font-size: 1.35rem;
+  margin: 2.5rem 0 1rem;
+  padding-bottom: .5rem;
+  border-bottom: 2px solid var(--accent);
+}
+h2:first-of-type { margin-top: 0; }
+h3 { font-size: 1.08rem; margin: 1.6rem 0 .6rem; color: var(--accent-dark); }
+h4 { font-size: .95rem; margin: 1.1rem 0 .4rem; }
+p { line-height: 1.75; margin: .55rem 0; }
+ul, ol { margin: .5rem 0 .5rem 1.5rem; line-height: 1.75; }
+li { margin: .25rem 0; }
+strong { color: var(--accent-dark); }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: .8rem 0;
+  background: var(--card);
+  font-size: .88rem;
+}
+th, td {
+  padding: .5rem .7rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--accent-light); font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfd; }
+
+code {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  background: var(--code-bg);
+  padding: .1rem .35rem;
+  border-radius: 4px;
+  font-size: .85em;
+}
+pre {
+  background: #2b2b3a;
+  color: #e8e8f0;
+  padding: .9rem 1.1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: .82rem;
+  line-height: 1.55;
+  margin: .7rem 0;
+}
+pre code { background: none; color: inherit; padding: 0; }
+
+.callout {
+  padding: .75rem 1rem;
+  border-radius: 8px;
+  border-left: 4px solid;
+  margin: .9rem 0;
+  line-height: 1.7;
+  font-size: .9rem;
+}
+.callout.info    { background: var(--info-bg);    border-color: var(--info-border); }
+.callout.warn    { background: var(--warn-bg);    border-color: var(--warn-border); }
+.callout.success { background: var(--success-bg); border-color: var(--success-border); }
+.callout.danger  { background: var(--danger-bg);  border-color: var(--danger-border); }
+.callout .t { font-weight: 700; display: block; margin-bottom: .2rem; }
+
+figure {
+  margin: 1.1rem 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .8rem;
+  text-align: center;
+}
+figure img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+figcaption { font-size: .82rem; color: var(--text-muted); margin-top: .55rem; }
+
+.steps { counter-reset: step; margin: .8rem 0; }
+.step {
+  position: relative;
+  padding: .6rem 0 .6rem 2.6rem;
+  counter-increment: step;
+}
+.step::before {
+  content: counter(step);
+  position: absolute;
+  left: 0; top: .55rem;
+  width: 1.7rem; height: 1.7rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .9rem;
+  font-weight: 700;
+}
+.step .st { font-weight: 600; }
+
+.kbd {
+  display: inline-block;
+  padding: .05rem .45rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--card);
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.doc-meta {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.doc-meta h1 { font-size: 1.5rem; margin-bottom: .3rem; }
+.doc-meta .ver { color: var(--text-muted); font-size: .88rem; }
+
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 1rem; }
+}
+@media print {
+  .sidebar { display: none; }
+  .main { margin-left: 0; max-width: none; }
+  figure { break-inside: avoid; }
+}
+
+/* Language toggle */
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 5px;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font-size: .75rem;
+  cursor: pointer;
+  transition: .15s;
+}
+.lang-toggle:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.55); }
+.lang-toggle svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* Default: show zh, hide en */
+body:not(.lang-en) .lang-en { display: none; }
+body.lang-en .lang-zh { display: none; }
+
+/* For content blocks */
+.lang-content { display: none; }
+body:not(.lang-en) .lang-content-zh { display: block; }
+body.lang-en    .lang-content-en { display: block; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1><span class="lang-zh">DAQ-P-1604 压力采集软件</span><span class="lang-en">DAQ-P-1604 Pressure Acquisition</span></h1>
+    <div class="sub"><span class="lang-zh">用户说明书 · v0.5.0</span><span class="lang-en">User Manual · v0.5.0</span></div>
+    <button id="lang-toggle" class="lang-toggle" title="中/EN">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/><path d="M12 2a15.3 15.3 0 00-4 10 15.3 15.3 0 004 10"/></svg>
+      <span class="lang-zh">EN</span><span class="lang-en">中文</span>
+    </button>
+  </div>
+  <nav>
+    <a href="#intro"><span class="lang-zh">1. 软件简介</span><span class="lang-en">1. Introduction</span></a>
+    <a href="#install"><span class="lang-zh">2. 安装与启动</span><span class="lang-en">2. Installation &amp; Launch</span></a>
+    <a href="#network"><span class="lang-zh">3. 设备网络连接</span><span class="lang-en">3. Device Network Setup</span></a>
+    <a href="#ui"><span class="lang-zh">4. 界面总览</span><span class="lang-en">4. Interface Overview</span></a>
+    <a href="#quickstart"><span class="lang-zh">5. 快速上手</span><span class="lang-en">5. Quick Start</span></a>
+    <a href="#device"><span class="lang-zh">6. 设备管理</span><span class="lang-en">6. Device Management</span></a>
+    <a class="nav-h2" href="#device-scan"><span class="lang-zh">6.1 扫描添加设备</span><span class="lang-en">6.1 Scan &amp; Add Devices</span></a>
+    <a class="nav-h2" href="#device-manual"><span class="lang-zh">6.2 手动添加设备</span><span class="lang-en">6.2 Add Device Manually</span></a>
+    <a class="nav-h2" href="#device-connect"><span class="lang-zh">6.3 连接与断开</span><span class="lang-en">6.3 Connect &amp; Disconnect</span></a>
+    <a class="nav-h2" href="#device-delete"><span class="lang-zh">6.4 删除设备</span><span class="lang-en">6.4 Delete Device</span></a>
+    <a href="#config"><span class="lang-zh">7. 设备配置</span><span class="lang-en">7. Device Configuration</span></a>
+    <a href="#monitor"><span class="lang-zh">8. 实时监控</span><span class="lang-en">8. Live Monitoring</span></a>
+    <a href="#recording"><span class="lang-zh">9. 数据保存（CSV）</span><span class="lang-en">9. Data Recording (CSV)</span></a>
+    <a href="#log"><span class="lang-zh">10. 日志面板</span><span class="lang-en">10. Log Panel</span></a>
+    <a href="#theme"><span class="lang-zh">11. 界面主题</span><span class="lang-en">11. UI Theme</span></a>
+    <a href="#bottombar"><span class="lang-zh">12. 底栏状态说明</span><span class="lang-en">12. Status Bar Reference</span></a>
+    <a href="#files"><span class="lang-zh">13. 配置与数据文件位置</span><span class="lang-en">13. Config &amp; Data File Locations</span></a>
+    <a href="#faq"><span class="lang-zh">14. 常见问题</span><span class="lang-en">14. FAQ</span></a>
+  </nav>
+</aside>
+
+<div id="content-zh" class="lang-content lang-content-zh">
+<main class="main">
+
+<div class="doc-meta">
+  <h1>DAQ-P-1604 压力采集软件 用户说明书</h1>
+  <div class="ver">适用软件版本：v0.5.0 ｜ 适用设备：DAQ-P-1604 压力采集器（18 通道）｜ 文档日期：2026-07</div>
+</div>
+
+<h2 id="intro">1. 软件简介</h2>
+<p>DAQ-P-1604 压力采集软件是一款 Windows 桌面应用，用于 DAQ-P-1604 压力采集设备的<strong>实时监控、波形显示与数据录制</strong>。软件通过以太网（TCP/IP）与设备通信，支持多设备并行管理。</p>
+<p>主要功能：</p>
+<ul>
+  <li><strong>18 通道采集</strong>：CH01–CH16 压力通道 + CH17 大气压力 + CH18 大气温度；</li>
+  <li><strong>实时波形</strong>：多通道曲线同屏显示，支持按需勾选通道、自定义曲线颜色；</li>
+  <li><strong>通道监控卡</strong>：各通道实时数值大字显示；</li>
+  <li><strong>数据保存</strong>：一键录制为 CSV 文件，可直接用 Excel 打开分析；</li>
+  <li><strong>设备扫描</strong>：一键发现同一网络内的所有 P1604 设备并批量添加；</li>
+  <li><strong>运行日志</strong>：通信与采集过程全程记录，可保存为日志文件用于问题排查；</li>
+  <li><strong>深/浅主题</strong>：适应不同现场光照环境。</li>
+</ul>
+<div class="callout info">
+  <span class="t">设备通讯细节</span>
+  本说明书面向软件日常操作。设备底层通讯协议（命令字、数据帧格式）请参见同目录《DAQ-P-1604 通讯协议说明书》。
+</div>
+
+<h2 id="install">2. 安装与启动</h2>
+<h3>2.1 运行环境</h3>
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>操作系统</td><td>Windows 10 / 11，64 位</td></tr>
+  <tr><td>运行依赖</td><td>Microsoft Edge WebView2 运行时（Windows 10/11 通常已内置；如启动失败请先安装 WebView2）</td></tr>
+  <tr><td>网络</td><td>与设备处于同一网段的以太网连接（详见第 3 节）</td></tr>
+</table>
+<h3>2.2 安装步骤</h3>
+<div class="steps">
+  <div class="step"><span class="st">关闭正在运行的旧版本</span>（如任务栏或任务管理器中存在 <code>DAQ-P-1604.exe</code> / <code>daq-p1604.exe</code>）。</div>
+  <div class="step"><span class="st">运行安装包</span> <code>daq-p1604-0.5.0-amd64-installer.exe</code>，按向导完成安装。覆盖安装旧版本无需先卸载。</div>
+  <div class="step"><span class="st">启动软件</span>，确认主界面正常出现、设备可连接与采集（见第 5 节快速上手）。</div>
+</div>
+<h3>2.3 卸载</h3>
+<p>通过「控制面板 → 程序和功能」卸载，或运行安装目录下的 <code>Uninstall.exe</code>。卸载不会删除用户配置与已保存的 CSV 数据（见第 13 节）。</p>
+
+<h2 id="network">3. 设备网络连接</h2>
+<p>软件与设备通过以太网通信，对网络的要求如下：</p>
+<table>
+  <tr><th>项目</th><th>说明</th></tr>
+  <tr><td>设备数据端口</td><td>TCP <code>9000</code>（软件主动向设备发起连接）</td></tr>
+  <tr><td>设备扫描</td><td>UDP 广播（设备发现端口 <code>7000</code>，本机监听 <code>7001</code>）</td></tr>
+  <tr><td>网段要求</td><td>电脑与设备须处于同一网段（例如设备为 <code>192.168.1.7</code>，电脑可设为 <code>192.168.1.x</code>）</td></tr>
+  <tr><td>防火墙</td><td>首次使用若 Windows 防火墙弹出提示，请允许本软件进行网络通信；否则设备扫描与连接会失败</td></tr>
+</table>
+<div class="callout warn">
+  <span class="t">提示</span>
+  不确定设备是否在线时，可先用 <code>ping 设备IP</code>（如 <code>ping 192.168.1.7</code>）确认网络连通，再在软件中连接。
+</div>
+
+<h2 id="ui">4. 界面总览</h2>
+<p>软件主界面由五个区域组成：<strong>顶栏</strong>、<strong>设备侧栏</strong>、<strong>监控主区</strong>、<strong>日志面板</strong>（右侧，默认收起）、<strong>底栏状态栏</strong>。</p>
+<figure>
+  <img src="daq-p1604/images/overview.png" alt="主界面总览">
+  <figcaption>图 4-1 主界面总览（已连接一台设备，等待采集）</figcaption>
+</figure>
+
+<h3>4.1 顶栏</h3>
+<figure>
+  <img src="daq-p1604/images/topbar.png" alt="顶栏">
+  <figcaption>图 4-2 顶栏</figcaption>
+</figure>
+<table>
+  <tr><th>控件</th><th>说明</th></tr>
+  <tr><td>DAQ-P1604 标识</td><td>软件名称与图标</td></tr>
+  <tr><td>实时监控</td><td>当前页面指示（本版仅实时监控一个页面）</td></tr>
+  <tr><td><strong>开始采集 / 停止采集</strong></td><td>对所有「已连接」设备启动采集；采集中变为红色「停止采集」，点击停止所有设备采集</td></tr>
+  <tr><td><strong>开始保存 / 停止保存</strong></td><td>开始将采集数据录制为 CSV（先弹出目录选择框）；录制中变为红色「停止保存」</td></tr>
+  <tr><td>＋</td><td>手动添加设备（见 6.2）</td></tr>
+  <tr><td>齿轮图标</td><td>打开当前选中设备的配置面板（见第 7 节）；无设备时不可用</td></tr>
+  <tr><td>界面刷新率</td><td>波形与数值的界面刷新频率：2 / 5 / 10 / 15 / 20 / 30 Hz（默认 10 Hz，见 8.4）</td></tr>
+  <tr><td>主题按钮</td><td>切换深色 / 浅色主题（见第 11 节）</td></tr>
+  <tr><td>版本号</td><td>当前软件版本（如 v0.5.0）</td></tr>
+</table>
+
+<h3>4.2 设备侧栏</h3>
+<figure>
+  <img src="daq-p1604/images/sidebar.png" alt="设备侧栏" style="max-width:280px">
+  <figcaption>图 4-3 设备侧栏</figcaption>
+</figure>
+<ul>
+  <li>顶部显示设备数量，右侧放大镜按钮为<strong>扫描设备</strong>（见 6.1）；</li>
+  <li>每台设备一张卡片：设备名称、<code>IP:端口</code>、状态图标；点击卡片选中设备，监控主区随即显示该设备；</li>
+  <li>鼠标悬停卡片时出现<strong>删除</strong>按钮（见 6.4）。</li>
+</ul>
+<p>设备状态图标的含义：</p>
+<table>
+  <tr><th>状态</th><th>颜色</th><th>含义</th></tr>
+  <tr><td>未连接</td><td>灰</td><td>尚未连接设备</td></tr>
+  <tr><td>连接中 / 停止中</td><td>黄</td><td>操作正在进行，请稍候</td></tr>
+  <tr><td>已连接</td><td>绿</td><td>已建立通信，可开始采集</td></tr>
+  <tr><td>采集中</td><td>绿（闪烁）</td><td>正在采集数据</td></tr>
+  <tr><td>错误</td><td>红</td><td>连接失败或设备断连，监控主区顶部会显示原因</td></tr>
+</table>
+
+<h3>4.3 监控主区</h3>
+<p>自上而下为：<strong>设备头卡</strong>（名称、地址、单位、采样率、状态、连接/断开与配置按钮）、<strong>实时波形</strong>（见 8.2）、<strong>通道监控</strong>（见 8.3）。未选中任何设备时显示引导提示页。</p>
+
+<h3>4.4 日志面板与底栏</h3>
+<p>右侧窄条为收起的<strong>日志面板</strong>（点击展开，见第 10 节）；底部为<strong>状态栏</strong>（见第 12 节）。</p>
+
+<h2 id="quickstart">5. 快速上手</h2>
+<p>完成一次「从开机到保存数据」的标准流程（各步骤的详细说明见后续章节）：</p>
+<div class="steps">
+  <div class="step"><span class="st">添加设备</span>：点击侧栏放大镜<strong>扫描设备</strong>，勾选发现的设备后「添加所选」；或点击顶栏 ＋ 手动输入 IP 与端口（见 6.1 / 6.2）。</div>
+  <div class="step"><span class="st">连接设备</span>：在设备卡片或监控主区点击<strong>连接</strong>，状态变为「已连接」。开启过「自动连接」的设备会在软件启动时自动连接。</div>
+  <div class="step"><span class="st">（可选）调整配置</span>：点击<strong>配置</strong>设置采样频率、压力单位、显示精度与通道（见第 7 节）。</div>
+  <div class="step"><span class="st">开始采集</span>：点击顶栏<strong>开始采集</strong>，实时波形与通道数值开始刷新。</div>
+  <div class="step"><span class="st">开始保存</span>：点击顶栏<strong>开始保存</strong>，在弹出的系统对话框中选择保存目录，软件即开始写入 CSV。</div>
+  <div class="step"><span class="st">停止保存 / 停止采集</span>：试验结束后先点<strong>停止保存</strong>关闭 CSV 文件，再点<strong>停止采集</strong>。CSV 可直接用 Excel 打开。</div>
+</div>
+<div class="callout success">
+  <span class="t">建议</span>
+  保存数据前先让采集运行几秒，确认各通道数值合理后再开始录制，避免录到空文件。
+</div>
+
+<h2 id="device">6. 设备管理</h2>
+
+<h3 id="device-scan">6.1 扫描添加设备（推荐）</h3>
+<p>点击设备侧栏右上角的<strong>放大镜按钮</strong>，软件会在当前网络内广播发现报文，列出所有在线的 P1604 设备。</p>
+<figure>
+  <img src="daq-p1604/images/scan-wait.png" alt="扫描中">
+  <figcaption>图 6-1 正在扫描</figcaption>
+</figure>
+<figure>
+  <img src="daq-p1604/images/scan-results.png" alt="扫描结果">
+  <figcaption>图 6-2 扫描结果：发现设备 DAQ-P-1604-374D87（已添加的设备显示「已添加」标记并置灰）</figcaption>
+</figure>
+<p>扫描结果中每台设备显示：<strong>设备名称</strong>（默认 <code>DAQ-P-1604-&lt;MAC末6位&gt;</code>）、<strong>IP:端口</strong>、<strong>序列号</strong>、<strong>MAC 地址</strong>与<strong>固件版本</strong>（FW x.y）。</p>
+<ul>
+  <li>扫描完成后，未添加过的设备会<strong>自动预勾选</strong>；勾选的设备可直接在列表中修改名称；</li>
+  <li>已在设备列表中的设备会置灰并显示「已添加」，不可重复添加；</li>
+  <li>顶部复选框「<strong>添加的设备默认启用开机自动连接</strong>」默认勾选：添加后立即尝试连接设备，且以后启动软件时自动连接；</li>
+  <li>点击<strong>添加所选 (N)</strong> 完成批量添加；结果未变化时可点<strong>重新扫描</strong>。</li>
+</ul>
+
+<h3 id="device-manual">6.2 手动添加设备</h3>
+<p>点击顶栏 <strong>＋</strong>，在弹窗中填写：</p>
+<figure>
+  <img src="daq-p1604/images/add-device.png" alt="添加设备">
+  <figcaption>图 6-3 手动添加设备</figcaption>
+</figure>
+<table>
+  <tr><th>字段</th><th>说明</th><th>校验规则</th></tr>
+  <tr><td>设备名称</td><td>便于识别的名称，如「压力采集器 1」</td><td>必填，为空提示「请输入设备名称」</td></tr>
+  <tr><td>IP 地址</td><td>设备的 IP，如 <code>192.168.1.7</code></td><td>必填，为空提示「请输入 IP 地址」</td></tr>
+  <tr><td>端口</td><td>设备数据端口</td><td>默认 <code>9000</code>，范围 1–65535</td></tr>
+</table>
+<p>IP 与端口均与已有设备完全相同时会提示「该设备已添加，请勿重复添加」。输入框中按 <span class="kbd">Enter</span> 等同点击「添加」。</p>
+
+<h3 id="device-connect">6.3 连接与断开</h3>
+<ul>
+  <li>选中设备后，点击监控主区头卡的<strong>连接</strong>按钮；连接成功后状态变为「已连接」，按钮变为「断开」；</li>
+  <li>连接成功后，软件会以<strong>设备硬件当前的压力单位</strong>为准自动同步界面单位（日志中有对应记录）；</li>
+  <li>连接失败时状态变为「错误」，头卡下方显示具体原因（如连接超时、拒绝连接）；</li>
+  <li>在设备配置中开启<strong>自动连接</strong>后，软件每次启动都会自动连接该设备（见第 7 节）。</li>
+</ul>
+
+<h3 id="device-delete">6.4 删除设备</h3>
+<p>鼠标悬停侧栏中的设备卡片，点击出现的<strong>垃圾桶图标</strong>，在确认对话框中点「删除」。</p>
+<figure>
+  <img src="daq-p1604/images/delete-device.png" alt="删除设备确认">
+  <figcaption>图 6-4 删除设备需二次确认，删除后该设备的配置一并移除</figcaption>
+</figure>
+<div class="callout warn">
+  <span class="t">注意</span>
+  删除设备会同时移除其全部配置（通道名称、精度、自动连接等），且不影响已保存的 CSV 数据文件。
+</div>
+
+<h2 id="config">7. 设备配置</h2>
+<p>选中设备后，点击顶栏齿轮或监控主区的<strong>配置</strong>按钮打开配置面板。面板分「硬件参数」与「通道配置」两区。</p>
+<figure>
+  <img src="daq-p1604/images/config-hardware.png" alt="配置面板-硬件参数">
+  <figcaption>图 7-1 配置面板：硬件参数区</figcaption>
+</figure>
+
+<h3>7.1 硬件参数</h3>
+<table>
+  <tr><th>配置项</th><th>说明</th><th>取值 / 默认</th></tr>
+  <tr><td>采样频率</td><td>设备每秒采样次数，保存时下发设备生效</td><td>1–1000 Hz 整数，默认 10 Hz</td></tr>
+  <tr><td>压力单位（全部通道）</td><td>CH01–CH16 压力通道的显示与保存单位，下发设备</td><td>psi / Pa / kPa / MPa / kgf/cm²，默认 psi</td></tr>
+  <tr><td>全局精度（全部通道）</td><td>数值显示与 CSV 保存的小数位数；点「应用到全部」一键同步到 18 个通道</td><td>0–6 位小数，默认 3 位</td></tr>
+  <tr><td>自动连接</td><td>开启后软件启动时自动连接本设备</td><td>默认关闭</td></tr>
+  <tr><td>设备硬件时间戳</td><td>开启：CSV 与波形使用设备硬件时间戳；关闭：使用电脑系统时间</td><td>默认开启</td></tr>
+</table>
+
+<h3>7.2 通道配置</h3>
+<figure>
+  <img src="daq-p1604/images/config-channels.png" alt="配置面板-通道配置">
+  <figcaption>图 7-2 通道配置区（CH17 大气压力 / CH18 大气温度为固定功能通道）</figcaption>
+</figure>
+<ul>
+  <li>共 18 行，标题旁显示「N/18 启用」；每行可设置：<strong>通道名称</strong>（如「总压」「静压」）、<strong>精度</strong>（0–6 位小数，覆盖全局精度）、<strong>启用开关</strong>；</li>
+  <li>被禁用的通道：不出现在监控界面与波形中，CSV 中对应列留空（保持列对齐）；</li>
+  <li>CH17 固定为大气压力（单位 Pa），CH18 固定为大气温度（单位 ℃），单位不可修改；</li>
+  <li>CH1–CH16 的单位跟随全局「压力单位」设置。</li>
+</ul>
+
+<h3>7.3 保存与生效</h3>
+<ul>
+  <li>修改后标题旁出现「未保存」标记；点击<strong>保存</strong>提交，<strong>重置</strong>恢复为已保存配置；</li>
+  <li>硬件相关项（采样频率、压力单位）保存时会<strong>下发到设备</strong>，底部状态显示「配置已保存并应用到设备」；仅界面类修改显示「配置已保存」；</li>
+  <li>下发等待约 15 秒无响应会提示「应用配置超时，设备可能无响应」，请检查设备连接后重试。</li>
+</ul>
+<div class="callout danger">
+  <span class="t">采集中禁止修改配置</span>
+  设备处于采集状态时，配置面板全部置灰并提示「采集中不允许变更配置，请先停止采集」。请先在顶栏停止采集再修改。
+</div>
+
+<h2 id="monitor">8. 实时监控</h2>
+
+<h3>8.1 开始 / 停止采集</h3>
+<p>设备「已连接」后，点击顶栏<strong>开始采集</strong>：所有已连接设备同时启动采集，按钮变为红色「停止采集」，底栏「采集状态」变为「运行中」，右侧开始计时。再次点击即停止所有设备的采集。</p>
+<figure>
+  <img src="daq-p1604/images/acquiring.png" alt="采集中">
+  <figcaption>图 8-1 采集中：16 条压力通道曲线实时刷新，通道卡片显示实时值</figcaption>
+</figure>
+
+<h3>8.2 实时波形</h3>
+<ul>
+  <li>波形图滚动显示<strong>最近约 30 秒</strong>的数据；鼠标悬停显示该时刻各通道精确数值（按各通道精度格式化）；</li>
+  <li>右上角<strong>图例</strong>显示当前绘制的通道；</li>
+  <li>默认绘制 CH01–CH16；CH17/CH18 因量纲与量级不同，默认不勾选，可在「通道选择」中手动勾选。</li>
+</ul>
+<h4>通道选择</h4>
+<p>点击波形卡片右上角的<strong>通道选择</strong>按钮，在弹层中勾选需要显示的通道，支持<strong>全选 / 全取消</strong>。</p>
+<figure>
+  <img src="daq-p1604/images/channel-selector.png" alt="通道选择">
+  <figcaption>图 8-2 通道选择弹层</figcaption>
+</figure>
+
+<h3>8.3 通道监控卡</h3>
+<p>波形下方为每个已启用通道的监控卡片：<strong>大号实时值</strong>（按通道精度显示）、单位、通道名称；卡片左上角圆点颜色与波形曲线一致。点击卡片上的<strong>调色盘按钮</strong>可自定义该通道的波形颜色（长久保存）。</p>
+<figure>
+  <img src="daq-p1604/images/channel-cards.png" alt="通道监控卡">
+  <figcaption>图 8-3 通道监控卡（18 通道）</figcaption>
+</figure>
+
+<h3>8.4 界面刷新率</h3>
+<p>点击顶栏<strong>仪表盘图标</strong>可选择界面刷新率（2 / 5 / 10 / 15 / 20 / 30 Hz，默认 10 Hz）。刷新率只影响屏幕显示的流畅度与 CPU 占用，<strong>不影响</strong>设备采样频率与 CSV 保存的数据密度。</p>
+<figure>
+  <img src="daq-p1604/images/refresh-rate.png" alt="界面刷新率">
+  <figcaption>图 8-4 界面刷新率选择</figcaption>
+</figure>
+
+<h2 id="recording">9. 数据保存（CSV）</h2>
+<h3>9.1 开始与停止</h3>
+<div class="steps">
+  <div class="step"><span class="st">确认采集已在运行</span>（底栏「采集状态：运行中」）。</div>
+  <div class="step"><span class="st">点击顶栏「开始保存」</span>，在弹出的 Windows 目录选择对话框中选择保存目录（可新建文件夹），确认后即刻开始录制。</div>
+  <div class="step"><span class="st">录制中</span>：顶栏按钮变为红色「停止保存」，底栏「记录状态」变为「保存中」，并显示当前写入的文件名、已记录条数、丢弃条数与文件数。</div>
+  <div class="step"><span class="st">点击「停止保存」</span>结束录制，文件关闭落盘。</div>
+</div>
+<figure>
+  <img src="daq-p1604/images/recording.png" alt="录制中">
+  <figcaption>图 9-1 录制中界面（底栏显示保存文件与已记录条数）</figcaption>
+</figure>
+<figure>
+  <img src="daq-p1604/images/bottombar-recording.png" alt="录制中底栏">
+  <figcaption>图 9-2 录制中的底栏：记录状态「保存中」、已记录 3594 条、丢弃 0、文件数 1、当前保存文件名</figcaption>
+</figure>
+
+<h3>9.2 文件命名与格式</h3>
+<ul>
+  <li><strong>每台设备生成一个 CSV 文件</strong>，文件名格式：<br><code>DAQ-P1604-&lt;设备名&gt;-&lt;年月日-时分秒&gt;-&lt;序号&gt;.csv</code><br>示例：<code>DAQ-P1604-DAQ-P-1604-374D87-20260726-084714-001.csv</code>（设备名中的空格与 <code>\/:*?"&lt;&gt;|</code> 等字符会替换为下划线）；</li>
+  <li>文件在首个数据到达时创建；表头固定 19 列：<code>Timestamp,CH01,…,CH16,CH17_AtmPressure,CH18_AtmTemp</code>；</li>
+  <li>数值按各通道配置的精度输出；<strong>禁用通道对应列留空</strong>（列位保持不变，便于多文件对比）；</li>
+  <li>时间戳带英文单引号前缀（如 <code>'2026-07-26 16:46:03</code>），使 Excel 按文本原样显示、不自动转换格式。</li>
+</ul>
+<p>CSV 实际内容示例（真实设备录制）：</p>
+<pre><code>Timestamp,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16,CH17_AtmPressure,CH18_AtmTemp
+'2026-07-26 16:46:03,10.7,40.7,-26.2,-38.1,-19.8,-16.7,-23.0,-18.5,-32.4,-44.7,-51.9,-3.0,42.1,-37.1,0.3,-26.5,0.0,0.0
+'2026-07-26 16:46:03,10.1,41.0,-25.0,-37.1,-19.4,-17.9,-23.5,-18.1,-32.2,-45.1,-50.9,-2.5,42.9,-37.1,-0.5,-27.4,0.0,0.0</code></pre>
+
+<h3>9.3 异常保护</h3>
+<ul>
+  <li><strong>设备断连自动停止</strong>：录制中若设备断连，软件自动停止录制并在底栏「录制错误」中注明原因（多设备同时录制时，单台断连只给出警告，其余设备继续录制）；</li>
+  <li><strong>丢弃计数</strong>：磁盘写入过慢导致缓冲队列溢出时，底栏「丢弃」会计数并变黄；正常硬盘上应为 0，持续上升请更换保存目录到更快的磁盘；</li>
+  <li>软件退出时自动停止录制并关闭文件，不会产生损坏文件。</li>
+</ul>
+
+<h2 id="log">10. 日志面板</h2>
+<p>右侧窄条为日志面板，点击展开；再次点击工具栏「收起」或窄条收回。</p>
+<figure>
+  <img src="daq-p1604/images/log-panel.png" alt="日志面板">
+  <figcaption>图 10-1 日志面板：连接、采集与设备通信全过程记录</figcaption>
+</figure>
+<ul>
+  <li><strong>级别过滤</strong>：Debug / Info / Warn / Error，表示「显示的最低级别」（默认 Info，即 Info 及以上）；</li>
+  <li><strong>分类过滤</strong>：全部 / 系统 / 通信（设备命令收发）/ 采集；</li>
+  <li><strong>保存日志到文件</strong>：点击后选择目录，日志持续写入 <code>daq-log_年月日-时分秒.log</code>，再次点击停止。软件每次启动也会自动在 <code>%APPDATA%\daq-p1604\logs</code> 下保存一份运行日志，便于事后排查；</li>
+  <li><strong>拷贝全部日志</strong>：把当前过滤结果复制到剪贴板，可直接粘贴给技术支持；悬停单条日志可复制该条；</li>
+  <li><strong>清空日志</strong>：清空面板（不影响已写入文件的日志）；</li>
+  <li>面板最多保留最近 500 条；高频通信日志自动合并显示「… 及 N 条同类日志」。</li>
+</ul>
+
+<h2 id="theme">11. 界面主题</h2>
+<p>点击顶栏<strong>月亮 / 太阳图标</strong>在浅色（默认）与深色主题间切换，选择结果自动保存，下次启动保持。深色主题适合暗室或夜间试验环境。</p>
+<figure>
+  <img src="daq-p1604/images/dark-theme.png" alt="深色主题">
+  <figcaption>图 11-1 深色主题</figcaption>
+</figure>
+
+<h2 id="bottombar">12. 底栏状态说明</h2>
+<table>
+  <tr><th>字段</th><th>说明</th></tr>
+  <tr><td>采集状态</td><td>运行中（绿）/ 已停止</td></tr>
+  <tr><td>记录状态</td><td>保存中（红）/ 未保存</td></tr>
+  <tr><td>设备</td><td>已添加的设备总数</td></tr>
+  <tr><td>在线</td><td>已连接 + 采集中的设备数量</td></tr>
+  <tr><td>已记录</td><td>本次录制已写入的快照条数</td></tr>
+  <tr><td>丢弃</td><td>仅录制中显示；缓冲队列满被丢弃的条数，&gt;0 时变黄色（正常应为 0）</td></tr>
+  <tr><td>文件数</td><td>仅录制中显示；本次录制生成的 CSV 文件数</td></tr>
+  <tr><td>保存目录 / 保存文件</td><td>未录制时显示输出目录；录制中显示当前写入文件的完整文件名（悬停看全路径）</td></tr>
+  <tr><td>录制错误</td><td>仅出现错误时显示（红色，悬停看详情），如设备断连导致的自动停止</td></tr>
+  <tr><td>运行时间</td><td>本次采集累计时长（时:分:秒），停止采集后归零</td></tr>
+  <tr><td>系统时间</td><td>电脑当前时间，每秒刷新</td></tr>
+</table>
+
+<h2 id="files">13. 配置与数据文件位置</h2>
+<table>
+  <tr><th>内容</th><th>位置</th></tr>
+  <tr><td>设备配置（设备列表、通道、精度、自动连接等）</td><td><code>%APPDATA%\daq-p1604\device-profiles.json</code></td></tr>
+  <tr><td>运行日志（自动保存）</td><td><code>%APPDATA%\daq-p1604\logs\</code></td></tr>
+  <tr><td>CSV 数据文件</td><td>「开始保存」时用户选择的目录</td></tr>
+  <tr><td>界面偏好（主题、刷新率等）</td><td>应用内本地存储，随系统用户保存</td></tr>
+</table>
+<div class="callout info">
+  <span class="t">迁移提示</span>
+  更换电脑时，复制 <code>device-profiles.json</code> 到新机同路径即可迁移全部设备配置。
+</div>
+
+<h2 id="faq">14. 常见问题</h2>
+<h3>14.1 扫描不到设备</h3>
+<ul>
+  <li>确认设备已上电、网线连接正常，电脑与设备在<strong>同一网段</strong>；</li>
+  <li>检查 Windows 防火墙是否放行了本软件（扫描使用 UDP 广播，被拦截时无结果）；</li>
+  <li>扫描不到时可改用<strong>手动添加</strong>（6.2），直接输入设备 IP 与端口 9000。</li>
+</ul>
+<h3>14.2 连接失败 / 状态显示「错误」</h3>
+<ul>
+  <li>在命令行执行 <code>ping 设备IP</code> 确认网络连通；</li>
+  <li>确认 IP 与端口（9000）填写正确，且设备未被其他软件占用；</li>
+  <li>查看头卡下方错误条与日志面板中的具体原因。</li>
+</ul>
+<h3>14.3 波形或数值不刷新</h3>
+<ul>
+  <li>确认已点击<strong>开始采集</strong>且底栏为「运行中」；</li>
+  <li>确认目标通道在「通道选择」中已勾选、且在配置中为「启用」；</li>
+  <li>界面刷新率被调到很低（如 2 Hz）时刷新会变慢，属正常现象。</li>
+</ul>
+<h3>14.4 CH17 / CH18 显示 0</h3>
+<p>CH17（大气压力）、CH18（大气温度）的数值取决于设备是否接入对应传感器。未接入或设备未提供数据时显示 0，不影响 CH01–CH16 的使用。</p>
+<h3>14.5 CSV 中同一秒出现多行</h3>
+<p>设备固件的时间戳字段存在已知缺陷，软件统一将 CSV 时间戳截断到秒级以规避。高采样率下同一秒出现多行属正常现象，行序即为采集顺序。</p>
+<h3>14.6 「开始保存」点击后没有生成文件</h3>
+<ul>
+  <li>确认在目录对话框中点击了「选择文件夹」而非取消；</li>
+  <li>确认采集正在运行——文件在首个数据到达时才创建；</li>
+  <li>确认对所选目录有写入权限（避免选择系统保护目录）。</li>
+</ul>
+<h3>14.7 配置面板全部置灰无法修改</h3>
+<p>设备正在采集中。请先在顶栏点击「停止采集」，再打开配置面板修改。</p>
+
+<div class="callout success" style="margin-top:2rem">
+  <span class="t">技术支持</span>
+  如遇本说明书未覆盖的问题，请导出日志（日志面板 → 拷贝全部日志，或提供 <code>%APPDATA%\daq-p1604\logs</code> 下对应时段的日志文件）并联系技术支持。
+</div>
+
+</main>
+</div><!-- /content-zh -->
+
+<div id="content-en" class="lang-content lang-content-en">
+<main class="main">
+
+<div class="doc-meta">
+  <h1>DAQ-P-1604 Pressure Acquisition Software User Manual</h1>
+  <div class="ver">Software Version: v0.5.0 | Device: DAQ-P-1604 Pressure Collector (18 channels) | Date: 2026-07</div>
+</div>
+
+<h2 id="intro">1. Introduction</h2>
+<p>The DAQ-P-1604 Pressure Acquisition Software is a Windows desktop application for <strong>real-time monitoring, waveform display, and data recording</strong> of DAQ-P-1604 pressure acquisition devices. It communicates with devices over Ethernet (TCP/IP) and supports parallel management of multiple devices.</p>
+<p>Key features:</p>
+<ul>
+  <li><strong>18-channel acquisition</strong>: CH01&ndash;CH16 pressure channels + CH17 atmospheric pressure + CH18 atmospheric temperature;</li>
+  <li><strong>Real-time waveforms</strong>: multi-channel curves on a single chart, with per-channel visibility toggles and customizable curve colors;</li>
+  <li><strong>Channel monitor cards</strong>: large real-time numeric readouts for each channel;</li>
+  <li><strong>Data recording</strong>: one-click CSV recording &mdash; open directly in Excel for analysis;</li>
+  <li><strong>Device scanning</strong>: discover all P1604 devices on the same network and add them in bulk;</li>
+  <li><strong>Runtime logs</strong>: full communication and acquisition logging, exportable for troubleshooting;</li>
+  <li><strong>Dark / light theme</strong>: adaptable to different ambient lighting conditions.</li>
+</ul>
+<div class="callout info">
+  <span class="t">Device Communication Details</span>
+  This manual covers daily software operation. For the device communication protocol (command set, data frame format), please refer to the <em>DAQ-P-1604 Communication Protocol Manual</em> in the same folder.
+</div>
+
+<h2 id="install">2. Installation &amp; Launch</h2>
+<h3>2.1 System Requirements</h3>
+<table>
+  <tr><th>Item</th><th>Requirement</th></tr>
+  <tr><td>OS</td><td>Windows 10 / 11, 64-bit</td></tr>
+  <tr><td>Runtime dependency</td><td>Microsoft Edge WebView2 Runtime (usually built into Windows 10/11; install WebView2 separately if launch fails)</td></tr>
+  <tr><td>Network</td><td>Ethernet connection on same subnet as the device (see Section 3)</td></tr>
+</table>
+<h3>2.2 Installation Steps</h3>
+<div class="steps">
+  <div class="step"><span class="st">Close any running old version</span> (check for <code>DAQ-P-1604.exe</code> / <code>daq-p1604.exe</code> in the taskbar or Task Manager).</div>
+  <div class="step"><span class="st">Run the installer</span> <code>daq-p1604-0.5.0-amd64-installer.exe</code> and follow the wizard. Installing over a previous version does not require uninstalling first.</div>
+  <div class="step"><span class="st">Launch the software</span> and verify that the main interface appears, devices can connect and acquire data (see Section 5 Quick Start).</div>
+</div>
+<h3>2.3 Uninstall</h3>
+<p>Uninstall via <strong>Control Panel &rarr; Programs and Features</strong>, or run <code>Uninstall.exe</code> in the installation directory. Uninstalling does <em>not</em> delete user configurations or saved CSV data (see Section 13).</p>
+
+<h2 id="network">3. Device Network Setup</h2>
+<p>The software communicates with devices over Ethernet. Network requirements:</p>
+<table>
+  <tr><th>Item</th><th>Description</th></tr>
+  <tr><td>Device data port</td><td>TCP <code>9000</code> (software initiates connection to device)</td></tr>
+  <tr><td>Device scanning</td><td>UDP broadcast (device discovery port <code>7000</code>, local listen port <code>7001</code>)</td></tr>
+  <tr><td>Subnet</td><td>Computer and device must be on the same subnet (e.g., device IP <code>192.168.1.7</code> &rarr; set computer to <code>192.168.1.x</code>)</td></tr>
+  <tr><td>Firewall</td><td>On first run, if Windows Firewall prompts, allow network access for this software; otherwise device scanning and connection will fail</td></tr>
+</table>
+<div class="callout warn">
+  <span class="t">Tip</span>
+  If unsure whether a device is online, first run <code>ping &lt;device_IP&gt;</code> (e.g. <code>ping 192.168.1.7</code>) to confirm network connectivity, then connect in the software.
+</div>
+
+<h2 id="ui">4. Interface Overview</h2>
+<p>The main interface consists of five areas: <strong>Top Bar</strong>, <strong>Device Sidebar</strong>, <strong>Monitor Area</strong>, <strong>Log Panel</strong> (right side, collapsed by default), and <strong>Status Bar</strong> at the bottom.</p>
+<figure>
+  <img src="daq-p1604/images/overview.png" alt="Overview of the main interface">
+  <figcaption>Fig. 4-1 Main interface overview (one device connected, awaiting acquisition)</figcaption>
+</figure>
+
+<h3>4.1 Top Bar</h3>
+<figure>
+  <img src="daq-p1604/images/topbar.png" alt="Top bar">
+  <figcaption>Fig. 4-2 Top bar</figcaption>
+</figure>
+<table>
+  <tr><th>Control</th><th>Description</th></tr>
+  <tr><td>DAQ-P1604 logo</td><td>Software name and icon</td></tr>
+  <tr><td>Live Monitor</td><td>Current page indicator (this version has one page only)</td></tr>
+  <tr><td><strong>Start / Stop Acquire</strong></td><td>Starts acquisition for all connected devices; turns red &ldquo;Stop Acquire&rdquo; during acquisition; click again to stop all</td></tr>
+  <tr><td><strong>Start / Stop Record</strong></td><td>Starts recording data to CSV (pops up a directory selection dialog first); turns red &ldquo;Stop Record&rdquo; while recording</td></tr>
+  <tr><td>+</td><td>Manually add a device (see 6.2)</td></tr>
+  <tr><td>Gear icon</td><td>Open configuration panel for the currently selected device (see Section 7); unavailable when no device is selected</td></tr>
+  <tr><td>UI refresh rate</td><td>Screen refresh rate for waveforms and values: 2 / 5 / 10 / 15 / 20 / 30 Hz (default 10 Hz, see 8.4)</td></tr>
+  <tr><td>Theme button</td><td>Toggle dark / light theme (see Section 11)</td></tr>
+  <tr><td>Version</td><td>Current software version (e.g. v0.5.0)</td></tr>
+</table>
+
+<h3>4.2 Device Sidebar</h3>
+<figure>
+  <img src="daq-p1604/images/sidebar.png" alt="Device sidebar" style="max-width:280px">
+  <figcaption>Fig. 4-3 Device sidebar</figcaption>
+</figure>
+<ul>
+  <li>The top shows device count; the magnifying glass button on the right triggers <strong>device scanning</strong> (see 6.1);</li>
+  <li>Each device is shown as a card: device name, <code>IP:port</code>, status icon; clicking a card selects the device, and the monitor area updates accordingly;</li>
+  <li>Hovering over a card reveals a <strong>Delete</strong> button (see 6.4).</li>
+</ul>
+<p>Device status icon meanings:</p>
+<table>
+  <tr><th>Status</th><th>Color</th><th>Meaning</th></tr>
+  <tr><td>Disconnected</td><td>Gray</td><td>Not yet connected</td></tr>
+  <tr><td>Connecting / Stopping</td><td>Yellow</td><td>Operation in progress, please wait</td></tr>
+  <tr><td>Connected</td><td>Green</td><td>Communication established, ready to acquire</td></tr>
+  <tr><td>Acquiring</td><td>Green (blinking)</td><td>Currently acquiring data</td></tr>
+  <tr><td>Error</td><td>Red</td><td>Connection failed or device disconnected; reason shown at top of monitor area</td></tr>
+</table>
+
+<h3>4.3 Monitor Area</h3>
+<p>From top to bottom: <strong>Device header card</strong> (name, address, unit, sample rate, status, connect/disconnect &amp; config buttons), <strong>Real-time waveform</strong> (see 8.2), <strong>Channel monitor</strong> (see 8.3). A guide page is shown when no device is selected.</p>
+
+<h3>4.4 Log Panel &amp; Status Bar</h3>
+<p>The narrow strip on the right is the collapsed <strong>Log Panel</strong> (click to expand, see Section 10); the bottom is the <strong>Status Bar</strong> (see Section 12).</p>
+
+<h2 id="quickstart">5. Quick Start</h2>
+<p>The standard workflow from power-on to saving data (detailed instructions in later sections):</p>
+<div class="steps">
+  <div class="step"><span class="st">Add device</span>: click the magnifying glass in the sidebar to <strong>scan for devices</strong>, check the found devices, then click &ldquo;Add Selected&rdquo;; or click the + button on the top bar to manually enter the IP and port (see 6.1 / 6.2).</div>
+  <div class="step"><span class="st">Connect device</span>: click <strong>Connect</strong> on the device card or monitor area header; the status changes to &ldquo;Connected&rdquo;. Devices with &ldquo;Auto-connect&rdquo; enabled will automatically connect on software startup.</div>
+  <div class="step"><span class="st">(Optional) Adjust configuration</span>: click <strong>Config</strong> to set sample rate, pressure unit, display precision, and channels (see Section 7).</div>
+  <div class="step"><span class="st">Start acquisition</span>: click <strong>Start Acquire</strong> on the top bar; real-time waveforms and channel values begin updating.</div>
+  <div class="step"><span class="st">Start recording</span>: click <strong>Start Record</strong> on the top bar, select a save directory in the system dialog, and CSV recording begins immediately.</div>
+  <div class="step"><span class="st">Stop recording / Stop acquisition</span>: after the experiment ends, first click <strong>Stop Record</strong> to close the CSV file, then click <strong>Stop Acquire</strong>. The CSV can be opened directly in Excel.</div>
+</div>
+<div class="callout success">
+  <span class="t">Recommendation</span>
+  Let the acquisition run for a few seconds before starting recording to confirm that all channel values are reasonable, avoiding empty files.
+</div>
+
+<h2 id="device">6. Device Management</h2>
+
+<h3 id="device-scan">6.1 Scan &amp; Add Devices (Recommended)</h3>
+<p>Click the <strong>magnifying glass button</strong> in the upper-right corner of the device sidebar. The software broadcasts a discovery message on the current network and lists all online P1604 devices.</p>
+<figure>
+  <img src="daq-p1604/images/scan-wait.png" alt="Scanning">
+  <figcaption>Fig. 6-1 Scanning in progress</figcaption>
+</figure>
+<figure>
+  <img src="daq-p1604/images/scan-results.png" alt="Scan results">
+  <figcaption>Fig. 6-2 Scan results: device DAQ-P-1604-374D87 found (already-added devices show &ldquo;Added&rdquo; label and are grayed out)</figcaption>
+</figure>
+<p>Each device in the scan results shows: <strong>Device Name</strong> (default <code>DAQ-P-1604-&lt;last_6_MAC_chars&gt;</code>), <strong>IP:Port</strong>, <strong>Serial Number</strong>, <strong>MAC Address</strong>, and <strong>Firmware Version</strong> (FW x.y).</p>
+<ul>
+  <li>After scanning completes, previously unadded devices are <strong>automatically pre-checked</strong>; checked devices can be renamed directly in the list;</li>
+  <li>Already-added devices are grayed out with &ldquo;Added&rdquo; label and cannot be added again;</li>
+  <li>The top checkbox &ldquo;<strong>Enable auto-connect on startup for added devices</strong>&rdquo; is checked by default: devices are immediately connected after adding, and reconnected automatically on future launches;</li>
+  <li>Click <strong>Add Selected (N)</strong> to batch-add; click <strong>Rescan</strong> if results haven&rsquo;t changed.</li>
+</ul>
+
+<h3 id="device-manual">6.2 Add Device Manually</h3>
+<p>Click the <strong>+</strong> button on the top bar and fill in the dialog:</p>
+<figure>
+  <img src="daq-p1604/images/add-device.png" alt="Add device dialog">
+  <figcaption>Fig. 6-3 Add device manually</figcaption>
+</figure>
+<table>
+  <tr><th>Field</th><th>Description</th><th>Validation</th></tr>
+  <tr><td>Device Name</td><td>A recognizable name, e.g. &ldquo;Pressure Collector 1&rdquo;</td><td>Required; empty triggers &ldquo;Please enter device name&rdquo;</td></tr>
+  <tr><td>IP Address</td><td>Device IP, e.g. <code>192.168.1.7</code></td><td>Required; empty triggers &ldquo;Please enter IP address&rdquo;</td></tr>
+  <tr><td>Port</td><td>Device data port</td><td>Default <code>9000</code>, range 1&ndash;65535</td></tr>
+</table>
+<p>If both IP and port match an existing device, a &ldquo;Device already added; duplicate not allowed&rdquo; message is shown. Pressing <span class="kbd">Enter</span> in an input field is equivalent to clicking &ldquo;Add&rdquo;.</p>
+
+<h3 id="device-connect">6.3 Connect &amp; Disconnect</h3>
+<ul>
+  <li>Select a device, then click the <strong>Connect</strong> button on the monitor area header card; once connected, status changes to &ldquo;Connected&rdquo; and the button becomes &ldquo;Disconnect&rdquo;;</li>
+  <li>After connecting, the software automatically syncs the interface unit to the <strong>device hardware&rsquo;s current pressure unit</strong> (logged accordingly);</li>
+  <li>On connection failure, status becomes &ldquo;Error&rdquo; and the specific reason is shown below the header card (e.g., connection timeout, connection refused);</li>
+  <li>Enabling <strong>Auto-connect</strong> in device configuration causes the software to automatically connect to this device on every startup (see Section 7).</li>
+</ul>
+
+<h3 id="device-delete">6.4 Delete Device</h3>
+<p>Hover over a device card in the sidebar, click the <strong>trash icon</strong> that appears, and confirm deletion in the dialog.</p>
+<figure>
+  <img src="daq-p1604/images/delete-device.png" alt="Delete device confirmation">
+  <figcaption>Fig. 6-4 Deleting a device requires double confirmation; the device&rsquo;s configuration is also removed</figcaption>
+</figure>
+<div class="callout warn">
+  <span class="t">Note</span>
+  Deleting a device also removes all its configuration (channel names, precision, auto-connect, etc.) but does not affect previously saved CSV data files.
+</div>
+
+<h2 id="config">7. Device Configuration</h2>
+<p>Select a device, then click the gear icon on the top bar or the <strong>Config</strong> button in the monitor area to open the configuration panel. The panel is divided into &ldquo;Hardware Parameters&rdquo; and &ldquo;Channel Configuration&rdquo; sections.</p>
+<figure>
+  <img src="daq-p1604/images/config-hardware.png" alt="Configuration panel &mdash; Hardware Parameters">
+  <figcaption>Fig. 7-1 Configuration panel: Hardware Parameters section</figcaption>
+</figure>
+
+<h3>7.1 Hardware Parameters</h3>
+<table>
+  <tr><th>Setting</th><th>Description</th><th>Values / Default</th></tr>
+  <tr><td>Sample Rate</td><td>Device samples per second; sent to device on save</td><td>1&ndash;1000 Hz integer, default 10 Hz</td></tr>
+  <tr><td>Pressure Unit (all channels)</td><td>Display and save unit for CH01&ndash;CH16 pressure channels; sent to device</td><td>psi / Pa / kPa / MPa / kgf/cm&sup2;, default psi</td></tr>
+  <tr><td>Global Precision (all channels)</td><td>Decimal places for display and CSV output; click &ldquo;Apply to All&rdquo; to sync to all 18 channels</td><td>0&ndash;6 decimal places, default 3</td></tr>
+  <tr><td>Auto-connect</td><td>When enabled, the device auto-connects on software startup</td><td>Default off</td></tr>
+  <tr><td>Device Hardware Timestamp</td><td>On: CSV and waveforms use device hardware timestamps; Off: use PC system time</td><td>Default on</td></tr>
+</table>
+
+<h3>7.2 Channel Configuration</h3>
+<figure>
+  <img src="daq-p1604/images/config-channels.png" alt="Channel configuration">
+  <figcaption>Fig. 7-2 Channel configuration (CH17 atmospheric pressure / CH18 atmospheric temperature are fixed-function channels)</figcaption>
+</figure>
+<ul>
+  <li>18 rows total; the title shows &ldquo;N/18 enabled&rdquo;; for each channel: <strong>Channel Name</strong> (e.g. &ldquo;Total Pressure&rdquo;, &ldquo;Static Pressure&rdquo;), <strong>Precision</strong> (0&ndash;6 decimal places, overrides global), <strong>Enable toggle</strong>;</li>
+  <li>Disabled channels: not shown in the monitor interface or waveform; corresponding column in CSV is left empty (column alignment preserved);</li>
+  <li>CH17 is fixed as Atmospheric Pressure (unit Pa), CH18 as Atmospheric Temperature (unit &deg;C); units cannot be changed;</li>
+  <li>CH1&ndash;CH16 units follow the global &ldquo;Pressure Unit&rdquo; setting.</li>
+</ul>
+
+<h3>7.3 Save &amp; Apply</h3>
+<ul>
+  <li>After modification, the title shows an &ldquo;Unsaved&rdquo; indicator; click <strong>Save</strong> to commit, <strong>Reset</strong> to revert to saved values;</li>
+  <li>Hardware-related items (sample rate, pressure unit) are <strong>sent to the device</strong> on save; the status bar shows &ldquo;Configuration saved and applied to device&rdquo;; UI-only changes show &ldquo;Configuration saved&rdquo;;</li>
+  <li>If the device does not respond within ~15 seconds, a &ldquo;Configuration apply timeout; device may be unresponsive&rdquo; message appears; check the device connection and retry.</li>
+</ul>
+<div class="callout danger">
+  <span class="t">Cannot Modify Configuration While Acquiring</span>
+  When a device is acquiring, the configuration panel is completely grayed out with the message &ldquo;Configuration changes not allowed during acquisition; please stop acquisition first&rdquo;. Stop acquisition from the top bar before making changes.
+</div>
+
+<h2 id="monitor">8. Live Monitoring</h2>
+
+<h3>8.1 Start / Stop Acquisition</h3>
+<p>After a device is &ldquo;Connected&rdquo;, click <strong>Start Acquire</strong> on the top bar: all connected devices begin acquiring simultaneously; the button turns red &ldquo;Stop Acquire&rdquo;; the status bar shows &ldquo;Acquiring&rdquo;; an elapsed timer starts on the right. Click again to stop acquisition on all devices.</p>
+<figure>
+  <img src="daq-p1604/images/acquiring.png" alt="Acquiring">
+  <figcaption>Fig. 8-1 Acquiring: 16 pressure channel curves updating in real time; channel cards display live values</figcaption>
+</figure>
+
+<h3>8.2 Real-time Waveform</h3>
+<ul>
+  <li>The waveform chart scrolls to show approximately the <strong>last 30 seconds</strong> of data; hovering the mouse shows precise per-channel values at that moment (formatted per each channel&rsquo;s precision);</li>
+  <li>The top-right <strong>legend</strong> shows the currently plotted channels;</li>
+  <li>CH01&ndash;CH16 are plotted by default; CH17/CH18 are unchecked by default due to different dimension and magnitude, and can be manually enabled in &ldquo;Channel Selector&rdquo;.</li>
+</ul>
+<h4>Channel Selector</h4>
+<p>Click the <strong>Channel Selector</strong> button at the top-right of the waveform card to choose which channels to display; supports <strong>select all / deselect all</strong>.</p>
+<figure>
+  <img src="daq-p1604/images/channel-selector.png" alt="Channel Selector">
+  <figcaption>Fig. 8-2 Channel selector popover</figcaption>
+</figure>
+
+<h3>8.3 Channel Monitor Cards</h3>
+<p>Below the waveform, each enabled channel has a monitor card showing: <strong>large real-time value</strong> (formatted per-channel precision), unit, channel name; the colored dot at the top-left matches the waveform curve color. Click the <strong>palette button</strong> on a card to customize that channel&rsquo;s waveform color (persisted permanently).</p>
+<figure>
+  <img src="daq-p1604/images/channel-cards.png" alt="Channel monitor cards">
+  <figcaption>Fig. 8-3 Channel monitor cards (18 channels)</figcaption>
+</figure>
+
+<h3>8.4 UI Refresh Rate</h3>
+<p>Click the <strong>gauge icon</strong> on the top bar to select the screen refresh rate (2 / 5 / 10 / 15 / 20 / 30 Hz, default 10 Hz). The refresh rate only affects display smoothness and CPU usage &mdash; it does <strong>not</strong> affect the device sample rate or the data density saved to CSV.</p>
+<figure>
+  <img src="daq-p1604/images/refresh-rate.png" alt="UI refresh rate">
+  <figcaption>Fig. 8-4 UI refresh rate selector</figcaption>
+</figure>
+
+<h2 id="recording">9. Data Recording (CSV)</h2>
+<h3>9.1 Start &amp; Stop</h3>
+<div class="steps">
+  <div class="step"><span class="st">Confirm acquisition is running</span> (status bar shows &ldquo;Acquiring&rdquo;).</div>
+  <div class="step"><span class="st">Click &ldquo;Start Record&rdquo; on the top bar</span>, select a save directory in the Windows folder dialog (you can create a new folder), and recording begins immediately once confirmed.</div>
+  <div class="step"><span class="st">While recording</span>: the top bar button turns red &ldquo;Stop Record&rdquo;; the status bar shows &ldquo;Recording&rdquo; along with the current file name, recorded row count, dropped count, and file count.</div>
+  <div class="step"><span class="st">Click &ldquo;Stop Record&rdquo;</span> to end recording; the file is closed and flushed to disk.</div>
+</div>
+<figure>
+  <img src="daq-p1604/images/recording.png" alt="Recording in progress">
+  <figcaption>Fig. 9-1 Recording in progress (status bar shows file name and recorded row count)</figcaption>
+</figure>
+<figure>
+  <img src="daq-p1604/images/bottombar-recording.png" alt="Status bar while recording">
+  <figcaption>Fig. 9-2 Status bar during recording: status &ldquo;Recording&rdquo;, 3594 recorded, 0 dropped, 1 file, current file name</figcaption>
+</figure>
+
+<h3>9.2 File Naming &amp; Format</h3>
+<ul>
+  <li><strong>One CSV file per device</strong>, naming pattern:<br><code>DAQ-P1604-&lt;device_name&gt;-&lt;YYYYMMDD-HHmmss&gt;-&lt;seq&gt;.csv</code><br>Example: <code>DAQ-P1604-DAQ-P-1604-374D87-20260726-084714-001.csv</code> (spaces and characters <code>\/:*?"&lt;&gt;|</code> in the device name are replaced with underscores);</li>
+  <li>The file is created upon the first data arrival; header is fixed at 19 columns: <code>Timestamp,CH01,&hellip;,CH16,CH17_AtmPressure,CH18_AtmTemp</code>;</li>
+  <li>Values are output per each channel&rsquo;s configured precision; <strong>disabled channel columns are left empty</strong> (column positions preserved for cross-file comparison);</li>
+  <li>Timestamps are prefixed with a single quote (e.g. <code>'2026-07-26 16:46:03</code>) so that Excel treats them as text without auto-formatting.</li>
+</ul>
+<p>Sample CSV content (recorded from a real device):</p>
+<pre><code>Timestamp,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16,CH17_AtmPressure,CH18_AtmTemp
+'2026-07-26 16:46:03,10.7,40.7,-26.2,-38.1,-19.8,-16.7,-23.0,-18.5,-32.4,-44.7,-51.9,-3.0,42.1,-37.1,0.3,-26.5,0.0,0.0
+'2026-07-26 16:46:03,10.1,41.0,-25.0,-37.1,-19.4,-17.9,-23.5,-18.1,-32.2,-45.1,-50.9,-2.5,42.9,-37.1,-0.5,-27.4,0.0,0.0</code></pre>
+
+<h3>9.3 Error Protection</h3>
+<ul>
+  <li><strong>Auto-stop on device disconnect</strong>: if a device disconnects during recording, the software automatically stops recording for that device and shows the reason in the status bar &ldquo;Recording Error&rdquo; (when multiple devices are recording, a single disconnect only produces a warning; other devices continue recording);</li>
+  <li><strong>Drop counter</strong>: if the disk write is too slow and the buffer queue overflows, the &ldquo;Dropped&rdquo; counter in the status bar increments and turns yellow; on a normal hard drive this should be 0; if it keeps rising, switch the save directory to a faster drive;</li>
+  <li>When the software exits, recording stops automatically and files are properly closed; no corrupted files are left behind.</li>
+</ul>
+
+<h2 id="log">10. Log Panel</h2>
+<p>The narrow strip on the right is the log panel; click to expand; click the &ldquo;Collapse&rdquo; button on the toolbar or the narrow strip to close.</p>
+<figure>
+  <img src="daq-p1604/images/log-panel.png" alt="Log panel">
+  <figcaption>Fig. 10-1 Log panel: full record of connections, acquisition, and device communication</figcaption>
+</figure>
+<ul>
+  <li><strong>Level filter</strong>: Debug / Info / Warn / Error, representing the minimum level to display (default Info: show Info and above);</li>
+  <li><strong>Category filter</strong>: All / System / Communication (device command send/receive) / Acquisition;</li>
+  <li><strong>Save log to file</strong>: click and select a directory; logs are continuously written to <code>daq-log_YYYYMMDD-HHmmss.log</code>; click again to stop. The software also automatically saves a run log under <code>%APPDATA%\daq-p1604\logs</code> on each startup for post-hoc troubleshooting;</li>
+  <li><strong>Copy all logs</strong>: copies the current filtered results to the clipboard, ready to paste to technical support; hovering a single log entry lets you copy just that entry;</li>
+  <li><strong>Clear logs</strong>: clears the panel (does not affect logs already written to file);</li>
+  <li>The panel retains at most the last 500 entries; high-frequency communication logs are automatically collapsed as &ldquo;&hellip; and N similar entries&rdquo;.</li>
+</ul>
+
+<h2 id="theme">11. UI Theme</h2>
+<p>Click the <strong>moon / sun icon</strong> on the top bar to toggle between light (default) and dark themes. The choice is saved automatically and persists across restarts. Dark theme is ideal for darkroom or nighttime test environments.</p>
+<figure>
+  <img src="daq-p1604/images/dark-theme.png" alt="Dark theme">
+  <figcaption>Fig. 11-1 Dark theme</figcaption>
+</figure>
+
+<h2>12. Status Bar Reference</h2>
+<table>
+  <tr><th>Field</th><th>Description</th></tr>
+  <tr><td>Acquisition Status</td><td>Running (green) / Stopped</td></tr>
+  <tr><td>Recording Status</td><td>Recording (red) / Not recording</td></tr>
+  <tr><td>Devices</td><td>Total number of added devices</td></tr>
+  <tr><td>Online</td><td>Number of connected + acquiring devices</td></tr>
+  <tr><td>Recorded</td><td>Number of snapshot rows written in the current recording session</td></tr>
+  <tr><td>Dropped</td><td>Only shown while recording; count of rows dropped due to buffer overflow; turns yellow when &gt;0 (should normally be 0)</td></tr>
+  <tr><td>Files</td><td>Only shown while recording; number of CSV files generated in the current session</td></tr>
+  <tr><td>Save Dir / Save File</td><td>When not recording: output directory; when recording: full file name of the current file (hover for full path)</td></tr>
+  <tr><td>Recording Error</td><td>Only shown on error (red; hover for details), e.g. auto-stop due to device disconnect</td></tr>
+  <tr><td>Elapsed</td><td>Cumulative acquisition duration (hh:mm:ss); resets to zero when acquisition stops</td></tr>
+  <tr><td>System Time</td><td>Current computer time, updated every second</td></tr>
+</table>
+
+<h2 id="files">13. Config &amp; Data File Locations</h2>
+<table>
+  <tr><th>Content</th><th>Location</th></tr>
+  <tr><td>Device configuration (device list, channels, precision, auto-connect, etc.)</td><td><code>%APPDATA%\daq-p1604\device-profiles.json</code></td></tr>
+  <tr><td>Runtime logs (auto-saved)</td><td><code>%APPDATA%\daq-p1604\logs\</code></td></tr>
+  <tr><td>CSV data files</td><td>Directory selected by the user when clicking &ldquo;Start Record&rdquo;</td></tr>
+  <tr><td>UI preferences (theme, refresh rate, etc.)</td><td>Application-local storage, persisted per system user</td></tr>
+</table>
+<div class="callout info">
+  <span class="t">Migration Tip</span>
+  When switching computers, copy <code>device-profiles.json</code> to the same path on the new machine to migrate all device configurations.
+</div>
+
+<h2 id="faq">14. FAQ</h2>
+<h3>14.1 No devices found during scanning</h3>
+<ul>
+  <li>Confirm the device is powered on, the network cable is connected, and the computer and device are on the <strong>same subnet</strong>;</li>
+  <li>Check whether Windows Firewall has allowed this software (scanning uses UDP broadcast; if blocked, no results will appear);</li>
+  <li>If scanning fails, use <strong>manual add</strong> (6.2) and directly enter the device IP and port 9000.</li>
+</ul>
+<h3>14.2 Connection fails / Status shows &ldquo;Error&rdquo;</h3>
+<ul>
+  <li>Run <code>ping &lt;device_IP&gt;</code> in a command prompt to verify network connectivity;</li>
+  <li>Confirm the IP and port (9000) are correct and the device is not occupied by another application;</li>
+  <li>Check the error bar below the header card and the log panel for the specific cause.</li>
+</ul>
+<h3>14.3 Waveform or values not updating</h3>
+<ul>
+  <li>Confirm <strong>Start Acquire</strong> has been clicked and the status bar shows &ldquo;Running&rdquo;;</li>
+  <li>Confirm the target channel is checked in &ldquo;Channel Selector&rdquo; and enabled in configuration;</li>
+  <li>If the UI refresh rate is set very low (e.g. 2 Hz), updates will be slow &mdash; this is normal.</li>
+</ul>
+<h3>14.4 CH17 / CH18 display 0</h3>
+<p>CH17 (atmospheric pressure) and CH18 (atmospheric temperature) values depend on whether the corresponding sensors are connected to the device. If sensors are not connected or the device provides no data, they display 0; this does not affect CH01&ndash;CH16 usage.</p>
+<h3>14.5 Multiple rows with same timestamp in CSV</h3>
+<p>The device firmware timestamp field has a known limitation; the software uniformly truncates CSV timestamps to second-level precision to work around it. Multiple rows within the same second at high sample rates are normal &mdash; row order equals acquisition order.</p>
+<h3>14.6 No file generated after clicking &ldquo;Start Record&rdquo;</h3>
+<ul>
+  <li>Confirm you clicked &ldquo;Select Folder&rdquo; rather than &ldquo;Cancel&rdquo; in the directory dialog;</li>
+  <li>Confirm acquisition is running &mdash; the file is created only when the first data point arrives;</li>
+  <li>Confirm you have write permission to the selected directory (avoid system-protected folders).</li>
+</ul>
+<h3>14.7 Configuration panel is all grayed out</h3>
+<p>The device is currently acquiring. First click &ldquo;Stop Acquire&rdquo; on the top bar, then open the configuration panel to make changes.</p>
+
+<div class="callout success" style="margin-top:2rem">
+  <span class="t">Technical Support</span>
+  For issues not covered by this manual, please export the logs (Log Panel &rarr; Copy All Logs, or provide the log files from the relevant time period under <code>%APPDATA%\daq-p1604\logs</code>) and contact technical support.
+</div>
+
+</main>
+</div><!-- /content-en -->
+
+<script>
+(function(){
+  var btn = document.getElementById('lang-toggle');
+  var isEn = (localStorage.getItem('doc-lang') || 'zh') === 'en';
+  if (isEn) document.body.classList.add('lang-en');
+  btn.addEventListener('click', function(){
+    var en = document.body.classList.toggle('lang-en');
+    localStorage.setItem('doc-lang', en ? 'en' : 'zh');
+  });
+})();
+</script>
+
+</body>
+</html>

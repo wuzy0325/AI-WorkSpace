@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAQ-T-1603 温度采集软件 用户说明书</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --accent: #1a6dff;
+  --accent-light: #e8f0ff;
+  --accent-dark: #0d47a1;
+  --bg: #f8f9fb;
+  --card: #ffffff;
+  --text: #1a1a2e;
+  --text-muted: #5a5a7a;
+  --border: #dde1e8;
+  --code-bg: #f0f2f5;
+  --warn-bg: #fff8e1;
+  --warn-border: #ffc107;
+  --info-bg: #e3f2fd;
+  --info-border: #42a5f5;
+  --success-bg: #e8f5e9;
+  --success-border: #66bb6a;
+  --danger-bg: #ffebee;
+  --danger-border: #ef5350;
+  --sidebar-w: 260px;
+  --lang-toggle-w: 44px;
+  font-size: 15px;
+}
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  min-height: 100vh;
+}
+.sidebar {
+  position: fixed;
+  top: 0; left: 0;
+  width: var(--sidebar-w);
+  height: 100vh;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 100;
+  padding: 0 0 2rem;
+}
+.sidebar-header {
+  padding: 1.25rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+}
+.sidebar-header h1 { font-size: 1rem; font-weight: 600; line-height: 1.3; }
+.sidebar-header .sub { font-size: .78rem; opacity: .8; margin-top: .25rem; }
+.sidebar nav a {
+  display: block;
+  padding: .45rem 1rem .45rem 1.25rem;
+  color: var(--text);
+  text-decoration: none;
+  font-size: .85rem;
+  border-left: 3px solid transparent;
+  transition: .15s;
+}
+.sidebar nav a:hover { background: var(--accent-light); color: var(--accent-dark); border-left-color: var(--accent); }
+.sidebar .nav-h2 { padding-left: 2rem; font-size: .8rem; }
+.main {
+  margin-left: var(--sidebar-w);
+  flex: 1;
+  padding: 2rem 2.5rem 4rem;
+  max-width: 980px;
+}
+h2 {
+  font-size: 1.35rem;
+  margin: 2.5rem 0 1rem;
+  padding-bottom: .5rem;
+  border-bottom: 2px solid var(--accent);
+}
+h2:first-of-type { margin-top: 0; }
+h3 { font-size: 1.08rem; margin: 1.6rem 0 .6rem; color: var(--accent-dark); }
+h4 { font-size: .95rem; margin: 1.1rem 0 .4rem; }
+p { line-height: 1.75; margin: .55rem 0; }
+ul, ol { margin: .5rem 0 .5rem 1.5rem; line-height: 1.75; }
+li { margin: .25rem 0; }
+strong { color: var(--accent-dark); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: .8rem 0;
+  background: var(--card);
+  font-size: .88rem;
+}
+th, td {
+  padding: .5rem .7rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--accent-light); font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfd; }
+code {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  background: var(--code-bg);
+  padding: .1rem .35rem;
+  border-radius: 4px;
+  font-size: .85em;
+}
+pre {
+  background: #2b2b3a;
+  color: #e8e8f0;
+  padding: .9rem 1.1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: .82rem;
+  line-height: 1.55;
+  margin: .7rem 0;
+}
+pre code { background: none; color: inherit; padding: 0; }
+.callout {
+  padding: .75rem 1rem;
+  border-radius: 8px;
+  border-left: 4px solid;
+  margin: .9rem 0;
+  line-height: 1.7;
+  font-size: .9rem;
+}
+.callout.info    { background: var(--info-bg);    border-color: var(--info-border); }
+.callout.warn    { background: var(--warn-bg);    border-color: var(--warn-border); }
+.callout.success { background: var(--success-bg); border-color: var(--success-border); }
+.callout.danger  { background: var(--danger-bg);  border-color: var(--danger-border); }
+.callout .t { font-weight: 700; display: block; margin-bottom: .2rem; }
+figure {
+  margin: 1.1rem 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .8rem;
+  text-align: center;
+}
+figure img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+figcaption { font-size: .82rem; color: var(--text-muted); margin-top: .55rem; }
+.steps { counter-reset: step; margin: .8rem 0; }
+.step {
+  position: relative;
+  padding: .6rem 0 .6rem 2.6rem;
+  counter-increment: step;
+}
+.step::before {
+  content: counter(step);
+  position: absolute;
+  left: 0; top: .55rem;
+  width: 1.7rem; height: 1.7rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .9rem;
+  font-weight: 700;
+}
+.step .st { font-weight: 600; }
+.kbd {
+  display: inline-block;
+  padding: .05rem .45rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--card);
+  font-size: .82rem;
+  font-weight: 600;
+}
+.doc-meta {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.doc-meta h1 { font-size: 1.5rem; margin-bottom: .3rem; }
+.doc-meta .ver { color: var(--text-muted); font-size: .88rem; }
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 1rem; }
+}
+/* Language toggle */
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 5px;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font-size: .75rem;
+  cursor: pointer;
+  transition: .15s;
+}
+.lang-toggle:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.55); }
+.lang-toggle svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+body:not(.lang-en) .lang-en { display: none; }
+body.lang-en .lang-zh { display: none; }
+
+.lang-content { display: none; }
+body:not(.lang-en) .lang-content-zh { display: block; }
+body.lang-en    .lang-content-en { display: block; }
+
+@media print {
+  .sidebar { display: none; }
+  .main { margin-left: 0; max-width: none; }
+  figure { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1><span class="lang-zh">DAQ-T-1603 温度采集软件</span><span class="lang-en">DAQ-T-1603 Temperature Acquisition</span></h1>
+    <div class="sub"><span class="lang-zh">用户说明书 · v0.5.0</span><span class="lang-en">User Manual · v0.5.0</span></div>
+    <button id="lang-toggle" class="lang-toggle" title="中/EN">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/><path d="M12 2a15.3 15.3 0 00-4 10 15.3 15.3 0 004 10"/></svg>
+      <span class="lang-zh">EN</span><span class="lang-en">中文</span>
+    </button>
+  </div>
+  <nav>
+    <a href="#intro"><span class="lang-zh">1. 软件简介</span><span class="lang-en">1. Introduction</span></a>
+    <a href="#install"><span class="lang-zh">2. 安装与启动</span><span class="lang-en">2. Installation &amp; Launch</span></a>
+    <a href="#network"><span class="lang-zh">3. 设备网络连接</span><span class="lang-en">3. Device Network Setup</span></a>
+    <a href="#ui"><span class="lang-zh">4. 界面总览</span><span class="lang-en">4. Interface Overview</span></a>
+    <a href="#quickstart"><span class="lang-zh">5. 快速上手</span><span class="lang-en">5. Quick Start</span></a>
+    <a href="#device"><span class="lang-zh">6. 设备管理</span><span class="lang-en">6. Device Management</span></a>
+    <a class="nav-h2" href="#device-scan"><span class="lang-zh">6.1 扫描添加设备</span><span class="lang-en">6.1 Scan &amp; Add Devices</span></a>
+    <a class="nav-h2" href="#device-manual"><span class="lang-zh">6.2 手动添加设备</span><span class="lang-en">6.2 Add Device Manually</span></a>
+    <a class="nav-h2" href="#device-connect"><span class="lang-zh">6.3 连接与断开</span><span class="lang-en">6.3 Connect &amp; Disconnect</span></a>
+    <a class="nav-h2" href="#device-delete"><span class="lang-zh">6.4 删除设备</span><span class="lang-en">6.4 Delete Device</span></a>
+    <a href="#config"><span class="lang-zh">7. 设备配置</span><span class="lang-en">7. Device Configuration</span></a>
+    <a href="#monitor"><span class="lang-zh">8. 实时监控</span><span class="lang-en">8. Live Monitoring</span></a>
+    <a href="#recording"><span class="lang-zh">9. 数据保存（CSV）</span><span class="lang-en">9. Data Recording (CSV)</span></a>
+    <a href="#log"><span class="lang-zh">10. 日志面板</span><span class="lang-en">10. Log Panel</span></a>
+    <a href="#theme"><span class="lang-zh">11. 界面主题</span><span class="lang-en">11. UI Theme</span></a>
+    <a href="#bottombar"><span class="lang-zh">12. 底栏状态说明</span><span class="lang-en">12. Status Bar Reference</span></a>
+    <a href="#files"><span class="lang-zh">13. 配置与数据文件位置</span><span class="lang-en">13. Config &amp; Data File Locations</span></a>
+    <a href="#faq"><span class="lang-zh">14. 常见问题</span><span class="lang-en">14. FAQ</span></a>
+  </nav>
+</aside>
+
+<div id="content-zh" class="lang-content lang-content-zh">
+<main class="main">
+
+<div class="doc-meta">
+  <h1>DAQ-T-1603 温度采集软件 用户说明书</h1>
+  <div class="ver">适用软件版本：v0.5.0 ｜ 适用设备：DAQ-T-1603 热电偶温度采集器（16 通道）｜ 文档日期：2026-07</div>
+</div>
+
+<h2 id="intro">1. 软件简介</h2>
+<p>DAQ-T-1603 温度采集软件是一款 Windows 桌面应用，用于 DAQ-T-1603 热电偶温度采集设备的<strong>实时监控、波形显示与数据录制</strong>。软件通过以太网（TCP/IP）与设备通信，支持多设备并行管理。</p>
+<p>主要功能：</p>
+<ul>
+  <li><strong>16 通道温度采集</strong>：CH01–CH16 热电偶通道，支持 K / J / T / E / N / S / R / B 八种热电偶类型；</li>
+  <li><strong>实时波形</strong>：多通道曲线同屏显示，支持按需勾选通道、自定义曲线颜色；</li>
+  <li><strong>通道监控卡</strong>：各通道实时温度大字显示（单位 ℃）；</li>
+  <li><strong>数据保存</strong>：一键录制为 CSV 文件，可直接用 Excel 打开分析；</li>
+  <li><strong>设备扫描</strong>：一键发现局域网内的 T1603 设备；</li>
+  <li><strong>运行日志</strong>：通信与采集过程全程记录，支持检索与保存为日志文件；</li>
+  <li><strong>深/浅主题</strong>：默认深色，适应试验现场光照环境。</li>
+</ul>
+<div class="callout info">
+  <span class="t">截图说明</span>
+  本说明书全部截图均来自真实设备（DAQ-T-1603，固件 FW 1.04）实际操作。截图时试验台仅在 CH14 接入一支 K 型热电偶（显示约 28 ℃ 室温），其余通道未接探头，故显示 0.00 ℃——未接入热电偶的通道读数为 0 属正常现象。
+</div>
+
+<h2 id="install">2. 安装与启动</h2>
+<h3>2.1 运行环境</h3>
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>操作系统</td><td>Windows 10 / 11，64 位</td></tr>
+  <tr><td>运行依赖</td><td>Microsoft Edge WebView2 运行时（Windows 10/11 通常已内置；如启动失败请先安装 WebView2）</td></tr>
+  <tr><td>网络</td><td>与设备处于同一网段的以太网连接（详见第 3 节）</td></tr>
+  <tr><td>窗口</td><td>默认 1600×900，最小 1280×720</td></tr>
+</table>
+<h3>2.2 安装步骤</h3>
+<div class="steps">
+  <div class="step"><span class="st">关闭正在运行的旧版本</span>（如任务栏或任务管理器中存在 <code>DAQ-T-1603.exe</code> / <code>daq-t1603.exe</code>）。</div>
+  <div class="step"><span class="st">运行安装包</span> <code>daq-t1603-0.5.0-amd64-installer.exe</code>，按向导完成安装。覆盖安装旧版本无需先卸载。</div>
+  <div class="step"><span class="st">启动软件</span>，确认主界面正常出现、设备可连接与采集（见第 5 节快速上手）。</div>
+</div>
+<h3>2.3 卸载</h3>
+<p>通过「控制面板 → 程序和功能」卸载，或运行安装目录下的 <code>Uninstall.exe</code>。卸载不会删除用户配置与已保存的 CSV 数据（见第 13 节）。</p>
+
+<h2 id="network">3. 设备网络连接</h2>
+<p>软件与设备通过以太网通信，对网络的要求如下：</p>
+<table>
+  <tr><th>项目</th><th>说明</th></tr>
+  <tr><td>设备数据端口</td><td>TCP <code>9000</code>（软件主动向设备发起连接）</td></tr>
+  <tr><td>设备扫描</td><td>UDP 广播（目标端口 <code>7000</code>，发现报文 <code>T1603</code>，响应超时 3 秒）</td></tr>
+  <tr><td>网段要求</td><td>电脑与设备须处于同一网段（例如设备为 <code>192.168.1.10</code>，电脑可设为 <code>192.168.1.x</code>）</td></tr>
+  <tr><td>防火墙</td><td>首次使用若 Windows 防火墙弹出提示，请允许本软件进行网络通信；否则设备扫描与连接会失败</td></tr>
+</table>
+<div class="callout warn">
+  <span class="t">提示</span>
+  不确定设备是否在线时，可先用 <code>ping 设备IP</code>（如 <code>ping 192.168.1.10</code>）确认网络连通，再在软件中连接。设备连线中断约 10 秒无数据时，软件会自动判定断线并回到「未连接」状态。
+</div>
+
+<h2 id="ui">4. 界面总览</h2>
+<p>软件主界面由五个区域组成：<strong>顶栏</strong>、<strong>设备侧栏</strong>、<strong>监控主区</strong>、<strong>日志面板</strong>（右侧，默认收起）、<strong>底栏状态栏</strong>。</p>
+<figure>
+  <img src="daq-t1603/images/overview.png" alt="主界面总览">
+  <figcaption>图 4-1 主界面总览（已连接一台设备，等待采集）</figcaption>
+</figure>
+
+<h3>4.1 顶栏</h3>
+<figure>
+  <img src="daq-t1603/images/topbar.png" alt="顶栏">
+  <figcaption>图 4-2 顶栏</figcaption>
+</figure>
+<table>
+  <tr><th>控件</th><th>说明</th></tr>
+  <tr><td>DAQ-T1603 标识</td><td>软件名称与图标（副标题 Temperature Acquisition）</td></tr>
+  <tr><td>实时监控</td><td>当前页面指示（本版仅实时监控一个页面）</td></tr>
+  <tr><td><strong>开始采集 / 停止采集</strong></td><td>对所有「已连接」设备启动采集；采集中变为红色「停止采集」，点击停止所有设备采集。无已连接设备时不可用</td></tr>
+  <tr><td><strong>开始保存 / 停止保存</strong></td><td>开始将采集数据录制为 CSV（先弹出目录选择框）；录制中变为红色「停止保存」，圆形图标红色闪烁</td></tr>
+  <tr><td>＋</td><td>手动添加设备（见 6.2）</td></tr>
+  <tr><td>界面刷新率</td><td>波形与数值的界面刷新频率：2 / 5 / 10 / 15 / 20 / 30 Hz（默认 10 Hz，见 8.4）</td></tr>
+  <tr><td>主题按钮</td><td>切换深色 / 浅色主题（见第 11 节）</td></tr>
+  <tr><td>版本号</td><td>当前软件版本（如 v0.5.0；窗口较窄时自动隐藏）</td></tr>
+</table>
+
+<h3>4.2 设备侧栏</h3>
+<figure>
+  <img src="daq-t1603/images/sidebar.png" alt="设备侧栏" style="max-width:280px">
+  <figcaption>图 4-3 设备侧栏</figcaption>
+</figure>
+<ul>
+  <li>顶部显示设备数量，右侧放大镜按钮为<strong>扫描设备</strong>（见 6.1）；</li>
+  <li>每台设备一张卡片：设备名称、<code>IP:端口</code>、状态图标；点击卡片选中设备，监控主区随即显示该设备；</li>
+  <li>鼠标悬停卡片时出现<strong>删除</strong>按钮（见 6.4）。</li>
+</ul>
+<p>设备状态图标的含义：</p>
+<table>
+  <tr><th>状态</th><th>颜色</th><th>含义</th></tr>
+  <tr><td>未连接</td><td>灰</td><td>尚未连接设备</td></tr>
+  <tr><td>连接中 / 启动中 / 停止中</td><td>黄（旋转）</td><td>操作正在进行，请稍候</td></tr>
+  <tr><td>已连接</td><td>绿</td><td>已建立通信，可开始采集</td></tr>
+  <tr><td>采集中</td><td>绿（闪烁）</td><td>正在采集数据</td></tr>
+  <tr><td>错误</td><td>红</td><td>连接失败或设备异常，底栏会显示「N 台异常」与详情</td></tr>
+</table>
+
+<h3>4.3 监控主区</h3>
+<p>自上而下为：<strong>设备头卡</strong>（名称、地址、热电偶类型、采样率、状态、连接/断开与配置按钮）、<strong>实时波形</strong>（见 8.2）、<strong>通道监控</strong>（见 8.3）。未选中任何设备时显示引导提示页。</p>
+
+<h3>4.4 日志面板与底栏</h3>
+<p>右侧窄条为收起的<strong>日志面板</strong>（点击展开，见第 10 节）；底部为<strong>状态栏</strong>（见第 12 节）。</p>
+
+<h2 id="quickstart">5. 快速上手</h2>
+<p>完成一次「从开机到保存数据」的标准流程（各步骤的详细说明见后续章节）：</p>
+<div class="steps">
+  <div class="step"><span class="st">添加设备</span>：点击侧栏放大镜<strong>扫描设备</strong>，在发现的设备上点 ＋ 添加；或点击顶栏 ＋ 手动输入 IP 与端口（见 6.1 / 6.2）。</div>
+  <div class="step"><span class="st">连接设备</span>：在监控主区点击<strong>连接</strong>，状态变为「已连接」。开启过「自动连接」的设备会在软件启动时自动连接。</div>
+  <div class="step"><span class="st">（可选）调整配置</span>：点击<strong>配置</strong>设置采样频率、热电偶类型与通道启用（见第 7 节）。</div>
+  <div class="step"><span class="st">开始采集</span>：点击顶栏<strong>开始采集</strong>，实时波形与通道数值开始刷新。</div>
+  <div class="step"><span class="st">开始保存</span>：点击顶栏<strong>开始保存</strong>，在弹出的系统对话框中选择保存目录，软件即开始写入 CSV。</div>
+  <div class="step"><span class="st">停止保存 / 停止采集</span>：试验结束后先点<strong>停止保存</strong>关闭 CSV 文件，再点<strong>停止采集</strong>。CSV 可直接用 Excel 打开。</div>
+</div>
+<div class="callout success">
+  <span class="t">建议</span>
+  保存数据前先让采集运行几秒，确认各通道温度合理后再开始录制，避免录到空文件。
+</div>
+
+<h2 id="device">6. 设备管理</h2>
+
+<h3 id="device-scan">6.1 扫描添加设备（推荐）</h3>
+<p>点击设备侧栏右上角的<strong>放大镜按钮</strong>，软件会在局域网内广播发现报文（UDP 7000，约 3 秒），列出所有在线的 T1603 设备。</p>
+<figure>
+  <img src="daq-t1603/images/scan-results.png" alt="扫描结果">
+  <figcaption>图 6-1 扫描结果：发现设备 192.168.1.10（MAC、固件版本 FW 1.04；已添加的设备显示「已添加」）</figcaption>
+</figure>
+<ul>
+  <li>扫描结果中每台设备显示：<strong>名称</strong>、<strong>IP:端口</strong>、<strong>MAC 地址</strong>与<strong>固件版本</strong>（FW x.y，有则显示）；</li>
+  <li>未添加的设备：点击右侧 <strong>＋</strong> 按钮，软件会把 IP 与端口预填进「添加设备」对话框，输入设备名称确认即可；</li>
+  <li>已在设备列表中的设备显示「已添加」，不可重复添加；</li>
+  <li>结果未变化时可点<strong>重新扫描</strong>；底部显示「发现 N 台设备」。</li>
+</ul>
+
+<h3 id="device-manual">6.2 手动添加设备</h3>
+<p>点击顶栏 <strong>＋</strong>，在弹窗中填写：</p>
+<figure>
+  <img src="daq-t1603/images/add-device.png" alt="添加设备">
+  <figcaption>图 6-2 手动添加设备</figcaption>
+</figure>
+<table>
+  <tr><th>字段</th><th>说明</th><th>校验规则</th></tr>
+  <tr><td>设备名称</td><td>便于识别的名称，如「温度采集器 1」</td><td>必填，最长 32 字符</td></tr>
+  <tr><td>IP 地址</td><td>设备的 IP，如 <code>192.168.1.10</code></td><td>必填（默认预填 192.168.3.101，请改为实际地址）</td></tr>
+  <tr><td>端口</td><td>设备数据端口</td><td>默认 <code>9000</code>，范围 1–65535</td></tr>
+</table>
+<p>IP 与端口均与已有设备完全相同时会提示「该设备已添加，请勿重复添加」。</p>
+
+<h3 id="device-connect">6.3 连接与断开</h3>
+<ul>
+  <li>选中设备后，点击监控主区头卡的<strong>连接</strong>按钮；连接成功后状态变为「已连接」，按钮变为「断开」；</li>
+  <li>连接成功的几秒内，软件会自动与设备完成<strong>配置同步</strong>（读取设备当前热电偶类型、采样率等参数并下发界面配置）；</li>
+  <li>连接失败时状态变为「错误」，底栏显示「1 台异常」，日志面板中有具体原因（如连接超时、拒绝连接）；</li>
+  <li>采集中若设备断线（约 10 秒无数据），软件自动断开并回到「未连接」；</li>
+  <li>在设备配置中开启<strong>自动连接</strong>后，软件每次启动都会自动连接该设备（见第 7 节）。</li>
+</ul>
+
+<h3 id="device-delete">6.4 删除设备</h3>
+<p>鼠标悬停侧栏中的设备卡片，点击出现的<strong>垃圾桶图标</strong>，在确认对话框中点「删除」。删除前软件会先自动断开该设备。</p>
+<figure>
+  <img src="daq-t1603/images/delete-device.png" alt="删除设备确认">
+  <figcaption>图 6-3 删除设备需二次确认，删除后该设备的配置一并移除</figcaption>
+</figure>
+<div class="callout warn">
+  <span class="t">注意</span>
+  删除设备会同时移除其全部配置（通道名称、热电偶类型、自动连接等），且不影响已保存的 CSV 数据文件。
+</div>
+
+<h2 id="config">7. 设备配置</h2>
+<p>选中设备后，点击监控主区的<strong>配置</strong>按钮打开配置面板。面板分「硬件参数」与「通道配置」两区。</p>
+<figure>
+  <img src="daq-t1603/images/config-hardware.png" alt="配置面板-硬件参数">
+  <figcaption>图 7-1 配置面板：硬件参数区与通道配置区</figcaption>
+</figure>
+
+<h3>7.1 硬件参数</h3>
+<table>
+  <tr><th>配置项</th><th>说明</th><th>取值 / 默认</th></tr>
+  <tr><td>采样频率</td><td>设备每秒采样次数，保存时下发设备生效</td><td>1–1000 Hz 整数，默认 10 Hz</td></tr>
+  <tr><td>硬件时间戳</td><td>启用：设备数据帧携带硬件时间戳；禁用：使用电脑系统时间</td><td>默认禁用</td></tr>
+  <tr><td>自动连接</td><td>开启后软件启动时自动连接本设备</td><td>默认关闭</td></tr>
+  <tr><td>热电偶类型（全部通道）</td><td>一键把 16 个通道统一设为同一种热电偶类型，保存时下发设备</td><td>K / J / T / E / N / S / R / B，默认 K 型</td></tr>
+</table>
+
+<h3>7.2 通道配置</h3>
+<figure>
+  <img src="daq-t1603/images/config-channels.png" alt="配置面板-通道配置">
+  <figcaption>图 7-2 通道配置区（16 通道，可逐通道设置热电偶类型）</figcaption>
+</figure>
+<ul>
+  <li>共 16 行（CH01–CH16），标题旁显示「N/16 启用」；每行可设置：<strong>通道名称</strong>（最长 32 字符，如「炉温」「进口温度」）、<strong>热电偶类型</strong>（K/J/T/E/N/S/R/B，覆盖全局设置，实现不同通道混用不同探头）、<strong>启用开关</strong>；</li>
+  <li>被禁用的通道：不出现在监控界面与波形中，CSV 中对应列留空（保持列对齐）；</li>
+  <li>温度单位固定为 <strong>℃</strong>，无需设置。</li>
+</ul>
+
+<h3>7.3 保存与生效</h3>
+<ul>
+  <li>修改后标题旁出现「未保存」标记；点击<strong>保存</strong>提交，<strong>重置</strong>恢复为已保存配置；</li>
+  <li>硬件相关项（采样频率、热电偶类型、硬件时间戳、通道启用）保存时会<strong>下发到设备</strong>，底部状态显示「配置已保存并应用到设备」；仅界面类修改显示「配置已保存」；</li>
+  <li>若保存时设备未连接，显示「配置已保存到本地，但设备离线未应用到硬件，请重新连接后再次保存」——重新连接设备后需再保存一次。</li>
+</ul>
+<div class="callout danger">
+  <span class="t">采集中禁止修改配置</span>
+  设备处于采集状态时，配置面板全部置灰并提示「采集中不允许变更配置，请先停止采集」。请先在顶栏停止采集再修改。
+</div>
+
+<h2 id="monitor">8. 实时监控</h2>
+
+<h3>8.1 开始 / 停止采集</h3>
+<p>设备「已连接」后，点击顶栏<strong>开始采集</strong>：所有已连接设备同时启动采集，按钮变为红色「停止采集」，底栏「采集状态」变为「运行中」，右侧开始计时。再次点击即停止所有设备的采集。</p>
+<figure>
+  <img src="daq-t1603/images/acquiring.png" alt="采集中">
+  <figcaption>图 8-1 采集中：CH14 热电偶实时温度约 28 ℃（红色曲线），通道卡片同步显示</figcaption>
+</figure>
+
+<h3>8.2 实时波形</h3>
+<ul>
+  <li>波形图滚动显示<strong>最近约 120 个采样点</strong>（默认 10 Hz 刷新率下约 12 秒）；鼠标悬停显示该时刻各通道数值；</li>
+  <li>右上角<strong>图例</strong>显示当前绘制的通道；默认绘制全部已启用通道；</li>
+  <li><strong>清除波形</strong>：点击波形卡片右上角的「清除波形」按钮可清空当前曲线并重画（不影响采集与录制）。停止/重新开始采集后，旧曲线可能仍短暂保留在图上，点一下「清除波形」即可获得干净视图。</li>
+</ul>
+<h4>通道选择</h4>
+<p>点击波形卡片右上角的<strong>通道选择</strong>按钮，在弹层中勾选需要显示的通道，支持<strong>全选 / 全取消</strong>（仅列出已启用通道）。</p>
+<figure>
+  <img src="daq-t1603/images/channel-selector.png" alt="通道选择">
+  <figcaption>图 8-2 通道选择弹层</figcaption>
+</figure>
+
+<h3>8.3 通道监控卡</h3>
+<p>波形下方为每个已启用通道的监控卡片：<strong>大号实时温度</strong>（保留两位小数）、单位 ℃、热电偶类型徽标（如 K）、通道名称；卡片左上角圆点颜色与波形曲线一致。点击卡片上的<strong>调色盘按钮</strong>可自定义该通道的波形颜色（长久保存）。</p>
+<figure>
+  <img src="daq-t1603/images/channel-cards.png" alt="通道监控卡">
+  <figcaption>图 8-3 通道监控卡（CH14 接有热电偶，其余通道未接探头显示 0.00 ℃）</figcaption>
+</figure>
+
+<h3>8.4 界面刷新率</h3>
+<p>点击顶栏<strong>仪表盘图标</strong>可选择界面刷新率（2 / 5 / 10 / 15 / 20 / 30 Hz，默认 10 Hz），选择后立即生效、无需重启采集。刷新率只影响屏幕显示的流畅度与 CPU 占用，<strong>不影响</strong>设备采样频率与 CSV 保存的数据密度。</p>
+<figure>
+  <img src="daq-t1603/images/refresh-rate.png" alt="界面刷新率">
+  <figcaption>图 8-4 界面刷新率选择</figcaption>
+</figure>
+
+<h2 id="recording">9. 数据保存（CSV）</h2>
+<h3>9.1 开始与停止</h3>
+<div class="steps">
+  <div class="step"><span class="st">确认采集已在运行</span>（底栏「采集状态：运行中」）。</div>
+  <div class="step"><span class="st">点击顶栏「开始保存」</span>，在弹出的 Windows 目录选择对话框中选择保存目录（可新建文件夹），确认后即刻开始录制。</div>
+  <div class="step"><span class="st">录制中</span>：顶栏按钮变为红色「停止保存」，底栏「记录状态」变为「保存中」，并显示保存目录与已记录帧数。</div>
+  <div class="step"><span class="st">点击「停止保存」</span>结束录制，文件关闭落盘。</div>
+</div>
+<figure>
+  <img src="daq-t1603/images/recording.png" alt="录制中">
+  <figcaption>图 9-1 录制中界面（底栏显示「保存中」与已记录帧数）</figcaption>
+</figure>
+<figure>
+  <img src="daq-t1603/images/bottombar-recording.png" alt="录制中底栏">
+  <figcaption>图 9-2 录制中的底栏：采集状态「运行中」、记录状态「保存中」、已记录 6086 帧、保存目录</figcaption>
+</figure>
+
+<h3>9.2 文件命名与格式</h3>
+<ul>
+  <li><strong>每台设备生成一个 CSV 文件</strong>，文件名格式：<br><code>DAQ-T1603_&lt;设备ID&gt;_&lt;年月日-时分秒.毫秒&gt;.csv</code><br>示例：<code>DAQ-T1603_t1603_1784946583769_20260727-085033.987.csv</code>（毫秒后缀防止同秒重复覆盖）；</li>
+  <li>表头固定 18 列：<code>Timestamp,Unit,CH01,CH02,…,CH16</code>（Unit 列为单位 ℃）；</li>
+  <li>数值固定保留 <strong>3 位小数</strong>；<strong>禁用通道对应列留空</strong>（列位保持不变，便于多文件对比）；</li>
+  <li>时间戳带英文单引号前缀（如 <code>'2026-07-27 08:50:33</code>），使 Excel 按文本原样显示、不自动转换格式；精度为秒级，高采样率下同一秒会出现多行，行序即为采集顺序。</li>
+</ul>
+<p>CSV 实际内容示例（真实设备录制，CH14 接有热电偶）：</p>
+<pre><code>Timestamp,Unit,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16
+'2026-07-27 08:50:33,℃,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,28.318,0.000
+'2026-07-27 08:50:33,℃,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,28.316,0.000</code></pre>
+
+<h3>9.3 异常保护</h3>
+<ul>
+  <li><strong>设备断连不中断录制</strong>：录制是全局会话，某台设备断连时其余设备继续录制；该设备恢复采集后数据继续写入各自文件；</li>
+  <li><strong>写入失败</strong>：磁盘写满或目录不可写时，底栏「录制错误」红字提示，该设备后续数据不再写入（其余设备不受影响）；</li>
+  <li><strong>缓冲背压</strong>：磁盘过慢导致缓冲队列溢出时丢弃新帧并在日志中给出警告；正常硬盘上不应出现；</li>
+  <li>软件退出时自动停止录制并关闭文件，不会产生损坏文件。</li>
+</ul>
+
+<h2 id="log">10. 日志面板</h2>
+<p>右侧窄条为日志面板，点击展开；再次点击工具栏「收起」或窄条收回。</p>
+<figure>
+  <img src="daq-t1603/images/log-panel.png" alt="日志面板">
+  <figcaption>图 10-1 日志面板：连接、配置同步与采集全过程记录（含设备命令收发）</figcaption>
+</figure>
+<ul>
+  <li><strong>检索</strong>：顶部搜索框可按消息 / 标签 / 详情 / 设备即时过滤日志；</li>
+  <li><strong>级别过滤</strong>：Debug / Info / Warn / Error，表示「显示的最低级别」（默认 Info，即 Info 及以上）；</li>
+  <li><strong>分类过滤</strong>：全部 / 系统 / 通信（设备命令收发）/ 采集；</li>
+  <li><strong>保存日志到文件</strong>：点击后选择目录，日志持续写入 <code>daq-log_年月日-时分秒.log</code>，再次点击停止。软件每次启动也会自动在 <code>%APPDATA%\daq-t1603\logs</code> 下保存运行日志（同前缀最多保留最近 7 个文件）；</li>
+  <li><strong>拷贝全部日志</strong>：把当前过滤结果复制到剪贴板，可直接粘贴给技术支持；悬停单条日志可复制该条；</li>
+  <li><strong>清空日志</strong>：清空面板（不影响已写入文件的日志）；</li>
+  <li>面板最多保留最近 500 条（最新在顶部）；高频通信日志自动合并显示「… 及 N 条同类日志」。</li>
+</ul>
+
+<h2 id="theme">11. 界面主题</h2>
+<p>点击顶栏<strong>月亮 / 太阳图标</strong>在深色（默认）与浅色主题间切换，选择结果自动保存，下次启动保持。本说明书截图除本图外均为浅色主题。</p>
+<figure>
+  <img src="daq-t1603/images/dark-theme.png" alt="深色主题">
+  <figcaption>图 11-1 深色主题（默认主题）</figcaption>
+</figure>
+
+<h2 id="bottombar">12. 底栏状态说明</h2>
+<table>
+  <tr><th>字段</th><th>说明</th></tr>
+  <tr><td>采集状态</td><td>运行中（绿）/ 已停止</td></tr>
+  <tr><td>记录状态</td><td>保存中（红）/ 未保存</td></tr>
+  <tr><td>设备</td><td>已添加的设备总数</td></tr>
+  <tr><td>在线</td><td>已连接 + 采集中的设备数量</td></tr>
+  <tr><td>已记录</td><td>本次录制已写入的快照帧数（多设备时合计）</td></tr>
+  <tr><td>保存目录</td><td>本次录制的输出目录（录制中显示，悬停看全路径）</td></tr>
+  <tr><td>录制错误</td><td>仅出现错误时显示（红色），如磁盘写入失败、目录不存在</td></tr>
+  <tr><td>设备错误</td><td>有设备处于错误状态时显示「N 台异常」，选中设备的错误详情随其后显示</td></tr>
+  <tr><td>运行时间</td><td>本次采集累计时长（时:分:秒），停止采集后归零</td></tr>
+  <tr><td>系统时间</td><td>电脑当前时间，每秒刷新</td></tr>
+</table>
+
+<h2 id="files">13. 配置与数据文件位置</h2>
+<table>
+  <tr><th>内容</th><th>位置</th></tr>
+  <tr><td>设备配置（设备列表、通道、热电偶类型、自动连接等）</td><td><code>%APPDATA%\daq-t1603\device-profiles.json</code></td></tr>
+  <tr><td>运行日志（自动保存，最多保留 7 个）</td><td><code>%APPDATA%\daq-t1603\logs\</code></td></tr>
+  <tr><td>CSV 数据文件</td><td>「开始保存」时用户选择的目录</td></tr>
+  <tr><td>界面偏好（主题、刷新率等）</td><td>应用内本地存储，随系统用户保存</td></tr>
+</table>
+<div class="callout info">
+  <span class="t">迁移提示</span>
+  更换电脑时，复制 <code>device-profiles.json</code> 到新机同路径即可迁移全部设备配置。
+</div>
+
+<h2 id="faq">14. 常见问题</h2>
+<h3>14.1 扫描不到设备</h3>
+<ul>
+  <li>确认设备已上电、网线连接正常，电脑与设备在<strong>同一网段</strong>；</li>
+  <li>检查 Windows 防火墙是否放行了本软件（扫描使用 UDP 广播，被拦截时无结果）；</li>
+  <li>扫描不到时可改用<strong>手动添加</strong>（6.2），直接输入设备 IP 与端口 9000。</li>
+</ul>
+<h3>14.2 连接失败 / 状态显示「错误」</h3>
+<ul>
+  <li>在命令行执行 <code>ping 设备IP</code> 确认网络连通；</li>
+  <li>确认 IP 与端口（9000）填写正确，且设备未被其他软件占用；</li>
+  <li>查看底栏「设备错误」与日志面板中的具体原因。</li>
+</ul>
+<h3>14.3 波形或数值不刷新</h3>
+<ul>
+  <li>确认已点击<strong>开始采集</strong>且底栏为「运行中」；</li>
+  <li>确认目标通道在「通道选择」中已勾选、且在配置中为「启用」；</li>
+  <li>界面刷新率被调到很低（如 2 Hz）时刷新会变慢，属正常现象。</li>
+</ul>
+<h3>14.4 通道显示 0.00 ℃</h3>
+<p>未接入热电偶（或探头开路）的通道读数为 0，属正常现象，不影响其他通道。接入热电偶后对应通道即显示实际温度；请同时在配置面板中确认该通道的热电偶类型与实际探头一致（K/J/T/E/N/S/R/B 选错会导致读数偏差）。</p>
+<h3>14.5 停止再开始采集后，波形里还有旧曲线</h3>
+<p>波形图会保留最近一段历史数据，跨次采集时旧曲线可能仍显示在图上。点击波形右上角<strong>清除波形</strong>即可清空重画，不影响采集与录制。</p>
+<h3>14.6 CSV 中同一秒出现多行</h3>
+<p>CSV 时间戳为秒级精度。采样频率高于 1 Hz 时，同一秒出现多行属正常现象，行序即为采集顺序。</p>
+<h3>14.7 「开始保存」点击后没有生成文件</h3>
+<ul>
+  <li>确认在目录对话框中点击了「选择文件夹」而非取消；</li>
+  <li>确认采集正在运行——文件在首个数据到达时才创建；</li>
+  <li>确认对所选目录有写入权限（避免选择系统保护目录）。</li>
+</ul>
+<h3>14.8 配置面板全部置灰无法修改</h3>
+<p>设备正在采集中。请先在顶栏点击「停止采集」，再打开配置面板修改。</p>
+
+<div class="callout success" style="margin-top:2rem">
+  <span class="t">技术支持</span>
+  如遇本说明书未覆盖的问题，请导出日志（日志面板 → 拷贝全部日志，或提供 <code>%APPDATA%\daq-t1603\logs</code> 下对应时段的日志文件）并联系技术支持。
+</div>
+
+</main>
+</div><!-- /content-zh -->
+
+<div id="content-en" class="lang-content lang-content-en">
+<main class="main">
+
+<div class="doc-meta">
+  <h1>DAQ-T-1603 Temperature Acquisition Software User Manual</h1>
+  <div class="ver">Software Version: v0.5.0 | Device: DAQ-T-1603 Thermocouple Temperature Collector (16 channels) | Date: 2026-07</div>
+</div>
+
+<h2 id="intro">1. Introduction</h2>
+<p>The DAQ-T-1603 Temperature Acquisition Software is a Windows desktop application for <strong>real-time monitoring, waveform display, and data recording</strong> of DAQ-T-1603 thermocouple temperature acquisition devices. It communicates with devices over Ethernet (TCP/IP) and supports parallel management of multiple devices.</p>
+<p>Key features:</p>
+<ul>
+  <li><strong>16-channel temperature acquisition</strong>: CH01&ndash;CH16 thermocouple channels, supporting K / J / T / E / N / S / R / B eight thermocouple types;</li>
+  <li><strong>Real-time waveforms</strong>: multi-channel curves on a single chart, with per-channel visibility toggles and customizable curve colors;</li>
+  <li><strong>Channel monitor cards</strong>: large real-time temperature readouts for each channel (unit &deg;C);</li>
+  <li><strong>Data recording</strong>: one-click CSV recording &mdash; open directly in Excel for analysis;</li>
+  <li><strong>Device scanning</strong>: discover all T1603 devices on the LAN;</li>
+  <li><strong>Runtime logs</strong>: full communication and acquisition logging, with search and file export;</li>
+  <li><strong>Dark / light theme</strong>: dark by default, adaptable to test site lighting conditions.</li>
+</ul>
+<div class="callout info">
+  <span class="t">Screenshot Notes</span>
+  All screenshots in this manual were taken from actual device operation (DAQ-T-1603, firmware FW 1.04). During capture, only CH14 was connected to a K-type thermocouple (showing ~28&deg;C room temperature); other channels had no probes connected and therefore display 0.00&deg;C &mdash; this is normal for unconnected thermocouple channels.
+</div>
+
+<h2 id="install">2. Installation &amp; Launch</h2>
+<h3>2.1 System Requirements</h3>
+<table>
+  <tr><th>Item</th><th>Requirement</th></tr>
+  <tr><td>OS</td><td>Windows 10 / 11, 64-bit</td></tr>
+  <tr><td>Runtime dependency</td><td>Microsoft Edge WebView2 Runtime (usually built into Windows 10/11; install WebView2 separately if launch fails)</td></tr>
+  <tr><td>Network</td><td>Ethernet connection on same subnet as the device (see Section 3)</td></tr>
+  <tr><td>Window</td><td>Default 1600&times;900, minimum 1280&times;720</td></tr>
+</table>
+<h3>2.2 Installation Steps</h3>
+<div class="steps">
+  <div class="step"><span class="st">Close any running old version</span> (check for <code>DAQ-T-1603.exe</code> / <code>daq-t1603.exe</code> in the taskbar or Task Manager).</div>
+  <div class="step"><span class="st">Run the installer</span> <code>daq-t1603-0.5.0-amd64-installer.exe</code> and follow the wizard. Installing over a previous version does not require uninstalling first.</div>
+  <div class="step"><span class="st">Launch the software</span> and verify that the main interface appears, devices can connect and acquire data (see Section 5 Quick Start).</div>
+</div>
+<h3>2.3 Uninstall</h3>
+<p>Uninstall via <strong>Control Panel &rarr; Programs and Features</strong>, or run <code>Uninstall.exe</code> in the installation directory. Uninstalling does <em>not</em> delete user configurations or saved CSV data (see Section 13).</p>
+
+<h2 id="network">3. Device Network Setup</h2>
+<p>The software communicates with devices over Ethernet. Network requirements:</p>
+<table>
+  <tr><th>Item</th><th>Description</th></tr>
+  <tr><td>Device data port</td><td>TCP <code>9000</code> (software initiates connection to device)</td></tr>
+  <tr><td>Device scanning</td><td>UDP broadcast (destination port <code>7000</code>, discovery message <code>T1603</code>, response timeout 3 s)</td></tr>
+  <tr><td>Subnet</td><td>Computer and device must be on the same subnet (e.g., device IP <code>192.168.1.10</code> &rarr; set computer to <code>192.168.1.x</code>)</td></tr>
+  <tr><td>Firewall</td><td>On first run, if Windows Firewall prompts, allow network access for this software; otherwise device scanning and connection will fail</td></tr>
+</table>
+<div class="callout warn">
+  <span class="t">Tip</span>
+  If unsure whether a device is online, first run <code>ping &lt;device_IP&gt;</code> (e.g. <code>ping 192.168.1.10</code>) to confirm network connectivity, then connect in the software. If the device stops sending data for ~10 seconds, the software automatically detects the disconnection and returns to &ldquo;Disconnected&rdquo; state.
+</div>
+
+<h2 id="ui">4. Interface Overview</h2>
+<p>The main interface consists of five areas: <strong>Top Bar</strong>, <strong>Device Sidebar</strong>, <strong>Monitor Area</strong>, <strong>Log Panel</strong> (right side, collapsed by default), and <strong>Status Bar</strong> at the bottom.</p>
+<figure>
+  <img src="daq-t1603/images/overview.png" alt="Overview of the main interface">
+  <figcaption>Fig. 4-1 Main interface overview (one device connected, awaiting acquisition)</figcaption>
+</figure>
+
+<h3>4.1 Top Bar</h3>
+<figure>
+  <img src="daq-t1603/images/topbar.png" alt="Top bar">
+  <figcaption>Fig. 4-2 Top bar</figcaption>
+</figure>
+<table>
+  <tr><th>Control</th><th>Description</th></tr>
+  <tr><td>DAQ-T1603 logo</td><td>Software name and icon (subtitle: Temperature Acquisition)</td></tr>
+  <tr><td>Live Monitor</td><td>Current page indicator (this version has one page only)</td></tr>
+  <tr><td><strong>Start / Stop Acquire</strong></td><td>Starts acquisition for all connected devices; turns red &ldquo;Stop Acquire&rdquo; during acquisition; click again to stop all. Unavailable when no device is connected</td></tr>
+  <tr><td><strong>Start / Stop Record</strong></td><td>Starts recording data to CSV (pops up a directory selection dialog first); turns red &ldquo;Stop Record&rdquo; while recording; icon flashes red</td></tr>
+  <tr><td>+</td><td>Manually add a device (see 6.2)</td></tr>
+  <tr><td>UI refresh rate</td><td>Screen refresh rate for waveforms and values: 2 / 5 / 10 / 15 / 20 / 30 Hz (default 10 Hz, see 8.4)</td></tr>
+  <tr><td>Theme button</td><td>Toggle dark / light theme (see Section 11)</td></tr>
+  <tr><td>Version</td><td>Current software version (e.g. v0.5.0; auto-hides when window is narrow)</td></tr>
+</table>
+
+<h3>4.2 Device Sidebar</h3>
+<figure>
+  <img src="daq-t1603/images/sidebar.png" alt="Device sidebar" style="max-width:280px">
+  <figcaption>Fig. 4-3 Device sidebar</figcaption>
+</figure>
+<ul>
+  <li>The top shows device count; the magnifying glass button on the right triggers <strong>device scanning</strong> (see 6.1);</li>
+  <li>Each device is shown as a card: device name, <code>IP:port</code>, status icon; clicking a card selects the device, and the monitor area updates accordingly;</li>
+  <li>Hovering over a card reveals a <strong>Delete</strong> button (see 6.4).</li>
+</ul>
+<p>Device status icon meanings:</p>
+<table>
+  <tr><th>Status</th><th>Color</th><th>Meaning</th></tr>
+  <tr><td>Disconnected</td><td>Gray</td><td>Not yet connected</td></tr>
+  <tr><td>Connecting / Starting / Stopping</td><td>Yellow (spinning)</td><td>Operation in progress, please wait</td></tr>
+  <tr><td>Connected</td><td>Green</td><td>Communication established, ready to acquire</td></tr>
+  <tr><td>Acquiring</td><td>Green (blinking)</td><td>Currently acquiring data</td></tr>
+  <tr><td>Error</td><td>Red</td><td>Connection failed or device abnormal; status bar shows &ldquo;N device(s) error&rdquo; with details</td></tr>
+</table>
+
+<h3>4.3 Monitor Area</h3>
+<p>From top to bottom: <strong>Device header card</strong> (name, address, thermocouple type, sample rate, status, connect/disconnect &amp; config buttons), <strong>Real-time waveform</strong> (see 8.2), <strong>Channel monitor</strong> (see 8.3). A guide page is shown when no device is selected.</p>
+
+<h3>4.4 Log Panel &amp; Status Bar</h3>
+<p>The narrow strip on the right is the collapsed <strong>Log Panel</strong> (click to expand, see Section 10); the bottom is the <strong>Status Bar</strong> (see Section 12).</p>
+
+<h2 id="quickstart">5. Quick Start</h2>
+<p>The standard workflow from power-on to saving data (detailed instructions in later sections):</p>
+<div class="steps">
+  <div class="step"><span class="st">Add device</span>: click the magnifying glass in the sidebar to <strong>scan for devices</strong>, click + on found devices to add; or click the + button on the top bar to manually enter IP and port (see 6.1 / 6.2).</div>
+  <div class="step"><span class="st">Connect device</span>: click <strong>Connect</strong> on the monitor area; the status changes to &ldquo;Connected&rdquo;. Devices with &ldquo;Auto-connect&rdquo; enabled will automatically connect on software startup.</div>
+  <div class="step"><span class="st">(Optional) Adjust configuration</span>: click <strong>Config</strong> to set sample rate, thermocouple type, and enable channels (see Section 7).</div>
+  <div class="step"><span class="st">Start acquisition</span>: click <strong>Start Acquire</strong> on the top bar; real-time waveforms and channel values begin updating.</div>
+  <div class="step"><span class="st">Start recording</span>: click <strong>Start Record</strong> on the top bar, select a save directory in the system dialog, and CSV recording begins immediately.</div>
+  <div class="step"><span class="st">Stop recording / Stop acquisition</span>: after the experiment ends, first click <strong>Stop Record</strong> to close the CSV file, then click <strong>Stop Acquire</strong>. The CSV can be opened directly in Excel.</div>
+</div>
+<div class="callout success">
+  <span class="t">Recommendation</span>
+  Let the acquisition run for a few seconds before starting recording to confirm that all channel temperatures are reasonable, avoiding empty files.
+</div>
+
+<h2 id="device">6. Device Management</h2>
+
+<h3 id="device-scan">6.1 Scan &amp; Add Devices (Recommended)</h3>
+<p>Click the <strong>magnifying glass button</strong> in the upper-right corner of the device sidebar. The software broadcasts a discovery message on the LAN (UDP 7000, ~3 s) and lists all online T1603 devices.</p>
+<figure>
+  <img src="daq-t1603/images/scan-results.png" alt="Scan results">
+  <figcaption>Fig. 6-1 Scan results: device 192.168.1.10 found (MAC, firmware FW 1.04; already-added devices show &ldquo;Added&rdquo;)</figcaption>
+</figure>
+<ul>
+  <li>Each device in the scan results shows: <strong>Name</strong>, <strong>IP:Port</strong>, <strong>MAC Address</strong>, and <strong>Firmware Version</strong> (FW x.y, shown if available);</li>
+  <li>For unadded devices: click the <strong>+</strong> button on the right; the software pre-fills the IP and port into the &ldquo;Add Device&rdquo; dialog; enter a name and confirm;</li>
+  <li>Already-added devices show &ldquo;Added&rdquo; label and cannot be added again;</li>
+  <li>Click <strong>Rescan</strong> if results haven&rsquo;t changed; the bottom shows &ldquo;N device(s) found&rdquo;.</li>
+</ul>
+
+<h3 id="device-manual">6.2 Add Device Manually</h3>
+<p>Click the <strong>+</strong> button on the top bar and fill in the dialog:</p>
+<figure>
+  <img src="daq-t1603/images/add-device.png" alt="Add device dialog">
+  <figcaption>Fig. 6-2 Add device manually</figcaption>
+</figure>
+<table>
+  <tr><th>Field</th><th>Description</th><th>Validation</th></tr>
+  <tr><td>Device Name</td><td>A recognizable name, e.g. &ldquo;Temperature Collector 1&rdquo;</td><td>Required, max 32 characters</td></tr>
+  <tr><td>IP Address</td><td>Device IP, e.g. <code>192.168.1.10</code></td><td>Required (default prefilled 192.168.3.101; change to actual address)</td></tr>
+  <tr><td>Port</td><td>Device data port</td><td>Default <code>9000</code>, range 1&ndash;65535</td></tr>
+</table>
+<p>If both IP and port match an existing device, a &ldquo;Device already added; duplicate not allowed&rdquo; message is shown.</p>
+
+<h3 id="device-connect">6.3 Connect &amp; Disconnect</h3>
+<ul>
+  <li>Select a device, then click the <strong>Connect</strong> button on the monitor area header card; once connected, status changes to &ldquo;Connected&rdquo; and the button becomes &ldquo;Disconnect&rdquo;;</li>
+  <li>Within seconds after connecting, the software automatically performs <strong>configuration sync</strong> (reads the device&rsquo;s current thermocouple type, sample rate, and applies UI settings);</li>
+  <li>On connection failure, status becomes &ldquo;Error&rdquo;, the status bar shows &ldquo;1 device(s) error&rdquo;, and the log panel shows the specific reason (e.g., connection timeout, connection refused);</li>
+  <li>If a device disconnects during acquisition (~10 s without data), the software automatically disconnects and returns to &ldquo;Disconnected&rdquo;;</li>
+  <li>Enabling <strong>Auto-connect</strong> in device configuration causes the software to automatically connect to this device on every startup (see Section 7).</li>
+</ul>
+
+<h3 id="device-delete">6.4 Delete Device</h3>
+<p>Hover over a device card in the sidebar, click the <strong>trash icon</strong> that appears, and confirm deletion in the dialog. The software automatically disconnects the device before deleting.</p>
+<figure>
+  <img src="daq-t1603/images/delete-device.png" alt="Delete device confirmation">
+  <figcaption>Fig. 6-3 Deleting a device requires double confirmation; the device&rsquo;s configuration is also removed</figcaption>
+</figure>
+<div class="callout warn">
+  <span class="t">Note</span>
+  Deleting a device also removes all its configuration (channel names, thermocouple type, auto-connect, etc.) but does not affect previously saved CSV data files.
+</div>
+
+<h2 id="config">7. Device Configuration</h2>
+<p>Select a device, then click the <strong>Config</strong> button in the monitor area to open the configuration panel. The panel is divided into &ldquo;Hardware Parameters&rdquo; and &ldquo;Channel Configuration&rdquo; sections.</p>
+<figure>
+  <img src="daq-t1603/images/config-hardware.png" alt="Configuration panel &mdash; Hardware Parameters">
+  <figcaption>Fig. 7-1 Configuration panel: Hardware Parameters and Channel Configuration sections</figcaption>
+</figure>
+
+<h3>7.1 Hardware Parameters</h3>
+<table>
+  <tr><th>Setting</th><th>Description</th><th>Values / Default</th></tr>
+  <tr><td>Sample Rate</td><td>Device samples per second; sent to device on save</td><td>1&ndash;1000 Hz integer, default 10 Hz</td></tr>
+  <tr><td>Hardware Timestamp</td><td>Enable: device data frames carry hardware timestamps; Disable: use PC system time</td><td>Default disabled</td></tr>
+  <tr><td>Auto-connect</td><td>When enabled, the device auto-connects on software startup</td><td>Default off</td></tr>
+  <tr><td>Thermocouple Type (all channels)</td><td>Set all 16 channels to a single thermocouple type at once; sent to device on save</td><td>K / J / T / E / N / S / R / B, default K</td></tr>
+</table>
+
+<h3>7.2 Channel Configuration</h3>
+<figure>
+  <img src="daq-t1603/images/config-channels.png" alt="Channel configuration">
+  <figcaption>Fig. 7-2 Channel configuration (16 channels, thermocouple type settable per channel)</figcaption>
+</figure>
+<ul>
+  <li>16 rows (CH01&ndash;CH16); the title shows &ldquo;N/16 enabled&rdquo;; for each channel: <strong>Channel Name</strong> (max 32 characters, e.g. &ldquo;Furnace Temp&rdquo;, &ldquo;Inlet Temp&rdquo;), <strong>Thermocouple Type</strong> (K/J/T/E/N/S/R/B, overrides global setting, enabling mixed probe types across channels), <strong>Enable toggle</strong>;</li>
+  <li>Disabled channels: not shown in the monitor interface or waveform; corresponding column in CSV is left empty (column alignment preserved);</li>
+  <li>Temperature unit is fixed at <strong>&deg;C</strong>; no configuration needed.</li>
+</ul>
+
+<h3>7.3 Save &amp; Apply</h3>
+<ul>
+  <li>After modification, the title shows an &ldquo;Unsaved&rdquo; indicator; click <strong>Save</strong> to commit, <strong>Reset</strong> to revert to saved values;</li>
+  <li>Hardware-related items (sample rate, thermocouple type, hardware timestamp, channel enable) are <strong>sent to the device</strong> on save; the status bar shows &ldquo;Configuration saved and applied to device&rdquo;; UI-only changes show &ldquo;Configuration saved&rdquo;;</li>
+  <li>If saving while the device is disconnected: &ldquo;Configuration saved locally, but device is offline and not applied to hardware; please reconnect and save again&rdquo; &mdash; you must reconnect and re-save.</li>
+</ul>
+<div class="callout danger">
+  <span class="t">Cannot Modify Configuration While Acquiring</span>
+  When a device is acquiring, the configuration panel is completely grayed out with the message &ldquo;Configuration changes not allowed during acquisition; please stop acquisition first&rdquo;. Stop acquisition from the top bar before making changes.
+</div>
+
+<h2 id="monitor">8. Live Monitoring</h2>
+
+<h3>8.1 Start / Stop Acquisition</h3>
+<p>After a device is &ldquo;Connected&rdquo;, click <strong>Start Acquire</strong> on the top bar: all connected devices begin acquiring simultaneously; the button turns red &ldquo;Stop Acquire&rdquo;; the status bar shows &ldquo;Acquiring&rdquo;; an elapsed timer starts on the right. Click again to stop acquisition on all devices.</p>
+<figure>
+  <img src="daq-t1603/images/acquiring.png" alt="Acquiring">
+  <figcaption>Fig. 8-1 Acquiring: CH14 thermocouple real-time temperature ~28&deg;C (red curve); channel cards update simultaneously</figcaption>
+</figure>
+
+<h3>8.2 Real-time Waveform</h3>
+<ul>
+  <li>The waveform chart scrolls to show approximately the <strong>last 120 samples</strong> (~12 s at the default 10 Hz refresh rate); hovering the mouse shows per-channel values at that moment;</li>
+  <li>The top-right <strong>legend</strong> shows the currently plotted channels; all enabled channels are plotted by default;</li>
+  <li><strong>Clear waveform</strong>: click the &ldquo;Clear Waveform&rdquo; button at the top-right of the waveform card to erase and redraw the current curves (does not affect acquisition or recording). After stopping and restarting acquisition, old curves may briefly remain on the chart; click &ldquo;Clear Waveform&rdquo; for a clean view.</li>
+</ul>
+<h4>Channel Selector</h4>
+<p>Click the <strong>Channel Selector</strong> button at the top-right of the waveform card to choose which channels to display; supports <strong>select all / deselect all</strong> (only enabled channels are listed).</p>
+<figure>
+  <img src="daq-t1603/images/channel-selector.png" alt="Channel Selector">
+  <figcaption>Fig. 8-2 Channel selector popover</figcaption>
+</figure>
+
+<h3>8.3 Channel Monitor Cards</h3>
+<p>Below the waveform, each enabled channel has a monitor card showing: <strong>large real-time temperature</strong> (two decimal places), unit &deg;C, thermocouple type badge (e.g. K), channel name; the colored dot at the top-left matches the waveform curve color. Click the <strong>palette button</strong> on a card to customize that channel&rsquo;s waveform color (persisted permanently).</p>
+<figure>
+  <img src="daq-t1603/images/channel-cards.png" alt="Channel monitor cards">
+  <figcaption>Fig. 8-3 Channel monitor cards (CH14 has a thermocouple connected; other channels show 0.00&deg;C with no probes)</figcaption>
+</figure>
+
+<h3>8.4 UI Refresh Rate</h3>
+<p>Click the <strong>gauge icon</strong> on the top bar to select the screen refresh rate (2 / 5 / 10 / 15 / 20 / 30 Hz, default 10 Hz). The change takes effect immediately without restarting acquisition. The refresh rate only affects display smoothness and CPU usage &mdash; it does <strong>not</strong> affect the device sample rate or the data density saved to CSV.</p>
+<figure>
+  <img src="daq-t1603/images/refresh-rate.png" alt="UI refresh rate">
+  <figcaption>Fig. 8-4 UI refresh rate selector</figcaption>
+</figure>
+
+<h2 id="recording">9. Data Recording (CSV)</h2>
+<h3>9.1 Start &amp; Stop</h3>
+<div class="steps">
+  <div class="step"><span class="st">Confirm acquisition is running</span> (status bar shows &ldquo;Acquiring&rdquo;).</div>
+  <div class="step"><span class="st">Click &ldquo;Start Record&rdquo; on the top bar</span>, select a save directory in the Windows folder dialog (you can create a new folder), and recording begins immediately once confirmed.</div>
+  <div class="step"><span class="st">While recording</span>: the top bar button turns red &ldquo;Stop Record&rdquo;; the status bar shows &ldquo;Recording&rdquo; along with the save directory and recorded frame count.</div>
+  <div class="step"><span class="st">Click &ldquo;Stop Record&rdquo;</span> to end recording; the file is closed and flushed to disk.</div>
+</div>
+<figure>
+  <img src="daq-t1603/images/recording.png" alt="Recording in progress">
+  <figcaption>Fig. 9-1 Recording in progress (status bar shows &ldquo;Recording&rdquo; and recorded frame count)</figcaption>
+</figure>
+<figure>
+  <img src="daq-t1603/images/bottombar-recording.png" alt="Status bar while recording">
+  <figcaption>Fig. 9-2 Status bar during recording: acquisition &ldquo;Running&rdquo;, recording &ldquo;Recording&rdquo;, 6086 frames recorded, save directory</figcaption>
+</figure>
+
+<h3>9.2 File Naming &amp; Format</h3>
+<ul>
+  <li><strong>One CSV file per device</strong>, naming pattern:<br><code>DAQ-T1603_&lt;device_ID&gt;_&lt;YYYYMMDD-HHmmss.ms&gt;.csv</code><br>Example: <code>DAQ-T1603_t1603_1784946583769_20260727-085033.987.csv</code> (millisecond suffix prevents same-second overwrites);</li>
+  <li>Header is fixed at 18 columns: <code>Timestamp,Unit,CH01,CH02,&hellip;,CH16</code> (Unit column is &deg;C);</li>
+  <li>Values always have <strong>3 decimal places</strong>; <strong>disabled channel columns are left empty</strong> (column positions preserved for cross-file comparison);</li>
+  <li>Timestamps are prefixed with a single quote (e.g. <code>'2026-07-27 08:50:33</code>) so that Excel treats them as text without auto-formatting; precision is seconds; multiple rows within the same second at high sample rates are normal &mdash; row order equals acquisition order.</li>
+</ul>
+<p>Sample CSV content (recorded from a real device, CH14 with thermocouple connected):</p>
+<pre><code>Timestamp,Unit,CH01,CH02,CH03,CH04,CH05,CH06,CH07,CH08,CH09,CH10,CH11,CH12,CH13,CH14,CH15,CH16
+'2026-07-27 08:50:33,&deg;C,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,28.318,0.000
+'2026-07-27 08:50:33,&deg;C,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,28.316,0.000</code></pre>
+
+<h3>9.3 Error Protection</h3>
+<ul>
+  <li><strong>Device disconnect does not interrupt recording</strong>: recording is a global session; if one device disconnects, other devices continue recording; when the device resumes acquisition, its data continues writing to its own file;</li>
+  <li><strong>Write failure</strong>: if the disk is full or the directory becomes unwritable, the status bar &ldquo;Recording Error&rdquo; shows a red warning; subsequent data from that device is not written (other devices are unaffected);</li>
+  <li><strong>Buffer backpressure</strong>: if the disk is too slow and the buffer queue overflows, new frames are dropped and a warning appears in the log; this should not occur on a normal hard drive;</li>
+  <li>When the software exits, recording stops automatically and files are properly closed; no corrupted files are left behind.</li>
+</ul>
+
+<h2 id="log">10. Log Panel</h2>
+<p>The narrow strip on the right is the log panel; click to expand; click the &ldquo;Collapse&rdquo; button on the toolbar or the narrow strip to close.</p>
+<figure>
+  <img src="daq-t1603/images/log-panel.png" alt="Log panel">
+  <figcaption>Fig. 10-1 Log panel: full record of connections, configuration sync, and acquisition (including device command send/receive)</figcaption>
+</figure>
+<ul>
+  <li><strong>Search</strong>: the search box at the top lets you filter logs by message / tag / details / device in real time;</li>
+  <li><strong>Level filter</strong>: Debug / Info / Warn / Error, representing the minimum level to display (default Info: show Info and above);</li>
+  <li><strong>Category filter</strong>: All / System / Communication (device command send/receive) / Acquisition;</li>
+  <li><strong>Save log to file</strong>: click and select a directory; logs are continuously written to <code>daq-log_YYYYMMDD-HHmmss.log</code>; click again to stop. The software also automatically saves a run log under <code>%APPDATA%\daq-t1603\logs</code> on each startup (same prefix, up to 7 most recent files kept);</li>
+  <li><strong>Copy all logs</strong>: copies the current filtered results to the clipboard, ready to paste to technical support; hovering a single log entry lets you copy just that entry;</li>
+  <li><strong>Clear logs</strong>: clears the panel (does not affect logs already written to file);</li>
+  <li>The panel retains at most the last 500 entries (newest at top); high-frequency communication logs are automatically collapsed as &ldquo;&hellip; and N similar entries&rdquo;.</li>
+</ul>
+
+<h2 id="theme">11. UI Theme</h2>
+<p>Click the <strong>moon / sun icon</strong> on the top bar to toggle between dark (default) and light themes. The choice is saved automatically and persists across restarts. All screenshots in this manual except this one use the light theme.</p>
+<figure>
+  <img src="daq-t1603/images/dark-theme.png" alt="Dark theme">
+  <figcaption>Fig. 11-1 Dark theme (default theme)</figcaption>
+</figure>
+
+<h2 id="bottombar">12. Status Bar Reference</h2>
+<table>
+  <tr><th>Field</th><th>Description</th></tr>
+  <tr><td>Acquisition Status</td><td>Running (green) / Stopped</td></tr>
+  <tr><td>Recording Status</td><td>Recording (red) / Not recording</td></tr>
+  <tr><td>Devices</td><td>Total number of added devices</td></tr>
+  <tr><td>Online</td><td>Number of connected + acquiring devices</td></tr>
+  <tr><td>Recorded</td><td>Number of snapshot frames written in the current recording session (sum across all devices)</td></tr>
+  <tr><td>Save Directory</td><td>Output directory for the current recording session (shown while recording; hover for full path)</td></tr>
+  <tr><td>Recording Error</td><td>Only shown on error (red), e.g. disk write failure, directory does not exist</td></tr>
+  <tr><td>Device Error</td><td>When devices are in error state: shows &ldquo;N device(s) error&rdquo;; the selected device&rsquo;s error details follow</td></tr>
+  <tr><td>Elapsed</td><td>Cumulative acquisition duration (hh:mm:ss); resets to zero when acquisition stops</td></tr>
+  <tr><td>System Time</td><td>Current computer time, updated every second</td></tr>
+</table>
+
+<h2 id="files">13. Config &amp; Data File Locations</h2>
+<table>
+  <tr><th>Content</th><th>Location</th></tr>
+  <tr><td>Device configuration (device list, channels, thermocouple type, auto-connect, etc.)</td><td><code>%APPDATA%\daq-t1603\device-profiles.json</code></td></tr>
+  <tr><td>Runtime logs (auto-saved, up to 7 files kept)</td><td><code>%APPDATA%\daq-t1603\logs\</code></td></tr>
+  <tr><td>CSV data files</td><td>Directory selected by the user when clicking &ldquo;Start Record&rdquo;</td></tr>
+  <tr><td>UI preferences (theme, refresh rate, etc.)</td><td>Application-local storage, persisted per system user</td></tr>
+</table>
+<div class="callout info">
+  <span class="t">Migration Tip</span>
+  When switching computers, copy <code>device-profiles.json</code> to the same path on the new machine to migrate all device configurations.
+</div>
+
+<h2 id="faq">14. FAQ</h2>
+<h3>14.1 No devices found during scanning</h3>
+<ul>
+  <li>Confirm the device is powered on, the network cable is connected, and the computer and device are on the <strong>same subnet</strong>;</li>
+  <li>Check whether Windows Firewall has allowed this software (scanning uses UDP broadcast; if blocked, no results will appear);</li>
+  <li>If scanning fails, use <strong>manual add</strong> (6.2) and directly enter the device IP and port 9000.</li>
+</ul>
+<h3>14.2 Connection fails / Status shows &ldquo;Error&rdquo;</h3>
+<ul>
+  <li>Run <code>ping &lt;device_IP&gt;</code> in a command prompt to verify network connectivity;</li>
+  <li>Confirm the IP and port (9000) are correct and the device is not occupied by another application;</li>
+  <li>Check the status bar &ldquo;Device Error&rdquo; and the log panel for the specific cause.</li>
+</ul>
+<h3>14.3 Waveform or values not updating</h3>
+<ul>
+  <li>Confirm <strong>Start Acquire</strong> has been clicked and the status bar shows &ldquo;Running&rdquo;;</li>
+  <li>Confirm the target channel is checked in &ldquo;Channel Selector&rdquo; and enabled in configuration;</li>
+  <li>If the UI refresh rate is set very low (e.g. 2 Hz), updates will be slow &mdash; this is normal.</li>
+</ul>
+<h3>14.4 Channel displays 0.00&deg;C</h3>
+<p>Channels without a thermocouple connected (or with an open probe) read 0, which is normal and does not affect other channels. Once a thermocouple is connected, the corresponding channel will show the actual temperature; also verify in the configuration panel that the channel&rsquo;s thermocouple type matches the actual probe (incorrect type selection among K/J/T/E/N/S/R/B will cause reading deviation).</p>
+<h3>14.5 Old curves remain on the waveform after stopping and restarting acquisition</h3>
+<p>The waveform chart retains recent historical data; old curves from previous acquisition sessions may briefly remain visible. Click <strong>Clear Waveform</strong> at the top-right of the waveform to erase and redraw; this does not affect acquisition or recording.</p>
+<h3>14.6 Multiple rows with same timestamp in CSV</h3>
+<p>CSV timestamps have second-level precision. At sample rates above 1 Hz, multiple rows within the same second are normal &mdash; row order equals acquisition order.</p>
+<h3>14.7 No file generated after clicking &ldquo;Start Record&rdquo;</h3>
+<ul>
+  <li>Confirm you clicked &ldquo;Select Folder&rdquo; rather than &ldquo;Cancel&rdquo; in the directory dialog;</li>
+  <li>Confirm acquisition is running &mdash; the file is created only when the first data point arrives;</li>
+  <li>Confirm you have write permission to the selected directory (avoid system-protected folders).</li>
+</ul>
+<h3>14.8 Configuration panel is all grayed out</h3>
+<p>The device is currently acquiring. First click &ldquo;Stop Acquire&rdquo; on the top bar, then open the configuration panel to make changes.</p>
+
+<div class="callout success" style="margin-top:2rem">
+  <span class="t">Technical Support</span>
+  For issues not covered by this manual, please export the logs (Log Panel &rarr; Copy All Logs, or provide the log files from the relevant time period under <code>%APPDATA%\daq-t1603\logs</code>) and contact technical support.
+</div>
+
+</main>
+</div><!-- /content-en -->
+
+<script>
+(function(){
+  var btn = document.getElementById('lang-toggle');
+  var isEn = (localStorage.getItem('doc-lang') || 'zh') === 'en';
+  if (isEn) document.body.classList.add('lang-en');
+  btn.addEventListener('click', function(){
+    var en = document.body.classList.toggle('lang-en');
+    localStorage.setItem('doc-lang', en ? 'en' : 'zh');
+  });
+})();
+</script>
+
+</body>
+</html>
