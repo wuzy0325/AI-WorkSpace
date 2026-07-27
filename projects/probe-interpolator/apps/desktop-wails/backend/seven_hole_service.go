@@ -19,95 +19,59 @@ const sevenHoleHelpDocFileName = "seven-hole-用户说明书.html"
 
 // sevenHoleState 封装 7 孔探针插值的运行时状态，自带 RWMutex。
 // 与 5 孔 / 3 孔的 state 隔离，避免锁混用（SPEC § Boundaries 要求）。
+//
+// dataSource 字段记录当前已加载的数据源类型（"prb" / "calibration-csv" / ""），
+// 供前端在切换数据源时判断是否需要清空槽位并重新分配。
 type sevenHoleState struct {
 	mu           sync.RWMutex
 	interpolator *seven_interp.SevenHolePrbInterpolator
 	prbFiles     []SevenHolePrbFileInfo
+	dataSource   string // "prb" | "calibration-csv" | ""
 }
 
-// LoadSevenHolePrbFiles 弹出多选文件对话框，让用户选择 7 个 .prb 校准文件
-// （1.prb..7.prb），加载后构建 SevenHolePrbInterpolator 并缓存到 sevenHoleState。
+// LoadSevenHolePrbFiles 加载已分配好的 7 个 .prb 文件路径（1 个内区 + 6 个扇区）。
 //
-// 文件名约定（与 shared/algorithms/go/sevenhole/interpolation/testdata/prb/ 一致）：
-//   - "7.prb" → 内区网格（13×13=169 点，a/b ∈ [-30,30] 步长 5）
-//   - "1.prb".."6.prb" → 外区扇区 1..6（每个 4×13=52 点，θ ∈ [30,45] 步长 5）
+// 与旧实现的差异（对齐 wind-daq 遍历测试 §5.6）：
+//   - 旧实现：后端弹多选对话框 + 后端按 basename 路由 sector
+//   - 新实现：前端弹对话框 + 前端按 basename 分配 sector + 后端只接收已分配的 inner+outer[6]
 //
-// 文件名 basename（不含扩展名）必须为 "1".."7" 之一的纯数字字符串；
-// 不满足约定时返回错误，提示用户按规范命名。
-func (a *App) LoadSevenHolePrbFiles() SevenHoleLoadPrbResponse {
-	filePaths, err := a.openPrbFileDialog("选择 7 个 PRB 校准文件（1.prb..7.prb）").PromptForMultipleSelection()
-	if err != nil {
-		return SevenHoleLoadPrbResponse{Success: false, Error: err.Error()}
-	}
-	if len(filePaths) == 0 {
-		return SevenHoleLoadPrbResponse{Success: false, Error: "已取消选择"}
-	}
-
-	// 按文件名解析 sector：basename（不含扩展名）必须为 "1".."7"。
-	// 内区文件（7.prb）单独记录路径；外区 1..6 按扇区编号填入 outerPaths 数组。
-	var innerPath string
-	var outerPaths [6]string
-	outerSeen := [6]bool{}
-	var warnings []string
-
-	for _, fp := range filePaths {
-		base := strings.TrimSuffix(filepath.Base(fp), filepath.Ext(fp))
-		n, err := strconv.Atoi(base)
-		if err != nil || n < 1 || n > 7 {
-			warnings = append(warnings, fmt.Sprintf("跳过非约定文件名: %s（期望 1.prb..7.prb）", filepath.Base(fp)))
-			continue
-		}
-		if n == 7 {
-			if innerPath != "" {
-				return SevenHoleLoadPrbResponse{
-					Success: false,
-					Error:   "检测到多个 7.prb 内区文件，请只保留一个",
-				}
-			}
-			innerPath = fp
-		} else {
-			idx := n - 1
-			if outerSeen[idx] {
-				return SevenHoleLoadPrbResponse{
-					Success: false,
-					Error:   fmt.Sprintf("检测到多个 %d.prb 外区文件，请只保留一个", n),
-				}
-			}
-			outerPaths[idx] = fp
-			outerSeen[idx] = true
-		}
-	}
-
-	// 校验：7 个文件必须齐全。
+// 设计要点：
+//   - 内区必须最先加载：外区插值在边界场景会回查内区网格（spec §5）
+//   - sector 编号 1..6 对应 outerPaths[0..5]，与 7 孔探针外围孔位物理编号一致
+//   - 外区路径数必须为 6，否则返回错误（避免静默用零值导致后续解析失败）
+//   - 文件路径由前端按 basename 分配（"7.prb"→内区，"1.prb"~"6.prb"→扇区 n），
+//     后端不再做 basename 路由，便于前端在 UI 上同步展示每个槽位的文件名
+func (a *App) LoadSevenHolePrbFiles(innerPath string, outerPaths []string) SevenHoleLoadPrbResponse {
 	if innerPath == "" {
+		return SevenHoleLoadPrbResponse{Success: false, Error: "缺少内区文件路径"}
+	}
+	if len(outerPaths) != 6 {
 		return SevenHoleLoadPrbResponse{
 			Success: false,
-			Error:   "缺少 7.prb 内区文件（文件名 basename 必须为 '7'）",
-		}
-	}
-	for i, p := range outerPaths {
-		if p == "" {
-			return SevenHoleLoadPrbResponse{
-				Success: false,
-				Error:   fmt.Sprintf("缺少 %d.prb 外区文件（文件名 basename 必须为 '%d'）", i+1, i+1),
-			}
+			Error:   fmt.Sprintf("外区扇区文件数必须为 6，实际 %d", len(outerPaths)),
 		}
 	}
 
-	// 内区必须最先加载：外区插值在边界场景会回查内区网格（spec §5）。
 	interpolator := seven_interp.NewSevenHolePrbInterpolator()
 
+	// 内区必须最先加载：外区插值在边界场景会回查内区网格（spec §5）。
 	innerLines, err := ReadPrbLines(innerPath)
 	if err != nil {
-		return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("读取 7.prb 失败: %s", err.Error())}
+		return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("读取内区 PRB 失败: %s", err.Error())}
 	}
 	if err := interpolator.LoadInnerPrbLines(innerLines, filepath.Base(innerPath)); err != nil {
-		return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("解析 7.prb 失败: %s", err.Error())}
+		return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("解析内区 PRB 失败: %s", err.Error())}
 	}
 
 	// 外区 1..6 按顺序加载，任一失败立即返回（避免错误被淹没）。
 	for i, outerPath := range outerPaths {
 		sector := i + 1
+		if outerPath == "" {
+			return SevenHoleLoadPrbResponse{
+				Success: false,
+				Error:   fmt.Sprintf("缺少 %d.prb 外区文件路径", sector),
+			}
+		}
 		outerLines, err := ReadPrbLines(outerPath)
 		if err != nil {
 			return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("读取 %d.prb 失败: %s", sector, err.Error())}
@@ -117,37 +81,109 @@ func (a *App) LoadSevenHolePrbFiles() SevenHoleLoadPrbResponse {
 		}
 	}
 
-	// 构造前端展示用的文件列表：内区在前，外区 1..6 顺序跟随。
-	prbFiles := make([]SevenHolePrbFileInfo, 0, 7)
-	prbFiles = append(prbFiles, SevenHolePrbFileInfo{
-		FilePath: innerPath,
-		FileName: filepath.Base(innerPath),
-		Sector:   0,
-	})
-	for i, p := range outerPaths {
-		prbFiles = append(prbFiles, SevenHolePrbFileInfo{
-			FilePath: p,
-			FileName: filepath.Base(p),
-			Sector:   i + 1,
-		})
-	}
-
+	// 构造前端展示用的文件列表：内区在前（Sector=7），外区 1..6 顺序跟随。
+	// PointCount 由算法包运行时读取：内区固定 169，扇区动态 = thetaCount×13。
+	prbFiles := buildSevenHoleFileList(innerPath, outerPaths, interpolator)
 	validRange := toSevenHoleValidRange(interpolator.GetValidRange())
+	innerPointCount := interpolator.GetInnerPointCount()
+	outerCounts := buildSevenHoleOuterCounts(interpolator)
 
 	// 写操作加写锁，与读路径（Calculate 等）互斥。
 	a.sevenHole.mu.Lock()
 	a.sevenHole.interpolator = interpolator
 	a.sevenHole.prbFiles = prbFiles
+	a.sevenHole.dataSource = "prb"
 	a.sevenHole.mu.Unlock()
 
 	return SevenHoleLoadPrbResponse{
 		Success: true,
 		Data: &SevenHoleLoadPrbResult{
-			Files:      prbFiles,
-			ValidRange: validRange,
-			Warnings:   warnings,
+			Files:            prbFiles,
+			ValidRange:       validRange,
+			InnerPointCount:  innerPointCount,
+			OuterPointCounts: outerCounts,
+			DataSource:       "prb",
 		},
 	}
+}
+
+// LoadSevenHoleCalibrationCsvFiles 加载已分配好的 7 个校准 CSV 文件路径
+// （1 份内区 CSV + 6 份外区 CSV，文件名约定：含"小角度区"→内区，含"大角度N区"→扇区 N）。
+//
+// 与 LoadSevenHolePrbFiles 同结构，区别仅在内/外区文件解析走 CSV 路径
+// （GBK 解码 + 列位置契约 + 退化边抖动，详见 seven_hole_csv.go）。
+// 解析失败的错误信息含文件路径，便于前端定位是哪个 CSV 出问题。
+func (a *App) LoadSevenHoleCalibrationCsvFiles(innerPath string, outerPaths []string) SevenHoleLoadPrbResponse {
+	if innerPath == "" {
+		return SevenHoleLoadPrbResponse{Success: false, Error: "缺少内区 CSV 文件路径"}
+	}
+	if len(outerPaths) != 6 {
+		return SevenHoleLoadPrbResponse{
+			Success: false,
+			Error:   fmt.Sprintf("外区扇区 CSV 数必须为 6，实际 %d", len(outerPaths)),
+		}
+	}
+
+	interpolator, warnings, err := loadSevenHoleCalibrationCsvFiles(innerPath, outerPaths)
+	if err != nil {
+		return SevenHoleLoadPrbResponse{Success: false, Error: err.Error()}
+	}
+
+	prbFiles := buildSevenHoleFileList(innerPath, outerPaths, interpolator)
+	validRange := toSevenHoleValidRange(interpolator.GetValidRange())
+	innerPointCount := interpolator.GetInnerPointCount()
+	outerCounts := buildSevenHoleOuterCounts(interpolator)
+
+	a.sevenHole.mu.Lock()
+	a.sevenHole.interpolator = interpolator
+	a.sevenHole.prbFiles = prbFiles
+	a.sevenHole.dataSource = "calibration-csv"
+	a.sevenHole.mu.Unlock()
+
+	return SevenHoleLoadPrbResponse{
+		Success: true,
+		Data: &SevenHoleLoadPrbResult{
+			Files:            prbFiles,
+			ValidRange:       validRange,
+			InnerPointCount:  innerPointCount,
+			OuterPointCounts: outerCounts,
+			DataSource:       "calibration-csv",
+			Warnings:         warnings,
+		},
+	}
+}
+
+// PickSevenHoleFiles 弹出多选文件对话框，让用户批量选择 7 孔校准文件（.prb 或 .csv）。
+//
+// 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成
+// （assignSevenHoleFilesByName / assignSevenHoleCsvFilesByName）。
+// 这样后端无需关心文件名约定，前端可在 UI 上展示"哪些文件未被识别"。
+//
+// 取消选择时返回 Success=true + 空 Paths（与 Wails 对话框"OK 但无选择"语义一致）。
+func (a *App) PickSevenHoleFiles() SevenHolePickFilesResponse {
+	paths, err := a.openFileDialog("选择 7 个 PRB / 校准 CSV 文件").
+		AddFilter("PRB / CSV files (*.prb;*.csv)", "*.prb;*.csv").
+		AddFilter("PRB Files (*.prb)", "*.prb").
+		AddFilter("CSV Files (*.csv)", "*.csv").
+		AddFilter("All Files (*.*)", "*.*").
+		PromptForMultipleSelection()
+	if err != nil {
+		return SevenHolePickFilesResponse{Success: false, Error: err.Error()}
+	}
+	// Wails 在用户取消时返回 nil；统一转为空数组便于前端 isEmpty 判断。
+	if paths == nil {
+		paths = []string{}
+	}
+	return SevenHolePickFilesResponse{Success: true, Paths: paths}
+}
+
+// GetSevenHoleDataSource 返回当前已加载的 7 孔数据源类型。
+// 取值："prb"（PRB 文件集）/ "calibration-csv"（校准 CSV）/ ""（未加载）。
+// 前端在初始化或切回 7 孔工作区时调用，用于决定槽位过滤器与展示文案。
+func (a *App) GetSevenHoleDataSource() SevenHoleDataSourceResponse {
+	a.sevenHole.mu.RLock()
+	defer a.sevenHole.mu.RUnlock()
+	return SevenHoleDataSourceResponse{Success: true, Data: a.sevenHole.dataSource}
 }
 
 // IsSevenHolePrbLoaded 返回 7 孔 .prb 文件集是否已全部加载。
@@ -157,7 +193,7 @@ func (a *App) IsSevenHolePrbLoaded() bool {
 	return a.sevenHole.interpolator != nil && a.sevenHole.interpolator.IsLoaded()
 }
 
-// GetSevenHolePrbFiles 返回已加载的 7 孔 .prb 文件列表。
+// GetSevenHolePrbFiles 返回已加载的 7 孔 .prb / CSV 文件列表。
 func (a *App) GetSevenHolePrbFiles() []SevenHolePrbFileInfo {
 	a.sevenHole.mu.RLock()
 	defer a.sevenHole.mu.RUnlock()
@@ -253,10 +289,13 @@ func toSevenHoleCoreInput(input SevenHoleInterpolationInput) seven_interp.Interp
 
 // toSevenHoleAppResult 将算法包结果转为应用层结果，字段一一映射。
 // 注意 Alpha/Beta 在 7 孔里语义反转（Alpha=侧滑、Beta=迎角），但 JSON tag 与 5 孔一致。
+// Theta/Phi 透传算法包的 PRB 网格原始角度坐标，供前端展示。
 func toSevenHoleAppResult(r seven_interp.InterpolationResult) *SevenHoleInterpolationResult {
 	return &SevenHoleInterpolationResult{
 		Alpha:           r.Alpha,
 		Beta:            r.Beta,
+		Theta:           r.Theta,
+		Phi:             r.Phi,
 		MachNumber:      r.MachNumber,
 		Velocity:        r.Velocity,
 		DynamicPressure: r.DynamicPressure,
@@ -279,6 +318,61 @@ func toSevenHoleValidRange(vr seven_interp.PrbValidRange) SevenHolePrbValidRange
 	}
 }
 
+// buildSevenHoleFileList 构造前端展示用的文件列表：内区在前（Sector=7），外区 1..6 顺序跟随。
+// PointCount 由算法包运行时读取：内区固定 169，扇区动态 = thetaCount×13。
+// 此函数在 PRB 与 CSV 两条加载路径共用，避免重复构造逻辑。
+func buildSevenHoleFileList(innerPath string, outerPaths []string, interp *seven_interp.SevenHolePrbInterpolator) []SevenHolePrbFileInfo {
+	files := make([]SevenHolePrbFileInfo, 0, 7)
+	files = append(files, SevenHolePrbFileInfo{
+		FilePath:   innerPath,
+		FileName:   filepath.Base(innerPath),
+		Sector:     7,
+		PointCount: interp.GetInnerPointCount(),
+	})
+	for i, p := range outerPaths {
+		sector := i + 1
+		files = append(files, SevenHolePrbFileInfo{
+			FilePath:   p,
+			FileName:   filepath.Base(p),
+			Sector:     sector,
+			PointCount: interp.GetOuterPointCount(sector),
+		})
+	}
+	return files
+}
+
+// buildSevenHoleOuterCounts 读取 6 个扇区的实际点数到固定长度数组。
+// 供前端展示"各扇区 thetaCount×13"动态值（如 4×13=52、7×13=91）。
+func buildSevenHoleOuterCounts(interp *seven_interp.SevenHolePrbInterpolator) [6]int {
+	var counts [6]int
+	for i := 0; i < 6; i++ {
+		counts[i] = interp.GetOuterPointCount(i + 1)
+	}
+	return counts
+}
+
+// csvFieldSetter 描述单个 CSV 列到 SevenHoleInterpolationInput 字段的映射。
+// 用 setter 函数指针避免反射，保持与原直写代码相同的运行时性能。
+type csvFieldSetter struct {
+	name string
+	set  func(*SevenHoleInterpolationInput, float64)
+}
+
+// sevenHoleInputFields 列出 7 孔数据 CSV 的 9 个必需列及其字段赋值函数。
+// 顺序与 SPEC §1.1 一致：P1..P7 + Patm + Tatm。集中定义避免 ImportSevenHoleCsvData
+// 中出现 9 行重复的 parse + 赋值代码，新增字段时只需在此追加一项。
+var sevenHoleInputFields = []csvFieldSetter{
+	{"P1", func(in *SevenHoleInterpolationInput, v float64) { in.P1 = v }},
+	{"P2", func(in *SevenHoleInterpolationInput, v float64) { in.P2 = v }},
+	{"P3", func(in *SevenHoleInterpolationInput, v float64) { in.P3 = v }},
+	{"P4", func(in *SevenHoleInterpolationInput, v float64) { in.P4 = v }},
+	{"P5", func(in *SevenHoleInterpolationInput, v float64) { in.P5 = v }},
+	{"P6", func(in *SevenHoleInterpolationInput, v float64) { in.P6 = v }},
+	{"P7", func(in *SevenHoleInterpolationInput, v float64) { in.P7 = v }},
+	{"Patm", func(in *SevenHoleInterpolationInput, v float64) { in.Patm = v }},
+	{"Tatm", func(in *SevenHoleInterpolationInput, v float64) { in.Tatm = v }},
+}
+
 // ImportSevenHoleCsvData 弹出文件选择对话框让用户选 7 孔数据 CSV，
 // 解析 P1-P7 + Patm + Tatm 列（共 9 列，全部必需）。
 //
@@ -287,8 +381,10 @@ func toSevenHoleValidRange(vr seven_interp.PrbValidRange) SevenHolePrbValidRange
 //   - 7 孔：P1-P7 + Patm + Tatm 全部必需（spec §1.1 强制表压，无 PressureMode 列）
 //
 // 支持 .csv/.txt/.dat 三种扩展名（与 3 孔一致），分隔符自动检测 tab vs 逗号。
+// 注意：此方法导入的是"数据 CSV"（待计算的压力数据），与 LoadSevenHoleCalibrationCsvFiles
+// 导入的"校准 CSV"（标定网格点系数）完全不同——后者是 7 份 GBK 编码的标定文件。
 func (a *App) ImportSevenHoleCsvData() SevenHoleImportCsvDataResponse {
-	filePath, err := a.openPrbFileDialog("选择 7 孔数据 CSV 文件").
+	filePath, err := a.openFileDialog("选择 7 孔数据 CSV 文件").
 		AddFilter("CSV/TXT/DAT (*.csv;*.txt;*.dat)", "*.csv;*.txt;*.dat").
 		AddFilter("CSV Files (*.csv)", "*.csv").
 		AddFilter("All Files (*.*)", "*.*").
@@ -315,17 +411,15 @@ func (a *App) ImportSevenHoleCsvData() SevenHoleImportCsvDataResponse {
 		colMap[strings.TrimSpace(col)] = i
 	}
 
-	// 7 孔 CSV 必需列：P1..P7 + Patm + Tatm 共 9 列，缺一不可。
-	required := []string{"P1", "P2", "P3", "P4", "P5", "P6", "P7", "Patm", "Tatm"}
 	// 用必需列的最大索引作为列数校验阈值，
 	// 避免用户 CSV 含可选备注列但数据行缺该列时整行被丢弃。
 	maxRequiredIdx := 0
-	for _, name := range required {
-		idx, ok := colMap[name]
+	for _, f := range sevenHoleInputFields {
+		idx, ok := colMap[f.name]
 		if !ok {
 			return SevenHoleImportCsvDataResponse{
 				Success: false,
-				Error:   fmt.Sprintf("缺少必要列: %s（7 孔 CSV 需包含 P1-P7 + Patm + Tatm 共 9 列）", name),
+				Error:   fmt.Sprintf("缺少必要列: %s（7 孔 CSV 需包含 P1-P7 + Patm + Tatm 共 9 列）", f.name),
 			}
 		}
 		if idx > maxRequiredIdx {
@@ -343,38 +437,25 @@ func (a *App) ImportSevenHoleCsvData() SevenHoleImportCsvDataResponse {
 			continue
 		}
 
-		// parse 返回错误而非静默返回 0，便于定位坏行。
-		parse := func(colIdx int) (float64, error) {
+		// 用 sevenHoleInputFields 驱动解析：每列独立 try-parse，
+		// 任一列失败记录到 rowErrs 并继续后续列（让用户在一行内看到所有坏列），
+		// 行末若有任何错误则跳过该行，所有错误合并到 parseWarnings。
+		var input SevenHoleInterpolationInput
+		var rowErrs []string
+		for _, f := range sevenHoleInputFields {
+			colIdx := colMap[f.name]
 			val, err := strconv.ParseFloat(strings.TrimSpace(row[colIdx]), 64)
 			if err != nil {
-				return 0, fmt.Errorf("第%d行第%d列解析失败: %q", rowIdx+1, colIdx+1, row[colIdx])
+				rowErrs = append(rowErrs, fmt.Sprintf("第%d行第%d列解析失败: %q", rowIdx+1, colIdx+1, row[colIdx]))
+				continue
 			}
-			return val, nil
+			f.set(&input, val)
 		}
-
-		p1, err1 := parse(colMap["P1"])
-		p2, err2 := parse(colMap["P2"])
-		p3, err3 := parse(colMap["P3"])
-		p4, err4 := parse(colMap["P4"])
-		p5, err5 := parse(colMap["P5"])
-		p6, err6 := parse(colMap["P6"])
-		p7, err7 := parse(colMap["P7"])
-		patm, err8 := parse(colMap["Patm"])
-		tatm, err9 := parse(colMap["Tatm"])
-
-		if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil || err6 != nil || err7 != nil || err8 != nil || err9 != nil {
-			for _, e := range []error{err1, err2, err3, err4, err5, err6, err7, err8, err9} {
-				if e != nil {
-					parseWarnings = append(parseWarnings, e.Error())
-				}
-			}
+		if len(rowErrs) > 0 {
+			parseWarnings = append(parseWarnings, rowErrs...)
 			continue
 		}
-
-		datas = append(datas, SevenHoleInterpolationInput{
-			P1: p1, P2: p2, P3: p3, P4: p4, P5: p5, P6: p6, P7: p7,
-			Patm: patm, Tatm: tatm,
-		})
+		datas = append(datas, input)
 	}
 
 	if len(parseWarnings) > 0 && len(datas) > 0 {
