@@ -31,6 +31,12 @@ Unicode true
 ## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
 ## !define WAILS_INSTALL_SCOPE     "user"             # Default "machine" - set to "user" for per-user install ($LOCALAPPDATA) without UAC prompt
 ####
+
+# Product version must match projects/probe-interpolator/VERSION.
+# Defined before !include "wails_tools.nsh" so the ifndef guard in wails_tools.nsh picks this up.
+!define INFO_PRODUCTVERSION "0.1.0"
+
+####
 ## Include the wails tools
 ####
 !include "wails_tools.nsh"
@@ -72,7 +78,9 @@ ManifestDPIAware true
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+# Output to build/bin/ with version in filename, matches archive-release script convention.
+# Path is relative to windows/nsis/ (where makensis runs): ../../build/bin/ -> apps/desktop-wails/build/bin/
+OutFile "..\..\build\bin\${INFO_PROJECTNAME}-${INFO_PRODUCTVERSION}-${ARCH}-installer.exe" # Name of the installer's file.
 !if "${WAILS_INSTALL_SCOPE}" == "user"
     InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !else

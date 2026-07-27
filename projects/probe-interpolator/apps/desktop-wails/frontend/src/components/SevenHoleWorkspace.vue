@@ -5,38 +5,63 @@
 // 与 5 孔 / 3 孔工作区的关键差异（参考 SPEC 与 seven_hole_types.go）：
 //   - 7 个压力输入 P1..P7（P7=中心孔，P1..P6=外围 60° 等分孔），无压力模式开关
 //     （spec §1.1 强制所有孔压力为表压 gauge，绝压数据需在导入前由调用方转换）
-//   - PRB 加载需要 7 个独立文件（1.prb..7.prb），文件名 basename 决定扇区角色
+//   - PRB / 校准 CSV 加载需要 7 个独立文件：
+//       PRB: 7.prb（内区）+ 1.prb..6.prb（外区扇区 n）
+//       CSV: 文件名含"(小角度区)"（内区）+ "(大角度N区)"（扇区 N）
+//   - 支持数据源切换（PRB / 校准 CSV），切换时清空旧槽位避免混用两种解析入口
 //   - ValidRange 显示（±30° Alpha/Beta 范围）替代 MachRange；MachMin/Max 恒为 0 仅供 UI 展示
-//   - 结果 Alpha=侧滑角（sideslip）、Beta=迎角（angle of attack），与 5 孔语义反转（spec §2.2）
+//   - UI/CSV/说明书统一为 α=侧滑角（sideslip）、β=迎角（angle of attack），
+//     与算法包 InterpolationResult.Alpha=sideslip、Beta=AOA 一致（SPEC §2.2）。
+//     7 孔 Alpha/Beta 语义与 5 孔**反转**（5 孔 Alpha=迎角），不能复用 5 孔 UI 文案。
 //   - 结果无 Vx/Vy/Vz 速度分量（5 孔有，7 孔无）
 //   - 根类名 .workspace-seven，与 .workspace / .workspace-three 平级，避免 CSS 互相覆盖
+//
+// v0.2.0 重构：
+//   - 校准文件加载逻辑抽出到 useSevenHoleCalibration composable（约 280 行）
+//   - 7 个槽位行抽出到 SevenHoleSlotRow 子组件（约 150 行模板）
+//   - 本文件专注于数据输入/计算/导出 UI，校准状态机由 composable 持有
+
 import { ref, computed } from 'vue'
 import {
   api,
   isWailsAvailable,
-  type SevenHolePrbFileInfo,
-  type SevenHolePrbValidRange,
   type SevenHoleInterpolationInput,
   type SevenHoleInterpolationResult,
 } from '../adapters/seven-hole'
+import { useSevenHoleCalibration } from '../composables/useSevenHoleCalibration'
 import { escapeCsvField } from '../utils/csv'
-import { formatVal, formatInt } from '../utils/format'
+import { formatVal, formatInt, formatResultNum } from '../utils/format'
 
 // emit('back') 由顶栏"返回"按钮触发，通知父组件 App.vue 切回欢迎页。
-// 各探针 service 的 .prb / 输入状态由后端独立保留，再次进入本工作区时会通过 onMounted 自动恢复。
 defineEmits<{
   (e: 'back'): void
 }>()
 
 // ==================== 状态管理 ====================
-const loaded = ref(false)
-const prbFiles = ref<SevenHolePrbFileInfo[]>([])
-const validRange = ref<SevenHolePrbValidRange | null>(null)
+// 校准文件配置 + 加载状态机由 composable 持有，本组件只注入 setStatus 回调。
+const statusMsg = ref('')
+const statusType = ref<'info' | 'success' | 'error' | 'warning'>('info')
+
+function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') {
+  statusMsg.value = msg
+  statusType.value = type
+}
+
+const {
+  loaded,
+  validRange,
+  innerPointCount,
+  outerPointCounts,
+  isImporting,
+  validRangeText,
+  dataSourceText,
+  batchImport,
+} = useSevenHoleCalibration({ setStatus })
+
+// 数据 / 计算状态：与 5/3 孔工作区一致。
 const inputs = ref<SevenHoleInterpolationInput[]>([])
 const results = ref<(SevenHoleInterpolationResult | null)[]>([])
 const calculating = ref(false)
-const statusMsg = ref('')
-const statusType = ref<'info' | 'success' | 'error' | 'warning'>('info')
 const defaultPatm = ref(101325)
 const defaultTatm = ref(20)
 // P1..P6=外围孔，P7=中心孔。所有压力均为表压（gauge，Pa）。
@@ -50,21 +75,17 @@ const newP7 = ref(0)
 const activeTab = ref<'input' | 'results'>('input')
 
 // ==================== 计算属性 ====================
-const validResultsCount = computed(() => results.value.filter(r => r !== null && r.isValid).length)
-const invalidResultsCount = computed(() => results.value.filter(r => r !== null && !r.isValid).length)
-const hasResults = computed(() => results.value.length > 0 && results.value.some(r => r !== null))
-// 角度范围文案：validRange 存在时显示 "α: -30°~30°, β: -30°~30°"，否则空。
-const validRangeText = computed(() => {
-  if (!validRange.value) return ''
-  const v = validRange.value
-  return `α: ${v.alphaMin.toFixed(0)}°~${v.alphaMax.toFixed(0)}°, β: ${v.betaMin.toFixed(0)}°~${v.betaMax.toFixed(0)}°`
-})
+const validResultsCount = computed(() => results.value.filter((r) => r !== null && r.isValid).length)
+const invalidResultsCount = computed(() => results.value.filter((r) => r !== null && !r.isValid).length)
+const hasResults = computed(() => results.value.length > 0 && results.value.some((r) => r !== null))
 
 // ==================== 工具函数 ====================
-function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') {
-  statusMsg.value = msg
-  statusType.value = type
-}
+// fmtNum 是 formatResultNum 的本地别名，5/3/7 孔 workspace 共享同一份泛型实现。
+// 见 utils/format.ts。无效行（r=null 或 IsValid=false）统一显示 "-"。
+const fmtNum = (
+  r: SevenHoleInterpolationResult | null,
+  sel: (r: SevenHoleInterpolationResult) => number,
+): string => formatResultNum(r, sel)
 
 async function openHelp() {
   if (!isWailsAvailable()) {
@@ -77,10 +98,7 @@ async function openHelp() {
   }
 }
 
-// formatVal / formatInt 已迁移到 ../utils/format。
-// escapeCsvField 已迁移到 ../utils/csv。
-
-// ==================== 数据操作 ====================
+// ==================== 单行输入 / 数据列表 ====================
 function buildCurrentInput(): SevenHoleInterpolationInput {
   // 7 孔输入不带 PressureMode：spec §1.1 强制表压输入。
   return {
@@ -102,7 +120,7 @@ function isValidInput(input: SevenHoleInterpolationInput): boolean {
 
 function addRow() {
   if (!loaded.value) {
-    setStatus('请先加载 PRB 文件', 'warning')
+    setStatus('请先加载 PRB / 校准 CSV 文件', 'warning')
     return
   }
   const input = buildCurrentInput()
@@ -134,40 +152,10 @@ function clearAll() {
   setStatus('已清空所有数据', 'info')
 }
 
-// ==================== 文件操作 ====================
-async function loadPrb() {
-  if (!isWailsAvailable()) {
-    setStatus('当前不在 Wails 环境中运行', 'error')
-    return
-  }
-  try {
-    const [resp, result] = await api.loadPrbFiles()
-    if (!resp.success) {
-      setStatus('加载失败: ' + resp.error, 'error')
-      return
-    }
-    if (!result || !Array.isArray(result.files)) {
-      setStatus('加载失败: PRB 文件信息为空', 'error')
-      return
-    }
-    loaded.value = true
-    prbFiles.value = result.files
-    validRange.value = result.validRange ?? null
-    if (result.warnings && result.warnings.length > 0) {
-      // 加载完成但有警告（如部分文件顺序错误、扇区缺失等）：用 warning 状态提示。
-      setStatus(`已加载 ${result.files.length} 个 PRB 文件（含 ${result.warnings.length} 条警告）`, 'warning')
-    } else {
-      const names = result.files.map(f => f.fileName).join(', ')
-      setStatus(`已加载 ${result.files.length} 个 PRB 文件: ${names}`, 'success')
-    }
-  } catch (e: any) {
-    setStatus('加载失败: ' + (e.message || e), 'error')
-  }
-}
-
+// ==================== 数据 CSV 导入 ====================
 async function importCsv() {
   if (!loaded.value) {
-    setStatus('请先加载 PRB 文件', 'warning')
+    setStatus('请先加载 PRB / 校准 CSV 文件', 'warning')
     return
   }
   if (!isWailsAvailable()) return
@@ -183,15 +171,16 @@ async function importCsv() {
       results.value.push(null)
     }
     setStatus(`已导入 ${data.length} 条数据`, 'success')
-  } catch (e: any) {
-    setStatus('导入失败: ' + (e.message || e), 'error')
+  } catch (e: unknown) {
+    // e 类型未约束（Wails/运行时抛出），统一转 string 展示。
+    setStatus('导入失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   }
 }
 
 // ==================== 计算 ====================
 async function calculateAll() {
   if (!loaded.value) {
-    setStatus('请先加载 PRB 文件', 'warning')
+    setStatus('请先加载 PRB / 校准 CSV 文件', 'warning')
     return
   }
   if (inputs.value.length === 0) {
@@ -209,15 +198,16 @@ async function calculateAll() {
     const [resp, res] = await api.batchCalculate(inputs.value)
     // 无论整体成功失败都更新结果：后端支持部分失败，让用户看到有效行 + 失败行的 Warning。
     results.value = res
-    const valid = res.filter(r => r && r.isValid).length
+    const valid = res.filter((r) => r && r.isValid).length
     if (!resp.success) {
       setStatus(`部分行计算失败：有效 ${valid}/${res.length} 条，首条错误: ${resp.error}`, 'warning')
     } else {
       setStatus(`计算完成！有效结果: ${valid}/${res.length} 条`, 'success')
     }
     activeTab.value = 'results'
-  } catch (e: any) {
-    setStatus('计算失败: ' + (e.message || e), 'error')
+  } catch (e: unknown) {
+    // e 类型未约束（Wails/算法包抛出），统一转 string 展示。
+    setStatus('计算失败: ' + (e instanceof Error ? e.message : String(e)), 'error')
   } finally {
     calculating.value = false
   }
@@ -230,22 +220,26 @@ function exportResults() {
     return
   }
 
-  // 7 孔结果字段：α(侧滑角)、β(迎角)、Ma、V、P0(总压)、Ps(静压)。
-  // 注意：与 5 孔不同，7 孔结果无 Vx/Vy/Vz 速度分量。
-  // CSV 表头明确标注 α/β 的物理含义，避免与 5 孔导出文件混淆。
-  const headers = ['序号', 'α(°) 侧滑角', 'β(°) 迎角', 'Ma', 'V(m/s)', '总压 P0(Pa)', '静压 Ps(Pa)', '状态']
+  // 7 孔结果字段：α(侧滑角)、β(迎角)、θ(俯仰角)、Ψ(方位角)、Ma、V、P0(总压)、Ps(静压)。
+  // 注意：与 5 孔不同，7 孔结果无 Vx/Vy/Vz 速度分量，且 α/β 语义反转（SPEC §2.2）。
+  // CSV 表头明确标注 α/β/θ/Ψ 的物理含义，避免与 5 孔导出文件混淆。
+  // α/β 与算法包字段直接对应：α 列绑定 result.alpha（sideslip）、β 列绑定 result.beta（AOA）。
+  // θ/Ψ 是 PRB 网格原始角度坐标：内区小角度下 θ=α、Ψ=β，外区大角度下是探头坐标系角度。
+  const headers = ['序号', 'α(°) 侧滑角', 'β(°) 迎角', 'θ(°) 俯仰角', 'Ψ(°) 方位角', 'Ma', 'V(m/s)', '总压 P0(Pa)', '静压 Ps(Pa)', '状态']
   const rows = results.value.map((r, idx) => [
     idx + 1,
-    r ? formatVal(r.alpha) : '-',
-    r ? formatVal(r.beta) : '-',
-    r ? formatVal(r.machNumber) : '-',
-    r ? formatVal(r.velocity) : '-',
-    r ? formatVal(r.P0) : '-',
-    r ? formatVal(r.Ps) : '-',
+    fmtNum(r, (x) => x.alpha),
+    fmtNum(r, (x) => x.beta),
+    fmtNum(r, (x) => x.theta),
+    fmtNum(r, (x) => x.phi),
+    fmtNum(r, (x) => x.machNumber),
+    fmtNum(r, (x) => x.velocity),
+    fmtNum(r, (x) => x.P0),
+    fmtNum(r, (x) => x.Ps),
     r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
-  const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map(row => row.join(','))].join('\n')
+  const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map((row) => row.join(','))].join('\n')
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
@@ -254,6 +248,7 @@ function exportResults() {
   URL.revokeObjectURL(link.href)
   setStatus('结果已导出', 'success')
 }
+
 </script>
 
 <template>
@@ -279,22 +274,14 @@ function exportResults() {
         </div>
       </div>
       <div class="header-actions">
-        <button
-          class="btn btn-back"
-          @click="$emit('back')"
-          title="返回探针选择页"
-        >
+        <button class="btn btn-back" @click="$emit('back')" title="返回探针选择页">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="19" y1="12" x2="5" y2="12"/>
             <polyline points="12 19 5 12 12 5"/>
           </svg>
           返回
         </button>
-        <button
-          class="btn btn-help"
-          @click="openHelp"
-          title="打开用户说明书"
-        >
+        <button class="btn btn-help" @click="openHelp" title="打开用户说明书">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
             <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
@@ -304,38 +291,38 @@ function exportResults() {
         </button>
         <button
           class="btn btn-primary"
-          @click="loadPrb"
-          :disabled="calculating"
+          :class="{ 'btn-loading': isImporting }"
+          :disabled="calculating || isImporting"
+          @click="batchImport"
         >
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg v-if="!isImporting" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          加载 PRB 文件
+          <svg v-else class="icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+          {{ isImporting ? '加载中...' : '加载 PRB/CSV 文件' }}
         </button>
       </div>
     </header>
 
-    <!-- 文件信息卡片 -->
     <Transition name="slide-down">
-      <div v-if="loaded && prbFiles.length > 0" class="info-card">
+      <div v-if="loaded" class="info-card">
         <div class="info-item">
           <span class="info-label">已加载文件</span>
-          <span class="info-value file-name">{{ prbFiles.length }} 个 PRB 文件</span>
+          <span class="info-value file-name">7 个 {{ dataSourceText }}</span>
         </div>
         <div class="info-divider"></div>
-        <div class="info-item" v-if="validRangeText">
+        <div v-if="validRangeText" class="info-item">
           <span class="info-label">角度范围</span>
           <span class="info-value">{{ validRangeText }}</span>
         </div>
-        <div class="info-divider" v-if="validRangeText"></div>
-        <!-- prb-tag 显示文件名 + 扇区角色：0=内区，1..6=外区 n -->
-        <div class="prb-tags">
-          <span class="prb-tag" v-for="f in prbFiles" :key="f.fileName">
-            {{ f.fileName }}
-            <em>{{ f.sector === 0 ? '内区' : `外区${f.sector}` }}</em>
-          </span>
+        <div class="info-divider"></div>
+        <div class="info-item">
+          <span class="info-label">网格点</span>
+          <span class="info-value">{{ innerPointCount + outerPointCounts.reduce((sum, count) => sum + count, 0) }}</span>
         </div>
         <div class="info-status active">
           <span class="status-dot"></span>
@@ -555,7 +542,7 @@ function exportResults() {
 
           <!-- 空状态 -->
           <Transition name="fade">
-            <div v-if="inputs.length === 0" class="empty-state">
+            <div v-if="inputs.length === 0" class="empty-state empty-state--panel">
               <div class="empty-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -605,6 +592,8 @@ function exportResults() {
                   <th class="col-num">#</th>
                   <th>α(°) 侧滑角</th>
                   <th>β(°) 迎角</th>
+                  <th>θ(°) 俯仰角</th>
+                  <th>Ψ(°) 方位角</th>
                   <th>Ma</th>
                   <th>V(m/s)</th>
                   <th>总压 P0(Pa)</th>
@@ -615,12 +604,14 @@ function exportResults() {
               <tbody>
                 <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
                   <td class="col-num">{{ idx + 1 }}</td>
-                  <td>{{ r ? formatVal(r.alpha) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.beta) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.machNumber) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.velocity) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.P0) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Ps) : '-' }}</td>
+                  <td>{{ fmtNum(r, x => x.alpha) }}</td>
+                  <td>{{ fmtNum(r, x => x.beta) }}</td>
+                  <td>{{ fmtNum(r, x => x.theta) }}</td>
+                  <td>{{ fmtNum(r, x => x.phi) }}</td>
+                  <td>{{ fmtNum(r, x => x.machNumber) }}</td>
+                  <td>{{ fmtNum(r, x => x.velocity) }}</td>
+                  <td>{{ fmtNum(r, x => x.P0) }}</td>
+                  <td>{{ fmtNum(r, x => x.Ps) }}</td>
                   <td class="col-status">
                     <span v-if="r && r.isValid" class="status-badge success">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
@@ -647,301 +638,10 @@ function exportResults() {
         <span class="status-text">{{ statusMsg || '就绪' }}</span>
       </div>
       <div class="status-meta">
-        <span>七孔探针工作区 v0.1.0</span>
+        <span>七孔探针工作区 v0.2.0</span>
       </div>
     </footer>
   </div>
 </template>
 
-<style>
-/* 工作区样式不带 scoped，与 App.vue 的全局基础样式配合。
-   每个 workspace 组件的根类名独立（.workspace / .workspace-three / .workspace-seven），
-   避免相互覆盖。当前样式与 ThreeHoleWorkspace 一致（SPEC 决策 UI(A)：共用 UI 框架）。 */
-.workspace-seven { max-width: 1440px; margin: 0 auto; padding: 12px; min-height: 100vh; display: flex; flex-direction: column; gap: 10px; }
-
-.app-header {
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-  border-radius: 10px;
-  padding: 12px 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  position: relative;
-  overflow: hidden;
-}
-
-.app-header::before {
-  content: '';
-  position: absolute;
-  top: 0; right: 0;
-  width: 200px; height: 100%;
-  background: linear-gradient(135deg, transparent 0%, rgba(99, 102, 241, 0.1) 100%);
-  pointer-events: none;
-}
-
-.header-brand { display: flex; align-items: center; gap: 10px; }
-
-.logo {
-  width: 36px; height: 36px;
-  background: linear-gradient(135deg, #6366f1, #4338ca);
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  color: white;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-}
-
-.logo svg { width: 22px; height: 22px; }
-
-.brand-text h1 { font-size: 18px; font-weight: 700; color: white; letter-spacing: -0.3px; }
-.brand-text .subtitle { font-size: 10px; color: #94a3b8; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
-
-.header-actions { display: flex; gap: 8px; }
-
-.info-card {
-  background: white;
-  border-radius: 10px;
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  border: 1px solid #e2e8f0;
-}
-
-.info-item { display: flex; flex-direction: column; gap: 1px; }
-.info-label { font-size: 10px; color: #64748b; font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px; }
-.info-value { font-size: 12px; font-weight: 600; color: #1e293b; }
-.info-value.file-name { color: #4f46e5; }
-.info-divider { width: 1px; height: 24px; background: #e2e8f0; }
-
-.prb-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-.prb-tag { background: #eef2ff; color: #4338ca; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-.prb-tag em { font-style: normal; color: #6366f1; margin-left: 3px; }
-
-.info-status {
-  margin-left: auto;
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  background: #f1f5f9;
-  border-radius: 6px;
-  font-size: 11px; font-weight: 600; color: #64748b;
-  transition: all 250ms ease;
-}
-
-.info-status.active { background: #f0fdf4; color: #16a34a; }
-
-.status-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: #94a3b8;
-  transition: background 250ms ease;
-}
-
-.info-status.active .status-dot { background: #22c55e; box-shadow: 0 0 0 2px #dcfce7; }
-
-.main-content { flex: 1; display: flex; flex-direction: column; gap: 10px; }
-
-.tabs { display: flex; gap: 3px; background: #e2e8f0; padding: 3px; border-radius: 6px; width: fit-content; }
-
-.tab-btn {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 14px;
-  border: none; background: transparent;
-  color: #475569; font-size: 13px; font-weight: 600;
-  border-radius: 6px; cursor: pointer;
-  transition: all 250ms ease;
-}
-
-.tab-btn:hover:not(:disabled) { color: #1e293b; background: rgba(255, 255, 255, 0.5); }
-.tab-btn.active { background: white; color: #4f46e5; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
-.tab-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.tab-btn .badge { padding: 1px 6px; background: #e2e8f0; color: #475569; border-radius: 10px; font-size: 10px; font-weight: 700; }
-.tab-btn .badge.success { background: #dcfce7; color: #16a34a; }
-.tab-btn .badge.error { background: #fee2e2; color: #dc2626; }
-
-.panel { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); border: 1px solid #e2e8f0; }
-
-.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.section-header h3 { font-size: 14px; font-weight: 700; color: #1e293b; }
-.section-actions { display: flex; gap: 6px; }
-.count-badge { padding: 2px 8px; background: #eef2ff; color: #4f46e5; border-radius: 20px; font-size: 11px; font-weight: 700; }
-
-/* 7 孔输入行有 10 列（P1..P7 + Patm + Tatm + 操作），窄屏自动换行。
-   flex-wrap: nowrap 在宽屏保持单行铺满；媒体查询断点处改为 wrap。 */
-.input-row { display: flex; flex-direction: row; gap: 8px; align-items: flex-end; flex-wrap: nowrap; }
-
-.input-group { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
-.input-group.action-group { flex: 0 0 auto; min-width: 80px; }
-
-.input-label { display: flex; flex-direction: column; gap: 1px; }
-.label-text { font-size: 11px; font-weight: 600; color: #334155; }
-.label-hint { font-size: 9px; color: #64748b; }
-
-.input-field {
-  padding: 5px 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  font-size: 12px; font-weight: 500; color: #1e293b;
-  background: white;
-  transition: all 150ms ease;
-  width: 100%; min-width: 0;
-  height: 30px;
-}
-
-.input-field:hover { border-color: #cbd5e1; }
-.input-field:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px #e0e7ff; }
-.input-field::placeholder { color: #94a3b8; }
-
-.btn-add { width: 100%; justify-content: center; height: 30px; white-space: nowrap; }
-
-.calculate-bar { display: flex; justify-content: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
-
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 6px 12px;
-  border: none; border-radius: 6px;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: all 150ms ease; white-space: nowrap;
-}
-
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.btn-primary {
-  background: linear-gradient(135deg, #6366f1, #4338ca);
-  color: white;
-  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3);
-}
-
-.btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, #4f46e5, #3730a3); box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4); transform: translateY(-1px); }
-.btn-primary:active:not(:disabled) { transform: translateY(0); }
-
-.btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
-.btn-secondary:hover:not(:disabled) { background: #e2e8f0; border-color: #cbd5e1; }
-
-.btn-help {
-  background: transparent;
-  color: #94a3b8;
-  border: 1px solid #475569;
-}
-.btn-help:hover:not(:disabled) {
-  background: rgba(255,255,255,0.1);
-  color: white;
-  border-color: #94a3b8;
-}
-
-/* 返回按钮：与 btn-help 同风格但更显眼，强调"可切换探针"的导航语义 */
-.btn-back {
-  background: transparent;
-  color: #cbd5e1;
-  border: 1px solid #64748b;
-}
-.btn-back:hover:not(:disabled) {
-  background: rgba(255,255,255,0.12);
-  color: white;
-  border-color: #cbd5e1;
-}
-
-.btn-calculate { padding: 8px 32px; font-size: 14px; border-radius: 10px; }
-.btn-loading { position: relative; pointer-events: none; }
-
-.btn-icon {
-  display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  border: none; border-radius: 6px;
-  background: transparent; color: #64748b; cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.btn-icon:hover { background: #f1f5f9; color: #334155; }
-.btn-icon.danger:hover { background: #fef2f2; color: #dc2626; }
-.btn-icon svg { width: 14px; height: 14px; }
-
-.icon { width: 14px; height: 14px; flex-shrink: 0; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-.data-table-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
-
-.table-container { overflow-x: auto; border-radius: 6px; border: 1px solid #e2e8f0; scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
-.table-container::-webkit-scrollbar { height: 5px; width: 5px; }
-.table-container::-webkit-scrollbar-track { background: transparent; }
-.table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-.table-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-.data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.data-table thead { background: #f8fafc; }
-.data-table th { padding: 6px 8px; text-align: center; font-weight: 700; color: #475569; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-.data-table td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #334155; font-weight: 500; white-space: nowrap; }
-
-.data-row { transition: background 150ms ease; }
-.data-row:hover { background: #eef2ff; }
-.data-row.invalid { background: #fef2f2; }
-.data-row.invalid:hover { background: #fee2e2; }
-
-.col-num { width: 36px; color: #64748b; font-weight: 600; }
-.col-action { width: 40px; }
-.col-status { width: 60px; }
-
-.status-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 20px; font-size: 10px; font-weight: 600; }
-.status-badge.success { background: #dcfce7; color: #16a34a; }
-.status-badge.error { background: #fee2e2; color: #dc2626; cursor: help; }
-.status-badge svg { width: 12px; height: 12px; }
-
-.result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.result-stats { display: flex; gap: 8px; }
-
-.stat-card { display: flex; flex-direction: column; align-items: center; padding: 8px 14px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; min-width: 60px; }
-.stat-card.success { background: #f0fdf4; border-color: #dcfce7; }
-.stat-card.error { background: #fef2f2; border-color: #fee2e2; }
-
-.stat-value { font-size: 18px; font-weight: 800; color: #1e293b; line-height: 1; }
-.stat-card.success .stat-value { color: #16a34a; }
-.stat-card.error .stat-value { color: #dc2626; }
-.stat-label { font-size: 9px; color: #64748b; font-weight: 600; margin-top: 2px; text-transform: uppercase; }
-
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px 20px; text-align: center; }
-.empty-icon { width: 48px; height: 48px; color: #cbd5e1; margin-bottom: 10px; }
-.empty-icon svg { width: 100%; height: 100%; }
-.empty-title { font-size: 14px; font-weight: 700; color: #334155; margin-bottom: 4px; }
-.empty-desc { font-size: 12px; color: #64748b; max-width: 400px; }
-
-.status-bar { background: white; border-radius: 10px; padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); border: 1px solid #e2e8f0; }
-.status-content { display: flex; align-items: center; gap: 8px; }
-
-.status-indicator { width: 6px; height: 6px; border-radius: 50%; background: #94a3b8; transition: all 250ms ease; }
-.status-indicator.info { background: #6366f1; box-shadow: 0 0 0 2px #e0e7ff; }
-.status-indicator.success { background: #22c55e; box-shadow: 0 0 0 2px #dcfce7; }
-.status-indicator.error { background: #ef4444; box-shadow: 0 0 0 2px #fee2e2; }
-.status-indicator.warning { background: #f59e0b; box-shadow: 0 0 0 2px #fffbeb; }
-
-.status-text { font-size: 11px; font-weight: 600; color: #475569; }
-.status-meta { font-size: 10px; color: #94a3b8; font-weight: 500; }
-
-.fade-enter-active, .fade-leave-active { transition: opacity 250ms ease, transform 250ms ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
-
-.slide-down-enter-active, .slide-down-leave-active { transition: all 350ms ease; }
-.slide-down-enter-from, .slide-down-leave-to { opacity: 0; transform: translateY(-16px); }
-
-.slide-up-enter-active, .slide-up-leave-active { transition: all 350ms ease; }
-.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(16px); }
-
-/* 7 孔输入行有 10 列，比 3 孔/5 孔更宽，提前到 1280px 就开始换行避免单元格过窄 */
-@media (max-width: 1280px) {
-  .input-row { flex-wrap: wrap; }
-  .input-group { flex: 1 1 calc(20% - 8px); min-width: 100px; }
-  .input-group.action-group { flex: 0 0 80px; }
-}
-
-@media (max-width: 768px) {
-  .workspace-seven { padding: 8px; }
-  .app-header { flex-direction: column; gap: 10px; text-align: center; }
-  .info-card { flex-wrap: wrap; gap: 8px; }
-  .info-divider { display: none; }
-  .input-group { flex: 1 1 calc(50% - 8px); }
-  .result-header { flex-direction: column; gap: 10px; }
-  .result-stats { width: 100%; justify-content: center; }
-}
-</style>
+<style src="../styles/seven-hole-workspace.css"></style>

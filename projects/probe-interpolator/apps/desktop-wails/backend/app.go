@@ -15,9 +15,6 @@ import (
 // App 是 Wails 后端服务根对象，绑定到前端。
 // 所有前端可调用的方法都挂在 App 上（Wails v3 的 binding 机制要求）。
 type App struct {
-	ctx context.Context
-	app *application.App
-
 	// selector 管理"会话内探针类型固定"状态，自带 RWMutex，
 	// 与后续各探针 service 的锁隔离，避免混用。
 	selector probeSelector
@@ -38,10 +35,16 @@ func NewApp() *App {
 	return &App{}
 }
 
-// ServiceStartup 是 Wails 服务生命周期钩子，保存 ctx 与 app 引用以备后用。
-// probe_selector 不需要 ctx/app，但后续 five_hole_service 等会用到（如打开文件对话框）。
+// ServiceStartup 是 Wails 服务生命周期钩子。
+//
+// 历史上这里曾保存 ctx 与 app 引用，但后续 service 实际通过 application.Get()
+// 在调用点取单例（dialog.go / seven_hole_service.go），未读取过字段，故移除字段
+// 以消除"实例字段 vs 全局单例"双源回退带来的初始化时序歧义
+// （参见 project_memory：双源获取让测试与初始化时序变得不可预测）。
+// Wails 启动时已调用 application.New()，application.Get() 在 ServiceStartup 之后
+// 任意调用点都返回同一单例。
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	a.ctx = ctx
-	a.app = application.Get()
+	_ = ctx
+	_ = options
 	return nil
 }

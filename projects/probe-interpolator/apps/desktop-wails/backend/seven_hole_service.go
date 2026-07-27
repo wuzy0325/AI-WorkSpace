@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	seven_interp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // sevenHoleHelpDocFileName 是 7 孔用户说明书文件名（与 docs/ 目录下文件名一致）。
@@ -64,21 +65,8 @@ func (a *App) LoadSevenHolePrbFiles(innerPath string, outerPaths []string) Seven
 	}
 
 	// 外区 1..6 按顺序加载，任一失败立即返回（避免错误被淹没）。
-	for i, outerPath := range outerPaths {
-		sector := i + 1
-		if outerPath == "" {
-			return SevenHoleLoadPrbResponse{
-				Success: false,
-				Error:   fmt.Sprintf("缺少 %d.prb 外区文件路径", sector),
-			}
-		}
-		outerLines, err := ReadPrbLines(outerPath)
-		if err != nil {
-			return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("读取 %d.prb 失败: %s", sector, err.Error())}
-		}
-		if err := interpolator.LoadOuterPrbLines(sector, outerLines, filepath.Base(outerPath)); err != nil {
-			return SevenHoleLoadPrbResponse{Success: false, Error: fmt.Sprintf("解析 %d.prb 失败: %s", sector, err.Error())}
-		}
+	if err := loadSevenHoleOuterPrbFiles(interpolator, outerPaths); err != nil {
+		return SevenHoleLoadPrbResponse{Success: false, Error: err.Error()}
 	}
 
 	// 构造前端展示用的文件列表：内区在前（Sector=7），外区 1..6 顺序跟随。
@@ -153,19 +141,22 @@ func (a *App) LoadSevenHoleCalibrationCsvFiles(innerPath string, outerPaths []st
 	}
 }
 
-// PickSevenHoleFiles 弹出多选文件对话框，让用户批量选择 7 孔校准文件（.prb 或 .csv）。
+// PickSevenHoleFiles 弹出多选文件对话框，让用户选择 7 孔 PRB 或校准 CSV 文件。
 //
 // 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成
 // （assignSevenHoleFilesByName / assignSevenHoleCsvFilesByName）。
 // 这样后端无需关心文件名约定，前端可在 UI 上展示"哪些文件未被识别"。
 //
 // 取消选择时返回 Success=true + 空 Paths（与 Wails 对话框"OK 但无选择"语义一致）。
+//
+// 实现说明：直接调用 application.Get() 取全局单例，与 openFileDialog 一致
+// （参见 dialog.go 注释解释了为何移除 a.app 双源回退）。
 func (a *App) PickSevenHoleFiles() SevenHolePickFilesResponse {
-	paths, err := a.openFileDialog("选择 7 个 PRB / 校准 CSV 文件").
-		AddFilter("PRB / CSV files (*.prb;*.csv)", "*.prb;*.csv").
+	paths, err := application.Get().Dialog.OpenFile().
+		SetTitle("选择 7 个 PRB / CSV 校准文件").
+		AddFilter("PRB / CSV Files (*.prb;*.csv)", "*.prb;*.csv").
 		AddFilter("PRB Files (*.prb)", "*.prb").
 		AddFilter("CSV Files (*.csv)", "*.csv").
-		AddFilter("All Files (*.*)", "*.*").
 		PromptForMultipleSelection()
 	if err != nil {
 		return SevenHolePickFilesResponse{Success: false, Error: err.Error()}
@@ -208,7 +199,7 @@ func (a *App) GetSevenHoleValidRange() SevenHoleValidRangeResponse {
 	a.sevenHole.mu.RUnlock()
 
 	if interpolator == nil || !interpolator.IsLoaded() {
-		return SevenHoleValidRangeResponse{Success: false, Error: "请先加载 7 个 PRB 文件"}
+		return SevenHoleValidRangeResponse{Success: false, Error: "请先加载 7 孔校准文件（PRB 或 CSV）"}
 	}
 	vr := interpolator.GetValidRange()
 	return SevenHoleValidRangeResponse{Success: true, Data: toSevenHoleValidRange(vr)}
@@ -222,7 +213,7 @@ func (a *App) CalculateSevenHole(input SevenHoleInterpolationInput) SevenHoleCal
 	a.sevenHole.mu.RUnlock()
 
 	if interpolator == nil || !interpolator.IsLoaded() {
-		return SevenHoleCalculateResponse{Success: false, Error: "请先加载 7 个 PRB 文件"}
+		return SevenHoleCalculateResponse{Success: false, Error: "请先加载 7 孔校准文件（PRB 或 CSV）"}
 	}
 
 	coreInput := toSevenHoleCoreInput(input)
@@ -242,7 +233,7 @@ func (a *App) BatchCalculateSevenHole(inputs []SevenHoleInterpolationInput) Seve
 	a.sevenHole.mu.RUnlock()
 
 	if interpolator == nil || !interpolator.IsLoaded() {
-		return SevenHoleBatchCalculateResponse{Success: false, Error: "请先加载 7 个 PRB 文件"}
+		return SevenHoleBatchCalculateResponse{Success: false, Error: "请先加载 7 孔校准文件（PRB 或 CSV）"}
 	}
 
 	results := make([]*SevenHoleInterpolationResult, len(inputs))
@@ -523,4 +514,25 @@ func readSevenHoleCsvFile(filePath string) ([][]string, error) {
 // 路径解析与跨平台打开逻辑抽到共享工具 GetHelpDocPath / OpenHelpDocByPath。
 func (a *App) OpenSevenHoleHelpDoc() error {
 	return OpenHelpDocByPath(GetHelpDocPath(sevenHoleHelpDocFileName))
+}
+
+// loadSevenHoleOuterPrbFiles 顺序加载 6 个外区 PRB 文件并喂给插值器。
+// 任一失败立即返回错误（含扇区号便于定位）；内区已由调用方加载完毕，
+// 外区失败时调用方需自行决定是否回滚状态（当前实现不回滚，依赖调用方整体失败语义）。
+// 抽出此函数避免 LoadSevenHolePrbFiles 函数体超过 50 行硬约束。
+func loadSevenHoleOuterPrbFiles(interpolator *seven_interp.SevenHolePrbInterpolator, outerPaths []string) error {
+	for i, outerPath := range outerPaths {
+		sector := i + 1
+		if outerPath == "" {
+			return fmt.Errorf("缺少 %d.prb 外区文件路径", sector)
+		}
+		outerLines, err := ReadPrbLines(outerPath)
+		if err != nil {
+			return fmt.Errorf("读取 %d.prb 失败: %s", sector, err.Error())
+		}
+		if err := interpolator.LoadOuterPrbLines(sector, outerLines, filepath.Base(outerPath)); err != nil {
+			return fmt.Errorf("解析 %d.prb 失败: %s", sector, err.Error())
+		}
+	}
+	return nil
 }

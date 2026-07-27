@@ -137,12 +137,24 @@ export function GetPrbFiles() {
 }
 
 /**
- * GetSevenHolePrbFiles 返回已加载的 7 孔 .prb 文件列表。
+ * GetSevenHoleDataSource 返回当前已加载的 7 孔数据源类型。
+ * 取值："prb"（PRB 文件集）/ "calibration-csv"（校准 CSV）/ ""（未加载）。
+ * 前端在初始化或切回 7 孔工作区时调用，用于决定槽位过滤器与展示文案。
+ * @returns {$CancellablePromise<$models.SevenHoleDataSourceResponse>}
+ */
+export function GetSevenHoleDataSource() {
+    return $Call.ByID(1955924992).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType11($result);
+    }));
+}
+
+/**
+ * GetSevenHolePrbFiles 返回已加载的 7 孔 .prb / CSV 文件列表。
  * @returns {$CancellablePromise<$models.SevenHolePrbFileInfo[]>}
  */
 export function GetSevenHolePrbFiles() {
     return $Call.ByID(397896414).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
+        return $$createType13($result);
     }));
 }
 
@@ -153,7 +165,7 @@ export function GetSevenHolePrbFiles() {
  */
 export function GetSevenHoleValidRange() {
     return $Call.ByID(2107756326).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType14($result);
     }));
 }
 
@@ -163,7 +175,7 @@ export function GetSevenHoleValidRange() {
  */
 export function GetThreeHoleMachRange() {
     return $Call.ByID(814220490).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType14($result);
+        return $$createType15($result);
     }));
 }
 
@@ -173,7 +185,7 @@ export function GetThreeHoleMachRange() {
  */
 export function GetThreeHolePrbFiles() {
     return $Call.ByID(1531895847).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
+        return $$createType17($result);
     }));
 }
 
@@ -185,24 +197,26 @@ export function GetThreeHolePrbFiles() {
  */
 export function ImportCsvData() {
     return $Call.ByID(843116193).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType17($result);
+        return $$createType18($result);
     }));
 }
 
 /**
  * ImportSevenHoleCsvData 弹出文件选择对话框让用户选 7 孔数据 CSV，
  * 解析 P1-P7 + Patm + Tatm 列（共 9 列，全部必需）。
- * 
+ *
  * 与 5 孔 CSV 的区别：
  *   - 5 孔：P1-P5 必需，Patm/Tatm/PressureMode 可选
  *   - 7 孔：P1-P7 + Patm + Tatm 全部必需（spec §1.1 强制表压，无 PressureMode 列）
- * 
+ *
  * 支持 .csv/.txt/.dat 三种扩展名（与 3 孔一致），分隔符自动检测 tab vs 逗号。
+ * 注意：此方法导入的是"数据 CSV"（待计算的压力数据），与 LoadSevenHoleCalibrationCsvFiles
+ * 导入的"校准 CSV"（标定网格点系数）完全不同——后者是 7 份 GBK 编码的标定文件。
  * @returns {$CancellablePromise<$models.SevenHoleImportCsvDataResponse>}
  */
 export function ImportSevenHoleCsvData() {
     return $Call.ByID(2368340882).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType18($result);
+        return $$createType19($result);
     }));
 }
 
@@ -214,7 +228,7 @@ export function ImportSevenHoleCsvData() {
  */
 export function ImportThreeHoleCsvData() {
     return $Call.ByID(2643417749).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType19($result);
+        return $$createType20($result);
     }));
 }
 
@@ -250,25 +264,47 @@ export function IsThreeHolePrbLoaded() {
  */
 export function LoadPrbFiles() {
     return $Call.ByID(1484034861).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType20($result);
+        return $$createType21($result);
     }));
 }
 
 /**
- * LoadSevenHolePrbFiles 弹出多选文件对话框，让用户选择 7 个 .prb 校准文件
- * （1.prb..7.prb），加载后构建 SevenHolePrbInterpolator 并缓存到 sevenHoleState。
- * 
- * 文件名约定（与 shared/algorithms/go/sevenhole/interpolation/testdata/prb/ 一致）：
- *   - "7.prb" → 内区网格（13×13=169 点，a/b ∈ [-30,30] 步长 5）
- *   - "1.prb".."6.prb" → 外区扇区 1..6（每个 4×13=52 点，θ ∈ [30,45] 步长 5）
- * 
- * 文件名 basename（不含扩展名）必须为 "1".."7" 之一的纯数字字符串；
- * 不满足约定时返回错误，提示用户按规范命名。
+ * LoadSevenHoleCalibrationCsvFiles 加载已分配好的 7 个校准 CSV 文件路径
+ * （1 份内区 CSV + 6 份外区 CSV，文件名约定：含"小角度区"→内区，含"大角度N区"→扇区 N）。
+ *
+ * 与 LoadSevenHolePrbFiles 同结构，区别仅在内/外区文件解析走 CSV 路径
+ * （GBK 解码 + 列位置契约 + 退化边抖动，详见 seven_hole_csv.go）。
+ * 解析失败的错误信息含文件路径，便于前端定位是哪个 CSV 出问题。
+ * @param {string} innerPath
+ * @param {string[]} outerPaths
  * @returns {$CancellablePromise<$models.SevenHoleLoadPrbResponse>}
  */
-export function LoadSevenHolePrbFiles() {
-    return $Call.ByID(1460511666).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
+export function LoadSevenHoleCalibrationCsvFiles(innerPath, outerPaths) {
+    return $Call.ByID(1952451816, innerPath, outerPaths).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType22($result);
+    }));
+}
+
+/**
+ * LoadSevenHolePrbFiles 加载已分配好的 7 个 .prb 文件路径（1 个内区 + 6 个扇区）。
+ * 
+ * 与旧实现的差异（对齐 wind-daq 遍历测试 §5.6）：
+ *   - 旧实现：后端弹多选对话框 + 后端按 basename 路由 sector
+ *   - 新实现：前端弹对话框 + 前端按 basename 分配 sector + 后端只接收已分配的 inner+outer[6]
+ * 
+ * 设计要点：
+ *   - 内区必须最先加载：外区插值在边界场景会回查内区网格（spec §5）
+ *   - sector 编号 1..6 对应 outerPaths[0..5]，与 7 孔探针外围孔位物理编号一致
+ *   - 外区路径数必须为 6，否则返回错误（避免静默用零值导致后续解析失败）
+ *   - 文件路径由前端按 basename 分配（"7.prb"→内区，"1.prb"~"6.prb"→扇区 n），
+ *     后端不再做 basename 路由，便于前端在 UI 上同步展示每个槽位的文件名
+ * @param {string} innerPath
+ * @param {string[]} outerPaths
+ * @returns {$CancellablePromise<$models.SevenHoleLoadPrbResponse>}
+ */
+export function LoadSevenHolePrbFiles(innerPath, outerPaths) {
+    return $Call.ByID(1460511666, innerPath, outerPaths).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType22($result);
     }));
 }
 
@@ -280,7 +316,7 @@ export function LoadSevenHolePrbFiles() {
  */
 export function LoadThreeHolePrbFiles() {
     return $Call.ByID(2882600435).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
+        return $$createType23($result);
     }));
 }
 
@@ -312,6 +348,22 @@ export function OpenThreeHoleHelpDoc() {
 }
 
 /**
+ * PickSevenHoleFiles 弹出多选文件对话框，让用户选择 7 孔 PRB 或校准 CSV 文件。
+ *
+ * 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成
+ * （assignSevenHoleFilesByName / assignSevenHoleCsvFilesByName）。
+ * 这样后端无需关心文件名约定，前端可在 UI 上展示"哪些文件未被识别"。
+ *
+ * 取消选择时返回 Success=true + 空 Paths（与 Wails 对话框"OK 但无选择"语义一致）。
+ * @returns {$CancellablePromise<$models.SevenHolePickFilesResponse>}
+ */
+export function PickSevenHoleFiles() {
+    return $Call.ByID(3076596409).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType24($result);
+    }));
+}
+
+/**
  * SetActiveProbe 设置当前会话的探针类型。
  * 允许覆盖式更新：用户从工作区返回欢迎页后可再次选择其他探针类型。
  * 各探针 service 的 .prb / 输入状态由各 service 自行保留，切换不会丢失。
@@ -334,15 +386,17 @@ const $$createType7 = $Create.Array($$createType6);
 const $$createType8 = $models.MachRangeResponse.createFrom;
 const $$createType9 = $models.PrbFileInfo.createFrom;
 const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $models.SevenHolePrbFileInfo.createFrom;
-const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = $models.SevenHoleValidRangeResponse.createFrom;
-const $$createType14 = $models.ThreeHoleMachRangeResponse.createFrom;
-const $$createType15 = $models.ThreeHolePrbFileInfo.createFrom;
-const $$createType16 = $Create.Array($$createType15);
-const $$createType17 = $models.ImportCsvDataResponse.createFrom;
-const $$createType18 = $models.SevenHoleImportCsvDataResponse.createFrom;
-const $$createType19 = $models.ThreeHoleImportCsvDataResponse.createFrom;
-const $$createType20 = $models.LoadPrbResponse.createFrom;
-const $$createType21 = $models.SevenHoleLoadPrbResponse.createFrom;
-const $$createType22 = $models.ThreeHoleLoadPrbResponse.createFrom;
+const $$createType11 = $models.SevenHoleDataSourceResponse.createFrom;
+const $$createType12 = $models.SevenHolePrbFileInfo.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = $models.SevenHoleValidRangeResponse.createFrom;
+const $$createType15 = $models.ThreeHoleMachRangeResponse.createFrom;
+const $$createType16 = $models.ThreeHolePrbFileInfo.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = $models.ImportCsvDataResponse.createFrom;
+const $$createType19 = $models.SevenHoleImportCsvDataResponse.createFrom;
+const $$createType20 = $models.ThreeHoleImportCsvDataResponse.createFrom;
+const $$createType21 = $models.LoadPrbResponse.createFrom;
+const $$createType22 = $models.SevenHoleLoadPrbResponse.createFrom;
+const $$createType23 = $models.ThreeHoleLoadPrbResponse.createFrom;
+const $$createType24 = $models.SevenHolePickFilesResponse.createFrom;

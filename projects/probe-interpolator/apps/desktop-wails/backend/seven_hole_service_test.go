@@ -1,9 +1,11 @@
 package backend
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -72,8 +74,8 @@ func readSevenHoleTestPrb(t *testing.T, name string) []string {
 }
 
 // setupSevenHoleLoadedApp 构造一个已加载真实 PRB 文件集的 App，用于多数测试用例。
-// 加载顺序与生产代码一致：内区（7.prb）最先，外区 1..6 顺序跟随。
-// prbFiles 字段同步填充，与生产代码 LoadSevenHolePrbFiles 行为对齐。
+// 加载顺序与生产代码一致：内区（7.prb，Sector=7）最先，外区 1..6（Sector=n）顺序跟随。
+// prbFiles / dataSource 字段同步填充，与生产代码 LoadSevenHolePrbFiles 行为对齐。
 func setupSevenHoleLoadedApp(t *testing.T) *App {
 	t.Helper()
 	interpolator := seven_interp.NewSevenHolePrbInterpolator()
@@ -83,8 +85,9 @@ func setupSevenHoleLoadedApp(t *testing.T) *App {
 		t.Fatalf("加载内区 7.prb 失败: %v", err)
 	}
 
+	// 与生产代码 buildSevenHoleFileList 一致：内区 Sector=7，外区 Sector=n。
 	prbFiles := []SevenHolePrbFileInfo{
-		{FilePath: "7.prb", FileName: "7.prb", Sector: 0},
+		{FilePath: "7.prb", FileName: "7.prb", Sector: 7, PointCount: interpolator.GetInnerPointCount()},
 	}
 
 	for sector := 1; sector <= 6; sector++ {
@@ -94,7 +97,10 @@ func setupSevenHoleLoadedApp(t *testing.T) *App {
 			t.Fatalf("加载外区 %s 失败: %v", name, err)
 		}
 		prbFiles = append(prbFiles, SevenHolePrbFileInfo{
-			FilePath: name, FileName: name, Sector: sector,
+			FilePath:   name,
+			FileName:   name,
+			Sector:     sector,
+			PointCount: interpolator.GetOuterPointCount(sector),
 		})
 	}
 
@@ -102,7 +108,12 @@ func setupSevenHoleLoadedApp(t *testing.T) *App {
 		t.Fatal("7 孔 PRB 加载后 IsLoaded 应为 true")
 	}
 
-	return &App{sevenHole: sevenHoleState{interpolator: interpolator, prbFiles: prbFiles}}
+	// dataSource="prb" 与生产代码 LoadSevenHolePrbFiles 一致，便于 GetSevenHoleDataSource 测试。
+	return &App{sevenHole: sevenHoleState{
+		interpolator: interpolator,
+		prbFiles:     prbFiles,
+		dataSource:   "prb",
+	}}
 }
 
 // ==================== 输入转换测试 ====================
@@ -425,18 +436,22 @@ func TestGetSevenHoleValidRange_Loaded(t *testing.T) {
 }
 
 // TestGetSevenHolePrbFiles_Loaded 验证加载后返回 7 个文件信息，顺序为内区 + 外区 1..6。
+// 与生产代码 buildSevenHoleFileList 一致：内区 Sector=7，外区 Sector=n。
 func TestGetSevenHolePrbFiles_Loaded(t *testing.T) {
 	app := setupSevenHoleLoadedApp(t)
 	files := app.GetSevenHolePrbFiles()
 	if len(files) != 7 {
 		t.Fatalf("应返回 7 个文件, got %d", len(files))
 	}
-	// 第 1 个是内区（Sector=0）
-	if files[0].Sector != 0 {
-		t.Errorf("第 1 个文件应为内区 Sector=0, got %d", files[0].Sector)
+	// 第 1 个是内区（Sector=7，对应 7.prb）
+	if files[0].Sector != 7 {
+		t.Errorf("第 1 个文件应为内区 Sector=7, got %d", files[0].Sector)
 	}
 	if files[0].FileName != "7.prb" {
 		t.Errorf("第 1 个文件名应为 7.prb, got %q", files[0].FileName)
+	}
+	if files[0].PointCount != 169 {
+		t.Errorf("内区 PointCount 应为 169, got %d", files[0].PointCount)
 	}
 	// 第 2..7 个是外区 1..6
 	for i := 1; i < 7; i++ {
@@ -447,5 +462,332 @@ func TestGetSevenHolePrbFiles_Loaded(t *testing.T) {
 		if files[i].FileName != expectedName {
 			t.Errorf("第 %d 个文件名应为 %s, got %q", i+1, expectedName, files[i].FileName)
 		}
+	}
+}
+
+// ==================== 新增测试：路径式加载与数据源切换 ====================
+// 以下测试覆盖 LoadSevenHolePrbFiles / LoadSevenHoleCalibrationCsvFiles /
+// GetSevenHoleDataSource 三个新接口的契约，与 wind-daq 遍历测试 §5.6 行为对齐。
+
+// sevenHolePrbFilePaths 返回测试 PRB 目录下的 7 个 PRB 文件完整路径。
+// 失败时返回 nil，调用方据此 Skip。
+func sevenHolePrbFilePaths(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := sevenHolePrbDir(t)
+	if dir == "" {
+		t.Skipf("无法定位 7 孔 PRB 测试数据目录")
+		return "", nil
+	}
+	inner := filepath.Join(dir, "7.prb")
+	outers := make([]string, 6)
+	for i := 1; i <= 6; i++ {
+		outers[i-1] = filepath.Join(dir, fmt.Sprintf("%d.prb", i))
+	}
+	return inner, outers
+}
+
+// TestLoadSevenHolePrbFiles_Success 验证前端已分配好的 7 份 PRB 路径
+// 经 LoadSevenHolePrbFiles 成功加载，返回结果含正确 Files/DataSource/PointCount。
+func TestLoadSevenHolePrbFiles_Success(t *testing.T) {
+	inner, outers := sevenHolePrbFilePaths(t)
+
+	app := &App{}
+	resp := app.LoadSevenHolePrbFiles(inner, outers)
+	if !resp.Success {
+		t.Fatalf("LoadSevenHolePrbFiles 应成功, got error: %s", resp.Error)
+	}
+	if resp.Data == nil {
+		t.Fatal("Data 不应为 nil")
+	}
+	if resp.Data.DataSource != "prb" {
+		t.Errorf("DataSource = %q, want \"prb\"", resp.Data.DataSource)
+	}
+	if len(resp.Data.Files) != 7 {
+		t.Errorf("Files 长度 = %d, want 7", len(resp.Data.Files))
+	}
+	// 第 1 个文件应为内区（Sector=7，PointCount=169）
+	if resp.Data.Files[0].Sector != 7 {
+		t.Errorf("Files[0].Sector = %d, want 7", resp.Data.Files[0].Sector)
+	}
+	if resp.Data.Files[0].PointCount != 169 {
+		t.Errorf("Files[0].PointCount = %d, want 169", resp.Data.Files[0].PointCount)
+	}
+	if resp.Data.InnerPointCount != 169 {
+		t.Errorf("InnerPointCount = %d, want 169", resp.Data.InnerPointCount)
+	}
+	// 各扇区外区点数应 > 0（动态值，至少 2×13=26）
+	for i, c := range resp.Data.OuterPointCounts {
+		if c <= 0 {
+			t.Errorf("OuterPointCounts[%d] = %d, want > 0", i, c)
+		}
+	}
+
+	// 加载后状态查询：IsSevenHolePrbLoaded / GetSevenHoleDataSource / GetSevenHolePrbFiles
+	if !app.IsSevenHolePrbLoaded() {
+		t.Error("加载后 IsSevenHolePrbLoaded 应为 true")
+	}
+	dsResp := app.GetSevenHoleDataSource()
+	if !dsResp.Success || dsResp.Data != "prb" {
+		t.Errorf("GetSevenHoleDataSource = %q, want \"prb\"", dsResp.Data)
+	}
+	files := app.GetSevenHolePrbFiles()
+	if len(files) != 7 {
+		t.Errorf("GetSevenHolePrbFiles 长度 = %d, want 7", len(files))
+	}
+}
+
+// TestLoadSevenHolePrbFiles_MissingInner 验证缺少内区路径时报错。
+func TestLoadSevenHolePrbFiles_MissingInner(t *testing.T) {
+	app := &App{}
+	_, outers := sevenHolePrbFilePaths(t)
+	resp := app.LoadSevenHolePrbFiles("", outers)
+	if resp.Success {
+		t.Error("缺少 innerPath 时 Success 应为 false")
+	}
+	if resp.Error == "" {
+		t.Error("缺少 innerPath 时 Error 应有提示")
+	}
+}
+
+// TestLoadSevenHolePrbFiles_WrongOuterCount 验证外区路径数不等于 6 时报错。
+func TestLoadSevenHolePrbFiles_WrongOuterCount(t *testing.T) {
+	app := &App{}
+	inner, outers := sevenHolePrbFilePaths(t)
+	// 只传 5 个外区路径，应触发错误
+	resp := app.LoadSevenHolePrbFiles(inner, outers[:5])
+	if resp.Success {
+		t.Error("外区数=5 时 Success 应为 false")
+	}
+	if resp.Error == "" {
+		t.Error("外区数=5 时 Error 应有提示")
+	}
+}
+
+// TestLoadSevenHolePrbFiles_MissingOuterPath 验证外区路径数组中含空字符串时报错。
+func TestLoadSevenHolePrbFiles_MissingOuterPath(t *testing.T) {
+	app := &App{}
+	inner, outers := sevenHolePrbFilePaths(t)
+	// 把扇区 3 的路径置空
+	outers[2] = ""
+	resp := app.LoadSevenHolePrbFiles(inner, outers)
+	if resp.Success {
+		t.Error("外区路径含空字符串时 Success 应为 false")
+	}
+	// 错误信息应明确指出是 3.prb 文件缺失（而非任意含 "3" 的字符串），
+	// 避免回归被掩盖。当前模板为 "缺少 %d.prb 外区文件路径"。
+	if !strings.Contains(resp.Error, "3.prb") {
+		t.Errorf("Error 应含 \"3.prb\" 提示, got: %s", resp.Error)
+	}
+}
+
+// TestLoadSevenHolePrbFiles_BadInnerPath 验证内区路径无法读取时报错。
+func TestLoadSevenHolePrbFiles_BadInnerPath(t *testing.T) {
+	app := &App{}
+	_, outers := sevenHolePrbFilePaths(t)
+	resp := app.LoadSevenHolePrbFiles("nonexistent.prb", outers)
+	if resp.Success {
+		t.Error("不存在的 innerPath 时 Success 应为 false")
+	}
+	if !strings.Contains(resp.Error, "读取内区 PRB 失败") {
+		t.Errorf("Error 应明确为读取内区失败, got: %s", resp.Error)
+	}
+}
+
+// TestGetSevenHoleDataSource_NotLoaded 验证未加载时返回空字符串。
+func TestGetSevenHoleDataSource_NotLoaded(t *testing.T) {
+	app := &App{}
+	resp := app.GetSevenHoleDataSource()
+	if !resp.Success {
+		t.Error("GetSevenHoleDataSource 应总返回 Success=true")
+	}
+	if resp.Data != "" {
+		t.Errorf("未加载时 Data 应为空字符串, got %q", resp.Data)
+	}
+}
+
+// TestGetSevenHoleDataSource_Loaded 验证加载 PRB 后返回 "prb"。
+func TestGetSevenHoleDataSource_Loaded(t *testing.T) {
+	app := setupSevenHoleLoadedApp(t)
+	resp := app.GetSevenHoleDataSource()
+	if !resp.Success {
+		t.Error("加载后 GetSevenHoleDataSource 应返回 Success=true")
+	}
+	if resp.Data != "prb" {
+		t.Errorf("加载 PRB 后 Data = %q, want \"prb\"", resp.Data)
+	}
+}
+
+// ==================== 校准 CSV 导入测试 ====================
+// 与 wind-daq 遍历测试共用相同数据集（W532.202608.P.7H.1-01），
+// 证明 probe-interpolator 的 CSV 解析与 wind-daq 完全一致。
+
+// sevenHoleCalDataDir 定位七孔校准 CSV 数据目录。
+// 与 wind-daq 测试相同：用户提供的校准导出样例，GBK 编码、18 列。
+// 路径定位失败时 Skip 而非 Fatal，避免在未拉取子模块的环境下整批测试失败。
+func sevenHoleCalDataDir(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	dir := filepath.Dir(file)
+	// 向上回溯 5 级到 repo root，再拼接 projects/wind-daq/docs/7-hole-cal-data/
+	for i := 0; i < 5; i++ {
+		dir = filepath.Dir(dir)
+	}
+	target := filepath.Join(dir, "projects", "wind-daq", "docs", "7-hole-cal-data")
+	if _, err := os.Stat(target); err != nil {
+		t.Skipf("校准 CSV 数据目录不可用: %v", err)
+		return ""
+	}
+	return target
+}
+
+// sevenHoleCalCsvPaths 扫描校准 CSV 目录，按文件名约定分配 7 份文件路径：
+//   - 含"(小角度区)" → 内区
+//   - 含"(大角度N区)"（N=1..6） → 扇区 N
+//
+// 与前端 assignSevenHoleCsvFilesByName 关键字匹配规则完全一致（括号锚定），
+// 避免硬编码特定数据集前缀，数据集重命名时测试仍可用。
+// 找不到内区或任一扇区时返回 error，调用方决定是否 Skip。
+func sevenHoleCalCsvPaths(dir string) (string, [6]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", [6]string{}, fmt.Errorf("读取校准 CSV 目录失败: %w", err)
+	}
+	var inner string
+	var outer [6]string
+	outerFound := make(map[int]bool)
+	outerRe := regexp.MustCompile(`\(大角度([1-6])区\)`)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".csv") {
+			continue
+		}
+		// 锚定关键字：与前端 assignSevenHoleCsvFilesByName 完全一致（括号包裹）
+		if strings.Contains(name, "(小角度区)") {
+			inner = filepath.Join(dir, name)
+			continue
+		}
+		m := outerRe.FindStringSubmatch(name)
+		if len(m) == 2 {
+			n := int(m[1][0] - '0')
+			outer[n-1] = filepath.Join(dir, name)
+			outerFound[n] = true
+		}
+	}
+	if inner == "" {
+		return "", [6]string{}, fmt.Errorf("校准 CSV 目录 %s 中未找到含 \"(小角度区)\" 的文件", dir)
+	}
+	for sector := 1; sector <= 6; sector++ {
+		if !outerFound[sector] {
+			return "", [6]string{}, fmt.Errorf("校准 CSV 目录 %s 中未找到含 \"(大角度%d区)\" 的文件", dir, sector)
+		}
+	}
+	return inner, outer, nil
+}
+
+// TestLoadSevenHoleCalibrationCsvFiles_Success 验证校准 CSV → 插值器全链路成功。
+// 与 wind-daq TestLoadSevenHoleCalibrationCsvFiles_Success 一致：
+// 7 份 GBK CSV 解析、退化边抖动、PRB 行集构建、加载成功。
+func TestLoadSevenHoleCalibrationCsvFiles_Success(t *testing.T) {
+	dir := sevenHoleCalDataDir(t)
+	if dir == "" {
+		return
+	}
+	inner, outer, err := sevenHoleCalCsvPaths(dir)
+	if err != nil {
+		t.Skipf("校准 CSV 文件集不完整: %v", err)
+		return
+	}
+
+	app := &App{}
+	resp := app.LoadSevenHoleCalibrationCsvFiles(inner, outer[:])
+	if !resp.Success {
+		t.Fatalf("LoadSevenHoleCalibrationCsvFiles 应成功, got error: %s", resp.Error)
+	}
+	if resp.Data == nil {
+		t.Fatal("Data 不应为 nil")
+	}
+	if resp.Data.DataSource != "calibration-csv" {
+		t.Errorf("DataSource = %q, want \"calibration-csv\"", resp.Data.DataSource)
+	}
+	if len(resp.Data.Files) != 7 {
+		t.Errorf("Files 长度 = %d, want 7", len(resp.Data.Files))
+	}
+	// CSV 解析后内区应为 169 点（与 PRB 加载结果一致）
+	if resp.Data.InnerPointCount != 169 {
+		t.Errorf("InnerPointCount = %d, want 169", resp.Data.InnerPointCount)
+	}
+	// 退化边抖动时 Warnings 应被填充（让用户可观测 CSV 解析的隐式修正）
+	// 注意：具体抖动次数取决于 CSV 数据，这里只验证存在性而非具体值
+	if resp.Data.Warnings != nil {
+		for _, w := range resp.Data.Warnings {
+			if !strings.Contains(w, "退化边") {
+				t.Errorf("Warnings 应描述退化边抖动, got: %s", w)
+			}
+		}
+	}
+
+	// 验证 dataSource 状态已写入 sevenHoleState
+	dsResp := app.GetSevenHoleDataSource()
+	if dsResp.Data != "calibration-csv" {
+		t.Errorf("加载 CSV 后 DataSource = %q, want \"calibration-csv\"", dsResp.Data)
+	}
+
+	// 验证可立即用于计算（与 PRB 路径行为对齐）
+	calcResp := app.CalculateSevenHole(SevenHoleInterpolationInput{
+		P1: 213.633, P2: -1551.4, P3: -1269.183, P4: -9.0,
+		P5: 2093.683, P6: 2049.133, P7: 3699.367,
+		Patm: 98876.0, Tatm: 28.0,
+	})
+	if !calcResp.Success {
+		t.Errorf("CSV 加载后计算应成功, got: %s", calcResp.Error)
+	}
+}
+
+// TestLoadSevenHoleCalibrationCsvFiles_MissingFile 验证缺文件时报错且含路径。
+func TestLoadSevenHoleCalibrationCsvFiles_MissingFile(t *testing.T) {
+	dir := sevenHoleCalDataDir(t)
+	if dir == "" {
+		return
+	}
+	inner, outer, err := sevenHoleCalCsvPaths(dir)
+	if err != nil {
+		t.Skipf("校准 CSV 文件集不完整: %v", err)
+		return
+	}
+	// 把扇区 2 的 CSV 路径改为不存在的文件
+	outer[1] = filepath.Join(dir, "missing.csv")
+
+	app := &App{}
+	resp := app.LoadSevenHoleCalibrationCsvFiles(inner, outer[:])
+	if resp.Success {
+		t.Error("缺文件时 Success 应为 false")
+	}
+	if !strings.Contains(resp.Error, "missing.csv") {
+		t.Errorf("Error 应含缺失文件名, got: %s", resp.Error)
+	}
+}
+
+// TestLoadSevenHoleCalibrationCsvFiles_WrongOuterCount 验证外区数不等于 6 时报错。
+func TestLoadSevenHoleCalibrationCsvFiles_WrongOuterCount(t *testing.T) {
+	dir := sevenHoleCalDataDir(t)
+	if dir == "" {
+		return
+	}
+	inner, outer, err := sevenHoleCalCsvPaths(dir)
+	if err != nil {
+		t.Skipf("校准 CSV 文件集不完整: %v", err)
+		return
+	}
+	app := &App{}
+	// 只传 4 个外区路径
+	resp := app.LoadSevenHoleCalibrationCsvFiles(inner, outer[:4])
+	if resp.Success {
+		t.Error("外区数=4 时 Success 应为 false")
 	}
 }

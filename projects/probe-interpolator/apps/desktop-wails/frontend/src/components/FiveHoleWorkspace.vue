@@ -15,7 +15,7 @@ import {
   type FiveHoleInterpolationResult,
 } from '../adapters/five-hole'
 import { escapeCsvField } from '../utils/csv'
-import { formatVal, formatInt } from '../utils/format'
+import { formatVal, formatInt, formatResultNum } from '../utils/format'
 
 // emit('back') 由顶栏"返回"按钮触发，通知父组件 App.vue 切回欢迎页。
 // 各探针 service 的 .prb / 输入状态由后端独立保留，再次进入本工作区时会通过 onMounted 自动恢复。
@@ -71,6 +71,11 @@ async function openHelp() {
 function resultVelocity(r: FiveHoleInterpolationResult): number {
   return r.V ?? r.velocity
 }
+
+// fmtNum 是 formatResultNum 的本地别名，5/3/7 孔 workspace 共享同一份泛型实现。
+// 见 utils/format.ts。无效行（r=null 或 IsValid=false）统一显示 "-"。
+const fmtNum = (r: FiveHoleInterpolationResult | null, sel: (r: FiveHoleInterpolationResult) => number): string =>
+  formatResultNum(r, sel)
 
 // ==================== 数据操作 ====================
 function buildCurrentInput(): FiveHoleInterpolationInput {
@@ -217,15 +222,15 @@ function exportResults() {
   const headers = ['序号', 'α(°) 迎角', 'β(°) 侧滑角', 'Ma', 'V(m/s)', 'Vx(m/s)', 'Vy(m/s)', 'Vz(m/s)', 'P0(Pa)', 'Ps(Pa)', '状态']
   const rows = results.value.map((r, idx) => [
     idx + 1,
-    r ? formatVal(r.alpha) : '-',
-    r ? formatVal(r.beta) : '-',
-    r ? formatVal(r.machNumber) : '-',
-    r ? formatVal(resultVelocity(r)) : '-',
-    r ? formatVal(r.Vx) : '-',
-    r ? formatVal(r.Vy) : '-',
-    r ? formatVal(r.Vz) : '-',
-    r ? formatVal(r.P0) : '-',
-    r ? formatVal(r.Ps) : '-',
+    fmtNum(r, x => x.alpha),
+    fmtNum(r, x => x.beta),
+    fmtNum(r, x => x.machNumber),
+    fmtNum(r, x => resultVelocity(x)),
+    fmtNum(r, x => x.Vx),
+    fmtNum(r, x => x.Vy),
+    fmtNum(r, x => x.Vz),
+    fmtNum(r, x => x.P0),
+    fmtNum(r, x => x.Ps),
     r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
@@ -591,15 +596,15 @@ function exportResults() {
               <tbody>
                 <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
                   <td class="col-num">{{ idx + 1 }}</td>
-                  <td>{{ r ? formatVal(r.alpha) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.beta) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.machNumber) : '-' }}</td>
-                  <td>{{ r ? formatVal(resultVelocity(r)) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Vx) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Vy) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Vz) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.P0) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Ps) : '-' }}</td>
+                  <td>{{ fmtNum(r, x => x.alpha) }}</td>
+                  <td>{{ fmtNum(r, x => x.beta) }}</td>
+                  <td>{{ fmtNum(r, x => x.machNumber) }}</td>
+                  <td>{{ fmtNum(r, x => resultVelocity(x)) }}</td>
+                  <td>{{ fmtNum(r, x => x.Vx) }}</td>
+                  <td>{{ fmtNum(r, x => x.Vy) }}</td>
+                  <td>{{ fmtNum(r, x => x.Vz) }}</td>
+                  <td>{{ fmtNum(r, x => x.P0) }}</td>
+                  <td>{{ fmtNum(r, x => x.Ps) }}</td>
                   <td class="col-status">
                     <span v-if="r && r.isValid" class="status-badge success">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>

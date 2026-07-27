@@ -18,7 +18,7 @@ import {
   type ThreeHoleInterpolationResult,
 } from '../adapters/three-hole'
 import { escapeCsvField } from '../utils/csv'
-import { formatVal, formatInt } from '../utils/format'
+import { formatVal, formatInt, formatResultNum } from '../utils/format'
 
 // emit('back') 由顶栏"返回"按钮触发，通知父组件 App.vue 切回欢迎页。
 // 各探针 service 的 .prb / 输入状态由后端独立保留，再次进入本工作区时会通过 onMounted 自动恢复。
@@ -53,6 +53,11 @@ function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' =
   statusMsg.value = msg
   statusType.value = type
 }
+
+// fmtNum 是 formatResultNum 的本地别名，5/3/7 孔 workspace 共享同一份泛型实现。
+// 见 utils/format.ts。无效行（r=null 或 IsValid=false）统一显示 "-"。
+const fmtNum = (r: ThreeHoleInterpolationResult | null, sel: (r: ThreeHoleInterpolationResult) => number): string =>
+  formatResultNum(r, sel)
 
 async function openHelp() {
   if (!isWailsAvailable()) {
@@ -211,10 +216,10 @@ function exportResults() {
   const headers = ['序号', 'α(°) 迎角', 'Ma', 'Pt(Pa)', 'Ps(Pa)', '状态']
   const rows = results.value.map((r, idx) => [
     idx + 1,
-    r ? formatVal(r.alpha) : '-',
-    r ? formatVal(r.machNumber) : '-',
-    r ? formatVal(r.P0) : '-',
-    r ? formatVal(r.Ps) : '-',
+    fmtNum(r, x => x.alpha),
+    fmtNum(r, x => x.machNumber),
+    fmtNum(r, x => x.P0),
+    fmtNum(r, x => x.Ps),
     r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
@@ -561,10 +566,10 @@ function exportResults() {
               <tbody>
                 <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
                   <td class="col-num">{{ idx + 1 }}</td>
-                  <td>{{ r ? formatVal(r.alpha) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.machNumber) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.P0) : '-' }}</td>
-                  <td>{{ r ? formatVal(r.Ps) : '-' }}</td>
+                  <td>{{ fmtNum(r, x => x.alpha) }}</td>
+                  <td>{{ fmtNum(r, x => x.machNumber) }}</td>
+                  <td>{{ fmtNum(r, x => x.P0) }}</td>
+                  <td>{{ fmtNum(r, x => x.Ps) }}</td>
                   <td class="col-status">
                     <span v-if="r && r.isValid" class="status-badge success">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>

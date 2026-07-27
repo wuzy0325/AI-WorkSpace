@@ -7,9 +7,11 @@
 // 与 5 孔 / 3 孔 adapter 的关键差异：
 //   - 7 孔无 PressureMode 字段（spec §1.1 强制表压输入）
 //   - 7 孔无 MachRange 概念，改用 ValidRange（Alpha/Beta 范围，Mach 恒为 0）
-//   - loadPrbFiles 一次加载 7 个文件（1.prb..7.prb），返回 SevenHoleLoadPrbResult
+//   - loadPrbFiles / loadCalibrationCsvFiles 接收"已分配好"的 inner + outer[6] 路径，
+//     文件名分配在前端完成（seven-hole-helpers.ts）
 //
 // 注意：bindings 目录由 `wails3 generate bindings` 自动生成，不要手动修改。
+//       修改后端 App 方法签名后必须重新生成 bindings 才能被前端调用。
 
 import * as WailsApp from '../../bindings/probe-interpolator/apps/desktop-wails/backend/app'
 import * as models from '../../bindings/probe-interpolator/apps/desktop-wails/backend/models'
@@ -21,11 +23,16 @@ export type SevenHolePrbValidRange = models.SevenHolePrbValidRange
 export type SevenHoleLoadPrbResult = models.SevenHoleLoadPrbResult
 export type SevenHoleInterpolationInput = models.SevenHoleInterpolationInput
 export type SevenHoleInterpolationResult = models.SevenHoleInterpolationResult
+export type SevenHolePickFilesResponse = models.SevenHolePickFilesResponse
+export type SevenHoleDataSourceResponse = models.SevenHoleDataSourceResponse
 
 // GenericResponse 与 isWailsAvailable 已迁移到 ./common，此处 re-export 保持组件 import 路径不变。
 // isolatedModules 模式下 type 重导出必须用 export type，与 value 分开。
 export type { GenericResponse }
 export { isWailsAvailable }
+
+/** 七孔数据源类型（与后端 sevenHoleState.dataSource 字段同步） */
+export type SevenHoleDataSource = 'prb' | 'calibration-csv' | ''
 
 // ==================== API 封装 ====================
 // 每个方法都 catch 异常转为统一 [GenericResponse, Data] 元组返回，
@@ -33,19 +40,85 @@ export { isWailsAvailable }
 
 export const api = {
   /**
-   * loadPrbFiles 弹出多选文件对话框，让用户选 7 个 .prb 校准文件（1.prb..7.prb）并加载。
+   * loadPrbFiles 加载已分配好的 7 个 .prb 文件路径（1 个内区 + 6 个扇区）。
+   *
+   * 文件路径由前端按 basename 分配（assignSevenHoleFilesByName）：
+   *   - "7.prb" → innerPath
+   *   - "1.prb"~"6.prb" → outerPaths[0..5]
+   *
+   * 后端不再做 basename 路由——这样前端可在 UI 上同步展示每个槽位的文件名。
    * 返回 [错误信息, 加载结果]；加载结果为 null 表示失败或取消。
-   * 文件名 basename 必须为 "1".."7" 之一，否则后端返回错误。
    */
-  async loadPrbFiles(): Promise<[GenericResponse, SevenHoleLoadPrbResult | null]> {
+  async loadPrbFiles(
+    innerPath: string,
+    outerPaths: string[],
+  ): Promise<[GenericResponse, SevenHoleLoadPrbResult | null]> {
     try {
-      const resp = await WailsApp.LoadSevenHolePrbFiles()
+      const resp = await WailsApp.LoadSevenHolePrbFiles(innerPath, outerPaths)
       if (!resp.success) {
         return [{ success: false, error: resp.error } as GenericResponse, null]
       }
       return [{ success: true } as GenericResponse, resp.data ?? null]
     } catch (e) {
       return [{ success: false, error: String(e) } as GenericResponse, null]
+    }
+  },
+
+  /**
+   * loadCalibrationCsvFiles 加载已分配好的 7 个校准 CSV 文件路径。
+   * 与 loadPrbFiles 同结构，区别仅在解析路径走 GBK + 列位置契约（后端处理）。
+   * 文件路径由前端按 basename 分配（assignSevenHoleCsvFilesByName）：
+   *   - 文件名含"小角度区" → innerPath
+   *   - 文件名含"大角度N区" → outerPaths[N-1]
+   */
+  async loadCalibrationCsvFiles(
+    innerPath: string,
+    outerPaths: string[],
+  ): Promise<[GenericResponse, SevenHoleLoadPrbResult | null]> {
+    try {
+      const resp = await WailsApp.LoadSevenHoleCalibrationCsvFiles(innerPath, outerPaths)
+      if (!resp.success) {
+        return [{ success: false, error: resp.error } as GenericResponse, null]
+      }
+      return [{ success: true } as GenericResponse, resp.data ?? null]
+    } catch (e) {
+      return [{ success: false, error: String(e) } as GenericResponse, null]
+    }
+  },
+
+  /**
+   * pickFiles 弹出支持 .prb 和 .csv 的多选文件对话框，仅返回用户选中的路径列表。
+   * 不解析、不分配槽位——分配逻辑在前端按 basename 完成。
+   * 取消选择时返回 Paths=[]（与 Wails 对话框"OK 但无选择"语义一致）。
+   */
+  async pickFiles(): Promise<[GenericResponse, string[]]> {
+    try {
+      const resp = await WailsApp.PickSevenHoleFiles()
+      if (!resp.success) {
+        return [{ success: false, error: resp.error } as GenericResponse, []]
+      }
+      return [{ success: true } as GenericResponse, resp.paths ?? []]
+    } catch (e) {
+      return [{ success: false, error: String(e) } as GenericResponse, []]
+    }
+  },
+
+  /**
+   * getDataSource 查询当前已加载的数据源类型。
+   * 取值："prb" / "calibration-csv" / ""（未加载）。
+   * 前端在初始化或切回 7 孔工作区时调用，用于决定槽位过滤器与展示文案。
+   */
+  async getDataSource(): Promise<[GenericResponse, SevenHoleDataSource]> {
+    try {
+      const resp = await WailsApp.GetSevenHoleDataSource()
+      if (!resp.success) {
+        return [{ success: false, error: resp.error } as GenericResponse, '']
+      }
+      // 后端 data 字段为 string，可能为 ""；空字符串表示未加载。
+      const ds = (resp.data ?? '') as SevenHoleDataSource
+      return [{ success: true } as GenericResponse, ds]
+    } catch (e) {
+      return [{ success: false, error: String(e) } as GenericResponse, '']
     }
   },
 
@@ -124,6 +197,8 @@ export const api = {
   /**
    * importCsvData 弹出文件选择对话框，解析 7 孔数据 CSV 为输入数组。
    * 与 5 孔 / 3 孔不同：7 孔 CSV 必含 P1-P7 + Patm + Tatm 共 9 列，全部必需。
+   * 注意：这是"数据 CSV"（待计算的压力数据），与 loadCalibrationCsvFiles 加载的"校准 CSV"
+   * （标定网格点系数）完全不同——后者是 7 份 GBK 编码的标定文件。
    */
   async importCsvData(): Promise<[GenericResponse, SevenHoleInterpolationInput[]]> {
     try {

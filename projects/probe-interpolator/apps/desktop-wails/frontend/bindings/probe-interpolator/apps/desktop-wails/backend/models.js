@@ -805,6 +805,53 @@ export class SevenHoleCalculateResponse {
     }
 }
 
+/**
+ * SevenHoleDataSourceResponse 返回当前已加载的 7 孔数据源类型。
+ * DataSource 取值："prb"（PRB 文件集）/ "calibration-csv"（校准 CSV）/ ""（未加载）。
+ */
+export class SevenHoleDataSourceResponse {
+    /**
+     * Creates a new SevenHoleDataSourceResponse instance.
+     * @param {Partial<SevenHoleDataSourceResponse>} [$$source = {}] - The source object to create the SevenHoleDataSourceResponse.
+     */
+    constructor($$source = {}) {
+        if (!("success" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["success"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["error"] = undefined;
+        }
+        if (!("data" in $$source)) {
+            /**
+             * "prb" | "calibration-csv" | ""
+             * @member
+             * @type {string}
+             */
+            this["data"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SevenHoleDataSourceResponse instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SevenHoleDataSourceResponse}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SevenHoleDataSourceResponse(/** @type {Partial<SevenHoleDataSourceResponse>} */($$parsedSource));
+    }
+}
+
 export class SevenHoleImportCsvDataResponse {
     /**
      * Creates a new SevenHoleImportCsvDataResponse instance.
@@ -951,11 +998,16 @@ export class SevenHoleInterpolationInput {
 
 /**
  * SevenHoleInterpolationResult 是 7 孔单点计算的输出。
- * 
+ *
  * 字段语义注意（与 5 孔反转，spec §2.2 / 附录 A）：
  *   - Alpha = 侧滑角（sideslip），5 孔里 Alpha 是迎角
  *   - Beta  = 迎角（angle of attack），5 孔里 Beta 是侧滑角
- * 
+ *
+ * Theta/Phi 是 PRB 网格原始角度坐标（deg），供前端展示与诊断：
+ *   - 内区（小角度）模式：Theta=Alpha、Phi=Beta（两套坐标系重合）
+ *   - 外区（大角度）模式：Theta 是探头坐标系俯仰角、Phi 是方位角；
+ *     Alpha/Beta 是经 convertThetaPhiToAlphaBeta 投影后的风洞坐标系角度
+ *
  * JSON tag 与 5 孔结果一致（P0/Ps/alpha/beta/velocity/dynamicPressure），
  * 便于前端结果表格组件复用同样的列定义。
  */
@@ -980,6 +1032,22 @@ export class SevenHoleInterpolationResult {
              * @type {number}
              */
             this["beta"] = 0;
+        }
+        if (!("theta" in $$source)) {
+            /**
+             * PRB 网格俯仰角（deg）：内区=Alpha，外区=原始 theta
+             * @member
+             * @type {number}
+             */
+            this["theta"] = 0;
+        }
+        if (!("phi" in $$source)) {
+            /**
+             * PRB 网格方位角（deg）：内区=Beta，外区=原始 phi
+             * @member
+             * @type {number}
+             */
+            this["phi"] = 0;
         }
         if (!("machNumber" in $$source)) {
             /**
@@ -1097,8 +1165,9 @@ export class SevenHoleLoadPrbResponse {
 }
 
 /**
- * SevenHoleLoadPrbResult 是加载 .prb 文件集后返回给前端的结果。
+ * SevenHoleLoadPrbResult 是加载 .prb / 校准 CSV 文件集后返回给前端的结果。
  * Files 按内区（7.prb）→ 外区 1..6 顺序排列；ValidRange 来自内区网格角点。
+ * InnerPointCount 固定 169（13×13，物理设计）；OuterPointCounts 为各扇区 thetaCount×13 动态值。
  */
 export class SevenHoleLoadPrbResult {
     /**
@@ -1120,6 +1189,30 @@ export class SevenHoleLoadPrbResult {
              */
             this["validRange"] = (new SevenHolePrbValidRange());
         }
+        if (!("innerPointCount" in $$source)) {
+            /**
+             * 内区实际点数（固定 169）
+             * @member
+             * @type {number}
+             */
+            this["innerPointCount"] = 0;
+        }
+        if (!("outerPointCounts" in $$source)) {
+            /**
+             * 各扇区外区实际点数（动态）
+             * @member
+             * @type {number[]}
+             */
+            this["outerPointCounts"] = Array.from({ length: 6 }, () => 0);
+        }
+        if (!("dataSource" in $$source)) {
+            /**
+             * "prb" | "calibration-csv"
+             * @member
+             * @type {string}
+             */
+            this["dataSource"] = "";
+        }
         if (!("warnings" in $$source)) {
             /**
              * @member
@@ -1139,7 +1232,7 @@ export class SevenHoleLoadPrbResult {
     static createFrom($$source = {}) {
         const $$createField0_0 = $$createType20;
         const $$createField1_0 = $$createType21;
-        const $$createField2_0 = $$createType10;
+        const $$createField5_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField0_0($$parsedSource["files"]);
@@ -1148,18 +1241,75 @@ export class SevenHoleLoadPrbResult {
             $$parsedSource["validRange"] = $$createField1_0($$parsedSource["validRange"]);
         }
         if ("warnings" in $$parsedSource) {
-            $$parsedSource["warnings"] = $$createField2_0($$parsedSource["warnings"]);
+            $$parsedSource["warnings"] = $$createField5_0($$parsedSource["warnings"]);
         }
         return new SevenHoleLoadPrbResult(/** @type {Partial<SevenHoleLoadPrbResult>} */($$parsedSource));
     }
 }
 
 /**
- * SevenHolePrbFileInfo 是单个 7 孔 .prb 校准文件的元信息。
- * Sector 字段标识文件角色：0=内区（7.prb），1..6=外区扇区 n（n.prb）。
- * 
+ * SevenHolePickFilesResponse 是 PickSevenHoleFiles 多选文件对话框的返回结果。
+ * 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成。
+ * 取消选择时 Paths 为空数组 + Success=true（与 Wails 对话框"OK 但无选择"语义一致）。
+ *
+ * Paths 字段不用 omitempty：后端已显式把 nil 转为 []string{}，保持空数组语义
+ * （取消时前端能拿到 []，而非 undefined），让前端 ?? [] 兜底与显式 [] 等价。
+ */
+export class SevenHolePickFilesResponse {
+    /**
+     * Creates a new SevenHolePickFilesResponse instance.
+     * @param {Partial<SevenHolePickFilesResponse>} [$$source = {}] - The source object to create the SevenHolePickFilesResponse.
+     */
+    constructor($$source = {}) {
+        if (!("success" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["success"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["error"] = undefined;
+        }
+        if (!("paths" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["paths"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SevenHolePickFilesResponse instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SevenHolePickFilesResponse}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType10;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("paths" in $$parsedSource) {
+            $$parsedSource["paths"] = $$createField2_0($$parsedSource["paths"]);
+        }
+        return new SevenHolePickFilesResponse(/** @type {Partial<SevenHolePickFilesResponse>} */($$parsedSource));
+    }
+}
+
+/**
+ * SevenHolePrbFileInfo 是单个 7 孔 .prb / 校准 CSV 文件的元信息。
+ * Sector 字段标识文件角色：7=内区（7.prb 或小角度区 CSV），1..6=外区扇区 n（n.prb 或大角度N区 CSV）。
+ *
  * 注意：曾经存在的 Loaded 字段已移除——后端只在全部 7 个文件成功加载后才写入 sevenHoleState，
  * 因此返回列表中的每一项都隐含 Loaded=true。前端若需要"是否已加载"判断应调用 IsSevenHolePrbLoaded。
+ *
+ * PointCount 字段：内区固定 169（13×13），扇区动态 = thetaCount×13（如 4×13=52、7×13=91）。
+ * 由算法包 GetInnerPointCount / GetOuterPointCount 运行时读取，不再使用 169/52 兼容约定值。
  */
 export class SevenHolePrbFileInfo {
     /**
@@ -1183,11 +1333,19 @@ export class SevenHolePrbFileInfo {
         }
         if (!("sector" in $$source)) {
             /**
-             * 0=inner (7.prb), 1..6=outer sector n
+             * 7=内区 (7.prb/小角度区 CSV)，1..6=外区扇区 n
              * @member
              * @type {number}
              */
             this["sector"] = 0;
+        }
+        if (!("pointCount" in $$source)) {
+            /**
+             * 内区固定 169；扇区动态 = thetaCount×13
+             * @member
+             * @type {number}
+             */
+            this["pointCount"] = 0;
         }
 
         Object.assign(this, $$source);

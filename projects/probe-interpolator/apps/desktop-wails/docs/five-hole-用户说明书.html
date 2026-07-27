@@ -1317,6 +1317,7 @@
                 <li><strong>有效</strong> - 数据在正常范围内，计算结果可信</li>
                 <li><strong>无效</strong> - 数据超出校准范围，计算结果可能不准确</li>
             </ul>
+            <p>无效行的数值列（α、β、Ma、V、Vx/Vy/Vz、P0、Ps）统一显示为"-"，不展示具体数值，避免与有效行结果混淆；状态列显示"无效"标签，鼠标悬停可查看具体原因。</p>
 
             <div class="tip info">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1353,8 +1354,9 @@
             <h3>导出文件内容</h3>
             <p>导出的CSV文件包含以下列：</p>
             <div class="code-block">
-                序号,α(°),β(°),Ma,V(m/s),Vx(m/s),Vy(m/s),Vz(m/s),P0(Pa),Ps(Pa),状态
+                序号,α(°) 迎角,β(°) 侧滑角,Ma,V(m/s),Vx(m/s),Vy(m/s),Vz(m/s),P0(Pa),Ps(Pa),状态
             </div>
+            <p>无效行的数值列以"-"占位，状态列显示"无效: &lt;原因&gt;"。</p>
 
             <div class="tip success">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

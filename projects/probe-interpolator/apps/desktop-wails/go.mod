@@ -7,6 +7,7 @@ require (
 	ai-workspace/shared/algorithms/go/sevenhole v0.0.0
 	ai-workspace/shared/algorithms/go/threehole v0.0.0
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.106
+	golang.org/x/text v0.40.0
 )
 
 require (
