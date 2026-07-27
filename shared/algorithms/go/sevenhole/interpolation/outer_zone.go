@@ -170,19 +170,19 @@ func (p *SevenHolePrbInterpolator) outerZoneTrySector(sector int, ka, kb float64
 // outerFindGridPointByKaKb 在扇区网格中查找 (ka,kb) 近似匹配的网格点。
 //
 // 容差选择 1e-6（远大于 gridEps=1e-9）：兜底路径用于自提取 PRB 反推场景，
-// (ka,kb) 来自同一份数据反算应 bit-for-bit 相等，1e-9 即可；但若 ka/kb
-// 来自外部 CSV 校准（浮点 16 位有效数字序列化，如 0.571 vs 0.5710000009999999），
-// 1e-9 会漏匹配。1e-6 同时覆盖两类来源且不会误跨网格（gridStep=5°，相邻
-// 网格点 ka/kb 差远大于 1e-6）。
+// 同时覆盖浮点序列化噪声且不会误跨网格。
 func outerFindGridPointByKaKb(sec *outerSector, ka, kb float64) (gridPoint, bool) {
-	const findGridPointEps = 1e-6
+	return outerFindGridPointByKaKbWithin(sec, ka, kb, 1e-6)
+}
+
+func outerFindGridPointByKaKbWithin(sec *outerSector, ka, kb, tolerance float64) (gridPoint, bool) {
 	if sec == nil {
 		return gridPoint{}, false
 	}
 	for it := 0; it < sec.thetaCount; it++ {
 		for ip := 0; ip < outerPhiCount; ip++ {
 			gp := &sec.points[it][ip]
-			if math.Abs(gp.ka-ka) < findGridPointEps && math.Abs(gp.kb-kb) < findGridPointEps {
+			if math.Abs(gp.ka-ka) < tolerance && math.Abs(gp.kb-kb) < tolerance {
 				return *gp, true
 			}
 		}

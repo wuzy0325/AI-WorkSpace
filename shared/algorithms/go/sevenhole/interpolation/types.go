@@ -30,9 +30,19 @@ type InterpolationInput struct {
 // JSON tags intentionally match the five-hole InterpolationResult so the
 // traversal pipeline (API responses, CSV computed columns, frontend views)
 // can be reused unchanged.
+//
+// Theta/Phi 是 PRB 网格原始角度坐标（deg），供前端展示与诊断使用：
+//   - 内区（小角度）模式：网格坐标系就是 (alpha, beta)，故 Theta=Alpha、Phi=Beta
+//   - 外区（大角度）模式：网格坐标 (theta, phi) 是探头坐标系下的俯仰角与方位角，
+//     需经 convertThetaPhiToAlphaBeta 投影到风洞坐标系的 (alpha, beta)；
+//     即 Theta/Phi 反映探头感受到的真实气流偏角，Alpha/Beta 是其在风洞坐标系下的分量
+//
+// 对仅需 Alpha/Beta 的旧调用方（如 wind-daq）而言为向后兼容的字段新增，无需改动。
 type InterpolationResult struct {
 	Alpha           float64 `json:"alpha"`           // sideslip angle (deg); five-hole meaning: angle of attack
 	Beta            float64 `json:"beta"`            // angle of attack (deg); five-hole meaning: sideslip angle
+	Theta           float64 `json:"theta"`           // PRB 网格俯仰角（deg）：内区=Alpha，外区=原始 theta
+	Phi             float64 `json:"phi"`             // PRB 网格方位角（deg）：内区=Beta，外区=原始 phi
 	MachNumber      float64 `json:"machNumber"`      // Mach number
 	Velocity        float64 `json:"velocity"`        // flow velocity (m/s)
 	DynamicPressure float64 `json:"dynamicPressure"` // dynamic pressure Pt-Ps (Pa)
@@ -87,7 +97,10 @@ type SevenHolePrbInterpolator struct {
 	outerPolygons [outerSectorCount][]point2D
 	outerQuads    [outerSectorCount][]distortedQuad
 	// innerSource / outerSources record the load-time source labels (usually
-	// file paths) for the Identity() snapshot identifier.
+	// file paths) for the Identity() snapshot identifier. 仅供诊断展示，
+	// 不得作为分支开关——历史曾试图用 dataSource 字段区分 PRB/CSV 走不同
+	// 插值分支，但会导致相同网格因来源不同得到不同结果，已删除（参见
+	// prb_interpolator.go Calculate 注释）。
 	innerSource  string
 	outerSources [outerSectorCount]string
 }
