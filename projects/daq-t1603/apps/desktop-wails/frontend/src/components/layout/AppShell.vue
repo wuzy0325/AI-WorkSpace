@@ -9,11 +9,10 @@ import ScanResultList from '@components/device/ScanResultList.vue'
 import type { ScanResult } from '@bridge/deviceBridge'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
-import pkg from '../../../package.json'
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
-const appVersion = pkg.version
+const appVersion = __APP_VERSION__
 
 const showAddDialog = ref(false)
 const showConfig = ref(false)

@@ -7,7 +7,7 @@
  *   - 连接 / 断开 / 应用配置
  *   - 启动 / 停止采集（带后台中继协程，按用户设置的刷新率推送温度快照、按 1s 频率推送录制状态）
  *   - 设置 UI 刷新率（SetUIRefreshRateHz，动态调整推送节奏，无需重启采集）
- * 
+ *
  * 设计要点：
  *   - 录制相关的热路径调用通过 hub.RecordingService 引用直接走，
  *     避免在 RecordingService 中再绕一层 Wails Bind 调用；
@@ -53,7 +53,7 @@ export function Disconnect(id: string): $CancellablePromise<void> {
 
 /**
  * EmitDeviceState 实现 core.StateEmitter 接口（ACQ-010/STB-003）。
- * 
+ *
  * 由 adapter 在 OnReadLoopExit 等异步状态变化时通过 hub.EmitDeviceState 触发，
  * 本方法将状态通过 Wails Event 总线广播为 daq:device-state 事件，
  * 前端 App.vue 中 onDeviceState 订阅器接收后调用 syncStatusFromBackend，
@@ -67,6 +67,22 @@ export function Disconnect(id: string): $CancellablePromise<void> {
  */
 export function EmitDeviceState(deviceID: string, state: core$0.DeviceState): $CancellablePromise<void> {
     return $Call.ByID(2016103354, deviceID, state);
+}
+
+/**
+ * ExitApplication 主动退出应用。
+ * 
+ * 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
+ * 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
+ * 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
+ * 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
+ * 走与原生关闭等价的 ServiceShutdown 清理流程（停止采集 / 录制 / 日志 / relay）。
+ * 
+ * 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
+ * 并终止应用主循环，确保单窗口场景下应用真正退出。
+ */
+export function ExitApplication(): $CancellablePromise<void> {
+    return $Call.ByID(2366630710);
 }
 
 /**
@@ -108,7 +124,8 @@ export function ScanDevices(): $CancellablePromise<core$0.ScanResult[]> {
  * 设计意图：
  *   - 前端 MainTopBar 提供 2/5/10/15/20/30 Hz 档位，让用户平衡"画面流畅度"与"CPU 占用"；
  *   - 后端 relayStream 按此频率通过 daq:payload 事件推送最新快照；
- *   - relayStream 下一轮 select 自动跟随新值，无需重启协程、无需持锁。
+ *   - relayStream 在下次 uiTicker.C 触发时检测 atomic 变化并 Reset ticker，
+ *     最长等一个旧间隔生效（如 10Hz→2Hz 最长 100ms+500ms=600ms），无需重启采集。
  * 
  * 范围校验：[1, 60] Hz。
  *   - 下限 1Hz：低于 1Hz 会让图表长时间不更新，误导用户以为采集卡死；

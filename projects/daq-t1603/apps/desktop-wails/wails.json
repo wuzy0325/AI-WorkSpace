@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "daq-t1603",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "outputfilename": "DAQ-T-1603",
   "frontend": {
     "dir": "frontend",

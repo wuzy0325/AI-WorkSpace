@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
+import { channelDisplayName } from '../../utils/channelDisplayName'
 import ChannelCard from './ChannelCard.vue'
 
 defineProps<{ deviceId: string }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 
 const COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
@@ -23,7 +26,7 @@ const COLORS = [
         :value="deviceStore.snapshotMap[deviceId]?.values[ch.index] ?? NaN"
         :unit="ch.unit"
         :color="ch.color || COLORS[ch.index % COLORS.length]"
-        :name="ch.name"
+        :name="channelDisplayName(ch.index, ch.name, i18n.t)"
         :thermocouple-type="ch.thermocoupleType"
         :precision="ch.precision"
         :active="deviceStore.isChartSelected(deviceId, ch.index)"

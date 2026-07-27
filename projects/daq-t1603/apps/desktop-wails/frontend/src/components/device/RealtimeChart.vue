@@ -8,6 +8,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
+import { channelDisplayName } from '../../utils/channelDisplayName'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -85,7 +86,7 @@ const option = computed(() => {
   const series = selectedChannels.map((ch, i) => {
     const color = ch.color || COLORS[i % COLORS.length]
     return {
-      name: ch.name || `CH${ch.index + 1}`,
+      name: channelDisplayName(ch.index, ch.name, i18n.t),
       type: 'line' as const,
       data: history.map((d) => {
         const v = d.values[ch.index]
@@ -125,7 +126,7 @@ const option = computed(() => {
       },
     },
     legend: {
-      data: selectedChannels.map((ch) => ch.name || `CH${ch.index + 1}`),
+      data: selectedChannels.map((ch) => channelDisplayName(ch.index, ch.name, i18n.t)),
       textStyle: { color: c.muted, fontSize: 10 },
       icon: 'roundRect',
       itemWidth: 8,

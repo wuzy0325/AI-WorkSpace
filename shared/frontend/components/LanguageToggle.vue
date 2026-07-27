@@ -1,40 +1,42 @@
 <script setup lang="ts">
 import { Globe } from '@lucide/vue'
-import { useI18nStore } from '@stores/i18nStore'
 
-/**
- * 顶栏语言切换按钮组。
- *
- * 设计：
- * - 双按钮形态（中 / EN），active 态高亮当前语言，比下拉菜单少一次点击
- * - 复用全局 .topbar__icon-btn 视觉语言，与主题切换、配置等按钮风格一致
- * - 切换通过 i18nStore.setLocale 持久化到 localStorage，下次启动自动恢复
- */
-const i18n = useI18nStore()
+type Locale = 'zh' | 'en'
+
+const props = defineProps<{
+  locale: Locale
+  toggleLabel: string
+  switchToZhLabel: string
+  switchToEnLabel: string
+}>()
+
+const emit = defineEmits<{
+  change: [locale: Locale]
+}>()
 </script>
 
 <template>
-  <div class="lang-toggle" role="group" :aria-label="i18n.t('topbar.toggleLanguage')">
+  <div class="lang-toggle" role="group" :aria-label="props.toggleLabel">
     <button
       class="lang-btn"
-      :class="{ 'lang-btn--active': i18n.locale === 'zh' }"
-      :aria-label="i18n.t('topbar.switchToZh')"
-      :aria-pressed="i18n.locale === 'zh'"
-      :title="i18n.t('topbar.toggleLanguage')"
+      :class="{ 'lang-btn--active': props.locale === 'zh' }"
+      :aria-label="props.switchToZhLabel"
+      :aria-pressed="props.locale === 'zh'"
+      :title="props.toggleLabel"
       data-testid="btn-locale-zh"
-      @click="i18n.setLocale('zh')"
+      @click="emit('change', 'zh')"
     >
       <Globe class="lang-btn__icon" />
       <span>中</span>
     </button>
     <button
       class="lang-btn"
-      :class="{ 'lang-btn--active': i18n.locale === 'en' }"
-      :aria-label="i18n.t('topbar.switchToEn')"
-      :aria-pressed="i18n.locale === 'en'"
-      :title="i18n.t('topbar.toggleLanguage')"
+      :class="{ 'lang-btn--active': props.locale === 'en' }"
+      :aria-label="props.switchToEnLabel"
+      :aria-pressed="props.locale === 'en'"
+      :title="props.toggleLabel"
       data-testid="btn-locale-en"
-      @click="i18n.setLocale('en')"
+      @click="emit('change', 'en')"
     >
       <Globe class="lang-btn__icon" />
       <span>EN</span>
@@ -43,7 +45,6 @@ const i18n = useI18nStore()
 </template>
 
 <style scoped>
-/* 容器：与单个 icon-btn 等高，内部两个按钮紧凑排列 */
 .lang-toggle {
   display: flex;
   align-items: center;
@@ -55,7 +56,6 @@ const i18n = useI18nStore()
   height: 36px;
 }
 
-/* 单个语言按钮：默认透明背景，激活时高亮 */
 .lang-btn {
   display: flex;
   align-items: center;
@@ -79,12 +79,7 @@ const i18n = useI18nStore()
   background: var(--btn-bg-hover);
 }
 
-/* 激活态：用 accent 色高亮，与 nav active 视觉语言一致 */
-.lang-btn--active {
-  color: var(--accent);
-  background: var(--accent-muted);
-}
-
+.lang-btn--active,
 .lang-btn--active:hover {
   color: var(--accent);
   background: var(--accent-muted);
@@ -95,7 +90,6 @@ const i18n = useI18nStore()
   height: 12px;
 }
 
-/* 窄屏：与 icon-btn 一起缩小 */
 @media (max-width: 767px) {
   .lang-toggle {
     height: 32px;

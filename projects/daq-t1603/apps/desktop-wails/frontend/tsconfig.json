@@ -20,7 +20,8 @@
       "@composables/*": ["./src/composables/*"],
       "@shared-frontend/*": ["../../../../../shared/frontend/*"],
       "vue": ["./node_modules/vue"],
-      "pinia": ["./node_modules/pinia"]
+      "pinia": ["./node_modules/pinia"],
+      "@lucide/vue": ["./node_modules/@lucide/vue"]
     },
     "baseUrl": "."
   },

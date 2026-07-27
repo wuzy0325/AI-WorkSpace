@@ -31,6 +31,10 @@ const zh = {
   // ---- 应用级 ----
   // Wails 原生窗口标题（由 App.vue onMounted + watch(locale) 调用 Window.SetTitle 同步）
   'app.windowTitle': 'DAQ-T-1603 温度采集',
+  // 退出应用确认框文案（MainTopBar 退出按钮触发，确认后调用后端 ExitApplication）
+  'app.confirmExitTitle': '退出应用',
+  'app.confirmExitText': '确认退出 DAQ-T-1603 吗？未保存的录制将被正常关闭并落盘。',
+  'app.exit': '退出',
 
   // ---- 设备状态 ----
   'status.acquiring': '采集中',
@@ -60,6 +64,7 @@ const zh = {
   'topbar.toggleLightTheme': '切换为浅色模式',
   'topbar.toggleDarkTheme': '切换为深色模式',
   'topbar.toggleLanguage': '切换语言',
+  'topbar.exitApp': '退出应用',
   // switchToZh/switchToEn 故意用目标语言描述：屏幕阅读器读出"切换到中文" / "Switch to English"
   // 让用户在切换前听到目标语言发音，便于识别将切到哪种语言。
   'topbar.switchToZh': '切换到中文',
@@ -238,6 +243,9 @@ const en = {
 
   // ---- app-level ----
   'app.windowTitle': 'DAQ-T-1603 Temperature Acquisition',
+  'app.confirmExitTitle': 'Exit Application',
+  'app.confirmExitText': 'Exit DAQ-T-1603? Any in-progress recording will be flushed and closed.',
+  'app.exit': 'Exit',
 
   // ---- status ----
   'status.acquiring': 'Acquiring',
@@ -267,6 +275,7 @@ const en = {
   'topbar.toggleLightTheme': 'Switch to Light Theme',
   'topbar.toggleDarkTheme': 'Switch to Dark Theme',
   'topbar.toggleLanguage': 'Switch Language',
+  'topbar.exitApp': 'Exit Application',
   'topbar.switchToZh': '切换到中文',
   'topbar.switchToEn': 'Switch to English',
 

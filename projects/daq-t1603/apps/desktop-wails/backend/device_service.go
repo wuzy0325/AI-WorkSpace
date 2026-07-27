@@ -125,6 +125,33 @@ func (s *DeviceService) SetUIRefreshRateHz(hz int) error {
 	return nil
 }
 
+// ExitApplication 主动退出应用。
+//
+// 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
+// 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
+// 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
+// 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
+// 走与原生关闭等价的 ServiceShutdown 清理流程（停止采集 / 录制 / 日志 / relay）。
+//
+// 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
+// 并终止应用主循环，确保单窗口场景下应用真正退出。
+func (s *DeviceService) ExitApplication() error {
+	s.emitLog("info", "system", "", "app", "DAQ-T-1603 application exit requested by user", "")
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app == nil {
+		app = application.Get()
+	}
+	if app == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	// Quit() 内部会按注册顺序触发各 Service 的 ServiceShutdown，
+	// 与用户点击原生 X 按钮的退出路径完全等价。
+	app.Quit()
+	return nil
+}
+
 // ScanDevices 触发设备扫描。
 func (s *DeviceService) ScanDevices() ([]core.ScanResult, error) {
 	return s.deviceUC.ScanDevices()

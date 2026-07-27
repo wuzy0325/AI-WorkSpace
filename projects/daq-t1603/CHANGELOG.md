@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0] - 2026-07-27
+
+### Added
+- 独立应用新增中英文界面切换，并保持语言偏好。
+
+### Fixed
+- 设备连接失败写入明确错误日志，便于现场定位地址、网络和协议问题。
+- 复用共享 SDK 的连续静默窗口排空逻辑，降低快速启停后的残留帧污染风险。
+
+### Verification
+- `$env:GOWORK="off"; go test ./...`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 暂无。
+
 ## [0.5.0] - 2026-07-25
 
 ### Added
