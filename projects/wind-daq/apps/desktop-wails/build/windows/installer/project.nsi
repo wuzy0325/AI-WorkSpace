@@ -9,7 +9,7 @@ Unicode true
 ####
 
 ; Version must match projects/wind-daq/VERSION.
-!define INFO_PRODUCTVERSION "0.10.0"
+!define INFO_PRODUCTVERSION "0.11.0"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -57,7 +57,7 @@ ManifestDPIAware true
 
 # Language selection dialog (zh/en)
 !define MUI_LANGDLL_ALLLANGUAGES
-!define MUI_LANGDLL_INFO "Please select the installation language:$\nÇëÑ¡Ôñ°²×°³ÌĞòÓïÑÔ£º"
+!define MUI_LANGDLL_INFO "Please select the installation language:$\nè¯·é€‰æ‹©å®‰è£…ç¨‹åºè¯­è¨€ï¼š"
 
 # Custom welcome/directory/finish text via LangString
 !define MUI_WELCOMEPAGE_TITLE "$(INST_WELCOME_TITLE)"
@@ -79,11 +79,11 @@ ManifestDPIAware true
 
 # ------ Installer UI Strings ------
 # Chinese
-LangString INST_WELCOME_TITLE  ${LANG_SIMPCHINESE} "»¶Ó­Ê¹ÓÃ Wind-DAQ ·ç¶´Êı¾İ²É¼¯ÏµÍ³"
-LangString INST_WELCOME_TEXT   ${LANG_SIMPCHINESE} "±¾ÏµÍ³×¨Îª·ç¶´²âÊÔÓë²âÁ¿Éè¼Æ£¬¼¯Êı¾İ²É¼¯¡¢ÔË¶¯¿ØÖÆ¡¢Ì½Õë±ê¶¨ÓÚÒ»Ìå¡£$\r$\n$\r$\nÖ÷Òª¹¦ÄÜ£º$\r$\n  * ¶àÍ¨µÀÑ¹Á¦ÓëÎÂ¶ÈÊı¾İ²É¼¯£¨DSA3217 / DAQ-P-1604 / DAQ-T-1603£©$\r$\n  * ÔË¶¯¿ØÖÆÆ÷¹ÜÀí£¨B140 / WTNMC4A£©$\r$\n  * Îå¿× / Èı¿× / ×ÜÑ¹ / ×ÜÎÂÌ½Õë±ê¶¨$\r$\n  * ·ç¶´Á÷³¡±éÀú²âÊÔÓëÊµÊ±²åÖµ¼ÆËã$\r$\n  * Êı¾İ¼ÇÂ¼¡¢´æ´¢Óë±¨¸æÉú³É$\r$\n$\r$\n°²×°³ÌĞò½«Òıµ¼ÄúÍê³É°²×°¡£"
-LangString INST_DIRECTORY_TEXT ${LANG_SIMPCHINESE} "Ñ¡Ôñ°²×°Ä¿Â¼¡£$\r$\n$\r$\n½¨Òé°²×°ÔÚ·ÇÏµÍ³ÅÌ£¬²¢È·±£ÓĞ×ã¹»µÄ´ÅÅÌ¿Õ¼äÓÃÓÚÊı¾İ´æ´¢¡£"
-LangString INST_FINISH_TITLE   ${LANG_SIMPCHINESE} "°²×°Íê³É"
-LangString INST_FINISH_TEXT    ${LANG_SIMPCHINESE} "Wind-DAQ ·ç¶´Êı¾İ²É¼¯ÏµÍ³ÒÑ³É¹¦°²×°¡£$\r$\n$\r$\nµã»÷Íê³ÉÍË³ö°²×°³ÌĞò¡£"
+LangString INST_WELCOME_TITLE  ${LANG_SIMPCHINESE} "æ¬¢è¿ä½¿ç”¨ Wind-DAQ é£æ´æ•°æ®é‡‡é›†ç³»ç»Ÿ"
+LangString INST_WELCOME_TEXT   ${LANG_SIMPCHINESE} "æœ¬ç³»ç»Ÿä¸“ä¸ºé£æ´æµ‹è¯•ä¸æµ‹é‡è®¾è®¡ï¼Œé›†æ•°æ®é‡‡é›†ã€è¿åŠ¨æ§åˆ¶ã€æ¢é’ˆæ ‡å®šäºä¸€ä½“ã€‚$\r$\n$\r$\nä¸»è¦åŠŸèƒ½ï¼š$\r$\n  * å¤šé€šé“å‹åŠ›ä¸æ¸©åº¦æ•°æ®é‡‡é›†ï¼ˆDSA3217 / DAQ-P-1604 / DAQ-T-1603ï¼‰$\r$\n  * è¿åŠ¨æ§åˆ¶å™¨ç®¡ç†ï¼ˆB140 / WTNMC4Aï¼‰$\r$\n  * äº”å­” / ä¸‰å­” / æ€»å‹ / æ€»æ¸©æ¢é’ˆæ ‡å®š$\r$\n  * é£æ´æµåœºéå†æµ‹è¯•ä¸å®æ—¶æ’å€¼è®¡ç®—$\r$\n  * æ•°æ®è®°å½•ã€å­˜å‚¨ä¸æŠ¥å‘Šç”Ÿæˆ$\r$\n$\r$\nå®‰è£…ç¨‹åºå°†å¼•å¯¼æ‚¨å®Œæˆå®‰è£…ã€‚"
+LangString INST_DIRECTORY_TEXT ${LANG_SIMPCHINESE} "é€‰æ‹©å®‰è£…ç›®å½•ã€‚$\r$\n$\r$\nå»ºè®®å®‰è£…åœ¨éç³»ç»Ÿç›˜ï¼Œå¹¶ç¡®ä¿æœ‰è¶³å¤Ÿçš„ç£ç›˜ç©ºé—´ç”¨äºæ•°æ®å­˜å‚¨ã€‚"
+LangString INST_FINISH_TITLE   ${LANG_SIMPCHINESE} "å®‰è£…å®Œæˆ"
+LangString INST_FINISH_TEXT    ${LANG_SIMPCHINESE} "Wind-DAQ é£æ´æ•°æ®é‡‡é›†ç³»ç»Ÿå·²æˆåŠŸå®‰è£…ã€‚$\r$\n$\r$\nç‚¹å‡»å®Œæˆé€€å‡ºå®‰è£…ç¨‹åºã€‚"
 # English
 LangString INST_WELCOME_TITLE  ${LANG_ENGLISH} "Welcome to Wind-DAQ Wind Tunnel DAQ System"
 LangString INST_WELCOME_TEXT   ${LANG_ENGLISH} "Wind-DAQ is a comprehensive wind tunnel measurement platform for data acquisition, motion control, and probe calibration.$\r$\n$\r$\nKey features:$\r$\n  * Multi-channel pressure & temperature acquisition (DSA3217 / DAQ-P-1604 / DAQ-T-1603)$\r$\n  * Motion controller management (B140 / WTNMC4A)$\r$\n  * Five-hole / Three-hole / Total pressure / Total temperature calibration$\r$\n  * Traversal testing with real-time interpolation$\r$\n  * Data recording, storage and report generation$\r$\n$\r$\nThe wizard will guide you through the installation."

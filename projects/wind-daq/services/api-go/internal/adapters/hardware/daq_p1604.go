@@ -75,6 +75,21 @@ func (d *DAQP1604) SetOnError(fn func(err error)) {
 
 func (d *DAQP1604) ID() string { return d.profile.ID }
 
+func runDAQP1604Handshake(conn net.Conn, timeout time.Duration, handshake func() error) error {
+	timedOut := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		_ = conn.Close()
+		close(timedOut)
+	})
+
+	err := handshake()
+	if timer.Stop() {
+		return err
+	}
+	<-timedOut
+	return fmt.Errorf("connection handshake timed out after %s", timeout)
+}
+
 func (d *DAQP1604) Connect() error {
 	d.mu.Lock()
 	if d.conn != nil {
@@ -92,7 +107,7 @@ func (d *DAQP1604) Connect() error {
 		port = DAQ_P_1604_DEFAULT_PORT
 	}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_P_1604_TIMEOUT)
+	conn, err := sharedproto.DialTCP(fmt.Sprintf("%s:%d", host, port), d.profile.LocalAddress, DAQ_P_1604_TIMEOUT)
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
@@ -110,25 +125,19 @@ func (d *DAQP1604) Connect() error {
 	d.status.Connection = device.ConnectionConnected
 	d.mu.Unlock()
 
-	// 启用长度前缀模式（供后续 FrameReader 读取单位系数 + 数据流帧解析）
-	// 此处启用后整个连接生命周期保持开启，initStream 不再重复发送。
-	if err := d.sendCommand("w1601"); err != nil {
-		d.mu.Lock()
-		d.conn = nil
-		d.frameReader = nil
-		d.status.Connection = device.ConnectionDisconnected
-		d.mu.Unlock()
-		_ = conn.Close()
-		return fmt.Errorf("enable length prefix: %w", err)
-	}
-	// 排空 w1601 的 A 应答，避免污染后续 u01101 的 ReadFrame
-	sharedproto.DrainW1601Response(d.frameReader, conn, 100*time.Millisecond)
-
-	// 读取硬件实际单位并同步 profile
-	// 软错误（超时/解析失败）不阻断连接，仅记录 warn；
-	// 硬错误（对端 FIN/RST）返回 error → 关闭 conn 并让 Connect 失败，
-	// 避免把已死连接塞进 DeviceManager 造成后续 StartAcquisition 爆 WSAECONNABORTED。
-	if err := d.syncUnitFromHardware(); err != nil {
+	// 强制覆盖整个握手，防止 Windows 极端情况下 read deadline 未解除阻塞。
+	err = runDAQP1604Handshake(conn, DAQ_P_1604_TIMEOUT+time.Second, func() error {
+		// 启用长度前缀模式（供后续 FrameReader 读取单位系数 + 数据流帧解析）
+		if err := d.sendCommand("w1601"); err != nil {
+			return fmt.Errorf("enable length prefix: %w", err)
+		}
+		sharedproto.DrainW1601Response(d.frameReader, conn, 100*time.Millisecond)
+		if err := d.syncUnitFromHardware(); err != nil {
+			return fmt.Errorf("sync unit from hardware: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		d.mu.Lock()
 		d.conn = nil
 		d.frameReader = nil
@@ -136,7 +145,7 @@ func (d *DAQP1604) Connect() error {
 		d.status.LastError = err.Error()
 		d.mu.Unlock()
 		_ = conn.Close()
-		return fmt.Errorf("sync unit from hardware: %w", err)
+		return err
 	}
 	return nil
 }

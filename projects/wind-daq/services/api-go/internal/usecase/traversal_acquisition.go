@@ -284,8 +284,19 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	var resultValues map[int]float64
 	var lastWarnings []string
 	skipPoint := false
+	// StartedAt/CompletedAt 语义（与 CSV writer 表头契约对齐）：
+	//   - StartedAt：本点首次采样尝试开始时间（进入采集阶段后的第一次 collectAveragedSamples 调用前）
+	//   - CompletedAt：本点最终被接受的采样尝试结束时间（最后一次 collectAveragedSamples 返回后）
+	// 二者差值即"单点总耗时"，包含验证失败重试间的 retryWaitInterval 等待。
+	// 不含稳定等待 dwell 时间——dwell 由 DwellTimeElapsed 单独记录。
+	//
+	// 历史问题：原先 StartedAt 在每次成功 attempt 内被覆盖，导致重试等待被排除，
+	// 与 CSV 契约"单点总耗时"声明不一致。修复后首次尝试开始时间被锁定保留。
+	firstAttemptStartMs := time.Now().UnixMilli()
+	var samplingEndMs int64
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		averaged, err := m.collectAveragedSamples(taskID, channelGroups, samplesPerPoint)
+		callEnd := time.Now()
 		if err != nil {
 			slog.Error("traversal sampling failed",
 				"component", "traversal",
@@ -295,6 +306,9 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			)
 			return m.failWithCode("sampling failed: %v", traversal.ErrAcquisitionFailed, err)
 		}
+		// CompletedAt 始终对齐最后一次成功采样结束时间；firstAttemptStartMs 锁定不变，
+		// 保证 StartedAt↔首次尝试、CompletedAt↔最终采样窗口右端，二者差值 = 单点总耗时。
+		samplingEndMs = callEnd.UnixMilli()
 		resultValues = averaged
 
 		if len(resultValues) != len(config.Channels) {
@@ -351,15 +365,16 @@ func (m *TraversalManager) RunCurrentPoint() error {
 
 		now := time.Now().UnixMilli()
 		skipResult := traversal.PointResult{
-			TaskID:             taskID,
-			CommitSeq:          commitSeq,
-			PointStatus:        traversal.PointStatusSkipped,
-			PointIndex:         pointIndex,
-			Point:              point,
-			Timestamp:          now,
-			CompletedAt:        now,
-			Values:             resultValues,
-			SampleCount:        samplesPerPoint,
+			TaskID:      taskID,
+			CommitSeq:   commitSeq,
+			PointStatus: traversal.PointStatusSkipped,
+			PointIndex:  pointIndex,
+			Point:       point,
+			Timestamp:   now,
+			StartedAt:   firstAttemptStartMs,
+			CompletedAt: samplingEndMs,
+			Values:      resultValues,
+			SampleCount: samplesPerPoint,
 			// 使用 effectiveDwellMs 反映实际等待时长（per-point 优先于全局）
 			DwellTimeElapsed:   effectiveDwellMs,
 			ValidationWarnings: lastWarnings,
@@ -377,7 +392,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// buildRawPressureForProbe 按当前探针类型的策略标签集装配并归一化到 Pa+表压，
 	// unitProvider 为 nil 时走降级路径（保持原值），保证离线/旧测试不崩。
 	//
-	// 三态 Status 填充逻辑抽取到 buildCalculatedResult 中,便于单元测试覆盖;
+	// 三态 Status 填充逻辑抽取到 classifyCalculatedResult 中,便于单元测试覆盖;
 	// 与 UI 实时插值卡片三态(绿色/橙色/红色)一一对应,便于 CSV 排障。
 	strategy, strategyOK := probeStrategyFor(config.ProbeType)
 	var (
@@ -412,8 +427,8 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		PointIndex:         pointIndex,
 		Point:              point,
 		Timestamp:          now,
-		StartedAt:          now - int64(dwellTime) - int64(samplesPerPoint)*int64(acquisitionBatchPoll/time.Millisecond),
-		CompletedAt:        now,
+		StartedAt:          firstAttemptStartMs,
+		CompletedAt:        samplingEndMs,
 		Values:             resultValues,
 		SampleCount:        samplesPerPoint,
 		DwellTimeElapsed:   dwellTime,

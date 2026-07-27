@@ -320,7 +320,7 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     samplingRate = 100
   }
   return {
-    id, name: '', type, transport: 'tcp', address, port,
+    id, name: '', type, transport: 'tcp', address, localAddress: '', port,
     serialPort: '', baudRate: 115200, samplingRate,
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
@@ -1353,6 +1353,11 @@ const scanError = ref<string | null>(null)
                       <label class="editor-label">{{ i18n.t.dev_port }} *</label>
                       <UiInputNumber v-model="draft.port" class="w-full" :disabled="isReadOnly" />
                       <div v-if="fieldErrors.port" class="editor-field-error">● {{ fieldErrors.port }}</div>
+                    </div>
+                    <div v-if="draft.type === 'DAQ-P-1604'" class="editor-field col-12">
+                      <label class="editor-label">{{ i18n.t.dev_localAddress }}</label>
+                      <UiInput v-model="draft.localAddress" :disabled="isReadOnly" placeholder="192.168.3.10" />
+                      <div class="editor-field-hint">{{ i18n.t.dev_localAddressHint }}</div>
                     </div>
                   </template>
 

@@ -42,6 +42,7 @@ export interface DeviceProfile {
   samplingRate: number;
   channels: any[];
   address?: string;
+  localAddress?: string;
 }
 
 export interface DeviceStatus {

@@ -1,6 +1,9 @@
 package backend
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +12,42 @@ import (
 	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/types"
 )
+
+func TestCallMgrDoesNotDuplicateUsecaseFailureLog(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	app := &App{appContext: &appcontext.AppContext{}}
+	result := app.callMgr(struct{}{}, "设备管理器", func() error {
+		return errors.New("connection failed")
+	})
+
+	if result.Success || result.Error != "connection failed" {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("callMgr duplicated usecase failure log: %s", logs.String())
+	}
+}
+
+func TestCallMgrLogsUninitializedManager(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	app := &App{appContext: &appcontext.AppContext{}}
+	result := app.callMgr(nil, "设备管理器", func() error { return nil })
+
+	if result.Success || result.Error == "" {
+		t.Fatalf("expected uninitialized manager failure, got %#v", result)
+	}
+	if !bytes.Contains(logs.Bytes(), []byte("manager 未初始化")) {
+		t.Fatalf("missing uninitialized manager log: %s", logs.String())
+	}
+}
 
 func TestConfigLoadNilAppReturnsError(t *testing.T) {
 	var app *App
@@ -100,8 +139,8 @@ func TestStorageStartRecordingResolvesRelativeOutputDir(t *testing.T) {
 	app := &App{appContext: ctx}
 
 	res := app.StorageStartRecording(types.StorageRecordingConfig{
-		OutputDir:   filepath.Join("data", "recordings"),
-		FilePrefix:  "run",
+		OutputDir:  filepath.Join("data", "recordings"),
+		FilePrefix: "run",
 	})
 	if !res.Success {
 		t.Fatalf("start recording failed: %#v", res)

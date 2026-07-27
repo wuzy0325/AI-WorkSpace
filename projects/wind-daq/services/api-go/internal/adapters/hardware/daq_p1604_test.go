@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +10,25 @@ import (
 	sharedproto "shared.local/device-sdk/go/protocol"
 	"wind-daq/services/api-go/internal/core/device"
 )
+
+func TestRunDAQP1604HandshakeTimesOutAndClosesConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	started := time.Now()
+	err := runDAQP1604Handshake(client, 20*time.Millisecond, func() error {
+		buf := make([]byte, 1)
+		_, readErr := client.Read(buf)
+		return readErr
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "handshake timed out") {
+		t.Fatalf("expected handshake timeout, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("handshake timeout took too long: %v", elapsed)
+	}
+}
 
 // TestDAQP1604_SyncUnitFromHardware_EOFReturnsError 验证：u01101 读到 io.EOF 时
 // syncUnitFromHardware 必须返回 error（连接已死），不能当作软错误吞掉。

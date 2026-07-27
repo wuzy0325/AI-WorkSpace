@@ -133,10 +133,27 @@ type TraversalManager struct {
 	// 稳定等待配置
 	stabilization *traversal.StabilizationConfig
 
-	// 启动时根据持久化配置恢复插值器的最后一次错误（若有），
-	// 用于在 CheckPreconditions 中向前端暴露真实失败原因，
-	// 避免前端基于配置 JSON 错误推断为"已加载"。
-	lastInterpolatorRestoreErr string
+	// lastFiveHoleRestoreErr / lastSevenHoleRestoreErr 按探针类型分别记录启动恢复错误。
+	// 设计动机：双变体配置下五孔/七孔插值器独立加载、独立失败——单字段会让
+	// 七孔加载失败时掩盖五孔加载成功（反之亦然），切换激活类型后 CheckPreconditions
+	// 拿到的错误消息可能属于另一类型，导致用户看到与当前操作无关的失败原因。
+	// 按 probeType 分桶后，CheckPreconditions 经 InterpolatorRestoreErrFor(probeType)
+	// 精确读取激活侧的根因。
+	lastFiveHoleRestoreErr  string
+	lastSevenHoleRestoreErr string
+
+	// fiveHoleRestoreEpoch / sevenHoleRestoreEpoch 是按变体独立的版本号，
+	// 防止启动恢复 goroutine 在用户显式导入/清除插值器后用陈旧结果覆盖。
+	//
+	// 设计动机：启动恢复是异步 goroutine——读取配置快照→磁盘 I/O→写回 interpolator。
+	// I/O 期间用户可能经前端导入新 PRB/CSV（调用 SetInterpolator/SetSevenHoleInterpolator）
+	// 或切换探针类型调用 ClearProbeInterpolator。若 goroutine 完成后无条件写回，
+	// 会用旧配置加载的插值器覆盖用户最新导入的结果。
+	//
+	// 机制：用户路径递增对应变体 epoch；goroutine 在写入前比对捕获时的 epoch，
+	// 不一致则跳过写入。两个变体各自独立 epoch——用户改五孔不影响七孔恢复。
+	fiveHoleRestoreEpoch  uint64
+	sevenHoleRestoreEpoch uint64
 
 	// 插值器加载端口（用于启动恢复时按路径加载 PRB / CSV / 多 PRB），
 	// nil 表示未注入加载器，启动恢复将被跳过并写入相应错误消息。
@@ -235,17 +252,46 @@ func (m *TraversalManager) GetConfigRaw() json.RawMessage {
 	return append(json.RawMessage(nil), m.configRaw...)
 }
 
-// SetInterpolator 注入插值器；切换插值器时清空缓存（避免旧结果污染新算法）
+// SetInterpolator 注入五孔插值器（用户路径）。
+//
+// 切换插值器时清空缓存（避免旧结果污染新算法）；递增 fiveHoleRestoreEpoch
+// 让任何在途的启动恢复 goroutine 在写回前发现 epoch 不一致而跳过，
+// 防止用户最新导入的插值器被旧配置加载的陈旧结果覆盖。
+// 五孔侧的启动恢复陈旧错误一并清除；七孔侧错误独立保留，互不影响。
 func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator) {
 	m.mu.Lock()
+	m.fiveHoleRestoreEpoch++
 	m.interpolator = interpolator
 	if m.interpCache != nil {
 		m.interpCache.Clear()
 	}
-	// 一旦插值器被显式重置（包括用户主动重新加载 PRB），
-	// 启动恢复的陈旧错误就不再适用，需要一并清除。
-	m.lastInterpolatorRestoreErr = ""
+	m.lastFiveHoleRestoreErr = ""
 	m.mu.Unlock()
+}
+
+// setInterpolatorFromRestore 是启动恢复 goroutine 专用的五孔插值器写入路径。
+//
+// 与 SetInterpolator 的差异：不递增 epoch（写回本身不应让其他在途 goroutine 误判），
+// 并在写入前比对该 goroutine 启动时捕获的 epoch——不一致即返回 false 跳过写入。
+//
+// 返回值约定：
+//   - true：epoch 一致，已成功写入
+//   - false：用户在恢复期间通过 SetInterpolator/ClearProbeInterpolator 修改了五孔变体，
+//     当前结果已陈旧，跳过写入以保护用户最新状态
+//
+// 调用方在收到 false 后应直接返回，不再做任何后续状态修改。
+func (m *TraversalManager) setInterpolatorFromRestore(interpolator coreinterp.Interpolator, epoch uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fiveHoleRestoreEpoch != epoch {
+		return false
+	}
+	m.interpolator = interpolator
+	if m.interpCache != nil {
+		m.interpCache.Clear()
+	}
+	m.lastFiveHoleRestoreErr = ""
+	return true
 }
 
 // SetInterpolatorLoader 注入插值器加载端口。
@@ -326,12 +372,42 @@ func (m *TraversalManager) SetActiveIndex(index ports.TraversalActiveIndex) {
 	m.mu.Unlock()
 }
 
-// InterpolatorRestoreErr 返回最近一次启动恢复 / 显式 RestoreInterpolatorFromPersistedConfig
-// 调用所遗留的错误消息，主要供测试与 CheckPreconditions 读取。空字符串表示无错误。
+// InterpolatorRestoreErr 返回最近一次启动恢复遗留的错误消息。
+//
+// Deprecated: 该方法合并五孔/七孔错误返回，双变体恢复下语义模糊——
+// 五孔失败时返回五孔错误，五孔成功时返回七孔错误，调用方无法区分错误属于哪一侧。
+// 新代码请使用 InterpolatorRestoreErrFor(probeType) 按激活类型精确读取。
+// 仅保留供既有测试断言兼容，后续将随测试改造移除。
 func (m *TraversalManager) InterpolatorRestoreErr() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.lastInterpolatorRestoreErr
+	// 优先返回五孔错误（兼容旧测试默认场景），五孔无错时回退七孔
+	if m.lastFiveHoleRestoreErr != "" {
+		return m.lastFiveHoleRestoreErr
+	}
+	return m.lastSevenHoleRestoreErr
+}
+
+// InterpolatorRestoreErrFor 返回指定探针类型对应的启动恢复错误。
+// 供 CheckPreconditions 按当前激活类型精确暴露根因——双变体恢复下，
+// 五孔失败不应让七孔的前置检查显示五孔的错误消息（反之亦然）。
+// 未知 probeType 归一化为 five-hole（与 normalizeProbeType 同语义）。
+func (m *TraversalManager) InterpolatorRestoreErrFor(probeType string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.restoreErrForLocked(probeType)
+}
+
+// restoreErrForLocked 是 InterpolatorRestoreErrFor 的无锁版本，
+// 供已持有 m.mu（RLock 或 Lock）的调用方在临界区内读取错误，避免 RLock 重入死锁。
+// 调用方必须已持有 m.mu。
+func (m *TraversalManager) restoreErrForLocked(probeType string) string {
+	switch normalizeProbeType(probeType) {
+	case traversal.ProbeTypeSevenHole:
+		return m.lastSevenHoleRestoreErr
+	default:
+		return m.lastFiveHoleRestoreErr
+	}
 }
 
 // Interpolator 返回当前注入的插值器（可能为 nil）；测试代码通过该方法断言
@@ -376,32 +452,42 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
 	// 有效探针类型：优先请求配置（向导未启动前 Manager 尚无 config.ProbeType），
 	// 回退 Manager 当前配置；PRB 项经策略表按该类型判定（traversal_probe.go）。
+	//
+	// 临界区合并：effectiveProbeType、hasInterpolator、restoreErr、cfg、acqController
+	// 都从 m.mu 读取或经策略表读取 m.interpolator/m.sevenHoleInterpolator，集中在同一 RLock
+	// 内完成，避免与 SetInterpolator/SetSevenHoleInterpolator 的写锁竞争时出现"读到旧
+	// hasInterpolator 但新 restoreErr"等错配快照。
 	m.mu.RLock()
 	effectiveProbeType := m.config.ProbeType
-	m.mu.RUnlock()
 	if config != nil && config.ProbeType != "" {
 		effectiveProbeType = config.ProbeType
 	}
-	hasInterpolator := m.hasLoadedInterpolatorFor(effectiveProbeType)
-	hasMotion := m.motion != nil
-	hasReader := m.reader != nil
+	// 在锁内直接调用策略表读取 hasInterpolator，避免 hasLoadedInterpolatorFor 重复 RLock。
+	// strategy.isLoaded 只读取 m.interpolator/m.sevenHoleInterpolator 字段，不持外部锁，
+	// 在已持有 m.mu.RLock 的临界区内调用是安全的。
+	strategy, strategyOK := probeStrategyFor(effectiveProbeType)
+	hasInterpolator := false
+	if strategyOK {
+		hasInterpolator = strategy.isLoaded(m)
+	}
+	restoreErr := m.restoreErrForLocked(effectiveProbeType)
 
 	// PRB 项默认消息；若启动恢复时记录了失败原因，则使用真实原因，
 	// 便于前端在 PRB 文件被删除/移动等情况下直接展示根因。
 	prbMessage := "Load PRB or calibration CSV before running interpolation"
+	if !hasInterpolator && restoreErr != "" {
+		prbMessage = restoreErr
+	}
+
 	// ChannelMap 校验：扫描 ChannelLabels 是否包含 Patm + Tatm 标签。
 	// P1-P5 标签存在性由 BuildRawPressure 返回的 ok 标志在运行时承担，
 	// 此处只做前置硬性校验——Patm/Tatm 缺失会让归一化与大气计算无法进行。
-	hasPatm := false
-	hasTatm := false
-	m.mu.RLock()
-	if !hasInterpolator && m.lastInterpolatorRestoreErr != "" {
-		prbMessage = m.lastInterpolatorRestoreErr
-	}
 	cfg := m.config
 	if config != nil {
 		cfg = *config
 	}
+	hasPatm := false
+	hasTatm := false
 	for _, label := range cfg.ChannelLabels {
 		switch label {
 		case "Patm":
@@ -414,6 +500,9 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	// 同时避免锁外单独再读 m.acquisitionController 产生数据竞争。
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
+
+	hasMotion := m.motion != nil
+	hasReader := m.reader != nil
 
 	channelMapPassed := hasPatm && hasTatm
 	channelMapMessage := "All required channel labels are mapped"

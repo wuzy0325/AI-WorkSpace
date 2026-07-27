@@ -425,6 +425,13 @@ export class Profile {
         if (/** @type {any} */(false)) {
             /**
              * @member
+             * @type {string | undefined}
+             */
+            this["localAddress"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
              * @type {number | undefined}
              */
             this["port"] = undefined;
@@ -495,14 +502,14 @@ export class Profile {
      * @returns {Profile}
      */
     static createFrom($$source = {}) {
-        const $$createField12_0 = $$createType3;
-        const $$createField14_0 = $$createType4;
+        const $$createField13_0 = $$createType3;
+        const $$createField15_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
-            $$parsedSource["channels"] = $$createField12_0($$parsedSource["channels"]);
+            $$parsedSource["channels"] = $$createField13_0($$parsedSource["channels"]);
         }
         if ("daqT1603Config" in $$parsedSource) {
-            $$parsedSource["daqT1603Config"] = $$createField14_0($$parsedSource["daqT1603Config"]);
+            $$parsedSource["daqT1603Config"] = $$createField15_0($$parsedSource["daqT1603Config"]);
         }
         return new Profile(/** @type {Partial<Profile>} */($$parsedSource));
     }

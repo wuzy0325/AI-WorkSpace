@@ -1,11 +1,11 @@
 package usecase
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
@@ -65,26 +65,50 @@ func TestLoadPersistedConfigSyncsProbeType(t *testing.T) {
 	}
 }
 
-// recordingSevenHoleLoader 实现 ports.InterpolatorLoader：七孔方法记录调用并可注入错误，
-// 五孔方法不应被七孔测试触达（触达即测试失败）。
+// recordingSevenHoleLoader 实现 ports.InterpolatorLoader：所有方法记录调用次数并可注入错误。
+//
+// 双变体恢复语义下，五孔与七孔方法可能同时被触达——loader 不再"拒绝另一类型调用"，
+// 改为记录所有调用次数让测试自行断言期望路径。七孔专用测试可通过断言
+// prbCalls/csvFiveCalls/multiPrbCalls == 0 表达"该场景不应触达五孔 loader"。
 type recordingSevenHoleLoader struct {
-	calls      int
-	csvCalls   int
-	innerPath  string
-	outerPaths [6]string
-	interp     seveninterp.Interpolator
-	err        error
+	calls         int
+	csvCalls      int
+	prbCalls      int
+	csvFiveCalls  int
+	multiPrbCalls int
+	innerPath     string
+	outerPaths    [6]string
+	prbPath       string
+	fiveCsvPath   string
+	interp        seveninterp.Interpolator
+	fiveInterp    coreinterp.Interpolator
+	err           error
 }
 
-func (l *recordingSevenHoleLoader) LoadPRB(string) (coreinterp.Interpolator, error) {
-	return nil, fmt.Errorf("LoadPRB must not be called in seven-hole restore tests")
+func (l *recordingSevenHoleLoader) LoadPRB(path string) (coreinterp.Interpolator, error) {
+	l.prbCalls++
+	l.prbPath = path
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.fiveInterp, nil
 }
-func (l *recordingSevenHoleLoader) LoadFiveHoleCSV(string) (coreinterp.Interpolator, error) {
-	return nil, fmt.Errorf("LoadFiveHoleCSV must not be called in seven-hole restore tests")
+func (l *recordingSevenHoleLoader) LoadFiveHoleCSV(path string) (coreinterp.Interpolator, error) {
+	l.csvFiveCalls++
+	l.fiveCsvPath = path
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.fiveInterp, nil
 }
-func (l *recordingSevenHoleLoader) LoadMultiPRB([]string, []float64, coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, *ports.MultiPrbLoadMetadata, error) {
-	return nil, nil, fmt.Errorf("LoadMultiPRB must not be called in seven-hole restore tests")
+func (l *recordingSevenHoleLoader) LoadMultiPRB(paths []string, _ []float64, _ coreinterp.MultiPrbInterpolationMode) (coreinterp.Interpolator, *ports.MultiPrbLoadMetadata, error) {
+	l.multiPrbCalls++
+	if l.err != nil {
+		return nil, nil, l.err
+	}
+	return l.fiveInterp, nil, nil
 }
+
 // LoadSevenHolePRB Task 07 新签名：返回中立 metadata；pointCount 不暴露
 // （兼容约定值 169/52 不应伪装为 loader 真值）。
 func (l *recordingSevenHoleLoader) LoadSevenHolePRB(innerPath string, outerPaths [6]string) (seveninterp.Interpolator, *ports.SevenHoleLoadMetadata, error) {
@@ -136,7 +160,7 @@ func newRestoreManager(probeType string) *TraversalManager {
 func TestRestoreSevenHole(t *testing.T) {
 	loader := &recordingSevenHoleLoader{interp: &mockSevenInterpolator{loaded: true}}
 	mgr := newRestoreManager(traversal.ProbeTypeSevenHole)
-	mgr.restoreInterpolatorFromConfig(context.Background(), sevenHoleConfigJSON(), loader)
+	mgr.restoreInterpolatorFromConfig(sevenHoleConfigJSON(), loader, 0, 0)
 
 	if loader.calls != 1 {
 		t.Fatalf("LoadSevenHolePRB calls = %d, want 1", loader.calls)
@@ -158,78 +182,171 @@ func TestRestoreSevenHole(t *testing.T) {
 	}
 }
 
-// TestRestoreSevenHoleIncomplete 缺 outerFiles 或数量≠6 时恢复报错且消息可读，
-// 且不启动 loader（spec §2.3 边界校验）。
+func TestRestoreDualVariantEachGetsFullTimeout(t *testing.T) {
+	loader := &mockInterpolatorLoader{
+		blockFor:          40 * time.Millisecond,
+		sevenHoleBlockFor: 40 * time.Millisecond,
+	}
+	loader.sevenHoleValidRange = seveninterp.PrbValidRange{}
+	mgr := newRestoreManager(traversal.ProbeTypeFiveHole)
+	cfg := []byte(`{
+		"probeType":"five-hole",
+		"prbFile":{"filePath":"D:/cal/five.prb"},
+		"sevenHolePrb":{
+			"kind":"seven-hole-prb-set",
+			"innerFile":{"filePath":"D:/cal/7.prb"},
+			"outerFiles":[
+				{"filePath":"D:/cal/1.prb"},{"filePath":"D:/cal/2.prb"},
+				{"filePath":"D:/cal/3.prb"},{"filePath":"D:/cal/4.prb"},
+				{"filePath":"D:/cal/5.prb"},{"filePath":"D:/cal/6.prb"}
+			]
+		}
+	}`)
+
+	mgr.restoreInterpolatorFromConfigWithTimeout(cfg, loader, 0, 0, 60*time.Millisecond)
+
+	if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); got != "" {
+		t.Fatalf("five-hole restore error = %q", got)
+	}
+	if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); got != "" {
+		t.Fatalf("seven-hole restore error = %q", got)
+	}
+	if loader.prbCalls != 1 || loader.sevenHolePRBCalls != 1 {
+		t.Fatalf("loader calls: five=%d seven=%d, want 1 each", loader.prbCalls, loader.sevenHolePRBCalls)
+	}
+}
+
+// TestRestoreSevenHoleIncomplete 七孔字段缺失或文件集不完整时视为该变体未配置，
+// 跳过且不报错（双变体语义：缺失不等于失败，仅意味着该侧未配置，前端按需引导导入）。
+//
+// 与旧设计的差异：旧设计将"文件集不完整"视为恢复失败并写入错误。
+// 新设计下，缺失字段表示该变体未启用，与五孔字段缺失的处理保持对称；
+// 不再调用 loader，错误字段保持空。
 func TestRestoreSevenHoleIncomplete(t *testing.T) {
 	cases := []struct {
 		name string
 		json string
-		want string
 	}{
-		{"missing sevenHolePrb", `{"probeType":"seven-hole"}`, "不完整"},
-		{"5 outer files", `{"probeType":"seven-hole","sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"}]}}`, "不完整"},
-		{"missing innerFile", `{"probeType":"seven-hole","sevenHolePrb":{"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`, "不完整"},
+		{"missing sevenHolePrb", `{"probeType":"seven-hole"}`},
+		{"5 outer files", `{"probeType":"seven-hole","sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"}]}}`},
+		{"missing innerFile", `{"probeType":"seven-hole","sevenHolePrb":{"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loader := &recordingSevenHoleLoader{}
 			mgr := newRestoreManager(traversal.ProbeTypeSevenHole)
-			mgr.restoreInterpolatorFromConfig(context.Background(), []byte(tc.json), loader)
+			mgr.restoreInterpolatorFromConfig([]byte(tc.json), loader, 0, 0)
 			if loader.calls != 0 {
 				t.Error("incomplete seven-hole config must not start the loader")
 			}
-			if got := mgr.InterpolatorRestoreErr(); !strings.Contains(got, tc.want) {
-				t.Errorf("restore err = %q, want containing %q", got, tc.want)
+			if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); got != "" {
+				t.Errorf("seven-hole restore err = %q, want empty (missing fields treated as unconfigured)", got)
+			}
+			// 七孔字段缺失时五孔侧也不应被触达（五孔字段同样缺失）
+			if loader.prbCalls != 0 || loader.csvFiveCalls != 0 || loader.multiPrbCalls != 0 {
+				t.Errorf("five-hole loaders must not be called when five-hole fields absent, got prb=%d csvFive=%d multi=%d",
+					loader.prbCalls, loader.csvFiveCalls, loader.multiPrbCalls)
 			}
 		})
 	}
 }
 
-// TestRestoreDualVariantAccepted 双变体语义：五孔字段与 sevenHolePrb 并存合法，
-// 仅按激活 probeType 恢复；未知 probeType 仍报错且不启动 loader。
+// TestRestoreDualVariantAccepted 双变体并行恢复语义：
+//   - 五孔字段与 sevenHolePrb 并存时，两侧 loader 均被调用，互不阻塞；
+//   - 七孔加载失败不影响五孔加载（反之亦然）——错误按类型分桶；
+//   - 未知 probeType 两侧同时报错且不启动任何 loader。
 func TestRestoreDualVariantAccepted(t *testing.T) {
 	t.Run("seven-hole active with five-hole fields present", func(t *testing.T) {
-		// 七孔激活 + 五孔字段并存：仅恢复七孔，五孔字段仅作持久化数据透传。
-		cfg := `{"probeType":"seven-hole","prbFile":{"filePath":"a.prb"},"useMultiPrb":true,` +
+		// 七孔激活 + 五孔字段并存：两侧 loader 均被调用一次，五孔/七孔错误都为空。
+		cfg := `{"probeType":"seven-hole","prbFile":{"filePath":"a.prb"},` +
 			`"sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`
-		loader := &recordingSevenHoleLoader{interp: &mockSevenInterpolator{loaded: true}}
+		// mockInterpolator.IsLoaded() 永远返回 true，无需 loaded 字段。
+		loader := &recordingSevenHoleLoader{
+			interp:     &mockSevenInterpolator{loaded: true},
+			fiveInterp: &mockInterpolator{},
+		}
 		mgr := newRestoreManager(traversal.ProbeTypeSevenHole)
-		mgr.restoreInterpolatorFromConfig(context.Background(), []byte(cfg), loader)
+		mgr.restoreInterpolatorFromConfig([]byte(cfg), loader, 0, 0)
 		if loader.calls != 1 {
-			t.Fatalf("seven-hole loader calls = %d, want 1 (active variant only)", loader.calls)
+			t.Fatalf("seven-hole loader calls = %d, want 1", loader.calls)
 		}
-		if got := mgr.InterpolatorRestoreErr(); got != "" {
-			t.Errorf("restore err = %q, want empty", got)
+		if loader.prbCalls != 1 {
+			t.Errorf("five-hole PRB loader calls = %d, want 1 (dual-variant parallel restore)", loader.prbCalls)
 		}
-		if !mgr.HasLoadedInterpolator() {
-			t.Error("seven-hole active must be loaded after restore")
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); got != "" {
+			t.Errorf("seven-hole restore err = %q, want empty", got)
+		}
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); got != "" {
+			t.Errorf("five-hole restore err = %q, want empty", got)
+		}
+		if !mgr.HasLoadedInterpolatorFor(traversal.ProbeTypeSevenHole) {
+			t.Error("seven-hole must be loaded after restore")
+		}
+		if !mgr.HasLoadedInterpolatorFor(traversal.ProbeTypeFiveHole) {
+			t.Error("five-hole must be loaded after restore (dual-variant)")
 		}
 	})
 
 	t.Run("five-hole active with sevenHolePrb present", func(t *testing.T) {
-		// 五孔激活 + sevenHolePrb 并存：不报错、不启动七孔 loader；
-		// 五孔无文件字段时不加载（与现状一致）。
-		cfg := `{"probeType":"five-hole","sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`
-		loader := &recordingSevenHoleLoader{}
-		mgr := newRestoreManager(traversal.ProbeTypeFiveHole)
-		mgr.restoreInterpolatorFromConfig(context.Background(), []byte(cfg), loader)
-		if loader.calls != 0 {
-			t.Error("five-hole active must not start the seven-hole loader")
+		// 五孔激活 + sevenHolePrb 并存：两侧 loader 均被调用，与激活类型无关。
+		// 这是双变体恢复的核心——切换激活类型后未恢复侧不再报"未加载"。
+		cfg := `{"probeType":"five-hole","prbFile":{"filePath":"a.prb"},` +
+			`"sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`
+		// mockInterpolator.IsLoaded() 永远返回 true，无需 loaded 字段。
+		loader := &recordingSevenHoleLoader{
+			interp:     &mockSevenInterpolator{loaded: true},
+			fiveInterp: &mockInterpolator{},
 		}
-		if got := mgr.InterpolatorRestoreErr(); got != "" {
-			t.Errorf("restore err = %q, want empty (dual-variant accepted)", got)
+		mgr := newRestoreManager(traversal.ProbeTypeFiveHole)
+		mgr.restoreInterpolatorFromConfig([]byte(cfg), loader, 0, 0)
+		if loader.calls != 1 {
+			t.Errorf("seven-hole loader calls = %d, want 1 (independent of active probeType)", loader.calls)
+		}
+		if loader.prbCalls != 1 {
+			t.Errorf("five-hole PRB loader calls = %d, want 1", loader.prbCalls)
+		}
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); got != "" {
+			t.Errorf("seven-hole restore err = %q, want empty", got)
+		}
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); got != "" {
+			t.Errorf("five-hole restore err = %q, want empty", got)
+		}
+	})
+
+	t.Run("seven-hole loader failure does not affect five-hole", func(t *testing.T) {
+		// 七孔 loader 失败仅写入七孔错误桶，五孔侧仍成功加载。
+		cfg := `{"probeType":"five-hole","prbFile":{"filePath":"a.prb"},` +
+			`"sevenHolePrb":{"innerFile":{"filePath":"7.prb"},"outerFiles":[{"filePath":"1.prb"},{"filePath":"2.prb"},{"filePath":"3.prb"},{"filePath":"4.prb"},{"filePath":"5.prb"},{"filePath":"6.prb"}]}}`
+		// 当前 recordingSevenHoleLoader 用单一 err 字段同时影响五孔和七孔。
+		// 这里需要更细粒度的注入：临时让 LoadSevenHolePRB 通过 interp=nil 模拟失败。
+		// mockInterpolator.IsLoaded() 永远返回 true，无需 loaded 字段。
+		loader := &recordingSevenHoleLoader{
+			interp:     nil, // 七孔 interp 为 nil，loader 仍返回 nil, nil
+			fiveInterp: &mockInterpolator{},
+		}
+		mgr := newRestoreManager(traversal.ProbeTypeFiveHole)
+		mgr.restoreInterpolatorFromConfig([]byte(cfg), loader, 0, 0)
+		// 五孔侧正常加载，错误为空
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); got != "" {
+			t.Errorf("five-hole restore err = %q, want empty (independent of seven-hole failure)", got)
+		}
+		if !mgr.HasLoadedInterpolatorFor(traversal.ProbeTypeFiveHole) {
+			t.Error("five-hole must remain loaded despite seven-hole nil interpolator")
 		}
 	})
 
 	t.Run("unknown probeType still rejected", func(t *testing.T) {
 		loader := &recordingSevenHoleLoader{}
 		mgr := newRestoreManager("")
-		mgr.restoreInterpolatorFromConfig(context.Background(), []byte(`{"probeType":"nine-hole"}`), loader)
+		mgr.restoreInterpolatorFromConfig([]byte(`{"probeType":"nine-hole"}`), loader, 0, 0)
 		if loader.calls != 0 {
 			t.Error("unknown probeType must not start any loader")
 		}
-		if got := mgr.InterpolatorRestoreErr(); !strings.Contains(got, "未知探针类型") {
-			t.Errorf("restore err = %q, want 未知探针类型", got)
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); !strings.Contains(got, "未知探针类型") {
+			t.Errorf("seven-hole restore err = %q, want 未知探针类型", got)
+		}
+		if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); !strings.Contains(got, "未知探针类型") {
+			t.Errorf("five-hole restore err = %q, want 未知探针类型", got)
 		}
 	})
 }
@@ -240,7 +357,7 @@ func TestRestoreSevenHoleCalibrationCsv(t *testing.T) {
 	cfg := `{"probeType":"seven-hole","sevenHolePrb":{"kind":"seven-hole-calibration-csv","innerFile":{"filePath":"inner.csv"},"outerFiles":[{"filePath":"1.csv"},{"filePath":"2.csv"},{"filePath":"3.csv"},{"filePath":"4.csv"},{"filePath":"5.csv"},{"filePath":"6.csv"}]}}`
 	loader := &recordingSevenHoleLoader{interp: &mockSevenInterpolator{loaded: true}}
 	mgr := newRestoreManager(traversal.ProbeTypeSevenHole)
-	mgr.restoreInterpolatorFromConfig(context.Background(), []byte(cfg), loader)
+	mgr.restoreInterpolatorFromConfig([]byte(cfg), loader, 0, 0)
 
 	if loader.csvCalls != 1 {
 		t.Fatalf("LoadSevenHoleCalibrationCSV calls = %d, want 1", loader.csvCalls)
@@ -295,7 +412,7 @@ func TestParseConfigSevenHoleBadKind(t *testing.T) {
 func TestRestoreSevenHoleLoaderError(t *testing.T) {
 	loader := &recordingSevenHoleLoader{err: errors.New("disk gone")}
 	mgr := newRestoreManager(traversal.ProbeTypeSevenHole)
-	mgr.restoreInterpolatorFromConfig(context.Background(), sevenHoleConfigJSON(), loader)
+	mgr.restoreInterpolatorFromConfig(sevenHoleConfigJSON(), loader, 0, 0)
 	if loader.calls != 1 {
 		t.Fatalf("calls = %d, want 1", loader.calls)
 	}

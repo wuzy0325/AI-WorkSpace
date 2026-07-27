@@ -173,32 +173,54 @@ func sevenHoleViewCalculate(m *TraversalManager, in probeCalcInput, inputReady b
 	return calculated
 }
 
-// SetSevenHoleInterpolator 注入七孔插值器（与五孔 interpolator 字段相互独立）。
-// 显式设置后启动恢复的陈旧错误不再适用，一并清除（与 SetInterpolator 同语义）。
+// SetSevenHoleInterpolator 注入七孔插值器（用户路径，与五孔 interpolator 字段相互独立）。
+// 递增 sevenHoleRestoreEpoch 让任何在途的启动恢复 goroutine 在写回前发现 epoch 不一致而跳过；
+// 显式设置后七孔侧启动恢复的陈旧错误不再适用，一并清除。
+// 五孔侧错误独立保留，互不影响（与 SetInterpolator 同语义的按类型分桶版本）。
 func (m *TraversalManager) SetSevenHoleInterpolator(interp seveninterp.Interpolator) {
 	m.mu.Lock()
+	m.sevenHoleRestoreEpoch++
 	m.sevenHoleInterpolator = interp
-	m.lastInterpolatorRestoreErr = ""
+	m.lastSevenHoleRestoreErr = ""
 	m.mu.Unlock()
+}
+
+// setSevenHoleInterpolatorFromRestore 是启动恢复 goroutine 专用的七孔插值器写入路径。
+// 与 setInterpolatorFromRestore 同语义：不递增 epoch，写入前比对捕获时的 epoch，
+// 不一致则返回 false 跳过写入以保护用户最新状态。
+func (m *TraversalManager) setSevenHoleInterpolatorFromRestore(interp seveninterp.Interpolator, epoch uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sevenHoleRestoreEpoch != epoch {
+		return false
+	}
+	m.sevenHoleInterpolator = interp
+	m.lastSevenHoleRestoreErr = ""
+	return true
 }
 
 // ClearProbeInterpolator 清除指定探针类型的插值器（spec §5.2.1）。
 // 前端切换探针类型前调用，防止陈旧校准数据被继续使用；未知类型返回 error。
+// 同时清除该类型对应的启动恢复错误并递增对应变体 epoch（与 SetInterpolator 同语义），
+// 让在途的启动恢复 goroutine 跳过写回以保护用户最新状态。
 func (m *TraversalManager) ClearProbeInterpolator(probeType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch probeType {
 	case traversal.ProbeTypeFiveHole:
+		m.fiveHoleRestoreEpoch++
 		m.interpolator = nil
 		if m.interpCache != nil {
 			m.interpCache.Clear()
 		}
+		m.lastFiveHoleRestoreErr = ""
 	case traversal.ProbeTypeSevenHole:
+		m.sevenHoleRestoreEpoch++
 		m.sevenHoleInterpolator = nil
+		m.lastSevenHoleRestoreErr = ""
 	default:
 		return fmt.Errorf("未知探针类型: %q", probeType)
 	}
-	m.lastInterpolatorRestoreErr = ""
 	return nil
 }
 

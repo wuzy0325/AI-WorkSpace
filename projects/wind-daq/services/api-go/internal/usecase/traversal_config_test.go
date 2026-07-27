@@ -65,10 +65,10 @@ type mockInterpolatorLoader struct {
 	multiPRBCalls int
 
 	// 七孔调用入参回填（Task 08 新增，用于 Import 七孔路径测试）
-	lastSevenHoleInner  string
-	lastSevenHoleOuter  [6]string
-	sevenHolePRBCalls   int
-	sevenHoleCSVCalls   int
+	lastSevenHoleInner string
+	lastSevenHoleOuter [6]string
+	sevenHolePRBCalls  int
+	sevenHoleCSVCalls  int
 
 	// 行为开关
 	prbErr      error
@@ -78,8 +78,9 @@ type mockInterpolatorLoader struct {
 	blockFor time.Duration
 
 	// 七孔行为开关（Task 08）
-	sevenHolePRBErr error
-	sevenHoleCSVErr error
+	sevenHolePRBErr   error
+	sevenHoleCSVErr   error
+	sevenHoleBlockFor time.Duration
 	// sevenHoleValidRange 七孔成功路径返回的有效范围；零值表示 ±30（与夹具默认一致）
 	sevenHoleValidRange seveninterp.PrbValidRange
 	// sevenHoleLoadedAtMs 七孔成功路径返回的加载时间戳；0 表示由 mock 用 time.Now 填充
@@ -180,7 +181,11 @@ func (l *mockInterpolatorLoader) LoadSevenHolePRB(innerPath string, outerPaths [
 	loadedAtMs := l.sevenHoleLoadedAtMs
 	innerPts := l.sevenHoleInnerPointCount
 	outerPts := l.sevenHoleOuterPointCounts
+	blockFor := l.sevenHoleBlockFor
 	l.mu.Unlock()
+	if blockFor > 0 {
+		time.Sleep(blockFor)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

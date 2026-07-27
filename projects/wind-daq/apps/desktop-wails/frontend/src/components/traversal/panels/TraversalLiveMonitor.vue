@@ -312,24 +312,26 @@ function onStatusBarClick() {
     <!-- 实时插值计算：统一卡片，紧凑 py-1.5 -->
     <section class="flex-shrink-0 border-b border-[var(--border-default)] p-2.5">
       <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--text-primary)]">
-        <Activity class="h-3.5 w-3.5 text-[var(--accent-info)]" />
-        {{ labels.realtimeCalculation }}
-      </div>
-      <!-- 状态条:四态视觉区分
-           - PRB 未加载:橙色,光标 pointer,点击跳配置
-           - 已加载未采集(no-data):蓝色提示"等待采集数据",无点击
-           - 插值无效:红色,hover tooltip 显示后端 warning 全文
-           - 正常:不渲染 -->
-      <div
-        v-if="interpStatus !== 'ok'"
-        class="mb-1.5 flex items-center gap-1.5 rounded-md px-2.5 py-1.5"
-        :class="{ 'cursor-pointer': interpStatus === 'prb-missing' }"
-        :style="statusBarStyle"
-        :title="statusBarTooltip"
-        @click="onStatusBarClick"
-      >
-        <AlertTriangle class="h-3 w-3 flex-shrink-0" />
-        <span class="text-[11px] font-medium truncate">{{ statusBarText }}</span>
+        <Activity class="h-3.5 w-3.5 text-[var(--accent-info)] flex-shrink-0" />
+        <span class="flex-shrink-0">{{ labels.realtimeCalculation }}</span>
+        <!-- 状态条:四态视觉区分,与标题同行右侧展示
+             - 原独立成行会因 v-if 显隐撑动布局,导致下方数值网格整体跳动
+             - 移到同行右侧后,显隐仅改变水平占位,垂直布局稳定
+             - PRB 未加载:橙色,光标 pointer,点击跳配置
+             - 已加载未采集(no-data):蓝色提示"等待采集数据",无点击
+             - 插值无效:红色,hover tooltip 显示后端 warning 全文
+             - 正常:不渲染 -->
+        <div
+          v-if="interpStatus !== 'ok'"
+          class="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 min-w-0"
+          :class="{ 'cursor-pointer': interpStatus === 'prb-missing' }"
+          :style="statusBarStyle"
+          :title="statusBarTooltip"
+          @click="onStatusBarClick"
+        >
+          <AlertTriangle class="h-3 w-3 flex-shrink-0" />
+          <span class="text-[11px] font-medium truncate">{{ statusBarText }}</span>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-1.5">
         <!-- 数值显示规则:isValid=false 时强制 value=undefined,模板兜底显示 '--',

@@ -962,14 +962,19 @@ export const useTraversalStore = defineStore('traversal', () => {
    *   后端字段变更时可在编译期感知。
    * - 后端 message 字段（CheckPreconditions 在 PRB 失败时已经把根因写入）会被回填到
    *   interpolatorRestoreMessage，由 UI 层展示给用户。
+   * - 显式传入当前 config：双变体恢复下 activateProbeType 仅修改前端 config.probeType，
+   *   后端 m.config.ProbeType 在保存前是旧值；后端 CheckPreconditions 已支持按请求
+   *   probeType 判定，必须显式传入否则会按旧类型查 PRB 误报"未加载"。
    */
   async function verifyInterpolatorWithBackend(): Promise<void> {
     if (!hasLoadedInterpolator.value) {
       interpolatorRestoreMessage.value = null
       return
     }
+    // 传入当前 config 副本，让后端按激活类型（而非陈旧的 m.config.ProbeType）判定 PRB 加载状态
+    const payload = config.value ? toSerializableConfig(config.value) : undefined
     try {
-      const res = await traversalApi.checkPreconditions()
+      const res = await traversalApi.checkPreconditions(payload)
       // API 调用未成功（如网络异常）：保留推断状态，但提示用户校验未完成
       if (!res.success || !res.data) {
         interpolatorRestoreMessage.value =

@@ -19,7 +19,7 @@ func TestImportPRB_Success(t *testing.T) {
 
 	// 预置一个旧插值器 + 陈旧恢复错误，验证 Import 后被清空。
 	mgr.SetInterpolator(&mockInterpolator{tag: "old"})
-	mgr.lastInterpolatorRestoreErr = "stale error"
+	mgr.lastFiveHoleRestoreErr = "stale error"
 
 	res, err := mgr.ImportPRB("/data/cal.prb")
 	if err != nil {
@@ -417,18 +417,23 @@ func TestImportMethods_ClearRestoreErr(t *testing.T) {
 	loader := &mockInterpolatorLoader{}
 	mgr.SetInterpolatorLoader(loader)
 
-	// 预置陈旧错误
-	mgr.lastInterpolatorRestoreErr = "stale"
+	// 预置陈旧错误：五孔/七孔双侧都写入，验证七孔 Import 仅清七孔侧
+	// （双变体独立分桶：七孔导入不影响五孔侧已记录的错误状态）。
+	mgr.lastFiveHoleRestoreErr = "stale five-hole"
+	mgr.lastSevenHoleRestoreErr = "stale seven-hole"
 	mgr.config = traversal.Config{ProbeType: traversal.ProbeTypeSevenHole}
 	mgr.SetSevenHoleInterpolator(&mockSevenHoleInterpolator{tag: "old"})
 
-	// 七孔导入成功后清空恢复错误
+	// 七孔导入成功后：七孔侧恢复错误被清空，五孔侧独立保留（双变体分桶语义）。
 	_, err := mgr.ImportSevenHolePRB("/data/7.prb", []string{"1.prb", "2.prb", "3.prb", "4.prb", "5.prb", "6.prb"})
 	if err != nil {
 		t.Fatalf("ImportSevenHolePRB: %v", err)
 	}
-	if mgr.InterpolatorRestoreErr() != "" {
-		t.Errorf("RestoreErr must be cleared after successful import, got %q", mgr.InterpolatorRestoreErr())
+	if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeSevenHole); got != "" {
+		t.Errorf("seven-hole RestoreErr must be cleared after successful import, got %q", got)
+	}
+	if got := mgr.InterpolatorRestoreErrFor(traversal.ProbeTypeFiveHole); got != "stale five-hole" {
+		t.Errorf("five-hole RestoreErr must be preserved independently, got %q", got)
 	}
 }
 
