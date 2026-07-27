@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.0] - 2026-07-27
+
+### Added
+
+- DAQ-P-1604 设备配置新增可选本地 IP 绑定，多网卡工位可明确选择通信网卡。
+- 七孔探针工作流支持动态 PRB 角度数量与多设备采集配置。
+
+### Fixed
+
+- 修复遍历 `PointResult.StartedAt` / `CompletedAt` 并非真实采样起止时间戳的问题。`traversal_acquisition.go` 原先用 `now - DwellTimeMs - SamplesPerPoint×10ms` 合成（文档 0.8.0 已声明记录"真实起止时间戳"，实现未落地），导致单点间隔恒为稳定等待 + 100ms，与设备采样率无关。现改为在 `collectAveragedSamples` 前后用 `time.Now()` 实测（选项 A：采样窗口语义，不含稳定等待 `DwellTimeMs`）；全 1603/采样 10/20Hz 配置下间隔正确反映为 ~0.5s。同时修正 skip 分支漏设 `StartedAt`（原默认 0 → 空串）的隐患。
+- 加固 DAQ-P-1604 连接握手：空帧可恢复、握手有总超时、对端关闭时清理死连接。
+
+### Verification
+
+- `go test ./internal/... ./api/...`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+
 ## [0.10.0] - 2026-07-24
 
 ### Added
