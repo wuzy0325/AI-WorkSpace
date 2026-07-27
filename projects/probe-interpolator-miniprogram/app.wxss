@@ -1,0 +1,256 @@
+/* ===================================================================
+   探针插值计算器 · 全局设计系统
+   仪器/控制台风格：冷调浅灰底 + 白卡 + 单一强调色 + 语义状态色
+   =================================================================== */
+page {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --ink: #0f172a;
+  --ink-2: #475569;
+  --ink-3: #94a3b8;
+  --border: #e6e8ec;
+  --border-strong: #d4d8de;
+  --accent: #2563eb;
+  --accent-ink: #1d4ed8;
+  --accent-soft: #eef4ff;
+  --ok: #0f9d58;
+  --ok-soft: #e8f7ef;
+  --err: #e02424;
+  --err-soft: #fdeaea;
+  --warn: #c27803;
+  --radius: 14rpx;
+  --radius-sm: 10rpx;
+  --radius-lg: 18rpx;
+  --shadow-sm: 0 1rpx 2rpx rgba(15, 23, 42, .05);
+  --shadow: 0 2rpx 8rpx rgba(15, 23, 42, .06), 0 12rpx 28rpx -16rpx rgba(15, 23, 42, .18);
+
+  background: var(--bg);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", Helvetica, sans-serif;
+  color: var(--ink);
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+view, text, button, input, picker, scroll-view { box-sizing: border-box; }
+
+/* 去掉小程序 button 默认描边 */
+button { padding: 0; background: transparent; line-height: 1.2; font-size: 28rpx; }
+button::after { border: none; }
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--surface);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius);
+  padding: 28rpx;
+  margin: 20rpx 24rpx;
+  box-shadow: var(--shadow-sm);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 18rpx;
+}
+
+/* ---------- 页头 ---------- */
+.page-header {
+  background: var(--surface);
+  border-bottom: 1rpx solid var(--border);
+  padding: 36rpx 28rpx 28rpx;
+  margin-bottom: 4rpx;
+}
+.page-header .title {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: .5rpx;
+  border-left: 6rpx solid var(--accent);
+  padding-left: 16rpx;
+  line-height: 1.2;
+}
+.page-header .sub {
+  font-size: 24rpx;
+  color: var(--ink-3);
+  margin: 12rpx 0 0 22rpx;
+}
+
+/* ---------- 文字辅助 ---------- */
+.hint { font-size: 23rpx; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-3); font-size: 24rpx; }
+.ok { color: var(--ok); }
+.error { color: var(--err); }
+.warn { color: var(--warn); }
+
+/* ---------- 按钮 ---------- */
+.btn {
+  appearance: none;
+  border: 1rpx solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 28rpx;
+  font-weight: 500;
+  padding: 18rpx 28rpx;
+  text-align: center;
+  color: var(--ink);
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:active { background: var(--accent-ink); }
+.btn-ghost { background: var(--surface-2); color: var(--ink-2); border-color: var(--border); }
+.btn-ghost:active { background: #eceef1; }
+.btn-row { display: flex; gap: 16rpx; }
+.btn-row .btn { flex: 1; }
+.btn-sm { font-size: 24rpx; padding: 12rpx 22rpx; }
+.btn-block { display: block; width: calc(100% - 48rpx); margin: 20rpx 24rpx; }
+.btn-full { display: block; width: 100%; }
+
+/* ---------- 分隔线 ---------- */
+.divider { height: 1rpx; background: var(--border); margin: 24rpx 0; }
+
+/* ---------- 输入 ---------- */
+.field-label { font-size: 25rpx; font-weight: 600; color: var(--ink-2); margin-bottom: 12rpx; }
+.grid2 { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.inp {
+  flex: 1 1 30%;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  background: var(--surface-2);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14rpx 18rpx;
+}
+.inp:focus-within { border-color: var(--accent); background: #fff; }
+.inp text { color: var(--ink-2); font-size: 25rpx; width: 64rpx; font-variant-numeric: tabular-nums; }
+.inp input { flex: 1; text-align: right; font-size: 28rpx; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ---------- 文件 ---------- */
+.file-list { display: flex; flex-wrap: wrap; gap: 12rpx; margin: 14rpx 0; }
+.file-tag {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 22rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 8rpx;
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid var(--border);
+}
+.file-row:last-child { border-bottom: none; }
+.file-name { flex: 1; font-size: 24rpx; color: var(--ink-2); word-break: break-all; }
+.mach-inp { flex: 0 0 auto; width: 240rpx; }
+.mach-inp input { text-align: left; width: 150rpx; }
+
+/* ---------- 结果 ---------- */
+.res-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid var(--border);
+}
+.res-row:last-child { border-bottom: none; }
+.res-label { color: var(--ink-2); font-size: 26rpx; }
+.res-val { font-size: 28rpx; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.res-val.warn { color: var(--warn); }
+.val-warn { color: var(--warn); font-weight: 600; }
+
+/* ---------- 状态条 ---------- */
+.status {
+  margin: 0 24rpx;
+  padding: 18rpx 22rpx;
+  border-radius: var(--radius-sm);
+  font-size: 25rpx;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: 1rpx solid var(--border);
+}
+.status.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.status.error { background: var(--err-soft); color: var(--err); border-color: transparent; }
+
+/* ---------- 单位选择 ---------- */
+.unit-row { display: flex; flex-wrap: wrap; gap: 16rpx; margin-top: 4rpx; }
+.unit-item { display: flex; flex-direction: column; gap: 8rpx; flex: 1 1 40%; }
+.unit-item > text { font-size: 23rpx; color: var(--ink-3); }
+.unit-picker {
+  background: var(--surface-2);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14rpx 18rpx;
+  font-size: 26rpx;
+  color: var(--ink);
+  text-align: center;
+}
+.unit-picker:active { background: #eceef1; }
+
+/* ---------- 批量 CSV ---------- */
+.section-label { font-size: 30rpx; font-weight: 600; color: var(--ink); }
+.csv-card { /* 继承 .card 外观 */ }
+.batch-btn-row { display: flex; gap: 16rpx; margin-top: 16rpx; }
+.csv-table-wrap { margin-top: 8rpx; }
+.scroll-x {
+  width: 100%;
+  white-space: nowrap;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.csv-table { display: inline-block; min-width: 100%; }
+.csv-tr { display: flex; flex-direction: row; border-bottom: 1rpx solid #f1f3f5; }
+.csv-tr:last-child { border-bottom: none; }
+.csv-th { background: var(--surface-2); font-weight: 600; position: sticky; top: 0; }
+.csv-td {
+  flex: 0 0 auto;
+  min-width: 150rpx;
+  padding: 12rpx 16rpx;
+  font-size: 22rpx;
+  color: var(--ink-2);
+  border-right: 1rpx solid #f1f3f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.csv-th .csv-td { color: var(--ink); }
+
+/* ---------- 首页探针瓦片 ---------- */
+.probe-list { padding: 20rpx 24rpx; display: flex; flex-direction: column; gap: 16rpx; }
+.probe-tile {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  background: var(--surface);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius);
+  padding: 28rpx 24rpx;
+  box-shadow: var(--shadow-sm);
+}
+.probe-tile:active { background: var(--surface-2); }
+.probe-badge {
+  flex: 0 0 auto;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 16rpx;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 34rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.probe-meta { flex: 1; min-width: 0; }
+.probe-name { font-size: 32rpx; font-weight: 600; color: var(--ink); }
+.probe-desc { font-size: 24rpx; color: var(--ink-3); margin-top: 4rpx; }
+.chevron { color: var(--ink-3); font-size: 40rpx; }
+
+/* ---------- 离屏 canvas（分享卡片绘制用） ---------- */
+.offscreen-canvas { position: fixed; left: -9999px; top: -9999px; width: 600px; height: 900px; }
