@@ -61,6 +61,22 @@ export function EmitLog(entry: $models.LogEvent): $CancellablePromise<void> {
 }
 
 /**
+ * ExitApplication 主动退出应用。
+ *
+ * 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
+ * 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
+ * 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
+ * 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
+ * 走与原生关闭等价的 ServiceShutdown 清理流程（停止录制/日志/relay）。
+ *
+ * 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
+ * 并终止应用主循环，确保单窗口场景下应用真正退出。
+ */
+export function ExitApplication(): $CancellablePromise<void> {
+    return $Call.ByID(569039905);
+}
+
+/**
  * GetLatestSnapshot 获取指定设备的最新快照（前端 500ms 轮询调用）
  * 替代原有的 daq:payload Event.Emit，避免 Wails v3 Event.Emit 触发
  * WebView2 同步 ExecuteScript 调用导致的 GUI 线程阻塞和 Eval errors。
@@ -75,7 +91,7 @@ export function GetLatestSnapshot(id: string): $CancellablePromise<[core$0.Press
 /**
  * GetLatestSnapshots 批量获取所有设备的最新快照（减少前端轮询次数）
  */
-export function GetLatestSnapshots(): $CancellablePromise<{ [key: string]: core$0.PressureSnapshot }> {
+export function GetLatestSnapshots(): $CancellablePromise<{ [_ in string]?: core$0.PressureSnapshot }> {
     return $Call.ByID(1045801725).then(($result: any) => {
         return $$createType1($result);
     });
@@ -150,6 +166,7 @@ export function StartLogFile(outputDir: string, prefix: string): $CancellablePro
 
 /**
  * StartRecording 开始录制
+ * 多设备精度合并：聚合所有已配置设备的通道精度，避免仅用第一个设备导致精度错误。
  */
 export function StartRecording(outputDir: string, filePrefix: string): $CancellablePromise<void> {
     return $Call.ByID(2702497030, outputDir, filePrefix);
@@ -188,6 +205,13 @@ export function StopRecording(): $CancellablePromise<void> {
  */
 export function UpsertProfile(profile: core$0.PressureProfile): $CancellablePromise<void> {
     return $Call.ByID(3103337011, profile);
+}
+
+/**
+ * ZeroCalibration 对设备的全部压力通道执行零点校准
+ */
+export function ZeroCalibration(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1912501281, id);
 }
 
 // Private type creation functions

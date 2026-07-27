@@ -261,6 +261,17 @@ func (a *App) StopAcquisition(id string) error {
 	return nil
 }
 
+// ZeroCalibration 对设备的全部压力通道执行零点校准
+func (a *App) ZeroCalibration(id string) error {
+	a.EmitLog(LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration requested"})
+	if err := a.deviceUC.ZeroCalibration(id); err != nil {
+		a.EmitLog(LogEvent{Level: "error", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration failed", Detail: err.Error()})
+		return err
+	}
+	a.EmitLog(LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration started"})
+	return nil
+}
+
 // GetStatus 获取设备状态
 func (a *App) GetStatus(id string) (core.DeviceState, bool) {
 	return a.deviceUC.GetStatus(id)
@@ -597,4 +608,34 @@ func (a *App) PickDirectory() (string, error) {
 		CanCreateDirectories(true).
 		SetTitle("选择保存目录").
 		PromptForSingleSelection()
+}
+
+// ExitApplication 主动退出应用。
+//
+// 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
+// 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
+// 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
+// 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
+// 走与原生关闭等价的 ServiceShutdown 清理流程（停止录制/日志/relay）。
+//
+// 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
+// 并终止应用主循环，确保单窗口场景下应用真正退出。
+func (a *App) ExitApplication() error {
+	a.EmitLog(LogEvent{
+		Level:    "info",
+		Category: "system",
+		Source:   "app",
+		Message:  "DAQ-P-1604 application exit requested by user",
+	})
+	app := a.app
+	if app == nil {
+		app = application.Get()
+	}
+	if app == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	// Quit() 内部会按注册顺序触发各 Service 的 ServiceShutdown，
+	// 与用户点击原生 X 按钮的退出路径完全等价。
+	app.Quit()
+	return nil
 }

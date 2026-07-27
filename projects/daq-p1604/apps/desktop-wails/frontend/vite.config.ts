@@ -18,6 +18,7 @@ export default defineConfig({
       // 让 shared/*.ts 文件能被 Rollup 正确解析
       'vue': fileURLToPath(new URL('./node_modules/vue', import.meta.url)),
       'pinia': fileURLToPath(new URL('./node_modules/pinia', import.meta.url)),
+      '@lucide/vue': fileURLToPath(new URL('./node_modules/@lucide/vue', import.meta.url)),
       'naive-ui': fileURLToPath(new URL('./node_modules/naive-ui', import.meta.url)),
       'naive-ui/es': fileURLToPath(new URL('./node_modules/naive-ui/es', import.meta.url)),
     },

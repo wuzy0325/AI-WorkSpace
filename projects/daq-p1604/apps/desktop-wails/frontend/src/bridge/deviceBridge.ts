@@ -6,11 +6,13 @@ import {
   Disconnect,
   StartAcquisition,
   StopAcquisition,
+  ZeroCalibration,
   ApplyConfig,
   GetStatus,
   ScanDevices,
   GetLatestSnapshot,
   GetLatestSnapshots,
+  ExitApplication,
 } from '../../bindings/daq-p1604/backend/app'
 import { Events } from '@wailsio/runtime'
 
@@ -40,6 +42,7 @@ export interface PressureProfile {
   id: string
   name: string
   address: string
+  localAddress?: string
   port: number
   samplingRate: number
   channels: ChannelConfig[]
@@ -123,6 +126,10 @@ export function stopAcquisition(id: string): Promise<void> {
   return StopAcquisition(id) as Promise<void>
 }
 
+export function zeroCalibration(id: string): Promise<void> {
+  return ZeroCalibration(id) as Promise<void>
+}
+
 export function getStatus(id: string): Promise<DeviceState | boolean> {
   return GetStatus(id) as any
 }
@@ -157,6 +164,16 @@ export function getLatestSnapshot(id: string): Promise<[PressureSnapshot, boolea
  */
 export function getLatestSnapshots(): Promise<Record<string, PressureSnapshot>> {
   return GetLatestSnapshots() as any
+}
+
+/**
+ * 主动退出应用。
+ *
+ * 由 MainTopBar 退出按钮的确认框 onPositiveClick 调用，
+ * 后端 application.Quit() 会触发 ServiceShutdown 走与原生关闭等价的清理流程。
+ */
+export function exitApplication(): Promise<void> {
+  return ExitApplication() as Promise<void>
 }
 
 export function onLog(handler: (entry: DeviceLogEvent) => void): void {

@@ -34,9 +34,16 @@ const (
 	// p1604UnitSyncTimeout 连接后读取硬件单位响应的超时时间。
 	// 设备通常在 100ms 内返回 u01101 响应，2s 余量足够应对网络抖动。
 	p1604UnitSyncTimeout = 2 * time.Second
+	// 覆盖 w1601 应答排空和单位同步；到期后直接关闭 socket，确保 Windows 上
+	// 偶发不响应 read deadline 的网络调用也能解除阻塞。
+	p1604HandshakeTimeout = 4 * time.Second
 	// p1604W1601DrainTimeout 排空 w1601 启用应答的最长等待时间。
 	// w1601 的 A 响应通常即时返回，100ms 内未读到则视为设备未发应答，继续后续流程。
 	p1604W1601DrainTimeout = 100 * time.Millisecond
+	// p1604CalibrationTimeout 零点校准（h 命令）等待设备响应的最长时间。
+	// 设备执行零点校准需要数百毫秒（内部 ADC 求平均），2s 余量足够覆盖网络抖动与
+	// 采集期间 readLoop 处理积压二进制帧的延迟。超时即视为设备无响应或连接已死。
+	p1604CalibrationTimeout = 2 * time.Second
 
 	// p1604ConsecutiveTimeoutThreshold 连续 ReadFrame 超时次数阈值。
 	// readLoop 每 200ms 读取一次数据帧，若连续 25 次（5s）均超时，
@@ -89,12 +96,13 @@ type DeviceLogEntry struct {
 
 // p1604Shard 单个分片：持有该分片下所有设备的状态、驱动、采集槽位
 type p1604Shard struct {
-	mu       sync.RWMutex
-	drivers  map[string]*p1604Driver
-	status   map[string]*core.DeviceState
-	sinks    map[string]func(core.PressureSnapshot)
-	channels map[string]chan core.PressureSnapshot
-	stopChs  map[string]chan struct{}
+	mu         sync.RWMutex
+	drivers    map[string]*p1604Driver
+	connecting map[string]struct{}
+	status     map[string]*core.DeviceState
+	sinks      map[string]func(core.PressureSnapshot)
+	channels   map[string]chan core.PressureSnapshot
+	stopChs    map[string]chan struct{}
 }
 
 // P1604Adapter DAQ-P-1604 硬件适配器（16 分片锁）
@@ -137,6 +145,15 @@ type p1604Driver struct {
 	// 主动停止原因追踪：嵌入 sharedproto.StopReasonTracker
 	// 提供 SetStopReason / GetStopReason / ClearStopReason 方法，跨项目复用
 	sharedproto.StopReasonTracker
+	// pendingResponseMu 保护 pendingResponse 通道，确保采集期间 ZeroCalibration
+	// 与 readLoop/processPayload 之间的请求/响应协调无竞态。
+	// 设计：发送命令前注册通道，readLoop 收到 ASCII 响应后投递到通道，
+	// ZeroCalibration 通过 select+timeout 等待响应或超时。
+	pendingResponseMu sync.Mutex
+	pendingResponse   chan []byte
+	// operationMu 串行化会改变连接读取者或等待命令响应的操作，防止采集启停
+	// 与校零同时读写同一 conn/frameReader。
+	operationMu sync.Mutex
 }
 
 // NewP1604Adapter 创建 P1604 硬件适配器
@@ -144,11 +161,12 @@ func NewP1604Adapter() *P1604Adapter {
 	a := &P1604Adapter{}
 	for i := range a.shards {
 		a.shards[i] = &p1604Shard{
-			drivers:  make(map[string]*p1604Driver),
-			status:   make(map[string]*core.DeviceState),
-			sinks:    make(map[string]func(core.PressureSnapshot)),
-			channels: make(map[string]chan core.PressureSnapshot),
-			stopChs:  make(map[string]chan struct{}),
+			drivers:    make(map[string]*p1604Driver),
+			connecting: make(map[string]struct{}),
+			status:     make(map[string]*core.DeviceState),
+			sinks:      make(map[string]func(core.PressureSnapshot)),
+			channels:   make(map[string]chan core.PressureSnapshot),
+			stopChs:    make(map[string]chan struct{}),
 		}
 	}
 	return a
@@ -239,6 +257,21 @@ func enableTCPKeepalive(conn net.Conn) error {
 	return nil
 }
 
+func runConnectionHandshake(conn net.Conn, timeout time.Duration, handshake func() error) error {
+	timedOut := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		_ = conn.Close()
+		close(timedOut)
+	})
+
+	err := handshake()
+	if timer.Stop() {
+		return err
+	}
+	<-timedOut
+	return fmt.Errorf("connection handshake timed out after %s", timeout)
+}
+
 // Connect 连接设备
 // 锁策略：仅在读写共享状态时持锁，TCP 拨号和 w1601 命令在锁外执行
 //
@@ -255,7 +288,17 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		shard.mu.Unlock()
 		return fmt.Errorf("device %s already connected", profile.ID)
 	}
+	if _, exists := shard.connecting[profile.ID]; exists {
+		shard.mu.Unlock()
+		return fmt.Errorf("device %s connection already in progress", profile.ID)
+	}
+	shard.connecting[profile.ID] = struct{}{}
 	shard.mu.Unlock()
+	defer func() {
+		shard.mu.Lock()
+		delete(shard.connecting, profile.ID)
+		shard.mu.Unlock()
+	}()
 
 	host := profile.Address
 	if host == "" {
@@ -267,7 +310,7 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 	}
 
 	// TCP 拨号在锁外执行，避免阻塞其他设备操作
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), p1604ConnectTimeout)
+	conn, err := sharedproto.DialTCP(fmt.Sprintf("%s:%d", host, port), profile.LocalAddress, p1604ConnectTimeout)
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
@@ -304,29 +347,31 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		idleLoopDone: make(chan struct{}),
 	}
 
-	// 连接后必须先发 w1601 启用长度前缀模式
-	if err := driver.sendCommand("w1601"); err != nil {
-		conn.Close()
-		return fmt.Errorf("enable length prefix: %w", err)
-	}
-	time.Sleep(50 * time.Millisecond)
+	var hwUnit, unitNote string
+	err = runConnectionHandshake(conn, p1604HandshakeTimeout, func() error {
+		// 连接后必须先发 w1601 启用长度前缀模式
+		if err := driver.sendCommand("w1601"); err != nil {
+			return fmt.Errorf("enable length prefix: %w", err)
+		}
+		time.Sleep(50 * time.Millisecond)
 
-	// 排空 w1601 的 A 应答，避免污染后续 u01101 响应
-	sharedproto.DrainW1601Response(driver.frameReader, conn, p1604W1601DrainTimeout)
-	// 打印 w1601 应答接收日志（A 应答已被排空丢弃，此处仅记录通信事件）
-	a.emitLog(DeviceLogEntry{
-		Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
-		Message: "Command response", Detail: "w1601 -> A (ack, drained)",
+		// 排空 w1601 的 A 应答，避免污染后续 u01101 响应
+		sharedproto.DrainW1601Response(driver.frameReader, conn, p1604W1601DrainTimeout)
+		a.emitLog(DeviceLogEntry{
+			Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
+			Message: "Command response", Detail: "w1601 -> A (ack, drained)",
+		})
+
+		var unitErr error
+		hwUnit, unitNote, unitErr = a.syncUnitFromHardware(driver, profile)
+		if unitErr != nil {
+			return fmt.Errorf("sync unit from hardware: %w", unitErr)
+		}
+		return nil
 	})
-
-	// 读取硬件当前 EU 压力转换系数，识别硬件单位
-	// 软错误（超时/解析失败）不阻断连接，仅记录 warn；
-	// 硬错误（对端 FIN/RST）返回 error → 关闭 conn 并让 Connect 失败，
-	// 避免把已死连接塞进 shard 造成后续 StartAcquisition 爆 WSAECONNABORTED。
-	hwUnit, unitNote, unitErr := a.syncUnitFromHardware(driver, profile)
-	if unitErr != nil {
-		conn.Close()
-		return fmt.Errorf("sync unit from hardware: %w", unitErr)
+	if err != nil {
+		_ = conn.Close()
+		return err
 	}
 
 	shard.mu.Lock()
@@ -481,8 +526,19 @@ func syncChannelsUnit(channels []core.ChannelConfig, globalUnit string) {
 //  3. 锁外：发送停止命令、conn.Close。
 func (a *P1604Adapter) Disconnect(id string) error {
 	shard := a.shard(id)
+	shard.mu.RLock()
+	driver := shard.drivers[id]
+	shard.mu.RUnlock()
+	if driver != nil {
+		driver.operationMu.Lock()
+		defer driver.operationMu.Unlock()
+	}
+
 	shard.mu.Lock()
-	driver, ok := shard.drivers[id]
+	current, ok := shard.drivers[id]
+	if current != driver {
+		ok = false
+	}
 	wasAcquiring := ok && driver != nil && driver.acquiring
 	// 在 close(stop) 之前标记主动停止原因，readLoop 看到该原因会静默退出
 	if wasAcquiring && driver != nil {
@@ -580,9 +636,18 @@ func (a *P1604Adapter) Disconnect(id string) error {
 // 锁策略：仅在状态检查和状态更新时持锁，所有 sendCommand 和 Sleep 在锁外执行
 func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot, error) {
 	shard := a.shard(id)
-	shard.mu.Lock()
+	shard.mu.RLock()
 	driver, ok := shard.drivers[id]
-	if !ok {
+	shard.mu.RUnlock()
+	if !ok || driver == nil {
+		return nil, fmt.Errorf("device %s not connected", id)
+	}
+	driver.operationMu.Lock()
+	defer driver.operationMu.Unlock()
+
+	shard.mu.Lock()
+	current, ok := shard.drivers[id]
+	if !ok || current != driver {
 		shard.mu.Unlock()
 		return nil, fmt.Errorf("device %s not connected", id)
 	}
@@ -722,8 +787,19 @@ func (a *P1604Adapter) driverSendCommandSafe(id, cmd string) error {
 //  3. 锁外：发送停止命令（不关 conn，连接保留以便后续重新 StartAcquisition）。
 func (a *P1604Adapter) StopAcquisition(id string) error {
 	shard := a.shard(id)
+	shard.mu.RLock()
+	driver := shard.drivers[id]
+	shard.mu.RUnlock()
+	if driver != nil {
+		driver.operationMu.Lock()
+		defer driver.operationMu.Unlock()
+	}
+
 	shard.mu.Lock()
-	driver, ok := shard.drivers[id]
+	current, ok := shard.drivers[id]
+	if current != driver {
+		ok = false
+	}
 	wasAcquiring := ok && driver != nil && driver.acquiring
 	if wasAcquiring && driver != nil {
 		driver.SetStopReason(sharedproto.StopReasonUserRequested)
@@ -782,6 +858,169 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 		shard.mu.Unlock()
 	}
 	return nil
+}
+
+// ZeroCalibration 对全部压力通道执行设备原生零点校准。
+//
+// 实现要点：把"只发命令不验响应"升级为请求/响应模式，避免设备返回 Nxx 或
+// 连接已死时前端仍提示"校准已启动"。两条路径分别由当前连接读取者协调：
+//   - 采集期间：readLoop 持有 frameReader，通过 driver.pendingResponse 通道
+//     把 ASCII 响应投递回本方法。本方法仅发送命令并 select 等待响应/超时。
+//   - 空闲期间：idleReadLoop 不使用 frameReader（仅裸读 conn），先停止它
+//     再用 frameReader 直接读写，结束后重启 idleReadLoop（与 ApplyConfig 同模式）。
+//
+// 错误处理与采集路径对齐：使用 IsConnectionFault（而非 IsConnResetByPeer）
+// 判定连接故障并触发 handleConnectionLost。原因：
+//   - 校零常在采集运行中触发，若设备连接半开（TCP keepalive 超时但未收到 RST），
+//     IsConnResetByPeer 不匹配超时，会遗漏清理，导致后续采集调用持续撞同一死连接；
+//   - IsConnectionFault 覆盖超时/broken pipe/closed conn/RST 等所有"连接不可用"证据，
+//     保守触发清理比静默失败更安全；
+//   - 注：IsConnectionFault 文档标注"不可作为状态机输入"，但 StartAcquisition/StopAcquisition
+//     的 rollback 路径已事实上用它做连接状态判定，此处与已有实践保持一致。
+func (a *P1604Adapter) ZeroCalibration(id string) error {
+	shard := a.shard(id)
+	shard.mu.RLock()
+	driver, ok := shard.drivers[id]
+	shard.mu.RUnlock()
+	if !ok || driver == nil || driver.conn == nil {
+		return fmt.Errorf("device %s not connected", id)
+	}
+	driver.operationMu.Lock()
+	defer driver.operationMu.Unlock()
+
+	shard.mu.RLock()
+	current, stillConnected := shard.drivers[id]
+	acquiring := stillConnected && current == driver && driver.acquiring
+	shard.mu.RUnlock()
+	if !stillConnected || current != driver || driver.conn == nil {
+		return fmt.Errorf("device %s not connected", id)
+	}
+
+	if acquiring {
+		return a.zeroCalibrationViaReadLoop(id, driver)
+	}
+	return a.zeroCalibrationDirect(id, driver)
+}
+
+// zeroCalibrationViaReadLoop 采集期间路径：通过 pendingResponse 通道协调响应。
+//
+// 约束：readLoop 是 frameReader 的唯一读取者，本方法绝不能直接调用 ReadFrame，
+// 否则与 readLoop 竞争同一 conn 的 Read，造成帧字节流错位。
+//
+// 并发：pendingResponseMu 保证同一 driver 同时只有一个等待者；若并发调用，
+// 第二个调用方立即返回错误，不阻塞。
+func (a *P1604Adapter) zeroCalibrationViaReadLoop(id string, driver *p1604Driver) error {
+	driver.pendingResponseMu.Lock()
+	if driver.pendingResponse != nil {
+		driver.pendingResponseMu.Unlock()
+		return fmt.Errorf("zero calibration: 另一个命令响应正在等待")
+	}
+	ch := make(chan []byte, 1)
+	driver.pendingResponse = ch
+	driver.pendingResponseMu.Unlock()
+
+	defer func() {
+		driver.pendingResponseMu.Lock()
+		driver.pendingResponse = nil
+		driver.pendingResponseMu.Unlock()
+	}()
+
+	if err := driver.sendCommand("h"); err != nil {
+		if sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
+		}
+		return fmt.Errorf("zero calibration: %w", err)
+	}
+
+	select {
+	case resp, ok := <-ch:
+		if !ok {
+			// 通道被 readLoop 关闭（handleConnectionLost 触发）：连接已断
+			return fmt.Errorf("zero calibration: 连接在等待响应期间断开")
+		}
+		if err := verifyZeroCalibrationResponse(resp); err != nil {
+			return err
+		}
+		// 成功路径补充通信日志：readLoop 已将响应路由到本方法，不再走 processPayload 的日志分支
+		a.emitLog(DeviceLogEntry{
+			Level: "info", Category: "hardware-recv", DeviceID: id,
+			Message: "Command response", Detail: "h -> A (ack, zero calibration ok)",
+		})
+		return nil
+	case <-time.After(p1604CalibrationTimeout):
+		return fmt.Errorf("zero calibration: 等待设备响应超时（%v）", p1604CalibrationTimeout)
+	}
+}
+
+// zeroCalibrationDirect 空闲期间路径：停止 idleReadLoop 后直接读写 frameReader。
+//
+// 顺序与 ApplyConfig 一致：joinReadLoop（防御性 no-op）→ stopIdleLoop →
+// Reset+Drain → sendCommand → ReadFrame → 验证响应；defer 重启 idleReadLoop。
+//
+// idleReadLoop 通过裸 conn.Read 排空延迟应答，与 frameReader.ReadFrame 竞争同一
+// conn 的读取，必须先停止它再用 frameReader，否则会造成帧字节流错位。
+func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) error {
+	driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
+	stoppedIdle := a.stopIdleLoop(id, driver)
+	defer func() {
+		shard := a.shard(id)
+		shard.mu.Lock()
+		if shard.drivers[id] == driver && driver.conn != nil && !driver.acquiring && driver.idleStopCh == stoppedIdle {
+			driver.idleStopCh = make(chan struct{})
+			driver.idleLoopDone = make(chan struct{})
+			go a.idleReadLoop(id, driver, driver.idleStopCh)
+		}
+		shard.mu.Unlock()
+	}()
+
+	// 清理残留数据：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
+	// 或上一条命令延迟到达的应答。否则 ReadFrame 会把残留当作 h 响应读出。
+	driver.frameReader.Reset()
+	if drained := sharedproto.DrainConnection(driver.conn, p1604W1601DrainTimeout); drained > 0 {
+		slog.Debug("DAQ-P-1604 drained residual data before zero calibration",
+			"device", id, "bytes", drained)
+	}
+
+	if err := driver.sendCommand("h"); err != nil {
+		if sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
+		}
+		return fmt.Errorf("zero calibration: %w", err)
+	}
+
+	// 读响应：长度前缀帧。采集未运行时无二进制流干扰，响应帧是 ReadFrame 的首个返回。
+	_ = driver.conn.SetReadDeadline(time.Now().Add(p1604CalibrationTimeout))
+	resp, err := driver.frameReader.ReadFrame()
+	_ = driver.conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		// 连接已死（FIN/RST/超时）→ 触发 handleConnectionLost 清理 driver + conn
+		if sharedproto.IsConnResetByPeer(err) || sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
+		}
+		return fmt.Errorf("zero calibration: %w", err)
+	}
+
+	if err := verifyZeroCalibrationResponse(resp); err != nil {
+		return err
+	}
+	a.emitLog(DeviceLogEntry{
+		Level: "info", Category: "hardware-recv", DeviceID: id,
+		Message: "Command response", Detail: "h -> A (ack, zero calibration ok)",
+	})
+	return nil
+}
+
+// verifyZeroCalibrationResponse 校验设备对 h 命令的响应。
+// 设备协议：A = 成功；Nxx = 错误码（如 N05 数据字段错误）；其他 = 异常响应。
+func verifyZeroCalibrationResponse(resp []byte) error {
+	s := strings.TrimSpace(string(resp))
+	if s == "A" {
+		return nil
+	}
+	if strings.HasPrefix(s, "N") {
+		return fmt.Errorf("零点校准被设备拒绝: %s", s)
+	}
+	return fmt.Errorf("零点校准响应异常: %q", s)
 }
 
 // joinReadLoop 等待 readLoop 关闭其 done channel；超时仅日志，不阻塞调用方。
@@ -921,9 +1160,20 @@ func (a *P1604Adapter) Status(id string) (core.DeviceState, bool) {
 //   - 设备正在采集：拒绝（由 usecase 层保证，adapter 自身也做防御性检查）
 func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 	shard := a.shard(id)
+	shard.mu.RLock()
+	driver := shard.drivers[id]
+	shard.mu.RUnlock()
+	if driver != nil {
+		driver.operationMu.Lock()
+		defer driver.operationMu.Unlock()
+	}
+
 	shard.mu.Lock()
 	st, exists := shard.status[id]
-	driver, hasDriver := shard.drivers[id]
+	current, hasDriver := shard.drivers[id]
+	if current != driver {
+		hasDriver = false
+	}
 	if exists && hasDriver && driver != nil && driver.acquiring {
 		shard.mu.Unlock()
 		return fmt.Errorf("cannot apply config while acquiring")
@@ -1089,7 +1339,7 @@ func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan stru
 			}
 			consecutiveTimeouts = 0
 			if len(payload) > 0 {
-				a.processPayload(id, payload)
+				a.processPayload(id, payload, driver)
 			}
 		}
 	}
@@ -1138,6 +1388,17 @@ func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, caus
 	st.SetStatus(core.StatusError)
 	st.Error = fmt.Sprintf("连接断开: %v", cause)
 	st.AcquiringAt = 0
+	// 关闭 pendingResponse 通道：让 ZeroCalibration 等待方立即感知断连，
+	// 不必等到 p1604CalibrationTimeout 超时才返回。锁顺序：shard.mu → pendingResponseMu，
+	// 与 processPayload（先释放 shard.mu 再取 pendingResponseMu）和 zeroCalibrationViaReadLoop
+	// （仅持 pendingResponseMu）不冲突，无死锁风险。
+	driver.pendingResponseMu.Lock()
+	pendingCh := driver.pendingResponse
+	driver.pendingResponse = nil
+	if pendingCh != nil {
+		close(pendingCh)
+	}
+	driver.pendingResponseMu.Unlock()
 	shard.mu.Unlock()
 
 	// 锁外关闭 conn：释放底层 fd 资源。
@@ -1161,15 +1422,37 @@ func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, caus
 // processPayload 处理接收到的数据帧
 //
 // 日志策略：
-//   - ASCII 响应帧（命令确认）：打印 hardware-recv 日志，属于硬件通信信息，
+//   - ASCII 响应帧（命令确认）：若 driver.pendingResponse 已注册（如零点校准等待响应），
+//     优先路由到通道由等待方处理；否则打印 hardware-recv 日志，属于硬件通信信息，
 //     频率低（仅连接/配置/启停时出现），可安全输出。
 //   - 二进制数据帧（采集压力数据）：不打印每帧内容，因为采集期间帧率高达
 //     1kHz × 多设备，逐帧打印会刷爆日志文件与前端面板。
 //     仅在解析错误或通道数异常时打印 warn/debug 日志。
-func (a *P1604Adapter) processPayload(id string, data []byte) {
+func (a *P1604Adapter) processPayload(id string, data []byte, driver *p1604Driver) {
 	// 区分 ASCII 响应和二进制帧
 	if sharedproto.IsASCIIFrame(data) {
-		// ASCII 响应（命令确认等）：打印通信日志后忽略，不作为采集数据下发
+		// 优先路由到等待中的命令响应通道（如 ZeroCalibration 采集期间路径）
+		if driver != nil {
+			driver.pendingResponseMu.Lock()
+			ch := driver.pendingResponse
+			if ch != nil {
+				select {
+				case ch <- data:
+				default:
+					// 通道满（多帧响应或等待方已超时退出但通道尚未清理）：
+					// 按原逻辑记录日志，避免静默丢失通信证据
+					a.emitLog(DeviceLogEntry{
+						Level: "warn", Category: "hardware-recv", DeviceID: id,
+						Message: "Command response dropped (pending channel full)",
+						Detail:  strings.TrimSpace(string(data)),
+					})
+				}
+				driver.pendingResponseMu.Unlock()
+				return
+			}
+			driver.pendingResponseMu.Unlock()
+		}
+		// 无等待方：打印通信日志后忽略，不作为采集数据下发
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware-recv", DeviceID: id,
 			Message: "Command response", Detail: strings.TrimSpace(string(data)),

@@ -5,9 +5,12 @@ export {
     ChannelConfig,
     DeviceState,
     DeviceStatus,
+    FileRotation,
     P1604Config,
     PressureProfile,
+    PressureSnapshot,
     RecordingSession,
     RecordingStatus,
-    ScanResult
+    ScanResult,
+    StopConditions
 } from "./models.js";

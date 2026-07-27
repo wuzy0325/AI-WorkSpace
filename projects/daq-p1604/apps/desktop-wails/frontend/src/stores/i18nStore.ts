@@ -33,6 +33,10 @@ const zh = {
   // ---- 应用级 ----
   // Wails 原生窗口标题（由 App.vue onMounted + watch(locale) 调用 Window.SetTitle 同步）
   'app.windowTitle': 'DAQ-P-1604 压力采集',
+  // 退出应用确认框文案（MainTopBar 退出按钮触发，确认后调用后端 ExitApplication）
+  'app.confirmExitTitle': '退出应用',
+  'app.confirmExitText': '确认退出 DAQ-P-1604 吗？未保存的录制将被正常关闭并落盘。',
+  'app.exit': '退出',
 
   // ---- 设备状态 ----
   'status.acquiring': '采集中',
@@ -54,14 +58,16 @@ const zh = {
   'topbar.startSave': '开始保存',
   'topbar.stopSave': '停止保存',
   'topbar.addDevice': '添加设备',
-  'topbar.openConfig': '打开配置',
-  'topbar.pleaseAddDevice': '请先添加设备',
+  'topbar.zeroCalibration': '校零',
+  'topbar.zeroing': '校零中...',
+  'topbar.connectBeforeZero': '请先连接设备再校零',
   'topbar.noDeviceAvailable': '没有可用的设备',
   'topbar.operating': '操作中...',
   'topbar.uiRefreshRate': '界面刷新率',
   'topbar.toggleLightTheme': '切换为浅色模式',
   'topbar.toggleDarkTheme': '切换为深色模式',
   'topbar.toggleLanguage': '切换语言',
+  'topbar.exitApp': '退出应用',
   // switchToZh/switchToEn 故意用目标语言描述：屏幕阅读器读出"切换到中文" / "Switch to English"
   // 让用户在切换前听到目标语言发音，便于识别将切到哪种语言。
   'topbar.switchToZh': '切换到中文',
@@ -168,6 +174,7 @@ const zh = {
   'dialog.deviceName': '设备名称',
   'dialog.deviceNamePlaceholder': '例如: 压力采集器 1',
   'dialog.ipAddress': 'IP 地址',
+  'dialog.localIpAddress': '绑定本地 IP（可选，多网卡使用）',
   'dialog.port': '端口',
   'dialog.inputDeviceName': '请输入设备名称',
   'dialog.inputIpAddress': '请输入 IP 地址',
@@ -183,6 +190,10 @@ const zh = {
   'log.saveToFile': '保存日志到文件',
   'log.savingTo': '日志正在保存至: {dir}\n点击停止',
   'log.level': '级别',
+  'log.levelDebug': '调试',
+  'log.levelInfo': '信息',
+  'log.levelWarn': '警告',
+  'log.levelError': '错误',
   'log.category': '分类',
   'log.allGroups': '全部',
   'log.empty': '暂无日志',
@@ -200,6 +211,9 @@ const zh = {
   // ---- 错误消息（throw / 状态栏显示） ----
   'error.saveConfigFailed': '保存配置失败',
   'error.applyConfigTimeout': '应用配置超时，设备可能无响应',
+  'error.zeroCalibrationTimeout': '校零超时，设备可能无响应',
+  'error.scanTimeout': '设备扫描超时，请检查网络或防火墙后重试',
+  'error.connectTimeout': '连接设备超时，请检查设备响应或网络后重试',
   'error.duplicateDevice': '该设备已添加，请勿重复添加',
 
   // ---- 日志消息（写入 logStore 的运行时消息） ----
@@ -209,6 +223,7 @@ const zh = {
   'logMessage.deviceDisconnected': '设备 [{id}] 已断开（后端推送，前一状态: {prev}）',
   'logMessage.scanSkipped': '扫描添加：{count} 台设备因地址重复被跳过 ({details})',
   'logMessage.scanFailed': '扫描添加失败：{name} - {error}',
+  'logMessage.scanDiscoveryFailed': '设备扫描失败：{error}',
   'logMessage.scanAdded': '扫描添加：成功新增 {count} 台设备',
   'logMessage.autoConnectDeviceFailed': '自动连接失败：{name} - {reason}',
 } as const
@@ -244,6 +259,9 @@ const en = {
 
   // ---- app-level ----
   'app.windowTitle': 'DAQ-P-1604 Pressure Acquisition',
+  'app.confirmExitTitle': 'Exit Application',
+  'app.confirmExitText': 'Exit DAQ-P-1604? Any in-progress recording will be flushed and closed.',
+  'app.exit': 'Exit',
 
   // ---- status ----
   'status.acquiring': 'Acquiring',
@@ -265,14 +283,16 @@ const en = {
   'topbar.startSave': 'Start Save',
   'topbar.stopSave': 'Stop Save',
   'topbar.addDevice': 'Add Device',
-  'topbar.openConfig': 'Open Config',
-  'topbar.pleaseAddDevice': 'Please add a device first',
+  'topbar.zeroCalibration': 'Zero Calibration',
+  'topbar.zeroing': 'Zeroing...',
+  'topbar.connectBeforeZero': 'Connect the device before zeroing',
   'topbar.noDeviceAvailable': 'No device available',
   'topbar.operating': 'Operating...',
   'topbar.uiRefreshRate': 'UI Refresh Rate',
   'topbar.toggleLightTheme': 'Switch to Light Theme',
   'topbar.toggleDarkTheme': 'Switch to Dark Theme',
   'topbar.toggleLanguage': 'Switch Language',
+  'topbar.exitApp': 'Exit Application',
   'topbar.switchToZh': '切换到中文',
   'topbar.switchToEn': 'Switch to English',
 
@@ -377,6 +397,7 @@ const en = {
   'dialog.deviceName': 'Device Name',
   'dialog.deviceNamePlaceholder': 'e.g., Pressure DAQ 1',
   'dialog.ipAddress': 'IP Address',
+  'dialog.localIpAddress': 'Local IP binding (optional)',
   'dialog.port': 'Port',
   'dialog.inputDeviceName': 'Please enter a device name',
   'dialog.inputIpAddress': 'Please enter an IP address',
@@ -392,6 +413,10 @@ const en = {
   'log.saveToFile': 'Save logs to file',
   'log.savingTo': 'Logs are being saved to: {dir}\nClick to stop',
   'log.level': 'Level',
+  'log.levelDebug': 'Debug',
+  'log.levelInfo': 'Info',
+  'log.levelWarn': 'Warn',
+  'log.levelError': 'Error',
   'log.category': 'Category',
   'log.allGroups': 'All',
   'log.empty': 'No logs',
@@ -409,6 +434,9 @@ const en = {
   // ---- error ----
   'error.saveConfigFailed': 'Failed to save config',
   'error.applyConfigTimeout': 'Config apply timed out, device may be unresponsive',
+  'error.zeroCalibrationTimeout': 'Zero calibration timed out, device may be unresponsive',
+  'error.scanTimeout': 'Device scan timed out. Check the network or firewall and try again.',
+  'error.connectTimeout': 'Device connection timed out. Check the device response or network and try again.',
   'error.duplicateDevice': 'This device has already been added',
 
   // ---- logMessage ----
@@ -418,6 +446,7 @@ const en = {
   'logMessage.deviceDisconnected': 'Device [{id}] disconnected (backend push, previous: {prev})',
   'logMessage.scanSkipped': 'Scan add: {count} device(s) skipped due to duplicate address ({details})',
   'logMessage.scanFailed': 'Scan add failed: {name} - {error}',
+  'logMessage.scanDiscoveryFailed': 'Device scan failed: {error}',
   'logMessage.scanAdded': 'Scan add: successfully added {count} device(s)',
   'logMessage.autoConnectDeviceFailed': 'Auto-connect failed: {name} - {reason}',
 } as const satisfies Record<keyof typeof zh, string>

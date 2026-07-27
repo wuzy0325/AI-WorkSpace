@@ -97,6 +97,11 @@ func (uc *DeviceUsecase) StopAcquisition(id string) error {
 	return uc.device.StopAcquisition(id)
 }
 
+// ZeroCalibration 对设备的全部压力通道执行零点校准
+func (uc *DeviceUsecase) ZeroCalibration(id string) error {
+	return uc.device.ZeroCalibration(id)
+}
+
 // GetStatus 获取设备状态
 func (uc *DeviceUsecase) GetStatus(id string) (core.DeviceState, bool) {
 	return uc.device.Status(id)

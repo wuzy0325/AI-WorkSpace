@@ -19,12 +19,12 @@ const copiedId = ref<number | null>(null)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
 /** 级别过滤选项 */
-const levelOptions: { value: LogLevel; label: string }[] = [
-  { value: 'debug', label: 'Debug' },
-  { value: 'info', label: 'Info' },
-  { value: 'warn', label: 'Warn' },
-  { value: 'error', label: 'Error' },
-]
+const levelOptions = computed<{ value: LogLevel; label: string }[]>(() => [
+  { value: 'debug', label: i18n.t('log.levelDebug') },
+  { value: 'info', label: i18n.t('log.levelInfo') },
+  { value: 'warn', label: i18n.t('log.levelWarn') },
+  { value: 'error', label: i18n.t('log.levelError') },
+])
 
 /** 分组过滤选项（标签随语言切换，用 computed 让 locale 变化时自动刷新） */
 const groupOptions = computed<{ value: LogGroup | 'all'; label: string }[]>(() => [

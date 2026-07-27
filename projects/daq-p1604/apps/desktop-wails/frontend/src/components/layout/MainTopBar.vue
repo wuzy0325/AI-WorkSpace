@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
+import { Sun, Moon, Activity, Crosshair, Plus, CircleDot, Play, Square, Circle, Gauge, Power } from '@lucide/vue'
+import { useDialog } from 'naive-ui'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
-import LanguageToggle from '@components/layout/LanguageToggle.vue'
+import { exitApplication } from '@bridge/deviceBridge'
+import LanguageToggle from '@shared-frontend/components/LanguageToggle.vue'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
-  (e: 'open-config'): void
+  (e: 'zero-calibration'): void
   (e: 'toggle-acquisition'): void
 }>()
 
@@ -19,6 +21,7 @@ const props = defineProps<{
   version: string
   /** 操作进行中标志：用于禁用采集按钮防止重复点击 */
   isToggling?: boolean
+  isZeroing?: boolean
 }>()
 
 const deviceStore = useDeviceStore()
@@ -26,6 +29,10 @@ const displayStore = useDisplayStore()
 const recordingStore = useRecordingStore()
 const i18n = useI18nStore()
 const { theme, toggleTheme } = useTheme()
+const dialog = useDialog()
+
+// 退出操作进行中标志：避免用户连点触发多个 application.Quit() 调用
+const isExiting = ref(false)
 
 const acquiringDevices = computed(
   () => deviceStore.profiles.filter((p) => deviceStore.acquiringFor(p.id)).length
@@ -41,12 +48,19 @@ const hasConnectedDevice = computed(
 const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDevice.value)
 
 /** 采集按钮是否应该被禁用（操作进行中或无可操作设备） */
-const isAcquisitionDisabled = computed(() => !canToggleAcquisition.value || props.isToggling)
+const isAcquisitionDisabled = computed(() => (
+  !canToggleAcquisition.value || props.isToggling || props.isZeroing
+))
 
-/** 设备列表是否为空——空时禁用"打开配置"按钮，避免误进添加设备流程 */
-const hasProfiles = computed(() => deviceStore.profiles.length > 0)
-/** "打开配置"按钮是否应该被禁用（设备列表为空时禁用） */
-const isConfigDisabled = computed(() => !hasProfiles.value)
+const selectedStatus = computed(() => (
+  deviceStore.selectedId ? deviceStore.statusFor(deviceStore.selectedId) : 'Disconnected'
+))
+const canZeroCalibration = computed(() => (
+  selectedStatus.value === 'Connected' || selectedStatus.value === 'Acquiring'
+))
+const isZeroCalibrationDisabled = computed(() => (
+  !canZeroCalibration.value || props.isZeroing || props.isToggling
+))
 
 function themeToggleLabel(): string {
   return theme.value === 'dark'
@@ -62,6 +76,51 @@ async function startSave() {
 
 function stopSave() {
   void recordingStore.stopRecording()
+}
+
+/**
+ * 触发"退出应用"确认对话框。
+ *
+ * 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露原生 ShouldClose 钩子，
+ * 用户点击窗口 X 按钮时前端无法拦截确认。本函数提供一个"应用内退出"路径：
+ * 弹出 Naive UI 确认框，用户确认后调用后端 ExitApplication 触发
+ * application.Quit()，走与原生关闭等价的 ServiceShutdown 清理流程
+ * （停止录制 / 关闭日志 / 停止 relay 协程），保证未保存的录制数据正确落盘。
+ *
+ * 防重入时机：isExiting 在 dialog 弹出前即置 true，
+ * 避免"用户连点 → 多个 dialog 排队 → 取消第一个后第二个仍弹出"的状态机不严谨。
+ * 用户取消（onNegativeClick）或关闭（onClose：ESC / 点击遮罩）时复位标志，
+ * 允许下次重试；onPositiveClick 路径成功后 app 已退出，复位与否均无副作用，
+ * 但仍在 catch 中复位以兼容 Quit() 失败场景。
+ */
+function handleExitClick() {
+  if (isExiting.value) return
+  // 提前锁住：dialog 弹出期间用户可能再次点击按钮
+  isExiting.value = true
+  dialog.warning({
+    title: i18n.t('app.confirmExitTitle'),
+    content: i18n.t('app.confirmExitText'),
+    positiveText: i18n.t('app.exit'),
+    negativeText: i18n.t('common.cancel'),
+    showIcon: false,
+    onPositiveClick: async () => {
+      try {
+        await exitApplication()
+      } catch (err) {
+        // Quit 失败时复位标志，允许用户重试
+        isExiting.value = false
+        console.error('[MainTopBar] exitApplication failed:', err)
+      }
+    },
+    onNegativeClick: () => {
+      // 用户点击"取消"：复位标志，允许下次重新触发
+      isExiting.value = false
+    },
+    onClose: () => {
+      // ESC 或点击遮罩关闭：同样复位，避免按钮永久 disabled
+      isExiting.value = false
+    },
+  })
 }
 
 // --- 刷新率下拉菜单 ---
@@ -182,12 +241,14 @@ onBeforeUnmount(() => {
 
         <button
           class="topbar__icon-btn"
-          :disabled="isConfigDisabled"
-          :title="isConfigDisabled ? i18n.t('topbar.pleaseAddDevice') : i18n.t('topbar.openConfig')"
-          data-testid="btn-config"
-          @click="emit('open-config')"
+          :disabled="isZeroCalibrationDisabled"
+          :title="props.isZeroing
+            ? i18n.t('topbar.zeroing')
+            : (canZeroCalibration ? i18n.t('topbar.zeroCalibration') : i18n.t('topbar.connectBeforeZero'))"
+          data-testid="btn-zero-calibration"
+          @click="emit('zero-calibration')"
         >
-          <Settings2 class="topbar__icon" />
+          <Crosshair class="topbar__icon" />
         </button>
 
         <button
@@ -219,7 +280,13 @@ onBeforeUnmount(() => {
           </div>
         </Teleport>
 
-        <LanguageToggle />
+        <LanguageToggle
+          :locale="i18n.locale"
+          :toggle-label="i18n.t('topbar.toggleLanguage')"
+          :switch-to-zh-label="i18n.t('topbar.switchToZh')"
+          :switch-to-en-label="i18n.t('topbar.switchToEn')"
+          @change="i18n.setLocale"
+        />
 
         <button
           class="topbar__icon-btn"
@@ -230,6 +297,17 @@ onBeforeUnmount(() => {
         >
           <Sun v-if="theme === 'dark'" class="topbar__icon" />
           <Moon v-else class="topbar__icon" />
+        </button>
+
+        <button
+          class="topbar__icon-btn topbar__icon-btn--exit"
+          :disabled="isExiting"
+          :aria-label="i18n.t('topbar.exitApp')"
+          :title="i18n.t('topbar.exitApp')"
+          data-testid="btn-exit-app"
+          @click="handleExitClick"
+        >
+          <Power class="topbar__icon" />
         </button>
 
         <span class="topbar__version" data-testid="topbar-version">v{{ version }}</span>
@@ -448,6 +526,16 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   background: var(--btn-bg);
   border-color: var(--border-default);
+}
+
+/* 退出按钮：悬停 / 键盘聚焦时切换为危险色，提示"将退出应用"
+   与录制按钮的红色语义呼应，但默认态保持次级色避免视觉过强
+   :focus-visible 与 :hover 共享样式，保证键盘 Tab 用户也能看到危险色提示 */
+.topbar__icon-btn--exit:hover:not(:disabled),
+.topbar__icon-btn--exit:focus-visible:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-muted);
+  border-color: var(--danger-border);
 }
 
 .topbar__icon {

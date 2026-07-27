@@ -17,6 +17,9 @@ import {
 const MAX_HISTORY_HARD_CAP = 4000
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
 const APPLY_CONFIG_TIMEOUT_MS = 15000
+const ZERO_CALIBRATION_TIMEOUT_MS = 12000
+const DEVICE_SCAN_TIMEOUT_MS = 5000
+const DEVICE_CONNECT_TIMEOUT_MS = 12000
 /** UI 渲染刷新率默认值（Hz），仅在 store 初始化时使用，运行时由 displayStore 驱动 */
 const RENDER_TICK_FALLBACK_HZ = 10
 /** 图表历史时间窗口默认值（秒），运行时由 displayStore 驱动 */
@@ -104,6 +107,7 @@ export const useDeviceStore = defineStore('device', () => {
   const chartSelections = ref<Record<string, Set<number>>>({})
   const scanResults = ref<ScanResult[]>([])
   const isScanning = ref(false)
+  let scanGeneration = 0
   // UI 渲染节拍定时器：按 displayStore.refreshRateHz 触发 pending → history
   const renderTickTimer = ref<ReturnType<typeof setInterval> | null>(null)
   // 快照轮询定时器：以固定周期从后端拉最新快照，与 UI 刷新率无关
@@ -405,7 +409,13 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function connect(id: string): Promise<void> {
-    await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
+    await transitionStatus(
+      id,
+      () => withTimeout(bridge.connect(id), DEVICE_CONNECT_TIMEOUT_MS, i18n.t('error.connectTimeout')),
+      'Connected',
+      'Disconnected',
+      'Connecting',
+    )
   }
 
   async function disconnect(id: string): Promise<void> {
@@ -446,6 +456,14 @@ export const useDeviceStore = defineStore('device', () => {
       }
       throw err
     }
+  }
+
+  async function zeroCalibration(id: string): Promise<void> {
+    await withTimeout(
+      bridge.zeroCalibration(id),
+      ZERO_CALIBRATION_TIMEOUT_MS,
+      i18n.t('error.zeroCalibrationTimeout'),
+    )
   }
 
   async function applyConfig(id: string, cfg: Partial<P1604Config>): Promise<void> {
@@ -508,16 +526,37 @@ export const useDeviceStore = defineStore('device', () => {
     scanResults.value = []
   }
 
+  function cancelScan(): void {
+    scanGeneration += 1
+    isScanning.value = false
+  }
+
   async function scanDevices(): Promise<void> {
+	if (isScanning.value) return
+    const generation = ++scanGeneration
     isScanning.value = true
     try {
-      scanResults.value = await bridge.scanDevices()
+      const results = await withTimeout(
+        bridge.scanDevices(),
+        DEVICE_SCAN_TIMEOUT_MS,
+        i18n.t('error.scanTimeout'),
+      )
+      if (generation === scanGeneration) {
+        scanResults.value = results
+      }
+    } catch (err) {
+      if (generation === scanGeneration) {
+        const message = err instanceof Error ? err.message : String(err)
+        logStore.error('device', i18n.t('logMessage.scanDiscoveryFailed', { error: message }))
+      }
     } finally {
-      isScanning.value = false
+      if (generation === scanGeneration) {
+        isScanning.value = false
+      }
     }
   }
 
-  async function addProfile(name: string, address: string, port: number): Promise<void> {
+  async function addProfile(name: string, address: string, port: number, localAddress = ''): Promise<void> {
     // CONN-002 重复添加防御：仅 IP+端口完全相同视为重复（同 IP 不同端口允许添加）。
     // 与扫描弹窗 planScannedAdditions 共用 hostKey 规则，保证手动添加与扫描批量添加
     // 的去重语义一致。
@@ -531,6 +570,7 @@ export const useDeviceStore = defineStore('device', () => {
       id,
       name,
       address,
+      localAddress,
       port,
       samplingRate: 100,
       channels: defaultChannels(),
@@ -700,8 +740,8 @@ export const useDeviceStore = defineStore('device', () => {
     existingDeviceKeys,
     selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
-    startAcquisition, stopAcquisition, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
-    clearScanResults, scanDevices, addProfile, addScannedProfiles, removeProfile, updateStatusFromBackend,
+    startAcquisition, stopAcquisition, zeroCalibration, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
+    clearScanResults, cancelScan, scanDevices, addProfile, addScannedProfiles, removeProfile, updateStatusFromBackend,
     applyDisplayPreferences, stopDisplayFlush,
     startSnapshotPolling, stopSnapshotPolling,
   }

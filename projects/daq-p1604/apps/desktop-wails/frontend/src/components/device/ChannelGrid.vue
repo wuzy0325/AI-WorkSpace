@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
+import { channelDisplayName } from '../../utils/channelDisplayName'
 import ChannelCard from './ChannelCard.vue'
 
 defineProps<{ deviceId: string }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 
 // 全局精度：作为单通道精度未设置时的回退值
 const globalPrecision = computed(() => deviceStore.selectedProfile?.p1604Config?.precision ?? 3)
@@ -29,7 +32,7 @@ const COLORS = [
         :value="deviceStore.renderedSnapshotMap[deviceId]?.values[ch.index] ?? NaN"
         :unit="ch.unit"
         :color="ch.color || COLORS[ch.index % COLORS.length]"
-        :name="ch.name"
+        :name="channelDisplayName(ch.index, ch.name, i18n.t)"
         :precision="ch.precision ?? globalPrecision"
         :active="deviceStore.isChartSelected(deviceId, ch.index)"
         @change-color="(color: string) => deviceStore.updateChannel(deviceId, ch.index, { color })"

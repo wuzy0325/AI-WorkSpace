@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.7.0] - 2026-07-27
+
+### Added
+- 设备配置新增可选本地 IP 绑定，多网卡 Windows 工位可指定连接 DAQ-P-1604 使用的网卡。
+
+### Fixed
+- 连接握手增加强制超时并在超时后关闭 socket，避免 Windows 边缘情况下连接界面永久阻塞。
+- 共享帧读取器会消费并跳过 `00 00` 空帧，避免后续命令响应持续错位。
+- `Disconnect`、`ApplyConfig`、采集启停和校零统一使用设备操作锁，避免并发关闭 channel 或竞争协议响应。
+
+### Verification
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go test -race ./adapters/hardware`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 设备固件时间戳 bug 仍存在，CSV 时间戳按既有规则规避。
+
+## [0.6.0] - 2026-07-27
+
+### Added
+- 新增 DAQ-P-1604 全压力通道校零功能：顶栏右侧以校零按钮替换配置按钮，当前选中设备处于已连接或采集中时均可发送设备原生 `h` 校零命令。
+- 新增校零操作锁、连接状态检查、12 秒前端超时提示及中英文界面文案，防止重复触发和未连接误操作。
+
+### Changed
+- 顶栏移除配置图标；设备详情区原有配置按钮继续保留，设备配置能力不受影响。
+
+### Internal
+- 新增 `DevicePort`、设备用例、Wails 后端和 TypeScript bridge 的校零调用链，并同步生成 Wails TypeScript bindings。
+- 模拟设备适配器支持采集中校零调用；新增硬件适配器回归测试，验证采集中发送 `h` 后采集状态保持不变。
+- 同步 6 个版本号文件到 0.6.0：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go build -buildvcs=false ./...`
+- `npm run test`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 校零命令在采集数据流中异步返回新的零位系数；当前版本确认命令已成功写入设备，但界面不解析并展示该系数响应。
+- DAQ-P-1604 设备固件时间戳 bug 仍存在，CSV 时间戳已统一截断到秒级规避。
+
 ## [0.5.0] - 2026-07-25
 
 ### Internal

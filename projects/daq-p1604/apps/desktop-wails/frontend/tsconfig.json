@@ -24,7 +24,8 @@
       "@views/*": ["src/views/*"],
       "@shared-frontend/*": ["../../../../../shared/frontend/*"],
       "vue": ["./node_modules/vue"],
-      "pinia": ["./node_modules/pinia"]
+      "pinia": ["./node_modules/pinia"],
+      "@lucide/vue": ["./node_modules/@lucide/vue"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "bindings/**/*.ts", "bindings/**/*.d.ts"],

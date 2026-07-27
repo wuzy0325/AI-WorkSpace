@@ -201,6 +201,16 @@ func (a *SimulatedAdapter) StopAcquisition(id string) error {
 	return nil
 }
 
+// ZeroCalibration 模拟零点校准，采集状态保持不变
+func (a *SimulatedAdapter) ZeroCalibration(id string) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if _, exists := a.status[id]; !exists {
+		return fmt.Errorf("device %s not connected", id)
+	}
+	return nil
+}
+
 // Status 获取模拟设备状态
 func (a *SimulatedAdapter) Status(id string) (core.DeviceState, bool) {
 	a.mu.RLock()

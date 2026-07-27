@@ -9,6 +9,7 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
+import { channelDisplayName } from '../../utils/channelDisplayName'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -105,8 +106,9 @@ const option = computed(() => {
 
   const series = selectedChannels.map((ch, i) => {
     const color = ch.color || COLORS[i % COLORS.length]
+    const name = channelDisplayName(ch.index, ch.name, i18n.t)
     return {
-      name: ch.name || `CH${ch.index + 1}`,
+      name,
       type: 'line' as const,
       data: history.map((d) => {
         const v = d.values[ch.index]
@@ -153,7 +155,7 @@ const option = computed(() => {
         const rows = params.map((p: any) => {
           const seriesName = (p.seriesName as string) ?? ''
           const ch = selectedChannels.find(
-            (c) => (c.name || `CH${c.index + 1}`) === seriesName,
+            (c) => channelDisplayName(c.index, c.name, i18n.t) === seriesName,
           )
           const precision = ch ? (ch.precision ?? 3) : 3
           const rawValue = Array.isArray(p.value) ? p.value[1] : p.value
@@ -168,7 +170,7 @@ const option = computed(() => {
       },
     },
     legend: {
-      data: selectedChannels.map((ch) => ch.name || `CH${ch.index + 1}`),
+      data: selectedChannels.map((ch) => channelDisplayName(ch.index, ch.name, i18n.t)),
       textStyle: { color: c.muted, fontSize: 10 },
       icon: 'roundRect',
       itemWidth: 8,

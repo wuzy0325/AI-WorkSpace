@@ -3,6 +3,7 @@ package hardware
 import (
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,91 @@ func TestEnableTCPKeepalive_NonTCPConn(t *testing.T) {
 	mock := &mockNonTCPConn{}
 	if err := enableTCPKeepalive(mock); err != nil {
 		t.Fatalf("enableTCPKeepalive on non-TCP conn should return nil, got: %v", err)
+	}
+}
+
+func TestRunConnectionHandshakeTimesOutAndClosesConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	started := time.Now()
+	err := runConnectionHandshake(client, 20*time.Millisecond, func() error {
+		buf := make([]byte, 1)
+		_, readErr := client.Read(buf)
+		return readErr
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "handshake timed out") {
+		t.Fatalf("expected handshake timeout, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("handshake timeout took too long: %v", elapsed)
+	}
+}
+
+func TestConnectRejectsSecondAttemptWhileHandshakeIsRunning(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan net.Conn, 2)
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted <- conn
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	profile := core.PressureProfile{
+		ID:      "test-connect-in-progress",
+		Address: addr.IP.String(),
+		Port:    addr.Port,
+	}
+	adapter := NewP1604Adapter()
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- adapter.Connect(profile) }()
+
+	var firstConn net.Conn
+	select {
+	case firstConn = <-accepted:
+		defer firstConn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("first connection was not accepted")
+	}
+
+	buf := make([]byte, len("w1601"))
+	if _, err := firstConn.Read(buf); err != nil {
+		t.Fatalf("read first handshake command: %v", err)
+	}
+	if got := string(buf); got != "w1601" {
+		t.Fatalf("first handshake command = %q, want w1601", got)
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- adapter.Connect(profile) }()
+	select {
+	case err := <-secondDone:
+		if err == nil || !strings.Contains(err.Error(), "connection already in progress") {
+			t.Fatalf("second Connect error = %v, want connection already in progress", err)
+		}
+	case secondConn := <-accepted:
+		secondConn.Close()
+		t.Fatal("second Connect opened another TCP connection")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("second Connect did not reject the concurrent attempt promptly")
+	}
+
+	firstConn.Close()
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first Connect did not return after its socket was closed")
 	}
 }
 
@@ -415,6 +501,543 @@ func TestApplyConfig_V01101EOFTriggersConnectionLost(t *testing.T) {
 	}
 
 	// 关闭 client（server 已在 goroutine 内 Close），避免 fd 泄漏告警
+	_ = client.Close()
+}
+
+func TestZeroCalibration_WhileAcquiringSendsHardwareCommand(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	const id = "test-zero-acquiring"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone) // 标记 readLoop 已退出（测试不启动真实 readLoop）
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusAcquiring,
+		StatusText: core.StatusAcquiring.String(),
+	}
+	shard.mu.Unlock()
+
+	// 模拟 readLoop 的 ASCII 响应路由行为：从 client 读取长度前缀帧并投递到 pendingResponse。
+	// 真实 readLoop 调用 processPayload 完成同样路由；此处直接复用 driver.pendingResponse
+	// 通道以隔离测试 ZeroCalibration 自身的等待/超时/校验逻辑。
+	stopReadLoop := make(chan struct{})
+	readLoopExited := make(chan struct{})
+	go func() {
+		defer close(readLoopExited)
+		for {
+			select {
+			case <-stopReadLoop:
+				return
+			default:
+			}
+			client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			frame, err := driver.frameReader.ReadFrame()
+			if err != nil {
+				continue
+			}
+			if sharedproto.IsASCIIFrame(frame) {
+				driver.pendingResponseMu.Lock()
+				ch := driver.pendingResponse
+				driver.pendingResponseMu.Unlock()
+				if ch != nil {
+					select {
+					case ch <- frame:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stopReadLoop)
+		<-readLoopExited
+	}()
+
+	command := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 16)
+		n, _ := server.Read(buf)
+		command <- string(buf[:n])
+		// 回送 "A" 响应（2 字节大端长度前缀 + 1 字节 ASCII payload）
+		_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+	}()
+
+	if err := a.ZeroCalibration(id); err != nil {
+		t.Fatalf("ZeroCalibration while acquiring returned error: %v", err)
+	}
+
+	select {
+	case got := <-command:
+		if got != "h" {
+			t.Fatalf("zero calibration command = %q, want %q", got, "h")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for zero calibration command")
+	}
+
+	state, ok := a.Status(id)
+	if !ok {
+		t.Fatal("device status missing after zero calibration")
+	}
+	if state.Status != core.StatusAcquiring {
+		t.Fatalf("status after zero calibration = %v, want Acquiring", state.Status)
+	}
+}
+
+func TestZeroCalibration_WaitsForAcquisitionTransition(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	const id = "test-zero-transition-lock"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    false,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Profile: driver.profile, Status: core.StatusConnected}
+	shard.mu.Unlock()
+
+	driver.operationMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- a.ZeroCalibration(id) }()
+
+	_ = server.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+	buf := make([]byte, 16)
+	if n, err := server.Read(buf); err == nil || n != 0 {
+		t.Fatalf("zero calibration sent command during acquisition transition: %q", string(buf[:n]))
+	}
+	driver.operationMu.Unlock()
+	_ = server.SetReadDeadline(time.Time{})
+
+	go func() {
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		n, _ := server.Read(buf)
+		if string(buf[:n]) == "h" {
+			_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+		}
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ZeroCalibration returned error after transition completed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ZeroCalibration did not continue after transition lock was released")
+	}
+}
+
+func TestDisconnect_WaitsForAcquisitionTransition(t *testing.T) {
+	const id = "test-disconnect-transition-lock"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{profile: core.PressureProfile{ID: id}}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Profile: driver.profile, Status: core.StatusConnected}
+	shard.mu.Unlock()
+
+	driver.operationMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- a.Disconnect(id) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Disconnect completed during acquisition transition: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	driver.operationMu.Unlock()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Disconnect returned error after transition completed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Disconnect did not continue after transition lock was released")
+	}
+}
+
+func TestApplyConfig_WaitsForAcquisitionTransition(t *testing.T) {
+	const id = "test-config-transition-lock"
+	cfg := core.P1604Config{Unit: sharedproto.P1604DefaultUnit}
+	a := NewP1604Adapter()
+	driver := &p1604Driver{profile: core.PressureProfile{ID: id, P1604Cfg: cfg}}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile: core.PressureProfile{ID: id, P1604Cfg: cfg},
+		Status:  core.StatusConnected,
+	}
+	shard.mu.Unlock()
+
+	driver.operationMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- a.ApplyConfig(id, cfg) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("ApplyConfig completed during acquisition transition: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	driver.operationMu.Unlock()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ApplyConfig returned error after transition completed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ApplyConfig did not continue after transition lock was released")
+	}
+}
+
+// TestZeroCalibration_IdleSuccess 验证空闲期间请求/响应路径成功。
+//
+// 测试前置：构造未采集的 driver + idleStopCh/idleLoopDone（idleReadLoop 占位）。
+// 测试步骤：服务端读 "h" 命令后回 "A" 响应，调用 ZeroCalibration。
+// 期待结果：返回 nil，driver.idleStopCh 被重启为新 channel（说明 defer 重启了 idleReadLoop）。
+func TestZeroCalibration_IdleSuccess(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	const id = "test-zero-idle"
+	a := NewP1604Adapter()
+	idleStop := make(chan struct{})
+	idleDone := make(chan struct{})
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		idleStopCh:   idleStop,
+		idleLoopDone: idleDone,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	go func() {
+		<-idleStop
+		close(idleDone)
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	go func() {
+		buf := make([]byte, 16)
+		_, _ = server.Read(buf) // 读 "h" 命令
+		_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+	}()
+
+	if err := a.ZeroCalibration(id); err != nil {
+		t.Fatalf("ZeroCalibration idle returned error: %v", err)
+	}
+
+	shard.mu.RLock()
+	restartedStop := driver.idleStopCh
+	shard.mu.RUnlock()
+	if restartedStop == nil || restartedStop == idleStop {
+		t.Fatal("ZeroCalibration must restart idleReadLoop with a new stop channel")
+	}
+	// 清理重启的 idleReadLoop
+	close(restartedStop)
+}
+
+// TestZeroCalibration_DeviceRejectsWithNxx 验证设备返回 Nxx 时 ZeroCalibration 返回错误。
+//
+// 测试前置：构造采集中的 driver + 模拟 readLoop 路由 ASCII 响应。
+// 测试步骤：服务端读 "h" 后回 "N05" 响应（设备拒绝）。
+// 期待结果：ZeroCalibration 返回 error 且包含"被设备拒绝"字样。
+func TestZeroCalibration_DeviceRejectsWithNxx(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	const id = "test-zero-nxx"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusAcquiring,
+		StatusText: core.StatusAcquiring.String(),
+	}
+	shard.mu.Unlock()
+
+	stopReadLoop := make(chan struct{})
+	readLoopExited := make(chan struct{})
+	go func() {
+		defer close(readLoopExited)
+		for {
+			select {
+			case <-stopReadLoop:
+				return
+			default:
+			}
+			client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			frame, err := driver.frameReader.ReadFrame()
+			if err != nil {
+				continue
+			}
+			if sharedproto.IsASCIIFrame(frame) {
+				driver.pendingResponseMu.Lock()
+				ch := driver.pendingResponse
+				driver.pendingResponseMu.Unlock()
+				if ch != nil {
+					select {
+					case ch <- frame:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stopReadLoop)
+		<-readLoopExited
+	}()
+
+	go func() {
+		buf := make([]byte, 16)
+		_, _ = server.Read(buf) // 读 "h" 命令
+		// 回送 "N05" 响应（设备拒绝）
+		_, _ = server.Write([]byte{0x00, 0x04, 'N', '0', '5'})
+	}()
+
+	err := a.ZeroCalibration(id)
+	if err == nil {
+		t.Fatal("ZeroCalibration should return error on N05 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "拒绝") {
+		t.Errorf("error should mention device rejection, got: %v", err)
+	}
+}
+
+// TestZeroCalibration_TimeoutWhenNoResponse 验证设备不响应时 ZeroCalibration 超时返回错误。
+//
+// 测试前置：构造采集中的 driver + 模拟 readLoop（无响应可路由）。
+// 测试步骤：服务端读 "h" 后不回任何响应，ZeroCalibration 等待 p1604CalibrationTimeout。
+// 期待结果：返回 timeout 错误。为避免测试卡 2s，临时缩短 timeout。
+//
+// 注意：本测试不修改全局 p1604CalibrationTimeout，依赖默认 2s 超时，验证后即返回。
+// 测试总耗时约 2s，是覆盖"超时"路径的最小代价。
+func TestZeroCalibration_TimeoutWhenNoResponse(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	const id = "test-zero-timeout"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusAcquiring,
+		StatusText: core.StatusAcquiring.String(),
+	}
+	shard.mu.Unlock()
+
+	stopReadLoop := make(chan struct{})
+	readLoopExited := make(chan struct{})
+	go func() {
+		defer close(readLoopExited)
+		for {
+			select {
+			case <-stopReadLoop:
+				return
+			default:
+			}
+			client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			frame, err := driver.frameReader.ReadFrame()
+			if err != nil {
+				continue
+			}
+			if sharedproto.IsASCIIFrame(frame) {
+				driver.pendingResponseMu.Lock()
+				ch := driver.pendingResponse
+				driver.pendingResponseMu.Unlock()
+				if ch != nil {
+					select {
+					case ch <- frame:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stopReadLoop)
+		<-readLoopExited
+	}()
+
+	go func() {
+		buf := make([]byte, 16)
+		_, _ = server.Read(buf) // 读 "h" 命令，不回响应
+		select {}
+	}()
+
+	start := time.Now()
+	err := a.ZeroCalibration(id)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("ZeroCalibration should return timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "超时") {
+		t.Errorf("error should mention timeout, got: %v", err)
+	}
+	// 验证确实等了约 2s（允许 ±500ms 抖动），而不是立即返回
+	if elapsed < p1604CalibrationTimeout-500*time.Millisecond {
+		t.Errorf("ZeroCalibration returned too fast: %v (expected ~%v)", elapsed, p1604CalibrationTimeout)
+	}
+}
+
+func TestPendingResponseDeliveryAndDisconnectAreSerialized(t *testing.T) {
+	const iterations = 1000
+	for i := 0; i < iterations; i++ {
+		driver := &p1604Driver{pendingResponse: make(chan []byte, 1)}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+			driver.pendingResponseMu.Lock()
+			if ch := driver.pendingResponse; ch != nil {
+				select {
+				case ch <- []byte("A"):
+				default:
+				}
+			}
+			driver.pendingResponseMu.Unlock()
+		}()
+
+		go func() {
+			defer wg.Done()
+			<-start
+			driver.pendingResponseMu.Lock()
+			if ch := driver.pendingResponse; ch != nil {
+				driver.pendingResponse = nil
+				close(ch)
+			}
+			driver.pendingResponseMu.Unlock()
+		}()
+
+		close(start)
+		wg.Wait()
+	}
+}
+
+// TestZeroCalibration_DisconnectionTriggersConnectionLost 验证设备 FIN 时
+// ZeroCalibration 触发 handleConnectionLost 清理 driver+conn。
+//
+// 测试前置：构造空闲 driver + idleStopCh/idleLoopDone（idleReadLoop 占位）。
+// 测试步骤：服务端读 "h" 后 sleep 50ms 让客户端进入 Read 阻塞，再 Close 触发 io.EOF。
+// 期待结果：ZeroCalibration 返回 error；shard.drivers[id] 被删除；status=Error。
+func TestZeroCalibration_DisconnectionTriggersConnectionLost(t *testing.T) {
+	server, client := net.Pipe()
+
+	const id = "test-zero-disconnect"
+	a := NewP1604Adapter()
+	idleStop := make(chan struct{})
+	idleDone := make(chan struct{})
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		idleStopCh:   idleStop,
+		idleLoopDone: idleDone,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	go func() {
+		<-idleStop
+		close(idleDone)
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	// 服务端：读 "h" → sleep 50ms 让客户端 ReadFrame 进入阻塞 → Close 触发 io.EOF
+	go func() {
+		buf := make([]byte, 16)
+		_, _ = server.Read(buf)
+		time.Sleep(50 * time.Millisecond)
+		server.Close()
+	}()
+
+	err := a.ZeroCalibration(id)
+	if err == nil {
+		t.Fatal("ZeroCalibration should return error on disconnect, got nil")
+	}
+
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted by handleConnectionLost after disconnect")
+	}
+	if !statusExists {
+		t.Fatal("status should still exist (set to Error) for frontend visibility")
+	}
+	if st.Status != core.StatusError {
+		t.Errorf("status should be Error, got %v", st.Status)
+	}
+
 	_ = client.Close()
 }
 

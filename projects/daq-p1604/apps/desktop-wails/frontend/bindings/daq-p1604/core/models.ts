@@ -119,6 +119,40 @@ export enum DeviceStatus {
 };
 
 /**
+ * FileRotation 文件滚动配置（任一条件满足即滚动到新文件，0 表示不限制）
+ */
+export class FileRotation {
+    /**
+     * 单文件最大字节数
+     */
+    "maxSizeBytes"?: number;
+
+    /**
+     * 单文件最大时长
+     */
+    "maxDurationMs"?: number;
+
+    /**
+     * 单文件最大记录数
+     */
+    "maxRecordCount"?: number;
+
+    /** Creates a new FileRotation instance. */
+    constructor($$source: Partial<FileRotation> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FileRotation instance from a string or object.
+     */
+    static createFrom($$source: any = {}): FileRotation {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FileRotation($$parsedSource as Partial<FileRotation>);
+    }
+}
+
+/**
  * P1604Config DAQ-P-1604 设备硬件配置
  */
 export class P1604Config {
@@ -143,9 +177,9 @@ export class P1604Config {
     "precision": number;
 
     /**
-     * 是否使用设备硬件时间戳，undefined=默认开启（兼容老 profile），显式 false=用系统时间
+     * 是否使用设备硬件时间戳，nil=默认开启（兼容老 profile），显式 false=用系统时间
      */
-    "useDeviceTimestamp"?: boolean;
+    "useDeviceTimestamp"?: boolean | null;
 
     /** Creates a new P1604Config instance. */
     constructor($$source: Partial<P1604Config> = {}) {
@@ -181,6 +215,7 @@ export class PressureProfile {
     "id": string;
     "name": string;
     "address": string;
+    "localAddress"?: string;
     "port": number;
     "samplingRate": number;
     "channels": ChannelConfig[];
@@ -232,6 +267,51 @@ export class PressureProfile {
 }
 
 /**
+ * PressureSnapshot 压力采集数据快照（18 通道）
+ */
+export class PressureSnapshot {
+    "deviceId": string;
+    "timestamp": number;
+    "hardwareTimestamp"?: number;
+
+    /**
+     * CH1-CH16 压力 + CH17 大气压力 + CH18 大气温度
+     */
+    "values": number[];
+    "unit": string;
+
+    /** Creates a new PressureSnapshot instance. */
+    constructor($$source: Partial<PressureSnapshot> = {}) {
+        if (!("deviceId" in $$source)) {
+            this["deviceId"] = "";
+        }
+        if (!("timestamp" in $$source)) {
+            this["timestamp"] = 0;
+        }
+        if (!("values" in $$source)) {
+            this["values"] = [];
+        }
+        if (!("unit" in $$source)) {
+            this["unit"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PressureSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PressureSnapshot {
+        const $$createField3_0 = $$createType4;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("values" in $$parsedSource) {
+            $$parsedSource["values"] = $$createField3_0($$parsedSource["values"]);
+        }
+        return new PressureSnapshot($$parsedSource as Partial<PressureSnapshot>);
+    }
+}
+
+/**
  * RecordingSession 录制会话运行时状态
  */
 export class RecordingSession {
@@ -239,18 +319,22 @@ export class RecordingSession {
     "outputDir": string;
     "filePrefix": string;
     "startTimeMs": number;
+
     /**
      * 已写入的快照数
      */
     "snapshotCount": number;
+
     /**
      * 队列满时丢弃的快照数
      */
     "droppedCount": number;
+
     /**
      * 已创建的文件数（含滚动）
      */
     "fileCount": number;
+
     /**
      * 当前正在写入的文件完整路径（文件滚动时更新）
      */
@@ -355,37 +439,27 @@ export class ScanResult {
 }
 
 /**
- * FileRotation 文件滚动配置（任一条件满足即滚动到新文件，0 表示不限制）
- */
-export class FileRotation {
-    "maxSizeBytes"?: number;
-    "maxDurationMs"?: number;
-    "maxRecordCount"?: number;
-
-    /** Creates a new FileRotation instance. */
-    constructor($$source: Partial<FileRotation> = {}) {
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new FileRotation instance from a string or object.
-     */
-    static createFrom($$source: any = {}): FileRotation {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new FileRotation($$parsedSource as Partial<FileRotation>);
-    }
-}
-
-/**
  * StopConditions 录制自动停止条件（任一条件满足即停止整个录制，0 表示不限制）
  */
 export class StopConditions {
+    /**
+     * 录制最大时长
+     */
     "maxDurationMs"?: number;
+
+    /**
+     * 所有文件累计最大字节数
+     */
     "maxFileSizeBytes"?: number;
+
+    /**
+     * 所有文件累计最大记录数
+     */
     "maxRecordCount"?: number;
 
     /** Creates a new StopConditions instance. */
     constructor($$source: Partial<StopConditions> = {}) {
+
         Object.assign(this, $$source);
     }
 
@@ -395,50 +469,6 @@ export class StopConditions {
     static createFrom($$source: any = {}): StopConditions {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new StopConditions($$parsedSource as Partial<StopConditions>);
-    }
-}
-
-/**
- * PressureSnapshot 压力采集数据快照（18 通道）
- */
-export class PressureSnapshot {
-    "deviceId": string;
-    "timestamp": number;
-    "hardwareTimestamp"?: number;
-    /**
-     * CH1-CH16 压力 + CH17 大气压力 + CH18 大气温度
-     */
-    "values": number[];
-    "unit": string;
-
-    /** Creates a new PressureSnapshot instance. */
-    constructor($$source: Partial<PressureSnapshot> = {}) {
-        if (!("deviceId" in $$source)) {
-            this["deviceId"] = "";
-        }
-        if (!("timestamp" in $$source)) {
-            this["timestamp"] = 0;
-        }
-        if (!("values" in $$source)) {
-            this["values"] = [];
-        }
-        if (!("unit" in $$source)) {
-            this["unit"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new PressureSnapshot instance from a string or object.
-     */
-    static createFrom($$source: any = {}): PressureSnapshot {
-        const $$createField3_0 = $$createType4;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("values" in $$parsedSource) {
-            $$parsedSource["values"] = $$createField3_0($$parsedSource["values"]);
-        }
-        return new PressureSnapshot($$parsedSource as Partial<PressureSnapshot>);
     }
 }
 

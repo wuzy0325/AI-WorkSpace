@@ -22,6 +22,7 @@ const showScanDialog = ref(false)
 
 const newName = ref('')
 const newAddress = ref('192.168.3.101')
+const newLocalAddress = ref('')
 const newPort = ref(9000)
 const addError = ref<string | null>(null)
 
@@ -34,6 +35,7 @@ const isAddingScanned = ref(false)
 
 /** 操作锁：防止快速重复点击导致并发请求 */
 const isToggling = ref(false)
+const isZeroing = ref(false)
 
 const isAcquiring = computed(() =>
   deviceStore.profiles.some((p) => deviceStore.acquiringFor(p.id))
@@ -50,7 +52,7 @@ const canConfigure = computed(() => !!deviceStore.selectedId)
  */
 async function toggleAcquisition() {
   // 操作锁检查：如果正在进行采集切换操作，忽略后续点击
-  if (isToggling.value) {
+  if (isToggling.value || isZeroing.value) {
     return
   }
 
@@ -79,9 +81,25 @@ async function toggleAcquisition() {
   }
 }
 
+async function zeroCalibration() {
+  const id = deviceStore.selectedId
+  if (!id || isZeroing.value || isToggling.value) return
+
+  const status = deviceStore.statusFor(id)
+  if (status !== 'Connected' && status !== 'Acquiring') return
+
+  isZeroing.value = true
+  try {
+    await deviceStore.zeroCalibration(id)
+  } finally {
+    isZeroing.value = false
+  }
+}
+
 function openAddDevice(prefill?: { address: string; port: number }) {
   newName.value = ''
   newAddress.value = prefill?.address ?? '192.168.3.101'
+  newLocalAddress.value = ''
   newPort.value = prefill?.port ?? 9000
   addError.value = null
   showAddDialog.value = true
@@ -92,6 +110,11 @@ function openScanDialog() {
   scanSelection.value = []
   showScanDialog.value = true
   void deviceStore.scanDevices()
+}
+
+function closeScanDialog() {
+  deviceStore.cancelScan()
+  showScanDialog.value = false
 }
 
 function openConfig() {
@@ -121,7 +144,7 @@ async function confirmAddDevice() {
   }
   addError.value = null
   try {
-    await deviceStore.addProfile(newName.value.trim(), newAddress.value.trim(), newPort.value)
+    await deviceStore.addProfile(newName.value.trim(), newAddress.value.trim(), newPort.value, newLocalAddress.value.trim())
     showAddDialog.value = false
   } catch (err) {
     addError.value = err instanceof Error ? err.message : i18n.t('dialog.addDeviceFailed')
@@ -207,8 +230,9 @@ async function confirmAddScanned() {
     <MainTopBar
       :version="appVersion"
       :is-toggling="isToggling"
+      :is-zeroing="isZeroing"
       @add-device="openAddDevice"
-      @open-config="openConfig"
+      @zero-calibration="zeroCalibration"
       @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
@@ -247,7 +271,7 @@ async function confirmAddScanned() {
     <!-- 扫描设备模态框 -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="showScanDialog" class="modal-overlay" @click.self="!deviceStore.isScanning && (showScanDialog = false)">
+        <div v-if="showScanDialog" class="modal-overlay" @click.self="closeScanDialog">
           <div class="modal-panel modal-panel--scan">
             <div class="dialog dialog--scan">
               <div class="dialog__header">
@@ -270,9 +294,8 @@ async function confirmAddScanned() {
               <div class="dialog__actions">
                 <button
                   class="dialog__btn dialog__btn--secondary"
-                  :disabled="deviceStore.isScanning"
-                  :title="deviceStore.isScanning ? i18n.t('dialog.scanInProgress') : i18n.t('common.cancel')"
-                  @click="showScanDialog = false"
+                  :title="i18n.t('common.cancel')"
+                  @click="closeScanDialog"
                 >
                   {{ i18n.t('common.cancel') }}
                 </button>
@@ -321,6 +344,10 @@ async function confirmAddScanned() {
                     <label>{{ i18n.t('dialog.port') }}</label>
                     <input v-model.number="newPort" type="number" min="1" max="65535" @keyup.enter="confirmAddDevice" />
                   </div>
+                </div>
+                <div class="dialog__field">
+                  <label>{{ i18n.t('dialog.localIpAddress') }}</label>
+                  <input v-model="newLocalAddress" placeholder="192.168.3.10" @keyup.enter="confirmAddDevice" />
                 </div>
                 <p v-if="addError" class="dialog__error">{{ addError }}</p>
               </div>
