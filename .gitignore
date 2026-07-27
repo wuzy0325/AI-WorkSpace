@@ -148,3 +148,13 @@ device-lab/skills/seven-hole-probe/tools/_transcoded/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# Workspace-local prototypes, exported diffs, and loose duplicate assets
+.tmp/
+e374937_full.diff
+/app_icon.png
+/tools/ico/probe_interpolator_1024.png
+projects/probe-interpolator/apps/desktop-wails/appicon.png
+
+# Developer-specific WeChat DevTools settings
+**/project.private.config.json
