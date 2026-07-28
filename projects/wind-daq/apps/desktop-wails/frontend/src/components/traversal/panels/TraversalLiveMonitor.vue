@@ -210,26 +210,32 @@ const interpStatus = computed<InterpStatus>(() => {
  *   - 橙色(state-warning)= 配置层问题(用户可解决,如导入 PRB)
  *   - 红色(accent-danger) = 数据层问题(需排查,如压力越界)
  *   - 蓝色(accent-info)   = 等待状态(系统正常但暂无数据,如已加载未采集)
+ *
+ * 边框使用 box-shadow inset 而非 border:border 会占据 2px 布局空间,
+ * 让状态条总高度(13.2px 内容 + 4px py-0.5 + 2px border = 19.2px)超过标题文字
+ * 行高(16px),状态条 v-if 显隐时会撑高标题行 3.2px,导致下方数值网格整体抖动。
+ * box-shadow inset 不占据布局空间,状态条高度降为 17.2px,配合标题行 min-h-5
+ * (20px)保证显隐都不改变垂直布局。
  */
 const statusBarStyle = computed(() => {
   if (interpStatus.value === 'prb-missing') {
     return {
       background: 'color-mix(in srgb, var(--state-warning) 12%, transparent)',
       color: 'var(--state-warning)',
-      border: '1px solid var(--state-warning)',
+      boxShadow: 'inset 0 0 0 1px var(--state-warning)',
     }
   }
   if (interpStatus.value === 'no-data') {
     return {
       background: 'color-mix(in srgb, var(--accent-info) 12%, transparent)',
       color: 'var(--accent-info)',
-      border: '1px solid var(--accent-info)',
+      boxShadow: 'inset 0 0 0 1px var(--accent-info)',
     }
   }
   return {
     background: 'color-mix(in srgb, var(--accent-danger) 12%, transparent)',
     color: 'var(--accent-danger)',
-    border: '1px solid var(--accent-danger)',
+    boxShadow: 'inset 0 0 0 1px var(--accent-danger)',
   }
 })
 
@@ -311,12 +317,13 @@ function onStatusBarClick() {
 
     <!-- 实时插值计算：统一卡片，紧凑 py-1.5 -->
     <section class="flex-shrink-0 border-b border-[var(--border-default)] p-2.5">
-      <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--text-primary)]">
+      <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--text-primary)] min-h-5">
         <Activity class="h-3.5 w-3.5 text-[var(--accent-info)] flex-shrink-0" />
         <span class="flex-shrink-0">{{ labels.realtimeCalculation }}</span>
         <!-- 状态条:四态视觉区分,与标题同行右侧展示
              - 原独立成行会因 v-if 显隐撑动布局,导致下方数值网格整体跳动
-             - 移到同行右侧后,显隐仅改变水平占位,垂直布局稳定
+             - 移到同行右侧 + 标题行 min-h-5 + 状态条 box-shadow inset:
+               状态条显隐时标题行高度恒为 20px,垂直布局稳定,不再抖动
              - PRB 未加载:橙色,光标 pointer,点击跳配置
              - 已加载未采集(no-data):蓝色提示"等待采集数据",无点击
              - 插值无效:红色,hover tooltip 显示后端 warning 全文

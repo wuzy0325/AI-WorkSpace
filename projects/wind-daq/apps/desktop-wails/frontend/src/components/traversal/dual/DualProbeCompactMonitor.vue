@@ -5,8 +5,8 @@
  *
  * 【功能定位】
  * 双探针模式下每个 row 内的紧凑监测面板，仅保留 spec FR7 列出的紧凑字段：
- *   - 状态、进度、当前点位
- *   - Alpha/Beta、总压、静压、速度
+ *   - 一行运行状态：状态、进度、当前点位、实际位置（轴运动中绿色高亮）
+ *   - 实时插值：Alpha/Beta、总压、静压、速度 + 插值状态条（四态，与单探针同构）
  *   - Warning/Error 摘要
  *   - 独立启动、暂停、恢复、停止、设置入口
  *
@@ -22,12 +22,15 @@
  * ============================================================================
  */
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
+import { Activity, AlertTriangle } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useDualTraversalStore } from '@stores/dualTraversalStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { useMotionStore } from '@stores/motionStore'
+import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import type { ProbeId, TraversalSessionState, TraversalTestStatusType } from '@shared/types/traversal'
 
@@ -66,6 +69,23 @@ const statusText = computed(() => {
   return (t.value as Record<string, string>)[status as string] ?? (status as string)
 })
 
+// 状态点颜色：与单探针 TraversalMain 的 statusColorToken 映射保持一致
+const statusDotColor = computed(() => {
+  switch (session.value.status?.status) {
+    case 'running':
+      return 'var(--accent-success)'
+    case 'paused':
+    case 'stopped':
+      return 'var(--accent-warning)'
+    case 'completed':
+      return 'var(--accent-info)'
+    case 'error':
+      return 'var(--accent-danger)'
+    default:
+      return 'var(--text-muted)'
+  }
+})
+
 // 按钮启用状态：未配置时全部禁用，仅允许打开设置
 const isUnconfigured = computed(() => !session.value.config)
 const isRunning = computed(() => session.value.status?.status === 'running')
@@ -75,7 +95,7 @@ const isTerminal = computed(() => {
   return s === 'completed' || s === 'stopped' || s === 'error'
 })
 const isStarting = computed(() => session.value.isStarting)
-const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && session.value.hasLoadedInterpolator)
+const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && !session.value.checkpoint && session.value.hasLoadedInterpolator)
 const canPause = computed(() => isRunning.value)
 const canResume = computed(() => isPaused.value)
 const canStop = computed(() => isRunning.value || isPaused.value)
@@ -103,6 +123,36 @@ const currentPointText = computed(() => {
   if (point.u !== null && point.u !== undefined) parts.push(`U=${point.u.toFixed(2)}`)
   return parts.length > 0 ? parts.join('  ') : '—'
 })
+
+// 实际位置：与单探针 TraversalLiveMonitor 同源，复用 useHardwareConnectionStatus
+// （按本 probe 配置的布点模式过滤显示轴）。dual 页面级没有订阅 motion 状态流，
+// 由本组件自行挂接/卸载；两个 probe 各挂一个监听器，写入同一 motionStore，互不干扰。
+const motionStore = useMotionStore()
+const currentConfig = computed(() => session.value.config)
+const { axisPositions } = useHardwareConnectionStatus(currentConfig)
+
+let unsubscribeMotionStatus: (() => void) | null = null
+onMounted(() => {
+  void motionStore.refreshStatus()
+  unsubscribeMotionStatus = motionStore.attachStatusListener()
+})
+onBeforeUnmount(() => {
+  if (unsubscribeMotionStatus) {
+    unsubscribeMotionStatus()
+    unsubscribeMotionStatus = null
+  }
+})
+
+// 实际位置文本：与「当前点位」同款 `X=12.34  Y=-5.01` 格式，跟随目标点显示在其后
+const actualPositionText = computed(() => {
+  const axes = axisPositions.value
+  if (!axes.length) return '—'
+  return axes
+    .map((axis) => `${axis.label}=${typeof axis.position === 'number' ? axis.position.toFixed(2) : '--'}`)
+    .join('  ')
+})
+// 任一轴运动中 → 实际位置整行高亮（单探针同款 accent-success 语义）
+const anyAxisMoving = computed(() => axisPositions.value.some((axis) => axis.moving))
 
 // 实时插值结果
 const realtimeResult = computed(() => session.value.realtimeResult)
@@ -132,6 +182,72 @@ const velocityText = computed(() => {
   return r.velocity.toFixed(2)
 })
 
+/**
+ * 实时插值四态判定：与单探针 TraversalLiveMonitor 完全同构。
+ *   - isValid=true                          → ok，正常显示数值
+ *   - realtimeResult=null + 已加载           → no-data，蓝色"等待采集数据"
+ *   - realtimeResult=null + 未加载           → prb-missing，橙色，点击打开配置导入 PRB
+ *   - isValid=false + hasLoadedInterpolator  → invalid，红色，tooltip 显示后端 warning
+ *   - isValid=false + !hasLoadedInterpolator → prb-missing，橙色，点击打开配置
+ * 真相源为 session.hasLoadedInterpolator（后端校验失败时 dualStore 同步置 false）。
+ */
+type InterpStatus = 'ok' | 'no-data' | 'prb-missing' | 'invalid'
+const interpStatus = computed<InterpStatus>(() => {
+  const r = realtimeResult.value
+  if (r) {
+    if (r.isValid) return 'ok'
+    return session.value.hasLoadedInterpolator ? 'invalid' : 'prb-missing'
+  }
+  return session.value.hasLoadedInterpolator ? 'no-data' : 'prb-missing'
+})
+
+/**
+ * 状态条配色：橙=配置层问题（可点击导入 PRB），蓝=等待数据，红=数据层问题
+ *
+ * 边框使用 box-shadow inset 而非 border:border 会占据 2px 布局空间,
+ * 让状态条总高度(~19.2px)超过标题文字行高(~14.4px),状态条 v-if 显隐时
+ * 会撑高标题行 ~4.8px,导致下方 metrics 网格整体抖动。
+ * box-shadow inset 不占据布局空间,配合 .dual-compact__section-title 的
+ * min-height: 20px,状态条显隐时标题行高度恒定,垂直布局稳定。
+ */
+const statusBarStyle = computed(() => {
+  if (interpStatus.value === 'prb-missing') {
+    return {
+      background: 'color-mix(in srgb, var(--state-warning) 12%, transparent)',
+      color: 'var(--state-warning)',
+      boxShadow: 'inset 0 0 0 1px var(--state-warning)',
+    }
+  }
+  if (interpStatus.value === 'no-data') {
+    return {
+      background: 'color-mix(in srgb, var(--accent-info) 12%, transparent)',
+      color: 'var(--accent-info)',
+      boxShadow: 'inset 0 0 0 1px var(--accent-info)',
+    }
+  }
+  return {
+    background: 'color-mix(in srgb, var(--accent-danger) 12%, transparent)',
+    color: 'var(--accent-danger)',
+    boxShadow: 'inset 0 0 0 1px var(--accent-danger)',
+  }
+})
+
+const statusBarText = computed(() => {
+  if (interpStatus.value === 'prb-missing') return t.value.interpolationNotLoaded
+  if (interpStatus.value === 'no-data') return t.value.interpolationWaitingData
+  return t.value.interpolationInvalid
+})
+
+/** 插值无效时 tooltip 显示后端 warning 全文（如"压力差值越界"），便于排查 */
+const statusBarTooltip = computed(() =>
+  interpStatus.value === 'invalid' ? (realtimeResult.value?.warning ?? '') : ''
+)
+
+/** PRB 未加载时点击打开该 probe 的配置对话框导入；插值无效时不响应（需排查数据而非配置） */
+function onStatusBarClick(): void {
+  if (interpStatus.value === 'prb-missing') emit('openSettings', props.probeId)
+}
+
 // Warning/Error 摘要
 const warningText = computed(() => {
   const s = session.value
@@ -149,6 +265,30 @@ async function onStart(): Promise<void> {
   const ok = await dualStore.start(props.probeId)
   if (!ok) {
     feedbackStore.pushToast(t.value.dualStartFailed + '：' + (session.value.error ?? ''), 'error')
+  }
+}
+
+async function onResumeCheckpoint(): Promise<void> {
+  const checkpoint = session.value.checkpoint
+  if (!checkpoint) return
+  const ok = await dualStore.resumeFromCheckpoint(props.probeId, checkpoint.taskId)
+  if (!ok) {
+    feedbackStore.pushToast(t.value.failedResume + '：' + (session.value.error ?? ''), 'error')
+  }
+}
+
+async function onDiscardCheckpoint(): Promise<void> {
+  const checkpoint = session.value.checkpoint
+  if (!checkpoint) return
+  const confirmed = await feedbackStore.confirm(t.value.travCheckDetected, {
+    title: t.value.travAbandon,
+    confirmText: t.value.travAbandon,
+    cancelText: t.value.cancel,
+  })
+  if (!confirmed) return
+  const ok = await dualStore.clearCheckpoint(props.probeId, checkpoint.taskId)
+  if (!ok) {
+    feedbackStore.pushToast(t.value.failedDiscardCheckpoint + '：' + (session.value.error ?? ''), 'error')
   }
 }
 
@@ -239,11 +379,27 @@ const completedSummary = computed(() => {
       </UiButton>
     </div>
 
-    <!-- 紧凑监测字段 -->
-    <div class="dual-compact__fields">
+    <div v-if="session.checkpoint" class="dual-compact__checkpoint" role="status">
+      <span class="dual-compact__checkpoint-text">
+        {{ t.travCheckDetected }} · {{ t.travCheckCompleted }}
+        {{ session.checkpoint.completedPoints }} / {{ session.checkpoint.totalPoints }}
+      </span>
+      <UiButton size="sm" variant="warning" @click="onResumeCheckpoint">
+        {{ t.travContinueTest }}
+      </UiButton>
+      <UiButton size="sm" variant="ghost" @click="onDiscardCheckpoint">
+        {{ t.travAbandon }}
+      </UiButton>
+    </div>
+
+    <!-- 运行状态：降低视觉权重，为实时数据保留首屏空间 -->
+    <div class="dual-compact__status-fields">
       <div class="dual-compact__field">
         <span class="dual-compact__field-label">{{ t.status }}</span>
-        <span class="dual-compact__field-value">{{ statusText }}</span>
+        <span class="dual-compact__field-value dual-compact__status-value">
+          <span class="dual-compact__status-dot" :style="{ background: statusDotColor }" aria-hidden="true"></span>
+          {{ statusText }}
+        </span>
       </div>
       <div class="dual-compact__field">
         <span class="dual-compact__field-label">{{ t.travProgress }}</span>
@@ -254,31 +410,61 @@ const completedSummary = computed(() => {
         <span class="dual-compact__field-value dual-compact__field-value--mono">{{ currentPointText }}</span>
       </div>
       <div class="dual-compact__field">
-        <span class="dual-compact__field-label">{{ alphaLabel }}</span>
-        <span class="dual-compact__field-value dual-compact__field-value--mono">{{ alphaText }}</span>
-      </div>
-      <div class="dual-compact__field">
-        <span class="dual-compact__field-label">{{ betaLabel }}</span>
-        <span class="dual-compact__field-value dual-compact__field-value--mono">{{ betaText }}</span>
-      </div>
-      <div class="dual-compact__field">
-        <span class="dual-compact__field-label">{{ t.P0 }}</span>
-        <span class="dual-compact__field-value dual-compact__field-value--mono">{{ totalPressureText }}</span>
-      </div>
-      <div class="dual-compact__field">
-        <span class="dual-compact__field-label">{{ t.Ps }}</span>
-        <span class="dual-compact__field-value dual-compact__field-value--mono">{{ staticPressureText }}</span>
-      </div>
-      <div class="dual-compact__field">
-        <span class="dual-compact__field-label">{{ t.velocity }}</span>
-        <span class="dual-compact__field-value dual-compact__field-value--mono">{{ velocityText }}</span>
+        <span class="dual-compact__field-label">{{ t.travActual }}</span>
+        <span
+          class="dual-compact__field-value dual-compact__field-value--mono"
+          :style="anyAxisMoving ? { color: 'var(--accent-success)' } : undefined"
+        >{{ actualPositionText }}</span>
       </div>
     </div>
 
-    <!-- 进度条 -->
     <div class="dual-compact__progress-bar">
       <div class="dual-compact__progress-fill" :style="{ width: progressPercent + '%' }" />
     </div>
+
+    <!-- 插值读数：与运行状态分组，避免操作员误认为是点位或原始压力。
+         数值配色与单探针一致：角度/速度用 --accent-info 强调，总压/静压用主文本色。 -->
+    <section class="dual-compact__interpolation" aria-live="polite">
+      <div class="dual-compact__section-title">
+        <Activity class="dual-compact__section-icon" aria-hidden="true" />
+        <span>{{ t.realtimeCalculation }}</span>
+        <!-- 插值状态条：四态视觉区分，与标题同行右侧（与单探针一致）。
+             PRB 未加载：橙色可点击打开配置；已加载未采集：蓝色；插值无效：红色 + tooltip -->
+        <div
+          v-if="interpStatus !== 'ok'"
+          class="dual-compact__interp-status"
+          :class="{ 'dual-compact__interp-status--clickable': interpStatus === 'prb-missing' }"
+          :style="statusBarStyle"
+          :title="statusBarTooltip"
+          @click="onStatusBarClick"
+        >
+          <AlertTriangle class="dual-compact__interp-status-icon" aria-hidden="true" />
+          <span class="dual-compact__interp-status-text">{{ statusBarText }}</span>
+        </div>
+      </div>
+      <div class="dual-compact__metrics">
+      <div class="dual-compact__field dual-compact__metric">
+        <span class="dual-compact__field-label">{{ alphaLabel }}</span>
+        <span class="dual-compact__metric-value dual-compact__metric-value--accent">{{ alphaText }}</span>
+      </div>
+      <div class="dual-compact__field dual-compact__metric">
+        <span class="dual-compact__field-label">{{ betaLabel }}</span>
+        <span class="dual-compact__metric-value dual-compact__metric-value--accent">{{ betaText }}</span>
+      </div>
+      <div class="dual-compact__field dual-compact__metric">
+        <span class="dual-compact__field-label">{{ t.P0 }}</span>
+        <span class="dual-compact__metric-value">{{ totalPressureText }}</span>
+      </div>
+      <div class="dual-compact__field dual-compact__metric">
+        <span class="dual-compact__field-label">{{ t.Ps }}</span>
+        <span class="dual-compact__metric-value">{{ staticPressureText }}</span>
+      </div>
+      <div class="dual-compact__field dual-compact__metric">
+        <span class="dual-compact__field-label">{{ t.velocity }}</span>
+        <span class="dual-compact__metric-value dual-compact__metric-value--accent">{{ velocityText }}</span>
+      </div>
+      </div>
+    </section>
 
     <!-- 完成事件摘要 -->
     <div v-if="completedSummary && isTerminal" class="dual-compact__completed" :class="{ 'dual-compact__completed--error': session.completeEvent?.status === 'error' }">
@@ -294,14 +480,16 @@ const completedSummary = computed(() => {
 </template>
 
 <style scoped>
+/* 配色对齐单探针 TraversalLiveMonitor：卡片 --bg-panel-strong，标签 --text-muted，
+   插值数值 --accent-info 强调，横幅用 color-mix 状态色。
+   旧实现引用了 --bg-surface/--color-primary 等不存在的 token（fallback 硬编码浅色），
+   与主题系统脱节；本文件统一改用真实设计 token。 */
 .dual-compact {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-surface, #ffffff);
-  border: 1px solid var(--border-subtle, #d0d0d0);
-  border-radius: 6px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border-default);
   min-width: 0;
 }
 
@@ -312,12 +500,111 @@ const completedSummary = computed(() => {
   align-items: center;
 }
 
-.dual-compact__fields {
+.dual-compact__checkpoint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: var(--state-warning);
+  background: color-mix(in srgb, var(--state-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--state-warning) 30%, transparent);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.dual-compact__checkpoint-text {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dual-compact__status-fields {
   display: grid;
-  /* 左右并排时容器很窄，120px 会导致字段被截断；改为更紧凑的列宽并允许自由换行 */
-  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  grid-template-columns: minmax(60px, 0.6fr) minmax(90px, 0.9fr) minmax(130px, 1.4fr) minmax(130px, 1.4fr);
   gap: 6px 8px;
   font-size: 12px;
+}
+
+.dual-compact__interp-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.dual-compact__interp-status--clickable {
+  cursor: pointer;
+}
+
+.dual-compact__interp-status-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.dual-compact__interp-status-text {
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dual-compact__status-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dual-compact__status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dual-compact__interpolation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.dual-compact__section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  /* 固定标题行高度,避免插值状态条 v-if 显隐时撑高标题行导致下方 metrics 抖动。
+     状态条内容高度 ~17.2px(去掉 border 后),20px 留足余量且与单探针 TraversalLiveMonitor
+     的 min-h-5 保持一致,双/单探针视觉节奏统一。 */
+  min-height: 20px;
+}
+
+.dual-compact__section-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--accent-info);
+}
+
+.dual-compact__metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.dual-compact__metric {
+  padding: 6px 8px;
+  background: var(--bg-panel-strong);
+  border-radius: 8px;
 }
 
 .dual-compact__field {
@@ -328,46 +615,63 @@ const completedSummary = computed(() => {
 }
 
 .dual-compact__field-label {
-  color: var(--text-tertiary, #888);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .dual-compact__field-value {
-  color: var(--text-primary, #1f1f1f);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dual-compact__field-value--mono {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-family-mono, monospace);
   font-weight: 500;
+}
+
+.dual-compact__metric-value {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dual-compact__metric-value--accent {
+  color: var(--accent-info);
 }
 
 .dual-compact__progress-bar {
   height: 4px;
-  background: var(--bg-elevated, #e8e8e8);
+  background: var(--border-default);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .dual-compact__progress-fill {
   height: 100%;
-  background: var(--color-primary, #2080f0);
+  background: var(--accent-primary);
   transition: width 0.2s ease;
 }
 
 .dual-compact__completed {
   padding: 4px 8px;
-  background: var(--color-success-bg, #e8f5e9);
-  color: var(--color-success, #2e7d32);
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  color: var(--accent-success);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 35%, transparent);
+  border-radius: 6px;
   font-size: 12px;
 }
 
 .dual-compact__completed--error {
-  background: var(--color-error-bg, #ffebee);
-  color: var(--color-error, #d03030);
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
 }
 
 .dual-compact__warning {
@@ -375,16 +679,18 @@ const completedSummary = computed(() => {
   align-items: flex-start;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--color-warning-bg, #fff8e1);
-  color: var(--color-warning, #f0a020);
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
+  color: var(--state-warning);
+  border: 1px solid color-mix(in srgb, var(--state-warning) 35%, transparent);
+  border-radius: 6px;
   font-size: 11px;
   overflow: hidden;
 }
 
 .dual-compact__warning--error {
-  background: var(--color-error-bg, #ffebee);
-  color: var(--color-error, #d03030);
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
 }
 
 .dual-compact__warning-icon {
