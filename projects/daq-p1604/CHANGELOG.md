@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.7.2] - 2026-07-28
+
+### Fixed
+- 修复现场 Windows 环境中开始采集卡死：`idleReadLoop` 不再调用 `conn.Read`，彻底放弃依赖 `SetReadDeadline` 保证退出的空闲检测（ADR-009，参考 `docs/acquisition-start-no-response.md` §5.2）。
+- 修复 `readLoop` 退出时残留 deadline 导致快速重启采集报 `i/o timeout`：退出时 `defer SetReadDeadline(time.Time{})` 清除残留。
+- 修复快速启停残留压力帧污染 ACK 读取导致连接被误判故障：`sendCommandACK` 重写为循环 ReadFrame 跳过非 ASCII 帧，覆盖 StartAcquisition / StopAcquisition / Disconnect / ApplyConfig / ZeroCalibration 全部 5 个调用点。
+- 修复 `sendCommandACK` 循环跑满上限时误报成功：超过 20 帧仍无 ACK 时返回 `too many residual frames` 错误。
+- 统一 `zeroCalibrationDirect` watchdog 触发时的错误信息。
+
+### Internal
+- `sendCommandACK` 引入 5s watchdog 硬兜底（ADR-009），覆盖 `SetReadDeadline` 失效场景。
+- `readLoop` 退出时 `defer SetReadDeadline(time.Time{})` 清除残留 deadline。
+- 删除 `p1604DrainTimeout` / `p1604IdleCheckInterval` 未使用常量。
+- 删除 `StopAcquisition` / `Disconnect` / `ApplyConfig` / `zeroCalibrationDirect` 中的 `DrainConnection` 调用。
+- 新增 4 个跳帧回归测试：`TestSendCommandACK_SkipsResidualFramesBeforeACK` / `TestSendCommandACK_TooManyResidualFramesReturnsError` / `TestSendCommandACK_ResidualThenNxxReturnsDeviceError` / `TestSendCommandACK_NoResidualReturnsACKDirectly`。
+- 同步 6 个版本号文件到 0.7.2：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 180s`
+- `task build-go`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 现场故障电脑（SetReadDeadline 失效）需实测验证 watchdog 路径，本机无法复现该 Windows 网络栈 bug。
+- 设备固件时间戳问题仍按既有 CSV 规则规避。
+
+## [0.7.1] - 2026-07-28
+
+### Fixed
+- Windows UDP 设备扫描改用同步 Winsock 和固定总截止时间，避免收到设备响应后接收循环仍永久阻塞。
+- 校零命令兼容设备返回 16 个系数的响应格式。
+- 点击窗口关闭按钮时显示退出确认，避免误操作直接关闭应用。
+
+### Internal
+- 新增真实同步 UDP socket 超时回归测试，并保留非 Windows 平台的 `net.PacketConn` 实现。
+- 同步 6 个版本号文件到 0.7.1。
+
+### Verification
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go vet ./...`
+- `npm run test`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 设备固件时间戳问题仍按既有 CSV 规则规避。
+
 ## [0.7.0] - 2026-07-27
 
 ### Added

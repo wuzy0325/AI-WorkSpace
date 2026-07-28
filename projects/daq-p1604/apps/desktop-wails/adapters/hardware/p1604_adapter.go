@@ -40,7 +40,6 @@ const (
 	// 偶发不响应 read deadline 的网络调用也能解除阻塞。
 	p1604HandshakeTimeout       = 4 * time.Second
 	p1604CommandResponseTimeout = 2 * time.Second
-	p1604DrainTimeout           = 100 * time.Millisecond
 	// p1604CalibrationTimeout 零点校准（h 命令）等待设备响应的最长时间。
 	// 设备执行零点校准需要数百毫秒（内部 ADC 求平均），2s 余量足够覆盖网络抖动与
 	// 采集期间 readLoop 处理积压二进制帧的延迟。超时即视为设备无响应或连接已死。
@@ -73,18 +72,52 @@ const (
 	// 比原来 110s 快 3 倍以上。
 	p1604KeepAlivePeriod = 3 * time.Second
 
-	// p1604IdleCheckInterval 非采集期间空闲检测间隔。
+	// p1604WatchdogTimeout 是 Windows 上 SetReadDeadline 可能失效时的硬兜底超时。
 	//
-	// 设计目的：CONN-008 用例要求"仅连接不采集时拔网线，30~40 秒后状态自动变为错误"。
-	// TCP keepalive 探测失败会让内核把 socket 标记为 abort，但应用层若不主动
-	// Read/Write，永远感知不到这个 abort——状态仍停在"已连接"。
-	// idleReadLoop 通过周期性短超时 Read 触发应用层感知：keepalive 失败后
-	// 下次 Read 立即返回 connection reset/abort 错误，触发 handleConnectionLost。
+	// 设计依据 ADR-009：现场一台 Windows 电脑（与 192.168.1.7:9000 设备配套使用）
+	// 可重复出现 SetReadDeadline 到期后阻塞 Read 仍不返回的现象。仅靠 deadline
+	// 不足以保证有界网络 I/O，必须由独立 timer 调用 conn.Close() 解除阻塞。
 	//
-	// 间隔取 1s：小于 keepalive 检出时间（~33s），确保 keepalive 标记 abort 后
-	// 应用层在 1s 内感知；大于 readLoop 读超时（200ms），避免与 readLoop 频繁切换。
-	p1604IdleCheckInterval = 1 * time.Second
+	// 5s 取值理由：
+	//   - 正常 idle Read 200ms deadline，5s 是 25 倍余量，绝不误杀
+	//   - 正常命令 ACK 2s deadline，5s 是 2.5 倍余量
+	//   - StartAcquisition 命令链正常 < 200ms，5s 足以覆盖网络抖动
+	//   - 用户可接受的最长单步等待时间，超时即报错让用户重连
+	//
+	// 使用 var 而非 const 是为了支持测试覆盖：deadline-ignore 回归测试可临时
+	// 缩短为 200ms 以加速验证（参考 TestStartAcquisition_WatchdogClosesConnOnDeadlineFailure）。
+	// 串行测试（默认）下无并发风险；并发测试需使用 t.Parallel 前自行 sync 化。
+	p1604WatchdogTimeout = 5 * time.Second
 )
+
+// watchdogClose 启动一个独立 timer，在 timeout 后调用 conn.Close() 作为
+// 阻塞 I/O 的硬兜底。
+//
+// 返回的 stop() 函数返回 true 表示 watchdog 未触发（连接仍可用），
+// 返回 false 表示 watchdog 已触发（连接已被 Close，调用方必须触发断线清理，
+// 不得在同一连接上继续操作或重试）。
+//
+// 用法模式（ADR-009 Safe Pattern）：
+//
+//	stop := watchdogClose(conn, timeout)
+//	n, err := conn.Read(buf)  // 若 deadline 失效，watchdog 会 Close 解除阻塞
+//	if !stop() {
+//	    // 连接已被 watchdog 关闭，必须 handleConnectionLost 清理
+//	}
+//
+// 设计约束：
+//   - 多次调用 stop() 是幂等的（time.AfterFunc.Stop 文档保证）
+//   - watchdog 与阻塞 Read 必须在同一 goroutine 内串行：先启动 watchdog，
+//     再 Read，Read 返回后立即 Stop watchdog。不允许在 Read 期间持有任何
+//     锁（mutex），否则 watchdog Close 后其他 goroutine 无法获取该锁清理。
+func watchdogClose(conn net.Conn, timeout time.Duration) (stop func() bool) {
+	timer := time.AfterFunc(timeout, func() {
+		_ = conn.Close()
+	})
+	return func() bool {
+		return timer.Stop()
+	}
+}
 
 // DeviceLogEntry 设备日志条目
 type DeviceLogEntry struct {
@@ -578,6 +611,10 @@ func (a *P1604Adapter) Disconnect(id string) error {
 
 	var stopErr error
 	if wasAcquiring && connected && driver != nil {
+		// readLoop 退出前可能已读到压力数据帧并放入 frameReader 缓冲区。
+		// 必须清空缓冲区，否则 sendCommandACK 的 ReadFrame 会读到残留数据帧
+		// 而非 ASCII A，导致 c 02 停止命令响应解析失败（详见 StopAcquisition 同款修复）。
+		driver.frameReader.Reset()
 		stopErr = driver.sendCommandACK("c 02 1")
 	}
 	if driver != nil && driver.conn != nil {
@@ -633,15 +670,25 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	shard.mu.Unlock()
 
 	// 命令应答必须由当前操作同步读取，先停止 idleReadLoop，避免抢读 ACK。
+	// idleReadLoop 改造后只等 stop channel，close 即退出，不会阻塞调用方。
 	stoppedIdle := a.stopIdleLoop(id, driver)
 	driver.frameReader.Reset()
-	sharedproto.DrainConnection(driver.conn, p1604DrainTimeout)
+	// 不再调用 DrainConnection：依赖 SetReadDeadline 的阻塞 Read 在现场 Windows 环境
+	// 不可靠（参考 docs/acquisition-start-no-response.md §4.2/§5.1）。首次采集无旧流帧，
+	// 正常停止会消费 c 02 应答；异常残留由 frameReader.Reset 处理已足够。
 
 	// 配置数据流参数：c 00 <st> <mask> <sync> <per> <fmt> <mode>
 	periodMs := driver.profile.P1604Cfg.SamplingRate
 	if err := driver.sendCommandACK(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
+		if sharedproto.IsConnectionFault(err) {
+			// sendCommandACK 内部 watchdog 触发或对端 FIN/RST：连接已死，
+			// 必须删除 driver + close conn，让用户重连而非继续撞同一死连接。
+			a.handleConnectionLost(id, driver, fmt.Errorf("set stream params: %w", err))
+		} else {
+			// 软错误（如设备返回 Nxx）：连接仍可用，重启 idleReadLoop 保持检测。
+			a.restartIdleLoop(id, driver, stoppedIdle)
+		}
 		a.rollbackAcquisition(id, ch, done)
-		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("set stream params: %w", err)
 	}
 
@@ -657,15 +704,23 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	contentMask |= 0x0800 // 始终包含大气数据
 	contentMaskHex := fmt.Sprintf("%04X", contentMask)
 	if err := driver.sendCommandACK(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
+		if sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, fmt.Errorf("set stream content: %w", err))
+		} else {
+			a.restartIdleLoop(id, driver, stoppedIdle)
+		}
 		a.rollbackAcquisition(id, ch, done)
-		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("set stream content: %w", err)
 	}
 
 	// 启动数据流
 	if err := driver.sendCommandACK("c 01 1"); err != nil {
+		if sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, fmt.Errorf("start stream: %w", err))
+		} else {
+			a.restartIdleLoop(id, driver, stoppedIdle)
+		}
 		a.rollbackAcquisition(id, ch, done)
-		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("start stream: %w", err)
 	}
 
@@ -786,6 +841,11 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 
 	// 仅在确实在采集且连接有效时，才在锁外发送停止命令
 	if wasAcquiring && connected && driver != nil {
+		// readLoop 退出前可能已读到压力数据帧并放入 frameReader 缓冲区。
+		// 必须清空缓冲区，否则 sendCommandACK 的 ReadFrame 会读到残留数据帧
+		// （现场复现：StartAcquisition 后 60ms 内 StopAcquisition，c 02 响应被
+		// 解析为 "\x01\x00\x00..." 二进制帧而非 ASCII A，连接被误判为故障）。
+		driver.frameReader.Reset()
 		if err := driver.sendCommandACK("c 02 1"); err != nil {
 			a.handleConnectionLost(id, driver, fmt.Errorf("stop stream: %w", err))
 			return fmt.Errorf("stop stream: %w", err)
@@ -904,10 +964,17 @@ func (a *P1604Adapter) zeroCalibrationViaReadLoop(id string, driver *p1604Driver
 // zeroCalibrationDirect 空闲期间路径：停止 idleReadLoop 后直接读写 frameReader。
 //
 // 顺序与 ApplyConfig 一致：joinReadLoop（防御性 no-op）→ stopIdleLoop →
-// Reset+Drain → sendCommand → ReadFrame → 验证响应；defer 重启 idleReadLoop。
+// Reset → sendCommand → ReadFrame → 验证响应；defer 重启 idleReadLoop。
 //
-// idleReadLoop 通过裸 conn.Read 排空延迟应答，与 frameReader.ReadFrame 竞争同一
-// conn 的读取，必须先停止它再用 frameReader，否则会造成帧字节流错位。
+// 不再调用 DrainConnection（参考 docs/acquisition-start-no-response.md §5.1）：
+// 依赖 SetReadDeadline 的阻塞 Read 在现场 Windows 环境不可靠，
+// frameReader.Reset 已足以清理应用层缓冲区残留。
+//
+// ReadFrame 仍保留 5s watchdog 兜底（ADR-009）：
+//   - ReadFrame 内部基于 conn.Read 解析长度前缀帧，deadline 失效时会卡死。
+//   - 设备无响应时连接已死，watchdog close conn 让 Read 返回错误。
+//   - watchdog 触发即连接已废，必须 handleConnectionLost 清理 driver + status。
+//   - 正常电脑上 watchdog 永不触发，连接仍可用。
 func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) error {
 	driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
 	stoppedIdle := a.stopIdleLoop(id, driver)
@@ -924,10 +991,6 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 
 	// 清理上次采集停止后尚未读完的二进制流数据帧。
 	driver.frameReader.Reset()
-	if drained := sharedproto.DrainConnection(driver.conn, p1604DrainTimeout); drained > 0 {
-		slog.Debug("DAQ-P-1604 drained residual data before zero calibration",
-			"device", id, "bytes", drained)
-	}
 
 	if err := driver.sendCommand("h"); err != nil {
 		if sharedproto.IsConnectionFault(err) {
@@ -937,15 +1000,30 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 	}
 
 	// 读响应：长度前缀帧。采集未运行时无二进制流干扰，响应帧是 ReadFrame 的首个返回。
+	// 双重超时保护（ADR-009）：
+	//   - SetReadDeadline 设 2s 软超时，覆盖任何残留 deadline
+	//   - 5s watchdog 硬兜底，应对 SetReadDeadline 失效场景
+	// watchdog 触发时构造统一的 read watchdog 错误信息：
+	//   - handleConnectionLost 用该信息通知前端
+	//   - 函数返回用相同信息，保证日志与前端展示一致（Note #5 修复）
 	_ = driver.conn.SetReadDeadline(time.Now().Add(p1604CalibrationTimeout))
+	wdStopRead := watchdogClose(driver.conn, p1604WatchdogTimeout)
 	resp, err := driver.frameReader.ReadFrame()
+	watchdogTriggered := !wdStopRead()
 	_ = driver.conn.SetReadDeadline(time.Time{})
 	if err != nil {
-		// 连接已死（FIN/RST/超时）→ 触发 handleConnectionLost 清理 driver + conn
-		if sharedproto.IsConnResetByPeer(err) || sharedproto.IsConnectionFault(err) {
-			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
+		// watchdog 触发：构造统一的错误信息，让 handleConnectionLost 和返回值一致
+		var calibErr error
+		if watchdogTriggered {
+			calibErr = fmt.Errorf("zero calibration: read watchdog triggered; reconnect required")
+		} else {
+			calibErr = fmt.Errorf("zero calibration: %w", err)
 		}
-		return fmt.Errorf("zero calibration: %w", err)
+		// watchdog 触发 / FIN / RST / 超时：均视为连接已死，触发清理
+		if watchdogTriggered || sharedproto.IsConnResetByPeer(err) || sharedproto.IsConnectionFault(err) {
+			a.handleConnectionLost(id, driver, calibErr)
+		}
+		return calibErr
 	}
 
 	if err := verifyZeroCalibrationResponse(resp); err != nil {
@@ -997,17 +1075,24 @@ func (d *p1604Driver) joinReadLoop(id string, timeout time.Duration) bool {
 	}
 }
 
-// joinIdleLoop 等待 idleReadLoop 关闭其 done channel；超时仅日志，不阻塞调用方。
+// joinIdleLoop 等待 idleReadLoop 关闭其 done channel。
+//
+// idleReadLoop 改造为只等 stop channel 后（参考 docs/acquisition-start-no-response.md §5.2），
+// close(stop) 必然立即唤醒 idleReadLoop 退出，本方法不会超时。保留 timeout 参数
+// 仅为防御性兜底（如未来 idleReadLoop 又引入阻塞操作）。
+//
 // 调用方通常先 close(idleStopCh)，然后调用本方法等待 idleReadLoop 退出，
-// 再启动 readLoop 或 conn.Close。driver 为 nil 或 idleReadLoop 未启动时直接返回。
-func (d *p1604Driver) joinIdleLoop(id string, timeout time.Duration) {
+// 再启动 readLoop 或 conn.Close。driver 为 nil 或 idleReadLoop 未启动时返回 true。
+func (d *p1604Driver) joinIdleLoop(id string, timeout time.Duration) bool {
 	if d == nil || d.idleLoopDone == nil {
-		return
+		return true
 	}
 	select {
 	case <-d.idleLoopDone:
+		return true
 	case <-time.After(timeout):
 		slog.Warn("DAQ-P-1604 idleLoop join timeout", "device", id, "timeout", timeout)
+		return false
 	}
 }
 
@@ -1015,8 +1100,11 @@ func (d *p1604Driver) joinIdleLoop(id string, timeout time.Duration) {
 // 必须在 shard.mu 锁外调用（避免持锁等待 goroutine），
 // 方法内部在锁内取得 idleStopCh，close 和 join 均在锁外执行。
 //
-// timeout 取 sharedproto.ReadLoopJoinTimeout 与 readLoop join 一致。
-func (a *P1604Adapter) stopIdleLoop(id string, driver *p1604Driver) chan struct{} {
+// 返回 stoppedIdleCh 用于 restartIdleLoop 比对（nil 表示无需重启）。
+//
+// idleReadLoop 改造后不再调用 conn.Read，close(stop) 立即唤醒退出，
+// join 必然在 ReadLoopJoinTimeout 内成功，不再有 forceClosed 场景。
+func (a *P1604Adapter) stopIdleLoop(id string, driver *p1604Driver) (stoppedIdleCh chan struct{}) {
 	if driver == nil {
 		return nil
 	}
@@ -1053,52 +1141,28 @@ func (a *P1604Adapter) restartIdleLoop(id string, driver *p1604Driver, stopped c
 	go a.idleReadLoop(id, driver, driver.idleStopCh)
 }
 
-// idleReadLoop 非采集期间周期性短超时 Read，感知 TCP keepalive 失败（CONN-008）。
+// idleReadLoop 非采集期间的占位协程，仅等待 stop channel 关闭后退出。
 //
-// 必要性：
-//   - TCP keepalive 探测失败会让内核把 socket 标记为 abort，但应用层若不主动
-//     Read/Write，永远感知不到。idleReadLoop 通过周期性 Read 触发感知：
-//     keepalive 标记 abort 后下次 Read 立即返回 connection reset/abort 错误。
-//   - 采集期间 readLoop 活跃，本 goroutine 已在 StartAcquisition 阶段被停止，
-//     不会与 readLoop 竞争 frameReader.buf。
+// 设计取舍（参考 docs/acquisition-start-no-response.md §5.2）：
+//   - 原实现每秒对连接执行 200ms deadline 的 Read 来感知 TCP keepalive 失败。
+//     但现场一台 Windows 电脑上 SetReadDeadline 到期后阻塞 Read 仍不返回，
+//     导致 StartAcquisition 调 stopIdleLoop 时 join 超时，整体永久卡死
+//     （现场日志：Start acquisition requested 后 30s 无任何 hardware-send 日志）。
+//   - 本协程不再调用 conn.Read，彻底回避 SetReadDeadline 不可靠问题。
+//     StartAcquisition / Disconnect 调 stopIdleLoop 时本协程必然在 select 上
+//     等待，close(stop) 立即唤醒退出，不会阻塞调用方。
 //
-// 退出路径：
-//  1. idleStopCh 关闭（StartAcquisition / Disconnect 主动停止）→ 静默退出
-//  2. Read 返回非 timeout 错误（keepalive 失败 / 对端 FIN）→ 调用 handleConnectionLost
-//  3. 调用方主动停止场景（Disconnect 期间 SetStopReason）→ 静默退出
+// 主动断线检测的取舍：
+//   - 仅连接不采集时不再有 30~40s 内主动变错误的检测能力；
+//   - TCP keepalive（3s 间隔，Windows ~33s / Linux ~12s 检出）仍是兜底；
+//   - 下一次 StartAcquisition / ApplyConfig / ZeroCalibration 会主动发命令
+//     确认连接可用性，连接已死时立即在命令路径上失败并 handleConnectionLost。
+//   - 用户操作频率远高于 30s，实际感知延迟可接受；优先保证采集可启动。
 //
 // 退出前必须 close(idleLoopDone)，让 StartAcquisition / Disconnect 能 join 到本协程。
 func (a *P1604Adapter) idleReadLoop(id string, driver *p1604Driver, stop <-chan struct{}) {
 	defer close(driver.idleLoopDone)
-
-	buf := make([]byte, 1024) // 裸读字节，不解析帧（非采集期间无数据流）
-	for {
-		select {
-		case <-stop:
-			return
-		case <-time.After(p1604IdleCheckInterval):
-		}
-		// 短超时 Read：仅 200ms，正常连接下会 timeout（无数据）；
-		// keepalive 失败后 socket 已 abort，Read 立即返回非 timeout 错误。
-		driver.conn.SetReadDeadline(time.Now().Add(p1604ReadTimeout))
-		n, err := driver.conn.Read(buf)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// 连接正常，只是没数据，继续下一轮
-				continue
-			}
-			// 主动停止场景（Disconnect 期间 SetStopReason）→ 静默退出
-			if driver.GetStopReason() != "" {
-				return
-			}
-			a.handleConnectionLost(id, driver, fmt.Errorf("idle keepalive check: %w", err))
-			return
-		}
-		if n > 0 {
-			a.handleConnectionLost(id, driver, fmt.Errorf("unexpected data while idle: %d bytes", n))
-			return
-		}
-	}
+	<-stop
 }
 
 // Status 获取设备状态
@@ -1191,13 +1255,9 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 		if !ok {
 			return fmt.Errorf("unsupported unit: %s", cfg.Unit)
 		}
-		// 清理上次采集停止后尚未读完的二进制流数据帧。
-		// 必须先清 FrameReader 缓冲区，再清 TCP 接收缓冲区。
+		// 清理应用层缓冲区残留。不再调用 DrainConnection：依赖 SetReadDeadline 的阻塞
+		// Read 在现场 Windows 环境不可靠（参考 docs/acquisition-start-no-response.md §5.1）。
 		driver.frameReader.Reset()
-		if drained := sharedproto.DrainConnection(driver.conn, p1604DrainTimeout); drained > 0 {
-			slog.Debug("DAQ-P-1604 drained residual data before ApplyConfig",
-				"device", id, "bytes", drained)
-		}
 		// 打印 v01101 命令发送日志（v01101 通过 sharedproto.P1604WriteUnitCoefficient 发送，不走 sendCommand）
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware-send", DeviceID: id,
@@ -1270,8 +1330,14 @@ func (a *P1604Adapter) SetDataSink(id string, sink func(core.PressureSnapshot)) 
 //     - 否则视为连接意外断开，标记设备为 Error 状态并通知前端。
 //
 // 退出前必须 close(readLoopDone)，让 Disconnect/StopAcquisition 能 join 到本协程。
+//
+// 退出时必须清除 SetReadDeadline：readLoop 每次循环都设 200ms deadline，退出时
+// 残留的 deadline 会让后续 sendCommandACK 的 ReadFrame 立即返回 i/o timeout
+// （现场复现：StopAcquisition 后 174ms 内再次 StartAcquisition，c 00 响应 23ms 内
+// 报 i/o timeout，正是 readLoop 残留 deadline 在生效）。
 func (a *P1604Adapter) readLoop(id string, driver *p1604Driver, stop <-chan struct{}) {
 	defer close(driver.readLoopDone)
+	defer func() { _ = driver.conn.SetReadDeadline(time.Time{}) }()
 
 	consecutiveTimeouts := 0
 
@@ -1502,13 +1568,115 @@ func (d *p1604Driver) sendCommand(cmd string) error {
 	return sharedproto.SendCommandNoNewline(d.conn, cmd, p1604CommandTimeout)
 }
 
+// p1604MaxResidualFrameSkips 是 sendCommandACK 在等待 ACK 期间最多可跳过的
+// 非 ASCII 帧数量上限。
+//
+// 设计依据：
+//   - 正常情况下 StopAcquisition/Disconnect 后 socket 中残留压力帧不会超过 5 个
+//     （采集 100ms 周期 × StopAcquisition 命令链 < 50ms 完成即停止数据流）
+//   - 留 4 倍余量设为 20，覆盖极端积压场景
+//   - 超过 20 帧仍非 ACK 时认定连接已混乱（可能帧对齐错位或设备异常），
+//     让 5s watchdog 兜底触发 handleConnectionLost
+const p1604MaxResidualFrameSkips = 20
+
+// sendCommandACK 发送命令并读取设备 ACK 响应（自动跳过残留压力帧）。
+//
+// 【为什么需要跳帧】
+//   - StopAcquisition/Disconnect 路径：readLoop 退出前已从 socket 读到压力数据帧
+//     放入 frameReader 应用层缓冲；同时内核 socket 接收缓冲也可能堆积了
+//     设备已发但应用没 Read 的压力帧。这些残留帧会让 sendCommandACK 内的
+//     ReadFrame 读到二进制流帧（"\x01\x00\x00..."）而非 ASCII 'A' 应答，
+//     导致 unexpected command response 错误并触发误判的 handleConnectionLost
+//     （现场复现：快速启停 5 次后第 6 次 StopAcquisition 报
+//     "stop stream: c 02 1 response: unexpected command response: \x01\x00\x00..."）
+//   - StartAcquisition / ApplyConfig / ZeroCalibration 路径同样可能命中残留
+//
+// 【跳帧策略】
+//   - 设备应答帧只有两种 ASCII 形式：
+//     · 'A'（0x41）—— 命令成功
+//     · 'N' 开头（0x4E）—— 命令拒绝（如 N05 等错误码）
+//   - 压力数据帧第一字节固定为 0x01（二进制流帧头同步标记，见 ParseStreamFrameEx）
+//   - 利用 IsASCIIFrame 区分：非 ASCII 帧 = 残留压力帧，丢弃后继续读下一帧
+//
+// 【双重超时保护】（ADR-009）
+//  1. SetReadDeadline 设 2s 软超时——覆盖 readLoop 残留的旧 deadline，
+//     也作为单次 ReadFrame 的正常超时（设备正常应答 < 100ms）
+//  2. watchdog 5s 硬兜底——应对现场 Windows 环境下 SetReadDeadline 到期后
+//     阻塞 Read 仍不返回的故障。watchdog 与 Read 在同一 goroutine 串行：
+//     先启动 watchdog → 循环 ReadFrame → Stop watchdog。期间不持有任何锁，
+//     watchdog Close 后其他 goroutine 能正常清理
+//
+// 【 watchdog 触发时】（wdStop 返回 false）
+//   - conn 已被 close，ReadFrame 必然已返回错误（close 解除阻塞）
+//   - 返回连接错误让调用方通过 IsConnectionFault 识别并触发 handleConnectionLost
+//   - 极端情况下 ackErr 仍为 nil（watchdog 在 ReadFrame 返回后立即触发），
+//     构造 net.ErrClosed 保证调用方走断线清理路径
+//
+// 【Connect 阶段不走本方法】
+//   - Connect 用 sendCommand + P1604ReadCommandACK 分开调用，
+//     由 runConnectionHandshake 提供 watchdog，避免双重 watchdog
 func (d *p1604Driver) sendCommandACK(cmd string) error {
 	if err := d.sendCommand(cmd); err != nil {
 		return err
 	}
-	if err := sharedproto.P1604ReadCommandACK(d.frameReader, d.conn, p1604CommandResponseTimeout); err != nil {
-		return fmt.Errorf("%s response: %w", cmd, err)
+
+	// 启动 5s watchdog 作为硬兜底（ADR-009：SetReadDeadline 在现场 Windows 上可能失效）
+	wdStop := watchdogClose(d.conn, p1604WatchdogTimeout)
+	defer func() {
+		// watchdog 未触发时主动停止；已触发时 Stop 是幂等空操作
+		_ = wdStop()
+	}()
+
+	// 循环 ReadFrame 跳过残留压力帧，直到读到 ASCII ACK/Nxx 或超时
+	var ackErr error
+	skipped := 0
+	for ; skipped < p1604MaxResidualFrameSkips; skipped++ {
+		// 每次迭代重新设 deadline（覆盖前次 ReadFrame 消耗的时间）
+		// 注意：SetReadDeadline 在故障电脑上可能失效，但 watchdog 会兜底
+		_ = d.conn.SetReadDeadline(time.Now().Add(p1604CommandResponseTimeout))
+		payload, readErr := d.frameReader.ReadFrame()
+		if readErr != nil {
+			ackErr = readErr
+			break
+		}
+		// 命中 ASCII 应答帧（'A' 或 'N' 开头）：退出循环处理结果
+		if len(payload) > 0 && sharedproto.IsASCIIFrame(payload) {
+			ackErr = interpretACKPayload(payload, cmd)
+			break
+		}
+		// 否则是残留压力帧（二进制，第一字节通常 0x01）：丢弃后继续读下一帧
 	}
+	// 循环正常结束（skipped == 上限）且未读到 ACK/错误时，认定连接已混乱：
+	// 设备可能持续发压力流（StopAcquisition 未生效）或帧对齐错位，必须返回错误
+	// 避免误报成功导致调用方继续后续操作（Critical bug 修复）
+	if ackErr == nil && skipped == p1604MaxResidualFrameSkips {
+		ackErr = fmt.Errorf("too many residual frames (>%d) while waiting for ACK", p1604MaxResidualFrameSkips)
+	}
+	// 跳过残留帧时记 debug 日志，便于现场排查（正常情况 skipped=0 不记）
+	if skipped > 0 && ackErr == nil {
+		slog.Debug("DAQ-P-1604 sendCommandACK skipped residual frames",
+			"device", d.profile.ID, "cmd", cmd, "skipped", skipped)
+	}
+
+	// 清除 deadline，避免影响后续 readLoop 或命令读取
+	_ = d.conn.SetReadDeadline(time.Time{})
+
+	// watchdog 检查：返回 false 表示已触发 close，conn 已废
+	if !wdStop() {
+		// watchdog 触发：conn 已被 close。ReadFrame 此时必然已返回错误
+		// （close 解除阻塞）。极端情况下 ackErr 仍为 nil（watchdog 在
+		// ReadFrame 返回后立即触发），构造 net.ErrClosed 让调用方走断线清理
+		if ackErr == nil {
+			ackErr = net.ErrClosed
+		}
+		return fmt.Errorf("%s response: %w (watchdog triggered, conn closed)", cmd, ackErr)
+	}
+
+	if ackErr != nil {
+		return fmt.Errorf("%s response: %w", cmd, ackErr)
+	}
+
+	// 成功路径：设备回 A
 	if d.emit != nil {
 		d.emit(DeviceLogEntry{
 			Level: "info", Category: "hardware-recv", DeviceID: d.profile.ID,
@@ -1516,6 +1684,20 @@ func (d *p1604Driver) sendCommandACK(cmd string) error {
 		})
 	}
 	return nil
+}
+
+// interpretACKPayload 解析 ASCII 应答 payload，返回 nil 表示成功（'A'），
+// 返回 error 表示设备拒绝（'N' 开头）或非预期应答。
+// 仅处理 ASCII 帧（调用方已用 IsASCIIFrame 校验），二进制压力帧不应进入本函数。
+func interpretACKPayload(payload []byte, cmd string) error {
+	response := string(payload)
+	if response == "A" {
+		return nil
+	}
+	if strings.HasPrefix(response, "N") {
+		return fmt.Errorf("device returned error: %s", response)
+	}
+	return fmt.Errorf("unexpected command response: %q", response)
 }
 
 // 注：isConnectionFault 已下沉到 shared.local/device-sdk/go/protocol（conn_helpers.go），

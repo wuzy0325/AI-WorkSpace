@@ -1371,3 +1371,172 @@ func TestSyncChannelsUnit_EmptySliceNoPanic(t *testing.T) {
 	syncChannelsUnit(nil, "Pa")
 	syncChannelsUnit([]core.ChannelConfig{}, "Pa")
 }
+
+// buildResidualFrame 构造一个二进制压力帧（5-byte header + 16 x float32），
+// 用于模拟采集残留帧。帧长度 5 + 64 = 69，加上 2 字节长度前缀共 71 字节。
+//
+// 第一字节固定 0x01（设备协议规定的二进制流帧头同步标记），让 IsASCIIFrame 返回 false。
+func buildResidualFrame() []byte {
+	const payloadLen = 5 + 16*4 // header + 16 floats
+	frame := make([]byte, 2+payloadLen)
+	binary.BigEndian.PutUint16(frame, uint16(payloadLen+2))
+	frame[2] = 0x01 // 二进制流帧头
+	// 其余字节填 0xBB 制造明显的非 ASCII 模式
+	for i := 3; i < len(frame); i++ {
+		frame[i] = 0xBB
+	}
+	return frame
+}
+
+// startTestTCPServer 启动一个测试用 TCP 服务端，accept 一个连接，
+// 通过 handler 函数让调用方控制写入内容。返回 listener 和服务端 conn。
+func startTestTCPServer(t *testing.T, handler func(server net.Conn)) (ln net.Listener, client net.Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		accepted <- conn
+		if handler != nil {
+			handler(conn)
+		}
+	}()
+	client, err = net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	server := <-accepted
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+		ln.Close()
+	})
+	return ln, client
+}
+
+// readCommandAndAck 用于测试 handler：读掉客户端发来的命令，然后写入指定的响应序列
+func readCommandAndAck(server net.Conn, cmdLen int, responses [][]byte) {
+	buf := make([]byte, cmdLen)
+	_, _ = server.Read(buf)
+	for _, resp := range responses {
+		_, _ = server.Write(resp)
+	}
+}
+
+// TestSendCommandACK_SkipsResidualFramesBeforeACK
+//
+// 测试前置：构造 TCP 服务端，连接后发送命令前先写 3 个残留压力帧 + 1 个 ACK
+// 测试步骤：调用 sendCommandACK("c 02 1")
+// 期待结果：返回 nil（成功），3 个残留帧被自动跳过
+//
+// 优先级 P0：覆盖 StopAcquisition 后快速 StartAcquisition 的现场场景
+func TestSendCommandACK_SkipsResidualFramesBeforeACK(t *testing.T) {
+	responses := [][]byte{
+		buildResidualFrame(), // 残留帧 1
+		buildResidualFrame(), // 残留帧 2
+		buildResidualFrame(), // 残留帧 3
+		framedASCII("A"),    // 真正的 ACK
+	}
+	_, client := startTestTCPServer(t, func(server net.Conn) {
+		readCommandAndAck(server, len("c 02 1"), responses)
+	})
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-skip-residual"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	if err := driver.sendCommandACK("c 02 1"); err != nil {
+		t.Fatalf("sendCommandACK should skip residual frames and return nil, got: %v", err)
+	}
+}
+
+// TestSendCommandACK_TooManyResidualFramesReturnsError
+//
+// 测试前置：构造 TCP 服务端，连接后发送 20+ 个残留压力帧，不发送任何 ACK
+// 测试步骤：调用 sendCommandACK("c 02 1")
+// 期待结果：返回错误（"too many residual frames"），不误报成功
+//
+// 优先级 P0：Critical bug 回归测试——循环正常结束不能误报成功
+func TestSendCommandACK_TooManyResidualFramesReturnsError(t *testing.T) {
+	// 构造 p1604MaxResidualFrameSkips + 2 个残留帧，确保循环跑满上限
+	responses := make([][]byte, p1604MaxResidualFrameSkips+2)
+	for i := range responses {
+		responses[i] = buildResidualFrame()
+	}
+	_, client := startTestTCPServer(t, func(server net.Conn) {
+		readCommandAndAck(server, len("c 02 1"), responses)
+	})
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-too-many-residual"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	err := driver.sendCommandACK("c 02 1")
+	if err == nil {
+		t.Fatal("sendCommandACK must return error when too many residual frames, got nil (false success)")
+	}
+	if !strings.Contains(err.Error(), "too many residual frames") {
+		t.Errorf("error should mention 'too many residual frames', got: %v", err)
+	}
+}
+
+// TestSendCommandACK_ResidualThenNxxReturnsDeviceError
+//
+// 测试前置：构造 TCP 服务端，发送 2 个残留帧后跟一个 N05 设备拒绝应答
+// 测试步骤：调用 sendCommandACK("c 05 1 0C10")
+// 期待结果：返回错误（"device returned error: N05"），跳过残留帧后正确识别拒绝
+//
+// 优先级 P1：残留帧不应掩盖设备的真实拒绝应答
+func TestSendCommandACK_ResidualThenNxxReturnsDeviceError(t *testing.T) {
+	responses := [][]byte{
+		buildResidualFrame(), // 残留帧 1
+		buildResidualFrame(), // 残留帧 2
+		framedASCII("N05"),   // 设备拒绝
+	}
+	_, client := startTestTCPServer(t, func(server net.Conn) {
+		readCommandAndAck(server, len("c 05 1 0C10"), responses)
+	})
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-residual-nxx"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	err := driver.sendCommandACK("c 05 1 0C10")
+	if err == nil {
+		t.Fatal("sendCommandACK should return Nxx device error, got nil")
+	}
+	if !strings.Contains(err.Error(), "device returned error: N05") {
+		t.Errorf("error should mention 'device returned error: N05', got: %v", err)
+	}
+}
+
+// TestSendCommandACK_NoResidualReturnsACKDirectly
+//
+// 测试前置：构造 TCP 服务端，发送命令后直接回一个 A（无残留帧）
+// 测试步骤：调用 sendCommandACK("c 01 1")
+// 期待结果：返回 nil（成功），循环只跑一次
+//
+// 优先级 P1：正常路径不能因跳帧逻辑引入回归
+func TestSendCommandACK_NoResidualReturnsACKDirectly(t *testing.T) {
+	_, client := startTestTCPServer(t, func(server net.Conn) {
+		readCommandAndAck(server, len("c 01 1"), [][]byte{framedASCII("A")})
+	})
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-no-residual"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+	if err := driver.sendCommandACK("c 01 1"); err != nil {
+		t.Fatalf("sendCommandACK should return nil for normal ACK, got: %v", err)
+	}
+}

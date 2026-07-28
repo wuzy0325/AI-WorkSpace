@@ -6,13 +6,13 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
-import { onLog, offLog, onDeviceState, offDeviceState, requestExit } from '@bridge/deviceBridge'
+import { onLog, offLog, onDeviceState, offDeviceState } from '@bridge/deviceBridge'
 import type { DeviceLogEvent, DeviceState } from '@bridge/deviceBridge'
 import AppShell from '@components/layout/AppShell.vue'
+import ExitConfirmationListener from '@components/ExitConfirmationListener.vue'
 import MonitorView from '@views/MonitorView.vue'
 import { NaiveThemeProvider } from '@shared-frontend/index'
-import { Events, Window } from '@wailsio/runtime'
-import { useDialog } from 'naive-ui'
+import { Window } from '@wailsio/runtime'
 import type { GlobalThemeOverrides } from 'naive-ui'
 
 /**
@@ -37,8 +37,6 @@ const displayStore = useDisplayStore()
 const i18n = useI18nStore()
 const logStore = useLogStore()
 const recordingStore = useRecordingStore()
-const dialog = useDialog()
-let cleanupExitListener: (() => void) | null = null
 
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const isDark = theme.value === 'dark'
@@ -130,23 +128,6 @@ onMounted(async () => {
   })
   recordingStore.startListening()
 
-  // 监听窗口 X 按钮关闭确认请求
-  cleanupExitListener = Events.On('app:exit-requested', () => {
-    dialog.warning({
-      title: i18n.t('app.confirmExitTitle'),
-      content: i18n.t('app.confirmExitText'),
-      positiveText: i18n.t('app.exit'),
-      negativeText: i18n.t('common.cancel'),
-      showIcon: false,
-      onPositiveClick: async () => {
-        try {
-          await requestExit()
-        } catch (err) {
-          console.error('[App] requestExit failed:', err)
-        }
-      },
-    })
-  })
 })
 
 onUnmounted(() => {
@@ -154,15 +135,12 @@ onUnmounted(() => {
   offLog()
   offDeviceState()
   recordingStore.stopListening()
-  if (cleanupExitListener) {
-    cleanupExitListener()
-    cleanupExitListener = null
-  }
 })
 </script>
 
 <template>
   <NaiveThemeProvider :theme="theme" :theme-overrides="themeOverrides">
+    <ExitConfirmationListener />
     <AppShell>
       <MonitorView />
     </AppShell>

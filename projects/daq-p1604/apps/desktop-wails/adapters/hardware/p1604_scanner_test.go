@@ -27,7 +27,7 @@ func TestBroadcastTargetsWithTimeoutFallsBack(t *testing.T) {
 func TestReadScanResponsesClosesSocketWhenDeadlineDoesNotWakeRead(t *testing.T) {
 	conn := newBlockingPacketConn()
 	started := time.Now()
-	results := readScanResponses(conn, 20*time.Millisecond)
+	results := readScanResponses(&packetDiscoverySocket{conn: conn}, 20*time.Millisecond)
 
 	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("scan read timeout took too long: %v", elapsed)

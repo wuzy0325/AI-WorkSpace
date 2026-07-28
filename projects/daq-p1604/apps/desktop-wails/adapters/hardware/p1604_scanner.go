@@ -46,43 +46,39 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 	targets := broadcastTargetsWithTimeout(p1604InterfaceTimeout, broadcastTargets)
 
 	// 在 7001 端口监听响应
-	conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", p1604DiscoveryRecvPort))
+	socket, err := openDiscoverySocket(p1604DiscoveryRecvPort)
 	if err != nil {
 		return nil, fmt.Errorf("udp listen on %d: %w", p1604DiscoveryRecvPort, err)
 	}
-	defer conn.Close()
-
-	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
-		return nil, fmt.Errorf("set deadline: %w", err)
-	}
+	defer socket.Close()
 
 	// 向所有网段广播地址发送发现命令
 	cmd := []byte(p1604DiscoveryCmd)
 	for _, t := range targets {
-		addr := &net.UDPAddr{IP: net.ParseIP(t), Port: p1604DiscoverySendPort}
-		if addr.IP == nil {
+		if net.ParseIP(t).To4() == nil {
 			continue
 		}
-		conn.WriteTo(cmd, addr)
+		_ = socket.Send(cmd, t, p1604DiscoverySendPort)
 	}
 
-	return readScanResponses(conn, s.timeout), nil
+	return readScanResponses(socket, s.timeout), nil
 }
 
-func readScanResponses(conn net.PacketConn, timeout time.Duration) []core.ScanResult {
-	// Close 是 deadline 的兜底：部分 Windows 网络驱动不会按期唤醒 ReadFrom。
-	timer := time.AfterFunc(timeout, func() { _ = conn.Close() })
-	defer timer.Stop()
-
+func readScanResponses(socket discoverySocket, timeout time.Duration) []core.ScanResult {
 	results := make([]core.ScanResult, 0)
 	seen := make(map[string]bool)
 	buf := make([]byte, 1024)
+	deadline := time.Now().Add(timeout)
 	for {
-		n, remote, err := conn.ReadFrom(buf)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n, remote, err := socket.Receive(buf, remaining)
 		if err != nil {
 			break
 		}
-		result := parseP1604Response(buf[:n], remote.String())
+		result := parseP1604Response(buf[:n], remote)
 		if result != nil && !seen[result.ID] {
 			seen[result.ID] = true
 			results = append(results, *result)
