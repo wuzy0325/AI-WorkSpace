@@ -18,9 +18,11 @@ import (
 
 	"wind-daq/services/api-go/api"
 	windaqconfig "wind-daq/services/api-go/internal/adapters/config"
+	storageadapter "wind-daq/services/api-go/internal/adapters/storage"
 	"wind-daq/services/api-go/internal/core/device"
 	windaqports "wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
+	"wind-daq/services/api-go/pkg/appcontext"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -153,6 +155,33 @@ func TestDeviceAcquisitionHTTPFlow(t *testing.T) {
 	}
 	if !status.Acquiring {
 		t.Fatalf("expected acquiring status, got %#v", status)
+	}
+}
+
+func TestDualTraversalRoutesUseIsolatedRealRegistryManagers(t *testing.T) {
+	configStore := windaqconfig.NewFileAppConfigStore(t.TempDir())
+	bundle, err := appcontext.NewTraversalRegistry(appcontext.TraversalRegistryDeps{
+		ConfigStore:     configStore,
+		CheckpointStore: storageadapter.NewFileCheckpointStore(),
+		DataDir:         t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewTraversalRegistry: %v", err)
+	}
+	router := api.NewRouter(api.Deps{TraversalRegistry: bundle.Registry})
+
+	probe1 := []byte(`{"probeType":"five-hole","motionAxes":[{"controllerId":"ctrl-a","axis":"X"}]}`)
+	probe2 := []byte(`{"probeType":"seven-hole","motionAxes":[{"controllerId":"ctrl-b","axis":"Y"}]}`)
+	request(t, router, http.MethodPost, "/api/traversal/probe1/config", probe1, http.StatusOK)
+	request(t, router, http.MethodPost, "/api/traversal/probe2/config", probe2, http.StatusOK)
+
+	got1 := request(t, router, http.MethodGet, "/api/traversal/probe1/config", nil, http.StatusOK)
+	got2 := request(t, router, http.MethodGet, "/api/traversal/probe2/config", nil, http.StatusOK)
+	if got1.Body.String() == got2.Body.String() {
+		t.Fatal("probe-scoped routes must not share manager configuration")
+	}
+	if !strings.Contains(got1.Body.String(), "five-hole") || !strings.Contains(got2.Body.String(), "seven-hole") {
+		t.Fatalf("unexpected isolated configs: probe1=%s probe2=%s", got1.Body.String(), got2.Body.String())
 	}
 }
 
@@ -353,39 +382,49 @@ func TestDaqStreamSendsServerSentEvents(t *testing.T) {
 	}
 	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
 
+	// 使用真实 httptest.Server + HTTP 客户端读取 SSE 流：
+	// httptest.ResponseRecorder 不是并发安全的，handler goroutine 写入与主 goroutine 读取会造成 race。
+	server := httptest.NewServer(router)
+	defer server.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/daq/stream/dev-1", nil)
-	resp := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		router.ServeHTTP(resp, req)
-		close(done)
-	}()
-
-	headerDeadline := time.After(500 * time.Millisecond)
-	for resp.Header().Get("Content-Type") != "text/event-stream" {
-		select {
-		case <-time.After(10 * time.Millisecond):
-		case <-headerDeadline:
-			t.Fatal("timed out waiting for SSE response headers")
-		}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/daq/stream/dev-1", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
 	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
 	hub.OnData(device.DataPayload{DeviceID: "dev-1", Timestamp: 123, Channels: []float64{42}, ChannelIndices: []int{0}})
-	deadline := time.After(500 * time.Millisecond)
+
+	// 按 SSE 帧边界读取，直到看到 payload 事件
+	buf := make([]byte, 0, 1024)
+	tmp := make([]byte, 256)
+	deadline := time.After(2 * time.Second)
 	for {
-		if strings.Contains(resp.Body.String(), "event: payload") && strings.Contains(resp.Body.String(), `"deviceId":"dev-1"`) {
-			cancel()
-			<-done
-			return
-		}
 		select {
 		case <-deadline:
-			cancel()
-			<-done
-			t.Fatalf("timed out waiting for SSE payload, body=%q", resp.Body.String())
-		case <-time.After(10 * time.Millisecond):
+			t.Fatalf("timed out waiting for SSE payload, buf=%q", string(buf))
+		default:
 		}
+		n, err := resp.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			if strings.Contains(string(buf), "event: payload") && strings.Contains(string(buf), `"deviceId":"dev-1"`) {
+				return
+			}
+		}
+		if err != nil {
+			t.Fatalf("read SSE body: %v (buf=%q)", err, string(buf))
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

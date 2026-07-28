@@ -80,20 +80,12 @@ function createViewTransform(width: number, height: number): ViewTransform {
   const spanH = bounds.value.maxH - bounds.value.minH || 1
   const spanV = bounds.value.maxV - bounds.value.minV || 1
   const dataAspect = spanH / spanV
-  const containerAspect = width / height
-  const maxAspectAdjustment = 1.35
-  const displayAspect = Math.min(
-    dataAspect * maxAspectAdjustment,
-    Math.max(dataAspect / maxAspectAdjustment, containerAspect)
-  )
-  const uniformPlotWidth = displayAspect > containerAspect ? width : height * displayAspect
-  const uniformPlotHeight = displayAspect > containerAspect ? width / displayAspect : height
-  // 单行检测：横纵轴选定后，所有点的纵轴坐标是否几乎相同。
-  // 切换到其他轴对时本判定仍基于 vAxis.value，自动适配（如 X-Z 轴对在 line 模式下 Z 全 0，会被识别为单行）。
+  // 关键点：优先撑满容器宽度，避免 dual 模式下右侧/左侧出现大片空白。
+  // 高度按数据比例计算；若单行数据则额外拉高绘图区域以提升可读性。
   const hasSingleRow = points.value.length > 1 && points.value.every((point) => Math.abs(coord(point, vAxis.value) - coord(points.value[0], vAxis.value)) < 0.01)
-  const shouldImproveLineReadability = hasSingleRow && uniformPlotHeight < height * 0.45
-  const plotWidth = shouldImproveLineReadability ? width : uniformPlotWidth
-  const plotHeight = shouldImproveLineReadability ? height * 0.56 : uniformPlotHeight
+  const plotWidth = width
+  const basePlotHeight = width / dataAspect
+  const plotHeight = hasSingleRow && basePlotHeight < height * 0.45 ? height * 0.56 : Math.min(basePlotHeight, height)
   const scale = plotWidth / spanH
 
   return {

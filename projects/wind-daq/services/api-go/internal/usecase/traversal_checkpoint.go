@@ -45,6 +45,14 @@ func (m *TraversalManager) LoadCheckpoint() (*traversal.Checkpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
+	// legacy 路由不读 dual v3（spec FR8：不自动迁移、不误加载）。
+	// v1/v2 解码行为保持不变。
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err == nil && header.Version == traversal.DualCheckpointVersion {
+		return nil, fmt.Errorf("%w: legacy 路径不读取 dual v3 checkpoint", ports.ErrCheckpointVersionMismatch)
+	}
 	var cp traversal.Checkpoint
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return nil, fmt.Errorf("parse checkpoint: %w", err)
@@ -63,10 +71,13 @@ func (m *TraversalManager) LoadCheckpoint() (*traversal.Checkpoint, error) {
 //   - taskID     任务标识
 //   - snapshot   运行快照（Config/TotalPoints/CommittedPoints/CommitSeq/CSVPath/ResultLogPath）
 //   - commitSeq  提交序号（权威水位；覆盖 snapshot.CommitSeq/CommittedPoints 与 cp.CompletedPoints，
-//                保证三者严格一致：cp.Snapshot.CommitSeq == cp.Snapshot.CommittedPoints == cp.CompletedPoints）
+//     保证三者严格一致：cp.Snapshot.CommitSeq == cp.Snapshot.CommittedPoints == cp.CompletedPoints）
 //   - savePath   checkpoint 关联的 CSV 路径（cp.SavePath；通常 = snapshot.CSVPath）
 //   - lastPoint  上次完成的点（可空，仅 saveCheckpoint 路径写入用于前端显示）
 //   - state      checkpoint 状态（saveCheckpoint/commitPointV2 均用 StateRunning）
+//   - probeID    managed 会话的 probe 身份（"" 表示 legacy）：非空时写入 v3
+//     （DualCheckpointVersion + ProbeID；BoundControllerIDs 已在 snapshot 中随 Task 9 冻结），
+//     为空时保持 v2（CheckpointVersion），版本语义不复用、不迁移（spec FR8）。
 //
 // 调用方仍需负责：lastPoint 的 NaN 清洗（saveCheckpoint 特有，commitPointV2 不写 lastPoint）。
 // helper 不做该清洗，保持职责单一。
@@ -77,9 +88,16 @@ func buildCheckpoint(
 	savePath string,
 	lastPoint *traversal.Point,
 	state traversal.State,
+	probeID ProbeID,
 ) traversal.Checkpoint {
+	version := traversal.CheckpointVersion
+	probeIDStr := ""
+	if probeID != "" {
+		version = traversal.DualCheckpointVersion
+		probeIDStr = string(probeID)
+	}
 	cp := traversal.Checkpoint{
-		Version:         traversal.CheckpointVersion,
+		Version:         version,
 		TaskID:          taskID,
 		State:           state,
 		Snapshot:        snapshot,
@@ -88,6 +106,7 @@ func buildCheckpoint(
 		LastPoint:       lastPoint,
 		SavePath:        savePath,
 		CreatedAt:       time.Now().UnixMilli(),
+		ProbeID:         probeIDStr,
 	}
 	// 强制三者一致：调用方传入的 commitSeq 是权威水位，
 	// 覆盖 snapshot 中可能滞后的值。commitPointV2 路径下 session.snapshot 中
@@ -103,10 +122,20 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 	m.mu.RLock()
 	config := m.config
 	taskID := m.status.TaskID
+	session := m.session
 	m.mu.RUnlock()
 
 	if taskID == "" || savePath == "" {
 		return
+	}
+	// managed 会话的 probe 身份（v3 元数据来源）；legacy 为空（v2）。
+	var probeID ProbeID
+	var boundControllers []string
+	if session != nil {
+		if session.managedOpts != nil {
+			probeID = session.managedOpts.ProbeID
+		}
+		boundControllers = session.snapshot.BoundControllerIDs
 	}
 
 	var lastPoint *traversal.Point
@@ -134,15 +163,16 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 	// 配置仅通过 Snapshot.Config 持有（P0-C4）：移除顶层 Config []byte 冗余字段，
 	// 单源真相避免双份同步维护。ResumeFromCheckpoint 直接从 Snapshot.Config 还原。
 	snapshot := traversal.TraversalRunSnapshot{
-		Config:          config,
-		TotalPoints:     len(points),
-		CommittedPoints: completedCount,
-		CommitSeq:       uint64(completedCount),
-		CSVPath:         savePath,
+		Config:             config,
+		TotalPoints:        len(points),
+		CommittedPoints:    completedCount,
+		CommitSeq:          uint64(completedCount),
+		CSVPath:            savePath,
+		BoundControllerIDs: boundControllers,
 	}
 	// 通过 buildCheckpoint 统一构造 DTO（Important-5），与 commitPointV2 共享逻辑，
 	// 保证字段语义一致（CompletedPoints/CommitSeq/Snapshot 三者对齐）。
-	checkpoint := buildCheckpoint(taskID, snapshot, uint64(completedCount), savePath, lastPoint, traversal.StateRunning)
+	checkpoint := buildCheckpoint(taskID, snapshot, uint64(completedCount), savePath, lastPoint, traversal.StateRunning, probeID)
 
 	data, err := json.MarshalIndent(checkpoint, "", "  ")
 	if err != nil {
@@ -170,6 +200,10 @@ func (m *TraversalManager) saveCheckpoint(points []traversal.Point, completedCou
 	m.mu.Lock()
 	m.lastCheckpointPath = checkpointPath
 	m.mu.Unlock()
+
+	// managed 会话：通知 registry checkpoint 已落盘（dual recovery index 登记时机：
+	// 映射存在 ⟺ checkpoint 文件存在）。
+	notifyManagedCheckpointSaved(session, checkpointPath)
 
 	slog.Info("traversal checkpoint saved",
 		"component", "traversal",
@@ -203,7 +237,8 @@ func (m *TraversalManager) ClearCheckpoint() {
 	}
 }
 
-// ResumeFromCheckpoint 从断点恢复测试
+// ResumeFromCheckpoint legacy single 断点恢复入口：保持既有 lease ownership
+// （自行 Acquire/Release 全局 workflow lease）。registry-managed 路径使用 ResumeManaged。
 //
 // 与 Start 的差异：
 //   - 配置来源：从 cp.Snapshot.Config 还原，而非前端传入
@@ -217,6 +252,15 @@ func (m *TraversalManager) ClearCheckpoint() {
 // 错误回滚与 Start 一致：使用 abortStartLocked 统一关闭已打开的端口、
 // 释放工作流锁、设置错误状态。任何步骤失败都保证状态机回到 Idle/Error。
 func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string, error) {
+	return m.resumeInternal(cp, nil)
+}
+
+// resumeInternal ResumeFromCheckpoint/ResumeManaged 共享的恢复实现。
+// ownership 语义与 startInternal 一致：opts == nil 为 legacy（Acquire + legacy
+// activeIndex），opts != nil 为 managed（不触碰 workflow lease 与 legacy index，
+// opts 冻结进 session 快照）。两条路径都启动后台 RunTraversalLoop。
+func (m *TraversalManager) resumeInternal(cp traversal.Checkpoint, opts *ManagedSessionOptions) (string, error) {
+	managed := opts != nil
 	slog.Info("traversal resuming from checkpoint",
 		"component", "traversal",
 		"task_id", cp.TaskID,
@@ -280,6 +324,11 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	if snapshot.ResultLogPath == "" {
 		snapshot.ResultLogPath = traversal.ResolveResultLogPath(config)
 	}
+	// 旧 checkpoint 无 BoundControllerIDs 字段：按还原配置重算冻结（与旧行为一致——
+	// 停机目标本来就是从该配置读取的绑定集合）。
+	if len(snapshot.BoundControllerIDs) == 0 {
+		snapshot.BoundControllerIDs = boundControllerIDs(config)
+	}
 
 	// v2：beginSession 活动会话门禁 + resetFinalizeOnce 武装关闭流程
 	parentCtx := context.Background()
@@ -288,14 +337,18 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
 		return "", err
 	}
+	// ownership mode 冻结为 session 快照字段（同一 session 不得混用两种模式）。
+	session.managedOpts = opts
 	m.resetFinalizeOnce()
 
-	if err := m.lockService.Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
-		// 锁获取失败：回滚 session 状态，不调 abortStartLocked（端口尚未打开）
-		session.Cancel()
-		session.MarkDone()
-		slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
-		return "", fmt.Errorf("acquire traversal lock: %w", err)
+	if !managed {
+		if err := m.lockService.Acquire(traversalLockResource, cp.TaskID, 24*time.Hour); err != nil {
+			// 锁获取失败：回滚 session 状态，不调 abortStartLocked（端口尚未打开）
+			session.Cancel()
+			session.MarkDone()
+			slog.Error("traversal checkpoint resume failed", "component", "traversal", "task_id", cp.TaskID, "error", err)
+			return "", fmt.Errorf("acquire traversal lock: %w", err)
+		}
 	}
 
 	// snapshot.MotionSafety 为 nil（旧 checkpoint 或前端未配置）时填充默认值。
@@ -322,12 +375,12 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 	m.isStopped = false
 	m.isPaused = false
 	m.status = traversal.Status{
-		TaskID:       cp.TaskID,
-		State:        traversal.StateRunning,
-		TotalPoints:  len(config.Path),
-		CurrentPoint: cp.CompletedPoints, // 从已完成点数开始
+		TaskID:          cp.TaskID,
+		State:           traversal.StateRunning,
+		TotalPoints:     len(config.Path),
+		CurrentPoint:    cp.CompletedPoints, // 从已完成点数开始
 		CommittedPoints: int(snapshot.CommitSeq),
-		StartedAt:    cp.CreatedAt,
+		StartedAt:       cp.CreatedAt,
 	}
 	// 恢复已完成的点结果（从 store 中读取，若存在）
 	if m.store != nil {
@@ -380,11 +433,12 @@ func (m *TraversalManager) ResumeFromCheckpoint(cp traversal.Checkpoint) (string
 		m.status.CSVPath = actualCSVPath
 		m.mu.Unlock()
 	}
-	// 注册活动索引，支持进程重启发现。
+	// 注册活动索引，支持进程重启发现（仅 legacy single 路径；
+	// managed 双探针使用 dual recovery index，由 registry 负责登记，spec FR3/FR4）。
 	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
 	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
 	// 用 session.snapshot.CSVPath（撞名回写后的实际路径）派生，避免与实际 CSV stem 错位。
-	if activeIndex != nil && checkpointPort != nil {
+	if !managed && activeIndex != nil && checkpointPort != nil {
 		checkpointPath := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
 		if err := activeIndex.Register(session.ctx, cp.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",

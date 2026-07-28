@@ -10,6 +10,8 @@ import type {
 } from '@shared/types/traversal'
 import FiveHolePrbConfig from './FiveHolePrbConfig.vue'
 import SevenHolePrbConfig from './SevenHolePrbConfig.vue'
+import { useTraversalStore } from '@stores/traversalStore'
+import type { TraversalPrbOperations } from './traversalPrbOperations'
 
 /**
  * 遍历 PRB 步骤公共壳（spec-seven-hole-traversal §6.3）：
@@ -33,13 +35,28 @@ const sevenHolePrbDraft = defineModel<SevenHolePrbDraft>('sevenHolePrbDraft', { 
 
 const props = defineProps<{
   t: Record<string, string>
+  operations?: TraversalPrbOperations
 }>()
 
+const traversalStore = useTraversalStore()
+const defaultOperations: TraversalPrbOperations = {
+  getError: () => traversalStore.error,
+  importPrbFile: traversalStore.importPrbFile,
+  importMultiPrbFiles: traversalStore.importMultiPrbFiles,
+  importCalibrationCsvFile: traversalStore.importCalibrationCsvFile,
+  importSevenHolePrbFiles: traversalStore.importSevenHolePrbFiles,
+  importSevenHoleCalibrationCsvFiles: traversalStore.importSevenHoleCalibrationCsvFiles,
+  clearInterpolator: (_probeType) => {
+    traversalStore.clearInterpolator()
+    return true
+  },
+}
+const operations = computed(() => props.operations ?? defaultOperations)
 const isSevenHole = computed(() => probeType.value === 'seven-hole')
 </script>
 
 <template>
-  <SevenHolePrbConfig v-if="isSevenHole" v-model="sevenHolePrbDraft" :t="props.t" />
+  <SevenHolePrbConfig v-if="isSevenHole" v-model="sevenHolePrbDraft" :t="props.t" :operations="operations" />
   <FiveHolePrbConfig
     v-else
     v-model:prb-mode="prbMode"
@@ -50,5 +67,6 @@ const isSevenHole = computed(() => probeType.value === 'seven-hole')
     v-model:multi-prb-interpolation-mode="multiPrbInterpolationMode"
     v-model:calibration-csv-file="calibrationCsvFile"
     :t="props.t"
+    :operations="operations"
   />
 </template>

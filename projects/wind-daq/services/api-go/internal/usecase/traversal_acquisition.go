@@ -728,13 +728,18 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 	// 通过 buildCheckpoint 统一构造 DTO（Important-5），与 saveCheckpoint 共享逻辑，
 	// 保证字段语义一致。CommitSeq = commitSeq 是本次提交的权威水位，
 	// helper 内部会强制 cp.Snapshot.CommitSeq/CommittedPoints/CompletedPoints 三者对齐。
+	// managed 会话写入 v3（ProbeID 来自冻结的 managedOpts，BoundControllerIDs 在快照中）。
 	m.mu.RLock()
 	var snapshot traversal.TraversalRunSnapshot
+	var probeID ProbeID
 	if session != nil {
 		snapshot = session.snapshot
+		if session.managedOpts != nil {
+			probeID = session.managedOpts.ProbeID
+		}
 	}
 	m.mu.RUnlock()
-	cp := buildCheckpoint(taskID, snapshot, commitSeq, snapshot.CSVPath, nil, traversal.StateRunning)
+	cp := buildCheckpoint(taskID, snapshot, commitSeq, snapshot.CSVPath, nil, traversal.StateRunning, probeID)
 
 	var checkpointErr error
 	if checkpointPort != nil {
@@ -770,6 +775,10 @@ func (m *TraversalManager) commitPointV2(taskID string, result *traversal.PointR
 		}
 		return errors.Join(append([]error{fmt.Errorf("checkpoint save: %w", checkpointErr)}, rbErrs...)...)
 	}
+
+	// managed 会话：通知 registry checkpoint 已落盘（dual recovery index 登记）。
+	// 路径与 checkpointPort/FileCheckpointPort.path() 派生一致（单一真相源）。
+	notifyManagedCheckpointSaved(session, traversal.ResolveCheckpointPathFromCSV(snapshot.CSVPath))
 
 	return nil
 }

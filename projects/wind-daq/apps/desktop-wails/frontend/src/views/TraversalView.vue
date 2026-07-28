@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import TraversalMain from '@components/traversal/TraversalMain.vue'
 import TraversalSettings from '@components/traversal/TraversalSettings.vue'
+import DualTraversalMain from '@components/traversal/dual/DualTraversalMain.vue'
+import DualTraversalSettings from '@components/traversal/dual/DualTraversalSettings.vue'
 import UiLoadingState from '@components/ui/UiLoadingState.vue'
 import UiErrorState from '@components/ui/UiErrorState.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { useTraversalStore } from '@stores/traversalStore'
+import { useDualTraversalStore } from '@stores/dualTraversalStore'
+import { useTraversalModeStore } from '@stores/traversalModeStore'
+import type { ProbeId } from '@shared/types/traversal'
 
 withDefaults(
   defineProps<{
@@ -19,6 +24,9 @@ withDefaults(
 const emit = defineEmits<{ (event: 'back'): void }>()
 
 const traversalStore = useTraversalStore()
+const dualTraversalStore = useDualTraversalStore()
+const traversalModeStore = useTraversalModeStore()
+
 const isRecovering = ref(true)
 const recoveryError = ref('')
 const showTraversalSettings = ref(false)
@@ -29,6 +37,31 @@ const showTraversalSettings = ref(false)
  */
 const traversalInitialStep = ref(0)
 let isRecoveryActive = true
+
+// 模式状态由全局 traversalModeStore 管理（入口在 MainDashboardView 侧边栏子菜单）。
+// TraversalView 仅消费 mode 决定渲染分支，不再持有顶部模式开关。
+const mode = computed(() => traversalModeStore.mode)
+
+// ---------------------------------------------------------------------------
+// Dual 模式配置对话框（每 probe 独立入口）
+// ---------------------------------------------------------------------------
+const showDualSettings = ref(false)
+const dualSettingsProbeId = ref<ProbeId>('probe1')
+
+function onDualOpenSettings(probeId: ProbeId): void {
+  dualSettingsProbeId.value = probeId
+  showDualSettings.value = true
+}
+
+function onDualSettingsClose(): void {
+  showDualSettings.value = false
+}
+
+async function onDualSettingsSaved(): Promise<void> {
+  showDualSettings.value = false
+  // 重新加载该 probe 的配置确保 store 同步
+  await dualTraversalStore.loadConfig(dualSettingsProbeId.value)
+}
 
 onMounted(async () => {
   try {
@@ -45,6 +78,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   isRecoveryActive = false
   traversalStore.cancelRecovery()
+  // 离开遍历视图时清理 dual 模式订阅/timer（spec FR1）
+  void traversalModeStore.cleanupOnLeave()
 })
 
 function backFromTraversal(): void {
@@ -92,9 +127,42 @@ function openSettings(step?: number): void {
       </template>
     </UiErrorState>
     <template v-else>
-      <TraversalMain :recovering="false" @open-settings="openSettings" @back="backFromTraversal" />
-      <TraversalSettings :show="showTraversalSettings" :initial-step="traversalInitialStep" @close="showTraversalSettings = false" @saved="onConfigSaved" />
+      <!-- 主区域：根据模式渲染（模式选择入口在侧边栏「遍历测试」子菜单） -->
+      <div class="flex flex-1 min-h-0 overflow-hidden">
+        <TraversalMain
+          v-if="mode === 'single'"
+          :recovering="false"
+          @open-settings="openSettings"
+          @back="backFromTraversal"
+        />
+        <DualTraversalMain
+          v-else
+          @open-settings="onDualOpenSettings"
+          @back="backFromTraversal"
+        />
+      </div>
+
+      <!-- single 模式配置对话框 -->
+      <TraversalSettings
+        v-if="mode === 'single'"
+        :show="showTraversalSettings"
+        :initial-step="traversalInitialStep"
+        @close="showTraversalSettings = false"
+        @saved="onConfigSaved"
+      />
+
+      <!-- dual 模式配置对话框（每 probe 独立入口） -->
+      <DualTraversalSettings
+        v-else
+        :show="showDualSettings"
+        :probe-id="dualSettingsProbeId"
+        @close="onDualSettingsClose"
+        @saved="onDualSettingsSaved"
+      />
     </template>
   </div>
 </template>
 
+<style scoped>
+/* 模式开关已迁移到侧边栏「遍历测试」子菜单（MainDashboardView），本视图不再需要顶部样式 */
+</style>

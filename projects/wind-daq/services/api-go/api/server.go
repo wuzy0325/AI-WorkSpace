@@ -29,10 +29,13 @@ type Deps struct {
 	MotionService      motionhttp.MotionService
 	CalibrationManager *usecase.CalibrationManager
 	TraversalManager   *usecase.TraversalManager
-	StorageRecorder    *usecase.StorageRecorder
-	ConfigManager      *usecase.ConfigManager
-	LogRing            *logging.RingBuffer
-	LogManager         *logging.Manager // 用于日志分类开关 API
+	// TraversalRegistry 双探针 registry（窄接口；nil 时 probe-scoped 路由返回 503）。
+	// legacy 单段 /api/traversal/{action} 路径不使用本字段（spec FR4 兼容）。
+	TraversalRegistry TraversalRegistry
+	StorageRecorder   *usecase.StorageRecorder
+	ConfigManager     *usecase.ConfigManager
+	LogRing           *logging.RingBuffer
+	LogManager        *logging.Manager // 用于日志分类开关 API
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -347,7 +350,14 @@ func NewRouter(deps Deps) http.Handler {
 
 	// ---- Traversal API ----
 	mux.HandleFunc("/api/traversal/", func(w http.ResponseWriter, r *http.Request) {
-		action := strings.TrimPrefix(r.URL.Path, "/api/traversal/")
+		rest := strings.TrimPrefix(r.URL.Path, "/api/traversal/")
+		// 两段 probe-scoped 路径（{probeId}/{action}）进入 dual dispatcher；
+		// 单段路径继续走 legacy（禁止隐式转发到 probe1，spec FR4）。
+		if strings.Contains(rest, "/") {
+			handleDualTraversal(w, r, deps, rest)
+			return
+		}
+		action := rest
 		switch action {
 		case "config":
 			if deps.TraversalManager == nil {

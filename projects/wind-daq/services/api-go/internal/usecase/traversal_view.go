@@ -107,6 +107,7 @@ func (m *TraversalManager) finalizeSinkInternal() {
 	resultLogPort := m.resultLogPort
 	checkpointPort := m.checkpointPort
 	taskID := m.config.TaskID
+	session := m.session
 	// 清理当前任务的 checkpointPort 引用：与 abortStartLocked 一致，
 	// 避免下一次 Start 复用已关闭的实例。csvPort/resultLogPort 是跨任务共享实例
 	// （appcontext 装配一次），不能置 nil，需保证 Open 可在 Close 后再次调用。
@@ -165,11 +166,13 @@ func (m *TraversalManager) finalizeSinkInternal() {
 			)
 		}
 	}
-	// 释放工作流级互斥锁；幂等
+	// 释放工作流级互斥锁；幂等。
+	// 仅 legacy ownership：managed 会话不持有 workflow lease（registry 负责释放）。
 	// spec Task 21 Path 4（void 路径）：Release 失败仅记录 Warn，不影响 void 签名；
 	// 成功时才记录 Info "traversal lock released"，确保"失败后不记录成功 info"契约。
 	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验。
-	if taskID != "" {
+	managed := session != nil && session.managedOpts != nil
+	if !managed && taskID != "" {
 		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
 			slog.Warn("traversal finalize release lock failed",
 				"component", "traversal", "task_id", taskID, "error", releaseErr)

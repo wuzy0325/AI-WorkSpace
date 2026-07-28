@@ -78,6 +78,12 @@ type App struct {
 	//   - true  → 放行，默认 listener 真正关闭窗口
 	// 由 RequestExit binding 在用户确认后置 true，避免 hook 二次触发时再次 Cancel 导致死循环
 	userConfirmedExit atomic.Bool
+	// traversalShutdown 双探针 registry 关停入口（spec FR9）。
+	// 默认为 appContext.TraversalRegistry.Shutdown；测试注入替身以覆盖 fatal 路径。
+	traversalShutdown func(ctx context.Context) error
+	// hostExit fatal 路径的非零退出 seam（默认 os.Exit；测试注入以观测退出码，
+	// 避免测试进程被真实退出）。registry shutdown 失败时跳过共享服务 Close 后调用。
+	hostExit func(code int)
 }
 
 // NewApp 创建新的 App 实例
@@ -239,6 +245,7 @@ func (a *App) startLocalAPIServer() {
 			MotionService:      a.appContext.MotionManagerRaw,
 			CalibrationManager: a.appContext.CalibrationMgr,
 			TraversalManager:   a.appContext.TraversalMgr,
+			TraversalRegistry:  a.appContext.TraversalRegistry,
 			StorageRecorder:    a.appContext.StorageRecorder,
 			ConfigManager:      a.appContext.ConfigManager,
 			LogRing:            ring,
@@ -433,6 +440,12 @@ func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResp
 func (a *App) ServiceShutdown() error {
 	a.shuttingDown.Store(true)
 
+	// 双探针 registry 先行关停（spec FR9）：在 relay/motion window/calibration/
+	// 共享服务 cleanup 之前执行；失败时 fatal + 非零 exit seam 并跳过后续清理。
+	if err := a.shutdownTraversalRegistryOrFatal(); err != nil {
+		return err
+	}
+
 	if a.relayStop != nil {
 		a.relayStop()
 	}
@@ -472,6 +485,46 @@ func (a *App) ServiceShutdown() error {
 		_ = a.logMgr.Close()
 	}
 	return nil
+}
+
+// shutdownTraversalRegistryOrFatal 执行 registry 关停；失败时记录 fatal、
+// 走非零 exit seam 并返回错误（调用方据此跳过后续共享服务 Close）。
+// registry Shutdown 内部已含双 deadline 与有界 EmergencyStop，返回即代表
+// 全部有界尝试结束或 hard deadline 到达（此时才允许触发 fatal exit）。
+func (a *App) shutdownTraversalRegistryOrFatal() error {
+	if err := a.shutdownTraversalRegistry(); err != nil {
+		slog.Error("fatal: traversal registry shutdown 失败，跳过共享服务关闭",
+			"component", "app", "error", err)
+		a.exitHost(2)
+		return err
+	}
+	return nil
+}
+
+// shutdownTraversalRegistry 执行双探针 registry 的有序关停（15s 上限，
+// 大于 registry hard deadline 10s，保证有界 EmergencyStop 尝试全部结束）。
+// 可经 traversalShutdown 字段注入替身（测试覆盖 fatal 路径）。
+func (a *App) shutdownTraversalRegistry() error {
+	if a.traversalShutdown != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return a.traversalShutdown(ctx)
+	}
+	if a.appContext == nil || a.appContext.TraversalRegistry == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return a.appContext.TraversalRegistry.Shutdown(ctx)
+}
+
+// exitHost fatal 路径的非零退出 seam（默认 os.Exit；测试注入观测）。
+func (a *App) exitHost(code int) {
+	if a.hostExit != nil {
+		a.hostExit(code)
+		return
+	}
+	os.Exit(code)
 }
 
 // terminateMotionWindow 关闭运动控制器独立窗口子进程（如已启动）。

@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -31,5 +32,37 @@ func TestStartShutdownOnCancel(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-srv.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("server shutdown did not finish")
+	}
+	if err := srv.ShutdownErr(); err != nil {
+		t.Fatalf("ShutdownErr: %v", err)
+	}
+}
+
+type fakeRegistryShutter struct{ err error }
+
+func (f fakeRegistryShutter) Shutdown(context.Context) error { return f.err }
+
+type fakeCalibrationShutter struct{ called bool }
+
+func (f *fakeCalibrationShutter) Shutdown() error { f.called = true; return nil }
+
+type fakeHTTPCloser struct{ called bool }
+
+func (f *fakeHTTPCloser) Close() error { f.called = true; return nil }
+
+func TestShutdownOwnedServer_RegistryFailureIsReturnedAndHTTPRemainsOpen(t *testing.T) {
+	shutdownErr := errors.New("registry stuck")
+	calibration := &fakeCalibrationShutter{}
+	httpServer := &fakeHTTPCloser{}
+	err := shutdownOwnedServer(fakeRegistryShutter{err: shutdownErr}, calibration, httpServer)
+	if !errors.Is(err, shutdownErr) {
+		t.Fatalf("registry shutdown error must be observable, got %v", err)
+	}
+	if calibration.called || httpServer.called {
+		t.Fatal("registry failure must not close shared services or HTTP")
+	}
 }

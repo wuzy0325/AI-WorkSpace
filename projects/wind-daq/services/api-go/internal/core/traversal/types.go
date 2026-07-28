@@ -582,6 +582,14 @@ type Status struct {
 
 const CheckpointVersion = 2
 
+// DualCheckpointVersion 双探针 checkpoint 格式版本（spec FR8/Task 10）。
+// 在完整 v2 可靠性字段（Snapshot/CommitSeq/真实 CSV 与结果日志路径/header 与
+// commit hash/时间字段）基础上增加 ProbeID 与 BoundControllerIDs
+// （后者随 Task 9 进入 TraversalRunSnapshot）。
+// 不修改、不复用 CheckpointVersion=2 的语义；dual 路径遇到 v1/v2 返回
+// checkpoint_version_mismatch，不自动迁移；legacy 路径不读 v3。
+const DualCheckpointVersion = 3
+
 type TraversalRunSnapshot struct {
 	Config               Config                `json:"config"`
 	Validation           *DataValidationConfig `json:"validation,omitempty"`
@@ -595,6 +603,10 @@ type TraversalRunSnapshot struct {
 	ResultLogPath        string                `json:"resultLogPath"`
 	CSVHeaderHash        string                `json:"csvHeaderHash,omitempty"`
 	LastCommitHash       string                `json:"lastCommitHash,omitempty"`
+	// BoundControllerIDs 启动快照时冻结的运动控制器绑定（spec 双探针 I1/Task 9）。
+	// Stop / EmergencyStop / 位置超差 / 限位 / 掉线等停机路径只作用于该集合；
+	// 为空表示 legacy 单探针兼容行为（按配置绑定回退到全部已连接控制器）。
+	BoundControllerIDs []string `json:"boundControllerIds,omitempty"`
 }
 
 // Checkpoint 断点恢复信息
@@ -612,6 +624,9 @@ type Checkpoint struct {
 	LastPoint       *Point               `json:"lastPoint,omitempty"`
 	SavePath        string               `json:"savePath"`
 	CreatedAt       int64                `json:"createdAt"`
+	// ProbeID 双探针身份元数据（v3 新增；spec I5：不得仅依赖解析文件名恢复 probe 身份）。
+	// legacy v1/v2 checkpoint 为空。
+	ProbeID string `json:"probeId,omitempty"`
 }
 
 // DataValidationConfig 数据验证配置

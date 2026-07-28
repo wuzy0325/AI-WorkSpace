@@ -608,7 +608,7 @@ watch(
 
 <template>
   <div
-    class="flex h-full flex-col"
+    class="flex h-full w-full flex-col flex-1 min-w-0"
     :style="{ background: 'var(--bg-canvas)', color: 'var(--text-primary)' }"
   >
     <!-- 顶栏：Header（含控制按钮）+ 状态栏 -->

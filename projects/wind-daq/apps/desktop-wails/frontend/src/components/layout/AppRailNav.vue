@@ -85,6 +85,7 @@ function handleClick(item: AppRailNavItem): void {
           'app-rail-nav__button--disabled': item.disabled,
           'app-rail-nav__button--external': item.external
         }"
+        :data-nav-id="item.id"
         :title="item.label"
         :disabled="item.disabled"
         @click="handleClick(item)"

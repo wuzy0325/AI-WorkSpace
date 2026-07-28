@@ -1690,6 +1690,59 @@ const zh: Record<string, string> = {
   shc_thetaGradient: 'θ 渐变',
   shc_tooltipPoint: 'Kα: {ka}<br/>Kβ: {kb}<br/>α: {alpha}°<br/>β: {beta}°',
   shc_tooltipOuterPoint: 'Kθ: {ktheta}<br/>Kφ: {kphi}<br/>θ: {theta}°<br/>φ: {phi}°',
+
+  // ===========================================================================
+  // 双探针并行遍历（dual traversal）UI 文案（spec FR1/FR7 / Task 18-21）
+  // ===========================================================================
+  // 模式开关（FR1）：active/paused 状态下禁用，提示原因
+  traversalModeSingle: '单探针模式',
+  traversalModeDual: '双探针模式',
+  traversalModeSwitchDisabled: '测试进行中，无法切换模式',
+  traversalModeSwitchDisabledHint: '请先停止或完成所有活动会话',
+  // 双探针标识（FR2）
+  probe1Label: '探针 1',
+  probe2Label: '探针 2',
+  // 双列状态栏（FR7）
+  dualStatusBarTitle: '双探针状态摘要',
+  dualProbeRowTitle: '探针 {probeId}',
+  dualProbeUnconfigured: '未配置 — 请打开设置',
+  dualProbeIdle: '空闲',
+  // 双探针紧凑监测面板字段（FR7）
+  dualProbeWarning: '警告',
+  dualProbeError: '错误',
+  dualProbeSetting: '设置',
+  // 双探针配置对话框（FR2/FR7）
+  dualSettingsTitle: '双探针配置',
+  dualSettingsTabHint: '选项卡切换两路独立配置；保存前原子校验控制器互不相同',
+  dualControllerConflict: '两个探针必须绑定不同的运动控制器',
+  dualControllerEmpty: '探针 {probeId} 未绑定运动控制器',
+  // 步骤校验失败原因（FR2：disabled 按钮必须显式提示原因，避免用户困惑）
+  dualStepInvalidName: '请填写测试名称',
+  dualStepInvalidNoPoints: '当前布点未生成任何点位，请检查布点参数',
+  dualStepInvalidRectangleArea: '矩形布点的 X/Y 范围必须大于 0',
+  dualStepInvalidDuplicateAxis: '存在重复的轴绑定（同控制器同物理轴被多方向共用）',
+  dualStepInvalidControllerEmpty: '请为 {axes} 轴选择运动控制器',
+  dualStepInvalidAxisKind: '轴类型与布点模式不匹配，请检查运动轴配置',
+  dualStepInvalidPrbSevenHole: '请导入七孔 PRB 内区与 6 个扇区文件',
+  dualStepInvalidCalibrationCsv: '请导入校准 CSV 文件（新算法）',
+  dualStepInvalidMultiPrb: '请导入至少一个多马赫数 PRB 文件',
+  dualStepInvalidPrbFile: '请导入 PRB 文件',
+  dualStepInvalidProbeChannel: '存在重复通道或未配置的探针通道',
+  dualStepInvalidSavePath: '请填写输出目录与文件名',
+  dualSaveSuccess: '双探针配置已保存',
+  dualSaveFailed: '保存失败',
+  dualStartFailed: '启动失败',
+  dualResumeFailed: '恢复失败',
+  dualStopFailed: '停止失败',
+  dualPauseFailed: '暂停失败',
+  dualCloseFailed: '关闭失败',
+  // 双探针 Tab 详情区
+  dualDetailsTabPreview: '点位预览',
+  dualDetailsTabChannels: '通道',
+  dualDetailsTabMotion: '运动',
+  // 完成事件提示
+  dualProbeCompleted: '探针 {probeId} 已完成',
+  dualProbeErrorOccurred: '探针 {probeId} 发生错误',
 }
 
 const en: Record<string, string> = {
@@ -3373,6 +3426,52 @@ const en: Record<string, string> = {
   shc_thetaGradient: 'θ gradient',
   shc_tooltipPoint: 'Kα: {ka}<br/>Kβ: {kb}<br/>α: {alpha}°<br/>β: {beta}°',
   shc_tooltipOuterPoint: 'Kθ: {ktheta}<br/>Kφ: {kphi}<br/>θ: {theta}°<br/>φ: {phi}°',
+
+  // ===========================================================================
+  // Dual traversal UI text (spec FR1/FR7 / Task 18-21)
+  // ===========================================================================
+  traversalModeSingle: 'Single Probe',
+  traversalModeDual: 'Dual Probe',
+  traversalModeSwitchDisabled: 'Cannot switch mode while test is running',
+  traversalModeSwitchDisabledHint: 'Please stop or complete all active sessions first',
+  probe1Label: 'Probe 1',
+  probe2Label: 'Probe 2',
+  dualStatusBarTitle: 'Dual Probe Status',
+  dualProbeRowTitle: 'Probe {probeId}',
+  dualProbeUnconfigured: 'Unconfigured — open settings',
+  dualProbeIdle: 'Idle',
+  dualProbeWarning: 'Warning',
+  dualProbeError: 'Error',
+  dualProbeSetting: 'Settings',
+  dualSettingsTitle: 'Dual Probe Configuration',
+  dualSettingsTabHint: 'Switch tabs for two independent configs; controller uniqueness validated before save',
+  dualControllerConflict: 'Two probes must bind different motion controllers',
+  dualControllerEmpty: 'Probe {probeId} has no motion controller bound',
+  // Step validation failure reasons (FR2: disabled buttons must show reason explicitly)
+  dualStepInvalidName: 'Please fill in the test name',
+  dualStepInvalidNoPoints: 'Current layout generates no points, please check layout parameters',
+  dualStepInvalidRectangleArea: 'Rectangle layout X/Y range must be greater than 0',
+  dualStepInvalidDuplicateAxis: 'Duplicate axis binding detected (same controller+physical axis used by multiple directions)',
+  dualStepInvalidControllerEmpty: 'Please select a motion controller for axis {axes}',
+  dualStepInvalidAxisKind: 'Axis type mismatch with layout pattern, please check motion axis config',
+  dualStepInvalidPrbSevenHole: 'Please import seven-hole PRB inner region and 6 sector files',
+  dualStepInvalidCalibrationCsv: 'Please import calibration CSV file (new algorithm)',
+  dualStepInvalidMultiPrb: 'Please import at least one multi-Mach PRB file',
+  dualStepInvalidPrbFile: 'Please import a PRB file',
+  dualStepInvalidProbeChannel: 'Duplicate channel or unconfigured probe channel detected',
+  dualStepInvalidSavePath: 'Please fill in output directory and file name',
+  dualSaveSuccess: 'Dual probe configuration saved',
+  dualSaveFailed: 'Save failed',
+  dualStartFailed: 'Start failed',
+  dualResumeFailed: 'Resume failed',
+  dualStopFailed: 'Stop failed',
+  dualPauseFailed: 'Pause failed',
+  dualCloseFailed: 'Close failed',
+  dualDetailsTabPreview: 'Points Preview',
+  dualDetailsTabChannels: 'Channels',
+  dualDetailsTabMotion: 'Motion',
+  dualProbeCompleted: 'Probe {probeId} completed',
+  dualProbeErrorOccurred: 'Probe {probeId} error',
 }
 
 export const useI18nStore = defineStore('i18n', () => {

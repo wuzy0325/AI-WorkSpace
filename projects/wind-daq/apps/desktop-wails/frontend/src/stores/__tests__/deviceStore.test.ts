@@ -45,6 +45,7 @@ describe('deviceStore', () => {
     // 重置 mock 配置为默认值：30 秒 × 10Hz = 300 点
     mockSettings.setWindowSec(30)
     mockSettings.setRefreshHz(10)
+    vi.spyOn(deviceApi, 'getCalibrationConfig').mockResolvedValue({ durationSec: 5 })
   })
 
   it('initializes with no profiles', () => {

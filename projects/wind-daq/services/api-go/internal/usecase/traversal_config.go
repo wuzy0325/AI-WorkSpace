@@ -38,7 +38,7 @@ func (m *TraversalManager) loadPersistedConfig() {
 	if m.configStore == nil {
 		return
 	}
-	data, err := m.configStore.LoadConfig(traversalConfigKey)
+	data, err := m.configStore.LoadConfig(m.currentConfigKey())
 	if err != nil || data == nil {
 		return
 	}
@@ -120,6 +120,29 @@ func (m *TraversalManager) RestoreInterpolatorFromPersistedConfig() {
 	go func() {
 		m.restoreInterpolatorFromConfig(data, loader, fiveEpoch, sevenEpoch)
 	}()
+}
+
+// RestoreInterpolatorFromPersistedConfigSync restores persisted interpolators before returning.
+// It preserves the legacy bounded, soft-failure behavior while giving managed factories an
+// explicit publication barrier before the manager becomes observable.
+func (m *TraversalManager) RestoreInterpolatorFromPersistedConfigSync() {
+	m.mu.RLock()
+	data := append(json.RawMessage(nil), m.configRaw...)
+	loader := m.interpLoader
+	fiveEpoch := m.fiveHoleRestoreEpoch
+	sevenEpoch := m.sevenHoleRestoreEpoch
+	m.mu.RUnlock()
+
+	if len(data) == 0 {
+		return
+	}
+	if loader == nil {
+		msg := "启动恢复失败：未注入插值器加载端口 (InterpolatorLoader)"
+		m.setFiveHoleRestoreErr(msg)
+		m.setSevenHoleRestoreErr(msg)
+		return
+	}
+	m.restoreInterpolatorFromConfig(data, loader, fiveEpoch, sevenEpoch)
 }
 
 // runLoaderWithTimeout 在 goroutine 中执行 loader 调用，等待 ctx.Done 或结果到达。

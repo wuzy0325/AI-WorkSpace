@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"shared.local/device-sdk/go/motion/adapters/hardware"
@@ -33,6 +34,38 @@ import (
 
 type Server struct {
 	*http.Server
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+type registryShutter interface {
+	Shutdown(context.Context) error
+}
+
+type calibrationShutter interface {
+	Shutdown() error
+}
+
+type httpCloser interface {
+	Close() error
+}
+
+// Done closes when context-owned shutdown succeeds or fails.
+func (s *Server) Done() <-chan struct{} { return s.done }
+
+// ShutdownErr returns the context-owned shutdown result after Done closes.
+func (s *Server) ShutdownErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+func (s *Server) finish(err error) {
+	s.mu.Lock()
+	s.err = err
+	s.mu.Unlock()
+	close(s.done)
 }
 
 func Start(ctx context.Context, addr string) (*Server, error) {
@@ -105,6 +138,21 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	travMgr.SetAcquisitionController(manager)
 	calMgr.SetAcquisitionController(manager)
 
+	// 双探针 registry（Task 14 统一装配），与 legacy travMgr 并存。
+	checkpointStore := storageadapter.NewFileCheckpointStore()
+	registryBundle, err := appcontext.NewTraversalRegistry(appcontext.TraversalRegistryDeps{
+		Hub:             hub,
+		Motion:          motionMgr,
+		DeviceManager:   manager,
+		ConfigStore:     appConfigStore,
+		CheckpointStore: checkpointStore,
+		DataDir:         "config",
+		InterpLoader:    interpadapter.NewLoader(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	handler := api.NewRouter(api.Deps{
 		DeviceManager:      manager,
 		AcquisitionHub:     hub,
@@ -112,6 +160,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		MotionManager:      motionMgr,
 		CalibrationManager: calMgr,
 		TraversalManager:   travMgr,
+		TraversalRegistry:  registryBundle.Registry,
 		StorageRecorder:    recorder,
 		ConfigManager: usecase.NewConfigManager(
 			appConfigStore,
@@ -120,16 +169,16 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	})
 
 	srv := &http.Server{Addr: addr, Handler: handler}
+	server := &Server{Server: srv, done: make(chan struct{})}
 	go func() {
 		<-ctx.Done()
-		// context-owned 关停：先停止校准任务并有界等待其 session 退出
-		// （writer flush/结果保存/运动归零完成），再关闭 HTTP 监听。
-		// 超时仅记录不阻塞整体关停——旧 session 会在后台继续收尾，
-		// Start 的 session 门禁保证其退出前不会有新任务复用资源。
-		if err := calMgr.Shutdown(); err != nil {
-			fmt.Fprintf(os.Stderr, "calibration shutdown wait timed out: %v\n", err)
-		}
-		srv.Close()
+		// context-owned 关停顺序（spec FR9）：
+		//  1. 双探针 registry Shutdown（双 deadline + 有界 EmergencyStop）；
+		//     失败时记录 fatal 并跳过全部共享服务 Close（仍可能被 traversal
+		//     goroutine 使用），进程结果由调用方按非零语义处理。
+		//  2. 停止校准任务并有界等待其 session 退出；
+		//  3. 关闭 HTTP 监听。
+		server.finish(shutdownOwnedServer(registryBundle.Registry, calMgr, srv))
 	}()
 	go func() {
 		srv.ListenAndServe()
@@ -142,7 +191,23 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		fmt.Fprintf(os.Stderr, "debug server start failed: %v\n", err)
 	}
 
-	return &Server{srv}, nil
+	return server, nil
+}
+
+func shutdownOwnedServer(registry registryShutter, calibration calibrationShutter, httpServer httpCloser) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := registry.Shutdown(shutdownCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: traversal registry shutdown failed, skipping shared service close: %v\n", err)
+		return fmt.Errorf("traversal registry shutdown: %w", err)
+	}
+	if err := calibration.Shutdown(); err != nil {
+		fmt.Fprintf(os.Stderr, "calibration shutdown wait timed out: %v\n", err)
+	}
+	if err := httpServer.Close(); err != nil {
+		return fmt.Errorf("close HTTP server: %w", err)
+	}
+	return nil
 }
 
 type deviceFactory struct{}

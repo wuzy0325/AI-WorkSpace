@@ -72,6 +72,11 @@ type TraversalRunSession struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	doneOnce sync.Once
+	// managedOpts registry-managed 会话的不可变启动选项（Task 8）：
+	// 非 nil 表示 managed ownership（不 Acquire/Release 全局 workflow lease），
+	// nil 表示 legacy single ownership（既有直接 lease 路径）。
+	// ownership mode 是 session 快照的一部分，同一 session 不得混用两种模式。
+	managedOpts *ManagedSessionOptions
 }
 
 func newTraversalRunSession(parent context.Context, taskID string, snapshot traversal.TraversalRunSnapshot) *TraversalRunSession {
@@ -102,10 +107,13 @@ type TraversalManager struct {
 	store           ports.TraversalResultStore
 	checkpointStore ports.CheckpointStore
 	configStore     ports.AppConfigStore // 遍历配置持久化存储
-	config          traversal.Config
-	status          traversal.Status
-	configRaw       json.RawMessage
-	interpolator    coreinterp.Interpolator
+	// configKey 配置持久化键：默认 "traversal"（legacy single）；
+	// managed 双探针装配经 SetConfigKey 设为 "traversal.probe1"/"traversal.probe2"。
+	configKey    string
+	config       traversal.Config
+	status       traversal.Status
+	configRaw    json.RawMessage
+	interpolator coreinterp.Interpolator
 	// sevenHoleInterpolator 七孔插值器（与五孔 interpolator 字段相互独立）。
 	// 生命周期由 SetSevenHoleInterpolator / ClearProbeInterpolator 显式管理，
 	// 计算与前置检查仅经策略表按 config.ProbeType 访问（traversal_probe.go）。
@@ -240,9 +248,9 @@ func (m *TraversalManager) SaveConfigRaw(config json.RawMessage) {
 		m.config.ProbeType = probe.ProbeType
 	}
 	m.mu.Unlock()
-	// 持久化到磁盘，确保重启后配置不丢失
+	// 持久化到磁盘，确保重启后配置不丢失（probe-scoped key，legacy 默认 "traversal"）
 	if m.configStore != nil {
-		_ = m.configStore.SaveConfig(traversalConfigKey, []byte(config))
+		_ = m.configStore.SaveConfig(m.currentConfigKey(), []byte(config))
 	}
 }
 
@@ -717,7 +725,24 @@ func sinkIsCsvPort(sink ports.TraversalPointSink, csvPort ports.TraversalCSVPort
 	return sink == csvPortAsSink
 }
 
+// Start legacy single 启动入口：保持既有 lease ownership（自行 Acquire/Release
+// 全局 workflow lease）。registry-managed 双探针路径请使用 StartManaged。
 func (m *TraversalManager) Start(config traversal.Config) error {
+	return m.startInternal(config, nil)
+}
+
+// startInternal Start/StartManaged 共享的启动实现。
+//
+// ownership 由 opts 决定（session 快照的一部分，同一 session 不得混用）：
+//   - opts == nil（legacy）：Acquire 全局 workflow lease、登记 legacy activeIndex，
+//     abort/Stop/finalize 的 Release 路径保持不变；
+//   - opts != nil（managed）：不触碰 workflow lease 与 legacy activeIndex，
+//     opts 冻结进 session.managedOpts，完成时由 RunTraversalLoop 在 finalize 后回调。
+//
+// 调用方差异：Start 不启动主循环（由 ParseAndStartTraversal 启动），
+// StartManaged 成功后自行 go RunTraversalLoop。
+func (m *TraversalManager) startInternal(config traversal.Config, opts *ManagedSessionOptions) error {
+	managed := opts != nil
 	slog.Info("traversal starting",
 		"component", "traversal",
 		"task_id", config.TaskID,
@@ -760,6 +785,14 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		CommitSeq:            0,
 		CSVPath:              traversal.ResolveOutputPath(config),
 		ResultLogPath:        traversal.ResolveResultLogPath(config),
+		BoundControllerIDs:   boundControllerIDs(config),
+	}
+	// managed 会话：输出文件名加 probe 前缀（spec FR8，如 probe1-traversal-....csv）。
+	// 结果日志/checkpoint 路径全部由 CSV 路径派生，自动获得同一前缀；
+	// 撞名 -2/-3 由 csvPort.Open 在带前缀的文件名上处理，实际路径经 OutputPath() 回写。
+	if managed {
+		snapshot.CSVPath = traversal.ResolveProbePrefixedPath(snapshot.CSVPath, string(opts.ProbeID))
+		snapshot.ResultLogPath = traversal.ResolveResultLogPathFromCSV(snapshot.CSVPath)
 	}
 	parentCtx := context.Background()
 	session, err := m.beginSession(parentCtx, config.TaskID, snapshot)
@@ -767,6 +800,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
+	// ownership mode 冻结为 session 快照字段（同一 session 不得混用两种模式）。
+	session.managedOpts = opts
 	// 重置 finalizeOnce：上一次任务结束（Stop/Complete）已消费 once，
 	// 新任务必须重新武装 finalizeSink 才能在结束时正确关闭端口。
 	m.resetFinalizeOnce()
@@ -780,14 +815,17 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
-	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）
+	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）。
+	// 仅 legacy ownership：managed 会话的全局/controller lease 由 registry 准入事务持有。
 	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
-	if err := m.lockService.Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
-		m.mu.Unlock()
-		session.Cancel()
-		session.MarkDone()
-		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
-		return fmt.Errorf("acquire traversal lock: %w", err)
+	if !managed {
+		if err := m.lockService.Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
+			m.mu.Unlock()
+			session.Cancel()
+			session.MarkDone()
+			slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+			return fmt.Errorf("acquire traversal lock: %w", err)
+		}
 	}
 	m.config = config
 	m.isStopped = false
@@ -828,7 +866,11 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 			session.MarkDone()
 			// spec Task 21 Path 1（可返回路径）：Release 错误通过 errors.Join 聚合进返回值，
 			// 调用方可通过 errors.Is 同时识别 cpErr 和 releaseErr。失败时记录 Warn 便于运维定位。
-			releaseErr := m.lockService.Release(traversalLockResource, config.TaskID)
+			// managed 会话不持有 workflow lease（registry 准入事务负责回滚），跳过 Release。
+			var releaseErr error
+			if !managed {
+				releaseErr = m.lockService.Release(traversalLockResource, config.TaskID)
+			}
 			if releaseErr != nil {
 				slog.Warn("traversal start release lock failed",
 					"component", "traversal", "task_id", config.TaskID, "error", releaseErr)
@@ -862,11 +904,12 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		m.status.CSVPath = actualCSVPath
 		m.mu.Unlock()
 	}
-	// 注册活动索引，支持进程重启发现。
+	// 注册活动索引，支持进程重启发现（仅 legacy single 路径；
+	// managed 双探针使用 dual recovery index，由 registry 负责登记，spec FR3/FR4）。
 	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
 	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
 	// 用 session.snapshot.CSVPath（撞名回写后的实际路径）派生，避免与实际 CSV stem 错位。
-	if activeIndex != nil && checkpointPort != nil {
+	if !managed && activeIndex != nil && checkpointPort != nil {
 		checkpointPath := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
 		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
@@ -1045,8 +1088,10 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
-	// 清理活动索引注册（启动时已 Register，失败必须 Unregister 否则下次启动会发现"幽灵任务"）
-	if activeIndex != nil && checkpointPort != nil && taskID != "" {
+	// 清理活动索引注册（启动时已 Register，失败必须 Unregister 否则下次启动会发现"幽灵任务"）。
+	// managed 会话不经 legacy activeIndex（registry 持有 dual recovery index）。
+	managed := session.managedOpts != nil
+	if !managed && activeIndex != nil && checkpointPort != nil && taskID != "" {
 		if err := activeIndex.Unregister(ctx, taskID); err != nil {
 			slog.Warn("traversal abort unregister active index failed",
 				"component", "traversal", "task_id", taskID, "error", err)
@@ -1055,9 +1100,12 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 	// spec Task 21 Path 2（void 路径）：Release 失败仅记录 Warn，不影响 void 签名。
 	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验，
 	// holder 不匹配时返回 "release denied" 错误，此处仅记录不重试。
-	if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
-		slog.Warn("traversal abort release lock failed",
-			"component", "traversal", "task_id", taskID, "error", releaseErr)
+	// managed 会话不持有 workflow lease（registry 准入事务负责回滚），跳过 Release。
+	if !managed {
+		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
+			slog.Warn("traversal abort release lock failed",
+				"component", "traversal", "task_id", taskID, "error", releaseErr)
+		}
 	}
 	slog.Error("traversal start failed",
 		"component", "traversal", "task_id", taskID,
@@ -1240,18 +1288,20 @@ func (m *TraversalManager) Stop() error {
 		}
 	}
 
-	// 清理活动索引
-	if activeIndex != nil && taskID != "" {
+	// 清理活动索引（仅 legacy single 路径；managed 会话由 registry 负责 dual recovery index）
+	managed := session != nil && session.managedOpts != nil
+	if !managed && activeIndex != nil && taskID != "" {
 		if err := activeIndex.Unregister(context.Background(), taskID); err != nil {
 			slog.Warn("traversal active index unregister failed",
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
 
-	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）
+	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）。
+	// 仅 legacy ownership：managed 会话不持有 workflow lease（registry 负责释放）。
 	// spec Task 21 Path 3（可返回路径）：Release 错误 join 进 stopErr，调用方可通过 errors.Is 识别。
 	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验。
-	if taskID != "" {
+	if !managed && taskID != "" {
 		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
 			stopErr = errors.Join(stopErr, fmt.Errorf("release traversal lock: %w", releaseErr))
 		}
@@ -1273,13 +1323,20 @@ func (m *TraversalManager) Stop() error {
 }
 
 // stopMotionAxes 停止遍历相关运动轴，返回第一个遇到的错误。
-// 仅停止当前配置绑定的控制器/轴，避免误停其它已连接但未参与遍历的控制器。
+// 停止目标由启动快照 BoundControllerIDs 限定（spec 双探针 I1/Task 9）：
+// 快照非空时只停快照中的控制器，绝不向另一 probe 的控制器发停止命令；
+// 快照为空时 legacy single 保持既有兼容行为，managed 会话禁止广播回退。
 func (m *TraversalManager) stopMotionAxes() error {
 	if m.motion == nil {
 		return nil
 	}
 	m.mu.RLock()
+	session := m.session
+	// 轴绑定取自启动快照配置（启动时冻结）；无活动 session 时回退当前配置（兼容路径）。
 	motionAxes := m.config.MotionAxes
+	if session != nil {
+		motionAxes = session.snapshot.Config.MotionAxes
+	}
 	m.mu.RUnlock()
 
 	var firstErr error
@@ -1288,7 +1345,14 @@ func (m *TraversalManager) stopMotionAxes() error {
 	// 而无法停止运动中的轴
 	statuses := m.motion.StatusAll(ctx)
 	motionAxes = resolveMotionAxes(motionAxes, statuses)
-	for _, status := range statuses {
+	scoped, broadcast := scopedControllerStatuses(session, statuses)
+	if !broadcast {
+		// managed 会话空快照：双模式禁止"空绑定时操作所有已连接控制器"的回退（spec I1）。
+		slog.Error("managed traversal session has empty BoundControllerIDs, skip scoped stop (broadcast fallback forbidden)",
+			"component", "traversal")
+		return nil
+	}
+	for _, status := range scoped {
 		// 无绑定配置时保持旧行为：停止所有运动中的轴
 		if len(motionAxes) == 0 {
 			for _, axis := range status.Axes {
@@ -1316,6 +1380,31 @@ func (m *TraversalManager) stopMotionAxes() error {
 	return firstErr
 }
 
+// scopedControllerStatuses 按启动快照 BoundControllerIDs 过滤停机目标控制器。
+//
+//   - 快照非空：仅返回快照中的控制器（启动时冻结，不受运行期配置漂移影响）；
+//   - 快照为空且 legacy 会话：broadcast=true 返回全部（既有单探针兼容行为）；
+//   - 快照为空且 managed 会话：broadcast=false（双模式禁止广播回退）。
+func scopedControllerStatuses(session *TraversalRunSession, statuses []motion.ControllerStatus) (scoped []motion.ControllerStatus, broadcast bool) {
+	if session == nil || len(session.snapshot.BoundControllerIDs) == 0 {
+		if session != nil && session.managedOpts != nil {
+			return nil, false
+		}
+		return statuses, true
+	}
+	bound := make(map[string]bool, len(session.snapshot.BoundControllerIDs))
+	for _, id := range session.snapshot.BoundControllerIDs {
+		bound[id] = true
+	}
+	scoped = make([]motion.ControllerStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if bound[status.ID] {
+			scoped = append(scoped, status)
+		}
+	}
+	return scoped, true
+}
+
 // GetResult 获取测试结果
 func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	if m.store == nil {
@@ -1339,24 +1428,38 @@ func (m *TraversalManager) emergencyStopMotionControllers() error {
 	}
 	m.mu.RLock()
 	motionAxes := m.config.MotionAxes
+	session := m.session
 	m.mu.RUnlock()
 
 	ctx := context.Background()
 	statuses := m.motion.StatusAll(ctx)
 	motionAxes = resolveMotionAxes(motionAxes, statuses)
 
-	// 收集参与遍历的唯一 controllerID 集合
+	// 收集参与遍历的唯一 controllerID 集合：
+	// 启动快照 BoundControllerIDs 优先（冻结值，spec 双探针 I1/Task 9）。
 	controllerIDs := make(map[string]bool)
-	for _, binding := range motionAxes {
-		if binding.ControllerID != "" {
-			controllerIDs[binding.ControllerID] = true
+	switch {
+	case session != nil && len(session.snapshot.BoundControllerIDs) > 0:
+		for _, id := range session.snapshot.BoundControllerIDs {
+			controllerIDs[id] = true
 		}
-	}
-	// 无绑定配置时退化为对所有已连接控制器急停
-	if len(controllerIDs) == 0 {
-		for _, status := range statuses {
-			if status.Connected {
-				controllerIDs[status.ID] = true
+	case session != nil && session.managedOpts != nil:
+		// managed 会话空快照：双模式禁止"急停所有已连接控制器"的回退（spec I1）。
+		// registry 准入已拒绝空绑定，此分支为纵深防御。
+		slog.Error("managed traversal session has empty BoundControllerIDs, skip emergency stop broadcast",
+			"component", "traversal")
+	default:
+		// legacy single：按配置绑定；无绑定配置时退化为对所有已连接控制器急停（既有兼容行为）。
+		for _, binding := range motionAxes {
+			if binding.ControllerID != "" {
+				controllerIDs[binding.ControllerID] = true
+			}
+		}
+		if len(controllerIDs) == 0 {
+			for _, status := range statuses {
+				if status.Connected {
+					controllerIDs[status.ID] = true
+				}
 			}
 		}
 	}
@@ -1475,6 +1578,10 @@ func (m *TraversalManager) RunTraversalLoop() {
 		return
 	}
 	defer session.MarkDone()
+	// managed 会话：完成回调必须在 finalizeSink 之后（spec Task 8：
+	// goroutine 退出且输出端口 finalize 完成后才通知 registry）。
+	// defer LIFO 顺序：finalizeSink → notifyManagedCompletion → MarkDone。
+	defer m.notifyManagedCompletion(session)
 	defer m.finalizeSink() // 所有退出路径统一关闭 sink
 
 	initStatus := m.Status()
