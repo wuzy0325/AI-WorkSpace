@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"daq-p1604/core"
 	"daq-p1604/usecase"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 const (
@@ -28,6 +30,13 @@ type App struct {
 	app      *application.App
 	mu       sync.Mutex
 	relays   map[string]*relayControl
+
+	// userConfirmedExit 用户已确认退出的标志位
+	// RegisterExitConfirmationHook 内 hook 检查该标志：
+	//   - false → event.Cancel() 阻止默认关闭 listener，并 EmitEvent 通知前端弹确认对话框
+	//   - true  → 放行，默认 listener 真正关闭窗口
+	// 由 RequestExit binding 在用户确认后置 true，避免 hook 二次触发时再次 Cancel 导致死循环
+	userConfirmedExit atomic.Bool
 
 	// latestSnapshots 各设备最新快照（前端轮询用，避免 Event.Emit 触发 WebView2 同步阻塞）
 	latestMu        sync.RWMutex
@@ -610,16 +619,50 @@ func (a *App) PickDirectory() (string, error) {
 		PromptForSingleSelection()
 }
 
-// ExitApplication 主动退出应用。
+// RegisterExitConfirmationHook 注册主窗口的 WindowClosing hook，
+// 拦截 X 按钮关闭流程：未确认时取消默认关闭并向前端推送确认请求事件。
 //
-// 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
-// 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
-// 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
-// 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
-// 走与原生关闭等价的 ServiceShutdown 清理流程（停止录制/日志/relay）。
+// 设计要点（基于 Wails v3 alpha2.106 事件分发机制）：
+//   - 点 X → WM_CLOSE → emit events.Common.WindowClosing → hook 同步先跑 → 默认 listener 后跑
+//   - hook 内必须调用 event.Cancel() 才能阻止默认 listener 执行，否则窗口立刻关闭
+//   - hook 内禁止阻塞弹模态对话框，故通过 EmitEvent 异步通知前端
+//   - 前端 confirm 后调 RequestExit binding，置 userConfirmedExit=true 并触发 application.Quit()
+//     → ServiceShutdown → window.Close() → hook 再次触发，此时 userConfirmedExit=true 放行
+func (a *App) RegisterExitConfirmationHook(win *application.WebviewWindow) {
+	win.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if a.userConfirmedExit.Load() {
+			return
+		}
+		event.Cancel()
+		go func() {
+			app := application.Get()
+			if app == nil {
+				return
+			}
+			app.Event.Emit("app:exit-requested")
+		}()
+	})
+}
+
+// RequestExit 由前端在用户确认退出对话框后调用。
+// 置 userConfirmedExit=true 让后续 hook 放行，然后调用 application.Quit() 触发完整退出流程。
+func (a *App) RequestExit() error {
+	a.userConfirmedExit.Store(true)
+	app := a.app
+	if app == nil {
+		app = application.Get()
+	}
+	if app == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	app.Quit()
+	return nil
+}
+
+// ExitApplication 主动退出应用（由前端程序化调用）。
 //
-// 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
-// 并终止应用主循环，确保单窗口场景下应用真正退出。
+// 新退出路径：用户点窗口 X 按钮 → RegisterExitConfirmationHook 拦截 → 前端确认 → RequestExit。
+// 此方法保留供非交互式场景使用（如测试或命令行触发）。
 func (a *App) ExitApplication() error {
 	a.EmitLog(LogEvent{
 		Level:    "info",

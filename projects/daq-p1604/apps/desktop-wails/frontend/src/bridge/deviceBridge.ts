@@ -12,7 +12,7 @@ import {
   ScanDevices,
   GetLatestSnapshot,
   GetLatestSnapshots,
-  ExitApplication,
+  RequestExit,
 } from '../../bindings/daq-p1604/backend/app'
 import { Events } from '@wailsio/runtime'
 
@@ -167,13 +167,12 @@ export function getLatestSnapshots(): Promise<Record<string, PressureSnapshot>> 
 }
 
 /**
- * 主动退出应用。
- *
- * 由 MainTopBar 退出按钮的确认框 onPositiveClick 调用，
- * 后端 application.Quit() 会触发 ServiceShutdown 走与原生关闭等价的清理流程。
+ * 请求退出应用（由窗口 X 按钮确认对话框调用）。
+ * 后端置 userConfirmedExit=true 后调用 application.Quit()，
+ * 触发 ServiceShutdown 走与原生关闭等价的清理流程。
  */
-export function exitApplication(): Promise<void> {
-  return ExitApplication() as Promise<void>
+export function requestExit(): Promise<void> {
+  return RequestExit() as Promise<void>
 }
 
 export function onLog(handler: (entry: DeviceLogEvent) => void): void {

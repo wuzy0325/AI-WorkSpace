@@ -12,6 +12,7 @@ import (
 	"daq-t1603/usecase"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // 前端推送节奏默认值：UI 快照 100ms（10Hz）一次，录制状态 1s 一次。
@@ -55,6 +56,13 @@ type DeviceService struct {
 
 	mu  sync.Mutex
 	app *application.App
+
+	// userConfirmedExit 用户已确认退出的标志位
+	// RegisterExitConfirmationHook 内 hook 检查该标志：
+	//   - false → event.Cancel() 阻止默认关闭 listener，并 EmitEvent 通知前端弹确认对话框
+	//   - true  → 放行，默认 listener 真正关闭窗口
+	// 由 RequestExit binding 在用户确认后置 true，避免 hook 二次触发时再次 Cancel 导致死循环
+	userConfirmedExit atomic.Bool
 }
 
 // NewDeviceService 创建设备 Service。
@@ -125,16 +133,41 @@ func (s *DeviceService) SetUIRefreshRateHz(hz int) error {
 	return nil
 }
 
-// ExitApplication 主动退出应用。
-//
-// 设计意图：Wails v3 alpha.95 在 Windows 平台未暴露 ShouldClose 拦截钩子，
-// 原生窗口的 X 按钮点击后默认监听器会直接关闭窗口，前端无法在原生路径上拦截。
-// 因此提供一个"带确认的应用内退出"路径：前端 MainTopBar 的"退出应用"按钮
-// 弹出 Naive UI 确认框，用户确认后调用本方法触发 application.Quit()，
-// 走与原生关闭等价的 ServiceShutdown 清理流程（停止采集 / 录制 / 日志 / relay）。
-//
-// 与 Window.Close() 的差异：application.Quit() 会触发所有窗口的关闭流程
-// 并终止应用主循环，确保单窗口场景下应用真正退出。
+// RegisterExitConfirmationHook 注册主窗口的 WindowClosing hook，
+// 拦截 X 按钮关闭流程：未确认时取消默认关闭并向前端推送确认请求事件。
+func (s *DeviceService) RegisterExitConfirmationHook(win *application.WebviewWindow) {
+	win.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if s.userConfirmedExit.Load() {
+			return
+		}
+		event.Cancel()
+		go func() {
+			app := application.Get()
+			if app == nil {
+				return
+			}
+			app.Event.Emit("app:exit-requested")
+		}()
+	})
+}
+
+// RequestExit 由前端在用户确认退出对话框后调用。
+func (s *DeviceService) RequestExit() error {
+	s.userConfirmedExit.Store(true)
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app == nil {
+		app = application.Get()
+	}
+	if app == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	app.Quit()
+	return nil
+}
+
+// ExitApplication 主动退出应用（保留供程序化调用，非 UI 主路径）。
 func (s *DeviceService) ExitApplication() error {
 	s.emitLog("info", "system", "", "app", "DAQ-T-1603 application exit requested by user", "")
 	s.mu.Lock()

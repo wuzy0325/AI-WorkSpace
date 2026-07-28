@@ -116,7 +116,7 @@ func main() {
 	}
 	wailsApp := application.New(appOpts)
 
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		// 窗口默认标题用英文，避免首屏硬编码中文。
 		// 前端 App.vue 在 onMounted 和 watch(locale) 时会通过 @wailsio/runtime 的 Window.SetTitle
 		// 覆盖为当前语言对应的本地化标题（zh: "DAQ-P-1604 压力采集" / en: "DAQ-P-1604 Pressure Acquisition"）。
@@ -128,6 +128,9 @@ func main() {
 		URL:       "/",
 		Hidden:    false,
 	})
+
+	// 注册窗口 X 按钮拦截：未确认退出时弹确认对话框
+	app.RegisterExitConfirmationHook(mainWindow)
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)

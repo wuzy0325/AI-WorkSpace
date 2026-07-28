@@ -23,7 +23,7 @@ import {
   GetStatus,
   ScanDevices,
   SetUIRefreshRateHz,
-  ExitApplication,
+  RequestExit,
 } from '../../bindings/daq-t1603/backend/deviceservice'
 
 export interface ChannelConfig {
@@ -164,14 +164,10 @@ export function setUIRefreshRateHz(hz: number): Promise<void> {
 }
 
 /**
- * 主动退出应用。
- *
- * 由 MainTopBar 退出按钮的确认框 onPositiveClick 调用，
- * 后端 application.Quit() 会触发各 Service 的 ServiceShutdown
- * 走与原生关闭等价的清理流程（停止采集 / 录制 / 日志 / relay）。
+ * 请求退出应用（由窗口 X 按钮确认对话框调用）。
  */
-export function exitApplication(): Promise<void> {
-  return ExitApplication() as Promise<void>
+export function requestExit(): Promise<void> {
+  return RequestExit() as Promise<void>
 }
 
 // ---- 事件订阅 ----------------------------------------------------------------
