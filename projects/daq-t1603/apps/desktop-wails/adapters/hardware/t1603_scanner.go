@@ -20,6 +20,10 @@ const (
 	t1603DefaultPort      = 9000
 	t1603ScanTimeout      = 3 * time.Second
 	t1603LimitedBroadcast = "255.255.255.255"
+	// t1603InterfaceTimeout 限制网卡枚举的最长时间。
+	// 部分异常虚拟网卡会让 Windows 的 net.Interfaces() 长期阻塞，
+	// 若不限制，会在创建 UDP socket 之前就卡住，导致扫描永久不返回。
+	t1603InterfaceTimeout = 500 * time.Millisecond
 )
 
 type listenPacketFn func(network, address string) (net.PacketConn, error)
@@ -27,6 +31,7 @@ type listenPacketFn func(network, address string) (net.PacketConn, error)
 type T1603Scanner struct {
 	timeout      time.Duration
 	listenPacket listenPacketFn
+	scanMu       sync.Mutex
 }
 
 func NewT1603Scanner() *T1603Scanner {
@@ -37,6 +42,16 @@ func NewT1603Scanner() *T1603Scanner {
 }
 
 func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
+	// 防止并发扫描：重复触发扫描会竞争 UDP socket 并导致结果混乱。
+	if !s.scanMu.TryLock() {
+		return nil, fmt.Errorf("device scan already in progress")
+	}
+	defer s.scanMu.Unlock()
+
+	// 网卡枚举有界化：若超过 t1603InterfaceTimeout 仍未完成，
+	// 回退到有限广播地址 255.255.255.255，避免在绑定 socket 前永久卡住。
+	targets := broadcastTargetsWithTimeout(t1603InterfaceTimeout, broadcastTargets)
+
 	conn, err := s.listenPacket("udp4", ":0")
 	if err != nil {
 		return nil, fmt.Errorf("udp listen: %w", err)
@@ -46,12 +61,12 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
 		return nil, fmt.Errorf("set deadline: %w", err)
 	}
-	// Some Windows network drivers do not wake ReadFrom when a deadline expires.
+	// 部分Windows网络驱动不会在deadline到期时唤醒ReadFrom，
+	// 用定时器在超时后强制Close作为兜底，确保接收循环一定退出。
 	watchdog := time.AfterFunc(s.timeout, func() { _ = conn.Close() })
 	defer watchdog.Stop()
 
 	cmd := []byte(t1603DiscoveryCmd)
-	targets := broadcastTargets()
 	for _, t := range targets {
 		addr := &net.UDPAddr{IP: net.ParseIP(t), Port: t1603DiscoveryPort}
 		if addr.IP == nil {
@@ -60,17 +75,19 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 		conn.WriteTo(cmd, addr)
 	}
 
-	var mu sync.Mutex
-	var results []core.ScanResult
+	return readT1603Responses(conn), nil
+}
+
+// readT1603Responses 在已设置 deadline 和 watchdog 的 socket 上循环接收设备响应。
+// 当 ReadFrom 因 deadline 超时或 watchdog 关闭 socket 返回错误时退出循环。
+func readT1603Responses(conn net.PacketConn) []core.ScanResult {
+	results := make([]core.ScanResult, 0)
 	seen := make(map[string]bool)
 	buf := make([]byte, 1024)
 
 	for {
 		n, remote, err := conn.ReadFrom(buf)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				break
-			}
 			break
 		}
 
@@ -84,18 +101,33 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 			continue
 		}
 
-		mu.Lock()
 		if !seen[result.ID] {
 			seen[result.ID] = true
 			results = append(results, *result)
 		}
-		mu.Unlock()
 	}
 
-	if results == nil {
-		results = []core.ScanResult{}
+	return results
+}
+
+// broadcastTargetsWithTimeout 为网卡枚举设置硬性时间上限。
+// 超时未返回时回退到 limitedBroadcast，保证扫描流程不会因网卡枚举卡死。
+//
+// 权衡：超时返回后，仍在阻塞的 enumerate goroutine 无法被取消（net.Interfaces 没有 context 版本），
+// 会一直挂起直到其内部 syscall 返回。这是有意接受的泄漏——主扫描流程必然能继续推进，
+// 避免因为网卡枚举阻塞导致整个扫描永久卡死。
+func broadcastTargetsWithTimeout(timeout time.Duration, enumerate func() []string) []string {
+	resultCh := make(chan []string, 1)
+	go func() {
+		resultCh <- enumerate()
+	}()
+
+	select {
+	case targets := <-resultCh:
+		return targets
+	case <-time.After(timeout):
+		return []string{t1603LimitedBroadcast}
 	}
-	return results, nil
 }
 
 func parseResponse(data []byte, remoteHost string) *core.ScanResult {

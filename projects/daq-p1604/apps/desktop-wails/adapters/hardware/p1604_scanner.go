@@ -91,6 +91,12 @@ func readScanResponses(conn net.PacketConn, timeout time.Duration) []core.ScanRe
 	return results
 }
 
+// broadcastTargetsWithTimeout 为网卡枚举设置硬性时间上限。
+// 超时未返回时回退到有限广播地址，保证扫描流程不会因网卡枚举卡死。
+//
+// 权衡：超时返回后，仍在阻塞的 enumerate goroutine 无法被取消（net.Interfaces 没有 context 版本），
+// 会一直挂起直到其内部 syscall 返回。这是有意接受的泄漏——主扫描流程必然能继续推进，
+// 避免因为网卡枚举阻塞导致整个扫描永久卡死。
 func broadcastTargetsWithTimeout(timeout time.Duration, enumerate func() []string) []string {
 	resultCh := make(chan []string, 1)
 	go func() {

@@ -58,6 +58,42 @@ func TestNetworkScannerClosesConnWhenDeadlineDoesNotUnblockRead(t *testing.T) {
 	}
 }
 
+// TestBroadcastTargetsWithTimeoutFallsBack 验证网卡枚举超时后回退到有限广播地址。
+// 模拟 net.Interfaces() 长期阻塞的场景（如异常虚拟网卡），
+// 确保扫描流程不会在创建 UDP socket 之前永久卡住。
+func TestBroadcastTargetsWithTimeoutFallsBack(t *testing.T) {
+	release := make(chan struct{})
+	started := time.Now()
+	targets := broadcastTargetsWithTimeout(20*time.Millisecond, func() []string {
+		<-release
+		return []string{"192.168.1.255"}
+	})
+	close(release)
+
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("broadcast target fallback took too long: %v", elapsed)
+	}
+	if len(targets) != 1 || targets[0] != limitedBroadcast {
+		t.Fatalf("expected limited broadcast fallback, got %v", targets)
+	}
+}
+
+// TestNetworkScannerRejectsConcurrentScan 验证并发扫描被拒绝。
+// 防止重复触发扫描时 UDP socket 竞争和结果混乱。
+func TestNetworkScannerRejectsConcurrentScan(t *testing.T) {
+	scanner := NewNetworkScanner(WithTimeout(100 * time.Millisecond))
+
+	if !scanner.scanMu.TryLock() {
+		t.Fatal("first TryLock must succeed")
+	}
+	// 持有锁的情况下再次扫描应被拒绝
+	_, err := scanner.Scan()
+	if err == nil {
+		t.Fatal("expected error when scan already in progress")
+	}
+	scanner.scanMu.Unlock()
+}
+
 type mockPacketConn struct {
 	responses    map[string]string
 	readBuf      chan []byte

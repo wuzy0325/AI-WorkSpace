@@ -62,6 +62,48 @@ func TestT1603ScannerClosesConnWhenDeadlineDoesNotUnblockRead(t *testing.T) {
 	}
 }
 
+// TestT1603BroadcastTargetsWithTimeoutFallsBack 验证网卡枚举超时后回退到有限广播地址。
+// 模拟 net.Interfaces() 长期阻塞的场景（如异常虚拟网卡），
+// 确保扫描流程不会在创建 UDP socket 之前永久卡住。
+func TestT1603BroadcastTargetsWithTimeoutFallsBack(t *testing.T) {
+	release := make(chan struct{})
+	started := time.Now()
+	targets := broadcastTargetsWithTimeout(20*time.Millisecond, func() []string {
+		<-release
+		return []string{"192.168.1.255"}
+	})
+	close(release)
+
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("broadcast target fallback took too long: %v", elapsed)
+	}
+	if len(targets) != 1 || targets[0] != t1603LimitedBroadcast {
+		t.Fatalf("expected limited broadcast fallback, got %v", targets)
+	}
+}
+
+// TestT1603ScannerRejectsConcurrentScan 验证并发扫描被拒绝。
+// 防止重复触发扫描时 UDP socket 竞争和结果混乱。
+func TestT1603ScannerRejectsConcurrentScan(t *testing.T) {
+	conn := newDeadlineIgnoringPacketConn()
+	scanner := &T1603Scanner{
+		timeout: 100 * time.Millisecond,
+		listenPacket: func(string, string) (net.PacketConn, error) {
+			return conn, nil
+		},
+	}
+
+	if !scanner.scanMu.TryLock() {
+		t.Fatal("first TryLock must succeed")
+	}
+	// 持有锁的情况下再次扫描应被拒绝
+	_, err := scanner.Scan()
+	if err == nil {
+		t.Fatal("expected error when scan already in progress")
+	}
+	scanner.scanMu.Unlock()
+}
+
 func TestParseResponse_JSON(t *testing.T) {
 	tests := []struct {
 		name       string
