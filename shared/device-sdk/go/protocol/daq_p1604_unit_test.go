@@ -110,9 +110,31 @@ func TestP1604ReadUnitCoefficient_Valid(t *testing.T) {
 	}
 }
 
-// TestP1604ReadUnitCoefficient_MultiValueResponse 验证响应可能包含多个空格分隔值，
-// 解析器应取第一个作为 EU 压力转换系数（防御性解析，兼容异常响应）。
-func TestP1604ReadUnitCoefficient_MultiValueResponse(t *testing.T) {
+func TestP1604ReadUnitCoefficient_ZeroTimeoutDoesNotSetDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	tracked := &deadlineTrackingConn{Conn: client}
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		writeFrame(t, server, "1.000000")
+	}()
+
+	coeff, err := P1604ReadUnitCoefficient(NewFrameReader(tracked), tracked, 0)
+	if err != nil {
+		t.Fatalf("read coefficient without deadline: %v", err)
+	}
+	if coeff != 1 {
+		t.Fatalf("coefficient = %v, want 1", coeff)
+	}
+	if tracked.readDeadlineCalls != 0 || tracked.writeDeadlineCalls != 0 {
+		t.Fatalf("deadline calls: read=%d write=%d, want 0", tracked.readDeadlineCalls, tracked.writeDeadlineCalls)
+	}
+}
+
+func TestP1604ReadUnitCoefficient_RejectsMultiValueResponse(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
@@ -120,17 +142,12 @@ func TestP1604ReadUnitCoefficient_MultiValueResponse(t *testing.T) {
 	go func() {
 		buf := make([]byte, 64)
 		_, _ = server.Read(buf)
-		// 模拟设备返回多个值（防御性解析多值响应，取第一个）
 		writeFrame(t, server, "6894.756836 0.000000 0.000000 0.000000 0.000000")
 	}()
 
 	fr := NewFrameReader(client)
-	coeff, err := P1604ReadUnitCoefficient(fr, client, time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if coeff != 6894.756836 {
-		t.Errorf("expected 6894.756836, got %v", coeff)
+	if _, err := P1604ReadUnitCoefficient(fr, client, time.Second); err == nil {
+		t.Fatal("expected error for multi-value response")
 	}
 }
 
@@ -217,6 +234,23 @@ func TestP1604WriteUnitCoefficient_DeviceReject(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "N07") {
 		t.Errorf("error should mention N07, got: %v", err)
+	}
+}
+
+func TestP1604WriteUnitCoefficient_RejectsUnexpectedResponse(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		writeFrame(t, server, "A ")
+	}()
+
+	err := P1604WriteUnitCoefficient(NewFrameReader(client), client, 6894.757, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "unexpected v01101 response") {
+		t.Fatalf("expected strict response error, got %v", err)
 	}
 }
 

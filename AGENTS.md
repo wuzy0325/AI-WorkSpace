@@ -27,6 +27,12 @@ Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/deskt
 
 Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `$env:GOWORK="off"`. Production: `-tags production` + `GOWORK=off` (ADR-004). Scripts: `validate-structure.ps1`, `validate-frontend-structure.ps1 -CheckFileSize`, `check-wails-bindings.ps1`. Full list: [docs/index.md](docs/index.md) §五.
 
+### Windows Network I/O Constraint
+
+- A field Windows PC reproducibly kept Go network reads blocked after `SetReadDeadline` expired. Treat socket deadlines as soft timeouts only, never as the sole cancellation mechanism for bounded hardware I/O.
+- Handshake, discovery, command-response, stop, and disconnect paths MUST have an independent owner that can call `conn.Close()` without waiting for the blocked goroutine or its mutex. A watchdog-fired connection is invalid and must not be reused.
+- Tests for bounded network I/O MUST include a connection double that ignores deadlines and returns only after `Close`. Full decision and audit: [ADR-009](docs/decisions/ADR-009-windows-network-deadline-fallback.md) and [workspace audit](docs/audits/2026-07-28-go-network-deadline-audit.md).
+
 ### Pre-submit / Release / Loading
 
 - **Pre-submit**: `validate-structure.ps1` + `go test ./...` + `npm run typecheck` + `npm run build`. Wails binding signature changes → `wails3 generate bindings -silent` (TS-binding projects `daq-t1603` / `daq-p1604` regenerate manually). Details: [development-rules.md](docs/runbooks/development-rules.md) + [frontend-ai-rules-deploy §32.1](docs/runbooks/frontend-ai-rules-deploy.zh-CN.md#321-wails-绑定同步强制零容忍).

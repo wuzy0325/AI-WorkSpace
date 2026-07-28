@@ -15,6 +15,8 @@
 | `runbooks/frontend-directory-rules.zh-CN.md` | AI / 前端开发者 | Vue 前端目录结构标准与文件放置规则 |
 | `runbooks/development-rules.md` | 开发者 / AI | 开发流程规则：依赖边界、测试、结构变更、复用优先、验证 |
 | `runbooks/win7-lts-development-workflow.md` | 开发者 / AI | master 与 lts/win7 日常开发、选择性同步、验证、回滚和发布流程 |
+| `decisions/ADR-009-windows-network-deadline-fallback.md` | 开发者 / AI | Windows 现场环境中 Go 网络 deadline 失效时的强制关闭与连接废弃规则 |
+| `audits/2026-07-28-go-network-deadline-audit.md` | 开发者 / AI | 全工作空间 Go socket deadline 风险清单、优先级与整改状态 |
 
 **快速定位：**
 - 文件/函数该多长 → `code-standards.zh-CN.md` §一
@@ -40,6 +42,8 @@
 - AI 友好代码组织 → `frontend-ai-rules-deploy.zh-CN.md` §35
 - Wails 桥接规范 → `frontend-ai-rules-deploy.zh-CN.md` §32
 - Wails binding 同步 → `frontend-ai-rules-deploy.zh-CN.md` §32.1
+- 硬件 TCP/UDP 超时与阻塞退出 → `decisions/ADR-009-windows-network-deadline-fallback.md`
+- 排查现有 `SetReadDeadline` / `SetDeadline` 风险 → `audits/2026-07-28-go-network-deadline-audit.md`
 - 测试规范 → `frontend-ai-rules-deploy.zh-CN.md` §33
 - 前端验证要求 → `frontend-ai-rules-deploy.zh-CN.md` §34
 

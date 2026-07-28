@@ -116,14 +116,16 @@
 3. `docs/architecture/workspace-engineering-rules.zh-CN.md`
 4. 项目级 `AGENTS.md` / `CLAUDE.md`
 5. `shared/device-sdk` 或项目 `adapters/hardware` 相关文件
-6. 对应设备协议 skill / docs
-7. 相关测试或模拟器
+6. `docs/decisions/ADR-009-windows-network-deadline-fallback.md`（涉及 TCP/UDP、deadline、阻塞 I/O 或连接生命周期时）
+7. 对应设备协议 skill / docs
+8. 相关测试或模拟器
 
 必须确认：
 
 - adapter 只做协议翻译和 I/O
 - 领域规则不进入 hardware adapter
 - 超时、重试、错误恢复明确
+- 有界网络 I/O 不以 socket deadline 作为唯一退出机制；watchdog 必须能绕过阻塞 goroutine/锁直接关闭连接
 - 可通过模拟器或 fake port 测试
 
 ### 3.5 修改 Wails backend 绑定

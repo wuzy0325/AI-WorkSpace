@@ -3,14 +3,66 @@ package scan
 import (
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"wind-daq/services/api-go/internal/core/device"
 )
+
+type deadlineIgnoringPacketConn struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newDeadlineIgnoringPacketConn() *deadlineIgnoringPacketConn {
+	return &deadlineIgnoringPacketConn{closed: make(chan struct{})}
+}
+
+func (c *deadlineIgnoringPacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	<-c.closed
+	return 0, nil, net.ErrClosed
+}
+
+func (c *deadlineIgnoringPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	return len(b), nil
+}
+
+func (c *deadlineIgnoringPacketConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func (c *deadlineIgnoringPacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (c *deadlineIgnoringPacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *deadlineIgnoringPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *deadlineIgnoringPacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestNetworkScannerClosesConnWhenDeadlineDoesNotUnblockRead(t *testing.T) {
+	conn := newDeadlineIgnoringPacketConn()
+	scanner := NewNetworkScanner(WithTimeout(20 * time.Millisecond))
+	scanner.listenPacket = func(string, string) (net.PacketConn, error) {
+		return conn, nil
+	}
+
+	done := make(chan []device.ScanResult, 1)
+	go func() {
+		done <- scanner.scanWithSocket("probe", 7000, func([]byte, string) *device.ScanResult { return nil })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		_ = conn.Close()
+		t.Fatal("scanWithSocket remained blocked after its deadline")
+	}
+}
 
 type mockPacketConn struct {
 	responses    map[string]string
 	readBuf      chan []byte
 	done         chan struct{}
+	closeOnce    sync.Once
 	readDeadline time.Time
 }
 
@@ -59,7 +111,10 @@ func (m *mockPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 	return len(b), nil
 }
 
-func (m *mockPacketConn) Close() error { close(m.done); return nil }
+func (m *mockPacketConn) Close() error {
+	m.closeOnce.Do(func() { close(m.done) })
+	return nil
+}
 func (m *mockPacketConn) LocalAddr() net.Addr {
 	return &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0}
 }

@@ -46,6 +46,9 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
 		return nil, fmt.Errorf("set deadline: %w", err)
 	}
+	// Some Windows network drivers do not wake ReadFrom when a deadline expires.
+	watchdog := time.AfterFunc(s.timeout, func() { _ = conn.Close() })
+	defer watchdog.Stop()
 
 	cmd := []byte(t1603DiscoveryCmd)
 	targets := broadcastTargets()
@@ -234,5 +237,3 @@ func broadcastAddr(ip net.IP, mask net.IPMask) string {
 	}
 	return broadcast.String()
 }
-
-

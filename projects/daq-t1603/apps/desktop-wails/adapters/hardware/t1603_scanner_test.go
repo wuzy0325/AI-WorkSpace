@@ -3,8 +3,64 @@ package hardware
 import (
 	"encoding/json"
 	"net"
+	"sync"
 	"testing"
+	"time"
 )
+
+type deadlineIgnoringPacketConn struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newDeadlineIgnoringPacketConn() *deadlineIgnoringPacketConn {
+	return &deadlineIgnoringPacketConn{closed: make(chan struct{})}
+}
+
+func (c *deadlineIgnoringPacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	<-c.closed
+	return 0, nil, net.ErrClosed
+}
+
+func (c *deadlineIgnoringPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	return len(b), nil
+}
+
+func (c *deadlineIgnoringPacketConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func (c *deadlineIgnoringPacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (c *deadlineIgnoringPacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *deadlineIgnoringPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *deadlineIgnoringPacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestT1603ScannerClosesConnWhenDeadlineDoesNotUnblockRead(t *testing.T) {
+	conn := newDeadlineIgnoringPacketConn()
+	scanner := &T1603Scanner{
+		timeout: 20 * time.Millisecond,
+		listenPacket: func(string, string) (net.PacketConn, error) {
+			return conn, nil
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := scanner.Scan()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Scan returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		_ = conn.Close()
+		t.Fatal("Scan remained blocked after its deadline")
+	}
+}
 
 func TestParseResponse_JSON(t *testing.T) {
 	tests := []struct {
@@ -144,10 +200,10 @@ func TestParseResponse_Garbage(t *testing.T) {
 
 func TestBroadcastAddr(t *testing.T) {
 	tests := []struct {
-		name   string
-		ip     net.IP
-		mask   net.IPMask
-		want   string
+		name string
+		ip   net.IP
+		mask net.IPMask
+		want string
 	}{
 		{"class C", net.IPv4(192, 168, 1, 10).To4(), net.IPv4Mask(255, 255, 255, 0), "192.168.1.255"},
 		{"class B", net.IPv4(10, 0, 0, 5).To4(), net.IPv4Mask(255, 255, 0, 0), "10.0.255.255"},

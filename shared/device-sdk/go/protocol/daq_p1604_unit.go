@@ -48,8 +48,8 @@ const P1604UnitReadTimeout = 2 * time.Second
 // 对 u01101 等命令返回 N05（数据字段错误）。仅范围语法 u01101-05 对尾部
 // 换行符宽容，曾掩盖此问题。正确做法是所有命令均不带换行符。
 const (
-	p1604ReadUnitCmd  = "u01101"       // 读取全局 EU 压力转换系数（单 cc 语法）
-	p1604WriteUnitFmt = "v01101 %.6f"  // 写入全局 EU 压力转换系数（单 cc 语法，无换行符）
+	p1604ReadUnitCmd  = "u01101"      // 读取全局 EU 压力转换系数（单 cc 语法）
+	p1604WriteUnitFmt = "v01101 %.6f" // 写入全局 EU 压力转换系数（单 cc 语法，无换行符）
 )
 
 // P1604ReadUnitCoefficient 从设备读取 EU 压力转换系数
@@ -71,21 +71,23 @@ func P1604ReadUnitCoefficient(reader *FrameReader, conn net.Conn, timeout time.D
 	if conn == nil {
 		return 0, fmt.Errorf("conn is nil")
 	}
-	if timeout <= 0 {
-		timeout = P1604UnitReadTimeout
-	}
-
 	// 发送 u01101 命令（纯 ASCII，不带换行符——见 p1604ReadUnitCmd 注释）
-	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		return 0, fmt.Errorf("set write deadline: %w", err)
+	if timeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return 0, fmt.Errorf("set write deadline: %w", err)
+		}
+		defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
 	}
 	if _, err := conn.Write([]byte(p1604ReadUnitCmd)); err != nil {
 		return 0, fmt.Errorf("send %s: %w", p1604ReadUnitCmd, err)
 	}
 
 	// 读取响应（FrameReader 自动剥离 2 字节长度前缀）
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return 0, fmt.Errorf("set read deadline: %w", err)
+	if timeout > 0 {
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return 0, fmt.Errorf("set read deadline: %w", err)
+		}
+		defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	}
 	payload, err := reader.ReadFrame()
 	if err != nil {
@@ -97,14 +99,16 @@ func P1604ReadUnitCoefficient(reader *FrameReader, conn net.Conn, timeout time.D
 	if strings.HasPrefix(text, "N") && len(text) >= 2 {
 		return 0, fmt.Errorf("device returned error: %s", text)
 	}
-	// 响应可能包含多个空格分隔的系数值（范围语法），取第一个作为 EU 压力转换系数
-	first := strings.Fields(text)
-	if len(first) == 0 {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
 		return 0, fmt.Errorf("empty response: %q", text)
 	}
-	coeff, err := strconv.ParseFloat(first[0], 64)
+	if len(fields) != 1 {
+		return 0, fmt.Errorf("unexpected %s response: %q", p1604ReadUnitCmd, text)
+	}
+	coeff, err := strconv.ParseFloat(fields[0], 64)
 	if err != nil {
-		return 0, fmt.Errorf("parse coefficient %q: %w", first[0], err)
+		return 0, fmt.Errorf("parse coefficient %q: %w", fields[0], err)
 	}
 	if math.IsNaN(coeff) || math.IsInf(coeff, 0) || coeff <= 0 {
 		return 0, fmt.Errorf("invalid coefficient: %v", coeff)
@@ -148,14 +152,14 @@ func P1604WriteUnitCoefficient(reader *FrameReader, conn net.Conn, coeff float64
 	if err != nil {
 		return fmt.Errorf("read v01101 response: %w", err)
 	}
-	text := strings.TrimSpace(string(payload))
-	if text == "A" {
+	response := string(payload)
+	if response == "A" {
 		return nil
 	}
-	if strings.HasPrefix(text, "N") {
-		return fmt.Errorf("device rejected unit change: %s", text)
+	if strings.HasPrefix(response, "N") {
+		return fmt.Errorf("device rejected unit change: %s", response)
 	}
-	return fmt.Errorf("unexpected v01101 response: %q", text)
+	return fmt.Errorf("unexpected v01101 response: %q", response)
 }
 
 // P1604MatchUnitByCoefficient 根据系数反查最接近的单位字符串

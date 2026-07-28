@@ -210,6 +210,49 @@ func setupAdapterWithDriver(id string, status core.DeviceStatus) (*P1604Adapter,
 	return a, driver, mockConn, collector
 }
 
+func TestStopAcquisitionClosesConnWhenReadLoopDoesNotExit(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	const id = "test-stop-stuck-reader"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Profile: driver.profile, Status: core.StatusAcquiring}
+	shard.stopChs[id] = make(chan struct{})
+	shard.mu.Unlock()
+
+	err := a.StopAcquisition(id)
+	if err == nil || !strings.Contains(err.Error(), "reconnect required") {
+		t.Fatalf("StopAcquisition error = %v, want reconnect required", err)
+	}
+
+	_ = server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 16)
+	n, readErr := server.Read(buf)
+	if n != 0 {
+		t.Fatalf("received command after read-loop timeout: %q", string(buf[:n]))
+	}
+	if readErr == nil {
+		t.Fatal("server read should fail after client connection is closed")
+	}
+
+	shard.mu.RLock()
+	_, stillConnected := shard.drivers[id]
+	shard.mu.RUnlock()
+	if stillConnected {
+		t.Fatal("driver should be removed after read-loop timeout")
+	}
+}
+
 type stateCollector struct {
 	mu     sync.Mutex
 	states []struct {
@@ -382,7 +425,7 @@ func TestSyncUnitFromHardware_EOFReturnsError(t *testing.T) {
 	_, _, err := a.syncUnitFromHardware(driver, core.PressureProfile{
 		ID:       "test-eof",
 		P1604Cfg: core.P1604Config{Unit: "Pa"},
-	})
+	}, p1604UnitSyncTimeout)
 	if err == nil {
 		t.Fatal("syncUnitFromHardware should return error on EOF, got nil")
 	}
@@ -391,9 +434,7 @@ func TestSyncUnitFromHardware_EOFReturnsError(t *testing.T) {
 	}
 }
 
-// TestSyncUnitFromHardware_TimeoutKeepsProfileUnit 验证：u01101 超时（软错误）
-// 不返回 error，保留 profile 单位继续连接流程——兼容旧固件/模拟器。
-func TestSyncUnitFromHardware_TimeoutKeepsProfileUnit(t *testing.T) {
+func TestSyncUnitFromHardware_TimeoutReturnsError(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
@@ -415,18 +456,12 @@ func TestSyncUnitFromHardware_TimeoutKeepsProfileUnit(t *testing.T) {
 
 	// 缩短超时避免测试卡太久：直接调 P1604ReadUnitCoefficient 模拟超时路径
 	// syncUnitFromHardware 内部用 p1604UnitSyncTimeout（2s），测试容忍 2s 等待
-	unit, note, err := a.syncUnitFromHardware(driver, core.PressureProfile{
+	_, _, err := a.syncUnitFromHardware(driver, core.PressureProfile{
 		ID:       "test-timeout",
 		P1604Cfg: core.P1604Config{Unit: "Pa"},
-	})
-	if err != nil {
-		t.Fatalf("syncUnitFromHardware should NOT return error on timeout, got: %v", err)
-	}
-	if unit != "" {
-		t.Errorf("unit should be empty on timeout (keep profile), got %q", unit)
-	}
-	if note == "" {
-		t.Error("note should describe the failure")
+	}, p1604UnitSyncTimeout)
+	if err == nil {
+		t.Fatal("syncUnitFromHardware should return error on timeout")
 	}
 }
 
@@ -1041,13 +1076,13 @@ func TestZeroCalibration_DisconnectionTriggersConnectionLost(t *testing.T) {
 	_ = client.Close()
 }
 
-// TestApplyConfig_V01101SoftErrorKeepsDriver 验证：v01101 软错误（如设备返回 N05）
+// TestApplyConfig_V01101ErrorKeepsDriver 验证设备拒绝 v01101 时返回错误。
 // 不触发 handleConnectionLost，driver 保留在 shard，前端可继续 Disconnect/重试。
 //
 // 模拟方式：服务端回复一个非 A 的 ASCII 帧（模拟设备拒绝）。
 // 注意：P1604WriteUnitCoefficient 对非 A 非 N 的响应会返回 "unexpected v01101 response"，
 // 对 N 开头返回 "device rejected unit change"。这里用 N01 触发后者（软错误）。
-func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
+func TestApplyConfig_V01101ErrorKeepsDriver(t *testing.T) {
 	server, client := net.Pipe()
 
 	a := NewP1604Adapter()
@@ -1071,7 +1106,7 @@ func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
 	}
 	shard.mu.Unlock()
 
-	// 服务端：读掉 v01101 → 回复 N01 帧（设备拒绝，软错误）
+	// 服务端：读掉 v01101 → 回复 N01 帧。
 	go func() {
 		buf := make([]byte, 64)
 		_, _ = server.Read(buf)
@@ -1085,7 +1120,7 @@ func TestApplyConfig_V01101SoftErrorKeepsDriver(t *testing.T) {
 	if err == nil {
 		t.Fatal("ApplyConfig should return error on v01101 N01, got nil")
 	}
-	// 2. driver 必须保留（软错误不触发 handleConnectionLost）
+	// 设备拒绝命令不代表 TCP 已断开，driver 必须保留。
 	shard.mu.RLock()
 	_, driverExists := shard.drivers[id]
 	shard.mu.RUnlock()

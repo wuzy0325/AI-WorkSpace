@@ -36,10 +36,9 @@ const (
 	p1604UnitSyncTimeout = 2 * time.Second
 	// 覆盖 w1601 应答排空和单位同步；到期后直接关闭 socket，确保 Windows 上
 	// 偶发不响应 read deadline 的网络调用也能解除阻塞。
-	p1604HandshakeTimeout = 4 * time.Second
-	// p1604W1601DrainTimeout 排空 w1601 启用应答的最长等待时间。
-	// w1601 的 A 响应通常即时返回，100ms 内未读到则视为设备未发应答，继续后续流程。
-	p1604W1601DrainTimeout = 100 * time.Millisecond
+	p1604HandshakeTimeout       = 4 * time.Second
+	p1604CommandResponseTimeout = 2 * time.Second
+	p1604DrainTimeout           = 100 * time.Millisecond
 	// p1604CalibrationTimeout 零点校准（h 命令）等待设备响应的最长时间。
 	// 设备执行零点校准需要数百毫秒（内部 ADC 求平均），2s 余量足够覆盖网络抖动与
 	// 采集期间 readLoop 处理积压二进制帧的延迟。超时即视为设备无响应或连接已死。
@@ -276,11 +275,10 @@ func runConnectionHandshake(conn net.Conn, timeout time.Duration, handshake func
 // 锁策略：仅在读写共享状态时持锁，TCP 拨号和 w1601 命令在锁外执行
 //
 // 连接后单位同步流程：
-//  1. 发送 w1601 启用长度前缀，排空 w1601 的 A 应答
+//  1. 发送 w1601 启用长度前缀并校验 A 应答
 //  2. 发送 u01101 读取硬件 EU 压力转换系数，识别硬件当前压力单位
 //  3. 若硬件单位与 profile 配置不一致，以硬件为准更新 profile
 //     （硬件是数据源，配置侧标签必须与硬件一致，否则数值与单位不匹配）
-//  4. 若读不到硬件单位（如设备不支持 u01101），保留 profile 单位并记录 warn
 func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 	shard := a.shard(profile.ID)
 	shard.mu.Lock()
@@ -353,17 +351,16 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 		if err := driver.sendCommand("w1601"); err != nil {
 			return fmt.Errorf("enable length prefix: %w", err)
 		}
-		time.Sleep(50 * time.Millisecond)
-
-		// 排空 w1601 的 A 应答，避免污染后续 u01101 响应
-		sharedproto.DrainW1601Response(driver.frameReader, conn, p1604W1601DrainTimeout)
+		if err := sharedproto.P1604ReadCommandACK(driver.frameReader, conn, 0); err != nil {
+			return fmt.Errorf("enable length prefix response: %w", err)
+		}
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware-recv", DeviceID: profile.ID,
-			Message: "Command response", Detail: "w1601 -> A (ack, drained)",
+			Message: "Command response", Detail: "w1601 -> A",
 		})
 
 		var unitErr error
-		hwUnit, unitNote, unitErr = a.syncUnitFromHardware(driver, profile)
+		hwUnit, unitNote, unitErr = a.syncUnitFromHardware(driver, profile, 0)
 		if unitErr != nil {
 			return fmt.Errorf("sync unit from hardware: %w", unitErr)
 		}
@@ -419,49 +416,23 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 
 // syncUnitFromHardware 读取硬件 EU 压力转换系数并匹配为标准单位字符串
 //
-// 返回值：
-//   - unit: 识别到的硬件单位（如 "psi"、"kPa"）；读取失败返回 ""
-//   - note: 给日志使用的简短描述（如 "unit=psi (coeff=1.000000)"）
-//   - err: 仅在"连接已死"（对端 FIN/RST）时非空。其他软错误（超时、解析失败、
-//     系数未知）不返回 err，保留 profile 单位并继续连接流程——兼容旧固件/模拟器
-//
-// 连接已死的判定依据 sharedproto.IsConnResetByPeer：包含 io.EOF、connection reset、
-// broken pipe、WSAECONNABORTED 等。此时若继续把 driver 塞进 shard，后续任何命令
-// （StartAcquisition 的 c 00）都会爆 WSAECONNABORTED，且本地 TCP 已不可用，
-// 必须让 Connect 失败并关闭 conn，强制用户重连。
-//
 // 通信日志：u01101 命令通过 sharedproto.P1604ReadUnitCoefficient 发送，
 // 不走 driver.sendCommand，故在此补充 hardware-send/hardware-recv 日志，
 // 让前端 "通信" 分组能看到完整的连接阶段命令交互。
-func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.PressureProfile) (string, string, error) {
+func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.PressureProfile, timeout time.Duration) (string, string, error) {
 	// 打印 u01101 命令发送日志
 	a.emitLog(DeviceLogEntry{
 		Level: "info", Category: "hardware-send", DeviceID: profile.ID,
 		Message: "Command sent", Detail: "u01101 (read unit coefficient)",
 	})
-	coeff, err := sharedproto.P1604ReadUnitCoefficient(driver.frameReader, driver.conn, p1604UnitSyncTimeout)
+	coeff, err := sharedproto.P1604ReadUnitCoefficient(driver.frameReader, driver.conn, timeout)
 	if err != nil {
 		// 打印 u01101 响应失败日志（通信层）
 		a.emitLog(DeviceLogEntry{
 			Level: "warn", Category: "hardware-recv", DeviceID: profile.ID,
 			Message: "Command response error", Detail: fmt.Sprintf("u01101: %v", err),
 		})
-		// 关键分支：对端已 FIN/RST → 连接已死，返回 error 让 Connect 失败
-		if sharedproto.IsConnResetByPeer(err) {
-			a.emitLog(DeviceLogEntry{
-				Level: "error", Category: "hardware", DeviceID: profile.ID,
-				Message: "Connection reset by peer during unit sync",
-				Detail:  fmt.Sprintf("u01101: %v | aborting connect", err),
-			})
-			return "", "", fmt.Errorf("read u01101: %w", err)
-		}
-		// 软错误（超时/解析失败等）：保留 profile 单位，记录 warn（不阻断连接）
-		a.emitLog(DeviceLogEntry{
-			Level: "warn", Category: "hardware", DeviceID: profile.ID,
-			Message: "Read hardware unit failed, keep profile unit",
-			Detail:  fmt.Sprintf("%v | profile=%s", err, profile.P1604Cfg.Unit),
-		})
-		return "", fmt.Sprintf("unit=%s (hardware read failed)", profile.P1604Cfg.Unit), nil
+		return "", "", fmt.Errorf("read u01101: %w", err)
 	}
 	// 打印 u01101 响应日志（通信层，记录解析出的系数）
 	a.emitLog(DeviceLogEntry{
@@ -470,13 +441,12 @@ func (a *P1604Adapter) syncUnitFromHardware(driver *p1604Driver, profile core.Pr
 	})
 	hwUnit, matched := sharedproto.P1604MatchUnitByCoefficient(coeff)
 	if !matched {
-		// 系数不在标准表内：保留 profile 单位，记录 warn 并暴露实际系数便于排查
 		a.emitLog(DeviceLogEntry{
-			Level: "warn", Category: "hardware", DeviceID: profile.ID,
+			Level: "error", Category: "hardware", DeviceID: profile.ID,
 			Message: "Hardware unit coefficient unknown",
-			Detail:  fmt.Sprintf("coeff=%f | profile=%s", coeff, profile.P1604Cfg.Unit),
+			Detail:  fmt.Sprintf("coeff=%f", coeff),
 		})
-		return "", fmt.Sprintf("unit=%s (hardware coeff=%f unknown)", profile.P1604Cfg.Unit, coeff), nil
+		return "", "", fmt.Errorf("unknown hardware unit coefficient: %f", coeff)
 	}
 	if hwUnit != profile.P1604Cfg.Unit {
 		// 硬件与 profile 不一致：以硬件为准
@@ -513,9 +483,6 @@ func syncChannelsUnit(channels []core.ChannelConfig, globalUnit string) {
 		}
 	}
 }
-
-// 注：drainW1601Response 已下沉到 shared.local/device-sdk/go/protocol（conn_helpers.go），
-// 调用处直接使用 sharedproto.DrainW1601Response。
 
 // Disconnect 断开设备连接
 //
@@ -594,8 +561,11 @@ func (a *P1604Adapter) Disconnect(id string) error {
 
 	// 等待 readLoop 退出后再操作连接，避免 ReadFrame 与 Close 竞争。
 	// join 超时仅是兜底，正常情况下 readLoop 在 200ms 读超时内就会观察到 stop。
-	if driver != nil && wasAcquiring {
-		driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
+	if driver != nil && wasAcquiring && !driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout) {
+		connected = false
+		if driver.conn != nil {
+			_ = driver.conn.Close()
+		}
 	}
 	// 等待 idleReadLoop 退出，避免它与 conn.Close 竞争（CONN-008）。
 	// idleStop 非 nil 表示本次 Disconnect 触发了 close，必须 join；
@@ -604,15 +574,9 @@ func (a *P1604Adapter) Disconnect(id string) error {
 		driver.joinIdleLoop(id, sharedproto.ReadLoopJoinTimeout)
 	}
 
-	// 在锁外执行 I/O：发送停止命令和关闭连接
+	var stopErr error
 	if wasAcquiring && connected && driver != nil {
-		if err := driver.sendCommand("c 02 1"); err != nil {
-			if sharedproto.IsConnectionFault(err) {
-				slog.Debug("DAQ-P-1604 stop stream on disconnect: connection already gone", "device", id, "error", err)
-			} else {
-				slog.Warn("DAQ-P-1604 stop stream on disconnect failed", "device", id, "error", err)
-			}
-		}
+		stopErr = driver.sendCommandACK("c 02 1")
 	}
 	if driver != nil && driver.conn != nil {
 		_ = driver.conn.Close()
@@ -629,6 +593,9 @@ func (a *P1604Adapter) Disconnect(id string) error {
 		Level: "info", Category: "hardware", DeviceID: id,
 		Message: "Device disconnected",
 	})
+	if stopErr != nil {
+		return fmt.Errorf("stop stream before disconnect: %w", stopErr)
+	}
 	return nil
 }
 
@@ -663,14 +630,18 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	shard.stopChs[id] = done
 	shard.mu.Unlock()
 
-	// 以下命令在锁外执行，避免阻塞其他设备操作
+	// 命令应答必须由当前操作同步读取，先停止 idleReadLoop，避免抢读 ACK。
+	stoppedIdle := a.stopIdleLoop(id, driver)
+	driver.frameReader.Reset()
+	sharedproto.DrainConnection(driver.conn, p1604DrainTimeout)
+
 	// 配置数据流参数：c 00 <st> <mask> <sync> <per> <fmt> <mode>
 	periodMs := driver.profile.P1604Cfg.SamplingRate
-	if err := driver.sendCommand(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
+	if err := driver.sendCommandACK(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
 		a.rollbackAcquisition(id, ch, done)
+		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("set stream params: %w", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	// 配置流返回内容：0010=压力，0400=设备时间戳，0800=大气压力/温度
 	// 掩码按 profile.UseDeviceTimestamp 动态构建：
@@ -683,15 +654,16 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	}
 	contentMask |= 0x0800 // 始终包含大气数据
 	contentMaskHex := fmt.Sprintf("%04X", contentMask)
-	if err := driver.sendCommand(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
+	if err := driver.sendCommandACK(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
 		a.rollbackAcquisition(id, ch, done)
+		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("set stream content: %w", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	// 启动数据流
-	if err := driver.sendCommand("c 01 1"); err != nil {
+	if err := driver.sendCommandACK("c 01 1"); err != nil {
 		a.rollbackAcquisition(id, ch, done)
+		a.restartIdleLoop(id, driver, stoppedIdle)
 		return nil, fmt.Errorf("start stream: %w", err)
 	}
 
@@ -708,35 +680,12 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	// 重置 stop 状态，准备启动新的 readLoop
 	driver.readLoopDone = make(chan struct{})
 	driver.ClearStopReason()
-	// 关闭 idleReadLoop：采集期间由 readLoop 接管 frameReader，idleReadLoop 必须停止
-	// 避免 readLoop 和 idleReadLoop 同时操作 driver.conn 造成数据竞争。
-	// 锁内仅 close channel（无阻塞），锁外再 join，避免持锁等待 goroutine。
-	// close 前保存引用避免 race，nil 时跳过（Connect 必然已初始化，此处 nil 是冗余防御）。
-	idleStop := func() chan struct{} {
-		if driver.idleStopCh == nil {
-			return nil
-		}
-		ch := driver.idleStopCh
-		select {
-		case <-ch: // 已关闭，避免重复 close panic
-		default:
-			close(ch)
-		}
-		driver.idleStopCh = nil // 标记已停止，避免 Disconnect/StopAcquisition 重复 close
-		return ch
-	}()
+	driver.idleStopCh = nil
 	if st, exists := shard.status[id]; exists {
 		st.SetStatus(core.StatusAcquiring)
 		st.AcquiringAt = core.TimestampMs()
 	}
 	shard.mu.Unlock()
-
-	// 锁外等待 idleReadLoop 退出：必须先 join 再启动 readLoop，
-	// 否则 readLoop 与残留的 idleReadLoop 会同时 Read driver.conn 造成数据竞争。
-	// join 超时仅是兜底（正常 idleReadLoop 在 p1604IdleCheckInterval=1s 内观察到 stop）。
-	if idleStop != nil {
-		driver.joinIdleLoop(id, sharedproto.ReadLoopJoinTimeout)
-	}
 
 	// 启动读取循环
 	go a.readLoop(id, driver, done)
@@ -776,7 +725,7 @@ func (a *P1604Adapter) driverSendCommandSafe(id, cmd string) error {
 	if !ok || driver == nil {
 		return fmt.Errorf("device %s not connected", id)
 	}
-	return driver.sendCommand(cmd)
+	return driver.sendCommandACK(cmd)
 }
 
 // StopAcquisition 停止数据采集
@@ -828,18 +777,16 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 	shard.mu.Unlock()
 
 	// 等待 readLoop 退出，避免它和后续命令并发使用同一 conn
-	if driver != nil && wasAcquiring {
-		driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout)
+	if driver != nil && wasAcquiring && !driver.joinReadLoop(id, sharedproto.ReadLoopJoinTimeout) {
+		a.handleConnectionLost(id, driver, fmt.Errorf("read loop did not exit after stop; reconnect required"))
+		return fmt.Errorf("read loop did not exit after stop; reconnect required")
 	}
 
 	// 仅在确实在采集且连接有效时，才在锁外发送停止命令
 	if wasAcquiring && connected && driver != nil {
-		if err := driver.sendCommand("c 02 1"); err != nil {
-			if sharedproto.IsConnectionFault(err) {
-				slog.Debug("DAQ-P-1604 stop stream: connection already gone", "device", id, "error", err)
-			} else {
-				slog.Warn("DAQ-P-1604 stop stream command failed", "device", id, "error", err)
-			}
+		if err := driver.sendCommandACK("c 02 1"); err != nil {
+			a.handleConnectionLost(id, driver, fmt.Errorf("stop stream: %w", err))
+			return fmt.Errorf("stop stream: %w", err)
 		}
 	}
 
@@ -973,10 +920,9 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 		shard.mu.Unlock()
 	}()
 
-	// 清理残留数据：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
-	// 或上一条命令延迟到达的应答。否则 ReadFrame 会把残留当作 h 响应读出。
+	// 清理上次采集停止后尚未读完的二进制流数据帧。
 	driver.frameReader.Reset()
-	if drained := sharedproto.DrainConnection(driver.conn, p1604W1601DrainTimeout); drained > 0 {
+	if drained := sharedproto.DrainConnection(driver.conn, p1604DrainTimeout); drained > 0 {
 		slog.Debug("DAQ-P-1604 drained residual data before zero calibration",
 			"device", id, "bytes", drained)
 	}
@@ -1023,17 +969,19 @@ func verifyZeroCalibrationResponse(resp []byte) error {
 	return fmt.Errorf("零点校准响应异常: %q", s)
 }
 
-// joinReadLoop 等待 readLoop 关闭其 done channel；超时仅日志，不阻塞调用方。
+// joinReadLoop 等待 readLoop 关闭其 done channel，并返回是否已退出。
 // 调用方通常先 close(stop) + 标记 stopReason，然后调用本方法等待 readLoop 退出，
 // 再安全 conn.Close。driver 为 nil 或 readLoop 未启动时直接返回。
-func (d *p1604Driver) joinReadLoop(id string, timeout time.Duration) {
+func (d *p1604Driver) joinReadLoop(id string, timeout time.Duration) bool {
 	if d == nil || d.readLoopDone == nil {
-		return
+		return true
 	}
 	select {
 	case <-d.readLoopDone:
+		return true
 	case <-time.After(timeout):
 		slog.Warn("DAQ-P-1604 readLoop join timeout", "device", id, "timeout", timeout)
+		return false
 	}
 }
 
@@ -1078,6 +1026,21 @@ func (a *P1604Adapter) stopIdleLoop(id string, driver *p1604Driver) chan struct{
 	return stopCh
 }
 
+func (a *P1604Adapter) restartIdleLoop(id string, driver *p1604Driver, stopped chan struct{}) {
+	if driver == nil || stopped == nil {
+		return
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if shard.drivers[id] != driver || driver.conn == nil || driver.acquiring || driver.idleStopCh != stopped {
+		return
+	}
+	driver.idleStopCh = make(chan struct{})
+	driver.idleLoopDone = make(chan struct{})
+	go a.idleReadLoop(id, driver, driver.idleStopCh)
+}
+
 // idleReadLoop 非采集期间周期性短超时 Read，感知 TCP keepalive 失败（CONN-008）。
 //
 // 必要性：
@@ -1092,7 +1055,6 @@ func (a *P1604Adapter) stopIdleLoop(id string, driver *p1604Driver) chan struct{
 //  2. Read 返回非 timeout 错误（keepalive 失败 / 对端 FIN）→ 调用 handleConnectionLost
 //  3. 调用方主动停止场景（Disconnect 期间 SetStopReason）→ 静默退出
 //
-// 读到的数据视为延迟到达的命令应答，丢弃即可——非采集期间不期望有数据流。
 // 退出前必须 close(idleLoopDone)，让 StartAcquisition / Disconnect 能 join 到本协程。
 func (a *P1604Adapter) idleReadLoop(id string, driver *p1604Driver, stop <-chan struct{}) {
 	defer close(driver.idleLoopDone)
@@ -1120,12 +1082,9 @@ func (a *P1604Adapter) idleReadLoop(id string, driver *p1604Driver, stop <-chan 
 			a.handleConnectionLost(id, driver, fmt.Errorf("idle keepalive check: %w", err))
 			return
 		}
-		// 读到数据（延迟到达的命令应答），丢弃并记录 debug 日志
 		if n > 0 {
-			a.emitLog(DeviceLogEntry{
-				Level: "debug", Category: "hardware-recv", DeviceID: id,
-				Message: "Idle read drained", Detail: fmt.Sprintf("%d bytes (late ack)", n),
-			})
+			a.handleConnectionLost(id, driver, fmt.Errorf("unexpected data while idle: %d bytes", n))
+			return
 		}
 	}
 }
@@ -1220,15 +1179,10 @@ func (a *P1604Adapter) ApplyConfig(id string, cfg core.P1604Config) error {
 		if !ok {
 			return fmt.Errorf("unsupported unit: %s", cfg.Unit)
 		}
-		// 清理 FrameReader 内部 buf 与 TCP 接收缓冲区的残留数据。
-		// 残留来源：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
-		// 或上一条命令延迟到达的应答。若不清理，P1604WriteUnitCoefficient 的
-		// ReadFrame 会把残留当作 v01101 响应读出，触发
-		// "unexpected v01101 response: <二进制乱码>"。
-		// 必须先 fr.Reset()（清 buf）再 DrainConnection（清 TCP 缓冲区），
-		// 顺序不能反：DrainConnection 读裸字节，不会清 FrameReader.buf。
+		// 清理上次采集停止后尚未读完的二进制流数据帧。
+		// 必须先清 FrameReader 缓冲区，再清 TCP 接收缓冲区。
 		driver.frameReader.Reset()
-		if drained := sharedproto.DrainConnection(driver.conn, p1604W1601DrainTimeout); drained > 0 {
+		if drained := sharedproto.DrainConnection(driver.conn, p1604DrainTimeout); drained > 0 {
 			slog.Debug("DAQ-P-1604 drained residual data before ApplyConfig",
 				"device", id, "bytes", drained)
 		}
@@ -1534,6 +1488,22 @@ func (d *p1604Driver) sendCommand(cmd string) error {
 		})
 	}
 	return sharedproto.SendCommandNoNewline(d.conn, cmd, p1604CommandTimeout)
+}
+
+func (d *p1604Driver) sendCommandACK(cmd string) error {
+	if err := d.sendCommand(cmd); err != nil {
+		return err
+	}
+	if err := sharedproto.P1604ReadCommandACK(d.frameReader, d.conn, p1604CommandResponseTimeout); err != nil {
+		return fmt.Errorf("%s response: %w", cmd, err)
+	}
+	if d.emit != nil {
+		d.emit(DeviceLogEntry{
+			Level: "info", Category: "hardware-recv", DeviceID: d.profile.ID,
+			Message: "Command response", Detail: cmd + " -> A",
+		})
+	}
+	return nil
 }
 
 // 注：isConnectionFault 已下沉到 shared.local/device-sdk/go/protocol（conn_helpers.go），

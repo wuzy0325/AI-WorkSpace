@@ -266,12 +266,13 @@ func TestDrainConnection_DrainsAndStops(t *testing.T) {
 	}
 }
 
-func TestDrainW1601Response_NilArgs(t *testing.T) {
-	// 不应 panic
-	DrainW1601Response(nil, nil, 100*time.Millisecond)
+func TestP1604ReadCommandACK_NilArgs(t *testing.T) {
+	if err := P1604ReadCommandACK(nil, nil, 100*time.Millisecond); err == nil {
+		t.Fatal("expected error for nil reader and conn")
+	}
 }
 
-func TestDrainW1601Response_ReadsFrame(t *testing.T) {
+func TestP1604ReadCommandACK_ReadsFrame(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
@@ -282,6 +283,82 @@ func TestDrainW1601Response_ReadsFrame(t *testing.T) {
 	}()
 
 	fr := NewFrameReader(client)
-	// 应能读出这一帧且不阻塞
-	DrainW1601Response(fr, client, 500*time.Millisecond)
+	if err := P1604ReadCommandACK(fr, client, 500*time.Millisecond); err != nil {
+		t.Fatalf("read w1601 response: %v", err)
+	}
+}
+
+type deadlineTrackingConn struct {
+	net.Conn
+	readDeadlineCalls  int
+	writeDeadlineCalls int
+}
+
+func (c *deadlineTrackingConn) SetReadDeadline(t time.Time) error {
+	c.readDeadlineCalls++
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *deadlineTrackingConn) SetWriteDeadline(t time.Time) error {
+	c.writeDeadlineCalls++
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func TestP1604ReadCommandACK_ZeroTimeoutDoesNotSetDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	tracked := &deadlineTrackingConn{Conn: client}
+	go func() {
+		writeFrame(t, server, "A")
+	}()
+
+	if err := P1604ReadCommandACK(NewFrameReader(tracked), tracked, 0); err != nil {
+		t.Fatalf("read ACK without deadline: %v", err)
+	}
+	if tracked.readDeadlineCalls != 0 {
+		t.Fatalf("SetReadDeadline called %d times, want 0", tracked.readDeadlineCalls)
+	}
+}
+
+func TestP1604ReadCommandACK_RejectsDeviceError(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	go func() {
+		writeFrame(t, server, "N05")
+	}()
+
+	err := P1604ReadCommandACK(NewFrameReader(client), client, 500*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "N05") {
+		t.Fatalf("expected N05 error, got %v", err)
+	}
+}
+
+func TestP1604ReadCommandACK_RejectsUnexpectedPayload(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	go func() {
+		writeFrame(t, server, "A ")
+	}()
+
+	err := P1604ReadCommandACK(NewFrameReader(client), client, 500*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "unexpected command response") {
+		t.Fatalf("expected strict payload error, got %v", err)
+	}
+}
+
+func TestP1604ReadCommandACK_TimesOutWithoutResponse(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	err := P1604ReadCommandACK(NewFrameReader(client), client, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
 }

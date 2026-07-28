@@ -76,7 +76,7 @@ Reference: `docs/runbooks/development-rules.md` (sections 8–12).
 1. **Frontend-backend separation** — Frontend displays, backend decides. If swapping Vue for a web UI would still need this logic, put it in Go backend.
 2. **Program to interfaces** — All external deps via `ports`. Strategy for multi-device, Observer for real-time data. New device = new adapter, zero core changes.
 3. **Readability first** — One function, one job. Business-domain names, no abbreviations. Max 3 nesting levels. Comments explain why, not what.
-4. **Boundary defense** — Validate at edges (user input, device responses). Trust internal callers. Timeout + retry on all hardware I/O. No silent error swallowing.
+4. **Boundary defense** — Validate at edges (user input, device responses). Trust internal callers. Timeout + retry on all hardware I/O. On the affected field Windows environment, Go socket deadlines do not reliably unblock an in-flight read; bounded hardware I/O must also have an independent watchdog/cancellation owner that can call `conn.Close()` without waiting for the I/O goroutine or its locks. A watchdog-closed connection is invalid and must be reconnected. See ADR-009. No silent error swallowing.
 5. **Long-term stability** — Explicit cleanup (defer, context). Pre-allocate buffers on hot paths. Log state changes at info, communication at debug. Externalize all config.
 
 ## Workspace Structure

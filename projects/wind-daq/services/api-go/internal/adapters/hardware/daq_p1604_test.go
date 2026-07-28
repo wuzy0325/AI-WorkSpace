@@ -30,6 +30,48 @@ func TestRunDAQP1604HandshakeTimesOutAndClosesConn(t *testing.T) {
 	}
 }
 
+func TestDAQP1604StopClosesConnWhenReadLoopDoesNotExit(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	d := NewDAQP1604(device.Profile{ID: "test-stop-stuck-reader", Type: device.DeviceDAQP1604})
+	d.mu.Lock()
+	d.conn = client
+	d.frameReader = sharedproto.NewFrameReader(client)
+	d.acquiring = true
+	d.stop = make(chan struct{})
+	d.readLoopDone = make(chan struct{})
+	d.status.Connection = device.ConnectionAcquiring
+	d.status.Acquiring = true
+	d.mu.Unlock()
+
+	err := d.StopAcquisition()
+	if err == nil || !strings.Contains(err.Error(), "reconnect required") {
+		t.Fatalf("StopAcquisition error = %v, want reconnect required", err)
+	}
+
+	_ = server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 16)
+	n, readErr := server.Read(buf)
+	if n != 0 {
+		t.Fatalf("received command after read-loop timeout: %q", string(buf[:n]))
+	}
+	if readErr == nil {
+		t.Fatal("server read should fail after client connection is closed")
+	}
+
+	d.mu.RLock()
+	conn := d.conn
+	status := d.status.Connection
+	d.mu.RUnlock()
+	if conn != nil {
+		t.Fatal("connection should be cleared after read-loop timeout")
+	}
+	if status != device.ConnectionError {
+		t.Fatalf("connection status = %v, want Error", status)
+	}
+}
+
 // TestDAQP1604_SyncUnitFromHardware_EOFReturnsError 验证：u01101 读到 io.EOF 时
 // syncUnitFromHardware 必须返回 error（连接已死），不能当作软错误吞掉。
 //
@@ -67,7 +109,7 @@ func TestDAQP1604_SyncUnitFromHardware_EOFReturnsError(t *testing.T) {
 		_ = server.Close()
 	}()
 
-	err := d.syncUnitFromHardware()
+	err := d.syncUnitFromHardware(DAQ_P_1604_TIMEOUT)
 	if err == nil {
 		t.Fatal("syncUnitFromHardware should return error on EOF, got nil")
 	}
@@ -145,11 +187,11 @@ func TestDAQP1604_SetUnit_V01101EOFTriggersOnError(t *testing.T) {
 	}
 }
 
-// TestDAQP1604_SetUnit_V01101SoftErrorKeepsDriver 验证：v01101 软错误（如设备返回 N01）
+// TestDAQP1604_SetUnit_V01101ErrorKeepsDriver 验证设备拒绝 v01101 时返回错误。
 // 不触发 driver 清理，driver 保留在 map 中，前端可继续 Disconnect/重试。
 //
 // 模拟方式：服务端回复 N01 帧（设备拒绝，软错误）。
-func TestDAQP1604_SetUnit_V01101SoftErrorKeepsDriver(t *testing.T) {
+func TestDAQP1604_SetUnit_V01101ErrorKeepsDriver(t *testing.T) {
 	server, client := net.Pipe()
 
 	d := NewDAQP1604(device.Profile{
@@ -170,7 +212,7 @@ func TestDAQP1604_SetUnit_V01101SoftErrorKeepsDriver(t *testing.T) {
 		atomic.StoreInt32(&onErrorCalled, 1)
 	})
 
-	// 服务端：读掉 v01101 → 回复 N01 帧（设备拒绝，软错误）
+	// 服务端：读掉 v01101 → 回复 N01 帧。
 	go func() {
 		buf := make([]byte, 64)
 		_, _ = server.Read(buf)
@@ -184,7 +226,7 @@ func TestDAQP1604_SetUnit_V01101SoftErrorKeepsDriver(t *testing.T) {
 	if err == nil {
 		t.Fatal("SetUnit should return error on v01101 N01, got nil")
 	}
-	// 2. driver 必须保留（软错误不触发清理）
+	// 设备拒绝命令不代表 TCP 已断开，driver 必须保留。
 	d.mu.RLock()
 	conn := d.conn
 	fr := d.frameReader

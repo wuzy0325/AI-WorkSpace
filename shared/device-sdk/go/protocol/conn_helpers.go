@@ -187,9 +187,6 @@ const drainMaxIters = 3
 // 返回值：累计读到的字节数。调用方可据此决定是否打 debug 日志（例如
 // wind-daq 原实现就有 "drained residual data" 的日志）。
 //
-// 与 DrainW1601Response 的区别：本函数用于"通用排空"（启动采集前清空连接缓冲区），
-// 直接读裸字节；DrainW1601Response 用于"按帧排空 w1601 应答"，使用 FrameReader。
-//
 // nil 容忍：conn 为 nil 时返回 0，不 panic。
 func DrainConnection(conn net.Conn, timeout time.Duration) int {
 	if conn == nil {
@@ -211,27 +208,37 @@ func DrainConnection(conn net.Conn, timeout time.Duration) int {
 	return totalDrained
 }
 
-// DrainW1601Response 排空 w1601 启用应答。
+// P1604ReadCommandACK 读取并校验 DAQ-P-1604 命令应答。
 //
-// w1601 启用长度前缀后，设备会回一个 A 应答（带长度前缀的 1 字节 ASCII）。
-// 若不排空，该应答会被后续 u01101 的 ReadFrame 误读为 u01101 响应。
+// 成功应答固定为 3 字节：[0x00, 0x03, 'A']。前两个字节是包含前缀的
+// 整帧长度，FrameReader 返回的 payload 必须精确等于 "A"。
 //
-// 超时即返回：设备未发应答或应答已丢失均不视为错误。
-// 最多读 2 次以容忍延迟到达的应答。
-//
-// nil 容忍：reader 或 conn 为 nil 时直接返回，不 panic。
-// 退出前清理 read deadline，与 DrainConnection 行为保持一致。
-func DrainW1601Response(reader *FrameReader, conn net.Conn, timeout time.Duration) {
-	if reader == nil || conn == nil {
-		return
+// timeout > 0 时设置本次读取 deadline；timeout == 0 时不设置 deadline，
+// 由调用方通过关闭连接解除阻塞。
+// Nxx、其他载荷、读取失败和超时均返回错误。
+func P1604ReadCommandACK(reader *FrameReader, conn net.Conn, timeout time.Duration) error {
+	if reader == nil {
+		return fmt.Errorf("frame reader is nil")
 	}
-	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
-	for i := 0; i < 2; i++ {
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		_, err := reader.ReadFrame()
-		if err != nil {
-			// 超时或错误：不再继续读，剩余数据（若有）由后续命令的 ReadFrame 处理
-			return
+	if conn == nil {
+		return fmt.Errorf("conn is nil")
+	}
+	if timeout > 0 {
+		defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return fmt.Errorf("set read deadline: %w", err)
 		}
 	}
+	payload, err := reader.ReadFrame()
+	if err != nil {
+		return fmt.Errorf("read command response: %w", err)
+	}
+	response := string(payload)
+	if response == "A" {
+		return nil
+	}
+	if strings.HasPrefix(response, "N") {
+		return fmt.Errorf("device returned error: %s", response)
+	}
+	return fmt.Errorf("unexpected command response: %q", response)
 }

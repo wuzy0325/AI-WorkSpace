@@ -132,6 +132,9 @@ func (s *NetworkScanner) scanWithSocket(
 	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
 		return nil
 	}
+	// Close is the hard timeout when a Windows network driver ignores deadlines.
+	watchdog := time.AfterFunc(s.timeout, func() { _ = conn.Close() })
+	defer watchdog.Stop()
 
 	seen := make(map[string]bool)
 	var devices []device.ScanResult
