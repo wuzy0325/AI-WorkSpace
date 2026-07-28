@@ -1,6 +1,7 @@
 package hardware
 
 import (
+	"encoding/binary"
 	"errors"
 	"net"
 	"strings"
@@ -11,6 +12,15 @@ import (
 	"daq-p1604/core"
 	sharedproto "shared.local/device-sdk/go/protocol"
 )
+
+const zeroCalibrationCoefficients = "-0.008106 -0.012445 -0.020647 -0.000668 -0.015450 -0.030518 -0.015354 -0.005031 -0.021625 -0.006795 -0.019813 0.013423 -0.014782 -0.002360 -0.013113 0.002527"
+
+func framedASCII(payload string) []byte {
+	frame := make([]byte, 2+len(payload))
+	binary.BigEndian.PutUint16(frame, uint16(len(frame)))
+	copy(frame[2:], payload)
+	return frame
+}
 
 // TestEnableTCPKeepalive_TCPConn 验证对真实 TCP 连接启用 keepalive 成功。
 // 使用本地 TCP listener 建立连接，调用后应无错误。
@@ -605,8 +615,7 @@ func TestZeroCalibration_WhileAcquiringSendsHardwareCommand(t *testing.T) {
 		buf := make([]byte, 16)
 		n, _ := server.Read(buf)
 		command <- string(buf[:n])
-		// 回送 "A" 响应（2 字节大端长度前缀 + 1 字节 ASCII payload）
-		_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+		_, _ = server.Write(framedASCII(zeroCalibrationCoefficients))
 	}()
 
 	if err := a.ZeroCalibration(id); err != nil {
@@ -668,7 +677,7 @@ func TestZeroCalibration_WaitsForAcquisitionTransition(t *testing.T) {
 		_ = server.SetReadDeadline(time.Now().Add(time.Second))
 		n, _ := server.Read(buf)
 		if string(buf[:n]) == "h" {
-			_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+			_, _ = server.Write(framedASCII(zeroCalibrationCoefficients))
 		}
 	}()
 
@@ -751,7 +760,7 @@ func TestApplyConfig_WaitsForAcquisitionTransition(t *testing.T) {
 // TestZeroCalibration_IdleSuccess 验证空闲期间请求/响应路径成功。
 //
 // 测试前置：构造未采集的 driver + idleStopCh/idleLoopDone（idleReadLoop 占位）。
-// 测试步骤：服务端读 "h" 命令后回 "A" 响应，调用 ZeroCalibration。
+// 测试步骤：服务端读 "h" 命令后回 16 路零位系数，调用 ZeroCalibration。
 // 期待结果：返回 nil，driver.idleStopCh 被重启为新 channel（说明 defer 重启了 idleReadLoop）。
 func TestZeroCalibration_IdleSuccess(t *testing.T) {
 	server, client := net.Pipe()
@@ -789,7 +798,7 @@ func TestZeroCalibration_IdleSuccess(t *testing.T) {
 	go func() {
 		buf := make([]byte, 16)
 		_, _ = server.Read(buf) // 读 "h" 命令
-		_, _ = server.Write([]byte{0x00, 0x03, 'A'})
+		_, _ = server.Write(framedASCII(zeroCalibrationCoefficients))
 	}()
 
 	if err := a.ZeroCalibration(id); err != nil {
@@ -882,6 +891,34 @@ func TestZeroCalibration_DeviceRejectsWithNxx(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "拒绝") {
 		t.Errorf("error should mention device rejection, got: %v", err)
+	}
+}
+
+func TestVerifyZeroCalibrationResponse_AcceptsSixteenZeroCoefficients(t *testing.T) {
+	resp := []byte(zeroCalibrationCoefficients)
+
+	if err := verifyZeroCalibrationResponse(resp); err != nil {
+		t.Fatalf("valid zero coefficient response rejected: %v", err)
+	}
+}
+
+func TestVerifyZeroCalibrationResponse_RejectsMalformedCoefficients(t *testing.T) {
+	tests := []struct {
+		name string
+		resp string
+	}{
+		{name: "ack only", resp: "A"},
+		{name: "too few", resp: "0.1 0.2"},
+		{name: "not numeric", resp: "0 0 0 0 0 0 0 bad 0 0 0 0 0 0 0 0"},
+		{name: "not finite", resp: "0 0 0 0 0 0 0 NaN 0 0 0 0 0 0 0 0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := verifyZeroCalibrationResponse([]byte(tt.resp)); err == nil {
+				t.Fatalf("malformed response accepted: %q", tt.resp)
+			}
+		})
 	}
 }
 

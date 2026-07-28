@@ -3,7 +3,9 @@ package hardware
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -891,7 +893,7 @@ func (a *P1604Adapter) zeroCalibrationViaReadLoop(id string, driver *p1604Driver
 		// 成功路径补充通信日志：readLoop 已将响应路由到本方法，不再走 processPayload 的日志分支
 		a.emitLog(DeviceLogEntry{
 			Level: "info", Category: "hardware-recv", DeviceID: id,
-			Message: "Command response", Detail: "h -> A (ack, zero calibration ok)",
+			Message: "Command response", Detail: "h -> " + strings.TrimSpace(string(resp)),
 		})
 		return nil
 	case <-time.After(p1604CalibrationTimeout):
@@ -951,20 +953,30 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 	}
 	a.emitLog(DeviceLogEntry{
 		Level: "info", Category: "hardware-recv", DeviceID: id,
-		Message: "Command response", Detail: "h -> A (ack, zero calibration ok)",
+		Message: "Command response", Detail: "h -> " + strings.TrimSpace(string(resp)),
 	})
 	return nil
 }
 
-// verifyZeroCalibrationResponse 校验设备对 h 命令的响应。
-// 设备协议：A = 成功；Nxx = 错误码（如 N05 数据字段错误）；其他 = 异常响应。
+// verifyZeroCalibrationResponse 校验设备对 h 命令返回的 16 路新零位系数。
 func verifyZeroCalibrationResponse(resp []byte) error {
 	s := strings.TrimSpace(string(resp))
-	if s == "A" {
-		return nil
-	}
 	if strings.HasPrefix(s, "N") {
 		return fmt.Errorf("零点校准被设备拒绝: %s", s)
+	}
+	fields := strings.Fields(s)
+	if len(fields) == 16 {
+		valid := true
+		for _, field := range fields {
+			value, err := strconv.ParseFloat(field, 64)
+			if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return nil
+		}
 	}
 	return fmt.Errorf("零点校准响应异常: %q", s)
 }
