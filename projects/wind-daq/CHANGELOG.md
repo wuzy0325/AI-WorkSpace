@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.11.2] - 2026-07-29
+
+### Fixed
+
+- 修复双探针遍历测试开始后实时压力值与插值结果冻结的问题。原 C6 修复为避免 DAQ 快照与后端 `latestData` 异步竞态导致抖动，在运行态（running/moving/stabilizing/acquiring）抑制 `onSnapshot` 写入 `realtimePressures`；但 `latestData` 实际来自已保存测点的平均值（历史值，非实时值），导致开始测试后界面冻结在上一个测点或空值，直到下一个测点保存才更新。现撤销该抑制，`onSnapshot` 在所有状态下持续更新 `realtimePressures`，`onProgress.latestData` 仅在测点完成时提供权威插值结果覆盖。新增测试覆盖 moving/acquiring 子状态下 `onSnapshot` 持续更新行为。
+- 修复总压校准实时画面概览页"系数卡片"内的马赫数/速度不实时刷新的问题。原实现读 `latestCoefficients.machNumber/velocity`（上一点采集完成时的快照），两点之间不刷新；现改为读 `physics?.machNumber/velocity`（来自后端 `livePhysics` 的 5Hz 推送），与五孔校准和侧边栏"关键数据"卡片的数据源对齐。侧边栏 Ma/V 原本即实时，未改动。数据 Tab 表格中的 Ma/V 列按行渲染每点系数快照，是历史数据，非实时，未改动。
+- 修复双探针遍历模式三个问题：1) 运动控制器紧急停止接触后状态未刷新仍显示急停（新增 `refreshStatus()` + `requestFastPolling()` 快速轮询）；2) 不允许配置同一控制器的不同轴（admission 改为 `(controllerID, axis)` 元组粒度，新增 `TestManagerRegistry_Start_SameControllerDifferentAxesAllowed` 等测试覆盖）；3) 误判不同控制器为冲突（前端 `DualTraversalSettings.vue` 改用 ID 比较而非引用比较）。
+- 修复双探针遍历实时压力卡片未读取用户在硬件配置步骤逐通道设置的 `precision` 字段的问题。原实现硬编码 `toFixed(3)`，现从 `ch.precision` 提取精度并缺省回退 3，与单探针模式 `useTraversalRealtimeData.ts` 行为对齐。
+- 修复遍历视图插值状态栏布局抖动问题（`interpStatus` 切换时高度跳变）。
+- 加固 DAQ-T-1603 TCP Dial 路径：原代码缺少 watchdog 兜底，在特定 Windows 环境下 `SetReadDeadline` 失效导致 Dial 永不返回。新增 goroutine + `time.After` 软超时，超时后 `conn.Close()` 解除阻塞。同时修复 T1603 已持 `d.mu` 时再次 `Lock()` 导致自死锁、`drainConnection` watchdog 触发后未清理连接状态等问题。
+- 加固 DAQ-P-1064Pre `sendCommand` 在 Write/Read 失败且 watchdog 触发时未调用 `invalidateConnection()` 清空 `d.conn` 的问题，确保上层收到失效通知触发重连。
+- 加固 UDP 设备发现：新增 `discovery_socket_windows.go` 分平台实现，Windows 下使用原生 socket + 软超时兜底，防止 `SetReadDeadline` 失效导致扫描永久阻塞；并发扫描保护避免多 goroutine 同时触发发现冲突。
+- 加固网络超时取消：所有 sendCommandACK 调用必须循环 ReadFrame 跳过非 ASCII 帧（压力帧），直到读到 ASCII 'A'/'Nxx' 或达到 20 帧上限；StopAcquisition 和 Disconnect 调用 sendCommandACK 前必须 `frameReader.Reset()` 清空残留数据。
+- 加固诊断工具（p1604-unit-diag、p1604-ts-diag、freqprobe、frameprobe）：新增 5 分钟进程级硬 watchdog，超时后 `conn.Close()` + `os.Exit(2)`，防止永久卡死。
+- 加固 `simulator.go`：`Start(ctx)` 监听 `ctx.Done()` 实现自动 Close；所有 goroutine 纳入 `sync.WaitGroup`，`Close()` 中 `wg.Wait()`；`cmdLoopIdle` 内层循环仅设置一次 idle deadline。
+
+### Changed
+
+- Wails 网络协议层一致性整改：`IsWatchdogTriggered` 改用 sentinel error + `errors.Is` 替代字符串匹配；`WatchdogClose` 入口增加 nil/timeout 防御性检查；`DialTCP` timeout 分支启动 goroutine 关闭 conn 防 FD 泄漏；`dsa3217.readLoop` defer 块检查 conn 失效时跳过 onError 避免双重调用；`daq_t1603.Disconnect` 在 stopAcquisitionLocked 返回 error 时保留 Error 状态不掩盖 invalidate。
+- 静态分析集成：`scripts/validate-structure.ps1` pre-submit 流程新增 `staticcheck -checks U1000 ./...`，防止 dead code 漏网；新增 `scripts/staticcheck-u1000-waivers.txt` 豁免清单（仅保留 build tag 分平台存根等误报）；清理 33 处预存 dead code。
+
+### Verification
+
+- `go build ./services/api-go/...` / `go vet ./services/api-go/...`: passed
+- `go test -race ./services/api-go/internal/...`: passed
+- `shared/device-sdk/go/...`: `go build` / `go vet` / `go test -race -count=1`: passed
+- `npm run typecheck`: passed
+- `npm run test`: passed (328 用例)
+- `npm run build`: passed
+- `task release`: passed
+- `makensis build/windows/installer/project.nsi`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+
+## [0.11.1] - 2026-07-28
+
+### Fixed
+
+- 修复 DAQ-P-1064Pre 启动采集命令 `sendStartAcquisitionLocked` 缺少 watchdog 兜底的问题。原代码仅依赖 `SetWriteDeadline`，在 SetWriteDeadline 失效的 Windows 电脑上 Write 可能永久卡死且无独立 owner 能 Close conn 解除阻塞，违反 ADR-009。现已在 Write 之前启动 `sharedproto.WatchdogClose(conn, DAQ_P_1064PRE_TIMEOUT)`，超时后强制 Close conn 兜底，Write 失败时通过 `WrapWatchdogError` 附加上下文。
+- 修复 DAQ-P-1064Pre 响应帧读取 `readResponseFrame` 可能因 `conn.Read` 部分读取导致协议错位的问题。Go 的 `conn.Read` 只保证返回 1-N 字节，单次 Read 可能只读到 3 字节，使 `header[3]<<8 | header[4]` 基于未初始化字节计算 `dataLen`，后续帧对齐错误。现已改用 `io.ReadFull` 保证 6 字节 header 与 dataLen 字节 body 完整读取。
+
+### Verification
+
+- `go build ./services/api-go/...` / `go vet ./services/api-go/...`: passed
+- `go test -race ./services/api-go/internal/adapters/hardware/...`: passed (hardware + sim)
+- `shared/device-sdk/go/protocol`: `go build` / `go vet` / `go test -race -count=1 ./...`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+
 ## [0.11.0] - 2026-07-27
 
 ### Added
