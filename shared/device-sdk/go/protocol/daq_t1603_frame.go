@@ -465,16 +465,6 @@ func (r *T1603FrameReader) frameSizeLocked() int {
 	return 192
 }
 
-func (r *T1603FrameReader) extractFrameLocked(size int) []byte {
-	frame := make([]byte, size)
-	copy(frame, r.buffer[:size])
-	r.buffer = r.buffer[size:]
-	if len(r.buffer) == 0 {
-		r.buffer = make([]byte, 0, 256)
-	}
-	return frame
-}
-
 // PrependBytes 将数据前置到缓冲区开头，用于将误读的数据回退到缓冲区
 func (r *T1603FrameReader) PrependBytes(data []byte) {
 	r.mu.Lock()
@@ -512,9 +502,29 @@ func (r *T1603FrameReader) Resync() {
 // Some firmwares emit a single-byte 'A', others emit "A\n".
 // It reads byte-by-byte under a short deadline so split TCP packets do not
 // corrupt frame alignment. Non-ACK bytes are preserved in the frame buffer.
+//
+// ADR-009 watchdog：持 r.mu 期间阻塞 r.conn.Read，watchdog 必须能
+// 不依赖 r.mu 直接 Close conn 解除阻塞。watchdog 触发时返回 net.ErrClosed
+// 包装的错误，调用方（StartAcquisition）必须把连接标记为失效并重连。
 func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// watchdog 兜底：timeout 后强制 Close r.conn 解除阻塞的 Read。
+	// 与 SendCommand 同模式：用 wdChecked 缓存结果避免多次调用 wdStop 死锁。
+	wdStop := WatchdogClose(r.conn, timeout)
+	var wdResult bool
+	wdChecked := false
+	checkWd := func() bool {
+		if !wdChecked {
+			wdResult = wdStop()
+			wdChecked = true
+		}
+		return wdResult
+	}
+
+	var resultErr error
+	consumed := false
 
 	one := make([]byte, 1)
 	var first byte
@@ -525,59 +535,66 @@ func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, erro
 		haveFirst = true
 	} else {
 		if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return false, err
-		}
-		n, err := r.conn.Read(one)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				_ = r.conn.SetReadDeadline(time.Time{})
-				return false, nil
-			}
-			_ = r.conn.SetReadDeadline(time.Time{})
-			return false, err
-		}
-		if n > 0 {
-			first = one[0]
-			haveFirst = true
-		}
-	}
-
-	if !haveFirst {
-		_ = r.conn.SetReadDeadline(time.Time{})
-		return false, nil
-	}
-
-	if first != 'A' {
-		r.buffer = append([]byte{first}, r.buffer...)
-		_ = r.conn.SetReadDeadline(time.Time{})
-		return false, nil
-	}
-
-	if len(r.buffer) > 0 {
-		if r.buffer[0] == '\n' {
-			r.buffer = r.buffer[1:]
-		}
-	} else {
-		if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err == nil {
+			resultErr = err
+		} else {
 			n, err := r.conn.Read(one)
-			if err == nil && n > 0 {
-				if one[0] != '\n' {
-					r.buffer = append([]byte{one[0]}, r.buffer...)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// 无 ACK 可读，不是错误；watchdog 仍可能在随后触发
+				} else {
+					resultErr = err
 				}
-			} else if err != nil {
-				if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-					_ = r.conn.SetReadDeadline(time.Time{})
-					return false, err
+			} else if n > 0 {
+				first = one[0]
+				haveFirst = true
+			}
+		}
+	}
+
+	if resultErr == nil && haveFirst {
+		if first != 'A' {
+			// 非 ACK 字节回退到 buffer 前部，保留给后续 ReadFrame
+			r.buffer = append([]byte{first}, r.buffer...)
+		} else {
+			consumed = true
+			// 处理可能的 \n 尾部
+			if len(r.buffer) > 0 {
+				if r.buffer[0] == '\n' {
+					r.buffer = r.buffer[1:]
+				}
+			} else {
+				if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err == nil {
+					n, err := r.conn.Read(one)
+					if err == nil && n > 0 {
+						if one[0] != '\n' {
+							r.buffer = append([]byte{one[0]}, r.buffer...)
+						}
+					} else if err != nil {
+						if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+							resultErr = err
+						}
+					}
 				}
 			}
 		}
 	}
 
-	_ = r.conn.SetReadDeadline(time.Time{})
-	if len(r.buffer) == 0 {
-		r.buffer = make([]byte, 0, 256)
+	// 统一在返回前检查 watchdog 状态
+	if !checkWd() {
+		if resultErr == nil {
+			resultErr = net.ErrClosed
+		}
+		return false, fmt.Errorf("%w (watchdog triggered, conn closed)", resultErr)
 	}
-	return true, nil
+	if resultErr == nil {
+		// watchdog 未触发且无错误：清 deadline，避免残留 timeout 影响后续 ReadFrame
+		_ = r.conn.SetReadDeadline(time.Time{})
+		if len(r.buffer) == 0 {
+			r.buffer = make([]byte, 0, 256)
+		}
+		return consumed, nil
+	}
+	return false, resultErr
 }
 
 // -- DAQ-T-1603 command/response helpers --
@@ -587,100 +604,217 @@ const (
 	cmdTailTimeout = 100 * time.Millisecond
 	cmdIdleWindow  = 30 * time.Millisecond
 	readLineBuffer = 1024
+	// cmdWatchdogTimeout 是 SendCommand/SendCommandIdle/SendCommandExact 的
+	// watchdog 兜底超时。设为 2*cmdTimeout 覆盖 Write(1s) + 首字节 Read(1s)
+	// 的最坏情况；后续字节由 cmdTailTimeout(100ms) deadline 在正常路径兜底。
+	// ADR-009：deadline 在某些 Windows 电脑不可靠，watchdog 是独立兜底机制。
+	cmdWatchdogTimeout = 2 * cmdTimeout
 )
 
 // SendCommand sends a text command and reads a newline-terminated response.
+//
+// ADR-009 watchdog：入口启动 WatchdogClose 兜底，deadline 失效时强制 Close conn
+// 解除 Read 阻塞。成功路径在 watchdog 未触发时清 deadline，避免残留 cmdTailTimeout
+// 影响后续命令（daq-t1603 0.7.2 修复点）。
 func SendCommand(conn net.Conn, cmd string) (string, error) {
-	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		return "", fmt.Errorf("send %q: %w", cmd, err)
+	// watchdog 兜底：timeout 内未完成则强制 Close conn 解除阻塞。
+	// 返回的 wdStop 必须在函数返回前调用一次以取消计时器；
+	// 多次调用在第一次返回 true 后会死锁（timer.Stop 行为），故用 wdCalled 缓存结果。
+	wdStop := WatchdogClose(conn, cmdWatchdogTimeout)
+	var wdResult bool
+	wdChecked := false
+	checkWd := func() bool {
+		if !wdChecked {
+			wdResult = wdStop()
+			wdChecked = true
+		}
+		return wdResult
 	}
 
-	conn.SetReadDeadline(time.Now().Add(cmdTimeout))
 	var buf bytes.Buffer
-	one := make([]byte, 1)
-	for {
-		n, err := conn.Read(one)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if buf.Len() > 0 {
-					return strings.TrimRight(buf.String(), "\r "), nil
+	var resultErr error
+	var partialResponse string
+
+	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		resultErr = fmt.Errorf("send %q: %w", cmd, err)
+	} else {
+		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
+		one := make([]byte, 1)
+		for {
+			n, err := conn.Read(one)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// deadline 触发：有部分响应则返回，否则返回错误
+					if buf.Len() > 0 {
+						partialResponse = strings.TrimRight(buf.String(), "\r ")
+						break
+					}
+					resultErr = err
+					break
 				}
-				return "", err
+				resultErr = fmt.Errorf("read response for %q: %w", cmd, err)
+				break
 			}
-			return "", fmt.Errorf("read response for %q: %w", cmd, err)
+			if n == 0 {
+				continue
+			}
+			if one[0] == '\n' {
+				partialResponse = strings.TrimRight(buf.String(), "\r ")
+				break
+			}
+			buf.WriteByte(one[0])
+			conn.SetReadDeadline(time.Now().Add(cmdTailTimeout))
 		}
-		if n == 0 {
-			continue
-		}
-		if one[0] == '\n' {
-			return strings.TrimRight(buf.String(), "\r "), nil
-		}
-		buf.WriteByte(one[0])
-		conn.SetReadDeadline(time.Now().Add(cmdTailTimeout))
 	}
+
+	// 统一在返回前检查 watchdog 状态：
+	// - 触发（false）：conn 已 Close，丢弃部分响应并附加上下文
+	// - 未触发（true）：conn 仍有效，清 deadline
+	if !checkWd() {
+		if resultErr == nil {
+			resultErr = net.ErrClosed
+		}
+		return "", fmt.Errorf("%w; %w", resultErr, ErrWatchdogTriggered)
+	}
+	// 清除 Read/Write deadline，避免过期的绝对时间影响后续命令。
+	// watchdog 未触发才到达此处，conn 仍有效，SetDeadline 失败可忽略。
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+	if resultErr != nil {
+		return "", resultErr
+	}
+	return partialResponse, nil
 }
 
 // SendCommandIdle sends a text command and finishes the response after a short
 // silent window once at least one byte has arrived. This matches DAQ-T-1603
 // query commands that return short ASCII payloads without a trailing newline.
+//
+// ADR-009 watchdog：与 SendCommand 同模式，watchdog 兜底 + 成功路径清 deadline。
 func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (string, error) {
-	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
-	if _, err := conn.Write([]byte(cmd)); err != nil {
-		return "", fmt.Errorf("send %q: %w", cmd, err)
+	wdStop := WatchdogClose(conn, cmdWatchdogTimeout)
+	var wdResult bool
+	wdChecked := false
+	checkWd := func() bool {
+		if !wdChecked {
+			wdResult = wdStop()
+			wdChecked = true
+		}
+		return wdResult
 	}
 
-	conn.SetReadDeadline(time.Now().Add(cmdTimeout))
 	var buf bytes.Buffer
-	one := make([]byte, 1)
-	for {
-		n, err := conn.Read(one)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if buf.Len() > 0 {
-					return strings.TrimRight(buf.String(), "\r\n "), nil
+	var resultErr error
+	var partialResponse string
+
+	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		resultErr = fmt.Errorf("send %q: %w", cmd, err)
+	} else {
+		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
+		one := make([]byte, 1)
+		for {
+			n, err := conn.Read(one)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					if buf.Len() > 0 {
+						partialResponse = strings.TrimRight(buf.String(), "\r\n ")
+						break
+					}
+					resultErr = err
+					break
 				}
-				return "", err
+				resultErr = fmt.Errorf("read response for %q: %w", cmd, err)
+				break
 			}
-			return "", fmt.Errorf("read response for %q: %w", cmd, err)
+			if n == 0 {
+				continue
+			}
+			if one[0] == '\n' {
+				partialResponse = strings.TrimRight(buf.String(), "\r\n ")
+				break
+			}
+			buf.WriteByte(one[0])
+			conn.SetReadDeadline(time.Now().Add(idleWindow))
 		}
-		if n == 0 {
-			continue
-		}
-		if one[0] == '\n' {
-			return strings.TrimRight(buf.String(), "\r\n "), nil
-		}
-		buf.WriteByte(one[0])
-		conn.SetReadDeadline(time.Now().Add(idleWindow))
 	}
+
+	if !checkWd() {
+		if resultErr == nil {
+			resultErr = net.ErrClosed
+		}
+		return "", fmt.Errorf("%w; %w", resultErr, ErrWatchdogTriggered)
+	}
+	// 清除 Read/Write deadline，避免过期的绝对时间影响后续命令。
+	// watchdog 未触发才到达此处，conn 仍有效，SetDeadline 失败可忽略。
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+	if resultErr != nil {
+		return "", resultErr
+	}
+	return partialResponse, nil
 }
 
 // SendCommandExact sends a text command and reads exactly n bytes as response.
 // After reading n bytes, drains any trailing \r\n to avoid corrupting the next command.
+//
+// ADR-009 watchdog：io.ReadFull 内部循环 conn.Read 不重设 deadline，
+// 必须由外层 watchdog 兜底；watchdog 触发时 conn 被 Close，io.ReadFull
+// 返回 io.ErrUnexpectedEOF 或 net.ErrClosed，统一包装为 "watchdog triggered"。
 func SendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
+	wdStop := WatchdogClose(conn, cmdWatchdogTimeout)
+	var wdResult bool
+	wdChecked := false
+	checkWd := func() bool {
+		if !wdChecked {
+			wdResult = wdStop()
+			wdChecked = true
+		}
+		return wdResult
+	}
+
+	var resultErr error
+	var response string
+
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
-		return "", fmt.Errorf("send %q: %w", cmd, err)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(cmdTimeout))
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(conn, buf); err != nil {
-		return "", fmt.Errorf("read exact %d for %q: %w", n, cmd, err)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-	one := make([]byte, 1)
-	for i := 0; i < 2; i++ {
-		n, err := conn.Read(one)
-		if err != nil || n == 0 {
-			break
+		resultErr = fmt.Errorf("send %q: %w", cmd, err)
+	} else {
+		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			resultErr = fmt.Errorf("read exact %d for %q: %w", n, cmd, err)
+		} else {
+			// 排空尾部 \r\n；watchdog 仍生效，覆盖尾部读取的 deadline 失效场景
+			conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+			one := make([]byte, 1)
+			for i := 0; i < 2; i++ {
+				rn, err := conn.Read(one)
+				if err != nil || rn == 0 {
+					break
+				}
+				if one[0] != '\r' && one[0] != '\n' {
+					break
+				}
+				conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+			}
+			response = string(bytes.TrimRight(buf, "\r\n "))
 		}
-		if one[0] != '\r' && one[0] != '\n' {
-			break
-		}
-		conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	}
 
-	return string(bytes.TrimRight(buf, "\r\n ")), nil
+	if !checkWd() {
+		if resultErr == nil {
+			resultErr = net.ErrClosed
+		}
+		return "", fmt.Errorf("%w; %w", resultErr, ErrWatchdogTriggered)
+	}
+	// 清除 Read/Write deadline，避免过期的绝对时间影响后续命令。
+	// watchdog 未触发才到达此处，conn 仍有效，SetDeadline 失败可忽略。
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+	if resultErr != nil {
+		return "", resultErr
+	}
+	return response, nil
 }

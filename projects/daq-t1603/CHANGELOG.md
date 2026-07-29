@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.3] - 2026-07-29
+
+### Fixed
+- 修复 TCP `Dial` 在 ADR-009 故障 Windows 机器上 deadline 失效导致永久卡死、UI 一直显示"连接中"无法翻转的问题。`protocol.DialTCP` 改为子 goroutine 跑 `Dial` + 主 goroutine `time.After` 软超时兜底，超时后立即返回 `os.ErrDeadlineExceeded` 让上层 fail-fast，并在 Dial 较晚返回时通过 select-default 关闭 conn 防 FD 泄漏。
+- 修复 `syncHardwareConfigLocked` 阶段 `readAllConfig` 吞掉 watchdog 错误继续走完 10 条 `@fd` 查询命令 + 3 条 `@fe` 强制命令的问题。检测到 `protocol.ErrWatchdogTriggered` 时立即返回错误，暴露真正的"连接被 watchdog 强制关闭"根因，避免操作员误判为"配置命令失败"。
+- 修复前端 `connect` 缺少超时兜底导致 UI 卡在 'Connecting' 状态的问题。新增 `CONNECT_TIMEOUT_MS = 10000`（覆盖后端最坏耗时 DialTCP 5s + syncHardwareConfigLocked 4s = 9s + 1s 余量），与 `startAcquisition` / `applyConfig` 一致采用 `withTimeout` 包装，超时后翻转 UI 为 'Disconnected'。
+
+### Internal
+- 新增回归测试 `TestDAQT1603SyncHardwareConfig_FailsFastOnWatchdogTriggered`：用 `t1603DeadlineIgnoringConn` 模拟 deadline 失效场景，验证 watchdog 触发后 `syncHardwareConfigLocked` 在 5s 预算内返回且错误链包含 `protocol.ErrWatchdogTriggered`。
+- 同步 6 个版本号文件到 0.6.3：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+- `$env:GOWORK="off"; go test -race -count=1 -run "TestDAQT1603" ./shared/device-sdk/go/daq/hardware/...`
+- `$env:GOWORK="off"; go test -race -count=1 ./shared/device-sdk/go/protocol/...`
+- `$env:GOWORK="off"; go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/daq-t1603.exe .`
+- `$env:GOWORK="off"; go vet ./...`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 暂无。
+
 ## [0.6.2] - 2026-07-29
 
 ### Fixed

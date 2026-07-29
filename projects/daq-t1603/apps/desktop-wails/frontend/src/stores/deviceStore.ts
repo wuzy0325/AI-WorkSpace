@@ -7,6 +7,11 @@ import { useI18nStore } from '@stores/i18nStore'
 const MAX_HISTORY = 200
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
 const APPLY_CONFIG_TIMEOUT_MS = 15000
+// 连接超时：覆盖后端最坏耗时（DialTCP 5s + syncHardwareConfigLocked 4s = 9s）+ 1s 余量。
+// 后端在故障 Windows 机器上 DialTCP watchdog 触发 5s + 配置同步 watchdog 触发 2-4s，
+// 若无前端超时兜底，bridge.connect 永久 pending → UI 卡死在 'Connecting'。
+// 与 startAcquisition/applyConfig 一致采用 withTimeout 包装，超时后翻转 UI 为 'Disconnected'。
+const CONNECT_TIMEOUT_MS = 10000
 const DISPLAY_REFRESH_RATE_FALLBACK_HZ = 10
 
 const CHANNEL_COLORS = [
@@ -292,7 +297,13 @@ export const useDeviceStore = defineStore('device', () => {
 
   async function connect(id: string): Promise<void> {
     try {
-      await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
+      await transitionStatus(
+        id,
+        () => withTimeout(bridge.connect(id), CONNECT_TIMEOUT_MS, 'Connect timed out'),
+        'Connected',
+        'Disconnected',
+        'Connecting',
+      )
     } catch (err) {
       await syncAndLogFailure(id)
       throw err

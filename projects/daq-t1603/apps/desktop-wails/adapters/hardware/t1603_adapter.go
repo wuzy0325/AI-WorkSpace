@@ -525,35 +525,6 @@ func (a *T1603Adapter) StopAcquisition(id string) error {
 	return stopErr
 }
 
-// stopAcquisitionLocked 保留供内部需要在已持锁路径下使用；调用方需自行确保
-// dev.StopAcquisition 不会回调 a.mu，否则务必改用 StopAcquisition。
-func (a *T1603Adapter) stopAcquisitionLocked(id string) error {
-	dev, ok := a.drivers[id]
-	if !ok {
-		return nil
-	}
-
-	if done, ok := a.stopChs[id]; ok {
-		close(done)
-		delete(a.stopChs, id)
-	}
-	delete(a.sinks, id)
-
-	if err := dev.StopAcquisition(); err != nil {
-		return err
-	}
-
-	if ch, ok := a.channels[id]; ok {
-		close(ch)
-		delete(a.channels, id)
-	}
-
-	if st, exists := a.status[id]; exists {
-		st.SetStatus(core.StatusConnected)
-	}
-	return nil
-}
-
 func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

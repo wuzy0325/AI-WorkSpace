@@ -3,11 +3,18 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"shared.local/device-sdk/go/protocol"
 )
+
+// globalWatchdogTimeout 是进程级硬 watchdog 超时（ADR-009 P2）。
+// frameprobe 读取 5 帧 + 配置开销 < 30s，5 分钟足够覆盖最慢场景。
+// watchdog 触发后强制 Close conn + os.Exit(2)，避免 sendCmdIdle 的 50ms 短 deadline 循环
+// 在故障 Windows 上 hang 住（Go issue #70395/#34385）。
+const globalWatchdogTimeout = 5 * time.Minute
 
 func main() {
 	conn, err := net.DialTimeout("tcp", "192.168.1.10:9000", 5*time.Second)
@@ -16,6 +23,15 @@ func main() {
 		return
 	}
 	defer conn.Close()
+	// 进程级硬 watchdog（ADR-009 P2）：5 分钟超时后强制 Close conn + os.Exit(2)。
+	// 退出码 2 = watchdog 硬超时，区别于连接失败的 return，便于脚本区分。
+	// 保存 timer 句柄并在 main 正常返回前 Stop，避免长生命周期场景下 watchdog 误触发。
+	wd := time.AfterFunc(globalWatchdogTimeout, func() {
+		fmt.Fprintf(os.Stderr, "\n[watchdog] 全局超时 %v 触发，强制关闭连接并退出\n", globalWatchdogTimeout)
+		_ = conn.Close()
+		os.Exit(2)
+	})
+	defer wd.Stop()
 	fmt.Println("已连接设备 192.168.1.10:9000")
 
 	// 模拟 syncHardwareConfig：查询配置并归一化

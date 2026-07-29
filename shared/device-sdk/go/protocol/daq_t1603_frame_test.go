@@ -827,3 +827,193 @@ func TestReadFrame_FixedWidthASCIIFrameFromChunks(t *testing.T) {
 		}
 	}
 }
+
+// =================================================================
+// ADR-009 watchdog 兜底测试（P0-6）
+// -----------------------------------------------------------------
+// 设计依据 ADR-009：SetReadDeadline 在某些 Windows 电脑不可靠，
+// Read 在 deadline 到期后仍可能无限阻塞。helper 必须有独立
+// watchdog 计时器，超时强制 Close conn 解除阻塞。
+// 测试用 deadlineIgnoringConn（SetReadDeadline no-op）模拟
+// 故障 Windows 场景，验证 watchdog 在预算内返回并附加上下文。
+// =================================================================
+
+// TestT1603SendCommand_WatchdogTriggersOnDeadlineIgnoringConn 验证 SendCommand
+// 在 deadline 失效场景下由 watchdog 兜底，预算内返回错误且包含 "watchdog triggered"。
+//
+// 前置：包装 client 为 deadlineIgnoringConn（SetReadDeadline 被 no-op），
+// server 端读出命令但不写响应（确保 Read 阻塞而非 Write 阻塞）。
+// 期待：SendCommand 在 cmdTimeout(1s) + 安全余量内返回错误，
+// 错误信息包含 "watchdog triggered"。
+func TestT1603SendCommand_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	// server 端读出命令让 client Write 完成，但不写响应让 client Read 阻塞
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 不写任何响应，触发 client Read 阻塞
+	}()
+
+	// 总预算 3s（cmdWatchdogTimeout=2s + 1s 余量），watchdog 应在 ~2s 内触发
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommand(ignored, "@fd MCH")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected watchdog-triggered error, got nil")
+		}
+		if !strings.Contains(err.Error(), "watchdog triggered") {
+			t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SendCommand did not return within 3s budget; watchdog likely not armed")
+	}
+}
+
+// TestT1603SendCommandIdle_WatchdogTriggersOnDeadlineIgnoringConn 验证 SendCommandIdle
+// 在 deadline 失效场景下由 watchdog 兜底。
+func TestT1603SendCommandIdle_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 不写任何响应
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommandIdle(ignored, "@fd SPS", 30*time.Millisecond)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected watchdog-triggered error, got nil")
+		}
+		if !strings.Contains(err.Error(), "watchdog triggered") {
+			t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SendCommandIdle did not return within 3s budget; watchdog likely not armed")
+	}
+}
+
+// TestT1603SendCommandExact_WatchdogTriggersOnDeadlineIgnoringConn 验证 SendCommandExact
+// 在 deadline 失效场景下由 watchdog 兜底。
+// io.ReadFull 内部循环 conn.Read 不重设 deadline，必须由外层 watchdog 兜底。
+func TestT1603SendCommandExact_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 不写任何响应
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommandExact(ignored, "@e3", 16)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected watchdog-triggered error, got nil")
+		}
+		if !strings.Contains(err.Error(), "watchdog triggered") {
+			t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SendCommandExact did not return within 3s budget; watchdog likely not armed")
+	}
+}
+
+// TestT1603ConsumeOptionalACK_WatchdogTriggersOnDeadlineIgnoringConn 验证
+// ConsumeOptionalACK 在 deadline 失效场景下由 watchdog 兜底。
+//
+// 注意：ConsumeOptionalACK 持 r.mu 期间阻塞 r.conn.Read，watchdog 必须
+// 不需要 r.mu 也能 Close conn 解除阻塞（ADR-009 决策 3）。
+func TestT1603ConsumeOptionalACK_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+	reader := NewT1603FrameReader(ignored)
+	reader.SetBinaryMode(true)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := reader.ConsumeOptionalACK(200 * time.Millisecond)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected watchdog-triggered error, got nil")
+		}
+		if !strings.Contains(err.Error(), "watchdog triggered") {
+			t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ConsumeOptionalACK did not return within 3s budget; watchdog likely not armed")
+	}
+}
+
+// TestT1603SendCommand_ClearsDeadlineOnSuccess 验证 SendCommand 成功路径
+// 在 watchdog 未触发时清 deadline（避免残留 cmdTailTimeout=100ms 影响后续命令）。
+//
+// 前置：server 端在收到命令后立即返回完整响应（含 \n）。
+// 期待：SendCommand 成功返回，client 的 read deadline 被清除（time.Time{}）。
+func TestT1603SendCommand_ClearsDeadlineOnSuccess(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// 复用同包 conn_helpers_test.go 中的 deadlineTrackingConn（已扩展记录 lastReadDeadline）
+	tracked := &deadlineTrackingConn{Conn: client}
+
+	go func() {
+		// 等待命令到达后立即返回响应
+		buf := make([]byte, 64)
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		_, _ = server.Write([]byte("FFFF\n"))
+	}()
+
+	resp, err := SendCommand(tracked, "@fd MCH")
+	if err != nil {
+		t.Fatalf("SendCommand returned error: %v", err)
+	}
+	if resp != "FFFF" {
+		t.Fatalf("response = %q, want FFFF", resp)
+	}
+
+	// 验证 read deadline 被清除为 time.Time{}（零值）
+	got := tracked.lastReadDeadlineValue()
+	if !got.IsZero() {
+		t.Fatalf("read deadline not cleared after success: %v", got)
+	}
+}

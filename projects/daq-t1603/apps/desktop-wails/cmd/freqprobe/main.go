@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ const (
 	deviceHost     = "192.168.1.10"
 	devicePort     = 9000
 	collectSeconds = 5
+	// globalWatchdogTimeout 是进程级硬 watchdog 超时（ADR-009 P2）。
+	// 8 个 SPS 值 × 5s 采集 + 配置开销 ≈ 50s，5 分钟足够覆盖最慢场景。
+	// watchdog 触发后强制 Close conn + os.Exit(2)，避免 SetReadDeadline 失效导致 main 挂起。
+	globalWatchdogTimeout = 5 * time.Minute
 )
 
 // 测试的 SPS 间隔列表（毫秒），对应频率 = 1000/SPS
@@ -37,6 +42,15 @@ func main() {
 		return
 	}
 	defer conn.Close()
+	// 进程级硬 watchdog（ADR-009 P2）：5 分钟超时后强制 Close conn + os.Exit(2)。
+	// 退出码 2 = watchdog 硬超时，区别于连接失败的 return，便于脚本区分。
+	// 保存 timer 句柄并在 main 正常返回前 Stop，避免长生命周期场景下 watchdog 误触发。
+	wd := time.AfterFunc(globalWatchdogTimeout, func() {
+		fmt.Fprintf(os.Stderr, "\n[watchdog] 全局超时 %v 触发，强制关闭连接并退出\n", globalWatchdogTimeout)
+		_ = conn.Close()
+		os.Exit(2)
+	})
+	defer wd.Stop()
 	fmt.Println("已连接设备")
 
 	fmt.Println("\n--- 查询当前设备配置 ---")

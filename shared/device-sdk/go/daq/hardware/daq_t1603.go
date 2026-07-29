@@ -167,17 +167,43 @@ func (d *DAQT1603) writeCommandOnly(conn net.Conn, cmd string) error {
 	return nil
 }
 
-func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
+// drainConnection 排空 TCP 接收缓冲区中的残留数据帧，返回 conn 是否仍可用。
+//
+// 返回值语义（C-1 修复）：
+//   - true：watchdog 未触发且 conn 未被外部 Close，conn 仍可用，调用方可继续后续操作
+//   - false：watchdog 已触发或 conn 已被外部 Close（net.ErrClosed 等），conn 已失效，
+//     调用方必须废弃连接并重连
+//
+// 修复前 bug：
+//   - P2-5：watchdog 触发时仅 emitLog 返回，调用方无法感知 conn 已失效
+//   - C-1：conn 已被外部 Close（如 Disconnect / invalidateConnectionAfterReadLoopTimeout）
+//     时 conn.Read 立即返回 net.ErrClosed 等非 timeout 错误，循环 break 后 wdStop() 返回
+//     true（watchdog 未触发），drainConnection 误返回 true 让调用方以为 conn 仍可用，
+//     后续命令在已关闭 conn 上失败触发 "use of closed network connection" 假象，掩盖根因
+func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) bool {
 	if conn == nil {
-		return
+		return true
 	}
-	buf := make([]byte, 4096)
-	totalDrained := 0
-	consecutiveTimeouts := 0
 	// maxIters=10：单次 drainConnection 总耗时上限约 1s（10 × 100ms），
 	// 足以吸收快速启停后的残留帧；过大的值（如 50 次 5s）会显著拖长 StartAcquisition。
 	const maxIters = 10
 	const quietWindowsRequired = 2
+
+	// watchdog 兜底：ADR-009 决策 1——SetReadDeadline 在某些 Windows 电脑
+	// 不可靠，conn.Read 在 deadline 到期后仍可能无限阻塞。必须有独立 owner
+	// 能在不等待阻塞 goroutine 的情况下调用 conn.Close() 解除阻塞。
+	// 总预算 = maxIters * timeout + 100ms 余量，覆盖最坏情况下的所有循环迭代。
+	// watchdog 触发后 conn 失效，调用方必须废弃连接并重连（不可复用）。
+	totalBudget := time.Duration(maxIters)*timeout + 100*time.Millisecond
+	wdStop := protocol.WatchdogClose(conn, totalBudget)
+
+	buf := make([]byte, 4096)
+	totalDrained := 0
+	consecutiveTimeouts := 0
+	// connClosedByPeer 标记：循环中遇到非 timeout 错误（如 net.ErrClosed /
+	// "use of closed network connection" / io.EOF）时置 true，表示 conn 已失效。
+	// C-1 修复：让调用方据此清理 d.conn 状态，避免后续命令写到已关闭 conn 上。
+	connClosedByPeer := false
 
 	for i := 0; i < maxIters; i++ {
 		conn.SetReadDeadline(time.Now().Add(timeout))
@@ -194,15 +220,34 @@ func (d *DAQT1603) drainConnection(conn net.Conn, timeout time.Duration) {
 				}
 				continue
 			}
-			// 连接已关闭等错误，无需继续
+			// 非 timeout 错误：conn 已被外部 Close（net.ErrClosed / EOF / RST）。
+			// C-1 修复：标记 conn 已失效，让 drainConnection 返回 false，
+			// 调用方据此清理 d.conn 状态，避免后续命令写到已关闭 conn 上。
+			connClosedByPeer = true
 			break
 		}
+	}
+
+	// 检查 watchdog 状态：触发则 conn 已 Close，不清 deadline（conn 已失效）。
+	// 未触发则清 deadline 避免残留 timeout 影响后续命令的 deadline 语义。
+	if !wdStop() {
+		d.emitLog("warn", "system", "DrainConnection watchdog triggered",
+			"conn closed by watchdog; reconnect required")
+		return false
+	}
+	// C-1 修复：conn 被外部 Close 时也返回 false，让调用方清理 d.conn 状态。
+	// 此时不调用 SetReadDeadline(time.Time{})：conn 已死，清 deadline 是无效操作。
+	if connClosedByPeer {
+		d.emitLog("warn", "system", "DrainConnection detected conn closed",
+			"conn closed by external path; reconnect required")
+		return false
 	}
 	conn.SetReadDeadline(time.Time{})
 	if totalDrained > 0 {
 		slog.Debug("DAQ-T-1603 drained residual data", "device", d.profile.ID, "bytes", totalDrained)
 		d.emitLog("debug", "system", "Drained residual data", fmt.Sprintf("%d bytes", totalDrained))
 	}
+	return true
 }
 
 func (d *DAQT1603) Connect() error {
@@ -222,7 +267,10 @@ func (d *DAQT1603) Connect() error {
 		port = DAQ_T_1603_DEFAULT_PORT
 	}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_T_1603_TIMEOUT)
+	// ADR-009：net.DialTimeout 内部依赖 deadline，在 Windows 故障机器上不可靠。
+	// 改用 protocol.DialTCP（带 watchdog goroutine 兜底），主线程在 timeout 后
+	// 立即返回错误而不依赖 Dial 返回，避免 Connect 永久卡死（前端"连接中"无法翻转）。
+	conn, err := protocol.DialTCP(fmt.Sprintf("%s:%d", host, port), "", DAQ_T_1603_TIMEOUT)
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
@@ -253,7 +301,12 @@ func (d *DAQT1603) Disconnect() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	_ = d.stopAcquisitionLocked()
+	// I-3 修复：保留 stopAcquisitionLocked 设置的 Error 状态。
+	// stopAcquisitionLocked 在 watchdog 触发或 drainConnection 检测到 conn 已死时
+	// 会置 d.status.Connection = ConnectionError，记录真实失败原因（LastError）。
+	// 若此处无条件覆盖为 Disconnected，会掩盖真实错误，前端误判为"正常断开"。
+	// 调用方（适配器/DeviceManager）应据 Error 状态决定是否提示用户重连。
+	stopErr := d.stopAcquisitionLocked()
 
 	if d.conn != nil {
 		_ = d.conn.Close()
@@ -261,8 +314,11 @@ func (d *DAQT1603) Disconnect() error {
 		d.frameReader = nil
 	}
 
-	d.status.Connection = core.ConnectionDisconnected
-	return nil
+	// 仅在未发生错误时才标记为 Disconnected，保留 Error 状态供上层感知。
+	if d.status.Connection != core.ConnectionError {
+		d.status.Connection = core.ConnectionDisconnected
+	}
+	return stopErr
 }
 
 func (d *DAQT1603) StartAcquisition() error {
@@ -290,13 +346,47 @@ func (d *DAQT1603) StartAcquisition() error {
 	}
 
 	if d.conn != nil {
+		// StartAcquisition 入口的 @f1 是为了停止上次残留的采集（快速启停场景）。
+		// watchdog 兜底：ADR-009——SetWriteDeadline 同样不可靠，Write 阻塞时
+		// 必须有独立 Close 兜底。1s 超时覆盖 500ms Write deadline + 500ms 余量。
+		// watchdog 触发后 conn 失效，StartAcquisition 必须失败并要求重连。
+		conn := d.conn
+		wdStop := protocol.WatchdogClose(conn, 1*time.Second)
 		d.writeMu.Lock()
-		_ = d.conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-		d.conn.Write([]byte("@f1"))
-		_ = d.conn.SetWriteDeadline(time.Time{})
+		d.emitLog("debug", "hardware-send", "Send command", "@f1")
+		_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		if _, err := conn.Write([]byte("@f1")); err != nil {
+			d.emitLog("warn", "hardware-send", "Pre-stop command write failed", err.Error())
+		}
+		_ = conn.SetWriteDeadline(time.Time{})
 		d.writeMu.Unlock()
+		if !wdStop() {
+			// watchdog 触发：conn 已 Close，废弃连接，StartAcquisition 失败。
+			// 不继续 drainConnection / 发 @f0：conn 已死，所有后续 I/O 都会失败。
+			// 当前已持有 d.mu（L289 Lock + L308 重新 Lock 后未释放），直接改字段即可。
+			// 修复前 bug：此处再次 d.mu.Lock() 导致自死锁（Go sync.Mutex 不可重入）。
+			d.conn = nil
+			d.frameReader = nil
+			d.status.Connection = core.ConnectionError
+			d.status.LastError = "pre-stop command write watchdog triggered; reconnect required"
+			d.emitLog("error", "hardware-send", "Pre-stop command watchdog triggered",
+				"conn closed by watchdog; reconnect required")
+			return fmt.Errorf("pre-stop command write watchdog triggered; reconnect required")
+		}
 		time.Sleep(50 * time.Millisecond)
-		d.drainConnection(d.conn, 100*time.Millisecond)
+		// P2-5 修复：drainConnection 返回 false 表示 watchdog 触发 conn 已 Close，
+		// 必须置 d.conn=nil + 标记 Error 状态，否则后续 @f0 命令会写到已关闭 conn 上，
+		// 触发 "use of closed network connection" 假象，掩盖真正的 watchdog 根因。
+		// 当前已持有 d.mu（StartAcquisition 入口 Lock，未释放），直接改字段即可。
+		if !d.drainConnection(d.conn, 100*time.Millisecond) {
+			d.conn = nil
+			d.frameReader = nil
+			d.status.Connection = core.ConnectionError
+			d.status.LastError = "drain connection watchdog triggered; reconnect required"
+			d.emitLog("error", "hardware-recv", "Drain watchdog triggered",
+				"conn closed by watchdog; reconnect required")
+			return fmt.Errorf("drain connection watchdog triggered; reconnect required")
+		}
 	}
 	if d.frameReader != nil {
 		d.frameReader.Reset()
@@ -352,6 +442,12 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	}
 	if d.conn != nil && wasAcquiring {
 		conn := d.conn
+		// @f1 Write 添加 watchdog 兜底：ADR-009 决策 1——SetWriteDeadline
+		// 在某些 Windows 电脑不可靠，Write 阻塞时必须有独立 Close 兜底。
+		// 1s 超时覆盖 500ms Write deadline + 500ms 余量。
+		// watchdog 触发后 conn 失效，但不在此处直接返回：让后续 join 阶段
+		// 通过 invalidateConnectionAfterReadLoopTimeout 统一清理状态。
+		wdStop := protocol.WatchdogClose(conn, 1*time.Second)
 		d.writeMu.Lock()
 		d.emitLog("debug", "hardware-send", "Send command", "@f1")
 		_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
@@ -366,13 +462,34 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 		}
 		_ = conn.SetWriteDeadline(time.Time{})
 		d.writeMu.Unlock()
+		if !wdStop() {
+			// watchdog 触发：conn 已 Close。readLoop 主循环的 conn.Read 会
+			// 因 conn Close 返回错误并退出，join 阶段会等待 readLoop 退出。
+			//
+			// 状态最终一致性保证：conn 已死但此处不立即置 d.conn=nil。
+			// 后续 drainConnection（行 482-491）会检测到 conn 已死（Read 立即返回
+			// isClosedConnError），返回 false 触发 d.conn=nil + status=Error 清理。
+			// 若 drainConnection 也被跳过（wasAcquiring=false 路径），则下次
+			// StartAcquisition 入口的 readLoopDone join 会触发 invalidate。
+			// 因此不存在"watchdog 触发但状态未清理"的路径，仅是延迟清理。
+			d.emitLog("warn", "hardware-send", "Stop command write watchdog triggered",
+				"conn closed by watchdog; reconnect required")
+		}
 	}
 	if wasAcquiring && done != nil {
+		// 释放 d.mu 等待 readLoop 退出，避免与 readLoop 主循环的 RLock 死锁。
+		// 注意：本函数由 StopAcquisition/Disconnect 持锁调用，select 分支
+		// return 前必须重新 d.mu.Lock() 以匹配调用方的 defer d.mu.Unlock()。
 		d.mu.Unlock()
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			slog.Warn("DAQ-T-1603 timeout waiting for readLoop to exit after stop", "device", d.profile.ID)
+			// ADR-009 决策 2：join 超时必须能调用 conn.Close() 解除 readLoop
+			// 阻塞，不能仅打 warn。readLoop 残留 goroutine 会与后续命令竞争
+			// conn，必须废弃连接并要求重连。
+			d.invalidateConnectionAfterReadLoopTimeout("read loop did not exit after stop; reconnect required")
+			d.mu.Lock()
+			return fmt.Errorf("read loop did not exit after stop; reconnect required")
 		}
 		d.mu.Lock()
 		if d.readLoopDone == done {
@@ -387,10 +504,51 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	// 发出后，设备已排队的帧可能尚未完全到达）。若不排空，后续
 	// ApplyDaqT1603Config 的 sendCommand 会把这些残留帧当作命令响应读出，
 	// 导致配置命令失败。
+	//
+	// P2-5 修复：drainConnection 返回 false 表示 watchdog 触发 conn 已 Close，
+	// 必须置 d.conn=nil + 标记 Error 状态。Stop 是用户主动停止，不调 onReadLoopExit
+	// 回调（readLoop 已正常退出），仅标记 Error 让下次 Connect/StartAcquisition
+	// 入口的 d.conn==nil 检查触发重连。当前已持有 d.mu（调用方 StopAcquisition
+	// / Disconnect 持锁），直接改字段即可。
 	if d.conn != nil {
-		d.drainConnection(d.conn, 100*time.Millisecond)
+		if !d.drainConnection(d.conn, 100*time.Millisecond) {
+			d.conn = nil
+			d.frameReader = nil
+			d.status.Connection = core.ConnectionError
+			d.status.LastError = "drain connection watchdog triggered; reconnect required"
+			d.emitLog("error", "hardware-recv", "Drain watchdog triggered",
+				"conn closed by watchdog; reconnect required")
+		}
 	}
 	return nil
+}
+
+// invalidateConnectionAfterReadLoopTimeout 在 readLoop join 超时后强制废弃连接。
+//
+// ADR-009 决策 2：连接生命周期所有者超时或取消时必须能调用 conn.Close()，
+// 不能仅打 warn 日志。本函数关闭 conn 后 readLoop 主循环的 conn.Read 会
+// 返回错误并退出，readLoop defer 会自行处理 onReadLoopExit 回调（仅当
+// unexpectedErr != nil 时触发，主动停止场景 readLoop 缓存的 stop 已被
+// close，isClosedConnError 分支会直接 return，不调用 onReadLoopExit）。
+//
+// 调用约束：本函数内部自加锁，调用方无需持锁；但若调用方已持锁，调用前
+// 必须 d.mu.Unlock() 以避免死锁（本函数 d.mu.Lock() 会阻塞）。
+func (d *DAQT1603) invalidateConnectionAfterReadLoopTimeout(message string) {
+	d.mu.Lock()
+	conn := d.conn
+	d.conn = nil
+	d.frameReader = nil
+	d.acquiring = false
+	d.stop = nil
+	d.status.Acquiring = false
+	d.status.Connection = core.ConnectionError
+	d.status.LastError = message
+	d.mu.Unlock()
+
+	if conn != nil {
+		_ = conn.Close()
+	}
+	d.emitLog("error", "system", "Connection invalidated", message)
 }
 
 func (d *DAQT1603) SetDataSink(sink core.DataSink) {
@@ -460,7 +618,24 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 		// 并发调用时 Reset 会与 readLoop 的 ReadFrame 竞争 frameReader 内部 buffer。
 		// frameReader 的 Reset 由 stopAcquisitionLocked / StartAcquisition 在持 d.mu
 		// 时统一完成。
-		d.drainConnection(conn, 100*time.Millisecond)
+		//
+		// P2-5 修复：drainConnection 返回 false 表示 watchdog 触发 conn 已 Close，
+		// 必须置 d.conn=nil + 标记 Error 状态。当前已释放 d.mu，需重新 Lock 后清理。
+		// 用 d.conn == conn 比较防止并发场景下 d.conn 已被其他路径替换（如 Disconnect），
+		// 避免误清新 conn。ApplyDaqT1603Config 无 readLoop 流程，不调 onReadLoopExit 回调。
+		if !d.drainConnection(conn, 100*time.Millisecond) {
+			d.mu.Lock()
+			if d.conn == conn {
+				d.conn = nil
+				d.frameReader = nil
+				d.status.Connection = core.ConnectionError
+				d.status.LastError = "drain connection watchdog triggered; reconnect required"
+			}
+			d.mu.Unlock()
+			d.emitLog("error", "hardware-recv", "Drain watchdog triggered",
+				"conn closed by watchdog; reconnect required")
+			return fmt.Errorf("drain connection watchdog triggered; reconnect required")
+		}
 		d.writeMu.Lock()
 		err := d.applyHardwareConfig(conn, cfg)
 		d.writeMu.Unlock()
@@ -493,6 +668,11 @@ func (d *DAQT1603) readLoop() {
 				// 发 @f1 确保设备停止推送，连接已断开时属预期（与 stopAcquisitionLocked 一致）。
 				// emitLog "Send command @f1" + 成败分支让 readLoop 退出路径可观测：
 				// 否则操作员只看到 "Read loop exited unexpectedly" 无法判断设备侧是否真停了。
+				//
+				// watchdog 兜底：ADR-009——readLoop 异常退出路径同样需要 Close 兜底，
+				// 避免 @f1 Write 在 deadline 失效时永久阻塞导致 defer 无法完成。
+				// 触发后 conn 失效，本函数后续不再使用 conn，仅清理状态。
+				wdStop := protocol.WatchdogClose(conn, 1*time.Second)
 				d.emitLog("debug", "hardware-send", "Send command", "@f1")
 				_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
 				if _, err := conn.Write([]byte("@f1")); err != nil {
@@ -503,6 +683,10 @@ func (d *DAQT1603) readLoop() {
 					}
 				}
 				_ = conn.SetWriteDeadline(time.Time{})
+				if !wdStop() {
+					d.emitLog("warn", "hardware-send", "Stop command write watchdog triggered",
+						"conn closed by watchdog; reconnect required")
+				}
 			}
 			d.writeMu.Unlock()
 
@@ -715,10 +899,15 @@ func checkConfigSyncDeadline(deadline time.Time) error {
 
 // readAllConfig 逐条查询硬件配置。单条查询失败时记 warn 并保留字段默认值后继续，
 // 不因某条辅助查询（旧固件可能不支持的 @fd AVG/TNUM 等）而整体放弃连接——
-// 这是与同步化之前一致的容错语义。唯一会硬失败的边界是总预算耗尽
-// （checkConfigSyncDeadline），用于对完全不响应的设备 fail-fast。
+// 这是与同步化之前一致的容错语义。两类错误会硬失败：
+//   - 总预算耗尽（checkConfigSyncDeadline）：用于对完全不响应的设备 fail-fast
+//   - watchdog 触发（ErrWatchdogTriggered）：conn 已被强制 Close，后续命令必失败，
+//     继续循环只会浪费 0ms（后续命令立即失败），但仍走完 10 条命令的循环开销，
+//     且掩盖真正的失败原因（用户看到 "force BIN mode: use of closed network connection"
+//     而非 "config sync aborted: watchdog triggered"）
+//
 // BIN/TIME/HEAD 的读回值随后会被 syncHardwareConfigLocked 的 @fe 强制命令覆盖，
-// 因此其读失败无害。
+// 因此其读失败无害（前提：失败原因不是 watchdog 触发）。
 func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1603HardwareConfig, error) {
 	cfg := &core.DaqT1603HardwareConfig{
 		ChannelMask:       "FFFF",
@@ -729,7 +918,7 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 	}
 
 	// query 在总预算内发送一条命令；失败时记日志并保留默认值，返回是否成功。
-	// 总预算耗尽时返回 deadline 错误，由调用方硬失败。
+	// 总预算耗尽或 watchdog 触发时返回错误，由调用方硬失败。
 	query := func(cmd string, fn func(resp string)) error {
 		if err := checkConfigSyncDeadline(deadline); err != nil {
 			return err
@@ -738,6 +927,11 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 		resp, err := d.sendCommandIdle(conn, cmd)
 		if err != nil {
 			d.logConfigQuery(cmd, startedAt, "", err)
+			// watchdog 触发：conn 已被强制 Close，后续命令必失败，立即返回错误
+			// 避免走完 10 条命令 + 掩盖真正失败原因（参见函数注释）。
+			if errors.Is(err, protocol.ErrWatchdogTriggered) {
+				return err
+			}
 			return nil // 单条失败：保留默认值，继续
 		}
 		d.logConfigQuery(cmd, startedAt, resp, nil)
@@ -754,6 +948,10 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 		resp, err := d.sendCommandExact(conn, cmd, n)
 		if err != nil {
 			d.logConfigQuery(cmd, startedAt, "", err)
+			// watchdog 触发：conn 已被强制 Close，后续命令必失败，立即返回错误。
+			if errors.Is(err, protocol.ErrWatchdogTriggered) {
+				return err
+			}
 			return nil
 		}
 		d.logConfigQuery(cmd, startedAt, resp, nil)
