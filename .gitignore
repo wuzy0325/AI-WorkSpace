@@ -96,6 +96,7 @@ scripts/tmp/
 
 # E2E 测试输出（截图、HTML 报告、coverage 清单，本地运行产物不入库）
 projects/*/docs/test-result/
+projects/*/apps/docs/test-result/
 
 # Vite 构建中间产物（dev server 重启时生成 timestamp 后缀的临时 mjs，不应入库）
 *.timestamp-*.mjs
