@@ -4,6 +4,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    // allowJs 是为了 Wails 自动生成的 bindings/*.js(项目无对应 .d.ts)。
+    // 后续若 wails3 generate bindings 输出 .d.ts,应移除此项并恢复严格类型检查。
+    "allowJs": true,
     "jsx": "preserve",
     "resolveJsonModule": true,
     "isolatedModules": true,

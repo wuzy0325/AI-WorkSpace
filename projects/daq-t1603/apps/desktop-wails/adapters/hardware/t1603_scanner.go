@@ -36,8 +36,7 @@ type T1603Scanner struct {
 
 func NewT1603Scanner() *T1603Scanner {
 	return &T1603Scanner{
-		timeout:      t1603ScanTimeout,
-		listenPacket: net.ListenPacket,
+		timeout: t1603ScanTimeout,
 	}
 }
 
@@ -52,48 +51,52 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 	// 回退到有限广播地址 255.255.255.255，避免在绑定 socket 前永久卡住。
 	targets := broadcastTargetsWithTimeout(t1603InterfaceTimeout, broadcastTargets)
 
-	conn, err := s.listenPacket("udp4", ":0")
+	var socket discoverySocket
+	var err error
+	if s.listenPacket != nil {
+		var conn net.PacketConn
+		conn, err = s.listenPacket("udp4", ":0")
+		if err == nil {
+			socket = &packetDiscoverySocket{conn: conn}
+		}
+	} else {
+		socket, err = openDiscoverySocket(0)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("udp listen: %w", err)
 	}
-	defer conn.Close()
-
-	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
-		return nil, fmt.Errorf("set deadline: %w", err)
-	}
-	// 部分Windows网络驱动不会在deadline到期时唤醒ReadFrom，
-	// 用定时器在超时后强制Close作为兜底，确保接收循环一定退出。
-	watchdog := time.AfterFunc(s.timeout, func() { _ = conn.Close() })
-	defer watchdog.Stop()
+	defer socket.Close()
 
 	cmd := []byte(t1603DiscoveryCmd)
 	for _, t := range targets {
-		addr := &net.UDPAddr{IP: net.ParseIP(t), Port: t1603DiscoveryPort}
-		if addr.IP == nil {
+		if net.ParseIP(t).To4() == nil {
 			continue
 		}
-		conn.WriteTo(cmd, addr)
+		_ = socket.Send(cmd, t, t1603DiscoveryPort)
 	}
 
-	return readT1603Responses(conn), nil
+	return readT1603Responses(socket, s.timeout), nil
 }
 
-// readT1603Responses 在已设置 deadline 和 watchdog 的 socket 上循环接收设备响应。
-// 当 ReadFrom 因 deadline 超时或 watchdog 关闭 socket 返回错误时退出循环。
-func readT1603Responses(conn net.PacketConn) []core.ScanResult {
+func readT1603Responses(socket discoverySocket, timeout time.Duration) []core.ScanResult {
 	results := make([]core.ScanResult, 0)
 	seen := make(map[string]bool)
 	buf := make([]byte, 1024)
+	deadline := time.Now().Add(timeout)
 
 	for {
-		n, remote, err := conn.ReadFrom(buf)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n, remote, err := socket.Receive(buf, remaining)
 		if err != nil {
 			break
 		}
 
-		host, _, splitErr := net.SplitHostPort(remote.String())
+		host, _, splitErr := net.SplitHostPort(remote)
 		if splitErr != nil {
-			host = remote.String()
+			host = remote
 		}
 
 		result := parseResponse(buf[:n], host)

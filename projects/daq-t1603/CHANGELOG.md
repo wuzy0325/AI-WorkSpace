@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.6.2] - 2026-07-29
+
+### Fixed
+- Windows UDP 设备扫描的 Winsock 路径补回 `Closesocket` watchdog 兜底,避免 `SO_RCVTIMEO` 在特定环境失效时扫描永久卡死(ADR-009 第 5 条)。
+- `sockaddrString` 出现非 IPv4 sockaddr 时显式返回错误,不再静默丢弃设备响应。
+
+### Internal
+- 新增 `TestDiscoverySocketReceiveUnblocksOnClose` 回归测试,验证 `Closesocket` 能解除阻塞的 `Recvfrom`(ADR-009 第 6 条要求的"忽略 deadline、只在 Close 后返回"连接 double 的 Windows 等价物)。
+- `tsconfig.json` 的 `allowJs` 加注释说明依据(Wails 自动生成的 `bindings/*.js` 无对应 `.d.ts`)。
+- 同步 6 个版本号文件到 0.6.2。
+
+### Verification
+- `$env:GOWORK="off"; go test -race -count=1 ./...`
+- `$env:GOWORK="off"; go vet ./...`
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 暂无。
+
+## [0.6.1] - 2026-07-28
+
+### Fixed
+- Windows UDP 设备扫描改用同步 Winsock 和固定总截止时间，避免接收循环在特定系统环境中永久阻塞。
+- 点击窗口关闭按钮时显示退出确认，避免误操作直接关闭应用。
+
+### Internal
+- 新增真实同步 UDP socket 超时回归测试，并保留非 Windows 平台的 `net.PacketConn` 实现。
+- 同步 6 个版本号文件到 0.6.1。
+
+### Verification
+- `$env:GOWORK="off"; go test ./...`
+- `$env:GOWORK="off"; go vet ./...`
+- `npm run test`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis build/windows/installer/project.nsi`
+
+### Known Issues
+- 暂无。
+
 ## [0.6.0] - 2026-07-27
 
 ### Added
