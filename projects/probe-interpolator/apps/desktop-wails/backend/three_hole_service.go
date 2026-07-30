@@ -29,7 +29,10 @@ type threeHoleState struct {
 // 加载后构建 ThreeHoleInterpolator 并缓存到 threeHoleState。
 // 返回加载结果（文件列表 + 马赫数范围 + 警告）供前端展示。
 func (a *App) LoadThreeHolePrbFiles() ThreeHoleLoadPrbResponse {
-	filePaths, err := a.openFileDialog("选择 PRB 校准文件").PromptForMultipleSelection()
+	filePaths, err := a.openFileDialog("选择 PRB 校准文件").
+		AddFilter("PRB Files (*.prb)", "*.prb").
+		AddFilter("All Files (*.*)", "*.*").
+		PromptForMultipleSelection()
 	if err != nil {
 		return ThreeHoleLoadPrbResponse{Success: false, Error: err.Error()}
 	}
@@ -209,6 +212,7 @@ func (a *App) ImportThreeHoleCsvData() ThreeHoleImportCsvDataResponse {
 	// 3 孔数据文件支持 .csv/.txt/.dat（与旧 3 孔程序习惯一致），追加过滤器。
 	filePath, err := a.openFileDialog("选择数据文件").
 		AddFilter("数据文件 (*.csv, *.txt, *.dat)", "*.csv;*.txt;*.dat").
+		AddFilter("All Files (*.*)", "*.*").
 		PromptForSingleSelection()
 	if err != nil {
 		return ThreeHoleImportCsvDataResponse{Success: false, Error: err.Error()}

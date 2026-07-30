@@ -30,7 +30,10 @@ type fiveHoleState struct {
 // 加载后构建 MultiPrbInterpolator 并缓存到 fiveHoleState。
 // 返回加载结果（文件列表 + 马赫数范围 + 警告）供前端展示。
 func (a *App) LoadPrbFiles() LoadPrbResponse {
-	filePaths, err := a.openFileDialog("选择多个 PRB 校准文件").PromptForMultipleSelection()
+	filePaths, err := a.openFileDialog("选择多个 PRB 校准文件").
+		AddFilter("PRB Files (*.prb)", "*.prb").
+		AddFilter("All Files (*.*)", "*.*").
+		PromptForMultipleSelection()
 	if err != nil {
 		return LoadPrbResponse{Success: false, Error: err.Error()}
 	}
@@ -208,6 +211,7 @@ func toCoreInput(input FiveHoleInterpolationInput) wind_interp.InterpolationInpu
 func (a *App) ImportCsvData() ImportCsvDataResponse {
 	filePath, err := a.openFileDialog("选择数据 CSV 文件").
 		AddFilter("CSV Files (*.csv)", "*.csv").
+		AddFilter("All Files (*.*)", "*.*").
 		PromptForSingleSelection()
 	if err != nil {
 		return ImportCsvDataResponse{Success: false, Error: err.Error()}

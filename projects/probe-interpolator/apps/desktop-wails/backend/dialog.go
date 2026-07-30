@@ -4,20 +4,18 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// dialog.go 抽取 5 / 3 / 7 孔"打开文件选择对话框"的公共逻辑。
+// dialog.go 抽取 5 / 3 / 7 孔"打开文件选择对话框"的公共入口。
 //
 // 3 个探针 service 原本各自实现了 openXxxFileDialog(title) 方法，函数体完全一致：
 //   - 取 application 单例（application.Get()）
 //   - 链式 SetTitle + AddFilter("PRB Files") + AddFilter("All Files")
 //
 // 抽到此处后 service 仅调用 a.openFileDialog(title) 即可。
-// 调用方仍可链式追加 CSV/TXT/DAT 等过滤器（5 孔仅 .prb，3/7 孔在 CSV 导入时追加）。
 //
-// 方法名原为 openPrbFileDialog，v0.2.0 改名为 openFileDialog——对话框不再限于 PRB，
-// 7 孔 CSV 导入（PickSevenHoleFiles / ImportSevenHoleCsvData）也复用此入口。
-
-// openFileDialog 创建文件选择对话框，预设 .prb 过滤器。
-// 调用方可链式 AddFilter 覆盖或追加过滤规则（例如 CSV 导入时追加 .csv/.txt/.dat）。
+// v0.1.1 起 openFileDialog 仅设置标题，不预设任何过滤器：
+// 调用方必须按场景链式 AddFilter（PRB 加载加 .prb，CSV 导入加 .csv/.txt/.dat）
+// 并按需追加 All Files 兜底，避免不同场景的过滤器互相污染
+// （例如 CSV 导入对话框不应出现 PRB 文件类型选项）。
 //
 // 注意：方法名首字母小写，不会被 Wails binding 暴露到前端。
 //
@@ -26,7 +24,5 @@ import (
 // （参见 app.go ServiceStartup 注释解释了为何移除 a.app 字段）。
 func (a *App) openFileDialog(title string) *application.OpenFileDialogStruct {
 	return application.Get().Dialog.OpenFile().
-		SetTitle(title).
-		AddFilter("PRB Files (*.prb)", "*.prb").
-		AddFilter("All Files (*.*)", "*.*")
+		SetTitle(title)
 }
