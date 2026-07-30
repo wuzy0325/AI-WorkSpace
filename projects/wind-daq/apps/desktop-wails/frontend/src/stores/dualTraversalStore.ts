@@ -185,30 +185,9 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
         session.status = status
       }),
       traversalProbeApi.onProgress(probeId, (event) => {
-        // onSnapshot 已恢复对运行态的持续 DAQ 压力更新（20Hz），不再被抑制。
-        // onProgress 职责简化为：
-        //   1. 当测点完成时用 latestData.rawPressure 覆盖（后端回写更准确且带
-        //      设备校正值，测点间短暂覆盖后 daq 流会立刻更新）；
-        //   2. 用 latestData.interpolationResult 提供权威插值结果（后端含运动数据）。
-        // C13 退路保留：latestData 为 null 时回退到 DAQ 快照。
-        if (event.latestData) {
-          session.realtimePressures = event.latestData.rawPressure
-          if (event.latestData.interpolationResult) {
-            session.realtimeResult = event.latestData.interpolationResult
-          }
-        } else {
-          const config = session.config
-          if (config && runtime.latestSnapshots.size > 0) {
-            const pressures = buildRealtimePressuresFromSnapshots(
-              config,
-              Array.from(runtime.latestSnapshots.values()),
-            )
-            session.realtimePressures = pressures as TraversalSessionState['realtimePressures']
-            syncRealtimeInput(
-              probeId,
-              toRealtimeInterpolationInput(pressures, config.probeType ?? 'five-hole'),
-            )
-          }
+        // 只更新权威插值结果，不覆盖 DAQ 快照的实时压力
+        if (event.latestData?.interpolationResult) {
+          session.realtimeResult = event.latestData.interpolationResult
         }
       }),
       traversalProbeApi.onComplete(probeId, (event: TraversalCompleteEvent) => {

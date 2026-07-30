@@ -464,6 +464,82 @@ describe('dualTraversalStore 设备订阅引用计数', () => {
     })
   })
 
+  it('测点进度不覆盖实时压力（DAQ 快照是唯一数据源）', async () => {
+    let snapshotCallback!: (payload: {
+      deviceId: string
+      channelIndices: number[]
+      channels: number[]
+    }) => void
+    let progressCallback!: (event: {
+      latestData: {
+        rawPressure: Record<string, number>
+        interpolationResult: Record<string, number | boolean>
+      }
+    }) => void
+    mockDevice.onSnapshot.mockImplementationOnce((callback) => {
+      snapshotCallback = callback
+      return () => {}
+    })
+    mockApi.onProgress.mockImplementationOnce((_probeId, callback) => {
+      progressCallback = callback
+      return () => {}
+    })
+    const channels = [
+      ['sevenHole.p1', 0],
+      ['sevenHole.p2', 1],
+      ['sevenHole.p3', 2],
+      ['sevenHole.p4', 3],
+      ['sevenHole.p5', 4],
+      ['sevenHole.p6', 5],
+      ['sevenHole.p7', 6],
+      ['sevenHole.pAtm', 7],
+      ['sevenHole.tAtm', 8],
+    ].map(([role, channelIndex]) => ({
+      name: role,
+      role: role as ProbeChannelRole,
+      channel: { deviceId: 'dev-seven', channelIndex },
+      enabled: true,
+    }))
+    const config = {
+      ...configWithDevices(...Array(9).fill('dev-seven')),
+      probeType: 'seven-hole',
+      channels: { probeChannels: channels, motionAxes: [] },
+    } as TraversalTestConfig
+    const store = useDualTraversalStore()
+    store.sessions.probe1.config = config
+    await store.start('probe1')
+
+    snapshotCallback({
+      deviceId: 'dev-seven',
+      channelIndices: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      channels: [101, 102, 103, 104, 105, 106, 107, 100800, 23.5],
+    })
+    progressCallback({
+      latestData: {
+        rawPressure: {
+          P1: 9_999_999,
+          P2: 9_999_999,
+          P3: 9_999_999,
+          P4: 9_999_999,
+          P5: 9_999_999,
+          P6: 9_999_999,
+          P7: 9_999_999,
+          Patm: 9_999_999,
+          Tatm: 9_999_999,
+        },
+        interpolationResult: { isValid: true, alpha: 12.5 },
+      },
+    })
+
+    expect(store.sessions.probe1.realtimePressures).toMatchObject({
+      P1: 101,
+      P7: 107,
+      Patm: 100800,
+      Tatm: 23.5,
+    })
+    expect(store.sessions.probe1.realtimeResult).toMatchObject({ isValid: true, alpha: 12.5 })
+  })
+
   it('两路共享设备时一路卸载不取消另一路订阅', async () => {
     const store = useDualTraversalStore()
     store.sessions.probe1.config = configWithDevices('dev-shared', 'dev-a')
