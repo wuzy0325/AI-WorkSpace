@@ -476,7 +476,10 @@ function buildRealtimePressuresFromSnapshots(
       case 'sevenHole.p6': result.P6 = value; matchedChannelCount += 1; break
       case 'sevenHole.p7': result.P7 = value; matchedChannelCount += 1; break
       case 'sevenHole.pAtm': result.Patm = value; matchedChannelCount += 1; break
-      case 'sevenHole.tAtm': result.Tatm = value; matchedChannelCount += 1; break
+      // 七孔校准无独立风洞温度通道角色（七孔配置仅 tAtm，无 tTunnel），
+      // 用大气温度近似风洞总温（TAT），低速风洞下误差可接受。
+      // 与 ThreeHoleMain 保持一致：tAtm 同时填充 Tatm 和 Ttunnel。
+      case 'sevenHole.tAtm': result.Tatm = value; result.Ttunnel = value; matchedChannelCount += 1; break
       case 'sevenHole.pTotal': result.P0 = value; matchedChannelCount += 1; break
       case 'sevenHole.pTunnelStatic': result.Ps = value; matchedChannelCount += 1; break
       default: break
@@ -511,7 +514,10 @@ function buildRealtimePressuresFromSnapshots(
     } else if (/大气.*压/.test(name) || normalizedName.includes('atmospheric pressure') || /(?:^|[^a-z0-9])patm(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.Patm = rawValue; matchedChannelCount += 1
     } else if (/大气.*温/.test(name) || normalizedName.includes('atmospheric temp') || normalizedName.includes('atmospheric temperature') || /(?:^|[^a-z0-9])tatm(?:[^a-z0-9]|$)/.test(normalizedName)) {
-      result.Tatm = rawValue; matchedChannelCount += 1
+      // 七孔无独立 tTunnel 角色，大气温度兜底填充 Ttunnel，与 role 分支保持一致
+      result.Tatm = rawValue
+      result.Ttunnel = rawValue
+      matchedChannelCount += 1
     } else if (/总压/.test(name) || normalizedName.includes('total pressure') || /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/.test(normalizedName) || /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.P0 = rawValue; matchedChannelCount += 1
     } else if (/静压/.test(name) || normalizedName.includes('static pressure') || /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/.test(normalizedName)) {
@@ -586,7 +592,8 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <!-- 顶部状态栏：跨全宽 sticky 定位，校准员最频繁看的信息
-           包含：状态徽章 / 进度条 / 时间 / 区域徽章(七孔独有) / 目标α-β+实际α-β / Ma+V / 采样子进度 / 错误 / 配置按钮
+           包含：状态徽章 / 进度条 / 时间 / 区域徽章(七孔独有) / 目标α-β+实际α-β / 采样子进度 / 错误 / 配置按钮
+           Ma/V 已移至左侧栏大字显示，避免顶部状态栏信息冗余与宽度抖动
            sticky 定位确保运动控制器运行时内容区滚动不会导致状态栏位置跳动 -->
       <div class="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-5 py-2.5">
         <!-- 状态徽章 -->
@@ -665,23 +672,6 @@ onBeforeUnmount(() => {
             <span v-if="isMoving" class="flex items-center gap-1 text-xs" :style="{ color: `var(--accent-success)` }">
               <span class="h-1.5 w-1.5 animate-pulse rounded-full" :style="{ backgroundColor: `var(--accent-success)` }"></span>
               {{ t.shm_moving }}
-            </span>
-          </div>
-        </div>
-
-        <!-- 马赫数 + 速度：实时气动参数。速度统一保留 3 位小数，与侧边栏及 CSV 精度对齐 -->
-        <div class="flex items-center gap-3 border-l border-[var(--border-default)] pl-3 text-xs">
-          <div class="flex items-center gap-1">
-            <span class="text-[var(--text-muted)]">{{ t.shm_machMa }}</span>
-            <span class="font-mono font-bold" :style="{ color: `var(--accent-success)` }">
-              {{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}
-            </span>
-          </div>
-          <div class="flex items-center gap-1">
-            <span class="text-[var(--text-muted)]">{{ t.shm_velocityV }}</span>
-            <span class="font-mono font-bold" :style="{ color: `var(--accent-success)` }">
-              {{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}
-              <span class="ml-0.5 text-[var(--text-muted)]">m/s</span>
             </span>
           </div>
         </div>
