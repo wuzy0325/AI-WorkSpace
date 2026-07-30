@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -33,8 +33,14 @@ Unicode true
 ####
 
 # Product version must match projects/probe-interpolator/VERSION.
-# Defined before !include "wails_tools.nsh" so the ifndef guard in wails_tools.nsh picks this up.
+# 所有 INFO_* 变量必须在 !include "wails_tools.nsh" 之前显式定义，
+# 因为本地 makensis 调用不经过 wails build 流程，wails_tools.nsh 不会从 wails.json 回填项目信息，
+# 默认值是空字符串会导致 installer 文件名变成 "-<version>-amd64-installer.exe"。
+!define INFO_PROJECTNAME "probe-interpolator"
+!define INFO_COMPANYNAME "Wind-DAQ Team"
+!define INFO_PRODUCTNAME "Probe Interpolator"
 !define INFO_PRODUCTVERSION "0.1.0"
+!define INFO_COPYRIGHT "© 2026, Wind-DAQ Team"
 
 ####
 ## Include the wails tools
@@ -98,8 +104,15 @@ Section
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
-    
+
     !insertmacro wails.files
+
+    # 用户说明书 HTML（5/3/7 孔各一份）必须随安装包发布，否则 OpenHelpDocByPath
+    # 在安装目录下找不到 docs/<fileName> 会报"未找到用户说明书文件"。
+    # 源路径相对 windows/nsis/：..\..\docs -> apps/desktop-wails/docs
+    SetOutPath $INSTDIR\docs
+    File /r "..\..\docs\*.*"
+    SetOutPath $INSTDIR
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -110,11 +123,12 @@ Section
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-Section "uninstall" 
+Section "uninstall"
     !insertmacro wails.setShellContext
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
+    RMDir /r "$INSTDIR\docs" # 卸载时清理用户说明书 HTML
     RMDir /r $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
