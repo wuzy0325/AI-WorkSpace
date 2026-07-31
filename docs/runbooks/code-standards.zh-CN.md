@@ -16,6 +16,17 @@
 
 常规文件控制在 **300～500 行**内。超长文件强制拆分——AI 超长上下文极易理解错乱。
 
+### 禁止 dead code
+
+未使用的私有符号（func / type / field / var / const）必须直接删除，不得保留在源码中。
+
+- **检测工具**：`staticcheck -checks U1000`
+- **集成位置**：`scripts/validate-structure.ps1` § 2f（pre-submit 流程自动执行）
+- **豁免清单**：`scripts/staticcheck-u1000-waivers.txt` 仅用于过渡期管理预存 dead code
+- **新增 dead code 不得加入豁免清单**——必须直接删除源码
+- **维护原则**：清理 dead code 后，必须同步删除豁免清单中对应行
+- **背景**：人工 code review 对私有未导出符号的覆盖天然不全，曾漏掉 3 处 dead code；改用静态分析兜底
+
 ### 代码块顺序固定
 
 推荐固定顺序，AI 阅读成本极低：

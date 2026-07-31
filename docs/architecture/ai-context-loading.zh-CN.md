@@ -89,6 +89,7 @@
 - 前端目录结构：`docs/runbooks/frontend-directory-rules.zh-CN.md`
 - 开发/验证规则：`docs/runbooks/development-rules.md`
 - 工作空间目录规则：`docs/runbooks/workspace-directory-rules.zh-CN.md`
+- Windows Go 已知问题：`docs/runbooks/go-windows-known-issues.zh-CN.md`
 - 模块设计：`docs/architecture/module-design.md`
 - 项目结构变体：`docs/architecture/project-variants.md`
 - AI 加载协议：`docs/architecture/ai-context-loading.zh-CN.md`
