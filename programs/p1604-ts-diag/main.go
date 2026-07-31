@@ -13,10 +13,19 @@ import (
 	"math"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	sharedproto "shared.local/device-sdk/go/protocol"
 )
+
+// globalWatchdogTimeout 是进程级硬 watchdog 超时（ADR-009 P2）。
+//
+// 设计依据：诊断工具的 SetReadDeadline 在故障 Windows 电脑上可能失效，
+// ReadFrame 永久阻塞导致 main 挂起。watchdog 在超时后强制 Close conn 解除阻塞，
+// 并 os.Exit(2) 退出，避免僵尸进程。
+// 取值 5 分钟：默认 200 帧 × 1ms ≈ 0.2s + 配置开销 < 5s，5 分钟足够覆盖最慢场景。
+const globalWatchdogTimeout = 5 * time.Minute
 
 func main() {
 	host := flag.String("host", "192.168.1.7", "设备 IP")
@@ -25,14 +34,28 @@ func main() {
 	periodMs := flag.Int("p", 1, "采样周期 ms (1=1000Hz)")
 	flag.Parse()
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
 	fmt.Printf("连接 %s (采样周期=%dms, 读取%d帧)...\n", addr, *periodMs, *numFrames)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	// ADR-009 R2-1：改用 sharedproto.DialTCP 替代 net.DialTimeout。
+	// net.DialTimeout 依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时
+	// Dial 可能永远不返回，工具启动即卡死。sharedproto.DialTCP 内部用 goroutine +
+	// time.After 软超时 + abandoned 信号，主线程在 timeout 后立即返回，晚到 conn
+	// 被 Close 不泄漏（R1-4 整改保证）。
+	conn, err := sharedproto.DialTCP(addr, "", 5*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "连接失败: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
+	// 进程级硬 watchdog（ADR-009 P2）：超时后强制 Close conn + os.Exit(2)。
+	// 退出码 2 = watchdog 硬超时，区别于 os.Exit(1)（连接失败等一般错误），便于脚本区分。
+	// 保存 timer 句柄并在 main 正常返回前 Stop，避免长生命周期场景下 watchdog 误触发。
+	wd := time.AfterFunc(globalWatchdogTimeout, func() {
+		fmt.Fprintf(os.Stderr, "\n[watchdog] 全局超时 %v 触发，强制关闭连接并退出\n", globalWatchdogTimeout)
+		_ = conn.Close()
+		os.Exit(2)
+	})
+	defer wd.Stop()
 	fmt.Println("✅ TCP 已连接")
 
 	fr := sharedproto.NewFrameReader(conn)
