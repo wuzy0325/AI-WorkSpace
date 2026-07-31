@@ -63,6 +63,16 @@ const (
 //   - 已通过 w1601 启用 2 字节长度前缀
 //   - 调用方独占 conn 与 frameReader（通常在 Connect 阶段或未采集时调用）
 //
+// ADR-009 watchdog 兜底：SetWriteDeadline / SetReadDeadline 在故障 Windows 电脑
+// 不可靠，Write / Read 在 deadline 到期后仍可能无限阻塞。watchdog 在独立 timer
+// goroutine 上跑，超时后强制 conn.Close() 解除阻塞，覆盖 Write + Read 全流程。
+// timeout == 0 时不启动 watchdog，由调用方负责通过 Close conn 解除阻塞。
+//
+// ADR-009 R0-12：soft deadline 触发时（net.Error.Timeout()），即使 watchdog 未触发也必须
+// 毒化连接——迟到响应可能随后进入 TCP 流被下一条命令消费，导致协议错位。
+// 整改后：soft timeout 时强制 Close conn 并返回 ErrWatchdogTriggered，让调用方
+// 统一毒化驱动状态。
+//
 // 返回值为当前硬件 EU 压力转换系数；调用方可通过 P1604MatchUnitByCoefficient 反查单位字符串。
 func P1604ReadUnitCoefficient(reader *FrameReader, conn net.Conn, timeout time.Duration) (float64, error) {
 	if reader == nil {
@@ -71,27 +81,41 @@ func P1604ReadUnitCoefficient(reader *FrameReader, conn net.Conn, timeout time.D
 	if conn == nil {
 		return 0, fmt.Errorf("conn is nil")
 	}
+
+	// watchdog 仅在 timeout > 0 时启动；timeout == 0 时由调用方负责 Close。
+	// 不启动 watchdog 时用 NoopWatchdogStop 占位，保持后续 wrapP1604IOError + defer 判断统一。
+	var wdStop func() bool = NoopWatchdogStop
+	if timeout > 0 {
+		wdStop = WatchdogClose(conn, timeout)
+	}
+
+	// watchdog 未触发时清 deadline 让 conn 可复用；触发时 conn 已 Close，不清。
+	// wdStop 幂等，defer 与 wrapP1604IOError 内部的多次调用安全（修复前 bug：
+	// 第二次调用 stop 永久阻塞，已通过 sync.Once 修复）。
+	defer func() {
+		if wdStop() {
+			if timeout > 0 {
+				_ = conn.SetReadDeadline(time.Time{})
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
+		}
+	}()
+
 	// 发送 u01101 命令（纯 ASCII，不带换行符——见 p1604ReadUnitCmd 注释）
 	if timeout > 0 {
-		if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-			return 0, fmt.Errorf("set write deadline: %w", err)
-		}
-		defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
+		_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	}
 	if _, err := conn.Write([]byte(p1604ReadUnitCmd)); err != nil {
-		return 0, fmt.Errorf("send %s: %w", p1604ReadUnitCmd, err)
+		return 0, wrapP1604IOError(err, wdStop, conn, "send "+p1604ReadUnitCmd)
 	}
 
 	// 读取响应（FrameReader 自动剥离 2 字节长度前缀）
 	if timeout > 0 {
-		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return 0, fmt.Errorf("set read deadline: %w", err)
-		}
-		defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	}
 	payload, err := reader.ReadFrame()
 	if err != nil {
-		return 0, fmt.Errorf("read %s response: %w", p1604ReadUnitCmd, err)
+		return 0, wrapP1604IOError(err, wdStop, conn, "read "+p1604ReadUnitCmd+" response")
 	}
 
 	text := strings.TrimSpace(string(payload))
@@ -123,6 +147,12 @@ func P1604ReadUnitCoefficient(reader *FrameReader, conn net.Conn, timeout time.D
 //
 // 调用前提同 P1604ReadUnitCoefficient；此外建议仅在未采集时调用，
 // 避免与数据流读取竞争 frameReader。
+//
+// ADR-009 watchdog 兜底：同 P1604ReadUnitCoefficient，覆盖 Write + Read 全流程。
+// 修复前 bug：设 deadline 后无 defer 清除，失败路径 deadline 残留影响后续命令。
+//
+// ADR-009 R0-12：soft deadline 触发时同样强制 Close conn 并返回 ErrWatchdogTriggered，
+// 防止迟到响应污染下一条命令（详见 P1604ReadUnitCoefficient 注释）。
 func P1604WriteUnitCoefficient(reader *FrameReader, conn net.Conn, coeff float64, timeout time.Duration) error {
 	if reader == nil {
 		return fmt.Errorf("frame reader is nil")
@@ -137,20 +167,25 @@ func P1604WriteUnitCoefficient(reader *FrameReader, conn net.Conn, coeff float64
 		return fmt.Errorf("invalid coefficient: %v", coeff)
 	}
 
+	// watchdog 兜底：覆盖 Write + Read 全流程。timeout 已确保 > 0。
+	wdStop := WatchdogClose(conn, timeout)
+	defer func() {
+		if wdStop() {
+			_ = conn.SetReadDeadline(time.Time{})
+			_ = conn.SetWriteDeadline(time.Time{})
+		}
+	}()
+
 	cmd := fmt.Sprintf(p1604WriteUnitFmt, coeff)
-	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		return fmt.Errorf("set write deadline: %w", err)
-	}
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
-		return fmt.Errorf("send v01101: %w", err)
+		return wrapP1604IOError(err, wdStop, conn, "send v01101")
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return fmt.Errorf("set read deadline: %w", err)
-	}
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	payload, err := reader.ReadFrame()
 	if err != nil {
-		return fmt.Errorf("read v01101 response: %w", err)
+		return wrapP1604IOError(err, wdStop, conn, "read v01101 response")
 	}
 	response := string(payload)
 	if response == "A" {
@@ -160,6 +195,35 @@ func P1604WriteUnitCoefficient(reader *FrameReader, conn net.Conn, coeff float64
 		return fmt.Errorf("device rejected unit change: %s", response)
 	}
 	return fmt.Errorf("unexpected v01101 response: %q", response)
+}
+
+// wrapP1604IOError 统一包装 P1604 unit helper 的 I/O 错误，覆盖三种场景：
+//
+//  1. soft timeout（net.Error.Timeout()==true）：deadline 先于 watchdog 触发。
+//     ADR-009 R0-12：协议边界已不可信，迟到响应可能随后进入 TCP 流被下一条命令消费。
+//     强制 Close conn 阻断迟到响应，返回包含 ErrWatchdogTriggered sentinel 的错误，
+//     让调用方（DAQP1604.SetUnit / syncUnitFromHardware / P1604Adapter.ApplyConfig 等）
+//     通过 errors.Is 检测并毒化驱动状态。
+//
+//  2. watchdog 已触发（wdStop()==false）：conn 已 Close，WrapWatchdogError 已包装 sentinel。
+//
+//  3. 其他错误（连接重置 / EOF / 协议解析错误）：仅附加 op 上下文，由调用方按错误类型决策。
+//     调用方通常已通过 IsConnResetByPeer 处理"对端已 FIN/RST"场景，此处不重复 Close。
+//
+// 调用约束：必须在错误返回路径调用；conn 在 soft timeout 分支会被 Close，调用方
+// 不可再使用该 conn 进行 I/O。
+func wrapP1604IOError(err error, wdStop func() bool, conn net.Conn, op string) error {
+	if err == nil {
+		return nil
+	}
+	// soft timeout 检测：deadline 兑现但 watchdog 未触发。
+	// 强制 Close conn 阻断迟到响应，统一返回 ErrWatchdogTriggered 让调用方毒化连接。
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		_ = conn.Close()
+		return fmt.Errorf("%s: %w; %w", op, err, ErrWatchdogTriggered)
+	}
+	// 其他错误（含 watchdog 已触发场景）委托给 WrapWatchdogError 统一处理。
+	return WrapWatchdogError(err, wdStop, op)
 }
 
 // P1604MatchUnitByCoefficient 根据系数反查最接近的单位字符串

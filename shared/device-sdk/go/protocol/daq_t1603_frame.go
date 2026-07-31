@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -85,21 +86,19 @@ func looksLikeReasonableTemperatureFrame(temps []float64) bool {
 	if len(temps) == 0 {
 		return false
 	}
-	reasonableCount := 0
 	for _, temp := range temps {
 		if math.IsNaN(temp) || math.IsInf(temp, 0) {
+			// NaN / Inf 是未接热电偶的正常读数，跳过
 			continue
 		}
+		// 任何值超出物理不可能范围（-1000°C ~ 5000°C）说明这不是温度帧，
+		// 立即拒绝。数据帧长度固定（64/72/192 字节），边界由帧长保证，
+		// 只要所有非 NaN 值在物理可能范围内即可认定为有效帧。
 		if temp < minImpossibleThermocoupleTemp || temp > maxImpossibleThermocoupleTemp {
 			return false
 		}
-		if temp >= minReasonableThermocoupleTemp && temp <= maxReasonableThermocoupleTemp {
-			reasonableCount++
-		}
 	}
-	// 半数通道在合理温度区间即视为有效帧；
-	// 16 路设备常有 5~7 路未接热电偶（读数饱和/NaN），不能因此判定整帧错位。
-	return reasonableCount >= len(temps)/2
+	return true
 }
 
 // ParseASCIIFrame parses a 192-byte ASCII text frame.
@@ -260,6 +259,24 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 // not yet received a full frame. The caller should retry.
 var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 
+// ErrControlACK reports a complete A response at a frame boundary.
+var ErrControlACK = errors.New("DAQ-T-1603 control command acknowledged")
+
+// ErrDeviceRejected 表示设备对设置命令（@fe / @f3 等）返回 E 拒绝响应。
+//
+// 语义边界（ADR-009 复核修订）：
+//   - E 是设备发出的合法、完整的错误响应，连接协议边界仍可信；
+//   - 因此本错误**不**触发 ADR-009 连接毒化（invalidateConnection）；
+//   - 调用方应终止当前操作并上报错误，不应继续执行后续命令。
+//
+// 与 ErrWatchdogTriggered 的区别：
+//   - ErrWatchdogTriggered 表示协议边界不可信，必须毒化连接；
+//   - ErrDeviceRejected 表示设备业务层拒绝，连接可继续复用。
+//
+// 调用方通过 errors.Is(err, ErrDeviceRejected) 精确匹配 sentinel，
+// 决定是否跳过毒化路径。
+var ErrDeviceRejected = errors.New("device rejected command (E response)")
+
 // T1603FrameReader reads frames from a DAQ-T-1603 device over TCP.
 // Mode combinations:
 //   - BIN=0, metadata=false → 192-byte fixed ASCII
@@ -272,6 +289,7 @@ type T1603FrameReader struct {
 	buffer       []byte
 	binaryMode   bool
 	metadataMode bool
+	ackAfterData []bool
 }
 
 // NewT1603FrameReader creates a frame reader for DAQ-T-1603 TCP data.
@@ -289,6 +307,14 @@ func (r *T1603FrameReader) SetBinaryMode(binary bool) {
 	r.mu.Unlock()
 }
 
+// IsBinaryMode 返回当前 binaryMode 状态，用于测试断言与诊断。
+// 与 SetBinaryMode 配对的只读访问器，避免外部直接访问 mu 保护的字段。
+func (r *T1603FrameReader) IsBinaryMode() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.binaryMode
+}
+
 // SetMetadataMode enables metadata prefix mode.
 // When true and binaryMode is false, reads newline-terminated variable-length
 // ASCII frames. When true and binaryMode is true, reads 72-byte fixed frames
@@ -298,6 +324,30 @@ func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
 	r.mu.Lock()
 	r.metadataMode = metadata
 	r.mu.Unlock()
+}
+
+// ExpectControlACK makes an optional leading A visible to the owner. Reading a
+// complete frame first resolves the optional ACK as absent.
+func (r *T1603FrameReader) ExpectControlACK() {
+	r.mu.Lock()
+	r.ackAfterData = append(r.ackAfterData, false)
+	r.mu.Unlock()
+}
+
+// ExpectControlACKAfterFrames expects a terminal ACK after zero or more
+// complete frames, as observed for @f1 on the real device.
+func (r *T1603FrameReader) ExpectControlACKAfterFrames() {
+	r.mu.Lock()
+	r.ackAfterData = append(r.ackAfterData, true)
+	r.mu.Unlock()
+}
+
+// HasPendingControlACK reports whether an earlier control command still has an
+// ACK in flight. It lets the connection owner distinguish start and stop ACKs.
+func (r *T1603FrameReader) HasPendingControlACK() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.ackAfterData) > 0
 }
 
 // ReadFrame reads one complete frame from the device.
@@ -325,7 +375,15 @@ func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	r.mu.Lock()
 	frameSize := r.frameSizeLocked()
-	if frame, ok := r.extractValidFixedFrameLocked(frameSize); ok {
+	if r.extractControlACKLocked(frameSize) {
+		r.mu.Unlock()
+		return nil, ErrControlACK
+	}
+	if frame, ok, err := r.extractFixedFrameLocked(frameSize); err != nil {
+		r.mu.Unlock()
+		return nil, err
+	} else if ok {
+		r.resolveMissingLeadingACKLocked()
 		r.mu.Unlock()
 		return frame, nil
 	}
@@ -346,7 +404,15 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
-		if frame, ok := r.extractValidFixedFrameLocked(frameSize); ok {
+		if r.extractControlACKLocked(frameSize) {
+			r.mu.Unlock()
+			return nil, ErrControlACK
+		}
+		if frame, ok, err := r.extractFixedFrameLocked(frameSize); err != nil {
+			r.mu.Unlock()
+			return nil, err
+		} else if ok {
+			r.resolveMissingLeadingACKLocked()
 			r.mu.Unlock()
 			return frame, nil
 		}
@@ -354,23 +420,38 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	}
 }
 
-func (r *T1603FrameReader) extractValidFixedFrameLocked(size int) ([]byte, bool) {
-	for len(r.buffer) >= size {
-		frame := make([]byte, size)
-		copy(frame, r.buffer[:size])
-		if _, err := ParseTCPFrameEx(frame); err == nil {
-			r.buffer = r.buffer[size:]
-			if len(r.buffer) == 0 {
-				r.buffer = make([]byte, 0, 256)
-			}
-			return frame, true
-		}
+func (r *T1603FrameReader) resolveMissingLeadingACKLocked() {
+	if len(r.ackAfterData) > 0 && !r.ackAfterData[0] {
+		r.ackAfterData = r.ackAfterData[1:]
+	}
+}
 
-		// A delayed command ACK or residual byte shifts every fixed-size frame.
-		// Drop one byte and retry before exposing a corrupted frame upstream.
+func (r *T1603FrameReader) extractControlACKLocked(frameSize int) bool {
+	if len(r.ackAfterData) == 0 || len(r.buffer) == 0 || r.buffer[0] != 'A' {
+		return false
+	}
+	r.buffer = r.buffer[1:]
+	for len(r.buffer) > 0 && (r.buffer[0] == '\r' || r.buffer[0] == '\n') {
 		r.buffer = r.buffer[1:]
 	}
-	return nil, false
+	r.ackAfterData = r.ackAfterData[1:]
+	return true
+}
+
+func (r *T1603FrameReader) extractFixedFrameLocked(size int) ([]byte, bool, error) {
+	if len(r.buffer) < size {
+		return nil, false, nil
+	}
+	frame := make([]byte, size)
+	copy(frame, r.buffer[:size])
+	if _, err := ParseTCPFrameEx(frame); err != nil {
+		return nil, false, fmt.Errorf("invalid frame at established %d-byte boundary: %w", size, err)
+	}
+	r.buffer = r.buffer[size:]
+	if len(r.buffer) == 0 {
+		r.buffer = make([]byte, 0, 256)
+	}
+	return frame, true, nil
 }
 
 // findFieldEnd scans buf for N space-separated fields and returns the
@@ -420,8 +501,15 @@ func tryExtractFrame(buf []byte) ([]byte, int) {
 
 func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
 	r.mu.Lock()
+	if len(r.ackAfterData) > 0 && len(r.buffer) > 0 && r.buffer[0] == 'A' && len(r.buffer) < 17 {
+		r.buffer = r.buffer[1:]
+		r.ackAfterData = r.ackAfterData[1:]
+		r.mu.Unlock()
+		return nil, ErrControlACK
+	}
 	if frame, end := tryExtractFrame(r.buffer); end >= 0 {
 		r.buffer = r.buffer[end:]
+		r.resolveMissingLeadingACKLocked()
 		if len(r.buffer) == 0 {
 			r.buffer = make([]byte, 0, 256)
 		}
@@ -443,8 +531,15 @@ func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
 
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
+		if len(r.ackAfterData) > 0 && len(r.buffer) > 0 && r.buffer[0] == 'A' && tryVariableACK(r.buffer) {
+			r.buffer = r.buffer[1:]
+			r.ackAfterData = r.ackAfterData[1:]
+			r.mu.Unlock()
+			return nil, ErrControlACK
+		}
 		if frame, end := tryExtractFrame(r.buffer); end >= 0 {
 			r.buffer = r.buffer[end:]
+			r.resolveMissingLeadingACKLocked()
 			if len(r.buffer) == 0 {
 				r.buffer = make([]byte, 0, 256)
 			}
@@ -453,6 +548,18 @@ func (r *T1603FrameReader) readFrameVariable() ([]byte, error) {
 		}
 		r.mu.Unlock()
 	}
+}
+
+func tryVariableACK(buffer []byte) bool {
+	if len(buffer) == 1 {
+		return true
+	}
+	_, end := tryExtractFrame(buffer)
+	if end >= 0 {
+		return false
+	}
+	_, end = tryExtractFrame(buffer[1:])
+	return end >= 0
 }
 
 func (r *T1603FrameReader) frameSizeLocked() int {
@@ -478,6 +585,7 @@ func (r *T1603FrameReader) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.buffer = make([]byte, 0, 256)
+	r.ackAfterData = nil
 }
 
 // Resync 丢弃缓冲区中 1 字节数据用于重同步。
@@ -498,35 +606,29 @@ func (r *T1603FrameReader) Resync() {
 	}
 }
 
-// ConsumeOptionalACK drains a leading ACK if present.
-// Some firmwares emit a single-byte 'A', others emit "A\n".
-// It reads byte-by-byte under a short deadline so split TCP packets do not
-// corrupt frame alignment. Non-ACK bytes are preserved in the frame buffer.
+// ConsumeOptionalACK drains a leading ACK if present for diagnostic tools.
+// Production uses the single-reader control ACK state above; this helper keeps
+// non-ACK bytes in the frame buffer for legacy probes.
 //
-// ADR-009 watchdog：持 r.mu 期间阻塞 r.conn.Read，watchdog 必须能
-// 不依赖 r.mu 直接 Close conn 解除阻塞。watchdog 触发时返回 net.ErrClosed
-// 包装的错误，调用方（StartAcquisition）必须把连接标记为失效并重连。
+// ADR-009 R0-3 整改：移除 watchdog Close 兜底。
+// 历史背景：原实现通过 WatchdogClose 在 timeout 后强制 Close conn 解除阻塞的
+// Read，违反 ADR-009 决策 8——可选 ACK 是"无数据也正常"的操作，watchdog 到期
+// 只能证明探测无法完成，不能证明物理连接故障。问题 Windows 电脑 deadline 失效
+// 时健康连接会被误杀。
+//
+// 整改后：仅依赖 SetReadDeadline 软超时。timeout 到期返回 (false, nil) 表示
+// "无 ACK"，是正常结果。调用方需自行决定是否在 deadline 失效场景下用外层
+// watchdog 兜底（如诊断工具的进程级 watchdog）。
+//
+// 注意：本函数仅在诊断工具（freqprobe/frameprobe）中使用，生产路径不再调用。
 func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// watchdog 兜底：timeout 后强制 Close r.conn 解除阻塞的 Read。
-	// 与 SendCommand 同模式：用 wdChecked 缓存结果避免多次调用 wdStop 死锁。
-	wdStop := WatchdogClose(r.conn, timeout)
-	var wdResult bool
-	wdChecked := false
-	checkWd := func() bool {
-		if !wdChecked {
-			wdResult = wdStop()
-			wdChecked = true
-		}
-		return wdResult
-	}
-
 	var resultErr error
 	consumed := false
 
-	one := make([]byte, 1)
+	one := make([]byte, 2)
 	var first byte
 	haveFirst := false
 	if len(r.buffer) > 0 {
@@ -538,15 +640,20 @@ func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, erro
 			resultErr = err
 		} else {
 			n, err := r.conn.Read(one)
+			// 无论结果如何，清 deadline 避免残留 timeout 影响后续 ReadFrame
+			_ = r.conn.SetReadDeadline(time.Time{})
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// 无 ACK 可读，不是错误；watchdog 仍可能在随后触发
+					// 无 ACK 可读，是正常结果，不是错误
 				} else {
 					resultErr = err
 				}
 			} else if n > 0 {
 				first = one[0]
 				haveFirst = true
+				if n > 1 {
+					r.buffer = append(r.buffer, one[1:n]...)
+				}
 			}
 		}
 	}
@@ -557,38 +664,13 @@ func (r *T1603FrameReader) ConsumeOptionalACK(timeout time.Duration) (bool, erro
 			r.buffer = append([]byte{first}, r.buffer...)
 		} else {
 			consumed = true
-			// 处理可能的 \n 尾部
-			if len(r.buffer) > 0 {
-				if r.buffer[0] == '\n' {
-					r.buffer = r.buffer[1:]
-				}
-			} else {
-				if err := r.conn.SetReadDeadline(time.Now().Add(timeout)); err == nil {
-					n, err := r.conn.Read(one)
-					if err == nil && n > 0 {
-						if one[0] != '\n' {
-							r.buffer = append([]byte{one[0]}, r.buffer...)
-						}
-					} else if err != nil {
-						if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-							resultErr = err
-						}
-					}
-				}
+			for len(r.buffer) > 0 && (r.buffer[0] == '\r' || r.buffer[0] == '\n') {
+				r.buffer = r.buffer[1:]
 			}
 		}
 	}
 
-	// 统一在返回前检查 watchdog 状态
-	if !checkWd() {
-		if resultErr == nil {
-			resultErr = net.ErrClosed
-		}
-		return false, fmt.Errorf("%w (watchdog triggered, conn closed)", resultErr)
-	}
 	if resultErr == nil {
-		// watchdog 未触发且无错误：清 deadline，避免残留 timeout 影响后续 ReadFrame
-		_ = r.conn.SetReadDeadline(time.Time{})
 		if len(r.buffer) == 0 {
 			r.buffer = make([]byte, 0, 256)
 		}
@@ -616,6 +698,11 @@ const (
 // ADR-009 watchdog：入口启动 WatchdogClose 兜底，deadline 失效时强制 Close conn
 // 解除 Read 阻塞。成功路径在 watchdog 未触发时清 deadline，避免残留 cmdTailTimeout
 // 影响后续命令（daq-t1603 0.7.2 修复点）。
+//
+// ADR-009 R0-12：soft deadline 触发时（net.Error.Timeout()），即使有部分响应也必须
+// 毒化连接——迟到响应可能随后进入 TCP 流被下一条命令消费，导致协议错位。
+// 整改后：soft timeout 时强制 Close conn 并返回 ErrWatchdogTriggered，让调用方
+// 统一毒化驱动状态。
 func SendCommand(conn net.Conn, cmd string) (string, error) {
 	// watchdog 兜底：timeout 内未完成则强制 Close conn 解除阻塞。
 	// 返回的 wdStop 必须在函数返回前调用一次以取消计时器；
@@ -634,9 +721,15 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 	var buf bytes.Buffer
 	var resultErr error
 	var partialResponse string
+	// softTimeoutTriggered 标记 soft deadline 触发，需强制毒化连接（R0-12）。
+	var softTimeoutTriggered bool
 
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
+		// Write 阶段任何错误（timeout、broken pipe、RST 等）都意味着协议边界不可信。
+		// R0-12 + finding 3：强制 Close conn 阻断迟到响应，标记毒化让调用方废弃连接。
+		softTimeoutTriggered = true
+		_ = conn.Close()
 		resultErr = fmt.Errorf("send %q: %w", cmd, err)
 	} else {
 		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
@@ -645,14 +738,23 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 			n, err := conn.Read(one)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// deadline 触发：有部分响应则返回，否则返回错误
+					// R0-12：soft deadline 触发，协议边界已不可信。
+					// 即使有部分响应也必须毒化连接：迟到响应可能随后进入 TCP 流，
+					// 被下一条命令消费导致协议错位。强制 Close conn 阻断迟到响应。
+					softTimeoutTriggered = true
+					_ = conn.Close()
 					if buf.Len() > 0 {
 						partialResponse = strings.TrimRight(buf.String(), "\r ")
-						break
 					}
 					resultErr = err
 					break
 				}
+				// ADR-009 finding 3：非 timeout 错误（EOF、RST、io.ErrUnexpectedEOF 等）
+				// 同样意味着协议边界不可信。设备可能在发送部分数据后断连，迟到响应
+				// 可能随后进入 TCP 流被下一条命令消费导致协议错位。强制 Close conn
+				// 并标记毒化，让调用方通过 IsWatchdogTriggered 触发 invalidateConnection。
+				softTimeoutTriggered = true
+				_ = conn.Close()
 				resultErr = fmt.Errorf("read response for %q: %w", cmd, err)
 				break
 			}
@@ -671,7 +773,9 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 	// 统一在返回前检查 watchdog 状态：
 	// - 触发（false）：conn 已 Close，丢弃部分响应并附加上下文
 	// - 未触发（true）：conn 仍有效，清 deadline
-	if !checkWd() {
+	// R0-12: softTimeoutTriggered 也视为 conn 已死，统一返回 ErrWatchdogTriggered。
+	// 丢弃 partialResponse：协议边界不可信时部分响应不可用。
+	if softTimeoutTriggered || !checkWd() {
 		if resultErr == nil {
 			resultErr = net.ErrClosed
 		}
@@ -692,6 +796,12 @@ func SendCommand(conn net.Conn, cmd string) (string, error) {
 // query commands that return short ASCII payloads without a trailing newline.
 //
 // ADR-009 watchdog：与 SendCommand 同模式，watchdog 兜底 + 成功路径清 deadline。
+//
+// ADR-009 R0-12：首字节 cmdTimeout 触发视为 soft timeout——协议边界不可信，
+// 迟到响应可能随后进入 TCP 流被下一条命令消费。整改后：首字节 timeout 时
+// 强制 Close conn 并返回 ErrWatchdogTriggered。
+// 注意：收到至少一个字节后的 idleWindow timeout 是正常结束语义（静默窗口
+// 检测到响应结束），不视为 soft timeout，返回成功。
 func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (string, error) {
 	wdStop := WatchdogClose(conn, cmdWatchdogTimeout)
 	var wdResult bool
@@ -707,9 +817,15 @@ func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (strin
 	var buf bytes.Buffer
 	var resultErr error
 	var partialResponse string
+	// softTimeoutTriggered 标记首字节 soft deadline 触发，需强制毒化连接（R0-12）。
+	var softTimeoutTriggered bool
 
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
+		// Write 阶段任何错误（timeout、broken pipe、RST 等）都意味着协议边界不可信。
+		// R0-12 + finding 3：强制 Close conn 阻断迟到响应，标记毒化让调用方废弃连接。
+		softTimeoutTriggered = true
+		_ = conn.Close()
 		resultErr = fmt.Errorf("send %q: %w", cmd, err)
 	} else {
 		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
@@ -719,12 +835,23 @@ func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (strin
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					if buf.Len() > 0 {
+						// 已收到至少一个字节后的 idleWindow timeout：
+						// 正常结束语义（静默窗口检测），返回部分响应。
 						partialResponse = strings.TrimRight(buf.String(), "\r\n ")
 						break
 					}
+					// 首字节 cmdTimeout 触发：soft timeout，毒化连接（R0-12）。
+					softTimeoutTriggered = true
+					_ = conn.Close()
 					resultErr = err
 					break
 				}
+				// ADR-009 finding 3：非 timeout 错误（EOF、RST、io.ErrUnexpectedEOF 等）
+				// 同样意味着协议边界不可信。设备可能在发送部分数据后断连，迟到响应
+				// 可能随后进入 TCP 流被下一条命令消费导致协议错位。强制 Close conn
+				// 并标记毒化，让调用方通过 IsWatchdogTriggered 触发 invalidateConnection。
+				softTimeoutTriggered = true
+				_ = conn.Close()
 				resultErr = fmt.Errorf("read response for %q: %w", cmd, err)
 				break
 			}
@@ -740,7 +867,8 @@ func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (strin
 		}
 	}
 
-	if !checkWd() {
+	// R0-12: softTimeoutTriggered 也视为 conn 已死，统一返回 ErrWatchdogTriggered。
+	if softTimeoutTriggered || !checkWd() {
 		if resultErr == nil {
 			resultErr = net.ErrClosed
 		}
@@ -757,11 +885,17 @@ func SendCommandIdle(conn net.Conn, cmd string, idleWindow time.Duration) (strin
 }
 
 // SendCommandExact sends a text command and reads exactly n bytes as response.
-// After reading n bytes, drains any trailing \r\n to avoid corrupting the next command.
+// DAQ-T-1603 fixed-length responses have no trailing delimiter, so the function
+// returns immediately after io.ReadFull completes.
 //
 // ADR-009 watchdog：io.ReadFull 内部循环 conn.Read 不重设 deadline，
 // 必须由外层 watchdog 兜底；watchdog 触发时 conn 被 Close，io.ReadFull
 // 返回 io.ErrUnexpectedEOF 或 net.ErrClosed，统一包装为 "watchdog triggered"。
+//
+// ADR-009 R0-12：io.ReadFull 中途 soft deadline 触发时返回 net.Error timeout
+// 或 io.ErrUnexpectedEOF（部分字节后 EOF）。两种情况都意味着协议边界不可信：
+// 设备可能继续发送剩余字节，被下一条命令消费导致协议错位。整改后：检测到
+// soft timeout 时强制 Close conn 并返回 ErrWatchdogTriggered。
 func SendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
 	wdStop := WatchdogClose(conn, cmdWatchdogTimeout)
 	var wdResult bool
@@ -776,34 +910,35 @@ func SendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
 
 	var resultErr error
 	var response string
+	// softTimeoutTriggered 标记 soft deadline 触发，需强制毒化连接（R0-12）。
+	var softTimeoutTriggered bool
 
 	conn.SetWriteDeadline(time.Now().Add(cmdTimeout))
 	if _, err := conn.Write([]byte(cmd)); err != nil {
+		// Write 阶段任何错误（timeout、broken pipe、RST 等）都意味着协议边界不可信。
+		// R0-12 + finding 3：强制 Close conn 阻断迟到响应，标记毒化让调用方废弃连接。
+		softTimeoutTriggered = true
+		_ = conn.Close()
 		resultErr = fmt.Errorf("send %q: %w", cmd, err)
 	} else {
 		conn.SetReadDeadline(time.Now().Add(cmdTimeout))
 		buf := make([]byte, n)
 		if _, err := io.ReadFull(conn, buf); err != nil {
+			// ADR-009 finding 3：io.ReadFull 中途任何错误（timeout、EOF、
+			// io.ErrUnexpectedEOF 短读等）都意味着协议边界不可信。设备可能在发送
+			// 部分数据后断连，迟到响应可能随后进入 TCP 流被下一条命令消费。
+			// 强制 Close conn 并标记毒化，让调用方通过 IsWatchdogTriggered
+			// 触发 invalidateConnection。
+			softTimeoutTriggered = true
+			_ = conn.Close()
 			resultErr = fmt.Errorf("read exact %d for %q: %w", n, cmd, err)
 		} else {
-			// 排空尾部 \r\n；watchdog 仍生效，覆盖尾部读取的 deadline 失效场景
-			conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-			one := make([]byte, 1)
-			for i := 0; i < 2; i++ {
-				rn, err := conn.Read(one)
-				if err != nil || rn == 0 {
-					break
-				}
-				if one[0] != '\r' && one[0] != '\n' {
-					break
-				}
-				conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-			}
 			response = string(bytes.TrimRight(buf, "\r\n "))
 		}
 	}
 
-	if !checkWd() {
+	// R0-12: softTimeoutTriggered 也视为 conn 已死，统一返回 ErrWatchdogTriggered。
+	if softTimeoutTriggered || !checkWd() {
 		if resultErr == nil {
 			resultErr = net.ErrClosed
 		}

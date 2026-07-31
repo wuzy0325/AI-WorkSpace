@@ -1,7 +1,9 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -363,7 +365,7 @@ func readWithTimeout(conn net.Conn, timeout time.Duration) (string, error) {
 	}
 }
 
-func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
+func TestSendCommandExactWithoutTerminatorDoesNotDelayNextCommand(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -374,12 +376,7 @@ func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 			done <- fmt.Errorf("first command = %q, err = %v", cmd, err)
 			return
 		}
-		if _, err := server.Write([]byte("KKKKKKKKKKKKKKKK\r")); err != nil {
-			done <- err
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-		if _, err := server.Write([]byte("\n")); err != nil {
+		if _, err := server.Write([]byte("KKKKKKKKKKKKKKKK")); err != nil {
 			done <- err
 			return
 		}
@@ -408,6 +405,37 @@ func TestSendCommandExactDrainsSplitCRLF(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("server error: %v", err)
+	}
+}
+
+func TestSendCommandExactReturnsWithoutOptionalTerminator(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		_, _ = server.Write([]byte("KKKKKKKKKKKKKKKK"))
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		resp, err := SendCommandExact(ignored, "@e3", 16)
+		if err == nil && resp != "KKKKKKKKKKKKKKKK" {
+			err = fmt.Errorf("response = %q", resp)
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SendCommandExact returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("SendCommandExact waited for an optional response terminator")
 	}
 }
 
@@ -486,6 +514,87 @@ func TestConsumeOptionalACK_AWithNewline(t *testing.T) {
 		if raw[i] != frame[i] {
 			t.Fatalf("frame[%d] = %d, want %d", i, raw[i], frame[i])
 		}
+	}
+}
+
+func TestReadFrame_ExpectedACKAfterCompleteTailFrames(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.ExpectControlACKAfterFrames()
+
+	frame := make([]byte, TCPFrameSize)
+	binary.LittleEndian.PutUint32(frame[14*4:], math.Float32bits(27.5))
+	go func() {
+		payload := append(append(append([]byte{}, frame...), frame...), 'A')
+		_, _ = server.Write(payload)
+	}()
+
+	for i := 0; i < 2; i++ {
+		got, err := reader.ReadFrame()
+		if err != nil {
+			t.Fatalf("tail frame %d: ReadFrame returned error: %v", i+1, err)
+		}
+		if !bytes.Equal(got, frame) {
+			t.Fatalf("tail frame %d changed", i+1)
+		}
+	}
+	if _, err := reader.ReadFrame(); !errors.Is(err, ErrControlACK) {
+		t.Fatalf("ReadFrame error = %v, want ErrControlACK", err)
+	}
+}
+
+func TestReadFrame_StartACKWinsOverPlausibleSparseMisalignment(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.ExpectControlACK()
+	frame := make([]byte, TCPFrameSize)
+
+	go func() { _, _ = server.Write(append([]byte{'A'}, frame...)) }()
+	if _, err := reader.ReadFrame(); !errors.Is(err, ErrControlACK) {
+		t.Fatalf("ReadFrame error = %v, want ErrControlACK", err)
+	}
+	got, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error after ACK: %v", err)
+	}
+	if !bytes.Equal(got, frame) {
+		t.Fatal("sparse frame changed after consuming start ACK")
+	}
+}
+
+func TestReadFrame_MissingOptionalStartACKDoesNotConsumeStopACK(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.ExpectControlACK()
+	frame := make([]byte, TCPFrameSize)
+
+	go func() { _, _ = server.Write(frame) }()
+	if _, err := reader.ReadFrame(); err != nil {
+		t.Fatalf("ReadFrame without optional start ACK returned error: %v", err)
+	}
+	if reader.HasPendingControlACK() {
+		t.Fatal("optional start ACK remained pending after the first complete frame")
+	}
+
+	reader.ExpectControlACKAfterFrames()
+	go func() { _, _ = server.Write([]byte{'A'}) }()
+	if _, err := reader.ReadFrame(); !errors.Is(err, ErrControlACK) {
+		t.Fatalf("stop ACK error = %v, want ErrControlACK", err)
+	}
+	if reader.HasPendingControlACK() {
+		t.Fatal("stop ACK remained pending")
 	}
 }
 
@@ -759,7 +868,7 @@ func TestReadFrame_BinaryTimestampModeAfterACK(t *testing.T) {
 	}
 }
 
-func TestReadFrame_FixedBinarySkipsDelayedACK(t *testing.T) {
+func TestReadFrame_FixedBinaryRejectsUnexpectedDelayedACK(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -776,12 +885,18 @@ func TestReadFrame_FixedBinarySkipsDelayedACK(t *testing.T) {
 		_, _ = server.Write(append([]byte{'A'}, frame...))
 	}()
 
-	raw, err := reader.ReadFrame()
-	if err != nil {
-		t.Fatalf("ReadFrame returned error: %v", err)
+	if _, err := reader.ReadFrame(); err == nil {
+		t.Fatal("ReadFrame accepted an unexpected ACK by sliding the frame boundary")
 	}
-	if string(raw) != string(frame) {
-		t.Fatalf("ReadFrame did not skip delayed ACK")
+}
+
+func TestParseTCPFrame_PlausibleFourByteShiftIsIndistinguishable(t *testing.T) {
+	frame := make([]byte, TCPFrameSize)
+	binary.LittleEndian.PutUint32(frame[14*4:], math.Float32bits(27.5))
+	shiftedCandidate := append([]byte{0, 0, 0, 0}, frame[:60]...)
+
+	if _, err := ParseTCPFrame(shiftedCandidate); err != nil {
+		t.Fatalf("four-byte shifted sparse frame should demonstrate protocol ambiguity, got %v", err)
 	}
 }
 
@@ -948,36 +1063,77 @@ func TestT1603SendCommandExact_WatchdogTriggersOnDeadlineIgnoringConn(t *testing
 	}
 }
 
-// TestT1603ConsumeOptionalACK_WatchdogTriggersOnDeadlineIgnoringConn 验证
-// ConsumeOptionalACK 在 deadline 失效场景下由 watchdog 兜底。
+// TestT1603ConsumeOptionalACK_DoesNotCloseHealthyConnWhenNoACK 验证
+// ConsumeOptionalACK 在无 ACK 场景下不会关闭健康连接。
 //
-// 注意：ConsumeOptionalACK 持 r.mu 期间阻塞 r.conn.Read，watchdog 必须
-// 不需要 r.mu 也能 Close conn 解除阻塞（ADR-009 决策 3）。
-func TestT1603ConsumeOptionalACK_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
+// ADR-009 决策 8：可选 ACK 是"无数据也正常"的操作，watchdog 到期只能证明
+// 探测无法完成，不能证明物理连接故障。原实现通过 WatchdogClose 在 timeout
+// 后强制 Close conn，违反该决策。整改后仅依赖 SetReadDeadline 软超时，
+// timeout 到期返回 (false, nil)，连接保持开放。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接
+//   - server 不发送任何数据（模拟无 ACK，正常状态）
+//
+// 测试步骤：
+//   - 调用 reader.ConsumeOptionalACK(50ms)
+//
+// 期待结果：
+//   - 返回 (false, nil)（无 ACK，正常结果）
+//   - 连接未被关闭：server.Write 成功，client.Read 能读到数据
+//   - 后续 ReadFrame 仍可正常工作
+func TestT1603ConsumeOptionalACK_DoesNotCloseHealthyConnWhenNoACK(t *testing.T) {
+	client, server := net.Pipe()
 	defer client.Close()
+	defer server.Close()
 
-	ignored := newDeadlineIgnoringConn(client)
-	reader := NewT1603FrameReader(ignored)
+	reader := NewT1603FrameReader(client)
 	reader.SetBinaryMode(true)
 
-	done := make(chan error, 1)
+	consumed, err := reader.ConsumeOptionalACK(50 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("ConsumeOptionalACK returned error on healthy conn with no ACK: %v", err)
+	}
+	if consumed {
+		t.Fatal("expected consumed=false when no ACK sent")
+	}
+
+	// 验证连接未被关闭。
+	// net.Pipe 的 Write 阻塞等待 Read，需用 goroutine 并发读写避免死锁。
+	readCh := make(chan struct {
+		data string
+		err  error
+	}, 1)
 	go func() {
-		_, err := reader.ConsumeOptionalACK(200 * time.Millisecond)
-		done <- err
+		_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		buf := make([]byte, 16)
+		n, err := client.Read(buf)
+		readCh <- struct {
+			data string
+			err  error
+		}{string(buf[:n]), err}
 	}()
 
+	// 短暂等待确保 client.Read goroutine 已启动并阻塞在 Read 上
+	time.Sleep(20 * time.Millisecond)
+
+	// server.Write 应能成功（client.Read 在等待）
+	_ = server.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, err := server.Write([]byte("alive")); err != nil {
+		t.Fatalf("server.Write failed after ConsumeOptionalACK, conn was killed: %v", err)
+	}
+
+	// 等待 client.Read 完成
 	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("expected watchdog-triggered error, got nil")
+	case r := <-readCh:
+		if r.err != nil {
+			t.Fatalf("client.Read failed after ConsumeOptionalACK, conn was killed: %v", r.err)
 		}
-		if !strings.Contains(err.Error(), "watchdog triggered") {
-			t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+		if r.data != "alive" {
+			t.Fatalf("client.Read got %q, want %q", r.data, "alive")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("ConsumeOptionalACK did not return within 3s budget; watchdog likely not armed")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("client.Read did not complete within 500ms")
 	}
 }
 
@@ -1015,5 +1171,175 @@ func TestT1603SendCommand_ClearsDeadlineOnSuccess(t *testing.T) {
 	got := tracked.lastReadDeadlineValue()
 	if !got.IsZero() {
 		t.Fatalf("read deadline not cleared after success: %v", got)
+	}
+}
+
+// TestT1603SendCommand_SoftTimeoutClosesConnAndReturnsSentinel 验证 ADR-009 R0-12：
+// 当 SetReadDeadline 正常兑现（soft deadline 先于 watchdog 触发）时，SendCommand 必须
+// 强制 Close conn 阻断迟到响应，并返回包装 ErrWatchdogTriggered sentinel 的错误让调用方
+// 统一毒化驱动状态。
+//
+// 修复前 bug：soft deadline 兑现时 helper 仅返回普通 timeout 错误，不 Close conn。
+// 迟到响应随后进入 TCP 流被下一条命令消费，导致协议错位。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接（SetReadDeadline 真有效，与 deadlineIgnoringConn 相反）
+//   - server 端读出命令后写一个非 '\n' 字节再停止发送，让 SendCommand 进入 cmdTailTimeout
+//     阶段（100ms）而非 cmdTimeout 阶段（1s），加速测试
+//
+// 测试步骤：
+//   - 调用 SendCommand，server 写一个字节后停止
+//   - 等待 cmdTailTimeout(100ms) soft deadline 触发
+//   - 函数返回后，server 再写入迟到响应
+//
+// 期待结果：
+//   - 函数在 2s 预算内返回
+//   - 错误通过 errors.Is(err, ErrWatchdogTriggered) 精确匹配 sentinel
+//   - conn 已被 helper Close：server 写入迟到响应时 Write 失败
+func TestT1603SendCommand_SoftTimeoutClosesConnAndReturnsSentinel(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 helper Close，不在 defer 中重复 Close
+
+	go func() {
+		// 读出命令让 client Write 完成
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 写一个非 '\n' 字节让 SendCommand 进入 cmdTailTimeout 阶段（100ms 而非 1s）
+		_, _ = server.Write([]byte("X"))
+		// 不再写任何数据，让 client Read 在 cmdTailTimeout(100ms) 后触发 soft timeout
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommand(client, "@fd MCH")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected soft timeout error wrapping ErrWatchdogTriggered, got nil")
+		}
+		if !errors.Is(err, ErrWatchdogTriggered) {
+			t.Errorf("error must wrap ErrWatchdogTriggered for soft timeout, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendCommand did not return within 2s budget; soft timeout likely not triggered")
+	}
+
+	// 验证 conn 已被 Close：服务端写入迟到响应应失败。
+	// 设置 WriteDeadline 防止 net.Pipe 无缓冲 Write 永久阻塞。
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte("late-response\n")); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by soft timeout helper")
+	}
+}
+
+// TestT1603SendCommandIdle_SoftTimeoutClosesConnAndReturnsSentinel 验证 ADR-009 R0-12：
+// SendCommandIdle 在首字节 cmdTimeout soft deadline 兑现时（未收到任何字节）必须
+// Close conn 并返回 ErrWatchdogTriggered。已收到字节后的 idleWindow timeout 是正常
+// 结束语义，不视为 soft timeout。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接（SetReadDeadline 真有效）
+//   - server 端读出命令后不写任何响应，让 client Read 在 cmdTimeout(1s) 后触发 soft timeout
+//
+// 测试步骤：
+//   - 调用 SendCommandIdle，idleWindow=30ms
+//   - 等待 cmdTimeout(1s) soft deadline 触发
+//
+// 期待结果：
+//   - 函数在 2s 预算内返回
+//   - 错误通过 errors.Is(err, ErrWatchdogTriggered) 精确匹配 sentinel
+//   - conn 已被 helper Close
+func TestT1603SendCommandIdle_SoftTimeoutClosesConnAndReturnsSentinel(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 helper Close
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 不写任何响应，让 client Read 在 cmdTimeout(1s) 后触发 soft timeout
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommandIdle(client, "@fd SPS", 30*time.Millisecond)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected soft timeout error wrapping ErrWatchdogTriggered, got nil")
+		}
+		if !errors.Is(err, ErrWatchdogTriggered) {
+			t.Errorf("error must wrap ErrWatchdogTriggered for soft timeout, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendCommandIdle did not return within 2s budget; soft timeout likely not triggered")
+	}
+
+	// 验证 conn 已被 Close
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte("late\n")); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by soft timeout helper")
+	}
+}
+
+// TestT1603SendCommandExact_SoftTimeoutClosesConnAndReturnsSentinel 验证 ADR-009 R0-12：
+// SendCommandExact 在 io.ReadFull 中途 soft deadline 兑现时必须 Close conn 并返回
+// ErrWatchdogTriggered。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接（SetReadDeadline 真有效）
+//   - server 端读出命令后写部分字节（少于 n）再停止，让 io.ReadFull 在中途触发 deadline
+//
+// 测试步骤：
+//   - 调用 SendCommandExact，n=16
+//   - server 写 5 字节后停止
+//   - 等待 cmdTimeout(1s) soft deadline 触发
+//
+// 期待结果：
+//   - 函数在 2s 预算内返回
+//   - 错误通过 errors.Is(err, ErrWatchdogTriggered) 精确匹配 sentinel
+//   - conn 已被 helper Close
+func TestT1603SendCommandExact_SoftTimeoutClosesConnAndReturnsSentinel(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 helper Close
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 写部分字节（少于 n=16）让 io.ReadFull 进入中途等待
+		_, _ = server.Write([]byte("partial"))
+		// 不再写数据，让 client Read 在 cmdTimeout(1s) 后触发 soft timeout
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SendCommandExact(client, "@e3", 16)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected soft timeout error wrapping ErrWatchdogTriggered, got nil")
+		}
+		if !errors.Is(err, ErrWatchdogTriggered) {
+			t.Errorf("error must wrap ErrWatchdogTriggered for soft timeout, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendCommandExact did not return within 2s budget; soft timeout likely not triggered")
+	}
+
+	// 验证 conn 已被 Close
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte("late-response-data")); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by soft timeout helper")
 	}
 }
