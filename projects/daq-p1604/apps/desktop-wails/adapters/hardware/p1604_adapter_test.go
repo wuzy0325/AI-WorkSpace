@@ -398,6 +398,106 @@ func TestHandleConnectionLost_SkipsAlreadyDisconnected(t *testing.T) {
 	}
 }
 
+// TestRollbackAcquisition_DoesNotPanicWhenChannelsAlreadyClosedByHandleConnectionLost
+// 验证 ADR-009 复核修订 finding 1 修复：StartAcquisition 失败路径下，
+// handleConnectionLost 已关闭并删除 done/ch 后，rollbackAcquisition 不能再次 close，
+// 否则触发 close of closed channel panic。
+//
+// 测试前置：
+//   - setupAdapterWithDriver 创建 driver + 预占采集槽位（ch/done 写入 map）
+//   - handleConnectionLost 模拟连接故障先行关闭并删除 ch/done
+//
+// 测试步骤：
+//   - 调用 rollbackAcquisition(id, ch, done)
+//
+// 期待结果：
+//   - 不 panic（owner 检查跳过已关闭的 ch/done）
+//   - map 中 channels/stopChs 已被清理
+func TestRollbackAcquisition_DoesNotPanicWhenChannelsAlreadyClosedByHandleConnectionLost(t *testing.T) {
+	id := "test-rollback-double-close"
+	a, driver, _, _ := setupAdapterWithDriver(id, core.StatusAcquiring)
+
+	// 预占采集槽位（模拟 StartAcquisition 入口的预占）
+	ch := make(chan core.PressureSnapshot, 1)
+	done := make(chan struct{})
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.channels[id] = ch
+	shard.stopChs[id] = done
+	shard.mu.Unlock()
+
+	// 模拟连接故障：handleConnectionLost 先行关闭并删除 done/ch
+	a.handleConnectionLost(id, driver, errors.New("simulated connection fault"))
+
+	// 回归点：rollbackAcquisition 不能 panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("rollbackAcquisition panicked after handleConnectionLost: %v", r)
+		}
+	}()
+	a.rollbackAcquisition(id, ch, done)
+
+	// 验证 map 已被清理
+	shard.mu.RLock()
+	_, chExists := shard.channels[id]
+	_, doneExists := shard.stopChs[id]
+	shard.mu.RUnlock()
+	if chExists || doneExists {
+		t.Errorf("channels/stopChs should be cleaned, chExists=%v, doneExists=%v", chExists, doneExists)
+	}
+}
+
+// TestRollbackAcquisition_ClosesChannelsWhenOwnerMatches 验证非连接故障路径下
+// rollbackAcquisition 正常关闭 ch/done（owner 检查通过）。
+//
+// 测试前置：
+//   - setupAdapterWithDriver 创建 driver，置 conn=nil 让 sendCommandACK 在入口返回
+//     "not connected"，避免 mockConn 的 Read 返回 (0,nil) 导致 P1604ReadCommandACK 挂起
+//   - 预占采集槽位（ch/done 写入 map）
+//
+// 测试步骤：
+//   - 调用 rollbackAcquisition(id, ch, done)
+//
+// 期待结果：
+//   - ch/done 被关闭（select 不阻塞）
+//   - map 中 channels/stopChs 已被清理
+func TestRollbackAcquisition_ClosesChannelsWhenOwnerMatches(t *testing.T) {
+	id := "test-rollback-normal"
+	a, driver, _, _ := setupAdapterWithDriver(id, core.StatusAcquiring)
+	driver.conn = nil
+
+	ch := make(chan core.PressureSnapshot, 1)
+	done := make(chan struct{})
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.channels[id] = ch
+	shard.stopChs[id] = done
+	shard.mu.Unlock()
+
+	a.rollbackAcquisition(id, ch, done)
+
+	// 验证 ch/done 已关闭
+	select {
+	case <-done:
+	default:
+		t.Error("done should be closed by rollbackAcquisition")
+	}
+	select {
+	case <-ch:
+	default:
+		t.Error("ch should be closed by rollbackAcquisition")
+	}
+
+	// 验证 map 已清理
+	shard.mu.RLock()
+	_, chExists := shard.channels[id]
+	_, doneExists := shard.stopChs[id]
+	shard.mu.RUnlock()
+	if chExists || doneExists {
+		t.Errorf("channels/stopChs should be cleaned after rollback")
+	}
+}
+
 // TestSyncUnitFromHardware_EOFReturnsError 验证：u01101 读到 io.EOF 时
 // syncUnitFromHardware 必须返回 error（连接已死），不能当作软错误吞掉。
 //
@@ -1441,7 +1541,7 @@ func TestSendCommandACK_SkipsResidualFramesBeforeACK(t *testing.T) {
 		buildResidualFrame(), // 残留帧 1
 		buildResidualFrame(), // 残留帧 2
 		buildResidualFrame(), // 残留帧 3
-		framedASCII("A"),    // 真正的 ACK
+		framedASCII("A"),     // 真正的 ACK
 	}
 	_, client := startTestTCPServer(t, func(server net.Conn) {
 		readCommandAndAck(server, len("c 02 1"), responses)
@@ -1538,5 +1638,773 @@ func TestSendCommandACK_NoResidualReturnsACKDirectly(t *testing.T) {
 	}
 	if err := driver.sendCommandACK("c 01 1"); err != nil {
 		t.Fatalf("sendCommandACK should return nil for normal ACK, got: %v", err)
+	}
+}
+
+// deadlineIgnoringConn 是忽略 SetReadDeadline/SetWriteDeadline 的连接替身，
+// 仅在 Close 后返回。用于模拟 Windows 故障环境下 deadline 失效场景（ADR-009）。
+//
+// 设计依据：ADR-009 要求有界网络 I/O 的测试必须包含忽略 deadline、只在 Close 后
+// 返回的连接 double。Windows 内核级 bug 会导致 SetReadDeadline/SetWriteDeadline
+// 到期后阻塞 Read/Write 仍不返回，必须依赖 watchdog Close conn 解除阻塞。
+//
+// 参考 shared/device-sdk/go/protocol/conn_helpers_test.go 同名替身，
+// 本替身额外覆盖 SetWriteDeadline 以支持 Write 阶段 watchdog 触发测试（P1-2.b/c）。
+type deadlineIgnoringConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newDeadlineIgnoringConn(inner net.Conn) *deadlineIgnoringConn {
+	return &deadlineIgnoringConn{
+		Conn:   inner,
+		closed: make(chan struct{}),
+	}
+}
+
+// SetReadDeadline 覆盖为 no-op，模拟 Windows 故障环境下 Read deadline 失效。
+func (c *deadlineIgnoringConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+// SetWriteDeadline 覆盖为 no-op，模拟 Windows 故障环境下 Write deadline 失效。
+// 这是 P1-2.b/c 测试的关键：让 Write 阶段无限阻塞，迫使 watchdog 触发 Close。
+func (c *deadlineIgnoringConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+// Close 关闭连接并通知 closed channel，让阻塞中的 Read/Write 立即返回。
+func (c *deadlineIgnoringConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// TestP1604SendCommandACK_WatchdogTriggersOnWriteDeadlineIgnoringConn 验证
+// Write 阶段 watchdog 兜底（P1-2.b 修复）。
+//
+// 修复前 bug：sendCommandACK 的 wdStop 在 sendCommand 之后启动，
+// Write 阶段完全无 watchdog 覆盖。当 SetWriteDeadline 失效（Write 无限阻塞）时，
+// sendCommandACK 永远卡在 sendCommand，无法返回。
+//
+// 修复后：wdStop 提到 sendCommand 之前，覆盖 Write + Read 全流程。
+// Write 阻塞 → watchdog 触发 Close → Write 返回错误 → sendCommandACK 返回
+// "watchdog triggered" 错误。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接，client 包装为 deadlineIgnoringConn
+//   - 服务端不读取任何数据（确保 Write 阻塞）
+//
+// 测试步骤：
+//   - 调用 sendCommandACK("c 02 1")
+//   - 等待 p1604WatchdogTimeout + 余量 内返回
+//
+// 期待结果：
+//   - 返回错误，错误信息包含 "watchdog triggered"
+//   - 在 p1604WatchdogTimeout + 2s 余量 内返回（不卡死）
+func TestP1604SendCommandACK_WatchdogTriggersOnWriteDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-write-watchdog"},
+		conn:        ignored,
+		frameReader: sharedproto.NewFrameReader(ignored),
+	}
+
+	// 服务端不读取任何数据，确保 client.Write 阻塞
+	// （net.Pipe 无缓冲，Write 必须等对端 Read）
+
+	done := make(chan error, 1)
+	go func() {
+		done <- driver.sendCommandACK("c 02 1")
+	}()
+
+	// 预算：watchdog timeout (5s) + 2s 余量（覆盖 goroutine 调度 + Close 完成时间）
+	budget := p1604WatchdogTimeout + 2*time.Second
+
+	var err error
+	timedOut := false
+
+	select {
+	case err = <-done:
+	case <-time.After(budget):
+		// RED 阶段：当前代码无 Write-phase watchdog，sendCommandACK 卡死
+		timedOut = true
+		// Close conn 解除 Write 阻塞，让 goroutine 退出避免泄漏
+		_ = ignored.Close()
+		select {
+		case err = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("sendCommandACK did not exit after conn close")
+		}
+	}
+
+	if timedOut {
+		t.Fatalf("sendCommandACK hung > %v — Write-phase watchdog missing (P1-2.b)", budget)
+	}
+
+	if err == nil {
+		t.Fatal("expected watchdog-triggered error, got nil")
+	}
+	if !strings.Contains(err.Error(), "watchdog triggered") {
+		t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+	}
+}
+
+// TestP1604SendCommandACK_SoftTimeoutClosesConnAndReturnsSentinel 验证 ADR-009 R0-12：
+// 当 SetReadDeadline 正常兑现（soft deadline 先于 watchdog 触发）时，sendCommandACK
+// 必须强制 Close conn 阻断迟到响应，并返回 ErrWatchdogTriggered sentinel 让调用方
+// 通过 IsWatchdogTriggered 毒化驱动状态。
+//
+// 修复前 bug：soft deadline 兑现时 sendCommandACK 仅返回普通 timeout 错误，不清
+// deadline、不 Close conn。迟到响应随后进入 TCP 流被下一条命令消费，导致协议错位
+// （如 c 00 的 ACK 被上一条 c 01 的迟到 ACK 冒充）。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接（SetReadDeadline 正常工作）
+//   - 临时覆盖 p1604CommandResponseTimeout 为 100ms 加速
+//   - 服务端读取命令但不发响应（确保 client.Read 在 deadline 到期后返回 timeout）
+//
+// 测试步骤：
+//   - 调用 sendCommandACK("c 02 1")
+//   - 等待函数返回后，服务端再写入一帧迟到响应（模拟设备延迟回复）
+//
+// 期待结果：
+//   - 函数在 5s 预算内返回
+//   - 错误通过 errors.Is(err, ErrWatchdogTriggered) 精确匹配 sentinel
+//   - conn 已被 Close：服务端写入迟到响应时 Write 失败
+func TestP1604SendCommandACK_SoftTimeoutClosesConnAndReturnsSentinel(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 sendCommandACK Close，不在 defer 中重复 Close
+
+	// 临时覆盖 soft deadline 为 100ms 加速测试。
+	// p1604WatchdogTimeout（5s const）远大于 100ms，确保 soft deadline 先触发。
+	origTimeout := p1604CommandResponseTimeout
+	p1604CommandResponseTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { p1604CommandResponseTimeout = origTimeout })
+
+	driver := &p1604Driver{
+		profile:     core.PressureProfile{ID: "test-soft-timeout"},
+		conn:        client,
+		frameReader: sharedproto.NewFrameReader(client),
+	}
+
+	// 服务端读取命令但不发响应，让 client.Read 在 soft deadline 到期后返回 timeout
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf)
+		// 故意不写响应，触发 soft timeout
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- driver.sendCommandACK("c 02 1")
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected soft timeout error wrapping ErrWatchdogTriggered, got nil")
+		}
+		if !sharedproto.IsWatchdogTriggered(err) {
+			t.Errorf("error must wrap ErrWatchdogTriggered for soft timeout, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sendCommandACK did not return within 5s budget")
+	}
+
+	// 验证 conn 已被 Close：服务端写入迟到响应应失败
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte{0x00, 0x01, 'A'}); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by soft timeout")
+	}
+	wg.Wait()
+}
+
+// TestP1604ZeroCalibrationDirect_WatchdogTriggersOnWriteDeadlineIgnoringConn 验证
+// zeroCalibrationDirect Write 阶段 watchdog 兜底（P1-2.c 修复）。
+//
+// 修复前 bug：zeroCalibrationDirect 的 wdStopRead 在 sendCommand("h") 之后启动，
+// Write 阶段完全无 watchdog 覆盖。当 SetWriteDeadline 失效时，ZeroCalibration
+// 永远卡在 sendCommand，无法返回。
+//
+// 修复后：wdStop 提到 sendCommand("h") 之前，覆盖 Write + Read 全流程。
+//
+// 测试前置：
+//   - 构造未采集的 driver + idleStopCh/idleLoopDone（idleReadLoop 占位）
+//   - client 包装为 deadlineIgnoringConn
+//   - 服务端不读取任何数据（确保 Write 阻塞）
+//
+// 测试步骤：
+//   - 调用 a.zeroCalibrationDirect(id, driver)
+//   - 等待 p1604WatchdogTimeout + 余量 内返回
+//
+// 期待结果：
+//   - 返回错误，错误信息包含 "watchdog triggered"
+//   - 在 p1604WatchdogTimeout + 2s 余量 内返回（不卡死）
+func TestP1604ZeroCalibrationDirect_WatchdogTriggersOnWriteDeadlineIgnoringConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	const id = "test-zero-write-watchdog"
+	a := NewP1604Adapter()
+	idleStop := make(chan struct{})
+	idleDone := make(chan struct{})
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         ignored,
+		frameReader:  sharedproto.NewFrameReader(ignored),
+		idleStopCh:   idleStop,
+		idleLoopDone: idleDone,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	go func() {
+		<-idleStop
+		close(idleDone)
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	// 服务端不读取任何数据，确保 client.Write 阻塞
+
+	done := make(chan error, 1)
+	go func() {
+		done <- a.zeroCalibrationDirect(id, driver)
+	}()
+
+	budget := p1604WatchdogTimeout + 2*time.Second
+
+	var err error
+	timedOut := false
+
+	select {
+	case err = <-done:
+	case <-time.After(budget):
+		timedOut = true
+		_ = ignored.Close()
+		select {
+		case err = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("zeroCalibrationDirect did not exit after conn close")
+		}
+	}
+
+	if timedOut {
+		t.Fatalf("zeroCalibrationDirect hung > %v — Write-phase watchdog missing (P1-2.c)", budget)
+	}
+
+	if err == nil {
+		t.Fatal("expected watchdog-triggered error, got nil")
+	}
+	if !strings.Contains(err.Error(), "watchdog triggered") {
+		t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+	}
+}
+
+// TestP1604ReadLoop_InvalidatesConnOnNoDataTimeout 验证 ADR-009 R0-10：
+// readLoop 入口启动的独立 no-data timer 在 deadline 失效（Read 永久阻塞）且
+// 无任何数据到达时，必须在 p1604NoDataTimeout 到期后独立触发 handleConnectionLost——
+// 清理 driver、close conn、置 Error 状态、通知前端。
+//
+// 关键差异（与 terminal read error 测试的对比）：
+//   - terminal read error：对端 EOF → ReadFrame 返回错误 → readLoop 调 handleConnectionLost
+//   - no-data timer：无数据 → timer 到期 → 调 handleConnectionLost → Close conn
+//     → ReadFrame 返回 closed 错误 → readLoop 再次调 handleConnectionLost（被 driver 身份检查跳过）
+//
+// timer 必须独立于 readLoop 循环体执行。本测试用 deadlineIgnoringConn 让 Read
+// 永久阻塞（模拟 Windows 故障环境下 deadline 失效），循环体不可达，
+// 仅靠 timer 到期能触发 handleConnectionLost。若 timer 未启动或依赖循环体，测试会超时。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接，client 端包 deadlineIgnoringConn（Read 永久阻塞）
+//   - driver.conn / frameReader / readLoopDone 已设置，acquiring=true
+//   - driver 已注册到 shard.drivers[id]，status 已注册到 shard.status[id]
+//   - p1604NoDataTimeout 临时覆盖为 200ms（生产默认 5s）
+//   - server 端不写任何数据，让 client Read 永久阻塞
+//
+// 测试步骤：
+//   - 启动 readLoop goroutine
+//   - 等待 noDataTimeout(200ms) + 余量(800ms) = 1s 预算
+//
+// 期待结果：
+//   - shard.drivers[id] 被删除（handleConnectionLost 清理）
+//   - shard.status[id].Status = StatusError
+//   - driver.conn 已被 Close（deadlineIgnoringConn.closed 已关闭）
+//   - readLoopDone 已关闭（readLoop 已退出）
+func TestP1604ReadLoop_InvalidatesConnOnNoDataTimeout(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	// 临时覆盖 p1604NoDataTimeout 为 200ms 加速测试。
+	// 同一包内测试默认串行执行，覆盖安全；t.Cleanup 确保恢复。
+	origTimeout := p1604NoDataTimeout
+	p1604NoDataTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { p1604NoDataTimeout = origTimeout })
+
+	const id = "test-p1604-nodata"
+	a := NewP1604Adapter()
+	ignored := newDeadlineIgnoringConn(client)
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         ignored,
+		frameReader:  sharedproto.NewFrameReader(ignored),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile: driver.profile,
+		Status:  core.StatusAcquiring,
+	}
+	shard.mu.Unlock()
+
+	stop := make(chan struct{})
+	go a.readLoop(id, driver, stop)
+
+	// 预算 1s：覆盖 200ms noDataTimer + Read 在 conn Close 后返回的延迟 + defer 清理。
+	// 若 timer 未触发，readLoop 永久阻塞，select 会超时 fatal。
+	select {
+	case <-driver.readLoopDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("readLoop did not exit within 1s; no-data timer may not have fired")
+	}
+
+	// 短暂等待 handleConnectionLost 完成状态清理
+	time.Sleep(100 * time.Millisecond)
+
+	// 验证 driver 已被 handleConnectionLost 清理
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted from shard.drivers after no-data timer fired")
+	}
+	if !statusExists {
+		t.Error("shard.status[id] should still exist (handleConnectionLost sets Error, not deletes)")
+	}
+	if st != nil && st.Status != core.StatusError {
+		t.Errorf("status = %v, want Error", st.Status)
+	}
+
+	// 验证 conn 已被 Close（deadlineIgnoringConn.closed channel 已关闭）
+	select {
+	case <-ignored.closed:
+		// 预期：conn 已被 Close
+	default:
+		t.Error("conn should be closed after no-data timer fired")
+	}
+}
+
+// TestZeroCalibration_ResponseTimeoutInvalidatesConn 验证 ADR-009 R0-12 + R1-2：
+// 采集期间校零，设备不回响应导致 select 超时后，必须调 handleConnectionLost 毒化连接
+// （删除 driver、置 status=Error、close conn），不能仅返回 timeout 错误保留 conn。
+//
+// 整改前 bug：zeroCalibrationViaReadLoop 的 select 超时只返回错误，不调 handleConnectionLost。
+// 后果：连接已半开（设备无响应但 TCP 未断），迟到响应可能随后进入 TCP 流被下一条命令消费
+// 导致协议错位；driver 仍保留在 shard.drivers，后续 StartAcquisition 会复用死连接爆 WSAECONNABORTED。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接
+//   - driver.acquiring=true，走 zeroCalibrationViaReadLoop 路径
+//   - mock readLoop goroutine 循环 ReadFrame，将 ASCII 帧投递到 pendingResponse
+//   - server 读取 "h" 命令但不回响应
+//
+// 测试步骤：
+//   - 调用 ZeroCalibration
+//   - 等待 p1604CalibrationTimeout（2s）+ 余量
+//
+// 期待结果：
+//   - 返回错误包含"超时"
+//   - shard.drivers[id] 被删除（handleConnectionLost 清理）
+//   - shard.status[id].Status = StatusError
+//   - conn 已被 Close
+func TestZeroCalibration_ResponseTimeoutInvalidatesConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	const id = "test-zero-resp-timeout-invalidate"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         client,
+		frameReader:  sharedproto.NewFrameReader(client),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusAcquiring,
+		StatusText: core.StatusAcquiring.String(),
+	}
+	shard.mu.Unlock()
+
+	// mock readLoop：循环 ReadFrame，将 ASCII 帧投递到 pendingResponse
+	stopReadLoop := make(chan struct{})
+	readLoopExited := make(chan struct{})
+	go func() {
+		defer close(readLoopExited)
+		for {
+			select {
+			case <-stopReadLoop:
+				return
+			default:
+			}
+			client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			frame, err := driver.frameReader.ReadFrame()
+			if err != nil {
+				continue
+			}
+			if sharedproto.IsASCIIFrame(frame) {
+				driver.pendingResponseMu.Lock()
+				ch := driver.pendingResponse
+				driver.pendingResponseMu.Unlock()
+				if ch != nil {
+					select {
+					case ch <- frame:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stopReadLoop)
+		<-readLoopExited
+	}()
+
+	// server 读取 "h" 命令但不回响应，让 select 超时
+	go func() {
+		buf := make([]byte, 16)
+		_, _ = server.Read(buf)
+		select {}
+	}()
+
+	start := time.Now()
+	err := a.ZeroCalibration(id)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("ZeroCalibration should return timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "超时") {
+		t.Errorf("error should mention timeout, got: %v", err)
+	}
+	if elapsed < p1604CalibrationTimeout-500*time.Millisecond {
+		t.Errorf("ZeroCalibration returned too fast: %v (expected ~%v)", elapsed, p1604CalibrationTimeout)
+	}
+
+	// 短暂等待 handleConnectionLost 完成状态清理
+	time.Sleep(100 * time.Millisecond)
+
+	// 验证 driver 已被 handleConnectionLost 清理
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted by handleConnectionLost after response timeout")
+	}
+	if !statusExists {
+		t.Fatal("status should still exist (set to Error) for frontend visibility")
+	}
+	if st.Status != core.StatusError {
+		t.Errorf("status should be Error, got %v", st.Status)
+	}
+
+	_ = client.Close()
+}
+
+// TestZeroCalibrationViaReadLoop_WriteWatchdogTriggersConnectionLost 验证 ADR-009 R1-2：
+// 采集期间校零，sendCommand 的 Write 永久阻塞（SetWriteDeadline 失效）时，
+// zeroCalibrationViaReadLoop 的 watchdog 必须在 p1604WatchdogTimeout 后 close conn，
+// 解除 Write 阻塞，并调 handleConnectionLost 毒化连接。
+//
+// 整改前 bug：zeroCalibrationViaReadLoop 无 watchdog 兜底，sendCommand 内部仅 SetWriteDeadline。
+// SetWriteDeadline 失效时 Write 永久阻塞，operationMu 永远无法释放，后续 Disconnect/StopAcquisition
+// 永久等待。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接，client 端包 deadlineIgnoringConn（SetWriteDeadline 失效）
+//   - driver.acquiring=true，走 zeroCalibrationViaReadLoop 路径
+//   - p1604WatchdogTimeout 临时覆盖为 200ms 加速
+//   - server 不读取任何数据，确保 client.Write 阻塞
+//
+// 测试步骤：
+//   - 调用 ZeroCalibration
+//   - 等待 watchdog 触发（200ms）+ 余量
+//
+// 期待结果：
+//   - 返回错误包含"watchdog triggered"
+//   - shard.drivers[id] 被删除（handleConnectionLost 清理）
+//   - shard.status[id].Status = StatusError
+//   - conn 已被 Close（deadlineIgnoringConn.closed channel 已关闭）
+func TestZeroCalibrationViaReadLoop_WriteWatchdogTriggersConnectionLost(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	// 临时覆盖 p1604WatchdogTimeout 为 200ms 加速测试。
+	origWatchdog := p1604WatchdogTimeout
+	p1604WatchdogTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { p1604WatchdogTimeout = origWatchdog })
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	const id = "test-zero-write-watchdog-r1-2"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         ignored,
+		frameReader:  sharedproto.NewFrameReader(ignored),
+		acquiring:    true,
+		readLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusAcquiring,
+		StatusText: core.StatusAcquiring.String(),
+	}
+	shard.mu.Unlock()
+
+	// server 不读取任何数据，确保 client.Write 阻塞
+	go func() {
+		select {}
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- a.ZeroCalibration(id)
+	}()
+
+	budget := p1604WatchdogTimeout + 2*time.Second
+	var err error
+	timedOut := false
+
+	select {
+	case err = <-done:
+	case <-time.After(budget):
+		timedOut = true
+		_ = ignored.Close()
+		select {
+		case err = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("ZeroCalibration did not exit after conn close")
+		}
+	}
+
+	if timedOut {
+		t.Fatalf("ZeroCalibration hung > %v — Write-phase watchdog missing (R1-2)", budget)
+	}
+
+	if err == nil {
+		t.Fatal("expected watchdog-triggered error, got nil")
+	}
+	if !strings.Contains(err.Error(), "watchdog triggered") {
+		t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+	}
+
+	// 验证 driver 已被 handleConnectionLost 清理
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted by handleConnectionLost after watchdog triggered")
+	}
+	if !statusExists {
+		t.Fatal("status should still exist (set to Error) for frontend visibility")
+	}
+	if st.Status != core.StatusError {
+		t.Errorf("status should be Error, got %v", st.Status)
+	}
+
+	// 验证 conn 已被 Close
+	select {
+	case <-ignored.closed:
+		// 预期：conn 已被 Close
+	default:
+		t.Error("conn should be closed after watchdog triggered")
+	}
+}
+
+// TestZeroCalibration_LockWaitWatchdogTriggersConnectionLost 验证 ADR-009 R1-2：
+// 前序操作持锁卡死（sendCommand Write 阻塞）时，ZeroCalibration 的外层 watchdog
+// 必须在 p1604WatchdogTimeout 后 close conn，解除前序操作的 Write 阻塞，
+// 让 operationMu 得以释放。ZeroCalibration 获取锁后检查 watchdog 已触发，
+// 调 handleConnectionLost 毒化连接。
+//
+// 整改前 bug：ZeroCalibration 直接 operationMu.Lock()，锁等待阶段无 watchdog 兜底。
+// 前序操作持锁卡死时 ZeroCalibration 永久阻塞在 operationMu.Lock() 上。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接，client 端包 deadlineIgnoringConn（SetWriteDeadline 失效）
+//   - 前序 goroutine 获取 operationMu 后调用 sendCommand（Write 永久阻塞）
+//   - p1604WatchdogTimeout 临时覆盖为 200ms 加速
+//   - server 不读取任何数据，确保 client.Write 阻塞
+//
+// 测试步骤：
+//   - 启动前序 goroutine 持锁卡死
+//   - 调用 ZeroCalibration（等待 operationMu）
+//   - 等待 watchdog 触发（200ms）+ 余量
+//
+// 期待结果：
+//   - 返回错误包含"watchdog triggered"
+//   - shard.drivers[id] 被删除（handleConnectionLost 清理）
+//   - shard.status[id].Status = StatusError
+//   - conn 已被 Close
+func TestZeroCalibration_LockWaitWatchdogTriggersConnectionLost(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	// 临时覆盖 p1604WatchdogTimeout 为 200ms 加速测试。
+	origWatchdog := p1604WatchdogTimeout
+	p1604WatchdogTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { p1604WatchdogTimeout = origWatchdog })
+
+	ignored := newDeadlineIgnoringConn(client)
+
+	const id = "test-zero-lock-wait-watchdog"
+	a := NewP1604Adapter()
+	driver := &p1604Driver{
+		profile:      core.PressureProfile{ID: id},
+		conn:         ignored,
+		frameReader:  sharedproto.NewFrameReader(ignored),
+		acquiring:    false, // 非采集状态，走 zeroCalibrationDirect 路径
+		readLoopDone: make(chan struct{}),
+		idleStopCh:   make(chan struct{}),
+		idleLoopDone: make(chan struct{}),
+	}
+	close(driver.readLoopDone)
+	go func() {
+		<-driver.idleStopCh
+		close(driver.idleLoopDone)
+	}()
+
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{
+		Profile:    driver.profile,
+		Status:     core.StatusConnected,
+		StatusText: core.StatusConnected.String(),
+	}
+	shard.mu.Unlock()
+
+	// server 不读取任何数据，确保 client.Write 阻塞
+	go func() {
+		select {}
+	}()
+
+	// 前序 goroutine：获取 operationMu 后调用 sendCommand（Write 永久阻塞）
+	// sendCommand 内部仅 SetWriteDeadline，deadlineIgnoringConn 让其失效，Write 永久阻塞。
+	priorStarted := make(chan struct{})
+	priorExited := make(chan struct{})
+	go func() {
+		defer close(priorExited)
+		driver.operationMu.Lock()
+		defer driver.operationMu.Unlock()
+		close(priorStarted)
+		// sendCommand 会永久阻塞（Write 阻塞 + SetWriteDeadline 失效）
+		// ZeroCalibration 的外层 watchdog close conn 后，Write 返回错误，goroutine 退出
+		_ = driver.sendCommand("h")
+	}()
+
+	// 等待前序 goroutine 持锁
+	select {
+	case <-priorStarted:
+	case <-time.After(1 * time.Second):
+		t.Fatal("prior goroutine did not acquire operationMu within 1s")
+	}
+
+	// ZeroCalibration 等待 operationMu，外层 watchdog 在 200ms 后触发
+	done := make(chan error, 1)
+	go func() {
+		done <- a.ZeroCalibration(id)
+	}()
+
+	budget := p1604WatchdogTimeout + 2*time.Second
+	var err error
+	timedOut := false
+
+	select {
+	case err = <-done:
+	case <-time.After(budget):
+		timedOut = true
+		_ = ignored.Close()
+		select {
+		case err = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("ZeroCalibration did not exit after conn close")
+		}
+	}
+
+	if timedOut {
+		t.Fatalf("ZeroCalibration hung > %v — lock-wait watchdog missing (R1-2)", budget)
+	}
+
+	if err == nil {
+		t.Fatal("expected watchdog-triggered error, got nil")
+	}
+	if !strings.Contains(err.Error(), "watchdog triggered") {
+		t.Errorf("error should mention 'watchdog triggered', got: %v", err)
+	}
+
+	// 等待前序 goroutine 退出
+	select {
+	case <-priorExited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("prior goroutine did not exit within 2s after watchdog triggered")
+	}
+
+	// 验证 driver 已被 handleConnectionLost 清理
+	shard.mu.RLock()
+	_, driverExists := shard.drivers[id]
+	st, statusExists := shard.status[id]
+	shard.mu.RUnlock()
+	if driverExists {
+		t.Error("driver should be deleted by handleConnectionLost after lock-wait watchdog triggered")
+	}
+	if !statusExists {
+		t.Fatal("status should still exist (set to Error) for frontend visibility")
+	}
+	if st.Status != core.StatusError {
+		t.Errorf("status should be Error, got %v", st.Status)
+	}
+
+	// 验证 conn 已被 Close
+	select {
+	case <-ignored.closed:
+		// 预期：conn 已被 Close
+	default:
+		t.Error("conn should be closed after lock-wait watchdog triggered")
 	}
 }

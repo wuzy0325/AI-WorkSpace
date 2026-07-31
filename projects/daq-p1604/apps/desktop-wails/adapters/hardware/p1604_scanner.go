@@ -25,12 +25,16 @@ const (
 type P1604Scanner struct {
 	timeout time.Duration
 	scanMu  sync.Mutex
+	// openSocket 抽象 socket 创建，便于测试注入 mock socket 验证 ADR-009 finding 3
+	// （Send 失败后不进入 Receive 循环）。生产路径调用包级 openDiscoverySocket。
+	openSocket func(localPort int) (discoverySocket, error)
 }
 
 // NewP1604Scanner 创建 P1604 设备扫描器
 func NewP1604Scanner() *P1604Scanner {
 	return &P1604Scanner{
-		timeout: p1604ScanTimeout,
+		timeout:    p1604ScanTimeout,
+		openSocket: openDiscoverySocket,
 	}
 }
 
@@ -46,7 +50,7 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 	targets := broadcastTargetsWithTimeout(p1604InterfaceTimeout, broadcastTargets)
 
 	// 在 7001 端口监听响应
-	socket, err := openDiscoverySocket(p1604DiscoveryRecvPort)
+	socket, err := s.openSocket(p1604DiscoveryRecvPort)
 	if err != nil {
 		return nil, fmt.Errorf("udp listen on %d: %w", p1604DiscoveryRecvPort, err)
 	}
@@ -58,7 +62,15 @@ func (s *P1604Scanner) Scan() ([]core.ScanResult, error) {
 		if net.ParseIP(t).To4() == nil {
 			continue
 		}
-		_ = socket.Send(cmd, t, p1604DiscoverySendPort)
+		if err := socket.Send(cmd, t, p1604DiscoverySendPort); err != nil {
+			// ADR-009 finding 6：Send 失败说明 socket handle 已被 watchdog Closesocket 销毁，
+			// 后续 Send/Receive 不可复用（契约：超时后 socket 不可复用）。
+			// 复核修订 finding 3 修复：直接返回空结果，不进入 Receive 循环——
+			// 旧实现 break 后仍调用 readScanResponses(socket, ...)，会继续调用同一 socket 的
+			// Receive，但 socket handle 可能已被 watchdog 销毁，行为不可预期。
+			// 调用方 defer socket.Close() 释放资源。
+			return nil, nil
+		}
 	}
 
 	return readScanResponses(socket, s.timeout), nil
