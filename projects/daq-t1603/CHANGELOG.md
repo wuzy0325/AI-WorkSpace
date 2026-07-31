@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.6.4] - 2026-07-31
+
+### Fixed
+- 修复 FrameReader Start 端要求首字节必须为 `'A'` 导致约 10~15% 启动失败的问题。设备固件在 `@f0` 后并行发送 ACK 与数据流,发送顺序不保证(约 85% ACK 首字节;约 10~15% 数据帧先到或带 1 个前导残杂字节;迟到的 Start ACK 还可能落在 Stop 收集窗口,实机 `raw=41 41`)。Start 端改为用偏移 0/偏移 1 帧合法性对齐真实边界;正常采集路径支持丢弃 1 个前导字节自愈;Stop 采用 150ms 静默窗口确认 `N×64+ACK`,`finalize` 容忍 1 个前导残杂 `'A'`。
+- 修复适配器 `StopAcquisition` 持锁期间 close channel 可能导致 `OnReadLoopExit` 回调对同一 channel 二次 close 触发 `panic: close of closed channel` 的问题。改为持锁期间原子移除 `stopChs`/`channels` 再锁外关闭。
+- 修复 Windows 故障机器 UDP discovery `Send`/`Receive` 在 kernel IOCP deadline 失效时永久阻塞的问题(ADR-009 R0-8/R0-9)。`Send` 加 `SetWriteDeadline` + watchdog 双兜底(原 `WriteTo` 永久阻塞);`Receive` 加 `SetReadDeadline` + watchdog 双兜底(原 `ReadFrom` 同根问题,调用方 `defer Close` 与阻塞调用在同一 goroutine 无法兜底)。触发后 socket 废弃,调用方不得复用。
+- 修复 Windows discovery socket watchdog 的 callback 时序问题(ADR-009 finding 5)。`time.AfterFunc.Stop` 返回 false 仅表示已 fire,不保证 callback 已完成。通过 `sync.WaitGroup` 确保 callback 完全退出后才返回,避免 callback 在 `Send`/`Receive` 返回后才执行 `Closesocket` 误关已复用的 socket 数值。新增 `closeHandleLocked`(原子取走 handle + `Closesocket`,多次调用安全)。
+
+### Internal
+- 新增 `stopstartprobe` CLI 调试工具,用于排查快速启停采集时 TCP socket 残留帧问题。
+- 适配器适配 `shared/device-sdk` 新的 `sendCommand` A/E 严格校验,适配新的 `invalidateConnection` / `resyncHardwareConfigMode` 接口。
+- scanner 适配新的 `discoverySocket` 接口,新增 watchdog 触发 / 多目标扫描测试。
+- 新增 `discovery_socket_test.go` / `discovery_socket_windows_test.go` / `t1603_adapter_lifecycle_test.go` / `t1603_scanner_test.go` 等回归测试,覆盖 adapter Connect / Disconnect / 采集启停生命周期与 watchdog 触发后连接毒化与重建。
+- 新增 `soSNDTIMEO=0x1005` 常量(`golang.org/x/sys/windows` v0.43/0.47 未导出 `SO_SNDTIMEO`,Winsock2.h 定义稳定)。
+- `frontend/package-lock.json` 依赖树重新 resolve(npm install 后 lockfile 同步),删除已不在 package.json 中的多余条目。
+- `frontend/src/components/layout/AppShell.vue` 布局微调。
+- 同步 6 个版本号文件到 0.6.4:`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`(含 `packages[""]`)/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`
+- `$env:GOWORK="off"; go vet ./...`
+- `npm install --no-audit --no-fund`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis -DARG_WAILS_AMD64_BINARY=... project.nsi`
+- `task archive-release`
+
+### Known Issues
+- 暂无。
+
 ## [0.6.3] - 2026-07-29
 
 ### Fixed
