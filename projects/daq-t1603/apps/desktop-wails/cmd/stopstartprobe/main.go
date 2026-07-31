@@ -42,7 +42,7 @@ func main() {
 	sendCmdNoWait(conn, "@f1")
 	time.Sleep(200 * time.Millisecond)
 	strictDrain(conn)
-	fmt.Println("\n--- 归一化完成 ---\n")
+	fmt.Println("\n--- 归一化完成 ---")
 
 	for round := 1; round <= 10; round++ {
 		fmt.Printf("=== 第 %d 轮 ===\n", round)

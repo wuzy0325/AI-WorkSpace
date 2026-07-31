@@ -547,6 +547,42 @@ func TestReadFrame_ExpectedACKAfterCompleteTailFrames(t *testing.T) {
 	}
 }
 
+func TestReadFrame_StopDoesNotMistakeFragmentedALeadingTailFrameForACK(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.ExpectControlACKAfterFrames()
+
+	frame := make([]byte, TCPFrameSize)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(25))
+	}
+	frame[0] = 'A' // A data byte at the established frame boundary, not the Stop ACK.
+
+	go func() {
+		_, _ = server.Write(frame[:1])
+		// Exceeds the former 50 ms quiet window. The leading data byte must not
+		// be finalized as an N=0 Stop ACK while the rest of the frame is in flight.
+		time.Sleep(75 * time.Millisecond)
+		_, _ = server.Write(append(frame[1:], 'A'))
+	}()
+
+	got, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("tail frame: ReadFrame returned error: %v", err)
+	}
+	if !bytes.Equal(got, frame) {
+		t.Fatal("A-leading tail frame changed")
+	}
+	_ = client.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, err := reader.ReadFrame(); !errors.Is(err, ErrControlACK) {
+		t.Fatalf("Stop ACK error = %v, want ErrControlACK", err)
+	}
+}
+
 func TestReadFrame_StartACKWinsOverPlausibleSparseMisalignment(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -570,7 +606,10 @@ func TestReadFrame_StartACKWinsOverPlausibleSparseMisalignment(t *testing.T) {
 	}
 }
 
-func TestReadFrame_MissingOptionalStartACKDoesNotConsumeStopACK(t *testing.T) {
+// TestReadFrame_StartDataFirstWithoutACK 验证 Start ACK 偶发缺失时
+// （SKILL.md §3.3.4）：首字节非 'A' 且偏移0帧合法 → 直接按数据帧消费，
+// 不要求 ACK，也不判错。
+func TestReadFrame_StartDataFirstWithoutACK(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -578,23 +617,99 @@ func TestReadFrame_MissingOptionalStartACKDoesNotConsumeStopACK(t *testing.T) {
 	reader := NewT1603FrameReader(client)
 	reader.SetBinaryMode(true)
 	reader.ExpectControlACK()
+
+	makeFrame := func(v float32) []byte {
+		frame := make([]byte, TCPFrameSize)
+		for i := 0; i < 16; i++ {
+			binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(v))
+		}
+		return frame
+	}
+	frame1 := makeFrame(25)
+	frame2 := makeFrame(30)
+
+	go func() { _, _ = server.Write(append(append([]byte{}, frame1...), frame2...)) }()
+
+	got, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("first data frame without ACK: ReadFrame returned error: %v", err)
+	}
+	if !bytes.Equal(got, frame1) {
+		t.Fatal("first frame changed when Start ACK was absent")
+	}
+	got, err = reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("second data frame without ACK: ReadFrame returned error: %v", err)
+	}
+	if !bytes.Equal(got, frame2) {
+		t.Fatal("second frame changed when Start ACK was absent")
+	}
+	if reader.HasPendingControlACK() {
+		t.Fatal("Start ACK stayed pending after data-first frames")
+	}
+}
+
+// TestReadFrame_NormalAcquisitionSelfHealOnStrayByte 验证正常采集路径中，
+// 边界帧非法时丢弃 1 个前导字节（迟到的 ACK/残杂字节）后自愈，不丢失后续数据。
+func TestReadFrame_NormalAcquisitionSelfHealOnStrayByte(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+
 	frame := make([]byte, TCPFrameSize)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(27.5))
+	}
+	frame2 := make([]byte, TCPFrameSize)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame2[i*4:], math.Float32bits(30))
+	}
 
-	go func() { _, _ = server.Write(frame) }()
-	if _, err := reader.ReadFrame(); err != nil {
-		t.Fatalf("ReadFrame without optional start ACK returned error: %v", err)
+	// 流中插入一个 0x41 前导字节（模拟迟到的 ACK 被当作数据消费）。
+	go func() { _, _ = server.Write(append(append([]byte{'A'}, frame...), frame2...)) }()
+
+	got, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("frame after stray byte: ReadFrame returned error: %v", err)
 	}
-	if reader.HasPendingControlACK() {
-		t.Fatal("optional start ACK remained pending after the first complete frame")
+	if !bytes.Equal(got, frame) {
+		t.Fatal("frame changed after 1-byte self-heal")
+	}
+	got, err = reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("second frame: ReadFrame returned error: %v", err)
+	}
+	if !bytes.Equal(got, frame2) {
+		t.Fatal("second frame changed")
+	}
+}
+
+// TestReadFrame_StartLeadingStrayByteOffset1 验证 Start 时存在1个前导残杂字节、
+// 帧从偏移1开始的情况：应丢弃前导字节，按偏移1对齐并返回首帧。
+func TestReadFrame_StartLeadingStrayByteOffset1(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.ExpectControlACK()
+
+	frame := make([]byte, TCPFrameSize)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(27.5))
 	}
 
-	reader.ExpectControlACKAfterFrames()
-	go func() { _, _ = server.Write([]byte{'A'}) }()
-	if _, err := reader.ReadFrame(); !errors.Is(err, ErrControlACK) {
-		t.Fatalf("stop ACK error = %v, want ErrControlACK", err)
+	go func() { _, _ = server.Write(append([]byte{0x00}, frame...)) }()
+	got, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("first frame after leading stray byte: ReadFrame returned error: %v", err)
 	}
-	if reader.HasPendingControlACK() {
-		t.Fatal("stop ACK remained pending")
+	if !bytes.Equal(got, frame) {
+		t.Fatal("frame after leading stray byte changed")
 	}
 }
 
@@ -865,28 +980,6 @@ func TestReadFrame_BinaryTimestampModeAfterACK(t *testing.T) {
 		if result.Temperatures[i] != want {
 			t.Errorf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
 		}
-	}
-}
-
-func TestReadFrame_FixedBinaryRejectsUnexpectedDelayedACK(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
-
-	reader := NewT1603FrameReader(client)
-	reader.SetBinaryMode(true)
-
-	frame := make([]byte, 64)
-	for i := 0; i < 16; i++ {
-		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(float32(15-i+1)))
-	}
-
-	go func() {
-		_, _ = server.Write(append([]byte{'A'}, frame...))
-	}()
-
-	if _, err := reader.ReadFrame(); err == nil {
-		t.Fatal("ReadFrame accepted an unexpected ACK by sliding the frame boundary")
 	}
 }
 

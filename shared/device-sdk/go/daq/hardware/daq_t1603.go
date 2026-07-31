@@ -935,7 +935,8 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 						// 2026-07-30-daq-t1603-acquisition-control-hardware-report.zh-CN.md 第11章）：
 						// Stop 响应 = N 个完整合法帧 + 单字节 'A' ACK，ACK 是事务终止边界。
 						// TCP 同一连接保证字节有序，ACK 前的字节不会重排到 ACK 后。
-						// 因此识别到 ACK 后立即完成 Stop，不再 drain。
+						// FrameReader 已在静默窗口后验证完整 N×frameSize+ACK 边界，
+						// 因此此处可安全完成 Stop。
 						// 边界错乱由 isResyncableReadError 的 Stop 上下文分支失效连接兜底。
 						return
 					}
@@ -958,23 +959,23 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 					}
 				}
 				if isResyncableReadError(err) {
-				d.mu.RLock()
-				stopping := d.stopping
-				d.mu.RUnlock()
-				if stopping {
-					// Stop 事务期间边界必须严格可信：错帧立即终止并毒化连接，
-					// 不走 resync。原因：Stop 期间 acquiring=false，readLoop 只消费
-					// 尾帧维持边界，错帧说明边界已错乱，resync 会掩盖问题导致
-					// 下次 Start 才失败，增加诊断难度。符合 SKILL.md 第 1021 行
-					// "固定边界解析失败时废弃连接"原则。
-					unexpectedErr = fmt.Errorf("invalid frame while waiting for Stop ACK: %w", err)
-					return
+					d.mu.RLock()
+					stopping := d.stopping
+					d.mu.RUnlock()
+					if stopping {
+						// Stop 事务期间边界必须严格可信：错帧立即终止并毒化连接，
+						// 不走 resync。原因：Stop 期间 acquiring=false，readLoop 只消费
+						// 尾帧维持边界，错帧说明边界已错乱，resync 会掩盖问题导致
+						// 下次 Start 才失败，增加诊断难度。符合 SKILL.md 第 1021 行
+						// "固定边界解析失败时废弃连接"原则。
+						unexpectedErr = fmt.Errorf("invalid frame while waiting for Stop ACK: %w", err)
+						return
+					}
+					fr.Reset()
+					d.emitLog("warn", "acquisition", "Frame misalignment; resyncing",
+						err.Error())
+					continue
 				}
-				fr.Reset()
-				d.emitLog("warn", "acquisition", "Frame misalignment; resyncing",
-					err.Error())
-				continue
-			}
 				d.mu.Lock()
 				d.readErrors++
 				d.mu.Unlock()

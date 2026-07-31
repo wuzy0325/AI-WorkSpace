@@ -222,7 +222,7 @@ func TestDAQT1603StartAcquisitionNormalizesHardwareTrigger(t *testing.T) {
 }
 
 func TestDAQT1603StopWaitsForTailFrameAndACKBeforeReturning(t *testing.T) {
-	setT1603StopTimeout(t, 200*time.Millisecond)
+	setT1603StopTimeout(t, 2*time.Second)
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -286,10 +286,10 @@ func TestDAQT1603StopWaitsForTailFrameAndACKBeforeReturning(t *testing.T) {
 	select {
 	case err := <-stopResult:
 		t.Fatalf("StopAcquisition returned before Stop ACK: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(10 * time.Millisecond):
 	}
 	close(releaseACK)
-	// 协议契约（第11章）：ACK 是 Stop 事务终止边界，ACK 后立即完成，不再 drain。
+	// ACK 后等待 150 ms 静默窗口，再统一验证 N×frameSize+ACK 的 Stop 响应边界。
 	select {
 	case err := <-stopResult:
 		if err != nil {
@@ -318,15 +318,15 @@ func TestDAQT1603StopWaitsForTailFrameAndACKBeforeReturning(t *testing.T) {
 	}
 }
 
-// TestDAQT1603StopCompletesImmediatelyAfterACKAndRestartSucceeds 验证协议契约
+// TestDAQT1603StopConfirmsQuietBoundaryAndRestartSucceeds 验证协议契约
 // （第11章）：Stop 响应 = N 个完整合法帧 + 单字节 'A' ACK，ACK 是事务终止边界。
-// 收到 ACK 后 Stop 立即返回，不再 drain；同连接下次 Start 正常工作。
+// 收到 ACK 并完成 150 ms 静默边界确认后 Stop 返回；同连接下次 Start 正常工作。
 //
 // 替代旧测试 TestDAQT1603StopDrainsBytesArrivingAfterACKBeforeRestart：
 // 旧测试假设"ACK 后有迟到字节"，该假设已被第5章修正澄清为缺乏证据
 // （TCP 同一连接保证字节有序，ACK 前的字节不会重排到 ACK 后）。
-func TestDAQT1603StopCompletesImmediatelyAfterACKAndRestartSucceeds(t *testing.T) {
-	setT1603StopTimeout(t, 300*time.Millisecond)
+func TestDAQT1603StopConfirmsQuietBoundaryAndRestartSucceeds(t *testing.T) {
+	setT1603StopTimeout(t, 500*time.Millisecond)
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -363,7 +363,7 @@ func TestDAQT1603StopCompletesImmediatelyAfterACKAndRestartSucceeds(t *testing.T
 		}
 		close(stopACKSeen)
 		// 等待 Stop 返回后，再发第二次 Start。
-		// 协议契约：ACK 后 Stop 应立即返回，无需静默 drain。
+		// 等待 Stop 完成 150 ms 静默边界确认后，再发第二次 Start。
 		<-stopReturned
 		cmd, err = readWithTimeout(server, testReadTimeout)
 		if err != nil || cmd != "@f0 FFFF 2" {
@@ -406,15 +406,15 @@ func TestDAQT1603StopCompletesImmediatelyAfterACKAndRestartSucceeds(t *testing.T
 	case <-time.After(testReadTimeout):
 		t.Fatal("server did not send Stop ACK")
 	}
-	// 协议契约：ACK 后 Stop 应立即返回（不再 drain 静默窗口）。
+	// 协议契约：ACK 后完成 150 ms 静默边界确认，再返回 Stop 成功。
 	select {
 	case err := <-stopResult:
 		if err != nil {
 			t.Fatalf("StopAcquisition returned error after ACK: %v", err)
 		}
 		close(stopReturned)
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("StopAcquisition did not return immediately after ACK (drain still active?)")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("StopAcquisition did not return after the 150 ms quiet-window confirmation")
 	}
 
 	if err := device.StartAcquisition(); err != nil {
@@ -436,7 +436,7 @@ func TestDAQT1603StopCompletesImmediatelyAfterACKAndRestartSucceeds(t *testing.T
 }
 
 // setT1603StopTimeout 注入短 Stop 超时，加速 Stop 失败路径测试。
-// ACK 后立即完成的成功路径不依赖此超时，仅 ACK 缺失或边界错乱时触发。
+// 正常成功路径只需短静默确认，不依赖总超时；仅 ACK 缺失或边界错乱时触发。
 func setT1603StopTimeout(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	oldTimeout := stopAcquisitionTimeout
@@ -2758,14 +2758,13 @@ func makeValidT1603BinaryFrame() []byte {
 }
 
 // makeInvalidT1603BinaryFrame 构造 64 字节错帧。
-// 全 0xFF 让所有 16 个 float32 都是 NaN，ParseTCPFrameEx 校验失败
-// （looksLikeReasonableTemperatureFrame 返回 false），
+// 所有通道均超出物理可能范围，使 ParseTCPFrameEx 校验失败，
 // extractFixedFrameLocked 返回 "invalid frame at established 64-byte boundary"，
 // 触发 isResyncableReadError 匹配。
 func makeInvalidT1603BinaryFrame() []byte {
 	frame := make([]byte, protocol.TCPFrameSize)
-	for i := range frame {
-		frame[i] = 0xFF
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(frame[i*4:], math.Float32bits(99999))
 	}
 	return frame
 }
@@ -2885,8 +2884,9 @@ func TestDAQT1603StopInvalidatesConnOnResyncableFrameError(t *testing.T) {
 	if statusAfter != core.ConnectionError {
 		t.Errorf("status.Connection = %v, want Error", statusAfter)
 	}
-	if !strings.Contains(lastError, "invalid frame") && !strings.Contains(lastError, "Stop ACK") {
-		t.Errorf("status.LastError = %q, want mention of invalid frame or Stop ACK", lastError)
+	if !strings.Contains(lastError, "invalid frame") && !strings.Contains(lastError, "Stop ACK") &&
+		!strings.Contains(lastError, "invalid Stop response boundary") {
+		t.Errorf("status.LastError = %q, want mention of invalid frame or Stop response boundary", lastError)
 	}
 
 	if err := <-serverErr; err != nil {

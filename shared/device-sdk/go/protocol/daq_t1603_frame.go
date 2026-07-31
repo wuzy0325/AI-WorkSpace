@@ -262,6 +262,10 @@ var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 // ErrControlACK reports a complete A response at a frame boundary.
 var ErrControlACK = errors.New("DAQ-T-1603 control command acknowledged")
 
+// Three consecutive 50 ms quiet intervals matched the real-device Stop probe.
+// A single 50 ms interval can expire between TCP fragments of an A-leading tail frame.
+const stopResponseQuietWindow = 150 * time.Millisecond
+
 // ErrDeviceRejected 表示设备对设置命令（@fe / @f3 等）返回 E 拒绝响应。
 //
 // 语义边界（ADR-009 复核修订）：
@@ -290,6 +294,7 @@ type T1603FrameReader struct {
 	binaryMode   bool
 	metadataMode bool
 	ackAfterData []bool
+	stopReady    bool
 }
 
 // NewT1603FrameReader creates a frame reader for DAQ-T-1603 TCP data.
@@ -326,8 +331,10 @@ func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
 	r.mu.Unlock()
 }
 
-// ExpectControlACK makes an optional leading A visible to the owner. Reading a
-// complete frame first resolves the optional ACK as absent.
+// ExpectControlACK makes the leading A returned by @f0 visible. 实机约 80% 的启动
+// 首字节为 'A'（ACK 前导）；其余启动中 ACK 偶发缺失或数据优先到达（SKILL.md
+// §3.3.4）。inspectFixedBufferLocked 通过偏移0/偏移1帧合法性自动对齐，不再要求
+// 首字节必须为 'A'。
 func (r *T1603FrameReader) ExpectControlACK() {
 	r.mu.Lock()
 	r.ackAfterData = append(r.ackAfterData, false)
@@ -373,26 +380,39 @@ func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 }
 
 func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
-	r.mu.Lock()
-	frameSize := r.frameSizeLocked()
-	if r.extractControlACKLocked(frameSize) {
-		r.mu.Unlock()
-		return nil, ErrControlACK
-	}
-	if frame, ok, err := r.extractFixedFrameLocked(frameSize); err != nil {
-		r.mu.Unlock()
-		return nil, err
-	} else if ok {
-		r.resolveMissingLeadingACKLocked()
-		r.mu.Unlock()
-		return frame, nil
-	}
-	r.mu.Unlock()
-
-	tmp := make([]byte, frameSize)
 	for {
+		r.mu.Lock()
+		frameSize := r.frameSizeLocked()
+		frame, ack, collectingStop, err := r.inspectFixedBufferLocked(frameSize)
+		r.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if ack {
+			return nil, ErrControlACK
+		}
+		if frame != nil {
+			return frame, nil
+		}
+
+		if collectingStop {
+			_ = r.conn.SetReadDeadline(time.Now().Add(stopResponseQuietWindow))
+		}
+		tmp := make([]byte, frameSize)
 		n, err := r.conn.Read(tmp)
 		if err != nil {
+			if collectingStop && isTimeoutError(err) {
+				r.mu.Lock()
+				ready, finalizeErr := r.finalizeStopResponseLocked(frameSize)
+				r.mu.Unlock()
+				if finalizeErr != nil {
+					return nil, finalizeErr
+				}
+				if ready {
+					_ = r.conn.SetReadDeadline(time.Time{})
+					continue
+				}
+			}
 			return nil, err
 		}
 		// 防御 (0, nil)：net.Conn 在边缘情况下（清除 deadline 期间、零字节
@@ -404,20 +424,113 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
-		if r.extractControlACKLocked(frameSize) {
-			r.mu.Unlock()
-			return nil, ErrControlACK
-		}
-		if frame, ok, err := r.extractFixedFrameLocked(frameSize); err != nil {
-			r.mu.Unlock()
-			return nil, err
-		} else if ok {
-			r.resolveMissingLeadingACKLocked()
-			r.mu.Unlock()
-			return frame, nil
-		}
 		r.mu.Unlock()
 	}
+}
+
+func (r *T1603FrameReader) inspectFixedBufferLocked(size int) ([]byte, bool, bool, error) {
+	if len(r.ackAfterData) == 0 {
+		frame, ok, err := r.extractFixedFrameLocked(size)
+		if err != nil {
+			// 正常采集路径的单字节自愈：边界帧非法时，丢弃首字节重试一次。
+			// 该字节通常是迟到的 Start/Stop ACK 或前导残杂字节（SKILL.md §3.3.4）。
+			// 缓冲不足 size+1 时先等待更多数据，否则无法判断丢弃后能否对齐。
+			if len(r.buffer) < size+1 {
+				return nil, false, false, nil
+			}
+			if dframe, dok, derr := r.extractFixedFrameWithDropLocked(size); derr == nil && dok {
+				return dframe, false, false, nil
+			}
+		}
+		return frameIf(ok, frame), false, false, err
+	}
+	if !r.ackAfterData[0] {
+		if len(r.buffer) == 0 {
+			return nil, false, false, nil
+		}
+		if r.buffer[0] == 'A' {
+			r.consumeControlACKLocked()
+			return nil, true, false, nil
+		}
+		// Start ACK 偶发缺失或迟到（SKILL.md §3.3.4 实机探针）：
+		// 首字节非 'A' 时不能判错，而要用偏移0/偏移1的帧合法性确定真实边界。
+		//   - 偏移0合法：数据优先、无前导残杂字节，ACK 视为未发送；
+		//   - 偏移1合法：存在1个前导残杂字节（上一事务尾字节），丢弃后对齐；
+		//   - 两者都非法：才是真正的协议错位，要求重连。
+		// 禁止裸搜 0x41：约 25.9°C 的 float32 LE 高字节本身就是 0x41。
+		if len(r.buffer) < size+1 {
+			return nil, false, false, nil
+		}
+		if _, err := ParseTCPFrameEx(r.buffer[:size]); err == nil {
+			r.resolveMissingLeadingACKLocked()
+			frame, ok, err := r.extractFixedFrameLocked(size)
+			return frameIf(ok, frame), false, false, err
+		}
+		if _, err := ParseTCPFrameEx(r.buffer[1 : size+1]); err == nil {
+			r.buffer = r.buffer[1:]
+			if len(r.buffer) == 0 {
+				r.buffer = make([]byte, 0, 256)
+			}
+			r.resolveMissingLeadingACKLocked()
+			frame, ok, err := r.extractFixedFrameLocked(size)
+			return frameIf(ok, frame), false, false, err
+		}
+		return nil, false, false, fmt.Errorf(
+			"expected Start ACK 0x41 or aligned first frame at stream boundary, got 0x%02X (neither offset valid)",
+			r.buffer[0])
+	}
+	if !r.stopReady {
+		return nil, false, true, nil
+	}
+	if len(r.buffer) > 1 {
+		frame, ok, err := r.extractFixedFrameLocked(size)
+		return frameIf(ok, frame), false, false, err
+	}
+	if len(r.buffer) == 1 && r.buffer[0] == 'A' {
+		r.consumeControlACKLocked()
+		r.stopReady = false
+		return nil, true, false, nil
+	}
+	return nil, false, false, fmt.Errorf("validated Stop response lost terminal ACK")
+}
+
+func frameIf(ok bool, frame []byte) []byte {
+	if ok {
+		return frame
+	}
+	return nil
+}
+
+func isTimeoutError(err error) bool {
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Timeout()
+}
+
+func (r *T1603FrameReader) finalizeStopResponseLocked(frameSize int) (bool, error) {
+	if len(r.buffer) == 0 {
+		return false, nil
+	}
+	// 迟到的 Start ACK 'A' 可能落在 Stop 收集窗口开头（实机快速点击复现：
+	// raw=41 41，即 [延迟 Start ACK][Stop ACK]）。原缓冲不满足 N×64+ACK 时，
+	// 尝试丢弃 1 个前导 'A' 再验证。仅当原缓冲非法时才丢，避免误删合法数据帧
+	// 首字节（合法帧首字节也可能为 0x41）。
+	buf := r.buffer
+	valid := len(buf)%frameSize == 1 && buf[len(buf)-1] == 'A'
+	if !valid && len(buf) > 1 && buf[0] == 'A' &&
+		(len(buf)-1)%frameSize == 1 && buf[len(buf)-1] == 'A' {
+		buf = buf[1:]
+		valid = true
+	}
+	if !valid {
+		return false, fmt.Errorf("invalid Stop response boundary after quiet window: bytes=%d expected N*%d+ACK; raw=% X",
+			len(r.buffer), frameSize, r.buffer)
+	}
+	if len(buf) != len(r.buffer) {
+		// 已丢弃前导残杂 'A'，同步从 buffer 移除。
+		r.buffer = r.buffer[1:]
+	}
+	r.stopReady = true
+	return true, nil
 }
 
 func (r *T1603FrameReader) resolveMissingLeadingACKLocked() {
@@ -426,16 +539,12 @@ func (r *T1603FrameReader) resolveMissingLeadingACKLocked() {
 	}
 }
 
-func (r *T1603FrameReader) extractControlACKLocked(frameSize int) bool {
-	if len(r.ackAfterData) == 0 || len(r.buffer) == 0 || r.buffer[0] != 'A' {
-		return false
-	}
+func (r *T1603FrameReader) consumeControlACKLocked() {
 	r.buffer = r.buffer[1:]
 	for len(r.buffer) > 0 && (r.buffer[0] == '\r' || r.buffer[0] == '\n') {
 		r.buffer = r.buffer[1:]
 	}
 	r.ackAfterData = r.ackAfterData[1:]
-	return true
 }
 
 func (r *T1603FrameReader) extractFixedFrameLocked(size int) ([]byte, bool, error) {
@@ -448,6 +557,24 @@ func (r *T1603FrameReader) extractFixedFrameLocked(size int) ([]byte, bool, erro
 		return nil, false, fmt.Errorf("invalid frame at established %d-byte boundary: %w", size, err)
 	}
 	r.buffer = r.buffer[size:]
+	if len(r.buffer) == 0 {
+		r.buffer = make([]byte, 0, 256)
+	}
+	return frame, true, nil
+}
+
+// extractFixedFrameWithDropLocked 丢弃缓冲区首字节后提取一帧，用于正常采集路径
+// 的单字节自愈（迟到的 ACK / 前导残杂字节导致的 1 字节偏移）。仅允许丢弃 1 字节。
+func (r *T1603FrameReader) extractFixedFrameWithDropLocked(size int) ([]byte, bool, error) {
+	if len(r.buffer) < size+1 {
+		return nil, false, nil
+	}
+	frame := make([]byte, size)
+	copy(frame, r.buffer[1:size+1])
+	if _, err := ParseTCPFrameEx(frame); err != nil {
+		return nil, false, fmt.Errorf("invalid frame at established %d-byte boundary after 1-byte drop: %w", size, err)
+	}
+	r.buffer = r.buffer[size+1:]
 	if len(r.buffer) == 0 {
 		r.buffer = make([]byte, 0, 256)
 	}
@@ -586,6 +713,7 @@ func (r *T1603FrameReader) Reset() {
 	defer r.mu.Unlock()
 	r.buffer = make([]byte, 0, 256)
 	r.ackAfterData = nil
+	r.stopReady = false
 }
 
 // Resync 丢弃缓冲区中 1 字节数据用于重同步。

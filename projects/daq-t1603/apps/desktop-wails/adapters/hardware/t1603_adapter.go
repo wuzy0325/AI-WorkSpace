@@ -538,22 +538,33 @@ func (a *T1603Adapter) StopAcquisition(id string) error {
 		a.mu.Unlock()
 		return nil
 	}
+	// 原子地：在持锁期间把 stopChs/channels 从 map 移除并捕获，随后在锁外关闭。
+	// 否则 dev.StopAcquisition()（约 150ms）期间 readLoop 异常退出会触发
+	// OnReadLoopExit 回调再次 close 同一 channel → panic: close of closed channel
+	// （快速点击 Start/Stop 实机复现）。回调与 Stop 都在 a.mu 下查 map，
+	// 通道一旦移除，任何一方都不会再看到它去二次 close。
+	var doneCh chan struct{}
 	if done, exists := a.stopChs[id]; exists {
-		close(done)
+		delete(a.stopChs, id)
+		doneCh = done
 	}
 	delete(a.sinks, id)
 	chToClose, hasCh := a.channels[id]
+	if hasCh {
+		delete(a.channels, id)
+	}
 	a.operations[id] = acquisitionOperationStopping
 	if st, exists := a.status[id]; exists {
 		st.SetStatus(core.StatusStopping)
 	}
 	a.mu.Unlock()
 
+	if doneCh != nil {
+		close(doneCh)
+	}
 	stopErr := dev.StopAcquisition()
 	a.mu.Lock()
 	delete(a.operations, id)
-	delete(a.stopChs, id)
-	delete(a.channels, id)
 	if st, exists := a.status[id]; exists {
 		if stopErr == nil {
 			st.SetStatus(core.StatusConnected)
