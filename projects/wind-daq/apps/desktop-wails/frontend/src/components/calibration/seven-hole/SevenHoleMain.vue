@@ -865,11 +865,11 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- 主区域：七孔校准特性曲线图（spec Task 22 实现）
-               - 内区 3 类真实图表：Kα-Kβ 散点图 + α-K0 / α-Ks 曲线（按 β 分组）
-               - 外区每个扇区 3 类真实图表：Kθ-Kφ 散点图 + φ-K0[n] / φ-Ks[n] 曲线（按 θ 分组）
+               - 内区 3 类真实图表：Kα-Kβ 网格折线图（α-β 双向等值线 + 当前点高亮） + α-K0 / α-Ks 曲线（按 β 分组）
+               - 外区每个扇区 3 类真实图表：Kθ-Kφ 网格折线图（θ-φ 双向等值线 + 当前点高亮） + φ-K0[n] / φ-Ks[n] 曲线（按 θ 分组）
                数据来源：calibrationStore.dataPoints，按 activeChartTab 过滤区域与扇区 -->
           <div class="flex-1 overflow-hidden p-4">
-            <SevenHoleCharts :active-tab="activeChartTab" />
+            <SevenHoleCharts :active-tab="activeChartTab" :current-point-id="progressInfo?.currentPointId ?? null" />
           </div>
         </div>
       </div>

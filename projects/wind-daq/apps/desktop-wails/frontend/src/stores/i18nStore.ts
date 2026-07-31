@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { dualTraversalEn, dualTraversalZh } from '@/locales/dual-traversal'
 
 export type Locale = 'zh' | 'en'
 
 const zh: Record<string, string> = {
+  ...dualTraversalZh,
   dashboardHome: '仪表盘',
   motionControl: '运动控制',
   probeCalibration: '探针校准',
@@ -325,6 +327,8 @@ const zh: Record<string, string> = {
   travCheckDetected: '检测到未完成的测试',
   travCheckCompleted: '已完成',
   travCheckConfig: '配置:',
+  // I-28 修复：原 TraversalCheckpointBanner 硬编码 'Unknown' 破坏 i18n 一致性。
+  travUnknownConfig: '未知',
   travContinueTest: '继续测试',
   travAbandon: '放弃',
   travLegendMoving: '移动',
@@ -1238,6 +1242,16 @@ const zh: Record<string, string> = {
   tp_sampleStdDev: '样本标准差',
   tp_noRawData: '暂无原始数据',
   tp_cptAlphaCurve: 'CPT-α 曲线',
+  tp_yAxisRange: 'Y 轴范围',
+  tp_yMinPlaceholder: '最小值',
+  tp_yMaxPlaceholder: '最大值',
+  tp_apply: '应用',
+  tp_auto: '自动',
+  tp_yPrecisionLabel: '精度',
+  tp_yRangeManualActive: '手动范围',
+  tp_yRangeAutoActive: '自动范围',
+  tp_yRangeInvalidHint: '请输入有效的最小值和最大值',
+  tp_yRangeMinGeMax: '最小值必须小于最大值',
   tp_calibrationDataLog: '校准数据记录',
   tp_totalRecords: '共 {count} 条',
   tp_index: '序号',
@@ -1690,6 +1704,7 @@ const zh: Record<string, string> = {
   shc_thetaGradient: 'θ 渐变',
   shc_tooltipPoint: 'Kα: {ka}<br/>Kβ: {kb}<br/>α: {alpha}°<br/>β: {beta}°',
   shc_tooltipOuterPoint: 'Kθ: {ktheta}<br/>Kφ: {kphi}<br/>θ: {theta}°<br/>φ: {phi}°',
+  shc_currentPoint: '当前采集点',
 
   // ===========================================================================
   // 双探针并行遍历（dual traversal）UI 文案（spec FR1/FR7 / Task 18-21）
@@ -1713,8 +1728,8 @@ const zh: Record<string, string> = {
   dualProbeSetting: '设置',
   // 双探针配置对话框（FR2/FR7）
   dualSettingsTitle: '双探针配置',
-  dualSettingsTabHint: '选项卡切换两路独立配置；保存前原子校验控制器互不相同',
-  dualControllerConflict: '两个探针必须绑定不同的运动控制器',
+  dualSettingsTabHint: '选项卡切换两路独立配置；保存前原子校验控制器+物理轴组合互不相同',
+  dualControllerConflict: '两个探针不能绑定同一控制器的同一物理轴，请改为不同物理轴',
   dualControllerEmpty: '探针 {probeId} 未绑定运动控制器',
   // 步骤校验失败原因（FR2：disabled 按钮必须显式提示原因，避免用户困惑）
   dualStepInvalidName: '请填写测试名称',
@@ -1743,9 +1758,32 @@ const zh: Record<string, string> = {
   // 完成事件提示
   dualProbeCompleted: '探针 {probeId} 已完成',
   dualProbeErrorOccurred: '探针 {probeId} 发生错误',
+  // 双探针 store 错误消息（C7 修复：替代 dualTraversalStore.ts 中硬编码中文）
+  dualErrVerifyInterpolator: '插值器状态校验失败: {error}',
+  dualErrVerifyInterpolatorException: '插值器状态校验失败: {error}',
+  dualErrInterpolatorNotLoaded: '插值器未加载',
+  dualErrRecoverRuntime: '恢复运行状态失败',
+  dualErrSaveConfig: '保存配置失败',
+  dualErrImportPrb: 'PRB 导入失败',
+  dualErrImportCalibrationCsv: 'CSV 导入失败',
+  dualErrImportMultiPrb: '多 PRB 导入失败',
+  dualErrImportSevenHolePrb: '七孔 PRB 导入失败',
+  dualErrImportSevenHoleCalibrationCsv: '七孔 CSV 导入失败',
+  dualErrClearInterpolator: '清除插值器失败',
+  dualErrLoadCheckpoint: '加载未完成任务失败',
+  dualErrStart: '启动失败',
+  dualErrPause: '暂停失败',
+  dualErrResume: '恢复失败',
+  dualErrStop: '停止失败',
+  dualErrClose: '关闭失败',
+  dualErrCheckpointPending: '检测到上次未完成的测试，请选择"继续测试"或"放弃"后再开始新测试',
+  dualErrClearCheckpoint: '清除断点失败',
+  dualErrClearCheckpointRetry: '未能清除未完成任务，请稍后重试',
+  dualErrResumeFromCheckpoint: '恢复失败',
 }
 
 const en: Record<string, string> = {
+  ...dualTraversalEn,
   dashboardHome: 'Dashboard',
   motionControl: 'Motion',
   probeCalibration: 'Calibration',
@@ -2067,6 +2105,8 @@ const en: Record<string, string> = {
   travCheckDetected: 'Unfinished test detected',
   travCheckCompleted: 'Completed',
   travCheckConfig: 'Config:',
+  // I-28 修复：原 TraversalCheckpointBanner 硬编码 'Unknown' 破坏 i18n 一致性.
+  travUnknownConfig: 'Unknown',
   travContinueTest: 'Continue',
   travAbandon: 'Abandon',
   travLegendMoving: 'Moving',
@@ -2974,6 +3014,16 @@ const en: Record<string, string> = {
   tp_sampleStdDev: 'Sample Std Dev',
   tp_noRawData: 'No raw data',
   tp_cptAlphaCurve: 'CPT-α Curve',
+  tp_yAxisRange: 'Y Axis Range',
+  tp_yMinPlaceholder: 'Min',
+  tp_yMaxPlaceholder: 'Max',
+  tp_apply: 'Apply',
+  tp_auto: 'Auto',
+  tp_yPrecisionLabel: 'Precision',
+  tp_yRangeManualActive: 'Manual range',
+  tp_yRangeAutoActive: 'Auto range',
+  tp_yRangeInvalidHint: 'Please enter valid min and max values',
+  tp_yRangeMinGeMax: 'Min must be less than max',
   tp_calibrationDataLog: 'Calibration Data Log',
   tp_totalRecords: '{count} records',
   tp_index: 'Index',
@@ -3426,6 +3476,7 @@ const en: Record<string, string> = {
   shc_thetaGradient: 'θ gradient',
   shc_tooltipPoint: 'Kα: {ka}<br/>Kβ: {kb}<br/>α: {alpha}°<br/>β: {beta}°',
   shc_tooltipOuterPoint: 'Kθ: {ktheta}<br/>Kφ: {kphi}<br/>θ: {theta}°<br/>φ: {phi}°',
+  shc_currentPoint: 'Current point',
 
   // ===========================================================================
   // Dual traversal UI text (spec FR1/FR7 / Task 18-21)
@@ -3444,8 +3495,8 @@ const en: Record<string, string> = {
   dualProbeError: 'Error',
   dualProbeSetting: 'Settings',
   dualSettingsTitle: 'Dual Probe Configuration',
-  dualSettingsTabHint: 'Switch tabs for two independent configs; controller uniqueness validated before save',
-  dualControllerConflict: 'Two probes must bind different motion controllers',
+  dualSettingsTabHint: 'Switch tabs for two independent configs; controller+axis pair uniqueness validated before save',
+  dualControllerConflict: 'Two probes cannot bind the same physical axis of the same controller; use different axes',
   dualControllerEmpty: 'Probe {probeId} has no motion controller bound',
   // Step validation failure reasons (FR2: disabled buttons must show reason explicitly)
   dualStepInvalidName: 'Please fill in the test name',
@@ -3472,6 +3523,28 @@ const en: Record<string, string> = {
   dualDetailsTabMotion: 'Motion',
   dualProbeCompleted: 'Probe {probeId} completed',
   dualProbeErrorOccurred: 'Probe {probeId} error',
+  // Dual traversal store error messages (C7 fix: replace hardcoded Chinese in dualTraversalStore.ts)
+  dualErrVerifyInterpolator: 'Interpolator state verification failed: {error}',
+  dualErrVerifyInterpolatorException: 'Interpolator state verification failed: {error}',
+  dualErrInterpolatorNotLoaded: 'Interpolator not loaded',
+  dualErrRecoverRuntime: 'Failed to recover runtime state',
+  dualErrSaveConfig: 'Failed to save configuration',
+  dualErrImportPrb: 'PRB import failed',
+  dualErrImportCalibrationCsv: 'CSV import failed',
+  dualErrImportMultiPrb: 'Multi-PRB import failed',
+  dualErrImportSevenHolePrb: 'Seven-hole PRB import failed',
+  dualErrImportSevenHoleCalibrationCsv: 'Seven-hole CSV import failed',
+  dualErrClearInterpolator: 'Failed to clear interpolator',
+  dualErrLoadCheckpoint: 'Failed to load unfinished task',
+  dualErrStart: 'Failed to start',
+  dualErrPause: 'Failed to pause',
+  dualErrResume: 'Failed to resume',
+  dualErrStop: 'Failed to stop',
+  dualErrClose: 'Failed to close',
+  dualErrCheckpointPending: 'An unfinished test exists. Continue or abandon it before starting a new test.',
+  dualErrClearCheckpoint: 'Failed to clear checkpoint',
+  dualErrClearCheckpointRetry: 'Failed to clear unfinished task, please retry later',
+  dualErrResumeFromCheckpoint: 'Failed to resume',
 }
 
 export const useI18nStore = defineStore('i18n', () => {

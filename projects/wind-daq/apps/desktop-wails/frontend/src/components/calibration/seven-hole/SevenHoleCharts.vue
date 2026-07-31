@@ -6,16 +6,24 @@
  *
  * 每个区域 3 类真实图表（布局完全一致，仅系数与坐标轴不同）：
  *   内区（α-β 系数）：
- *     1. Kα-Kβ 散点图：X 轴 Kα，Y 轴 Kβ，颜色按 α 角度渐变（visualMap）
+ *     1. Kα-Kβ 网格折线图：X 轴 Kα，Y 轴 Kβ
+ *        - 主线：按 α 分组的彩色粗线（同 α 不同 β 的点连线）
+ *        - 参考线：按 β 分组的灰色细线（同 β 不同 α 的点连线）
+ *        - 当前采集点橙色发光高亮
+ *        与 FiveHoleMain.vue 的 Kα-Kβ 图保持一致的范式（α-β 双向等值线网格）
  *     2. α-K0 曲线：X 轴 α，Y 轴 K0，多条曲线按 β 分组
  *     3. α-Ks 曲线：X 轴 α，Y 轴 Ks，多条曲线按 β 分组
  *   外区 N 区（θ-φ 系数，N=1..6）：
- *     1. Kθ-Kφ 散点图：X 轴 Kθ，Y 轴 Kφ，颜色按 θ 角度渐变（visualMap）
+ *     1. Kθ-Kφ 网格折线图：X 轴 Kθ，Y 轴 Kφ
+ *        - 主线：按 θ 分组的彩色粗线
+ *        - 参考线：按 φ 分组的灰色细线
+ *        - 当前采集点橙色发光高亮
  *     2. φ-K0[n] 曲线：X 轴 φ，Y 轴 K0[n]，多条曲线按 θ 分组
  *     3. φ-Ks[n] 曲线：X 轴 φ，Y 轴 Ks[n]，多条曲线按 θ 分组
  *
  * 区域切换由父组件 SevenHoleMain.vue 通过 activeTab prop 控制（Tab 栏在父组件渲染），
  * 本组件复用 3 个 ECharts 实例，根据 activeTab 切换数据源与 option 配置。
+ * 父组件同时透传 currentPointId，用于第 1 图高亮当前采集点。
  *
  * 严格遵循 spec Task 22 验收要求：
  *   - 使用 ECharts，配置 large: true + largeThreshold: 500 优化大数据量渲染
@@ -63,6 +71,8 @@ type SevenHoleChartTab = 'inner' | 'outer-1' | 'outer-2' | 'outer-3' | 'outer-4'
 
 const props = defineProps<{
   activeTab: SevenHoleChartTab
+  /** 当前采集点 id（由父组件从 progressInfo.currentPointId 透传），用于第 1 图高亮当前点 */
+  currentPointId?: number | null
 }>()
 
 const { t } = storeToRefs(useI18nStore())
@@ -152,8 +162,10 @@ const innerDataPoints = computed<SevenHoleDataPoint[]>(() => {
 })
 
 // 内区采样点提取：从 coordinates 取 α/β，从 coefficients 取 Kalpha/Kbeta/K0/Ks
+// 保留 pointId 用于第 1 图当前采集点高亮（与父组件透传的 currentPointId 匹配）
 // 过滤掉 NaN/Infinity 防止 ECharts 绘制异常（数据点采集异常或部分字段缺失时）
 interface InnerPoint {
+  pointId: number
   alpha: number
   beta: number
   Kalpha: number
@@ -168,28 +180,13 @@ const innerPoints = computed<InnerPoint[]>(() => {
       const alpha = p.coordinates['α']
       const beta = p.coordinates['β']
       const { Kalpha, Kbeta, K0, Ks } = p.coefficients
-      return { alpha, beta, Kalpha, Kbeta, K0, Ks }
+      return { pointId: p.pointId, alpha, beta, Kalpha, Kbeta, K0, Ks }
     })
     .filter((p): p is InnerPoint =>
       Number.isFinite(p.alpha) && Number.isFinite(p.beta)
       && Number.isFinite(p.Kalpha) && Number.isFinite(p.Kbeta)
       && Number.isFinite(p.K0) && Number.isFinite(p.Ks)
     )
-})
-
-// 散点图数据：[Kalpha, Kbeta, alpha]，第三维（alpha）用于 visualMap 着色
-const scatterData = computed<Array<[number, number, number]>>(() => {
-  return innerPoints.value.map((p) => [p.Kalpha, p.Kbeta, p.alpha])
-})
-
-// α 范围：用于 visualMap 的 min/max
-const alphaRange = computed<{ min: number; max: number }>(() => {
-  if (scatterData.value.length === 0) return { min: -30, max: 30 }
-  const alphas = scatterData.value.map((d) => d[2])
-  const min = Math.min(...alphas)
-  const max = Math.max(...alphas)
-  // 范围为零时扩展 ±1，避免 visualMap 退化为单色
-  return min === max ? { min: min - 1, max: max + 1 } : { min, max }
 })
 
 // 按 β 分组：返回按 β 升序排序的 [{ beta, data: [alpha, value][] }, ...]
@@ -237,6 +234,7 @@ const outerDataPoints = computed<SevenHoleDataPoint[]>(() => {
 })
 
 interface OuterPoint {
+  pointId: number
   theta: number
   phi: number
   Ktheta: number
@@ -246,32 +244,41 @@ interface OuterPoint {
 }
 
 const outerPoints = computed<OuterPoint[]>(() => {
-  return outerDataPoints.value
+  const mapped = outerDataPoints.value
     .map((p) => {
       const theta = p.coordinates['θ']
       const phi = p.coordinates['φ']
       const { Ktheta, Kphi, K0Outer, KsOuter } = p.coefficients
-      return { theta, phi, Ktheta, Kphi, K0Outer, KsOuter }
+      return { pointId: p.pointId, theta, phi, Ktheta, Kphi, K0Outer, KsOuter }
     })
-    .filter((p): p is OuterPoint =>
-      Number.isFinite(p.theta) && Number.isFinite(p.phi)
-      && Number.isFinite(p.Ktheta) && Number.isFinite(p.Kphi)
-      && Number.isFinite(p.K0Outer) && Number.isFinite(p.KsOuter)
-    )
-})
 
-// 外区散点图数据：[Ktheta, Kphi, theta]，第三维（theta）用于 visualMap 着色
-const outerScatterData = computed<Array<[number, number, number]>>(() => {
-  return outerPoints.value.map((p) => [p.Ktheta, p.Kphi, p.theta])
-})
+  // 扇区跨 0° 视图修正（仅 Sector 1 受影响）：
+  //
+  // 后端 GenerateSevenHolePoints 把 φ 归一化到 [0°, 360°)（seven_hole.go §3.1 扇区居中约定）。
+  // Sector 1 的 sectorPhiStart = -30°，归一化后 φ ∈ [330°, 355°] ∪ [0°, 30°]——跨 0°/360° 边界。
+  // 其他扇区（2~6）的 φ 全部落在 [30°, 330°] 内，不跨边界。
+  //
+  // 若直接按 φ 升序排序，Sector 1 的序列会变成 0°→30°→330°→355°，
+  // 曲线从 φ=30° 跳到 φ=330°，画出一条横跨整个图的长线段；
+  // 同时 Kφ 在扇区边界从 +2 跳到 -2（spec §4.3 边界符号反转），线段还穿过整个 Y 轴。
+  //
+  // 修复：检测扇区是否同时存在 φ<180° 和 φ>180° 的点（即跨 0°），
+  // 若是则把 φ>180° 的点偏移到 φ-360°（变成负值），让 φ 序列变成 [-30°, +30°] 连续递增。
+  //
+  // 此偏移仅影响图表视图层显示（X 轴刻度、连线顺序），不修改 store 中的原始数据；
+  // tooltip 反查 θ/φ 时也用偏移后的 phi，保持一致性。
+  const hasPhiAbove180 = mapped.some((p) => p.phi > 180)
+  const hasPhiBelow180 = mapped.some((p) => p.phi < 180)
+  const crossesZero = hasPhiAbove180 && hasPhiBelow180
+  const adjusted = crossesZero
+    ? mapped.map((p) => (p.phi > 180 ? { ...p, phi: p.phi - 360 } : p))
+    : mapped
 
-// θ 范围：用于外区散点图 visualMap 的 min/max
-const thetaRange = computed<{ min: number; max: number }>(() => {
-  if (outerScatterData.value.length === 0) return { min: 0, max: 60 }
-  const thetas = outerScatterData.value.map((d) => d[2])
-  const min = Math.min(...thetas)
-  const max = Math.max(...thetas)
-  return min === max ? { min: min - 1, max: max + 1 } : { min, max }
+  return adjusted.filter((p): p is OuterPoint =>
+    Number.isFinite(p.theta) && Number.isFinite(p.phi)
+    && Number.isFinite(p.Ktheta) && Number.isFinite(p.Kphi)
+    && Number.isFinite(p.K0Outer) && Number.isFinite(p.KsOuter)
+  )
 })
 
 // 按 θ 分组：返回按 θ 升序排序的 [{ theta, data: [phi, value][] }, ...]
@@ -298,56 +305,230 @@ function groupByTheta(points: OuterPoint[], valueKey: 'K0Outer' | 'KsOuter'): Th
 const outerK0GroupedData = computed<ThetaGroup[]>(() => groupByTheta(outerPoints.value, 'K0Outer'))
 const outerKsGroupedData = computed<ThetaGroup[]>(() => groupByTheta(outerPoints.value, 'KsOuter'))
 
+// ===== 第 1 图专用分组（Kα-Kβ / Kθ-Kφ 平面网格折线图）=====
+// 与 FiveHoleMain.vue 的 groupByAlpha / groupByBetaKb 范式一致：
+//   - 主线分组（彩色粗线）：同 α/θ 不同 β/φ 的点连线，按 β/φ 升序确保曲线连续不回环
+//   - 参考线分组（灰色细线）：同 β/φ 不同 α/θ 的点连线，按 α/θ 升序
+// 两个方向交叉形成 Kα-Kβ 平面上的 α-β 网格，便于读出等 α/等 β 线的拓扑连续性。
+
+interface KxyGroup {
+  /** 分组角度值（内区 α/β，外区 θ/φ） */
+  key: number
+  /** 平面坐标点序列 [Kx, Ky] */
+  data: Array<[number, number]>
+}
+
+// 内区主线分组：按 α 分组，组内按 β 升序连接，形成"等 α 线"
+function groupByAlphaKxy(points: InnerPoint[]): KxyGroup[] {
+  const groups = new Map<number, Array<{ beta: number; Kalpha: number; Kbeta: number }>>()
+  for (const p of points) {
+    if (!groups.has(p.alpha)) groups.set(p.alpha, [])
+    groups.get(p.alpha)!.push({ beta: p.beta, Kalpha: p.Kalpha, Kbeta: p.Kbeta })
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([alpha, items]) => ({
+      key: alpha,
+      data: items
+        .sort((a, b) => a.beta - b.beta)
+        .map((it) => [it.Kalpha, it.Kbeta] as [number, number]),
+    }))
+}
+
+// 内区参考线分组：按 β 分组，组内按 α 升序连接，形成"等 β 线"
+function groupByBetaKxy(points: InnerPoint[]): KxyGroup[] {
+  const groups = new Map<number, Array<{ alpha: number; Kalpha: number; Kbeta: number }>>()
+  for (const p of points) {
+    if (!groups.has(p.beta)) groups.set(p.beta, [])
+    groups.get(p.beta)!.push({ alpha: p.alpha, Kalpha: p.Kalpha, Kbeta: p.Kbeta })
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([beta, items]) => ({
+      key: beta,
+      data: items
+        .sort((a, b) => a.alpha - b.alpha)
+        .map((it) => [it.Kalpha, it.Kbeta] as [number, number]),
+    }))
+}
+
+// 外区主线分组：按 θ 分组，组内按 φ 升序连接，形成"等 θ 线"
+function groupByThetaKxy(points: OuterPoint[]): KxyGroup[] {
+  const groups = new Map<number, Array<{ phi: number; Ktheta: number; Kphi: number }>>()
+  for (const p of points) {
+    if (!groups.has(p.theta)) groups.set(p.theta, [])
+    groups.get(p.theta)!.push({ phi: p.phi, Ktheta: p.Ktheta, Kphi: p.Kphi })
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([theta, items]) => ({
+      key: theta,
+      data: items
+        .sort((a, b) => a.phi - b.phi)
+        .map((it) => [it.Ktheta, it.Kphi] as [number, number]),
+    }))
+}
+
+// 外区参考线分组：按 φ 分组，组内按 θ 升序连接，形成"等 φ 线"
+function groupByPhiKxy(points: OuterPoint[]): KxyGroup[] {
+  const groups = new Map<number, Array<{ theta: number; Ktheta: number; Kphi: number }>>()
+  for (const p of points) {
+    if (!groups.has(p.phi)) groups.set(p.phi, [])
+    groups.get(p.phi)!.push({ theta: p.theta, Ktheta: p.Ktheta, Kphi: p.Kphi })
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([phi, items]) => ({
+      key: phi,
+      data: items
+        .sort((a, b) => a.theta - b.theta)
+        .map((it) => [it.Ktheta, it.Kphi] as [number, number]),
+    }))
+}
+
+const innerMainGroups = computed<KxyGroup[]>(() => groupByAlphaKxy(innerPoints.value))
+const innerRefGroups = computed<KxyGroup[]>(() => groupByBetaKxy(innerPoints.value))
+const outerMainGroups = computed<KxyGroup[]>(() => groupByThetaKxy(outerPoints.value))
+const outerRefGroups = computed<KxyGroup[]>(() => groupByPhiKxy(outerPoints.value))
+
 // ===== ECharts option 构建（内/外区共用，根据 activeTab 切换数据源与坐标轴名）=====
 
-// 1. 散点图：内区 Kα-Kβ（按 α 渐变）/ 外区 Kθ-Kφ（按 θ 渐变）
-function buildScatterOption(): EChartsOption {
+// 1. 网格折线图：内区 Kα-Kβ（α-β 双向等值线 + 当前点高亮）/ 外区 Kθ-Kφ（θ-φ 双向等值线 + 当前点高亮）
+//    与 FiveHoleMain.vue 的 Kα-Kβ 图保持一致范式：主线彩色 + 参考线灰色 + 当前点橙色高亮
+function buildGridLineOption(): EChartsOption {
   const c = palette.value
   const isInner = props.activeTab === 'inner'
-  const data = isInner ? scatterData.value : outerScatterData.value
-  const range = isInner ? alphaRange.value : thetaRange.value
+  const mainGroups = isInner ? innerMainGroups.value : outerMainGroups.value
+  const refGroups = isInner ? innerRefGroups.value : outerRefGroups.value
   const xName = isInner ? t.value.shc_axisKa : t.value.shc_axisKtheta
   const yName = isInner ? t.value.shc_axisKb : t.value.shc_axisKphi
-  const gradientLabel = isInner ? t.value.shc_alphaGradient : t.value.shc_thetaGradient
-  // 公共 grid 配置：左侧 56px 容纳 Y 轴标题，右侧 48px 容纳 visualMap，底部 28px 容纳 X 轴刻度
-  const grid = { left: 56, right: 48, top: 16, bottom: 28 }
+  // grid 配置：左侧 56px 容纳 Y 轴标题，右侧 16px（不再需要 visualMap 颜色条），底部 28px 容纳 X 轴刻度
+  const grid = { left: 56, right: 16, top: 32, bottom: 28 }
 
-  // 无数据时不再返回"暂无数据"占位，而是渲染完整空坐标轴 + 网格 + 颜色条
-  // （散点 series 数据为空数组，visualMap 用 alphaRange/thetaRange 的 fallback min/max）
-  // 这样切到外区 Tab 时操作员能看到完整的 Kθ-Kφ 坐标系框架，等采集数据到达后散点立即填入
+  // 当前采集点：从父组件透传的 currentPointId 在 innerPoints/outerPoints 中匹配 pointId
+  // 未传或未匹配到时不渲染高亮 series（数据为空数组，series 跳过）
+  const cpId = props.currentPointId ?? null
+  const currentPoint = cpId != null
+    ? (isInner ? innerPoints.value : outerPoints.value).find((p) => p.pointId === cpId)
+    : undefined
+  const currentPointData: Array<[number, number]> = currentPoint
+    ? [isInner
+        ? [(currentPoint as InnerPoint).Kalpha, (currentPoint as InnerPoint).Kbeta]
+        : [(currentPoint as OuterPoint).Ktheta, (currentPoint as OuterPoint).Kphi]]
+    : []
 
-  // tooltip formatter：内区反查 β，外区反查 φ（散点只携带 colorDim，第四维需从原始数据查找）
+  // tooltip formatter：内区显示 Kα/Kβ/α/β，外区显示 Kθ/Kφ/θ/φ
+  // 与原散点图 tooltip 文案保持一致（shc_tooltipPoint / shc_tooltipOuterPoint）
   const tooltipFormatter = (params: unknown): string => {
     const p = params as { value?: unknown }
-    const val = p.value as [number, number, number] | undefined
+    const val = p.value as [number, number] | undefined
     if (!val) return ''
-    const [xVal, yVal, colorDim] = val
+    const [xVal, yVal] = val
     if (isInner) {
-      // 内区：xVal=Kα, yVal=Kβ, colorDim=α，反查 β
+      // 内区：从 innerPoints 反查 α/β（同 Kα/Kβ 可能有多点，取第一个匹配）
       const matched = innerPoints.value.find(
-        (pt) => Math.abs(pt.Kalpha - xVal) < 1e-9
-          && Math.abs(pt.Kbeta - yVal) < 1e-9
-          && Math.abs(pt.alpha - colorDim) < 1e-9,
+        (pt) => Math.abs(pt.Kalpha - xVal) < 1e-9 && Math.abs(pt.Kbeta - yVal) < 1e-9,
       )
+      const alpha = matched?.alpha
       const beta = matched?.beta
       return t.value.shc_tooltipPoint
         .replace('{ka}', xVal.toFixed(3))
         .replace('{kb}', yVal.toFixed(3))
-        .replace('{alpha}', colorDim.toFixed(1))
+        .replace('{alpha}', alpha !== undefined ? alpha.toFixed(1) : '--')
         .replace('{beta}', beta !== undefined ? beta.toFixed(1) : '--')
     }
-    // 外区：xVal=Kθ, yVal=Kφ, colorDim=θ，反查 φ
+    // 外区：从 outerPoints 反查 θ/φ
     const matched = outerPoints.value.find(
-      (pt) => Math.abs(pt.Ktheta - xVal) < 1e-9
-        && Math.abs(pt.Kphi - yVal) < 1e-9
-        && Math.abs(pt.theta - colorDim) < 1e-9,
+      (pt) => Math.abs(pt.Ktheta - xVal) < 1e-9 && Math.abs(pt.Kphi - yVal) < 1e-9,
     )
+    const theta = matched?.theta
     const phi = matched?.phi
     return t.value.shc_tooltipOuterPoint
       .replace('{ktheta}', xVal.toFixed(3))
       .replace('{kphi}', yVal.toFixed(3))
-      .replace('{theta}', colorDim.toFixed(1))
+      .replace('{theta}', theta !== undefined ? theta.toFixed(1) : '--')
       .replace('{phi}', phi !== undefined ? phi.toFixed(1) : '--')
+  }
+
+  // 构造 series：参考线（灰）→ 主线（彩）→ 当前点高亮（橙）
+  // 顺序决定 z 序：后渲染的在上层，当前点必须在最上层
+  const series: NonNullable<EChartsOption['series']> = []
+
+  // 1) 参考线（灰色细线 + 灰色小圆点）：内区按 β，外区按 φ
+  //    不进 legend（legend 只显示主线 α/θ 分组），避免 legend 项过多挤压可视化空间
+  refGroups.forEach((group) => {
+    series.push({
+      type: 'line',
+      name: isInner ? `β=${group.key.toFixed(1)}` : `φ=${group.key.toFixed(1)}`,
+      data: group.data,
+      showSymbol: true,
+      symbolSize: 3,
+      lineStyle: { color: c.muted, width: 1, opacity: 0.5 },
+      itemStyle: { color: c.muted, opacity: 0.5 },
+      silent: true,
+      animation: false,
+      z: 1,
+    })
+  })
+
+  // 2) 主线（彩色粗线 + 彩色小圆点）：内区按 α，外区按 θ
+  mainGroups.forEach((group, i) => {
+    const color = c.visualMapColors[i % c.visualMapColors.length]
+    series.push({
+      type: 'line',
+      name: isInner ? `α=${group.key.toFixed(1)}` : `θ=${group.key.toFixed(1)}`,
+      data: group.data,
+      showSymbol: true,
+      symbolSize: 4,
+      lineStyle: { color, width: 2 },
+      itemStyle: { color },
+      emphasis: { focus: 'series', lineStyle: { width: 2.5 } },
+      animation: false,
+      z: 2,
+    })
+  })
+
+  // 3) 当前采集点高亮（橙色发光散点）：与 FiveHoleMain.vue 的橙色 #f97316 高亮色保持一致
+  if (currentPointData.length > 0) {
+    series.push({
+      type: 'scatter',
+      name: t.value.shc_currentPoint,
+      data: currentPointData,
+      symbolSize: 10,
+      itemStyle: { color: '#f97316', shadowColor: '#f97316', shadowBlur: 10 },
+      emphasis: { scale: 1.4 },
+      animation: false,
+      z: 10,
+    })
+  }
+
+  // 坐标轴 min/max 策略（内/外区不同）：
+  //
+  // 内区 Kα-Kβ：原点 (0,0) 对应 α=0,β=0 工况，必须在图中可见才直观；
+  //             Kα/Kβ 均可正可负，对称化（min=-absMax, max=+absMax）让原点居中。
+  //             与 FiveHoleChartUtils.resolveKAlphaKbetaBounds 行为对齐。
+  //
+  // 外区 Kθ-Kφ：Kθ = (Pn-P7)/(Pn-(Pn+1+Pn-1)/2)，分子分母都 > 0，
+  //             Kθ 恒为正（通常 0.3~1.2），原点 (0,0) 无物理意义（Kθ=0 意味着 Pn=P7，
+  //             那已经是内区）。X 轴（Kθ）不应对称化，应数据自适应从 0 起算。
+  //             Y 轴（Kφ）边界跳变 ±2，原点有意义，仍可对称化。
+  const symmetricAxisBound = (axisRange: { min: number; max: number }): number => {
+    const absMax = Math.max(Math.abs(axisRange.min), Math.abs(axisRange.max))
+    return absMax
+  }
+
+  // X 轴边界：内区对称化，外区数据自适应（不传 min/max 让 ECharts 自动算）
+  const xAxisBound = isInner
+    ? {
+        min: (value: { min: number; max: number }) => -symmetricAxisBound(value),
+        max: (value: { min: number; max: number }) => symmetricAxisBound(value),
+      }
+    : {}
+
+  // Y 轴边界：内/外区都对称化（Kβ 与 Kφ 都可正可负，原点有意义）
+  const yAxisBound = {
+    min: (value: { min: number; max: number }) => -symmetricAxisBound(value),
+    max: (value: { min: number; max: number }) => symmetricAxisBound(value),
   }
 
   return {
@@ -363,6 +544,15 @@ function buildScatterOption(): EChartsOption {
       textStyle: { color: c.text, fontSize: 12 },
       formatter: tooltipFormatter,
     },
+    legend: {
+      type: 'scroll',
+      textStyle: { color: c.muted, fontSize: 9 },
+      icon: 'roundRect',
+      itemWidth: 8,
+      itemHeight: 8,
+      top: 0,
+      right: 0,
+    },
     xAxis: {
       type: 'value',
       name: xName,
@@ -373,6 +563,7 @@ function buildScatterOption(): EChartsOption {
       axisTick: { lineStyle: { color: c.muted } },
       axisLabel: { color: c.muted, fontSize: 10 },
       splitLine: { lineStyle: { color: c.grid, type: 'dashed' } },
+      ...xAxisBound,
     },
     yAxis: {
       type: 'value',
@@ -384,33 +575,9 @@ function buildScatterOption(): EChartsOption {
       axisTick: { lineStyle: { color: c.muted } },
       axisLabel: { color: c.muted, fontSize: 10 },
       splitLine: { lineStyle: { color: c.grid, type: 'dashed' } },
+      ...yAxisBound,
     },
-    visualMap: {
-      min: range.min,
-      max: range.max,
-      dimension: 2, // 散点第三维（内区 α / 外区 θ）
-      calculable: false,
-      show: true,
-      orient: 'vertical',
-      right: 0,
-      top: 'middle',
-      itemWidth: 8,
-      itemHeight: 70,
-      text: [gradientLabel],
-      textStyle: { color: c.muted, fontSize: 9 },
-      inRange: { color: c.visualMapColors },
-    },
-    series: [
-      {
-        type: 'scatter',
-        symbolSize: 6,
-        data,
-        // spec §27 第 5 条：大数据量下启用 large 模式优化渲染
-        large: true,
-        largeThreshold: 500,
-        emphasis: { focus: 'series' },
-      },
-    ],
+    series,
   }
 }
 
@@ -433,19 +600,18 @@ function buildCurveOption(
   // 颜色循环：分组较多时按调色板循环，与 visualMap 配色同源保持视觉一致
   const colors = c.visualMapColors
 
+  // showSymbol: true —— 与 FiveHoleMain.vue 的 CPT-α/CPS-α 曲线图保持一致：
+  // 每个采样点画一个彩色小圆（symbolSize=4），便于在采样稀疏区域一眼看出漏点位置
   const series = grouped.map((group, i) => ({
     name: legendNameFormatter(group.key),
     type: 'line' as const,
-    showSymbol: false,
+    showSymbol: true,
     symbolSize: 4,
     data: group.data,
     lineStyle: { width: 1.5, color: colors[i % colors.length] },
     itemStyle: { color: colors[i % colors.length] },
     emphasis: { focus: 'series' as const, lineStyle: { width: 2.5 } },
     animation: false,
-    // spec §27 第 5 条：大数据量下启用 large 模式优化渲染
-    large: true,
-    largeThreshold: 500,
   }))
 
   return {
@@ -526,7 +692,8 @@ const outerKsGrouped = computed(() => outerKsGroupedData.value.map((g) => ({ key
 
 // ===== 更新所有图表（根据 activeTab 切换内/外区数据源）=====
 function updateCharts(): void {
-  scatterChart.value?.setOption(buildScatterOption(), { notMerge: true })
+  // 第 1 图：网格折线图（替代原散点图），主线彩色 + 参考线灰色 + 当前点橙色高亮
+  scatterChart.value?.setOption(buildGridLineOption(), { notMerge: true })
   if (props.activeTab === 'inner') {
     k0CurveChart.value?.setOption(
       buildCurveOption(
@@ -574,9 +741,9 @@ function updateCharts(): void {
 
 // 节流更新：dataPoints 变化或主题/语言切换时通过 rAF 合并到下一帧
 // useThrottledChartUpdate 在 unmount 时自动取消挂起的 rAF（防内存泄漏 + 防 setOption 已 dispose 实例）
-// 监听内/外区数据 + activeTab 切换 + palette/t，任意变化都触发节流重绘
+// 监听内/外区数据 + activeTab 切换 + currentPointId（当前点高亮）+ palette/t，任意变化都触发节流重绘
 useThrottledChartUpdate(
-  [innerPoints, outerPoints, () => props.activeTab, palette, t],
+  [innerPoints, outerPoints, () => props.activeTab, () => props.currentPointId, palette, t],
   updateCharts,
   // 不立即触发：onMounted 路径会主动调 updateCharts 完成首次绘制
   { immediate: false },
@@ -661,10 +828,10 @@ const ksCurveTitle = computed(() => {
 
 <template>
   <div data-test="seven-hole-charts" class="seven-hole-charts">
-    <!-- 3 类图表布局（与原内区布局一致）：上半区主散点图（跨两列），下半区两条曲线并列
+    <!-- 3 类图表布局（与原内区布局一致）：上半区主网格折线图（跨两列），下半区两条曲线并列
          activeTab 由父组件 SevenHoleMain.vue 的 Tab 栏控制，本组件仅渲染图表区域 -->
     <div class="seven-hole-charts__inner">
-      <!-- 1. 散点图：内区 Kα-Kβ / 外区 Kθ-Kφ（主图，跨两列） -->
+      <!-- 1. 网格折线图：内区 Kα-Kβ / 外区 Kθ-Kφ（主图，跨两列；α-β / θ-φ 双向等值线 + 当前点高亮） -->
       <div class="chart-card chart-card--main">
         <div class="chart-card__title">
           <Activity class="chart-card__icon" />
