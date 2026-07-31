@@ -25,12 +25,28 @@ import (
 // 解决思路：把 Dial 放进子 goroutine 跑，主 goroutine 用 time.After 做软超时。
 //   - 正常路径：Dial 在 timeout 内返回，主 goroutine 接收结果
 //   - 软超时路径：主 goroutine 立即返回 timeout 错误，让上层 fail-fast
-//   - Dial 在 timeout 后才返回：通过 select-default 检测到主线程已放弃，关闭 conn 防 FD 泄漏
+//   - Dial 在 timeout 后才返回：通过 abandoned 信号通知 goroutine 丢弃 conn（R1-4 整改）
 //   - Dial 永远不返回（Windows deadline 不可靠场景）：泄漏一个 goroutine（4KB 栈），
 //     主线程仍能立即返回错误，避免上层卡死。这是可接受代价。
 //
+// R1-4 整改（2026-07-30）：原实现 resultCh 为缓冲 1 channel + select-default 检测
+// 主线程是否已放弃。问题：主线程超时返回后，goroutine 仍可能 send 成功到缓冲 channel
+// （default 分支不触发），conn 留在缓冲 channel 中无人接收，FD 泄漏。
+//
+// 整改后：用无缓冲 channel + abandoned close 信号。
+//   - 无缓冲 channel 保证 send 成功 ⇔ 主线程正在接收（不会无人接收）
+//   - 主线程超时后 close(abandoned)，goroutine select 必走 abandoned 分支 Close conn
+//   - 即使 goroutine 在主线程 close(abandoned) 后才完成 Dial，也能通过 abandoned 信号 Close
+//
 // 第 2 条要求"独立 owner 能调用 conn.Close()"——但 Dial 还没返回 conn 句柄时
-// 无法 Close。本函数用 timer + goroutine 模式绕过该限制，主线程不依赖 Dial 返回。
+// 无法 Close。本函数用 timer + goroutine + abandoned 信号绕过该限制，主线程不依赖 Dial 返回。
+//
+// dialFn 是可注入的 dial 函数，默认调用 net.Dialer.Dial。测试可替换为
+// "忽略 timeout、超时后才成功"的 mock，验证晚到 conn 被 Close 不泄漏（R1-4 验收要求）。
+var dialFn = func(dialer net.Dialer, network, address string) (net.Conn, error) {
+	return dialer.Dial(network, address)
+}
+
 func DialTCP(address, localAddress string, timeout time.Duration) (net.Conn, error) {
 	if timeout <= 0 {
 		// 无 timeout 时直接 Dial，由调用方自行管理生命周期
@@ -72,15 +88,19 @@ func DialTCP(address, localAddress string, timeout time.Duration) (net.Conn, err
 		conn net.Conn
 		err  error
 	}
-	resultCh := make(chan dialResult, 1)
+	// R1-4：无缓冲 channel 保证 send 成功 ⇔ 主线程正在接收，避免晚到 conn 滞留缓冲。
+	resultCh := make(chan dialResult)
+	// R1-4：abandoned 信号在主线程超时后 close，通知 goroutine 丢弃 conn。
+	abandoned := make(chan struct{})
 
 	go func() {
-		conn, err := dialer.Dial(network, address)
+		conn, err := dialFn(dialer, network, address)
 		select {
 		case resultCh <- dialResult{conn, err}:
-			// 主线程还在等待，正常交付结果
-		default:
-			// 主线程已超时返回，关闭 conn 防止 FD 泄漏
+			// 主线程还在等待，无缓冲 channel 保证交付即被接收
+		case <-abandoned:
+			// 主线程已超时返回，Close conn 防 FD 泄漏（R1-4）。
+			// 即使 err != nil（Dial 失败），conn 通常为 nil，Close 是 no-op。
 			if conn != nil {
 				_ = conn.Close()
 			}
@@ -91,8 +111,9 @@ func DialTCP(address, localAddress string, timeout time.Duration) (net.Conn, err
 	case r := <-resultCh:
 		return r.conn, r.err
 	case <-time.After(timeout):
-		// 软超时：不等待 Dial 返回，立即返回错误让上层 fail-fast。
-		// Dial goroutine 仍可能阻塞（Windows deadline 不可靠），但主线程已释放。
+		// 软超时：close abandoned 通知 goroutine 丢弃晚到 conn，主线程立即返回错误。
+		// goroutine 仍可能阻塞在 Dial 中（Windows deadline 不可靠），但主线程已释放。
+		close(abandoned)
 		return nil, fmt.Errorf("dial %s: watchdog timeout (%s) - %w", address, timeout, os.ErrDeadlineExceeded)
 	}
 }
@@ -126,15 +147,15 @@ const ReadLoopJoinTimeout = 1 * time.Second
 //     调用方必须在调用本函数前已启动 WatchdogClose(conn, timeout) 覆盖 Write 阶段，
 //     否则一旦 deadline 失效，调用方将永久卡死。
 //   - 推荐调用模式（参考 daq-p1604 sendCommandACK / wind-daq sendCommand）：
-//       wdStop := WatchdogClose(conn, timeout)
-//       defer func() {
-//           if wdStop() {
-//               _ = conn.SetWriteDeadline(time.Time{})
-//           }
-//       }()
-//       if err := SendCommandNoNewline(conn, cmd, timeout); err != nil {
-//           return WrapWatchdogError(err, wdStop, "send "+cmd)
-//       }
+//     wdStop := WatchdogClose(conn, timeout)
+//     defer func() {
+//     if wdStop() {
+//     _ = conn.SetWriteDeadline(time.Time{})
+//     }
+//     }()
+//     if err := SendCommandNoNewline(conn, cmd, timeout); err != nil {
+//     return WrapWatchdogError(err, wdStop, "send "+cmd)
+//     }
 //   - timeout <= 0 时本函数不设 deadline，调用方必须通过 Close conn 解除阻塞
 //     （例如 readLoop 退出后 Close，或外层握手 watchdog 兜底）。
 func SendCommandNoNewline(conn net.Conn, cmd string, timeout time.Duration) error {
@@ -246,11 +267,20 @@ func IsConnResetByPeer(err error) bool {
 // 与 IsConnectionFault 的区别：本函数只匹配 "主动 close" 场景（net.ErrClosed
 // 或 "use of closed network connection"），用于 readLoop 退出时区分
 // "调用方 Close 触发的读取错误" 与 "网络异常触发的读取错误"。
+//
+// 同时识别 io.ErrClosedPipe（"io: read/write on closed pipe"）：net.Pipe 关闭后
+// Read 返回该错误。生产环境真实 TCP conn Close 后返回 net.ErrClosed，但单元测试
+// 大量使用 net.Pipe 模拟双向连接，noDataTimer/Disconnect Close 后 readLoop Read
+// 会收到 io.ErrClosedPipe。若不识别，readLoop defer 会误走 invalidate 路径覆盖
+// timer 设置的状态（LastError 被改为 "io: read/write on closed pipe"）。
 func IsClosedConnError(err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if errors.Is(err, io.ErrClosedPipe) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
@@ -476,6 +506,9 @@ func IsWatchdogTriggered(err error) bool {
 //     避免设备持续发送非 ASCII 帧导致总耗时 = maxResidualFrameSkips * timeout（最长 100s）。
 //  5. 清除残留 deadline：timeout > 0 时退出前 SetReadDeadline(time.Time{})，
 //     避免影响后续命令的 deadline 语义（daq-p1604 0.7.2 修复点）。
+//  6. R0-12 soft timeout 毒化：net.Error.Timeout() 或总预算耗尽时强制 Close conn，
+//     返回 ErrWatchdogTriggered sentinel 让调用方统一毒化驱动状态。迟到响应可能随后
+//     进入 TCP 流被下一条命令消费，协议边界已不可信，禁止复用 conn。
 //
 // timeout > 0 时同时设置 deadline + watchdog，双保险；
 // timeout == 0 时不设 deadline 也不启动 watchdog，由调用方通过关闭连接解除阻塞
@@ -504,14 +537,20 @@ func P1604ReadCommandACK(reader *FrameReader, conn net.Conn, timeout time.Durati
 	// timeout == 0 时不参与总超时控制，由外层 Close 决定何时解除阻塞。
 	overallStart := time.Now()
 
+	// softTimeoutTriggered 标记协议边界已不可信（soft deadline 触发、ReadFrame 错误、
+	// 跳帧上限等），触发后必须强制 Close conn 防止迟到响应污染下一条命令
+	// （R0-12 + finding 3）。
+	var softTimeoutTriggered bool
 	var ackErr error
 	skipped := 0
 	for ; skipped < maxResidualFrameSkips; skipped++ {
 		if timeout > 0 {
 			// 每次循环用剩余总超时设置 deadline，覆盖旧值。
-			// 剩余不足时立即设为 1ms 触发超时，避免负数 AddValue。
+			// 剩余不足时立即触发 soft timeout，避免负数 AddValue。
 			remaining := time.Until(overallStart.Add(timeout))
 			if remaining <= 0 {
+				// 总预算耗尽等同于 soft timeout：协议边界已不可信。
+				softTimeoutTriggered = true
 				ackErr = fmt.Errorf("read command response: %w", context.DeadlineExceeded)
 				break
 			}
@@ -519,6 +558,12 @@ func P1604ReadCommandACK(reader *FrameReader, conn net.Conn, timeout time.Durati
 		}
 		payload, readErr := reader.ReadFrame()
 		if readErr != nil {
+			// ADR-009 finding 3：ReadFrame 任何错误（EOF、短读、invalid frame length、
+			// timeout 等）都意味着协议边界不可信。设备可能在发送部分数据后断连，
+			// 迟到响应可能随后进入 TCP 流被下一条命令消费导致协议错位。
+			// 标记 softTimeoutTriggered 强制 Close conn 并返回 ErrWatchdogTriggered，
+			// 让调用方通过 IsWatchdogTriggered 触发 invalidateConnection。
+			softTimeoutTriggered = true
 			ackErr = fmt.Errorf("read command response: %w", readErr)
 			break
 		}
@@ -528,9 +573,22 @@ func P1604ReadCommandACK(reader *FrameReader, conn net.Conn, timeout time.Durati
 			break
 		}
 	}
-	// 跳帧循环到上限仍无 ACK，视为协议错位。
+	// 跳帧循环到上限仍无 ACK，视为协议错位（finding 3）。
+	// 设备持续发送非 ASCII 帧而无 ACK，协议边界已不可信，必须 Close conn 阻断。
 	if ackErr == nil && skipped == maxResidualFrameSkips {
+		softTimeoutTriggered = true
 		ackErr = fmt.Errorf("too many residual frames (>%d) while waiting for ACK", maxResidualFrameSkips)
+	}
+
+	// R0-12：soft timeout 触发时强制 Close conn 阻断迟到响应，
+	// 统一返回 ErrWatchdogTriggered 让调用方毒化驱动状态。
+	// 与 watchdog 触发路径共享同一返回格式，调用方只需 IsWatchdogTriggered 判定。
+	if softTimeoutTriggered {
+		_ = conn.Close()
+		if ackErr == nil {
+			ackErr = net.ErrClosed
+		}
+		return fmt.Errorf("%w; %w", ackErr, ErrWatchdogTriggered)
 	}
 
 	// watchdog 触发时 conn 已被 Close，返回错误需附加上下文。

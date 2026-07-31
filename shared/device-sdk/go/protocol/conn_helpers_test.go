@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -117,6 +118,69 @@ func TestDialTCPNormalDial(t *testing.T) {
 	peer.Close()
 }
 
+// closeTrackingConn 包装 net.Conn 并用 atomic 计数 Close 调用，
+// 用于验证 DialTCP 主线程超时后晚到 conn 是否被正确 Close（R1-4）。
+type closeTrackingConn struct {
+	net.Conn
+	closed *atomic.Int32
+}
+
+func (c *closeTrackingConn) Close() error {
+	c.closed.Add(1)
+	return c.Conn.Close()
+}
+
+// TestDialTCP_LateArrivingConnIsClosedAfterTimeout 验证 ADR-009 R1-4：
+// 当 Dial 在主线程超时后才返回 conn 时，DialTCP 必须通过 abandoned 信号
+// 通知 goroutine Close 晚到 conn，防止 FD 泄漏。
+//
+// 旧实现用缓冲 channel + select-default，晚到 conn 可能滞留缓冲不被 Close。
+// 整改后用无缓冲 channel + abandoned close 信号，保证晚到 conn 必被 Close。
+//
+// 测试前置：注入 dialFn 故意 sleep 200ms（超过 timeout=50ms）后才返回 conn，
+// 模拟 Windows 故障机器 deadline 失效、Dial 在超时后才完成的场景。
+// 期待结果：DialTCP 在 50ms 超时返回错误；晚到 conn 在 500ms 内被 Close 一次。
+func TestDialTCP_LateArrivingConnIsClosedAfterTimeout(t *testing.T) {
+	// net.Pipe 提供真实双向 conn，便于 Close 追踪
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+
+	var closeCount atomic.Int32
+	trackingConn := &closeTrackingConn{Conn: clientConn, closed: &closeCount}
+
+	// 注入 dialFn：故意 sleep 超过 timeout 后才返回 conn
+	originalDialFn := dialFn
+	dialFn = func(d net.Dialer, network, address string) (net.Conn, error) {
+		time.Sleep(200 * time.Millisecond)
+		return trackingConn, nil
+	}
+	defer func() { dialFn = originalDialFn }()
+
+	started := time.Now()
+	_, err := DialTCP("127.0.0.1:1", "", 50*time.Millisecond)
+	elapsed := time.Since(started)
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("DialTCP blocked too long (%v), should return at 50ms timeout", elapsed)
+	}
+
+	// 等待 goroutine 完成 Dial 并处理 abandoned 信号 Close conn
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if closeCount.Load() > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if closeCount.Load() == 0 {
+		t.Fatal("late-arriving conn was not closed after timeout - FD leak (R1-4 regression)")
+	}
+}
+
 func TestStopReasonTracker_SetGetClear(t *testing.T) {
 	var tr StopReasonTracker
 	if got := tr.GetStopReason(); got != "" {
@@ -190,6 +254,7 @@ func TestIsClosedConnError(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{"net.ErrClosed", net.ErrClosed, true},
+		{"io.ErrClosedPipe", io.ErrClosedPipe, true},
 		{"closed msg", errors.New("use of closed network connection"), true},
 		{"timeout not closed", &timeoutErr{}, false},
 		{"unrelated", errors.New("read: connection reset by peer"), false},
@@ -859,6 +924,126 @@ func TestP1604ReadCommandACK_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T
 	if _, writeErr := server.Write([]byte("test")); writeErr == nil {
 		t.Error("expected server.Write to fail after client was closed by watchdog")
 	}
+}
+
+// TestP1604ReadCommandACK_SoftTimeoutClosesConnAndReturnsSentinel 验证 ADR-009 R0-12：
+// 当 SetReadDeadline 正常兑现（soft deadline 先于或同时于 watchdog 触发）时，
+// helper 必须强制 Close conn 阻断迟到响应，并返回 ErrWatchdogTriggered sentinel
+// 让调用方统一毒化驱动状态。
+//
+// 修复前 bug：soft deadline 兑现时 helper 仅返回普通 timeout 错误，不清 deadline、
+// 不 Close conn。迟到响应随后进入 TCP 流被下一条命令的 P1604ReadCommandACK 消费，
+// 导致协议错位（如 c 00 的 ACK 被上一条 c 01 的迟到 ACK 冒充）。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接（SetReadDeadline 正常工作）
+//   - 服务端不写任何数据，确保 client.Read 在 deadline 到期后返回 timeout
+//
+// 测试步骤：
+//   - 调用 P1604ReadCommandACK，timeout=50ms
+//   - 等待函数返回后，服务端再写入一帧迟到响应（模拟设备延迟回复）
+//
+// 期待结果：
+//   - 函数在 5s 预算内返回
+//   - 错误通过 errors.Is(err, ErrWatchdogTriggered) 精确匹配 sentinel
+//   - conn 已被 helper Close：服务端写入迟到响应时 Write 失败，且后续 ReadFrame
+//     不会消费到迟到响应（client 已关闭）
+func TestP1604ReadCommandACK_SoftTimeoutClosesConnAndReturnsSentinel(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 helper Close，不在 defer 中重复 Close
+
+	done := make(chan error, 1)
+	go func() {
+		done <- P1604ReadCommandACK(NewFrameReader(client), client, 50*time.Millisecond)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected soft timeout error wrapping ErrWatchdogTriggered, got nil")
+		}
+		if !errors.Is(err, ErrWatchdogTriggered) {
+			t.Errorf("error must wrap ErrWatchdogTriggered for soft timeout, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("P1604ReadCommandACK did not return within 5s budget")
+	}
+
+	// 验证 conn 已被 Close：服务端写入迟到响应应失败
+	// 设置 WriteDeadline 防止 net.Pipe 无缓冲 Write 永久阻塞
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte{0x00, 0x01, 'A'}); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by soft timeout helper")
+	}
+}
+
+// TestP1604ReadCommandACK_TotalBudgetExhaustionTriggersSoftTimeout 验证 ADR-009 R0-12
+// 总预算耗尽路径：当循环内多次 Read 消耗的总时间超过 timeout 时，remaining <= 0
+// 分支必须标记 softTimeoutTriggered 并强制 Close conn。
+//
+// 测试前置：
+//   - 包装 client 为 delayConn，每次 Read 延迟 30ms 后再返回（模拟设备慢速发送非 ASCII 帧）
+//   - timeout=80ms，确保第 3 次 Read 时 remaining <= 0
+//
+// 测试步骤：
+//   - 调用 P1604ReadCommandACK，timeout=80ms
+//
+// 期待结果：
+//   - 函数返回错误且通过 errors.Is 匹配 ErrWatchdogTriggered
+//   - conn 已被 Close
+func TestP1604ReadCommandACK_TotalBudgetExhaustionTriggersSoftTimeout(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client 由 helper Close
+
+	// delayConn 让每次 Read 阻塞 30ms，模拟设备慢速发送非 ASCII 残留帧
+	delayed := &delayConn{Conn: client, readDelay: 30 * time.Millisecond}
+
+	done := make(chan error, 1)
+	go func() {
+		// 持续写入非 ASCII 帧让 client.Read 有数据可读，但每次 Read 都延迟
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 10; i++ {
+				writeBinaryFrame(server, buildResidualFrame())
+			}
+		}()
+		done <- P1604ReadCommandACK(NewFrameReader(delayed), delayed, 80*time.Millisecond)
+		wg.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected total budget exhaustion error, got nil")
+		}
+		if !errors.Is(err, ErrWatchdogTriggered) {
+			t.Errorf("error must wrap ErrWatchdogTriggered when total budget exhausted, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("P1604ReadCommandACK did not return within 5s budget")
+	}
+
+	// 验证 conn 已被 Close
+	_ = server.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, writeErr := server.Write([]byte{0x00, 0x01, 'A'}); writeErr == nil {
+		t.Error("expected server.Write to fail after client was closed by total budget exhaustion")
+	}
+}
+
+// delayConn 在每次 Read 前阻塞指定时长，模拟设备慢速响应。
+// 用于测试总预算耗尽场景下 P1604ReadCommandACK 的 soft timeout 行为。
+type delayConn struct {
+	net.Conn
+	readDelay time.Duration
+}
+
+func (c *delayConn) Read(b []byte) (int, error) {
+	time.Sleep(c.readDelay)
+	return c.Conn.Read(b)
 }
 
 // TestP1604ReadCommandACK_RejectsDeviceErrorNxx 验证设备返回 Nxx 错误码时
