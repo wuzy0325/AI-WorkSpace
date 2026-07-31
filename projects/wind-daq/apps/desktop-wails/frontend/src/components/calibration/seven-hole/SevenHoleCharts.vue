@@ -155,6 +155,10 @@ function isSevenHoleDataPoint(p: CalibrationAnyDataPoint): p is SevenHoleDataPoi
 }
 
 // 内区数据点：仅 region === 'inner' 的点用于绘制
+//
+// 后端 Region 字段直接取自预设点位配置（point.Region，用户配置的轨迹区域），
+// 不受 DetermineRegion 压力判定影响——内区轨迹点（α/β）的 Region 必然为 'inner'，
+// 外区轨迹点（θ/φ）的 Region 必然为 'outer'。前端按 Region 字段过滤即可。
 const innerDataPoints = computed<SevenHoleDataPoint[]>(() => {
   return calibrationStore.dataPoints
     .filter(isSevenHoleDataPoint)

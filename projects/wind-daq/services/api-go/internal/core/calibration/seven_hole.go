@@ -413,14 +413,24 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 		//   - i == samplesPerPoint-1：最后样本必发，确保前端拿到最终系数
 		now := time.Now().UnixMilli()
 		if realtimeCallback != nil && (i == 0 || now-lastRealtimeSentAt >= realtimeIntervalMs || i == samplesPerPoint-1) {
-			region, sector, _ := DetermineRegion(rawData.P1, rawData.P2, rawData.P3, rawData.P4, rawData.P5, rawData.P6, rawData.P7, prevRegion, prevSector)
+			// 实时推送的 region/sector 优先用预设区域（用户配置的轨迹区域），
+			// 与最终落盘的 Region/Sector 一致——避免实时显示"外区"、最终落盘"内区"的闪烁。
+			// point.Region 为空时（旧调用路径）回退到 DetermineRegion 压力判定。
+			rtRegion := point.Region
+			rtSector := point.Sector
+			if rtRegion == "" {
+				rtRegion, rtSector, _ = DetermineRegion(
+					rawData.P1, rawData.P2, rawData.P3, rawData.P4, rawData.P5, rawData.P6, rawData.P7,
+					prevRegion, prevSector,
+				)
+			}
 			var realtimeCoeffs SevenHoleCoefficients
-			if region == "inner" {
+			if rtRegion == "inner" {
 				realtimeCoeffs, _ = CalculateSevenHoleInnerCoefficients(rawData)
 			} else {
-				realtimeCoeffs, _ = CalculateSevenHoleOuterCoefficients(rawData, sector)
+				realtimeCoeffs, _ = CalculateSevenHoleOuterCoefficients(rawData, rtSector)
 			}
-			realtimeCallback(rawData, realtimeCoeffs, region, sector)
+			realtimeCallback(rawData, realtimeCoeffs, rtRegion, rtSector)
 			lastRealtimeSentAt = now
 		}
 	}
@@ -430,13 +440,31 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 	// 1. 计算平均值——后续 DetermineRegion 与系数计算都基于均值（降低单次样本噪声）
 	avgData := CalculateSevenHoleAverage(samples)
 
-	// 2. 最终分区判定（基于均值，使用 prev 滞回状态避免边界点分区抖动）
-	region, sector, boundaryFlag := DetermineRegion(
+	// 2. 区域归属：优先使用预设点位配置（point.Region/point.Sector）
+	//
+	// 校准轨迹的内外区是用户规划明确的——内区点用 α/β 网格，外区点用 θ/φ 网格，
+	// GenerateSevenHolePoints 生成点位时已经填充了正确的 Region/Sector 字段。
+	// 不应基于实时压力数据"判定"——压力数据在边界点扰动会导致误判，
+	// 进而让数据点 Region 错位（CSV 路由错位、前端图表过滤错位）。
+	//
+	// DetermineRegion 仍调用一次，承担两个职责：
+	//   - 始终生成 boundaryFlag 边界点标记（spec §3.2，CSV 边界标记列）
+	//   - point.Region 为空时（旧调用路径或简陋测试用例）回退作为区域判定结果
+	// 生产路径下 point.Region 已填充，DetermineRegion 的 region/sector 结果被丢弃，
+	// 仅采用 boundaryFlag。
+	detRegion, detSector, boundaryFlag := DetermineRegion(
 		avgData.P1, avgData.P2, avgData.P3, avgData.P4, avgData.P5, avgData.P6, avgData.P7,
 		prevRegion, prevSector,
 	)
+	region := point.Region
+	sector := point.Sector
+	if region == "" {
+		// 兜底：point.Region 未填充时回退到压力判定（向后兼容旧调用路径）
+		region = detRegion
+		sector = detSector
+	}
 
-	// 3. 按分区调用系数计算
+	// 3. 按预设区域调用系数计算
 	var coefficients SevenHoleCoefficients
 	var calcErr error
 	if region == "inner" {

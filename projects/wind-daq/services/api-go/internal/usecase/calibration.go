@@ -807,6 +807,10 @@ func (m *CalibrationManager) buildSevenHoleCsvSink(config calibration.Config) ca
 				"type", fmt.Sprintf("%T", dp))
 			return
 		}
+		// CSV 路由按数据点的 Region 字段决定文件归属。
+		// Region 由 seven_hole.go 的 AcquireDataWithChannels 直接取自 point.Region
+		// （用户配置的轨迹区域），不再受 DetermineRegion 压力判定影响——
+		// 内区轨迹点（α/β）必然路由到内区 CSV，外区轨迹点（θ/φ）必然路由到外区 CSV。
 		writer, err := m.routeSevenHoleWriter(config, basePath, shDp.Region, shDp.Sector)
 		if err != nil {
 			slog.Error("calibration seven hole csv route failed",
