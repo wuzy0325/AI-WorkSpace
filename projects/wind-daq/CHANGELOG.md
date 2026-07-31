@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.11.4] - 2026-07-31
+
+### Added
+
+- 新增 `scripts/staticcheck-u1000-waivers.txt` 与 `validate-structure.ps1` 的 "2f. Go dead code check (U1000)" 章节：用 staticcheck 自动检测未使用的私有符号（func/type/field/var/const），避免人工 review 漏掉 dead code。豁免清单不含行号，避免代码编辑导致豁免失效；新增 dead code 不得加入豁免清单，必须直接删除源码。
+- 新增 `docs/runbooks/go-windows-known-issues.zh-CN.md`（L3 专题规则）：系统化记录 Go 在 Windows 上的内核级已知问题（网络 I/O deadline 失效、runtime crash、文件系统、进程管理），并附上游行 issue 索引（golang/go #5971 / #21133 / #34385 等）。配合 ADR-009 落实"永远不要把 socket deadline 作为有界硬件 I/O 的唯一取消机制"硬约束。
+- 新增 `docs/audits/2026-07-29-adr009-remaining-remediation.md`：ADR-009 剩余整改清单复核修订版，撤回旧版"全部 P0/P1/P2/SIM-1 已完成"结论，记录五批整改进度（R0-1 ~ R2-2）与独立审查 finding 1-9 状态。
+- 新增 `docs/audits/2026-07-30-daq-t1603-acquisition-control-hardware-report.zh-CN.md`：DAQ-T-1603 采集控制实机验证报告（192.168.1.10:9000），验证 Start ACK / Stop ACK / 旧流排空 / 64 字节数据边界，为"物理停止后允许配置"提供依据。
+- 新增 `docs/plans/2026-07-31-daq-p1604-stop-transaction-remediation.zh-CN.md`：DAQ-P-1604 Stop 事务整改方案（待实现），涉及独立应用 / Wind-DAQ / 共享协议三层。
+- 新增 `docs/udp-discovery-windows-timeout-root-cause.md`：Windows UDP 设备扫描不返回问题根因与修复方案。
+- 新增 `projects/wind-daq/docs/test-cases.html`（181KB）：Wind-DAQ 功能测试用例文档，按用户测试用例格式要求编写（测试前置 / 测试步骤 / 期待结果三段式），用例优先级色板（P0/P1/P2）与结果色（pass/fail/block/skip）解耦，技术术语站在测试人员和用户角度改写。
+- 新增 `device-lab/skills/daq-t1603/SKILL.md` "3.2 实机响应证据（2026-07-29，192.168.1.10:9000）" 章节：所有命令裸发、无终止符，记录实机测得的响应字节证据表（@e3 / @fd MCH / @fd SPS / @fd BIN / @fe 等），区分"实机已验证"与"待复核"状态。
+- `shared/device-sdk/go/protocol` 新增 `ErrDeviceRejected` sentinel：设备对 `@fe` / `@f3` 等设置命令返回 E 属于合法业务层拒绝，连接协议边界仍可信，不触发 ADR-009 毒化。与 `ErrWatchdogTriggered`（协议不可信）边界区分。
+- `shared/device-sdk/go/protocol` 新增 `IsBinaryMode` 只读访问器与 `ExpectControlACK` / `ExpectControlACKAfterFrames` / `HasPendingControlACK` 接口：处理 `@f1` 等命令"先数据帧后 ACK"或"先 ACK 后数据"的可选 ACK 时序。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 新增 `resyncHardwareConfigMode`：`applyHardwareConfig` 中途收到 E 错误时逐条查询设备实际 BIN / TIME / HEAD 并同步到本地 cfg 与 FrameReader，避免配置失败后本地 cfg 与设备实际模式不一致。
+- `projects/daq-t1603/apps/desktop-wails/cmd/stopstartprobe/`：新增 stop/start probe CLI 调试工具，用于排查快速启停采集时 TCP socket 残留帧问题。
+
+### Changed
+
+- `shared/device-sdk/go/protocol` 的 `DialTCP` 改为无缓冲 channel + abandoned close 信号：原实现 resultCh 为缓冲 1 channel + select-default 检测主线程是否已放弃，但主线程超时返回后 goroutine 仍可能 send 成功到缓冲 channel（default 不触发），导致晚到 conn 滞留缓冲 channel 无人接收、FD 泄漏。改为无缓冲 channel 保证 send 成功 ⇔ 主线程正在接收，主线程超时后 close(abandoned) 让 goroutine 必走 abandoned 分支 Close conn。
+- `shared/device-sdk/go/protocol` 的 `P1604ReadCommandACK` 在 soft timeout（net.Error.Timeout 或总预算耗尽）、ReadFrame 任何错误、跳帧上限触发时强制 Close conn 并返回 `ErrWatchdogTriggered` sentinel 让调用方统一毒化驱动状态。迟到响应可能随后进入 TCP 流被下一条命令消费导致协议错位，协议边界已不可信，禁止复用 conn。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `sendCommand` 改用 `SendCommandExact(conn, cmd, 1)` 严格单字节响应：'A' 成功；'E' 设备合法拒绝返回 `ErrDeviceRejected` 业务错误（不毒化连接）；其他字节 / 空响应协议错位。删除 `sendCommandIdle`（30ms idle 探测在新模型下无意义）。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `queryBinaryMode` 严格校验 `@fd BIN` 响应："1" → binary 模式；"0" → ASCII 模式；其他值 → 协议错误，中止同步并返回错误。修复前 bug：非 "1" 响应被误判为 "0"，导致 BIN=1 命令失败后仍假定 ASCII 模式。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `@fe BIN 1` 命令发送后必须重新查询 `@fd BIN` 验证实际模式：设备 temp 固件对 `@fe BIN 1` 会返回 A 但实际不切换二进制模式，仅读回 "1" 时启用二进制模式；"0" 保持/回退 ASCII；其他值视为协议错误中止同步。BIN 验证失败时禁止假定 BIN=1 继续。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `noDataTimeout` 改为独立 `time.AfterFunc` timer，不依赖 readLoop 循环体：即使 Read 永久阻塞也能到期触发；var 而非 const 允许测试注入短超时加速用例。新增 `stopAcquisitionTimeout`（3s）限制 StopAcquisition 总预算，超时直接 Close conn。
+- `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go` 的 `Disconnect` 修复死锁链：原实现先 `sendCommandLocked("ST")` 再 Close，sendCommand 卡死时 Disconnect 等待 connMu 死锁。改为锁内取 conn 引用 + 置 nil + 置 status.Connected=false，锁外 conn.Close()（TCP FIN 足以让 B140 停止运动，不需要先发 ST 命令）。
+- `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go` 新增 `invalidateConnectionLocked` expectedConn 比较：调用方在触发故障前捕获 c.conn 并传入；仅当 c.conn 仍是 expectedConn 时才清空，避免 Disconnect → Connect 替换为新连接后，旧命令的 invalidation 误杀新连接。锁顺序：c.mu（caller）→ c.connMu（本方法），保持正向锁顺序不死锁。
+- `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go` 的 `sendCommand` 重构为 I/O goroutine + b140SendResult 结构区分 soft / hard 错误：soft=true（设备返回 "?" 拒绝命令）连接仍可用，不应失效；soft=false（I/O 级硬错误）连接不可靠，应失效。
+- `shared/device-sdk/go/ffi/wtnmc4a.go` 的 `getRR1` proc 名从 "WTNMC4A_GetRR1Status" 修正为 "WTNMC4A_GetRR1"（与 DLL 实际导出名一致），移除未使用的 readCV / readCA proc（dead code）。
+- `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go` 删除本地 `watchdogClose` 函数，改用 `shared/device-sdk/go/protocol.WatchdogClose` 统一 ADR-009 watchdog 实现，避免跨项目代码复制。删除 `p1604ConsecutiveTimeoutThreshold`（25 次 5s 超时）与 `p1604CommandResponseTimeout`（合并入 `p1604HandshakeTimeout`），watchdog + TCP keepalive 已是更可靠的兜底机制。
+- `programs/p1604-ts-diag/main.go` 与 `programs/p1604-unit-diag/main.go` 的 `net.DialTimeout` → `sharedproto.DialTCP`（R2-1 整改）：原依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时 Dial 可能永远不返回，工具启动即卡死。新增 5 分钟进程级硬 watchdog，超时后 `conn.Close()` + `os.Exit(2)`，退出码 2 区分 watchdog 硬超时与一般错误。
+- `projects/wind-daq/services/api-go/internal/usecase/traversal_registry_recovery.go` 的 `LoadCheckpoint` 入口先检查 `r.sessions[probeID]` 是否仍持有活动 session，若持有则直接返回 (nil, nil)，不扫描 recoveryIndex。即使磁盘上有同 probeID 的 checkpoint 也忽略，因为运行期 session 是真值源。锁实现：r.mu.Lock 取快照后立即 Unlock，避免在持有 registry 锁时进入 recoveryIndex.Find 的 IO 路径。
+- `device-lab/skills/daq-t1603/SKILL.md` 状态机图更新：新增 Stopping 中间态（完整尾帧 + A_stop → Stopping → disconnect）；ACK 超时 / 边界异常 → Error（Close 连接，要求重连）。FrameReader 移除 `consumeOptionalACK`（由 `ExpectControlACK`/`HasPendingControlACK` 替代），`reset` 不清零 metadataMode。
+- `AGENTS.md` 的 Windows Network I/O Constraint 章节中文化，强化"永远不要把 socket deadline 作为有界硬件 I/O 的唯一取消机制"硬约束表述，引用新增的 `docs/runbooks/go-windows-known-issues.zh-CN.md`。
+
+### Fixed
+
+- 修复 `shared/device-sdk/go/protocol/conn_helpers.go` 的 `DialTCP` 在主线程超时返回后晚到 conn 滞留缓冲 channel 导致 FD 泄漏（R1-4 整改）。
+- 修复 `shared/device-sdk/go/protocol` 的 `IsClosedConnError` 未识别 `io.ErrClosedPipe`：net.Pipe 关闭后 Read 返回该错误；单元测试大量使用 net.Pipe 模拟双向连接，noDataTimer/Disconnect Close 后 readLoop Read 会收到 io.ErrClosedPipe，若不识别，readLoop defer 会误走 invalidate 路径覆盖 timer 设置的状态。
+- 修复 `shared/device-sdk/go/protocol/daq_t1603_frame.go` 的 `looksLikeReasonableTemperatureFrame` 阈值过严：原 `len(temps)/2`（8 通道合理）导致仅 2 通道接热电偶场景（其余 14 通道为 NaN）触发误判为帧错位，频繁出现 "Frame misalignment; resyncing" 与 "invalid frame at established 64-byte boundary: binary frame values out of expected range" 警告。改为 1（仅需 1 个通道数值合理即接受帧）。
+- 修复 `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `writeCommandOnly` 中 watchdog 在 `writeMu.Lock` 之后启动的死锁（R0-2）：SetWriteDeadline 失效时 Write 永久阻塞、writeMu 无法释放、所有命令路径死锁。改为 watchdog 在 Lock 之前启动。
+- 修复 `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `applyHardwareConfig` 中途收到 E 错误后本地 cfg 与设备实际模式不一致导致后续帧解析全错（新增 `resyncHardwareConfigMode` 重新同步实际 BIN / TIME / HEAD）。
+- 修复 `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `queryBinaryMode` 非 "1" 响应被误判为 "0"：非 "0"/"1" 响应现在返回协议错误，中止同步。
+- 修复 `shared/device-sdk/go/daq/hardware/daq_t1603.go` 的 `@fe BIN 1` 命令发送后未重新查询 `@fd BIN` 验证实际模式：设备 temp 固件对 `@fe BIN 1` 会返回 A 但实际不切换二进制模式，必须通过查询 `@fd BIN` 验证实际模式。
+- 修复 `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go` 的 `Disconnect` 在 sendCommand 卡死时等待 connMu 死锁：改为锁内取 conn 引用 + 置 nil，锁外 conn.Close()。
+- 修复 `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go` 的 `invalidateConnectionLocked` 在 Disconnect → Connect 替换为新连接后误杀新连接（expectedConn 比较）。
+- 修复 `shared/device-sdk/go/ffi/wtnmc4a.go` 的 `getRR1` proc 名错误（"WTNMC4A_GetRR1Status" → "WTNMC4A_GetRR1"），原写法在加载阶段会 MustFindProc 失败。
+- 修复 `projects/daq-t1603/apps/desktop-wails/adapters/hardware/discovery_socket.go` 的 Send/Receive 在 Windows 故障机器 kernel IOCP deadline 失效时永久阻塞（ADR-009 R0-8 / R0-9 整改）。
+- 修复 `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go` 的 `p1604WatchdogTimeout` 为 const 时测试无法注入短超时加速 deadline-ignore 回归测试：改为 var 允许测试注入（200ms）。
+- 修复 `projects/wind-daq/services/api-go/internal/usecase/traversal_registry_recovery.go` 的 `LoadCheckpoint` 在 registry 仍持有活动 session 时返回磁盘 checkpoint 导致前端同时看到"正在运行"的 session 和"继续/放弃"提示造成状态分裂。
+- 移除 `shared/algorithms/go/threehole/interpolation/three_hole.go` 的 `interpolate` 方法（仅是 `interpolateWithWarning` 的薄包装，无调用方）与测试 helper `makePrbLines` / `formatFloat`（历史调试残留）。
+- 移除 `projects/three-hole-interpolator/apps/desktop-wails/backend/helpdoc.go`（孤儿文件，原通过 go:embed 嵌入用户说明书 HTML 的调用方已在历史 commit 中移除）。
+
+### Compatibility
+
+- 配置文件格式：兼容。无新增配置字段，无字段含义变更。
+- 数据文件格式：兼容。dual traversal checkpoint 仍仅接受 v3 格式，v1/v2 不自动迁移。
+- 设备协议行为：
+  - `@fe BIN 1` 命令后新增 `@fd BIN` 验证步骤：设备 temp 固件对 `@fe BIN 1` 会返回 A 但实际不切换二进制模式，原代码假定切换成功是 bug，现严格校验。**影响**：若设备固件存在该缺陷，原 0.11.3 行为是"假定切换成功 → 后续二进制帧解析失败 → 触发 resync"，0.11.4 行为是"检测到未切换 → 中止同步并返回错误 → 调用方决定重试或报错"。
+  - `sendCommand` 对 'E' 响应从"协议错误 + 毒化连接"改为"业务错误 `ErrDeviceRejected` + 不毒化"：调用方需检查 sentinel 错误决定是否重试或上报，不应假定所有错误都触发重连。
+- API 契约：兼容。无 backend 方法签名变更，无 frontend bindings 重生成需求。
+- 测试契约：`p1604WatchdogTimeout` 从 const 改为 var 不影响生产代码行为，仅允许测试注入短超时。
+
+### Verification
+
+- `go build ./services/api-go/...` / `go vet ./services/api-go/...`: passed
+- `go test -race ./services/api-go/internal/...`: passed
+- `shared/device-sdk/go/...`: `go build` / `go vet` / `go test -race -count=1`: passed
+- `npm run typecheck`: passed
+- `npm run test`: passed
+- `npm run build`: passed
+- `task release`: passed (production build with -tags production, GOWORK=off)
+- `makensis -DARG_WAILS_AMD64_BINARY=build/bin/wind-daq.exe build/windows/installer/project.nsi`: passed
+- `task archive-release`: passed (archived to releases/bin/)
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+- dual traversal checkpoint 仅支持 v3 格式，不支持 v1/v2 自动迁移。
+- UDP 设备发现 Windows raw winsock 实现依赖 `golang.org/x/sys/windows` 私有常量 `0x1005`（`SO_SNDTIMEO`），后续 Windows SDK 升级需关注该常量稳定性。
+- `go.work` 当前包含 `./projects/daq-t1603/apps/desktop-wails`，与 AGENTS.md "daq-t1603 excluded from go.work (ADR-006)" 描述存在不一致。若 ADR-006 仍生效需还原 go.work 改动并同步 AGENTS.md；若已撤销需补充 ADR 记录说明。
+
 ## [0.11.3] - 2026-07-31
 
 ### Added
