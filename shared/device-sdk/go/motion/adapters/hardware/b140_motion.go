@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shared.local/device-sdk/go/motion/core"
+	sharedproto "shared.local/device-sdk/go/protocol"
 )
 
 const (
@@ -186,7 +187,16 @@ func (c *B140MotionController) Connect(ctx context.Context) error {
 	c.connecting = true
 	c.mu.Unlock()
 
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	// ADR-009 R0-7：原实现 DialContext(ctx, ...) 在 ctx 无 deadline 时 Dial 永久阻塞
+	// （Windows 故障机器 net 库 deadline 不可靠）。
+	// context.WithTimeout 内部用 time.AfterFunc，time.AfterFunc 触发时 close ctx.Done()
+	// channel——这是 Go runtime 保证的，不依赖 net 库 deadline。DialContext 监听
+	// ctx.Done()，timeout 后立即返回 ctx.Err()。DialContext 内部异步等待 dial 完成后
+	// Close conn，保证晚到 conn 不泄漏（与 sharedproto.DialTCP 的 abandoned 信号等价）。
+	// 若 ctx 已有 deadline，WithTimeout 自动取较短者。
+	dialCtx, cancel := context.WithTimeout(ctx, b140CommandTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", address)
 	if err != nil {
 		c.mu.Lock()
 		c.connecting = false
@@ -274,37 +284,49 @@ func (c *B140MotionController) connectCleanup(conn net.Conn, err error) error {
 }
 
 // Disconnect closes TCP connection and clears cached hardware state.
+//
+// ADR-009 修复：不再先发 ST 命令再 Close（原实现 sendCommandLocked("ST") 在
+// sendCommand 卡死时会死锁）。TCP FIN 足以让 B140 停止运动。
+// 改为：锁内取 conn 引用 + 置 nil + 置 c.status.Connected=false，锁外 conn.Close()。
+// 若 sendCommand 正在阻塞，Disconnect 等 connMu 的时长由 sendCommand 的 watchdog 兜底
+// （最长 b140CommandTimeout），不会无限等待。
 func (c *B140MotionController) Disconnect(ctx context.Context) error {
 	// 先取消所有补偿任务，避免 disconnect 后 goroutine 还在跑命令。
 	c.cancelAllCompensation("controller disconnecting")
 
+	// 1. 先失效 status（under c.mu），让并发 Status 查询快速返回 not connected。
 	c.mu.Lock()
-	if c.status.Connected && c.conn != nil {
-		_, _ = c.sendCommandLocked(ctx, "ST")
-	}
 	c.status.Connected = false
-	c.mu.Unlock()
-
-	c.connMu.Lock()
-	var err error
-	if c.conn != nil {
-		err = c.conn.Close()
-	}
-	c.conn = nil
-	c.reader = nil
-	c.connMu.Unlock()
-
-	c.mu.Lock()
-	c.directionSignature = ""
-	if err != nil {
-		c.status.LastError = err.Error()
-	}
 	for i := range c.status.Axes {
 		c.status.Axes[i].Moving = false
 		c.status.Axes[i].Velocity = 0
 		c.status.Axes[i].Compensating = false
 		c.status.Axes[i].CompensationError = ""
 		c.status.Axes[i].PositionError = 0
+	}
+	c.mu.Unlock()
+
+	// 2. 锁内取 conn 引用 + 置 nil（under connMu）。
+	// 若 sendCommand 正在阻塞持 connMu，此处等待由 sendCommand 的 watchdog 兜底，
+	// 最长 b140CommandTimeout；watchdog 触发后 sendCommand 失效连接并释放 connMu。
+	c.connMu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.reader = nil
+	c.connMu.Unlock()
+
+	// 3. 锁外 Close：避免与 sendCommand 的 connMu 竞争。
+	// TCP FIN 足以让 B140 停止运动，不需要先发 ST 命令（原实现的死锁链根因）。
+	var err error
+	if conn != nil {
+		err = conn.Close()
+	}
+
+	// 4. 清理 directionSignature 与 LastError（under c.mu）。
+	c.mu.Lock()
+	c.directionSignature = ""
+	if err != nil {
+		c.status.LastError = err.Error()
 	}
 	c.mu.Unlock()
 	return err
@@ -1283,35 +1305,121 @@ func (c *B140MotionController) syncCompensationStatusLocked() {
 
 // ---------- 命令发送 ----------
 
+// b140SendResult 是 sendCommand I/O goroutine 的返回结果。
+// soft=true 表示设备返回 "?" 拒绝命令（协议级软错误），连接仍可用，不应失效。
+// soft=false 表示 I/O 级硬错误（Write/Read 失败、watchdog 触发），连接不可靠，应失效。
+type b140SendResult struct {
+	payload string
+	err     error
+	soft    bool
+}
+
+// invalidateConnectionLocked 失效当前连接：置 c.conn=nil + c.reader=nil（under connMu）
+// 并标记 c.status.Connected=false（under c.mu）。
+//
+// 调用方必须持有 c.mu；本方法内部获取 c.connMu。
+// 锁顺序：c.mu（caller）→ c.connMu（本方法）—— 与全局锁顺序一致，不会死锁。
+//
+// 设计说明：不直接在 sendCommand 持 connMu 时调用本方法，因为 sendCommand 持 connMu
+// 再获取 c.mu 会形成 c.connMu → c.mu 的反向锁顺序，与 checkConnectedLocked /
+// Connect 等持 c.mu 后获取 c.connMu 的路径成环。sendCommand 在调用本方法前先释放
+// connMu，再由调用方持 c.mu 调用本方法，保持正向锁顺序。
+//
+// ADR-009 finding 2 修复：expectedConn 比较避免误杀新连接。
+// 调用方必须在触发故障前捕获 c.conn，并传入此参数。仅当 c.conn 仍是 expectedConn
+// 时才清空 c.conn/c.reader 并置 Connected=false；若 c.conn 已被 Disconnect -> Connect
+// 替换为新连接，仅关闭旧 expectedConn，不修改状态，避免旧命令的 invalidation 误杀新连接。
+func (c *B140MotionController) invalidateConnectionLocked(expectedConn net.Conn, message string) {
+	c.connMu.Lock()
+	currentConn := c.conn
+	if currentConn != expectedConn {
+		// c.conn 已被替换为新连接（Disconnect -> Connect）或已置 nil，
+		// 旧命令的 invalidation 不应误杀新连接。仅关闭旧 expectedConn，不修改状态。
+		c.connMu.Unlock()
+		if expectedConn != nil {
+			_ = expectedConn.Close()
+		}
+		return
+	}
+	c.conn = nil
+	c.reader = nil
+	c.connMu.Unlock()
+	c.status.Connected = false
+	if message != "" {
+		c.status.LastError = message
+	}
+	if expectedConn != nil {
+		_ = expectedConn.Close()
+	}
+}
+
 // sendCommand 发送命令并读取响应。不要求调用方持 c.mu，仅持 c.connMu。
 // 补偿 goroutine 与运动命令共用此入口。
+//
+// ADR-009 修复：除 SetDeadline 软超时外，独立 watchdog 在 timeout 后强制 Close conn，
+// 避免故障 Windows 电脑上 deadline 失效导致 Read 永久阻塞，进而引发 Disconnect 死锁。
+// watchdog 触发或 I/O 硬错误后失效连接（c.conn=nil + c.status.Connected=false），
+// 让后续命令立即返回 "not connected"，避免向已关闭的 conn 写入。
+//
+// ctx 取消分支不再无界等 <-done：watchdog 在 watchdogTimeout 后 Close conn，
+// <-done 此时为有界等待（最长 watchdogTimeout）。返回 I/O 错误（含 watchdog 上下文）
+// 或 ctx.Err()。
 func (c *B140MotionController) sendCommand(ctx context.Context, cmd string) (string, error) {
 	c.connMu.Lock()
-	defer c.connMu.Unlock()
 
 	if c.conn == nil || c.reader == nil {
+		c.connMu.Unlock()
 		return "", fmt.Errorf("controller not connected")
 	}
 
+	// 计算 watchdog 超时：取 b140CommandTimeout 与 ctx 剩余 deadline 的较小值。
+	// ctx 无 deadline 时用 b140CommandTimeout。
 	deadline := time.Now().Add(b140CommandTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
+	watchdogTimeout := time.Until(deadline)
+	if watchdogTimeout <= 0 {
+		// ctx 已过期，直接返回，不启动 watchdog
+		c.connMu.Unlock()
+		return "", ctx.Err()
+	}
+
 	if err := c.conn.SetDeadline(deadline); err != nil {
+		message := fmt.Sprintf("SetDeadline failed: %v", err)
+		// ADR-009 finding 2：捕获 expectedConn，仅当 c.conn 仍是此 conn 时才清状态。
+		expectedConn := c.conn
+		c.connMu.Unlock()
+		c.mu.Lock()
+		c.invalidateConnectionLocked(expectedConn, message)
+		c.mu.Unlock()
 		return "", err
 	}
 
-	type result struct {
-		payload string
-		err     error
-	}
-	done := make(chan result, 1)
-
 	conn := c.conn
 	reader := c.reader
+
+	// 启动独立 watchdog：超时后强制 Close conn，解除 Read 阻塞。
+	// 即使 SetDeadline 在故障 Windows 上失效，watchdog 也能保证 connMu 在有界时间内释放。
+	// 注意：watchdog 内部 Close conn 不需要抢 connMu（net.Conn.Close 并发安全）。
+	//
+	// I-1 说明：与 dsa3217 / daq_p1064pre 标杆模式（watchdog 在 ioMu.Lock 之前启动）不同，
+	// b140_motion 在 connMu.Lock 之后启动 watchdog。两者差异源于锁的争用场景：
+	//   - dsa3217 / daq_p1064pre：readLoop 持 ioMu 阻塞 ReadString，sendCommand 卡在
+	//     ioMu.Lock 上，watchdog 必须先启动才能 Close conn 解除 readLoop 阻塞、释放 ioMu
+	//   - b140_motion：无 readLoop，connMu 的所有持有者（Connect/Disconnect/sendCommand）
+	//     均不在锁内做阻塞 I/O（除 sendCommand 自身的 Write/Read，但那是 watchdog 覆盖区间）
+	//     因此 sendCommand 获取 connMu 的等待时间有界，watchdog 在 Lock 之后启动不会
+	//     出现"等锁期间无 Close owner"的死锁窗口。
+	// Disconnect 等 connMu 的最长等待时间 = sendCommand 的 watchdogTimeout（b140CommandTimeout），
+	// 与标杆模式行为一致。
+	wdStop := sharedproto.WatchdogClose(conn, watchdogTimeout)
+
+	done := make(chan b140SendResult, 1)
+
 	go func() {
 		if _, wErr := conn.Write([]byte(cmd + "\r")); wErr != nil {
-			done <- result{err: wErr}
+			done <- b140SendResult{err: wErr}
 			return
 		}
 
@@ -1319,15 +1427,19 @@ func (c *B140MotionController) sendCommand(ctx context.Context, cmd string) (str
 		for {
 			b, rErr := reader.ReadByte()
 			if rErr != nil {
-				done <- result{err: rErr}
+				done <- b140SendResult{err: rErr}
 				return
 			}
 			switch b {
 			case ':':
-				done <- result{payload: strings.TrimSpace(payload.String())}
+				done <- b140SendResult{payload: strings.TrimSpace(payload.String())}
 				return
 			case '?':
-				done <- result{err: fmt.Errorf("B140 command %q failed: %s", cmd, strings.TrimSpace(payload.String()))}
+				// 设备拒绝命令（软错误）：连接仍可用，不应失效
+				done <- b140SendResult{
+					err:  fmt.Errorf("B140 command %q failed: %s", cmd, strings.TrimSpace(payload.String())),
+					soft: true,
+				}
 				return
 			default:
 				payload.WriteByte(b)
@@ -1337,11 +1449,78 @@ func (c *B140MotionController) sendCommand(ctx context.Context, cmd string) (str
 
 	select {
 	case <-ctx.Done():
-		<-done
+		// ctx 取消：不再无界等 <-done。watchdog 在 watchdogTimeout 后 Close conn，
+		// <-done 此时为有界等待（最长 watchdogTimeout）。
+		r := <-done
+		ok := wdStop()
+		c.connMu.Unlock()
+		c.applyInvalidate(r, ok, conn)
+		// 优先返回 I/O 错误（含 watchdog 上下文），其次返回 ctx.Err()。
+		// ctx 取消时若 I/O 已因 watchdog 触发失败，I/O 错误比 ctx.Err() 更能反映根因。
+		if r.err != nil && !r.soft {
+			return "", wrapB140WatchdogError(r.err, !ok)
+		}
 		return "", ctx.Err()
 	case r := <-done:
-		return r.payload, r.err
+		ok := wdStop()
+		c.connMu.Unlock()
+		c.applyInvalidate(r, ok, conn)
+		if r.err == nil {
+			// 成功路径：watchdog 未触发，conn 仍可用，清除 SetDeadline 设置的读写 deadline，
+			// 避免过期的绝对时间影响下次 sendCommand（虽然下次会重新 SetDeadline 覆盖，
+			// 但显式清除符合 ADR-009 决策 3"deadline 残留禁止"原则）。
+			// 不需要再次抢 connMu：net.Conn.SetDeadline 并发安全，且 applyInvalidate 在
+			// 成功路径不会失效 conn（conn 仍非 nil）。
+			_ = conn.SetDeadline(time.Time{})
+			return r.payload, nil
+		}
+		if r.soft {
+			// 软错误（? 响应）：连接仍可用，清除 deadline 后返回错误。
+			_ = conn.SetDeadline(time.Time{})
+			return "", r.err
+		}
+		return "", wrapB140WatchdogError(r.err, !ok)
 	}
+}
+
+// applyInvalidate 根据 I/O 结果和 watchdog 状态决定是否失效连接，并在持 c.mu 时调用
+// invalidateConnectionLocked。调用方必须已释放 c.connMu。
+//
+// 失效判定：
+//   - watchdog 触发（ok=false）：conn 已被 Close，必须失效
+//   - 硬 I/O 错误（r.err != nil && !r.soft）：连接不可靠，失效
+//   - 软错误（? 响应）或成功且 watchdog 未触发：连接仍可用，不失效
+//
+// ADR-009 finding 2：expectedConn 由调用方从 sendCommand 入口捕获，传给
+// invalidateConnectionLocked 进行比较，避免旧命令误杀 Disconnect -> Connect 后的新连接。
+func (c *B140MotionController) applyInvalidate(r b140SendResult, ok bool, expectedConn net.Conn) {
+	var message string
+	if !ok {
+		// watchdog 已触发（conn 已 Close）
+		if r.err != nil {
+			message = fmt.Sprintf("%v (watchdog triggered, conn closed)", r.err)
+		} else {
+			message = "watchdog triggered, conn closed"
+		}
+	} else if r.err != nil && !r.soft {
+		// 硬 I/O 错误
+		message = r.err.Error()
+	} else {
+		// 软错误或成功且 watchdog 未触发：不失效
+		return
+	}
+	c.mu.Lock()
+	c.invalidateConnectionLocked(expectedConn, message)
+	c.mu.Unlock()
+}
+
+// wrapB140WatchdogError 在 watchdog 触发时附加 "(watchdog triggered, conn closed)" 上下文，
+// 便于调用方从错误信息识别 ADR-009 兜底路径。watchdogTriggered=false 时原样返回。
+func wrapB140WatchdogError(err error, watchdogTriggered bool) error {
+	if err == nil || !watchdogTriggered {
+		return err
+	}
+	return fmt.Errorf("%w; %w", err, sharedproto.ErrWatchdogTriggered)
 }
 
 // sendCommandLocked 旧入口：保留给 Connect/Disconnect 等已持 c.mu 的调用点。
@@ -1373,11 +1552,6 @@ func (c *B140MotionController) applyAxisSpeed(ctx context.Context, axisCfg core.
 	}
 	_, err := c.sendCommand(ctx, fmt.Sprintf("SP%s=%d", physical, pulseSpeed))
 	return err
-}
-
-// applyAxisSpeedLocked 旧入口：保留给已持 c.mu 的调用点。
-func (c *B140MotionController) applyAxisSpeedLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) error {
-	return c.applyAxisSpeed(ctx, axisCfg, physical)
 }
 
 // readAxisPosition 不持 c.mu 的位置读取版本。
@@ -1419,11 +1593,6 @@ func (c *B140MotionController) readAxisPosition(ctx context.Context, axisCfg cor
 	}
 	c.mu.Unlock()
 	return position, nil
-}
-
-// readAxisPositionLocked 旧入口：保留给已持 c.mu 的调用点。
-func (c *B140MotionController) readAxisPositionLocked(ctx context.Context, axisCfg core.AxisConfig, physical string) (float64, error) {
-	return c.readAxisPosition(ctx, axisCfg, physical)
 }
 
 func (c *B140MotionController) prepareAxisCommandLocked(ctx context.Context, axis core.AxisName) (core.AxisConfig, string, error) {

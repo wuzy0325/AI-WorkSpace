@@ -30,8 +30,6 @@ var (
 	instStop   *syscall.Proc
 	readLP     *syscall.Proc
 	readEP     *syscall.Proc
-	readCV     *syscall.Proc
-	readCA     *syscall.Proc
 	getRR1     *syscall.Proc
 	startHome  *syscall.Proc
 	clearLimit *syscall.Proc
@@ -66,9 +64,7 @@ func Init(dllPath string) error {
 		instStop = wtnmc4a.MustFindProc("WTNMC4A_InstStop")
 		readLP = wtnmc4a.MustFindProc("WTNMC4A_ReadLP")
 		readEP = wtnmc4a.MustFindProc("WTNMC4A_ReadEP")
-		readCV = wtnmc4a.MustFindProc("WTNMC4A_ReadCV")
-		readCA = wtnmc4a.MustFindProc("WTNMC4A_ReadCA")
-		getRR1 = wtnmc4a.MustFindProc("WTNMC4A_GetRR1Status")
+		getRR1 = wtnmc4a.MustFindProc("WTNMC4A_GetRR1")
 		startHome = wtnmc4a.MustFindProc("WTNMC4A_StartAutoHomeSearch")
 		clearLimit = wtnmc4a.MustFindProc("WTNMC4A_ClearSoftwareLimit")
 		setPDirLim = wtnmc4a.MustFindProc("WTNMC4A_SetPDirSoftwareLimit")

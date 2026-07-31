@@ -1271,13 +1271,6 @@ func (c *WTNMC4AMotionController) getRR0Status(handle uintptr) (rr0Status, error
 	}, nil
 }
 
-// getRR1StatusLocked 保留原有方法名（内部调用 handle 版本），
-// 确保其他可能在锁内调用的代码兼容。
-func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
-	status, _ := c.getRR1Status(c.handle, axisNum)
-	return status
-}
-
 func (c *WTNMC4AMotionController) readLogicalPosition(handle uintptr, axisNum int) int32 {
 	if c.readLP != nil {
 		return c.readLP(handle, axisNum)
