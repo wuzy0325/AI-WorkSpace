@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.12.0] - 2026-07-31
+
+### Fixed
+
+- 修复问题电脑上"退出确认后程序无响应"的卡死问题：`stopAllMotion` 用 `context.Background()` 无超时，B140 通信异常时 `queryStatus` 串行多个 sendCommand 累积 ~70s 阻塞 GUI 主线程。改为 3s 有界超时，最坏 3s+5s=8s 内完成退出。
+- 精确化 `stopAllMotion` 注释，区分未启动命令（立即返回 ctx.Err()）与执行中命令（等 watchdog Close conn，最长 5s）的 ctx 取消语义。
+
+### Changed
+
+- 重构 `ServiceShutdown`：抽出 `runShutdownStep` 辅助函数统一执行 + 打点，记录每步 step_ms 与 total_ms，问题电脑再卡时可直接从日志定位卡在哪个子步骤。失败路径也打点，避免日志时间线断裂。主体保持线性流程，达成 AGENTS.md ≤50 行/函数约束。
+
+### Internal
+
+- 新增 `TestStopAllMotion_BoundedByContextTimeout` / `TestStopAllMotion_StopCallRespectsContextTimeout` 防回归测试，改回 `context.Background()` 则 10s 超时失败。实际 3.00s / 3.01s 返回，精确命中 3s 上限。
+
+### Verification
+
+- `go build ./services/api-go/...`: passed
+- `go test ./services/api-go/internal/usecase/`: passed (含 2 个新回归测试)
+- `go vet ./services/api-go/internal/usecase/...`: passed
+- `go build ./apps/desktop-wails/backend/...`: passed
+- `go test ./apps/desktop-wails/backend/...`: passed
+- `go vet ./apps/desktop-wails/backend/...`: passed
+- `task release`: passed
+- `makensis build/windows/installer/project.nsi`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+- 该修复针对 B140 运动控制器通信异常场景；若其他设备（T1603 / P1604）通信异常时退出仍可能等待单命令 watchdog（5s）超时，但不会累积到 ~70s。
+
 ## [0.11.4] - 2026-07-31
 
 ### Added
