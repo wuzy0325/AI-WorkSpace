@@ -25,6 +25,8 @@ import (
 //   - dual 路径不读写 legacy traversal-active-index.json（manager ownership 分支保证）。
 
 // LoadCheckpoint 返回该 probe 的唯一可恢复 checkpoint（不扫描目录猜测）。
+// registry 仍持有 session 时，索引中的 checkpoint 属于运行期容灾快照，不可恢复，
+// 返回 nil 避免前端同时展示“正在运行”和“继续/放弃”。
 // 无候选时返回 (nil, nil)；候选文件损坏或版本不符返回错误。
 func (r *ManagerRegistry) LoadCheckpoint(ctx context.Context, probeID ProbeID) (*traversal.Checkpoint, error) {
 	if err := ctx.Err(); err != nil {
@@ -32,6 +34,12 @@ func (r *ManagerRegistry) LoadCheckpoint(ctx context.Context, probeID ProbeID) (
 	}
 	if !probeID.Valid() {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidProbeID, probeID)
+	}
+	r.mu.Lock()
+	_, active := r.sessions[probeID]
+	r.mu.Unlock()
+	if active {
+		return nil, nil
 	}
 	ref, found, err := r.recoveryIndex.Find(ctx, string(probeID))
 	if err != nil {

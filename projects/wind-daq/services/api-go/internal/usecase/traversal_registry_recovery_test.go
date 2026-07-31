@@ -280,6 +280,23 @@ func TestManagerRegistry_LoadCheckpoint_UniqueCandidate(t *testing.T) {
 	}
 }
 
+func TestManagerRegistry_LoadCheckpoint_HidesActiveSessionCheckpoint(t *testing.T) {
+	fx := newRegistryFixture(t)
+	if _, err := fx.registry.Start(context.Background(), Probe1, startProbe1OK(fx)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	seedDualCheckpoint(t, fx, Probe1, "probe1-task-1", []string{"ctrl-a"})
+
+	cp, err := fx.registry.LoadCheckpoint(context.Background(), Probe1)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint: %v", err)
+	}
+	if cp != nil {
+		t.Fatalf("活动 session 的运行期 checkpoint 不得作为可恢复任务返回: %+v", cp)
+	}
+	completeSession(fx, Probe1)
+}
+
 func TestManagerRegistry_ClearCheckpoint_ValidatesTaskID(t *testing.T) {
 	fx := newRegistryFixture(t)
 	cpPath := seedDualCheckpoint(t, fx, Probe1, "probe1-task-9", []string{"ctrl-a"})
