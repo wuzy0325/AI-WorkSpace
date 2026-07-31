@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.7.3] - 2026-07-31
+
+### Fixed
+- 修复 discovery（设备发现）阶段在 Windows 网络栈异常时永久阻塞：跨平台 `discovery_socket.go` 的 Send/Receive 加 `SetDeadline` + 独立 watchdog timer 双兜底；Windows `discovery_socket_windows.go` 的 `winsockDiscoverySocket` 加 `handleMu` 保护 handle，`closeHandleLocked` 原子取走 handle，`startWatchdog` 返回 stop-and-join，避免 callback 在操作返回后误关已复用 socket 数值（ADR-009 finding 5）。
+- 修复 Stop transaction 在 soft deadline 触发后无法可靠取消：`StopAcquisition` 改用 `context` 控制总预算，soft deadline 触发时强制 `Close(conn)` 并返回 `ErrWatchdogTriggered` sentinel，调用方毒化驱动并重建连接。
+- 修复 adapter IO 错误处理不统一：适配 `shared/device-sdk/go/protocol` 层的 `wrapP1604IOError` / `ErrWatchdogTriggered`，soft deadline 触发时强制 Close conn 并返回 sentinel 让调用方毒化驱动，避免后续命令在已失效连接上重试。
+- 修复 `expectedConn` 比较误杀新连接：与 daq-t1603 B140 同款 finding 2 修复，Stop transaction remediation 测试中 `expectedConn` 比较避免误杀重建后的新连接。
+
+### Internal
+- 删除本地 `watchdogClose` 函数，改用 `shared/device-sdk/go/protocol.WatchdogClose` 统一 ADR-009 watchdog 实现，避免跨项目代码复制。
+- `p1604WatchdogTimeout` 从 const 改为 var：允许测试注入短超时（200ms）加速 deadline-ignore 回归测试。
+- 删除 `p1604ConsecutiveTimeoutThreshold`（25 次 5s 超时）：原设计依赖 readLoop 活跃做应用层断线检测，ADR-009 后 watchdog + TCP keepalive 已是更可靠的兜底机制。
+- 删除 `p1604CommandResponseTimeout`（合并入 `p1604HandshakeTimeout`）。
+- 新增 `context` 导入：Stop transaction 改用 ctx 控制总预算。
+- 适配 `soSNDTIMEO=0x1005`（golang.org/x/sys/windows 未导出 SO_SNDTIMEO）。
+- 新增 Stop transaction remediation 测试覆盖（+870 行）：watchdog 触发后连接毒化与重建、soft timeout / ReadFrame 错误的 conn 失效、expectedConn 比较避免误杀新连接（详见 `docs/plans/2026-07-31-daq-p1604-stop-transaction-remediation.zh-CN.md`）。
+- 新增跨平台 discovery watchdog 行为单测：`discovery_socket_test.go`（新）/ `discovery_socket_windows_test.go`（+63）。
+- 新增多目标扫描 / watchdog 触发测试：`p1604_scanner_test.go`（+75）。
+- 同步 6 个版本号文件到 0.7.3：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `$env:GOWORK="off"; go vet ./...`
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`
+- `npm run typecheck`
+- `npm run build`
+- `task release`
+- `makensis -DARG_WAILS_AMD64_BINARY=... build/windows/installer/project.nsi`
+
+### Known Issues
+- 现场故障电脑（SetReadDeadline 失效）需实测验证 discovery 与 Stop 路径的 watchdog 兜底，本机无法复现该 Windows 网络栈 bug。
+- 设备固件时间戳问题仍按既有 CSV 规则规避。
+
 ## [0.7.2] - 2026-07-28
 
 ### Fixed
