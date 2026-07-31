@@ -290,6 +290,8 @@ export const deviceApi = {
   _statusListeners: new Set<StatusCallback>(),
   _deviceLostListeners: new Set<DeviceLostCallback>(),
   _subscriptions: new Map<string, DeviceSubscription>(),
+  // 同一设备的底层轮询由多个页面共享；最后一个 owner 释放后才真正关闭。
+  _subscriptionOwners: new Map<string, Set<string>>(),
   _publishRateHz: DEFAULT_PUBLISH_RATE_HZ,
 
   onSnapshot: (cb: SnapshotCallback): (() => void) => {
@@ -337,7 +339,13 @@ export const deviceApi = {
   // 不再调用 app.Event.Emit；前端这里按全局刷新频率轮询 Go 标准库 HTTP，
   // 绕开 Wails 反射桥，稳定可靠。AcquisitionHub.OnData 始终更新 latestByDevice，
   // 不受 publishHz 节流影响；轮询间隔使用全局刷新频率设置，并在保存设置后重建。
-  subscribeToDevice: (deviceId: string): void => {
+  subscribeToDevice: (deviceId: string, owner = 'default'): void => {
+    let owners = deviceApi._subscriptionOwners.get(deviceId)
+    if (!owners) {
+      owners = new Set<string>()
+      deviceApi._subscriptionOwners.set(deviceId, owners)
+    }
+    owners.add(owner)
     if (deviceApi._subscriptions.has(deviceId)) return
 
     if (isWailsAvailable()) {
@@ -416,7 +424,7 @@ export const deviceApi = {
       deviceApi._notifyListeners,
       (error) => {
         // SSE 拿到 404 表示设备已断开/异常退出：通知 deviceStore 更新 UI 状态为 Error。
-        // 通知后由 deviceStore 通过 unsubscribeFromDevice 统一清理订阅
+        // 通知后由 deviceStore 通过 unsubscribeAllFromDevice 统一清理订阅
         // （_registerSubscription 注册的 unsubscribe wrapper 会调 subscription.unsubscribe()），
         // 这里不重复调用，避免职责重叠。
         // 严格相等匹配 sse-client.ts:28 的 `SSE HTTP ${status}` 错误格式，
@@ -433,7 +441,16 @@ export const deviceApi = {
     deviceApi._registerSubscription(deviceId, { unsubscribe: () => subscription.unsubscribe() })
   },
 
-  unsubscribeFromDevice: (deviceId: string): void => {
+  unsubscribeFromDevice: (deviceId: string, owner = 'default'): void => {
+    const owners = deviceApi._subscriptionOwners.get(deviceId)
+    owners?.delete(owner)
+    if (owners && owners.size > 0) return
+    deviceApi._subscriptionOwners.delete(deviceId)
+    deviceApi.unsubscribeAllFromDevice(deviceId)
+  },
+
+  unsubscribeAllFromDevice: (deviceId: string): void => {
+    deviceApi._subscriptionOwners.delete(deviceId)
     const subscription = deviceApi._subscriptions.get(deviceId)
     if (subscription) {
       subscription.unsubscribe()

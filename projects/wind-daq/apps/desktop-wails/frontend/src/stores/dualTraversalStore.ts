@@ -5,6 +5,7 @@ import { deviceApi } from '@api/deviceApi'
 import { traversalProbeApi } from '@api/traversalApi'
 import { invalidateProbePolling } from '@api/traversalPolling'
 import { useI18nStore } from '@stores/i18nStore'
+import { useDeviceStore } from '@stores/deviceStore'
 import { useStorageStore } from '@stores/storageStore'
 import {
   acquireDualTraversalDevice,
@@ -215,10 +216,12 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
 
   function acquireDevices(probeId: ProbeId): void {
     const runtime = runtimes[probeId]
+    const deviceStore = useDeviceStore()
     const ids = uniqueTraversalDeviceIds(sessionOf(probeId).config)
     for (const deviceId of ids) {
       if (!runtime.subscribedDeviceIds.includes(deviceId)) {
         acquireDualTraversalDevice(deviceId)
+        deviceStore.ensureSubscribed(deviceId)
         runtime.subscribedDeviceIds.push(deviceId)
       }
     }

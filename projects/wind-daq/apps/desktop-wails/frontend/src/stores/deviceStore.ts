@@ -343,20 +343,20 @@ export const useDeviceStore = defineStore('devices', () => {
     profiles.value.forEach((profile) => {
       if (subscribedDeviceIds.has(profile.id)) return
       if (!acquiringFor(profile.id)) return
-      deviceApi.subscribeToDevice(profile.id)
+      deviceApi.subscribeToDevice(profile.id, 'dashboard')
       subscribedDeviceIds.add(profile.id)
     })
 
     Array.from(subscribedDeviceIds).forEach((id) => {
       if (activeIds.has(id)) return
-      deviceApi.unsubscribeFromDevice(id)
+      deviceApi.unsubscribeFromDevice(id, 'dashboard')
       subscribedDeviceIds.delete(id)
     })
   }
 
   function cleanupSnapshotSubscriptions() {
     subscribedDeviceIds.forEach((id) => {
-      deviceApi.unsubscribeFromDevice(id)
+      deviceApi.unsubscribeFromDevice(id, 'dashboard')
     })
     subscribedDeviceIds.clear()
   }
@@ -386,7 +386,7 @@ export const useDeviceStore = defineStore('devices', () => {
           lastError: '设备连接已断开',
         })
         // 停止该设备的数据订阅，避免继续轮询已不存在的设备
-        deviceApi.unsubscribeFromDevice(deviceId)
+        deviceApi.unsubscribeAllFromDevice(deviceId)
         subscribedDeviceIds.delete(deviceId)
       })
     }
@@ -642,7 +642,7 @@ export const useDeviceStore = defineStore('devices', () => {
       await deviceApi.disconnect(id)
     } finally {
       // 无论后端是否报错，都先停止订阅，避免遗留 SSE/事件回调把状态又拉回 Connected
-      deviceApi.unsubscribeFromDevice(id)
+      deviceApi.unsubscribeAllFromDevice(id)
       subscribedDeviceIds.delete(id)
     }
 
@@ -671,7 +671,7 @@ export const useDeviceStore = defineStore('devices', () => {
   async function startAcquisition(id: string): Promise<boolean> {
     const result = await deviceApi.startAcquisition(id)
     if (result.success) {
-      deviceApi.subscribeToDevice(id)
+      deviceApi.subscribeToDevice(id, 'dashboard')
       subscribedDeviceIds.add(id)
       await refreshStatusFor(id)
     }
@@ -694,13 +694,13 @@ export const useDeviceStore = defineStore('devices', () => {
    */
   function ensureSubscribed(id: string): void {
     if (!id) return
-    deviceApi.subscribeToDevice(id)
+    deviceApi.subscribeToDevice(id, 'dashboard')
     subscribedDeviceIds.add(id)
   }
 
   async function stopAcquisition(id: string): Promise<void> {
     await deviceApi.stopAcquisition(id)
-    deviceApi.unsubscribeFromDevice(id)
+    deviceApi.unsubscribeAllFromDevice(id)
     subscribedDeviceIds.delete(id)
     await refreshStatusFor(id)
   }

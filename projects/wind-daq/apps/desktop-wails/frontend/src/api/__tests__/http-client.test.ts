@@ -102,8 +102,35 @@ describe('deviceApi', () => {
     Object.defineProperty(window, 'chrome', { configurable: true, value: undefined })
     const { deviceApi } = await import('@api/deviceApi')
     deviceApi._subscriptions.clear()
+    deviceApi._subscriptionOwners.clear()
     deviceApi._deviceLostListeners.clear()
     deviceApi._publishRateHz = 20
+  })
+
+  it('keeps shared polling alive until the last owner unsubscribes', async () => {
+    Object.defineProperty(window, 'chrome', {
+      configurable: true,
+      value: { webview: { postMessage: vi.fn() } },
+    })
+    const { deviceApi } = await import('@api/deviceApi')
+    const { wailsApi } = await import('@api/wails-adapter')
+    vi.spyOn(deviceApi, 'getLatest').mockResolvedValue({
+      deviceId: 'dev-shared', timestamp: 1, channels: [1], channelIndices: [0],
+    })
+    vi.spyOn(window, 'setTimeout').mockReturnValue(1 as never)
+    vi.spyOn(wailsApi.device, 'subscribeStream').mockResolvedValue({ success: true, Success: true })
+
+    deviceApi.subscribeToDevice('dev-shared', 'dashboard')
+    deviceApi.subscribeToDevice('dev-shared')
+    deviceApi.unsubscribeFromDevice('dev-shared')
+
+    expect(deviceApi._subscriptions.has('dev-shared')).toBe(true)
+    expect(wailsApi.device.subscribeStream).not.toHaveBeenCalledWith('dev-shared', false)
+
+    deviceApi.unsubscribeFromDevice('dev-shared', 'dashboard')
+
+    expect(deviceApi._subscriptions.has('dev-shared')).toBe(false)
+    expect(wailsApi.device.subscribeStream).toHaveBeenCalledWith('dev-shared', false)
   })
 
   it('constructs correct connect URL', async () => {

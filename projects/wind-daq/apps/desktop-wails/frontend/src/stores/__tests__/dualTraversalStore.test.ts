@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
+const mockEnsureDeviceSubscribed = vi.hoisted(() => vi.fn())
+
 // Mock wails-adapter：测试走 fetch 分支
 vi.mock('@api/wails-adapter', () => ({
   isWailsAvailable: () => false,
@@ -90,6 +92,10 @@ vi.mock('@stores/i18nStore', () => ({
 
 vi.mock('@stores/storageStore', () => ({
   useStorageStore: () => ({ settings: { refreshRateHz: 5 } }),
+}))
+
+vi.mock('@stores/deviceStore', () => ({
+  useDeviceStore: () => ({ ensureSubscribed: mockEnsureDeviceSubscribed }),
 }))
 
 import {
@@ -551,6 +557,7 @@ describe('dualTraversalStore 设备订阅引用计数', () => {
 
     await store.start('probe1')
     await store.start('probe2')
+    expect(mockEnsureDeviceSubscribed).toHaveBeenCalledWith('dev-shared')
     expect(mockDevice.subscribeToDevice).toHaveBeenCalledTimes(2) // dev-shared 一次 + dev-a 一次
     expect(dualDeviceRefCount('dev-shared')).toBe(2)
     expect(dualDeviceRefCount('dev-a')).toBe(1)
