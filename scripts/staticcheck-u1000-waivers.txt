@@ -1,0 +1,31 @@
+# staticcheck U1000 dead code 豁免清单
+#
+# 用途：配合 scripts/validate-structure.ps1 的 "2f. Go dead code check (U1000)" 章节，
+# 让预存 dead code 不阻塞 CI；新增 dead code 不得加入本清单，必须直接删除。
+#
+# 格式（每行一条，以 # 开头为注释，空行忽略）：
+#   <模块相对路径>/<文件相对路径>::<符号类型>::<符号名>
+#
+# 字段说明：
+#   - 模块相对路径：相对 workspace 根的模块目录，正斜杠分隔
+#     例：projects/wind-daq/services/api-go
+#   - 文件相对路径：模块内相对路径，正斜杠分隔
+#     例：internal/usecase/traversal_helpers.go
+#   - 符号类型：func / type / field / var / const（staticcheck 报告原文）
+#   - 符号名：staticcheck 报告原文，含 receiver
+#     例：decodeBody / (*TraversalManager).fail / (*blockingGen).Generate
+#
+# 完整示例：
+#   projects/wind-daq/services/api-go/api/server.go::func::decodeBody
+#
+# 维护原则：
+#   1. 清理 dead code 后，必须同步删除本清单中对应行
+#   2. 不得为本清单已存在的文件新增豁免（应直接删除 dead code）
+#   3. 见 docs/runbooks/code-standards.zh-CN.md
+
+# ===== projects/probe-interpolator/apps/desktop-wails (1) =====
+# modifyOptionsForIOS 是 build tag 分平台存根（//go:build ios 与 //go:build !ios 各一份），
+# 在非 iOS 平台编译时仅 default 版本参与编译，staticcheck 误报为未使用。
+# 实际 iOS 平台编译时由 app_options_ios.go 提供，调用方在 main.go 中。
+# 删除会破坏 iOS 构建，保留豁免。
+projects/probe-interpolator/apps/desktop-wails/ios/app_options_default.go::func::modifyOptionsForIOS

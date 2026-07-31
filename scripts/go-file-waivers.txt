@@ -34,3 +34,21 @@ projects/wind-daq/services/api-go/internal/core/calibration/seven_hole.go
 projects/daq-p1604/apps/desktop-wails/adapters/recording/csv_recorder.go
 projects/1604Cal/internal/report/report_service.go
 projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go
+# ADR-009 R0-6/R0-12 整改后新增 ioMu/watchdog/响应一致性校验逻辑导致行数增长。
+# 整改范围限于本批次，禁止顺手拆分；后续单独提拆分任务。
+projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go
+# ADR-009 SIM-1 整改：simulator.go 新增 sync.WaitGroup 跟踪所有工作 goroutine，
+# Close 中 wg.Wait 保证完全回收，避免测试 t.Cleanup 后 goroutine 泄漏。
+projects/wind-daq/services/api-go/internal/adapters/hardware/sim/simulator.go
+# 双探针遍历模式整改：traversal_manager_registry.go 引入 (controllerID, axis) 元组粒度
+# 的资源独占模型，boundAxisPairs / ControllerAxisPair / controllerTokens 字段扩展导致行数增长。
+projects/wind-daq/services/api-go/internal/usecase/traversal_manager_registry.go
+# 双探针遍历模式 + ADR-009 整改：traversal_view.go 新增 lease/状态查询与停止原因追踪字段。
+projects/wind-daq/services/api-go/internal/usecase/traversal_view.go
+# 以下为预存超长文件（截至 2026-07-29 审计），与本次 ADR-009 R0 批次整改无关，
+# 暂予豁免避免阻塞 CI；后续按 P0/P1/P2 优先级单独提拆分任务。
+projects/daq-p1604/apps/desktop-wails/backend/app.go
+projects/daq-t1603/apps/desktop-wails/adapters/hardware/t1603_adapter.go
+projects/daq-t1603/apps/desktop-wails/adapters/recording/csv_recorder.go
+projects/wind-daq/services/api-go/internal/core/calibration/types.go
+projects/wind-daq/services/api-go/internal/core/traversal/types.go

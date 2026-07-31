@@ -182,6 +182,94 @@ foreach ($f in $goFiles) {
     $errors.Add("SIZE: Go file exceeds $maxGoFileLines lines: $relPath ($lineCount lines, see docs/runbooks/code-standards.zh-CN.md section 1)")
 }
 
+# ---- 2f. Go dead code check (staticcheck U1000) ----
+# 用 staticcheck 检测未使用的私有符号（func/type/field/var/const），
+# 避免人工 code review 漏掉 dead code（本次会话曾漏掉 3 处）。
+#
+# 设计要点：
+#   - staticcheck 未安装时仅 warn 不 fail，避免阻塞未安装该工具的环境
+#   - GOWORK=off：daq-t1603 / threehole / 1604Cal / p1604-ts-diag 不在 go.work use 列表，
+#     统一用 GOWORK=off 扫描所有模块，保证行为一致
+#   - 豁免清单 scripts/staticcheck-u1000-waivers.txt 管理预存 dead code，
+#     新增 dead code 不得加入豁免清单，必须直接删除源码
+#   - 豁免键格式：<模块相对路径>/<文件相对路径>::<符号类型>::<符号名>
+#     不含行号，避免代码编辑导致豁免失效
+$staticcheckCmd = Get-Command staticcheck -ErrorAction SilentlyContinue
+if (-not $staticcheckCmd) {
+    if (-not $Quiet) {
+        Write-Host "WARN: staticcheck not installed; skip U1000 dead code check." -ForegroundColor Yellow
+        Write-Host "      Install: go install honnef.co/go/tools/cmd/staticcheck@latest" -ForegroundColor Yellow
+    }
+} else {
+    # 加载豁免清单
+    $u1000WaiverPath = Join-Path $PSScriptRoot "staticcheck-u1000-waivers.txt"
+    $u1000Waivers = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    if (Test-Path -Path $u1000WaiverPath -PathType Leaf) {
+        $waiverLines = [System.IO.File]::ReadAllLines($u1000WaiverPath, [System.Text.Encoding]::UTF8)
+        foreach ($wl in $waiverLines) {
+            $trimmed = $wl.Trim()
+            if ($trimmed -and -not $trimmed.StartsWith('#')) {
+                $null = $u1000Waivers.Add($trimmed)
+            }
+        }
+    }
+
+    # 待扫描的 Go 模块列表（所有含 go.mod 的活跃模块，排除 .worktrees/build）
+    # 维护说明：新增模块时在此追加；废弃模块时移除对应行
+    $goModules = @(
+        "projects/wind-daq/services/api-go",
+        "projects/wind-daq/apps/desktop-wails",
+        "shared/device-sdk/go",
+        "shared/motion-control/go",
+        "shared/algorithms/go/fivehole",
+        "shared/algorithms/go/sevenhole",
+        "shared/algorithms/go/threehole",
+        "projects/motion-controller/services/api-go",
+        "projects/motion-controller/apps/desktop-wails",
+        "projects/five-hole-interpolator/apps/desktop-wails",
+        "projects/three-hole-interpolator/apps/desktop-wails",
+        "projects/probe-interpolator/apps/desktop-wails",
+        "projects/daq-t1603/apps/desktop-wails",
+        "projects/daq-p1604/apps/desktop-wails",
+        "projects/1604Cal",
+        "programs/p1604-unit-diag",
+        "programs/p1604-ts-diag"
+    )
+
+    # staticcheck 输出格式：file:line:col: <kind> <name> is unused (U1000)
+    # 正则提取 file / kind / name，组合豁免键
+    $u1000Pattern = '^(.+):(\d+):(\d+):\s+(func|type|field|var|const)\s+(.+?)\s+is unused\s+\(U1000\)\s*$'
+
+    foreach ($moduleRel in $goModules) {
+        $moduleAbs = Join-Path $workspaceRoot $moduleRel
+        if (-not (Test-Path -Path $moduleAbs -PathType Container)) { continue }
+
+        # 用 Push-Location 切到模块目录，保证 staticcheck 在正确上下文运行
+        Push-Location $moduleAbs
+        try {
+            # GOWORK=off 统一处理 daq-t1603 等不在 go.work use 列表的模块
+            # PowerShell 原生 $env: 方式设置环境变量，输出用数组捕获
+            $prevGowork = $env:GOWORK
+            $env:GOWORK = "off"
+            $output = & staticcheck -checks U1000 ./... 2>&1 | Where-Object { $_ -is [string] }
+            $env:GOWORK = $prevGowork
+            foreach ($line in $output) {
+                if ($line -match $u1000Pattern) {
+                    $fileRel = $matches[1] -replace '\\', '/'
+                    $kind = $matches[4]
+                    $name = $matches[5]
+                    $waiverKey = "$moduleRel/$fileRel::$kind::$name"
+                    if (-not $u1000Waivers.Contains($waiverKey)) {
+                        $errors.Add("DEADCODE: unused $kind $name in $moduleRel/$fileRel`: line $($matches[2]) (remove source or add to scripts/staticcheck-u1000-waivers.txt)")
+                    }
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
 # ---- 3. Results ----
 if ($errors.Count -gt 0) {
     if (-not $Quiet) {
