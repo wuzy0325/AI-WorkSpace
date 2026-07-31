@@ -8,6 +8,8 @@ const (
 	StatusDisconnected DeviceStatus = iota
 	StatusConnected
 	StatusAcquiring
+	StatusStarting
+	StatusStopping
 	StatusError
 )
 
@@ -19,6 +21,10 @@ func (s DeviceStatus) String() string {
 		return "Connected"
 	case StatusAcquiring:
 		return "Acquiring"
+	case StatusStarting:
+		return "Starting"
+	case StatusStopping:
+		return "Stopping"
 	case StatusError:
 		return "Error"
 	default:
@@ -28,12 +34,12 @@ func (s DeviceStatus) String() string {
 
 type T1603Config struct {
 	ThermocoupleTypes string `json:"thermocoupleTypes"` // 16 chars, one per channel
-	ChannelMask       string `json:"channelMask"`        // hex 0000-FFFF
-	SamplingRate      int    `json:"samplingRate"`       // Hz
-	AverageCount      int    `json:"averageCount"`       // 1-100
-	ShowTimestamp     bool   `json:"showTimestamp"`      // 启用设备硬件时间戳（@fe TIME）
+	ChannelMask       string `json:"channelMask"`       // hex 0000-FFFF
+	SamplingRate      int    `json:"samplingRate"`      // Hz
+	AverageCount      int    `json:"averageCount"`      // 1-100
+	ShowTimestamp     bool   `json:"showTimestamp"`     // 启用设备硬件时间戳（@fe TIME）
 	ShowSequence      bool   `json:"showSequence"`
-	AutoConnect      bool   `json:"autoConnect"`        // 启动时自动连接
+	AutoConnect       bool   `json:"autoConnect"` // 启动时自动连接
 }
 
 type ChannelConfig struct {

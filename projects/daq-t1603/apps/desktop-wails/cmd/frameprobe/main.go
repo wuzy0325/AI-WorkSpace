@@ -17,7 +17,12 @@ import (
 const globalWatchdogTimeout = 5 * time.Minute
 
 func main() {
-	conn, err := net.DialTimeout("tcp", "192.168.1.10:9000", 5*time.Second)
+	// ADR-009 R2-1：改用 sharedproto.DialTCP 替代 net.DialTimeout。
+	// net.DialTimeout 依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时
+	// Dial 可能永远不返回，工具启动即卡死。sharedproto.DialTCP 内部用 goroutine +
+	// time.After 软超时 + abandoned 信号，主线程在 timeout 后立即返回，晚到 conn
+	// 被 Close 不泄漏（R1-4 整改保证）。
+	conn, err := protocol.DialTCP("192.168.1.10:9000", "", 5*time.Second)
 	if err != nil {
 		fmt.Printf("连接失败: %v\n", err)
 		return
@@ -36,15 +41,15 @@ func main() {
 
 	// 模拟 syncHardwareConfig：查询配置并归一化
 	fmt.Println("\n=== 查询并归一化配置 ===")
-	sendCmd(conn, "@e3")       // 16 位热电偶类型
-	sendCmdIdle(conn, "@fd MCH") // 通道掩码
-	sendCmdIdle(conn, "@fd SPS") // 采样间隔
+	sendCmd(conn, "@e3")              // 16 位热电偶类型
+	sendCmdIdle(conn, "@fd MCH")      // 通道掩码
+	sendCmdIdle(conn, "@fd SPS")      // 采样间隔
 	sendCmdExact(conn, "@fd BIN", 1)  // 当前二进制模式
 	sendCmdExact(conn, "@fd TIME", 1) // 时间戳
 	sendCmdExact(conn, "@fd HEAD", 1) // 序列号
-	sendCmd(conn, "@fe BIN 1")   // ★ 归一化为二进制
-	sendCmd(conn, "@fe TIME 0")  // 关闭时间戳
-	sendCmd(conn, "@fe HEAD 0")  // 关闭序列号
+	sendCmd(conn, "@fe BIN 1")        // ★ 归一化为二进制
+	sendCmd(conn, "@fe TIME 0")       // 关闭时间戳
+	sendCmd(conn, "@fe HEAD 0")       // 关闭序列号
 	time.Sleep(100 * time.Millisecond)
 
 	// 停止可能正在进行的采集，排空缓冲区

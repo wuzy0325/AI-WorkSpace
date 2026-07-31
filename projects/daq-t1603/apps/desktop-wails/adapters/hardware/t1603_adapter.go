@@ -28,6 +28,13 @@ const (
 	adapterBackpressureWarnIntervalMs = int64(5000)
 )
 
+type acquisitionOperation string
+
+const (
+	acquisitionOperationStarting acquisitionOperation = "starting"
+	acquisitionOperationStopping acquisitionOperation = "stopping"
+)
+
 // hzToSpsMs 将频率(Hz)转换为设备 SPS 采集间隔(毫秒)
 // 设备 SPS 参数含义为采集间隔毫秒，实际频率 = 1000/SPS
 func hzToSpsMs(hz int) int {
@@ -46,13 +53,14 @@ func spsMsToHz(ms int) int {
 }
 
 type T1603Adapter struct {
-	mu       sync.RWMutex
-	drivers  map[string]*sharedhw.DAQT1603
-	status   map[string]*core.DeviceState
-	sinks    map[string]func(core.TemperatureSnapshot)
-	channels map[string]chan core.TemperatureSnapshot
-	stopChs  map[string]chan struct{}
-	logSink  func(DeviceLogEntry)
+	mu         sync.RWMutex
+	drivers    map[string]*sharedhw.DAQT1603
+	status     map[string]*core.DeviceState
+	sinks      map[string]func(core.TemperatureSnapshot)
+	channels   map[string]chan core.TemperatureSnapshot
+	stopChs    map[string]chan struct{}
+	operations map[string]acquisitionOperation
+	logSink    func(DeviceLogEntry)
 	// stateSink 设备状态变更回调（ACQ-010/STB-003）：
 	// adapter 在 OnReadLoopExit 等异步状态变化时调用，
 	// 由 main.go 注入为 hub.EmitDeviceState，最终通过
@@ -82,6 +90,7 @@ func NewT1603Adapter() *T1603Adapter {
 		sinks:        make(map[string]func(core.TemperatureSnapshot)),
 		channels:     make(map[string]chan core.TemperatureSnapshot),
 		stopChs:      make(map[string]chan struct{}),
+		operations:   make(map[string]acquisitionOperation),
 		bpWarnLastMs: make(map[string]int64),
 	}
 }
@@ -254,6 +263,7 @@ func (a *T1603Adapter) Connect(profile core.TemperatureProfile) error {
 		driver := a.drivers[profile.ID]
 		delete(a.drivers, profile.ID)
 		delete(a.sinks, profile.ID)
+		delete(a.operations, profile.ID)
 		if done, ok := a.stopChs[profile.ID]; ok {
 			close(done)
 			delete(a.stopChs, profile.ID)
@@ -341,6 +351,7 @@ func (a *T1603Adapter) Disconnect(id string) error {
 		delete(a.stopChs, id)
 	}
 	delete(a.sinks, id)
+	delete(a.operations, id)
 	delete(a.drivers, id)
 	if st, exists := a.status[id]; exists {
 		st.SetStatus(core.StatusDisconnected)
@@ -376,6 +387,13 @@ func (a *T1603Adapter) Disconnect(id string) error {
 
 func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnapshot, error) {
 	a.mu.Lock()
+	if operation, exists := a.operations[id]; exists {
+		a.mu.Unlock()
+		if operation == acquisitionOperationStopping {
+			return nil, fmt.Errorf("device %s stop in progress", id)
+		}
+		return nil, fmt.Errorf("device %s start in progress", id)
+	}
 	dev, ok := a.drivers[id]
 	if !ok {
 		a.mu.Unlock()
@@ -392,6 +410,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 	done := make(chan struct{})
 	a.channels[id] = ch
 	a.stopChs[id] = done
+	a.operations[id] = acquisitionOperationStarting
 
 	directSink := func(snapshot core.TemperatureSnapshot) {
 		// 水位监控：超过阈值时发限频 warn 日志。
@@ -408,8 +427,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 	a.sinks[id] = directSink
 
 	if st, exists := a.status[id]; exists {
-		st.SetStatus(core.StatusAcquiring)
-		st.AcquiringAt = core.TimestampMs()
+		st.SetStatus(core.StatusStarting)
 	}
 	a.mu.Unlock()
 
@@ -439,6 +457,7 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		delete(a.channels, id)
 		delete(a.stopChs, id)
 		delete(a.sinks, id)
+		delete(a.operations, id)
 		if st, exists := a.status[id]; exists {
 			st.SetStatus(core.StatusConnected)
 			st.AcquiringAt = 0
@@ -450,6 +469,14 @@ func (a *T1603Adapter) StartAcquisition(id string) (<-chan core.TemperatureSnaps
 		}
 		return nil, fmt.Errorf("start acquisition %s: %w", id, err)
 	}
+
+	a.mu.Lock()
+	delete(a.operations, id)
+	if st, exists := a.status[id]; exists {
+		st.SetStatus(core.StatusAcquiring)
+		st.AcquiringAt = core.TimestampMs()
+	}
+	a.mu.Unlock()
 
 	// 校验采集启动后状态，防止与 StopAcquisition 的竞态
 	// 如果 stopChs[id] 已被清除，说明在 dev.StartAcquisition() 期间 StopAcquisition 被调用，
@@ -499,6 +526,13 @@ func (a *T1603Adapter) StopAcquisition(id string) error {
 	// 锁内只标记停止 + 提取驱动句柄；dev.StopAcquisition 必须在锁外调用，
 	// 否则会与 OnReadLoopExit/OnConfigSynced 回调互锁。
 	a.mu.Lock()
+	if operation, exists := a.operations[id]; exists {
+		a.mu.Unlock()
+		if operation == acquisitionOperationStarting {
+			return fmt.Errorf("device %s start in progress", id)
+		}
+		return fmt.Errorf("device %s stop in progress", id)
+	}
 	dev, ok := a.drivers[id]
 	if !ok {
 		a.mu.Unlock()
@@ -506,19 +540,30 @@ func (a *T1603Adapter) StopAcquisition(id string) error {
 	}
 	if done, exists := a.stopChs[id]; exists {
 		close(done)
-		delete(a.stopChs, id)
 	}
 	delete(a.sinks, id)
 	chToClose, hasCh := a.channels[id]
-	if hasCh {
-		delete(a.channels, id)
-	}
+	a.operations[id] = acquisitionOperationStopping
 	if st, exists := a.status[id]; exists {
-		st.SetStatus(core.StatusConnected)
+		st.SetStatus(core.StatusStopping)
 	}
 	a.mu.Unlock()
 
 	stopErr := dev.StopAcquisition()
+	a.mu.Lock()
+	delete(a.operations, id)
+	delete(a.stopChs, id)
+	delete(a.channels, id)
+	if st, exists := a.status[id]; exists {
+		if stopErr == nil {
+			st.SetStatus(core.StatusConnected)
+			st.AcquiringAt = 0
+		} else {
+			st.SetStatus(core.StatusError)
+			st.Error = stopErr.Error()
+		}
+	}
+	a.mu.Unlock()
 	if hasCh {
 		close(chToClose)
 	}
@@ -535,6 +580,9 @@ func (a *T1603Adapter) Status(id string) (core.DeviceState, bool) {
 	}
 	dev, hasDev := a.drivers[id]
 	if hasDev {
+		if _, operating := a.operations[id]; operating {
+			return *st, true
+		}
 		ds := dev.Status()
 		// 信任驱动层状态：硬件层是 acquiring/connection 的唯一真相源。
 		// 此前用 'st.Status != StatusAcquiring' 守卫想抑制闪烁，但会使

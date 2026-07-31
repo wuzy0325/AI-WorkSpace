@@ -27,7 +27,17 @@ const addError = ref<string | null>(null)
 const isToggling = ref(false)
 
 const isAcquiring = computed(() =>
-  deviceStore.profiles.some((p) => deviceStore.acquiringFor(p.id))
+  deviceStore.profiles.some((p) => {
+    const status = deviceStore.statusFor(p.id)
+    return status === 'Acquiring' || status === 'Starting' || status === 'Stopping'
+  })
+)
+
+const isTransitioning = computed(() =>
+  deviceStore.profiles.some((p) => {
+    const status = deviceStore.statusFor(p.id)
+    return status === 'Starting' || status === 'Stopping'
+  })
 )
 
 const canConfigure = computed(() => !!deviceStore.selectedId)
@@ -41,7 +51,7 @@ const canConfigure = computed(() => !!deviceStore.selectedId)
  */
 async function toggleAcquisition() {
   // 操作锁检查：如果正在进行采集切换操作，忽略后续点击
-  if (isToggling.value) {
+  if (isToggling.value || isTransitioning.value) {
     return
   }
 
@@ -50,7 +60,7 @@ async function toggleAcquisition() {
     if (isAcquiring.value) {
       // 停止所有正在采集的设备
       const acquiringIds = deviceStore.profiles
-        .filter((p) => deviceStore.acquiringFor(p.id))
+        .filter((p) => deviceStore.statusFor(p.id) === 'Acquiring')
         .map((p) => p.id)
       await Promise.allSettled(acquiringIds.map((id) => deviceStore.stopAcquisition(id)))
     } else {
@@ -132,7 +142,7 @@ async function confirmAddDevice() {
   <div class="shell">
     <MainTopBar
       :version="appVersion"
-      :is-toggling="isToggling"
+      :is-toggling="isToggling || isTransitioning"
       @add-device="openAddDevice"
       @toggle-acquisition="toggleAcquisition"
     />

@@ -72,7 +72,15 @@ func (s *T1603Scanner) Scan() ([]core.ScanResult, error) {
 		if net.ParseIP(t).To4() == nil {
 			continue
 		}
-		_ = socket.Send(cmd, t, t1603DiscoveryPort)
+		if err := socket.Send(cmd, t, t1603DiscoveryPort); err != nil {
+			// ADR-009 finding 6：Send 失败说明 socket handle 已被 watchdog Closesocket 销毁，
+			// 后续 Send/Receive 不可复用（契约：超时后 socket 不可复用）。
+			// 复核修订 finding 3 修复：直接返回空结果，不进入 Receive 循环——
+			// 旧实现 break 后仍调用 readT1603Responses(socket, ...)，会继续调用同一 socket 的
+			// Receive，但 socket handle 可能已被 watchdog 销毁，行为不可预期。
+			// 调用方 defer socket.Close() 释放资源。
+			return nil, nil
+		}
 	}
 
 	return readT1603Responses(socket, s.timeout), nil

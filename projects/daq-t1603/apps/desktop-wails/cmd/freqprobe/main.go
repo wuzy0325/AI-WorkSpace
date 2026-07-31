@@ -36,7 +36,12 @@ func main() {
 	fmt.Printf("目标设备: %s\n", addr)
 	fmt.Printf("SPS 含义: 采集间隔(毫秒), 实际频率 = 1000/SPS\n\n")
 
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	// ADR-009 R2-1：改用 sharedproto.DialTCP 替代 net.DialTimeout。
+	// net.DialTimeout 依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时
+	// Dial 可能永远不返回，工具启动即卡死。sharedproto.DialTCP 内部用 goroutine +
+	// time.After 软超时 + abandoned 信号，主线程在 timeout 后立即返回，晚到 conn
+	// 被 Close 不泄漏（R1-4 整改保证）。
+	conn, err := protocol.DialTCP(addr, "", 5*time.Second)
 	if err != nil {
 		fmt.Printf("连接失败: %v\n", err)
 		return

@@ -104,6 +104,85 @@ func TestT1603ScannerRejectsConcurrentScan(t *testing.T) {
 	scanner.scanMu.Unlock()
 }
 
+// failingWritePacketConn 是 mock net.PacketConn，WriteTo 总是返回错误（即 Send 失败），
+// ReadFrom 计数用于断言"Send 失败后不调用 Receive"（复核修订 finding 3）。
+type failingWritePacketConn struct {
+	receiveCount int32
+	receiveMu    sync.Mutex
+}
+
+func (c *failingWritePacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	c.receiveMu.Lock()
+	c.receiveCount++
+	c.receiveMu.Unlock()
+	return 0, nil, net.ErrClosed
+}
+
+func (c *failingWritePacketConn) WriteTo(_ []byte, _ net.Addr) (int, error) {
+	return 0, net.ErrClosed
+}
+
+func (c *failingWritePacketConn) Close() error                     { return nil }
+func (c *failingWritePacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (c *failingWritePacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *failingWritePacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *failingWritePacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *failingWritePacketConn) ReceiveCallCount() int32 {
+	c.receiveMu.Lock()
+	defer c.receiveMu.Unlock()
+	return c.receiveCount
+}
+
+// TestT1603Scanner_SendFailureSkipsReceive 验证 ADR-009 复核修订 finding 3：
+// T1603Scanner.Scan 在 Send 失败后必须直接返回 nil，不调用同一 socket 的 Receive。
+//
+// 测试前置：
+//   - T1603Scanner 配置 2s timeout（足够长，若进入 Receive 循环会让测试超时）
+//   - listenPacket 注入 failingWritePacketConn：WriteTo 总返回 net.ErrClosed（即 Send 失败）
+//   - ReadFrom 计数器初始 0
+//
+// 测试步骤：
+//   - 调用 scanner.Scan()
+//
+// 期待结果：
+//   - 返回 nil 错误
+//   - 返回空结果（nil 或 len==0）
+//   - 耗时应远小于 2s timeout（不进入 Receive 循环）
+//   - ReadFrom 调用次数 == 0（Send 失败后不调用 Receive）
+//
+// 修复前：Send 失败 break 后仍调用 readT1603Responses(socket, ...)，ReadFrom 被调用 1 次，
+//
+//	测试断言 ReceiveCallCount == 0 失败。
+//
+// 修复后：Send 失败直接 return nil, nil，ReadFrom 从未被调用，测试通过。
+func TestT1603Scanner_SendFailureSkipsReceive(t *testing.T) {
+	failingConn := &failingWritePacketConn{}
+	scanner := &T1603Scanner{
+		timeout: 2 * time.Second,
+		listenPacket: func(string, string) (net.PacketConn, error) {
+			return failingConn, nil
+		},
+	}
+
+	started := time.Now()
+	results, err := scanner.Scan()
+	elapsed := time.Since(started)
+
+	if err != nil {
+		t.Fatalf("Scan should return nil error on Send failure, got: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Scan should return empty results on Send failure, got %d items", len(results))
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("Scan should return immediately on Send failure (不进入 Receive 循环), took %v", elapsed)
+	}
+	if count := failingConn.ReceiveCallCount(); count != 0 {
+		t.Fatalf("Receive should NOT be called after Send failure, got %d calls", count)
+	}
+}
+
 func TestParseResponse_JSON(t *testing.T) {
 	tests := []struct {
 		name       string
