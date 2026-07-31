@@ -2,19 +2,8 @@ package interpolation
 
 import (
 	"math"
-	"strconv"
 	"testing"
 )
-
-func makePrbLines(cma float64, items ...string) []string {
-	lines := []string{formatFloat(cma), "4"}
-	lines = append(lines, items...)
-	return lines
-}
-
-func formatFloat(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
-}
 
 func TestParsePrbLines(t *testing.T) {
 	lines := []string{

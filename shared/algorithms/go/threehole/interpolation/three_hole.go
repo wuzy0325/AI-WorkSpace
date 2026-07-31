@@ -173,11 +173,6 @@ func (t *ThreeHoleInterpolator) Calculate(input InterpolationInput) (Interpolati
 	}, nil
 }
 
-func (t *ThreeHoleInterpolator) interpolate(kbMeasured, ma float64) *calibrationItem {
-	match, _ := t.interpolateWithWarning(kbMeasured, ma)
-	return match
-}
-
 func (t *ThreeHoleInterpolator) interpolateWithWarning(kbMeasured, ma float64) (*calibrationItem, bool) {
 	kbExtrapolated := false
 
