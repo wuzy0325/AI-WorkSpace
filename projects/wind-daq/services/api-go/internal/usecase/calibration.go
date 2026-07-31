@@ -1944,8 +1944,21 @@ func (f *fallbackRuntime) StopMotion() error {
 
 // stopAllMotion 停止所有运动控制器中 Moving=true 的轴。
 // CalibrationManager.stopMotion 与 fallbackRuntime.StopMotion 共用此逻辑。
+//
+// 为什么用 3 秒有界超时而不是 context.Background()：
+// ServiceShutdown 在 Wails v3 主线程同步执行（application.cleanup 经 InvokeSync 投递），
+// 此函数串行调用 StatusAll + 每轴 Stop，任一硬件卡住就会阻塞 GUI 主线程，
+// 表现为"退出确认后程序无响应"。B140 单命令已有 5 秒 watchdog 兜底，但 queryStatus
+// 串行多个命令会累积到 ~70 秒。
+//
+// 3 秒超时生效路径（B140 sendCommand 的 ctx 取消语义，见 b140_motion.go:1450-1463）：
+//   - 未启动的新命令：立即返回 ctx.Err()（watchdogTimeout≤0 分支）
+//   - 当前正在执行的命令：进入 case <-ctx.Done() 后仍需 r := <-done 等 watchdog
+//     Close conn 解除 Read 阻塞，最长 5 秒
+// 因此最坏路径 = 3s 等首命令 ctx 取消 + 5s 等该命令 watchdog Close = 8s 内完成退出。
 func stopAllMotion(mgr ports.MotionManager) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	var firstErr error
 	for _, status := range mgr.StatusAll(ctx) {
 		for _, axis := range status.Axes {
