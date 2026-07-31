@@ -1,6 +1,7 @@
 go 1.26.1
 
 use (
+	./projects/daq-t1603/apps/desktop-wails
 	./projects/probe-interpolator/apps/desktop-wails
 	programs/p1604-unit-diag
 	projects/daq-p1604/apps/desktop-wails

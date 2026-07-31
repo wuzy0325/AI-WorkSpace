@@ -29,9 +29,9 @@ Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `
 
 ### Windows Network I/O Constraint
 
-- A field Windows PC reproducibly kept Go network reads blocked after `SetReadDeadline` expired. Treat socket deadlines as soft timeouts only, never as the sole cancellation mechanism for bounded hardware I/O.
-- Handshake, discovery, command-response, stop, and disconnect paths MUST have an independent owner that can call `conn.Close()` without waiting for the blocked goroutine or its mutex. A watchdog-fired connection is invalid and must not be reused.
-- Tests for bounded network I/O MUST include a connection double that ignores deadlines and returns only after `Close`. Full decision and audit: [ADR-009](docs/decisions/ADR-009-windows-network-deadline-fallback.md) and [workspace audit](docs/audits/2026-07-28-go-network-deadline-audit.md).
+- **永远不要把 socket deadline 作为有界硬件 I/O 的唯一取消机制**。Treat socket deadlines as soft timeouts only. 这是 Go 在 Windows 上的已知内核级问题（详见 [go-windows-known-issues](docs/runbooks/go-windows-known-issues.zh-CN.md)）。
+- Handshake、discovery、command-response、stop、disconnect 路径**必须**有独立 owner 可直接调用 `conn.Close()`，不等待阻塞 goroutine。被 watchdog 关闭的连接不可复用。
+- 有界网络 I/O 的测试**必须**包含忽略 deadline、只在 `Close` 后返回的连接 double。完整决策：[ADR-009](docs/decisions/ADR-009-windows-network-deadline-fallback.md)。
 
 ### Pre-submit / Release / Loading
 
@@ -42,7 +42,7 @@ Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (50191 symbols, 100045 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (53580 symbols, 110679 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
