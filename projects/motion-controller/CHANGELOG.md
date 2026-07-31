@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.4] - 2026-07-31
+
+### Internal
+
+- 清理 motion-controller 项目下误入库的临时脚本与测试 HTML（chore commit `007a61f`）：删除 `_apply_changes.py`、`_build_nsis.bat`、`_patch_dll_path.py`、`_patch_import_order.py`、`_regen_nsi.py`、`test-cases.html`，将根目录原型 `redesign-preview.html` 迁移至 `docs/prototype/redesign-preview.html`。
+- 本版本无功能变更，运行时行为与 0.3.3 完全一致。按用户强制要求重新打包发布。
+
+### Verification
+
+- `go test ./... -count=1 -timeout 120s`: passed
+- `go vet ./...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis` 构建安装包: passed
+
+### Known Issues
+
+- 暂无。
+
 ## [0.3.3] - 2026-07-22
 
 ### Changed
