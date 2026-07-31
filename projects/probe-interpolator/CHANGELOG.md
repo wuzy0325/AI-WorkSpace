@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.2.0] - 2026-07-31
+
+### Added
+
+- **七孔探针校准模块**：
+  - 新增 `LoadSevenHoleCalibrationCsvFiles` API，支持 7 个 GBK 编码 CSV 文件
+    （内区 1 + 外区 6）导入，退化边缘自动 dither，复用 PRB 折线渲染器展示校准曲线，
+    并返回 warnings 用于退化边缘可观测性。
+  - 新增 `PickSevenHoleFiles` / `GetSevenHoleDataSource` API，
+    支持前端槽位 UI 文件选择与 PRB/CSV 校准数据源切换。
+  - 前端新增 `SevenHoleSlotRow.vue` 组件，与 wind-daq traversal-test 槽位 UI 模式一致，
+    每个槽位独立选择 PRB 或 CSV 校准文件。
+  - 前端新增 `useSevenHoleCalibration.ts` composable，
+    封装校准流程状态管理与 CSV 导入交互逻辑。
+  - 新增 `seven-hole-helpers.ts` 适配层辅助函数与 `seven-hole-slot-row.css` /
+    `seven-hole-workspace.css` 样式文件。
+
+### Changed
+
+- **七孔 PRB 加载流程重构**：`LoadSevenHolePrbFiles` 接受前端预分配的
+  inner + outer[6] 路径数组，取代后端多选对话框 + 后端 basename 路由的旧实现，
+  与 wind-daq traversal-test slot-UI 模式对齐。
+- **CSV 导入重构**：`ImportSevenHoleCsvData` 改为 `csvFieldSetter` 数据驱动模式，
+  取代 9 个独立解析调用 + 9 路错误联合，降低维护成本。
+- **七孔工作区重写**：`SevenHoleWorkspace.vue` 从 947 行精简至约 440 行，
+  校准逻辑迁移至 `useSevenHoleCalibration.ts` composable。
+- **`loadSevenHoleCalibrationCsvFiles` 签名**：从 `[6]string` 改为 `[]string`，
+  移除调用方冗余的数组转换。
+- **build/config.yml `info.version`**：从 wails 模板默认值 `0.0.1` 修正为 `0.2.0`，
+  解决历史版本不同步问题（后续 release 将随 VERSION 一并更新）。
+
+### Fixed
+
+- **文件对话框过滤器不再污染 CSV 导入**（80ed7c8）：
+  `openFileDialog` 预设 PRB 过滤器，CSV 导入链式 `AddFilter` 只是追加而非替换，
+  导致 CSV 对话框同时显示 PRB 文件类型。改为 `openFileDialog` 仅 `SetTitle`，
+  各调用方按场景显式 `AddFilter`（PRB 加载加 `.prb`，CSV 导入加 `.csv/.txt/.dat`）。
+- **GetHelpDocPath 在 Windows dev 模式下找不到 docs/**（80ed7c8）：
+  补充 cwd 兜底及上 4 级目录查找，并校验命中是文件而非目录。
+- **应用图标嵌入错误**（c162dcc）：
+  `main.go` 的 `//go:embed` 由 `appicon.png` 改为 `app_icon.png`，
+  对应图标文件重命名，避免编译时找不到 embed 文件。
+- **NSIS installer 文件名缺前缀**（bdbed99）：
+  本地 makensis 不经过 wails build，`wails_tools.nsh` 不会从 `wails.json` 回填
+  `INFO_PROJECTNAME` 等变量，默认空字符串导致 installer 文件名变成
+  `-<version>-amd64-installer.exe`。显式 `!define` 所有 INFO_* 变量修复。
+
+### Internal
+
+- `Taskfile.yml` 更新 build/release 流程，移除旧 `config.yml`（79 行 wails 模板冗余配置）。
+- `app_icon.png` 替换为高分辨率版本（135KB → 1.19MB），同步 `windows/icon.ico`（21KB → 107KB）。
+- `seven_hole_service_test.go` 扩展测试覆盖（新增校准 CSV 导入与槽位 UI 相关测试）。
+- 三份用户说明书 HTML 同步更新（5/3/7 孔）。
+
+### Verification
+
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed
+- `$env:GOWORK="off"; go vet ./...`: passed
+- `npm install --no-audit --no-fund`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis -DARG_WAILS_AMD64_BINARY=<exe> project.nsi`: passed（UTF-8 BOM 已恢复）
+- `task archive-release`: passed
+
+### Known Issues
+
+- 暂无。
+
 ## [0.1.0] - 2026-07-20
 
 ### Added
