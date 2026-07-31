@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.11.3] - 2026-07-31
+
+### Added
+
+- 双探针遍历（dual traversal）后端引入 `ManagerRegistry` 与 `ManagedTraversalManager` 接口，提供 probe-scoped 生命周期管理：每探针一套独立 goroutine + channel（满足"每设备独立线程避免阻塞"硬约束），同 probe 的 Start/Stop/Pause/Resume/RunPoint/CloseProbe 串行化但**不阻塞其他 probe**，全局 `admissionGate` 仅用于 workflow lease 交接等全局事务。
+- 实现 dual traversal spec I2 的 lease 端口（`WorkflowLeasePort` / `ControllerLeasePort`）：opaque lease token（`crypto/rand` + hex）保证旧 generation 在 lease 被新 session 接管后无法续约或释放；`(controllerID, axis)` 元组作为资源独占粒度，允许两个 probe 分别 lease 同一控制器的不同物理轴（X 轴 + Y 轴挂同一 B140 是合法配置），`axis=""` 退化为控制器级 lease 兼容遗留调用。
+- 新增 `SessionToken`（probeID + 单调 generation）作为完成回调的权威身份：registry 仅在 token 仍是当前 session 且未完成时原子减计数一次，旧 generation 通知只记录诊断不影响当前 session，避免陈旧回调误释放新 session 的 lease。
+- dual 模式新增 probe-scoped `LoadCheckpoint` / `ResumeFromCheckpoint` / `ClearCheckpoint` façade 与 `DualTraversalRecoveryIndex`：不变量"映射存在 ⟺ checkpoint 文件存在"，stopped/error 终态保留映射，completed 注销，Stat 失败或文件不存在时注销 stale 映射。
+- 新增 `TaskIDGenerator`（进程内单调 taskID 生成）与 `ErrRecoverableTaskExists` / `ErrTaskIDRegisteredToOtherProbe` / `ErrCheckpointVersionMismatch` 哨兵错误；dual 路径仅接受 v3 checkpoint，不自动迁移 v1/v2。
+- 新增 `discovery_socket_windows.go`：UDP 设备发现的 Windows raw winsock 分平台实现，使用 `SO_SNDTIMEO`（`0x1005` 常量，因 `golang.org/x/sys/windows` 未导出）+ 独立 watchdog + stop-and-join 语义，落实 ADR-009 "永远不要把 socket deadline 作为有界硬件 I/O 的唯一取消机制"。
+- 新增 `discovery_socket.go` 跨平台接口 + `discovery_socket_other.go` 非 Windows fallback；`network_scanner.go` 改用 `openDiscoverySocket` 并新增 `interfaceTimeout=500ms`（`net.Interfaces` 在异常虚拟网卡上无 context 版本会长期阻塞，硬性上限后回退到 `255.255.255.255` 有限广播）。
+- 新增 `wtnPXINoDataTimeout=10s` 无数据 timer：WTN-PXI 通常以高采样率推送 8 通道数据帧，10s 内无任何字节到达一定是网络中断/设备断电/网线脱落/服务端崩溃；独立 `time.AfterFunc` timer 不依赖循环体执行，即使 Read 永久阻塞也能到期触发。
+- 新增 `DeviceManager.connMuRegistry sync.Map`：序列化同一 device id 上的 Connect/Disconnect/DeleteProfile，防止重连场景下两个 goroutine 同时操作同一物理设备（TCP/串口设备只允许一个会话）。
+- 前端新增 `dual-traversal.ts` zh/en 字典与 `i18nInterpolate.ts` 安全占位符替换工具：`String.prototype.replace` 中 replacement 的 `$` 字符会被特殊解析（`$$` → `$`、`$&` → 匹配子串等），后端错误消息中的设备名是不可信输入，函数式 replace 统一兜底避免 `$` 特殊模式注入风险。
+- 前端新增 `traversalErrorMapper.ts`：把后端 `device X is not acquiring` / `recoverable_task_exists` 等错误字符串集中映射为本地化用户可读消息，抽取 `RECOVERABLE_TASK_EXISTS_CODE` 常量避免散落字符串匹配。
+- 前端新增 `dualTraversalRuntime.ts`：拆分 `pollingUnsubscribers`（终态后停止）与 `snapshotUnsubscribers`（终态后保留让用户在结果界面看压力值），避免无意义轮询浪费 CPU/网络；`realtimeInFlight` 守卫避免高频 snapshot 节流间隙请求堆积导致结果闪烁；`optimisticStatusUntil` 窗口防止 pause/resume 乐观更新期间陈旧轮询回退状态造成 UI 闪烁。
+- 前端新增 `traversalModeStore.ts`：single/dual 模式全局 store，带活动检测与 localStorage 持久化。
+- 前端 `SevenHoleCharts.vue` 完成 ECharts i18n 完整覆盖：axis / tooltip / legend / 标题全部走 i18nStore，延续 daq-p1604 / daq-t1603 / wind-daq 三项目 i18n 改造工作。
+- 新增 `ports/traversal.go` 集中定义 dual traversal 契约端口（`TaskIDGenerator` / `WorkflowLeasePort` / `ControllerLeasePort` / `DualTraversalRecoveryIndex` / `CheckpointStore`），使 usecase 不直接依赖 `resourcelock.Service` 或 storage adapter，符合六边形架构约束。
+
+### Changed
+
+- DAQ-P-1604Pre 默认 host/port 从 `192.168.0.7:9001` 改为 `192.168.3.232:23`（参考 Cursor DAQ 实测值），`CMD_ACQUISITION_CTRL` 命令码从 `0x10` 改为 `0x14`（旧值设备不识别）。旧 profile 已保存的 host/port 不受影响，仅影响新发现设备写入的默认值。
+- 五孔探针校准算法 `AcquireData(point, channelReader, samplesPerPoint)` 直接返回 `"五孔探针 AcquireData 缺少探针通道配置，请通过 AcquireDataWithConfig 调用"` 错误，避免悄悄走"零值 fallback"老路径导致 `Kα=0 / Kβ=0 / CPT=0` 无告警。新增 `AcquireDataWithChannels` 通过 `onRealtime` / `onSampleProgress` 回调驱动前端实时监控显示。
+- `usecase/traversal_devices.go` 新增采集态与设备可读名检查：`referencedAcquisitionDevices` / `firstNonAcquiringDevice`，dual 启动时若任一引用设备未在采集态则拒绝并返回本地化错误。
+- `usecase/device_manager.go` 新增 `connMuRegistry sync.Map` 字段，序列化同一 device id 的硬件 I/O 操作。
+- `adapters/runtime/controller_lease.go` 实现 `WorkflowLease` + `ControllerLease` adapter：`WorkflowLease.Renew` 不直接 `Acquire` 兜底（未持有时 `Acquire` 会隐式重建 lease 违背续约语义），先 `IsHeld` 校验当前 holder 匹配再续约。
+- `api/server.go` `Deps` 新增 `TraversalRegistry TraversalRegistry` 字段：nil 时 probe-scoped 路由返回 503，legacy 单段 `/api/traversal/{action}` 路径不使用本字段（spec FR4 兼容）。
+- `ports/device.go` 新增 `ErrorNotifiable` 接口：设备层错误可主动通知 usecase 触发状态转移。
+
+### Fixed
+
+- 修复双探针遍历实时数据冻结（已在 0.11.2 修复，本版本进一步加固）：撤销 `onSnapshot` 在运行态直接 return 的抑制逻辑，`onSnapshot` 在所有状态下持续更新 `realtimePressures`，`onProgress.latestData` 仅在测点完成时提供权威插值结果覆盖。
+- 修复双探针遍历 dashboard 设备流在 dual 页面切换时被错误断开的问题（`deviceStore` 引用计数）。
+- 修复双探针遍历实时结果只来自后端 `latestData` 而忽略 DAQ 快照的问题：改为以 DAQ 快照为唯一实时数据源，`latestData` 仅在测点完成时提供权威插值结果。
+- 修复七孔校准各区波形图算法错误（图表数据序列错位、tooltip 显示异常）。
+- 修复七孔校准顶部状态栏冗余显示马赫数/速度（与侧边栏重复）的问题。
+- 修复遍历视图插值状态栏 `interpStatus` 切换时高度跳变的布局抖动问题。
+- NSIS 安装脚本添加 UTF-8 BOM（与 1604Cal 项目对齐），避免手动调用 makensis 时解析失败。
+
+### Compatibility
+
+- 配置文件格式：兼容；DAQ-P-1604Pre 默认 host/port 变化仅影响新发现设备，旧 profile 已保存值不受影响。
+- 数据文件格式：兼容；dual traversal checkpoint 仅接受 v3，v1/v2 不自动迁移（返回 `ErrCheckpointVersionMismatch`），legacy 单探针 checkpoint 路径不动。
+- 设备协议行为：DAQ-P-1604Pre `CMD_ACQUISITION_CTRL` 命令码修正为 `0x14` 是 bug 修复（旧值设备不识别），非破坏性变更。
+- API 契约：`Deps` 结构体新增 `TraversalRegistry` 字段，外部装配点需补字段（生产装配由 composition root 注入，影响有限）；`FiveHoleAlgorithm.AcquireData` 直接返回错误而非零值，强制走 `AcquireDataWithConfig`，外部调用方需迁移。
+
+### Verification
+
+- `go build ./services/api-go/...` / `go vet ./services/api-go/...`: passed
+- `go test -race ./services/api-go/internal/...`: passed (usecase 108s)
+- `shared/device-sdk/go/...`: `go build` / `go vet` / `go test -race -count=1`: passed (daq/hardware 38s, protocol 20s)
+- `npm run typecheck`: passed
+- `npm run test`: passed (33 files, 348 tests)
+- `npm run build`: passed (built in 11.21s)
+- `task release`: passed (production build with -tags production, GOWORK=off)
+- `makensis -DARG_WAILS_AMD64_BINARY=build/bin/wind-daq.exe build/windows/installer/project.nsi`: passed (6.95 MB installer)
+- `task archive-release`: passed (archived to releases/bin/)
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+- dual traversal checkpoint 仅支持 v3 格式，不支持 v1/v2 自动迁移。
+
 ## [0.11.2] - 2026-07-29
 
 ### Fixed
