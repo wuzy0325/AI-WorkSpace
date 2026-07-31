@@ -65,15 +65,8 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// 多设备采集态校验：通道可能跨设备绑定（如五孔在 A、大气压/温度在 B），
 	// 逐台去重校验，任一设备未采集都在动设备前失败。
 	if acqController != nil {
-		checked := make(map[string]bool)
-		for _, ref := range config.ResolvedChannelRefs() {
-			if checked[ref.DeviceID] {
-				continue
-			}
-			checked[ref.DeviceID] = true
-			if !acqController.IsAcquiring(ref.DeviceID) {
-				return m.failWithCode("device %s is not acquiring; traversal will not move to point %d", traversal.ErrAcquisitionFailed, ref.DeviceID, pointIndex+1)
-			}
+		if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
+			return m.failWithCode("device %s is not acquiring; traversal will not move to point %d", traversal.ErrAcquisitionFailed, deviceName, pointIndex+1)
 		}
 	}
 	// 采样通道按设备分组：每组内部键 ↔ 硬件索引一一对应，
@@ -122,12 +115,30 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		"point", fmt.Sprintf("(X=%s, Y=%s, Z=%s, U=%s)",
 			formatCoord(point.X), formatCoord(point.Y), formatCoord(point.Z), formatCoord(point.U)),
 	)
+	m.motionCommandMu.Lock()
+	m.mu.RLock()
+	paused := m.isPaused
+	stopped := m.isStopped
+	m.mu.RUnlock()
+	if paused || stopped {
+		m.motionCommandMu.Unlock()
+		return nil
+	}
 	for _, status := range controllerStatuses {
 		if !status.Connected {
 			continue
 		}
 		for axis, position := range availableAxisTargets(status, point, motionAxes) {
+			m.mu.RLock()
+			paused = m.isPaused
+			stopped = m.isStopped
+			m.mu.RUnlock()
+			if paused || stopped {
+				m.motionCommandMu.Unlock()
+				return nil
+			}
 			if err := m.motion.MoveTo(ctx, status.ID, axis, position); err != nil {
+				m.motionCommandMu.Unlock()
 				slog.Error("traversal move failed",
 					"component", "traversal",
 					"task_id", taskID,
@@ -135,6 +146,10 @@ func (m *TraversalManager) RunCurrentPoint() error {
 					"axis", axis,
 					"error", err,
 				)
+				stopErr := m.stopMotionWithEmergencyFallback()
+				if stopErr != nil {
+					return m.failWithCode("move %s axis: %v; stopping traversal axes also failed: %v", traversal.ErrMotionFailed, axis, err, stopErr)
+				}
 				return m.failWithCode("move %s axis: %v", traversal.ErrMotionFailed, axis, err)
 			}
 			slog.Info("traversal move sent",
@@ -146,6 +161,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 			)
 		}
 	}
+	m.motionCommandMu.Unlock()
 
 	motionComplete, reason, failure := m.waitForMotionComplete(ctx, point, taskID, pointIndex)
 	slog.Info("traversal motion phase ended",
@@ -249,7 +265,7 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	session := m.session
 	m.mu.RUnlock()
 	if session != nil && session.ctx.Err() != nil {
-		return m.failWithCode("traversal cancelled during stabilization", traversal.ErrUnknown)
+		return nil
 	}
 
 	// 阶段3：采集中（含数据验证 + 可选重试）
@@ -298,6 +314,9 @@ func (m *TraversalManager) RunCurrentPoint() error {
 		averaged, err := m.collectAveragedSamples(taskID, channelGroups, samplesPerPoint)
 		callEnd := time.Now()
 		if err != nil {
+			if m.isTaskCancelled(taskID) {
+				return nil
+			}
 			slog.Error("traversal sampling failed",
 				"component", "traversal",
 				"task_id", taskID,
@@ -1262,6 +1281,13 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 	// 注意按"完成样本"而非"任意新帧"重置：多设备混采时若某台设备死透，
 	// 其余设备的新帧不会掩盖停滞，凑不齐样本仍会超时。
 	stallDeadline := time.Now().Add(acquisitionStallTimeout)
+	// I-3 修复：notAcquiring 累计时长上限。
+	// 原实现：notAcquiring=true 时每次循环重置 stallDeadline，导致 stallDeadline 永远
+	// 不会到期，设备永久故障+用户不 Stop 时遍历永久卡死。
+	// 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），但累计 notAcquiring
+	// 时长超过 acquisitionNotAcquiringTimeout 即判失败，避免设备永久故障时卡死。
+	notAcquiringTotal := time.Duration(0)
+	notAcquiringLastSample := time.Now()
 
 	// 自诊断：无有效样本时区分"设备未在采集"与"通道索引对不上"两类根因。
 	// everOk=false → 所有设备 GetLatestData 始终 ok=false（设备未采集或 deviceID 不匹配）；
@@ -1326,16 +1352,37 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 				}
 			}
 			if notAcquiring {
+				// I-3 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），
+				// 但累计 notAcquiring 时长，超过 acquisitionNotAcquiringTimeout 即判失败。
+				// 避免设备永久故障（断链/driver 死锁）+ 用户不 Stop 时遍历永久卡死。
+				now := time.Now()
+				notAcquiringTotal += now.Sub(notAcquiringLastSample)
+				notAcquiringLastSample = now
+				if notAcquiringTotal >= acquisitionNotAcquiringTimeout {
+					slog.Error("traversal averaged sampling failed: devices not acquiring for too long",
+						"component", "traversal",
+						"task_id", taskID,
+						"valid_samples", validSamples,
+						"target_samples", samplesPerPoint,
+						"not_acquiring_total", notAcquiringTotal.String(),
+						"limit", acquisitionNotAcquiringTimeout.String(),
+					)
+					return nil, fmt.Errorf("devices not acquiring for %s (limit %s); traversal aborted to prevent hang",
+						notAcquiringTotal, acquisitionNotAcquiringTimeout)
+				}
 				stallDeadline = time.Now().Add(acquisitionStallTimeout)
 				slog.Debug("traversal waiting for acquisition to resume",
 					"component", "traversal",
 					"task_id", taskID,
 					"valid_samples", validSamples,
 					"target_samples", samplesPerPoint,
+					"not_acquiring_total", notAcquiringTotal.String(),
 				)
 				time.Sleep(acquisitionBatchPoll)
 				continue
 			}
+			// 设备恢复采集后重置 notAcquiring 累计计时器，避免短暂停采累计成误判
+			notAcquiringLastSample = time.Now()
 		}
 		if time.Now().After(stallDeadline) {
 			slog.Warn("traversal averaged sampling stalled",

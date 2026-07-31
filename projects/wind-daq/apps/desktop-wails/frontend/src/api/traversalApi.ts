@@ -224,6 +224,9 @@ export const traversalApi = {
   onProgress: (callback: (event: TraversalProgressEvent) => void): (() => void) =>
     createPollingSubscription((status) => {
       if (status.status !== 'running' && status.status !== 'paused') return null
+      // 不含 timestamp / duration 等每次轮询都会变化的字段：
+      // polling 通过 JSON.stringify(event) 做去重，包含 Date.now() 会让 lastKey 永不相等，
+      // 导致每 500ms 必触发回调。需要时间戳的回调方在接收时自行 Date.now()。
       return {
         taskId: status.taskId,
         totalPoints: status.totalPoints,
@@ -231,13 +234,14 @@ export const traversalApi = {
         currentPoint: status.currentPoint ?? { alpha: 0, beta: 0 },
         currentPointPhase: status.currentPointPhase,
         latestData: status.latestData,
-        timestamp: Date.now(),
       }
     }, callback),
 
   onComplete: (callback: (event: TraversalCompleteEvent) => void): (() => void) =>
     createPollingSubscription((status) => {
       if (!['completed', 'stopped', 'error'].includes(status.status)) return null
+      // 不含 duration：每次轮询 Date.now() - startTime 都变化，破坏去重。
+      // 消费方（如 TraversalMain.vue）按需自行计算 finishedAt - startTime。
       return {
         taskId: status.taskId,
         success: status.status === 'completed',
@@ -245,7 +249,6 @@ export const traversalApi = {
         totalPoints: status.totalPoints,
         filePath: status.csvPath,
         error: status.lastError,
-        duration: status.startTime ? Date.now() - status.startTime : 0,
       }
     }, callback),
 
@@ -359,8 +362,8 @@ export const traversalProbeApi = {
     return { success: true, data: mapStatusResponse(res.data) }
   },
 
-  loadCheckpoint: async (probeId: ProbeId): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
-    invoke<TraversalCheckpoint | null>(probePath(probeId, 'loadCheckpoint'), undefined, 'GET'),
+  loadCheckpoint: async (probeId: ProbeId, signal?: AbortSignal): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
+    invoke<TraversalCheckpoint | null>(probePath(probeId, 'loadCheckpoint'), undefined, 'GET', signal),
 
   /** 恢复请求体只携带 taskId（用户确认）；权威路径由服务端 index 决定 */
   resumeFromCheckpoint: async (probeId: ProbeId, taskId: string): Promise<{ success: boolean; data?: { taskId: string }; error?: string }> =>
@@ -380,6 +383,7 @@ export const traversalProbeApi = {
     subscribeProbeStatus(probeId, (signal) => traversalProbeApi.getStatus(probeId, signal), {
       buildEvent: (status) => {
         if (status.status !== 'running' && status.status !== 'paused') return null
+        // 不含 timestamp / duration：每次轮询 Date.now() 都变化，破坏 lastKey 去重。
         return {
           taskId: status.taskId,
           totalPoints: status.totalPoints,
@@ -387,7 +391,6 @@ export const traversalProbeApi = {
           currentPoint: status.currentPoint ?? { alpha: 0, beta: 0 },
           currentPointPhase: status.currentPointPhase,
           latestData: status.latestData,
-          timestamp: Date.now(),
         }
       },
       callback,
@@ -398,6 +401,7 @@ export const traversalProbeApi = {
     subscribeProbeStatus(probeId, (signal) => traversalProbeApi.getStatus(probeId, signal), {
       buildEvent: (status) => {
         if (!['completed', 'stopped', 'error'].includes(status.status)) return null
+        // 不含 duration：每次轮询 Date.now() - startTime 都变化，破坏 lastKey 去重。
         return {
           taskId: status.taskId,
           success: status.status === 'completed',
@@ -405,7 +409,6 @@ export const traversalProbeApi = {
           totalPoints: status.totalPoints,
           filePath: status.csvPath,
           error: status.lastError,
-          duration: status.startTime ? Date.now() - status.startTime : 0,
         }
       },
       callback,

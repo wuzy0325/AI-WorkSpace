@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -75,7 +76,16 @@ func (c *admissionCompletion) finish(r *ManagerRegistry, publish bool) {
 
 // Start registry 的 probe-scoped 启动 façade（HTTP 必须经此，不得直接调 manager Start）。
 //
-// 顺序：准入前检查与准备（锁外）→ 原子准入与 managed Start（同一 admission gate）。
+// 顺序：准入前检查与准备（锁外）→ per-probe gate + admission gate 双重获取 →
+// 原子准入与 managed Start。
+//
+// gate 获取顺序（I-7）：probeGate 先于 admission。probeGate 串行化同 probe 的
+// lifecycle 操作（publication barrier + generation stability），admission 串行化
+// 全局 workflow lease 交接。两 gate 独立，release 顺序与 acquire 相反。
+//
+// admission 释放采用 panic-safe 模式：completion.finish 内部会调用 r.releaseAdmission()，
+// 但错误路径或 panic 发生在 finish 之前时由 defer 兜底，杜绝 admission gate 泄漏。
+// probeGate 始终由 defer 释放（不与 admission 复用释放路径），简化生命周期管理。
 func (r *ManagerRegistry) Start(ctx context.Context, probeID ProbeID, rawConfig json.RawMessage) (string, error) {
 	prep, err := r.prepareStart(ctx, probeID, rawConfig)
 	if err != nil {
@@ -87,12 +97,25 @@ func (r *ManagerRegistry) Start(ctx context.Context, probeID ProbeID, rawConfig 
 	if transitioning {
 		return "", ErrRegistryTransitioning
 	}
+	// probeGate 先于 admission：保证同 probe 的 Start/Stop/Pause/Resume/RunPoint 串行化，
+	// 且不阻塞其他 probe 的并发操作（I-7）。
+	if err := r.acquireProbeGate(ctx, probeID); err != nil {
+		return "", err
+	}
+	defer r.releaseProbeGate(probeID)
 	if err := r.acquireAdmission(ctx); err != nil {
 		return "", err
 	}
-	admission, err := r.admitLockedUnderGate(ctx, probeID, prep.taskID, prep.manager, prep.startBindings, prep.otherBindings)
+	// admissionReleased 标记 admission 是否已通过 completion.finish 释放；
+	// defer 仅在未释放时兜底（错误路径或 panic），避免 gate 永久泄漏。
+	admissionReleased := false
+	defer func() {
+		if !admissionReleased {
+			r.releaseAdmission()
+		}
+	}()
+	admission, err := r.admitLockedUnderGate(ctx, probeID, prep.taskID, prep.manager, prep.startAxisPairs, prep.otherAxisPairs)
 	if err != nil {
-		r.releaseAdmission()
 		return "", err
 	}
 	completion := &admissionCompletion{}
@@ -107,12 +130,14 @@ func (r *ManagerRegistry) Start(ctx context.Context, probeID ProbeID, rawConfig 
 	if err := prep.manager.StartManaged(prep.config, opts); err != nil {
 		rollbackErr := r.rollbackAdmissionUnderGate(admission)
 		completion.finish(r, false)
+		admissionReleased = true
 		return "", errors.Join(fmt.Errorf("启动遍历任务失败: %w", err), rollbackErr)
 	}
 	r.mu.Lock()
 	closing := r.closing
 	r.mu.Unlock()
 	completion.finish(r, true)
+	admissionReleased = true
 	if closing {
 		go r.stopSessionAfterClosing(admission.session)
 		return "", ErrRegistryClosing
@@ -122,11 +147,11 @@ func (r *ManagerRegistry) Start(ctx context.Context, probeID ProbeID, rawConfig 
 
 // startPreparation Start 准入前的锁外准备产物。
 type startPreparation struct {
-	manager       ManagedTraversalManager
-	config        traversal.Config
-	taskID        string
-	startBindings []string
-	otherBindings []string
+	manager        ManagedTraversalManager
+	config         traversal.Config
+	taskID         string
+	startAxisPairs []traversal.MotionAxisBinding
+	otherAxisPairs []traversal.MotionAxisBinding
 }
 
 // prepareStart 可恢复候选检查（任何输出文件/运动 I/O 之前）→ GetOrCreate → 解析配置 →
@@ -164,39 +189,31 @@ func (r *ManagerRegistry) prepareStart(ctx context.Context, probeID ProbeID, raw
 	// 持久化配置读取为文件 I/O，不得持有 registry mutex。启动 probe 的绑定以实际
 	// 运行的 rawConfig 为准；rawConfig 未绑定轴时回退到其持久化配置（前端先保存
 	// 后启动的常规流程二者一致）。
-	startBindings := boundControllerIDs(cfg)
-	if len(startBindings) == 0 {
-		startBindings = r.loadProbeBindings(probeID)
+	//
+	// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的不同物理轴可被两个 probe
+	// 分别 lease（风洞实验中两探针共用同一运动控制器的不同轴是常见配置）。
+	//
+	// I/O 错误必须向上传播：吞错会让用户看到 resource_conflict 而非真实的存储故障，
+	// 误导排查方向（I-6）。
+	startAxisPairs := boundControllerAxisPairs(cfg)
+	if len(startAxisPairs) == 0 {
+		persisted, err := r.loadProbeBindings(probeID)
+		if err != nil {
+			return nil, fmt.Errorf("读取 probe %s 持久化配置失败: %w", probeID, err)
+		}
+		startAxisPairs = persisted
+	}
+	otherAxisPairs, err := r.loadProbeBindings(otherProbe(probeID))
+	if err != nil {
+		return nil, fmt.Errorf("读取另一路 probe 持久化配置失败: %w", err)
 	}
 	return &startPreparation{
-		manager:       manager,
-		config:        cfg,
-		taskID:        taskID,
-		startBindings: startBindings,
-		otherBindings: r.loadProbeBindings(otherProbe(probeID)),
+		manager:        manager,
+		config:         cfg,
+		taskID:         taskID,
+		startAxisPairs: startAxisPairs,
+		otherAxisPairs: otherAxisPairs,
 	}, nil
-}
-
-// admit 通过 admission gate 串行化跨 probe 状态与 lease 交接。外部 lease I/O
-// 在 r.mu 外执行，最终登记前重新校验 closing 状态。
-func (r *ManagerRegistry) admit(
-	ctx context.Context,
-	probeID ProbeID,
-	taskID string,
-	manager ManagedTraversalManager,
-	startBindings, otherPersisted []string,
-) (*registryAdmission, error) {
-	r.mu.Lock()
-	transitioning := r.workflowTransition
-	r.mu.Unlock()
-	if transitioning {
-		return nil, ErrRegistryTransitioning
-	}
-	if err := r.acquireAdmission(ctx); err != nil {
-		return nil, err
-	}
-	defer r.releaseAdmission()
-	return r.admitLockedUnderGate(ctx, probeID, taskID, manager, startBindings, otherPersisted)
 }
 
 // admitLockedUnderGate executes admission while the caller holds admissionGate.
@@ -205,9 +222,9 @@ func (r *ManagerRegistry) admitLockedUnderGate(
 	probeID ProbeID,
 	taskID string,
 	manager ManagedTraversalManager,
-	startBindings, otherPersisted []string,
+	startAxisPairs, otherPersisted []traversal.MotionAxisBinding,
 ) (*registryAdmission, error) {
-	acquireWorkflow, err := r.checkAdmissionState(probeID, startBindings, otherPersisted)
+	acquireWorkflow, err := r.checkAdmissionState(probeID, startAxisPairs, otherPersisted)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +235,7 @@ func (r *ManagerRegistry) admitLockedUnderGate(
 		}
 		admission.acquiredWorkflow = true
 	}
-	tokens, acquireErr, rollbackErr := r.acquireControllers(ctx, taskID, startBindings)
+	tokens, acquireErr, rollbackErr := r.acquireControllers(ctx, taskID, startAxisPairs)
 	if acquireErr != nil {
 		retainWorkflow := admission.acquiredWorkflow && len(tokens) > 0
 		if admission.acquiredWorkflow && !retainWorkflow {
@@ -230,7 +247,7 @@ func (r *ManagerRegistry) admitLockedUnderGate(
 		if retainWorkflow || len(tokens) > 0 {
 			admission.acquiredWorkflow = retainWorkflow
 			r.mu.Lock()
-			r.registerSessionLocked(probeID, taskID, manager, startBindings, tokens, admission)
+			r.registerSessionLocked(probeID, taskID, manager, startAxisPairs, tokens, admission)
 			admission.session.rollback = true
 			admission.session.state = sessionStateCompletionFailed
 			admission.session.completionErr = rollbackErr
@@ -240,12 +257,12 @@ func (r *ManagerRegistry) admitLockedUnderGate(
 		return nil, errors.Join(acquireErr, rollbackErr)
 	}
 	r.mu.Lock()
-	r.registerSessionLocked(probeID, taskID, manager, startBindings, tokens, admission)
+	r.registerSessionLocked(probeID, taskID, manager, startAxisPairs, tokens, admission)
 	r.mu.Unlock()
 	return admission, nil
 }
 
-func (r *ManagerRegistry) checkAdmissionState(probeID ProbeID, startBindings, otherPersisted []string) (bool, error) {
+func (r *ManagerRegistry) checkAdmissionState(probeID ProbeID, startAxisPairs, otherPersisted []traversal.MotionAxisBinding) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closing {
@@ -262,21 +279,25 @@ func (r *ManagerRegistry) checkAdmissionState(probeID ProbeID, startBindings, ot
 	// 另一路已运行时以其启动快照绑定为准（冻结值），否则用其持久化配置。
 	otherBindings := otherPersisted
 	if other, active := r.sessions[otherProbe(probeID)]; active {
-		otherBindings = other.boundControllerIDs
+		otherBindings = other.boundAxisPairs
 	}
-	if err := validateDualBindings(startBindings, otherBindings); err != nil {
+	if err := validateDualBindings(startAxisPairs, otherBindings); err != nil {
 		return false, err
 	}
 	return r.activeCount == 0, nil
 }
 
 // registerSessionLocked 登记 session、递增计数并启动续约器（调用方持有 r.mu）。
+//
+// boundControllerIDs（控制器级，去重）用于 EmergencyStop 等控制器级操作；
+// boundAxisPairs（(controllerID, axis) 元组）为资源独占的真实粒度，作为 lease token
+// map 的 key 源。两者都从 startAxisPairs 派生，保持单一真相源。
 func (r *ManagerRegistry) registerSessionLocked(
 	probeID ProbeID,
 	taskID string,
 	manager ManagedTraversalManager,
-	startBindings []string,
-	tokens map[string]string,
+	startAxisPairs []traversal.MotionAxisBinding,
+	tokens map[ControllerAxisPair]string,
 	admission *registryAdmission,
 ) {
 	r.generations[probeID]++
@@ -285,7 +306,8 @@ func (r *ManagerRegistry) registerSessionLocked(
 		taskID:             taskID,
 		token:              SessionToken{ProbeID: probeID, Generation: r.generations[probeID]},
 		manager:            manager,
-		boundControllerIDs: slices.Clone(startBindings),
+		boundControllerIDs: boundControllerIDsFromPairs(startAxisPairs),
+		boundAxisPairs:     slices.Clone(startAxisPairs),
 		controllerTokens:   tokens,
 		workflowAcquired:   admission.acquiredWorkflow,
 		state:              sessionStateActive,
@@ -302,28 +324,33 @@ func (r *ManagerRegistry) registerSessionLocked(
 	r.startSessionRenewerLocked(admission.session)
 }
 
-// acquireControllers 依次预占启动快照中的控制器；任一失败按相反顺序撤销已取得的预占。
-func (r *ManagerRegistry) acquireControllers(ctx context.Context, taskID string, bindings []string) (map[string]string, error, error) {
-	tokens := make(map[string]string, len(bindings))
-	for _, controllerID := range bindings {
-		token, err := r.controllerLease.Acquire(ctx, controllerID, taskID, registryLeaseTTL)
+// acquireControllers 依次预占启动快照中的控制器轴；任一失败按相反顺序撤销已取得的预占。
+//
+// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的不同物理轴可被两个 probe
+// 分别 lease；只有同一物理轴才视为冲突资源。
+func (r *ManagerRegistry) acquireControllers(ctx context.Context, taskID string, bindings []traversal.MotionAxisBinding) (map[ControllerAxisPair]string, error, error) {
+	tokens := make(map[ControllerAxisPair]string, len(bindings))
+	for _, binding := range bindings {
+		pair := ControllerAxisPair{ControllerID: binding.ControllerID, Axis: binding.Axis}
+		token, err := r.controllerLease.Acquire(ctx, binding.ControllerID, binding.Axis, taskID, registryLeaseTTL)
 		if err != nil {
 			releaseCtx := context.WithoutCancel(ctx)
 			var rollbackErrs []error
 			for _, acquired := range slices.Backward(bindings) {
-				if leaseToken, ok := tokens[acquired]; ok {
+				acqPair := ControllerAxisPair{ControllerID: acquired.ControllerID, Axis: acquired.Axis}
+				if leaseToken, ok := tokens[acqPair]; ok {
 					if releaseErr := r.controllerLease.Release(releaseCtx, leaseToken); releaseErr != nil {
-						rollbackErrs = append(rollbackErrs, fmt.Errorf("释放控制器 %s lease: %w", acquired, releaseErr))
+						rollbackErrs = append(rollbackErrs, fmt.Errorf("释放控制器 %s 轴 %s lease: %w", acquired.ControllerID, acquired.Axis, releaseErr))
 					} else {
-						delete(tokens, acquired)
+						delete(tokens, acqPair)
 					}
 				}
 			}
 			return tokens,
-				conflictOrCtx(ctx, err, fmt.Sprintf("预占控制器 %s 失败", controllerID)),
+				conflictOrCtx(ctx, err, fmt.Sprintf("预占控制器 %s 轴 %s 失败", binding.ControllerID, binding.Axis)),
 				errors.Join(rollbackErrs...)
 		}
-		tokens[controllerID] = token
+		tokens[pair] = token
 	}
 	return tokens, nil, nil
 }
@@ -344,31 +371,71 @@ func (r *ManagerRegistry) rollbackAdmissionUnderGate(admission *registryAdmissio
 	return nil
 }
 
-// validateDualBindings 双模式启动前原子校验：两路控制器绑定均非空且互不重叠（spec I1）。
-func validateDualBindings(startBindings, otherBindings []string) error {
-	if len(startBindings) == 0 || len(otherBindings) == 0 {
-		return fmt.Errorf("%w: 双模式要求两路均配置非空运动控制器", ErrResourceConflict)
+// validateDualBindings 双模式启动前原子校验：两路 (controllerID, axis) 元组均非空且互不重叠（spec I1）。
+//
+// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的不同物理轴可被两个 probe 分别
+// 绑定（风洞实验常见配置）；仅当两路绑定到同一控制器的同一物理轴时才视为冲突。
+func validateDualBindings(startAxisPairs, otherAxisPairs []traversal.MotionAxisBinding) error {
+	if len(startAxisPairs) == 0 || len(otherAxisPairs) == 0 {
+		return fmt.Errorf("%w: 双模式要求两路均配置非空运动控制器轴", ErrResourceConflict)
 	}
-	for _, id := range startBindings {
-		if slices.Contains(otherBindings, id) {
-			return fmt.Errorf("%w: 控制器 %s 已被另一路绑定", ErrResourceConflict, id)
+	otherSet := make(map[ControllerAxisPair]bool, len(otherAxisPairs))
+	for _, b := range otherAxisPairs {
+		otherSet[ControllerAxisPair{ControllerID: b.ControllerID, Axis: b.Axis}] = true
+	}
+	for _, b := range startAxisPairs {
+		pair := ControllerAxisPair{ControllerID: b.ControllerID, Axis: b.Axis}
+		if otherSet[pair] {
+			return fmt.Errorf("%w: 控制器 %s 轴 %s 已被另一路绑定", ErrResourceConflict, b.ControllerID, b.Axis)
 		}
 	}
 	return nil
 }
 
-// loadProbeBindings 从 probe-scoped 持久化配置读取控制器绑定。
-// 未配置或配置损坏时返回 nil（调用方按"未配置"处理，拒绝启动）。
-func (r *ManagerRegistry) loadProbeBindings(probeID ProbeID) []string {
-	data, err := r.configStore.LoadConfig(probeConfigKey(probeID))
-	if err != nil || len(data) == 0 {
-		return nil
+// loadProbeBindings 从 probe-scoped 持久化配置读取控制器轴绑定（(controllerID, axis) 元组）。
+//
+// 语义（I-6 修复）：
+//   - 未配置（key 不存在）：返回 (nil, nil)，调用方按"未配置"处理（validateDualBindings 拒绝启动）；
+//   - 真实 I/O 错误（LoadConfig 返回非 nil error）：返回 (nil, err) 向上传播，让用户看到
+//     真实存储故障而非 resource_conflict 误导；
+//   - 顶层 JSON 损坏（无法解析为 envelope）：返回 (nil, err) 向上传播（真实配置损坏）；
+//   - channels 子字段解析失败：lenient 返回 nil（channels 可能是对象 {motionAxes:[...]}、
+//     数组 [...] 或其他历史形态，子字段形态不符不是真实错误，跳过即可）。
+//
+// AppConfigStore.LoadConfig 的契约：key 不存在时返回 (nil, nil)，与 os.IsNotExist 等价；
+// 其他错误（权限/磁盘等）包装后返回。本函数严格遵循该契约区分"未配置"与"I/O 错误"。
+func (r *ManagerRegistry) loadProbeBindings(probeID ProbeID) ([]traversal.MotionAxisBinding, error) {
+	key := probeConfigKey(probeID)
+	data, err := r.configStore.LoadConfig(key)
+	if err != nil {
+		// 真实 I/O 错误必须向上传播（I-6）：吞错会让用户看到 resource_conflict 而非存储故障。
+		return nil, fmt.Errorf("读取 probe %s 持久化配置 key=%s 失败: %w", probeID, key, err)
 	}
-	var cfg traversal.Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil
+	if len(data) == 0 {
+		// key 不存在（未配置）：合法状态，返回 nil 让 validateDualBindings 处理。
+		return nil, nil
 	}
-	return boundControllerIDs(cfg)
+	var envelope struct {
+		MotionAxes []traversal.MotionAxisBinding `json:"motionAxes"`
+		Channels   json.RawMessage               `json:"channels"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		// 顶层 JSON 损坏属真实配置错误，向上传播。
+		return nil, fmt.Errorf("解析 probe %s 持久化配置 key=%s 失败: %w", probeID, key, err)
+	}
+	var channels struct {
+		MotionAxes []traversal.MotionAxisBinding `json:"motionAxes"`
+	}
+	if len(envelope.Channels) > 0 {
+		// channels 子字段可能是对象 {motionAxes:[...]} 或历史数组形态；
+		// 解析失败时 lenient 跳过（仅用 envelope.MotionAxes），不视为真实错误。
+		if err := json.Unmarshal(envelope.Channels, &channels); err != nil {
+			slog.Debug("probe 持久化配置 channels 子字段非 {motionAxes:[...]} 形态，跳过",
+				"probe", string(probeID), "key", key, "error", err)
+		}
+	}
+	axes := append(envelope.MotionAxes, channels.MotionAxes...)
+	return boundControllerAxisPairs(traversal.Config{MotionAxes: axes}), nil
 }
 
 // conflictOrCtx 区分上下文取消与资源冲突：取消按原样返回，其余包装为 resource_conflict。

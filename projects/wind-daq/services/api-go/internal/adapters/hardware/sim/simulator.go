@@ -108,7 +108,21 @@ type TCPSimulator struct {
 
 	closed     atomic.Bool
 	stopAccept chan struct{}
-	acceptDone chan struct{}
+
+	// wg 跟踪所有工作 goroutine（acceptLoop / sendLoop / cmdLoop / readUntilClosed），
+	// Close 中 Wait 确保所有 goroutine 退出后才返回，避免测试 t.Cleanup 后仍有 goroutine 访问已关闭资源。
+	//
+	// 设计依据 ADR-009 SIM-1：原实现 Close 仅等 acceptDone，sendLoop/cmdLoop/readUntilClosed
+	// 在 conn.Close 后才退出，但未 join，极端场景（Windows 故障电脑 + 测试超时未杀进程）
+	// 下 goroutine 泄漏。wg.Wait 保证完全回收。
+	//
+	// 注意：ctx 监听 goroutine 不纳入 wg——它会调用 Close，wg.Wait 不能等待调用者自己，
+	// 否则形成自我等待死锁。ctx 监听 goroutine 通过 close(stopAccept) 通知退出。
+	wg sync.WaitGroup
+
+	// ctxCancel 由 Start 注入，用于 ctx 取消时触发 Close。
+	// 保存以便 Close 时取消已注册的 ctx 监听 goroutine（幂等保护）。
+	ctxCancel context.CancelFunc
 }
 
 // NewTCPSimulator 构造一个模拟器实例。
@@ -129,6 +143,10 @@ func NewTCPSimulator(producer FrameProducer, responder CommandResponder, autoSta
 
 // Start 启动 TCP 监听。使用 127.0.0.1:0 让操作系统分配随机端口，
 // 支持多设备并发测试（多个 Simulator 实例同时运行于不同端口）。
+//
+// ctx 用于在测试超时或取消时自动触发 Close，避免 goroutine 泄漏。
+// 设计依据 ADR-009 SIM-1：原实现忽略 ctx，测试框架超时后模拟器 goroutine
+// 仍在运行，导致 race detector 误报或 FD 泄漏。现通过 ctx.Done() 监听主动 Close。
 func (s *TCPSimulator) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -137,8 +155,32 @@ func (s *TCPSimulator) Start(ctx context.Context) error {
 	s.listener = ln
 	s.addr = ln.Addr().String()
 	s.stopAccept = make(chan struct{})
-	s.acceptDone = make(chan struct{})
+
+	// 派生可取消 ctx，用于 ctx 取消时触发 Close。
+	// ctxCancel 保存到结构体，Close 时调用以停止已注册的监听 goroutine（幂等）。
+	ctx, s.ctxCancel = context.WithCancel(ctx)
+
+	s.wg.Add(1)
 	go s.acceptLoop()
+
+	// ctx 监听 goroutine：ctx.Done() 触发时调用 Close，确保测试框架超时后
+	// 模拟器不再持有端口与 goroutine。
+	//
+	// 不纳入 wg 跟踪（关键）：本 goroutine 会调用 s.Close()，而 Close 内部
+	// wg.Wait() 会等待所有被跟踪的 goroutine。若本 goroutine 也在 wg 中，
+	// Close 会等待本 goroutine 退出，但本 goroutine 阻塞在 Close 中，
+	// defer wg.Done() 永不执行 → 自我等待死锁。
+	// 退出路径：Close 中 close(stopAccept) 让本 goroutine 通过 <-s.stopAccept 分支退出。
+	go func() {
+		select {
+		case <-ctx.Done():
+			// ctx 取消（如测试超时），主动 Close 释放资源。
+			// Close 幂等，与显式 Close 调用安全并发。
+			_ = s.Close()
+		case <-s.stopAccept:
+			// 已 Close，无需再监听 ctx。
+		}
+	}()
 	return nil
 }
 
@@ -147,11 +189,19 @@ func (s *TCPSimulator) Addr() string {
 	return s.addr
 }
 
-// Close 关闭监听与当前客户端连接，等待 acceptLoop 退出。
+// Close 关闭监听与当前客户端连接，等待所有工作 goroutine 退出。
 // 幂等：重复调用安全。
+//
+// 设计依据 ADR-009 SIM-1：原实现仅等 acceptDone，sendLoop/cmdLoop/readUntilClosed
+// 未纳入 WaitGroup，可能在 t.Cleanup 后仍有 goroutine 访问已关闭 conn。
+// 现通过 wg.Wait 确保所有 goroutine 完全退出。
 func (s *TCPSimulator) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
+	}
+	// 取消 ctx 监听 goroutine，避免它在 Close 完成前再次触发 Close（虽然幂等，但减少竞争）。
+	if s.ctxCancel != nil {
+		s.ctxCancel()
 	}
 	if s.stopAccept != nil {
 		close(s.stopAccept)
@@ -160,9 +210,10 @@ func (s *TCPSimulator) Close() error {
 		_ = s.listener.Close()
 	}
 	s.disconnectClientLocked()
-	if s.acceptDone != nil {
-		<-s.acceptDone
-	}
+	// 等待所有工作 goroutine（acceptLoop / sendLoop / cmdLoop / readUntilClosed）退出。
+	// ctx 监听 goroutine 不在 wg 中（它会调用 Close，不能自我等待），
+	// 通过上面的 close(stopAccept) 让它通过 <-s.stopAccept 分支退出。
+	s.wg.Wait()
 	return nil
 }
 
@@ -247,7 +298,7 @@ func (s *TCPSimulator) disconnectClientLocked() {
 
 // acceptLoop 接受客户端连接。每次只保留一个客户端：新连接到来时关闭旧连接。
 func (s *TCPSimulator) acceptLoop() {
-	defer close(s.acceptDone)
+	defer s.wg.Done()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -291,13 +342,25 @@ func (s *TCPSimulator) handleNewConnection(conn net.Conn) {
 	// done 在读 goroutine（cmdLoop 或 readUntilClosed）退出时关闭，
 	// 用于通知 sendLoop 停止。
 	done := make(chan struct{})
-	go s.sendLoop(conn, done)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.sendLoop(conn, done)
+	}()
 	if s.responder != nil {
-		go s.cmdLoop(conn, done)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.cmdLoop(conn, done)
+		}()
 	} else {
 		// 无 responder 的流式设备：起一个读 goroutine 仅用于检测连接关闭，
 		// adapter 不发命令，读到数据丢弃即可。
-		go s.readUntilClosed(conn, done)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.readUntilClosed(conn, done)
+		}()
 	}
 }
 
@@ -408,6 +471,12 @@ func (s *TCPSimulator) cmdLoopLine(conn net.Conn) {
 
 // cmdLoopIdle 空闲模式：读到数据后短暂无新字节即认为命令完整。
 // 用于 T1603 这类命令不带分隔符的设备。
+//
+// 设计依据 ADR-009 SIM-1：原实现内层循环每次迭代都 SetReadDeadline(10ms)，
+// 是 Go issue #70395/#34385 描述的"反复 SetReadDeadline 导致 hang"高危模式。
+// 现改为内层循环进入前设置一次 idle deadline，后续 Read 复用该 deadline，
+// deadline 自然到期后 Read 返回 timeout error 退出内层循环。
+// SetReadDeadline 调用频率从 O(包数) 降为 O(命令数)，消除 hang 风险。
 func (s *TCPSimulator) cmdLoopIdle(conn net.Conn) {
 	var buf []byte
 	tmp := make([]byte, 64)
@@ -426,9 +495,16 @@ func (s *TCPSimulator) cmdLoopIdle(conn net.Conn) {
 		}
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
-			// 持续读直到空闲：短超时再读，无新数据即认为命令完整
+			// 内层循环：设置一次 idle deadline，后续 Read 复用。
+			// 若 idleWindow 内无新字节，Read 返回 timeout error 退出内层循环。
+			// 不再每次迭代重设 deadline，避免 Go issue #70395 hang 风险。
+			//
+			// 饥饿条件（与原实现相同）：若客户端持续以 <idleWindow 间隔发送数据，
+			// 每次 Read 都立即返回数据（n2>0, err2=nil），deadline 不会到期，
+			// 内层循环不会退出。测试场景下客户端按命令间隔发包，不会持续发包，可接受。
+			// 若未来用于长连接场景，可增加最大字节数限制（如 64KB）作为硬性退出条件。
+			_ = conn.SetReadDeadline(time.Now().Add(idleWindow))
 			for {
-				_ = conn.SetReadDeadline(time.Now().Add(idleWindow))
 				n2, err2 := conn.Read(tmp)
 				if n2 > 0 {
 					buf = append(buf, tmp[:n2]...)

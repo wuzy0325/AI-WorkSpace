@@ -477,10 +477,9 @@ const elapsedText = computed(() => {
   let elapsedMs: number
   if (traversalStore.isTerminal) {
     // 终态：冻结已用时间，不再随 now 增长。
-    // 优先使用后端返回的真实耗时（TraversalCompleteEvent.duration，毫秒），
-    // 缺失时回退到进入终态那一刻 now - startTime 冻结值。
-    const dur = traversalStore.completeEvent?.duration
-    elapsedMs = dur && dur > 0 ? dur : Math.max(0, (finishedAt.value ?? now.value) - startTime)
+    // 后端不再在 TraversalCompleteEvent 中携带 duration（每次轮询 Date.now() - startTime
+    // 破坏 polling 去重），改为本地用 finishedAt - startTime 计算。
+    elapsedMs = Math.max(0, (finishedAt.value ?? now.value) - startTime)
   } else {
     elapsedMs = Math.max(0, now.value - startTime)
   }
@@ -588,7 +587,13 @@ watch(
     if (!event) return
 
     if (event.success) {
-      const duration = event.duration ? (event.duration / 1000).toFixed(1) : '--'
+      // 后端不再在 TraversalCompleteEvent 中携带 duration（破坏 polling 去重），
+      // 改为本地用 finishedAt - startTime 计算（与 elapsedText 一致）。
+      const startTime = traversalStore.status?.startTime
+      const durMs = typeof startTime === 'number' && startTime > 0 && finishedAt.value !== null
+        ? Math.max(0, finishedAt.value - startTime)
+        : 0
+      const duration = durMs > 0 ? (durMs / 1000).toFixed(1) : '--'
       feedbackStore.pushToast(
         `${t.value.testCompleted}\n${t.value.filePath}: ${event.filePath}\n${t.value.duration}: ${duration}s\n${t.value.totalPoints}: ${event.totalPoints}`,
         'success',
@@ -676,6 +681,7 @@ watch(
         config: t.travCheckConfig,
         continueTest: t.travContinueTest,
         abandon: t.travAbandon,
+        unknown: t.travUnknownConfig,
       }"
       @resume="resumeFromCheckpoint"
       @discard="discardCheckpoint"

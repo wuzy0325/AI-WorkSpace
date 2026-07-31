@@ -27,6 +27,10 @@ import (
 // 成功仅在 goroutine 退出、输出 finalize、checkpoint 保留和 completion lease 释放
 // 完成后返回；cleanup 失败（completion_failed）返回可诊断错误（重试入口在
 // CloseProbe/Shutdown）。
+//
+// session 状态检查（I-10）：completing/completion_failed/completed 状态下 manager
+// 已自行停止或正在清理，重复调用 manager.Stop() 是冗余 I/O（可能返回错误并误导用户）。
+// 仅在 active 状态下请求停止，与 closeProbeSession/gracefulStopSession 行为一致。
 func (r *ManagerRegistry) Stop(ctx context.Context, probeID ProbeID) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -39,16 +43,26 @@ func (r *ManagerRegistry) Stop(ctx context.Context, probeID ProbeID) error {
 	}
 	r.mu.Lock()
 	session := r.sessions[probeID]
+	state := sessionStateActive
+	if session != nil {
+		state = session.state
+	}
 	r.mu.Unlock()
 	r.releaseAdmission()
 	if session == nil {
 		return fmt.Errorf("probe %s 无活动遍历任务", probeID)
 	}
-	// 锁外请求停止；即使失败仍执行有界等待（errors.Join 聚合）。
-	stopErr := session.manager.Stop()
+	// 仅 active 状态下请求停止；其他状态 manager 已在停止/清理流程中，跳过冗余 Stop 调用。
+	var stopErr error
+	if state == sessionStateActive {
+		stopErr = session.manager.Stop()
+	} else {
+		slog.Info("Stop 跳过非活动状态 session 的 manager.Stop 调用",
+			"probe", probeID, "task", session.taskID, "state", state.String())
+	}
 	waitErr := waitSettled(ctx, session)
 	r.mu.Lock()
-	state := session.state
+	state = session.state
 	completionErr := session.completionErr
 	r.mu.Unlock()
 	if waitErr != nil {
@@ -65,6 +79,10 @@ func (r *ManagerRegistry) Stop(ctx context.Context, probeID ProbeID) error {
 //
 // ctx 超时返回 ErrCloseProbeTimeout：map 条目与 closing 标记保留（GetOrCreate 返回
 // probe_closing，不创建新 manager）；幂等：无 manager 或保留期间重复调用均可重入。
+//
+// I-7 修复后补充：closeProbeSession 前获取 per-probe lifecycle gate（probeGate），
+// 确保若有 Pause/Resume/RunPoint 正在 call(manager) 期间，CloseProbe 会等待其返回
+// 再删除 manager，维持"lifecycle 调用期间 generation 不被替换"不变量。
 func (r *ManagerRegistry) CloseProbe(ctx context.Context, probeID ProbeID) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -97,6 +115,13 @@ func (r *ManagerRegistry) CloseProbe(ctx context.Context, probeID ProbeID) error
 	r.closingProbes[probeID] = true
 	r.mu.Unlock()
 	r.releaseAdmission()
+
+	// I-7 修复补充：获取 per-probe lifecycle gate，等待正在进行的 Pause/Resume/RunPoint
+	// 返回后再删除 manager。若 ctx 超时则保留 closing 标记与 manager 条目，调用方可重试。
+	if err := r.acquireProbeGate(ctx, probeID); err != nil {
+		return err
+	}
+	defer r.releaseProbeGate(probeID)
 
 	// 锁外执行 manager shutdown I/O：并发 CloseProbe 双 probe 互不阻塞。
 	if err := r.closeProbeSession(ctx, probeID, session, manager); err != nil {
@@ -394,6 +419,16 @@ func (r *ManagerRegistry) Resume(ctx context.Context, probeID ProbeID) error {
 
 // callProbeManager 选择 probe 的 manager 并调用生命周期方法（registry 统一入口，
 // HTTP handler 不得绕过）。manager 创建失败/未知 probe/closing 的错误原样传播。
+//
+// 使用 per-probe gate（I-7）而非全局 admission：
+//   - Pause/Resume/RunPoint 是单 probe 操作，manager 内部自带并发控制；
+//   - per-probe gate 序列化同 probe 的 lifecycle 操作（publication barrier +
+//     generation stability），但不阻塞其他 probe；
+//   - 全局 admission gate 仅用于 workflow lease 交接等全局事务，不在 lifecycle 调用
+//     期间持有，避免 probe1 单步运动期间 probe2 所有操作阻塞（违反 user_rules 第 9 条）。
+//
+// GetOrCreate 自带 per-probe creation gate（probeCreationGate），与 lifecycle gate
+// 职责正交：creation gate 防止并发 factory 调用，lifecycle gate 防止并发 lifecycle 操作。
 func (r *ManagerRegistry) callProbeManager(ctx context.Context, probeID ProbeID, rejectManagedAutoRun bool, call func(ManagedTraversalManager) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -401,19 +436,25 @@ func (r *ManagerRegistry) callProbeManager(ctx context.Context, probeID ProbeID,
 	if !probeID.Valid() {
 		return fmt.Errorf("%w: %q", ErrInvalidProbeID, probeID)
 	}
-	if err := r.acquireAdmission(ctx); err != nil {
+	// 获取 per-probe lifecycle gate：与同 probe 的 Start/Stop/CloseProbe 串行化，
+	// 但不阻塞其他 probe 的并发操作。RunPoint 运动期间其他 probe 操作不受影响。
+	if err := r.acquireProbeGate(ctx, probeID); err != nil {
 		return err
 	}
-	defer r.releaseAdmission()
+	defer r.releaseProbeGate(probeID)
 	manager, err := r.GetOrCreate(probeID)
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	_, active := r.sessions[probeID]
-	r.mu.Unlock()
-	if rejectManagedAutoRun && active {
-		return fmt.Errorf("%w: probe %s managed traversal loop 已自动运行", ErrAlreadyRunning, probeID)
+	if rejectManagedAutoRun {
+		r.mu.Lock()
+		_, active := r.sessions[probeID]
+		r.mu.Unlock()
+		if active {
+			return fmt.Errorf("%w: probe %s managed traversal loop 已自动运行", ErrAlreadyRunning, probeID)
+		}
 	}
+	// 持 probeGate 调用 manager：generation 不会在调用期间被 CloseProbe 替换。
+	// 其他 probe 的操作持各自 gate，互不阻塞。
 	return call(manager)
 }

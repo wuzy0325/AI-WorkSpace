@@ -12,6 +12,9 @@ defineProps<{
     config: string
     continueTest: string
     abandon: string
+    // I-28 修复：原模板硬编码 'Unknown'，破坏 i18n 一致性。
+    // 由父组件传入 i18n.t.travUnknownConfig，让中英文环境下都有正确翻译。
+    unknown: string
   }
 }>()
 
@@ -40,7 +43,7 @@ defineEmits<{
         <div class="text-xs font-medium text-[var(--text-primary)]">{{ labels.detected }}</div>
         <div class="text-[10px] text-[var(--text-muted)]">
           {{ labels.completed }} {{ checkpoint.completedPoints }} / {{ checkpoint.totalPoints }} ·
-          {{ labels.config }} {{ checkpoint.config?.name || 'Unknown' }}
+          {{ labels.config }} {{ checkpoint.config?.name || labels.unknown }}
         </div>
       </div>
     </div>

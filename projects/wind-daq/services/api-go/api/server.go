@@ -1082,14 +1082,6 @@ func parseChannelIndex(r *http.Request) (int, error) {
 	return channelIndex, nil
 }
 
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return false
-	}
-	return true
-}
-
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

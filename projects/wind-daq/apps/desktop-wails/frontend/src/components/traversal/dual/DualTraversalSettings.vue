@@ -261,9 +261,48 @@ const motionAxes = computed<TraversalMotionAxisConfig[]>({
 })
 
 // 布局子字段：lineConfig / rectangleConfig / sectorConfig / customPoints / pattern / snakeOrder / primaryAxis
+function ensurePatternConfig(nextPattern: TraversalPattern): void {
+  const layout = draft.value.layout
+  if (nextPattern === 'line' && !layout.line) {
+    layout.line = {
+      startX: -30,
+      startY: 0,
+      endX: 30,
+      endY: 0,
+      xStepSegments: [{ start: -30, end: 30, step: 5 }],
+      yStepSegments: [],
+    }
+  } else if (nextPattern === 'rectangle' && !layout.rectangle) {
+    layout.rectangle = {
+      xMin: -30,
+      xMax: 30,
+      xStepSegments: [{ start: -30, end: 30, step: 5 }],
+      yMin: -30,
+      yMax: 30,
+      yStepSegments: [{ start: -30, end: 30, step: 5 }],
+    }
+  } else if (nextPattern === 'sector' && !layout.sector) {
+    layout.sector = {
+      centerX: 0,
+      centerY: 0,
+      radiusMin: 100,
+      radiusMax: 300,
+      radialStepSegments: [{ start: 100, end: 300, step: 50 }],
+      angleStart: -30,
+      angleEnd: 30,
+      angularStepSegments: [{ start: -30, end: 30, step: 5 }],
+    }
+  } else if (nextPattern === 'custom' && !layout.custom) {
+    layout.custom = { points: [] }
+  }
+}
+
 const pattern = computed<TraversalPattern>({
   get: () => draft.value.layout.pattern,
-  set: (v: TraversalPattern) => { draft.value.layout.pattern = v },
+  set: (v: TraversalPattern) => {
+    ensurePatternConfig(v)
+    draft.value.layout.pattern = v
+  },
 })
 const snakeOrder = computed<boolean>({
   get: () => draft.value.layout.snakeOrder ?? false,
@@ -399,11 +438,7 @@ const isStepValid = computed(() => {
     return prbFile.value !== null
   }
   if (currentStep.value === 2) {
-    const axesToValidate = pattern.value === 'line'
-      ? motionAxes.value.filter((a) => a.name === 'X')
-      : pattern.value === 'custom'
-        ? motionAxes.value
-        : motionAxes.value.filter((a) => a.name === 'X' || a.name === 'Y')
+    const axesToValidate = filterActiveMotionAxes(draft.value)
     const noDuplicateBinding = !hasDuplicateMotionAxis(axesToValidate)
     return testName.value.trim() !== '' && estimatedPointCount.value > 0 && rectangleHasArea.value &&
       noDuplicateBinding &&
@@ -441,11 +476,7 @@ const stepInvalidReason = computed<string>(() => {
     if (testName.value.trim() === '') return t.value.dualStepInvalidName
     if (estimatedPointCount.value <= 0) return t.value.dualStepInvalidNoPoints
     if (!rectangleHasArea.value) return t.value.dualStepInvalidRectangleArea
-    const axesToValidate = pattern.value === 'line'
-      ? motionAxes.value.filter((a) => a.name === 'X')
-      : pattern.value === 'custom'
-        ? motionAxes.value
-        : motionAxes.value.filter((a) => a.name === 'X' || a.name === 'Y')
+    const axesToValidate = filterActiveMotionAxes(draft.value)
     if (hasDuplicateMotionAxis(axesToValidate)) return t.value.dualStepInvalidDuplicateAxis
     const emptyAxes = axesToValidate.filter((a) => a.controllerId === '').map((a) => a.name).join('/')
     if (emptyAxes) return t.value.dualStepInvalidControllerEmpty.replace('{axes}', emptyAxes)
@@ -461,21 +492,44 @@ const stepInvalidReason = computed<string>(() => {
 // ---------------------------------------------------------------------------
 // 跨 probe 控制器冲突检测（spec FR2：保存前原子校验）
 // ---------------------------------------------------------------------------
-// 当前 probe 启用的运动控制器 ID 集合（line 模式仅 X，rectangle/sector 仅 X+Y，
-// custom 全部 4 轴；与 isStepValid 第 2 步校验范围对齐，避免误判 Z/U 冲突）
-function activeControllerIds(cfg: TraversalTestConfig): Set<string> {
-  const ids = new Set<string>()
+
+// filterActiveMotionAxes 按 pattern 筛选参与冲突检测/步骤校验的运动轴。
+// line 仅 X 轴；rectangle/sector 仅 X+Y 轴；custom 全部 4 轴。
+// 4 处调用点（activeControllerIds / activeControllerAxisPairs /
+// isStepValid 第 2 步 / stepInvalidReason）共用同一筛选规则，避免漂移。
+function filterActiveMotionAxes(cfg: TraversalTestConfig): TraversalMotionAxisConfig[] {
   const pat = cfg.layout.pattern
   const axes = cfg.channels.motionAxes
-  const filtered = pat === 'line'
-    ? axes.filter((a) => a.name === 'X')
-    : pat === 'custom'
-      ? axes
-      : axes.filter((a) => a.name === 'X' || a.name === 'Y')
-  for (const a of filtered) {
+  if (pat === 'line') return axes.filter((a) => a.name === 'X')
+  if (pat === 'custom') return axes
+  return axes.filter((a) => a.name === 'X' || a.name === 'Y')
+}
+
+// 当前 probe 启用的运动控制器 ID 集合。
+// 仅用于 currentControllerEmpty 判定"是否完全未配置任何控制器"。
+function activeControllerIds(cfg: TraversalTestConfig): Set<string> {
+  const ids = new Set<string>()
+  for (const a of filterActiveMotionAxes(cfg)) {
     if (a.controllerId) ids.add(a.controllerId)
   }
   return ids
+}
+
+// 当前 probe 启用的 (controllerId, axis) 元组集合——冲突检测的真正输入。
+// 业务背景：风洞实验中两个探针常共用同一运动控制器（一台设备多轴），
+// probe1 用控制器 A 的 X 轴、probe2 用控制器 A 的 Y 轴是合法且常见的物理场景。
+// 因此资源独占的粒度必须细化到"控制器 + 物理轴"元组，而不是控制器整体。
+// 仅当两 probe 绑定到同一控制器的同一物理轴时才视为冲突（无法同时驱动同一物理轴）。
+function activeControllerAxisPairs(cfg: TraversalTestConfig): Set<string> {
+  const pairs = new Set<string>()
+  for (const a of filterActiveMotionAxes(cfg)) {
+    // controllerId 或 axis 任一为空都视为未完成配置，不参与冲突检测；
+    // 未完成配置由 isStepValid 第 2 步的 axis 校验拦截，不在这里重复提示。
+    if (a.controllerId && a.axis) {
+      pairs.add(`${a.controllerId}|${a.axis}`)
+    }
+  }
+  return pairs
 }
 
 // 当前 probe 的控制器是否为空（保存前阻断）
@@ -484,13 +538,17 @@ const currentControllerEmpty = computed(() => {
   return ids.size === 0
 })
 
-// 跨 probe 冲突：当前 probe 与另一 probe 的控制器 ID 有交集
+// 跨 probe 冲突：当前 probe 与另一 probe 的 (controllerId, axis) 元组有交集。
+// 同一控制器的不同物理轴允许两个 probe 分别使用——这是双探针风洞实验的常见配置。
 const controllerConflict = computed(() => {
-  const currentIds = activeControllerIds(draft.value)
-  if (currentIds.size === 0) return false
-  const otherIds = activeControllerIds(draft.value === drafts.probe1 ? drafts.probe2 : drafts.probe1)
-  for (const id of currentIds) {
-    if (otherIds.has(id)) return true
+  const currentPairs = activeControllerAxisPairs(draft.value)
+  if (currentPairs.size === 0) return false
+  // 显式按 activeTab 判定另一路，避免依赖 draft.value 的引用身份
+  // （draft 一旦改为深拷贝 computed，引用比较会失效）。
+  const otherDraft = activeTab.value === 'probe1' ? drafts.probe2 : drafts.probe1
+  const otherPairs = activeControllerAxisPairs(otherDraft)
+  for (const pair of currentPairs) {
+    if (otherPairs.has(pair)) return true
   }
   return false
 })
@@ -645,7 +703,7 @@ const tabOptions = computed<{ value: ProbeId; label: string }[]>(() => [
 </script>
 
 <template>
-  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @close="emit('close')">
+  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @update:show="emit('close')">
     <template #header>
       <div class="dual-settings-header">
         <span class="setup-overline">{{ t.dualSettingsTitle }}</span>

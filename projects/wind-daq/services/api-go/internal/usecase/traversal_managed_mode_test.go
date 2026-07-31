@@ -138,6 +138,38 @@ func TestTraversal_ManagedStart_AdmissionRollbackNoCallback(t *testing.T) {
 	}
 }
 
+func TestTraversal_ManagedStart_RejectsNonAcquiringReferencedDevice(t *testing.T) {
+	mgr, _, _, _ := newCheckpointTestManager()
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"probe-device-id": true, "environment-device-id": true},
+		acquiring: map[string]bool{"probe-device-id": true, "environment-device-id": false},
+		names:     map[string]string{"environment-device-id": "环境采集仪"},
+	})
+	callbacks := make(chan SessionToken, 1)
+	opts := managedTestOpts()
+	opts.CompletionCallback = func(token SessionToken) { callbacks <- token }
+	config := makeManagedTestConfig("managed-device-check")
+	config.DeviceID = "probe-device-id"
+	config.Channels = []int{0, 1}
+	config.ChannelRefs = map[int]traversal.ChannelRef{
+		0: {DeviceID: "probe-device-id", Index: 0},
+		1: {DeviceID: "environment-device-id", Index: 0},
+	}
+
+	err := mgr.StartManaged(config, opts)
+	if err == nil || !contains(err.Error(), "环境采集仪") || contains(err.Error(), "environment-device-id") {
+		t.Fatalf("expected readable pre-start acquisition error, got %v", err)
+	}
+	if status := mgr.Status(); status.State != traversal.StateIdle {
+		t.Fatalf("managed session must not start after failed acquisition check, got %+v", status)
+	}
+	select {
+	case token := <-callbacks:
+		t.Fatalf("rejected managed start must not invoke completion callback, got %+v", token)
+	default:
+	}
+}
+
 func TestTraversal_ManagedStart_RejectsInvalidOpts(t *testing.T) {
 	config := makeTestConfig("")
 	config.TaskID = "managed-task-opts"
@@ -204,6 +236,50 @@ func TestTraversal_ManagedResume_ManagedOwnership(t *testing.T) {
 	// 从断点继续：CompletedPoints 之后的点全部完成
 	if status := mgr.Status(); status.CurrentPoint < status.TotalPoints {
 		t.Fatalf("恢复后应完成剩余点位: %+v", status)
+	}
+}
+
+func TestTraversal_ManagedResume_RejectsNonAcquiringReferencedDevice(t *testing.T) {
+	mgr, _, _, _ := newCheckpointTestManager()
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"probe-device-id": true, "environment-device-id": true},
+		acquiring: map[string]bool{"probe-device-id": true, "environment-device-id": false},
+		names:     map[string]string{"environment-device-id": "环境采集仪"},
+	})
+	callbacks := make(chan SessionToken, 1)
+	opts := managedTestOpts()
+	opts.CompletionCallback = func(token SessionToken) { callbacks <- token }
+	config := makeManagedTestConfig("managed-resume-device-check")
+	config.DeviceID = "probe-device-id"
+	config.Channels = []int{0, 1}
+	config.ChannelRefs = map[int]traversal.ChannelRef{
+		0: {DeviceID: "probe-device-id", Index: 0},
+		1: {DeviceID: "environment-device-id", Index: 0},
+	}
+	cp := traversal.Checkpoint{
+		Version:         2,
+		TaskID:          config.TaskID,
+		State:           traversal.StateStopped,
+		CompletedPoints: 0,
+		TotalPoints:     len(config.Path),
+		Snapshot: traversal.TraversalRunSnapshot{
+			Config:      config,
+			TotalPoints: len(config.Path),
+		},
+	}
+	opts.TaskID = cp.TaskID
+
+	_, err := mgr.ResumeManaged(cp, opts)
+	if err == nil || !contains(err.Error(), "环境采集仪") || contains(err.Error(), "environment-device-id") {
+		t.Fatalf("expected readable pre-resume acquisition error, got %v", err)
+	}
+	if status := mgr.Status(); status.State != traversal.StateIdle {
+		t.Fatalf("managed session must not resume after failed acquisition check, got %+v", status)
+	}
+	select {
+	case token := <-callbacks:
+		t.Fatalf("rejected managed resume must not invoke completion callback, got %+v", token)
+	default:
 	}
 }
 

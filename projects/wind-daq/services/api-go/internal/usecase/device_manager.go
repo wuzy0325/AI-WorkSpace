@@ -639,6 +639,17 @@ func (m *DeviceManager) IsAcquiring(id string) bool {
 	return status.Acquiring
 }
 
+// DeviceName returns the operator-facing profile name for diagnostics.
+func (m *DeviceManager) DeviceName(id string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return ""
+	}
+	return profile.Name
+}
+
 // 编译期断言：DeviceManager 实现 ports.AcquisitionController。
 // StartAcquisition 已存在（device_manager.go:569），加上 IsConnected/IsAcquiring 即满足接口。
 var _ ports.AcquisitionController = (*DeviceManager)(nil)

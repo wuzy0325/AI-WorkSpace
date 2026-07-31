@@ -59,6 +59,17 @@ const (
 	// 设备死透/断链场景仍能正常超时——stallDeadline 仅按"完成样本"重置，无新帧时
 	// 永远不会重置，最多 10s 即报错退出。
 	acquisitionStallTimeout = 10 * time.Second
+	// acquisitionNotAcquiringTimeout 设备未采集累计时长上限（I-3 修复）。
+	//
+	// 原实现：notAcquiring=true 时每次循环都重置 stallDeadline = now+10s，
+	// 导致 stallDeadline 永远不会到期，10s 兜底形同虚设。设计动机是允许用户
+	// 临时停采集后恢复继续，但代价是设备永久故障（断链/driver 死锁）+ 用户不点 Stop
+	// → 遍历永久卡死。
+	//
+	// 修复：保留"用户主动暂停可恢复"语义（stallDeadline 仍重置），但引入独立的
+	// notAcquiringTotal 累计时长上限。累计未采集时长超过此阈值即判失败，避免
+	// 设备永久故障时遍历卡死。取 60s 平衡"用户短暂停采恢复"与"设备故障有界退出"。
+	acquisitionNotAcquiringTimeout = 60 * time.Second
 	cancelCheckPoll         = 100 * time.Millisecond // 任务取消检查间隔
 	pausedLoopIdle          = 200 * time.Millisecond // 暂停态主循环空转间隔
 	retryWaitInterval       = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
@@ -100,6 +111,7 @@ func (s *TraversalRunSession) IsDone() bool {
 
 type TraversalManager struct {
 	mu              sync.RWMutex
+	motionCommandMu sync.Mutex
 	session         *TraversalRunSession
 	reader          ports.LatestDataReader
 	motion          ports.MotionAccess
@@ -198,6 +210,11 @@ type TraversalManager struct {
 
 // 遍历配置持久化存储的 key
 const traversalConfigKey = "traversal"
+
+const (
+	pauseMotionStopTimeout  = 3 * time.Second
+	pauseMotionPollInterval = 20 * time.Millisecond
+)
 
 func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAccess, sink ports.TraversalPointSink, store ports.TraversalResultStore, checkpointStore ports.CheckpointStore, configStore ...ports.AppConfigStore) *TraversalManager {
 	mgr := &TraversalManager{
@@ -531,17 +548,19 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	//   是反模式——接口实现若耗时（如未来扩展为网络查询）会阻塞 TraversalManager 的其他操作。
 	//   故有意锁外调用，acqController 局部变量已是接口指针的原子快照，无数据竞争。
 	deviceConnected := true
-	deviceConnectedMsg := "Target device is connected"
+	deviceConnectedMsg := "All referenced devices are connected"
 	deviceAcquiring := true
-	deviceAcquiringMsg := "Target device is acquiring"
+	deviceAcquiringMsg := "All referenced devices are acquiring"
 	if acqController != nil {
-		deviceConnected = acqController.IsConnected(cfg.DeviceID)
-		if !deviceConnected {
-			deviceConnectedMsg = "Target device is not connected, please connect it first"
-		}
-		deviceAcquiring = acqController.IsAcquiring(cfg.DeviceID)
-		if !deviceAcquiring {
-			deviceAcquiringMsg = "Target device is not acquiring, please start acquisition first"
+		for _, state := range referencedAcquisitionDevices(acqController, cfg) {
+			if deviceConnected && !state.connected {
+				deviceConnected = false
+				deviceConnectedMsg = fmt.Sprintf("Device %s is not connected, please connect it first", state.name)
+			}
+			if deviceAcquiring && !state.acquiring {
+				deviceAcquiring = false
+				deviceAcquiringMsg = fmt.Sprintf("Device %s is not acquiring, please start acquisition first", state.name)
+			}
 		}
 	}
 
@@ -995,7 +1014,14 @@ func (m *TraversalManager) openReliabilityPorts(
 		// checkpoint 路径与实际 CSV stem 一致，避免 Resume 打开错误 CSV 污染旧数据。
 		actualCSVPath := csvPort.OutputPath()
 		if actualCSVPath != "" && actualCSVPath != snapshot.CSVPath {
+			// I-1 修复：写 session.snapshot 必须持 m.mu.Lock，避免与 commitPointV2
+			// 在 m.mu.RLock 内读 session.snapshot 形成 data race。
+			// 当前时序上 openReliabilityPorts 仅在 Start/Resume 同步初始化路径调用、
+			// commitPointV2 在 run loop 内调用，一般不并发；但模式脆弱——一旦未来
+			// 出现并发路径（热重入/异步恢复）即会触发 race。这里加锁让不变量显式成立。
+			m.mu.Lock()
 			session.snapshot.CSVPath = actualCSVPath
+			m.mu.Unlock()
 			// 同步更新 checkpointPort.basePath，让 Save/Load/Find/Unregister
 			// 派生路径与新 CSV stem 一致。Resume 模式下撞名不会发生（Open 不创建文件），
 			// 但 SetBasePath 仍是无副作用的幂等操作。
@@ -1023,7 +1049,10 @@ func (m *TraversalManager) openReliabilityPorts(
 		// 回写 session.snapshot.ResultLogPath 保证后续恢复/状态展示一致。
 		actualLogPath := resultLogPort.OutputPath()
 		if actualLogPath != "" && actualLogPath != snapshot.ResultLogPath {
+			// I-1 修复：与 CSVPath 写入对称，写 session.snapshot 必须持 m.mu.Lock。
+			m.mu.Lock()
 			session.snapshot.ResultLogPath = actualLogPath
+			m.mu.Unlock()
 		}
 		// Resume 模式：Open 仅追加打开，不做水位对齐。必须显式 ValidateTail +
 		// TruncateAfter，丢弃崩溃前未 Sync 的半写入记录，保证权威日志与
@@ -1153,7 +1182,6 @@ func (m *TraversalManager) Status() traversal.Status {
 // RunCurrentPoint 执行当前测试点的完整流程（移动→稳定→采集→保存）
 func (m *TraversalManager) Pause() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.status.State != traversal.StateRunning && !isSubState(m.status.State) {
 		err := fmt.Errorf("traversal is not running")
 		slog.Warn("traversal pause rejected",
@@ -1162,19 +1190,52 @@ func (m *TraversalManager) Pause() error {
 			"state", m.status.State,
 			"error", err,
 		)
+		m.mu.Unlock()
 		return err
 	}
 	m.isPaused = true
 	m.status.State = traversal.StatePaused
+	taskID := m.config.TaskID
+	completedPoints := m.status.CurrentPoint
+	m.mu.Unlock()
+
+	// Pause must not return while a previously issued traversal move can keep
+	// running. The command gate also prevents a concurrent MoveTo from being
+	// issued after this stop sequence starts.
+	m.motionCommandMu.Lock()
+	stopErr := m.stopMotionAxesLocked()
+	if stopErr == nil {
+		stopErr = m.waitForBoundMotionStoppedLocked(pauseMotionStopTimeout)
+	}
+	if stopErr != nil {
+		emergencyErr := m.emergencyStopMotionControllersLocked()
+		m.motionCommandMu.Unlock()
+		if emergencyErr != nil {
+			return m.failWithCode(
+				"pause traversal motion failed: %v; emergency stop fallback also failed: %v",
+				traversal.ErrEmergencyStopFailed,
+				stopErr,
+				emergencyErr,
+			)
+		}
+		return m.failWithCode(
+			"pause traversal motion failed; emergency stop triggered: %v",
+			traversal.ErrMotionFailed,
+			stopErr,
+		)
+	}
+	m.motionCommandMu.Unlock()
 	slog.Info("traversal paused",
 		"component", "traversal",
-		"task_id", m.config.TaskID,
-		"completed_points", m.status.CurrentPoint,
+		"task_id", taskID,
+		"completed_points", completedPoints,
 	)
 	return nil
 }
 
 func (m *TraversalManager) Resume() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status.State != traversal.StatePaused {
@@ -1237,24 +1298,42 @@ func (m *TraversalManager) Stop() error {
 		"completed_points", completedPoints,
 	)
 
-	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
-	stopErr := m.stopMotionAxes()
-
-	// 等待 RunTraversalLoop 退出：其 defer finalizeSink 会关闭所有端口，
-	// 保证 commitPointV2 已完成，避免 Stop 与 commitPointV2 竞态。
-	// 超时 5s 保护：RunTraversalLoop 可能卡在 motion.MoveTo 等不响应 ctx 的调用上。
+	// 先等待 RunTraversalLoop 退出（5s 超时保护），再调用 stopMotionAxes。
+	// 旧实现先同步调用 stopMotionAxes：若 RunCurrentPoint 卡在 motion.MoveTo
+	// （不响应 ctx）持有 motionCommandMu，stopMotionAxes 会永久阻塞在
+	// motionCommandMu.Lock()，永远到不了 5s 超时分支，导致 Stop 永久挂起。
+	// 新顺序：session.Cancel() 后等 loop 退出 → motionCommandMu 释放 →
+	// stopMotionAxes 不阻塞。超时仍不退出时跳过 stopMotionAxes（锁未释放，
+	// 调用必阻塞），仅 finalizeSink 兜底，运动轴物理停止依赖外部急停或人工介入。
+	loopExited := true
 	if session != nil && !session.IsDone() {
 		select {
 		case <-session.Done():
-			// RunTraversalLoop 已退出，finalizeSink 已执行
+			// RunTraversalLoop 已退出，motionCommandMu 已释放，finalizeSink 已执行
 		case <-time.After(5 * time.Second):
 			slog.Warn("traversal stop timeout waiting for loop exit, force finalizing sink",
 				"component", "traversal",
 				"task_id", taskID,
 			)
 			// 超时强制关闭端口（finalizeSink 幂等，重复调用安全）
+			loopExited = false
 			m.finalizeSink()
 		}
+	}
+
+	var stopErr error
+	if loopExited {
+		// 运行循环已退出，motionCommandMu 已释放，安全调用 stopMotionAxes。
+		// 仍需调用以确保运动轴物理停止（loop 退出不保证 motion 已停止）。
+		stopErr = m.stopMotionAxes()
+	} else {
+		// loop 未退出（motionCommandMu 仍被持有），无法安全调用 stopMotionAxes；
+		// 记录跳过原因，运动轴的物理停止依赖外部运动控制器急停或人工介入。
+		slog.Warn("traversal stop skipped stopMotionAxes: RunTraversalLoop did not exit within timeout",
+			"component", "traversal",
+			"task_id", taskID,
+		)
+		stopErr = fmt.Errorf("stop timeout: RunTraversalLoop did not exit within 5s, motion axes may still be moving")
 	}
 
 	// 先在锁内收集 Save 所需快照，再到锁外执行可能耗时的 store.Save
@@ -1327,6 +1406,12 @@ func (m *TraversalManager) Stop() error {
 // 快照非空时只停快照中的控制器，绝不向另一 probe 的控制器发停止命令；
 // 快照为空时 legacy single 保持既有兼容行为，managed 会话禁止广播回退。
 func (m *TraversalManager) stopMotionAxes() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
+	return m.stopMotionAxesLocked()
+}
+
+func (m *TraversalManager) stopMotionAxesLocked() error {
 	if m.motion == nil {
 		return nil
 	}
@@ -1380,6 +1465,81 @@ func (m *TraversalManager) stopMotionAxes() error {
 	return firstErr
 }
 
+func (m *TraversalManager) stopMotionWithEmergencyFallback() error {
+	stopErr := m.stopMotionAxes()
+	if stopErr == nil {
+		m.motionCommandMu.Lock()
+		stopErr = m.waitForBoundMotionStoppedLocked(pauseMotionStopTimeout)
+		m.motionCommandMu.Unlock()
+	}
+	if stopErr == nil {
+		return nil
+	}
+	if emergencyErr := m.emergencyStopMotionControllers(); emergencyErr != nil {
+		return errors.Join(stopErr, fmt.Errorf("emergency stop fallback failed: %w", emergencyErr))
+	}
+	return fmt.Errorf("normal stop failed; emergency stop triggered: %w", stopErr)
+}
+
+func (m *TraversalManager) waitForBoundMotionStoppedLocked(timeout time.Duration) error {
+	if m.motion == nil {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timed out waiting for traversal axes to stop")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		stopped := m.boundMotionStopped(ctx)
+		cancel()
+		if stopped {
+			return nil
+		}
+		time.Sleep(pauseMotionPollInterval)
+	}
+}
+
+func (m *TraversalManager) boundMotionStopped(ctx context.Context) bool {
+	m.mu.RLock()
+	session := m.session
+	motionAxes := m.config.MotionAxes
+	if session != nil {
+		motionAxes = session.snapshot.Config.MotionAxes
+	}
+	m.mu.RUnlock()
+
+	statuses := m.motion.StatusAll(ctx)
+	motionAxes = resolveMotionAxes(motionAxes, statuses)
+	scoped, broadcast := scopedControllerStatuses(session, statuses)
+	if !broadcast {
+		return false
+	}
+	checked := 0
+	for _, status := range scoped {
+		for _, axis := range status.Axes {
+			if len(motionAxes) > 0 && !axisHasBinding(status.ID, axis.Name, motionAxes) {
+				continue
+			}
+			checked++
+			if axis.Moving {
+				return false
+			}
+		}
+	}
+	return checked > 0 || len(motionAxes) == 0
+}
+
+func axisHasBinding(controllerID string, axis motion.AxisName, bindings []traversal.MotionAxisBinding) bool {
+	for _, binding := range bindings {
+		if motion.AxisName(binding.Axis) == axis && (binding.ControllerID == "" || binding.ControllerID == controllerID) {
+			return true
+		}
+	}
+	return false
+}
+
 // scopedControllerStatuses 按启动快照 BoundControllerIDs 过滤停机目标控制器。
 //
 //   - 快照非空：仅返回快照中的控制器（启动时冻结，不受运行期配置漂移影响）；
@@ -1423,6 +1583,12 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 //
 // 返回聚合错误（含所有失败控制器的错误信息），调用方需将其包装为 ErrEmergencyStopFailed。
 func (m *TraversalManager) emergencyStopMotionControllers() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
+	return m.emergencyStopMotionControllersLocked()
+}
+
+func (m *TraversalManager) emergencyStopMotionControllersLocked() error {
 	if m.motion == nil {
 		return nil
 	}
@@ -1456,6 +1622,17 @@ func (m *TraversalManager) emergencyStopMotionControllers() error {
 			}
 		}
 		if len(controllerIDs) == 0 {
+			// I-5 修复：广播急停所有已连接控制器是 legacy 兼容行为，但会波及非遍历工位设备。
+			// 测试 TestTraversal_BoundControllers_LegacyEmptyBindingFallbackPreserved
+			// 明确要求保留此行为，故不删除——但增加 WARN 日志显式标记影响范围，
+			// 让操作员和事后审计能识别"广播急停"事件，避免静默波及非预期设备。
+			// managed 路径已在 case 2 显式拒绝空绑定，此处仅 legacy 路径会到达。
+			slog.Warn("traversal emergency stop broadcasting to ALL connected controllers (legacy empty-binding fallback)",
+				"component", "traversal",
+				"reason", "no motion axes bound in legacy single mode",
+				"connected_controllers", collectConnectedControllerIDs(statuses),
+				"note", "this may affect non-traversal workstations; bind motion axes explicitly to scope emergency stop",
+			)
 			for _, status := range statuses {
 				if status.Connected {
 					controllerIDs[status.ID] = true
@@ -1483,7 +1660,7 @@ func (m *TraversalManager) emergencyStopMotionControllers() error {
 
 	if len(errs) > 0 {
 		// 至少有一台急停失败：尝试 stopMotionAxes 兜底减速停
-		if stopErr := m.stopMotionAxes(); stopErr != nil {
+		if stopErr := m.stopMotionAxesLocked(); stopErr != nil {
 			errs = append(errs, fmt.Errorf("fallback stop also failed: %w", stopErr))
 		}
 		return errors.Join(errs...)

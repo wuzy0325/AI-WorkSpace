@@ -56,6 +56,9 @@ func (r *ManagerRegistry) LoadCheckpoint(ctx context.Context, probeID ProbeID) (
 // （ProbeID 一致）→ 与新 Start 完全相同的准入事务（admitLocked：workflow lease +
 // controller lease + session token，全部在任何 append 文件/运动 I/O 之前）→
 // managed Resume。准入或 Resume 失败按相反顺序回滚，checkpoint 与输出文件保持不变。
+//
+// admission 释放采用 panic-safe 模式（与 Start 一致，I-8）：completion.finish 内部
+// 释放 admission，错误路径或 panic 由 defer 兜底，杜绝 gate 泄漏导致 registry 冻结。
 func (r *ManagerRegistry) ResumeFromCheckpoint(ctx context.Context, probeID ProbeID, taskID string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -66,15 +69,21 @@ func (r *ManagerRegistry) ResumeFromCheckpoint(ctx context.Context, probeID Prob
 	if err := r.acquireAdmission(ctx); err != nil {
 		return "", err
 	}
+	// admissionReleased 标记 admission 是否已通过 completion.finish 释放；
+	// defer 仅在未释放时兜底（错误路径或 panic），避免 gate 永久泄漏。
+	admissionReleased := false
+	defer func() {
+		if !admissionReleased {
+			r.releaseAdmission()
+		}
+	}()
 	cp, err := r.authoritativeCheckpoint(ctx, probeID, taskID)
 	if err != nil {
-		r.releaseAdmission()
 		return "", err
 	}
 	// 准入前不得打开 append 文件或执行任何运动 I/O：先完成准入事务。
 	admission, err := r.admitResumeLockedUnderGate(ctx, probeID, cp)
 	if err != nil {
-		r.releaseAdmission()
 		return "", err
 	}
 	completion := &admissionCompletion{}
@@ -90,12 +99,14 @@ func (r *ManagerRegistry) ResumeFromCheckpoint(ctx context.Context, probeID Prob
 	if err != nil {
 		rollbackErr := r.rollbackAdmissionUnderGate(admission)
 		completion.finish(r, false)
+		admissionReleased = true
 		return "", errors.Join(fmt.Errorf("恢复遍历任务失败: %w", err), rollbackErr)
 	}
 	r.mu.Lock()
 	closing := r.closing
 	r.mu.Unlock()
 	completion.finish(r, true)
+	admissionReleased = true
 	if closing {
 		go r.stopSessionAfterClosing(admission.session)
 		return "", ErrRegistryClosing
@@ -172,19 +183,24 @@ func (r *ManagerRegistry) authoritativeCheckpoint(ctx context.Context, probeID P
 // admitResume resume 的准入事务：与 Start 完全相同的临界区（绑定校验 +
 // workflow/controller lease + session token 登记）。任何 lease/文件/运动 I/O
 // 之前完成：冲突时 checkpoint 与输出文件保持不变。
+//
+// 资源独占粒度为 (controllerID, axis) 元组：从 checkpoint 快照的 Config.MotionAxes
+// 提取 axis pairs（v3 快照中 BoundControllerIDs 仅用于 EmergencyStop 等控制器级操作，
+// 不携带轴信息；Config 才持有完整 (controllerID, axis) 绑定）。
 func (r *ManagerRegistry) admitResumeLockedUnderGate(ctx context.Context, probeID ProbeID, cp *traversal.Checkpoint) (*registryAdmission, error) {
 	manager, err := r.GetOrCreate(probeID)
 	if err != nil {
 		return nil, err
 	}
-	// 恢复任务的绑定以 checkpoint 启动快照为准（v3 含 BoundControllerIDs；
-	// 防御性回退到快照配置推导）。
-	bindings := cp.Snapshot.BoundControllerIDs
-	if len(bindings) == 0 {
-		bindings = boundControllerIDs(cp.Snapshot.Config)
+	// 恢复任务的轴绑定以 checkpoint 快照 Config 为准（v3 快照含完整 MotionAxes）。
+	// 若 Config 无有效 axis pairs（旧 v3 快照可能只存了 BoundControllerIDs 而无轴信息），
+	// boundControllerAxisPairs 返回 nil，由 validateDualBindings 拒绝启动。
+	axisPairs := boundControllerAxisPairs(cp.Snapshot.Config)
+	otherAxisPairs, err := r.loadProbeBindings(otherProbe(probeID))
+	if err != nil {
+		return nil, fmt.Errorf("读取另一路 probe 持久化配置失败: %w", err)
 	}
-	otherBindings := r.loadProbeBindings(otherProbe(probeID))
-	admission, err := r.admitLockedUnderGate(ctx, probeID, cp.TaskID, manager, bindings, otherBindings)
+	admission, err := r.admitLockedUnderGate(ctx, probeID, cp.TaskID, manager, axisPairs, otherAxisPairs)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +265,10 @@ func (r *ManagerRegistry) checkpointSavedCallbackFor(session *registrySession) f
 //   - 正常完成：原子注销映射（任务数据已权威落盘，无可恢复需求）；
 //   - stopped/error：保留并确认映射（checkpoint 文件存在时可恢复，spec I6）；
 //   - completion_failed 不调用本函数（session 保留，映射不动）。
+//
+// 不变量（I-11）："映射存在 ⟺ checkpoint 文件存在"。stopped/error 状态下若
+// checkpoint 文件不存在（被外部删除或 Stat 失败），必须注销映射，避免 stale
+// mapping 让 LoadCheckpoint 在下次启动时返回不存在的路径。
 func (r *ManagerRegistry) completeRecoveryMapping(session *registrySession) error {
 	ctx := context.Background()
 	r.mu.Lock()
@@ -273,8 +293,24 @@ func (r *ManagerRegistry) completeRecoveryMapping(session *registrySession) erro
 	}
 	checkpointPath := traversal.ResolveCheckpointPathFromCSV(status.CSVPath)
 	exists, err := r.checkpointStore.Stat(checkpointPath)
-	if err != nil || !exists {
-		return err
+	if err != nil {
+		// Stat 失败：文件状态未知，按 stale 处理注销映射（保留映射会让 LoadCheckpoint
+		// 指向不可读路径，下次启动恢复失败）。注销失败才向上传播。
+		slog.Warn("检查 checkpoint 文件失败，注销可能 stale 的恢复映射",
+			"probe", session.probeID, "task", session.taskID, "path", checkpointPath, "error", err)
+		if unregErr := r.recoveryIndex.Unregister(ctx, string(session.probeID), session.taskID); unregErr != nil {
+			return fmt.Errorf("注销 stale dual recovery 映射失败（Stat 错误: %v）: %w", err, unregErr)
+		}
+		return nil
+	}
+	if !exists {
+		// checkpoint 文件不存在：映射必须注销以维持"映射存在 ⟺ 文件存在"不变量。
+		slog.Warn("checkpoint 文件不存在，注销 stale 恢复映射",
+			"probe", session.probeID, "task", session.taskID, "path", checkpointPath)
+		if err := r.recoveryIndex.Unregister(ctx, string(session.probeID), session.taskID); err != nil {
+			return fmt.Errorf("注销 stale dual recovery 映射失败: %w", err)
+		}
+		return nil
 	}
 	if err := r.recoveryIndex.Register(ctx, string(session.probeID), session.taskID, checkpointPath); err != nil {
 		return fmt.Errorf("确认 dual recovery 映射失败: %w", err)

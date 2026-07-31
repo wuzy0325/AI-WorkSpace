@@ -12,6 +12,14 @@ const t = computed(() => i18n.t)
 // - CPT/error/machNumber/velocity：从 point.coefficients 取对应系数（用于系数-系数散点图）
 type ChartXKey = 'alpha' | keyof TotalPressureCoefficients
 
+// Y 轴范围手动覆盖：用户在图表 Tab 工具条输入 min/max 后传入，
+// 跳过基于数据点的自动 [min-10%, max+10%] 计算逻辑。
+// min 必须 < max，否则视为无效回退到自动模式（draw 内做校验）。
+interface YRangeOverride {
+  min: number
+  max: number
+}
+
 const props = defineProps<{
   dataPoints: TotalPressureDataPoint[]
   xKey: ChartXKey
@@ -21,6 +29,10 @@ const props = defineProps<{
   yLabel?: string
   // X 轴刻度标签开关：概览页空间紧凑时传 false 隐藏，图表 Tab 传 true
   showXAxisLabels?: boolean
+  // Y 轴刻度小数位数：默认 3，与原硬编码一致；用户可调高以适配小量程数据（如 error 量级 0.0001）
+  yPrecision?: number
+  // Y 轴范围手动覆盖：null 表示自动模式（基于数据点 + 10% padding）
+  yRangeOverride?: YRangeOverride | null
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -139,7 +151,16 @@ function draw(): void {
   const xPad = (xMax - xMin) * 0.1
   const yPad = (yMax - yMin) * 0.1
   xMin -= xPad; xMax += xPad
-  yMin -= yPad; yMax += yPad
+  // Y 轴范围手动覆盖：用户在图表 Tab 输入 min/max 后传入，
+  // 直接采用用户值，跳过 10% padding（用户已自行决定边界）。
+  // 无效输入（min >= max 或非有限数）静默回退到自动模式，避免 UI 报错打断操作。
+  const override = props.yRangeOverride
+  if (override && Number.isFinite(override.min) && Number.isFinite(override.max) && override.min < override.max) {
+    yMin = override.min
+    yMax = override.max
+  } else {
+    yMin -= yPad; yMax += yPad
+  }
 
   const plotW = width - padLeft - padRight
   const plotH = height - padTop - padBottom
@@ -182,6 +203,13 @@ function draw(): void {
   }
 
   // Y 轴刻度标签
+  // 精度可由父组件通过 yPrecision 配置（默认 3）：CPT 通常 3 位足够，
+  // 但 error 系数量级可能到 0.0001，需要更高精度才能看出刻度差异。
+  // 非法值（负数或非整数）回退到 3，避免 toFixed 抛错。
+  const yPrecisionRaw = props.yPrecision
+  const yPrecision = (typeof yPrecisionRaw === 'number' && Number.isFinite(yPrecisionRaw) && yPrecisionRaw >= 0 && Number.isInteger(yPrecisionRaw))
+    ? yPrecisionRaw
+    : 3
   ctx.fillStyle = colors.textMuted
   ctx.font = `11px ${CANVAS_FONT}`
   ctx.textAlign = 'right'
@@ -189,7 +217,7 @@ function draw(): void {
   for (let i = 0; i <= yTicks; i++) {
     const val = yMin + ((yMax - yMin) * i) / yTicks
     const y = padTop + plotH - (plotH * i) / yTicks
-    ctx.fillText(val.toFixed(3), padLeft - 6, y)
+    ctx.fillText(val.toFixed(yPrecision), padLeft - 6, y)
   }
 
   // Y 轴标题仅在传入非空字符串时绘制（图表 Tab 可选）
@@ -239,6 +267,15 @@ function draw(): void {
 
 // dataPoints 变化时自动重绘（deep 监听数组内容变化）
 watch(() => props.dataPoints, () => {
+  void nextTick(draw)
+}, { deep: true })
+
+// Y 轴精度或手动范围变化时立即重绘：用户在工具条调整参数后需即时看到效果。
+// yRangeOverride 是对象引用，deep 监听确保用户改 min 或 max 都能触发。
+watch(() => props.yPrecision, () => {
+  void nextTick(draw)
+})
+watch(() => props.yRangeOverride, () => {
   void nextTick(draw)
 }, { deep: true })
 

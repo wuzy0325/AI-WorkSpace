@@ -58,19 +58,36 @@ func (m *TraversalManager) loadPersistedConfig() {
 		m.mu.Unlock()
 	}
 
-	// 仅从配置中提取 savePath 并回填断点路径。
+	// 从持久化配置中提取 savePath / saveFileName / taskId，按与运行期相同的派生逻辑
+	// 计算断点路径：ResolveOutputPath → ResolveCheckpointPathFromCSV。
 	// 插值器恢复改为显式的 RestoreInterpolatorFromPersistedConfig 调用，
 	// 避免在装配阶段没有注入 InterpolatorLoader 时阻塞或失败。
+	//
+	// 旧实现直接拼接 probe.SavePath + ".checkpoint.json"，
+	// 与实际写入路径 (${dir}/.traversal/${stem}.checkpoint.json) 完全不匹配，
+	// Stat 永远返回 false，重启后 LoadCheckpoint 永远返回 nil，断点恢复失效。
+	//
+	// 局限：撞名 -2/-3 场景下，预期路径与实际落盘路径不同，启动期无法恢复；
+	// 该场景依赖运行期 csvPort.OutputPath() 回写的 lastCheckpointPath（已正确实现）。
 	var probe struct {
-		SavePath string `json:"savePath"`
+		SavePath     string `json:"savePath"`
+		SaveFileName string `json:"saveFileName"`
+		TaskID       string `json:"taskId"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil || probe.SavePath == "" {
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return
+	}
+	if probe.SavePath == "" && probe.SaveFileName == "" && probe.TaskID == "" {
 		return
 	}
 	if m.checkpointStore == nil {
 		return
 	}
-	candidate := probe.SavePath + ".checkpoint.json"
+	candidate := traversal.ResolveCheckpointPathFromCSV(traversal.ResolveOutputPath(traversal.Config{
+		SavePath:     probe.SavePath,
+		SaveFileName: probe.SaveFileName,
+		TaskID:       probe.TaskID,
+	}))
 	exists, err := m.checkpointStore.Stat(candidate)
 	if err != nil || !exists {
 		return
@@ -935,6 +952,11 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		MotionAxes:        motionAxes,
 		MotionSafety:      cfg.MotionSafety,
 		ProbeType:         probeType,
+		// I-2 修复：把 cfg.Validation/cfg.Stabilization 写入 config 字段，
+		// 让 ParseConfig 成为纯解析函数（无 manager 状态副作用）。
+		// 装配路径（ParseAndStartTraversal）读取此字段调用 m.SetValidation/SetStabilization。
+		Validation:    cfg.Validation,
+		Stabilization: cfg.Stabilization,
 	}
 	// 压力类型兜底：空串与缺失均落 "gauge"，与历史行为一致，避免归一化逻辑误判绝压。
 	pressureType := cfg.PProbePressureType
@@ -942,10 +964,12 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		pressureType = "gauge"
 	}
 	config.PProbePressureType = pressureType
-	// 注入数据验证与稳定等待配置（前端可选传入）
-	m.SetValidation(cfg.Validation)
-	m.SetStabilization(cfg.Stabilization)
-
+	// I-2 修复：ParseConfig 不再产生状态副作用（原先在此处调用 SetValidation/SetStabilization）。
+	// 解析方法承担装配职责会污染 manager 状态——prepareStart (registry_admission.go)
+	// 仅需解析配置用于校验，不应改变 m.validation/m.stabilization；CheckPreconditions
+	// 调用 ParseConfig 后再读 m.validation 会读到上次解析注入的旧值。
+	// 改由 ParseAndStartTraversal 等装配路径在 ParseConfig 之后显式调用 Set*，
+	// 让 ParseConfig 成为纯解析函数。
 	slog.Info("parsing traversal config",
 		"component", "traversal",
 		"task_id", config.TaskID,
@@ -966,6 +990,11 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
+	// I-2 修复：装配路径显式注入数据验证与稳定等待配置到 manager 持久字段。
+	// 原先由 ParseConfig 隐式调用，会污染仅为校验而解析的调用方（如 prepareStart）。
+	// 现在装配语义清晰：ParseConfig 是纯解析，ParseAndStartTraversal 是装配+启动。
+	m.SetValidation(config.Validation)
+	m.SetStabilization(config.Stabilization)
 
 	// 后端再次校验采集态，防止绕过前端禁用按钮或确认对话框直接调用启动 API。
 	// 遍历测试不再隐式发送 StartAcquisition，设备采集生命周期由操作员管理。
@@ -975,15 +1004,8 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
 	if acqController != nil {
-		checked := make(map[string]bool)
-		for _, ref := range config.ResolvedChannelRefs() {
-			if checked[ref.DeviceID] {
-				continue
-			}
-			checked[ref.DeviceID] = true
-			if !acqController.IsAcquiring(ref.DeviceID) {
-				return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", ref.DeviceID)
-			}
+		if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
+			return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
 		}
 	}
 	if config.LayoutPattern == "sector" {

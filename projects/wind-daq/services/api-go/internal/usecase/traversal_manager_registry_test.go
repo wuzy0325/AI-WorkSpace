@@ -396,12 +396,16 @@ func (l *fakeWorkflowLease) setReleaseBlock() (entered <-chan struct{}, unblock 
 	return l.releaseEntered, func() { once.Do(func() { close(l.releaseBlock) }) }
 }
 
-// fakeControllerLease controller-scoped token lease（互斥锁内原子 check-and-set）。
+// fakeControllerLease (controllerID, axis)-scoped token lease（互斥锁内原子 check-and-set）。
+//
+// 资源独占粒度与生产实现一致：同一控制器的不同物理轴可被两个 session 分别 lease；
+// 只有同一 (controllerID, axis) 元组才视为冲突资源。failAcquire/failRelease 按
+// controllerID 注入失败（覆盖该控制器的所有轴），保持既有测试的控制器级失败语义。
 type fakeControllerLease struct {
 	mu       sync.Mutex
-	held     map[string]string // controllerID → token
+	held     map[ControllerAxisPair]string // (controllerID, axis) → token
 	next     int
-	acquires map[string]int
+	acquires map[ControllerAxisPair]int
 	// renewCalls 续约次数；renewErr 注入续约失败；failRelease 按 controllerID 注入释放失败。
 	renewCalls  int
 	renewErr    error
@@ -412,12 +416,12 @@ type fakeControllerLease struct {
 
 func newFakeControllerLease() *fakeControllerLease {
 	return &fakeControllerLease{
-		held: make(map[string]string), acquires: make(map[string]int),
+		held: make(map[ControllerAxisPair]string), acquires: make(map[ControllerAxisPair]int),
 		failAcquire: make(map[string]bool), failRelease: make(map[string]bool),
 	}
 }
 
-func (l *fakeControllerLease) Acquire(_ context.Context, controllerID, _ string, _ time.Duration) (string, error) {
+func (l *fakeControllerLease) Acquire(_ context.Context, controllerID, axis, _ string, _ time.Duration) (string, error) {
 	if l.onAcquire != nil {
 		l.onAcquire()
 	}
@@ -426,13 +430,14 @@ func (l *fakeControllerLease) Acquire(_ context.Context, controllerID, _ string,
 	if l.failAcquire[controllerID] {
 		return "", fmt.Errorf("controller %s acquire failed (injected)", controllerID)
 	}
-	if _, ok := l.held[controllerID]; ok {
-		return "", fmt.Errorf("controller %s already leased", controllerID)
+	pair := ControllerAxisPair{ControllerID: controllerID, Axis: axis}
+	if _, ok := l.held[pair]; ok {
+		return "", fmt.Errorf("controller %s axis %s already leased", controllerID, axis)
 	}
 	l.next++
-	token := fmt.Sprintf("tok-%s-%d", controllerID, l.next)
-	l.held[controllerID] = token
-	l.acquires[controllerID]++
+	token := fmt.Sprintf("tok-%s-%s-%d", controllerID, axis, l.next)
+	l.held[pair] = token
+	l.acquires[pair]++
 	return token, nil
 }
 
@@ -454,22 +459,39 @@ func (l *fakeControllerLease) Renew(_ context.Context, leaseToken string, _ time
 func (l *fakeControllerLease) Release(_ context.Context, leaseToken string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for controllerID, token := range l.held {
+	for pair, token := range l.held {
 		if token == leaseToken {
-			if l.failRelease[controllerID] {
-				return fmt.Errorf("controller %s release failed (injected)", controllerID)
+			if l.failRelease[pair.ControllerID] {
+				return fmt.Errorf("controller %s release failed (injected)", pair.ControllerID)
 			}
-			delete(l.held, controllerID)
+			delete(l.held, pair)
 			return nil
 		}
 	}
 	return errors.New("unknown controller lease token")
 }
 
+// heldCount 返回该控制器当前被持有的轴 lease 数量（同一控制器的多个轴各算一份）。
+// 既有测试在每控制器只配一个轴的场景下期待返回 1；新场景下若两 probe 分别 lease
+// 同一控制器的 X/Y 轴，则返回 2。
 func (l *fakeControllerLease) heldCount(controllerID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, ok := l.held[controllerID]; ok {
+	count := 0
+	for pair := range l.held {
+		if pair.ControllerID == controllerID {
+			count++
+		}
+	}
+	return count
+}
+
+// heldAxisCount 返回 (controllerID, axis) 元组的 lease 数量（0 或 1）。
+// 用于精确断言同控制器不同轴的 lease 状态。
+func (l *fakeControllerLease) heldAxisCount(controllerID, axis string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.held[ControllerAxisPair{ControllerID: controllerID, Axis: axis}]; ok {
 		return 1
 	}
 	return 0
@@ -605,7 +627,9 @@ func (s *fakeConfigStore) LoadConfig(key string) ([]byte, error) {
 	defer s.mu.Unlock()
 	data, ok := s.data[key]
 	if !ok {
-		return nil, errors.New("config key not found")
+		// 与生产 FileAppConfigStore 一致：key 不存在返回 (nil, nil)，
+		// 让调用方能区分"未配置"与真实 I/O 错误（I-6 修复后 loadProbeBindings 依赖该语义）。
+		return nil, nil
 	}
 	return data, nil
 }
@@ -721,9 +745,25 @@ func dualConfigJSON(clientTaskID string, controllerIDs ...string) json.RawMessag
 	return json.RawMessage(fmt.Sprintf(`{"taskId":%q,"deviceId":"dev-1","channels":[0],"motionAxes":[%s]}`, clientTaskID, axes))
 }
 
+// dualConfigWithAxisJSON 构造只含单个 (controllerID, axis) 元组的配置 JSON。
+// 用于同控制器不同轴场景：两 probe 共用同一控制器但绑定不同物理轴时，
+// 需要精确指定每个 probe 的 axis（dualConfigJSON 按 X/Y/Z/U 顺序自动派生无法表达此场景）。
+func dualConfigWithAxisJSON(clientTaskID, controllerID, axis string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"taskId":%q,"deviceId":"dev-1","channels":[0],"motionAxes":[{"controllerId":%q,"axis":%q}]}`,
+		clientTaskID, controllerID, axis,
+	))
+}
+
 // seedPersistedBindings 写入 probe-scoped 持久化配置。
 func (f *registryFixture) seedPersistedBindings(probeID ProbeID, controllerIDs ...string) {
 	f.configs.seed(probeConfigKey(probeID), dualConfigJSON("", controllerIDs...))
+}
+
+// seedPersistedAxisBinding 写入 probe-scoped 持久化配置（单个 (controllerID, axis) 元组）。
+// 用于同控制器不同轴场景的持久化绑定种子。
+func (f *registryFixture) seedPersistedAxisBinding(probeID ProbeID, controllerID, axis string) {
+	f.configs.seed(probeConfigKey(probeID), dualConfigWithAxisJSON("", controllerID, axis))
 }
 
 // ---------------------------------------------------------------------------

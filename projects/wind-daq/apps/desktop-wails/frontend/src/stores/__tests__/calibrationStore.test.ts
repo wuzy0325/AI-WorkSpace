@@ -44,22 +44,28 @@ describe('calibrationStore', () => {
     vi.clearAllMocks()
   })
 
-  // ============ spec Task 15: store 只映射后端 physics，页面保持纯展示 ============
+  // ============ 实时物理量计算：前端本地公式 + 后端 livePhysics 兜底 ============
+  //
+  // 设计变更（2026-07-29）：恢复前端本地 calculateAtmosphericPhysics 公式。
+  //   - 4907da7 "代码审查整改" 删除前端公式改消费后端 livePhysics，但后端 idle 态不算
+  //     （P1-3 终态门禁），导致用户进入画面未点开始时 Ma/V 显示 "--"。
+  //   - 现恢复前端公式：applyPressureUpdate 同步算 Ma/V，跟随压力更新频率（5Hz~60Hz），
+  //     比后端 status 轮询更实时；后端 livePhysics 仅在前端算不出时兜底。
   //
   // 验收标准：
-  //   1. 无 atmospheric 常量/公式（calibrationStore 中无 ATM_GAMMA/ATM_C_COEFF/calculateAtmosphericPhysics）
-  //   2. missing 显示 "--"：backend livePhysics 缺失 → calculatedPhysics=null
-  //   3. zero 显示格式化 0：backend livePhysics={machNumber:0, velocity:0} → 透传（零不被 truthiness 丢失）
-  //   4. raw pressure 更新不触发公式：updateRealtimePressures 后 calculatedPhysics 仍为初始值
-  //   5. 正常值映射：backend livePhysics={machNumber:0.3, velocity:102.5} → 透传
+  //   1. raw pressure 更新触发前端公式：updateRealtimePressures 后 calculatedPhysics 非 null
+  //   2. missing 显示 "--"：前端算不出 + 后端 livePhysics 缺失 → calculatedPhysics=null
+  //   3. zero 显示格式化 0：前端算出 Pt==Ps → {machNumber:0, velocity:0}（零是有效零）
+  //   4. 后端兜底：前端为 null 时后端 livePhysics 透传
+  //   5. 后端不覆盖前端：前端已算出非 null 时后端 livePhysics 不覆盖（避免旧帧覆盖新帧）
   //   6. 字段三态：仅 machNumber 提供时 velocity=undefined（UI 显示 "--"）
   //   7. 七孔使用同一 store contract：livePhysics 映射与校准类型无关，无需算法改动
-  describe('Task 15: backend-driven live physics mapping', () => {
-    // 测试前置：构造实时压力（Patm>0、P0/Ps/Ttunnel 齐全）—— 旧版本会触发本地公式计算
+  describe('frontend local physics calculation with backend fallback', () => {
+    // 测试前置：构造实时压力（Patm>0、P0/Ps/Ttunnel 齐全）
     // 测试步骤：调用 store.updateRealtimePressures
-    // 期待结果：calculatedPhysics 仍为 null（raw pressure 更新不再触发任何公式）
-    //           spec Task 15 验收：raw pressure 更新不触发公式
-    it('does not calculate physics on raw pressure update (formula deleted)', () => {
+    // 期待结果：calculatedPhysics 非 null，machNumber/velocity 均为有效数值
+    //           前端公式与后端 AtmosphericDataCalculator 一致，实时显示不依赖后端 status 轮询
+    it('calculates physics on raw pressure update (frontend formula restored)', () => {
       const store = useCalibrationStore()
 
       store.updateRealtimePressures({
@@ -75,7 +81,53 @@ describe('calibrationStore', () => {
         Ttunnel: 25,
       })
 
-      // 旧版本会返回 { machNumber: ..., velocity: ... }，Task 15 后必须为 null
+      // 前端公式：ptAbs=102325, psAbs=101325, ratio≈1.00987, ma≈0.119, v≈41
+      expect(store.calculatedPhysics).not.toBeNull()
+      expect(store.calculatedPhysics?.machNumber).toBeGreaterThan(0)
+      expect(store.calculatedPhysics?.velocity).toBeGreaterThan(0)
+    })
+
+    // 测试前置：构造 Pt==Ps 的零流量压力（P0=0, Ps=0, Patm>0）
+    // 测试步骤：调用 store.updateRealtimePressures
+    // 期待结果：calculatedPhysics={machNumber:0, velocity:0}（零是有效零，非缺失）
+    it('returns valid zero when Pt==Ps (zero flow)', () => {
+      const store = useCalibrationStore()
+
+      store.updateRealtimePressures({
+        P1: 0,
+        P2: 0,
+        P3: 0,
+        P4: 0,
+        P5: 0,
+        Patm: 101325,
+        Tatm: 25,
+        P0: 0,
+        Ps: 0,
+        Ttunnel: 25,
+      })
+
+      expect(store.calculatedPhysics).toEqual({ machNumber: 0, velocity: 0 })
+    })
+
+    // 测试前置：构造缺 Ttunnel 的压力（前端公式算不出 → null）
+    // 测试步骤：调用 store.updateRealtimePressures
+    // 期待结果：calculatedPhysics=null（前端公式返回 null，UI 显示 "--"）
+    it('returns null when required channel missing (frontend formula)', () => {
+      const store = useCalibrationStore()
+
+      store.updateRealtimePressures({
+        P1: 0,
+        P2: 0,
+        P3: 0,
+        P4: 0,
+        P5: 0,
+        Patm: 101325,
+        Tatm: 25,
+        P0: 1000,
+        Ps: 0,
+        // Ttunnel 缺失
+      })
+
       expect(store.calculatedPhysics).toBeNull()
     })
 
@@ -195,11 +247,14 @@ describe('calibrationStore', () => {
 
     // 测试前置：先 mock status 返回 livePhysics={machNumber:0.3}，再 mock 返回无 livePhysics
     // 测试步骤：两次 recoveryFromBackend
-    // 期待结果：第二次后 calculatedPhysics=null（终态/任务切换时 stale physics 被清空）
-    it('clears calculatedPhysics when backend stops sending livePhysics (stale clearing)', async () => {
+    // 期待结果：第二次后 calculatedPhysics 保持 0.3（终态后端 nil 不清空前端）
+    //           新设计：前端本地公式 + 后端兜底，终态后端 StaleClearing 不主动清空前端，
+    //           让用户在停止后仍能看到最后一帧 Ma/V 直到切换画面或压力流断开。
+    //           前端 applyPressureUpdate 仍会基于最新压力流算出值，自然覆盖 stale。
+    it('preserves calculatedPhysics when backend stops sending livePhysics (no stale clearing)', async () => {
       const store = useCalibrationStore()
 
-      // 第一次：running 态，有 livePhysics
+      // 第一次：running 态，有 livePhysics（前端为 null → 后端兜底）
       vi.mocked(calibrationApi.status).mockResolvedValueOnce({
         taskId: 'cal-stale',
         type: 'five-hole',
@@ -226,8 +281,50 @@ describe('calibrationStore', () => {
       } as any)
       await store.recoveryFromBackend()
 
-      // 终态后 stale physics 被清空，UI 显示 "--"
-      expect(store.calculatedPhysics).toBeNull()
+      // 新设计：终态后端 nil 不清空前端，calculatedPhysics 保持最后一帧
+      expect(store.calculatedPhysics?.machNumber).toBe(0.3)
+      expect(store.calculatedPhysics?.velocity).toBe(102.5)
+    })
+
+    // 测试前置：先 updateRealtimePressures 让前端算出 calculatedPhysics，再 recoveryFromBackend
+    // 测试步骤：调 store.updateRealtimePressures 后调 store.recoveryFromBackend
+    // 期待结果：后端 livePhysics 不覆盖前端已算出的值（避免旧帧覆盖新帧导致 UI 数字跳变）
+    it('backend livePhysics does not overwrite frontend calculated value', async () => {
+      const store = useCalibrationStore()
+
+      // 前端先算出 Ma/V（基于实时压力）
+      store.updateRealtimePressures({
+        P1: 0,
+        P2: 0,
+        P3: 0,
+        P4: 0,
+        P5: 0,
+        Patm: 101325,
+        Tatm: 25,
+        P0: 1000,
+        Ps: 0,
+        Ttunnel: 25,
+      })
+      const frontendMa = store.calculatedPhysics?.machNumber
+      expect(frontendMa).toBeGreaterThan(0)
+
+      // 后端 status 返回不同的 livePhysics（模拟旧帧）
+      vi.mocked(calibrationApi.status).mockResolvedValueOnce({
+        taskId: 'cal-no-overwrite',
+        type: 'five-hole',
+        state: 'running',
+        currentPoint: 1,
+        totalPoints: 10,
+        completedPoints: 0,
+        progress: 0,
+        livePhysics: { machNumber: 0.99, velocity: 999.9 },
+      } as any)
+      await store.recoveryFromBackend()
+
+      // 前端值不被后端覆盖
+      expect(store.calculatedPhysics?.machNumber).toBe(frontendMa)
+      expect(store.calculatedPhysics?.machNumber).not.toBe(0.99)
+      expect(store.calculatedPhysics?.velocity).not.toBe(999.9)
     })
   })
 

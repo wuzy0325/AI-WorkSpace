@@ -118,6 +118,14 @@ type Config struct {
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 为 nil 时下游使用 DefaultMotionSafety，保证旧配置反序列化兼容。
 	MotionSafety *MotionSafetyConfig `json:"motionSafety,omitempty"`
+
+	// Validation 数据验证配置（前端可选传入）。
+	// I-2 修复：ParseConfig 作为纯解析函数，把 cfg.Validation 写入此字段；
+	// 装配路径（ParseAndStartTraversal）读取此字段调用 m.SetValidation。
+	// 旧配置/旧断点反序列化时为 nil，与历史行为兼容。
+	Validation *DataValidationConfig `json:"validation,omitempty"`
+	// Stabilization 稳定等待配置（前端可选传入）。语义同 Validation。
+	Stabilization *StabilizationConfig `json:"stabilization,omitempty"`
 }
 
 // Probe type values for Config.ProbeType (spec-seven-hole-traversal section 2.3).

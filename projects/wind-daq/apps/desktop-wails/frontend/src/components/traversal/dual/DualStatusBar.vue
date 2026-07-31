@@ -181,26 +181,34 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
 </template>
 
 <style scoped>
+/* C12 修复：原使用 --bg-surface / --bg-elevated / --border-subtle / --text-tertiary /
+   --font-mono / --color-warning / --color-error / --color-primary 等项目不存在的 token，
+   全部 fallback 成硬编码浅色，导致深色模式下状态栏显示白卡片、文字与背景对比度不足。
+   改为对齐 DualProbeRow.vue 与 light.css / dark.css 中真实存在的 token 体系：
+   背景 --bg-panel / --bg-panel-strong；边框 --border-default；文本 --text-primary /
+   --text-secondary / --text-muted；强调色 --accent-warning / --accent-danger / --accent-info；
+   等宽字体 --font-family-mono；阴影 --shadow-panel。
+   警告/错误背景统一用 color-mix 透明叠加，随主题切换自动适配。 */
 .dual-status-cell {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 10px 14px;
-  border: 1px solid var(--border-subtle, #d0d0d0);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--bg-surface, #ffffff);
+  background: var(--bg-panel);
   min-width: 0;
   flex: 1 1 0;
 }
 
 .dual-status-cell--warning {
-  border-color: var(--color-warning, #f0a020);
-  background: var(--color-warning-bg, #fff8e1);
+  border-color: color-mix(in srgb, var(--accent-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
 }
 
 .dual-status-cell--error {
-  border-color: var(--color-error, #d03030);
-  background: var(--color-error-bg, #ffebee);
+  border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
 }
 
 .dual-status-cell__header {
@@ -212,11 +220,11 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
 }
 
 .dual-status-cell__probe-label {
-  color: var(--text-primary, #1f1f1f);
+  color: var(--text-primary);
 }
 
 .dual-status-cell__status {
-  color: var(--text-secondary, #5a5a5a);
+  color: var(--text-secondary);
   font-weight: 400;
 }
 
@@ -230,19 +238,19 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
 .dual-status-cell__progress-bar {
   flex: 1 1 auto;
   height: 6px;
-  background: var(--bg-elevated, #e8e8e8);
+  background: var(--bg-panel-strong);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .dual-status-cell__progress-fill {
   height: 100%;
-  background: var(--color-primary, #2080f0);
+  background: var(--accent-info);
   transition: width 0.2s ease;
 }
 
 .dual-status-cell__progress-text {
-  color: var(--text-secondary, #5a5a5a);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -250,12 +258,12 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
   display: flex;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-secondary, #5a5a5a);
+  color: var(--text-secondary);
 }
 
 .dual-status-cell__point-value {
-  color: var(--text-primary, #1f1f1f);
-  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
 }
 
 .dual-status-cell__metrics {
@@ -273,13 +281,13 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
 }
 
 .dual-status-cell__metric-label {
-  color: var(--text-tertiary, #888);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .dual-status-cell__metric-value {
-  color: var(--text-primary, #1f1f1f);
-  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -291,10 +299,10 @@ const isErrorStatus = computed(() => session.value.status?.status === 'error')
   align-items: flex-start;
   gap: 4px;
   padding: 4px 6px;
-  background: var(--bg-elevated, #f5f5f5);
+  background: var(--bg-panel-strong);
   border-radius: 4px;
   font-size: 11px;
-  color: var(--text-secondary, #5a5a5a);
+  color: var(--text-secondary);
   overflow: hidden;
 }
 

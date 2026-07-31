@@ -231,7 +231,9 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 	}
 	return map[string]any{
 		"taskId":                  status.TaskID,
-		"state":                   string(status.State),
+		// state 必须使用本地变量 state（已根据 currentPoint/totalPoints 修正为 "completed"），
+		// 而非原始 status.State——否则完成后前端会读到 state="idle"+status="completed" 的矛盾组合。
+		"state":                   state,
 		"status":                  displayState,
 		"currentPoint":            status.CurrentPoint,
 		"currentPointCoordinates": currentPoint,

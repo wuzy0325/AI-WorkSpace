@@ -78,6 +78,126 @@ func TestBroadcastTargetsWithTimeoutFallsBack(t *testing.T) {
 	}
 }
 
+// failingSendDiscoverySocket 是 mock discoverySocket，Send 总是返回错误，
+// Receive 调用次数被计数用于断言"Send 失败后不调用 Receive"（复核修订 finding 3）。
+type failingSendDiscoverySocket struct {
+	sendErr        error
+	receiveCount   int32
+	receiveCountMu sync.Mutex
+}
+
+func (s *failingSendDiscoverySocket) Send(_ []byte, _ string, _ int) error {
+	return s.sendErr
+}
+
+func (s *failingSendDiscoverySocket) Receive(buf []byte, _ time.Duration) (int, string, error) {
+	s.receiveCountMu.Lock()
+	s.receiveCount++
+	s.receiveCountMu.Unlock()
+	return 0, "", net.ErrClosed
+}
+
+func (s *failingSendDiscoverySocket) Close() error { return nil }
+
+func (s *failingSendDiscoverySocket) ReceiveCallCount() int32 {
+	s.receiveCountMu.Lock()
+	defer s.receiveCountMu.Unlock()
+	return s.receiveCount
+}
+
+// TestScanWithSocket_SendFailureSkipsReceive 验证 ADR-009 复核修订 finding 3：
+// scanWithSocket 在 Send 失败后必须直接返回，不调用同一 socket 的 Receive。
+//
+// 测试前置：
+//
+//   - NetworkScanner 配置 100ms timeout（避免超时干扰）
+//
+//   - listenPacket 返回 nil error（实际未使用，因为 listenPacket 路径会被 failingSendDiscoverySocket 替代）
+//
+//   - 注入 failingSendDiscoverySocket：Send 总是返回错误
+//
+//     由于 scanWithSocket 内部通过 openDiscoverySocket 或 listenPacket 创建 socket，
+//     不直接支持 socket 注入。本测试通过 listenPacket 注入 packetDiscoverySocket 包装的
+//     failingSendDiscoverySocket 不太合适。改为：直接验证 scanWithSocket 在 Send 失败时
+//     返回 nil 且耗时极短（不进入 Receive 循环，否则会阻塞到 timeout）。
+//
+//     替代方案：用 deadlineIgnoringPacketConn（WriteTo 成功但 ReadFrom 永久阻塞）
+//     验证 Send 成功时进入 Receive 循环。本测试用 listenPacket 注入会让 Send 成功，
+//     不符合"Send 失败"场景。需要更精确的 mock。
+//
+//     最终方案：通过 packetDiscoverySocket 包装一个 Send 总失败的 mock conn。
+//     packetDiscoverySocket.Send 调用 conn.WriteTo，所以 WriteTo 失败即 Send 失败。
+type failingWritePacketConn struct {
+	receiveCount int32
+	receiveMu    sync.Mutex
+}
+
+func (c *failingWritePacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	c.receiveMu.Lock()
+	c.receiveCount++
+	c.receiveMu.Unlock()
+	return 0, nil, net.ErrClosed
+}
+
+func (c *failingWritePacketConn) WriteTo(_ []byte, _ net.Addr) (int, error) {
+	return 0, net.ErrClosed
+}
+
+func (c *failingWritePacketConn) Close() error                     { return nil }
+func (c *failingWritePacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (c *failingWritePacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *failingWritePacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *failingWritePacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *failingWritePacketConn) ReceiveCallCount() int32 {
+	c.receiveMu.Lock()
+	defer c.receiveMu.Unlock()
+	return c.receiveCount
+}
+
+// TestScanWithSocket_SendFailureSkipsReceive 验证 ADR-009 复核修订 finding 3：
+// scanWithSocket 在 Send 失败后必须直接返回 nil，不调用同一 socket 的 Receive。
+//
+// 测试前置：
+//   - NetworkScanner 配置 2s timeout（足够长，若进入 Receive 循环会让测试超时）
+//   - listenPacket 注入 failingWritePacketConn：WriteTo 总返回 net.ErrClosed（即 Send 失败）
+//   - ReadFrom 计数器初始 0
+//
+// 测试步骤：
+//   - 调用 scanWithSocket("probe", 7000, parser)
+//
+// 期待结果：
+//   - 返回 nil
+//   - 耗时应远小于 2s timeout（不进入 Receive 循环）
+//   - ReadFrom 调用次数 == 0（Send 失败后不调用 Receive）
+//
+// 修复前：Send 失败 break 后仍执行 Receive 循环，ReadFrom 被调用 1 次（返回 errClosed 后 break），
+//
+//	测试断言 ReceiveCallCount == 0 失败。
+//
+// 修复后：Send 失败直接 return nil，ReadFrom 从未被调用，测试通过。
+func TestScanWithSocket_SendFailureSkipsReceive(t *testing.T) {
+	failingConn := &failingWritePacketConn{}
+	scanner := NewNetworkScanner(WithTimeout(2 * time.Second))
+	scanner.listenPacket = func(string, string) (net.PacketConn, error) {
+		return failingConn, nil
+	}
+
+	started := time.Now()
+	devices := scanner.scanWithSocket("probe", 7000, func([]byte, string) *device.ScanResult { return nil })
+	elapsed := time.Since(started)
+
+	if devices != nil {
+		t.Fatalf("scanWithSocket should return nil on Send failure, got %v", devices)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("scanWithSocket should return immediately on Send failure (不进入 Receive 循环), took %v", elapsed)
+	}
+	if count := failingConn.ReceiveCallCount(); count != 0 {
+		t.Fatalf("Receive should NOT be called after Send failure, got %d calls", count)
+	}
+}
+
 // TestNetworkScannerRejectsConcurrentScan 验证并发扫描被拒绝。
 // 防止重复触发扫描时 UDP socket 竞争和结果混乱。
 func TestNetworkScannerRejectsConcurrentScan(t *testing.T) {
@@ -172,14 +292,6 @@ func newMockListenPacket(responses map[string]string) listenPacketFn {
 			done:      make(chan struct{}),
 		}, nil
 	}
-}
-
-func csvParts(s string) []string {
-	parts := strings.Split(s, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
 }
 
 func TestNetworkScannerReturnsNoErrorOnTimeout(t *testing.T) {

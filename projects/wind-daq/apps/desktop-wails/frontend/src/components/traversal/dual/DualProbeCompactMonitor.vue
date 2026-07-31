@@ -31,6 +31,7 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
+import { traversalSessionWarning } from '@api/traversalErrorMapper'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import type { ProbeId, TraversalSessionState, TraversalTestStatusType } from '@shared/types/traversal'
 
@@ -95,6 +96,7 @@ const isTerminal = computed(() => {
   return s === 'completed' || s === 'stopped' || s === 'error'
 })
 const isStarting = computed(() => session.value.isStarting)
+const isCheckpointPending = computed(() => dualStore.checkpointPending[props.probeId])
 const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && !session.value.checkpoint && session.value.hasLoadedInterpolator)
 const canPause = computed(() => isRunning.value)
 const canResume = computed(() => isPaused.value)
@@ -248,74 +250,88 @@ function onStatusBarClick(): void {
   if (interpStatus.value === 'prb-missing') emit('openSettings', props.probeId)
 }
 
+/** I-23 修复：键盘可达性——Enter/Space 触发与点击等价操作。 */
+function onStatusBarKeydown(event: KeyboardEvent): void {
+  // 仅响应 Enter/Space；其他键（Tab/方向键）交给浏览器默认行为。
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  onStatusBarClick()
+}
+
 // Warning/Error 摘要
-const warningText = computed(() => {
-  const s = session.value
-  const parts: string[] = []
-  if (s.status?.warning) parts.push(s.status.warning)
-  if (s.status?.lastError) parts.push(s.status.lastError)
-  if (s.error) parts.push(s.error)
-  return parts.length > 0 ? parts.join('；') : ''
-})
+const warningText = computed(() => traversalSessionWarning(session.value, t.value))
 const hasWarning = computed(() => warningText.value.length > 0)
 const isErrorStatus = computed(() => session.value.status?.status === 'error')
 
-// 控制按钮 actions
-async function onStart(): Promise<void> {
-  const ok = await dualStore.start(props.probeId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.dualStartFailed + '：' + (session.value.error ?? ''), 'error')
+// I-24 修复：所有 IPC handler 包 try-catch，避免 IPC 异常成为 unhandled rejection。
+// 失败时仍尝试用 session.error 兜底，若 session.error 也空则用通用错误模板。
+async function safeCall(
+  action: () => Promise<boolean>,
+  failureKey: keyof typeof i18n.t,
+): Promise<void> {
+  try {
+    const ok = await action()
+    if (!ok) {
+      feedbackStore.pushToast(
+        `${t.value[failureKey]}：${session.value.error ?? ''}`,
+        'error',
+      )
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    feedbackStore.pushToast(`${t.value[failureKey]}：${detail}`, 'error')
   }
+}
+
+// 控制按钮 actions
+function onStart(): Promise<void> {
+  return safeCall(() => dualStore.start(props.probeId), 'dualStartFailed')
 }
 
 async function onResumeCheckpoint(): Promise<void> {
   const checkpoint = session.value.checkpoint
   if (!checkpoint) return
-  const ok = await dualStore.resumeFromCheckpoint(props.probeId, checkpoint.taskId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.failedResume + '：' + (session.value.error ?? ''), 'error')
-  }
+  await safeCall(() => dualStore.resumeFromCheckpoint(props.probeId, checkpoint.taskId), 'failedResume')
 }
 
 async function onDiscardCheckpoint(): Promise<void> {
   const checkpoint = session.value.checkpoint
   if (!checkpoint) return
-  const confirmed = await feedbackStore.confirm(t.value.travCheckDetected, {
-    title: t.value.travAbandon,
-    confirmText: t.value.travAbandon,
-    cancelText: t.value.cancel,
-  })
-  if (!confirmed) return
-  const ok = await dualStore.clearCheckpoint(props.probeId, checkpoint.taskId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.failedDiscardCheckpoint + '：' + (session.value.error ?? ''), 'error')
+  try {
+    const confirmed = await feedbackStore.confirm(t.value.travCheckDetected, {
+      title: t.value.travAbandon,
+      confirmText: t.value.travAbandon,
+      cancelText: t.value.cancel,
+    })
+    if (!confirmed) return
+    await safeCall(() => dualStore.clearCheckpoint(props.probeId, checkpoint.taskId), 'failedDiscardCheckpoint')
+  } catch (err) {
+    // confirm 弹窗自身异常（如 modal 系统故障）——记录但不抛出。
+    const detail = err instanceof Error ? err.message : String(err)
+    feedbackStore.pushToast(`${t.value.failedDiscardCheckpoint}：${detail}`, 'error')
   }
 }
 
-async function onPause(): Promise<void> {
-  const ok = await dualStore.pause(props.probeId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.dualPauseFailed + '：' + (session.value.error ?? ''), 'error')
-  }
+function onPause(): Promise<void> {
+  return safeCall(() => dualStore.pause(props.probeId), 'dualPauseFailed')
 }
 
-async function onResume(): Promise<void> {
-  const ok = await dualStore.resume(props.probeId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.dualResumeFailed + '：' + (session.value.error ?? ''), 'error')
-  }
+function onResume(): Promise<void> {
+  return safeCall(() => dualStore.resume(props.probeId), 'dualResumeFailed')
 }
 
 async function onStop(): Promise<void> {
-  const confirmed = await feedbackStore.confirm(t.value.travStopConfirm, {
-    title: t.value.travStopTitle,
-    confirmText: t.value.travStop,
-    cancelText: t.value.cancel,
-  })
-  if (!confirmed) return
-  const ok = await dualStore.stop(props.probeId)
-  if (!ok) {
-    feedbackStore.pushToast(t.value.dualStopFailed + '：' + (session.value.error ?? ''), 'error')
+  try {
+    const confirmed = await feedbackStore.confirm(t.value.travStopConfirm, {
+      title: t.value.travStopTitle,
+      confirmText: t.value.travStop,
+      cancelText: t.value.cancel,
+    })
+    if (!confirmed) return
+    await safeCall(() => dualStore.stop(props.probeId), 'dualStopFailed')
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    feedbackStore.pushToast(`${t.value.dualStopFailed}：${detail}`, 'error')
   }
 }
 
@@ -384,10 +400,10 @@ const completedSummary = computed(() => {
         {{ t.travCheckDetected }} · {{ t.travCheckCompleted }}
         {{ session.checkpoint.completedPoints }} / {{ session.checkpoint.totalPoints }}
       </span>
-      <UiButton size="sm" variant="warning" @click="onResumeCheckpoint">
+      <UiButton size="sm" variant="warning" :disabled="isCheckpointPending" :loading="isCheckpointPending" @click="onResumeCheckpoint">
         {{ t.travContinueTest }}
       </UiButton>
-      <UiButton size="sm" variant="ghost" @click="onDiscardCheckpoint">
+      <UiButton size="sm" variant="ghost" :disabled="isCheckpointPending" @click="onDiscardCheckpoint">
         {{ t.travAbandon }}
       </UiButton>
     </div>
@@ -436,7 +452,10 @@ const completedSummary = computed(() => {
           :class="{ 'dual-compact__interp-status--clickable': interpStatus === 'prb-missing' }"
           :style="statusBarStyle"
           :title="statusBarTooltip"
+          :role="interpStatus === 'prb-missing' ? 'button' : undefined"
+          :tabindex="interpStatus === 'prb-missing' ? 0 : undefined"
           @click="onStatusBarClick"
+          @keydown="onStatusBarKeydown"
         >
           <AlertTriangle class="dual-compact__interp-status-icon" aria-hidden="true" />
           <span class="dual-compact__interp-status-text">{{ statusBarText }}</span>
@@ -479,228 +498,4 @@ const completedSummary = computed(() => {
   </div>
 </template>
 
-<style scoped>
-/* 配色对齐单探针 TraversalLiveMonitor：卡片 --bg-panel-strong，标签 --text-muted，
-   插值数值 --accent-info 强调，横幅用 color-mix 状态色。
-   旧实现引用了 --bg-surface/--color-primary 等不存在的 token（fallback 硬编码浅色），
-   与主题系统脱节；本文件统一改用真实设计 token。 */
-.dual-compact {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 0 10px;
-  border-bottom: 1px solid var(--border-default);
-  min-width: 0;
-}
-
-.dual-compact__controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.dual-compact__checkpoint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  color: var(--state-warning);
-  background: color-mix(in srgb, var(--state-warning) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--state-warning) 30%, transparent);
-  border-radius: 6px;
-  font-size: 11px;
-}
-
-.dual-compact__checkpoint-text {
-  min-width: 0;
-  margin-right: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dual-compact__status-fields {
-  display: grid;
-  grid-template-columns: minmax(60px, 0.6fr) minmax(90px, 0.9fr) minmax(130px, 1.4fr) minmax(130px, 1.4fr);
-  gap: 6px 8px;
-  font-size: 12px;
-}
-
-.dual-compact__interp-status {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 2px 8px;
-  border-radius: 6px;
-}
-
-.dual-compact__interp-status--clickable {
-  cursor: pointer;
-}
-
-.dual-compact__interp-status-icon {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
-}
-
-.dual-compact__interp-status-text {
-  font-size: 11px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dual-compact__status-value {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.dual-compact__status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.dual-compact__interpolation {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 2px;
-}
-
-.dual-compact__section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 500;
-  /* 固定标题行高度,避免插值状态条 v-if 显隐时撑高标题行导致下方 metrics 抖动。
-     状态条内容高度 ~17.2px(去掉 border 后),20px 留足余量且与单探针 TraversalLiveMonitor
-     的 min-h-5 保持一致,双/单探针视觉节奏统一。 */
-  min-height: 20px;
-}
-
-.dual-compact__section-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--accent-info);
-}
-
-.dual-compact__metrics {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(72px, 1fr));
-  gap: 6px;
-}
-
-.dual-compact__metric {
-  padding: 6px 8px;
-  background: var(--bg-panel-strong);
-  border-radius: 8px;
-}
-
-.dual-compact__field {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.dual-compact__field-label {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.dual-compact__field-value {
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dual-compact__field-value--mono {
-  font-family: var(--font-family-mono, monospace);
-  font-weight: 500;
-}
-
-.dual-compact__metric-value {
-  color: var(--text-primary);
-  font-family: var(--font-family-mono, monospace);
-  font-size: 15px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dual-compact__metric-value--accent {
-  color: var(--accent-info);
-}
-
-.dual-compact__progress-bar {
-  height: 4px;
-  background: var(--border-default);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.dual-compact__progress-fill {
-  height: 100%;
-  background: var(--accent-primary);
-  transition: width 0.2s ease;
-}
-
-.dual-compact__completed {
-  padding: 4px 8px;
-  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
-  color: var(--accent-success);
-  border: 1px solid color-mix(in srgb, var(--accent-success) 35%, transparent);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.dual-compact__completed--error {
-  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
-  color: var(--accent-danger);
-  border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
-}
-
-.dual-compact__warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 4px 8px;
-  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
-  color: var(--state-warning);
-  border: 1px solid color-mix(in srgb, var(--state-warning) 35%, transparent);
-  border-radius: 6px;
-  font-size: 11px;
-  overflow: hidden;
-}
-
-.dual-compact__warning--error {
-  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
-  color: var(--accent-danger);
-  border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
-}
-
-.dual-compact__warning-icon {
-  flex-shrink: 0;
-  font-weight: 700;
-}
-
-.dual-compact__warning-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>
+<style scoped src="./DualProbeCompactMonitor.css"></style>

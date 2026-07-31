@@ -1188,7 +1188,8 @@ export interface TraversalProgressEvent {
   currentPoint: TraversalCoordPoint
   currentPointPhase?: TraversalPointPhase
   latestData?: TraversalDataPoint
-  timestamp: number
+  // timestamp 已移除：原实现每次轮询都填 Date.now()，导致 polling 去重 key 永不相等，
+  // 每 500ms 必触发回调。若需要事件时间戳，由回调方在接收时自行 Date.now()。
 }
 
 /** 测试完成事件 */
@@ -1198,7 +1199,9 @@ export interface TraversalCompleteEvent {
   status: TraversalTerminalStatus
   filePath?: string
   error?: string
-  duration: number
+  // duration 已移除：原实现每次轮询都填 Date.now() - startTime，导致 polling 去重
+  // key 永不相等，终态后每 500ms 仍触发回调。消费方（如 TraversalMain.vue）按
+  // 需自行计算（finishedAt - startTime 或后端返回的真实耗时）。
   totalPoints: number
 }
 

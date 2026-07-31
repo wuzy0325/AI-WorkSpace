@@ -701,14 +701,6 @@ func (r *emergencyStopCapableRuntime) EmergencyStopMotion() error {
 	return errors.Join(errs...)
 }
 
-// calibrationManagerForTest 暴露 CalibrationManager 的字段便于断言。
-// 由于 CalibrationManager 字段为私有，测试通过 NewCalibrationManager + 状态读取方法访问。
-func newCalibrationManagerWithRuntime(runtime ports.CalibrationRuntime) *CalibrationManager {
-	m := NewCalibrationManager(nil, nil, nil, nil)
-	m.SetRuntime(runtime)
-	return m
-}
-
 func TestHandleCalibrationMotionSafetyFailure_CriticalDeviationTriggersEmergencyStop(t *testing.T) {
 	// 测试前置：CriticalDeviation 故障，runtime 实现 EmergencyStopProvider
 	mgr := &controllableMotionManager{}

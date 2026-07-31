@@ -6,12 +6,12 @@
  * 【功能定位】
  * 双探针模式下每 probe 的完整 row 容器：
  *   - 紧凑监测区（DualProbeCompactMonitor）：固定不滚动，含控制按钮 +
- *     Warning 摘要 + 核心字段（状态/进度/当前点位/Alpha·Beta/总压/静压/速度）
- *   - Tab 详情区：可独立滚动；包含完整通道值、运动状态、点位预览、诊断信息
+ *     Warning 摘要 + 运行状态 + 实时插值
+ *   - 固定数据区：实时压力与实时插值同时可见，下方展示点位预览
  *
  * 【布局约束】
  * - 控制栏与 Warning 固定不滚动（spec FR7），避免长错误文本遮挡关键控制；
- * - Tab 详情区独立滚动，长内容不影响另一 probe 的 row；
+ * - 数据区独立滚动，长内容不影响另一 probe 的 row；
  * - 五孔/七孔探针类型组合下展示字段正确（Alpha/Beta 标签按
  *   TRAVERSAL_PROBE_PRESENTATION 切换）。
  *
@@ -20,8 +20,9 @@
  * ============================================================================
  */
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
+import { Crosshair, Wind } from '@lucide/vue'
 
 import DualProbeCompactMonitor from './DualProbeCompactMonitor.vue'
 import PointsPreview from '@components/traversal/PointsPreview.vue'
@@ -58,25 +59,19 @@ const probeLabel = computed(() =>
   props.probeId === 'probe1' ? t.value.probe1Label : t.value.probe2Label,
 )
 
-// Tab 切换：详情/通道/运动/诊断（仅展示该 probe 配置/状态相关的 Tab）
-type DetailTab = 'points' | 'channels' | 'motion' | 'diagnostics'
-const activeTab = ref<DetailTab>('points')
-
-const tabs = computed<{ value: DetailTab; label: string }[]>(() => [
-  { value: 'points', label: t.value.pointsPreview },
-  { value: 'channels', label: t.value.realtimePressureData },
-  { value: 'motion', label: t.value.travHardwareStatus },
-  { value: 'diagnostics', label: t.value.travValidationWarnings },
-])
-
 // 通道压力：来自 session.realtimePressures（每 probe 独立）
-// TraversalRawPressure 是结构化对象（P1..P7/Patm/Tatm/P0/Ps），按通道名匹配展示
+// TraversalRawPressure 是结构化对象（P1..P7/Patm/Tatm/P0/Ps），按通道名匹配展示。
+// 卡片只保留 标签 + 数值 + 单位（与单探针 TraversalLiveMonitor 一致），
+// 设备 ID / 通道序号属于配置层信息，不在实时监测画面展示。
 interface ChannelRow {
   index: number
   label: string
-  deviceId: string
-  channelIndex: string
   value: number | null
+  unit: string
+  // 通道显示精度：取自 ProbeChannelConfig.precision（用户在硬件配置步骤逐通道调整），
+  // 与单探针 useTraversalRealtimeData 的 getChannelPrecision 语义一致。
+  // 缺省回退 3，保持与历史行为兼容。
+  precision: number
 }
 
 // 角色到压力字段的映射（与 ProbeChannelRole 枚举对齐）
@@ -114,71 +109,13 @@ const channelRows = computed<ChannelRow[]>(() => {
     return {
       index: idx,
       label: ch.name || `CH${idx + 1}`,
-      deviceId: ch.channel?.deviceId ?? '',
-      channelIndex: ch.channel?.channelIndex != null ? String(ch.channel.channelIndex) : '',
       value,
+      unit: ch.role?.endsWith('.tAtm') ? '°C' : 'Pa',
+      // precision 在 TraversalHardwareStep 中已 clamp 到 [0,8]，
+      // 但旧配置或外部导入可能缺失，统一回退到 3 与单探针模式一致
+      precision: typeof ch.precision === 'number' ? ch.precision : 3,
     }
   })
-})
-
-// 运动状态：轴绑定 + 当前点位目标（来自 session.status.currentPoint）
-// 注意：后端 TraversalTestStatus 不返回轴实际位置（axisPositions 字段不存在），
-// 故仅展示绑定信息与目标点位；实际位置由硬件状态面板（不在 dual 紧凑视图中）展示。
-interface MotionRow {
-  axis: string
-  controllerId: string
-  physicalAxis: string
-  target: number | null
-}
-
-const motionRows = computed<MotionRow[]>(() => {
-  const cfg = session.value.config
-  const status = session.value.status
-  if (!cfg) return []
-  // TraversalTestConfig.channels.motionAxes 是绑定数组（不是顶层 motionAxes）
-  const axes = cfg.channels?.motionAxes ?? []
-  const targets = status?.currentPoint ?? null
-  const targetMap: Record<string, number | null> = targets
-    ? {
-        X: targets.alpha ?? null,
-        Y: targets.beta ?? null,
-        Z: targets.z ?? null,
-        U: targets.u ?? null,
-      }
-    : {}
-  return axes.map((axis) => {
-    const axisName = axis.name?.toUpperCase() ?? ''
-    return {
-      axis: axis.name,
-      controllerId: axis.controllerId || '—',
-      physicalAxis: axis.axis || '—',
-      target: targetMap[axisName] ?? null,
-    }
-  })
-})
-
-// 诊断信息：警告/错误/validationWarnings
-const diagnostics = computed(() => {
-  const s = session.value
-  const items: { type: 'warning' | 'error' | 'info'; text: string }[] = []
-  if (s.error) items.push({ type: 'error', text: s.error })
-  if (s.status?.warning) items.push({ type: 'warning', text: s.status.warning })
-  if (s.status?.lastError) items.push({ type: 'error', text: s.status.lastError })
-  if (s.status?.motionSafetyFailure) {
-    items.push({ type: 'error', text: JSON.stringify(s.status.motionSafetyFailure) })
-  }
-  if (s.status?.validationWarnings) {
-    for (const w of s.status.validationWarnings) {
-      items.push({ type: 'warning', text: w })
-    }
-  }
-  if (s.interpolatorRestoreMessage) {
-    items.push({ type: 'warning', text: s.interpolatorRestoreMessage })
-  }
-  if (items.length === 0) {
-    items.push({ type: 'info', text: t.value.noLayoutConfigured })
-  }
-  return items
 })
 
 // 点位预览数据：从 config 派生
@@ -205,25 +142,29 @@ function onOpenSettings(): void {
     <!-- 紧凑监测区：固定不滚动（spec FR7） -->
     <DualProbeCompactMonitor :probe-id="probeId" @open-settings="onOpenSettings" />
 
-    <!-- Tab 切换条 -->
-    <div class="dual-row__tabs" role="tablist">
-      <button
-        v-for="tab in tabs"
-        :key="tab.value"
-        type="button"
-        role="tab"
-        :aria-selected="activeTab === tab.value"
-        :class="['dual-row__tab', { 'dual-row__tab--active': activeTab === tab.value }]"
-        @click="activeTab = tab.value"
-      >
-        {{ tab.label }}
-      </button>
-    </div>
+    <div class="dual-row__live-data">
+      <section class="dual-row__section" aria-live="polite">
+        <div class="dual-row__section-title">
+          <Wind class="dual-row__section-icon" aria-hidden="true" />
+          <span>{{ t.realtimePressureData }}</span>
+        </div>
+        <div v-if="channelRows.length === 0" class="dual-row__empty">{{ t.pleaseConfigureLayout }}</div>
+        <div v-else class="dual-row__pressure-grid">
+          <div v-for="row in channelRows" :key="row.index" class="dual-row__pressure-item">
+            <span class="dual-row__pressure-label">{{ row.label }}</span>
+            <div class="dual-row__pressure-reading">
+              <span class="dual-row__pressure-value">{{ row.value !== null ? row.value.toFixed(row.precision) : '—' }}</span>
+              <span class="dual-row__pressure-unit">{{ row.unit }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
 
-    <!-- Tab 详情区：可独立滚动；控制栏与 Warning 不被滚动隐藏 -->
-    <div class="dual-row__detail" role="tabpanel">
-      <!-- 点位预览 -->
-      <div v-if="activeTab === 'points'" class="dual-row__panel">
+      <section class="dual-row__section dual-row__points">
+        <div class="dual-row__section-title">
+          <Crosshair class="dual-row__section-icon" aria-hidden="true" />
+          <span>{{ t.pointsPreview }}</span>
+        </div>
         <PointsPreview
           v-if="layoutForPreview"
           :layout="layoutForPreview"
@@ -242,80 +183,25 @@ function onOpenSettings(): void {
           }"
         />
         <div v-else class="dual-row__empty">{{ t.pleaseConfigureLayout }}</div>
-      </div>
-
-      <!-- 通道压力 -->
-      <div v-else-if="activeTab === 'channels'" class="dual-row__panel">
-        <div v-if="channelRows.length === 0" class="dual-row__empty">{{ t.pleaseConfigureLayout }}</div>
-        <table v-else class="dual-row__table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>{{ t.realtimePressureData }}</th>
-              <th>Device</th>
-              <th>Ch</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in channelRows" :key="row.index">
-              <td>{{ row.index + 1 }}</td>
-              <td>{{ row.label }}</td>
-              <td class="dual-row__mono">{{ row.deviceId || '—' }}</td>
-              <td class="dual-row__mono">{{ row.channelIndex || '—' }}</td>
-              <td class="dual-row__mono">{{ row.value !== null ? row.value.toFixed(3) : '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 运动状态 -->
-      <div v-else-if="activeTab === 'motion'" class="dual-row__panel">
-        <div v-if="motionRows.length === 0" class="dual-row__empty">{{ t.pleaseConfigureLayout }}</div>
-        <table v-else class="dual-row__table">
-          <thead>
-            <tr>
-              <th>{{ t.travMotionSafetyAxis }}</th>
-              <th>{{ t.travMotionSafetyController }}</th>
-              <th>{{ t.travActual }}</th>
-              <th>{{ t.travTarget }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in motionRows" :key="row.axis">
-              <td>{{ row.axis }}</td>
-              <td class="dual-row__mono">{{ row.controllerId }}</td>
-              <td class="dual-row__mono">{{ row.physicalAxis }}</td>
-              <td class="dual-row__mono">{{ row.target !== null ? row.target.toFixed(3) : '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 诊断 -->
-      <div v-else-if="activeTab === 'diagnostics'" class="dual-row__panel">
-        <div
-          v-for="(item, idx) in diagnostics"
-          :key="idx"
-          :class="['dual-row__diag', `dual-row__diag--${item.type}`]"
-        >
-          <span class="dual-row__diag-icon">{{ item.type === 'error' ? '⚠' : item.type === 'warning' ? '!' : 'i' }}</span>
-          <span class="dual-row__diag-text">{{ item.text }}</span>
-        </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* 配色对齐单探针 TraversalLiveMonitor：面板 --bg-panel + 卡片 --bg-panel-strong，
+   标签 --text-muted，数值 mono bold，图标/强调 --accent-info。
+   旧实现使用 --bg-surface/--bg-elevated/--border-subtle 等不存在的 token，
+   fallback 成硬编码浅色，导致与整体主题脱节（深色模式下更是白卡片）。 */
 .dual-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  background: var(--bg-surface, #ffffff);
-  border: 1px solid var(--border-subtle, #d0d0d0);
-  border-radius: 6px;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
   min-height: 0;
   min-width: 0;
   /* 关键：左右并排时各占 50%，内容溢出必须裁剪而不是撑破 flex 行 */
@@ -333,120 +219,118 @@ function onOpenSettings(): void {
 
 .dual-row__probe-label {
   font-weight: 700;
-  color: var(--text-primary, #1f1f1f);
+  color: var(--text-primary);
 }
 
 .dual-row__probe-title {
-  color: var(--text-secondary, #5a5a5a);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
-.dual-row__tabs {
+.dual-row__live-data {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border-subtle, #e0e0e0);
-  flex: 0 0 auto;
-  overflow-x: auto;
-}
-
-.dual-row__tab {
-  padding: 6px 10px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary, #5a5a5a);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.dual-row__tab:hover {
-  color: var(--text-primary, #1f1f1f);
-}
-
-.dual-row__tab--active {
-  color: var(--color-primary, #2080f0);
-  border-bottom-color: var(--color-primary, #2080f0);
-  font-weight: 600;
-}
-
-.dual-row__detail {
+  flex-direction: column;
+  gap: 10px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 4px;
+  padding: 2px 0;
 }
 
-.dual-row__panel {
+.dual-row__section {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+.dual-row__section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dual-row__section-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--accent-info);
+}
+
+.dual-row__points {
+  /* 关键：shrink=1 + min-height: 0 + overflow: hidden 三者配合，
+     让窗口缩小时 flex item 能跟随 .dual-row__live-data 一起缩小。
+     原 flex: 1 0 240px 的 shrink=0 + min-height: auto（默认值），
+     导致 PointsPreview 的 canvas 在窗口放大时撑大 containerRef，
+     反向撑大本 section 到放大时的尺寸（如 600px），
+     窗口缩小时本 section 卡在大尺寸，ResizeObserver 不触发，
+     canvas 不缩小，"放大窗口再缩小不回缩"。
+     min-height: 0 允许 flex item 缩小到内容以下，
+     overflow: hidden 裁剪 canvas 短暂溢出（draw 更新前的过渡帧）。 */
+  flex: 1 1 240px;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+}
+
+.dual-row__pressure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+
+/* 单探针式单行卡片：左标签右数值，基线对齐 */
+.dual-row__pressure-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 12px;
+  background: var(--bg-panel-strong);
+  border-radius: 8px;
+}
+
+.dual-row__pressure-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.dual-row__pressure-reading {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dual-row__pressure-unit {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.dual-row__pressure-value {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dual-row__empty {
   padding: 16px;
-  color: var(--text-tertiary, #888);
+  color: var(--text-muted);
   font-size: 12px;
   text-align: center;
 }
 
-.dual-row__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-
-.dual-row__table th,
-.dual-row__table td {
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border-subtle, #e8e8e8);
-  text-align: left;
-}
-
-.dual-row__table th {
-  background: var(--bg-elevated, #f5f5f5);
-  color: var(--text-tertiary, #888);
-  font-weight: 600;
-}
-
-.dual-row__mono {
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-}
-
-.dual-row__diag {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  margin-bottom: 4px;
-}
-
-.dual-row__diag--error {
-  background: var(--color-error-bg, #ffebee);
-  color: var(--color-error, #d03030);
-}
-
-.dual-row__diag--warning {
-  background: var(--color-warning-bg, #fff8e1);
-  color: var(--color-warning, #f0a020);
-}
-
-.dual-row__diag--info {
-  background: var(--bg-elevated, #f5f5f5);
-  color: var(--text-secondary, #5a5a5a);
-}
-
-.dual-row__diag-icon {
-  flex-shrink: 0;
-  font-weight: 700;
-}
-
-.dual-row__diag-text {
-  word-break: break-word;
-  white-space: pre-wrap;
-}
 </style>

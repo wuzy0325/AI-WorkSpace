@@ -54,17 +54,19 @@ type mockMotionAccess struct {
 	// statusSequence 按顺序返回的状态快照序列；每次 StatusAll 弹出队首。
 	// 用于模拟跨样本的运动状态变化（如位置随时间推移而变化）。
 	// 优先级高于 statuses；为空时回退到 statuses 或默认值。
-	statusSequence    [][]motion.ControllerStatus
-	moveToCalls       []struct {
+	statusSequence [][]motion.ControllerStatus
+	moveToCalls    []struct {
 		id       string
 		axis     motion.AxisName
 		position float64
 	}
-	stopCalls          []struct {
+	stopCalls []struct {
 		id   string
 		axis motion.AxisName
 	}
 	emergencyStopCalls []string
+	moveToErr          error
+	stopErr            error
 	// emergencyStopErr 注入 EmergencyStop 调用错误（用于测试急停失败 fallback）
 	emergencyStopErr error
 }
@@ -94,7 +96,7 @@ func (m *mockMotionAccess) MoveTo(ctx context.Context, id string, axis motion.Ax
 		axis     motion.AxisName
 		position float64
 	}{id, axis, position})
-	return nil
+	return m.moveToErr
 }
 
 func (m *mockMotionAccess) Stop(ctx context.Context, id string, axis motion.AxisName) error {
@@ -102,7 +104,19 @@ func (m *mockMotionAccess) Stop(ctx context.Context, id string, axis motion.Axis
 		id   string
 		axis motion.AxisName
 	}{id, axis})
-	return nil
+	if m.stopErr == nil {
+		for controllerIndex := range m.statuses {
+			if m.statuses[controllerIndex].ID != id {
+				continue
+			}
+			for axisIndex := range m.statuses[controllerIndex].Axes {
+				if m.statuses[controllerIndex].Axes[axisIndex].Name == axis {
+					m.statuses[controllerIndex].Axes[axisIndex].Moving = false
+				}
+			}
+		}
+	}
+	return m.stopErr
 }
 
 // EmergencyStop 记录急停调用并返回注入错误（若有）

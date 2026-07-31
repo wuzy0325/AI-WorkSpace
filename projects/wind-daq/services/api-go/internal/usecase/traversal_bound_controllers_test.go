@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"wind-daq/services/api-go/internal/core/motion"
@@ -82,6 +83,60 @@ func TestTraversal_BoundControllers_StopUsesSnapshotNotLiveConfig(t *testing.T) 
 	}
 	if counts["ctrl-b"] != 0 {
 		t.Fatalf("probe2 控制器 ctrl-b 不得收到任何 Stop, got %d", counts["ctrl-b"])
+	}
+}
+
+func TestTraversal_BoundControllers_PauseStopsSnapshotAxesBeforeReturning(t *testing.T) {
+	motionAccess := boundControllersMotion()
+	motionAccess.statusSequence = [][]motion.ControllerStatus{
+		motionAccess.statuses,
+		{{ID: "ctrl-a", Connected: true, Axes: []motion.AxisStatus{{Name: motion.AxisX, Moving: false}}}},
+	}
+	mgr, _ := newBoundSessionManager(
+		motionAccess,
+		[]string{"ctrl-a"},
+		[]traversal.MotionAxisBinding{{ControllerID: "ctrl-a", Axis: "X"}},
+		true,
+	)
+
+	if err := mgr.Pause(); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if got := mgr.Status().State; got != traversal.StatePaused {
+		t.Fatalf("state = %s, want paused", got)
+	}
+	counts := stopCallControllers(motionAccess)
+	if counts["ctrl-a"] == 0 {
+		t.Fatal("Pause must stop the bound controller before returning")
+	}
+	if counts["ctrl-b"] != 0 {
+		t.Fatalf("Pause must not stop another probe controller, got %d calls", counts["ctrl-b"])
+	}
+}
+
+func TestTraversal_BoundControllers_PauseEmergencyStopsWhenNormalStopFails(t *testing.T) {
+	motionAccess := boundControllersMotion()
+	motionAccess.stopErr = errors.New("B140 ST command failed")
+	mgr, _ := newBoundSessionManager(
+		motionAccess,
+		[]string{"ctrl-a"},
+		[]traversal.MotionAxisBinding{{ControllerID: "ctrl-a", Axis: "X"}},
+		true,
+	)
+
+	err := mgr.Pause()
+	if err == nil || !contains(err.Error(), motionAccess.stopErr.Error()) {
+		t.Fatalf("Pause should report normal stop failure, got %v", err)
+	}
+	if len(motionAccess.emergencyStopCalls) != 1 || motionAccess.emergencyStopCalls[0] != "ctrl-a" {
+		t.Fatalf("Pause must emergency-stop only the bound controller, got %v", motionAccess.emergencyStopCalls)
+	}
+	status := mgr.Status()
+	if status.State != traversal.StateError {
+		t.Fatalf("state = %s, want error after emergency-stop fallback", status.State)
+	}
+	if status.LastErrorCode != traversal.ErrMotionFailed {
+		t.Fatalf("error code = %s, want %s", status.LastErrorCode, traversal.ErrMotionFailed)
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 // WorkflowTraversalResource 全局遍历工作流锁资源名（与 usecase 既有约定一致）。
 const WorkflowTraversalResource = "workflow:traversal"
 
-// controllerResourceKeyPrefix 控制器资源锁名前缀，后接 controllerID。
+// controllerResourceKeyPrefix 控制器资源锁名前缀，后接 controllerID 与 axis。
 const controllerResourceKeyPrefix = "controller:traversal:"
 
 // ErrUnknownLeaseToken lease token 未知（从未签发或已释放）。
@@ -32,8 +32,14 @@ var ErrUnknownLeaseToken = errors.New("unknown lease token")
 // ErrLeaseNotHeld lease 已不由该 token/holder 持有（过期或被新 session 接管）。
 var ErrLeaseNotHeld = errors.New("lease not held")
 
-func controllerResourceKey(controllerID string) string {
-	return controllerResourceKeyPrefix + controllerID
+// controllerResourceKey 构造 (controllerID, axis) 元组对应的资源锁名。
+// axis 为空时退化为控制器级资源（向后兼容遗留调用）；非空时按物理轴细分，
+// 允许两个 probe 分别 lease 同一控制器的不同物理轴。
+func controllerResourceKey(controllerID, axis string) string {
+	if axis == "" {
+		return controllerResourceKeyPrefix + controllerID
+	}
+	return controllerResourceKeyPrefix + controllerID + ":axis:" + axis
 }
 
 // WorkflowLease 固定 resource 的全局工作流 lease adapter。
@@ -80,7 +86,6 @@ func (l *WorkflowLease) Release(ctx context.Context, holder string) error {
 // controllerLeaseEntry 已签发 token 的登记信息。
 type controllerLeaseEntry struct {
 	resource string
-	holder   string // 诊断用身份（如 session/probe 标识）
 }
 
 // ControllerLease controller-scoped、opaque token 校验的资源 lease adapter。
@@ -103,9 +108,10 @@ func NewControllerLease(svc *resourcelock.Service) *ControllerLease {
 	return &ControllerLease{svc: svc, issued: make(map[string]controllerLeaseEntry)}
 }
 
-// Acquire 原子预占 controllerID 对应的控制器资源，成功返回 opaque leaseToken。
-// 底层 svc.Acquire 持锁判断+写入，并发争抢同一控制器时只有一个调用成功。
-func (l *ControllerLease) Acquire(ctx context.Context, controllerID, holder string, ttl time.Duration) (string, error) {
+// Acquire 原子预占 (controllerID, axis) 对应的控制器轴资源，成功返回 opaque leaseToken。
+// 底层 svc.Acquire 持锁判断+写入，并发争抢同一 (controllerID, axis) 时只有一个调用成功。
+// 同一控制器的不同 axis 视为独立资源，可分别被不同 session 持有。
+func (l *ControllerLease) Acquire(ctx context.Context, controllerID, axis, holder string, ttl time.Duration) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -116,12 +122,12 @@ func (l *ControllerLease) Acquire(ctx context.Context, controllerID, holder stri
 	if err != nil {
 		return "", err
 	}
-	resource := controllerResourceKey(controllerID)
+	resource := controllerResourceKey(controllerID, axis)
 	if err := l.svc.Acquire(resource, token, ttl); err != nil {
-		return "", fmt.Errorf("controller lease acquire %s: %w", controllerID, err)
+		return "", fmt.Errorf("controller lease acquire %s axis %s: %w", controllerID, axis, err)
 	}
 	l.mu.Lock()
-	l.issued[token] = controllerLeaseEntry{resource: resource, holder: holder}
+	l.issued[token] = controllerLeaseEntry{resource: resource}
 	l.mu.Unlock()
 	return token, nil
 }

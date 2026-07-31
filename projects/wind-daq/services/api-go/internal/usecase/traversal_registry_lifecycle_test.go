@@ -790,9 +790,10 @@ func TestManagerRegistry_LifecycleCallRetainsAdmissionUntilSelectedManagerReturn
 	pauseDone := make(chan error, 1)
 	go func() { pauseDone <- fx.registry.Pause(context.Background(), Probe1) }()
 
+	// I-7 修复后 callProbeManager 持有 per-probe lifecycle gate（probeGate）而非全局
+	// admissionGate。等待 Pause 进入 manager 调用 = 等待 probeGate 被持有。
 	deadline := time.After(time.Second)
-	for fx.registry.tryAcquireAdmissionForTest() {
-		fx.registry.releaseAdmission()
+	for fx.registry.tryAcquireProbeGateForTest(Probe1) {
 		select {
 		case <-deadline:
 			manager.mu.Unlock()
@@ -845,6 +846,19 @@ func TestManagerRegistry_RunPointRejectsManagedAutoSession(t *testing.T) {
 func (r *ManagerRegistry) tryAcquireAdmissionForTest() bool {
 	select {
 	case <-r.admissionGate:
+		return true
+	default:
+		return false
+	}
+}
+
+// tryAcquireProbeGateForTest 探测指定 probe 的 probeGate 是否被持有（I-7 后生命周期方法持有 probeGate 而非 admissionGate）。
+// 返回 true 表示 gate 当前空闲（可获取），false 表示被 Pause/Resume/RunPoint 等持有中。
+func (r *ManagerRegistry) tryAcquireProbeGateForTest(probeID ProbeID) bool {
+	gate := r.probeGate(probeID)
+	select {
+	case <-gate:
+		gate <- struct{}{} // 探测后立即归还，不真正占用
 		return true
 	default:
 		return false

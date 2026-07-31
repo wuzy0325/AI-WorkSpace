@@ -100,4 +100,5 @@ type AcquisitionController interface {
 	IsConnected(id string) bool
 	IsAcquiring(id string) bool
 	StartAcquisition(id string) error
+	DeviceName(id string) string
 }

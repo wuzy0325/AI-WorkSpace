@@ -52,6 +52,18 @@ func (r *stoppingLatestDataReader) GetLatestData(deviceID string) (device.DataPa
 
 func (*stoppingLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
 
+type waitingLatestDataReader struct {
+	once    sync.Once
+	started chan struct{}
+}
+
+func (r *waitingLatestDataReader) GetLatestData(string) (device.DataPayload, bool) {
+	r.once.Do(func() { close(r.started) })
+	return device.DataPayload{}, false
+}
+
+func (*waitingLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
+
 type retryLatestDataReader struct {
 	calls int
 }
@@ -86,6 +98,8 @@ func (c *resumableAcquisitionController) IsAcquiring(string) bool {
 	defer c.mu.Unlock()
 	return c.acquiring
 }
+
+func (c *resumableAcquisitionController) DeviceName(id string) string { return id }
 func (*resumableAcquisitionController) StartAcquisition(string) error { return nil }
 
 func (c *resumableAcquisitionController) SetAcquiring(v bool) {
@@ -203,6 +217,56 @@ func TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTas
 	}
 }
 
+func TestRunCurrentPointKeepsStoppedStateWhenSamplingIsCancelled(t *testing.T) {
+	reader := &waitingLatestDataReader{started: make(chan struct{})}
+	manager := NewTraversalManager(reader, &mockMotionAccess{}, nil, nil, nil)
+	config := traversal.Config{
+		TaskID:          "trav-stop-during-sampling",
+		DeviceID:        "dev-1",
+		Channels:        []int{0},
+		Path:            []traversal.Point{{X: 0, Y: 0, Z: 0}},
+		DwellTimeMs:     1,
+		SamplesPerPoint: 1,
+	}
+	if err := manager.Start(config); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.session.MarkDone()
+		_ = manager.lockService.Release(traversalLockResource, config.TaskID)
+	})
+
+	result := make(chan error, 1)
+	go func() { result <- manager.RunCurrentPoint() }()
+	select {
+	case <-reader.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunCurrentPoint did not enter sampling")
+	}
+
+	manager.mu.Lock()
+	manager.isStopped = true
+	manager.status.State = traversal.StateStopped
+	manager.session.Cancel()
+	manager.mu.Unlock()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("user stop must not return a sampling failure: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunCurrentPoint did not exit after stop")
+	}
+	status := manager.Status()
+	if status.State != traversal.StateStopped {
+		t.Fatalf("state = %s, want stopped", status.State)
+	}
+	if status.LastError != "" {
+		t.Fatalf("last error = %q, want empty", status.LastError)
+	}
+}
+
 func TestRunCurrentPointDoesNotMoveWhenAcquisitionHasStopped(t *testing.T) {
 	motionAccess := &originReturnMotion{moveTargets: make(map[motion.AxisName]float64)}
 	manager := NewTraversalManager(&delayedLatestDataReader{}, motionAccess, nil, nil, nil)
@@ -218,14 +282,65 @@ func TestRunCurrentPointDoesNotMoveWhenAcquisitionHasStopped(t *testing.T) {
 	manager.SetAcquisitionController(&mockAcquisitionController{
 		connected:  map[string]bool{"dev-1": true},
 		acquiring:  map[string]bool{"dev-1": false},
+		names:      map[string]string{"dev-1": "五孔压力采集仪"},
 		startCalls: nil,
 	})
 
 	if err := manager.RunCurrentPoint(); err == nil {
 		t.Fatal("expected RunCurrentPoint to fail when acquisition is stopped")
+	} else if !contains(err.Error(), "五孔压力采集仪") || contains(err.Error(), "dev-1") {
+		t.Fatalf("expected readable device name without internal ID, got %q", err)
 	}
 	if len(motionAccess.moveTargets) != 0 {
 		t.Fatalf("MoveTo called after acquisition stopped: %v", motionAccess.moveTargets)
+	}
+}
+
+func TestRunCurrentPointMoveCommandFailureStopsBoundAxes(t *testing.T) {
+	motionErr := errors.New("B140 command PAC=-120000 failed")
+	motionAccess := &mockMotionAccess{
+		statuses: []motion.ControllerStatus{{
+			ID:        "ctrl-a",
+			Connected: true,
+			Axes:      []motion.AxisStatus{{Name: motion.AxisZ, Moving: true}},
+		}},
+		moveToErr: motionErr,
+	}
+	manager := NewTraversalManager(&mockLatestDataReader{}, motionAccess, nil, nil, nil)
+	config := traversal.Config{
+		TaskID:     "move-command-failure",
+		DeviceID:   "device-1",
+		Channels:   []int{0},
+		Path:       []traversal.Point{{Z: -60}},
+		MotionAxes: []traversal.MotionAxisBinding{{ControllerID: "ctrl-a", Axis: "Z"}},
+	}
+	snapshot := traversal.TraversalRunSnapshot{
+		Config:             config,
+		TotalPoints:        1,
+		BoundControllerIDs: []string{"ctrl-a"},
+	}
+	session := newTraversalRunSession(context.Background(), config.TaskID, snapshot)
+	session.managedOpts = &ManagedSessionOptions{ProbeID: Probe2}
+	manager.mu.Lock()
+	manager.config = config
+	manager.session = session
+	manager.status = traversal.Status{
+		TaskID:       config.TaskID,
+		State:        traversal.StateRunning,
+		TotalPoints:  1,
+		CurrentPoint: 0,
+	}
+	manager.mu.Unlock()
+
+	err := manager.RunCurrentPoint()
+	if !errors.Is(err, motionErr) && !contains(err.Error(), motionErr.Error()) {
+		t.Fatalf("expected move error, got %v", err)
+	}
+	if len(motionAccess.stopCalls) == 0 {
+		t.Fatal("MoveTo failure must stop bound axes before returning")
+	}
+	if got := manager.Status().State; got != traversal.StateError {
+		t.Fatalf("state = %s, want error", got)
 	}
 }
 
@@ -318,8 +433,35 @@ func (m *originReturnMotion) MoveTo(_ context.Context, _ string, axis motion.Axi
 	return nil
 }
 
-func (*originReturnMotion) Stop(context.Context, string, motion.AxisName) error { return nil }
-func (*originReturnMotion) EmergencyStop(context.Context, string) error         { return nil }
+func (m *originReturnMotion) Stop(_ context.Context, controllerID string, axisName motion.AxisName) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for controllerIndex := range m.statuses {
+		if m.statuses[controllerIndex].ID != controllerID {
+			continue
+		}
+		for axisIndex := range m.statuses[controllerIndex].Axes {
+			if m.statuses[controllerIndex].Axes[axisIndex].Name == axisName {
+				m.statuses[controllerIndex].Axes[axisIndex].Moving = false
+			}
+		}
+	}
+	return nil
+}
+
+func (m *originReturnMotion) EmergencyStop(_ context.Context, controllerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for controllerIndex := range m.statuses {
+		if m.statuses[controllerIndex].ID != controllerID {
+			continue
+		}
+		for axisIndex := range m.statuses[controllerIndex].Axes {
+			m.statuses[controllerIndex].Axes[axisIndex].Moving = false
+		}
+	}
+	return nil
+}
 
 func TestReturnToOriginMovesConfiguredAxesToZero(t *testing.T) {
 	motionAccess := &originReturnMotion{moveTargets: make(map[motion.AxisName]float64)}

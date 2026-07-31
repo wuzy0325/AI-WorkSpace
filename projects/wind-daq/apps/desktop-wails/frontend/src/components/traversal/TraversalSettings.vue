@@ -765,7 +765,7 @@ watch(() => props.show, async (isVisible) => {
 
 <template>
   <!-- 遍历测试配置对话框：限制最大高度，使用 flex 布局确保内容不溢出 -->
-  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @close="emit('close')">
+  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @update:show="emit('close')">
     <template #header>
       <div>
           <span class="setup-overline">{{ t.traversalSetup }}</span>

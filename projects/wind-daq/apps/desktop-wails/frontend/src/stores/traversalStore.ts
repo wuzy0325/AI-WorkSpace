@@ -6,6 +6,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useStorageStore } from '@stores/storageStore'
 import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
+import { safeInterpolate } from '@shared/i18nInterpolate'
 import {
   createDefaultTraversalProbeChannels,
   createSevenHoleTraversalProbeChannels
@@ -977,8 +978,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       const res = await traversalApi.checkPreconditions(payload)
       // API 调用未成功（如网络异常）：保留推断状态，但提示用户校验未完成
       if (!res.success || !res.data) {
+        // C8 修复：res.error 来自后端（不可信输入），原 .replace('{error}', value) 会让
+        // value 中的 $ 字符被特殊解析（如 "$&" 展开为匹配占位符）。改用 safeInterpolate 函数式 replace。
         interpolatorRestoreMessage.value =
-          i18n.t.travErrVerifyInterpolator.replace('{error}', res.error || i18n.t.travErrResponseEmpty)
+          safeInterpolate(i18n.t.travErrVerifyInterpolator, '{error}', res.error || i18n.t.travErrResponseEmpty)
         return
       }
       const result: PreconditionCheckResult = res.data
@@ -992,8 +995,9 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
     } catch (err) {
       // 抛错时不改变推断状态（避免网络抖动误判），但通过 message 通知 UI
+      // C8 修复：err.message 不可信，改用 safeInterpolate 防止 $ 注入。
       interpolatorRestoreMessage.value =
-        i18n.t.travErrVerifyInterpolatorException.replace('{error}', err instanceof Error ? err.message : String(err))
+        safeInterpolate(i18n.t.travErrVerifyInterpolatorException, '{error}', err instanceof Error ? err.message : String(err))
     }
   }
 

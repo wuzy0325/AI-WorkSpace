@@ -141,9 +141,16 @@ func (r *ManagerRegistry) runSessionCleanup(session *registrySession, gateHeld b
 	}
 	// Admission and the final-session decision share one gate through lease release
 	// and count commit, so a new session cannot be admitted into that window.
+	//
+	// 使用 bounded context（I-9）：context.Background() 无法取消，admission gate
+	// 若被泄漏（panic/bug）将永久阻塞 cleanup 路径，导致 completion_failed 状态
+	// 无法收敛、CloseProbe/Shutdown 重试也卡死。bounded 超时让 cleanup 失败可见，
+	// 进入 completion_failed 后由重试机制兜底。
 	if !gateHeld {
-		if err := r.acquireAdmission(context.Background()); err != nil {
-			return err
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), registryLeaseTTL)
+		defer cancel()
+		if err := r.acquireAdmission(cleanupCtx); err != nil {
+			return fmt.Errorf("cleanup 获取 admission gate 失败（可能被泄漏）: %w", err)
 		}
 		defer r.releaseAdmission()
 	}
@@ -187,23 +194,26 @@ func (r *ManagerRegistry) prepareSessionCleanup(session *registrySession) (bool,
 	return alreadyCompleted, session.rollback
 }
 
-// releasePendingControllers 释放 session 尚未成功释放的控制器 lease；
+// releasePendingControllers 释放 session 尚未成功释放的控制器轴 lease；
 // 成功的条目从 pendingReleases 删除（重试幂等），失败聚合返回。
+//
+// pendingReleases 的 key 为 ControllerAxisPair（(controllerID, axis) 元组），
+// 同一控制器的不同轴 lease 互相独立——释放 X 轴不影响 Y 轴。
 func (r *ManagerRegistry) releasePendingControllers(session *registrySession) error {
 	if len(session.pendingReleases) == 0 {
 		return nil
 	}
-	released := make([]string, 0, len(session.pendingReleases))
+	released := make([]ControllerAxisPair, 0, len(session.pendingReleases))
 	var errs []error
-	for controllerID, leaseToken := range session.pendingReleases {
+	for pair, leaseToken := range session.pendingReleases {
 		if err := r.controllerLease.Release(context.Background(), leaseToken); err != nil {
-			errs = append(errs, fmt.Errorf("释放控制器 %s lease: %w", controllerID, err))
+			errs = append(errs, fmt.Errorf("释放控制器 %s 轴 %s lease: %w", pair.ControllerID, pair.Axis, err))
 			continue
 		}
-		released = append(released, controllerID)
+		released = append(released, pair)
 	}
-	for _, controllerID := range released {
-		delete(session.pendingReleases, controllerID)
+	for _, pair := range released {
+		delete(session.pendingReleases, pair)
 	}
 	return errors.Join(errs...)
 }
@@ -266,12 +276,13 @@ func (r *ManagerRegistry) runSessionRenewer(session *registrySession, ctx contex
 	}
 }
 
-// renewSessionControllers 续约 session 全部控制器 lease。
+// renewSessionControllers 续约 session 全部控制器轴 lease。
 // controllerTokens 自 admission 后不可变，读取无需持锁。
+// key 为 ControllerAxisPair，同一控制器的不同轴 lease 互相独立续约。
 func (r *ManagerRegistry) renewSessionControllers(ctx context.Context, session *registrySession) error {
-	for controllerID, leaseToken := range session.controllerTokens {
+	for pair, leaseToken := range session.controllerTokens {
 		if err := r.controllerLease.Renew(ctx, leaseToken, registryLeaseTTL); err != nil {
-			return fmt.Errorf("续约控制器 %s lease: %w", controllerID, err)
+			return fmt.Errorf("续约控制器 %s 轴 %s lease: %w", pair.ControllerID, pair.Axis, err)
 		}
 	}
 	return nil

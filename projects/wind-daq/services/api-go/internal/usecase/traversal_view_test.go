@@ -563,6 +563,7 @@ func indexOf(s, sub string) int {
 type mockAcquisitionController struct {
 	connected  map[string]bool
 	acquiring  map[string]bool
+	names      map[string]string
 	startErr   error
 	startCalls []string
 }
@@ -573,6 +574,10 @@ func (m *mockAcquisitionController) IsConnected(id string) bool {
 
 func (m *mockAcquisitionController) IsAcquiring(id string) bool {
 	return m.acquiring[id]
+}
+
+func (m *mockAcquisitionController) DeviceName(id string) string {
+	return m.names[id]
 }
 
 func (m *mockAcquisitionController) StartAcquisition(id string) error {
@@ -716,6 +721,41 @@ func TestCheckPreconditions_DeviceConnectedNotAcquiring(t *testing.T) {
 	}
 	if result["allPassed"] != false {
 		t.Errorf("allPassed: expect false when device is not acquiring, got %v", result["allPassed"])
+	}
+}
+
+func TestCheckPreconditions_ChecksEveryReferencedDeviceByName(t *testing.T) {
+	mgr := newConfigTestManager(t)
+	mgr.SetInterpolator(&mockInterpolator{})
+	mgr.SetAcquisitionController(&mockAcquisitionController{
+		connected: map[string]bool{"probe-device-id": true, "environment-device-id": true},
+		acquiring: map[string]bool{"probe-device-id": true, "environment-device-id": false},
+		names:     map[string]string{"environment-device-id": "环境采集仪"},
+	})
+
+	cfg := &traversal.Config{
+		DeviceID:      "probe-device-id",
+		Channels:      []int{0, 1, 2},
+		ChannelLabels: map[int]string{0: "P1", 1: "Patm", 2: "Tatm"},
+		ChannelRefs: map[int]traversal.ChannelRef{
+			0: {DeviceID: "probe-device-id", Index: 0},
+			1: {DeviceID: "environment-device-id", Index: 0},
+			2: {DeviceID: "environment-device-id", Index: 1},
+		},
+	}
+	result := mgr.CheckPreconditions(cfg)
+
+	checks, _ := result["checks"].([]map[string]any)
+	deviceAcq := findCheck(checks, "DeviceAcquiring")
+	if deviceAcq == nil || deviceAcq["passed"] != false {
+		t.Fatalf("expected referenced environment device to fail acquisition check, got %#v", deviceAcq)
+	}
+	msg, _ := deviceAcq["message"].(string)
+	if !contains(msg, "环境采集仪") || contains(msg, "environment-device-id") {
+		t.Fatalf("expected operator-facing device name without internal ID, got %q", msg)
+	}
+	if result["allPassed"] != false {
+		t.Fatalf("allPassed must be false when any referenced device is not acquiring")
 	}
 }
 

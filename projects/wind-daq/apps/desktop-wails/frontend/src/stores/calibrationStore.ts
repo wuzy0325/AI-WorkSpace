@@ -37,14 +37,58 @@ export interface CalculatedPhysics {
   velocity?: number
 }
 
-// spec Task 15：删除前端 atmospheric 公式（ATM_GAMMA/ATM_C_COEFF/ATM_RECOVERY + calculateAtmosphericPhysics）。
-//   实时马赫数/流速改由后端 CalibrationStatus.livePhysics 提供（spec Task 13 已组装），
-//   前端 store 只在 updateStatusFromBackend 中映射 livePhysics → calculatedPhysics，
-//   原始压力更新（updateRealtimePressures）不再触发任何公式，避免前后端算法漂移。
-//   三态语义（与后端 *float64 对齐）：
-//     livePhysics 缺失（undefined）→ calculatedPhysics=null（UI 显示 "--"）
-//     livePhysics.machNumber=0     → 透传 0（UI 显示 "0.000"，零是有效零，区别于 missing）
-//     livePhysics.machNumber=0.3   → 透传 0.3
+// 大气数据计算常数（与后端 AtmosphericDataCalculator 保持一致）
+// 实时显示需要前端本地算——后端 livePhysics 受 idle 态门禁、reader 在线性等约束，
+// 用户进入画面但未点开始时后端不算，前端必须自己算才能"进入画面即实时显示 Ma/V"。
+// 公式与后端一致，避免与 CSV 落盘的最终系数漂移；CSV 系数仍由后端校准算法独立计算。
+const ATM_GAMMA = 1.4       // 空气绝热指数
+const ATM_C_COEFF = 20.047  // 声速计算系数
+const ATM_RECOVERY = 0.9    // 温度传感器恢复系数
+
+/**
+ * 实时大气数据计算（马赫数 / 流速）。
+ *
+ * 关键：风洞总压/静压通道通常以大气压为参考点输出差压（表压），
+ *   后端公式约定 Pt_abs = P0 + Patm, Ps_abs = Ps + Patm。
+ *   若 Patm 缺失或为 0，实时 UI 使用标准大气压兜底，避免差压通道导致整块空白。
+ *
+ * 马赫数: Ma = sqrt((2/(γ-1)) * ((Pt_abs/Ps_abs)^((γ-1)/γ) - 1))
+ * 静温:   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，需转开尔文）
+ * 流速:   V = Ma * 20.047 * sqrt(SAT)
+ *
+ * 当 P0/Ps/Ttunnel 任一缺失或非法时返回 null（UI 显示 "--"）。
+ */
+function calculateAtmosphericPhysics(p: RealtimePressures): CalculatedPhysics | null {
+  const ptGauge = p.P0
+  const psGauge = p.Ps
+  // 风洞温度通道单位为 ℃，需转换为开尔文
+  const tatK = p.Ttunnel === undefined ? undefined : p.Ttunnel + 273.15
+  // 大气压：与后端 formulas.go 口径一致——Patm 缺失或 <=0 时不计算 Ma/V，
+  // 返回 null 让 UI 显示 "--"。前端不兜底标准大气压，避免与后端 CSV 口径不一致。
+  const patm = p.Patm
+
+  if (ptGauge === undefined || psGauge === undefined || tatK === undefined || patm === undefined) return null
+  if (!Number.isFinite(ptGauge) || !Number.isFinite(psGauge) || !Number.isFinite(tatK) || !Number.isFinite(patm)) return null
+  if (patm <= 0) return null
+
+  const ptAbs = ptGauge + patm
+  const psAbs = psGauge + patm
+
+  if (psAbs <= 0 || ptAbs < psAbs || tatK <= 0) return null
+  if (ptAbs === psAbs) return { machNumber: 0, velocity: 0 }
+
+  const ratio = ptAbs / psAbs
+  const ma = Math.sqrt((2 / (ATM_GAMMA - 1)) * (Math.pow(ratio, (ATM_GAMMA - 1) / ATM_GAMMA) - 1))
+  if (!Number.isFinite(ma) || ma < 0) return null
+
+  const sat = tatK / (1 + ((ATM_GAMMA - 1) / 2) * ATM_RECOVERY * ma * ma)
+  if (!Number.isFinite(sat) || sat <= 0) return null
+
+  const velocity = ma * ATM_C_COEFF * Math.sqrt(sat)
+  if (!Number.isFinite(velocity)) return null
+
+  return { machNumber: ma, velocity }
+}
 
 export interface TimeInfo {
   elapsedTime: number
@@ -138,11 +182,15 @@ export const useCalibrationStore = defineStore('calibration', () => {
     const intervalMs = Math.round(uiRefreshIntervalMs.value)
 
     const applyPressureUpdate = (pressures: RealtimePressures) => {
-      // spec Task 15：raw pressure 更新只刷新 realtimePressures，不再触发任何公式。
-      //   马赫数/流速由后端 CalibrationStatus.livePhysics 提供，store 在
-      //   updateStatusFromBackend 中映射。避免前端公式与后端 AtmosphericDataCalculator
-      //   漂移导致"UI 显示数值、CSV 对应列为空"等不一致。
       realtimePressures.value = pressures
+      // 同步计算气动参数（马赫数、流速），公式与后端 AtmosphericDataCalculator 一致：
+      //   Ma = sqrt((2/(γ-1)) * ((Pt/Ps)^((γ-1)/γ) - 1))
+      //   SAT = TAT / (1 + 0.2 * r * Ma^2)   （TAT 取风洞温度，开尔文）
+      //   V   = Ma * 20.047 * sqrt(SAT)
+      // 实时显示用：用户进入画面但未点开始时后端 livePhysics 不计算（idle 态门禁），
+      // 前端必须自己算才能"进入画面即实时显示 Ma/V"。
+      // CSV 落盘的最终系数仍由后端校准算法独立计算，与此处实时显示公式不冲突。
+      calculatedPhysics.value = calculateAtmosphericPhysics(pressures)
     }
 
     if (now - lastPressureUpdateAt >= intervalMs) {
@@ -448,27 +496,34 @@ export const useCalibrationStore = defineStore('calibration', () => {
       updateRegion(backendRegion, backendSector, backendBoundaryFlag)
     }
 
-    // spec Task 15：映射后端 livePhysics → calculatedPhysics
-    //   - 后端在 CalibrationStatus.LivePhysics 中提供实时马赫数/流速（spec Task 13 已组装），
-    //     由 AtmosphericDataCalculator 锁外计算，5Hz polling 时随 status 一并返回。
+    // 后端 livePhysics 兜底映射策略：
+    //   - 前端 applyPressureUpdate 已跟随压力更新频率（5Hz~60Hz）同步算出 calculatedPhysics，
+    //     比后端 status 轮询（5Hz）更实时——后端 livePhysics 不覆盖前端非 null 值，
+    //     避免旧帧覆盖新帧导致 UI 数字跳变。
+    //   - 前端算不出（null）时才用后端 livePhysics 兜底：例如前端通道映射缺关键字段、
+    //     或压力更新尚未到达（acquireView 刚启动），后端可能算得出。
     //   - 三态语义（与后端 *float64 nil 对齐）：
-    //       livePhysics 缺失（undefined） → calculatedPhysics=null（UI 显示 "--"）
+    //       livePhysics 缺失（undefined） → 不覆盖前端
     //       livePhysics.machNumber=0      → 透传 0（UI 显示 "0.000"，零是有效零）
     //       livePhysics.machNumber=0.3    → 透传 0.3
     //   - "对象存在性"而非 truthiness：`if (backendLivePhysics && typeof === 'object')`
     //     确保全零 LivePhysics（{machNumber:0, velocity:0}）不被跳过——后端 §22 中
     //     Pt==Ps 是有效零气动状态，UI 必须显示 "0.000" 而非 "--"。
-    //   - 终态后端已 StaleClearing（livePhysics=nil），自然映射为 null。
+    //   - 终态后端已 StaleClearing（livePhysics=nil），不覆盖前端——前端 applyPressureUpdate
+    //     在终态仍会算（只要压力流还在），让用户在停止后仍能看到最后一帧 Ma/V 直到切换画面。
     //   - Wails binding 字段为 PascalCase，做 fallback 与其他字段一致。
     const backendLivePhysics = calStatus.livePhysics ?? calStatus.LivePhysics
     if (backendLivePhysics && typeof backendLivePhysics === 'object') {
-      calculatedPhysics.value = {
-        machNumber: backendLivePhysics.machNumber,
-        velocity: backendLivePhysics.velocity,
+      // 前端已算出非 null → 不覆盖（前端更实时）
+      if (calculatedPhysics.value === null) {
+        calculatedPhysics.value = {
+          machNumber: backendLivePhysics.machNumber,
+          velocity: backendLivePhysics.velocity,
+        }
       }
-    } else {
-      calculatedPhysics.value = null
     }
+    // 注意：后端 livePhysics=nil 时不主动清空 calculatedPhysics——
+    // 前端 applyPressureUpdate 仍会基于压力流算出值，让 idle/终态也能显示。
 
     // 更新运行状态
     isRunning.value = state === 'running'

@@ -39,8 +39,6 @@ func resolveSavePath(p string) (string, error) {
 	return filepath.Abs(p)
 }
 
-const defaultSampleInterval = 50 * time.Millisecond
-
 // calibrationStopJoinTimeout Stop/Shutdown 等待校准 worker 完全退出
 // （writer flush、结果保存、运动归零均完成）的上限。超时后 Stop 返回明确错误，
 // 且在旧 session 退出前新 Start 持续被拒绝，禁止 replacement 复用旧任务资源。
@@ -1001,8 +999,9 @@ func (m *CalibrationManager) Status() calibration.Status {
 	//     直到下一次轮询，与"终态后端已 StaleClearing"的注释相矛盾。
 	//   - 前端 updateStatusFromBackend 终态分支会 stopStatusPolling，导致这一帧 stale physics
 	//     永久停留在 UI 上，给操作员"任务还在跑"的错觉。
-	//   - 修复：只在 running/paused 时组装 LivePhysics；终态下 status.LivePhysics 保持 nil，
-	//     前端 calculatedPhysics 自然映射为 null（UI 显示 "--"）。
+	//   - 修复：只在 running/paused 时组装 LivePhysics；终态下 status.LivePhysics 保持 nil。
+	//   - idle 态也不组装：前端 calibrationStore.calculateAtmosphericPhysics 已本地算出 Ma/V，
+	//     后端无需在 idle 态提供 livePhysics，避免依赖 currentConfig 在 idle 态的不可靠性。
 	if status.State == calibration.StateRunning || status.State == calibration.StatePaused {
 		if lp := m.resolveLivePhysics(config); lp != nil {
 			status.LivePhysics = lp

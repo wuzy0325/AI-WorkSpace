@@ -202,61 +202,6 @@ func (a *FiveHoleAlgorithm) AcquireDataWithChannels(
 	}, nil
 }
 
-// readFiveHoleFromChannelReader 简化的通道读取（无 probeChannels 配置时的回退方案）
-func readFiveHoleFromChannelReader(reader ChannelValueReader) FiveHoleRawData {
-	// 使用默认角色映射直接读取
-	roleMap := map[string]string{
-		"fiveHole.p1":            "p1",
-		"fiveHole.p2":            "p2",
-		"fiveHole.p3":            "p3",
-		"fiveHole.p4":            "p4",
-		"fiveHole.p5":            "p5",
-		"fiveHole.pAtm":          "pAtm",
-		"fiveHole.tAtm":          "tAtm",
-		"fiveHole.pTotal":        "pTotal",
-		"fiveHole.pTunnelStatic": "pStatic",
-	}
-
-	values := make(map[string]float64)
-	for _, field := range []string{"p1", "p2", "p3", "p4", "p5", "pAtm", "tAtm"} {
-		for _, f := range roleMap {
-			if f == field {
-				// 尝试读取（无法确定具体设备ID和通道索引，返回0）
-				if val, ok := reader("", -1); ok {
-					values[field] = val
-				}
-				break
-			}
-		}
-	}
-
-	result := FiveHoleRawData{
-		P1:   values["p1"],
-		P2:   values["p2"],
-		P3:   values["p3"],
-		P4:   values["p4"],
-		P5:   values["p5"],
-		PAtm: values["pAtm"],
-		TAtm: values["tAtm"],
-	}
-	return result
-}
-
-// readRawDeviceChannelsFromReader 从通道读取器中读取16通道原始数据
-func readRawDeviceChannelsFromReader(reader ChannelValueReader) map[string][]float64 {
-	result := make(map[string][]float64)
-	channels := make([]float64, 16)
-	for ch := 0; ch < 16; ch++ {
-		val, ok := reader("", ch)
-		if !ok {
-			val = 0
-		}
-		channels[ch] = val
-	}
-	result["default"] = channels
-	return result
-}
-
 // readRawDeviceChannelsFromProbe 从探针通道配置中读取16通道原始数据
 func readRawDeviceChannelsFromProbe(reader ChannelValueReader, probeChannels []ProbeChannel) map[string][]float64 {
 	// 收集所有设备ID

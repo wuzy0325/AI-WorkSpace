@@ -207,11 +207,17 @@ type registrySession struct {
 	taskID  string // 服务端权威任务 ID
 	token   SessionToken
 	manager ManagedTraversalManager
-	// boundControllerIDs 启动快照冻结的控制器绑定（Task 9 运动安全隔离的输入）。
+	// boundControllerIDs 启动快照冻结的控制器 ID 去重列表（Task 9 运动安全隔离的输入）。
+	// 急停按控制器级别执行（EmergencyStop 是控制器级操作，无法只停单轴），故仍保留
+	// 去重后的 controllerID 列表；同控制器的不同轴 lease 在 boundAxisPairs 中维护。
 	boundControllerIDs []string
-	// controllerTokens controllerID → leaseToken（Task 1 ControllerLeasePort 签发）。
-	// admission 后不可变，续约器读取无需持锁。
-	controllerTokens map[string]string
+	// boundAxisPairs 启动快照冻结的 (controllerID, axis) 元组列表（资源独占的真实粒度）。
+	// 用于冲突检测快照与 lease token 映射的 key 源。
+	boundAxisPairs []traversal.MotionAxisBinding
+	// controllerTokens (controllerID, axis) → leaseToken（Task 1 ControllerLeasePort 签发）。
+	// admission 后不可变，续约器读取无需持锁。key 为 ControllerAxisPair 结构体，
+	// 同一控制器的不同轴有独立 token，互不影响。
+	controllerTokens map[ControllerAxisPair]string
 	// workflowAcquired 本次准入是否触发了全局 workflow lease 获取（仅第一路 true），
 	// 供准入回滚决定是否释放。
 	workflowAcquired bool
@@ -241,9 +247,9 @@ type registrySession struct {
 	cleanupMu sync.Mutex
 	// recoveryStopOnce bounds asynchronous stop requests after recovery index failures.
 	recoveryStopOnce sync.Once
-	// pendingReleases 尚未成功释放的控制器 lease（cleanupMu 保护）；
+	// pendingReleases 尚未成功释放的控制器轴 lease（cleanupMu 保护）；
 	// 初始为 controllerTokens 的拷贝，释放成功即删除对应条目。
-	pendingReleases map[string]string
+	pendingReleases map[ControllerAxisPair]string
 }
 
 // ManagerRegistry 双探针 manager 注册表（spec FR3）。
@@ -257,13 +263,19 @@ type ManagerRegistry struct {
 	// admissionGate 串行化 admission、回滚和最后一路 workflow lease 交接。
 	// Channel ownership makes waiting context-bounded; external lease I/O never holds r.mu.
 	admissionGate chan struct{}
-	closing       bool
-	factory       TraversalManagerFactory
-	managers      map[ProbeID]ManagedTraversalManager
-	creating      map[ProbeID]*probeCreationGate
-	sessions      map[ProbeID]*registrySession
-	activeCount   int
-	generations   map[ProbeID]uint64
+	// probeGates 每 probe 独立生命周期 gate（I-7）：序列化同 probe 的 Start/Stop/Pause/
+	// Resume/RunPoint/CloseProbe，避免单 probe 长耗时操作（如 RunPoint 运动）阻塞其他
+	// probe 的并发操作（违反 user_rules 第 9 条）。全局 admissionGate 仅用于 workflow
+	// lease 交接等全局事务；per-probe 操作经 probeGates 互不阻塞。
+	probeGates   map[ProbeID]chan struct{}
+	probeGatesMu sync.Mutex
+	closing      bool
+	factory      TraversalManagerFactory
+	managers     map[ProbeID]ManagedTraversalManager
+	creating     map[ProbeID]*probeCreationGate
+	sessions     map[ProbeID]*registrySession
+	activeCount  int
+	generations  map[ProbeID]uint64
 	// workflowTransition 全局 lease 交接 gate：最后一路清理时置位，阻止新 admission
 	// 复用旧 lease 状态；全局 lease 释放提交后清除。
 	workflowTransition bool
@@ -317,6 +329,7 @@ func NewManagerRegistry(deps ManagerRegistryDeps, opts ...ManagerRegistryOption)
 	registry := &ManagerRegistry{
 		factory:         deps.Factory,
 		admissionGate:   make(chan struct{}, 1),
+		probeGates:      make(map[ProbeID]chan struct{}),
 		managers:        make(map[ProbeID]ManagedTraversalManager),
 		creating:        make(map[ProbeID]*probeCreationGate),
 		sessions:        make(map[ProbeID]*registrySession),
@@ -356,6 +369,41 @@ func (r *ManagerRegistry) acquireAdmission(ctx context.Context) error {
 
 func (r *ManagerRegistry) releaseAdmission() {
 	r.admissionGate <- struct{}{}
+}
+
+// probeGate 返回指定 probe 的 lifecycle gate（不存在时懒创建并填充初始 token）。
+// gate 为 capacity-1 channel：acquire = 读取 token，release = 写回 token。
+// 不同 probe 的 gate 互相独立，杜绝跨 probe 阻塞（I-7）。
+func (r *ManagerRegistry) probeGate(probeID ProbeID) chan struct{} {
+	r.probeGatesMu.Lock()
+	defer r.probeGatesMu.Unlock()
+	gate, ok := r.probeGates[probeID]
+	if !ok {
+		gate = make(chan struct{}, 1)
+		gate <- struct{}{}
+		r.probeGates[probeID] = gate
+	}
+	return gate
+}
+
+// acquireProbeGate 获取指定 probe 的 lifecycle gate（context-aware）。
+// 用于 Start/Stop/Pause/Resume/RunPoint/CloseProbe 串行化同 probe 操作。
+func (r *ManagerRegistry) acquireProbeGate(ctx context.Context, probeID ProbeID) error {
+	select {
+	case <-r.probeGate(probeID):
+		if err := ctx.Err(); err != nil {
+			r.releaseProbeGate(probeID)
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseProbeGate 释放指定 probe 的 lifecycle gate。
+func (r *ManagerRegistry) releaseProbeGate(probeID ProbeID) {
+	r.probeGate(probeID) <- struct{}{}
 }
 
 // GetOrCreate 返回指定 probe 的 manager；不存在时经 per-probe creation gate 创建。
@@ -432,6 +480,8 @@ func probeConfigKey(probeID ProbeID) string {
 }
 
 // boundControllerIDs 提取配置中唯一非空控制器 ID 列表（字典序，便于比较与诊断）。
+// 仅用于急停快照（EmergencyStop 按控制器级执行，去重后逐台急停）。
+// 资源独占检测与 lease 请用 boundControllerAxisPairs。
 func boundControllerIDs(cfg traversal.Config) []string {
 	seen := make(map[string]bool)
 	ids := make([]string, 0, len(cfg.MotionAxes))
@@ -445,4 +495,57 @@ func boundControllerIDs(cfg traversal.Config) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// boundControllerIDsFromPairs 从 (controllerID, axis) 元组列表派生去重后的控制器 ID 列表。
+// 用于 EmergencyStop 等控制器级操作：同一控制器的多个轴 lease 只产生一次 ES 调用。
+// 接受 MotionAxisBinding 列表（与 boundControllerAxisPairs 输出类型一致），便于
+// 在 registerSessionLocked 中直接从启动快照的 axis pairs 派生 controller 列表。
+func boundControllerIDsFromPairs(pairs []traversal.MotionAxisBinding) []string {
+	seen := make(map[string]bool)
+	ids := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		id := strings.TrimSpace(p.ControllerID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// ControllerAxisPair 控制器轴资源标识 (controllerID, axis) 元组。
+// 作为 lease token map 的 key 与冲突检测的输入——同一控制器的不同物理轴
+// 可被两个 probe 分别独占（风洞实验中两探针共用同一运动控制器的不同轴）。
+type ControllerAxisPair struct {
+	ControllerID string
+	Axis         string
+}
+
+// boundControllerAxisPairs 提取配置中唯一 (controllerID, axis) 元组列表。
+// 资源独占的真实粒度：同一控制器的不同轴不视为冲突，可分别 lease。
+// controllerID 或 axis 为空的绑定被跳过（未完成配置由 ParseConfig 拦截）。
+func boundControllerAxisPairs(cfg traversal.Config) []traversal.MotionAxisBinding {
+	seen := make(map[ControllerAxisPair]bool)
+	pairs := make([]traversal.MotionAxisBinding, 0, len(cfg.MotionAxes))
+	for _, axis := range cfg.MotionAxes {
+		id := strings.TrimSpace(axis.ControllerID)
+		ax := strings.TrimSpace(axis.Axis)
+		if id == "" || ax == "" {
+			continue
+		}
+		key := ControllerAxisPair{ControllerID: id, Axis: ax}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pairs = append(pairs, traversal.MotionAxisBinding{
+			Name:         axis.Name,
+			ControllerID: id,
+			Axis:         ax,
+		})
+	}
+	return pairs
 }

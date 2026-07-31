@@ -501,6 +501,9 @@ export const motionApi = {
   resetEmergencyStop: async (id: string): Promise<boolean> => {
     if (isMotionStandaloneMode()) {
       await mainProcessRequest('/api/motion/resetEmergencyStop', { method: 'POST', body: JSON.stringify({ id }) });
+      // 与 emergencyStop 行为对齐：复位后立即触发一次高频轮询，
+      // 让独立窗口 UI 立刻反映急停解除状态，避免依赖 2s 慢速心跳。
+      requestFastPolling();
       return true;
     }
     if (isWailsAvailable()) {

@@ -23,6 +23,63 @@ func startProbe1OK(fx *registryFixture) json.RawMessage {
 	return dualConfigJSON("client-task-id", "ctrl-a")
 }
 
+func TestManagerRegistry_LoadProbeBindingsFromFrontendConfig(t *testing.T) {
+	fx := newRegistryFixture(t)
+	fx.configs.seed(probeConfigKey(Probe2), json.RawMessage(`{
+		"channels":{"motionAxes":[
+			{"name":"X","controllerId":" ctrl-b ","axis":"X"},
+			{"name":"Y","controllerId":"ctrl-b","axis":"Y"}
+		]}
+	}`))
+
+	bindings, err := fx.registry.loadProbeBindings(Probe2)
+	if err != nil {
+		t.Fatalf("loadProbeBindings 应在配置存在时返回 nil 错误, got %v", err)
+	}
+	// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的两个不同轴各自算一份。
+	// ControllerID 经 TrimSpace 规整，两个 (ctrl-b, X) / (ctrl-b, Y) 元组都应被提取。
+	if len(bindings) != 2 {
+		t.Fatalf("应从前端 channels.motionAxes 提取两路 axis pairs, got %d", len(bindings))
+	}
+	for _, b := range bindings {
+		if b.ControllerID != "ctrl-b" {
+			t.Fatalf("ControllerID 应规整为 ctrl-b, got %q", b.ControllerID)
+		}
+		if b.Axis != "X" && b.Axis != "Y" {
+			t.Fatalf("Axis 应为 X 或 Y, got %q", b.Axis)
+		}
+	}
+}
+
+// TestManagerRegistry_LoadProbeBindings_IOErrorPropagated 验证 I-6 修复：
+// 真实 I/O 错误（非"未配置"）必须向上传播，而非被吞掉返回 nil。
+// 这样用户能看到真实存储故障而非 resource_conflict 误导。
+func TestManagerRegistry_LoadProbeBindings_IOErrorPropagated(t *testing.T) {
+	fx := newRegistryFixture(t)
+	// 注入会返回真实 I/O 错误的 configStore（不是 not-exist 的 nil, nil）。
+	fx.registry.configStore = &errorConfigStore{err: errors.New("disk read error")}
+
+	bindings, err := fx.registry.loadProbeBindings(Probe1)
+	if err == nil {
+		t.Fatalf("I/O 错误应向上传播, got nil err with bindings=%v", bindings)
+	}
+	if !strings.Contains(err.Error(), "disk read error") {
+		t.Fatalf("错误应包含原始 I/O 错误信息, got %v", err)
+	}
+	if bindings != nil {
+		t.Fatalf("I/O 错误下 bindings 应为 nil, got %v", bindings)
+	}
+}
+
+// errorConfigStore 注入式 AppConfigStore，对所有 LoadConfig 返回固定错误。
+// 用于验证 I/O 错误向上传播（区别于 fakeConfigStore 的"未配置"语义）。
+type errorConfigStore struct {
+	err error
+}
+
+func (s *errorConfigStore) LoadConfig(string) ([]byte, error) { return nil, s.err }
+func (s *errorConfigStore) SaveConfig(string, []byte) error   { return nil }
+
 func TestManagerRegistry_Start_ServerSideTaskIDAndOptions(t *testing.T) {
 	fx := newRegistryFixture(t)
 	raw := startProbe1OK(fx)
@@ -140,8 +197,8 @@ func TestManagerRegistry_Start_FirstAcquiresWorkflowSecondReuses(t *testing.T) {
 func TestManagerRegistry_Start_ControllerConflictRollback(t *testing.T) {
 	fx := newRegistryFixture(t)
 	ctx := context.Background()
-	// 外部持有 ctrl-a（如 legacy single 或上一任务残留）
-	if _, err := fx.controllers.Acquire(ctx, "ctrl-a", "external", time.Minute); err != nil {
+	// 外部持有 ctrl-a 的 X 轴（dualConfigJSON("", "ctrl-a") 默认配 X 轴），如 legacy single 或上一任务残留
+	if _, err := fx.controllers.Acquire(ctx, "ctrl-a", "X", "external", time.Minute); err != nil {
 		t.Fatalf("预置外部 lease: %v", err)
 	}
 	fx.seedPersistedBindings(Probe1, "ctrl-a")
@@ -175,7 +232,9 @@ func TestManagerRegistry_Start_ControllerAcquireRollbackFailureRetainsOwnership(
 	fx.controllers.setReleaseFail("ctrl-a", true)
 
 	_, err := fx.registry.Start(context.Background(), Probe1, dualConfigJSON("", "ctrl-a", "ctrl-c"))
-	if !errors.Is(err, ErrResourceConflict) || !strings.Contains(err.Error(), "释放控制器 ctrl-a lease") {
+	// dualConfigJSON 为 ctrl-a 派生 X 轴、ctrl-c 派生 Y 轴（按顺序 X/Y/Z/U）；
+	// 错误聚合应同时包含 acquire 失败（ctrl-c 轴 Y）与 rollback release 失败（ctrl-a 轴 X）。
+	if !errors.Is(err, ErrResourceConflict) || !strings.Contains(err.Error(), "释放控制器 ctrl-a 轴 X lease") {
 		t.Fatalf("Start 应聚合 acquire 与 rollback release 错误, got %v", err)
 	}
 	if state, ok := fx.sessionStateOf(Probe1); !ok || state != sessionStateCompletionFailed {
@@ -520,5 +579,105 @@ func TestManagerRegistry_Start_InvalidProbeID(t *testing.T) {
 	fx := newRegistryFixture(t)
 	if _, err := fx.registry.Start(context.Background(), "probe9", dualConfigJSON("", "ctrl-a")); !errors.Is(err, ErrInvalidProbeID) {
 		t.Fatalf("未知 probe 应返回 ErrInvalidProbeID, got %v", err)
+	}
+}
+
+// TestManagerRegistry_Start_SameControllerDifferentAxesAllowed 验证资源独占粒度为
+// (controllerID, axis) 元组：两 probe 共用同一运动控制器的不同物理轴时应允许双探针并行启动
+// （风洞实验常见配置：两探针分别由同一控制器的 X/Y 轴驱动）。
+func TestManagerRegistry_Start_SameControllerDifferentAxesAllowed(t *testing.T) {
+	fx := newRegistryFixture(t)
+	ctx := context.Background()
+	// 两 probe 各配 ctrl-a 的一个轴（probe1→X，probe2→Y），共用控制器但物理轴不同
+	fx.seedPersistedAxisBinding(Probe1, "ctrl-a", "X")
+	fx.seedPersistedAxisBinding(Probe2, "ctrl-a", "Y")
+
+	if _, err := fx.registry.Start(ctx, Probe1, dualConfigWithAxisJSON("", "ctrl-a", "X")); err != nil {
+		t.Fatalf("Start probe1 (ctrl-a, X): %v", err)
+	}
+	if _, err := fx.registry.Start(ctx, Probe2, dualConfigWithAxisJSON("", "ctrl-a", "Y")); err != nil {
+		t.Fatalf("Start probe2 (ctrl-a, Y): %v", err)
+	}
+	// 全局 workflow lease 只获取一次（两 probe 共享）
+	if _, _, acquires, _ := fx.workflow.state(); acquires != 1 {
+		t.Fatalf("全局 lease 应只获取一次, got %d", acquires)
+	}
+	// 同控制器的两个轴 lease 互相独立——heldCount 返回 2，heldAxisCount 各为 1
+	if fx.controllers.heldCount("ctrl-a") != 2 {
+		t.Fatalf("ctrl-a 应持有两个轴 lease, got %d", fx.controllers.heldCount("ctrl-a"))
+	}
+	if fx.controllers.heldAxisCount("ctrl-a", "X") != 1 || fx.controllers.heldAxisCount("ctrl-a", "Y") != 1 {
+		t.Fatal("ctrl-a 的 X/Y 轴 lease 应各自独立持有")
+	}
+	if fx.activeCount() != 2 {
+		t.Fatalf("activeCount 应为 2, got %d", fx.activeCount())
+	}
+}
+
+// TestManagerRegistry_Start_SameControllerSameAxisRejected 验证冲突检测粒度：
+// 两 probe 绑定到同一控制器的同一物理轴时必须被拒绝（资源冲突）。
+// validateDualBindings 用另一路 probe 的持久化绑定做静态校验——
+// 即使另一路未运行，启动第一路时就会立即拒绝（spec I1：双模式两路绑定不得重叠）。
+func TestManagerRegistry_Start_SameControllerSameAxisRejected(t *testing.T) {
+	fx := newRegistryFixture(t)
+	ctx := context.Background()
+	// 两 probe 都配 ctrl-a 的 X 轴（同一 (controllerID, axis) 元组）
+	fx.seedPersistedAxisBinding(Probe1, "ctrl-a", "X")
+	fx.seedPersistedAxisBinding(Probe2, "ctrl-a", "X")
+
+	_, err := fx.registry.Start(ctx, Probe1, dualConfigWithAxisJSON("", "ctrl-a", "X"))
+	if !errors.Is(err, ErrResourceConflict) {
+		t.Fatalf("同控制器同轴应返回 ErrResourceConflict, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "轴 X") {
+		t.Fatalf("错误信息应指明冲突的轴, got %v", err)
+	}
+	// 冲突后不得登记任何 session 或预占 lease
+	if fx.activeCount() != 0 || fx.sessionCount() != 0 {
+		t.Fatalf("冲突后不得登记 session, active=%d sessions=%d", fx.activeCount(), fx.sessionCount())
+	}
+	if fx.controllers.totalHeld() != 0 {
+		t.Fatal("冲突后不得持有任何 lease")
+	}
+}
+
+// TestManagerRegistry_Start_SameControllerDifferentAxesIndependentCompletion 验证
+// 同控制器不同轴 lease 的释放互相独立：一路完成时另一路的轴 lease 不受影响。
+func TestManagerRegistry_Start_SameControllerDifferentAxesIndependentCompletion(t *testing.T) {
+	fx := newRegistryFixture(t)
+	ctx := context.Background()
+	fx.seedPersistedAxisBinding(Probe1, "ctrl-a", "X")
+	fx.seedPersistedAxisBinding(Probe2, "ctrl-a", "Y")
+
+	if _, err := fx.registry.Start(ctx, Probe1, dualConfigWithAxisJSON("", "ctrl-a", "X")); err != nil {
+		t.Fatalf("Start probe1: %v", err)
+	}
+	if _, err := fx.registry.Start(ctx, Probe2, dualConfigWithAxisJSON("", "ctrl-a", "Y")); err != nil {
+		t.Fatalf("Start probe2: %v", err)
+	}
+
+	// probe1 完成：释放 (ctrl-a, X) lease，但 (ctrl-a, Y) 必须仍被 probe2 持有
+	completeSession(fx, Probe1)
+	if fx.controllers.heldAxisCount("ctrl-a", "X") != 0 {
+		t.Fatal("probe1 完成后 (ctrl-a, X) lease 应释放")
+	}
+	if fx.controllers.heldAxisCount("ctrl-a", "Y") != 1 {
+		t.Fatal("probe1 完成不得影响 probe2 的 (ctrl-a, Y) lease")
+	}
+	if fx.activeCount() != 1 {
+		t.Fatalf("probe1 完成后 activeCount 应为 1, got %d", fx.activeCount())
+	}
+	// 全局 workflow lease 在仍有一路活动时不得释放
+	if held, _, _, _ := fx.workflow.state(); !held {
+		t.Fatal("probe2 仍活动时全局 workflow lease 应保留")
+	}
+
+	// probe2 完成：最后一路释放全部 lease 与全局 workflow lease
+	completeSession(fx, Probe2)
+	if fx.controllers.totalHeld() != 0 {
+		t.Fatal("全部完成后控制器 lease 应释放")
+	}
+	if held, _, _, releases := fx.workflow.state(); held || releases != 1 {
+		t.Fatalf("最后一路完成应释放全局 workflow lease: held=%v releases=%d", held, releases)
 	}
 }

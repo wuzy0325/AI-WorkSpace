@@ -214,4 +214,75 @@ describe('DualTraversalSettings', () => {
     await wrapper.findAll('.footer-right button').at(-1)!.trigger('click')
     expect(wrapper.findComponent(PrbStepStub).props('prbFile')).toBeNull()
   })
+
+  it('initializes rectangle and sector configs when switching layout patterns', async () => {
+    const probe1 = configWithChannel('probe1-device')
+    probe1.prbFile = {
+      filePath: 'D:/probe1.prb',
+      fileName: 'probe1.prb',
+      loadedAt: 0,
+      validRange: { alphaMin: -30, alphaMax: 30, betaMin: -30, betaMax: 30, machMin: 0, machMax: 1 },
+    }
+    probe1.channels.motionAxes = [
+      { name: 'X', controllerId: 'mc-x', axis: 'X' },
+      { name: 'Y', controllerId: 'mc-y', axis: 'Y' },
+    ]
+    loadedConfigs.probe1 = probe1
+    loadedConfigs.probe2 = configWithChannel('probe2-device')
+
+    const LayoutStepStub = defineComponent({
+      inheritAttrs: false,
+      props: ['pattern', 'rectangleConfig', 'sectorConfig'],
+      emits: ['update:pattern'],
+      template: `
+        <div class="layout-step-stub">
+          <button class="select-rectangle" @click="$emit('update:pattern', 'rectangle')">rectangle</button>
+          <button class="select-sector" @click="$emit('update:pattern', 'sector')">sector</button>
+        </div>
+      `,
+    })
+    const wrapper = mount(DualTraversalSettings, {
+      props: { show: true, probeId: 'probe1' },
+      global: {
+        stubs: {
+          UiDialog: defineComponent({ inheritAttrs: false, template: '<div><slot name="header"/><slot/><slot name="footer"/></div>' }),
+          UiSteps: defineComponent({ inheritAttrs: false, template: '<div><slot/></div>' }),
+          UiStep: defineComponent({ inheritAttrs: false, template: '<div />' }),
+          MotionSafetyPanel: defineComponent({ inheritAttrs: false, template: '<div />' }),
+          PointsPreview: defineComponent({ inheritAttrs: false, template: '<div />' }),
+          TraversalPrbStep: defineComponent({ inheritAttrs: false, template: '<div />' }),
+          TraversalLayoutStep: LayoutStepStub,
+        },
+      },
+    })
+    await vi.waitFor(() => {
+      expect(wrapper.findComponent(TraversalHardwareStep).props('probeChannels')[0].channel.deviceId).toBe('probe1-device')
+    })
+
+    await wrapper.findAll('.footer-right button').at(-1)!.trigger('click')
+    await wrapper.findAll('.footer-right button').at(-1)!.trigger('click')
+    const layoutStep = wrapper.findComponent(LayoutStepStub)
+
+    await layoutStep.find('.select-rectangle').trigger('click')
+    expect(layoutStep.props('rectangleConfig')).toEqual({
+      xMin: -30,
+      xMax: 30,
+      xStepSegments: [{ start: -30, end: 30, step: 5 }],
+      yMin: -30,
+      yMax: 30,
+      yStepSegments: [{ start: -30, end: 30, step: 5 }],
+    })
+
+    await layoutStep.find('.select-sector').trigger('click')
+    expect(layoutStep.props('sectorConfig')).toEqual({
+      centerX: 0,
+      centerY: 0,
+      radiusMin: 100,
+      radiusMax: 300,
+      radialStepSegments: [{ start: 100, end: 300, step: 50 }],
+      angleStart: -30,
+      angleEnd: 30,
+      angularStepSegments: [{ start: -30, end: 30, step: 5 }],
+    })
+  })
 })

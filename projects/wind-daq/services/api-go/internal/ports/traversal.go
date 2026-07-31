@@ -216,11 +216,15 @@ type WorkflowLeasePort interface {
 // 每次 Acquire 生成 opaque lease token（不可由 probe ID/controller ID 推导）作为
 // 底层锁的唯一 holder；后续 Renew/Release 只认 token。旧 generation token 在 lease
 // 被新 session 接管后不能续约或释放新 session 的 lease。
+//
+// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的不同物理轴可被两个 probe
+// 分别 lease（风洞实验中两探针共用同一运动控制器的不同轴是常见配置）；同一物理轴
+// 才是真正冲突的资源。axis 为空字符串时表示控制器级 lease（向后兼容遗留调用）。
 type ControllerLeasePort interface {
-	// Acquire 原子预占 controllerID 对应的控制器资源，成功返回 opaque leaseToken。
+	// Acquire 原子预占 (controllerID, axis) 对应的控制器轴资源，成功返回 opaque leaseToken。
 	// holder 为诊断用身份（如 session/probe 标识），不作为锁持有者。
 	// 资源已被占用且未过期时返回冲突错误。
-	Acquire(ctx context.Context, controllerID, holder string, ttl time.Duration) (leaseToken string, err error)
+	Acquire(ctx context.Context, controllerID, axis, holder string, ttl time.Duration) (leaseToken string, err error)
 	// Renew 续约 leaseToken 对应的 lease；token 未知、已过期或已被接管时返回错误。
 	Renew(ctx context.Context, leaseToken string, ttl time.Duration) error
 	// Release 释放 leaseToken 对应的 lease；token 未知或已非当前持有者时返回错误。

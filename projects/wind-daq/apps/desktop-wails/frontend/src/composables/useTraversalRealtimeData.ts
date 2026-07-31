@@ -22,10 +22,10 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useTraversalStore } from '@stores/traversalStore'
 
 /** 实时压力通道键名（五孔 7 项 + 七孔扩展 P6/P7） */
-type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'Patm' | 'Tatm'
+export type LivePressureKey = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'Patm' | 'Tatm'
 
 /** 实时压力映射（部分通道可能缺失） */
-type LivePressureMap = Partial<Record<LivePressureKey, number>>
+export type LivePressureMap = Partial<Record<LivePressureKey, number>>
 
 /** 压力通道 UI 展示项 */
 export interface PressureItem {
@@ -46,7 +46,7 @@ export interface PressureItem {
  * @param snapshots 最新 DAQ 快照数组
  * @returns 匹配到至少一个通道时返回 LivePressureMap，否则返回 null
  */
-function buildRealtimePressuresFromSnapshots(
+export function buildRealtimePressuresFromSnapshots(
   config: TraversalTestConfig,
   snapshots: DataPayload[]
 ): LivePressureMap | null {
@@ -140,7 +140,7 @@ function getTraversalDeviceId(config: TraversalTestConfig | null): string | null
  * @param probeType 探针类型（缺省按五孔）
  * @returns 完整的插值输入，或 null
  */
-function toRealtimeInterpolationInput(
+export function toRealtimeInterpolationInput(
   pressures: LivePressureMap | null,
   probeType: 'five-hole' | 'seven-hole' = 'five-hole'
 ): TraversalRealtimeInput | null {

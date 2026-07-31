@@ -20,10 +20,23 @@ import (
 // 运行期映射注册与完成注销。
 
 // seedDualCheckpoint 构造 v3 checkpoint 写入 fake store 并登记到 fake index，返回文件路径。
+//
+// bound 为 controller ID 列表，函数内部按顺序（X/Y/Z/U）派生 (controllerID, axis) 元组
+// 写入 Config.MotionAxes——admitResumeLockedUnderGate 从该字段提取 axis pairs 进行
+// (controllerID, axis) 粒度的冲突检测与 lease 预占。BoundControllerIDs 仍按控制器级
+// 保留，用于 EmergencyStop 等控制器级操作（与生产语义一致）。
 func seedDualCheckpoint(t *testing.T, fx *registryFixture, probeID ProbeID, taskID string, bound []string) string {
 	t.Helper()
 	csvPath := filepath.Join(t.TempDir(), string(probeID)+"-run.csv")
 	cpPath := traversal.ResolveCheckpointPathFromCSV(csvPath)
+	axisNames := []string{"X", "Y", "Z", "U"}
+	motionAxes := make([]traversal.MotionAxisBinding, 0, len(bound))
+	for i, id := range bound {
+		motionAxes = append(motionAxes, traversal.MotionAxisBinding{
+			ControllerID: id,
+			Axis:         axisNames[i%len(axisNames)],
+		})
+	}
 	cp := traversal.Checkpoint{
 		Version:         traversal.DualCheckpointVersion,
 		TaskID:          taskID,
@@ -35,10 +48,11 @@ func seedDualCheckpoint(t *testing.T, fx *registryFixture, probeID ProbeID, task
 		CreatedAt:       1785000000000,
 		Snapshot: traversal.TraversalRunSnapshot{
 			Config: traversal.Config{
-				TaskID:   taskID,
-				DeviceID: "dev-1",
-				Channels: []int{0},
-				Path:     []traversal.Point{{X: 0}, {X: 1}, {X: 2}},
+				TaskID:     taskID,
+				DeviceID:   "dev-1",
+				Channels:   []int{0},
+				Path:       []traversal.Point{{X: 0}, {X: 1}, {X: 2}},
+				MotionAxes: motionAxes,
 			},
 			TotalPoints:        3,
 			CommitSeq:          1,
@@ -172,8 +186,8 @@ func TestTraversal_Resume_ControllerConflictKeepsCheckpoint(t *testing.T) {
 	fx := newRegistryFixture(t)
 	cpPath := seedDualCheckpoint(t, fx, Probe1, "probe1-task-9", []string{"ctrl-a"})
 	before, _ := fx.cpStore.Read(cpPath)
-	// 外部持有 ctrl-a（另一 session 占用中）
-	if _, err := fx.controllers.Acquire(context.Background(), "ctrl-a", "external", time.Minute); err != nil {
+	// 外部持有 ctrl-a 的 X 轴（seedDualCheckpoint 默认派生 X 轴），另一 session 占用中
+	if _, err := fx.controllers.Acquire(context.Background(), "ctrl-a", "X", "external", time.Minute); err != nil {
 		t.Fatalf("预置外部 lease: %v", err)
 	}
 	fx.seedPersistedBindings(Probe2, "ctrl-b")

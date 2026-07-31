@@ -4,7 +4,7 @@ import { useTraversalStore } from './traversalStore'
 import { useDualTraversalStore } from './dualTraversalStore'
 import { useFeedbackStore } from './feedbackStore'
 import { useI18nStore } from './i18nStore'
-import type { TraversalMode } from '@shared/types/traversal'
+import type { ProbeId, TraversalMode } from '@shared/types/traversal'
 
 /**
  * 遍历测试模式状态（single / dual）全局 store。
@@ -114,10 +114,27 @@ export const useTraversalModeStore = defineStore('traversalMode', () => {
     ])
     const failed = results.some((result) => result.status === 'rejected' || !result.value)
     if (!failed) return true
-    const details = (['probe1', 'probe2'] as const)
-      .map((probeId, index) => results[index]?.status === 'rejected'
-        ? String((results[index] as PromiseRejectedResult).reason)
-        : dualTraversalStore.sessions[probeId].error)
+    // I-21 修复：部分失败时已关闭的 probe 状态已被 close() 内部清理（status=null 等），
+    // 但失败的 probe 仍保留终态可重试。原代码用户重试时会陷入死循环——已关闭的 probe
+    // 再调 close() 返回 false（registry 返回 already_closed 类错误），失败的 probe
+    // 重试时仍可能失败。改进：对失败的 probe 显式调 cleanupLocal 释放本地资源（订阅/设备），
+    // 让用户重试时 close() 是无副作用的幂等动作；同时把错误聚合到 toast。
+    const probes: readonly ProbeId[] = ['probe1', 'probe2'] as const
+    const details = probes
+      .map((probeId, index) => {
+        const result = results[index]
+        if (result?.status === 'rejected') {
+          // rejected 时清理本地资源，避免下次重试 close 时订阅泄漏。
+          dualTraversalStore.cleanupLocal(probeId)
+          return `${probeId}: ${String((result as PromiseRejectedResult).reason)}`
+        }
+        if (result?.status === 'fulfilled' && !result.value) {
+          // close 返回 false：后端拒绝（如 already_running），保留可重试状态但清理本地资源。
+          dualTraversalStore.cleanupLocal(probeId)
+          return `${probeId}: ${dualTraversalStore.sessions[probeId].error ?? 'close failed'}`
+        }
+        return null
+      })
       .filter(Boolean)
       .join('; ')
     feedbackStore.pushToast(`${i18n.t.dualCloseFailed}${details ? `: ${details}` : ''}`, 'error')

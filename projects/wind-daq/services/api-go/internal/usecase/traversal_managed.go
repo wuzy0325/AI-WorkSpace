@@ -41,6 +41,12 @@ func (m *TraversalManager) StartManaged(config traversal.Config, opts ManagedSes
 	if opts.TaskID != "" && opts.TaskID != config.TaskID {
 		return fmt.Errorf("managed options taskID %q 与 config taskID %q 不一致", opts.TaskID, config.TaskID)
 	}
+	m.mu.RLock()
+	acqController := m.acquisitionController
+	m.mu.RUnlock()
+	if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
+		return fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
+	}
 	if err := m.startInternal(config, &opts); err != nil {
 		return err
 	}
@@ -57,6 +63,12 @@ func (m *TraversalManager) ResumeManaged(cp traversal.Checkpoint, opts ManagedSe
 	}
 	if opts.TaskID != "" && cp.TaskID != "" && opts.TaskID != cp.TaskID {
 		return "", fmt.Errorf("managed options taskID %q 与 checkpoint taskID %q 不一致", opts.TaskID, cp.TaskID)
+	}
+	m.mu.RLock()
+	acqController := m.acquisitionController
+	m.mu.RUnlock()
+	if deviceName, stopped := firstNonAcquiringDevice(acqController, cp.Snapshot.Config); stopped {
+		return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
 	}
 	return m.resumeInternal(cp, &opts)
 }

@@ -62,8 +62,7 @@ func WithTimeout(timeout time.Duration) NetworkScannerOption {
 
 func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 	s := &NetworkScanner{
-		timeout:      defaultScanTimeout,
-		listenPacket: net.ListenPacket,
+		timeout: defaultScanTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -121,12 +120,22 @@ func (s *NetworkScanner) scanWithSocket(
 	port int,
 	parser func([]byte, string) *device.ScanResult,
 ) []device.ScanResult {
-	conn, err := s.listenPacket("udp4", ":0")
+	var socket discoverySocket
+	var err error
+	if s.listenPacket != nil {
+		var conn net.PacketConn
+		conn, err = s.listenPacket("udp4", ":0")
+		if err == nil {
+			socket = &packetDiscoverySocket{conn: conn}
+		}
+	} else {
+		socket, err = openDiscoverySocket(0)
+	}
 	if err != nil {
 		log.Printf("[scan] 创建 socket 失败 cmd=%q: %v", cmd, err)
 		return nil
 	}
-	defer conn.Close()
+	defer socket.Close()
 
 	// 只使用广播地址，避免单播重复命令导致设备不响应。
 	// 网卡枚举有界化：若超过 interfaceTimeout 仍未完成，回退到有限广播地址，
@@ -137,34 +146,34 @@ func (s *NetworkScanner) scanWithSocket(
 		if addr == nil {
 			continue
 		}
-		dest := &net.UDPAddr{IP: addr, Port: port}
-		if _, err := conn.WriteTo([]byte(cmd), dest); err != nil {
-			log.Printf("[scan] 发送命令 %q 到 %s:%d 失败: %v", cmd, target, port, err)
+		if err := socket.Send([]byte(cmd), addr.String(), port); err != nil {
+			// ADR-009 finding 6：Send 失败说明 socket handle 已被 watchdog Closesocket 销毁，
+			// 后续 Send/Receive 不可复用（契约：超时后 socket 不可复用）。
+			// 复核修订 finding 3 修复：直接返回空结果，不进入 Receive 循环——
+			// 旧实现 break 后仍执行下方 Receive 循环，会继续调用同一 socket 的 Receive，
+			// 但 socket handle 可能已被 watchdog 销毁，行为不可预期。
+			// 调用方 defer socket.Close() 释放资源。
+			log.Printf("[scan] 发送命令 %q 到 %s:%d 失败, 终止本轮扫描并跳过 Receive: %v", cmd, target, port, err)
+			return nil
 		}
 	}
-
-	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
-		return nil
-	}
-	// 部分Windows网络驱动不会在deadline到期时唤醒ReadFrom，
-	// 用定时器在超时后强制Close作为兜底，确保接收循环一定退出。
-	watchdog := time.AfterFunc(s.timeout, func() { _ = conn.Close() })
-	defer watchdog.Stop()
 
 	seen := make(map[string]bool)
 	var devices []device.ScanResult
 	buf := make([]byte, 1024)
+	deadline := time.Now().Add(s.timeout)
 	for {
-		n, remote, err := conn.ReadFrom(buf)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n, remote, err := socket.Receive(buf, remaining)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				break
-			}
 			break
 		}
 		raw := string(buf[:n])
-		log.Printf("[scan] socket %q 收到响应 from=%s len=%d data=%q", cmd, remote.String(), n, raw)
-		result := parser(buf[:n], remote.String())
+		log.Printf("[scan] socket %q 收到响应 from=%s len=%d data=%q", cmd, remote, n, raw)
+		result := parser(buf[:n], remote)
 		if result != nil {
 			log.Printf("[scan] socket %q 解析成功 id=%s type=%s", cmd, result.ID, result.Type)
 			if !seen[result.ID] {
