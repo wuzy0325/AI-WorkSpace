@@ -437,54 +437,108 @@ func (a *App) DeviceSubscribeStream(deviceID string, subscribe bool) GenericResp
 }
 
 // ServiceShutdown is called by Wails v3 when the bound service shuts down.
+//
+// 为什么每步打点：Wails v3 经 InvokeSync 在 GUI 主线程同步调用本方法，
+// 任一子步骤阻塞都会让 Windows 把进程标记为"无响应"。打点记录每步耗时，
+// 出问题时可直接从日志定位卡在哪个子步骤，无需复现。
+//
+// 设计：每个子步骤通过 runShutdownStep 统一执行 + 打点，保证：
+//   - 失败路径也打点（避免日志时间线断裂，误判"卡在某步之后"）
+//   - ServiceShutdown 主体保持线性可读，函数行数 ≤ 50（AGENTS.md 约束）
 func (a *App) ServiceShutdown() error {
 	a.shuttingDown.Store(true)
+	shutdownStart := time.Now()
 
-	// 双探针 registry 先行关停（spec FR9）：在 relay/motion window/calibration/
-	// 共享服务 cleanup 之前执行；失败时 fatal + 非零 exit seam 并跳过后续清理。
-	if err := a.shutdownTraversalRegistryOrFatal(); err != nil {
+	// 双探针 registry 先行关停（spec FR9）：失败时 fatal + 非零 exit seam
+	// 并跳过后续清理。runShutdownStep 保证失败也打点。
+	if err := a.runShutdownStep(shutdownStart, "traversal_registry", a.shutdownTraversalRegistryOrFatal); err != nil {
 		return err
 	}
 
-	if a.relayStop != nil {
-		a.relayStop()
-	}
+	// relay 停止（no-op 安全）
+	a.runShutdownStep(shutdownStart, "relay_stop", func() error {
+		if a.relayStop != nil {
+			a.relayStop()
+		}
+		return nil
+	})
 
-	// 同步停止 DataStreamRelay 并等待所有转发 worker 完成 hub 退订（O-3），
-	// 避免进程退出时 relay goroutine 仍持有 hub 订阅。
-	// Stop 幂等且并发安全：startDataRelay 的 drain goroutine 退出时
-	// defer relay.Stop() 会共享同一次终止，不会重复 cancel。
-	if a.appContext != nil && a.appContext.DataStreamRelay != nil {
-		a.appContext.DataStreamRelay.Stop()
-	}
+	// 同步停止 DataStreamRelay 并等待所有转发 worker 完成 hub 退订（O-3）。
+	// Stop 幂等且并发安全，startDataRelay 的 drain goroutine 退出时
+	// defer relay.Stop() 共享同一次终止，不会重复 cancel。
+	a.runShutdownStep(shutdownStart, "data_stream_relay_stop", func() error {
+		if a.appContext != nil && a.appContext.DataStreamRelay != nil {
+			a.appContext.DataStreamRelay.Stop()
+		}
+		return nil
+	})
 
 	// 先关闭子窗口进程：保证父进程退出时不会留下孤儿运动控制器窗口。
-	// 顺序放在最前是因为子进程仍可能向父进程的日志/HTTP 写数据，先停子再停父更稳。
-	a.terminateMotionWindow()
+	// 顺序放在 relay 之后是因为子进程仍可能向父进程的日志/HTTP 写数据。
+	a.runShutdownStep(shutdownStart, "terminate_motion_window", func() error {
+		a.terminateMotionWindow()
+		return nil
+	})
 
-	// 停止校准任务并有界等待其 session 退出（writer flush/结果保存/运动归零完成），
-	// 避免进程退出时校准 worker 仍在写文件或驱动运动轴。
+	// 停止校准任务并有界等待其 session 退出（writer flush/结果保存/运动归零）。
 	// 必须在 logMgr.Close 之前完成：校准 finalize 期间的日志需要能落盘。
-	if a.appContext != nil && a.appContext.CalibrationMgr != nil {
-		if err := a.appContext.CalibrationMgr.Shutdown(); err != nil {
-			slog.Warn("[app] 校准任务停止等待超时，后台仍将继续收尾", "component", "app", "error", err)
+	// 内部已 bounded：stopMotion（3s）+ worker join（5s）= 最坏 8s 返回。
+	a.runShutdownStep(shutdownStart, "calibration_mgr_shutdown", func() error {
+		if a.appContext != nil && a.appContext.CalibrationMgr != nil {
+			if err := a.appContext.CalibrationMgr.Shutdown(); err != nil {
+				slog.Warn("[app] 校准任务停止等待超时，后台仍将继续收尾", "component", "app", "error", err)
+			}
 		}
-	}
+		return nil
+	})
 
-	if a.cancel != nil {
-		a.cancel()
-	}
-	if a.apiServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = a.apiServer.Shutdown(shutdownCtx)
-	}
+	// API server shutdown：cancel ctx + 2s bounded Shutdown。
+	a.runShutdownStep(shutdownStart, "api_server_shutdown", func() error {
+		if a.cancel != nil {
+			a.cancel()
+		}
+		if a.apiServer != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = a.apiServer.Shutdown(shutdownCtx)
+		}
+		return nil
+	})
+
 	// 在 logMgr.Close 之前打这条收尾日志，确保它能写入文件/ring sink。
-	slog.Info("Wind-DAQ 应用已关闭", "component", "app")
+	slog.Info("Wind-DAQ 应用已关闭", "component", "app",
+		"total_ms", time.Since(shutdownStart).Milliseconds())
 	if a.logMgr != nil {
 		_ = a.logMgr.Close()
 	}
 	return nil
+}
+
+// runShutdownStep 执行单个 shutdown 子步骤并打点记录耗时。
+//
+// 行为：
+//   - 调用 fn()，记录 step_ms / total_ms / error（若有）
+//   - 失败也打点（level=Warn），保证日志时间线完整
+//   - 返回 fn 的错误，由调用方决定是否中断后续步骤
+//
+// 为什么要抽辅助函数：原 ServiceShutdown 内联 6 个子步骤 + stepDone 闭包，
+// 函数行数 ~64 超 AGENTS.md ≤50 行约束。抽出后主体 ~50 行内，且失败路径
+// 打点逻辑统一，避免每步重复 if-err-log。
+func (a *App) runShutdownStep(shutdownStart time.Time, step string, fn func() error) error {
+	stepStart := time.Now()
+	err := fn()
+	elapsed := time.Since(stepStart)
+	total := time.Since(shutdownStart)
+	if err != nil {
+		slog.Warn("[app] shutdown step failed",
+			"component", "app", "step", step,
+			"step_ms", elapsed.Milliseconds(), "total_ms", total.Milliseconds(), "error", err)
+	} else {
+		slog.Info("[app] shutdown step done",
+			"component", "app", "step", step,
+			"step_ms", elapsed.Milliseconds(), "total_ms", total.Milliseconds())
+	}
+	return err
 }
 
 // shutdownTraversalRegistryOrFatal 执行 registry 关停；失败时记录 fatal、
