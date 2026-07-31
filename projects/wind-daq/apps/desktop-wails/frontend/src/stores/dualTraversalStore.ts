@@ -184,12 +184,8 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
         }
         session.status = status
       }),
-      traversalProbeApi.onProgress(probeId, (event) => {
-        // 只更新权威插值结果，不覆盖 DAQ 快照的实时压力
-        if (event.latestData?.interpolationResult) {
-          session.realtimeResult = event.latestData.interpolationResult
-        }
-      }),
+      // 保留进度订阅契约，但测点平均结果不写入实时监控状态。
+      traversalProbeApi.onProgress(probeId, () => {}),
       traversalProbeApi.onComplete(probeId, (event: TraversalCompleteEvent) => {
         session.completeEvent = event
         // C5 修复：dual 路径同时更新 status 与 state，避免 'running'+'completed' 矛盾组合。

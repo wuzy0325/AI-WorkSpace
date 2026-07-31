@@ -464,7 +464,7 @@ describe('dualTraversalStore 设备订阅引用计数', () => {
     })
   })
 
-  it('测点进度不覆盖实时压力（DAQ 快照是唯一数据源）', async () => {
+  it('测点进度不覆盖 DAQ 快照的实时压力和插值结果', async () => {
     let snapshotCallback!: (payload: {
       deviceId: string
       channelIndices: number[]
@@ -508,11 +508,15 @@ describe('dualTraversalStore 设备订阅引用计数', () => {
     const store = useDualTraversalStore()
     store.sessions.probe1.config = config
     await store.start('probe1')
+    store.markInterpolatorLoaded('probe1')
 
     snapshotCallback({
       deviceId: 'dev-seven',
       channelIndices: [0, 1, 2, 3, 4, 5, 6, 7, 8],
       channels: [101, 102, 103, 104, 105, 106, 107, 100800, 23.5],
+    })
+    await vi.waitFor(() => {
+      expect(store.sessions.probe1.realtimeResult).toMatchObject({ isValid: true, alpha: 1 })
     })
     progressCallback({
       latestData: {
@@ -537,7 +541,7 @@ describe('dualTraversalStore 设备订阅引用计数', () => {
       Patm: 100800,
       Tatm: 23.5,
     })
-    expect(store.sessions.probe1.realtimeResult).toMatchObject({ isValid: true, alpha: 12.5 })
+    expect(store.sessions.probe1.realtimeResult).toMatchObject({ isValid: true, alpha: 1 })
   })
 
   it('两路共享设备时一路卸载不取消另一路订阅', async () => {
