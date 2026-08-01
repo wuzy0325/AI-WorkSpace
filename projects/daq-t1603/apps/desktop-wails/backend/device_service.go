@@ -343,6 +343,11 @@ func (s *DeviceService) startRelay(deviceID string, ch <-chan core.TemperatureSn
 	s.hub.RegisterRelay(deviceID, control)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("relay goroutine panic recovered", "deviceId", deviceID, "panic", r)
+			}
+		}()
 		defer close(control.Done)
 		defer s.hub.ClearRelay(deviceID, control)
 		s.relayStream(ctx, deviceID, ch)
@@ -421,6 +426,13 @@ func (s *DeviceService) emitPayload(snapshot core.TemperatureSnapshot) {
 	if app == nil {
 		return
 	}
+	// 与 EmitDeviceState 一致：Wails app 关闭/重启时 Event.Emit 可能 panic，
+	// recover 避免 panic 终止 relay/readLoop 清理流程。
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("emitPayload recovered from panic", "panic", r)
+		}
+	}()
 	app.Event.Emit("daq:payload", snapshot)
 }
 

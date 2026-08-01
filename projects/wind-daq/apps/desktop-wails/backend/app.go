@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +30,8 @@ const (
 	ModeNormal = "normal"
 	// ModeMotion 运动控制器独立窗口模式，仅启动运动相关服务
 	ModeMotion = "motion"
+	// exitWatchdogTimeout 必须覆盖当前优雅关停最坏时长：registry 15s + calibration 8s + API 2s。
+	exitWatchdogTimeout = 30 * time.Second
 )
 
 // VersionInfo 版本信息
@@ -84,6 +88,8 @@ type App struct {
 	// hostExit fatal 路径的非零退出 seam（默认 os.Exit；测试注入以观测退出码，
 	// 避免测试进程被真实退出）。registry shutdown 失败时跳过共享服务 Close 后调用。
 	hostExit func(code int)
+	// exitWatchdog 在用户确认退出时启动最终兜底；测试可注入同步替身。
+	exitWatchdog func()
 }
 
 // NewApp 创建新的 App 实例
@@ -92,7 +98,15 @@ func NewApp(mode string) *App {
 	if mode != ModeMotion {
 		mode = ModeNormal
 	}
-	return &App{mode: mode}
+	app := &App{mode: mode}
+	app.exitWatchdog = func() {
+		time.AfterFunc(exitWatchdogTimeout, func() {
+			slog.Error("[app] 优雅退出超时，强制结束残留进程", "component", "app",
+				"timeout", exitWatchdogTimeout.String())
+			app.exitHost(0)
+		})
+	}
+	return app
 }
 
 // SetParentPID 仅 ModeMotion 子进程使用：在 Wails Run 之前把父进程 PID 注入。
@@ -127,13 +141,16 @@ func (a *App) RegisterExitConfirmationHook(win *application.WebviewWindow) {
 		}
 		// 阻止默认关闭 listener，窗口保持打开
 		event.Cancel()
+		slog.Info("[app] 退出确认 hook: 拦截窗口关闭，推送确认事件", "component", "app")
 		// 异步推送事件给前端，避免阻塞事件分发 goroutine
 		go func() {
 			app := application.Get()
 			if app == nil {
+				slog.Warn("[app] 退出确认 hook: application 为空，无法推送事件", "component", "app")
 				return
 			}
 			app.Event.Emit("app:exit-requested")
+			slog.Info("[app] 退出确认 hook: 已推送 app:exit-requested", "component", "app")
 		}()
 	})
 }
@@ -143,6 +160,9 @@ func (a *App) RegisterExitConfirmationHook(win *application.WebviewWindow) {
 // （cleanup → ServiceShutdown → 关闭所有窗口 → 最后一个窗口关闭后 PostQuitMessage 退出）。
 func (a *App) RequestExit() GenericResponse {
 	a.userConfirmedExit.Store(true)
+	if a.exitWatchdog != nil {
+		a.exitWatchdog()
+	}
 	go func() {
 		app := application.Get()
 		if app == nil {
@@ -229,6 +249,19 @@ func (a *App) startLocalAPIServer() {
 	if a.appContext == nil {
 		return
 	}
+	// LSP 环境加固：端口被占（如残留的另一个 Wind-DAQ 实例）时不再静默失败——
+	// 前端所有轮询会失败表现为"卡死/无响应"。主动探测 + 弹窗提示 + 不启动服务。
+	if err := probeLocalPort("127.0.0.1:8900"); err != nil {
+		slog.Error("[app] local API 端口被占用，服务未启动", "component", "app", "error", err)
+		if app := application.Get(); app != nil {
+			app.Dialog.Error().
+				SetTitle("本地服务端口被占用").
+				SetMessage(fmt.Sprintf("本地 API 服务端口 127.0.0.1:8900 被占用（可能已有另一个 Wind-DAQ 实例在运行）:\n%v\n\n请关闭其他 Wind-DAQ 实例后重试。", err)).
+				Show()
+		}
+		a.apiServer = nil
+		return
+	}
 	ring := func() *logging.RingBuffer {
 		if a.logMgr != nil {
 			return a.logMgr.Ring()
@@ -261,6 +294,19 @@ func (a *App) startLocalAPIServer() {
 			slog.Error("[app] local API 服务器异常退出", "component", "app", "error", err)
 		}
 	}()
+}
+
+// probeLocalPort 探测本地 TCP 端口是否已被占用。
+// 成功返回 nil（端口可用）；被占用或探测失败返回错误。
+// 探测失败（连接被拒绝）视为端口可用——本机无监听时 connect 会立即拒绝。
+func probeLocalPort(addr string) error {
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	if err != nil {
+		// 连接失败 = 无监听 = 端口可用。
+		return nil
+	}
+	_ = conn.Close()
+	return fmt.Errorf("port %s already in use", addr)
 }
 
 // startDataRelay 启动采集数据中继。
@@ -493,14 +539,32 @@ func (a *App) ServiceShutdown() error {
 	})
 
 	// API server shutdown：cancel ctx + 2s bounded Shutdown。
+	// 修复（2026-08-01）：在 LSP/安全软件拦截 socket 操作的机器上
+	// （ASProxy64.dll/Astrill、深信服驱动等），Shutdown 的 listener Close
+	// 会卡死在内部 cancelIO（Accept 永不返回），阻塞主线程导致退出卡死/未响应。
+	// 改为后台 goroutine 执行 + 主线程有界等待 300ms 后继续退出流程；
+	// 卡住的 goroutine 随进程退出自然释放。
 	a.runShutdownStep(shutdownStart, "api_server_shutdown", func() error {
+		slog.Info("[app] api_server_shutdown: begin", "component", "app")
 		if a.cancel != nil {
 			a.cancel()
+			slog.Info("[app] api_server_shutdown: cancel done", "component", "app")
 		}
 		if a.apiServer != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_ = a.apiServer.Shutdown(shutdownCtx)
+			slog.Info("[app] api_server_shutdown: calling Shutdown", "component", "app")
+			done := make(chan struct{})
+			go func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = a.apiServer.Shutdown(shutdownCtx)
+				close(done)
+			}()
+			select {
+			case <-done:
+				slog.Info("[app] api_server_shutdown: Shutdown returned", "component", "app")
+			case <-time.After(300 * time.Millisecond):
+				slog.Warn("[app] api_server_shutdown: Shutdown 卡住，继续退出流程", "component", "app")
+			}
 		}
 		return nil
 	})
@@ -521,11 +585,14 @@ func (a *App) ServiceShutdown() error {
 //   - 失败也打点（level=Warn），保证日志时间线完整
 //   - 返回 fn 的错误，由调用方决定是否中断后续步骤
 //
-// 为什么要抽辅助函数：原 ServiceShutdown 内联 6 个子步骤 + stepDone 闭包，
-// 函数行数 ~64 超 AGENTS.md ≤50 行约束。抽出后主体 ~50 行内，且失败路径
-// 打点逻辑统一，避免每步重复 if-err-log。
+// 诊断：若 fn 超过 5s 未返回，后台 dump 全 goroutine 栈到
+// %APPDATA%/wind-daq/goroutine-dump-<step>.txt，用于定位退出卡死点。
 func (a *App) runShutdownStep(shutdownStart time.Time, step string, fn func() error) error {
 	stepStart := time.Now()
+	dumpTimer := time.AfterFunc(5*time.Second, func() {
+		dumpGoroutines("shutdown-step-hang: " + step)
+	})
+	defer dumpTimer.Stop()
 	err := fn()
 	elapsed := time.Since(stepStart)
 	total := time.Since(shutdownStart)
@@ -539,6 +606,24 @@ func (a *App) runShutdownStep(shutdownStart time.Time, step string, fn func() er
 			"step_ms", elapsed.Milliseconds(), "total_ms", total.Milliseconds())
 	}
 	return err
+}
+
+// dumpGoroutines 将全 goroutine 栈写入 %APPDATA%/wind-daq/goroutine-dump-*.txt。
+// 仅用于诊断退出卡死；文件名含时间戳避免覆盖历史记录。
+func dumpGoroutines(reason string) {
+	buf := make([]byte, 4*1024*1024)
+	n := runtime.Stack(buf, true)
+	content := fmt.Sprintf("Wind-DAQ goroutine dump\n原因: %s\n时间: %s\n\n%s\n",
+		reason, time.Now().Format("2006-01-02 15:04:05.000"), buf[:n])
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(configDir, "wind-daq")
+	_ = os.MkdirAll(dir, 0o755)
+	path := filepath.Join(dir, fmt.Sprintf("goroutine-dump-%s.txt", time.Now().Format("20060102-150405")))
+	_ = os.WriteFile(path, []byte(content), 0o644)
+	slog.Error("[app] 已生成 goroutine dump", "component", "app", "path", path, "reason", reason)
 }
 
 // shutdownTraversalRegistryOrFatal 执行 registry 关停；失败时记录 fatal、
@@ -828,16 +913,36 @@ func (a *App) RemoveFile(path string) (bool, error) {
 }
 
 // callMgr 通用 manager 方法调用辅助
+//
+// LSP 环境加固（2026-08-01）：底层设备/运动操作可能被 winsock 拦截永久卡死。
+// 若在 binding 调用线程同步执行，前端 promise 永不 resolve（按钮永久"连接中"）。
+// 改在独立 goroutine 执行 + 有界等待：超时返回"操作超时"错误给前端，
+// 卡死的 goroutine 随连接废弃（受控降级，前端可重试）。
 func (a *App) callMgr(mgr any, name string, fn func() error) GenericResponse {
 	if a == nil || a.appContext == nil || mgr == nil {
 		slog.Warn("callMgr: manager 未初始化", "component", "app", "manager", name)
 		return GenericResponse{Success: false, Error: name + "未初始化"}
 	}
-	if err := fn(); err != nil {
-		return GenericResponse{Success: false, Error: err.Error()}
+	done := make(chan error, 1)
+	go func() {
+		done <- fn()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return GenericResponse{Success: false, Error: err.Error()}
+		}
+		return GenericResponse{Success: true}
+	case <-time.After(bindingCallTimeout):
+		slog.Error("callMgr: operation timed out (possible hardware hang)",
+			"component", "app", "manager", name)
+		return GenericResponse{Success: false, Error: name + "操作超时（底层可能无响应），请重试"}
 	}
-	return GenericResponse{Success: true}
 }
+
+// bindingCallTimeout 是 Wails binding 调用的等待上限。
+// 覆盖设备/运动等可能被 LSP 卡死的底层操作；正常操作远快于此。
+const bindingCallTimeout = 10 * time.Second
 
 func (a *App) deviceManager() any {
 	if a == nil || a.appContext == nil {
@@ -906,7 +1011,22 @@ func (a *App) DeviceScanDevices() ([]types.DeviceScanResult, error) {
 	if a == nil || a.appContext == nil || a.appContext.DeviceManager == nil {
 		return nil, fmt.Errorf("设备管理器未初始化")
 	}
-	return a.appContext.DeviceManager.ScanDevices()
+	// LSP 环境加固：扫描可能被 winsock 卡死，有界等待（同 callMgr 模式）。
+	type scanResult struct {
+		results []types.DeviceScanResult
+		err     error
+	}
+	done := make(chan scanResult, 1)
+	go func() {
+		results, err := a.appContext.DeviceManager.ScanDevices()
+		done <- scanResult{results, err}
+	}()
+	select {
+	case r := <-done:
+		return r.results, r.err
+	case <-time.After(bindingCallTimeout):
+		return nil, fmt.Errorf("设备扫描超时（底层可能无响应），请重试")
+	}
 }
 
 func (a *App) DeviceConnect(id string) GenericResponse {

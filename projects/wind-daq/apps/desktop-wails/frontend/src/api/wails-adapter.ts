@@ -1,5 +1,10 @@
 // Wails API 适配器 - 统一封装 Wails v3 生成绑定，避免业务层感知绑定路径变化
 
+// 修复（2026-08-01）：静态导入 Wails runtime 事件模块。
+// 历史实现动态 import('@wailsio/runtime')，若 chunk 加载失败会导致
+// onExitRequested 监听永不注册，用户点 X 后确认框不弹出、应用无法退出。
+import { Events } from '@wailsio/runtime';
+
 // 类型定义（与 Wails 生成的 models.ts 保持一致）
 // 注意：Wails 实际通过 JSON tag 序列化为小写 success/error，
 // 但历史代码中存在大量 `result.Success` / `res.Error` 的大写读法（来自此文件之前的错误手写类型）。
@@ -681,10 +686,13 @@ export const wailsApi = {
       if (!isWailsAvailable()) return () => {};
       let cleanup: (() => void) | null = null;
       let active = true;
-      void import('@wailsio/runtime').then(({ Events }) => {
-        if (!active) return;
-        cleanup = Events.On('app:exit-requested', () => callback());
-      });
+      try {
+        cleanup = Events.On('app:exit-requested', () => {
+          callback()
+        })
+      } catch (err) {
+        console.error('[exit] register onExitRequested failed:', err)
+      }
       return () => {
         active = false;
         cleanup?.();

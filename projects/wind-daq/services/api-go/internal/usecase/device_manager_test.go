@@ -84,6 +84,15 @@ type fakeDevice struct {
 	dataSink device.DataSink
 	emitDone chan struct{}
 	unit     string
+	// setUnitEntered / setUnitGate 允许测试模拟"锁外 SetUnit 挂起"：
+	//   - setUnitEntered 非 nil 时，SetUnit 进入后立即 close（一次），
+	//     用于确认 UpsertProfile 已释放 DeviceManager 锁并进入锁外 I/O；
+	//   - setUnitGate 非 nil 时，SetUnit 阻塞等待其被 close，
+	//     用于制造并发窗口（此期间另一 goroutine 可执行 DeleteProfile）。
+	// 默认 nil，SetUnit 立即返回，保持既有测试行为不变。
+	setUnitEntered chan struct{}
+	setUnitGate    chan struct{}
+	setUnitOnce    sync.Once
 	// customChannelIndices / customChannels 允许测试自定义发送的通道数据
 	// （如含 Index=16 大气压通道）。未设置时 StartAcquisition 用默认 4 通道。
 	customChannelIndices []int
@@ -176,6 +185,12 @@ func (d *fakeDevice) SetDataSink(sink device.DataSink) {
 }
 
 func (d *fakeDevice) SetUnit(unit string) error {
+	if d.setUnitEntered != nil {
+		d.setUnitOnce.Do(func() { close(d.setUnitEntered) })
+	}
+	if d.setUnitGate != nil {
+		<-d.setUnitGate
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.unit = unit
@@ -766,3 +781,102 @@ func TestCalibrateRejectsDisabledChannelTarget(t *testing.T) {
 		t.Fatal("校零已禁用校零应用的通道应返回错误，但 err=nil")
 	}
 }
+
+// indexedFactory 记录按创建顺序返回的设备，供测试按索引取用（captureFactory 只保留 last）。
+type indexedFactory struct {
+	devs []*fakeDevice
+}
+
+func (f *indexedFactory) Create(profile device.Profile) (ports.Device, error) {
+	dev := &fakeDevice{id: profile.ID}
+	f.devs = append(f.devs, dev)
+	return dev, nil
+}
+
+// TestDeviceManagerUpsertProfileRelocatesIndexAfterConcurrentDelete 回归测试
+// 2026-08-01 LSP 修复引入的锁外 SetUnit：UpsertProfile 在锁外执行
+// configurable.SetUnit 期间，另一 goroutine 并发 DeleteProfile 删除了
+// profiles 中靠前的元素，旧索引 i 失效。修复前用旧 i 写回会导致越界 panic
+// 或写错元素；修复后重取锁重新定位索引。
+func TestDeviceManagerUpsertProfileRelocatesIndexAfterConcurrentDelete(t *testing.T) {
+	mkProfile := func(id string) device.Profile {
+		p := newTestProfile(id, device.DeviceDAQP1604)
+		p.Channels = []device.ChannelConfig{
+			{Index: 0, Name: "P1", Enabled: true, Unit: "psi"},
+			{Index: 1, Name: "P2", Enabled: true, Unit: "psi"},
+		}
+		return p
+	}
+	profileA := mkProfile("p1604-del-a")
+	profileB := mkProfile("p1604-del-b")
+
+	store := &memoryProfileStore{profiles: []device.Profile{profileA, profileB}}
+	factory := &indexedFactory{}
+	manager, err := newTestDeviceManager(store, factory, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	if err := manager.Connect("p1604-del-a"); err != nil {
+		t.Fatalf("Connect A returned error: %v", err)
+	}
+	if err := manager.Connect("p1604-del-b"); err != nil {
+		t.Fatalf("Connect B returned error: %v", err)
+	}
+	if len(factory.devs) != 2 {
+		t.Fatalf("expected 2 devices, got %d", len(factory.devs))
+	}
+	devB := factory.devs[1]
+	devB.setUnitEntered = make(chan struct{})
+	devB.setUnitGate = make(chan struct{})
+
+	updatedB := profileB
+	updatedB.Channels = []device.ChannelConfig{
+		{Index: 0, Name: "P1", Enabled: true, Unit: "kPa"},
+		{Index: 1, Name: "P2", Enabled: true, Unit: "kPa"},
+	}
+
+	upsertDone := make(chan error, 1)
+	go func() {
+		upsertDone <- manager.UpsertProfile(updatedB)
+	}()
+
+	// 等待 UpsertProfile 进入锁外 SetUnit（已释放 m.mu）。
+	<-devB.setUnitEntered
+
+	// 并发删除索引靠前的 A：B 的索引 1 变 0，旧索引失效。
+	if err := manager.DeleteProfile("p1604-del-a"); err != nil {
+		t.Fatalf("DeleteProfile A returned error: %v", err)
+	}
+
+	// 释放 SetUnit gate，让 UpsertProfile 继续锁外 I/O 后的写回。
+	close(devB.setUnitGate)
+
+	select {
+	case err := <-upsertDone:
+		if err != nil {
+			t.Fatalf("UpsertProfile returned error after concurrent delete: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpsertProfile did not return after SetUnit released")
+	}
+
+	// 验证 B 的 profile 已正确写回（无越界/无错写）。
+	profiles := manager.GetProfiles()
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 profile after deleting A, got %d", len(profiles))
+	}
+	if profiles[0].ID != "p1604-del-b" {
+		t.Fatalf("expected profile p1604-del-b, got %q", profiles[0].ID)
+	}
+	if profiles[0].Channels[0].Unit != "kPa" {
+		t.Fatalf("expected B unit kPa, got %q", profiles[0].Channels[0].Unit)
+	}
+
+	devB.mu.Lock()
+	gotUnit := devB.unit
+	devB.mu.Unlock()
+	if gotUnit != "kPa" {
+		t.Fatalf("expected connected device B unit kPa, got %q", gotUnit)
+	}
+}
+

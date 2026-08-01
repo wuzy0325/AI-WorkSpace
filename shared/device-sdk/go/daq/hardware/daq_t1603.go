@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,16 @@ var noDataTimeout = 10 * time.Second
 // 防止问题电脑 deadline 失效导致永久阻塞（ADR-009）。
 // 实测 ACK 在 @f1 后约 1ms 到达，3s 预算留足余量。
 var stopAcquisitionTimeout = 3 * time.Second
+
+// stopQuietFallbackTimeout 是 Stop 静默窗口的 Go timer 兜底。
+// 问题电脑 SetReadDeadline 失效时，readLoop 会永久阻塞在 conn.Read（静默窗口），
+// 只有 StopAcquisition owner 关闭 conn 才能解除。此 timer 在静默窗口（150ms）
+// 加余量后到期：若 readLoop 仍未完成（done 未关闭），关闭 conn 解除阻塞，
+// 把问题电脑的 Stop 从 stopAcquisitionTimeout（3s）降到约 350ms（连接需重连，
+// 符合 ADR-009“问题电脑 deadline 失效时必须 Close 兜底”）。
+// 健康电脑上 readLoop 在 deadline 下约 160ms 完成，timer 到期时 done 已关闭，
+// 不会误关连接。
+const stopQuietFallbackTimeout = 350 * time.Millisecond
 
 const maxConsecutiveFrameErrors = 5
 
@@ -78,6 +89,18 @@ type DAQT1603 struct {
 	acquiring              bool
 	streaming              bool
 	stopping               bool
+	// stopAbandoned 表示 Stop owner 已在静默兜底（deadline 失效故障电脑）路径
+	// 主动废弃连接：readLoop 随后因对端 FIN 收到的 EOF 属预期退出，不应再触发
+	// onReadLoopExit 回调或"Read loop exited unexpectedly"告警。连接在下一次
+	// StartAcquisition 时透明重连。仅在 connectLocked 成功与 Disconnect 时复位。
+	stopAbandoned          bool
+	// deadlineProbed/deadlineBroken：机器 SetReadDeadline 是否失效的探测
+	// 结果（连接建立后的空窗期探测一次，device 级缓存）。部分 Windows
+	// 机器安全软件（LSP hook winsock）使 deadline 取消失效，阻塞 Read
+	// 永不返回；此时 Stop 静默确认窗口改用 goroutine + 定时器实现，
+	// 且连接在 Stop 完成后废弃（遗留读 goroutine 使连接不可复用）。
+	deadlineProbed         bool
+	deadlineBroken         bool
 	conn                   net.Conn
 	frameReader            *protocol.T1603FrameReader
 	config                 core.DaqT1603HardwareConfig
@@ -245,6 +268,34 @@ func (d *DAQT1603) Connect() error {
 	return d.connectLocked()
 }
 
+// probeDeadlineBroken 检测本机 SetReadDeadline 是否生效：设置 20ms deadline
+// 后 goroutine 阻塞读，30ms 定时判定——goroutine 返回 timeout 表示生效；
+// 定时先到（goroutine 仍阻塞）表示失效（2026-07-31 实测：500ms deadline 下
+// Read 阻塞 >60s）。必须由调用方在连接建立后的空窗期调用（无数据推送，
+// 判定不受数据到达干扰）；判定失效时遗留的阻塞读 goroutine 由调用方废弃
+// 连接（Close）解除。
+func probeDeadlineBroken(conn net.Conn) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	done := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 1)
+		_, err := conn.Read(buf)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		_ = conn.SetReadDeadline(time.Time{})
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return false
+		}
+		// 收到数据或连接级错误：空窗期偶发情况，无法判定，按"生效"处理
+		// （走同步路径；若实际失效由 Stop 的 350ms 兜底保证正确性）。
+		return false
+	case <-time.After(30 * time.Millisecond):
+		return true
+	}
+}
+
 func (d *DAQT1603) connectLocked() error {
 	if d.conn != nil {
 		return nil
@@ -274,12 +325,51 @@ func (d *DAQT1603) connectLocked() error {
 
 	d.conn = conn
 	d.frameReader = protocol.NewT1603FrameReader(conn)
+	// 连接建立后是事务空窗期（设备无数据推送），探测机器 SetReadDeadline
+	// 是否失效（安全软件 LSP hook winsock 时失效）结果可靠，device 级缓存
+	// 一次。失效则废弃本连接并重连一次：探测的阻塞读 goroutine 遗留在此
+	// 连接上，Close 解除后重连获得干净连接，后续 Stop 才能安全走
+	// goroutine 静默窗口路径。
+	if !d.deadlineProbed {
+		d.deadlineProbed = true
+		if probeDeadlineBroken(conn) {
+			d.deadlineBroken = true
+			d.emitLog("warn", "system", "Read deadline broken on this machine",
+				"Stop uses goroutine quiet window; conn recycled after each stop")
+			// 探测的阻塞读 goroutine 仍挂在本连接上：问题电脑 conn.Close()
+			// 在挂起 Read 时阻塞（closesocket 等待未完成重叠读取），直接
+			// 调用会卡死 Connect。AbortConnection（CloseWrite FIN + Close）
+			// 放后台执行解除探测 goroutine，WatchdogClose 兜底 500ms 内
+			// 强制 AbortConnection（与 Stop 兜底的连接收尾一致）。
+			go protocol.AbortConnection(conn)
+			wdStop := protocol.WatchdogClose(conn, 500*time.Millisecond)
+			go func() { _ = wdStop() }()
+			d.conn = nil
+			d.frameReader = nil
+			// 设备仅允许单连接：旧连接的 FIN 传播 + 设备释放槽位需要时间，
+			// 立即重连会被设备拒绝（@e3 读取 EOF，2026-07-31 实机复现）。
+			// CloseWrite(FIN) 在 AbortConnection 内同步首步执行，此刻已发出；
+			// 等一小段让设备处理完 FIN 再拨号。仅此一次（deadlineProbed 已置位）。
+			time.Sleep(200 * time.Millisecond)
+			return d.connectLocked()
+		} else {
+			d.emitLog("info", "system", "Read deadline works on this machine",
+				"Stop uses sync quiet window; conn reused after stop")
+		}
+	}
+	d.frameReader.SetDeadlineBroken(d.deadlineBroken)
 	d.frameReader.SetBinaryMode(d.config.BinaryFormat)
 	d.frameReader.SetMetadataMode(d.config.ShowTimestamp || d.config.ShowSequence)
 	d.status.Connection = core.ConnectionConnected
+	d.status.LastError = ""
+	// 连接已恢复（可能由 Stop 静默兜底后的自动重连），readLoop 随后的
+	// EOF/断线必须重新视为异常退出并通知上层。
+	d.stopAbandoned = false
 
 	if err := d.syncHardwareConfigLocked(conn); err != nil {
-		_ = conn.Close()
+		go protocol.AbortConnection(conn)
+		wdStop := protocol.WatchdogClose(conn, 500*time.Millisecond)
+		go func() { _ = wdStop() }()
 		d.conn = nil
 		d.frameReader = nil
 		// R0-4：watchdog 触发导致的连接失败置 Error 状态，区别于普通连接失败。
@@ -312,12 +402,20 @@ func (d *DAQT1603) Disconnect() error {
 
 	if d.conn != nil {
 		conn := d.conn
+		// ADR-009 对齐：写 @f1 前启动 watchdog，防止问题电脑 SetWriteDeadline 失效
+		// 时 Write 永久阻塞并永久持有 writeMu（阻塞后续所有命令路径）。
+		wdStop := protocol.WatchdogClose(conn, DAQ_T_1603_TIMEOUT)
 		d.writeMu.Lock()
 		_ = conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
 		_, _ = conn.Write([]byte("@f1"))
 		_ = conn.SetWriteDeadline(time.Time{})
 		d.writeMu.Unlock()
-		closeT1603AcquisitionTransport(conn)
+		wdStop()
+		// 故障电脑上 conn.Close() 在挂起 Read 时可能永久阻塞（安全软件 hook
+		// winsock）：FIN+Close 放到后台 goroutine，由下方的 readLoop join
+		// （3s 超时）收敛。CloseWrite 发送 FIN 让设备释放连接槽位，readLoop
+		// 读到对端 EOF 后自行退出，Close 随后完成。
+		go protocol.AbortConnection(conn)
 		d.conn = nil
 		d.frameReader = nil
 	}
@@ -335,6 +433,9 @@ func (d *DAQT1603) Disconnect() error {
 	}
 	d.streaming = false
 	d.stopping = false
+	// 连接生命周期已结束，复位 stopAbandoned：下一次 connectLocked 成功后
+	// 的 readLoop EOF 必须重新视为异常退出并通知上层。
+	d.stopAbandoned = false
 	d.readLoopDone = nil
 
 	d.status.Connection = core.ConnectionDisconnected
@@ -359,6 +460,7 @@ func (d *DAQT1603) StartAcquisition() error {
 	}
 	if d.readLoopDone != nil {
 		done := d.readLoopDone
+		stuckConn := d.conn
 		d.mu.Unlock()
 		slog.Info("DAQ-T-1603 waiting for readLoop to exit", "device", d.profile.ID)
 		select {
@@ -377,7 +479,7 @@ func (d *DAQT1603) StartAcquisition() error {
 			// required。不继续发送 @f1/@f0，不启动新 readLoop。
 			slog.Warn("DAQ-T-1603 timeout waiting for readLoop to exit; invalidating connection",
 				"device", d.profile.ID)
-			d.invalidateConnectionAfterReadLoopTimeout("readLoop did not exit before StartAcquisition; reconnect required")
+			d.invalidateConnectionAfterReadLoopTimeout(stuckConn, "readLoop did not exit before StartAcquisition; reconnect required")
 			// invalidate 内部自加锁配对释放；return 前重新持锁匹配调用方 defer Unlock。
 			d.mu.Lock()
 			return fmt.Errorf("readLoop did not exit before StartAcquisition; reconnect required")
@@ -481,34 +583,140 @@ func (d *DAQT1603) stopAcquisitionLocked() error {
 	// finish after consuming the terminal ACK. The timeout owner closes conn
 	// directly, so a Windows Read that ignores deadlines cannot hang Stop.
 	d.mu.Unlock()
+
+	slog.Info("DAQ-T-1603 stop: waiting for readLoop to consume tail + ACK",
+		"device", d.profile.ID, "fallback", stopQuietFallbackTimeout)
+
+	// 问题电脑兜底：readLoop 在静默窗口会阻塞在 conn.Read（SetReadDeadline 失效），
+	// 仅靠 stopAcquisitionTimeout（3s）会导致每个 Stop 卡满 3s。此 Go timer
+	// 在静默窗口到期后若 readLoop 仍未完成，直接 Close conn 解除阻塞，
+	// 使 Stop 在 ~350ms 内完成（连接需重连，符合 ADR-009）。
+	// 健康电脑 readLoop 约 160ms 完成，timer 到期时 done 已关闭，不误关连接。
+	//
+	// 修复（2026-07-31 实机验证）：故障电脑上 conn.Close() 在挂起 Read 时可能
+	// 永久阻塞（安全软件 hook winsock）。旧实现先 Close 再 close(quietFallback)，
+	// Close 卡死导致 quietFallback 永不关闭，Stop 掉到 3s 超时，且设备侧连接
+	// 槽位未被释放（设备仅允许单连接，重连直接 EOF）。现改为先
+	// close(quietFallback) 让 Stop 立即返回，再在后台 goroutine 中 FIN+Close：
+	// CloseWrite 发送 FIN 让设备释放连接槽位并解除 readLoop 读侧阻塞，
+	// Close 随后自然完成。
+	//
+	// 竞态说明：close(quietFallback) 仅发生在 timer 到期时 done 未关闭（readLoop
+	// 尚未完成边界校验）的情况。done 分支内二次检查 quietFallback：若 readLoop
+	// 是 350ms 后被 FIN/EOF 杀掉才退出（quietFallback 已关闭），同样走毒化分支，
+	// 避免"Stop 返回成功但连接已死"；正常路径为非阻塞 default。
+	quietFallback := make(chan struct{})
+	quietTimer := time.AfterFunc(stopQuietFallbackTimeout, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				d.emitLog("error", "system", "Stop quiet timer panic recovered",
+					fmt.Sprintf("%v\n%s", r, debug.Stack()))
+			}
+		}()
+		select {
+		case <-done:
+			// readLoop 已完成，连接可复用，不关闭。
+			d.emitLog("debug", "system", "Stop quiet timer fired; done already closed", "action=none")
+		default:
+			// 仅关闭 quietFallback 让 Stop 立即返回；连接的 FIN+Close 由
+			// finalizeStopQuietFallbackLocked 在置 stopAbandoned 之后发起，
+			// 保证 readLoop 收到 EOF 时 stopAbandoned 必然已设置（无竞态）。
+			// 注意：问题电脑安全软件（WinDivert/360）对 RST（SetLinger(0)）敏感
+			// 可能原生崩溃，AbortConnection 用普通 CloseWrite+Close（与 p1604 一致）。
+			d.emitLog("debug", "system", "Stop quiet timer fired; closing quietFallback", "action=close")
+			close(quietFallback)
+		}
+	})
+	defer quietTimer.Stop()
+
 	select {
 	case <-done:
+		// readLoop 正常消费尾帧 + ACK 后退出，Stop 成功且连接可复用。
+		// 但需排除两种不可复用场景：
+		//   - readLoop 是被 350ms 兜底杀掉后才退出（故障电脑 FIN/EOF），
+		//     此时 quietFallback 已关闭，连接已不可复用，走毒化分支；
+		//   - 静默确认窗口遗留了阻塞读 goroutine（deadline 失效机器的
+		//     goroutine 窗口到期时发生，frameReader.IsDirty()）：遗留读
+		//     会抢走连接上后续事务（配置/再次 Start）的数据，连接不可
+		//     安全复用，同样走废弃分支（Stop 仍返回 nil，下次 Start
+		//     自动重连）。
+		d.emitLog("debug", "system", "Stop wait: readLoop done", "branch=done")
 		d.mu.Lock()
-		if d.conn != conn {
-			return fmt.Errorf("stop acquisition lost connection; reconnect required")
+		select {
+		case <-quietFallback:
+			d.emitLog("debug", "system", "Stop wait: quiet fallback fired before done", "branch=done-quietFallback")
+			return d.finalizeStopQuietFallbackLocked(conn)
+		default:
+			if d.conn != conn {
+				return fmt.Errorf("stop acquisition lost connection; reconnect required")
+			}
+			if fr.IsDirty() {
+				d.emitLog("info", "system", "Stop completed; connection recycled",
+					"leftover quiet-window read goroutine makes conn unsafe to reuse")
+				return d.finalizeStopQuietFallbackLocked(conn)
+			}
+			fr.Reset()
+			d.streaming = false
+			d.stopping = false
+			d.stop = nil
+			d.readLoopDone = nil
+			d.status.Connection = core.ConnectionConnected
+			return nil
 		}
-		fr.Reset()
-		d.streaming = false
-		d.stopping = false
-		d.stop = nil
-		d.readLoopDone = nil
-		d.status.Connection = core.ConnectionConnected
-		return nil
+	case <-quietFallback:
+		// 问题电脑：readLoop 阻塞在 conn.Read（deadline 失效），静默窗口到期由
+		// Go timer 直接判定 Stop 完成（不依赖 <-done）。连接由
+		// finalizeStopQuietFallbackLocked 置 stopAbandoned 后后台 FIN+Close
+		// 释放设备槽位；Stop 返回 nil（优雅停止），下次 Start 自动重连。
+		d.emitLog("debug", "system", "Stop wait: quiet fallback fired", "branch=quietFallback")
+		d.mu.Lock()
+		return d.finalizeStopQuietFallbackLocked(conn)
 	case <-time.After(stopAcquisitionTimeout):
 		reason := fmt.Sprintf("stop ACK or residual drain not completed within %v; reconnect required", stopAcquisitionTimeout)
+		d.emitLog("error", "system", "Stop wait: 3s timeout",
+			fmt.Sprintf("branch=timeout connIsNil=%v", d.conn == nil))
 		d.invalidateConnection(conn, reason)
 		d.mu.Lock()
 		return fmt.Errorf("%s", reason)
 	}
 }
 
-func closeT1603AcquisitionTransport(conn net.Conn) {
-	if tcp, ok := conn.(*net.TCPConn); ok {
-		// The device firmware retains rapidly FIN-closed sessions and eventually
-		// stops servicing new connections. RST discards the old stream immediately.
-		_ = tcp.SetLinger(0)
+// finalizeStopQuietFallbackLocked 在 Stop 静默窗口超时（deadline 失效的故障
+// 电脑）时结束 Stop：设备已收到 @f1 停止推送，连接由 Stop owner 主动废弃，
+// 后台 FIN+Close 负责释放设备连接槽位，下次 StartAcquisition 自动重连。
+//
+// 优雅停止契约（2026-07-31 实机验证，取代旧 "reconnect required" 错误）：
+//   - Stop 返回 nil：停止动作本身成功，连接废弃是内部细节，上层无需干预；
+//   - 置 stopAbandoned（持锁时）：readLoop 随后因对端 FIN 收到的 EOF 属预期
+//     退出，不再触发 onReadLoopExit / "Read loop exited unexpectedly" 告警，
+//     UI 不再出现"停止失败"与"设备断开"噪音；
+//   - 置 Error 状态 + 清空 LastError：内部状态表示"连接待重连"，adapter 层
+//     映射为 Connected（非 Disconnected/非 Acquiring），下次 Start 透明恢复。
+//
+// 调用方必须已持有 d.mu；返回前重新持锁，匹配调用方（stopAcquisitionLocked）
+// 的 defer Unlock。连接由后台 goroutine 的 FIN+Close 负责真正关闭。
+func (d *DAQT1603) finalizeStopQuietFallbackLocked(conn net.Conn) error {
+	d.stopAbandoned = true
+	d.conn = nil
+	d.frameReader = nil
+	d.acquiring = false
+	d.streaming = false
+	d.stopping = false
+	d.stop = nil
+	d.readLoopDone = nil
+	d.status.Acquiring = false
+	d.status.Connection = core.ConnectionError
+	d.status.LastError = ""
+	d.mu.Unlock()
+	d.emitLog("info", "system", "Stop completed; connection closed by Stop owner (not reusable)",
+		"next Start reconnects automatically")
+	// stopAbandoned 已置位后才发起 FIN+Close：readLoop 的 EOF 一定晚于
+	// stopAbandoned 可见，无竞态。
+	if conn != nil {
+		go protocol.AbortConnection(conn)
 	}
-	_ = conn.Close()
+	d.mu.Lock()
+	return nil
 }
 
 // invalidateConnectionAfterReadLoopTimeout 在 readLoop join 超时后强制废弃连接。
@@ -519,11 +727,21 @@ func closeT1603AcquisitionTransport(conn net.Conn) {
 // unexpectedErr != nil 时触发，主动停止场景 readLoop 缓存的 stop 已被
 // close，isClosedConnError 分支会直接 return，不调用 onReadLoopExit）。
 //
+// expectedConn 比较避免误杀重连后的新连接：Stop 兜底（故障电脑 FIN/EOF）
+// 或 Disconnect 已置 d.conn=nil，或用户已重连（d.conn=newConn），
+// 此时 expectedConn != d.conn，本函数 no-op 返回。
+//
 // 调用约束：本函数内部自加锁，调用方无需持锁；但若调用方已持锁，调用前
 // 必须 d.mu.Unlock() 以避免死锁（本函数 d.mu.Lock() 会阻塞）。
-func (d *DAQT1603) invalidateConnectionAfterReadLoopTimeout(message string) {
+func (d *DAQT1603) invalidateConnectionAfterReadLoopTimeout(expectedConn net.Conn, message string) {
 	d.mu.Lock()
 	conn := d.conn
+	if conn != expectedConn {
+		// 连接已被替换（重连）或置 nil（Stop 兜底/Disconnect/其他毒化），
+		// 本连接已由其他 owner 处理，跳过，避免误杀新连接。
+		d.mu.Unlock()
+		return
+	}
 	d.conn = nil
 	d.frameReader = nil
 	d.acquiring = false
@@ -541,7 +759,14 @@ func (d *DAQT1603) invalidateConnectionAfterReadLoopTimeout(message string) {
 	d.mu.Unlock()
 
 	if conn != nil {
-		_ = conn.Close()
+		// 问题电脑挂起 Read 时 Close 会永久阻塞（closesocket 等待未完成
+		// 重叠读取）：直接调用导致连接永不关闭、设备单连接槽位泄漏，
+		// 后续所有连接被设备拒绝（EOF，2026-07-31 实机复现）。
+		// AbortConnection（CloseWrite FIN + Close）后台执行 + WatchdogClose
+		// 500ms 兜底，与 probe 收尾/Stop 兜底一致。
+		go protocol.AbortConnection(conn)
+		wdStop := protocol.WatchdogClose(conn, 500*time.Millisecond)
+		go func() { _ = wdStop() }()
 	}
 	d.emitLog("error", "system", "Connection invalidated", message)
 }
@@ -582,7 +807,11 @@ func (d *DAQT1603) invalidateConnection(expectedConn net.Conn, reason string) bo
 	d.mu.Unlock()
 
 	if conn != nil {
-		_ = conn.Close()
+		// 同 invalidateConnectionAfterReadLoopTimeout：挂起 Read 时 Close 阻塞
+		// → 连接不关闭 → 设备槽位泄漏。后台 AbortConnection + WatchdogClose。
+		go protocol.AbortConnection(conn)
+		wdStop := protocol.WatchdogClose(conn, 500*time.Millisecond)
+		go func() { _ = wdStop() }()
 	}
 	d.emitLog("error", "system", "Connection invalidated", reason)
 	return true
@@ -808,6 +1037,12 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 	// 读取栈上变量无 race 风险。
 	noDataTimeoutSnapshot := noDataTimeout
 	noDataTimer := time.AfterFunc(noDataTimeoutSnapshot, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				d.emitLog("error", "system", "no-data timer panic recovered",
+					fmt.Sprintf("%v\n%s", r, debug.Stack()))
+			}
+		}()
 		// 锁内比较 expected conn，避免与重连后的新 conn 竞争。
 		d.mu.Lock()
 		currentConn := d.conn
@@ -829,8 +1064,13 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 		d.mu.Unlock()
 
 		// 锁外 Close expected conn 解除 readLoop 的 Read 阻塞。
+		// 挂起 Read 时 Close 在问题电脑可能阻塞（closesocket 等待未完成
+		// 重叠读取），后台 AbortConnection + WatchdogClose 兜底，避免
+		// no-data timer 回调自身被卡住。
 		if currentConn != nil {
-			_ = currentConn.Close()
+			go protocol.AbortConnection(currentConn)
+			wdStop := protocol.WatchdogClose(currentConn, 500*time.Millisecond)
+			go func() { _ = wdStop() }()
 		}
 		d.emitLog("warn", "acquisition", "No data timeout, conn closed by watchdog",
 			fmt.Sprintf("duration=%v", noDataTimeoutSnapshot))
@@ -842,8 +1082,32 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 
 	var unexpectedErr error
 
+	// panic 兜底：任何 readLoop 内部 panic（含其调用的 onReadLoopExit 回调）
+	// 都记录到日志并吞掉，避免 Wails GUI 下进程直接闪退且无法诊断。
+	defer func() {
+		if r := recover(); r != nil {
+			d.emitLog("error", "system", "readLoop panic recovered",
+				fmt.Sprintf("%v\n%s", r, debug.Stack()))
+		}
+	}()
+
 	defer func() {
 		if unexpectedErr != nil {
+			// 优雅停止契约：Stop 静默兜底已置 stopAbandoned（连接由 Stop owner
+			// 主动废弃，FIN 由 finalize 在置位后才发出），readLoop 随后收到的
+			// EOF 是预期退出——不再发 @f1、不再 invalidate、不触发
+			// onReadLoopExit，避免 UI 出现"停止失败/设备断开"噪音。
+			d.mu.RLock()
+			abandoned := d.stopAbandoned
+			d.mu.RUnlock()
+			if abandoned {
+				slog.Debug("DAQ-T-1603 read loop exited after Stop owner close",
+					"device", d.profile.ID, "error", unexpectedErr)
+				if done != nil {
+					close(done)
+				}
+				return
+			}
 			// ADR-009 finding 4 整改：watchdog 必须在 writeMu.Lock 之前启动，覆盖锁等待阶段。
 			// 历史背景：原实现直接 d.writeMu.Lock()，若前序操作（如 ApplyDaqT1603Config
 			// 或 stopAcquisitionLocked）持 writeMu 阻塞在 Write 上（SetWriteDeadline 失效），
@@ -890,7 +1154,7 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 			//
 			// 调用约束：本函数内部自加锁，调用前不持锁。@f1 Write 已在锁外完成。
 			d.emitLog("warn", "system", "Read loop exited unexpectedly", unexpectedErr.Error())
-			d.invalidateConnectionAfterReadLoopTimeout(unexpectedErr.Error())
+			d.invalidateConnectionAfterReadLoopTimeout(conn, unexpectedErr.Error())
 
 			// onReadLoopExit 由本 defer 显式调用（invalidate 不触发该回调）。
 			// 在 invalidate 之后调用：调用方读取到的 status.Connection 已是 Error，
@@ -980,7 +1244,16 @@ func (d *DAQT1603) readLoop(conn net.Conn, fr *protocol.T1603FrameReader, done c
 				d.readErrors++
 				d.mu.Unlock()
 				slog.Debug("DAQ-T-1603 read error", "device", d.profile.ID, "error", err)
-				d.emitLog("error", "acquisition", "Read loop error", err.Error())
+				// 优雅停止后（stopAbandoned）的 EOF 是 Stop owner 主动废弃连接的
+				// 预期结果，降级为 debug 日志；其他 read error 保持 error 级别。
+				d.mu.RLock()
+				abandoned := d.stopAbandoned
+				d.mu.RUnlock()
+				if abandoned {
+					d.emitLog("debug", "acquisition", "Read loop exited after Stop owner close", err.Error())
+				} else {
+					d.emitLog("error", "acquisition", "Read loop error", err.Error())
+				}
 				unexpectedErr = err
 				return
 			}

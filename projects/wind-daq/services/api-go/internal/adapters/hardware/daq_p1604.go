@@ -116,7 +116,9 @@ func (d *DAQP1604) ID() string { return d.profile.ID }
 func runDAQP1604Handshake(conn net.Conn, timeout time.Duration, handshake func() error) error {
 	timedOut := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() {
-		_ = conn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞，若同步执行
+		// 则 close(timedOut) 永不执行，下方 <-timedOut 永久阻塞（Connect 卡死）。
+		go sharedproto.AbortConnection(conn)
 		close(timedOut)
 	})
 
@@ -183,7 +185,8 @@ func (d *DAQP1604) Connect() error {
 		d.status.Connection = device.ConnectionError
 		d.status.LastError = err.Error()
 		d.mu.Unlock()
-		_ = conn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞，不阻塞 Connect。
+		go sharedproto.AbortConnection(conn)
 		return err
 	}
 	return nil
@@ -217,7 +220,9 @@ func (d *DAQP1604) Disconnect() error {
 	}
 
 	if conn != nil {
-		_ = conn.Close()
+		// 后台 detach：join 超时说明 readLoop 可能仍挂在 Read 上，
+		// LSP 环境下 Close 可能永久阻塞，不阻塞 Disconnect。
+		go sharedproto.AbortConnection(conn)
 	}
 	slog.Info("DAQ-P-1604 TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 	return stopErr
@@ -353,7 +358,8 @@ func (d *DAQP1604) invalidateConnection(expectedConn net.Conn, message string) {
 		// 旧命令的 invalidation 不应误杀新连接。仅关闭旧 expectedConn，不修改状态。
 		d.mu.Unlock()
 		if expectedConn != nil {
-			_ = expectedConn.Close()
+			// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞。
+			go sharedproto.AbortConnection(expectedConn)
 		}
 		return
 	}
@@ -367,7 +373,8 @@ func (d *DAQP1604) invalidateConnection(expectedConn net.Conn, message string) {
 	d.mu.Unlock()
 
 	if expectedConn != nil {
-		_ = expectedConn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（同 t1603 模式）。
+		go sharedproto.AbortConnection(expectedConn)
 	}
 	if fn != nil {
 		fn(fmt.Errorf("%s", message))
@@ -742,8 +749,10 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 		d.mu.Unlock()
 
 		// 锁外 Close expected conn 解除 readLoop 的 Read 阻塞。
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（卡死 timer 回调
+		// 会让后续毒化路径无法继续）。
 		if currentConn != nil {
-			_ = currentConn.Close()
+			go sharedproto.AbortConnection(currentConn)
 		}
 		slog.Warn("DAQ-P-1604 no data timeout, conn closed by watchdog",
 			"device", d.profile.ID, "duration", noDataTimeoutSnapshot)

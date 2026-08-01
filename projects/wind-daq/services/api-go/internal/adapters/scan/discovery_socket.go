@@ -40,7 +40,8 @@ func (s *packetDiscoverySocket) Send(data []byte, target string, port int) error
 	_ = s.conn.SetWriteDeadline(time.Now().Add(discoverySendTimeout))
 	// 独立 watchdog：deadline 失效时强制 Close conn 解除阻塞的 WriteTo。
 	// 与 Receive 的 watchdog 模式一致，跨平台行为统一。
-	watchdog := time.AfterFunc(discoverySendTimeout, func() { _ = s.conn.Close() })
+	// LSP 环境加固：Close 在挂起 I/O 时可能永久阻塞，放后台执行不卡 timer goroutine。
+	watchdog := time.AfterFunc(discoverySendTimeout, func() { go s.conn.Close() })
 	defer watchdog.Stop()
 	_, err := s.conn.WriteTo(data, addr)
 	return err
@@ -58,7 +59,8 @@ func (s *packetDiscoverySocket) Receive(buf []byte, timeout time.Duration) (int,
 	if err := s.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return 0, "", err
 	}
-	watchdog := time.AfterFunc(timeout, func() { _ = s.conn.Close() })
+	// LSP 环境加固：Close 在挂起 I/O 时可能永久阻塞，放后台执行不卡 timer goroutine。
+	watchdog := time.AfterFunc(timeout, func() { go s.conn.Close() })
 	defer watchdog.Stop()
 	n, remote, err := s.conn.ReadFrom(buf)
 	if err != nil {

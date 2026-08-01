@@ -216,7 +216,9 @@ func (d *DAQP1064Pre) Disconnect() error {
 		case <-time.After(sharedproto.ReadLoopJoinTimeout):
 			slog.Warn("DAQ-P-1064Pre readLoop join timeout on disconnect", "device", d.profile.ID)
 			if conn != nil {
-				_ = conn.Close()
+				// LSP 环境挂起 Read 时 Close 可能永久阻塞（closesocket 等待未完成
+				// 重叠读取）：后台执行，调用线程不等，避免 Disconnect 卡死。
+				go sharedproto.AbortConnection(conn)
 			}
 			// ADR-009 finding 2：Disconnect 已自行置 d.conn=nil，invalidateConnection 的
 			// expectedConn 比较会因 nil != expectedConn 跳过状态修改。此处由 Disconnect
@@ -235,7 +237,9 @@ func (d *DAQP1064Pre) Disconnect() error {
 	}
 
 	if conn != nil {
-		_ = conn.Close()
+		// 正常路径 readLoop 已退出，无挂起 Read，Close 应即时返回；
+		// 仍放后台兜底 LSP 环境异常（Close 卡死不阻塞 Disconnect）。
+		go sharedproto.AbortConnection(conn)
 	}
 	slog.Info("DAQ-P-1064Pre TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 	return nil
@@ -373,7 +377,8 @@ func (d *DAQP1064Pre) invalidateConnection(expectedConn net.Conn, message string
 		// 旧命令的 invalidation 不应误杀新连接。仅关闭旧 expectedConn，不修改状态。
 		d.mu.Unlock()
 		if expectedConn != nil {
-			_ = expectedConn.Close()
+			// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞。
+			go sharedproto.AbortConnection(expectedConn)
 		}
 		return
 	}
@@ -386,7 +391,8 @@ func (d *DAQP1064Pre) invalidateConnection(expectedConn net.Conn, message string
 	d.mu.Unlock()
 
 	if expectedConn != nil {
-		_ = expectedConn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（同 t1603 模式）。
+		go sharedproto.AbortConnection(expectedConn)
 	}
 	if fn != nil {
 		fn(fmt.Errorf("%s", message))
@@ -595,8 +601,10 @@ func (d *DAQP1064Pre) readLoop(stop <-chan struct{}) {
 		d.mu.Unlock()
 
 		// 锁外 Close expected conn 解除 readLoop 的 Read 阻塞。
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（卡死 timer 回调
+		// 会让后续毒化路径无法继续）。
 		if currentConn != nil {
-			_ = currentConn.Close()
+			go sharedproto.AbortConnection(currentConn)
 		}
 		slog.Warn("DAQ-P-1064Pre no data timeout, conn closed by watchdog",
 			"device", d.profile.ID, "duration", noDataTimeoutSnapshot)
@@ -970,7 +978,8 @@ func (d *DAQP1064Pre) sendCommand(cmd byte, data []byte, timeoutMs int) ([]byte,
 	if _, err := conn.Write(frame); err != nil {
 		// ADR-009 finding 3：Write 任何错误（timeout、broken pipe、RST 等）都意味着
 		// 协议边界不可信。强制 Close conn 并毒化连接，避免下次 sendCommand 复用已死 conn。
-		_ = conn.Close()
+		// 后台 detach：LSP 环境挂起 Write 时 Close 可能永久阻塞。
+		go sharedproto.AbortConnection(conn)
 		d.invalidateConnection(conn, fmt.Sprintf("sendCommand write error: %v", err))
 		return nil, fmt.Errorf("write command: %w; %w", err, sharedproto.ErrWatchdogTriggered)
 	}
@@ -1020,28 +1029,28 @@ func (d *DAQP1064Pre) readResponseFrame(conn net.Conn, wdStop func() bool, expec
 	if _, err := io.ReadFull(conn, header); err != nil {
 		// ADR-009 finding 3：header 读取失败（EOF、短读、timeout 等）意味着
 		// 协议边界不可信。强制 Close conn 阻断迟到响应，包装 sentinel 让调用方毒化。
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("read response header: %w; %w", err, sharedproto.ErrWatchdogTriggered)
 	}
 
 	if header[0] != 0xA5 || header[1] != 0x5A {
 		// ADR-009 finding 3：header magic 不匹配说明协议已错位（上一命令迟到响应、
 		// 采集帧串入、或帧错位）。强制 Close conn 阻断。
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("invalid response header; %w", sharedproto.ErrWatchdogTriggered)
 	}
 
 	// ADR-009 finding 3：响应 cmd 必须与请求 cmd 一致。
 	// 不一致说明协议边界已不可信，必须 Close conn 阻断。
 	if header[2] != expectedCmd {
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("%w: expected 0x%02X, got 0x%02X; %w", ErrResponseCmdMismatch, expectedCmd, header[2], sharedproto.ErrWatchdogTriggered)
 	}
 
 	dataLen := int(header[3])<<8 | int(header[4])
 	if dataLen > 4096-6 {
 		// ADR-009 finding 3：响应长度异常，协议已错位。强制 Close conn 阻断。
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("response too long; %w", sharedproto.ErrWatchdogTriggered)
 	}
 
@@ -1050,21 +1059,21 @@ func (d *DAQP1064Pre) readResponseFrame(conn net.Conn, wdStop func() bool, expec
 	if _, err := io.ReadFull(conn, respData); err != nil {
 		// ADR-009 finding 3：body 读取失败（EOF、短读、timeout 等）意味着
 		// 协议边界不可信。强制 Close conn 阻断迟到响应。
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("read response body: %w; %w", err, sharedproto.ErrWatchdogTriggered)
 	}
 
 	// 1 字节 checksum（复核修订 finding 1：原实现漏读 checksum，导致下一帧错位）
 	var checksumByte [1]byte
 	if _, err := io.ReadFull(conn, checksumByte[:]); err != nil {
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("read response checksum: %w; %w", err, sharedproto.ErrWatchdogTriggered)
 	}
 	// 校验 checksum：与 buildFrame 一致，对 header + payload 求和
 	expectedChecksum := d.calculateChecksum(append(header, respData...))
 	if checksumByte[0] != expectedChecksum {
 		// checksum 不匹配说明协议边界已不可信（数据损坏、帧错位等），必须 Close conn 阻断。
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 		return nil, fmt.Errorf("checksum mismatch: expected 0x%02X, got 0x%02X; %w", expectedChecksum, checksumByte[0], sharedproto.ErrWatchdogTriggered)
 	}
 	return respData, nil

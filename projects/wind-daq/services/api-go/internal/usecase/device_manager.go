@@ -21,6 +21,11 @@ type scanPending struct {
 	done    chan struct{}
 }
 
+// scanInFlightWaitTimeout 是并发 ScanDevices 等待 in-flight 扫描完成的上限。
+// LSP 环境下底层 winsock 扫描可能永久卡死导致 pending.done 永不关闭，
+// 超时后返回错误并重置 scanInFlight，保证扫描功能可重试（发现 5 整改）。
+const scanInFlightWaitTimeout = 8 * time.Second
+
 type DeviceManager struct {
 	mu           sync.RWMutex
 	profiles     []device.Profile
@@ -102,8 +107,20 @@ func (m *DeviceManager) ScanDevices() ([]device.ScanResult, error) {
 	if m.scanInFlight != nil {
 		pending := m.scanInFlight
 		m.mu.Unlock()
-		<-pending.done
-		return pending.results, pending.err
+		// LSP 环境加固：底层扫描可能被 winsock 卡死导致 pending.done 永不关闭。
+		// 有界等待：超时后返回错误，并重置 scanInFlight 保证扫描功能可重试
+		//（否则一次卡死永久锁死所有后续扫描）。
+		select {
+		case <-pending.done:
+			return pending.results, pending.err
+		case <-time.After(scanInFlightWaitTimeout):
+			m.mu.Lock()
+			if m.scanInFlight == pending {
+				m.scanInFlight = nil
+			}
+			m.mu.Unlock()
+			return nil, fmt.Errorf("device scan timed out after %v (previous scan hung); retry", scanInFlightWaitTimeout)
+		}
 	}
 	pending := &scanPending{done: make(chan struct{})}
 	m.scanInFlight = pending
@@ -128,7 +145,6 @@ func (m *DeviceManager) GetProfiles() []device.Profile {
 
 func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if m.normalizer != nil {
 		profile = m.normalizer.Normalize(profile)
@@ -142,35 +158,59 @@ func (m *DeviceManager) UpsertProfile(profile device.Profile) error {
 					// 防御：校零进行中切换单位会触发 Calibrate 阶段 3 的 TOCTOU 静默丢弃，
 					// 此处提前拒绝，与 SetUnit 行为一致。
 					if _, running := m.calibrating[profile.ID]; running {
+						m.mu.Unlock()
 						return fmt.Errorf("cannot change unit while calibration is in progress")
 					}
+					// SetUnit 走网络命令，必须在锁外执行（LSP 环境可能卡死）。
+					// 快照引用后释放锁再调用。
+					var configurable ports.UnitConfigurable
 					if dev, ok := m.devices[profile.ID]; ok {
 						if dev.Status().Acquiring {
+							m.mu.Unlock()
 							return fmt.Errorf("cannot update DAQ-P-1604 unit while acquiring: %s", profile.ID)
 						}
-						configurable, ok := dev.(ports.UnitConfigurable)
-						if !ok {
+						var isCfg bool
+						configurable, isCfg = dev.(ports.UnitConfigurable)
+						if !isCfg {
+							m.mu.Unlock()
 							return fmt.Errorf("device does not support unit configuration: %s", profile.ID)
 						}
+					}
+					m.mu.Unlock()
+					if configurable != nil {
 						if err := configurable.SetUnit(nextUnit); err != nil {
 							return err
 						}
+					}
+					m.mu.Lock()
+					// profile 可能在锁外 SetUnit 期间被并发 DeleteProfile 删除/替换
+					// （同 ID 复用），旧索引 i 已失效（越界或错位）。重新定位，
+					// 与 SetUnit 的锁外后重取模式一致。
+					var ok bool
+					i, ok = m.findProfileIndexLocked(profile.ID)
+					if !ok {
+						m.mu.Unlock()
+						return fmt.Errorf("device profile not found: %s", profile.ID)
 					}
 				}
 			}
 			m.profiles[i] = profile
 			if err := m.store.SaveProfiles(m.profiles); err != nil {
+				m.mu.Unlock()
 				return err
 			}
 			m.loadCalibrationOffsetsLocked(profile.ID)
+			m.mu.Unlock()
 			return nil
 		}
 	}
 	m.profiles = append(m.profiles, profile)
 	if err := m.store.SaveProfiles(m.profiles); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	m.loadCalibrationOffsetsLocked(profile.ID)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -266,28 +306,45 @@ func (m *DeviceManager) SetUnit(id string, unit string) error {
 		return fmt.Errorf("unit is required")
 	}
 
+	// 注意：网络 I/O 必须在锁外执行（LSP 环境可能卡死，持全局锁会冻结整个应用）。
+	// 锁内仅完成校验与引用快照，锁外调用 SetUnit，返回后重取锁更新 profile。
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// 防御：校零进行中切换单位会导致 TOCTOU —— Calibrate 阶段 3 检测到单位变化
 	// 会静默丢弃该通道的偏移结果，用户收到 200 OK 但偏移未生效且无显式错误。
 	// 此处提前拒绝，让用户收到明确错误反馈。
 	if _, running := m.calibrating[id]; running {
+		m.mu.Unlock()
 		return fmt.Errorf("cannot change unit while calibration is in progress")
 	}
 
 	profileIndex, ok := m.findProfileIndexLocked(id)
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("device profile not found: %s", id)
 	}
+	var configurable ports.UnitConfigurable
 	if dev, ok := m.devices[id]; ok {
-		configurable, ok := dev.(ports.UnitConfigurable)
-		if !ok {
+		var isCfg bool
+		configurable, isCfg = dev.(ports.UnitConfigurable)
+		if !isCfg {
+			m.mu.Unlock()
 			return fmt.Errorf("device does not support unit configuration: %s", id)
 		}
+	}
+	m.mu.Unlock()
+
+	if configurable != nil {
 		if err := configurable.SetUnit(unit); err != nil {
 			return err
 		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// profile 可能在锁外期间被删除/替换，重新定位。
+	profileIndex, ok = m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
 	}
 	for i := range m.profiles[profileIndex].Channels {
 		m.profiles[profileIndex].Channels[i].Unit = unit
@@ -316,37 +373,57 @@ func (m *DeviceManager) ApplyDaqT1603Config(id string, config device.DaqT1603Har
 		return err
 	}
 
+	// 网络 I/O 在锁外执行（可能被 LSP 卡死，持全局锁会冻结整个应用）。
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	profileIndex, ok := m.findProfileIndexLocked(id)
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("device profile not found: %s", id)
 	}
+	var configurable ports.DaqT1603Configurable
 	if dev, ok := m.devices[id]; ok {
-		configurable, ok := dev.(ports.DaqT1603Configurable)
-		if !ok {
+		var isCfg bool
+		configurable, isCfg = dev.(ports.DaqT1603Configurable)
+		if !isCfg {
+			m.mu.Unlock()
 			return fmt.Errorf("device does not support DAQ-T-1603 configuration: %s", id)
 		}
+	}
+	m.mu.Unlock()
+
+	if configurable != nil {
 		if err := configurable.ApplyDaqT1603Config(config); err != nil {
 			return err
 		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profileIndex, ok = m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
 	}
 	m.profiles[profileIndex].DaqT1603Config = config
 	return m.store.SaveProfiles(m.profiles)
 }
 
 // GetDsa3217ScanConfig 获取 DSA3217 设备的扫描配置
+// 注意：GetDsa3217ScanConfig 内部走网络命令（sendCommand），必须在锁外执行
+// （LSP 环境可能卡死，持全局锁会冻结整个应用）。与 ApplyDsa3217ScanConfig
+// 对称：锁内仅快照引用，锁外调用。
 func (m *DeviceManager) GetDsa3217ScanConfig(id string) (device.DSA3217ScanConfig, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	dev, ok := m.devices[id]
+	m.mu.RUnlock()
 
-	if dev, ok := m.devices[id]; ok {
-		if configurable, ok := dev.(ports.DSA3217Configurable); ok {
-			return configurable.GetDsa3217ScanConfig()
-		}
+	if !ok {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("device not connected or does not support DSA3217 configuration: %s", id)
 	}
-	return device.DSA3217ScanConfig{}, fmt.Errorf("device not connected or does not support DSA3217 configuration: %s", id)
+	configurable, ok := dev.(ports.DSA3217Configurable)
+	if !ok {
+		return device.DSA3217ScanConfig{}, fmt.Errorf("device not connected or does not support DSA3217 configuration: %s", id)
+	}
+	return configurable.GetDsa3217ScanConfig()
 }
 
 // ApplyDsa3217ScanConfig 写入 DSA3217 扫描配置并回读验证

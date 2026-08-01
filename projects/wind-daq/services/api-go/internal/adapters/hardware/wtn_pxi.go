@@ -146,7 +146,9 @@ func (d *WTNPXI) Disconnect() error {
 	}
 
 	if conn != nil {
-		_ = conn.Close()
+		// 后台 detach：join 超时说明 readLoop 可能仍挂在 Read 上，
+		// LSP 环境下 Close 可能永久阻塞，不阻塞 Disconnect。
+		go sharedproto.AbortConnection(conn)
 	}
 	slog.Info("WTN_PXI TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 	return nil
@@ -258,7 +260,8 @@ func (d *WTNPXI) invalidateConnectionAfterReadLoopTimeout(message string) {
 	d.mu.Unlock()
 
 	if conn != nil {
-		_ = conn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（同 t1603 模式）。
+		go sharedproto.AbortConnection(conn)
 	}
 	if fn != nil {
 		fn(fmt.Errorf("%s", message))
@@ -366,8 +369,10 @@ func (d *WTNPXI) readLoop(stop <-chan struct{}) {
 		d.mu.Unlock()
 
 		// 锁外 Close expected conn 解除 readLoop 的 Read 阻塞。
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（卡死 timer 回调
+		// 会让后续毒化路径无法继续）。
 		if currentConn != nil {
-			_ = currentConn.Close()
+			go sharedproto.AbortConnection(currentConn)
 		}
 		slog.Warn("WTN_PXI no data timeout, conn closed by watchdog",
 			"device", d.profile.ID, "duration", noDataTimeoutSnapshot)

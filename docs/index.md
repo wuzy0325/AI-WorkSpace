@@ -62,6 +62,7 @@
 | `architecture/project-variants.md` | 当前工作空间允许的项目结构变体 |
 | `decisions/` | 架构决策记录（ADR） |
 | `plans/2026-07-23-workspace-win7-lts-worktree.md` | 独立 Win7 LTS worktree 的 6 产品改造、同步、验收与发布计划 |
+| `plans/2026-08-01-device-network-hang-lsp-remediation.md` | LSP 环境下设备网络操作防"本机卡死"整改计划（全局锁移出 I/O、WatchdogClose 语义、FFI 线程池、binding 超时） |
 
 **快速定位：**
 - 想按任务类型判断 AI 该加载什么 → `architecture/ai-task-context-map.zh-CN.md`

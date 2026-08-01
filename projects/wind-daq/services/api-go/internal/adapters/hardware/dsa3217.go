@@ -201,8 +201,9 @@ func (d *DSA3217) Disconnect() error {
 	d.mu.Unlock()
 
 	// Phase 4：锁外 Close conn，被 watchdog 或 invalidate 关闭过的 conn 再次 Close 无害。
+	// 后台 detach：即使 readLoop 已退出，LSP 环境 Close 仍可能阻塞（卡死不阻塞 Disconnect）。
 	if conn != nil {
-		_ = conn.Close()
+		go sharedproto.AbortConnection(conn)
 	}
 	slog.Info("DSA3217 TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
 	return nil
@@ -338,7 +339,8 @@ func (d *DSA3217) invalidateConnection(expectedConn net.Conn, message string) {
 		// 旧命令的 invalidation 不应误杀新连接。仅关闭旧 expectedConn，不修改状态。
 		d.mu.Unlock()
 		if expectedConn != nil {
-			_ = expectedConn.Close()
+			// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞。
+			go sharedproto.AbortConnection(expectedConn)
 		}
 		return
 	}
@@ -354,7 +356,8 @@ func (d *DSA3217) invalidateConnection(expectedConn net.Conn, message string) {
 	d.mu.Unlock()
 
 	if expectedConn != nil {
-		_ = expectedConn.Close()
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（同 t1603 模式）。
+		go sharedproto.AbortConnection(expectedConn)
 	}
 	if fn != nil {
 		fn(fmt.Errorf("%s", message))

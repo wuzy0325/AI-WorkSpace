@@ -82,6 +82,11 @@ func main() {
 		Name:        "Wind-DAQ",
 		Description: "Wind-DAQ wind tunnel data acquisition desktop app",
 		LogLevel:    slog.LevelInfo,
+		// Wails 已完成 ServiceShutdown、窗口和托盘清理后直接结束宿主进程。
+		// 避免特定 Windows/WebView2 环境中消息循环不返回而残留 wind-daq.exe。
+		PostShutdown: func() {
+			os.Exit(0)
+		},
 		Services: []application.Service{
 			application.NewService(app),
 		},

@@ -1,4 +1,4 @@
-package hardware
+﻿package hardware
 
 import (
 	"encoding/binary"
@@ -469,7 +469,6 @@ func TestDAQT1603StopWithoutACKInvalidatesConnection(t *testing.T) {
 			_, _ = server.Write(append([]byte{'A'}, frame...))
 		}
 		_, _ = readWithTimeout(server, testReadTimeout)
-		// Intentionally omit the Stop ACK. The stop owner must close conn.
 	}()
 
 	device := NewDAQT1603(core.Profile{ID: "t1603-stop-no-ack", Type: core.DeviceDaqT1603})
@@ -481,9 +480,16 @@ func TestDAQT1603StopWithoutACKInvalidatesConnection(t *testing.T) {
 	if err := device.StartAcquisition(); err != nil {
 		t.Fatalf("StartAcquisition returned error: %v", err)
 	}
+	// net.Pipe 是同步无缓冲管道：server goroutine 顺序执行（读 @f0 → 写
+	// ACK+frame → 读 @f1），若 readLoop 尚未消费 ACK+frame，server 会阻塞在
+	// Write 上导致 @f1 写入无接收方而卡满 watchdog。等待 readLoop 进入
+	// 稳定循环后再 Stop，避免测试时序依赖 goroutine 调度。
+	time.Sleep(100 * time.Millisecond)
+	// 优雅停止契约：静默兜底返回 nil（设备已停止，连接由后台 FIN+Close 释放，
+	// 下次 Start 自动重连），但连接必须已毒化不可复用。
 	err := device.StopAcquisition()
-	if err == nil || !strings.Contains(err.Error(), "reconnect required") {
-		t.Fatalf("StopAcquisition error = %v, want reconnect required", err)
+	if err != nil {
+		t.Fatalf("StopAcquisition error = %v, want nil (graceful fallback)", err)
 	}
 	device.mu.RLock()
 	conn := device.conn
@@ -496,6 +502,125 @@ func TestDAQT1603StopWithoutACKInvalidatesConnection(t *testing.T) {
 		t.Fatalf("connection status = %v, want %v", status, core.ConnectionError)
 	}
 }
+
+// TestDAQT1603StopWithACKOnDeadlineFailingConn 验证：连接 Read deadline 失效
+// （Windows 故障机器 LSP hook 特征：SetReadDeadline 为 no-op）时，设备正常
+// 回 Stop ACK 仍能走正常完成路径（非 350ms 兜底）快速结束 Stop。
+//
+// 背景（2026-07-31 实机复现 + 裸 TCP 探针验证）：@f1 后设备回 1 字节 'A'
+// （N=0 尾帧），readLoop 读到 ACK 后进入 collectingStop 静默窗口——旧实现用
+// SetReadDeadline(150ms) 唤醒"等 N 帧边界"的阻塞 Read；故障机器 deadline
+// 取消失效，该 Read 永久阻塞，done 永不关闭，Stop 掉到 350ms 兜底废弃连接。
+// 修复后（goroutine 静默窗口，不依赖 deadline）：Stop 约 180ms（探测缓存后
+// 仅 150ms 窗口）正常完成。
+//
+// 注意：deadline 失效机器的 goroutine 窗口到期（N=0 响应无更多数据）会遗留
+// 阻塞读 goroutine（frameReader.IsDirty()），该 goroutine 会抢走连接上后续
+// 事务的数据，连接不可安全复用——Stop 正常完成后由上层废弃连接，下次 Start
+// 自动重连（与 350ms 兜底的连接处置一致，但完成更快且无兜底告警日志）。
+//
+// 测试步骤：
+//   - net.Pipe 建立双向连接，client 端包 t1603DeadlineIgnoringConn
+//   - 模拟已探测：device.deadlineBroken=true + frameReader.SetDeadlineBroken(true)
+//   - server 回 Start 响应（'A'+帧）、Stop 响应（'A'）
+//   - StartAcquisition → StopAcquisition
+//
+// 期待结果：
+//   - StopAcquisition 在 350ms 兜底前返回 nil（正常完成路径）
+//   - 连接已废弃：conn=nil、status=Error（遗留读 goroutine 不可复用）
+//   - onReadLoopExit 未被调用（Stop owner 主动废弃，无异常通知）
+//   - server 按序收到完整命令序列
+func TestDAQT1603StopWithACKOnDeadlineFailingConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	ignored := newT1603DeadlineIgnoringConn(client)
+	frame := make([]byte, protocol.TCPFrameSize)
+	stopSeen := make(chan struct{})
+
+	serverErr := make(chan error, 1)
+	go func() {
+		cmd, err := readWithTimeout(server, testReadTimeout)
+		if err != nil || cmd != "@f0 FFFF 2" {
+			serverErr <- fmt.Errorf("start command = %q, err = %v", cmd, err)
+			return
+		}
+		if _, err := server.Write(append([]byte{'A'}, frame...)); err != nil {
+			serverErr <- err
+			return
+		}
+		cmd, err = readWithTimeout(server, testReadTimeout)
+		if err != nil || cmd != "@f1" {
+			serverErr <- fmt.Errorf("stop command = %q, err = %v", cmd, err)
+			return
+		}
+		close(stopSeen)
+		if _, err := server.Write([]byte{'A'}); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-stop-ack-no-deadline", Type: core.DeviceDaqT1603})
+	device.conn = ignored
+	device.frameReader = protocol.NewT1603FrameReader(ignored)
+	device.frameReader.SetBinaryMode(true)
+	// 模拟连接建立后已探测：本机器 deadline 失效。
+	device.deadlineProbed = true
+	device.deadlineBroken = true
+	device.frameReader.SetDeadlineBroken(true)
+	device.config = core.DaqT1603HardwareConfig{ChannelMask: "FFFF", BinaryFormat: true}
+	device.status.Connection = core.ConnectionConnected
+	var onReadLoopExitCalled int32
+	device.onReadLoopExit = func(err error) {
+		atomic.StoreInt32(&onReadLoopExitCalled, 1)
+	}
+
+	if err := device.StartAcquisition(); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	// net.Pipe 是同步无缓冲管道：等待 readLoop 消费 Start 响应进入稳定循环。
+	time.Sleep(100 * time.Millisecond)
+
+	stopResult := make(chan error, 1)
+	started := time.Now()
+	go func() { stopResult <- device.StopAcquisition() }()
+	select {
+	case <-stopSeen:
+	case <-time.After(testReadTimeout):
+		t.Fatal("device did not send @f1")
+	}
+	select {
+	case err := <-stopResult:
+		if err != nil {
+			t.Fatalf("StopAcquisition error = %v, want nil (normal path)", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("StopAcquisition did not return within 300ms; fell into 350ms quiet fallback")
+	}
+	if elapsed := time.Since(started); elapsed >= 300*time.Millisecond {
+		t.Fatalf("StopAcquisition took %v, want < 300ms (normal completion, not fallback)", elapsed)
+	}
+
+	device.mu.RLock()
+	conn := device.conn
+	status := device.status.Connection
+	device.mu.RUnlock()
+	if conn != nil {
+		t.Fatal("connection remained reusable after goroutine quiet window left a leftover read")
+	}
+	if status != core.ConnectionError {
+		t.Fatalf("connection status = %v, want %v (recycled)", status, core.ConnectionError)
+	}
+	if atomic.LoadInt32(&onReadLoopExitCalled) != 0 {
+		t.Error("onReadLoopExit should not be called when Stop completes via normal ACK path")
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 
 func TestDAQT1603StopAllowsConfigOnSameConnection(t *testing.T) {
 	setT1603StopTimeout(t, 200*time.Millisecond)
@@ -750,6 +875,29 @@ type t1603RecordingDeadlineIgnoringConn struct {
 	writeCount int32
 }
 
+type t1603BlockingCloseConn struct {
+	*t1603DeadlineIgnoringConn
+	closeStarted chan struct{}
+	releaseClose chan struct{}
+}
+
+func newT1603BlockingCloseConn(inner net.Conn) *t1603BlockingCloseConn {
+	return &t1603BlockingCloseConn{
+		t1603DeadlineIgnoringConn: newT1603DeadlineIgnoringConn(inner),
+		closeStarted:              make(chan struct{}),
+		releaseClose:              make(chan struct{}),
+	}
+}
+
+func (c *t1603BlockingCloseConn) Close() error {
+	c.once.Do(func() {
+		close(c.closeStarted)
+		<-c.releaseClose
+		close(c.closed)
+	})
+	return c.Conn.Close()
+}
+
 func newT1603RecordingDeadlineIgnoringConn(inner net.Conn) *t1603RecordingDeadlineIgnoringConn {
 	return &t1603RecordingDeadlineIgnoringConn{
 		t1603DeadlineIgnoringConn: newT1603DeadlineIgnoringConn(inner),
@@ -765,6 +913,95 @@ func (c *t1603RecordingDeadlineIgnoringConn) Write(b []byte) (int, error) {
 // WriteCount 返回累计 Write 调用次数（线程安全）。
 func (c *t1603RecordingDeadlineIgnoringConn) WriteCount() int {
 	return int(atomic.LoadInt32(&c.writeCount))
+}
+
+// TestDAQT1603StopReturnsWhileFallbackClosePending 验证 Stop 的 350ms 兜底
+// 不被阻塞的 conn.Close 拖住（故障电脑实机验证：conn.Close() 在挂起 Read 时
+// 可能永久阻塞，旧实现先 Close 再 close(quietFallback)，Stop 卡满
+// stopAcquisitionTimeout）。
+//
+// 优雅停止契约（2026-07-31 实机验证）：
+//   - 兜底 timer 到期（readLoop 未完成边界校验）即返回 nil，不等待 Close
+//     完成（Stop 本身成功，连接废弃由后台 FIN+Close 处理，下次 Start 自动重连）；
+//   - 连接毒化：conn=nil、status=Error；
+//   - 后台 goroutine 发起 Close（阻塞中可观察），release 后连接真正关闭；
+//   - readLoop 随后退出（EOF）属预期，onReadLoopExit 回调不被调用。
+func TestDAQT1603StopReturnsWhileFallbackClosePending(t *testing.T) {
+	setT1603StopTimeout(t, 5*time.Second)
+	server, client := net.Pipe()
+	defer server.Close()
+	blocked := newT1603BlockingCloseConn(client)
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-stop-close-order", Type: core.DeviceDaqT1603})
+	device.conn = blocked
+	device.frameReader = protocol.NewT1603FrameReader(blocked)
+	device.frameReader.SetBinaryMode(true)
+	device.acquiring = true
+	device.streaming = true
+	device.stop = make(chan struct{})
+	device.readLoopDone = make(chan struct{})
+	device.status.Connection = core.ConnectionAcquiring
+	device.status.Acquiring = true
+	var onExitCalled int32
+	device.OnReadLoopExit(func(err error) { atomic.StoreInt32(&onExitCalled, 1) })
+	// 缓存 readLoopDone：finalizeStopQuietFallbackLocked 会置 d.readLoopDone=nil，
+	// 若 Stop 后仍读 device 字段会阻塞在 nil channel 上（noDataTimer 测试同款坑）。
+	readLoopDone := device.readLoopDone
+	go device.readLoop(blocked, device.frameReader, readLoopDone)
+
+	go func() {
+		_, _ = readWithTimeout(server, testReadTimeout)
+	}()
+
+	stopResult := make(chan error, 1)
+	go func() { stopResult <- device.StopAcquisition() }()
+
+	// 兜底 timer（350ms）到期即返回，不被阻塞的 Close 拖住（2s 断言窗口能
+	// 区分修复后 ~350ms 与修复前 5s 超时）。
+	select {
+	case err := <-stopResult:
+		if err != nil {
+			t.Fatalf("StopAcquisition error = %v, want nil (graceful fallback)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("StopAcquisition did not return within 2s; fallback Close is blocking Stop")
+	}
+
+	// Stop 返回后，后台 goroutine 正在 Close（阻塞中），连接尚未真正关闭。
+	select {
+	case <-blocked.closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background close was not attempted")
+	}
+
+	device.mu.RLock()
+	conn := device.conn
+	status := device.status.Connection
+	device.mu.RUnlock()
+	if conn != nil || status != core.ConnectionError {
+		t.Fatalf("conn=%v status=%v, want nil/Error", conn, status)
+	}
+
+	// 释放 Close 后，连接被真正关闭（server.Write 失败），readLoop 退出，
+	// 但 EOF 属预期（stopAbandoned），onReadLoopExit 不应被调用。
+	close(blocked.releaseClose)
+	select {
+	case <-blocked.closed:
+	case <-time.After(time.Second):
+		t.Fatal("conn.Close did not complete after release")
+	}
+	_ = server.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, writeErr := server.Write([]byte("probe")); writeErr == nil {
+		t.Error("expected server.Write to fail after conn was closed")
+	}
+	select {
+	case <-readLoopDone:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not exit after conn close")
+	}
+	if atomic.LoadInt32(&onExitCalled) != 0 {
+		t.Error("onReadLoopExit should not be called on graceful stop fallback (EOF is expected)")
+	}
 }
 
 // TestDAQT1603StopAcquisition_ClosesConnOnReadLoopJoinTimeout 验证
@@ -2995,3 +3232,5 @@ func TestDAQT1603ReadLoop_ResyncsOnFrameMisalignmentDuringAcquisition(t *testing
 		t.Fatal(err)
 	}
 }
+
+

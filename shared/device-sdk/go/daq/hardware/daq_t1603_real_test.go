@@ -1,6 +1,8 @@
 package hardware
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -9,6 +11,74 @@ import (
 
 	"shared.local/device-sdk/go/daq/core"
 )
+
+func TestDAQT1603RealDeviceCaptureSpikes(t *testing.T) {
+	if os.Getenv("DAQ_T1603_REAL") != "1" {
+		t.Skip("set DAQ_T1603_REAL=1 to run against 192.168.1.10:9000")
+	}
+
+	device := NewDAQT1603(core.Profile{
+		ID: "t1603-real-spike-capture", Type: core.DeviceDaqT1603,
+		Address: "192.168.1.10", Port: 9000,
+		DaqT1603Config: core.DaqT1603HardwareConfig{
+			ChannelMask: "FFFF", BinaryFormat: true, TriggerMode: 2,
+		},
+	})
+	device.OnLog(func(entry LogEntry) {
+		if entry.Level == "warn" || entry.Level == "error" {
+			t.Logf("driver %s: %s (%s)", entry.Level, entry.Message, entry.Detail)
+		}
+	})
+	if err := device.Connect(); err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	defer device.Disconnect()
+
+	var frames atomic.Int64
+	minValues := make([]float64, 16)
+	maxValues := make([]float64, 16)
+	previous := make([]float64, 16)
+	for i := range minValues {
+		minValues[i] = math.Inf(1)
+		maxValues[i] = math.Inf(-1)
+		previous[i] = math.NaN()
+	}
+	spikes := make(chan string, 64)
+	device.SetDataSink(func(payload core.DataPayload) {
+		frame := frames.Add(1)
+		for i, value := range payload.Channels {
+			if value < minValues[i] {
+				minValues[i] = value
+			}
+			if value > maxValues[i] {
+				maxValues[i] = value
+			}
+			if !math.IsNaN(previous[i]) && math.Abs(value-previous[i]) > 10 {
+				select {
+				case spikes <- fmt.Sprintf("frame=%d CH%02d %.6f -> %.6f all=%v", frame, i+1, previous[i], value, payload.Channels):
+				default:
+				}
+			}
+			previous[i] = value
+		}
+	})
+	if err := device.StartAcquisition(); err != nil {
+		t.Fatalf("StartAcquisition returned error: %v", err)
+	}
+	deadline := time.After(60 * time.Second)
+	for {
+		select {
+		case spike := <-spikes:
+			t.Logf("SPIKE %s", spike)
+		case <-deadline:
+			if err := device.StopAcquisition(); err != nil {
+				t.Logf("StopAcquisition: %v", err)
+			}
+			t.Logf("captured=%d min=%v max=%v", frames.Load(), minValues, maxValues)
+			return
+		}
+	}
+}
 
 func TestDAQT1603RealDeviceRapidRestart(t *testing.T) {
 	if os.Getenv("DAQ_T1603_REAL") != "1" {

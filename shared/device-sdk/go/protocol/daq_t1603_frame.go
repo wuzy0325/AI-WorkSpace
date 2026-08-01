@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -262,8 +263,11 @@ var ErrIncompleteFrame = fmt.Errorf("incomplete frame: waiting for more data")
 // ErrControlACK reports a complete A response at a frame boundary.
 var ErrControlACK = errors.New("DAQ-T-1603 control command acknowledged")
 
-// Three consecutive 50 ms quiet intervals matched the real-device Stop probe.
-// A single 50 ms interval can expire between TCP fragments of an A-leading tail frame.
+// stopResponseQuietWindow 是 Stop 响应收集的静默确认窗口：边界未就绪
+// （帧/ACK 分段未到齐）时等待后续数据段的时间上限。窗口内数据到达即
+// 收集，窗口到期仍未就绪则按 buffer 内容判定协议错位（报错毒化）或
+// 数据缺失（由上层 Stop 兜底收尾）。实现不依赖 SetReadDeadline
+// （部分 Windows 机器 deadline 取消失效会永久阻塞）。
 const stopResponseQuietWindow = 150 * time.Millisecond
 
 // ErrDeviceRejected 表示设备对设置命令（@fe / @f3 等）返回 E 拒绝响应。
@@ -295,6 +299,27 @@ type T1603FrameReader struct {
 	metadataMode bool
 	ackAfterData []bool
 	stopReady    bool
+	// deadlineBroken 由上层（DAQT1603，连接建立后空窗期探测）注入：
+	// 部分 Windows 机器（安全软件 LSP hook winsock）SetReadDeadline 失效，
+	// 阻塞 Read 永不返回。true 时 Stop 静默确认窗口改用 goroutine + 定时器
+	// 实现，不依赖 deadline；该路径窗口到期会遗留阻塞读 goroutine，连接
+	// 不可复用（dirty），Stop 完成后由上层废弃。
+	deadlineBroken bool
+	// dirty 标记本连接遗留了阻塞读 goroutine（deadlineBroken 机器的静默
+	// 窗口到期时发生）：遗留读会抢走连接上后续事务的数据，连接不可安全
+	// 复用，Stop 完成后由上层废弃（自动重连兜底）。
+	dirty bool
+	// stopTailCh 仅在静默窗口到期、阻塞读 goroutine 仍未返回时赋值；其
+	// 后续读到的数据由下一轮 readFrameFixed 循环顶部 drainStopTail 消费
+	// 归队，保证字节顺序不被打乱。
+	stopTailCh chan stopReadRes
+}
+
+// stopReadRes 是 collectingStop 静默窗口内 goroutine 阻塞读的结果。
+type stopReadRes struct {
+	n   int
+	err error
+	buf []byte
 }
 
 // NewT1603FrameReader creates a frame reader for DAQ-T-1603 TCP data.
@@ -381,6 +406,10 @@ func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 
 func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 	for {
+		if err := r.drainStopTail(); err != nil {
+			// 遗留读以错误结束（EOF/closed/timeout 等），交回正常错误路径。
+			return nil, err
+		}
 		r.mu.Lock()
 		frameSize := r.frameSizeLocked()
 		frame, ack, collectingStop, err := r.inspectFixedBufferLocked(frameSize)
@@ -396,23 +425,111 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 		}
 
 		if collectingStop {
-			_ = r.conn.SetReadDeadline(time.Now().Add(stopResponseQuietWindow))
+			// Stop 响应收集：静默确认窗口。窗口必须完整走完：A-leading
+			// 尾帧的首字节 'A' 与 N=0 ACK 无法从内容区分，立即 finalize
+			// 会把帧首字节误判为 Stop ACK。
+			//
+			// deadline 失效的机器（安全软件 LSP hook winsock，探测由上层
+			// 在连接建立后完成并注入 SetDeadlineBroken）不能依赖
+			// SetReadDeadline 结束窗口——旧实现此时阻塞 Read 永久卡死，
+			// Stop 掉到 350ms 兜底废弃连接（2026-07-31 实机复现 + 裸 TCP
+			// 探针验证：@f1 后设备实际已回 1 字节 'A'，卡点在此窗口的
+			// Read 上）。
+			if !r.deadlineBroken {
+				// deadline 生效（正常机器）：同步窗口——SetReadDeadline
+				// 到期即静默确认，无遗留读 goroutine，连接可安全复用。
+				slog.Debug("Stop quiet window: sync path (deadline works)")
+				_ = r.conn.SetReadDeadline(time.Now().Add(stopResponseQuietWindow))
+				tmp := make([]byte, frameSize)
+				n, err := r.conn.Read(tmp)
+				if err != nil {
+					if isTimeoutError(err) {
+						r.mu.Lock()
+						ready, finalizeErr := r.finalizeStopResponseLocked(frameSize)
+						r.mu.Unlock()
+						if finalizeErr != nil {
+							return nil, finalizeErr
+						}
+						if ready {
+							continue
+						}
+						// buffer 为空：设备未回 ACK，由 readLoop 重试，
+						// 最终由上层 quietFallback（350ms）收尾废弃连接。
+						return nil, ErrIncompleteFrame
+					}
+					return nil, err
+				}
+				if n == 0 {
+					continue
+				}
+				r.mu.Lock()
+				r.buffer = append(r.buffer, tmp[:n]...)
+				r.mu.Unlock()
+				continue
+			}
+			// deadline 失效（问题机器）：goroutine 阻塞读 + 固定 150ms
+			// 窗口——窗口内数据到达即收集（goroutine 收到数据即退出，
+			// 无残留），窗口到期先非阻塞收取竞争到达的数据，仍无数据则
+			// 挂 stopTailCh 归队并标记 dirty（连接不可复用，由上层废弃）。
+			// 到期后按 buffer 验证 N*frameSize+ACK 边界：合法 → 完成收集；
+			// 有内容但非法 → 协议错位报错；空 → ErrIncompleteFrame 重试，
+			// 最终由上层 quietFallback（350ms）收尾。
+			slog.Debug("Stop quiet window: goroutine path (deadline broken)", "conn", r.conn.RemoteAddr())
+			deadline := time.Now().Add(stopResponseQuietWindow)
+			for {
+				if time.Now().After(deadline) {
+					break
+				}
+				ch := make(chan stopReadRes, 1)
+				go func() {
+					tmp := make([]byte, frameSize)
+					n, err := r.conn.Read(tmp)
+					ch <- stopReadRes{n: n, err: err, buf: tmp}
+				}()
+				select {
+				case res := <-ch:
+					if res.n > 0 {
+						r.mu.Lock()
+						r.buffer = append(r.buffer, res.buf[:res.n]...)
+						r.mu.Unlock()
+					}
+					if res.err != nil {
+						return nil, res.err
+					}
+				case <-time.After(time.Until(deadline)):
+					select {
+					case res := <-ch:
+						if res.n > 0 {
+							r.mu.Lock()
+							r.buffer = append(r.buffer, res.buf[:res.n]...)
+							r.mu.Unlock()
+						}
+						if res.err != nil {
+							return nil, res.err
+						}
+					default:
+						// goroutine 仍在阻塞：遗留读会抢走后续事务数据，
+						// 连接不可复用。数据经 stopTailCh 归队（保顺序），
+						// 连接由上层 Stop 完成后废弃（自动重连兜底）。
+						r.dirty = true
+						r.stopTailCh = ch
+					}
+				}
+			}
+			r.mu.Lock()
+			ready, finalizeErr := r.finalizeStopResponseLocked(frameSize)
+			r.mu.Unlock()
+			if finalizeErr != nil {
+				return nil, finalizeErr
+			}
+			if ready {
+				continue
+			}
+			return nil, ErrIncompleteFrame
 		}
 		tmp := make([]byte, frameSize)
 		n, err := r.conn.Read(tmp)
 		if err != nil {
-			if collectingStop && isTimeoutError(err) {
-				r.mu.Lock()
-				ready, finalizeErr := r.finalizeStopResponseLocked(frameSize)
-				r.mu.Unlock()
-				if finalizeErr != nil {
-					return nil, finalizeErr
-				}
-				if ready {
-					_ = r.conn.SetReadDeadline(time.Time{})
-					continue
-				}
-			}
 			return nil, err
 		}
 		// 防御 (0, nil)：net.Conn 在边缘情况下（清除 deadline 期间、零字节
@@ -425,6 +542,46 @@ func (r *T1603FrameReader) readFrameFixed() ([]byte, error) {
 		r.mu.Lock()
 		r.buffer = append(r.buffer, tmp[:n]...)
 		r.mu.Unlock()
+	}
+}
+
+// SetDeadlineBroken 注入本连接 SetReadDeadline 是否失效的探测结果
+// （由上层 DAQT1603 在连接建立后的空窗期探测，见 probeDeadlineBroken）。
+// true 时 Stop 静默确认窗口改用 goroutine + 定时器（不依赖 deadline）。
+func (r *T1603FrameReader) SetDeadlineBroken(broken bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deadlineBroken = broken
+}
+
+// IsDirty 报告本连接是否遗留了阻塞读 goroutine（deadline 失效机器的静默
+// 窗口到期时发生）。遗留读会抢走连接上后续事务的数据，连接不可安全复用，
+// 上层应在 Stop 完成后废弃连接（自动重连兜底）。
+func (r *T1603FrameReader) IsDirty() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dirty
+}
+
+// drainStopTail 消费 collectingStop 静默窗口遗留的读结果：窗口到期时阻塞
+// 读 goroutine 可能仍在等待，其后续读到的数据（含连接复用后新事务的首批
+// 数据）经 stopTailCh 归队，保证字节顺序不被打乱。无遗留时零开销返回 nil。
+// 调用方不应持锁；返回非 nil error 表示遗留读以错误结束。
+func (r *T1603FrameReader) drainStopTail() error {
+	ch := r.stopTailCh
+	if ch == nil {
+		return nil
+	}
+	select {
+	case res := <-ch:
+		if res.n > 0 {
+			r.mu.Lock()
+			r.buffer = append(r.buffer, res.buf[:res.n]...)
+			r.mu.Unlock()
+		}
+		return res.err
+	default:
+		return nil
 	}
 }
 
@@ -522,7 +679,7 @@ func (r *T1603FrameReader) finalizeStopResponseLocked(frameSize int) (bool, erro
 		valid = true
 	}
 	if !valid {
-		return false, fmt.Errorf("invalid Stop response boundary after quiet window: bytes=%d expected N*%d+ACK; raw=% X",
+		return false, fmt.Errorf("invalid Stop response boundary: bytes=%d expected N*%d+ACK; raw=% X",
 			len(r.buffer), frameSize, r.buffer)
 	}
 	if len(buf) != len(r.buffer) {

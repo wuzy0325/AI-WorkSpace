@@ -52,11 +52,18 @@ func openDiscoverySocket(localPort int) (discoverySocket, error) {
 
 // closeHandleLocked 在 handleMu 保护下取走 handle 并 Closesocket。
 // 调用方必须持有 handleMu。多次调用安全：handle 已被取走（=0）时直接返回。
+//
+// LSP 环境加固：Closesocket 在存在挂起 Sendto/Recvfrom 时可能被安全软件
+// 拦截而永久阻塞。若在 handleMu 内同步执行，watchdog callback 会永久持有
+// handleMu，导致 wg.Wait()（startWatchdog 的 stop-and-join）永久阻塞，
+// Send/Receive 永不返回。因此本函数只负责取走 handle 置 0（原子性保证
+// Closesocket 只执行一次），Closesocket 本身由调用方在锁外执行。
 func (s *winsockDiscoverySocket) closeHandleLocked() {
 	h := s.handle
 	s.handle = 0
 	if h != 0 {
-		_ = windows.Closesocket(h)
+		// 锁外 Closesocket：即使被 LSP 卡死，锁已释放，其他路径不受影响。
+		go windows.Closesocket(h)
 	}
 }
 

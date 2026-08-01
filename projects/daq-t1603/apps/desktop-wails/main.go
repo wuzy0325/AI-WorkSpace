@@ -136,6 +136,14 @@ func main() {
 	deviceService.RegisterExitConfirmationHook(mainWindow)
 
 	// ---- 6. 启动事件循环 ----
+	// panic 兜底：主 goroutine panic（如 Event.Emit 在退出阶段）记录后继续/退出，
+	// 避免 Wails GUI 下进程直接闪退且无法诊断。
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("main panic recovered", "panic", r)
+			log.Printf("panic: %v", r)
+		}
+	}()
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}

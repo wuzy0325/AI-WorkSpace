@@ -76,3 +76,19 @@ func TestServiceShutdown_NoRegistryProceeds(t *testing.T) {
 		t.Fatal("无 registry 时共享服务 cleanup 应照常执行")
 	}
 }
+
+func TestRequestExit_StartsHostExitWatchdog(t *testing.T) {
+	watchdogStarted := false
+	app := &App{
+		exitWatchdog: func() { watchdogStarted = true },
+	}
+
+	response := app.RequestExit()
+
+	if !response.Success {
+		t.Fatalf("退出请求应立即成功: %+v", response)
+	}
+	if !watchdogStarted {
+		t.Fatal("退出请求必须启动宿主退出 watchdog，避免 Wails/WebView2 清理卡住后进程残留")
+	}
+}

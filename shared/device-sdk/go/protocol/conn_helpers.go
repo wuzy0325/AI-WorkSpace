@@ -365,6 +365,29 @@ const maxResidualFrameSkips = 20
 // 保持与 WatchdogClose 相同的 stop 函数签名，统一调用方代码结构。
 func NoopWatchdogStop() bool { return true }
 
+// AbortConnection 以不阻塞调用方的方式终止连接：先 CloseWrite 发送 FIN，
+// 再 Close。
+//
+// ADR-009 补充：在 deadline 失效的故障 Windows 电脑上，conn.Close() 在存在
+// 挂起 Read 时可能永久阻塞（实测：安全软件 hook winsock，closesocket 等待
+// 未完成的重叠读取）。此时必须先 CloseWrite（shutdown SD_SEND，发送 FIN
+// 不依赖读侧状态、通常立即返回）让对端感知连接关闭并释放资源（如单连接
+// 设备的连接槽位），再 Close；待对端 FIN 回传后挂起 Read 读到 EOF 解除阻塞，
+// Close 自然完成。
+//
+// 对非 TCPConn（net.Pipe、测试包装连接）直接 Close。
+//
+// 调用方应在独立 goroutine 中调用本函数，或容忍本函数阻塞。
+func AbortConnection(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
+	_ = conn.Close()
+}
+
 // WatchdogClose 启动独立 watchdog 计时器，超时后强制 Close conn。
 //
 // 设计依据 ADR-009：SetReadDeadline 在某些 Windows 电脑不可靠，
@@ -385,7 +408,8 @@ func NoopWatchdogStop() bool { return true }
 //   - 返回 false 表示 watchdog 已触发（conn 已被 Close），调用方必须放弃该 conn
 //
 // 调用方应在操作完成后立即调用 stop() 取消计时器；watchdog 已触发时
-// stop 会等待 timer goroutine 完成 Close，避免与外层 defer Close 竞争。
+// stop 会等待 timer goroutine 发起 Close（Close 本身在后台 goroutine 中执行，
+// 避免故障电脑上挂起 Read 导致 closesocket 阻塞 wdStop）。
 //
 // stop 函数幂等：多次调用安全。WrapWatchdogError + defer wdStop() 的常见
 // 调用模式会触发多次 stop，必须保证第二次调用不阻塞、不重复等待。
@@ -402,9 +426,14 @@ func WatchdogClose(conn net.Conn, timeout time.Duration) func() bool {
 	}
 	timedOut := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() {
-		// 强制 Close 解除阻塞在 Read 上的 goroutine。
+		// 强制解除阻塞在 Read 上的 goroutine。
+		// 故障 Windows 电脑上 conn.Close() 在挂起 Read 时可能永久阻塞
+		// （安全软件 hook winsock，closesocket 等待未完成的重叠读取），
+		// 直接调用会卡死 timer goroutine，close(timedOut) 永远不执行、
+		// wdStop() 永久阻塞。因此 Close 放到独立 goroutine 中执行，
+		// 且先 CloseWrite 发送 FIN 解除读侧阻塞。
 		// 即使 Close 返回错误（已被外层关闭）也无害。
-		_ = conn.Close()
+		go AbortConnection(conn)
 		close(timedOut)
 	})
 	var once sync.Once

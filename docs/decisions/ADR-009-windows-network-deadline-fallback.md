@@ -2,11 +2,11 @@
 
 ## Date
 
-2026-07-28
+2026-07-28（修订：2026-08-01）
 
 ## Status
 
-Accepted
+Accepted（2026-08-01 补充"最终兜底失效（Close 卡死）"章节）
 
 ## Context
 
@@ -84,10 +84,38 @@ n, addr, err := conn.ReadFrom(buf)
 - DAQ-P-1604 两套停止路径均验证 reader join 超时后关闭并废弃连接，且不会在旧连接上发送 `c 02` 或启动第二个 reader。
 - 历史测试已证明外部 Close 可以解除部分 UDP 阻塞，但不能据此认定三套生产 scanner 全部合规。2026-07-29 复核确认：T1603 Windows 实现已有 raw `Closesocket` watchdog，但生产 timer 触发证据仍需加强；P1604 与 Wind-DAQ Windows `Recvfrom`、以及三套 scanner Send 阶段仍列入整改。
 
-## References
+## 2026-08-01 补充：最终兜底失效（Close 卡死）与 LSP 环境加固
 
+### Context
+
+2026-07-31 至 2026-08-01 在 wind-daq 本机复现出比 deadline 失效更深一层的故障模式：某些 Windows 电脑上的网络过滤器 / LSP（如 Astrill ASProxy64.dll、深信服驱动）不仅使 `SetReadDeadline` 失效，还会让 **`conn.Close()` / `closesocket` 在存在挂起 Read 时永久阻塞**。实测：`SetReadDeadline(500ms)` 下 `Read` 阻塞超过 60s；goroutine dump 显示 `apiServer.Shutdown → FD.Close → cancelIO 等待`。由此 `WatchdogClose` 原本"watchdog 到期调用 Close 兜底"的最终手段本身成为卡死点，并沿调用链传染：驱动方法 → per-id connMu → DeviceManager 全局锁 → Wails binding → 前端 promise 永不 resolve（用户感知"本机卡死"）。
+
+### 新增决策
+
+1. **全局锁内不得执行任何网络 I/O**。所有驱动调用先取引用、释放锁、再做 I/O，返回后重取状态更新（`device_manager.go` 的 SetUnit / ApplyDaqT1603Config / GetDsa3217ScanConfig / UpsertProfile 已按此改造）。卡死的单设备不得拖垮全局锁上的所有操作。
+2. **`WatchdogClose` 的 stop 语义改为"不等待 Close 完成"**：timer 回调内 Close 放入独立 goroutine，且必须先 `close(timedOut)`；`wdStop()` 只判定触发与否，绝不等 Close 返回。这是全部恢复路径可用的前提（`shared/device-sdk/go/protocol/conn_helpers.go`）。
+3. **Close 卡死不再作为兜底假设**：新增 `AbortConnection`（先 `CloseWrite` 发 FIN、再 `Close`，放入后台 goroutine），调用侧立即返回；需要立即回收 fd 的场景使用 `SetLinger(0)` RST 路径（注意安全软件对 RST 敏感）。`WatchdogClose` 后连接一律不可复用（语义不变）。
+4. **驱动层剩余同步 Close 点全部改为后台 detach-close**：`daq_p1064pre.go`（join 超时）、`daq_p1604.go` / `wtn_pxi.go`（noDataTimer）、`dsa3217.go`（invalidate）等改为 `go AbortConnection(conn)`。
+5. **DLL FFI（WTNMC4A）调用移入受限 OS 线程池**：Go 无法抢占阻塞的 syscall，改为"专用线程 + 调用侧超时放弃"，线程数量封顶，杜绝每轮询泄漏（`wtnmc4a_motion.go` 的 `ffiGate`）。
+6. **扫描链路必须有 deadline**：`scanInFlight` 等待加超时并重置为 nil（扫描功能不被一次卡死永久锁死）；`discovery_socket_windows.go` 的 `Closesocket` 先行取出 handle 并置 0，锁外执行，即使被卡死也保留二次关闭机会。
+7. **Wails binding / HTTP handler 所有可能触达硬件 I/O 的入口必须可超时**：绑定调用在独立 goroutine 执行 + 有界等待（10s），超时返回错误给前端（`app.go` 的 `callMgr` / `bindingCallTimeout`）。
+8. **本地 API 服务端口占用显性化**：`probeLocalPort` 探测 8900，被占用时弹 Dialog 提示而非静默无 UI。
+9. **运动 / 设备状态轮询的等待必须可被前端取消或超时**：无法取消的改为有界等待后返回陈旧状态，规避 `WithoutCancel` ctx 导致的 goroutine 无界累积。
+
+### 验证
+
+- `shared/device-sdk/go`：build + protocol/daq/motion 测试通过。
+- `projects/wind-daq` api-go：build + hardware/scan/usecase 测试通过（usecase 96s）；desktop backend build 通过。
+- `daq-t1603`（GOWORK=off）与 `daq-p1604` build 通过。
+- 完整整改计划与实施记录见 `projects/wind-daq/docs/specs/plan-device-network-hang-2026-08-01.md`。
+
+### References
+
+- `projects/wind-daq/docs/specs/plan-device-network-hang-2026-08-01.md`
+- `shared/device-sdk/go/protocol/conn_helpers.go`（含 2026-07-31 Close 卡死实测注释）
+- `projects/wind-daq/apps/desktop-wails/backend/app.go`
+- `projects/wind-daq/services/api-go/internal/usecase/device_manager.go`
 - `docs/audits/2026-07-28-go-network-deadline-audit.md`
 - `docs/audits/2026-07-29-adr009-remaining-remediation.md`
-- `shared/device-sdk/go/protocol/conn_helpers.go`
 - `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go`
 - `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`
