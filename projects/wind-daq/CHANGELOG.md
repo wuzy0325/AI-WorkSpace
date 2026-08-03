@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.12.1] - 2026-08-03
+
+### Fixed
+
+- 设备网络操作防本机卡死整改（LSP 环境加固，对应 `b8475f4`）：LSP/安全软件（Astrill ASProxy64.dll、深信服驱动等）hook winsock 导致 SetReadDeadline 失效、conn.Close() 在挂起 I/O 时永久阻塞的故障模式下，退出/扫描/设备操作不再卡死主线程：
+  - `WatchdogClose` 语义重构：timer 回调 go AbortConnection（CloseWrite FIN + Close），wdStop 不再等待 Close 完成。
+  - `wtnmc4a_motion` FFI 调用全部改走 ffiGate（单 worker + 有界投递等待 + 超时失败），杜绝 DLL syscall 阻塞冻结控制器锁。
+  - 驱动层（p1064pre/p1604/dsa3217/wtn_pxi）同步 Close 改后台 detach；扫描链 closesocket 移出 handleMu、scanInFlight 增加 8s deadline + 超时重置。
+  - `device_manager` 全局锁内网络 I/O 移出（SetUnit/ApplyConfig 等改锁外执行）。
+  - `app.go`：callMgr 与 DeviceScanDevices 增加 10s 有界等待（超时返回"操作超时"提示，前端可重试）；startLocalAPIServer 探测 127.0.0.1:8900 端口占用并弹窗提示；API server Shutdown 改后台 goroutine + 主线程 300ms 有界等待；退出确认后 30s exitWatchdog 强制结束进程；runShutdownStep 超 5s 自动 dump goroutine 栈到 `%APPDATA%\wind-daq\goroutine-dump-*.txt`。
+- 修复 `UpsertProfile` 锁外 SetUnit 后旧索引 TOCTOU（重取锁重新定位），补回归测试。
+- 修复前端 wails-adapter 静态导入 Events 导致退出确认事件不注册的问题。
+- 七孔校准区域归属改用预设配置替代压力判定（`bafa1fd`）：低压力/零压场景下七孔区域不再误判。
+
+### Changed
+
+- 设备扫描、设备/运动管理操作超时后返回"操作超时（底层可能无响应），请重试"，前端不再永久转圈。
+
+### Internal
+
+- ADR-009 补充最终兜底失效章节；归档整改计划文档 `docs/plans/2026-08-01-device-network-hang-lsp-remediation.md`。
+- `shared/device-sdk/go/daq/hardware/daq_t1603.go` 增加 deadline 探测 + Stop 静默窗口 350ms goroutine 兜底、stopAbandoned 优雅停止契约。
+
+### Verification
+
+- `go build ./services/api-go/...`: passed
+- `go test ./services/api-go/internal/...`: passed（含 UpsertProfile TOCTOU 回归测试）
+- `go vet ./services/api-go/...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis build/windows/installer/project.nsi`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+- LSP 拦截场景下底层操作超时后为受控降级（前端提示重试），卡死 goroutine 随进程退出释放；不影响正常环境。
+
 ## [0.12.0] - 2026-07-31
 
 ### Fixed
