@@ -301,6 +301,33 @@ func runConnectionHandshake(conn net.Conn, timeout time.Duration, handshake func
 	return fmt.Errorf("connection handshake timed out after %s", timeout)
 }
 
+// describeConnectHandshakeFailure 为握手阶段"设备拒绝新连接"补充可执行的运维提示。
+//
+// 现场现象（192.168.1.7:9000 实机复现）：设备长时间拔网线后重连，TCP 拨号成功、
+// w1601 发送成功，但设备随即 FIN 关闭新连接，读 ACK 得到 io.EOF
+// （P1604ReadCommandACK 对任意读错误统一附加 ErrWatchdogTriggered 哨兵，会误报 watchdog）。
+//
+// 根因是设备固件缺陷：链路长时间中断后设备仍保留旧连接槽位（单客户端固件），
+// 对新连接在第一条命令时直接关闭，且该状态不会自行恢复——实测重试 20 秒后仍 EOF，
+// 只有重启设备电源才能复位其 TCP 服务。应用无法通过重试或命令绕开，因此必须把
+// "重启设备电源"作为可执行建议返回给操作员，而不是暴露难以理解的 EOF 原始错误。
+//
+// 判定依据：IsConnResetByPeer（对端 FIN/RST 硬证据）覆盖 w1601 与 u01101 两处
+// 设备主动关闭连接的握手路径；纯超时（连接存活但无响应）属另一类故障，走原错误。
+//
+// 提示文案取舍：IsConnResetByPeer 也覆盖瞬时故障（设备瞬间重启、网络抖动），
+// 这类场景简单重试即可恢复，直接建议重启电源会误导排查。因此文案把"重试"放
+// 在前面，"重启电源"作为持续失败后的兜底建议。
+func describeConnectHandshakeFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	if sharedproto.IsConnResetByPeer(err) {
+		return fmt.Errorf("%w（设备拒绝了新连接，可能是长时间断网后旧连接未释放。请先重试，仍失败再重启设备电源）", err)
+	}
+	return err
+}
+
 // Connect 连接设备
 // 锁策略：仅在读写共享状态时持锁，TCP 拨号和 w1601 命令在锁外执行
 //
@@ -398,7 +425,9 @@ func (a *P1604Adapter) Connect(profile core.PressureProfile) error {
 	})
 	if err != nil {
 		_ = conn.Close()
-		return err
+		// 设备主动关闭连接（长时间断网后旧连接未释放）：补充"重启设备电源"运维提示，
+		// 避免操作员面对 EOF/watchdog 原始错误无从下手。
+		return describeConnectHandshakeFailure(err)
 	}
 
 	shard.mu.Lock()
@@ -679,6 +708,20 @@ func (a *P1604Adapter) Disconnect(id string) error {
 	return nil
 }
 
+// isDeadConnectionError 判定错误是否表明"连接已不可用，必须清理 driver 走重连"。
+//
+// 组合 IsConnectionFault（超时/重置/关闭）与 IsConnResetByPeer（对端 FIN/RST/abort）
+// 的原因：IsConnectionFault 的匹配串漏掉了 WSAECONNABORTED（"connection was aborted"），
+// 该错误只在 IsConnResetByPeer 的 wsasend/wsarecv 匹配中。现场 Windows 上
+// TCP keepalive 检测到半死连接后会 abort socket，后续 Write 立即返回该错误；
+// 若仅用 IsConnectionFault 判定，会走"软错误"分支只重启 idleReadLoop、不清理
+// driver，应用停留在"已连接但不可用"的假状态，每次操作都失败。
+//
+// 仅用于 handleConnectionLost 等状态迁移决策；日志分级仍用 IsConnectionFault 原义。
+func isDeadConnectionError(err error) bool {
+	return sharedproto.IsConnectionFault(err) || sharedproto.IsConnResetByPeer(err)
+}
+
 // StartAcquisition 启动数据采集
 // 锁策略：仅在状态检查和状态更新时持锁，所有 sendCommand 和 Sleep 在锁外执行
 //
@@ -735,9 +778,10 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	// 配置数据流参数：c 00 <st> <mask> <sync> <per> <fmt> <mode>
 	periodMs := driver.profile.P1604Cfg.SamplingRate
 	if err := driver.sendCommandACK(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
-		if sharedproto.IsConnectionFault(err) {
-			// sendCommandACK 内部 watchdog 触发或对端 FIN/RST：连接已死，
-			// 必须删除 driver + close conn，让用户重连而非继续撞同一死连接。
+		if isDeadConnectionError(err) {
+			// sendCommandACK 内部 watchdog 触发 / 对端 FIN/RST / 本地 keepalive
+			// abort（WSAECONNABORTED）：连接已死，必须删除 driver + close conn，
+			// 让用户重连而非继续撞同一死连接。
 			a.handleConnectionLost(id, driver, fmt.Errorf("set stream params: %w", err))
 		} else {
 			// 软错误（如设备返回 Nxx）：连接仍可用，重启 idleReadLoop 保持检测。
@@ -759,7 +803,7 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 	contentMask |= 0x0800 // 始终包含大气数据
 	contentMaskHex := fmt.Sprintf("%04X", contentMask)
 	if err := driver.sendCommandACK(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
-		if sharedproto.IsConnectionFault(err) {
+		if isDeadConnectionError(err) {
 			a.handleConnectionLost(id, driver, fmt.Errorf("set stream content: %w", err))
 		} else {
 			a.restartIdleLoop(id, driver, stoppedIdle)
@@ -770,7 +814,7 @@ func (a *P1604Adapter) StartAcquisition(id string) (<-chan core.PressureSnapshot
 
 	// 启动数据流
 	if err := driver.sendCommandACK("c 01 1"); err != nil {
-		if sharedproto.IsConnectionFault(err) {
+		if isDeadConnectionError(err) {
 			a.handleConnectionLost(id, driver, fmt.Errorf("start stream: %w", err))
 		} else {
 			a.restartIdleLoop(id, driver, stoppedIdle)
@@ -1048,7 +1092,8 @@ func (a *P1604Adapter) zeroCalibrationViaReadLoop(id string, driver *p1604Driver
 			a.handleConnectionLost(id, driver, calibErr)
 			return calibErr
 		}
-		if sharedproto.IsConnectionFault(err) {
+		// 普通写错误：连接级故障（含 WSAECONNABORTED）才清理，软错误保留连接。
+		if isDeadConnectionError(err) {
 			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
 		}
 		return fmt.Errorf("zero calibration: %w", err)

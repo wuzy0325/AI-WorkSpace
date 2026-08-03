@@ -3,6 +3,8 @@ package hardware
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -83,6 +85,154 @@ func TestRunConnectionHandshakeTimesOutAndClosesConn(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("handshake timeout took too long: %v", elapsed)
+	}
+}
+
+// TestDescribeConnectHandshakeFailure_DeviceReject 验证：握手失败由设备主动关闭
+// 连接（对端 FIN/RST，如拔网线重连后 w1601 读到 io.EOF）时，返回的错误追加
+// "重启设备电源"运维提示；非连接故障（如解析错误）不追加提示。
+//
+// 场景：设备长时间拔网线后重连，TCP 拨号成功、w1601 发送成功，但设备随即
+// FIN 关闭新连接（单客户端固件仍保留旧连接槽位），只有重启设备电源才能恢复。
+func TestDescribeConnectHandshakeFailure_DeviceReject(t *testing.T) {
+	// 复刻 P1604ReadCommandACK 对 EOF 的错误链：ackErr 包装 io.EOF，
+	// 再附加 ErrWatchdogTriggered 哨兵（该路径会误报 watchdog，见 conn_helpers.go）。
+	ackErr := fmt.Errorf("read command response: %w", io.EOF)
+	handshakeErr := fmt.Errorf("enable length prefix response: %w; %w", ackErr, sharedproto.ErrWatchdogTriggered)
+
+	got := describeConnectHandshakeFailure(handshakeErr)
+	if got == nil {
+		t.Fatal("describeConnectHandshakeFailure should return error, got nil")
+	}
+	if !strings.Contains(got.Error(), "重启设备电源") {
+		t.Fatalf("device-reject error should carry power-cycle guidance, got: %v", got)
+	}
+	// 必须保留原始错误链，调用方依赖 errors.Is(io.EOF) 与 IsConnResetByPeer 判定。
+	if !errors.Is(got, io.EOF) {
+		t.Fatalf("wrapped error should still match io.EOF, got: %v", got)
+	}
+	if !sharedproto.IsConnResetByPeer(got) {
+		t.Fatalf("wrapped error should still be detected as conn reset, got: %v", got)
+	}
+
+	// 非连接故障（协议/解析错误）：不追加电源提示，保持原错误文本。
+	softErr := describeConnectHandshakeFailure(errors.New("unknown hardware unit coefficient: 1.5"))
+	if softErr == nil || !strings.Contains(softErr.Error(), "unknown hardware unit coefficient") {
+		t.Fatalf("soft error should pass through unchanged, got: %v", softErr)
+	}
+	if strings.Contains(softErr.Error(), "重启设备电源") {
+		t.Fatalf("soft error should not carry power-cycle guidance, got: %v", softErr)
+	}
+
+	// nil 输入：直接返回 nil，不 panic。
+	if got := describeConnectHandshakeFailure(nil); got != nil {
+		t.Fatalf("nil input should return nil, got: %v", got)
+	}
+}
+
+// TestStartAcquisition_WSAECONNABORTEDTriggersConnectionLost 验证：StartAcquisition
+// 发送 c 00 时连接已死（本地 keepalive abort 半死连接的 WSAECONNABORTED 写错误），
+// 必须走 handleConnectionLost 清理 driver + close conn + 置 Error，而不是停留在
+// "已连接但不可用"的假状态。
+//
+// 场景：拔网线后不点断开直接开始采集，PC 端 TCP keepalive（~33s）已 abort 旧 socket，
+// 后续 Write 立即返回 WSAECONNABORTED。修复前 StartAcquisition 用 IsConnectionFault
+// 判定，不匹配 "connection was aborted"（只有 IsConnResetByPeer 的 wsasend 匹配），
+// 走 else 分支只重启 idleReadLoop，driver 残留、状态仍是 Connected，每次 Start 都失败。
+func TestStartAcquisition_WSAECONNABORTEDTriggersConnectionLost(t *testing.T) {
+	id := "test-start-aborted-conn"
+	a := NewP1604Adapter()
+	mockConn := &mockConnWriteError{writeErr: wsaECONNABORTED("192.168.1.7")}
+	driver := &p1604Driver{
+		profile: core.PressureProfile{
+			ID:       id,
+			P1604Cfg: core.P1604Config{SamplingRate: 100},
+		},
+		conn:        mockConn,
+		frameReader: sharedproto.NewFrameReader(mockConn),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Profile: driver.profile, Status: core.StatusConnected}
+	shard.mu.Unlock()
+
+	ch, err := a.StartAcquisition(id)
+	if err == nil {
+		t.Fatal("StartAcquisition should fail on aborted connection")
+	}
+	if !strings.Contains(err.Error(), "set stream params") {
+		t.Fatalf("error should originate from set stream params, got: %v", err)
+	}
+	if ch != nil {
+		t.Fatal("StartAcquisition should not return a channel on failure")
+	}
+
+	// 核心断言：driver 必须被清理（否则应用停留在"假连接"状态）。
+	shard.mu.RLock()
+	_, stillExists := shard.drivers[id]
+	shard.mu.RUnlock()
+	if stillExists {
+		t.Fatal("driver should be cleaned up on dead connection, not stuck in fake-connected state")
+	}
+
+	// status 应为 Error，且错误信息可读。
+	shard.mu.RLock()
+	st, _ := shard.status[id]
+	shard.mu.RUnlock()
+	if st == nil || st.Status != core.StatusError {
+		t.Fatalf("status should be Error after dead connection, got: %v", st)
+	}
+	if !strings.Contains(st.Error, "set stream params") {
+		t.Fatalf("status error should carry the cause, got: %q", st.Error)
+	}
+
+	// conn 必须被 handleConnectionLost 关闭。
+	if mockConn.CloseCount() == 0 {
+		t.Fatal("conn should be closed by handleConnectionLost")
+	}
+}
+
+// TestStartAcquisition_DeviceNxxKeepsConnection 验证：StartAcquisition 收到设备软错误
+// （如 N05 数据字段错误）时，连接仍可用，driver 保留、状态保持 Connected——
+// 防止 isDeadConnectionError 过度清理把可用连接误杀。
+func TestStartAcquisition_DeviceNxxKeepsConnection(t *testing.T) {
+	id := "test-start-nxx-conn"
+	a := NewP1604Adapter()
+	// 两条 N05：第一条响应 c 00，第二条供 rollback 的 c 02 消费——避免 mock 耗尽
+	// 返回 io.EOF，若未来 sendCommandACK 对 EOF 也走"关闭连接"语义会误伤本断言。
+	mockConn := &mockConnSequence{reads: [][]byte{framedASCII("N05"), framedASCII("N05")}}
+	driver := &p1604Driver{
+		profile: core.PressureProfile{
+			ID:       id,
+			P1604Cfg: core.P1604Config{SamplingRate: 100},
+		},
+		conn:        mockConn,
+		frameReader: sharedproto.NewFrameReader(mockConn),
+	}
+	shard := a.shard(id)
+	shard.mu.Lock()
+	shard.drivers[id] = driver
+	shard.status[id] = &core.DeviceState{Profile: driver.profile, Status: core.StatusConnected}
+	shard.mu.Unlock()
+
+	ch, err := a.StartAcquisition(id)
+	if err == nil {
+		t.Fatal("StartAcquisition should fail when device returns N05")
+	}
+	if ch != nil {
+		t.Fatal("StartAcquisition should not return a channel on failure")
+	}
+
+	// 软错误不清理 driver，连接保留（下次 Start 前用户仍可先处理配置）。
+	shard.mu.RLock()
+	cur, stillExists := shard.drivers[id]
+	shard.mu.RUnlock()
+	if !stillExists || cur != driver {
+		t.Fatal("driver should be kept on device soft error")
+	}
+	if mockConn.CloseCount() != 0 {
+		t.Fatal("conn should not be closed on device soft error")
 	}
 }
 
@@ -189,6 +339,48 @@ func (m *mockConnWithCloseTracking) CloseCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closeCount
+}
+
+// mockConnWriteError 的 Write 返回固定错误，模拟连接已死时的写失败
+// （如本地 TCP keepalive abort 半死连接后的 WSAECONNABORTED）。
+// 其余方法委托 mockConnWithCloseTracking（记录 Close 次数）。
+type mockConnWriteError struct {
+	mockConnWithCloseTracking
+	writeErr error
+}
+
+func (m *mockConnWriteError) Write(b []byte) (int, error) { return 0, m.writeErr }
+
+// mockConnSequence 依次返回预设的应答帧字节（长度前缀帧），用于模拟设备对
+// 命令的应答。耗尽后返回 io.EOF。
+type mockConnSequence struct {
+	mockConnWithCloseTracking
+	mu    sync.Mutex
+	reads [][]byte
+}
+
+func (m *mockConnSequence) Read(b []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.reads) == 0 {
+		return 0, io.EOF
+	}
+	data := m.reads[0]
+	m.reads = m.reads[1:]
+	n := copy(b, data)
+	return n, nil
+}
+
+// wsaECONNABORTED 构造一个与 Windows keepalive abort 一致的 net.OpError：
+// 消息前缀 "wsasend"，"connection was aborted"。IsConnectionFault 不匹配该串，
+// 只有 IsConnResetByPeer（wsasend）匹配——正是 isDeadConnectionError 要覆盖的缺口。
+func wsaECONNABORTED(remote string) error {
+	return &net.OpError{
+		Op:   "write",
+		Net:  "tcp",
+		Addr: &net.TCPAddr{IP: net.ParseIP(remote), Port: 9000},
+		Err:  errors.New("wsasend: An established connection was aborted by the software in your host machine."),
+	}
 }
 
 // setupAdapterWithDriver 构造一个带 driver 和 status 的 adapter 用于 handleConnectionLost 测试。
