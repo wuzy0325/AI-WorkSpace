@@ -19,9 +19,6 @@ vi.mock('@api/traversalApi', () => ({
     resume: vi.fn(async () => ({ success: true })),
     stop: vi.fn(async () => ({ success: true })),
     close: vi.fn(async () => ({ success: true })),
-    loadCheckpoint: vi.fn(async () => ({ success: true, data: null })),
-    resumeFromCheckpoint: vi.fn(async () => ({ success: true, data: { taskId: 'server-task-9' } })),
-    clearCheckpoint: vi.fn(async () => ({ success: true })),
     calculateRealtime: vi.fn(async () => ({ success: true, data: { isValid: true, alpha: 1 } })),
     importPrb: vi.fn(async () => ({ success: true, data: { filePath: 'a.prb' } })),
     importMultiPrb: vi.fn(async () => ({ success: true, data: { files: [], machNumbers: [], warnings: [] } })),
@@ -71,16 +68,11 @@ vi.mock('@stores/i18nStore', () => ({
           dualErrImportSevenHolePrb: '7hole prb import failed',
           dualErrImportSevenHoleCalibrationCsv: '7hole csv import failed',
           dualErrClearInterpolator: 'clear failed',
-          dualErrLoadCheckpoint: 'load checkpoint failed',
           dualErrStart: 'start failed',
           dualErrPause: 'pause failed',
           dualErrResume: 'resume failed',
           dualErrStop: 'stop failed',
           dualErrClose: 'close failed',
-          dualErrCheckpointPending: 'checkpoint pending',
-          dualErrClearCheckpoint: 'clear checkpoint failed',
-          dualErrClearCheckpointRetry: 'clear retry',
-          dualErrResumeFromCheckpoint: 'resume from checkpoint failed',
           travErrResponseEmpty: 'response empty',
         }
         return templates[prop] ?? ''
@@ -181,84 +173,6 @@ describe('dualTraversalStore keyed session 隔离', () => {
     expect(store.sessions.probe2.error).toBeNull()
   })
 
-  it('start 前发现可恢复断点时不创建新任务并展示恢复入口', async () => {
-    const store = useDualTraversalStore()
-    store.sessions.probe1.config = configWithDevices('dev-a')
-    const checkpoint = { taskId: 'failed-task', completedPoints: 23, totalPoints: 169 }
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: checkpoint })
-
-    const ok = await store.start('probe1')
-
-    expect(ok).toBe(false)
-    expect(mockApi.start).not.toHaveBeenCalled()
-    expect(store.sessions.probe1.checkpoint).toEqual(checkpoint)
-    // C10 修复：原静默返回 false（error 为 null），UI 无任何反馈导致用户反复点击"开始"。
-    // 现在写入 session.error（mock i18n 模板 'checkpoint pending'），让 UI 通过 warningText 显示提示。
-    expect(store.sessions.probe1.error).toBe('checkpoint pending')
-    expect(store.sessions.probe1.isStarting).toBe(false)
-  })
-
-  it('start 前断点查询失败时关闭启动链路并显示真实错误', async () => {
-    const store = useDualTraversalStore()
-    store.sessions.probe1.config = configWithDevices('dev-a')
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: false, error: 'checkpoint service unavailable' })
-
-    const ok = await store.start('probe1')
-
-    expect(ok).toBe(false)
-    expect(mockApi.start).not.toHaveBeenCalled()
-    expect(store.sessions.probe1.error).toBe('checkpoint service unavailable')
-    expect(store.sessions.probe1.isStarting).toBe(false)
-  })
-
-  it('start 并发遇到 recoverable_task_exists 时刷新断点而不拼接内部错误码', async () => {
-    const store = useDualTraversalStore()
-    store.sessions.probe1.config = configWithDevices('dev-a')
-    store.sessions.probe1.status = {
-      taskId: 'failed-task',
-      status: 'error',
-      lastError: 'device 模拟 is not acquiring; traversal will not move to point 24',
-    } as never
-    const checkpoint = { taskId: 'failed-task', completedPoints: 23, totalPoints: 169 }
-    mockApi.loadCheckpoint
-      .mockResolvedValueOnce({ success: true, data: null })
-      .mockResolvedValueOnce({ success: true, data: checkpoint })
-    mockApi.start.mockResolvedValueOnce({
-      success: false,
-      error: 'recoverable_task_exists: probe probe1 存在可恢复任务 failed-task',
-    })
-
-    const ok = await store.start('probe1')
-
-    expect(ok).toBe(false)
-    expect(mockApi.start).toHaveBeenCalledOnce()
-    expect(mockApi.loadCheckpoint).toHaveBeenCalledTimes(2)
-    expect(store.sessions.probe1.checkpoint).toEqual(checkpoint)
-    // C10 修复：recoverable_task_exists 分支也写入 session.error（mock i18n 模板 'checkpoint pending'）。
-    expect(store.sessions.probe1.error).toBe('checkpoint pending')
-    expect(store.sessions.probe1.isStarting).toBe(false)
-  })
-
-  it('任务错误终态立即加载恢复断点且不受实时请求代际干扰', async () => {
-    let completeCallback!: (event: { taskId: string; status: string }) => void
-    mockApi.onComplete.mockImplementationOnce((_probeId, callback) => {
-      completeCallback = callback
-      return () => {}
-    })
-    const store = useDualTraversalStore()
-    store.sessions.probe1.config = configWithDevices('dev-a')
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: null })
-    await store.start('probe1')
-
-    const checkpoint = { taskId: 'server-task-1', completedPoints: 23, totalPoints: 169 }
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: checkpoint })
-    completeCallback({ taskId: 'server-task-1', status: 'error' })
-    store.syncRealtimeInput('probe1', { P1: 1 } as never)
-    await vi.waitFor(() => expect(store.sessions.probe1.checkpoint).toEqual(checkpoint))
-
-    expect(store.sessions.probe1.completeEvent?.status).toBe('error')
-  })
-
   it('POST start pending 时 anyActive/isActive 阻止模式切换', async () => {
     let resolveStart!: (value: { success: boolean; data: { taskId: string } }) => void
     mockApi.start.mockReturnValueOnce(new Promise((resolve) => { resolveStart = resolve }))
@@ -306,15 +220,11 @@ describe('dualTraversalStore keyed session 隔离', () => {
     await store.resume('probe1')
     await store.stop('probe2')
     await store.close('probe1')
-    await store.resumeFromCheckpoint('probe2', 'task-9')
-    await store.clearCheckpoint('probe1', 'task-8')
 
     expect(mockApi.pause).toHaveBeenCalledWith('probe2')
     expect(mockApi.resume).toHaveBeenCalledWith('probe1')
     expect(mockApi.stop).toHaveBeenCalledWith('probe2')
     expect(mockApi.close).toHaveBeenCalledWith('probe1')
-    expect(mockApi.resumeFromCheckpoint).toHaveBeenCalledWith('probe2', 'task-9')
-    expect(mockApi.clearCheckpoint).toHaveBeenCalledWith('probe1', 'task-8')
   })
 
   it('轮询原始状态与成功 pause/resume 立即更新本地 session 状态', async () => {
@@ -693,7 +603,7 @@ describe('dualTraversalStore 实时计算', () => {
   })
 })
 
-describe('dualTraversalStore 配置与断点', () => {
+describe('dualTraversalStore 配置', () => {
   it('PRB operations 按 probe 路由并只更新该 session 插值器状态', async () => {
     const store = useDualTraversalStore()
 
@@ -843,87 +753,6 @@ describe('dualTraversalStore 配置与断点', () => {
     expect(mockDevice.subscribeToDevice).toHaveBeenCalledTimes(2)
     expect(mockDevice.unsubscribeFromDevice).toHaveBeenCalledOnce()
     expect(dualDeviceRefCount('dev-a')).toBe(1)
-  })
-
-  it('loadCheckpoint/clearCheckpoint 只影响本 probe 断点状态', async () => {
-    const store = useDualTraversalStore()
-    const cp = { taskId: 'task-9' } as never
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: cp })
-
-    await store.loadCheckpoint('probe1')
-    expect(store.sessions.probe1.checkpoint).toEqual(cp)
-    expect(store.sessions.probe2.checkpoint).toBeNull()
-
-    store.sessions.probe1.status = { taskId: 'task-9', status: 'error', lastError: 'old failure' } as never
-    store.sessions.probe1.error = 'old failure'
-    store.sessions.probe1.completeEvent = { taskId: 'task-9', status: 'error' } as never
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: null })
-
-    expect(await store.clearCheckpoint('probe1', 'task-9')).toBe(true)
-    expect(store.sessions.probe1.checkpoint).toBeNull()
-    expect(store.sessions.probe1.status).toBeNull()
-    expect(store.sessions.probe1.error).toBeNull()
-    expect(store.sessions.probe1.completeEvent).toBeNull()
-  })
-
-  it.each(['cleanupLocal', 'reset'] as const)(
-    '%s 后迟到的断点响应不得复活已清理状态',
-    async (cleanupAction) => {
-      let resolveCheckpoint!: (value: { success: boolean; data: { taskId: string } }) => void
-      mockApi.loadCheckpoint.mockReturnValueOnce(new Promise((resolve) => { resolveCheckpoint = resolve }))
-      const store = useDualTraversalStore()
-
-      const pending = store.loadCheckpoint('probe1')
-      store[cleanupAction]('probe1')
-      resolveCheckpoint({ success: true, data: { taskId: 'stale-task' } })
-      await pending
-
-      expect(store.sessions.probe1.checkpoint).toBeNull()
-    },
-  )
-
-  it('成功恢复断点时清除旧错误和旧完成事件', async () => {
-    const store = useDualTraversalStore()
-    store.sessions.probe1.config = configWithDevices('dev-a')
-    store.sessions.probe1.checkpoint = { taskId: 'failed-task' } as never
-    store.sessions.probe1.error = 'old failure'
-    store.sessions.probe1.completeEvent = { taskId: 'failed-task', status: 'error' } as never
-
-    expect(await store.resumeFromCheckpoint('probe1', 'failed-task')).toBe(true)
-
-    expect(store.sessions.probe1.error).toBeNull()
-    expect(store.sessions.probe1.completeEvent).toBeNull()
-    expect(store.sessions.probe1.status?.status).toBe('running')
-  })
-
-  it('恢复断点进行中拒绝重复恢复与放弃请求', async () => {
-    let resolveResume!: (value: { success: boolean; data: { taskId: string } }) => void
-    mockApi.resumeFromCheckpoint.mockReturnValueOnce(new Promise((resolve) => { resolveResume = resolve }))
-    const store = useDualTraversalStore()
-    store.sessions.probe1.checkpoint = { taskId: 'failed-task' } as never
-
-    const firstResume = store.resumeFromCheckpoint('probe1', 'failed-task')
-    const secondResume = store.resumeFromCheckpoint('probe1', 'failed-task')
-    const discard = store.clearCheckpoint('probe1', 'failed-task')
-
-    expect(await secondResume).toBe(false)
-    expect(await discard).toBe(false)
-    expect(mockApi.resumeFromCheckpoint).toHaveBeenCalledOnce()
-    expect(mockApi.clearCheckpoint).not.toHaveBeenCalled()
-    resolveResume({ success: true, data: { taskId: 'failed-task' } })
-    expect(await firstResume).toBe(true)
-  })
-
-  it('clearCheckpoint 后端仍返回断点时不得伪装成已放弃', async () => {
-    const store = useDualTraversalStore()
-    const cp = { taskId: 'task-9' } as never
-    store.sessions.probe1.checkpoint = cp
-    mockApi.loadCheckpoint.mockResolvedValueOnce({ success: true, data: cp })
-
-    expect(await store.clearCheckpoint('probe1', 'task-9')).toBe(false)
-    expect(store.sessions.probe1.checkpoint).toEqual(cp)
-    // C7 修复：错误消息改为 i18n（mock 模板 'clear retry'）。
-    expect(store.sessions.probe1.error).toBe('clear retry')
   })
 
   it('anyActive 派生：任一路活动时模式开关门禁', async () => {

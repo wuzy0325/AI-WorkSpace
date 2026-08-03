@@ -135,26 +135,3 @@ func TestTraversal_ManagedStart_AppliesProbePrefix(t *testing.T) {
 	mgr2.mu.Unlock()
 	mgr2.RunTraversalLoop()
 }
-
-// TestTraversal_LegacyLoadCheckpointRejectsV3 验证 legacy LoadCheckpoint 不读 dual v3。
-func TestTraversal_LegacyLoadCheckpointRejectsV3(t *testing.T) {
-	mgr, _, _, _ := newCheckpointTestManager()
-	csvPath := filepath.Join(t.TempDir(), "probe1-run.csv")
-	cp := traversal.Checkpoint{
-		Version: traversal.DualCheckpointVersion,
-		TaskID:  "probe1-task-1",
-		ProbeID: "probe1",
-	}
-	data, _ := json.MarshalIndent(cp, "", "  ")
-	cpPath := traversal.ResolveCheckpointPathFromCSV(csvPath)
-	if err := mgr.checkpointStore.Write(cpPath, data); err != nil {
-		t.Fatalf("写入 v3 checkpoint: %v", err)
-	}
-	mgr.mu.Lock()
-	mgr.lastCheckpointPath = cpPath
-	mgr.mu.Unlock()
-
-	if _, err := mgr.LoadCheckpoint(); err == nil || !strings.Contains(err.Error(), "checkpoint_version_mismatch") {
-		t.Fatalf("legacy LoadCheckpoint 读 v3 应拒绝, got %v", err)
-	}
-}

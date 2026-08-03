@@ -36,7 +36,6 @@ import type {
   TraversalRawPressure,
   CalibrationCsvFileInfo,
   InterpolationAlgorithm,
-  TraversalCheckpoint,
   TraversalErrorCode,
   TraversalProbeType,
   TraversalRealtimeInput,
@@ -101,10 +100,6 @@ export const useTraversalStore = defineStore('traversal', () => {
   // 与实时压力数据同频，避免出现"压力卡片与插值卡片刷新节奏不一致"的视觉错位。
   // refreshRateHz 已在 storageStore 内 clamp 到 1–10Hz（系统边界），此处直接消费不再二次保护。
   const uiRefreshIntervalMs = computed(() => Math.round(1000 / useStorageStore().settings.refreshRateHz))
-
-  // 断点恢复信息（应用启动时加载，用于判断是否展示"恢复"横幅）
-  const checkpoint = ref<TraversalCheckpoint | null>(null)
-  const hasCheckpoint = computed(() => checkpoint.value !== null)
 
   function toSerializableConfig(cfg: TraversalTestConfig): TraversalTestConfig {
     return JSON.parse(JSON.stringify(cfg)) as TraversalTestConfig
@@ -863,60 +858,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     }
   }
 
-  /** 加载断点恢复信息（应用启动或进入遍历页面时调用） */
-  async function loadCheckpoint(): Promise<TraversalCheckpoint | null> {
-    const res = await traversalApi.loadCheckpoint()
-    if (res.success) {
-      checkpoint.value = res.data ?? null
-      return checkpoint.value
-    }
-    checkpoint.value = null
-    return null
-  }
-
-  /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
-  async function resumeFromCheckpoint(cp: TraversalCheckpoint): Promise<string> {
-    if (isStarting.value) {
-      throw new Error(i18n.t.travErrTestStarting)
-    }
-
-    isStarting.value = true
-    try {
-      error.value = null
-      statusRecoveryFailed.value = false
-      status.value = null
-      dataPoints.value = []
-      completeEvent.value = null
-      realtimePressures.value = null
-      realtimeResult.value = null
-
-      setupEventSubscriptions()
-
-      const res = await traversalApi.resumeFromCheckpoint(cp)
-      if (!res.success || !res.data?.taskId) {
-        teardownEventSubscriptions()
-        throw new Error(res.error || i18n.t.travErrResumeCheckpoint)
-      }
-
-      // 恢复后清空 checkpoint 缓存（后端会在测试完成时自动清理断点文件）
-      checkpoint.value = null
-      await refreshStatus()
-      return res.data.taskId
-    } catch (err) {
-      teardownEventSubscriptions()
-      error.value = err instanceof Error ? err.message : String(err)
-      throw err
-    } finally {
-      isStarting.value = false
-    }
-  }
-
-  /** 清除断点文件（用户主动放弃恢复时调用） */
-  async function clearCheckpoint(): Promise<void> {
-    await traversalApi.clearCheckpoint()
-    checkpoint.value = null
-  }
-
   function clearError(): void {
     error.value = null
   }
@@ -1019,7 +960,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     realtimePressures.value = null
     realtimeResult.value = null
     hasLoadedInterpolator.value = false
-    checkpoint.value = null
 
     teardownEventSubscriptions()
   }
@@ -1046,8 +986,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     completeEvent,
     error,
     isSimulation,
-    checkpoint,
-    hasCheckpoint,
     uiRefreshIntervalMs,
     loadConfig,
     recoverRendererState,
@@ -1067,9 +1005,6 @@ export const useTraversalStore = defineStore('traversal', () => {
     resume,
     stop,
     refreshStatus,
-    loadCheckpoint,
-    resumeFromCheckpoint,
-    clearCheckpoint,
     clearError,
     reset,
     syncRealtimeInterpolation,

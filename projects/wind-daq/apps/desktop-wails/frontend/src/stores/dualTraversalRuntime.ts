@@ -6,9 +6,6 @@ const deviceRefCounts = new Map<string, number>()
 
 export interface DualTraversalSessionRuntime {
   requestId: number
-  checkpointRequestId: number
-  checkpointAbort: AbortController | null
-  checkpointOperationId: number
   lifecycleGeneration: number
   // 订阅拆分为两类（C9 修复）：
   // - pollingUnsubscribers: onStatus/onProgress/onComplete/onError，500ms 轮询类，
@@ -37,9 +34,6 @@ export interface DualTraversalSessionRuntime {
 export function createDualTraversalRuntime(): DualTraversalSessionRuntime {
   return {
     requestId: 0,
-    checkpointRequestId: 0,
-    checkpointAbort: null,
-    checkpointOperationId: 0,
     lifecycleGeneration: 0,
     pollingUnsubscribers: [],
     snapshotUnsubscribers: [],

@@ -54,61 +54,6 @@ func TestManagerRegistry_Stop_NoActiveSession(t *testing.T) {
 	}
 }
 
-func TestManagerRegistry_Stop_WaitsForResumeManagedPublication(t *testing.T) {
-	fx := newRegistryFixture(t)
-	seedDualCheckpoint(t, fx, Probe1, "probe1-task-9", []string{"ctrl-a"})
-	fx.seedPersistedBindings(Probe2, "ctrl-b")
-	if _, err := fx.registry.GetOrCreate(Probe1); err != nil {
-		t.Fatalf("GetOrCreate: %v", err)
-	}
-	manager := fx.factory.manager(Probe1)
-	resumeEntered, unblockResume := manager.setResumeBlock()
-	manager.setOnStop(func() {
-		manager.mu.Lock()
-		opts := manager.lastOpts
-		manager.mu.Unlock()
-		opts.CompletionCallback(opts.Token)
-	})
-
-	resumeDone := make(chan error, 1)
-	go func() {
-		_, err := fx.registry.ResumeFromCheckpoint(context.Background(), Probe1, "probe1-task-9")
-		resumeDone <- err
-	}()
-	<-resumeEntered
-	if fx.registry.tryAcquireAdmissionForTest() {
-		fx.registry.releaseAdmission()
-		t.Fatal("ResumeManaged 阻塞期间 admission gate 必须保持持有")
-	}
-
-	stopDone := make(chan error, 1)
-	stopAttempted := make(chan struct{})
-	go func() {
-		close(stopAttempted)
-		stopDone <- fx.registry.Stop(context.Background(), Probe1)
-	}()
-	<-stopAttempted
-	select {
-	case err := <-stopDone:
-		t.Fatalf("ResumeManaged 返回前 Stop 不得返回: %v", err)
-	default:
-	}
-	if calls := manager.stopCallCount(); calls != 0 {
-		t.Fatalf("ResumeManaged 返回前 Stop 不得到达 manager, calls=%d", calls)
-	}
-
-	unblockResume()
-	if err := <-resumeDone; err != nil {
-		t.Fatalf("ResumeFromCheckpoint: %v", err)
-	}
-	if err := <-stopDone; err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	if calls := manager.stopCallCount(); calls != 1 {
-		t.Fatalf("恢复发布后 Stop 必须送达一次, calls=%d", calls)
-	}
-}
-
 func TestManagerRegistry_Stop_AggregatesStopErrorAndWaits(t *testing.T) {
 	fx := newRegistryFixture(t)
 	raw := startProbe1OK(fx)

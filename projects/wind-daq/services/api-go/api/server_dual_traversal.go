@@ -19,13 +19,10 @@ import (
 // 规则：
 //   - /api/traversal/{probeId}/{action} 两段路径命中本 dispatcher；
 //     单段 legacy 路径不进入本文件（server.go 分流），禁止隐式转发到 probe1；
-//   - 生命周期 action（start/runPoint/pause/resume/stop/resumeFromCheckpoint/
-//     clearCheckpoint/close）只调用 registry façade，handler 不直接调用
+//   - 生命周期 action（start/runPoint/pause/resume/stop/close）只调用 registry façade，handler 不直接调用
 //     manager 生命周期方法（spec I2）；
 //   - 只读 config/status/result 与导入/实时计算等非生命周期操作经
 //     registry.GetOrCreate 选择 manager 后委托共享 action handler；
-//   - resumeFromCheckpoint/clearCheckpoint 请求体只携带 taskId（用户确认），
-//     不接受客户端提交的 checkpoint 文件路径作为恢复权威来源。
 
 // TraversalRegistry api 层依赖的窄 registry 接口（装配根注入 *usecase.ManagerRegistry）。
 type TraversalRegistry interface {
@@ -36,9 +33,6 @@ type TraversalRegistry interface {
 	Resume(ctx context.Context, probeID usecase.ProbeID) error
 	Stop(ctx context.Context, probeID usecase.ProbeID) error
 	CloseProbe(ctx context.Context, probeID usecase.ProbeID) error
-	LoadCheckpoint(ctx context.Context, probeID usecase.ProbeID) (*traversal.Checkpoint, error)
-	ResumeFromCheckpoint(ctx context.Context, probeID usecase.ProbeID, taskID string) (string, error)
-	ClearCheckpoint(ctx context.Context, probeID usecase.ProbeID, taskID string) error
 }
 
 // traversalSharedManager 非生命周期共享操作所需的 manager 方法集。
@@ -92,12 +86,6 @@ func dispatchDualAction(w http.ResponseWriter, r *http.Request, deps Deps, probe
 		dualManagerCall(w, r, deps, probeID, deps.TraversalRegistry.Stop)
 	case "close":
 		dualClose(w, r, deps, probeID)
-	case "resumeFromCheckpoint":
-		dualResumeFromCheckpoint(w, r, deps, probeID)
-	case "clearCheckpoint":
-		dualClearCheckpoint(w, r, deps, probeID)
-	case "loadCheckpoint":
-		dualLoadCheckpoint(w, r, deps, probeID)
 	default:
 		dispatchDualSharedAction(w, r, deps, probeID, action)
 	}
@@ -187,74 +175,17 @@ func dualClose(w http.ResponseWriter, r *http.Request, deps Deps, probeID usecas
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// dualResumeFromCheckpoint 恢复请求体只携带 taskId（用户确认）；
-// 权威 checkpoint 路径由服务端 dual recovery index 决定，不接受客户端路径。
-func dualResumeFromCheckpoint(w http.ResponseWriter, r *http.Request, deps Deps, probeID usecase.ProbeID) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		TaskID string `json:"taskId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	taskID, err := deps.TraversalRegistry.ResumeFromCheckpoint(r.Context(), probeID, body.TaskID)
-	if err != nil {
-		writeRegistryError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"taskId": taskID})
-}
-
-func dualClearCheckpoint(w http.ResponseWriter, r *http.Request, deps Deps, probeID usecase.ProbeID) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		TaskID string `json:"taskId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := deps.TraversalRegistry.ClearCheckpoint(r.Context(), probeID, body.TaskID); err != nil {
-		writeRegistryError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-}
-
-func dualLoadCheckpoint(w http.ResponseWriter, r *http.Request, deps Deps, probeID usecase.ProbeID) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	checkpoint, err := deps.TraversalRegistry.LoadCheckpoint(r.Context(), probeID)
-	if err != nil {
-		writeRegistryError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, checkpoint)
-}
-
 // ---------------------------------------------------------------------------
 // 错误码映射（spec FR4 / Task 12）
 // ---------------------------------------------------------------------------
 
 // writeRegistryError 把 registry façade 的 sentinel 错误映射为稳定 HTTP 状态码：
 // 400 invalid_probe_id / 503 manager_creation_failed / 409 resource_conflict /
-// 409 already_running / 503 registry_closing / 400 task_id_mismatch /
-// 400 probe_id_mismatch / 409 recoverable_task_exists / 409 checkpoint_version_mismatch /
-// 503 registry_transitioning / 409 probe_closing。
+// 409 already_running / 503 registry_closing / 409 recoverable_task_exists /
+// 409 checkpoint_version_mismatch / 503 registry_transitioning / 409 probe_closing。
 func writeRegistryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, usecase.ErrInvalidProbeID):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, usecase.ErrTaskIDMismatch), errors.Is(err, usecase.ErrProbeIDMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, usecase.ErrResourceConflict),
 		errors.Is(err, usecase.ErrAlreadyRunning),

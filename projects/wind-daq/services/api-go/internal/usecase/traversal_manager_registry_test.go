@@ -38,12 +38,6 @@ type fakeManagedManager struct {
 	lastConfig traversal.Config
 	lastOpts   ManagedSessionOptions
 	configRaw  json.RawMessage
-	// resumeCalls/lastResumeCp/resumeErr ResumeManaged 记录与错误注入（Task 11）。
-	resumeCalls  int
-	lastResumeCp traversal.Checkpoint
-	resumeErr    error
-	resumeBlock  chan struct{}
-	resumeEnter  chan struct{}
 	// statusState/statusCSVPath Status() 返回值注入（completion 恢复映射收尾用）。
 	statusState   traversal.State
 	statusCSVPath string
@@ -113,34 +107,6 @@ func (f *fakeManagedManager) setOnStart(hook func(ManagedSessionOptions)) {
 	f.onStart = hook
 }
 
-func (f *fakeManagedManager) ResumeManaged(cp traversal.Checkpoint, opts ManagedSessionOptions) (string, error) {
-	f.mu.Lock()
-	f.resumeCalls++
-	f.lastResumeCp = cp
-	f.lastOpts = opts
-	err := f.resumeErr
-	block := f.resumeBlock
-	entered := f.resumeEnter
-	f.mu.Unlock()
-	if entered != nil {
-		close(entered)
-	}
-	if block != nil {
-		<-block
-	}
-	if err != nil {
-		return "", err
-	}
-	return cp.TaskID, nil
-}
-
-func (f *fakeManagedManager) setResumeBlock() (<-chan struct{}, func()) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.resumeBlock = make(chan struct{})
-	f.resumeEnter = make(chan struct{})
-	return f.resumeEnter, func() { close(f.resumeBlock) }
-}
 func (f *fakeManagedManager) RunCurrentPoint() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -232,8 +198,6 @@ func (f *fakeManagedManager) GetConfigRaw() json.RawMessage {
 	defer f.mu.Unlock()
 	return f.configRaw
 }
-func (f *fakeManagedManager) LoadCheckpoint() (*traversal.Checkpoint, error) { return nil, nil }
-func (f *fakeManagedManager) ClearCheckpoint()                               {}
 
 // fakeManagerFactory 记录 factory 调用次数与按 probe 创建的 manager。
 // create 钩子（barrier 测试用）在 factory 互斥锁外执行，允许阻塞。
@@ -533,9 +497,6 @@ type fakeRecoveryIndex struct {
 	candidates    map[string]ports.TraversalCheckpointRef
 	registerErr   error
 	unregisterErr error
-	findEntered   chan struct{}
-	findBlock     chan struct{}
-	findOnce      sync.Once
 }
 
 func (i *fakeRecoveryIndex) Register(_ context.Context, probeID, taskID, checkpointPath string) error {
@@ -557,27 +518,9 @@ func (i *fakeRecoveryIndex) Register(_ context.Context, probeID, taskID, checkpo
 
 func (i *fakeRecoveryIndex) Find(_ context.Context, probeID string) (ports.TraversalCheckpointRef, bool, error) {
 	i.mu.Lock()
-	entered, block := i.findEntered, i.findBlock
-	i.mu.Unlock()
-	if entered != nil {
-		i.findOnce.Do(func() { close(entered) })
-	}
-	if block != nil {
-		<-block
-	}
-	i.mu.Lock()
 	defer i.mu.Unlock()
 	ref, found := i.candidates[probeID]
 	return ref, found, nil
-}
-
-func (i *fakeRecoveryIndex) setFindBlock() (<-chan struct{}, func()) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.findEntered = make(chan struct{})
-	i.findBlock = make(chan struct{})
-	var once sync.Once
-	return i.findEntered, func() { once.Do(func() { close(i.findBlock) }) }
 }
 
 func (i *fakeRecoveryIndex) Unregister(_ context.Context, probeID, taskID string) error {

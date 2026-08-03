@@ -96,8 +96,7 @@ const isTerminal = computed(() => {
   return s === 'completed' || s === 'stopped' || s === 'error'
 })
 const isStarting = computed(() => session.value.isStarting)
-const isCheckpointPending = computed(() => dualStore.checkpointPending[props.probeId])
-const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && !session.value.checkpoint && session.value.hasLoadedInterpolator)
+const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && session.value.hasLoadedInterpolator)
 const canPause = computed(() => isRunning.value)
 const canResume = computed(() => isPaused.value)
 const canStop = computed(() => isRunning.value || isPaused.value)
@@ -288,30 +287,6 @@ function onStart(): Promise<void> {
   return safeCall(() => dualStore.start(props.probeId), 'dualStartFailed')
 }
 
-async function onResumeCheckpoint(): Promise<void> {
-  const checkpoint = session.value.checkpoint
-  if (!checkpoint) return
-  await safeCall(() => dualStore.resumeFromCheckpoint(props.probeId, checkpoint.taskId), 'failedResume')
-}
-
-async function onDiscardCheckpoint(): Promise<void> {
-  const checkpoint = session.value.checkpoint
-  if (!checkpoint) return
-  try {
-    const confirmed = await feedbackStore.confirm(t.value.travCheckDetected, {
-      title: t.value.travAbandon,
-      confirmText: t.value.travAbandon,
-      cancelText: t.value.cancel,
-    })
-    if (!confirmed) return
-    await safeCall(() => dualStore.clearCheckpoint(props.probeId, checkpoint.taskId), 'failedDiscardCheckpoint')
-  } catch (err) {
-    // confirm 弹窗自身异常（如 modal 系统故障）——记录但不抛出。
-    const detail = err instanceof Error ? err.message : String(err)
-    feedbackStore.pushToast(`${t.value.failedDiscardCheckpoint}：${detail}`, 'error')
-  }
-}
-
 function onPause(): Promise<void> {
   return safeCall(() => dualStore.pause(props.probeId), 'dualPauseFailed')
 }
@@ -392,19 +367,6 @@ const completedSummary = computed(() => {
         @click="onOpenSettings"
       >
         {{ t.dualProbeSetting }}
-      </UiButton>
-    </div>
-
-    <div v-if="session.checkpoint" class="dual-compact__checkpoint" role="status">
-      <span class="dual-compact__checkpoint-text">
-        {{ t.travCheckDetected }} · {{ t.travCheckCompleted }}
-        {{ session.checkpoint.completedPoints }} / {{ session.checkpoint.totalPoints }}
-      </span>
-      <UiButton size="sm" variant="warning" :disabled="isCheckpointPending" :loading="isCheckpointPending" @click="onResumeCheckpoint">
-        {{ t.travContinueTest }}
-      </UiButton>
-      <UiButton size="sm" variant="ghost" :disabled="isCheckpointPending" @click="onDiscardCheckpoint">
-        {{ t.travAbandon }}
       </UiButton>
     </div>
 

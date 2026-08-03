@@ -13,9 +13,9 @@ import (
 // docs/specs/tasks-dual-traversal.md Task 8。
 //
 // ownership 机制：
-//   - legacy（Start/ResumeFromCheckpoint）：manager 自行 Acquire/Release 全局
+//   - legacy（Start）：manager 自行 Acquire/Release 全局
 //     workflow lease、读写 legacy traversal-active-index.json——行为与改造前完全一致；
-//   - managed（StartManaged/ResumeManaged）：lease 由 registry 准入事务持有，
+//   - managed（StartManaged）：lease 由 registry 准入事务持有，
 //     manager 不触碰 workflow lease 与 legacy activeIndex；ManagedSessionOptions
 //     在启动时一次性注入并冻结为 session 快照字段（session.managedOpts）；
 //   - ownership 是 session 快照的一部分，同一 session 不得混用两种模式
@@ -52,25 +52,6 @@ func (m *TraversalManager) StartManaged(config traversal.Config, opts ManagedSes
 	}
 	go m.RunTraversalLoop()
 	return nil
-}
-
-// ResumeManaged registry-only 的 managed 断点恢复入口。
-// 语义与 StartManaged 一致（不 Acquire/Release、冻结 opts、finalize 后回调），
-// 配置与进度从 checkpoint snapshot 还原。
-func (m *TraversalManager) ResumeManaged(cp traversal.Checkpoint, opts ManagedSessionOptions) (string, error) {
-	if err := m.validateManagedOpts(opts); err != nil {
-		return "", err
-	}
-	if opts.TaskID != "" && cp.TaskID != "" && opts.TaskID != cp.TaskID {
-		return "", fmt.Errorf("managed options taskID %q 与 checkpoint taskID %q 不一致", opts.TaskID, cp.TaskID)
-	}
-	m.mu.RLock()
-	acqController := m.acquisitionController
-	m.mu.RUnlock()
-	if deviceName, stopped := firstNonAcquiringDevice(acqController, cp.Snapshot.Config); stopped {
-		return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
-	}
-	return m.resumeInternal(cp, &opts)
 }
 
 // validateManagedOpts 校验 managed 启动选项的完整性（装配一致性防御）。

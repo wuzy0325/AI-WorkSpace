@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/internal/usecase"
 )
 
@@ -15,9 +14,7 @@ import (
 // 每个 sentinel 从对应 façade 注入，断言 HTTP 状态码与响应体中的错误码字符串：
 // unknown probe → 400 invalid_probe_id；manager 创建失败 → 503 manager_creation_failed；
 // 资源冲突 → 409 resource_conflict；同 probe 已运行 → 409 already_running；
-// registry closing → 503 registry_closing；taskID 不匹配 → 400 task_id_mismatch；
-// probe_id_mismatch → 400；recoverable_task_exists → 409；
-// checkpoint_version_mismatch → 409；registry_transitioning → 503。
+// registry closing → 503 registry_closing；registry_transitioning → 503。
 
 func TestServer_DualTraversal_ErrorCodes(t *testing.T) {
 	cases := []struct {
@@ -43,18 +40,6 @@ func TestServer_DualTraversal_ErrorCodes(t *testing.T) {
 		{"registry_closing", func(reg *fakeTraversalRegistry) {
 			reg.startErr = usecase.ErrRegistryClosing
 		}, http.MethodPost, "/api/traversal/probe1/start", `{}`, 503, "registry_closing"},
-		{"task_id_mismatch", func(reg *fakeTraversalRegistry) {
-			reg.resumeCpErr = usecase.ErrTaskIDMismatch
-		}, http.MethodPost, "/api/traversal/probe1/resumeFromCheckpoint", `{"taskId":"x"}`, 400, "task_id_mismatch"},
-		{"probe_id_mismatch", func(reg *fakeTraversalRegistry) {
-			reg.loadCpErr = usecase.ErrProbeIDMismatch
-		}, http.MethodGet, "/api/traversal/probe1/loadCheckpoint", "", 400, "probe_id_mismatch"},
-		{"recoverable_task_exists", func(reg *fakeTraversalRegistry) {
-			reg.startErr = ports.ErrRecoverableTaskExists
-		}, http.MethodPost, "/api/traversal/probe1/start", `{}`, 409, "recoverable_task_exists"},
-		{"checkpoint_version_mismatch", func(reg *fakeTraversalRegistry) {
-			reg.loadCpErr = ports.ErrCheckpointVersionMismatch
-		}, http.MethodGet, "/api/traversal/probe1/loadCheckpoint", "", 409, "checkpoint_version_mismatch"},
 		{"registry_transitioning", func(reg *fakeTraversalRegistry) {
 			reg.startErr = usecase.ErrRegistryTransitioning
 		}, http.MethodPost, "/api/traversal/probe1/start", `{}`, 503, "registry_transitioning"},
@@ -64,9 +49,6 @@ func TestServer_DualTraversal_ErrorCodes(t *testing.T) {
 		{"stop façade 错误传播", func(reg *fakeTraversalRegistry) {
 			reg.stopErr = usecase.ErrResourceConflict
 		}, http.MethodPost, "/api/traversal/probe1/stop", "", 409, "resource_conflict"},
-		{"clearCheckpoint task_id_mismatch", func(reg *fakeTraversalRegistry) {
-			reg.clearCpErr = usecase.ErrTaskIDMismatch
-		}, http.MethodPost, "/api/traversal/probe1/clearCheckpoint", `{"taskId":"x"}`, 400, "task_id_mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

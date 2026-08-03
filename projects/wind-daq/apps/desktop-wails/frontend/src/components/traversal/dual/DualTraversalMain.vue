@@ -51,7 +51,7 @@ const { sessions } = storeToRefs(dualStore)
 const t = computed(() => i18n.t)
 let mounted = false
 
-// 两 probe 在 onMounted 时分别恢复配置/状态/断点；任一失败不影响另一路。
+// 两 probe 在 onMounted 时分别恢复配置和当前运行状态；任一失败不影响另一路。
 onMounted(async () => {
   mounted = true
   const probeIds: ProbeId[] = ['probe1', 'probe2']
@@ -61,12 +61,6 @@ onMounted(async () => {
     if (!mounted) return
     await dualStore.recoverRuntime(probeId)
   }))
-  if (!mounted) return
-  // 加载状态/断点（不阻塞 UI 渲染；缺失配置时跳过）
-  await Promise.allSettled([
-    dualStore.loadCheckpoint('probe1'),
-    dualStore.loadCheckpoint('probe2'),
-  ])
   if (!mounted) return
   // 任意 probe 加载失败：toast 提示但不阻断（另一路仍可用）
   results.forEach((res, idx) => {

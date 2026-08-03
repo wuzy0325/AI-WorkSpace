@@ -1,7 +1,9 @@
 package usecase
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -76,12 +78,14 @@ func TestRunCurrentPointCheckpointUsesSinkOutputPath(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = mgr.Stop() })
 
-	cp, err := mgr.LoadCheckpoint()
+	cpPath := traversal.ResolveCheckpointPathFromCSV(outputPath)
+	data, err := os.ReadFile(cpPath)
 	if err != nil {
-		t.Fatalf("LoadCheckpoint returned error: %v", err)
+		t.Fatalf("read checkpoint file failed: %v", err)
 	}
-	if cp == nil {
-		t.Fatal("expected checkpoint to be saved")
+	var cp traversal.Checkpoint
+	if err := json.Unmarshal(data, &cp); err != nil {
+		t.Fatalf("unmarshal checkpoint failed: %v", err)
 	}
 	if cp.SavePath != outputPath {
 		t.Fatalf("checkpoint SavePath = %q, want %q", cp.SavePath, outputPath)

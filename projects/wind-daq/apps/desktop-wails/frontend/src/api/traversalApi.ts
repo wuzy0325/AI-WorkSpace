@@ -9,7 +9,6 @@ import type {
   PreconditionCheckResult,
   ProbeId,
   SevenHolePrbFileInfo,
-  TraversalCheckpoint,
   TraversalCompleteEvent,
   TraversalCoordPoint,
   TraversalErrorEvent,
@@ -190,18 +189,6 @@ export const traversalApi = {
 
   stop: async (): Promise<{ success: boolean; error?: string }> => invoke('/api/traversal/stop'),
 
-  /** 加载断点恢复信息（应用启动或进入遍历页面时调用，判断是否需要展示"恢复"横幅） */
-  loadCheckpoint: async (): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
-    invoke<TraversalCheckpoint | null>('/api/traversal/loadCheckpoint', undefined, 'GET'),
-
-  /** 从断点恢复测试（复用原 taskId，从已完成点数继续） */
-  resumeFromCheckpoint: async (checkpoint: TraversalCheckpoint): Promise<{ success: boolean; data?: { taskId: string }; error?: string }> =>
-    invoke<{ taskId: string }>('/api/traversal/resumeFromCheckpoint', checkpoint),
-
-  /** 清除断点文件（用户主动放弃恢复时调用） */
-  clearCheckpoint: async (): Promise<{ success: boolean; error?: string }> =>
-    invoke('/api/traversal/clearCheckpoint'),
-
   getStatus: async (): Promise<{ success: boolean; data?: TraversalTestStatus | null; error?: string }> => {
     const res = await invoke<TraversalStatusRawResponse | null>('/api/traversal/status', undefined, 'GET')
     if (!res.success || !res.data) return res as { success: boolean; data?: TraversalTestStatus | null; error?: string }
@@ -269,8 +256,6 @@ export const traversalApi = {
 // 双探针 probe-aware API（spec FR4 / Task 16）
 //
 // 两段路由 /api/traversal/{probeId}/{action}；legacy 无 probeId 函数保持不变。
-// resumeFromCheckpoint/clearCheckpoint 请求体只携带 taskId（用户确认），
-// 权威 checkpoint 路径由服务端 dual recovery index 决定（FR4）。
 // ---------------------------------------------------------------------------
 
 function probePath(probeId: ProbeId, action: string): string {
@@ -361,16 +346,6 @@ export const traversalProbeApi = {
     if (!res.success || !res.data) return res as { success: boolean; data?: TraversalTestStatus | null; error?: string }
     return { success: true, data: mapStatusResponse(res.data) }
   },
-
-  loadCheckpoint: async (probeId: ProbeId, signal?: AbortSignal): Promise<{ success: boolean; data?: TraversalCheckpoint | null; error?: string }> =>
-    invoke<TraversalCheckpoint | null>(probePath(probeId, 'loadCheckpoint'), undefined, 'GET', signal),
-
-  /** 恢复请求体只携带 taskId（用户确认）；权威路径由服务端 index 决定 */
-  resumeFromCheckpoint: async (probeId: ProbeId, taskId: string): Promise<{ success: boolean; data?: { taskId: string }; error?: string }> =>
-    invoke<{ taskId: string }>(probePath(probeId, 'resumeFromCheckpoint'), { taskId }),
-
-  clearCheckpoint: async (probeId: ProbeId, taskId: string): Promise<{ success: boolean; error?: string }> =>
-    invoke(probePath(probeId, 'clearCheckpoint'), { taskId }),
 
   onStatus: (probeId: ProbeId, callback: (status: TraversalTestStatus) => void): (() => void) =>
     subscribeProbeStatus(probeId, (signal) => traversalProbeApi.getStatus(probeId, signal), {

@@ -114,17 +114,6 @@ describe('traversalProbeApi 路由', () => {
     await traversalProbeApi.getResult('probe2', 'task-1')
     expect(lastCall().url).toBe('http://localhost:8080/api/traversal/probe2/result?taskId=task-1')
 
-    await traversalProbeApi.loadCheckpoint('probe1')
-    expect(lastCall().url).toBe('http://localhost:8080/api/traversal/probe1/loadCheckpoint')
-
-    // resumeFromCheckpoint / clearCheckpoint 请求体只携带 taskId（FR4）
-    await traversalProbeApi.resumeFromCheckpoint('probe2', 'probe2-task-9')
-    expect(lastCall().url).toBe('http://localhost:8080/api/traversal/probe2/resumeFromCheckpoint')
-    expect(JSON.parse(lastCall().body!)).toEqual({ taskId: 'probe2-task-9' })
-
-    await traversalProbeApi.clearCheckpoint('probe1', 'probe1-task-8')
-    expect(lastCall().url).toBe('http://localhost:8080/api/traversal/probe1/clearCheckpoint')
-    expect(JSON.parse(lastCall().body!)).toEqual({ taskId: 'probe1-task-8' })
   })
 
   it('getStatus 复用 legacy 状态映射（currentPoint 兼容数字/对象）', async () => {

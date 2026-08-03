@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"wind-daq/services/api-go/internal/ports"
 )
 
 // ---------------------------------------------------------------------------
@@ -394,25 +392,15 @@ func TestManagerRegistry_Start_RollbackReleaseFailureRetainsSessionForRetry(t *t
 	}
 }
 
-func TestManagerRegistry_Start_RecoverableTaskRejected(t *testing.T) {
+func TestManagerRegistry_Start_IgnoresLegacyRecoveryEntry(t *testing.T) {
 	fx := newRegistryFixture(t)
 	fx.index.seed("probe1", "probe1-task-9", "/tmp/probe1.checkpoint.json")
 	raw := startProbe1OK(fx)
 
-	_, err := fx.registry.Start(context.Background(), Probe1, raw)
-	if !errors.Is(err, ports.ErrRecoverableTaskExists) {
-		t.Fatalf("应返回 ErrRecoverableTaskExists, got %v", err)
+	if _, err := fx.registry.Start(context.Background(), Probe1, raw); err != nil {
+		t.Fatalf("legacy recovery entry must not block a new start: %v", err)
 	}
-	// 拒绝发生在 factory 创建与任何文件/运动 I/O 之前
-	if fx.factory.callCount() != 0 {
-		t.Fatal("recoverable 拒绝不得触发 factory 创建")
-	}
-	if _, _, acquires, _ := fx.workflow.state(); acquires != 0 {
-		t.Fatal("recoverable 拒绝不得触碰全局 lease")
-	}
-	if fx.controllers.totalHeld() != 0 || fx.sessionCount() != 0 {
-		t.Fatal("recoverable 拒绝不得预占控制器或登记 session")
-	}
+	completeSession(fx, Probe1)
 }
 
 func TestManagerRegistry_Start_AlreadyRunning(t *testing.T) {

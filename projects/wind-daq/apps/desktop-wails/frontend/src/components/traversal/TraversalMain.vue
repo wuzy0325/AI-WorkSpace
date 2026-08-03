@@ -10,12 +10,11 @@
  * 【布局重构（2026-07）】
  * 参考 ThreeHoleMain.vue 的布局风格：
  *   - 顶部：Header（标题+配置） + 状态栏（跨全宽，集中展示操作员最频繁看的核心信息）
- *   - 中部：断点恢复横幅 / 插值器恢复横幅（条件显示）
+ *   - 中部：插值器恢复横幅（条件显示）
  *   - 主工作区：左侧栏 384px（三段式：控制按钮 + 数据 + 硬件状态条） + 右侧 Tab 工作区
  *
  * 【组件结构】
  * - shell/TraversalTopBar.vue        — Header + 状态栏
- * - shell/TraversalCheckpointBanner.vue — 断点恢复横幅
  * - shell/TraversalErrorBanner.vue   — 错误横幅
  * - panels/TraversalLiveMonitor.vue  — 左侧三段式实时监测面板（含控制按钮）
  * - panels/TraversalWorkspaceArea.vue — 右侧 Tab 工作区
@@ -34,17 +33,13 @@ import { useFeedbackStore } from '@stores/feedbackStore'
 import { useMotionStore } from '@stores/motionStore'
 import { useTraversalStore } from '@stores/traversalStore'
 import { useI18nStore } from '@stores/i18nStore'
-import type {
-  TraversalCheckpoint,
-  PreconditionCheckResult
-} from '@shared/types/traversal'
+import type { PreconditionCheckResult } from '@shared/types/traversal'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import { joinCalibrationPath } from '@shared/calibrationCsvPath'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
 import { useTraversalStatusDisplay } from '@composables/useTraversalStatusDisplay'
 import TraversalTopBar from './shell/TraversalTopBar.vue'
-import TraversalCheckpointBanner from './shell/TraversalCheckpointBanner.vue'
 import TraversalErrorBanner from './shell/TraversalErrorBanner.vue'
 import TraversalLiveMonitor from './panels/TraversalLiveMonitor.vue'
 import TraversalWorkspaceArea, { type WorkspaceTab } from './panels/TraversalWorkspaceArea.vue'
@@ -111,13 +106,10 @@ const preconditionResult = ref<PreconditionCheckResult | null>(null)
 /** 顶栏引用：用于确认对话框关闭后将焦点回到开始按钮（开始按钮在顶栏 Header 行） */
 const topBarRef = ref<InstanceType<typeof TraversalTopBar> | null>(null)
 
-// 本地维护的断点信息（用于 UI 横幅显示，与 store.checkpoint 同步）
-const checkpoint = ref<TraversalCheckpoint | null>(null)
 let unsubscribeDaqSnapshot: (() => void) | null = null
 let unsubscribeDeviceStatus: (() => void) | null = null
 let unsubscribeMotionStatus: (() => void) | null = null
 
-const hasCheckpoint = computed(() => checkpoint.value !== null)
 // 是否显示真实控制按钮（恢复中不显示）
 const showRealControls = computed(() => !props.recovering)
 
@@ -163,57 +155,7 @@ onMounted(async () => {
   // 恢复正在进行的移位测试状态
   await traversalStore.refreshStatus()
 
-  // 检测是否有未完成的测试断点
-  await checkForCheckpoint()
 })
-
-/** 从后端加载断点信息，用于显示恢复横幅 */
-async function checkForCheckpoint(): Promise<void> {
-  try {
-    const savedCheckpoint = await traversalStore.loadCheckpoint()
-    if (savedCheckpoint) {
-      checkpoint.value = savedCheckpoint
-    }
-  } catch (err) {
-    feedbackStore.pushToast(
-      t.value.failedCheckCheckpoint + '：' + (err instanceof Error ? err.message : String(err)),
-      'error'
-    )
-  }
-}
-
-/** 从断点恢复测试 */
-async function resumeFromCheckpoint(): Promise<void> {
-  if (!checkpoint.value) return
-
-  try {
-    await traversalStore.resumeFromCheckpoint(checkpoint.value)
-    checkpoint.value = null
-    // 断点恢复后同样确保数据订阅：用户可能从其他页面返回，
-    // 之前的订阅可能已取消；幂等调用不会重复建立。
-    ensureSubscribed()
-  } catch (err) {
-    feedbackStore.pushToast(
-      t.value.failedResume + '：' + (err instanceof Error ? err.message : String(err)),
-      'error'
-    )
-  }
-}
-
-/** 放弃断点，删除断点文件 */
-async function discardCheckpoint(): Promise<void> {
-  const currentCheckpoint = checkpoint.value
-  checkpoint.value = null
-  try {
-    await traversalStore.clearCheckpoint()
-  } catch (err) {
-    checkpoint.value = currentCheckpoint
-    feedbackStore.pushToast(
-      t.value.failedDiscardCheckpoint + '：' + (err instanceof Error ? err.message : String(err)),
-      'error'
-    )
-  }
-}
 
 onBeforeUnmount(() => {
   if (unsubscribeDaqSnapshot) {
@@ -670,22 +612,6 @@ watch(
         @click="traversalStore.interpolatorRestoreMessage = null"
       >{{ t.travGotIt }}</button>
     </div>
-
-    <!-- 断点恢复横幅 -->
-    <TraversalCheckpointBanner
-      v-if="hasCheckpoint && !traversalStore.isRunning && checkpoint"
-      :checkpoint="checkpoint"
-      :labels="{
-        detected: t.travCheckDetected,
-        completed: t.travCheckCompleted,
-        config: t.travCheckConfig,
-        continueTest: t.travContinueTest,
-        abandon: t.travAbandon,
-        unknown: t.travUnknownConfig,
-      }"
-      @resume="resumeFromCheckpoint"
-      @discard="discardCheckpoint"
-    />
 
     <!-- 恢复加载状态 -->
     <div v-if="recovering" class="flex flex-1 items-center justify-center p-6">

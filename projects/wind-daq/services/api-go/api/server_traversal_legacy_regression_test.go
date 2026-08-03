@@ -96,22 +96,13 @@ func TestServer_LegacyTraversal_LifecycleErrors(t *testing.T) {
 		404, `{"error":"traversal result not found","success":false}`+"\n")
 }
 
-// loadCheckpoint / resumeFromCheckpoint / clearCheckpoint 字节级回归。
-func TestServer_LegacyTraversal_CheckpointRoutes(t *testing.T) {
+// 未完成测试检测和恢复功能已移除，相关路由统一返回 404。
+func TestServer_LegacyTraversal_CheckpointRoutesRemoved(t *testing.T) {
 	router := legacyRouter()
 
-	// loadCheckpoint：无断点 → null
-	assertResponse(t, do(t, router, http.MethodGet, "/api/traversal/loadCheckpoint", ""), 200, "null\n")
-
-	// resumeFromCheckpoint：空 checkpoint（无 taskId）→ 400 精确错误
-	assertResponse(t, do(t, router, http.MethodPost, "/api/traversal/resumeFromCheckpoint", `{}`),
-		400, `{"error":"checkpoint taskId is required","success":false}`+"\n")
-
-	// clearCheckpoint → success true（无断点也幂等）
-	assertResponse(t, do(t, router, http.MethodPost, "/api/traversal/clearCheckpoint", ""), 200, `{"success":true}`+"\n")
-
-	// loadCheckpoint：错误 method → 405
-	assertResponse(t, do(t, router, http.MethodPost, "/api/traversal/loadCheckpoint", ""), 405, "")
+	assertResponse(t, do(t, router, http.MethodGet, "/api/traversal/loadCheckpoint", ""), 404, "")
+	assertResponse(t, do(t, router, http.MethodPost, "/api/traversal/resumeFromCheckpoint", `{}`), 404, "")
+	assertResponse(t, do(t, router, http.MethodPost, "/api/traversal/clearCheckpoint", ""), 404, "")
 }
 
 // import / clearInterpolator / calculateRealtime / checkPreconditions 字节级回归。

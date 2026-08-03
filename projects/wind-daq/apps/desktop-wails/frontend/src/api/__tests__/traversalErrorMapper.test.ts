@@ -11,7 +11,6 @@ function failedSession(message: string): TraversalSessionState {
     isStarting: false,
     error: null,
     completeEvent: null,
-    checkpoint: { taskId: 'failed-task' },
     realtimePressures: null,
     realtimeResult: null,
     hasLoadedInterpolator: false,
@@ -20,22 +19,22 @@ function failedSession(message: string): TraversalSessionState {
 }
 
 describe('traversal error mapper', () => {
-  it('formats a previous-task acquisition error with the readable device name in Chinese', () => {
+  it('formats an acquisition error with the readable device name in Chinese', () => {
     const message = traversalSessionWarning(
       failedSession('device 环境采集仪 is not acquiring; traversal will not move to point 24'),
       dualTraversalZh,
     )
 
-    expect(message).toBe('上次任务错误：设备「环境采集仪」未开始采集，请先在设备管理中开始采集')
+    expect(message).toBe('设备「环境采集仪」未开始采集，请先在设备管理中开始采集')
   })
 
-  it('uses locale punctuation for the English previous-task error', () => {
+  it('uses locale punctuation for the English error', () => {
     const message = traversalSessionWarning(
       failedSession('device Environment DAQ is not acquiring; traversal will not move to point 24'),
       dualTraversalEn,
     )
 
-    expect(message).toBe('Previous task error: Device "Environment DAQ" is not acquiring. Start acquisition in Device Manager first.')
+    expect(message).toBe('Device "Environment DAQ" is not acquiring. Start acquisition in Device Manager first.')
     expect(message).not.toContain('：')
   })
 })

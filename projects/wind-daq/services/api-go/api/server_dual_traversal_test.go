@@ -48,7 +48,6 @@ type fakeDualManager struct {
 	lastClearProbeType string
 	lastRealtimeProbe  string
 	startManagedCalls  int
-	resumeManagedCalls int
 	runPointCalls      int
 	pauseCalls         int
 	resumeCalls        int
@@ -70,12 +69,6 @@ func (m *fakeDualManager) StartManaged(traversal.Config, usecase.ManagedSessionO
 	defer m.mu.Unlock()
 	m.startManagedCalls++
 	return nil
-}
-func (m *fakeDualManager) ResumeManaged(cp traversal.Checkpoint, _ usecase.ManagedSessionOptions) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.resumeManagedCalls++
-	return cp.TaskID, nil
 }
 func (m *fakeDualManager) RunCurrentPoint() error {
 	m.mu.Lock()
@@ -128,8 +121,6 @@ func (m *fakeDualManager) GetConfigRaw() json.RawMessage {
 	m.getConfigRawCalls++
 	return m.configRaw
 }
-func (m *fakeDualManager) LoadCheckpoint() (*traversal.Checkpoint, error) { return nil, nil }
-func (m *fakeDualManager) ClearCheckpoint()                               {}
 func (m *fakeDualManager) BuildStatusResponse() map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -194,7 +185,7 @@ func (m *fakeDualManager) CalculateRealtimeForAPI(probeType string, _ usecase.Pr
 func (m *fakeDualManager) lifecycleCalls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.startManagedCalls + m.resumeManagedCalls + m.runPointCalls + m.pauseCalls + m.resumeCalls + m.stopCalls
+	return m.startManagedCalls + m.runPointCalls + m.pauseCalls + m.resumeCalls + m.stopCalls
 }
 
 // fakeTraversalRegistry 实现 api.TraversalRegistry：记录 façade 调用并按 probe 路由。
@@ -206,10 +197,6 @@ type fakeTraversalRegistry struct {
 	startErr       error
 	stopErr        error
 	closeErr       error
-	loadCp         *traversal.Checkpoint
-	loadCpErr      error
-	resumeCpErr    error
-	clearCpErr     error
 
 	startCalls   int
 	runPointHits int
@@ -217,19 +204,12 @@ type fakeTraversalRegistry struct {
 	resumeHits   int
 	stopCalls    int
 	closeCalls   int
-	loadCpCalls  int
-	resumeCpHits int
-	clearCpHits  int
 
 	lastStartProbe  usecase.ProbeID
 	lastStartRaw    json.RawMessage
 	lastActionProbe map[string]usecase.ProbeID
 	stopByProbe     map[usecase.ProbeID]int
 	startedTaskID   string
-	lastResumeTask  usecase.ProbeID
-	lastResumeID    string
-	lastClearProbe  usecase.ProbeID
-	lastClearID     string
 }
 
 func newFakeTraversalRegistry() *fakeTraversalRegistry {
@@ -308,32 +288,6 @@ func (r *fakeTraversalRegistry) CloseProbe(_ context.Context, probeID usecase.Pr
 	r.lastActionProbe["close"] = probeID
 	return r.closeErr
 }
-func (r *fakeTraversalRegistry) LoadCheckpoint(_ context.Context, probeID usecase.ProbeID) (*traversal.Checkpoint, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.loadCpCalls++
-	r.lastActionProbe["loadCheckpoint"] = probeID
-	return r.loadCp, r.loadCpErr
-}
-func (r *fakeTraversalRegistry) ResumeFromCheckpoint(_ context.Context, probeID usecase.ProbeID, taskID string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.resumeCpHits++
-	r.lastResumeTask = probeID
-	r.lastResumeID = taskID
-	if r.resumeCpErr != nil {
-		return "", r.resumeCpErr
-	}
-	return taskID, nil
-}
-func (r *fakeTraversalRegistry) ClearCheckpoint(_ context.Context, probeID usecase.ProbeID, taskID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.clearCpHits++
-	r.lastClearProbe = probeID
-	r.lastClearID = taskID
-	return r.clearCpErr
-}
 
 func newDualRouter(reg TraversalRegistry) http.Handler {
 	return NewRouter(Deps{TraversalRegistry: reg})
@@ -352,7 +306,6 @@ func TestServer_DualTraversal_Routes(t *testing.T) {
 		"task-1": {TaskID: "task-1", State: traversal.StateStopped},
 	}
 	reg.managerFor(usecase.Probe1).configRaw = json.RawMessage(`{"probeType":"five-hole"}`)
-	reg.loadCp = &traversal.Checkpoint{Version: 3, TaskID: "probe1-task-9", ProbeID: "probe1"}
 	router := newDualRouter(reg)
 
 	type expect struct {
@@ -454,21 +407,9 @@ func TestServer_DualTraversal_Routes(t *testing.T) {
 				t.Fatal("stop 必须只调 registry façade")
 			}
 		}}},
-		{"loadCheckpoint", expect{"/api/traversal/probe1/loadCheckpoint", http.MethodGet, "", 200, func(t *testing.T) {
-			if reg.loadCpCalls != 1 {
-				t.Fatal("loadCheckpoint 必须只调 registry façade")
-			}
-		}}},
-		{"resumeFromCheckpoint", expect{"/api/traversal/probe1/resumeFromCheckpoint", http.MethodPost, `{"taskId":"probe1-task-9"}`, 200, func(t *testing.T) {
-			if reg.resumeCpHits != 1 || reg.lastResumeID != "probe1-task-9" {
-				t.Fatal("resumeFromCheckpoint 必须只调 registry façade 且只传 taskId")
-			}
-		}}},
-		{"clearCheckpoint", expect{"/api/traversal/probe1/clearCheckpoint", http.MethodPost, `{"taskId":"probe1-task-9"}`, 200, func(t *testing.T) {
-			if reg.clearCpHits != 1 || reg.lastClearID != "probe1-task-9" {
-				t.Fatal("clearCheckpoint 必须只调 registry façade 且只传 taskId")
-			}
-		}}},
+		{"loadCheckpoint removed", expect{"/api/traversal/probe1/loadCheckpoint", http.MethodGet, "", 404, func(t *testing.T) {}}},
+		{"resumeFromCheckpoint removed", expect{"/api/traversal/probe1/resumeFromCheckpoint", http.MethodPost, `{"taskId":"probe1-task-9"}`, 404, func(t *testing.T) {}}},
+		{"clearCheckpoint removed", expect{"/api/traversal/probe1/clearCheckpoint", http.MethodPost, `{"taskId":"probe1-task-9"}`, 404, func(t *testing.T) {}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
