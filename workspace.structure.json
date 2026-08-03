@@ -17,6 +17,7 @@
                                    ".codebuddy",
                                    ".workbuddy",
                                    ".worktrees",
+                                   ".tmp",
                                    "AGENTS.md",
                                     "CLAUDE.md",
                                     "README.md",

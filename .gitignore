@@ -167,5 +167,15 @@ e374937_full.diff
 /tools/ico/probe_interpolator_1024.png
 projects/probe-interpolator/apps/desktop-wails/appicon.png
 
+# 工作区根目录的调试二进制（p1604-unit-diag.exe 等，programs/ 下编译产物意外输出到根目录）
+/p1604-unit-diag.exe
+/p1604-ts-diag.exe
+
+# 工作区根目录的临时 CSV（calib5.csv 等调试导出，不入库）
+/calib5.csv
+
+# 七孔校准数据目录下的 Python 调试脚本（__diag_*.py / __find_*.py / __probe.py 等，临时排查工具）
+projects/wind-daq/docs/7-hole-cal-data/__*.py
+
 # Developer-specific WeChat DevTools settings
 **/project.private.config.json
