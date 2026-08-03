@@ -200,6 +200,7 @@ func toThreeHoleAppResult(r three_interp.InterpolationResult) *ThreeHoleInterpol
 		TotalPressure:  r.TotalPressure,
 		StaticPressure: r.StaticPressure,
 		IterationCount: r.IterationCount,
+		Calculated:     r.Calculated,
 		IsValid:        r.IsValid,
 		Warning:        r.Warning,
 	}

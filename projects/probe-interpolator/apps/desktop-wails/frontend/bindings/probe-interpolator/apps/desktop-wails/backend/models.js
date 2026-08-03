@@ -1727,6 +1727,13 @@ export class ThreeHoleInterpolationResult {
              */
             this["iterationCount"] = 0;
         }
+        if (!("calculated" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["calculated"] = false;
+        }
         if (!("isValid" in $$source)) {
             /**
              * @member

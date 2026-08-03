@@ -52,3 +52,7 @@ projects/daq-t1603/apps/desktop-wails/adapters/hardware/t1603_adapter.go
 projects/daq-t1603/apps/desktop-wails/adapters/recording/csv_recorder.go
 projects/wind-daq/services/api-go/internal/core/calibration/types.go
 projects/wind-daq/services/api-go/internal/core/traversal/types.go
+# probe-interpolator 0.2.1 三孔插值健壮性修复（A1/A2/A3/A4/B1/C2）导致 three_hole.go 行数增长至 563。
+# 拆分 TODO：将 LoadPrbData + parsePrbLines 抽到 three_hole_loader.go，
+# calculateMulti + interpolateWithWarning 抽到 three_hole_multi.go，目标降至 ≤ 400 行。
+shared/algorithms/go/threehole/interpolation/three_hole.go

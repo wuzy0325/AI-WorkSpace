@@ -44,6 +44,7 @@ type ThreeHoleInterpolationResult struct {
 	TotalPressure  float64 `json:"P0"`
 	StaticPressure float64 `json:"Ps"`
 	IterationCount int     `json:"iterationCount"`
+	Calculated     bool    `json:"calculated"`
 	IsValid        bool    `json:"isValid"`
 	Warning        string  `json:"warning,omitempty"`
 }

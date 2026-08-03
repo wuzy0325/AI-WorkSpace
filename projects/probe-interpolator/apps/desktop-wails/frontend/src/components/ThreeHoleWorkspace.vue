@@ -44,9 +44,8 @@ const activeTab = ref<'input' | 'results'>('input')
 const pressureMode = ref<'gauge' | 'absolute'>('gauge')
 
 // ==================== 计算属性 ====================
-const validResultsCount = computed(() => results.value.filter(r => r !== null && r.isValid).length)
-const invalidResultsCount = computed(() => results.value.filter(r => r !== null && !r.isValid).length)
 const hasResults = computed(() => results.value.length > 0 && results.value.some(r => r !== null))
+const computedResultsCount = computed(() => results.value.filter(r => r !== null && r.calculated).length)
 
 // ==================== 工具函数 ====================
 function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') {
@@ -54,10 +53,9 @@ function setStatus(msg: string, type: 'info' | 'success' | 'error' | 'warning' =
   statusType.value = type
 }
 
-// fmtNum 是 formatResultNum 的本地别名，5/3/7 孔 workspace 共享同一份泛型实现。
-// 见 utils/format.ts。无效行（r=null 或 IsValid=false）统一显示 "-"。
+// 三孔超校准范围时保留参考值；未完成计算的失败结果仍显示 "-"。
 const fmtNum = (r: ThreeHoleInterpolationResult | null, sel: (r: ThreeHoleInterpolationResult) => number): string =>
-  formatResultNum(r, sel)
+  formatResultNum(r, sel, r?.calculated === true)
 
 async function openHelp() {
   if (!isWailsAvailable()) {
@@ -189,13 +187,17 @@ async function calculateAll() {
   setStatus('正在计算中，请稍候...', 'info')
   try {
     const [resp, res] = await api.batchCalculate(inputs.value)
-    // 无论整体成功失败都更新结果：后端支持部分失败，让用户看到有效行 + 失败行的 Warning。
+    // 无论整体成功失败都更新结果：后端支持部分失败，让用户看到已计算行 + 失败行的 Warning。
     results.value = res
-    const valid = res.filter(r => r && r.isValid).length
+    const computed = res.filter(r => r && r.calculated).length
+    const reference = res.filter(r => r && r.calculated && !r.isValid).length
+    const failed = res.length - computed
     if (!resp.success) {
-      setStatus(`部分行计算失败：有效 ${valid}/${res.length} 条，首条错误: ${resp.error}`, 'warning')
+      setStatus(`部分行计算失败：已计算 ${computed}/${res.length} 条，首条错误: ${resp.error}`, 'warning')
+    } else if (reference > 0 || failed > 0) {
+      setStatus(`计算完成：${computed} 条结果（${reference} 条超出校准范围，仅供参考），失败 ${failed} 条`, 'warning')
     } else {
-      setStatus(`计算完成！有效结果: ${valid}/${res.length} 条`, 'success')
+      setStatus(`计算完成：${computed}/${res.length} 条结果`, 'success')
     }
     activeTab.value = 'results'
   } catch (e: any) {
@@ -220,7 +222,7 @@ function exportResults() {
     fmtNum(r, x => x.machNumber),
     fmtNum(r, x => x.P0),
     fmtNum(r, x => x.Ps),
-    r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
+    r ? (r.calculated ? (r.isValid ? '参考' : '参考: ' + r.warning) : '计算失败: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
   const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map(row => row.join(','))].join('\n')
@@ -344,8 +346,8 @@ function exportResults() {
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
           </svg>
           计算结果
-          <span v-if="hasResults" class="badge" :class="{ success: validResultsCount > 0, error: invalidResultsCount > 0 }">
-            {{ validResultsCount }}/{{ results.length }}
+          <span v-if="hasResults" class="badge" :class="{ success: computedResultsCount > 0 }">
+            {{ computedResultsCount }}/{{ results.length }}
           </span>
         </button>
       </div>
@@ -532,14 +534,6 @@ function exportResults() {
                 <span class="stat-value">{{ results.length }}</span>
                 <span class="stat-label">总记录</span>
               </div>
-              <div class="stat-card success">
-                <span class="stat-value">{{ validResultsCount }}</span>
-                <span class="stat-label">有效</span>
-              </div>
-              <div class="stat-card error" v-if="invalidResultsCount > 0">
-                <span class="stat-value">{{ invalidResultsCount }}</span>
-                <span class="stat-label">无效</span>
-              </div>
             </div>
             <button class="btn btn-secondary" @click="exportResults">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -564,20 +558,20 @@ function exportResults() {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
+                <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ warning: r && r.calculated && !r.isValid, invalid: r && !r.calculated }">
                   <td class="col-num">{{ idx + 1 }}</td>
                   <td>{{ fmtNum(r, x => x.alpha) }}</td>
                   <td>{{ fmtNum(r, x => x.machNumber) }}</td>
                   <td>{{ fmtNum(r, x => x.P0) }}</td>
                   <td>{{ fmtNum(r, x => x.Ps) }}</td>
                   <td class="col-status">
-                    <span v-if="r && r.isValid" class="status-badge success">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-                      有效
-                    </span>
-                    <span v-else-if="r && !r.isValid" class="status-badge error" :title="r.warning">
+                    <span v-if="r && r.calculated" class="status-badge" :class="r.isValid ? '' : 'warning'" :title="r.warning">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                      无效
+                      参考
+                    </span>
+                    <span v-else-if="r" class="status-badge error" :title="r.warning">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      计算失败
                     </span>
                     <span v-else class="status-badge">-</span>
                   </td>
@@ -855,6 +849,8 @@ function exportResults() {
 
 .data-row { transition: background 150ms ease; }
 .data-row:hover { background: #eef2ff; }
+.data-row.warning { background: #fffbeb; }
+.data-row.warning:hover { background: #fef3c7; }
 .data-row.invalid { background: #fef2f2; }
 .data-row.invalid:hover { background: #fee2e2; }
 
@@ -865,6 +861,7 @@ function exportResults() {
 
 .status-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 20px; font-size: 10px; font-weight: 600; }
 .status-badge.success { background: #dcfce7; color: #16a34a; }
+.status-badge.warning { background: #fef3c7; color: #b45309; cursor: help; }
 .status-badge.error { background: #fee2e2; color: #dc2626; cursor: help; }
 .status-badge svg { width: 12px; height: 12px; }
 

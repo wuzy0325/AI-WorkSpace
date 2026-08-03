@@ -9,13 +9,14 @@ type InterpolationInput struct {
 }
 
 type InterpolationResult struct {
-	Alpha           float64 `json:"alpha"`
-	MachNumber      float64 `json:"machNumber"`
-	TotalPressure   float64 `json:"P0"`
-	StaticPressure  float64 `json:"Ps"`
-	IterationCount  int     `json:"iterationCount"`
-	IsValid         bool    `json:"isValid"`
-	Warning         string  `json:"warning,omitempty"`
+	Alpha          float64 `json:"alpha"`
+	MachNumber     float64 `json:"machNumber"`
+	TotalPressure  float64 `json:"P0"`
+	StaticPressure float64 `json:"Ps"`
+	IterationCount int     `json:"iterationCount"`
+	Calculated     bool    `json:"calculated"`
+	IsValid        bool    `json:"isValid"`
+	Warning        string  `json:"warning,omitempty"`
 }
 
 type PrbValidRange struct {

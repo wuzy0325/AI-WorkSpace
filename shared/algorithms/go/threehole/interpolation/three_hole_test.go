@@ -116,7 +116,12 @@ func TestCalcMach(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		mach := calcMach(tt.pt, tt.ps, tt.pa, tt.tatm)
+		mach, err := calcMach(tt.pt, tt.ps, tt.pa, tt.tatm)
+		if err != nil {
+			t.Errorf("calcMach(%f, %f, %f, %f) 不应返回错误: %v",
+				tt.pt, tt.ps, tt.pa, tt.tatm, err)
+			continue
+		}
 		if mach < tt.wantMin || mach > tt.wantMax {
 			t.Errorf("calcMach(%f, %f, %f, %f) = %f, want in [%f, %f]",
 				tt.pt, tt.ps, tt.pa, tt.tatm, mach, tt.wantMin, tt.wantMax)

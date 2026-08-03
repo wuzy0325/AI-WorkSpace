@@ -84,7 +84,10 @@ tasks:
   clean:
     summary: 清理上次打包遗留的二进制和资源文件，避免与新构建混淆
     cmds:
-      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+      # Test-Path 守卫：build/bin 不存在时 Remove-Item 会返回 exit 1（嵌套 powershell
+      # 对不存在的路径即使 -ErrorAction SilentlyContinue 也置 $?=False），
+      # 导致 task clean 在无遗留产物时失败。加守卫后恒 exit 0。
+      - cmd: powershell -NoProfile -Command "if (Test-Path build/bin) { Remove-Item -Recurse -Force build/bin }"
 
   check-bindings:
     summary: 检查 Wails backend 方法与 frontend bindings 是否一致（方法缺失/多余 + stale 时间戳警告）

@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.1] - 2026-08-02
+
+### Fixed
+
+- 三孔插值输入有限性校验（A1）：`Patm=NaN` 等脏输入不再静默产出 `MachNumber=NaN` 且 `isValid=true` 的结果，统一返回 `isValid=false` + 警告（结构化无效结果，不使批量接口整体失败）。
+- 三孔完整气动参数校验（A2）：`calcMach` 对齐七孔 `calVelocityMach` 全部前置条件（`Patm>0`、`Tatm>-273.15℃`、`pt≥ps`、`ps+Patm>0`、压力比≥1、最终 Ma 有限），不再用 `Abs` 掩盖非物理状态、不再对异常静默返回 0。
+- 三孔 PRB 加载器一致性校验（A4）：多文件加载时校验各档 Alpha 网格完全一致、Kb 严格单调无重复，违规文件拒绝加载，避免错序 PRB 静默错配角度、重复 Kb 区间插值除零。
+- 三孔超范围警告携带诊断数值（A3）：警告包含"恢复Ma=X，校准范围[Y,Z]"。
+
+### Changed
+
+- 三孔结果状态统一显示"参考"（不再区分"有效/无效"）：已计算行一律标注"参考"并展示计算数值，超出校准范围的行以琥珀色 + 悬停 Warning 提示原因；导出 CSV 同步输出数值与"参考: 原因"。
+- 三孔单 PRB 文件快速路径（B1/C2）：跳过空转迭代与每帧排序，`IterationCount=1`、不再出现"马赫数被限制到标定边界"噪音警告。
+- 三孔预计算 Kb 排序表（B2）：单文件热路径免去每帧排序/分配。
+
+### Internal
+
+- `three_hole_improvements_test.go` 新增 A1/A2/A3/A4/B1/C2 回归测试；更新 `TestCalcMach` 新签名与 `TestThreeHole_Boundary_ZeroAtm`（`PAtm≤0` 现判无效）。
+
+### Verification
+
+- `$env:GOWORK="off"; go test ./interpolation/ -count=1`（shared/algorithms/go/threehole）: passed
+- `$env:GOWORK="off"; go test ./backend/ -count=1`（probe-interpolator）: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- 端到端回归：W532 三孔 PRB + 三孔测试数据.csv，63 行仍全部 `isValid=false`，首行恢复 Ma=0.167。
+
+### Known Issues
+
+- 暂无。
+
 ## [0.2.0] - 2026-07-31
 
 ### Added
