@@ -580,11 +580,16 @@ func (i *fakeRecoveryIndex) setFindBlock() (<-chan struct{}, func()) {
 	return i.findEntered, func() { once.Do(func() { close(i.findBlock) }) }
 }
 
-func (i *fakeRecoveryIndex) Unregister(_ context.Context, probeID, _ string) error {
+func (i *fakeRecoveryIndex) Unregister(_ context.Context, probeID, taskID string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.unregisterErr != nil {
 		return i.unregisterErr
+	}
+	// 与真实 adapter 语义一致：无候选幂等成功；候选存在但 taskID 不符返回错误
+	// （防止实现误传文件 taskID 而非索引 taskID 时测试静默通过）。
+	if existing, found := i.candidates[probeID]; found && existing.TaskID != taskID {
+		return fmt.Errorf("注销任务与登记候选不一致: probe=%s task=%s", probeID, taskID)
 	}
 	delete(i.candidates, probeID)
 	return nil

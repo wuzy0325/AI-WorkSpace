@@ -22,12 +22,20 @@ import (
 //   - 注销：正常完成（completed）的 completion 提交后 Unregister；
 //     stopped/error 终态保留映射（spec I6：可恢复 checkpoint 必须可发现）；
 //   - 显式放弃：ClearCheckpoint 校验 taskID 后原子 Unregister 并删除文件；
+//   - 自愈清理：LoadCheckpoint 发现索引 taskID 与文件内容 taskID 不一致
+//     （不可恢复脏状态）时注销映射并删除残留文件；
 //   - dual 路径不读写 legacy traversal-active-index.json（manager ownership 分支保证）。
 
 // LoadCheckpoint 返回该 probe 的唯一可恢复 checkpoint（不扫描目录猜测）。
 // registry 仍持有 session 时，索引中的 checkpoint 属于运行期容灾快照，不可恢复，
 // 返回 nil 避免前端同时展示“正在运行”和“继续/放弃”。
 // 无候选时返回 (nil, nil)；候选文件损坏或版本不符返回错误。
+// 索引 taskID 与文件内容 taskID 不一致时为不可恢复脏状态（典型成因：旧任务
+// checkpoint 文件删除失败残留，新任务复用同一 CSV 输出路径且提前停止，
+// completeRecoveryMapping 按路径 Stat 成功后把新 taskID 登记到旧文件上）：
+// 两个任务均无法经 resume/clear 恢复（两者都以索引 taskID 校验），保留只会让
+// 前端展示永远操作失败的断点横幅。此处自愈注销映射、删除残留文件并返回
+// (nil, nil)；注销失败返回错误，映射与文件保留待下次重试。
 func (r *ManagerRegistry) LoadCheckpoint(ctx context.Context, probeID ProbeID) (*traversal.Checkpoint, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -55,7 +63,27 @@ func (r *ManagerRegistry) LoadCheckpoint(ctx context.Context, probeID ProbeID) (
 	if cp.ProbeID != string(probeID) {
 		return nil, fmt.Errorf("%w: checkpoint 属于 %s，请求为 %s", ErrProbeIDMismatch, cp.ProbeID, probeID)
 	}
+	if cp.TaskID != ref.TaskID {
+		return nil, r.discardOrphanedRecovery(ctx, probeID, ref, cp.TaskID)
+	}
 	return cp, nil
+}
+
+// discardOrphanedRecovery 清理"索引候选与文件内容不一致"的不可恢复脏状态：
+// 按索引 taskID 注销映射并 best-effort 删除残留文件（残留仅浪费磁盘，与
+// ClearCheckpoint 的文件删除策略一致）。
+func (r *ManagerRegistry) discardOrphanedRecovery(ctx context.Context, probeID ProbeID, ref ports.TraversalCheckpointRef, fileTaskID string) error {
+	slog.Warn("双探针恢复映射与 checkpoint 文件内容不一致，按不可恢复清理",
+		"probe", probeID, "indexTask", ref.TaskID, "fileTask", fileTaskID, "path", ref.Path)
+	if err := r.recoveryIndex.Unregister(ctx, string(probeID), ref.TaskID); err != nil {
+		return fmt.Errorf("注销不一致的双探针恢复映射失败: %w", err)
+	}
+	if r.checkpointStore != nil {
+		if err := r.checkpointStore.Remove(ref.Path); err != nil {
+			slog.Warn("删除不一致 dual checkpoint 文件失败（映射已注销）", "path", ref.Path, "error", err)
+		}
+	}
+	return nil
 }
 
 // ResumeFromCheckpoint 恢复该 probe 的唯一可恢复任务。

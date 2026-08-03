@@ -16,8 +16,8 @@ import (
 // Task 11：registry probe-scoped 恢复 façade。
 //
 // 覆盖：LoadCheckpoint 唯一候选 / taskID 不匹配 / probeID 不匹配 / v1/v2 拒绝 /
-// resume 准入事务（冲突时 checkpoint 与输出文件不变）/ ClearCheckpoint /
-// 运行期映射注册与完成注销。
+// LoadCheckpoint 索引-文件 taskID 不一致自愈 / resume 准入事务（冲突时 checkpoint
+// 与输出文件不变）/ ClearCheckpoint / 运行期映射注册与完成注销。
 
 // seedDualCheckpoint 构造 v3 checkpoint 写入 fake store 并登记到 fake index，返回文件路径。
 //
@@ -295,6 +295,56 @@ func TestManagerRegistry_LoadCheckpoint_HidesActiveSessionCheckpoint(t *testing.
 		t.Fatalf("活动 session 的运行期 checkpoint 不得作为可恢复任务返回: %+v", cp)
 	}
 	completeSession(fx, Probe1)
+}
+
+func TestManagerRegistry_LoadCheckpoint_HealsIndexFileTaskIDMismatch(t *testing.T) {
+	fx := newRegistryFixture(t)
+	ctx := context.Background()
+	// 脏状态：索引候选为 task-b，其路径下的文件内容却属于 task-a
+	// （task-a 文件删除失败残留；task-b 复用同一 CSV 路径提前停止，
+	// completeRecoveryMapping 按路径 Stat 成功后误登记）。
+	cpPath := seedDualCheckpoint(t, fx, Probe1, "probe1-task-a-stale", []string{"ctrl-a"})
+	fx.index.seed("probe1", "probe1-task-b-authoritative", cpPath)
+
+	cp, err := fx.registry.LoadCheckpoint(ctx, Probe1)
+	if err != nil || cp != nil {
+		t.Fatalf("不一致状态应自愈并返回无候选: cp=%+v err=%v", cp, err)
+	}
+	if _, found, _ := fx.index.Find(ctx, "probe1"); found {
+		t.Fatal("自愈后恢复映射应注销")
+	}
+	if exists, _ := fx.cpStore.Stat(cpPath); exists {
+		t.Fatal("自愈后残留 checkpoint 文件应删除")
+	}
+	// 自愈后用户视角状态干净：再次加载无候选（断点横幅消失）；
+	// 显式放弃幂等成功（空索引早返回，不再报 task_id_mismatch）。
+	cp, err = fx.registry.LoadCheckpoint(ctx, Probe1)
+	if err != nil || cp != nil {
+		t.Fatalf("自愈后再次加载应返回无候选: cp=%+v err=%v", cp, err)
+	}
+	if err := fx.registry.ClearCheckpoint(ctx, Probe1, "probe1-task-a-stale"); err != nil {
+		t.Fatalf("自愈后清除应幂等返回 nil: %v", err)
+	}
+}
+
+func TestManagerRegistry_LoadCheckpoint_HealFailureRetainsState(t *testing.T) {
+	fx := newRegistryFixture(t)
+	ctx := context.Background()
+	cpPath := seedDualCheckpoint(t, fx, Probe1, "probe1-task-a-stale", []string{"ctrl-a"})
+	fx.index.seed("probe1", "probe1-task-b-authoritative", cpPath)
+	fx.index.setErrors(nil, errors.New("unregister failed"))
+
+	cp, err := fx.registry.LoadCheckpoint(ctx, Probe1)
+	if err == nil || cp != nil {
+		t.Fatalf("自愈注销失败应返回错误且无候选: cp=%+v err=%v", cp, err)
+	}
+	// 注销失败：映射与文件保留，等待下次重试
+	if _, found, _ := fx.index.Find(ctx, "probe1"); !found {
+		t.Fatal("注销失败时映射应保留")
+	}
+	if exists, _ := fx.cpStore.Stat(cpPath); !exists {
+		t.Fatal("注销失败时文件不得删除")
+	}
 }
 
 func TestManagerRegistry_ClearCheckpoint_ValidatesTaskID(t *testing.T) {
