@@ -121,6 +121,8 @@ const zh = {
 
   // ---- 配置面板 ----
   'config.deviceConfig': '设备配置',
+  'config.deviceName': '设备名称',
+  'config.deviceNamePlaceholder': '输入设备名称',
   'config.hardwareParams': '硬件参数',
   'config.channelConfig': '通道配置',
   'config.samplingRate': '采样频率',
@@ -215,6 +217,7 @@ const zh = {
   'error.scanTimeout': '设备扫描超时，请检查网络或防火墙后重试',
   'error.connectTimeout': '连接设备超时，请检查设备响应或网络后重试',
   'error.duplicateDevice': '该设备已添加，请勿重复添加',
+  'error.duplicateName': '设备名已存在，请更换名称',
 
   // ---- 日志消息（写入 logStore 的运行时消息） ----
   'logMessage.autoConnectFailed': '自动连接失败: {message}',
@@ -344,6 +347,8 @@ const en = {
 
   // ---- config ----
   'config.deviceConfig': 'Device Config',
+  'config.deviceName': 'Device Name',
+  'config.deviceNamePlaceholder': 'Enter device name',
   'config.hardwareParams': 'Hardware',
   'config.channelConfig': 'Channels',
   'config.samplingRate': 'Sampling Rate',
@@ -438,6 +443,7 @@ const en = {
   'error.scanTimeout': 'Device scan timed out. Check the network or firewall and try again.',
   'error.connectTimeout': 'Device connection timed out. Check the device response or network and try again.',
   'error.duplicateDevice': 'This device has already been added',
+  'error.duplicateName': 'Device name already exists. Please choose another.',
 
   // ---- logMessage ----
   'logMessage.autoConnectFailed': 'Auto-connect failed: {message}',

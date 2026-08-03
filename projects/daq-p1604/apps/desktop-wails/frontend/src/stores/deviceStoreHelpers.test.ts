@@ -5,6 +5,7 @@ import {
   dedupeName,
   hostKey,
   computeExistingKeys,
+  computeExistingNames,
   planScannedAdditions,
 } from './deviceStoreHelpers'
 
@@ -83,6 +84,23 @@ describe('computeExistingKeys', () => {
     expect(keys.has('host:192.168.3.101:9000')).toBe(true)
     expect(keys.has('host:10.0.0.5:7000')).toBe(true)
     expect(keys.size).toBe(2)
+  })
+})
+
+// ---------- computeExistingNames ----------
+describe('computeExistingNames', () => {
+  it('从 profiles 收集非空设备名', () => {
+    const names = computeExistingNames([
+      { id: 'a', name: '工位A', address: '192.168.3.101', port: 9000 } as any,
+      { id: 'b', name: '', address: '10.0.0.5', port: 7000 } as any,
+      { id: 'c', name: '工位A', address: '10.0.0.6', port: 7000 } as any,
+    ])
+    expect(names.has('工位A')).toBe(true)
+    expect(names.size).toBe(1)
+  })
+
+  it('空列表返回空集合', () => {
+    expect(computeExistingNames([]).size).toBe(0)
   })
 })
 

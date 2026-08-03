@@ -38,6 +38,7 @@ const precisionOptions = computed<SelectOption[]>(() =>
 // 采样频率（Hz），UI 层展示整数频率，保存时换算为周期毫秒
 // 频率范围：1 Hz 到 500 Hz
 const samplingFreq = ref(10)
+const deviceName = ref('') // 设备名称（用户可读的唯一标识，可在此修改）
 const autoConnect = ref(false) // 启动时自动连接
 const pressureUnit = ref('psi') // 全局压力单位
 const globalPrecision = ref(3) // 全局默认精度（小数位数）
@@ -108,6 +109,7 @@ function syncFormFromProfile(profileData: typeof profile.value) {
   if (!profileData) return
   // 保存同步中跳过表单同步，避免触发 watcher 覆盖 saveStatus
   if (syncing.value) return
+  deviceName.value = profileData.name || ''
   samplingFreq.value = periodMsToHz(profileData.p1604Config?.samplingRate || 100)
   autoConnect.value = profileData.p1604Config?.autoConnect ?? false
   pressureUnit.value = profileData.p1604Config?.unit || 'psi'
@@ -144,6 +146,7 @@ watch(
 function formEqualsProfile(p: typeof profile.value): boolean {
   if (!p) return false
   const cfg = p.p1604Config
+  if (deviceName.value !== (p.name || '')) return false
   if (samplingFreq.value !== periodMsToHz(cfg?.samplingRate || 100)) return false
   if (autoConnect.value !== (cfg?.autoConnect ?? false)) return false
   if (pressureUnit.value !== (cfg?.unit || 'psi')) return false
@@ -167,7 +170,7 @@ function formEqualsProfile(p: typeof profile.value): boolean {
   return true
 }
 
-watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
+watch([deviceName, samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   // CFG-017：改回原值时自动清除徽章；只有真正存在差异时才标记未保存
@@ -206,12 +209,26 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
 
 async function saveConfig() {
   if (!profile.value) return
+  // 设备名校验：非空 + 全局唯一（排除当前设备自身，与手动添加/扫描添加共用同一语义）
+  const trimmedName = deviceName.value.trim()
+  if (!trimmedName) {
+    saveStatus.value = 'error'
+    saveMessage.value = i18n.t('dialog.inputDeviceName')
+    return
+  }
+  const nameTaken = deviceStore.profiles.some((p) => p.id !== props.deviceId && p.name === trimmedName)
+  if (nameTaken) {
+    saveStatus.value = 'error'
+    saveMessage.value = i18n.t('error.duplicateName')
+    return
+  }
   saveStatus.value = 'saving'
   saveMessage.value = ''
   syncing.value = true
   try {
     const nextProfile = {
       ...profile.value,
+      name: trimmedName,
       p1604Config: {
         ...profile.value.p1604Config,
         samplingRate: hzToPeriodMs(samplingFreq.value),
@@ -314,6 +331,21 @@ function onChannelPrecisionChange(index: number, value: string) {
           <h4 class="config__section-title">{{ i18n.t('config.hardwareParams') }}</h4>
         </div>
         <div class="config__section-body">
+          <!-- 设备名称：用户可读的唯一标识，可在配置面板修改 -->
+          <div class="config__field">
+            <label class="config__label">
+              <Hash class="config__label-icon" />
+              <span>{{ i18n.t('config.deviceName') }}</span>
+            </label>
+            <input
+              v-model="deviceName"
+              class="config__text-input"
+              type="text"
+              :placeholder="i18n.t('config.deviceNamePlaceholder')"
+              :disabled="isAcquiring"
+            />
+          </div>
+
           <!-- 采样频率（Hz） -->
           <div class="config__field">
             <label class="config__label">
@@ -703,6 +735,30 @@ function onChannelPrecisionChange(index: number, value: string) {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+/* 文本输入（设备名称等） */
+.config__text-input {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__text-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.config__text-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .config__rate-input {

@@ -6,6 +6,7 @@ import { useLogStore } from '@stores/logStore'
 import { useI18nStore } from '@stores/i18nStore'
 import {
   computeExistingKeys,
+  computeExistingNames,
   hostKey,
   planScannedAdditions,
   type ScannedDeviceInput,
@@ -563,6 +564,10 @@ export const useDeviceStore = defineStore('device', () => {
     const dupKey = hostKey(address, port)
     if (computeExistingKeys(profiles.value).has(dupKey)) {
       throw new Error(i18n.t('error.duplicateDevice'))
+    }
+    // 名字全局唯一：设备名是用户可读的唯一标识，与现有设备重名时阻止添加
+    if (computeExistingNames(profiles.value).has(name)) {
+      throw new Error(i18n.t('error.duplicateName'))
     }
 
     const id = `p1604_${Date.now()}`

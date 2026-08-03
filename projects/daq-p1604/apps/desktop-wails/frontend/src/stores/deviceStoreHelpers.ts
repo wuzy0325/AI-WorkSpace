@@ -111,6 +111,18 @@ export function computeExistingKeys(profiles: PressureProfile[]): Set<string> {
 }
 
 /**
+ * 从当前 profiles 生成设备名集合（忽略空名）。
+ * 供"名字全局唯一"校验使用：手动添加、配置面板改名、扫描批量添加共用同一语义。
+ */
+export function computeExistingNames(profiles: PressureProfile[]): Set<string> {
+  const names = new Set<string>()
+  for (const p of profiles) {
+    if (p.name) names.add(p.name)
+  }
+  return names
+}
+
+/**
  * 计算一次批量添加计划。
  *
  * 输入：扫描到的原始输入 + 现有 profile 列表 + 默认自动连接开关值
@@ -131,10 +143,7 @@ export function planScannedAdditions(params: {
 
   const existingKeys = computeExistingKeys(existingProfiles)
   // 名字冲突集合：包含现有 profile 名字，用于 dedupeName 命中判断
-  const usedNames = new Set<string>()
-  for (const p of existingProfiles) {
-    if (p.name) usedNames.add(p.name)
-  }
+  const usedNames = computeExistingNames(existingProfiles)
 
   const toAdd: PlannedProfile[] = []
   const skipped: SkippedScanEntry[] = []

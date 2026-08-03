@@ -6,6 +6,7 @@ import LogPanel from './LogPanel.vue'
 import DeviceSidebar from './DeviceSidebar.vue'
 import DaqP1604Config from '@components/device/DaqP1604Config.vue'
 import ScanResultList, { type ScanSelectionItem } from '@components/device/ScanResultList.vue'
+import { type ScannedDeviceInput } from '@stores/deviceStoreHelpers'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useLogStore } from '@stores/logStore'
 import { useI18nStore } from '@stores/i18nStore'
@@ -165,7 +166,17 @@ async function confirmAddScanned() {
 
   isAddingScanned.value = true
   try {
-    const result = await deviceStore.addScannedProfiles(scanSelection.value, {
+    // 把扫描弹窗的选择项映射为 ScannedDeviceInput，其中 name 作为 overrideName 传给规划逻辑。
+    // 修复点：此前仅传 ScanSelectionItem，planScannedAdditions 读取的是 overrideName，
+    // 用户在内联输入框改的名字从未生效（永远落到默认名）。此处显式映射后改名真正落地。
+    const inputs: ScannedDeviceInput[] = scanSelection.value.map((s) => ({
+      address: s.address,
+      port: s.port,
+      macAddress: s.macAddress,
+      serialNumber: s.serialNumber,
+      overrideName: s.name,
+    }))
+    const result = await deviceStore.addScannedProfiles(inputs, {
       defaultAutoConnect: defaultAutoConnectOnAdd.value,
     })
 
