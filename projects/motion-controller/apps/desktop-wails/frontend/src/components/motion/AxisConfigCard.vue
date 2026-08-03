@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AxisConfig } from '@shared/types/motion'
-import { getAxisThemeClass, getAxisInfoLabel, computePulsesPerUnit } from './motionConfigEditor'
+import type { AxisConfig, AxisKind } from '@shared/types/motion'
+import { getAxisThemeClass, getAxisInfoLabel, computePulsesPerUnit, applyAxisKindDefaults } from './motionConfigEditor'
 import UiToggle from '@components/ui/UiToggle.vue'
 
 const props = defineProps<{
@@ -32,6 +32,14 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   }
   emit('update', index, { ...props.axis, [key]: value })
 }
+
+/**
+ * 切换轴类型时的默认值联动，规则实现见共享纯函数 applyAxisKindDefaults
+ * （切 ROTARY 仅在 gearRatio 仍为默认 1 时填 180；切 LINEAR 仅在 lead == null 时填 4）。
+ */
+function onKindChange(index: number, kind: AxisKind) {
+  emit('update', index, applyAxisKindDefaults(props.axis, kind))
+}
 </script>
 
 <template>
@@ -53,7 +61,7 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
       <div class="axis-card__row">
         <label class="axis-card__cell">
           <span class="axis-card__cell-label">类型</span>
-          <select :value="axis.kind" @change="onAxisUpdate(index, 'kind', ($event.target as HTMLSelectElement).value)" class="axis-card__select config-select">
+          <select :value="axis.kind" @change="onKindChange(index, ($event.target as HTMLSelectElement).value as AxisKind)" class="axis-card__select config-select">
             <option value="LINEAR">直线轴</option>
             <option value="ROTARY">旋转轴</option>
           </select>
@@ -116,7 +124,8 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
 .axis-card {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-lg);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 6px;
   border: 1px solid var(--border-default);
   background: var(--bg-panel-strong);
   overflow: hidden;
@@ -159,9 +168,10 @@ function onAxisUpdate(index: number, key: string, value: unknown) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--axis-hue);
-  color: white;
+  color: #0b0e13;
   font-size: 0.75rem;
   font-weight: 800;
   flex-shrink: 0;

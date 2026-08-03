@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"shared.local/device-sdk/go/pkg/slog"
 	"sync"
 	"syscall"
 	"time"
@@ -16,7 +17,6 @@ import (
 
 	"shared.local/device-sdk/go/motion/core"
 	"shared.local/device-sdk/go/motion/ports"
-	"shared.local/device-sdk/go/pkg/slog"
 )
 
 const (
@@ -194,6 +194,14 @@ type WTNMC4AMotionController struct {
 	trustedPositions map[int]trustedPositionSample
 	stateVersion     uint64
 
+	// ffiGate 串行化 DLL FFI 调用并施加调用侧超时。
+	// 动机：WTNMC4A DLL 内部走 TCP 通信，在 LSP 拦截 winsock 的机器上
+	// 可能永久阻塞（syscall 阻塞不可被 Go 抢占、无法用 timer/watchdog 解除）。
+	// 若在 ioMu/mu 持锁期间同步调用，控制器全部操作（含急停/断开）永久死锁。
+	// 方案：所有 FFI 调用投递到 ffiGate 单 worker 串行执行；调用侧有界等待，
+	// 超时后释放锁返回错误（worker 卡死时后续投递快速失败，不阻塞调用方）。
+	ffi *ffiGate
+
 	// Test seams for deterministic DLL failure and concurrency tests.
 	readLP    func(handle uintptr, axis int) int32
 	readRR0   func(handle uintptr) (rr0Status, error)
@@ -204,6 +212,110 @@ type WTNMC4AMotionController struct {
 	// 每 500ms 做一次完整状态（含 getRR1Status），刷新限位/报警/归零等慢变信号。
 	lastFullStatusAt time.Time // 上次完整状态时间
 
+}
+
+// ffiCallTimeout 是单次 FFI 调用的调用侧等待上限。
+// 健康 DLL 调用通常在毫秒级完成；200ms 已远超正常耗时。
+// 超时后调用侧放弃等待并释放锁，DLL 内部若卡死则由 worker 继续阻塞（泄漏受控）。
+const ffiCallTimeout = 200 * time.Millisecond
+
+// ffiGate 是受限的 DLL FFI 执行器：
+//   - 单 worker goroutine 串行执行（DLL 非线程安全）
+//   - 投递无界等待（调用方持锁时投递不阻塞：见 enqueue 的 channel 缓冲）
+//   - 等待结果有界，超时返回 ErrFFIHang
+//   - worker 一旦卡死，后续调用在投递后快速超时失败（fail-fast），不再累积 goroutine
+type ffiGate struct {
+	queue chan ffiJob
+	done  chan struct{}
+	once  sync.Once
+}
+
+type ffiJob struct {
+	fn   func()
+	done chan struct{}
+}
+
+// newFFIGate 创建并启动 worker。只应在 Connect 成功后创建（此时才有 DLL 可调）；
+// Disconnect 时 Close 停止 worker。
+func newFFIGate() *ffiGate {
+	g := &ffiGate{
+		queue: make(chan ffiJob, 1),
+		done:  make(chan struct{}),
+	}
+	go func() {
+		for {
+			select {
+			case <-g.done:
+				return
+			case job := <-g.queue:
+				job.fn()
+				close(job.done)
+			}
+		}
+	}()
+	return g
+}
+
+// Do 投递 fn 到 worker 并等待其完成，超时返回 ErrFFIHang。
+// fn 内必须完成所有 FFI 调用与结果回写（含错误捕获），worker 串行执行保证原子性。
+// Do 返回 ErrFFIHang 时调用方应放弃该连接（连接已不可信），释放锁继续。
+// 投递与等待均有界：worker 卡死时快速失败，不阻塞调用方、不累积 goroutine。
+func (g *ffiGate) Do(fn func()) error {
+	if g == nil {
+		// 未初始化（gate 尚未创建），直接执行——调用方应保证仅在连接建立后调用。
+		fn()
+		return nil
+	}
+	job := ffiJob{fn: fn, done: make(chan struct{})}
+	select {
+	case g.queue <- job:
+	case <-g.done:
+		return ErrFFIHang
+	case <-time.After(ffiCallTimeout):
+		// worker 卡死且队列已满：投递也快速失败。
+		return ErrFFIHang
+	}
+	select {
+	case <-job.done:
+		return nil
+	case <-g.done:
+		return ErrFFIHang
+	case <-time.After(ffiCallTimeout):
+		return ErrFFIHang
+	}
+}
+
+// ErrFFIHang 表示 DLL FFI 调用在 ffiCallTimeout 内未返回（LSP 环境 DLL 内部阻塞）。
+// 调用方应释放锁、上报错误，连接后续不可用。
+var ErrFFIHang = errors.New("WTNMC4A FFI call timed out (possible winsock LSP hang); controller unreachable")
+
+// Close 停止 worker。调用方（Disconnect）负责在无并发 FFI 时调用。
+func (g *ffiGate) Close() {
+	if g == nil {
+		return
+	}
+	g.once.Do(func() { close(g.done) })
+}
+
+// doFFI 是控制器上的便捷包装：在 ffiGate 上执行 fn，返回 gate 错误（无超时返回 nil）。
+func (c *WTNMC4AMotionController) doFFI(fn func()) error {
+	if c.ffi == nil {
+		// gate 未创建（未连接），直接执行（调用方应保证此时无 DLL 调用）。
+		fn()
+		return nil
+	}
+	return c.ffi.Do(fn)
+}
+
+// markControllerUnreachableLocked 在 FFI 超时（LSP 卡死）后更新控制器状态：
+// DLL 内部阻塞导致控制器不可达，后续命令将快速失败；状态标记让上层
+// （轮询/界面）感知并进入重连路径。调用方必须已持有 c.mu。
+func (c *WTNMC4AMotionController) markControllerUnreachableLocked(err error) {
+	c.status.LastError = err.Error()
+	c.status.Connected = false
+	c.handle = 0
+	// 通知上层连接已失效（不可达）。不阻塞：onError 回调在锁外由上层触发。
+	slog.Warn("WTNMC4A FFI unreachable, controller marked disconnected", "id", c.profile.ID, "error", err)
 }
 
 func (c *WTNMC4AMotionController) GetProfile() core.MotionControllerProfile {
@@ -309,18 +421,32 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 		c.status.LastError = fmt.Sprintf("无效的IP地址: %v", err)
 		return fmt.Errorf("WTNMC4A IP地址无效 %q: %w", c.profile.Address, err)
 	}
-	ret, _, _ := c.procs.devCreateA.Call(
-		uintptr(unsafe.Pointer(ipPtr)),
-		uintptr(defaultSendTO),
-		uintptr(defaultRecvTO),
-	)
-	if ret == 0 || ret == ^uintptr(0) {
+	// 先创建 ffiGate：devCreateA 是 FFI，可能被 LSP 卡死，必须走 gate 受超时保护。
+	// 若已存在（异常路径残留），先关闭重建，避免 worker 堆积。
+	if c.ffi != nil {
+		c.ffi.Close()
+	}
+	c.ffi = newFFIGate()
+	var devRet uintptr
+	err = c.doFFI(func() {
+		devRet, _, _ = c.procs.devCreateA.Call(
+			uintptr(unsafe.Pointer(ipPtr)),
+			uintptr(defaultSendTO),
+			uintptr(defaultRecvTO),
+		)
+	})
+	if err != nil {
+		c.cleanupConnectionLocked()
+		c.status.LastError = err.Error()
+		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: %w", c.profile.Address, c.profile.Port, err)
+	}
+	if devRet == 0 || devRet == ^uintptr(0) {
 		c.cleanupConnectionLocked()
 		c.status.LastError = fmt.Sprintf("创建设备句柄失败: %s:%d", c.profile.Address, c.profile.Port)
-		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回失败句柄 0x%x", c.profile.Address, c.profile.Port, ret)
+		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回失败句柄 0x%x", c.profile.Address, c.profile.Port, devRet)
 	}
-	c.handle = ret
-	slog.Info("WTNMC4A DEV_CreateA returned handle", "address", c.profile.Address, "handle", fmt.Sprintf("0x%x", ret))
+	c.handle = devRet
+	slog.Info("WTNMC4A DEV_CreateA returned handle", "address", c.profile.Address, "handle", fmt.Sprintf("0x%x", devRet))
 
 	if err := c.verifyConnectionLocked(); err != nil {
 		c.cleanupConnectionLocked()
@@ -350,12 +476,19 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	if c.handle != 0 {
-		c.procs.devRelease.Call(c.handle)
+		// devRelease 走 gate：LSP 卡死时快速失败，不阻塞 Disconnect。
+		_ = c.doFFI(func() {
+			c.procs.devRelease.Call(c.handle)
+		})
 		c.handle = 0
 	}
 	if c.dll != nil {
 		c.dll.Release()
 		c.dll = nil
+	}
+	if c.ffi != nil {
+		c.ffi.Close()
+		c.ffi = nil
 	}
 
 	c.lastFullStatusAt = time.Time{}
@@ -711,18 +844,31 @@ func (c *WTNMC4AMotionController) moveAxisInit(an int, targetPulse int32) error 
 		NPulseNum:   absPulse,
 	}
 
-	ret, _, _ := c.procs.initLVDV.Call(
-		c.handle,
-		uintptr(unsafe.Pointer(&dataList)),
-		uintptr(unsafe.Pointer(&lcData)),
-	)
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.initLVDV.Call(
+			c.handle,
+			uintptr(unsafe.Pointer(&dataList)),
+			uintptr(unsafe.Pointer(&lcData)),
+		)
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		slog.Error("WTNMC4A InitLVDV failed", "axis", an)
 		return fmt.Errorf("InitLVDV failed")
 	}
 	slog.Debug("WTNMC4A InitLVDV success", "axis", an)
 
-	ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	err = c.doFFI(func() {
+		ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		slog.Error("WTNMC4A StartLVDV failed", "axis", an)
 		return fmt.Errorf("StartLVDV failed")
@@ -901,17 +1047,30 @@ func (c *WTNMC4AMotionController) Jog(ctx context.Context, axis core.AxisName, v
 		NPulseNum:   0,
 	}
 
-	ret, _, _ := c.procs.initLVDV.Call(
-		c.handle,
-		uintptr(unsafe.Pointer(&dataList)),
-		uintptr(unsafe.Pointer(&lcData)),
-	)
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.initLVDV.Call(
+			c.handle,
+			uintptr(unsafe.Pointer(&dataList)),
+			uintptr(unsafe.Pointer(&lcData)),
+		)
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		c.status.LastError = fmt.Sprintf("初始化轴 %s 点动失败", axis)
 		return fmt.Errorf("WTNMC4A 初始化轴 %s 点动失败", axis)
 	}
 
-	ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	err = c.doFFI(func() {
+		ret, _, _ = c.procs.startLVDV.Call(c.handle, uintptr(an))
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		c.status.LastError = fmt.Sprintf("启动轴 %s 点动失败", axis)
 		return fmt.Errorf("WTNMC4A 启动轴 %s 点动失败", axis)
@@ -936,7 +1095,14 @@ func (c *WTNMC4AMotionController) Home(ctx context.Context, axis core.AxisName) 
 	}
 
 	an := wtnmc4aAxisNum(axis)
-	ret, _, _ := c.procs.startHome.Call(c.handle, uintptr(an))
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.startHome.Call(c.handle, uintptr(an))
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 启动轴 %s 回零失败", axis)
 	}
@@ -1055,7 +1221,14 @@ func (c *WTNMC4AMotionController) ResetEmergencyStop(ctx context.Context) error 
 	if err := c.checkConnectedLocked(); err != nil {
 		return err
 	}
-	ret, _, _ := c.procs.reset.Call(c.handle)
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.reset.Call(c.handle)
+	})
+	if err != nil {
+		c.markControllerUnreachableLocked(err)
+		return err
+	}
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 复位设备失败")
 	}
@@ -1085,13 +1258,27 @@ func (c *WTNMC4AMotionController) DefinePosition(ctx context.Context, axis core.
 	an := wtnmc4aAxisNum(axis)
 
 	pulse := wtnmc4aEngineeringToPulse(axisCfg, position)
-	ret, _, _ := c.procs.setLP.Call(c.handle, uintptr(an), uintptr(int64(pulse)))
+	var ret uintptr
+	var ffiErr error
+	ffiErr = c.doFFI(func() {
+		ret, _, _ = c.procs.setLP.Call(c.handle, uintptr(an), uintptr(int64(pulse)))
+	})
+	if ffiErr != nil {
+		c.markControllerUnreachableLocked(ffiErr)
+		return ffiErr
+	}
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 设置轴 %s 逻辑位置失败", axis)
 	}
 
 	encoderCount := core.EngineeringToEncoderCount(axisCfg, position)
-	ret, _, _ = c.procs.setEP.Call(c.handle, uintptr(an), uintptr(int64(encoderCount)))
+	ffiErr = c.doFFI(func() {
+		ret, _, _ = c.procs.setEP.Call(c.handle, uintptr(an), uintptr(int64(encoderCount)))
+	})
+	if ffiErr != nil {
+		c.markControllerUnreachableLocked(ffiErr)
+		return ffiErr
+	}
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 设置轴 %s 实位失败", axis)
 	}
@@ -1131,7 +1318,13 @@ func (c *WTNMC4AMotionController) verifyConnectionLocked() error {
 	}
 	// SDK 写入 64 字节结构体，必须用匹配的缓冲区，避免越界破坏栈内存
 	var raw wtnmc4aRR1Struct
-	ret, _, _ := c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	})
+	if err != nil {
+		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: %w", c.profile.Address, err)
+	}
 	if ret == 0 {
 		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: GetRR1Status 无响应", c.profile.Address)
 	}
@@ -1140,7 +1333,10 @@ func (c *WTNMC4AMotionController) verifyConnectionLocked() error {
 
 func (c *WTNMC4AMotionController) cleanupConnectionLocked() {
 	if c.handle != 0 && c.procs.devRelease != nil {
-		c.procs.devRelease.Call(c.handle)
+		// devRelease 走 gate：LSP 卡死时快速失败不阻塞清理路径。
+		_ = c.doFFI(func() {
+			c.procs.devRelease.Call(c.handle)
+		})
 		c.handle = 0
 	}
 	if c.dll != nil {
@@ -1201,16 +1397,37 @@ func (c *WTNMC4AMotionController) cacheAxisSpeedsLocked() error {
 			DecIncRate:   int32(defaultDecIncRate),
 		}
 
-		if ret, _, _ := c.procs.setSV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].StartSpeed))); ret == 0 {
+		var ret uintptr
+		if ffiErr := c.doFFI(func() {
+			ret, _, _ = c.procs.setSV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].StartSpeed)))
+		}); ffiErr != nil {
+			return ffiErr
+		}
+		if ret == 0 {
 			return fmt.Errorf("WTNMC4A 设置轴 %s 起始速度失败", axisCfg.Name)
 		}
-		if ret, _, _ := c.procs.setV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].DriveSpeed))); ret == 0 {
+		if ffiErr := c.doFFI(func() {
+			ret, _, _ = c.procs.setV.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].DriveSpeed)))
+		}); ffiErr != nil {
+			return ffiErr
+		}
+		if ret == 0 {
 			return fmt.Errorf("WTNMC4A 设置轴 %s 驱动速度失败", axisCfg.Name)
 		}
-		if ret, _, _ := c.procs.setA.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Acceleration))); ret == 0 {
+		if ffiErr := c.doFFI(func() {
+			ret, _, _ = c.procs.setA.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Acceleration)))
+		}); ffiErr != nil {
+			return ffiErr
+		}
+		if ret == 0 {
 			return fmt.Errorf("WTNMC4A 设置轴 %s 加速度失败", axisCfg.Name)
 		}
-		if ret, _, _ := c.procs.setDec.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Deceleration))); ret == 0 {
+		if ffiErr := c.doFFI(func() {
+			ret, _, _ = c.procs.setDec.Call(c.handle, uintptr(an), uintptr(int64(c.speedParams[an].Deceleration)))
+		}); ffiErr != nil {
+			return ffiErr
+		}
+		if ret == 0 {
 			return fmt.Errorf("WTNMC4A 设置轴 %s 减速度失败", axisCfg.Name)
 		}
 	}
@@ -1226,7 +1443,13 @@ func (c *WTNMC4AMotionController) getRR1Status(handle uintptr, axisNum int) (rr1
 		return c.readRR1(handle, axisNum)
 	}
 	var raw wtnmc4aRR1Struct
-	ret, _, _ := c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.getRR1.Call(handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
+	})
+	if err != nil {
+		return rr1Status{}, err
+	}
 	if ret == 0 {
 		return rr1Status{}, fmt.Errorf("GetRR1Status 返回失败")
 	}
@@ -1259,7 +1482,13 @@ func (c *WTNMC4AMotionController) getRR0Status(handle uintptr) (rr0Status, error
 		return c.readRR0(handle)
 	}
 	var raw wtnmc4aRR0Struct
-	ret, _, _ := c.procs.getRR0.Call(handle, uintptr(unsafe.Pointer(&raw)))
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.getRR0.Call(handle, uintptr(unsafe.Pointer(&raw)))
+	})
+	if err != nil {
+		return rr0Status{}, err
+	}
 	if ret == 0 {
 		return rr0Status{}, fmt.Errorf("GetRR0Status 返回失败")
 	}
@@ -1271,23 +1500,27 @@ func (c *WTNMC4AMotionController) getRR0Status(handle uintptr) (rr0Status, error
 	}, nil
 }
 
-// getRR1StatusLocked 保留原有方法名（内部调用 handle 版本），
-// 确保其他可能在锁内调用的代码兼容。
-func (c *WTNMC4AMotionController) getRR1StatusLocked(axisNum int) rr1Status {
-	status, _ := c.getRR1Status(c.handle, axisNum)
-	return status
-}
-
 func (c *WTNMC4AMotionController) readLogicalPosition(handle uintptr, axisNum int) int32 {
 	if c.readLP != nil {
 		return c.readLP(handle, axisNum)
 	}
-	ret, _, _ := c.procs.readLP.Call(handle, uintptr(axisNum))
+	var ret uintptr
+	// readLP 无 error 返回：gate 卡死时返回 0 位置 + 由上层状态机兜底
+	// （trustedPositions 校验会因无效采样触发重连路径）。
+	_ = c.doFFI(func() {
+		ret, _, _ = c.procs.readLP.Call(handle, uintptr(axisNum))
+	})
 	return int32(ret)
 }
 
 func (c *WTNMC4AMotionController) callInstStop(handle uintptr, axisNum int) error {
-	ret, _, _ := c.procs.instStop.Call(handle, uintptr(axisNum))
+	var ret uintptr
+	err := c.doFFI(func() {
+		ret, _, _ = c.procs.instStop.Call(handle, uintptr(axisNum))
+	})
+	if err != nil {
+		return err
+	}
 	if ret == 0 {
 		return fmt.Errorf("InstStop 返回失败")
 	}

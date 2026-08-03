@@ -131,6 +131,7 @@ type Profile struct {
 	Type                       Type                   `json:"type"`
 	Transport                  string                 `json:"transport,omitempty"`
 	Address                    string                 `json:"address,omitempty"`
+	LocalAddress               string                 `json:"localAddress,omitempty"`
 	Port                       int                    `json:"port,omitempty"`
 	SerialPort                 string                 `json:"serialPort,omitempty"`
 	BaudRate                   int                    `json:"baudRate,omitempty"`

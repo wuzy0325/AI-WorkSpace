@@ -13,10 +13,19 @@ import (
 	"math"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	sharedproto "shared.local/device-sdk/go/protocol"
 )
+
+// globalWatchdogTimeout 是进程级硬 watchdog 超时（ADR-009 P2）。
+//
+// 设计依据：诊断工具的 SetReadDeadline 在故障 Windows 电脑上可能失效，
+// ReadFrame 永久阻塞导致 main 挂起。watchdog 在超时后强制 Close conn 解除阻塞，
+// 并 os.Exit(2) 退出，避免僵尸进程。
+// 取值 5 分钟：默认 200 帧 × 1ms ≈ 0.2s + 配置开销 < 5s，5 分钟足够覆盖最慢场景。
+const globalWatchdogTimeout = 5 * time.Minute
 
 func main() {
 	host := flag.String("host", "192.168.1.7", "设备 IP")
@@ -25,14 +34,28 @@ func main() {
 	periodMs := flag.Int("p", 1, "采样周期 ms (1=1000Hz)")
 	flag.Parse()
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
 	fmt.Printf("连接 %s (采样周期=%dms, 读取%d帧)...\n", addr, *periodMs, *numFrames)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	// ADR-009 R2-1：改用 sharedproto.DialTCP 替代 net.DialTimeout。
+	// net.DialTimeout 依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时
+	// Dial 可能永远不返回，工具启动即卡死。sharedproto.DialTCP 内部用 goroutine +
+	// time.After 软超时 + abandoned 信号，主线程在 timeout 后立即返回，晚到 conn
+	// 被 Close 不泄漏（R1-4 整改保证）。
+	conn, err := sharedproto.DialTCP(addr, "", 5*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "连接失败: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
+	// 进程级硬 watchdog（ADR-009 P2）：超时后强制 Close conn + os.Exit(2)。
+	// 退出码 2 = watchdog 硬超时，区别于 os.Exit(1)（连接失败等一般错误），便于脚本区分。
+	// 保存 timer 句柄并在 main 正常返回前 Stop，避免长生命周期场景下 watchdog 误触发。
+	wd := time.AfterFunc(globalWatchdogTimeout, func() {
+		fmt.Fprintf(os.Stderr, "\n[watchdog] 全局超时 %v 触发，强制关闭连接并退出\n", globalWatchdogTimeout)
+		_ = conn.Close()
+		os.Exit(2)
+	})
+	defer wd.Stop()
 	fmt.Println("✅ TCP 已连接")
 
 	fr := sharedproto.NewFrameReader(conn)
@@ -43,9 +66,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "w1601 失败: %v\n", err)
 		os.Exit(1)
 	}
-	time.Sleep(100 * time.Millisecond)
-	sharedproto.DrainW1601Response(fr, conn, 200*time.Millisecond)
+	if err := sharedproto.P1604ReadCommandACK(fr, conn, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "w1601 应答失败: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Println("  ✅ 长度前缀已启用")
+
+	coeff, err := sharedproto.P1604ReadUnitCoefficient(fr, conn, 2*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "u01101 失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("  ✅ u01101 系数: %.6f\n", coeff)
+	if err := sharedproto.P1604WriteUnitCoefficient(fr, conn, coeff, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "v01101 原值写回失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("  ✅ v01101 原值写回 ACK")
 
 	// 第2步: 配置采集参数
 	fmt.Println("[2/4] c 00 (配置采集参数) ...")
@@ -54,7 +91,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "c 00 失败: %v\n", err)
 		os.Exit(1)
 	}
-	time.Sleep(200 * time.Millisecond)
+	if err := sharedproto.P1604ReadCommandACK(fr, conn, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "c 00 应答失败: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Println("  ✅")
 
 	// 第3步: 配置流内容 (压力+时间戳+大气)
@@ -63,7 +103,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "c 05 失败: %v\n", err)
 		os.Exit(1)
 	}
-	time.Sleep(200 * time.Millisecond)
+	if err := sharedproto.P1604ReadCommandACK(fr, conn, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "c 05 应答失败: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Println("  ✅")
 
 	// 第4步: 启动采集
@@ -72,22 +115,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "c 01 失败: %v\n", err)
 		os.Exit(1)
 	}
-	time.Sleep(200 * time.Millisecond)
-	fmt.Println("  ✅ 采集已启动")
-	fmt.Println()
-
-	// 清空缓冲区积压
-	for i := 0; i < 20; i++ {
-		conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		data, err := fr.ReadFrame()
-		if err != nil {
-			break
-		}
-		if !sharedproto.IsASCIIFrame(data) {
-			break
-		}
+	if err := sharedproto.P1604ReadCommandACK(fr, conn, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "c 01 应答失败: %v\n", err)
+		os.Exit(1)
 	}
-	fmt.Println("缓冲区已排空，开始读数...")
+	fmt.Println("  ✅ 采集已启动")
 	fmt.Println()
 
 	// wall clock 计时：用于对比"设备时间戳跨度"与"系统时间跨度"
@@ -119,7 +151,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "\n⏱ 读取超时 (已读 %d 帧)\n", readCount)
 				break
 			}
-			fmt.Fprintf(os.Stderr, "\nReadFrame 错误: %v\n", readCount, err)
+			fmt.Fprintf(os.Stderr, "\nReadFrame 错误（已读 %d 帧）: %v\n", readCount, err)
 			break
 		}
 		if sharedproto.IsASCIIFrame(data) {
@@ -205,8 +237,14 @@ func main() {
 		prevFrac = fractional
 	}
 
-	// 停止
-	sendCmd(conn, "c 02 1")
+	if err := sendCmd(conn, "c 02 1"); err != nil {
+		fmt.Fprintf(os.Stderr, "c 02 发送失败: %v\n", err)
+		os.Exit(1)
+	}
+	if err := sharedproto.P1604ReadCommandACK(fr, conn, 2*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "c 02 应答失败: %v\n", err)
+		os.Exit(1)
+	}
 	wallEnd := time.Now()
 	fmt.Println()
 

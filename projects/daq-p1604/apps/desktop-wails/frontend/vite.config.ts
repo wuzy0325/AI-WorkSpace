@@ -14,6 +14,11 @@ export default defineConfig({
       '@bridge': fileURLToPath(new URL('./src/bridge', import.meta.url)),
       '@composables': fileURLToPath(new URL('./src/composables', import.meta.url)),
       '@shared-frontend': fileURLToPath(new URL('../../../../../shared/frontend', import.meta.url)),
+      // shared/frontend 目录向上找不到 node_modules，需显式映射 vue/pinia 到项目本地依赖，
+      // 让 shared/*.ts 文件能被 Rollup 正确解析
+      'vue': fileURLToPath(new URL('./node_modules/vue', import.meta.url)),
+      'pinia': fileURLToPath(new URL('./node_modules/pinia', import.meta.url)),
+      '@lucide/vue': fileURLToPath(new URL('./node_modules/@lucide/vue', import.meta.url)),
       'naive-ui': fileURLToPath(new URL('./node_modules/naive-ui', import.meta.url)),
       'naive-ui/es': fileURLToPath(new URL('./node_modules/naive-ui/es', import.meta.url)),
     },

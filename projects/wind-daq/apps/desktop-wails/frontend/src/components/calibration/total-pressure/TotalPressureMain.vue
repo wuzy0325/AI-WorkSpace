@@ -14,6 +14,7 @@ import { isTotalPressureDataPoint } from '@shared/calibrationDataGuards'
 import { deviceApi } from '@api/deviceApi'
 import type { DataPayload } from '@api/types'
 import UiButton from '@components/ui/UiButton.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import TotalPressureChart from './TotalPressureChart.vue'
 import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 import {
@@ -52,6 +53,46 @@ const latestSnapshots = ref<Map<string, DataPayload>>(new Map())
 
 // K-α 图表 ref，用于切换 Tab 后主动触发重绘（canvas 尺寸从 0 变为实际值）
 const chartRef = ref<InstanceType<typeof TotalPressureChart> | null>(null)
+
+// 图表 Y 轴范围/精度控制：用户在图表 Tab 工具条调整后立即应用到 Canvas 重绘。
+// - chartYRangeOverride 为 null 表示自动模式（基于数据点 + 10% padding）
+// - 用户输入 min/max 后点击"应用"才写入 chartYRangeOverride，避免输入过程中频繁校验
+// - chartYPrecision 立即生效（无应用按钮），用户改完即看到刻度精度变化
+// - 概览页与图表 Tab 共用同一组设置，保证两 Tab 视觉一致
+// - chartYPrecisionInput 与 UiInputNumber 的 number | null 双向绑定兼容；
+//   chartYPrecision 用 computed 兜底 null → 3，确保传给图表的 prop 始终是合法 number
+const chartYRangeOverride = ref<{ min: number; max: number } | null>(null)
+const chartYMinInput = ref<number | null>(null)
+const chartYMaxInput = ref<number | null>(null)
+const chartYPrecisionInput = ref<number | null>(3)
+const chartYPrecision = computed<number>(() => {
+  const v = chartYPrecisionInput.value
+  if (v === null || !Number.isFinite(v) || v < 0) return 3
+  return Math.min(6, Math.max(0, Math.floor(v)))
+})
+
+// 应用 Y 轴范围：校验 min < max 后写入 chartYRangeOverride 触发图表重绘。
+// 无效输入（任一为空、min >= max）toast 警告，不修改当前生效范围。
+function applyYRange(): void {
+  const min = chartYMinInput.value
+  const max = chartYMaxInput.value
+  if (min === null || max === null) {
+    feedbackStore.pushToast(t.value.tp_yRangeInvalidHint, 'warning')
+    return
+  }
+  if (min >= max) {
+    feedbackStore.pushToast(t.value.tp_yRangeMinGeMax, 'warning')
+    return
+  }
+  chartYRangeOverride.value = { min, max }
+}
+
+// 重置为自动模式：清空 override 与输入框，图表回退到基于数据点的自动范围。
+function resetYRangeToAuto(): void {
+  chartYRangeOverride.value = null
+  chartYMinInput.value = null
+  chartYMaxInput.value = null
+}
 
 // 实时采集快照订阅：deviceApi.onSnapshot 推送设备通道原始数据，
 // 由 buildRealtimePressuresFromSnapshots 映射到 RealtimePressures 喂给 store，
@@ -688,15 +729,17 @@ onUnmounted(() => {
                     <span class="text-xs text-[var(--text-muted)]">{{ t.tp_error }}</span>
                     <span class="font-mono text-xl font-bold text-[var(--accent-primary)]">{{ formatValue(latestCoefficients.error, 4) }}</span>
                   </div>
-                  <!-- 实时马赫数/速度：与系数同卡展示，便于校准员关联系数与流场状态 -->
+                  <!-- 实时马赫数/速度：与系数同卡展示，便于校准员关联系数与流场状态。
+                       数据源与侧边栏一致，取自 store.calculatedPhysics（后端 livePhysics 5Hz 推送），
+                       而非 latestCoefficients（上一点采集完成快照），避免两点之间不刷新。 -->
                   <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 border-t border-[var(--border-default)] mt-2 pt-2">
                     <span class="text-xs text-[var(--text-muted)]">Ma</span>
-                    <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ latestCoefficients.machNumber !== undefined ? latestCoefficients.machNumber.toFixed(3) : '--' }}</span>
+                    <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.machNumber !== undefined ? physics.machNumber.toFixed(3) : '--' }}</span>
                   </div>
                   <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                     <span class="text-xs text-[var(--text-muted)]">V</span>
                     <div class="text-right">
-                      <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ latestCoefficients.velocity !== undefined ? latestCoefficients.velocity.toFixed(3) : '--' }}</span>
+                      <span class="font-mono text-xl font-bold text-[var(--accent-success)]">{{ physics?.velocity !== undefined ? physics.velocity.toFixed(3) : '--' }}</span>
                       <span class="ml-1 text-xs text-[var(--text-muted)]">m/s</span>
                     </div>
                   </div>
@@ -744,7 +787,7 @@ onUnmounted(() => {
             <div class="flex flex-1 flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-w-0 min-h-0">
               <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.tp_cptAlphaCurve }}</h3>
               <div class="flex-1 min-h-0">
-                <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" />
+                <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" />
               </div>
             </div>
           </div>
@@ -753,9 +796,28 @@ onUnmounted(() => {
         <!-- 图表 Tab：放大查看 K-α 曲线 -->
         <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-4">
           <div class="flex h-full flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-            <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.tp_cptAlphaCurve }}</h3>
+            <div class="flex items-center justify-between mb-2 flex-shrink-0 flex-wrap gap-2">
+              <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.tp_cptAlphaCurve }}</h3>
+              <!-- Y 轴范围/精度控制工具条：
+                   - 精度输入框立即生效（无需点应用）
+                   - 最小值/最大值输入框 + 应用按钮：写入 override 触发重绘
+                   - 自动按钮：清空 override 回退到基于数据点的自动范围
+                   - 概览页与图表 Tab 共用同一组设置，保证两 Tab 视觉一致 -->
+              <div class="flex items-center gap-2 text-xs flex-wrap">
+                <span class="text-[var(--text-muted)]">{{ t.tp_yAxisRange }}</span>
+                <UiInputNumber v-model="chartYMinInput" :placeholder="t.tp_yMinPlaceholder" :step="0.001" class="w-28" />
+                <span class="text-[var(--text-muted)]">~</span>
+                <UiInputNumber v-model="chartYMaxInput" :placeholder="t.tp_yMaxPlaceholder" :step="0.001" class="w-28" />
+                <UiButton size="sm" variant="primary" @click="applyYRange">{{ t.tp_apply }}</UiButton>
+                <UiButton size="sm" variant="secondary" :disabled="chartYRangeOverride === null" @click="resetYRangeToAuto">{{ t.tp_auto }}</UiButton>
+                <span class="text-[var(--text-muted)] ml-2">{{ t.tp_yPrecisionLabel }}</span>
+                <UiInputNumber v-model="chartYPrecisionInput" :min="0" :max="6" :step="1" class="w-20" />
+                <span v-if="chartYRangeOverride" class="text-[var(--accent-success)]">{{ t.tp_yRangeManualActive }}</span>
+                <span v-else class="text-[var(--text-muted)]">{{ t.tp_yRangeAutoActive }}</span>
+              </div>
+            </div>
             <div class="flex-1 min-h-0">
-              <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" y-label="CPT" />
+              <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" y-label="CPT" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" />
             </div>
           </div>
         </div>

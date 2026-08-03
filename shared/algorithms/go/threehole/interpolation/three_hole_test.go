@@ -2,19 +2,8 @@ package interpolation
 
 import (
 	"math"
-	"strconv"
 	"testing"
 )
-
-func makePrbLines(cma float64, items ...string) []string {
-	lines := []string{formatFloat(cma), "4"}
-	lines = append(lines, items...)
-	return lines
-}
-
-func formatFloat(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
-}
 
 func TestParsePrbLines(t *testing.T) {
 	lines := []string{
@@ -127,7 +116,12 @@ func TestCalcMach(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		mach := calcMach(tt.pt, tt.ps, tt.pa, tt.tatm)
+		mach, err := calcMach(tt.pt, tt.ps, tt.pa, tt.tatm)
+		if err != nil {
+			t.Errorf("calcMach(%f, %f, %f, %f) 不应返回错误: %v",
+				tt.pt, tt.ps, tt.pa, tt.tatm, err)
+			continue
+		}
 		if mach < tt.wantMin || mach > tt.wantMax {
 			t.Errorf("calcMach(%f, %f, %f, %f) = %f, want in [%f, %f]",
 				tt.pt, tt.ps, tt.pa, tt.tatm, mach, tt.wantMin, tt.wantMax)

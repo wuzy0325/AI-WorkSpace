@@ -1188,7 +1188,8 @@ export interface TraversalProgressEvent {
   currentPoint: TraversalCoordPoint
   currentPointPhase?: TraversalPointPhase
   latestData?: TraversalDataPoint
-  timestamp: number
+  // timestamp 已移除：原实现每次轮询都填 Date.now()，导致 polling 去重 key 永不相等，
+  // 每 500ms 必触发回调。若需要事件时间戳，由回调方在接收时自行 Date.now()。
 }
 
 /** 测试完成事件 */
@@ -1198,7 +1199,9 @@ export interface TraversalCompleteEvent {
   status: TraversalTerminalStatus
   filePath?: string
   error?: string
-  duration: number
+  // duration 已移除：原实现每次轮询都填 Date.now() - startTime，导致 polling 去重
+  // key 永不相等，终态后每 500ms 仍触发回调。消费方（如 TraversalMain.vue）按
+  // 需自行计算（finishedAt - startTime 或后端返回的真实耗时）。
   totalPoints: number
 }
 
@@ -1408,4 +1411,45 @@ export interface TraversalCheckpoint {
   lastPoint?: TraversalPoint
   savePath: string
   createdAt: number
+}
+
+// ---------------------------------------------------------------------------
+// 双探针并行遍历（dual traversal）类型（spec FR5 / Task 15）
+// ---------------------------------------------------------------------------
+
+/** 双探针标识：本功能固定支持 probe1/probe2（spec FR2） */
+export type ProbeId = 'probe1' | 'probe2'
+
+/** 遍历模式：单探针 / 双探针（spec FR1） */
+export type TraversalMode = 'single' | 'dual'
+
+/**
+ * 双探针 keyed session 状态（spec FR5）。
+ *
+ * 双探针模式下 dualTraversalStore 以 Record<ProbeId, TraversalSessionState>
+ * 管理两路完全隔离的状态：一路 reset/失败/卸载不得修改另一路。
+ * 字段与 spec FR5 完全一致；既有 single 模式类型（TraversalTestConfig /
+ * TraversalTestStatus 等）不受影响。
+ */
+export interface TraversalSessionState {
+  /** 该 probe 的完整测试配置（型号/PRB/通道/点位/环境/运动绑定/输出） */
+  config: TraversalTestConfig | null
+  /** 最近一次轮询到的运行状态 */
+  status: TraversalTestStatus | null
+  /** start 请求进行中（防止重复提交） */
+  isStarting: boolean
+  /** 最近一次操作的可读错误消息 */
+  error: string | null
+  /** 最近一次完成事件（completed/stopped/error 终态） */
+  completeEvent: TraversalCompleteEvent | null
+  /** 可恢复断点（stopped/error 后由 dual recovery index 提供） */
+  checkpoint: TraversalCheckpoint | null
+  /** 实时原始压力（进度事件/latestData 驱动） */
+  realtimePressures: TraversalRawPressure | null
+  /** 实时插值结果（节流实时计算驱动） */
+  realtimeResult: InterpolationResult | null
+  /** 后端插值器是否已加载（实时计算与前置检查的门禁） */
+  hasLoadedInterpolator: boolean
+  /** 插值器启动恢复的错误消息（五孔/七孔各自独立恢复） */
+  interpolatorRestoreMessage: string | null
 }

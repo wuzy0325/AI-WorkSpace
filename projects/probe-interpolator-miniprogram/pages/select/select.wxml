@@ -1,0 +1,33 @@
+<view class="page-header">
+  <view class="title">探针插值计算器</view>
+  <view class="sub">风洞探针 · 离线计算</view>
+</view>
+
+<view class="probe-list">
+  <view class="probe-tile" data-kind="three" bindtap="go">
+    <view class="probe-badge">3</view>
+    <view class="probe-meta">
+      <view class="probe-name">三孔探针</view>
+      <view class="probe-desc">3 孔压 · 单 .prb 校准</view>
+    </view>
+    <view class="chevron">›</view>
+  </view>
+
+  <view class="probe-tile" data-kind="five" bindtap="go">
+    <view class="probe-badge">5</view>
+    <view class="probe-meta">
+      <view class="probe-name">五孔探针</view>
+      <view class="probe-desc">5 孔压 · 多马赫 .prb 校准</view>
+    </view>
+    <view class="chevron">›</view>
+  </view>
+
+  <view class="probe-tile" data-kind="seven" bindtap="go">
+    <view class="probe-badge">7</view>
+    <view class="probe-meta">
+      <view class="probe-name">七孔探针</view>
+      <view class="probe-desc">7 孔压 · 大小角度自动判定</view>
+    </view>
+    <view class="chevron">›</view>
+  </view>
+</view>

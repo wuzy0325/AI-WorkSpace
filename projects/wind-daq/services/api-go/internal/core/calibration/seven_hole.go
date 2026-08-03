@@ -413,14 +413,24 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 		//   - i == samplesPerPoint-1：最后样本必发，确保前端拿到最终系数
 		now := time.Now().UnixMilli()
 		if realtimeCallback != nil && (i == 0 || now-lastRealtimeSentAt >= realtimeIntervalMs || i == samplesPerPoint-1) {
-			region, sector, _ := DetermineRegion(rawData.P1, rawData.P2, rawData.P3, rawData.P4, rawData.P5, rawData.P6, rawData.P7, prevRegion, prevSector)
+			// 实时推送的 region/sector 优先用预设区域（用户配置的轨迹区域），
+			// 与最终落盘的 Region/Sector 一致——避免实时显示"外区"、最终落盘"内区"的闪烁。
+			// point.Region 为空时（旧调用路径）回退到 DetermineRegion 压力判定。
+			rtRegion := point.Region
+			rtSector := point.Sector
+			if rtRegion == "" {
+				rtRegion, rtSector, _ = DetermineRegion(
+					rawData.P1, rawData.P2, rawData.P3, rawData.P4, rawData.P5, rawData.P6, rawData.P7,
+					prevRegion, prevSector,
+				)
+			}
 			var realtimeCoeffs SevenHoleCoefficients
-			if region == "inner" {
+			if rtRegion == "inner" {
 				realtimeCoeffs, _ = CalculateSevenHoleInnerCoefficients(rawData)
 			} else {
-				realtimeCoeffs, _ = CalculateSevenHoleOuterCoefficients(rawData, sector)
+				realtimeCoeffs, _ = CalculateSevenHoleOuterCoefficients(rawData, rtSector)
 			}
-			realtimeCallback(rawData, realtimeCoeffs, region, sector)
+			realtimeCallback(rawData, realtimeCoeffs, rtRegion, rtSector)
 			lastRealtimeSentAt = now
 		}
 	}
@@ -430,13 +440,31 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 	// 1. 计算平均值——后续 DetermineRegion 与系数计算都基于均值（降低单次样本噪声）
 	avgData := CalculateSevenHoleAverage(samples)
 
-	// 2. 最终分区判定（基于均值，使用 prev 滞回状态避免边界点分区抖动）
-	region, sector, boundaryFlag := DetermineRegion(
+	// 2. 区域归属：优先使用预设点位配置（point.Region/point.Sector）
+	//
+	// 校准轨迹的内外区是用户规划明确的——内区点用 α/β 网格，外区点用 θ/φ 网格，
+	// GenerateSevenHolePoints 生成点位时已经填充了正确的 Region/Sector 字段。
+	// 不应基于实时压力数据"判定"——压力数据在边界点扰动会导致误判，
+	// 进而让数据点 Region 错位（CSV 路由错位、前端图表过滤错位）。
+	//
+	// DetermineRegion 仍调用一次，承担两个职责：
+	//   - 始终生成 boundaryFlag 边界点标记（spec §3.2，CSV 边界标记列）
+	//   - point.Region 为空时（旧调用路径或简陋测试用例）回退作为区域判定结果
+	// 生产路径下 point.Region 已填充，DetermineRegion 的 region/sector 结果被丢弃，
+	// 仅采用 boundaryFlag。
+	detRegion, detSector, boundaryFlag := DetermineRegion(
 		avgData.P1, avgData.P2, avgData.P3, avgData.P4, avgData.P5, avgData.P6, avgData.P7,
 		prevRegion, prevSector,
 	)
+	region := point.Region
+	sector := point.Sector
+	if region == "" {
+		// 兜底：point.Region 未填充时回退到压力判定（向后兼容旧调用路径）
+		region = detRegion
+		sector = detSector
+	}
 
-	// 3. 按分区调用系数计算
+	// 3. 按预设区域调用系数计算
 	var coefficients SevenHoleCoefficients
 	var calcErr error
 	if region == "inner" {
@@ -520,20 +548,20 @@ const (
 //
 // 推荐默认值（spec §6.2）：内区 [-30°,30°] 步长 5°；外区 θ [30°,60°] 步长 5°、φ [0°,355°] 步长 5°
 type SevenHoleConfig struct {
-	Mode            SevenHoleMode `json:"mode"`
-	InnerAlphaMin   float64       `json:"innerAlphaMin"`
-	InnerAlphaMax   float64       `json:"innerAlphaMax"`
-	InnerAlphaStep  float64       `json:"innerAlphaStep"`
-	InnerBetaMin    float64       `json:"innerBetaMin"`
-	InnerBetaMax    float64       `json:"innerBetaMax"`
-	InnerBetaStep   float64       `json:"innerBetaStep"`
-	OuterThetaMin   float64       `json:"outerThetaMin"`
-	OuterThetaMax   float64       `json:"outerThetaMax"`
-	OuterThetaStep  float64       `json:"outerThetaStep"`
-	OuterPhiMin     float64       `json:"outerPhiMin"`
-	OuterPhiMax     float64       `json:"outerPhiMax"`
-	OuterPhiStep    float64       `json:"outerPhiStep"`
-	Serpentine      bool          `json:"serpentine"`
+	Mode           SevenHoleMode `json:"mode"`
+	InnerAlphaMin  float64       `json:"innerAlphaMin"`
+	InnerAlphaMax  float64       `json:"innerAlphaMax"`
+	InnerAlphaStep float64       `json:"innerAlphaStep"`
+	InnerBetaMin   float64       `json:"innerBetaMin"`
+	InnerBetaMax   float64       `json:"innerBetaMax"`
+	InnerBetaStep  float64       `json:"innerBetaStep"`
+	OuterThetaMin  float64       `json:"outerThetaMin"`
+	OuterThetaMax  float64       `json:"outerThetaMax"`
+	OuterThetaStep float64       `json:"outerThetaStep"`
+	OuterPhiMin    float64       `json:"outerPhiMin"`
+	OuterPhiMax    float64       `json:"outerPhiMax"`
+	OuterPhiStep   float64       `json:"outerPhiStep"`
+	Serpentine     bool          `json:"serpentine"`
 }
 
 // 数据集模式硬编码外区 θ 取值（spec §6.2 / Task 6 验收标准）
@@ -621,10 +649,10 @@ func GenerateSevenHolePoints(config SevenHoleConfig) ([]CalPoint, error) {
 // Points 字段供前端可视化布点（如未启动校准时的"点位预览图"）；TotalCount 等聚合字段
 // 供前端状态栏直接显示，避免前端遍历 600+ 点计算分布。
 type SevenHolePreviewResult struct {
-	Points      []CalPoint `json:"points"`
-	TotalCount  int        `json:"totalCount"`
-	InnerCount  int        `json:"innerCount"`
-	OuterCount  int        `json:"outerCount"`
+	Points     []CalPoint `json:"points"`
+	TotalCount int        `json:"totalCount"`
+	InnerCount int        `json:"innerCount"`
+	OuterCount int        `json:"outerCount"`
 }
 
 // generateSevenHoleInnerPoints 生成内区点位（α-β 网格，蛇形顺序）
@@ -683,8 +711,8 @@ func generateSevenHoleInnerPoints(config SevenHoleConfig) ([]CalPoint, error) {
 // 遍历顺序（与基准数据集 W532.202608.P.7H.1-01 对齐，code-review 调整）：
 //   - 外层：θ 循环（俯仰角，慢轴）—— 先固定俯仰角，扫描一圈方位
 //   - 内层：φ 循环（滚转角，旋转台快速轴）—— φ 递增扫描
-//   物理含义：俯仰角变更代价高（探针姿态调整），滚转角代价低（旋转台扫描），
-//   先固定 θ 扫一圈 φ 可减少机构换姿态次数，与既有校准数据时序完全一致。
+//     物理含义：俯仰角变更代价高（探针姿态调整），滚转角代价低（旋转台扫描），
+//     先固定 θ 扫一圈 φ 可减少机构换姿态次数，与既有校准数据时序完全一致。
 //
 // 蛇形走位（spec Task 6）：奇数 θ 行的 φ 反向
 //   - 例：θ=30°（第0行）φ 正向；θ=35°（第1行）φ 反向
@@ -769,14 +797,14 @@ func generateSevenHoleFullOuterPoints(config SevenHoleConfig) ([]CalPoint, error
 //   - 最外层：4 个 θ 值（30° → 35° → 40° → 45°）—— 先固定俯仰角
 //   - 中层：6 个扇区（Sector 1 → 2 → ... → 6）—— 跨所有扇区连续扫描 360°
 //   - 内层：13 个 φ 值（扇区起始 -30° → +30°，步长 5°）—— φ 是旋转台快速轴
-//   物理含义：俯仰角变更代价高（探针姿态调整），滚转角代价低（旋转台扫描），
-//   先固定 θ 走完一圈 360°（跨所有 6 扇区）再切下一个 θ，θ 轴换次数 = 3 次
-//   （vs 按扇区分组的 24 次），大幅减少姿态调整次数。
+//     物理含义：俯仰角变更代价高（探针姿态调整），滚转角代价低（旋转台扫描），
+//     先固定 θ 走完一圈 360°（跨所有 6 扇区）再切下一个 θ，θ 轴换次数 = 3 次
+//     （vs 按扇区分组的 24 次），大幅减少姿态调整次数。
 //
 // 蛇形走位（spec Task 6，config.Serpentine=true 时启用，默认 false）：
 //   - 奇数 θ 行的扇区顺序和 φ 方向都反向
 //   - 例：θ=30°（第0行）Sector 1→2→...→6, φ 正向（330°→30°→90°→...→330°），停在 330°
-//         θ=35°（第1行）Sector 6→5→...→1, φ 反向（330°→270°→...→30°→330°），停在 330°
+//     θ=35°（第1行）Sector 6→5→...→1, φ 反向（330°→270°→...→30°→330°），停在 330°
 //   - 旋转台无需回程即可直接进入下一俯仰角，θ 轴切换时 φ 轴停在 330° 不动
 //
 // 非蛇形（默认，与基准数据集一致）：
@@ -785,7 +813,7 @@ func generateSevenHoleFullOuterPoints(config SevenHoleConfig) ([]CalPoint, error
 //     由于两个位置 φ 值相同，φ 轴实际不动
 func generateSevenHoleDatasetOuterPoints(config SevenHoleConfig) ([]CalPoint, error) {
 	// 数据集模式忽略 config 的 OuterTheta/OuterPhi 配置，使用硬编码值
-	thetaValues := sevenHoleDatasetThetaValues              // 4 个 θ 值
+	thetaValues := sevenHoleDatasetThetaValues                                  // 4 个 θ 值
 	phiPerSector := int(sevenHoleDatasetSectorSpan/sevenHoleDatasetPhiStep) + 1 // 13 点/扇区
 
 	points := make([]CalPoint, 0, len(thetaValues)*phiPerSector*6)

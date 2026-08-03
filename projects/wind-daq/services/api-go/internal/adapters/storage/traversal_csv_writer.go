@@ -58,16 +58,16 @@ type TraversalCsvWriter struct {
 	// motionAxes 逻辑方向→物理轴绑定（来自 config.MotionAxes）。
 	// buildRow 按此把 Point.X/Y/Z/U 逻辑坐标值映射到对应物理轴列，
 	// 未绑定的物理轴列留空。为空（旧配置兼容）时保持原行为：按 Point 字段顺序直接填值。
-	motionAxes       []traversal.MotionAxisBinding
-	header           []string
-	rows             int
-	commitSeq        uint64
-	headerHash       string
+	motionAxes []traversal.MotionAxisBinding
+	header     []string
+	rows       int
+	commitSeq  uint64
+	headerHash string
 }
 
 var (
-	_ ports.TraversalCSVPort    = (*TraversalCsvWriter)(nil)
-	_ ports.TraversalPointSink  = (*TraversalCsvWriter)(nil)
+	_ ports.TraversalCSVPort   = (*TraversalCsvWriter)(nil)
+	_ ports.TraversalPointSink = (*TraversalCsvWriter)(nil)
 )
 
 // labelEntry 单个标签列的元信息
@@ -592,10 +592,20 @@ func (w *TraversalCsvWriter) buildHeader() []string {
 		}
 	}
 	if w.options.SaveCalculatedResult {
-		// 计算结果列：插值器输出的关键空气动力量 + 采样元数据 + 单点起止时间
-		// StartedAt/CompletedAt：单点采集的真实起止时间戳（秒级字符串，与 Timestamp 列格式一致），
-		// 用户可直接用 CompletedAt - StartedAt 算出单点总耗时，不再依赖"点数×10ms"回填公式
-		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "SampleCount", "DwellMs", "StartedAt", "CompletedAt")
+		// 计算结果列：插值器输出的关键空气动力量 + 状态标识 + 采样元数据 + 单点起止时间
+		// StartedAt/CompletedAt 契约：单点总耗时语义
+		//   - StartedAt：本点首次采样尝试开始时间戳（进入采集阶段后的第一次 collectAveragedSamples 调用前）
+		//   - CompletedAt：本点最终被接受的采样尝试结束时间戳（最后一次 collectAveragedSamples 返回后）
+		//   - 二者差值即"单点总耗时"，包含验证失败的重试等待（retryWaitInterval），
+		//     不含稳定等待 dwell 时间（dwell 由 DwellMs 列单独记录）
+		//   - 秒级字符串格式与 Timestamp 列一致
+		//
+		// CalcStatus 列:区分三种失败原因,与 UI 实时插值卡片三态一一对应
+		//   - "valid":插值成功,Alpha~Mach 为真实数值
+		//   - "prb_missing":PRB/CSV 校准数据未加载或通道未映射(配置层问题)
+		//   - "invalid":已加载 PRB 但本点压力数据异常(数据层问题)
+		// 失败时 Alpha~Mach 写空字符串(保持原行为),操作员可按 CalcStatus 列快速过滤失败点
+		cols = append(cols, "Alpha", "Beta", "Pt", "Ps", "Mach", "CalcStatus", "SampleCount", "DwellMs", "StartedAt", "CompletedAt")
 	}
 	// 自定义字段列（按字典序）
 	cols = append(cols, w.customFieldNames...)
@@ -628,21 +638,32 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 	}
 	if w.options.SaveCalculatedResult {
 		// 从 PointResult.Calculated 读取插值结果；若上游未填充则写空
+		// CalcStatus 列按 Status 字段输出标识;Valid=true 但 Status 为空时回退 "valid"(向后兼容旧数据)
 		calc := p.Calculated
 		if calc != nil && calc.Valid {
+			status := calc.Status
+			if status == "" {
+				status = traversal.CalcStatusValid
+			}
 			row = append(row,
 				formatFloat(calc.Alpha),
 				formatFloat(calc.Beta),
 				formatFloat(calc.Pt),
 				formatFloat(calc.Ps),
 				formatFloat(calc.Mach),
+				string(status),
 			)
+		} else if calc != nil && calc.Status != "" {
+			// 失败路径:Alpha~Mach 写空,CalcStatus 写入失败原因标识
+			row = append(row, "", "", "", "", "", string(calc.Status))
 		} else {
-			row = append(row, "", "", "", "", "")
+			// calc==nil(上游未填充)或 Status 为空:全部写空,与旧行为一致
+			row = append(row, "", "", "", "", "", "")
 		}
 		row = append(row, strconv.Itoa(p.SampleCount), strconv.Itoa(p.DwellTimeElapsed))
-		// StartedAt/CompletedAt：与 Timestamp 同为秒级字符串。
-		// 0 值写空字符串（兼容旧数据或异常路径未赋值的场景），避免显示"1970-01-01 08:00:00"误导用户
+		// StartedAt/CompletedAt：单点总耗时契约（见 buildHeader 注释）。
+		// 与 Timestamp 同为秒级字符串；0 值写空字符串（兼容旧数据或异常路径未赋值的场景），
+		// 避免显示"1970-01-01 08:00:00"误导用户
 		row = append(row, formatUnixMilli(p.StartedAt), formatUnixMilli(p.CompletedAt))
 	}
 	// 自定义字段：以 PointResult.CustomValues 为准；缺失写空

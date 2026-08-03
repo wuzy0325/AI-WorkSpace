@@ -9,6 +9,7 @@
 //   - POST   /api/device/disconnect           断开设备，body: {"id":"..."}
 //   - POST   /api/device/start                启动采集，body: {"id":"..."}
 //   - POST   /api/device/stop                 停止采集，body: {"id":"..."}
+//   - POST   /api/device/zero-calibration     零点校准，body: {"id":"..."}
 //   - GET    /api/device/status/{id}          查询设备状态
 //   - POST   /api/device/apply-config         下发配置，body: {"id":"...","config":{...}}
 //   - GET    /api/device/latest-snapshots     批量获取所有设备最新快照
@@ -168,6 +169,25 @@ func (s *Server) handleDeviceStop(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, nil)
 }
 
+// handleDeviceZeroCalibration POST /api/device/zero-calibration
+// 对指定设备的全部压力通道执行设备原生零点校准（h 命令）。
+// 请求体：{"id":"<deviceId>"}
+func (s *Server) handleDeviceZeroCalibration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id, ok := decodeIDRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := s.app.ZeroCalibration(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeOK(w, nil)
+}
+
 // handleDeviceStatus GET /api/device/status/{id}
 // 返回指定设备的当前状态。设备不存在时返回 404，前端用 .catch(()=>false) 兼容。
 //
@@ -205,7 +225,7 @@ func (s *Server) handleDeviceApplyConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		ID     string          `json:"id"`
+		ID     string           `json:"id"`
 		Config core.P1604Config `json:"config"`
 	}
 	if !decodeJSON(w, r, &body) {

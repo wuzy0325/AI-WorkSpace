@@ -2,11 +2,11 @@
 import { computed, ref } from 'vue'
 import { useFileImport } from '@composables/useFileImport'
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { useTraversalStore } from '@stores/traversalStore'
 import type { SevenHolePrbDraft, SevenHolePrbFileInfo } from '@shared/types/traversal'
 import { assignSevenHoleCsvFilesByName, assignSevenHoleFilesByName, detectSevenHoleBatchFormat } from '@shared/types/traversal'
 import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
+import type { TraversalPrbOperations } from './traversalPrbOperations'
 
 /**
  * 七孔 PRB 配置子组件（spec-seven-hole-traversal §6.3）：
@@ -19,9 +19,9 @@ const draft = defineModel<SevenHolePrbDraft>({ required: true })
 
 const props = defineProps<{
   t: Record<string, string>
+  operations: TraversalPrbOperations
 }>()
 
-const traversalStore = useTraversalStore()
 const feedbackStore = useFeedbackStore()
 
 const fileImport = useFileImport({
@@ -154,17 +154,17 @@ async function importIfComplete(candidate: SevenHolePrbDraft = draft.value): Pro
   const inner = candidate.innerFile
   const outer = candidate.outerFiles as SevenHolePrbFileInfo[]
   isBackendImporting.value = true
-  let imported: Awaited<ReturnType<typeof traversalStore.importSevenHolePrbFiles>>
+  let imported: Awaited<ReturnType<TraversalPrbOperations['importSevenHolePrbFiles']>>
   try {
     imported = candidate.source === 'calibration-csv'
-      ? await traversalStore.importSevenHoleCalibrationCsvFiles(inner.filePath, outer.map((f) => f.filePath))
-      : await traversalStore.importSevenHolePrbFiles(inner.filePath, outer.map((f) => f.filePath))
+      ? await props.operations.importSevenHoleCalibrationCsvFiles(inner.filePath, outer.map((f) => f.filePath))
+      : await props.operations.importSevenHolePrbFiles(inner.filePath, outer.map((f) => f.filePath))
   } finally {
     isBackendImporting.value = false
   }
   if (!imported) {
     feedbackStore.pushToast(
-      importErrorKey() + ': ' + (traversalStore.error || props.t.unknownError),
+      importErrorKey() + ': ' + (props.operations.getError() || props.t.unknownError),
       'error'
     )
     return

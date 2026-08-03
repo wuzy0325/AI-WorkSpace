@@ -7,8 +7,7 @@ import (
 )
 
 type fakeReportGenerator struct {
-	result report.ReportResult
-	err    error
+	err error
 }
 
 func (g *fakeReportGenerator) Generate(cfg report.ReportConfig, data [][]string, headers []string) (report.ReportResult, error) {
@@ -73,13 +72,4 @@ func TestReportManagerRejectsConcurrentGeneration(t *testing.T) {
 	if result.Records < 1 {
 		t.Fatal("expected at least one record")
 	}
-}
-
-type blockingGen struct {
-	block chan struct{}
-}
-
-func (g *blockingGen) Generate(cfg report.ReportConfig, data [][]string, headers []string) (report.ReportResult, error) {
-	<-g.block
-	return report.ReportResult{Path: cfg.OutputDir + "/" + cfg.FilePrefix + ".csv", Size: 42, Records: 1}, nil
 }

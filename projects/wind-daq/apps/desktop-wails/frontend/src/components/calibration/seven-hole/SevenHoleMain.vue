@@ -476,7 +476,7 @@ function buildRealtimePressuresFromSnapshots(
       case 'sevenHole.p6': result.P6 = value; matchedChannelCount += 1; break
       case 'sevenHole.p7': result.P7 = value; matchedChannelCount += 1; break
       case 'sevenHole.pAtm': result.Patm = value; matchedChannelCount += 1; break
-      case 'sevenHole.tAtm': result.Tatm = value; matchedChannelCount += 1; break
+      case 'sevenHole.tAtm': result.Tatm = value; result.Ttunnel = value; matchedChannelCount += 1; break
       case 'sevenHole.pTotal': result.P0 = value; matchedChannelCount += 1; break
       case 'sevenHole.pTunnelStatic': result.Ps = value; matchedChannelCount += 1; break
       default: break
@@ -511,7 +511,10 @@ function buildRealtimePressuresFromSnapshots(
     } else if (/大气.*压/.test(name) || normalizedName.includes('atmospheric pressure') || /(?:^|[^a-z0-9])patm(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.Patm = rawValue; matchedChannelCount += 1
     } else if (/大气.*温/.test(name) || normalizedName.includes('atmospheric temp') || normalizedName.includes('atmospheric temperature') || /(?:^|[^a-z0-9])tatm(?:[^a-z0-9]|$)/.test(normalizedName)) {
-      result.Tatm = rawValue; matchedChannelCount += 1
+      // 七孔无独立 tTunnel 角色，大气温度兜底填充 Ttunnel，与 role 分支保持一致
+      result.Tatm = rawValue
+      result.Ttunnel = rawValue
+      matchedChannelCount += 1
     } else if (/总压/.test(name) || normalizedName.includes('total pressure') || /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/.test(normalizedName) || /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.P0 = rawValue; matchedChannelCount += 1
     } else if (/静压/.test(name) || normalizedName.includes('static pressure') || /(?:^|[^a-z0-9])ps(?:[^a-z0-9]|$)/.test(normalizedName)) {
@@ -585,9 +588,9 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <!-- 顶部状态栏：跨全宽 sticky 定位，校准员最频繁看的信息
-           包含：状态徽章 / 进度条 / 时间 / 区域徽章(七孔独有) / 目标α-β+实际α-β / Ma+V / 采样子进度 / 错误 / 配置按钮
-           sticky 定位确保运动控制器运行时内容区滚动不会导致状态栏位置跳动 -->
+        <!-- 顶部状态栏：跨全宽 sticky 定位，校准员最频繁看的信息
+             包含：状态徽章 / 进度条 / 时间 / 区域徽章(七孔独有) / 目标α-β+实际α-β / Ma+V / 采样子进度 / 错误 / 配置按钮
+             sticky 定位确保运动控制器运行时内容区滚动不会导致状态栏位置跳动 -->
       <div class="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-[var(--border-default)] bg-[var(--bg-panel)] px-5 py-2.5">
         <!-- 状态徽章 -->
         <span
@@ -874,10 +877,10 @@ onBeforeUnmount(() => {
             >{{ tab.label }}</button>
           </div>
 
-          <!-- 主区域：七孔校准特性曲线图（spec Task 22 实现）
-               - 内区 3 类真实图表：Kα-Kβ 散点图 + α-K0 / α-Ks 曲线（按 β 分组）
-               - 外区每个扇区 3 类真实图表：Kθ-Kφ 散点图 + φ-K0[n] / φ-Ks[n] 曲线（按 θ 分组）
-               数据来源：calibrationStore.dataPoints，按 activeChartTab 过滤区域与扇区 -->
+            <!-- 主区域：七孔校准特性曲线图（spec Task 22 实现）
+                - 内区 3 类真实图表：Kα-Kβ 散点图 + α-K0 / α-Ks 曲线（按 β 分组）
+                - 外区每个扇区 3 类真实图表：Kθ-Kφ 散点图 + φ-K0[n] / φ-Ks[n] 曲线（按 θ 分组）
+                数据来源：calibrationStore.dataPoints，按 activeChartTab 过滤区域与扇区 -->
           <div class="flex-1 overflow-hidden p-4">
             <SevenHoleCharts :active-tab="activeChartTab" />
           </div>

@@ -105,6 +105,7 @@ func TestToThreeHoleAppResult(t *testing.T) {
 		TotalPressure:  150000,
 		StaticPressure: 100000,
 		IterationCount: 5,
+		Calculated:     true,
 		IsValid:        true,
 	}
 
@@ -117,6 +118,9 @@ func TestToThreeHoleAppResult(t *testing.T) {
 	}
 	if !r.IsValid {
 		t.Error("IsValid 应为 true")
+	}
+	if !r.Calculated {
+		t.Error("Calculated 应为 true")
 	}
 	if r.IterationCount != 5 {
 		t.Errorf("IterationCount = %d, want 5", r.IterationCount)

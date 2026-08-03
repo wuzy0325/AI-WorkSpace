@@ -15,6 +15,8 @@
 | `runbooks/frontend-directory-rules.zh-CN.md` | AI / 前端开发者 | Vue 前端目录结构标准与文件放置规则 |
 | `runbooks/development-rules.md` | 开发者 / AI | 开发流程规则：依赖边界、测试、结构变更、复用优先、验证 |
 | `runbooks/win7-lts-development-workflow.md` | 开发者 / AI | master 与 lts/win7 日常开发、选择性同步、验证、回滚和发布流程 |
+| `decisions/ADR-009-windows-network-deadline-fallback.md` | 开发者 / AI | Windows 现场环境中 Go 网络 deadline 失效时的强制关闭与连接废弃规则 |
+| `audits/2026-07-28-go-network-deadline-audit.md` | 开发者 / AI | 全工作空间 Go socket deadline 风险清单、优先级与整改状态 |
 
 **快速定位：**
 - 文件/函数该多长 → `code-standards.zh-CN.md` §一
@@ -40,6 +42,8 @@
 - AI 友好代码组织 → `frontend-ai-rules-deploy.zh-CN.md` §35
 - Wails 桥接规范 → `frontend-ai-rules-deploy.zh-CN.md` §32
 - Wails binding 同步 → `frontend-ai-rules-deploy.zh-CN.md` §32.1
+- 硬件 TCP/UDP 超时与阻塞退出 → `decisions/ADR-009-windows-network-deadline-fallback.md`
+- 排查现有 `SetReadDeadline` / `SetDeadline` 风险 → `audits/2026-07-28-go-network-deadline-audit.md`
 - 测试规范 → `frontend-ai-rules-deploy.zh-CN.md` §33
 - 前端验证要求 → `frontend-ai-rules-deploy.zh-CN.md` §34
 
@@ -57,6 +61,8 @@
 | `architecture/module-design.md` | Go 包和 Vue 3 模块设计细节 |
 | `architecture/project-variants.md` | 当前工作空间允许的项目结构变体 |
 | `decisions/` | 架构决策记录（ADR） |
+| `plans/2026-07-23-workspace-win7-lts-worktree.md` | 独立 Win7 LTS worktree 的 6 产品改造、同步、验收与发布计划 |
+| `plans/2026-08-01-device-network-hang-lsp-remediation.md` | LSP 环境下设备网络操作防"本机卡死"整改计划（全局锁移出 I/O、WatchdogClose 语义、FFI 线程池、binding 超时） |
 
 **快速定位：**
 - 想按任务类型判断 AI 该加载什么 → `architecture/ai-task-context-map.zh-CN.md`
@@ -91,6 +97,8 @@
 - `projects/daq-t1603/AGENTS.md` — DAQ-T-1603 项目级 AI 入口与渐进加载导航
 - `projects/daq-t1603/README.md` — DAQ-T-1603 独立桌面应用入口
 - `projects/daq-t1603/CLAUDE.md` — DAQ-T-1603 单 Go module 架构约束
+- `decisions/ADR-007-daq-t1603-win7-lts.md` — DAQ-T1603 Win7 已验证技术基线和真机证据
+- `decisions/ADR-008-workspace-win7-lts-worktree.md` — 独立 Win7 LTS worktree、产品范围和 AI 选择性同步策略
 - `projects/daq-p1604/AGENTS.md` — DAQ-P-1604 项目级 AI 入口
 - `projects/daq-p1604/README.md` — DAQ-P-1604 独立桌面应用入口
 - `projects/motion-controller/AGENTS.md` — Motion Controller 项目级 AI 入口与渐进加载导航

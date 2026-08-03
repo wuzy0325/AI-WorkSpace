@@ -1,4 +1,4 @@
-﻿// Package usecase — TraversalManager 内部辅助函数（从 traversal.go 拆分）
+// Package usecase — TraversalManager 内部辅助函数（从 traversal.go 拆分）
 //
 // 包含错误流式构造、任务取消轮询、通道映射、运动轴目标过滤等纯工具方法。
 package usecase
@@ -24,8 +24,46 @@ func formatCoord(v float64) string {
 	return fmt.Sprintf("%.2f", v)
 }
 
-func (m *TraversalManager) fail(format string, args ...any) error {
-	return m.failWithCode(format, traversal.ErrUnknown, args...)
+// collectConnectedControllerIDs 从状态列表中收集所有已连接控制器的 ID，
+// 用于在 legacy 空绑定广播急停路径中显式记录影响范围（I-5 修复）。
+// 仅做日志可见性增强，不参与控制流。
+func collectConnectedControllerIDs(statuses []motion.ControllerStatus) []string {
+	ids := make([]string, 0, len(statuses))
+	for _, s := range statuses {
+		if s.Connected {
+			ids = append(ids, s.ID)
+		}
+	}
+	return ids
+}
+
+// CodedError 携带 ErrorCode 的结构化错误。
+//
+// I-4 修复：failWithCode 原先返回 fmt.Errorf("%s", message)，调用方无法用
+// errors.Is 程序化识别错误码——只能 strings.Contains 匹配 message，脆弱。
+// 改为返回 *CodedError 后，调用方可以：
+//
+//	if errors.Is(err, &CodedError{Code: traversal.ErrMotionFailed}) { ... }
+//
+// 或定义哨兵错误并用 errors.Is(err, ErrXxxCoded) 比较。
+//
+// 注意：保留 Error() 文本与原 fmt.Errorf("%s", message) 一致，
+// 不破坏现有依赖 err.Error() 字符串匹配的代码与测试。
+type CodedError struct {
+	Code    traversal.ErrorCode
+	Message string
+}
+
+func (e *CodedError) Error() string { return e.Message }
+
+// Is 实现 errors.Is 比较：仅比较 Code，Message 不参与。
+// 调用方可用 &CodedError{Code: traversal.ErrXxx} 作为 target。
+func (e *CodedError) Is(target error) bool {
+	t, ok := target.(*CodedError)
+	if !ok {
+		return false
+	}
+	return e.Code == t.Code
 }
 
 // failWithCode 带错误码的失败
@@ -42,7 +80,8 @@ func (m *TraversalManager) failWithCode(format string, code traversal.ErrorCode,
 		"error_code", string(code),
 		"error", message,
 	)
-	return fmt.Errorf("%s", message)
+	// I-4 修复：返回 *CodedError 携带 Code 字段，支持 errors.Is 程序化识别。
+	return &CodedError{Code: code, Message: message}
 }
 
 func (m *TraversalManager) setErrorLocked(message string, code traversal.ErrorCode) {

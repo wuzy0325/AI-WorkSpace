@@ -9,7 +9,7 @@ import UiSelect, { type UiSelectOption } from '@components/ui/UiSelect.vue'
 import UiInput from '@components/ui/UiInput.vue'
 import UiToggle from '@components/ui/UiToggle.vue'
 
-import { DEFAULT_AXIS_NAMES, createDefaultAxis, defaultEncComp, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE } from './motionConfigEditor'
+import { DEFAULT_AXIS_NAMES, createDefaultAxis, validateEncoderCompensation, normalizePositive, DEFAULT_ENCODER_SCALE, defaultMaxSpeedForType, normalizeAxisForMotionController } from './motionConfigEditor'
 import ProfileSidebar from './ProfileSidebar.vue'
 import AxisConfigCard from './AxisConfigCard.vue'
 import EncoderCompensationEditor from './EncoderCompensationEditor.vue'
@@ -36,22 +36,27 @@ provide<(text: string, event: MouseEvent) => void>('showTooltip', showTooltip)
 provide<() => void>('hideTooltip', hideTooltip)
 
 /* -- 控制器默认值常量 -- */
+// 默认类型为 B140-MC（出厂硬件默认），IP 192.168.3.121 / 端口 23。
+// 与 wind-daq 后端 defaultMotionProfiles 出厂默认对齐，安装后立即可用。
 const DEFAULT_NAME = '新控制器'
-const DEFAULT_TYPE = 'SIMULATED-MC'
-const DEFAULT_ADDRESS = '127.0.0.1'
-const DEFAULT_PORT = 5176
+const DEFAULT_TYPE = 'B140-MC'
+const DEFAULT_ADDRESS = '192.168.3.121'
+const DEFAULT_PORT = 23
 const MAX_PORT = 65535
 
 function defaultPortForType(type: string): number {
   if (type === 'B140-MC') return 23
   if (type === 'WTNMC4A-MC') return 5000
+  // 模拟控制器显式固定 5176：不能依赖 fallback（DEFAULT_PORT），
+  // 否则 DEFAULT_PORT 变动会把新建控制器切换类型时的端口静默改写。
+  if (type === 'SIMULATED-MC') return 5176
   return DEFAULT_PORT
 }
 
 /* -- Form state -- */
 const editing = reactive<MotionControllerProfile>({
   id: '', name: '', type: DEFAULT_TYPE, address: DEFAULT_ADDRESS, port: DEFAULT_PORT, autoConnect: false,
-  axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name)),
+  axes: DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, DEFAULT_TYPE)),
 })
 
 const isEdit = computed(() => !!editing.id)
@@ -63,8 +68,9 @@ const isCreatingNew = ref(false)
 const saving = ref(false)
 
 /* -- Controller type options -- */
+// 选项顺序与 DEFAULT_TYPE 解耦：默认新建 B140，但下拉仍按"模拟/B140/WTNMC4A"展示
 const controllerTypeOptions = computed<UiSelectOption[]>(() => [
-  { value: DEFAULT_TYPE, label: '模拟控制器' },
+  { value: 'SIMULATED-MC', label: '模拟控制器' },
   { value: 'B140-MC', label: 'B140 控制器' },
   { value: 'WTNMC4A-MC', label: 'WTNMC4A 控制器' },
 ])
@@ -109,8 +115,10 @@ const fieldErrors = computed<FieldErrors>(() => {
 // 编码器补偿 error 级告警：与 wind-daq 行为对齐，保存时阻断。
 // 仅收集 severity==='error'（物理不可能，如容差小于编码器分辨率）；warning 级由
 // EncoderCompensationEditor 内联展示，不阻断保存。
+// 仅 B140 控制器启用编码器补偿校验：其他类型不显示配置项，遗留配置不应阻断保存。
 const compensationErrors = computed<string[]>(() => {
   const errors: string[] = []
+  if (editing.type !== 'B140-MC') return errors
   for (const axis of editing.axes) {
     if (axis.positionSource !== 'encoder') continue
     const comp = axis.encoderCompensation
@@ -165,7 +173,7 @@ function newProfile(): void {
   editing.address = DEFAULT_ADDRESS
   editing.port = DEFAULT_PORT
   editing.autoConnect = false
-  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name))
+  editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, editing.type))
   isCreatingNew.value = true
   captureSnapshot()
   // 下一微任务恢复监听，确保 captureSnapshot 已完成
@@ -181,17 +189,10 @@ function editProfile(src: MotionControllerProfile): void {
   editing.address = src.address
   editing.port = src.port
   editing.autoConnect = src.autoConnect
-  editing.axes = src.axes.map((a) => ({
-    ...a,
-    enabled: true,
-    stepsPerRev: a.stepsPerRev ?? 1.8,
-    microSteps: a.microSteps ?? 4,
-    lead: a.lead ?? 4,
-    gearRatio: a.gearRatio ?? 1,
-    positionSource: a.positionSource ?? 'register',
-    encoderScale: a.encoderScale ?? 0.005,
-    encoderCompensation: a.encoderCompensation ?? defaultEncComp(),
-  }))
+  // 字段补齐统一走项目包装，与 wind-daq 保持字段一致并保留本项目低速默认值，
+  // 覆盖 kind/maxSpeed/inverted/encoderInverted 等 old profile 可能缺字段的场景，
+  // 并合并 encoderCompensation 的部分字段（避免仅 {enabled:true} 时其余字段为 undefined）
+  editing.axes = src.axes.map((a) => normalizeAxisForMotionController(a, editing.type))
   isCreatingNew.value = false
   captureSnapshot()
   // 下一微任务恢复监听，确保 captureSnapshot 已完成
@@ -344,6 +345,24 @@ watch(() => editing.type, (type, oldType) => {
   if (editing.port === defaultPortForType(oldType)) {
     editing.port = defaultPortForType(type)
   }
+  // 新建态下切换控制器类型时，按新类型的默认速度重新生成轴配置
+  // （MC4A / B140 默认 4，模拟控制器沿用项目低速默认值）
+  if (isCreatingNew.value) {
+    editing.axes = DEFAULT_AXIS_NAMES.map((name) => createDefaultAxis(name, type))
+    return
+  }
+  // 编辑态切换到硬件控制器时，若现有 maxSpeed 超过硬件安全上限则 clamp，
+  // 避免遗留的模拟控制器速度（100）被带到 B140/WTNMC4A 引发碰撞风险
+  const hardwareCap = defaultMaxSpeedForType(type, Number.POSITIVE_INFINITY)
+  if (Number.isFinite(hardwareCap)) {
+    editing.axes = editing.axes.map((axis) => {
+      const current = axis.maxSpeed ?? 0
+      if (current > hardwareCap) {
+        return { ...axis, maxSpeed: hardwareCap }
+      }
+      return axis
+    })
+  }
 })
 
 // 深度监听 editing 变化，标记脏状态
@@ -471,11 +490,13 @@ function onUpdateEncoderScale(index: number, value: number): void {
                       <label class="form-field__label">类型</label>
                       <UiSelect v-model="editing.type" :options="controllerTypeOptions" compact />
                     </div>
-                    <div class="form-field">
+                    <div class="form-field" :class="{ 'form-field--span-2': editing.type === 'WTNMC4A-MC' }">
                       <label class="form-field__label">地址</label>
                       <UiInput v-model="editing.address" placeholder="127.0.0.1" :error="fieldErrors.address" compact />
                     </div>
-                    <div class="form-field">
+                    <!-- WTNMC4A 不需要端口配置（非 TCP 协议），隐藏端口字段；
+                         port 值仍由 defaultPortForType 维护默认 5000，切回 B140 时 watch 自动恢复 23 -->
+                    <div v-if="editing.type !== 'WTNMC4A-MC'" class="form-field">
                       <label class="form-field__label">端口</label>
                       <UiInput v-model="editing.port" type="number" :min="1" :max="65535" :step="1" :error="fieldErrors.port" compact />
                     </div>
@@ -586,14 +607,15 @@ function onUpdateEncoderScale(index: number, value: number): void {
    ============================================================ */
 .config-panel {
   width: 100%;
-  max-width: 900px;
-  max-height: 600px;
+  max-width: 960px;
+  max-height: 640px;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 8px;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
   outline: none;
   overflow: hidden;
   transition: border-color var(--motion-medium) var(--easing-standard),
@@ -615,9 +637,9 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-panel);
+  background: var(--bg-panel-strong);
   flex-shrink: 0;
   position: relative;
   transition: background var(--motion-medium) var(--easing-standard);
@@ -693,14 +715,15 @@ function onUpdateEncoderScale(index: number, value: number): void {
 }
 
 .config-panel__close {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   color: var(--text-muted);
-  background: var(--bg-panel-strong);
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
   cursor: pointer;
   transition: all var(--motion-fast) var(--easing-standard);
@@ -808,9 +831,10 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
+  padding: 9px 12px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--accent-danger);
   background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
@@ -903,6 +927,11 @@ function onUpdateEncoderScale(index: number, value: number): void {
   gap: var(--space-2);
 }
 
+/* WTNMC4A 隐藏端口后，地址字段占 2 列填满 5 列网格，避免留空位 */
+.form-field--span-2 {
+  grid-column: span 2;
+}
+
 .form-field--toggle .form-field__label {
   margin: 0;
 }
@@ -929,9 +958,9 @@ function onUpdateEncoderScale(index: number, value: number): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: 11px 16px;
   border-top: 1px solid var(--border-default);
-  background: var(--bg-panel);
+  background: var(--bg-panel-strong);
   flex-shrink: 0;
   gap: var(--space-3);
   transition: background var(--motion-medium) var(--easing-standard);
@@ -980,15 +1009,16 @@ function onUpdateEncoderScale(index: number, value: number): void {
 .field-tooltip {
   position: fixed;
   z-index: 9999;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
+  padding: 7px 11px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-primary);
-  background: var(--bg-app);
+  background: var(--bg-panel);
   border: 1px solid var(--border-default);
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 </style>

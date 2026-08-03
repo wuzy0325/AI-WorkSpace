@@ -62,6 +62,7 @@ type PressureProfile struct {
 	ID           string          `json:"id"`
 	Name         string          `json:"name"`
 	Address      string          `json:"address"`
+	LocalAddress string          `json:"localAddress,omitempty"`
 	Port         int             `json:"port"`
 	SamplingRate int             `json:"samplingRate"`
 	Channels     []ChannelConfig `json:"channels"`

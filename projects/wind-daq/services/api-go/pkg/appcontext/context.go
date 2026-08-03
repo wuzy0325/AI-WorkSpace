@@ -1,13 +1,13 @@
-﻿// Package appcontext provides public access to core application components
+// Package appcontext provides public access to core application components
 package appcontext
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
 	"os"
 	"path/filepath"
+	"shared.local/device-sdk/go/pkg/slog"
 	"time"
 
 	hardware "shared.local/device-sdk/go/motion/adapters/hardware"
@@ -42,7 +42,10 @@ type AppContext struct {
 	ConfigManager    *usecase.ConfigManager
 	MotionManagerRaw *motionmanager.MotionManager
 	DataStreamRelay  *usecase.DataStreamRelay
-	configDir        string
+	// TraversalRegistry 双探针 registry（Task 14）；与 legacy TraversalMgr 并存，
+	// legacy single 路径行为不变。Shutdown 必须先于共享服务 Close（spec FR9）。
+	TraversalRegistry *usecase.ManagerRegistry
+	configDir         string
 }
 
 // NewAppContext creates and initializes all core services
@@ -133,18 +136,34 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	traversalMgr.SetAcquisitionController(deviceMgr)
 	calibrationMgr.SetAcquisitionController(deviceMgr)
 
+	// 双探针 registry（Task 14）：与 legacy TraversalMgr 并存，共享
+	// AcquisitionHub/MotionAccess/DeviceManager 查询端口/appConfigStore/checkpointStore。
+	registryBundle, err := NewTraversalRegistry(TraversalRegistryDeps{
+		Hub:             hub,
+		Motion:          motionMgr,
+		DeviceManager:   deviceMgr,
+		ConfigStore:     appConfigStore,
+		CheckpointStore: checkpointStore,
+		DataDir:         configDir,
+		InterpLoader:    interpadapter.NewLoader(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &AppContext{
-		DeviceManager:    deviceMgr,
-		AcquisitionHub:   hub,
-		ReportManager:    reportMgr,
-		MotionManager:    motionMgr,
-		CalibrationMgr:   calibrationMgr,
-		TraversalMgr:     traversalMgr,
-		StorageRecorder:  recorder,
-		ConfigManager:    configMgr,
-		MotionManagerRaw: rawMotionMgr,
-		DataStreamRelay:  usecase.NewDataStreamRelay(hub),
-		configDir:        configDir,
+		DeviceManager:     deviceMgr,
+		AcquisitionHub:    hub,
+		ReportManager:     reportMgr,
+		MotionManager:     motionMgr,
+		CalibrationMgr:    calibrationMgr,
+		TraversalMgr:      traversalMgr,
+		StorageRecorder:   recorder,
+		ConfigManager:     configMgr,
+		MotionManagerRaw:  rawMotionMgr,
+		DataStreamRelay:   usecase.NewDataStreamRelay(hub),
+		TraversalRegistry: registryBundle.Registry,
+		configDir:         configDir,
 	}, nil
 }
 

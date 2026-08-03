@@ -1,9 +1,8 @@
 go 1.26.1
 
 use (
-	./projects/1604Cal
-	./projects/three-hole-interpolator/apps/desktop-win7
-	./projects/three-hole-interpolator/apps/desktop-win7-walk
+	./projects/daq-t1603/apps/desktop-wails
+	./projects/probe-interpolator/apps/desktop-wails
 	programs/p1604-unit-diag
 	// Win7 LTS 改造已完成，daq-p1604 改为 Go 1.20 + net/http + Electron 22.3.27，
 	// 与工作空间 Go 1.26 + Wails v3 alpha 不兼容，临时摘除避免间接依赖冲突。
@@ -18,8 +17,11 @@ use (
 	projects/wind-daq/apps/desktop-wails
 	projects/wind-daq/services/api-go
 	shared/algorithms/go/fivehole
+	shared/algorithms/go/sevenhole
 	shared/device-sdk/go
 	shared/motion-control/go
 )
 
+// threehole 模块未加入 use 列表——three-hole-interpolator 项目 go.mod 内有
+// 各自的 replace 指向本工作区路径，go.work 在此统一声明避免冲突。
 replace ai-workspace/shared/algorithms/go/threehole => ./shared/algorithms/go/threehole

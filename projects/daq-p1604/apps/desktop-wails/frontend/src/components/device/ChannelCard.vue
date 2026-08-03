@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Palette } from '@lucide/vue'
+import { useI18nStore } from '@stores/i18nStore'
 
 const props = defineProps<{
   index: number
@@ -16,6 +17,8 @@ const emit = defineEmits<{
   (e: 'changeColor', color: string): void
 }>()
 
+const i18n = useI18nStore()
+
 function formatValue(v: number): string {
   if (v === undefined || v === null || isNaN(v)) return '---'
   const p = typeof props.precision === 'number' ? Math.max(0, Math.min(props.precision, 6)) : 2
@@ -24,16 +27,6 @@ function formatValue(v: number): string {
 
 // 数值直接派生显示文本：采集期间值持续变化，不再触发闪烁动画，避免视觉噪音
 const displayValue = computed(() => formatValue(props.value))
-
-const statusText = computed(() => {
-  if (props.active) return '已选择'
-  return '空闲'
-})
-
-const statusColor = computed(() => {
-  if (props.active) return 'var(--accent)'
-  return 'var(--text-muted)'
-});
 
 /** 打开原生调色盘 */
 function openColorPicker() {
@@ -68,7 +61,7 @@ function onColorChange(target: HTMLInputElement) {
         <!-- 颜色选择按钮：使用图标替代彩色圆点，降低视觉噪音 -->
         <button
           class="card__color-btn"
-          title="选择波形颜色"
+          :title="i18n.t('channel.pickColor')"
           @click="openColorPicker"
         >
           <Palette class="card__color-icon" :style="{ color: color }" />

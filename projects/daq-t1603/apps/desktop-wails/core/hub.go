@@ -41,14 +41,14 @@ type StateEmitter interface {
 // Hub 是 backend 各 Service 共享的运行期状态容器。
 //
 // 设计目标：
-//   1. 集中保存应用生命周期 ctx（在 ServiceStartup 时注入），
-//      让所有 Service 共享一个可被统一取消的上下文；
-//   2. 维护 deviceID -> *RelayControl 的中继协程映射，
-//      DeviceService 启停采集时通过 Hub 管理；
-//   3. 通过 LogEmitter 抽象提供给所有 Service 一个统一的日志发布入口，
-//      避免循环依赖（DeviceService/RecordingService 不必直接依赖 LogService）；
-//   4. 通过 EventBus 抽象"推送给前端"的能力，使 Service 不再耦合具体传输
-//      （Wails v3 的 application.App.Event.Emit 或 httpserver 的 WebSocket 推送）。
+//  1. 集中保存应用生命周期 ctx（在 ServiceStartup 时注入），
+//     让所有 Service 共享一个可被统一取消的上下文；
+//  2. 维护 deviceID -> *RelayControl 的中继协程映射，
+//     DeviceService 启停采集时通过 Hub 管理；
+//  3. 通过 LogEmitter 抽象提供给所有 Service 一个统一的日志发布入口，
+//     避免循环依赖（DeviceService/RecordingService 不必直接依赖 LogService）；
+//  4. 通过 EventBus 抽象"推送给前端"的能力，使 Service 不再耦合具体传输
+//     （Wails v3 的 application.App.Event.Emit 或 httpserver 的 WebSocket 推送）。
 //
 // 并发性：所有方法都加锁；中继 goroutine 在被取消后会调用 ClearRelay 自清理。
 type Hub struct {

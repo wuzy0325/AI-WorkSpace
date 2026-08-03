@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "wind-daq",
   "version": "0.10.0",

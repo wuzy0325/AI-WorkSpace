@@ -60,8 +60,15 @@ import { buildCalibrationCsvName } from '@shared/calibrationCsvPath'
 const props = withDefaults(
   defineProps<{
     show?: boolean
+    /**
+     * 对话框打开时定位到的步骤索引(0=通道, 1=PRB, 2=布点, 3=摘要)。
+     * 用于"PRB 未加载"等场景下从外部跳转直达 PRB 步骤,免去用户手动点击。
+     * 未传或越界(包括 > steps.length-1)时默认 0;同时把 visitedSteps 同步加该索引,
+     * 让 goToStep 反向跳转也允许。
+     */
+    initialStep?: number
   }>(),
-  { show: false }
+  { show: false, initialStep: 0 }
 )
 
 const emit = defineEmits<{
@@ -745,16 +752,20 @@ watch(() => props.show, async (isVisible) => {
     )
     if (!savePath.value.trim()) savePath.value = storageStore.settings?.baseDirectory?.trim() ?? ''
     if (!saveFileName.value.trim()) saveFileName.value = buildCalibrationCsvName(testName.value, 'Traversal')
-    // 重置步骤导航到第一步
-    currentStep.value = 0
-    visitedSteps.value = new Set([0])
+    // 步骤定位:外部 initialStep 优先(用于"PRB 未加载"等场景直达 PRB 步骤),
+    // 越界保护:索引 < 0 或 >= steps.length 时回退到 0,避免 v-if 分支越界空白。
+    // visitedSteps 同步加 0..initialStep 范围,允许用户反向跳转修复前置步骤。
+    // 与 steps computed 共享同一长度源,避免未来步骤数变更时越界保护静默失效。
+    const target = props.initialStep >= 0 && props.initialStep < steps.value.length ? props.initialStep : 0
+    currentStep.value = target
+    visitedSteps.value = new Set(Array.from({ length: target + 1 }, (_, i) => i))
   } finally { isLoading.value = false }
 }, { immediate: true })
 </script>
 
 <template>
   <!-- 遍历测试配置对话框：限制最大高度，使用 flex 布局确保内容不溢出 -->
-  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @close="emit('close')">
+  <UiDialog :show="props.show" width="min(92vw, 960px)" closable @update:show="emit('close')">
     <template #header>
       <div>
           <span class="setup-overline">{{ t.traversalSetup }}</span>

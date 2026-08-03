@@ -262,6 +262,66 @@ func TestCheckPreconditionsProbeAware(t *testing.T) {
 	}
 }
 
+// TestCheckPreconditionsRespectsRequestProbeType 双变体恢复场景的回归测试：
+// 前端 activateProbeType 切换后尚未保存到后端（m.config.ProbeType 仍是旧值），
+// 此时调用 checkPreconditions 必须按请求 config 的 ProbeType 判定，
+// 否则切到已加载侧仍会按陈旧 m.config.ProbeType 误报"未加载 PRB"。
+func TestCheckPreconditionsRespectsRequestProbeType(t *testing.T) {
+	prbPassed := func(mgr *TraversalManager, cfg *traversal.Config) bool {
+		result := mgr.CheckPreconditions(cfg)
+		for _, c := range result["checks"].([]map[string]any) {
+			if c["name"] == "PRB" {
+				return c["passed"].(bool)
+			}
+		}
+		t.Fatal("PRB check missing")
+		return false
+	}
+
+	// 后端 m.config.ProbeType=five-hole（陈旧），但仅七孔插值器加载成功。
+	// 场景：用户切换到七孔侧，前端 config.probeType=seven-hole 但尚未保存。
+	mgr := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr.config = traversal.Config{ProbeType: traversal.ProbeTypeFiveHole}
+	mgr.SetSevenHoleInterpolator(&mockSevenInterpolator{loaded: true})
+
+	// 不传 config：按陈旧 m.config.ProbeType=five-hole 判定，五孔未加载→失败
+	if prbPassed(mgr, nil) {
+		t.Error("nil config must fall back to m.config.ProbeType=five-hole and fail (five-hole not loaded)")
+	}
+
+	// 传入 config.ProbeType=seven-hole：必须按请求类型判定→七孔已加载→通过
+	// 这是修复"切换探针类型后误报未加载 PRB"的关键路径
+	sevenCfg := &traversal.Config{ProbeType: traversal.ProbeTypeSevenHole}
+	if !prbPassed(mgr, sevenCfg) {
+		t.Error("config.ProbeType=seven-hole must pass (request probeType overrides stale m.config.ProbeType)")
+	}
+
+	// 反向场景：m.config.ProbeType=seven-hole（陈旧），仅五孔加载成功
+	mgr2 := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr2.config = traversal.Config{ProbeType: traversal.ProbeTypeSevenHole}
+	mgr2.SetInterpolator(&mockInterpolator{})
+
+	if prbPassed(mgr2, nil) {
+		t.Error("nil config must fall back to m.config.ProbeType=seven-hole and fail (seven-hole not loaded)")
+	}
+	fiveCfg := &traversal.Config{ProbeType: traversal.ProbeTypeFiveHole}
+	if !prbPassed(mgr2, fiveCfg) {
+		t.Error("config.ProbeType=five-hole must pass (request probeType overrides stale m.config.ProbeType)")
+	}
+
+	// 双变体都加载成功：任一类型传入都必须通过（覆盖最常见切换场景）
+	mgr3 := NewTraversalManager(nil, nil, nil, nil, nil)
+	mgr3.config = traversal.Config{ProbeType: traversal.ProbeTypeFiveHole}
+	mgr3.SetInterpolator(&mockInterpolator{})
+	mgr3.SetSevenHoleInterpolator(&mockSevenInterpolator{loaded: true})
+	if !prbPassed(mgr3, &traversal.Config{ProbeType: traversal.ProbeTypeSevenHole}) {
+		t.Error("both loaded: seven-hole request must pass")
+	}
+	if !prbPassed(mgr3, &traversal.Config{ProbeType: traversal.ProbeTypeFiveHole}) {
+		t.Error("both loaded: five-hole request must pass")
+	}
+}
+
 // TestClearProbeInterpolator 五孔/七孔分别只清指定类型；未知类型报错；
 // 清除后对应类型前置检查失败。
 func TestClearProbeInterpolator(t *testing.T) {

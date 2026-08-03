@@ -174,7 +174,8 @@ func TestHandleFiveHolePreview_InvalidStep(t *testing.T) {
 // 测试前置：最小 1×1 网格
 // 测试步骤：POST /api/calibration/fivehole
 // 期待结果：HTTP 200；响应顶层是 [，不是 {points:...}
-//           spec Task 10 acceptance：bare-array 响应不变
+//
+//	spec Task 10 acceptance：bare-array 响应不变
 func TestHandleFiveHolePreview_BareArrayResponse(t *testing.T) {
 	mgr := newTestFiveHoleCalibrationManager()
 	body := `{

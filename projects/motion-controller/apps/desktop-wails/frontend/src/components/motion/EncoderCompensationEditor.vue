@@ -161,6 +161,18 @@ const FIELD_HELP: Record<string, string> = {
 const enabledAxes = computed(() => {
   return props.axes.filter(axis => axisConfigs[axis.name]?.enabled)
 })
+
+// 编码器补偿仅 B140 控制器支持：WTNMC4A / 模拟控制器不显示配置项，避免误配置
+const isB140Controller = computed(() => props.controllerType === 'B140-MC')
+
+// 仅展示「B140 控制器 + 该轴位置来源选了编码器」的轴。
+// positionSource 默认 'register'，所以用户未主动切到 encoder 时配置项不出现，
+// 与"只有 B140 在选择编码器时才让配置"的需求一致。
+const visibleAxes = computed(() =>
+  isB140Controller.value
+    ? props.axes.filter(axis => axis.positionSource === 'encoder')
+    : []
+)
 </script>
 
 <template>
@@ -170,9 +182,9 @@ const enabledAxes = computed(() => {
       <span class="enc-comp-editor__subtitle">为各轴配置编码器补偿参数</span>
     </div>
 
-    <div class="enc-comp-editor__axes">
+    <div v-if="visibleAxes.length > 0" class="enc-comp-editor__axes">
       <div
-        v-for="axis in axes"
+        v-for="axis in visibleAxes"
         :key="axis.name"
         class="enc-comp-axis"
       >
@@ -357,7 +369,14 @@ const enabledAxes = computed(() => {
       </div>
     </div>
 
-    <div v-if="enabledAxes.length === 0" class="enc-comp-editor__empty">
+    <!-- 三类空态：非 B140 / B140 但无编码器轴 / B140 且未启用任何补偿 -->
+    <div v-else-if="!isB140Controller" class="enc-comp-editor__empty">
+      <p>仅 B140 控制器支持编码器补偿配置</p>
+    </div>
+    <div v-else-if="visibleAxes.length === 0" class="enc-comp-editor__empty">
+      <p>暂无可配置的轴，请先将轴的「位置来源」设为编码器</p>
+    </div>
+    <div v-else-if="enabledAxes.length === 0" class="enc-comp-editor__empty">
       <p>未启用任何轴的编码器补偿</p>
     </div>
   </div>
@@ -418,9 +437,10 @@ const enabledAxes = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: 11px 12px;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--bg-panel-strong);
 }
 
@@ -436,9 +456,10 @@ const enabledAxes = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
   background: var(--axis-hue, var(--accent-primary));
-  color: white;
+  color: #0b0e13;
   font-size: 0.75rem;
   font-weight: 800;
   flex-shrink: 0;
@@ -604,8 +625,9 @@ const enabledAxes = computed(() => {
   display: flex;
   align-items: flex-start;
   gap: var(--space-1-5);
-  padding: var(--space-1-5) var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 3px;
   font-size: 0.6875rem;
   line-height: 1.4;
 }
@@ -643,6 +665,7 @@ const enabledAxes = computed(() => {
   font-size: 0.75rem;
   background: var(--bg-panel-strong);
   border: 1px dashed var(--border-default);
-  border-radius: var(--radius-md);
+  /* 仪器质感：紧凑圆角 */
+  border-radius: 4px;
 }
 </style>

@@ -49,6 +49,12 @@ type App struct {
 	latestSnapshots map[string]core.PressureSnapshot
 }
 
+// relayControl 采集数据中继控制
+type relayControl struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // LogFileState 日志文件写入状态
 type LogFileState struct {
 	Active    bool   `json:"active"`
@@ -260,6 +266,17 @@ func (a *App) StopAcquisition(id string) error {
 	}
 	a.hub.WaitRelay(id)
 	a.EmitLog(core.LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Acquisition stopped"})
+	return nil
+}
+
+// ZeroCalibration 对设备的全部压力通道执行零点校准
+func (a *App) ZeroCalibration(id string) error {
+	a.EmitLog(core.LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration requested"})
+	if err := a.deviceUC.ZeroCalibration(id); err != nil {
+		a.EmitLog(core.LogEvent{Level: "error", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration failed", Detail: err.Error()})
+		return err
+	}
+	a.EmitLog(core.LogEvent{Level: "info", Category: "acquisition", DeviceID: id, Source: "device", Message: "Zero calibration started"})
 	return nil
 }
 

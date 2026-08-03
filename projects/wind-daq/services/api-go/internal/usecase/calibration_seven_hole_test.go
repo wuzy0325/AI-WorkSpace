@@ -1,4 +1,4 @@
-﻿// Package usecase — 七孔校准 usecase 层测试（spec Task 9）
+// Package usecase — 七孔校准 usecase 层测试（spec Task 9）
 //
 // 测试覆盖：
 //   - createAlgorithm 工厂分支：TypeSevenHole → *SevenHoleAlgorithm
@@ -11,9 +11,10 @@ package usecase
 
 import (
 	"errors"
-	"shared.local/device-sdk/go/pkg/slog"
 	"sync"
 	"testing"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/ports"

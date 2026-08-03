@@ -44,6 +44,7 @@ export interface PressureProfile {
   id: string
   name: string
   address: string
+  localAddress?: string
   port: number
   samplingRate: number
   channels: ChannelConfig[]
@@ -147,6 +148,11 @@ export function startAcquisition(id: string): Promise<void> {
 /** 停止采集 */
 export function stopAcquisition(id: string): Promise<void> {
   return post('/api/device/stop', { id })
+}
+
+/** 对设备的全部压力通道执行零点校准 */
+export function zeroCalibration(id: string): Promise<void> {
+  return post('/api/device/zero-calibration', { id })
 }
 
 /**

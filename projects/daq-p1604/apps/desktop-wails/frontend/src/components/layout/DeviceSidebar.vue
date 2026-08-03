@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import {
   Activity, Trash2, Network, Loader2,
   CircleDot, Zap, AlertTriangle, ChevronRight, Search
@@ -11,6 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const deviceStore = useDeviceStore()
+const i18n = useI18nStore()
 const pendingDeleteId = ref<string | null>(null)
 const pendingDeleteName = ref('')
 
@@ -23,7 +25,7 @@ const sorted = computed(() =>
 function handleDelete(id: string, name: string, event: Event): void {
   event.stopPropagation()
   pendingDeleteId.value = id
-  pendingDeleteName.value = name || '未命名设备'
+  pendingDeleteName.value = name || i18n.t('sidebar.unnamedDevice')
 }
 
 function closeDeleteDialog(): void {
@@ -57,24 +59,24 @@ function statusClass(status: string, acquiring: boolean): string {
 }
 
 function statusLabel(status: string, acquiring: boolean): string {
-  if (acquiring) return '采集中'
-  if (status === 'Stopping') return '停止中'
-  if (status === 'Connected') return '已连接'
-  if (status === 'Connecting') return '连接中'
-  if (status === 'Error') return '错误'
-  return '未连接'
+  if (acquiring) return i18n.t('status.acquiring')
+  if (status === 'Stopping') return i18n.t('status.stopping')
+  if (status === 'Connected') return i18n.t('status.connected')
+  if (status === 'Connecting') return i18n.t('status.connecting')
+  if (status === 'Error') return i18n.t('status.error')
+  return i18n.t('status.disconnected')
 }
 </script>
 
 <template>
   <aside class="sidebar">
     <div class="sidebar__header">
-      <h2 class="sidebar__title">设备列表</h2>
+      <h2 class="sidebar__title">{{ i18n.t('sidebar.deviceList') }}</h2>
       <div class="sidebar__header-actions">
         <span class="sidebar__count" data-testid="sidebar-count">{{ sorted.length }}</span>
         <button
           class="sidebar__scan-btn"
-          title="扫描设备"
+          :title="i18n.t('sidebar.scanDevices')"
           :disabled="deviceStore.isScanning"
           @click="emit('scan')"
         >
@@ -87,8 +89,8 @@ function statusLabel(status: string, acquiring: boolean): string {
       <div class="sidebar__empty-illu">
         <Activity class="sidebar__empty-icon" />
       </div>
-      <p class="sidebar__empty-text">暂无设备</p>
-      <p class="sidebar__empty-hint">点击顶栏 + 添加 P1604</p>
+      <p class="sidebar__empty-text">{{ i18n.t('sidebar.noDevices') }}</p>
+      <p class="sidebar__empty-hint">{{ i18n.t('sidebar.addHint') }}</p>
     </div>
 
     <ul v-else class="sidebar__list" data-testid="sidebar-list">
@@ -108,7 +110,7 @@ function statusLabel(status: string, acquiring: boolean): string {
             <Activity class="device__icon-svg" />
           </div>
           <div class="device__info">
-            <span class="device__name">{{ p.name || '未命名' }}</span>
+            <span class="device__name">{{ p.name || i18n.t('sidebar.unnamed') }}</span>
             <span class="device__addr mono">{{ p.address }}:{{ p.port }}</span>
           </div>
           <div class="device__right">
@@ -122,8 +124,8 @@ function statusLabel(status: string, acquiring: boolean): string {
             </div>
             <button
               class="device__delete"
-              title="删除设备"
-              @click="handleDelete(p.id, p.name || '未命名设备', $event)"
+              :title="i18n.t('sidebar.deleteDevice')"
+              @click="handleDelete(p.id, p.name || i18n.t('sidebar.unnamedDevice'), $event)"
             >
               <Trash2 class="device__delete-icon" />
             </button>
@@ -142,15 +144,15 @@ function statusLabel(status: string, acquiring: boolean): string {
           <div class="modal-panel modal-panel--compact">
             <div class="dialog">
               <div class="dialog__header">
-                <h3 class="dialog__title">确认删除设备</h3>
-                <p class="dialog__subtitle">删除后将移除该设备配置与当前选择状态。</p>
+                <h3 class="dialog__title">{{ i18n.t('sidebar.confirmDeleteTitle') }}</h3>
+                <p class="dialog__subtitle">{{ i18n.t('sidebar.confirmDeleteSubtitle') }}</p>
               </div>
               <div class="dialog__body">
-                <p class="dialog__text">确认删除设备 "{{ pendingDeleteName }}" 吗？</p>
+                <p class="dialog__text">{{ i18n.t('sidebar.confirmDeleteText', { name: pendingDeleteName }) }}</p>
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="closeDeleteDialog">取消</button>
-                <button class="dialog__btn dialog__btn--danger" @click="confirmDelete">删除</button>
+                <button class="dialog__btn dialog__btn--secondary" @click="closeDeleteDialog">{{ i18n.t('common.cancel') }}</button>
+                <button class="dialog__btn dialog__btn--danger" @click="confirmDelete">{{ i18n.t('common.delete') }}</button>
               </div>
             </div>
           </div>

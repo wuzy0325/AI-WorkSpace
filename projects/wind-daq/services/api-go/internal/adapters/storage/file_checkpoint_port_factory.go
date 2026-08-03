@@ -32,3 +32,24 @@ func (f *FileCheckpointPortFactory) Create(ctx context.Context, basePath string)
 	}
 	return NewFileCheckpointPort(f.store, basePath), nil
 }
+
+// DualCheckpointPortFactory 按 basePath 创建 dual v3 codec 的 FileCheckpointPort
+// （spec FR8：managed 双探针 manager 的 checkpoint port 工厂，Task 14 装配）。
+type DualCheckpointPortFactory struct {
+	store ports.CheckpointStore
+}
+
+var _ ports.TraversalCheckpointPortFactory = (*DualCheckpointPortFactory)(nil)
+
+// NewDualCheckpointPortFactory 创建双探针断点端口工厂。
+func NewDualCheckpointPortFactory(store ports.CheckpointStore) *DualCheckpointPortFactory {
+	return &DualCheckpointPortFactory{store: store}
+}
+
+// Create 按 basePath 创建 dual v3 codec 的 FileCheckpointPort 实例。
+func (f *DualCheckpointPortFactory) Create(ctx context.Context, basePath string) (ports.TraversalCheckpointPort, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return NewDualCheckpointPort(f.store, basePath), nil
+}

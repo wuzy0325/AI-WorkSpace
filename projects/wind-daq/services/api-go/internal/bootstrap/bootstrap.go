@@ -1,10 +1,10 @@
-﻿package bootstrap
+package bootstrap
 
 import (
 	"encoding/json"
-	"shared.local/device-sdk/go/pkg/slog"
 	"net/http"
 	"path/filepath"
+	"shared.local/device-sdk/go/pkg/slog"
 	"time"
 
 	"shared.local/device-sdk/go/motion/adapters/hardware"
@@ -54,6 +54,9 @@ type Config struct {
 type APIServer struct {
 	Address string
 	Handler http.Handler
+	// TraversalRegistry 双探针 registry（Task 14）；调用方在关停 HTTP 前必须先
+	// 调用其 Shutdown（spec FR9：失败时禁止继续关闭共享服务）。
+	TraversalRegistry *usecase.ManagerRegistry
 }
 
 func BuildAPIServer(cfg Config) (APIServer, error) {
@@ -131,6 +134,20 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	// 与 traversal 的"等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"。
 	calMgr.SetAcquisitionController(manager)
 
+	// 双探针 registry（Task 14 统一装配），与 legacy travMgr 并存。
+	registryBundle, err := appcontext.NewTraversalRegistry(appcontext.TraversalRegistryDeps{
+		Hub:             hub,
+		Motion:          motionMgr,
+		DeviceManager:   manager,
+		ConfigStore:     appConfigStore,
+		CheckpointStore: checkpointStore,
+		DataDir:         dataDir,
+		InterpLoader:    interpadapter.NewLoader(),
+	})
+	if err != nil {
+		return APIServer{}, err
+	}
+
 	router := api.NewRouter(api.Deps{
 		DeviceManager:      manager,
 		AcquisitionHub:     hub,
@@ -139,12 +156,13 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 		MotionService:      rawMotionMgr,
 		CalibrationManager: calMgr,
 		TraversalManager:   travMgr,
+		TraversalRegistry:  registryBundle.Registry,
 		StorageRecorder:    recorder,
 		ConfigManager:      configMgr,
 		LogRing:            cfg.LogRing,
 		LogManager:         cfg.LogManager,
 	})
-	return APIServer{Address: cfg.Address, Handler: router}, nil
+	return APIServer{Address: cfg.Address, Handler: router, TraversalRegistry: registryBundle.Registry}, nil
 }
 
 // acquisitionAppConfig 采集 hub 的应用配置（JSON 文件 acquisition.json）。

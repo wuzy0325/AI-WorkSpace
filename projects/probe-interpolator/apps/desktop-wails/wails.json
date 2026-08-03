@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "probe-interpolator",
+  "version": "0.2.1",
+  "outputfilename": "probe-interpolator",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://localhost:15177"
+    }
+  },
+  "author": {
+    "name": "Wind-DAQ Team",
+    "email": ""
+  }
+}

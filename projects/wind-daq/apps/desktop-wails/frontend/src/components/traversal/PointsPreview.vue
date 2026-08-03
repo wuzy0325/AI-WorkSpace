@@ -178,8 +178,12 @@ function draw() {
   const dpr = window.devicePixelRatio || 1
   canvas.width = rect.width * dpr
   canvas.height = rect.height * dpr
-  canvas.style.width = `${rect.width}px`
-  canvas.style.height = `${rect.height}px`
+  // 不设置 canvas.style.width/height：让 CSS w-full h-full 控制显示尺寸。
+  // 原实现把 style.width/height 设为固定 px，会反向撑大 containerRef
+  // （当 containerRef 的 h-full 在某些 flex 布局下不严格生效时），
+  // 进而在双探针模式下撑大 .dual-row__points，导致窗口缩小后画布不缩小。
+  // backing store 由 canvas.width/height 属性控制，与 CSS 显示尺寸独立，
+  // 配合 ctx.scale(dpr, dpr) 在高 DPI 屏幕下保持清晰渲染。
   ctx.scale(dpr, dpr)
 
   const width = rect.width
@@ -386,14 +390,18 @@ watch(() => props.visible !== false && props.currentPointPhase !== undefined, (s
   }
 }, { immediate: true })
 
-// 监听轴对变化、layout 变化、当前点变化、主题变化 → 重绘
+// I-26 修复：原 watch 对 props.layout 用 deep:true，但 layout 含数百点位时深比较开销大。
+// draw() 只读取 points（由 layout 派生）与 hAxis/vAxis/bounds，不依赖 currentPoint 字段细节；
+// 改为浅监听 + 显式列出真正影响绘制的依赖（completedPoints/currentPointPhase 是标量）。
+// layout 引用变化（父组件重新构造对象）即可触发重绘，无需深比较内部点位数组。
 watch(
-  [() => props.layout, () => props.currentPoint, () => props.completedPoints, () => props.currentPointPhase, () => themeStore.theme, hAxis, vAxis],
+  [() => props.layout, () => props.completedPoints, () => props.currentPointPhase, () => themeStore.theme, hAxis, vAxis],
   () => { nextTick(draw) },
-  { deep: true }
 )
 
 let resizeObserver: ResizeObserver | null = null
+// I-25 修复：保存 setTimeout 句柄，组件卸载时清理，避免回调在卸载后仍触发 draw。
+let initialDrawTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => {
   // 使用 ResizeObserver 监听容器尺寸变化
@@ -406,7 +414,8 @@ onMounted(() => {
   window.addEventListener('resize', draw)
 
   // 延迟执行绘制，确保容器已正确渲染
-  setTimeout(() => {
+  initialDrawTimer = setTimeout(() => {
+    initialDrawTimer = null
     nextTick(draw)
   }, 100)
 
@@ -418,6 +427,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopBlinkAnimation()
+  // I-25 修复：清理未触发的初始绘制 timer，防止卸载后回调访问已失效的 canvasRef。
+  if (initialDrawTimer !== null) {
+    clearTimeout(initialDrawTimer)
+    initialDrawTimer = null
+  }
   if (resizeObserver && containerRef.value) {
     resizeObserver.unobserve(containerRef.value)
     resizeObserver.disconnect()

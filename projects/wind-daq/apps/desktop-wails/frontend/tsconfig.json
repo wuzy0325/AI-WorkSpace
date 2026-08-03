@@ -23,12 +23,14 @@
       "@shared/*": ["src/shared/*"],
       "@shared-frontend/*": ["../../../../../shared/frontend/*"],
       "@composables/*": ["src/composables/*"],
-      "@utils/*": ["src/utils/*"]
+      "@utils/*": ["src/utils/*"],
+      "vue": ["./node_modules/vue"],
+      "pinia": ["./node_modules/pinia"]
     }
   },
   "include": [
     "src/**/*.ts",
     "src/**/*.vue"
   ],
-  "exclude": []
+  "exclude": ["src/**/__tests__/**"]
 }

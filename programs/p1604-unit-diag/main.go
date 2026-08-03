@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,13 @@ const (
 	defaultPort    = 9000
 	connectTimeout = 5 * time.Second
 	cmdTimeout     = 2 * time.Second
+	// globalWatchdogTimeout 是进程级硬 watchdog 超时（ADR-009 P2）。
+	//
+	// 设计依据：诊断工具的 SetReadDeadline/SetWriteDeadline 在故障 Windows 电脑上可能失效，
+	// Read/Write 永久阻塞导致 main 挂起。watchdog 在超时后强制 Close conn 解除阻塞，
+	// 并 os.Exit(2) 退出，避免僵尸进程。
+	// 取值 5 分钟：覆盖最慢诊断流程（多通道 EU 系数写入 + 验证 + 恢复），正常用例不会触发。
+	globalWatchdogTimeout = 5 * time.Minute
 )
 
 func main() {
@@ -46,15 +54,31 @@ func main() {
 		os.Exit(2)
 	}
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
 	fmt.Printf("=== DAQ-P-1604 EU 系数写入诊断 ===\n")
 	fmt.Printf("目标: %s  目标单位: %s (coeff=%f)\n\n", addr, *targetUnit, coeff)
 
-	conn, err := net.DialTimeout("tcp", addr, connectTimeout)
+	// ADR-009 R2-1：改用 sharedproto.DialTCP 替代 net.DialTimeout。
+	// net.DialTimeout 依赖 Dial 内部 deadline，Windows 故障机器 deadline 不可靠时
+	// Dial 可能永远不返回，工具启动即卡死。sharedproto.DialTCP 内部用 goroutine +
+	// time.After 软超时 + abandoned 信号，主线程在 timeout 后立即返回，晚到 conn
+	// 被 Close 不泄漏（R1-4 整改保证）。
+	conn, err := sharedproto.DialTCP(addr, "", connectTimeout)
 	if err != nil {
 		fail("连接失败: %v", err)
 	}
 	defer conn.Close()
+	// 进程级硬 watchdog（ADR-009 P2）：5 分钟超时后强制 Close conn + os.Exit(2)。
+	// 诊断工具单连接顺序执行，watchdog 触发即视为设备/网络故障，无需重连。
+	// 退出码 2 = watchdog 硬超时，区别于 fail() 的 os.Exit(1)（一般错误），便于脚本区分超时与其他故障。
+	// 保存 timer 句柄并在 main 正常返回前 Stop，避免长生命周期场景下 watchdog 误触发
+	// （诊断工具进程退出即回收，本 defer 是防御性编程）。
+	wd := time.AfterFunc(globalWatchdogTimeout, func() {
+		fmt.Fprintf(os.Stderr, "\n[watchdog] 全局超时 %v 触发，强制关闭连接并退出\n", globalWatchdogTimeout)
+		_ = conn.Close()
+		os.Exit(2)
+	})
+	defer wd.Stop()
 	fmt.Printf("[OK] TCP 已连接\n")
 	if tcp, ok := conn.(*net.TCPConn); ok {
 		_ = tcp.SetKeepAlive(true)
@@ -89,14 +113,14 @@ func main() {
 	// 步骤 3: 探测多种 u 命令格式
 	fmt.Printf("\n[步骤3] 探测 u 命令格式（查找设备支持的 EU 系数入口）...\n")
 	probes := []string{
-		"u01101",  // 文档 3.5.3 示例：全局数组 aa=11 cc=01 EU 系数
-		"u01100",  // 全局 cc=00 offset
-		"u01102",  // 全局 cc=02 EU c0
-		"u01105",  // 全局 cc=05 EU c3
-		"u0110A",  // 全局 cc=0A 量程代码
-		"u0115F",  // 全局 cc=5F 当前压力 EU 值
-		"u00101",  // 传感器1 cc=01 slope
-		"u00100",  // 传感器1 cc=00 offset
+		"u01101",    // 文档 3.5.3 示例：全局数组 aa=11 cc=01 EU 系数
+		"u01100",    // 全局 cc=00 offset
+		"u01102",    // 全局 cc=02 EU c0
+		"u01105",    // 全局 cc=05 EU c3
+		"u0110A",    // 全局 cc=0A 量程代码
+		"u0115F",    // 全局 cc=5F 当前压力 EU 值
+		"u00101",    // 传感器1 cc=01 slope
+		"u00100",    // 传感器1 cc=00 offset
 		"u00100-01", // 传感器1 cc=00-01 offset+slope
 		"u01101-05", // 全局 cc=01-05
 	}
@@ -144,9 +168,9 @@ func main() {
 	// 步骤 5: 探测多种 v 命令写入格式（找到设备真正接受的写法）
 	fmt.Printf("\n[步骤5] 探测 v 命令写入格式（目标系数 %f）...\n", coeff)
 	writeVariants := []string{
-		"v01101 " + fmt.Sprintf("%.6f", coeff),       // 文档 3.5.3 示例（单 cc）
-		"v01101-05 " + fmt.Sprintf("%.6f", coeff),    // 范围语法（匹配读取）
-		"v01101-01 " + fmt.Sprintf("%.6f", coeff),    // 单元素范围
+		"v01101 " + fmt.Sprintf("%.6f", coeff),    // 文档 3.5.3 示例（单 cc）
+		"v01101-05 " + fmt.Sprintf("%.6f", coeff), // 范围语法（匹配读取）
+		"v01101-01 " + fmt.Sprintf("%.6f", coeff), // 单元素范围
 	}
 	// 先用一个无害的值（原始系数本身）探测格式，避免误写
 	probeWriteCmd := "v01101 " + fmt.Sprintf("%.6f", origCoeff)

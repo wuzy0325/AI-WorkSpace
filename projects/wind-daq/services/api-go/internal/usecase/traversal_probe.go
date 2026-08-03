@@ -173,33 +173,139 @@ func sevenHoleViewCalculate(m *TraversalManager, in probeCalcInput, inputReady b
 	return calculated
 }
 
-// SetSevenHoleInterpolator 注入七孔插值器（与五孔 interpolator 字段相互独立）。
-// 显式设置后启动恢复的陈旧错误不再适用，一并清除（与 SetInterpolator 同语义）。
+// SetSevenHoleInterpolator 注入七孔插值器（用户路径，与五孔 interpolator 字段相互独立）。
+// 递增 sevenHoleRestoreEpoch 让任何在途的启动恢复 goroutine 在写回前发现 epoch 不一致而跳过；
+// 显式设置后七孔侧启动恢复的陈旧错误不再适用，一并清除。
+// 五孔侧错误独立保留，互不影响（与 SetInterpolator 同语义的按类型分桶版本）。
 func (m *TraversalManager) SetSevenHoleInterpolator(interp seveninterp.Interpolator) {
 	m.mu.Lock()
+	m.sevenHoleRestoreEpoch++
 	m.sevenHoleInterpolator = interp
-	m.lastInterpolatorRestoreErr = ""
+	m.lastSevenHoleRestoreErr = ""
 	m.mu.Unlock()
+}
+
+// setSevenHoleInterpolatorFromRestore 是启动恢复 goroutine 专用的七孔插值器写入路径。
+// 与 setInterpolatorFromRestore 同语义：不递增 epoch，写入前比对捕获时的 epoch，
+// 不一致则返回 false 跳过写入以保护用户最新状态。
+func (m *TraversalManager) setSevenHoleInterpolatorFromRestore(interp seveninterp.Interpolator, epoch uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sevenHoleRestoreEpoch != epoch {
+		return false
+	}
+	m.sevenHoleInterpolator = interp
+	m.lastSevenHoleRestoreErr = ""
+	return true
 }
 
 // ClearProbeInterpolator 清除指定探针类型的插值器（spec §5.2.1）。
 // 前端切换探针类型前调用，防止陈旧校准数据被继续使用；未知类型返回 error。
+// 同时清除该类型对应的启动恢复错误并递增对应变体 epoch（与 SetInterpolator 同语义），
+// 让在途的启动恢复 goroutine 跳过写回以保护用户最新状态。
 func (m *TraversalManager) ClearProbeInterpolator(probeType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch probeType {
 	case traversal.ProbeTypeFiveHole:
+		m.fiveHoleRestoreEpoch++
 		m.interpolator = nil
 		if m.interpCache != nil {
 			m.interpCache.Clear()
 		}
+		m.lastFiveHoleRestoreErr = ""
 	case traversal.ProbeTypeSevenHole:
+		m.sevenHoleRestoreEpoch++
 		m.sevenHoleInterpolator = nil
+		m.lastSevenHoleRestoreErr = ""
 	default:
 		return fmt.Errorf("未知探针类型: %q", probeType)
 	}
-	m.lastInterpolatorRestoreErr = ""
 	return nil
+}
+
+// classifyCalculatedResult 根据插值流程的关键信号分类 CalculatedResult 的三态 Status 并构造实例。
+//
+// 抽取动机:RunCurrentPoint 内联的 switch 5 分支无法单元测试,且本逻辑是 CSV/UI
+// 失败原因区分的核心,必须高可信——抽成纯函数后可逐分支断言。
+//
+// 三态判定矩阵(与 UI 实时插值卡片三态一一对应):
+//   - strategyOK=false / hasAll=false → PrbMissing(配置层未就绪)
+//   - interpErr!=nil + !interpolatorLoaded → PrbMissing(插值器未加载)
+//   - interpErr!=nil + interpolatorLoaded  → Invalid(已加载但其他 err,如输入校验)
+//   - interpRes.IsValid=true  → Valid + 数值
+//   - interpRes.IsValid=false → Invalid(压力越界等数据层问题)
+//
+// 参数 interpolatorLoaded 由调用方通过 HasLoadedInterpolatorFor 获取,
+// 保持纯函数特性(不依赖 manager 状态)。
+//
+// 命名说明:动词 classify 表达"按信号判定属于哪一态",比 build 更准确——
+// 调用方读到 classifyCalculatedResult 即预期返回 Valid/PrbMissing/Invalid 三态之一。
+func classifyCalculatedResult(
+	strategyOK bool,
+	hasAll bool,
+	interpRes probeCalcResult,
+	interpErr error,
+	interpolatorLoaded bool,
+) *traversal.CalculatedResult {
+	if !strategyOK || !hasAll {
+		// 策略未注册或通道不全:配置层未就绪
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusPrbMissing,
+		}
+	}
+	switch {
+	case interpErr != nil && !interpolatorLoaded:
+		// 插值器未加载 → 配置层问题
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusPrbMissing,
+		}
+	case interpErr != nil:
+		// 已加载但 err != nil(如未来新增的输入校验 err) → 数据层问题
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusInvalid,
+		}
+	case interpRes.IsValid:
+		return &traversal.CalculatedResult{
+			Valid:  true,
+			Status: traversal.CalcStatusValid,
+			Alpha:  interpRes.Alpha,
+			Beta:   interpRes.Beta,
+			Pt:     interpRes.Pt,
+			Ps:     interpRes.Ps,
+			Mach:   interpRes.Mach,
+		}
+	default:
+		// 已加载但 IsValid=false → 数据层问题(压力越界等)
+		return &traversal.CalculatedResult{
+			Valid:  false,
+			Status: traversal.CalcStatusInvalid,
+		}
+	}
+}
+
+// HasLoadedInterpolatorFor 判定指定探针类型的插值器是否已加载 PRB/CSV 数据集。
+//
+// 设计动机:
+// 前端 store.hasLoadedInterpolator 是 UI 三态判定的真相源(不依赖后端 warning 文本),
+// 后端 CSV 落盘的 Status 也需要按相同真相源区分 PrbMissing / Invalid,
+// 避免依赖 interpErr != nil 这种脆弱判定(未来插值器新增其他 err 会被误判为配置层问题)。
+//
+// 与 CalculateRealtimeByProbe 不同,此方法不做"请求类型与当前配置一致"校验,
+// 仅回答"该探针类型的插值器是否已加载"——供采集循环在 err 路径下分类 Status 使用。
+// 未知探针类型返回 false(与 strategy.isLoaded 行为一致)。
+func (m *TraversalManager) HasLoadedInterpolatorFor(probeType string) bool {
+	requested := normalizeProbeType(probeType)
+	strategy, ok := probeStrategyFor(requested)
+	if !ok {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return strategy.isLoaded(m)
 }
 
 // CalculateRealtimeByProbe 按显式探针类型分发实时插值（spec §5.2 第 4 条）。

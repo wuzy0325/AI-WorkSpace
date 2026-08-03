@@ -2,6 +2,8 @@ package ports
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
@@ -58,14 +60,14 @@ type TraversalOutputSession struct {
 	//   - ChannelLabels   通道索引→标签映射（如 {0:"P1", 16:"Patm"}），可空
 	// 这些字段在 v2 装配下由 usecase 从 traversal.Config 复制；
 	// 旧 sink 路径走 InitializeTraversal(config)，不消费这些字段，保持向后兼容。
-	SaveOptions     *traversal.SaveOptions
-	Channels        []int
-	ChannelLabels   map[int]string
+	SaveOptions   *traversal.SaveOptions
+	Channels      []int
+	ChannelLabels map[int]string
 	// MotionAxes 逻辑方向→物理轴绑定（来自前端 motionAxes 配置）。
 	// CSV writer 按此把 Point.X/Y/Z/U 逻辑坐标值映射到对应物理轴列，
 	// 未绑定的物理轴列留空，避免"逻辑 X 绑到物理 Z 时数据仍写入 X 列"的错位 bug。
 	// 表头固定输出 X/Y/Z/U 四列（物理轴名），仅列数据按 motionAxes 重映射。
-	MotionAxes      []traversal.MotionAxisBinding
+	MotionAxes []traversal.MotionAxisBinding
 }
 
 type TraversalRowSummary struct {
@@ -177,4 +179,84 @@ type CheckpointStore interface {
 type ChannelUnitProvider interface {
 	// ChannelUnit 返回指定设备通道的工程单位字符串（如 "Pa"/"kPa"/"MPa"）。
 	ChannelUnit(deviceID string, channelIndex int) (string, error)
+}
+
+// ---------------------------------------------------------------------------
+// 双探针并行遍历（dual traversal）契约
+// 规格：docs/specs/dual-traversal-spec.md（I2 工作流互斥 / I5 全局任务身份 / FR4 恢复索引）
+// ---------------------------------------------------------------------------
+
+// TaskIDGenerator 服务端权威任务 ID 生成端口（spec I5）。
+//
+// dual 模式的 task ID 必须由服务端生成，包含 probe 命名空间或等价不可冲突身份，
+// 保证 probe1/probe2 在结果 store、活动索引和 checkpoint 中不发生键冲突。
+// 客户端提交的 task ID 不得成为权威 ID。
+type TaskIDGenerator interface {
+	// NewTaskID 为指定 probe 生成全局唯一任务 ID；probeID 为 "probe1"/"probe2"，
+	// 实现可将其作为命名空间片段或改用 UUID 等价物保证唯一性。
+	NewTaskID(ctx context.Context, probeID string) (string, error)
+}
+
+// WorkflowLeasePort 全局遍历工作流 lease（spec I2）。
+//
+// registry 以固定 holder 身份持有一份 workflow:traversal lease：
+// 第一个 probe session 启动前获取，后续 probe 复用，最后一个 session 清理后释放。
+// registry 只依赖本端口，不导入具体 resourcelock.Service。
+type WorkflowLeasePort interface {
+	// Acquire 获取全局工作流 lease；被其它 holder 占用且未过期时返回冲突错误。
+	Acquire(ctx context.Context, holder string, ttl time.Duration) error
+	// Renew 续约既有 lease；holder 必须仍是当前持有者，否则返回错误（不得隐式重建 lease）。
+	Renew(ctx context.Context, holder string, ttl time.Duration) error
+	// Release 释放 lease；holder 不匹配返回错误，不存在/已过期幂等成功。
+	Release(ctx context.Context, holder string) error
+}
+
+// ControllerLeasePort 控制器资源 lease（spec I2：token-checked Acquire/Renew/Release）。
+//
+// 每次 Acquire 生成 opaque lease token（不可由 probe ID/controller ID 推导）作为
+// 底层锁的唯一 holder；后续 Renew/Release 只认 token。旧 generation token 在 lease
+// 被新 session 接管后不能续约或释放新 session 的 lease。
+//
+// 资源独占粒度为 (controllerID, axis) 元组：同一控制器的不同物理轴可被两个 probe
+// 分别 lease（风洞实验中两探针共用同一运动控制器的不同轴是常见配置）；同一物理轴
+// 才是真正冲突的资源。axis 为空字符串时表示控制器级 lease（向后兼容遗留调用）。
+type ControllerLeasePort interface {
+	// Acquire 原子预占 (controllerID, axis) 对应的控制器轴资源，成功返回 opaque leaseToken。
+	// holder 为诊断用身份（如 session/probe 标识），不作为锁持有者。
+	// 资源已被占用且未过期时返回冲突错误。
+	Acquire(ctx context.Context, controllerID, axis, holder string, ttl time.Duration) (leaseToken string, err error)
+	// Renew 续约 leaseToken 对应的 lease；token 未知、已过期或已被接管时返回错误。
+	Renew(ctx context.Context, leaseToken string, ttl time.Duration) error
+	// Release 释放 leaseToken 对应的 lease；token 未知或已非当前持有者时返回错误。
+	Release(ctx context.Context, leaseToken string) error
+}
+
+// ErrRecoverableTaskExists 同一 probe 已存在可恢复任务（每 probe 最多一个权威候选）。
+// 供 HTTP 层映射为 409 recoverable_task_exists。
+var ErrRecoverableTaskExists = errors.New("recoverable_task_exists")
+
+// ErrTaskIDRegisteredToOtherProbe 相同 taskID 已注册到其它 probe（spec FR8：task ID 全局唯一）。
+var ErrTaskIDRegisteredToOtherProbe = errors.New("task_id_registered_to_other_probe")
+
+// ErrCheckpointVersionMismatch checkpoint 格式版本与读取路径不符（spec FR8：
+// dual 路径遇到 v1/v2、legacy 路径遇到 v3，均不自动迁移；HTTP 映射 400/409）。
+var ErrCheckpointVersionMismatch = errors.New("checkpoint_version_mismatch")
+
+// DualTraversalRecoveryIndex 双探针恢复索引（spec FR4）。
+//
+// 维护 probeId → taskId → checkpointPath 权威映射（envelope version:1），
+// 文件独立于 legacy traversal-active-index.json，互不读写、互不迁移。
+// 每个 probe 同时最多保留一个可恢复任务；task ID 全局唯一。
+type DualTraversalRecoveryIndex interface {
+	// Register 登记 probe 的可恢复任务。同一 probe 已有其它 taskID 时返回
+	// ErrRecoverableTaskExists；taskID 已注册到其它 probe 时返回
+	// ErrTaskIDRegisteredToOtherProbe；同 probe 同 taskID 重复登记为幂等更新。
+	Register(ctx context.Context, probeID, taskID, checkpointPath string) error
+	// Find 返回该 probe 的唯一可恢复候选；不存在时 found=false 且 err=nil。
+	Find(ctx context.Context, probeID string) (TraversalCheckpointRef, bool, error)
+	// Unregister 注销该 probe 的恢复映射；映射不存在时幂等成功，
+	// taskID 与登记的候选不一致时返回错误。
+	Unregister(ctx context.Context, probeID, taskID string) error
+	// ListProbeTaskIDs 返回该 probe 已登记的全部 taskID（按字典序，通常最多一个）。
+	ListProbeTaskIDs(ctx context.Context, probeID string) ([]string, error)
 }

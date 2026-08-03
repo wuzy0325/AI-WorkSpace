@@ -17,8 +17,13 @@ import (
 // 抽到此处后 service 仅保留各探针的文件名常量和方法签名（Wails binding 要求方法名唯一）。
 
 // GetHelpDocPath 在可执行文件附近查找用户说明书 HTML。
-// 查找顺序：exe 同级 docs/ → 上 1 级 docs/ → 上 2 级 docs/。
-// 开发模式下 docs/ 通常在向上若干级的目录，依次尝试兼容 dev 与 release 布局。
+//
+// 查找顺序（依次尝试）：
+//  1. exe 同级 docs/（NSIS 安装后的标准结构：$INSTDIR/docs/<fileName>）
+//  2. exe 上 1/2/3/4 级 docs/（开发模式：build/bin/probe-interpolator.exe
+//     向上 2 级到 apps/desktop-wails/docs/；wails dev 临时目录可能更深）
+//  3. 当前工作目录及上 1/2 级 docs/（Windows 开发模式 wails dev 兜底）
+//
 // 找不到返回空字符串，调用方应给出友好错误。
 func GetHelpDocPath(fileName string) string {
 	ex, err := os.Executable()
@@ -31,11 +36,27 @@ func GetHelpDocPath(fileName string) string {
 		filepath.Join(exeDir, "docs", fileName),
 		filepath.Join(exeDir, "..", "docs", fileName),
 		filepath.Join(exeDir, "..", "..", "docs", fileName),
+		filepath.Join(exeDir, "..", "..", "..", "docs", fileName),
+		filepath.Join(exeDir, "..", "..", "..", "..", "docs", fileName),
+	}
+
+	// Windows 开发模式下 wails dev 可能使用临时目录作为 exe 路径，
+	// 此时工作目录才是项目根，补充从 cwd 查找的兜底。
+	if runtime.GOOS == "windows" {
+		if cwd, err := os.Getwd(); err == nil {
+			possiblePaths = append(possiblePaths,
+				filepath.Join(cwd, "docs", fileName),
+				filepath.Join(cwd, "..", "docs", fileName),
+				filepath.Join(cwd, "..", "..", "docs", fileName),
+			)
+		}
 	}
 
 	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			return p
+		// 用 Clean 规范化路径（解析 .. 等），并校验命中是文件而非目录。
+		cleanPath := filepath.Clean(p)
+		if info, err := os.Stat(cleanPath); err == nil && !info.IsDir() {
+			return cleanPath
 		}
 	}
 	return ""

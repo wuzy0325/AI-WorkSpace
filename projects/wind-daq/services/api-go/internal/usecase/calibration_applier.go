@@ -1,11 +1,12 @@
-﻿package usecase
+package usecase
 
 import (
 	"context"
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
 	"sync"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/device"
 )

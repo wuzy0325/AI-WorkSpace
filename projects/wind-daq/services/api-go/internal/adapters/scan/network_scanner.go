@@ -1,11 +1,11 @@
 package scan
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"wind-daq/services/api-go/internal/core/device"
@@ -25,6 +25,10 @@ const (
 
 	defaultScanTimeout = 3 * time.Second
 	limitedBroadcast   = "255.255.255.255"
+	// interfaceTimeout 限制网卡枚举的最长时间。
+	// 部分异常虚拟网卡会让 Windows 的 net.Interfaces() 长期阻塞，
+	// 若不限制，会在创建 UDP socket 之前就卡住，导致扫描永久不返回。
+	interfaceTimeout = 500 * time.Millisecond
 )
 
 const (
@@ -47,6 +51,7 @@ type listenPacketFn func(network, address string) (net.PacketConn, error)
 type NetworkScanner struct {
 	timeout      time.Duration
 	listenPacket listenPacketFn
+	scanMu       sync.Mutex
 }
 
 type NetworkScannerOption func(*NetworkScanner)
@@ -57,8 +62,7 @@ func WithTimeout(timeout time.Duration) NetworkScannerOption {
 
 func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 	s := &NetworkScanner{
-		timeout:      defaultScanTimeout,
-		listenPacket: net.ListenPacket,
+		timeout: defaultScanTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -67,6 +71,13 @@ func NewNetworkScanner(opts ...NetworkScannerOption) *NetworkScanner {
 }
 
 func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
+	// 防止并发扫描：重复触发扫描会竞争 UDP socket 并导致结果混乱。
+	if !s.scanMu.TryLock() {
+		log.Printf("[scan] 扫描已在进行中，拒绝并发请求")
+		return nil, fmt.Errorf("device scan already in progress")
+	}
+	defer s.scanMu.Unlock()
+
 	log.Printf("[scan] 开始设备扫描, timeout=%v", s.timeout)
 
 	type scanTask struct {
@@ -109,44 +120,60 @@ func (s *NetworkScanner) scanWithSocket(
 	port int,
 	parser func([]byte, string) *device.ScanResult,
 ) []device.ScanResult {
-	conn, err := s.listenPacket("udp4", ":0")
+	var socket discoverySocket
+	var err error
+	if s.listenPacket != nil {
+		var conn net.PacketConn
+		conn, err = s.listenPacket("udp4", ":0")
+		if err == nil {
+			socket = &packetDiscoverySocket{conn: conn}
+		}
+	} else {
+		socket, err = openDiscoverySocket(0)
+	}
 	if err != nil {
 		log.Printf("[scan] 创建 socket 失败 cmd=%q: %v", cmd, err)
 		return nil
 	}
-	defer conn.Close()
+	defer socket.Close()
 
-	// 只使用广播地址，避免单播重复命令导致设备不响应
-	targets := getAllBroadcastTargets()
+	// 只使用广播地址，避免单播重复命令导致设备不响应。
+	// 网卡枚举有界化：若超过 interfaceTimeout 仍未完成，回退到有限广播地址，
+	// 避免在绑定 socket 前因异常虚拟网卡导致扫描永久卡住。
+	targets := broadcastTargetsWithTimeout(interfaceTimeout, getAllBroadcastTargets)
 	for _, target := range targets {
 		addr := net.ParseIP(target)
 		if addr == nil {
 			continue
 		}
-		dest := &net.UDPAddr{IP: addr, Port: port}
-		if _, err := conn.WriteTo([]byte(cmd), dest); err != nil {
-			log.Printf("[scan] 发送命令 %q 到 %s:%d 失败: %v", cmd, target, port, err)
+		if err := socket.Send([]byte(cmd), addr.String(), port); err != nil {
+			// ADR-009 finding 6：Send 失败说明 socket handle 已被 watchdog Closesocket 销毁，
+			// 后续 Send/Receive 不可复用（契约：超时后 socket 不可复用）。
+			// 复核修订 finding 3 修复：直接返回空结果，不进入 Receive 循环——
+			// 旧实现 break 后仍执行下方 Receive 循环，会继续调用同一 socket 的 Receive，
+			// 但 socket handle 可能已被 watchdog 销毁，行为不可预期。
+			// 调用方 defer socket.Close() 释放资源。
+			log.Printf("[scan] 发送命令 %q 到 %s:%d 失败, 终止本轮扫描并跳过 Receive: %v", cmd, target, port, err)
+			return nil
 		}
-	}
-
-	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
-		return nil
 	}
 
 	seen := make(map[string]bool)
 	var devices []device.ScanResult
 	buf := make([]byte, 1024)
+	deadline := time.Now().Add(s.timeout)
 	for {
-		n, remote, err := conn.ReadFrom(buf)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n, remote, err := socket.Receive(buf, remaining)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				break
-			}
 			break
 		}
 		raw := string(buf[:n])
-		log.Printf("[scan] socket %q 收到响应 from=%s len=%d data=%q", cmd, remote.String(), n, raw)
-		result := parser(buf[:n], remote.String())
+		log.Printf("[scan] socket %q 收到响应 from=%s len=%d data=%q", cmd, remote, n, raw)
+		result := parser(buf[:n], remote)
 		if result != nil {
 			log.Printf("[scan] socket %q 解析成功 id=%s type=%s", cmd, result.ID, result.Type)
 			if !seen[result.ID] {
@@ -160,280 +187,23 @@ func (s *NetworkScanner) scanWithSocket(
 	return devices
 }
 
-// deviceDispatcher 根据响应内容分发到对应的设备解析函数。
-// remoteAddr 格式为 "host:port"，入口处统一提取纯 IP 供下游使用。
-func deviceDispatcher(data []byte, remoteAddr string) *device.ScanResult {
-	remoteHost := remoteHostFromAddr(remoteAddr)
-	msg := strings.TrimSpace(string(data))
+// broadcastTargetsWithTimeout 为网卡枚举设置硬性时间上限。
+// 超时未返回时回退到 limitedBroadcast，保证扫描流程不会因网卡枚举卡死。
+//
+// 权衡：超时返回后，仍在阻塞的 enumerate goroutine 无法被取消（net.Interfaces 没有 context 版本），
+// 会一直挂起直到其内部 syscall 返回。这是有意接受的泄漏——主扫描流程必然能继续推进，
+// 避免因为网卡枚举阻塞导致整个扫描永久卡死。
+func broadcastTargetsWithTimeout(timeout time.Duration, enumerate func() []string) []string {
+	resultCh := make(chan []string, 1)
+	go func() {
+		resultCh <- enumerate()
+	}()
 
-	// JSON 响应：根据 model/type 字段区分设备类型，默认按 T1603 处理
-	var jsonData map[string]interface{}
-	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
-		return dispatchJsonResponse(jsonData, remoteHost)
-	}
-
-	// 二进制响应：1604Pre
-	if len(data) >= 36 && !isASCIIPrintable(data) {
-		if result := parseDaqP1604PreResponse(data, remoteAddr); result != nil {
-			return result
-		}
-	}
-
-	// CSV / 短文本响应
-	return parseDaqP1604Response(data, remoteAddr)
-}
-
-// dispatchJsonResponse 根据 JSON 中的 model 字段分发到对应的解析函数
-func dispatchJsonResponse(jsonData map[string]interface{}, remoteHost string) *device.ScanResult {
-	model := getJSONString(jsonData, "model")
-	// 如果 model 包含 P1604 标识，按 P1604 处理
-	if strings.Contains(strings.ToUpper(model), "P1604") {
-		return parseDaqP1604Json(jsonData, remoteHost)
-	}
-	// 默认按 T1603 处理（保持向后兼容）
-	return parseDaqT1603Json(jsonData, remoteHost)
-}
-
-func isASCIIPrintable(data []byte) bool {
-	n := len(data)
-	if n > 5 {
-		n = 5
-	}
-	for _, b := range data[:n] {
-		if b < 0x20 || b > 0x7E {
-			return false
-		}
-	}
-	return true
-}
-
-func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
-	remoteHost := remoteHostFromAddr(remoteAddr)
-	msg := strings.TrimSpace(string(data))
-	parts := strings.Split(msg, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-
-	// CSV 响应：根据 model 字段（parts[3]）区分设备类型
-	// P1604 响应格式：IP,MAC,0,序列号,firmware,...（parts[3] 为序列号，不含 T1603）
-	// T1603 响应格式：IP,MAC,0,T1603,firmware,...（parts[3] 为 model "T1603"）
-	// 注意：两者 parts[2] 都可能是 "0"，不能用 parts[2] 区分
-	if len(parts) >= 6 {
-		model := strings.ToUpper(safeGet(parts, 3))
-		if strings.Contains(model, "T1603") {
-			// model 包含 T1603，按 T1603 解析
-			return parseDaqT1603Csv(parts, remoteHost)
-		}
-		// model 不含 T1603，按 P1604 解析（P1604 的 parts[3] 是序列号）
-		return parseDaqP1604Csv(parts)
-	}
-
-	if strings.HasPrefix(msg, "DAQP1604") {
-		return &device.ScanResult{
-			ID:        scanResultID(scanDaqP1604Prefix, remoteHost, daqP1604DefaultPort, ""),
-			Name:      "Discovered DAQ-P-1604",
-			Type:      device.DeviceDAQP1604,
-			Available: true,
-			Address:   remoteHost,
-			Port:      daqP1604DefaultPort,
-		}
-	}
-	if strings.HasPrefix(msg, "DAQT1603") {
-		return &device.ScanResult{
-			ID:        scanResultID(scanDaqT1603Prefix, remoteHost, daqT1603DefaultPort, ""),
-			Name:      "Discovered DAQ-T-1603",
-			Type:      device.DeviceDaqT1603,
-			Available: true,
-			Address:   remoteHost,
-			Port:      daqT1603DefaultPort,
-		}
-	}
-
-	return nil
-}
-
-func parseDaqP1604Csv(parts []string) *device.ScanResult {
-	if len(parts) < 6 {
-		return nil
-	}
-
-	address := parts[0]
-	if address == "" {
-		return nil
-	}
-	port := daqP1604DefaultPort
-	if p, err := parseInt(safeGet(parts, 7)); err == nil && p > 0 {
-		port = p
-	}
-
-	mac := safeGet(parts, 1)
-	result := &device.ScanResult{
-		ID:         scanResultID(scanDaqP1604Prefix, address, port, mac),
-		Name:       "Discovered DAQ-P-1604",
-		Type:       device.DeviceDAQP1604,
-		Available:  true,
-		Address:    address,
-		Port:       port,
-		MacAddress: mac,
-	}
-
-	result.SerialNumber = omitZero(safeGet(parts, 3))
-	result.FirmwareVersion = safeGet(parts, 4)
-	result.SubnetMask = safeGet(parts, 8)
-	result.Gateway = safeGet(parts, 9)
-
-	return result
-}
-
-// parseDaqP1604Json 解析 P1604 设备的 JSON 格式响应
-func parseDaqP1604Json(jsonData map[string]interface{}, remoteHost string) *device.ScanResult {
-	address := remoteHost
-	if ip, ok := jsonData["ip"].(string); ok && ip != "" {
-		address = ip
-	}
-	port := daqP1604DefaultPort
-	if p, ok := jsonData["port"].(float64); ok && p > 0 {
-		port = int(p)
-	}
-
-	mac, _ := jsonData["mac"].(string)
-	result := &device.ScanResult{
-		ID:         scanResultID(scanDaqP1604Prefix, address, port, mac),
-		Name:       "Discovered DAQ-P-1604",
-		Type:       device.DeviceDAQP1604,
-		Available:  true,
-		Address:    address,
-		Port:       port,
-		MacAddress: mac,
-	}
-
-	result.SerialNumber = getJSONString(jsonData, "serialNumber")
-	result.FirmwareVersion = getJSONString(jsonData, "firmwareVersion")
-	result.SubnetMask = getJSONString(jsonData, "subnetMask")
-	result.Gateway = getJSONString(jsonData, "gateway")
-
-	return result
-}
-
-func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
-	remoteHost := remoteHostFromAddr(remoteAddr)
-	msg := strings.TrimSpace(string(data))
-
-	var jsonData map[string]interface{}
-	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
-		return parseDaqT1603Json(jsonData, remoteHost)
-	}
-
-	return parseDaqP1604Response(data, remoteAddr)
-}
-
-func remoteHostFromAddr(remoteAddr string) string {
-	host := remoteAddr
-	if splitHost, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = splitHost
-	}
-	return host
-}
-
-func parseDaqT1603Json(jsonData map[string]interface{}, remoteHost string) *device.ScanResult {
-	address := remoteHost
-	if ip, ok := jsonData["ip"].(string); ok && ip != "" {
-		address = ip
-	}
-	port := daqT1603DefaultPort
-	if p, ok := jsonData["port"].(float64); ok && p > 0 {
-		port = int(p)
-	}
-
-	mac, _ := jsonData["mac"].(string)
-	result := &device.ScanResult{
-		ID:         scanResultID(scanDaqT1603Prefix, address, port, mac),
-		Name:       "Discovered DAQ-T-1603",
-		Type:       device.DeviceDaqT1603,
-		Available:  true,
-		Address:    address,
-		Port:       port,
-		MacAddress: mac,
-	}
-
-	result.SerialNumber = getJSONString(jsonData, "serialNumber")
-	result.FirmwareVersion = getJSONString(jsonData, "firmwareVersion")
-	result.Model = getJSONString(jsonData, "model")
-	result.SubnetMask = getJSONString(jsonData, "subnetMask")
-	result.Gateway = getJSONString(jsonData, "gateway")
-	if mode, ok := jsonData["ipMode"].(string); ok {
-		result.IpMode = mode
-	}
-	if tc, ok := jsonData["tcpConnected"].(bool); ok {
-		result.TcpConnected = tc
-	}
-	if ia, ok := jsonData["ipAssigned"].(bool); ok {
-		result.IpAssigned = ia
-	}
-
-	return result
-}
-
-func parseDaqT1603Csv(parts []string, remoteHost string) *device.ScanResult {
-	if len(parts) < 8 {
-		return nil
-	}
-
-	address := parts[0]
-	if address == "" {
-		address = remoteHost
-	}
-	port := daqT1603DefaultPort
-	if p, err := parseInt(parts[7]); err == nil && p > 0 {
-		port = p
-	}
-
-	mac := ""
-	if len(parts) > 1 && parts[1] != "" {
-		mac = parts[1]
-	}
-	result := &device.ScanResult{
-		ID:         scanResultID(scanDaqT1603Prefix, address, port, mac),
-		Name:       "Discovered DAQ-T-1603",
-		Type:       device.DeviceDaqT1603,
-		Available:  true,
-		Address:    address,
-		Port:       port,
-		MacAddress: mac,
-	}
-
-	result.SerialNumber = omitZero(safeGet(parts, 2))
-	result.Model = safeGet(parts, 3)
-	result.FirmwareVersion = safeGet(parts, 4)
-	if tc := safeGet(parts, 5); tc == "1" {
-		result.TcpConnected = true
-	}
-	if ia := safeGet(parts, 6); ia == "1" {
-		result.IpAssigned = true
-	}
-	result.SubnetMask = safeGet(parts, 8)
-
-	return result
-}
-
-func parseDaqP1604PreResponse(data []byte, remoteAddr string) *device.ScanResult {
-	if len(data) < 36 {
-		return nil
-	}
-
-	ip := fmt.Sprintf("%d.%d.%d.%d", data[5], data[6], data[7], data[8])
-	mac := fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
-		data[9], data[10], data[11], data[12], data[13], data[14])
-
-	return &device.ScanResult{
-		ID:         fmt.Sprintf("scan-daq-p-1604pre-%s-%d", ip, daqP1064PreDefaultPort),
-		Name:       "Discovered DAQ-P-1604Pre",
-		Type:       device.DeviceDAQP1604Pre,
-		Available:  true,
-		Address:    ip,
-		Port:       daqP1064PreDefaultPort,
-		MacAddress: mac,
+	select {
+	case targets := <-resultCh:
+		return targets
+	case <-time.After(timeout):
+		return []string{limitedBroadcast}
 	}
 }
 

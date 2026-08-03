@@ -70,6 +70,17 @@ export const useMotionStore = defineStore('motion', () => {
 
   async function emergencyStop(id: string): Promise<void> {
     await motionApi.emergencyStop(id)
+    // 急停状态变化后立即拉取一次最新状态，避免 UI 等待下一次轮询（最长 2s）才刷新；
+    // 与 connect/disconnect 行为对齐，确保 useHardwareConnectionStatus 立刻反映新状态。
+    //
+    // I-22 修复：refreshStatus 失败不抛错——急停主操作已成功，状态刷新仅是 UI 优化。
+    // 原代码若 refreshStatus 抛错（如后端短暂不可用）会覆盖 emergencyStop 的成功语义，
+    // 让调用方误以为急停失败。改为 console.warn 记录失败，依赖后续轮询补偿。
+    try {
+      await refreshStatus()
+    } catch (err) {
+      console.warn(`[motionStore] emergencyStop(${id}) 后 refreshStatus 失败:`, err)
+    }
   }
 
   async function definePosition(id: string, axis: AxisName, position: number): Promise<void> {
@@ -78,6 +89,18 @@ export const useMotionStore = defineStore('motion', () => {
 
   async function resetEmergencyStop(id: string): Promise<void> {
     await motionApi.resetEmergencyStop(id)
+    // 急停解除后立即拉取最新状态：解除急停是用户恢复操作的关键动作，若 UI 仍显示急停态，
+    // 用户会误以为按钮失效或硬件仍处报警；显式 refreshStatus 让状态变化立刻可见。
+    // 这也覆盖了"硬件急停按钮物理解除后软件状态不刷新"的场景——只要用户点过软件复位按钮，
+    // 状态就会被主动拉取一次，避免依赖最长 2s 的轮询周期。
+    //
+    // I-22 修复：与 emergencyStop 对齐——refreshStatus 失败不抛错，避免覆盖
+    // resetEmergencyStop 的成功语义。轮询补偿会保证最终状态一致。
+    try {
+      await refreshStatus()
+    } catch (err) {
+      console.warn(`[motionStore] resetEmergencyStop(${id}) 后 refreshStatus 失败:`, err)
+    }
   }
 
   /**

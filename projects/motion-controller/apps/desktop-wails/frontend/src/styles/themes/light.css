@@ -36,4 +36,21 @@
   --axis-z-soft: #cffafe;
   --axis-u: #d97706;
   --axis-u-soft: #fef3c7;
+
+  /* 急停横幅渐变与边框色（浅色下保持暖红/橙调） */
+  --accent-danger-banner-from: #991b1b;
+  --accent-danger-banner-to: #c2410c;
+  --accent-danger-banner-border: #f59e0b;
+  --accent-danger-banner-action-bg: #ffffff;
+  --accent-danger-banner-action-fg: #b45309;
+  --accent-danger-banner-action-bg-hover: #fef3c7;
+
+  /* 轴徽章上的深色文字（浅色下用深色保证可读） */
+  --color-on-axis-badge: #ffffff;
+
+  /* 急停按钮上的反色文字 */
+  --color-on-danger: #ffffff;
+
+  /* accent 主色按钮 hover/active 后的反色文字 */
+  --color-on-accent: #ffffff;
 }

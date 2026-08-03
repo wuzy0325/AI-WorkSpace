@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import * as bridge from '@bridge/deviceBridge'
 import type { PressureProfile, PressureSnapshot, P1604Config, ChannelConfig, ScanResult, DeviceState } from '@bridge/deviceBridge'
 import { useLogStore } from '@stores/logStore'
+import { useI18nStore } from '@stores/i18nStore'
 import {
   computeExistingKeys,
   hostKey,
@@ -16,6 +17,9 @@ import {
 const MAX_HISTORY_HARD_CAP = 4000
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
 const APPLY_CONFIG_TIMEOUT_MS = 15000
+const ZERO_CALIBRATION_TIMEOUT_MS = 12000
+const DEVICE_SCAN_TIMEOUT_MS = 5000
+const DEVICE_CONNECT_TIMEOUT_MS = 12000
 /** UI 渲染刷新率默认值（Hz），仅在 store 初始化时使用，运行时由 displayStore 驱动 */
 const RENDER_TICK_FALLBACK_HZ = 10
 /** 图表历史时间窗口默认值（秒），运行时由 displayStore 驱动 */
@@ -40,10 +44,17 @@ const CHANNEL_COLORS = [
   '#64748b', '#78716c',
 ]
 
+/**
+ * 默认通道配置。
+ *
+ * name 留空：让 UI 通过 i18n 占位符显示本地化的默认名称
+ * （如"通道 1" / "Channel 1"、"大气压力" / "Atmospheric Pressure"），
+ * 避免在持久化数据中固化某一种语言。用户手动输入的名称仍按原样保存。
+ */
 function defaultChannels() {
   return Array.from({ length: 18 }, (_, i) => ({
     index: i,
-    name: i < 16 ? `通道 ${i + 1}` : (i === 16 ? '大气压力' : '大气温度'),
+    name: '',
     enabled: true,
     unit: i < 16 ? 'psi' : (i === 16 ? 'Pa' : '°C'),
     color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
@@ -76,6 +87,10 @@ function p1604Defaults(cfg: Partial<P1604Config>): P1604Config {
 }
 
 export const useDeviceStore = defineStore('device', () => {
+  const i18n = useI18nStore()
+  // logStore 不反向依赖 deviceStore（无循环依赖），顶部捕获一次复用，
+  // 避免 updateStatusFromBackend 每次调用都重新执行 useLogStore()
+  const logStore = useLogStore()
   const profiles = ref<PressureProfile[]>([])
   const selectedId = ref<string | null>(null)
   const statusMap = ref<Record<string, string>>({})
@@ -92,6 +107,7 @@ export const useDeviceStore = defineStore('device', () => {
   const chartSelections = ref<Record<string, Set<number>>>({})
   const scanResults = ref<ScanResult[]>([])
   const isScanning = ref(false)
+  let scanGeneration = 0
   // UI 渲染节拍定时器：按 displayStore.refreshRateHz 触发 pending → history
   const renderTickTimer = ref<ReturnType<typeof setInterval> | null>(null)
   // 快照轮询定时器：以固定周期从后端拉最新快照，与 UI 刷新率无关
@@ -393,7 +409,13 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function connect(id: string): Promise<void> {
-    await transitionStatus(id, () => bridge.connect(id), 'Connected', 'Disconnected', 'Connecting')
+    await transitionStatus(
+      id,
+      () => withTimeout(bridge.connect(id), DEVICE_CONNECT_TIMEOUT_MS, i18n.t('error.connectTimeout')),
+      'Connected',
+      'Disconnected',
+      'Connecting',
+    )
   }
 
   async function disconnect(id: string): Promise<void> {
@@ -436,11 +458,19 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
+  async function zeroCalibration(id: string): Promise<void> {
+    await withTimeout(
+      bridge.zeroCalibration(id),
+      ZERO_CALIBRATION_TIMEOUT_MS,
+      i18n.t('error.zeroCalibrationTimeout'),
+    )
+  }
+
   async function applyConfig(id: string, cfg: Partial<P1604Config>): Promise<void> {
     await withTimeout(
       bridge.applyConfig(id, p1604Defaults(cfg)),
       APPLY_CONFIG_TIMEOUT_MS,
-      '应用配置超时，设备可能无响应',
+      i18n.t('error.applyConfigTimeout'),
     )
   }
 
@@ -455,7 +485,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -471,7 +501,7 @@ export const useDeviceStore = defineStore('device', () => {
       await bridge.upsertProfile(profile)
     } catch {
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -488,7 +518,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -496,22 +526,43 @@ export const useDeviceStore = defineStore('device', () => {
     scanResults.value = []
   }
 
+  function cancelScan(): void {
+    scanGeneration += 1
+    isScanning.value = false
+  }
+
   async function scanDevices(): Promise<void> {
+	if (isScanning.value) return
+    const generation = ++scanGeneration
     isScanning.value = true
     try {
-      scanResults.value = await bridge.scanDevices()
+      const results = await withTimeout(
+        bridge.scanDevices(),
+        DEVICE_SCAN_TIMEOUT_MS,
+        i18n.t('error.scanTimeout'),
+      )
+      if (generation === scanGeneration) {
+        scanResults.value = results
+      }
+    } catch (err) {
+      if (generation === scanGeneration) {
+        const message = err instanceof Error ? err.message : String(err)
+        logStore.error('device', i18n.t('logMessage.scanDiscoveryFailed', { error: message }))
+      }
     } finally {
-      isScanning.value = false
+      if (generation === scanGeneration) {
+        isScanning.value = false
+      }
     }
   }
 
-  async function addProfile(name: string, address: string, port: number): Promise<void> {
+  async function addProfile(name: string, address: string, port: number, localAddress = ''): Promise<void> {
     // CONN-002 重复添加防御：仅 IP+端口完全相同视为重复（同 IP 不同端口允许添加）。
     // 与扫描弹窗 planScannedAdditions 共用 hostKey 规则，保证手动添加与扫描批量添加
     // 的去重语义一致。
     const dupKey = hostKey(address, port)
     if (computeExistingKeys(profiles.value).has(dupKey)) {
-      throw new Error('该设备已添加，请勿重复添加')
+      throw new Error(i18n.t('error.duplicateDevice'))
     }
 
     const id = `p1604_${Date.now()}`
@@ -519,6 +570,7 @@ export const useDeviceStore = defineStore('device', () => {
       id,
       name,
       address,
+      localAddress,
       port,
       samplingRate: 100,
       channels: defaultChannels(),
@@ -535,7 +587,7 @@ export const useDeviceStore = defineStore('device', () => {
     } catch {
       // 持久化失败时重新加载配置，恢复本地状态一致性
       await loadProfiles()
-      throw new Error('保存配置失败')
+      throw new Error(i18n.t('error.saveConfigFailed'))
     }
   }
 
@@ -663,8 +715,7 @@ export const useDeviceStore = defineStore('device', () => {
         const newUnit = state.profile.p1604Config.unit
         if (prevUnit !== newUnit) {
           profiles.value[idx] = state.profile
-          const logStore = useLogStore()
-          logStore.info('device', `设备 [${id}] 单位已从硬件同步: ${prevUnit} -> ${newUnit}`)
+          logStore.info('device', i18n.t('logMessage.deviceUnitSynced', { id, prev: prevUnit, next: newUnit }))
         }
       }
     }
@@ -673,10 +724,10 @@ export const useDeviceStore = defineStore('device', () => {
     if (statusChanged || errorChanged) {
       const logStore = useLogStore()
       if (state.statusText === 'Error' && state.error) {
-        logStore.error('device', `设备 [${id}] 状态异常: ${state.error}`)
+        logStore.error('device', i18n.t('logMessage.deviceStateError', { id, error: state.error }))
       } else if (statusChanged && state.statusText === 'Disconnected' && prevStatus && prevStatus !== 'Disconnected') {
         // 后端推送的断开（区别于前端主动断开）—— 记录 info 便于追溯
-        logStore.warn('device', `设备 [${id}] 已断开（后端推送，前一状态: ${prevStatus}）`)
+        logStore.warn('device', i18n.t('logMessage.deviceDisconnected', { id, prev: prevStatus }))
       }
     }
   }
@@ -689,8 +740,8 @@ export const useDeviceStore = defineStore('device', () => {
     existingDeviceKeys,
     selectDevice, statusFor, errorFor, acquiringFor, historyFor, isChartSelected, toggleChartSelection,
     pushSnapshot, loadProfiles, autoConnectAll, connect, disconnect,
-    startAcquisition, stopAcquisition, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
-    clearScanResults, scanDevices, addProfile, addScannedProfiles, removeProfile, updateStatusFromBackend,
+    startAcquisition, stopAcquisition, zeroCalibration, applyConfig, updateChannel, applyGlobalPrecision, saveProfile,
+    clearScanResults, cancelScan, scanDevices, addProfile, addScannedProfiles, removeProfile, updateStatusFromBackend,
     applyDisplayPreferences, stopDisplayFlush,
     startSnapshotPolling, stopSnapshotPolling,
   }

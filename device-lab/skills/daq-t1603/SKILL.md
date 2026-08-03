@@ -62,12 +62,10 @@ await driver.disconnect()
 ```
 Disconnected ──connect()──→ Connected ──startAcquisition()──→ Acquiring
      ↑                            ↑                                 │
-     │                            │                                 │
-     └──disconnect()──────────────┴──stopAcquisition()──────────────┘
-     │                                                              │
-     │            disconnect() 内部会先 stopAcquisition()            │
-     │                                                              │
-     └────────────────── readLoop 异常退出（连接故障/无数据超时）────────┘
+     │                            └── 完整尾帧 + A_stop ─ Stopping ─┘
+     └── disconnect()：发送 @f1、关闭连接、等待 readLoop 退出
+
+Stopping ──ACK超时/边界异常──→ Error（Close连接，要求重连）
 ```
 
 ---
@@ -318,10 +316,6 @@ class FrameReader:
             if count == n: return buf.length
         return -1
 
-    // 消费 @f0 的可选 ACK 前导
-    func consumeOptionalACK(timeoutMs: int):
-        ...（同前）
-
     func reset():
         buffer.clear()
         // ★ metadataMode 不清零，保留当前模式配置
@@ -333,7 +327,7 @@ class FrameReader:
 
 ### 3.1 命令在线字节
 
-**命令以裸 ASCII 字符串发送，不追加任何换行或终止符。** 驱动直接 `conn.Write([]byte(cmd))`，cmd 即命令本身。换行只出现在**设备响应**中（响应以 `\n` 或 `\r\n` 结尾，由 `SendCommand`/`SendCommandIdle` 的 read-until-`\n` 逻辑消费）。
+**命令以裸 ASCII 字符串发送，不追加任何换行或终止符。** 驱动直接 `conn.Write([]byte(cmd))`，cmd 即命令本身。响应边界按命令分别定义，不能假设所有响应都有 `\n` 或 `\r\n`。
 
 | 命令 | ASCII | 十六进制 |
 |------|-------|---------|
@@ -349,19 +343,98 @@ class FrameReader:
 | `@fe SPS 100` | `@fe SPS 100` | `40 66 65 20 53 50 53 20 31 30 30` |
 | `@fe TIME 0` | `@fe TIME 0` | `40 66 65 20 54 49 4D 45 20 30` |
 
-常见设备响应（**响应**带换行，命令不带）：
+### 3.2 实机响应证据（2026-07-29，`192.168.1.10:9000`）
 
-| 响应 | ASCII | 十六进制 |
-|------|-------|---------|
-| ACK（带换行） | `A\n` | `41 0A` |
-| ACK（单字节） | `A` | `41` |
-| 错误 | `E` | `45` |
+所有命令均裸发、无终止符。以下结果在设备空闲且本机独占连接时测得；只读查询曾分别独立连接和同一连接顺序复测。
+
+| 命令 | 实际响应 | 在线字节 | 证据状态 |
+|------|----------|----------|----------|
+| `@e3` | `KTTTTTTTTTTTTTTT` + LF | 16 字节类型 + `0A`，共 17 字节 | 实机已验证 |
+| `@fd MCH` | `FFFF` | `46 46 46 46` | 实机已验证 |
+| `@fd SPS` | `2` | `32` | 实机已验证，值随配置变化 |
+| `@fd BIN` | `1` | `31` | 实机已验证 |
+| `@fd TIME` | `0` | `30` | 实机已验证 |
+| `@fd HEAD` | `0` | `30` | 实机已验证 |
+| `@fd AVG` | `4` | `34` | 实机已验证，值随配置变化 |
+| `@fd TYPE` | `0` | `30` | 实机已验证 |
+| `@fd TRIG` | `0` | `30` | 实机已验证 |
+| `@fd TNUM` | `1` | `31` | 实机已验证，值随配置变化 |
+| `@fe BIN 1` | `A` | `41` | 实机已验证；发送值与设备原状态一致 |
+| `@fe TIME 0` | `A` | `41` | 实机已验证；发送值与设备原状态一致 |
+| `@fe HEAD 0` | `A` | `41` | 实机已验证；发送值与设备原状态一致 |
+
+本轮**未发送** `@f3`、`@fd CHECK`、`@fe MCH`、`@fe AVG`、`@fe TYPE`、`@fe TRIG`、`@fe TNUM`，也未发送 `@fe BIN 0`、`@fe TIME 1`、`@fe HEAD 1` 等相反值。因此不得把这些命令/参数组合的响应终止符或 ACK 行为写成“实机已验证”。`@f0`、`@f1` 和 `@fe SPS` 的后续实机证据见 §3.3。
 
 **错误响应 `E` 的触发条件：** 命令格式错误、参数越界、不支持的操作（如向 temp 型号发送不支持的命令）。驱动收到 `E` 后应终止当前操作并上报错误，不应重试同一命令。
 
-> **响应读取策略差异**：`SendCommand` / `SendCommandIdle` 读到 `\n` 即结束（响应带换行）；`SendCommandExact(n)` 用 `io.ReadFull` 精确读 n 字节，再消费尾部 `\r\n`（固定长度响应如 `@fd BIN` 的单字符 `0`/`1`）。
+> **响应读取规则**：当前生产配置同步只查询确定边界：`@e3` 精确读 17 字节并移除末尾单个 LF；`MCH/BIN/TIME/HEAD/TYPE/TRIG` 按实机固定长度精确读。`SendCommandExact(n)` 读满后立即返回，不再探测尾部。`SPS/AVG/TNUM` 虽已实机观察到无终止符响应，但值长度可变，连接同步阶段不查询，沿用已保存配置。
 
-### 3.2 数据帧十六进制展开
+### 3.3 采集控制实机证据（2026-07-30，`192.168.1.10:9000`）
+
+受控测试条件：`BIN=1`、`TIME=0`、`HEAD=0`、SPS=`2ms`，命令均裸发；同一TCP连接执行5轮物理`@f0 FFFF 2`/`@f1`。每轮Start前先Stop，持续读取到1秒静默，再额外确认500ms零字节。Start后固定抓取50ms，再Stop并读取到1秒静默。测试结束后设备保持SPS=`2ms`且已停止。
+
+#### 3.3.1 Start ACK 在清空旧流后先于数据
+
+`@f0` 的控制响应为单字节 `A`，与采集数据共用同一条无帧头 TCP 字节流。隔离复测先发送`@f1`，持续读取到连续1秒静默，再额外观察500ms零字节，然后发送`@f0`。5轮均首先收到单字节`A`，去掉该字节后分别得到23/27/27/26/26个严格对齐的64字节记录，CH02均约30.3°C。生产驱动必须先物理Stop并排空，再把事务起点的单字节`A`作为Start ACK消费。
+
+> 数据帧内部经常包含字节 `0x41`：约 30°C 的 float32 LE 最高字节本身就是 `41`。在无帧头流中搜索字节 `A` 不能识别 ACK，必须结合当前控制事务和已知帧边界。
+
+#### 3.3.2 Stop ACK 后仍需排空主机接收缓冲
+
+隔离复测中，在已停止状态发送`@f1`只返回单字节`A`并持续静默；采集后发送`@f1`时，先收到0或1个已经在途的完整64字节记录，再收到单字节`A`。该`A`可作为Stop ACK，但不能单独证明主机TCP接收缓冲已经排空。生产路径必须在ACK后继续丢弃迟到旧流字节，达到连续1秒静默后再确认500ms零字节。受控实验未观察到截断帧。
+
+#### 3.3.3 驱动约束
+
+TCP保证字节顺序。隔离实验已经确认旧数据残留是早期误判的原因，主机驱动遵守以下规则：
+
+- Start、Stop、配置和 Disconnect 由同一连接 owner 串行执行，整个连接只有一个 reader。
+- `Acquiring` / `Stopping` 状态禁止发送频率、类型、BIN/TIME/HEAD 等配置命令。
+- Start 端**容忍 ACK 缺失/迟到**（§3.3.4）：首字节 `0x41` 消费为 ACK；首字节非 `0x41` 用偏移0/偏移1帧合法性对齐，不判错。
+- 正常采集路径允许**丢弃 1 个前导字节**做单字节自愈（迟到的 ACK / 残杂字节），但 Stop 事务路径保持严格 `N×64+ACK` 校验，不走自愈。
+- Stop后由唯一reader继续消费完整尾帧和事务边界上的单字节`A`，静默窗口确认 `N×64+ACK` 后清空应用层缓冲；边界无法确认时Close连接、进入Error并要求重连。
+- **禁止裸搜 `0x41` 判定 ACK/帧边界**（约 25.9°C 的 float32 LE 高字节本身就是 `0x41`），必须用帧合法性校验。
+- **快速点击安全**：StopAcquisition 必须在持锁期间把 `stopChs`/`channels` 从 map 移除后再锁外关闭，避免与 `OnReadLoopExit` 回调对同一 channel 二次 close（panic: close of closed channel）。
+
+#### 3.3.4 Start ACK 偶发迟到（2026-07-31 实机探针实测，`192.168.1.10:9000`）
+
+> **结论先行**：`@f0` 的 Start ACK 单字节 `A` 是**每次都会发送**的，但**不是固定排在第一字节**。在约 7%~15% 的启动中，第一个64字节数据帧会**先于** ACK 到达（1000Hz 探针 10/60，5Hz 探针 3/20，1秒探针 2/30）。此现象已在多个独立工具上复现：生产驱动、原始 socket 探针、连续读取1秒探针。设备固件在 `@f0` 后并行发送 ACK 与数据流，发送顺序不保证（固件时序竞争），与采样率无关。
+
+**探测方法与数据（30轮，SPS=1ms，每轮 `@f0` → 读100ms → `@f1` → 连续读1秒）：**
+
+```text
+正常轮次（28/30）:
+  cycle=01 first=ACK  firstIn=6.0ms  frames100ms=100
+          stop1s total=129  last=0x41  windows(100ms)=129,0,0,0,0,0,0,0   ← N×64+ACK 且之后900ms零字节
+
+ACK迟到轮次（2/30）:
+  cycle=03 first=0x00  firstIn=1.1ms  frames100ms=103
+          stop1s total=130  last=0x41  windows(100ms)=130,0,0,0,0,0,0,0   ← 多出1个前置字节
+  cycle=08 first=0x00  firstIn=0.0ms  frames100ms=101
+          stop1s total=66   last=0x41  windows(100ms)=66,0,0,0,0,0,0,0
+```
+
+**关键事实：**
+
+1. **Stop 后缓存是干净清空的**：所有轮次 Stop 残余在第一个100ms窗口内（实际前~9ms）全部到达，随后连续900ms零字节。即使Stop后连续读满1秒再Start，下一轮仍会偶发首字节`0x00`（cycle 03→04、08→09 均如此）。因此 `first=0x00` **不是** Stop 残留。
+2. **Start ACK 迟到产生 1 字节边界偏移**：凡 `first=0x00` 的轮次，该轮 Stop 残余都比 `N×64+ACK` 多出**1个前置字节**。原因：迟到的 `A(0x41)` 被当作数据字节消费，导致后续 64 字节定长边界整体偏移 1 字节，该偏移持续到 Stop，表现为残余多 1 字节。
+3. **与旧日志的对应关系**：历史上“Frame misalignment / binary frame values out of expected range”“expected Start ACK got 0x00”都源于此，而不是设备异常温度或 Stop 清空缺陷。审计报告第10.3节中被“剔除”的 `@f0` 首字节非 `A`（`00`）轮次即此现象。
+
+**驱动实现要求（Start 端必须容忍 ACK 缺失/迟到，正常采集需单字节自愈）：**
+
+- `@f0` 后**不能**把“首字节必须为 `0x41`”当作硬性失败前提。
+- 首字节为 `0x41` → 正常消费为 Start ACK。
+- 首字节非 `0x41` → 不立即报错；用**偏移0/偏移1的帧合法性**确定真实边界：
+  - 偏移0帧合法 → 数据优先且无前导残杂字节，ACK 视为未发送，直接消费首帧；
+  - 偏移1帧合法 → 存在1个前导残杂字节（上一事务尾字节），丢弃后对齐消费首帧；
+  - 两者都非法 → 才判为协议错位并失效连接。
+- **正常采集路径单字节自愈**：采集期间若 64 字节边界帧非法，尝试丢弃1个前导字节重试一次（该字节通常是迟到的 ACK 或残杂字节）。只允许丢1字节，且 Stop 事务路径保持严格 `N×64+ACK` 校验，不走自愈。
+- 禁止裸搜 `0x41`：约 25.9°C 的 float32 LE 高字节本身就是 `0x41`，数据里常出现，必须用帧合法性校验而非字节值判断。
+
+> **Stop 清空验证结论**：Stop 响应严格为 `N×64 + 尾部ACK`（`N>=0`），全部在 `@f1` 后约 1~9ms 内到达，之后设备保持静默。生产 Stop 采用“150ms 静默窗口确认 + 整段 `N×64+ACK` 校验 + 全部消费后 Reset”即可保证缓存清空，无需秒级等待。
+
+> **迟到 Start ACK 落在 Stop 窗口（2026-07-31 快速点击复现）**：短采集（如 20ms）时，迟到的 Start ACK `A` 可能拖到 Stop 收集窗口才到达，与 Stop ACK 拼成 `raw=41 41`，不满足 `N×64+ACK`。`finalizeStopResponseLocked` 必须容忍：原缓冲非法时，丢弃**1个前导 `A`**（即迟到 Start ACK）再验证。仅原缓冲非法时才丢，合法数据帧首字节为 `0x41` 时不会误删。已用 60 轮 × 3 次短采集压力测试（Start→20ms→Stop）验证 0 警告 0 错误。
+
+### 3.4 数据帧十六进制展开
 
 #### 二进制帧在线形态（BIN=1，64 字节）
 
@@ -445,24 +518,22 @@ func syncHardwareConfig():
     sleep(300ms)   // 连接建立后等设备就绪
 
     // —— 1. 查询设备当前参数 ——
-    config.thermocoupleTypes = sendCommandExact("@e3", 16)
-    config.channelMask       = sendCommandIdle("@fd MCH")
-    config.samplingRate      = parseInt(sendCommandIdle("@fd SPS"))
+    config.thermocoupleTypes = trimSuffix(sendCommandExact("@e3", 17), "\n")
+    config.channelMask       = sendCommandExact("@fd MCH", 4)
+    // SPS / AVG / TNUM 无终止符且长度可变，连接同步阶段沿用已保存配置
     config.binaryFormat      = sendCommandExact("@fd BIN", 1) == "1"
     config.showTimestamp     = sendCommandExact("@fd TIME", 1) == "1"
     config.showSequence      = sendCommandExact("@fd HEAD", 1) == "1"
-    config.averageCount      = parseInt(sendCommandIdle("@fd AVG"))
     config.triggerMode       = parseInt(sendCommandExact("@fd TYPE", 1))
     config.triggerEdge       = parseInt(sendCommandExact("@fd TRIG", 1))
-    config.triggerCount      = parseInt(sendCommandIdle("@fd TNUM"))
     // 注意：不查询 @fd CHECK，openCircuitCheck 字段保持空，需按需单独调用
 
     // —— 2. 强制归一化为 64 字节纯二进制帧 ——
     // 三条命令必须全部成功，否则 FrameReader 与设备模式不一致 → 解析乱码
     modeSetOK = false
-    if sendCommand("@fe BIN 1")  succeeds and
-       sendCommand("@fe TIME 0") succeeds and
-       sendCommand("@fe HEAD 0") succeeds:
+    if sendCommandExact("@fe BIN 1", 1)  == "A" and
+       sendCommandExact("@fe TIME 0", 1) == "A" and
+       sendCommandExact("@fe HEAD 0", 1) == "A":
         modeSetOK = true
 
     // —— 3. 仅在三命令全成功时覆盖本地配置 ——
@@ -483,16 +554,16 @@ func syncHardwareConfig():
 >
 > **已知限制**：驱动未实现 temp 型号自动检测与 ASCII 回退。使用 temp 型号时，必须由上层在 `ApplyConfig` 中显式设 `binaryFormat=false`，并避免依赖 sync 的强制归一化结果。
 
-### 4.3 启动前准备（StartAcquisition preamble）
+### 4.3 启动前准备
 
-采集启动前清理残留数据并配置帧读取器。**此步骤是 `startAcquisition` 的内部子流程**，在 `@f0` 发送之前执行，不应独立调用。
+正常Stop已消费Stop ACK并清空FrameReader，因此连接处于干净命令边界。首次Start重置FrameReader并登记前导Start ACK；Stop后的Start重新发送`@f0`，不复用旧物理流。
 
 ```pseudocode
 func startAcquisitionPreamble():
     writeCommandOnly("@f1")                     // 停止任何残留采集流
-    sleep(50ms)                                 // 等设备处理停止命令
-    drainConnection(conn, waitTime=100ms)       // 排空 TCP 缓冲区
-    frameReader.reset()                         // 清空内部 buffer
+    readCompleteTailFramesUntilACK("A")         // ACK前只接受完整在途帧
+    waitForQuietWindow()                         // 确认旧流结束
+    frameReader.reset()                          // 边界确认后清空内部buffer
     // ★ 根据当前配置设置帧读取器模式
     frameReader.setBinaryMode(currentConfig.binaryFormat)
     frameReader.setMetadataMode(currentConfig.showTimestamp || currentConfig.showSequence)
@@ -509,18 +580,17 @@ func startAcquisition():
     // 配置归一化
     applyNormalizedConfig()
 
-    // ★ 启动前准备（停止残留采集 + 排空缓冲区 + 重置帧读取器）
+    // ★ 启动前准备（物理停止 + 排空旧流 + 重置帧读取器）
     startAcquisitionPreamble()
 
     // 发送开始采集
     writeCommandOnly("@f0 FFFF 2")
 
-    // 消费可选的 ACK 前导
-    // BIN=1 时部分固件发 'A' / 'A\n'，部分不发，超时 200ms 即过
-    // ★ ConsumeOptionalACK 返回 error 时直接终止 StartAcquisition（非 ACK 字节
-    //   被回填到 buffer，不视为错误；仅 I/O 错误才返回 error）
-    if consumeOptionalACK(timeout=200ms) returns error:
-        return error
+    // 已建立干净事务边界。实机 ACK 通常为前导单字节 A，
+    // 但约 7% 的启动中第一个数据帧先到、ACK 随后迟到（见 §3.3.4）。
+    // Start 端必须容忍 ACK 迟到：用“跳过单个字节后连续帧全合法”定位并跳过唯一的迟到 A，
+    // 禁止裸搜 0x41 或把“首字节非 A”直接判为协议错位。
+    expectStartACKAllowDelayed()
 
     // 启动读取循环
     startAsync(readLoop)
@@ -568,51 +638,47 @@ func readLoop():
                 values = parseASCIIFrame(frame)
             // 反转通道顺序（串口帧除外，但 TCP 模式下始终需要）
             values = reverse(values)
-            // 合法性校验
+            // 合法性校验；边界上的非法帧直接使连接失效，禁止逐字节猜边界
             if not isValidFrame(values):
-                consecutiveFrameErrors++
-                // ★ 连续 5 次失败 → 自动重同步
-                if consecutiveFrameErrors >= 5:
-                    frameReader.resync()    // 丢弃缓冲区首字节重新对齐
-                    consecutiveFrameErrors = 0
-                continue
+                unexpectedErr = "invalid frame at established boundary"
+                return
             consecutiveFrameErrors = 0
             lastDataAt = now()
-            // 发出数据
-            onData({ deviceId, timestamp, hardwareTimestamp: hwTs, values, unit: "°C" })
+            // 用户逻辑采集开启时才上送；暂停期间继续读流以维护固定边界
+            if acquiring:
+                onData({ deviceId, timestamp, hardwareTimestamp: hwTs, values, unit: "°C" })
 
     // 正常停止：defer 中 unexpectedErr==null，不发 @f1
 ```
 
-> **Resync 设计要点**：`resync()` 仅丢弃内部 buffer 首字节，**不持锁阻塞在 conn.Read 上**，避免与 `setBinaryMode` / `setMetadataMode` / `reset` 等持锁操作互相阻塞。buffer 为空时不做任何 I/O，等下次读到新数据再由调用方决定是否再次 resync。
+> **固定边界原则**：纯二进制帧无帧头。多数通道为 0 时，偏移 4 字节的候选帧仍可能全部落在合法温度范围，软件无法从内容判断错位。因此生产路径禁止逐字节滑动重同步；连接期间保持唯一 reader 连续消费固定帧，边界异常时废弃连接。
 
 ### 4.6 StopAcquisition
 
 ```pseudocode
 func stopAcquisition():
-    if acquiring:
-        close(stopSignal)          // 通知 readLoop 正常退出
     acquiring = false
-    // ★ 异步发送 @f1（goroutine），不阻塞调用方
-    //   连接已被 Disconnect 关闭时写失败属预期，降级为 debug 日志
-    if wasAcquiring:
-        go func():
-            writeLock.lock()
-            capturedConn.write("@f1", timeout=500ms)
-            writeLock.unlock()
-    frameReader.reset()            // 清空缓冲区
+    stopping = true
+    frameReader.expectControlACKAfterFrames()
+    writeCommandOnly("@f1")
+    wait(readLoopDone, timeout=1s)
+    // readLoop消费完整尾帧和Stop ACK后退出
+    frameReader.reset()
+    streaming = false
+    stopping = false
+    status = Connected
 ```
 
-> **注意**：StopAcquisition **不等待 readLoop 退出**。等待 readLoop 退出的逻辑在 **StartAcquisition** 入口：若上一次的 `readLoopDone` 仍在，先等其结束（最多 3s 超时），再启动新循环。这避免「停止→立即启动」时旧 readLoop 与新 readLoop 并发读同一连接。
+> Stop owner的3秒总超时独立于socket deadline。若ACK缺失、ACK后排空未完成、Read忽略deadline或边界异常，owner直接`conn.Close()`解除阻塞，连接进入Error并要求重连。不能启动第二个reader执行drain。
 
 ### 4.7 Disconnect
 
 ```pseudocode
 func disconnect():
-    if acquiring:
-        stopAcquisition()
-    close(configSyncDone)
+    acquiring = false
+    capturedConn.write("@f1", timeout=500ms)
     conn.close()
+    wait(readLoopDone, timeout=3s)
     connected = false
 ```
 
@@ -622,7 +688,7 @@ func disconnect():
 
 ### 5.1 命令发送策略
 
-四种发送模式，适应不同的响应特征：
+发送模式必须由命令的已验证响应边界决定：
 
 ```pseudocode
 // writeCommandOnly —— 只写不读，用于 @f0/@f1
@@ -631,18 +697,16 @@ func writeCommandOnly(cmd: string):
     conn.write(cmd, timeout=5s)
     // 无响应等待
 
-// SendCommand —— 读至换行，用于 @fe 等带 ACK 的命令
-// ★ 命令裸发；响应以 \n 结尾，读到 \n 即止
+// SendCommand —— 仅用于确实以 LF 结束的响应
 func sendCommand(cmd: string) -> string:
     conn.write(cmd)
     return conn.readUntil('\n', timeout=5s).trimEnd('\r\n')
 
 // SendCommandExact —— 精确读 N 字节，用于固定长度响应
-// ★ 命令裸发；用 io.ReadFull 精确读 n 字节，再消费尾部 \r\n
+// ★ 命令裸发；用 io.ReadFull 精确读 n 字节，读满立即返回
 func sendCommandExact(cmd: string, expectBytes: int) -> string:
     conn.write(cmd)
     resp = conn.readExact(expectBytes, timeout=5s)
-    conn.readAvailable()  // 消费尾部 \r\n
     return resp
 
 // SendCommandIdle —— 读至 30ms 静默，用于可变长度响应
@@ -652,22 +716,22 @@ func sendCommandIdle(cmd: string) -> string:
     return conn.readUntilIdle(idleTime=30ms, timeout=5s)
 ```
 
-**响应匹配**：驱动内维护 `pendingResponses` FIFO 队列，命令互斥不会交叉。
+**生产驱动约束**：T1603 命令必须互斥，采集期间禁止查询；不要假设存在 `pendingResponses` FIFO，当前 Go 驱动使用同步命令所有权。
 
 ### 5.2 配置查询（@fd）
 
 | 命令 | 功能 | 响应长度 | 匹配策略 |
 |------|------|----------|---------|
-| `@fd MCH` | 通道掩码 | 4 字符 | SendCommandIdle |
-| `@fd SPS` | 采样间隔 (ms) | 可变 | SendCommandIdle |
+| `@fd MCH` | 通道掩码 | 4 字符 | SendCommandExact(4)，实机已验证 |
+| `@fd SPS` | 采样间隔 (ms) | 可变、无终止符 | 实机已验证；同步阶段不查询 |
 | `@fd BIN` | 二进制标志 | 1 字符 | SendCommandExact(1) |
 | `@fd TIME` | 时间戳标志 | 1 字符 | SendCommandExact(1) |
 | `@fd HEAD` | 序号标志 | 1 字符 | SendCommandExact(1) |
-| `@fd AVG` | 平均次数 | 可变 | SendCommandIdle |
+| `@fd AVG` | 平均次数 | 可变、无终止符 | 实机已验证；同步阶段不查询 |
 | `@fd TYPE` | 触发方式 | 1 字符 | SendCommandExact(1) |
 | `@fd TRIG` | 触发沿 | 1 字符 | SendCommandExact(1) |
-| `@fd TNUM` | 触发次数 | 可变 | SendCommandIdle |
-| `@fd CHECK` | 开路检测 | 4 字符 | SendCommandExact(4) |
+| `@fd TNUM` | 触发次数 | 可变、无终止符 | 实机已验证；同步阶段不查询 |
+| `@fd CHECK` | 开路检测 | 4 字符（协议/历史资料） | 本轮未实机验证 |
 
 **`@fd CHECK` 响应格式：** 4 位十六进制掩码，每 bit 对应一个通道（bit0=CH0，bit15=CH15），`1` 表示该通道开路。例如 `0003` 表示 CH0 和 CH1 开路，`FFFF` 表示全部通道开路。
 
@@ -675,7 +739,7 @@ func sendCommandIdle(cmd: string) -> string:
 
 ### 5.3 配置设置（@fe）
 
-所有 `@fe` 响应为 `A\n`（ACK）。
+仅 `@fe BIN 1`、`@fe TIME 0`、`@fe HEAD 0` 已实机验证返回单字节 `A`、无终止符。其他 `@fe` 命令当前按同一单字节 ACK 协议实现并有自动化测试，但本轮未做实机写入验证。
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
@@ -693,8 +757,8 @@ func sendCommandIdle(cmd: string) -> string:
 
 | 命令 | 功能 | 响应 | 说明 |
 |------|------|------|------|
-| `@e3` | 读 | 16 字符 | 如 `KKKKKKKKKKKKKKKK` |
-| `@f3 0<16ch>0` | 写 | `A\n` | 格式：`0` + 16 类型字符 + `0` |
+| `@e3` | 读 | 16 字符 + 单个 LF | 实机共 17 字节 |
+| `@f3 0<16ch>0` | 写 | 单字节 ACK（实现/自动化测试） | 本轮未实机验证 |
 
 **类型映射：**
 
@@ -711,8 +775,8 @@ func sendCommandIdle(cmd: string) -> string:
 
 | 命令 | 功能 | 说明 |
 |------|------|------|
-| `@f0 <mask> 2` | 开始连续采集 | writeCommandOnly，可能带 ACK 前导 |
-| `@f1` | 停止采集 | writeCommandOnly |
+| `@f0 <mask> 2` | 开始连续采集 | 完成Stop排空后，实机先返回单字节`A`，随后发送64字节记录，见 §3.3 |
+| `@f1` | 停止采集 | 实机返回单字节`A`；先消费完整在途记录，事务边界`A`后旧流静默，见 §3.3 |
 
 参数说明：
 - `<mask>`：16 位十六进制通道掩码，bit0=CH0，bit15=CH15。如 `FFFF`（全通道）、`0001`（仅 CH0）、`0003`（CH0+CH1）
@@ -774,20 +838,20 @@ func applyConfig(config: DaqT1603HardwareConfig):
     // ★ 热电偶类型走 @f3（若提供，必须 16 字符）
     if config.thermocoupleTypes != "":
         assert len(config.thermocoupleTypes) == 16
-        sendCommand("@f3 0" + config.thermocoupleTypes + "0")
+        expectSingleByteACK("@f3 0" + config.thermocoupleTypes + "0")
 
     // ★ 注意：不下发 @fe MCH —— 通道掩码通过 @f0 启动参数控制
-    sendCommand("@fe BIN " + (config.binaryFormat ? "1" : "0"))
-    sendCommand("@fe TIME " + (config.showTimestamp ? "1" : "0"))
-    sendCommand("@fe HEAD " + (config.showSequence ? "1" : "0"))
+    expectSingleByteACK("@fe BIN " + (config.binaryFormat ? "1" : "0"))
+    expectSingleByteACK("@fe TIME " + (config.showTimestamp ? "1" : "0"))
+    expectSingleByteACK("@fe HEAD " + (config.showSequence ? "1" : "0"))
     if config.samplingRate > 0:
-        sendCommand("@fe SPS " + config.samplingRate)
+        expectSingleByteACK("@fe SPS " + config.samplingRate)
     if config.averageCount > 0:
-        sendCommand("@fe AVG " + config.averageCount)
-    sendCommand("@fe TYPE " + config.triggerMode)
-    sendCommand("@fe TRIG " + config.triggerEdge)
+        expectSingleByteACK("@fe AVG " + config.averageCount)
+    expectSingleByteACK("@fe TYPE " + config.triggerMode)
+    expectSingleByteACK("@fe TRIG " + config.triggerEdge)
     if config.triggerCount > 0:
-        sendCommand("@fe TNUM " + config.triggerCount)
+        expectSingleByteACK("@fe TNUM " + config.triggerCount)
 
     localConfig = config
     frameReader.setBinaryMode(config.binaryFormat)
@@ -896,14 +960,14 @@ func isClosedConnError(err: Error) -> bool:
 | 场景 | 超时 | 说明 |
 |------|------|------|
 | TCP Connect | 5s | 建立连接 |
-| 命令响应 | 5s | 等待设备回复 |
-| @fd 静默窗口 | 30ms | 可变长度响应结束判定 |
+| 命令响应 | 按 operation owner | 固定边界读；timeout/短读后连接毒化，不复用 |
+| @fd 静默窗口 | 不用于生产同步 | SPS/AVG/TNUM 沿用保存值 |
 | readLoop 读超时 | 200ms | 每次 socket 读取 |
 | 无数据超时 | 10s | 超过即退出 readLoop |
-| ACK 消费 | 200ms | 等待 @f0 前导 |
-| 缓冲区排空 | 100ms/次 | drainConnection，最多 200 次迭代（~20s 安全上限） |
-| StartAcquisition 等旧 readLoop 退出 | 3s | 超时则告警并继续 |
-| @f1 停止命令写入 | 500ms | StopAcquisition 异步发送 |
+| @f0 ACK | operation owner读取 | 完成Stop排空后精确读取前导单字节`A` |
+| 缓冲区排空 | Stop事务内执行 | 唯一reader消费完整尾帧和Stop ACK，再丢弃ACK后迟到旧流字节至静默确认完成 |
+| StartAcquisition 等旧 readLoop 退出 | 3s | 超时 Close、Error、要求重连，禁止继续 |
+| @f1 停止命令写入 | operation watchdog | Write 失败或 timeout 后连接毒化 |
 | 配置同步起始延迟 | 300ms | connect 后等设备就绪 |
 | 启动前 @f1 后等待 | 50ms | 让设备处理停止命令 |
 
@@ -928,7 +992,9 @@ await driver.startAcquisition() // 恢复采集
 
 ### 8.4 采集启停风险点
 
-**残留数据污染：** `@f1` 停止后 TCP 缓冲区约残留 3000+ 字节，不清空直接 `@f0` 导致帧错位。
+**残留数据处理：** Stop由唯一reader消费完整尾帧和Stop ACK。收到ACK后先清空FrameReader，再继续丢弃socket中迟到的旧流字节；达到连续1秒静默并额外确认500ms零字节后，才允许配置或再次Start。若排空Read在Windows忽略deadline，独立Stop owner在3秒总预算后直接Close连接并要求重连。
+
+**快速点击防护：** 在Stop完成前，共享驱动层拒绝并发Start（`stopping=true`时返回`stop in progress`）。适配器层记录设备级转换事务标记`Starting/Stopping`，防止相反操作重叠进入驱动。前端在`Starting/Stopping`持续禁用采集按钮，不依赖防抖或固定冷却时间。
 
 **死锁预防：**
 ```pseudocode
@@ -954,19 +1020,19 @@ defer:
         onReadLoopExit(unexpectedErr)
     close(readLoopDone)
 
-// 正常停止：close(stopSignal)，readLoop 检测到后 return，defer 不发 @f1
-// 等待 readLoop 退出：在 StartAcquisition 入口 wait(readLoopDone)，最多 3s 超时
+// 用户逻辑停止不关闭 stopSignal，readLoop 继续维护固定边界但不上送数据。
+// Disconnect 才关闭 stopSignal、发送 @f1、Close conn 并等待 readLoopDone。
 ```
 
 ### 8.5 绝对禁止的操作
 
 | 禁止 | 后果 |
 |------|------|
-| defer 中无条件发 @f1 | 正常停止时 StopAcquisition 已异步发过，重复发送导致异常 |
+| 发送 @f1 后未等Stop ACK就退出reader或Reset | 旧帧残留污染后续配置或采集，可能产生不可检测的通道错位 |
 | readLoop 中用全局连接引用而非捕获的局部变量 | Connect 替换连接后操作错误连接 |
-| 跳过 drainConnection | 残留数据导致帧错位 |
+| 只sleep或只reset应用层buffer，不持续读取到Stop ACK | 设备或TCP队列中的旧数据会污染下一事务 |
 | 采集期间发送查询命令 | 数据流与响应混杂 |
-| 未消费前导 ACK | 首字节错位，整帧解析失败 |
+| 在未完成Stop排空时直接读取Start ACK | 可能把旧流数据误认为本次Start响应 |
 
 ---
 
@@ -975,13 +1041,13 @@ defer:
 | # | 注意点 |
 |---|--------|
 | 1 | **BIN 推荐值：1**。配置同步后强制 `@fe BIN 1` / `@fe TIME 0` / `@fe HEAD 0`，以 64 字节 float32 LE 接收，效率最高 |
-| 2 | 二进制帧前**可能无 ACK**。部分固件不发 `A`/`A\n`，consumeOptionalACK 超时 200ms 后正常读取即可；返回 I/O error 时中断启动 |
+| 2 | 完成Stop排空后，`@f0`实机先返回单字节`A`，随后发送64字节记录；不得在任意数据流中搜索裸`0x41` |
 | 3 | 设备发送 CH15→CH0，解析后必须 `.reverse()` |
 | 4 | ASCII 定长帧 192 字节**无换行终止**，按长度截取；ASCII 变长帧（BIN=0 + TIME/HEAD=1）同样无换行，按字段计数截取 |
 | 5 | `@f0`/`@f1` 走 writeCommandOnly，不进入 pending 队列 |
 | 6 | 采集期间**禁止**查询命令，需先停止 |
-| 7 | 启动采集前必须 drainConnection + reset FrameReader（含 50ms 等待） |
-| 8 | 停止→启动是高危操作：StopAcquisition 异步发 `@f1` 不等待；StartAcquisition 入口等待上一次 readLoopDone（最多 3s） |
+| 7 | Start前必须位于干净命令边界；正常Stop收到Stop ACK后才能reset FrameReader |
+| 8 | StopAcquisition发送`@f1`并等待唯一reader消费Stop ACK；返回后可配置或重新Start |
 | 9 | readLoop 内捕获连接引用，不直接使用全局连接变量 |
 | 10 | SPS 单位是**毫秒**，应用层可能用 Hz：`Hz = 1000 / SPS`；配置字段 `samplingRate` 存的是 SPS 原值（ms），非 Hz |
 | 11 | **temp 型号固件不支持 BIN=1**，`@fd BIN` 始终返回 `0`，但发 `@fe BIN 1` 仍回 ACK。驱动**未实现自动回退**，需上层显式设 `binaryFormat=false` |
@@ -994,7 +1060,7 @@ defer:
 | 18 | 配置下发（ApplyConfig）后必须同步调用 `frameReader.setMetadataMode(config.showTimestamp \|\| config.showSequence)` |
 | 19 | ApplyConfig **不下发 `@fe MCH`**，通道掩码通过 `@f0 <mask>` 启动参数控制 |
 | 20 | `@fd CHECK` **不在配置同步中查询**，`openCircuitCheck` 同步后为空，需按需单独调用 |
-| 21 | 连续 5 次帧解析失败 → 自动 `resync()`（丢缓冲区首字节重新对齐），计数清零；resync 不持锁阻塞 I/O |
+| 21 | 固定边界解析失败时废弃连接；禁止逐字节`resync()`猜测无帧头二进制边界 |
 | 22 | `HardwareTimestamp`：72B 二进制帧为 `sec+ns`（纳秒精度）；ASCII 变长帧为 Unix 秒浮点（微秒精度）；无时间戳时为 0，应用本机接收时间 |
-| 23 | readLoop defer **仅异常退出**发 `@f1`，正常停止不发（StopAcquisition 已异步发过） |
+| 23 | readLoop 在逻辑停止期间继续消费帧但不上送；仅 Disconnect/异常退出才发 `@f1` 并关闭连接 |
 | 24 | 应用层采样率输入范围为 **1~1000 Hz**，驱动通过 `hzToSpsMs` 转换为设备 SPS 参数 |

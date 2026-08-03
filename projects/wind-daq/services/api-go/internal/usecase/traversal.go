@@ -1,4 +1,4 @@
-﻿// Package usecase 实现风洞 DAQ 的核心业务用例。
+// Package usecase 实现风洞 DAQ 的核心业务用例。
 //
 // 本文件 traversal.go 是 TraversalManager（遍历测试编排器）的主入口：
 //   - 状态机：Idle / Running / Paused / Stopped / Error，外加 moving / stabilizing /
@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
 	"sync"
 	"time"
 
 	coreinterp "ai-workspace/shared/algorithms/go/fivehole/interpolation"
 	seveninterp "ai-workspace/shared/algorithms/go/sevenhole/interpolation"
+	"shared.local/device-sdk/go/pkg/slog"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/realtime"
 	"wind-daq/services/api-go/internal/core/resourcelock"
@@ -59,10 +59,21 @@ const (
 	// 设备死透/断链场景仍能正常超时——stallDeadline 仅按"完成样本"重置，无新帧时
 	// 永远不会重置，最多 10s 即报错退出。
 	acquisitionStallTimeout = 10 * time.Second
-	cancelCheckPoll         = 100 * time.Millisecond // 任务取消检查间隔
-	pausedLoopIdle          = 200 * time.Millisecond // 暂停态主循环空转间隔
-	retryWaitInterval       = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
-	checkpointInterval      = 10                     // 每完成10个点保存一次断点
+	// acquisitionNotAcquiringTimeout 设备未采集累计时长上限（I-3 修复）。
+	//
+	// 原实现：notAcquiring=true 时每次循环都重置 stallDeadline = now+10s，
+	// 导致 stallDeadline 永远不会到期，10s 兜底形同虚设。设计动机是允许用户
+	// 临时停采集后恢复继续，但代价是设备永久故障（断链/driver 死锁）+ 用户不点 Stop
+	// → 遍历永久卡死。
+	//
+	// 修复：保留"用户主动暂停可恢复"语义（stallDeadline 仍重置），但引入独立的
+	// notAcquiringTotal 累计时长上限。累计未采集时长超过此阈值即判失败，避免
+	// 设备永久故障时遍历卡死。取 60s 平衡"用户短暂停采恢复"与"设备故障有界退出"。
+	acquisitionNotAcquiringTimeout = 60 * time.Second
+	cancelCheckPoll                = 100 * time.Millisecond // 任务取消检查间隔
+	pausedLoopIdle                 = 200 * time.Millisecond // 暂停态主循环空转间隔
+	retryWaitInterval              = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
+	checkpointInterval             = 10                     // 每完成10个点保存一次断点
 )
 
 type TraversalRunSession struct {
@@ -72,6 +83,11 @@ type TraversalRunSession struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	doneOnce sync.Once
+	// managedOpts registry-managed 会话的不可变启动选项（Task 8）：
+	// 非 nil 表示 managed ownership（不 Acquire/Release 全局 workflow lease），
+	// nil 表示 legacy single ownership（既有直接 lease 路径）。
+	// ownership mode 是 session 快照的一部分，同一 session 不得混用两种模式。
+	managedOpts *ManagedSessionOptions
 }
 
 func newTraversalRunSession(parent context.Context, taskID string, snapshot traversal.TraversalRunSnapshot) *TraversalRunSession {
@@ -95,6 +111,7 @@ func (s *TraversalRunSession) IsDone() bool {
 
 type TraversalManager struct {
 	mu              sync.RWMutex
+	motionCommandMu sync.Mutex
 	session         *TraversalRunSession
 	reader          ports.LatestDataReader
 	motion          ports.MotionAccess
@@ -102,10 +119,13 @@ type TraversalManager struct {
 	store           ports.TraversalResultStore
 	checkpointStore ports.CheckpointStore
 	configStore     ports.AppConfigStore // 遍历配置持久化存储
-	config          traversal.Config
-	status          traversal.Status
-	configRaw       json.RawMessage
-	interpolator    coreinterp.Interpolator
+	// configKey 配置持久化键：默认 "traversal"（legacy single）；
+	// managed 双探针装配经 SetConfigKey 设为 "traversal.probe1"/"traversal.probe2"。
+	configKey    string
+	config       traversal.Config
+	status       traversal.Status
+	configRaw    json.RawMessage
+	interpolator coreinterp.Interpolator
 	// sevenHoleInterpolator 七孔插值器（与五孔 interpolator 字段相互独立）。
 	// 生命周期由 SetSevenHoleInterpolator / ClearProbeInterpolator 显式管理，
 	// 计算与前置检查仅经策略表按 config.ProbeType 访问（traversal_probe.go）。
@@ -133,10 +153,27 @@ type TraversalManager struct {
 	// 稳定等待配置
 	stabilization *traversal.StabilizationConfig
 
-	// 启动时根据持久化配置恢复插值器的最后一次错误（若有），
-	// 用于在 CheckPreconditions 中向前端暴露真实失败原因，
-	// 避免前端基于配置 JSON 错误推断为"已加载"。
-	lastInterpolatorRestoreErr string
+	// lastFiveHoleRestoreErr / lastSevenHoleRestoreErr 按探针类型分别记录启动恢复错误。
+	// 设计动机：双变体配置下五孔/七孔插值器独立加载、独立失败——单字段会让
+	// 七孔加载失败时掩盖五孔加载成功（反之亦然），切换激活类型后 CheckPreconditions
+	// 拿到的错误消息可能属于另一类型，导致用户看到与当前操作无关的失败原因。
+	// 按 probeType 分桶后，CheckPreconditions 经 InterpolatorRestoreErrFor(probeType)
+	// 精确读取激活侧的根因。
+	lastFiveHoleRestoreErr  string
+	lastSevenHoleRestoreErr string
+
+	// fiveHoleRestoreEpoch / sevenHoleRestoreEpoch 是按变体独立的版本号，
+	// 防止启动恢复 goroutine 在用户显式导入/清除插值器后用陈旧结果覆盖。
+	//
+	// 设计动机：启动恢复是异步 goroutine——读取配置快照→磁盘 I/O→写回 interpolator。
+	// I/O 期间用户可能经前端导入新 PRB/CSV（调用 SetInterpolator/SetSevenHoleInterpolator）
+	// 或切换探针类型调用 ClearProbeInterpolator。若 goroutine 完成后无条件写回，
+	// 会用旧配置加载的插值器覆盖用户最新导入的结果。
+	//
+	// 机制：用户路径递增对应变体 epoch；goroutine 在写入前比对捕获时的 epoch，
+	// 不一致则跳过写入。两个变体各自独立 epoch——用户改五孔不影响七孔恢复。
+	fiveHoleRestoreEpoch  uint64
+	sevenHoleRestoreEpoch uint64
 
 	// 插值器加载端口（用于启动恢复时按路径加载 PRB / CSV / 多 PRB），
 	// nil 表示未注入加载器，启动恢复将被跳过并写入相应错误消息。
@@ -173,6 +210,11 @@ type TraversalManager struct {
 
 // 遍历配置持久化存储的 key
 const traversalConfigKey = "traversal"
+
+const (
+	pauseMotionStopTimeout  = 3 * time.Second
+	pauseMotionPollInterval = 20 * time.Millisecond
+)
 
 func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAccess, sink ports.TraversalPointSink, store ports.TraversalResultStore, checkpointStore ports.CheckpointStore, configStore ...ports.AppConfigStore) *TraversalManager {
 	mgr := &TraversalManager{
@@ -223,9 +265,9 @@ func (m *TraversalManager) SaveConfigRaw(config json.RawMessage) {
 		m.config.ProbeType = probe.ProbeType
 	}
 	m.mu.Unlock()
-	// 持久化到磁盘，确保重启后配置不丢失
+	// 持久化到磁盘，确保重启后配置不丢失（probe-scoped key，legacy 默认 "traversal"）
 	if m.configStore != nil {
-		_ = m.configStore.SaveConfig(traversalConfigKey, []byte(config))
+		_ = m.configStore.SaveConfig(m.currentConfigKey(), []byte(config))
 	}
 }
 
@@ -235,17 +277,46 @@ func (m *TraversalManager) GetConfigRaw() json.RawMessage {
 	return append(json.RawMessage(nil), m.configRaw...)
 }
 
-// SetInterpolator 注入插值器；切换插值器时清空缓存（避免旧结果污染新算法）
+// SetInterpolator 注入五孔插值器（用户路径）。
+//
+// 切换插值器时清空缓存（避免旧结果污染新算法）；递增 fiveHoleRestoreEpoch
+// 让任何在途的启动恢复 goroutine 在写回前发现 epoch 不一致而跳过，
+// 防止用户最新导入的插值器被旧配置加载的陈旧结果覆盖。
+// 五孔侧的启动恢复陈旧错误一并清除；七孔侧错误独立保留，互不影响。
 func (m *TraversalManager) SetInterpolator(interpolator coreinterp.Interpolator) {
 	m.mu.Lock()
+	m.fiveHoleRestoreEpoch++
 	m.interpolator = interpolator
 	if m.interpCache != nil {
 		m.interpCache.Clear()
 	}
-	// 一旦插值器被显式重置（包括用户主动重新加载 PRB），
-	// 启动恢复的陈旧错误就不再适用，需要一并清除。
-	m.lastInterpolatorRestoreErr = ""
+	m.lastFiveHoleRestoreErr = ""
 	m.mu.Unlock()
+}
+
+// setInterpolatorFromRestore 是启动恢复 goroutine 专用的五孔插值器写入路径。
+//
+// 与 SetInterpolator 的差异：不递增 epoch（写回本身不应让其他在途 goroutine 误判），
+// 并在写入前比对该 goroutine 启动时捕获的 epoch——不一致即返回 false 跳过写入。
+//
+// 返回值约定：
+//   - true：epoch 一致，已成功写入
+//   - false：用户在恢复期间通过 SetInterpolator/ClearProbeInterpolator 修改了五孔变体，
+//     当前结果已陈旧，跳过写入以保护用户最新状态
+//
+// 调用方在收到 false 后应直接返回，不再做任何后续状态修改。
+func (m *TraversalManager) setInterpolatorFromRestore(interpolator coreinterp.Interpolator, epoch uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fiveHoleRestoreEpoch != epoch {
+		return false
+	}
+	m.interpolator = interpolator
+	if m.interpCache != nil {
+		m.interpCache.Clear()
+	}
+	m.lastFiveHoleRestoreErr = ""
+	return true
 }
 
 // SetInterpolatorLoader 注入插值器加载端口。
@@ -326,12 +397,42 @@ func (m *TraversalManager) SetActiveIndex(index ports.TraversalActiveIndex) {
 	m.mu.Unlock()
 }
 
-// InterpolatorRestoreErr 返回最近一次启动恢复 / 显式 RestoreInterpolatorFromPersistedConfig
-// 调用所遗留的错误消息，主要供测试与 CheckPreconditions 读取。空字符串表示无错误。
+// InterpolatorRestoreErr 返回最近一次启动恢复遗留的错误消息。
+//
+// Deprecated: 该方法合并五孔/七孔错误返回，双变体恢复下语义模糊——
+// 五孔失败时返回五孔错误，五孔成功时返回七孔错误，调用方无法区分错误属于哪一侧。
+// 新代码请使用 InterpolatorRestoreErrFor(probeType) 按激活类型精确读取。
+// 仅保留供既有测试断言兼容，后续将随测试改造移除。
 func (m *TraversalManager) InterpolatorRestoreErr() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.lastInterpolatorRestoreErr
+	// 优先返回五孔错误（兼容旧测试默认场景），五孔无错时回退七孔
+	if m.lastFiveHoleRestoreErr != "" {
+		return m.lastFiveHoleRestoreErr
+	}
+	return m.lastSevenHoleRestoreErr
+}
+
+// InterpolatorRestoreErrFor 返回指定探针类型对应的启动恢复错误。
+// 供 CheckPreconditions 按当前激活类型精确暴露根因——双变体恢复下，
+// 五孔失败不应让七孔的前置检查显示五孔的错误消息（反之亦然）。
+// 未知 probeType 归一化为 five-hole（与 normalizeProbeType 同语义）。
+func (m *TraversalManager) InterpolatorRestoreErrFor(probeType string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.restoreErrForLocked(probeType)
+}
+
+// restoreErrForLocked 是 InterpolatorRestoreErrFor 的无锁版本，
+// 供已持有 m.mu（RLock 或 Lock）的调用方在临界区内读取错误，避免 RLock 重入死锁。
+// 调用方必须已持有 m.mu。
+func (m *TraversalManager) restoreErrForLocked(probeType string) string {
+	switch normalizeProbeType(probeType) {
+	case traversal.ProbeTypeSevenHole:
+		return m.lastSevenHoleRestoreErr
+	default:
+		return m.lastFiveHoleRestoreErr
+	}
 }
 
 // Interpolator 返回当前注入的插值器（可能为 nil）；测试代码通过该方法断言
@@ -376,32 +477,42 @@ func (m *TraversalManager) SetStabilization(config *traversal.StabilizationConfi
 func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[string]any {
 	// 有效探针类型：优先请求配置（向导未启动前 Manager 尚无 config.ProbeType），
 	// 回退 Manager 当前配置；PRB 项经策略表按该类型判定（traversal_probe.go）。
+	//
+	// 临界区合并：effectiveProbeType、hasInterpolator、restoreErr、cfg、acqController
+	// 都从 m.mu 读取或经策略表读取 m.interpolator/m.sevenHoleInterpolator，集中在同一 RLock
+	// 内完成，避免与 SetInterpolator/SetSevenHoleInterpolator 的写锁竞争时出现"读到旧
+	// hasInterpolator 但新 restoreErr"等错配快照。
 	m.mu.RLock()
 	effectiveProbeType := m.config.ProbeType
-	m.mu.RUnlock()
 	if config != nil && config.ProbeType != "" {
 		effectiveProbeType = config.ProbeType
 	}
-	hasInterpolator := m.hasLoadedInterpolatorFor(effectiveProbeType)
-	hasMotion := m.motion != nil
-	hasReader := m.reader != nil
+	// 在锁内直接调用策略表读取 hasInterpolator，避免 hasLoadedInterpolatorFor 重复 RLock。
+	// strategy.isLoaded 只读取 m.interpolator/m.sevenHoleInterpolator 字段，不持外部锁，
+	// 在已持有 m.mu.RLock 的临界区内调用是安全的。
+	strategy, strategyOK := probeStrategyFor(effectiveProbeType)
+	hasInterpolator := false
+	if strategyOK {
+		hasInterpolator = strategy.isLoaded(m)
+	}
+	restoreErr := m.restoreErrForLocked(effectiveProbeType)
 
 	// PRB 项默认消息；若启动恢复时记录了失败原因，则使用真实原因，
 	// 便于前端在 PRB 文件被删除/移动等情况下直接展示根因。
 	prbMessage := "Load PRB or calibration CSV before running interpolation"
+	if !hasInterpolator && restoreErr != "" {
+		prbMessage = restoreErr
+	}
+
 	// ChannelMap 校验：扫描 ChannelLabels 是否包含 Patm + Tatm 标签。
 	// P1-P5 标签存在性由 BuildRawPressure 返回的 ok 标志在运行时承担，
 	// 此处只做前置硬性校验——Patm/Tatm 缺失会让归一化与大气计算无法进行。
-	hasPatm := false
-	hasTatm := false
-	m.mu.RLock()
-	if !hasInterpolator && m.lastInterpolatorRestoreErr != "" {
-		prbMessage = m.lastInterpolatorRestoreErr
-	}
 	cfg := m.config
 	if config != nil {
 		cfg = *config
 	}
+	hasPatm := false
+	hasTatm := false
 	for _, label := range cfg.ChannelLabels {
 		switch label {
 		case "Patm":
@@ -414,6 +525,9 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	// 同时避免锁外单独再读 m.acquisitionController 产生数据竞争。
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
+
+	hasMotion := m.motion != nil
+	hasReader := m.reader != nil
 
 	channelMapPassed := hasPatm && hasTatm
 	channelMapMessage := "All required channel labels are mapped"
@@ -434,17 +548,19 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 	//   是反模式——接口实现若耗时（如未来扩展为网络查询）会阻塞 TraversalManager 的其他操作。
 	//   故有意锁外调用，acqController 局部变量已是接口指针的原子快照，无数据竞争。
 	deviceConnected := true
-	deviceConnectedMsg := "Target device is connected"
+	deviceConnectedMsg := "All referenced devices are connected"
 	deviceAcquiring := true
-	deviceAcquiringMsg := "Target device is acquiring"
+	deviceAcquiringMsg := "All referenced devices are acquiring"
 	if acqController != nil {
-		deviceConnected = acqController.IsConnected(cfg.DeviceID)
-		if !deviceConnected {
-			deviceConnectedMsg = "Target device is not connected, please connect it first"
-		}
-		deviceAcquiring = acqController.IsAcquiring(cfg.DeviceID)
-		if !deviceAcquiring {
-			deviceAcquiringMsg = "Target device is not acquiring, please start acquisition first"
+		for _, state := range referencedAcquisitionDevices(acqController, cfg) {
+			if deviceConnected && !state.connected {
+				deviceConnected = false
+				deviceConnectedMsg = fmt.Sprintf("Device %s is not connected, please connect it first", state.name)
+			}
+			if deviceAcquiring && !state.acquiring {
+				deviceAcquiring = false
+				deviceAcquiringMsg = fmt.Sprintf("Device %s is not acquiring, please start acquisition first", state.name)
+			}
 		}
 	}
 
@@ -628,7 +744,24 @@ func sinkIsCsvPort(sink ports.TraversalPointSink, csvPort ports.TraversalCSVPort
 	return sink == csvPortAsSink
 }
 
+// Start legacy single 启动入口：保持既有 lease ownership（自行 Acquire/Release
+// 全局 workflow lease）。registry-managed 双探针路径请使用 StartManaged。
 func (m *TraversalManager) Start(config traversal.Config) error {
+	return m.startInternal(config, nil)
+}
+
+// startInternal Start/StartManaged 共享的启动实现。
+//
+// ownership 由 opts 决定（session 快照的一部分，同一 session 不得混用）：
+//   - opts == nil（legacy）：Acquire 全局 workflow lease、登记 legacy activeIndex，
+//     abort/Stop/finalize 的 Release 路径保持不变；
+//   - opts != nil（managed）：不触碰 workflow lease 与 legacy activeIndex，
+//     opts 冻结进 session.managedOpts，完成时由 RunTraversalLoop 在 finalize 后回调。
+//
+// 调用方差异：Start 不启动主循环（由 ParseAndStartTraversal 启动），
+// StartManaged 成功后自行 go RunTraversalLoop。
+func (m *TraversalManager) startInternal(config traversal.Config, opts *ManagedSessionOptions) error {
+	managed := opts != nil
 	slog.Info("traversal starting",
 		"component", "traversal",
 		"task_id", config.TaskID,
@@ -671,6 +804,14 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		CommitSeq:            0,
 		CSVPath:              traversal.ResolveOutputPath(config),
 		ResultLogPath:        traversal.ResolveResultLogPath(config),
+		BoundControllerIDs:   boundControllerIDs(config),
+	}
+	// managed 会话：输出文件名加 probe 前缀（spec FR8，如 probe1-traversal-....csv）。
+	// 结果日志/checkpoint 路径全部由 CSV 路径派生，自动获得同一前缀；
+	// 撞名 -2/-3 由 csvPort.Open 在带前缀的文件名上处理，实际路径经 OutputPath() 回写。
+	if managed {
+		snapshot.CSVPath = traversal.ResolveProbePrefixedPath(snapshot.CSVPath, string(opts.ProbeID))
+		snapshot.ResultLogPath = traversal.ResolveResultLogPathFromCSV(snapshot.CSVPath)
 	}
 	parentCtx := context.Background()
 	session, err := m.beginSession(parentCtx, config.TaskID, snapshot)
@@ -678,6 +819,8 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
+	// ownership mode 冻结为 session 快照字段（同一 session 不得混用两种模式）。
+	session.managedOpts = opts
 	// 重置 finalizeOnce：上一次任务结束（Stop/Complete）已消费 once，
 	// 新任务必须重新武装 finalizeSink 才能在结束时正确关闭端口。
 	m.resetFinalizeOnce()
@@ -691,14 +834,17 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
 		return err
 	}
-	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）
+	// 申请工作流级互斥锁（与 calibration 等其他工作流互斥）。
+	// 仅 legacy ownership：managed 会话的全局/controller lease 由 registry 准入事务持有。
 	// TTL 给一个保守上限：单次遍历最多跑 24h；过期会被同名 holder 续约或外部接管
-	if err := m.lockService.Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
-		m.mu.Unlock()
-		session.Cancel()
-		session.MarkDone()
-		slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
-		return fmt.Errorf("acquire traversal lock: %w", err)
+	if !managed {
+		if err := m.lockService.Acquire(traversalLockResource, config.TaskID, 24*time.Hour); err != nil {
+			m.mu.Unlock()
+			session.Cancel()
+			session.MarkDone()
+			slog.Error("traversal start failed", "component", "traversal", "task_id", config.TaskID, "error", err)
+			return fmt.Errorf("acquire traversal lock: %w", err)
+		}
 	}
 	m.config = config
 	m.isStopped = false
@@ -739,7 +885,11 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 			session.MarkDone()
 			// spec Task 21 Path 1（可返回路径）：Release 错误通过 errors.Join 聚合进返回值，
 			// 调用方可通过 errors.Is 同时识别 cpErr 和 releaseErr。失败时记录 Warn 便于运维定位。
-			releaseErr := m.lockService.Release(traversalLockResource, config.TaskID)
+			// managed 会话不持有 workflow lease（registry 准入事务负责回滚），跳过 Release。
+			var releaseErr error
+			if !managed {
+				releaseErr = m.lockService.Release(traversalLockResource, config.TaskID)
+			}
 			if releaseErr != nil {
 				slog.Warn("traversal start release lock failed",
 					"component", "traversal", "task_id", config.TaskID, "error", releaseErr)
@@ -773,11 +923,12 @@ func (m *TraversalManager) Start(config traversal.Config) error {
 		m.status.CSVPath = actualCSVPath
 		m.mu.Unlock()
 	}
-	// 注册活动索引，支持进程重启发现。
+	// 注册活动索引，支持进程重启发现（仅 legacy single 路径；
+	// managed 双探针使用 dual recovery index，由 registry 负责登记，spec FR3/FR4）。
 	// checkpointPath 派生规则收敛到 ResolveCheckpointPathFromCSV 单一真相源，
 	// 与 FileCheckpointPort.path() / saveCheckpoint / commitPointV2 fallback 保持一致。
 	// 用 session.snapshot.CSVPath（撞名回写后的实际路径）派生，避免与实际 CSV stem 错位。
-	if activeIndex != nil && checkpointPort != nil {
+	if !managed && activeIndex != nil && checkpointPort != nil {
 		checkpointPath := traversal.ResolveCheckpointPathFromCSV(session.snapshot.CSVPath)
 		if err := activeIndex.Register(session.ctx, config.TaskID, checkpointPath); err != nil {
 			slog.Warn("traversal active index register failed",
@@ -863,7 +1014,14 @@ func (m *TraversalManager) openReliabilityPorts(
 		// checkpoint 路径与实际 CSV stem 一致，避免 Resume 打开错误 CSV 污染旧数据。
 		actualCSVPath := csvPort.OutputPath()
 		if actualCSVPath != "" && actualCSVPath != snapshot.CSVPath {
+			// I-1 修复：写 session.snapshot 必须持 m.mu.Lock，避免与 commitPointV2
+			// 在 m.mu.RLock 内读 session.snapshot 形成 data race。
+			// 当前时序上 openReliabilityPorts 仅在 Start/Resume 同步初始化路径调用、
+			// commitPointV2 在 run loop 内调用，一般不并发；但模式脆弱——一旦未来
+			// 出现并发路径（热重入/异步恢复）即会触发 race。这里加锁让不变量显式成立。
+			m.mu.Lock()
 			session.snapshot.CSVPath = actualCSVPath
+			m.mu.Unlock()
 			// 同步更新 checkpointPort.basePath，让 Save/Load/Find/Unregister
 			// 派生路径与新 CSV stem 一致。Resume 模式下撞名不会发生（Open 不创建文件），
 			// 但 SetBasePath 仍是无副作用的幂等操作。
@@ -891,7 +1049,10 @@ func (m *TraversalManager) openReliabilityPorts(
 		// 回写 session.snapshot.ResultLogPath 保证后续恢复/状态展示一致。
 		actualLogPath := resultLogPort.OutputPath()
 		if actualLogPath != "" && actualLogPath != snapshot.ResultLogPath {
+			// I-1 修复：与 CSVPath 写入对称，写 session.snapshot 必须持 m.mu.Lock。
+			m.mu.Lock()
 			session.snapshot.ResultLogPath = actualLogPath
+			m.mu.Unlock()
 		}
 		// Resume 模式：Open 仅追加打开，不做水位对齐。必须显式 ValidateTail +
 		// TruncateAfter，丢弃崩溃前未 Sync 的半写入记录，保证权威日志与
@@ -956,8 +1117,10 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
-	// 清理活动索引注册（启动时已 Register，失败必须 Unregister 否则下次启动会发现"幽灵任务"）
-	if activeIndex != nil && checkpointPort != nil && taskID != "" {
+	// 清理活动索引注册（启动时已 Register，失败必须 Unregister 否则下次启动会发现"幽灵任务"）。
+	// managed 会话不经 legacy activeIndex（registry 持有 dual recovery index）。
+	managed := session.managedOpts != nil
+	if !managed && activeIndex != nil && checkpointPort != nil && taskID != "" {
 		if err := activeIndex.Unregister(ctx, taskID); err != nil {
 			slog.Warn("traversal abort unregister active index failed",
 				"component", "traversal", "task_id", taskID, "error", err)
@@ -966,9 +1129,12 @@ func (m *TraversalManager) abortStartLocked(session *TraversalRunSession, taskID
 	// spec Task 21 Path 2（void 路径）：Release 失败仅记录 Warn，不影响 void 签名。
 	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验，
 	// holder 不匹配时返回 "release denied" 错误，此处仅记录不重试。
-	if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
-		slog.Warn("traversal abort release lock failed",
-			"component", "traversal", "task_id", taskID, "error", releaseErr)
+	// managed 会话不持有 workflow lease（registry 准入事务负责回滚），跳过 Release。
+	if !managed {
+		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
+			slog.Warn("traversal abort release lock failed",
+				"component", "traversal", "task_id", taskID, "error", releaseErr)
+		}
 	}
 	slog.Error("traversal start failed",
 		"component", "traversal", "task_id", taskID,
@@ -1016,7 +1182,6 @@ func (m *TraversalManager) Status() traversal.Status {
 // RunCurrentPoint 执行当前测试点的完整流程（移动→稳定→采集→保存）
 func (m *TraversalManager) Pause() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.status.State != traversal.StateRunning && !isSubState(m.status.State) {
 		err := fmt.Errorf("traversal is not running")
 		slog.Warn("traversal pause rejected",
@@ -1025,19 +1190,52 @@ func (m *TraversalManager) Pause() error {
 			"state", m.status.State,
 			"error", err,
 		)
+		m.mu.Unlock()
 		return err
 	}
 	m.isPaused = true
 	m.status.State = traversal.StatePaused
+	taskID := m.config.TaskID
+	completedPoints := m.status.CurrentPoint
+	m.mu.Unlock()
+
+	// Pause must not return while a previously issued traversal move can keep
+	// running. The command gate also prevents a concurrent MoveTo from being
+	// issued after this stop sequence starts.
+	m.motionCommandMu.Lock()
+	stopErr := m.stopMotionAxesLocked()
+	if stopErr == nil {
+		stopErr = m.waitForBoundMotionStoppedLocked(pauseMotionStopTimeout)
+	}
+	if stopErr != nil {
+		emergencyErr := m.emergencyStopMotionControllersLocked()
+		m.motionCommandMu.Unlock()
+		if emergencyErr != nil {
+			return m.failWithCode(
+				"pause traversal motion failed: %v; emergency stop fallback also failed: %v",
+				traversal.ErrEmergencyStopFailed,
+				stopErr,
+				emergencyErr,
+			)
+		}
+		return m.failWithCode(
+			"pause traversal motion failed; emergency stop triggered: %v",
+			traversal.ErrMotionFailed,
+			stopErr,
+		)
+	}
+	m.motionCommandMu.Unlock()
 	slog.Info("traversal paused",
 		"component", "traversal",
-		"task_id", m.config.TaskID,
-		"completed_points", m.status.CurrentPoint,
+		"task_id", taskID,
+		"completed_points", completedPoints,
 	)
 	return nil
 }
 
 func (m *TraversalManager) Resume() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status.State != traversal.StatePaused {
@@ -1100,24 +1298,42 @@ func (m *TraversalManager) Stop() error {
 		"completed_points", completedPoints,
 	)
 
-	// 停止所有运动轴（在锁外执行，避免持锁调用外部接口）
-	stopErr := m.stopMotionAxes()
-
-	// 等待 RunTraversalLoop 退出：其 defer finalizeSink 会关闭所有端口，
-	// 保证 commitPointV2 已完成，避免 Stop 与 commitPointV2 竞态。
-	// 超时 5s 保护：RunTraversalLoop 可能卡在 motion.MoveTo 等不响应 ctx 的调用上。
+	// 先等待 RunTraversalLoop 退出（5s 超时保护），再调用 stopMotionAxes。
+	// 旧实现先同步调用 stopMotionAxes：若 RunCurrentPoint 卡在 motion.MoveTo
+	// （不响应 ctx）持有 motionCommandMu，stopMotionAxes 会永久阻塞在
+	// motionCommandMu.Lock()，永远到不了 5s 超时分支，导致 Stop 永久挂起。
+	// 新顺序：session.Cancel() 后等 loop 退出 → motionCommandMu 释放 →
+	// stopMotionAxes 不阻塞。超时仍不退出时跳过 stopMotionAxes（锁未释放，
+	// 调用必阻塞），仅 finalizeSink 兜底，运动轴物理停止依赖外部急停或人工介入。
+	loopExited := true
 	if session != nil && !session.IsDone() {
 		select {
 		case <-session.Done():
-			// RunTraversalLoop 已退出，finalizeSink 已执行
+			// RunTraversalLoop 已退出，motionCommandMu 已释放，finalizeSink 已执行
 		case <-time.After(5 * time.Second):
 			slog.Warn("traversal stop timeout waiting for loop exit, force finalizing sink",
 				"component", "traversal",
 				"task_id", taskID,
 			)
 			// 超时强制关闭端口（finalizeSink 幂等，重复调用安全）
+			loopExited = false
 			m.finalizeSink()
 		}
+	}
+
+	var stopErr error
+	if loopExited {
+		// 运行循环已退出，motionCommandMu 已释放，安全调用 stopMotionAxes。
+		// 仍需调用以确保运动轴物理停止（loop 退出不保证 motion 已停止）。
+		stopErr = m.stopMotionAxes()
+	} else {
+		// loop 未退出（motionCommandMu 仍被持有），无法安全调用 stopMotionAxes；
+		// 记录跳过原因，运动轴的物理停止依赖外部运动控制器急停或人工介入。
+		slog.Warn("traversal stop skipped stopMotionAxes: RunTraversalLoop did not exit within timeout",
+			"component", "traversal",
+			"task_id", taskID,
+		)
+		stopErr = fmt.Errorf("stop timeout: RunTraversalLoop did not exit within 5s, motion axes may still be moving")
 	}
 
 	// 先在锁内收集 Save 所需快照，再到锁外执行可能耗时的 store.Save
@@ -1151,18 +1367,20 @@ func (m *TraversalManager) Stop() error {
 		}
 	}
 
-	// 清理活动索引
-	if activeIndex != nil && taskID != "" {
+	// 清理活动索引（仅 legacy single 路径；managed 会话由 registry 负责 dual recovery index）
+	managed := session != nil && session.managedOpts != nil
+	if !managed && activeIndex != nil && taskID != "" {
 		if err := activeIndex.Unregister(context.Background(), taskID); err != nil {
 			slog.Warn("traversal active index unregister failed",
 				"component", "traversal", "task_id", taskID, "error", err)
 		}
 	}
 
-	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）
+	// 释放工作流级互斥锁；幂等（finalizeSink 也会释放，重复调用安全）。
+	// 仅 legacy ownership：managed 会话不持有 workflow lease（registry 负责释放）。
 	// spec Task 21 Path 3（可返回路径）：Release 错误 join 进 stopErr，调用方可通过 errors.Is 识别。
 	// 不强制释放他人锁——resourcelock.Service.Release 自身有 holder 校验。
-	if taskID != "" {
+	if !managed && taskID != "" {
 		if releaseErr := m.lockService.Release(traversalLockResource, taskID); releaseErr != nil {
 			stopErr = errors.Join(stopErr, fmt.Errorf("release traversal lock: %w", releaseErr))
 		}
@@ -1184,13 +1402,26 @@ func (m *TraversalManager) Stop() error {
 }
 
 // stopMotionAxes 停止遍历相关运动轴，返回第一个遇到的错误。
-// 仅停止当前配置绑定的控制器/轴，避免误停其它已连接但未参与遍历的控制器。
+// 停止目标由启动快照 BoundControllerIDs 限定（spec 双探针 I1/Task 9）：
+// 快照非空时只停快照中的控制器，绝不向另一 probe 的控制器发停止命令；
+// 快照为空时 legacy single 保持既有兼容行为，managed 会话禁止广播回退。
 func (m *TraversalManager) stopMotionAxes() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
+	return m.stopMotionAxesLocked()
+}
+
+func (m *TraversalManager) stopMotionAxesLocked() error {
 	if m.motion == nil {
 		return nil
 	}
 	m.mu.RLock()
+	session := m.session
+	// 轴绑定取自启动快照配置（启动时冻结）；无活动 session 时回退当前配置（兼容路径）。
 	motionAxes := m.config.MotionAxes
+	if session != nil {
+		motionAxes = session.snapshot.Config.MotionAxes
+	}
 	m.mu.RUnlock()
 
 	var firstErr error
@@ -1199,7 +1430,14 @@ func (m *TraversalManager) stopMotionAxes() error {
 	// 而无法停止运动中的轴
 	statuses := m.motion.StatusAll(ctx)
 	motionAxes = resolveMotionAxes(motionAxes, statuses)
-	for _, status := range statuses {
+	scoped, broadcast := scopedControllerStatuses(session, statuses)
+	if !broadcast {
+		// managed 会话空快照：双模式禁止"空绑定时操作所有已连接控制器"的回退（spec I1）。
+		slog.Error("managed traversal session has empty BoundControllerIDs, skip scoped stop (broadcast fallback forbidden)",
+			"component", "traversal")
+		return nil
+	}
+	for _, status := range scoped {
 		// 无绑定配置时保持旧行为：停止所有运动中的轴
 		if len(motionAxes) == 0 {
 			for _, axis := range status.Axes {
@@ -1227,6 +1465,106 @@ func (m *TraversalManager) stopMotionAxes() error {
 	return firstErr
 }
 
+func (m *TraversalManager) stopMotionWithEmergencyFallback() error {
+	stopErr := m.stopMotionAxes()
+	if stopErr == nil {
+		m.motionCommandMu.Lock()
+		stopErr = m.waitForBoundMotionStoppedLocked(pauseMotionStopTimeout)
+		m.motionCommandMu.Unlock()
+	}
+	if stopErr == nil {
+		return nil
+	}
+	if emergencyErr := m.emergencyStopMotionControllers(); emergencyErr != nil {
+		return errors.Join(stopErr, fmt.Errorf("emergency stop fallback failed: %w", emergencyErr))
+	}
+	return fmt.Errorf("normal stop failed; emergency stop triggered: %w", stopErr)
+}
+
+func (m *TraversalManager) waitForBoundMotionStoppedLocked(timeout time.Duration) error {
+	if m.motion == nil {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timed out waiting for traversal axes to stop")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		stopped := m.boundMotionStopped(ctx)
+		cancel()
+		if stopped {
+			return nil
+		}
+		time.Sleep(pauseMotionPollInterval)
+	}
+}
+
+func (m *TraversalManager) boundMotionStopped(ctx context.Context) bool {
+	m.mu.RLock()
+	session := m.session
+	motionAxes := m.config.MotionAxes
+	if session != nil {
+		motionAxes = session.snapshot.Config.MotionAxes
+	}
+	m.mu.RUnlock()
+
+	statuses := m.motion.StatusAll(ctx)
+	motionAxes = resolveMotionAxes(motionAxes, statuses)
+	scoped, broadcast := scopedControllerStatuses(session, statuses)
+	if !broadcast {
+		return false
+	}
+	checked := 0
+	for _, status := range scoped {
+		for _, axis := range status.Axes {
+			if len(motionAxes) > 0 && !axisHasBinding(status.ID, axis.Name, motionAxes) {
+				continue
+			}
+			checked++
+			if axis.Moving {
+				return false
+			}
+		}
+	}
+	return checked > 0 || len(motionAxes) == 0
+}
+
+func axisHasBinding(controllerID string, axis motion.AxisName, bindings []traversal.MotionAxisBinding) bool {
+	for _, binding := range bindings {
+		if motion.AxisName(binding.Axis) == axis && (binding.ControllerID == "" || binding.ControllerID == controllerID) {
+			return true
+		}
+	}
+	return false
+}
+
+// scopedControllerStatuses 按启动快照 BoundControllerIDs 过滤停机目标控制器。
+//
+//   - 快照非空：仅返回快照中的控制器（启动时冻结，不受运行期配置漂移影响）；
+//   - 快照为空且 legacy 会话：broadcast=true 返回全部（既有单探针兼容行为）；
+//   - 快照为空且 managed 会话：broadcast=false（双模式禁止广播回退）。
+func scopedControllerStatuses(session *TraversalRunSession, statuses []motion.ControllerStatus) (scoped []motion.ControllerStatus, broadcast bool) {
+	if session == nil || len(session.snapshot.BoundControllerIDs) == 0 {
+		if session != nil && session.managedOpts != nil {
+			return nil, false
+		}
+		return statuses, true
+	}
+	bound := make(map[string]bool, len(session.snapshot.BoundControllerIDs))
+	for _, id := range session.snapshot.BoundControllerIDs {
+		bound[id] = true
+	}
+	scoped = make([]motion.ControllerStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if bound[status.ID] {
+			scoped = append(scoped, status)
+		}
+	}
+	return scoped, true
+}
+
 // GetResult 获取测试结果
 func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 	if m.store == nil {
@@ -1245,29 +1583,60 @@ func (m *TraversalManager) GetResult(taskID string) (traversal.Status, bool) {
 //
 // 返回聚合错误（含所有失败控制器的错误信息），调用方需将其包装为 ErrEmergencyStopFailed。
 func (m *TraversalManager) emergencyStopMotionControllers() error {
+	m.motionCommandMu.Lock()
+	defer m.motionCommandMu.Unlock()
+	return m.emergencyStopMotionControllersLocked()
+}
+
+func (m *TraversalManager) emergencyStopMotionControllersLocked() error {
 	if m.motion == nil {
 		return nil
 	}
 	m.mu.RLock()
 	motionAxes := m.config.MotionAxes
+	session := m.session
 	m.mu.RUnlock()
 
 	ctx := context.Background()
 	statuses := m.motion.StatusAll(ctx)
 	motionAxes = resolveMotionAxes(motionAxes, statuses)
 
-	// 收集参与遍历的唯一 controllerID 集合
+	// 收集参与遍历的唯一 controllerID 集合：
+	// 启动快照 BoundControllerIDs 优先（冻结值，spec 双探针 I1/Task 9）。
 	controllerIDs := make(map[string]bool)
-	for _, binding := range motionAxes {
-		if binding.ControllerID != "" {
-			controllerIDs[binding.ControllerID] = true
+	switch {
+	case session != nil && len(session.snapshot.BoundControllerIDs) > 0:
+		for _, id := range session.snapshot.BoundControllerIDs {
+			controllerIDs[id] = true
 		}
-	}
-	// 无绑定配置时退化为对所有已连接控制器急停
-	if len(controllerIDs) == 0 {
-		for _, status := range statuses {
-			if status.Connected {
-				controllerIDs[status.ID] = true
+	case session != nil && session.managedOpts != nil:
+		// managed 会话空快照：双模式禁止"急停所有已连接控制器"的回退（spec I1）。
+		// registry 准入已拒绝空绑定，此分支为纵深防御。
+		slog.Error("managed traversal session has empty BoundControllerIDs, skip emergency stop broadcast",
+			"component", "traversal")
+	default:
+		// legacy single：按配置绑定；无绑定配置时退化为对所有已连接控制器急停（既有兼容行为）。
+		for _, binding := range motionAxes {
+			if binding.ControllerID != "" {
+				controllerIDs[binding.ControllerID] = true
+			}
+		}
+		if len(controllerIDs) == 0 {
+			// I-5 修复：广播急停所有已连接控制器是 legacy 兼容行为，但会波及非遍历工位设备。
+			// 测试 TestTraversal_BoundControllers_LegacyEmptyBindingFallbackPreserved
+			// 明确要求保留此行为，故不删除——但增加 WARN 日志显式标记影响范围，
+			// 让操作员和事后审计能识别"广播急停"事件，避免静默波及非预期设备。
+			// managed 路径已在 case 2 显式拒绝空绑定，此处仅 legacy 路径会到达。
+			slog.Warn("traversal emergency stop broadcasting to ALL connected controllers (legacy empty-binding fallback)",
+				"component", "traversal",
+				"reason", "no motion axes bound in legacy single mode",
+				"connected_controllers", collectConnectedControllerIDs(statuses),
+				"note", "this may affect non-traversal workstations; bind motion axes explicitly to scope emergency stop",
+			)
+			for _, status := range statuses {
+				if status.Connected {
+					controllerIDs[status.ID] = true
+				}
 			}
 		}
 	}
@@ -1291,7 +1660,7 @@ func (m *TraversalManager) emergencyStopMotionControllers() error {
 
 	if len(errs) > 0 {
 		// 至少有一台急停失败：尝试 stopMotionAxes 兜底减速停
-		if stopErr := m.stopMotionAxes(); stopErr != nil {
+		if stopErr := m.stopMotionAxesLocked(); stopErr != nil {
 			errs = append(errs, fmt.Errorf("fallback stop also failed: %w", stopErr))
 		}
 		return errors.Join(errs...)
@@ -1386,6 +1755,10 @@ func (m *TraversalManager) RunTraversalLoop() {
 		return
 	}
 	defer session.MarkDone()
+	// managed 会话：完成回调必须在 finalizeSink 之后（spec Task 8：
+	// goroutine 退出且输出端口 finalize 完成后才通知 registry）。
+	// defer LIFO 顺序：finalizeSink → notifyManagedCompletion → MarkDone。
+	defer m.notifyManagedCompletion(session)
 	defer m.finalizeSink() // 所有退出路径统一关闭 sink
 
 	initStatus := m.Status()

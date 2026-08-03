@@ -8,11 +8,13 @@ import DaqP1604Config from '@components/device/DaqP1604Config.vue'
 import ScanResultList, { type ScanSelectionItem } from '@components/device/ScanResultList.vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useLogStore } from '@stores/logStore'
+import { useI18nStore } from '@stores/i18nStore'
 import pkg from '../../../package.json'
 const appVersion = pkg.version
 
 const deviceStore = useDeviceStore()
 const logStore = useLogStore()
+const i18n = useI18nStore()
 
 const showAddDialog = ref(false)
 const showConfig = ref(false)
@@ -20,6 +22,7 @@ const showScanDialog = ref(false)
 
 const newName = ref('')
 const newAddress = ref('192.168.3.101')
+const newLocalAddress = ref('')
 const newPort = ref(9000)
 const addError = ref<string | null>(null)
 
@@ -32,6 +35,7 @@ const isAddingScanned = ref(false)
 
 /** 操作锁：防止快速重复点击导致并发请求 */
 const isToggling = ref(false)
+const isZeroing = ref(false)
 
 const isAcquiring = computed(() =>
   deviceStore.profiles.some((p) => deviceStore.acquiringFor(p.id))
@@ -48,7 +52,7 @@ const canConfigure = computed(() => !!deviceStore.selectedId)
  */
 async function toggleAcquisition() {
   // 操作锁检查：如果正在进行采集切换操作，忽略后续点击
-  if (isToggling.value) {
+  if (isToggling.value || isZeroing.value) {
     return
   }
 
@@ -77,9 +81,25 @@ async function toggleAcquisition() {
   }
 }
 
+async function zeroCalibration() {
+  const id = deviceStore.selectedId
+  if (!id || isZeroing.value || isToggling.value) return
+
+  const status = deviceStore.statusFor(id)
+  if (status !== 'Connected' && status !== 'Acquiring') return
+
+  isZeroing.value = true
+  try {
+    await deviceStore.zeroCalibration(id)
+  } finally {
+    isZeroing.value = false
+  }
+}
+
 function openAddDevice(prefill?: { address: string; port: number }) {
   newName.value = ''
   newAddress.value = prefill?.address ?? '192.168.3.101'
+  newLocalAddress.value = ''
   newPort.value = prefill?.port ?? 9000
   addError.value = null
   showAddDialog.value = true
@@ -90,6 +110,11 @@ function openScanDialog() {
   scanSelection.value = []
   showScanDialog.value = true
   void deviceStore.scanDevices()
+}
+
+function closeScanDialog() {
+  deviceStore.cancelScan()
+  showScanDialog.value = false
 }
 
 function openConfig() {
@@ -110,19 +135,19 @@ provide('shell:openConfig', requestConfig)
 
 async function confirmAddDevice() {
   if (!newName.value.trim()) {
-    addError.value = '请输入设备名称'
+    addError.value = i18n.t('dialog.inputDeviceName')
     return
   }
   if (!newAddress.value.trim()) {
-    addError.value = '请输入 IP 地址'
+    addError.value = i18n.t('dialog.inputIpAddress')
     return
   }
   addError.value = null
   try {
-    await deviceStore.addProfile(newName.value.trim(), newAddress.value.trim(), newPort.value)
+    await deviceStore.addProfile(newName.value.trim(), newAddress.value.trim(), newPort.value, newLocalAddress.value.trim())
     showAddDialog.value = false
   } catch (err) {
-    addError.value = err instanceof Error ? err.message : '添加设备失败'
+    addError.value = err instanceof Error ? err.message : i18n.t('dialog.addDeviceFailed')
   }
 }
 
@@ -148,19 +173,20 @@ async function confirmAddScanned() {
     if (result.skipped.length > 0) {
       logStore.warn(
         'device',
-        `扫描添加：${result.skipped.length} 台设备因地址重复被跳过 (${result.skipped
-          .map((s) => `${s.address}:${s.port}`)
-          .join(', ')})`,
+        i18n.t('logMessage.scanSkipped', {
+          count: result.skipped.length,
+          details: result.skipped.map((s) => `${s.address}:${s.port}`).join(', '),
+        }),
       )
     }
     // 汇报单条落库失败
     if (result.failed.length > 0) {
       for (const f of result.failed) {
-        logStore.error('device', `扫描添加失败：${f.input.name} - ${f.error}`)
+        logStore.error('device', i18n.t('logMessage.scanFailed', { name: f.input.name, error: f.error }))
       }
     }
     if (result.added.length > 0) {
-      logStore.info('device', `扫描添加：成功新增 ${result.added.length} 台设备`)
+      logStore.info('device', i18n.t('logMessage.scanAdded', { count: result.added.length }))
     }
 
     // 立即触发新加设备的自动连接（不用等应用重启）：
@@ -177,7 +203,7 @@ async function confirmAddScanned() {
           if (res.status === 'rejected') {
             const target = targets[i]!
             const reason = res.reason instanceof Error ? res.reason.message : String(res.reason)
-            logStore.warn('device', `自动连接失败：${target.name} - ${reason}`)
+            logStore.warn('device', i18n.t('logMessage.autoConnectDeviceFailed', { name: target.name, reason }))
           }
         })
       }
@@ -204,8 +230,9 @@ async function confirmAddScanned() {
     <MainTopBar
       :version="appVersion"
       :is-toggling="isToggling"
+      :is-zeroing="isZeroing"
       @add-device="openAddDevice"
-      @open-config="openConfig"
+      @zero-calibration="zeroCalibration"
       @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
@@ -244,18 +271,18 @@ async function confirmAddScanned() {
     <!-- 扫描设备模态框 -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="showScanDialog" class="modal-overlay" @click.self="!deviceStore.isScanning && (showScanDialog = false)">
+        <div v-if="showScanDialog" class="modal-overlay" @click.self="closeScanDialog">
           <div class="modal-panel modal-panel--scan">
             <div class="dialog dialog--scan">
               <div class="dialog__header">
-                <h3 class="dialog__title">扫描设备</h3>
-                <p class="dialog__subtitle">勾选发现的设备后一次性添加</p>
+                <h3 class="dialog__title">{{ i18n.t('dialog.scanTitle') }}</h3>
+                <p class="dialog__subtitle">{{ i18n.t('dialog.scanSubtitle') }}</p>
               </div>
               <div class="dialog__body dialog__body--scan">
                 <!-- 顶部：默认自动连接开关（Q2=A：默认开启） -->
                 <label class="scan-option">
                   <input v-model="defaultAutoConnectOnAdd" type="checkbox" />
-                  <span>添加的设备默认启用开机自动连接（本次新加会立即尝试连接）</span>
+                  <span>{{ i18n.t('dialog.defaultAutoConnect') }}</span>
                 </label>
                 <ScanResultList
                   v-model="scanSelection"
@@ -267,25 +294,24 @@ async function confirmAddScanned() {
               <div class="dialog__actions">
                 <button
                   class="dialog__btn dialog__btn--secondary"
-                  :disabled="deviceStore.isScanning"
-                  :title="deviceStore.isScanning ? '扫描进行中，请稍候' : '取消'"
-                  @click="showScanDialog = false"
+                  :title="i18n.t('common.cancel')"
+                  @click="closeScanDialog"
                 >
-                  取消
+                  {{ i18n.t('common.cancel') }}
                 </button>
                 <button
                   v-if="!deviceStore.isScanning"
                   class="dialog__btn dialog__btn--secondary"
                   @click="void deviceStore.scanDevices()"
                 >
-                  重新扫描
+                  {{ i18n.t('dialog.rescan') }}
                 </button>
                 <button
                   class="dialog__btn dialog__btn--primary"
                   :disabled="scanSelection.length === 0 || isAddingScanned"
                   @click="confirmAddScanned"
                 >
-                  {{ isAddingScanned ? '添加中...' : `添加所选 (${scanSelection.length})` }}
+                  {{ isAddingScanned ? i18n.t('dialog.addingDevices') : i18n.t('dialog.addSelected', { n: scanSelection.length }) }}
                 </button>
               </div>
             </div>
@@ -301,29 +327,33 @@ async function confirmAddScanned() {
           <div class="modal-panel modal-panel--narrow">
             <div class="dialog">
               <div class="dialog__header">
-                <h3 class="dialog__title">添加 P1604 设备</h3>
-                <p class="dialog__subtitle">通过 IP 端口接入压力采集器</p>
+                <h3 class="dialog__title">{{ i18n.t('dialog.addDeviceTitle') }}</h3>
+                <p class="dialog__subtitle">{{ i18n.t('dialog.addDeviceSubtitle') }}</p>
               </div>
               <div class="dialog__body">
                 <div class="dialog__field">
-                  <label>设备名称</label>
-                  <input v-model="newName" placeholder="例如: 压力采集器 1" autofocus @keyup.enter="confirmAddDevice" />
+                  <label>{{ i18n.t('dialog.deviceName') }}</label>
+                  <input v-model="newName" :placeholder="i18n.t('dialog.deviceNamePlaceholder')" autofocus @keyup.enter="confirmAddDevice" />
                 </div>
                 <div class="dialog__row">
                   <div class="dialog__field">
-                    <label>IP 地址</label>
+                    <label>{{ i18n.t('dialog.ipAddress') }}</label>
                     <input v-model="newAddress" placeholder="192.168.3.101" @keyup.enter="confirmAddDevice" />
                   </div>
                   <div class="dialog__field dialog__field--narrow">
-                    <label>端口</label>
+                    <label>{{ i18n.t('dialog.port') }}</label>
                     <input v-model.number="newPort" type="number" min="1" max="65535" @keyup.enter="confirmAddDevice" />
                   </div>
+                </div>
+                <div class="dialog__field">
+                  <label>{{ i18n.t('dialog.localIpAddress') }}</label>
+                  <input v-model="newLocalAddress" placeholder="192.168.3.10" @keyup.enter="confirmAddDevice" />
                 </div>
                 <p v-if="addError" class="dialog__error">{{ addError }}</p>
               </div>
               <div class="dialog__actions">
-                <button class="dialog__btn dialog__btn--secondary" @click="showAddDialog = false">取消</button>
-                <button class="dialog__btn dialog__btn--primary" @click="confirmAddDevice">添加</button>
+                <button class="dialog__btn dialog__btn--secondary" @click="showAddDialog = false">{{ i18n.t('common.cancel') }}</button>
+                <button class="dialog__btn dialog__btn--primary" @click="confirmAddDevice">{{ i18n.t('common.add') }}</button>
               </div>
             </div>
           </div>

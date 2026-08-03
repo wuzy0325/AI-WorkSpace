@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
@@ -15,6 +16,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 const { theme } = useTheme()
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
+const i18n = useI18nStore()
 const logStore = useLogStore()
 const recordingStore = useRecordingStore()
 
@@ -70,6 +72,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 })
 
 onMounted(async () => {
+  // 语言偏好已在 i18nStore 创建时同步从 localStorage 读取，无需在此显式初始化
   // 从后端加载已保存的设备配置
   await deviceStore.loadProfiles()
   // 同步日志文件保存状态（后端启动时已自动开启）
@@ -79,7 +82,7 @@ onMounted(async () => {
     await deviceStore.autoConnectAll()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    logStore.warn('auto-connect', `自动连接失败: ${message}`)
+    logStore.warn('auto-connect', i18n.t('logMessage.autoConnectFailed', { message }))
   }
   // 同步 UI 显示偏好到 deviceStore（渲染刷新率 + 历史时间窗口）
   deviceStore.applyDisplayPreferences(displayStore.refreshRateHz, displayStore.historyWindowSec)
@@ -102,6 +105,7 @@ onMounted(async () => {
     deviceStore.updateStatusFromBackend(id, state)
   })
   recordingStore.startListening()
+
 })
 
 onUnmounted(() => {

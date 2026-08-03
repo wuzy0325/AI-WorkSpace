@@ -1,5 +1,11 @@
 # Three-Hole Interpolator
 
+> **⚠️ DEPRECATED (2026-07-20)** — 本项目已被 [`projects/probe-interpolator`](../probe-interpolator) 取代。
+>
+> 新项目 `probe-interpolator` v0.1.0+ 将 5 孔 / 3 孔 / 7 孔探针插值整合为单一桌面程序，
+> 提供统一 UI 与共享算法包。本项目仅保留代码与历史 release 制品，不再发布新版本或修复缺陷。
+> 请迁移至 `probe-interpolator` 进行后续开发与使用。
+
 Standalone Wails desktop app for three-hole probe PRB interpolation.
 
 Extracted from `ThreeHoleProbeApp` (C# WPF) and ported to Go + Vue 3.

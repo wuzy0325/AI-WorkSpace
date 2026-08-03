@@ -53,37 +53,53 @@ func TestLoadSevenHoleCalibrationCsvFiles_Success(t *testing.T) {
 // TestSevenHoleCsvDitherConsistency 退化边抖动与夹具脚本一致：
 // 已知数据集在 7.prb/1.prb/3.prb/4.prb 各有 1/1/3/1 处精确 ka 相等退化边
 // （gen_traversal_fixtures.py 生成记录），Go 抖动扫描应命中相同数量。
+//
+// 直接调用共享包的 LoadCalibrationCSVFromUTF8（绕过 adapter 的文件 I/O 包装），
+// 以验证抖动警告透传——adapter 默认丢弃 warnings，此处需读取它们。
 func TestSevenHoleCsvDitherConsistency(t *testing.T) {
 	dir := sevenHoleCalDataDir(t)
-	inner, outer := sevenHoleCalCsvPaths(dir)
-
-	innerPoints, err := parseSevenHoleCsv(inner, true)
+	innerPath, outerPaths := sevenHoleCalCsvPaths(dir)
+	innerSrc, err := readSevenHoleCsvSource(innerPath)
 	if err != nil {
-		t.Fatalf("parse inner: %v", err)
+		t.Fatalf("read inner csv: %v", err)
 	}
-	gridLines := make([]float64, 13)
-	for i := range gridLines {
-		gridLines[i] = -30 + 5*float64(i)
-	}
-	if got := ditherSevenHoleGrid(innerPoints, gridLines, gridLines); got != 1 {
-		t.Errorf("inner dither count = %d, want 1 (与夹具脚本一致)", got)
-	}
-	wantDither := []int{1, 0, 3, 1, 0, 0}
-	for i, path := range outer {
-		points, err := parseSevenHoleCsv(path, false)
+	outerSrcs := make([]seveninterp.SevenHoleCSVSource, len(outerPaths))
+	for i, p := range outerPaths {
+		src, err := readSevenHoleCsvSource(p)
 		if err != nil {
-			t.Fatalf("parse outer %d: %v", i+1, err)
+			t.Fatalf("read outer csv %d: %v", i+1, err)
 		}
-		bVals := sevenHoleSectorPhiLines[i][:]
-		if got := ditherSevenHoleGrid(points, []float64{30, 35, 40, 45}, bVals); got != wantDither[i] {
-			t.Errorf("sector %d dither count = %d, want %d", i+1, got, wantDither[i])
+		outerSrcs[i] = src
+	}
+	_, warnings, err := seveninterp.LoadCalibrationCSVFromUTF8(innerSrc, outerSrcs)
+	if err != nil {
+		t.Fatalf("LoadCalibrationCSVFromUTF8: %v", err)
+	}
+	// 历史数据集表头沿用 inner 命名，outer 表头与历史别名不符会触发 6 条表头诊断警告。
+	// 这里只断言抖动相关的 4 条子串存在，不限制总警告数（表头诊断警告可能变化）。
+	wantSubstrings := []string{
+		"内区 CSV 已对 1 处退化边",
+		"扇区 1 CSV 已对 1 处退化边",
+		"扇区 3 CSV 已对 3 处退化边",
+		"扇区 4 CSV 已对 1 处退化边",
+	}
+	matched := make([]bool, len(wantSubstrings))
+	for _, w := range warnings {
+		for i, want := range wantSubstrings {
+			if !matched[i] && strings.Contains(w, want) {
+				matched[i] = true
+			}
+		}
+	}
+	for i, ok := range matched {
+		if !ok {
+			t.Errorf("missing warning substring %q in warnings: %v", wantSubstrings[i], warnings)
 		}
 	}
 }
 
 // TestSevenHoleCsvImportVsGolden 校准 CSV 导入与 golden 对拍交叉验证：
-// 用校准 CSV 构建的插值器在 golden 标定点上的输出与 Python 权威输出一致
-// （容差与 golden_test.go 相同），证明「校准 CSV → 插值网格」转换等价。
+// 用校准 CSV 构建的插值器在 golden 标定点上的输出与 Python 权威输出一致。
 func TestSevenHoleCsvImportVsGolden(t *testing.T) {
 	dir := sevenHoleCalDataDir(t)
 	inner, outer := sevenHoleCalCsvPaths(dir)
@@ -99,9 +115,9 @@ func TestSevenHoleCsvImportVsGolden(t *testing.T) {
 		t.Skipf("golden fixture not available: %v", err)
 	}
 	var entries []struct {
-		Index  int    `json:"index"`
-		Mode   string `json:"mode"`
-		Input  struct {
+		Index int    `json:"index"`
+		Mode  string `json:"mode"`
+		Input struct {
 			P1, P2, P3, P4, P5, P6, P7, Pa, T float64
 		} `json:"input"`
 		Output struct {
@@ -149,6 +165,46 @@ func TestSevenHoleCsvImportVsGolden(t *testing.T) {
 	}
 	if checked != len(samples) {
 		t.Fatalf("sample coverage = %d, want %d", checked, len(samples))
+	}
+}
+
+// TestSevenHoleCsvNearbyMeasurementsRemainContinuous guards against restoring
+// the old 5e-4 coefficient snap: nearby runtime samples must produce nearby,
+// but not bit-identical, interpolation results.
+func TestSevenHoleCsvNearbyMeasurementsRemainContinuous(t *testing.T) {
+	dir := sevenHoleCalDataDir(t)
+	inner, outer := sevenHoleCalCsvPaths(dir)
+	interp, err := LoadSevenHoleCalibrationCsvFiles(inner, outer)
+	if err != nil {
+		t.Fatalf("LoadSevenHoleCalibrationCsvFiles: %v", err)
+	}
+
+	input := seveninterp.InterpolationInput{
+		P1: 831.233, P2: 509.833, P3: -409.933, P4: -1007.717,
+		P5: -715.367, P6: 193.817, P7: 4070.833,
+		PAtm: 98891, TAtm: 28,
+	}
+	base, err := interp.Calculate(input)
+	if err != nil {
+		t.Fatalf("Calculate: %v", err)
+	}
+	if !base.IsValid {
+		t.Fatalf("unexpected invalid base result: %s", base.Warning)
+	}
+	input.P1 += 0.001
+	perturbed, err := interp.Calculate(input)
+	if err != nil {
+		t.Fatalf("Calculate perturbed: %v", err)
+	}
+	if !perturbed.IsValid {
+		t.Fatalf("unexpected invalid perturbed result: %s", perturbed.Warning)
+	}
+	delta := math.Hypot(perturbed.Alpha-base.Alpha, perturbed.Beta-base.Beta)
+	if delta == 0 {
+		t.Fatal("nearby sample was snapped to the calibration result")
+	}
+	if delta > 0.1 {
+		t.Fatalf("nearby sample changed angles discontinuously: delta=%g deg", delta)
 	}
 }
 

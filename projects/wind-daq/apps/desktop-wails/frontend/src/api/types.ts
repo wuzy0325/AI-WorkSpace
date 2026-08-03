@@ -58,6 +58,7 @@ export interface DeviceProfile {
   type: DeviceType
   transport?: 'tcp' | 'serial'
   address?: string
+  localAddress?: string
   port?: number
   serialPort?: string
   baudRate?: number

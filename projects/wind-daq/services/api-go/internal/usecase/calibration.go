@@ -1,4 +1,4 @@
-﻿package usecase
+package usecase
 
 import (
 	"context"
@@ -38,8 +38,6 @@ func resolveSavePath(p string) (string, error) {
 	}
 	return filepath.Abs(p)
 }
-
-const defaultSampleInterval = 50 * time.Millisecond
 
 // calibrationStopJoinTimeout Stop/Shutdown 等待校准 worker 完全退出
 // （writer flush、结果保存、运动归零均完成）的上限。超时后 Stop 返回明确错误，
@@ -809,6 +807,10 @@ func (m *CalibrationManager) buildSevenHoleCsvSink(config calibration.Config) ca
 				"type", fmt.Sprintf("%T", dp))
 			return
 		}
+		// CSV 路由按数据点的 Region 字段决定文件归属。
+		// Region 由 seven_hole.go 的 AcquireDataWithChannels 直接取自 point.Region
+		// （用户配置的轨迹区域），不再受 DetermineRegion 压力判定影响——
+		// 内区轨迹点（α/β）必然路由到内区 CSV，外区轨迹点（θ/φ）必然路由到外区 CSV。
 		writer, err := m.routeSevenHoleWriter(config, basePath, shDp.Region, shDp.Sector)
 		if err != nil {
 			slog.Error("calibration seven hole csv route failed",
@@ -1001,8 +1003,9 @@ func (m *CalibrationManager) Status() calibration.Status {
 	//     直到下一次轮询，与"终态后端已 StaleClearing"的注释相矛盾。
 	//   - 前端 updateStatusFromBackend 终态分支会 stopStatusPolling，导致这一帧 stale physics
 	//     永久停留在 UI 上，给操作员"任务还在跑"的错觉。
-	//   - 修复：只在 running/paused 时组装 LivePhysics；终态下 status.LivePhysics 保持 nil，
-	//     前端 calculatedPhysics 自然映射为 null（UI 显示 "--"）。
+	//   - 修复：只在 running/paused 时组装 LivePhysics；终态下 status.LivePhysics 保持 nil。
+	//   - idle 态也不组装：前端 calibrationStore.calculateAtmosphericPhysics 已本地算出 Ma/V，
+	//     后端无需在 idle 态提供 livePhysics，避免依赖 currentConfig 在 idle 态的不可靠性。
 	if status.State == calibration.StateRunning || status.State == calibration.StatePaused {
 		if lp := m.resolveLivePhysics(config); lp != nil {
 			status.LivePhysics = lp
@@ -1945,8 +1948,21 @@ func (f *fallbackRuntime) StopMotion() error {
 
 // stopAllMotion 停止所有运动控制器中 Moving=true 的轴。
 // CalibrationManager.stopMotion 与 fallbackRuntime.StopMotion 共用此逻辑。
+//
+// 为什么用 3 秒有界超时而不是 context.Background()：
+// ServiceShutdown 在 Wails v3 主线程同步执行（application.cleanup 经 InvokeSync 投递），
+// 此函数串行调用 StatusAll + 每轴 Stop，任一硬件卡住就会阻塞 GUI 主线程，
+// 表现为"退出确认后程序无响应"。B140 单命令已有 5 秒 watchdog 兜底，但 queryStatus
+// 串行多个命令会累积到 ~70 秒。
+//
+// 3 秒超时生效路径（B140 sendCommand 的 ctx 取消语义，见 b140_motion.go:1450-1463）：
+//   - 未启动的新命令：立即返回 ctx.Err()（watchdogTimeout≤0 分支）
+//   - 当前正在执行的命令：进入 case <-ctx.Done() 后仍需 r := <-done 等 watchdog
+//     Close conn 解除 Read 阻塞，最长 5 秒
+// 因此最坏路径 = 3s 等首命令 ctx 取消 + 5s 等该命令 watchdog Close = 8s 内完成退出。
 func stopAllMotion(mgr ports.MotionManager) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	var firstErr error
 	for _, status := range mgr.StatusAll(ctx) {
 		for _, axis := range status.Axes {

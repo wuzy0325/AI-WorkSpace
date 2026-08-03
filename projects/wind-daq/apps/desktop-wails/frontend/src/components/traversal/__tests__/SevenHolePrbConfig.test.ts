@@ -6,8 +6,21 @@ import { describe, expect, it, vi } from 'vitest'
 import SevenHolePrbConfig from '../SevenHolePrbConfig.vue'
 import type { SevenHolePrbDraft } from '../../../shared/types/traversal'
 import { useTraversalStore } from '../../../stores/traversalStore'
+import type { TraversalPrbOperations } from '../traversalPrbOperations'
 
 const selectedPaths = vi.hoisted(() => ({ batch: [] as string[] }))
+
+function operationsFor(store: ReturnType<typeof useTraversalStore>): TraversalPrbOperations {
+  return {
+    getError: () => store.error,
+    importPrbFile: store.importPrbFile,
+    importMultiPrbFiles: store.importMultiPrbFiles,
+    importCalibrationCsvFile: store.importCalibrationCsvFile,
+    importSevenHolePrbFiles: store.importSevenHolePrbFiles,
+    importSevenHoleCalibrationCsvFiles: store.importSevenHoleCalibrationCsvFiles,
+    clearInterpolator: () => true,
+  }
+}
 
 vi.mock('@composables/useFileImport', () => ({
   useFileImport: () => ({
@@ -28,13 +41,15 @@ describe('SevenHolePrbConfig', () => {
       }))
     }
     let updated = draft
+    const pinia = createPinia()
     const wrapper = mount(SevenHolePrbConfig, {
       props: {
         modelValue: draft,
         'onUpdate:modelValue': (value: SevenHolePrbDraft) => { updated = value },
-        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>
+        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>,
+        operations: operationsFor(useTraversalStore(pinia)),
       },
-      global: { plugins: [createPinia()] }
+      global: { plugins: [pinia] }
     })
 
     const sourceButtons = wrapper.findAll('.mode-row button')
@@ -65,7 +80,8 @@ describe('SevenHolePrbConfig', () => {
       props: {
         modelValue: draft,
         'onUpdate:modelValue': () => {},
-        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>
+        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>,
+        operations: operationsFor(store),
       },
       global: { plugins: [pinia] }
     })
@@ -97,7 +113,8 @@ describe('SevenHolePrbConfig', () => {
       props: {
         modelValue: draft,
         'onUpdate:modelValue': (value: SevenHolePrbDraft) => { updated = value },
-        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>
+        t: new Proxy({}, { get: (_target, key) => String(key) }) as Record<string, string>,
+        operations: operationsFor(store),
       },
       global: { plugins: [pinia] }
     })

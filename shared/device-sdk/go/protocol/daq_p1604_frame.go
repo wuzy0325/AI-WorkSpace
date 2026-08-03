@@ -40,39 +40,47 @@ func NewFrameReader(conn net.Conn) *FrameReader {
 // ReadFrame 读取一帧完整数据（长度前缀 + payload），返回 payload。
 // 调用方通常应在调用前设置 conn 的 read deadline，以控制等待超时。
 func (r *FrameReader) ReadFrame() ([]byte, error) {
-	r.mu.Lock()
-	if len(r.buf) < p1604LengthPrefixSize {
-		r.mu.Unlock()
-		if err := r.fillAtLeast(p1604LengthPrefixSize); err != nil {
-			return nil, err
-		}
+	for {
 		r.mu.Lock()
-	}
-
-	frameLen := int(binary.BigEndian.Uint16(r.buf[:p1604LengthPrefixSize]))
-	payloadLen := frameLen - p1604LengthPrefixSize
-	if payloadLen <= 0 || payloadLen > maxFramePayloadLen {
-		r.mu.Unlock()
-		return nil, fmt.Errorf("invalid frame length: %d", frameLen)
-	}
-
-	total := p1604LengthPrefixSize + payloadLen
-	if len(r.buf) < total {
-		r.mu.Unlock()
-		if err := r.fillAtLeast(total); err != nil {
-			return nil, err
+		if len(r.buf) < p1604LengthPrefixSize {
+			r.mu.Unlock()
+			if err := r.fillAtLeast(p1604LengthPrefixSize); err != nil {
+				return nil, err
+			}
+			r.mu.Lock()
 		}
-		r.mu.Lock()
-	}
 
-	payload := make([]byte, payloadLen)
-	copy(payload, r.buf[p1604LengthPrefixSize:total])
-	r.buf = r.buf[total:]
-	if len(r.buf) == 0 {
-		r.buf = make([]byte, 0, maxFramePayloadLen)
+		frameLen := int(binary.BigEndian.Uint16(r.buf[:p1604LengthPrefixSize]))
+		if frameLen == 0 {
+			// 部分固件用 00 00 表示无数据应答；消费后继续等下一帧，避免永久错位。
+			r.buf = r.buf[p1604LengthPrefixSize:]
+			r.mu.Unlock()
+			continue
+		}
+		payloadLen := frameLen - p1604LengthPrefixSize
+		if payloadLen <= 0 || payloadLen > maxFramePayloadLen {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("invalid frame length: %d", frameLen)
+		}
+
+		total := p1604LengthPrefixSize + payloadLen
+		if len(r.buf) < total {
+			r.mu.Unlock()
+			if err := r.fillAtLeast(total); err != nil {
+				return nil, err
+			}
+			r.mu.Lock()
+		}
+
+		payload := make([]byte, payloadLen)
+		copy(payload, r.buf[p1604LengthPrefixSize:total])
+		r.buf = r.buf[total:]
+		if len(r.buf) == 0 {
+			r.buf = make([]byte, 0, maxFramePayloadLen)
+		}
+		r.mu.Unlock()
+		return payload, nil
 	}
-	r.mu.Unlock()
-	return payload, nil
 }
 
 // fillAtLeast 不断从 conn 读取数据，直到缓冲区至少包含 need 字节或发生错误。

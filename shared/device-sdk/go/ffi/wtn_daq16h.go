@@ -24,21 +24,21 @@ import (
 
 // DLL 句柄与函数指针。sync.Once 保证幂等加载，避免重复 LoadDLL。
 var (
-	daq16hOnce           sync.Once
-	daq16hInitErr        error
-	wtnDaq16h            *syscall.DLL
-	daq16hDevCreateA     *syscall.Proc
-	daq16hDevRelease     *syscall.Proc
-	daq16hInitTask       *syscall.Proc
-	daq16hStartTask      *syscall.Proc
-	daq16hSendSoftTrig   *syscall.Proc
-	daq16hGetStatus      *syscall.Proc
-	daq16hReadBinary     *syscall.Proc
-	daq16hReadAnalog     *syscall.Proc
-	daq16hStopTask       *syscall.Proc
-	daq16hReleaseTask    *syscall.Proc
-	daq16hVerifyParam    *syscall.Proc
-	daq16hScaleBinToVolt *syscall.Proc
+	daq16hOnce             sync.Once
+	daq16hInitErr          error
+	wtnDaq16h              *syscall.DLL
+	daq16hDevCreateA       *syscall.Proc
+	daq16hDevRelease       *syscall.Proc
+	daq16hInitTask         *syscall.Proc
+	daq16hStartTask        *syscall.Proc
+	daq16hSendSoftTrig     *syscall.Proc
+	daq16hGetStatus        *syscall.Proc
+	daq16hReadBinary       *syscall.Proc
+	daq16hReadAnalog       *syscall.Proc
+	daq16hStopTask         *syscall.Proc
+	daq16hReleaseTask      *syscall.Proc
+	daq16hVerifyParam      *syscall.Proc
+	daq16hScaleBinToVolt   *syscall.Proc
 	daq16hGetVoltRangeInfo *syscall.Proc
 )
 

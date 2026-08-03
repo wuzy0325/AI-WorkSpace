@@ -65,4 +65,21 @@
   --axis-z-soft: color-mix(in srgb, #06b6d4 20%, transparent);
   --axis-u: #f59e0b;
   --axis-u-soft: color-mix(in srgb, #f59e0b 20%, transparent);
+
+  /* 急停横幅渐变与边框色（用于 MotionBanner） */
+  --accent-danger-banner-from: #7c2d12;
+  --accent-danger-banner-to: #b45309;
+  --accent-danger-banner-border: #f59e0b;
+  --accent-danger-banner-action-bg: #1c1917;
+  --accent-danger-banner-action-fg: #fcd34d;
+  --accent-danger-banner-action-bg-hover: #292524;
+
+  /* 轴徽章上的深色文字（用于 AxisCard、EncoderCompensationEditor） */
+  --color-on-axis-badge: #0b0e13;
+
+  /* 急停按钮上的反色文字 */
+  --color-on-danger: #ffffff;
+
+  /* accent 主色按钮 hover/active 后的反色文字 */
+  --color-on-accent: #ffffff;
 }

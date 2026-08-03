@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { DeviceLogEvent, LogCategory } from '@bridge/deviceBridge'
 import * as logBridge from '@bridge/logBridge'
+import { useI18nStore } from '@stores/i18nStore'
 
 /** 日志级别 */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -19,27 +20,12 @@ const GROUP_CATEGORY_MAP: Record<LogGroup, LogCategory[]> = {
   acquisition: ['acquisition'],
 }
 
-/** 分组中文标签 */
-export const LOG_GROUP_LABELS: Record<LogGroup, string> = {
-  system: '系统',
-  communication: '通信',
-  acquisition: '采集',
-}
-
 /** 根据后端原始分类映射到前端分组 */
 export function mapCategoryToGroup(category: LogCategory): LogGroup {
   for (const [group, categories] of Object.entries(GROUP_CATEGORY_MAP) as [LogGroup, LogCategory[]][]) {
     if (categories.includes(category)) return group
   }
   return 'system'
-}
-
-/** 后端原始分类的中文标签（用于日志条目内显示） */
-export const CATEGORY_LABELS: Record<LogCategory, string> = {
-  system: '系统',
-  'hardware-send': '发送',
-  'hardware-recv': '接收',
-  acquisition: '采集',
 }
 
 /** 单条日志记录 */
@@ -77,6 +63,7 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 }
 
 export const useLogStore = defineStore('log', () => {
+  const i18n = useI18nStore()
   const entries = ref<LogEntry[]>([])
   const minLevel = ref<LogLevel>('info')
   const group = ref<LogGroup | 'all'>('all')
@@ -152,7 +139,7 @@ export const useLogStore = defineStore('log', () => {
             source: options?.source ?? tag,
             deviceId: options?.deviceId,
             tag,
-            message: `… 及 ${state.suppressed} 条同类日志`,
+            message: i18n.t('log.throttled', { n: state.suppressed }),
             timestamp: Date.now(),
           })
         }

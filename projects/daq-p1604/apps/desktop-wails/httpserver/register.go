@@ -69,6 +69,7 @@ func RegisterHandlers(
 	mux.HandleFunc("/api/device/disconnect", s.handleDeviceDisconnect)
 	mux.HandleFunc("/api/device/start", s.handleDeviceStart)
 	mux.HandleFunc("/api/device/stop", s.handleDeviceStop)
+	mux.HandleFunc("/api/device/zero-calibration", s.handleDeviceZeroCalibration)
 	mux.HandleFunc("/api/device/status/", s.handleDeviceStatus)
 	mux.HandleFunc("/api/device/apply-config", s.handleDeviceApplyConfig)
 	// daq-p1604 专属：前端 500ms 轮询读取最新快照

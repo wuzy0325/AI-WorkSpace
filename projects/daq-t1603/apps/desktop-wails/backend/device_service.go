@@ -17,7 +17,7 @@ import (
 // UI 推送间隔可由前端通过 SetUIRefreshRateHz 动态调整；
 // 录制状态间隔固定，与采集帧率解耦。
 const (
-	uiPayloadRefreshDefault    = 100 * time.Millisecond
+	uiPayloadRefreshDefault     = 100 * time.Millisecond
 	recordingStatusEmitInterval = time.Second
 
 	// UI 刷新率合法范围（Hz）。
@@ -268,9 +268,9 @@ func (s *DeviceService) injectDeviceProfile(deviceID string) {
 // ----------------------------------------------------------------------------
 
 // startRelay 启动一个后台 goroutine，把硬件 channel 的快照按节流策略转发给：
-//   1. 前端（通过 hub.EmitEvent，事件名 "daq:payload"）
-//   2. 录制写入器（条件：RecordingService.IsActive()）
-//   3. 周期性广播录制状态（"daq:recording-status"）
+//  1. 前端（通过 hub.EmitEvent，事件名 "daq:payload"）
+//  2. 录制写入器（条件：RecordingService.IsActive()）
+//  3. 周期性广播录制状态（"daq:recording-status"）
 func (s *DeviceService) startRelay(deviceID string, ch <-chan core.TemperatureSnapshot) {
 	baseCtx := s.hub.Context()
 	if baseCtx == nil {
@@ -286,6 +286,11 @@ func (s *DeviceService) startRelay(deviceID string, ch <-chan core.TemperatureSn
 	s.hub.RegisterRelay(deviceID, control)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("relay goroutine panic recovered", "deviceId", deviceID, "panic", r)
+			}
+		}()
 		defer close(control.Done)
 		defer s.hub.ClearRelay(deviceID, control)
 		s.relayStream(ctx, deviceID, ch)

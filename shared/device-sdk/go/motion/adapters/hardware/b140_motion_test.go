@@ -434,3 +434,204 @@ func splitTCPAddr(t *testing.T, addr string) (string, int) {
 	}
 	return host, port
 }
+
+// ---------- ADR-009 watchdog 兜底测试 ----------
+
+// deadlineIgnoringConn 是忽略 SetDeadline 的连接替身，仅在 Close 后返回。
+//
+// 设计依据 ADR-009：必须包含忽略 deadline、仅在 Close 后才返回的连接替身，
+// 用于模拟 SetDeadline 在故障 Windows 电脑上失效的场景。
+// 此时 Read 不会在 deadline 到期后返回，必须依赖 watchdog Close 解除阻塞。
+//
+// 实现参考 shared/device-sdk/go/protocol/conn_helpers_test.go:481-508。
+type deadlineIgnoringConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newDeadlineIgnoringConn(inner net.Conn) *deadlineIgnoringConn {
+	return &deadlineIgnoringConn{
+		Conn:   inner,
+		closed: make(chan struct{}),
+	}
+}
+
+// SetDeadline 覆盖为 no-op，模拟 Windows 故障环境下 deadline 失效。
+// b140 sendCommand 调用 SetDeadline（同时设置读写 deadline），此处全部忽略。
+func (c *deadlineIgnoringConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+// SetReadDeadline 同样覆盖为 no-op。
+func (c *deadlineIgnoringConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+// SetWriteDeadline 同样覆盖为 no-op，避免 Write 因 deadline 提前返回。
+func (c *deadlineIgnoringConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+// Close 关闭连接并通知 closed channel，让测试可验证 Close 被调用。
+func (c *deadlineIgnoringConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// newB140WithDeadlineIgnoringConn 构造一个 c.conn 为 deadlineIgnoringConn 的 controller，
+// 用于测试 watchdog 在 SetDeadline 失效场景下的兜底行为。
+//
+// 返回 controller 和 server 端 conn。server 端在后台 goroutine 中读取并丢弃
+// client 发来的命令（让 client 的 Write 完成），但不写任何响应（让 client 的 Read 阻塞）。
+// 测试结束时调用方应 defer server.Close()。
+func newB140WithDeadlineIgnoringConn(t *testing.T) (*B140MotionController, net.Conn) {
+	t.Helper()
+	server, client := net.Pipe()
+	ignored := newDeadlineIgnoringConn(client)
+
+	ctrl := NewB140MotionController(core.MotionControllerProfile{
+		ID:      "b140-watchdog-test",
+		Name:    "B140-WatchDog-Test",
+		Type:    core.ControllerTypeB140,
+		Address: "127.0.0.1",
+		Axes: []core.AxisConfig{
+			{Name: core.AxisX, Enabled: true, Kind: core.AxisKindLinear, MaxSpeed: core.PtrFloat64(20)},
+		},
+	})
+	ctrl.conn = ignored
+	ctrl.reader = bufio.NewReader(ignored)
+	ctrl.status.Connected = true
+
+	// 服务端读取并丢弃命令，让 client 的 Write 完成；不写任何响应让 client 的 Read 阻塞。
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			if _, err := server.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	return ctrl, server
+}
+
+// TestB140SendCommand_WatchdogTriggersOnDeadlineIgnoringConn 验证 ADR-009 watchdog 兜底：
+// 当 SetDeadline 失效（Read 无限阻塞）时，watchdog 在 timeout 后强制 Close conn，
+// 解除 sendCommand 阻塞并返回包含 "watchdog triggered" 或 "conn closed" 的错误。
+//
+// 修复前：sendCommand 的 <-done 无界等待，deadlineIgnoringConn 场景下永久阻塞。
+// 修复后：watchdog 在 watchdogTimeout 后 Close conn，sendCommand 在有界时间内返回。
+func TestB140SendCommand_WatchdogTriggersOnDeadlineIgnoringConn(t *testing.T) {
+	ctrl, server := newB140WithDeadlineIgnoringConn(t)
+	defer server.Close()
+	defer ctrl.Disconnect(context.Background())
+
+	// 用 100ms ctx 让 watchdog timeout = 100ms（远小于 b140CommandTimeout=5s）。
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ctrl.sendCommand(ctx, "TD")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "watchdog triggered") && !strings.Contains(err.Error(), "conn closed") {
+			t.Errorf("error should mention 'watchdog triggered' or 'conn closed', got: %v", err)
+		}
+	case <-time.After(b140CommandTimeout + time.Second):
+		t.Fatal("sendCommand did not return in time (watchdog did not trigger)")
+	}
+}
+
+// TestB140Disconnect_DoesNotDeadlockWhenSendCommandBlocked 验证 ADR-009 死锁修复：
+// sendCommand 阻塞时（deadlineIgnoringConn + Read 永久阻塞），Disconnect 能在 1s 内返回。
+//
+// 修复前的死锁链：
+//  1. sendCommand 持 connMu，卡在 <-done（I/O goroutine 的 Read 永久阻塞）
+//  2. Disconnect 调用 sendCommandLocked("ST") 或直接抢 connMu，永久等待
+//
+// 修复后：watchdog 在 100ms 后 Close conn → sendCommand 释放 connMu → Disconnect 继续。
+func TestB140Disconnect_DoesNotDeadlockWhenSendCommandBlocked(t *testing.T) {
+	ctrl, server := newB140WithDeadlineIgnoringConn(t)
+	defer server.Close()
+
+	sendDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_, err := ctrl.sendCommand(ctx, "TD")
+		sendDone <- err
+	}()
+
+	// 等 sendCommand 进入阻塞（acquire connMu + Read 阻塞）。
+	// 50ms 足够 goroutine 调度并完成 Write（server 端立即读取）。
+	time.Sleep(50 * time.Millisecond)
+
+	disconnectDone := make(chan struct{})
+	go func() {
+		_ = ctrl.Disconnect(context.Background())
+		close(disconnectDone)
+	}()
+
+	select {
+	case <-disconnectDone:
+		// Disconnect 在 1s 内返回，继续验证 sendCommand
+	case <-time.After(time.Second):
+		t.Fatal("Disconnect deadlocked (did not return in 1s)")
+	}
+
+	select {
+	case <-sendDone:
+		// sendCommand 也已返回，无 goroutine 泄漏
+	case <-time.After(time.Second):
+		t.Fatal("sendCommand did not return after Disconnect")
+	}
+}
+
+// TestB140SendCommand_InvalidatesConnectionOnWatchdogTrigger 验证 watchdog 触发后
+// 连接被失效：c.conn==nil 且 c.status.Connected==false。
+//
+// 这避免后续命令复用已关闭的 conn，让调用方快速收到 "not connected" 错误，
+// 而不是尝试向已关闭的 conn 写入导致难以诊断的 I/O 错误。
+func TestB140SendCommand_InvalidatesConnectionOnWatchdogTrigger(t *testing.T) {
+	ctrl, server := newB140WithDeadlineIgnoringConn(t)
+	defer server.Close()
+	defer ctrl.Disconnect(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ctrl.sendCommand(ctx, "TD")
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		// sendCommand 已返回
+	case <-time.After(b140CommandTimeout + time.Second):
+		t.Fatal("sendCommand did not return in time")
+	}
+
+	ctrl.connMu.Lock()
+	connNil := ctrl.conn == nil
+	ctrl.connMu.Unlock()
+	if !connNil {
+		t.Fatal("c.conn should be nil after watchdog trigger")
+	}
+
+	ctrl.mu.Lock()
+	connected := ctrl.status.Connected
+	ctrl.mu.Unlock()
+	if connected {
+		t.Fatal("c.status.Connected should be false after watchdog trigger")
+	}
+}

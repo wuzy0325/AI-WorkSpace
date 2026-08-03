@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useFileImport } from '@composables/useFileImport'
 import { useFeedbackStore } from '@stores/feedbackStore'
-import { useTraversalStore } from '@stores/traversalStore'
 import type {
   CalibrationCsvFileInfo,
   MultiPrbInterpolationMode,
@@ -13,6 +12,7 @@ import UiButton from '@components/ui/UiButton.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiSelect from '@components/ui/UiSelect.vue'
+import type { TraversalPrbOperations } from './traversalPrbOperations'
 
 const prbMode = defineModel<'single' | 'multi'>('prbMode', { required: true })
 const interpolationAlgorithm = defineModel<InterpolationAlgorithm>('interpolationAlgorithm', { required: true })
@@ -24,9 +24,9 @@ const calibrationCsvFile = defineModel<CalibrationCsvFileInfo | null>('calibrati
 
 const props = defineProps<{
   t: Record<string, string>
+  operations: TraversalPrbOperations
 }>()
 
-const traversalStore = useTraversalStore()
 const feedbackStore = useFeedbackStore()
 
 // 文件导入逻辑统一委托给 useFileImport composable
@@ -90,9 +90,9 @@ function clearAlgorithmConfig(algorithm: InterpolationAlgorithm): void {
   } else {
     calibrationCsvFile.value = null
   }
-  // 清除后端插值器状态标记
-  traversalStore.clearInterpolator()
-}
+    // 清除后端插值器状态标记
+    void props.operations.clearInterpolator('five-hole')
+  }
 
 /**
  * 切换插值算法，若已有配置则弹出确认对话框
@@ -116,16 +116,16 @@ function removeMultiPrbFile(index: number): void {
   multiPrbFiles.value.splice(index, 1)
   multiPrbMachNumbers.value.splice(index, 1)
   // 多PRB全部移除后清除插值器状态
-  if (multiPrbFiles.value.length === 0) traversalStore.clearInterpolator()
+  if (multiPrbFiles.value.length === 0) void props.operations.clearInterpolator('five-hole')
 }
 
-function clearMultiPrbFiles(): void { multiPrbFiles.value = []; multiPrbMachNumbers.value = []; traversalStore.clearInterpolator() }
+function clearMultiPrbFiles(): void { multiPrbFiles.value = []; multiPrbMachNumbers.value = []; void props.operations.clearInterpolator('five-hole') }
 
 /** 移除单个 PRB 文件 */
-function removePrbFile(): void { prbFile.value = null; traversalStore.clearInterpolator() }
+function removePrbFile(): void { prbFile.value = null; void props.operations.clearInterpolator('five-hole') }
 
 /** 移除标定 CSV 文件 */
-function removeCalibrationCsvFile(): void { calibrationCsvFile.value = null; traversalStore.clearInterpolator() }
+function removeCalibrationCsvFile(): void { calibrationCsvFile.value = null; void props.operations.clearInterpolator('five-hole') }
 
 /** 导入 PRB 文件：单文件或多文件 */
 async function importPrbFile(): Promise<void> {
@@ -138,18 +138,18 @@ async function importPrbFile(): Promise<void> {
 
   try {
     if (prbMode.value === 'multi') {
-      const imported = await traversalStore.importMultiPrbFiles(paths, undefined, multiPrbInterpolationMode.value)
+      const imported = await props.operations.importMultiPrbFiles(paths, undefined, multiPrbInterpolationMode.value)
       if (imported) {
         multiPrbFiles.value = imported.files.map((f) => clonePrbFileInfo(f))
         multiPrbMachNumbers.value = normalizeMultiPrbMachNumbers(imported.files, imported.machNumbers)
         if (imported.warnings.length > 0) feedbackStore.pushToast(imported.warnings.join('\n'), 'warning')
       } else {
-        feedbackStore.pushToast(props.t.failedImportPrb + ': ' + (traversalStore.error || props.t.unknownError), 'error')
+        feedbackStore.pushToast(props.t.failedImportPrb + ': ' + (props.operations.getError() || props.t.unknownError), 'error')
       }
     } else {
-      const imported = await traversalStore.importPrbFile(paths[0]!)
+      const imported = await props.operations.importPrbFile(paths[0]!)
       if (imported) prbFile.value = clonePrbFileInfo(imported)
-      else feedbackStore.pushToast(props.t.failedImportPrb + ': ' + (traversalStore.error || props.t.unknownError), 'error')
+      else feedbackStore.pushToast(props.t.failedImportPrb + ': ' + (props.operations.getError() || props.t.unknownError), 'error')
     }
   } catch (err) {
     feedbackStore.pushToast(props.t.failedImportPrb + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
@@ -165,9 +165,9 @@ async function importCalibrationCsvFile(): Promise<void> {
   if (!filePath) return
 
   try {
-    const imported = await traversalStore.importCalibrationCsvFile(filePath)
+    const imported = await props.operations.importCalibrationCsvFile(filePath)
     if (imported) calibrationCsvFile.value = { ...imported }
-    else feedbackStore.pushToast(props.t.failedImportCsv + ': ' + (traversalStore.error || props.t.unknownError), 'error')
+    else feedbackStore.pushToast(props.t.failedImportCsv + ': ' + (props.operations.getError() || props.t.unknownError), 'error')
   } catch (err) {
     feedbackStore.pushToast(props.t.failedImportCsv + ': ' + (err instanceof Error ? err.message : String(err)), 'error')
   }

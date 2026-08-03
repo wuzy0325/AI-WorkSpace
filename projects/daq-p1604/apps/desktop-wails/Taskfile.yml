@@ -13,7 +13,7 @@ tasks:
   dev-frontend:
     summary: 启动前端开发服务器（热更新，独立调试前端时使用）
     cmds:
-      - npm --prefix frontend run dev -- --host 127.0.0.1
+      - cd frontend && npm run dev -- --host 127.0.0.1
     env:
       BROWSER: none
 
@@ -31,8 +31,8 @@ tasks:
   build-frontend:
     summary: 仅构建前端（npm install + npm run build，输出到 frontend/dist）
     cmds:
-      - npm --prefix frontend install --no-audit --no-fund
-      - npm --prefix frontend run build
+      - cd frontend && npm install --no-audit --no-fund
+      - cd frontend && npm run build
 
   generate-icon:
     summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
@@ -70,7 +70,11 @@ tasks:
   run-dev:
     summary: 使用已构建的内嵌前端运行桌面应用（清除 FRONTEND_DEVSERVER_URL 以使用内嵌资源）
     cmds:
-      - powershell -Command "$env:FRONTEND_DEVSERVER_URL=''; build\bin\daq-p1604.exe"
+      # 用 cmd /C 而非 powershell -Command "$env:..."：
+      # task 在 Windows 上默认 shell 是 cmd.exe，传给 powershell 时 $env 会被吞掉，
+      # 导致 PowerShell 收到 ":FRONTEND_DEVSERVER_URL=" 并报 CommandNotFoundException。
+      # `set VAR=` 是 cmd 原生清空环境变量的写法，&& 串联下一条命令。
+      - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\daq-p1604.exe"
 
   dev:
     summary: 开发模式（构建前端后运行内嵌资源，未启用 production 标签以保留 devtools）
@@ -84,7 +88,7 @@ tasks:
   clean:
     summary: 清理上次打包遗留的二进制，避免与新构建混淆
     cmds:
-      - cmd: powershell Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue; exit 0"
 
   check-bindings:
     summary: 检查 Wails backend 方法与 frontend bindings 是否一致（方法缺失/多余 + stale 时间戳警告）

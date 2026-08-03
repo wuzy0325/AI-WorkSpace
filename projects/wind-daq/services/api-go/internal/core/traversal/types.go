@@ -118,6 +118,14 @@ type Config struct {
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 为 nil 时下游使用 DefaultMotionSafety，保证旧配置反序列化兼容。
 	MotionSafety *MotionSafetyConfig `json:"motionSafety,omitempty"`
+
+	// Validation 数据验证配置（前端可选传入）。
+	// I-2 修复：ParseConfig 作为纯解析函数，把 cfg.Validation 写入此字段；
+	// 装配路径（ParseAndStartTraversal）读取此字段调用 m.SetValidation。
+	// 旧配置/旧断点反序列化时为 nil，与历史行为兼容。
+	Validation *DataValidationConfig `json:"validation,omitempty"`
+	// Stabilization 稳定等待配置（前端可选传入）。语义同 Validation。
+	Stabilization *StabilizationConfig `json:"stabilization,omitempty"`
 }
 
 // Probe type values for Config.ProbeType (spec-seven-hole-traversal section 2.3).
@@ -337,7 +345,27 @@ type CalculatedResult struct {
 	Pt    float64 `json:"pt"`
 	Ps    float64 `json:"ps"`
 	Mach  float64 `json:"mach"`
+	// Status 标识本点插值结果的状态,用于 CSV 落盘时区分失败原因:
+	//   - CalcStatusValid:插值成功,Alpha/Beta/...为真实数值
+	//   - CalcStatusPrbMissing:PRB/CSV 校准数据未加载,插值器未初始化(配置层问题)
+	//   - CalcStatusInvalid:已加载 PRB 但本点压力数据异常导致插值越界/无效(数据层问题)
+	// 空字符串等价于 CalcStatusValid(向后兼容 Valid=true 的旧路径)
+	Status CalcStatus `json:"status,omitempty"`
 }
+
+// CalcStatus 计算结果状态枚举。
+//
+// 设计动机:旧版仅有 Valid bool,Valid=false 时 CSV 一律写空字符串,
+// 操作员无法从 CSV 区分"PRB 未加载"与"插值无效",排障需回看实时视图。
+// 新增 Status 字段后,CSV 可在 Alpha~Mach 列旁写入差异化标识,
+// 与 UI 实时插值卡片三态(绿色/橙色/红色)一一对应。
+type CalcStatus string
+
+const (
+	CalcStatusValid      CalcStatus = "valid"
+	CalcStatusPrbMissing CalcStatus = "prb_missing"
+	CalcStatusInvalid    CalcStatus = "invalid"
+)
 
 type PointStatus string
 
@@ -562,6 +590,14 @@ type Status struct {
 
 const CheckpointVersion = 2
 
+// DualCheckpointVersion 双探针 checkpoint 格式版本（spec FR8/Task 10）。
+// 在完整 v2 可靠性字段（Snapshot/CommitSeq/真实 CSV 与结果日志路径/header 与
+// commit hash/时间字段）基础上增加 ProbeID 与 BoundControllerIDs
+// （后者随 Task 9 进入 TraversalRunSnapshot）。
+// 不修改、不复用 CheckpointVersion=2 的语义；dual 路径遇到 v1/v2 返回
+// checkpoint_version_mismatch，不自动迁移；legacy 路径不读 v3。
+const DualCheckpointVersion = 3
+
 type TraversalRunSnapshot struct {
 	Config               Config                `json:"config"`
 	Validation           *DataValidationConfig `json:"validation,omitempty"`
@@ -575,6 +611,10 @@ type TraversalRunSnapshot struct {
 	ResultLogPath        string                `json:"resultLogPath"`
 	CSVHeaderHash        string                `json:"csvHeaderHash,omitempty"`
 	LastCommitHash       string                `json:"lastCommitHash,omitempty"`
+	// BoundControllerIDs 启动快照时冻结的运动控制器绑定（spec 双探针 I1/Task 9）。
+	// Stop / EmergencyStop / 位置超差 / 限位 / 掉线等停机路径只作用于该集合；
+	// 为空表示 legacy 单探针兼容行为（按配置绑定回退到全部已连接控制器）。
+	BoundControllerIDs []string `json:"boundControllerIds,omitempty"`
 }
 
 // Checkpoint 断点恢复信息
@@ -592,6 +632,9 @@ type Checkpoint struct {
 	LastPoint       *Point               `json:"lastPoint,omitempty"`
 	SavePath        string               `json:"savePath"`
 	CreatedAt       int64                `json:"createdAt"`
+	// ProbeID 双探针身份元数据（v3 新增；spec I5：不得仅依赖解析文件名恢复 probe 身份）。
+	// legacy v1/v2 checkpoint 为空。
+	ProbeID string `json:"probeId,omitempty"`
 }
 
 // DataValidationConfig 数据验证配置

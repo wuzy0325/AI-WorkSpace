@@ -1,13 +1,14 @@
-﻿package usecase
+package usecase
 
 import (
 	"context"
 	"errors"
-	"shared.local/device-sdk/go/pkg/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/traversal"
 	"wind-daq/services/api-go/internal/ports"

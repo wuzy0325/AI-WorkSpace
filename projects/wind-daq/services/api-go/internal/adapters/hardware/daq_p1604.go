@@ -1,11 +1,12 @@
-﻿package hardware
+package hardware
 
 import (
 	"fmt"
-	"shared.local/device-sdk/go/pkg/slog"
 	"net"
+	"shared.local/device-sdk/go/pkg/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sharedproto "shared.local/device-sdk/go/protocol"
@@ -20,11 +21,44 @@ const (
 
 	// maxConsecutiveFrameErrors 是触发自动重同步的连续帧错误阈值。
 	maxConsecutiveFrameErrors = 5
-	// noDataTimeout 是允许的最长无数据时间，超过则判定为连接异常。
-	noDataTimeout = 10 * time.Second
 	// readLoop 等待超时使用 sharedproto.ReadLoopJoinTimeout（跨项目统一）
 	// 主动停止原因使用 sharedproto.StopReasonUserRequested（跨项目统一）
 )
+
+// noDataTimeoutNs 存储允许的最长无数据时间（纳秒），超过则判定为连接异常。
+// readLoop 入口启动独立 time.AfterFunc timer，到期触发连接毒化。
+//
+// 包级共享变量：DAQP1604 / DAQP1064Pre / WTNPXI 三个驱动的 readLoop 共用此超时。
+// 各驱动 readLoopWatchdog（兜底 deadline 失效的 Read 阻塞）与本变量独立，
+// 避免共享超时导致同时触发后 readLoopWatchdog 覆盖 noDataTimer 设置的 LastError。
+//
+// ADR-009 R0-10：原实现 readLoop 通过 SetReadDeadline(100~200ms) 让 Read 周期返回，
+// 在循环体累计 time.Since(lastDataAt) > noDataTimeout 检测无数据。问题 Windows 电脑
+// deadline 失效时循环体不可达，noDataTimeout 永远不会被触发，半开连接无法自行收敛。
+// 独立 timer 不依赖循环体，即使 Read 永久阻塞也能到期触发。
+//
+// 使用 atomic.Int64 而非 const 是为了允许测试注入短超时（200ms）加速 no-data timer 用例；
+// 运行期不应修改，生产代码保持默认 10s。
+//
+// ADR-009 finding 4 修复：原 var noDataTimeout time.Duration 在 readLoop goroutine 跨
+// 测试边界读取与下一测试修改全局变量并发触发 data race。改用 atomic.Int64 后，
+// 读写均无锁原子操作，race detector 不再报错。helper 函数 getNoDataTimeout / setNoDataTimeout
+// 封装访问，避免直接暴露 atomic 类型到外部包。
+var noDataTimeoutNs atomic.Int64
+
+func init() {
+	noDataTimeoutNs.Store(int64(10 * time.Second))
+}
+
+// getNoDataTimeout 返回当前无数据超时。readLoop 与所有生产代码统一通过本函数读取。
+func getNoDataTimeout() time.Duration {
+	return time.Duration(noDataTimeoutNs.Load())
+}
+
+// setNoDataTimeout 修改无数据超时，仅测试使用。
+func setNoDataTimeout(d time.Duration) {
+	noDataTimeoutNs.Store(int64(d))
+}
 
 type DAQP1604 struct {
 	mu          sync.RWMutex
@@ -41,6 +75,10 @@ type DAQP1604 struct {
 	// consecutiveFrameErrors 连续帧解析错误计数，用于触发自动重同步。
 	consecutiveFrameErrors int
 	onError                func(err error)
+	// cmdTimeout 是 sendCommandACK 的 watchdog 超时；零值时回退到 DAQ_P_1604_TIMEOUT。
+	// 暴露为字段供测试覆盖（生产代码保持默认 5s，测试可缩短到 200ms 加速用例），
+	// 与 dsa3217.cmdTimeout 标杆模式对齐。
+	cmdTimeout time.Duration
 
 	// readLoopDone 由 readLoop 退出时关闭，供 Start/Stop/Disconnect 等待协程结束。
 	readLoopDone chan struct{}
@@ -75,6 +113,23 @@ func (d *DAQP1604) SetOnError(fn func(err error)) {
 
 func (d *DAQP1604) ID() string { return d.profile.ID }
 
+func runDAQP1604Handshake(conn net.Conn, timeout time.Duration, handshake func() error) error {
+	timedOut := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞，若同步执行
+		// 则 close(timedOut) 永不执行，下方 <-timedOut 永久阻塞（Connect 卡死）。
+		go sharedproto.AbortConnection(conn)
+		close(timedOut)
+	})
+
+	err := handshake()
+	if timer.Stop() {
+		return err
+	}
+	<-timedOut
+	return fmt.Errorf("connection handshake timed out after %s", timeout)
+}
+
 func (d *DAQP1604) Connect() error {
 	d.mu.Lock()
 	if d.conn != nil {
@@ -92,7 +147,7 @@ func (d *DAQP1604) Connect() error {
 		port = DAQ_P_1604_DEFAULT_PORT
 	}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), DAQ_P_1604_TIMEOUT)
+	conn, err := sharedproto.DialTCP(fmt.Sprintf("%s:%d", host, port), d.profile.LocalAddress, DAQ_P_1604_TIMEOUT)
 	if err != nil {
 		return fmt.Errorf("connect to %s:%d: %w", host, port, err)
 	}
@@ -110,42 +165,44 @@ func (d *DAQP1604) Connect() error {
 	d.status.Connection = device.ConnectionConnected
 	d.mu.Unlock()
 
-	// 启用长度前缀模式（供后续 FrameReader 读取单位系数 + 数据流帧解析）
-	// 此处启用后整个连接生命周期保持开启，initStream 不再重复发送。
-	if err := d.sendCommand("w1601"); err != nil {
-		d.mu.Lock()
-		d.conn = nil
-		d.frameReader = nil
-		d.status.Connection = device.ConnectionDisconnected
-		d.mu.Unlock()
-		_ = conn.Close()
-		return fmt.Errorf("enable length prefix: %w", err)
-	}
-	// 排空 w1601 的 A 应答，避免污染后续 u01101 的 ReadFrame
-	sharedproto.DrainW1601Response(d.frameReader, conn, 100*time.Millisecond)
-
-	// 读取硬件实际单位并同步 profile
-	// 软错误（超时/解析失败）不阻断连接，仅记录 warn；
-	// 硬错误（对端 FIN/RST）返回 error → 关闭 conn 并让 Connect 失败，
-	// 避免把已死连接塞进 DeviceManager 造成后续 StartAcquisition 爆 WSAECONNABORTED。
-	if err := d.syncUnitFromHardware(); err != nil {
+	// 强制覆盖整个握手，防止 Windows 极端情况下 read deadline 未解除阻塞。
+	err = runDAQP1604Handshake(conn, DAQ_P_1604_TIMEOUT+time.Second, func() error {
+		if err := d.sendCommand("w1601"); err != nil {
+			return fmt.Errorf("enable length prefix: %w", err)
+		}
+		if err := sharedproto.P1604ReadCommandACK(d.frameReader, conn, 0); err != nil {
+			return fmt.Errorf("enable length prefix response: %w", err)
+		}
+		if err := d.syncUnitFromHardware(0); err != nil {
+			return fmt.Errorf("sync unit from hardware: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		d.mu.Lock()
 		d.conn = nil
 		d.frameReader = nil
 		d.status.Connection = device.ConnectionError
 		d.status.LastError = err.Error()
 		d.mu.Unlock()
-		_ = conn.Close()
-		return fmt.Errorf("sync unit from hardware: %w", err)
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞，不阻塞 Connect。
+		go sharedproto.AbortConnection(conn)
+		return err
 	}
 	return nil
 }
 
 func (d *DAQP1604) Disconnect() error {
 	d.SetStopReason(sharedproto.StopReasonUserRequested)
+	d.mu.RLock()
+	wasAcquiring := d.acquiring
+	d.mu.RUnlock()
+	var stopErr error
+	if wasAcquiring {
+		stopErr = d.StopAcquisition()
+	}
 
 	d.mu.Lock()
-	_ = d.stopAcquisitionLocked()
 	done := d.readLoopDone
 	conn := d.conn
 	d.conn = nil
@@ -163,10 +220,12 @@ func (d *DAQP1604) Disconnect() error {
 	}
 
 	if conn != nil {
-		_ = conn.Close()
+		// 后台 detach：join 超时说明 readLoop 可能仍挂在 Read 上，
+		// LSP 环境下 Close 可能永久阻塞，不阻塞 Disconnect。
+		go sharedproto.AbortConnection(conn)
 	}
 	slog.Info("DAQ-P-1604 TCP disconnected", "category", "hardware-recv", "component", "hardware", "device", d.profile.ID)
-	return nil
+	return stopErr
 }
 
 func (d *DAQP1604) StartAcquisition() error {
@@ -185,32 +244,39 @@ func (d *DAQP1604) StartAcquisition() error {
 	// 等待上一次 readLoop 完全退出，避免旧 goroutine 与新采集竞争 conn 或状态。
 	if d.readLoopDone != nil {
 		done := d.readLoopDone
+		// ADR-009 finding 2：捕获 expectedConn，join 超时后仅关闭此 conn，
+		// 避免与并发 Disconnect -> Connect 的新连接误杀。
+		expectedConn := d.conn
 		d.mu.Unlock()
 		select {
 		case <-done:
 		case <-time.After(sharedproto.ReadLoopJoinTimeout):
-			slog.Warn("DAQ-P-1604 previous readLoop join timeout on start", "device", d.profile.ID)
+			d.invalidateConnectionAfterReadLoopTimeout(expectedConn, "previous read loop did not exit; reconnect required")
+			return fmt.Errorf("previous read loop did not exit; reconnect required")
 		}
 		d.mu.Lock()
 	}
 
-	// 重置帧读取器并排空连接中的残留数据，防止旧命令响应或流字节污染新采集。
+	// ADR-009 R0-5 整改：移除 StartAcquisition 前的 DrainConnection 调用。
+	//
+	// 历史背景：原实现通过 sharedproto.DrainConnection（阻塞 Read + watchdog Close）
+	// 排空 TCP 接收缓冲区中的残留数据。但空缓冲是正常状态，watchdog 到期只能证明
+	// 探测无法完成，不能证明物理连接故障——问题 Windows 电脑 deadline 失效时
+	// 健康连接会被误杀（违反 ADR-009 决策 8）。
+	//
+	// 整改后：仅依赖 frameReader.Reset() 清空应用层缓冲区；残留字节（如上次 c 02
+	// ACK 或 readLoop 退出时设备已排队的压力帧）由后续 sendCommandACK 调用的
+	// P1604ReadCommandACK 跳帧逻辑安全跳过（maxResidualFrameSkips=20）。
+	// 对齐独立 P1604（p1604_adapter.go StartAcquisition）的整改模式。
 	if d.frameReader != nil {
 		d.frameReader.Reset()
 	}
-	conn := d.conn
 	d.mu.Unlock()
-	// 排空连接残留数据并记录字节数，便于诊断帧错位问题
-	if drained := sharedproto.DrainConnection(conn, 100*time.Millisecond); drained > 0 {
-		slog.Debug("DAQ-P-1604 drained residual data",
-			"category", "hardware-drain", "component", "hardware",
-			"device", d.profile.ID, "bytes", drained)
-	}
 
 	if err := d.initStream(); err != nil {
 		return fmt.Errorf("init stream: %w", err)
 	}
-	if err := d.sendCommand("c 01 1"); err != nil {
+	if err := d.sendCommandACK("c 01 1"); err != nil {
 		return fmt.Errorf("start stream: %w", err)
 	}
 
@@ -233,7 +299,9 @@ func (d *DAQP1604) StopAcquisition() error {
 	d.mu.Lock()
 	err := d.stopAcquisitionLocked()
 	done := d.readLoopDone
-	connected := d.conn != nil
+	// ADR-009 finding 2：捕获 expectedConn，join 超时后仅关闭此 conn，
+	// 避免与并发 Disconnect -> Connect 的新连接误杀。
+	expectedConn := d.conn
 	d.mu.Unlock()
 
 	// 等待 readLoop 退出后再发送停止命令，避免命令与读取并发。
@@ -241,17 +309,14 @@ func (d *DAQP1604) StopAcquisition() error {
 		select {
 		case <-done:
 		case <-time.After(sharedproto.ReadLoopJoinTimeout):
-			slog.Warn("DAQ-P-1604 readLoop join timeout on stop", "device", d.profile.ID)
+			d.invalidateConnectionAfterReadLoopTimeout(expectedConn, "read loop did not exit after stop; reconnect required")
+			return fmt.Errorf("read loop did not exit after stop; reconnect required")
 		}
 	}
 
-	if connected {
-		if stopErr := d.sendCommand("c 02 1"); stopErr != nil {
-			if sharedproto.IsConnectionFault(stopErr) {
-				slog.Debug("DAQ-P-1604 stop stream: connection already gone", "device", d.profile.ID, "error", stopErr)
-			} else {
-				slog.Warn("DAQ-P-1604 stop stream command failed", "device", d.profile.ID, "error", stopErr)
-			}
+	if expectedConn != nil {
+		if stopErr := d.sendCommandACK("c 02 1"); stopErr != nil {
+			return fmt.Errorf("stop stream: %w", stopErr)
 		}
 	}
 	return err
@@ -268,6 +333,64 @@ func (d *DAQP1604) stopAcquisitionLocked() error {
 		d.status.Connection = device.ConnectionConnected
 	}
 	return nil
+}
+
+// invalidateConnection 置连接为 Error 状态并通知上层（onError）。
+//
+// 使用场景：
+//   - readLoop watchdog 触发（ReadFrame 永久阻塞）
+//   - StopAcquisition/Disconnect 等待 readLoopDone 超时（readLoop 卡死）
+//   - sendCommandACK Write/Read watchdog 触发（P1-2.a / P1-3.d）
+//
+// 调用方语义：连接已不可用，必须重新 Connect 才能恢复。Close 在锁外执行，
+// 避免在 mu.Lock 内做 I/O 与 readLoop 的 Read 竞争。
+//
+// ADR-009 finding 2 修复：expectedConn 比较避免误杀新连接。
+// 调用方必须在触发故障前捕获 d.conn（通常在 RLock 后取引用），并传入此参数。
+// 仅当 d.conn 仍是 expectedConn 时才清空 d.conn/frameReader 并置 Error 状态；
+// 若 d.conn 已被 Disconnect -> Connect 替换为新连接，仅关闭旧 expectedConn，
+// 不修改状态、不通知 onError，避免旧命令的 invalidation 误杀新连接。
+func (d *DAQP1604) invalidateConnection(expectedConn net.Conn, message string) {
+	d.mu.Lock()
+	currentConn := d.conn
+	if currentConn != expectedConn {
+		// d.conn 已被替换为新连接（Disconnect -> Connect）或已置 nil，
+		// 旧命令的 invalidation 不应误杀新连接。仅关闭旧 expectedConn，不修改状态。
+		d.mu.Unlock()
+		if expectedConn != nil {
+			// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞。
+			go sharedproto.AbortConnection(expectedConn)
+		}
+		return
+	}
+	d.conn = nil
+	d.frameReader = nil
+	d.acquiring = false
+	d.status.Acquiring = false
+	d.status.Connection = device.ConnectionError
+	d.status.LastError = message
+	fn := d.onError
+	d.mu.Unlock()
+
+	if expectedConn != nil {
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（同 t1603 模式）。
+		go sharedproto.AbortConnection(expectedConn)
+	}
+	if fn != nil {
+		fn(fmt.Errorf("%s", message))
+	}
+}
+
+// invalidateConnectionAfterReadLoopTimeout 在 StopAcquisition/Disconnect 等待
+// readLoop 退出超时时调用：强制 Close conn 解除 readLoop 阻塞，并标记连接为 Error。
+//
+// 命名与 dsa3217.go 标杆对齐，便于跨项目 grep 复用同一模式。
+// 实际逻辑委托给 invalidateConnection，避免清理逻辑分叉。
+//
+// ADR-009 finding 2：同样接收 expectedConn，仅在 d.conn 仍是触发故障时的 conn 时
+// 才置 Error 状态；若连接已被替换，仅关闭旧 conn 不修改状态。
+func (d *DAQP1604) invalidateConnectionAfterReadLoopTimeout(expectedConn net.Conn, message string) {
+	d.invalidateConnection(expectedConn, message)
 }
 
 func (d *DAQP1604) SetDataSink(sink device.DataSink) {
@@ -312,19 +435,17 @@ func (d *DAQP1604) SetUnit(unit string) error {
 	if conn != nil && fr != nil {
 		coeff := sharedproto.P1604PressureUnitCoefficient[unit]
 		d.writeMu.Lock()
-		// 清理 FrameReader 内部 buf 与 TCP 接收缓冲区的残留数据。
-		// 残留来源：上次采集停止后 readLoop 退出时未读空的二进制流数据帧，
-		// 或上一条命令延迟到达的应答。若不清理，P1604WriteUnitCoefficient 的
-		// ReadFrame 会把残留当作 v01101 响应读出，触发
-		// "unexpected v01101 response: <二进制乱码>"。
-		// 必须先 fr.Reset()（清 buf）再 DrainConnection（清 TCP 缓冲区），
-		// 顺序不能反：DrainConnection 读裸字节，不会清 FrameReader.buf。
+		// ADR-009 R0-5 整改：移除 SetUnit 前的 DrainConnection 调用。
+		//
+		// 历史背景：原实现通过 sharedproto.DrainConnection（阻塞 Read + watchdog Close）
+		// 排空 TCP 接收缓冲区中的残留数据。但空缓冲是正常状态，watchdog 到期只能证明
+		// 探测无法完成，不能证明物理连接故障——问题 Windows 电脑 deadline 失效时
+		// 健康连接会被误杀（违反 ADR-009 决策 8）。
+		//
+		// 整改后：仅依赖 frameReader.Reset() 清空应用层缓冲区；残留字节由后续
+		// P1604WriteUnitCoefficient 内部的 P1604ReadCommandACK 跳帧逻辑安全跳过。
+		// 对齐独立 P1604（p1604_adapter.go ApplyConfig）的整改模式。
 		fr.Reset()
-		if drained := sharedproto.DrainConnection(conn, 100*time.Millisecond); drained > 0 {
-			slog.Debug("DAQ-P-1604 drained residual data before SetUnit",
-				"category", "hardware-drain", "component", "hardware",
-				"device", d.profile.ID, "bytes", drained)
-		}
 		err := sharedproto.P1604WriteUnitCoefficient(fr, conn, coeff, DAQ_P_1604_TIMEOUT)
 		d.writeMu.Unlock()
 		if err != nil {
@@ -332,23 +453,17 @@ func (d *DAQP1604) SetUnit(unit string) error {
 			slog.Warn("DAQ-P-1604 write hardware unit coefficient failed",
 				"category", "hardware-send", "component", "hardware",
 				"device", d.profile.ID, "unit", unit, "coeff", coeff, "error", err)
-			// 对端已 FIN/RST → 连接已死，清理 driver + 通知 DeviceManager 删除。
-			// SetUnit 要求非采集状态（开头已校验 d.acquiring==false），readLoop
-			// 此时已退出，重置 conn/frameReader 无并发风险。
-			// 与 readLoop defer 块的清理逻辑一致，确保 DeviceManager 从 map 中
-			// 删除 driver，避免后续 StartAcquisition 爆 WSAECONNABORTED。
-			if sharedproto.IsConnResetByPeer(err) {
-				d.mu.Lock()
-				d.conn = nil
-				d.frameReader = nil
-				d.status.Connection = device.ConnectionError
-				d.status.LastError = err.Error()
-				fn := d.onError
-				d.mu.Unlock()
-				_ = conn.Close()
-				if fn != nil {
-					fn(fmt.Errorf("write hardware unit coefficient: %w", err))
-				}
+			// ADR-009 R1-1 + R0-12 + 复核修订 finding 2：对端 FIN/RST 或 soft timeout / watchdog
+			// 触发都意味着连接已不可信，必须统一毒化驱动状态——清空 conn/frameReader、置 Error、
+			// Close conn 并通知 onError。SetUnit 要求非采集状态（开头已校验
+			// d.acquiring==false），readLoop 此时已退出，重置 conn/frameReader 无并发风险。
+			//
+			// 复核修订 finding 2 修复：必须调用 invalidateConnection(conn, message) 而非
+			// 内联清状态。invalidateConnection 内部比较 d.conn == expectedConn，若旧 SetUnit
+			// 与 Disconnect -> Connect 并发，新连接不会被旧操作误杀。内联清状态会无条件
+			// 清掉当前 d.conn，可能误杀新连接。
+			if sharedproto.IsConnResetByPeer(err) || sharedproto.IsWatchdogTriggered(err) {
+				d.invalidateConnection(conn, fmt.Sprintf("write hardware unit coefficient: %v", err))
 			}
 			return fmt.Errorf("write hardware unit coefficient: %w", err)
 		}
@@ -371,15 +486,12 @@ func (d *DAQP1604) SetUnit(unit string) error {
 // 在 Connect 阶段调用：以硬件实际单位为准覆盖 profile，避免 profile 与硬件脱节
 // 导致"单位标签变了但数据值没变"的现象（硬件 EU 系数没改，数据仍是旧单位量级）。
 //
-// 返回值：
-//   - err: 仅在"连接已死"（对端 FIN/RST）时非空。其他软错误（超时、解析失败、
-//     系数未知）不返回 err，保留 profile 单位并继续连接流程——兼容旧固件/模拟器
+// 读取超时、设备错误、格式错误和未知系数均返回错误并中止连接。
 //
-// 连接已死的判定依据 sharedproto.IsConnResetByPeer：包含 io.EOF、connection reset、
-// broken pipe、WSAECONNABORTED 等。此时若继续保留 conn，后续 StartAcquisition
-// 的 c 00 命令会爆 WSAECONNABORTED，且本地 TCP 已不可用，
-// 必须让 Connect 失败并关闭 conn，强制用户重连。
-func (d *DAQP1604) syncUnitFromHardware() error {
+// ADR-009 R1-1 + R0-12：soft timeout / watchdog 触发时 helper 已 Close conn，
+// 本函数必须毒化驱动状态——清空 conn/frameReader、置 Error、Close 旧 conn、通知 onError，
+// 避免已死的 conn 被后续 StartAcquisition 复用爆 WSAECONNABORTED。
+func (d *DAQP1604) syncUnitFromHardware(timeout time.Duration) error {
 	d.mu.RLock()
 	conn := d.conn
 	fr := d.frameReader
@@ -396,29 +508,32 @@ func (d *DAQP1604) syncUnitFromHardware() error {
 
 	// 读取硬件 EU 系数（内部发 u01101 并读响应）
 	d.writeMu.Lock()
-	coeff, err := sharedproto.P1604ReadUnitCoefficient(fr, conn, DAQ_P_1604_TIMEOUT)
+	coeff, err := sharedproto.P1604ReadUnitCoefficient(fr, conn, timeout)
 	d.writeMu.Unlock()
 	if err != nil {
-		// 关键分支：对端已 FIN/RST → 连接已死，返回 error 让 Connect 失败
-		if sharedproto.IsConnResetByPeer(err) {
-			slog.Error("DAQ-P-1604 connection reset by peer during unit sync",
-				"category", "hardware-recv", "component", "hardware",
-				"device", id, "error", err)
-			return fmt.Errorf("read unit coefficient: %w", err)
-		}
-		// 软错误（超时/解析失败等）：保留 profile 单位，记录 warn（不阻断连接）
-		slog.Warn("read hardware unit coefficient failed",
+		slog.Error("read hardware unit coefficient failed",
 			"category", "hardware-recv", "component", "hardware",
 			"device", id, "error", err)
-		return nil
+		// ADR-009 R1-1 + R0-12 + 复核修订 finding 2：soft timeout / watchdog 触发时 helper 已 Close conn，
+		// 必须毒化驱动状态避免后续命令复用已死连接。
+		//
+		// 复核修订 finding 2 修复：必须调用 invalidateConnection(conn, message) 而非
+		// 内联清状态。invalidateConnection 内部比较 d.conn == expectedConn，若旧 syncUnitFromHardware
+		// 与 Disconnect -> Connect 并发，新连接不会被旧操作误杀。内联清状态会无条件
+		// 清掉当前 d.conn，可能误杀新连接。
+		if sharedproto.IsWatchdogTriggered(err) {
+			d.invalidateConnection(conn, fmt.Sprintf("read unit coefficient: %v", err))
+		}
+		return fmt.Errorf("read unit coefficient: %w", err)
 	}
 
 	hwUnit, ok := sharedproto.P1604MatchUnitByCoefficient(coeff)
 	if !ok {
-		slog.Warn("hardware unit coefficient unmatched to known units",
+		err := fmt.Errorf("unknown hardware unit coefficient: %v", coeff)
+		slog.Error("hardware unit coefficient unmatched to known units",
 			"category", "hardware-recv", "component", "hardware",
 			"device", id, "coeff", coeff)
-		return nil
+		return err
 	}
 
 	if currentUnit == hwUnit {
@@ -473,10 +588,9 @@ func (d *DAQP1604) initStream() error {
 		// 最小 1ms = 1000Hz，超过设备物理极限时钳制
 		periodMs = 1
 	}
-	if err := d.sendCommand(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
+	if err := d.sendCommandACK(fmt.Sprintf("c 00 1 FFFF 1 %d 7 0", periodMs)); err != nil {
 		return fmt.Errorf("set stream params: %w", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	// 配置流返回内容：0010=压力，0400=设备时间戳，0800=大气数据
 	// 掩码计算：压力(0010) + 可选时间戳(0400) + 大气数据(0800)
@@ -486,10 +600,9 @@ func (d *DAQP1604) initStream() error {
 	}
 	contentMask |= 0x0800 // 始终包含大气数据
 	contentMaskHex := fmt.Sprintf("%04X", contentMask)
-	if err := d.sendCommand(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
+	if err := d.sendCommandACK(fmt.Sprintf("c 05 1 %s", contentMaskHex)); err != nil {
 		return fmt.Errorf("set stream content: %w", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	return nil
 }
@@ -508,8 +621,147 @@ func (d *DAQP1604) sendCommand(cmd string) error {
 	return sharedproto.SendCommandNoNewline(d.conn, cmd, DAQ_P_1604_TIMEOUT)
 }
 
+// effectiveCmdTimeout 返回 sendCommandACK 应使用的 watchdog 超时：
+// 字段非零则用字段值，否则回退到 DAQ_P_1604_TIMEOUT 常量。
+// 与 dsa3217.effectiveCmdTimeout 标杆模式对齐，供测试覆盖加速。
+func (d *DAQP1604) effectiveCmdTimeout() time.Duration {
+	if d.cmdTimeout > 0 {
+		return d.cmdTimeout
+	}
+	return DAQ_P_1604_TIMEOUT
+}
+
+func (d *DAQP1604) sendCommandACK(cmd string) error {
+	// 取 conn / reader 引用并启动外部 watchdog 覆盖 Write 阶段（ADR-009 / P1-2.a）。
+	//
+	// 此前 sendCommand 仅设 SetWriteDeadline，在 Windows 故障环境下 deadline 不可靠，
+	// Write 可能永久阻塞。外部 watchdog 在超时后强制 Close conn 解除阻塞。
+	//
+	// sendCommandACK 仅在 Connect 完成后的命令路径调用（StartAcquisition /
+	// StopAcquisition / initStream），无外层握手 watchdog，可安全启动外部 watchdog。
+	// Connect 路径调用 sendCommand + P1604ReadCommandACK(timeout=0)，由
+	// runDAQP1604Handshake 外层 watchdog 兜底，不会双重 watchdog。
+	d.mu.RLock()
+	conn := d.conn
+	reader := d.frameReader
+	d.mu.RUnlock()
+	if conn == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	timeout := d.effectiveCmdTimeout()
+	wdStop := sharedproto.WatchdogClose(conn, timeout)
+
+	// Write 阶段：sendCommand 内部用 writeMu 串行化 + SetWriteDeadline 兜底，
+	// 外部 watchdog 作为 ADR-009 兜底机制覆盖 writeMu.Lock 等待 + Write 全流程。
+	if err := d.sendCommand(cmd); err != nil {
+		// ADR-009 finding 3：Write 任何错误（timeout、broken pipe、RST 等）都意味着
+		// 协议边界不可信。watchdog 可能已 Close conn（wdStop 返回 false），也可能未触发
+		// 但 Write 返回非 timeout 错误（如 RST）。统一毒化连接，避免下次复用已死 conn。
+		if !wdStop() {
+			d.invalidateConnection(conn, fmt.Sprintf("sendCommandACK %s write watchdog: %v", cmd, err))
+			return fmt.Errorf("%s write: %w; %w", cmd, err, sharedproto.ErrWatchdogTriggered)
+		}
+		// watchdog 未触发但 Write 失败：conn 可能已死（RST/FIN）或协议不可信。
+		// 强制 Close conn 并毒化，返回 ErrWatchdogTriggered 让调用方统一识别。
+		d.invalidateConnection(conn, fmt.Sprintf("sendCommandACK %s write error: %v", cmd, err))
+		return fmt.Errorf("%s write: %w; %w", cmd, err, sharedproto.ErrWatchdogTriggered)
+	}
+
+	// Write 完成，停止外部 watchdog，避免与 P1604ReadCommandACK 内嵌 watchdog 双重计时。
+	// 检查 wdStop 返回值：若 watchdog 在 Write 临界点触发（conn 已 Close），
+	// 必须立即 invalidate 连接，否则后续 P1604ReadCommandACK 在已死 conn 上读到
+	// "use of closed network connection" 错误（不含 "watchdog triggered"），
+	// 导致 invalidateConnection 不被调用，连接状态不一致。
+	if !wdStop() {
+		d.invalidateConnection(conn, fmt.Sprintf("sendCommandACK %s write watchdog triggered after write: conn closed", cmd))
+		return fmt.Errorf("%s write: watchdog triggered after write completed", cmd)
+	}
+
+	// Read 阶段：P1604ReadCommandACK 内嵌 watchdog（timeout>0）保护 Read 阻塞，
+	// 并处理跳帧循环。外部 watchdog 已停止，不会干扰。
+	if err := sharedproto.P1604ReadCommandACK(reader, conn, timeout); err != nil {
+		// P1604ReadCommandACK 内嵌 watchdog 触发时，错误含 "watchdog triggered"，
+		// 检测到后同样清理连接状态（P1-3.d），避免下次复用已 Close 的 conn。
+		// 使用 sharedproto.IsWatchdogTriggered 替代字符串匹配，避免依赖错误消息字面量。
+		if sharedproto.IsWatchdogTriggered(err) {
+			d.invalidateConnection(conn, fmt.Sprintf("sendCommandACK %s read watchdog: %v", cmd, err))
+		}
+		return fmt.Errorf("%s response: %w", cmd, err)
+	}
+	return nil
+}
+
 func (d *DAQP1604) readLoop(stop <-chan struct{}) {
-	lastDataAt := time.Now()
+	// ADR-009 R0-10：no-data owner 必须独立于 read goroutine 与其 mutex。
+	//
+	// 历史背景：原实现 readLoop 通过 SetReadDeadline(200ms) 让 ReadFrame 周期返回，
+	// 在循环体累计 `time.Since(lastDataAt) > noDataTimeout` 检测无数据。问题 Windows 电脑
+	// deadline 失效时循环体不可达，noDataTimeout 永远不会被触发，半开连接无法自行收敛。
+	//
+	// 整改后：readLoop 入口启动独立 time.AfterFunc timer，到期通过 expected conn 比较
+	// 安全毒化连接（清空 conn/frameReader、置 Error 状态、Close conn）。timer 不依赖
+	// readLoop 循环体执行，即使 Read 永久阻塞也能到期触发。每次收到有效帧调用 Reset 续期；
+	// readLoop 退出 defer Stop。
+	//
+	// 不调 onError：让 readLoop defer 的 unexpectedErr 路径统一调用 invalidateConnection
+	// 通知上层，避免同一故障被 onError 回调两次。timer Close 后 readLoop 的 Read 返回
+	// 错误进入 defer，defer 调用 invalidateConnection 统一清理（重置 status=Error、
+	// 清空 conn/frameReader、调 onError）。
+	//
+	// expected conn 比较避免与重连后的新 conn 竞争：Stop/Disconnect 已置 d.conn=nil
+	// 或重连后 d.conn 是新连接，timer 触发时 d.conn != expectedConn 直接跳过。
+	// acquiring 检查避免 Stop 后 readLoop 尚未退出时 timer 误触发：stopAcquisitionLocked
+	// 先置 d.acquiring=false 再等 done，timer 检测到 acquiring=false 直接跳过。
+	d.mu.RLock()
+	expectedConn := d.conn
+	d.mu.RUnlock()
+
+	// 快照 noDataTimeout 到局部变量：测试会通过 setNoDataTimeout 覆盖加速（200ms），
+	// t.Cleanup 在测试结束时恢复原值。若 timer 回调内读取全局变量，可能在与
+	// t.Cleanup 写入并发时触发 data race。局部变量在 timer 创建时已固化，回调
+	// 读取栈上变量无 race 风险。
+	// ADR-009 finding 4：通过 getNoDataTimeout 读取 atomic 变量，确保 readLoop 跨测试
+	// 边界读取与下一测试修改并发安全。
+	noDataTimeoutSnapshot := getNoDataTimeout()
+	noDataTimer := time.AfterFunc(noDataTimeoutSnapshot, func() {
+		d.mu.Lock()
+		if !d.acquiring {
+			// 采集已停止（stopAcquisitionLocked 先置 acquiring=false 再等 done），
+			// timer 不应毒化保留的连接，让 readLoop 正常退出即可。
+			d.mu.Unlock()
+			return
+		}
+		currentConn := d.conn
+		if currentConn != expectedConn {
+			// 连接已被替换（重连）或置 nil（Stop/Disconnect），跳过。
+			d.mu.Unlock()
+			return
+		}
+		// 统一毒化：清空 conn/frameReader、置 Error 状态、保存 LastError。
+		// 不调 onError，让 readLoop defer 统一通知（避免双重回调）。
+		d.conn = nil
+		d.frameReader = nil
+		d.acquiring = false
+		d.status.Acquiring = false
+		d.status.Connection = device.ConnectionError
+		d.status.LastError = fmt.Sprintf("no data received for %v", noDataTimeoutSnapshot)
+		d.mu.Unlock()
+
+		// 锁外 Close expected conn 解除 readLoop 的 Read 阻塞。
+		// 后台 detach：LSP 环境挂起 Read 时 Close 可能永久阻塞（卡死 timer 回调
+		// 会让后续毒化路径无法继续）。
+		if currentConn != nil {
+			go sharedproto.AbortConnection(currentConn)
+		}
+		slog.Warn("DAQ-P-1604 no data timeout, conn closed by watchdog",
+			"device", d.profile.ID, "duration", noDataTimeoutSnapshot)
+	})
+	// readLoop 退出时停止 timer，避免 timer 在 readLoop 已退出后误触发。
+	// Stop 不等待已 firing 的回调完成，但回调内 acquiring + expected conn 双重检查
+	// 能正确处理 readLoop 退出后 timer 才 fire 的场景。
+	defer noDataTimer.Stop()
+
 	var unexpectedErr error
 
 	defer func() {
@@ -519,19 +771,20 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 				return
 			}
 
-			d.mu.Lock()
-			d.acquiring = false
-			d.stop = nil
-			d.status.Acquiring = false
-			d.status.LastError = unexpectedErr.Error()
-			d.status.Connection = device.ConnectionError
-			fn := d.onError
-			d.mu.Unlock()
-
+			// ADR-009 R0-11：terminal read error 必须调用 invalidateConnection 统一毒化连接——
+			// 清空 d.conn/d.frameReader、close conn、置 Error 状态、保存 LastError、通知 onError。
+			// 历史背景：原 defer 仅设置 status=Error 但未清空 conn/frameReader 也未 close conn，
+			// EOF/RST 后连接已死，下次 StartAcquisition 会用旧 conn 发命令爆 WSAECONNABORTED。
+			//
+			// invalidateConnection 不清空 d.stop（它是采集生命周期字段，非连接状态），
+			// 此处显式清空对齐原 defer 行为，避免 readLoop 退出后 stop channel 残留。
 			slog.Warn("DAQ-P-1604 read loop exited unexpectedly", "device", d.profile.ID, "error", unexpectedErr)
-			if fn != nil {
-				fn(unexpectedErr)
-			}
+			d.mu.Lock()
+			d.stop = nil
+			d.mu.Unlock()
+			// ADR-009 finding 2：传入 readLoop 启动时捕获的 expectedConn，
+			// 避免与并发 Disconnect -> Connect 的新连接误杀。
+			d.invalidateConnection(expectedConn, unexpectedErr.Error())
 		}
 	}()
 
@@ -564,15 +817,16 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 		if conn == nil {
 			return
 		}
+		// SetReadDeadline 仍保留作为单次 Read 的软超时，让循环体能周期性
+		// 重新检查 stop channel（ADR-009 R0-10：no-data 检测由独立 timer 负责，
+		// deadline 失效场景由 timer 兜底 Close conn）。
 		_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 
 		payload, err := fr.ReadFrame()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if time.Since(lastDataAt) > noDataTimeout {
-					unexpectedErr = fmt.Errorf("no data received for %v", noDataTimeout)
-					return
-				}
+				// deadline 软超时：循环体重新检查 stop channel，不视为异常。
+				// no-data 检测由独立 noDataTimer 负责，不依赖循环体执行。
 				continue
 			}
 			// 主动停止后连接被关闭属于预期行为，静默退出。
@@ -587,7 +841,11 @@ func (d *DAQP1604) readLoop(stop <-chan struct{}) {
 			return
 		}
 		if len(payload) > 0 {
-			lastDataAt = time.Now()
+			// 收到有效帧，续期 no-data timer。
+			// Reset 是原子操作，无需加锁；即使 timer 已 fire 也能安全 Reset（time.AfterFunc 文档保证）。
+			// 使用入口快照的 noDataTimeoutSnapshot 而非全局 noDataTimeout，避免与
+			// 测试 t.Cleanup 写入全局变量并发 race。
+			noDataTimer.Reset(noDataTimeoutSnapshot)
 			d.processPayload(payload)
 		}
 	}

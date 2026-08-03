@@ -14,28 +14,32 @@ Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/deskt
 | Location | Constraint |
 |---|---|
 | `core/` | zero hardware imports, zero file I/O, zero serial/network, zero framework |
-| `ports/` | zero implementations — interfaces only |
-| `usecase/` | zero direct hardware calls — go through `ports` |
-| `api/` | zero domain logic — thin routing, delegate to `usecase` |
-| `adapters/hardware/` | zero domain logic — pure protocol translation + I/O |
-| `apps/desktop-wails/backend/` | zero business logic — param conversion + usecase calls |
+| `ports/` | zero implementations 鈥?interfaces only |
+| `usecase/` | zero direct hardware calls 鈥?go through `ports` |
+| `api/` | zero domain logic 鈥?thin routing, delegate to `usecase` |
+| `adapters/hardware/` | zero domain logic 鈥?pure protocol translation + I/O |
+| `apps/desktop-wails/backend/` | zero business logic 鈥?param conversion + usecase calls |
 | `apps/desktop-wails/frontend/` | zero hardware access, zero calibration algorithms |
-| `programs/` | zero project `internal/*` imports — `shared/*` only |
+| `programs/` | zero project `internal/*` imports 鈥?`shared/*` only |
+| `*.go` (non-test) | 鈮?500 lines per file, 鈮?50 lines per function 鈥?enforced by `validate-structure.ps1` against `scripts/go-file-waivers.txt`; see [code-standards 搂涓€](docs/runbooks/code-standards.zh-CN.md) |
 
 ### Environment & Commands
 
-Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `$env:GOWORK="off"`. Production: `-tags production` + `GOWORK=off` (ADR-004). Scripts: `validate-structure.ps1`, `validate-frontend-structure.ps1 -CheckFileSize`, `check-wails-bindings.ps1`. Full list: [docs/index.md](docs/index.md) §五.
+Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) 鈫?`$env:GOWORK="off"`. Production: `-tags production` + `GOWORK=off` (ADR-004). Scripts: `validate-structure.ps1`, `validate-frontend-structure.ps1 -CheckFileSize`, `check-wails-bindings.ps1`. Full list: [docs/index.md](docs/index.md) 搂浜?
 
+### Windows Network I/O Constraint
+
+- **姘歌繙涓嶈鎶?socket deadline 浣滀负鏈夌晫纭欢 I/O 鐨勫敮涓€鍙栨秷鏈哄埗**銆俆reat socket deadlines as soft timeouts only. 杩欐槸 Go 鍦?Windows 涓婄殑宸茬煡鍐呮牳绾ч棶棰橈紙璇﹁ [go-windows-known-issues](docs/runbooks/go-windows-known-issues.zh-CN.md)锛夈€?- Handshake銆乨iscovery銆乧ommand-response銆乻top銆乨isconnect 璺緞**蹇呴』**鏈夌嫭绔?owner 鍙洿鎺ヨ皟鐢?`conn.Close()`锛屼笉绛夊緟闃诲 goroutine銆傝 watchdog 鍏抽棴鐨勮繛鎺ヤ笉鍙鐢ㄣ€?- 鏈夌晫缃戠粶 I/O 鐨勬祴璇?*蹇呴』**鍖呭惈蹇界暐 deadline銆佸彧鍦?`Close` 鍚庤繑鍥炵殑杩炴帴 double銆傚畬鏁村喅绛栵細[ADR-009](docs/decisions/ADR-009-windows-network-deadline-fallback.md)銆?
 ### Pre-submit / Release / Loading
 
-- **Pre-submit**: `validate-structure.ps1` + `go test ./...` + `npm run typecheck` + `npm run build`. Wails binding signature changes → `wails3 generate bindings -silent` (TS-binding projects `daq-t1603` / `daq-p1604` regenerate manually). Details: [development-rules.md](docs/runbooks/development-rules.md) + [frontend-ai-rules-deploy §32.1](docs/runbooks/frontend-ai-rules-deploy.zh-CN.md#321-wails-绑定同步强制零容忍).
-- **Release**: [release-versioning.zh-CN.md](docs/runbooks/release-versioning.zh-CN.md) — version + changelog + note + `task release` + report artifact.
-- **Loading**: L1 (this file) → L2 ([CLAUDE.md](CLAUDE.md) + [workspace-engineering-rules](docs/architecture/workspace-engineering-rules.zh-CN.md)) → L3 (runbooks) → L4 (`projects/<name>/`) → L5 (source + tests). **Never load entire `docs/` by default.** Task map: [ai-task-context-map](docs/architecture/ai-task-context-map.zh-CN.md).
+- **Pre-submit**: `validate-structure.ps1` + `go test ./...` + `npm run typecheck` + `npm run build`. Wails binding signature changes 鈫?`wails3 generate bindings -silent` (TS-binding projects `daq-t1603` / `daq-p1604` regenerate manually). Details: [development-rules.md](docs/runbooks/development-rules.md) + [frontend-ai-rules-deploy 搂32.1](docs/runbooks/frontend-ai-rules-deploy.zh-CN.md#321-wails-缁戝畾鍚屾寮哄埗闆跺蹇?.
+- **Release**: [release-versioning.zh-CN.md](docs/runbooks/release-versioning.zh-CN.md) 鈥?version + changelog + note + `task release` + report artifact.
+- **Loading**: L1 (this file) 鈫?L2 ([CLAUDE.md](CLAUDE.md) + [workspace-engineering-rules](docs/architecture/workspace-engineering-rules.zh-CN.md)) 鈫?L3 (runbooks) 鈫?L4 (`projects/<name>/`) 鈫?L5 (source + tests). **Never load entire `docs/` by default.** Task map: [ai-task-context-map](docs/architecture/ai-task-context-map.zh-CN.md).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (55673 symbols, 109989 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (54298 symbols, 113061 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

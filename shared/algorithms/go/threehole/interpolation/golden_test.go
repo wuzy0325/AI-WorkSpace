@@ -480,8 +480,7 @@ func TestThreeHole_Boundary_OutOfRange(t *testing.T) {
 }
 
 // TestThreeHole_Boundary_ZeroAtm 零大气参数
-// PAtm=0 时, calcMach 中 absPs=ps+0=ps(表压当绝对压)
-// 角度仍有效(Alpha 只依赖 Kb), 但 MachNumber 物理参数异常
+// A2 后 PAtm<=0 属非法大气压，calcMach 校验前置条件（patm>0）应判无效。
 func TestThreeHole_Boundary_ZeroAtm(t *testing.T) {
 	interp := loadRealPrbFile(t)
 	// 使用 α=5 的校准压力, 但 PAtm=0
@@ -493,11 +492,12 @@ func TestThreeHole_Boundary_ZeroAtm(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Calculate 错误: %v", err)
 		}
-		// Alpha 不受 PAtm 影响(只依赖 Kb), 应≈5
-		if math.Abs(result.Alpha-5) > 0.5 {
-			t.Errorf("Alpha 应≈5, 实际=%.6f", result.Alpha)
+		if result.IsValid {
+			t.Errorf("PAtm=0 应返回 IsValid=false（大气压非法），实际=true, Warning=%q", result.Warning)
 		}
-		// PAtm=0 时 MachNumber 仍应为有限值(不 panic 即可)
+		if result.Warning == "" {
+			t.Errorf("PAtm=0 应产生非空 Warning")
+		}
 		if !isFinite(result.MachNumber) {
 			t.Errorf("MachNumber 应为有限值: Mach=%v", result.MachNumber)
 		}

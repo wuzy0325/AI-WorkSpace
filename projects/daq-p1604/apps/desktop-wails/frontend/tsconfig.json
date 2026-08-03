@@ -7,6 +7,7 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -22,7 +23,10 @@
       "@composables/*": ["src/composables/*"],
       "@stores/*": ["src/stores/*"],
       "@views/*": ["src/views/*"],
-      "@shared-frontend/*": ["../../../../../shared/frontend/*"]
+      "@shared-frontend/*": ["../../../../../shared/frontend/*"],
+      "vue": ["./node_modules/vue"],
+      "pinia": ["./node_modules/pinia"],
+      "@lucide/vue": ["./node_modules/@lucide/vue"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"],

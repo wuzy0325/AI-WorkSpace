@@ -1,4 +1,4 @@
-﻿// Package usecase — traversal 配置层（从 traversal.go 拆分）
+// Package usecase — traversal 配置层（从 traversal.go 拆分）
 //
 // 包含：traversalAPIConfig（前端 JSON 形态）、ParseAndStartTraversal（API 入口）、
 // 持久化配置加载、isSubState 等子状态判定、角色 → 通道标签映射。
@@ -24,11 +24,21 @@ import (
 // 并在前端 CheckPreconditions 中暴露超时原因，避免阻塞应用启动。
 const restoreInterpolatorTimeout = 5 * time.Second
 
+// 七孔 PRB 文件集 kind 字段值：前端按判别联合选择数据源，
+// 后端在边界校验（normalizeAndValidateProbeType）与恢复路径（restoreSevenHoleFromConfig）
+// 都需引用同一组常量，避免字面量散落导致拼写漂移。
+const (
+	// KindSevenHolePrbSet 七孔 .prb 文件集（内区 1 份 + 外区 6 份）。
+	KindSevenHolePrbSet = "seven-hole-prb-set"
+	// KindSevenHoleCalibrationCsv 七孔校准 CSV 文件集（与 .prb 集同结构，加载路径不同）。
+	KindSevenHoleCalibrationCsv = "seven-hole-calibration-csv"
+)
+
 func (m *TraversalManager) loadPersistedConfig() {
 	if m.configStore == nil {
 		return
 	}
-	data, err := m.configStore.LoadConfig(traversalConfigKey)
+	data, err := m.configStore.LoadConfig(m.currentConfigKey())
 	if err != nil || data == nil {
 		return
 	}
@@ -48,19 +58,36 @@ func (m *TraversalManager) loadPersistedConfig() {
 		m.mu.Unlock()
 	}
 
-	// 仅从配置中提取 savePath 并回填断点路径。
+	// 从持久化配置中提取 savePath / saveFileName / taskId，按与运行期相同的派生逻辑
+	// 计算断点路径：ResolveOutputPath → ResolveCheckpointPathFromCSV。
 	// 插值器恢复改为显式的 RestoreInterpolatorFromPersistedConfig 调用，
 	// 避免在装配阶段没有注入 InterpolatorLoader 时阻塞或失败。
+	//
+	// 旧实现直接拼接 probe.SavePath + ".checkpoint.json"，
+	// 与实际写入路径 (${dir}/.traversal/${stem}.checkpoint.json) 完全不匹配，
+	// Stat 永远返回 false，重启后 LoadCheckpoint 永远返回 nil，断点恢复失效。
+	//
+	// 局限：撞名 -2/-3 场景下，预期路径与实际落盘路径不同，启动期无法恢复；
+	// 该场景依赖运行期 csvPort.OutputPath() 回写的 lastCheckpointPath（已正确实现）。
 	var probe struct {
-		SavePath string `json:"savePath"`
+		SavePath     string `json:"savePath"`
+		SaveFileName string `json:"saveFileName"`
+		TaskID       string `json:"taskId"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil || probe.SavePath == "" {
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return
+	}
+	if probe.SavePath == "" && probe.SaveFileName == "" && probe.TaskID == "" {
 		return
 	}
 	if m.checkpointStore == nil {
 		return
 	}
-	candidate := probe.SavePath + ".checkpoint.json"
+	candidate := traversal.ResolveCheckpointPathFromCSV(traversal.ResolveOutputPath(traversal.Config{
+		SavePath:     probe.SavePath,
+		SaveFileName: probe.SaveFileName,
+		TaskID:       probe.TaskID,
+	}))
 	exists, err := m.checkpointStore.Stat(candidate)
 	if err != nil || !exists {
 		return
@@ -73,335 +100,444 @@ func (m *TraversalManager) loadPersistedConfig() {
 // RestoreInterpolatorFromPersistedConfig 启动期异步恢复插值器。
 //
 // 装配阶段在 SetInterpolatorLoader 之后调用此方法，**在后台 goroutine 中**
-// 按持久化配置加载 PRB / CSV / 多 PRB。任何错误都会写入 lastInterpolatorRestoreErr
-// 由 CheckPreconditions 暴露给前端；超时 / 加载器未注入 / 配置缺失均视为软失败，
-// 不影响主应用启动。
+// 按持久化配置加载 PRB / CSV / 多 PRB。任何错误都会写入按探针类型分桶的
+// lastFiveHoleRestoreErr / lastSevenHoleRestoreErr，由 CheckPreconditions
+// 经 InterpolatorRestoreErrFor(probeType) 暴露给前端；超时 / 加载器未注入 /
+// 配置缺失均视为软失败，不影响主应用启动。
 //
 // 设计要点：
 //   - 异步：磁盘 I/O 不阻塞 NewAppContext / BuildAPIServer 主路径。
 //   - 超时：通过 context.WithTimeout(restoreInterpolatorTimeout) 限制阻塞上限。
 //   - 单源真相：使用同一份 GetConfigRaw 快照，避免与运行期 SaveConfigRaw 竞争。
+//   - 双变体并行：五孔与七孔字段独立恢复，避免"切到未恢复侧即报未加载"的状态不一致
+//     （详见 restoreInterpolatorFromConfig 注释）。
+//   - 版本保护：捕获启动时的 fiveHoleRestoreEpoch / sevenHoleRestoreEpoch，
+//     传给 restore 路径，写回前比对——若用户在恢复期间显式导入/清除了对应变体
+//     的插值器（epoch 递增），跳过写回以保护用户最新状态。
 func (m *TraversalManager) RestoreInterpolatorFromPersistedConfig() {
 	m.mu.RLock()
 	data := append(json.RawMessage(nil), m.configRaw...)
 	loader := m.interpLoader
+	fiveEpoch := m.fiveHoleRestoreEpoch
+	sevenEpoch := m.sevenHoleRestoreEpoch
 	m.mu.RUnlock()
 
 	if len(data) == 0 {
 		return
 	}
 	if loader == nil {
-		m.setInterpolatorRestoreErr("启动恢复失败：未注入插值器加载端口 (InterpolatorLoader)")
+		// 加载器缺失同时阻塞两侧变体恢复，按类型分桶写入便于 CheckPreconditions
+		// 无论激活侧是五孔还是七孔都能读到根因。
+		msg := "启动恢复失败：未注入插值器加载端口 (InterpolatorLoader)"
+		m.setFiveHoleRestoreErr(msg)
+		m.setSevenHoleRestoreErr(msg)
 		return
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), restoreInterpolatorTimeout)
-		defer cancel()
-		m.restoreInterpolatorFromConfig(ctx, data, loader)
+		m.restoreInterpolatorFromConfig(data, loader, fiveEpoch, sevenEpoch)
 	}()
 }
 
-// loadResult 用于把异步 loader 调用的结果（插值器 + 错误）通过 channel
-// 投递给等待 ctx.Done() 的主 goroutine，确保即使 I/O 阻塞超过 ctx 截止时间，
-// 主 goroutine 也能跳过 SetInterpolator，避免陈旧结果污染运行期状态。
-type loadResult struct {
-	interpolator coreinterp.Interpolator
-	err          error
-}
+// RestoreInterpolatorFromPersistedConfigSync restores persisted interpolators before returning.
+// It preserves the legacy bounded, soft-failure behavior while giving managed factories an
+// explicit publication barrier before the manager becomes observable.
+func (m *TraversalManager) RestoreInterpolatorFromPersistedConfigSync() {
+	m.mu.RLock()
+	data := append(json.RawMessage(nil), m.configRaw...)
+	loader := m.interpLoader
+	fiveEpoch := m.fiveHoleRestoreEpoch
+	sevenEpoch := m.sevenHoleRestoreEpoch
+	m.mu.RUnlock()
 
-// sevenHoleLoadResult 是 loadResult 的七孔变体（返回类型为 seveninterp.Interpolator）。
-type sevenHoleLoadResult struct {
-	interpolator seveninterp.Interpolator
-	err          error
-}
-
-// runSevenHoleLoaderWithTimeout 与 runLoaderWithTimeout 同语义，适配七孔加载签名。
-func runSevenHoleLoaderWithTimeout(ctx context.Context, load func() (seveninterp.Interpolator, error)) (seveninterp.Interpolator, error, bool) {
-	done := make(chan sevenHoleLoadResult, 1)
-	go func() {
-		interpolator, err := load()
-		done <- sevenHoleLoadResult{interpolator: interpolator, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err(), true
-	case res := <-done:
-		return res.interpolator, res.err, false
+	if len(data) == 0 {
+		return
 	}
+	if loader == nil {
+		msg := "启动恢复失败：未注入插值器加载端口 (InterpolatorLoader)"
+		m.setFiveHoleRestoreErr(msg)
+		m.setSevenHoleRestoreErr(msg)
+		return
+	}
+	m.restoreInterpolatorFromConfig(data, loader, fiveEpoch, sevenEpoch)
 }
 
 // runLoaderWithTimeout 在 goroutine 中执行 loader 调用，等待 ctx.Done 或结果到达。
 //
+// 泛型参数 T 适配五孔 coreinterp.Interpolator 与七孔 seveninterp.Interpolator 两种签名，
+// 消除此前 runLoaderWithTimeout / runSevenHoleLoaderWithTimeout 的重复实现。
+//
 // 返回值约定：
 //   - 成功：(interp, nil, false)
-//   - 加载失败：(nil, err, false)
-//   - 超时：(nil, ctx.Err(), true) —— 标记 timedOut=true，调用方可据此决定不写 SetInterpolator
+//   - 加载失败：(zero, err, false)
+//   - 超时：(zero, ctx.Err(), true) —— 标记 timedOut=true，调用方可据此决定不写 SetInterpolator
 //
 // 注意：底层 os.Open / Read 等系统调用无法被 ctx 真正中断，loader goroutine
 // 可能在 ctx 超时后仍继续执行直到 syscall 返回；我们通过 channel 缓冲容量为 1
 // 让那个 goroutine 写完就退出，避免泄漏。
-func runLoaderWithTimeout(ctx context.Context, load func() (coreinterp.Interpolator, error)) (coreinterp.Interpolator, error, bool) {
+func runLoaderWithTimeout[T any](ctx context.Context, load func() (T, error)) (T, error, bool) {
+	type loadResult struct {
+		value T
+		err   error
+	}
 	done := make(chan loadResult, 1)
 	go func() {
-		interpolator, err := load()
-		done <- loadResult{interpolator: interpolator, err: err}
+		value, err := load()
+		done <- loadResult{value: value, err: err}
 	}()
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err(), true
+		var zero T
+		return zero, ctx.Err(), true
 	case res := <-done:
-		return res.interpolator, res.err, false
+		return res.value, res.err, false
 	}
 }
 
 // restoreInterpolatorFromConfig 从已保存的配置 JSON 中提取插值文件路径并重新加载插值器。
 //
-// 优先级：新算法 CSV > 多 PRB > 单 PRB，与前端 TraversalPrbStep 的逻辑一致。
+// 双变体并行恢复（与原 switch-case 按 probeType 选唯一路径不同）：
+//   - 五孔变体（prbFile / calibrationCsvFile / multiPrb）与七孔变体（sevenHolePrb）
+//     在配置中可并存，启动时两侧独立恢复，互不阻塞。
+//   - 任一变体缺失（字段为空）视为该变体未配置，跳过且不报错，不污染对应错误字段。
+//   - 任一变体加载失败仅写入对应类型错误桶，另一侧仍可正常加载。
+//   - 优先级：五孔按 新算法 CSV > 多 PRB > 单 PRB（与前端 TraversalPrbStep 一致），
+//     七孔按 sevenHolePrb.kind 在 PRB 文件集与校准 CSV 之间选择。
 //
-// 失败处理：任何分支加载失败都会通过 setInterpolatorRestoreErr 记录原因，
-// 由 CheckPreconditions 在 PRB 检查项中暴露给前端，避免前端基于
-// configRaw 静默推断为"已加载"而出现状态不一致。
+// 失败处理：每个分支加载失败通过 setFiveHoleRestoreErr / setSevenHoleRestoreErr
+// 记录原因，由 CheckPreconditions 经 InterpolatorRestoreErrFor(probeType) 在
+// PRB 检查项中暴露给前端，避免前端基于 configRaw 静默推断为"已加载"而出现状态不一致。
+//
+// 五孔/七孔独立 ctx：两侧各持 restoreInterpolatorTimeout 超时窗口，避免一侧 I/O 慢
+// 挤压另一侧可用时间。原实现共享单一 5s ctx，五孔加载耗 4.9s 时七孔只剩 0.1s 必然超时。
+//
+// 版本保护：fiveEpoch/sevenEpoch 由调用方在 goroutine 启动时捕获，传给两侧 restore
+// 路径，写回前经 setInterpolatorFromRestore / setSevenHoleInterpolatorFromRestore 比对
+// 当前 epoch——若用户在恢复期间显式导入/清除了对应变体，跳过写回以保护用户最新状态。
 //
 // 该函数通过 ports.InterpolatorLoader 接口加载文件，**不直接依赖
 // adapters/interpolation 实现包**，遵守工作区六边形分层约束。
-func (m *TraversalManager) restoreInterpolatorFromConfig(ctx context.Context, data []byte, loader ports.InterpolatorLoader) {
+func (m *TraversalManager) restoreInterpolatorFromConfig(data []byte, loader ports.InterpolatorLoader, fiveEpoch, sevenEpoch uint64) {
+	m.restoreInterpolatorFromConfigWithTimeout(data, loader, fiveEpoch, sevenEpoch, restoreInterpolatorTimeout)
+}
+
+func (m *TraversalManager) restoreInterpolatorFromConfigWithTimeout(data []byte, loader ports.InterpolatorLoader, fiveEpoch, sevenEpoch uint64, timeout time.Duration) {
 	// 容错解析：prbFile 和 calibrationCsvFile 字段在前端均为对象结构
-	var rawCfg struct {
-		ProbeType             string `json:"probeType"`
-		InterpolationAlgorithm string `json:"interpolationAlgorithm"`
-		PrbFile               struct {
-			FilePath string `json:"filePath"`
-		} `json:"prbFile"`
-		CalibrationCsvFile struct {
-			FilePath string `json:"filePath"`
-		} `json:"calibrationCsvFile"`
-		UseMultiPrb  bool `json:"useMultiPrb"`
-		MultiPrb     *struct {
-			Files []struct {
-				FilePath string `json:"filePath"`
-			} `json:"files"`
-			MachNumbers       []float64 `json:"machNumbers"`
-			InterpolationMode string    `json:"interpolationMode"`
-		} `json:"multiPrb"`
-		SevenHolePrb *sevenHolePrbConfig `json:"sevenHolePrb"`
-	}
+	var rawCfg traversalRestoreConfig
 	if err := json.Unmarshal(data, &rawCfg); err != nil {
 		msg := fmt.Sprintf("启动恢复失败：解析配置 JSON 出错: %v", err)
 		slog.Error("interpolator restore failed",
 			"component", "traversal",
-			"error", msg,
+			"error", err,
 		)
-		m.setInterpolatorRestoreErr(msg)
+		// 解析失败意味着无法判断两侧变体字段是否存在，两侧都报错。
+		m.setFiveHoleRestoreErr(msg)
+		m.setSevenHoleRestoreErr(msg)
 		return
 	}
 
-	// 进入加载流程前先清空上一次错误，避免在配置变更后仍保留陈旧消息
-	m.setInterpolatorRestoreErr("")
+	// 注意：此处不再无条件 resetAllRestoreErrs。
+	// 旧实现入口处清空两侧错误，会让"上一次失败 + 本次配置变更（移除该变体）"
+	// 静默清空陈旧错误。新实现依赖 setInterpolatorFromRestore 在成功路径清空错误，
+	// 失败路径覆盖错误；未配置变体保留上一次错误信息更有助于用户排查。
 
-	// 上下文取消（超时）时直接放弃，避免在加载完成后再写入陈旧结果。
-	if err := ctx.Err(); err != nil {
-		m.setInterpolatorRestoreErr(fmt.Sprintf("启动恢复超时：%v", err))
-		return
-	}
-
-	// 探针类型边界校验（双变体语义）：未知非空类型报错；五孔字段与
-	// sevenHolePrb 并存合法，仅按激活 probeType 恢复对应数据源（§5.2.1 第 6 条），
-	// 未激活变体字段仅作持久化数据透传，不进入 usecase。
+	// 探针类型边界校验（双变体语义）：未知非空类型两侧同时报错；
+	// 五孔字段与 sevenHolePrb 并存合法，两侧独立恢复（spec §5.2.1 第 6 条）。
 	if rawCfg.ProbeType != "" && rawCfg.ProbeType != traversal.ProbeTypeFiveHole && rawCfg.ProbeType != traversal.ProbeTypeSevenHole {
-		m.setInterpolatorRestoreErr(fmt.Sprintf("启动恢复失败：未知探针类型 %q", rawCfg.ProbeType))
+		msg := fmt.Sprintf("启动恢复失败：未知探针类型 %q", rawCfg.ProbeType)
+		m.setFiveHoleRestoreErr(msg)
+		m.setSevenHoleRestoreErr(msg)
 		return
 	}
 
-	// 根据插值算法优先级加载（通过 runLoaderWithTimeout 让 ctx 超时真正生效：
-	// 超时后即便底层 I/O 仍在阻塞，主 goroutine 也不会调用 SetInterpolator）
+	// 五孔/七孔独立 ctx：两侧各持独立超时窗口，互不挤压。
+	// 不复用父 ctx 的 deadline——父 ctx 由调用方在 RestoreInterpolatorFromPersistedConfig
+	// 内创建为 5s 超时，五孔占用后七孔会被挤压。此处各自从 context.Background 派生，
+	// 与原"父 ctx + 两侧共享"语义等价但隔离超时。
+	// 五孔变体恢复：按字段存在性决定（无字段则跳过，不报错）。
+	fiveCtx, fiveCancel := context.WithTimeout(context.Background(), timeout)
+	m.restoreFiveHoleFromConfig(fiveCtx, &rawCfg, loader, fiveEpoch)
+	fiveCancel()
+
+	// 七孔变体恢复：与五孔独立，互不阻塞。
+	sevenCtx, sevenCancel := context.WithTimeout(context.Background(), timeout)
+	m.restoreSevenHoleFromConfig(sevenCtx, &rawCfg, loader, sevenEpoch)
+	sevenCancel()
+}
+
+// traversalRestoreConfig 是 restoreInterpolatorFromConfig 解析持久化 JSON 用的
+// 命名类型，供 restoreFiveHoleFromConfig / restoreSevenHoleFromConfig 共享，
+// 避免在每个恢复函数内重复 anonymous struct 定义。
+type traversalRestoreConfig struct {
+	ProbeType              string `json:"probeType"`
+	InterpolationAlgorithm string `json:"interpolationAlgorithm"`
+	PrbFile                struct {
+		FilePath string `json:"filePath"`
+	} `json:"prbFile"`
+	CalibrationCsvFile struct {
+		FilePath string `json:"filePath"`
+	} `json:"calibrationCsvFile"`
+	UseMultiPrb bool `json:"useMultiPrb"`
+	MultiPrb    *struct {
+		Files []struct {
+			FilePath string `json:"filePath"`
+		} `json:"files"`
+		MachNumbers       []float64 `json:"machNumbers"`
+		InterpolationMode string    `json:"interpolationMode"`
+	} `json:"multiPrb"`
+	SevenHolePrb *sevenHolePrbConfig `json:"sevenHolePrb"`
+}
+
+// restoreFiveHoleFromConfig 按五孔字段存在性恢复五孔插值器。
+//
+// 优先级：新算法 CSV > 多 PRB > 单 PRB，与前端 TraversalPrbStep 一致。
+// 三类字段均缺失时视为五孔变体未配置，跳过且不写入错误。
+// 失败时通过 setFiveHoleRestoreErr 记录，不写回插值器。
+//
+// 通过 runLoaderWithTimeout 让 ctx 超时真正生效：超时后即便底层 I/O
+// 仍在阻塞，主 goroutine 也不会调用 setInterpolatorFromRestore。
+//
+// fiveEpoch 由 goroutine 启动时捕获，传给 setInterpolatorFromRestore 比对当前 epoch；
+// 若用户在恢复期间显式导入/清除了五孔插值器（epoch 递增），跳过写回以保护用户最新状态。
+func (m *TraversalManager) restoreFiveHoleFromConfig(ctx context.Context, cfg *traversalRestoreConfig, loader ports.InterpolatorLoader, fiveEpoch uint64) {
+	// 先按字段存在性选出五孔加载描述符；无匹配字段时视为该变体未配置。
+	var spec *fiveHoleLoadSpec
 	switch {
-	case rawCfg.ProbeType == traversal.ProbeTypeSevenHole:
-		// 七孔唯一路径：LoadSevenHolePRB（无 CSV/多 PRB 模式，spec §5.4）。
-		// 五孔字段与 sevenHolePrb 并存时仅恢复七孔（激活方）。
-		seven := rawCfg.SevenHolePrb
-		if seven == nil || seven.InnerFile == nil || seven.InnerFile.FilePath == "" || len(seven.OuterFiles) != 6 {
-			got := 0
-			if seven != nil {
-				got = len(seven.OuterFiles)
-			}
-			msg := fmt.Sprintf("启动恢复失败：七孔文件集不完整（PRB 或校准 CSV 均需 1 个内区文件 + 恰 6 个扇区文件，实际 %d 个）", got)
-			slog.Error("interpolator restore failed",
-				"component", "traversal",
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
+	case cfg.InterpolationAlgorithm == "new" && cfg.CalibrationCsvFile.FilePath != "":
+		csvPath := cfg.CalibrationCsvFile.FilePath
+		spec = &fiveHoleLoadSpec{
+			loadType: "csv",
+			path:     csvPath,
+			load: func() (coreinterp.Interpolator, error) {
+				return loader.LoadFiveHoleCSV(csvPath)
+			},
 		}
-		var outerPaths [6]string
-		for i, f := range seven.OuterFiles {
-			outerPaths[i] = f.FilePath
-		}
-		innerPath := seven.InnerFile.FilePath
-		// 按 kind 选择数据源：校准 CSV（七孔校准导出）或 .prb 文件集（默认）。
-		isCalibrationCsv := seven.Kind == "seven-hole-calibration-csv"
-		interpolator, err, timedOut := runSevenHoleLoaderWithTimeout(ctx, func() (seveninterp.Interpolator, error) {
-			// Task 07：loader 新签名返回 *SevenHoleLoadMetadata，启动恢复路径
-			// 不消费 metadata（仅显式 Import 路径需要 LoadedAtMs/ValidRange），
-			// 这里丢弃 metadata 仅取 interpolator + err。
-			if isCalibrationCsv {
-				interp, _, err := loader.LoadSevenHoleCalibrationCSV(innerPath, outerPaths)
-				return interp, err
-			}
-			interp, _, err := loader.LoadSevenHolePRB(innerPath, outerPaths)
-			return interp, err
-		})
-		if timedOut {
-			msg := fmt.Sprintf("启动恢复超时：加载七孔%s文件集超过 %s", map[bool]string{true: "校准CSV", false: "PRB"}[isCalibrationCsv], restoreInterpolatorTimeout)
-			slog.Warn("interpolator restore timed out",
-				"component", "traversal",
-				"type", "seven_hole_prb",
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		if err != nil {
-			msg := fmt.Sprintf("启动恢复失败：加载七孔%s文件集出错: %v", map[bool]string{true: "校准CSV", false: "PRB"}[isCalibrationCsv], err)
-			slog.Error("interpolator restore failed",
-				"component", "traversal",
-				"type", "seven_hole_prb",
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		m.SetSevenHoleInterpolator(interpolator)
-		slog.Info("interpolator restored from seven-hole file set",
-			"component", "traversal",
-			"kind", seven.Kind,
-			"inner_path", innerPath,
-		)
 
-	case rawCfg.InterpolationAlgorithm == "new" && rawCfg.CalibrationCsvFile.FilePath != "":
-		// 新算法：从 CSV 标定文件加载
-		csvPath := rawCfg.CalibrationCsvFile.FilePath
-		interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (coreinterp.Interpolator, error) {
-			return loader.LoadFiveHoleCSV(csvPath)
-		})
-		if timedOut {
-			msg := fmt.Sprintf("启动恢复超时：加载 CSV 文件 %s 超过 %s", csvPath, restoreInterpolatorTimeout)
-			slog.Warn("interpolator restore timed out",
-				"component", "traversal",
-				"type", "csv",
-				"path", csvPath,
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		if err != nil {
-			msg := fmt.Sprintf("启动恢复失败：加载 CSV 文件 %s 出错: %v", csvPath, err)
-			slog.Error("interpolator restore failed",
-				"component", "traversal",
-				"type", "csv",
-				"path", csvPath,
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		m.SetInterpolator(interpolator)
-		slog.Info("interpolator restored from CSV",
-			"component", "traversal",
-			"path", csvPath,
-		)
-
-	case rawCfg.UseMultiPrb && rawCfg.MultiPrb != nil && len(rawCfg.MultiPrb.Files) > 0:
-		// 多 PRB 模式
-		filePaths := make([]string, 0, len(rawCfg.MultiPrb.Files))
-		for _, f := range rawCfg.MultiPrb.Files {
+	case cfg.UseMultiPrb && cfg.MultiPrb != nil && len(cfg.MultiPrb.Files) > 0:
+		filePaths := make([]string, 0, len(cfg.MultiPrb.Files))
+		for _, f := range cfg.MultiPrb.Files {
 			if f.FilePath != "" {
 				filePaths = append(filePaths, f.FilePath)
 			}
 		}
 		if len(filePaths) == 0 {
-			m.setInterpolatorRestoreErr("启动恢复失败：多 PRB 配置中没有有效文件路径")
+			m.setFiveHoleRestoreErr("启动恢复失败：多 PRB 配置中没有有效文件路径")
 			return
 		}
-		mode := coreinterp.MultiPrbInterpolationMode(rawCfg.MultiPrb.InterpolationMode)
-		machNumbers := append([]float64(nil), rawCfg.MultiPrb.MachNumbers...)
-		interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (coreinterp.Interpolator, error) {
-			// Task 07：loader 新签名返回 *MultiPrbLoadMetadata，启动恢复路径
-			// 不消费 metadata（仅显式 ImportMultiPRB 路径需要 Files/Warnings），
-			// 这里丢弃 metadata 仅取 interpolator + err。
-			interp, _, err := loader.LoadMultiPRB(filePaths, machNumbers, mode)
-			return interp, err
-		})
-		if timedOut {
-			msg := fmt.Sprintf("启动恢复超时：加载 %d 个多 PRB 文件超过 %s", len(filePaths), restoreInterpolatorTimeout)
-			slog.Warn("interpolator restore timed out",
-				"component", "traversal",
-				"type", "multi_prb",
-				"file_count", len(filePaths),
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
+		mode := coreinterp.MultiPrbInterpolationMode(cfg.MultiPrb.InterpolationMode)
+		machNumbers := append([]float64(nil), cfg.MultiPrb.MachNumbers...)
+		spec = &fiveHoleLoadSpec{
+			loadType:  "multi_prb",
+			fileCount: len(filePaths),
+			// 捕获 filePaths/machNumbers/mode 副本，避免闭包持有 cfg 指针。
+			load: func() (coreinterp.Interpolator, error) {
+				// Task 07：loader 新签名返回 *MultiPrbLoadMetadata，启动恢复路径
+				// 不消费 metadata（仅显式 ImportMultiPRB 路径需要 Files/Warnings），
+				// 这里丢弃 metadata 仅取 interpolator + err。
+				interp, _, err := loader.LoadMultiPRB(filePaths, machNumbers, mode)
+				return interp, err
+			},
 		}
-		if err != nil {
-			msg := fmt.Sprintf("启动恢复失败：加载多 PRB 文件出错: %v", err)
-			slog.Error("interpolator restore failed",
-				"component", "traversal",
-				"type", "multi_prb",
-				"file_count", len(filePaths),
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		m.SetInterpolator(interpolator)
-		slog.Info("interpolator restored from multi PRB",
-			"component", "traversal",
-			"file_count", len(filePaths),
-		)
 
-	case rawCfg.PrbFile.FilePath != "":
-		// 单 PRB 模式
-		prbPath := rawCfg.PrbFile.FilePath
-		interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (coreinterp.Interpolator, error) {
-			return loader.LoadPRB(prbPath)
-		})
-		if timedOut {
-			msg := fmt.Sprintf("启动恢复超时：加载 PRB 文件 %s 超过 %s", prbPath, restoreInterpolatorTimeout)
-			slog.Warn("interpolator restore timed out",
-				"component", "traversal",
-				"type", "prb",
-				"path", prbPath,
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
+	case cfg.PrbFile.FilePath != "":
+		prbPath := cfg.PrbFile.FilePath
+		spec = &fiveHoleLoadSpec{
+			loadType: "prb",
+			path:     prbPath,
+			load: func() (coreinterp.Interpolator, error) {
+				return loader.LoadPRB(prbPath)
+			},
 		}
-		if err != nil {
-			msg := fmt.Sprintf("启动恢复失败：加载 PRB 文件 %s 出错: %v", prbPath, err)
-			slog.Error("interpolator restore failed",
-				"component", "traversal",
-				"type", "prb",
-				"path", prbPath,
-				"error", msg,
-			)
-			m.setInterpolatorRestoreErr(msg)
-			return
-		}
-		m.SetInterpolator(interpolator)
-		slog.Info("interpolator restored from PRB",
-			"component", "traversal",
-			"path", prbPath,
-		)
+	}
+
+	if spec != nil {
+		m.applyFiveHoleLoad(ctx, *spec, fiveEpoch)
 	}
 }
 
-// setInterpolatorRestoreErr 线程安全地写入启动恢复错误消息，
-// 空字符串表示无错误。该字段仅由 CheckPreconditions 读取。
-func (m *TraversalManager) setInterpolatorRestoreErr(msg string) {
+// fiveHoleLoadSpec 描述一次五孔加载任务的输入。
+//
+// 抽取为命名结构体（而非匿名闭包）的动机：让 applyFiveHoleLoad 可单元测试断言，
+// 同时消除三处 switch-case 的重复超时/错误/slog/SetInterpolator 模板。
+type fiveHoleLoadSpec struct {
+	loadType  string // "csv" | "multi_prb" | "prb"，写入 slog.type 字段
+	path      string // CSV/单 PRB 路径；multi_prb 模式留空
+	fileCount int    // multi_prb 模式的文件数；其他模式为 0
+	load      func() (coreinterp.Interpolator, error)
+}
+
+// applyFiveHoleLoad 是 restoreFiveHoleFromConfig 三分支共享的加载/写回路径。
+//
+// 流程：runLoaderWithTimeout → 超时/错误/空插值器短路 → setInterpolatorFromRestore 比对 epoch 写回。
+// 成功写入时由 setInterpolatorFromRestore 清空 lastFiveHoleRestoreErr；
+// 失败路径由本函数经 setFiveHoleRestoreErr 写入根因，便于 CheckPreconditions 暴露给前端。
+//
+// nil 插值器防御：loader 接口约定返回 (nil, nil) 视为加载成功但无数据，
+// 但调用方 SetInterpolator(nil) 会让 hasLoadedInterpolator 返回 false 却无任何错误信息；
+// 此处显式拦截并写入根因，避免"恢复成功但插值器为空"的静默状态。
+func (m *TraversalManager) applyFiveHoleLoad(ctx context.Context, spec fiveHoleLoadSpec, fiveEpoch uint64) {
+	interpolator, err, timedOut := runLoaderWithTimeout(ctx, spec.load)
+	if timedOut {
+		msg := fmt.Sprintf("启动恢复超时：加载%s文件超过 %s（path=%s, file_count=%d）",
+			spec.loadType, restoreInterpolatorTimeout, spec.path, spec.fileCount)
+		slog.Warn("interpolator restore timed out",
+			"component", "traversal",
+			"type", spec.loadType,
+			"path", spec.path,
+			"file_count", spec.fileCount,
+			"timeout", restoreInterpolatorTimeout,
+		)
+		m.setFiveHoleRestoreErr(msg)
+		return
+	}
+	if err != nil {
+		slog.Error("interpolator restore failed",
+			"component", "traversal",
+			"type", spec.loadType,
+			"path", spec.path,
+			"file_count", spec.fileCount,
+			"error", err,
+		)
+		m.setFiveHoleRestoreErr(fmt.Sprintf("启动恢复失败：加载%s文件出错: %v", spec.loadType, err))
+		return
+	}
+	// loader 返回 (nil, nil) 视为加载成功但插值器为空——这种状态会让 hasLoadedInterpolator
+	// 返回 false 却无 restoreErr，前端看到默认消息无法定位根因；此处显式报错。
+	if interpolator == nil {
+		msg := fmt.Sprintf("启动恢复失败：加载%s返回空插值器（path=%s, file_count=%d）",
+			spec.loadType, spec.path, spec.fileCount)
+		slog.Error("interpolator restore returned nil",
+			"component", "traversal",
+			"type", spec.loadType,
+			"path", spec.path,
+			"file_count", spec.fileCount,
+		)
+		m.setFiveHoleRestoreErr(msg)
+		return
+	}
+	// epoch 不匹配返回 false：用户在恢复期间显式导入/清除了五孔插值器，
+	// 当前结果已陈旧，跳过写回以保护用户最新状态。
+	if !m.setInterpolatorFromRestore(interpolator, fiveEpoch) {
+		slog.Info("interpolator restore skipped (user changed interpolator)",
+			"component", "traversal",
+			"type", spec.loadType,
+			"path", spec.path,
+		)
+		return
+	}
+	slog.Info("interpolator restored",
+		"component", "traversal",
+		"type", spec.loadType,
+		"path", spec.path,
+		"file_count", spec.fileCount,
+	)
+}
+
+// restoreSevenHoleFromConfig 按七孔字段存在性恢复七孔插值器。
+//
+// sevenHolePrb == nil 或文件集不完整时视为七孔变体未配置，跳过且不报错。
+// 加载失败通过 setSevenHoleRestoreErr 记录，不写回插值器。
+//
+// sevenEpoch 由 goroutine 启动时捕获，传给 setSevenHoleInterpolatorFromRestore 比对当前 epoch；
+// 若用户在恢复期间显式导入/清除了七孔插值器（epoch 递增），跳过写回以保护用户最新状态。
+func (m *TraversalManager) restoreSevenHoleFromConfig(ctx context.Context, cfg *traversalRestoreConfig, loader ports.InterpolatorLoader, sevenEpoch uint64) {
+	seven := cfg.SevenHolePrb
+	// 七孔字段缺失或文件集不完整：视为该变体未配置，跳过（不写错误）。
+	// 这与五孔字段缺失的处理保持对称——双变体语义下任一侧未配置都视为合法。
+	if seven == nil || seven.InnerFile == nil || seven.InnerFile.FilePath == "" || len(seven.OuterFiles) != 6 {
+		return
+	}
+
+	var outerPaths [6]string
+	for i, f := range seven.OuterFiles {
+		outerPaths[i] = f.FilePath
+	}
+	innerPath := seven.InnerFile.FilePath
+	// 按 kind 选择数据源：校准 CSV（七孔校准导出）或 .prb 文件集（默认）。
+	// kindLabel 在 slog 与错误消息中复用，避免散落的 map[bool]string 模式。
+	isCalibrationCsv := seven.Kind == KindSevenHoleCalibrationCsv
+	kindLabel := "PRB"
+	if isCalibrationCsv {
+		kindLabel = "校准CSV"
+	}
+	interpolator, err, timedOut := runLoaderWithTimeout(ctx, func() (seveninterp.Interpolator, error) {
+		// Task 07：loader 新签名返回 *SevenHoleLoadMetadata，启动恢复路径
+		// 不消费 metadata（仅显式 Import 路径需要 LoadedAtMs/ValidRange），
+		// 这里丢弃 metadata 仅取 interpolator + err。
+		if isCalibrationCsv {
+			interp, _, err := loader.LoadSevenHoleCalibrationCSV(innerPath, outerPaths)
+			return interp, err
+		}
+		interp, _, err := loader.LoadSevenHolePRB(innerPath, outerPaths)
+		return interp, err
+	})
+	if timedOut {
+		msg := fmt.Sprintf("启动恢复超时：加载七孔%s文件集超过 %s", kindLabel, restoreInterpolatorTimeout)
+		slog.Warn("interpolator restore timed out",
+			"component", "traversal",
+			"type", "seven_hole_prb",
+			"kind", seven.Kind,
+			"inner_path", innerPath,
+			"timeout", restoreInterpolatorTimeout,
+		)
+		m.setSevenHoleRestoreErr(msg)
+		return
+	}
+	if err != nil {
+		slog.Error("interpolator restore failed",
+			"component", "traversal",
+			"type", "seven_hole_prb",
+			"kind", seven.Kind,
+			"inner_path", innerPath,
+			"error", err,
+		)
+		m.setSevenHoleRestoreErr(fmt.Sprintf("启动恢复失败：加载七孔%s文件集出错: %v", kindLabel, err))
+		return
+	}
+	// loader 返回 (nil, nil) 防御：与五孔路径同语义。
+	if interpolator == nil {
+		msg := fmt.Sprintf("启动恢复失败：加载七孔%s文件集返回空插值器（inner_path=%s）", kindLabel, innerPath)
+		slog.Error("interpolator restore returned nil",
+			"component", "traversal",
+			"type", "seven_hole_prb",
+			"kind", seven.Kind,
+			"inner_path", innerPath,
+		)
+		m.setSevenHoleRestoreErr(msg)
+		return
+	}
+	// epoch 不匹配返回 false：用户在恢复期间显式导入/清除了七孔插值器，
+	// 当前结果已陈旧，跳过写回以保护用户最新状态。
+	if !m.setSevenHoleInterpolatorFromRestore(interpolator, sevenEpoch) {
+		slog.Info("interpolator restore skipped (user changed interpolator)",
+			"component", "traversal",
+			"type", "seven_hole_prb",
+			"kind", seven.Kind,
+			"inner_path", innerPath,
+		)
+		return
+	}
+	slog.Info("interpolator restored",
+		"component", "traversal",
+		"type", "seven_hole_prb",
+		"kind", seven.Kind,
+		"inner_path", innerPath,
+	)
+}
+
+// setFiveHoleRestoreErr 线程安全地写入五孔侧启动恢复错误消息，
+// 空字符串表示无错误。该字段仅由 CheckPreconditions 经
+// InterpolatorRestoreErrFor("five-hole") 读取。
+func (m *TraversalManager) setFiveHoleRestoreErr(msg string) {
 	m.mu.Lock()
-	m.lastInterpolatorRestoreErr = msg
+	m.lastFiveHoleRestoreErr = msg
+	m.mu.Unlock()
+}
+
+// setSevenHoleRestoreErr 与 setFiveHoleRestoreErr 同语义，按七孔类型分桶。
+func (m *TraversalManager) setSevenHoleRestoreErr(msg string) {
+	m.mu.Lock()
+	m.lastSevenHoleRestoreErr = msg
 	m.mu.Unlock()
 }
 
@@ -540,8 +676,8 @@ type sevenHolePrbFileRef struct {
 // 文件（1.prb~6.prb，按孔号顺序）。仅在 probeType="seven-hole" 时合法。
 type sevenHolePrbConfig struct {
 	// Kind 前端判别联合的 kind 字段；出现时必须为 "seven-hole-prb-set"。
-	Kind       string               `json:"kind,omitempty"`
-	InnerFile  *sevenHolePrbFileRef `json:"innerFile"`
+	Kind       string                `json:"kind,omitempty"`
+	InnerFile  *sevenHolePrbFileRef  `json:"innerFile"`
 	OuterFiles []sevenHolePrbFileRef `json:"outerFiles"`
 }
 
@@ -816,6 +952,11 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		MotionAxes:        motionAxes,
 		MotionSafety:      cfg.MotionSafety,
 		ProbeType:         probeType,
+		// I-2 修复：把 cfg.Validation/cfg.Stabilization 写入 config 字段，
+		// 让 ParseConfig 成为纯解析函数（无 manager 状态副作用）。
+		// 装配路径（ParseAndStartTraversal）读取此字段调用 m.SetValidation/SetStabilization。
+		Validation:    cfg.Validation,
+		Stabilization: cfg.Stabilization,
 	}
 	// 压力类型兜底：空串与缺失均落 "gauge"，与历史行为一致，避免归一化逻辑误判绝压。
 	pressureType := cfg.PProbePressureType
@@ -823,10 +964,12 @@ func (m *TraversalManager) ParseConfig(raw json.RawMessage) (traversal.Config, e
 		pressureType = "gauge"
 	}
 	config.PProbePressureType = pressureType
-	// 注入数据验证与稳定等待配置（前端可选传入）
-	m.SetValidation(cfg.Validation)
-	m.SetStabilization(cfg.Stabilization)
-
+	// I-2 修复：ParseConfig 不再产生状态副作用（原先在此处调用 SetValidation/SetStabilization）。
+	// 解析方法承担装配职责会污染 manager 状态——prepareStart (registry_admission.go)
+	// 仅需解析配置用于校验，不应改变 m.validation/m.stabilization；CheckPreconditions
+	// 调用 ParseConfig 后再读 m.validation 会读到上次解析注入的旧值。
+	// 改由 ParseAndStartTraversal 等装配路径在 ParseConfig 之后显式调用 Set*，
+	// 让 ParseConfig 成为纯解析函数。
 	slog.Info("parsing traversal config",
 		"component", "traversal",
 		"task_id", config.TaskID,
@@ -847,6 +990,11 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
+	// I-2 修复：装配路径显式注入数据验证与稳定等待配置到 manager 持久字段。
+	// 原先由 ParseConfig 隐式调用，会污染仅为校验而解析的调用方（如 prepareStart）。
+	// 现在装配语义清晰：ParseConfig 是纯解析，ParseAndStartTraversal 是装配+启动。
+	m.SetValidation(config.Validation)
+	m.SetStabilization(config.Stabilization)
 
 	// 后端再次校验采集态，防止绕过前端禁用按钮或确认对话框直接调用启动 API。
 	// 遍历测试不再隐式发送 StartAcquisition，设备采集生命周期由操作员管理。
@@ -856,15 +1004,8 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
 	if acqController != nil {
-		checked := make(map[string]bool)
-		for _, ref := range config.ResolvedChannelRefs() {
-			if checked[ref.DeviceID] {
-				continue
-			}
-			checked[ref.DeviceID] = true
-			if !acqController.IsAcquiring(ref.DeviceID) {
-				return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", ref.DeviceID)
-			}
+		if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
+			return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
 		}
 	}
 	if config.LayoutPattern == "sector" {

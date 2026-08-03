@@ -52,6 +52,38 @@ func (r *stoppingLatestDataReader) GetLatestData(deviceID string) (device.DataPa
 
 func (*stoppingLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
 
+type waitingLatestDataReader struct {
+	once    sync.Once
+	started chan struct{}
+}
+
+func (r *waitingLatestDataReader) GetLatestData(string) (device.DataPayload, bool) {
+	r.once.Do(func() { close(r.started) })
+	return device.DataPayload{}, false
+}
+
+func (*waitingLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
+
+type retryLatestDataReader struct {
+	calls int
+}
+
+func (r *retryLatestDataReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
+	r.calls++
+	value := 1.0
+	if r.calls > 1 {
+		value = 1500
+	}
+	return device.DataPayload{
+		DeviceID:       deviceID,
+		Timestamp:      int64(r.calls),
+		Channels:       []float64{value},
+		ChannelIndices: []int{0},
+	}, true
+}
+
+func (*retryLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
+
 // resumableAcquisitionController 测试用 ports.AcquisitionController 实现，
 // 支持运行时切换 acquiring 状态，模拟"用户停采集后又恢复"的场景。
 // 用 mutex 保护 acquiring 字段，避免 IsAcquiring 与测试主 goroutine 修改并发时的数据竞争。
@@ -66,6 +98,8 @@ func (c *resumableAcquisitionController) IsAcquiring(string) bool {
 	defer c.mu.Unlock()
 	return c.acquiring
 }
+
+func (c *resumableAcquisitionController) DeviceName(id string) string { return id }
 func (*resumableAcquisitionController) StartAcquisition(string) error { return nil }
 
 func (c *resumableAcquisitionController) SetAcquiring(v bool) {
@@ -183,6 +217,56 @@ func TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTas
 	}
 }
 
+func TestRunCurrentPointKeepsStoppedStateWhenSamplingIsCancelled(t *testing.T) {
+	reader := &waitingLatestDataReader{started: make(chan struct{})}
+	manager := NewTraversalManager(reader, &mockMotionAccess{}, nil, nil, nil)
+	config := traversal.Config{
+		TaskID:          "trav-stop-during-sampling",
+		DeviceID:        "dev-1",
+		Channels:        []int{0},
+		Path:            []traversal.Point{{X: 0, Y: 0, Z: 0}},
+		DwellTimeMs:     1,
+		SamplesPerPoint: 1,
+	}
+	if err := manager.Start(config); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.session.MarkDone()
+		_ = manager.lockService.Release(traversalLockResource, config.TaskID)
+	})
+
+	result := make(chan error, 1)
+	go func() { result <- manager.RunCurrentPoint() }()
+	select {
+	case <-reader.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunCurrentPoint did not enter sampling")
+	}
+
+	manager.mu.Lock()
+	manager.isStopped = true
+	manager.status.State = traversal.StateStopped
+	manager.session.Cancel()
+	manager.mu.Unlock()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("user stop must not return a sampling failure: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunCurrentPoint did not exit after stop")
+	}
+	status := manager.Status()
+	if status.State != traversal.StateStopped {
+		t.Fatalf("state = %s, want stopped", status.State)
+	}
+	if status.LastError != "" {
+		t.Fatalf("last error = %q, want empty", status.LastError)
+	}
+}
+
 func TestRunCurrentPointDoesNotMoveWhenAcquisitionHasStopped(t *testing.T) {
 	motionAccess := &originReturnMotion{moveTargets: make(map[motion.AxisName]float64)}
 	manager := NewTraversalManager(&delayedLatestDataReader{}, motionAccess, nil, nil, nil)
@@ -198,14 +282,121 @@ func TestRunCurrentPointDoesNotMoveWhenAcquisitionHasStopped(t *testing.T) {
 	manager.SetAcquisitionController(&mockAcquisitionController{
 		connected:  map[string]bool{"dev-1": true},
 		acquiring:  map[string]bool{"dev-1": false},
+		names:      map[string]string{"dev-1": "五孔压力采集仪"},
 		startCalls: nil,
 	})
 
 	if err := manager.RunCurrentPoint(); err == nil {
 		t.Fatal("expected RunCurrentPoint to fail when acquisition is stopped")
+	} else if !contains(err.Error(), "五孔压力采集仪") || contains(err.Error(), "dev-1") {
+		t.Fatalf("expected readable device name without internal ID, got %q", err)
 	}
 	if len(motionAccess.moveTargets) != 0 {
 		t.Fatalf("MoveTo called after acquisition stopped: %v", motionAccess.moveTargets)
+	}
+}
+
+func TestRunCurrentPointMoveCommandFailureStopsBoundAxes(t *testing.T) {
+	motionErr := errors.New("B140 command PAC=-120000 failed")
+	motionAccess := &mockMotionAccess{
+		statuses: []motion.ControllerStatus{{
+			ID:        "ctrl-a",
+			Connected: true,
+			Axes:      []motion.AxisStatus{{Name: motion.AxisZ, Moving: true}},
+		}},
+		moveToErr: motionErr,
+	}
+	manager := NewTraversalManager(&mockLatestDataReader{}, motionAccess, nil, nil, nil)
+	config := traversal.Config{
+		TaskID:     "move-command-failure",
+		DeviceID:   "device-1",
+		Channels:   []int{0},
+		Path:       []traversal.Point{{Z: -60}},
+		MotionAxes: []traversal.MotionAxisBinding{{ControllerID: "ctrl-a", Axis: "Z"}},
+	}
+	snapshot := traversal.TraversalRunSnapshot{
+		Config:             config,
+		TotalPoints:        1,
+		BoundControllerIDs: []string{"ctrl-a"},
+	}
+	session := newTraversalRunSession(context.Background(), config.TaskID, snapshot)
+	session.managedOpts = &ManagedSessionOptions{ProbeID: Probe2}
+	manager.mu.Lock()
+	manager.config = config
+	manager.session = session
+	manager.status = traversal.Status{
+		TaskID:       config.TaskID,
+		State:        traversal.StateRunning,
+		TotalPoints:  1,
+		CurrentPoint: 0,
+	}
+	manager.mu.Unlock()
+
+	err := manager.RunCurrentPoint()
+	if !errors.Is(err, motionErr) && !contains(err.Error(), motionErr.Error()) {
+		t.Fatalf("expected move error, got %v", err)
+	}
+	if len(motionAccess.stopCalls) == 0 {
+		t.Fatal("MoveTo failure must stop bound axes before returning")
+	}
+	if got := manager.Status().State; got != traversal.StateError {
+		t.Fatalf("state = %s, want error", got)
+	}
+}
+
+// TestRunCurrentPointSamplingWindowIncludesRetryWait 验证 StartedAt/CompletedAt
+// 严格遵循 CSV writer 表头契约——"单点总耗时"，包含验证失败的重试等待。
+//
+// 测试前置：
+//   - retryLatestDataReader 第一次返回 1（超出 [1000,2000] 合法范围），第二次返回 1500（合法）
+//   - validation 启用，OnInvalid=retry，RetryCount=1 → maxAttempts=2
+//
+// 测试步骤：
+//   - 启动 manager 并执行 RunCurrentPoint
+//   - 第一次采样验证失败 → 等待 retryWaitInterval → 第二次采样成功
+//
+// 期待结果：
+//   - sink 收到 1 个 point
+//   - CompletedAt - StartedAt >= retryWaitInterval（重试等待计入单点总耗时，与 CSV 契约一致）
+func TestRunCurrentPointSamplingWindowIncludesRetryWait(t *testing.T) {
+	reader := &retryLatestDataReader{}
+	sink := &mockTraversalPointSink{}
+	manager := NewTraversalManager(reader, &mockMotionAccess{}, sink, newMockTraversalResultStore(), wiring.NewFileCheckpointStore())
+	config := traversal.Config{
+		TaskID:          "trav-retry-window",
+		DeviceID:        "sim-1",
+		Channels:        []int{0},
+		ChannelLabels:   map[int]string{0: "P1"},
+		Path:            []traversal.Point{{X: 0, Y: 0, Z: 0}},
+		DwellTimeMs:     1,
+		SamplesPerPoint: 1,
+		SavePath:        t.TempDir(),
+		SaveFileName:    "retry-window",
+	}
+	manager.SetValidation(&traversal.DataValidationConfig{
+		Enabled:    true,
+		OnInvalid:  "retry",
+		RetryCount: 1,
+		PressureRange: map[string]*traversal.PressureRange{
+			"P1": {Min: 1000, Max: 2000},
+		},
+	})
+
+	if err := manager.Start(config); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Stop() })
+	if err := manager.RunCurrentPoint(); err != nil {
+		t.Fatalf("RunCurrentPoint returned error: %v", err)
+	}
+
+	points, _, _ := sink.snapshot()
+	if len(points) != 1 {
+		t.Fatalf("written points = %d, want 1", len(points))
+	}
+	window := time.Duration(points[0].CompletedAt-points[0].StartedAt) * time.Millisecond
+	if window < retryWaitInterval {
+		t.Fatalf("single-point total time = %v, must include retry wait %v (per CSV contract)", window, retryWaitInterval)
 	}
 }
 
@@ -242,8 +433,35 @@ func (m *originReturnMotion) MoveTo(_ context.Context, _ string, axis motion.Axi
 	return nil
 }
 
-func (*originReturnMotion) Stop(context.Context, string, motion.AxisName) error { return nil }
-func (*originReturnMotion) EmergencyStop(context.Context, string) error         { return nil }
+func (m *originReturnMotion) Stop(_ context.Context, controllerID string, axisName motion.AxisName) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for controllerIndex := range m.statuses {
+		if m.statuses[controllerIndex].ID != controllerID {
+			continue
+		}
+		for axisIndex := range m.statuses[controllerIndex].Axes {
+			if m.statuses[controllerIndex].Axes[axisIndex].Name == axisName {
+				m.statuses[controllerIndex].Axes[axisIndex].Moving = false
+			}
+		}
+	}
+	return nil
+}
+
+func (m *originReturnMotion) EmergencyStop(_ context.Context, controllerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for controllerIndex := range m.statuses {
+		if m.statuses[controllerIndex].ID != controllerID {
+			continue
+		}
+		for axisIndex := range m.statuses[controllerIndex].Axes {
+			m.statuses[controllerIndex].Axes[axisIndex].Moving = false
+		}
+	}
+	return nil
+}
 
 func TestReturnToOriginMovesConfiguredAxesToZero(t *testing.T) {
 	motionAccess := &originReturnMotion{moveTargets: make(map[motion.AxisName]float64)}

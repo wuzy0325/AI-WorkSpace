@@ -45,6 +45,7 @@ describe('deviceStore', () => {
     // 重置 mock 配置为默认值：30 秒 × 10Hz = 300 点
     mockSettings.setWindowSec(30)
     mockSettings.setRefreshHz(10)
+    vi.spyOn(deviceApi, 'getCalibrationConfig').mockResolvedValue({ durationSec: 5 })
   })
 
   it('initializes with no profiles', () => {
@@ -276,7 +277,7 @@ describe('deviceStore', () => {
     })
 
     const stop = vi.spyOn(deviceApi, 'stopAcquisition').mockResolvedValue({ success: true })
-    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeFromDevice').mockImplementation(() => undefined)
+    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeAllFromDevice').mockImplementation(() => undefined)
     vi.spyOn(deviceApi, 'getStatus').mockResolvedValue({
       id: 'daq-1',
       name: 'DAQ 1',
@@ -308,10 +309,10 @@ describe('deviceStore', () => {
       channels: [],
     }]
 
-    // mock deviceApi：startAcquisition 成功，subscribeToDevice/unsubscribeFromDevice 不做实际副作用
+    // mock deviceApi：启动采集与订阅清理不做实际副作用
     vi.spyOn(deviceApi, 'startAcquisition').mockResolvedValue({ success: true })
     const subscribe = vi.spyOn(deviceApi, 'subscribeToDevice').mockImplementation(() => undefined)
-    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeFromDevice').mockImplementation(() => undefined)
+    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeAllFromDevice').mockImplementation(() => undefined)
     // 重连时 refreshStatusFor 拿到 Acquiring
     vi.spyOn(deviceApi, 'getStatus').mockResolvedValue({
       id: 'daq-1',
@@ -326,7 +327,7 @@ describe('deviceStore', () => {
     const detach = store.attachStatusListener()
     await store.startAcquisition('daq-1')
     expect(store.acquiringFor('daq-1')).toBe(true)
-    expect(subscribe).toHaveBeenCalledWith('daq-1')
+    expect(subscribe).toHaveBeenCalledWith('daq-1', 'dashboard')
 
     // 步骤 2：模拟设备异常退出（拔网线后轮询 404）
     // deviceApi._notifyDeviceLost 会同步触发所有 onDeviceLost 回调，

@@ -19,8 +19,8 @@ const (
 )
 
 type DeviceUsecase struct {
-	device ports.DevicePort
-	config ports.ConfigPort
+	device  ports.DevicePort
+	config  ports.ConfigPort
 	scanner ports.DeviceScanPort
 }
 

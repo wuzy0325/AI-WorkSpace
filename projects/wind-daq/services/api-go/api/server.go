@@ -21,29 +21,6 @@ import (
 	"wind-daq/services/api-go/pkg/types"
 )
 
-// AppHandler 由桌面壳层（Electron 主进程的 backend.App）实现，注入到 api.Deps
-// 暴露应用层 HTTP 端点（/api/app/*）。Wails 分支不需要此接口——版本/启动模式
-// 等通过 Wails binding 直接暴露；HTTP 分支必须通过此接口走 HTTP 路由。
-//
-// OpenMotionWindow 在 Electron 分支走 IPC 不走 HTTP，但接口方法保留——
-// 编译期 var _ api.AppHandler = (*App)(nil) 校验要求所有方法都被实现。
-type AppHandler interface {
-	// Version 返回应用版本信息（名称 + 版本号），供前端标题栏/关于对话框显示
-	Version() AppVersionInfo
-	// StartupMode 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口子进程）
-	StartupMode() string
-	// OpenMotionWindow 启动运动控制器独立窗口（Electron 走 IPC，不走 HTTP 路由）
-	OpenMotionWindow() error
-	// ResolvePath 将相对路径解析到用户可写应用目录（%APPDATA%\wind-daq）
-	ResolvePath(path string) (string, error)
-}
-
-// AppVersionInfo 是 GET /api/app/version 的响应体
-type AppVersionInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
 type Deps struct {
 	DeviceManager      *usecase.DeviceManager
 	AcquisitionHub     *usecase.AcquisitionHub
@@ -52,18 +29,42 @@ type Deps struct {
 	MotionService      motionhttp.MotionService
 	CalibrationManager *usecase.CalibrationManager
 	TraversalManager   *usecase.TraversalManager
-	StorageRecorder    *usecase.StorageRecorder
-	ConfigManager      *usecase.ConfigManager
-	LogRing            *logging.RingBuffer
-	LogManager         *logging.Manager // 用于日志分类开关 API
+	// TraversalRegistry 双探针 registry（窄接口；nil 时 probe-scoped 路由返回 503）。
+	// legacy 单段 /api/traversal/{action} 路径不使用本字段（spec FR4 兼容）。
+	TraversalRegistry TraversalRegistry
+	StorageRecorder   *usecase.StorageRecorder
+	ConfigManager     *usecase.ConfigManager
+	LogRing           *logging.RingBuffer
+	LogManager        *logging.Manager // 用于日志分类开关 API
 
-	// AppHandler 由桌面壳层实现，让 HTTP 路由层暴露 /api/app/* 端点
-	// （version / startup-mode / resolve-path）。Electron 分支必填，Wails 分支可空。
+	// AppHandler 由桌面壳层（Electron 主进程的 backend.App）实现，注入到 api.Deps。
+	// 经 HTTP 路由层暴露 /api/app/* 端点（version / startup-mode / resolve-path）。
+	// Electron 分支必填，Wails 分支可空。
 	AppHandler AppHandler
 	// OnAcquisitionStarted 在 startAcquisition 成功后异步触发，
 	// 实现"采集启动后自动开始录制"业务策略（读 storage-settings.autoStartOnAcquisition）。
 	// 异步调用（go func），不阻塞 HTTP 响应；nil 时跳过。
 	OnAcquisitionStarted func(deviceID string)
+}
+
+// AppHandler 由桌面壳层（Electron 主进程的 backend.App）实现，注入到 api.Deps。
+// OpenMotionWindow 走 Electron IPC（不走 HTTP），但接口方法保留——编译期
+// `var _ api.AppHandler = (*App)(nil)` 校验要求所有方法都被实现。
+type AppHandler interface {
+	// Version 返回应用版本信息（名称 + 版本号），供前端标题栏/关于对话框显示。
+	Version() AppVersionInfo
+	// StartupMode 返回 "normal"（主窗口）或 "motion"（运动控制器独立窗口子进程）。
+	StartupMode() string
+	// OpenMotionWindow 启动运动控制器独立窗口（Electron 走 IPC，不走 HTTP 路由）。
+	OpenMotionWindow() error
+	// ResolvePath 将相对路径解析到用户可写应用目录（%APPDATA%\wind-daq）。
+	ResolvePath(path string) (string, error)
+}
+
+// AppVersionInfo 是 GET /api/app/version 的响应体。
+type AppVersionInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -88,11 +89,6 @@ func NewRouter(deps Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
-
-	// ---- App API ----
-	// /api/app/* 暴露应用层端点（版本、启动模式、路径解析）。
-	// AppHandler 为空时所有 /api/app/* 路由返回 503，
-	// 让前端能感知后端未注入 AppHandler 而非静默 404。
 	mux.HandleFunc("/api/app/", func(w http.ResponseWriter, r *http.Request) {
 		if deps.AppHandler == nil {
 			writeError(w, http.StatusServiceUnavailable, "app handler not injected")
@@ -107,7 +103,7 @@ func NewRouter(deps Deps) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, deps.AppHandler.Version())
 		case "startup-mode":
-			// 前端要求 text/plain 响应（不是 JSON），保持与 wails-adapter.ts 契约一致
+			// 前端要求 text/plain 响应（不是 JSON），保持与 wails-adapter.ts 契约一致。
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
@@ -132,7 +128,7 @@ func NewRouter(deps Deps) http.Handler {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			// 同时返回 success 包裹和 path 字段，兼容前端 {path: string} 与字符串两种解析
+			// 同时返回 success 包裹 + path 字段，兼容前端 {path: string} 与字符串两种解析。
 			writeJSON(w, http.StatusOK, map[string]string{"path": resolved})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -428,7 +424,14 @@ func NewRouter(deps Deps) http.Handler {
 
 	// ---- Traversal API ----
 	mux.HandleFunc("/api/traversal/", func(w http.ResponseWriter, r *http.Request) {
-		action := strings.TrimPrefix(r.URL.Path, "/api/traversal/")
+		rest := strings.TrimPrefix(r.URL.Path, "/api/traversal/")
+		// 两段 probe-scoped 路径（{probeId}/{action}）进入 dual dispatcher；
+		// 单段路径继续走 legacy（禁止隐式转发到 probe1，spec FR4）。
+		if strings.Contains(rest, "/") {
+			handleDualTraversal(w, r, deps, rest)
+			return
+		}
+		action := rest
 		switch action {
 		case "config":
 			if deps.TraversalManager == nil {
@@ -963,7 +966,7 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// 异步触发"采集启动后自动开始录制"业务策略：
+		// 异步触发"采集启动后自动开始录制"业务策略。
 		// 回调内会读 storage-settings.autoStartOnAcquisition，失败仅记录日志不阻塞采集。
 		// 异步执行避免慢回调（如读配置 + 启动 sink）阻塞 HTTP 响应。
 		if deps.OnAcquisitionStarted != nil {
@@ -1157,14 +1160,6 @@ func parseChannelIndex(r *http.Request) (int, error) {
 		return 0, fmt.Errorf("channelIndex must be a non-negative integer")
 	}
 	return channelIndex, nil
-}
-
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return false
-	}
-	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

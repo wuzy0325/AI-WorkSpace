@@ -60,7 +60,8 @@ type SevenHoleLoadMetadata struct {
 // 错误处理约定：
 //   - 文件不存在、解析失败、行非法等错误均通过返回的 error 暴露，
 //     调用方（如 TraversalManager.restoreInterpolatorFromConfig）会把
-//     错误消息写入 lastInterpolatorRestoreErr 供前端展示。
+//     错误消息写入按探针类型分桶的 lastFiveHoleRestoreErr /
+//     lastSevenHoleRestoreErr，供前端经 CheckPreconditions 按激活类型读取展示。
 //   - 实现可以选择封装底层 IO 错误，但必须保留可读性（建议 fmt.Errorf("...: %w", err)）。
 //
 // 元数据约定（Task 07）：

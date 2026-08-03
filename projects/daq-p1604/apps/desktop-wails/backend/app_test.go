@@ -16,12 +16,13 @@ type mockDevicePort struct {
 }
 
 func (m *mockDevicePort) Connect(profile core.PressureProfile) error { return nil }
-func (m *mockDevicePort) Disconnect(id string) error                  { return nil }
+func (m *mockDevicePort) Disconnect(id string) error                 { return nil }
 func (m *mockDevicePort) StartAcquisition(id string) (<-chan core.PressureSnapshot, error) {
 	return nil, nil
 }
-func (m *mockDevicePort) StopAcquisition(id string) error              { return nil }
-func (m *mockDevicePort) ApplyConfig(id string, cfg core.P1604Config) error { return nil }
+func (m *mockDevicePort) StopAcquisition(id string) error                         { return nil }
+func (m *mockDevicePort) ZeroCalibration(id string) error                         { return nil }
+func (m *mockDevicePort) ApplyConfig(id string, cfg core.P1604Config) error       { return nil }
 func (m *mockDevicePort) SetDataSink(id string, sink func(core.PressureSnapshot)) {}
 
 func (m *mockDevicePort) Status(id string) (core.DeviceState, bool) {

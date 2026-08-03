@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Settings2, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
+import { Sun, Moon, Activity, Crosshair, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
 import { pickDirectory } from '@bridge/recordingBridge'
+import LanguageToggle from '@shared-frontend/components/LanguageToggle.vue'
 
 const emit = defineEmits<{
   (e: 'add-device'): void
-  (e: 'open-config'): void
+  (e: 'zero-calibration'): void
   (e: 'toggle-acquisition'): void
 }>()
 
@@ -17,11 +19,13 @@ const props = defineProps<{
   version: string
   /** 操作进行中标志：用于禁用采集按钮防止重复点击 */
   isToggling?: boolean
+  isZeroing?: boolean
 }>()
 
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
 const recordingStore = useRecordingStore()
+const i18n = useI18nStore()
 const { theme, toggleTheme } = useTheme()
 
 const acquiringDevices = computed(
@@ -38,15 +42,24 @@ const hasConnectedDevice = computed(
 const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDevice.value)
 
 /** 采集按钮是否应该被禁用（操作进行中或无可操作设备） */
-const isAcquisitionDisabled = computed(() => !canToggleAcquisition.value || props.isToggling)
+const isAcquisitionDisabled = computed(() => (
+  !canToggleAcquisition.value || props.isToggling || props.isZeroing
+))
 
-/** 设备列表是否为空——空时禁用"打开配置"按钮，避免误进添加设备流程 */
-const hasProfiles = computed(() => deviceStore.profiles.length > 0)
-/** "打开配置"按钮是否应该被禁用（设备列表为空时禁用） */
-const isConfigDisabled = computed(() => !hasProfiles.value)
+const selectedStatus = computed(() => (
+  deviceStore.selectedId ? deviceStore.statusFor(deviceStore.selectedId) : 'Disconnected'
+))
+const canZeroCalibration = computed(() => (
+  selectedStatus.value === 'Connected' || selectedStatus.value === 'Acquiring'
+))
+const isZeroCalibrationDisabled = computed(() => (
+  !canZeroCalibration.value || props.isZeroing || props.isToggling
+))
 
 function themeToggleLabel(): string {
-  return theme.value === 'dark' ? '切换为浅色模式' : '切换为深色模式'
+  return theme.value === 'dark'
+    ? i18n.t('topbar.toggleLightTheme')
+    : i18n.t('topbar.toggleDarkTheme')
 }
 
 async function startSave() {
@@ -56,7 +69,7 @@ async function startSave() {
 }
 
 function stopSave() {
-  void recordingStore.stopRecording()
+	void recordingStore.stopRecording()
 }
 
 // --- 刷新率下拉菜单 ---
@@ -127,14 +140,14 @@ onBeforeUnmount(() => {
           <h1 class="topbar__title" data-testid="topbar-title">
             DAQ-P<span class="topbar__title-accent">1604</span>
           </h1>
-          <p class="topbar__subtitle">Pressure Acquisition</p>
+          <p class="topbar__subtitle">{{ i18n.t('topbar.subtitle') }}</p>
         </div>
       </div>
 
       <div class="topbar__nav">
         <div class="topbar__nav-btn topbar__nav-btn--active">
           <CircleDot class="topbar__nav-icon" />
-          实时监控
+          {{ i18n.t('topbar.realtimeMonitor') }}
         </div>
       </div>
 
@@ -144,28 +157,32 @@ onBeforeUnmount(() => {
             class="topbar__action-btn"
             :class="isAcquiring ? 'topbar__action-btn--stop' : 'topbar__action-btn--start'"
             :disabled="isAcquisitionDisabled"
-            :title="isAcquisitionDisabled ? (isToggling ? '操作中...' : (isAcquiring ? '停止采集' : '没有可用的设备')) : (isAcquiring ? '停止采集' : '开始采集')"
+            :title="isAcquisitionDisabled
+              ? (isToggling
+                  ? i18n.t('topbar.operating')
+                  : (isAcquiring ? i18n.t('topbar.stopAcquisition') : i18n.t('topbar.noDeviceAvailable')))
+              : (isAcquiring ? i18n.t('topbar.stopAcquisition') : i18n.t('topbar.startAcquisition'))"
             @click="emit('toggle-acquisition')"
           >
             <Play v-if="!isAcquiring" class="topbar__action-icon" />
             <Square v-else class="topbar__action-icon" />
-            <span>{{ isAcquiring ? '停止采集' : '开始采集' }}</span>
+            <span>{{ isAcquiring ? i18n.t('topbar.stopAcquisition') : i18n.t('topbar.startAcquisition') }}</span>
           </button>
 
           <button
             class="topbar__action-btn topbar__action-btn--record"
             :class="{ 'topbar__action-btn--recording': recordingStore.isRecording }"
-            :title="recordingStore.isRecording ? '停止保存' : '开始保存'"
+            :title="recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave')"
             @click="recordingStore.isRecording ? stopSave() : startSave()"
           >
             <Circle class="topbar__action-icon" />
-            <span>{{ recordingStore.isRecording ? '停止保存' : '开始保存' }}</span>
+            <span>{{ recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave') }}</span>
           </button>
         </div>
 
         <button
           class="topbar__icon-btn"
-          :title="'添加设备'"
+          :title="i18n.t('topbar.addDevice')"
           @click="emit('add-device')"
         >
           <Plus class="topbar__icon" />
@@ -173,18 +190,20 @@ onBeforeUnmount(() => {
 
         <button
           class="topbar__icon-btn"
-          :disabled="isConfigDisabled"
-          :title="isConfigDisabled ? '请先添加设备' : '打开配置'"
-          data-testid="btn-config"
-          @click="emit('open-config')"
+          :disabled="isZeroCalibrationDisabled"
+          :title="props.isZeroing
+            ? i18n.t('topbar.zeroing')
+            : (canZeroCalibration ? i18n.t('topbar.zeroCalibration') : i18n.t('topbar.connectBeforeZero'))"
+          data-testid="btn-zero-calibration"
+          @click="emit('zero-calibration')"
         >
-          <Settings2 class="topbar__icon" />
+          <Crosshair class="topbar__icon" />
         </button>
 
         <button
           class="topbar__icon-btn"
           ref="refreshTriggerRef"
-          title="界面刷新率"
+          :title="i18n.t('topbar.uiRefreshRate')"
           @click="toggleRefreshMenu"
         >
           <Gauge class="topbar__icon" />
@@ -197,7 +216,7 @@ onBeforeUnmount(() => {
             class="topbar__refresh-dropdown"
             :style="refreshDropdownStyle"
           >
-            <div class="topbar__refresh-header">界面刷新率</div>
+            <div class="topbar__refresh-header">{{ i18n.t('topbar.uiRefreshRate') }}</div>
             <div
               v-for="hz in refreshRateOptions"
               :key="hz"
@@ -209,6 +228,14 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </Teleport>
+
+        <LanguageToggle
+          :locale="i18n.locale"
+          :toggle-label="i18n.t('topbar.toggleLanguage')"
+          :switch-to-zh-label="i18n.t('topbar.switchToZh')"
+          :switch-to-en-label="i18n.t('topbar.switchToEn')"
+          @change="i18n.setLocale"
+        />
 
         <button
           class="topbar__icon-btn"
@@ -434,9 +461,9 @@ onBeforeUnmount(() => {
 }
 
 .topbar__icon-btn:disabled:hover {
-  color: var(--text-secondary);
-  background: var(--btn-bg);
-  border-color: var(--border-default);
+	color: var(--text-secondary);
+	background: var(--btn-bg);
+	border-color: var(--border-default);
 }
 
 .topbar__icon {

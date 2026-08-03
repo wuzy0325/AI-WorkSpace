@@ -1,4 +1,4 @@
-﻿// Package usecase — 校准模块运动安全移植单元测试
+// Package usecase — 校准模块运动安全移植单元测试
 //
 // 覆盖范围：
 //   - validateCalibrationMotionSafetyConfig：calibration.MotionAxisConfig → traversal.MotionAxisBinding 转换 + 委托校验
@@ -13,11 +13,12 @@ package usecase
 import (
 	"context"
 	"errors"
-	"shared.local/device-sdk/go/pkg/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/core/motion"
@@ -699,14 +700,6 @@ func (r *emergencyStopCapableRuntime) EmergencyStopMotion() error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// calibrationManagerForTest 暴露 CalibrationManager 的字段便于断言。
-// 由于 CalibrationManager 字段为私有，测试通过 NewCalibrationManager + 状态读取方法访问。
-func newCalibrationManagerWithRuntime(runtime ports.CalibrationRuntime) *CalibrationManager {
-	m := NewCalibrationManager(nil, nil, nil, nil)
-	m.SetRuntime(runtime)
-	return m
 }
 
 func TestHandleCalibrationMotionSafetyFailure_CriticalDeviationTriggersEmergencyStop(t *testing.T) {

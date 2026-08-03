@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Motion Controller — 运动控制器</title>
+<style>
+/* ============ tokens ============ */
+:root{
+  --bg:#0b0e13;
+  --panel:#121822;
+  --panel-2:#171f2b;
+  --panel-3:#1d2734;
+  --line:#283342;
+  --line-soft:#1f2937;
+  --text:#e9eef5;
+  --muted:#8b95a7;
+  --muted-2:#5e6878;
+  --accent:#3b82f6;
+  --ok:#22c55e;
+  --warn:#f59e0b;
+  --danger:#ef4444;
+
+  /* 再收一档：仪器/控制台质感 */
+  --r-lg:6px;   /* 卡片 / 大面板 */
+  --r-md:4px;   /* 控件 / 输入 / 按钮 */
+  --r-sm:3px;   /* 小标签 / 分隔 */
+  --r-win:8px;  /* 窗口外框 */
+}
+[data-theme="light"]{
+  --bg:#eef1f5;
+  --panel:#ffffff;
+  --panel-2:#f4f6f9;
+  --panel-3:#e9edf2;
+  --line:#d4dae3;
+  --line-soft:#e4e8ee;
+  --text:#1a2230;
+  --muted:#5c6675;
+  --muted-2:#9aa4b2;
+  --accent:#2563eb;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:14px;
+  -webkit-font-smoothing:antialiased;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+
+/* ============ window chrome ============ */
+.win{
+  width:min(1180px,100%);
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--r-win);
+  overflow:hidden;
+  box-shadow:0 24px 60px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;
+}
+.titlebar{
+  display:flex;align-items:center;gap:12px;
+  padding:9px 14px;
+  background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.lights{display:flex;gap:7px}
+.lights i{width:11px;height:11px;border-radius:50%;display:block}
+.lights .r{background:#ff5f57}
+.lights .y{background:#febc2e}
+.lights .g{background:#28c840}
+.titlebar .name{font-size:12.5px;font-weight:600;letter-spacing:.3px;color:var(--muted)}
+.titlebar .spacer{flex:1}
+.tb-btn{
+  background:var(--panel-3);border:1px solid var(--line);color:var(--muted);
+  border-radius:var(--r-sm);padding:4px 10px;font-size:12px;cursor:pointer;transition:.15s;
+}
+.tb-btn:hover{color:var(--text);border-color:var(--accent)}
+
+/* ============ body: sidebar + main ============ */
+.body{display:flex;align-items:stretch;min-height:480px}
+
+/* sidebar */
+.sidebar{
+  width:208px;flex:none;
+  background:var(--panel);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;
+}
+.side-h{
+  font-size:10px;letter-spacing:1px;text-transform:uppercase;
+  color:var(--muted-2);font-weight:700;padding:14px 14px 8px;
+}
+.ctrl-list{flex:1;overflow:auto;padding:0 8px}
+.ctrl-item{
+  display:flex;align-items:center;gap:9px;
+  padding:9px 10px;margin-bottom:4px;
+  border-radius:var(--r-md);cursor:pointer;
+  border:1px solid transparent;transition:.12s;
+}
+.ctrl-item:hover{background:var(--panel-2)}
+.ctrl-item.active{
+  background:var(--panel-2);border-color:var(--accent);
+  box-shadow:inset 2px 0 0 var(--accent);
+}
+.sdot{width:8px;height:8px;border-radius:50%;flex:none}
+.sdot.ok{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.sdot.off{background:var(--muted-2)}
+.ci-main{min-width:0}
+.ci-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ci-sub{font-size:10.5px;color:var(--muted);margin-top:1px}
+.side-foot{padding:10px 12px;border-top:1px solid var(--line)}
+.side-btn{
+  width:100%;padding:8px;border-radius:var(--r-md);
+  background:var(--panel-2);border:1px solid var(--line);
+  color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:.12s;
+}
+.side-btn:hover{color:var(--text);border-color:var(--accent)}
+
+/* main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+
+/* ============ top control row ============ */
+.controls{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 16px;
+  background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.cur-ctrl{font-size:12px;color:var(--muted)}
+.cur-ctrl b{color:var(--text);font-weight:600}
+.ctrl{
+  display:inline-flex;align-items:center;gap:7px;
+  border-radius:var(--r-md);padding:8px 14px;
+  font-size:13px;font-weight:600;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel-3);color:var(--text);transition:.15s;
+}
+.ctrl:hover{border-color:var(--accent)}
+.ctrl .dot{width:8px;height:8px;border-radius:50%;background:var(--muted-2)}
+.ctrl.connected .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.ctrl.stop{color:#fcd34d;border-color:#3a3320}
+.ctrl.stop:hover{background:#2a2516}
+.ctrl.estop{margin-left:auto;background:var(--danger);border-color:var(--danger);color:#fff;position:relative}
+.ctrl.estop::after{content:"";position:absolute;inset:-1px;border-radius:inherit;border:1px solid var(--danger);animation:pulse 1.4s ease-out infinite}
+@keyframes pulse{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.18)}}
+.ctrl:disabled{opacity:.4;cursor:not-allowed}
+.ctrl:disabled:hover{border-color:var(--line)}
+
+/* ============ e-stop banner ============ */
+.estop-banner{
+  display:none;align-items:center;gap:12px;padding:10px 16px;
+  background:linear-gradient(90deg,#7c2d12,#b45309);color:#fff;font-weight:700;font-size:13px;
+  border-bottom:1px solid #f59e0b;
+}
+.estop-banner.show{display:flex}
+.estop-banner .reset{
+  margin-left:auto;background:#1c1917;border:1px solid #f59e0b;color:#fcd34d;
+  padding:5px 12px;border-radius:var(--r-sm);font-weight:600;cursor:pointer;font-size:12px;
+}
+.estop-banner .reset:hover{background:#292524}
+
+/* ============ axis grid ============ */
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:16px}
+.card{
+  background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:14px;position:relative;transition:border-color .15s, box-shadow .2s;min-width:0;
+}
+.card::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:2px;background:var(--ax);opacity:.9}
+.card:hover{border-color:var(--ax);box-shadow:0 0 0 1px var(--ax), 0 8px 24px -12px var(--ax)}
+.card.disabled{opacity:.45;filter:grayscale(.4)}
+
+.card-head{display:flex;align-items:center;gap:9px;margin-bottom:12px;padding-left:8px}
+.badge{width:30px;height:30px;border-radius:var(--r-md);display:grid;place-items:center;font-weight:800;font-size:15px;color:#0b0e13;background:var(--ax)}
+.card-head .nm{font-size:12px;color:var(--muted);font-weight:600}
+.card-head .unit{margin-left:auto;font-size:11px;color:var(--muted-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px}
+
+.readout{
+  font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;
+  font-size:40px;font-weight:600;line-height:1;text-align:center;padding:10px 0 14px;color:var(--text);letter-spacing:-1px;
+}
+.readout .u{font-size:15px;color:var(--muted);font-weight:500;margin-left:4px;letter-spacing:0}
+
+.limits{display:flex;justify-content:space-between;align-items:center;margin:0 4px 14px;font-size:11px}
+.limits .lim{display:flex;align-items:center;gap:5px}
+.limits .lab{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted-2);font-weight:700}
+.limits .val{font-family:ui-monospace,monospace;color:var(--text);font-weight:600}
+.limits .end{width:6px;height:6px;border-radius:1px;background:var(--danger)}
+
+.section-label{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted-2);font-weight:700;margin-bottom:6px;padding-left:4px}
+.jog{display:flex;gap:6px;margin-bottom:14px}
+.jog button{flex:1 1 44px;min-width:40px;height:40px;border-radius:var(--r-md);border:1px solid var(--line);background:var(--panel-3);color:var(--text);font-size:22px;font-weight:800;cursor:pointer;transition:.12s;display:grid;place-items:center}
+.jog button:hover{border-color:var(--ax);color:var(--ax)}
+.jog .step-in{
+  flex:2 1 56px;min-width:0;height:40px;border-radius:var(--r-md);
+  border:1px solid var(--line);background:var(--bg);color:var(--text);
+  font-size:15px;text-align:center;font-family:ui-monospace,monospace;
+  outline:none;transition:.12s;-moz-appearance:textfield;
+}
+.jog .step-in::-webkit-outer-spin-button,
+.jog .step-in::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.jog .step-in:focus{border-color:var(--ax)}
+
+.move{display:flex;gap:6px}
+.move input{flex:1;height:38px;border-radius:var(--r-md);border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px;text-align:center;font-family:ui-monospace,monospace;outline:none;transition:.12s}
+.move input:focus{border-color:var(--ax)}
+.move input.warn{border-color:var(--warn);background:rgba(245,158,11,.08)}
+.move input.err{border-color:var(--danger);background:rgba(239,68,68,.1)}
+.move .go{width:54px;height:38px;border-radius:var(--r-md);border:1px solid var(--ax);background:var(--ax);color:#0b0e13;font-weight:800;font-size:13px;cursor:pointer;transition:.12s}
+.move .go:hover{filter:brightness(1.1)}
+.move .go:disabled{opacity:.4;cursor:not-allowed}
+
+.card-foot{display:flex;gap:6px;margin-top:10px}
+.card-foot button{flex:1;height:32px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--panel-3);color:var(--muted);font-size:11.5px;font-weight:600;cursor:pointer;transition:.12s}
+.card-foot button:hover{color:var(--text);border-color:var(--ax)}
+
+.hint{font-size:10.5px;margin-top:7px;padding-left:4px;min-height:14px;font-weight:600}
+.hint.warn{color:var(--warn)}.hint.err{color:var(--danger)}.hint.ok{color:var(--ok)}
+
+footer{padding:10px 16px;border-top:1px solid var(--line);background:var(--panel-2);font-size:11px;color:var(--muted-2);display:flex;gap:14px;align-items:center}
+footer kbd{background:var(--panel-3);border:1px solid var(--line);border-radius:3px;padding:1px 6px;font-family:ui-monospace,monospace;color:var(--muted)}
+
+/* responsive guards: keep 4-across on normal widths, degrade gracefully when narrow */
+@media (max-width:1100px){ .readout{font-size:32px} }
+@media (max-width:1000px){
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sidebar{width:188px}
+}
+@media (max-width:560px){ .grid{grid-template-columns:minmax(0,1fr)} }
+</style>
+</head>
+<body>
+<div class="win">
+  <!-- title bar -->
+  <div class="titlebar">
+    <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+    <div class="name" data-i18n="app">Motion Controller · 运动控制器</div>
+    <div class="spacer"></div>
+    <button class="tb-btn" id="themeBtn">🌓 <span data-i18n="theme">主题</span></button>
+    <button class="tb-btn" id="langBtn">中 / EN</button>
+  </div>
+
+  <!-- body -->
+  <div class="body">
+    <!-- sidebar -->
+    <aside class="sidebar">
+      <div class="side-h" data-i18n="controllers">控制器</div>
+      <div class="ctrl-list" id="ctrlList">
+        <div class="ctrl-item active" data-name="X-Y-Z 平台">
+          <span class="sdot ok"></span>
+          <div class="ci-main"><div class="ci-name">X-Y-Z 平台</div><div class="ci-sub">4 轴 · 已连接</div></div>
+        </div>
+        <div class="ctrl-item" data-name="U 旋转台">
+          <span class="sdot ok"></span>
+          <div class="ci-main"><div class="ci-name">U 旋转台</div><div class="ci-sub">1 轴 · 已连接</div></div>
+        </div>
+        <div class="ctrl-item" data-name="龙门系统">
+          <span class="sdot off"></span>
+          <div class="ci-main"><div class="ci-name">龙门系统</div><div class="ci-sub">离线</div></div>
+        </div>
+      </div>
+      <div class="side-foot">
+        <button class="side-btn" data-i18n="addCtrl">+ 添加控制器</button>
+      </div>
+    </aside>
+
+    <!-- main -->
+    <div class="main">
+      <!-- e-stop banner -->
+      <div class="estop-banner" id="estopBanner">
+        ⚠ <span data-i18n="estopOn">急停已触发 — 所有轴已锁死</span>
+        <button class="reset" id="estopReset" data-i18n="estopReset">解除急停</button>
+      </div>
+
+      <!-- controls -->
+      <div class="controls">
+        <div class="cur-ctrl"><span data-i18n="curCtrl">当前控制器</span>: <b id="curCtrl">X-Y-Z 平台</b></div>
+        <button class="ctrl connect" id="connectBtn"><span class="dot"></span><span data-i18n="connect">连接</span></button>
+        <button class="ctrl stop" id="stopBtn" disabled data-i18n="stop">停止</button>
+        <button class="ctrl estop" id="estopBtn" disabled data-i18n="estop">急停</button>
+      </div>
+
+      <!-- axis grid -->
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span data-i18n="footer1">模拟数据 · 仅作视觉原型</span>
+    <span style="margin-left:auto"><kbd>Esc</kbd> <span data-i18n="footer2">急停</span></span>
+  </footer>
+</div>
+
+<script>
+/* ---------- i18n ---------- */
+const I18N = {
+  zh:{
+    app:"Motion Controller · 运动控制器", theme:"主题", connect:"连接", disconnect:"断开",
+    stop:"停止", estop:"急停", estopOn:"急停已触发 — 所有轴已锁死", estopReset:"解除急停",
+    jog:"步进", move:"定位", home:"归零", step:"步长", target:"目标值", limL:"左限位", limR:"右限位", go:"GO",
+    controllers:"控制器", addCtrl:"+ 添加控制器", curCtrl:"当前控制器",
+    footer1:"模拟数据 · 仅作视觉原型", footer2:"急停", nearLimit:"接近限位，请谨慎",
+    overLimit:"超出限位范围", moving:"移动中…", arrived:"已到位", notConn:"请先连接设备",
+    disabled:"已禁能", homing:"归零中…"
+  },
+  en:{
+    app:"Motion Controller", theme:"Theme", connect:"Connect", disconnect:"Disconnect",
+    stop:"Stop", estop:"E-STOP", estopOn:"EMERGENCY STOP — all axes locked",
+    estopReset:"Reset E-STOP", jog:"Step", move:"Move", home:"Home", step:"Step", target:"Target", limL:"L-Limit", limR:"R-Limit", go:"GO",
+    controllers:"Controllers", addCtrl:"+ Add Controller", curCtrl:"Current",
+    footer1:"Simulated data · visual prototype only", footer2:"E-STOP",
+    nearLimit:"Near limit — caution", overLimit:"Out of limit range",
+    moving:"Moving…", arrived:"Arrived", notConn:"Connect device first",
+    disabled:"Disabled", homing:"Homing…"
+  }
+};
+let lang = "zh";
+
+/* ---------- axis model ---------- */
+const axes = [
+  {id:"X", name:"X Axis",   color:"#22d3ee", unit:"mm", min:-100, max:100, pos:0, step:1, home:0},
+  {id:"Y", name:"Y Axis",   color:"#a78bfa", unit:"mm", min:-100, max:100, pos:0, step:1, home:0},
+  {id:"Z", name:"Z Axis",   color:"#34d399", unit:"mm", min:-50,  max:50,  pos:0, step:1, home:0},
+  {id:"U", name:"U Axis",   color:"#fbbf24", unit:"°",  min:-180, max:180, pos:0, step:5, home:0},
+];
+let connected = false;
+let estop = false;
+let moving = {};
+
+/* ---------- render ---------- */
+const grid = document.getElementById("grid");
+function fmt(v){ return (Math.round(v*100)/100).toFixed(v % 1 === 0 ? 0 : 2); }
+function pct(a){ return ((a.pos - a.min)/(a.max - a.min))*100; }
+
+function build(){
+  grid.innerHTML = "";
+  axes.forEach(a=>{
+    const el = document.createElement("div");
+    el.className = "card";
+    el.style.setProperty("--ax", a.color);
+    el.innerHTML = `
+      <div class="card-head">
+        <div class="badge">${a.id}</div>
+        <div class="nm">${a.name}</div>
+        <div class="unit">${a.unit}</div>
+      </div>
+      <div class="readout"><span class="val">${connected?fmt(a.pos):"--"}</span><span class="u">${a.unit}</span></div>
+      <div class="limits">
+        <div class="lim left"><span class="end"></span><span class="lab" data-i18n="limL">左限位</span><span class="val">${fmt(a.min)}</span></div>
+        <div class="lim right"><span class="val">${fmt(a.max)}</span><span class="lab" data-i18n="limR">右限位</span><span class="end"></span></div>
+      </div>
+      <div class="section-label" data-i18n="jog">步进</div>
+      <div class="jog">
+        <button class="minus">−</button>
+        <input class="step-in" type="number" value="${a.step}" min="0" step="0.1" />
+        <button class="plus">+</button>
+      </div>
+      <div class="section-label" data-i18n="move">定位</div>
+      <div class="move">
+        <input type="number" class="tgt" placeholder="${I18N[lang].target}" />
+        <button class="go" data-i18n="go">GO</button>
+      </div>
+      <div class="card-foot"><button class="home" data-i18n="home">归零</button></div>
+      <div class="hint"></div>
+    `;
+    grid.appendChild(el);
+
+    const stepIn = el.querySelector(".step-in");
+    el.querySelector(".minus").onclick = ()=> jog(a, -getStep(stepIn), el);
+    el.querySelector(".plus").onclick  = ()=> jog(a,  getStep(stepIn), el);
+
+    const inp = el.querySelector(".tgt");
+    const go  = el.querySelector(".go");
+    const hint= el.querySelector(".hint");
+    inp.addEventListener("input", ()=>{
+      if(!connected || estop) return;
+      const v = parseFloat(inp.value);
+      inp.classList.remove("warn","err"); hint.className="hint"; hint.textContent="";
+      if(isNaN(v)) return;
+      if(v < a.min || v > a.max){ inp.classList.add("err"); hint.classList.add("err"); hint.textContent=I18N[lang].overLimit; }
+      else if(nearLimitFor(a,v)){ inp.classList.add("warn"); hint.classList.add("warn"); hint.textContent=I18N[lang].nearLimit; }
+    });
+    go.onclick = ()=>{
+      if(!connected){ hint.className="hint err"; hint.textContent=I18N[lang].notConn; return; }
+      if(estop) return;
+      const v = parseFloat(inp.value);
+      if(isNaN(v)){ inp.classList.add("err"); return; }
+      if(v < a.min || v > a.max){ inp.classList.add("err"); hint.className="hint err"; hint.textContent=I18N[lang].overLimit; return; }
+      moveTo(a, v, el);
+    };
+    el.querySelector(".home").onclick = ()=>{ if(!connected || estop) return; moveTo(a, a.home, el, true); };
+
+    a._el = el;
+  });
+}
+function nearLimitFor(a,v){ const p=((v-a.min)/(a.max-a.min))*100; return p<5||p>95; }
+
+/* ---------- behaviors ---------- */
+function getStep(inp){
+  let v = parseFloat(inp.value);
+  if(isNaN(v) || v <= 0){ v = 1; inp.value = 1; }
+  return v;
+}
+function jog(a, d, el){
+  if(!connected || estop) return;
+  a.pos = Math.max(a.min, Math.min(a.max, a.pos + d));
+  refreshAxis(a);
+}
+function moveTo(a, target, el){
+  if(moving[a.id]) clearInterval(moving[a.id]);
+  const hint = el.querySelector(".hint");
+  const dir = target > a.pos ? 1 : -1;
+  const speed = Math.max(0.4, Math.abs(target-a.pos)/60);
+  hint.className="hint"; hint.textContent = I18N[lang].moving;
+  moving[a.id] = setInterval(()=>{
+    if(estop){ clearInterval(moving[a.id]); return; }
+    const remain = target - a.pos;
+    if(Math.abs(remain) <= speed){ a.pos = target; clearInterval(moving[a.id]); moving[a.id]=null;
+      hint.className="hint ok"; hint.textContent=I18N[lang].arrived; refreshAxis(a); return; }
+    a.pos += dir*speed; refreshAxis(a);
+  }, 16);
+}
+function refreshAxis(a){
+  const el = a._el; if(!el) return;
+  el.querySelector(".val").textContent = connected ? fmt(a.pos) : "--";
+}
+
+/* ---------- connect / estop ---------- */
+const connectBtn = document.getElementById("connectBtn");
+const stopBtn    = document.getElementById("stopBtn");
+const estopBtn   = document.getElementById("estopBtn");
+const banner     = document.getElementById("estopBanner");
+
+connectBtn.onclick = ()=>{
+  connected = !connected;
+  connectBtn.querySelector("span:last-child").textContent = connected ? I18N[lang].disconnect : I18N[lang].connect;
+  connectBtn.classList.toggle("connected", connected);
+  stopBtn.disabled = !connected;
+  estopBtn.disabled = !connected;
+  axes.forEach(refreshAxis);
+  if(!connected) axes.forEach(a=>{ if(moving[a.id]){clearInterval(moving[a.id]); moving[a.id]=null;} });
+};
+stopBtn.onclick = ()=>{
+  if(!connected) return;
+  axes.forEach(a=>{ if(moving[a.id]){ clearInterval(moving[a.id]); moving[a.id]=null; } });
+  axes.forEach(a=>{ const h=a._el.querySelector(".hint"); h.className="hint"; h.textContent=""; });
+};
+estopBtn.onclick = triggerEstop;
+document.getElementById("estopReset").onclick = ()=>{ estop = false; banner.classList.remove("show"); };
+function triggerEstop(){
+  if(!connected || estop) return;
+  estop = true; banner.classList.add("show");
+  axes.forEach(a=>{ if(moving[a.id]){ clearInterval(moving[a.id]); moving[a.id]=null; }
+    const h=a._el.querySelector(".hint"); h.className="hint err"; h.textContent=I18N[lang].estopOn; });
+}
+document.addEventListener("keydown", e=>{ if(e.key === "Escape") triggerEstop(); });
+
+/* ---------- sidebar selection ---------- */
+const curCtrl = document.getElementById("curCtrl");
+document.querySelectorAll(".ctrl-item").forEach(it=>{
+  it.onclick = ()=>{
+    document.querySelectorAll(".ctrl-item").forEach(x=>x.classList.remove("active"));
+    it.classList.add("active");
+    curCtrl.textContent = it.getAttribute("data-name");
+  };
+});
+
+/* ---------- theme / lang ---------- */
+document.getElementById("themeBtn").onclick = ()=>{
+  const cur = document.documentElement.getAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", cur==="dark"?"light":"dark");
+};
+document.getElementById("langBtn").onclick = ()=>{ lang = lang==="zh" ? "en" : "zh"; applyLang(); };
+function applyLang(){
+  document.querySelectorAll("[data-i18n]").forEach(n=>{
+    const k = n.getAttribute("data-i18n");
+    if(I18N[lang][k]) n.textContent = I18N[lang][k];
+  });
+  connectBtn.querySelector("span:last-child").textContent = connected ? I18N[lang].disconnect : I18N[lang].connect;
+  build();
+}
+
+/* ---------- init ---------- */
+build();
+applyLang();
+</script>
+</body>
+</html>

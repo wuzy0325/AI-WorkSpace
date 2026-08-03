@@ -6,9 +6,13 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { useDeviceStore } from '@stores/deviceStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
+import { channelDisplayName } from '../../utils/channelDisplayName'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
+
+const i18n = useI18nStore()
 
 const props = withDefaults(defineProps<{
   deviceId?: string
@@ -70,7 +74,7 @@ const option = computed(() => {
   const history = deviceStore.historyFor(props.deviceId).slice(-props.maxPoints)
   const times = history.map((d) => {
     const date = new Date(d.timestamp)
-    return date.toLocaleTimeString('zh-CN', { hour12: false })
+    return date.toLocaleTimeString(i18n.timeLocale, { hour12: false })
   })
 
   const channels = deviceStore.selectedProfile?.channels ?? []
@@ -82,7 +86,7 @@ const option = computed(() => {
   const series = selectedChannels.map((ch, i) => {
     const color = ch.color || COLORS[i % COLORS.length]
     return {
-      name: ch.name || `CH${ch.index + 1}`,
+      name: channelDisplayName(ch.index, ch.name, i18n.t),
       type: 'line' as const,
       data: history.map((d) => {
         const v = d.values[ch.index]
@@ -122,7 +126,7 @@ const option = computed(() => {
       },
     },
     legend: {
-      data: selectedChannels.map((ch) => ch.name || `CH${ch.index + 1}`),
+      data: selectedChannels.map((ch) => channelDisplayName(ch.index, ch.name, i18n.t)),
       textStyle: { color: c.muted, fontSize: 10 },
       icon: 'roundRect',
       itemWidth: 8,
@@ -174,10 +178,10 @@ const selectedChannelCount = computed(() => {
     <div v-else class="chart__empty">
       <div class="chart__empty-pulse"></div>
       <p class="chart__empty-text">
-        {{ !hasData ? '等待实时数据...' : '未选择通道' }}
+        {{ !hasData ? i18n.t('chart.waitingData') : i18n.t('chart.noChannelSelected') }}
       </p>
       <p class="chart__empty-hint">
-        {{ !hasData ? '设备开始采集后将自动显示波形' : '请在上方通道选择中勾选需要显示的通道' }}
+        {{ !hasData ? i18n.t('chart.willShowWhenAcquiring') : i18n.t('chart.pleaseSelectChannel') }}
       </p>
     </div>
   </div>

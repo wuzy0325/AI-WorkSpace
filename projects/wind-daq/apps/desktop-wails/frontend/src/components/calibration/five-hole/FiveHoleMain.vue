@@ -290,6 +290,8 @@ function buildRealtimePressuresFromSnapshots(
     Ttunnel: undefined as number | undefined,
   }
   let matchedChannelCount = 0
+  // 风洞温度优先级标记：tTunnel 角色优先于 tAtm 兜底，与总压对齐
+  let hasTunnelTemp = false
 
   const assignByRole = (role: ProbeChannelRole | undefined, value: number): void => {
     switch (role) {
@@ -317,8 +319,11 @@ function buildRealtimePressuresFromSnapshots(
         result.Patm = value
         matchedChannelCount += 1
         break
+      // 五孔校准若无独立风洞温度传感器（tTunnel），用大气温度近似风洞总温（TAT），
+      // 低速风洞下误差可接受。与 TotalPressureMain 的 hasTunnelTemp 模式一致。
       case 'fiveHole.tAtm':
         result.Tatm = value
+        if (!hasTunnelTemp) result.Ttunnel = value
         matchedChannelCount += 1
         break
       case 'fiveHole.pTotal':
@@ -331,6 +336,7 @@ function buildRealtimePressuresFromSnapshots(
         break
       case 'fiveHole.tTunnel':
         result.Ttunnel = value
+        hasTunnelTemp = true
         matchedChannelCount += 1
         break
       default:
@@ -369,6 +375,8 @@ function buildRealtimePressuresFromSnapshots(
       matchedChannelCount += 1
     } else if (/大气.*温/.test(name) || normalizedName.includes('atmospheric temp') || normalizedName.includes('atmospheric temperature') || /(?:^|[^a-z0-9])tatm(?:[^a-z0-9]|$)/.test(normalizedName) || normalizedName.includes('t∞')) {
       result.Tatm = rawValue
+      // 大气温度在无独立风洞温度通道时兜底为 Ttunnel，与 role 分支保持一致
+      if (!hasTunnelTemp) result.Ttunnel = rawValue
       matchedChannelCount += 1
     } else if (/总压/.test(name) || normalizedName.includes('total pressure') || /(?:^|[^a-z0-9])p0(?:[^a-z0-9]|$)/.test(normalizedName) || /(?:^|[^a-z0-9])pt(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.P0 = rawValue
@@ -378,6 +386,8 @@ function buildRealtimePressuresFromSnapshots(
       matchedChannelCount += 1
     } else if (/风洞.*温/.test(name) || normalizedName.includes('tunnel temp') || normalizedName.includes('tunnel temperature') || /(?:^|[^a-z0-9])ttunnel(?:[^a-z0-9]|$)/.test(normalizedName)) {
       result.Ttunnel = rawValue
+      // 标记已有独立风洞温度，阻止后续 tAtm 兜底覆盖，与 role 分支保持一致
+      hasTunnelTemp = true
       matchedChannelCount += 1
     }
   }

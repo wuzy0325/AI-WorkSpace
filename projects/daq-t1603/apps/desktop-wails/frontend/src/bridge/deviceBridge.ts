@@ -86,6 +86,7 @@ export interface DeviceLogEvent {
   timestamp: number
 }
 
+/** 录制不可恢复错误事件载荷 */
 export interface RecordingFatalEvent {
   deviceId: string
   error: string

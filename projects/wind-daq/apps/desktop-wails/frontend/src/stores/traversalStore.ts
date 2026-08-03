@@ -6,6 +6,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useStorageStore } from '@stores/storageStore'
 import { normalizeTraversalLayoutRanges } from '@shared/types/traversal'
+import { safeInterpolate } from '@shared/i18nInterpolate'
 import {
   createDefaultTraversalProbeChannels,
   createSevenHoleTraversalProbeChannels
@@ -194,7 +195,28 @@ export const useTraversalStore = defineStore('traversal', () => {
       return
     }
 
-    realtimeResult.value = res.success ? (res.data ?? null) : null
+    if (res.success) {
+      // HTTP 200:后端已返回 InterpolationResult(IsValid 区分成功/数据层失败)
+      realtimeResult.value = res.data ?? null
+    } else {
+      // HTTP 400(如 PRB 未加载、探针类型不一致):后端返回 error 不带 body,
+      // 旧实现直接置 null,导致 interpStatus 把 null 当作"未采到数据"判 ok,
+      // 状态条被吞掉,用户看不到任何提示。
+      // 这里构造 IsValid=false + warning 的占位结果,让 UI 三态分类能正确识别:
+      //   - hasLoadedInterpolator=false → prb-missing(橙色,可点击跳配置)
+      //   - hasLoadedInterpolator=true  → invalid(红色,tooltip 显示后端 error)
+      // 数值字段全部为 0,与后端 PrbMissing/Invalid 路径零值契约一致,
+      // 前端模板在 isValid=false 时已强制显示 '--' 不会读这些零值。
+      realtimeResult.value = {
+        isValid: false,
+        warning: res.error ?? '',
+        alpha: 0,
+        beta: 0,
+        machNumber: 0,
+        velocity: 0,
+        dynamicPressure: 0,
+      } as InterpolationResult
+    }
   }
 
   /**
@@ -941,18 +963,27 @@ export const useTraversalStore = defineStore('traversal', () => {
    *   后端字段变更时可在编译期感知。
    * - 后端 message 字段（CheckPreconditions 在 PRB 失败时已经把根因写入）会被回填到
    *   interpolatorRestoreMessage，由 UI 层展示给用户。
+   * - 显式传入当前 config：双变体恢复下 activateProbeType 仅修改前端 config.probeType，
+   *   后端 m.config.ProbeType 在保存前是旧值；后端 CheckPreconditions 已支持按请求
+   *   probeType 判定，必须显式传入否则会按旧类型查 PRB 误报"未加载"。
    */
   async function verifyInterpolatorWithBackend(): Promise<void> {
     if (!hasLoadedInterpolator.value) {
       interpolatorRestoreMessage.value = null
       return
     }
+    // 传入当前 config 副本，让后端按激活类型（而非陈旧的 m.config.ProbeType）判定 PRB 加载状态
+    const payload = config.value ? toSerializableConfig(config.value) : undefined
     try {
-      const res = await traversalApi.checkPreconditions()
+      const res = await traversalApi.checkPreconditions(payload)
       // API 调用未成功（如网络异常）：保留推断状态，但提示用户校验未完成
       if (!res.success || !res.data) {
+        // C8 修复：res.error 来自后端（不可信输入），原 .replace('{error}', value) 会让
+        // value 中的 $ 字符被特殊解析（如 "$&" 展开为匹配占位符）。改用 safeInterpolate 函数式 replace。
+        // C8 修复：res.error 来自后端（不可信输入），原 .replace('{error}', value) 会让
+        // value 中的 $ 字符被特殊解析（如 "$&" 展开为匹配占位符）。改用 safeInterpolate 函数式 replace。
         interpolatorRestoreMessage.value =
-          i18n.t.travErrVerifyInterpolator.replace('{error}', res.error || i18n.t.travErrResponseEmpty)
+          safeInterpolate(i18n.t.travErrVerifyInterpolator, '{error}', res.error || i18n.t.travErrResponseEmpty)
         return
       }
       const result: PreconditionCheckResult = res.data
@@ -966,8 +997,10 @@ export const useTraversalStore = defineStore('traversal', () => {
       }
     } catch (err) {
       // 抛错时不改变推断状态（避免网络抖动误判），但通过 message 通知 UI
+      // C8 修复：err.message 不可信，改用 safeInterpolate 防止 $ 注入。
+      // C8 修复：err.message 不可信，改用 safeInterpolate 防止 $ 注入。
       interpolatorRestoreMessage.value =
-        i18n.t.travErrVerifyInterpolatorException.replace('{error}', err instanceof Error ? err.message : String(err))
+        safeInterpolate(i18n.t.travErrVerifyInterpolatorException, '{error}', err instanceof Error ? err.message : String(err))
     }
   }
 

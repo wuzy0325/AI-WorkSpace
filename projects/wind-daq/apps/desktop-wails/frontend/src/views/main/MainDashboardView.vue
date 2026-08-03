@@ -33,6 +33,8 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useStorageStore } from '@stores/storageStore'
 import { useCalibrationLicenseStore } from '@stores/calibrationLicenseStore'
+import { useTraversalModeStore } from '@stores/traversalModeStore'
+import type { TraversalMode } from '@shared/types/traversal'
 import { storageApi, deviceApi } from '@api/deviceApi'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiEmptyState from '@components/ui/UiEmptyState.vue'
@@ -46,6 +48,7 @@ const i18n = useI18nStore()
 const feedbackStore = useFeedbackStore()
 const storageStore = useStorageStore()
 const licenseStore = useCalibrationLicenseStore()
+const traversalModeStore = useTraversalModeStore()
 const { t } = storeToRefs(i18n)
 
 const activePage = ref<MainShellPage>('dashboard')
@@ -105,7 +108,52 @@ function handleRailSelect(id: string): void {
     showLicenseDialog.value = true
     return
   }
+  // 遍历测试：点击弹出子菜单让用户选单探针/双探针（取代旧版顶部模式开关行）。
+  // 每次点击都弹出，用户可快速选择当前模式（相当于确认进入）或切换到另一模式。
+  // 活动检测在 traversalModeStore.switchMode 内完成，运行中切换会被拦截并 toast。
+  if (id === 'traversal') {
+    openTraversalModeMenu()
+    return
+  }
   activePage.value = id as MainShellPage
+}
+
+// ---------------------------------------------------------------------------
+// 遍历测试模式子菜单（取代 TraversalView 顶部模式开关行）
+// ---------------------------------------------------------------------------
+// 用 Teleport + fixed 定位的小面板，紧贴侧边栏「遍历测试」按钮右侧。
+// click-outside 关闭；活动检测由 traversalModeStore 提供，disabled 项灰显并 tooltip。
+const showTraversalMenu = ref(false)
+const traversalMenuX = ref(0)
+const traversalMenuY = ref(0)
+
+function openTraversalModeMenu(): void {
+  // 通过 data-nav-id 定位侧边栏按钮，子菜单紧贴其右侧弹出
+  const btn = document.querySelector('[data-nav-id="traversal"]') as HTMLElement | null
+  if (btn) {
+    const rect = btn.getBoundingClientRect()
+    traversalMenuX.value = rect.right
+    traversalMenuY.value = rect.top
+  }
+  showTraversalMenu.value = true
+}
+
+function closeTraversalMenu(): void {
+  showTraversalMenu.value = false
+}
+
+async function selectTraversalMode(next: TraversalMode): Promise<void> {
+  // 点击与当前相同模式时仅关闭菜单并进入页面（不触发 switchMode 清理逻辑）
+  if (next === traversalModeStore.mode) {
+    closeTraversalMenu()
+    activePage.value = 'traversal'
+    return
+  }
+  const ok = await traversalModeStore.switchMode(next)
+  closeTraversalMenu()
+  if (ok) {
+    activePage.value = 'traversal'
+  }
 }
 
 // 许可证对话框：验证码正确，已解锁——放行进入探针校准画面
@@ -443,6 +491,51 @@ function handleKeydown(e: KeyboardEvent) {
       @unlocked="handleLicenseUnlocked"
       @cancel="handleLicenseCancel"
     />
+    <!-- 遍历测试模式子菜单：Teleport 到 body，紧贴侧边栏按钮右侧；
+         click-outside 关闭，活动检测 disabled 项灰显 -->
+    <Teleport to="body">
+      <div
+        v-if="showTraversalMenu"
+        class="traversal-mode-menu-overlay"
+        @click="closeTraversalMenu"
+        @contextmenu.prevent="closeTraversalMenu"
+      >
+        <div
+          class="traversal-mode-menu"
+          :style="{ left: traversalMenuX + 'px', top: traversalMenuY + 'px' }"
+          role="menu"
+          :aria-label="t.traversalTest"
+          @click.stop
+        >
+          <button
+            type="button"
+            role="menuitemradio"
+            :aria-checked="traversalModeStore.mode === 'single'"
+            class="traversal-mode-menu__item"
+            :class="{ 'traversal-mode-menu__item--active': traversalModeStore.mode === 'single' }"
+            :disabled="traversalModeStore.mode !== 'single' && traversalModeStore.modeSwitchDisabled"
+            :title="traversalModeStore.mode !== 'single' && traversalModeStore.modeSwitchDisabled ? traversalModeStore.modeSwitchDisabledReason : ''"
+            @click="selectTraversalMode('single')"
+          >
+            <span class="traversal-mode-menu__check">{{ traversalModeStore.mode === 'single' ? '✓' : '' }}</span>
+            <span class="traversal-mode-menu__label">{{ t.traversalModeSingle }}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitemradio"
+            :aria-checked="traversalModeStore.mode === 'dual'"
+            class="traversal-mode-menu__item"
+            :class="{ 'traversal-mode-menu__item--active': traversalModeStore.mode === 'dual' }"
+            :disabled="traversalModeStore.mode !== 'dual' && traversalModeStore.modeSwitchDisabled"
+            :title="traversalModeStore.mode !== 'dual' && traversalModeStore.modeSwitchDisabled ? traversalModeStore.modeSwitchDisabledReason : ''"
+            @click="selectTraversalMode('dual')"
+          >
+            <span class="traversal-mode-menu__check">{{ traversalModeStore.mode === 'dual' ? '✓' : '' }}</span>
+            <span class="traversal-mode-menu__label">{{ t.traversalModeDual }}</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </MainView>
 </template>
 
@@ -474,5 +567,74 @@ function handleKeydown(e: KeyboardEvent) {
   background: transparent;
   display: flex;
   flex-direction: column;
+}
+</style>
+
+<!-- 非 scoped：Teleport 到 body 的子菜单需要全局样式 -->
+<style>
+/* 透明遮罩覆盖全屏，捕获 click-outside 关闭子菜单 */
+.traversal-mode-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+/* 子菜单面板：紧贴侧边栏按钮右侧，最小宽度保证文案完整 */
+.traversal-mode-menu {
+  position: fixed;
+  min-width: 160px;
+  background: var(--bg-panel, #ffffff);
+  border: 1px solid var(--border-default, #d0d0d0);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 10000;
+}
+
+.traversal-mode-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary, #1f1f1f);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.traversal-mode-menu__item:hover:not(:disabled) {
+  background: var(--bg-elevated, #f0f0f0);
+}
+
+.traversal-mode-menu__item--active {
+  color: var(--accent-primary, #2080f0);
+  font-weight: 600;
+}
+
+.traversal-mode-menu__item--active:hover:not(:disabled) {
+  background: var(--bg-elevated, #f0f0f0);
+}
+
+.traversal-mode-menu__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.traversal-mode-menu__check {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.traversal-mode-menu__label {
+  flex: 1;
+  white-space: nowrap;
 }
 </style>

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
+import { useI18nStore } from '@stores/i18nStore'
 import { useLogStore } from '@stores/logStore'
 import { useRecordingStore } from '@stores/recordingStore'
 import { useTheme } from '@composables/useTheme'
@@ -15,6 +16,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 const { theme } = useTheme()
 const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
+const i18n = useI18nStore()
 const logStore = useLogStore()
 const recordingStore = useRecordingStore()
 
@@ -70,6 +72,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 })
 
 onMounted(async () => {
+  // 语言偏好已在 i18nStore 创建时同步从 localStorage 读取，无需在此显式初始化
   // 从后端加载已保存的设备配置
   await deviceStore.loadProfiles()
   // 同步日志文件保存状态（后端启动时已自动开启）
@@ -81,7 +84,7 @@ onMounted(async () => {
     await deviceStore.autoConnectAll()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    logStore.info('auto-connect', `部分设备自动连接失败: ${message}`)
+    logStore.info('auto-connect', i18n.t('logMessage.autoConnectFailed', { message }))
   }
   deviceStore.setDisplayRefreshRateHz(displayStore.refreshRateHz)
   onPayload((snapshot: TemperatureSnapshot) => {
@@ -91,7 +94,9 @@ onMounted(async () => {
   // 而非后端默认 10Hz。放在 onPayload 订阅之后，避免 await 阻塞事件订阅。
   // 失败不阻塞启动，后端会沿用默认值。
   void setUIRefreshRateHz(displayStore.refreshRateHz).catch((err) => {
-    logStore.error('system', `同步后端刷新率失败: ${err instanceof Error ? err.message : String(err)}`)
+    logStore.error('system', i18n.t('logMessage.syncRefreshRateFailed', {
+      message: err instanceof Error ? err.message : String(err),
+    }))
   })
   onLog((entry: DeviceLogEvent) => {
     logStore.pushEvent(entry)
@@ -105,14 +110,22 @@ onMounted(async () => {
   })
   // 订阅录制 fatal/backpressure 事件：写入 logStore + 更新 recordingStore 状态
   onRecordingFatal((event) => {
-    logStore.error('acquisition', `录制不可恢复错误 [${event.deviceId}]: ${event.error}`)
+    logStore.error('acquisition', i18n.t('logMessage.recordingFatal', {
+      deviceId: event.deviceId,
+      error: event.error,
+    }))
     recordingStore.handleFatalError(event.error)
   })
   onRecordingBackpressure((event) => {
-    logStore.warn('acquisition', `录制队列背压丢帧 [${event.deviceId}]: 队列 ${event.queueLen}/${event.queueCap}`)
+    logStore.warn('acquisition', i18n.t('logMessage.recordingBackpressure', {
+      deviceId: event.deviceId,
+      queueLen: event.queueLen,
+      queueCap: event.queueCap,
+    }))
     recordingStore.handleBackpressure(event.droppedTotal)
   })
   recordingStore.startListening()
+
 })
 
 onUnmounted(() => {

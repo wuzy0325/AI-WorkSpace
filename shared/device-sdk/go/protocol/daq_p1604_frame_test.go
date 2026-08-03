@@ -173,3 +173,23 @@ func TestFrameReader_InvalidLength(t *testing.T) {
 		t.Fatal("expected error for invalid frame length")
 	}
 }
+
+func TestFrameReader_SkipsZeroLengthFrame(t *testing.T) {
+	server, client := net.Pipe()
+	payload := []byte("A")
+
+	go func() {
+		defer client.Close()
+		_, _ = client.Write([]byte{0x00, 0x00, 0x00, 0x03, 'A'})
+	}()
+
+	fr := NewFrameReader(server)
+	received, err := fr.ReadFrame()
+	_ = server.Close()
+	if err != nil {
+		t.Fatalf("ReadFrame after zero-length keepalive: %v", err)
+	}
+	if !bytes.Equal(received, payload) {
+		t.Fatalf("received %v, want %v", received, payload)
+	}
+}

@@ -24,8 +24,9 @@ import (
 //   - w1601        启用长度前缀模式，回 "A" 帧
 //   - u01101       读取全局 EU 压力转换系数，回 "<coeff> " 帧
 //   - v01101 <c>   写入 EU 压力转换系数，回 "A" 帧
-//   - c 01 1       开始发帧（StartStream）
-//   - c 02 1       停止发帧（StopStream）
+//   - c 00/c 05    配置数据流，回 "A" 帧
+//   - c 01 1       回 "A" 帧并开始发帧（StartStream）
+//   - c 02 1       回 "A" 帧并停止发帧（StopStream）
 //
 // 单位系数响应均以 2 字节大端长度前缀帧返回，对齐设备 w1601 模式与
 // shared/device-sdk/go/protocol 的 FrameReader.ReadFrame 读取逻辑。
@@ -89,14 +90,17 @@ func (r *P1604Responder) HandleCommand(line []byte) (Response, error) {
 	if len(fields) < 3 {
 		return Response{}, nil
 	}
-	// 精确匹配 "c 01 1"（开始）/ "c 02 1"（停止），避免与 "c 00 ..." 等配置命令混淆
+	// 精确匹配采集控制命令；所有有效命令都返回协议规定的 A 应答。
 	if fields[0] == "c" && fields[1] == "01" && fields[2] == "1" {
-		return Response{StartStream: true}, nil
+		return Response{Data: prefixedFrame("A"), StartStream: true}, nil
 	}
 	if fields[0] == "c" && fields[1] == "02" && fields[2] == "1" {
-		return Response{StopStream: true}, nil
+		return Response{Data: prefixedFrame("A"), StopStream: true}, nil
 	}
-	return Response{}, nil
+	if fields[0] == "c" && (fields[1] == "00" || fields[1] == "05") {
+		return Response{Data: prefixedFrame("A")}, nil
+	}
+	return Response{Data: prefixedFrame("N05")}, nil
 }
 
 // DSA3217Responder 响应 DSA3217 的 SCPI 命令并维护扫描配置。
