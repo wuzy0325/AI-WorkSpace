@@ -82,6 +82,8 @@ projects/*/releases/bin/
 projects/*/apps/desktop-wails/release/
 projects/*/apps/desktop-wails/release/*.zip
 projects/*/*.zip
+# 工作区根目录的调试 zip 包（daq-debug-<date>.zip 等，运行时/调试打包产物）
+/daq-debug-*.zip
 
 # 备份文件（git 已有版本历史，.bak 是反模式）
 *.bak
@@ -127,6 +129,12 @@ temp/
 .trae/
 .opencode/
 
+# 临时工作目录（点前缀的隐藏临时目录，运行时/调试产物，不应入库）
+.temp/
+.traversal/
+tasks/
+tmp/
+
 # UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
 wind-daq-trae-work-prototype/
 projects/wind-daq/docs/ui-views-prototype-v4*.png
@@ -137,6 +145,8 @@ pdf-qa/
 
 # 七孔校准实验数据（CSV 原始数据，按项目编号归档，不入库）
 projects/wind-daq/docs/W532.*.P.*-*/
+# 七孔校准实测 CSV（按日期归档的原始采集数据，不入库）
+projects/wind-daq/docs/7-hole-cal-data/*.csv
 
 # 软件介绍材料（HTML/PDF 产物 + 配图，本地生成不入库）
 wind-daq-software-introduction.html
