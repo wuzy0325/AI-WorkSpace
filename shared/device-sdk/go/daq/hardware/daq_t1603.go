@@ -359,7 +359,8 @@ func (d *DAQT1603) connectLocked() error {
 	}
 	d.frameReader.SetDeadlineBroken(d.deadlineBroken)
 	d.frameReader.SetBinaryMode(d.config.BinaryFormat)
-	d.frameReader.SetMetadataMode(d.config.ShowTimestamp || d.config.ShowSequence)
+	d.frameReader.SetMetadataMode(d.config.ShowTimestamp)
+	d.frameReader.SetSequenceMode(d.config.ShowSequence)
 	d.status.Connection = core.ConnectionConnected
 	d.status.LastError = ""
 	// 连接已恢复（可能由 Stop 静默兜底后的自动重连），readLoop 随后的
@@ -868,6 +869,17 @@ func (d *DAQT1603) GetDaqT1603Config() (core.DaqT1603HardwareConfig, error) {
 }
 
 func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
+	// 驱动连接时强制开启 HEAD（帧序号），apply 路径保持一致：
+	// 不允许调用方传入 ShowSequence=false 把设备切回无序号帧，
+	// 否则与连接时的 HEAD=1 协议边界不一致，帧长从 68 变 64 导致解析错位。
+	// 设备实际不支持 HEAD 的固件（temp）在 connect 时已回退 ShowSequence=false，
+	// 此时保持 false 即可（读取 d.config 实际值）。
+	d.mu.RLock()
+	actualSeq := d.config.ShowSequence
+	d.mu.RUnlock()
+	if actualSeq {
+		cfg.ShowSequence = true
+	}
 	d.mu.Lock()
 	conn := d.conn
 	if conn != nil && d.acquiring {
@@ -942,7 +954,8 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 			d.profile.DaqT1603Config = cfg
 			if d.frameReader != nil {
 				d.frameReader.SetBinaryMode(cfg.BinaryFormat)
-				d.frameReader.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
+				d.frameReader.SetMetadataMode(cfg.ShowTimestamp)
+				d.frameReader.SetSequenceMode(cfg.ShowSequence)
 			}
 			d.mu.Unlock()
 			return err
@@ -954,7 +967,8 @@ func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
 	d.profile.DaqT1603Config = cfg
 	if d.frameReader != nil {
 		d.frameReader.SetBinaryMode(cfg.BinaryFormat)
-		d.frameReader.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
+		d.frameReader.SetMetadataMode(cfg.ShowTimestamp)
+		d.frameReader.SetSequenceMode(cfg.ShowSequence)
 	}
 	d.mu.Unlock()
 	return nil
@@ -1320,6 +1334,7 @@ func (d *DAQT1603) processPayload(data []byte) {
 		DeviceID:          d.profile.ID,
 		Timestamp:         core.NowMs(),
 		HardwareTimestamp: result.HardwareTimestamp,
+		SequenceNumber:    result.SequenceNumber,
 		Channels:          result.Temperatures,
 		ChannelIndices:    indices,
 	})
@@ -1346,7 +1361,9 @@ func (d *DAQT1603) syncHardwareConfigLocked(conn net.Conn) error {
 	// 强制二进制帧（BIN 1）。TIME 前缀按用户配置（d.config.ShowTimestamp）决定：
 	// 启用时设备发 72 字节带时间戳帧，FrameReader 的 metadata 模式在下方同步开启；
 	// 禁用时退回 64 字节纯二进制帧（帧读取最稳，默认行为）。
-	// HEAD（序号前缀）当前未在 UI 暴露，强制关闭。
+	// HEAD（帧序号前缀）强制开启：每帧携带连续帧序号，可用于检测丢帧/错帧，
+	// 同时提高帧边界自校验能力（2026-08-03 实机验证，见 docs/audits/）。
+	// 开启 HEAD 后二进制帧为 68 字节（HEAD+TIME 时为 76 字节）。
 	// 三条命令必须全部成功，否则 FrameReader 与设备模式不一致。
 	// 每条命令前检查总 deadline，避免单条命令跨过预算导致总耗时超出。
 	if err := checkConfigSyncDeadline(deadline); err != nil {
@@ -1399,19 +1416,37 @@ func (d *DAQT1603) syncHardwareConfigLocked(conn net.Conn) error {
 		d.emitLog("warn", "system", "Config sync deadline exceeded before HEAD", err.Error())
 		return err
 	}
-	if _, err := d.sendCommand(conn, "@fe HEAD 0"); err != nil {
-		d.emitLog("warn", "system", "Force HEAD=0 failed", err.Error())
-		return fmt.Errorf("force HEAD=0: %w", err)
+	if _, err := d.sendCommand(conn, "@fe HEAD 1"); err != nil {
+		d.emitLog("warn", "system", "Force HEAD=1 failed", err.Error())
+		return fmt.Errorf("force HEAD=1: %w", err)
+	}
+	// 读取回 HEAD 验证生效（与 BIN 验证同策略：ACK 不代表生效）。
+	if err := checkConfigSyncDeadline(deadline); err != nil {
+		d.emitLog("warn", "system", "Config sync deadline exceeded before HEAD verify", err.Error())
+		return err
+	}
+	headResp, err := d.sendCommandExact(conn, "@fd HEAD", 1)
+	if err != nil {
+		d.emitLog("warn", "system", "HEAD verify query failed", err.Error())
+		return fmt.Errorf("verify HEAD: %w", err)
+	}
+	headEffective := strings.TrimSpace(headResp) == "1"
+	if !headEffective {
+		// HEAD=1 未生效（temp 固件或设备忽略 @fe HEAD 1）：真正回退到无序号帧，
+		// 否则 FrameReader 按 68 字节序号帧解析设备实际发送的 64 字节帧会错位。
+		d.emitLog("warn", "system", "HEAD=1 not effective, fallback to no-sequence",
+			fmt.Sprintf("@fd HEAD returned %q after @fe HEAD 1", strings.TrimSpace(headResp)))
 	}
 	cfg.ShowTimestamp = d.config.ShowTimestamp
-	cfg.ShowSequence = false
+	cfg.ShowSequence = headEffective
 
 	d.config = *cfg
 	d.profile.DaqT1603Config = *cfg
 	fr := d.frameReader
 	if fr != nil {
 		fr.SetBinaryMode(cfg.BinaryFormat)
-		fr.SetMetadataMode(cfg.ShowTimestamp || cfg.ShowSequence)
+		fr.SetMetadataMode(cfg.ShowTimestamp)
+		fr.SetSequenceMode(cfg.ShowSequence)
 	}
 
 	// 通知上层适配器镜像硬件实际配置（采样率、通道掩码、热电偶类型等）。

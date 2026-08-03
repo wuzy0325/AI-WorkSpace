@@ -38,6 +38,14 @@ func ParseSerialFrame(data []byte) ([]float64, error) {
 
 const TCPFrameSize = 64
 const TCPFrameSizeWithTimestamp = 72 // 8 bytes timestamp header + 64 bytes float32 data
+// TCPFrameSizeWithSequence 是 HEAD=1 时的二进制帧长：4 字节帧序号头 + 64 字节 float32 数据。
+// 2026-08-03 实机验证（FW 1.04）：HEAD=1 时帧 = [seq uint32 LE][16×float32 LE]。
+const TCPFrameSizeWithSequence = 68
+
+// TCPFrameSizeWithSequenceAndTimestamp 是 HEAD=1 且 TIME=1 时的二进制帧长：
+// 4 字节序号头 + 8 字节时间戳头 + 64 字节 float32 数据。
+// 2026-08-03 实机验证：帧 = [seq uint32 LE][sec uint32 LE][ns uint32 LE][16×float32 LE]。
+const TCPFrameSizeWithSequenceAndTimestamp = 76
 
 // maxReasonableThermocoupleTemp 是温度校验的上限参考值。
 // 基于 K 型热电偶物理量程（-200°C ~ 1350°C），
@@ -174,13 +182,59 @@ func parseBinaryFrameWithTimestamp(data []byte) (*T1603ParsedFrame, error) {
 	}, nil
 }
 
+// parseBinaryFrameWithSequence parses a 68-byte binary frame with a sequence header.
+// Format: [uint32 seq LE][16 × float32 LE]
+// Channel order from device is CH15→CH0, results are reversed to CH0→CH15.
+func parseBinaryFrameWithSequence(data []byte) (*T1603ParsedFrame, error) {
+	if len(data) != TCPFrameSizeWithSequence {
+		return nil, fmt.Errorf("invalid frame size: %d, expected %d", len(data), TCPFrameSizeWithSequence)
+	}
+	seq := binary.LittleEndian.Uint32(data[0:4])
+	temps := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		temps[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[4+i*4:])))
+	}
+	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
+		temps[i], temps[j] = temps[j], temps[i]
+	}
+	if !looksLikeReasonableTemperatureFrame(temps) {
+		return nil, fmt.Errorf("binary frame values out of expected range")
+	}
+	return &T1603ParsedFrame{SequenceNumber: int(seq), Temperatures: temps}, nil
+}
+
+// parseBinaryFrameWithSequenceAndTimestamp parses a 76-byte binary frame with
+// sequence and timestamp headers.
+// Format: [uint32 seq LE][uint32 sec LE][uint32 ns LE][16 × float32 LE]
+func parseBinaryFrameWithSequenceAndTimestamp(data []byte) (*T1603ParsedFrame, error) {
+	if len(data) != TCPFrameSizeWithSequenceAndTimestamp {
+		return nil, fmt.Errorf("invalid frame size: %d, expected %d", len(data), TCPFrameSizeWithSequenceAndTimestamp)
+	}
+	seq := binary.LittleEndian.Uint32(data[0:4])
+	sec := binary.LittleEndian.Uint32(data[4:8])
+	ns := binary.LittleEndian.Uint32(data[8:12])
+	ts := float64(sec) + float64(ns)/1e9
+	temps := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		temps[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[12+i*4:])))
+	}
+	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
+		temps[i], temps[j] = temps[j], temps[i]
+	}
+	if !looksLikeReasonableTemperatureFrame(temps) {
+		return nil, fmt.Errorf("binary frame values out of expected range")
+	}
+	return &T1603ParsedFrame{SequenceNumber: int(seq), HardwareTimestamp: ts, Temperatures: temps}, nil
+}
+
 // ParseTCPFrameEx parses a TCP frame with optional metadata prefix.
 // The device can prefix data with sequence number (@fe HEAD 1) and
 // hardware timestamp (@fe TIME 1). The space-separated format is:
 //
 //	[seq] [timestamp] t1 t2 ... t16
 //
-// Fixed-width 192-byte ASCII, 64-byte binary, and 72-byte binary-with-timestamp
+// Fixed-width 192-byte ASCII, 64-byte binary, 68-byte binary-with-sequence,
+// 72-byte binary-with-timestamp, and 76-byte binary-with-sequence-and-timestamp
 // frames are also supported.
 func ParseTCPFrameEx(data []byte) (*T1603ParsedFrame, error) {
 	switch len(data) {
@@ -192,6 +246,10 @@ func ParseTCPFrameEx(data []byte) (*T1603ParsedFrame, error) {
 		return &T1603ParsedFrame{Temperatures: temps}, nil
 	case TCPFrameSizeWithTimestamp:
 		return parseBinaryFrameWithTimestamp(data)
+	case TCPFrameSizeWithSequence:
+		return parseBinaryFrameWithSequence(data)
+	case TCPFrameSizeWithSequenceAndTimestamp:
+		return parseBinaryFrameWithSequenceAndTimestamp(data)
 	case 192:
 		temps, err := ParseASCIIFrame(data)
 		if err != nil {
@@ -286,17 +344,20 @@ const stopResponseQuietWindow = 150 * time.Millisecond
 var ErrDeviceRejected = errors.New("device rejected command (E response)")
 
 // T1603FrameReader reads frames from a DAQ-T-1603 device over TCP.
-// Mode combinations:
+// Mode combinations (binary):
 //   - BIN=0, metadata=false → 192-byte fixed ASCII
 //   - BIN=1, metadata=false → 64-byte fixed binary
 //   - BIN=0, metadata=true  → newline-terminated variable ASCII (TIME/HEAD)
 //   - BIN=1, metadata=true  → 72-byte fixed binary with timestamp header
+//   - BIN=1, sequence=true  → 68-byte fixed binary with sequence header
+//   - BIN=1, metadata+seq   → 76-byte fixed binary with seq + timestamp headers
 type T1603FrameReader struct {
 	conn         net.Conn
 	mu           sync.Mutex
 	buffer       []byte
 	binaryMode   bool
 	metadataMode bool
+	sequenceMode bool
 	ackAfterData []bool
 	stopReady    bool
 	// deadlineBroken 由上层（DAQT1603，连接建立后空窗期探测）注入：
@@ -349,11 +410,28 @@ func (r *T1603FrameReader) IsBinaryMode() bool {
 // When true and binaryMode is false, reads newline-terminated variable-length
 // ASCII frames. When true and binaryMode is true, reads 72-byte fixed frames
 // with 8-byte hardware timestamp header.
-// Set true when @fe TIME or @fe HEAD is enabled on the device.
+// Set true when @fe TIME is enabled on the device.
 func (r *T1603FrameReader) SetMetadataMode(metadata bool) {
 	r.mu.Lock()
 	r.metadataMode = metadata
 	r.mu.Unlock()
+}
+
+// SetSequenceMode enables the frame-sequence header mode (@fe HEAD 1).
+// When true and binaryMode is true, reads 68-byte fixed frames with a 4-byte
+// sequence header; combined with metadata mode reads 76-byte frames with
+// sequence + timestamp headers.
+func (r *T1603FrameReader) SetSequenceMode(sequence bool) {
+	r.mu.Lock()
+	r.sequenceMode = sequence
+	r.mu.Unlock()
+}
+
+// IsSequenceMode 返回当前 sequenceMode 状态，用于测试断言。
+func (r *T1603FrameReader) IsSequenceMode() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sequenceMode
 }
 
 // ExpectControlACK makes the leading A returned by @f0 visible. 实机约 80% 的启动
@@ -385,20 +463,22 @@ func (r *T1603FrameReader) HasPendingControlACK() bool {
 // ReadFrame reads one complete frame from the device.
 // Routing:
 //   - metadataMode + binaryMode     → 72-byte fixed binary with timestamp
-//   - metadataMode + !binaryMode    → variable-length newline-terminated text
-//   - !metadataMode + binaryMode    → 64-byte fixed binary
-//   - !metadataMode + !binaryMode   → 192-byte fixed ASCII
+//   - sequenceMode + binaryMode     → 68-byte fixed binary with seq header
+//   - metadata+sequence + binary    → 76-byte fixed binary with seq + ts headers
+//   - (metadata|sequence) + !binary → variable-length newline-terminated text
+//   - !metadata + !sequence + binary → 64-byte fixed binary
+//   - !metadata + !sequence + !binary → 192-byte fixed ASCII
 func (r *T1603FrameReader) ReadFrame() ([]byte, error) {
 	r.mu.Lock()
 	mm := r.metadataMode
+	sm := r.sequenceMode
 	bm := r.binaryMode
 	r.mu.Unlock()
 
-	// BIN=1, TIME/HEAD=1: 72-byte fixed binary with timestamp header
 	// BIN=0, TIME/HEAD=1: variable-length newline-terminated ASCII
-	// BIN=1, TIME/HEAD=0: 64-byte fixed binary
-	// BIN=0, TIME/HEAD=0: 192-byte fixed ASCII
-	if mm && !bm {
+	// (seq-only ASCII is 17 fields, seq+ts ASCII is 18 fields, handled by
+	// tryExtractFrame / parseSpaceSeparatedFrame).
+	if (mm || sm) && !bm {
 		return r.readFrameVariable()
 	}
 	return r.readFrameFixed()
@@ -848,6 +928,12 @@ func tryVariableACK(buffer []byte) bool {
 
 func (r *T1603FrameReader) frameSizeLocked() int {
 	if r.binaryMode {
+		if r.sequenceMode && r.metadataMode {
+			return TCPFrameSizeWithSequenceAndTimestamp // 76: seq + ts + 64 float32
+		}
+		if r.sequenceMode {
+			return TCPFrameSizeWithSequence // 68: seq + 64 float32
+		}
 		if r.metadataMode {
 			return TCPFrameSizeWithTimestamp // 72 bytes: 8 header + 64 float32
 		}

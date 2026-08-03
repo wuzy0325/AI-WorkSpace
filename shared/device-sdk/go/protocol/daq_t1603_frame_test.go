@@ -845,6 +845,193 @@ func TestParseTCPFrameEx_72ByteRejectsOutOfRangeValues(t *testing.T) {
 	}
 }
 
+// encodeBinaryFrameWithSequence 构造 HEAD=1 时的 68 字节帧：[seq uint32 LE][16×float32 LE]。
+func encodeBinaryFrameWithSequence(seq uint32, values []float64) []byte {
+	frame := make([]byte, TCPFrameSizeWithSequence)
+	binary.LittleEndian.PutUint32(frame[0:4], seq)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(frame[4+i*4:], math.Float32bits(float32(v)))
+	}
+	return frame
+}
+
+func TestParseTCPFrameEx_68ByteBinarySequence(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithSequence(1234, vals)
+	if len(frame) != TCPFrameSizeWithSequence {
+		t.Fatalf("frame length = %d, want %d", len(frame), TCPFrameSizeWithSequence)
+	}
+
+	result, err := ParseTCPFrameEx(frame)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.SequenceNumber != 1234 {
+		t.Fatalf("sequence = %d, want 1234", result.SequenceNumber)
+	}
+	if len(result.Temperatures) != 16 {
+		t.Fatalf("expected 16 temperatures, got %d", len(result.Temperatures))
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestParseTCPFrameEx_68ByteRejectsOutOfRangeValues(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := range vals {
+		vals[i] = 99999
+	}
+	_, err := ParseTCPFrameEx(encodeBinaryFrameWithSequence(1, vals))
+	if err == nil {
+		t.Fatal("expected error for out-of-range binary sequence temperatures")
+	}
+}
+
+// encodeBinaryFrameWithSequenceAndTimestamp 构造 HEAD=1 且 TIME=1 时的 76 字节帧：
+// [seq uint32 LE][sec uint32 LE][ns uint32 LE][16×float32 LE]。
+func encodeBinaryFrameWithSequenceAndTimestamp(seq, sec, ns uint32, values []float64) []byte {
+	frame := make([]byte, TCPFrameSizeWithSequenceAndTimestamp)
+	binary.LittleEndian.PutUint32(frame[0:4], seq)
+	binary.LittleEndian.PutUint32(frame[4:8], sec)
+	binary.LittleEndian.PutUint32(frame[8:12], ns)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(frame[12+i*4:], math.Float32bits(float32(v)))
+	}
+	return frame
+}
+
+func TestParseTCPFrameEx_76ByteBinarySequenceAndTimestamp(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithSequenceAndTimestamp(99, 1781803881, 179316583, vals)
+	if len(frame) != TCPFrameSizeWithSequenceAndTimestamp {
+		t.Fatalf("frame length = %d, want %d", len(frame), TCPFrameSizeWithSequenceAndTimestamp)
+	}
+
+	result, err := ParseTCPFrameEx(frame)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.SequenceNumber != 99 {
+		t.Fatalf("sequence = %d, want 99", result.SequenceNumber)
+	}
+	expectedTS := 1781803881.179316583
+	if result.HardwareTimestamp != expectedTS {
+		t.Errorf("timestamp = %f, want %f", result.HardwareTimestamp, expectedTS)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestParseTCPFrameEx_76ByteRejectsOutOfRangeValues(t *testing.T) {
+	vals := make([]float64, 16)
+	for i := range vals {
+		vals[i] = 99999
+	}
+	_, err := ParseTCPFrameEx(encodeBinaryFrameWithSequenceAndTimestamp(1, 1781803881, 179316583, vals))
+	if err == nil {
+		t.Fatal("expected error for out-of-range binary seq+ts temperatures")
+	}
+}
+
+func TestReadFrame_BinarySequenceMode(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.SetSequenceMode(true)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithSequence(42, vals)
+
+	go func() {
+		_, _ = server.Write(frame)
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != TCPFrameSizeWithSequence {
+		t.Fatalf("frame length = %d, want %d", len(raw), TCPFrameSizeWithSequence)
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.SequenceNumber != 42 {
+		t.Fatalf("sequence = %d, want 42", result.SequenceNumber)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
+func TestReadFrame_BinarySequenceAndTimestampMode(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	reader := NewT1603FrameReader(client)
+	reader.SetBinaryMode(true)
+	reader.SetSequenceMode(true)
+	reader.SetMetadataMode(true)
+
+	vals := make([]float64, 16)
+	for i := 0; i < 16; i++ {
+		vals[i] = float64(15 - i + 1)
+	}
+	frame := encodeBinaryFrameWithSequenceAndTimestamp(7, 1781803881, 179316583, vals)
+
+	go func() {
+		_, _ = server.Write(frame)
+	}()
+
+	raw, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame returned error: %v", err)
+	}
+	if len(raw) != TCPFrameSizeWithSequenceAndTimestamp {
+		t.Fatalf("frame length = %d, want %d", len(raw), TCPFrameSizeWithSequenceAndTimestamp)
+	}
+
+	result, err := ParseTCPFrameEx(raw)
+	if err != nil {
+		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
+	}
+	if result.SequenceNumber != 7 {
+		t.Fatalf("sequence = %d, want 7", result.SequenceNumber)
+	}
+	for i := 0; i < 16; i++ {
+		want := float64(i + 1)
+		if result.Temperatures[i] != want {
+			t.Fatalf("temperature[%d] = %f, want %f", i, result.Temperatures[i], want)
+		}
+	}
+}
+
 func TestReadFrame_BinaryTimestampMode(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

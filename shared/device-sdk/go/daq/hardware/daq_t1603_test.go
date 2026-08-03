@@ -2369,7 +2369,8 @@ func TestDAQT1603SendCommand_RejectsInvalidACKAsProtocolError(t *testing.T) {
 //     @fe BIN 1 → "A"
 //     @fd BIN (第 2 次，queryBinaryMode 验证) → "0"（**关键：temp 固件读回 0**）
 //     @fe TIME 0 → "A"
-//     @fe HEAD 0 → "A"
+//     @fe HEAD 1 → "A"
+//     @fd HEAD → "1"
 //
 // 测试步骤：
 //   - 调用 device.syncHardwareConfigLocked(client)
@@ -2397,7 +2398,8 @@ func TestDAQT1603SyncHardwareConfig_TempFirmwareFallsBackToASCII(t *testing.T) {
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "0"}, // queryBinaryMode 第 2 次查询，temp 固件读回 0 → 触发回退
 		{"@fe TIME 0", "A"},
-		{"@fe HEAD 0", "A"},
+		{"@fe HEAD 1", "A"},
+		{"@fd HEAD", "1"}, // HEAD verify
 	}
 
 	serverErr := make(chan error, 1)
@@ -2453,6 +2455,97 @@ func TestDAQT1603SyncHardwareConfig_TempFirmwareFallsBackToASCII(t *testing.T) {
 	}
 }
 
+// TestDAQT1603SyncHardwareConfig_HeadFallbackKeepsNoSequence 验证 HEAD=1 未生效时
+// 真正回退到无序号模式，而不是日志声明回退却仍强制 ShowSequence=true。
+//
+// 业务背景（2026-08-03 code review 修复）：旧实现 @fd HEAD 读回非 "1" 时仅打 warn
+// 日志，随后仍 `cfg.ShowSequence = true` + `fr.SetSequenceMode(true)`，导致设备发
+// 64 字节帧而 FrameReader 按 68 字节序号帧解析，帧边界错位数据全乱。与 BIN 验证
+// （@fd BIN 读回 0 回退 ASCII）保持一致的回退语义。
+//
+// 测试前置：
+//   - net.Pipe 建立双向连接
+//   - server goroutine 对 @fe HEAD 1 回 "A"，但 @fd HEAD 读回 "0"（设备忽略 HEAD）
+//
+// 期待结果：
+//   - 返回 nil
+//   - device.config.ShowSequence == false
+//   - FrameReader.IsSequenceMode() == false
+func TestDAQT1603SyncHardwareConfig_HeadFallbackKeepsNoSequence(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	responses := []struct {
+		command  string
+		response string
+	}{
+		{"@e3", "KKKKKKKKKKKKKKKK\n"},
+		{"@fd MCH", "FFFF"},
+		{"@fd BIN", "1"},
+		{"@fd TIME", "0"},
+		{"@fd HEAD", "0"},
+		{"@fd TYPE", "0"},
+		{"@fd TRIG", "0"},
+		{"@fe BIN 1", "A"},
+		{"@fd BIN", "1"},
+		{"@fe TIME 0", "A"},
+		{"@fe HEAD 1", "A"},
+		{"@fd HEAD", "0"}, // 关键：HEAD=1 未生效
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		for i, item := range responses {
+			cmd, err := readWithTimeout(server, testReadTimeout)
+			if err != nil {
+				serverErr <- fmt.Errorf("read %d-th command failed: %v (want %q)", i, err, item.command)
+				return
+			}
+			if cmd != item.command {
+				serverErr <- fmt.Errorf("command %d = %q, want %q", i, cmd, item.command)
+				return
+			}
+			if _, err := server.Write([]byte(item.response)); err != nil {
+				serverErr <- fmt.Errorf("write response %q failed: %v", item.response, err)
+				return
+			}
+		}
+		serverErr <- nil
+	}()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-head-fallback", Type: core.DeviceDaqT1603})
+	device.mu.Lock()
+	device.conn = client
+	device.frameReader = protocol.NewT1603FrameReader(client)
+	device.mu.Unlock()
+
+	if err := device.syncHardwareConfigLocked(client); err != nil {
+		t.Fatalf("syncHardwareConfigLocked should succeed with HEAD fallback, got: %v", err)
+	}
+
+	device.mu.RLock()
+	showSeq := device.config.ShowSequence
+	fr := device.frameReader
+	device.mu.RUnlock()
+
+	if showSeq {
+		t.Errorf("HEAD=1 not effective should fall back to no-sequence (ShowSequence=false), got true")
+	}
+	if fr != nil && fr.IsSequenceMode() {
+		t.Errorf("FrameReader should be in no-sequence mode after HEAD fallback, still sequence")
+	}
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server goroutine error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server goroutine did not complete within 2s")
+	}
+}
+
 // TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary 验证正常固件路径：
 // @fe BIN 1 后读回 @fd BIN = "1"，应保持二进制模式。
 //
@@ -2480,7 +2573,8 @@ func TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary(t *testing.T) {
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"}, // queryBinaryMode 第 2 次，读回 1 → 保持二进制
 		{"@fe TIME 0", "A"},
-		{"@fe HEAD 0", "A"},
+		{"@fe HEAD 1", "A"},
+		{"@fd HEAD", "1"}, // HEAD verify
 	}
 
 	serverErr := make(chan error, 1)
@@ -2515,6 +2609,7 @@ func TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary(t *testing.T) {
 
 	device.mu.RLock()
 	binaryFormat := device.config.BinaryFormat
+	showSeq := device.config.ShowSequence
 	fr := device.frameReader
 	device.mu.RUnlock()
 
@@ -2523,6 +2618,12 @@ func TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary(t *testing.T) {
 	}
 	if fr != nil && !fr.IsBinaryMode() {
 		t.Errorf("FrameReader should be in binary mode after BIN verified, still ASCII")
+	}
+	if !showSeq {
+		t.Errorf("normal firmware should enable HEAD (ShowSequence=true), got false")
+	}
+	if fr != nil && !fr.IsSequenceMode() {
+		t.Errorf("FrameReader should be in sequence mode after HEAD verified, got false")
 	}
 
 	select {
@@ -2554,7 +2655,8 @@ func TestDAQT1603SyncHardwareConfig_ReturnsWhenCallerHoldsDeviceLock(t *testing.
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"},
 		{"@fe TIME 0", "A"},
-		{"@fe HEAD 0", "A"},
+		{"@fe HEAD 1", "A"},
+		{"@fd HEAD", "1"},
 	}
 
 	serverErr := make(chan error, 1)
