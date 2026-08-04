@@ -1522,6 +1522,9 @@ func (d *DAQT1603) queryBinaryMode(conn net.Conn, deadline time.Time) (bool, err
 //
 // BIN/TIME/HEAD 的读回值随后会被 syncHardwareConfigLocked 的 @fe 强制命令覆盖，
 // 因此其读失败无害（前提：失败原因不是 watchdog 触发）。
+// MCH 例外：其读回值是设备端持久化的历史掩码（如出厂遗留 "0000"），不代表应用
+// 期望的配置，因此只读取以维持协议响应边界与后续命令时序，不写回 cfg.ChannelMask
+// （应用配置/profile 才是权威，空值回退 FFFF）。见下方 @fd MCH 处的 0.6.8 修复。
 func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1603HardwareConfig, error) {
 	cfg := d.config
 	if cfg.ChannelMask == "" {
@@ -1567,11 +1570,11 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 		return nil, err
 	}
 
-	if err := readExact("@fd MCH", 4, func(resp string) {
-		if len(resp) == 4 {
-			cfg.ChannelMask = strings.TrimSpace(resp)
-		}
-	}); err != nil {
+// @fd MCH 的读回值是设备端持久化的历史掩码（如出厂遗留 "0000"），不代表应用
+// 期望的配置。仍读取以维持协议响应边界与后续命令时序，但不写回 cfg.ChannelMask
+// （应用配置/profile 才是权威），否则后续 StartAcquisition 会拼出 `@f0 0000 2`
+// 导致零通道采集（0.6.8 修复，见 readAllConfig 头注释与 releases/0.6.8.md）。
+	if err := readExact("@fd MCH", 4, func(string) {}); err != nil {
 		return nil, err
 	}
 

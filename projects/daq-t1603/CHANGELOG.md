@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.8] - 2026-08-04
+
+### Fixed
+- 修复连接同步时设备端持久化通道掩码覆盖应用配置的问题：`readAllConfig` 执行 `@fd MCH` 读取设备内部保存的历史通道掩码（如 `0000`），此前无条件写回 `cfg.ChannelMask`，导致 profile 配置的 `FFFF`（全通道启用）被覆盖，随后 `StartAcquisition` 发送 `@f0 0000 2` 而非 `@f0 FFFF 2`。设备以零通道掩码启动采集时（HEAD=1 帧序列模式）数据帧只有 4 字节序列头，Stop 尾部变为 4 字节 + ACK `'A'`，不满足 `N×68+ACK` 边界校验，报 `invalid Stop response boundary: bytes=5 expected N*68+ACK; raw=22 00 00 00 41`。修复：`@fd MCH` 仍被读取以维持协议响应边界，但不再覆盖 `cfg.ChannelMask`；启动命令回退逻辑保持 mask 为空时默认 `FFFF`。
+
+### Internal
+- 回归测试 `TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses` 更新：设备 `@fd MCH` 响应 `0000`，profile 显式 `ChannelMask: "FFFF"`，断言同步后仍为 `FFFF`（修复前实测被覆盖为 `0000`）。
+- 同步 6 个版本号文件到 0.6.8：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+- shared device-sdk `go test ./...`: passed（含更新后的 `TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses`）。
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed。
+- `npm run typecheck`: passed。
+- `npm run build`: passed。
+- `task release`: passed。
+  - `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed。
+
+### Known Issues
+- 暂无。
+
 ## [0.6.7] - 2026-08-04
 
 ### Added

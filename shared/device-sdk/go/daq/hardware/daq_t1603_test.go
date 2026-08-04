@@ -178,7 +178,7 @@ func TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses(t *testing.T
 		response string
 	}{
 		{"@e3", "KTTTTTTTTTTTTTTT\n"},
-		{"@fd MCH", "FFFF"},
+		{"@fd MCH", "0000"}, // 设备历史值不得覆盖应用要求的全通道掩码
 		{"@fd BIN", "1"},
 		{"@fd TIME", "0"},
 		{"@fd HEAD", "0"},
@@ -206,6 +206,7 @@ func TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses(t *testing.T
 		ID:   "t1603-read-config",
 		Type: core.DeviceDaqT1603,
 		DaqT1603Config: core.DaqT1603HardwareConfig{
+			ChannelMask:  "FFFF",
 			SamplingRate: 2,
 			AverageCount: 4,
 			TriggerCount: 1,
@@ -2689,6 +2690,94 @@ func TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary(t *testing.T) {
 	}
 	if fr != nil && !fr.IsSequenceMode() {
 		t.Errorf("FrameReader should be in sequence mode after HEAD verified, got false")
+	}
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server goroutine error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server goroutine did not complete within 2s")
+	}
+}
+
+// TestDAQT1603SyncHardwareConfig_MchDeviceValueDoesNotOverrideProfileMask 验证 0.6.8 修复：
+// 设备端 @fd MCH 返回持久化的历史掩码（如 "0000"）时，不得覆盖应用配置的通道掩码。
+//
+// 测试前置：与 BinVerifiedStaysBinary 相同，但 @fd MCH 返回 "0000"（设备历史遗留值），
+// profile 未显式设置 ChannelMask（readAllConfig 默认回退 "FFFF"）。
+//
+// 期待结果：
+//   - syncHardwareConfigLocked 返回 nil
+//   - device.config.ChannelMask == "FFFF"（MCH 只读不写回，配置保持应用侧权威值）
+func TestDAQT1603SyncHardwareConfig_MchDeviceValueDoesNotOverrideProfileMask(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	responses := []struct {
+		command  string
+		response string
+	}{
+		{"@e3", "KKKKKKKKKKKKKKKK\n"},
+		{"@fd MCH", "0000"}, // 设备历史值，不得覆盖 profile 掩码（0.6.8 修复点）
+		{"@fd BIN", "1"},    // readAllConfig 第 1 次
+		{"@fd TIME", "0"},
+		{"@fd HEAD", "0"},
+		{"@fd TYPE", "0"},
+		{"@fd TRIG", "0"},
+		{"@fe BIN 1", "A"},
+		{"@fd BIN", "1"}, // queryBinaryMode 第 2 次，读回 1 → 保持二进制
+		{"@fe TIME 0", "A"},
+		{"@fe HEAD 1", "A"},
+		{"@fd HEAD", "1"}, // HEAD verify
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		for i, item := range responses {
+			cmd, err := readWithTimeout(server, testReadTimeout)
+			if err != nil {
+				serverErr <- fmt.Errorf("read %d-th command failed: %v", i, err)
+				return
+			}
+			if cmd != item.command {
+				serverErr <- fmt.Errorf("command %d = %q, want %q", i, cmd, item.command)
+				return
+			}
+			if _, err := server.Write([]byte(item.response)); err != nil {
+				serverErr <- fmt.Errorf("write response %q failed: %v", item.response, err)
+				return
+			}
+		}
+		serverErr <- nil
+	}()
+
+	device := NewDAQT1603(core.Profile{ID: "t1603-mch-zero", Type: core.DeviceDaqT1603})
+	device.mu.Lock()
+	device.conn = client
+	device.frameReader = protocol.NewT1603FrameReader(client)
+	device.mu.Unlock()
+
+	if err := device.syncHardwareConfigLocked(client); err != nil {
+		t.Fatalf("syncHardwareConfigLocked failed on normal firmware: %v", err)
+	}
+
+	device.mu.RLock()
+	mask := device.config.ChannelMask
+	binaryFormat := device.config.BinaryFormat
+	showSeq := device.config.ShowSequence
+	device.mu.RUnlock()
+
+	if mask != "FFFF" {
+		t.Errorf("MCH=0000 must not override profile mask: got %q, want %q", mask, "FFFF")
+	}
+	if !binaryFormat {
+		t.Errorf("normal firmware should stay in binary mode (BinaryFormat=true), got false")
+	}
+	if !showSeq {
+		t.Errorf("normal firmware should enable HEAD (ShowSequence=true), got false")
 	}
 
 	select {
