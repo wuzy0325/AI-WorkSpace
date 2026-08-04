@@ -1,0 +1,60 @@
+# Wails v3 项目配置（DAQ-T-1603）
+# 参考 wails3 v3.0.0-alpha.95 模板 schema，
+# 各字段含义见 wails3 命令源码（internal/commands/build_assets/config.yml）。
+version: '3'
+
+info:
+  companyName: "DAQ-T-1603 Team"
+  productName: "DAQ-T-1603"
+  productIdentifier: "com.daq.t1603"
+  description: "DAQ-T-1603 温度采集"
+  copyright: "(c) 2026, DAQ-T-1603 Team"
+  comments: "Wails v3 desktop edition"
+  version: "0.6.6"
+
+# wails3 dev 监听 Go 源代码变化时的配置
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+      - build
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  # 启动序列：
+  #   1. 安装前端依赖（once，缓存命中后跳过）
+  #   2. 后台启动 Vite 开发服务器（background）
+  #   3. blocking 阶段：先 go mod tidy 收尾依赖
+  #   4. blocking 阶段：编译 Go 主程序
+  #   5. primary：拉起编译产物，等待退出后回到监听
+  #
+  # 注意：refresh engine（atterpac/refresh）执行 cmd 时仅用 strings.Split(cmd, " ")
+  # 直接 exec.Command 调用，不支持 shell 引号、不会启动 cmd.exe，
+  # 故所有需要 shell 语义（set 环境变量、组合命令）的工作都包装到 build\dev_*.cmd 里，
+  # 这里只写「单个可执行 + 单个相对路径」，最大兼容性。
+  executes:
+    - cmd: build\dev_install.cmd
+      type: once
+    - cmd: build\dev_vite.cmd
+      type: background
+    - cmd: build\dev_tidy.cmd
+      type: blocking
+    - cmd: build\dev_build.cmd
+      type: blocking
+    - cmd: build\dev_run.cmd
+      type: primary
+
+# 文件关联（保留占位，按需启用）
+fileAssociations: []
+
+other: []
